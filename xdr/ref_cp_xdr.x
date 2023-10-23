@@ -80,6 +80,22 @@ enum rcp_stat1 {
  *****************************************************************************/
 
 /*
+ * A ds can have multiple volumes for multiple mds.
+ *
+ * the <uuid of volume> could be shared across mds nodes, so perhaps
+ *  we have:
+ *  
+ *  /vol1
+ *      /972d0a79-85b9-4cfd-b34c-f12665593df8
+ *      /3c11ef74-17ef-4a59-8aff-74dd4c5ddc1e
+ *  /vol2
+ *      /3c11ef74-17ef-4a59-8aff-74dd4c5ddc1e
+ *  
+ *  which means that vol1 services both mds1 and mds2, whilst vol2 only
+ *  services mds2.
+ */
+
+/*
  * List all volumes on a node.
  */
 struct rcp_volume_list1_args {
@@ -157,6 +173,10 @@ struct rcp_byte_range1 {
  * Note that the flags are built on top of
  * previous RCP_FILE_ACCESS_GRANT1 and
  * RCP_FILE_ACCESS_REVOKE1 calls.
+ *
+ * NOTE: This will be interesting on a stock Linux NFS client
+ * which might share the same LAYOUT with multiple users. Will
+ * have to investigate.
  */
 struct rcp_file_access_grant1_args {
 	rcp_trace_id1 rfaga_trace_id;
