@@ -298,6 +298,22 @@ union rcp_getattr1_res switch (rcp_stat1 rgr_status) {
 		void;
 };
 
+/*
+ * Get the dir_path for a file.
+ */
+struct rcp_dir_path1_args {
+	rcp_trace_id1 rdpa_trace_id;
+	rpc_server_id1 rdpa_mds_id;	/* Which connecting mds? */
+	rcp_volume_fh1 rdpa_fh;
+};
+
+union rcp_dir_path1_res switch (rcp_stat1 rdpr_status) {
+	case RCP1_OK:
+		rcp_dir_path1 rdpr_dir_path;
+	default:
+		void;
+};
+
 const RCP_PORT 4098;
 
 program RCP_ADMIN_PROGRAM {
@@ -310,5 +326,6 @@ program RCP_ADMIN_PROGRAM {
 		rcp_file_access_show1_res RCP_FILE_ACCESS_SHOW1(rcp_file_access_show1_args) = 5;
 		rcp_file_access_list1_res RCP_FILE_ACCESS_LIST1(rcp_file_access_list1_args) = 6;
 		rcp_getattr1_res RCP_GETATTR1(rcp_getattr1_args) = 7;
+		rcp_dir_path1_res RCP_DIR_PATH1(rcp_dir_path1_args) = 8;
 	} = 1;
 } = 304098;
