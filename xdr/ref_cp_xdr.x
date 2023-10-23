@@ -24,10 +24,6 @@ typedef unsigned hyper rcp_offset1;
 typedef unsigned hyper rcp_size1;
 typedef unsigned hyper rcp_cookie1;
 
-/*
- * Each request will supply a rcp_trace_id1 which the
- * response will return back.
- */
 typedef unsigned hyper rcp_trace_id1;
 
 typedef opaque rcp_uuid1<RCP_UUID_LEN1>;
@@ -112,7 +108,6 @@ struct rcp_volume_info1 {
 };
 
 struct rcp_volume_list1 {
-	rcp_trace_id1 rvl_trace_id;
 	rcp_cookie1 rvl_cookie;
 	bool rvl_eof;
 	rcp_volume_info1 rvl_volumes<>;
@@ -225,14 +220,9 @@ struct rcp_file_access_range1 {
  * Note that the @rfasa_byte_range might span
  * multiple access regions.
  */
-struct rcp_file_access_show1 {
-	rcp_trace_id1 rfasr_trace_id;
-	rcp_file_access_range1 rfasr_file_access_range<>;
-};
-
 union rcp_file_access_show1_res switch (rcp_stat1 rfasr_status) {
 	case RCP1_OK:
-		rcp_file_access_show1 rfasr_access;
+		rcp_file_access_range1 rfasr_access_range<>;
 	default:
 		void;
 };
