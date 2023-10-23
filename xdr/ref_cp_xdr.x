@@ -316,6 +316,19 @@ union rcp_truncate1_res switch (rcp_stat1 rtr_status) {
 		void;
 };
 
+enum rcp_ops1 {
+	RCP_OP_NULL = 0,
+	RCP_OP_VOLUME_LIST = 1,
+	RCP_OP_VOLUME_SHOW = 2,
+	RCP_OP_FILE_ACCESS_GRANT = 3,
+	RCP_OP_FILE_ACCESS_REVOKE = 4,
+	RCP_OP_FILE_ACCESS_SHOW = 5,
+	RCP_OP_FILE_ACCESS_LIST = 6,
+	RCP_OP_GETATTR = 7,
+	RCP_OP_DIR_PATH = 8,
+	RCP_OP_TRUNCATE = 9
+};
+
 const RCP_PORT 4098;
 
 program RCP_ADMIN_PROGRAM {
