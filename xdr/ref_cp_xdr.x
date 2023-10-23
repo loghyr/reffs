@@ -13,7 +13,7 @@ const RCP_PATH_LEN1 = 1024;		/* Maximum bytes in a path name */
 const RCP_NAME_LEN1 = 255;		/* Maximum bytes in a name */
 
 
-typedef unsigned hyper rcp_node_id1;
+typedef unsigned hyper rpc_server_id1;
 typedef unsigned hyper rcp_volume_id1;
 typedef unsigned hyper rcp_share_id1;
 typedef unsigned hyper rcp_inode_id1;
@@ -82,7 +82,7 @@ enum rcp_stat1 {
 /*
  * A ds can have multiple volumes for multiple mds.
  *
- * the <uuid of volume> could be shared across mds nodes, so perhaps
+ * the <uuid of volume> could be shared across mdses, so perhaps
  *  we have:
  *  
  *  /vol1
@@ -96,11 +96,11 @@ enum rcp_stat1 {
  */
 
 /*
- * List all volumes on a node.
+ * List all volumes on a ds.
  */
 struct rcp_volume_list1_args {
 	rcp_trace_id1 rvla_trace_id;
-	rcp_node_id1 rvla_node_id;        /* Which connecting mds? */
+	rpc_server_id1 rvla_mds_id;        /* Which connecting mds? */
 	rcp_cookie1 rvla_cookie;
 };
 
@@ -126,11 +126,11 @@ union rcp_volume_list1_res switch (rcp_stat1 rvlr_status) {
 };
 
 /*
- * List a specific volume on a node.
+ * List a specific volume on a ds
  */
 struct rcp_volume_list1_args {
 	rcp_trace_id1 rvsa_trace_id;
-	rcp_node_id1 rvsa_node_id;        /* Which connecting mds? */
+	rpc_server_id1 rvsa_mds_id;        /* Which connecting mds? */
 	rcp_volume_id1 rvsa_volume_id;
 };
 
@@ -147,7 +147,7 @@ union rcp_volume_show1_res switch (rcp_stat1 rvsr_status) {
 
 struct rcp_volume_fh1 {
 	rcp_volume_id1 rvf_volume_id;
-	rcp_inode_id1 rvf_inode_id;
+	rcp_inode_id1 rvf_imds_id;
 };
 
 /*
@@ -180,7 +180,7 @@ struct rcp_byte_range1 {
  */
 struct rcp_file_access_grant1_args {
 	rcp_trace_id1 rfaga_trace_id;
-	rcp_node_id1 rfaga_node_id;	/* Which connecting mds? */
+	rpc_server_id1 rfaga_mds_id;	/* Which connecting mds? */
 	rcp_volume_fh1 rfaga_fh;
 	rcp_address_string1 rfaga_client;
 	rpc_uid1 rfaga_uid;
@@ -194,7 +194,7 @@ struct rcp_file_access_grant1_args {
  */
 struct rcp_file_access_revoke1_args {
 	rcp_trace_id1 rfara_trace_id;
-	rcp_node_id1 rfara_node_id;	/* Which connecting mds? */
+	rpc_server_id1 rfara_mds_id;	/* Which connecting mds? */
 	rcp_volume_fh1 rfara_fh;
 	rcp_address_string1 rfara_client;
 	rpc_uid1 rfara_uid;
@@ -208,7 +208,7 @@ struct rcp_file_access_revoke1_args {
  */
 struct rcp_file_access_show1_args {
 	rcp_trace_id1 rfasa_trace_id;
-	rcp_node_id1 rfasa_node_id;	/* Which connecting mds? */
+	rpc_server_id1 rfasa_mds_id;	/* Which connecting mds? */
 	rcp_volume_fh1 rfasa_fh;
 	rcp_address_string1 rfasa_client;
 	rpc_uid1 rfasa_uid;
@@ -242,7 +242,7 @@ union rcp_file_access_show1_res switch (rcp_stat1 rfasr_status) {
  */
 struct rcp_file_access_list1_args {
 	rcp_trace_id1 rfala_trace_id;
-	rcp_node_id1 rfala_node_id;	/* Which connecting mds? */
+	rpc_server_id1 rfala_mds_id;	/* Which connecting mds? */
 	rcp_volume_fh1 rfala_fh;
 	rcp_cookie1 rfala_cookie;
 };
@@ -282,7 +282,7 @@ struct rcp_fattr1 {
 
 struct rcp_getattr1_args {
 	rcp_trace_id1 rga_trace_id;
-	rcp_node_id1 rga_node_id;	/* Which connecting mds? */
+	rpc_server_id1 rga_mds_id;	/* Which connecting mds? */
 	rcp_volume_fh1 rga_fh;
 };
 
