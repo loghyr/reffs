@@ -1,0 +1,24 @@
+The Reference File System is provided under:
+
+       SPDX-License-Identifier: GPL-2.0+
+
+We also include:
+
+       .x files copyright the IETF Trust available under a simplified
+          BSD license as described in
+          http://trustee.ietf.org/docs/IETF-Trust-License-Policy.pdf)
+
+          According to https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/,
+          the IETF BSD License is:
+
+          The above BSD License is intended to be compatible with the Revised BSD License
+          template published at https://opensource.org/licenses/BSD-3-Clause. As such,
+          .x files will be provided under:
+               SPDX-License-Identifier: BSD-3-Clause
+
+Copies of the Licenses are in:
+
+       LICENSES/GPL-2.0
+       LICENSES/BSD-3-Clause
+
+All contributions to the Reference File System are subject to this COPYING file.
