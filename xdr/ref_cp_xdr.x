@@ -276,14 +276,9 @@ struct rcp_getattr1_args {
 	rcp_volume_fh1 rga_fh;
 };
 
-struct rcp_getattr1 {
-	rcp_trace_id1 rg_trace_id;
-	rcp_fattr1 fg_fattr;
-};
-
 union rcp_getattr1_res switch (rcp_stat1 rgr_status) {
 	case RCP1_OK:
-		rcp_getattr1 rgr_attr;
+		rcp_fattr1 rgr_attr;
 	default:
 		void;
 };
