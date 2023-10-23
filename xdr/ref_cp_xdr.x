@@ -259,7 +259,7 @@ union rcp_file_access_show1_res switch (rcp_stat1 rfalr_status) {
 };
 
 /*
- * Get the Ref File Info for a file.
+ * Get the Ref File Info for a data file.
  */
 struct rcp_fattr1 {
 	rcp_volume_fh1 rf_fh;
@@ -289,7 +289,7 @@ union rcp_getattr1_res switch (rcp_stat1 rgr_status) {
 };
 
 /*
- * Get the dir_path for a file.
+ * Get the dir_path for a data file.
  */
 struct rcp_dir_path1_args {
 	rcp_trace_id1 rdpa_trace_id;
@@ -300,6 +300,23 @@ struct rcp_dir_path1_args {
 union rcp_dir_path1_res switch (rcp_stat1 rdpr_status) {
 	case RCP1_OK:
 		rcp_dir_path1 rdpr_dir_path;
+	default:
+		void;
+};
+
+/*
+ * Truncate a data file.
+ */
+struct rcp_truncate1_args {
+	rcp_trace_id1 rta_trace_id;
+	rpc_server_id1 rta_mds_id;	/* Which connecting mds? */
+	rcp_volume_fh1 rta_fh;
+	rcp_offset1 rta_offset;
+};
+
+union rcp_truncate1_res switch (rcp_stat1 rtr_status) {
+	case RCP1_OK:
+		rcp_fattr1 rtr_attr;
 	default:
 		void;
 };
@@ -317,5 +334,6 @@ program RCP_ADMIN_PROGRAM {
 		rcp_file_access_list1_res RCP_FILE_ACCESS_LIST1(rcp_file_access_list1_args) = 6;
 		rcp_getattr1_res RCP_GETATTR1(rcp_getattr1_args) = 7;
 		rcp_dir_path1_res RCP_DIR_PATH1(rcp_dir_path1_args) = 8;
+		rcp_truncate1_res RCP_TRUNCATE1(rcp_truncate1_args) = 9;
 	} = 1;
 } = 304098;
