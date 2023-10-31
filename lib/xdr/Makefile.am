@@ -30,31 +30,31 @@ ref_cp_xdr.c: ref_cp_xdr.x ref_cp_xdr.h
 ref_cp_xdr.h: ref_cp_xdr.x
 	rpcgen -C -h $< > $@
 
-nfsv42_xdr.c: nfsv42_xdr.x
+nfsv42_xdr.c: nfsv42_xdr.x nfsv42_xdr.h
 	rpcgen -C -c $< > $@
 
 nfsv42_xdr.h: nfsv42_xdr.x
 	rpcgen -C -h $< > $@
 
-rpc_xdr.c: rpc_xdr.x
+rpc_xdr.c: rpc_xdr.x rpc_xdr.h
 	rpcgen -C -c $< > $@
 
 rpc_xdr.h: rpc_xdr.x
 	rpcgen -C -h $< > $@
 
-flexfiles_xdr.c: flexfiles_xdr.x
+flexfiles_xdr.c: flexfiles_xdr.x nfsv42_xdr.h flexfiles_xdr.h
 	rpcgen -C -c $< > $@
 
 flexfiles_xdr.h: flexfiles_xdr.x
 	rpcgen -C -h $< > $@
 
-mntv3_xdr.c: mntv3_xdr.x
+mntv3_xdr.c: mntv3_xdr.x mntv3_xdr.h
 	rpcgen -C -c $< > $@
 
 mntv3_xdr.h: mntv3_xdr.x
 	rpcgen -C -h $< > $@
 
-nfsv3_xdr.c: nfsv3_xdr.x
+nfsv3_xdr.c: nfsv3_xdr.x nfsv3_xdr.h
 	rpcgen -C -c $< > $@
 
 nfsv3_xdr.h: nfsv3_xdr.x
