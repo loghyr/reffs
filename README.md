@@ -1,3 +1,5 @@
+SPDX-License-Identifier: GPL-2.0+
+
 General Information
 
 RefFS is the Reference File System which provides:
@@ -10,6 +12,9 @@ RefFS is the Reference File System which provides:
 6) A reference Control Protocol which communicates between a reference NFSv3 server and a reference NFSv4.1 server with Flex Files support.
 
 License
+
+See COPYING in this directory.
+
 
 Disclaimer
 
