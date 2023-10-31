@@ -64,8 +64,17 @@ DisableFormat: false
 ExperimentalAutoDetectBinPacking: false
 FixNamespaceComments: false
 
-#ForEachMacros:
-#  - 'name'
+ForEachMacros:
+  - 'cds_list_for_each'
+  - 'cds_list_for_each_entry'
+  - 'cds_list_for_each_entry_reverse'
+  - 'cds_list_for_each_entry_safe'
+  - 'cds_list_for_each_entry_safe_from'
+  - 'cds_list_for_each_rcu'
+  - 'cds_list_for_each_entry_rcu'
+  - 'cds_lfht_for_each_entry'
+  - 'cds_lfht_for_each_entry_safe'
+
 
 IncludeBlocks: Preserve
 IncludeCategories:
