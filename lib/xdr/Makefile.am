@@ -2,15 +2,13 @@
 
 ACLOCAL_AMFLAGS = -Im4 -I.
 
-AM_CFLAGS = -Wno-unused-variable
+AM_CFLAGS = -Wno-unused-variable $(TIRPC_CFLAGS)
 
 GEN_SOURCES = \
 	ref_cp_xdr.h \
 	ref_cp_xdr.c \
 	nfsv42_xdr.h \
 	nfsv42_xdr.c \
-	rpc_xdr.h \
-	rpc_xdr.c \
 	flexfiles_xdr.h \
 	flexfiles_xdr.c \
 	mntv3_xdr.h \
@@ -34,12 +32,6 @@ nfsv42_xdr.c: nfsv42_xdr.x nfsv42_xdr.h
 	rpcgen -C -c $< > $@
 
 nfsv42_xdr.h: nfsv42_xdr.x
-	rpcgen -C -h $< > $@
-
-rpc_xdr.c: rpc_xdr.x rpc_xdr.h
-	rpcgen -C -c $< > $@
-
-rpc_xdr.h: rpc_xdr.x
 	rpcgen -C -h $< > $@
 
 flexfiles_xdr.c: flexfiles_xdr.x nfsv42_xdr.h flexfiles_xdr.h

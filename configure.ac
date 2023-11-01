@@ -31,15 +31,18 @@ AC_TYPE_UINT64_T
 AC_TYPE_UINT8_T
 
 PKG_CHECK_MODULES(URCU, liburcu, ,
-        [AC_MSG_ERROR([Could not configure Userspace RCU support.])])
+        [AC_MSG_ERROR([Could not configure liburcu support.])])
 
 PKG_CHECK_MODULES(URCU_CDS, liburcu-cds, ,
-        [AC_MSG_ERROR([Could not configure Userspace RCU CDS support.])])
+        [AC_MSG_ERROR([Could not configure liburcu-cds support.])])
+
+PKG_CHECK_MODULES(TIRPC, libtirpc, ,
+        [AC_MSG_ERROR([Could not configure libtirpc support.])])
 
 AX_PTHREAD([], [AC_MSG_ERROR([Could not configure pthread support])])
 AC_CHECK_LIB([pthread], [pthread_create], , [AC_MSG_ERROR([Please install libpthread])])
 
-LIBS="$URCU_LIBS $URCU_CDS_LIBS $JEMALLOC_LIBS $LIBS"
+LIBS="$TIRPC_LIBS $URCU_LIBS $URCU_CDS_LIBS $JEMALLOC_LIBS $LIBS"
 
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])
 
