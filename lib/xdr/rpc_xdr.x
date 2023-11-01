@@ -64,14 +64,16 @@ enum auth_stat {
     RPCSEC_GSS_CTXPROBLEM  = 14  /* problem with context */
 };
 
+union rpc_body switch (msg_type mtype) {
+    case CALL:
+        call_body cbody;
+    case REPLY:
+        reply_body rbody;
+};
+
 struct rpc_msg {
     unsigned int xid;
-    union switch (msg_type mtype) {
-        case CALL:
-            call_body cbody;
-        case REPLY:
-            reply_body rbody;
-    } body;
+    rpc_body body;
 };
 
 struct call_body {
@@ -89,36 +91,37 @@ union reply_body switch (reply_stat stat) {
         accepted_reply areply;
     case MSG_DENIED:
         rejected_reply rreply;
-} reply;
+};
 
-struct accepted_reply {
-    opaque_auth verf;
-    union switch (accept_stat stat) {
+struct mismatch {
+    unsigned int low;
+    unsigned int high;
+};
+
+union accept_body switch (accept_stat stat) {
     case SUCCESS:
         opaque results[0];
         /*
          * procedure-specific results start here
          */
     case PROG_MISMATCH:
-        struct {
-            unsigned int low;
-            unsigned int high;
-        } mismatch_info;
+        mismatch mismatch_info;
     default:
         /*
          * Void.  Cases include PROG_UNAVAIL, PROC_UNAVAIL,
          * GARBAGE_ARGS, and SYSTEM_ERR.
          */
         void;
-    } reply_data;
+};
+
+struct accepted_reply {
+    opaque_auth verf;
+    accept_body reply_data;
 };
 
 union rejected_reply switch (reject_stat stat) {
     case RPC_MISMATCH:
-        struct {
-            unsigned int low;
-            unsigned int high;
-        } mismatch_info;
+        mismatch mismatch_info;
     case AUTH_ERROR:
             auth_stat stat;
 };
