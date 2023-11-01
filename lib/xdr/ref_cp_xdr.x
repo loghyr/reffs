@@ -121,9 +121,9 @@ union rcp_volume_list1_res switch (rcp_stat1 rvlr_status) {
 };
 
 /*
- * List a specific volume on a ds
+ * Show a specific volume on a ds
  */
-struct rcp_volume_list1_args {
+struct rcp_volume_show1_args {
 	rcp_trace_id1 rvsa_trace_id;
 	rpc_server_id1 rvsa_mds_id;
 	rcp_volume_id1 rvsa_volume_id;
@@ -251,7 +251,7 @@ struct rcp_file_access_list1 {
 	rcp_file_access1 rfasr_file_access<>;
 };
 
-union rcp_file_access_show1_res switch (rcp_stat1 rfalr_status) {
+union rcp_file_access_list1_res switch (rcp_stat1 rfalr_status) {
 	case RCP1_OK:
 		rcp_file_access_list1 rfalr_access;
 	default:
