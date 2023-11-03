@@ -20,6 +20,8 @@
 
 int main(int argc, char *argv[])
 {
+	int ret;
+
 	pthread_attr_t attr;
 
 	rcu_register_thread();
