@@ -4,3 +4,6 @@
 SUBDIRS = lib
 
 ACLOCAL_AMFLAGS = -Im4
+
+pkgconfigdir = $(libdir)/pkgconfig
+pkgconfig_DATA = reffs.pc

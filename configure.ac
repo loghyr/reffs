@@ -48,6 +48,7 @@ AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable
 
 AC_CONFIG_FILES([
 	Makefile
+	reffs.pc
 	lib/Makefile
 	lib/include/Makefile
 	lib/xdr/Makefile
