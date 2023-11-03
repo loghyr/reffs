@@ -4,7 +4,7 @@
 Summary: A Reference File System
 Name: @PACKAGE@
 Version: @VERSION@
-Release: 1
+Release: 1%{?dist}
 Epoch: 1
 License: GPL-2.0+
 URL: http://www.tulsalabs.com/
@@ -27,14 +27,20 @@ The Reference File System (reffs) is:
    with Flex Files support.
 
 %prep
-%setup -n @PACKAGE@-@VERSION@
+%setup -q
+
+%post
+/sbin/ldconfig
+
+%postun
+/sbin/ldconfig
 
 %build
 %configure
-make -j
+make %{?_smp_mflags}
 
 %install
-make install DESTDIR=$RPM_BUILD_ROOT
+%make_install
 
 %files
 %defattr(-,root,root)
@@ -43,6 +49,3 @@ make install DESTDIR=$RPM_BUILD_ROOT
 %{_includedir}/reffs
 %{_libdir}/*.so*
 %{_libdir}/pkgconfig/*
-
-%clean
-[ "$RPM_BUILD_ROOT" != "/" ] && rm -rf ${RPM_BUILD_ROOT}
