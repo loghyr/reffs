@@ -1,6 +1,6 @@
 /*
+ * SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: GPL-2.0+
- * Copyright (C) 2023 Tom Haynes <loghyr@gmail.com>
  */
 
 #ifdef HAVE_CONFIG_H

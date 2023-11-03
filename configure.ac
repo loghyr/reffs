@@ -1,5 +1,5 @@
+dnl SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 dnl SPDX-License-Identifier: GPL-2.0+
-dnl Copyright (C) 2023 Tom Haynes <loghyr@gmail.com>
 
 AC_PREREQ([2.69])
 AC_INIT([reffs], [0.1], [loghyr@gmail.com])
