@@ -8,9 +8,7 @@ AM_CFLAGS = \
 	-I../lib/xdr
 
 LDADD = \
-	../lib/xdr/libreffsxdr.la \
-	-ljemalloc \
-	-lpthread
+	../lib/xdr/libreffsxdr.la
 
 reffs_SOURCES = reffs.c
 reffs_LDADD = $(LDADD)

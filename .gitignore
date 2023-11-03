@@ -21,3 +21,4 @@ stamp-h?
 *.la
 *.pc
 *.spec
+*bz2

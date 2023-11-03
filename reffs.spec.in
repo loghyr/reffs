@@ -46,6 +46,12 @@ make %{?_smp_mflags}
 %defattr(-,root,root)
 %doc README.md COPYING CONTRIBUTING INSTALL LICENSES/*
 %{_bindir}/*
-%{_includedir}/reffs
+%{_includedir}/reffs.h
+%{_includedir}/reffs/*
 %{_libdir}/*.so*
+%{_libdir}/*.a
 %{_libdir}/pkgconfig/*
+
+%changelog
+* Fri Nov  3 2023 Tom Haynes <loghyr@gmail.com> - 0.0.1
+- First version being packaged

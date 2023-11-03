@@ -17,6 +17,7 @@
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
+#include "reffs.h"
 
 int main(int argc, char *argv[])
 {

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: GPL-2.0+
 
-SUBDIRS = reffs
+refsincludedir = $(includedir)/reffs
 
-include_HEADERS = \
-	reffs.h
+refsinclude_HEADERS = \
+	inode.h
