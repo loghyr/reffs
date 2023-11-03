@@ -9,8 +9,6 @@ GEN_SOURCES = \
 	ref_cp_xdr.c \
 	nfsv42_xdr.h \
 	nfsv42_xdr.c \
-	flexfiles_xdr.h \
-	flexfiles_xdr.c \
 	mntv3_xdr.h \
 	mntv3_xdr.c \
 	nfsv3_xdr.h \
@@ -32,12 +30,6 @@ nfsv42_xdr.c: nfsv42_xdr.x nfsv42_xdr.h
 	rpcgen -C -c $< > $@
 
 nfsv42_xdr.h: nfsv42_xdr.x
-	rpcgen -C -h $< > $@
-
-flexfiles_xdr.c: flexfiles_xdr.x nfsv42_xdr.h flexfiles_xdr.h
-	rpcgen -C -c $< > $@
-
-flexfiles_xdr.h: flexfiles_xdr.x
 	rpcgen -C -h $< > $@
 
 mntv3_xdr.c: mntv3_xdr.x mntv3_xdr.h
