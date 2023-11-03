@@ -7,15 +7,37 @@
 #include "config.h"
 #endif
 
+#include <errno.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <errno.h>
 #include <stdlib.h>
-#include <signal.h>
+#include <urcu.h>
+#include <urcu/rculist.h>
+#include <urcu/ref.h>
 
-int main(int argc, char **argv)
+int main(int argc, char *argv[])
 {
-	printf("To be implemented\n");
-	
+	pthread_attr_t attr;
+
+	rcu_register_thread();
+
+	ret = pthread_attr_init(&attr);
+	if (ret) {
+		fprintf(stderr, "Could not init thread attributes: %d\n", ret);
+		abort();
+	}
+
+	ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	if (ret) {
+		fprintf(stderr, "Could not assign thread attributes: %d\n",
+			ret);
+		abort();
+	}
+
+	rcu_unregister_thread();
+
 	return 0;
 }
