@@ -19,3 +19,5 @@ stamp-h?
 *.o
 *.lo
 *.la
+*.pc
+*.spec
