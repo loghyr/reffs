@@ -1,0 +1,48 @@
+#SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+#SPDX-License-Identifier: GPL-2.0+
+
+Summary: A Reference File System
+Name: @PACKAGE@
+Version: @VERSION@
+Release: 1
+Epoch: 1
+License: GPL-2.0+
+URL: http://www.tulsalabs.com/
+Group: Development/System
+Packager: Tom Haynes <loghyr@gmail.com>
+
+Source: @PACKAGE@-@VERSION@.tar.bz2
+
+Buildroot: %{_tmppath}/%{name}-root
+
+%description 
+The Reference File System (reffs) is:
+1) A reference user land file system.
+2) A reference NFSv3 server.
+3) A reference NFSv3 client.
+4) A reference NFSv4.1 server with Flex Files support.
+5) A reference NFSv4.1 client with Flex Files support.
+6) A reference Control Protocol which communicates between
+   a reference NFSv3 server and a reference NFSv4.1 server
+   with Flex Files support.
+
+%prep
+%setup -n @PACKAGE@-@VERSION@
+
+%build
+%configure
+make -j
+
+%install
+make install DESTDIR=$RPM_BUILD_ROOT
+
+%files
+%defattr(-,root,root)
+%doc README.md COPYING CONTRIBUTING INSTALL LICENSES/*
+%{_bindir}/*
+%{_includedir}/reffs
+%{_libdir}/*.so*
+%{_libdir}/pkgconfig/*
+
+%clean
+[ "$RPM_BUILD_ROOT" != "/" ] && rm -rf ${RPM_BUILD_ROOT}
