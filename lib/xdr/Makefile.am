@@ -34,7 +34,7 @@ nfsv42_xdr.h: nfsv42_xdr.x
 	rpcgen -C -h nfsv42_xdr.x > $@
 
 mntv3_xdr.c: mntv3_xdr.x mntv3_xdr.h
-	rpcgen -C -c nfsv42_xdr.x > $@
+	rpcgen -C -c mntv3_xdr.x > $@
 
 mntv3_xdr.h: mntv3_xdr.x
 	rpcgen -C -h mntv3_xdr.x > $@
