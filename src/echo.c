@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
 
 	char *hostaddr;
 
-	int len;
+	socklen_t len;
 	ssize_t n;
 
 	atomic_flag af;
@@ -100,7 +100,7 @@ int main(int argc, char *argv[])
 		if (n < 0)
 			FAIL("Could not read from socket: %d", n);
 
-		printf("%s (aka %s) said %d bytes: %s", host->h_name,
+		printf("%s (aka %s) said %ld bytes: %s", host->h_name,
 		       hostaddr, n, buf);
 
 		n = write(connector, buf, strlen(buf));
