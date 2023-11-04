@@ -26,6 +26,16 @@ The Reference File System (reffs) is:
    a reference NFSv3 server and a reference NFSv4.1 server
    with Flex Files support.
 
+%bcond_with toolchain_clang
+
+%if %{with toolchain_clang}
+%global toolchain clang
+%else
+%global toolchain gcc
+%endif
+
+%global _lto_cflags %{nil}
+
 %prep
 %setup -q
 
@@ -36,7 +46,22 @@ The Reference File System (reffs) is:
 /sbin/ldconfig
 
 %build
-%configure
+%if %{?_debug:1}%{!?_debug:0}
+  %if %{_debug}==1
+    %define _enable_debug --enable-debug
+  %endif
+%endif
+%if %{?_asan:1}%{!?_asan:0}
+  %if %{_asan}==1
+    %define _enable_asan --enable-asan
+  %endif
+%endif
+%if %{?_tsan:1}%{!?_tsan:0}
+  %if %{_tsan}==1
+    %define _enable_tsan --enable-tsan
+  %endif
+%endif
+%configure  %{?_enable_debug} %{?_enable_asan}  %{?_enable_debug} %{?_enable_tsan}
 make %{?_smp_mflags}
 
 %install

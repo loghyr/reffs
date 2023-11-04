@@ -89,6 +89,10 @@ AC_ARG_ENABLE([tsan],
     dnl We can't do anything about this message in GCC; use clang.
   ])
 
+AC_ARG_ENABLE([debug],
+    [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
+    [enable_debug=$enableval], [enable_debug=no])
+
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])
 
 AC_CONFIG_FILES([

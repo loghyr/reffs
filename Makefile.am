@@ -8,6 +8,10 @@ ACLOCAL_AMFLAGS = -Im4
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = reffs.pc
 
+ASAN := 0
+TSAN := 0
+DEBUG := 0
+
 EXTRA_DIST = README.md COPYING CONTRIBUTING INSTALL
 
 TARBALL := $(PACKAGE)-$(VERSION).tar.bz2
@@ -24,4 +28,8 @@ RPM_BUILD_DIR := ../rpmbuild
 rpm: $(TARBALL)
 	cp $(TARBALL) $(RPM_BUILD_DIR)/SOURCES/
 	cp $(PACKAGE).spec $(RPM_BUILD_DIR)/SPECS/
-	rpmbuild -ba ~/rpmbuild/SPECS/$(PACKAGE).spec
+	rpmbuild -ba 	\
+		--define="_debug $(DEBUG)" \
+		--define="_asan $(ASAN)" \
+		--define="_tsan $(TSAN)" \
+		~/rpmbuild/SPECS/$(PACKAGE).spec
