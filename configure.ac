@@ -104,7 +104,11 @@ AC_CONFIG_FILES([
 	lib/Makefile
 	lib/include/Makefile
 	lib/include/reffs/Makefile
+	lib/fs/Makefile
+	lib/nfs3/Makefile
+	lib/nfs4/Makefile
 	lib/xdr/Makefile
+	lib/utils/Makefile
 	lib/tests/Makefile])
 
 AC_OUTPUT
