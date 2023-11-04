@@ -8,7 +8,7 @@ AM_CFLAGS = \
 	-I../lib/xdr
 
 LDADD = \
-	../lib/xdr/libreffsxdr.la
+	../lib/xdr/libreffs_xdr.la
 
 echo_SOURCES = echo.c
 echo_LDADD = $(LDADD)
