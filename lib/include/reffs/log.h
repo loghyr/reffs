@@ -11,7 +11,8 @@
 #include <stdarg.h>
 #include <stdatomic.h>
 
-static inline void reffs_fail(const char *function, int line, const char *msg, ...)
+static inline void reffs_fail(const char *function, int line, const char *msg,
+			      ...)
 {
 	va_list ap;
 	va_start(ap, msg);
@@ -22,7 +23,8 @@ static inline void reffs_fail(const char *function, int line, const char *msg, .
 	abort();
 }
 
-static inline void reffs_log(const char *function, int line, const char *msg, ...)
+static inline void reffs_log(const char *function, int line, const char *msg,
+			     ...)
 {
 	va_list ap;
 	va_start(ap, msg);
@@ -34,9 +36,9 @@ static inline void reffs_log(const char *function, int line, const char *msg, ..
 
 #define FAIL(...) reffs_fail(__func__, __LINE__, __VA_ARGS__)
 
-#define WARN_ONCE(X, ...)                                     \
-	do {                                                  \
-		if (!atomic_flag_test_and_set((X)))           \
+#define WARN_ONCE(X, ...)                                           \
+	do {                                                        \
+		if (!atomic_flag_test_and_set((X)))                 \
 			reffs_log(__func__, __LINE__, __VA_ARGS__); \
 	} while (0)
 
