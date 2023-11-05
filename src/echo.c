@@ -46,7 +46,6 @@ static struct option options[] = {
 };
 
 #define BUFSIZE (1024)
-#define NAMELEN (100)
 
 #define MAX_LISTENERS (5)
 #define MAX_CONNECTORS (10)
@@ -57,14 +56,13 @@ struct client {
 	struct cds_list_head c_link;
 	uint64_t c_id;
 	int c_fd;
-	struct sockaddr_in c_addr;
-	char c_addr_str[NAMELEN];
-	char c_name[NAMELEN];
+	struct sockaddr_in6 c_addr;
+	char c_addr_str[INET6_ADDRSTRLEN];
 };
 
 CDS_LIST_HEAD(client_list);
-static pthread_mutex_t client_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t client_cond = PTHREAD_COND_INITIALIZER;
+// static pthread_mutex_t client_lock = PTHREAD_MUTEX_INITIALIZER;
+// static pthread_cond_t client_cond = PTHREAD_COND_INITIALIZER;
 uint64_t next_id = 0;
 
 bool stop_processing = false;
@@ -106,8 +104,6 @@ static void client_put(struct client *client)
 
 struct client *assign_connector(int listener)
 {
-	struct hostent *host;
-	char *hostaddr;
 	socklen_t len;
 	int ret;
 
@@ -128,21 +124,20 @@ struct client *assign_connector(int listener)
 	if (client->c_fd < 0)
 		FAIL("Could not open socket: %d", client->c_fd);
 
-	host = gethostbyaddr((const char *)&client->c_addr.sin_addr.s_addr,
-			     sizeof(client->c_addr.sin_addr.s_addr), AF_INET);
-	if (!host) {
+	ret = getpeername(client->c_fd, (struct sockaddr *)&client->c_addr,
+			  &len);
+	if (ret < 0) {
 		ret = errno;
-		FAIL("Could not gethostbyaddr(): %d", ret);
-	}
-	strncpy(client->c_name, host->h_name, NAMELEN - 1);
-
-	hostaddr = inet_ntoa(client->c_addr.sin_addr);
-	if (!hostaddr) {
-		ret = errno;
-		FAIL("Could not inet_ntoa(): %d", ret);
+		FAIL("Could not getpeername(): %d", ret);
 	}
 
-	strncpy(client->c_addr_str, hostaddr, NAMELEN - 1);
+	if (!inet_ntop(AF_INET6, &client->c_addr.sin6_addr, client->c_addr_str,
+		       sizeof(client->c_addr_str))) {
+		ret = errno;
+		FAIL("Could not inet_ntop(): %d", ret);
+	}
+
+	return client;
 }
 
 static void *connector_thread(void *vclient)
@@ -163,8 +158,7 @@ static void *connector_thread(void *vclient)
 		if (n < 0)
 			FAIL("Could not read from socket: %d", n);
 
-		printf("%s (aka %s) said %ld bytes: %s", client->c_name,
-		       client->c_addr_str, n, buf);
+		printf("%s said %ld bytes: %s", client->c_addr_str, n, buf);
 
 		n = write(client->c_fd, buf, strlen(buf));
 		if (n < 0)
@@ -174,9 +168,8 @@ static void *connector_thread(void *vclient)
 			break;
 	}
 
-	if (!strncmp(buf, "kill", 4)) {
+	if (!strncmp(buf, "kill", 4))
 		uatomic_set(&stop_processing, true);
-	}
 
 	/*
 	 * Fine for now...
@@ -195,16 +188,13 @@ int main(int argc, char *argv[])
 	unsigned short port = 3049;
 	unsigned short num_listeners = 3;
 	unsigned short i;
-	unsigned short j;
 
 	pid_t pid = getpid();
 
-	int listener;
-	int connector;
 	int opt;
 	int listner_opt = 1;
 
-	struct sockaddr_in server;
+	struct sockaddr_in6 addr;
 	pthread_t tid_connector;
 	pthread_attr_t attr;
 
@@ -257,20 +247,19 @@ int main(int argc, char *argv[])
 	 * 2) Multiple clients connecting to a port.
 	 */
 	for (i = 0; i < num_listeners; i++) {
-		pfds[i].fd = socket(AF_INET, SOCK_STREAM, 0);
+		pfds[i].fd = socket(AF_INET6, SOCK_STREAM, 0);
 		if (pfds[i].fd < 0)
 			FAIL("Could not open socket: %d", pfds[i].fd);
 
-		setsockopt(pfds[i].fd, SOL_SOCKET, SO_REUSEADDR,
+		setsockopt(pfds[i].fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT,
 			   (const void *)&listner_opt, sizeof(int));
 
-		bzero((char *)&server, sizeof(server));
-		server.sin_family = AF_INET;
-		server.sin_addr.s_addr = htonl(INADDR_ANY);
-		server.sin_port = htons(port + i);
+		bzero((char *)&addr, sizeof(addr));
+		addr.sin6_family = AF_INET6;
+		memcpy(&addr.sin6_addr, &in6addr_any, sizeof(in6addr_any));
+		addr.sin6_port = htons(port + i);
 
-		ret = bind(pfds[i].fd, (struct sockaddr *)&server,
-			   sizeof(server));
+		ret = bind(pfds[i].fd, (struct sockaddr *)&addr, sizeof(addr));
 		if (ret < 0)
 			FAIL("Could not bind server socket: %d", ret);
 
