@@ -53,7 +53,7 @@ AC_ARG_ENABLE([asan],
     [enable_asan=$enableval], [enable_asan=no])
   AS_IF([test "x$enable_asan" != xno], [
     AX_CHECK_COMPILE_FLAG([-fsanitize=address],
-                          [CFLAGS="$CFLAGS -fsanitize=address"],
+                          [CFLAGS="${CFLAGS} -fsanitize=address"],
                           [enable_asan=no], [])
     AS_IF([test "x$enable_asan" = xno], [
         AC_MSG_FAILURE(
@@ -63,7 +63,7 @@ AC_ARG_ENABLE([asan],
     dnl export ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer
     dnl export ASAN_OPTIONS=symbolize=1
     AX_CHECK_COMPILE_FLAG([-fno-omit-frame-pointer],
-                          [CFLAGS="$CFLAGS -fno-omit-frame-pointer"],
+                          [CFLAGS="${CFLAGS} -fno-omit-frame-pointer"],
                           [], [])
   ])
 
@@ -75,7 +75,7 @@ AC_ARG_ENABLE([tsan],
     [enable_tsan=$enableval], [enable_tsan=no])
   AS_IF([test "x$enable_tsan" != xno], [
     AX_CHECK_COMPILE_FLAG([-fsanitize=thread],
-                          [CFLAGS="$CFLAGS -fsanitize=thread"],
+                          [CFLAGS="${CFLAGS} -fsanitize=thread"],
                           [enable_tsan=no], [])
     AS_IF([test "x$enable_tsan" = xno], [
         AC_MSG_FAILURE(
@@ -83,7 +83,7 @@ AC_ARG_ENABLE([tsan],
  Check out https://code.google.com/p/address-sanitizer/wiki/HowToBuild])])
     dnl Keep error messages nice.
     AX_CHECK_COMPILE_FLAG([-fno-omit-frame-pointer],
-                          [CFLAGS="$CFLAGS -fno-omit-frame-pointer"],
+                          [CFLAGS="${CFLAGS} -fno-omit-frame-pointer"],
                           [], [])
     dnl -fsanitize=thread linking must be done with -pie or -shared
     dnl We can't do anything about this message in GCC; use clang.
@@ -92,6 +92,12 @@ AC_ARG_ENABLE([tsan],
 AC_ARG_ENABLE([debug],
     [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
     [enable_debug=$enableval], [enable_debug=no])
+
+if test "x$enable_debug" = "xno"; then
+	CFLAGS="${CFLAGS} -DRCU_MEMBARRIER=1 -Wall -Wextra -Werror -g -Og -fno-omit-frame-pointer -fasynchronous-unwind-tables"
+else
+	CFLAGS="${CFLAGS} -DRCU_MEMBARRIER=1 -Wall -Wextra -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
+fi
 
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])
 
