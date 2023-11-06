@@ -358,6 +358,8 @@ int main(int argc, char *argv[])
 	if (!pfds)
 		FAIL("Could not allocate memory");
 
+	cds_wfcq_init(&queue.head, &queue.tail);
+
 	/*
 	 * Two goals:
 	 * 1) Multiple ports being monitored
