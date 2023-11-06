@@ -46,22 +46,32 @@ The Reference File System (reffs) is:
 /sbin/ldconfig
 
 %build
-%if %{?_debug:1}%{!?_debug:0}
-  %if %{_debug}==1
+%if %{?_debug_enabled:1}%{!?_debug_enabled:0}
+  %if %{_debug_enabled}==1
     %define _enable_debug --enable-debug
   %endif
 %endif
-%if %{?_asan:1}%{!?_asan:0}
-  %if %{_asan}==1
+%if %{?_asan_enabled:1}%{!?_asan_enabled:0}
+  %if %{_asan_enabled}==1
     %define _enable_asan --enable-asan
   %endif
 %endif
-%if %{?_tsan:1}%{!?_tsan:0}
-  %if %{_tsan}==1
+%if %{?_tsan_enabled:1}%{!?_tsan_enabled:0}
+  %if %{_tsan_enabled}==1
     %define _enable_tsan --enable-tsan
   %endif
 %endif
-%configure  %{?_enable_debug} %{?_enable_asan}  %{?_enable_debug} %{?_enable_tsan}
+%if %{?_lsan_enabled:1}%{!?_lsan_enabled:0}
+  %if %{_lsan_enabled}==1
+    %define _enable_lsan --enable-lsan
+  %endif
+%endif
+%if %{?_ubsan_enabled:1}%{!?_ubsan_enabled:0}
+  %if %{_ubsan_enabled}==1
+    %define _enable_ubsan --enable-ubsan
+  %endif
+%endif
+%configure  %{?_enable_debug} %{?_enable_asan} %{?_enable_tsan} %{?_enable_lsan} %{?_enable_ubsan}
 make %{?_smp_mflags}
 
 %install

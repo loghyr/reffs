@@ -45,58 +45,82 @@ AC_CHECK_LIB([pthread], [pthread_create], , [AC_MSG_ERROR([Please install libpth
 LIBS="${PTHREAD_LIBS} ${TIRPC_LIBS} ${URCU_LIBS} ${URCU_CDS_LIBS} ${JEMALLOC_LIBS} ${LIBS}"
 CFLAGS="${CFLAGS} ${PTHREAD_CFLAGS} ${TIRPC_CFLAGS}"
 
-dnl Enable Address Sanitizer, if supported by gcc (4.8+) or clang.
-dnl http://clang.llvm.org/docs/AddressSanitizer.html
-dnl https://code.google.com/p/address-sanitizer/wiki/HowToBuild
-AC_ARG_ENABLE([asan],
-    [AS_HELP_STRING([--enable-asan], [Enable Address Sanitizer])],
-    [enable_asan=$enableval], [enable_asan=no])
-  AS_IF([test "x$enable_asan" != xno], [
-    AX_CHECK_COMPILE_FLAG([-fsanitize=address],
-                          [CFLAGS="${CFLAGS} -fsanitize=address"],
-                          [enable_asan=no], [])
-    AS_IF([test "x$enable_asan" = xno], [
-        AC_MSG_FAILURE(
-            [--enable-asan is given, but not supported on this platform.
- Check out https://code.google.com/p/address-sanitizer/wiki/HowToBuild])])
-    dnl Keep error messages nice. Also consider:
-    dnl export ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer
-    dnl export ASAN_OPTIONS=symbolize=1
-    AX_CHECK_COMPILE_FLAG([-fno-omit-frame-pointer],
-                          [CFLAGS="${CFLAGS} -fno-omit-frame-pointer"],
-                          [], [])
-  ])
+AC_ARG_ENABLE(asan,
+[  --enable-asan      Compile with address sanitizer],
+[case "${enableval}" in
+	yes) asan_enabled=true ;;
+	no)  asan_enabled=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-asan) ;;
+esac],[asan_enabled=false])
 
-dnl Enable Thread Sanitizer, if supported by clang.
-dnl http://clang.llvm.org/docs/ThreadSanitizer.html
-dnl https://code.google.com/p/address-sanitizer/wiki/HowToBuild
-AC_ARG_ENABLE([tsan],
-    [AS_HELP_STRING([--enable-tsan], [Enable Thread Sanitizer])],
-    [enable_tsan=$enableval], [enable_tsan=no])
-  AS_IF([test "x$enable_tsan" != xno], [
-    AX_CHECK_COMPILE_FLAG([-fsanitize=thread],
-                          [CFLAGS="${CFLAGS} -fsanitize=thread"],
-                          [enable_tsan=no], [])
-    AS_IF([test "x$enable_tsan" = xno], [
-        AC_MSG_FAILURE(
-            [--enable-tsan is given, but not supported on this platform.
- Check out https://code.google.com/p/address-sanitizer/wiki/HowToBuild])])
-    dnl Keep error messages nice.
-    AX_CHECK_COMPILE_FLAG([-fno-omit-frame-pointer],
-                          [CFLAGS="${CFLAGS} -fno-omit-frame-pointer"],
-                          [], [])
-    dnl -fsanitize=thread linking must be done with -pie or -shared
-    dnl We can't do anything about this message in GCC; use clang.
-  ])
+if test "x${enable_asan}" = "xyes"; then
+	ASAN_CFLAGS="-fsanitize=address -fno-omit-frame-pointer -DASAN_ENABLED -U_FORTIFY_SOURCE"
+	CFLAGS="${CFLAGS} ${ASAN_CFLAGS}"
+	AC_SUBST(ASAN_CFLAGS)
+	ASAN_LDFLAGS="-lasan"
+	AC_SUBST(ASAN_LDFLAGS)
+	LDFLAGS="${LDFLAGS} ${ASAN_LDFLAGS}"
+fi
+
+AC_ARG_ENABLE(tsan,
+[  --enable-tsan      Compile with thread sanitizer],
+[case "${enableval}" in
+	yes) tsan_enabled=true ;;
+	no)  tsan_enabled=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-tsan) ;;
+esac],[tsan_enabled=false])
+
+if test "x${enable_tsan}" = "xyes"; then
+	TSAN_CFLAGS="-fsanitize=thread -fno-omit-frame-pointer -DTSAN_ENABLED -U_FORTIFY_SOURCE"
+	CFLAGS="${CFLAGS} ${TSAN_CFLAGS}"
+	AC_SUBST(TSAN_CFLAGS)
+	TSAN_LDFLAGS="-ltsan"
+	AC_SUBST(TSAN_LDFLAGS)
+	LDFLAGS="${LDFLAGS} ${TSAN_LDFLAGS}"
+fi
+
+AC_ARG_ENABLE(lsan,
+[  --enable-lsan      Compile with leak sanitizer],
+[case "${enableval}" in
+	yes) lsan_enabled=true ;;
+	no)  lsan_enabled=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-lsan) ;;
+esac],[lsan_enabled=false])
+
+if test "x${enable_lsan}" = "xyes"; then
+	LSAN_CFLAGS="-fsanitize=leak -fno-omit-frame-pointer -DLSAN_ENABLED -U_FORTIFY_SOURCE"
+	CFLAGS="${CFLAGS} ${LSAN_CFLAGS}"
+	AC_SUBST(LSAN_CFLAGS)
+	LSAN_LDFLAGS="-llsan"
+	AC_SUBST(LSAN_LDFLAGS)
+	LDFLAGS="${LDFLAGS} ${LSAN_LDFLAGS}"
+fi
+
+AC_ARG_ENABLE(ubsan,
+[  --enable-ubsan      Compile with undefined behaviour sanitizer],
+[case "${enableval}" in
+	yes) ubsan_enabled=true ;;
+	no)  ubsan_enabled=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-ubsan) ;;
+esac],[ubsan_enabled=false])
+
+if test "x${enable_ubsan}" = "xyes"; then
+	UBSAN_CFLAGS="-fsanitize=undefined -fno-omit-frame-pointer -DUBSAN_ENABLED -U_FORTIFY_SOURCE"
+	CFLAGS="${CFLAGS} ${UBSAN_CFLAGS}"
+	AC_SUBST(UBSAN_CFLAGS)
+	UBSAN_LDFLAGS="-lubsan"
+	AC_SUBST(UBSAN_LDFLAGS)
+	LDFLAGS="${LDFLAGS} ${UBSAN_LDFLAGS}"
+fi
 
 AC_ARG_ENABLE([debug],
     [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
     [enable_debug=$enableval], [enable_debug=no])
 
-if test "x$enable_debug" = "xno"; then
-	CFLAGS="${CFLAGS} -DRCU_MEMBARRIER=1 -Wall -Wextra -Werror -g -Og -fno-omit-frame-pointer -fasynchronous-unwind-tables"
-else
+if test "x$enable_debug}" = "xyes"; then
 	CFLAGS="${CFLAGS} -DRCU_MEMBARRIER=1 -Wall -Wextra -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
+else
+	CFLAGS="${CFLAGS} -DRCU_MEMBARRIER=1 -Wall -Wextra -Werror -g -Og -fno-omit-frame-pointer -fasynchronous-unwind-tables"
 fi
 
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])

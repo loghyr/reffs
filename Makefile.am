@@ -29,7 +29,9 @@ rpm: $(TARBALL)
 	cp $(TARBALL) $(RPM_BUILD_DIR)/SOURCES/
 	cp $(PACKAGE).spec $(RPM_BUILD_DIR)/SPECS/
 	rpmbuild -ba 	\
-		--define="_debug $(DEBUG)" \
-		--define="_asan $(ASAN)" \
-		--define="_tsan $(TSAN)" \
+		--define="_debug_enabled $(DEBUG_ENABLED)" \
+		--define="_asan_enabled $(ASAN_ENABLED)" \
+		--define="_tsan_enabled $(TSAN_ENABLED)" \
+		--define="_lsan_enabled $(LSAN_ENABLED)" \
+		--define="_ubsan_enabled $(UBSAN_ENABLED)" \
 		~/rpmbuild/SPECS/$(PACKAGE).spec
