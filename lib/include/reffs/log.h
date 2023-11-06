@@ -35,6 +35,7 @@ static inline void reffs_log(const char *function, int line, const char *msg,
 }
 
 #define FAIL(...) reffs_fail(__func__, __LINE__, __VA_ARGS__)
+#define LOG(...) reffs_log(__func__, __LINE__, __VA_ARGS__)
 
 #define WARN_ONCE(X, ...)                                           \
 	do {                                                        \
