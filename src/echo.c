@@ -9,7 +9,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
+#include <sys/epoll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
@@ -77,75 +77,21 @@ struct listener_queue {
 };
 
 CDS_LIST_HEAD(listener_list);
-static pthread_mutex_t pfds_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // static pthread_mutex_t listener_lock = PTHREAD_MUTEX_INITIALIZER;
 // static pthread_cond_t listener_cond = PTHREAD_COND_INITIALIZER;
-
-/* A server structure for these? */
-struct pollfd *pfds;
-int num_listeners = 3;
 
 uint64_t next_id = 0;
 
 bool stop_processing = false;
 
-void pfds_resize(void)
-{
-	struct listener *lsnr;
-	int new = 0;
-
-	pthread_mutex_lock(&pfds_lock);
-
-	rcu_read_lock();
-	cds_list_for_each_entry_rcu(lsnr, &listener_list, l_link)
-		if (!(lsnr->l_flags & LISTENER_IS_DEAF))
-			new ++;
-
-	if (new != num_listeners) {
-		free(pfds);
-		num_listeners = new;
-
-		pfds = calloc(num_listeners, sizeof(*pfds));
-		if (!pfds)
-			FAIL("Could not allocate memory");
-	}
-
-	new = 0;
-	cds_list_for_each_entry_rcu(lsnr, &listener_list, l_link)
-		if (!(lsnr->l_flags & LISTENER_IS_DEAF)) {
-			pfds[new].fd = lsnr->l_fd;
-			pfds[new].events = POLLIN;
-		}
-
-	rcu_read_unlock();
-
-	pthread_mutex_unlock(&pfds_lock);
-}
-
-struct listener *listener_get(struct listener *lsnr)
+static struct listener *listener_get(struct listener *lsnr)
 {
 	if (!lsnr)
 		return NULL;
 
 	if (!urcu_ref_get_unless_zero(&lsnr->l_ref))
 		return NULL;
-
-	return lsnr;
-}
-
-struct listener *listener_find(int fd)
-{
-	struct listener *lsnr = NULL;
-	struct listener *tmp;
-
-	rcu_read_lock();
-	cds_list_for_each_entry_rcu(tmp, &listener_list, l_link)
-		if (!(tmp->l_flags & LISTENER_IS_DEAF) && fd == tmp->l_fd) {
-			lsnr = listener_get(tmp);
-			break;
-		}
-	rcu_read_unlock();
 
 	return lsnr;
 }
@@ -172,6 +118,39 @@ static void listener_put(struct listener *lsnr)
 		return;
 
 	urcu_ref_put(&lsnr->l_ref, listener_release);
+}
+
+static struct listener *listener_find(int fd)
+{
+	struct listener *lsnr = NULL;
+	struct listener *tmp;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(tmp, &listener_list, l_link)
+		if (!(uatomic_read(&tmp->l_flags) & LISTENER_IS_DEAF) &&
+		    fd == tmp->l_fd) {
+			lsnr = listener_get(tmp);
+			break;
+		}
+	rcu_read_unlock();
+
+	return lsnr;
+}
+
+static void listener_find_and_close(int fd)
+{
+	struct listener *lsnr;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(lsnr, &listener_list, l_link)
+		if (!(uatomic_read(&lsnr->l_flags) & LISTENER_IS_DEAF) &&
+		    fd == lsnr->l_fd) {
+			uatomic_or(&lsnr->l_flags, LISTENER_IS_DEAF);
+			cds_list_del(&lsnr->l_link);
+			listener_put(lsnr);
+			break;
+		}
+	rcu_read_unlock();
 }
 
 struct listener *listener_alloc(uint32_t flags)
@@ -288,7 +267,7 @@ static void *connector_thread(void *vqueue)
 			uatomic_set(&stop_processing, true);
 
 		if (!strncmp(buf, "done", 4)) {
-			lsnr->l_flags |= LISTENER_IS_DEAF;
+			uatomic_or(&lsnr->l_flags, LISTENER_IS_DEAF);
 			cds_list_del(&lsnr->l_link);
 			listener_put(lsnr);
 		}
@@ -301,11 +280,21 @@ static void *connector_thread(void *vqueue)
 	return NULL;
 }
 
+#define MAX_EVENTS (10)
+
 int main(int argc, char *argv[])
 {
 	int ret;
+
+	int i;
+	int num_listeners = 3;
+
+	int epfd;
+	int count;
+	struct epoll_event event;
+	struct epoll_event events[MAX_EVENTS];
+
 	unsigned short port = 3049;
-	int short i;
 
 	pid_t pid = getpid();
 
@@ -354,11 +343,13 @@ int main(int argc, char *argv[])
 	if (ret)
 		FAIL("Could not assign thread attributes: %d", ret);
 
-	pfds = calloc(num_listeners, sizeof(*pfds));
-	if (!pfds)
-		FAIL("Could not allocate memory");
-
 	cds_wfcq_init(&queue.head, &queue.tail);
+
+	epfd = epoll_create1(0);
+	if (epfd < 0) {
+		ret = errno;
+		FAIL("Could not epoll_create1(): %d", ret);
+	}
 
 	/*
 	 * Two goals:
@@ -369,8 +360,12 @@ int main(int argc, char *argv[])
 		lsnr = listener_alloc(LISTENER_IS_SERVER);
 		attach_server(lsnr, port + i);
 
-		pfds[i].fd = lsnr->l_fd;
-		pfds[i].events = POLLIN;
+		event.data.fd = lsnr->l_fd;
+		event.events = EPOLLIN | EPOLLET;
+		if (epoll_ctl(epfd, EPOLL_CTL_ADD, event.data.fd, &event)) {
+			ret = errno;
+			FAIL("Could not epoll_ctl(): %d", ret);
+		}
 
 		ret = pthread_create(&tid_connector, &attr, connector_thread,
 				     &queue);
@@ -379,43 +374,46 @@ int main(int argc, char *argv[])
 	}
 
 	while (!uatomic_read(&stop_processing)) {
-		pthread_mutex_lock(&pfds_lock);
-		ret = poll(pfds, num_listeners, -1);
-		if (ret < 0)
-			FAIL("Could not poll: %d", ret);
-		pthread_mutex_unlock(&pfds_lock);
+		count = epoll_wait(epfd, events, MAX_EVENTS, 30000);
 
-		for (i = 0; i < num_listeners; i++) {
-			if (pfds[i].revents != 0) {
-				fnd = listener_find(pfds[i].fd);
-				if (!fnd)
-					FAIL("Could not find listener for %d",
-					     pfds[i].fd);
-				if (fnd->l_flags & LISTENER_IS_SERVER) {
-					lsnr = listener_alloc(
-						LISTENER_IS_CLIENT);
-					attach_listener(lsnr, pfds[i].fd);
-				} else {
-					lq = malloc(sizeof(*lq));
-					if (!lq)
-						FAIL("Could not alloc lq");
-					lq->lq_lsnr = fnd;
-					fnd = NULL;
-					cds_wfcq_node_init(&lq->lq_node);
-					cds_wfcq_enqueue(&queue.head,
-							 &queue.tail,
-							 &lq->lq_node);
+		for (i = 0; i < count; i++) {
+			if (events[i].events & (EPOLLERR | EPOLLHUP) ||
+			    !(events[i].events & EPOLLIN)) {
+				LOG("epoll error = %u", events[i].events);
+				listener_find_and_close(events[i].data.fd);
+				continue;
+			}
+
+			fnd = listener_find(events[i].data.fd);
+			if (!fnd)
+				FAIL("Could not find listener for %d",
+				     events[i].data.fd);
+			if (fnd->l_flags & LISTENER_IS_SERVER) {
+				lsnr = listener_alloc(LISTENER_IS_CLIENT);
+				attach_listener(lsnr, events[i].data.fd);
+
+				event.data.fd = lsnr->l_fd;
+				event.events = EPOLLIN | EPOLLET;
+				if (epoll_ctl(epfd, EPOLL_CTL_ADD,
+					      event.data.fd, &event)) {
+					ret = errno;
+					FAIL("Could not epoll_ctl(): %d", ret);
 				}
 
-				listener_put(fnd);
+			} else {
+				lq = malloc(sizeof(*lq));
+				if (!lq)
+					FAIL("Could not alloc lq");
+				lq->lq_lsnr = fnd;
+				fnd = NULL;
+				cds_wfcq_node_init(&lq->lq_node);
+				cds_wfcq_enqueue(&queue.head, &queue.tail,
+						 &lq->lq_node);
 			}
+
+			listener_put(fnd);
 		}
-
-		pfds_resize();
 	}
-
-	free(pfds);
-	pfds = NULL;
 
 	synchronize_rcu();
 	rcu_barrier();
@@ -430,6 +428,8 @@ int main(int argc, char *argv[])
 	rcu_read_unlock();
 
 	rcu_barrier();
+
+	close(epfd);
 
 	rcu_unregister_thread();
 
