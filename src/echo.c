@@ -71,6 +71,10 @@ struct queue {
 	struct cds_wfcq_tail tail;
 };
 
+/*
+ * Add an action and data here and
+ * we have a msg structure.
+ */
 struct listener_queue {
 	struct cds_wfcq_node lq_node;
 	struct listener *lq_lsnr;
