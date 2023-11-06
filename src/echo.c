@@ -267,9 +267,6 @@ static void *connector_thread(void *vqueue)
 		if (n < 0)
 			FAIL("Could not write to socket: %d", n);
 
-		if (!strncmp(buf, "kill", 4))
-			uatomic_set(&stop_processing, true);
-
 		if (!strncmp(buf, "done", 4)) {
 			uatomic_or(&lsnr->l_flags, LISTENER_IS_DEAF);
 			cds_list_del(&lsnr->l_link);
@@ -286,6 +283,81 @@ static void *connector_thread(void *vqueue)
 
 #define MAX_EVENTS (10)
 
+static void server(int epfd, struct queue *queue)
+{
+	int count;
+	int i;
+	int ret;
+	struct epoll_event events[MAX_EVENTS];
+	struct epoll_event event;
+
+	struct listener *lsnr;
+	struct listener *fnd;
+
+	struct listener_queue *lq;
+
+	while (!uatomic_read(&stop_processing)) {
+		count = epoll_wait(epfd, events, MAX_EVENTS, 30000);
+
+		for (i = 0; i < count; i++) {
+			if (events[i].events & (EPOLLERR | EPOLLHUP) ||
+			    !(events[i].events & EPOLLIN)) {
+				LOG("epoll error = %u", events[i].events);
+				listener_find_and_close(events[i].data.fd);
+				continue;
+			}
+
+			fnd = listener_find(events[i].data.fd);
+			if (!fnd)
+				FAIL("Could not find listener for %d",
+				     events[i].data.fd);
+			if (fnd->l_flags & LISTENER_IS_SERVER) {
+				lsnr = listener_alloc(LISTENER_IS_CLIENT);
+				attach_listener(lsnr, events[i].data.fd);
+
+				event.data.fd = lsnr->l_fd;
+				event.events = EPOLLIN | EPOLLET;
+				if (epoll_ctl(epfd, EPOLL_CTL_ADD,
+					      event.data.fd, &event)) {
+					ret = errno;
+					FAIL("Could not epoll_ctl(): %d", ret);
+				}
+
+			} else {
+				lq = malloc(sizeof(*lq));
+				if (!lq)
+					FAIL("Could not alloc lq");
+				lq->lq_lsnr = fnd;
+				fnd = NULL;
+				cds_wfcq_node_init(&lq->lq_node);
+				cds_wfcq_enqueue(&queue->head, &queue->tail,
+						 &lq->lq_node);
+			}
+
+			listener_put(fnd);
+		}
+	}
+}
+
+static void done_signal_handler(int signum)
+{
+	LOG("Got signal %d", signum);
+}
+
+static void shutdown_signal_handler(int signum)
+{
+	struct sigaction sa = {
+		.sa_handler = done_signal_handler,
+		.sa_flags = SA_RESTART,
+	};
+
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGQUIT, &sa, NULL);
+
+	LOG("Got signal %d", signum);
+	uatomic_set(&stop_processing, true);
+}
+
 int main(int argc, char *argv[])
 {
 	int ret;
@@ -294,9 +366,7 @@ int main(int argc, char *argv[])
 	int num_listeners = 3;
 
 	int epfd;
-	int count;
 	struct epoll_event event;
-	struct epoll_event events[MAX_EVENTS];
 
 	unsigned short port = 3049;
 
@@ -309,10 +379,33 @@ int main(int argc, char *argv[])
 	atomic_flag af;
 
 	struct listener *lsnr;
-	struct listener *fnd;
 
 	struct queue queue;
-	struct listener_queue *lq;
+
+	sigset_t sigmask;
+	struct sigaction sa = {
+		.sa_handler = shutdown_signal_handler,
+		.sa_flags = SA_RESTART,
+	};
+
+	sigemptyset(&sigmask);
+	ret = sigaddset(&sigmask, SIGTERM);
+	if (ret < 0) {
+		ret = errno;
+		FAIL("Could not sigaddset(): %d", ret);
+	}
+
+	ret = sigaddset(&sigmask, SIGINT);
+	if (ret < 0) {
+		ret = errno;
+		FAIL("Could not sigaddset(): %d", ret);
+	}
+
+	ret = pthread_sigmask(SIG_BLOCK, &sigmask, NULL);
+	if (ret < 0) {
+		ret = errno;
+		FAIL("Could not pthread_sigmask(): %d", ret);
+	}
 
 	rcu_register_thread();
 
@@ -355,11 +448,25 @@ int main(int argc, char *argv[])
 		FAIL("Could not epoll_create1(): %d", ret);
 	}
 
-	/*
-	 * Two goals:
-	 * 1) Multiple ports being monitored
-	 * 2) Multiple listeners connecting to a port.
-	 */
+	sa.sa_mask = sigmask;
+	ret = sigaction(SIGTERM, &sa, NULL);
+	if (ret < 0) {
+		ret = errno;
+		FAIL("Could not sigaction(): %d", ret);
+	}
+
+	ret = sigaction(SIGINT, &sa, NULL);
+	if (ret < 0) {
+		ret = errno;
+		FAIL("Could not sigaction(): %d", ret);
+	}
+
+	ret = pthread_sigmask(SIG_UNBLOCK, &sigmask, NULL);
+	if (ret < 0) {
+		ret = errno;
+		FAIL("Could not pthread_sigmask(): %d", ret);
+	}
+
 	for (i = 0; i < num_listeners; i++) {
 		lsnr = listener_alloc(LISTENER_IS_SERVER);
 		attach_server(lsnr, port + i);
@@ -377,46 +484,12 @@ int main(int argc, char *argv[])
 			FAIL("Could not create thread %d", ret);
 	}
 
-	while (!uatomic_read(&stop_processing)) {
-		count = epoll_wait(epfd, events, MAX_EVENTS, 30000);
+	server(epfd, &queue);
 
-		for (i = 0; i < count; i++) {
-			if (events[i].events & (EPOLLERR | EPOLLHUP) ||
-			    !(events[i].events & EPOLLIN)) {
-				LOG("epoll error = %u", events[i].events);
-				listener_find_and_close(events[i].data.fd);
-				continue;
-			}
-
-			fnd = listener_find(events[i].data.fd);
-			if (!fnd)
-				FAIL("Could not find listener for %d",
-				     events[i].data.fd);
-			if (fnd->l_flags & LISTENER_IS_SERVER) {
-				lsnr = listener_alloc(LISTENER_IS_CLIENT);
-				attach_listener(lsnr, events[i].data.fd);
-
-				event.data.fd = lsnr->l_fd;
-				event.events = EPOLLIN | EPOLLET;
-				if (epoll_ctl(epfd, EPOLL_CTL_ADD,
-					      event.data.fd, &event)) {
-					ret = errno;
-					FAIL("Could not epoll_ctl(): %d", ret);
-				}
-
-			} else {
-				lq = malloc(sizeof(*lq));
-				if (!lq)
-					FAIL("Could not alloc lq");
-				lq->lq_lsnr = fnd;
-				fnd = NULL;
-				cds_wfcq_node_init(&lq->lq_node);
-				cds_wfcq_enqueue(&queue.head, &queue.tail,
-						 &lq->lq_node);
-			}
-
-			listener_put(fnd);
-		}
+	ret = pthread_sigmask(SIG_BLOCK, &sigmask, NULL);
+	if (ret < 0) {
+		ret = errno;
+		FAIL("Could not pthread_sigmask(): %d", ret);
 	}
 
 	synchronize_rcu();
