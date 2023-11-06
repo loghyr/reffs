@@ -10,12 +10,12 @@ AM_CFLAGS = \
 LDADD = \
 	../lib/xdr/libreffs_xdr.la
 
-echo_SOURCES = echo.c
-echo_LDADD = $(LDADD)
+recho_SOURCES = recho.c
+recho_LDADD = $(LDADD)
 
 reffs_SOURCES = reffs.c
 reffs_LDADD = $(LDADD)
 
 bin_PROGRAMS = \
-	echo \
+	recho \
 	reffs
