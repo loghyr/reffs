@@ -53,6 +53,6 @@ const RE_PORT = 3049;
 program RE_ADMIN_PROGRAM {
 	version RE_ADMIN_V1 {
 		void RE_PROC1_NULL(void) = 0;
-		re_message1_res RE_VOLUME_LIST1(re_message1_args) = 1;
+		re_message1_res RE_PROC1_MESSAGE(re_message1_args) = 1;
 	} = 1;
 } = 304097;
