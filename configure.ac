@@ -129,6 +129,7 @@ AC_CONFIG_FILES([
 	Makefile
 	reffs.pc
 	reffs.spec
+	reffs-echo.service
 	LICENSES/Makefile
 	src/Makefile
 	lib/Makefile
@@ -142,4 +143,3 @@ AC_CONFIG_FILES([
 	lib/tests/Makefile])
 
 AC_OUTPUT
-

@@ -1,0 +1,14 @@
+[Unit]
+Description=Reffs Echo Daemon
+Wants=network-online.target
+After=network-online.target rpcbind.service
+
+[Service]
+Environment="LIBC_FATAL_STDERR_=1"
+Environment="MALLOC_CONF=prof:false"
+ExecStart=/usr/bin/recho
+LimitCORE=infinity
+SyslogIdentifier=reffs-echo
+
+[Install]
+WantedBy=multi-user.target

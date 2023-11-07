@@ -39,8 +39,15 @@ The Reference File System (reffs) is:
 %prep
 %setup -q
 
+%pre
+
+%preun
+%systemd_preun reffs-echo.service
+
 %post
 /sbin/ldconfig
+
+%systemd_post reffs-echo.service
 
 %postun
 /sbin/ldconfig
@@ -76,6 +83,7 @@ make %{?_smp_mflags}
 
 %install
 %make_install
+rm -f %{buildroot}/%{_libdir}/*.la
 
 %files
 %defattr(-,root,root)
@@ -86,6 +94,7 @@ make %{?_smp_mflags}
 %{_libdir}/*.so*
 %{_libdir}/*.a
 %{_libdir}/pkgconfig/*
+%{_unitdir}/*
 
 %changelog
 * Fri Nov  3 2023 Tom Haynes <loghyr@gmail.com> - 0.0.1
