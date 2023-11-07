@@ -8,6 +8,8 @@ AM_CFLAGS = -Wno-unused-variable $(TIRPC_CFLAGS)
 GEN_SOURCES = \
 	ref_cp_xdr.h \
 	ref_cp_xdr.c \
+	reffs_echo_xdr.h \
+	reffs_echo_xdr.c \
 	nfsv42_xdr.h \
 	nfsv42_xdr.c \
 	mntv3_xdr.h \
@@ -18,13 +20,19 @@ GEN_SOURCES = \
 CLEANFILES = $(GEN_SOURCES)
 
 lib_LTLIBRARIES = libreffs_xdr.la
-libreffs_xdr_la_SOURCES = $(GEN_SOURCES) ref_cp_xdr.x nfsv42_xdr.x mntv3_xdr.x nfsv3_xdr.x
+libreffs_xdr_la_SOURCES = $(GEN_SOURCES) ref_cp_xdr.x reffs_echo_xdr.x nfsv42_xdr.x mntv3_xdr.x nfsv3_xdr.x
 
 ref_cp_xdr.c: ref_cp_xdr.x ref_cp_xdr.h
 	rpcgen -C -c ref_cp_xdr.x > $@
 
 ref_cp_xdr.h: ref_cp_xdr.x
 	rpcgen -C -h ref_cp_xdr.x > $@
+
+reffs_echo_xdr.c: reffs_echo_xdr.x reffs_echo_xdr.h
+	rpcgen -C -c reffs_echo_xdr.x > $@
+
+reffs_echo_xdr.h: reffs_echo_xdr.x
+	rpcgen -C -h reffs_echo_xdr.x > $@
 
 nfsv42_xdr.c: nfsv42_xdr.x nfsv42_xdr.h
 	rpcgen -C -c nfsv42_xdr.x > $@
