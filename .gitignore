@@ -22,3 +22,4 @@ stamp-h?
 *.pc
 *.spec
 *bz2
+*.service
