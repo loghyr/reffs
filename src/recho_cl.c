@@ -42,6 +42,7 @@ static void usage(const char *me)
 	fprintf(stdout, "Options:\n");
 	fprintf(stdout, " -h  --help         Show help\n");
 	fprintf(stdout, " -p  --port         Port number\n");
+	fprintf(stdout, " -s  --server       Server name\n");
 }
 
 static struct option options[] = {
@@ -65,7 +66,8 @@ int main(int argc, char *argv[])
 
 	unsigned short port = RE_PORT;
 
-	char hostname[HOSTNAME_MAX];
+	char host_name[HOSTNAME_MAX];
+	char server_name[HOSTNAME_MAX] = "adept";
 	gid_t groups[NGROUPS_MAX];
 	uid_t uid;
 	gid_t gid;
@@ -89,10 +91,13 @@ int main(int argc, char *argv[])
 	re_message1_args *args;
 	re_message1_res *res;
 
-	while ((opt = getopt_long(argc, argv, "hp:", options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "hp:s:", options, NULL)) != -1) {
 		switch (opt) {
 		case 'p':
 			port = atoi(optarg);
+			break;
+		case 's':
+			strncpy(server_name, optarg, HOSTNAME_MAX - 1);
 			break;
 		case 'h':
 			usage(argv[0]);
@@ -112,14 +117,14 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	ret = gethostname(hostname, HOSTNAME_MAX);
+	ret = gethostname(host_name, HOSTNAME_MAX);
 	if (ret < 0) {
 		ret = errno;
-		LOG("gethostname() failed: %d", ret);
-		sprintf(hostname, "reffs_cl_%d_%d", pid, port);
+		LOG("gethost_name() failed: %d", ret);
+		sprintf(host_name, "reffs_cl_%d_%d", pid, port);
 	}
 
-	LOG("hostname = %s", hostname);
+	LOG("host_name = %s", host_name);
 
 	nconf = getnetconfigent(NC_INET6);
 	if (!nconf) {
@@ -136,7 +141,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (!rpcb_getaddr(RE_ADMIN_PROGRAM, RE_ADMIN_V1, nconf, &svcaddr,
-			  "adept")) {
+			  server_name)) {
 		ret = errno;
 		LOG("Could not rpcb_getaddr() with clnt_stat=%d: %d",
 		    rpc_createerr.cf_stat, ret);
@@ -152,7 +157,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	clnt->cl_auth = authsys_create(hostname, uid, gid, num_groups, groups);
+	clnt->cl_auth = authsys_create(host_name, uid, gid, num_groups, groups);
 	if (!clnt->cl_auth) {
 		ret = errno;
 		LOG("authsys_create() failed: %d", ret);
@@ -189,9 +194,9 @@ int main(int argc, char *argv[])
 		strcpy(args->rma_message.re_message_string1_val, buf);
 
 		stat = clnt_call(clnt, RE_PROC1_MESSAGE,
-				 (xdrproc_t)xdr_re_message1_args,
-				 (char *)args, (xdrproc_t)xdr_re_message1_res,
-				 (char *)res, tv);
+				 (xdrproc_t)xdr_re_message1_args, (char *)args,
+				 (xdrproc_t)xdr_re_message1_res, (char *)res,
+				 tv);
 		if (stat != RPC_SUCCESS) {
 			ret = errno;
 			LOG("clnt_call() failed with clnt_stat=%d: %d", stat,
