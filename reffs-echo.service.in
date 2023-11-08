@@ -8,7 +8,7 @@ Environment="LIBC_FATAL_STDERR_=1"
 Environment="MALLOC_CONF=prof:false"
 ExecStart=/usr/bin/recho
 LimitCORE=infinity
-SyslogIdentifier=reffs-echo
+SyslogIdentifier=reffs-echo_ev
 
 [Install]
 WantedBy=multi-user.target

@@ -12,8 +12,8 @@ LDADD = \
 	../lib/xdr/libreffs_xdr.la \
 	$(TIRPC_LIBS)
 
-recho_SOURCES = recho.c
-recho_LDADD = $(LDADD)
+recho_ev_SOURCES = recho_ev.c
+recho_ev_LDADD = $(LDADD)
 
 recho_cl_SOURCES = recho_cl.c
 recho_cl_LDADD = $(LDADD)
@@ -22,6 +22,6 @@ reffs_SOURCES = reffs.c
 reffs_LDADD = $(LDADD)
 
 bin_PROGRAMS = \
-	recho \
+	recho_ev \
 	recho_cl \
 	reffs
