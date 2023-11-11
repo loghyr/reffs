@@ -123,7 +123,7 @@ union rejected_reply switch (reject_stat stat) {
     case RPC_MISMATCH:
         mismatch mismatch_info;
     case AUTH_ERROR:
-            auth_stat stat;
+            auth_stat astat;
 };
 
 const RPC_MACHINE_NAME_LEN = 255;
