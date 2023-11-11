@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <getopt.h>
@@ -29,6 +30,8 @@
 #include <urcu/wfcqueue.h>
 #include <urcu/ref.h>
 #include "reffs/log.h"
+
+#include <ev.h>
 
 static void usage(const char *me)
 {
