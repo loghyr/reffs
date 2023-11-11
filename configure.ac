@@ -16,6 +16,8 @@ AC_USE_SYSTEM_EXTENSIONS
 AC_SYS_LARGEFILE
 LT_INIT
 
+AM_PATH_PYTHON([3.6],, [:])
+
 AC_CHECK_HEADER_STDBOOL
 
 # Checks for typedefs, structures, and compiler characteristics.
@@ -118,10 +120,11 @@ AC_ARG_ENABLE([debug],
     [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
     [enable_debug=$enableval], [enable_debug=no])
 
+COMMON_FLAGS="${CFLAGS} -DRCU_MEMBARRIER=1 -Wall -Wextra -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
 if test "x$enable_debug}" = "xyes"; then
-	CFLAGS="${CFLAGS} -DRCU_MEMBARRIER=1 -Wall -Wextra -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
+	CFLAGS="${COMMON_FLAGS} -O2"
 else
-	CFLAGS="${CFLAGS} -DRCU_MEMBARRIER=1 -Wall -Wextra -Werror -g -Og -fno-omit-frame-pointer -fasynchronous-unwind-tables"
+	CFLAGS="${COMMON_FLAGS} -g -Og"
 fi
 
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])
@@ -132,15 +135,17 @@ AC_CONFIG_FILES([
 	reffs.spec
 	reffs-echo.service
 	LICENSES/Makefile
-	src/Makefile
 	lib/Makefile
+	lib/fs/Makefile
 	lib/include/Makefile
 	lib/include/reffs/Makefile
-	lib/fs/Makefile
 	lib/nfs3/Makefile
 	lib/nfs4/Makefile
-	lib/xdr/Makefile
+	lib/scripts/Makefile
+	lib/scripts/reffs/Makefile
+	lib/tests/Makefile
 	lib/utils/Makefile
-	lib/tests/Makefile])
+	lib/xdr/Makefile
+	src/Makefile])
 
 AC_OUTPUT

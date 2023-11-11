@@ -167,7 +167,13 @@ int main(int argc, char *argv[])
 	while (1) {
 		// Get the user input
 		memset(&buf, '\0', MSG_MAX);
-		scanf("%s", buf);
+		ret = scanf("%s", buf);
+		if (ret == EOF) {
+			ret = errno;
+			LOG("scanf() failed: %d", ret);
+			return 1;
+		}
+
 		len = strlen(buf);
 		if (!strncmp(buf, "done", len))
 			break;

@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: GPL-2.0+
+
+xdrgen.py is taken from PYNFS. I don't know how I want to
+include it yet. Perhaps a submodule?
+
+git://git.linux-nfs.org/projects/cdmackay/pynfs.git
+
+In any event, for now, I've copied over the file and license.

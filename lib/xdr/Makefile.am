@@ -20,7 +20,7 @@ GEN_SOURCES = \
 CLEANFILES = $(GEN_SOURCES)
 
 lib_LTLIBRARIES = libreffs_xdr.la
-libreffs_xdr_la_SOURCES = $(GEN_SOURCES) ref_cp_xdr.x reffs_echo_xdr.x nfsv42_xdr.x mntv3_xdr.x nfsv3_xdr.x
+libreffs_xdr_la_SOURCES = $(GEN_SOURCES) ref_cp_xdr.x reffs_echo_xdr.x nfsv42_xdr.x mntv3_xdr.x nfsv3_xdr.x rpc_xdr.x
 
 ref_cp_xdr.c: ref_cp_xdr.x ref_cp_xdr.h
 	rpcgen -C -c ref_cp_xdr.x > $@

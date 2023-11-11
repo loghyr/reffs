@@ -1,0 +1,9 @@
+__pycache__/
+parser.out
+parsetab.py
+reffs_echo_xdr_const.py
+reffs_echo_xdr_pack.py
+reffs_echo_xdr_type.py
+rpc_xdr_const.py
+rpc_xdr_pack.py
+rpc_xdr_type.py

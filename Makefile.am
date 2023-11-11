@@ -39,4 +39,5 @@ rpm: $(TARBALL)
 		--define="_tsan_enabled $(TSAN_ENABLED)" \
 		--define="_lsan_enabled $(LSAN_ENABLED)" \
 		--define="_ubsan_enabled $(UBSAN_ENABLED)" \
+		--define "__python python3" \
 		~/rpmbuild/SPECS/$(PACKAGE).spec

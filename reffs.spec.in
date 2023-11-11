@@ -95,6 +95,7 @@ rm -f %{buildroot}/%{_libdir}/*.la
 %{_libdir}/*.a
 %{_libdir}/pkgconfig/*
 %{_unitdir}/*
+%{python_sitelib}/reffs/*
 
 %changelog
 * Fri Nov  3 2023 Tom Haynes <loghyr@gmail.com> - 0.0.1
