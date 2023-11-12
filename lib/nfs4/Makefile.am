@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: GPL-2.0+
 
-subdirs = tests
+SUBDIRS = tests
 
 AM_CFLAGS = -Im4 -I. \
 	-I$(top_srcdir)/lib/include \
