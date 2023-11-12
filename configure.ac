@@ -32,7 +32,6 @@ AC_TYPE_UINT32_T
 AC_TYPE_UINT64_T
 AC_TYPE_UINT8_T
 
-PKG_CHECK_MODULES(CHECK, libcheck, , [AC_MSG_ERROR([Could not configure libcheck support.])])
 PKG_CHECK_MODULES(URCU, liburcu, ,
         [AC_MSG_ERROR([Could not configure liburcu support.])])
 
