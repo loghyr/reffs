@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: GPL-2.0+
 
-ACLOCAL_AMFLAGS = -Im4
+ACLOCAL_AMFLAGS = -Im4 
 
 AM_CFLAGS = \
-	-I../lib/include \
-	-I../lib/xdr
+	-I$(top_srcdir)/lib/include \
+	-I$(top_srcdir)/lib/xdr
 	-I$(TIRPC_CFLAGS)
 
 LDADD = \

@@ -5,4 +5,5 @@ refsincludedir = $(includedir)/reffs
 
 refsinclude_HEADERS =	\
 	inode.h		\
-	log.h
+	log.h		\
+	test.h

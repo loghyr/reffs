@@ -32,6 +32,7 @@ AC_TYPE_UINT32_T
 AC_TYPE_UINT64_T
 AC_TYPE_UINT8_T
 
+PKG_CHECK_MODULES(CHECK, libcheck, , [AC_MSG_ERROR([Could not configure libcheck support.])])
 PKG_CHECK_MODULES(URCU, liburcu, ,
         [AC_MSG_ERROR([Could not configure liburcu support.])])
 
@@ -122,7 +123,7 @@ AC_ARG_ENABLE([debug],
 
 COMMON_FLAGS="${CFLAGS} -DRCU_MEMBARRIER=1 -Wall -Wextra -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
 if test "x$enable_debug}" = "xyes"; then
-	CFLAGS="${COMMON_FLAGS} -O2"
+	CFLAGS="${COMMON_FLAGS} -O2 -DNDEBUG"
 else
 	CFLAGS="${COMMON_FLAGS} -g -Og"
 fi
@@ -141,6 +142,7 @@ AC_CONFIG_FILES([
 	lib/include/reffs/Makefile
 	lib/nfs3/Makefile
 	lib/nfs4/Makefile
+	lib/nfs4/tests/Makefile
 	lib/scripts/Makefile
 	lib/scripts/reffs/Makefile
 	lib/tests/Makefile
