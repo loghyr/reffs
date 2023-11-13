@@ -143,6 +143,7 @@ AC_CONFIG_FILES([
 	LICENSES/Makefile
 	lib/Makefile
 	lib/fs/Makefile
+	lib/fs/tests/Makefile
 	lib/include/Makefile
 	lib/include/reffs/Makefile
 	lib/nfs3/Makefile

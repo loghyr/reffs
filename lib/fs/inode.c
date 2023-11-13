@@ -43,11 +43,14 @@ static void inode_release(struct urcu_ref *ref)
 bool inode_unhash(struct inode *inode)
 {
 	int ret;
+	bool b;
+	uint64_t state;
 
 	// Do we want to hide the memory model with an inline function?
-	if (__atomic_fetch_and(&inode->i_state, ~INODE_IS_HASHED,
-			       __ATOMIC_ACQUIRE) &
-	    INODE_IS_HASHED) {
+	state = __atomic_fetch_and(&inode->i_state, ~INODE_IS_HASHED,
+				   __ATOMIC_ACQUIRE);
+	b = state & INODE_IS_HASHED;
+	if (b) {
 		ret = cds_lfht_del(inode->i_sb->sb_inodes, &inode->i_node);
 		assert(!ret);
 		inode_put(inode);
@@ -107,6 +110,10 @@ struct inode *inode_find(struct super_block *sb, uint64_t ino)
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 	unsigned long hash = XXH3_64bits(&ino, sizeof(ino));
+
+	// Is this just for unit testing?
+	if (!sb)
+		return NULL;
 
 	rcu_read_lock();
 	cds_lfht_lookup(sb->sb_inodes, hash, inode_match, &ino, &iter);
