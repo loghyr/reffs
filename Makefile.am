@@ -26,6 +26,12 @@ $(TARBALL): dist-bzip2
 mrproper:
 	git clean -f -x -d
 
+style:
+	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | xargs clang-format --dry-run
+
+fix-style:
+	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | xargs clang-format -i
+
 RPM_BUILD_DIR := ../rpmbuild
 
 .PHONY: rpm

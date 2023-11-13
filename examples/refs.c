@@ -175,7 +175,8 @@ int main(int argc, char *argv[])
 
 	ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	if (ret) {
-		fprintf(stderr, "Could not assign thread attributes: %d\n", ret);
+		fprintf(stderr, "Could not assign thread attributes: %d\n",
+			ret);
 		abort();
 	}
 
