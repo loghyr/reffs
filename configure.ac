@@ -41,6 +41,9 @@ PKG_CHECK_MODULES(URCU_CDS, liburcu-cds, ,
 PKG_CHECK_MODULES(TIRPC, libtirpc, ,
         [AC_MSG_ERROR([Could not configure libtirpc support.])])
 
+dnl I can't get either libcheck or libuuid to be found!
+dnl UUID_LIBS=-luuid
+
 AX_PTHREAD([], [AC_MSG_ERROR([Could not configure pthread support])])
 AC_CHECK_LIB([pthread], [pthread_create], , [AC_MSG_ERROR([Please install libpthread])])
 AC_CHECK_LIB([ev], [ev_run], , [AC_MSG_ERROR([Please install libev])])

@@ -11,5 +11,6 @@ lib_LTLIBRARIES = libreffs_nfs4.la
 libreffs_nfs4_la_SOURCES = \
 	errors.c
 
-include_HEADERS = \
+reffsincludedir = $(includedir)/reffs
+reffsinclude_HEADERS = \
 	errors.h
