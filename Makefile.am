@@ -27,10 +27,10 @@ mrproper:
 	git clean -f -x -d
 
 style:
-	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | xargs clang-format --dry-run
+	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format --dry-run -Werror
 
 fix-style:
-	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | xargs clang-format -i
+	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
 
 RPM_BUILD_DIR := ../rpmbuild
 
