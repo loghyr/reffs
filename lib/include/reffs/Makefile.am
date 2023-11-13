@@ -3,7 +3,9 @@
 
 refsincludedir = $(includedir)/reffs
 
-refsinclude_HEADERS =	\
-	inode.h		\
-	log.h		\
+refsinclude_HEADERS = \
+	dirent.h \
+	inode.h \
+	log.h \
+	super_block.h \
 	test.h
