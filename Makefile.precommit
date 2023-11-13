@@ -18,5 +18,8 @@ reconf: style
 style: clean
 	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | xargs clang-format --dry-run
 
-clean:
+clean: pristine
 	git clean -f -x -d
+
+pristine:
+	git ls-files --other --directory --exclude-standard | sed q1
