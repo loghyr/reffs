@@ -16,7 +16,7 @@ Source: @PACKAGE@-@VERSION@.tar.bz2
 BuildRequires:  gcc make check autoconf-archive pkg-config
 BuildRequires:  xxhash-devel libtirpc-devel nfs-utils
 BuildRequires:  libev-devel jemalloc uuid-devel
-BuildRequires:  clang-tools-extra
+BuildRequires:  clang-tools-extra check-devel
 
 Requires:	xxhash libev jemalloc uuid
 

@@ -41,6 +41,8 @@ PKG_CHECK_MODULES(URCU_CDS, liburcu-cds, ,
 PKG_CHECK_MODULES(TIRPC, libtirpc, ,
         [AC_MSG_ERROR([Could not configure libtirpc support.])])
 
+PKG_CHECK_MODULES([CHECK], [check >= 0.15.2])
+
 dnl I can't get either libcheck or libuuid to be found!
 dnl UUID_LIBS=-luuid
 
