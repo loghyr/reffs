@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
+#include <urcu/rculfhash.h>
 #include <urcu/ref.h>
 
 #include "reffs/dirent.h"
@@ -17,10 +18,10 @@
 #define REFFS_UUID_SIZE (16)
 
 struct super_block {
-        struct rcu_head sb_rcu;
-        struct urcu_ref sb_ref;
-        struct cds_list_head sb_link;	/* List of sbs */
-        struct cds_list_head sb_inodes;
+	struct rcu_head sb_rcu;
+	struct urcu_ref sb_ref;
+	struct cds_list_head sb_link; /* List of sbs */
+	struct cds_lfht *sb_inodes;
 
 	struct dirent *sb_dirent;
 	uint64_t sb_id;

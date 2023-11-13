@@ -44,8 +44,9 @@ PKG_CHECK_MODULES(TIRPC, libtirpc, ,
 AX_PTHREAD([], [AC_MSG_ERROR([Could not configure pthread support])])
 AC_CHECK_LIB([pthread], [pthread_create], , [AC_MSG_ERROR([Please install libpthread])])
 AC_CHECK_LIB([ev], [ev_run], , [AC_MSG_ERROR([Please install libev])])
+AC_CHECK_LIB([xxhash], [XXH3_64bits], , [AC_MSG_ERROR([Please install xxhash-devel])])
 
-LIBS="${PTHREAD_LIBS} ${TIRPC_LIBS} ${URCU_LIBS} ${URCU_CDS_LIBS} ${LIBEV} ${JEMALLOC_LIBS} ${LIBS}"
+LIBS="${PTHREAD_LIBS} ${TIRPC_LIBS} ${XXHASH_LIBS} ${URCU_LIBS} ${URCU_CDS_LIBS} ${LIBEV} ${JEMALLOC_LIBS} ${LIBS}"
 CFLAGS="${CFLAGS} ${PTHREAD_CFLAGS} ${TIRPC_CFLAGS}"
 
 AC_ARG_ENABLE(asan,

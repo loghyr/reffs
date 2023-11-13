@@ -24,3 +24,4 @@ stamp-h?
 *bz2
 *.service
 py-compile
+test-driver

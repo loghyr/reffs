@@ -3,12 +3,26 @@
  * SPDX-License-Identifier: GPL-2.0+
  */
 
+#include <xxhash.h>
+#include <stdatomic.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h>
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/log.h"
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
+#include <urcu/rculfhash.h>
+
+static int inode_match(struct cds_lfht_node *ht_node, const void *vkey)
+{
+	struct inode *inode = caa_container_of(ht_node, struct inode, i_node);
+	const uint64_t *key = vkey;
+
+	return *key == inode->i_ino;
+}
 
 static void inode_free_rcu(struct rcu_head *rcu)
 {
@@ -21,12 +35,39 @@ static void inode_release(struct urcu_ref *ref)
 {
 	struct inode *inode = caa_container_of(ref, struct inode, i_ref);
 
+	super_block_put(inode->i_sb);
+
 	call_rcu(&inode->i_rcu, inode_free_rcu);
+}
+
+bool inode_unhash(struct inode *inode)
+{
+	int ret;
+
+	// Do we want to hide the memory model with an inline function?
+	if (__atomic_fetch_and(&inode->i_state, ~INODE_IS_HASHED,
+			       __ATOMIC_ACQUIRE) &
+	    INODE_IS_HASHED) {
+		ret = cds_lfht_del(inode->i_sb->sb_inodes, &inode->i_node);
+		assert(!ret);
+		inode_put(inode);
+		return true;
+	}
+
+	return false;
 }
 
 struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 {
 	struct inode *inode;
+	struct inode *tmp;
+	struct cds_lfht_node *node;
+	unsigned long hash = XXH3_64bits(&ino, sizeof(ino));
+
+	/* If it already exists, use it */
+	inode = inode_find(sb, ino);
+	if (inode)
+		return inode;
 
 	inode = calloc(1, sizeof(*inode));
 	if (!inode) {
@@ -34,9 +75,27 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 		return NULL;
 	}
 
-	inode->i_ino = ino;
-	cds_list_add_rcu(&inode->i_link, &sb->sb_inodes);
+	cds_lfht_node_init(&inode->i_node);
 	urcu_ref_init(&inode->i_ref);
+
+	inode->i_sb = super_block_get(sb);
+
+	/* Make sure no one else beat us to it */
+	rcu_read_lock();
+	node = cds_lfht_add_unique(inode->i_sb->sb_inodes, hash, inode_match,
+				   &ino, &inode->i_node);
+	if (node != &inode->i_node) {
+		tmp = caa_container_of(node, struct inode, i_node);
+		inode_put(inode);
+		inode = tmp;
+	} else {
+		__atomic_fetch_or(&inode->i_state, INODE_IS_HASHED,
+				  __ATOMIC_ACQUIRE);
+	}
+
+	rcu_read_unlock();
+
+	inode->i_ino = ino;
 
 	return inode;
 }
@@ -45,13 +104,17 @@ struct inode *inode_find(struct super_block *sb, uint64_t ino)
 {
 	struct inode *inode = NULL;
 	struct inode *tmp;
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	unsigned long hash = XXH3_64bits(&ino, sizeof(ino));
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(tmp, &sb->sb_inodes, i_link)
-		if (ino == tmp->i_ino) {
-			inode = inode_get(tmp);
-			break;
-		}
+	cds_lfht_lookup(sb->sb_inodes, hash, inode_match, &ino, &iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (node) {
+		tmp = caa_container_of(node, struct inode, i_node);
+		inode = inode_get(tmp);
+	}
 	rcu_read_unlock();
 
 	return inode;

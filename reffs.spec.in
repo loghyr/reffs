@@ -13,6 +13,12 @@ Packager: Tom Haynes <loghyr@gmail.com>
 
 Source: @PACKAGE@-@VERSION@.tar.bz2
 
+BuildRequires:  gcc make check autoconf-archive pkg-config
+BuildRequires:  xxhash-devel tirpc-devel rpcbind-devel nfs-utils
+BuildRequires:  libev-devel pthread jemalloc
+
+Requires:	xxhash libev jemalloc
+
 Buildroot: %{_tmppath}/%{name}-root
 
 %description 
