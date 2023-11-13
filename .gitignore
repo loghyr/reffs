@@ -25,3 +25,5 @@ stamp-h?
 *.service
 py-compile
 test-driver
+*.trs
+*.log

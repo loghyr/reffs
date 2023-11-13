@@ -1,0 +1,22 @@
+all: rpm
+
+rpm: check
+	make rpm
+
+check: build
+	make check
+
+build: configure
+	make
+
+configure: reconf
+	./configure
+
+reconf: style
+	autoreconf -i
+
+style: clean
+	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | xargs clang-format --dry-run
+
+clean:
+	git clean -f -x -d
