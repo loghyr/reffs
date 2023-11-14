@@ -56,6 +56,29 @@ static void super_block_release(struct urcu_ref *ref)
 	call_rcu(&sb->sb_rcu, super_block_free_rcu);
 }
 
+int super_block_dirent_create(struct super_block *sb)
+{
+	sb->sb_dirent = dirent_alloc(NULL, "/");
+	if (!sb->sb_dirent)
+		return ENOMEM;
+
+	sb->sb_dirent->d_inode = inode_alloc(sb, 1);
+	if (!sb->sb_dirent->d_inode) {
+		dirent_put(sb->sb_dirent);
+		return ENOMEM;
+	}
+
+	return 0;
+}
+
+void super_block_dirent_release(struct super_block *sb)
+{
+	if (sb->sb_dirent) {
+		dirent_put(sb->sb_dirent);
+		sb->sb_dirent = NULL;
+	}
+}
+
 struct super_block *super_block_alloc(uint64_t id)
 {
 	struct super_block *sb;

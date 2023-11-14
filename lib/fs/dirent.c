@@ -23,6 +23,9 @@ static void dirent_release(struct urcu_ref *ref)
 {
 	struct dirent *de = caa_container_of(ref, struct dirent, d_ref);
 
+	if (de->d_inode)
+		inode_put(de->d_inode);
+
 	call_rcu(&de->d_rcu, dirent_free_rcu);
 }
 
@@ -44,7 +47,9 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name)
 	}
 
 	CDS_INIT_LIST_HEAD(&de->d_children);
-	cds_list_add_rcu(&de->d_siblings, &parent->d_children);
+	CDS_INIT_LIST_HEAD(&de->d_siblings);
+	if (parent)
+		cds_list_add_rcu(&de->d_siblings, &parent->d_children);
 	urcu_ref_init(&de->d_ref);
 
 	return de;

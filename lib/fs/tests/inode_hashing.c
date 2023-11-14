@@ -4,6 +4,7 @@
  */
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <check.h>
 #include <stdbool.h>
 #include <errno.h>
@@ -11,35 +12,142 @@
 #include "reffs/inode.h"
 #include "reffs/test.h"
 
-/*
- * BIG WARNING HERE: The inode_unhash() puts the inode. So it
- * implicitly nukes the active reference.
- */
+static uint64_t sb_id_next = 0;
 
 START_TEST(add_sb_1)
 {
 	struct super_block *sb;
-	sb = super_block_alloc(1);
+	uint64_t sb_id;
+
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
+	ck_assert(sb);
+
+	super_block_dirent_release(sb);
+	super_block_put(sb);
+}
+
+START_TEST(add_sb_2)
+{
+	struct super_block *sb;
+	uint64_t sb_id;
+
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
 	ck_assert(sb);
 
 	super_block_put(sb);
+	super_block_dirent_release(sb);
+}
+
+START_TEST(find_sb_inode)
+{
+	struct inode *inode1;
+	struct inode *inode2;
+	struct super_block *sb;
+	int ret;
+	uint64_t sb_id;
+
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
+	ck_assert(sb);
+
+	ret = super_block_dirent_create(sb);
+	ck_assert_int_eq(ret, 0);
+
+	inode1 = inode_alloc(sb, 1);
+	ck_assert(inode1 == sb->sb_dirent->d_inode);
+
+	inode2 = inode_find(sb, 1);
+	ck_assert(inode2 == sb->sb_dirent->d_inode);
+
+	inode_put(inode1);
+	inode_put(inode2);
+
+	super_block_put(sb);
+	super_block_dirent_release(sb);
+}
+
+START_TEST(find_sb_inode_put)
+{
+	struct inode *inode1;
+	struct inode *inode2;
+	struct super_block *sb;
+	int ret;
+	uint64_t sb_id;
+
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
+	ck_assert(sb);
+
+	ret = super_block_dirent_create(sb);
+	ck_assert_int_eq(ret, 0);
+
+	inode1 = inode_alloc(sb, 1);
+	ck_assert(inode1 == sb->sb_dirent->d_inode);
+
+	inode2 = inode_find(sb, 1);
+	ck_assert(inode2 == sb->sb_dirent->d_inode);
+
+	super_block_put(sb);
+	super_block_dirent_release(sb);
+
+	inode_put(inode1);
+	inode_put(inode2);
+}
+
+START_TEST(find_sb_inode_unhash)
+{
+	struct inode *inode1;
+	struct inode *inode2;
+	struct super_block *sb;
+	int ret;
+	uint64_t sb_id;
+
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
+	ck_assert(sb);
+
+	ret = super_block_dirent_create(sb);
+	ck_assert_int_eq(ret, 0);
+
+	inode1 = inode_alloc(sb, 1);
+	ck_assert(inode1 == sb->sb_dirent->d_inode);
+
+	inode2 = inode_find(sb, 1);
+	ck_assert(inode2 == sb->sb_dirent->d_inode);
+
+	inode_put(inode1);
+	inode_put(inode2);
+
+	super_block_put(sb);
+	super_block_dirent_release(sb);
 }
 
 START_TEST(add_inode_1)
 {
 	struct inode *inode;
 	struct super_block *sb;
+	uint64_t sb_id;
 
-	sb = super_block_alloc(2);
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
 	ck_assert(sb);
 
-	inode = inode_alloc(sb, 1);
+	inode = inode_alloc(sb, 2);
 	ck_assert(inode);
 
-	inode_unhash(inode);
-	inode = inode_find(sb, 1);
+	inode_put(inode);
+	inode = inode_find(sb, 2);
 	ck_assert(!inode);
 
+	super_block_dirent_release(sb);
 	super_block_put(sb);
 }
 
@@ -47,24 +155,28 @@ START_TEST(add_inode_2)
 {
 	struct inode *inode1, *inode2;
 	struct super_block *sb;
+	uint64_t sb_id;
 
-	sb = super_block_alloc(3);
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
 	ck_assert(sb);
 
-	inode1 = inode_alloc(sb, 1);
+	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
 
-	inode2 = inode_alloc(sb, 2);
+	inode2 = inode_alloc(sb, 3);
 	ck_assert(inode2);
 
-	inode_unhash(inode1);
-	inode1 = inode_find(sb, 1);
+	inode_put(inode1);
+	inode1 = inode_find(sb, 2);
 	ck_assert(!inode1);
 
-	inode_unhash(inode2);
-	inode2 = inode_find(sb, 2);
+	inode_put(inode2);
+	inode2 = inode_find(sb, 3);
 	ck_assert(!inode2);
 
+	super_block_dirent_release(sb);
 	super_block_put(sb);
 }
 
@@ -72,25 +184,30 @@ START_TEST(put_inode_1)
 {
 	struct inode *inode1, *inode2, *inode3;
 	struct super_block *sb;
+	uint64_t sb_id;
 
-	sb = super_block_alloc(3);
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
 	ck_assert(sb);
-	inode1 = inode_alloc(sb, 1);
+	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
-	inode2 = inode_alloc(sb, 2);
+	inode2 = inode_alloc(sb, 3);
 	ck_assert(inode2);
 
-	inode3 = inode_find(sb, 1);
+	inode3 = inode_find(sb, 2);
 	ck_assert(inode3);
 
-	inode_unhash(inode1);
-	inode1 = inode_find(sb, 1);
-	ck_assert(!inode1);
+	inode_put(inode1);
+	inode1 = inode_find(sb, 2);
+	ck_assert(inode1 == inode3);
+	inode_put(inode1);
 
-	inode_unhash(inode2);
-	inode2 = inode_find(sb, 2);
+	inode_put(inode2);
+	inode2 = inode_find(sb, 3);
 	ck_assert(!inode2);
 
+	super_block_dirent_release(sb);
 	super_block_put(sb);
 
 	inode_put(inode3);
@@ -100,27 +217,33 @@ START_TEST(get_inode_1)
 {
 	struct inode *inode1, *inode2, *inode3;
 	struct super_block *sb;
+	uint64_t sb_id;
 
-	sb = super_block_alloc(3);
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
 	ck_assert(sb);
 
-	inode1 = inode_alloc(sb, 1);
+	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
 
-	inode2 = inode_alloc(sb, 2);
+	inode2 = inode_alloc(sb, 3);
 	ck_assert(inode2);
 
 	inode3 = inode_get(inode1);
 	ck_assert(inode3);
 
 	inode_unhash(inode1);
-	inode1 = inode_find(sb, 1);
+	inode_put(inode1);
+	/* Better not be found even thought inode3 has a reference. */
+	inode1 = inode_find(sb, 2);
 	ck_assert(!inode1);
 
-	inode_unhash(inode2);
-	inode2 = inode_find(sb, 2);
+	inode_put(inode2);
+	inode2 = inode_find(sb, 3);
 	ck_assert(!inode2);
 
+	super_block_dirent_release(sb);
 	super_block_put(sb);
 
 	inode_put(inode3);
@@ -130,40 +253,53 @@ START_TEST(sb_put_inode_1)
 {
 	struct inode *inode1, *inode2;
 	struct super_block *sb;
+	uint64_t sb_id;
 
-	sb = super_block_alloc(3);
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
 	ck_assert(sb);
 
-	inode1 = inode_alloc(sb, 1);
+	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
 
-	inode2 = inode_alloc(sb, 2);
+	inode2 = inode_alloc(sb, 3);
 	ck_assert(inode2);
 
-	inode_unhash(inode2);
-	inode2 = inode_find(sb, 2);
+	inode_put(inode2);
+	inode2 = inode_find(sb, 3);
 	ck_assert(!inode2);
 
+	super_block_dirent_release(sb);
 	super_block_put(sb);
+
+	inode_put(inode1);
+	inode1 = inode_find(sb, 3);
+	ck_assert(!inode1);
 }
 
 START_TEST(find_inode_1)
 {
 	struct inode *inode1, *inode2;
 	struct super_block *sb;
+	uint64_t sb_id;
 
-	sb = super_block_alloc(4);
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
 	ck_assert(sb);
-	inode1 = inode_alloc(sb, 1);
+	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
 
-	inode2 = inode_find(sb, 1);
+	inode2 = inode_find(sb, 2);
 	ck_assert(inode2 == inode1);
 
-	inode_unhash(inode1);
-	inode1 = inode_find(sb, 1);
+	inode_put(inode2);
+	inode_put(inode1);
+	inode1 = inode_find(sb, 2);
 	ck_assert(!inode1);
 
+	super_block_dirent_release(sb);
 	super_block_put(sb);
 }
 
@@ -171,20 +307,24 @@ START_TEST(find_inode_1_sb_NULL)
 {
 	struct inode *inode1, *inode2;
 	struct super_block *sb;
+	uint64_t sb_id;
 
-	sb = super_block_alloc(5);
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
 	ck_assert(sb);
 
-	inode1 = inode_alloc(sb, 1);
+	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
 
-	inode2 = inode_find(NULL, 1);
+	inode2 = inode_find(NULL, 2);
 	ck_assert(!inode2);
 
-	inode_unhash(inode1);
-	inode1 = inode_find(sb, 1);
+	inode_put(inode1);
+	inode1 = inode_find(sb, 2);
 	ck_assert(!inode1);
 
+	super_block_dirent_release(sb);
 	super_block_put(sb);
 }
 
@@ -192,41 +332,51 @@ START_TEST(find_inode_3)
 {
 	struct inode *inode1, *inode2, *inode3;
 	struct super_block *sb;
+	uint64_t sb_id;
 
-	sb = super_block_alloc(6);
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb = super_block_alloc(sb_id);
 	ck_assert(sb);
 
-	inode1 = inode_alloc(sb, 1);
+	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
 
-	inode2 = inode_alloc(sb, 2);
+	inode2 = inode_alloc(sb, 3);
 	ck_assert(inode2);
 
-	inode3 = inode_find(sb, 3);
+	inode3 = inode_find(sb, 4);
 	ck_assert(!inode3);
 
-	inode_unhash(inode1);
-	inode1 = inode_find(sb, 1);
+	inode_put(inode1);
+	inode1 = inode_find(sb, 2);
 	ck_assert(!inode1);
 
-	inode_unhash(inode2);
-	inode2 = inode_find(sb, 2);
+	inode_put(inode2);
+	inode2 = inode_find(sb, 3);
 	ck_assert(!inode2);
 
+	super_block_dirent_release(sb);
 	super_block_put(sb);
-	sb = super_block_find(1);
+
+	sb = super_block_find(6);
 	ck_assert(!sb);
 }
 
 START_TEST(find_sb_1)
 {
 	struct super_block *sb1, *sb2;
-	sb1 = super_block_alloc(7);
+	uint64_t sb_id;
+
+	sb_id = uatomic_add_return(&sb_id_next, 1);
+
+	sb1 = super_block_alloc(sb_id);
 	ck_assert(sb1);
 
-	sb2 = super_block_find(7);
+	sb2 = super_block_find(sb_id);
 	ck_assert(sb1 == sb2);
 
+	super_block_dirent_release(sb1);
 	super_block_put(sb1);
 }
 
@@ -250,6 +400,10 @@ Suite *error_suite(void)
 	tcase_add_test(tc_core, get_inode_1);
 	tcase_add_test(tc_core, put_inode_1);
 	tcase_add_test(tc_core, sb_put_inode_1);
+	tcase_add_test(tc_core, add_sb_2);
+	tcase_add_test(tc_core, find_sb_inode);
+	tcase_add_test(tc_core, find_sb_inode_put);
+	tcase_add_test(tc_core, find_sb_inode_unhash);
 
 	suite_add_tcase(s, tc_core);
 

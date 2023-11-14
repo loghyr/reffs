@@ -89,28 +89,13 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	root_sb->sb_dirent =
-		dirent_alloc(NULL, "/"); /* Root is only entry with a "/" */
-	if (!root_sb->sb_dirent) {
-		ret = ENOMEM;
+	ret = super_block_dirent_create(root_sb);
+	if (ret)
 		goto out_sb;
-	}
-
-	root_sb->sb_dirent->d_inode = inode_alloc(root_sb, 1);
-	if (!root_sb->sb_dirent->d_inode) {
-		ret = ENOMEM;
-		goto out_dirent;
-	}
 
 	ret = fuse_main(argc, argv, &operations, NULL);
 
-	// And tear it down?
-	inode_unhash(root_sb->sb_dirent->d_inode);
-	root_sb->sb_dirent->d_inode = NULL;
-
-out_dirent:
-	dirent_put(root_sb->sb_dirent);
-	root_sb->sb_dirent = NULL;
+	super_block_dirent_release(root_sb);
 
 out_sb:
 	super_block_put(root_sb);

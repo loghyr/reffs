@@ -38,4 +38,7 @@ struct super_block *super_block_find(uint64_t id);
 struct super_block *super_block_get(struct super_block *sb);
 void super_block_put(struct super_block *sb);
 
+int super_block_dirent_create(struct super_block *sb);
+void super_block_dirent_release(struct super_block *sb);
+
 #endif /* _REFFS_SB_H */

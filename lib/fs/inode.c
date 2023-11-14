@@ -31,15 +31,6 @@ static void inode_free_rcu(struct rcu_head *rcu)
 	free(inode);
 }
 
-static void inode_release(struct urcu_ref *ref)
-{
-	struct inode *inode = caa_container_of(ref, struct inode, i_ref);
-
-	super_block_put(inode->i_sb);
-
-	call_rcu(&inode->i_rcu, inode_free_rcu);
-}
-
 bool inode_unhash(struct inode *inode)
 {
 	int ret;
@@ -53,11 +44,20 @@ bool inode_unhash(struct inode *inode)
 	if (b) {
 		ret = cds_lfht_del(inode->i_sb->sb_inodes, &inode->i_node);
 		assert(!ret);
-		inode_put(inode);
 		return true;
 	}
 
 	return false;
+}
+
+static void inode_release(struct urcu_ref *ref)
+{
+	struct inode *inode = caa_container_of(ref, struct inode, i_ref);
+
+	inode_unhash(inode);
+	super_block_put(inode->i_sb);
+
+	call_rcu(&inode->i_rcu, inode_free_rcu);
 }
 
 struct inode *inode_alloc(struct super_block *sb, uint64_t ino)

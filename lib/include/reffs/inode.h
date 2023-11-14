@@ -53,9 +53,6 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino);
 struct inode *inode_find(struct super_block *sb, uint64_t ino);
 struct inode *inode_get(struct inode *inode);
 void inode_put(struct inode *inode);
-
-bool inode_unhash(
-	struct inode *
-		inode); /* The inode will stick in the sb ht until is is unhashed. */
+bool inode_unhash(struct inode *inode);
 
 #endif /* _REFFS_INODE_H */
