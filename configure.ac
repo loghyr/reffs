@@ -50,8 +50,9 @@ AX_PTHREAD([], [AC_MSG_ERROR([Could not configure pthread support])])
 AC_CHECK_LIB([pthread], [pthread_create], , [AC_MSG_ERROR([Please install libpthread])])
 AC_CHECK_LIB([ev], [ev_run], , [AC_MSG_ERROR([Please install libev])])
 AC_CHECK_LIB([xxhash], [XXH3_64bits], , [AC_MSG_ERROR([Please install xxhash-devel])])
+AC_CHECK_LIB([fuse], [fuse_main], , [AC_MSG_ERROR([Please install fuse])])
 
-LIBS="${PTHREAD_LIBS} ${TIRPC_LIBS} ${XXHASH_LIBS} ${URCU_LIBS} ${URCU_CDS_LIBS} ${LIBEV} ${JEMALLOC_LIBS} ${LIBS}"
+LIBS="${PTHREAD_LIBS} ${TIRPC_LIBS} ${FUSE_LIBS} ${XXHASH_LIBS} ${URCU_LIBS} ${URCU_CDS_LIBS} ${LIBEV} ${JEMALLOC_LIBS} ${LIBS}"
 CFLAGS="${CFLAGS} ${PTHREAD_CFLAGS} ${TIRPC_CFLAGS}"
 
 AC_ARG_ENABLE(asan,
@@ -126,7 +127,7 @@ AC_ARG_ENABLE([debug],
     [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
     [enable_debug=$enableval], [enable_debug=no])
 
-COMMON_FLAGS="${CFLAGS} -DRCU_MEMBARRIER=1 -Wall -Wextra -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
+COMMON_FLAGS="${CFLAGS} -D_FILE_OFFSET_BITS=64 -DRCU_MEMBARRIER=1 -Wall -Wextra -Wformat=2 -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
 if test "x$enable_debug}" = "xyes"; then
 	CFLAGS="${COMMON_FLAGS} -O2 -DNDEBUG"
 else

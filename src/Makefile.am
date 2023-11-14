@@ -9,7 +9,8 @@ AM_CFLAGS = \
 	-I$(TIRPC_CFLAGS)
 
 LDADD = \
-	../lib/xdr/libreffs_xdr.la \
+	$(top_srcdir)/lib/xdr/libreffs_xdr.la \
+	$(top_srcdir)/lib/fs/libreffs_fs.la \
 	$(TIRPC_LIBS)
 
 recho_ev_SOURCES = recho_ev.c
@@ -21,7 +22,11 @@ recho_cl_LDADD = $(LDADD)
 reffs_SOURCES = reffs.c
 reffs_LDADD = $(LDADD)
 
+reffs_fuse_SOURCES = reffs_fuse.c
+reffs_fuse_LDADD = $(LDADD)
+
 bin_PROGRAMS = \
-	recho_ev \
 	recho_cl \
+	recho_ev \
+	reffs_fuse \
 	reffs
