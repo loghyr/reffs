@@ -71,7 +71,7 @@ static struct name_match *find_matching_directory_entry(const char *path,
 	struct super_block *sb;
 	struct name_match *nm;
 	char *str;
-	char *buf;
+	char *buf = NULL;
 	char *next = NULL;
 	char *last;
 	bool exists;
@@ -130,9 +130,9 @@ static struct name_match *find_matching_directory_entry(const char *path,
 		}
 	} while (next);
 
+found:
 	free(buf);
 
-found:
 	super_block_put(sb);
 	return nm;
 }
