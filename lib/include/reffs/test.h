@@ -17,7 +17,7 @@
 #else
 #define assert_ptr(expr, ...)                                                  \
 	do {                                                                   \
-		if (expr == 0) {                                               \
+		if ((expr) == 0) {                                             \
 			fprintf(stderr, "%s:%d assert %s", __func__, __LINE__, \
 				#expr);                                        \
 			fprintf(stderr, __VA_ARGS__);                          \
@@ -27,7 +27,7 @@
 	} while (0)
 #define assert_status(expr, ...)                                           \
 	do {                                                               \
-		if (expr != 0) {                                           \
+		if ((expr) != 0) {                                         \
 			fprintf(stderr, "%s:%d assert status %s is not 0", \
 				__func__, __LINE__, #expr);                \
 			fprintf(stderr, __VA_ARGS__);                      \
@@ -39,7 +39,7 @@
 
 #define verify(expr)                                                   \
 	do {                                                           \
-		if (expr == 0) {                                       \
+		if ((expr) == 0) {                                     \
 			fprintf(stderr, "%s:%d assert %s\n", __func__, \
 				__LINE__, #expr);                      \
 			abort();                                       \
