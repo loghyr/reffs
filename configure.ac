@@ -131,7 +131,7 @@ COMMON_FLAGS="${CFLAGS} -D_FILE_OFFSET_BITS=64 -DRCU_MEMBARRIER=1 -Wall -Wextra 
 if test "x$enable_debug}" = "xyes"; then
 	CFLAGS="${COMMON_FLAGS} -O2 -DNDEBUG"
 else
-	CFLAGS="${COMMON_FLAGS} -g -Og"
+	CFLAGS="${COMMON_FLAGS} -g -Og -O0"
 fi
 
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])
