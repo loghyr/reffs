@@ -26,58 +26,24 @@
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
 #include "reffs/super_block.h"
+#include "reffs/inode.h"
+#include "reffs/fuse.h"
 
 struct super_block *root_sb;
-
-// Remove once this gets fleshed out
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-static int do_fuse_getattr(const char *path, struct stat *st)
-{
-	return 0;
-}
-
-static int do_fuse_readdir(const char *path, void *buffer,
-			   fuse_fill_dir_t filler, off_t offset,
-			   struct fuse_file_info *fi)
-{
-	return 0;
-}
-
-static int do_fuse_read(const char *path, char *buffer, size_t size,
-			off_t offset, struct fuse_file_info *fi)
-{
-	return 0;
-}
-
-static int do_fuse_mkdir(const char *path, mode_t mode)
-{
-	return 0;
-}
-
-static int do_fuse_mknod(const char *path, mode_t mode, dev_t rdev)
-{
-	return 0;
-}
-
-static int do_fuse_write(const char *path, const char *buffer, size_t size,
-			 off_t offset, struct fuse_file_info *info)
-{
-	return size;
-}
 
 static struct fuse_operations operations = {
 	.getattr = do_fuse_getattr,
 	.readdir = do_fuse_readdir,
-	.read = do_fuse_read,
+	// .read = do_fuse_read,
 	.mkdir = do_fuse_mkdir,
-	.mknod = do_fuse_mknod,
-	.write = do_fuse_write,
+	// .mknod = do_fuse_mknod,
+	// .write = do_fuse_write,
 };
 
 int main(int argc, char *argv[])
 {
 	int ret;
+	struct inode *inode;
 
 	rcu_register_thread();
 
@@ -92,9 +58,23 @@ int main(int argc, char *argv[])
 	if (ret)
 		goto out_sb;
 
+	inode = inode_get(root_sb->sb_dirent->d_inode);
+
+	inode->i_uid = getuid();
+	inode->i_gid = getgid();
+	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
+	inode->i_atime = inode->i_atime;
+	inode->i_btime = inode->i_btime;
+	inode->i_ctime = inode->i_ctime;
+	inode->i_mode = S_IFDIR | 0755;
+	inode->i_size = 4096;
+	inode->i_used = 8;
+	inode->i_nlink = 2;
+
 	ret = fuse_main(argc, argv, &operations, NULL);
 
 	super_block_dirent_release(root_sb);
+	inode_put(inode);
 
 out_sb:
 	super_block_put(root_sb);

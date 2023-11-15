@@ -5,7 +5,9 @@ refsincludedir = $(includedir)/reffs
 
 refsinclude_HEADERS = \
 	dirent.h \
+	fuse.h \
 	inode.h \
 	log.h \
 	super_block.h \
-	test.h
+	test.h \
+	time.h

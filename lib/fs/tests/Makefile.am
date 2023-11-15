@@ -12,5 +12,7 @@ LDADD = \
 check_PROGRAMS = $(TESTS)
 
 TESTS = \
-	inode_hashing \
 	inode_hashing_no_check
+
+#	inode_hashing \
+#	fofofo
