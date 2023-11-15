@@ -26,6 +26,8 @@ struct super_block {
 	struct dirent *sb_dirent;
 	uint64_t sb_id;
 
+	uint64_t sb_next_ino;
+
 	uint8_t sb_uuid[REFFS_UUID_SIZE];
 
 #define SB_IS_READ_ONLY (1ULL << 0)
