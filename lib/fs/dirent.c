@@ -14,6 +14,20 @@
 
 CDS_LIST_HEAD(dirent_list);
 
+static void dirent_parent_release(struct dirent *de)
+{
+	struct dirent *parent;
+
+	rcu_read_lock();
+	parent = rcu_xchg_pointer(&de->d_parent, NULL);
+	if (parent) {
+		uatomic_dec(&parent->d_inode->i_nlink);
+		cds_list_del_init(&de->d_siblings);
+		dirent_put(parent);
+	}
+	rcu_read_unlock();
+}
+
 static void dirent_free_rcu(struct rcu_head *rcu)
 {
 	struct dirent *de = caa_container_of(rcu, struct dirent, d_rcu);
@@ -29,11 +43,7 @@ static void dirent_release(struct urcu_ref *ref)
 	if (de->d_inode)
 		inode_put(de->d_inode);
 
-	if (de->d_parent) {
-		uatomic_dec(&de->d_parent->d_inode->i_nlink);
-		cds_list_del(&de->d_siblings);
-		dirent_put(de->d_parent);
-	}
+	dirent_parent_release(de);
 
 	call_rcu(&de->d_rcu, dirent_free_rcu);
 }
@@ -111,4 +121,22 @@ void dirent_put(struct dirent *de)
 		return;
 
 	urcu_ref_put(&de->d_ref, dirent_release);
+}
+
+void dirent_children_release(struct dirent *parent)
+{
+	struct dirent *de;
+
+	if (!parent)
+		return;
+
+	rcu_read_lock();
+	while (!cds_list_empty(&parent->d_children)) {
+		de = cds_list_first_entry(&parent->d_children, struct dirent,
+					  d_siblings);
+		dirent_parent_release(de);
+		dirent_children_release(de);
+		dirent_put(de);
+	}
+	rcu_read_unlock();
 }

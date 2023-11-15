@@ -37,5 +37,6 @@ struct dirent *dirent_find(struct dirent *parent, bool case_sensitive,
 			   char *name);
 struct dirent *dirent_get(struct dirent *de);
 void dirent_put(struct dirent *de);
+void dirent_children_release(struct dirent *de);
 
 #endif /* _REFFS_DIRENT_H */

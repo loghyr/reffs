@@ -74,10 +74,15 @@ int super_block_dirent_create(struct super_block *sb)
 
 void super_block_dirent_release(struct super_block *sb)
 {
-	if (sb->sb_dirent) {
-		dirent_put(sb->sb_dirent);
-		sb->sb_dirent = NULL;
+	struct dirent *de;
+
+	rcu_read_lock();
+	de = rcu_xchg_pointer(&sb->sb_dirent, NULL);
+	if (de) {
+		dirent_children_release(de);
+		dirent_put(de);
 	}
+	rcu_read_unlock();
 }
 
 struct super_block *super_block_alloc(uint64_t id)
