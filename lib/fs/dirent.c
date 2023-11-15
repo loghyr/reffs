@@ -5,6 +5,9 @@
 
 #include "reffs/dirent.h"
 #include "reffs/log.h"
+#include "reffs/test.h"
+#include <unistd.h>
+#include <sys/stat.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
@@ -25,6 +28,12 @@ static void dirent_release(struct urcu_ref *ref)
 
 	if (de->d_inode)
 		inode_put(de->d_inode);
+
+	if (de->d_parent) {
+		uatomic_dec(&de->d_parent->d_inode->i_nlink);
+		cds_list_del(&de->d_siblings);
+		dirent_put(de->d_parent);
+	}
 
 	call_rcu(&de->d_rcu, dirent_free_rcu);
 }
@@ -48,8 +57,13 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name)
 
 	CDS_INIT_LIST_HEAD(&de->d_children);
 	CDS_INIT_LIST_HEAD(&de->d_siblings);
-	if (parent)
+	if (parent) {
+		de->d_parent = dirent_get(parent);
+		verify(parent->d_inode->i_mode & S_IFDIR);
+		uatomic_inc(&parent->d_inode->i_nlink);
 		cds_list_add_rcu(&de->d_siblings, &parent->d_children);
+	}
+
 	urcu_ref_init(&de->d_ref);
 
 	return de;

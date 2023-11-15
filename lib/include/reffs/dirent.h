@@ -23,6 +23,8 @@ struct dirent {
 	struct cds_list_head d_siblings;
 	struct cds_list_head d_children;
 
+	struct dirent *d_parent;
+
 	char *d_name;
 	struct inode *d_inode;
 };
