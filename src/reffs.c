@@ -17,7 +17,6 @@
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
-#include "reffs.h"
 
 int main(int __attribute__((unused)) argc,
 	 char __attribute__((unused)) * argv[])

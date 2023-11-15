@@ -3,5 +3,3 @@
 
 SUBDIRS = reffs
 
-include_HEADERS = \
-	reffs.h

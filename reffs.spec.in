@@ -96,7 +96,6 @@ rm -f %{buildroot}/%{_libdir}/*.la
 %defattr(-,root,root)
 %doc README.md COPYING CONTRIBUTING INSTALL LICENSES/*
 %{_bindir}/*
-%{_includedir}/reffs.h
 %{_includedir}/reffs/*
 %{_libdir}/*.so*
 %{_libdir}/*.a

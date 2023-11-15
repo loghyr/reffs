@@ -25,7 +25,6 @@
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
-#include "reffs.h"
 #include "reffs/super_block.h"
 
 struct super_block *root_sb;
