@@ -71,6 +71,13 @@ int main(int argc, char *argv[])
 	inode->i_used = 8;
 	inode->i_nlink = 2;
 
+	do_fuse_mkdir("/foo", 0755);
+	do_fuse_mkdir("/foo/bar", 0640);
+	do_fuse_mkdir("/foo/garbo", 0640);
+	sleep(1);
+	do_fuse_mkdir("/hello", 0755);
+	do_fuse_mkdir("/hello/nurse", 0755);
+
 	ret = fuse_main(argc, argv, &operations, NULL);
 
 	super_block_dirent_release(root_sb);
