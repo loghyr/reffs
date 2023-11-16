@@ -37,6 +37,7 @@ static struct fuse_operations operations = {
 	// .read = reffs_fuse_read,
 	.mkdir = reffs_fuse_mkdir,
 	// .mknod = reffs_fuse_mknod,
+	.rmdir = reffs_fuse_rmdir,
 	// .write = reffs_fuse_write,
 };
 
@@ -74,11 +75,18 @@ int main(int argc, char *argv[])
 	reffs_fuse_mkdir("/foo", 0755);
 	reffs_fuse_mkdir("/foo/bar", 0640);
 	reffs_fuse_mkdir("/foo/garbo", 0640);
-	sleep(1);
+	reffs_fuse_mkdir("/foo/nurse", 0640);
 	reffs_fuse_mkdir("/hello", 0755);
 	reffs_fuse_mkdir("/hello/nurse", 0755);
 
 	ret = fuse_main(argc, argv, &operations, NULL);
+
+	reffs_fuse_rmdir("/foo/bar");
+	reffs_fuse_rmdir("/foo/garbo");
+	reffs_fuse_rmdir("/foo/nurse");
+	reffs_fuse_rmdir("/foo");
+	reffs_fuse_rmdir("/hello/nurse");
+	reffs_fuse_rmdir("/hello");
 
 	super_block_dirent_release(root_sb);
 	inode_put(inode);

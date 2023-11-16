@@ -63,7 +63,7 @@ static bool name_is_child(struct name_match *nm, char *name)
 // Very chatty
 // Need to clean up
 //
-#define MATCH_LAST_COMPONENT (true)
+#define LAST_COMPONENT_IS_MATCH (true)
 #define LAST_COMPONENT_IS_NEW (false)
 static struct name_match *find_matching_directory_entry(const char *path,
 							bool match_end)
@@ -142,11 +142,11 @@ int reffs_fuse_getattr(const char *path, struct stat *st)
 	struct name_match *nm;
 	struct inode *inode;
 
-	nm = find_matching_directory_entry(path, MATCH_LAST_COMPONENT);
+	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
 	if (!nm)
 		return -ENOENT;
 
-	inode = inode_get(nm->nm_dirent->d_inode);
+	inode = nm->nm_dirent->d_inode;
 
 	st->st_uid = inode->i_uid;
 	st->st_gid = inode->i_gid;
@@ -160,8 +160,6 @@ int reffs_fuse_getattr(const char *path, struct stat *st)
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
-	inode_put(inode);
-
 	return 0;
 }
 
@@ -174,7 +172,7 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	filler(buffer, ".", NULL, 0);
 	filler(buffer, "..", NULL, 0);
 
-	nm = find_matching_directory_entry(path, MATCH_LAST_COMPONENT);
+	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
 	if (!nm)
 		return -ENOENT;
 
@@ -198,7 +196,7 @@ int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
 int reffs_fuse_mkdir(const char *path, mode_t mode)
 {
 	struct name_match *nm;
-	struct inode *inode;
+	struct inode *inode = NULL;
 	struct super_block *sb;
 	struct dirent *de;
 
@@ -208,9 +206,23 @@ int reffs_fuse_mkdir(const char *path, mode_t mode)
 	if (!nm)
 		return -ENOENT;
 
-	inode = inode_get(nm->nm_dirent->d_inode);
+	inode = nm->nm_dirent->d_inode;
 	sb = inode->i_sb;
 
+	if (!(inode->i_mode & S_IFDIR)) {
+		ret = -ENOTDIR;
+		goto out;
+	}
+
+	if (!strcmp(nm->nm_name, "..")) {
+		ret = -ENOTEMPTY;
+		goto out;
+	}
+
+	/*
+	 * Is it possible for the parent to be deleted whilst we add this node?
+	 * Consider an empty directory and a race...
+	 */
 	de = dirent_alloc(nm->nm_dirent, nm->nm_name);
 	if (!de) {
 		ret = -ENOENT;
@@ -236,10 +248,9 @@ int reffs_fuse_mkdir(const char *path, mode_t mode)
 	de->d_inode->i_nlink = 2;
 
 out:
+	// Note: Where does the reference to de go?
 	dirent_put(nm->nm_dirent);
 	free(nm);
-
-	inode_put(inode);
 
 	return ret;
 }
@@ -247,6 +258,47 @@ out:
 int reffs_fuse_mknod(const char *path, mode_t mode, dev_t rdev)
 {
 	return 0;
+}
+
+int reffs_fuse_rmdir(const char *path)
+{
+	struct name_match *nm;
+	struct inode *inode = NULL;
+
+	int ret = 0;
+
+	if (!strcmp("/", path))
+		return -EBUSY;
+
+	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
+	if (!nm)
+		return -ENOENT;
+
+	inode = nm->nm_dirent->d_inode;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		ret = -ENOTDIR;
+		goto out;
+	}
+
+	// This raises that we may need to lock here
+	if (!cds_list_empty(&(nm->nm_dirent->d_children))) {
+		ret = -ENOTEMPTY;
+		goto out;
+	}
+
+	if (!strcmp(nm->nm_name, "..")) {
+		ret = -ENOTEMPTY;
+		goto out;
+	}
+
+	dirent_children_release(nm->nm_dirent);
+
+out:
+	dirent_put(nm->nm_dirent);
+	free(nm);
+
+	return ret;
 }
 
 int reffs_fuse_write(const char *path, const char *buffer, size_t size,

@@ -15,6 +15,7 @@ int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
 		    struct fuse_file_info *fi);
 int reffs_fuse_mkdir(const char *path, mode_t mode);
 int reffs_fuse_mknod(const char *path, mode_t mode, dev_t rdev);
+int reffs_fuse_rmdir(const char *path);
 int reffs_fuse_write(const char *path, const char *buffer, size_t size,
 		     off_t offset, struct fuse_file_info *info);
 
