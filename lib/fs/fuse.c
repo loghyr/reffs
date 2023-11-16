@@ -137,7 +137,7 @@ found:
 	return nm;
 }
 
-int do_fuse_getattr(const char *path, struct stat *st)
+int reffs_fuse_getattr(const char *path, struct stat *st)
 {
 	struct name_match *nm;
 	struct inode *inode;
@@ -165,8 +165,8 @@ int do_fuse_getattr(const char *path, struct stat *st)
 	return 0;
 }
 
-int do_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
-		    off_t offset, struct fuse_file_info *fi)
+int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
+		       off_t offset, struct fuse_file_info *fi)
 {
 	struct name_match *nm;
 	struct dirent *de;
@@ -189,13 +189,13 @@ int do_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	return 0;
 }
 
-int do_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
-		 struct fuse_file_info *fi)
+int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
+		    struct fuse_file_info *fi)
 {
 	return 0;
 }
 
-int do_fuse_mkdir(const char *path, mode_t mode)
+int reffs_fuse_mkdir(const char *path, mode_t mode)
 {
 	struct name_match *nm;
 	struct inode *inode;
@@ -244,13 +244,13 @@ out:
 	return ret;
 }
 
-int do_fuse_mknod(const char *path, mode_t mode, dev_t rdev)
+int reffs_fuse_mknod(const char *path, mode_t mode, dev_t rdev)
 {
 	return 0;
 }
 
-int do_fuse_write(const char *path, const char *buffer, size_t size,
-		  off_t offset, struct fuse_file_info *info)
+int reffs_fuse_write(const char *path, const char *buffer, size_t size,
+		     off_t offset, struct fuse_file_info *info)
 {
 	return size;
 }
