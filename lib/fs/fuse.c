@@ -198,7 +198,7 @@ int reffs_fuse_mkdir(const char *path, mode_t mode)
 	struct name_match *nm;
 	struct inode *inode = NULL;
 	struct super_block *sb;
-	struct dirent *de;
+	struct dirent *de = NULL;
 
 	int ret = 0;
 
@@ -231,7 +231,7 @@ int reffs_fuse_mkdir(const char *path, mode_t mode)
 
 	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1));
 	if (!de->d_inode) {
-		dirent_put(de);
+		dirent_parent_release(de);
 		ret = -ENOENT;
 		goto out;
 	}
@@ -248,7 +248,7 @@ int reffs_fuse_mkdir(const char *path, mode_t mode)
 	de->d_inode->i_nlink = 2;
 
 out:
-	// Note: Where does the reference to de go?
+	dirent_put(de);
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
@@ -292,6 +292,7 @@ int reffs_fuse_rmdir(const char *path)
 		goto out;
 	}
 
+	dirent_parent_release(nm->nm_dirent);
 	dirent_children_release(nm->nm_dirent);
 
 out:

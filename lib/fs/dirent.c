@@ -14,7 +14,7 @@
 
 CDS_LIST_HEAD(dirent_list);
 
-static void dirent_parent_release(struct dirent *de)
+void dirent_parent_release(struct dirent *de)
 {
 	struct dirent *parent;
 
@@ -24,6 +24,7 @@ static void dirent_parent_release(struct dirent *de)
 		uatomic_dec(&parent->d_inode->i_nlink);
 		cds_list_del_init(&de->d_siblings);
 		dirent_put(parent);
+		dirent_put(de);
 	}
 	rcu_read_unlock();
 }
@@ -65,6 +66,8 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name)
 		return NULL;
 	}
 
+	urcu_ref_init(&de->d_ref);
+
 	CDS_INIT_LIST_HEAD(&de->d_children);
 	CDS_INIT_LIST_HEAD(&de->d_siblings);
 	if (parent) {
@@ -72,9 +75,8 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name)
 		verify(parent->d_inode->i_mode & S_IFDIR);
 		uatomic_inc(&parent->d_inode->i_nlink);
 		cds_list_add_rcu(&de->d_siblings, &parent->d_children);
+		dirent_get(de); // One for the linked list
 	}
-
-	urcu_ref_init(&de->d_ref);
 
 	return de;
 }

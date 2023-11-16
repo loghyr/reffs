@@ -33,10 +33,11 @@ struct dirent {
 #define REFFS_STRING_CASE_INSENSITIVE (false)
 
 struct dirent *dirent_alloc(struct dirent *parent, char *name);
+void dirent_children_release(struct dirent *de);
 struct dirent *dirent_find(struct dirent *parent, bool case_sensitive,
 			   char *name);
 struct dirent *dirent_get(struct dirent *de);
+void dirent_parent_release(struct dirent *de);
 void dirent_put(struct dirent *de);
-void dirent_children_release(struct dirent *de);
 
 #endif /* _REFFS_DIRENT_H */
