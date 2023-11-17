@@ -34,6 +34,8 @@
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
+enum reffs_text_case fuse_rtc = reffs_text_case_sensitive;
+
 struct name_match {
 	struct dirent *nm_dirent;
 	char *nm_name;
@@ -44,10 +46,18 @@ static bool name_is_child(struct name_match *nm, char *name)
 	bool exists = false;
 	struct dirent *de;
 
+	reffs_strng_compare cmp;
+
+	// In case we refactor
+	if (fuse_rtc == reffs_text_case_insensitive)
+		cmp = strcasecmp;
+	else
+		cmp = strcmp;
+
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children,
 				    d_siblings) {
-		if (!strcmp(de->d_name, name)) {
+		if (!cmp(de->d_name, name)) {
 			exists = true;
 			dirent_put(nm->nm_dirent);
 			nm->nm_dirent = dirent_get(de);
@@ -223,7 +233,7 @@ int reffs_fuse_mkdir(const char *path, mode_t mode)
 	 * Is it possible for the parent to be deleted whilst we add this node?
 	 * Consider an empty directory and a race...
 	 */
-	de = dirent_alloc(nm->nm_dirent, nm->nm_name);
+	de = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth);
 	if (!de) {
 		ret = -ENOENT;
 		goto out;
@@ -231,7 +241,7 @@ int reffs_fuse_mkdir(const char *path, mode_t mode)
 
 	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1));
 	if (!de->d_inode) {
-		dirent_parent_release(de);
+		dirent_parent_release(de, reffs_life_action_death);
 		ret = -ENOENT;
 		goto out;
 	}
@@ -239,9 +249,9 @@ int reffs_fuse_mkdir(const char *path, mode_t mode)
 	de->d_inode->i_uid = getuid();
 	de->d_inode->i_gid = getgid();
 	clock_gettime(CLOCK_REALTIME, &de->d_inode->i_mtime);
-	de->d_inode->i_atime = inode->i_atime;
-	de->d_inode->i_btime = inode->i_btime;
-	de->d_inode->i_ctime = inode->i_ctime;
+	de->d_inode->i_atime = inode->i_mtime;
+	de->d_inode->i_btime = inode->i_mtime;
+	de->d_inode->i_ctime = inode->i_mtime;
 	de->d_inode->i_mode = S_IFDIR | mode;
 	de->d_inode->i_size = 4096;
 	de->d_inode->i_used = 8;
@@ -292,8 +302,10 @@ int reffs_fuse_rmdir(const char *path)
 		goto out;
 	}
 
-	dirent_parent_release(nm->nm_dirent);
-	dirent_children_release(nm->nm_dirent);
+	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
+
+	// FIXME: This should be a no-op!
+	dirent_children_release(nm->nm_dirent, reffs_life_action_death);
 
 out:
 	dirent_put(nm->nm_dirent);

@@ -3,31 +3,18 @@
  * SPDX-License-Identifier: GPL-2.0+
  */
 
-#include "reffs/dirent.h"
-#include "reffs/log.h"
-#include "reffs/test.h"
 #include <unistd.h>
 #include <sys/stat.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
 
+#include "reffs/dirent.h"
+#include "reffs/log.h"
+#include "reffs/test.h"
+#include "reffs/types.h"
+
 CDS_LIST_HEAD(dirent_list);
-
-void dirent_parent_release(struct dirent *de)
-{
-	struct dirent *parent;
-
-	rcu_read_lock();
-	parent = rcu_xchg_pointer(&de->d_parent, NULL);
-	if (parent) {
-		uatomic_dec(&parent->d_inode->i_nlink);
-		cds_list_del_init(&de->d_siblings);
-		dirent_put(parent);
-		dirent_put(de);
-	}
-	rcu_read_unlock();
-}
 
 static void dirent_free_rcu(struct rcu_head *rcu)
 {
@@ -44,12 +31,15 @@ static void dirent_release(struct urcu_ref *ref)
 	if (de->d_inode)
 		inode_put(de->d_inode);
 
-	dirent_parent_release(de);
+	// Basically trying to prep for when we are no longer a RAM disk!
+	dirent_parent_release(de, reffs_life_action_unload);
 
 	call_rcu(&de->d_rcu, dirent_free_rcu);
 }
 
-struct dirent *dirent_alloc(struct dirent *parent, char *name)
+// name should be utf8
+struct dirent *dirent_alloc(struct dirent *parent, char *name,
+			    enum reffs_life_action rla)
 {
 	struct dirent *de;
 
@@ -76,21 +66,25 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name)
 		uatomic_inc(&parent->d_inode->i_nlink);
 		cds_list_add_rcu(&de->d_siblings, &parent->d_children);
 		dirent_get(de); // One for the linked list
+
+		if (rla == reffs_life_action_birth)
+			inode_update_times_now(
+				parent->d_inode,
+				REFFS_INODE_UPDATE_CTIME |
+					REFFS_INODE_UPDATE_MTIME);
 	}
 
 	return de;
 }
 
-typedef int (*reffs_strng_compare)(const char *s1, const char *s2);
-
-struct dirent *dirent_find(struct dirent *parent, bool case_sensitive,
+struct dirent *dirent_find(struct dirent *parent, enum reffs_text_case rtc,
 			   char *name)
 {
 	struct dirent *de = NULL;
 	struct dirent *tmp;
 	reffs_strng_compare cmp;
 
-	if (case_sensitive)
+	if (rtc == reffs_text_case_insensitive)
 		cmp = strcasecmp;
 	else
 		cmp = strcmp;
@@ -125,7 +119,7 @@ void dirent_put(struct dirent *de)
 	urcu_ref_put(&de->d_ref, dirent_release);
 }
 
-void dirent_children_release(struct dirent *parent)
+void dirent_children_release(struct dirent *parent, enum reffs_life_action rla)
 {
 	struct dirent *de;
 
@@ -136,9 +130,30 @@ void dirent_children_release(struct dirent *parent)
 	while (!cds_list_empty(&parent->d_children)) {
 		de = cds_list_first_entry(&parent->d_children, struct dirent,
 					  d_siblings);
-		dirent_parent_release(de);
-		dirent_children_release(de);
+		dirent_parent_release(de, rla);
+		dirent_children_release(de, rla);
 		dirent_put(de);
+	}
+	rcu_read_unlock();
+}
+
+void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
+{
+	struct dirent *parent;
+
+	rcu_read_lock();
+	parent = rcu_xchg_pointer(&de->d_parent, NULL);
+	if (parent) {
+		uatomic_dec(&parent->d_inode->i_nlink);
+		cds_list_del_init(&de->d_siblings);
+		dirent_put(parent);
+		dirent_put(de);
+
+		if (rla == reffs_life_action_death)
+			inode_update_times_now(
+				parent->d_inode,
+				REFFS_INODE_UPDATE_CTIME |
+					REFFS_INODE_UPDATE_MTIME);
 	}
 	rcu_read_unlock();
 }

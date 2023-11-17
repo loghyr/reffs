@@ -56,9 +56,10 @@ static void super_block_release(struct urcu_ref *ref)
 	call_rcu(&sb->sb_rcu, super_block_free_rcu);
 }
 
-int super_block_dirent_create(struct super_block *sb)
+int super_block_dirent_create(struct super_block *sb,
+			      enum reffs_life_action rla)
 {
-	sb->sb_dirent = dirent_alloc(NULL, "/");
+	sb->sb_dirent = dirent_alloc(NULL, "/", rla);
 	if (!sb->sb_dirent)
 		return ENOMEM;
 
@@ -72,14 +73,15 @@ int super_block_dirent_create(struct super_block *sb)
 	return 0;
 }
 
-void super_block_dirent_release(struct super_block *sb)
+void super_block_dirent_release(struct super_block *sb,
+				enum reffs_life_action rla)
 {
 	struct dirent *de;
 
 	rcu_read_lock();
 	de = rcu_xchg_pointer(&sb->sb_dirent, NULL);
 	if (de) {
-		dirent_children_release(de);
+		dirent_children_release(de, rla);
 		dirent_put(de);
 	}
 	rcu_read_unlock();

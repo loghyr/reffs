@@ -145,3 +145,19 @@ void inode_put(struct inode *inode)
 
 	urcu_ref_put(&inode->i_ref, inode_release);
 }
+
+void inode_update_times_now(struct inode *inode, uint64_t flags)
+{
+	struct timespec now;
+
+	clock_gettime(CLOCK_REALTIME, &now);
+
+	if (flags & REFFS_INODE_UPDATE_ATIME)
+		inode->i_atime = now;
+
+	if (flags & REFFS_INODE_UPDATE_CTIME)
+		inode->i_ctime = now;
+
+	if (flags & REFFS_INODE_UPDATE_MTIME)
+		inode->i_mtime = now;
+}

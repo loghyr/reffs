@@ -13,6 +13,7 @@
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
 
+#include "reffs/types.h"
 #include "reffs/inode.h"
 
 #define REFFS_MAX_NAME (255)
@@ -29,15 +30,14 @@ struct dirent {
 	struct inode *d_inode;
 };
 
-#define REFFS_STRING_CASE_SENSITIVE (true)
-#define REFFS_STRING_CASE_INSENSITIVE (false)
+struct dirent *dirent_alloc(struct dirent *parent, char *name,
+			    enum reffs_life_action rla);
 
-struct dirent *dirent_alloc(struct dirent *parent, char *name);
-void dirent_children_release(struct dirent *de);
-struct dirent *dirent_find(struct dirent *parent, bool case_sensitive,
+void dirent_children_release(struct dirent *de, enum reffs_life_action rla);
+struct dirent *dirent_find(struct dirent *parent, enum reffs_text_case rtc,
 			   char *name);
 struct dirent *dirent_get(struct dirent *de);
-void dirent_parent_release(struct dirent *de);
+void dirent_parent_release(struct dirent *de, enum reffs_life_action rla);
 void dirent_put(struct dirent *de);
 
 #endif /* _REFFS_DIRENT_H */

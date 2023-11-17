@@ -55,7 +55,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	ret = super_block_dirent_create(root_sb);
+	ret = super_block_dirent_create(root_sb, reffs_life_action_birth);
 	if (ret)
 		goto out_sb;
 
@@ -88,7 +88,7 @@ int main(int argc, char *argv[])
 	reffs_fuse_rmdir("/hello/nurse");
 	reffs_fuse_rmdir("/hello");
 
-	super_block_dirent_release(root_sb);
+	super_block_dirent_release(root_sb, reffs_life_action_death);
 	inode_put(inode);
 
 out_sb:

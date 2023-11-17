@@ -55,4 +55,9 @@ struct inode *inode_get(struct inode *inode);
 void inode_put(struct inode *inode);
 bool inode_unhash(struct inode *inode);
 
+#define REFFS_INODE_UPDATE_ATIME (1ULL << 0)
+#define REFFS_INODE_UPDATE_CTIME (1ULL << 1)
+#define REFFS_INODE_UPDATE_MTIME (1ULL << 2)
+void inode_update_times_now(struct inode *inode, uint64_t flags);
+
 #endif /* _REFFS_INODE_H */
