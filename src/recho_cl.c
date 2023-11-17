@@ -25,6 +25,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <getopt.h>
+#include <assert.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/wfcqueue.h>

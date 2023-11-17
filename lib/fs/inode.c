@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <assert.h>
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/log.h"
@@ -43,6 +44,8 @@ bool inode_unhash(struct inode *inode)
 	b = state & INODE_IS_HASHED;
 	if (b) {
 		ret = cds_lfht_del(inode->i_sb->sb_inodes, &inode->i_node);
+		if (ret)
+			LOG("ret = %d", ret);
 		assert(!ret);
 		return true;
 	}

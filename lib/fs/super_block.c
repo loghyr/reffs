@@ -11,6 +11,7 @@
 #include <urcu/ref.h>
 #include <urcu/rculfhash.h>
 #include <errno.h>
+#include <assert.h>
 
 CDS_LIST_HEAD(super_block_list);
 
@@ -28,6 +29,8 @@ static void super_block_remove_all_inodes(struct cds_lfht *ht)
 	rcu_read_unlock();
 
 	assert(!count);
+	if (count)
+		LOG("count = %lu", count);
 }
 
 static void super_block_free_rcu(struct rcu_head *rcu)

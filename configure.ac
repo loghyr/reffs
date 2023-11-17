@@ -127,15 +127,23 @@ AC_ARG_ENABLE([debug],
     [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
     [enable_debug=$enableval], [enable_debug=no])
 
+AC_ARG_ENABLE([noopt],
+    [AS_HELP_STRING([--enable-noopt], [Enable no optimizations])],
+    [enable_noopt=$enableval], [enable_noopt=no])
+
 COMMON_FLAGS="${CFLAGS} -D_FILE_OFFSET_BITS=64 -DRCU_MEMBARRIER=1 -Wall -Wextra -Wformat=2 -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
-if test "x$enable_debug}" = "xyes"; then
-	CFLAGS="${COMMON_FLAGS} -O2 -DNDEBUG"
+if test "x${enable_debug}" = "xyes"; then
+if test "x${enable_noopt}" = "xyes"; then
+	CFLAGS="${COMMON_FLAGS} -O0 -DNDEBUG"
 else
-#if !defined _FORTIFY_SOURCE
+	CFLAGS="${COMMON_FLAGS} -O2 -DNDEBUG"
+fi
+else
+if test "x${enable_noopt}" = "xyes"; then
 	CFLAGS="${COMMON_FLAGS} -g -O0"
-#else
+else
 	CFLAGS="${COMMON_FLAGS} -g -Og"
-#endif
+fi
 fi
 
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])
