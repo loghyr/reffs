@@ -26,6 +26,8 @@ struct dirent {
 
 	struct dirent *d_parent;
 
+	pthread_mutex_t d_lock;
+
 	char *d_name;
 	struct inode *d_inode;
 };

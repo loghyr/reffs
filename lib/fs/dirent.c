@@ -58,6 +58,8 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name,
 
 	urcu_ref_init(&de->d_ref);
 
+	pthread_mutex_init(&de->d_lock, NULL);
+
 	CDS_INIT_LIST_HEAD(&de->d_children);
 	CDS_INIT_LIST_HEAD(&de->d_siblings);
 	if (parent) {

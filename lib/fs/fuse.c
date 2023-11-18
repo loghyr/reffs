@@ -229,11 +229,9 @@ int reffs_fuse_mkdir(const char *path, mode_t mode)
 		goto out;
 	}
 
-	/*
-	 * Is it possible for the parent to be deleted whilst we add this node?
-	 * Consider an empty directory and a race...
-	 */
+	pthread_mutex_lock(&nm->nm_dirent->d_lock);
 	de = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth);
+	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
 	if (!de) {
 		ret = -ENOENT;
 		goto out;
@@ -286,12 +284,12 @@ int reffs_fuse_rmdir(const char *path)
 
 	inode = nm->nm_dirent->d_inode;
 
+	pthread_mutex_lock(&nm->nm_dirent->d_lock);
 	if (!(inode->i_mode & S_IFDIR)) {
 		ret = -ENOTDIR;
 		goto out;
 	}
 
-	// This raises that we may need to lock here
 	if (!cds_list_empty(&(nm->nm_dirent->d_children))) {
 		ret = -ENOTEMPTY;
 		goto out;
@@ -304,10 +302,8 @@ int reffs_fuse_rmdir(const char *path)
 
 	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
 
-	// FIXME: This should be a no-op!
-	dirent_children_release(nm->nm_dirent, reffs_life_action_death);
-
 out:
+	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
