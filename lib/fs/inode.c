@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <assert.h>
+#include "reffs/data_block.h"
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/log.h"
@@ -28,6 +29,11 @@ static int inode_match(struct cds_lfht_node *ht_node, const void *vkey)
 static void inode_free_rcu(struct rcu_head *rcu)
 {
 	struct inode *inode = caa_container_of(rcu, struct inode, i_rcu);
+
+	// Eventually we will have to abstract this layer, perhaps
+	// as a property of the sb?
+	if (inode->i_db)
+		data_block_put(inode->i_db);
 
 	free(inode);
 }
@@ -83,6 +89,9 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 
 	cds_lfht_node_init(&inode->i_node);
 	urcu_ref_init(&inode->i_ref);
+
+	pthread_mutex_init(&inode->i_db_lock, NULL);
+	pthread_mutex_init(&inode->i_attr_lock, NULL);
 
 	inode->i_sb = super_block_get(sb);
 

@@ -17,13 +17,19 @@ struct data_block {
 	struct urcu_ref db_ref;
 
 	pthread_mutex_t db_lock;
-	char *db_text;
-	int db_len;
+
+	char *db_buffer;
+	size_t db_size; /* Length of db_buffer */
 };
 
-struct data_block *data_block_alloc(char *text, int len);
+struct data_block *data_block_alloc(const char *buffer, size_t size,
+				    off_t offset);
 struct data_block *data_block_get(struct data_block *db);
 void data_block_put(struct data_block *db);
+size_t data_block_read(struct data_block *db, char *buffer, size_t size,
+		       off_t offset);
 bool data_block_unhash(struct data_block *db);
+size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
+			off_t offset);
 
 #endif /* _REFFS_DATA_BLOCK_H */

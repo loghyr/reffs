@@ -25,6 +25,7 @@
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
+#include "reffs/data_block.h"
 #include "reffs/super_block.h"
 #include "reffs/dirent.h"
 #include "reffs/inode.h"
@@ -173,36 +174,6 @@ int reffs_fuse_getattr(const char *path, struct stat *st)
 	return 0;
 }
 
-int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
-		       off_t offset, struct fuse_file_info *fi)
-{
-	struct name_match *nm;
-	struct dirent *de;
-
-	filler(buffer, ".", NULL, 0);
-	filler(buffer, "..", NULL, 0);
-
-	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
-	if (!nm)
-		return -ENOENT;
-
-	rcu_read_lock();
-	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children, d_siblings)
-		filler(buffer, de->d_name, NULL, 0);
-	rcu_read_unlock();
-
-	dirent_put(nm->nm_dirent);
-	free(nm);
-
-	return 0;
-}
-
-int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
-		    struct fuse_file_info *fi)
-{
-	return 0;
-}
-
 int reffs_fuse_mkdir(const char *path, mode_t mode)
 {
 	struct name_match *nm;
@@ -265,6 +236,132 @@ out:
 
 int reffs_fuse_mknod(const char *path, mode_t mode, dev_t rdev)
 {
+	struct name_match *nm;
+	struct inode *inode = NULL;
+	struct super_block *sb;
+	struct dirent *de = NULL;
+
+	int ret = 0;
+
+	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_NEW);
+	if (!nm)
+		return -ENOENT;
+
+	inode = nm->nm_dirent->d_inode;
+	sb = inode->i_sb;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		ret = -ENOTDIR;
+		goto out;
+	}
+
+	if (!strcmp(nm->nm_name, "..")) {
+		ret = -ENOTEMPTY;
+		goto out;
+	}
+
+	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	de = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth);
+	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	if (!de) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1));
+	if (!de->d_inode) {
+		dirent_parent_release(de, reffs_life_action_death);
+		ret = -ENOENT;
+		goto out;
+	}
+
+	de->d_inode->i_uid = getuid();
+	de->d_inode->i_gid = getgid();
+	clock_gettime(CLOCK_REALTIME, &de->d_inode->i_mtime);
+	de->d_inode->i_atime = inode->i_mtime;
+	de->d_inode->i_btime = inode->i_mtime;
+	de->d_inode->i_ctime = inode->i_mtime;
+	de->d_inode->i_mode = mode; // For now, assume a file!
+	de->d_inode->i_size = 0;
+	de->d_inode->i_used = 0;
+	de->d_inode->i_nlink = 1;
+
+out:
+	dirent_put(de);
+	dirent_put(nm->nm_dirent);
+	free(nm);
+
+	return ret;
+}
+
+int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
+		    struct fuse_file_info *fi)
+{
+	struct name_match *nm;
+	struct inode *inode = NULL;
+
+	int ret;
+
+	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
+	if (!nm)
+		return -ENOENT;
+
+	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+
+	inode = nm->nm_dirent->d_inode;
+
+	// Perhaps a reader/write lock?
+	pthread_mutex_lock(&inode->i_db_lock);
+
+	if (inode->i_mode & S_IFDIR) {
+		ret = -EISDIR;
+		goto out;
+	}
+
+	if (!inode->i_db)
+		ret = 0;
+	else
+		ret = data_block_read(inode->i_db, buffer, size, offset);
+
+	pthread_mutex_lock(&inode->i_attr_lock);
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+	pthread_mutex_unlock(&inode->i_attr_lock);
+
+out:
+	pthread_mutex_unlock(&inode->i_db_lock);
+	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	dirent_put(nm->nm_dirent);
+	free(nm);
+
+	if (ret < 0) {
+		errno = -ret;
+		ret = -1;
+	}
+
+	return ret;
+}
+
+int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
+		       off_t offset, struct fuse_file_info *fi)
+{
+	struct name_match *nm;
+	struct dirent *de;
+
+	filler(buffer, ".", NULL, 0);
+	filler(buffer, "..", NULL, 0);
+
+	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
+	if (!nm)
+		return -ENOENT;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children, d_siblings)
+		filler(buffer, de->d_name, NULL, 0);
+	rcu_read_unlock();
+
+	dirent_put(nm->nm_dirent);
+	free(nm);
+
 	return 0;
 }
 
@@ -313,5 +410,80 @@ out:
 int reffs_fuse_write(const char *path, const char *buffer, size_t size,
 		     off_t offset, struct fuse_file_info *info)
 {
-	return size;
+	struct name_match *nm;
+	struct inode *inode = NULL;
+
+	int ret = size;
+
+	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
+	if (!nm)
+		return -ENOENT;
+
+	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+
+	inode = nm->nm_dirent->d_inode;
+
+	pthread_mutex_lock(&inode->i_db_lock);
+
+	if (inode->i_mode & S_IFDIR) {
+		ret = -EISDIR;
+		goto out;
+	}
+
+	if (!inode->i_db) {
+		inode->i_db = data_block_alloc(buffer, size, offset);
+		if (!inode->i_db)
+			ret = -ENOSPC;
+	} else {
+		ret = data_block_write(inode->i_db, buffer, size, offset);
+	}
+
+	pthread_mutex_lock(&inode->i_attr_lock);
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
+					      REFFS_INODE_UPDATE_MTIME);
+	inode->i_size = inode->i_db->db_size;
+	// Blocks?
+	pthread_mutex_unlock(&inode->i_attr_lock);
+
+out:
+	pthread_mutex_unlock(&inode->i_db_lock);
+	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	dirent_put(nm->nm_dirent);
+	free(nm);
+
+	if (ret < 0) {
+		errno = -ret;
+		ret = -1;
+	}
+
+	return ret;
+}
+
+int reffs_fuse_unlink(const char *path)
+{
+	struct name_match *nm;
+	struct inode *inode = NULL;
+
+	int ret = 0;
+
+	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
+	if (!nm)
+		return -ENOENT;
+
+	inode = nm->nm_dirent->d_inode;
+
+	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	if (inode->i_mode & S_IFDIR) {
+		ret = -EISDIR;
+		goto out;
+	}
+
+	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
+
+out:
+	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	dirent_put(nm->nm_dirent);
+	free(nm);
+
+	return ret;
 }

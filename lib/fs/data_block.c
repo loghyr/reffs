@@ -4,6 +4,8 @@
  */
 
 #include <string.h>
+#include <stdlib.h>
+#include <errno.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
@@ -15,6 +17,7 @@ static void data_block_free_rcu(struct rcu_head *rcu)
 	struct data_block *db =
 		caa_container_of(rcu, struct data_block, db_rcu);
 
+	free(db->db_buffer);
 	free(db);
 }
 
@@ -26,7 +29,8 @@ static void data_block_release(struct urcu_ref *ref)
 	call_rcu(&db->db_rcu, data_block_free_rcu);
 }
 
-struct data_block *data_block_alloc(char *text, int len)
+struct data_block *data_block_alloc(const char *buffer, size_t size,
+				    off_t offset)
 {
 	struct data_block *db;
 
@@ -36,15 +40,15 @@ struct data_block *data_block_alloc(char *text, int len)
 		return NULL;
 	}
 
-	db->db_text = malloc(len);
-	if (!db->db_text) {
+	db->db_buffer = calloc(offset + size, sizeof(*db->db_buffer));
+	if (!db->db_buffer) {
 		LOG("Could not alloc a db's storage");
 		free(db);
 		return NULL;
 	}
 
-	db->db_len = len;
-	memcpy(db->db_text, text, len);
+	db->db_size = offset + size;
+	memcpy(db->db_buffer + offset, buffer, size);
 
 	pthread_mutex_init(&db->db_lock, NULL);
 
@@ -70,4 +74,47 @@ void data_block_put(struct data_block *db)
 		return;
 
 	urcu_ref_put(&db->db_ref, data_block_release);
+}
+
+size_t data_block_read(struct data_block *db, char *buffer, size_t size,
+		       off_t offset)
+{
+	size_t read = 0;
+
+	if ((size_t)offset > db->db_size)
+		return read;
+
+	if (size + offset > db->db_size)
+		read = db->db_size - offset;
+	else
+		read = size;
+
+	memcpy(buffer, db->db_buffer + offset, read);
+
+	return read;
+}
+
+size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
+			off_t offset)
+{
+	char *new;
+	char *old;
+
+	if (size + offset > db->db_size) {
+		new = calloc(offset + size, sizeof(*new));
+		if (!new) {
+			LOG("Could not alloc a db's storage");
+			free(db);
+			return -ENOSPC;
+		}
+
+		memcpy(new, db->db_buffer, db->db_size);
+		old = rcu_xchg_pointer(&db->db_buffer, new);
+		free(old);
+		db->db_size = offset + size;
+	}
+
+	memcpy(db->db_buffer + offset, buffer, size);
+
+	return size;
 }

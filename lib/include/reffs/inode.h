@@ -36,6 +36,9 @@ struct inode {
 	struct super_block *i_sb;
 	struct data_block *i_db;
 
+	pthread_mutex_t i_db_lock;
+	pthread_mutex_t i_attr_lock;
+
 	/* attributes */
 	pthread_mutex_t i_attrs_lock;
 	uint32_t i_uid;

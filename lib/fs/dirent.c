@@ -69,11 +69,14 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name,
 		cds_list_add_rcu(&de->d_siblings, &parent->d_children);
 		dirent_get(de); // One for the linked list
 
-		if (rla == reffs_life_action_birth)
+		if (rla == reffs_life_action_birth) {
+			pthread_mutex_lock(&parent->d_inode->i_attr_lock);
 			inode_update_times_now(
 				parent->d_inode,
 				REFFS_INODE_UPDATE_CTIME |
 					REFFS_INODE_UPDATE_MTIME);
+			pthread_mutex_unlock(&parent->d_inode->i_attr_lock);
+		}
 	}
 
 	return de;

@@ -34,11 +34,12 @@ struct super_block *root_sb;
 static struct fuse_operations operations = {
 	.getattr = reffs_fuse_getattr,
 	.readdir = reffs_fuse_readdir,
-	// .read = reffs_fuse_read,
+	.read = reffs_fuse_read,
 	.mkdir = reffs_fuse_mkdir,
-	// .mknod = reffs_fuse_mknod,
+	.mknod = reffs_fuse_mknod,
 	.rmdir = reffs_fuse_rmdir,
-	// .write = reffs_fuse_write,
+	.unlink = reffs_fuse_unlink,
+	.write = reffs_fuse_write,
 };
 
 int main(int argc, char *argv[])
