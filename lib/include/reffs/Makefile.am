@@ -4,6 +4,7 @@
 reffsincludedir = $(includedir)/reffs
 
 reffsinclude_HEADERS = \
+	data_block.h \
 	dirent.h \
 	fuse.h \
 	inode.h \

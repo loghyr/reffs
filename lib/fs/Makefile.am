@@ -8,6 +8,7 @@ AM_CFLAGS = -Im4 -I. \
 
 lib_LTLIBRARIES = libreffs_fs.la
 libreffs_fs_la_SOURCES = \
+	data_block.c \
 	dirent.c \
 	fuse.c \
 	inode.c \

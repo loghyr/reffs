@@ -15,6 +15,7 @@
 #include <urcu/ref.h>
 
 struct super_block;
+struct data_block;
 
 struct reffs_file_handle {
 	uint64_t rfh_ino;
@@ -33,6 +34,7 @@ struct inode {
 
 	struct reffs_file_handle i_on;
 	struct super_block *i_sb;
+	struct data_block *i_db;
 
 	/* attributes */
 	pthread_mutex_t i_attrs_lock;
