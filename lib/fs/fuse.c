@@ -76,31 +76,36 @@ static bool name_is_child(struct name_match *nm, char *name)
 //
 #define LAST_COMPONENT_IS_MATCH (true)
 #define LAST_COMPONENT_IS_NEW (false)
-static struct name_match *find_matching_directory_entry(const char *path,
-							bool match_end)
+int find_matching_directory_entry(struct name_match **nm, const char *path,
+				  bool match_end)
 {
 	struct super_block *sb;
-	struct name_match *nm;
+	struct name_match *new;
 	char *str;
 	char *buf = NULL;
 	char *next = NULL;
 	char *last;
 	bool exists;
+	int ret = 0;
 
 	sb = super_block_find(1);
 	if (!sb)
-		return NULL;
+		return -ENODEV;
 
-	nm = calloc(1, sizeof(*nm));
-	if (!nm)
+	new = calloc(1, sizeof(*new));
+	if (!new) {
+		ret = -ENOENT;
 		goto found;
+	}
 
-	nm->nm_dirent = dirent_get(sb->sb_dirent);
-	if (!strcmp(path, "/"))
+	new->nm_dirent = dirent_get(sb->sb_dirent);
+	if (!strcmp(path, "/")) {
+		ret = -ENOENT;
 		goto found;
+	}
 
-	nm->nm_name = strrchr(path, '/');
-	nm->nm_name++;
+	new->nm_name = strrchr(path, '/');
+	new->nm_name++;
 
 	buf = strdup(path);
 	next = buf;
@@ -109,21 +114,20 @@ static struct name_match *find_matching_directory_entry(const char *path,
 	last++;
 
 	do {
-		str = strchr(next, '/');
+		str = next;
 		if (str) {
-			str++;
+			// First time!
+			if (*str == '/')
+				str++;
 			next = strchr(str, '/');
 			if (next) {
 				*next++ = '\0';
 				assert(*next != '/');
 			}
-		} else {
-			str = next;
-			next = NULL;
 		}
 
 		if (str)
-			exists = name_is_child(nm, str);
+			exists = name_is_child(new, str);
 		else
 			exists = false;
 
@@ -133,11 +137,18 @@ static struct name_match *find_matching_directory_entry(const char *path,
 			else if (!next && !match_end && str == last)
 				break;
 			else {
-				dirent_put(nm->nm_dirent);
-				free(nm);
-				nm = NULL;
+				dirent_put(new->nm_dirent);
+				free(new);
+				new = NULL;
+				ret = -ENOENT;
 				goto found;
 			}
+		} else if (!match_end && last == str) {
+			dirent_put(new->nm_dirent);
+			free(new);
+			new = NULL;
+			ret = -EEXIST;
+			goto found;
 		}
 	} while (next);
 
@@ -145,28 +156,33 @@ found:
 	free(buf);
 
 	super_block_put(sb);
-	return nm;
+	*nm = new;
+	return ret;
 }
 
 int reffs_fuse_getattr(const char *path, struct stat *st)
 {
 	struct name_match *nm;
 	struct inode *inode;
+	int ret;
 
-	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
-	if (!nm)
-		return -ENOENT;
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		return ret;
 
 	inode = nm->nm_dirent->d_inode;
 
+	st->st_ino = inode->i_ino;
 	st->st_uid = inode->i_uid;
 	st->st_gid = inode->i_gid;
-	st->st_mtime = inode->i_mtime.tv_sec;
-	st->st_atime = inode->i_atime.tv_sec;
-	st->st_ctime = inode->i_ctime.tv_sec;
+	st->st_mtim = inode->i_mtime;
+	st->st_atim = inode->i_atime;
+	st->st_ctim = inode->i_ctime;
 	st->st_mode = inode->i_mode;
 	st->st_size = inode->i_size;
 	st->st_nlink = inode->i_nlink;
+	st->st_blocks = inode->i_used;
+	st->st_blksize = 4096;
 
 	dirent_put(nm->nm_dirent);
 	free(nm);
@@ -181,11 +197,11 @@ int reffs_fuse_mkdir(const char *path, mode_t mode)
 	struct super_block *sb;
 	struct dirent *de = NULL;
 
-	int ret = 0;
+	int ret;
 
-	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_NEW);
-	if (!nm)
-		return -ENOENT;
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
+	if (ret)
+		return ret;
 
 	inode = nm->nm_dirent->d_inode;
 	sb = inode->i_sb;
@@ -241,17 +257,22 @@ int reffs_fuse_mknod(const char *path, mode_t mode, dev_t rdev)
 	struct super_block *sb;
 	struct dirent *de = NULL;
 
-	int ret = 0;
+	int ret;
 
-	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_NEW);
-	if (!nm)
-		return -ENOENT;
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
+	if (ret)
+		return ret;
 
 	inode = nm->nm_dirent->d_inode;
 	sb = inode->i_sb;
 
 	if (!(inode->i_mode & S_IFDIR)) {
 		ret = -ENOTDIR;
+		goto out;
+	}
+
+	if (mode & S_IFDIR) {
+		ret = -EISDIR;
 		goto out;
 	}
 
@@ -302,9 +323,9 @@ int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
 
 	int ret;
 
-	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
-	if (!nm)
-		return -ENOENT;
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		return ret;
 
 	pthread_mutex_lock(&nm->nm_dirent->d_lock);
 
@@ -320,8 +341,12 @@ int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
 
 	if (!inode->i_db)
 		ret = 0;
-	else
+	else {
 		ret = data_block_read(inode->i_db, buffer, size, offset);
+		if (!ret && size) {
+			ret = -EOVERFLOW;
+		}
+	}
 
 	pthread_mutex_lock(&inode->i_attr_lock);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
@@ -347,12 +372,14 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	struct name_match *nm;
 	struct dirent *de;
 
+	int ret;
+
 	filler(buffer, ".", NULL, 0);
 	filler(buffer, "..", NULL, 0);
 
-	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
-	if (!nm)
-		return -ENOENT;
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		return ret;
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children, d_siblings)
@@ -370,14 +397,14 @@ int reffs_fuse_rmdir(const char *path)
 	struct name_match *nm;
 	struct inode *inode = NULL;
 
-	int ret = 0;
+	int ret;
 
 	if (!strcmp("/", path))
 		return -EBUSY;
 
-	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
-	if (!nm)
-		return -ENOENT;
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		return ret;
 
 	inode = nm->nm_dirent->d_inode;
 
@@ -413,11 +440,11 @@ int reffs_fuse_write(const char *path, const char *buffer, size_t size,
 	struct name_match *nm;
 	struct inode *inode = NULL;
 
-	int ret = size;
+	int ret;
 
-	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
-	if (!nm)
-		return -ENOENT;
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		return ret;
 
 	pthread_mutex_lock(&nm->nm_dirent->d_lock);
 
@@ -442,9 +469,10 @@ int reffs_fuse_write(const char *path, const char *buffer, size_t size,
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
 	inode->i_size = inode->i_db->db_size;
-	// Blocks?
+	inode->i_used = inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
 	pthread_mutex_unlock(&inode->i_attr_lock);
 
+	ret = size;
 out:
 	pthread_mutex_unlock(&inode->i_db_lock);
 	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
@@ -464,11 +492,11 @@ int reffs_fuse_unlink(const char *path)
 	struct name_match *nm;
 	struct inode *inode = NULL;
 
-	int ret = 0;
+	int ret;
 
-	nm = find_matching_directory_entry(path, LAST_COMPONENT_IS_MATCH);
-	if (!nm)
-		return -ENOENT;
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		return ret;
 
 	inode = nm->nm_dirent->d_inode;
 

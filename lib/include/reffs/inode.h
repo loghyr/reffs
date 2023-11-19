@@ -46,8 +46,8 @@ struct inode {
 	uint32_t i_nlink;
 	uint16_t i_mode;
 	uint16_t i_unused;
-	uint64_t i_size;
-	uint64_t i_used;
+	int64_t i_size;
+	int64_t i_used;
 	struct timespec i_atime;
 	struct timespec i_btime;
 	struct timespec i_ctime;
