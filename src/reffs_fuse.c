@@ -32,12 +32,18 @@
 struct super_block *root_sb;
 
 static struct fuse_operations operations = {
+	.chmod = reffs_fuse_chmod,
+	.chown = reffs_fuse_chown,
+	.fallocate = reffs_fuse_fallocate,
 	.getattr = reffs_fuse_getattr,
-	.readdir = reffs_fuse_readdir,
-	.read = reffs_fuse_read,
 	.mkdir = reffs_fuse_mkdir,
 	.mknod = reffs_fuse_mknod,
+	.read = reffs_fuse_read,
+	.readdir = reffs_fuse_readdir,
+	.readlink = reffs_fuse_readlink,
+	.rename = reffs_fuse_rename,
 	.rmdir = reffs_fuse_rmdir,
+	.symlink = reffs_fuse_symlink,
 	.unlink = reffs_fuse_unlink,
 	.write = reffs_fuse_write,
 };
@@ -65,9 +71,9 @@ int main(int argc, char *argv[])
 	inode->i_uid = getuid();
 	inode->i_gid = getgid();
 	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
-	inode->i_atime = inode->i_atime;
-	inode->i_btime = inode->i_btime;
-	inode->i_ctime = inode->i_ctime;
+	inode->i_atime = inode->i_mtime;
+	inode->i_btime = inode->i_mtime;
+	inode->i_ctime = inode->i_mtime;
 	inode->i_mode = S_IFDIR | 0755;
 	inode->i_size = 4096;
 	inode->i_used = 8;
@@ -97,6 +103,9 @@ out_sb:
 	root_sb = NULL;
 
 out:
+        synchronize_rcu();
+        rcu_barrier();
+
 	rcu_unregister_thread();
 
 	return ret;

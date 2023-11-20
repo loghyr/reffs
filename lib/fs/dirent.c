@@ -16,6 +16,29 @@
 
 CDS_LIST_HEAD(dirent_list);
 
+void dirent_parent_attach(struct dirent *de, struct dirent *parent,
+			  enum reffs_life_action rla)
+{
+	if (!parent)
+		return;
+
+	rcu_read_lock();
+	de->d_parent = dirent_get(parent);
+	verify(parent->d_inode->i_mode & S_IFDIR);
+	uatomic_inc(&parent->d_inode->i_nlink);
+	cds_list_add_rcu(&de->d_siblings, &parent->d_children);
+	dirent_get(de); // One for the linked list
+
+	if (rla == reffs_life_action_birth || rla == reffs_life_action_update) {
+		pthread_mutex_lock(&parent->d_inode->i_attr_lock);
+		inode_update_times_now(parent->d_inode,
+				       REFFS_INODE_UPDATE_CTIME |
+					       REFFS_INODE_UPDATE_MTIME);
+		pthread_mutex_unlock(&parent->d_inode->i_attr_lock);
+	}
+	rcu_read_unlock();
+}
+
 static void dirent_free_rcu(struct rcu_head *rcu)
 {
 	struct dirent *de = caa_container_of(rcu, struct dirent, d_rcu);
@@ -62,22 +85,8 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name,
 
 	CDS_INIT_LIST_HEAD(&de->d_children);
 	CDS_INIT_LIST_HEAD(&de->d_siblings);
-	if (parent) {
-		de->d_parent = dirent_get(parent);
-		verify(parent->d_inode->i_mode & S_IFDIR);
-		uatomic_inc(&parent->d_inode->i_nlink);
-		cds_list_add_rcu(&de->d_siblings, &parent->d_children);
-		dirent_get(de); // One for the linked list
-
-		if (rla == reffs_life_action_birth) {
-			pthread_mutex_lock(&parent->d_inode->i_attr_lock);
-			inode_update_times_now(
-				parent->d_inode,
-				REFFS_INODE_UPDATE_CTIME |
-					REFFS_INODE_UPDATE_MTIME);
-			pthread_mutex_unlock(&parent->d_inode->i_attr_lock);
-		}
-	}
+	if (parent)
+		dirent_parent_attach(de, parent, rla);
 
 	return de;
 }
@@ -146,6 +155,9 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 {
 	struct dirent *parent;
 
+	if (!de)
+		return;
+
 	rcu_read_lock();
 	parent = rcu_xchg_pointer(&de->d_parent, NULL);
 	if (parent) {
@@ -154,11 +166,15 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 		dirent_put(parent);
 		dirent_put(de);
 
-		if (rla == reffs_life_action_death)
+		if (rla == reffs_life_action_death ||
+		    rla == reffs_life_action_update) {
+			pthread_mutex_lock(&parent->d_inode->i_attr_lock);
 			inode_update_times_now(
 				parent->d_inode,
 				REFFS_INODE_UPDATE_CTIME |
 					REFFS_INODE_UPDATE_MTIME);
+			pthread_mutex_unlock(&parent->d_inode->i_attr_lock);
+		}
 	}
 	rcu_read_unlock();
 }

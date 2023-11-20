@@ -39,6 +39,8 @@ void dirent_children_release(struct dirent *de, enum reffs_life_action rla);
 struct dirent *dirent_find(struct dirent *parent, enum reffs_text_case rtc,
 			   char *name);
 struct dirent *dirent_get(struct dirent *de);
+void dirent_parent_attach(struct dirent *de, struct dirent *parent,
+			  enum reffs_life_action rla);
 void dirent_parent_release(struct dirent *de, enum reffs_life_action rla);
 void dirent_put(struct dirent *de);
 

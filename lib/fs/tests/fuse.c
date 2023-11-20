@@ -317,6 +317,9 @@ int main(void)
 	root_sb = NULL;
 
 out:
+        synchronize_rcu();
+        rcu_barrier();
+
 	rcu_unregister_thread();
 
 	return ret;
