@@ -36,8 +36,11 @@ static inline void reffs_log(const char *function, int line, const char *msg,
 }
 
 void reffs_trace(const char *msg, ...);
-void reffs_tracing_set(void);
-void reffs_tracing_clear(void);
+
+// FIXME: Maybe a range of tracing state?
+#define REFFS_TRACE_STATE_ENABLED (true)
+#define REFFS_TRACE_STATE_DISABLED (false)
+void reffs_tracing_set(bool state);
 bool reffs_tracing_enabled(void);
 
 #define FAIL(...) reffs_fail(__func__, __LINE__, __VA_ARGS__)

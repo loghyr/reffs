@@ -21,14 +21,9 @@ void reffs_trace(const char *msg, ...)
 
 static bool reffs_tracing_state = false;
 
-void reffs_tracing_set(void)
+void reffs_tracing_set(bool state)
 {
-	reffs_tracing_state = true;
-}
-
-void reffs_tracing_clear(void)
-{
-	reffs_tracing_state = false;
+	reffs_tracing_state = state;
 }
 
 bool reffs_tracing_enabled(void)
