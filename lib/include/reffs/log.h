@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 
@@ -34,6 +35,11 @@ static inline void reffs_log(const char *function, int line, const char *msg,
 	va_end(ap);
 }
 
+void reffs_trace(const char *msg, ...);
+void reffs_tracing_set(void);
+void reffs_tracing_clear(void);
+bool reffs_tracing_enabled(void);
+
 #define FAIL(...) reffs_fail(__func__, __LINE__, __VA_ARGS__)
 #define LOG(...) reffs_log(__func__, __LINE__, __VA_ARGS__)
 
@@ -41,6 +47,13 @@ static inline void reffs_log(const char *function, int line, const char *msg,
 	do {                                                        \
 		if (!atomic_flag_test_and_set((X)))                 \
 			reffs_log(__func__, __LINE__, __VA_ARGS__); \
+	} while (0)
+
+// FIXME: Expose it as a global to bypass a function call
+#define TRACE(...)                                \
+	do {                                      \
+		if (reffs_tracing_enabled())      \
+			reffs_trace(__VA_ARGS__); \
 	} while (0)
 
 #endif /* _REFFS_LOG_H */

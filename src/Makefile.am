@@ -11,6 +11,7 @@ AM_CFLAGS = \
 LDADD = \
 	$(top_srcdir)/lib/xdr/libreffs_xdr.la \
 	$(top_srcdir)/lib/fs/libreffs_fs.la \
+	$(top_srcdir)/lib/utils/libreffs_utils.la \
 	$(TIRPC_LIBS)
 
 recho_ev_SOURCES = recho_ev.c

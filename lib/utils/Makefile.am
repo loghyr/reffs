@@ -5,6 +5,6 @@ AM_CFLAGS = -Im4 -I. -I$(top_srcdir)/lib/include
 
 AM_LDFLAGS = -rdynamic
 
-#lib_LTLIBRARIES = libreffs_utils.la
-#libreffs_utils_la_SOURCES = \
-#	error.c
+lib_LTLIBRARIES = libreffs_utils.la
+libreffs_utils_la_SOURCES = \
+	trace.c

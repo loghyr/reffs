@@ -84,7 +84,8 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 		return ret;
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children, d_siblings) {
+	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children,
+				    d_siblings) {
 		if (cur++ < offset)
 			continue;
 		ret = filler(buffer, de->d_name, NULL, cur);
