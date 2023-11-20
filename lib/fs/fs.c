@@ -29,6 +29,7 @@
 #include "reffs/time.h"
 #include "reffs/test.h"
 #include "reffs/fs.h"
+#include "reffs/log.h"
 
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -156,6 +157,8 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 
 	int ret;
 
+	TRACE("path=%s mode=0%o", path, mode);
+
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		goto out;
@@ -193,6 +196,8 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 
 	int ret;
 
+	TRACE("path=%s uid=%u gid=%u", path, uid, gid);
+
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		goto out;
@@ -226,6 +231,7 @@ out:
 
 int reffs_fs_fallocate(const char *path, int mode, off_t offset, off_t len)
 {
+	TRACE("path=%s mode=0%o offset=%lu len=%lu", path, mode, offset, len);
 	return 0;
 }
 
@@ -234,6 +240,8 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	struct name_match *nm;
 	struct inode *inode;
 	int ret;
+
+	TRACE("path=%s", path);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -267,6 +275,8 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	struct dirent *de = NULL;
 
 	int ret;
+
+	TRACE("path=%s mode=0%o", path, mode);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
@@ -327,6 +337,8 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 	struct dirent *de = NULL;
 
 	int ret;
+
+	TRACE("path=%s mode=0%o rdev=%lu", path, mode, rdev);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
@@ -391,6 +403,8 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 
 	int ret;
 
+	TRACE("path=%s size=%lu offset=%lu", path, size, offset);
+
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		goto out;
@@ -442,6 +456,7 @@ int reffs_fs_readdir(const char *path, void *buffer, char *filler, off_t offset)
 
 int reffs_fs_readlink(const char *path, char *buffer, size_t len)
 {
+	TRACE("path=%s len=%lu", path, len);
 	return 0;
 }
 
@@ -507,6 +522,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 	int ret;
 
 	bool dst_exists = false;
+
+	TRACE("src_path=%s dst_path=%s", src_path, dst_path);
 
 	if (!strcmp(src_path, "/") || !strcmp(dst_path, "/"))
 		return -EFAULT;
@@ -617,6 +634,8 @@ int reffs_fs_rmdir(const char *path)
 
 	int ret;
 
+	TRACE("path=%s", path);
+
 	if (!strcmp("/", path))
 		return -EBUSY;
 
@@ -653,6 +672,7 @@ out:
 
 int reffs_fs_symlink(const char *path, const char *new_path)
 {
+	TRACE("path=%s new_path=%s", path, new_path);
 	return 0;
 }
 
@@ -663,6 +683,8 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 	struct inode *inode = NULL;
 
 	int ret;
+
+	TRACE("path=%s size=%lu offset=%lu", path, size, offset);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -716,6 +738,8 @@ int reffs_fs_unlink(const char *path)
 	struct inode *inode = NULL;
 
 	int ret;
+
+	TRACE("path=%s", path);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)

@@ -25,6 +25,7 @@
 #include "reffs/inode.h"
 #include "reffs/fuse.h"
 #include "reffs/test.h"
+#include "reffs/log.h"
 
 struct super_block *root_sb;
 
@@ -43,6 +44,8 @@ int main(void)
 	int rc;
 
 	rcu_register_thread();
+
+	reffs_tracing_set(REFFS_TRACE_STATE_ENABLED);
 
 	// Perhaps a function to instantiate the root?
 	root_sb = super_block_alloc(1);

@@ -35,7 +35,7 @@ static inline void reffs_log(const char *function, int line, const char *msg,
 	va_end(ap);
 }
 
-void reffs_trace(const char *msg, ...);
+void reffs_trace(const char *function, int line, const char *msg, ...);
 
 // FIXME: Maybe a range of tracing state?
 #define REFFS_TRACE_STATE_ENABLED (true)
@@ -53,10 +53,10 @@ bool reffs_tracing_enabled(void);
 	} while (0)
 
 // FIXME: Expose it as a global to bypass a function call
-#define TRACE(...)                                \
-	do {                                      \
-		if (reffs_tracing_enabled())      \
-			reffs_trace(__VA_ARGS__); \
+#define TRACE(...)                                                    \
+	do {                                                          \
+		if (reffs_tracing_enabled())                          \
+			reffs_trace(__func__, __LINE__, __VA_ARGS__); \
 	} while (0)
 
 #endif /* _REFFS_LOG_H */

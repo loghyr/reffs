@@ -24,6 +24,7 @@
 #include "reffs/dirent.h"
 #include "reffs/fs.h"
 #include "reffs/fuse.h"
+#include "reffs/log.h"
 
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -75,8 +76,11 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	int ret;
 	off_t cur = 1;
 
+	TRACE("path=%s offset=%lu", path, offset);
+
+	// FIXME: Need to figure out how to use cur
 	filler(buffer, ".", NULL, 0);
-	filler(buffer, "..", NULL, 1);
+	filler(buffer, "..", NULL, 0);
 
 	// For now expose find_matching_directory_entry because how to handle filler()?
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
@@ -88,7 +92,7 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 				    d_siblings) {
 		if (cur++ < offset)
 			continue;
-		ret = filler(buffer, de->d_name, NULL, cur);
+		ret = filler(buffer, de->d_name, NULL, 0);
 		if (ret)
 			break;
 	}

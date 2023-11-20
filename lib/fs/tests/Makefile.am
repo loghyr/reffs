@@ -7,7 +7,8 @@ AM_CFLAGS = -Im4 -I.. @CHECK_CFLAGS@ \
 
 LDADD = \
 	@CHECK_LIBS@ \
-	$(top_srcdir)/lib/fs/libreffs_fs.la
+	$(top_srcdir)/lib/fs/libreffs_fs.la \
+	$(top_srcdir)/lib/utils/libreffs_utils.la
 
 check_PROGRAMS = $(TESTS)
 
