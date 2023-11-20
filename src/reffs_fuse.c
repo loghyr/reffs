@@ -103,8 +103,8 @@ out_sb:
 	root_sb = NULL;
 
 out:
-        synchronize_rcu();
-        rcu_barrier();
+	synchronize_rcu();
+	rcu_barrier();
 
 	rcu_unregister_thread();
 

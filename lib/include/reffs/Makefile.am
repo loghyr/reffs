@@ -6,6 +6,7 @@ reffsincludedir = $(includedir)/reffs
 reffsinclude_HEADERS = \
 	data_block.h \
 	dirent.h \
+	fs.h \
 	fuse.h \
 	inode.h \
 	log.h \

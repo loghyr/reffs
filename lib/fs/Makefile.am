@@ -10,6 +10,7 @@ lib_LTLIBRARIES = libreffs_fs.la
 libreffs_fs_la_SOURCES = \
 	data_block.c \
 	dirent.c \
+	fs.c \
 	fuse.c \
 	inode.c \
 	super_block.c
