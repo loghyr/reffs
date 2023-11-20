@@ -73,9 +73,10 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	struct dirent *de;
 
 	int ret;
+	off_t cur = 1;
 
 	filler(buffer, ".", NULL, 0);
-	filler(buffer, "..", NULL, 0);
+	filler(buffer, "..", NULL, 1);
 
 	// For now expose find_matching_directory_entry because how to handle filler()?
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
@@ -83,14 +84,19 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 		return ret;
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children, d_siblings)
-		filler(buffer, de->d_name, NULL, 0);
+	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children, d_siblings) {
+		if (cur++ < offset)
+			continue;
+		ret = filler(buffer, de->d_name, NULL, cur);
+		if (ret)
+			break;
+	}
 	rcu_read_unlock();
 
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
-	return ret;
+	return 0;
 }
 
 int reffs_fuse_readlink(const char *path, char *buffer, size_t len)
