@@ -55,7 +55,7 @@ int main(int argc, char *argv[])
 
 	rcu_register_thread();
 
-	// Perhaps a function to instantiate the root?
+	// FIXME: This should be init()
 	root_sb = super_block_alloc(1);
 	if (!root_sb) {
 		ret = ENOMEM;
@@ -79,26 +79,13 @@ int main(int argc, char *argv[])
 	inode->i_used = 8;
 	inode->i_nlink = 2;
 
-	reffs_fuse_mkdir("/foo", 0755);
-	reffs_fuse_mkdir("/foo/bar", 0640);
-	reffs_fuse_mkdir("/foo/garbo", 0640);
-	reffs_fuse_mkdir("/foo/nurse", 0640);
-	reffs_fuse_mkdir("/hello", 0755);
-	reffs_fuse_mkdir("/hello/nurse", 0755);
-
 	ret = fuse_main(argc, argv, &operations, NULL);
-
-	reffs_fuse_rmdir("/foo/bar");
-	reffs_fuse_rmdir("/foo/garbo");
-	reffs_fuse_rmdir("/foo/nurse");
-	reffs_fuse_rmdir("/foo");
-	reffs_fuse_rmdir("/hello/nurse");
-	reffs_fuse_rmdir("/hello");
 
 	super_block_dirent_release(root_sb, reffs_life_action_death);
 	inode_put(inode);
 
 out_sb:
+	// FIXME: This should be destroy()
 	super_block_put(root_sb);
 	root_sb = NULL;
 
