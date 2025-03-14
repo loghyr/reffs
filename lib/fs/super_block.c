@@ -42,8 +42,7 @@ static void super_block_free_rcu(struct rcu_head *rcu)
 
 	ret = cds_lfht_destroy(sb->sb_inodes, NULL);
 	if (ret < 0) {
-		ret = errno;
-		LOG("Could not delete a hash table");
+		LOG("Could not delete a hash table: %m");
 	}
 
 	free(sb);
