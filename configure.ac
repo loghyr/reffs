@@ -180,6 +180,13 @@ else
 fi
 fi
 
+dnl Compiler specifc flags
+if test "x${CC}" = "xclang"; then
+	AC_MSG_RESULT([No clang flags yet])
+else
+	CFLAGS="${CFLAGS} -Wall -Wextra -Wpedantic"
+fi
+
 AC_MSG_RESULT([C flags are ${CFLAGS}])
 
 AC_SUBST([DEBUG_ENABLED])

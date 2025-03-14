@@ -24,8 +24,7 @@ libreffs_xdr_la_SOURCES = $(GEN_SOURCES) ref_cp_xdr.x reffs_echo_xdr.x nfsv42_xd
 
 %.c: %.x %.h
 	rpcgen -C -c $< > $@
-	sed -i '1i#pragma clang diagnostic push\n#pragma clang diagnostic ignored "-Wunused-variable"\n#pragma clang diagnostic ignored "-Wcast-function-type"' $@
-	echo '#pragma clang diagnostic pop' >> $@
+	./insert_pragmas.sh $@
 
 %.h: %.x
 	rpcgen -C -h $< > $@
