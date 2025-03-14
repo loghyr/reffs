@@ -29,6 +29,10 @@ fix-style:
 scanbuild:
 	scan-build make
 
+tidy:
+	bear -- make
+	find . -name "*.c" -o -name "*.cpp" | xargs clang-tidy -p .
+
 RPM_BUILD_DIR = ../rpmbuild
 
 .PHONY: rpm

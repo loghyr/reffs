@@ -24,6 +24,9 @@ style: clean
 fix-style:
 	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
 
+tidy:	configure
+	make tidy
+
 clean: pristine
 	git clean -f -x -d
 

@@ -180,12 +180,13 @@ else
 fi
 fi
 
+AC_MSG_RESULT([C flags are ${CFLAGS}])
+
 AC_SUBST([DEBUG_ENABLED])
 AC_SUBST([ASAN_ENABLED])
 AC_SUBST([LSAN_ENABLED])
 AC_SUBST([TSAN_ENABLED])
 AC_SUBST([UBSAN_ENABLED])
-
 
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])
 
