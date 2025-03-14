@@ -463,7 +463,7 @@ int reffs_fs_readlink(const char *path, char *buffer, size_t len)
 static int rename_dest_locked(struct name_match *nm_src, struct dirent *de_dst,
 			      char *dst_name)
 {
-	int ret;
+	int ret = 0;
 	reffs_strng_compare cmp;
 	char *name;
 	char *old;
