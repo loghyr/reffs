@@ -90,9 +90,9 @@ if test "x${enable_asan}" = "xyes"; then
 	ASAN_LDFLAGS="-lasan"
 	AC_SUBST(ASAN_LDFLAGS)
 	LDFLAGS="${LDFLAGS} ${ASAN_LDFLAGS}"
-	ASAN=1
+	ASAN_ENABLED=1
 else
-	ASAN=0
+	ASAN_ENABLED=0
 fi
 
 AC_ARG_ENABLE(tsan,
@@ -110,9 +110,9 @@ if test "x${enable_tsan}" = "xyes"; then
 	TSAN_LDFLAGS="-ltsan"
 	AC_SUBST(TSAN_LDFLAGS)
 	LDFLAGS="${LDFLAGS} ${TSAN_LDFLAGS}"
-	TSAN=1
+	TSAN_ENABLED=1
 else
-	TSAN=0
+	TSAN_ENABLED=0
 fi
 
 AC_ARG_ENABLE(lsan,
@@ -130,9 +130,9 @@ if test "x${enable_lsan}" = "xyes"; then
 	LSAN_LDFLAGS="-llsan"
 	AC_SUBST(LSAN_LDFLAGS)
 	LDFLAGS="${LDFLAGS} ${LSAN_LDFLAGS}"
-	LSAN=1
+	LSAN_ENABLED=1
 else
-	LSAN=0
+	LSAN_ENABLED=0
 fi
 
 AC_ARG_ENABLE(ubsan,
@@ -150,9 +150,9 @@ if test "x${enable_ubsan}" = "xyes"; then
 	UBSAN_LDFLAGS="-lubsan"
 	AC_SUBST(UBSAN_LDFLAGS)
 	LDFLAGS="${LDFLAGS} ${UBSAN_LDFLAGS}"
-	UBSAN=1
+	UBSAN_ENABLED=1
 else
-	UBSAN=0
+	UBSAN_ENABLED=0
 fi
 
 AC_ARG_ENABLE([debug],
@@ -165,27 +165,26 @@ AC_ARG_ENABLE([noopt],
 
 COMMON_FLAGS="${CFLAGS} -D_FILE_OFFSET_BITS=64 -DRCU_MEMBARRIER=1 -Wall -Wextra -Wformat=2 -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
 if test "x${enable_debug}" = "xyes"; then
+	DEBUG_ENABLED=1
 if test "x${enable_noopt}" = "xyes"; then
 	CFLAGS="${COMMON_FLAGS} -O0 -DNDEBUG"
 else
 	CFLAGS="${COMMON_FLAGS} -O2 -DNDEBUG"
 fi
 else
+	DEBUG_ENABLED=0
 if test "x${enable_noopt}" = "xyes"; then
 	CFLAGS="${COMMON_FLAGS} -g -O0"
 else
 	CFLAGS="${COMMON_FLAGS} -g -Og"
 fi
-	DEBUG=1
-else
-	DEBUG=0
 fi
 
-AC_SUBST([DEBUG])
-AC_SUBST([ASAN])
-AC_SUBST([LSAN])
-AC_SUBST([TSAN])
-AC_SUBST([UBSAN])
+AC_SUBST([DEBUG_ENABLED])
+AC_SUBST([ASAN_ENABLED])
+AC_SUBST([LSAN_ENABLED])
+AC_SUBST([TSAN_ENABLED])
+AC_SUBST([UBSAN_ENABLED])
 
 
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])
