@@ -26,6 +26,9 @@ style:
 fix-style:
 	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
 
+scanbuild:
+	scan-build make
+
 RPM_BUILD_DIR = ../rpmbuild
 
 .PHONY: rpm

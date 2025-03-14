@@ -9,6 +9,9 @@ check: build
 build: configure
 	make
 
+scanbuild: configure
+	scan-build make
+
 configure: reconf
 	./configure
 
