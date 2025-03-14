@@ -105,7 +105,7 @@ struct dirent *dirent_find(struct dirent *parent, enum reffs_text_case rtc,
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(tmp, &parent->d_children, d_siblings)
-		if (!cmp(de->d_name, name)) {
+		if (!cmp(tmp->d_name, name)) {
 			de = dirent_get(tmp);
 			break;
 		}
