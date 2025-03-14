@@ -1,8 +1,8 @@
 dnl SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 dnl SPDX-License-Identifier: GPL-2.0+
 
-AC_PREREQ([2.69])
 AC_INIT([reffs], [0.0.1], [loghyr@gmail.com])
+AC_CONFIG_AUX_DIR([.])
 AM_INIT_AUTOMAKE([foreign])
 
 AC_CONFIG_SRCDIR([src/reffs.c])
