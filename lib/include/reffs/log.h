@@ -18,7 +18,7 @@ static inline void reffs_fail(const char *function, int line, const char *msg,
 	va_list ap;
 	va_start(ap, msg);
 	fprintf(stderr, "%s:%d ", function, line);
-	vfprintf(stderr, msg, ap);
+	vfprintf(stderr, "%s", ap);
 	fprintf(stderr, "\n");
 	va_end(ap);
 	abort();
@@ -30,7 +30,7 @@ static inline void reffs_log(const char *function, int line, const char *msg,
 	va_list ap;
 	va_start(ap, msg);
 	fprintf(stdout, "%s:%d ", function, line);
-	vfprintf(stdout, msg, ap);
+	vfprintf(stdout, "%s", ap);
 	fprintf(stdout, "\n");
 	va_end(ap);
 }
