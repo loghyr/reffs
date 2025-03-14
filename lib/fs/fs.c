@@ -709,6 +709,9 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 		}
 	} else {
 		ret = data_block_write(inode->i_db, buffer, size, offset);
+		if (ret) {
+			goto out_unlock;
+		}
 	}
 
 	pthread_mutex_lock(&inode->i_attr_lock);
