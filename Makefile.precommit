@@ -1,19 +1,19 @@
 all: rpm
 
 rpm: check
-	make rpm
+	make rpm $(filter --with-cc=%,$(MAKECMDGOALS))
 
 check: build
-	make check
+	make check $(filter --with-cc=%,$(MAKECMDGOALS))
 
 build: configure
-	make
+	make $(filter --with-cc=%,$(MAKECMDGOALS))
 
 scanbuild: configure
-	scan-build make
+	scan-build make $(filter --with-cc=%,$(MAKECMDGOALS))
 
 configure: reconf
-	./configure
+	./configure $(filter --with-cc=%,$(MAKECMDGOALS))
 
 reconf: style
 	autoreconf -i
@@ -25,7 +25,7 @@ fix-style:
 	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
 
 tidy:	configure
-	make tidy
+	make tidy $(filter --with-cc=%,$(MAKECMDGOALS))
 
 clean: pristine
 	git clean -f -x -d

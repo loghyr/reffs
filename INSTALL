@@ -10,3 +10,7 @@ A Quick Summary
    o ../reffs/configure
    o make [-j]
    o make check-all
+
+Note, to switch to gcc:
+
+make -f Makefile.precommit build -- --with-cc=gcc
