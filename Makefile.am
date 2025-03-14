@@ -8,18 +8,12 @@ ACLOCAL_AMFLAGS = -Im4
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = reffs.pc
 
-ASAN_ENABLED := 0
-TSAN_ENABLED := 0
-LSAN_ENABLED := 0
-UBSAN_ENABLED := 0
-DEBUG_ENABLED := 0
-
 EXTRA_DIST = README.md COPYING CONTRIBUTING INSTALL reffs-echo.service.in
 
 systemddir = $(prefix)/lib/systemd/system
 systemd_DATA = reffs-echo.service
 
-TARBALL := $(PACKAGE)-$(VERSION).tar.bz2
+TARBALL = $(PACKAGE)-$(VERSION).tar.bz2
 
 $(TARBALL): dist-bzip2
 
@@ -32,7 +26,7 @@ style:
 fix-style:
 	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
 
-RPM_BUILD_DIR := ../rpmbuild
+RPM_BUILD_DIR = ../rpmbuild
 
 .PHONY: rpm
 

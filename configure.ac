@@ -11,7 +11,27 @@ AC_CONFIG_MACRO_DIR([m4])
 
 AM_SILENT_RULES([yes])
 
+# Set Clang as the default compiler
+CC=clang
+
+# Allow users to specify a compiler with --with-cc
+AC_ARG_WITH([cc],
+    [AS_HELP_STRING([--with-cc=COMPILER], [Specify the C compiler to use (clang or gcc)])],
+    [CC="$withval"],
+    [])
+
+# Check if the specified compiler exists
+AC_CHECK_PROG(CC_CHECK, $CC, yes, no)
+if test "$CC_CHECK" = "no"; then
+    AC_MSG_ERROR([Compiler '$CC' not found.])
+fi
+
+# Display the compiler that will be used
+AC_MSG_RESULT([Using C compiler: $CC])
+
 AC_PROG_CC
+AC_PROG_AR
+
 AC_USE_SYSTEM_EXTENSIONS
 AC_SYS_LARGEFILE
 LT_INIT
@@ -70,6 +90,9 @@ if test "x${enable_asan}" = "xyes"; then
 	ASAN_LDFLAGS="-lasan"
 	AC_SUBST(ASAN_LDFLAGS)
 	LDFLAGS="${LDFLAGS} ${ASAN_LDFLAGS}"
+	ASAN=1
+else
+	ASAN=0
 fi
 
 AC_ARG_ENABLE(tsan,
@@ -87,6 +110,9 @@ if test "x${enable_tsan}" = "xyes"; then
 	TSAN_LDFLAGS="-ltsan"
 	AC_SUBST(TSAN_LDFLAGS)
 	LDFLAGS="${LDFLAGS} ${TSAN_LDFLAGS}"
+	TSAN=1
+else
+	TSAN=0
 fi
 
 AC_ARG_ENABLE(lsan,
@@ -104,6 +130,9 @@ if test "x${enable_lsan}" = "xyes"; then
 	LSAN_LDFLAGS="-llsan"
 	AC_SUBST(LSAN_LDFLAGS)
 	LDFLAGS="${LDFLAGS} ${LSAN_LDFLAGS}"
+	LSAN=1
+else
+	LSAN=0
 fi
 
 AC_ARG_ENABLE(ubsan,
@@ -121,6 +150,9 @@ if test "x${enable_ubsan}" = "xyes"; then
 	UBSAN_LDFLAGS="-lubsan"
 	AC_SUBST(UBSAN_LDFLAGS)
 	LDFLAGS="${LDFLAGS} ${UBSAN_LDFLAGS}"
+	UBSAN=1
+else
+	UBSAN=0
 fi
 
 AC_ARG_ENABLE([debug],
@@ -144,7 +176,17 @@ if test "x${enable_noopt}" = "xyes"; then
 else
 	CFLAGS="${COMMON_FLAGS} -g -Og"
 fi
+	DEBUG=1
+else
+	DEBUG=0
 fi
+
+AC_SUBST([DEBUG])
+AC_SUBST([ASAN])
+AC_SUBST([LSAN])
+AC_SUBST([TSAN])
+AC_SUBST([UBSAN])
+
 
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])
 
