@@ -703,8 +703,10 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 
 	if (!inode->i_db) {
 		inode->i_db = data_block_alloc(buffer, size, offset);
-		if (!inode->i_db)
+		if (!inode->i_db) {
 			ret = -ENOSPC;
+			goto out_unlock;
+		}
 	} else {
 		ret = data_block_write(inode->i_db, buffer, size, offset);
 	}
