@@ -31,7 +31,7 @@ scanbuild:
 
 tidy:
 	bear -- make
-	find . -name "*.c" -o -name "*.cpp" | xargs clang-tidy -p .
+	find . -name "*.c" -o -name "*.cpp" | xargs clang-tidy -p . -header-filter=.* 
 
 RPM_BUILD_DIR = ../rpmbuild
 
