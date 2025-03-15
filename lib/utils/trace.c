@@ -14,9 +14,17 @@ void reffs_trace(const char *function, int line, const char *msg, ...)
 {
 	va_list ap;
 	va_start(ap, msg);
-	fprintf(stdout, "%s:%d ", function, line);
-	vfprintf(stdout, "%s", ap);
-	fprintf(stdout, "\n");
+
+	char formatted_msg[REFFS_OUTPUT_BUFFER];
+	snprintf(formatted_msg, sizeof(formatted_msg), "%s:%d %s\n", function,
+		 line, msg);
+
+	va_list ap_copy;
+	va_copy(ap_copy, ap);
+
+	vfprintf(stdout, formatted_msg, ap_copy);
+
+	va_end(ap_copy);
 	va_end(ap);
 }
 
