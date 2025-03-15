@@ -3,6 +3,8 @@ SPDX-License-Identifier: GPL-2.0+
 
 A Quick Summary
 
+0. Run ./install-pre-commit.sh
+
 1. Configure and build RefFS:
    o cd where-you-want-to-build-reffs
    o mkdir build

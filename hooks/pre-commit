@@ -1,0 +1,18 @@
+#!/bin/sh
+
+# Change to the root directory of the Git repository
+git rev-parse --show-toplevel > /dev/null 2>&1 || exit 1
+ROOT_DIR=$(git rev-parse --show-toplevel)
+cd "$ROOT_DIR"
+
+# Execute the pre-commit build
+make -f Makefile.precommit build
+
+# Check the exit status of the make command
+if [ $? -ne 0 ]; then
+    echo "Pre-commit build failed. Aborting commit."
+    exit 1
+fi
+
+# If the build succeeds, allow the commit
+exit 0

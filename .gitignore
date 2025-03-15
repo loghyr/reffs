@@ -27,3 +27,4 @@ py-compile
 test-driver
 *.trs
 *.log
+.git/hooks/pre-commit
