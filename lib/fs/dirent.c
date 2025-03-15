@@ -3,7 +3,14 @@
  * SPDX-License-Identifier: GPL-2.0+
  */
 
+#define _XOPEN_SOURCE 600
+//#define _POSIX_C_SOURCE 200809L
+#include <features.h>
+
 #include <unistd.h>
+#include <string.h>
+#include <strings.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
@@ -97,6 +104,12 @@ struct dirent *dirent_find(struct dirent *parent, enum reffs_text_case rtc,
 	struct dirent *de = NULL;
 	struct dirent *tmp;
 	reffs_strng_compare cmp;
+
+	assert(parent);
+	assert(name);
+
+	if (!name)
+		return de;
 
 	if (rtc == reffs_text_case_insensitive)
 		cmp = strcasecmp;
