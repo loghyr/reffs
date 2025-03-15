@@ -22,7 +22,7 @@ void reffs_trace(const char *function, int line, const char *msg, ...)
 	va_list ap_copy;
 	va_copy(ap_copy, ap);
 
-	vfprintf(stdout, formatted_msg, ap_copy);
+	fprintf(stdout, "%s", formatted_msg);
 
 	va_end(ap_copy);
 	va_end(ap);

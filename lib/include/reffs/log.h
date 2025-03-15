@@ -13,6 +13,7 @@
 #include <stdatomic.h>
 
 #define REFFS_OUTPUT_BUFFER (1024)
+
 static inline void reffs_log(const char *function, int line, const char *msg,
 			     ...)
 {
@@ -26,11 +27,9 @@ static inline void reffs_log(const char *function, int line, const char *msg,
 	va_list ap_copy;
 	va_copy(ap_copy, ap);
 
-	vfprintf(stderr, formatted_msg, ap_copy);
+	fprintf(stderr, "%s", formatted_msg);
 
 	va_end(ap_copy);
-	va_end(ap);
-
 	va_end(ap);
 }
 
@@ -40,7 +39,7 @@ static inline void reffs_fail(const char *function, int line, const char *msg,
 	va_list ap;
 	va_start(ap, msg);
 
-	reffs_log(function, line, msg, ap); // Pass ap to reffs_log
+	reffs_log(function, line, msg, ap);
 
 	va_end(ap);
 	abort();
