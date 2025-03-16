@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
+#include "reffs/log.h"
+
 #ifdef NDEBUG
 #define assert_ptr(expr, ...) (__ASSERT_VOID_CAST(0))
 #define assert_status(expr, ...) (__ASSERT_VOID_CAST(0))
