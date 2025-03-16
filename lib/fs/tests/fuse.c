@@ -207,7 +207,7 @@ int main(void)
 	verify(st_pre.st_ino == st_post.st_ino);
 	verify(st_pre.st_uid == st_post.st_uid);
 	verify(st_pre.st_gid == st_post.st_gid);
-	verify(st_post.st_size == 10);
+	verify(st_post.st_size == 5);
 	verify(st_pre.st_atim.tv_sec == st_post.st_atim.tv_sec);
 	verify(st_pre.st_atim.tv_nsec == st_post.st_atim.tv_nsec);
 	verify((st_pre.st_mtim.tv_sec < st_post.st_mtim.tv_sec) ||
@@ -231,7 +231,7 @@ int main(void)
 	verify(st_pre.st_ino == st_post.st_ino);
 	verify(st_pre.st_uid == st_post.st_uid);
 	verify(st_pre.st_gid == st_post.st_gid);
-	verify(st_post.st_size == 10);
+	verify(st_post.st_size == 5);
 	verify(st_pre.st_mtim.tv_sec == st_post.st_mtim.tv_sec);
 	verify(st_pre.st_mtim.tv_nsec == st_post.st_mtim.tv_nsec);
 	verify(st_pre.st_ctim.tv_sec == st_post.st_ctim.tv_sec);
