@@ -13,12 +13,35 @@ Packager: Tom Haynes <loghyr@gmail.com>
 
 Source: @PACKAGE@-@VERSION@.tar.bz2
 
-BuildRequires:  gcc make check autoconf-archive pkg-config
-BuildRequires:  xxhash-devel libtirpc-devel nfs-utils
-BuildRequires:  libev-devel jemalloc uuid-devel
-BuildRequires:  clang-tools-extra check-devel
+BuildRequires: git
+BuildRequires: autoreconf
+BuildRequires: automake
+BuildRequires: libtool
+BuildRequires: userspace-rcu-devel
+BuildRequires: libtirpc-devel
+BuildRequires: check-devel
+BuildRequires: libuuid-devel
+BuildRequires: libev-devel
+BuildRequires: xxhash-devel
+BuildRequires: fuse-devel
+BuildRequires: clang
+BuildRequires: autoconf-archive
+BuildRequires: make
+BuildRequires: gcc
+BuildRequires: clang-format
+BuildRequires: rpcgen
+BuildRequires: bear
+BuildRequires: clang-tidy
+BuildRequires: scan-build
 
-Requires:	xxhash libev jemalloc uuid
+Requires: check
+Requires: fuse
+Requires: libtirpc
+Requires: libev
+Requires: libuuid
+Requires: pthreads
+Requires: userspace-rcu
+Requires: xxhash
 
 Buildroot: %{_tmppath}/%{name}-root
 

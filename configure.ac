@@ -68,14 +68,12 @@ PKG_CHECK_MODULES(TIRPC, libtirpc, ,
 
 PKG_CHECK_MODULES([CHECK], [check >= 0.15.2])
 
-dnl I can't get either libcheck or libuuid to be found!
-dnl UUID_LIBS=-luuid
-
 AX_PTHREAD([], [AC_MSG_ERROR([Could not configure pthread support])])
 AC_CHECK_LIB([pthread], [pthread_create], , [AC_MSG_ERROR([Please install libpthread])])
-AC_CHECK_LIB([ev], [ev_run], , [AC_MSG_ERROR([Please install libev])])
+AC_CHECK_LIB([ev], [ev_run], , [AC_MSG_ERROR([Please install libev-devel])])
 AC_CHECK_LIB([xxhash], [XXH3_64bits], , [AC_MSG_ERROR([Please install xxhash-devel])])
-AC_CHECK_LIB([fuse], [fuse_main], , [AC_MSG_ERROR([Please install fuse])])
+AC_CHECK_LIB([fuse], [fuse_main], , [AC_MSG_ERROR([Please install fuse-devel])])
+AC_CHECK_LIB([uuid], [uuid_unparse], , [AC_MSG_ERROR([Please install uuid-devel])])
 
 LIBS="${PTHREAD_LIBS} ${TIRPC_LIBS} ${FUSE_LIBS} ${XXHASH_LIBS} ${URCU_LIBS} ${URCU_CDS_LIBS} ${LIBEV} ${JEMALLOC_LIBS} ${LIBS}"
 CFLAGS="${CFLAGS} ${PTHREAD_CFLAGS} ${TIRPC_CFLAGS}"
