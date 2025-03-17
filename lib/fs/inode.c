@@ -9,14 +9,16 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <assert.h>
-#include "reffs/data_block.h"
-#include "reffs/inode.h"
-#include "reffs/super_block.h"
-#include "reffs/log.h"
+#include <time.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
 #include <urcu/rculfhash.h>
+
+#include "reffs/data_block.h"
+#include "reffs/inode.h"
+#include "reffs/super_block.h"
+#include "reffs/log.h"
 
 static int inode_match(struct cds_lfht_node *ht_node, const void *vkey)
 {

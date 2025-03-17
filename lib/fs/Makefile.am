@@ -4,7 +4,7 @@
 SUBDIRS = tests
 
 AM_CFLAGS = -Im4 -I. \
-	-I$(top_srcdir)/lib/include
+	-I$(top_srcdir)/lib/include $(PTHREAD_CFLAGS)
 
 lib_LTLIBRARIES = libreffs_fs.la
 libreffs_fs_la_SOURCES = \

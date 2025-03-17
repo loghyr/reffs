@@ -58,25 +58,53 @@ AC_TYPE_UINT64_T
 AC_TYPE_UINT8_T
 
 PKG_CHECK_MODULES(URCU, liburcu, ,
-        [AC_MSG_ERROR([Could not configure liburcu support.])])
+    [AC_MSG_ERROR([Could not configure liburcu support.])])
 
 PKG_CHECK_MODULES(URCU_CDS, liburcu-cds, ,
-        [AC_MSG_ERROR([Could not configure liburcu-cds support.])])
+    [AC_MSG_ERROR([Could not configure liburcu-cds support.])])
 
 PKG_CHECK_MODULES(TIRPC, libtirpc, ,
-        [AC_MSG_ERROR([Could not configure libtirpc support.])])
+    [AC_MSG_ERROR([Could not configure libtirpc support.])])
 
 PKG_CHECK_MODULES([CHECK], [check >= 0.15.2])
 
-AX_PTHREAD([], [AC_MSG_ERROR([Could not configure pthread support])])
-AC_CHECK_LIB([pthread], [pthread_create], , [AC_MSG_ERROR([Please install libpthread])])
-AC_CHECK_LIB([ev], [ev_run], , [AC_MSG_ERROR([Please install libev-devel])])
-AC_CHECK_LIB([xxhash], [XXH3_64bits], , [AC_MSG_ERROR([Please install xxhash-devel])])
-AC_CHECK_LIB([fuse], [fuse_main], , [AC_MSG_ERROR([Please install fuse-devel])])
-AC_CHECK_LIB([uuid], [uuid_unparse], , [AC_MSG_ERROR([Please install uuid-devel])])
+AX_PTHREAD([PTHREAD_CFLAGS=-pthread], [AC_MSG_ERROR([Could not configure pthread support])])
+AC_SUBST(PTHREAD_CFLAGS)
 
-LIBS="${PTHREAD_LIBS} ${TIRPC_LIBS} ${FUSE_LIBS} ${XXHASH_LIBS} ${URCU_LIBS} ${URCU_CDS_LIBS} ${LIBEV} ${JEMALLOC_LIBS} ${LIBS}"
-CFLAGS="${CFLAGS} ${PTHREAD_CFLAGS} ${TIRPC_CFLAGS}"
+PKG_CHECK_MODULES(XXHASH, libxxhash, , [AC_MSG_ERROR([Could not configure xxhash support.])])
+
+PKG_CHECK_MODULES(FUSE, fuse, , [AC_MSG_ERROR([Could not configure fuse support.])])
+
+# Check for programs
+AC_PATH_PROG([GIT], [git], [no])
+if test "x$GIT" = "xno"; then
+    AC_MSG_ERROR([git is required to build this project])
+fi
+
+AC_PATH_PROG([CLANG_FORMAT], [clang-format], [no])
+if test "x$CLANG_FORMAT" = "xno"; then
+    AC_MSG_ERROR([clang-format is required to build this project])
+fi
+
+AC_PATH_PROG([CLANG_TIDY], [clang-tidy], [no])
+if test "x$CLANG_TIDY" = "xno"; then
+    AC_MSG_ERROR([clang-tidy is required to build this project])
+fi
+
+AC_PATH_PROG([SCAN_BUILD], [scan-build], [no])
+if test "x$SCAN_BUILD" = "xno"; then
+    AC_MSG_ERROR([scan-build is required to build this project])
+fi
+
+AC_PATH_PROG([RPCGEN], [rpcgen], [no])
+if test "x$RPCGEN" = "xno"; then
+    AC_MSG_ERROR([rpcgen is required to build this project])
+fi
+
+AC_PATH_PROG([BEAR], [bear], [no])
+if test "x$BEAR" = "xno"; then
+    AC_MSG_ERROR([bear is required to build this project])
+fi
 
 AC_ARG_ENABLE(asan,
 [  --enable-asan      Compile with address sanitizer],

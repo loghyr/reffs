@@ -4,15 +4,21 @@
 ACLOCAL_AMFLAGS = -Im4 
 
 AM_CFLAGS = \
-	-I$(top_srcdir)/lib/include \
-	-I$(top_srcdir)/lib/xdr
-	-I$(TIRPC_CFLAGS)
+	-I$(top_srcdir)/lib/include	\
+	-I$(top_srcdir)/lib/xdr		\
+	$(TIRPC_CFLAGS)			\
+	$(PTHREAD_CFLAGS)
 
 LDADD = \
-	$(top_srcdir)/lib/xdr/libreffs_xdr.la \
-	$(top_srcdir)/lib/fs/libreffs_fs.la \
-	$(top_srcdir)/lib/utils/libreffs_utils.la \
-	$(TIRPC_LIBS)
+	$(top_srcdir)/lib/xdr/libreffs_xdr.la		\
+	$(top_srcdir)/lib/fs/libreffs_fs.la		\
+	$(top_srcdir)/lib/utils/libreffs_utils.la	\
+	$(TIRPC_LIBS)					\
+	$(PTHREAD_LIBS)					\
+	$(URCU_LIBS)					\
+	$(URCU_CDS_LIBS)				\
+	$(XXHASH_LIBS)					\
+	$(FUSE_LIBS)
 
 recho_ev_SOURCES = recho_ev.c
 recho_ev_LDADD = $(LDADD)
