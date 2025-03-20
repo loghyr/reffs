@@ -27,8 +27,8 @@ fix-style:
 tidy: configure
 	make tidy
 
-clean: pristine
+clean: mrproper
 	git clean -f -x -d
 
-pristine:
+mrproper:
 	git ls-files --other --directory --exclude-standard
