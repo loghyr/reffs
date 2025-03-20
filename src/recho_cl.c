@@ -37,6 +37,19 @@
 #include <rpc/rpcb_clnt.h>
 #include <rpc/nettype.h>
 
+static int safe_gets(char *buf, size_t size)
+{
+	if (fgets(buf, size, stdin) != NULL) {
+		size_t len = strlen(buf);
+		if (len > 0 && buf[len - 1] == '\n') {
+			buf[len - 1] = '\0';
+		}
+		return 0;
+	} else {
+		return 1;
+	}
+}
+
 static void usage(const char *me)
 {
 	fprintf(stdout, "Usage: %s [options]\n", me);
@@ -168,8 +181,8 @@ int main(int argc, char *argv[])
 	while (1) {
 		// Get the user input
 		memset(&buf, '\0', MSG_MAX);
-		ret = scanf("%s", buf);
-		if (ret == EOF) {
+		ret = safe_gets(buf, MSG_MAX);
+		if (ret) {
 			ret = errno;
 			LOG("scanf() failed: %d", ret);
 			return 1;
