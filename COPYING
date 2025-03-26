@@ -1,22 +1,19 @@
 SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 
-The Reference File System is provided under:
+The Reference File System is provided under a dual license:
 
-       SPDX-License-Identifier: GPL-2.0+
+  * SPDX-License-Identifier: GPL-2.0+
 
-We also include:
+This project also includes:
 
-       .x files copyright the IETF Trust available under a simplified
-          BSD license as described in
-          http://trustee.ietf.org/docs/IETF-Trust-License-Policy.pdf)
+  * `.x` files, which are derived from IETF Trust materials. These files are made available under the BSD-3-Clause license, as described in the IETF Trust Legal Provisions:
+      * http://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/
 
-          According to https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/,
-          the IETF BSD License is:
+  * The IETF BSD License is intended to be compatible with the Revised BSD License template published at:
+      * https://opensource.org/licenses/BSD-3-Clause
 
-          The above BSD License is intended to be compatible with the Revised BSD License
-          template published at https://opensource.org/licenses/BSD-3-Clause. As such,
-          .x files will be provided under:
-               SPDX-License-Identifier: BSD-3-Clause
+  * Therefore, `.x` files are provided under:
+      * SPDX-License-Identifier: BSD-3-Clause
 
 Copies of the Licenses are in:
 

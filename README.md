@@ -1,23 +1,22 @@
 SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 SPDX-License-Identifier: GPL-2.0+
 
-General Information
+# General Information
 
 RefFS is the Reference File System which provides:
 
-1) A reference user land file system.
-2) A reference NFSv3 server.
-3) A reference NFSv3 client.
-4) A reference NFSv4.1 server with Flex Files support.
-5) A reference NFSv4.1 client with Flex Files support.
-6) A reference Control Protocol which communicates between a reference NFSv3 server and a reference NFSv4.1 server with Flex Files support.
+1. A reference user land file system.
+2. A reference NFSv3 server.
+3. A reference NFSv3 client.
+4. A reference NFSv4.1 server with Flex Files support.
+5. A reference NFSv4.1 client with Flex Files support.
+6. A reference Control Protocol which communicates between a reference NFSv3 server and a reference NFSv4.1 server with Flex Files support.
 
-License
+# License
 
 See COPYING in this directory.
 
-
-Disclaimer
+# Disclaimer
 
 There is no warranty, expressed or implied, associated with this product.  Use at your own risk.
 
