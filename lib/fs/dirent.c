@@ -3,6 +3,10 @@
  * SPDX-License-Identifier: GPL-2.0+
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #define _XOPEN_SOURCE 600
 //#define _POSIX_C_SOURCE 200809L
 #include <features.h>

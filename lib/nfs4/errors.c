@@ -3,6 +3,10 @@
  * SPDX-License-Identifier: GPL-2.0+
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include "errors.h"
 
 #define NFS4_MAX_ERRORS_PER_OP (115)
