@@ -17,5 +17,11 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# If the build succeeds, allow the commit
+# Check if the commit message contains a "Signed-off-by" line
+if ! git log -1 HEAD --pretty=format:"%b" | grep -q "^Signed-off-by:"; then
+    echo "Error: Commit message must contain a 'Signed-off-by:' line."
+    echo "Use 'git commit -s' or manually add a 'Signed-off-by:' line to your commit message."
+    exit 1
+fi
+
 exit 0
