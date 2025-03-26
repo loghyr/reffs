@@ -1,6 +1,6 @@
 /*
- * SPDexpr-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
- * SPDexpr-License-Identifier: GPL-2.0+
+ * SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+ * SPDX-License-Identifier: GPL-2.0+
  */
 
 #ifndef _REFFS_TEST_H

@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: GPL-2.0+
+
 # Change to the root directory of the Git repository
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 if [ -z "$REPO_ROOT" ]; then

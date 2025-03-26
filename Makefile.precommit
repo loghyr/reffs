@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: GPL-2.0+
+
 all: rpm
 
 rpm: check
@@ -18,7 +21,10 @@ configure: reconf
 reconf: style
 	autoreconf -i
 
-style: clean
+license: clean
+	./check_license.sh
+
+style: license
 	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format --dry-run -Werror
 
 fix-style:

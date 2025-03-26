@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+ * SPDX-License-Identifier: GPL-2.0+
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
