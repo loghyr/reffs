@@ -1,3 +1,4 @@
+/* XDR definitions derived from RFC 1813 */
 /* SPDX-License-Identifier: BSD-3-Clause */
 
 const MNTPATHLEN = 1024;   /* Maximum bytes in a path name */

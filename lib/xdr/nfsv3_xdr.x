@@ -1,3 +1,4 @@
+/* XDR definitions derived from RFC 1813 */
 /* SPDX-License-Identifier: BSD-3-Clause */
 
 /*

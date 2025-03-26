@@ -1,6 +1,5 @@
+/* XDR definitions derived from RFC 5531 */
 /* SPDX-License-Identifier: BSD-3-Clause */
-
-/* From RFC5531 */
 
 enum auth_flavor {
     AUTH_NONE       = 0,

@@ -1,8 +1,13 @@
 #!/bin/bash
 
+# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: GPL-2.0+
+
 file="$1"
 
 cat <<EOF | sed -e "1i\\" > "$file".tmp
+/* SPDX-License-Identifier: BSD-3-Clause */
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-variable"
