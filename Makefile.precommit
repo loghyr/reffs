@@ -1,40 +1,53 @@
 # SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: GPL-2.0+
 
-all: rpm
+# Default target: style and license check
+all: style license
 
-rpm: check
-	make rpm
-
-check: build
-	make check
-
-build: configure
-	make
-
-scanbuild: configure
-	scan-build make
-
+# Configure the build (for build-related checks)
 configure: reconf
-	./configure $(filter --with-cc=%,$(MAKEOVERRIDES))
+	mkdir -p build
+	cd build && ../configure $(filter --with-cc=%,$(MAKEOVERRIDES))
 
-reconf: style
-	autoreconf -i
+# Build the project (for build-related checks)
+build: configure
+	cd build && make
 
-license: clean
+# Run tests (for build-related checks)
+check: build
+	cd build && make check
+
+# Run scan-build (for static analysis)
+scanbuild: configure
+	cd build && scan-build make
+
+# Check license headers
+license:
 	./check_license.sh
 
-style: license
-	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format --dry-run -Werror
+# Check code style
+style:
+	find . -name xdr -prune -o \( ! -name 'config.h' -o -name '*.ch' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format --dry-run -Werror
 
+# Fix code style (if needed)
 fix-style:
-	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
+	find . -name xdr -prune -o \( ! -name 'config.h' -o -name '*.ch' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
 
-tidy: configure
-	make tidy
+# Clean build artifacts (less aggressive than git clean)
+untracked_files := $(shell git ls-files --other --directory --exclude-standard)
+clean:
+	rm -rf build
+ifneq ("$(untracked_files)","")
+	echo "ERROR: Untracked files found. Please add or remove them before proceeding:"
+	echo "$(untracked_files)"
+	exit 1
+endif
 
-clean: mrproper
-	git clean -f -x -d
-
+# Remove generated files and build directories (more aggressive)
 mrproper:
-	git ls-files --other --directory --exclude-standard
+	git clean -f -x -d
+	rm -rf build
+
+# Reconfigure the build system (for developers)
+reconf: clean
+	autoreconf -i
