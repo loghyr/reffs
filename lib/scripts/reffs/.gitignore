@@ -1,4 +1,5 @@
 __pycache__/
+xdrgen.py
 parser.out
 parsetab.py
 reffs_echo_xdr_const.py
