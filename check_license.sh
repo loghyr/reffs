@@ -27,8 +27,8 @@ check_spdx_headers() {
   fi
 }
 
-# Get a list of all files, excluding .gitignore, LICENSES directory, .x files, COPYING, and xdrgen.py
-files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|COPYING$|lib/scripts/reffs/xdrgen\.py$')
+# Get a list of all files, excluding .gitignore, LICENSES directory, .x files, COPYING, and xdrgen.py.in
+files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|COPYING$|lib/scripts/reffs/xdrgen\.py\.in$')
 
 # Check each file
 error_count=0

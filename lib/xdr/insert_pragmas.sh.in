@@ -5,6 +5,9 @@
 
 file="$1"
 
+# Correct include paths
+sed -i 's/#include[[:space:]]*"\(.*\)\/\([^"]*\)"/#include "\2"/g' "$file"
+
 cat <<EOF | sed -e "1i\\" > "$file".tmp
 /* SPDX-License-Identifier: BSD-3-Clause */
 

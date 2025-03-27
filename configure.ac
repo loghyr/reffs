@@ -249,4 +249,7 @@ AC_CONFIG_FILES([
 	lib/xdr/Makefile
 	src/Makefile])
 
+AC_CONFIG_FILES([lib/xdr/insert_pragmas.sh],[chmod +x lib/xdr/insert_pragmas.sh])
+AC_CONFIG_FILES([lib/scripts/reffs/xdrgen.py],[chmod +x lib/scripts/reffs/xdrgen.py])
+
 AC_OUTPUT

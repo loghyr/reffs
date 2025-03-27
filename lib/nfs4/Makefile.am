@@ -3,9 +3,9 @@
 
 SUBDIRS = tests
 
-AM_CFLAGS = -Im4 -I. \
-	-I$(top_srcdir)/lib/include \
-	-I$(top_srcdir)/lib/xdr \
+AM_CFLAGS = -Im4 -I.			\
+	-I$(top_srcdir)/lib/include	\
+	-I$(top_builddir)/lib/xdr	\
 	$(TIRPC_CFLAGS)
 
 lib_LTLIBRARIES = libreffs_nfs4.la

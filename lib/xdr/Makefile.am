@@ -24,7 +24,7 @@ libreffs_xdr_la_SOURCES = $(GEN_SOURCES) ref_cp_xdr.x reffs_echo_xdr.x nfsv42_xd
 
 %.c: %.x %.h
 	rpcgen -C -c $< > $@
-	./insert_pragmas.sh $@
+	$(top_builddir)/lib/xdr/insert_pragmas.sh $@
 
 %.h: %.x
 	rpcgen -C -h $< > $@
