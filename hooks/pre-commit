@@ -9,11 +9,19 @@ ROOT_DIR=$(git rev-parse --show-toplevel)
 cd "$ROOT_DIR"
 
 # Execute the pre-commit build
-make -f Makefile.precommit build
+make -f Makefile.precommit reconf
 
 # Check the exit status of the make command
 if [ $? -ne 0 ]; then
-    echo "Pre-commit build failed. Aborting commit."
+    echo "Pre-commit Autoconf failed. Aborting commit."
+    exit 1
+fi
+
+# Now build out of tree
+
+./tree-build.sh
+if [ $? -ne 0 ]; then
+    echo "Pre-commit Out-of-tree build failed. Aborting commit."
     exit 1
 fi
 
