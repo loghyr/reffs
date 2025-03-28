@@ -12,38 +12,18 @@
 #include <stdarg.h>
 #include <stdatomic.h>
 
-#define REFFS_OUTPUT_BUFFER (1024)
+#define reffs_fail(fmt, ...)                                              \
+	do {                                                              \
+		fprintf(stderr, "%s() %d: " fmt "\n", __func__, __LINE__, \
+			##__VA_ARGS__);                                   \
+		abort();                                                  \
+	} while (0)
 
-static inline void reffs_log(const char *function, int line, const char *msg,
-			     ...)
-{
-	va_list ap;
-	va_start(ap, msg);
-
-	char formatted_msg[REFFS_OUTPUT_BUFFER];
-	snprintf(formatted_msg, sizeof(formatted_msg), "%s:%d %s\n", function,
-		 line, msg);
-
-	va_list ap_copy;
-	va_copy(ap_copy, ap);
-
-	fprintf(stderr, "%s", formatted_msg);
-
-	va_end(ap_copy);
-	va_end(ap);
-}
-
-static inline void reffs_fail(const char *function, int line, const char *msg,
-			      ...)
-{
-	va_list ap;
-	va_start(ap, msg);
-
-	reffs_log(function, line, msg, ap);
-
-	va_end(ap);
-	abort();
-}
+#define reffs_log(fmt, ...)                                               \
+	do {                                                              \
+		fprintf(stdout, "%s() %d: " fmt "\n", __func__, __LINE__, \
+			##__VA_ARGS__);                                   \
+	} while (0)
 
 void reffs_trace(const char *function, int line, const char *msg, ...);
 
@@ -53,20 +33,20 @@ void reffs_trace(const char *function, int line, const char *msg, ...);
 void reffs_tracing_set(bool state);
 bool reffs_tracing_enabled(void);
 
-#define FAIL(...) reffs_fail(__func__, __LINE__, __VA_ARGS__)
-#define LOG(...) reffs_log(__func__, __LINE__, __VA_ARGS__)
+#define FAIL(fmt, ...) reffs_fail(fmt, ##__VA_ARGS__)
+#define LOG(fmt, ...) reffs_log(fmt, ##__VA_ARGS__)
 
-#define WARN_ONCE(X, ...)                                           \
-	do {                                                        \
-		if (!atomic_flag_test_and_set((X)))                 \
-			reffs_log(__func__, __LINE__, __VA_ARGS__); \
+#define WARN_ONCE(X, fmt, ...)                         \
+	do {                                           \
+		if (!atomic_flag_test_and_set((X)))    \
+			reffs_log(fmt, ##__VA_ARGS__); \
 	} while (0)
 
 // FIXME: Expose it as a global to bypass a function call
-#define TRACE(...)                                                    \
-	do {                                                          \
-		if (reffs_tracing_enabled())                          \
-			reffs_trace(__func__, __LINE__, __VA_ARGS__); \
+#define TRACE(fmt, ...)                                \
+	do {                                           \
+		if (reffs_tracing_enabled())           \
+			reffs_log(fmt, ##__VA_ARGS__); \
 	} while (0)
 
 #endif /* _REFFS_LOG_H */

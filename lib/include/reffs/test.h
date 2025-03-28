@@ -20,8 +20,7 @@
 #define assert_ptr(expr, ...)                                        \
 	do {                                                         \
 		if ((expr) == 0) {                                   \
-			reffs_fail(__func__, __LINE__,               \
-				   "assert %s: " __VA_ARGS__, #expr, \
+			reffs_fail("assert %s: " __VA_ARGS__, #expr, \
 				   ##__VA_ARGS__);                   \
 		}                                                    \
 	} while (0)
@@ -29,19 +28,18 @@
 #define assert_status(expr, ...)                                              \
 	do {                                                                  \
 		if ((expr) != 0) {                                            \
-			reffs_fail(__func__, __LINE__,                        \
-				   "assert status %s is not 0: " __VA_ARGS__, \
+			reffs_fail("assert status %s is not 0: " __VA_ARGS__, \
 				   #expr, ##__VA_ARGS__);                     \
 		}                                                             \
 	} while (0)
 
 #endif /* NDEBUG */
 
-#define verify(expr)                                                        \
-	do {                                                                \
-		if ((expr) == 0) {                                          \
-			reffs_fail(__func__, __LINE__, "assert %s", #expr); \
-		}                                                           \
+#define verify(expr)                                    \
+	do {                                            \
+		if ((expr) == 0) {                      \
+			reffs_fail("assert %s", #expr); \
+		}                                       \
 	} while (0)
 
 #endif /* _REFFS_TEST_H */

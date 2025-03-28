@@ -262,13 +262,13 @@ static void *connector_thread(void *vqueue)
 		bzero(buf, BUFSIZE);
 		n = read(lsnr->l_fd, buf, BUFSIZE);
 		if (n < 0)
-			FAIL("Could not read from socket: %d", n);
+			FAIL("Could not read from socket: %ld", n);
 
 		printf("%s said %ld bytes: %s", lsnr->l_addr_str, n, buf);
 
 		n = write(lsnr->l_fd, buf, strlen(buf));
 		if (n < 0)
-			FAIL("Could not write to socket: %d", n);
+			FAIL("Could not write to socket: %ld", n);
 
 		if (!strncmp(buf, "done", 4)) {
 			uatomic_or(&lsnr->l_flags, LISTENER_IS_DEAF);
