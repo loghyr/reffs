@@ -89,6 +89,8 @@ int main(void)
 	verify(st_pre.st_gid == inode->i_gid);
 	verify(st_pre.st_size == inode->i_size);
 
+	usleep(1000);
+
 	ret = reffs_fuse_mkdir("/foo/bar/garbo", 0640);
 	verify(!ret);
 	ret = reffs_fuse_getattr("/foo/bar", &st_post);
@@ -127,6 +129,8 @@ int main(void)
 	verify(st_pre.st_size == 0);
 	verify(st_pre.st_mode == (S_IFREG | 0755));
 
+	usleep(1000);
+
 	ret = reffs_fuse_write("/foo/bar", "hello", 5, 0, NULL);
 	rc = errno;
 	verify(ret == -1);
@@ -152,6 +156,7 @@ int main(void)
 		((st_pre.st_ctim.tv_nsec < st_post.st_ctim.tv_nsec))));
 
 	st_pre = st_post;
+	usleep(1000);
 
 	bzero(buffer, BUFFER_LEN);
 	ret = reffs_fuse_read("/foo/bar/nurse", buffer, 5, 0, NULL);
@@ -175,6 +180,7 @@ int main(void)
 		((st_pre.st_atim.tv_nsec < st_post.st_atim.tv_nsec))));
 
 	st_pre = st_post;
+	usleep(1000);
 
 	bzero(buffer, BUFFER_LEN);
 	ret = reffs_fuse_read("/foo/bar/nurse", buffer, 5, 10, NULL);
@@ -197,6 +203,7 @@ int main(void)
 		((st_pre.st_atim.tv_nsec < st_post.st_atim.tv_nsec))));
 
 	st_pre = st_post;
+	usleep(1000);
 
 	ret = reffs_fuse_write("/foo/bar/nurse", "hello", 5, 5, NULL);
 	rc = errno;
@@ -207,7 +214,7 @@ int main(void)
 	verify(st_pre.st_ino == st_post.st_ino);
 	verify(st_pre.st_uid == st_post.st_uid);
 	verify(st_pre.st_gid == st_post.st_gid);
-	verify(st_post.st_size == 5);
+	verify(st_post.st_size == 10);
 	verify(st_pre.st_atim.tv_sec == st_post.st_atim.tv_sec);
 	verify(st_pre.st_atim.tv_nsec == st_post.st_atim.tv_nsec);
 	verify((st_pre.st_mtim.tv_sec < st_post.st_mtim.tv_sec) ||
@@ -218,6 +225,7 @@ int main(void)
 		((st_pre.st_ctim.tv_nsec < st_post.st_ctim.tv_nsec))));
 
 	st_pre = st_post;
+	usleep(1000);
 
 	bzero(buffer, BUFFER_LEN);
 	ret = reffs_fuse_read("/foo/bar/nurse", buffer, 5, 5, NULL);
@@ -231,7 +239,7 @@ int main(void)
 	verify(st_pre.st_ino == st_post.st_ino);
 	verify(st_pre.st_uid == st_post.st_uid);
 	verify(st_pre.st_gid == st_post.st_gid);
-	verify(st_post.st_size == 5);
+	verify(st_post.st_size == 10);
 	verify(st_pre.st_mtim.tv_sec == st_post.st_mtim.tv_sec);
 	verify(st_pre.st_mtim.tv_nsec == st_post.st_mtim.tv_nsec);
 	verify(st_pre.st_ctim.tv_sec == st_post.st_ctim.tv_sec);
@@ -241,6 +249,7 @@ int main(void)
 		((st_pre.st_atim.tv_nsec < st_post.st_atim.tv_nsec))));
 
 	st_pre = st_post;
+	usleep(1000);
 
 	bzero(buffer, BUFFER_LEN);
 	ret = reffs_fuse_read("/foo/bar/nurse", buffer, 10, 0, NULL);
@@ -262,6 +271,7 @@ int main(void)
 	verify((st_pre.st_atim.tv_sec < st_post.st_atim.tv_sec) ||
 	       ((st_pre.st_atim.tv_sec == st_post.st_atim.tv_sec) &&
 		((st_pre.st_atim.tv_nsec < st_post.st_atim.tv_nsec))));
+	usleep(1000);
 
 	ret = reffs_fuse_getattr("/foo/bar", &st_pre);
 	verify(!ret);

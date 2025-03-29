@@ -709,7 +709,7 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 		}
 	} else {
 		ret = data_block_write(inode->i_db, buffer, size, offset);
-		if (ret) {
+		if (ret < 0) {
 			goto out_unlock;
 		}
 	}
