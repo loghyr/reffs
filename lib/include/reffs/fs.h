@@ -17,6 +17,7 @@ struct name_match {
 int find_matching_directory_entry(struct name_match **nm, const char *path,
 				  bool match_end);
 
+int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid);
 int reffs_fs_chmod(const char *path, mode_t mode);
 int reffs_fs_chown(const char *path, uid_t uid, gid_t gid);
 int reffs_fs_fallocate(const char *path, int mode, off_t offset, off_t len);

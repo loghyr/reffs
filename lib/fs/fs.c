@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -147,6 +148,75 @@ found:
 
 	super_block_put(sb);
 	*nm = new;
+	return ret;
+}
+
+int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
+{
+	struct name_match *nm;
+	struct inode *inode = NULL;
+
+	int ret;
+
+	TRACE("path=%s mode=0%o", path, mode);
+
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		goto out;
+
+	if (mode == F_OK)
+		goto out;
+
+	if (uid == inode->i_uid) {
+		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR)) {
+			ret = -EACCES;
+			goto out;
+		}
+		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR)) {
+			ret = -EACCES;
+			goto out;
+		}
+		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR)) {
+			ret = -EACCES;
+			goto out;
+		}
+	} else if (gid == inode->i_gid) {
+		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP)) {
+			ret = -EACCES;
+			goto out;
+		}
+		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP)) {
+			ret = -EACCES;
+			goto out;
+		}
+		if ((mode & X_OK) && !(inode->i_mode & S_IXGRP)) {
+			ret = -EACCES;
+			goto out;
+		}
+	} else {
+		if ((mode & W_OK) && !(inode->i_mode & S_IWOTH)) {
+			ret = -EACCES;
+			goto out;
+		}
+		if ((mode & R_OK) && !(inode->i_mode & S_IROTH)) {
+			ret = -EACCES;
+			goto out;
+		}
+		if ((mode & X_OK) && !(inode->i_mode & S_IXOTH)) {
+			ret = -EACCES;
+			goto out;
+		}
+	}
+
+	dirent_put(nm->nm_dirent);
+	free(nm);
+
+out:
+	if (ret < 0) {
+		errno = -ret;
+		ret = -1;
+	}
+
 	return ret;
 }
 

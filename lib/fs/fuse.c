@@ -7,7 +7,7 @@
 #include "config.h"
 #endif
 
-#define FUSE_USE_VERSION 30
+#define FUSE_USE_VERSION 31
 
 #include <fuse.h>
 
@@ -28,6 +28,13 @@
 
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+
+int reffs_fuse_access(const char *path, int mode)
+{
+	struct fuse_context *context = fuse_get_context();
+
+	return reffs_fs_access(path, mode, context->uid, context->gid);
+}
 
 int reffs_fuse_chmod(const char *path, mode_t mode)
 {
