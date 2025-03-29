@@ -45,7 +45,7 @@ if [ $? -ne 0 ]; then
 fi
 
 # Run tests (if available)
-# make check // loghyr - fix!
+make check
 
 # Check the test result
 if [ $? -ne 0 ]; then
