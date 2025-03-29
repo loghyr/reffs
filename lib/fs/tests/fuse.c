@@ -111,13 +111,19 @@ int main(void)
 		((st_pre.st_ctim.tv_nsec < st_post.st_ctim.tv_nsec))));
 
 	ret = reffs_fuse_rmdir("/");
-	verify(ret == -EBUSY);
+	rc = errno;
+	verify(ret == -1);
+	verify(rc == EBUSY);
 
 	ret = reffs_fuse_rmdir("/foo/bar");
-	verify(ret == -ENOTEMPTY);
+	rc = errno;
+	verify(ret == -1);
+	verify(rc == ENOTEMPTY);
 
 	ret = reffs_fuse_mknod("/foo/bar/nurse", S_IFDIR | 0755, 0);
-	verify(ret == -EISDIR);
+	rc = errno;
+	verify(ret == -1);
+	verify(rc == EISDIR);
 
 	ret = reffs_fuse_mknod("/foo/bar/nurse", S_IFREG | 0755, 0);
 	verify(!ret);
@@ -277,13 +283,17 @@ int main(void)
 	verify(!ret);
 
 	ret = reffs_fuse_unlink("/foo/bar");
-	verify(ret == -EISDIR);
+	rc = errno;
+	verify(ret == -1);
+	verify(rc = EISDIR);
 
 	ret = reffs_fuse_unlink("/foo/bar/nurse");
 	verify(!ret);
 
 	ret = reffs_fuse_getattr("/foo/bar/nurse", &st_post);
-	verify(ret == -ENOENT);
+	rc = errno;
+	verify(ret == -1);
+	verify(rc = ENOENT);
 
 	ret = reffs_fuse_getattr("/foo/bar", &st_post);
 	verify(!ret);
@@ -303,7 +313,9 @@ int main(void)
 		((st_pre.st_ctim.tv_nsec < st_post.st_ctim.tv_nsec))));
 
 	ret = reffs_fuse_rmdir("/foo/bar");
-	verify(ret == -ENOTEMPTY);
+	rc = errno;
+	verify(ret == -1);
+	verify(rc = ENOTEMPTY);
 
 	ret = reffs_fuse_getattr("/foo/bar", &st_post);
 	verify(!ret);

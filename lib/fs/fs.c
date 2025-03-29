@@ -315,7 +315,7 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		return ret;
+		goto out;
 
 	inode = nm->nm_dirent->d_inode;
 
@@ -334,6 +334,12 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
+out:
+	if (ret < 0) {
+		errno = -ret;
+		ret = -1;
+	}
+
 	return ret;
 }
 
@@ -350,19 +356,19 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
-		return ret;
+		goto out;
 
 	inode = nm->nm_dirent->d_inode;
 	sb = inode->i_sb;
 
 	if (!(inode->i_mode & S_IFDIR)) {
 		ret = -ENOTDIR;
-		goto out;
+		goto out_puts;
 	}
 
 	if (!strcmp(nm->nm_name, "..")) {
 		ret = -ENOTEMPTY;
-		goto out;
+		goto out_puts;
 	}
 
 	pthread_mutex_lock(&nm->nm_dirent->d_lock);
@@ -370,14 +376,14 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
 	if (!de) {
 		ret = -ENOENT;
-		goto out;
+		goto out_puts;
 	}
 
 	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1));
 	if (!de->d_inode) {
 		dirent_parent_release(de, reffs_life_action_death);
 		ret = -ENOENT;
-		goto out;
+		goto out_puts;
 	}
 
 	de->d_inode->i_uid = getuid();
@@ -391,10 +397,16 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	de->d_inode->i_used = 8;
 	de->d_inode->i_nlink = 2;
 
-out:
+out_puts:
 	dirent_put(de);
 	dirent_put(nm->nm_dirent);
 	free(nm);
+
+out:
+	if (ret < 0) {
+		errno = -ret;
+		ret = -1;
+	}
 
 	return ret;
 }
@@ -412,24 +424,24 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
-		return ret;
+		goto out;
 
 	inode = nm->nm_dirent->d_inode;
 	sb = inode->i_sb;
 
 	if (!(inode->i_mode & S_IFDIR)) {
 		ret = -ENOTDIR;
-		goto out;
+		goto out_puts;
 	}
 
 	if (mode & S_IFDIR) {
 		ret = -EISDIR;
-		goto out;
+		goto out_puts;
 	}
 
 	if (!strcmp(nm->nm_name, "..")) {
 		ret = -ENOTEMPTY;
-		goto out;
+		goto out_puts;
 	}
 
 	pthread_mutex_lock(&nm->nm_dirent->d_lock);
@@ -437,14 +449,14 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
 	if (!de) {
 		ret = -ENOENT;
-		goto out;
+		goto out_puts;
 	}
 
 	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1));
 	if (!de->d_inode) {
 		dirent_parent_release(de, reffs_life_action_death);
 		ret = -ENOENT;
-		goto out;
+		goto out_puts;
 	}
 
 	de->d_inode->i_uid = getuid();
@@ -458,10 +470,16 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 	de->d_inode->i_used = 0;
 	de->d_inode->i_nlink = 1;
 
-out:
+out_puts:
 	dirent_put(de);
 	dirent_put(nm->nm_dirent);
 	free(nm);
+
+out:
+	if (ret < 0) {
+		errno = -ret;
+		ret = -1;
+	}
 
 	return ret;
 }
@@ -575,6 +593,11 @@ static int rename_dest(struct name_match *nm_src, struct dirent *de_dst,
 	ret = rename_dest_locked(nm_src, de_dst, dst_name);
 	pthread_mutex_unlock(&nm_src->nm_dirent->d_parent->d_lock);
 
+	if (ret < 0) {
+		errno = -ret;
+		ret = -1;
+	}
+
 	return ret;
 }
 
@@ -595,13 +618,15 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 
 	TRACE("src_path=%s dst_path=%s", src_path, dst_path);
 
-	if (!strcmp(src_path, "/") || !strcmp(dst_path, "/"))
-		return -EFAULT;
+	if (!strcmp(src_path, "/") || !strcmp(dst_path, "/")) {
+		ret = -EFAULT;
+		goto out;
+	}
 
 	ret = find_matching_directory_entry(&nm_src, src_path,
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		return ret;
+		goto out;
 
 	// TODO: make sure the paths are not overlapped if dirs
 	ret = find_matching_directory_entry(&nm_dst, dst_path,
@@ -614,7 +639,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		if (ret) {
 			dirent_put(nm_src->nm_dirent);
 			free(nm_src);
-			return ret;
+			goto out;
 		}
 	} else {
 		dst_exists = true;
@@ -623,25 +648,25 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 	if (!dst_exists) {
 		if (!(nm_dst->nm_dirent->d_inode->i_mode & S_IFDIR)) {
 			ret = -ENOTDIR;
-			goto out;
+			goto out_unlock;
 #ifdef NOT_NOW
 		} else if (!cds_list_empty(&(nm_dst->nm_dirent->d_children))) {
 			// man page says it must be empty
 			ret = -ENOTEMPTY;
-			goto out;
+			goto out_unlock;
 #endif
 		}
 	}
 
 	if (!strcmp(nm_dst->nm_name, "..")) {
 		ret = -ENOTEMPTY;
-		goto out;
+		goto out_unlock;
 	}
 
 	if (nm_dst->nm_dirent->d_inode->i_ino ==
 	    nm_src->nm_dirent->d_inode->i_ino) {
 		ret = 0;
-		goto out;
+		goto out_unlock;
 	}
 
 	if (nm_src->nm_dirent == nm_dst->nm_dirent) {
@@ -688,11 +713,17 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		dirent_put(de_delete_dst);
 	}
 
-out:
+out_unlock:
 	dirent_put(nm_src->nm_dirent);
 	free(nm_src);
 	dirent_put(nm_dst->nm_dirent);
 	free(nm_dst);
+
+out:
+	if (ret < 0) {
+		errno = -ret;
+		ret = -1;
+	}
 
 	return ret;
 }
@@ -706,36 +737,43 @@ int reffs_fs_rmdir(const char *path)
 
 	TRACE("path=%s", path);
 
-	if (!strcmp("/", path))
-		return -EBUSY;
+	if (!strcmp("/", path)) {
+		ret = -EBUSY;
+		goto out;
+	}
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		return ret;
+		goto out;
 
 	inode = nm->nm_dirent->d_inode;
 
 	pthread_mutex_lock(&nm->nm_dirent->d_lock);
 	if (!(inode->i_mode & S_IFDIR)) {
 		ret = -ENOTDIR;
-		goto out;
+		goto out_unlock;
 	}
 
 	if (!cds_list_empty(&(nm->nm_dirent->d_children))) {
 		ret = -ENOTEMPTY;
-		goto out;
+		goto out_unlock;
 	}
 
 	if (!strcmp(nm->nm_name, "..")) {
 		ret = -ENOTEMPTY;
-		goto out;
+		goto out_unlock;
 	}
 
 	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
-out:
+out_unlock:
 	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
+out:
+	if (ret < 0) {
+		errno = -ret;
+		ret = -1;
+	}
 
 	return ret;
 }
@@ -744,6 +782,41 @@ int reffs_fs_symlink(const char *path, const char *new_path)
 {
 	TRACE("path=%s new_path=%s", path, new_path);
 	return 0;
+}
+
+int reffs_fs_unlink(const char *path)
+{
+	struct name_match *nm;
+	struct inode *inode = NULL;
+
+	int ret;
+
+	TRACE("path=%s", path);
+
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		goto out;
+
+	inode = nm->nm_dirent->d_inode;
+
+	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	if (inode->i_mode & S_IFDIR) {
+		ret = -EISDIR;
+		goto out_unlock;
+	}
+
+	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
+out_unlock:
+	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	dirent_put(nm->nm_dirent);
+	free(nm);
+out:
+	if (ret < 0) {
+		errno = -ret;
+		ret = -1;
+	}
+
+	return ret;
 }
 
 int reffs_fs_write(const char *path, const char *buffer, size_t size,
@@ -803,36 +876,6 @@ out:
 		errno = -ret;
 		ret = -1;
 	}
-
-	return ret;
-}
-
-int reffs_fs_unlink(const char *path)
-{
-	struct name_match *nm;
-	struct inode *inode = NULL;
-
-	int ret;
-
-	TRACE("path=%s", path);
-
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
-	if (ret)
-		return ret;
-
-	inode = nm->nm_dirent->d_inode;
-
-	pthread_mutex_lock(&nm->nm_dirent->d_lock);
-	if (inode->i_mode & S_IFDIR) {
-		ret = -EISDIR;
-		goto out;
-	}
-
-	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
-out:
-	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
-	dirent_put(nm->nm_dirent);
-	free(nm);
 
 	return ret;
 }
