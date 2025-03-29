@@ -8,6 +8,7 @@
 
 #include <fuse.h>
 
+int reffs_fuse_access(const char *path, int mode);
 int reffs_fuse_chmod(const char *path, mode_t mode);
 int reffs_fuse_chown(const char *path, uid_t uid, gid_t gid);
 int reffs_fuse_fallocate(const char *path, int mode, off_t offset, off_t len,

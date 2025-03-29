@@ -34,6 +34,7 @@
 struct super_block *root_sb;
 
 static struct fuse_operations operations = {
+	.access = reffs_fuse_access,
 	.chmod = reffs_fuse_chmod,
 	.chown = reffs_fuse_chown,
 	.fallocate = reffs_fuse_fallocate,
