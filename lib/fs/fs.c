@@ -165,49 +165,50 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 		goto out;
 
 	if (mode == F_OK)
-		goto out;
+		goto out_puts;
 
 	if (uid == inode->i_uid) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR)) {
 			ret = -EACCES;
-			goto out;
+			goto out_puts;
 		}
 		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR)) {
 			ret = -EACCES;
-			goto out;
+			goto out_puts;
 		}
 		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR)) {
 			ret = -EACCES;
-			goto out;
+			goto out_puts;
 		}
 	} else if (gid == inode->i_gid) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP)) {
 			ret = -EACCES;
-			goto out;
+			goto out_puts;
 		}
 		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP)) {
 			ret = -EACCES;
-			goto out;
+			goto out_puts;
 		}
 		if ((mode & X_OK) && !(inode->i_mode & S_IXGRP)) {
 			ret = -EACCES;
-			goto out;
+			goto out_puts;
 		}
 	} else {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWOTH)) {
 			ret = -EACCES;
-			goto out;
+			goto out_puts;
 		}
 		if ((mode & R_OK) && !(inode->i_mode & S_IROTH)) {
 			ret = -EACCES;
-			goto out;
+			goto out_puts;
 		}
 		if ((mode & X_OK) && !(inode->i_mode & S_IXOTH)) {
 			ret = -EACCES;
-			goto out;
+			goto out_puts;
 		}
 	}
 
+out_puts:
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
