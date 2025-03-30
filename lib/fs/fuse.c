@@ -73,33 +73,56 @@ int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
 	return reffs_fs_read(path, buffer, size, offset);
 }
 
+static void fill_stat(struct stat *st, struct inode *inode)
+{
+	st->st_ino = inode->i_ino;
+	st->st_uid = inode->i_uid;
+	st->st_gid = inode->i_gid;
+	st->st_mtim = inode->i_mtime;
+	st->st_atim = inode->i_atime;
+	st->st_ctim = inode->i_ctime;
+	st->st_mode = inode->i_mode;
+	st->st_size = inode->i_size;
+	st->st_nlink = inode->i_nlink;
+	st->st_blocks = inode->i_used;
+	st->st_blksize = 4096;
+}
+
 int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 		       off_t offset,
 		       struct fuse_file_info __attribute__((unused)) * fi)
 {
 	struct name_match *nm;
 	struct dirent *de;
+	struct stat st;
 
 	int ret;
-	off_t cur = 1;
+	off_t cur = 2;
 
 	TRACE("path=%s offset=%lu", path, offset);
-
-	// FIXME: Need to figure out how to use cur
-	filler(buffer, ".", NULL, 0);
-	filler(buffer, "..", NULL, 0);
 
 	// For now expose find_matching_directory_entry because how to handle filler()?
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		return ret;
 
+	if (offset == 0) {
+		fill_stat(&st, nm->nm_dirent->d_inode);
+		filler(buffer, ".", &st, ++offset);
+		if (nm->nm_dirent->d_parent)
+			fill_stat(&st, nm->nm_dirent->d_parent->d_inode);
+		else
+			fill_stat(&st, nm->nm_dirent->d_inode);
+		filler(buffer, "..", &st, ++offset);
+	}
+
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children,
 				    d_siblings) {
 		if (cur++ < offset)
 			continue;
-		ret = filler(buffer, de->d_name, NULL, 0);
+		fill_stat(&st, de->d_inode);
+		ret = filler(buffer, de->d_name, &st, cur);
 		if (ret)
 			break;
 	}
