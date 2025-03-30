@@ -41,8 +41,6 @@ int main(void)
 
 	char buffer[BUFFER_LEN];
 
-	int rc;
-
 	rcu_register_thread();
 
 	reffs_tracing_set(REFFS_TRACE_STATE_ENABLED);
@@ -111,19 +109,13 @@ int main(void)
 		((st_pre.st_ctim.tv_nsec < st_post.st_ctim.tv_nsec))));
 
 	ret = reffs_fuse_rmdir("/");
-	rc = errno;
-	verify(ret == -1);
-	verify(rc == EBUSY);
+	verify(ret == -EBUSY);
 
 	ret = reffs_fuse_rmdir("/foo/bar");
-	rc = errno;
-	verify(ret == -1);
-	verify(rc == ENOTEMPTY);
+	verify(ret == -ENOTEMPTY);
 
 	ret = reffs_fuse_mknod("/foo/bar/nurse", S_IFDIR | 0755, 0);
-	rc = errno;
-	verify(ret == -1);
-	verify(rc == EISDIR);
+	verify(ret == -EISDIR);
 
 	ret = reffs_fuse_mknod("/foo/bar/nurse", S_IFREG | 0755, 0);
 	verify(!ret);
@@ -138,12 +130,9 @@ int main(void)
 	usleep(1000);
 
 	ret = reffs_fuse_write("/foo/bar", "hello", 5, 0, NULL);
-	rc = errno;
-	verify(ret == -1);
-	verify(rc == EISDIR);
+	verify(ret == -EISDIR);
 
 	ret = reffs_fuse_write("/foo/bar/nurse", "hello", 5, 0, NULL);
-	rc = errno;
 	verify(ret == 5);
 
 	ret = reffs_fuse_getattr("/foo/bar/nurse", &st_post);
@@ -166,7 +155,6 @@ int main(void)
 
 	bzero(buffer, BUFFER_LEN);
 	ret = reffs_fuse_read("/foo/bar/nurse", buffer, 5, 0, NULL);
-	rc = errno;
 	verify(ret == 5);
 
 	verify(!strcmp(buffer, "hello"));
@@ -190,9 +178,7 @@ int main(void)
 
 	bzero(buffer, BUFFER_LEN);
 	ret = reffs_fuse_read("/foo/bar/nurse", buffer, 5, 10, NULL);
-	rc = errno;
-	verify(ret == -1);
-	verify(rc == EOVERFLOW);
+	verify(ret == -EOVERFLOW);
 
 	ret = reffs_fuse_getattr("/foo/bar/nurse", &st_post);
 	verify(!ret);
@@ -212,7 +198,6 @@ int main(void)
 	usleep(1000);
 
 	ret = reffs_fuse_write("/foo/bar/nurse", "hello", 5, 5, NULL);
-	rc = errno;
 	verify(ret == 5);
 
 	ret = reffs_fuse_getattr("/foo/bar/nurse", &st_post);
@@ -235,7 +220,6 @@ int main(void)
 
 	bzero(buffer, BUFFER_LEN);
 	ret = reffs_fuse_read("/foo/bar/nurse", buffer, 5, 5, NULL);
-	rc = errno;
 	verify(ret == 5);
 
 	verify(!strcmp(buffer, "hello"));
@@ -259,7 +243,6 @@ int main(void)
 
 	bzero(buffer, BUFFER_LEN);
 	ret = reffs_fuse_read("/foo/bar/nurse", buffer, 10, 0, NULL);
-	rc = errno;
 	verify(ret == 10);
 
 	verify(!strcmp(buffer, "hellohello"));
@@ -283,17 +266,13 @@ int main(void)
 	verify(!ret);
 
 	ret = reffs_fuse_unlink("/foo/bar");
-	rc = errno;
-	verify(ret == -1);
-	verify(rc = EISDIR);
+	verify(ret == -EISDIR);
 
 	ret = reffs_fuse_unlink("/foo/bar/nurse");
 	verify(!ret);
 
 	ret = reffs_fuse_getattr("/foo/bar/nurse", &st_post);
-	rc = errno;
-	verify(ret == -1);
-	verify(rc = ENOENT);
+	verify(ret == -ENOENT);
 
 	ret = reffs_fuse_getattr("/foo/bar", &st_post);
 	verify(!ret);
@@ -313,9 +292,7 @@ int main(void)
 		((st_pre.st_ctim.tv_nsec < st_post.st_ctim.tv_nsec))));
 
 	ret = reffs_fuse_rmdir("/foo/bar");
-	rc = errno;
-	verify(ret == -1);
-	verify(rc = ENOTEMPTY);
+	verify(ret == -ENOTEMPTY);
 
 	ret = reffs_fuse_getattr("/foo/bar", &st_post);
 	verify(!ret);

@@ -214,11 +214,6 @@ out_puts:
 	free(nm);
 
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
 
@@ -253,11 +248,6 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 	free(nm);
 
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
 
@@ -293,11 +283,6 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 	free(nm);
 
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
 
@@ -337,11 +322,6 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	free(nm);
 
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
 
@@ -405,11 +385,6 @@ out_puts:
 	free(nm);
 
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
 
@@ -478,11 +453,6 @@ out_puts:
 	free(nm);
 
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
 
@@ -531,11 +501,6 @@ out_unlock:
 	free(nm);
 
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
 
@@ -597,11 +562,6 @@ static int rename_dest(struct name_match *nm_src, struct dirent *de_dst,
 	pthread_mutex_lock(&nm_src->nm_dirent->d_parent->d_lock);
 	ret = rename_dest_locked(nm_src, de_dst, dst_name);
 	pthread_mutex_unlock(&nm_src->nm_dirent->d_parent->d_lock);
-
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
 
 	return ret;
 }
@@ -725,11 +685,6 @@ out_unlock:
 	free(nm_dst);
 
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
 
@@ -775,11 +730,6 @@ out_unlock:
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
 
@@ -816,11 +766,6 @@ out_unlock:
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
 
@@ -877,10 +822,5 @@ out_unlock:
 	free(nm);
 
 out:
-	if (ret < 0) {
-		errno = -ret;
-		ret = -1;
-	}
-
 	return ret;
 }
