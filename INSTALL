@@ -4,6 +4,10 @@ SPDX-License-Identifier: GPL-2.0+
 A Quick Summary
 
 0. Run ./install-pre-commit.sh
+   Note, this will perform the following checks:
+     o Make sure every applicable file has licensing
+     o Make sure every commit is signed-off-by
+     o Make sure every commit passwes make check
 
 1. Configure and build RefFS:
    o cd where-you-want-to-build-reffs
@@ -11,7 +15,7 @@ A Quick Summary
    o cd build
    o ../reffs/configure
    o make [-j]
-   o make check-all
+   o make check
 
 Note, to switch to gcc:
 
