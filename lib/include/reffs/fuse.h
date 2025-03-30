@@ -35,6 +35,7 @@ int reffs_fuse_statfs(const char *path, struct statvfs *buf);
 int reffs_fuse_symlink(const char *path, const char *new_path);
 int reffs_fuse_truncate(const char *path, off_t len);
 int reffs_fuse_unlink(const char *);
+int reffs_fuse_utimensat(const char *path, const struct timespec times[2]);
 int reffs_fuse_write(const char *path, const char *buffer, size_t size,
 		     off_t offset, struct fuse_file_info *info);
 

@@ -46,6 +46,12 @@ int reffs_fuse_chown(const char *path, uid_t uid, gid_t gid)
 	return reffs_fs_chown(path, uid, gid);
 }
 
+int reffs_fuse_create(const char *path, mode_t mode,
+		      struct fuse_file_info __attribute__((unused)) * info)
+{
+	return reffs_fs_create(path, mode);
+}
+
 int reffs_fuse_fallocate(const char *path, int mode, off_t offset, off_t len,
 			 struct fuse_file_info __attribute__((unused)) * info)
 {
@@ -196,14 +202,6 @@ int reffs_fuse_flush(const char *path,
 	return 0;
 }
 
-int reffs_fuse_create(const char *path, mode_t mode,
-		      struct fuse_file_info __attribute__((unused)) * info)
-{
-	TRACE("path=%s mode=0%o", path, mode);
-
-	return 0;
-}
-
 int reffs_fuse_release(const char *path,
 		       struct fuse_file_info __attribute__((unused)) * info)
 {
@@ -225,4 +223,9 @@ int reffs_fuse_statfs(const char *path, struct statvfs *buf)
 	TRACE("path=%s", path);
 
 	return 0;
+}
+
+int reffs_fuse_utimensat(const char *path, const struct timespec times[2])
+{
+	return reffs_fs_utimensat(path, times);
 }

@@ -57,6 +57,7 @@ static struct fuse_operations operations = {
 	.release = reffs_fuse_release,
 	.fsync = reffs_fuse_fsync,
 	.statfs = reffs_fuse_statfs,
+	.utimens = reffs_fuse_utimensat,
 };
 
 static void usage(const char *me)

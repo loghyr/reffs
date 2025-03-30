@@ -114,10 +114,10 @@ int main(void)
 	ret = reffs_fuse_rmdir("/foo/bar");
 	verify(ret == -ENOTEMPTY);
 
-	ret = reffs_fuse_mknod("/foo/bar/nurse", S_IFDIR | 0755, 0);
+	ret = reffs_fuse_create("/foo/bar/nurse", S_IFDIR | 0755, NULL);
 	verify(ret == -EISDIR);
 
-	ret = reffs_fuse_mknod("/foo/bar/nurse", S_IFREG | 0755, 0);
+	ret = reffs_fuse_create("/foo/bar/nurse", S_IFREG | 0755, NULL);
 	verify(!ret);
 
 	ret = reffs_fuse_getattr("/foo/bar/nurse", &st_pre);

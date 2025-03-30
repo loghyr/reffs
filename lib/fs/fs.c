@@ -286,6 +286,74 @@ out:
 	return ret;
 }
 
+int reffs_fs_create(const char *path, mode_t mode)
+{
+	struct name_match *nm;
+	struct inode *inode = NULL;
+	struct super_block *sb;
+	struct dirent *de = NULL;
+
+	int ret;
+
+	TRACE("path=%s mode=0%o", path, mode);
+
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
+	if (ret)
+		goto out;
+
+	inode = nm->nm_dirent->d_inode;
+	sb = inode->i_sb;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		ret = -ENOTDIR;
+		goto out_puts;
+	}
+
+	if (mode & S_IFDIR) {
+		ret = -EISDIR;
+		goto out_puts;
+	}
+
+	if (!strcmp(nm->nm_name, "..")) {
+		ret = -ENOTEMPTY;
+		goto out_puts;
+	}
+
+	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	de = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth);
+	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	if (!de) {
+		ret = -ENOENT;
+		goto out_puts;
+	}
+
+	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1));
+	if (!de->d_inode) {
+		dirent_parent_release(de, reffs_life_action_death);
+		ret = -ENOENT;
+		goto out_puts;
+	}
+
+	de->d_inode->i_uid = getuid();
+	de->d_inode->i_gid = getgid();
+	clock_gettime(CLOCK_REALTIME, &de->d_inode->i_mtime);
+	de->d_inode->i_atime = inode->i_mtime;
+	de->d_inode->i_btime = inode->i_mtime;
+	de->d_inode->i_ctime = inode->i_mtime;
+	de->d_inode->i_mode = mode; // For now, assume a file!
+	de->d_inode->i_size = 0;
+	de->d_inode->i_used = 0;
+	de->d_inode->i_nlink = 1;
+
+out_puts:
+	dirent_put(de);
+	dirent_put(nm->nm_dirent);
+	free(nm);
+
+out:
+	return ret;
+}
+
 int reffs_fs_fallocate(const char *path, int mode, off_t offset, off_t len)
 {
 	TRACE("path=%s mode=0%o offset=%lu len=%lu", path, mode, offset, len);
@@ -763,6 +831,30 @@ int reffs_fs_unlink(const char *path)
 	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
 out_unlock:
 	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	dirent_put(nm->nm_dirent);
+	free(nm);
+out:
+	return ret;
+}
+
+int reffs_fs_utimensat(const char *path, const struct timespec times[2])
+{
+	struct name_match *nm;
+	struct inode *inode = NULL;
+
+	int ret;
+
+	TRACE("path=%s atime=(%lu.%ld) mtime=(%lu.%ld)", path, times[0].tv_sec,
+	      times[0].tv_nsec, times[1].tv_sec, times[1].tv_nsec);
+
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		goto out;
+
+	inode = nm->nm_dirent->d_inode;
+	inode->i_atime = times[0];
+	inode->i_mtime = times[1];
+
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
