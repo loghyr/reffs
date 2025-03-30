@@ -49,6 +49,14 @@ static struct fuse_operations operations = {
 	.symlink = reffs_fuse_symlink,
 	.unlink = reffs_fuse_unlink,
 	.write = reffs_fuse_write,
+	.link = reffs_fuse_link,
+	.truncate = reffs_fuse_truncate,
+	.open = reffs_fuse_open,
+	.flush = reffs_fuse_flush,
+	.create = reffs_fuse_create,
+	.release = reffs_fuse_release,
+	.fsync = reffs_fuse_fsync,
+	.statfs = reffs_fuse_statfs,
 };
 
 static void usage(const char *me)

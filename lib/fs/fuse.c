@@ -165,3 +165,64 @@ int reffs_fuse_unlink(const char *path)
 {
 	return reffs_fs_unlink(path);
 }
+
+int reffs_fuse_link(const char *oldpath, const char *newpath)
+{
+	TRACE("old path=%s new path=%s", oldpath, newpath);
+
+	return 0;
+}
+
+int reffs_fuse_truncate(const char *path, off_t len)
+{
+	TRACE("path=%s len=%lu", path, len);
+
+	return 0;
+}
+
+int reffs_fuse_open(const char *path,
+		    struct fuse_file_info __attribute__((unused)) * info)
+{
+	TRACE("path=%s", path);
+
+	return 0;
+}
+
+int reffs_fuse_flush(const char *path,
+		     struct fuse_file_info __attribute__((unused)) * info)
+{
+	TRACE("path=%s", path);
+
+	return 0;
+}
+
+int reffs_fuse_create(const char *path, mode_t mode,
+		      struct fuse_file_info __attribute__((unused)) * info)
+{
+	TRACE("path=%s mode=0%o", path, mode);
+
+	return 0;
+}
+
+int reffs_fuse_release(const char *path,
+		       struct fuse_file_info __attribute__((unused)) * info)
+{
+	TRACE("path=%s", path);
+
+	return 0;
+}
+
+int reffs_fuse_fsync(const char *path, int datasync,
+		     struct fuse_file_info __attribute__((unused)) * info)
+{
+	TRACE("path=%s datasync=%d", path, datasync);
+
+	return 0;
+}
+
+int reffs_fuse_statfs(const char *path, struct statvfs *buf)
+{
+	TRACE("path=%s", path);
+
+	return 0;
+}
