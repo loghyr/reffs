@@ -154,7 +154,7 @@ found:
 int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 {
 	struct name_match *nm;
-	struct inode *inode = NULL;
+	struct inode *inode;
 
 	int ret;
 
@@ -167,6 +167,7 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 	if (mode == F_OK)
 		goto out_puts;
 
+	inode = nm->nm_dirent->d_inode;
 	if (uid == inode->i_uid) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR)) {
 			ret = -EACCES;
@@ -538,8 +539,11 @@ out:
 	return ret;
 }
 
+/* For FUSE, doing it there. */
 int reffs_fs_readdir(const char *path, void *buffer, char *filler, off_t offset)
 {
+	TRACE("path=%s offset=%lu", path, offset);
+
 	return 0;
 }
 
