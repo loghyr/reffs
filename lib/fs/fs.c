@@ -214,6 +214,7 @@ out_puts:
 	free(nm);
 
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
@@ -248,6 +249,7 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 	free(nm);
 
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
@@ -283,6 +285,7 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 	free(nm);
 
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
@@ -351,6 +354,7 @@ out_puts:
 	free(nm);
 
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
@@ -390,6 +394,7 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	free(nm);
 
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
@@ -453,6 +458,7 @@ out_puts:
 	free(nm);
 
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
@@ -521,6 +527,7 @@ out_puts:
 	free(nm);
 
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
@@ -569,21 +576,27 @@ out_unlock:
 	free(nm);
 
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
 /* For FUSE, doing it there. */
 int reffs_fs_readdir(const char *path, void *buffer, char *filler, off_t offset)
 {
+	int ret = 0;
 	TRACE("path=%s offset=%lu", path, offset);
 
-	return 0;
+	TRACE("ret=%d", ret);
+	return ret;
 }
 
 int reffs_fs_readlink(const char *path, char *buffer, size_t len)
 {
+	int ret = 0;
 	TRACE("path=%s len=%lu", path, len);
-	return 0;
+
+	TRACE("ret=%d", ret);
+	return ret;
 }
 
 static int rename_dest_locked(struct name_match *nm_src, struct dirent *de_dst,
@@ -706,10 +719,24 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		ret = rename_dest(nm_src, nm_dst->nm_dirent, nm_dst->nm_name);
 	} else {
 		struct dirent *de_src_pin;
+		struct dirent *de_dst_parent;
 		struct dirent *de_dst_pin;
 		struct dirent *de_delete_dst = NULL;
 
-		verify(nm_dst->nm_dirent->d_parent);
+		/*
+		 * FIXME: Detect other sb boundaries!
+		 */
+		if (!(nm_dst->nm_dirent->d_parent)) {
+			struct super_block *sb = super_block_find(1);
+			verify(sb);
+
+			de_dst_parent = dirent_get(sb->sb_dirent);
+			super_block_put(sb);
+		} else {
+			de_dst_parent = dirent_get(nm_dst->nm_dirent->d_parent);
+		}
+
+		verify(de_dst_parent);
 		verify(nm_src->nm_dirent->d_parent);
 
 		de_src_pin = dirent_get(nm_src->nm_dirent->d_parent);
@@ -718,12 +745,11 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 			if ((nm_dst->nm_dirent->d_inode->i_mode & S_IFDIR))
 				de_dst_pin = dirent_get(nm_dst->nm_dirent);
 			else {
-				de_dst_pin =
-					dirent_get(nm_dst->nm_dirent->d_parent);
+				de_dst_pin = dirent_get(de_dst_parent);
 				de_delete_dst = dirent_get(nm_dst->nm_dirent);
 			}
 		} else {
-			de_dst_pin = dirent_get(nm_dst->nm_dirent->d_parent);
+			de_dst_pin = dirent_get(de_dst_parent);
 		}
 
 		pthread_mutex_lock(&de_dst_pin->d_lock);
@@ -741,6 +767,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 
 		dirent_put(de_src_pin);
 		dirent_put(de_dst_pin);
+		dirent_put(de_dst_parent);
 
 		dirent_parent_release(de_delete_dst, reffs_life_action_death);
 		dirent_put(de_delete_dst);
@@ -753,6 +780,7 @@ out_unlock:
 	free(nm_dst);
 
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
@@ -798,13 +826,17 @@ out_unlock:
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
 int reffs_fs_symlink(const char *path, const char *new_path)
 {
+	int ret = 0;
+
 	TRACE("path=%s new_path=%s", path, new_path);
-	return 0;
+	TRACE("ret=%d", ret);
+	return ret;
 }
 
 int reffs_fs_unlink(const char *path)
@@ -834,6 +866,7 @@ out_unlock:
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
@@ -858,6 +891,7 @@ int reffs_fs_utimensat(const char *path, const struct timespec times[2])
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
 
@@ -914,5 +948,6 @@ out_unlock:
 	free(nm);
 
 out:
+	TRACE("ret=%d", ret);
 	return ret;
 }
