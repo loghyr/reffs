@@ -607,6 +607,9 @@ static int rename_dest_locked(struct name_match *nm_src, struct dirent *de_dst,
 	char *name;
 	char *old;
 
+	TRACE("nm_src=%s(%s) dst=%s name=%s", nm_src->nm_name,
+	      nm_src->nm_dirent->d_name, de_dst->d_name, dst_name);
+
 	// In case we refactor
 	if (fuse_rtc == reffs_text_case_insensitive)
 		cmp = strcasecmp;
@@ -679,9 +682,11 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 	ret = find_matching_directory_entry(&nm_dst, dst_path,
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret) {
-		if (ret == -ENOENT)
+		if (ret == -ENOENT) {
+			TRACE("Finding target directory");
 			ret = find_matching_directory_entry(
 				&nm_dst, dst_path, LAST_COMPONENT_IS_NEW);
+		}
 
 		if (ret) {
 			dirent_put(nm_src->nm_dirent);
@@ -689,6 +694,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 			goto out;
 		}
 	} else {
+		TRACE("Already exists");
 		dst_exists = true;
 	}
 
@@ -719,6 +725,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 	}
 
 	if (nm_src->nm_dirent == nm_dst->nm_dirent) {
+		TRACE("Renaming within the same parent");
 		ret = rename_dest(nm_src, nm_dst->nm_dirent, nm_dst->nm_name);
 	} else {
 		struct dirent *de_src_pin;
@@ -730,6 +737,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		 * FIXME: Detect other sb boundaries!
 		 */
 		if (!(nm_dst->nm_dirent->d_parent)) {
+			TRACE("Destination is root");
 			struct super_block *sb = super_block_find(1);
 			verify(sb);
 
@@ -738,6 +746,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		} else {
 			de_dst_parent = dirent_get(nm_dst->nm_dirent->d_parent);
 		}
+		TRACE("dst parent de=%s", de_dst_parent->d_name);
 
 		verify(de_dst_parent);
 		verify(nm_src->nm_dirent->d_parent);
@@ -752,7 +761,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 				de_delete_dst = dirent_get(nm_dst->nm_dirent);
 			}
 		} else {
-			de_dst_pin = dirent_get(de_dst_parent);
+			de_dst_pin = dirent_get(nm_dst->nm_dirent);
+			TRACE("Pinned parent de=%s", de_dst_pin->d_name);
 		}
 
 		pthread_mutex_lock(&de_dst_pin->d_lock);
