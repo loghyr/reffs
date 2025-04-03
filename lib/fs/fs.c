@@ -673,6 +673,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		goto out;
+	TRACE("nm_src=%s, de=%s", nm_src->nm_name, nm_src->nm_dirent->d_name);
 
 	// TODO: make sure the paths are not overlapped if dirs
 	ret = find_matching_directory_entry(&nm_dst, dst_path,
@@ -703,6 +704,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 #endif
 		}
 	}
+
+	TRACE("nm_dst=%s, de=%s", nm_dst->nm_name, nm_dst->nm_dirent->d_name);
 
 	if (!strcmp(nm_dst->nm_name, "..")) {
 		ret = -ENOTEMPTY;
