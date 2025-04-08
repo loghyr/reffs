@@ -26,7 +26,7 @@
 #define BUFFER_SIZE 4096
 #define QUEUE_DEPTH 1024
 #define NFS_PORT 2049
-#define PRIVATE_PORT 4098
+#define REFFS_PORT 4098
 #define NUM_LISTENERS 2
 #define MAX_WORKER_THREADS 4
 #define MAX_PENDING_REQUESTS 256
@@ -94,7 +94,7 @@ int num_worker_threads = 0;
 
 // Forward declarations
 void handle_nfs_protocol(struct task *task);
-void handle_private_protocol(struct task *task);
+void handle_reffs_protocol(struct task *task);
 int setup_io_uring(struct io_uring *ring);
 
 // Generate a unique transaction ID for RPC
@@ -354,12 +354,12 @@ void handle_nfs_protocol(struct task *task)
 	printf("\n");
 }
 
-// Private protocol handler
-void handle_private_protocol(struct task *task)
+// Reffs-Ctl protocol handler
+void handle_reffs_protocol(struct task *task)
 {
-	printf("Private Protocol Handler: Received %d bytes on port %d\n",
+	printf("Reffs-Ctl Protocol Handler: Received %d bytes on port %d\n",
 	       task->bytes_read, task->port);
-	printf("Private data: %.*s\n", task->bytes_read, task->buffer);
+	printf("Reffs-Ctl data: %.*s\n", task->bytes_read, task->buffer);
 }
 
 void *worker_thread(void *arg)
@@ -406,8 +406,8 @@ void *worker_thread(void *arg)
 			// Route to appropriate handler based on port
 			if (task->port == NFS_PORT) {
 				handle_nfs_protocol(task);
-			} else if (task->port == PRIVATE_PORT) {
-				handle_private_protocol(task);
+			} else if (task->port == REFFS_PORT) {
+				handle_reffs_protocol(task);
 			} else {
 				printf("Unknown protocol on port %d: %.*s",
 				       task->port, task->bytes_read,
@@ -591,10 +591,81 @@ int send_nfs_getattr(int sockfd, const char *file_path, struct io_uring *ring)
 	return 0;
 }
 
+int op_read_handler(struct io_uring_cqe *cqe)
+{
+	// Data received
+	char *buffer = (char *)get_data_ptr(cqe->user_data);
+	int bytes_read = cqe->res;
+
+	if (bytes_read > 0) {
+		// Check for NFS response
+		if (bytes_read >= 4) {
+			uint32_t xid;
+			void *attrs =
+				malloc(256); // Simplified attribute structure
+
+			if (decode_getattr_response(buffer, bytes_read, &xid,
+						    attrs) == 0) {
+				// Find the corresponding request
+				struct nfs_request_context *ctx =
+					find_request_by_xid(xid);
+				if (ctx) {
+					// Call the callback
+					ctx->callback(ctx, attrs, bytes_read,
+						      0);
+					free(attrs);
+				} else {
+					printf("Received response for unknown XID: %u\n",
+					       xid);
+					free(attrs);
+				}
+			} else {
+				// Not a valid NFS response, process as regular data
+				int client_fd =
+					cqe->flags; // Assuming flags contains the fd
+				int client_port = get_client_port(client_fd);
+
+				struct task *task = malloc(sizeof(struct task));
+				if (task) {
+					task->buffer = buffer;
+					task->bytes_read = bytes_read;
+					task->port = client_port;
+					add_task(task);
+
+					// Submit another read
+					buffer = malloc(BUFFER_SIZE);
+					if (buffer) {
+						sqe = io_uring_get_sqe(&ring);
+						io_uring_prep_read(
+							sqe, client_fd, buffer,
+							BUFFER_SIZE, 0);
+						sqe->user_data =
+							create_user_data(
+								OP_TYPE_READ,
+								buffer);
+						io_uring_submit(&ring);
+					}
+				} else {
+					free(buffer);
+				}
+			}
+		}
+	} else {
+		// Connection closed or error
+		int client_fd = cqe->flags; // Assuming flags contains the fd
+		printf("Connection closed (fd: %d)\n", client_fd);
+		unregister_client_fd(client_fd);
+		close(client_fd);
+		free(buffer);
+	}
+
+	return 0;
+}
+
 int main()
 {
 	int listener_fds[NUM_LISTENERS];
-	int ports[NUM_LISTENERS] = { NFS_PORT, PRIVATE_PORT };
+	int ports[NUM_LISTENERS] = { NFS_PORT, REFFS_PORT };
 	struct io_uring ring;
 	struct io_uring_sqe *sqe;
 	struct io_uring_cqe *cqe;
@@ -759,90 +830,7 @@ int main()
 			}
 
 			case OP_TYPE_READ: {
-				// Data received
-				char *buffer = (char *)data_ptr;
-				int bytes_read = cqe->res;
-
-				if (bytes_read > 0) {
-					// Check for NFS response
-					if (bytes_read >= 4) {
-						uint32_t xid;
-						void *attrs = malloc(
-							256); // Simplified attribute structure
-
-						if (decode_getattr_response(
-							    buffer, bytes_read,
-							    &xid, attrs) == 0) {
-							// Find the corresponding request
-							struct nfs_request_context
-								*ctx = find_request_by_xid(
-									xid);
-							if (ctx) {
-								// Call the callback
-								ctx->callback(
-									ctx,
-									attrs,
-									bytes_read,
-									0);
-								free(attrs);
-							} else {
-								printf("Received response for unknown XID: %u\n",
-								       xid);
-								free(attrs);
-							}
-						} else {
-							// Not a valid NFS response, process as regular data
-							int client_fd =
-								cqe->flags; // Assuming flags contains the fd
-							int client_port =
-								get_client_port(
-									client_fd);
-
-							struct task *task =
-								malloc(sizeof(
-									struct task));
-							if (task) {
-								task->buffer =
-									buffer;
-								task->bytes_read =
-									bytes_read;
-								task->port =
-									client_port;
-								add_task(task);
-
-								// Submit another read
-								buffer = malloc(
-									BUFFER_SIZE);
-								if (buffer) {
-									sqe = io_uring_get_sqe(
-										&ring);
-									io_uring_prep_read(
-										sqe,
-										client_fd,
-										buffer,
-										BUFFER_SIZE,
-										0);
-									sqe->user_data = create_user_data(
-										OP_TYPE_READ,
-										buffer);
-									io_uring_submit(
-										&ring);
-								}
-							} else {
-								free(buffer);
-							}
-						}
-					}
-				} else {
-					// Connection closed or error
-					int client_fd =
-						cqe->flags; // Assuming flags contains the fd
-					printf("Connection closed (fd: %d)\n",
-					       client_fd);
-					unregister_client_fd(client_fd);
-					close(client_fd);
-					free(buffer);
-				}
+				op_read_handler(cqe);
 				break;
 			}
 
