@@ -6,7 +6,8 @@ enum auth_flavor {
     AUTH_SYS        = 1,
     AUTH_SHORT      = 2,
     AUTH_DH         = 3,
-    RPCSEC_GSS      = 6
+    RPCSEC_GSS      = 6,
+    AUTH_TLS        = 7
     /* and more to be defined */
 };
 
