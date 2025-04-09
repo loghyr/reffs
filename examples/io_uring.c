@@ -6,6 +6,7 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +31,7 @@
 #define NUM_LISTENERS 2
 #define MAX_WORKER_THREADS 4
 #define MAX_PENDING_REQUESTS 256
+#define MAX_CONNECTIONS 1024 // Maximum number of concurrent client connections
 
 // Global flag for clean shutdown
 volatile sig_atomic_t running = 1;
@@ -54,6 +56,7 @@ struct task {
 	char *buffer;
 	int bytes_read;
 	int port; // Added to track which port the data came from
+	uint32_t xid;
 };
 
 // Track file descriptors and their associated ports
@@ -591,75 +594,259 @@ int send_nfs_getattr(int sockfd, const char *file_path, struct io_uring *ring)
 	return 0;
 }
 
+// Global or connection-specific buffer for incomplete packets
+struct buffer_state {
+	int fd;
+	char *data;
+	size_t filled;
+	size_t capacity;
+};
+
+// Store buffer states by fd
+struct buffer_state *conn_buffers[MAX_CONNECTIONS];
+
+/*
+ * -ERROR or number of bytes (including 0) processed
+ */
+int decode_nfs_response(char *data, size_t filled, uint32_t client_port)
+{
+	// Peel out enough bytes
+	// Need to COPY into buffer.
+	// Send it on it's way
+
+	uint32_t xid = ntohl(*(uint32_t *)data);
+	data += 4;
+
+	void *attrs = malloc(256);
+	struct task *task = malloc(sizeof(struct task));
+	if (task) {
+		task->buffer = buffer;
+		task->port = client_port;
+		task->xid = xid;
+		add_task(task);
+	}
+
+	// Process the NFS message
+	struct nfs_request_context *ctx = find_request_by_xid(xid);
+	if (ctx) {
+		ctx->callback(ctx, attrs, consumed, 0);
+	} else {
+		printf("Received response for unknown XID: %u\n", xid);
+	}
+
+	free(attrs);
+}
+
 int op_read_handler(struct io_uring_cqe *cqe)
 {
 	// Data received
 	char *buffer = (char *)get_data_ptr(cqe->user_data);
 	int bytes_read = cqe->res;
+	int client_fd = cqe->flags; // Assuming flags contains the fd
+	int client_port = get_client_port(client_fd);
 
-	if (bytes_read > 0) {
-		// Check for NFS response
-		if (bytes_read >= 4) {
-			uint32_t xid;
-			void *attrs =
-				malloc(256); // Simplified attribute structure
-
-			if (decode_getattr_response(buffer, bytes_read, &xid,
-						    attrs) == 0) {
-				// Find the corresponding request
-				struct nfs_request_context *ctx =
-					find_request_by_xid(xid);
-				if (ctx) {
-					// Call the callback
-					ctx->callback(ctx, attrs, bytes_read,
-						      0);
-					free(attrs);
-				} else {
-					printf("Received response for unknown XID: %u\n",
-					       xid);
-					free(attrs);
-				}
-			} else {
-				// Not a valid NFS response, process as regular data
-				int client_fd =
-					cqe->flags; // Assuming flags contains the fd
-				int client_port = get_client_port(client_fd);
-
-				struct task *task = malloc(sizeof(struct task));
-				if (task) {
-					task->buffer = buffer;
-					task->bytes_read = bytes_read;
-					task->port = client_port;
-					add_task(task);
-
-					// Submit another read
-					buffer = malloc(BUFFER_SIZE);
-					if (buffer) {
-						sqe = io_uring_get_sqe(&ring);
-						io_uring_prep_read(
-							sqe, client_fd, buffer,
-							BUFFER_SIZE, 0);
-						sqe->user_data =
-							create_user_data(
-								OP_TYPE_READ,
-								buffer);
-						io_uring_submit(&ring);
-					}
-				} else {
-					free(buffer);
-				}
-			}
-		}
-	} else {
+	if (bytes_read <= 0) {
 		// Connection closed or error
-		int client_fd = cqe->flags; // Assuming flags contains the fd
-		printf("Connection closed (fd: %d)\n", client_fd);
+		printf("Connection closed or error (fd: %d, res: %d)\n",
+		       client_fd, bytes_read);
 		unregister_client_fd(client_fd);
 		close(client_fd);
 		free(buffer);
+		return 0;
+	}
+
+	// Get or create buffer state for this connection
+	struct buffer_state *state = get_buffer_state(client_fd);
+	if (!state) {
+		state = create_buffer_state(client_fd);
+		if (!state) {
+			free(buffer);
+			return -ENOMEM;
+		}
+	}
+
+	// Append new data to existing buffer
+	if (!append_to_buffer(state, buffer, bytes_read)) {
+		free(buffer);
+		return -ENOMEM;
+	}
+	free(buffer); // Original buffer no longer needed
+
+	// Process complete messages from the buffer
+	int processed = 0;
+	while (state->filled > 0) {
+		int consumed = 0;
+
+		// 1. Check for TLS handshake
+		if (state->filled >= 5 && state->data[0] == 0x16) {
+			// Parse TLS record length
+			uint16_t record_len = (state->data[3] << 8) |
+					      state->data[4];
+			size_t full_record_size = record_len + 5;
+
+			if (state->filled < full_record_size) {
+				// Incomplete TLS record, need more data
+				break;
+			}
+
+			// Process complete TLS record
+			process_tls_handshake(client_fd, state->data,
+					      full_record_size);
+			consumed = full_record_size;
+		}
+		// 2. Check for AUTH_TLS RPC NULL procedure
+		else if (state->filled >= 24) {
+			uint32_t xid = ntohl(*(uint32_t *)state->data);
+			uint32_t msg_type =
+				ntohl(*(uint32_t *)(state->data + 4));
+			uint32_t rpc_version =
+				ntohl(*(uint32_t *)(state->data + 8));
+			uint32_t program =
+				ntohl(*(uint32_t *)(state->data + 12));
+			uint32_t auth_flavor =
+				ntohl(*(uint32_t *)(state->data + 20));
+
+			if (msg_type == 0 && rpc_version == 2 &&
+			    program == 100003 && auth_flavor == 7) {
+				// AUTH_TLS probe detected
+				printf("AUTH_TLS probe detected (XID: %u)\n",
+				       xid);
+				send_starttls_response(client_fd, xid);
+
+				// In real code, we'd determine exact message size
+				consumed =
+					24; // Simplified - actual size might be different
+			}
+		}
+		// 3. Check for regular NFS/RPC message
+		if (consumed == 0 && state->filled >= 4) {
+			// Try to decode as NFS
+			int result = decode_nfs_response(state->data,
+							 state->filled,
+							 client_port);
+			if (result > 0) {
+				// Successfully decoded, consume the bytes
+				// Result tells us how many bytes were consumed
+				consumed = result;
+			}
+		}
+
+		// If we identified and processed a message
+		if (consumed > 0) {
+			// Remove the consumed bytes from buffer
+			memmove(state->data, state->data + consumed,
+				state->filled - consumed);
+			state->filled -= consumed;
+			processed++;
+			continue; // Continue the loop to process any remaining complete messages
+		}
+
+		// If we get here, we either:
+		// - Don't have enough data for a complete message
+		// - Don't recognize the protocol
+		break;
+	}
+
+	printf("Processed %d complete messages, %zu bytes remaining in buffer\n",
+	       processed, state->filled);
+
+	// Always submit another read for more data
+	char *new_buffer = malloc(BUFFER_SIZE);
+	if (new_buffer) {
+		struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+		io_uring_prep_read(sqe, client_fd, new_buffer, BUFFER_SIZE, 0);
+		sqe->user_data = create_user_data(OP_TYPE_READ, new_buffer);
+		io_uring_submit(&ring);
 	}
 
 	return 0;
+}
+
+// Function to create buffer state for a connection
+struct buffer_state *create_buffer_state(int fd)
+{
+	struct buffer_state *state = malloc(sizeof(struct buffer_state));
+	if (!state)
+		return NULL;
+
+	state->fd = fd;
+	state->capacity =
+		BUFFER_SIZE * 2; // Make buffer large enough for reassembly
+	state->data = malloc(state->capacity);
+	state->filled = 0;
+
+	if (!state->data) {
+		free(state);
+		return NULL;
+	}
+
+	conn_buffers[fd % MAX_CONNECTIONS] = state; // Simple hash
+	return state;
+}
+
+// Function to get buffer state for a connection
+struct buffer_state *get_buffer_state(int fd)
+{
+	return conn_buffers[fd % MAX_CONNECTIONS];
+}
+
+// Function to append data to a buffer, resizing if necessary
+bool append_to_buffer(struct buffer_state *state, const char *data, size_t len)
+{
+	// Check if we need to resize
+	if (state->filled + len > state->capacity) {
+		size_t new_capacity = state->capacity * 2;
+		char *new_data = realloc(state->data, new_capacity);
+		if (!new_data)
+			return false;
+
+		state->data = new_data;
+		state->capacity = new_capacity;
+	}
+
+	// Append the data
+	memcpy(state->data + state->filled, data, len);
+	state->filled += len;
+	return true;
+}
+
+// Helper function to process TLS handshake
+void process_tls_handshake(int fd, char *buffer, int bytes_read)
+{
+	// In a real implementation, this would pass data to your TLS library
+	if (bytes_read >= 6) {
+		uint8_t handshake_type = buffer[5];
+		switch (handshake_type) {
+		case 1:
+			printf("ClientHello message\n");
+			// Handle ClientHello and prepare ServerHello response
+			break;
+		case 2:
+			printf("ServerHello message\n");
+			break;
+		default:
+			printf("Other handshake message type: %d\n",
+			       handshake_type);
+		}
+	}
+
+	// In a real impl, this would call your TLS library and potentially
+	// send a response
+	free(buffer); // Free the buffer when done with TLS processing
+}
+
+// Helper function to send STARTTLS response
+void send_starttls_response(int fd, uint32_t xid)
+{
+	// Build and send RPC response with "STARTTLS" verifier
+	// This is a simplified placeholder
+	printf("Sending STARTTLS response for XID: %u on fd %d\n", xid, fd);
+
+	// In a real implementation:
+	// 1. Create RPC reply header with the same XID
+	// 2. Set status to MSG_ACCEPTED
+	// 3. Add AUTH_NONE verifier with "STARTTLS" token
+	// 4. Send the response using io_uring write
 }
 
 int main()
