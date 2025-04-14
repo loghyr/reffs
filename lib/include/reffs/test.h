@@ -42,4 +42,11 @@
 		}                                       \
 	} while (0)
 
+#define verify_msg(expr, fmt, ...)                      \
+	do {                                            \
+		if ((expr) == 0) {                      \
+			reffs_fail(fmt, ##__VA_ARGS__); \
+		}                                       \
+	} while (0)
+
 #endif /* _REFFS_TEST_H */
