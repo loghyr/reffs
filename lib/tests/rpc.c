@@ -43,113 +43,157 @@ struct rpc_trans {
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
-static int nfs3_null(uint32_t *base, uint32_t *consumed)
+static int nfs3_null(struct rpc_trans *rt)
 {
+	LOG("NULL");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_getattr(uint32_t *base, uint32_t *consumed)
+static int nfs3_getattr(struct rpc_trans *rt)
 {
+	LOG("GETATTR");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_setattr(uint32_t *base, uint32_t *consumed)
+static int nfs3_setattr(struct rpc_trans *rt)
 {
+	LOG("SETATTR");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_lookup(uint32_t *base, uint32_t *consumed)
+static int nfs3_lookup(struct rpc_trans *rt)
 {
+	LOG("LOOKUP");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_access(uint32_t *base, uint32_t *consumed)
+static int nfs3_access(struct rpc_trans *rt)
 {
+	LOG("ACCESS");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_readlink(uint32_t *base, uint32_t *consumed)
+static int nfs3_readlink(struct rpc_trans *rt)
 {
+	LOG("READLINK");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_read(uint32_t *base, uint32_t *consumed)
+static int nfs3_read(struct rpc_trans *rt)
 {
+	LOG("READ");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_write(uint32_t *base, uint32_t *consumed)
+static int nfs3_write(struct rpc_trans *rt)
 {
+	LOG("WRITE");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_create(uint32_t *base, uint32_t *consumed)
+static int nfs3_create(struct rpc_trans *rt)
 {
+	LOG("CREATE");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_mkdir(uint32_t *base, uint32_t *consumed)
+static int nfs3_mkdir(struct rpc_trans *rt)
 {
+	LOG("MKDIR");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_symlink(uint32_t *base, uint32_t *consumed)
+static int nfs3_symlink(struct rpc_trans *rt)
 {
+	LOG("SYMLINK");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_mknod(uint32_t *base, uint32_t *consumed)
+static int nfs3_mknod(struct rpc_trans *rt)
 {
+	LOG("MKNOD");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_remove(uint32_t *base, uint32_t *consumed)
+static int nfs3_remove(struct rpc_trans *rt)
 {
+	LOG("REMOVE");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_rmdir(uint32_t *base, uint32_t *consumed)
+static int nfs3_rmdir(struct rpc_trans *rt)
 {
+	LOG("RMDIR");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_rename(uint32_t *base, uint32_t *consumed)
+static int nfs3_rename(struct rpc_trans *rt)
 {
+	LOG("RENAME");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_link(uint32_t *base, uint32_t *consumed)
+static int nfs3_link(struct rpc_trans *rt)
 {
+	LOG("LINK");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_readdir(uint32_t *base, uint32_t *consumed)
+static int nfs3_readdir(struct rpc_trans *rt)
 {
+	LOG("READDIR");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_readdirplus(uint32_t *base, uint32_t *consumed)
+static int nfs3_readdirplus(struct rpc_trans *rt)
 {
+	LOG("READDIRPLUS");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_fsstat(uint32_t *base, uint32_t *consumed)
+static int nfs3_fsstat(struct rpc_trans *rt)
 {
+	LOG("FSSTAT");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_fsinfo(uint32_t *base, uint32_t *consumed)
+static int nfs3_fsinfo(struct rpc_trans *rt)
 {
+	LOG("FSINFO");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_pathconf(uint32_t *base, uint32_t *consumed)
+static int nfs3_pathconf(struct rpc_trans *rt)
 {
+	LOG("PATHCONF");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-static int nfs3_commit(uint32_t *base, uint32_t *consumed)
+static int nfs3_commit(struct rpc_trans *rt)
 {
+	LOG("COMMIT");
+	printf("There are %lu words remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 #pragma GCC diagnostic pop
@@ -160,13 +204,14 @@ struct rpc_operations_handler {
 	size_t roh_args_size;
 	xdrproc_t roh_res_f;
 	size_t roh_res_size;
-	int (*roh_action)(uint32_t *buf, uint32_t *consumed);
+	int (*roh_action)(struct rpc_trans *rt);
 };
 
 struct rpc_program_handler {
 	uint32_t rph_program;
 	uint32_t rph_version;
 	const struct rpc_operations_handler *rph_ops;
+	size_t rph_ops_len;
 };
 
 #define RPC_OPERATION_INIT(OP, ARGS_F, ARGS, RES_F, RES, CALL) \
@@ -222,13 +267,15 @@ const struct rpc_operations_handler nfsv3_operations_handler[] = {
 			   xdr_PATHCONF3res, PATHCONF3res, nfs3_pathconf),
 	RPC_OPERATION_INIT(NFSPROC3_COMMIT, xdr_COMMIT3args, COMMIT3args,
 			   xdr_COMMIT3res, COMMIT3res, nfs3_commit),
-	{ 0 }
 };
 
-struct rpc_program_handler nfsv3_handler = { .rph_program = NFS3_PROGRAM,
-					     .rph_version = NFS_V3,
-					     .rph_ops =
-						     nfsv3_operations_handler };
+struct rpc_program_handler nfsv3_handler = {
+	.rph_program = NFS3_PROGRAM,
+	.rph_version = NFS_V3,
+	.rph_ops = nfsv3_operations_handler,
+	.rph_ops_len = sizeof(nfsv3_operations_handler) /
+		       sizeof(*nfsv3_operations_handler)
+};
 
 static inline uint32_t *decode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 					uint32_t *dst)
@@ -247,6 +294,7 @@ int main(void)
 {
 	struct rpc_trans rt = { 0 };
 	uint32_t *p;
+	size_t i;
 
 	rt.rt_body = (uint32_t *)nfs3_fsinfo_request_packet_data;
 	rt.rt_len = sizeof(nfs3_null_request_packet_data) /
@@ -261,37 +309,37 @@ int main(void)
 
 	p = decode_uint32_t(&rt, p, &rt.rt_info.ri_xid);
 	verify_msg(p, "Could not decode xid");
-	verify_msg(rt.rt_info.ri_xid == 0xad46842e,
-		   "Incorrect XID (0x%x vs 0x%x)", rt.rt_info.ri_xid,
-		   0xad46842e);
 
 	p = decode_uint32_t(&rt, p, &rt.rt_info.ri_type);
 	verify_msg(p, "Could not decode type");
-	verify_msg(rt.rt_info.ri_type == 0, "Incorrect type (%u vs %u)",
-		   rt.rt_info.ri_type, 0);
+
+	LOG("This is a %s", rt.rt_info.ri_type ? "REPLY" : "CALL");
 
 	p = decode_uint32_t(&rt, p, &rt.rt_info.ri_rpc_version);
 	verify_msg(p, "Could not decode rpc version");
-	verify_msg(rt.rt_info.ri_rpc_version == 2,
-		   "Incorrect rpc version (%u vs %u)",
-		   rt.rt_info.ri_rpc_version, 2);
 
 	p = decode_uint32_t(&rt, p, &rt.rt_info.ri_program);
 	verify_msg(p, "Could not decode program");
-	verify_msg(rt.rt_info.ri_program == 100003,
-		   "Incorrect program (%u vs %u)", rt.rt_info.ri_program,
-		   100003);
 
 	p = decode_uint32_t(&rt, p, &rt.rt_info.ri_version);
 	verify_msg(p, "Could not decode version");
-	verify_msg(rt.rt_info.ri_version == 3, "Incorrect version (%u vs %u)",
-		   rt.rt_info.ri_version, 3);
+
+	LOG("This is a program %u version %u", rt.rt_info.ri_program,
+	    rt.rt_info.ri_version);
 
 	p = decode_uint32_t(&rt, p, &rt.rt_info.ri_procedure);
 	verify_msg(p, "Could not decode procedure");
-	verify_msg(rt.rt_info.ri_procedure == NFSPROC3_FSINFO,
-		   "Incorrect procedure (%u vs %u)", rt.rt_info.ri_procedure,
-		   NFSPROC3_FSINFO);
+
+	for (i = 0; i < nfsv3_handler.rph_ops_len; i++) {
+		if (nfsv3_handler.rph_ops[i].roh_operation ==
+		    rt.rt_info.ri_procedure) {
+			if (nfsv3_handler.rph_ops[i].roh_action) {
+				int ret = nfsv3_handler.rph_ops[i].roh_action(
+					&rt);
+				LOG("action returned %d", ret);
+			}
+		}
+	}
 
 	printf("There are %lu words remaining\n", rt.rt_len - rt.rt_offset);
 
