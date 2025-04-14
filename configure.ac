@@ -34,8 +34,9 @@ AC_USE_SYSTEM_EXTENSIONS
 AC_PROG_AR
 
 AC_MSG_CHECKING([for C11 support])
+dnl Strip out the freaking -O2 by default!
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([],[])],
-    [CFLAGS="$CFLAGS -std=c11"; AC_MSG_RESULT([yes])],
+    [CFLAGS="-std=c11"; AC_MSG_RESULT([yes])],
     [AC_MSG_RESULT([no]); HAVE_C11=no])
 
 AC_SYS_LARGEFILE
@@ -195,6 +196,7 @@ AC_ARG_ENABLE([noopt],
     [enable_noopt=$enableval], [enable_noopt=no])
 
 COMMON_FLAGS="${CFLAGS} -D_FILE_OFFSET_BITS=64 -DRCU_MEMBARRIER=1 -Wall -Wextra -Wformat=2 -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
+if test "x${enable_config_block}" = "xyes"; then
 if test "x${enable_debug}" = "xyes"; then
 	DEBUG_ENABLED=1
 if test "x${enable_noopt}" = "xyes"; then
@@ -216,6 +218,9 @@ if test "x${CC}" = "xclang"; then
 	AC_MSG_RESULT([No clang flags yet])
 else
 	CFLAGS="${CFLAGS} -Wall -Wextra -Wpedantic"
+fi
+else
+	CFLAGS="${COMMON_FLAGS} -Wall -Wextra -Wpedantic -g -O0"
 fi
 
 AC_MSG_RESULT([C flags are ${CFLAGS}])

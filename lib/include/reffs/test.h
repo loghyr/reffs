@@ -13,6 +13,11 @@
 
 #include "reffs/log.h"
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
+#endif
+
 #ifdef NDEBUG
 #define assert_ptr(expr, ...) (__ASSERT_VOID_CAST(0))
 #define assert_status(expr, ...) (__ASSERT_VOID_CAST(0))
@@ -48,5 +53,9 @@
 			reffs_fail(fmt, ##__VA_ARGS__); \
 		}                                       \
 	} while (0)
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #endif /* _REFFS_TEST_H */

@@ -3,10 +3,6 @@
  * SPDX-License-Identifier: GPL-2.0+
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
-
 /*
 Frame 10764: 144 bytes on wire (1152 bits), 144 bytes captured (1152 bits) on interface any, id 0
     Section number: 1

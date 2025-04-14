@@ -12,6 +12,11 @@
 #include <stdarg.h>
 #include <stdatomic.h>
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
+#endif
+
 #define reffs_fail(fmt, ...)                                              \
 	do {                                                              \
 		fprintf(stderr, "%s() %d: " fmt "\n", __func__, __LINE__, \
@@ -48,5 +53,9 @@ bool reffs_tracing_enabled(void);
 		if (reffs_tracing_enabled())           \
 			reffs_log(fmt, ##__VA_ARGS__); \
 	} while (0)
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 #endif /* _REFFS_LOG_H */
