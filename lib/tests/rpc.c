@@ -16,6 +16,7 @@
 #include <rpc/xdr.h>
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
+#include <zlib.h>
 #include "nfsv3_xdr.h"
 #include "nfsv3_test.h"
 #include "reffs/test.h"
@@ -92,15 +93,23 @@ static int nfs3_null(struct rpc_trans *rt)
 
 static void print_nfs_fh3_hex(nfs_fh3 *fh)
 {
-	printf("File handle (length %u):\n", fh->data.data_len);
+	// Calculate CRC-32
+	uLong crc = crc32(0L, Z_NULL, 0);
+	crc = crc32(crc, (const Bytef *)fh->data.data_val, fh->data.data_len);
 
+	printf("File handle (length %u):\n", fh->data.data_len);
+	printf("[hash (CRC-32): 0x%08lx]\n", crc);
+	printf("FileHandle: ");
+
+	// Print bytes in hex format
 	unsigned char *bytes = (unsigned char *)fh->data.data_val;
 	for (u_int i = 0; i < fh->data.data_len; i++) {
 		printf("%02x", bytes[i]);
 
+		// Optional formatting for readability
 		if ((i + 1) % 16 == 0) {
 			printf("\n");
-		} else {
+		} else if (i != fh->data.data_len - 1) {
 			printf(" ");
 		}
 	}

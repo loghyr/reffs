@@ -107,6 +107,9 @@ if test "x$BEAR" = "xno"; then
     AC_MSG_ERROR([bear is required to build this project])
 fi
 
+AC_CHECK_HEADER([zlib.h], [], [AC_MSG_ERROR([zlib.h not found])])
+AC_CHECK_LIB([z], [crc32], [], [AC_MSG_ERROR([zlib library not found])])
+
 AC_ARG_ENABLE(asan,
 [  --enable-asan      Compile with address sanitizer],
 [case "${enableval}" in
