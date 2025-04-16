@@ -287,7 +287,10 @@ AC_CONFIG_FILES([
 	lib/fs/tests/Makefile
 	lib/include/Makefile
 	lib/include/reffs/Makefile
+	lib/mount3/Makefile
+	lib/mount3/tests/Makefile
 	lib/nfs3/Makefile
+	lib/nfs3/tests/Makefile
 	lib/nfs4/Makefile
 	lib/nfs4/tests/Makefile
 	lib/rpc/Makefile

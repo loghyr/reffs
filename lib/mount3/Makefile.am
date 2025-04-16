@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: GPL-2.0+
 
 SUBDIRS = tests
@@ -11,6 +11,6 @@ AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/fs @CHECK_CFLAGS@		\
 
 AM_LDFLAGS = -rdynamic
 
-lib_LTLIBRARIES = libreffs_nfs3.la
-libreffs_nfs3_la_SOURCES = \
-	nfs3.c
+lib_LTLIBRARIES = libreffs_mount3.la
+libreffs_mount3_la_SOURCES = \
+	mount3.c

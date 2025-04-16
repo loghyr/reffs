@@ -10,6 +10,7 @@ reffsinclude_HEADERS = \
 	fuse.h \
 	inode.h \
 	log.h \
+	nfs3.h \
 	rpc.h \
 	super_block.h \
 	test.h \
