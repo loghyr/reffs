@@ -20,19 +20,11 @@
 #include "reffs/test.h"
 #include "reffs/rpc.h"
 
-#ifdef NOT_NOW
-
-static int nfs3_getattr(struct rpc_trans *rt)
+static int rpc_parse_call_data(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
 	XDR xdrs = { 0 };
-
-	//GETATTR3res *res = ph->ph_res;
-	GETATTR3args *args = ph->ph_args;
-
-	void *data;
-	xdrproc_t f;
 
 	size_t len;
 
@@ -40,23 +32,16 @@ static int nfs3_getattr(struct rpc_trans *rt)
 
 	uint32_t start_pos, end_pos;
 
-	LOG("GETATTR");
-
-	if (rt->rt_info.ri_type == 0) {
-		data = ph->ph_args;
-		f = ph->ph_op_handler->roh_args_f;
-	} else {
-		data = ph->ph_res;
-		f = ph->ph_op_handler->roh_res_f;
-	}
+	if (!ph->ph_op_handler->roh_args_f)
+		return 0;
 
 	xdrmem_create(&xdrs, (char *)p, rt->rt_len - rt->rt_offset, XDR_DECODE);
 
 	start_pos = xdr_getpos(&xdrs);
 
-	if (!f(&xdrs, data)) {
+	if (!ph->ph_op_handler->roh_args_f(&xdrs, ph->ph_args)) {
 		xdr_destroy(&xdrs);
-		return -1;
+		return EINVAL;
 	}
 
 	end_pos = xdr_getpos(&xdrs);
@@ -66,20 +51,12 @@ static int nfs3_getattr(struct rpc_trans *rt)
 	xdr_destroy(&xdrs);
 
 	rt->rt_offset += len;
-	p = (uint32_t *)(p + len / sizeof(uint32_t));
 
-	if (rt->rt_info.ri_type == 0) {
-		print_nfs_fh3_hex(&args->object);
-	} else {
-	}
-
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
-#endif
-
-int rpc_protocol_allocate(struct rpc_trans *rt, struct rpc_program_handler *rph)
+int rpc_protocol_allocate_call(struct rpc_trans *rt,
+			       struct rpc_program_handler *rph)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -90,17 +67,26 @@ int rpc_protocol_allocate(struct rpc_trans *rt, struct rpc_program_handler *rph)
 
 			ph->ph_op_handler = &rph->rph_ops[i];
 
-			ph->ph_args = calloc(1, rph->rph_ops[i].roh_args_size);
-			if (!ph->ph_args)
-				return ENOMEM;
-			ph->ph_res = calloc(1, rph->rph_ops[i].roh_res_size);
-			if (!ph->ph_res) {
-				free(ph->ph_args);
-				ph->ph_args = NULL;
-				return ENOMEM;
+			if (rph->rph_ops[i].roh_args_f &&
+			    rph->rph_ops[i].roh_args_size) {
+				ph->ph_args = calloc(
+					1, rph->rph_ops[i].roh_args_size);
+				if (!ph->ph_args)
+					return ENOMEM;
 			}
 
-			return 0;
+			if (rph->rph_ops[i].roh_res_f &&
+			    rph->rph_ops[i].roh_res_size) {
+				ph->ph_res =
+					calloc(1, rph->rph_ops[i].roh_res_size);
+				if (!ph->ph_res) {
+					free(ph->ph_args);
+					ph->ph_args = NULL;
+					return ENOMEM;
+				}
+			}
+
+			return rpc_parse_call_data(rt);
 		}
 	}
 

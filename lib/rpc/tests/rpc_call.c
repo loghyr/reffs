@@ -60,52 +60,9 @@ static int nfs3_getattr(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
-	XDR xdrs = { 0 };
-
-	//GETATTR3res *res = ph->ph_res;
 	GETATTR3args *args = ph->ph_args;
 
-	void *data;
-	xdrproc_t f;
-
-	size_t len;
-
-	uint32_t *p = (uint32_t *)(rt->rt_body + rt->rt_offset);
-
-	uint32_t start_pos, end_pos;
-
-	LOG("GETATTR");
-
-	if (rt->rt_info.ri_type == 0) {
-		data = ph->ph_args;
-		f = ph->ph_op_handler->roh_args_f;
-	} else {
-		data = ph->ph_res;
-		f = ph->ph_op_handler->roh_res_f;
-	}
-
-	xdrmem_create(&xdrs, (char *)p, rt->rt_len - rt->rt_offset, XDR_DECODE);
-
-	start_pos = xdr_getpos(&xdrs);
-
-	if (!f(&xdrs, data)) {
-		xdr_destroy(&xdrs);
-		return -1;
-	}
-
-	end_pos = xdr_getpos(&xdrs);
-
-	len = end_pos - start_pos;
-
-	xdr_destroy(&xdrs);
-
-	rt->rt_offset += len;
-	p = (uint32_t *)(p + len / sizeof(uint32_t));
-
-	if (rt->rt_info.ri_type == 0) {
-		print_nfs_fh3_hex(&args->object);
-	} else {
-	}
+	print_nfs_fh3_hex(&args->object);
 
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
@@ -343,6 +300,9 @@ int main(void)
 
 	LOG("This is a %s", rt->rt_info.ri_type ? "REPLY" : "CALL");
 
+	verify_msg(rt->rt_info.ri_type == 0,
+		   "Select an example which is a call");
+
 	p = decode_uint32_t(rt, p, &rt->rt_info.ri_rpc_version);
 	verify_msg(p, "Could not decode rpc version");
 
@@ -460,7 +420,7 @@ int main(void)
 		break;
 	}
 
-	ret = rpc_protocol_allocate(rt, &nfsv3_handler);
+	ret = rpc_protocol_allocate_call(rt, &nfsv3_handler);
 	verify(ret == 0);
 
 	ret = rpc_protocol_op_call(rt);

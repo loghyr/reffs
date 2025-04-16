@@ -19,4 +19,4 @@ LDADD = \
 check_PROGRAMS = $(TESTS)
 
 TESTS =				\
-	rpc
+	rpc_call
