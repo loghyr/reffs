@@ -8,6 +8,7 @@
 #endif
 
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -19,6 +20,98 @@
 #include <errno.h>
 #include "reffs/test.h"
 #include "reffs/rpc.h"
+
+CDS_LIST_HEAD(rpc_program_handler_list);
+
+static void rpc_program_handler_free_rcu(struct rcu_head *rcu)
+{
+	struct rpc_program_handler *rph =
+		caa_container_of(rcu, struct rpc_program_handler, rph_rcu);
+
+	free(rph);
+}
+
+static void rpc_program_handler_release(struct urcu_ref *ref)
+{
+	struct rpc_program_handler *rph =
+		caa_container_of(ref, struct rpc_program_handler, rph_ref);
+
+	uint32_t flags = __atomic_fetch_and(&rph->rph_flags, ~RPH_IN_LIST,
+					    __ATOMIC_ACQUIRE);
+	if (flags & RPH_IN_LIST)
+		cds_list_del_init(&rph->rph_list);
+
+	call_rcu(&rph->rph_rcu, rpc_program_handler_free_rcu);
+}
+
+struct rpc_program_handler *
+rpc_program_handler_alloc(uint32_t program, uint32_t version,
+			  const struct rpc_operations_handler *ops,
+			  size_t ops_len)
+{
+	struct rpc_program_handler *rph;
+
+	rph = rpc_program_handler_find(program, version);
+	if (rph) {
+		rpc_program_handler_put(rph);
+		return NULL;
+	}
+
+	rph = calloc(1, sizeof(*rph));
+	if (!rph) {
+		LOG("Could not alloc a rph");
+		return NULL;
+	}
+
+	rph->rph_program = program;
+	rph->rph_version = version;
+	rph->rph_ops = ops;
+	rph->rph_ops_len = ops_len;
+
+	urcu_ref_init(&rph->rph_ref);
+	__atomic_fetch_or(&rph->rph_flags, RPH_IN_LIST, __ATOMIC_RELEASE);
+	cds_list_add_rcu(&rph->rph_list, &rpc_program_handler_list);
+
+	return rph;
+}
+
+struct rpc_program_handler *rpc_program_handler_find(uint32_t program,
+						     uint32_t version)
+{
+	struct rpc_program_handler *rph = NULL;
+	struct rpc_program_handler *tmp;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(tmp, &rpc_program_handler_list, rph_list)
+		if (program == tmp->rph_program &&
+		    version == tmp->rph_version) {
+			rph = rpc_program_handler_get(tmp);
+			break;
+		}
+	rcu_read_unlock();
+
+	return rph;
+}
+
+struct rpc_program_handler *
+rpc_program_handler_get(struct rpc_program_handler *rph)
+{
+	if (!rph)
+		return NULL;
+
+	if (!urcu_ref_get_unless_zero(&rph->rph_ref))
+		return NULL;
+
+	return rph;
+}
+
+void rpc_program_handler_put(struct rpc_program_handler *rph)
+{
+	if (!rph)
+		return;
+
+	urcu_ref_put(&rph->rph_ref, rpc_program_handler_release);
+}
 
 static int rpc_parse_call_data(struct rpc_trans *rt)
 {
@@ -55,30 +148,36 @@ static int rpc_parse_call_data(struct rpc_trans *rt)
 	return 0;
 }
 
-int rpc_protocol_allocate_call(struct rpc_trans *rt,
-			       struct rpc_program_handler *rph)
+int rpc_protocol_allocate_call(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
-	for (size_t i = 0; i < rph->rph_ops_len; i++) {
-		if (rph->rph_ops[i].roh_operation == rt->rt_info.ri_procedure) {
-			if (!rph->rph_ops[i].roh_action)
+	rt->rt_rph = rpc_program_handler_find(rt->rt_info.ri_program,
+					      rt->rt_info.ri_version);
+	if (!rt->rt_rph)
+		return ENOENT;
+
+	for (size_t i = 0; i < rt->rt_rph->rph_ops_len; i++) {
+		if (rt->rt_rph->rph_ops[i].roh_operation ==
+		    rt->rt_info.ri_procedure) {
+			if (!rt->rt_rph->rph_ops[i].roh_action)
 				return 0;
 
-			ph->ph_op_handler = &rph->rph_ops[i];
+			ph->ph_op_handler = &rt->rt_rph->rph_ops[i];
 
-			if (rph->rph_ops[i].roh_args_f &&
-			    rph->rph_ops[i].roh_args_size) {
+			if (rt->rt_rph->rph_ops[i].roh_args_f &&
+			    rt->rt_rph->rph_ops[i].roh_args_size) {
 				ph->ph_args = calloc(
-					1, rph->rph_ops[i].roh_args_size);
+					1,
+					rt->rt_rph->rph_ops[i].roh_args_size);
 				if (!ph->ph_args)
 					return ENOMEM;
 			}
 
-			if (rph->rph_ops[i].roh_res_f &&
-			    rph->rph_ops[i].roh_res_size) {
-				ph->ph_res =
-					calloc(1, rph->rph_ops[i].roh_res_size);
+			if (rt->rt_rph->rph_ops[i].roh_res_f &&
+			    rt->rt_rph->rph_ops[i].roh_res_size) {
+				ph->ph_res = calloc(
+					1, rt->rt_rph->rph_ops[i].roh_res_size);
 				if (!ph->ph_res) {
 					free(ph->ph_args);
 					ph->ph_args = NULL;
@@ -110,6 +209,8 @@ void rpc_protocol_free(struct rpc_trans *rt)
 
 	if (!rt)
 		return;
+
+	rpc_program_handler_put(rt->rt_rph);
 
 	switch (rt->rt_info.ri_cred.rc_flavor) {
 	case AUTH_SYS:

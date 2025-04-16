@@ -256,14 +256,6 @@ const struct rpc_operations_handler nfsv3_operations_handler[] = {
 			   xdr_COMMIT3res, COMMIT3res, nfs3_commit),
 };
 
-struct rpc_program_handler nfsv3_handler = {
-	.rph_program = NFS3_PROGRAM,
-	.rph_version = NFS_V3,
-	.rph_ops = nfsv3_operations_handler,
-	.rph_ops_len = sizeof(nfsv3_operations_handler) /
-		       sizeof(*nfsv3_operations_handler)
-};
-
 //#define EXAMINE_PACKET nfs3_null_request_packet_data
 
 #define EXAMINE_PACKET nfs3_getattr_dir_request_packet_data
@@ -276,6 +268,8 @@ int main(void)
 
 	int ret;
 
+	struct rpc_program_handler *nfsv3_handler;
+
 	rt = calloc(1, sizeof(*rt));
 	verify(rt);
 
@@ -286,6 +280,12 @@ int main(void)
 
 	rt->rt_body = (char *)EXAMINE_PACKET;
 	rt->rt_len = sizeof(EXAMINE_PACKET) / sizeof(*EXAMINE_PACKET);
+
+	nfsv3_handler = rpc_program_handler_alloc(
+		NFS3_PROGRAM, NFS_V3, nfsv3_operations_handler,
+		sizeof(nfsv3_operations_handler) /
+			sizeof(*nfsv3_operations_handler));
+	verify(nfsv3_handler);
 
 	rt->rt_offset = 72; // Jump over the rpc marker
 	p = (uint32_t *)(rt->rt_body + 72);
@@ -420,7 +420,7 @@ int main(void)
 		break;
 	}
 
-	ret = rpc_protocol_allocate_call(rt, &nfsv3_handler);
+	ret = rpc_protocol_allocate_call(rt);
 	verify(ret == 0);
 
 	ret = rpc_protocol_op_call(rt);
@@ -432,6 +432,8 @@ int main(void)
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 
 	rpc_protocol_free(rt);
+
+	rpc_program_handler_put(nfsv3_handler);
 
 	return 0;
 }

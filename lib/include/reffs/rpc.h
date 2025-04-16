@@ -11,6 +11,10 @@
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
 
+#include <urcu.h>
+#include <urcu/rculist.h>
+#include <urcu/ref.h>
+
 struct rpc_cred {
 	uint32_t rc_flavor;
 	union {
@@ -30,12 +34,15 @@ struct rpc_info {
 	enum auth_stat ri_stat;
 };
 
+struct rpc_program_handler;
+
 struct rpc_trans {
 	struct rpc_info rt_info; // The RPC Header
 	char *rt_body; // The raw RPC payload
 	size_t rt_len; // The length of the payload
 	size_t rt_offset; // Current offset to be parsed
 	void *rt_context; // Protocol specific context
+	struct rpc_program_handler *rt_rph;
 };
 
 /*
@@ -59,6 +66,11 @@ struct rpc_program_handler {
 	uint32_t rph_version; // Which version?
 	const struct rpc_operations_handler *rph_ops; // Array of operations
 	size_t rph_ops_len; // Length of operations array
+	struct rcu_head rph_rcu;
+	struct urcu_ref rph_ref;
+	struct cds_list_head rph_list;
+#define RPH_IN_LIST (1 << 0)
+	uint32_t rph_flags;
 };
 
 /*
@@ -93,9 +105,20 @@ static inline uint32_t *decode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 	return ++p;
 }
 
-int rpc_protocol_allocate_call(struct rpc_trans *rt,
-			       struct rpc_program_handler *rph);
+int rpc_protocol_allocate_call(struct rpc_trans *rt);
 void rpc_protocol_free(struct rpc_trans *rt);
 int rpc_protocol_op_call(struct rpc_trans *rt);
+
+struct rpc_program_handler *
+rpc_program_handler_alloc(uint32_t program, uint32_t version,
+			  const struct rpc_operations_handler *ops,
+			  size_t ops_len);
+
+struct rpc_program_handler *rpc_program_handler_find(uint32_t program,
+						     uint32_t version);
+
+struct rpc_program_handler *
+rpc_program_handler_get(struct rpc_program_handler *rph);
+void rpc_program_handler_put(struct rpc_program_handler *rph);
 
 #endif
