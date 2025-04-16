@@ -34,11 +34,11 @@ static int nfs3_null(struct rpc_trans *rt)
 static void print_nfs_fh3_hex(nfs_fh3 *fh)
 {
 	// Calculate CRC-32
-	uLong crc = crc32(0L, Z_NULL, 0);
-	crc = crc32(crc, (const Bytef *)fh->data.data_val, fh->data.data_len);
+	uint32_t crc =
+		crc32(0L, (const Bytef *)fh->data.data_val, fh->data.data_len);
 
 	printf("File handle (length %u):\n", fh->data.data_len);
-	printf("[hash (CRC-32): 0x%08lx]\n", crc);
+	printf("[hash (CRC-32): 0x%08x]\n", crc);
 	printf("FileHandle: ");
 
 	// Print bytes in hex format
@@ -307,71 +307,6 @@ struct rpc_program_handler nfsv3_handler = {
 		       sizeof(*nfsv3_operations_handler)
 };
 
-static void allocate_nfs_data(struct rpc_trans *rt)
-{
-	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
-
-	for (size_t i = 0; i < nfsv3_handler.rph_ops_len; i++) {
-		if (nfsv3_handler.rph_ops[i].roh_operation ==
-		    rt->rt_info.ri_procedure) {
-			if (!nfsv3_handler.rph_ops[i].roh_action)
-				return;
-
-			ph->ph_op_handler = &nfsv3_handler.rph_ops[i];
-
-			ph->ph_args = calloc(
-				1, nfsv3_handler.rph_ops[i].roh_args_size);
-			verify(ph->ph_args);
-			ph->ph_res = calloc(
-				1, nfsv3_handler.rph_ops[i].roh_res_size);
-			verify(ph->ph_res);
-		}
-	}
-}
-
-static int call_nfs_op(struct rpc_trans *rt)
-{
-	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
-	int ret = -1;
-
-	if (ph->ph_op_handler->roh_action)
-		ret = ph->ph_op_handler->roh_action(rt);
-
-	return ret;
-}
-
-static void free_rpc_nfs(struct rpc_trans *rt)
-{
-	struct protocol_handler *ph;
-
-	if (!rt)
-		return;
-
-	switch (rt->rt_info.ri_cred.rc_flavor) {
-	case AUTH_SYS:
-		xdr_free((xdrproc_t)xdr_authunix_parms,
-			 (char *)&rt->rt_info.ri_cred.rc_unix);
-	default:
-		break;
-	}
-
-	ph = (struct protocol_handler *)rt->rt_context;
-	if (ph) {
-		if (ph->ph_op_handler->roh_args_f) {
-			xdr_free(ph->ph_op_handler->roh_args_f,
-				 (char *)ph->ph_args);
-		}
-
-		if (ph->ph_op_handler->roh_res_f) {
-			xdr_free(ph->ph_op_handler->roh_args_f,
-				 (char *)ph->ph_res);
-		}
-		free(ph);
-	}
-
-	free(rt);
-}
-
 //#define EXAMINE_PACKET nfs3_null_request_packet_data
 
 #define EXAMINE_PACKET nfs3_getattr_dir_request_packet_data
@@ -381,6 +316,8 @@ int main(void)
 	struct rpc_trans *rt;
 	struct protocol_handler *ph;
 	uint32_t *p;
+
+	int ret;
 
 	rt = calloc(1, sizeof(*rt));
 	verify(rt);
@@ -523,9 +460,10 @@ int main(void)
 		break;
 	}
 
-	allocate_nfs_data(rt);
+	ret = rpc_protocol_allocate(rt, &nfsv3_handler);
+	verify(ret == 0);
 
-	int ret = call_nfs_op(rt);
+	ret = rpc_protocol_op_call(rt);
 	LOG("action returned %d", ret);
 	if (!ret) {
 		p = (uint32_t *)(rt->rt_body + rt->rt_offset);
@@ -533,7 +471,7 @@ int main(void)
 
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 
-	free_rpc_nfs(rt);
+	rpc_protocol_free(rt);
 
 	return 0;
 }

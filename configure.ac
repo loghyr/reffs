@@ -251,6 +251,7 @@ AC_CONFIG_FILES([
 	lib/nfs4/Makefile
 	lib/nfs4/tests/Makefile
 	lib/rpc/Makefile
+	lib/rpc/tests/Makefile
 	lib/scripts/Makefile
 	lib/scripts/reffs/Makefile
 	lib/tests/Makefile

@@ -16,55 +16,20 @@
 #include <rpc/xdr.h>
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
-#include <zlib.h>
+#include <errno.h>
 #include "reffs/test.h"
 #include "reffs/rpc.h"
 
 #ifdef NOT_NOW
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-static int nfs3_null(struct rpc_trans *rt)
-{
-	LOG("NULL");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static void print_nfs_fh3_hex(nfs_fh3 *fh)
-{
-	// Calculate CRC-32
-	uLong crc = crc32(0L, Z_NULL, 0);
-	crc = crc32(crc, (const Bytef *)fh->data.data_val, fh->data.data_len);
-
-	printf("File handle (length %u):\n", fh->data.data_len);
-	printf("[hash (CRC-32): 0x%08lx]\n", crc);
-	printf("FileHandle: ");
-
-	// Print bytes in hex format
-	unsigned char *bytes = (unsigned char *)fh->data.data_val;
-	for (u_int i = 0; i < fh->data.data_len; i++) {
-		printf("%02x", bytes[i]);
-
-		// Optional formatting for readability
-		if ((i + 1) % 16 == 0) {
-			printf("\n");
-		} else if (i != fh->data.data_len - 1) {
-			printf(" ");
-		}
-	}
-	printf("\n");
-}
-
 static int nfs3_getattr(struct rpc_trans *rt)
 {
-	struct nfs_packet_handler *nph =
-		(struct nfs_packet_handler *)rt->rt_context;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
 	XDR xdrs = { 0 };
 
-	//GETATTR3res *res = nph->nph_res;
-	GETATTR3args *args = nph->nph_args;
+	//GETATTR3res *res = ph->ph_res;
+	GETATTR3args *args = ph->ph_args;
 
 	void *data;
 	xdrproc_t f;
@@ -78,11 +43,11 @@ static int nfs3_getattr(struct rpc_trans *rt)
 	LOG("GETATTR");
 
 	if (rt->rt_info.ri_type == 0) {
-		data = nph->nph_args;
-		f = nph->nph_op_handler->roh_args_f;
+		data = ph->ph_args;
+		f = ph->ph_op_handler->roh_args_f;
 	} else {
-		data = nph->nph_res;
-		f = nph->nph_op_handler->roh_res_f;
+		data = ph->ph_res;
+		f = ph->ph_op_handler->roh_res_f;
 	}
 
 	xdrmem_create(&xdrs, (char *)p, rt->rt_len - rt->rt_offset, XDR_DECODE);
@@ -112,240 +77,50 @@ static int nfs3_getattr(struct rpc_trans *rt)
 	return 0;
 }
 
-static int nfs3_setattr(struct rpc_trans *rt)
+#endif
+
+int rpc_protocol_allocate(struct rpc_trans *rt, struct rpc_program_handler *rph)
 {
-	LOG("SETATTR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
-static int nfs3_lookup(struct rpc_trans *rt)
-{
-	LOG("LOOKUP");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
+	for (size_t i = 0; i < rph->rph_ops_len; i++) {
+		if (rph->rph_ops[i].roh_operation == rt->rt_info.ri_procedure) {
+			if (!rph->rph_ops[i].roh_action)
+				return 0;
 
-static int nfs3_access(struct rpc_trans *rt)
-{
-	LOG("ACCESS");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
+			ph->ph_op_handler = &rph->rph_ops[i];
 
-static int nfs3_readlink(struct rpc_trans *rt)
-{
-	LOG("READLINK");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
+			ph->ph_args = calloc(1, rph->rph_ops[i].roh_args_size);
+			if (!ph->ph_args)
+				return ENOMEM;
+			ph->ph_res = calloc(1, rph->rph_ops[i].roh_res_size);
+			if (!ph->ph_res) {
+				free(ph->ph_args);
+				ph->ph_args = NULL;
+				return ENOMEM;
+			}
 
-static int nfs3_read(struct rpc_trans *rt)
-{
-	LOG("READ");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_write(struct rpc_trans *rt)
-{
-	LOG("WRITE");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_create(struct rpc_trans *rt)
-{
-	LOG("CREATE");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_mkdir(struct rpc_trans *rt)
-{
-	LOG("MKDIR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_symlink(struct rpc_trans *rt)
-{
-	LOG("SYMLINK");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_mknod(struct rpc_trans *rt)
-{
-	LOG("MKNOD");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_remove(struct rpc_trans *rt)
-{
-	LOG("REMOVE");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_rmdir(struct rpc_trans *rt)
-{
-	LOG("RMDIR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_rename(struct rpc_trans *rt)
-{
-	LOG("RENAME");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_link(struct rpc_trans *rt)
-{
-	LOG("LINK");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_readdir(struct rpc_trans *rt)
-{
-	LOG("READDIR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_readdirplus(struct rpc_trans *rt)
-{
-	LOG("READDIRPLUS");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_fsstat(struct rpc_trans *rt)
-{
-	LOG("FSSTAT");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_fsinfo(struct rpc_trans *rt)
-{
-	LOG("FSINFO");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_pathconf(struct rpc_trans *rt)
-{
-	LOG("PATHCONF");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
-static int nfs3_commit(struct rpc_trans *rt)
-{
-	LOG("COMMIT");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-#pragma GCC diagnostic pop
-
-const struct rpc_operations_handler nfsv3_operations_handler[] = {
-	RPC_OPERATION_INIT(NFSPROC3_NULL, NULL, NULL, NULL, NULL, nfs3_null),
-	RPC_OPERATION_INIT(NFSPROC3_GETATTR, xdr_GETATTR3args, GETATTR3args,
-			   xdr_GETATTR3res, GETATTR3res, nfs3_getattr),
-	RPC_OPERATION_INIT(NFSPROC3_SETATTR, xdr_SETATTR3args, SETATTR3args,
-			   xdr_SETATTR3res, SETATTR3res, nfs3_setattr),
-	RPC_OPERATION_INIT(NFSPROC3_LOOKUP, xdr_LOOKUP3args, LOOKUP3args,
-			   xdr_LOOKUP3res, LOOKUP3res, nfs3_lookup),
-	RPC_OPERATION_INIT(NFSPROC3_ACCESS, xdr_ACCESS3args, ACCESS3args,
-			   xdr_ACCESS3res, ACCESS3res, nfs3_access),
-	RPC_OPERATION_INIT(NFSPROC3_READLINK, xdr_READLINK3args, READLINK3args,
-			   xdr_READLINK3res, READLINK3res, nfs3_readlink),
-	RPC_OPERATION_INIT(NFSPROC3_READ, xdr_READ3args, READ3args,
-			   xdr_READ3res, READ3res, nfs3_read),
-	RPC_OPERATION_INIT(NFSPROC3_WRITE, xdr_WRITE3args, WRITE3args,
-			   xdr_WRITE3res, WRITE3res, nfs3_write),
-	RPC_OPERATION_INIT(NFSPROC3_CREATE, xdr_CREATE3args, CREATE3args,
-			   xdr_CREATE3res, CREATE3res, nfs3_create),
-	RPC_OPERATION_INIT(NFSPROC3_MKDIR, xdr_MKDIR3args, MKDIR3args,
-			   xdr_MKDIR3res, MKDIR3res, nfs3_mkdir),
-	RPC_OPERATION_INIT(NFSPROC3_SYMLINK, xdr_SYMLINK3args, SYMLINK3args,
-			   xdr_SYMLINK3res, SYMLINK3res, nfs3_symlink),
-	RPC_OPERATION_INIT(NFSPROC3_MKNOD, xdr_MKNOD3args, MKNOD3args,
-			   xdr_MKNOD3res, MKNOD3res, nfs3_mknod),
-	RPC_OPERATION_INIT(NFSPROC3_REMOVE, xdr_REMOVE3args, REMOVE3args,
-			   xdr_REMOVE3res, REMOVE3res, nfs3_remove),
-	RPC_OPERATION_INIT(NFSPROC3_RMDIR, xdr_RMDIR3args, RMDIR3args,
-			   xdr_RMDIR3res, RMDIR3res, nfs3_rmdir),
-	RPC_OPERATION_INIT(NFSPROC3_RENAME, xdr_RENAME3args, RENAME3args,
-			   xdr_RENAME3res, RENAME3res, nfs3_rename),
-	RPC_OPERATION_INIT(NFSPROC3_LINK, xdr_LINK3args, LINK3args,
-			   xdr_LINK3res, LINK3res, nfs3_link),
-	RPC_OPERATION_INIT(NFSPROC3_READDIR, xdr_READDIR3args, READDIR3args,
-			   xdr_READDIR3res, READDIR3res, nfs3_readdir),
-	RPC_OPERATION_INIT(NFSPROC3_READDIRPLUS, xdr_READDIRPLUS3args,
-			   READDIRPLUS3args, xdr_READDIRPLUS3res,
-			   READDIRPLUS3res, nfs3_readdirplus),
-	RPC_OPERATION_INIT(NFSPROC3_FSSTAT, xdr_FSSTAT3args, FSSTAT3args,
-			   xdr_FSSTAT3res, FSSTAT3res, nfs3_fsstat),
-	RPC_OPERATION_INIT(NFSPROC3_FSINFO, xdr_FSINFO3args, FSINFO3args,
-			   xdr_FSINFO3res, FSINFO3res, nfs3_fsinfo),
-	RPC_OPERATION_INIT(NFSPROC3_PATHCONF, xdr_PATHCONF3args, PATHCONF3args,
-			   xdr_PATHCONF3res, PATHCONF3res, nfs3_pathconf),
-	RPC_OPERATION_INIT(NFSPROC3_COMMIT, xdr_COMMIT3args, COMMIT3args,
-			   xdr_COMMIT3res, COMMIT3res, nfs3_commit),
-};
-
-struct rpc_program_handler nfsv3_handler = {
-	.rph_program = NFS3_PROGRAM,
-	.rph_version = NFS_V3,
-	.rph_ops = nfsv3_operations_handler,
-	.rph_ops_len = sizeof(nfsv3_operations_handler) /
-		       sizeof(*nfsv3_operations_handler)
-};
-
-static void allocate_nfs_data(struct rpc_trans *rt)
-{
-	struct nfs_packet_handler *nph =
-		(struct nfs_packet_handler *)rt->rt_context;
-
-	for (size_t i = 0; i < nfsv3_handler.rph_ops_len; i++) {
-		if (nfsv3_handler.rph_ops[i].roh_operation ==
-		    rt->rt_info.ri_procedure) {
-			if (!nfsv3_handler.rph_ops[i].roh_action)
-				return;
-
-			nph->nph_op_handler = &nfsv3_handler.rph_ops[i];
-
-			nph->nph_args = calloc(
-				1, nfsv3_handler.rph_ops[i].roh_args_size);
-			verify(nph->nph_args);
-			nph->nph_res = calloc(
-				1, nfsv3_handler.rph_ops[i].roh_res_size);
-			verify(nph->nph_res);
+			return 0;
 		}
 	}
+
+	return ENOENT;
 }
 
-static int call_nfs_op(struct rpc_trans *rt)
+int rpc_protocol_op_call(struct rpc_trans *rt)
 {
-	struct nfs_packet_handler *nph =
-		(struct nfs_packet_handler *)rt->rt_context;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 	int ret = -1;
 
-	if (nph->nph_op_handler->roh_action)
-		ret = nph->nph_op_handler->roh_action(rt);
+	if (ph->ph_op_handler->roh_action)
+		ret = ph->ph_op_handler->roh_action(rt);
 
 	return ret;
 }
 
-static void free_rpc_nfs(struct rpc_trans *rt)
+void rpc_protocol_free(struct rpc_trans *rt)
 {
-	struct nfs_packet_handler *nph;
+	struct protocol_handler *ph;
 
 	if (!rt)
 		return;
@@ -358,21 +133,19 @@ static void free_rpc_nfs(struct rpc_trans *rt)
 		break;
 	}
 
-	nph = (struct nfs_packet_handler *)rt->rt_context;
-	if (nph) {
-		if (nph->nph_op_handler->roh_args_f) {
-			xdr_free(nph->nph_op_handler->roh_args_f,
-				 (char *)nph->nph_args);
+	ph = (struct protocol_handler *)rt->rt_context;
+	if (ph) {
+		if (ph->ph_op_handler->roh_args_f) {
+			xdr_free(ph->ph_op_handler->roh_args_f,
+				 (char *)ph->ph_args);
 		}
 
-		if (nph->nph_op_handler->roh_res_f) {
-			xdr_free(nph->nph_op_handler->roh_args_f,
-				 (char *)nph->nph_res);
+		if (ph->ph_op_handler->roh_res_f) {
+			xdr_free(ph->ph_op_handler->roh_args_f,
+				 (char *)ph->ph_res);
 		}
-		free(nph);
+		free(ph);
 	}
 
 	free(rt);
 }
-
-#endif

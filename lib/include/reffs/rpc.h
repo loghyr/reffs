@@ -92,4 +92,8 @@ static inline uint32_t *decode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 	return ++p;
 }
 
+int rpc_protocol_allocate(struct rpc_trans *rt, struct rpc_program_handler *rph);
+void rpc_protocol_free(struct rpc_trans *rt);
+int rpc_protocol_op_call(struct rpc_trans *rt);
+
 #endif
