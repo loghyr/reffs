@@ -210,12 +210,11 @@ void rpc_protocol_free(struct rpc_trans *rt)
 	if (!rt)
 		return;
 
-	rpc_program_handler_put(rt->rt_rph);
-
 	switch (rt->rt_info.ri_cred.rc_flavor) {
 	case AUTH_SYS:
 		xdr_free((xdrproc_t)xdr_authunix_parms,
 			 (char *)&rt->rt_info.ri_cred.rc_unix);
+		break;
 	default:
 		break;
 	}
@@ -225,14 +224,18 @@ void rpc_protocol_free(struct rpc_trans *rt)
 		if (ph->ph_op_handler->roh_args_f) {
 			xdr_free(ph->ph_op_handler->roh_args_f,
 				 (char *)ph->ph_args);
+			free(ph->ph_args);
 		}
 
 		if (ph->ph_op_handler->roh_res_f) {
-			xdr_free(ph->ph_op_handler->roh_args_f,
+			xdr_free(ph->ph_op_handler->roh_res_f,
 				 (char *)ph->ph_res);
+			free(ph->ph_res);
 		}
 		free(ph);
 	}
+
+	rpc_program_handler_put(rt->rt_rph);
 
 	free(rt);
 }
