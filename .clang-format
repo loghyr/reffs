@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: GPL-2.0
 #
-# clang-format configuration file. Intended for clang-format >= 11.
+# clang-format configuration file. Intended for clang-format >=  20.1.2.
 #
 # For more information, see:
 #

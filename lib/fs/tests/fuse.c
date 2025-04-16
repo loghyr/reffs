@@ -419,9 +419,9 @@ int main(void)
 	verify(st_pre.st_atim.tv_sec == st_post.st_atim.tv_sec);
 	verify(st_pre.st_atim.tv_nsec == st_post.st_atim.tv_nsec);
 	verify((st_pre.st_mtim.tv_sec == st_post.st_mtim.tv_sec) &&
-	       (st_pre.st_mtim.tv_nsec == st_post.st_mtim.tv_nsec)); 
+	       (st_pre.st_mtim.tv_nsec == st_post.st_mtim.tv_nsec));
 	verify((st_pre.st_ctim.tv_sec == st_post.st_ctim.tv_sec) &&
-	       (st_pre.st_ctim.tv_nsec == st_post.st_ctim.tv_nsec)); 
+	       (st_pre.st_ctim.tv_nsec == st_post.st_ctim.tv_nsec));
 	st_pre = st_post;
 
 	ret = reffs_fuse_getattr("/", &st_post);
@@ -473,9 +473,9 @@ int main(void)
 	verify(st_pre.st_atim.tv_sec == st_post.st_atim.tv_sec);
 	verify(st_pre.st_atim.tv_nsec == st_post.st_atim.tv_nsec);
 	verify((st_pre.st_mtim.tv_sec == st_post.st_mtim.tv_sec) &&
-	       (st_pre.st_mtim.tv_nsec == st_post.st_mtim.tv_nsec)); 
+	       (st_pre.st_mtim.tv_nsec == st_post.st_mtim.tv_nsec));
 	verify((st_pre.st_ctim.tv_sec == st_post.st_ctim.tv_sec) &&
-	       (st_pre.st_ctim.tv_nsec == st_post.st_ctim.tv_nsec)); 
+	       (st_pre.st_ctim.tv_nsec == st_post.st_ctim.tv_nsec));
 	st_pre = st_post;
 
 	ret = reffs_fuse_getattr("/", &st_post);

@@ -27,11 +27,11 @@ license:
 
 # Check code style
 style:
-	find . -name xdr -prune -o \( ! -name 'config.h' -o -name '*.ch' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format --dry-run -Werror
+	find . -name xdr -prune -o \( ! -name 'config.h' \) -a \( -name '*.c' -o -name '*.h' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format --dry-run -Werror
 
 # Fix code style (if needed)
 fix-style:
-	find . -name xdr -prune -o \( ! -name 'config.h' -o -name '*.ch' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
+	find . -name xdr -prune -o \( ! -name 'config.h' \) -a \( -name '*.c' -o -name '*.h' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
 
 # Clean build artifacts (less aggressive than git clean)
 untracked_files := $(shell git ls-files --other --directory --exclude-standard)

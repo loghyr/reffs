@@ -47,7 +47,8 @@ struct rpc_operations_handler {
 	size_t roh_args_size; // The size of the base args structure
 	xdrproc_t roh_res_f; // The function to process the res
 	size_t roh_res_size; // The size of the base res structure
-	int (*roh_action)(struct rpc_trans *rt); // The protocol handler for calls
+	int (*roh_action)(
+		struct rpc_trans *rt); // The protocol handler for calls
 };
 
 /*
@@ -65,10 +66,10 @@ struct rpc_program_handler {
  */
 struct protocol_handler {
 	struct rpc_cred *ph_cred; // A pointer to the credential
-	void *ph_args;	// The base args
+	void *ph_args; // The base args
 	void *ph_res; // The base res
 	int ph_stat; // Protocol error code
-	const struct rpc_operations_handler *ph_op_handler; 
+	const struct rpc_operations_handler *ph_op_handler;
 };
 
 #define RPC_OPERATION_INIT(OP, ARGS_F, ARGS, RES_F, RES, CALL) \
@@ -92,7 +93,8 @@ static inline uint32_t *decode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 	return ++p;
 }
 
-int rpc_protocol_allocate(struct rpc_trans *rt, struct rpc_program_handler *rph);
+int rpc_protocol_allocate(struct rpc_trans *rt,
+			  struct rpc_program_handler *rph);
 void rpc_protocol_free(struct rpc_trans *rt);
 int rpc_protocol_op_call(struct rpc_trans *rt);
 

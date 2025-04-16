@@ -721,9 +721,8 @@ int op_read_handler(struct io_uring_cqe *cqe)
 		// 3. Check for regular NFS/RPC message
 		if (consumed == 0 && state->filled >= 4) {
 			// Try to decode as NFS
-			int result = decode_nfs_response(state->data,
-							 state->filled,
-							 client_port);
+			int result = decode_nfs_response(
+				state->data, state->filled, client_port);
 			if (result > 0) {
 				// Successfully decoded, consume the bytes
 				// Result tells us how many bytes were consumed
