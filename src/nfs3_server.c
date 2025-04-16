@@ -56,6 +56,13 @@ volatile sig_atomic_t running = 1;
 #define NFS3_READ 6
 #define NFS3_WRITE 7
 
+// IO operation context structure
+typedef struct {
+	int op_type;
+	int fd;
+	void *buffer;
+} io_context_t;
+
 // Task struct for worker queue
 struct task {
 	char *buffer;
@@ -213,22 +220,19 @@ void unregister_client_fd(int fd)
 	}
 }
 
-// Extract operation type from sqe->user_data
-int get_op_type(uint64_t user_data)
+// Create an IO context for operations
+io_context_t *create_io_context(int op_type, int fd, void *buffer)
 {
-	return (user_data >> 56) & 0xFF;
-}
+	io_context_t *ctx = malloc(sizeof(io_context_t));
+	if (!ctx) {
+		return NULL;
+	}
 
-// Create user_data with operation type and context pointer
-uint64_t create_user_data(int op_type, void *ptr)
-{
-	return ((uint64_t)op_type << 56) | ((uint64_t)ptr & 0x00FFFFFFFFFFFFFF);
-}
+	ctx->op_type = op_type;
+	ctx->fd = fd;
+	ctx->buffer = buffer;
 
-// Extract pointer from user_data
-void *get_data_ptr(uint64_t user_data)
-{
-	return (void *)(user_data & 0x00FFFFFFFFFFFFFF);
+	return ctx;
 }
 
 // Simplified XDR encoding for NFS response
@@ -336,14 +340,23 @@ int process_record_marker(struct buffer_state *buffer_state,
 				// Request more data
 				char *new_buffer = malloc(BUFFER_SIZE);
 				if (new_buffer) {
+					// Create an IO context for this read operation
+					io_context_t *ctx = create_io_context(
+						OP_TYPE_READ, buffer_state->fd,
+						new_buffer);
+					if (!ctx) {
+						free(new_buffer);
+						return -ENOMEM;
+					}
+
 					struct io_uring_sqe *sqe =
 						io_uring_get_sqe(ring);
 					io_uring_prep_read(sqe,
 							   buffer_state->fd,
 							   new_buffer,
 							   BUFFER_SIZE, 0);
-					sqe->user_data = create_user_data(
-						OP_TYPE_READ, new_buffer);
+					sqe->user_data =
+						(uint64_t)(uintptr_t)ctx;
 					io_uring_submit(ring);
 				}
 				return 0; // Need more data
@@ -392,14 +405,23 @@ int process_record_marker(struct buffer_state *buffer_state,
 				// Request more data
 				char *new_buffer = malloc(BUFFER_SIZE);
 				if (new_buffer) {
+					// Create an IO context for this read operation
+					io_context_t *ctx = create_io_context(
+						OP_TYPE_READ, buffer_state->fd,
+						new_buffer);
+					if (!ctx) {
+						free(new_buffer);
+						return -ENOMEM;
+					}
+
 					struct io_uring_sqe *sqe =
 						io_uring_get_sqe(ring);
 					io_uring_prep_read(sqe,
 							   buffer_state->fd,
 							   new_buffer,
 							   BUFFER_SIZE, 0);
-					sqe->user_data = create_user_data(
-						OP_TYPE_READ, new_buffer);
+					sqe->user_data =
+						(uint64_t)(uintptr_t)ctx;
 					io_uring_submit(ring);
 				}
 				return 0; // Need more data
@@ -412,12 +434,20 @@ int process_record_marker(struct buffer_state *buffer_state,
 			// Request more data
 			char *new_buffer = malloc(BUFFER_SIZE);
 			if (new_buffer) {
+				// Create an IO context for this read operation
+				io_context_t *ctx = create_io_context(
+					OP_TYPE_READ, buffer_state->fd,
+					new_buffer);
+				if (!ctx) {
+					free(new_buffer);
+					return -ENOMEM;
+				}
+
 				struct io_uring_sqe *sqe =
 					io_uring_get_sqe(ring);
 				io_uring_prep_read(sqe, buffer_state->fd,
 						   new_buffer, BUFFER_SIZE, 0);
-				sqe->user_data = create_user_data(OP_TYPE_READ,
-								  new_buffer);
+				sqe->user_data = (uint64_t)(uintptr_t)ctx;
 				io_uring_submit(ring);
 			}
 			return 0; // Need more data
@@ -435,10 +465,18 @@ int process_record_marker(struct buffer_state *buffer_state,
 	// Request more data
 	char *new_buffer = malloc(BUFFER_SIZE);
 	if (new_buffer) {
+		// Create an IO context for this read operation
+		io_context_t *ctx = create_io_context(
+			OP_TYPE_READ, buffer_state->fd, new_buffer);
+		if (!ctx) {
+			free(new_buffer);
+			return -ENOMEM;
+		}
+
 		struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 		io_uring_prep_read(sqe, buffer_state->fd, new_buffer,
 				   BUFFER_SIZE, 0);
-		sqe->user_data = create_user_data(OP_TYPE_READ, new_buffer);
+		sqe->user_data = (uint64_t)(uintptr_t)ctx;
 		io_uring_submit(ring);
 	}
 
@@ -694,10 +732,19 @@ bool append_to_buffer(struct buffer_state *state, const char *data, size_t len)
 // Handle read completions
 int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 {
-	// Data received
-	char *buffer = (char *)get_data_ptr(cqe->user_data);
+	// Get the IO context from user_data
+	io_context_t *ctx = (io_context_t *)(uintptr_t)cqe->user_data;
+	if (!ctx) {
+		fprintf(stderr, "Error: NULL io context in read handler\n");
+		return -EINVAL;
+	}
+
+	// Extract data from context
+	char *buffer = (char *)ctx->buffer;
+	int client_fd = ctx->fd;
 	int bytes_read = cqe->res;
-	int client_fd = cqe->flags; // Assuming flags contains the fd
+
+	// We now have the correct client_fd from our context
 
 	if (bytes_read <= 0) {
 		// Connection closed or error
@@ -706,6 +753,7 @@ int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 		unregister_client_fd(client_fd);
 		close(client_fd);
 		free(buffer);
+		free(ctx);
 		return 0;
 	}
 
@@ -715,6 +763,7 @@ int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 		state = create_buffer_state(client_fd);
 		if (!state) {
 			free(buffer);
+			free(ctx);
 			return -ENOMEM;
 		}
 	}
@@ -722,9 +771,12 @@ int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	// Append new data to existing buffer
 	if (!append_to_buffer(state, buffer, bytes_read)) {
 		free(buffer);
+		free(ctx);
 		return -ENOMEM;
 	}
+
 	free(buffer); // Original buffer no longer needed
+	free(ctx); // Free the context
 
 	// Process the RPC record marker to get a complete RPC message
 	int complete_size = process_record_marker(state, ring);
@@ -782,12 +834,19 @@ int send_nfs_response(struct io_uring *ring, int fd, char *buffer, int len)
 	memcpy(send_buffer, &marker, 4);
 	memcpy(send_buffer + 4, buffer, len);
 
+	// Create an IO context for the write operation
+	io_context_t *ctx = create_io_context(OP_TYPE_WRITE, fd, send_buffer);
+	if (!ctx) {
+		free(send_buffer);
+		return -ENOMEM;
+	}
+
 	// Submit the write operation to io_uring
 	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 	io_uring_prep_write(sqe, fd, send_buffer, len + 4, 0);
 
-	// Mark this as a write operation
-	sqe->user_data = create_user_data(OP_TYPE_WRITE, send_buffer);
+	// Associate with the io context
+	sqe->user_data = (uint64_t)(uintptr_t)ctx;
 
 	io_uring_submit(ring);
 	return 0;
@@ -862,14 +921,22 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 	struct sockaddr_in client_address;
 	socklen_t client_len = sizeof(client_address);
 
+	// Create IO context for the accept operation
+	io_context_t *accept_ctx =
+		create_io_context(OP_TYPE_ACCEPT, listener_fd, NULL);
+	if (!accept_ctx) {
+		fprintf(stderr, "Failed to create accept context\n");
+		exit_code = 1;
+		goto out;
+	}
+
 	sqe = io_uring_get_sqe(&ring);
 	io_uring_prep_accept(sqe, listener_fd,
 			     (struct sockaddr *)&client_address, &client_len,
 			     0);
 
-	// Mark this as an accept operation
-	sqe->user_data = create_user_data(OP_TYPE_ACCEPT,
-					  (void *)(uintptr_t)listener_fd);
+	// Associate with the io context
+	sqe->user_data = (uint64_t)(uintptr_t)accept_ctx;
 
 	io_uring_submit(&ring);
 
@@ -890,14 +957,19 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 		if (cqe->res < 0) {
 			fprintf(stderr, "CQE error: %s\n", strerror(-cqe->res));
 		} else {
-			// Extract operation type
-			int op_type = get_op_type(cqe->user_data);
-			void *data_ptr = get_data_ptr(cqe->user_data);
+			// Get the IO context from user_data
+			io_context_t *ctx =
+				(io_context_t *)(uintptr_t)cqe->user_data;
+			if (!ctx) {
+				fprintf(stderr, "Error: NULL io context\n");
+				io_uring_cqe_seen(&ring, cqe);
+				continue;
+			}
 
-			switch (op_type) {
+			switch (ctx->op_type) {
 			case OP_TYPE_ACCEPT: {
 				// Handle new connection
-				int listen_fd = (int)(uintptr_t)data_ptr;
+				int listen_fd = ctx->fd;
 				int client_fd = cqe->res;
 
 				printf("New connection accepted (fd: %d)\n",
@@ -909,13 +981,26 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 				// Prepare to read from this new connection
 				char *buffer = malloc(BUFFER_SIZE);
 				if (buffer) {
-					sqe = io_uring_get_sqe(&ring);
-					io_uring_prep_read(sqe, client_fd,
-							   buffer, BUFFER_SIZE,
-							   0);
-					sqe->user_data = create_user_data(
-						OP_TYPE_READ, buffer);
-					io_uring_submit(&ring);
+					// Create IO context for the read operation
+					io_context_t *read_ctx =
+						create_io_context(OP_TYPE_READ,
+								  client_fd,
+								  buffer);
+					if (!read_ctx) {
+						fprintf(stderr,
+							"Failed to create read context\n");
+						free(buffer);
+						close(client_fd);
+					} else {
+						sqe = io_uring_get_sqe(&ring);
+						io_uring_prep_read(
+							sqe, client_fd, buffer,
+							BUFFER_SIZE, 0);
+						sqe->user_data =
+							(uint64_t)(uintptr_t)
+								read_ctx;
+						io_uring_submit(&ring);
+					}
 				} else {
 					perror("malloc");
 					close(client_fd);
@@ -924,26 +1009,41 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 				// Submit a new accept for this listener
 				struct sockaddr_in client_address;
 				socklen_t client_len = sizeof(client_address);
+
+				// Create new IO context for the next accept
+				io_context_t *accept_ctx = create_io_context(
+					OP_TYPE_ACCEPT, listen_fd, NULL);
+				if (!accept_ctx) {
+					fprintf(stderr,
+						"Failed to create accept context\n");
+					free(ctx);
+					io_uring_cqe_seen(&ring, cqe);
+					continue;
+				}
+
 				sqe = io_uring_get_sqe(&ring);
 				io_uring_prep_accept(
 					sqe, listen_fd,
 					(struct sockaddr *)&client_address,
 					&client_len, 0);
-				sqe->user_data = create_user_data(
-					OP_TYPE_ACCEPT,
-					(void *)(uintptr_t)listen_fd);
+				sqe->user_data =
+					(uint64_t)(uintptr_t)accept_ctx;
 				io_uring_submit(&ring);
+
+				free(ctx); // Free the completed accept context
 				break;
 			}
 
 			case OP_TYPE_READ: {
 				op_read_handler(cqe, &ring);
+				// Note: op_read_handler now handles freeing the context
 				break;
 			}
 
 			case OP_TYPE_WRITE: {
 				// Write completed, free the buffer
-				free(data_ptr);
+				free(ctx->buffer);
+				free(ctx);
 				break;
 			}
 
@@ -951,15 +1051,17 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 				// NFS request write completed
 				printf("NFS request sent successfully\n");
 				// For client-side requests, we'd track for the response
+				free(ctx);
 				break;
 			}
 
 			default:
 				fprintf(stderr, "Unknown operation type: %d\n",
-					op_type);
-				if (data_ptr) {
-					free(data_ptr);
+					ctx->op_type);
+				if (ctx->buffer) {
+					free(ctx->buffer);
 				}
+				free(ctx);
 				break;
 			}
 		}
