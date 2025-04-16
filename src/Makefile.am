@@ -7,10 +7,19 @@ AM_CFLAGS = \
 	-I$(top_srcdir)/lib/include	\
 	-I$(top_builddir)/lib/xdr		\
 	$(TIRPC_CFLAGS)			\
+	@CHECK_CFLAGS@			\
+	$(URCU_CFLAGS)			\
+	$(URCU_CDS_CFLAGS)		\
+	$(FUSE_CFLAGS)			\
+	$(ZLIB_CFLAGS)			\
+	$(URING_CFLAGS)			\
 	$(PTHREAD_CFLAGS)
 
 LDADD = \
 	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
+	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
+	$(top_builddir)/lib/mount3/libreffs_mount3.la	\
+	$(top_builddir)/lib/nfs3/libreffs_nfs3.la	\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
 	$(TIRPC_LIBS)					\
@@ -18,6 +27,8 @@ LDADD = \
 	$(URCU_LIBS)					\
 	$(URCU_CDS_LIBS)				\
 	$(XXHASH_LIBS)					\
+	$(ZLIB_LIBS)					\
+	$(URING_LIBS)					\
 	$(FUSE_LIBS)
 
 recho_ev_SOURCES = recho_ev.c
@@ -32,8 +43,12 @@ reffs_LDADD = $(LDADD)
 reffs_fuse_SOURCES = reffs_fuse.c
 reffs_fuse_LDADD = $(LDADD)
 
+reffs_nfs3_srv_SOURCES = nfs3_server.c
+reffs_nfs3_srv_LDADD = $(LDADD)
+
 bin_PROGRAMS = \
 	recho_cl \
 	recho_ev \
 	reffs_fuse \
-	reffs
+	reffs	\
+	reffs_nfs3_srv

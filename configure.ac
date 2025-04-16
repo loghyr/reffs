@@ -110,6 +110,31 @@ fi
 AC_CHECK_HEADER([zlib.h], [], [AC_MSG_ERROR([zlib.h not found])])
 AC_CHECK_LIB([z], [crc32], [], [AC_MSG_ERROR([zlib library not found])])
 
+# Check for io_uring support
+AC_ARG_ENABLE([linux-io_uring],
+    [AS_HELP_STRING([--enable-linux-io_uring], [enable Linux io_uring support @<:@default=yes@:>@])],
+    [],
+    [enable_linux_io_uring=yes])
+
+AS_IF([test "x$enable_linux_io_uring" != "xno"], [
+    # Check for liburing
+    AC_CHECK_HEADERS([liburing.h], [
+        AC_CHECK_LIB([uring], [io_uring_queue_init], [
+            AC_DEFINE([HAVE_LINUX_IO_URING], [1], [Define if Linux io_uring is available])
+            URING_LIBS="-luring"
+        ], [
+            if test "x$enable_linux_io_uring" = "xyes"; then
+                AC_MSG_ERROR([io_uring support explicitly requested but liburing not found])
+            fi
+        ])
+    ], [
+        if test "x$enable_linux_io_uring" = "xyes"; then
+            AC_MSG_ERROR([io_uring support explicitly requested but liburing.h not found])
+        fi
+    ])
+])
+AC_SUBST([URING_LIBS])
+
 AC_ARG_ENABLE(asan,
 [  --enable-asan      Compile with address sanitizer],
 [case "${enableval}" in
