@@ -10,6 +10,7 @@ AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/fs @CHECK_CFLAGS@		\
 LDADD = \
 	@CHECK_LIBS@					\
 	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
+	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
 	-lxxhash					\
 	-lpthread					\
 	$(URCU_LIBS) $(URCU_CDS_LIBS) $(FUSE_LIBS)	\

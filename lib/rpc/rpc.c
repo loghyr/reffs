@@ -17,10 +17,10 @@
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
 #include <zlib.h>
-#include "nfsv3_xdr.h"
-#include "nfsv3_test.h"
 #include "reffs/test.h"
 #include "reffs/rpc.h"
+
+#ifdef NOT_NOW
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -58,12 +58,13 @@ static void print_nfs_fh3_hex(nfs_fh3 *fh)
 
 static int nfs3_getattr(struct rpc_trans *rt)
 {
-	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	struct nfs_packet_handler *nph =
+		(struct nfs_packet_handler *)rt->rt_context;
 
 	XDR xdrs = { 0 };
 
-	//GETATTR3res *res = ph->ph_res;
-	GETATTR3args *args = ph->ph_args;
+	//GETATTR3res *res = nph->nph_res;
+	GETATTR3args *args = nph->nph_args;
 
 	void *data;
 	xdrproc_t f;
@@ -77,11 +78,11 @@ static int nfs3_getattr(struct rpc_trans *rt)
 	LOG("GETATTR");
 
 	if (rt->rt_info.ri_type == 0) {
-		data = ph->ph_args;
-		f = ph->ph_op_handler->roh_args_f;
+		data = nph->nph_args;
+		f = nph->nph_op_handler->roh_args_f;
 	} else {
-		data = ph->ph_res;
-		f = ph->ph_op_handler->roh_res_f;
+		data = nph->nph_res;
+		f = nph->nph_op_handler->roh_res_f;
 	}
 
 	xdrmem_create(&xdrs, (char *)p, rt->rt_len - rt->rt_offset, XDR_DECODE);
@@ -309,7 +310,8 @@ struct rpc_program_handler nfsv3_handler = {
 
 static void allocate_nfs_data(struct rpc_trans *rt)
 {
-	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	struct nfs_packet_handler *nph =
+		(struct nfs_packet_handler *)rt->rt_context;
 
 	for (size_t i = 0; i < nfsv3_handler.rph_ops_len; i++) {
 		if (nfsv3_handler.rph_ops[i].roh_operation ==
@@ -317,32 +319,33 @@ static void allocate_nfs_data(struct rpc_trans *rt)
 			if (!nfsv3_handler.rph_ops[i].roh_action)
 				return;
 
-			ph->ph_op_handler = &nfsv3_handler.rph_ops[i];
+			nph->nph_op_handler = &nfsv3_handler.rph_ops[i];
 
-			ph->ph_args = calloc(
+			nph->nph_args = calloc(
 				1, nfsv3_handler.rph_ops[i].roh_args_size);
-			verify(ph->ph_args);
-			ph->ph_res = calloc(
+			verify(nph->nph_args);
+			nph->nph_res = calloc(
 				1, nfsv3_handler.rph_ops[i].roh_res_size);
-			verify(ph->ph_res);
+			verify(nph->nph_res);
 		}
 	}
 }
 
 static int call_nfs_op(struct rpc_trans *rt)
 {
-	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	struct nfs_packet_handler *nph =
+		(struct nfs_packet_handler *)rt->rt_context;
 	int ret = -1;
 
-	if (ph->ph_op_handler->roh_action)
-		ret = ph->ph_op_handler->roh_action(rt);
+	if (nph->nph_op_handler->roh_action)
+		ret = nph->nph_op_handler->roh_action(rt);
 
 	return ret;
 }
 
 static void free_rpc_nfs(struct rpc_trans *rt)
 {
-	struct protocol_handler *ph;
+	struct nfs_packet_handler *nph;
 
 	if (!rt)
 		return;
@@ -355,185 +358,21 @@ static void free_rpc_nfs(struct rpc_trans *rt)
 		break;
 	}
 
-	ph = (struct protocol_handler *)rt->rt_context;
-	if (ph) {
-		if (ph->ph_op_handler->roh_args_f) {
-			xdr_free(ph->ph_op_handler->roh_args_f,
-				 (char *)ph->ph_args);
+	nph = (struct nfs_packet_handler *)rt->rt_context;
+	if (nph) {
+		if (nph->nph_op_handler->roh_args_f) {
+			xdr_free(nph->nph_op_handler->roh_args_f,
+				 (char *)nph->nph_args);
 		}
 
-		if (ph->ph_op_handler->roh_res_f) {
-			xdr_free(ph->ph_op_handler->roh_args_f,
-				 (char *)ph->ph_res);
+		if (nph->nph_op_handler->roh_res_f) {
+			xdr_free(nph->nph_op_handler->roh_args_f,
+				 (char *)nph->nph_res);
 		}
-		free(ph);
+		free(nph);
 	}
 
 	free(rt);
 }
 
-//#define EXAMINE_PACKET nfs3_null_request_packet_data
-
-#define EXAMINE_PACKET nfs3_getattr_dir_request_packet_data
-
-int main(void)
-{
-	struct rpc_trans *rt;
-	struct protocol_handler *ph;
-	uint32_t *p;
-
-	rt = calloc(1, sizeof(*rt));
-	verify(rt);
-
-	ph = calloc(1, sizeof(*ph));
-	verify(ph);
-
-	rt->rt_context = (void *)ph;
-
-	rt->rt_body = (char *)EXAMINE_PACKET;
-	rt->rt_len = sizeof(EXAMINE_PACKET) / sizeof(*EXAMINE_PACKET);
-
-	rt->rt_offset = 72; // Jump over the rpc marker
-	p = (uint32_t *)(rt->rt_body + 72);
-
-	printf("The size of %p is %lu.\n", (void *)rt->rt_body, rt->rt_len);
-
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_xid);
-	verify_msg(p, "Could not decode xid");
-
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_type);
-	verify_msg(p, "Could not decode type");
-
-	LOG("This is a %s", rt->rt_info.ri_type ? "REPLY" : "CALL");
-
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_rpc_version);
-	verify_msg(p, "Could not decode rpc version");
-
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_program);
-	verify_msg(p, "Could not decode program");
-
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_version);
-	verify_msg(p, "Could not decode version");
-
-	LOG("This is a program %u version %u", rt->rt_info.ri_program,
-	    rt->rt_info.ri_version);
-
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_procedure);
-	verify_msg(p, "Could not decode procedure");
-
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_cred.rc_flavor);
-	verify_msg(p, "Could not decode auth flavor");
-
-	switch (rt->rt_info.ri_cred.rc_flavor) {
-	case AUTH_NONE: {
-		uint32_t len;
-		p = decode_uint32_t(rt, p, &len);
-		verify_msg(p, "Could not decode auth flavor len");
-		LOG("auth is AUTH_NONE, len is %u", len);
-		break;
-	}
-	case AUTH_SYS: {
-		XDR xdrs = { 0 };
-
-		uint32_t len;
-		p = decode_uint32_t(rt, p, &len);
-		verify_msg(p, "Could not decode auth flavor len");
-		verify_msg(len != 0, "auth flavor len %u invalid", len);
-
-		xdrmem_create(&xdrs, (char *)p, rt->rt_len - rt->rt_offset,
-			      XDR_DECODE);
-
-		if (!xdr_authunix_parms(&xdrs, &rt->rt_info.ri_cred.rc_unix)) {
-			xdr_free((xdrproc_t)xdr_authunix_parms,
-				 (char *)&rt->rt_info.ri_cred.rc_unix);
-			rt->rt_info.ri_stat = AUTH_BADCRED;
-		} else {
-			LOG("time = %lu", rt->rt_info.ri_cred.rc_unix.aup_time);
-			LOG("machine = %s",
-			    rt->rt_info.ri_cred.rc_unix.aup_machname);
-			LOG("uid = %u", rt->rt_info.ri_cred.rc_unix.aup_uid);
-			LOG("gid = %u", rt->rt_info.ri_cred.rc_unix.aup_gid);
-			LOG("len = %u", rt->rt_info.ri_cred.rc_unix.aup_len);
-			LOG("gids = %p",
-			    (void *)rt->rt_info.ri_cred.rc_unix.aup_gids);
-		}
-
-		xdr_destroy(&xdrs);
-
-		rt->rt_offset += len;
-		p = (uint32_t *)(p + len / sizeof(uint32_t));
-
-		LOG("auth is AUTH_SYS");
-		break;
-	}
-	case AUTH_SHORT:
-		LOG("auth %u is not supported", rt->rt_info.ri_cred.rc_flavor);
-		break;
-	case AUTH_DH:
-		LOG("auth %u is not supported", rt->rt_info.ri_cred.rc_flavor);
-		break;
-	case RPCSEC_GSS:
-		LOG("auth %u is not supported", rt->rt_info.ri_cred.rc_flavor);
-		break;
-#ifdef NOT_NOW_TLS
-	case AUTH_TLS:
-		LOG("auth is AUTH_TLS");
-		break;
 #endif
-	default:
-		LOG("auth %u is not supported", rt->rt_info.ri_cred.rc_flavor);
-		break;
-	}
-
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_verifier_flavor);
-	verify_msg(p, "Could not decode verifier flavor");
-
-	switch (rt->rt_info.ri_verifier_flavor) {
-	case AUTH_NONE: {
-		uint32_t len;
-		p = decode_uint32_t(rt, p, &len);
-		verify_msg(p, "Could not decode verifier flavor len");
-		LOG("verifier is AUTH_NONE, len is %u", len);
-		break;
-	}
-	case AUTH_SYS: {
-		LOG("verifier is AUTH_SYS");
-		break;
-	}
-	case AUTH_SHORT:
-		LOG("verifier %u is not supported",
-		    rt->rt_info.ri_cred.rc_flavor);
-		break;
-	case AUTH_DH:
-		LOG("verifier %u is not supported",
-		    rt->rt_info.ri_cred.rc_flavor);
-		break;
-	case RPCSEC_GSS:
-		LOG("verifier %u is not supported",
-		    rt->rt_info.ri_cred.rc_flavor);
-		break;
-#ifdef NOT_NOW_TLS
-	case AUTH_TLS:
-		LOG("verifier is AUTH_TLS");
-		break;
-#endif
-	default:
-		LOG("verifier %u is not supported",
-		    rt->rt_info.ri_verifier_flavor);
-		break;
-	}
-
-	allocate_nfs_data(rt);
-
-	int ret = call_nfs_op(rt);
-	LOG("action returned %d", ret);
-	if (!ret) {
-		p = (uint32_t *)(rt->rt_body + rt->rt_offset);
-	}
-
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-
-	free_rpc_nfs(rt);
-
-	return 0;
-}
