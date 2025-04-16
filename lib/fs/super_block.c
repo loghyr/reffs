@@ -69,8 +69,8 @@ int super_block_dirent_create(struct super_block *sb,
 	if (!sb->sb_dirent)
 		return ENOMEM;
 
-	sb->sb_dirent->d_inode =
-		inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1));
+	sb->sb_dirent->d_inode = inode_alloc(
+		sb, uatomic_add_return(&sb->sb_next_ino, 1, __ATOMIC_RELAXED));
 	if (!sb->sb_dirent->d_inode) {
 		dirent_put(sb->sb_dirent);
 		return ENOMEM;

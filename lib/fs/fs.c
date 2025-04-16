@@ -330,7 +330,8 @@ int reffs_fs_create(const char *path, mode_t mode)
 		goto out_puts;
 	}
 
-	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1));
+	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+							 __ATOMIC_RELAXED));
 	if (!de->d_inode) {
 		dirent_parent_release(de, reffs_life_action_death);
 		ret = -ENOENT;
@@ -434,7 +435,8 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 		goto out_puts;
 	}
 
-	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1));
+	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+							 __ATOMIC_RELAXED));
 	if (!de->d_inode) {
 		dirent_parent_release(de, reffs_life_action_death);
 		ret = -ENOENT;
@@ -503,7 +505,8 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 		goto out_puts;
 	}
 
-	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1));
+	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+							 __ATOMIC_RELAXED));
 	if (!de->d_inode) {
 		dirent_parent_release(de, reffs_life_action_death);
 		ret = -ENOENT;

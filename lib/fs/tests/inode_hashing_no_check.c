@@ -22,7 +22,7 @@ static int add_sb_1(void)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -38,7 +38,7 @@ static int add_sb_2(void)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -57,7 +57,7 @@ static int find_sb_inode(void)
 	int ret;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -88,7 +88,7 @@ static int find_sb_inode_put(void)
 	int ret;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -119,7 +119,7 @@ static int find_sb_inode_unhash(void)
 	int ret;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -148,7 +148,7 @@ static int add_inode_1(void)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -172,7 +172,7 @@ static int add_inode_2(void)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -203,7 +203,7 @@ static int put_inode_1(void)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -238,7 +238,7 @@ static int get_inode_1(void)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -276,7 +276,7 @@ static int sb_put_inode_1(void)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -307,7 +307,7 @@ static int find_inode_1(void)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -334,7 +334,7 @@ static int find_inode_1_sb_NULL(void)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -361,7 +361,7 @@ static int find_inode_3(void)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id);
 	verify(sb);
@@ -397,7 +397,7 @@ static int find_sb_1(void)
 	struct super_block *sb1, *sb2;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1);
+	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb1 = super_block_alloc(sb_id);
 	verify(sb1);

@@ -36,7 +36,7 @@ void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 	rcu_read_lock();
 	de->d_parent = dirent_get(parent);
 	verify(parent->d_inode->i_mode & S_IFDIR);
-	uatomic_inc(&parent->d_inode->i_nlink);
+	uatomic_inc(&parent->d_inode->i_nlink, __ATOMIC_RELAXED);
 	cds_list_add_rcu(&de->d_siblings, &parent->d_children);
 	dirent_get(de); // One for the linked list
 
@@ -178,7 +178,7 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 	rcu_read_lock();
 	parent = rcu_xchg_pointer(&de->d_parent, NULL);
 	if (parent) {
-		uatomic_dec(&parent->d_inode->i_nlink);
+		uatomic_dec(&parent->d_inode->i_nlink, __ATOMIC_RELAXED);
 		cds_list_del_init(&de->d_siblings);
 		dirent_put(parent);
 		dirent_put(de);
