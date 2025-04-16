@@ -113,81 +113,121 @@ AC_CHECK_LIB([z], [crc32], [], [AC_MSG_ERROR([zlib library not found])])
 AC_ARG_ENABLE(asan,
 [  --enable-asan      Compile with address sanitizer],
 [case "${enableval}" in
-	yes) asan_enabled=true ;;
-	no)  asan_enabled=false ;;
-	*) AC_MSG_ERROR(bad value ${enableval} for --enable-asan) ;;
+        yes) asan_enabled=true ;; 
+        no)  asan_enabled=false ;;
+        *) AC_MSG_ERROR(bad value ${enableval} for --enable-asan) ;;
 esac],[asan_enabled=false])
-
 if test "x${enable_asan}" = "xyes"; then
-	ASAN_CFLAGS="-fsanitize=address -fno-omit-frame-pointer -DASAN_ENABLED -U_FORTIFY_SOURCE"
-	CFLAGS="${CFLAGS} ${ASAN_CFLAGS}"
-	AC_SUBST(ASAN_CFLAGS)
-	ASAN_LDFLAGS="-lasan"
-	AC_SUBST(ASAN_LDFLAGS)
-	LDFLAGS="${LDFLAGS} ${ASAN_LDFLAGS}"
-	ASAN_ENABLED=1
+        # Check if we're using Clang
+        AC_CHECK_PROG(IS_CLANG, clang, yes, no)
+        if test "x${IS_CLANG}" = "xyes"; then
+                # For Clang, use the same flag for both compiler and linker
+                ASAN_CFLAGS="-fsanitize=address -fno-omit-frame-pointer -DASAN_ENABLED -U_FORTIFY_SOURCE"
+                CFLAGS="${CFLAGS} ${ASAN_CFLAGS}"
+                AC_SUBST(ASAN_CFLAGS)
+                ASAN_LDFLAGS="-fsanitize=address"
+        else
+                # GCC needs explicit linking to libasan
+                ASAN_CFLAGS="-fsanitize=address -fno-omit-frame-pointer -DASAN_ENABLED -U_FORTIFY_SOURCE"
+                CFLAGS="${CFLAGS} ${ASAN_CFLAGS}"
+                AC_SUBST(ASAN_CFLAGS)
+                ASAN_LDFLAGS="-lasan"
+        fi
+        AC_SUBST(ASAN_LDFLAGS)
+        LDFLAGS="${LDFLAGS} ${ASAN_LDFLAGS}"
+        ASAN_ENABLED=1
 else
-	ASAN_ENABLED=0
+        ASAN_ENABLED=0
 fi
 
 AC_ARG_ENABLE(tsan,
 [  --enable-tsan      Compile with thread sanitizer],
 [case "${enableval}" in
-	yes) tsan_enabled=true ;;
-	no)  tsan_enabled=false ;;
-	*) AC_MSG_ERROR(bad value ${enableval} for --enable-tsan) ;;
+        yes) tsan_enabled=true ;;
+        no)  tsan_enabled=false ;;
+        *) AC_MSG_ERROR(bad value ${enableval} for --enable-tsan) ;;
 esac],[tsan_enabled=false])
-
 if test "x${enable_tsan}" = "xyes"; then
-	TSAN_CFLAGS="-fsanitize=thread -fno-omit-frame-pointer -DTSAN_ENABLED -U_FORTIFY_SOURCE"
-	CFLAGS="${CFLAGS} ${TSAN_CFLAGS}"
-	AC_SUBST(TSAN_CFLAGS)
-	TSAN_LDFLAGS="-ltsan"
-	AC_SUBST(TSAN_LDFLAGS)
-	LDFLAGS="${LDFLAGS} ${TSAN_LDFLAGS}"
-	TSAN_ENABLED=1
+        # Check if we're using Clang
+        AC_CHECK_PROG(IS_CLANG, clang, yes, no)
+        if test "x${IS_CLANG}" = "xyes"; then
+                # For Clang, use the same flag for both compiler and linker
+                TSAN_CFLAGS="-fsanitize=thread -fno-omit-frame-pointer -DTSAN_ENABLED -U_FORTIFY_SOURCE"
+                CFLAGS="${CFLAGS} ${TSAN_CFLAGS}"
+                AC_SUBST(TSAN_CFLAGS)
+                TSAN_LDFLAGS="-fsanitize=thread"
+        else
+                # GCC needs explicit linking to libtsan
+                TSAN_CFLAGS="-fsanitize=thread -fno-omit-frame-pointer -DTSAN_ENABLED -U_FORTIFY_SOURCE"
+                CFLAGS="${CFLAGS} ${TSAN_CFLAGS}"
+                AC_SUBST(TSAN_CFLAGS)
+                TSAN_LDFLAGS="-ltsan"
+        fi
+        AC_SUBST(TSAN_LDFLAGS)
+        LDFLAGS="${LDFLAGS} ${TSAN_LDFLAGS}"
+        TSAN_ENABLED=1
 else
-	TSAN_ENABLED=0
+        TSAN_ENABLED=0
 fi
 
 AC_ARG_ENABLE(lsan,
 [  --enable-lsan      Compile with leak sanitizer],
 [case "${enableval}" in
-	yes) lsan_enabled=true ;;
-	no)  lsan_enabled=false ;;
-	*) AC_MSG_ERROR(bad value ${enableval} for --enable-lsan) ;;
+        yes) lsan_enabled=true ;;
+        no)  lsan_enabled=false ;;
+        *) AC_MSG_ERROR(bad value ${enableval} for --enable-lsan) ;;
 esac],[lsan_enabled=false])
-
 if test "x${enable_lsan}" = "xyes"; then
-	LSAN_CFLAGS="-fsanitize=leak -fno-omit-frame-pointer -DLSAN_ENABLED -U_FORTIFY_SOURCE"
-	CFLAGS="${CFLAGS} ${LSAN_CFLAGS}"
-	AC_SUBST(LSAN_CFLAGS)
-	LSAN_LDFLAGS="-llsan"
-	AC_SUBST(LSAN_LDFLAGS)
-	LDFLAGS="${LDFLAGS} ${LSAN_LDFLAGS}"
-	LSAN_ENABLED=1
+        # Check if we're using Clang
+        AC_CHECK_PROG(IS_CLANG, clang, yes, no)
+        if test "x${IS_CLANG}" = "xyes"; then
+                # For Clang, use the same flag for both compiler and linker
+                LSAN_CFLAGS="-fsanitize=leak -fno-omit-frame-pointer -DLSAN_ENABLED -U_FORTIFY_SOURCE"
+                CFLAGS="${CFLAGS} ${LSAN_CFLAGS}"
+                AC_SUBST(LSAN_CFLAGS)
+                LSAN_LDFLAGS="-fsanitize=leak"
+        else
+                # GCC needs explicit linking to liblsan
+                LSAN_CFLAGS="-fsanitize=leak -fno-omit-frame-pointer -DLSAN_ENABLED -U_FORTIFY_SOURCE"
+                CFLAGS="${CFLAGS} ${LSAN_CFLAGS}"
+                AC_SUBST(LSAN_CFLAGS)
+                LSAN_LDFLAGS="-llsan"
+        fi
+        AC_SUBST(LSAN_LDFLAGS)
+        LDFLAGS="${LDFLAGS} ${LSAN_LDFLAGS}"
+        LSAN_ENABLED=1
 else
-	LSAN_ENABLED=0
+        LSAN_ENABLED=0
 fi
 
 AC_ARG_ENABLE(ubsan,
 [  --enable-ubsan      Compile with undefined behaviour sanitizer],
 [case "${enableval}" in
-	yes) ubsan_enabled=true ;;
-	no)  ubsan_enabled=false ;;
-	*) AC_MSG_ERROR(bad value ${enableval} for --enable-ubsan) ;;
+        yes) ubsan_enabled=true ;;
+        no)  ubsan_enabled=false ;;
+        *) AC_MSG_ERROR(bad value ${enableval} for --enable-ubsan) ;;
 esac],[ubsan_enabled=false])
-
 if test "x${enable_ubsan}" = "xyes"; then
-	UBSAN_CFLAGS="-fsanitize=undefined -fno-omit-frame-pointer -DUBSAN_ENABLED -U_FORTIFY_SOURCE"
-	CFLAGS="${CFLAGS} ${UBSAN_CFLAGS}"
-	AC_SUBST(UBSAN_CFLAGS)
-	UBSAN_LDFLAGS="-lubsan"
-	AC_SUBST(UBSAN_LDFLAGS)
-	LDFLAGS="${LDFLAGS} ${UBSAN_LDFLAGS}"
-	UBSAN_ENABLED=1
+        # Check if we're using Clang
+        AC_CHECK_PROG(IS_CLANG, clang, yes, no)
+        if test "x${IS_CLANG}" = "xyes"; then
+                # For Clang, use the same flag for both compiler and linker
+                UBSAN_CFLAGS="-fsanitize=undefined -fno-omit-frame-pointer -DUBSAN_ENABLED -U_FORTIFY_SOURCE"
+                CFLAGS="${CFLAGS} ${UBSAN_CFLAGS}"
+                AC_SUBST(UBSAN_CFLAGS)
+                UBSAN_LDFLAGS="-fsanitize=undefined"
+        else
+                # GCC needs explicit linking to libubsan
+                UBSAN_CFLAGS="-fsanitize=undefined -fno-omit-frame-pointer -DUBSAN_ENABLED -U_FORTIFY_SOURCE"
+                CFLAGS="${CFLAGS} ${UBSAN_CFLAGS}"
+                AC_SUBST(UBSAN_CFLAGS)
+                UBSAN_LDFLAGS="-lubsan"
+        fi
+        AC_SUBST(UBSAN_LDFLAGS)
+        LDFLAGS="${LDFLAGS} ${UBSAN_LDFLAGS}"
+        UBSAN_ENABLED=1
 else
-	UBSAN_ENABLED=0
+        UBSAN_ENABLED=0
 fi
 
 AC_ARG_ENABLE([debug],
