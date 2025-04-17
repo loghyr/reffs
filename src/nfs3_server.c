@@ -57,48 +57,49 @@ volatile sig_atomic_t running = 1;
 #define NFS3_WRITE 7
 
 // IO operation context structure
-typedef struct {
-	int op_type;
-	int fd;
-	void *buffer;
-} io_context_t;
+struct io_context {
+	int ic_op_type;
+	int ic_fd;
+	uint32_t ic_id;
+	void *ic_buffer;
+};
 
 // Task struct for worker queue
 struct task {
-	char *buffer;
-	int bytes_read;
-	uint32_t xid;
-	int fd; // For sending responses
+	char *t_buffer;
+	int t_bytes_read;
+	uint32_t t_xid;
+	int t_fd; // For sending responses
 };
 
 // NFS request context for tracking operations
 struct nfs_request_context {
-	uint32_t xid; // RPC transaction ID
-	int operation; // NFS operation (GETATTR, READ, etc.)
-	int sockfd; // Socket this request was sent on
-	void *private_data; // Application-specific context
-	void (*callback)(struct nfs_request_context *ctx, void *response,
-			 int res_len, int status);
-	char *buffer; // Buffer for response
+	uint32_t nrc_xid; // RPC transaction ID
+	int nrc_operation; // NFS operation (GETATTR, READ, etc.)
+	int nrc_sockfd; // Socket this request was sent on
+	void *nrc_private_data; // Application-specific context
+	void (*nrc_cb)(struct nfs_request_context *nrc, void *response,
+		       int res_len, int status);
+	char *nrc_buffer; // Buffer for response
 };
 
 // Record state for reassembling fragmented RPC messages
 struct record_state {
-	bool last_fragment;
-	uint32_t fragment_len;
-	char *data;
-	size_t total_len;
-	size_t capacity;
-	uint32_t position;
+	bool rs_last_fragment;
+	uint32_t rs_fragment_len;
+	char *rs_data;
+	size_t rs_total_len;
+	size_t rs_capacity;
+	uint32_t rs_position;
 };
 
 // Connection buffer state for reassembling messages
 struct buffer_state {
-	int fd;
-	char *data;
-	size_t filled;
-	size_t capacity;
-	struct record_state record;
+	int bs_fd;
+	char *bs_data;
+	size_t bs_filled;
+	size_t bs_capacity;
+	struct record_state bs_record;
 };
 
 // Request tracking
@@ -124,7 +125,7 @@ int setup_io_uring(struct io_uring *ring);
 void handle_nfs_protocol(struct task *task);
 struct buffer_state *create_buffer_state(int fd);
 struct buffer_state *get_buffer_state(int fd);
-bool append_to_buffer(struct buffer_state *state, const char *data, size_t len);
+bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len);
 int decode_nfs_response(char *data, size_t filled, struct io_uring *ring,
 			int client_fd);
 void register_client_fd(int fd);
@@ -138,6 +139,18 @@ void signal_handler(int sig)
 
 	// Wake up any waiting worker threads
 	pthread_cond_broadcast(&task_queue_cond);
+}
+
+uint32_t generate_id(void)
+{
+	static uint32_t next_id = 1;
+	static pthread_mutex_t id_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+	pthread_mutex_lock(&id_mutex);
+	uint32_t id = next_id++;
+	pthread_mutex_unlock(&id_mutex);
+
+	return id;
 }
 
 // Generate a unique transaction ID for RPC
@@ -154,14 +167,14 @@ uint32_t generate_xid(void)
 }
 
 // Register a new request for tracking
-int register_request(struct nfs_request_context *ctx)
+int register_request(struct nfs_request_context *nrc)
 {
 	pthread_mutex_lock(&request_mutex);
 
 	// Find an empty slot
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] == NULL) {
-			pending_requests[i] = ctx;
+			pending_requests[i] = nrc;
 			pthread_mutex_unlock(&request_mutex);
 			return 0;
 		}
@@ -174,19 +187,20 @@ int register_request(struct nfs_request_context *ctx)
 // Find a request by XID
 struct nfs_request_context *find_request_by_xid(uint32_t xid)
 {
-	struct nfs_request_context *ctx = NULL;
+	struct nfs_request_context *nrc = NULL;
 
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
-		if (pending_requests[i] && pending_requests[i]->xid == xid) {
-			ctx = pending_requests[i];
+		if (pending_requests[i] &&
+		    pending_requests[i]->nrc_xid == xid) {
+			nrc = pending_requests[i];
 			pending_requests[i] = NULL; // Remove from tracking
 			break;
 		}
 	}
 	pthread_mutex_unlock(&request_mutex);
 
-	return ctx;
+	return nrc;
 }
 
 // Add task to the worker queue
@@ -209,30 +223,31 @@ void register_client_fd(int fd)
 // Unregister client fd
 void unregister_client_fd(int fd)
 {
-	struct buffer_state *state = get_buffer_state(fd);
-	if (state) {
-		free(state->data);
-		if (state->record.data) {
-			free(state->record.data);
+	struct buffer_state *bs = get_buffer_state(fd);
+	if (bs) {
+		free(bs->bs_data);
+		if (bs->bs_record.rs_data) {
+			free(bs->bs_record.rs_data);
 		}
-		free(state);
+		free(bs);
 		conn_buffers[fd % MAX_CONNECTIONS] = NULL;
 	}
 }
 
 // Create an IO context for operations
-io_context_t *create_io_context(int op_type, int fd, void *buffer)
+struct io_context *create_io_context(int op_type, int fd, void *buffer)
 {
-	io_context_t *ctx = malloc(sizeof(io_context_t));
-	if (!ctx) {
+	struct io_context *ic = malloc(sizeof(struct io_context));
+	if (!ic) {
 		return NULL;
 	}
 
-	ctx->op_type = op_type;
-	ctx->fd = fd;
-	ctx->buffer = buffer;
+	ic->ic_op_type = op_type;
+	ic->ic_fd = fd;
+	ic->ic_id = generate_id();
+	ic->ic_buffer = buffer;
 
-	return ctx;
+	return ic;
 }
 
 // Simplified XDR encoding for NFS response
@@ -260,10 +275,10 @@ int encode_nfs_response(char *buffer, int __attribute__((unused)) buflen,
 }
 
 // Handler for GETATTR response
-void handle_getattr_response(struct nfs_request_context *ctx, void *response,
+void handle_getattr_response(struct nfs_request_context *nrc, void *response,
 			     int __attribute__((unused)) res_len, int status)
 {
-	printf("GETATTR response received: XID=%u, status=%d\n", ctx->xid,
+	printf("GETATTR response received: XID=%u, status=%d\n", nrc->nrc_xid,
 	       status);
 
 	if (status == 0 && response) {
@@ -274,13 +289,36 @@ void handle_getattr_response(struct nfs_request_context *ctx, void *response,
 	}
 
 	// Free the context
-	if (ctx->private_data) {
-		free(ctx->private_data);
+	if (nrc->nrc_private_data) {
+		free(nrc->nrc_private_data);
 	}
-	if (ctx->buffer) {
-		free(ctx->buffer);
+	if (nrc->nrc_buffer) {
+		free(nrc->nrc_buffer);
 	}
-	free(ctx);
+	free(nrc);
+}
+
+int request_more_read_data(struct buffer_state *bs, struct io_uring *ring)
+{
+	char *new_buffer = malloc(BUFFER_SIZE);
+	if (new_buffer) {
+		// Create an IO context for this read operation
+		struct io_context *ic =
+			create_io_context(OP_TYPE_READ, bs->bs_fd, new_buffer);
+		if (!ic) {
+			free(new_buffer);
+			return -ENOMEM;
+		}
+
+		struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+		io_uring_prep_read(sqe, bs->bs_fd, new_buffer, BUFFER_SIZE, 0);
+		sqe->user_data = (uint64_t)(uintptr_t)ic;
+		io_uring_submit(ring);
+	} else {
+		return -ENOMEM;
+	}
+
+	return 0;
 }
 
 // Process the RPC record marker and reassemble fragments
@@ -288,41 +326,40 @@ void handle_getattr_response(struct nfs_request_context *ctx, void *response,
 //   > 0: Complete message available, returns size
 //   0: Need more data
 //   < 0: Error
-int process_record_marker(struct buffer_state *buffer_state,
-			  struct io_uring *ring)
+int process_record_marker(struct buffer_state *bs, struct io_uring *ring)
 {
-	char *data = buffer_state->data;
-	size_t filled = buffer_state->filled;
-	struct record_state *record = &buffer_state->record;
+	char *data = bs->bs_data;
+	size_t filled = bs->bs_filled;
+	struct record_state *rs = &bs->bs_record;
 
 	// Process record markers until we have a complete message or need more data
 	while (filled >= 4) { // Need at least 4 bytes for the record marker
 		// If we're starting a new record
-		if (record->position == 0) {
+		if (rs->rs_position == 0) {
 			uint32_t marker = ntohl(*(uint32_t *)data);
-			record->last_fragment = (marker & 0x80000000) != 0;
-			record->fragment_len = marker & 0x7FFFFFFF;
+			rs->rs_last_fragment = (marker & 0x80000000) != 0;
+			rs->rs_fragment_len = marker & 0x7FFFFFFF;
 
 			// Ensure our record buffer is large enough
-			if (!record->data) {
-				record->capacity = record->fragment_len *
-						   2; // Some extra space
-				record->data = malloc(record->capacity);
-				if (!record->data) {
+			if (!rs->rs_data) {
+				rs->rs_capacity = rs->rs_fragment_len *
+						  2; // Some extra space
+				rs->rs_data = malloc(rs->rs_capacity);
+				if (!rs->rs_data) {
 					return -ENOMEM;
 				}
-				record->total_len = 0;
-			} else if (record->total_len + record->fragment_len >
-				   record->capacity) {
+				rs->rs_total_len = 0;
+			} else if (rs->rs_total_len + rs->rs_fragment_len >
+				   rs->rs_capacity) {
 				// Need to resize
-				size_t new_capacity = record->capacity * 2;
+				size_t new_capacity = rs->rs_capacity * 2;
 				char *new_data =
-					realloc(record->data, new_capacity);
+					realloc(rs->rs_data, new_capacity);
 				if (!new_data) {
 					return -ENOMEM;
 				}
-				record->data = new_data;
-				record->capacity = new_capacity;
+				rs->rs_data = new_data;
+				rs->rs_capacity = new_capacity;
 			}
 
 			// Move past the marker in the input buffer
@@ -332,64 +369,41 @@ int process_record_marker(struct buffer_state *buffer_state,
 			// If no more data available, we need to read more
 			if (filled == 0) {
 				// Compact the buffer, removing the 4 bytes we just processed
-				memmove(buffer_state->data,
-					buffer_state->data + 4,
-					buffer_state->filled - 4);
-				buffer_state->filled -= 4;
+				memmove(bs->bs_data, bs->bs_data + 4,
+					bs->bs_filled - 4);
+				bs->bs_filled -= 4;
 
-				// Request more data
-				char *new_buffer = malloc(BUFFER_SIZE);
-				if (new_buffer) {
-					// Create an IO context for this read operation
-					io_context_t *ctx = create_io_context(
-						OP_TYPE_READ, buffer_state->fd,
-						new_buffer);
-					if (!ctx) {
-						free(new_buffer);
-						return -ENOMEM;
-					}
-
-					struct io_uring_sqe *sqe =
-						io_uring_get_sqe(ring);
-					io_uring_prep_read(sqe,
-							   buffer_state->fd,
-							   new_buffer,
-							   BUFFER_SIZE, 0);
-					sqe->user_data =
-						(uint64_t)(uintptr_t)ctx;
-					io_uring_submit(ring);
-				}
-				return 0; // Need more data
+				return request_more_read_data(bs, ring);
 			}
 		}
 
 		// Determine how much we can copy
-		size_t to_copy = record->fragment_len - record->position;
+		size_t to_copy = rs->rs_fragment_len - rs->rs_position;
 		if (to_copy > filled) {
 			to_copy = filled;
 		}
 
 		// Copy data into our reassembly buffer
-		memcpy(record->data + record->total_len, data, to_copy);
-		record->total_len += to_copy;
-		record->position += to_copy;
+		memcpy(rs->rs_data + rs->rs_total_len, data, to_copy);
+		rs->rs_total_len += to_copy;
+		rs->rs_position += to_copy;
 
 		// Advance the input buffer
 		data += to_copy;
 		filled -= to_copy;
 
 		// Check if we've completed this fragment
-		if (record->position >= record->fragment_len) {
+		if (rs->rs_position >= rs->rs_fragment_len) {
 			// Reset position for next fragment
-			record->position = 0;
+			rs->rs_position = 0;
 
 			// If this was the last fragment, we have a complete message
-			if (record->last_fragment) {
-				size_t complete_size = record->total_len;
+			if (rs->rs_last_fragment) {
+				size_t complete_size = rs->rs_total_len;
 
 				// Update our buffer state for the next processing cycle
-				memmove(buffer_state->data, data, filled);
-				buffer_state->filled = filled;
+				memmove(bs->bs_data, data, filled);
+				bs->bs_filled = filled;
 
 				// Return the complete message size
 				return complete_size;
@@ -399,94 +413,35 @@ int process_record_marker(struct buffer_state *buffer_state,
 			// If we're out of data, request more
 			if (filled < 4) {
 				// Compact the buffer
-				memmove(buffer_state->data, data, filled);
-				buffer_state->filled = filled;
+				memmove(bs->bs_data, data, filled);
+				bs->bs_filled = filled;
 
-				// Request more data
-				char *new_buffer = malloc(BUFFER_SIZE);
-				if (new_buffer) {
-					// Create an IO context for this read operation
-					io_context_t *ctx = create_io_context(
-						OP_TYPE_READ, buffer_state->fd,
-						new_buffer);
-					if (!ctx) {
-						free(new_buffer);
-						return -ENOMEM;
-					}
-
-					struct io_uring_sqe *sqe =
-						io_uring_get_sqe(ring);
-					io_uring_prep_read(sqe,
-							   buffer_state->fd,
-							   new_buffer,
-							   BUFFER_SIZE, 0);
-					sqe->user_data =
-						(uint64_t)(uintptr_t)ctx;
-					io_uring_submit(ring);
-				}
-				return 0; // Need more data
+				return request_more_read_data(bs, ring);
 			}
 		} else {
 			// We need more data for this fragment
-			memmove(buffer_state->data, data, filled);
-			buffer_state->filled = filled;
+			memmove(bs->bs_data, data, filled);
+			bs->bs_filled = filled;
 
-			// Request more data
-			char *new_buffer = malloc(BUFFER_SIZE);
-			if (new_buffer) {
-				// Create an IO context for this read operation
-				io_context_t *ctx = create_io_context(
-					OP_TYPE_READ, buffer_state->fd,
-					new_buffer);
-				if (!ctx) {
-					free(new_buffer);
-					return -ENOMEM;
-				}
-
-				struct io_uring_sqe *sqe =
-					io_uring_get_sqe(ring);
-				io_uring_prep_read(sqe, buffer_state->fd,
-						   new_buffer, BUFFER_SIZE, 0);
-				sqe->user_data = (uint64_t)(uintptr_t)ctx;
-				io_uring_submit(ring);
-			}
-			return 0; // Need more data
+			return request_more_read_data(bs, ring);
 		}
 	}
 
 	// Not enough data to even read a marker
 	if (filled > 0) {
-		memmove(buffer_state->data, data, filled);
-		buffer_state->filled = filled;
+		memmove(bs->bs_data, data, filled);
+		bs->bs_filled = filled;
 	} else {
-		buffer_state->filled = 0;
+		bs->bs_filled = 0;
 	}
 
-	// Request more data
-	char *new_buffer = malloc(BUFFER_SIZE);
-	if (new_buffer) {
-		// Create an IO context for this read operation
-		io_context_t *ctx = create_io_context(
-			OP_TYPE_READ, buffer_state->fd, new_buffer);
-		if (!ctx) {
-			free(new_buffer);
-			return -ENOMEM;
-		}
-
-		struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-		io_uring_prep_read(sqe, buffer_state->fd, new_buffer,
-				   BUFFER_SIZE, 0);
-		sqe->user_data = (uint64_t)(uintptr_t)ctx;
-		io_uring_submit(ring);
-	}
-
-	return 0; // Need more data
+	return request_more_read_data(bs, ring);
 }
 
 // NFS protocol handler
-void handle_nfs_protocol(struct task *task)
+void handle_nfs_protocol(struct task *t)
 {
-	printf("NFS Protocol Handler: Received %d bytes\n", task->bytes_read);
+	printf("NFS Protocol Handler: Received %d bytes\n", t->t_bytes_read);
 
 	// Process RPC/NFS message
 	// This is a simplified example - in a real implementation, you would:
@@ -495,10 +450,10 @@ void handle_nfs_protocol(struct task *task)
 	// 3. Send a response
 
 	// Extract XID from the message (first 4 bytes)
-	uint32_t xid = ntohl(*(uint32_t *)task->buffer);
+	uint32_t xid = ntohl(*(uint32_t *)t->t_buffer);
 
 	// Extract the RPC message type (call=0, reply=1)
-	uint32_t msg_type = ntohl(*(uint32_t *)(task->buffer + 4));
+	uint32_t msg_type = ntohl(*(uint32_t *)(t->t_buffer + 4));
 
 	// Print basic info about the message
 	printf("RPC Message: XID=%u, Type=%s\n", xid,
@@ -506,9 +461,9 @@ void handle_nfs_protocol(struct task *task)
 
 	if (msg_type == 0) { // It's a call
 		// Extract program, version, procedure
-		uint32_t program = ntohl(*(uint32_t *)(task->buffer + 12));
-		uint32_t version = ntohl(*(uint32_t *)(task->buffer + 16));
-		uint32_t procedure = ntohl(*(uint32_t *)(task->buffer + 20));
+		uint32_t program = ntohl(*(uint32_t *)(t->t_buffer + 12));
+		uint32_t version = ntohl(*(uint32_t *)(t->t_buffer + 16));
+		uint32_t procedure = ntohl(*(uint32_t *)(t->t_buffer + 20));
 
 		printf("RPC Call: Program=%u, Version=%u, Procedure=%u\n",
 		       program, version, procedure);
@@ -568,7 +523,7 @@ void *worker_thread(void *arg)
 	printf("Worker thread %d started\n", thread_id);
 
 	while (running) {
-		struct task *task = NULL;
+		struct task *t = NULL;
 
 		// Use a timeout when checking for tasks during shutdown
 		if (!running) {
@@ -577,7 +532,7 @@ void *worker_thread(void *arg)
 
 		pthread_mutex_lock(&task_queue_mutex);
 		if (task_queue_head != task_queue_tail) {
-			task = task_queue[task_queue_head];
+			t = task_queue[task_queue_head];
 			task_queue_head = (task_queue_head + 1) % QUEUE_DEPTH;
 			pthread_mutex_unlock(&task_queue_mutex);
 		} else {
@@ -597,21 +552,21 @@ void *worker_thread(void *arg)
 			continue;
 		}
 
-		if (task) {
-			handle_nfs_protocol(task);
+		if (t) {
+			handle_nfs_protocol(t);
 
 			// Generate and send a response
-			if (task->fd > 0) {
+			if (t->t_fd > 0) {
 				// In a real implementation, you would:
 				// 1. Prepare the appropriate response based on the request
 				// 2. Send it via io_uring
 				// For this example, we just acknowledge
 				printf("Processing request with XID %u\n",
-				       task->xid);
+				       t->t_xid);
 			}
 
-			free(task->buffer);
-			free(task);
+			free(t->t_buffer);
+			free(t);
 		}
 	}
 
@@ -677,30 +632,30 @@ int setup_listener(int port)
 // Create buffer state for a connection
 struct buffer_state *create_buffer_state(int fd)
 {
-	struct buffer_state *state = malloc(sizeof(struct buffer_state));
-	if (!state)
+	struct buffer_state *bs = malloc(sizeof(struct buffer_state));
+	if (!bs)
 		return NULL;
 
-	state->fd = fd;
-	state->capacity = BUFFER_SIZE * 2;
-	state->data = malloc(state->capacity);
-	state->filled = 0;
+	bs->bs_fd = fd;
+	bs->bs_capacity = BUFFER_SIZE * 2;
+	bs->bs_data = malloc(bs->bs_capacity);
+	bs->bs_filled = 0;
 
 	// Initialize record state
-	state->record.last_fragment = false;
-	state->record.fragment_len = 0;
-	state->record.data = NULL;
-	state->record.total_len = 0;
-	state->record.capacity = 0;
-	state->record.position = 0;
+	bs->bs_record.rs_last_fragment = false;
+	bs->bs_record.rs_fragment_len = 0;
+	bs->bs_record.rs_data = NULL;
+	bs->bs_record.rs_total_len = 0;
+	bs->bs_record.rs_capacity = 0;
+	bs->bs_record.rs_position = 0;
 
-	if (!state->data) {
-		free(state);
+	if (!bs->bs_data) {
+		free(bs);
 		return NULL;
 	}
 
-	conn_buffers[fd % MAX_CONNECTIONS] = state;
-	return state;
+	conn_buffers[fd % MAX_CONNECTIONS] = bs;
+	return bs;
 }
 
 // Get buffer state for a connection
@@ -710,22 +665,22 @@ struct buffer_state *get_buffer_state(int fd)
 }
 
 // Append data to a buffer, resizing if necessary
-bool append_to_buffer(struct buffer_state *state, const char *data, size_t len)
+bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len)
 {
 	// Check if we need to resize
-	if (state->filled + len > state->capacity) {
-		size_t new_capacity = state->capacity * 2;
-		char *new_data = realloc(state->data, new_capacity);
+	if (bs->bs_filled + len > bs->bs_capacity) {
+		size_t new_capacity = bs->bs_capacity * 2;
+		char *new_data = realloc(bs->bs_data, new_capacity);
 		if (!new_data)
 			return false;
 
-		state->data = new_data;
-		state->capacity = new_capacity;
+		bs->bs_data = new_data;
+		bs->bs_capacity = new_capacity;
 	}
 
 	// Append the data
-	memcpy(state->data + state->filled, data, len);
-	state->filled += len;
+	memcpy(bs->bs_data + bs->bs_filled, data, len);
+	bs->bs_filled += len;
 	return true;
 }
 
@@ -733,15 +688,15 @@ bool append_to_buffer(struct buffer_state *state, const char *data, size_t len)
 int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 {
 	// Get the IO context from user_data
-	io_context_t *ctx = (io_context_t *)(uintptr_t)cqe->user_data;
-	if (!ctx) {
+	struct io_context *ic = (struct io_context *)(uintptr_t)cqe->user_data;
+	if (!ic) {
 		fprintf(stderr, "Error: NULL io context in read handler\n");
 		return -EINVAL;
 	}
 
 	// Extract data from context
-	char *buffer = (char *)ctx->buffer;
-	int client_fd = ctx->fd;
+	char *buffer = (char *)ic->ic_buffer;
+	int client_fd = ic->ic_fd;
 	int bytes_read = cqe->res;
 
 	// We now have the correct client_fd from our context
@@ -753,66 +708,66 @@ int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 		unregister_client_fd(client_fd);
 		close(client_fd);
 		free(buffer);
-		free(ctx);
+		free(ic);
 		return 0;
 	}
 
 	// Get or create buffer state for this connection
-	struct buffer_state *state = get_buffer_state(client_fd);
-	if (!state) {
-		state = create_buffer_state(client_fd);
-		if (!state) {
+	struct buffer_state *bs = get_buffer_state(client_fd);
+	if (!bs) {
+		bs = create_buffer_state(client_fd);
+		if (!bs) {
 			free(buffer);
-			free(ctx);
+			free(ic);
 			return -ENOMEM;
 		}
 	}
 
 	// Append new data to existing buffer
-	if (!append_to_buffer(state, buffer, bytes_read)) {
+	if (!append_to_buffer(bs, buffer, bytes_read)) {
 		free(buffer);
-		free(ctx);
+		free(ic);
 		return -ENOMEM;
 	}
 
 	free(buffer); // Original buffer no longer needed
-	free(ctx); // Free the context
+	free(ic); // Free the context
 
 	// Process the RPC record marker to get a complete RPC message
-	int complete_size = process_record_marker(state, ring);
+	int complete_size = process_record_marker(bs, ring);
+	if (complete_size <= 0)
+		return 0;
 
-	if (complete_size > 0) {
-		// We have a complete RPC message
-		printf("Complete RPC message assembled (%d bytes)\n",
-		       complete_size);
+	// We have a complete RPC message
+	printf("Complete RPC message assembled (%d bytes)\n", complete_size);
 
-		// Create a task for processing
-		struct task *task = malloc(sizeof(struct task));
-		if (task) {
-			// Copy the complete message
-			task->buffer = malloc(complete_size);
-			if (!task->buffer) {
-				free(task);
-				return -ENOMEM;
-			}
-			memcpy(task->buffer, state->record.data, complete_size);
-			task->bytes_read = complete_size;
-			task->fd = client_fd;
-
-			// Extract XID for convenience
-			if (complete_size >= 4) {
-				task->xid = ntohl(*(uint32_t *)task->buffer);
-			} else {
-				task->xid = 0;
-			}
-
-			// Queue it for processing
-			add_task(task);
-
-			// Reset the record state for the next message
-			state->record.total_len = 0;
-			state->record.position = 0;
+	// Create a task for processing
+	struct task *t = malloc(sizeof(struct task));
+	if (t) {
+		// Copy the complete message
+		t->t_buffer = malloc(complete_size);
+		if (!t->t_buffer) {
+			free(t);
+			return -ENOMEM;
 		}
+
+		memcpy(t->t_buffer, bs->bs_record.rs_data, complete_size);
+		t->t_bytes_read = complete_size;
+		t->t_fd = client_fd;
+
+		// Extract XID for convenience
+		if (complete_size >= 4) {
+			t->t_xid = ntohl(*(uint32_t *)t->t_buffer);
+		} else {
+			t->t_xid = 0;
+		}
+
+		// Queue it for processing
+		add_task(t);
+
+		// Reset the record state for the next message
+		bs->bs_record.rs_total_len = 0;
+		bs->bs_record.rs_position = 0;
 	}
 
 	return 0;
@@ -835,8 +790,9 @@ int send_nfs_response(struct io_uring *ring, int fd, char *buffer, int len)
 	memcpy(send_buffer + 4, buffer, len);
 
 	// Create an IO context for the write operation
-	io_context_t *ctx = create_io_context(OP_TYPE_WRITE, fd, send_buffer);
-	if (!ctx) {
+	struct io_context *ic =
+		create_io_context(OP_TYPE_WRITE, fd, send_buffer);
+	if (!ic) {
 		free(send_buffer);
 		return -ENOMEM;
 	}
@@ -846,7 +802,7 @@ int send_nfs_response(struct io_uring *ring, int fd, char *buffer, int len)
 	io_uring_prep_write(sqe, fd, send_buffer, len + 4, 0);
 
 	// Associate with the io context
-	sqe->user_data = (uint64_t)(uintptr_t)ctx;
+	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
 	io_uring_submit(ring);
 	return 0;
@@ -922,9 +878,9 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 	socklen_t client_len = sizeof(client_address);
 
 	// Create IO context for the accept operation
-	io_context_t *accept_ctx =
+	struct io_context *ic_accept =
 		create_io_context(OP_TYPE_ACCEPT, listener_fd, NULL);
-	if (!accept_ctx) {
+	if (!ic_accept) {
 		fprintf(stderr, "Failed to create accept context\n");
 		exit_code = 1;
 		goto out;
@@ -936,7 +892,7 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 			     0);
 
 	// Associate with the io context
-	sqe->user_data = (uint64_t)(uintptr_t)accept_ctx;
+	sqe->user_data = (uint64_t)(uintptr_t)ic_accept;
 
 	io_uring_submit(&ring);
 
@@ -958,18 +914,18 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 			fprintf(stderr, "CQE error: %s\n", strerror(-cqe->res));
 		} else {
 			// Get the IO context from user_data
-			io_context_t *ctx =
-				(io_context_t *)(uintptr_t)cqe->user_data;
-			if (!ctx) {
+			struct io_context *ic =
+				(struct io_context *)(uintptr_t)cqe->user_data;
+			if (!ic) {
 				fprintf(stderr, "Error: NULL io context\n");
 				io_uring_cqe_seen(&ring, cqe);
 				continue;
 			}
 
-			switch (ctx->op_type) {
+			switch (ic->ic_op_type) {
 			case OP_TYPE_ACCEPT: {
 				// Handle new connection
-				int listen_fd = ctx->fd;
+				int listen_fd = ic->ic_fd;
 				int client_fd = cqe->res;
 
 				printf("New connection accepted (fd: %d)\n",
@@ -982,11 +938,11 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 				char *buffer = malloc(BUFFER_SIZE);
 				if (buffer) {
 					// Create IO context for the read operation
-					io_context_t *read_ctx =
+					struct io_context *ic_read =
 						create_io_context(OP_TYPE_READ,
 								  client_fd,
 								  buffer);
-					if (!read_ctx) {
+					if (!ic_read) {
 						fprintf(stderr,
 							"Failed to create read context\n");
 						free(buffer);
@@ -998,7 +954,7 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 							BUFFER_SIZE, 0);
 						sqe->user_data =
 							(uint64_t)(uintptr_t)
-								read_ctx;
+								ic_read;
 						io_uring_submit(&ring);
 					}
 				} else {
@@ -1011,12 +967,13 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 				socklen_t client_len = sizeof(client_address);
 
 				// Create new IO context for the next accept
-				io_context_t *accept_ctx = create_io_context(
-					OP_TYPE_ACCEPT, listen_fd, NULL);
-				if (!accept_ctx) {
+				struct io_context *ic_accept =
+					create_io_context(OP_TYPE_ACCEPT,
+							  listen_fd, NULL);
+				if (!ic_accept) {
 					fprintf(stderr,
 						"Failed to create accept context\n");
-					free(ctx);
+					free(ic);
 					io_uring_cqe_seen(&ring, cqe);
 					continue;
 				}
@@ -1026,11 +983,10 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 					sqe, listen_fd,
 					(struct sockaddr *)&client_address,
 					&client_len, 0);
-				sqe->user_data =
-					(uint64_t)(uintptr_t)accept_ctx;
+				sqe->user_data = (uint64_t)(uintptr_t)ic_accept;
 				io_uring_submit(&ring);
 
-				free(ctx); // Free the completed accept context
+				free(ic); // Free the completed accept context
 				break;
 			}
 
@@ -1042,8 +998,8 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 
 			case OP_TYPE_WRITE: {
 				// Write completed, free the buffer
-				free(ctx->buffer);
-				free(ctx);
+				free(ic->ic_buffer);
+				free(ic);
 				break;
 			}
 
@@ -1051,17 +1007,17 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 				// NFS request write completed
 				printf("NFS request sent successfully\n");
 				// For client-side requests, we'd track for the response
-				free(ctx);
+				free(ic);
 				break;
 			}
 
 			default:
 				fprintf(stderr, "Unknown operation type: %d\n",
-					ctx->op_type);
-				if (ctx->buffer) {
-					free(ctx->buffer);
+					ic->ic_op_type);
+				if (ic->ic_buffer) {
+					free(ic->ic_buffer);
 				}
-				free(ctx);
+				free(ic);
 				break;
 			}
 		}
@@ -1085,11 +1041,11 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i]) {
-			if (pending_requests[i]->private_data) {
-				free(pending_requests[i]->private_data);
+			if (pending_requests[i]->nrc_private_data) {
+				free(pending_requests[i]->nrc_private_data);
 			}
-			if (pending_requests[i]->buffer) {
-				free(pending_requests[i]->buffer);
+			if (pending_requests[i]->nrc_buffer) {
+				free(pending_requests[i]->nrc_buffer);
 			}
 			free(pending_requests[i]);
 			pending_requests[i] = NULL;
@@ -1100,11 +1056,11 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 	// Cleanup connection buffers
 	for (int i = 0; i < MAX_CONNECTIONS; i++) {
 		if (conn_buffers[i]) {
-			if (conn_buffers[i]->data) {
-				free(conn_buffers[i]->data);
+			if (conn_buffers[i]->bs_data) {
+				free(conn_buffers[i]->bs_data);
 			}
-			if (conn_buffers[i]->record.data) {
-				free(conn_buffers[i]->record.data);
+			if (conn_buffers[i]->bs_record.rs_data) {
+				free(conn_buffers[i]->bs_record.rs_data);
 			}
 			free(conn_buffers[i]);
 		}
