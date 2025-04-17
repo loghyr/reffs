@@ -22,13 +22,6 @@
 #include "reffs/rpc.h"
 #include "reffs/log.h"
 
-static int nfs3_null(struct rpc_trans *rt)
-{
-	LOG("NULL");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
-}
-
 static void print_nfs_fh3_hex(nfs_fh3 *fh)
 {
 	// Calculate CRC-32
@@ -54,8 +47,15 @@ static void print_nfs_fh3_hex(nfs_fh3 *fh)
 	printf("\n");
 }
 
+static int nfs3_null(struct rpc_trans *rt)
+{
+	TRACE("NULL");
+	return 0;
+}
+
 static int nfs3_getattr(struct rpc_trans *rt)
 {
+	TRACE("SETATTR");
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
 	GETATTR3args *args = ph->ph_args;
@@ -68,140 +68,140 @@ static int nfs3_getattr(struct rpc_trans *rt)
 
 static int nfs3_setattr(struct rpc_trans *rt)
 {
-	LOG("SETATTR");
+	TRACE("SETATTR");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_lookup(struct rpc_trans *rt)
 {
-	LOG("LOOKUP");
+	TRACE("LOOKUP");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_access(struct rpc_trans *rt)
 {
-	LOG("ACCESS");
+	TRACE("ACCESS");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_readlink(struct rpc_trans *rt)
 {
-	LOG("READLINK");
+	TRACE("READLINK");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_read(struct rpc_trans *rt)
 {
-	LOG("READ");
+	TRACE("READ");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_write(struct rpc_trans *rt)
 {
-	LOG("WRITE");
+	TRACE("WRITE");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_create(struct rpc_trans *rt)
 {
-	LOG("CREATE");
+	TRACE("CREATE");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_mkdir(struct rpc_trans *rt)
 {
-	LOG("MKDIR");
+	TRACE("MKDIR");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_symlink(struct rpc_trans *rt)
 {
-	LOG("SYMLINK");
+	TRACE("SYMLINK");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_mknod(struct rpc_trans *rt)
 {
-	LOG("MKNOD");
+	TRACE("MKNOD");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_remove(struct rpc_trans *rt)
 {
-	LOG("REMOVE");
+	TRACE("REMOVE");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_rmdir(struct rpc_trans *rt)
 {
-	LOG("RMDIR");
+	TRACE("RMDIR");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_rename(struct rpc_trans *rt)
 {
-	LOG("RENAME");
+	TRACE("RENAME");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_link(struct rpc_trans *rt)
 {
-	LOG("LINK");
+	TRACE("LINK");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_readdir(struct rpc_trans *rt)
 {
-	LOG("READDIR");
+	TRACE("READDIR");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_readdirplus(struct rpc_trans *rt)
 {
-	LOG("READDIRPLUS");
+	TRACE("READDIRPLUS");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_fsstat(struct rpc_trans *rt)
 {
-	LOG("FSSTAT");
+	TRACE("FSSTAT");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_fsinfo(struct rpc_trans *rt)
 {
-	LOG("FSINFO");
+	TRACE("FSINFO");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_pathconf(struct rpc_trans *rt)
 {
-	LOG("PATHCONF");
+	TRACE("PATHCONF");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_commit(struct rpc_trans *rt)
 {
-	LOG("COMMIT");
+	TRACE("COMMIT");
 	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
