@@ -121,7 +121,7 @@ static int nfs3_null(struct rpc_trans *rt)
 
 static int nfs3_getattr(struct rpc_trans *rt)
 {
-	TRACE("SETATTR: 0x%x", rt->rt_info.ri_xid);
+	TRACE("GETATTR: 0x%x", rt->rt_info.ri_xid);
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
 	struct super_block *sb = NULL;
