@@ -21,6 +21,8 @@
 #include "nfsv3_xdr.h"
 #include "reffs/rpc.h"
 #include "reffs/log.h"
+#include "reffs/filehandle.h"
+#include "reffs/time.h"
 
 static void print_nfs_fh3_hex(nfs_fh3 *fh)
 {
@@ -58,151 +60,173 @@ static int nfs3_getattr(struct rpc_trans *rt)
 	TRACE("SETATTR");
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
 	GETATTR3args *args = ph->ph_args;
+	GETATTR3res *res = ph->ph_res;
+	fattr3 *fa = &res->GETATTR3res_u.resok.obj_attributes;
+
+	struct network_file_handle *nfh = NULL;
+
+	if (args->object.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->object.data.data_val;
+
+	sb = super_block_find(nfh->nfh_fsid);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	ftype3 type;
+	fa->mode = inode->i_mode;
+	fa->nlink = inode->i_nlink;
+	fa->uid = inode->i_uid;
+	fa->gid = inode->i_gid;
+	fa->size = inode->i_size;
+	fa->used = inode->i_used;
+	fa->rdev = 0;  // Figure out
+	fa->fsid = nfh->nfh_fsid;
+	fa->fileid = inode->i_ino;
+	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
+	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
 
 	print_nfs_fh3_hex(&args->object);
 
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_setattr(struct rpc_trans *rt)
 {
 	TRACE("SETATTR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_lookup(struct rpc_trans *rt)
 {
 	TRACE("LOOKUP");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_access(struct rpc_trans *rt)
 {
 	TRACE("ACCESS");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_readlink(struct rpc_trans *rt)
 {
 	TRACE("READLINK");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_read(struct rpc_trans *rt)
 {
 	TRACE("READ");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_write(struct rpc_trans *rt)
 {
 	TRACE("WRITE");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_create(struct rpc_trans *rt)
 {
 	TRACE("CREATE");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_mkdir(struct rpc_trans *rt)
 {
 	TRACE("MKDIR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_symlink(struct rpc_trans *rt)
 {
 	TRACE("SYMLINK");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_mknod(struct rpc_trans *rt)
 {
 	TRACE("MKNOD");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_remove(struct rpc_trans *rt)
 {
 	TRACE("REMOVE");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_rmdir(struct rpc_trans *rt)
 {
 	TRACE("RMDIR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_rename(struct rpc_trans *rt)
 {
 	TRACE("RENAME");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_link(struct rpc_trans *rt)
 {
 	TRACE("LINK");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_readdir(struct rpc_trans *rt)
 {
 	TRACE("READDIR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_readdirplus(struct rpc_trans *rt)
 {
 	TRACE("READDIRPLUS");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_fsstat(struct rpc_trans *rt)
 {
 	TRACE("FSSTAT");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_fsinfo(struct rpc_trans *rt)
 {
 	TRACE("FSINFO");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_pathconf(struct rpc_trans *rt)
 {
 	TRACE("PATHCONF");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_commit(struct rpc_trans *rt)
 {
 	TRACE("COMMIT");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
 	return 0;
 }
 
