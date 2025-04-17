@@ -7,7 +7,6 @@
 #define _REFFS_FILEHANDLE_H
 
 #include <stdint.h>
-#include <stdtypes.h>
 
 #define FILEHANDLE_VERSION_1 (1)
 #define FILEHANDLE_VERSION_CURR (1)

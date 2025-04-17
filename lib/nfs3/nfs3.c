@@ -14,6 +14,10 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <rpc/xdr.h>
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
@@ -23,6 +27,8 @@
 #include "reffs/log.h"
 #include "reffs/filehandle.h"
 #include "reffs/time.h"
+#include "reffs/inode.h"
+#include "reffs/super_block.h"
 
 static void print_nfs_fh3_hex(nfs_fh3 *fh)
 {
@@ -49,15 +55,73 @@ static void print_nfs_fh3_hex(nfs_fh3 *fh)
 	printf("\n");
 }
 
+static bool nfs3_gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
+{
+	for (uint32_t i = 0; i < len; len++)
+		if (gid == gids[i])
+			return true;
+
+	return false;
+}
+
+static int nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
+			     int mode)
+{
+	uid_t uid = 65534;
+	gid_t gid = 65534;
+
+	uint32_t len = 0;
+	gid_t *gids = NULL;
+
+	switch (cred->rc_flavor) {
+	case AUTH_SYS:
+		uid = cred->rc_unix.aup_uid;
+		gid = cred->rc_unix.aup_gid;
+		len = cred->rc_unix.aup_len;
+		gids = cred->rc_unix.aup_gids;
+		break;
+	case AUTH_NONE:
+		break;
+	default:
+		return EACCES; // Should have already been done at RPC layer
+	}
+
+	if (uid == inode->i_uid) {
+		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))
+			return EACCES;
+		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
+			return EACCES;
+		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
+			return EACCES;
+	} else if (gid == inode->i_gid ||
+		   nfs3_gid_in_gids(inode->i_gid, len, gids)) {
+		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
+			return EACCES;
+		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP))
+			return EACCES;
+		if ((mode & X_OK) && !(inode->i_mode & S_IXGRP))
+			return EACCES;
+	} else {
+		if ((mode & W_OK) && !(inode->i_mode & S_IWOTH))
+			return EACCES;
+		if ((mode & R_OK) && !(inode->i_mode & S_IROTH))
+			return EACCES;
+		if ((mode & X_OK) && !(inode->i_mode & S_IXOTH))
+			return EACCES;
+	}
+
+	return 0;
+}
+
 static int nfs3_null(struct rpc_trans *rt)
 {
-	TRACE("NULL");
+	TRACE("NULL: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_getattr(struct rpc_trans *rt)
 {
-	TRACE("SETATTR");
+	TRACE("SETATTR: 0x%x", rt->rt_info.ri_xid);
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
 	struct super_block *sb = NULL;
@@ -88,14 +152,17 @@ static int nfs3_getattr(struct rpc_trans *rt)
 		goto out;
 	}
 
-	ftype3 type;
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, R_OK);
+	if (res->status)
+		goto out;
+
 	fa->mode = inode->i_mode;
 	fa->nlink = inode->i_nlink;
 	fa->uid = inode->i_uid;
 	fa->gid = inode->i_gid;
 	fa->size = inode->i_size;
 	fa->used = inode->i_used;
-	fa->rdev = 0;  // Figure out
+	// fa->rdev = 0;  Implement once we do these types
 	fa->fsid = nfh->nfh_fsid;
 	fa->fileid = inode->i_ino;
 	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
@@ -112,121 +179,121 @@ out:
 
 static int nfs3_setattr(struct rpc_trans *rt)
 {
-	TRACE("SETATTR");
+	TRACE("SETATTR: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_lookup(struct rpc_trans *rt)
 {
-	TRACE("LOOKUP");
+	TRACE("LOOKUP: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_access(struct rpc_trans *rt)
 {
-	TRACE("ACCESS");
+	TRACE("ACCESS: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_readlink(struct rpc_trans *rt)
 {
-	TRACE("READLINK");
+	TRACE("READLINK: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_read(struct rpc_trans *rt)
 {
-	TRACE("READ");
+	TRACE("READ: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_write(struct rpc_trans *rt)
 {
-	TRACE("WRITE");
+	TRACE("WRITE: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_create(struct rpc_trans *rt)
 {
-	TRACE("CREATE");
+	TRACE("CREATE: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_mkdir(struct rpc_trans *rt)
 {
-	TRACE("MKDIR");
+	TRACE("MKDIR: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_symlink(struct rpc_trans *rt)
 {
-	TRACE("SYMLINK");
+	TRACE("SYMLINK: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_mknod(struct rpc_trans *rt)
 {
-	TRACE("MKNOD");
+	TRACE("MKNOD: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_remove(struct rpc_trans *rt)
 {
-	TRACE("REMOVE");
+	TRACE("REMOVE: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_rmdir(struct rpc_trans *rt)
 {
-	TRACE("RMDIR");
+	TRACE("RMDIR: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_rename(struct rpc_trans *rt)
 {
-	TRACE("RENAME");
+	TRACE("RENAME: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_link(struct rpc_trans *rt)
 {
-	TRACE("LINK");
+	TRACE("LINK: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_readdir(struct rpc_trans *rt)
 {
-	TRACE("READDIR");
+	TRACE("READDIR: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_readdirplus(struct rpc_trans *rt)
 {
-	TRACE("READDIRPLUS");
+	TRACE("READDIRPLUS: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_fsstat(struct rpc_trans *rt)
 {
-	TRACE("FSSTAT");
+	TRACE("FSSTAT: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_fsinfo(struct rpc_trans *rt)
 {
-	TRACE("FSINFO");
+	TRACE("FSINFO: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_pathconf(struct rpc_trans *rt)
 {
-	TRACE("PATHCONF");
+	TRACE("PATHCONF: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int nfs3_commit(struct rpc_trans *rt)
 {
-	TRACE("COMMIT");
+	TRACE("COMMIT: 0x%x", rt->rt_info.ri_xid);
 	return 0;
 }
 
