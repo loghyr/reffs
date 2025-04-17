@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -17,6 +18,29 @@
 #include <urcu/ref.h>
 #include "reffs/data_block.h"
 #include "reffs/log.h"
+
+struct buffer_free {
+	char *buffer;
+	struct rcu_head rcu;
+};
+
+static void buffer_free_rcu(struct rcu_head *rcu)
+{
+	struct buffer_free *bf = caa_container_of(rcu, struct buffer_free, rcu);
+
+	free(bf->buffer);
+	free(bf);
+}
+
+static void buffer_free_schedule(char *buffer)
+{
+	struct buffer_free *bf = malloc(sizeof(*bf));
+	if (!bf)
+		free(buffer);
+
+	bf->buffer = buffer;
+	call_rcu(&bf->rcu, buffer_free_rcu);
+}
 
 static void data_block_free_rcu(struct rcu_head *rcu)
 {
@@ -106,21 +130,69 @@ size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 	char *new;
 	char *old;
 
+	rcu_read_lock();
 	if (size + offset > db->db_size) {
 		new = calloc(offset + size, sizeof(*new));
 		if (!new) {
 			LOG("Could not alloc a db's storage");
 			free(db);
+			rcu_read_unlock();
+			return -ENOSPC;
+		}
+
+		if (db->db_buffer)
+			memcpy(new, db->db_buffer, db->db_size);
+		old = rcu_xchg_pointer(&db->db_buffer, new);
+		buffer_free_schedule(old);
+		db->db_size = offset + size;
+	}
+	rcu_read_unlock();
+
+	memcpy(db->db_buffer + offset, buffer, size);
+
+	return size;
+}
+
+size_t data_block_resize(struct data_block *db, size_t size)
+{
+	char *new;
+	char *old;
+
+	if (size == db->db_size)
+		return size;
+
+	rcu_read_lock();
+	if (size > db->db_size) {
+		new = calloc(size, sizeof(*new));
+		if (!new) {
+			LOG("Could not alloc a db's storage");
+			free(db);
+			rcu_read_unlock();
 			return -ENOSPC;
 		}
 
 		memcpy(new, db->db_buffer, db->db_size);
 		old = rcu_xchg_pointer(&db->db_buffer, new);
-		free(old);
-		db->db_size = offset + size;
+		buffer_free_schedule(old);
+	} else if (size == 0) {
+		old = rcu_xchg_pointer(&db->db_buffer, NULL);
+		buffer_free_schedule(old);
+	} else {
+		new = calloc(size, sizeof(*new));
+		if (!new) {
+			LOG("Could not alloc a db's storage");
+			free(db);
+			rcu_read_unlock();
+			return -ENOSPC;
+		}
+
+		memcpy(new, db->db_buffer, size);
+		old = rcu_xchg_pointer(&db->db_buffer, new);
+		buffer_free_schedule(old);
 	}
 
-	memcpy(db->db_buffer + offset, buffer, size);
+	db->db_size = size;
+	rcu_read_unlock();
 
-	return size;
+	return db->db_size;
 }

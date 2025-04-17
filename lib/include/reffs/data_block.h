@@ -33,5 +33,6 @@ size_t data_block_read(struct data_block *db, char *buffer, size_t size,
 bool data_block_unhash(struct data_block *db);
 size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 			off_t offset);
+size_t data_block_resize(struct data_block *db, size_t size);
 
 #endif /* _REFFS_DATA_BLOCK_H */
