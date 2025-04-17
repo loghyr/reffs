@@ -134,7 +134,7 @@ void unregister_client_fd(int fd);
 // Signal handler
 void signal_handler(int sig)
 {
-	printf("Received signal %d, initiating shutdown...\n", sig);
+	TRACE("Received signal %d, initiating shutdown...", sig);
 	running = 0;
 
 	// Wake up any waiting worker threads
@@ -278,14 +278,14 @@ int encode_nfs_response(char *buffer, int __attribute__((unused)) buflen,
 void handle_getattr_response(struct nfs_request_context *nrc, void *response,
 			     int __attribute__((unused)) res_len, int status)
 {
-	printf("GETATTR response received: XID=%u, status=%d\n", nrc->nrc_xid,
-	       status);
+	TRACE("GETATTR response received: XID=%u, status=%d", nrc->nrc_xid,
+	      status);
 
 	if (status == 0 && response) {
-		printf("File attributes received\n");
+		TRACE("File attributes received");
 		// In a real implementation, you would process the attributes here
 	} else {
-		printf("GETATTR failed\n");
+		TRACE("GETATTR failed");
 	}
 
 	// Free the context
@@ -441,7 +441,7 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring)
 // NFS protocol handler
 void handle_nfs_protocol(struct task *t)
 {
-	printf("NFS Protocol Handler: Received %d bytes\n", t->t_bytes_read);
+	TRACE("NFS Protocol Handler: Received %d bytes", t->t_bytes_read);
 
 	// Process RPC/NFS message
 	// This is a simplified example - in a real implementation, you would:
@@ -456,8 +456,8 @@ void handle_nfs_protocol(struct task *t)
 	uint32_t msg_type = ntohl(*(uint32_t *)(t->t_buffer + 4));
 
 	// Print basic info about the message
-	printf("RPC Message: XID=%u, Type=%s\n", xid,
-	       msg_type == 0 ? "CALL" : "REPLY");
+	TRACE("RPC Message: XID=%u, Type=%s", xid,
+	      msg_type == 0 ? "CALL" : "REPLY");
 
 	if (msg_type == 0) { // It's a call
 		// Extract program, version, procedure
@@ -465,8 +465,8 @@ void handle_nfs_protocol(struct task *t)
 		uint32_t version = ntohl(*(uint32_t *)(t->t_buffer + 16));
 		uint32_t procedure = ntohl(*(uint32_t *)(t->t_buffer + 20));
 
-		printf("RPC Call: Program=%u, Version=%u, Procedure=%u\n",
-		       program, version, procedure);
+		TRACE("RPC Call: Program=%u, Version=%u, Procedure=%u", program,
+		      version, procedure);
 
 		if (program == 100003) { // NFS
 			printf("NFS Call: ");
@@ -500,12 +500,12 @@ void handle_nfs_protocol(struct task *t)
 				int resp_len = encode_nfs_response(
 					resp_buffer, BUFFER_SIZE, xid, 0);
 
-				printf("resp_len = %d\n", resp_len);
+				TRACE("resp_len = %d", resp_len);
 
 				// Submit response for sending using io_uring
 				// This would be implemented in the main event loop
 			} else {
-				printf("Failed to allocate response buffer\n");
+				LOG("Failed to allocate response buffer");
 			}
 		}
 	}
@@ -520,7 +520,7 @@ void *worker_thread(void *arg)
 	// Register this thread with userspace RCU
 	rcu_register_thread();
 
-	printf("Worker thread %d started\n", thread_id);
+	TRACE("Worker thread %d started", thread_id);
 
 	while (running) {
 		struct task *t = NULL;
@@ -561,8 +561,8 @@ void *worker_thread(void *arg)
 				// 1. Prepare the appropriate response based on the request
 				// 2. Send it via io_uring
 				// For this example, we just acknowledge
-				printf("Processing request with XID %u\n",
-				       t->t_xid);
+				TRACE("Processing request with XID %u",
+				      t->t_xid);
 			}
 
 			free(t->t_buffer);
@@ -570,7 +570,7 @@ void *worker_thread(void *arg)
 		}
 	}
 
-	printf("Worker thread %d exiting\n", thread_id);
+	TRACE("Worker thread %d exiting", thread_id);
 
 	// Unregister this thread from userspace RCU
 	rcu_unregister_thread();
@@ -625,7 +625,7 @@ int setup_listener(int port)
 		return -1;
 	}
 
-	printf("Listening on port %d\n", port);
+	TRACE("Listening on port %d", port);
 	return listen_fd;
 }
 
@@ -690,7 +690,7 @@ int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	// Get the IO context from user_data
 	struct io_context *ic = (struct io_context *)(uintptr_t)cqe->user_data;
 	if (!ic) {
-		fprintf(stderr, "Error: NULL io context in read handler\n");
+		LOG("Error: NULL io context in read handler");
 		return -EINVAL;
 	}
 
@@ -703,8 +703,8 @@ int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 
 	if (bytes_read <= 0) {
 		// Connection closed or error
-		printf("Connection closed or error (fd: %d, res: %d)\n",
-		       client_fd, bytes_read);
+		LOG("Connection closed or error (fd: %d, res: %d)", client_fd,
+		    bytes_read);
 		unregister_client_fd(client_fd);
 		close(client_fd);
 		free(buffer);
@@ -739,7 +739,7 @@ int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 		return 0;
 
 	// We have a complete RPC message
-	printf("Complete RPC message assembled (%d bytes)\n", complete_size);
+	TRACE("Complete RPC message assembled (%d bytes)", complete_size);
 
 	// Create a task for processing
 	struct task *t = malloc(sizeof(struct task));
@@ -859,16 +859,14 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 			num_worker_threads++;
 		} else {
 			free(thread_id);
-			fprintf(stderr, "Failed to create worker thread %d\n",
-				i);
+			LOG("Failed to create worker thread %d", i);
 		}
 	}
 
 	// Setup NFS listener
 	listener_fd = setup_listener(NFS_PORT);
 	if (listener_fd < 0) {
-		fprintf(stderr, "Failed to setup listener on port %d\n",
-			NFS_PORT);
+		LOG("Failed to setup listener on port %d", NFS_PORT);
 		exit_code = 1;
 		goto out;
 	}
@@ -881,7 +879,7 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 	struct io_context *ic_accept =
 		create_io_context(OP_TYPE_ACCEPT, listener_fd, NULL);
 	if (!ic_accept) {
-		fprintf(stderr, "Failed to create accept context\n");
+		LOG("Failed to create accept context");
 		exit_code = 1;
 		goto out;
 	}
@@ -905,19 +903,19 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 			// Timeout - check running flag and continue
 			continue;
 		} else if (ret < 0) {
-			fprintf(stderr, "io_uring_wait_cqe_timeout error: %s\n",
-				strerror(-ret));
+			LOG("io_uring_wait_cqe_timeout error: %s",
+			    strerror(-ret));
 			continue;
 		}
 
 		if (cqe->res < 0) {
-			fprintf(stderr, "CQE error: %s\n", strerror(-cqe->res));
+			LOG("CQE error: %s", strerror(-cqe->res));
 		} else {
 			// Get the IO context from user_data
 			struct io_context *ic =
 				(struct io_context *)(uintptr_t)cqe->user_data;
 			if (!ic) {
-				fprintf(stderr, "Error: NULL io context\n");
+				LOG("Error: NULL io context");
 				io_uring_cqe_seen(&ring, cqe);
 				continue;
 			}
@@ -928,8 +926,8 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 				int listen_fd = ic->ic_fd;
 				int client_fd = cqe->res;
 
-				printf("New connection accepted (fd: %d)\n",
-				       client_fd);
+				TRACE("New connection accepted (fd: %d)",
+				      client_fd);
 
 				// Register this client
 				register_client_fd(client_fd);
@@ -943,8 +941,7 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 								  client_fd,
 								  buffer);
 					if (!ic_read) {
-						fprintf(stderr,
-							"Failed to create read context\n");
+						LOG("Failed to create read context");
 						free(buffer);
 						close(client_fd);
 					} else {
@@ -971,8 +968,7 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 					create_io_context(OP_TYPE_ACCEPT,
 							  listen_fd, NULL);
 				if (!ic_accept) {
-					fprintf(stderr,
-						"Failed to create accept context\n");
+					LOG("Failed to create accept context");
 					free(ic);
 					io_uring_cqe_seen(&ring, cqe);
 					continue;
@@ -1005,15 +1001,15 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 
 			case OP_TYPE_NFS_REQ: {
 				// NFS request write completed
-				printf("NFS request sent successfully\n");
+				TRACE("NFS request sent successfully");
 				// For client-side requests, we'd track for the response
 				free(ic);
 				break;
 			}
 
 			default:
-				fprintf(stderr, "Unknown operation type: %d\n",
-					ic->ic_op_type);
+				LOG("Unknown operation type: %d",
+				    ic->ic_op_type);
 				if (ic->ic_buffer) {
 					free(ic->ic_buffer);
 				}
@@ -1025,19 +1021,19 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 		io_uring_cqe_seen(&ring, cqe);
 	}
 
-	printf("Main loop exited, cleaning up...\n");
+	TRACE("Main loop exited, cleaning up...");
 
 	// Cleanup listener socket
 	close(listener_fd);
 
 	// Wait for worker threads to finish
-	printf("Waiting for worker threads to exit...\n");
+	TRACE("Waiting for worker threads to exit...");
 	for (int i = 0; i < num_worker_threads; i++) {
 		pthread_join(worker_threads[i], NULL);
 	}
 
 	// Cleanup any pending requests
-	printf("Cleaning up pending requests...\n");
+	TRACE("Cleaning up pending requests...");
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i]) {
@@ -1068,7 +1064,7 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 
 out:
 	// Wait for RCU grace period
-	printf("Calling rcu_barrier()...\n");
+	TRACE("Calling rcu_barrier()...");
 	rcu_barrier();
 
 	mount3_protocol_deregister();
@@ -1077,6 +1073,6 @@ out:
 	// Clean up io_uring
 	io_uring_queue_exit(&ring);
 
-	printf("Shutdown complete\n");
+	LOG("Shutdown complete");
 	return exit_code;
 }
