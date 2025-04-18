@@ -31,6 +31,22 @@
 #include "reffs/super_block.h"
 #include "reffs/data_block.h"
 
+static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
+{
+	fa->mode = inode->i_mode;
+	fa->nlink = inode->i_nlink;
+	fa->uid = inode->i_uid;
+	fa->gid = inode->i_gid;
+	fa->size = inode->i_size;
+	fa->used = inode->i_used;
+	// fa->rdev = 0;  Implement once we do these types
+	fa->fsid = inode->i_sb->sb_id;
+	fa->fileid = inode->i_ino;
+	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
+	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+}
+
 static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 				  uint64_t *flags)
 {
@@ -211,18 +227,7 @@ static int nfs3_getattr(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
-	fa->mode = inode->i_mode;
-	fa->nlink = inode->i_nlink;
-	fa->uid = inode->i_uid;
-	fa->gid = inode->i_gid;
-	fa->size = inode->i_size;
-	fa->used = inode->i_used;
-	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = sb->sb_id;
-	fa->fileid = inode->i_ino;
-	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
-	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+	inode_attr_to_fattr(inode, fa);
 
 	print_nfs_fh3_hex(&args->object);
 
@@ -305,18 +310,7 @@ static int nfs3_setattr(struct rpc_trans *rt)
 
 update_wcc:
 	wcc->after.attributes_follow = true;
-	fa->mode = inode->i_mode;
-	fa->nlink = inode->i_nlink;
-	fa->uid = inode->i_uid;
-	fa->gid = inode->i_gid;
-	fa->size = inode->i_size;
-	fa->used = inode->i_used;
-	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = sb->sb_id;
-	fa->fileid = inode->i_ino;
-	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
-	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_lock);
 	pthread_mutex_unlock(&inode->i_db_lock);
@@ -425,18 +419,7 @@ static int nfs3_access(struct rpc_trans *rt)
 
 	pthread_mutex_lock(&inode->i_attr_lock); // Consider reader/writer?
 
-	fa->mode = inode->i_mode;
-	fa->nlink = inode->i_nlink;
-	fa->uid = inode->i_uid;
-	fa->gid = inode->i_gid;
-	fa->size = inode->i_size;
-	fa->used = inode->i_used;
-	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = sb->sb_id;
-	fa->fileid = inode->i_ino;
-	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
-	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_lock);
 
@@ -537,18 +520,7 @@ static int nfs3_read(struct rpc_trans *rt)
 update_wcc:
 	poa->attributes_follow = true;
 	fattr3 *fa = &poa->post_op_attr_u.attributes;
-	fa->mode = inode->i_mode;
-	fa->nlink = inode->i_nlink;
-	fa->uid = inode->i_uid;
-	fa->gid = inode->i_gid;
-	fa->size = inode->i_size;
-	fa->used = inode->i_used;
-	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = sb->sb_id;
-	fa->fileid = inode->i_ino;
-	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
-	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_lock);
 	pthread_mutex_unlock(&inode->i_db_lock);
@@ -584,9 +556,9 @@ static int nfs3_write(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
 
-	        size3 size;
-        nfstime3 mtime;
-        nfstime3 ctime;
+	size3 size;
+	nfstime3 mtime;
+	nfstime3 ctime;
 
 	TRACE("WRITE: 0x%x", rt->rt_info.ri_xid);
 
@@ -669,19 +641,8 @@ update_wcc:
 	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
 	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
 	wcc->after.attributes_follow = true;
-	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
-	fa->mode = inode->i_mode;
-	fa->nlink = inode->i_nlink;
-	fa->uid = inode->i_uid;
-	fa->gid = inode->i_gid;
-	fa->size = inode->i_size;
-	fa->used = inode->i_used;
-	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = sb->sb_id;
-	fa->fileid = inode->i_ino;
-	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
-	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+
+	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
 
 	pthread_mutex_unlock(&inode->i_attr_lock);
 	pthread_mutex_unlock(&inode->i_db_lock);
@@ -856,34 +817,12 @@ static int nfs3_create(struct rpc_trans *rt)
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 
-	fa->mode = tmp->i_mode;
-	fa->nlink = tmp->i_nlink;
-	fa->uid = tmp->i_uid;
-	fa->gid = tmp->i_gid;
-	fa->size = tmp->i_size;
-	fa->used = tmp->i_used;
-	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = sb->sb_id;
-	fa->fileid = tmp->i_ino;
-	timespec_to_nfstime3(&tmp->i_atime, &fa->atime);
-	timespec_to_nfstime3(&tmp->i_mtime, &fa->mtime);
-	timespec_to_nfstime3(&tmp->i_ctime, &fa->ctime);
+	inode_attr_to_fattr(tmp, fa);
 
 update_wcc:
 	wcc->after.attributes_follow = true;
 	fa = &wcc->after.post_op_attr_u.attributes;
-	fa->mode = inode->i_mode;
-	fa->nlink = inode->i_nlink;
-	fa->uid = inode->i_uid;
-	fa->gid = inode->i_gid;
-	fa->size = inode->i_size;
-	fa->used = inode->i_used;
-	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = sb->sb_id;
-	fa->fileid = inode->i_ino;
-	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
-	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_lock);
 	pthread_mutex_unlock(&inode->i_parent->d_lock);
@@ -999,35 +938,12 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
-
-	fa->mode = de->d_inode->i_mode;
-	fa->nlink = de->d_inode->i_nlink;
-	fa->uid = de->d_inode->i_uid;
-	fa->gid = de->d_inode->i_gid;
-	fa->size = de->d_inode->i_size;
-	fa->used = de->d_inode->i_used;
-	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = sb->sb_id;
-	fa->fileid = de->d_inode->i_ino;
-	timespec_to_nfstime3(&de->d_inode->i_atime, &fa->atime);
-	timespec_to_nfstime3(&de->d_inode->i_mtime, &fa->mtime);
-	timespec_to_nfstime3(&de->d_inode->i_ctime, &fa->ctime);
+	inode_attr_to_fattr(de->d_inode, fa);
 
 update_wcc:
 	wcc->after.attributes_follow = true;
 	fa = &wcc->after.post_op_attr_u.attributes;
-	fa->mode = inode->i_mode;
-	fa->nlink = inode->i_nlink;
-	fa->uid = inode->i_uid;
-	fa->gid = inode->i_gid;
-	fa->size = inode->i_size;
-	fa->used = inode->i_used;
-	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = sb->sb_id;
-	fa->fileid = inode->i_ino;
-	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
-	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_lock);
 	pthread_mutex_unlock(&inode->i_parent->d_lock);
