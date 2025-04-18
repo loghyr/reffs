@@ -180,3 +180,31 @@ void inode_update_times_now(struct inode *inode, uint64_t flags)
 	if (flags & REFFS_INODE_UPDATE_MTIME)
 		inode->i_mtime = now;
 }
+
+enum reffs_text_case reffs_rtc = reffs_text_case_sensitive;
+
+bool inode_name_is_child(struct inode *inode, char *name)
+{
+	bool exists = false;
+	struct dirent *de;
+
+	reffs_strng_compare cmp;
+
+	// In case we refactor
+	if (reffs_rtc == reffs_text_case_insensitive)
+		cmp = strcasecmp;
+	else
+		cmp = strcmp;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(de, &inode->i_children, d_siblings) {
+		if (!cmp(de->d_name, name)) {
+			exists = true;
+			break;
+		}
+	}
+	rcu_read_unlock();
+
+	return exists;
+}
+

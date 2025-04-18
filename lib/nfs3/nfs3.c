@@ -37,23 +37,12 @@ static void print_nfs_fh3_hex(nfs_fh3 *fh)
 	uint32_t crc =
 		crc32(0L, (const Bytef *)fh->data.data_val, fh->data.data_len);
 
-	printf("File handle (length %u):\n", fh->data.data_len);
-	printf("[hash (CRC-32): 0x%08x]\n", crc);
-	printf("FileHandle: ");
+	struct network_file_handle *nfh;
 
-	// Print bytes in hex format
-	unsigned char *bytes = (unsigned char *)fh->data.data_val;
-	for (u_int i = 0; i < fh->data.data_len; i++) {
-		printf("%02x", bytes[i]);
+	nfh = (struct network_file_handle *)fh;
 
-		// Optional formatting for readability
-		if ((i + 1) % 16 == 0) {
-			printf("\n");
-		} else if (i != fh->data.data_len - 1) {
-			printf(" ");
-		}
-	}
-	printf("\n");
+	TRACE("FileHandle: sb = %lu, ino =%lu, vers = %u, CRC32 = 0x%08x",
+	      nfh->nfh_sb, nfh->nfh_ino, nfh->nfh_vers, crc);
 }
 
 static bool nfs3_gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
@@ -141,7 +130,7 @@ static int nfs3_getattr(struct rpc_trans *rt)
 
 	nfh = (struct network_file_handle *)args->object.data.data_val;
 
-	sb = super_block_find(nfh->nfh_fsid);
+	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
 		res->status = NFS3ERR_STALE;
 		goto out;
@@ -164,7 +153,7 @@ static int nfs3_getattr(struct rpc_trans *rt)
 	fa->size = inode->i_size;
 	fa->used = inode->i_used;
 	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = nfh->nfh_fsid;
+	fa->fsid = sb->sb_id;
 	fa->fileid = inode->i_ino;
 	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
 	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
@@ -204,7 +193,7 @@ static int nfs3_setattr(struct rpc_trans *rt)
 
 	nfh = (struct network_file_handle *)args->object.data.data_val;
 
-	sb = super_block_find(nfh->nfh_fsid);
+	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
 		res->status = NFS3ERR_STALE;
 		goto out;
@@ -315,7 +304,7 @@ update_wcc:
 	fa->size = inode->i_size;
 	fa->used = inode->i_used;
 	// fa->rdev = 0;  Implement once we do these types
-	fa->fsid = nfh->nfh_fsid;
+	fa->fsid = sb->sb_id;
 	fa->fileid = inode->i_ino;
 	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
 	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
@@ -371,7 +360,161 @@ static int nfs3_create(struct rpc_trans *rt)
 static int nfs3_mkdir(struct rpc_trans *rt)
 {
 	TRACE("MKDIR: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	MKDIR3args *args = ph->ph_args;
+	MKDIR3res *res = ph->ph_res;
+	MKDIR3resok *resok = &res->MKDIR3res_u.resok;
+
+	wcc_data *wcc = &resok->dir_wcc;
+	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
+	wcc_attr *wa = &wcc->before.pre_op_attr_u.attributes;
+
+	struct network_file_handle *nfh = NULL;
+
+	struct dirent *de = NULL;
+
+	// Refactor to a function
+	uid_t uid = 65534;
+	gid_t gid = 65534;
+
+	switch (rt->rt_info.ri_cred.rc_flavor) {
+	case AUTH_SYS:
+		uid = rt->rt_info.ri_cred.rc_unix.aup_uid;
+		gid = rt->rt_info.ri_cred.rc_unix.aup_gid;
+		break;
+	case AUTH_NONE:
+		break;
+	default:
+		res->status =
+			NFS3ERR_ACCES; // Should have already been done at RPC layer
+		goto out;
+	}
+
+	if (args->where.dir.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->where.dir.data.data_val;
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status =
+		nfs3_access_check(inode, &rt->rt_info.ri_cred, W_OK | X_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_mutex_lock(&inode->i_attr_lock);
+
+	wcc->before.attributes_follow = true;
+	wa->size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_mtime, &wa->mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &wa->ctime);
+
+	if (inode_name_is_child(inode, args->where.name)) {
+		res->status = NFS3ERR_EXIST;
+		goto update_wcc;
+	}
+
+	de = dirent_alloc(inode->i_parent, args->where.name,
+			  reffs_life_action_birth);
+	if (!de) {
+		res->status = NFS3ERR_NOENT;
+		goto update_wcc;
+	}
+
+	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+							 __ATOMIC_RELAXED));
+	if (!de->d_inode) {
+		dirent_parent_release(de, reffs_life_action_death);
+		res->status = NFS3ERR_NOENT;
+		goto update_wcc;
+	}
+
+	de->d_inode->i_uid = uid;
+	de->d_inode->i_gid = gid;
+	clock_gettime(CLOCK_REALTIME, &de->d_inode->i_mtime);
+	de->d_inode->i_atime = de->d_inode->i_mtime;
+	de->d_inode->i_btime = de->d_inode->i_mtime;
+	de->d_inode->i_ctime = de->d_inode->i_mtime;
+	de->d_inode->i_mode = S_IFDIR |
+			      inode->i_mode; // Inherit from the parent!
+	de->d_inode->i_size = 4096;
+	de->d_inode->i_used = 8;
+	de->d_inode->i_nlink = 2;
+
+	nfh = calloc(1, sizeof(struct nfs_fh3));
+	if (nfh) {
+		resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+		resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+		resok->obj.handle_follows = true;
+		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+		nfh->nfh_sb = sb->sb_id;
+		nfh->nfh_ino = de->d_inode->i_ino;
+	}
+
+	resok->obj_attributes.attributes_follow = true;
+	fa = &resok->obj_attributes.post_op_attr_u.attributes;
+
+	fa->mode = de->d_inode->i_mode;
+	fa->nlink = de->d_inode->i_nlink;
+	fa->uid = de->d_inode->i_uid;
+	fa->gid = de->d_inode->i_gid;
+	fa->size = de->d_inode->i_size;
+	fa->used = de->d_inode->i_used;
+	// fa->rdev = 0;  Implement once we do these types
+	fa->fsid = sb->sb_id;
+	fa->fileid = de->d_inode->i_ino;
+	timespec_to_nfstime3(&de->d_inode->i_atime, &fa->atime);
+	timespec_to_nfstime3(&de->d_inode->i_mtime, &fa->mtime);
+	timespec_to_nfstime3(&de->d_inode->i_ctime, &fa->ctime);
+
+update_wcc:
+	wcc->after.attributes_follow = true;
+	fa = &wcc->after.post_op_attr_u.attributes;
+	fa->mode = inode->i_mode;
+	fa->nlink = inode->i_nlink;
+	fa->uid = inode->i_uid;
+	fa->gid = inode->i_gid;
+	fa->size = inode->i_size;
+	fa->used = inode->i_used;
+	// fa->rdev = 0;  Implement once we do these types
+	fa->fsid = sb->sb_id;
+	fa->fileid = inode->i_ino;
+	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
+	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+
+	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_parent->d_lock);
+
+	print_nfs_fh3_hex(&args->where.dir);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_symlink(struct rpc_trans *rt)

@@ -12,11 +12,11 @@
 #define FILEHANDLE_VERSION_CURR (1)
 
 struct network_file_handle {
-	uint16_t nfh_version;
+	uint16_t nfh_vers;
 	uint16_t nfh_reserved_1;
 	uint16_t nfh_reserved_2;
 	uint16_t nfh_reserved_3;
-	uint64_t nfh_fsid;
+	uint64_t nfh_sb;
 	uint64_t nfh_ino;
 };
 
