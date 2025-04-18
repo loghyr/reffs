@@ -54,8 +54,8 @@ static bool nfs3_gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
 	return false;
 }
 
-static int nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
-			     struct authunix_parms *ap, int mode)
+static nfsstat3 nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
+				  struct authunix_parms *ap, int mode)
 {
 	switch (cred->rc_flavor) {
 	case AUTH_SYS:
@@ -73,34 +73,34 @@ static int nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
 
 		break;
 	default:
-		return EACCES; // Should have already been done at RPC layer
+		return NFS3ERR_ACCES; // Should have already been done at RPC layer
 	}
 
 	if (ap->aup_uid == inode->i_uid) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))
-			return EACCES;
+			return NFS3ERR_ACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
-			return EACCES;
+			return NFS3ERR_ACCES;
 		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
-			return EACCES;
+			return NFS3ERR_ACCES;
 	} else if (ap->aup_gid == inode->i_gid ||
 		   nfs3_gid_in_gids(inode->i_gid, ap->aup_len, ap->aup_gids)) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
-			return EACCES;
+			return NFS3ERR_ACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP))
-			return EACCES;
+			return NFS3ERR_ACCES;
 		if ((mode & X_OK) && !(inode->i_mode & S_IXGRP))
-			return EACCES;
+			return NFS3ERR_ACCES;
 	} else {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWOTH))
-			return EACCES;
+			return NFS3ERR_ACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IROTH))
-			return EACCES;
+			return NFS3ERR_ACCES;
 		if ((mode & X_OK) && !(inode->i_mode & S_IXOTH))
-			return EACCES;
+			return NFS3ERR_ACCES;
 	}
 
-	return 0;
+	return NFS3_OK;
 }
 
 static int nfs3_null(struct rpc_trans *rt)
