@@ -51,7 +51,7 @@ static bool name_is_child(struct name_match *nm, char *name)
 		cmp = strcmp;
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children,
+	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_inode->i_children,
 				    d_siblings) {
 		if (!cmp(de->d_name, name)) {
 			exists = true;
@@ -706,7 +706,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 			ret = -ENOTDIR;
 			goto out_unlock;
 #ifdef NOT_NOW
-		} else if (!cds_list_empty(&(nm_dst->nm_dirent->d_children))) {
+		} else if (!cds_list_empty(
+				   &(nm_dst->nm_dirent->d_inode->i_children))) {
 			// man page says it must be empty
 			ret = -ENOTEMPTY;
 			goto out_unlock;
@@ -826,7 +827,7 @@ int reffs_fs_rmdir(const char *path)
 		goto out_unlock;
 	}
 
-	if (!cds_list_empty(&(nm->nm_dirent->d_children))) {
+	if (!cds_list_empty(&(nm->nm_dirent->d_inode->i_children))) {
 		ret = -ENOTEMPTY;
 		goto out_unlock;
 	}

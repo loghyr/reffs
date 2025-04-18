@@ -101,6 +101,8 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 
 	inode->i_sb = super_block_get(sb);
 
+	CDS_INIT_LIST_HEAD(&inode->i_children);
+
 	/* Make sure no one else beat us to it */
 	rcu_read_lock();
 	node = cds_lfht_add_unique(inode->i_sb->sb_inodes, hash, inode_match,
@@ -113,7 +115,6 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 		__atomic_fetch_or(&inode->i_state, INODE_IS_HASHED,
 				  __ATOMIC_ACQUIRE);
 	}
-
 	rcu_read_unlock();
 
 	inode->i_ino = ino;

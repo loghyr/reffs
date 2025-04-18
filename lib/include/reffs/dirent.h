@@ -21,8 +21,12 @@
 struct dirent {
 	struct rcu_head d_rcu;
 	struct urcu_ref d_ref;
+
+	/*
+	 * This entry is in the children of either the inode
+	 * above it or is the root of the superblock.
+	 */
 	struct cds_list_head d_siblings;
-	struct cds_list_head d_children;
 
 	struct dirent *d_parent;
 

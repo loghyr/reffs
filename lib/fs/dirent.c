@@ -37,8 +37,12 @@ void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 	de->d_parent = dirent_get(parent);
 	verify(parent->d_inode->i_mode & S_IFDIR);
 	uatomic_inc(&parent->d_inode->i_nlink, __ATOMIC_RELAXED);
-	cds_list_add_rcu(&de->d_siblings, &parent->d_children);
+	cds_list_add_rcu(&de->d_siblings, &parent->d_inode->i_children);
 	dirent_get(de); // One for the linked list
+
+	if (de->d_inode && de->d_inode->i_mode & S_IFDIR)
+		de->d_inode->i_parent =
+			parent; // Do not take a reference, manage carefully
 
 	if (rla == reffs_life_action_birth || rla == reffs_life_action_update) {
 		pthread_mutex_lock(&parent->d_inode->i_attr_lock);
@@ -94,7 +98,6 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name,
 
 	pthread_mutex_init(&de->d_lock, NULL);
 
-	CDS_INIT_LIST_HEAD(&de->d_children);
 	CDS_INIT_LIST_HEAD(&de->d_siblings);
 	if (parent)
 		dirent_parent_attach(de, parent, rla);
@@ -121,7 +124,8 @@ struct dirent *dirent_find(struct dirent *parent, enum reffs_text_case rtc,
 		cmp = strcmp;
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(tmp, &parent->d_children, d_siblings)
+	cds_list_for_each_entry_rcu(tmp, &parent->d_inode->i_children,
+				    d_siblings)
 		if (!cmp(tmp->d_name, name)) {
 			de = dirent_get(tmp);
 			break;
@@ -158,9 +162,9 @@ void dirent_children_release(struct dirent *parent, enum reffs_life_action rla)
 		return;
 
 	rcu_read_lock();
-	while (!cds_list_empty(&parent->d_children)) {
-		de = cds_list_first_entry(&parent->d_children, struct dirent,
-					  d_siblings);
+	while (!cds_list_empty(&parent->d_inode->i_children)) {
+		de = cds_list_first_entry(&parent->d_inode->i_children,
+					  struct dirent, d_siblings);
 		dirent_parent_release(de, rla);
 		dirent_children_release(de, rla);
 		dirent_put(de);
@@ -182,6 +186,9 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 		cds_list_del_init(&de->d_siblings);
 		dirent_put(parent);
 		dirent_put(de);
+
+		if (de->d_inode && de->d_inode->i_mode & S_IFDIR)
+			de->d_inode->i_parent = NULL; // Prevent use-after-free
 
 		if (rla == reffs_life_action_death ||
 		    rla == reffs_life_action_update) {

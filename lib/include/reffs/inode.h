@@ -16,6 +16,7 @@
 
 struct super_block;
 struct data_block;
+struct dirent;
 
 struct reffs_file_handle {
 	uint64_t rfh_ino;
@@ -35,6 +36,12 @@ struct inode {
 	struct reffs_file_handle i_on;
 	struct super_block *i_sb;
 	struct data_block *i_db;
+
+	/* Do this as a linked list for now */
+	struct cds_list_head i_children;
+
+	/* Only valid for directories */
+	struct dirent *i_parent;
 
 	pthread_mutex_t i_db_lock;
 	pthread_mutex_t i_attr_lock;

@@ -123,7 +123,7 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	}
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_children,
+	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_inode->i_children,
 				    d_siblings) {
 		if (cur++ < offset)
 			continue;
