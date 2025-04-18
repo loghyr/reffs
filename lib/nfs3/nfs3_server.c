@@ -329,10 +329,115 @@ static int nfs3_lookup(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * How does ACCESS3 fail in a way that
+ * it uses ACCESS3resfail?
+ */
 static int nfs3_access(struct rpc_trans *rt)
 {
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+	struct network_file_handle *nfh = NULL;
+
+	ACCESS3args *args = ph->ph_args;
+	ACCESS3res *res = ph->ph_res;
+	ACCESS3resok *resok = &res->ACCESS3res_u.resok;
+
+	fattr3 *fa;
+
+	struct authunix_parms ap;
+
+	nfsstat3 status;
+
 	TRACE("ACCESS: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+
+	if (args->object.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->object.data.data_val;
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	if (args->access & ACCESS3_READ) {
+		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					   R_OK);
+		if (!status)
+			resok->access |= ACCESS3_READ;
+	}
+
+	if (args->access & ACCESS3_LOOKUP && (inode->i_mode & S_IFDIR)) {
+		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					   R_OK);
+		if (!status)
+			resok->access |= ACCESS3_LOOKUP;
+	}
+
+	if (args->access & ACCESS3_MODIFY) {
+		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					   W_OK);
+		if (!status)
+			resok->access |= ACCESS3_MODIFY;
+	}
+
+	if (args->access & ACCESS3_EXTEND) {
+		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					   W_OK);
+		if (!status)
+			resok->access |= ACCESS3_EXTEND;
+	}
+
+	if (args->access & ACCESS3_DELETE && (inode->i_mode & S_IFDIR)) {
+		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					   W_OK);
+		if (!status)
+			resok->access |= ACCESS3_DELETE;
+	}
+
+	if (args->access & ACCESS3_EXECUTE && !(inode->i_mode & S_IFDIR)) {
+		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					   X_OK);
+		if (!status)
+			resok->access |= ACCESS3_EXECUTE;
+	}
+
+	fa = &resok->obj_attributes.post_op_attr_u.attributes;
+	resok->obj_attributes.attributes_follow = true;
+
+	pthread_mutex_lock(&inode->i_attr_lock);	// Consider reader/writer?
+
+	fa->mode = inode->i_mode;
+	fa->nlink = inode->i_nlink;
+	fa->uid = inode->i_uid;
+	fa->gid = inode->i_gid;
+	fa->size = inode->i_size;
+	fa->used = inode->i_used;
+	// fa->rdev = 0;  Implement once we do these types
+	fa->fsid = sb->sb_id;
+	fa->fileid = inode->i_ino;
+	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
+	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+
+	pthread_mutex_unlock(&inode->i_attr_lock);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_readlink(struct rpc_trans *rt)
