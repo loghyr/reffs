@@ -208,3 +208,28 @@ bool inode_name_is_child(struct inode *inode, char *name)
 	return exists;
 }
 
+struct inode *inode_name_get_inode(struct inode *inode, char *name)
+{
+	struct inode *exists = NULL;
+	struct dirent *de;
+
+	reffs_strng_compare cmp;
+
+	// In case we refactor
+	if (reffs_rtc == reffs_text_case_insensitive)
+		cmp = strcasecmp;
+	else
+		cmp = strcmp;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(de, &inode->i_children, d_siblings) {
+		if (!cmp(de->d_name, name)) {
+			exists = inode_get(de->d_inode);
+			break;
+		}
+	}
+	rcu_read_unlock();
+
+	return exists;
+}
+

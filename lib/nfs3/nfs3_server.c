@@ -31,6 +31,69 @@
 #include "reffs/super_block.h"
 #include "reffs/data_block.h"
 
+static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
+				  uint64_t *flags)
+{
+	if (sa->size.set_it) {
+		if (inode->i_mode & S_IFDIR)
+			return NFS3ERR_ISDIR;
+
+		size_t sz = data_block_resize(inode->i_db,
+					      sa->size.set_size3_u.size);
+		if (sz < 0)
+			return -sz;
+
+		inode->i_size = inode->i_db->db_size;
+		inode->i_used =
+			inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
+		*flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
+	}
+
+	if (sa->mode.set_it) {
+		inode->i_mode = (sa->mode.set_mode3_u.mode & 07777);
+		*flags |= REFFS_INODE_UPDATE_CTIME;
+	}
+
+	if (sa->uid.set_it) {
+		inode->i_uid = sa->uid.set_uid3_u.uid;
+		*flags |= REFFS_INODE_UPDATE_CTIME;
+	}
+
+	if (sa->gid.set_it) {
+		inode->i_gid = sa->gid.set_gid3_u.gid;
+		*flags |= REFFS_INODE_UPDATE_CTIME;
+	}
+
+	switch (sa->atime.set_it) {
+	case DONT_CHANGE:
+		break;
+	case SET_TO_SERVER_TIME:
+		*flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_ATIME;
+		break;
+	case SET_TO_CLIENT_TIME:
+		nfstime3_to_timespec(&sa->atime.set_atime_u.atime,
+				     &inode->i_atime);
+		*flags |= REFFS_INODE_UPDATE_CTIME;
+		break;
+	}
+
+	switch (sa->mtime.set_it) {
+	case DONT_CHANGE:
+		break;
+	case SET_TO_SERVER_TIME:
+		*flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
+		break;
+	case SET_TO_CLIENT_TIME:
+		nfstime3_to_timespec(&sa->mtime.set_mtime_u.mtime,
+				     &inode->i_mtime);
+		*flags |= REFFS_INODE_UPDATE_CTIME;
+		*flags &= ~REFFS_INODE_UPDATE_MTIME;
+		break;
+	}
+
+	return NFS3_OK;
+}
+
 static void print_nfs_fh3_hex(nfs_fh3 *fh)
 {
 	// Calculate CRC-32
@@ -229,69 +292,11 @@ static int nfs3_setattr(struct rpc_trans *rt)
 		}
 	}
 
-	if (sa->size.set_it) {
-		if (inode->i_mode & S_IFDIR) {
-			res->status = NFS3ERR_ISDIR;
-			wcc = &res->SETATTR3res_u.resfail.obj_wcc;
-			fa = &wcc->after.post_op_attr_u.attributes;
-			goto update_wcc;
-		}
-
-		size_t sz = data_block_resize(inode->i_db,
-					      sa->size.set_size3_u.size);
-		if (sz < 0) {
-			res->status = -sz;
-			wcc = &res->SETATTR3res_u.resfail.obj_wcc;
-			fa = &wcc->after.post_op_attr_u.attributes;
-			goto update_wcc;
-		}
-
-		inode->i_size = inode->i_db->db_size;
-		inode->i_used =
-			inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
-		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
-	}
-
-	if (sa->mode.set_it) {
-		inode->i_mode = (sa->mode.set_mode3_u.mode & 07777);
-		flags |= REFFS_INODE_UPDATE_CTIME;
-	}
-
-	if (sa->uid.set_it) {
-		inode->i_uid = sa->uid.set_uid3_u.uid;
-		flags |= REFFS_INODE_UPDATE_CTIME;
-	}
-
-	if (sa->gid.set_it) {
-		inode->i_gid = sa->gid.set_gid3_u.gid;
-		flags |= REFFS_INODE_UPDATE_CTIME;
-	}
-
-	switch (sa->atime.set_it) {
-	case DONT_CHANGE:
-		break;
-	case SET_TO_SERVER_TIME:
-		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_ATIME;
-		break;
-	case SET_TO_CLIENT_TIME:
-		nfstime3_to_timespec(&sa->atime.set_atime_u.atime,
-				     &inode->i_atime);
-		flags |= REFFS_INODE_UPDATE_CTIME;
-		break;
-	}
-
-	switch (sa->mtime.set_it) {
-	case DONT_CHANGE:
-		break;
-	case SET_TO_SERVER_TIME:
-		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
-		break;
-	case SET_TO_CLIENT_TIME:
-		nfstime3_to_timespec(&sa->mtime.set_mtime_u.mtime,
-				     &inode->i_mtime);
-		flags |= REFFS_INODE_UPDATE_CTIME;
-		flags &= ~REFFS_INODE_UPDATE_MTIME;
-		break;
+	res->status = nfs3_apply_sattr3(inode, sa, &flags);
+	if (res->status) {
+		wcc = &res->SETATTR3res_u.resfail.obj_wcc;
+		fa = &wcc->after.post_op_attr_u.attributes;
+		goto update_wcc;
 	}
 
 	if (flags)
@@ -417,7 +422,7 @@ static int nfs3_access(struct rpc_trans *rt)
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 	resok->obj_attributes.attributes_follow = true;
 
-	pthread_mutex_lock(&inode->i_attr_lock);	// Consider reader/writer?
+	pthread_mutex_lock(&inode->i_attr_lock); // Consider reader/writer?
 
 	fa->mode = inode->i_mode;
 	fa->nlink = inode->i_nlink;
@@ -458,10 +463,208 @@ static int nfs3_write(struct rpc_trans *rt)
 	return 0;
 }
 
+static void createverf3_to_timespec(createverf3 verf, struct timespec *ts)
+{
+	// First 4 bytes for tv_sec, last 4 bytes for tv_nsec
+	memcpy(&ts->tv_sec, verf, 4);
+	memcpy(&ts->tv_nsec, verf + 4, 4);
+}
+
+// Convert struct timespec to createverf3
+static void timespec_to_createverf3(struct timespec *ts, createverf3 verf)
+{
+	// First 4 bytes for tv_sec, last 4 bytes for tv_nsec
+	memcpy(verf, &ts->tv_sec, 4);
+	memcpy(verf + 4, &ts->tv_nsec, 4);
+}
+
 static int nfs3_create(struct rpc_trans *rt)
 {
 	TRACE("CREATE: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+	struct inode *exists = NULL;
+	struct inode *tmp = NULL;
+
+	CREATE3args *args = ph->ph_args;
+	CREATE3res *res = ph->ph_res;
+	CREATE3resok *resok = &res->CREATE3res_u.resok;
+
+	wcc_data *wcc = &resok->dir_wcc;
+	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
+	wcc_attr *wa = &wcc->before.pre_op_attr_u.attributes;
+	sattr3 *sa = &args->how.createhow3_u.obj_attributes;
+
+	uint64_t flags = 0;
+
+	struct network_file_handle *nfh = NULL;
+
+	struct dirent *de = NULL;
+	struct authunix_parms ap;
+
+	createverf3 cv;
+
+	if (args->where.dir.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->where.dir.data.data_val;
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_mutex_lock(&inode->i_attr_lock);
+
+	wcc->before.attributes_follow = true;
+	wa->size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_mtime, &wa->mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &wa->ctime);
+
+	exists = inode_name_get_inode(inode, args->where.name);
+	if (exists) {
+		switch (args->how.mode) {
+		case UNCHECKED:
+			break;
+		case GUARDED:
+			res->status = NFS3ERR_EXIST;
+			goto update_wcc;
+		case EXCLUSIVE:
+			timespec_to_createverf3(&exists->i_ctime, cv);
+			if (!memcmp(cv, args->how.createhow3_u.verf,
+				    NFS3_CREATEVERFSIZE)) {
+				res->status = NFS3ERR_EXIST;
+				goto update_wcc;
+			}
+			break;
+		}
+
+		res->status = nfs3_access_check(exists, &rt->rt_info.ri_cred,
+						&ap, W_OK);
+		if (res->status)
+			goto update_wcc;
+		tmp = exists;
+	} else {
+		de = dirent_alloc(inode->i_parent, args->where.name,
+				  reffs_life_action_birth);
+		if (!de) {
+			res->status = NFS3ERR_NOENT;
+			goto update_wcc;
+		}
+
+		de->d_inode =
+			inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+							   __ATOMIC_RELAXED));
+		if (!de->d_inode) {
+			dirent_parent_release(de, reffs_life_action_death);
+			res->status = NFS3ERR_NOENT;
+			goto update_wcc;
+		}
+
+		tmp = de->d_inode;
+
+		tmp->i_size = 0;
+		tmp->i_used = 0;
+		tmp->i_nlink = 1;
+
+		tmp->i_uid = ap.aup_uid;
+		tmp->i_gid = ap.aup_gid;
+		clock_gettime(CLOCK_REALTIME, &tmp->i_mtime);
+		tmp->i_atime = tmp->i_mtime;
+		tmp->i_btime = tmp->i_mtime;
+		tmp->i_ctime = tmp->i_mtime;
+		tmp->i_mode = (S_IFCHR | inode->i_mode) & ~S_IFDIR;
+	}
+
+	nfh = calloc(1, sizeof(struct nfs_fh3));
+	if (nfh) {
+		resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+		resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+		resok->obj.handle_follows = true;
+		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+		nfh->nfh_sb = sb->sb_id;
+		nfh->nfh_ino = tmp->i_ino;
+	}
+
+	if (args->how.mode == EXCLUSIVE) {
+		createverf3_to_timespec(args->how.createhow3_u.verf,
+					&tmp->i_ctime);
+	} else {
+		res->status = nfs3_apply_sattr3(inode, sa, &flags);
+		if (res->status) {
+			wcc = &res->CREATE3res_u.resfail.dir_wcc;
+			fa = &wcc->after.post_op_attr_u.attributes;
+			goto update_wcc;
+		}
+	}
+
+	if (flags)
+		inode_update_times_now(inode, flags);
+
+	resok->obj_attributes.attributes_follow = true;
+	fa = &resok->obj_attributes.post_op_attr_u.attributes;
+
+	fa->mode = tmp->i_mode;
+	fa->nlink = tmp->i_nlink;
+	fa->uid = tmp->i_uid;
+	fa->gid = tmp->i_gid;
+	fa->size = tmp->i_size;
+	fa->used = tmp->i_used;
+	// fa->rdev = 0;  Implement once we do these types
+	fa->fsid = sb->sb_id;
+	fa->fileid = tmp->i_ino;
+	timespec_to_nfstime3(&tmp->i_atime, &fa->atime);
+	timespec_to_nfstime3(&tmp->i_mtime, &fa->mtime);
+	timespec_to_nfstime3(&tmp->i_ctime, &fa->ctime);
+
+update_wcc:
+	wcc->after.attributes_follow = true;
+	fa = &wcc->after.post_op_attr_u.attributes;
+	fa->mode = inode->i_mode;
+	fa->nlink = inode->i_nlink;
+	fa->uid = inode->i_uid;
+	fa->gid = inode->i_gid;
+	fa->size = inode->i_size;
+	fa->used = inode->i_used;
+	// fa->rdev = 0;  Implement once we do these types
+	fa->fsid = sb->sb_id;
+	fa->fileid = inode->i_ino;
+	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
+	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+
+	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_parent->d_lock);
+
+	print_nfs_fh3_hex(&args->where.dir);
+
+out:
+	inode_put(exists);
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_mkdir(struct rpc_trans *rt)
@@ -505,8 +708,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
-					W_OK | X_OK);
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
 	if (res->status)
 		goto out;
 

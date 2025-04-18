@@ -73,5 +73,6 @@ bool inode_unhash(struct inode *inode);
 void inode_update_times_now(struct inode *inode, uint64_t flags);
 
 bool inode_name_is_child(struct inode *inode, char *name);
+struct inode *inode_name_get_inode(struct inode *inode, char *name);
 
 #endif /* _REFFS_INODE_H */
