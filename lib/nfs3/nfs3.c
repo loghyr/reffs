@@ -55,36 +55,36 @@ static bool nfs3_gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
 }
 
 static int nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
-			     int mode)
+			     struct authunix_parms *ap, int mode)
 {
-	uid_t uid = 65534;
-	gid_t gid = 65534;
-
-	uint32_t len = 0;
-	gid_t *gids = NULL;
-
 	switch (cred->rc_flavor) {
 	case AUTH_SYS:
-		uid = cred->rc_unix.aup_uid;
-		gid = cred->rc_unix.aup_gid;
-		len = cred->rc_unix.aup_len;
-		gids = cred->rc_unix.aup_gids;
+		ap->aup_uid = cred->rc_unix.aup_uid;
+		ap->aup_gid = cred->rc_unix.aup_gid;
+		ap->aup_len = cred->rc_unix.aup_len;
+		ap->aup_gids = cred->rc_unix.aup_gids;
 		break;
 	case AUTH_NONE:
+		ap->aup_uid = 65534;
+		ap->aup_gid = 65534;
+
+		ap->aup_len = 0;
+		ap->aup_gids = NULL;
+
 		break;
 	default:
 		return EACCES; // Should have already been done at RPC layer
 	}
 
-	if (uid == inode->i_uid) {
+	if (ap->aup_uid == inode->i_uid) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))
 			return EACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
 			return EACCES;
 		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
 			return EACCES;
-	} else if (gid == inode->i_gid ||
-		   nfs3_gid_in_gids(inode->i_gid, len, gids)) {
+	} else if (ap->aup_gid == inode->i_gid ||
+		   nfs3_gid_in_gids(inode->i_gid, ap->aup_len, ap->aup_gids)) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
 			return EACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP))
@@ -122,6 +122,7 @@ static int nfs3_getattr(struct rpc_trans *rt)
 	fattr3 *fa = &res->GETATTR3res_u.resok.obj_attributes;
 
 	struct network_file_handle *nfh = NULL;
+	struct authunix_parms ap;
 
 	if (args->object.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
@@ -142,7 +143,7 @@ static int nfs3_getattr(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, R_OK);
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -185,6 +186,7 @@ static int nfs3_setattr(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 
 	uint64_t flags = 0;
+	struct authunix_parms ap;
 
 	if (args->object.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
@@ -205,7 +207,7 @@ static int nfs3_setattr(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, W_OK);
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -377,23 +379,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 
 	struct dirent *de = NULL;
-
-	// Refactor to a function
-	uid_t uid = 65534;
-	gid_t gid = 65534;
-
-	switch (rt->rt_info.ri_cred.rc_flavor) {
-	case AUTH_SYS:
-		uid = rt->rt_info.ri_cred.rc_unix.aup_uid;
-		gid = rt->rt_info.ri_cred.rc_unix.aup_gid;
-		break;
-	case AUTH_NONE:
-		break;
-	default:
-		res->status =
-			NFS3ERR_ACCES; // Should have already been done at RPC layer
-		goto out;
-	}
+	struct authunix_parms ap;
 
 	if (args->where.dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
@@ -414,8 +400,8 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status =
-		nfs3_access_check(inode, &rt->rt_info.ri_cred, W_OK | X_OK);
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					W_OK | X_OK);
 	if (res->status)
 		goto out;
 
@@ -452,8 +438,8 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	de->d_inode->i_uid = uid;
-	de->d_inode->i_gid = gid;
+	de->d_inode->i_uid = ap.aup_uid;
+	de->d_inode->i_gid = ap.aup_gid;
 	clock_gettime(CLOCK_REALTIME, &de->d_inode->i_mtime);
 	de->d_inode->i_atime = de->d_inode->i_mtime;
 	de->d_inode->i_btime = de->d_inode->i_mtime;
