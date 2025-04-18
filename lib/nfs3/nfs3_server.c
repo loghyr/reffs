@@ -174,7 +174,6 @@ static int nfs3_null(struct rpc_trans *rt)
 
 static int nfs3_getattr(struct rpc_trans *rt)
 {
-	TRACE("GETATTR: 0x%x", rt->rt_info.ri_xid);
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
 	struct super_block *sb = NULL;
@@ -186,6 +185,8 @@ static int nfs3_getattr(struct rpc_trans *rt)
 
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
+
+	TRACE("GETATTR: 0x%x", rt->rt_info.ri_xid);
 
 	if (args->object.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
@@ -453,8 +454,110 @@ static int nfs3_readlink(struct rpc_trans *rt)
 
 static int nfs3_read(struct rpc_trans *rt)
 {
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	READ3args *args = ph->ph_args;
+	READ3res *res = ph->ph_res;
+	READ3resok *resok = &res->READ3res_u.resok;
+
+	post_op_attr *poa = &res->GETATTR3res_u.resok.file_attributes;
+
+	struct network_file_handle *nfh = NULL;
+	struct authunix_parms ap;
+
 	TRACE("READ: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+
+	if (args->file.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->file.data.data_val;
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	if (res->status)
+		goto out;
+
+	if (inode->i_mode & S_IFDIR) {
+		res->status = NFS3ERR_ISDIR;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_db_lock);
+	pthread_mutex_lock(&inode->i_attr_lock);
+
+	if (!inode->i_db) {
+		res->status = NFS3ERR_IO;
+	} else {
+		resok->data.data_val = calloc(args->count, sizeof(char));
+		if (!resok->data.data_val) {
+			res->status = NFS3ERR_JUKEBOX;
+			poa = &res->GETATTR3res_u.resfail.file_attributes;
+			goto update_wcc;
+		}
+
+		resok->data.data_len = args->count;
+
+		res->status = data_block_read(inode->i_db, resok->data.data_val,
+					      args->count, args->offset);
+		if (!res->status && size) {
+			res->status = EOVERFLOW;
+			free(resok->data.data_val);
+			resok->data.data_len = 0;
+			poa = &res->GETATTR3res_u.resfail.file_attributes;
+			goto update_wcc;
+		}
+
+		resok->data.data_len = res->status;
+
+		inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+
+		if (args->offset + args->count > inode->i_db->db_size)
+			resok->eof = true;
+
+		resok->count = resok->data.data_len;
+	}
+
+update_wcc:
+	poa->attributes_follow = true;
+	fattr3 *fa = &poa->post_op_attr_u.attributes;
+	fa->mode = inode->i_mode;
+	fa->nlink = inode->i_nlink;
+	fa->uid = inode->i_uid;
+	fa->gid = inode->i_gid;
+	fa->size = inode->i_size;
+	fa->used = inode->i_used;
+	// fa->rdev = 0;  Implement once we do these types
+	fa->fsid = sb->sb_id;
+	fa->fileid = inode->i_ino;
+	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
+	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+
+	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_db_lock);
+
+	print_nfs_fh3_hex(&args->object);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_write(struct rpc_trans *rt)
