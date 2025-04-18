@@ -463,7 +463,7 @@ static int nfs3_read(struct rpc_trans *rt)
 	READ3res *res = ph->ph_res;
 	READ3resok *resok = &res->READ3res_u.resok;
 
-	post_op_attr *poa = &res->GETATTR3res_u.resok.file_attributes;
+	post_op_attr *poa = &res->READ3res_u.resok.file_attributes;
 
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
@@ -502,12 +502,13 @@ static int nfs3_read(struct rpc_trans *rt)
 	pthread_mutex_lock(&inode->i_attr_lock);
 
 	if (!inode->i_db) {
-		res->status = NFS3ERR_IO;
+		resok->count = 0;
+		resok->eof = true;
 	} else {
 		resok->data.data_val = calloc(args->count, sizeof(char));
 		if (!resok->data.data_val) {
 			res->status = NFS3ERR_JUKEBOX;
-			poa = &res->GETATTR3res_u.resfail.file_attributes;
+			poa = &res->READ3res_u.resfail.file_attributes;
 			goto update_wcc;
 		}
 
@@ -515,23 +516,23 @@ static int nfs3_read(struct rpc_trans *rt)
 
 		res->status = data_block_read(inode->i_db, resok->data.data_val,
 					      args->count, args->offset);
-		if (!res->status && size) {
+		if (!res->status && args->count) {
 			res->status = EOVERFLOW;
 			free(resok->data.data_val);
 			resok->data.data_len = 0;
-			poa = &res->GETATTR3res_u.resfail.file_attributes;
+			poa = &res->READ3res_u.resfail.file_attributes;
 			goto update_wcc;
 		}
 
 		resok->data.data_len = res->status;
-
-		inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
 
 		if (args->offset + args->count > inode->i_db->db_size)
 			resok->eof = true;
 
 		resok->count = resok->data.data_len;
 	}
+
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
 
 update_wcc:
 	poa->attributes_follow = true;
@@ -552,7 +553,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_lock);
 	pthread_mutex_unlock(&inode->i_db_lock);
 
-	print_nfs_fh3_hex(&args->object);
+	print_nfs_fh3_hex(&args->file);
 
 out:
 	inode_put(inode);
@@ -560,10 +561,137 @@ out:
 	return res->status;
 }
 
+static void timespec_to_writeverf3(struct timespec *ts, writeverf3 verf)
+{
+	// First 4 bytes for tv_sec, last 4 bytes for tv_nsec
+	memcpy(verf, &ts->tv_sec, 4);
+	memcpy(verf + 4, &ts->tv_nsec, 4);
+}
+
 static int nfs3_write(struct rpc_trans *rt)
 {
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	WRITE3args *args = ph->ph_args;
+	WRITE3res *res = ph->ph_res;
+	WRITE3resok *resok = &res->WRITE3res_u.resok;
+
+	wcc_data *wcc = &res->WRITE3res_u.resok.file_wcc;
+
+	struct network_file_handle *nfh = NULL;
+	struct authunix_parms ap;
+
+	        size3 size;
+        nfstime3 mtime;
+        nfstime3 ctime;
+
 	TRACE("WRITE: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+
+	if (args->file.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->file.data.data_val;
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	if (res->status)
+		goto out;
+
+	if (inode->i_mode & S_IFDIR) {
+		res->status = NFS3ERR_ISDIR;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_db_lock);
+	pthread_mutex_lock(&inode->i_attr_lock);
+
+	size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+	timespec_to_nfstime3(&inode->i_mtime, &mtime);
+
+	if (!inode->i_db) {
+		inode->i_db = data_block_alloc(
+			args->data.data_val, args->data.data_len, args->offset);
+		if (!inode->i_db) {
+			res->status = NFS3ERR_NOSPC;
+			wcc = &res->WRITE3res_u.resfail.file_wcc;
+			goto update_wcc;
+		}
+	} else {
+		res->status = data_block_write(inode->i_db, args->data.data_val,
+					       args->data.data_len,
+					       args->offset);
+		if (res->status < 0) {
+			res->status = -res->status;
+			wcc = &res->WRITE3res_u.resfail.file_wcc;
+			goto update_wcc;
+		}
+
+		resok->count = res->status;
+	}
+
+	/* For now, it is a RAM disk and all writes are done right away! */
+	switch (args->stable) {
+	case UNSTABLE:
+	case DATA_SYNC:
+	case FILE_SYNC:
+		resok->committed = FILE_SYNC;
+		break;
+	};
+
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
+					      REFFS_INODE_UPDATE_MTIME);
+
+	timespec_to_writeverf3(&inode->i_ctime, resok->verf);
+
+	inode->i_size = inode->i_db->db_size;
+	inode->i_used = inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
+
+update_wcc:
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+	wcc->after.attributes_follow = true;
+	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
+	fa->mode = inode->i_mode;
+	fa->nlink = inode->i_nlink;
+	fa->uid = inode->i_uid;
+	fa->gid = inode->i_gid;
+	fa->size = inode->i_size;
+	fa->used = inode->i_used;
+	// fa->rdev = 0;  Implement once we do these types
+	fa->fsid = sb->sb_id;
+	fa->fileid = inode->i_ino;
+	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
+	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
+
+	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_db_lock);
+
+	print_nfs_fh3_hex(&args->file);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static void createverf3_to_timespec(createverf3 verf, struct timespec *ts)
@@ -573,7 +701,6 @@ static void createverf3_to_timespec(createverf3 verf, struct timespec *ts)
 	memcpy(&ts->tv_nsec, verf + 4, 4);
 }
 
-// Convert struct timespec to createverf3
 static void timespec_to_createverf3(struct timespec *ts, createverf3 verf)
 {
 	// First 4 bytes for tv_sec, last 4 bytes for tv_nsec
