@@ -7,6 +7,7 @@
 #define _REFFS_FILEHANDLE_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define FILEHANDLE_VERSION_1 (1)
 #define FILEHANDLE_VERSION_CURR (1)
@@ -19,5 +20,11 @@ struct network_file_handle {
 	uint64_t nfh_sb;
 	uint64_t nfh_ino;
 };
+
+static inline bool network_file_handles_equal(struct network_file_handle *a,
+					      struct network_file_handle *b)
+{
+	return a->nfh_sb == b->nfh_sb && a->nfh_ino == b->nfh_ino;
+}
 
 #endif
