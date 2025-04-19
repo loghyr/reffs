@@ -184,8 +184,6 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 	if (parent) {
 		uatomic_dec(&parent->d_inode->i_nlink, __ATOMIC_RELAXED);
 		cds_list_del_init(&de->d_siblings);
-		dirent_put(parent);
-		dirent_put(de);
 
 		if (de->d_inode && de->d_inode->i_mode & S_IFDIR)
 			de->d_inode->i_parent = NULL; // Prevent use-after-free
@@ -199,6 +197,9 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 					REFFS_INODE_UPDATE_MTIME);
 			pthread_mutex_unlock(&parent->d_inode->i_attr_lock);
 		}
+
+		dirent_put(parent);
+		dirent_put(de);
 	}
 	rcu_read_unlock();
 }
