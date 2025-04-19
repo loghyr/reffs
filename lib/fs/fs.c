@@ -31,24 +31,17 @@
 #include "reffs/test.h"
 #include "reffs/fs.h"
 #include "reffs/log.h"
+#include "reffs/cmp.h"
 
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"
-
-enum reffs_text_case fuse_rtc = reffs_text_case_sensitive;
 
 static bool name_is_child(struct name_match *nm, char *name)
 {
 	bool exists = false;
 	struct dirent *de;
 
-	reffs_strng_compare cmp;
-
-	// In case we refactor
-	if (fuse_rtc == reffs_text_case_insensitive)
-		cmp = strcasecmp;
-	else
-		cmp = strcmp;
+	reffs_strng_compare cmp = reffs_text_case_cmp();
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_inode->i_children,
@@ -606,18 +599,12 @@ static int rename_dest_locked(struct name_match *nm_src, struct dirent *de_dst,
 			      char *dst_name)
 {
 	int ret = 0;
-	reffs_strng_compare cmp;
+	reffs_strng_compare cmp = reffs_text_case_cmp();
 	char *name;
 	char *old;
 
 	TRACE("nm_src=%s(%s) dst=%s name=%s", nm_src->nm_name,
 	      nm_src->nm_dirent->d_name, de_dst->d_name, dst_name);
-
-	// In case we refactor
-	if (fuse_rtc == reffs_text_case_insensitive)
-		cmp = strcasecmp;
-	else
-		cmp = strcmp;
 
 	/* If they are the same path, do nothing */
 	if (nm_src->nm_dirent == de_dst && !cmp(nm_src->nm_name, dst_name))

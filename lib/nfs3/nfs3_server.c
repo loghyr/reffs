@@ -24,15 +24,13 @@
 #include <zlib.h>
 #include "nfsv3_xdr.h"
 #include "reffs/rpc.h"
+#include "reffs/cmp.h"
 #include "reffs/log.h"
 #include "reffs/filehandle.h"
 #include "reffs/time.h"
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/data_block.h"
-
-// Need to make a config item
-static enum reffs_text_case reffs_rtc = reffs_text_case_sensitive;
 
 static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 {
@@ -1117,7 +1115,7 @@ static int nfs3_remove(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 
-	de = dirent_find(inode->i_parent, reffs_rtc, args->object.name);
+	de = dirent_find(inode->i_parent, reffs_case_get(), args->object.name);
 	if (!de) {
 		res->status = NFS3ERR_NOENT;
 		wcc = &res->REMOVE3res_u.resfail.dir_wcc;
@@ -1222,7 +1220,7 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	de = dirent_find(inode->i_parent, reffs_rtc, args->object.name);
+	de = dirent_find(inode->i_parent, reffs_case_get(), args->object.name);
 	if (!de) {
 		res->status = NFS3ERR_NOENT;
 		wcc = &res->RMDIR3res_u.resfail.dir_wcc;

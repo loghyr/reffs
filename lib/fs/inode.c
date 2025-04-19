@@ -23,6 +23,7 @@
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/log.h"
+#include "reffs/cmp.h"
 
 static int inode_match(struct cds_lfht_node *ht_node, const void *vkey)
 {
@@ -181,21 +182,12 @@ void inode_update_times_now(struct inode *inode, uint64_t flags)
 		inode->i_mtime = now;
 }
 
-// Need to make a config item
-static enum reffs_text_case reffs_rtc = reffs_text_case_sensitive;
-
 bool inode_name_is_child(struct inode *inode, char *name)
 {
 	bool exists = false;
 	struct dirent *de;
 
-	reffs_strng_compare cmp;
-
-	// In case we refactor
-	if (reffs_rtc == reffs_text_case_insensitive)
-		cmp = strcasecmp;
-	else
-		cmp = strcmp;
+	reffs_strng_compare cmp = reffs_text_case_cmp();
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(de, &inode->i_children, d_siblings) {
@@ -214,13 +206,7 @@ struct inode *inode_name_get_inode(struct inode *inode, char *name)
 	struct inode *exists = NULL;
 	struct dirent *de;
 
-	reffs_strng_compare cmp;
-
-	// In case we refactor
-	if (reffs_rtc == reffs_text_case_insensitive)
-		cmp = strcasecmp;
-	else
-		cmp = strcmp;
+	reffs_strng_compare cmp = reffs_text_case_cmp();
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(de, &inode->i_children, d_siblings) {

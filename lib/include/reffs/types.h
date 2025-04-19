@@ -17,12 +17,4 @@ enum reffs_life_action {
 	reffs_life_action_update = 4
 };
 
-enum reffs_text_case {
-	reffs_text_case_insensitive = 0,
-	reffs_text_case_sensitive = 1,
-};
-
-// Right place for now?
-typedef int (*reffs_strng_compare)(const char *s1, const char *s2);
-
 #endif /* _REFFS_TYPES_H */

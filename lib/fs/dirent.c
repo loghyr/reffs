@@ -24,6 +24,7 @@
 #include "reffs/log.h"
 #include "reffs/test.h"
 #include "reffs/types.h"
+#include "reffs/cmp.h"
 
 CDS_LIST_HEAD(dirent_list);
 
@@ -110,18 +111,13 @@ struct dirent *dirent_find(struct dirent *parent, enum reffs_text_case rtc,
 {
 	struct dirent *de = NULL;
 	struct dirent *tmp;
-	reffs_strng_compare cmp;
+	reffs_strng_compare cmp = reffs_text_case_cmp_of(rtc);
 
 	assert(parent);
 	assert(name);
 
 	if (!name)
 		return de;
-
-	if (rtc == reffs_text_case_insensitive)
-		cmp = strcasecmp;
-	else
-		cmp = strcmp;
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(tmp, &parent->d_inode->i_children,

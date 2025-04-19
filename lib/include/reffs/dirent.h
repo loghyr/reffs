@@ -15,6 +15,7 @@
 
 #include "reffs/types.h"
 #include "reffs/inode.h"
+#include "reffs/cmp.h"
 
 #define REFFS_MAX_NAME (255)
 
