@@ -1151,8 +1151,108 @@ out:
 
 static int nfs3_rmdir(struct rpc_trans *rt)
 {
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+	struct inode *exists = NULL;
+	struct dirent *de = NULL;
+
+	RMDIR3args *args = ph->ph_args;
+	RMDIR3res *res = ph->ph_res;
+	RMDIR3resok *resok = &res->RMDIR3res_u.resok;
+	wcc_data *wcc = &resok->dir_wcc;
+	fattr3 *fa;
+
+	struct network_file_handle *nfh = NULL;
+
+	struct authunix_parms ap;
+
+	size3 size;
+	nfstime3 mtime;
+	nfstime3 ctime;
+
 	TRACE("RMDIR: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+
+	if (args->object.dir.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->object.dir.data.data_val;
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_mutex_lock(&inode->i_attr_lock);
+
+	size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+	timespec_to_nfstime3(&inode->i_mtime, &mtime);
+
+	exists = inode_name_get_inode(inode, args->object.name);
+	if (!exists) {
+		res->status = NFS3ERR_NOENT;
+		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
+		goto update_wcc;
+	}
+
+	if (!(exists->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
+		goto update_wcc;
+	}
+
+	de = dirent_find(inode->i_parent, reffs_rtc, args->object.name);
+	if (!de) {
+		res->status = NFS3ERR_NOENT;
+		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
+		goto update_wcc;
+	}
+
+	dirent_parent_release(de, reffs_life_action_death);
+
+update_wcc:
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+
+	wcc->after.attributes_follow = true;
+	fa = &wcc->after.post_op_attr_u.attributes;
+
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_parent->d_lock);
+
+	print_nfs_fh3_hex(&args->object.dir);
+
+out:
+	dirent_put(de);
+	inode_put(exists);
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_rename(struct rpc_trans *rt)
