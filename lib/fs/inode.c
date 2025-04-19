@@ -181,7 +181,8 @@ void inode_update_times_now(struct inode *inode, uint64_t flags)
 		inode->i_mtime = now;
 }
 
-enum reffs_text_case reffs_rtc = reffs_text_case_sensitive;
+// Need to make a config item
+static enum reffs_text_case reffs_rtc = reffs_text_case_sensitive;
 
 bool inode_name_is_child(struct inode *inode, char *name)
 {

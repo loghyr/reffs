@@ -31,6 +31,9 @@
 #include "reffs/super_block.h"
 #include "reffs/data_block.h"
 
+// Need to make a config item
+static enum reffs_text_case reffs_rtc = reffs_text_case_sensitive;
+
 static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 {
 	fa->mode = inode->i_mode;
@@ -249,10 +252,13 @@ static int nfs3_setattr(struct rpc_trans *rt)
 	SETATTR3res *res = ph->ph_res;
 	wcc_data *wcc = &res->SETATTR3res_u.resok.obj_wcc;
 	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
-	wcc_attr *wa = &wcc->before.pre_op_attr_u.attributes;
 	sattr3 *sa = &args->new_attributes;
 
 	struct network_file_handle *nfh = NULL;
+
+	size3 size;
+	nfstime3 mtime;
+	nfstime3 ctime;
 
 	uint64_t flags = 0;
 	struct authunix_parms ap;
@@ -283,10 +289,9 @@ static int nfs3_setattr(struct rpc_trans *rt)
 	pthread_mutex_lock(&inode->i_db_lock);
 	pthread_mutex_lock(&inode->i_attr_lock);
 
-	wcc->before.attributes_follow = true;
-	wa->size = inode->i_size;
-	timespec_to_nfstime3(&inode->i_mtime, &wa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &wa->ctime);
+	size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 
 	if (args->guard.check) {
 		if (!nfstime3_is_timespec(&args->guard.sattrguard3_u.obj_ctime,
@@ -309,6 +314,10 @@ static int nfs3_setattr(struct rpc_trans *rt)
 		inode_update_times_now(inode, flags);
 
 update_wcc:
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
 	wcc->after.attributes_follow = true;
 	inode_attr_to_fattr(inode, fa);
 
@@ -394,8 +403,8 @@ static int nfs3_lookup(struct rpc_trans *rt)
 	inode_attr_to_fattr(exists, fa);
 
 update_wcc:
-        resok->dir_attributes.attributes_follow = true;
-        fa = &resok->dir_attributes.post_op_attr_u.attributes;
+	resok->dir_attributes.attributes_follow = true;
+	fa = &resok->dir_attributes.post_op_attr_u.attributes;
 
 	inode_attr_to_fattr(inode, fa);
 
@@ -1051,8 +1060,93 @@ static int nfs3_mknod(struct rpc_trans *rt)
 
 static int nfs3_remove(struct rpc_trans *rt)
 {
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+	struct dirent *de = NULL;
+
+	REMOVE3args *args = ph->ph_args;
+	REMOVE3res *res = ph->ph_res;
+	REMOVE3resok *resok = &res->REMOVE3res_u.resok;
+	wcc_data *wcc = &resok->dir_wcc;
+	fattr3 *fa;
+
+	struct network_file_handle *nfh = NULL;
+
+	struct authunix_parms ap;
+
+	size3 size;
+	nfstime3 mtime;
+	nfstime3 ctime;
+
 	TRACE("REMOVE: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+
+	if (args->object.dir.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->object.dir.data.data_val;
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_mutex_lock(&inode->i_attr_lock);
+
+	size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+	timespec_to_nfstime3(&inode->i_mtime, &mtime);
+
+	de = dirent_find(inode->i_parent, reffs_rtc, args->object.name);
+	if (!de) {
+		res->status = NFS3ERR_NOENT;
+		wcc = &res->REMOVE3res_u.resfail.dir_wcc;
+		goto update_wcc;
+	}
+
+	dirent_parent_release(de, reffs_life_action_death);
+
+update_wcc:
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+
+	wcc->after.attributes_follow = true;
+	fa = &wcc->after.post_op_attr_u.attributes;
+
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_parent->d_lock);
+
+	print_nfs_fh3_hex(&args->object.dir);
+
+out:
+	dirent_put(de);
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_rmdir(struct rpc_trans *rt)
