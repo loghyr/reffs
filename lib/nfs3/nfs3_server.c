@@ -325,8 +325,89 @@ out:
 
 static int nfs3_lookup(struct rpc_trans *rt)
 {
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+	struct inode *exists = NULL;
+
+	LOOKUP3args *args = ph->ph_args;
+	LOOKUP3res *res = ph->ph_res;
+	LOOKUP3resok *resok = &res->LOOKUP3res_u.resok;
+
+	fattr3 *fa;
+
+	struct network_file_handle *nfh = NULL;
+
+	struct authunix_parms ap;
+
 	TRACE("LOOKUP: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+
+	if (args->what.dir.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->what.dir.data.data_val;
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_attr_lock);
+
+	exists = inode_name_get_inode(inode, args->what.name);
+	if (!exists) {
+		res->status = NFS3ERR_NOENT;
+		goto update_wcc;
+	}
+
+	nfh = calloc(1, sizeof(struct nfs_fh3));
+	if (nfh) {
+		resok->object.data.data_val = (char *)nfh;
+		resok->object.data.data_len = sizeof(nfs_fh3);
+		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+		nfh->nfh_sb = sb->sb_id;
+		nfh->nfh_ino = exists->i_ino;
+	}
+
+	resok->obj_attributes.attributes_follow = true;
+	fa = &resok->obj_attributes.post_op_attr_u.attributes;
+
+	inode_attr_to_fattr(exists, fa);
+
+update_wcc:
+        resok->dir_attributes.attributes_follow = true;
+        fa = &resok->dir_attributes.post_op_attr_u.attributes;
+
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_lock);
+
+	print_nfs_fh3_hex(&args->what.dir);
+
+out:
+	inode_put(exists);
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 /*
@@ -838,8 +919,6 @@ out:
 
 static int nfs3_mkdir(struct rpc_trans *rt)
 {
-	TRACE("MKDIR: 0x%x", rt->rt_info.ri_xid);
-
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
 	struct super_block *sb = NULL;
@@ -857,6 +936,8 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 
 	struct dirent *de = NULL;
 	struct authunix_parms ap;
+
+	TRACE("MKDIR: 0x%x", rt->rt_info.ri_xid);
 
 	if (args->where.dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
