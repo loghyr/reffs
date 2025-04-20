@@ -18,29 +18,7 @@
 #include <urcu/ref.h>
 #include "reffs/data_block.h"
 #include "reffs/log.h"
-
-struct buffer_free {
-	char *buffer;
-	struct rcu_head rcu;
-};
-
-static void buffer_free_rcu(struct rcu_head *rcu)
-{
-	struct buffer_free *bf = caa_container_of(rcu, struct buffer_free, rcu);
-
-	free(bf->buffer);
-	free(bf);
-}
-
-static void buffer_free_schedule(char *buffer)
-{
-	struct buffer_free *bf = malloc(sizeof(*bf));
-	if (!bf)
-		free(buffer);
-
-	bf->buffer = buffer;
-	call_rcu(&bf->rcu, buffer_free_rcu);
-}
+#include "reffs/rcu.h"
 
 static void data_block_free_rcu(struct rcu_head *rcu)
 {
@@ -143,7 +121,7 @@ size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 		if (db->db_buffer)
 			memcpy(new, db->db_buffer, db->db_size);
 		old = rcu_xchg_pointer(&db->db_buffer, new);
-		buffer_free_schedule(old);
+		reffs_string_release(old);
 		db->db_size = offset + size;
 	}
 	rcu_read_unlock();
@@ -173,10 +151,10 @@ size_t data_block_resize(struct data_block *db, size_t size)
 
 		memcpy(new, db->db_buffer, db->db_size);
 		old = rcu_xchg_pointer(&db->db_buffer, new);
-		buffer_free_schedule(old);
+		reffs_string_release(old);
 	} else if (size == 0) {
 		old = rcu_xchg_pointer(&db->db_buffer, NULL);
-		buffer_free_schedule(old);
+		reffs_string_release(old);
 	} else {
 		new = calloc(size, sizeof(*new));
 		if (!new) {
@@ -188,7 +166,7 @@ size_t data_block_resize(struct data_block *db, size_t size)
 
 		memcpy(new, db->db_buffer, size);
 		old = rcu_xchg_pointer(&db->db_buffer, new);
-		buffer_free_schedule(old);
+		reffs_string_release(old);
 	}
 
 	db->db_size = size;
