@@ -12,6 +12,7 @@ reffsinclude_HEADERS = \
 	inode.h \
 	log.h \
 	nfs3.h \
+	rcu.h \
 	rpc.h \
 	super_block.h \
 	test.h \
