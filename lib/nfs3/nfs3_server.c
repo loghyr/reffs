@@ -1469,8 +1469,137 @@ static int nfs3_link(struct rpc_trans *rt)
 
 static int nfs3_readdir(struct rpc_trans *rt)
 {
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	READDIR3args *args = ph->ph_args;
+	READDIR3res *res = ph->ph_res;
+	READDIR3resok *resok = &res->READDIR3res_u.resok;
+
+	post_op_attr *poa = &resok->dir_attributes;
+	fattr3 *fa;
+
+	dirlist3 *dl = NULL;
+	cookie3 cookie = args->cookie;
+	count3 count = 0;
+
+	struct network_file_handle *nfh = NULL;
+
+	struct dirent *de = NULL;
+	struct authunix_parms ap;
+
+	entry3 *e_next;
+
 	TRACE("READDIR: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+
+	if (args->dir.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->dir.data.data_val;
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	count = sizeof(READDIR3res);
+	if (count > args->count) {
+		res->status = NFS3ERR_INVAL;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_mutex_lock(&inode->i_attr_lock);
+
+	dl = &resok->reply;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(de, &de->d_inode->i_children, d_siblings) {
+		if (de->d_cookie < cookie)
+			continue;
+
+		entry3 *e = calloc(1, sizeof(*e));
+		if (!e) {
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIR3res_u.resfail.dir_attributes;
+				goto update_wcc;
+			}
+
+			break;
+		}
+
+		e->fileid = de->d_inode->i_ino;
+		e->cookie = de->d_cookie;
+		e->name = strdup(de->d_name);
+		if (!e->name) {
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIR3res_u.resfail.dir_attributes;
+				goto update_wcc;
+			}
+
+			break;
+		}
+
+		count += sizeof(*e) + strlen(e->name) + 1;
+		if (count > args->count) {
+			free(e->name);
+			free(e);
+			goto past_eof;
+		}
+
+		if (!dl->entries) {
+			dl->entries = e;
+		} else {
+			e_next->nextentry = e;
+		}
+
+		e_next = e;
+	}
+	rcu_read_unlock();
+
+	dl->eof = true;
+
+past_eof:
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+
+update_wcc:
+	poa->attributes_follow = true;
+	fa = &poa->post_op_attr_u.attributes;
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_parent->d_lock);
+
+	print_nfs_fh3_hex(&args->dir);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_readdirplus(struct rpc_trans *rt)
