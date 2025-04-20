@@ -33,6 +33,9 @@ struct dirent {
 
 	pthread_mutex_t d_lock;
 
+	uint64_t d_cookie;
+	uint64_t d_cookie_next;
+
 	char *d_name;
 	struct inode *d_inode;
 };

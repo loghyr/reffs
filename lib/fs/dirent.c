@@ -38,6 +38,8 @@ void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 	de->d_parent = dirent_get(parent);
 	verify(parent->d_inode->i_mode & S_IFDIR);
 	uatomic_inc(&parent->d_inode->i_nlink, __ATOMIC_RELAXED);
+	de->d_cookie =
+		uatomic_add_return(&parent->d_cookie_next, 1, __ATOMIC_RELAXED);
 	cds_list_add_rcu(&de->d_siblings, &parent->d_inode->i_children);
 	dirent_get(de); // One for the linked list
 
@@ -96,6 +98,7 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name,
 	}
 
 	urcu_ref_init(&de->d_ref);
+	de->d_cookie_next = 1;
 
 	pthread_mutex_init(&de->d_lock, NULL);
 
