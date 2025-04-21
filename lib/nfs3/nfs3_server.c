@@ -798,8 +798,11 @@ static int nfs3_create(struct rpc_trans *rt)
 
 	wcc_data *wcc = &resok->dir_wcc;
 	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
-	wcc_attr *wa = &wcc->before.pre_op_attr_u.attributes;
 	sattr3 *sa = &args->how.createhow3_u.obj_attributes;
+
+	size3 size;
+	nfstime3 mtime;
+	nfstime3 ctime;
 
 	uint64_t flags = 0;
 
@@ -846,10 +849,9 @@ static int nfs3_create(struct rpc_trans *rt)
 	pthread_mutex_lock(&inode->i_parent->d_lock);
 	pthread_mutex_lock(&inode->i_attr_lock);
 
-	wcc->before.attributes_follow = true;
-	wa->size = inode->i_size;
-	timespec_to_nfstime3(&inode->i_mtime, &wa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &wa->ctime);
+	size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 
 	exists = inode_name_get_inode(inode, args->where.name);
 	if (exists) {
@@ -931,6 +933,11 @@ static int nfs3_create(struct rpc_trans *rt)
 	if (flags)
 		inode_update_times_now(inode, flags);
 
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 
@@ -966,7 +973,10 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 
 	wcc_data *wcc = &resok->dir_wcc;
 	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
-	wcc_attr *wa = &wcc->before.pre_op_attr_u.attributes;
+
+	size3 size;
+	nfstime3 mtime;
+	nfstime3 ctime;
 
 	struct network_file_handle *nfh = NULL;
 
@@ -1009,10 +1019,9 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	pthread_mutex_lock(&inode->i_parent->d_lock);
 	pthread_mutex_lock(&inode->i_attr_lock);
 
-	wcc->before.attributes_follow = true;
-	wa->size = inode->i_size;
-	timespec_to_nfstime3(&inode->i_mtime, &wa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &wa->ctime);
+	size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_mtime, &mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 
 	if (inode_name_is_child(inode, args->where.name)) {
 		res->status = NFS3ERR_EXIST;
@@ -1056,6 +1065,11 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 		nfh->nfh_ino = de->d_inode->i_ino;
 	}
 
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 	inode_attr_to_fattr(de->d_inode, fa);
@@ -1096,8 +1110,11 @@ static int nfs3_mknod(struct rpc_trans *rt)
 
 	wcc_data *wcc = &resok->dir_wcc;
 	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
-	wcc_attr *wa = &wcc->before.pre_op_attr_u.attributes;
 	sattr3 *sa;
+
+	size3 size;
+	nfstime3 mtime;
+	nfstime3 ctime;
 
 	uint64_t flags = 0;
 
@@ -1155,10 +1172,9 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	pthread_mutex_lock(&inode->i_parent->d_lock);
 	pthread_mutex_lock(&inode->i_attr_lock);
 
-	wcc->before.attributes_follow = true;
-	wa->size = inode->i_size;
-	timespec_to_nfstime3(&inode->i_mtime, &wa->mtime);
-	timespec_to_nfstime3(&inode->i_ctime, &wa->ctime);
+	size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_mtime, &mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 
 	if (inode_name_is_child(inode, args->where.name)) {
 		res->status = NFS3ERR_EXIST;
@@ -1249,6 +1265,11 @@ static int nfs3_mknod(struct rpc_trans *rt)
 
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
+
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
 
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
