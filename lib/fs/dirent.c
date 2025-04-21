@@ -61,6 +61,8 @@ static void dirent_free_rcu(struct rcu_head *rcu)
 {
 	struct dirent *de = caa_container_of(rcu, struct dirent, d_rcu);
 
+	pthread_rwlock_destroy(&de->d_rwlock);
+
 	free(de->d_name);
 	free(de);
 }
@@ -100,7 +102,7 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name,
 	urcu_ref_init(&de->d_ref);
 	de->d_cookie_next = 1;
 
-	pthread_mutex_init(&de->d_lock, NULL);
+	pthread_rwlock_init(&de->d_rwlock, NULL);
 
 	CDS_INIT_LIST_HEAD(&de->d_siblings);
 	if (parent)

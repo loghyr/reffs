@@ -31,7 +31,7 @@ struct dirent {
 
 	struct dirent *d_parent;
 
-	pthread_mutex_t d_lock;
+	pthread_rwlock_t d_rwlock;
 
 	uint64_t d_cookie;
 	uint64_t d_cookie_next;

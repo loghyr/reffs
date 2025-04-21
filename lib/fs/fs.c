@@ -224,7 +224,7 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 	if (ret)
 		goto out;
 
-	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_wrlock(&nm->nm_dirent->d_rwlock);
 
 	inode = nm->nm_dirent->d_inode;
 
@@ -237,7 +237,7 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 	pthread_mutex_unlock(&inode->i_attr_lock);
 
 	pthread_mutex_unlock(&inode->i_db_lock);
-	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
@@ -259,7 +259,7 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 	if (ret)
 		goto out;
 
-	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_wrlock(&nm->nm_dirent->d_rwlock);
 
 	inode = nm->nm_dirent->d_inode;
 
@@ -273,7 +273,7 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 	pthread_mutex_unlock(&inode->i_attr_lock);
 
 	pthread_mutex_unlock(&inode->i_db_lock);
-	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
@@ -315,9 +315,9 @@ int reffs_fs_create(const char *path, mode_t mode)
 		goto out_puts;
 	}
 
-	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_wrlock(&nm->nm_dirent->d_rwlock);
 	de = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth);
-	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	if (!de) {
 		ret = -ENOENT;
 		goto out_puts;
@@ -420,9 +420,9 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 		goto out_puts;
 	}
 
-	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_wrlock(&nm->nm_dirent->d_rwlock);
 	de = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth);
-	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	if (!de) {
 		ret = -ENOENT;
 		goto out_puts;
@@ -490,9 +490,9 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 		goto out_puts;
 	}
 
-	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_wrlock(&nm->nm_dirent->d_rwlock);
 	de = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth);
-	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	if (!de) {
 		ret = -ENOENT;
 		goto out_puts;
@@ -540,7 +540,7 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 	if (ret)
 		goto out;
 
-	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_rdlock(&nm->nm_dirent->d_rwlock);
 
 	inode = nm->nm_dirent->d_inode;
 
@@ -567,7 +567,7 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 
 out_unlock:
 	pthread_mutex_unlock(&inode->i_db_lock);
-	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
@@ -633,9 +633,9 @@ static int rename_dest(struct name_match *nm_src, struct dirent *de_dst,
 {
 	int ret;
 
-	pthread_mutex_lock(&nm_src->nm_dirent->d_parent->d_lock);
+	pthread_rwlock_wrlock(&nm_src->nm_dirent->d_parent->d_rwlock);
 	ret = rename_dest_locked(nm_src, de_dst, dst_name);
-	pthread_mutex_unlock(&nm_src->nm_dirent->d_parent->d_lock);
+	pthread_rwlock_unlock(&nm_src->nm_dirent->d_parent->d_rwlock);
 
 	return ret;
 }
@@ -756,9 +756,9 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 			TRACE("Pinned parent de=%s", de_dst_pin->d_name);
 		}
 
-		pthread_mutex_lock(&de_dst_pin->d_lock);
+		pthread_rwlock_wrlock(&de_dst_pin->d_rwlock);
 		if (de_dst_pin != de_src_pin)
-			pthread_mutex_lock(&de_src_pin->d_lock);
+			pthread_rwlock_wrlock(&de_src_pin->d_rwlock);
 
 		dirent_parent_release(nm_src->nm_dirent,
 				      reffs_life_action_update);
@@ -766,8 +766,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 				     reffs_life_action_update);
 		ret = rename_dest_locked(nm_src, de_dst_pin, nm_dst->nm_name);
 		if (de_dst_pin != de_src_pin)
-			pthread_mutex_unlock(&de_src_pin->d_lock);
-		pthread_mutex_unlock(&de_dst_pin->d_lock);
+			pthread_rwlock_unlock(&de_src_pin->d_rwlock);
+		pthread_rwlock_unlock(&de_dst_pin->d_rwlock);
 
 		dirent_put(de_src_pin);
 		dirent_put(de_dst_pin);
@@ -808,7 +808,7 @@ int reffs_fs_rmdir(const char *path)
 
 	inode = nm->nm_dirent->d_inode;
 
-	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_wrlock(&nm->nm_dirent->d_rwlock);
 	if (!(inode->i_mode & S_IFDIR)) {
 		ret = -ENOTDIR;
 		goto out_unlock;
@@ -826,7 +826,7 @@ int reffs_fs_rmdir(const char *path)
 
 	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
 out_unlock:
-	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
@@ -858,7 +858,7 @@ int reffs_fs_unlink(const char *path)
 
 	inode = nm->nm_dirent->d_inode;
 
-	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_wrlock(&nm->nm_dirent->d_rwlock);
 	if (inode->i_mode & S_IFDIR) {
 		ret = -EISDIR;
 		goto out_unlock;
@@ -866,7 +866,7 @@ int reffs_fs_unlink(const char *path)
 
 	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
 out_unlock:
-	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
@@ -913,7 +913,7 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 	if (ret)
 		goto out;
 
-	pthread_mutex_lock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_rdlock(&nm->nm_dirent->d_rwlock);
 
 	inode = nm->nm_dirent->d_inode;
 
@@ -947,7 +947,7 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 	ret = size;
 out_unlock:
 	pthread_mutex_unlock(&inode->i_db_lock);
-	pthread_mutex_unlock(&nm->nm_dirent->d_lock);
+	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
 

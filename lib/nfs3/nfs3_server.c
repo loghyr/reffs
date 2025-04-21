@@ -37,7 +37,7 @@
 /*
  * On locking order:
  *
- * 1) Always take the d_lock of the dirent after
+ * 1) Always take the d_rwlock of the dirent after
  * the i_attr_lock of the inode.
  *
  * 2) Always take the i_db_lock of the inode after the
@@ -871,7 +871,7 @@ static int nfs3_create(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 
-	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_rwlock_wrlock(&inode->i_parent->d_rwlock);
 	exists = inode_name_get_inode(inode, args->where.name);
 	if (exists) {
 		switch (args->how.mode) {
@@ -879,14 +879,14 @@ static int nfs3_create(struct rpc_trans *rt)
 			break;
 		case GUARDED:
 			res->status = NFS3ERR_EXIST;
-			pthread_mutex_unlock(&inode->i_parent->d_lock);
+			pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 			goto update_wcc;
 		case EXCLUSIVE:
 			timespec_to_createverf3(&exists->i_ctime, cv);
 			if (!memcmp(cv, args->how.createhow3_u.verf,
 				    NFS3_CREATEVERFSIZE)) {
 				res->status = NFS3ERR_EXIST;
-				pthread_mutex_unlock(&inode->i_parent->d_lock);
+				pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 				goto update_wcc;
 			}
 			break;
@@ -895,7 +895,7 @@ static int nfs3_create(struct rpc_trans *rt)
 		res->status = nfs3_access_check(exists, &rt->rt_info.ri_cred,
 						&ap, W_OK);
 		if (res->status) {
-			pthread_mutex_unlock(&inode->i_parent->d_lock);
+			pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 			goto update_wcc;
 		}
 
@@ -905,7 +905,7 @@ static int nfs3_create(struct rpc_trans *rt)
 				  reffs_life_action_birth);
 		if (!de) {
 			res->status = NFS3ERR_NOENT;
-			pthread_mutex_unlock(&inode->i_parent->d_lock);
+			pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 			goto update_wcc;
 		}
 
@@ -915,7 +915,7 @@ static int nfs3_create(struct rpc_trans *rt)
 		if (!de->d_inode) {
 			dirent_parent_release(de, reffs_life_action_death);
 			res->status = NFS3ERR_NOENT;
-			pthread_mutex_unlock(&inode->i_parent->d_lock);
+			pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 			goto update_wcc;
 		}
 
@@ -933,7 +933,7 @@ static int nfs3_create(struct rpc_trans *rt)
 		tmp->i_ctime = tmp->i_mtime;
 		tmp->i_mode = (S_IFCHR | inode->i_mode) & ~S_IFDIR;
 	}
-	pthread_mutex_unlock(&inode->i_parent->d_lock);
+	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
 	if (args->how.mode == EXCLUSIVE) {
 		createverf3_to_timespec(args->how.createhow3_u.verf,
@@ -1053,11 +1053,11 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 
-	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_rwlock_wrlock(&inode->i_parent->d_rwlock);
 	if (inode_name_is_child(inode, args->where.name)) {
 		res->status = NFS3ERR_EXIST;
 		wcc = &resfail->dir_wcc;
-		pthread_mutex_unlock(&inode->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 		goto update_wcc;
 	}
 
@@ -1066,7 +1066,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	if (!de) {
 		res->status = NFS3ERR_NOENT;
 		wcc = &resfail->dir_wcc;
-		pthread_mutex_unlock(&inode->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 		goto update_wcc;
 	}
 
@@ -1076,10 +1076,10 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 		dirent_parent_release(de, reffs_life_action_death);
 		res->status = NFS3ERR_NOENT;
 		wcc = &resfail->dir_wcc;
-		pthread_mutex_unlock(&inode->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 		goto update_wcc;
 	}
-	pthread_mutex_unlock(&inode->i_parent->d_lock);
+	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
 	de->d_inode->i_uid = ap.aup_uid;
 	de->d_inode->i_gid = ap.aup_gid;
@@ -1121,7 +1121,7 @@ update_wcc:
 	fa = &wcc->after.post_op_attr_u.attributes;
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_mutex_unlock(&inode->i_parent->d_lock);
+	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
 	print_nfs_fh3_hex(&args->where.dir);
 
@@ -1216,12 +1216,12 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 
-	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_rwlock_wrlock(&inode->i_parent->d_rwlock);
 	if (inode_name_is_child(inode, args->where.name)) {
 		res->status = NFS3ERR_EXIST;
 		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
 		fa = &wcc->after.post_op_attr_u.attributes;
-		pthread_mutex_unlock(&inode->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 		goto update_wcc;
 	}
 
@@ -1231,7 +1231,7 @@ static int nfs3_mknod(struct rpc_trans *rt)
 		res->status = NFS3ERR_NOENT;
 		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
 		fa = &wcc->after.post_op_attr_u.attributes;
-		pthread_mutex_unlock(&inode->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 		goto update_wcc;
 	}
 
@@ -1242,10 +1242,10 @@ static int nfs3_mknod(struct rpc_trans *rt)
 		res->status = NFS3ERR_NOENT;
 		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
 		fa = &wcc->after.post_op_attr_u.attributes;
-		pthread_mutex_unlock(&inode->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 		goto update_wcc;
 	}
-	pthread_mutex_unlock(&inode->i_parent->d_lock);
+	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
 	de->d_inode->i_uid = ap.aup_uid;
 	de->d_inode->i_gid = ap.aup_gid;
@@ -1396,7 +1396,7 @@ static int nfs3_remove(struct rpc_trans *rt)
 		goto out;
 	}
 
-	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_rwlock_wrlock(&inode->i_parent->d_rwlock);
 
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
@@ -1407,12 +1407,12 @@ static int nfs3_remove(struct rpc_trans *rt)
 	if (!de) {
 		res->status = NFS3ERR_NOENT;
 		wcc = &res->REMOVE3res_u.resfail.dir_wcc;
-		pthread_mutex_unlock(&inode->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 		goto update_wcc;
 	}
 
 	dirent_parent_release(de, reffs_life_action_death);
-	pthread_mutex_unlock(&inode->i_parent->d_lock);
+	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -1498,19 +1498,19 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 
-	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_rwlock_wrlock(&inode->i_parent->d_rwlock);
 	exists = inode_name_get_inode(inode, args->object.name);
 	if (!exists) {
 		res->status = NFS3ERR_NOENT;
 		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
-		pthread_mutex_unlock(&inode->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 		goto update_wcc;
 	}
 
 	if (!(exists->i_mode & S_IFDIR)) {
 		res->status = NFS3ERR_NOTDIR;
 		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
-		pthread_mutex_unlock(&inode->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 		goto update_wcc;
 	}
 
@@ -1518,12 +1518,12 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 	if (!de) {
 		res->status = NFS3ERR_NOENT;
 		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
-		pthread_mutex_unlock(&inode->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 		goto update_wcc;
 	}
 
 	dirent_parent_release(de, reffs_life_action_death);
-	pthread_mutex_unlock(&inode->i_parent->d_lock);
+	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -1656,16 +1656,16 @@ static int nfs3_rename(struct rpc_trans *rt)
 	}
 
 	/*
-	 * Note: Hold the d_locks longer than we need to!
+	 * Note: Hold the d_rwlocks longer than we need to!
 	 */
 	if (inode_src == inode_dst) {
 		pthread_mutex_lock(&inode_src->i_attr_lock);
-		pthread_mutex_lock(&inode_src->i_parent->d_lock);
+		pthread_rwlock_wrlock(&inode_src->i_parent->d_rwlock);
 	} else {
 		pthread_mutex_lock(&inode_src->i_attr_lock);
-		pthread_mutex_lock(&inode_src->i_parent->d_lock);
+		pthread_rwlock_wrlock(&inode_src->i_parent->d_rwlock);
 		pthread_mutex_lock(&inode_dst->i_attr_lock);
-		pthread_mutex_lock(&inode_dst->i_parent->d_lock);
+		pthread_rwlock_wrlock(&inode_dst->i_parent->d_rwlock);
 	}
 
 	size_src = inode_src->i_size;
@@ -1746,12 +1746,12 @@ update_wcc:
 	inode_attr_to_fattr(inode_src, fa);
 
 	if (inode_src == inode_dst) {
-		pthread_mutex_unlock(&inode_src->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode_src->i_parent->d_rwlock);
 		pthread_mutex_unlock(&inode_src->i_attr_lock);
 	} else {
-		pthread_mutex_unlock(&inode_dst->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode_dst->i_parent->d_rwlock);
 		pthread_mutex_unlock(&inode_dst->i_attr_lock);
-		pthread_mutex_unlock(&inode_src->i_parent->d_lock);
+		pthread_rwlock_unlock(&inode_src->i_parent->d_rwlock);
 		pthread_mutex_unlock(&inode_src->i_attr_lock);
 	}
 
@@ -1838,7 +1838,7 @@ static int nfs3_readdir(struct rpc_trans *rt)
 	}
 
 	pthread_mutex_lock(&inode->i_attr_lock);
-	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_rwlock_rdlock(&inode->i_parent->d_rwlock);
 
 	dl = &resok->reply;
 
@@ -1900,7 +1900,7 @@ update_wcc:
 	fa = &poa->post_op_attr_u.attributes;
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_mutex_unlock(&inode->i_parent->d_lock);
+	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 	pthread_mutex_unlock(&inode->i_attr_lock);
 
 	print_nfs_fh3_hex(&args->dir);
