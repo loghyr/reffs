@@ -38,10 +38,10 @@
  * On locking order:
  *
  * 1) Always take the d_rwlock of the dirent after
- * the i_attr_lock of the inode.
+ * the i_attr_mutex of the inode.
  *
  * 2) Always take the i_db_lock of the inode after the
- * i_attr_lock of the inode.
+ * i_attr_mutex of the inode.
  */
 
 static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
@@ -308,7 +308,7 @@ static int nfs3_setattr(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
@@ -344,7 +344,7 @@ update_wcc:
 	wcc->after.attributes_follow = true;
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	print_nfs_fh3_hex(&args->object);
 
@@ -406,7 +406,7 @@ static int nfs3_lookup(struct rpc_trans *rt)
 		goto out;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	exists = inode_name_get_inode(inode, args->what.name);
 	if (!exists) {
@@ -439,7 +439,7 @@ update_wcc:
 
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	print_nfs_fh3_hex(&args->what.dir);
 
@@ -541,11 +541,11 @@ static int nfs3_access(struct rpc_trans *rt)
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 	resok->obj_attributes.attributes_follow = true;
 
-	pthread_mutex_lock(&inode->i_attr_lock); // Consider reader/writer?
+	pthread_mutex_lock(&inode->i_attr_mutex); // Consider reader/writer?
 
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
 	inode_put(inode);
@@ -608,7 +608,7 @@ static int nfs3_read(struct rpc_trans *rt)
 		goto out;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	if (!inode->i_db) {
 		resok->count = 0;
@@ -651,7 +651,7 @@ update_wcc:
 	fattr3 *fa = &poa->post_op_attr_u.attributes;
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	print_nfs_fh3_hex(&args->file);
 
@@ -721,7 +721,7 @@ static int nfs3_write(struct rpc_trans *rt)
 		goto out;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
@@ -778,7 +778,7 @@ update_wcc:
 
 	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
 
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	print_nfs_fh3_hex(&args->file);
 
@@ -865,7 +865,7 @@ static int nfs3_create(struct rpc_trans *rt)
 		goto out;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
@@ -979,7 +979,7 @@ update_wcc:
 	fa = &wcc->after.post_op_attr_u.attributes;
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	print_nfs_fh3_hex(&args->where.dir);
 
@@ -1047,7 +1047,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
@@ -1210,7 +1210,7 @@ static int nfs3_mknod(struct rpc_trans *rt)
 		break;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
@@ -1331,7 +1331,7 @@ update_wcc:
 	fa = &wcc->after.post_op_attr_u.attributes;
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	print_nfs_fh3_hex(&args->where.dir);
 
@@ -1402,7 +1402,7 @@ static int nfs3_remove(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	de = dirent_find(inode->i_parent, reffs_case_get(), args->object.name);
 	if (!de) {
 		res->status = NFS3ERR_NOENT;
@@ -1425,7 +1425,7 @@ update_wcc:
 
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	print_nfs_fh3_hex(&args->object.dir);
 
@@ -1492,7 +1492,7 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
@@ -1536,7 +1536,7 @@ update_wcc:
 
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	print_nfs_fh3_hex(&args->object.dir);
 
@@ -1659,12 +1659,12 @@ static int nfs3_rename(struct rpc_trans *rt)
 	 * Note: Hold the d_rwlocks longer than we need to!
 	 */
 	if (inode_src == inode_dst) {
-		pthread_mutex_lock(&inode_src->i_attr_lock);
+		pthread_mutex_lock(&inode_src->i_attr_mutex);
 		pthread_rwlock_wrlock(&inode_src->i_parent->d_rwlock);
 	} else {
-		pthread_mutex_lock(&inode_src->i_attr_lock);
+		pthread_mutex_lock(&inode_src->i_attr_mutex);
 		pthread_rwlock_wrlock(&inode_src->i_parent->d_rwlock);
-		pthread_mutex_lock(&inode_dst->i_attr_lock);
+		pthread_mutex_lock(&inode_dst->i_attr_mutex);
 		pthread_rwlock_wrlock(&inode_dst->i_parent->d_rwlock);
 	}
 
@@ -1747,12 +1747,12 @@ update_wcc:
 
 	if (inode_src == inode_dst) {
 		pthread_rwlock_unlock(&inode_src->i_parent->d_rwlock);
-		pthread_mutex_unlock(&inode_src->i_attr_lock);
+		pthread_mutex_unlock(&inode_src->i_attr_mutex);
 	} else {
 		pthread_rwlock_unlock(&inode_dst->i_parent->d_rwlock);
-		pthread_mutex_unlock(&inode_dst->i_attr_lock);
+		pthread_mutex_unlock(&inode_dst->i_attr_mutex);
 		pthread_rwlock_unlock(&inode_src->i_parent->d_rwlock);
-		pthread_mutex_unlock(&inode_src->i_attr_lock);
+		pthread_mutex_unlock(&inode_src->i_attr_mutex);
 	}
 
 	print_nfs_fh3_hex(&args->from.dir);
@@ -1837,7 +1837,7 @@ static int nfs3_readdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	pthread_rwlock_rdlock(&inode->i_parent->d_rwlock);
 
 	dl = &resok->reply;
@@ -1901,7 +1901,7 @@ update_wcc:
 	inode_attr_to_fattr(inode, fa);
 
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	print_nfs_fh3_hex(&args->dir);
 

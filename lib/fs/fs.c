@@ -230,11 +230,11 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 
 	pthread_mutex_lock(&inode->i_db_lock);
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
 	inode->i_mode = (mode & 07777);
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	pthread_mutex_unlock(&inode->i_db_lock);
 	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
@@ -265,12 +265,12 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 
 	pthread_mutex_lock(&inode->i_db_lock);
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
 	inode->i_uid = uid;
 	inode->i_gid = gid;
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	pthread_mutex_unlock(&inode->i_db_lock);
 	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
@@ -561,9 +561,9 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 		}
 	}
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out_unlock:
 	pthread_mutex_unlock(&inode->i_db_lock);
@@ -618,11 +618,11 @@ static int rename_dest_locked(struct name_match *nm_src, struct dirent *de_dst,
 		old = rcu_xchg_pointer(&nm_src->nm_dirent->d_name, name);
 		rcu_read_unlock();
 		free(old);
-		pthread_mutex_lock(&de_dst->d_inode->i_attr_lock);
+		pthread_mutex_lock(&de_dst->d_inode->i_attr_mutex);
 		inode_update_times_now(de_dst->d_inode,
 				       REFFS_INODE_UPDATE_CTIME |
 					       REFFS_INODE_UPDATE_MTIME);
-		pthread_mutex_unlock(&de_dst->d_inode->i_attr_lock);
+		pthread_mutex_unlock(&de_dst->d_inode->i_attr_mutex);
 	}
 
 	return ret;
@@ -937,12 +937,12 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 		}
 	}
 
-	pthread_mutex_lock(&inode->i_attr_lock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
 	inode->i_size = inode->i_db->db_size;
 	inode->i_used = inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
-	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	ret = size;
 out_unlock:

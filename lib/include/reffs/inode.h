@@ -44,7 +44,7 @@ struct inode {
 	struct dirent *i_parent;
 
 	pthread_mutex_t i_db_lock;
-	pthread_mutex_t i_attr_lock;
+	pthread_mutex_t i_attr_mutex;
 
 	/* attributes */
 	pthread_mutex_t i_attrs_lock;
