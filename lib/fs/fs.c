@@ -228,15 +228,12 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 
 	inode = nm->nm_dirent->d_inode;
 
-	pthread_rwlock_rdlock(&inode->i_db_rwlock);
-
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
 	inode->i_mode = (mode & 07777);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
@@ -263,8 +260,6 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 
 	inode = nm->nm_dirent->d_inode;
 
-	pthread_rwlock_rdlock(&inode->i_db_rwlock);
-
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
@@ -272,7 +267,6 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 	inode->i_gid = gid;
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
