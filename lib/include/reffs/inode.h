@@ -59,6 +59,9 @@ struct inode {
 	struct timespec i_btime;
 	struct timespec i_ctime;
 	struct timespec i_mtime;
+
+	uint32_t i_dev_major;
+	uint32_t i_dev_minor;
 };
 
 struct inode *inode_alloc(struct super_block *sb, uint64_t ino);

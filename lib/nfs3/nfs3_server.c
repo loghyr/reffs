@@ -28,6 +28,7 @@
 #include "reffs/cmp.h"
 #include "reffs/log.h"
 #include "reffs/filehandle.h"
+#include "reffs/test.h"
 #include "reffs/time.h"
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
@@ -41,7 +42,8 @@ static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 	fa->gid = inode->i_gid;
 	fa->size = inode->i_size;
 	fa->used = inode->i_used;
-	// fa->rdev = 0;  Implement once we do these types
+	fa->rdev.specdata1 = inode->i_dev_major;
+	fa->rdev.specdata2 = inode->i_dev_minor;
 	fa->fsid = inode->i_sb->sb_id;
 	fa->fileid = inode->i_ino;
 	timespec_to_nfstime3(&inode->i_atime, &fa->atime);
@@ -1082,8 +1084,191 @@ static int nfs3_symlink(struct rpc_trans *rt)
 
 static int nfs3_mknod(struct rpc_trans *rt)
 {
-	TRACE("MKNOD: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+	struct inode *tmp = NULL;
+
+	MKNOD3args *args = ph->ph_args;
+	MKNOD3res *res = ph->ph_res;
+	MKNOD3resok *resok = &res->MKNOD3res_u.resok;
+
+	wcc_data *wcc = &resok->dir_wcc;
+	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
+	wcc_attr *wa = &wcc->before.pre_op_attr_u.attributes;
+	sattr3 *sa;
+
+	uint64_t flags = 0;
+
+	struct network_file_handle *nfh = NULL;
+
+	struct dirent *de = NULL;
+	struct authunix_parms ap;
+
+	if (args->where.dir.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		uint32_t crc = nfs3_getfh_crc(&args->where.dir);
+		TRACE("MKNOD: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		      crc);
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->where.dir.data.data_val;
+	TRACE("MKNOD: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
+	      nfh->nfh_sb, nfh->nfh_ino);
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	switch (args->what.type) {
+	case NF3REG:
+	case NF3DIR:
+	case NF3LNK:
+		res->status = NFS3ERR_BADTYPE;
+		goto out;
+	case NF3BLK:
+	case NF3CHR:
+	case NF3SOCK:
+	case NF3FIFO:
+		break;
+	}
+
+	pthread_mutex_lock(&inode->i_parent->d_lock);
+	pthread_mutex_lock(&inode->i_attr_lock);
+
+	wcc->before.attributes_follow = true;
+	wa->size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_mtime, &wa->mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &wa->ctime);
+
+	if (inode_name_is_child(inode, args->where.name)) {
+		res->status = NFS3ERR_EXIST;
+		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
+		fa = &wcc->after.post_op_attr_u.attributes;
+		goto update_wcc;
+	}
+
+	de = dirent_alloc(inode->i_parent, args->where.name,
+			  reffs_life_action_birth);
+	if (!de) {
+		res->status = NFS3ERR_NOENT;
+		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
+		fa = &wcc->after.post_op_attr_u.attributes;
+		goto update_wcc;
+	}
+
+	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+							 __ATOMIC_RELAXED));
+	if (!de->d_inode) {
+		dirent_parent_release(de, reffs_life_action_death);
+		res->status = NFS3ERR_NOENT;
+		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
+		fa = &wcc->after.post_op_attr_u.attributes;
+		goto update_wcc;
+	}
+
+	de->d_inode->i_uid = ap.aup_uid;
+	de->d_inode->i_gid = ap.aup_gid;
+	clock_gettime(CLOCK_REALTIME, &de->d_inode->i_mtime);
+	de->d_inode->i_atime = de->d_inode->i_mtime;
+	de->d_inode->i_btime = de->d_inode->i_mtime;
+	de->d_inode->i_ctime = de->d_inode->i_mtime;
+	de->d_inode->i_mode = inode->i_mode &
+			      ~S_IFDIR; // Inherit from the parent!
+	de->d_inode->i_size = 4096;
+	de->d_inode->i_used = 8;
+	de->d_inode->i_nlink = 2;
+
+	switch (args->what.type) {
+	case NF3REG:
+	case NF3DIR:
+	case NF3LNK:
+		verify_msg(0, "Type changed: %u", args->what.type);
+		goto out;
+	case NF3BLK:
+		sa = &args->what.mknoddata3_u.device.dev_attributes;
+		de->d_inode->i_dev_major =
+			args->what.mknoddata3_u.device.spec.specdata1;
+		de->d_inode->i_dev_minor =
+			args->what.mknoddata3_u.device.spec.specdata2;
+		de->d_inode->i_mode |= S_IFBLK;
+		break;
+	case NF3CHR:
+		sa = &args->what.mknoddata3_u.device.dev_attributes;
+		de->d_inode->i_dev_major =
+			args->what.mknoddata3_u.device.spec.specdata1;
+		de->d_inode->i_dev_minor =
+			args->what.mknoddata3_u.device.spec.specdata2;
+		de->d_inode->i_mode |= S_IFCHR;
+		break;
+	case NF3SOCK:
+		sa = &args->what.mknoddata3_u.pipe_attributes;
+		de->d_inode->i_mode |= S_IFSOCK;
+		break;
+	case NF3FIFO:
+		sa = &args->what.mknoddata3_u.pipe_attributes;
+		de->d_inode->i_mode |= S_IFIFO;
+		break;
+	}
+
+	res->status = nfs3_apply_sattr3(de->d_inode, sa, &flags);
+	if (res->status) {
+		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
+		fa = &wcc->after.post_op_attr_u.attributes;
+		goto update_wcc;
+	}
+
+	nfh = calloc(1, sizeof(struct nfs_fh3));
+	if (nfh) {
+		resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+		resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+		resok->obj.handle_follows = true;
+		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+		nfh->nfh_sb = sb->sb_id;
+		nfh->nfh_ino = de->d_inode->i_ino;
+	}
+
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
+					      REFFS_INODE_UPDATE_MTIME);
+
+	resok->obj_attributes.attributes_follow = true;
+	fa = &resok->obj_attributes.post_op_attr_u.attributes;
+
+	inode_attr_to_fattr(tmp, fa);
+
+update_wcc:
+	wcc->after.attributes_follow = true;
+	fa = &wcc->after.post_op_attr_u.attributes;
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_lock);
+	pthread_mutex_unlock(&inode->i_parent->d_lock);
+
+	print_nfs_fh3_hex(&args->where.dir);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_remove(struct rpc_trans *rt)
