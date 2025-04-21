@@ -62,6 +62,16 @@ struct io_context {
 	int ic_fd;
 	uint32_t ic_id;
 	void *ic_buffer;
+
+	// Network address information (can handle both IPv4 and IPv6)
+	struct sockaddr_storage peer_addr; // Remote endpoint address
+	socklen_t peer_addr_len; // Length of peer address
+	struct sockaddr_storage local_addr; // Local endpoint address
+	socklen_t local_addr_len; // Length of local address
+	char peer_str[INET6_ADDRSTRLEN]; // String representation of peer IP
+	uint16_t peer_port; // Peer port
+	char local_str[INET6_ADDRSTRLEN]; // String representation of local IP
+	uint16_t local_port; // Local port
 };
 
 // Task struct for worker queue
@@ -234,10 +244,31 @@ void unregister_client_fd(int fd)
 	}
 }
 
+static void io_context_copy_network_info(struct io_context *dst,
+					 const struct io_context *src)
+{
+	if (!dst || !src)
+		return;
+
+	// Copy peer address information
+	memcpy(&dst->peer_addr, &src->peer_addr,
+	       sizeof(struct sockaddr_storage));
+	dst->peer_addr_len = src->peer_addr_len;
+	memcpy(dst->peer_str, src->peer_str, INET6_ADDRSTRLEN);
+	dst->peer_port = src->peer_port;
+
+	// Copy local address information
+	memcpy(&dst->local_addr, &src->local_addr,
+	       sizeof(struct sockaddr_storage));
+	dst->local_addr_len = src->local_addr_len;
+	memcpy(dst->local_str, src->local_str, INET6_ADDRSTRLEN);
+	dst->local_port = src->local_port;
+}
+
 // Create an IO context for operations
 struct io_context *create_io_context(int op_type, int fd, void *buffer)
 {
-	struct io_context *ic = malloc(sizeof(struct io_context));
+	struct io_context *ic = calloc(1, sizeof(struct io_context));
 	if (!ic) {
 		return NULL;
 	}
@@ -298,25 +329,15 @@ void handle_getattr_response(struct nfs_request_context *nrc, void *response,
 	free(nrc);
 }
 
-int request_more_read_data(struct buffer_state *bs, struct io_uring *ring)
+int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
+			   struct io_context *ic)
 {
-	char *new_buffer = malloc(BUFFER_SIZE);
-	if (new_buffer) {
-		// Create an IO context for this read operation
-		struct io_context *ic =
-			create_io_context(OP_TYPE_READ, bs->bs_fd, new_buffer);
-		if (!ic) {
-			free(new_buffer);
-			return -ENOMEM;
-		}
+	ic->ic_fd = bs->bs_fd;
 
-		struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-		io_uring_prep_read(sqe, bs->bs_fd, new_buffer, BUFFER_SIZE, 0);
-		sqe->user_data = (uint64_t)(uintptr_t)ic;
-		io_uring_submit(ring);
-	} else {
-		return -ENOMEM;
-	}
+	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+	io_uring_prep_read(sqe, bs->bs_fd, ic->ic_buffer, BUFFER_SIZE, 0);
+	sqe->user_data = (uint64_t)(uintptr_t)ic;
+	io_uring_submit(ring);
 
 	return 0;
 }
@@ -326,7 +347,8 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring)
 //   > 0: Complete message available, returns size
 //   0: Need more data
 //   < 0: Error
-int process_record_marker(struct buffer_state *bs, struct io_uring *ring)
+int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
+			  struct io_context *ic)
 {
 	char *data = bs->bs_data;
 	size_t filled = bs->bs_filled;
@@ -373,7 +395,7 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring)
 					bs->bs_filled - 4);
 				bs->bs_filled -= 4;
 
-				return request_more_read_data(bs, ring);
+				return request_more_read_data(bs, ring, ic);
 			}
 		}
 
@@ -416,14 +438,14 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring)
 				memmove(bs->bs_data, data, filled);
 				bs->bs_filled = filled;
 
-				return request_more_read_data(bs, ring);
+				return request_more_read_data(bs, ring, ic);
 			}
 		} else {
 			// We need more data for this fragment
 			memmove(bs->bs_data, data, filled);
 			bs->bs_filled = filled;
 
-			return request_more_read_data(bs, ring);
+			return request_more_read_data(bs, ring, ic);
 		}
 	}
 
@@ -435,7 +457,7 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring)
 		bs->bs_filled = 0;
 	}
 
-	return request_more_read_data(bs, ring);
+	return request_more_read_data(bs, ring, ic);
 }
 
 // NFS protocol handler
@@ -582,7 +604,7 @@ void *worker_thread(void *arg)
 int setup_io_uring(struct io_uring *ring)
 {
 	if (io_uring_queue_init(QUEUE_DEPTH, ring, 0) < 0) {
-		perror("io_uring_queue_init");
+		LOG("io_uring_queue_init: %s", strerror(errno));
 		return -1;
 	}
 	return 0;
@@ -596,7 +618,7 @@ int setup_listener(int port)
 
 	listen_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (listen_fd < 0) {
-		perror("socket");
+		LOG("socket: %s", strerror(errno));
 		return -1;
 	}
 
@@ -604,7 +626,7 @@ int setup_listener(int port)
 	int opt = 1;
 	if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) <
 	    0) {
-		perror("setsockopt");
+		LOG("setsockopt: %s", strerror(errno));
 		close(listen_fd);
 		return -1;
 	}
@@ -614,13 +636,13 @@ int setup_listener(int port)
 	address.sin_port = htons(port);
 
 	if (bind(listen_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-		perror("bind");
+		LOG("bind: %s", strerror(errno));
 		close(listen_fd);
 		return -1;
 	}
 
 	if (listen(listen_fd, 10) < 0) {
-		perror("listen");
+		LOG("listen: %s", strerror(errno));
 		close(listen_fd);
 		return -1;
 	}
@@ -685,7 +707,7 @@ bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len)
 }
 
 // Handle read completions
-int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
+static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 {
 	// Get the IO context from user_data
 	struct io_context *ic = (struct io_context *)(uintptr_t)cqe->user_data;
@@ -730,13 +752,15 @@ int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 		return -ENOMEM;
 	}
 
-	free(buffer); // Original buffer no longer needed
-	free(ic); // Free the context
-
 	// Process the RPC record marker to get a complete RPC message
-	int complete_size = process_record_marker(bs, ring);
-	if (complete_size <= 0)
+	int complete_size = process_record_marker(bs, ring, ic);
+	if (complete_size <= 0) {
+		if (complete_size < 0) {
+			free(buffer);
+			free(ic);
+		}
 		return 0;
+	}
 
 	// We have a complete RPC message
 	TRACE("Complete RPC message assembled (%d bytes)", complete_size);
@@ -770,6 +794,179 @@ int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 		bs->bs_record.rs_position = 0;
 	}
 
+	return 0;
+}
+
+/*
+&static void format_address_for_display(const struct sockaddr_storage *addr,
+				       char *buf, size_t buflen, uint16_t *port)
+{
+	if (addr->ss_family == AF_INET) {
+		// IPv4
+		struct sockaddr_in *ipv4 = (struct sockaddr_in *)addr;
+		inet_ntop(AF_INET, &ipv4->sin_addr, buf, buflen);
+		if (port)
+			*port = ntohs(ipv4->sin_port);
+	} else if (addr->ss_family == AF_INET6) {
+		struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)addr;
+
+		// Check if this is an IPv4-mapped IPv6 address
+		if (IN6_IS_ADDR_V4MAPPED(&ipv6->sin6_addr)) {
+			// Extract the IPv4 part from the IPv6 address
+			struct in_addr ipv4_addr;
+			memcpy(&ipv4_addr, ((char *)&ipv6->sin6_addr) + 12, 4);
+			inet_ntop(AF_INET, &ipv4_addr, buf, buflen);
+		} else {
+			// Regular IPv6
+			inet_ntop(AF_INET6, &ipv6->sin6_addr, buf, buflen);
+		}
+
+		if (port)
+			*port = ntohs(ipv6->sin6_port);
+	} else {
+		// Unknown address family
+		snprintf(buf, buflen, "unknown");
+		if (port)
+			*port = 0;
+	}
+}
+
+static const char *get_peer_address_str(struct io_context *ic, char *buf,
+					size_t buflen)
+{
+	format_address_for_display(&ic->peer_addr, buf, buflen, NULL);
+	return buf;
+}
+*/
+
+static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
+{
+	// Get the IO context from user_data
+	struct io_context *ic = (struct io_context *)(uintptr_t)cqe->user_data;
+	if (!ic) {
+		LOG("Error: NULL io context in read handler");
+		return -EINVAL;
+	}
+
+	struct io_uring_sqe *sqe;
+
+	// Handle new connection
+	int listen_fd = ic->ic_fd;
+	int client_fd = cqe->res;
+
+	// Store peer (remote) address information
+	ic->peer_addr_len = sizeof(ic->peer_addr);
+	if (getpeername(client_fd, (struct sockaddr *)&ic->peer_addr,
+			&ic->peer_addr_len) == 0) {
+		// Get IP string and port based on address family
+		if (ic->peer_addr.ss_family == AF_INET) {
+			// IPv4
+			struct sockaddr_in *ipv4 =
+				(struct sockaddr_in *)&ic->peer_addr;
+			inet_ntop(AF_INET, &ipv4->sin_addr, ic->peer_str,
+				  INET6_ADDRSTRLEN);
+			ic->peer_port = ntohs(ipv4->sin_port);
+		} else if (ic->peer_addr.ss_family == AF_INET6) {
+			// IPv6
+			struct sockaddr_in6 *ipv6 =
+				(struct sockaddr_in6 *)&ic->peer_addr;
+			inet_ntop(AF_INET6, &ipv6->sin6_addr, ic->peer_str,
+				  INET6_ADDRSTRLEN);
+			ic->peer_port = ntohs(ipv6->sin6_port);
+		}
+
+		TRACE("Client connected from %s port %d", ic->peer_str,
+		      ic->peer_port);
+	} else {
+		LOG("Failed to get peer information: %s", strerror(errno));
+		// Use empty values instead of failing
+		memset(&ic->peer_addr, 0, sizeof(ic->peer_addr));
+		ic->peer_addr_len = 0;
+		strcpy(ic->peer_str, "unknown");
+		ic->peer_port = 0;
+	}
+
+	// Store local (server) address information
+	ic->local_addr_len = sizeof(ic->local_addr);
+	if (getsockname(client_fd, (struct sockaddr *)&ic->local_addr,
+			&ic->local_addr_len) == 0) {
+		// Get IP string and port based on address family
+		if (ic->local_addr.ss_family == AF_INET) {
+			// IPv4
+			struct sockaddr_in *ipv4 =
+				(struct sockaddr_in *)&ic->local_addr;
+			inet_ntop(AF_INET, &ipv4->sin_addr, ic->local_str,
+				  INET6_ADDRSTRLEN);
+			ic->local_port = ntohs(ipv4->sin_port);
+		} else if (ic->local_addr.ss_family == AF_INET6) {
+			// IPv6
+			struct sockaddr_in6 *ipv6 =
+				(struct sockaddr_in6 *)&ic->local_addr;
+			inet_ntop(AF_INET6, &ipv6->sin6_addr, ic->local_str,
+				  INET6_ADDRSTRLEN);
+			ic->local_port = ntohs(ipv6->sin6_port);
+		}
+
+		TRACE("Server local endpoint - %s port %d", ic->local_str,
+		      ic->local_port);
+	} else {
+		LOG("Failed to get local information: %s", strerror(errno));
+		// Use empty values instead of failing
+		memset(&ic->local_addr, 0, sizeof(ic->local_addr));
+		ic->local_addr_len = 0;
+		strcpy(ic->local_str, "unknown");
+		ic->local_port = 0;
+	}
+
+	TRACE("New connection accepted (fd: %d)", client_fd);
+
+	// Register this client
+	register_client_fd(client_fd);
+
+	// Prepare to read from this new connection
+	char *buffer = malloc(BUFFER_SIZE);
+	if (buffer) {
+		// Create IO context for the read operation
+		struct io_context *ic_read =
+			create_io_context(OP_TYPE_READ, client_fd, buffer);
+		io_context_copy_network_info(ic_read, ic);
+		if (!ic_read) {
+			LOG("Failed to create read context");
+			free(buffer);
+			close(client_fd);
+		} else {
+			sqe = io_uring_get_sqe(ring);
+			io_uring_prep_read(sqe, client_fd, buffer, BUFFER_SIZE,
+					   0);
+			sqe->user_data = (uint64_t)(uintptr_t)ic_read;
+			io_uring_submit(ring);
+		}
+	} else {
+		LOG("malloc: %s", strerror(errno));
+		close(client_fd);
+	}
+
+	// Submit a new accept for this listener
+	struct sockaddr_in client_address;
+	socklen_t client_len = sizeof(client_address);
+
+	// Create new IO context for the next accept
+	struct io_context *ic_accept =
+		create_io_context(OP_TYPE_ACCEPT, listen_fd, NULL);
+	if (!ic_accept) {
+		LOG("Failed to create accept context");
+		free(ic);
+		io_uring_cqe_seen(ring, cqe);
+		return 0;
+	}
+
+	sqe = io_uring_get_sqe(ring);
+	io_uring_prep_accept(sqe, listen_fd, (struct sockaddr *)&client_address,
+			     &client_len, 0);
+	sqe->user_data = (uint64_t)(uintptr_t)ic_accept;
+	io_uring_submit(ring);
+
+	free(ic); // Free the completed accept context
 	return 0;
 }
 
@@ -922,67 +1119,7 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 
 			switch (ic->ic_op_type) {
 			case OP_TYPE_ACCEPT: {
-				// Handle new connection
-				int listen_fd = ic->ic_fd;
-				int client_fd = cqe->res;
-
-				TRACE("New connection accepted (fd: %d)",
-				      client_fd);
-
-				// Register this client
-				register_client_fd(client_fd);
-
-				// Prepare to read from this new connection
-				char *buffer = malloc(BUFFER_SIZE);
-				if (buffer) {
-					// Create IO context for the read operation
-					struct io_context *ic_read =
-						create_io_context(OP_TYPE_READ,
-								  client_fd,
-								  buffer);
-					if (!ic_read) {
-						LOG("Failed to create read context");
-						free(buffer);
-						close(client_fd);
-					} else {
-						sqe = io_uring_get_sqe(&ring);
-						io_uring_prep_read(
-							sqe, client_fd, buffer,
-							BUFFER_SIZE, 0);
-						sqe->user_data =
-							(uint64_t)(uintptr_t)
-								ic_read;
-						io_uring_submit(&ring);
-					}
-				} else {
-					perror("malloc");
-					close(client_fd);
-				}
-
-				// Submit a new accept for this listener
-				struct sockaddr_in client_address;
-				socklen_t client_len = sizeof(client_address);
-
-				// Create new IO context for the next accept
-				struct io_context *ic_accept =
-					create_io_context(OP_TYPE_ACCEPT,
-							  listen_fd, NULL);
-				if (!ic_accept) {
-					LOG("Failed to create accept context");
-					free(ic);
-					io_uring_cqe_seen(&ring, cqe);
-					continue;
-				}
-
-				sqe = io_uring_get_sqe(&ring);
-				io_uring_prep_accept(
-					sqe, listen_fd,
-					(struct sockaddr *)&client_address,
-					&client_len, 0);
-				sqe->user_data = (uint64_t)(uintptr_t)ic_accept;
-				io_uring_submit(&ring);
-
-				free(ic); // Free the completed accept context
+				op_accept_handler(cqe, &ring);
 				break;
 			}
 
