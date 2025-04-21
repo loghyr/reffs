@@ -356,6 +356,7 @@ static int nfs3_lookup(struct rpc_trans *rt)
 	LOOKUP3res *res = ph->ph_res;
 	LOOKUP3resok *resok = &res->LOOKUP3res_u.resok;
 
+	post_op_attr *poa = &resok->dir_attributes;
 	fattr3 *fa;
 
 	struct network_file_handle *nfh = NULL;
@@ -400,17 +401,22 @@ static int nfs3_lookup(struct rpc_trans *rt)
 	exists = inode_name_get_inode(inode, args->what.name);
 	if (!exists) {
 		res->status = NFS3ERR_NOENT;
+		poa = &res->LOOKUP3res_u.resfail.dir_attributes;
 		goto update_wcc;
 	}
 
 	nfh = calloc(1, sizeof(struct nfs_fh3));
-	if (nfh) {
-		resok->object.data.data_val = (char *)nfh;
-		resok->object.data.data_len = sizeof(nfs_fh3);
-		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-		nfh->nfh_sb = sb->sb_id;
-		nfh->nfh_ino = exists->i_ino;
+	if (!nfh) {
+		res->status = NFS3ERR_JUKEBOX;
+		poa = &res->LOOKUP3res_u.resfail.dir_attributes;
+		goto update_wcc;
 	}
+
+	resok->object.data.data_val = (char *)nfh;
+	resok->object.data.data_len = sizeof(nfs_fh3);
+	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+	nfh->nfh_sb = sb->sb_id;
+	nfh->nfh_ino = exists->i_ino;
 
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
@@ -418,8 +424,8 @@ static int nfs3_lookup(struct rpc_trans *rt)
 	inode_attr_to_fattr(exists, fa);
 
 update_wcc:
-	resok->dir_attributes.attributes_follow = true;
-	fa = &resok->dir_attributes.post_op_attr_u.attributes;
+	poa->attributes_follow = true;
+	fa = &poa->post_op_attr_u.attributes;
 
 	inode_attr_to_fattr(inode, fa);
 
@@ -908,16 +914,6 @@ static int nfs3_create(struct rpc_trans *rt)
 		tmp->i_mode = (S_IFCHR | inode->i_mode) & ~S_IFDIR;
 	}
 
-	nfh = calloc(1, sizeof(struct nfs_fh3));
-	if (nfh) {
-		resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-		resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
-		resok->obj.handle_follows = true;
-		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-		nfh->nfh_sb = sb->sb_id;
-		nfh->nfh_ino = tmp->i_ino;
-	}
-
 	if (args->how.mode == EXCLUSIVE) {
 		createverf3_to_timespec(args->how.createhow3_u.verf,
 					&tmp->i_ctime);
@@ -932,6 +928,20 @@ static int nfs3_create(struct rpc_trans *rt)
 
 	if (flags)
 		inode_update_times_now(inode, flags);
+	nfh = calloc(1, sizeof(struct nfs_fh3));
+	if (!nfh) {
+		res->status = NFS3ERR_JUKEBOX;
+		wcc = &res->CREATE3res_u.resfail.dir_wcc;
+		fa = &wcc->after.post_op_attr_u.attributes;
+		goto update_wcc;
+	}
+
+	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+	resok->obj.handle_follows = true;
+	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+	nfh->nfh_sb = sb->sb_id;
+	nfh->nfh_ino = tmp->i_ino;
 
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
@@ -970,6 +980,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	MKDIR3args *args = ph->ph_args;
 	MKDIR3res *res = ph->ph_res;
 	MKDIR3resok *resok = &res->MKDIR3res_u.resok;
+	MKDIR3resfail *resfail = &res->MKDIR3res_u.resfail;
 
 	wcc_data *wcc = &resok->dir_wcc;
 	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
@@ -1025,6 +1036,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 
 	if (inode_name_is_child(inode, args->where.name)) {
 		res->status = NFS3ERR_EXIST;
+		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
 
@@ -1032,6 +1044,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 			  reffs_life_action_birth);
 	if (!de) {
 		res->status = NFS3ERR_NOENT;
+		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
 
@@ -1040,6 +1053,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	if (!de->d_inode) {
 		dirent_parent_release(de, reffs_life_action_death);
 		res->status = NFS3ERR_NOENT;
+		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
 
@@ -1056,14 +1070,18 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	de->d_inode->i_nlink = 2;
 
 	nfh = calloc(1, sizeof(struct nfs_fh3));
-	if (nfh) {
-		resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-		resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
-		resok->obj.handle_follows = true;
-		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-		nfh->nfh_sb = sb->sb_id;
-		nfh->nfh_ino = de->d_inode->i_ino;
+	if (!nfh) {
+		res->status = NFS3ERR_JUKEBOX;
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
 	}
+
+	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+	resok->obj.handle_follows = true;
+	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+	nfh->nfh_sb = sb->sb_id;
+	nfh->nfh_ino = de->d_inode->i_ino;
 
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
@@ -1254,14 +1272,19 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	}
 
 	nfh = calloc(1, sizeof(struct nfs_fh3));
-	if (nfh) {
-		resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-		resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
-		resok->obj.handle_follows = true;
-		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-		nfh->nfh_sb = sb->sb_id;
-		nfh->nfh_ino = de->d_inode->i_ino;
+	if (!nfh) {
+		res->status = NFS3ERR_JUKEBOX;
+		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
+		fa = &wcc->after.post_op_attr_u.attributes;
+		goto update_wcc;
 	}
+
+	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+	resok->obj.handle_follows = true;
+	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+	nfh->nfh_sb = sb->sb_id;
+	nfh->nfh_ino = de->d_inode->i_ino;
 
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
