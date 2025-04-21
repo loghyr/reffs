@@ -534,8 +534,6 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 	if (ret)
 		goto out;
 
-	pthread_rwlock_rdlock(&nm->nm_dirent->d_rwlock);
-
 	inode = nm->nm_dirent->d_inode;
 
 	// Perhaps a reader/write lock?
@@ -561,7 +559,6 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 
 out_unlock:
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
-	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
@@ -907,8 +904,6 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 	if (ret)
 		goto out;
 
-	pthread_rwlock_rdlock(&nm->nm_dirent->d_rwlock);
-
 	inode = nm->nm_dirent->d_inode;
 
 	pthread_rwlock_wrlock(&inode->i_db_rwlock);
@@ -941,7 +936,6 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 	ret = size;
 out_unlock:
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
-	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
 
