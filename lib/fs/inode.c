@@ -42,7 +42,7 @@ static void inode_free_rcu(struct rcu_head *rcu)
 	if (inode->i_db)
 		data_block_put(inode->i_db);
 
-	pthread_mutex_destroy(&inode->i_db_lock);
+	pthread_rwlock_destroy(&inode->i_db_rwlock);
 	pthread_mutex_destroy(&inode->i_attr_mutex);
 
 	free(inode);
@@ -100,7 +100,7 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 	cds_lfht_node_init(&inode->i_node);
 	urcu_ref_init(&inode->i_ref);
 
-	pthread_mutex_init(&inode->i_db_lock, NULL);
+	pthread_rwlock_init(&inode->i_db_rwlock, NULL);
 	pthread_mutex_init(&inode->i_attr_mutex, NULL);
 
 	inode->i_sb = super_block_get(sb);

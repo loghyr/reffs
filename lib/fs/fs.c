@@ -228,7 +228,7 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 
 	inode = nm->nm_dirent->d_inode;
 
-	pthread_mutex_lock(&inode->i_db_lock);
+	pthread_rwlock_rdlock(&inode->i_db_rwlock);
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
@@ -236,7 +236,7 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 	inode->i_mode = (mode & 07777);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	pthread_mutex_unlock(&inode->i_db_lock);
+	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
@@ -263,7 +263,7 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 
 	inode = nm->nm_dirent->d_inode;
 
-	pthread_mutex_lock(&inode->i_db_lock);
+	pthread_rwlock_rdlock(&inode->i_db_rwlock);
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
@@ -272,7 +272,7 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 	inode->i_gid = gid;
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	pthread_mutex_unlock(&inode->i_db_lock);
+	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
@@ -545,7 +545,7 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 	inode = nm->nm_dirent->d_inode;
 
 	// Perhaps a reader/write lock?
-	pthread_mutex_lock(&inode->i_db_lock);
+	pthread_rwlock_rdlock(&inode->i_db_rwlock);
 
 	if (inode->i_mode & S_IFDIR) {
 		ret = -EISDIR;
@@ -566,7 +566,7 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out_unlock:
-	pthread_mutex_unlock(&inode->i_db_lock);
+	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);
@@ -917,7 +917,7 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 
 	inode = nm->nm_dirent->d_inode;
 
-	pthread_mutex_lock(&inode->i_db_lock);
+	pthread_rwlock_wrlock(&inode->i_db_rwlock);
 
 	if (inode->i_mode & S_IFDIR) {
 		ret = -EISDIR;
@@ -946,7 +946,7 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 
 	ret = size;
 out_unlock:
-	pthread_mutex_unlock(&inode->i_db_lock);
+	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	pthread_rwlock_unlock(&nm->nm_dirent->d_rwlock);
 	dirent_put(nm->nm_dirent);
 	free(nm);

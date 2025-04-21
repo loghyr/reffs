@@ -40,7 +40,7 @@
  * 1) Always take the d_rwlock of the dirent after
  * the i_attr_mutex of the inode.
  *
- * 2) Always take the i_db_lock of the inode after the
+ * 2) Always take the i_db_rwlock of the inode after the
  * i_attr_mutex of the inode.
  */
 
@@ -324,9 +324,9 @@ static int nfs3_setattr(struct rpc_trans *rt)
 		}
 	}
 
-	pthread_mutex_lock(&inode->i_db_lock);
+	pthread_rwlock_wrlock(&inode->i_db_rwlock);
 	res->status = nfs3_apply_sattr3(inode, sa, &flags);
-	pthread_mutex_unlock(&inode->i_db_lock);
+	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	if (res->status) {
 		wcc = &res->SETATTR3res_u.resfail.obj_wcc;
 		fa = &wcc->after.post_op_attr_u.attributes;
@@ -623,7 +623,7 @@ static int nfs3_read(struct rpc_trans *rt)
 
 		resok->data.data_len = args->count;
 
-		pthread_mutex_lock(&inode->i_db_lock);
+		pthread_rwlock_rdlock(&inode->i_db_rwlock);
 		res->status = data_block_read(inode->i_db, resok->data.data_val,
 					      args->count, args->offset);
 		if (!res->status && args->count) {
@@ -631,7 +631,7 @@ static int nfs3_read(struct rpc_trans *rt)
 			free(resok->data.data_val);
 			resok->data.data_len = 0;
 			poa = &res->READ3res_u.resfail.file_attributes;
-			pthread_mutex_unlock(&inode->i_db_lock);
+			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
 		}
 
@@ -639,7 +639,7 @@ static int nfs3_read(struct rpc_trans *rt)
 
 		if (args->offset + args->count > inode->i_db->db_size)
 			resok->eof = true;
-		pthread_mutex_unlock(&inode->i_db_lock);
+		pthread_rwlock_unlock(&inode->i_db_rwlock);
 
 		resok->count = resok->data.data_len;
 	}
@@ -727,14 +727,14 @@ static int nfs3_write(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 
-	pthread_mutex_lock(&inode->i_db_lock);
+	pthread_rwlock_wrlock(&inode->i_db_rwlock);
 	if (!inode->i_db) {
 		inode->i_db = data_block_alloc(
 			args->data.data_val, args->data.data_len, args->offset);
 		if (!inode->i_db) {
 			res->status = NFS3ERR_NOSPC;
 			wcc = &res->WRITE3res_u.resfail.file_wcc;
-			pthread_mutex_unlock(&inode->i_db_lock);
+			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
 		}
 	} else {
@@ -744,7 +744,7 @@ static int nfs3_write(struct rpc_trans *rt)
 		if (res->status < 0) {
 			res->status = -res->status;
 			wcc = &res->WRITE3res_u.resfail.file_wcc;
-			pthread_mutex_unlock(&inode->i_db_lock);
+			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
 		}
 
@@ -767,7 +767,7 @@ static int nfs3_write(struct rpc_trans *rt)
 
 	inode->i_size = inode->i_db->db_size;
 	inode->i_used = inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
-	pthread_mutex_unlock(&inode->i_db_lock);
+	pthread_rwlock_unlock(&inode->i_db_rwlock);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -886,7 +886,8 @@ static int nfs3_create(struct rpc_trans *rt)
 			if (!memcmp(cv, args->how.createhow3_u.verf,
 				    NFS3_CREATEVERFSIZE)) {
 				res->status = NFS3ERR_EXIST;
-				pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+				pthread_rwlock_unlock(
+					&inode->i_parent->d_rwlock);
 				goto update_wcc;
 			}
 			break;

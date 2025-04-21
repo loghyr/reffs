@@ -43,7 +43,7 @@ struct inode {
 	/* Only valid for directories */
 	struct dirent *i_parent;
 
-	pthread_mutex_t i_db_lock;
+	pthread_rwlock_t i_db_rwlock;
 	pthread_mutex_t i_attr_mutex;
 
 	/* attributes */
