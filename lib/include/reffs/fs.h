@@ -6,6 +6,8 @@
 #ifndef _REFFS_FS_H
 #define _REFFS_FS_H
 
+#include <sys/stat.h>
+
 struct dirent;
 struct name_match {
 	struct dirent *nm_dirent;

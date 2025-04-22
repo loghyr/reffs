@@ -21,48 +21,99 @@
 #include "mntv3_xdr.h"
 #include "reffs/rpc.h"
 #include "reffs/log.h"
+#include "reffs/filehandle.h"
+#include "reffs/fs.h"
+#include "reffs/dirent.h"
+#include "reffs/super_block.h"
 
 static int mount3_null(struct rpc_trans *rt)
 {
-	LOG("NULL");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	TRACE("NULL: xid=0x%08x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int mount3_mnt(struct rpc_trans *rt)
 {
-	LOG("MNT");
-	// struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	struct name_match *nm = NULL;
+	struct inode *inode;
 
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
-	return 0;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	dirpath dp = ph->ph_args;
+	mountres3 *mr = ph->ph_res;
+
+	struct network_file_handle *nfh = NULL;
+	int *flavors = NULL;
+
+	TRACE("MNT: xid=0x%08x", rt->rt_info.ri_xid);
+
+	mr->fhs_status =
+		find_matching_directory_entry(&nm, dp, LAST_COMPONENT_IS_MATCH);
+	if (mr->fhs_status)
+		goto out;
+
+	inode = nm->nm_dirent->d_inode;
+
+	nfh = calloc(1, sizeof(*nfh));
+	if (!nfh) {
+		mr->fhs_status = MNT3ERR_SERVERFAULT;
+		goto out;
+	}
+
+	flavors = calloc(2, sizeof(*flavors));
+	if (!flavors) {
+		mr->fhs_status = MNT3ERR_SERVERFAULT;
+		goto out;
+	}
+
+	mr->mountres3_u.mountinfo.fhandle.fhandle3_val = (char *)nfh;
+	mr->mountres3_u.mountinfo.fhandle.fhandle3_len = sizeof(*nfh);
+	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+	nfh->nfh_sb = inode->i_sb->sb_id; // FIXME: If mounted on, change the sb
+	nfh->nfh_ino = inode->i_ino;
+
+	mr->mountres3_u.mountinfo.auth_flavors.auth_flavors_len = 2;
+	mr->mountres3_u.mountinfo.auth_flavors.auth_flavors_val = flavors;
+
+	flavors[0] = AUTH_NONE;
+	flavors[1] = AUTH_UNIX;
+
+	nfh = NULL;
+	flavors = NULL;
+
+out:
+	free(flavors);
+	free(nfh);
+	if (nm) {
+		dirent_put(nm->nm_dirent);
+		free(nm);
+	}
+	return mr->fhs_status;
 }
 
 static int mount3_dump(struct rpc_trans *rt)
 {
-	LOG("DUMP");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	TRACE("DUMP: xid=0x%08x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int mount3_umnt(struct rpc_trans *rt)
 {
-	LOG("UMNT");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	TRACE("UMNT: xid=0x%08x", rt->rt_info.ri_xid);
 	return 0;
 }
 
 static int mount3_umntall(struct rpc_trans *rt)
 {
-	LOG("UMNTALL");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	TRACE("UMNTALL: xid=0x%08x", rt->rt_info.ri_xid);
+
 	return 0;
 }
 
 static int mount3_exports(struct rpc_trans *rt)
 {
-	LOG("EXPORTS");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	TRACE("EXPORTS: xid=0x%08x", rt->rt_info.ri_xid);
+
 	return 0;
 }
 
