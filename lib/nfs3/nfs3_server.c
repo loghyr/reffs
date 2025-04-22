@@ -425,7 +425,7 @@ static int nfs3_lookup(struct rpc_trans *rt)
 	resok->object.data.data_val = (char *)nfh;
 	resok->object.data.data_len = sizeof(nfs_fh3);
 	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-	nfh->nfh_sb = sb->sb_id;
+	nfh->nfh_sb = sb->sb_id;	// FIXME: If mounted on, change the sb
 	nfh->nfh_ino = exists->i_ino;
 
 	resok->obj_attributes.attributes_follow = true;
@@ -2254,6 +2254,7 @@ static int nfs3_readdir(struct rpc_trans *rt)
 		e->cookie = de->d_cookie;
 		e->name = strdup(de->d_name);
 		if (!e->name) {
+			free(e);
 			if (!dl->entries) {
 				free(dl);
 				res->status = NFS3ERR_JUKEBOX;
@@ -2304,8 +2305,183 @@ out:
 
 static int nfs3_readdirplus(struct rpc_trans *rt)
 {
-	TRACE("READDIRPLUS: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	READDIRPLUS3args *args = ph->ph_args;
+	READDIRPLUS3res *res = ph->ph_res;
+	READDIRPLUS3resok *resok = &res->READDIRPLUS3res_u.resok;
+
+	post_op_attr *poa_e;
+	post_op_attr *poa = &resok->dir_attributes;
+	fattr3 *fa;
+
+	dirlistplus3 *dl = NULL;
+	cookie3 cookie = args->cookie;
+	count3 maxcount = 0;
+	count3 dircount = 0;
+
+	struct network_file_handle *nfh = NULL;
+
+	struct dirent *de = NULL;
+	struct authunix_parms ap;
+
+	entryplus3 *e_next;
+
+	if (args->dir.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		uint32_t crc = nfs3_getfh_crc(&args->dir);
+		TRACE("READDIRPLUS: xid=0x%08x badfh crc=0x%08x",
+		      rt->rt_info.ri_xid, crc);
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->dir.data.data_val;
+	TRACE("READDIRPLUS: xid=0x%08x sb=%lu ino=%lu cookie=0x%08lx",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, args->cookie);
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	maxcount = sizeof(READDIRPLUS3res);
+	if (maxcount > args->maxcount) {
+		res->status = NFS3ERR_INVAL;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	pthread_rwlock_rdlock(&inode->i_parent->d_rwlock);
+
+	dl = &resok->reply;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(de, &de->d_inode->i_children, d_siblings) {
+		if (de->d_cookie < cookie)
+			continue;
+
+		entryplus3 *e = calloc(1, sizeof(*e));
+		if (!e) {
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+
+			break;
+		}
+
+		e->fileid = de->d_inode->i_ino;
+		e->cookie = de->d_cookie;
+		e->name = strdup(de->d_name);
+		if (!e->name) {
+			free(e);
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+
+			break;
+		}
+
+		nfh = calloc(1, sizeof(struct nfs_fh3));
+		if (!nfh) {
+			free(e->name);
+			free(e);
+
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+
+			break;
+		}
+
+		e->name_handle.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+		e->name_handle.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+		e->name_handle.handle_follows = true;
+		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+		nfh->nfh_sb = sb->sb_id;	// FIXME: If mounted on, change the sb
+		nfh->nfh_ino = de->d_inode->i_ino;
+
+		poa_e = &e->name_attributes;
+		poa_e->attributes_follow = true;
+		fa = &poa_e->post_op_attr_u.attributes;
+		inode_attr_to_fattr(de->d_inode, fa);
+
+		dircount += sizeof(*e) - sizeof(post_op_attr);
+		if (dircount > args->dircount) {
+			free(nfh);
+			free(e->name);
+			free(e);
+			goto past_eof;
+		}
+
+		maxcount += sizeof(*e) + strlen(e->name) +
+			    sizeof(struct nfs_fh3) + 1;
+		if (maxcount > args->maxcount) {
+			free(nfh);
+			free(e->name);
+			free(e);
+			goto past_eof;
+		}
+
+		if (!dl->entries) {
+			dl->entries = e;
+		} else {
+			e_next->nextentry = e;
+		}
+
+		e_next = e;
+	}
+	rcu_read_unlock();
+
+	dl->eof = true;
+
+past_eof:
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+
+update_wcc:
+	poa->attributes_follow = true;
+	fa = &poa->post_op_attr_u.attributes;
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	print_nfs_fh3_hex(&args->dir);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_fsstat(struct rpc_trans *rt)
