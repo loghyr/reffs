@@ -1134,8 +1134,163 @@ out:
 
 static int nfs3_symlink(struct rpc_trans *rt)
 {
-	TRACE("SYMLINK: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	SYMLINK3args *args = ph->ph_args;
+	SYMLINK3res *res = ph->ph_res;
+	SYMLINK3resok *resok = &res->SYMLINK3res_u.resok;
+	SYMLINK3resfail *resfail = &res->SYMLINK3res_u.resfail;
+
+	wcc_data *wcc = &resok->dir_wcc;
+	fattr3 *fa;
+	sattr3 *sa = &args->symlink.symlink_attributes;
+
+	uint64_t flags = 0;
+
+	size3 size;
+	nfstime3 mtime;
+	nfstime3 ctime;
+
+	char *name = NULL;
+
+	struct network_file_handle *nfh = NULL;
+
+	struct dirent *de = NULL;
+	struct authunix_parms ap;
+
+	if (args->where.dir.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		uint32_t crc = nfs3_getfh_crc(&args->where.dir);
+		TRACE("SYMLINK: xid=0x%08x badfh crc=0x%08x",
+		      rt->rt_info.ri_xid, crc);
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->where.dir.data.data_val;
+	TRACE("SYMLINK: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
+	      nfh->nfh_sb, nfh->nfh_ino);
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	name = strdup(args->symlink.symlink_data);
+	if (!name) {
+		res->status = NFS3ERR_JUKEBOX;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_mtime, &mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+
+	pthread_rwlock_wrlock(&inode->i_parent->d_rwlock);
+	if (inode_name_is_child(inode, args->where.name)) {
+		res->status = NFS3ERR_EXIST;
+		wcc = &resfail->dir_wcc;
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+		goto update_wcc;
+	}
+
+	de = dirent_alloc(inode->i_parent, args->where.name,
+			  reffs_life_action_birth);
+	if (!de) {
+		res->status = NFS3ERR_NOENT;
+		wcc = &resfail->dir_wcc;
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+		goto update_wcc;
+	}
+
+	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+							 __ATOMIC_RELAXED));
+	if (!de->d_inode) {
+		dirent_parent_release(de, reffs_life_action_death);
+		res->status = NFS3ERR_NOENT;
+		wcc = &resfail->dir_wcc;
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+		goto update_wcc;
+	}
+	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+
+	de->d_inode->i_uid = ap.aup_uid;
+	de->d_inode->i_gid = ap.aup_gid;
+	clock_gettime(CLOCK_REALTIME, &de->d_inode->i_mtime);
+	de->d_inode->i_atime = de->d_inode->i_mtime;
+	de->d_inode->i_btime = de->d_inode->i_mtime;
+	de->d_inode->i_ctime = de->d_inode->i_mtime;
+	de->d_inode->i_mode = (S_IFLNK | inode->i_mode) & ~S_IFDIR;
+	de->d_inode->i_size = 4096;
+	de->d_inode->i_used = 8;
+	de->d_inode->i_nlink = 2;
+
+	nfh = calloc(1, sizeof(struct nfs_fh3));
+	if (!nfh) {
+		res->status = NFS3ERR_JUKEBOX;
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
+	}
+
+	res->status = nfs3_apply_sattr3(inode, sa, &flags);
+	if (res->status) {
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
+	}
+
+	de->d_inode->i_symlink = name;
+	name = NULL;
+
+	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+	resok->obj.handle_follows = true;
+	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+	nfh->nfh_sb = sb->sb_id;
+	nfh->nfh_ino = de->d_inode->i_ino;
+
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+
+	resok->obj_attributes.attributes_follow = true;
+	fa = &resok->obj_attributes.post_op_attr_u.attributes;
+	inode_attr_to_fattr(de->d_inode, fa);
+
+update_wcc:
+	wcc->after.attributes_follow = true;
+	fa = &wcc->after.post_op_attr_u.attributes;
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	print_nfs_fh3_hex(&args->where.dir);
+
+out:
+	free(name);
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_mknod(struct rpc_trans *rt)

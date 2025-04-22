@@ -62,6 +62,8 @@ struct inode {
 
 	uint32_t i_dev_major;
 	uint32_t i_dev_minor;
+
+	char *i_symlink;
 };
 
 struct inode *inode_alloc(struct super_block *sb, uint64_t ino);

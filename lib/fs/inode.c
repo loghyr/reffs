@@ -45,6 +45,7 @@ static void inode_free_rcu(struct rcu_head *rcu)
 	pthread_rwlock_destroy(&inode->i_db_rwlock);
 	pthread_mutex_destroy(&inode->i_attr_mutex);
 
+	free(inode->i_symlink);
 	free(inode);
 }
 
