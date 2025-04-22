@@ -17,6 +17,8 @@
 #include <rpc/xdr.h>
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
+#include <rpc/clnt.h>
+#include <rpc/rpc_msg.h>
 #include <errno.h>
 #include "reffs/test.h"
 #include "reffs/rpc.h"
@@ -199,6 +201,8 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 
 	if (ph->ph_op_handler->roh_action)
 		ret = ph->ph_op_handler->roh_action(rt);
+	else
+		ph->ph_stat = PROG_UNAVAIL;
 
 	return ret;
 }
