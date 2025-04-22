@@ -1196,7 +1196,7 @@ update_wcc:
 	fa = &wcc->after.post_op_attr_u.attributes;
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	print_nfs_fh3_hex(&args->where.dir);
 
