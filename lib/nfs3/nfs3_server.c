@@ -2652,8 +2652,71 @@ out:
 
 static int nfs3_pathconf(struct rpc_trans *rt)
 {
-	TRACE("PATHCONF: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	PATHCONF3args *args = ph->ph_args;
+	PATHCONF3res *res = ph->ph_res;
+	PATHCONF3resok *resok = &res->PATHCONF3res_u.resok;
+
+	post_op_attr *poa = &resok->obj_attributes;
+
+	struct network_file_handle *nfh = NULL;
+	struct authunix_parms ap;
+
+	if (args->object.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		uint32_t crc = nfs3_getfh_crc(&args->object);
+		TRACE("PATHCONF: xid=0x%08x badfh crc=0x%08x",
+		      rt->rt_info.ri_xid, crc);
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->object.data.data_val;
+	TRACE("PATHCONF: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
+	      nfh->nfh_sb, nfh->nfh_ino);
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	if (res->status)
+		goto out;
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+	poa->attributes_follow = true;
+	fattr3 *fa = &poa->post_op_attr_u.attributes;
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	resok->linkmax = 1024;
+	resok->name_max = 256;
+	resok->no_trunc = true;
+	resok->chown_restricted = false;
+	resok->case_insensitive =
+		reffs_case_get() == reffs_text_case_insensitive ? true : false;
+	resok->case_preserving = true;
+
+	print_nfs_fh3_hex(&args->object);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_commit(struct rpc_trans *rt)
