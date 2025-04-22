@@ -29,6 +29,7 @@
 #include "reffs/rpc.h"
 #include "reffs/nfs3.h"
 #include "reffs/mount3.h"
+#include "reffs/network.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
 
@@ -65,15 +66,10 @@ struct io_context {
 	uint32_t ic_id;
 	void *ic_buffer;
 
-	// Network address information (can handle both IPv4 and IPv6)
 	struct sockaddr_storage peer_addr; // Remote endpoint address
 	socklen_t peer_addr_len; // Length of peer address
 	struct sockaddr_storage local_addr; // Local endpoint address
 	socklen_t local_addr_len; // Length of local address
-	char peer_str[INET6_ADDRSTRLEN]; // String representation of peer IP
-	uint16_t peer_port; // Peer port
-	char local_str[INET6_ADDRSTRLEN]; // String representation of local IP
-	uint16_t local_port; // Local port
 };
 
 // Task struct for worker queue
@@ -256,15 +252,11 @@ static void io_context_copy_network_info(struct io_context *dst,
 	memcpy(&dst->peer_addr, &src->peer_addr,
 	       sizeof(struct sockaddr_storage));
 	dst->peer_addr_len = src->peer_addr_len;
-	memcpy(dst->peer_str, src->peer_str, INET6_ADDRSTRLEN);
-	dst->peer_port = src->peer_port;
 
 	// Copy local address information
 	memcpy(&dst->local_addr, &src->local_addr,
 	       sizeof(struct sockaddr_storage));
 	dst->local_addr_len = src->local_addr_len;
-	memcpy(dst->local_str, src->local_str, INET6_ADDRSTRLEN);
-	dst->local_port = src->local_port;
 }
 
 // Create an IO context for operations
@@ -799,48 +791,6 @@ static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	return 0;
 }
 
-/*
-&static void format_address_for_display(const struct sockaddr_storage *addr,
-				       char *buf, size_t buflen, uint16_t *port)
-{
-	if (addr->ss_family == AF_INET) {
-		// IPv4
-		struct sockaddr_in *ipv4 = (struct sockaddr_in *)addr;
-		inet_ntop(AF_INET, &ipv4->sin_addr, buf, buflen);
-		if (port)
-			*port = ntohs(ipv4->sin_port);
-	} else if (addr->ss_family == AF_INET6) {
-		struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)addr;
-
-		// Check if this is an IPv4-mapped IPv6 address
-		if (IN6_IS_ADDR_V4MAPPED(&ipv6->sin6_addr)) {
-			// Extract the IPv4 part from the IPv6 address
-			struct in_addr ipv4_addr;
-			memcpy(&ipv4_addr, ((char *)&ipv6->sin6_addr) + 12, 4);
-			inet_ntop(AF_INET, &ipv4_addr, buf, buflen);
-		} else {
-			// Regular IPv6
-			inet_ntop(AF_INET6, &ipv6->sin6_addr, buf, buflen);
-		}
-
-		if (port)
-			*port = ntohs(ipv6->sin6_port);
-	} else {
-		// Unknown address family
-		snprintf(buf, buflen, "unknown");
-		if (port)
-			*port = 0;
-	}
-}
-
-static const char *get_peer_address_str(struct io_context *ic, char *buf,
-					size_t buflen)
-{
-	format_address_for_display(&ic->peer_addr, buf, buflen, NULL);
-	return buf;
-}
-*/
-
 static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 {
 	// Get the IO context from user_data
@@ -852,6 +802,9 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 
 	struct io_uring_sqe *sqe;
 
+	char addr_str[INET6_ADDRSTRLEN];
+	uint16_t port;
+
 	// Handle new connection
 	int listen_fd = ic->ic_fd;
 	int client_fd = cqe->res;
@@ -860,64 +813,26 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	ic->peer_addr_len = sizeof(ic->peer_addr);
 	if (getpeername(client_fd, (struct sockaddr *)&ic->peer_addr,
 			&ic->peer_addr_len) == 0) {
-		// Get IP string and port based on address family
-		if (ic->peer_addr.ss_family == AF_INET) {
-			// IPv4
-			struct sockaddr_in *ipv4 =
-				(struct sockaddr_in *)&ic->peer_addr;
-			inet_ntop(AF_INET, &ipv4->sin_addr, ic->peer_str,
-				  INET6_ADDRSTRLEN);
-			ic->peer_port = ntohs(ipv4->sin_port);
-		} else if (ic->peer_addr.ss_family == AF_INET6) {
-			// IPv6
-			struct sockaddr_in6 *ipv6 =
-				(struct sockaddr_in6 *)&ic->peer_addr;
-			inet_ntop(AF_INET6, &ipv6->sin6_addr, ic->peer_str,
-				  INET6_ADDRSTRLEN);
-			ic->peer_port = ntohs(ipv6->sin6_port);
-		}
-
-		TRACE("Client connected from %s port %d", ic->peer_str,
-		      ic->peer_port);
+		addr_to_string(&ic->peer_addr, addr_str, INET6_ADDRSTRLEN,
+			       &port);
+		TRACE("Client connected from %s port %d", addr_str, port);
 	} else {
 		LOG("Failed to get peer information: %s", strerror(errno));
-		// Use empty values instead of failing
 		memset(&ic->peer_addr, 0, sizeof(ic->peer_addr));
 		ic->peer_addr_len = 0;
-		strcpy(ic->peer_str, "unknown");
-		ic->peer_port = 0;
 	}
 
 	// Store local (server) address information
 	ic->local_addr_len = sizeof(ic->local_addr);
 	if (getsockname(client_fd, (struct sockaddr *)&ic->local_addr,
 			&ic->local_addr_len) == 0) {
-		// Get IP string and port based on address family
-		if (ic->local_addr.ss_family == AF_INET) {
-			// IPv4
-			struct sockaddr_in *ipv4 =
-				(struct sockaddr_in *)&ic->local_addr;
-			inet_ntop(AF_INET, &ipv4->sin_addr, ic->local_str,
-				  INET6_ADDRSTRLEN);
-			ic->local_port = ntohs(ipv4->sin_port);
-		} else if (ic->local_addr.ss_family == AF_INET6) {
-			// IPv6
-			struct sockaddr_in6 *ipv6 =
-				(struct sockaddr_in6 *)&ic->local_addr;
-			inet_ntop(AF_INET6, &ipv6->sin6_addr, ic->local_str,
-				  INET6_ADDRSTRLEN);
-			ic->local_port = ntohs(ipv6->sin6_port);
-		}
-
-		TRACE("Server local endpoint - %s port %d", ic->local_str,
-		      ic->local_port);
+		addr_to_string(&ic->local_addr, addr_str, INET6_ADDRSTRLEN,
+			       &port);
+		TRACE("Server local endpoint - %s port %d", addr_str, port);
 	} else {
 		LOG("Failed to get local information: %s", strerror(errno));
-		// Use empty values instead of failing
 		memset(&ic->local_addr, 0, sizeof(ic->local_addr));
 		ic->local_addr_len = 0;
-		strcpy(ic->local_str, "unknown");
-		ic->local_port = 0;
 	}
 
 	TRACE("New connection accepted (fd: %d)", client_fd);
@@ -1051,10 +966,10 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 	}
 
 	root_sb = super_block_alloc(1, "/");
-        if (!root_sb) {
-                exit_code = ENOMEM;
-                goto out;
-        }
+	if (!root_sb) {
+		exit_code = ENOMEM;
+		goto out;
+	}
 
 	server_boot_uuid_generate();
 

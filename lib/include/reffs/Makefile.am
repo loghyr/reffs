@@ -11,6 +11,7 @@ reffsinclude_HEADERS = \
 	fuse.h \
 	inode.h \
 	log.h \
+	network.h \
 	nfs3.h \
 	rcu.h \
 	rpc.h \
