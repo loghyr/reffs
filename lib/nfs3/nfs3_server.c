@@ -1999,8 +1999,165 @@ out:
 
 static int nfs3_link(struct rpc_trans *rt)
 {
-	TRACE("LINK: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+	struct inode *inode_dir = NULL;
+	struct inode *exists = NULL;
+
+	LINK3args *args = ph->ph_args;
+	LINK3res *res = ph->ph_res;
+	LINK3resok *resok = &res->LINK3res_u.resok;
+	LINK3resfail *resfail = &res->LINK3res_u.resfail;
+
+	wcc_data *wcc = &resok->linkdir_wcc;
+	post_op_attr *poa = &resok->file_attributes;
+	fattr3 *fa;
+
+	size3 size;
+	nfstime3 mtime;
+	nfstime3 ctime;
+
+	struct network_file_handle *nfh = NULL;
+	struct network_file_handle *nfh_dir = NULL;
+
+	struct dirent *de = NULL;
+	struct authunix_parms ap;
+
+	if (args->file.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		uint32_t crc = nfs3_getfh_crc(&args->file);
+		TRACE("LINK: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		      crc);
+		goto out;
+	}
+
+	if (args->link.dir.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		uint32_t crc = nfs3_getfh_crc(&args->link.dir);
+		TRACE("LINK: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		      crc);
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->file.data.data_val;
+	nfh_dir = (struct network_file_handle *)args->link.dir.data.data_val;
+
+	TRACE("LINK: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
+	      nfh->nfh_sb, nfh->nfh_ino);
+
+	if (nfh->nfh_sb != nfh_dir->nfh_sb) {
+		res->status = NFS3ERR_XDEV;
+		goto out;
+	}
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	inode_dir = inode_find(sb, nfh_dir->nfh_ino);
+	if (!inode_dir) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFREG)) {
+		res->status = NFS3ERR_INVAL;
+		goto out;
+	}
+
+	res->status =
+		nfs3_access_check(inode_dir, &rt->rt_info.ri_cred, &ap, W_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode_dir->i_attr_mutex);
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	size = inode_dir->i_size;
+	timespec_to_nfstime3(&inode_dir->i_ctime, &ctime);
+	timespec_to_nfstime3(&inode_dir->i_mtime, &mtime);
+
+	pthread_rwlock_wrlock(&inode_dir->i_parent->d_rwlock);
+	exists = inode_name_get_inode(inode_dir, args->link.name);
+	if (exists) {
+		res->status = NFS3ERR_EXIST;
+		pthread_rwlock_unlock(&inode_dir->i_parent->d_rwlock);
+		wcc = &resfail->linkdir_wcc;
+		poa = &resfail->file_attributes;
+		goto update_wcc;
+	}
+
+	de = dirent_alloc(inode_dir->i_parent, args->link.name,
+			  reffs_life_action_birth);
+	if (!de) {
+		res->status = NFS3ERR_NOENT;
+		pthread_rwlock_unlock(&inode_dir->i_parent->d_rwlock);
+		wcc = &resfail->linkdir_wcc;
+		poa = &resfail->file_attributes;
+		goto update_wcc;
+	}
+
+	de->d_inode = inode_get(inode);
+	if (!de->d_inode) {
+		dirent_parent_release(de, reffs_life_action_death);
+		res->status = NFS3ERR_NOENT;
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+		wcc = &resfail->linkdir_wcc;
+		poa = &resfail->file_attributes;
+		goto update_wcc;
+	}
+
+	uatomic_inc(&inode->i_nlink, __ATOMIC_RELAXED);
+
+	pthread_rwlock_unlock(&inode_dir->i_parent->d_rwlock);
+
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME);
+
+update_wcc:
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+
+	poa->attributes_follow = true;
+	fa = &poa->post_op_attr_u.attributes;
+
+	inode_attr_to_fattr(inode_dir, fa);
+
+	wcc->after.attributes_follow = true;
+	fa = &wcc->after.post_op_attr_u.attributes;
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+	pthread_mutex_unlock(&inode_dir->i_attr_mutex);
+
+	print_nfs_fh3_hex(&args->file);
+
+out:
+	inode_put(exists);
+	inode_put(inode);
+	inode_put(inode_dir);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_readdir(struct rpc_trans *rt)
