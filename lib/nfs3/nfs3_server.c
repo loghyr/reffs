@@ -2578,8 +2578,76 @@ out:
 
 static int nfs3_fsinfo(struct rpc_trans *rt)
 {
-	TRACE("FSINFO: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	FSINFO3args *args = ph->ph_args;
+	FSINFO3res *res = ph->ph_res;
+	FSINFO3resok *resok = &res->FSINFO3res_u.resok;
+
+	post_op_attr *poa = &resok->obj_attributes;
+
+	struct network_file_handle *nfh = NULL;
+	struct authunix_parms ap;
+
+	if (args->fsroot.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		uint32_t crc = nfs3_getfh_crc(&args->fsroot);
+		TRACE("FSINFO: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		      crc);
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->fsroot.data.data_val;
+	TRACE("FSINFO: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
+	      nfh->nfh_sb, nfh->nfh_ino);
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	if (res->status)
+		goto out;
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+	poa->attributes_follow = true;
+	fattr3 *fa = &poa->post_op_attr_u.attributes;
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	nfstime3 gran = { .seconds = 0, .nseconds = 1 };
+	resok->rtmax = 1 * 1024 * 1024;
+	resok->rtpref = resok->rtmax;
+	resok->rtmult = 1;
+	resok->wtmax = resok->rtmax;
+	resok->wtpref = resok->wtmax;
+	resok->wtmult = 1;
+	resok->dtpref = 1024 * 1024;
+	resok->maxfilesize = SIZE_MAX;
+	resok->time_delta = gran;
+	resok->properties = FSF3_LINK | FSF3_SYMLINK | FSF3_HOMOGENEOUS |
+			    FSF3_CANSETTIME;
+
+	print_nfs_fh3_hex(&args->fsroot);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_pathconf(struct rpc_trans *rt)
