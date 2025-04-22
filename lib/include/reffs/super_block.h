@@ -30,6 +30,12 @@ struct super_block {
 
 	uint8_t sb_uuid[REFFS_UUID_SIZE];
 
+	size_t sb_bytes_max;
+	size_t sb_bytes_used;
+
+	size_t sb_inodes_max;
+	size_t sb_inodes_used;
+
 #define SB_IS_READ_ONLY (1ULL << 0)
 #define SB_IS_MOUNTED (1ULL << 1)
 	uint64_t sb_state;

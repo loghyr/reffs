@@ -68,6 +68,7 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 		if (inode->i_mode & S_IFDIR)
 			return NFS3ERR_ISDIR;
 
+		size_t size = inode->i_size;
 		size_t sz = data_block_resize(inode->i_db,
 					      sa->size.set_size3_u.size);
 		if (sz < 0)
@@ -77,6 +78,8 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 		inode->i_used =
 			inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
 		*flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
+		uatomic_add_return(&inode->i_sb->sb_bytes_used,
+				   inode->i_size - size, __ATOMIC_RELAXED);
 	}
 
 	if (sa->mode.set_it) {
@@ -425,7 +428,7 @@ static int nfs3_lookup(struct rpc_trans *rt)
 	resok->object.data.data_val = (char *)nfh;
 	resok->object.data.data_len = sizeof(nfs_fh3);
 	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-	nfh->nfh_sb = sb->sb_id;	// FIXME: If mounted on, change the sb
+	nfh->nfh_sb = sb->sb_id; // FIXME: If mounted on, change the sb
 	nfh->nfh_ino = exists->i_ino;
 
 	resok->obj_attributes.attributes_follow = true;
@@ -841,6 +844,10 @@ static int nfs3_write(struct rpc_trans *rt)
 
 	inode->i_size = inode->i_db->db_size;
 	inode->i_used = inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
+
+	uatomic_add_return(&inode->i_sb->sb_bytes_used,
+			   inode->i_db->db_size - size, __ATOMIC_RELAXED);
+
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 
 update_wcc:
@@ -1053,6 +1060,8 @@ static int nfs3_create(struct rpc_trans *rt)
 
 	inode_attr_to_fattr(tmp, fa);
 
+	uatomic_inc(&tmp->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
+
 update_wcc:
 	wcc->after.attributes_follow = true;
 	fa = &wcc->after.post_op_attr_u.attributes;
@@ -1194,6 +1203,8 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 	inode_attr_to_fattr(de->d_inode, fa);
+
+	uatomic_inc(&de->d_inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
 
 update_wcc:
 	wcc->after.attributes_follow = true;
@@ -1354,6 +1365,8 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 	inode_attr_to_fattr(de->d_inode, fa);
+
+	uatomic_inc(&de->d_inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
 
 update_wcc:
 	wcc->after.attributes_follow = true;
@@ -1560,6 +1573,8 @@ static int nfs3_mknod(struct rpc_trans *rt)
 
 	inode_attr_to_fattr(tmp, fa);
 
+	uatomic_inc(&tmp->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
+
 update_wcc:
 	wcc->after.attributes_follow = true;
 	fa = &wcc->after.post_op_attr_u.attributes;
@@ -1647,6 +1662,10 @@ static int nfs3_remove(struct rpc_trans *rt)
 
 	dirent_parent_release(de, reffs_life_action_death);
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+
+	uatomic_dec(&inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
+	uatomic_add_return(&inode->i_sb->sb_bytes_used, -size,
+			   __ATOMIC_RELAXED);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -1758,6 +1777,8 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 
 	dirent_parent_release(de, reffs_life_action_death);
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+
+	uatomic_dec(&inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -2425,10 +2446,11 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 		}
 
 		e->name_handle.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-		e->name_handle.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+		e->name_handle.post_op_fh3_u.handle.data.data_len =
+			sizeof(nfs_fh3);
 		e->name_handle.handle_follows = true;
 		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-		nfh->nfh_sb = sb->sb_id;	// FIXME: If mounted on, change the sb
+		nfh->nfh_sb = sb->sb_id; // FIXME: If mounted on, change the sb
 		nfh->nfh_ino = de->d_inode->i_ino;
 
 		poa_e = &e->name_attributes;
@@ -2486,8 +2508,72 @@ out:
 
 static int nfs3_fsstat(struct rpc_trans *rt)
 {
-	TRACE("FSSTAT: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	FSSTAT3args *args = ph->ph_args;
+	FSSTAT3res *res = ph->ph_res;
+	FSSTAT3resok *resok = &res->FSSTAT3res_u.resok;
+
+	post_op_attr *poa = &resok->obj_attributes;
+
+	struct network_file_handle *nfh = NULL;
+	struct authunix_parms ap;
+
+	if (args->fsroot.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		uint32_t crc = nfs3_getfh_crc(&args->fsroot);
+		TRACE("FSSTAT: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		      crc);
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->fsroot.data.data_val;
+	TRACE("FSSTAT: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
+	      nfh->nfh_sb, nfh->nfh_ino);
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	if (res->status)
+		goto out;
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+
+	resok->tbytes = sb->sb_bytes_max;
+	resok->fbytes = sb->sb_bytes_used;
+	resok->abytes = resok->tbytes - resok->abytes;
+	resok->tfiles = sb->sb_inodes_max;
+	resok->ffiles = sb->sb_inodes_used;
+	resok->afiles = resok->tfiles - resok->ffiles;
+	resok->invarsec = 0;
+
+	poa->attributes_follow = true;
+	fattr3 *fa = &poa->post_op_attr_u.attributes;
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	print_nfs_fh3_hex(&args->fsroot);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_fsinfo(struct rpc_trans *rt)

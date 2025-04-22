@@ -117,6 +117,9 @@ struct super_block *super_block_alloc(uint64_t id)
 	cds_list_add_rcu(&sb->sb_link, &super_block_list);
 	urcu_ref_init(&sb->sb_ref);
 
+	sb->sb_bytes_max = SIZE_MAX;
+	sb->sb_inodes_max = SIZE_MAX;
+
 	return sb;
 }
 
