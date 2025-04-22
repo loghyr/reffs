@@ -2209,7 +2209,7 @@ static int nfs3_readdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
