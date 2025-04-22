@@ -1006,7 +1006,7 @@ static int nfs3_create(struct rpc_trans *rt)
 		tmp->i_atime = tmp->i_mtime;
 		tmp->i_btime = tmp->i_mtime;
 		tmp->i_ctime = tmp->i_mtime;
-		tmp->i_mode = (S_IFCHR | inode->i_mode) & ~S_IFDIR;
+		tmp->i_mode = (S_IFREG | inode->i_mode) & ~S_IFDIR;
 	}
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
