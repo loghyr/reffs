@@ -7,6 +7,8 @@
 #define _REFFS_RPC_H
 
 #include <unistd.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 #include <rpc/xdr.h>
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
@@ -29,6 +31,10 @@ struct rpc_info {
 	uint32_t ri_program;
 	uint32_t ri_version;
 	uint32_t ri_procedure;
+	struct sockaddr_storage ri_peer;
+	socklen_t ri_peer_len;
+	struct sockaddr_storage ri_local;
+	socklen_t ri_local_len;
 	struct rpc_cred ri_cred;
 	uint32_t ri_verifier_flavor;
 	enum auth_stat ri_stat;
