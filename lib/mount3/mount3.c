@@ -112,7 +112,43 @@ static int mount3_umntall(struct rpc_trans *rt)
 
 static int mount3_exports(struct rpc_trans *rt)
 {
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	exportnode *en;
+	exportnode *en_head = NULL;
+	exportnode *next;
+
+	struct cds_list_head *sb_list = super_block_list_head();
+
+	struct super_block *sb = NULL;
+
 	TRACE("EXPORTS: xid=0x%08x", rt->rt_info.ri_xid);
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
+		en = calloc(1, sizeof(*en));
+		if (!en)
+			goto out_unwind;
+
+		en->ex_dir = strdup(sb->sb_path);
+		if (!en->ex_dir)
+			goto out_unwind;
+
+		en->ex_next = en_head;
+		en_head = en;
+	}
+	rcu_read_unlock();
+
+	ph->ph_res = en_head;
+
+	return 0;
+out_unwind:
+
+	for (en = en_head; en != NULL; en = next) {
+		next = en->ex_next;
+		free(en->ex_dir);
+		free(en);
+	}
 
 	return 0;
 }

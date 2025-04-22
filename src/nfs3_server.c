@@ -30,6 +30,7 @@
 #include "reffs/nfs3.h"
 #include "reffs/mount3.h"
 #include "reffs/server.h"
+#include "reffs/super_block.h"
 
 #define BUFFER_SIZE 4096
 #define QUEUE_DEPTH 1024
@@ -1015,6 +1016,8 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 
 	int exit_code = 0;
 
+	struct super_block *root_sb;
+
 	// Initialize userspace RCU
 	rcu_init();
 
@@ -1046,6 +1049,12 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 		exit_code = 1;
 		goto out;
 	}
+
+	root_sb = super_block_alloc(1, "/");
+        if (!root_sb) {
+                exit_code = ENOMEM;
+                goto out;
+        }
 
 	server_boot_uuid_generate();
 

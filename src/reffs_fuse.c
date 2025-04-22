@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
 	rcu_register_thread();
 
 	// FIXME: This should be init()
-	root_sb = super_block_alloc(1);
+	root_sb = super_block_alloc(1, "/");
 	if (!root_sb) {
 		ret = ENOMEM;
 		goto out;

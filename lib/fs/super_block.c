@@ -19,6 +19,12 @@
 
 CDS_LIST_HEAD(super_block_list);
 
+
+struct cds_list_head *super_block_list_head(void)
+{
+	return &super_block_list;
+}
+
 static void super_block_remove_all_inodes(struct cds_lfht *ht)
 {
 	struct cds_lfht_iter iter;
@@ -93,7 +99,7 @@ void super_block_dirent_release(struct super_block *sb,
 	rcu_read_unlock();
 }
 
-struct super_block *super_block_alloc(uint64_t id)
+struct super_block *super_block_alloc(uint64_t id, char *path)
 {
 	struct super_block *sb;
 
@@ -114,6 +120,12 @@ struct super_block *super_block_alloc(uint64_t id)
 	}
 
 	sb->sb_id = id;
+	sb->sb_path = strdup(path);
+	if (!sb->sb_path) {
+		free(sb);
+		return NULL;
+	}
+
 	cds_list_add_rcu(&sb->sb_link, &super_block_list);
 	urcu_ref_init(&sb->sb_ref);
 

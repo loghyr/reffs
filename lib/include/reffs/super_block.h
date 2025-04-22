@@ -28,6 +28,8 @@ struct super_block {
 
 	uint64_t sb_next_ino;
 
+	char *sb_path;
+
 	uint8_t sb_uuid[REFFS_UUID_SIZE];
 
 	size_t sb_bytes_max;
@@ -41,7 +43,7 @@ struct super_block {
 	uint64_t sb_state;
 };
 
-struct super_block *super_block_alloc(uint64_t id);
+struct super_block *super_block_alloc(uint64_t id, char *path);
 struct super_block *super_block_find(uint64_t id);
 struct super_block *super_block_get(struct super_block *sb);
 void super_block_put(struct super_block *sb);
@@ -50,5 +52,7 @@ int super_block_dirent_create(struct super_block *sb,
 			      enum reffs_life_action rla);
 void super_block_dirent_release(struct super_block *sb,
 				enum reffs_life_action rla);
+
+struct cds_list_head *super_block_list_head(void);
 
 #endif /* _REFFS_SB_H */
