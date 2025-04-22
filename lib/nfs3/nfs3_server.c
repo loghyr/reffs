@@ -888,9 +888,10 @@ static int nfs3_create(struct rpc_trans *rt)
 	CREATE3args *args = ph->ph_args;
 	CREATE3res *res = ph->ph_res;
 	CREATE3resok *resok = &res->CREATE3res_u.resok;
+	CREATE3resfail *resfail = &res->CREATE3res_u.resfail;
 
 	wcc_data *wcc = &resok->dir_wcc;
-	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
+	fattr3 *fa;
 	sattr3 *sa = &args->how.createhow3_u.obj_attributes;
 
 	size3 size;
@@ -954,6 +955,7 @@ static int nfs3_create(struct rpc_trans *rt)
 		case GUARDED:
 			res->status = NFS3ERR_EXIST;
 			pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+			wcc = &resfail->dir_wcc;
 			goto update_wcc;
 		case EXCLUSIVE:
 			timespec_to_createverf3(&exists->i_ctime, cv);
@@ -962,6 +964,7 @@ static int nfs3_create(struct rpc_trans *rt)
 				res->status = NFS3ERR_EXIST;
 				pthread_rwlock_unlock(
 					&inode->i_parent->d_rwlock);
+				wcc = &resfail->dir_wcc;
 				goto update_wcc;
 			}
 			break;
@@ -971,6 +974,7 @@ static int nfs3_create(struct rpc_trans *rt)
 						&ap, W_OK);
 		if (res->status) {
 			pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+			wcc = &resfail->dir_wcc;
 			goto update_wcc;
 		}
 
@@ -981,6 +985,7 @@ static int nfs3_create(struct rpc_trans *rt)
 		if (!de) {
 			res->status = NFS3ERR_NOENT;
 			pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+			wcc = &resfail->dir_wcc;
 			goto update_wcc;
 		}
 
@@ -991,6 +996,7 @@ static int nfs3_create(struct rpc_trans *rt)
 			dirent_parent_release(de, reffs_life_action_death);
 			res->status = NFS3ERR_NOENT;
 			pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+			wcc = &resfail->dir_wcc;
 			goto update_wcc;
 		}
 
@@ -1016,8 +1022,7 @@ static int nfs3_create(struct rpc_trans *rt)
 	} else {
 		res->status = nfs3_apply_sattr3(inode, sa, &flags);
 		if (res->status) {
-			wcc = &res->CREATE3res_u.resfail.dir_wcc;
-			fa = &wcc->after.post_op_attr_u.attributes;
+			wcc = &resfail->dir_wcc;
 			goto update_wcc;
 		}
 	}
@@ -1027,8 +1032,7 @@ static int nfs3_create(struct rpc_trans *rt)
 	nfh = calloc(1, sizeof(struct nfs_fh3));
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
-		wcc = &res->CREATE3res_u.resfail.dir_wcc;
-		fa = &wcc->after.post_op_attr_u.attributes;
+		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
 
