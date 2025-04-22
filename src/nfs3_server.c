@@ -51,14 +51,6 @@ volatile sig_atomic_t running = 1;
 #define OP_TYPE_CONNECT 4
 #define OP_TYPE_NFS_REQ 5
 
-// NFS operations
-#define NFS3_NULL 0
-#define NFS3_GETATTR 1
-#define NFS3_SETATTR 2
-#define NFS3_LOOKUP 3
-#define NFS3_READ 6
-#define NFS3_WRITE 7
-
 // IO operation context structure
 struct io_context {
 	int ic_op_type;
@@ -486,25 +478,7 @@ void handle_nfs_protocol(struct task *t)
 
 		if (program == 100003) { // NFS
 			printf("NFS Call: ");
-			switch (procedure) {
-			case NFS3_NULL:
-				printf("NULL\n");
-				break;
-			case NFS3_GETATTR:
-				printf("GETATTR\n");
-				break;
-			case NFS3_LOOKUP:
-				printf("LOOKUP\n");
-				break;
-			case NFS3_READ:
-				printf("READ\n");
-				break;
-			case NFS3_WRITE:
-				printf("WRITE\n");
-				break;
-			default:
-				printf("Procedure %d\n", procedure);
-			}
+			printf("Procedure %d\n", procedure);
 
 			// We would dispatch to the appropriate NFS handler here
 			// For this example, we'll just send a simple success response
