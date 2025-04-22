@@ -419,7 +419,7 @@ static int nfs3_lookup(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	nfh = calloc(1, sizeof(struct nfs_fh3));
+	nfh = calloc(1, sizeof(*nfh));
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		poa = &res->LOOKUP3res_u.resfail.dir_attributes;
@@ -427,7 +427,7 @@ static int nfs3_lookup(struct rpc_trans *rt)
 	}
 
 	resok->object.data.data_val = (char *)nfh;
-	resok->object.data.data_len = sizeof(nfs_fh3);
+	resok->object.data.data_len = sizeof(*nfh);
 	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
 	nfh->nfh_sb = sb->sb_id; // FIXME: If mounted on, change the sb
 	nfh->nfh_ino = exists->i_ino;
@@ -1037,7 +1037,7 @@ static int nfs3_create(struct rpc_trans *rt)
 
 	if (flags)
 		inode_update_times_now(inode, flags);
-	nfh = calloc(1, sizeof(struct nfs_fh3));
+	nfh = calloc(1, sizeof(*nfh));
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		wcc = &resfail->dir_wcc;
@@ -1045,7 +1045,7 @@ static int nfs3_create(struct rpc_trans *rt)
 	}
 
 	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
 	resok->obj.handle_follows = true;
 	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
 	nfh->nfh_sb = sb->sb_id;
@@ -1182,7 +1182,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	de->d_inode->i_used = 8;
 	de->d_inode->i_nlink = 2;
 
-	nfh = calloc(1, sizeof(struct nfs_fh3));
+	nfh = calloc(1, sizeof(*nfh));
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		wcc = &resfail->dir_wcc;
@@ -1190,7 +1190,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	}
 
 	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
 	resok->obj.handle_follows = true;
 	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
 	nfh->nfh_sb = sb->sb_id;
@@ -1335,7 +1335,7 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	de->d_inode->i_used = 8;
 	de->d_inode->i_nlink = 2;
 
-	nfh = calloc(1, sizeof(struct nfs_fh3));
+	nfh = calloc(1, sizeof(*nfh));
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		wcc = &resfail->dir_wcc;
@@ -1352,7 +1352,7 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	name = NULL;
 
 	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
 	resok->obj.handle_follows = true;
 	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
 	nfh->nfh_sb = sb->sb_id;
@@ -1546,7 +1546,7 @@ static int nfs3_mknod(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	nfh = calloc(1, sizeof(struct nfs_fh3));
+	nfh = calloc(1, sizeof(*nfh));
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
@@ -1555,7 +1555,7 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	}
 
 	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(nfs_fh3);
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
 	resok->obj.handle_follows = true;
 	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
 	nfh->nfh_sb = sb->sb_id;
@@ -2430,7 +2430,7 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 			break;
 		}
 
-		nfh = calloc(1, sizeof(struct nfs_fh3));
+		nfh = calloc(1, sizeof(*nfh));
 		if (!nfh) {
 			free(e->name);
 			free(e);
@@ -2448,7 +2448,7 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 
 		e->name_handle.post_op_fh3_u.handle.data.data_val = (char *)nfh;
 		e->name_handle.post_op_fh3_u.handle.data.data_len =
-			sizeof(nfs_fh3);
+			sizeof(*nfh);
 		e->name_handle.handle_follows = true;
 		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
 		nfh->nfh_sb = sb->sb_id; // FIXME: If mounted on, change the sb
@@ -2467,8 +2467,7 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 			goto past_eof;
 		}
 
-		maxcount += sizeof(*e) + strlen(e->name) +
-			    sizeof(struct nfs_fh3) + 1;
+		maxcount += sizeof(*e) + strlen(e->name) + sizeof(*nfh) + 1;
 		if (maxcount > args->maxcount) {
 			free(nfh);
 			free(e->name);
