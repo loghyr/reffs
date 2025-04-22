@@ -107,6 +107,20 @@ if test "x$BEAR" = "xno"; then
     AC_MSG_ERROR([bear is required to build this project])
 fi
 
+# Check for libuuid
+AC_CHECK_HEADER([uuid/uuid.h],
+  [AC_CHECK_LIB([uuid], [uuid_generate],
+    [UUID_LIBS="-luuid"
+     AC_DEFINE([HAVE_LIBUUID], [1], [Define if you have libuuid])],
+    [AC_MSG_ERROR([libuuid library not found])])],
+  [AC_MSG_ERROR([uuid.h header not found])])
+AC_SUBST([UUID_LIBS])
+
+# Optional: check for uuid_generate_time_safe which is available in newer versions
+AC_CHECK_LIB([uuid], [uuid_generate_time_safe],
+  [AC_DEFINE([HAVE_UUID_GENERATE_TIME_SAFE], [1],
+             [Define if libuuid has uuid_generate_time_safe function])])
+
 AC_CHECK_HEADER([zlib.h], [], [AC_MSG_ERROR([zlib.h not found])])
 AC_CHECK_LIB([z], [crc32], [], [AC_MSG_ERROR([zlib library not found])])
 

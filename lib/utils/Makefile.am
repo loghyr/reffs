@@ -9,4 +9,5 @@ lib_LTLIBRARIES = libreffs_utils.la
 libreffs_utils_la_SOURCES =	\
 	cmp.c			\
 	rcu.c			\
+	server.c		\
 	trace.c

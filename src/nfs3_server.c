@@ -29,6 +29,7 @@
 #include "reffs/rpc.h"
 #include "reffs/nfs3.h"
 #include "reffs/mount3.h"
+#include "reffs/server.h"
 
 #define BUFFER_SIZE 4096
 #define QUEUE_DEPTH 1024
@@ -1045,6 +1046,8 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 		exit_code = 1;
 		goto out;
 	}
+
+	server_boot_uuid_generate();
 
 	// Create worker threads
 	for (int i = 0; i < MAX_WORKER_THREADS; i++) {

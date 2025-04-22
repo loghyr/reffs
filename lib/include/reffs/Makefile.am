@@ -14,6 +14,7 @@ reffsinclude_HEADERS = \
 	nfs3.h \
 	rcu.h \
 	rpc.h \
+	server.h \
 	super_block.h \
 	test.h \
 	time.h \

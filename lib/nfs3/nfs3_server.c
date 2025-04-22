@@ -33,6 +33,7 @@
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/data_block.h"
+#include "reffs/server.h"
 
 /*
  * On locking order:
@@ -2721,8 +2722,83 @@ out:
 
 static int nfs3_commit(struct rpc_trans *rt)
 {
-	TRACE("COMMIT: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	COMMIT3args *args = ph->ph_args;
+	COMMIT3res *res = ph->ph_res;
+	COMMIT3resok *resok = &res->COMMIT3res_u.resok;
+
+	wcc_data *wcc = &res->COMMIT3res_u.resok.file_wcc;
+
+	struct network_file_handle *nfh = NULL;
+	struct authunix_parms ap;
+
+	size3 size;
+	nfstime3 mtime;
+	nfstime3 ctime;
+
+	uuid_t *uuid;
+
+	if (args->file.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		uint32_t crc = nfs3_getfh_crc(&args->file);
+		TRACE("COMMIT: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		      crc);
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->file.data.data_val;
+	TRACE("COMMIT: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
+	      nfh->nfh_sb, nfh->nfh_ino);
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	if (res->status)
+		goto out;
+
+	uuid = server_boot_uuid_get();
+	memcpy(resok->verf, (*uuid) + 8, NFS3_WRITEVERFSIZE);
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	size = inode->i_size;
+	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+	timespec_to_nfstime3(&inode->i_mtime, &mtime);
+
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+
+	pthread_rwlock_unlock(&inode->i_db_rwlock);
+
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+	wcc->after.attributes_follow = true;
+
+	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
+
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	print_nfs_fh3_hex(&args->file);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 const struct rpc_operations_handler nfs3_operations_handler[] = {

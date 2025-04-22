@@ -24,6 +24,7 @@ LDADD = \
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
 	$(TIRPC_LIBS)					\
 	$(PTHREAD_LIBS)					\
+	$(UUID_LIBS)					\
 	$(URCU_LIBS)					\
 	$(URCU_CDS_LIBS)				\
 	$(XXHASH_LIBS)					\
