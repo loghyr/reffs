@@ -91,25 +91,6 @@ out:
 	return mr->fhs_status;
 }
 
-static int mount3_dump(struct rpc_trans *rt)
-{
-	TRACE("DUMP: xid=0x%08x", rt->rt_info.ri_xid);
-	return 0;
-}
-
-static int mount3_umnt(struct rpc_trans *rt)
-{
-	TRACE("UMNT: xid=0x%08x", rt->rt_info.ri_xid);
-	return 0;
-}
-
-static int mount3_umntall(struct rpc_trans *rt)
-{
-	TRACE("UMNTALL: xid=0x%08x", rt->rt_info.ri_xid);
-
-	return 0;
-}
-
 static int mount3_exports(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -159,11 +140,10 @@ const struct rpc_operations_handler mount3_operations_handler[] = {
 	RPC_OPERATION_INIT(MOUNTPROC3_MNT, xdr_dirpath, dirpath, xdr_mountres3,
 			   mountres3, mount3_mnt),
 	RPC_OPERATION_INIT(MOUNTPROC3_DUMP, NULL, NULL, xdr_mountlist,
-			   mountlist, mount3_dump),
+			   mountlist, NULL),
 	RPC_OPERATION_INIT(MOUNTPROC3_UMNT, xdr_dirpath, dirpath, NULL, NULL,
-			   mount3_umnt),
-	RPC_OPERATION_INIT(MOUNTPROC3_UMNTALL, NULL, NULL, NULL, NULL,
-			   mount3_umntall),
+			   NULL),
+	RPC_OPERATION_INIT(MOUNTPROC3_UMNTALL, NULL, NULL, NULL, NULL, NULL),
 	RPC_OPERATION_INIT(MOUNTPROC3_EXPORT, NULL, NULL, xdr_exports, exports,
 			   mount3_exports),
 };
