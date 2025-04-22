@@ -555,8 +555,82 @@ out:
 
 static int nfs3_readlink(struct rpc_trans *rt)
 {
-	TRACE("READLINK: 0x%x", rt->rt_info.ri_xid);
-	return 0;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
+
+	READLINK3args *args = ph->ph_args;
+	READLINK3res *res = ph->ph_res;
+	READLINK3resok *resok = &res->READLINK3res_u.resok;
+
+	post_op_attr *poa = &resok->symlink_attributes;
+	fattr3 *fa;
+
+	char *name;
+
+	struct network_file_handle *nfh = NULL;
+
+	struct authunix_parms ap;
+
+	if (args->symlink.data.data_len != sizeof(*nfh)) {
+		res->status = NFS3ERR_BADHANDLE;
+		uint32_t crc = nfs3_getfh_crc(&args->symlink);
+		TRACE("SYMLINK: xid=0x%08x badfh crc=0x%08x",
+		      rt->rt_info.ri_xid, crc);
+		goto out;
+	}
+
+	nfh = (struct network_file_handle *)args->symlink.data.data_val;
+	TRACE("READLINK: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
+	      nfh->nfh_sb, nfh->nfh_ino);
+
+	sb = super_block_find(nfh->nfh_sb);
+	if (!sb) {
+		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	inode = inode_find(sb, nfh->nfh_ino);
+	if (!inode) {
+		res->status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	if (res->status)
+		goto out;
+
+	if (!(inode->i_mode & S_IFLNK)) {
+		res->status = NFS3ERR_INVAL;
+		goto out;
+	}
+
+	name = strdup(inode->i_symlink);
+	if (!name) {
+		res->status = NFS3ERR_JUKEBOX;
+		goto out;
+	}
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	resok->data = name;
+	name = NULL;
+
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+
+	poa->attributes_follow = true;
+	fa = &poa->post_op_attr_u.attributes;
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	print_nfs_fh3_hex(&args->symlink);
+
+out:
+	inode_put(inode);
+	super_block_put(sb);
+	return res->status;
 }
 
 static int nfs3_read(struct rpc_trans *rt)
