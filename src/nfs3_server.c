@@ -259,7 +259,7 @@ struct io_context *create_io_context(enum op_type op_type, int fd, void *buffer)
 void handle_getattr_response(struct nfs_request_context *nrc, void *response,
 			     int __attribute__((unused)) res_len, int status)
 {
-	TRACE("GETATTR response received: XID=%u, status=%d", nrc->nrc_xid,
+	TRACE("GETATTR response received: xid=0x%08x, status=%d", nrc->nrc_xid,
 	      status);
 
 	if (status == 0 && response) {
@@ -421,7 +421,7 @@ void rpc_process_task(struct task *t)
 	u_long msg_len = 0;
 
 	// Print basic info about the message
-	TRACE("RPC Message: XID=%u, Type=%s", xid,
+	TRACE("RPC Message: xid=0x%08x, Type=%s", xid,
 	      msg_type == 0 ? "CALL" : "REPLY");
 
 	if (msg_type == 0) { // It's a call
@@ -961,7 +961,7 @@ handle_rpc_error:
 
 					io_uring_submit(t->t_ring);
 
-					TRACE("Sent RPC reply (XID=%u, len=%zu)",
+					TRACE("Sent RPC reply (xid=0x%08x, len=%zu)",
 					      rt->rt_info.ri_xid,
 					      rt->rt_reply_len);
 
