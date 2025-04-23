@@ -61,6 +61,24 @@ enum op_type {
 	OP_TYPE_RPC_REQ = 5
 };
 
+static inline const char *op_type_to_str(enum op_type op)
+{
+	switch (op) {
+	case OP_TYPE_ACCEPT:
+		return "ACCEPT";
+	case OP_TYPE_READ:
+		return "READ";
+	case OP_TYPE_WRITE:
+		return "WRITE";
+	case OP_TYPE_CONNECT:
+		return "CONNECT";
+	case OP_TYPE_RPC_REQ:
+		return "RPC_REQ";
+	}
+
+	return "unknown";
+}
+
 // IO operation context structure
 struct io_context {
 	enum op_type ic_op_type;
@@ -291,6 +309,8 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 	io_uring_prep_read(sqe, bs->bs_fd, ic->ic_buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
+	TRACE("On fd = %d sent a context of type %s and id %d", ic->ic_fd,
+	      op_type_to_str(ic->ic_op_type), ic->ic_id);
 	io_uring_submit(ring);
 
 	return 0;
@@ -969,6 +989,11 @@ handle_rpc_error:
 					sqe->user_data =
 						(uint64_t)(uintptr_t)ic_write;
 
+					TRACE("On fd = %d sent a context of type %s and id %d",
+					      ic_write->ic_fd,
+					      op_type_to_str(
+						      ic_write->ic_op_type),
+					      ic_write->ic_id);
 					io_uring_submit(t->t_ring);
 
 					TRACE("Sent RPC reply (xid=0x%08x, len=%zu)",
@@ -1174,8 +1199,6 @@ static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	int client_fd = ic->ic_fd;
 	int bytes_read = cqe->res;
 
-	// We now have the correct client_fd from our context
-
 	if (bytes_read <= 0) {
 		// Connection closed or error
 		LOG("Connection closed or error (fd: %d, res: %d)", client_fd,
@@ -1316,6 +1339,10 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 			io_uring_prep_read(sqe, client_fd, buffer, BUFFER_SIZE,
 					   0);
 			sqe->user_data = (uint64_t)(uintptr_t)ic_read;
+			TRACE("On fd = %d sent a context of type %s and id %d",
+			      ic_read->ic_fd,
+			      op_type_to_str(ic_read->ic_op_type),
+			      ic_read->ic_id);
 			io_uring_submit(ring);
 		}
 	} else {
@@ -1341,6 +1368,9 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	io_uring_prep_accept(sqe, listen_fd, (struct sockaddr *)&client_address,
 			     &client_len, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic_accept;
+	TRACE("On fd = %d sent a context of type %s and id %d",
+	      ic_accept->ic_fd, op_type_to_str(ic_accept->ic_op_type),
+	      ic_accept->ic_id);
 	io_uring_submit(ring);
 
 	free(ic); // Free the completed accept context
@@ -1378,6 +1408,8 @@ int send_nfs_response(struct io_uring *ring, int fd, char *buffer, int len)
 	// Associate with the io context
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
+	TRACE("On fd = %d sent a context of type %s and id %d", ic->ic_fd,
+	      op_type_to_str(ic->ic_op_type), ic->ic_id);
 	io_uring_submit(ring);
 	return 0;
 }
@@ -1509,6 +1541,9 @@ int main(int argc, char *argv[])
 	// Associate with the io context
 	sqe->user_data = (uint64_t)(uintptr_t)ic_accept;
 
+	TRACE("On fd = %d sent a context of type %s and id %d",
+	      ic_accept->ic_fd, op_type_to_str(ic_accept->ic_op_type),
+	      ic_accept->ic_id);
 	io_uring_submit(&ring);
 
 	if (!pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
@@ -1550,29 +1585,33 @@ int main(int argc, char *argv[])
 				continue;
 			}
 
+			TRACE("On fd = %d got a context of type %s and id %d",
+			      ic->ic_fd, op_type_to_str(ic->ic_op_type),
+			      ic->ic_id);
+
+			enum op_type op = ic->ic_op_type;
+
 			switch (ic->ic_op_type) {
 			case OP_TYPE_ACCEPT: {
-				op_accept_handler(cqe, &ring);
+				ret = op_accept_handler(cqe, &ring);
 				break;
 			}
 
 			case OP_TYPE_READ: {
-				op_read_handler(cqe, &ring);
-				// Note: op_read_handler now handles freeing the context
+				ret = op_read_handler(cqe, &ring);
 				break;
 			}
 
 			case OP_TYPE_WRITE: {
-				// Write completed, free the buffer
 				free(ic->ic_buffer);
 				free(ic);
+				ret = 0;
 				break;
 			}
 
 			case OP_TYPE_RPC_REQ: {
-				// NFS request write completed
 				TRACE("NFS request sent successfully");
-				// For client-side requests, we'd track for the response
+				ret = 0;
 				free(ic);
 				break;
 			}
@@ -1584,8 +1623,11 @@ int main(int argc, char *argv[])
 					free(ic->ic_buffer);
 				}
 				free(ic);
+				ret = 0;
 				break;
 			}
+
+			TRACE("%s returned %d", op_type_to_str(op), ret);
 		}
 
 		io_uring_cqe_seen(&ring, cqe);
