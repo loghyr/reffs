@@ -177,9 +177,13 @@ static void print_nfs_fh3_hex(nfs_fh3 *fh)
 
 static bool nfs3_gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
 {
-	for (uint32_t i = 0; i < len; len++)
-		if (gid == gids[i])
+	for (uint32_t i = 0; i < len; i++)
+		if (gid == gids[i]) {
+			TRACE(REFFS_TRACE_LEVEL_WARNING,
+			      "gids stop, gid=%u len=%u gids=%p", gid, len,
+			      (void *)gids);
 			return true;
+		}
 
 	return false;
 }
@@ -2878,8 +2882,6 @@ static int nfs3_fsinfo(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
 
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "fsinfo start");
-
 	if (args->fsroot.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->fsroot);
@@ -2934,7 +2936,6 @@ static int nfs3_fsinfo(struct rpc_trans *rt)
 out:
 	inode_put(inode);
 	super_block_put(sb);
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "fsinfo stop");
 	return res->status;
 }
 
@@ -2953,8 +2954,6 @@ static int nfs3_pathconf(struct rpc_trans *rt)
 
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
-
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "pathconf start");
 
 	if (args->object.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
@@ -3005,7 +3004,6 @@ static int nfs3_pathconf(struct rpc_trans *rt)
 out:
 	inode_put(inode);
 	super_block_put(sb);
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "pathconf stop");
 	return res->status;
 }
 
