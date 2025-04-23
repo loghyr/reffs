@@ -51,25 +51,25 @@ static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 
 	switch (type) {
 	case S_IFLNK:
-		fa->type = NF3LNK; 
+		fa->type = NF3LNK;
 		break;
 	case S_IFREG:
-		fa->type = NF3REG; 
+		fa->type = NF3REG;
 		break;
 	case S_IFDIR:
-		fa->type = NF3DIR; 
+		fa->type = NF3DIR;
 		break;
 	case S_IFCHR:
-		fa->type = NF3CHR; 
+		fa->type = NF3CHR;
 		break;
 	case S_IFBLK:
-		fa->type = NF3BLK; 
+		fa->type = NF3BLK;
 		break;
 	case S_IFIFO:
-		fa->type = NF3FIFO; 
+		fa->type = NF3FIFO;
 		break;
 	case S_IFSOCK:
-		fa->type = NF3SOCK; 
+		fa->type = NF3SOCK;
 		break;
 	}
 
@@ -159,6 +159,7 @@ static uint32_t nfs3_getfh_crc(nfs_fh3 *fh)
 	return crc32(0L, (const Bytef *)fh->data.data_val, fh->data.data_len);
 }
 
+#ifdef NOT_NOW
 static void print_nfs_fh3_hex(nfs_fh3 *fh)
 {
 	uint32_t crc =
@@ -171,6 +172,7 @@ static void print_nfs_fh3_hex(nfs_fh3 *fh)
 	TRACE("FileHandle: sb = %lu, ino =%lu, vers = %u, CRC32 = 0x%08x",
 	      nfh->nfh_sb, nfh->nfh_ino, nfh->nfh_vers, crc);
 }
+#endif
 
 static bool nfs3_gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
 {
@@ -280,8 +282,6 @@ static int nfs3_getattr(struct rpc_trans *rt)
 
 	inode_attr_to_fattr(inode, fa);
 
-	print_nfs_fh3_hex(&args->object);
-
 out:
 	inode_put(inode);
 	super_block_put(sb);
@@ -376,8 +376,6 @@ update_wcc:
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	print_nfs_fh3_hex(&args->object);
-
 out:
 	inode_put(inode);
 	super_block_put(sb);
@@ -470,8 +468,6 @@ update_wcc:
 	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	print_nfs_fh3_hex(&args->what.dir);
 
 out:
 	inode_put(exists);
@@ -655,8 +651,6 @@ static int nfs3_readlink(struct rpc_trans *rt)
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	print_nfs_fh3_hex(&args->symlink);
-
 out:
 	inode_put(inode);
 	super_block_put(sb);
@@ -756,8 +750,6 @@ update_wcc:
 	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	print_nfs_fh3_hex(&args->file);
 
 out:
 	inode_put(inode);
@@ -887,8 +879,6 @@ update_wcc:
 	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	print_nfs_fh3_hex(&args->file);
 
 out:
 	inode_put(inode);
@@ -1096,8 +1086,6 @@ update_wcc:
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	print_nfs_fh3_hex(&args->where.dir);
-
 out:
 	inode_put(exists);
 	inode_put(inode);
@@ -1239,8 +1227,6 @@ update_wcc:
 	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	print_nfs_fh3_hex(&args->where.dir);
 
 out:
 	inode_put(inode);
@@ -1401,8 +1387,6 @@ update_wcc:
 	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	print_nfs_fh3_hex(&args->where.dir);
 
 out:
 	free(name);
@@ -1609,8 +1593,6 @@ update_wcc:
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	print_nfs_fh3_hex(&args->where.dir);
-
 out:
 	inode_put(inode);
 	super_block_put(sb);
@@ -1706,8 +1688,6 @@ update_wcc:
 	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	print_nfs_fh3_hex(&args->object.dir);
 
 out:
 	dirent_put(de);
@@ -1819,8 +1799,6 @@ update_wcc:
 	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	print_nfs_fh3_hex(&args->object.dir);
 
 out:
 	dirent_put(de);
@@ -2037,9 +2015,6 @@ update_wcc:
 		pthread_mutex_unlock(&inode_src->i_attr_mutex);
 	}
 
-	print_nfs_fh3_hex(&args->from.dir);
-	print_nfs_fh3_hex(&args->to.dir);
-
 out:
 	dirent_put(de_dst);
 	inode_put(inode_dst);
@@ -2202,8 +2177,6 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 	pthread_mutex_unlock(&inode_dir->i_attr_mutex);
 
-	print_nfs_fh3_hex(&args->file);
-
 out:
 	inode_put(exists);
 	inode_put(inode);
@@ -2235,7 +2208,7 @@ static int nfs3_readdir(struct rpc_trans *rt)
 	struct dirent *de = NULL;
 	struct authunix_parms ap;
 
-	entry3 *e_next;
+	entry3 *e_next = NULL;
 
 	if (args->dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
@@ -2281,8 +2254,102 @@ static int nfs3_readdir(struct rpc_trans *rt)
 
 	dl = &resok->reply;
 
+	if (cookie == 0) {
+		entry3 *e = calloc(1, sizeof(*e));
+		if (!e) {
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIR3res_u.resfail.dir_attributes;
+				goto update_wcc;
+			}
+
+			goto past_eof;
+		}
+
+		e->fileid = inode->i_ino;
+		e->cookie = 0;
+		e->name = strdup(".");
+		if (!e->name) {
+			free(e);
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIR3res_u.resfail.dir_attributes;
+				goto update_wcc;
+			}
+
+			goto past_eof;
+		}
+
+		count += sizeof(*e) + strlen(e->name) + 1;
+		if (count > args->count) {
+			free(e->name);
+			free(e);
+			goto past_eof;
+		}
+
+		if (!dl->entries) {
+			dl->entries = e;
+		} else {
+			e_next->nextentry = e;
+		}
+
+		e_next = e;
+	}
+
+	if (cookie < 2) {
+		entry3 *e = calloc(1, sizeof(*e));
+		if (!e) {
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIR3res_u.resfail.dir_attributes;
+				goto update_wcc;
+			}
+
+			goto past_eof;
+		}
+
+		e->fileid = inode->i_ino;
+		e->cookie = 1;
+		e->name = strdup("..");
+		if (!e->name) {
+			free(e);
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIR3res_u.resfail.dir_attributes;
+				goto update_wcc;
+			}
+
+			goto past_eof;
+		}
+
+		count += sizeof(*e) + strlen(e->name) + 1;
+		if (count > args->count) {
+			free(e->name);
+			free(e);
+			goto past_eof;
+		}
+
+		if (!dl->entries) {
+			dl->entries = e;
+		} else {
+			e_next->nextentry = e;
+		}
+
+		e_next = e;
+	}
+
+	if (!inode->i_parent->d_inode) {
+		dl->eof = true;
+		goto past_eof;
+	}
+
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(de, &de->d_inode->i_children, d_siblings) {
+	cds_list_for_each_entry_rcu(de, &inode->i_parent->d_inode->i_children,
+				    d_siblings) {
 		if (de->d_cookie < cookie)
 			continue;
 
@@ -2343,8 +2410,6 @@ update_wcc:
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	print_nfs_fh3_hex(&args->dir);
-
 out:
 	inode_put(inode);
 	super_block_put(sb);
@@ -2376,7 +2441,7 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 	struct dirent *de = NULL;
 	struct authunix_parms ap;
 
-	entryplus3 *e_next;
+	entryplus3 *e_next = NULL;
 
 	if (args->dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
@@ -2422,8 +2487,182 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 
 	dl = &resok->reply;
 
+	if (cookie == 0) {
+		entryplus3 *e = calloc(1, sizeof(*e));
+		if (!e) {
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+
+			goto past_eof;
+		}
+
+		e->fileid = inode->i_ino;
+		e->cookie = 0;
+		e->name = strdup(".");
+		if (!e->name) {
+			free(e);
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+
+			goto past_eof;
+		}
+
+		nfh = calloc(1, sizeof(*nfh));
+		if (!nfh) {
+			free(e->name);
+			free(e);
+
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+
+			goto past_eof;
+		}
+
+		e->name_handle.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+		e->name_handle.post_op_fh3_u.handle.data.data_len =
+			sizeof(*nfh);
+		e->name_handle.handle_follows = true;
+		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+		nfh->nfh_sb = sb->sb_id; // FIXME: If mounted on, change the sb
+		nfh->nfh_ino = inode->i_ino;
+
+		poa_e = &e->name_attributes;
+		poa_e->attributes_follow = true;
+		fa = &poa_e->post_op_attr_u.attributes;
+		inode_attr_to_fattr(inode, fa);
+
+		dircount += sizeof(*e) - sizeof(post_op_attr);
+		if (dircount > args->dircount) {
+			free(nfh);
+			free(e->name);
+			free(e);
+			goto past_eof;
+		}
+
+		maxcount += sizeof(*e) + strlen(e->name) + sizeof(*nfh) + 1;
+		if (maxcount > args->maxcount) {
+			free(nfh);
+			free(e->name);
+			free(e);
+			goto past_eof;
+		}
+
+		if (!dl->entries) {
+			dl->entries = e;
+		} else {
+			e_next->nextentry = e;
+		}
+
+		e_next = e;
+	}
+
+	if (cookie < 2) {
+		entryplus3 *e = calloc(1, sizeof(*e));
+		if (!e) {
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+
+			goto past_eof;
+		}
+
+		e->fileid = inode->i_ino;
+		e->cookie = 1;
+		e->name = strdup("..");
+		if (!e->name) {
+			free(e);
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+
+			goto past_eof;
+		}
+
+		nfh = calloc(1, sizeof(*nfh));
+		if (!nfh) {
+			free(e->name);
+			free(e);
+
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+
+			goto past_eof;
+		}
+
+		e->name_handle.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+		e->name_handle.post_op_fh3_u.handle.data.data_len =
+			sizeof(*nfh);
+		e->name_handle.handle_follows = true;
+		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
+		nfh->nfh_sb = sb->sb_id; // FIXME: If mounted on, change the sb
+		nfh->nfh_ino = inode->i_ino;
+
+		poa_e = &e->name_attributes;
+		poa_e->attributes_follow = true;
+		fa = &poa_e->post_op_attr_u.attributes;
+		inode_attr_to_fattr(inode, fa);
+
+		dircount += sizeof(*e) - sizeof(post_op_attr);
+		if (dircount > args->dircount) {
+			free(nfh);
+			free(e->name);
+			free(e);
+			goto past_eof;
+		}
+
+		maxcount += sizeof(*e) + strlen(e->name) + sizeof(*nfh) + 1;
+		if (maxcount > args->maxcount) {
+			free(nfh);
+			free(e->name);
+			free(e);
+			goto past_eof;
+		}
+
+		if (!dl->entries) {
+			dl->entries = e;
+		} else {
+			e_next->nextentry = e;
+		}
+
+		e_next = e;
+	}
+
+	if (!inode->i_parent->d_inode) {
+		dl->eof = true;
+		goto past_eof;
+	}
+
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(de, &de->d_inode->i_children, d_siblings) {
+	cds_list_for_each_entry_rcu(de, &inode->i_parent->d_inode->i_children,
+				    d_siblings) {
 		if (de->d_cookie < cookie)
 			continue;
 
@@ -2524,8 +2763,6 @@ update_wcc:
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	print_nfs_fh3_hex(&args->dir);
-
 out:
 	inode_put(inode);
 	super_block_put(sb);
@@ -2593,8 +2830,6 @@ static int nfs3_fsstat(struct rpc_trans *rt)
 	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	print_nfs_fh3_hex(&args->fsroot);
 
 out:
 	inode_put(inode);
@@ -2668,8 +2903,6 @@ static int nfs3_fsinfo(struct rpc_trans *rt)
 	resok->properties = FSF3_LINK | FSF3_SYMLINK | FSF3_HOMOGENEOUS |
 			    FSF3_CANSETTIME;
 
-	print_nfs_fh3_hex(&args->fsroot);
-
 out:
 	inode_put(inode);
 	super_block_put(sb);
@@ -2736,8 +2969,6 @@ static int nfs3_pathconf(struct rpc_trans *rt)
 	resok->case_insensitive =
 		reffs_case_get() == reffs_text_case_insensitive ? true : false;
 	resok->case_preserving = true;
-
-	print_nfs_fh3_hex(&args->object);
 
 out:
 	inode_put(inode);
@@ -2817,8 +3048,6 @@ static int nfs3_commit(struct rpc_trans *rt)
 	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	print_nfs_fh3_hex(&args->file);
 
 out:
 	inode_put(inode);

@@ -112,6 +112,7 @@ struct super_block *super_block_alloc(uint64_t id, char *path)
 	}
 
 	CDS_INIT_LIST_HEAD(&sb->sb_link);
+	CDS_INIT_LIST_HEAD(&sb->sb_dirent_parent.d_siblings);
 	pthread_rwlock_init(&sb->sb_dirent_parent.d_rwlock, NULL);
 
 	sb->sb_inodes = cds_lfht_new(

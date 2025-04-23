@@ -100,7 +100,7 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name,
 	}
 
 	urcu_ref_init(&de->d_ref);
-	de->d_cookie_next = 1;
+	de->d_cookie_next = 2;
 
 	pthread_rwlock_init(&de->d_rwlock, NULL);
 
