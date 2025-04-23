@@ -437,6 +437,11 @@ void rpc_process_task(struct task *t)
 			return;
 		}
 
+		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
+		rt->rt_info.ri_reject_stat = RPC_MISMATCH;
+		rt->rt_info.ri_accept_stat = SUCCESS;
+		rt->rt_info.ri_auth_stat = AUTH_OK;
+
 		struct protocol_handler *ph = calloc(1, sizeof(*ph));
 		if (!ph) {
 			free(rt);
@@ -815,8 +820,13 @@ handle_rpc_error:
 			struct protocol_handler *ph =
 				(struct protocol_handler *)rt->rt_context;
 
-			u_long xdr_size = xdr_sizeof(
-				ph->ph_op_handler->roh_res_f, ph->ph_res);
+			u_long xdr_size = 0;
+
+			if (ph->ph_op_handler->roh_res_f) {
+				xdr_size =
+					xdr_sizeof(ph->ph_op_handler->roh_res_f,
+						   ph->ph_res);
+			}
 
 			rt->rt_reply_len = 7 * sizeof(uint32_t) + xdr_size;
 			msg_len = rt->rt_reply_len - sizeof(uint32_t);
@@ -826,6 +836,9 @@ handle_rpc_error:
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
+
+			TRACE("Encoding at %p for length %lu",
+			      (void *)rt->rt_reply, rt->rt_reply_len);
 
 			p = (uint32_t *)rt->rt_reply;
 			p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
@@ -898,16 +911,6 @@ handle_rpc_error:
 				goto handle_rpc_error;
 			}
 
-			p = rpc_encode_uint32_t(rt, p, 0);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE("Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto handle_rpc_error;
-			}
-
 			if (rt->rt_offset + xdr_size > rt->rt_reply_len) {
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				free(rt->rt_reply);
@@ -917,29 +920,32 @@ handle_rpc_error:
 				goto handle_rpc_error;
 			}
 
-			xdrmem_create(&xdrs, (char *)p,
-				      rt->rt_reply_len - rt->rt_offset,
-				      XDR_ENCODE);
+			if (ph->ph_op_handler->roh_res_f) {
+				xdrmem_create(&xdrs, (char *)p,
+					      rt->rt_reply_len - rt->rt_offset,
+					      XDR_ENCODE);
 
-			start_pos = xdr_getpos(&xdrs);
+				start_pos = xdr_getpos(&xdrs);
 
-			if (!ph->ph_op_handler->roh_res_f(&xdrs, ph->ph_res)) {
+				if (!ph->ph_op_handler->roh_res_f(&xdrs,
+								  ph->ph_res)) {
+					xdr_destroy(&xdrs);
+					rt->rt_info.ri_accept_stat = SYSTEM_ERR;
+					free(rt->rt_reply);
+					rt->rt_reply = NULL;
+					TRACE("Could not encode RPC reply xid=0x%08x",
+					      rt->rt_info.ri_xid);
+					goto handle_rpc_error;
+				}
+
+				end_pos = xdr_getpos(&xdrs);
+
+				len = end_pos - start_pos;
+
 				xdr_destroy(&xdrs);
-				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE("Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto handle_rpc_error;
+
+				rt->rt_offset += len;
 			}
-
-			end_pos = xdr_getpos(&xdrs);
-
-			len = end_pos - start_pos;
-
-			xdr_destroy(&xdrs);
-
-			rt->rt_offset += len;
 
 			assert(rt->rt_offset == rt->rt_reply_len);
 		}
