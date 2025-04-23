@@ -2849,21 +2849,21 @@ const struct rpc_operations_handler nfs3_operations_handler[] = {
 
 static struct rpc_program_handler *nfs3_handler;
 
-volatile sig_atomic_t registered = 0;
+volatile sig_atomic_t nfsv3_registered = 0;
 
 int nfs3_protocol_register(void)
 {
-	if (registered)
+	if (nfsv3_registered)
 		return 0;
 
-	registered = 1;
+	nfsv3_registered = 1;
 
 	nfs3_handler = rpc_program_handler_alloc(
 		NFS3_PROGRAM, NFS_V3, nfs3_operations_handler,
 		sizeof(nfs3_operations_handler) /
 			sizeof(*nfs3_operations_handler));
 	if (!nfs3_handler) {
-		registered = 0;
+		nfsv3_registered = 0;
 		return ENOMEM;
 	}
 
@@ -2872,12 +2872,12 @@ int nfs3_protocol_register(void)
 
 int nfs3_protocol_deregister(void)
 {
-	if (!registered)
+	if (!nfsv3_registered)
 		return 0;
 
 	rpc_program_handler_put(nfs3_handler);
 	nfs3_handler = NULL;
-	registered = 0;
+	nfsv3_registered = 0;
 
 	return 0;
 }

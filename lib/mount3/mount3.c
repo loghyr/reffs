@@ -150,21 +150,21 @@ const struct rpc_operations_handler mount3_operations_handler[] = {
 
 static struct rpc_program_handler *mount3_handler;
 
-volatile sig_atomic_t registered = 0;
+volatile sig_atomic_t mountv3_registered = 0;
 
 int mount3_protocol_register(void)
 {
-	if (registered)
+	if (mountv3_registered)
 		return 0;
 
-	registered = 1;
+	mountv3_registered = 1;
 
 	mount3_handler = rpc_program_handler_alloc(
 		MOUNT_PROGRAM, MOUNT_V3, mount3_operations_handler,
 		sizeof(mount3_operations_handler) /
 			sizeof(*mount3_operations_handler));
 	if (!mount3_handler) {
-		registered = 0;
+		mountv3_registered = 0;
 		return ENOMEM;
 	}
 
@@ -173,12 +173,12 @@ int mount3_protocol_register(void)
 
 int mount3_protocol_deregister(void)
 {
-	if (!registered)
+	if (!mountv3_registered)
 		return 0;
 
 	rpc_program_handler_put(mount3_handler);
 	mount3_handler = NULL;
-	registered = 0;
+	mountv3_registered = 0;
 
 	return 0;
 }
