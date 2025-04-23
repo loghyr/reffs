@@ -27,6 +27,10 @@
 #include <rpc/clnt.h>
 #include <rpc/rpc_msg.h>
 #include <getopt.h>
+#include <rpc/pmap_clnt.h>
+
+#include "nfsv3_xdr.h"
+#include "mntv3_xdr.h"
 
 #include "reffs/log.h"
 #include "reffs/rpc.h"
@@ -1501,6 +1505,19 @@ int main(int argc, char *argv[])
 
 	io_uring_submit(&ring);
 
+	if (!pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
+		LOG("Failed to register with portmapper");
+		exit_code = 1;
+		goto out;
+	}
+
+	if (!pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, port)) {
+		LOG("Failed to register with portmapper");
+		pmap_unset(NFS3_PROGRAM, NFS_V3);
+		exit_code = 1;
+		goto out;
+	}
+
 	while (running) {
 		// Set a timeout for io_uring_wait_cqe to allow checking the running flag
 		struct __kernel_timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
@@ -1608,6 +1625,9 @@ int main(int argc, char *argv[])
 			free(conn_buffers[i]);
 		}
 	}
+
+	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
+	pmap_unset(NFS3_PROGRAM, NFS_V3);
 
 out:
 	// Wait for RCU grace period
