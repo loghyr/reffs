@@ -44,11 +44,17 @@
 
 void reffs_trace(const char *function, int line, const char *msg, ...);
 
-// FIXME: Maybe a range of tracing state?
-#define REFFS_TRACE_STATE_ENABLED (true)
-#define REFFS_TRACE_STATE_DISABLED (false)
-void reffs_tracing_set(bool state);
-bool reffs_tracing_enabled(void);
+enum reffs_trace_level {
+	REFFS_TRACE_LEVEL_DEBUG = 0,
+	REFFS_TRACE_LEVEL_INFO = 1,
+	REFFS_TRACE_LEVEL_NOTICE = 2,
+	REFFS_TRACE_LEVEL_WARNING = 3,
+	REFFS_TRACE_LEVEL_ERR = 4,
+	REFFS_TRACE_LEVEL_DISABLED = 5
+};
+
+void reffs_tracing_set(enum reffs_trace_level level);
+bool reffs_tracing_enabled(enum reffs_trace_level level);
 
 #define FAIL(fmt, ...) reffs_fail(fmt, ##__VA_ARGS__)
 #define LOG(fmt, ...) reffs_log(fmt, ##__VA_ARGS__)
@@ -60,9 +66,9 @@ bool reffs_tracing_enabled(void);
 	} while (0)
 
 // FIXME: Expose it as a global to bypass a function call
-#define TRACE(fmt, ...)                                \
+#define TRACE(level, fmt, ...)                                \
 	do {                                           \
-		if (reffs_tracing_enabled())           \
+		if (reffs_tracing_enabled(level))           \
 			reffs_log(fmt, ##__VA_ARGS__); \
 	} while (0)
 

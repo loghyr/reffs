@@ -15,14 +15,14 @@
 
 #define REFFS_OUTPUT_BUFFER 1024
 
-static bool reffs_tracing_state = false;
+static enum reffs_trace_level reffs_trace_level = REFFS_TRACE_LEVEL_DISABLED;
 
-void reffs_tracing_set(bool state)
+void reffs_tracing_set(enum reffs_trace_level level)
 {
-	reffs_tracing_state = state;
+	reffs_trace_level = level;
 }
 
-bool reffs_tracing_enabled(void)
+bool reffs_tracing_enabled(enum reffs_trace_level level)
 {
-	return reffs_tracing_state;
+	return level >= reffs_trace_level;
 }

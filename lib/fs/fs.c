@@ -151,7 +151,7 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 
 	int ret;
 
-	TRACE("path=%s mode=0%o", path, mode);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s mode=0%o", path, mode);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -207,7 +207,7 @@ out_puts:
 	free(nm);
 
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -218,7 +218,7 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 
 	int ret;
 
-	TRACE("path=%s mode=0%o", path, mode);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s mode=0%o", path, mode);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -239,7 +239,7 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 	free(nm);
 
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -250,7 +250,8 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 
 	int ret;
 
-	TRACE("path=%s uid=%u gid=%u", path, uid, gid);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s uid=%u gid=%u", path, uid,
+	      gid);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -272,7 +273,7 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 	free(nm);
 
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -285,7 +286,7 @@ int reffs_fs_create(const char *path, mode_t mode)
 
 	int ret;
 
-	TRACE("path=%s mode=0%o", path, mode);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s mode=0%o", path, mode);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
@@ -342,13 +343,14 @@ out_puts:
 	free(nm);
 
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
 int reffs_fs_fallocate(const char *path, int mode, off_t offset, off_t len)
 {
-	TRACE("path=%s mode=0%o offset=%lu len=%lu", path, mode, offset, len);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s mode=0%o offset=%lu len=%lu",
+	      path, mode, offset, len);
 	return 0;
 }
 
@@ -358,7 +360,7 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	struct inode *inode;
 	int ret;
 
-	TRACE("path=%s", path);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s", path);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -382,7 +384,7 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	free(nm);
 
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -395,7 +397,7 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 
 	int ret;
 
-	TRACE("path=%s mode=0%o", path, mode);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s mode=0%o", path, mode);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
@@ -447,7 +449,7 @@ out_puts:
 	free(nm);
 
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -460,7 +462,8 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 
 	int ret;
 
-	TRACE("path=%s mode=0%o rdev=%lu", path, mode, rdev);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s mode=0%o rdev=%lu", path,
+	      mode, rdev);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
@@ -517,7 +520,7 @@ out_puts:
 	free(nm);
 
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -528,7 +531,8 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 
 	int ret;
 
-	TRACE("path=%s size=%lu offset=%lu", path, size, offset);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s size=%lu offset=%lu", path,
+	      size, offset);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -563,7 +567,7 @@ out_unlock:
 	free(nm);
 
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -571,18 +575,18 @@ out:
 int reffs_fs_readdir(const char *path, void *buffer, char *filler, off_t offset)
 {
 	int ret = 0;
-	TRACE("path=%s offset=%lu", path, offset);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s offset=%lu", path, offset);
 
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
 int reffs_fs_readlink(const char *path, char *buffer, size_t len)
 {
 	int ret = 0;
-	TRACE("path=%s len=%lu", path, len);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s len=%lu", path, len);
 
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -594,8 +598,9 @@ static int rename_dest_locked(struct name_match *nm_src, struct dirent *de_dst,
 	char *name;
 	char *old;
 
-	TRACE("nm_src=%s(%s) dst=%s name=%s", nm_src->nm_name,
-	      nm_src->nm_dirent->d_name, de_dst->d_name, dst_name);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "nm_src=%s(%s) dst=%s name=%s",
+	      nm_src->nm_name, nm_src->nm_dirent->d_name, de_dst->d_name,
+	      dst_name);
 
 	/* If they are the same path, do nothing */
 	if (nm_src->nm_dirent == de_dst && !cmp(nm_src->nm_name, dst_name))
@@ -646,7 +651,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 
 	bool dst_exists = false;
 
-	TRACE("src_path=%s dst_path=%s", src_path, dst_path);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "src_path=%s dst_path=%s", src_path,
+	      dst_path);
 
 	if (!strcmp(src_path, "/") || !strcmp(dst_path, "/")) {
 		ret = -EFAULT;
@@ -657,14 +663,16 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		goto out;
-	TRACE("nm_src=%s, de=%s", nm_src->nm_name, nm_src->nm_dirent->d_name);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "nm_src=%s, de=%s", nm_src->nm_name,
+	      nm_src->nm_dirent->d_name);
 
 	// TODO: make sure the paths are not overlapped if dirs
 	ret = find_matching_directory_entry(&nm_dst, dst_path,
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret) {
 		if (ret == -ENOENT) {
-			TRACE("Finding target directory");
+			TRACE(REFFS_TRACE_LEVEL_WARNING,
+			      "Finding target directory");
 			ret = find_matching_directory_entry(
 				&nm_dst, dst_path, LAST_COMPONENT_IS_NEW);
 		}
@@ -675,7 +683,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 			goto out;
 		}
 	} else {
-		TRACE("Already exists");
+		TRACE(REFFS_TRACE_LEVEL_WARNING, "Already exists");
 		dst_exists = true;
 	}
 
@@ -693,7 +701,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		}
 	}
 
-	TRACE("nm_dst=%s, de=%s", nm_dst->nm_name, nm_dst->nm_dirent->d_name);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "nm_dst=%s, de=%s", nm_dst->nm_name,
+	      nm_dst->nm_dirent->d_name);
 
 	if (!strcmp(nm_dst->nm_name, "..")) {
 		ret = -ENOTEMPTY;
@@ -707,7 +716,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 	}
 
 	if (nm_src->nm_dirent == nm_dst->nm_dirent) {
-		TRACE("Renaming within the same parent");
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "Renaming within the same parent");
 		ret = rename_dest(nm_src, nm_dst->nm_dirent, nm_dst->nm_name);
 	} else {
 		struct dirent *de_src_pin;
@@ -719,7 +729,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		 * FIXME: Detect other sb boundaries!
 		 */
 		if (!(nm_dst->nm_dirent->d_parent)) {
-			TRACE("Destination is root");
+			TRACE(REFFS_TRACE_LEVEL_WARNING, "Destination is root");
 			struct super_block *sb = super_block_find(1);
 			verify(sb);
 
@@ -728,7 +738,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		} else {
 			de_dst_parent = dirent_get(nm_dst->nm_dirent->d_parent);
 		}
-		TRACE("dst parent de=%s", de_dst_parent->d_name);
+		TRACE(REFFS_TRACE_LEVEL_WARNING, "dst parent de=%s",
+		      de_dst_parent->d_name);
 
 		verify(de_dst_parent);
 		verify(nm_src->nm_dirent->d_parent);
@@ -744,7 +755,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 			}
 		} else {
 			de_dst_pin = dirent_get(nm_dst->nm_dirent);
-			TRACE("Pinned parent de=%s", de_dst_pin->d_name);
+			TRACE(REFFS_TRACE_LEVEL_WARNING, "Pinned parent de=%s",
+			      de_dst_pin->d_name);
 		}
 
 		pthread_rwlock_wrlock(&de_dst_pin->d_rwlock);
@@ -775,7 +787,7 @@ out_unlock:
 	free(nm_dst);
 
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -786,7 +798,7 @@ int reffs_fs_rmdir(const char *path)
 
 	int ret;
 
-	TRACE("path=%s", path);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s", path);
 
 	if (!strcmp("/", path)) {
 		ret = -EBUSY;
@@ -821,7 +833,7 @@ out_unlock:
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -829,8 +841,8 @@ int reffs_fs_symlink(const char *path, const char *new_path)
 {
 	int ret = 0;
 
-	TRACE("path=%s new_path=%s", path, new_path);
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s new_path=%s", path, new_path);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -841,7 +853,7 @@ int reffs_fs_unlink(const char *path)
 
 	int ret;
 
-	TRACE("path=%s", path);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s", path);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -861,7 +873,7 @@ out_unlock:
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -872,7 +884,8 @@ int reffs_fs_utimensat(const char *path, const struct timespec times[2])
 
 	int ret;
 
-	TRACE("path=%s atime=(%lu.%ld) mtime=(%lu.%ld)", path, times[0].tv_sec,
+	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	      "path=%s atime=(%lu.%ld) mtime=(%lu.%ld)", path, times[0].tv_sec,
 	      times[0].tv_nsec, times[1].tv_sec, times[1].tv_nsec);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
@@ -886,7 +899,7 @@ int reffs_fs_utimensat(const char *path, const struct timespec times[2])
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }
 
@@ -898,7 +911,8 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 
 	int ret;
 
-	TRACE("path=%s size=%lu offset=%lu", path, size, offset);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s size=%lu offset=%lu", path,
+	      size, offset);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -940,6 +954,6 @@ out_unlock:
 	free(nm);
 
 out:
-	TRACE("ret=%d", ret);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ret=%d", ret);
 	return ret;
 }

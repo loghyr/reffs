@@ -169,7 +169,8 @@ static void print_nfs_fh3_hex(nfs_fh3 *fh)
 
 	nfh = (struct network_file_handle *)fh;
 
-	TRACE("FileHandle: sb = %lu, ino =%lu, vers = %u, CRC32 = 0x%08x",
+	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	      "FileHandle: sb = %lu, ino =%lu, vers = %u, CRC32 = 0x%08x",
 	      nfh->nfh_sb, nfh->nfh_ino, nfh->nfh_vers, crc);
 }
 #endif
@@ -234,7 +235,8 @@ static nfsstat3 nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
 
 static int nfs3_null(struct rpc_trans *rt)
 {
-	TRACE("NULL: xid=0x%08x", rt->rt_info.ri_xid);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "NULL: xid=0x%08x",
+	      rt->rt_info.ri_xid);
 	return 0;
 }
 
@@ -255,14 +257,15 @@ static int nfs3_getattr(struct rpc_trans *rt)
 	if (args->object.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->object);
-		TRACE("GETATTR: xid=0x%08x badfh crc=0x%08x",
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "GETATTR: xid=0x%08x badfh crc=0x%08x",
 		      rt->rt_info.ri_xid, crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->object.data.data_val;
-	TRACE("GETATTR: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "GETATTR: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -313,14 +316,15 @@ static int nfs3_setattr(struct rpc_trans *rt)
 	if (args->object.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->object);
-		TRACE("SETATTR: xid=0x%08x badfh crc=0x%08x",
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "SETATTR: xid=0x%08x badfh crc=0x%08x",
 		      rt->rt_info.ri_xid, crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->object.data.data_val;
-	TRACE("SETATTR: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "SETATTR: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -404,14 +408,15 @@ static int nfs3_lookup(struct rpc_trans *rt)
 	if (args->what.dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->what.dir);
-		TRACE("LOOKUP: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "LOOKUP: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->what.dir.data.data_val;
-	TRACE("LOOKUP: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "LOOKUP: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -501,14 +506,15 @@ static int nfs3_access(struct rpc_trans *rt)
 	if (args->object.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->object);
-		TRACE("ACCESS: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "ACCESS: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->object.data.data_val;
-	TRACE("ACCESS: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "ACCESS: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -602,14 +608,15 @@ static int nfs3_readlink(struct rpc_trans *rt)
 	if (args->symlink.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->symlink);
-		TRACE("SYMLINK: xid=0x%08x badfh crc=0x%08x",
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "SYMLINK: xid=0x%08x badfh crc=0x%08x",
 		      rt->rt_info.ri_xid, crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->symlink.data.data_val;
-	TRACE("READLINK: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "READLINK: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -676,14 +683,15 @@ static int nfs3_read(struct rpc_trans *rt)
 	if (args->file.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->file);
-		TRACE("READ: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "READ: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->file.data.data_val;
-	TRACE("READ: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "READ: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -787,14 +795,15 @@ static int nfs3_write(struct rpc_trans *rt)
 	if (args->file.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->file);
-		TRACE("WRITE: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "WRITE: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->file.data.data_val;
-	TRACE("WRITE: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "WRITE: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -934,14 +943,15 @@ static int nfs3_create(struct rpc_trans *rt)
 	if (args->where.dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->where.dir);
-		TRACE("CREATE: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "CREATE: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->where.dir.data.data_val;
-	TRACE("CREATE: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "CREATE: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -1120,14 +1130,15 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	if (args->where.dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->where.dir);
-		TRACE("MKDIR: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "MKDIR: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->where.dir.data.data_val;
-	TRACE("MKDIR: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "MKDIR: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -1266,14 +1277,15 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	if (args->where.dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->where.dir);
-		TRACE("SYMLINK: xid=0x%08x badfh crc=0x%08x",
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "SYMLINK: xid=0x%08x badfh crc=0x%08x",
 		      rt->rt_info.ri_xid, crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->where.dir.data.data_val;
-	TRACE("SYMLINK: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "SYMLINK: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -1425,14 +1437,15 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	if (args->where.dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->where.dir);
-		TRACE("MKNOD: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "MKNOD: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->where.dir.data.data_val;
-	TRACE("MKNOD: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "MKNOD: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -1624,14 +1637,15 @@ static int nfs3_remove(struct rpc_trans *rt)
 	if (args->object.dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->object.dir);
-		TRACE("REMOVE: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "REMOVE: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->object.dir.data.data_val;
-	TRACE("REMOVE: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "REMOVE: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -1722,14 +1736,15 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 	if (args->object.dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->object.dir);
-		TRACE("RMDIR: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "RMDIR: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->object.dir.data.data_val;
-	TRACE("RMDIR: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "RMDIR: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -1851,7 +1866,8 @@ static int nfs3_rename(struct rpc_trans *rt)
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc_src = nfs3_getfh_crc(&args->from.dir);
 		uint32_t crc_to = nfs3_getfh_crc(&args->to.dir);
-		TRACE("RENAME: xid=0x%08x badfh crc_src=0x%08x crc_to=0x%08x",
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "RENAME: xid=0x%08x badfh crc_src=0x%08x crc_to=0x%08x",
 		      rt->rt_info.ri_xid, crc_src, crc_to);
 		goto out;
 	}
@@ -1862,13 +1878,15 @@ static int nfs3_rename(struct rpc_trans *rt)
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc_src = nfs3_getfh_crc(&args->from.dir);
 		uint32_t crc_to = nfs3_getfh_crc(&args->to.dir);
-		TRACE("RENAME: xid=0x%08x badfh crc_src=0x%08x crc_to=0x%08x",
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "RENAME: xid=0x%08x badfh crc_src=0x%08x crc_to=0x%08x",
 		      rt->rt_info.ri_xid, crc_src, crc_to);
 		goto out;
 	}
 
 	nfh_dst = (struct network_file_handle *)args->to.dir.data.data_val;
-	TRACE("RENAME: xid=0x%08x sb_src=%lu ino_src=%lu sb_dst=%lu ino_dst=%lu",
+	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	      "RENAME: xid=0x%08x sb_src=%lu ino_src=%lu sb_dst=%lu ino_dst=%lu",
 	      rt->rt_info.ri_xid, nfh_src->nfh_sb, nfh_src->nfh_ino,
 	      nfh_dst->nfh_sb, nfh_dst->nfh_ino);
 
@@ -2055,7 +2073,8 @@ static int nfs3_link(struct rpc_trans *rt)
 	if (args->file.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->file);
-		TRACE("LINK: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "LINK: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
@@ -2063,7 +2082,8 @@ static int nfs3_link(struct rpc_trans *rt)
 	if (args->link.dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->link.dir);
-		TRACE("LINK: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "LINK: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
@@ -2071,8 +2091,8 @@ static int nfs3_link(struct rpc_trans *rt)
 	nfh = (struct network_file_handle *)args->file.data.data_val;
 	nfh_dir = (struct network_file_handle *)args->link.dir.data.data_val;
 
-	TRACE("LINK: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "LINK: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	if (nfh->nfh_sb != nfh_dir->nfh_sb) {
 		res->status = NFS3ERR_XDEV;
@@ -2213,13 +2233,15 @@ static int nfs3_readdir(struct rpc_trans *rt)
 	if (args->dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->dir);
-		TRACE("READDIR: xid=0x%08x badfh crc=0x%08x",
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "READDIR: xid=0x%08x badfh crc=0x%08x",
 		      rt->rt_info.ri_xid, crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->dir.data.data_val;
-	TRACE("READDIR: xid=0x%08x sb=%lu ino=%lu cookie=0x%08lx",
+	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	      "READDIR: xid=0x%08x sb=%lu ino=%lu cookie=0x%08lx",
 	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, args->cookie);
 
 	sb = super_block_find(nfh->nfh_sb);
@@ -2446,13 +2468,15 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 	if (args->dir.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->dir);
-		TRACE("READDIRPLUS: xid=0x%08x badfh crc=0x%08x",
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "READDIRPLUS: xid=0x%08x badfh crc=0x%08x",
 		      rt->rt_info.ri_xid, crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->dir.data.data_val;
-	TRACE("READDIRPLUS: xid=0x%08x sb=%lu ino=%lu cookie=0x%08lx",
+	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	      "READDIRPLUS: xid=0x%08x sb=%lu ino=%lu cookie=0x%08lx",
 	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, args->cookie);
 
 	sb = super_block_find(nfh->nfh_sb);
@@ -2788,14 +2812,15 @@ static int nfs3_fsstat(struct rpc_trans *rt)
 	if (args->fsroot.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->fsroot);
-		TRACE("FSSTAT: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "FSSTAT: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->fsroot.data.data_val;
-	TRACE("FSSTAT: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "FSSTAT: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -2853,19 +2878,20 @@ static int nfs3_fsinfo(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
 
-	TRACE("fsinfo start");
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "fsinfo start");
 
 	if (args->fsroot.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->fsroot);
-		TRACE("FSINFO: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "FSINFO: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->fsroot.data.data_val;
-	TRACE("FSINFO: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "FSINFO: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -2908,7 +2934,7 @@ static int nfs3_fsinfo(struct rpc_trans *rt)
 out:
 	inode_put(inode);
 	super_block_put(sb);
-	TRACE("fsinfo stop");
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "fsinfo stop");
 	return res->status;
 }
 
@@ -2928,19 +2954,20 @@ static int nfs3_pathconf(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
 
-	TRACE("pathconf start");
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "pathconf start");
 
 	if (args->object.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->object);
-		TRACE("PATHCONF: xid=0x%08x badfh crc=0x%08x",
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "PATHCONF: xid=0x%08x badfh crc=0x%08x",
 		      rt->rt_info.ri_xid, crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->object.data.data_val;
-	TRACE("PATHCONF: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "PATHCONF: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -2978,7 +3005,7 @@ static int nfs3_pathconf(struct rpc_trans *rt)
 out:
 	inode_put(inode);
 	super_block_put(sb);
-	TRACE("pathconf stop");
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "pathconf stop");
 	return res->status;
 }
 
@@ -3007,14 +3034,15 @@ static int nfs3_commit(struct rpc_trans *rt)
 	if (args->file.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->file);
-		TRACE("COMMIT: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "COMMIT: xid=0x%08x badfh crc=0x%08x", rt->rt_info.ri_xid,
 		      crc);
 		goto out;
 	}
 
 	nfh = (struct network_file_handle *)args->file.data.data_val;
-	TRACE("COMMIT: xid=0x%08x sb=%lu ino=%lu", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "COMMIT: xid=0x%08x sb=%lu ino=%lu",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {

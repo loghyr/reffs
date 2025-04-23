@@ -105,7 +105,7 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	int ret;
 	off_t cur = 2;
 
-	TRACE("path=%s offset=%lu", path, offset);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s offset=%lu", path, offset);
 
 	// For now expose find_matching_directory_entry because how to handle filler()?
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
@@ -174,14 +174,15 @@ int reffs_fuse_unlink(const char *path)
 
 int reffs_fuse_link(const char *oldpath, const char *newpath)
 {
-	TRACE("old path=%s new path=%s", oldpath, newpath);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "old path=%s new path=%s", oldpath,
+	      newpath);
 
 	return 0;
 }
 
 int reffs_fuse_truncate(const char *path, off_t len)
 {
-	TRACE("path=%s len=%lu", path, len);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s len=%lu", path, len);
 
 	return 0;
 }
@@ -189,7 +190,7 @@ int reffs_fuse_truncate(const char *path, off_t len)
 int reffs_fuse_open(const char *path,
 		    struct fuse_file_info __attribute__((unused)) * info)
 {
-	TRACE("path=%s", path);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s", path);
 
 	return 0;
 }
@@ -197,7 +198,7 @@ int reffs_fuse_open(const char *path,
 int reffs_fuse_flush(const char *path,
 		     struct fuse_file_info __attribute__((unused)) * info)
 {
-	TRACE("path=%s", path);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s", path);
 
 	return 0;
 }
@@ -205,7 +206,7 @@ int reffs_fuse_flush(const char *path,
 int reffs_fuse_release(const char *path,
 		       struct fuse_file_info __attribute__((unused)) * info)
 {
-	TRACE("path=%s", path);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s", path);
 
 	return 0;
 }
@@ -213,14 +214,14 @@ int reffs_fuse_release(const char *path,
 int reffs_fuse_fsync(const char *path, int datasync,
 		     struct fuse_file_info __attribute__((unused)) * info)
 {
-	TRACE("path=%s datasync=%d", path, datasync);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s datasync=%d", path, datasync);
 
 	return 0;
 }
 
 int reffs_fuse_statfs(const char *path, struct statvfs *buf)
 {
-	TRACE("path=%s", path);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "path=%s", path);
 
 	return 0;
 }

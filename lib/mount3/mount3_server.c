@@ -28,7 +28,8 @@
 
 static int mount3_null(struct rpc_trans *rt)
 {
-	TRACE("NULL: xid=0x%08x", rt->rt_info.ri_xid);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "NULL: xid=0x%08x",
+	      rt->rt_info.ri_xid);
 	return 0;
 }
 
@@ -48,7 +49,7 @@ static int mount3_mnt(struct rpc_trans *rt)
 	uint64_t ino = 1;
 	uint64_t sb_id = 1;
 
-	TRACE("MNT: xid=0x%08x", rt->rt_info.ri_xid);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "MNT: xid=0x%08x", rt->rt_info.ri_xid);
 
 	mr->fhs_status = find_matching_directory_entry(&nm, *dp,
 						       LAST_COMPONENT_IS_MATCH);
@@ -110,7 +111,8 @@ static int mount3_exports(struct rpc_trans *rt)
 
 	struct super_block *sb = NULL;
 
-	TRACE("EXPORTS: xid=0x%08x", rt->rt_info.ri_xid);
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "EXPORTS: xid=0x%08x",
+	      rt->rt_info.ri_xid);
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
