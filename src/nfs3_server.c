@@ -261,8 +261,11 @@ void unregister_client_fd(int fd)
 	}
 }
 
+static int context_created = 0;
+static int context_freed = 0;
+
 // Create an IO context for operations
-struct io_context *create_io_context(enum op_type op_type, int fd, void *buffer)
+struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer)
 {
 	struct io_context *ic = calloc(1, sizeof(struct io_context));
 	if (!ic) {
@@ -274,7 +277,25 @@ struct io_context *create_io_context(enum op_type op_type, int fd, void *buffer)
 	ic->ic_id = generate_id();
 	ic->ic_buffer = buffer;
 
+	context_created++;
+	TRACE("Created io_context %d of type %s (total: %d)", ic->ic_id,
+	      op_type_to_str(op_type), context_created);
+
 	return ic;
+}
+
+void io_context_free(struct io_context *ic)
+{
+	if (!ic)
+		return;
+
+	context_freed++;
+	TRACE("Freed io_context %d of type %s (total: %d/%d)", ic->ic_id,
+	      op_type_to_str(ic->ic_op_type), context_freed, context_created);
+
+	if (ic->ic_buffer)
+		free(ic->ic_buffer);
+	free(ic);
 }
 
 // Handler for GETATTR response
@@ -401,6 +422,39 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 				memmove(bs->bs_data, data, filled);
 				bs->bs_filled = filled;
 
+				// If there's not enough data for another record marker, request more
+				if (bs->bs_filled < 4) {
+					request_more_read_data(bs, ring, ic);
+				} else {
+					// We still have enough data for another potential message,
+					// but we need to create a new read context for future data
+					char *buffer = malloc(BUFFER_SIZE);
+					if (buffer) {
+						struct io_context *ic_new =
+							io_context_create(
+								OP_TYPE_READ,
+								bs->bs_fd,
+								buffer);
+						if (ic_new) {
+							copy_connection_info(
+								&ic_new->ic_ci,
+								&ic->ic_ci);
+							struct io_uring_sqe *sqe =
+								io_uring_get_sqe(
+									ring);
+							io_uring_prep_read(
+								sqe, bs->bs_fd,
+								buffer,
+								BUFFER_SIZE, 0);
+							sqe->user_data =
+								(uint64_t)(uintptr_t)
+									ic_new;
+							io_uring_submit(ring);
+						} else {
+							free(buffer);
+						}
+					}
+				}
 				// Return the complete message size
 				return complete_size;
 			}
@@ -602,9 +656,17 @@ void rpc_process_task(struct task *t)
 		}
 
 		int ret = rpc_protocol_allocate_call(rt);
-		ret = rpc_protocol_op_call(rt);
-		if (!ret) {
-			p = (uint32_t *)(rt->rt_body + rt->rt_offset);
+		if (ret == ENOENT) {
+			rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
+			rt->rt_info.ri_accept_stat = PROG_UNAVAIL;
+		} else if (ret == ENOMEM) {
+			rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
+			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
+		} else {
+			ret = rpc_protocol_op_call(rt);
+			if (!ret) {
+				p = (uint32_t *)(rt->rt_body + rt->rt_offset);
+			}
 		}
 
 handle_rpc_error:
@@ -971,7 +1033,7 @@ handle_rpc_error:
 		}
 
 		if (rt->rt_reply && rt->rt_reply_len > 0) {
-			struct io_context *ic_write = create_io_context(
+			struct io_context *ic_write = io_context_create(
 				OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply);
 
 			if (ic_write) {
@@ -1003,7 +1065,7 @@ handle_rpc_error:
 					rt->rt_reply = NULL;
 				} else {
 					LOG("Failed to get SQE for reply");
-					free(ic_write);
+					io_context_free(ic_write);
 				}
 			} else {
 				LOG("Failed to create write context");
@@ -1205,8 +1267,7 @@ static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 		    bytes_read);
 		unregister_client_fd(client_fd);
 		close(client_fd);
-		free(buffer);
-		free(ic);
+		io_context_free(ic);
 		return 0;
 	}
 
@@ -1215,16 +1276,14 @@ static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	if (!bs) {
 		bs = create_buffer_state(client_fd);
 		if (!bs) {
-			free(buffer);
-			free(ic);
+			io_context_free(ic);
 			return -ENOMEM;
 		}
 	}
 
 	// Append new data to existing buffer
 	if (!append_to_buffer(bs, buffer, bytes_read)) {
-		free(buffer);
-		free(ic);
+		io_context_free(ic);
 		return -ENOMEM;
 	}
 
@@ -1232,8 +1291,7 @@ static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	int complete_size = process_record_marker(bs, ring, ic);
 	if (complete_size <= 0) {
 		if (complete_size < 0) {
-			free(buffer);
-			free(ic);
+			io_context_free(ic);
 		}
 		return 0;
 	}
@@ -1328,7 +1386,7 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	if (buffer) {
 		// Create IO context for the read operation
 		struct io_context *ic_read =
-			create_io_context(OP_TYPE_READ, client_fd, buffer);
+			io_context_create(OP_TYPE_READ, client_fd, buffer);
 		copy_connection_info(&ic_read->ic_ci, &ic->ic_ci);
 		if (!ic_read) {
 			LOG("Failed to create read context");
@@ -1356,10 +1414,10 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 
 	// Create new IO context for the next accept
 	struct io_context *ic_accept =
-		create_io_context(OP_TYPE_ACCEPT, listen_fd, NULL);
+		io_context_create(OP_TYPE_ACCEPT, listen_fd, NULL);
 	if (!ic_accept) {
 		LOG("Failed to create accept context");
-		free(ic);
+		io_context_free(ic);
 		io_uring_cqe_seen(ring, cqe);
 		return 0;
 	}
@@ -1373,7 +1431,7 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	      ic_accept->ic_id);
 	io_uring_submit(ring);
 
-	free(ic); // Free the completed accept context
+	io_context_free(ic); // Free the completed accept context
 	return 0;
 }
 
@@ -1395,7 +1453,7 @@ int send_nfs_response(struct io_uring *ring, int fd, char *buffer, int len)
 
 	// Create an IO context for the write operation
 	struct io_context *ic =
-		create_io_context(OP_TYPE_WRITE, fd, send_buffer);
+		io_context_create(OP_TYPE_WRITE, fd, send_buffer);
 	if (!ic) {
 		free(send_buffer);
 		return -ENOMEM;
@@ -1471,8 +1529,19 @@ int main(int argc, char *argv[])
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = signal_handler;
+	sa.sa_flags = SA_RESTART; // Restart interrupted system calls
+	sigemptyset(&sa.sa_mask);
+	sigaddset(&sa.sa_mask, SIGINT);
+	sigaddset(&sa.sa_mask, SIGTERM);
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
+
+	sigset_t mask;
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGINT);
+	sigaddset(&mask, SIGTERM);
+	// Block signals in main thread temporarily
+	pthread_sigmask(SIG_BLOCK, &mask, NULL);
 
 	// Setup io_uring
 	if (setup_io_uring(&ring) < 0) {
@@ -1512,6 +1581,8 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
+
 	// Setup NFS listener
 	listener_fd = setup_listener(port);
 	if (listener_fd < 0) {
@@ -1526,7 +1597,7 @@ int main(int argc, char *argv[])
 
 	// Create IO context for the accept operation
 	struct io_context *ic_accept =
-		create_io_context(OP_TYPE_ACCEPT, listener_fd, NULL);
+		io_context_create(OP_TYPE_ACCEPT, listener_fd, NULL);
 	if (!ic_accept) {
 		LOG("Failed to create accept context");
 		exit_code = 1;
@@ -1561,7 +1632,18 @@ int main(int argc, char *argv[])
 
 	while (running) {
 		// Set a timeout for io_uring_wait_cqe to allow checking the running flag
-		struct __kernel_timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
+		struct __kernel_timespec ts = { .tv_sec = 0,
+						.tv_nsec = 100000000 };
+
+		static time_t last_check = 0;
+		time_t now = time(NULL);
+		if (now - last_check >= 1) { // Check signal flag every second
+			if (!running) {
+				TRACE("Detected shutdown flag, breaking main loop");
+				break;
+			}
+			last_check = now;
+		}
 
 		int ret = io_uring_wait_cqe_timeout(&ring, &cqe, &ts);
 		if (ret == -ETIME) {
@@ -1603,8 +1685,7 @@ int main(int argc, char *argv[])
 			}
 
 			case OP_TYPE_WRITE: {
-				free(ic->ic_buffer);
-				free(ic);
+				io_context_free(ic);
 				ret = 0;
 				break;
 			}
@@ -1612,17 +1693,14 @@ int main(int argc, char *argv[])
 			case OP_TYPE_RPC_REQ: {
 				TRACE("NFS request sent successfully");
 				ret = 0;
-				free(ic);
+				io_context_free(ic);
 				break;
 			}
 
 			default:
 				LOG("Unknown operation type: %d",
 				    ic->ic_op_type);
-				if (ic->ic_buffer) {
-					free(ic->ic_buffer);
-				}
-				free(ic);
+				io_context_free(ic);
 				ret = 0;
 				break;
 			}
@@ -1637,6 +1715,37 @@ int main(int argc, char *argv[])
 
 	// Cleanup listener socket
 	close(listener_fd);
+
+	// Drain pending io_uring operations
+	while (1) {
+		struct io_uring_cqe *cqe;
+		struct __kernel_timespec ts = { .tv_sec = 0,
+						.tv_nsec = 100000000 };
+
+		int ret = io_uring_wait_cqe_timeout(&ring, &cqe, &ts);
+		if (ret == -ETIME) {
+			// No more completions
+			TRACE("No more completions");
+			break;
+		} else if (ret < 0) {
+			LOG("Error draining io_uring: %s", strerror(-ret));
+			break;
+		}
+
+		// Free associated resources
+		if (cqe->user_data) {
+			struct io_context *ic =
+				(struct io_context *)(uintptr_t)cqe->user_data;
+			if (ic) {
+				TRACE("Cleaning up io_context of type %s and id %d",
+				      op_type_to_str(ic->ic_op_type),
+				      ic->ic_id);
+				io_context_free(ic);
+			}
+		}
+
+		io_uring_cqe_seen(&ring, cqe);
+	}
 
 	// Wait for worker threads to finish
 	TRACE("Waiting for worker threads to exit...");
@@ -1674,10 +1783,15 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	TRACE("Unregistering Port Mapper");
 	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
 	pmap_unset(NFS3_PROGRAM, NFS_V3);
 
 out:
+
+	TRACE("Final io_context statistics: created=%d, freed=%d, difference=%d",
+	      context_created, context_freed, context_created - context_freed);
+
 	// Wait for RCU grace period
 	TRACE("Calling rcu_barrier()...");
 	rcu_barrier();

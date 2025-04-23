@@ -35,7 +35,7 @@ static int mount3_null(struct rpc_trans *rt)
 static int mount3_mnt(struct rpc_trans *rt)
 {
 	struct name_match *nm = NULL;
-	struct inode *inode;
+	struct inode *inode = NULL;
 
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -45,14 +45,21 @@ static int mount3_mnt(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 	int *flavors = NULL;
 
+	uint64_t ino = 1;
+	uint64_t sb_id = 1;
+
 	TRACE("MNT: xid=0x%08x", rt->rt_info.ri_xid);
 
-	mr->fhs_status =
-		find_matching_directory_entry(&nm, dp, LAST_COMPONENT_IS_MATCH);
-	if (mr->fhs_status)
-		goto out;
+	if (strcmp(dp, "/")) {
+		mr->fhs_status = find_matching_directory_entry(
+			&nm, dp, LAST_COMPONENT_IS_MATCH);
+		if (mr->fhs_status)
+			goto out;
 
-	inode = nm->nm_dirent->d_inode;
+		inode = nm->nm_dirent->d_inode;
+		ino = inode->i_ino;
+		sb_id = inode->i_sb->sb_id;
+	}
 
 	nfh = calloc(1, sizeof(*nfh));
 	if (!nfh) {
@@ -69,8 +76,8 @@ static int mount3_mnt(struct rpc_trans *rt)
 	mr->mountres3_u.mountinfo.fhandle.fhandle3_val = (char *)nfh;
 	mr->mountres3_u.mountinfo.fhandle.fhandle3_len = sizeof(*nfh);
 	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-	nfh->nfh_sb = inode->i_sb->sb_id; // FIXME: If mounted on, change the sb
-	nfh->nfh_ino = inode->i_ino;
+	nfh->nfh_sb = sb_id; // FIXME: If mounted on, change the sb
+	nfh->nfh_ino = ino;
 
 	mr->mountres3_u.mountinfo.auth_flavors.auth_flavors_len = 2;
 	mr->mountres3_u.mountinfo.auth_flavors.auth_flavors_val = flavors;
@@ -80,6 +87,8 @@ static int mount3_mnt(struct rpc_trans *rt)
 
 	nfh = NULL;
 	flavors = NULL;
+
+	mr->fhs_status = MNT3_OK;
 
 out:
 	free(flavors);
