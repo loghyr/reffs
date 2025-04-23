@@ -26,6 +26,7 @@
 #include <stdbool.h>
 #include <rpc/clnt.h>
 #include <rpc/rpc_msg.h>
+#include <getopt.h>
 
 #include "reffs/log.h"
 #include "reffs/rpc.h"
@@ -1371,7 +1372,21 @@ int send_nfs_response(struct io_uring *ring, int fd, char *buffer, int len)
 	return 0;
 }
 
-int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
+static void usage(const char *prog)
+{
+        printf("Usage: %s [options]\n", prog);
+        printf("Options:\n");
+        printf("  -h  --help                   Print this usage and exit\n");
+        printf("  -p  --port=id                Serve NFS traffic from this \"port\"\n");
+}
+
+static struct option long_opts[] = {
+        { "help", no_argument, 0, 'h' },
+        { "port", required_argument, 0, 'p' },
+        { NULL, 0, NULL, 0 },
+};
+
+int main(int argc, char *argv[])
 {
 	int listener_fd;
 	struct io_uring ring;
@@ -1380,10 +1395,26 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 
 	int exit_code = 0;
 
+	int port = NFS_PORT;
+	        int opt;
+
+
 	struct super_block *root_sb;
 
 	// Initialize userspace RCU
 	rcu_init();
+
+        while ((opt = getopt_long(argc, argv, "p:h", long_opts, NULL)) !=
+               -1) {
+                switch (opt) {
+                case 'p':
+                        port = atoi(optarg);
+                        break;
+                case 'h':
+                        usage(argv[0]);
+                        return 0;
+                }
+        }
 
 	// Initialize pending requests array
 	memset(pending_requests, 0, sizeof(pending_requests));
@@ -1437,7 +1468,7 @@ int main(int __attribute__((unused)) argc, char *__attribute__((unused)) argv[])
 	}
 
 	// Setup NFS listener
-	listener_fd = setup_listener(NFS_PORT);
+	listener_fd = setup_listener(port);
 	if (listener_fd < 0) {
 		LOG("Failed to setup listener on port %d", NFS_PORT);
 		exit_code = 1;
