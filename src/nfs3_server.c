@@ -1578,6 +1578,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	inode->i_parent = &sb->sb_dirent_parent;
 	inode->i_uid = getuid();
 	inode->i_gid = getgid();
 	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);

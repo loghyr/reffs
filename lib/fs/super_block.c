@@ -55,6 +55,8 @@ static void super_block_free_rcu(struct rcu_head *rcu)
 		LOG("Could not delete a hash table: %m");
 	}
 
+	pthread_rwlock_destroy(&sb->sb_dirent_parent.d_rwlock);
+
 	free(sb);
 }
 
@@ -71,7 +73,7 @@ static void super_block_release(struct urcu_ref *ref)
 int super_block_dirent_create(struct super_block *sb,
 			      enum reffs_life_action rla)
 {
-	sb->sb_dirent = dirent_alloc(NULL, "/", rla);
+	sb->sb_dirent = dirent_alloc(&sb->sb_dirent_parent, "/", rla);
 	if (!sb->sb_dirent)
 		return ENOMEM;
 
@@ -110,6 +112,7 @@ struct super_block *super_block_alloc(uint64_t id, char *path)
 	}
 
 	CDS_INIT_LIST_HEAD(&sb->sb_link);
+	pthread_rwlock_init(&sb->sb_dirent_parent.d_rwlock, NULL);
 
 	sb->sb_inodes = cds_lfht_new(
 		8, 8, 0, CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING, NULL);

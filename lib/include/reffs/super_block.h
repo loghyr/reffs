@@ -23,6 +23,7 @@ struct super_block {
 	struct cds_list_head sb_link; /* List of sbs */
 	struct cds_lfht *sb_inodes;
 
+	struct dirent sb_dirent_parent;
 	struct dirent *sb_dirent;
 	uint64_t sb_id;
 

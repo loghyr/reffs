@@ -31,7 +31,7 @@ CDS_LIST_HEAD(dirent_list);
 void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 			  enum reffs_life_action rla)
 {
-	if (!parent)
+	if (!parent || !parent->d_inode)
 		return;
 
 	rcu_read_lock();
