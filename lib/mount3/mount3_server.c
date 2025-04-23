@@ -39,7 +39,7 @@ static int mount3_mnt(struct rpc_trans *rt)
 
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
-	dirpath dp = ph->ph_args;
+	dirpath *dp = ph->ph_args;
 	mountres3 *mr = ph->ph_res;
 
 	struct network_file_handle *nfh = NULL;
@@ -50,16 +50,14 @@ static int mount3_mnt(struct rpc_trans *rt)
 
 	TRACE("MNT: xid=0x%08x", rt->rt_info.ri_xid);
 
-	if (strcmp(dp, "/")) {
-		mr->fhs_status = find_matching_directory_entry(
-			&nm, dp, LAST_COMPONENT_IS_MATCH);
-		if (mr->fhs_status)
-			goto out;
+	mr->fhs_status = find_matching_directory_entry(&nm, *dp,
+						       LAST_COMPONENT_IS_MATCH);
+	if (mr->fhs_status)
+		goto out;
 
-		inode = nm->nm_dirent->d_inode;
-		ino = inode->i_ino;
-		sb_id = inode->i_sb->sb_id;
-	}
+	inode = nm->nm_dirent->d_inode;
+	ino = inode->i_ino;
+	sb_id = inode->i_sb->sb_id;
 
 	nfh = calloc(1, sizeof(*nfh));
 	if (!nfh) {
@@ -146,11 +144,11 @@ out_unwind:
 const struct rpc_operations_handler mount3_operations_handler[] = {
 	RPC_OPERATION_INIT(MOUNTPROC3_NULL, NULL, NULL, NULL, NULL,
 			   mount3_null),
-	RPC_OPERATION_INIT(MOUNTPROC3_MNT, xdr_dirpath, dirpath, xdr_mountres3,
-			   mountres3, mount3_mnt),
+	RPC_OPERATION_INIT(MOUNTPROC3_MNT, xdr_dirpath, dirpath *,
+			   xdr_mountres3, mountres3, mount3_mnt),
 	RPC_OPERATION_INIT(MOUNTPROC3_DUMP, NULL, NULL, xdr_mountlist,
 			   mountlist, NULL),
-	RPC_OPERATION_INIT(MOUNTPROC3_UMNT, xdr_dirpath, dirpath, NULL, NULL,
+	RPC_OPERATION_INIT(MOUNTPROC3_UMNT, xdr_dirpath, dirpath *, NULL, NULL,
 			   NULL),
 	RPC_OPERATION_INIT(MOUNTPROC3_UMNTALL, NULL, NULL, NULL, NULL, NULL),
 	RPC_OPERATION_INIT(MOUNTPROC3_EXPORT, NULL, NULL, xdr_exports, exports,

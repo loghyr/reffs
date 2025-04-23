@@ -137,7 +137,7 @@ static int rpc_parse_call_data(struct rpc_trans *rt)
 
 	start_pos = xdr_getpos(&xdrs);
 
-	if (!ph->ph_op_handler->roh_args_f(&xdrs, &ph->ph_args)) {
+	if (!ph->ph_op_handler->roh_args_f(&xdrs, ph->ph_args)) {
 		xdr_destroy(&xdrs);
 		return EINVAL;
 	}
@@ -239,13 +239,13 @@ void rpc_protocol_free(struct rpc_trans *rt)
 		if (ph->ph_op_handler) {
 			if (ph->ph_op_handler->roh_args_f) {
 				xdr_free(ph->ph_op_handler->roh_args_f,
-					 &ph->ph_args);
+					 ph->ph_args);
 				free(ph->ph_args);
 			}
 
 			if (ph->ph_op_handler->roh_res_f) {
 				xdr_free(ph->ph_op_handler->roh_res_f,
-					 &ph->ph_res);
+					 ph->ph_res);
 				free(ph->ph_res);
 			}
 		}

@@ -47,6 +47,32 @@
 
 static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 {
+	uint16_t type = inode->i_mode & S_IFMT;
+
+	switch (type) {
+	case S_IFLNK:
+		fa->type = NF3LNK; 
+		break;
+	case S_IFREG:
+		fa->type = NF3REG; 
+		break;
+	case S_IFDIR:
+		fa->type = NF3DIR; 
+		break;
+	case S_IFCHR:
+		fa->type = NF3CHR; 
+		break;
+	case S_IFBLK:
+		fa->type = NF3BLK; 
+		break;
+	case S_IFIFO:
+		fa->type = NF3FIFO; 
+		break;
+	case S_IFSOCK:
+		fa->type = NF3SOCK; 
+		break;
+	}
+
 	fa->mode = inode->i_mode;
 	fa->nlink = inode->i_nlink;
 	fa->uid = inode->i_uid;

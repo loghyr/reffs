@@ -1500,7 +1500,8 @@ int main(int argc, char *argv[])
 	int port = NFS_PORT;
 	int opt;
 
-	struct super_block *root_sb;
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
 
 	// Initialize userspace RCU
 	rcu_init();
@@ -1559,11 +1560,36 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	root_sb = super_block_alloc(1, "/");
-	if (!root_sb) {
+	sb = super_block_alloc(1, "/");
+	if (!sb) {
 		exit_code = ENOMEM;
 		goto out;
 	}
+
+	exit_code = super_block_dirent_create(sb, reffs_life_action_birth);
+	if (exit_code)
+		goto out;
+
+	inode = inode_get(sb->sb_dirent->d_inode);
+	assert(inode);
+	if (!inode) {
+		exit_code = 1;
+		LOG("No root inode on root sb");
+		goto out;
+	}
+
+	inode->i_uid = getuid();
+	inode->i_gid = getgid();
+	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
+	inode->i_atime = inode->i_mtime;
+	inode->i_btime = inode->i_mtime;
+	inode->i_ctime = inode->i_mtime;
+	inode->i_mode = S_IFDIR | 0755;
+	inode->i_size = 4096;
+	inode->i_used = 8;
+	inode->i_nlink = 2;
+
+	inode_put(inode);
 
 	server_boot_uuid_generate();
 
@@ -1788,13 +1814,17 @@ int main(int argc, char *argv[])
 	pmap_unset(NFS3_PROGRAM, NFS_V3);
 
 out:
-
 	TRACE("Final io_context statistics: created=%d, freed=%d, difference=%d",
 	      context_created, context_freed, context_created - context_freed);
 
 	// Wait for RCU grace period
 	TRACE("Calling rcu_barrier()...");
 	rcu_barrier();
+
+	if (sb) {
+		super_block_dirent_release(sb, reffs_life_action_death);
+		super_block_put(sb);
+	}
 
 	mount3_protocol_deregister();
 	nfs3_protocol_deregister();

@@ -13,4 +13,4 @@ AM_LDFLAGS = -rdynamic
 
 lib_LTLIBRARIES = libreffs_mount3.la
 libreffs_mount3_la_SOURCES = \
-	mount3.c
+	mount3_server.c
