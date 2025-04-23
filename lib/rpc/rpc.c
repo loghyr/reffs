@@ -210,7 +210,7 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 	int ret = 0;
 
-	if (ph->ph_op_handler->roh_action)
+	if (ph->ph_op_handler && ph->ph_op_handler->roh_action)
 		ret = ph->ph_op_handler->roh_action(rt);
 	else
 		rt->rt_info.ri_accept_stat = PROG_UNAVAIL;

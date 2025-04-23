@@ -2853,6 +2853,8 @@ static int nfs3_fsinfo(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
 
+	TRACE("fsinfo start");
+
 	if (args->fsroot.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->fsroot);
@@ -2906,6 +2908,7 @@ static int nfs3_fsinfo(struct rpc_trans *rt)
 out:
 	inode_put(inode);
 	super_block_put(sb);
+	TRACE("fsinfo stop");
 	return res->status;
 }
 
@@ -2924,6 +2927,8 @@ static int nfs3_pathconf(struct rpc_trans *rt)
 
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
+
+	TRACE("pathconf start");
 
 	if (args->object.data.data_len != sizeof(*nfh)) {
 		res->status = NFS3ERR_BADHANDLE;
@@ -2973,6 +2978,7 @@ static int nfs3_pathconf(struct rpc_trans *rt)
 out:
 	inode_put(inode);
 	super_block_put(sb);
+	TRACE("pathconf stop");
 	return res->status;
 }
 
