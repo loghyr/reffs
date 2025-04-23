@@ -130,7 +130,8 @@ static int rpc_parse_call_data(struct rpc_trans *rt)
 	if (!ph->ph_op_handler->roh_args_f)
 		return 0;
 
-	xdrmem_create(&xdrs, (char *)p, rt->rt_len - rt->rt_offset, XDR_DECODE);
+	xdrmem_create(&xdrs, (char *)p, rt->rt_body_len - rt->rt_offset,
+		      XDR_DECODE);
 
 	start_pos = xdr_getpos(&xdrs);
 
@@ -197,12 +198,12 @@ int rpc_protocol_allocate_call(struct rpc_trans *rt)
 int rpc_protocol_op_call(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
-	int ret = -1;
+	int ret = 0;
 
 	if (ph->ph_op_handler->roh_action)
 		ret = ph->ph_op_handler->roh_action(rt);
 	else
-		ph->ph_stat = PROG_UNAVAIL;
+		rt->rt_info.ri_accept_stat = PROG_UNAVAIL;
 
 	return ret;
 }
@@ -241,5 +242,6 @@ void rpc_protocol_free(struct rpc_trans *rt)
 
 	rpc_program_handler_put(rt->rt_rph);
 
+	free(rt->rt_reply);
 	free(rt);
 }

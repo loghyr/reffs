@@ -17,6 +17,8 @@
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
 
+#include "reffs/network.h"
+
 struct rpc_cred {
 	uint32_t rc_flavor;
 	union {
@@ -31,22 +33,26 @@ struct rpc_info {
 	uint32_t ri_program;
 	uint32_t ri_version;
 	uint32_t ri_procedure;
-	struct sockaddr_storage ri_peer;
-	socklen_t ri_peer_len;
-	struct sockaddr_storage ri_local;
-	socklen_t ri_local_len;
+	struct connection_info ri_ci;
 	struct rpc_cred ri_cred;
 	uint32_t ri_verifier_flavor;
-	enum auth_stat ri_stat;
+
+	enum reply_stat ri_reply_stat;
+	enum reject_stat ri_reject_stat;
+	enum accept_stat ri_accept_stat;
+	enum auth_stat ri_auth_stat;
 };
 
 struct rpc_program_handler;
 
 struct rpc_trans {
 	struct rpc_info rt_info; // The RPC Header
+	int rt_fd; // For sending responses
 	char *rt_body; // The raw RPC payload
-	size_t rt_len; // The length of the payload
+	size_t rt_body_len; // The length of the payload
 	size_t rt_offset; // Current offset to be parsed
+	char *rt_reply; // The raw RPC payload
+	size_t rt_reply_len; // The length of the payload
 	void *rt_context; // Protocol specific context
 	struct rpc_program_handler *rt_rph;
 };
@@ -98,11 +104,24 @@ struct protocol_handler {
 	  .roh_res_size = sizeof(RES),                         \
 	  .roh_action = CALL }
 
-static inline uint32_t *decode_uint32_t(struct rpc_trans *rt, uint32_t *p,
-					uint32_t *dst)
+static inline uint32_t *rpc_decode_uint32_t(struct rpc_trans *rt, uint32_t *p,
+					    uint32_t *dst)
 {
-	if (rt->rt_offset + sizeof(uint32_t) <= rt->rt_len) {
+	if (rt->rt_offset + sizeof(uint32_t) <= rt->rt_body_len) {
 		*dst = ntohl(*p);
+		rt->rt_offset += sizeof(uint32_t);
+	} else {
+		return NULL;
+	}
+
+	return ++p;
+}
+
+static inline uint32_t *rpc_encode_uint32_t(struct rpc_trans *rt, uint32_t *p,
+					    uint32_t src)
+{
+	if (rt->rt_offset + sizeof(uint32_t) < rt->rt_reply_len) {
+		*p = htonl(src);
 		rt->rt_offset += sizeof(uint32_t);
 	} else {
 		return NULL;

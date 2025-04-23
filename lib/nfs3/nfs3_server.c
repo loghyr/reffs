@@ -174,7 +174,7 @@ static nfsstat3 nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
 
 		break;
 	default:
-		return NFS3ERR_ACCES; // Should have already been done at RPC layer
+		return NFS3ERR_ACCES;
 	}
 
 	if (ap->aup_uid == inode->i_uid) {

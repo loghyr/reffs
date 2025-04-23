@@ -27,7 +27,8 @@
 static int nfs3_null(struct rpc_trans *rt)
 {
 	LOG("NULL");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
@@ -64,147 +65,168 @@ static int nfs3_getattr(struct rpc_trans *rt)
 
 	print_nfs_fh3_hex(&args->object);
 
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_setattr(struct rpc_trans *rt)
 {
 	LOG("SETATTR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_lookup(struct rpc_trans *rt)
 {
 	LOG("LOOKUP");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_access(struct rpc_trans *rt)
 {
 	LOG("ACCESS");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_readlink(struct rpc_trans *rt)
 {
 	LOG("READLINK");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_read(struct rpc_trans *rt)
 {
 	LOG("READ");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_write(struct rpc_trans *rt)
 {
 	LOG("WRITE");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_create(struct rpc_trans *rt)
 {
 	LOG("CREATE");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_mkdir(struct rpc_trans *rt)
 {
 	LOG("MKDIR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_symlink(struct rpc_trans *rt)
 {
 	LOG("SYMLINK");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_mknod(struct rpc_trans *rt)
 {
 	LOG("MKNOD");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_remove(struct rpc_trans *rt)
 {
 	LOG("REMOVE");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_rmdir(struct rpc_trans *rt)
 {
 	LOG("RMDIR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_rename(struct rpc_trans *rt)
 {
 	LOG("RENAME");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_link(struct rpc_trans *rt)
 {
 	LOG("LINK");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_readdir(struct rpc_trans *rt)
 {
 	LOG("READDIR");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_readdirplus(struct rpc_trans *rt)
 {
 	LOG("READDIRPLUS");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_fsstat(struct rpc_trans *rt)
 {
 	LOG("FSSTAT");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_fsinfo(struct rpc_trans *rt)
 {
 	LOG("FSINFO");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_pathconf(struct rpc_trans *rt)
 {
 	LOG("PATHCONF");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 
 static int nfs3_commit(struct rpc_trans *rt)
 {
 	LOG("COMMIT");
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 	return 0;
 }
 #pragma GCC diagnostic pop
@@ -279,7 +301,7 @@ int main(void)
 	rt->rt_context = (void *)ph;
 
 	rt->rt_body = (char *)EXAMINE_PACKET;
-	rt->rt_len = sizeof(EXAMINE_PACKET) / sizeof(*EXAMINE_PACKET);
+	rt->rt_body_len = sizeof(EXAMINE_PACKET) / sizeof(*EXAMINE_PACKET);
 
 	nfsv3_handler = rpc_program_handler_alloc(
 		NFS3_PROGRAM, NFS_V3, nfsv3_operations_handler,
@@ -290,12 +312,13 @@ int main(void)
 	rt->rt_offset = 72; // Jump over the rpc marker
 	p = (uint32_t *)(rt->rt_body + 72);
 
-	printf("The size of %p is %lu.\n", (void *)rt->rt_body, rt->rt_len);
+	printf("The size of %p is %lu.\n", (void *)rt->rt_body,
+	       rt->rt_body_len);
 
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_xid);
+	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_xid);
 	verify_msg(p, "Could not decode xid");
 
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_type);
+	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_type);
 	verify_msg(p, "Could not decode type");
 
 	LOG("This is a %s", rt->rt_info.ri_type ? "REPLY" : "CALL");
@@ -303,28 +326,28 @@ int main(void)
 	verify_msg(rt->rt_info.ri_type == 0,
 		   "Select an example which is a call");
 
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_rpc_version);
+	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_rpc_version);
 	verify_msg(p, "Could not decode rpc version");
 
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_program);
+	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_program);
 	verify_msg(p, "Could not decode program");
 
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_version);
+	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_version);
 	verify_msg(p, "Could not decode version");
 
 	LOG("This is a program %u version %u", rt->rt_info.ri_program,
 	    rt->rt_info.ri_version);
 
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_procedure);
+	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_procedure);
 	verify_msg(p, "Could not decode procedure");
 
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_cred.rc_flavor);
+	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_cred.rc_flavor);
 	verify_msg(p, "Could not decode auth flavor");
 
 	switch (rt->rt_info.ri_cred.rc_flavor) {
 	case AUTH_NONE: {
 		uint32_t len;
-		p = decode_uint32_t(rt, p, &len);
+		p = rpc_decode_uint32_t(rt, p, &len);
 		verify_msg(p, "Could not decode auth flavor len");
 		LOG("auth is AUTH_NONE, len is %u", len);
 		break;
@@ -333,11 +356,11 @@ int main(void)
 		XDR xdrs = { 0 };
 
 		uint32_t len;
-		p = decode_uint32_t(rt, p, &len);
+		p = rpc_decode_uint32_t(rt, p, &len);
 		verify_msg(p, "Could not decode auth flavor len");
 		verify_msg(len != 0, "auth flavor len %u invalid", len);
 
-		xdrmem_create(&xdrs, (char *)p, rt->rt_len - rt->rt_offset,
+		xdrmem_create(&xdrs, (char *)p, rt->rt_body_len - rt->rt_offset,
 			      XDR_DECODE);
 
 		if (!xdr_authunix_parms(&xdrs, &rt->rt_info.ri_cred.rc_unix)) {
@@ -382,13 +405,13 @@ int main(void)
 		break;
 	}
 
-	p = decode_uint32_t(rt, p, &rt->rt_info.ri_verifier_flavor);
+	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_verifier_flavor);
 	verify_msg(p, "Could not decode verifier flavor");
 
 	switch (rt->rt_info.ri_verifier_flavor) {
 	case AUTH_NONE: {
 		uint32_t len;
-		p = decode_uint32_t(rt, p, &len);
+		p = rpc_decode_uint32_t(rt, p, &len);
 		verify_msg(p, "Could not decode verifier flavor len");
 		LOG("verifier is AUTH_NONE, len is %u", len);
 		break;
@@ -429,7 +452,8 @@ int main(void)
 		p = (uint32_t *)(rt->rt_body + rt->rt_offset);
 	}
 
-	printf("There are %lu bytes remaining\n", rt->rt_len - rt->rt_offset);
+	printf("There are %lu bytes remaining\n",
+	       rt->rt_body_len - rt->rt_offset);
 
 	rpc_protocol_free(rt);
 
