@@ -41,7 +41,7 @@ recho_cl_LDADD = $(LDADD)
 reffs_SOURCES = reffs.c
 reffs_LDADD = $(LDADD)
 
-reffs_fuse_SOURCES = reffs_fuse.c
+reffs_fuse_SOURCES = fuse.c
 reffs_fuse_LDADD = $(LDADD)
 
 reffs_nfs3_srv_SOURCES = nfs3_server.c

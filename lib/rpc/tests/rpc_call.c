@@ -366,7 +366,7 @@ int main(void)
 		if (!xdr_authunix_parms(&xdrs, &rt->rt_info.ri_cred.rc_unix)) {
 			xdr_free((xdrproc_t)xdr_authunix_parms,
 				 (char *)&rt->rt_info.ri_cred.rc_unix);
-			rt->rt_info.ri_stat = AUTH_BADCRED;
+			rt->rt_info.ri_auth_stat = AUTH_BADCRED;
 		} else {
 			LOG("time = %lu", rt->rt_info.ri_cred.rc_unix.aup_time);
 			LOG("machine = %s",

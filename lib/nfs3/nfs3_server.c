@@ -15,7 +15,6 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <rpc/xdr.h>
@@ -2368,11 +2367,6 @@ static int nfs3_readdir(struct rpc_trans *rt)
 		e_next = e;
 	}
 
-	if (!inode->i_parent->d_inode) {
-		dl->eof = true;
-		goto past_eof;
-	}
-
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(de, &inode->i_parent->d_inode->i_children,
 				    d_siblings) {
@@ -2681,11 +2675,6 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 		}
 
 		e_next = e;
-	}
-
-	if (!inode->i_parent->d_inode) {
-		dl->eof = true;
-		goto past_eof;
 	}
 
 	rcu_read_lock();

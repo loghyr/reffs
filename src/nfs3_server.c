@@ -40,6 +40,7 @@
 #include "reffs/server.h"
 #include "reffs/super_block.h"
 #include "reffs/test.h"
+#include "reffs/ns.h"
 
 #define BUFFER_SIZE 4096
 #define QUEUE_DEPTH 1024
@@ -1555,9 +1556,6 @@ int main(int argc, char *argv[])
 	int port = NFS_PORT;
 	int opt;
 
-	struct super_block *sb = NULL;
-	struct inode *inode = NULL;
-
 	// Initialize userspace RCU
 	rcu_init();
 
@@ -1623,37 +1621,9 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	sb = super_block_alloc(1, "/");
-	if (!sb) {
-		exit_code = ENOMEM;
-		goto out;
-	}
-
-	exit_code = super_block_dirent_create(sb, reffs_life_action_birth);
+	exit_code = reffs_ns_init();
 	if (exit_code)
 		goto out;
-
-	inode = inode_get(sb->sb_dirent->d_inode);
-	assert(inode);
-	if (!inode) {
-		exit_code = 1;
-		LOG("No root inode on root sb");
-		goto out;
-	}
-
-	inode->i_parent = &sb->sb_dirent_parent;
-	inode->i_uid = getuid();
-	inode->i_gid = getgid();
-	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
-	inode->i_atime = inode->i_mtime;
-	inode->i_btime = inode->i_mtime;
-	inode->i_ctime = inode->i_mtime;
-	inode->i_mode = S_IFDIR | 0755;
-	inode->i_size = 4096;
-	inode->i_used = 8;
-	inode->i_nlink = 2;
-
-	inode_put(inode);
 
 	server_boot_uuid_generate();
 
@@ -1893,10 +1863,7 @@ out:
 	TRACE(REFFS_TRACE_LEVEL_WARNING, "Calling rcu_barrier()...");
 	rcu_barrier();
 
-	if (sb) {
-		super_block_dirent_release(sb, reffs_life_action_death);
-		super_block_put(sb);
-	}
+	reffs_ns_fini();
 
 	mount3_protocol_deregister();
 	nfs3_protocol_deregister();

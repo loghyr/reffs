@@ -26,15 +26,16 @@
 #include "reffs/fuse.h"
 #include "reffs/test.h"
 #include "reffs/log.h"
-
-struct super_block *root_sb;
+#include "reffs/fs.h"
+#include "reffs/ns.h"
 
 #define BUFFER_LEN (1024)
 
 int main(void)
 {
 	int ret;
-	struct inode *inode;
+	struct super_block *sb = NULL;
+	struct inode *inode = NULL;
 
 	struct stat st_pre;
 	struct stat st_src_pre;
@@ -45,30 +46,27 @@ int main(void)
 
 	rcu_register_thread();
 
-	reffs_tracing_set(REFFS_TRACE_STATE_ENABLED);
+	reffs_tracing_set(REFFS_TRACE_LEVEL_DEBUG);
 
-	// Perhaps a function to instantiate the root?
-	root_sb = super_block_alloc(1);
-	if (!root_sb) {
-		ret = ENOMEM;
+	ret = reffs_ns_init();
+	if (ret)
+		goto out;
+
+	sb = super_block_find(1);
+	if (!sb)
+		goto out;
+
+	inode = inode_find(sb, 1);
+	if (!inode) {
+		super_block_put(sb);
 		goto out;
 	}
 
-	ret = super_block_dirent_create(root_sb, reffs_life_action_birth);
-	verify(!ret);
-
-	inode = inode_get(root_sb->sb_dirent->d_inode);
-
 	inode->i_uid = getuid();
 	inode->i_gid = getgid();
-	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
-	inode->i_atime = inode->i_atime;
-	inode->i_btime = inode->i_btime;
-	inode->i_ctime = inode->i_ctime;
-	inode->i_mode = S_IFDIR | 0755;
-	inode->i_size = 4096;
-	inode->i_used = 8;
-	inode->i_nlink = 2;
+
+	inode_put(inode);
+	super_block_put(sb);
 
 	ret = reffs_fuse_getattr("/", &st_pre);
 	verify(!ret);
@@ -534,15 +532,11 @@ int main(void)
 	       ((st_src_pre.st_ctim.tv_sec == st_post.st_ctim.tv_sec) &&
 		((st_src_pre.st_ctim.tv_nsec < st_post.st_ctim.tv_nsec))));
 
-	super_block_dirent_release(root_sb, reffs_life_action_death);
-	inode_put(inode);
-
-	super_block_put(root_sb);
-	root_sb = NULL;
-
 out:
 	synchronize_rcu();
 	rcu_barrier();
+
+	reffs_ns_fini();
 
 	rcu_unregister_thread();
 

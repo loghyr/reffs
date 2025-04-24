@@ -30,8 +30,8 @@
 #include "reffs/inode.h"
 #include "reffs/fuse.h"
 #include "reffs/log.h"
-
-struct super_block *root_sb;
+#include "reffs/fs.h"
+#include "reffs/ns.h"
 
 static struct fuse_operations operations = {
 	.access = reffs_fuse_access,
@@ -87,6 +87,7 @@ int main(int argc, char *argv[])
 {
 	int ret;
 	struct inode *inode;
+	struct super_block *sb;
 
 	int opt;
 
@@ -121,43 +122,33 @@ int main(int argc, char *argv[])
 
 	rcu_register_thread();
 
-	// FIXME: This should be init()
-	root_sb = super_block_alloc(1, "/");
-	if (!root_sb) {
-		ret = ENOMEM;
+	ret = reffs_ns_init();
+	if (ret)
+		goto out;
+
+	sb = super_block_find(1);
+	if (!sb)
+		goto out;
+
+	inode = inode_find(sb, 1);
+	if (!inode) {
+		super_block_put(sb);
 		goto out;
 	}
 
-	ret = super_block_dirent_create(root_sb, reffs_life_action_birth);
-	if (ret)
-		goto out_sb;
-
-	inode = inode_get(root_sb->sb_dirent->d_inode);
-
 	inode->i_uid = getuid();
 	inode->i_gid = getgid();
-	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
-	inode->i_atime = inode->i_mtime;
-	inode->i_btime = inode->i_mtime;
-	inode->i_ctime = inode->i_mtime;
-	inode->i_mode = S_IFDIR | 0755;
-	inode->i_size = 4096;
-	inode->i_used = 8;
-	inode->i_nlink = 2;
+
+	inode_put(inode);
+	super_block_put(sb);
 
 	ret = fuse_main(fuse_argc, fuse_argv, &operations, NULL);
-
-	super_block_dirent_release(root_sb, reffs_life_action_death);
-	inode_put(inode);
-
-out_sb:
-	// FIXME: This should be destroy()
-	super_block_put(root_sb);
-	root_sb = NULL;
 
 out:
 	synchronize_rcu();
 	rcu_barrier();
+
+	reffs_ns_fini();
 
 	rcu_unregister_thread();
 

@@ -23,7 +23,6 @@ struct super_block {
 	struct cds_list_head sb_link; /* List of sbs */
 	struct cds_lfht *sb_inodes;
 
-	struct dirent sb_dirent_parent;
 	struct dirent *sb_dirent;
 	uint64_t sb_id;
 
@@ -49,7 +48,7 @@ struct super_block *super_block_find(uint64_t id);
 struct super_block *super_block_get(struct super_block *sb);
 void super_block_put(struct super_block *sb);
 
-int super_block_dirent_create(struct super_block *sb,
+int super_block_dirent_create(struct super_block *sb, struct dirent *de,
 			      enum reffs_life_action rla);
 void super_block_dirent_release(struct super_block *sb,
 				enum reffs_life_action rla);

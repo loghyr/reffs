@@ -13,6 +13,7 @@ reffsinclude_HEADERS = \
 	log.h \
 	network.h \
 	nfs3.h \
+	ns.h \
 	rcu.h \
 	rpc.h \
 	server.h \

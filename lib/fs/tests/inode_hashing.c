@@ -25,7 +25,7 @@ START_TEST(add_sb_1)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
 	super_block_dirent_release(sb, reffs_life_action_death);
@@ -39,7 +39,7 @@ START_TEST(add_sb_2)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
 	super_block_put(sb);
@@ -56,10 +56,10 @@ START_TEST(find_sb_inode)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
-	ret = super_block_dirent_create(sb, reffs_life_action_birth);
+	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
 	ck_assert_int_eq(ret, 0);
 
 	inode1 = inode_alloc(sb, 1);
@@ -85,10 +85,10 @@ START_TEST(find_sb_inode_put)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
-	ret = super_block_dirent_create(sb, reffs_life_action_birth);
+	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
 	ck_assert_int_eq(ret, 0);
 
 	inode1 = inode_alloc(sb, 1);
@@ -114,10 +114,10 @@ START_TEST(find_sb_inode_unhash)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
-	ret = super_block_dirent_create(sb, reffs_life_action_birth);
+	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
 	ck_assert_int_eq(ret, 0);
 
 	inode1 = inode_alloc(sb, 1);
@@ -141,7 +141,7 @@ START_TEST(add_inode_1)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
 	inode = inode_alloc(sb, 2);
@@ -163,7 +163,7 @@ START_TEST(add_inode_2)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
 	inode1 = inode_alloc(sb, 2);
@@ -192,7 +192,7 @@ START_TEST(put_inode_1)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
@@ -225,7 +225,7 @@ START_TEST(get_inode_1)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
 	inode1 = inode_alloc(sb, 2);
@@ -261,7 +261,7 @@ START_TEST(sb_put_inode_1)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
 	inode1 = inode_alloc(sb, 2);
@@ -290,7 +290,7 @@ START_TEST(find_inode_1)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
@@ -315,7 +315,7 @@ START_TEST(find_inode_1_sb_NULL)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
 	inode1 = inode_alloc(sb, 2);
@@ -340,7 +340,7 @@ START_TEST(find_inode_3)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id);
+	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
 
 	inode1 = inode_alloc(sb, 2);
@@ -374,7 +374,7 @@ START_TEST(find_sb_1)
 
 	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb1 = super_block_alloc(sb_id);
+	sb1 = super_block_alloc(sb_id, "/");
 	ck_assert(sb1);
 
 	sb2 = super_block_find(sb_id);

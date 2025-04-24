@@ -104,23 +104,25 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 	pthread_rwlock_init(&inode->i_db_rwlock, NULL);
 	pthread_mutex_init(&inode->i_attr_mutex, NULL);
 
-	inode->i_sb = super_block_get(sb);
-
 	CDS_INIT_LIST_HEAD(&inode->i_children);
 
-	/* Make sure no one else beat us to it */
-	rcu_read_lock();
-	node = cds_lfht_add_unique(inode->i_sb->sb_inodes, hash, inode_match,
-				   &ino, &inode->i_node);
-	if (node != &inode->i_node) {
-		tmp = caa_container_of(node, struct inode, i_node);
-		inode_put(inode);
-		inode = tmp;
-	} else {
-		__atomic_fetch_or(&inode->i_state, INODE_IS_HASHED,
-				  __ATOMIC_ACQUIRE);
+	if (sb) {
+		inode->i_sb = super_block_get(sb);
+
+		/* Make sure no one else beat us to it */
+		rcu_read_lock();
+		node = cds_lfht_add_unique(inode->i_sb->sb_inodes, hash,
+					   inode_match, &ino, &inode->i_node);
+		if (node != &inode->i_node) {
+			tmp = caa_container_of(node, struct inode, i_node);
+			inode_put(inode);
+			inode = tmp;
+		} else {
+			__atomic_fetch_or(&inode->i_state, INODE_IS_HASHED,
+					  __ATOMIC_ACQUIRE);
+		}
+		rcu_read_unlock();
 	}
-	rcu_read_unlock();
 
 	inode->i_ino = ino;
 
