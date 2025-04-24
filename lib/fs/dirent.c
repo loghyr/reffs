@@ -189,12 +189,10 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 
 		if (rla == reffs_life_action_death ||
 		    rla == reffs_life_action_update) {
-			pthread_mutex_lock(&parent->d_inode->i_attr_mutex);
 			inode_update_times_now(
 				parent->d_inode,
 				REFFS_INODE_UPDATE_CTIME |
 					REFFS_INODE_UPDATE_MTIME);
-			pthread_mutex_unlock(&parent->d_inode->i_attr_mutex);
 		}
 
 		dirent_put(parent);
