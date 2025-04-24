@@ -109,7 +109,8 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 	}
 
 	if (sa->mode.set_it) {
-		inode->i_mode = (sa->mode.set_mode3_u.mode & 07777);
+		uint16_t mode = inode->i_mode & S_IFMT;
+		inode->i_mode = (sa->mode.set_mode3_u.mode & 07777) | mode;
 		*flags |= REFFS_INODE_UPDATE_CTIME;
 	}
 
@@ -304,7 +305,6 @@ static int nfs3_setattr(struct rpc_trans *rt)
 	SETATTR3args *args = ph->ph_args;
 	SETATTR3res *res = ph->ph_res;
 	wcc_data *wcc = &res->SETATTR3res_u.resok.obj_wcc;
-	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
 	sattr3 *sa = &args->new_attributes;
 
 	struct network_file_handle *nfh = NULL;
@@ -356,7 +356,6 @@ static int nfs3_setattr(struct rpc_trans *rt)
 					  &inode->i_ctime)) {
 			res->status = NFS3ERR_NOT_SYNC;
 			wcc = &res->SETATTR3res_u.resfail.obj_wcc;
-			fa = &wcc->after.post_op_attr_u.attributes;
 			goto update_wcc;
 		}
 	}
@@ -366,7 +365,6 @@ static int nfs3_setattr(struct rpc_trans *rt)
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	if (res->status) {
 		wcc = &res->SETATTR3res_u.resfail.obj_wcc;
-		fa = &wcc->after.post_op_attr_u.attributes;
 		goto update_wcc;
 	}
 
@@ -375,6 +373,7 @@ static int nfs3_setattr(struct rpc_trans *rt)
 
 update_wcc:
 	wcc->before.attributes_follow = true;
+	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
 	wcc->before.pre_op_attr_u.attributes.size = size;
 	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
 	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
