@@ -1235,6 +1235,8 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 
 	uatomic_inc(&de->d_inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
 
+	de->d_inode->i_parent = de;
+
 update_wcc:
 	wcc->after.attributes_follow = true;
 	fa = &wcc->after.post_op_attr_u.attributes;

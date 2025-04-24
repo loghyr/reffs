@@ -103,10 +103,10 @@ int reffs_ns_init(void)
 	inode->i_used = 8;
 	inode->i_nlink = 2;
 
-	inode_put(inode);
 
-	dirent_parent_attach(reffs_root_sb->sb_dirent, reffs_root_de,
-			     reffs_life_action_update);
+	inode->i_parent = reffs_root_sb->sb_dirent;
+
+	inode_put(inode);
 
 out:
 	if (ret)

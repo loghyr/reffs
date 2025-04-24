@@ -514,6 +514,8 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 	de->d_inode->i_used = 0;
 	de->d_inode->i_nlink = 1;
 
+	de->d_inode->i_parent = de;
+
 out_puts:
 	dirent_put(de);
 	dirent_put(nm->nm_dirent);

@@ -48,11 +48,9 @@ void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 			parent; // Do not take a reference, manage carefully
 
 	if (rla == reffs_life_action_birth || rla == reffs_life_action_update) {
-		pthread_mutex_lock(&parent->d_inode->i_attr_mutex);
 		inode_update_times_now(parent->d_inode,
 				       REFFS_INODE_UPDATE_CTIME |
 					       REFFS_INODE_UPDATE_MTIME);
-		pthread_mutex_unlock(&parent->d_inode->i_attr_mutex);
 	}
 	rcu_read_unlock();
 }
