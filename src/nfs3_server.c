@@ -357,7 +357,7 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 
 	// Process record markers until we have a complete message or need more data
 	while (filled >= 4) { // Need at least 4 bytes for the record marker
-		// If we're starting a new record
+		// If we're starting a new fragment
 		if (rs->rs_position == 0) {
 			uint32_t marker = ntohl(*(uint32_t *)data);
 			rs->rs_last_fragment = (marker & 0x80000000) != 0;
@@ -365,6 +365,7 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 
 			// Ensure our record buffer is large enough
 			if (!rs->rs_data) {
+				// First fragment - initialize buffer with extra space
 				rs->rs_capacity = rs->rs_fragment_len *
 						  2; // Some extra space
 				rs->rs_data = malloc(rs->rs_capacity);
@@ -374,8 +375,12 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 				rs->rs_total_len = 0;
 			} else if (rs->rs_total_len + rs->rs_fragment_len >
 				   rs->rs_capacity) {
-				// Need to resize
-				size_t new_capacity = rs->rs_capacity * 2;
+				// Need to resize - ensure we have enough space for current data + new fragment
+				size_t new_capacity =
+					rs->rs_total_len + rs->rs_fragment_len;
+				// Add some extra margin to reduce future reallocations
+				new_capacity = new_capacity * 2;
+
 				char *new_data =
 					realloc(rs->rs_data, new_capacity);
 				if (!new_data) {
@@ -406,7 +411,19 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 			to_copy = filled;
 		}
 
-		// Copy data into our reassembly buffer
+		// Verify we're not going to exceed buffer bounds
+		if (rs->rs_total_len + to_copy > rs->rs_capacity) {
+			// This should never happen with the resize logic above, but add a safety check
+			size_t new_capacity = (rs->rs_total_len + to_copy) * 2;
+			char *new_data = realloc(rs->rs_data, new_capacity);
+			if (!new_data) {
+				return -ENOMEM;
+			}
+			rs->rs_data = new_data;
+			rs->rs_capacity = new_capacity;
+		}
+
+		// Copy data into our reassembly buffer at the current total position
 		memcpy(rs->rs_data + rs->rs_total_len, data, to_copy);
 		rs->rs_total_len += to_copy;
 		rs->rs_position += to_copy;

@@ -860,6 +860,8 @@ static int nfs3_write(struct rpc_trans *rt)
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
 		}
+
+		resok->count = args->data.data_len;
 	} else {
 		res->status = data_block_write(inode->i_db, args->data.data_val,
 					       args->data.data_len,
