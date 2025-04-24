@@ -100,12 +100,21 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 		if (sz < 0)
 			return -sz;
 
-		inode->i_size = inode->i_db->db_size;
-		inode->i_used =
-			inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
+		if (!inode->i_db && size) {
+			inode->i_db = data_block_alloc(
+				NULL, sa->size.set_size3_u.size, 0);
+			if (!inode->i_db) {
+				return ENOMEM;
+			}
+		} else if (inode->i_db) {
+			inode->i_size = inode->i_db->db_size;
+			inode->i_used = inode->i_size / 4096 +
+					(inode->i_size % 4096 ? 1 : 0);
+			uatomic_add_return(&inode->i_sb->sb_bytes_used,
+					   inode->i_size - size,
+					   __ATOMIC_RELAXED);
+		}
 		*flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
-		uatomic_add_return(&inode->i_sb->sb_bytes_used,
-				   inode->i_size - size, __ATOMIC_RELAXED);
 	}
 
 	if (sa->mode.set_it) {
@@ -741,9 +750,16 @@ static int nfs3_read(struct rpc_trans *rt)
 			poa = &res->READ3res_u.resfail.file_attributes;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
+		} else if (res->status < 0) {
+			free(resok->data.data_val);
+			resok->data.data_len = 0;
+			poa = &res->READ3res_u.resfail.file_attributes;
+			pthread_rwlock_unlock(&inode->i_db_rwlock);
+			goto update_wcc;
 		}
 
 		resok->data.data_len = res->status;
+		res->status = NFS3_OK;
 
 		if (args->offset + args->count > inode->i_db->db_size)
 			resok->eof = true;
@@ -856,6 +872,7 @@ static int nfs3_write(struct rpc_trans *rt)
 		}
 
 		resok->count = res->status;
+		res->status = NFS3_OK;
 	}
 
 	/* For now, it is a RAM disk and all writes are done right away! */
@@ -1056,7 +1073,7 @@ static int nfs3_create(struct rpc_trans *rt)
 		createverf3_to_timespec(args->how.createhow3_u.verf,
 					&tmp->i_ctime);
 	} else {
-		res->status = nfs3_apply_sattr3(inode, sa, &flags);
+		res->status = nfs3_apply_sattr3(tmp, sa, &flags);
 		if (res->status) {
 			wcc = &resfail->dir_wcc;
 			goto update_wcc;

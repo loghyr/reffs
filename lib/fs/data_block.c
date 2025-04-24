@@ -56,7 +56,8 @@ struct data_block *data_block_alloc(const char *buffer, size_t size,
 	}
 
 	db->db_size = offset + size;
-	memcpy(db->db_buffer + offset, buffer, size);
+	if (buffer)
+		memcpy(db->db_buffer + offset, buffer, size);
 
 	pthread_mutex_init(&db->db_lock, NULL);
 
@@ -136,7 +137,7 @@ size_t data_block_resize(struct data_block *db, size_t size)
 	char *new;
 	char *old;
 
-	if (size == db->db_size)
+	if (!db || size == db->db_size)
 		return size;
 
 	rcu_read_lock();
