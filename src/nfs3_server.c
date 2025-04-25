@@ -162,7 +162,7 @@ void unregister_client_fd(int fd);
 // Signal handler
 void signal_handler(int sig)
 {
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	TRACE(REFFS_TRACE_LEVEL_ERR,
 	      "Received signal %d, initiating shutdown...", sig);
 	running = 0;
 
@@ -280,7 +280,7 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer)
 	ic->ic_buffer = buffer;
 
 	context_created++;
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "Created io_context %d of type %s (total: %d)", ic->ic_id,
 	      op_type_to_str(op_type), context_created);
 
@@ -293,7 +293,7 @@ void io_context_free(struct io_context *ic)
 		return;
 
 	context_freed++;
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "Freed io_context %d of type %s (total: %d/%d)", ic->ic_id,
 	      op_type_to_str(ic->ic_op_type), context_freed, context_created);
 
@@ -335,7 +335,7 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 	io_uring_prep_read(sqe, bs->bs_fd, ic->ic_buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "On fd = %d sent a context of type %s and id %d", ic->ic_fd,
 	      op_type_to_str(ic->ic_op_type), ic->ic_id);
 	io_uring_submit(ring);
@@ -522,8 +522,8 @@ void rpc_process_task(struct task *t)
 	u_long msg_len = 0;
 
 	// Print basic info about the message
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "RPC Message: xid=0x%08x, Type=%s",
-	      xid, msg_type == 0 ? "CALL" : "REPLY");
+	TRACE(REFFS_TRACE_LEVEL_NOTICE, "RPC Message: xid=0x%08x, Type=%s", xid,
+	      msg_type == 0 ? "CALL" : "REPLY");
 
 	if (msg_type == 0) { // It's a call
 		uint32_t *p;
@@ -701,7 +701,7 @@ handle_rpc_error:
 				rt->rt_reply =
 					calloc(rt->rt_reply_len, sizeof(char));
 				if (!rt->rt_reply) {
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -713,7 +713,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -724,7 +724,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -734,7 +734,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -744,7 +744,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -755,7 +755,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -765,7 +765,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -775,7 +775,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -787,7 +787,7 @@ handle_rpc_error:
 					calloc(rt->rt_reply_len, sizeof(char));
 				if (!rt->rt_reply) {
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -799,7 +799,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -810,7 +810,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -820,7 +820,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -830,7 +830,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -841,7 +841,7 @@ handle_rpc_error:
 				if (!p) {
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto drop_on_floor;
@@ -852,7 +852,7 @@ handle_rpc_error:
 			msg_len = rt->rt_reply_len - sizeof(uint32_t);
 			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
 			if (!rt->rt_reply) {
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
@@ -863,7 +863,7 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
@@ -873,7 +873,7 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
@@ -883,7 +883,7 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
@@ -893,7 +893,7 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
@@ -903,7 +903,7 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
@@ -913,7 +913,7 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
@@ -923,7 +923,7 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
@@ -934,7 +934,7 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
@@ -960,13 +960,13 @@ handle_rpc_error:
 			msg_len = rt->rt_reply_len - sizeof(uint32_t);
 			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
 			if (!rt->rt_reply) {
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
-			TRACE(REFFS_TRACE_LEVEL_WARNING,
+			TRACE(REFFS_TRACE_LEVEL_DEBUG,
 			      "Encoding at %p for length %lu",
 			      (void *)rt->rt_reply, rt->rt_reply_len);
 
@@ -976,7 +976,7 @@ handle_rpc_error:
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto handle_rpc_error;
@@ -987,7 +987,7 @@ handle_rpc_error:
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto handle_rpc_error;
@@ -998,7 +998,7 @@ handle_rpc_error:
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto handle_rpc_error;
@@ -1009,7 +1009,7 @@ handle_rpc_error:
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto handle_rpc_error;
@@ -1020,7 +1020,7 @@ handle_rpc_error:
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto handle_rpc_error;
@@ -1031,7 +1031,7 @@ handle_rpc_error:
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto handle_rpc_error;
@@ -1042,7 +1042,7 @@ handle_rpc_error:
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto handle_rpc_error;
@@ -1052,7 +1052,7 @@ handle_rpc_error:
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
 				      "Could not encode RPC reply xid=0x%08x",
 				      rt->rt_info.ri_xid);
 				goto handle_rpc_error;
@@ -1071,7 +1071,7 @@ handle_rpc_error:
 					rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 					free(rt->rt_reply);
 					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Could not encode RPC reply xid=0x%08x",
 					      rt->rt_info.ri_xid);
 					goto handle_rpc_error;
@@ -1108,7 +1108,7 @@ handle_rpc_error:
 					sqe->user_data =
 						(uint64_t)(uintptr_t)ic_write;
 
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "On fd = %d sent a context of type %s and id %d",
 					      ic_write->ic_fd,
 					      op_type_to_str(
@@ -1116,7 +1116,7 @@ handle_rpc_error:
 					      ic_write->ic_id);
 					io_uring_submit(t->t_ring);
 
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
+					TRACE(REFFS_TRACE_LEVEL_DEBUG,
 					      "Sent RPC reply (xid=0x%08x, len=%zu)",
 					      rt->rt_info.ri_xid,
 					      rt->rt_reply_len);
@@ -1151,7 +1151,7 @@ void *worker_thread(void *arg)
 	// Register this thread with userspace RCU
 	rcu_register_thread();
 
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "Worker thread %d started", thread_id);
+	TRACE(REFFS_TRACE_LEVEL_NOTICE, "Worker thread %d started", thread_id);
 
 	while (running) {
 		struct task *t = NULL;
@@ -1192,7 +1192,7 @@ void *worker_thread(void *arg)
 		}
 	}
 
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "Worker thread %d exiting", thread_id);
+	TRACE(REFFS_TRACE_LEVEL_NOTICE, "Worker thread %d exiting", thread_id);
 
 	// Unregister this thread from userspace RCU
 	rcu_unregister_thread();
@@ -1357,7 +1357,7 @@ static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	}
 
 	// We have a complete RPC message
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "Complete RPC message assembled (%d bytes)", complete_size);
 
 	// Create a task for processing
@@ -1461,7 +1461,7 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 			io_uring_prep_read(sqe, client_fd, buffer, BUFFER_SIZE,
 					   0);
 			sqe->user_data = (uint64_t)(uintptr_t)ic_read;
-			TRACE(REFFS_TRACE_LEVEL_WARNING,
+			TRACE(REFFS_TRACE_LEVEL_NOTICE,
 			      "On fd = %d sent a context of type %s and id %d",
 			      ic_read->ic_fd,
 			      op_type_to_str(ic_read->ic_op_type),
@@ -1491,7 +1491,7 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	io_uring_prep_accept(sqe, listen_fd, (struct sockaddr *)&client_address,
 			     &client_len, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic_accept;
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "On fd = %d sent a context of type %s and id %d",
 	      ic_accept->ic_fd, op_type_to_str(ic_accept->ic_op_type),
 	      ic_accept->ic_id);
@@ -1532,7 +1532,7 @@ int send_nfs_response(struct io_uring *ring, int fd, char *buffer, int len)
 	// Associate with the io context
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "On fd = %d sent a context of type %s and id %d", ic->ic_fd,
 	      op_type_to_str(ic->ic_op_type), ic->ic_id);
 	io_uring_submit(ring);
@@ -1746,7 +1746,7 @@ int main(int argc, char *argv[])
 				continue;
 			}
 
-			TRACE(REFFS_TRACE_LEVEL_WARNING,
+			TRACE(REFFS_TRACE_LEVEL_NOTICE,
 			      "On fd = %d got a context of type %s and id %d",
 			      ic->ic_fd, op_type_to_str(ic->ic_op_type),
 			      ic->ic_id);
@@ -1786,7 +1786,7 @@ int main(int argc, char *argv[])
 				break;
 			}
 
-			TRACE(REFFS_TRACE_LEVEL_WARNING, "%s returned %d",
+			TRACE(REFFS_TRACE_LEVEL_NOTICE, "%s returned %d",
 			      op_type_to_str(op), ret);
 		}
 

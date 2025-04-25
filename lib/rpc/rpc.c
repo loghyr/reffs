@@ -88,7 +88,7 @@ struct rpc_program_handler *rpc_program_handler_find(uint32_t program,
 		if (program == tmp->rph_program &&
 		    version == tmp->rph_version) {
 			rph = rpc_program_handler_get(tmp);
-			TRACE(REFFS_TRACE_LEVEL_WARNING,
+			TRACE(REFFS_TRACE_LEVEL_INFO,
 			      "RPC program %u and version %u have a match",
 			      program, version);
 			break;
@@ -170,7 +170,7 @@ int rpc_protocol_allocate_call(struct rpc_trans *rt)
 	for (size_t i = 0; i < rt->rt_rph->rph_ops_len; i++) {
 		if (rt->rt_rph->rph_ops[i].roh_operation ==
 		    rt->rt_info.ri_procedure) {
-			TRACE(REFFS_TRACE_LEVEL_WARNING,
+			TRACE(REFFS_TRACE_LEVEL_INFO,
 			      "RPC program %u and version %u matches operation %d",
 			      rt->rt_info.ri_program, rt->rt_info.ri_version,
 			      rt->rt_info.ri_procedure);
