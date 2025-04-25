@@ -173,10 +173,15 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 		*flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
 	}
 
-	/* Handle mode changes */
 	if (sa->mode.set_it) {
+		/* Check ownership for mode changes - only owner or root can change mode */
+		if (ap && ap->aup_uid != 0 && ap->aup_uid != inode->i_uid) {
+			return NFS3ERR_PERM;
+		}
+
 		uint16_t file_type = inode->i_mode & S_IFMT;
 		uint16_t new_mode = sa->mode.set_mode3_u.mode & 07777;
+
 		/* Only clear S_ISGID if attempting to set it AND user is not in the file's group */
 		if ((new_mode & S_ISGID) && /* Trying to set S_ISGID */
 		    S_ISREG(inode->i_mode) && /* Is a regular file */
@@ -185,6 +190,7 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 			/* Clear the S_ISGID bit */
 			new_mode &= ~S_ISGID;
 		}
+
 		/* Apply the new mode */
 		inode->i_mode = new_mode | file_type;
 		*flags |= REFFS_INODE_UPDATE_CTIME;
@@ -223,6 +229,12 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
                          */
 			inode->i_mode &= ~(S_ISUID | S_ISGID);
 		}
+	}
+
+	if ((sa->atime.set_it != DONT_CHANGE ||
+	     sa->mtime.set_it != DONT_CHANGE) &&
+	    ap && ap->aup_uid != 0 && ap->aup_uid != inode->i_uid) {
+		return NFS3ERR_PERM;
 	}
 
 	/* Handle timestamp changes */
@@ -3105,7 +3117,7 @@ out:
 	return res->status;
 }
 
-const struct rpc_operations_handler nfs3_operations_handler[] = {
+struct rpc_operations_handler nfs3_operations_handler[] = {
 	RPC_OPERATION_INIT(NFSPROC3_NULL, NULL, NULL, NULL, NULL, nfs3_null),
 	RPC_OPERATION_INIT(NFSPROC3_GETATTR, xdr_GETATTR3args, GETATTR3args,
 			   xdr_GETATTR3res, GETATTR3res, nfs3_getattr),
