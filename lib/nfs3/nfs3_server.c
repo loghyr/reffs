@@ -208,6 +208,32 @@ static void print_nfs_fh3_hex(nfs_fh3 *fh)
 }
 #endif
 
+static struct inode *directory_inode_find(struct super_block *sb, uint64_t ino,
+					  struct rpc_cred *cred,
+					  struct authunix_parms *ap, int mode,
+					  nfsstat3 *status)
+{
+	struct inode *inode;
+
+	inode = inode_find(sb, ino);
+	if (!inode) {
+		*status = NFS3ERR_NOENT;
+		goto out;
+	}
+
+	if (!(inode->i_mode & S_IFDIR)) {
+		*status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	*status = inode_permission_check(inode, cred, ap, X_OK);
+	if (*status)
+		goto out;
+
+	*status = inode_permission_check(inode, cred, ap, mode);
+out:
+	return inode;
+}
 static int nfs3_null(struct rpc_trans *rt)
 {
 	TRACE(REFFS_TRACE_LEVEL_WARNING, "NULL: xid=0x%08x",
@@ -259,7 +285,9 @@ static int nfs3_getattr(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_attr_to_fattr(inode, fa);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
 	inode_put(inode);
@@ -399,21 +427,10 @@ static int nfs3_lookup(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode = inode_find(sb, nfh->nfh_ino);
-	if (!inode) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	res->status =
-		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	inode = directory_inode_find(sb, nfh->nfh_ino, &rt->rt_info.ri_cred,
+				     &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
-
-	if (!(inode->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 
@@ -505,43 +522,43 @@ static int nfs3_access(struct rpc_trans *rt)
 	}
 
 	if (args->access & ACCESS3_READ) {
-		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
-						&ap, R_OK);
+		status = inode_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					    R_OK);
 		if (!status)
 			resok->access |= ACCESS3_READ;
 	}
 
 	if (args->access & ACCESS3_LOOKUP && (inode->i_mode & S_IFDIR)) {
-		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
-						&ap, R_OK);
+		status = inode_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					    X_OK);
 		if (!status)
 			resok->access |= ACCESS3_LOOKUP;
 	}
 
 	if (args->access & ACCESS3_MODIFY) {
-		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
-						&ap, W_OK);
+		status = inode_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					    W_OK);
 		if (!status)
 			resok->access |= ACCESS3_MODIFY;
 	}
 
 	if (args->access & ACCESS3_EXTEND) {
-		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
-						&ap, W_OK);
+		status = inode_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					    W_OK);
 		if (!status)
 			resok->access |= ACCESS3_EXTEND;
 	}
 
 	if (args->access & ACCESS3_DELETE && (inode->i_mode & S_IFDIR)) {
-		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
-						&ap, W_OK);
+		status = inode_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					    W_OK);
 		if (!status)
 			resok->access |= ACCESS3_DELETE;
 	}
 
 	if (args->access & ACCESS3_EXECUTE && !(inode->i_mode & S_IFDIR)) {
-		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
-						&ap, X_OK);
+		status = inode_access_check(inode, &rt->rt_info.ri_cred, &ap,
+					    X_OK);
 		if (!status)
 			resok->access |= ACCESS3_EXECUTE;
 	}
@@ -948,21 +965,10 @@ static int nfs3_create(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode = inode_find(sb, nfh->nfh_ino);
-	if (!inode) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	res->status =
-		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	inode = directory_inode_find(sb, nfh->nfh_ino, &rt->rt_info.ri_cred,
+				     &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
-
-	if (!(inode->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 
@@ -1136,21 +1142,10 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode = inode_find(sb, nfh->nfh_ino);
-	if (!inode) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	res->status =
-		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	inode = directory_inode_find(sb, nfh->nfh_ino, &rt->rt_info.ri_cred,
+				     &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
-
-	if (!(inode->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 
@@ -1285,21 +1280,10 @@ static int nfs3_symlink(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode = inode_find(sb, nfh->nfh_ino);
-	if (!inode) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	res->status =
-		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	inode = directory_inode_find(sb, nfh->nfh_ino, &rt->rt_info.ri_cred,
+				     &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
-
-	if (!(inode->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
 
 	name = strdup(args->symlink.symlink_data);
 	if (!name) {
@@ -1445,21 +1429,10 @@ static int nfs3_mknod(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode = inode_find(sb, nfh->nfh_ino);
-	if (!inode) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	res->status =
-		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	inode = directory_inode_find(sb, nfh->nfh_ino, &rt->rt_info.ri_cred,
+				     &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
-
-	if (!(inode->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
 
 	switch (args->what.type) {
 	case NF3REG:
@@ -1645,21 +1618,10 @@ static int nfs3_remove(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode = inode_find(sb, nfh->nfh_ino);
-	if (!inode) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	res->status =
-		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	inode = directory_inode_find(sb, nfh->nfh_ino, &rt->rt_info.ri_cred,
+				     &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
-
-	if (!(inode->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
 
 	pthread_rwlock_wrlock(&inode->i_parent->d_rwlock);
 
@@ -1745,21 +1707,10 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode = inode_find(sb, nfh->nfh_ino);
-	if (!inode) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	res->status =
-		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	inode = directory_inode_find(sb, nfh->nfh_ino, &rt->rt_info.ri_cred,
+				     &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
-
-	if (!(inode->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 
@@ -1903,37 +1854,17 @@ static int nfs3_rename(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode_src = inode_find(sb, nfh_src->nfh_ino);
-	if (!inode_src) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	inode_dst = inode_find(sb, nfh_dst->nfh_ino);
-	if (!inode_dst) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	res->status = inode_permission_check(inode_src, &rt->rt_info.ri_cred,
-					     &ap, W_OK);
+	inode_src = directory_inode_find(sb, nfh_src->nfh_ino,
+					 &rt->rt_info.ri_cred, &ap, W_OK,
+					 &res->status);
 	if (res->status)
 		goto out;
 
-	res->status = inode_permission_check(inode_dst, &rt->rt_info.ri_cred,
-					     &ap, W_OK);
+	inode_dst = directory_inode_find(sb, nfh_dst->nfh_ino,
+					 &rt->rt_info.ri_cred, &ap, W_OK,
+					 &res->status);
 	if (res->status)
 		goto out;
-
-	if (!(inode_src->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
-
-	if (!(inode_dst->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
 
 	/*
 	 * Note: Hold the d_rwlocks longer than we need to!
@@ -2253,21 +2184,10 @@ static int nfs3_readdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode = inode_find(sb, nfh->nfh_ino);
-	if (!inode) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	res->status =
-		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	inode = directory_inode_find(sb, nfh->nfh_ino, &rt->rt_info.ri_cred,
+				     &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
-
-	if (!(inode->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
 
 	count = sizeof(READDIR3res);
 	if (count > args->count) {
@@ -2484,21 +2404,10 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode = inode_find(sb, nfh->nfh_ino);
-	if (!inode) {
-		res->status = NFS3ERR_NOENT;
-		goto out;
-	}
-
-	res->status =
-		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	inode = directory_inode_find(sb, nfh->nfh_ino, &rt->rt_info.ri_cred,
+				     &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
-
-	if (!(inode->i_mode & S_IFDIR)) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
 
 	maxcount = sizeof(READDIRPLUS3res);
 	if (maxcount > args->maxcount) {

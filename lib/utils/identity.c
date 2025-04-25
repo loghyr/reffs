@@ -40,6 +40,10 @@ static bool gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
 	return false;
 }
 
+/*
+ * The only way we call this for checking access is if it is
+ * a directory and then we return EACCES and not EPERM.
+ */
 int inode_permission_check(struct inode *inode, struct rpc_cred *cred,
 			   struct authunix_parms *ap, int mode)
 {
@@ -72,7 +76,7 @@ int inode_permission_check(struct inode *inode, struct rpc_cred *cred,
 		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
 			return EPERM;
 		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
-			return EPERM;
+			return EACCES;
 	} else if (ap->aup_gid == inode->i_gid ||
 		   gid_in_gids(inode->i_gid, ap->aup_len, ap->aup_gids)) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
@@ -80,14 +84,67 @@ int inode_permission_check(struct inode *inode, struct rpc_cred *cred,
 		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP))
 			return EPERM;
 		if ((mode & X_OK) && !(inode->i_mode & S_IXGRP))
-			return EPERM;
+			return EACCES;
 	} else {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWOTH))
 			return EPERM;
 		if ((mode & R_OK) && !(inode->i_mode & S_IROTH))
 			return EPERM;
 		if ((mode & X_OK) && !(inode->i_mode & S_IXOTH))
-			return EPERM;
+			return EACCES;
+	}
+
+	return 0;
+}
+
+int inode_access_check(struct inode *inode, struct rpc_cred *cred,
+		       struct authunix_parms *ap, int mode)
+{
+	switch (cred->rc_flavor) {
+	case AUTH_SYS:
+		ap->aup_uid = cred->rc_unix.aup_uid;
+		ap->aup_gid = cred->rc_unix.aup_gid;
+		ap->aup_len = cred->rc_unix.aup_len;
+		ap->aup_gids = cred->rc_unix.aup_gids;
+		break;
+	case AUTH_NONE:
+		ap->aup_uid = 65534;
+		ap->aup_gid = 65534;
+
+		ap->aup_len = 0;
+		ap->aup_gids = NULL;
+
+		break;
+	default:
+		return EACCES;
+	}
+
+	/* Superuser mode for now */
+	if (ap->aup_uid == 0)
+		return 0;
+
+	if (ap->aup_uid == inode->i_uid) {
+		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))
+			return EACCES;
+		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
+			return EACCES;
+		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
+			return EACCES;
+	} else if (ap->aup_gid == inode->i_gid ||
+		   gid_in_gids(inode->i_gid, ap->aup_len, ap->aup_gids)) {
+		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
+			return EACCES;
+		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP))
+			return EACCES;
+		if ((mode & X_OK) && !(inode->i_mode & S_IXGRP))
+			return EACCES;
+	} else {
+		if ((mode & W_OK) && !(inode->i_mode & S_IWOTH))
+			return EACCES;
+		if ((mode & R_OK) && !(inode->i_mode & S_IROTH))
+			return EACCES;
+		if ((mode & X_OK) && !(inode->i_mode & S_IXOTH))
+			return EACCES;
 	}
 
 	return 0;
