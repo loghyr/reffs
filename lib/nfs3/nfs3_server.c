@@ -216,7 +216,7 @@ static nfsstat3 nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
 
 		break;
 	default:
-		return NFS3ERR_ACCES;
+		return NFS3ERR_PERM;
 	}
 
 	/* Superuser mode for now */
@@ -225,26 +225,26 @@ static nfsstat3 nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
 
 	if (ap->aup_uid == inode->i_uid) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))
-			return NFS3ERR_ACCES;
+			return NFS3ERR_PERM;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
-			return NFS3ERR_ACCES;
+			return NFS3ERR_PERM;
 		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
-			return NFS3ERR_ACCES;
+			return NFS3ERR_PERM;
 	} else if (ap->aup_gid == inode->i_gid ||
 		   nfs3_gid_in_gids(inode->i_gid, ap->aup_len, ap->aup_gids)) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
-			return NFS3ERR_ACCES;
+			return NFS3ERR_PERM;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP))
-			return NFS3ERR_ACCES;
+			return NFS3ERR_PERM;
 		if ((mode & X_OK) && !(inode->i_mode & S_IXGRP))
-			return NFS3ERR_ACCES;
+			return NFS3ERR_PERM;
 	} else {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWOTH))
-			return NFS3ERR_ACCES;
+			return NFS3ERR_PERM;
 		if ((mode & R_OK) && !(inode->i_mode & S_IROTH))
-			return NFS3ERR_ACCES;
+			return NFS3ERR_PERM;
 		if ((mode & X_OK) && !(inode->i_mode & S_IXOTH))
-			return NFS3ERR_ACCES;
+			return NFS3ERR_PERM;
 	}
 
 	return NFS3_OK;
