@@ -9,6 +9,7 @@ reffsinclude_HEADERS = \
 	filehandle.h \
 	fs.h \
 	fuse.h \
+	identity.h \
 	inode.h \
 	log.h \
 	network.h \

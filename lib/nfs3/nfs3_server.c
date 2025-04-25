@@ -33,6 +33,7 @@
 #include "reffs/super_block.h"
 #include "reffs/data_block.h"
 #include "reffs/server.h"
+#include "reffs/identity.h"
 
 /*
  * On locking order:
@@ -88,8 +89,11 @@ static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 }
 
 static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
-				  uint64_t *flags)
+				  struct authunix_parms *ap, uint64_t *flags)
 {
+	if (ap && ap->aup_uid != 0 && (ap->aup_uid != inode->i_uid))
+		return NFS3ERR_PERM;
+
 	if (sa->size.set_it) {
 		if (inode->i_mode & S_IFDIR)
 			return NFS3ERR_ISDIR;
@@ -118,8 +122,25 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 	}
 
 	if (sa->mode.set_it) {
-		uint16_t mode = inode->i_mode & S_IFMT;
-		inode->i_mode = (sa->mode.set_mode3_u.mode & 07777) | mode;
+		uint16_t file_type = inode->i_mode & S_IFMT;
+		uint16_t new_mode = sa->mode.set_mode3_u.mode & 07777;
+
+		/* Check if user is in the file's group */
+		bool user_in_group = is_user_in_group(ap ? ap->aup_uid : 0,
+						      inode->i_gid, ap);
+
+		/* Only clear S_ISGID if attempting to set it AND user is not in the file's group */
+		if ((new_mode & S_ISGID) && /* Trying to set S_ISGID */
+		    S_ISREG(inode->i_mode) && /* Is a regular file */
+		    ap && ap->aup_uid != 0 && /* Not root */
+		    !user_in_group) { /* Not in file's group */
+
+			/* Clear the S_ISGID bit */
+			new_mode &= ~S_ISGID;
+		}
+
+		/* Apply the new mode */
+		inode->i_mode = new_mode | file_type;
 		*flags |= REFFS_INODE_UPDATE_CTIME;
 	}
 
@@ -129,6 +150,9 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 	}
 
 	if (sa->gid.set_it) {
+		if (ap && !can_user_chgrp_to_group(ap ? ap->aup_uid : 0,
+						   inode->i_gid, ap))
+			return NFS3ERR_PERM;
 		inode->i_gid = sa->gid.set_gid3_u.gid;
 		*flags |= REFFS_INODE_UPDATE_CTIME;
 	}
@@ -184,72 +208,6 @@ static void print_nfs_fh3_hex(nfs_fh3 *fh)
 }
 #endif
 
-static bool nfs3_gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
-{
-	for (uint32_t i = 0; i < len; i++)
-		if (gid == gids[i]) {
-			TRACE(REFFS_TRACE_LEVEL_WARNING,
-			      "gids stop, gid=%u len=%u gids=%p", gid, len,
-			      (void *)gids);
-			return true;
-		}
-
-	return false;
-}
-
-static nfsstat3 nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
-				  struct authunix_parms *ap, int mode)
-{
-	switch (cred->rc_flavor) {
-	case AUTH_SYS:
-		ap->aup_uid = cred->rc_unix.aup_uid;
-		ap->aup_gid = cred->rc_unix.aup_gid;
-		ap->aup_len = cred->rc_unix.aup_len;
-		ap->aup_gids = cred->rc_unix.aup_gids;
-		break;
-	case AUTH_NONE:
-		ap->aup_uid = 65534;
-		ap->aup_gid = 65534;
-
-		ap->aup_len = 0;
-		ap->aup_gids = NULL;
-
-		break;
-	default:
-		return NFS3ERR_PERM;
-	}
-
-	/* Superuser mode for now */
-	if (ap->aup_uid == 0)
-		return NFS3_OK;
-
-	if (ap->aup_uid == inode->i_uid) {
-		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))
-			return NFS3ERR_PERM;
-		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
-			return NFS3ERR_PERM;
-		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
-			return NFS3ERR_PERM;
-	} else if (ap->aup_gid == inode->i_gid ||
-		   nfs3_gid_in_gids(inode->i_gid, ap->aup_len, ap->aup_gids)) {
-		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
-			return NFS3ERR_PERM;
-		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP))
-			return NFS3ERR_PERM;
-		if ((mode & X_OK) && !(inode->i_mode & S_IXGRP))
-			return NFS3ERR_PERM;
-	} else {
-		if ((mode & W_OK) && !(inode->i_mode & S_IWOTH))
-			return NFS3ERR_PERM;
-		if ((mode & R_OK) && !(inode->i_mode & S_IROTH))
-			return NFS3ERR_PERM;
-		if ((mode & X_OK) && !(inode->i_mode & S_IXOTH))
-			return NFS3ERR_PERM;
-	}
-
-	return NFS3_OK;
-}
-
 static int nfs3_null(struct rpc_trans *rt)
 {
 	TRACE(REFFS_TRACE_LEVEL_WARNING, "NULL: xid=0x%08x",
@@ -296,7 +254,8 @@ static int nfs3_getattr(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -354,7 +313,8 @@ static int nfs3_setattr(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -374,7 +334,7 @@ static int nfs3_setattr(struct rpc_trans *rt)
 	}
 
 	pthread_rwlock_wrlock(&inode->i_db_rwlock);
-	res->status = nfs3_apply_sattr3(inode, sa, &flags);
+	res->status = nfs3_apply_sattr3(inode, sa, &ap, &flags);
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	if (res->status) {
 		wcc = &res->SETATTR3res_u.resfail.obj_wcc;
@@ -445,7 +405,8 @@ static int nfs3_lookup(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -544,43 +505,43 @@ static int nfs3_access(struct rpc_trans *rt)
 	}
 
 	if (args->access & ACCESS3_READ) {
-		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
-					   R_OK);
+		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
+						&ap, R_OK);
 		if (!status)
 			resok->access |= ACCESS3_READ;
 	}
 
 	if (args->access & ACCESS3_LOOKUP && (inode->i_mode & S_IFDIR)) {
-		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
-					   R_OK);
+		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
+						&ap, R_OK);
 		if (!status)
 			resok->access |= ACCESS3_LOOKUP;
 	}
 
 	if (args->access & ACCESS3_MODIFY) {
-		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
-					   W_OK);
+		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
+						&ap, W_OK);
 		if (!status)
 			resok->access |= ACCESS3_MODIFY;
 	}
 
 	if (args->access & ACCESS3_EXTEND) {
-		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
-					   W_OK);
+		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
+						&ap, W_OK);
 		if (!status)
 			resok->access |= ACCESS3_EXTEND;
 	}
 
 	if (args->access & ACCESS3_DELETE && (inode->i_mode & S_IFDIR)) {
-		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
-					   W_OK);
+		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
+						&ap, W_OK);
 		if (!status)
 			resok->access |= ACCESS3_DELETE;
 	}
 
 	if (args->access & ACCESS3_EXECUTE && !(inode->i_mode & S_IFDIR)) {
-		status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap,
-					   X_OK);
+		status = inode_permission_check(inode, &rt->rt_info.ri_cred,
+						&ap, X_OK);
 		if (!status)
 			resok->access |= ACCESS3_EXECUTE;
 	}
@@ -645,7 +606,8 @@ static int nfs3_readlink(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -720,7 +682,8 @@ static int nfs3_read(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -839,7 +802,8 @@ static int nfs3_write(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -990,7 +954,8 @@ static int nfs3_create(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -1029,8 +994,8 @@ static int nfs3_create(struct rpc_trans *rt)
 			break;
 		}
 
-		res->status = nfs3_access_check(exists, &rt->rt_info.ri_cred,
-						&ap, W_OK);
+		res->status = inode_permission_check(
+			exists, &rt->rt_info.ri_cred, &ap, W_OK);
 		if (res->status) {
 			pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 			wcc = &resfail->dir_wcc;
@@ -1079,7 +1044,7 @@ static int nfs3_create(struct rpc_trans *rt)
 		createverf3_to_timespec(args->how.createhow3_u.verf,
 					&tmp->i_ctime);
 	} else {
-		res->status = nfs3_apply_sattr3(tmp, sa, &flags);
+		res->status = nfs3_apply_sattr3(tmp, sa, NULL, &flags);
 		if (res->status) {
 			wcc = &resfail->dir_wcc;
 			goto update_wcc;
@@ -1177,7 +1142,8 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -1325,7 +1291,8 @@ static int nfs3_symlink(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -1392,7 +1359,7 @@ static int nfs3_symlink(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	res->status = nfs3_apply_sattr3(inode, sa, &flags);
+	res->status = nfs3_apply_sattr3(inode, sa, NULL, &flags);
 	if (res->status) {
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
@@ -1484,7 +1451,8 @@ static int nfs3_mknod(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -1586,7 +1554,7 @@ static int nfs3_mknod(struct rpc_trans *rt)
 		break;
 	}
 
-	res->status = nfs3_apply_sattr3(de->d_inode, sa, &flags);
+	res->status = nfs3_apply_sattr3(de->d_inode, sa, NULL, &flags);
 	if (res->status) {
 		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
 		fa = &wcc->after.post_op_attr_u.attributes;
@@ -1683,7 +1651,8 @@ static int nfs3_remove(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -1782,7 +1751,8 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -1945,13 +1915,13 @@ static int nfs3_rename(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status =
-		nfs3_access_check(inode_src, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status = inode_permission_check(inode_src, &rt->rt_info.ri_cred,
+					     &ap, W_OK);
 	if (res->status)
 		goto out;
 
-	res->status =
-		nfs3_access_check(inode_dst, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status = inode_permission_check(inode_dst, &rt->rt_info.ri_cred,
+					     &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -2149,7 +2119,8 @@ static int nfs3_link(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -2158,8 +2129,8 @@ static int nfs3_link(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status =
-		nfs3_access_check(inode_dir, &rt->rt_info.ri_cred, &ap, W_OK);
+	res->status = inode_permission_check(inode_dir, &rt->rt_info.ri_cred,
+					     &ap, W_OK);
 	if (res->status)
 		goto out;
 
@@ -2288,7 +2259,8 @@ static int nfs3_readdir(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -2518,7 +2490,8 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -2856,7 +2829,8 @@ static int nfs3_fsstat(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -2925,7 +2899,8 @@ static int nfs3_fsinfo(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -2998,7 +2973,8 @@ static int nfs3_pathconf(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -3072,7 +3048,8 @@ static int nfs3_commit(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = nfs3_access_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
+	res->status =
+		inode_permission_check(inode, &rt->rt_info.ri_cred, &ap, R_OK);
 	if (res->status)
 		goto out;
 

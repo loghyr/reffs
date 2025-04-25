@@ -3,7 +3,7 @@
 
 SUBDIRS = tests
 
-AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/fs @CHECK_CFLAGS@		\
+AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 	$(URCU_CFLAGS) $(URCU_CDS_CFLAGS) $(FUSE_CFLAGS)	\
 	$(TIRPC_CFLAGS) $(ZLIB_CFLAGS)				\
 	-I$(top_srcdir)/lib/include				\
