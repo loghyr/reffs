@@ -862,6 +862,16 @@ static int nfs3_write(struct rpc_trans *rt)
 		res->status = NFS3_OK;
 	}
 
+	if ((inode->i_mode & S_ISGID) && ap.aup_uid != 0 &&
+	    ap.aup_uid != inode->i_uid) {
+		inode->i_mode &= ~S_ISGID;
+	}
+
+	if ((inode->i_mode & S_ISUID) && ap.aup_uid != 0 &&
+	    ap.aup_uid != inode->i_uid) {
+		inode->i_mode &= ~S_ISUID;
+	}
+
 	/* For now, it is a RAM disk and all writes are done right away! */
 	switch (args->stable) {
 	case UNSTABLE:
