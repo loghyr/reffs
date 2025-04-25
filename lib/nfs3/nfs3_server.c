@@ -1802,6 +1802,13 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 
 	pthread_rwlock_wrlock(&inode->i_parent->d_rwlock);
 
+	if (inode->i_nlink > 2) {
+		res->status = NFS3ERR_NOTEMPTY;
+		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
+		pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
+		goto update_wcc;
+	}
+
 	exists = inode_name_get_inode(inode, args->object.name);
 	if (!exists) {
 		res->status = NFS3ERR_NOENT;
