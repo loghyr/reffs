@@ -219,6 +219,10 @@ static nfsstat3 nfs3_access_check(struct inode *inode, struct rpc_cred *cred,
 		return NFS3ERR_ACCES;
 	}
 
+	/* Superuser mode for now */
+	if (ap->aup_uid == 0)
+		return NFS3_OK;
+
 	if (ap->aup_uid == inode->i_uid) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))
 			return NFS3ERR_ACCES;
@@ -1797,6 +1801,7 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 
 	pthread_rwlock_wrlock(&inode->i_parent->d_rwlock);
+
 	exists = inode_name_get_inode(inode, args->object.name);
 	if (!exists) {
 		res->status = NFS3ERR_NOENT;
