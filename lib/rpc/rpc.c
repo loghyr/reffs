@@ -14,6 +14,7 @@
 #include <strings.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <time.h>
 #include <rpc/xdr.h>
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
@@ -48,7 +49,7 @@ static void rpc_program_handler_release(struct urcu_ref *ref)
 
 struct rpc_program_handler *
 rpc_program_handler_alloc(uint32_t program, uint32_t version,
-			  const struct rpc_operations_handler *ops,
+			  struct rpc_operations_handler *ops,
 			  size_t ops_len)
 {
 	struct rpc_program_handler *rph;
@@ -214,10 +215,36 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 	int ret = 0;
 
-	if (ph->ph_op_handler && ph->ph_op_handler->roh_action)
+	if (ph->ph_op_handler && ph->ph_op_handler->roh_action) {
+		struct timespec start, end;
+		uint64_t duration_ns;
+
+		clock_gettime(CLOCK_MONOTONIC, &start);
 		ret = ph->ph_op_handler->roh_action(rt);
-	else
+		clock_gettime(CLOCK_MONOTONIC, &end);
+
+		duration_ns = (end.tv_sec - start.tv_sec) * 1000000000ULL +
+			      (end.tv_nsec - start.tv_nsec);
+
+		ph->ph_op_handler->roh_calls++;
+		ph->ph_op_handler->roh_duration_total += duration_ns;
+
+		if (duration_ns > ph->ph_op_handler->roh_duration_max) {
+			ph->ph_op_handler->roh_duration_max = duration_ns;
+		}
+
+		uint64_t avg_duration =
+			ph->ph_op_handler->roh_duration_total / ph->ph_op_handler->roh_calls;
+
+		TRACE(REFFS_TRACE_LEVEL_WARNING,
+		      "OP: %u,%u,%u took %lu ns (max: %lu ns, avg: %lu ns, calls: %lu)",
+		      rt->rt_info.ri_program, rt->rt_info.ri_version,
+		      rt->rt_info.ri_procedure, duration_ns,
+		      ph->ph_op_handler->roh_duration_max, avg_duration,
+		      ph->ph_op_handler->roh_calls);
+	} else {
 		rt->rt_info.ri_accept_stat = PROG_UNAVAIL;
+	}
 
 	return ret;
 }

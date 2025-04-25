@@ -143,7 +143,7 @@ out_unwind:
 	return 0;
 }
 
-const struct rpc_operations_handler mount3_operations_handler[] = {
+struct rpc_operations_handler mount3_operations_handler[] = {
 	RPC_OPERATION_INIT(MOUNTPROC3_NULL, NULL, NULL, NULL, NULL,
 			   mount3_null),
 	RPC_OPERATION_INIT(MOUNTPROC3_MNT, xdr_dirpath, dirpath *,

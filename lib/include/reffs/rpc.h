@@ -17,6 +17,8 @@
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
 
+#include <time.h>
+
 #include "reffs/network.h"
 #include "reffs/log.h"
 
@@ -69,6 +71,9 @@ struct rpc_operations_handler {
 	size_t roh_res_size; // The size of the base res structure
 	int (*roh_action)(
 		struct rpc_trans *rt); // The protocol handler for calls
+	uint64_t roh_duration_max;
+	uint64_t roh_duration_total;
+	uint64_t roh_calls;
 };
 
 /*
@@ -77,7 +82,7 @@ struct rpc_operations_handler {
 struct rpc_program_handler {
 	uint32_t rph_program; // Which program?
 	uint32_t rph_version; // Which version?
-	const struct rpc_operations_handler *rph_ops; // Array of operations
+	struct rpc_operations_handler *rph_ops; // Array of operations
 	size_t rph_ops_len; // Length of operations array
 	struct rcu_head rph_rcu;
 	struct urcu_ref rph_ref;
@@ -94,7 +99,7 @@ struct protocol_handler {
 	void *ph_args; // The base args
 	void *ph_res; // The base res
 	int ph_stat; // Protocol error code
-	const struct rpc_operations_handler *ph_op_handler;
+	struct rpc_operations_handler *ph_op_handler;
 };
 
 #define RPC_OPERATION_INIT(OP, ARGS_F, ARGS, RES_F, RES, CALL) \
@@ -141,7 +146,7 @@ int rpc_protocol_op_call(struct rpc_trans *rt);
 
 struct rpc_program_handler *
 rpc_program_handler_alloc(uint32_t program, uint32_t version,
-			  const struct rpc_operations_handler *ops,
+			  struct rpc_operations_handler *ops,
 			  size_t ops_len);
 
 struct rpc_program_handler *rpc_program_handler_find(uint32_t program,
