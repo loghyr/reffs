@@ -19,13 +19,16 @@
 bool can_user_chgrp_to_group(uid_t uid, gid_t target_gid,
 			     struct authunix_parms *ap);
 
+int rpc_cred_to_authunix_parms(struct rpc_cred *cred,
+			       struct authunix_parms *ap);
+
 bool is_user_in_group(uid_t uid, gid_t group_to_check,
 		      struct authunix_parms *ap);
 
-int inode_access_check(struct inode *inode, struct rpc_cred *cred,
-		       struct authunix_parms *ap, int mode);
+int inode_access_check(struct inode *inode, struct authunix_parms *ap,
+		       int mode);
 
-int inode_permission_check(struct inode *inode, struct rpc_cred *cred,
-			   struct authunix_parms *ap, int mode);
+int inode_permission_check(struct inode *inode, struct authunix_parms *ap,
+			   int mode);
 
 #endif /* _REFFS_INDENTITY_H */

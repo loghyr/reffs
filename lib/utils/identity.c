@@ -40,12 +40,7 @@ static bool gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
 	return false;
 }
 
-/*
- * The only way we call this for checking access is if it is
- * a directory and then we return EACCES and not EPERM.
- */
-int inode_permission_check(struct inode *inode, struct rpc_cred *cred,
-			   struct authunix_parms *ap, int mode)
+int rpc_cred_to_authunix_parms(struct rpc_cred *cred, struct authunix_parms *ap)
 {
 	switch (cred->rc_flavor) {
 	case AUTH_SYS:
@@ -66,6 +61,16 @@ int inode_permission_check(struct inode *inode, struct rpc_cred *cred,
 		return EPERM;
 	}
 
+	return 0;
+}
+
+/*
+ * The only way we call this for checking access is if it is
+ * a directory and then we return EACCES and not EPERM.
+ */
+int inode_permission_check(struct inode *inode, struct authunix_parms *ap,
+			   int mode)
+{
 	/* Superuser mode for now */
 	if (ap->aup_uid == 0)
 		return 0;
@@ -97,28 +102,8 @@ int inode_permission_check(struct inode *inode, struct rpc_cred *cred,
 	return 0;
 }
 
-int inode_access_check(struct inode *inode, struct rpc_cred *cred,
-		       struct authunix_parms *ap, int mode)
+int inode_access_check(struct inode *inode, struct authunix_parms *ap, int mode)
 {
-	switch (cred->rc_flavor) {
-	case AUTH_SYS:
-		ap->aup_uid = cred->rc_unix.aup_uid;
-		ap->aup_gid = cred->rc_unix.aup_gid;
-		ap->aup_len = cred->rc_unix.aup_len;
-		ap->aup_gids = cred->rc_unix.aup_gids;
-		break;
-	case AUTH_NONE:
-		ap->aup_uid = 65534;
-		ap->aup_gid = 65534;
-
-		ap->aup_len = 0;
-		ap->aup_gids = NULL;
-
-		break;
-	default:
-		return EACCES;
-	}
-
 	/* Superuser mode for now */
 	if (ap->aup_uid == 0)
 		return 0;
