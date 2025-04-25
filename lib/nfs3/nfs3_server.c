@@ -1226,8 +1226,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	de->d_inode->i_atime = de->d_inode->i_mtime;
 	de->d_inode->i_btime = de->d_inode->i_mtime;
 	de->d_inode->i_ctime = de->d_inode->i_mtime;
-	de->d_inode->i_mode = S_IFDIR |
-			      inode->i_mode; // Inherit from the parent!
+	de->d_inode->i_mode = S_IFDIR | inode->i_mode;
 	de->d_inode->i_size = 4096;
 	de->d_inode->i_used = 8;
 	de->d_inode->i_nlink = 2;
@@ -1440,7 +1439,6 @@ static int nfs3_mknod(struct rpc_trans *rt)
 
 	struct super_block *sb = NULL;
 	struct inode *inode = NULL;
-	struct inode *tmp = NULL;
 
 	MKNOD3args *args = ph->ph_args;
 	MKNOD3res *res = ph->ph_res;
@@ -1551,8 +1549,7 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	de->d_inode->i_atime = de->d_inode->i_mtime;
 	de->d_inode->i_btime = de->d_inode->i_mtime;
 	de->d_inode->i_ctime = de->d_inode->i_mtime;
-	de->d_inode->i_mode = inode->i_mode &
-			      ~S_IFDIR; // Inherit from the parent!
+	de->d_inode->i_mode = inode->i_mode & ~S_IFDIR;
 	de->d_inode->i_size = 4096;
 	de->d_inode->i_used = 8;
 	de->d_inode->i_nlink = 2;
@@ -1622,9 +1619,9 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 
-	inode_attr_to_fattr(tmp, fa);
+	inode_attr_to_fattr(de->d_inode, fa);
 
-	uatomic_inc(&tmp->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
+	uatomic_inc(&de->d_inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
 
 update_wcc:
 	wcc->after.attributes_follow = true;
