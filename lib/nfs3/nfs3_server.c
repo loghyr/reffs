@@ -362,10 +362,6 @@ static int nfs3_getattr(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = inode_access_check(inode, &ap, R_OK);
-	if (res->status)
-		goto out;
-
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_attr_to_fattr(inode, fa);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
