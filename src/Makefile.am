@@ -13,7 +13,8 @@ AM_CFLAGS = \
 	$(FUSE_CFLAGS)			\
 	$(ZLIB_CFLAGS)			\
 	$(URING_CFLAGS)			\
-	$(PTHREAD_CFLAGS)
+	$(PTHREAD_CFLAGS)		\
+	$(JEMALLOC_FLAGS)
 
 LDADD = \
 	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
@@ -30,7 +31,8 @@ LDADD = \
 	$(XXHASH_LIBS)					\
 	$(ZLIB_LIBS)					\
 	$(URING_LIBS)					\
-	$(FUSE_LIBS)
+	$(FUSE_LIBS)					\
+	$(JEMALLOC_LIBS)
 
 recho_ev_SOURCES = recho_ev.c
 recho_ev_LDADD = $(LDADD)

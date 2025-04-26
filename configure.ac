@@ -149,6 +149,26 @@ AS_IF([test "x$enable_linux_io_uring" != "xno"], [
 ])
 AC_SUBST([URING_LIBS])
 
+# Check for jemalloc
+AC_ARG_WITH([jemalloc],
+  [AS_HELP_STRING([--with-jemalloc], [use jemalloc for memory allocation])],
+  [], [with_jemalloc=check])
+
+AS_IF([test "x$with_jemalloc" != xno], [
+  AC_CHECK_LIB([jemalloc], [malloc], [
+    AC_DEFINE([HAVE_JEMALLOC], [1], [Define if jemalloc is available])
+    LIBS="-ljemalloc $LIBS"
+    have_jemalloc=yes
+  ], [
+    if test "x$with_jemalloc" != xcheck; then
+      AC_MSG_FAILURE([--with-jemalloc was given, but test for jemalloc failed])
+    fi
+    have_jemalloc=no
+  ])
+], [have_jemalloc=no])
+
+AM_CONDITIONAL([HAVE_JEMALLOC], [test "x$have_jemalloc" = xyes])
+
 AC_ARG_ENABLE(asan,
 [  --enable-asan      Compile with address sanitizer],
 [case "${enableval}" in

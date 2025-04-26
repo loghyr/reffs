@@ -4,6 +4,7 @@
 AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/fs @CHECK_CFLAGS@		\
 	$(URCU_CFLAGS) $(URCU_CDS_CFLAGS) $(FUSE_CFLAGS)	\
 	$(UUID_CFLAGS)						\
+	$(JEMALLOC_FLAGS)					\
 	-I$(top_srcdir)/lib/include				\
 	-I$(top_builddir)/lib/xdr
 
@@ -14,7 +15,7 @@ LDADD = \
 	-lxxhash					\
 	-lpthread					\
 	$(URCU_LIBS) $(URCU_CDS_LIBS) $(FUSE_LIBS)	\
-	$(UUID_LIBS)
+	$(UUID_LIBS) $(JEMALLOC_LIBS)
 
 check_PROGRAMS = $(TESTS)
 

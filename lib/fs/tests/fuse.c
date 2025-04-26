@@ -7,6 +7,10 @@
 #include "config.h"
 #endif
 
+#ifdef HAVE_JEMALLOC
+#include <jemalloc/jemalloc.h>
+#endif
+
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
