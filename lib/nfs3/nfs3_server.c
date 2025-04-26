@@ -173,7 +173,9 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 					   inode->i_size - size,
 					   __ATOMIC_RELAXED);
 		}
-		*flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
+		if (flags)
+			*flags |= REFFS_INODE_UPDATE_CTIME |
+				  REFFS_INODE_UPDATE_MTIME;
 	}
 
 	if (sa->mode.set_it) {
@@ -196,7 +198,8 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 
 		/* Apply the new mode */
 		inode->i_mode = new_mode | file_type;
-		*flags |= REFFS_INODE_UPDATE_CTIME;
+		if (flags)
+			*flags |= REFFS_INODE_UPDATE_CTIME;
 	}
 
 	/* Store original mode to check if we need to clear set-ID bits */
@@ -211,11 +214,13 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 	/* Apply ownership changes */
 	if (sa->uid.set_it && sa->uid.set_uid3_u.uid != (uid_t)-1) {
 		inode->i_uid = sa->uid.set_uid3_u.uid;
-		*flags |= REFFS_INODE_UPDATE_CTIME;
+		if (flags)
+			*flags |= REFFS_INODE_UPDATE_CTIME;
 	}
 	if (sa->gid.set_it && sa->gid.set_gid3_u.gid != (gid_t)-1) {
 		inode->i_gid = sa->gid.set_gid3_u.gid;
-		*flags |= REFFS_INODE_UPDATE_CTIME;
+		if (flags)
+			*flags |= REFFS_INODE_UPDATE_CTIME;
 	}
 
 	/* Clear set-ID bits according to POSIX rules for chown */
@@ -245,25 +250,32 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 	case DONT_CHANGE:
 		break;
 	case SET_TO_SERVER_TIME:
-		*flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_ATIME;
+		if (flags)
+			*flags |= REFFS_INODE_UPDATE_CTIME |
+				  REFFS_INODE_UPDATE_ATIME;
 		break;
 	case SET_TO_CLIENT_TIME:
 		nfstime3_to_timespec(&sa->atime.set_atime_u.atime,
 				     &inode->i_atime);
-		*flags |= REFFS_INODE_UPDATE_CTIME;
+		if (flags)
+			*flags |= REFFS_INODE_UPDATE_CTIME;
 		break;
 	}
 	switch (sa->mtime.set_it) {
 	case DONT_CHANGE:
 		break;
 	case SET_TO_SERVER_TIME:
-		*flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
+		if (flags)
+			*flags |= REFFS_INODE_UPDATE_CTIME |
+				  REFFS_INODE_UPDATE_MTIME;
 		break;
 	case SET_TO_CLIENT_TIME:
 		nfstime3_to_timespec(&sa->mtime.set_mtime_u.mtime,
 				     &inode->i_mtime);
-		*flags |= REFFS_INODE_UPDATE_CTIME;
-		*flags &= ~REFFS_INODE_UPDATE_MTIME;
+		if (flags) {
+			*flags |= REFFS_INODE_UPDATE_CTIME;
+			*flags &= ~REFFS_INODE_UPDATE_MTIME;
+		}
 		break;
 	}
 	return NFS3_OK;
@@ -1036,8 +1048,6 @@ static int nfs3_create(struct rpc_trans *rt)
 	nfstime3 mtime;
 	nfstime3 ctime;
 
-	uint64_t flags = 0;
-
 	struct network_file_handle *nfh = NULL;
 
 	struct dirent *de = NULL;
@@ -1156,15 +1166,13 @@ static int nfs3_create(struct rpc_trans *rt)
 		createverf3_to_timespec(args->how.createhow3_u.verf,
 					&tmp->i_ctime);
 	} else {
-		res->status = nfs3_apply_sattr3(tmp, sa, NULL, &flags);
+		res->status = nfs3_apply_sattr3(tmp, sa, NULL, NULL);
 		if (res->status) {
 			wcc = &resfail->dir_wcc;
 			goto update_wcc;
 		}
 	}
 
-	if (flags)
-		inode_update_times_now(inode, flags);
 	nfh = calloc(1, sizeof(*nfh));
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
@@ -1219,6 +1227,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 
 	wcc_data *wcc = &resok->dir_wcc;
 	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
+	sattr3 *sa = &args->attributes;
 
 	size3 size;
 	nfstime3 mtime;
@@ -1306,6 +1315,12 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	de->d_inode->i_used = 8;
 	de->d_inode->i_nlink = 2;
 
+	res->status = nfs3_apply_sattr3(de->d_inode, sa, NULL, NULL);
+	if (res->status) {
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
+	}
+
 	nfh = calloc(1, sizeof(*nfh));
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
@@ -1361,8 +1376,6 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	wcc_data *wcc = &resok->dir_wcc;
 	fattr3 *fa;
 	sattr3 *sa = &args->symlink.symlink_attributes;
-
-	uint64_t flags = 0;
 
 	size3 size;
 	nfstime3 mtime;
@@ -1465,7 +1478,7 @@ static int nfs3_symlink(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	res->status = nfs3_apply_sattr3(inode, sa, NULL, &flags);
+	res->status = nfs3_apply_sattr3(inode, sa, NULL, NULL);
 	if (res->status) {
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
@@ -1524,8 +1537,6 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	size3 size;
 	nfstime3 mtime;
 	nfstime3 ctime;
-
-	uint64_t flags = 0;
 
 	struct network_file_handle *nfh = NULL;
 
@@ -1657,7 +1668,7 @@ static int nfs3_mknod(struct rpc_trans *rt)
 		break;
 	}
 
-	res->status = nfs3_apply_sattr3(de->d_inode, sa, NULL, &flags);
+	res->status = nfs3_apply_sattr3(de->d_inode, sa, NULL, NULL);
 	if (res->status) {
 		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
 		fa = &wcc->after.post_op_attr_u.attributes;
