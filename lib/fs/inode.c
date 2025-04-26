@@ -226,3 +226,79 @@ struct inode *inode_name_get_inode(struct inode *inode, char *name)
 	return exists;
 }
 
+struct inode_delayed_release {
+	struct inode *idr_inode;
+	time_t idr_release_time;
+	struct cds_list_head idr_list;
+};
+
+static CDS_LIST_HEAD(delayed_release_list);
+static pthread_mutex_t delayed_release_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static pthread_t reaper_thread;
+static bool reaper_running = false;
+static pthread_mutex_t reaper_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void *reaper_thread_func(void *__attribute__((unused)) arg)
+{
+	while (1) {
+		time_t now = time(NULL);
+		struct inode_delayed_release *idr, *tmp;
+		bool list_empty = true;
+
+		pthread_mutex_lock(&delayed_release_lock);
+		cds_list_for_each_entry_safe(idr, tmp, &delayed_release_list,
+					     idr_list) {
+			if (idr->idr_release_time <= now) {
+				cds_list_del(&idr->idr_list);
+				inode_put(idr->idr_inode);
+				free(idr);
+			} else {
+				list_empty = false;
+			}
+		}
+
+		if (list_empty && cds_list_empty(&delayed_release_list)) {
+			reaper_running = false;
+			pthread_mutex_unlock(&delayed_release_lock);
+			break;
+		}
+
+		pthread_mutex_unlock(&delayed_release_lock);
+
+		// Sleep for a short time before next check
+		sleep(1);
+	}
+
+	return NULL;
+}
+
+static void ensure_reaper_thread(void)
+{
+	pthread_mutex_lock(&reaper_lock);
+	if (!reaper_running) {
+		reaper_running = true;
+		pthread_create(&reaper_thread, NULL, reaper_thread_func, NULL);
+		pthread_detach(reaper_thread);
+	}
+	pthread_mutex_unlock(&reaper_lock);
+}
+
+void inode_schedule_delayed_release(struct inode *inode, int delay_seconds)
+{
+	struct inode_delayed_release *idr =
+		malloc(sizeof(struct inode_delayed_release));
+	if (!idr) {
+		inode_put(inode);
+		return;
+	}
+
+	idr->idr_inode = inode;
+	idr->idr_release_time = time(NULL) + delay_seconds;
+
+	pthread_mutex_lock(&delayed_release_lock);
+	cds_list_add(&idr->idr_list, &delayed_release_list);
+	pthread_mutex_lock(&delayed_release_lock);
+
+	ensure_reaper_thread();
+}

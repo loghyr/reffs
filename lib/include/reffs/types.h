@@ -14,7 +14,8 @@ enum reffs_life_action {
 	reffs_life_action_load = 1,
 	reffs_life_action_unload = 2,
 	reffs_life_action_death = 3,
-	reffs_life_action_update = 4
+	reffs_life_action_delayed_death = 4,
+	reffs_life_action_update = 5
 };
 
 #endif /* _REFFS_TYPES_H */

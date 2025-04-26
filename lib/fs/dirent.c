@@ -188,15 +188,24 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 			de->d_inode->i_parent = NULL; // Prevent use-after-free
 
 		if (rla == reffs_life_action_death ||
-		    rla == reffs_life_action_update) {
+		    rla == reffs_life_action_update ||
+		    rla == reffs_life_action_delayed_death) {
 			inode_update_times_now(
 				parent->d_inode,
 				REFFS_INODE_UPDATE_CTIME |
 					REFFS_INODE_UPDATE_MTIME);
 		}
-
 		dirent_put(parent);
+
+		// Handle delayed release
+		if (rla == reffs_life_action_delayed_death && de->d_inode) {
+			uatomic_dec(&de->d_inode->i_nlink, __ATOMIC_RELAXED);
+			inode_schedule_delayed_release(de->d_inode, 60);
+			call_rcu(&de->d_rcu, dirent_free_rcu);
+		}
+
 		dirent_put(de);
 	}
 	rcu_read_unlock();
 }
+
