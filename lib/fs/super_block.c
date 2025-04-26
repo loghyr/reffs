@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <unistd.h>
 #include "reffs/super_block.h"
 #include "reffs/log.h"
 #include "reffs/inode.h"
@@ -29,6 +30,13 @@ static void super_block_remove_all_inodes(struct cds_lfht *ht)
 	struct cds_lfht_iter iter;
 	struct inode *inode;
 	unsigned long count = 0;
+	int sleep_em = INODE_RELEASE_HARVEST + 1;
+
+	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	      "Sleep for %d seconds to let inodes drain", sleep_em);
+	sleep(sleep_em);
+
+	rcu_barrier();
 
 	rcu_read_lock();
 	cds_lfht_for_each_entry(ht, &iter, inode, i_node) {
@@ -37,9 +45,9 @@ static void super_block_remove_all_inodes(struct cds_lfht *ht)
 	}
 	rcu_read_unlock();
 
-	assert(!count);
 	if (count)
 		LOG("count = %lu", count);
+	assert(!count);
 }
 
 static void super_block_free_rcu(struct rcu_head *rcu)
@@ -49,11 +57,15 @@ static void super_block_free_rcu(struct rcu_head *rcu)
 	struct super_block *sb =
 		caa_container_of(rcu, struct super_block, sb_rcu);
 
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "%p - %ld", (void *)sb,
+	      sb->sb_ref.refcount);
+
 	ret = cds_lfht_destroy(sb->sb_inodes, NULL);
 	if (ret < 0) {
 		LOG("Could not delete a hash table: %m");
 	}
 
+	free(sb->sb_path);
 	free(sb);
 }
 
@@ -61,6 +73,14 @@ static void super_block_release(struct urcu_ref *ref)
 {
 	struct super_block *sb =
 		caa_container_of(ref, struct super_block, sb_ref);
+
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "%p - %ld", (void *)sb,
+	      sb->sb_ref.refcount);
+
+	uint64_t flags = __atomic_fetch_and(&sb->sb_state, ~SB_IN_LIST,
+					    __ATOMIC_ACQUIRE);
+	if (flags & SB_IN_LIST)
+		cds_list_del_init(&sb->sb_link);
 
 	super_block_remove_all_inodes(sb->sb_inodes);
 
@@ -92,7 +112,7 @@ void super_block_dirent_release(struct super_block *sb,
 	rcu_read_lock();
 	de = rcu_xchg_pointer(&sb->sb_dirent, NULL);
 	if (de) {
-		dirent_children_release(de, rla);
+		dirent_parent_release(de, rla);
 		dirent_put(de);
 	}
 	rcu_read_unlock();
@@ -118,6 +138,8 @@ struct super_block *super_block_alloc(uint64_t id, char *path)
 		return NULL;
 	}
 
+	urcu_ref_init(&sb->sb_ref);
+
 	sb->sb_id = id;
 	sb->sb_path = strdup(path);
 	if (!sb->sb_path) {
@@ -125,8 +147,13 @@ struct super_block *super_block_alloc(uint64_t id, char *path)
 		return NULL;
 	}
 
+	uuid_generate(sb->sb_uuid);
+
+	__atomic_fetch_or(&sb->sb_state, SB_IN_LIST, __ATOMIC_RELEASE);
 	cds_list_add_rcu(&sb->sb_link, &super_block_list);
-	urcu_ref_init(&sb->sb_ref);
+
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "%p - %ld", (void *)sb,
+	      sb->sb_ref.refcount);
 
 	sb->sb_bytes_max = SIZE_MAX;
 	sb->sb_inodes_max = SIZE_MAX;
@@ -158,6 +185,9 @@ struct super_block *super_block_get(struct super_block *sb)
 	if (!urcu_ref_get_unless_zero(&sb->sb_ref))
 		return NULL;
 
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "%p - %ld", (void *)sb,
+	      sb->sb_ref.refcount);
+
 	return sb;
 }
 
@@ -165,6 +195,9 @@ void super_block_put(struct super_block *sb)
 {
 	if (!sb)
 		return;
+
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "%p - %ld", (void *)sb,
+	      sb->sb_ref.refcount);
 
 	urcu_ref_put(&sb->sb_ref, super_block_release);
 }

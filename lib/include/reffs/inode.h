@@ -80,6 +80,7 @@ void inode_update_times_now(struct inode *inode, uint64_t flags);
 bool inode_name_is_child(struct inode *inode, char *name);
 struct inode *inode_name_get_inode(struct inode *inode, char *name);
 
+#define INODE_RELEASE_HARVEST (2)
 void inode_schedule_delayed_release(struct inode *inode, int delay_seconds);
 
 #endif /* _REFFS_INODE_H */

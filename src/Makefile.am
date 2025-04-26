@@ -53,3 +53,12 @@ bin_PROGRAMS = \
 	reffs_fuse \
 	reffs	\
 	reffs_nfs3_srv
+
+EXTRA_DIST = asan_nfs3_server.sh asan-suppressions.txt
+dist_data_DATA = asan-suppressions.txt
+dist_bin_SCRIPTS = asan_nfs3_server.sh
+
+all-local:
+	$(INSTALL_DATA) $(top_srcdir)/src/asan-suppressions.txt $(top_builddir)/src/asan-suppressions.txt
+	cp $(top_srcdir)/src/asan_nfs3_server.sh $(top_builddir)/src/
+	chmod +x $(top_builddir)/src/asan_nfs3_server.sh

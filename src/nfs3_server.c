@@ -1882,6 +1882,10 @@ out:
 
 	reffs_ns_fini();
 
+	// Let inodes clear out of memory
+	TRACE(REFFS_TRACE_LEVEL_WARNING, "Calling rcu_barrier()...");
+	rcu_barrier();
+
 	mount3_protocol_deregister();
 	nfs3_protocol_deregister();
 

@@ -1749,6 +1749,7 @@ static int nfs3_remove(struct rpc_trans *rt)
 	}
 
 	dirent_parent_release(de, reffs_life_action_death);
+	dirent_put(de);
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
 	uatomic_dec(&inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
@@ -1864,6 +1865,7 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 	}
 
 	dirent_parent_release(de, reffs_life_action_death);
+	dirent_put(de);
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
 	uatomic_dec(&inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);

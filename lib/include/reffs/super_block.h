@@ -9,13 +9,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <urcu.h>
+#include <uuid/uuid.h>
 #include <urcu/rculist.h>
 #include <urcu/rculfhash.h>
 #include <urcu/ref.h>
 
 #include "reffs/dirent.h"
-
-#define REFFS_UUID_SIZE (16)
 
 struct super_block {
 	struct rcu_head sb_rcu;
@@ -30,7 +29,7 @@ struct super_block {
 
 	char *sb_path;
 
-	uint8_t sb_uuid[REFFS_UUID_SIZE];
+	uuid_t sb_uuid;
 
 	size_t sb_bytes_max;
 	size_t sb_bytes_used;
@@ -38,8 +37,9 @@ struct super_block {
 	size_t sb_inodes_max;
 	size_t sb_inodes_used;
 
-#define SB_IS_READ_ONLY (1ULL << 0)
-#define SB_IS_MOUNTED (1ULL << 1)
+#define SB_IN_LIST (1ULL << 0)
+#define SB_IS_READ_ONLY (1ULL << 1)
+#define SB_IS_MOUNTED (1ULL << 2)
 	uint64_t sb_state;
 };
 

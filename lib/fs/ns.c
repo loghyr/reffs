@@ -103,7 +103,6 @@ int reffs_ns_init(void)
 	inode->i_used = 8;
 	inode->i_nlink = 2;
 
-
 	inode->i_parent = reffs_root_sb->sb_dirent;
 
 	inode_put(inode);
@@ -113,6 +112,50 @@ out:
 		reffs_ns_fini();
 
 	return ret;
+}
+
+static void release_dirents_recursive(struct dirent *de_parent)
+{
+	struct dirent *de;
+	int count = 0;
+
+	if (!de_parent || !de_parent->d_inode)
+		return;
+
+	cds_list_for_each_entry_rcu(de, &de_parent->d_inode->i_children,
+				    d_siblings) {
+		release_dirents_recursive(de);
+		dirent_put(de);
+		count++;
+	}
+
+	TRACE(REFFS_TRACE_LEVEL_INFO, "Unloaded %d entries for %s", count,
+	      de_parent->d_name);
+}
+
+static void release_all_fs_dirents(void)
+{
+	struct super_block *sb, *tmp;
+	struct dirent *de_parent;
+	char uuid_str[UUID_STR_LEN];
+
+	struct cds_list_head *sb_list = super_block_list_head();
+
+	cds_list_for_each_entry_safe(sb, tmp, sb_list, sb_link) {
+		uuid_unparse(sb->sb_uuid, uuid_str);
+		TRACE(REFFS_TRACE_LEVEL_WARNING, "Unloading \"%s\" (uuid %s)",
+		      sb->sb_path, uuid_str);
+		de_parent = dirent_get(sb->sb_dirent);
+		if (de_parent) {
+			release_dirents_recursive(de_parent);
+
+			dirent_parent_release(de_parent,
+					      reffs_life_action_death);
+			dirent_put(de_parent);
+		}
+
+		super_block_put(sb);
+	}
 }
 
 int reffs_ns_fini(void)
@@ -125,7 +168,13 @@ int reffs_ns_fini(void)
 	if (reffs_root_sb) {
 		super_block_dirent_release(reffs_root_sb,
 					   reffs_life_action_death);
-		super_block_put(reffs_root_sb);
+		release_all_fs_dirents();
+		/*
+		 * Normally we would still have a reference to the sb
+		 * here, but as we strong armed all sbs to be
+		 * put in release_all_fs_dirents(), we don't!
+		 */
+		//super_block_put(reffs_root_sb);
 		reffs_root_sb = NULL;
 	}
 
