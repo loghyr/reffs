@@ -35,6 +35,9 @@
 #include "reffs/server.h"
 #include "reffs/identity.h"
 
+#define NFS3_PATH_MAX (1024)
+#define NFS3_NAME_MAX (256)
+
 /*
  * On locking order:
  *
@@ -1065,6 +1068,11 @@ static int nfs3_create(struct rpc_trans *rt)
 		goto out;
 	}
 
+	if (strlen(args->where.name) > NFS3_NAME_MAX) {
+		res->status = NFS3ERR_NAMETOOLONG;
+		goto out;
+	}
+
 	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
@@ -1248,6 +1256,11 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
+	if (strlen(args->where.name) > NFS3_NAME_MAX) {
+		res->status = NFS3ERR_NAMETOOLONG;
+		goto out;
+	}
+
 	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	size = inode->i_size;
@@ -1388,6 +1401,11 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
+
+	if (strlen(args->symlink.symlink_data) > NFS3_PATH_MAX) {
+		res->status = NFS3ERR_NAMETOOLONG;
+		goto out;
+	}
 
 	name = strdup(args->symlink.symlink_data);
 	if (!name) {
@@ -1534,6 +1552,11 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
 		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	if (strlen(args->where.name) > NFS3_NAME_MAX) {
+		res->status = NFS3ERR_NAMETOOLONG;
 		goto out;
 	}
 
@@ -1733,6 +1756,11 @@ static int nfs3_remove(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
+	if (strlen(args->object.name) > NFS3_NAME_MAX) {
+		res->status = NFS3ERR_NAMETOOLONG;
+		goto out;
+	}
+
 	pthread_rwlock_wrlock(&inode->i_parent->d_rwlock);
 
 	size = inode->i_size;
@@ -1819,6 +1847,11 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
 		res->status = NFS3ERR_STALE;
+		goto out;
+	}
+
+	if (strlen(args->object.name) > NFS3_NAME_MAX) {
+		res->status = NFS3ERR_NAMETOOLONG;
 		goto out;
 	}
 
@@ -2020,6 +2053,11 @@ static int nfs3_rename(struct rpc_trans *rt)
 
 	de_dst = dirent_find(inode_dst->i_parent, rtc, args->to.name);
 
+	if (strlen(args->to.name) > NFS3_NAME_MAX) {
+		res->status = NFS3ERR_NAMETOOLONG;
+		goto out;
+	}
+
 	name = strdup(args->to.name);
 	if (!name) {
 		res->status = NFS3ERR_JUKEBOX;
@@ -2179,6 +2217,11 @@ static int nfs3_link(struct rpc_trans *rt)
 
 	if (!(inode_dir->i_mode & S_IFDIR)) {
 		res->status = NFS3ERR_NOTDIR;
+		goto out;
+	}
+
+	if (strlen(args->link.name) > NFS3_NAME_MAX) {
+		res->status = NFS3ERR_NAMETOOLONG;
 		goto out;
 	}
 
@@ -3024,7 +3067,7 @@ static int nfs3_pathconf(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	resok->linkmax = 1024;
-	resok->name_max = 256;
+	resok->name_max = NFS3_NAME_MAX;
 	resok->no_trunc = true;
 	resok->chown_restricted = false;
 	resok->case_insensitive =
