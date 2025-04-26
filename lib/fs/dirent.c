@@ -40,7 +40,7 @@ void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 	uatomic_inc(&parent->d_inode->i_nlink, __ATOMIC_RELAXED);
 	de->d_cookie =
 		uatomic_add_return(&parent->d_cookie_next, 1, __ATOMIC_RELAXED);
-	cds_list_add_rcu(&de->d_siblings, &parent->d_inode->i_children);
+	cds_list_add_tail_rcu(&de->d_siblings, &parent->d_inode->i_children);
 	dirent_get(de); // One for the linked list
 
 	if (de->d_inode && de->d_inode->i_mode & S_IFDIR)
