@@ -235,7 +235,7 @@ static int nfs3_commit(struct rpc_trans *rt)
 }
 #pragma GCC diagnostic pop
 
-const struct rpc_operations_handler nfsv3_operations_handler[] = {
+struct rpc_operations_handler nfsv3_operations_handler[] = {
 	RPC_OPERATION_INIT(NFSPROC3_NULL, NULL, NULL, NULL, NULL, nfs3_null),
 	RPC_OPERATION_INIT(NFSPROC3_GETATTR, xdr_GETATTR3args, GETATTR3args,
 			   xdr_GETATTR3res, GETATTR3res, nfs3_getattr),
