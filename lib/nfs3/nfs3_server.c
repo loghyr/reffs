@@ -2179,7 +2179,7 @@ static int nfs3_link(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
-	if (!(inode->i_mode & S_IFDIR)) {
+	if (!(inode_dir->i_mode & S_IFDIR)) {
 		res->status = NFS3ERR_NOTDIR;
 		goto out;
 	}
