@@ -69,7 +69,7 @@ int reffs_ns_init(void)
 	inode->i_ctime = inode->i_mtime;
 	inode->i_mode = S_IFDIR | 0755;
 	inode->i_size = 4096;
-	inode->i_used = 8;
+	inode->i_used = 4096;
 	inode->i_nlink = 2;
 
 	inode_put(inode);
@@ -100,7 +100,7 @@ int reffs_ns_init(void)
 	inode->i_ctime = inode->i_mtime;
 	inode->i_mode = S_IFDIR | 0777;
 	inode->i_size = 4096;
-	inode->i_used = 8;
+	inode->i_used = 4096;
 	inode->i_nlink = 2;
 
 	inode->i_parent = reffs_root_sb->sb_dirent;

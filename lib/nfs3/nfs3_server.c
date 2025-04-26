@@ -35,8 +35,8 @@
 #include "reffs/server.h"
 #include "reffs/identity.h"
 
-#define NFS3_PATH_MAX (1024)
-#define NFS3_NAME_MAX (256)
+#define NFS3_PATH_MAX (1023)
+#define NFS3_NAME_MAX (255)
 
 /*
  * On locking order:
@@ -551,6 +551,7 @@ static int nfs3_lookup(struct rpc_trans *rt)
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
 	inode_attr_to_fattr(exists, fa);
 
 update_wcc:
@@ -660,6 +661,7 @@ static int nfs3_access(struct rpc_trans *rt)
 
 	pthread_mutex_lock(&inode->i_attr_mutex); // Consider reader/writer?
 
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
 	inode_attr_to_fattr(inode, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
@@ -1312,7 +1314,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	de->d_inode->i_ctime = de->d_inode->i_mtime;
 	de->d_inode->i_mode = S_IFDIR | inode->i_mode;
 	de->d_inode->i_size = 4096;
-	de->d_inode->i_used = 8;
+	de->d_inode->i_used = 4096;
 	de->d_inode->i_nlink = 2;
 
 	res->status = nfs3_apply_sattr3(de->d_inode, sa, NULL, NULL);
@@ -1468,7 +1470,7 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	de->d_inode->i_ctime = de->d_inode->i_mtime;
 	de->d_inode->i_mode = (S_IFLNK | inode->i_mode) & ~S_IFDIR;
 	de->d_inode->i_size = 4096;
-	de->d_inode->i_used = 8;
+	de->d_inode->i_used = 0;
 	de->d_inode->i_nlink = 2;
 
 	nfh = calloc(1, sizeof(*nfh));
@@ -1633,7 +1635,7 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	de->d_inode->i_ctime = de->d_inode->i_mtime;
 	de->d_inode->i_mode = inode->i_mode & ~S_IFDIR;
 	de->d_inode->i_size = 4096;
-	de->d_inode->i_used = 8;
+	de->d_inode->i_used = 0;
 	de->d_inode->i_nlink = 2;
 
 	switch (args->what.type) {
@@ -3000,15 +3002,15 @@ static int nfs3_fsinfo(struct rpc_trans *rt)
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	nfstime3 gran = { .seconds = 0, .nseconds = 1 };
-	resok->rtmax = 1 * 1024 * 1024;
+	nfstime3 gran = { .seconds = 1, .nseconds = 0 };
+	resok->rtmax = 1048576;
 	resok->rtpref = resok->rtmax;
-	resok->rtmult = 1;
+	resok->rtmult = 4096;
 	resok->wtmax = resok->rtmax;
 	resok->wtpref = resok->wtmax;
-	resok->wtmult = 1;
-	resok->dtpref = 1024 * 1024;
-	resok->maxfilesize = SIZE_MAX;
+	resok->wtmult = 4096;
+	resok->dtpref = resok->wtmax;
+	resok->maxfilesize = 9223372036854775807;
 	resok->time_delta = gran;
 	resok->properties = FSF3_LINK | FSF3_SYMLINK | FSF3_HOMOGENEOUS |
 			    FSF3_CANSETTIME;
@@ -3077,9 +3079,9 @@ static int nfs3_pathconf(struct rpc_trans *rt)
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	resok->linkmax = 1024;
+	resok->linkmax = 255;
 	resok->name_max = NFS3_NAME_MAX;
-	resok->no_trunc = true;
+	resok->no_trunc = false;
 	resok->chown_restricted = false;
 	resok->case_insensitive =
 		reffs_case_get() == reffs_text_case_insensitive ? true : false;
