@@ -1378,6 +1378,7 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	char *name = NULL;
 
 	struct network_file_handle *nfh = NULL;
+	struct network_file_handle *nfh_new = NULL;
 
 	struct dirent *de = NULL;
 	struct authunix_parms ap;
@@ -1465,8 +1466,8 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	de->d_inode->i_used = 0;
 	de->d_inode->i_nlink = 2;
 
-	nfh = network_file_handle_construct(sb->sb_id, de->d_inode->i_ino);
-	if (!nfh) {
+	nfh_new = network_file_handle_construct(sb->sb_id, de->d_inode->i_ino);
+	if (!nfh_new) {
 		res->status = NFS3ERR_JUKEBOX;
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
@@ -1481,10 +1482,10 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	de->d_inode->i_symlink = name;
 	name = NULL;
 
-	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
+	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh_new;
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh_new);
 	resok->obj.handle_follows = true;
-	nfh = NULL;
+	nfh_new = NULL;
 
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
@@ -1505,7 +1506,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
-	free(nfh);
+	free(nfh_new);
 	free(name);
 	inode_put(inode);
 	super_block_put(sb);
