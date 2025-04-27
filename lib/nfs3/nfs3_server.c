@@ -2450,7 +2450,7 @@ static int nfs3_readdir(struct rpc_trans *rt)
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(de, &inode->i_parent->d_inode->i_children,
 				    d_siblings) {
-		if (de->d_cookie < cookie)
+		if (de->d_cookie <= cookie)
 			continue;
 
 		entry3 *e = calloc(1, sizeof(*e));
