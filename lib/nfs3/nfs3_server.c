@@ -2460,6 +2460,7 @@ static int nfs3_readdir(struct rpc_trans *rt)
 				free(dl);
 				res->status = NFS3ERR_JUKEBOX;
 				poa = &res->READDIR3res_u.resfail.dir_attributes;
+				rcu_read_unlock();
 				goto update_wcc;
 			}
 
@@ -2475,6 +2476,7 @@ static int nfs3_readdir(struct rpc_trans *rt)
 				free(dl);
 				res->status = NFS3ERR_JUKEBOX;
 				poa = &res->READDIR3res_u.resfail.dir_attributes;
+				rcu_read_unlock();
 				goto update_wcc;
 			}
 
@@ -2485,6 +2487,7 @@ static int nfs3_readdir(struct rpc_trans *rt)
 		if (count > args->count) {
 			free(e->name);
 			free(e);
+			rcu_read_unlock();
 			goto past_eof;
 		}
 
@@ -2760,6 +2763,7 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 				res->status = NFS3ERR_JUKEBOX;
 				poa = &res->READDIRPLUS3res_u.resfail
 					       .dir_attributes;
+				rcu_read_unlock();
 				goto update_wcc;
 			}
 
@@ -2776,6 +2780,7 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 				res->status = NFS3ERR_JUKEBOX;
 				poa = &res->READDIRPLUS3res_u.resfail
 					       .dir_attributes;
+				rcu_read_unlock();
 				goto update_wcc;
 			}
 
@@ -2794,6 +2799,7 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 				res->status = NFS3ERR_JUKEBOX;
 				poa = &res->READDIRPLUS3res_u.resfail
 					       .dir_attributes;
+				rcu_read_unlock();
 				goto update_wcc;
 			}
 
@@ -2815,6 +2821,7 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 			free(nfh);
 			free(e->name);
 			free(e);
+			rcu_read_unlock();
 			goto past_eof;
 		}
 
@@ -2823,6 +2830,7 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 			free(nfh);
 			free(e->name);
 			free(e);
+			rcu_read_unlock();
 			goto past_eof;
 		}
 
