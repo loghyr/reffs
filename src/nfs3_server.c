@@ -1580,6 +1580,8 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
+	server_boot_uuid_generate();
+
 	while ((opt = getopt_long(argc, argv, "p:ht:", long_opts, NULL)) !=
 	       -1) {
 		switch (opt) {
@@ -1645,8 +1647,6 @@ int main(int argc, char *argv[])
 	exit_code = reffs_ns_init();
 	if (exit_code)
 		goto out;
-
-	server_boot_uuid_generate();
 
 	// Create worker threads
 	for (int i = 0; i < MAX_WORKER_THREADS; i++) {

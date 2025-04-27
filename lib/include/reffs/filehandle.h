@@ -24,7 +24,15 @@ struct network_file_handle {
 static inline bool network_file_handles_equal(struct network_file_handle *a,
 					      struct network_file_handle *b)
 {
-	return a->nfh_sb == b->nfh_sb && a->nfh_ino == b->nfh_ino;
+	return a->nfh_sb == b->nfh_sb && a->nfh_ino == b->nfh_ino &&
+	       a->nfh_reserved_1 == b->nfh_reserved_1 &&
+	       a->nfh_reserved_2 == b->nfh_reserved_2 &&
+	       a->nfh_reserved_3 == b->nfh_reserved_3;
 }
+
+struct network_file_handle *network_file_handle_construct(uint64_t sbi,
+							  uint64_t ino);
+
+void network_file_handle_init(void);
 
 #endif

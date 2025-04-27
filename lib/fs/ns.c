@@ -26,6 +26,7 @@
 #include "reffs/data_block.h"
 #include "reffs/server.h"
 #include "reffs/ns.h"
+#include "reffs/filehandle.h"
 
 volatile sig_atomic_t reffs_namespace_initialized = 0;
 static struct super_block *reffs_root_sb = NULL;
@@ -106,6 +107,8 @@ int reffs_ns_init(void)
 	inode->i_parent = reffs_root_sb->sb_dirent;
 
 	inode_put(inode);
+
+	network_file_handle_init();
 
 out:
 	if (ret)

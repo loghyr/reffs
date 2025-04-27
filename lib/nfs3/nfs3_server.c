@@ -535,7 +535,8 @@ static int nfs3_lookup(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	nfh = calloc(1, sizeof(*nfh));
+	// When we add more than one sb, be careul here
+	nfh = network_file_handle_construct(sb->sb_id, exists->i_ino);
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		poa = &res->LOOKUP3res_u.resfail.dir_attributes;
@@ -544,9 +545,6 @@ static int nfs3_lookup(struct rpc_trans *rt)
 
 	resok->object.data.data_val = (char *)nfh;
 	resok->object.data.data_len = sizeof(*nfh);
-	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-	nfh->nfh_sb = sb->sb_id; // FIXME: If mounted on, change the sb
-	nfh->nfh_ino = exists->i_ino;
 
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
@@ -1175,7 +1173,7 @@ static int nfs3_create(struct rpc_trans *rt)
 		}
 	}
 
-	nfh = calloc(1, sizeof(*nfh));
+	nfh = network_file_handle_construct(sb->sb_id, tmp->i_ino);
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		wcc = &resfail->dir_wcc;
@@ -1185,9 +1183,6 @@ static int nfs3_create(struct rpc_trans *rt)
 	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
 	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
 	resok->obj.handle_follows = true;
-	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-	nfh->nfh_sb = sb->sb_id;
-	nfh->nfh_ino = tmp->i_ino;
 
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
@@ -1323,7 +1318,7 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	nfh = calloc(1, sizeof(*nfh));
+	nfh = network_file_handle_construct(sb->sb_id, de->d_inode->i_ino);
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		wcc = &resfail->dir_wcc;
@@ -1333,9 +1328,6 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
 	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
 	resok->obj.handle_follows = true;
-	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-	nfh->nfh_sb = sb->sb_id;
-	nfh->nfh_ino = de->d_inode->i_ino;
 
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
@@ -1473,7 +1465,7 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	de->d_inode->i_used = 0;
 	de->d_inode->i_nlink = 2;
 
-	nfh = calloc(1, sizeof(*nfh));
+	nfh = network_file_handle_construct(sb->sb_id, de->d_inode->i_ino);
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		wcc = &resfail->dir_wcc;
@@ -1492,9 +1484,7 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
 	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
 	resok->obj.handle_follows = true;
-	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-	nfh->nfh_sb = sb->sb_id;
-	nfh->nfh_ino = de->d_inode->i_ino;
+	nfh = NULL;
 
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
@@ -1515,6 +1505,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	free(nfh);
 	free(name);
 	inode_put(inode);
 	super_block_put(sb);
@@ -1677,7 +1668,7 @@ static int nfs3_mknod(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	nfh = calloc(1, sizeof(*nfh));
+	nfh = network_file_handle_construct(sb->sb_id, de->d_inode->i_ino);
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
@@ -1688,9 +1679,6 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
 	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
 	resok->obj.handle_follows = true;
-	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-	nfh->nfh_sb = sb->sb_id;
-	nfh->nfh_ino = de->d_inode->i_ino;
 
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
@@ -2624,7 +2612,8 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 			goto past_eof;
 		}
 
-		nfh = calloc(1, sizeof(*nfh));
+		// With multi-sb, check for mounted on
+		nfh = network_file_handle_construct(sb->sb_id, inode->i_ino);
 		if (!nfh) {
 			free(e->name);
 			free(e);
@@ -2644,9 +2633,6 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 		e->name_handle.post_op_fh3_u.handle.data.data_len =
 			sizeof(*nfh);
 		e->name_handle.handle_follows = true;
-		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-		nfh->nfh_sb = sb->sb_id; // FIXME: If mounted on, change the sb
-		nfh->nfh_ino = inode->i_ino;
 
 		poa_e = &e->name_attributes;
 		poa_e->attributes_follow = true;
@@ -2708,7 +2694,8 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 			goto past_eof;
 		}
 
-		nfh = calloc(1, sizeof(*nfh));
+		// With multi-sb, check for mounted on
+		nfh = network_file_handle_construct(sb->sb_id, inode->i_ino);
 		if (!nfh) {
 			free(e->name);
 			free(e);
@@ -2728,9 +2715,6 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 		e->name_handle.post_op_fh3_u.handle.data.data_len =
 			sizeof(*nfh);
 		e->name_handle.handle_follows = true;
-		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-		nfh->nfh_sb = sb->sb_id; // FIXME: If mounted on, change the sb
-		nfh->nfh_ino = inode->i_ino;
 
 		poa_e = &e->name_attributes;
 		poa_e->attributes_follow = true;
@@ -2797,7 +2781,9 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 			break;
 		}
 
-		nfh = calloc(1, sizeof(*nfh));
+		// With multi-sb, check for mounted on
+		nfh = network_file_handle_construct(sb->sb_id,
+						    de->d_inode->i_ino);
 		if (!nfh) {
 			free(e->name);
 			free(e);
@@ -2817,9 +2803,6 @@ static int nfs3_readdirplus(struct rpc_trans *rt)
 		e->name_handle.post_op_fh3_u.handle.data.data_len =
 			sizeof(*nfh);
 		e->name_handle.handle_follows = true;
-		nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
-		nfh->nfh_sb = sb->sb_id; // FIXME: If mounted on, change the sb
-		nfh->nfh_ino = de->d_inode->i_ino;
 
 		poa_e = &e->name_attributes;
 		poa_e->attributes_follow = true;
