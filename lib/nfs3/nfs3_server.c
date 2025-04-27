@@ -1473,7 +1473,7 @@ static int nfs3_symlink(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	res->status = nfs3_apply_sattr3(inode, sa, NULL, NULL);
+	res->status = nfs3_apply_sattr3(de->d_inode, sa, NULL, NULL);
 	if (res->status) {
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
