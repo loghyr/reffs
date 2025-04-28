@@ -465,8 +465,17 @@ static int rpc_process_task_call(struct task *t)
 
 handle_rpc_error:
 	rt->rt_offset = 0;
+	TRACE(REFFS_TRACE_LEVEL_ERR,
+	      "Encoding reply_stat=%d, reject_stat=%d accept_stat=%d ret=%d RPC reply xid=0x%08x",
+	      rt->rt_info.ri_reply_stat, rt->rt_info.ri_reject_stat,
+	      rt->rt_info.ri_accept_stat, ret, rt->rt_info.ri_xid);
+
 	if (rt->rt_info.ri_reply_stat == MSG_DENIED) {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "Branch 1 xid=0x%08x",
+		      rt->rt_info.ri_xid);
 		if (rt->rt_info.ri_reject_stat == RPC_MISMATCH) {
+			TRACE(REFFS_TRACE_LEVEL_ERR, "Branch 2 xid=0x%08x",
+			      rt->rt_info.ri_xid);
 			rt->rt_reply_len = 7 * sizeof(uint32_t);
 			msg_len = rt->rt_reply_len - sizeof(uint32_t);
 			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
@@ -549,6 +558,8 @@ handle_rpc_error:
 				goto drop_on_floor;
 			}
 		} else {
+			TRACE(REFFS_TRACE_LEVEL_ERR, "Branch 3 xid=0x%08x",
+			      rt->rt_info.ri_xid);
 			rt->rt_reply_len = 6 * sizeof(uint32_t);
 			msg_len = rt->rt_reply_len - sizeof(uint32_t);
 			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
@@ -613,6 +624,8 @@ handle_rpc_error:
 			}
 		}
 	} else if (rt->rt_info.ri_accept_stat) {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "Branch 4 xid=0x%08x",
+		      rt->rt_info.ri_xid);
 		rt->rt_reply_len = 8 * sizeof(uint32_t);
 		msg_len = rt->rt_reply_len - sizeof(uint32_t);
 		rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
@@ -704,6 +717,8 @@ handle_rpc_error:
 			goto drop_on_floor;
 		}
 	} else {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "Branch 5 xid=0x%08x",
+		      rt->rt_info.ri_xid);
 		XDR xdrs = { 0 };
 
 		uint32_t start_pos, end_pos;
@@ -729,8 +744,10 @@ handle_rpc_error:
 			goto drop_on_floor;
 		}
 
-		TRACE(REFFS_TRACE_LEVEL_DEBUG, "Encoding at %p for length %lu",
-		      (void *)rt->rt_reply, rt->rt_reply_len);
+		TRACE(REFFS_TRACE_LEVEL_ERR,
+		      "Encoding at %p for length %lu for xid=0x%08x",
+		      (void *)rt->rt_reply, rt->rt_reply_len,
+		      rt->rt_info.ri_xid);
 
 		p = (uint32_t *)rt->rt_reply;
 		p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
@@ -847,6 +864,9 @@ handle_rpc_error:
 			rt->rt_offset += len;
 		}
 
+		TRACE(REFFS_TRACE_LEVEL_ERR,
+		      "Final offset=%zu len=%zu for xid=0x%08x", rt->rt_offset,
+		      rt->rt_reply_len, rt->rt_info.ri_xid);
 		assert(rt->rt_offset == rt->rt_reply_len);
 	}
 

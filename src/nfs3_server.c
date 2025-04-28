@@ -611,8 +611,8 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	if (ret <= 0) {
 		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed: %d", ret);
 	} else {
-		TRACE(REFFS_TRACE_LEVEL_NOTICE, "Submitted %d io_uring operations",
-		      ret);
+		TRACE(REFFS_TRACE_LEVEL_NOTICE,
+		      "Submitted %d io_uring operations", ret);
 	}
 
 	return 0;
@@ -1319,9 +1319,17 @@ int main(int argc, char *argv[])
 					    strerror(-cqe->res));
 					op_write_handler_failed(cqe);
 				} else {
+					struct io_context *ic =
+						(struct io_context *)(uintptr_t)
+							cqe->user_data;
+					if (!ic) {
+						LOG("Error: NULL io context in write handler");
+						return -EINVAL;
+					}
+
 					TRACE(REFFS_TRACE_LEVEL_WARNING,
-					      "Successfully wrote %d bytes",
-					      cqe->res);
+					      "Successfully wrote %d bytes for (xid=0x%08x)",
+					      cqe->res, ic->ic_xid);
 					op_write_handler(cqe, &ring);
 				}
 				ret = 0;

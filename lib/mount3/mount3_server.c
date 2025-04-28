@@ -144,16 +144,16 @@ out_unwind:
 }
 
 struct rpc_operations_handler mount3_operations_handler[] = {
-	RPC_OPERATION_INIT(MOUNTPROC3_NULL, NULL, NULL, NULL, NULL,
+	RPC_OPERATION_INIT(MOUNTPROC3, NULL, NULL, NULL, NULL, NULL,
 			   mount3_null),
-	RPC_OPERATION_INIT(MOUNTPROC3_MNT, xdr_dirpath, dirpath *,
+	RPC_OPERATION_INIT(MOUNTPROC3, MNT, xdr_dirpath, dirpath *,
 			   xdr_mountres3, mountres3, mount3_mnt),
-	RPC_OPERATION_INIT(MOUNTPROC3_DUMP, NULL, NULL, xdr_mountlist,
+	RPC_OPERATION_INIT(MOUNTPROC3, DUMP, NULL, NULL, xdr_mountlist,
 			   mountlist, NULL),
-	RPC_OPERATION_INIT(MOUNTPROC3_UMNT, xdr_dirpath, dirpath *, NULL, NULL,
+	RPC_OPERATION_INIT(MOUNTPROC3, UMNT, xdr_dirpath, dirpath *, NULL, NULL,
 			   NULL),
-	RPC_OPERATION_INIT(MOUNTPROC3_UMNTALL, NULL, NULL, NULL, NULL, NULL),
-	RPC_OPERATION_INIT(MOUNTPROC3_EXPORT, NULL, NULL, xdr_exports, exports,
+	RPC_OPERATION_INIT(MOUNTPROC3, UMNTALL, NULL, NULL, NULL, NULL, NULL),
+	RPC_OPERATION_INIT(MOUNTPROC3, EXPORT, NULL, NULL, xdr_exports, exports,
 			   mount3_exports),
 };
 

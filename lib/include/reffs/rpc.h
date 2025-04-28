@@ -70,6 +70,7 @@ struct rpc_trans {
  */
 struct rpc_operations_handler {
 	uint32_t roh_operation; // The operation ID
+	const char *roh_name;
 	xdrproc_t roh_args_f; // The function to process the args
 	size_t roh_args_size; // The size of the base args structure
 	xdrproc_t roh_res_f; // The function to process the res
@@ -107,12 +108,13 @@ struct protocol_handler {
 	struct rpc_operations_handler *ph_op_handler;
 };
 
-#define RPC_OPERATION_INIT(OP, ARGS_F, ARGS, RES_F, RES, CALL) \
-	{ .roh_operation = OP,                                 \
-	  .roh_args_f = (xdrproc_t)ARGS_F,                     \
-	  .roh_args_size = sizeof(ARGS),                       \
-	  .roh_res_f = (xdrproc_t)RES_F,                       \
-	  .roh_res_size = sizeof(RES),                         \
+#define RPC_OPERATION_INIT(PROTOCOL, NAME, ARGS_F, ARGS, RES_F, RES, CALL) \
+	{ .roh_operation = PROTOCOL##_##NAME,                              \
+	  .roh_name = #NAME,                                               \
+	  .roh_args_f = (xdrproc_t)ARGS_F,                                 \
+	  .roh_args_size = sizeof(ARGS),                                   \
+	  .roh_res_f = (xdrproc_t)RES_F,                                   \
+	  .roh_res_size = sizeof(RES),                                     \
 	  .roh_action = CALL }
 
 static inline uint32_t *rpc_decode_uint32_t(struct rpc_trans *rt, uint32_t *p,
@@ -151,8 +153,7 @@ int rpc_protocol_op_call(struct rpc_trans *rt);
 
 struct rpc_program_handler *
 rpc_program_handler_alloc(uint32_t program, uint32_t version,
-			  struct rpc_operations_handler *ops,
-			  size_t ops_len);
+			  struct rpc_operations_handler *ops, size_t ops_len);
 
 struct rpc_program_handler *rpc_program_handler_find(uint32_t program,
 						     uint32_t version);
