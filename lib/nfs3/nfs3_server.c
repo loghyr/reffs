@@ -1460,7 +1460,7 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	de->d_inode->i_mode = (S_IFLNK | inode->i_mode) & ~S_IFDIR;
 	de->d_inode->i_size = 4096;
 	de->d_inode->i_used = 0;
-	de->d_inode->i_nlink = 2;
+	de->d_inode->i_nlink = 1;
 
 	nfh_new = network_file_handle_construct(sb->sb_id, de->d_inode->i_ino);
 	if (!nfh_new) {
@@ -1622,7 +1622,7 @@ static int nfs3_mknod(struct rpc_trans *rt)
 	de->d_inode->i_mode = inode->i_mode & ~S_IFDIR;
 	de->d_inode->i_size = 4096;
 	de->d_inode->i_used = 0;
-	de->d_inode->i_nlink = 2;
+	de->d_inode->i_nlink = 1;
 
 	switch (args->what.type) {
 	case NF3REG:
