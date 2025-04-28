@@ -75,6 +75,8 @@ static void inode_release(struct urcu_ref *ref)
 	struct inode *inode = caa_container_of(ref, struct inode, i_ref);
 
 	inode_unhash(inode);
+	if (inode->i_sb)
+		uatomic_inc(&inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
 	super_block_put(inode->i_sb);
 
 	call_rcu(&inode->i_rcu, inode_free_rcu);
@@ -108,20 +110,29 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 
 	if (sb) {
 		inode->i_sb = super_block_get(sb);
+		assert(inode->i_sb);
 
-		/* Make sure no one else beat us to it */
-		rcu_read_lock();
-		node = cds_lfht_add_unique(inode->i_sb->sb_inodes, hash,
-					   inode_match, &ino, &inode->i_node);
-		if (node != &inode->i_node) {
-			tmp = caa_container_of(node, struct inode, i_node);
-			inode_put(inode);
-			inode = tmp;
-		} else {
-			__atomic_fetch_or(&inode->i_state, INODE_IS_HASHED,
-					  __ATOMIC_ACQUIRE);
+		if (inode->i_sb) {
+			uatomic_inc(&inode->i_sb->sb_inodes_used,
+				    __ATOMIC_RELAXED);
+
+			/* Make sure no one else beat us to it */
+			rcu_read_lock();
+			node = cds_lfht_add_unique(inode->i_sb->sb_inodes, hash,
+						   inode_match, &ino,
+						   &inode->i_node);
+			if (node != &inode->i_node) {
+				tmp = caa_container_of(node, struct inode,
+						       i_node);
+				inode_put(inode);
+				inode = tmp;
+			} else {
+				__atomic_fetch_or(&inode->i_state,
+						  INODE_IS_HASHED,
+						  __ATOMIC_ACQUIRE);
+			}
+			rcu_read_unlock();
 		}
-		rcu_read_unlock();
 	}
 
 	inode->i_ino = ino;

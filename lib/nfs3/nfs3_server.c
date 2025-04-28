@@ -1194,8 +1194,6 @@ static int nfs3_create(struct rpc_trans *rt)
 
 	inode_attr_to_fattr(tmp, fa);
 
-	uatomic_inc(&tmp->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
-
 update_wcc:
 	wcc->after.attributes_follow = true;
 	fa = &wcc->after.post_op_attr_u.attributes;
@@ -1337,8 +1335,6 @@ static int nfs3_mkdir(struct rpc_trans *rt)
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 	inode_attr_to_fattr(de->d_inode, fa);
-
-	uatomic_inc(&de->d_inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
 
 	de->d_inode->i_parent = de;
 
@@ -1495,8 +1491,6 @@ static int nfs3_symlink(struct rpc_trans *rt)
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
 	inode_attr_to_fattr(de->d_inode, fa);
-
-	uatomic_inc(&de->d_inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
 
 update_wcc:
 	wcc->after.attributes_follow = true;
@@ -1694,8 +1688,6 @@ static int nfs3_mknod(struct rpc_trans *rt)
 
 	inode_attr_to_fattr(de->d_inode, fa);
 
-	uatomic_inc(&de->d_inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
-
 update_wcc:
 	wcc->after.attributes_follow = true;
 	fa = &wcc->after.post_op_attr_u.attributes;
@@ -1781,10 +1773,6 @@ static int nfs3_remove(struct rpc_trans *rt)
 	dirent_parent_release(de, reffs_life_action_death);
 	dirent_put(de);
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
-
-	uatomic_dec(&inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
-	uatomic_add_return(&inode->i_sb->sb_bytes_used, -size,
-			   __ATOMIC_RELAXED);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -1902,8 +1890,6 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 	dirent_parent_release(de, reffs_life_action_death);
 	dirent_put(de);
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
-
-	uatomic_dec(&inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
