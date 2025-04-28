@@ -698,7 +698,7 @@ static int nfs3_readlink(struct rpc_trans *rt)
 		res->status = NFS3ERR_BADHANDLE;
 		uint32_t crc = nfs3_getfh_crc(&args->symlink);
 		TRACE(REFFS_TRACE_LEVEL_WARNING,
-		      "SYMLINK: xid=0x%08x badfh crc=0x%08x",
+		      "READLINK: xid=0x%08x badfh crc=0x%08x",
 		      rt->rt_info.ri_xid, crc);
 		goto out;
 	}
@@ -783,8 +783,8 @@ static int nfs3_read(struct rpc_trans *rt)
 	}
 
 	nfh = (struct network_file_handle *)args->file.data.data_val;
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "READ: xid=0x%08x sb=%lu ino=%lu",
-	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino);
+	TRACE(REFFS_TRACE_LEVEL_ERR, "READ: xid=0x%08x sb=%lu ino=%lu off=%zu count=%u",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, args->offset, args->count);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
