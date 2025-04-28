@@ -43,6 +43,7 @@
 #include "reffs/network.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
+#include "reffs/task.h"
 #include "reffs/test.h"
 #include "reffs/ns.h"
 
@@ -92,16 +93,6 @@ struct io_context {
 	void *ic_buffer;
 
 	struct connection_info ic_ci;
-};
-
-// Task struct for worker queue
-struct task {
-	char *t_buffer;
-	int t_bytes_read;
-	uint32_t t_xid;
-	int t_fd; // For sending responses
-	struct connection_info t_ci;
-	struct io_uring *t_ring;
 };
 
 // NFS request context for tracking operations
@@ -154,7 +145,6 @@ struct buffer_state *conn_buffers[MAX_CONNECTIONS];
 
 // Forward declarations
 int setup_io_uring(struct io_uring *ring);
-void rpc_process_task(struct task *task);
 struct buffer_state *create_buffer_state(int fd);
 struct buffer_state *get_buffer_state(int fd);
 bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len);
@@ -515,635 +505,46 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 	return request_more_read_data(bs, ring, ic);
 }
 
-void rpc_process_task(struct task *t)
+static int rpc_trans_cb(struct rpc_trans *rt)
 {
-	// Extract XID from the message (first 4 bytes)
-	uint32_t xid = ntohl(*(uint32_t *)t->t_buffer);
-
-	// Extract the RPC message type (call=0, reply=1)
-	uint32_t msg_type = ntohl(*(uint32_t *)(t->t_buffer + 4));
-
-	u_long msg_len = 0;
-
-	// Print basic info about the message
-	TRACE(REFFS_TRACE_LEVEL_NOTICE, "RPC Message: xid=0x%08x, Type=%s", xid,
-	      msg_type == 0 ? "CALL" : "REPLY");
-
-	if (msg_type == 0) { // It's a call
-		uint32_t *p;
-
-		struct rpc_trans *rt = calloc(1, sizeof(*rt));
-		if (!rt) {
-			add_task(t);
-			return;
-		}
-
-		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
-		rt->rt_info.ri_reject_stat = RPC_MISMATCH;
-		rt->rt_info.ri_accept_stat = SUCCESS;
-		rt->rt_info.ri_auth_stat = AUTH_OK;
-
-		struct protocol_handler *ph = calloc(1, sizeof(*ph));
-		if (!ph) {
-			free(rt);
-			add_task(t);
-			return;
-		}
-
-		rt->rt_context = (void *)ph;
-
-		rt->rt_fd = t->t_fd;
-		rt->rt_body = t->t_buffer;
-		rt->rt_body_len = t->t_bytes_read;
-		rt->rt_offset = 0;
-		copy_connection_info(&rt->rt_info.ri_ci, &t->t_ci);
-
-		p = (uint32_t *)rt->rt_body;
-
-		p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_xid);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			goto handle_rpc_error;
-		}
-
-		p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_type);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			goto handle_rpc_error;
-		}
-
-		p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_rpc_version);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			goto handle_rpc_error;
-		}
-
-		if (rt->rt_info.ri_rpc_version != 2) {
-			rt->rt_info.ri_reply_stat = MSG_DENIED;
-			rt->rt_info.ri_reject_stat = RPC_MISMATCH;
-		}
-
-		p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_program);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			goto handle_rpc_error;
-		}
-
-		p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_version);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			goto handle_rpc_error;
-		}
-
-		p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_procedure);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			goto handle_rpc_error;
-		}
-
-		p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_cred.rc_flavor);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			goto handle_rpc_error;
-		}
-
-		switch (rt->rt_info.ri_cred.rc_flavor) {
-		case AUTH_NONE: {
-			uint32_t len;
-			p = rpc_decode_uint32_t(rt, p, &len);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-				goto handle_rpc_error;
-			}
-			break;
-		}
-		case AUTH_SYS: {
-			XDR xdrs = { 0 };
-
-			uint32_t len;
-			p = rpc_decode_uint32_t(rt, p, &len);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-				goto handle_rpc_error;
-			}
-
-			xdrmem_create(&xdrs, (char *)p,
-				      rt->rt_body_len - rt->rt_offset,
-				      XDR_DECODE);
-
-			if (!xdr_authunix_parms(&xdrs,
-						&rt->rt_info.ri_cred.rc_unix)) {
-				xdr_free((xdrproc_t)xdr_authunix_parms,
-					 (char *)&rt->rt_info.ri_cred.rc_unix);
-				rt->rt_info.ri_auth_stat = AUTH_BADCRED;
-				rt->rt_info.ri_reply_stat = MSG_DENIED;
-				rt->rt_info.ri_reject_stat = AUTH_ERROR;
-				xdr_destroy(&xdrs);
-				goto handle_rpc_error;
-			}
-
-			xdr_destroy(&xdrs);
-			rt->rt_offset += len;
-			p = (uint32_t *)(p + len / sizeof(uint32_t));
-			break;
-		}
-		case AUTH_SHORT:
-		case AUTH_DH:
-		case RPCSEC_GSS:
-		default:
-			rt->rt_info.ri_auth_stat = AUTH_BADCRED;
-			rt->rt_info.ri_reply_stat = MSG_DENIED;
-			rt->rt_info.ri_reject_stat = AUTH_ERROR;
-			break;
-		}
-
-		p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_verifier_flavor);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			goto handle_rpc_error;
-		}
-
-		switch (rt->rt_info.ri_verifier_flavor) {
-		case AUTH_NONE: {
-			uint32_t len;
-			p = rpc_decode_uint32_t(rt, p, &len);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-				goto handle_rpc_error;
-			}
-			break;
-		}
-		case AUTH_SYS:
-		case AUTH_SHORT:
-		case AUTH_DH:
-		case RPCSEC_GSS:
-		default:
-			rt->rt_info.ri_auth_stat = AUTH_BADVERF;
-			break;
-		}
-
-		int ret = rpc_protocol_allocate_call(rt);
-		if (ret == ENOENT) {
-			rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
-			rt->rt_info.ri_accept_stat = PROG_UNAVAIL;
-		} else if (ret == ENOMEM) {
-			rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
-			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-		} else {
-			ret = rpc_protocol_op_call(rt);
-			if (!ret) {
-				p = (uint32_t *)(rt->rt_body + rt->rt_offset);
-			}
-		}
-
-handle_rpc_error:
-		rt->rt_offset = 0;
-		if (rt->rt_info.ri_reply_stat == MSG_DENIED) {
-			if (rt->rt_info.ri_reject_stat == RPC_MISMATCH) {
-				rt->rt_reply_len = 7 * sizeof(uint32_t);
-				msg_len = rt->rt_reply_len - sizeof(uint32_t);
-				rt->rt_reply =
-					calloc(rt->rt_reply_len, sizeof(char));
-				if (!rt->rt_reply) {
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = (uint32_t *)rt->rt_reply;
-				p = rpc_encode_uint32_t(rt, p,
-							msg_len | 0x80000000);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = rpc_encode_uint32_t(rt, p,
-							rt->rt_info.ri_xid);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = rpc_encode_uint32_t(rt, p, 1);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = rpc_encode_uint32_t(rt, p, 0);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = rpc_encode_uint32_t(
-					rt, p, rt->rt_info.ri_auth_stat);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = rpc_encode_uint32_t(rt, p, 2);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = rpc_encode_uint32_t(rt, p, 2);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-			} else {
-				rt->rt_reply_len = 6 * sizeof(uint32_t);
-				msg_len = rt->rt_reply_len - sizeof(uint32_t);
-				rt->rt_reply =
-					calloc(rt->rt_reply_len, sizeof(char));
-				if (!rt->rt_reply) {
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-				p = (uint32_t *)rt->rt_reply;
-
-				p = rpc_encode_uint32_t(rt, p,
-							msg_len | 0x80000000);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = rpc_encode_uint32_t(rt, p,
-							rt->rt_info.ri_xid);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = rpc_encode_uint32_t(rt, p, 1);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = rpc_encode_uint32_t(rt, p, 0);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-
-				p = rpc_encode_uint32_t(
-					rt, p, rt->rt_info.ri_auth_stat);
-				if (!p) {
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto drop_on_floor;
-				}
-			}
-		} else if (rt->rt_info.ri_accept_stat) {
-			rt->rt_reply_len = 8 * sizeof(uint32_t);
-			msg_len = rt->rt_reply_len - sizeof(uint32_t);
-			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
-			if (!rt->rt_reply) {
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto drop_on_floor;
-			}
-
-			p = (uint32_t *)rt->rt_reply;
-			p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 1);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 1);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 0);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 0);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 0);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p,
-						rt->rt_info.ri_accept_stat);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto drop_on_floor;
-			}
-		} else {
-			XDR xdrs = { 0 };
-
-			uint32_t start_pos, end_pos;
-			size_t len;
-
-			struct protocol_handler *ph =
-				(struct protocol_handler *)rt->rt_context;
-
-			u_long xdr_size = 0;
-
-			if (ph->ph_op_handler->roh_res_f) {
-				xdr_size =
-					xdr_sizeof(ph->ph_op_handler->roh_res_f,
-						   ph->ph_res);
-			}
-
-			rt->rt_reply_len = 7 * sizeof(uint32_t) + xdr_size;
-			msg_len = rt->rt_reply_len - sizeof(uint32_t);
-			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
-			if (!rt->rt_reply) {
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto drop_on_floor;
-			}
-
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Encoding at %p for length %lu",
-			      (void *)rt->rt_reply, rt->rt_reply_len);
-
-			p = (uint32_t *)rt->rt_reply;
-			p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto handle_rpc_error;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto handle_rpc_error;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 1);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto handle_rpc_error;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 0);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto handle_rpc_error;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 0);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto handle_rpc_error;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 0);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto handle_rpc_error;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 0);
-			if (!p) {
-				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto handle_rpc_error;
-			}
-
-			if (rt->rt_offset + xdr_size > rt->rt_reply_len) {
-				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
-				goto handle_rpc_error;
-			}
-
-			if (ph->ph_op_handler->roh_res_f) {
-				xdrmem_create(&xdrs, (char *)p,
-					      rt->rt_reply_len - rt->rt_offset,
-					      XDR_ENCODE);
-
-				start_pos = xdr_getpos(&xdrs);
-
-				if (!ph->ph_op_handler->roh_res_f(&xdrs,
-								  ph->ph_res)) {
-					xdr_destroy(&xdrs);
-					rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-					free(rt->rt_reply);
-					rt->rt_reply = NULL;
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Could not encode RPC reply xid=0x%08x",
-					      rt->rt_info.ri_xid);
-					goto handle_rpc_error;
-				}
-
-				end_pos = xdr_getpos(&xdrs);
-
-				len = end_pos - start_pos;
-
-				xdr_destroy(&xdrs);
-
-				rt->rt_offset += len;
-			}
-
-			assert(rt->rt_offset == rt->rt_reply_len);
-		}
-
-		if (rt->rt_reply && rt->rt_reply_len > 0) {
-			struct io_context *ic_write = io_context_create(
-				OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply);
-
-			if (ic_write) {
-				copy_connection_info(&ic_write->ic_ci,
-						     &rt->rt_info.ri_ci);
-
-				struct io_uring_sqe *sqe =
-					io_uring_get_sqe(t->t_ring);
-				if (sqe) {
-					io_uring_prep_write(sqe, rt->rt_fd,
-							    rt->rt_reply,
-							    rt->rt_reply_len,
-							    0);
-
-					sqe->user_data =
-						(uint64_t)(uintptr_t)ic_write;
-
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "On fd = %d sent a context of type %s and id %d",
-					      ic_write->ic_fd,
-					      op_type_to_str(
-						      ic_write->ic_op_type),
-					      ic_write->ic_id);
-					io_uring_submit(t->t_ring);
-
-					TRACE(REFFS_TRACE_LEVEL_DEBUG,
-					      "Sent RPC reply (xid=0x%08x, len=%zu)",
-					      rt->rt_info.ri_xid,
-					      rt->rt_reply_len);
-
-					rt->rt_reply = NULL;
-				} else {
-					LOG("Failed to get SQE for reply");
-					io_context_free(ic_write);
-				}
-			} else {
-				LOG("Failed to create write context");
-			}
-		} else {
-			TRACE(REFFS_TRACE_LEVEL_WARNING,
-			      "Dropped RPC reply xid=0x%08x due to no data",
-			      rt->rt_info.ri_xid);
-		}
-
-drop_on_floor:
-		rpc_protocol_free(rt);
-	} else {
-		verify(0);
+	struct io_context *ic;
+	struct io_uring_sqe *sqe;
+
+	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply);
+	if (!ic) {
+		LOG("Failed to create write context");
+		TRACE(REFFS_TRACE_LEVEL_ERR,
+		      "Dropped RPC reply xid=0x%08x due to no context",
+		      rt->rt_info.ri_xid);
+		return 0;
 	}
+
+	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);
+
+	sqe = io_uring_get_sqe(rt->rt_ring);
+	if (!sqe) {
+		io_context_free(ic);
+		TRACE(REFFS_TRACE_LEVEL_ERR,
+		      "Dropped RPC reply xid=0x%08x due to no sqe",
+		      rt->rt_info.ri_xid);
+		return 0;
+	}
+
+	io_uring_prep_write(sqe, rt->rt_fd, rt->rt_reply, rt->rt_reply_len, 0);
+
+	sqe->user_data = (uint64_t)(uintptr_t)ic;
+
+	TRACE(REFFS_TRACE_LEVEL_DEBUG,
+	      "On fd = %d sent a context of type %s and id %d", ic->ic_fd,
+	      op_type_to_str(ic->ic_op_type), ic->ic_id);
+	io_uring_submit(rt->rt_ring);
+
+	TRACE(REFFS_TRACE_LEVEL_ERR, "Sent RPC reply (xid=0x%08x, len=%zu)",
+	      rt->rt_info.ri_xid, rt->rt_reply_len);
+
+	rt->rt_reply = NULL;
+
+	return 0;
 }
 
 // Worker thread function
@@ -1188,8 +589,14 @@ void *worker_thread(void *arg)
 		}
 
 		if (t) {
-			if (t->t_fd > 0)
-				rpc_process_task(t);
+			if (t->t_fd > 0) {
+				t->t_cb = rpc_trans_cb;
+				int rc = rpc_process_task(t);
+				if (rc == ENOMEM) {
+					add_task(t);
+					continue;
+				}
+			}
 
 			free(t->t_buffer);
 			free(t);

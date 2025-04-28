@@ -19,8 +19,11 @@
 
 #include <time.h>
 
+#include <liburing.h>
+
 #include "reffs/network.h"
 #include "reffs/log.h"
+#include "reffs/task.h"
 
 struct rpc_cred {
 	uint32_t rc_flavor;
@@ -57,6 +60,8 @@ struct rpc_trans {
 	char *rt_reply; // The raw RPC payload
 	size_t rt_reply_len; // The length of the payload
 	void *rt_context; // Protocol specific context
+	struct io_uring *rt_ring;
+	int (*rt_cb)(struct rpc_trans *rt); // Callback function pointer
 	struct rpc_program_handler *rt_rph;
 };
 
@@ -155,5 +160,7 @@ struct rpc_program_handler *rpc_program_handler_find(uint32_t program,
 struct rpc_program_handler *
 rpc_program_handler_get(struct rpc_program_handler *rph);
 void rpc_program_handler_put(struct rpc_program_handler *rph);
+
+int rpc_process_task(struct task *t);
 
 #endif
