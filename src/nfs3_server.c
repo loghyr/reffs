@@ -512,14 +512,14 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 }
 
 // Maximum size for a single write
-#define MAX_WRITE_SIZE 16384 // 16KB chunk size
+#define MAX_WRITE_SIZE (1024 * 1024)
 
 static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe;
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
 
-	TRACE(REFFS_TRACE_LEVEL_ERR,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "Len=%zu, Position=%zu, Remaining=%zu (xid=0x%08x)",
 	      ic->ic_buffer_len, ic->ic_position, remaining, ic->ic_xid);
 
@@ -551,7 +551,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 
 		// For debugging
 		uint32_t original_marker = ntohl(*(uint32_t *)buffer);
-		TRACE(REFFS_TRACE_LEVEL_ERR,
+		TRACE(REFFS_TRACE_LEVEL_DEBUG,
 		      "Original Record Marker=0x%x (xid=0x%08x)",
 		      original_marker, ic->ic_xid);
 	} else {
@@ -567,7 +567,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	p = (uint32_t *)buffer;
 	*p = htonl((last_fragment ? 0x80000000 : 0) | (chunk_size - 4));
 
-	TRACE(REFFS_TRACE_LEVEL_ERR,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "Last Fragment=%d, Chunk=%u,  Record Marker=0x%x (xid=0x%08x)",
 	      last_fragment, chunk_size, ntohl(*p), ic->ic_xid);
 
@@ -582,7 +582,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	int total_fragments =
 		(ic->ic_buffer_len + MAX_WRITE_SIZE - 1) / MAX_WRITE_SIZE;
 
-	TRACE(REFFS_TRACE_LEVEL_ERR,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "Fragment %d/%d: payload_offset=%zu size=%u last=%d (xid=0x%08x)",
 	      (int)(ic->ic_position / MAX_WRITE_SIZE), total_fragments,
 	      ic->ic_position, chunk_size, last_fragment, ic->ic_xid);
@@ -611,7 +611,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	if (ret <= 0) {
 		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed: %d", ret);
 	} else {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "Submitted %d io_uring operations",
+		TRACE(REFFS_TRACE_LEVEL_NOTICE, "Submitted %d io_uring operations",
 		      ret);
 	}
 
@@ -640,7 +640,7 @@ static int rpc_trans_cb(struct rpc_trans *rt)
 	int total_fragments =
 		(ic->ic_buffer_len + MAX_WRITE_SIZE - 1) / MAX_WRITE_SIZE;
 
-	TRACE(REFFS_TRACE_LEVEL_ERR,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "Fragmenting RPC reply of %zu bytes into %d fragments (xid=0x%08x)",
 	      ic->ic_buffer_len, total_fragments, ic->ic_xid);
 
@@ -1319,7 +1319,7 @@ int main(int argc, char *argv[])
 					    strerror(-cqe->res));
 					op_write_handler_failed(cqe);
 				} else {
-					TRACE(REFFS_TRACE_LEVEL_ERR,
+					TRACE(REFFS_TRACE_LEVEL_WARNING,
 					      "Successfully wrote %d bytes",
 					      cqe->res);
 					op_write_handler(cqe, &ring);
