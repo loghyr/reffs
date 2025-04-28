@@ -783,8 +783,10 @@ static int nfs3_read(struct rpc_trans *rt)
 	}
 
 	nfh = (struct network_file_handle *)args->file.data.data_val;
-	TRACE(REFFS_TRACE_LEVEL_ERR, "READ: xid=0x%08x sb=%lu ino=%lu off=%zu count=%u",
-	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, args->offset, args->count);
+	TRACE(REFFS_TRACE_LEVEL_ERR,
+	      "READ: xid=0x%08x sb=%lu ino=%lu off=%zu count=%u",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, args->offset,
+	      args->count);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -1707,6 +1709,7 @@ static int nfs3_remove(struct rpc_trans *rt)
 
 	struct super_block *sb = NULL;
 	struct inode *inode = NULL;
+	struct inode *inode_pin = NULL;
 	struct dirent *de = NULL;
 
 	REMOVE3args *args = ph->ph_args;
@@ -1770,8 +1773,11 @@ static int nfs3_remove(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
+	inode_pin = inode_get(de->d_inode);
+
 	dirent_parent_release(de, reffs_life_action_death);
-	dirent_put(de);
+	dirent_put(de); // One for remove
+	dirent_put(de); // One for the find
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
 update_wcc:
@@ -1780,15 +1786,17 @@ update_wcc:
 	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
 	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
 
-	wcc->after.attributes_follow = true;
-	fa = &wcc->after.post_op_attr_u.attributes;
+	if (inode_pin) {
+		wcc->after.attributes_follow = true;
+		fa = &wcc->after.post_op_attr_u.attributes;
 
-	inode_attr_to_fattr(inode, fa);
+		inode_attr_to_fattr(inode_pin, fa);
+	}
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
-	dirent_put(de);
+	inode_put(inode_pin);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -1888,7 +1896,8 @@ static int nfs3_rmdir(struct rpc_trans *rt)
 	}
 
 	dirent_parent_release(de, reffs_life_action_death);
-	dirent_put(de);
+	dirent_put(de); // One for remove
+	dirent_put(de); // One for the find
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 
 update_wcc:
@@ -1897,15 +1906,16 @@ update_wcc:
 	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
 	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
 
-	wcc->after.attributes_follow = true;
-	fa = &wcc->after.post_op_attr_u.attributes;
+	if (exists) {
+		wcc->after.attributes_follow = true;
+		fa = &wcc->after.post_op_attr_u.attributes;
 
-	inode_attr_to_fattr(inode, fa);
+		inode_attr_to_fattr(exists, fa);
+	}
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
-	dirent_put(de);
 	inode_put(exists);
 	inode_put(inode);
 	super_block_put(sb);
@@ -2264,12 +2274,11 @@ update_wcc:
 
 	poa->attributes_follow = true;
 	fa = &poa->post_op_attr_u.attributes;
-
-	inode_attr_to_fattr(inode_dir, fa);
+	inode_attr_to_fattr(inode, fa);
 
 	wcc->after.attributes_follow = true;
 	fa = &wcc->after.post_op_attr_u.attributes;
-	inode_attr_to_fattr(inode, fa);
+	inode_attr_to_fattr(inode_dir, fa);
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 	pthread_mutex_unlock(&inode_dir->i_attr_mutex);

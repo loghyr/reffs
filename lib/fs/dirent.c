@@ -211,12 +211,15 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 		}
 		dirent_put(parent);
 
-		// Handle delayed release
-		if (rla == reffs_life_action_delayed_death && de->d_inode) {
+		if (de->d_inode) {
 			uatomic_dec(&de->d_inode->i_nlink, __ATOMIC_RELAXED);
-			inode_schedule_delayed_release(de->d_inode,
-						       INODE_RELEASE_HARVEST);
-			call_rcu(&de->d_rcu, dirent_free_rcu);
+
+			// Handle delayed release
+			if (rla == reffs_life_action_delayed_death) {
+				inode_schedule_delayed_release(
+					de->d_inode, INODE_RELEASE_HARVEST);
+				call_rcu(&de->d_rcu, dirent_free_rcu);
+			}
 		}
 
 		dirent_put(de);
