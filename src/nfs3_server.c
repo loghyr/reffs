@@ -92,6 +92,10 @@ struct io_context {
 	uint32_t ic_id;
 	void *ic_buffer;
 
+	size_t ic_buffer_len;
+	size_t ic_position;
+	uint32_t ic_xid;
+
 	struct connection_info ic_ci;
 };
 
@@ -261,7 +265,8 @@ static int context_created = 0;
 static int context_freed = 0;
 
 // Create an IO context for operations
-struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer)
+static struct io_context *io_context_create(enum op_type op_type, int fd,
+					    void *buffer, size_t buffer_len)
 {
 	struct io_context *ic = calloc(1, sizeof(struct io_context));
 	if (!ic) {
@@ -272,6 +277,7 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer)
 	ic->ic_fd = fd;
 	ic->ic_id = generate_id();
 	ic->ic_buffer = buffer;
+	ic->ic_buffer_len = buffer_len;
 
 	context_created++;
 	TRACE(REFFS_TRACE_LEVEL_NOTICE,
@@ -291,8 +297,7 @@ void io_context_free(struct io_context *ic)
 	      "Freed io_context %d of type %s (total: %d/%d)", ic->ic_id,
 	      op_type_to_str(ic->ic_op_type), context_freed, context_created);
 
-	if (ic->ic_buffer)
-		free(ic->ic_buffer);
+	free(ic->ic_buffer);
 	free(ic);
 }
 
@@ -451,7 +456,8 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 							io_context_create(
 								OP_TYPE_READ,
 								bs->bs_fd,
-								buffer);
+								buffer,
+								BUFFER_SIZE);
 						if (ic_new) {
 							copy_connection_info(
 								&ic_new->ic_ci,
@@ -505,12 +511,119 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 	return request_more_read_data(bs, ring, ic);
 }
 
+// Maximum size for a single write
+#define MAX_WRITE_SIZE 16384 // 16KB chunk size
+
+static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
+{
+	struct io_uring_sqe *sqe;
+	size_t remaining = ic->ic_buffer_len - ic->ic_position;
+
+	TRACE(REFFS_TRACE_LEVEL_ERR,
+	      "Len=%zu, Position=%zu, Remaining=%zu (xid=0x%08x)",
+	      ic->ic_buffer_len, ic->ic_position, remaining, ic->ic_xid);
+
+	// If no more data to send, we're done
+	if (remaining == 0) {
+		io_context_free(ic);
+		return 0;
+	} else if (remaining < 0) {
+		// Error case - shouldn't happen with correct position tracking
+		unregister_client_fd(ic->ic_fd);
+		close(ic->ic_fd);
+		io_context_free(ic);
+		return 0;
+	}
+
+	// Determine if this is the last fragment to send
+	bool last_fragment = (remaining <= MAX_WRITE_SIZE);
+
+	// Calculate size for this fragment
+	uint32_t chunk_size;
+	char *buffer;
+	uint32_t *p;
+
+	if (ic->ic_position == 0) {
+		// First fragment - record marker is already in the buffer
+		chunk_size = remaining > MAX_WRITE_SIZE ? MAX_WRITE_SIZE :
+							  remaining;
+		buffer = (char *)ic->ic_buffer;
+
+		// For debugging
+		uint32_t original_marker = ntohl(*(uint32_t *)buffer);
+		TRACE(REFFS_TRACE_LEVEL_ERR,
+		      "Original Record Marker=0x%x (xid=0x%08x)",
+		      original_marker, ic->ic_xid);
+	} else {
+		// Calculate chunk size: either MAX_WRITE_SIZE or remaining + 4 bytes for marker
+		chunk_size = remaining > (MAX_WRITE_SIZE - 4) ? MAX_WRITE_SIZE :
+								(remaining + 4);
+
+		// Subsequent fragments - we need to reuse the preceding 4 bytes for the record marker
+		buffer = (char *)ic->ic_buffer + (ic->ic_position - 4);
+	}
+
+	// Set the record marker to reflect the payload size (excluding the marker itself)
+	p = (uint32_t *)buffer;
+	*p = htonl((last_fragment ? 0x80000000 : 0) | (chunk_size - 4));
+
+	TRACE(REFFS_TRACE_LEVEL_ERR,
+	      "Last Fragment=%d, Chunk=%u,  Record Marker=0x%x (xid=0x%08x)",
+	      last_fragment, chunk_size, ntohl(*p), ic->ic_xid);
+
+	sqe = io_uring_get_sqe(ring);
+	if (!sqe) {
+		io_context_free(ic);
+		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_get_sqe failed: %d",
+		      ENOMEM);
+		return ENOMEM;
+	}
+
+	int total_fragments =
+		(ic->ic_buffer_len + MAX_WRITE_SIZE - 1) / MAX_WRITE_SIZE;
+
+	TRACE(REFFS_TRACE_LEVEL_ERR,
+	      "Fragment %d/%d: payload_offset=%zu size=%u last=%d (xid=0x%08x)",
+	      (int)(ic->ic_position / MAX_WRITE_SIZE), total_fragments,
+	      ic->ic_position, chunk_size, last_fragment, ic->ic_xid);
+
+	// Update position for next fragment
+	if (ic->ic_position == 0) {
+		// After first fragment, position points to end of this chunk
+		ic->ic_position += chunk_size;
+	} else {
+		// For subsequent fragments, position points to end of payload (excluding marker)
+		ic->ic_position += (chunk_size - 4);
+	}
+
+	int error = 0;
+	socklen_t len = sizeof(error);
+	if (getsockopt(ic->ic_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 ||
+	    error != 0) {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "Socket error before write: %s",
+		      strerror(error ? error : errno));
+	}
+
+	// Submit the write operation
+	io_uring_prep_write(sqe, ic->ic_fd, buffer, chunk_size, 0);
+	sqe->user_data = (uint64_t)(uintptr_t)ic;
+	int ret = io_uring_submit(ring);
+	if (ret <= 0) {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed: %d", ret);
+	} else {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "Submitted %d io_uring operations",
+		      ret);
+	}
+
+	return 0;
+}
+
 static int rpc_trans_cb(struct rpc_trans *rt)
 {
 	struct io_context *ic;
-	struct io_uring_sqe *sqe;
 
-	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply);
+	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
+			       rt->rt_reply_len);
 	if (!ic) {
 		LOG("Failed to create write context");
 		TRACE(REFFS_TRACE_LEVEL_ERR,
@@ -519,32 +632,19 @@ static int rpc_trans_cb(struct rpc_trans *rt)
 		return 0;
 	}
 
+	ic->ic_xid = rt->rt_info.ri_xid;
 	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);
-
-	sqe = io_uring_get_sqe(rt->rt_ring);
-	if (!sqe) {
-		io_context_free(ic);
-		TRACE(REFFS_TRACE_LEVEL_ERR,
-		      "Dropped RPC reply xid=0x%08x due to no sqe",
-		      rt->rt_info.ri_xid);
-		return 0;
-	}
-
-	io_uring_prep_write(sqe, rt->rt_fd, rt->rt_reply, rt->rt_reply_len, 0);
-
-	sqe->user_data = (uint64_t)(uintptr_t)ic;
-
-	TRACE(REFFS_TRACE_LEVEL_DEBUG,
-	      "On fd = %d sent a context of type %s and id %d", ic->ic_fd,
-	      op_type_to_str(ic->ic_op_type), ic->ic_id);
-	io_uring_submit(rt->rt_ring);
-
-	TRACE(REFFS_TRACE_LEVEL_ERR, "Sent RPC reply (xid=0x%08x, len=%zu)",
-	      rt->rt_info.ri_xid, rt->rt_reply_len);
 
 	rt->rt_reply = NULL;
 
-	return 0;
+	int total_fragments =
+		(ic->ic_buffer_len + MAX_WRITE_SIZE - 1) / MAX_WRITE_SIZE;
+
+	TRACE(REFFS_TRACE_LEVEL_ERR,
+	      "Fragmenting RPC reply of %zu bytes into %d fragments (xid=0x%08x)",
+	      ic->ic_buffer_len, total_fragments, ic->ic_xid);
+
+	return rpc_trans_writer(ic, rt->rt_ring);
 }
 
 // Worker thread function
@@ -717,6 +817,40 @@ bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len)
 	return true;
 }
 
+static int op_write_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
+{
+	// Get the IO context from user_data
+	struct io_context *ic = (struct io_context *)(uintptr_t)cqe->user_data;
+	if (!ic) {
+		LOG("Error: NULL io context in write handler");
+		return -EINVAL;
+	}
+
+	return rpc_trans_writer(ic, ring);
+}
+
+static int op_write_handler_failed(struct io_uring_cqe *cqe)
+{
+	// Get the IO context from user_data
+	struct io_context *ic = (struct io_context *)(uintptr_t)cqe->user_data;
+	if (!ic) {
+		LOG("Error: NULL io context in write handler");
+		return -EINVAL;
+	}
+
+	size_t remaining = ic->ic_buffer_len - ic->ic_position;
+
+	TRACE(REFFS_TRACE_LEVEL_ERR,
+	      "Connection closed: Len=%zu, Position=%zu, Remaining=%zu (xid=0x%08x)",
+	      ic->ic_buffer_len, ic->ic_position, remaining, ic->ic_xid);
+
+	unregister_client_fd(ic->ic_fd);
+	close(ic->ic_fd);
+	io_context_free(ic);
+
+	return 0;
+}
+
 // Handle read completions
 static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 {
@@ -860,8 +994,8 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	char *buffer = malloc(BUFFER_SIZE);
 	if (buffer) {
 		// Create IO context for the read operation
-		struct io_context *ic_read =
-			io_context_create(OP_TYPE_READ, client_fd, buffer);
+		struct io_context *ic_read = io_context_create(
+			OP_TYPE_READ, client_fd, buffer, BUFFER_SIZE);
 		copy_connection_info(&ic_read->ic_ci, &ic->ic_ci);
 		if (!ic_read) {
 			LOG("Failed to create read context");
@@ -890,7 +1024,7 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 
 	// Create new IO context for the next accept
 	struct io_context *ic_accept =
-		io_context_create(OP_TYPE_ACCEPT, listen_fd, NULL);
+		io_context_create(OP_TYPE_ACCEPT, listen_fd, NULL, 0);
 	if (!ic_accept) {
 		LOG("Failed to create accept context");
 		io_context_free(ic);
@@ -930,7 +1064,7 @@ int send_nfs_response(struct io_uring *ring, int fd, char *buffer, int len)
 
 	// Create an IO context for the write operation
 	struct io_context *ic =
-		io_context_create(OP_TYPE_WRITE, fd, send_buffer);
+		io_context_create(OP_TYPE_WRITE, fd, send_buffer, len + 4);
 	if (!ic) {
 		free(send_buffer);
 		return -ENOMEM;
@@ -1085,7 +1219,7 @@ int main(int argc, char *argv[])
 
 	// Create IO context for the accept operation
 	struct io_context *ic_accept =
-		io_context_create(OP_TYPE_ACCEPT, listener_fd, NULL);
+		io_context_create(OP_TYPE_ACCEPT, listener_fd, NULL, 0);
 	if (!ic_accept) {
 		LOG("Failed to create accept context");
 		exit_code = 1;
@@ -1146,7 +1280,11 @@ int main(int argc, char *argv[])
 		}
 
 		if (cqe->res < 0) {
-			LOG("CQE error: %s", strerror(-cqe->res));
+			struct io_context *ic =
+				(struct io_context *)(uintptr_t)cqe->user_data;
+			LOG("CQE error for op=%s, fd=%d: %s",
+			    op_type_to_str(ic->ic_op_type), ic->ic_fd,
+			    strerror(-cqe->res));
 		} else {
 			// Get the IO context from user_data
 			struct io_context *ic =
@@ -1176,7 +1314,16 @@ int main(int argc, char *argv[])
 			}
 
 			case OP_TYPE_WRITE: {
-				io_context_free(ic);
+				if (cqe->res < 0) {
+					LOG("Write operation failed: %s",
+					    strerror(-cqe->res));
+					op_write_handler_failed(cqe);
+				} else {
+					TRACE(REFFS_TRACE_LEVEL_ERR,
+					      "Successfully wrote %d bytes",
+					      cqe->res);
+					op_write_handler(cqe, &ring);
+				}
 				ret = 0;
 				break;
 			}
