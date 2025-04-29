@@ -297,16 +297,11 @@ void rpc_protocol_free(struct rpc_trans *rt)
 	free(rt);
 }
 
-static int rpc_process_task_call(struct task *t)
+static struct rpc_trans *rpc_trans_create(struct task *t)
 {
-	u_long msg_len = 0;
-	int ret = 0;
-
-	uint32_t *p;
-
 	struct rpc_trans *rt = calloc(1, sizeof(*rt));
 	if (!rt)
-		return ENOMEM;
+		return NULL;
 
 	rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 	rt->rt_info.ri_reject_stat = RPC_MISMATCH;
@@ -316,7 +311,7 @@ static int rpc_process_task_call(struct task *t)
 	struct protocol_handler *ph = calloc(1, sizeof(*ph));
 	if (!ph) {
 		free(rt);
-		return ENOMEM;
+		return NULL;
 	}
 
 	rt->rt_context = (void *)ph;
@@ -327,6 +322,20 @@ static int rpc_process_task_call(struct task *t)
 	rt->rt_body_len = t->t_bytes_read;
 	rt->rt_offset = 0;
 	copy_connection_info(&rt->rt_info.ri_ci, &t->t_ci);
+
+	return rt;
+}
+
+static int rpc_process_task_call(struct task *t)
+{
+	u_long msg_len = 0;
+	int ret = 0;
+
+	uint32_t *p;
+
+	struct rpc_trans *rt = rpc_trans_create(t);
+	if (!rt)
+		return ENOMEM;
 
 	p = (uint32_t *)rt->rt_body;
 
@@ -888,6 +897,15 @@ drop_on_floor:
 
 int rpc_process_task(struct task *t)
 {
+	if (!t)
+		return EINVAL;
+
+	if (t->t_bytes_read < (int)(2 * sizeof(uint32_t))) {
+		TRACE(REFFS_TRACE_LEVEL_NOTICE,
+		      "Dropped RPC reply due to no data");
+		return 0;
+	}
+
 	// Extract XID from the message (first 4 bytes)
 	uint32_t xid = ntohl(*(uint32_t *)t->t_buffer);
 
