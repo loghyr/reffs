@@ -475,7 +475,7 @@ static int rpc_process_task_call(struct task *t)
 
 handle_rpc_error:
 	rt->rt_offset = 0;
-	TRACE(REFFS_TRACE_LEVEL_ERR,
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "Encoding reply_stat=%d, reject_stat=%d accept_stat=%d ret=%d RPC reply xid=0x%08x",
 	      rt->rt_info.ri_reply_stat, rt->rt_info.ri_reject_stat,
 	      rt->rt_info.ri_accept_stat, ret, rt->rt_info.ri_xid);
@@ -864,7 +864,7 @@ handle_rpc_error:
 			rt->rt_offset += len;
 		}
 
-		TRACE(REFFS_TRACE_LEVEL_ERR,
+		TRACE(REFFS_TRACE_LEVEL_NOTICE,
 		      "Final offset=%zu len=%zu for xid=0x%08x", rt->rt_offset,
 		      rt->rt_reply_len, rt->rt_info.ri_xid);
 		assert(rt->rt_offset == rt->rt_reply_len);

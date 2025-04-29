@@ -262,6 +262,8 @@ static void register_client_fd(int fd)
 // Unregister client fd
 static void unregister_client_fd(int fd)
 {
+	TRACE(REFFS_TRACE_LEVEL_ERR,
+	      "Unregistering existing buffer state for %d", fd);
 	struct buffer_state *bs = get_buffer_state(fd);
 	if (bs) {
 		free(bs->bs_data);
@@ -382,6 +384,8 @@ static int request_more_read_data(struct buffer_state *bs,
 	if (ret < 0)
 		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed with %s",
 		      strerror(-ret));
+	else
+		ret = 0;
 
 	return ret;
 }
@@ -450,6 +454,8 @@ static int request_additional_read_data(int fd, struct connection_info *ci,
 		free(buffer);
 		close(fd);
 		io_context_free(ic);
+	} else {
+		ret = 0;
 	}
 
 	return 0;
@@ -467,77 +473,29 @@ static int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 	size_t filled = bs->bs_filled;
 	struct record_state *rs = &bs->bs_record;
 
-	int ret;
+	TRACE(REFFS_TRACE_LEVEL_DEBUG,
+	      "ENTRY: filled=%zu, rs_position=%u, rs_total_len=%zu, rs_fragment_len=%u, rs_last_fragment=%d",
+	      filled, rs->rs_position, rs->rs_total_len, rs->rs_fragment_len,
+	      rs->rs_last_fragment);
 
-	// Process record markers until we have a complete message or need more data
-	while (filled >= 4) { // Need at least 4 bytes for the record marker
-		// If we're starting a new fragment
-		if (rs->rs_position == 0) {
-			uint32_t marker = ntohl(*(uint32_t *)data);
-			rs->rs_last_fragment = (marker & 0x80000000) != 0;
-			rs->rs_fragment_len = marker & 0x7FFFFFFF;
+	// If continuing an existing fragment
+	if (rs->rs_fragment_len > 0) {
+		TRACE(REFFS_TRACE_LEVEL_DEBUG,
+		      "Continuing fragment: position=%u, fragment_len=%u, filled=%zu",
+		      rs->rs_position, rs->rs_fragment_len, filled);
 
-			// Ensure our record buffer is large enough
-			if (!rs->rs_data) {
-				// First fragment - initialize buffer with extra space
-				rs->rs_capacity = rs->rs_fragment_len *
-						  2; // Some extra space
-				rs->rs_data = malloc(rs->rs_capacity);
-				if (!rs->rs_data)
-					return -ENOMEM;
-				rs->rs_total_len = 0;
-			} else if (rs->rs_total_len + rs->rs_fragment_len >
-				   rs->rs_capacity) {
-				// Need to resize - ensure we have enough space for current data + new fragment
-				size_t new_capacity =
-					rs->rs_total_len + rs->rs_fragment_len;
-				// Add some extra margin to reduce future reallocations
-				new_capacity = new_capacity * 2;
+		// Calculate remaining bytes needed
+		size_t bytes_remaining = rs->rs_fragment_len - rs->rs_position;
+		size_t to_copy = (filled > bytes_remaining) ? bytes_remaining :
+							      filled;
 
-				char *new_data =
-					realloc(rs->rs_data, new_capacity);
-				if (!new_data)
-					return -ENOMEM;
-				rs->rs_data = new_data;
-				rs->rs_capacity = new_capacity;
-			}
-
-			// Move past the marker in the input buffer
-			data += 4;
-			filled -= 4;
-
-			// If no more data available, we need to read more
-			if (filled == 0) {
-				// Compact the buffer, removing the 4 bytes we just processed
-				memmove(bs->bs_data, bs->bs_data + 4,
-					bs->bs_filled - 4);
-				bs->bs_filled -= 4;
-
-				return request_more_read_data(bs, ring, ic);
-			}
-		}
-
-		// Determine how much we can copy
-		size_t to_copy = rs->rs_fragment_len - rs->rs_position;
-		if (to_copy > filled) {
-			to_copy = filled;
-		}
-
-		// Verify we're not going to exceed buffer bounds
-		if (rs->rs_total_len + to_copy > rs->rs_capacity) {
-			// This should never happen with the resize logic above, but add a safety check
-			size_t new_capacity = (rs->rs_total_len + to_copy) * 2;
-			char *new_data = realloc(rs->rs_data, new_capacity);
-			if (!new_data)
-				return -ENOMEM;
-			rs->rs_data = new_data;
-			rs->rs_capacity = new_capacity;
-		}
-
-		// Copy data into our reassembly buffer at the current total position
-		memcpy(rs->rs_data + rs->rs_total_len, data, to_copy);
-		rs->rs_total_len += to_copy;
+		// Copy data to the correct position in the buffer
+		memcpy(rs->rs_data + rs->rs_position, data, to_copy);
 		rs->rs_position += to_copy;
+
+		TRACE(REFFS_TRACE_LEVEL_DEBUG,
+		      "Copied %zu more bytes, new position=%u of %u", to_copy,
+		      rs->rs_position, rs->rs_fragment_len);
 
 		// Advance the input buffer
 		data += to_copy;
@@ -545,63 +503,218 @@ static int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 
 		// Check if we've completed this fragment
 		if (rs->rs_position >= rs->rs_fragment_len) {
-			// Reset position for next fragment
-			rs->rs_position = 0;
+			TRACE(REFFS_TRACE_LEVEL_DEBUG,
+			      "Fragment complete, last_fragment=%d",
+			      rs->rs_last_fragment);
 
-			// If this was the last fragment, we have a complete message
+			// If this was the last fragment, we've got a complete message
 			if (rs->rs_last_fragment) {
-				size_t complete_size = rs->rs_total_len;
+				size_t message_size = rs->rs_position;
 
-				// Update our buffer state for the next processing cycle
-				memmove(bs->bs_data, data, filled);
-				bs->bs_filled = filled;
+				// Reset state for next message
+				rs->rs_position = 0;
+				rs->rs_fragment_len = 0;
+				rs->rs_last_fragment = false;
 
-				// If there's not enough data for another record marker, request more
-				if (bs->bs_filled < 4) {
-					ret = request_more_read_data(bs, ring,
-								     ic);
-					if (ret < 0) {
-						TRACE(REFFS_TRACE_LEVEL_ERR,
-						      "%s", strerror(-ret));
-						return ret;
-					}
+				// Update buffer state
+				if (filled > 0) {
+					memmove(bs->bs_data, data, filled);
+					bs->bs_filled = filled;
 				} else {
-					// We still have enough data for another potential message,
-					// but we need to create a new read context for future data
+					bs->bs_filled = 0;
+				}
+
+				TRACE(REFFS_TRACE_LEVEL_DEBUG,
+				      "Complete message assembled, size=%zu",
+				      message_size);
+
+				// Request more data for future operations if needed
+				if (bs->bs_filled < 4) {
 					request_additional_read_data(
 						bs->bs_fd, &ic->ic_ci, ring);
 				}
 
-				// Return the complete message size
-				return complete_size;
+				return message_size;
 			}
 
-			// Otherwise, continue to the next fragment
-			// If we're out of data, request more
-			if (filled < 4) {
-				// Compact the buffer
-				memmove(bs->bs_data, data, filled);
-				bs->bs_filled = filled;
+			// Not the last fragment, reset for next fragment
+			rs->rs_position = 0;
+			rs->rs_fragment_len = 0;
 
+			// If we don't have enough data for next marker, request more
+			if (filled < 4) {
+				if (filled > 0) {
+					memmove(bs->bs_data, data, filled);
+					bs->bs_filled = filled;
+				} else {
+					bs->bs_filled = 0;
+				}
 				return request_more_read_data(bs, ring, ic);
 			}
 		} else {
-			// We need more data for this fragment
-			memmove(bs->bs_data, data, filled);
-			bs->bs_filled = filled;
-
+			// Fragment not complete, need more data
+			if (filled > 0) {
+				memmove(bs->bs_data, data, filled);
+				bs->bs_filled = filled;
+			} else {
+				bs->bs_filled = 0;
+			}
+			TRACE(REFFS_TRACE_LEVEL_ERR,
+			      "Fragment incomplete, position=%u of %u, requesting more data",
+			      rs->rs_position, rs->rs_fragment_len);
 			return request_more_read_data(bs, ring, ic);
 		}
 	}
 
-	// Not enough data to even read a marker
-	if (filled > 0) {
-		memmove(bs->bs_data, data, filled);
+	// Starting a new fragment/message
+
+	// Need at least 4 bytes for the record marker
+	if (filled < 4) {
 		bs->bs_filled = filled;
-	} else {
-		bs->bs_filled = 0;
+		return request_more_read_data(bs, ring, ic);
 	}
 
+	// Extract marker
+	uint32_t marker = ntohl(*(uint32_t *)data);
+	bool last_fragment = (marker & 0x80000000) != 0;
+	uint32_t fragment_len = marker & 0x7FFFFFFF;
+
+	TRACE(REFFS_TRACE_LEVEL_DEBUG,
+	      "Starting a new message Len=%u, last_fragment=%d, marker=0x%08x",
+	      fragment_len, last_fragment, marker);
+
+	// Skip invalid markers
+	if (fragment_len == 0) {
+		TRACE(REFFS_TRACE_LEVEL_ERR,
+		      "Invalid zero-length fragment, skipping");
+		data += 4;
+		filled -= 4;
+		if (filled < 4) {
+			if (filled > 0) {
+				memmove(bs->bs_data, data, filled);
+			}
+			bs->bs_filled = filled;
+			return request_more_read_data(bs, ring, ic);
+		}
+		// Reprocess with next potential marker
+		return process_record_marker(bs, ring, ic);
+	}
+
+	// Initialize state for this fragment
+	rs->rs_last_fragment = last_fragment;
+	rs->rs_fragment_len = fragment_len;
+	rs->rs_position = 0;
+
+	// Ensure we have enough buffer space
+	if (!rs->rs_data) {
+		rs->rs_capacity = fragment_len * 2;
+		rs->rs_data = malloc(rs->rs_capacity);
+		if (!rs->rs_data) {
+			TRACE(REFFS_TRACE_LEVEL_ERR,
+			      "Failed to allocate record buffer");
+			return -ENOMEM;
+		}
+	} else if (fragment_len > rs->rs_capacity) {
+		size_t new_capacity = fragment_len * 2;
+
+		TRACE(REFFS_TRACE_LEVEL_DEBUG,
+		      "Resizing buffer from %zu to %zu bytes", rs->rs_capacity,
+		      new_capacity);
+
+		char *new_data = realloc(rs->rs_data, new_capacity);
+		if (!new_data) {
+			TRACE(REFFS_TRACE_LEVEL_ERR,
+			      "Failed to resize record buffer");
+			return -ENOMEM;
+		}
+		rs->rs_data = new_data;
+		rs->rs_capacity = new_capacity;
+	}
+
+	// Skip past the marker
+	data += 4;
+	filled -= 4;
+
+	// If no data after marker, request more
+	if (filled == 0) {
+		bs->bs_filled = 0;
+		return request_more_read_data(bs, ring, ic);
+	}
+
+	// Copy available data for this fragment
+	size_t to_copy = (filled > fragment_len) ? fragment_len : filled;
+
+	TRACE(REFFS_TRACE_LEVEL_DEBUG,
+	      "Copying %zu bytes, fragment_len=%u, filled=%zu", to_copy,
+	      fragment_len, filled);
+
+	memcpy(rs->rs_data, data, to_copy);
+	rs->rs_position = to_copy;
+
+	// Advance buffer pointers
+	data += to_copy;
+	filled -= to_copy;
+
+	// Check if we've completed this fragment
+	if (rs->rs_position >= fragment_len) {
+		// Fragment is complete
+
+		// If this was the last fragment, we have a complete message
+		if (last_fragment) {
+			size_t message_size = rs->rs_position;
+
+			// Reset state for next message
+			rs->rs_position = 0;
+			rs->rs_fragment_len = 0;
+			rs->rs_last_fragment = false;
+
+			// Update buffer state
+			if (filled > 0) {
+				memmove(bs->bs_data, data, filled);
+				bs->bs_filled = filled;
+			} else {
+				bs->bs_filled = 0;
+			}
+
+			TRACE(REFFS_TRACE_LEVEL_ERR,
+			      "Complete message assembled, size=%zu",
+			      message_size);
+
+			// Request more data for future operations if needed
+			if (bs->bs_filled < 4) {
+				request_additional_read_data(bs->bs_fd,
+							     &ic->ic_ci, ring);
+			}
+
+			return message_size;
+		}
+
+		// Not the last fragment, check if we have data for next marker
+		rs->rs_position = 0;
+		rs->rs_fragment_len = 0;
+
+		if (filled < 4) {
+			if (filled > 0) {
+				memmove(bs->bs_data, data, filled);
+			}
+			bs->bs_filled = filled;
+			return request_more_read_data(bs, ring, ic);
+		}
+
+		// Continue to process the next fragment
+		memmove(bs->bs_data, data, filled);
+		bs->bs_filled = filled;
+		return process_record_marker(bs, ring, ic);
+	}
+
+	// Fragment is incomplete, need more data
+	if (filled > 0) {
+		memmove(bs->bs_data, data, filled);
+	}
+	bs->bs_filled = filled;
+	TRACE(REFFS_TRACE_LEVEL_DEBUG,
+	      "Need more data for current fragment: position=%u, fragment_len=%u",
+	      rs->rs_position, fragment_len);
 	return request_more_read_data(bs, ring, ic);
 }
 
@@ -729,6 +842,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	} else {
 		TRACE(REFFS_TRACE_LEVEL_NOTICE,
 		      "Submitted %d io_uring operations", ret);
+		ret = 0;
 	}
 
 	return 0;
@@ -936,6 +1050,7 @@ bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len)
 	// Append the data
 	memcpy(bs->bs_data + bs->bs_filled, data, len);
 	bs->bs_filled += len;
+
 	return true;
 }
 
@@ -1026,7 +1141,7 @@ static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	}
 
 	// We have a complete RPC message
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
+	TRACE(REFFS_TRACE_LEVEL_ERR,
 	      "Complete RPC message assembled (%d bytes)", complete_size);
 
 	// Create a task for processing
@@ -1127,6 +1242,8 @@ static int request_accept_op(int fd, struct connection_info *ci,
 		      strerror(-ret));
 		close(fd);
 		io_context_free(ic);
+	} else {
+		ret = 0;
 	}
 
 	return 0;
