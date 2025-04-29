@@ -2112,7 +2112,7 @@ update_wcc:
 	wcc_dst->after.attributes_follow = true;
 	fa = &wcc_dst->after.post_op_attr_u.attributes;
 
-	inode_attr_to_fattr(inode_src, fa);
+	inode_attr_to_fattr(inode_dst, fa);
 
 	if (inode_src == inode_dst) {
 		pthread_rwlock_unlock(&inode_src->i_parent->d_rwlock);
