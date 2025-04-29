@@ -55,6 +55,14 @@
 #define MAX_PENDING_REQUESTS 256
 #define MAX_CONNECTIONS 1024 // Maximum number of concurrent client connections
 
+#define IO_URING_WAIT_SEC (0)
+#define IO_URING_WAIT_NSEC (100000000)
+
+#define IO_URING_WAIT_US \
+	((IO_URING_WAIT_SEC * 1000000) + (IO_URING_WAIT_NSEC / 1000))
+
+#define MAX_RETRIES (3)
+
 // Global flag for clean shutdown
 volatile sig_atomic_t running = 1;
 
@@ -66,6 +74,9 @@ enum op_type {
 	OP_TYPE_CONNECT = 4,
 	OP_TYPE_RPC_REQ = 5
 };
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
 
 static inline const char *op_type_to_str(enum op_type op)
 {
@@ -148,17 +159,18 @@ int num_worker_threads = 0;
 struct buffer_state *conn_buffers[MAX_CONNECTIONS];
 
 // Forward declarations
-int setup_io_uring(struct io_uring *ring);
-struct buffer_state *create_buffer_state(int fd);
-struct buffer_state *get_buffer_state(int fd);
-bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len);
-int decode_nfs_response(char *data, size_t filled, struct io_uring *ring,
-			int client_fd);
-void register_client_fd(int fd);
-void unregister_client_fd(int fd);
+static int setup_io_uring(struct io_uring *ring);
+static struct buffer_state *create_buffer_state(int fd);
+static struct buffer_state *get_buffer_state(int fd);
+static bool append_to_buffer(struct buffer_state *bs, const char *data,
+			     size_t len);
+static int decode_nfs_response(char *data, size_t filled, struct io_uring *ring,
+			       int client_fd);
+static void register_client_fd(int fd);
+static void unregister_client_fd(int fd);
 
 // Signal handler
-void signal_handler(int sig)
+static void signal_handler(int sig)
 {
 	TRACE(REFFS_TRACE_LEVEL_ERR,
 	      "Received signal %d, initiating shutdown...", sig);
@@ -168,7 +180,7 @@ void signal_handler(int sig)
 	pthread_cond_broadcast(&task_queue_cond);
 }
 
-uint32_t generate_id(void)
+static uint32_t generate_id(void)
 {
 	static uint32_t next_id = 1;
 	static pthread_mutex_t id_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -181,7 +193,7 @@ uint32_t generate_id(void)
 }
 
 // Generate a unique transaction ID for RPC
-uint32_t generate_xid(void)
+static uint32_t generate_xid(void)
 {
 	static uint32_t next_xid = 1;
 	static pthread_mutex_t xid_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -194,7 +206,7 @@ uint32_t generate_xid(void)
 }
 
 // Register a new request for tracking
-int register_request(struct nfs_request_context *nrc)
+static int register_request(struct nfs_request_context *nrc)
 {
 	pthread_mutex_lock(&request_mutex);
 
@@ -212,7 +224,7 @@ int register_request(struct nfs_request_context *nrc)
 }
 
 // Find a request by XID
-struct nfs_request_context *find_request_by_xid(uint32_t xid)
+static struct nfs_request_context *find_request_by_xid(uint32_t xid)
 {
 	struct nfs_request_context *nrc = NULL;
 
@@ -231,7 +243,7 @@ struct nfs_request_context *find_request_by_xid(uint32_t xid)
 }
 
 // Add task to the worker queue
-void add_task(struct task *task)
+static void add_task(struct task *task)
 {
 	pthread_mutex_lock(&task_queue_mutex);
 	task_queue[task_queue_tail] = task;
@@ -241,14 +253,14 @@ void add_task(struct task *task)
 }
 
 // Register client fd
-void register_client_fd(int fd)
+static void register_client_fd(int fd)
 {
 	// In this simplified version, we just track buffer state
 	create_buffer_state(fd);
 }
 
 // Unregister client fd
-void unregister_client_fd(int fd)
+static void unregister_client_fd(int fd)
 {
 	struct buffer_state *bs = get_buffer_state(fd);
 	if (bs) {
@@ -287,7 +299,7 @@ static struct io_context *io_context_create(enum op_type op_type, int fd,
 	return ic;
 }
 
-void io_context_free(struct io_context *ic)
+static void io_context_free(struct io_context *ic)
 {
 	if (!ic)
 		return;
@@ -302,8 +314,10 @@ void io_context_free(struct io_context *ic)
 }
 
 // Handler for GETATTR response
-void handle_getattr_response(struct nfs_request_context *nrc, void *response,
-			     int __attribute__((unused)) res_len, int status)
+static void handle_getattr_response(struct nfs_request_context *nrc,
+				    void *response,
+				    int __attribute__((unused)) res_len,
+				    int status)
 {
 	TRACE(REFFS_TRACE_LEVEL_WARNING,
 	      "GETATTR response received: xid=0x%08x, status=%d", nrc->nrc_xid,
@@ -326,18 +340,117 @@ void handle_getattr_response(struct nfs_request_context *nrc, void *response,
 	free(nrc);
 }
 
-int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
-			   struct io_context *ic)
+/*
+ * Let the caller shut things down if there is an error
+ */
+static int request_more_read_data(struct buffer_state *bs,
+				  struct io_uring *ring, struct io_context *ic)
 {
+	struct io_uring_sqe *sqe = NULL;
+	int ret = 0;
+
 	ic->ic_fd = bs->bs_fd;
 
-	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+	for (int i = 0; i < MAX_RETRIES; i++) {
+		sqe = io_uring_get_sqe(ring);
+		if (sqe)
+			break;
+		TRACE(REFFS_TRACE_LEVEL_ERR, "Waiting for retry %d", i);
+		usleep(IO_URING_WAIT_US);
+	}
+
+	if (!sqe) {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_get_sqe failed");
+		return -ENOMEM;
+	}
+
 	io_uring_prep_read(sqe, bs->bs_fd, ic->ic_buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "On fd = %d sent a context of type %s and id %d", ic->ic_fd,
 	      op_type_to_str(ic->ic_op_type), ic->ic_id);
-	io_uring_submit(ring);
+	for (int i = 0; i < MAX_RETRIES; i++) {
+		ret = io_uring_submit(ring);
+		if (ret >= 0)
+			break;
+		if (ret == -EAGAIN)
+			usleep(IO_URING_WAIT_US);
+		else
+			break;
+	}
+
+	if (ret < 0)
+		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed with %s",
+		      strerror(-ret));
+
+	return ret;
+}
+
+static int request_additional_read_data(int fd, struct connection_info *ci,
+					struct io_uring *ring)
+{
+	struct io_uring_sqe *sqe = NULL;
+	int ret;
+
+	char *buffer = malloc(BUFFER_SIZE);
+	if (!buffer) {
+		LOG("Failed to allocate buffer");
+		close(fd);
+		return ENOMEM;
+	}
+
+	struct io_context *ic =
+		io_context_create(OP_TYPE_READ, fd, buffer, BUFFER_SIZE);
+	if (!ic) {
+		LOG("Failed to create read context");
+		free(buffer);
+		close(fd);
+		return ENOMEM;
+	}
+
+	if (ci)
+		copy_connection_info(&ic->ic_ci, ci);
+
+	for (int i = 0; i < MAX_RETRIES; i++) {
+		sqe = io_uring_get_sqe(ring);
+		if (sqe)
+			break;
+		TRACE(REFFS_TRACE_LEVEL_ERR, "Waiting for retry %d", i);
+		usleep(IO_URING_WAIT_US);
+	}
+
+	if (!sqe) {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_get_sqe failed");
+		free(buffer);
+		close(fd);
+		io_context_free(ic);
+		return -ENOMEM;
+	}
+
+	io_uring_prep_read(sqe, fd, buffer, BUFFER_SIZE, 0);
+	sqe->user_data = (uint64_t)(uintptr_t)ic;
+
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
+	      "On fd = %d sent a context of type %s and id %d", fd,
+	      op_type_to_str(ic->ic_op_type), ic->ic_id);
+
+	for (int i = 0; i < MAX_RETRIES; i++) {
+		ret = io_uring_submit(ring);
+		if (ret >= 0)
+			break;
+		if (ret == -EAGAIN)
+			usleep(IO_URING_WAIT_US);
+		else
+			break;
+	}
+
+	if (ret < 0) {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed with %s",
+		      strerror(-ret));
+		free(buffer);
+		close(fd);
+		io_context_free(ic);
+	}
 
 	return 0;
 }
@@ -347,12 +460,14 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 //   > 0: Complete message available, returns size
 //   0: Need more data
 //   < 0: Error
-int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
-			  struct io_context *ic)
+static int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
+				 struct io_context *ic)
 {
 	char *data = bs->bs_data;
 	size_t filled = bs->bs_filled;
 	struct record_state *rs = &bs->bs_record;
+
+	int ret;
 
 	// Process record markers until we have a complete message or need more data
 	while (filled >= 4) { // Need at least 4 bytes for the record marker
@@ -368,9 +483,8 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 				rs->rs_capacity = rs->rs_fragment_len *
 						  2; // Some extra space
 				rs->rs_data = malloc(rs->rs_capacity);
-				if (!rs->rs_data) {
+				if (!rs->rs_data)
 					return -ENOMEM;
-				}
 				rs->rs_total_len = 0;
 			} else if (rs->rs_total_len + rs->rs_fragment_len >
 				   rs->rs_capacity) {
@@ -382,9 +496,8 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 
 				char *new_data =
 					realloc(rs->rs_data, new_capacity);
-				if (!new_data) {
+				if (!new_data)
 					return -ENOMEM;
-				}
 				rs->rs_data = new_data;
 				rs->rs_capacity = new_capacity;
 			}
@@ -415,9 +528,8 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 			// This should never happen with the resize logic above, but add a safety check
 			size_t new_capacity = (rs->rs_total_len + to_copy) * 2;
 			char *new_data = realloc(rs->rs_data, new_capacity);
-			if (!new_data) {
+			if (!new_data)
 				return -ENOMEM;
-			}
 			rs->rs_data = new_data;
 			rs->rs_capacity = new_capacity;
 		}
@@ -446,38 +558,20 @@ int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 
 				// If there's not enough data for another record marker, request more
 				if (bs->bs_filled < 4) {
-					request_more_read_data(bs, ring, ic);
+					ret = request_more_read_data(bs, ring,
+								     ic);
+					if (ret < 0) {
+						TRACE(REFFS_TRACE_LEVEL_ERR,
+						      "%s", strerror(-ret));
+						return ret;
+					}
 				} else {
 					// We still have enough data for another potential message,
 					// but we need to create a new read context for future data
-					char *buffer = malloc(BUFFER_SIZE);
-					if (buffer) {
-						struct io_context *ic_new =
-							io_context_create(
-								OP_TYPE_READ,
-								bs->bs_fd,
-								buffer,
-								BUFFER_SIZE);
-						if (ic_new) {
-							copy_connection_info(
-								&ic_new->ic_ci,
-								&ic->ic_ci);
-							struct io_uring_sqe *sqe =
-								io_uring_get_sqe(
-									ring);
-							io_uring_prep_read(
-								sqe, bs->bs_fd,
-								buffer,
-								BUFFER_SIZE, 0);
-							sqe->user_data =
-								(uint64_t)(uintptr_t)
-									ic_new;
-							io_uring_submit(ring);
-						} else {
-							free(buffer);
-						}
-					}
+					request_additional_read_data(
+						bs->bs_fd, &ic->ic_ci, ring);
 				}
+
 				// Return the complete message size
 				return complete_size;
 			}
@@ -518,6 +612,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe;
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
+	int ret;
 
 	TRACE(REFFS_TRACE_LEVEL_NOTICE,
 	      "Len=%zu, Position=%zu, Remaining=%zu (xid=0x%08x)",
@@ -571,11 +666,19 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	      "Last Fragment=%d, Chunk=%u,  Record Marker=0x%x (xid=0x%08x)",
 	      last_fragment, chunk_size, ntohl(*p), ic->ic_xid);
 
-	sqe = io_uring_get_sqe(ring);
+	for (int i = 0; i < MAX_RETRIES; i++) {
+		sqe = io_uring_get_sqe(ring);
+		if (sqe)
+			break;
+		TRACE(REFFS_TRACE_LEVEL_ERR, "Waiting for retry %d", i);
+		usleep(IO_URING_WAIT_US);
+	}
+
 	if (!sqe) {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_get_sqe failed");
+		unregister_client_fd(ic->ic_fd);
+		close(ic->ic_fd);
 		io_context_free(ic);
-		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_get_sqe failed: %d",
-		      ENOMEM);
 		return ENOMEM;
 	}
 
@@ -607,9 +710,22 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	// Submit the write operation
 	io_uring_prep_write(sqe, ic->ic_fd, buffer, chunk_size, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
-	int ret = io_uring_submit(ring);
-	if (ret <= 0) {
+
+	for (int i = 0; i < MAX_RETRIES; i++) {
+		ret = io_uring_submit(ring);
+		if (ret >= 0)
+			break;
+		if (ret == -EAGAIN)
+			usleep(IO_URING_WAIT_US);
+		else
+			break;
+	}
+
+	if (ret < 0) {
 		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed: %d", ret);
+		unregister_client_fd(ic->ic_fd);
+		close(ic->ic_fd);
+		io_context_free(ic);
 	} else {
 		TRACE(REFFS_TRACE_LEVEL_NOTICE,
 		      "Submitted %d io_uring operations", ret);
@@ -648,7 +764,7 @@ static int rpc_trans_cb(struct rpc_trans *rt)
 }
 
 // Worker thread function
-void *worker_thread(void *arg)
+static void *worker_thread(void *arg)
 {
 	int thread_id = *(int *)arg;
 	free(arg);
@@ -691,8 +807,14 @@ void *worker_thread(void *arg)
 		if (t) {
 			if (t->t_fd > 0) {
 				t->t_cb = rpc_trans_cb;
+				TRACE(REFFS_TRACE_LEVEL_NOTICE,
+				      "Complete RPC message processed (%d bytes)",
+				      t->t_bytes_read);
 				int rc = rpc_process_task(t);
 				if (rc == ENOMEM) {
+					TRACE(REFFS_TRACE_LEVEL_ERR,
+					      "Worker thread %d rescheduling",
+					      thread_id);
 					add_task(t);
 					continue;
 				}
@@ -896,6 +1018,8 @@ static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	int complete_size = process_record_marker(bs, ring, ic);
 	if (complete_size <= 0) {
 		if (complete_size < 0) {
+			unregister_client_fd(ic->ic_fd);
+			close(ic->ic_fd);
 			io_context_free(ic);
 		}
 		return 0;
@@ -940,6 +1064,74 @@ static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	return 0;
 }
 
+static int request_accept_op(int fd, struct connection_info *ci,
+			     struct io_uring *ring)
+{
+	struct io_uring_sqe *sqe = NULL;
+	int ret;
+
+	struct sockaddr *buffer = malloc(sizeof(struct sockaddr));
+	if (!buffer) {
+		LOG("Failed to allocate buffer");
+		close(fd);
+		return ENOMEM;
+	}
+
+	struct io_context *ic = io_context_create(OP_TYPE_ACCEPT, fd, buffer,
+						  sizeof(struct sockaddr));
+	if (!ic) {
+		LOG("Failed to create read context");
+		free(buffer);
+		close(fd);
+		return ENOMEM;
+	}
+
+	if (ci)
+		copy_connection_info(&ic->ic_ci, ci);
+
+	for (int i = 0; i < MAX_RETRIES; i++) {
+		sqe = io_uring_get_sqe(ring);
+		if (sqe)
+			break;
+		TRACE(REFFS_TRACE_LEVEL_ERR, "Waiting for retry %d", i);
+		usleep(IO_URING_WAIT_US);
+	}
+
+	if (!sqe) {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_get_sqe failed");
+		close(fd);
+		io_context_free(ic);
+		return -ENOMEM;
+	}
+
+	io_uring_prep_accept(sqe, fd, ic->ic_buffer,
+			     (socklen_t *)&ic->ic_buffer_len, 0);
+	sqe->user_data = (uint64_t)(uintptr_t)ic;
+
+	TRACE(REFFS_TRACE_LEVEL_NOTICE,
+	      "On fd = %d sent a context of type %s and id %d", fd,
+	      op_type_to_str(ic->ic_op_type), ic->ic_id);
+
+	for (int i = 0; i < MAX_RETRIES; i++) {
+		ret = io_uring_submit(ring);
+		if (ret >= 0)
+			break;
+		if (ret == -EAGAIN)
+			usleep(IO_URING_WAIT_US);
+		else
+			break;
+	}
+
+	if (ret < 0) {
+		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed with %s",
+		      strerror(-ret));
+		close(fd);
+		io_context_free(ic);
+	}
+
+	return 0;
+}
+
 static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 {
 	// Get the IO context from user_data
@@ -948,8 +1140,6 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 		LOG("Error: NULL io context in read handler");
 		return -EINVAL;
 	}
-
-	struct io_uring_sqe *sqe;
 
 	char addr_str[INET6_ADDRSTRLEN];
 	uint16_t port;
@@ -991,63 +1181,18 @@ static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	register_client_fd(client_fd);
 
 	// Prepare to read from this new connection
-	char *buffer = malloc(BUFFER_SIZE);
-	if (buffer) {
-		// Create IO context for the read operation
-		struct io_context *ic_read = io_context_create(
-			OP_TYPE_READ, client_fd, buffer, BUFFER_SIZE);
-		copy_connection_info(&ic_read->ic_ci, &ic->ic_ci);
-		if (!ic_read) {
-			LOG("Failed to create read context");
-			free(buffer);
-			close(client_fd);
-		} else {
-			sqe = io_uring_get_sqe(ring);
-			io_uring_prep_read(sqe, client_fd, buffer, BUFFER_SIZE,
-					   0);
-			sqe->user_data = (uint64_t)(uintptr_t)ic_read;
-			TRACE(REFFS_TRACE_LEVEL_NOTICE,
-			      "On fd = %d sent a context of type %s and id %d",
-			      ic_read->ic_fd,
-			      op_type_to_str(ic_read->ic_op_type),
-			      ic_read->ic_id);
-			io_uring_submit(ring);
-		}
-	} else {
-		LOG("malloc: %s", strerror(errno));
-		close(client_fd);
-	}
+	request_additional_read_data(client_fd, &ic->ic_ci, ring);
 
-	// Submit a new accept for this listener
-	struct sockaddr_in client_address;
-	socklen_t client_len = sizeof(client_address);
-
-	// Create new IO context for the next accept
-	struct io_context *ic_accept =
-		io_context_create(OP_TYPE_ACCEPT, listen_fd, NULL, 0);
-	if (!ic_accept) {
-		LOG("Failed to create accept context");
-		io_context_free(ic);
-		io_uring_cqe_seen(ring, cqe);
-		return 0;
-	}
-
-	sqe = io_uring_get_sqe(ring);
-	io_uring_prep_accept(sqe, listen_fd, (struct sockaddr *)&client_address,
-			     &client_len, 0);
-	sqe->user_data = (uint64_t)(uintptr_t)ic_accept;
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
-	      "On fd = %d sent a context of type %s and id %d",
-	      ic_accept->ic_fd, op_type_to_str(ic_accept->ic_op_type),
-	      ic_accept->ic_id);
-	io_uring_submit(ring);
+	// Accept more connections
+	request_accept_op(listen_fd, &ic->ic_ci, ring);
 
 	io_context_free(ic); // Free the completed accept context
 	return 0;
 }
 
 // Send NFS response using io_uring
-int send_nfs_response(struct io_uring *ring, int fd, char *buffer, int len)
+static int send_nfs_response(struct io_uring *ring, int fd, char *buffer,
+			     int len)
 {
 	// Prefix with record marker (last fragment + length)
 	uint32_t marker = htonl(0x80000000 | len);
@@ -1061,6 +1206,8 @@ int send_nfs_response(struct io_uring *ring, int fd, char *buffer, int len)
 	// Copy marker and data
 	memcpy(send_buffer, &marker, 4);
 	memcpy(send_buffer + 4, buffer, len);
+
+	// Missing error checking since no callers yet
 
 	// Create an IO context for the write operation
 	struct io_context *ic =
@@ -1110,7 +1257,6 @@ int main(int argc, char *argv[])
 {
 	int listener_fd;
 	struct io_uring ring;
-	struct io_uring_sqe *sqe;
 	struct io_uring_cqe *cqe;
 
 	int exit_code = 0;
@@ -1213,41 +1359,16 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	// Setup initial accept operation
-	struct sockaddr_in client_address;
-	socklen_t client_len = sizeof(client_address);
-
-	// Create IO context for the accept operation
-	struct io_context *ic_accept =
-		io_context_create(OP_TYPE_ACCEPT, listener_fd, NULL, 0);
-	if (!ic_accept) {
-		LOG("Failed to create accept context");
-		exit_code = 1;
-		goto out;
-	}
-
-	sqe = io_uring_get_sqe(&ring);
-	io_uring_prep_accept(sqe, listener_fd,
-			     (struct sockaddr *)&client_address, &client_len,
-			     0);
-
-	// Associate with the io context
-	sqe->user_data = (uint64_t)(uintptr_t)ic_accept;
-
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
-	      "On fd = %d sent a context of type %s and id %d",
-	      ic_accept->ic_fd, op_type_to_str(ic_accept->ic_op_type),
-	      ic_accept->ic_id);
-	io_uring_submit(&ring);
+	request_accept_op(listener_fd, NULL, &ring);
 
 	if (!pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
-		LOG("Failed to register with portmapper");
+		LOG("Failed to register with portmapper for NFSv3");
 		exit_code = 1;
 		goto out;
 	}
 
 	if (!pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, port)) {
-		LOG("Failed to register with portmapper");
+		LOG("Failed to register with portmapper for MOUNTv3");
 		pmap_unset(NFS3_PROGRAM, NFS_V3);
 		exit_code = 1;
 		goto out;
@@ -1255,8 +1376,8 @@ int main(int argc, char *argv[])
 
 	while (running) {
 		// Set a timeout for io_uring_wait_cqe to allow checking the running flag
-		struct __kernel_timespec ts = { .tv_sec = 0,
-						.tv_nsec = 100000000 };
+		struct __kernel_timespec ts = { .tv_sec = IO_URING_WAIT_SEC,
+						.tv_nsec = IO_URING_WAIT_NSEC };
 
 		static time_t last_check = 0;
 		time_t now = time(NULL);
@@ -1461,3 +1582,5 @@ out:
 	LOG("Shutdown complete");
 	return exit_code;
 }
+
+#pragma clang diagnostic pop
