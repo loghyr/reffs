@@ -131,7 +131,8 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 			if (ap->aup_gid == target_gid)
 				user_in_target_group = true;
 
-			/* Supplementary groups membership
+			/*
+			 * Supplementary groups membership
                          * NFS protocol may use different representations for -1 groups
                          * so be cautious and validate each group
                          */
@@ -165,14 +166,14 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 			if (!inode->i_db) {
 				return ENOMEM;
 			}
-		} else if (inode->i_db) {
-			inode->i_size = inode->i_db->db_size;
-			inode->i_used = inode->i_size / 4096 +
-					(inode->i_size % 4096 ? 1 : 0);
-			uatomic_add_return(&inode->i_sb->sb_bytes_used,
-					   inode->i_size - size,
-					   __ATOMIC_RELAXED);
 		}
+
+		inode->i_size = sz;
+
+		inode->i_used =
+			inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
+		uatomic_add_return(&inode->i_sb->sb_bytes_used,
+				   inode->i_size - size, __ATOMIC_RELAXED);
 		if (flags)
 			*flags |= REFFS_INODE_UPDATE_CTIME |
 				  REFFS_INODE_UPDATE_MTIME;
