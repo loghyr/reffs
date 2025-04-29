@@ -300,6 +300,7 @@ void rpc_protocol_free(struct rpc_trans *rt)
 static int rpc_process_task_call(struct task *t)
 {
 	u_long msg_len = 0;
+	int ret = 0;
 
 	uint32_t *p;
 
@@ -449,7 +450,7 @@ static int rpc_process_task_call(struct task *t)
 		break;
 	}
 
-	int ret = rpc_protocol_allocate_call(rt);
+	ret = rpc_protocol_allocate_call(rt);
 	if (ret == ENOENT) {
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 		rt->rt_info.ri_accept_stat = PROG_UNAVAIL;
