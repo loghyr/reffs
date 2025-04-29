@@ -481,11 +481,7 @@ handle_rpc_error:
 	      rt->rt_info.ri_accept_stat, ret, rt->rt_info.ri_xid);
 
 	if (rt->rt_info.ri_reply_stat == MSG_DENIED) {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "Branch 1 xid=0x%08x",
-		      rt->rt_info.ri_xid);
 		if (rt->rt_info.ri_reject_stat == RPC_MISMATCH) {
-			TRACE(REFFS_TRACE_LEVEL_ERR, "Branch 2 xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			rt->rt_reply_len = 7 * sizeof(uint32_t);
 			msg_len = rt->rt_reply_len - sizeof(uint32_t);
 			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
@@ -568,8 +564,6 @@ handle_rpc_error:
 				goto drop_on_floor;
 			}
 		} else {
-			TRACE(REFFS_TRACE_LEVEL_ERR, "Branch 3 xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			rt->rt_reply_len = 6 * sizeof(uint32_t);
 			msg_len = rt->rt_reply_len - sizeof(uint32_t);
 			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
@@ -634,8 +628,6 @@ handle_rpc_error:
 			}
 		}
 	} else if (rt->rt_info.ri_accept_stat) {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "Branch 4 xid=0x%08x",
-		      rt->rt_info.ri_xid);
 		rt->rt_reply_len = 8 * sizeof(uint32_t);
 		msg_len = rt->rt_reply_len - sizeof(uint32_t);
 		rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
@@ -727,8 +719,6 @@ handle_rpc_error:
 			goto drop_on_floor;
 		}
 	} else {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "Branch 5 xid=0x%08x",
-		      rt->rt_info.ri_xid);
 		XDR xdrs = { 0 };
 
 		uint32_t start_pos, end_pos;
