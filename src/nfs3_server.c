@@ -262,8 +262,6 @@ static void register_client_fd(int fd)
 // Unregister client fd
 static void unregister_client_fd(int fd)
 {
-	TRACE(REFFS_TRACE_LEVEL_ERR,
-	      "Unregistering existing buffer state for %d", fd);
 	struct buffer_state *bs = get_buffer_state(fd);
 	if (bs) {
 		free(bs->bs_data);
