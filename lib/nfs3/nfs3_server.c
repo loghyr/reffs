@@ -915,8 +915,9 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 	nfh = (struct network_file_handle *)args->file.data.data_val;
 	TRACE(REFFS_TRACE_LEVEL_WARNING,
-	      "WRITE: xid=0x%08x sb=%lu ino=%lu crc=0x%08x", rt->rt_info.ri_xid,
-	      nfh->nfh_sb, nfh->nfh_ino, crc);
+	      "WRITE: xid=0x%08x sb=%lu ino=%lu off=%lu len=%u crc=0x%08x",
+	      rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, args->offset,
+	      args->data.data_len, crc);
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
@@ -3175,7 +3176,8 @@ out:
 }
 
 struct rpc_operations_handler nfs3_operations_handler[] = {
-	RPC_OPERATION_INIT(NFSPROC3, NULL, NULL, NULL, NULL, NULL, nfs3_op_null),
+	RPC_OPERATION_INIT(NFSPROC3, NULL, NULL, NULL, NULL, NULL,
+			   nfs3_op_null),
 	RPC_OPERATION_INIT(NFSPROC3, GETATTR, xdr_GETATTR3args, GETATTR3args,
 			   xdr_GETATTR3res, GETATTR3res, nfs3_op_getattr),
 	RPC_OPERATION_INIT(NFSPROC3, SETATTR, xdr_SETATTR3args, SETATTR3args,
