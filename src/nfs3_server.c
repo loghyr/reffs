@@ -728,9 +728,136 @@ static int process_record_marker(struct buffer_state *bs)
 	return 0;
 }
 
+// Handle read completions
+static int op_read_handler(struct io_context *ic, int bytes_read,
+			   struct io_uring *ring)
+{
+	int ret;
+
+	// Extract data from context
+	char *buffer = (char *)ic->ic_buffer;
+	int client_fd = ic->ic_fd;
+
+	if (bytes_read <= 0) {
+		// Connection closed or error
+		LOG("Connection closed or error (fd: %d, res: %d)", client_fd,
+		    bytes_read);
+		unregister_client_fd(client_fd);
+		close(client_fd);
+		io_context_free(ic);
+		return 0;
+	}
+
+	// Get or create buffer state for this connection
+	struct buffer_state *bs = get_buffer_state(client_fd);
+	if (!bs) {
+		bs = create_buffer_state(client_fd);
+		if (!bs) {
+			io_context_free(ic);
+			return -ENOMEM;
+		}
+	}
+
+	// Append new data to existing buffer
+	if (!append_to_buffer(bs, buffer, bytes_read)) {
+		io_context_free(ic);
+		return -ENOMEM;
+	}
+
+	// Process the RPC record marker to get a complete RPC message
+	while (bs->bs_filled >= 4) {
+		int complete_size = process_record_marker(bs);
+		if (complete_size < 0) {
+			unregister_client_fd(ic->ic_fd);
+			close(ic->ic_fd);
+			io_context_free(ic);
+			return 0;
+		}
+
+		if (complete_size == 0)
+			break;
+
+		// We have a complete RPC message
+		TRACE(REFFS_TRACE_LEVEL_ERR,
+		      "Complete RPC message assembled (%d bytes)",
+		      complete_size);
+
+		// Create a task for processing
+		struct task *t = calloc(1, sizeof(struct task));
+		if (t) {
+			// Copy the complete message
+			t->t_buffer = malloc(complete_size);
+			if (!t->t_buffer) {
+				free(t);
+				return -ENOMEM;
+			}
+
+			memcpy(t->t_buffer, bs->bs_record.rs_data,
+			       complete_size);
+			t->t_bytes_read = complete_size;
+			t->t_fd = client_fd;
+			t->t_ring = ring;
+
+			copy_connection_info(&t->t_ci, &ic->ic_ci);
+
+			// Extract XID for convenience
+			if (complete_size >= 4) {
+				t->t_xid = ntohl(*(uint32_t *)t->t_buffer);
+			} else {
+				t->t_xid = 0;
+			}
+
+			// Queue it for processing
+			add_task(t);
+
+			// Reset the record state for the next message
+			bs->bs_record.rs_total_len = 0;
+			bs->bs_record.rs_position = 0;
+		}
+	}
+
+	ret = request_more_read_data(bs, ring, ic);
+	if (ret) {
+		unregister_client_fd(ic->ic_fd);
+		close(ic->ic_fd);
+		io_context_free(ic);
+	}
+
+	return 0;
+}
+
 // Maximum size for a single write
 #define MAX_WRITE_SIZE (1024 * 1024)
 
+/*
+ * Creating responses:
+ *
+ * rpc_process_task() calls rpc_trans_cb() which creates an io_context.
+ *
+ * rpc_trans_cb() calls rpc_trans_writer() which in turn submits
+ * the context to io_uring_submit().
+ *
+ * When op_type_write() is called after io_uring_wait_cqe_timeout()
+ * wakes up with the CQE, it also invokes rpc_trans_writer().
+ *
+ * At this point, rpc_trans_writer() needs to either end the
+ * recursion because of either it is done or because of an
+ * error.
+ *
+ * If it does not end the recursion, then it advances to the
+ * next fragment and submits it back to io_uring_submit().
+ *
+ * At no point are there multiple instances of this io_context
+ * submitted to io_uring. The sequential nature of rpc_trans_writer()
+ * ensures that we avoid memory allocations and we avoid parallel
+ * access to the io_context.
+ *
+ * Note: the first 4 bytes of the orginal buffer are for the
+ * record marker. After the first fragment is sent, we use
+ * the last 4 bytes of the previous fragment to store the
+ * record marker for the current fragment.
+ *
+ */
 static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe;
@@ -889,6 +1016,13 @@ static int rpc_trans_cb(struct rpc_trans *rt)
 	      ic->ic_buffer_len, total_fragments, ic->ic_xid);
 
 	return rpc_trans_writer(ic, rt->rt_ring);
+}
+
+static int op_write_handler(struct io_context *ic,
+			    int __attribute__((unused)) bytes_written,
+			    struct io_uring *ring)
+{
+	return rpc_trans_writer(ic, ring);
 }
 
 // Worker thread function
@@ -1066,111 +1200,6 @@ bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len)
 	bs->bs_filled += len;
 
 	return true;
-}
-
-static int op_write_handler(struct io_context *ic,
-			    int __attribute__((unused)) bytes_written,
-			    struct io_uring *ring)
-{
-	return rpc_trans_writer(ic, ring);
-}
-
-// Handle read completions
-static int op_read_handler(struct io_context *ic, int bytes_read,
-			   struct io_uring *ring)
-{
-	int ret;
-
-	// Extract data from context
-	char *buffer = (char *)ic->ic_buffer;
-	int client_fd = ic->ic_fd;
-
-	if (bytes_read <= 0) {
-		// Connection closed or error
-		LOG("Connection closed or error (fd: %d, res: %d)", client_fd,
-		    bytes_read);
-		unregister_client_fd(client_fd);
-		close(client_fd);
-		io_context_free(ic);
-		return 0;
-	}
-
-	// Get or create buffer state for this connection
-	struct buffer_state *bs = get_buffer_state(client_fd);
-	if (!bs) {
-		bs = create_buffer_state(client_fd);
-		if (!bs) {
-			io_context_free(ic);
-			return -ENOMEM;
-		}
-	}
-
-	// Append new data to existing buffer
-	if (!append_to_buffer(bs, buffer, bytes_read)) {
-		io_context_free(ic);
-		return -ENOMEM;
-	}
-
-	// Process the RPC record marker to get a complete RPC message
-	while (bs->bs_filled >= 4) {
-		int complete_size = process_record_marker(bs);
-		if (complete_size < 0) {
-			unregister_client_fd(ic->ic_fd);
-			close(ic->ic_fd);
-			io_context_free(ic);
-			return 0;
-		}
-
-		if (complete_size == 0)
-			break;
-
-		// We have a complete RPC message
-		TRACE(REFFS_TRACE_LEVEL_ERR,
-		      "Complete RPC message assembled (%d bytes)",
-		      complete_size);
-
-		// Create a task for processing
-		struct task *t = calloc(1, sizeof(struct task));
-		if (t) {
-			// Copy the complete message
-			t->t_buffer = malloc(complete_size);
-			if (!t->t_buffer) {
-				free(t);
-				return -ENOMEM;
-			}
-
-			memcpy(t->t_buffer, bs->bs_record.rs_data,
-			       complete_size);
-			t->t_bytes_read = complete_size;
-			t->t_fd = client_fd;
-			t->t_ring = ring;
-
-			copy_connection_info(&t->t_ci, &ic->ic_ci);
-
-			// Extract XID for convenience
-			if (complete_size >= 4) {
-				t->t_xid = ntohl(*(uint32_t *)t->t_buffer);
-			} else {
-				t->t_xid = 0;
-			}
-
-			// Queue it for processing
-			add_task(t);
-
-			// Reset the record state for the next message
-			bs->bs_record.rs_total_len = 0;
-			bs->bs_record.rs_position = 0;
-		}
-	}
-
-	ret = request_more_read_data(bs, ring, ic);
-	if (ret) {
-		unregister_client_fd(ic->ic_fd);
-		close(ic->ic_fd);
-		io_context_free(ic);
-	}
-
-	return 0;
 }
 
 static int request_accept_op(int fd, struct connection_info *ci,
