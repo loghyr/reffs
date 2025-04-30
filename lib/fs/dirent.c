@@ -49,9 +49,13 @@ void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 	cds_list_add_tail_rcu(&de->d_siblings, &parent->d_inode->i_children);
 	dirent_get(de); // One for the linked list
 
-	if (de->d_inode && de->d_inode->i_mode & S_IFDIR)
-		de->d_inode->i_parent =
-			parent; // Do not take a reference, manage carefully
+	if (de->d_inode) {
+		if (de->d_inode->i_mode & S_IFDIR)
+			de->d_inode->i_parent =
+				parent; // Do not take a reference, manage carefully
+		else
+			uatomic_inc(&de->d_inode->i_nlink, __ATOMIC_RELAXED);
+	}
 
 	if (rla == reffs_life_action_birth || rla == reffs_life_action_update) {
 		inode_update_times_now(parent->d_inode,

@@ -376,9 +376,13 @@ static int request_more_read_data(struct buffer_state *bs,
 		ret = io_uring_submit(ring);
 		if (ret >= 0)
 			break;
-		if (ret == -EAGAIN)
+		if (ret == -EAGAIN) {
+			TRACE(write_fragment_trace,
+			      "Context=%p resubmission %d", (void *)ic, i);
 			usleep(IO_URING_WAIT_US);
-		else
+			ret = 0;
+			break; // Right now we don't know what io_uring is doing!
+		} else
 			break;
 	}
 
@@ -395,7 +399,7 @@ static int request_additional_read_data(int fd, struct connection_info *ci,
 					struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe = NULL;
-	int ret;
+	int ret = 0;
 
 	char *buffer = malloc(BUFFER_SIZE);
 	if (!buffer) {
@@ -443,9 +447,13 @@ static int request_additional_read_data(int fd, struct connection_info *ci,
 		ret = io_uring_submit(ring);
 		if (ret >= 0)
 			break;
-		if (ret == -EAGAIN)
+		if (ret == -EAGAIN) {
+			TRACE(write_fragment_trace,
+			      "Context=%p resubmission %d", (void *)ic, i);
 			usleep(IO_URING_WAIT_US);
-		else
+			ret = 0;
+			break; // Right now we don't know what io_uring is doing!
+		} else
 			break;
 	}
 
@@ -862,7 +870,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe;
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
-	int ret;
+	int ret = 0;
 
 	TRACE(write_fragment_trace,
 	      "Context=%p Len=%zu, Position=%zu, Remaining=%zu (xid=0x%08x)",
@@ -970,6 +978,8 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 			TRACE(write_fragment_trace,
 			      "Context=%p resubmission %d", (void *)ic, i);
 			usleep(IO_URING_WAIT_US);
+			ret = 0;
+			break; // Right now we don't know what io_uring is doing!
 		} else
 			break;
 	}
@@ -1206,7 +1216,7 @@ static int request_accept_op(int fd, struct connection_info *ci,
 			     struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe = NULL;
-	int ret;
+	int ret = 0;
 
 	struct sockaddr *buffer = malloc(sizeof(struct sockaddr));
 	if (!buffer) {
@@ -1254,9 +1264,12 @@ static int request_accept_op(int fd, struct connection_info *ci,
 		ret = io_uring_submit(ring);
 		if (ret >= 0)
 			break;
-		if (ret == -EAGAIN)
+		if (ret == -EAGAIN) {
+			TRACE(write_fragment_trace,
+			      "context=%p resubmission %d", (void *)ic, i);
 			usleep(IO_URING_WAIT_US);
-		else
+			break; // right now we don't know what io_uring is doing!
+		} else
 			break;
 	}
 
