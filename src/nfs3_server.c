@@ -1408,6 +1408,8 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	setvbuf(stdout, NULL, _IOLBF, 0);
+
 	// Initialize pending requests array
 	memset(pending_requests, 0, sizeof(pending_requests));
 
