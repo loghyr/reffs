@@ -262,6 +262,8 @@ static void *reaper_thread_func(void *__attribute__((unused)) arg)
 		cds_list_for_each_entry_safe(idr, tmp, &delayed_release_list,
 					     idr_list) {
 			if (idr->idr_release_time <= now) {
+				TRACE(REFFS_TRACE_LEVEL_ERR, "%p",
+				      (void *)idr->idr_inode);
 				cds_list_del(&idr->idr_list);
 				inode_put(idr->idr_inode);
 				free(idr);
@@ -308,6 +310,8 @@ void inode_schedule_delayed_release(struct inode *inode, int delay_seconds)
 	idr->idr_inode = inode_get(inode);
 	verify(idr->idr_inode);
 	idr->idr_release_time = time(NULL) + delay_seconds;
+
+	TRACE(REFFS_TRACE_LEVEL_ERR, "%p", (void *)idr->idr_inode);
 
 	pthread_mutex_lock(&delayed_release_lock);
 	cds_list_add(&idr->idr_list, &delayed_release_list);

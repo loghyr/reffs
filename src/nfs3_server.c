@@ -675,7 +675,7 @@ static int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 				bs->bs_filled = 0;
 			}
 
-			TRACE(REFFS_TRACE_LEVEL_ERR,
+			TRACE(REFFS_TRACE_LEVEL_DEBUG,
 			      "Complete message assembled, size=%zu",
 			      message_size);
 
@@ -1140,7 +1140,7 @@ static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
 	}
 
 	// We have a complete RPC message
-	TRACE(REFFS_TRACE_LEVEL_ERR,
+	TRACE(REFFS_TRACE_LEVEL_DEBUG,
 	      "Complete RPC message assembled (%d bytes)", complete_size);
 
 	// Create a task for processing

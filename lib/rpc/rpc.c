@@ -744,7 +744,7 @@ handle_rpc_error:
 			goto drop_on_floor;
 		}
 
-		TRACE(REFFS_TRACE_LEVEL_ERR,
+		TRACE(REFFS_TRACE_LEVEL_NOTICE,
 		      "Encoding at %p for length %lu for xid=0x%08x",
 		      (void *)rt->rt_reply, rt->rt_reply_len,
 		      rt->rt_info.ri_xid);

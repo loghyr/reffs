@@ -28,6 +28,12 @@
 
 CDS_LIST_HEAD(dirent_list);
 
+#ifdef DEBUG_DIRENT_ACCESS
+#define DIRENT_TRACE REFFS_TRACE_LEVEL_ERR
+#else
+#define DIRENT_TRACE REFFS_TRACE_LEVEL_DEBUG
+#endif
+
 void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 			  enum reffs_life_action rla)
 {
@@ -59,8 +65,7 @@ static void dirent_free_rcu(struct rcu_head *rcu)
 {
 	struct dirent *de = caa_container_of(rcu, struct dirent, d_rcu);
 
-	TRACE(REFFS_TRACE_LEVEL_DEBUG, "%p - %ld", (void *)de,
-	      de->d_ref.refcount);
+	TRACE(DIRENT_TRACE, "%p - %ld", (void *)de, de->d_ref.refcount);
 
 	pthread_rwlock_destroy(&de->d_rwlock);
 
@@ -72,8 +77,7 @@ static void dirent_release(struct urcu_ref *ref)
 {
 	struct dirent *de = caa_container_of(ref, struct dirent, d_ref);
 
-	TRACE(REFFS_TRACE_LEVEL_DEBUG, "%p - %ld", (void *)de,
-	      de->d_ref.refcount);
+	TRACE(DIRENT_TRACE, "%p - %ld", (void *)de, de->d_ref.refcount);
 
 	if (de->d_inode)
 		inode_put(de->d_inode);
@@ -106,8 +110,7 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name,
 	urcu_ref_init(&de->d_ref);
 	de->d_cookie_next = 2;
 
-	TRACE(REFFS_TRACE_LEVEL_DEBUG, "%p - %ld", (void *)de,
-	      de->d_ref.refcount);
+	TRACE(DIRENT_TRACE, "%p - %ld", (void *)de, de->d_ref.refcount);
 
 	pthread_rwlock_init(&de->d_rwlock, NULL);
 
@@ -151,8 +154,7 @@ struct dirent *dirent_get(struct dirent *de)
 	if (!urcu_ref_get_unless_zero(&de->d_ref))
 		return NULL;
 
-	TRACE(REFFS_TRACE_LEVEL_DEBUG, "%p - %ld", (void *)de,
-	      de->d_ref.refcount);
+	TRACE(DIRENT_TRACE, "%p - %ld", (void *)de, de->d_ref.refcount);
 
 	return de;
 }
@@ -162,8 +164,7 @@ void dirent_put(struct dirent *de)
 	if (!de)
 		return;
 
-	TRACE(REFFS_TRACE_LEVEL_DEBUG, "%p - %ld", (void *)de,
-	      de->d_ref.refcount);
+	TRACE(DIRENT_TRACE, "%p - %ld", (void *)de, de->d_ref.refcount);
 	urcu_ref_put(&de->d_ref, dirent_release);
 }
 
@@ -214,12 +215,9 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 		if (de->d_inode) {
 			uatomic_dec(&de->d_inode->i_nlink, __ATOMIC_RELAXED);
 
-			// Handle delayed release
-			if (rla == reffs_life_action_delayed_death) {
+			if (rla == reffs_life_action_delayed_death)
 				inode_schedule_delayed_release(
 					de->d_inode, INODE_RELEASE_HARVEST);
-				call_rcu(&de->d_rcu, dirent_free_rcu);
-			}
 		}
 
 		dirent_put(de);
