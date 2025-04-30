@@ -309,7 +309,7 @@ void inode_schedule_delayed_release(struct inode *inode, int delay_seconds)
 
 	pthread_mutex_lock(&delayed_release_lock);
 	cds_list_add(&idr->idr_list, &delayed_release_list);
-	pthread_mutex_lock(&delayed_release_lock);
+	pthread_mutex_unlock(&delayed_release_lock);
 
 	ensure_reaper_thread();
 }
