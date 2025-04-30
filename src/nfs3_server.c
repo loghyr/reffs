@@ -839,9 +839,11 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 		ret = io_uring_submit(ring);
 		if (ret >= 0)
 			break;
-		if (ret == -EAGAIN)
+		if (ret == -EAGAIN) {
+			TRACE(write_fragment_trace,
+			      "Context=%p resubmission %d", (void *)ic, i);
 			usleep(IO_URING_WAIT_US);
-		else
+		} else
 			break;
 	}
 
@@ -851,8 +853,9 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 		close(ic->ic_fd);
 		io_context_free(ic);
 	} else {
-		TRACE(REFFS_TRACE_LEVEL_NOTICE,
-		      "Submitted %d io_uring operations", ret);
+		TRACE(write_fragment_trace,
+		      "Context=%p submitted %d io_uring operations", (void *)ic,
+		      ret);
 		ret = 0;
 	}
 
