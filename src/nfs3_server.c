@@ -559,7 +559,8 @@ static int process_record_marker(struct buffer_state *bs, struct io_uring *ring,
 			} else {
 				bs->bs_filled = 0;
 			}
-			TRACE(REFFS_TRACE_LEVEL_ERR,
+
+			TRACE(REFFS_TRACE_LEVEL_NOTICE,
 			      "Fragment incomplete, position=%u of %u, requesting more data",
 			      rs->rs_position, rs->rs_fragment_len);
 			return request_more_read_data(bs, ring, ic);
