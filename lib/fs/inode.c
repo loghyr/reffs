@@ -24,6 +24,7 @@
 #include "reffs/super_block.h"
 #include "reffs/log.h"
 #include "reffs/cmp.h"
+#include "reffs/test.h"
 
 static int inode_match(struct cds_lfht_node *ht_node, const void *vkey)
 {
@@ -304,7 +305,8 @@ void inode_schedule_delayed_release(struct inode *inode, int delay_seconds)
 		return;
 	}
 
-	idr->idr_inode = inode;
+	idr->idr_inode = inode_get(inode);
+	verify(idr->idr_inode);
 	idr->idr_release_time = time(NULL) + delay_seconds;
 
 	pthread_mutex_lock(&delayed_release_lock);

@@ -1786,7 +1786,7 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	dirent_parent_release(de, reffs_life_action_death);
+	dirent_parent_release(de, reffs_life_action_delayed_death);
 	dirent_put(de); // One for remove
 	dirent_put(de); // One for the find
 	pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
