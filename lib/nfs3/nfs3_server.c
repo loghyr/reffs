@@ -320,11 +320,11 @@ static struct inode *directory_inode_find(struct super_block *sb, uint64_t ino,
 		goto out;
 	}
 
-	*status = inode_permission_check(inode, ap, X_OK);
+	*status = inode_access_check(inode, ap, X_OK);
 	if (*status)
 		goto out;
 
-	*status = inode_permission_check(inode, ap, mode);
+	*status = inode_access_check(inode, ap, mode);
 out:
 	return inode;
 }
@@ -725,7 +725,7 @@ static int nfs3_op_readlink(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = inode_permission_check(inode, &ap, R_OK);
+	res->status = inode_access_check(inode, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -1128,7 +1128,7 @@ static int nfs3_op_create(struct rpc_trans *rt)
 			break;
 		}
 
-		res->status = inode_permission_check(exists, &ap, W_OK);
+		res->status = inode_access_check(exists, &ap, W_OK);
 		if (res->status) {
 			pthread_rwlock_unlock(&inode->i_parent->d_rwlock);
 			wcc = &resfail->dir_wcc;
@@ -2906,7 +2906,7 @@ static int nfs3_op_fsstat(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = inode_permission_check(inode, &ap, R_OK);
+	res->status = inode_access_check(inode, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -2980,7 +2980,7 @@ static int nfs3_op_fsinfo(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = inode_permission_check(inode, &ap, R_OK);
+	res->status = inode_access_check(inode, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -3058,7 +3058,7 @@ static int nfs3_op_pathconf(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = inode_permission_check(inode, &ap, R_OK);
+	res->status = inode_access_check(inode, &ap, R_OK);
 	if (res->status)
 		goto out;
 
@@ -3137,7 +3137,7 @@ static int nfs3_op_commit(struct rpc_trans *rt)
 		goto out;
 	}
 
-	res->status = inode_permission_check(inode, &ap, R_OK);
+	res->status = inode_access_check(inode, &ap, R_OK);
 	if (res->status)
 		goto out;
 

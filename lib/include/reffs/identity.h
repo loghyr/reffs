@@ -28,7 +28,14 @@ bool is_user_in_group(uid_t uid, gid_t group_to_check,
 int inode_access_check(struct inode *inode, struct authunix_parms *ap,
 		       int mode);
 
-int inode_permission_check(struct inode *inode, struct authunix_parms *ap,
-			   int mode);
+enum privilege_op {
+	PRIV_CHANGE_OWNER,
+	PRIV_CHANGE_GROUP,
+	PRIV_SET_SPECIAL_BITS,
+	PRIV_TIME_CHANGE
+};
+
+int inode_privilege_check(struct inode *inode, struct authunix_parms *ap,
+			  enum privilege_op op, void *arg);
 
 #endif /* _REFFS_INDENTITY_H */

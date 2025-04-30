@@ -64,44 +64,6 @@ int rpc_cred_to_authunix_parms(struct rpc_cred *cred, struct authunix_parms *ap)
 	return 0;
 }
 
-/*
- * The only way we call this for checking access is if it is
- * a directory and then we return EACCES and not EPERM.
- */
-int inode_permission_check(struct inode *inode, struct authunix_parms *ap,
-			   int mode)
-{
-	/* Superuser mode for now */
-	if (ap->aup_uid == 0)
-		return 0;
-
-	if (ap->aup_uid == inode->i_uid) {
-		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))
-			return EPERM;
-		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
-			return EPERM;
-		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
-			return EACCES;
-	} else if (ap->aup_gid == inode->i_gid ||
-		   gid_in_gids(inode->i_gid, ap->aup_len, ap->aup_gids)) {
-		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
-			return EPERM;
-		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP))
-			return EPERM;
-		if ((mode & X_OK) && !(inode->i_mode & S_IXGRP))
-			return EACCES;
-	} else {
-		if ((mode & W_OK) && !(inode->i_mode & S_IWOTH))
-			return EPERM;
-		if ((mode & R_OK) && !(inode->i_mode & S_IROTH))
-			return EPERM;
-		if ((mode & X_OK) && !(inode->i_mode & S_IXOTH))
-			return EACCES;
-	}
-
-	return 0;
-}
-
 int inode_access_check(struct inode *inode, struct authunix_parms *ap, int mode)
 {
 	/* Superuser mode for now */
@@ -197,4 +159,54 @@ bool is_user_in_group(uid_t uid, gid_t group_to_check,
 			return true;
 
 	return false;
+}
+
+int inode_privilege_check(struct inode *inode, struct authunix_parms *ap,
+			  enum privilege_op op, void *arg)
+{
+	/* Root can do anything */
+	if (!ap || ap->aup_uid == 0)
+		return 0;
+
+	/* Owner checks */
+	switch (op) {
+	case PRIV_CHANGE_OWNER:
+		/* Only owner can change ownership */
+		if (ap->aup_uid != inode->i_uid)
+			return EPERM;
+
+		/* Prevent non-root from giving away files */
+		if (arg && *(uid_t *)arg != inode->i_uid &&
+		    *(uid_t *)arg != (uid_t)-1)
+			return EPERM;
+		break;
+
+	case PRIV_CHANGE_GROUP:
+		/* Only owner can change group */
+		if (ap->aup_uid != inode->i_uid)
+			return EPERM;
+
+		/* User must be a member of the target group */
+		if (arg) {
+			gid_t new_gid = *(gid_t *)arg;
+			if (new_gid != (gid_t)-1 && new_gid != ap->aup_gid &&
+			    !gid_in_gids(new_gid, ap->aup_len, ap->aup_gids))
+				return EPERM;
+		}
+		break;
+
+	case PRIV_SET_SPECIAL_BITS:
+		/* Only owner can set special bits */
+		if (ap->aup_uid != inode->i_uid)
+			return EPERM;
+		break;
+
+	case PRIV_TIME_CHANGE:
+		/* Only owner or root can change times */
+		if (ap->aup_uid != inode->i_uid)
+			return EPERM;
+		break;
+	}
+
+	return 0;
 }
