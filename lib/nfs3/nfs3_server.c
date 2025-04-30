@@ -328,14 +328,14 @@ static struct inode *directory_inode_find(struct super_block *sb, uint64_t ino,
 out:
 	return inode;
 }
-static int nfs3_null(struct rpc_trans *rt)
+static int nfs3_op_null(struct rpc_trans *rt)
 {
 	TRACE(REFFS_TRACE_LEVEL_WARNING, "NULL: xid=0x%08x",
 	      rt->rt_info.ri_xid);
 	return 0;
 }
 
-static int nfs3_getattr(struct rpc_trans *rt)
+static int nfs3_op_getattr(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -389,7 +389,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_setattr(struct rpc_trans *rt)
+static int nfs3_op_setattr(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -483,7 +483,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_lookup(struct rpc_trans *rt)
+static int nfs3_op_lookup(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -575,7 +575,7 @@ out:
  * How does ACCESS3 fail in a way that
  * it uses ACCESS3resfail?
  */
-static int nfs3_access(struct rpc_trans *rt)
+static int nfs3_op_access(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -675,7 +675,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_readlink(struct rpc_trans *rt)
+static int nfs3_op_readlink(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -759,7 +759,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_read(struct rpc_trans *rt)
+static int nfs3_op_read(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -880,7 +880,7 @@ static void timespec_to_writeverf3(struct timespec *ts, writeverf3 verf)
 	memcpy(verf + 4, &ts->tv_nsec, 4);
 }
 
-static int nfs3_write(struct rpc_trans *rt)
+static int nfs3_op_write(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -1035,7 +1035,7 @@ static void timespec_to_createverf3(struct timespec *ts, createverf3 verf)
 	memcpy(verf + 4, &ts->tv_nsec, 4);
 }
 
-static int nfs3_create(struct rpc_trans *rt)
+static int nfs3_op_create(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -1218,7 +1218,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_mkdir(struct rpc_trans *rt)
+static int nfs3_op_mkdir(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -1362,7 +1362,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_symlink(struct rpc_trans *rt)
+static int nfs3_op_symlink(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -1519,7 +1519,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_mknod(struct rpc_trans *rt)
+static int nfs3_op_mknod(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -1714,7 +1714,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_remove(struct rpc_trans *rt)
+static int nfs3_op_remove(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -1810,7 +1810,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_rmdir(struct rpc_trans *rt)
+static int nfs3_op_rmdir(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -1929,7 +1929,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_rename(struct rpc_trans *rt)
+static int nfs3_op_rename(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -2133,7 +2133,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_link(struct rpc_trans *rt)
+static int nfs3_op_link(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -2297,7 +2297,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_readdir(struct rpc_trans *rt)
+static int nfs3_op_readdir(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -2521,7 +2521,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_readdirplus(struct rpc_trans *rt)
+static int nfs3_op_readdirplus(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -2864,7 +2864,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_fsstat(struct rpc_trans *rt)
+static int nfs3_op_fsstat(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -2938,7 +2938,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_fsinfo(struct rpc_trans *rt)
+static int nfs3_op_fsinfo(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -3016,7 +3016,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_pathconf(struct rpc_trans *rt)
+static int nfs3_op_pathconf(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -3089,7 +3089,7 @@ out:
 	return res->status;
 }
 
-static int nfs3_commit(struct rpc_trans *rt)
+static int nfs3_op_commit(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -3175,50 +3175,50 @@ out:
 }
 
 struct rpc_operations_handler nfs3_operations_handler[] = {
-	RPC_OPERATION_INIT(NFSPROC3, NULL, NULL, NULL, NULL, NULL, nfs3_null),
+	RPC_OPERATION_INIT(NFSPROC3, NULL, NULL, NULL, NULL, NULL, nfs3_op_null),
 	RPC_OPERATION_INIT(NFSPROC3, GETATTR, xdr_GETATTR3args, GETATTR3args,
-			   xdr_GETATTR3res, GETATTR3res, nfs3_getattr),
+			   xdr_GETATTR3res, GETATTR3res, nfs3_op_getattr),
 	RPC_OPERATION_INIT(NFSPROC3, SETATTR, xdr_SETATTR3args, SETATTR3args,
-			   xdr_SETATTR3res, SETATTR3res, nfs3_setattr),
+			   xdr_SETATTR3res, SETATTR3res, nfs3_op_setattr),
 	RPC_OPERATION_INIT(NFSPROC3, LOOKUP, xdr_LOOKUP3args, LOOKUP3args,
-			   xdr_LOOKUP3res, LOOKUP3res, nfs3_lookup),
+			   xdr_LOOKUP3res, LOOKUP3res, nfs3_op_lookup),
 	RPC_OPERATION_INIT(NFSPROC3, ACCESS, xdr_ACCESS3args, ACCESS3args,
-			   xdr_ACCESS3res, ACCESS3res, nfs3_access),
+			   xdr_ACCESS3res, ACCESS3res, nfs3_op_access),
 	RPC_OPERATION_INIT(NFSPROC3, READLINK, xdr_READLINK3args, READLINK3args,
-			   xdr_READLINK3res, READLINK3res, nfs3_readlink),
+			   xdr_READLINK3res, READLINK3res, nfs3_op_readlink),
 	RPC_OPERATION_INIT(NFSPROC3, READ, xdr_READ3args, READ3args,
-			   xdr_READ3res, READ3res, nfs3_read),
+			   xdr_READ3res, READ3res, nfs3_op_read),
 	RPC_OPERATION_INIT(NFSPROC3, WRITE, xdr_WRITE3args, WRITE3args,
-			   xdr_WRITE3res, WRITE3res, nfs3_write),
+			   xdr_WRITE3res, WRITE3res, nfs3_op_write),
 	RPC_OPERATION_INIT(NFSPROC3, CREATE, xdr_CREATE3args, CREATE3args,
-			   xdr_CREATE3res, CREATE3res, nfs3_create),
+			   xdr_CREATE3res, CREATE3res, nfs3_op_create),
 	RPC_OPERATION_INIT(NFSPROC3, MKDIR, xdr_MKDIR3args, MKDIR3args,
-			   xdr_MKDIR3res, MKDIR3res, nfs3_mkdir),
+			   xdr_MKDIR3res, MKDIR3res, nfs3_op_mkdir),
 	RPC_OPERATION_INIT(NFSPROC3, SYMLINK, xdr_SYMLINK3args, SYMLINK3args,
-			   xdr_SYMLINK3res, SYMLINK3res, nfs3_symlink),
+			   xdr_SYMLINK3res, SYMLINK3res, nfs3_op_symlink),
 	RPC_OPERATION_INIT(NFSPROC3, MKNOD, xdr_MKNOD3args, MKNOD3args,
-			   xdr_MKNOD3res, MKNOD3res, nfs3_mknod),
+			   xdr_MKNOD3res, MKNOD3res, nfs3_op_mknod),
 	RPC_OPERATION_INIT(NFSPROC3, REMOVE, xdr_REMOVE3args, REMOVE3args,
-			   xdr_REMOVE3res, REMOVE3res, nfs3_remove),
+			   xdr_REMOVE3res, REMOVE3res, nfs3_op_remove),
 	RPC_OPERATION_INIT(NFSPROC3, RMDIR, xdr_RMDIR3args, RMDIR3args,
-			   xdr_RMDIR3res, RMDIR3res, nfs3_rmdir),
+			   xdr_RMDIR3res, RMDIR3res, nfs3_op_rmdir),
 	RPC_OPERATION_INIT(NFSPROC3, RENAME, xdr_RENAME3args, RENAME3args,
-			   xdr_RENAME3res, RENAME3res, nfs3_rename),
+			   xdr_RENAME3res, RENAME3res, nfs3_op_rename),
 	RPC_OPERATION_INIT(NFSPROC3, LINK, xdr_LINK3args, LINK3args,
-			   xdr_LINK3res, LINK3res, nfs3_link),
+			   xdr_LINK3res, LINK3res, nfs3_op_link),
 	RPC_OPERATION_INIT(NFSPROC3, READDIR, xdr_READDIR3args, READDIR3args,
-			   xdr_READDIR3res, READDIR3res, nfs3_readdir),
+			   xdr_READDIR3res, READDIR3res, nfs3_op_readdir),
 	RPC_OPERATION_INIT(NFSPROC3, READDIRPLUS, xdr_READDIRPLUS3args,
 			   READDIRPLUS3args, xdr_READDIRPLUS3res,
-			   READDIRPLUS3res, nfs3_readdirplus),
+			   READDIRPLUS3res, nfs3_op_readdirplus),
 	RPC_OPERATION_INIT(NFSPROC3, FSSTAT, xdr_FSSTAT3args, FSSTAT3args,
-			   xdr_FSSTAT3res, FSSTAT3res, nfs3_fsstat),
+			   xdr_FSSTAT3res, FSSTAT3res, nfs3_op_fsstat),
 	RPC_OPERATION_INIT(NFSPROC3, FSINFO, xdr_FSINFO3args, FSINFO3args,
-			   xdr_FSINFO3res, FSINFO3res, nfs3_fsinfo),
+			   xdr_FSINFO3res, FSINFO3res, nfs3_op_fsinfo),
 	RPC_OPERATION_INIT(NFSPROC3, PATHCONF, xdr_PATHCONF3args, PATHCONF3args,
-			   xdr_PATHCONF3res, PATHCONF3res, nfs3_pathconf),
+			   xdr_PATHCONF3res, PATHCONF3res, nfs3_op_pathconf),
 	RPC_OPERATION_INIT(NFSPROC3, COMMIT, xdr_COMMIT3args, COMMIT3args,
-			   xdr_COMMIT3res, COMMIT3res, nfs3_commit),
+			   xdr_COMMIT3res, COMMIT3res, nfs3_op_commit),
 };
 
 static struct rpc_program_handler *nfs3_handler;
