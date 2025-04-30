@@ -63,11 +63,8 @@
 
 #define MAX_RETRIES (3)
 
-#ifdef DEBUG_PACKET_ASSEMBLY
-#define PACKET_ASSEMBLY_TRACE REFFS_TRACE_LEVEL_ERR
-#else
-#define PACKET_ASSEMBLY_TRACE REFFS_TRACE_LEVEL_NOTICE
-#endif
+static enum reffs_trace_level packet_assembly_trace = REFFS_TRACE_LEVEL_NOTICE;
+static enum reffs_trace_level write_fragment_trace = REFFS_TRACE_LEVEL_NOTICE;
 
 // Global flag for clean shutdown
 volatile sig_atomic_t running = 1;
@@ -372,7 +369,7 @@ static int request_more_read_data(struct buffer_state *bs,
 
 	io_uring_prep_read(sqe, bs->bs_fd, ic->ic_buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
-	TRACE(PACKET_ASSEMBLY_TRACE,
+	TRACE(packet_assembly_trace,
 	      "On fd = %d sent a context of type %s and id %d", ic->ic_fd,
 	      op_type_to_str(ic->ic_op_type), ic->ic_id);
 	for (int i = 0; i < MAX_RETRIES; i++) {
@@ -438,7 +435,7 @@ static int request_additional_read_data(int fd, struct connection_info *ci,
 	io_uring_prep_read(sqe, fd, buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
-	TRACE(PACKET_ASSEMBLY_TRACE,
+	TRACE(packet_assembly_trace,
 	      "On fd = %d sent a context of type %s and id %d", fd,
 	      op_type_to_str(ic->ic_op_type), ic->ic_id);
 
@@ -476,14 +473,14 @@ static int process_record_marker(struct buffer_state *bs)
 	size_t filled = bs->bs_filled;
 	struct record_state *rs = &bs->bs_record;
 
-	TRACE(PACKET_ASSEMBLY_TRACE,
+	TRACE(packet_assembly_trace,
 	      "ENTRY: filled=%zu, rs_position=%u, rs_total_len=%zu, rs_fragment_len=%u, rs_last_fragment=%d",
 	      filled, rs->rs_position, rs->rs_total_len, rs->rs_fragment_len,
 	      rs->rs_last_fragment);
 
 	// If continuing an existing fragment
 	if (rs->rs_fragment_len > 0) {
-		TRACE(PACKET_ASSEMBLY_TRACE,
+		TRACE(packet_assembly_trace,
 		      "Continuing fragment: position=%u, fragment_len=%u, filled=%zu",
 		      rs->rs_position, rs->rs_fragment_len, filled);
 
@@ -496,7 +493,7 @@ static int process_record_marker(struct buffer_state *bs)
 		memcpy(rs->rs_data + rs->rs_position, data, to_copy);
 		rs->rs_position += to_copy;
 
-		TRACE(PACKET_ASSEMBLY_TRACE,
+		TRACE(packet_assembly_trace,
 		      "Copied %zu more bytes, new position=%u of %u", to_copy,
 		      rs->rs_position, rs->rs_fragment_len);
 
@@ -506,7 +503,7 @@ static int process_record_marker(struct buffer_state *bs)
 
 		// Check if we've completed this fragment
 		if (rs->rs_position >= rs->rs_fragment_len) {
-			TRACE(PACKET_ASSEMBLY_TRACE,
+			TRACE(packet_assembly_trace,
 			      "Fragment complete, last_fragment=%d",
 			      rs->rs_last_fragment);
 
@@ -527,7 +524,7 @@ static int process_record_marker(struct buffer_state *bs)
 					bs->bs_filled = 0;
 				}
 
-				TRACE(PACKET_ASSEMBLY_TRACE,
+				TRACE(packet_assembly_trace,
 				      "Complete message assembled, size=%zu, filled=%zu, bs_filled=%zu",
 				      message_size, filled, bs->bs_filled);
 
@@ -557,7 +554,7 @@ static int process_record_marker(struct buffer_state *bs)
 				bs->bs_filled = 0;
 			}
 
-			TRACE(PACKET_ASSEMBLY_TRACE,
+			TRACE(packet_assembly_trace,
 			      "Fragment incomplete, position=%u of %u, requesting more data, filled=%zu, bs_filled=%zu",
 			      rs->rs_position, rs->rs_fragment_len, filled,
 			      bs->bs_filled);
@@ -570,7 +567,7 @@ static int process_record_marker(struct buffer_state *bs)
 	// Need at least 4 bytes for the record marker
 	if (filled < 4) {
 		bs->bs_filled = filled;
-		TRACE(PACKET_ASSEMBLY_TRACE,
+		TRACE(packet_assembly_trace,
 		      "Requesting more data, filled=%zu, bs_filled=%zu", filled,
 		      bs->bs_filled);
 		return 0;
@@ -581,7 +578,7 @@ static int process_record_marker(struct buffer_state *bs)
 	bool last_fragment = (marker & 0x80000000) != 0;
 	uint32_t fragment_len = marker & 0x7FFFFFFF;
 
-	TRACE(PACKET_ASSEMBLY_TRACE,
+	TRACE(packet_assembly_trace,
 	      "Starting a new message Len=%u, last_fragment=%d, marker=0x%08x",
 	      fragment_len, last_fragment, marker);
 
@@ -596,7 +593,7 @@ static int process_record_marker(struct buffer_state *bs)
 				memmove(bs->bs_data, data, filled);
 			}
 			bs->bs_filled = filled;
-			TRACE(PACKET_ASSEMBLY_TRACE,
+			TRACE(packet_assembly_trace,
 			      "Requesting more data, filled=%zu, bs_filled=%zu",
 			      filled, bs->bs_filled);
 			return 0;
@@ -604,7 +601,7 @@ static int process_record_marker(struct buffer_state *bs)
 		// Update buffer and return instead of recursing
 		memmove(bs->bs_data, data, filled);
 		bs->bs_filled = filled;
-		TRACE(PACKET_ASSEMBLY_TRACE,
+		TRACE(packet_assembly_trace,
 		      "Requesting more data, filled=%zu, bs_filled=%zu", filled,
 		      bs->bs_filled);
 		return 0;
@@ -627,7 +624,7 @@ static int process_record_marker(struct buffer_state *bs)
 	} else if (fragment_len > rs->rs_capacity) {
 		size_t new_capacity = fragment_len * 2;
 
-		TRACE(PACKET_ASSEMBLY_TRACE,
+		TRACE(packet_assembly_trace,
 		      "Resizing buffer from %zu to %zu bytes", rs->rs_capacity,
 		      new_capacity);
 
@@ -648,7 +645,7 @@ static int process_record_marker(struct buffer_state *bs)
 	// If no data after marker, request more
 	if (filled == 0) {
 		bs->bs_filled = 0;
-		TRACE(PACKET_ASSEMBLY_TRACE,
+		TRACE(packet_assembly_trace,
 		      "Requesting more data, filled=%zu, bs_filled=%zu", filled,
 		      bs->bs_filled);
 		return 0;
@@ -657,7 +654,7 @@ static int process_record_marker(struct buffer_state *bs)
 	// Copy available data for this fragment
 	size_t to_copy = (filled > fragment_len) ? fragment_len : filled;
 
-	TRACE(PACKET_ASSEMBLY_TRACE,
+	TRACE(packet_assembly_trace,
 	      "Copying %zu bytes, fragment_len=%u, filled=%zu", to_copy,
 	      fragment_len, filled);
 
@@ -689,7 +686,7 @@ static int process_record_marker(struct buffer_state *bs)
 				bs->bs_filled = 0;
 			}
 
-			TRACE(PACKET_ASSEMBLY_TRACE,
+			TRACE(packet_assembly_trace,
 			      "Complete message assembled, size=%zu, filled=%zu, bs_filled=%zu",
 			      message_size, filled, bs->bs_filled);
 
@@ -705,7 +702,7 @@ static int process_record_marker(struct buffer_state *bs)
 				memmove(bs->bs_data, data, filled);
 			}
 			bs->bs_filled = filled;
-			TRACE(PACKET_ASSEMBLY_TRACE,
+			TRACE(packet_assembly_trace,
 			      "Requesting more data, filled=%zu, bs_filled=%zu",
 			      filled, bs->bs_filled);
 			return 0;
@@ -714,7 +711,7 @@ static int process_record_marker(struct buffer_state *bs)
 		// Update buffer state instead of recursing
 		memmove(bs->bs_data, data, filled);
 		bs->bs_filled = filled;
-		TRACE(PACKET_ASSEMBLY_TRACE,
+		TRACE(packet_assembly_trace,
 		      "Requesting more data, filled=%zu, bs_filled=%zu", filled,
 		      bs->bs_filled);
 		return 0;
@@ -725,7 +722,7 @@ static int process_record_marker(struct buffer_state *bs)
 		memmove(bs->bs_data, data, filled);
 	}
 	bs->bs_filled = filled;
-	TRACE(PACKET_ASSEMBLY_TRACE,
+	TRACE(packet_assembly_trace,
 	      "Need more data for current fragment: position=%u, fragment_len=%u, filled=%zu, bs_filled=%zu",
 	      rs->rs_position, fragment_len, filled, bs->bs_filled);
 	return 0;
@@ -740,9 +737,10 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
 	int ret;
 
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
-	      "Len=%zu, Position=%zu, Remaining=%zu (xid=0x%08x)",
-	      ic->ic_buffer_len, ic->ic_position, remaining, ic->ic_xid);
+	TRACE(write_fragment_trace,
+	      "Context=%p Len=%zu, Position=%zu, Remaining=%zu (xid=0x%08x)",
+	      (void *)ic, ic->ic_buffer_len, ic->ic_position, remaining,
+	      ic->ic_xid);
 
 	// If no more data to send, we're done
 	if (remaining == 0) {
@@ -883,7 +881,7 @@ static int rpc_trans_cb(struct rpc_trans *rt)
 	int total_fragments =
 		(ic->ic_buffer_len + MAX_WRITE_SIZE - 1) / MAX_WRITE_SIZE;
 
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
+	TRACE(write_fragment_trace,
 	      "Fragmenting RPC reply of %zu bytes into %d fragments (xid=0x%08x)",
 	      ic->ic_buffer_len, total_fragments, ic->ic_xid);
 
@@ -1067,56 +1065,22 @@ bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len)
 	return true;
 }
 
-static int op_write_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
+static int op_write_handler(struct io_context *ic,
+			    int __attribute__((unused)) bytes_written,
+			    struct io_uring *ring)
 {
-	// Get the IO context from user_data
-	struct io_context *ic = (struct io_context *)(uintptr_t)cqe->user_data;
-	if (!ic) {
-		LOG("Error: NULL io context in write handler");
-		return -EINVAL;
-	}
-
 	return rpc_trans_writer(ic, ring);
 }
 
-static int op_write_handler_failed(struct io_uring_cqe *cqe)
-{
-	// Get the IO context from user_data
-	struct io_context *ic = (struct io_context *)(uintptr_t)cqe->user_data;
-	if (!ic) {
-		LOG("Error: NULL io context in write handler");
-		return -EINVAL;
-	}
-
-	size_t remaining = ic->ic_buffer_len - ic->ic_position;
-
-	TRACE(REFFS_TRACE_LEVEL_ERR,
-	      "Connection closed: Len=%zu, Position=%zu, Remaining=%zu (xid=0x%08x)",
-	      ic->ic_buffer_len, ic->ic_position, remaining, ic->ic_xid);
-
-	unregister_client_fd(ic->ic_fd);
-	close(ic->ic_fd);
-	io_context_free(ic);
-
-	return 0;
-}
-
 // Handle read completions
-static int op_read_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
+static int op_read_handler(struct io_context *ic, int bytes_read,
+			   struct io_uring *ring)
 {
 	int ret;
-
-	// Get the IO context from user_data
-	struct io_context *ic = (struct io_context *)(uintptr_t)cqe->user_data;
-	if (!ic) {
-		LOG("Error: NULL io context in read handler");
-		return -EINVAL;
-	}
 
 	// Extract data from context
 	char *buffer = (char *)ic->ic_buffer;
 	int client_fd = ic->ic_fd;
-	int bytes_read = cqe->res;
 
 	if (bytes_read <= 0) {
 		// Connection closed or error
@@ -1276,21 +1240,14 @@ static int request_accept_op(int fd, struct connection_info *ci,
 	return 0;
 }
 
-static int op_accept_handler(struct io_uring_cqe *cqe, struct io_uring *ring)
+static int op_accept_handler(struct io_context *ic, int client_fd,
+			     struct io_uring *ring)
 {
-	// Get the IO context from user_data
-	struct io_context *ic = (struct io_context *)(uintptr_t)cqe->user_data;
-	if (!ic) {
-		LOG("Error: NULL io context in read handler");
-		return -EINVAL;
-	}
-
 	char addr_str[INET6_ADDRSTRLEN];
 	uint16_t port;
 
 	// Handle new connection
 	int listen_fd = ic->ic_fd;
-	int client_fd = cqe->res;
 
 	ic->ic_ci.ci_peer_len = sizeof(ic->ic_ci.ci_peer);
 	if (getpeername(client_fd, (struct sockaddr *)&ic->ic_ci.ci_peer,
@@ -1388,12 +1345,28 @@ static void usage(const char *prog)
 	printf("                                     3 - Warning");
 	printf("                                     4 - Error");
 	printf("                                     5 - Disabled");
+	printf("  -a  --assembly=lvl           Enable packet assembly tracing at a level");
+	printf("                                     0 - Debug");
+	printf("                                     1 - Info");
+	printf("                                     2 - Notice");
+	printf("                                     3 - Warning");
+	printf("                                     4 - Error");
+	printf("                                     5 - Disabled");
+	printf("  -f  --fragment=lvl           Enable write fragment tracing at a level");
+	printf("                                     0 - Debug");
+	printf("                                     1 - Info");
+	printf("                                     2 - Notice");
+	printf("                                     3 - Warning");
+	printf("                                     4 - Error");
+	printf("                                     5 - Disabled");
 }
 
 static struct option long_opts[] = {
 	{ "help", no_argument, 0, 'h' },
 	{ "port", required_argument, 0, 'p' },
 	{ "tracing", required_argument, 0, 't' },
+	{ "assembly", required_argument, 0, 'a' },
+	{ "fragment", required_argument, 0, 'f' },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -1413,12 +1386,32 @@ int main(int argc, char *argv[])
 
 	server_boot_uuid_generate();
 
-	while ((opt = getopt_long(argc, argv, "p:ht:", long_opts, NULL)) !=
+	while ((opt = getopt_long(argc, argv, "p:ht:a:f:", long_opts, NULL)) !=
 	       -1) {
 		switch (opt) {
 		case 'p':
 			port = atoi(optarg);
 			break;
+		case 'a': {
+			int tracing = atoi(optarg);
+			packet_assembly_trace = tracing;
+			if (tracing < 0)
+				packet_assembly_trace = REFFS_TRACE_LEVEL_DEBUG;
+			else if (tracing > REFFS_TRACE_LEVEL_DISABLED)
+				packet_assembly_trace =
+					REFFS_TRACE_LEVEL_DISABLED;
+			break;
+		}
+		case 'f': {
+			int tracing = atoi(optarg);
+			write_fragment_trace = tracing;
+			if (tracing < 0)
+				write_fragment_trace = REFFS_TRACE_LEVEL_DEBUG;
+			else if (tracing > REFFS_TRACE_LEVEL_DISABLED)
+				write_fragment_trace =
+					REFFS_TRACE_LEVEL_DISABLED;
+			break;
+		}
 		case 't': {
 			int tracing = atoi(optarg);
 			enum reffs_trace_level level = tracing;
@@ -1546,59 +1539,46 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
+		struct io_context *ic =
+			(struct io_context *)(uintptr_t)cqe->user_data;
+		if (!ic) {
+			LOG("Error: NULL io context");
+			io_uring_cqe_seen(&ring, cqe);
+			continue;
+		}
+
+		TRACE(write_fragment_trace,
+		      "context %p (%d) with fd=%d of type %s and id %d",
+		      (void *)ic, cqe->res, ic->ic_fd,
+		      op_type_to_str(ic->ic_op_type), ic->ic_id);
+
 		if (cqe->res < 0) {
-			struct io_context *ic =
-				(struct io_context *)(uintptr_t)cqe->user_data;
 			LOG("CQE error for op=%s, fd=%d: %s",
 			    op_type_to_str(ic->ic_op_type), ic->ic_fd,
 			    strerror(-cqe->res));
+
+			unregister_client_fd(ic->ic_fd);
+			close(ic->ic_fd);
+			io_context_free(ic);
 		} else {
-			// Get the IO context from user_data
-			struct io_context *ic =
-				(struct io_context *)(uintptr_t)cqe->user_data;
-			if (!ic) {
-				LOG("Error: NULL io context");
-				io_uring_cqe_seen(&ring, cqe);
-				continue;
-			}
-
-			TRACE(REFFS_TRACE_LEVEL_NOTICE,
-			      "On fd = %d got a context of type %s and id %d",
-			      ic->ic_fd, op_type_to_str(ic->ic_op_type),
-			      ic->ic_id);
-
 			enum op_type op = ic->ic_op_type;
 
 			switch (ic->ic_op_type) {
 			case OP_TYPE_ACCEPT: {
-				ret = op_accept_handler(cqe, &ring);
+				ret = op_accept_handler(ic, cqe->res, &ring);
 				break;
 			}
 
 			case OP_TYPE_READ: {
-				ret = op_read_handler(cqe, &ring);
+				ret = op_read_handler(ic, cqe->res, &ring);
 				break;
 			}
 
 			case OP_TYPE_WRITE: {
-				if (cqe->res < 0) {
-					LOG("Write operation failed: %s",
-					    strerror(-cqe->res));
-					op_write_handler_failed(cqe);
-				} else {
-					struct io_context *ic =
-						(struct io_context *)(uintptr_t)
-							cqe->user_data;
-					if (!ic) {
-						LOG("Error: NULL io context in write handler");
-						return -EINVAL;
-					}
-
-					TRACE(REFFS_TRACE_LEVEL_WARNING,
-					      "Successfully wrote %d bytes for (xid=0x%08x)",
-					      cqe->res, ic->ic_xid);
-					op_write_handler(cqe, &ring);
-				}
+				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				      "Successfully wrote %d bytes for (xid=0x%08x)",
+				      cqe->res, ic->ic_xid);
+				op_write_handler(ic, cqe->res, &ring);
 				ret = 0;
 				break;
 			}
