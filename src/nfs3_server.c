@@ -35,6 +35,7 @@
 #include "reffs/server.h"
 #include "reffs/ns.h"
 #include "reffs/io.h"
+#include "reffs/trace/trace.h"
 
 #define NFS_PORT 2049
 
@@ -44,8 +45,7 @@ volatile sig_atomic_t running = 1;
 // Signal handler
 static void signal_handler(int sig)
 {
-	TRACE(REFFS_TRACE_LEVEL_ERR,
-	      "Received signal %d, initiating shutdown...", sig);
+	TRACE("Received signal %d, initiating shutdown...", sig);
 	running = 0;
 
 	// Wake up any waiting worker threads
@@ -58,35 +58,20 @@ static void usage(const char *prog)
 	printf("Options:\n");
 	printf("  -h  --help                   Print this usage and exit\n");
 	printf("  -p  --port=id                Serve NFS traffic from this \"port\"\n");
-	printf("  -t  --tracing=lvl            Enable tracing at a level");
-	printf("                                     0 - Debug");
-	printf("                                     1 - Info");
-	printf("                                     2 - Notice");
-	printf("                                     3 - Warning");
-	printf("                                     4 - Error");
-	printf("                                     5 - Disabled");
-	printf("  -a  --assembly=lvl           Enable packet assembly tracing at a level");
-	printf("                                     0 - Debug");
-	printf("                                     1 - Info");
-	printf("                                     2 - Notice");
-	printf("                                     3 - Warning");
-	printf("                                     4 - Error");
-	printf("                                     5 - Disabled");
-	printf("  -f  --fragment=lvl           Enable write fragment tracing at a level");
-	printf("                                     0 - Debug");
-	printf("                                     1 - Info");
-	printf("                                     2 - Notice");
-	printf("                                     3 - Warning");
-	printf("                                     4 - Error");
-	printf("                                     5 - Disabled");
+	printf("  -f  --file=fname             Save tracing data to this file \"fname\"\n");
+	printf("  -c  --category=cat           Enable tracing for a category");
+	printf("                                     0 - General");
+	printf("                                     1 - IO");
+	printf("                                     2 - RPC");
+	printf("                                     3 - NFS");
+	printf("                                     4 - FS");
 }
 
 static struct option long_opts[] = {
+	{ "category", required_argument, 0, 'c' },
+	{ "file", required_argument, 0, 'f' },
 	{ "help", no_argument, 0, 'h' },
 	{ "port", required_argument, 0, 'p' },
-	{ "tracing", required_argument, 0, 't' },
-	{ "assembly", required_argument, 0, 'a' },
-	{ "fragment", required_argument, 0, 'f' },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -99,49 +84,30 @@ int main(int argc, char *argv[])
 
 	struct io_uring ring;
 
+	char *trace_file = "/tmp/reffs_nfs3_srv.log";
+
 	// Initialize userspace RCU
 	rcu_init();
 
 	server_boot_uuid_generate();
 
-	while ((opt = getopt_long(argc, argv, "p:ht:a:f:", long_opts, NULL)) !=
-	       -1) {
+	char *opts = "p:ht:c:f:";
+
+	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'p':
 			port = atoi(optarg);
 			break;
-		case 'a': {
+		case 'c': {
 			int tracing = atoi(optarg);
-			enum reffs_trace_level packet_assembly_trace = tracing;
-			if (tracing < 0)
-				packet_assembly_trace = REFFS_TRACE_LEVEL_DEBUG;
-			else if (tracing > REFFS_TRACE_LEVEL_DISABLED)
-				packet_assembly_trace =
-					REFFS_TRACE_LEVEL_DISABLED;
-			packet_assembly_trace_set(packet_assembly_trace);
+			if (tracing > 0 && tracing < REFFS_TRACE_CAT_MAX) {
+				reffs_trace_enable_category(tracing);
+			}
 			break;
 		}
-		case 'f': {
-			int tracing = atoi(optarg);
-			enum reffs_trace_level write_fragment_trace = tracing;
-			if (tracing < 0)
-				write_fragment_trace = REFFS_TRACE_LEVEL_DEBUG;
-			else if (tracing > REFFS_TRACE_LEVEL_DISABLED)
-				write_fragment_trace =
-					REFFS_TRACE_LEVEL_DISABLED;
-			write_fragment_trace_set(write_fragment_trace);
+		case 'f':
+			trace_file = optarg;
 			break;
-		}
-		case 't': {
-			int tracing = atoi(optarg);
-			enum reffs_trace_level level = tracing;
-			if (tracing < 0)
-				level = REFFS_TRACE_LEVEL_DEBUG;
-			else if (tracing > REFFS_TRACE_LEVEL_DISABLED)
-				level = REFFS_TRACE_LEVEL_DISABLED;
-			reffs_tracing_set(level);
-			break;
-		}
 		case 'h':
 			usage(argv[0]);
 			return 0;
@@ -149,6 +115,7 @@ int main(int argc, char *argv[])
 	}
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
+	reffs_trace_init(trace_file);
 
 	// Setup signal handlers
 	struct sigaction sa;
@@ -222,7 +189,7 @@ int main(int argc, char *argv[])
 	// Run the main IO processing loop
 	io_handler_main_loop(&running, &ring);
 
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "Main loop exited, cleaning up...");
+	TRACE("Main loop exited, cleaning up...");
 
 	// Cleanup listener socket
 	close(listener_fd);
@@ -233,24 +200,23 @@ int main(int argc, char *argv[])
 	// Wait for worker threads to finish
 	wait_for_worker_threads();
 
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "Unregistering Port Mapper");
+	TRACE("Unregistering Port Mapper");
 	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
 	pmap_unset(NFS3_PROGRAM, NFS_V3);
 
 out:
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
-	      "Final io_context statistics: created=%d, freed=%d, difference=%d",
+	TRACE("Final io_context statistics: created=%d, freed=%d, difference=%d",
 	      get_context_created(), get_context_freed(),
 	      get_context_created() - get_context_freed());
 
 	// Wait for RCU grace period
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "Calling rcu_barrier()...");
+	TRACE("Calling rcu_barrier()...");
 	rcu_barrier();
 
 	reffs_ns_fini();
 
 	// Let inodes clear out of memory
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "Calling rcu_barrier()...");
+	TRACE("Calling rcu_barrier()...");
 	rcu_barrier();
 
 	mount3_protocol_deregister();

@@ -53,15 +53,12 @@ void *io_worker_thread(void *vtd)
 {
 	struct thread_data *td = (struct thread_data *)vtd;
 
-	int thread_id = td->thread_id;
 	volatile sig_atomic_t *running = td->running;
 
 	free(vtd);
 
 	// Register this thread with userspace RCU
 	rcu_register_thread();
-
-	TRACE(REFFS_TRACE_LEVEL_NOTICE, "Worker thread %d started", thread_id);
 
 	while (*running) {
 		struct task *t = NULL;
@@ -96,14 +93,8 @@ void *io_worker_thread(void *vtd)
 		if (t) {
 			if (t->t_fd > 0) {
 				t->t_cb = io_rpc_trans_cb;
-				TRACE(REFFS_TRACE_LEVEL_NOTICE,
-				      "Complete RPC message processed (%d bytes)",
-				      t->t_bytes_read);
 				int rc = rpc_process_task(t);
 				if (rc == ENOMEM) {
-					TRACE(REFFS_TRACE_LEVEL_ERR,
-					      "Worker thread %d rescheduling",
-					      thread_id);
 					add_task(t);
 					continue;
 				}
@@ -113,8 +104,6 @@ void *io_worker_thread(void *vtd)
 			free(t);
 		}
 	}
-
-	TRACE(REFFS_TRACE_LEVEL_NOTICE, "Worker thread %d exiting", thread_id);
 
 	// Unregister this thread from userspace RCU
 	rcu_unregister_thread();
@@ -159,8 +148,7 @@ int create_worker_threads(volatile sig_atomic_t *running)
 void wait_for_worker_threads(void)
 {
 	// Wait for worker threads to finish
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
-	      "Waiting for worker threads to exit...");
+	LOG("Waiting for worker threads to exit...");
 	for (int i = 0; i < num_worker_threads; i++) {
 		pthread_join(worker_threads[i], NULL);
 	}

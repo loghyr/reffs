@@ -120,7 +120,6 @@ out:
 static void release_dirents_recursive(struct dirent *de_parent)
 {
 	struct dirent *de;
-	int count = 0;
 
 	if (!de_parent || !de_parent->d_inode)
 		return;
@@ -129,11 +128,7 @@ static void release_dirents_recursive(struct dirent *de_parent)
 				    d_siblings) {
 		release_dirents_recursive(de);
 		dirent_put(de);
-		count++;
 	}
-
-	TRACE(REFFS_TRACE_LEVEL_INFO, "Unloaded %d entries for %s", count,
-	      de_parent->d_name);
 }
 
 static void release_all_fs_dirents(void)
@@ -146,8 +141,6 @@ static void release_all_fs_dirents(void)
 
 	cds_list_for_each_entry_safe(sb, tmp, sb_list, sb_link) {
 		uuid_unparse(sb->sb_uuid, uuid_str);
-		TRACE(REFFS_TRACE_LEVEL_WARNING, "Unloading \"%s\" (uuid %s)",
-		      sb->sb_path, uuid_str);
 		de_parent = dirent_get(sb->sb_dirent);
 		if (de_parent) {
 			release_dirents_recursive(de_parent);

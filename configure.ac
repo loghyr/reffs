@@ -346,6 +346,7 @@ AC_CONFIG_FILES([
 	lib/fs/tests/Makefile
 	lib/include/Makefile
 	lib/include/reffs/Makefile
+	lib/include/reffs/trace/Makefile
 	lib/io/Makefile
 	lib/mount3/Makefile
 	lib/mount3/tests/Makefile
@@ -358,6 +359,7 @@ AC_CONFIG_FILES([
 	lib/scripts/Makefile
 	lib/scripts/reffs/Makefile
 	lib/tests/Makefile
+	lib/trace/Makefile
 	lib/utils/Makefile
 	lib/xdr/Makefile
 	src/Makefile])

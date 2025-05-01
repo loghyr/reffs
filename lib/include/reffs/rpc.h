@@ -135,10 +135,6 @@ static inline uint32_t *rpc_decode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 static inline uint32_t *rpc_encode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 					    uint32_t src)
 {
-	TRACE(REFFS_TRACE_LEVEL_DEBUG,
-	      "Encoding %u at %lu size %lu where there is %lu left", src,
-	      rt->rt_offset, rt->rt_reply_len,
-	      rt->rt_reply_len - rt->rt_offset);
 	if (rt->rt_offset + sizeof(uint32_t) <= rt->rt_reply_len) {
 		*p = htonl(src);
 		rt->rt_offset += sizeof(uint32_t);

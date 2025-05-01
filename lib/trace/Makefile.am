@@ -9,10 +9,6 @@ AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 
 AM_LDFLAGS = -rdynamic
 
-lib_LTLIBRARIES = libreffs_utils.la
-libreffs_utils_la_SOURCES =	\
-	cmp.c			\
-	identity.c		\
-	network.c		\
-	rcu.c			\
-	server.c
+lib_LTLIBRARIES = libreffs_trace.la
+libreffs_trace_la_SOURCES =	\
+	common.c

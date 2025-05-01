@@ -63,9 +63,6 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 	ic->ic_buffer_len = buffer_len;
 
 	context_created++;
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
-	      "Created io_context %d of type %s (total: %d)", ic->ic_id,
-	      op_type_to_str(op_type), context_created);
 
 	return ic;
 }
@@ -76,9 +73,6 @@ void io_context_free(struct io_context *ic)
 		return;
 
 	context_freed++;
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
-	      "Freed io_context %d of type %s (total: %d/%d)", ic->ic_id,
-	      op_type_to_str(ic->ic_op_type), context_freed, context_created);
 
 	free(ic->ic_buffer);
 	free(ic);

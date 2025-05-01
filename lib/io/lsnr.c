@@ -62,6 +62,5 @@ int setup_listener(int port)
 		return -1;
 	}
 
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "Listening on port %d", port);
 	return listen_fd;
 }

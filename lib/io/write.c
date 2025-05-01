@@ -31,6 +31,7 @@
 #include "reffs/task.h"
 #include "reffs/test.h"
 #include "reffs/io.h"
+#include "reffs/trace/io.h"
 
 // Maximum size for a single write
 #define MAX_WRITE_SIZE (1024 * 1024)
@@ -70,11 +71,6 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
 	int ret = 0;
 
-	TRACE(write_fragment_trace_get(),
-	      "Context=%p Len=%zu, Position=%zu, Remaining=%zu (xid=0x%08x)",
-	      (void *)ic, ic->ic_buffer_len, ic->ic_position, remaining,
-	      ic->ic_xid);
-
 	// If no more data to send, we're done
 	if (remaining == 0) {
 		io_context_free(ic);
@@ -100,12 +96,6 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 		chunk_size = remaining > MAX_WRITE_SIZE ? MAX_WRITE_SIZE :
 							  remaining;
 		buffer = (char *)ic->ic_buffer;
-
-		// For debugging
-		uint32_t original_marker = ntohl(*(uint32_t *)buffer);
-		TRACE(REFFS_TRACE_LEVEL_DEBUG,
-		      "Original Record Marker=0x%x (xid=0x%08x)",
-		      original_marker, ic->ic_xid);
 	} else {
 		// Calculate chunk size: either MAX_WRITE_SIZE or remaining + 4 bytes for marker
 		chunk_size = remaining > (MAX_WRITE_SIZE - 4) ? MAX_WRITE_SIZE :
@@ -119,33 +109,19 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	p = (uint32_t *)buffer;
 	*p = htonl((last_fragment ? 0x80000000 : 0) | (chunk_size - 4));
 
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
-	      "Last Fragment=%d, Chunk=%u,  Record Marker=0x%x (xid=0x%08x)",
-	      last_fragment, chunk_size, ntohl(*p), ic->ic_xid);
-
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		sqe = io_uring_get_sqe(ring);
 		if (sqe)
 			break;
-		TRACE(REFFS_TRACE_LEVEL_ERR, "Waiting for retry %d", i);
 		usleep(IO_URING_WAIT_US);
 	}
 
 	if (!sqe) {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_get_sqe failed");
 		unregister_client_fd(ic->ic_fd);
 		close(ic->ic_fd);
 		io_context_free(ic);
 		return ENOMEM;
 	}
-
-	int total_fragments =
-		(ic->ic_buffer_len + MAX_WRITE_SIZE - 1) / MAX_WRITE_SIZE;
-
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
-	      "Fragment %d/%d: payload_offset=%zu size=%u last=%d (xid=0x%08x)",
-	      (int)(ic->ic_position / MAX_WRITE_SIZE), total_fragments,
-	      ic->ic_position, chunk_size, last_fragment, ic->ic_xid);
 
 	// Update position for next fragment
 	if (ic->ic_position == 0) {
@@ -156,25 +132,16 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 		ic->ic_position += (chunk_size - 4);
 	}
 
-	int error = 0;
-	socklen_t len = sizeof(error);
-	if (getsockopt(ic->ic_fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0 ||
-	    error != 0) {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "Socket error before write: %s",
-		      strerror(error ? error : errno));
-	}
-
 	// Submit the write operation
 	io_uring_prep_write(sqe, ic->ic_fd, buffer, chunk_size, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
+	trace_io_write_submit(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
-			TRACE(write_fragment_trace_get(),
-			      "Context=%p resubmission %d", (void *)ic, i);
 			usleep(IO_URING_WAIT_US);
 			ret = 0;
 			break; // Right now we don't know what io_uring is doing!
@@ -183,14 +150,10 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	}
 
 	if (ret < 0) {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed: %d", ret);
 		unregister_client_fd(ic->ic_fd);
 		close(ic->ic_fd);
 		io_context_free(ic);
 	} else {
-		TRACE(write_fragment_trace_get(),
-		      "Context=%p submitted %d io_uring operations", (void *)ic,
-		      ret);
 		ret = 0;
 	}
 
@@ -205,9 +168,6 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 			       rt->rt_reply_len);
 	if (!ic) {
 		LOG("Failed to create write context");
-		TRACE(REFFS_TRACE_LEVEL_ERR,
-		      "Dropped RPC reply xid=0x%08x due to no context",
-		      rt->rt_info.ri_xid);
 		return 0;
 	}
 
@@ -215,13 +175,6 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);
 
 	rt->rt_reply = NULL;
-
-	int total_fragments =
-		(ic->ic_buffer_len + MAX_WRITE_SIZE - 1) / MAX_WRITE_SIZE;
-
-	TRACE(write_fragment_trace_get(),
-	      "Fragmenting RPC reply of %zu bytes into %d fragments (xid=0x%08x)",
-	      ic->ic_buffer_len, total_fragments, ic->ic_xid);
 
 	return rpc_trans_writer(ic, rt->rt_ring);
 }

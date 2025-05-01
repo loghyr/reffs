@@ -28,6 +28,7 @@
 #include "reffs/network.h"
 #include "reffs/test.h"
 #include "reffs/io.h"
+#include "reffs/trace/io.h"
 
 int request_accept_op(int fd, struct connection_info *ci, struct io_uring *ring)
 {
@@ -57,12 +58,10 @@ int request_accept_op(int fd, struct connection_info *ci, struct io_uring *ring)
 		sqe = io_uring_get_sqe(ring);
 		if (sqe)
 			break;
-		TRACE(REFFS_TRACE_LEVEL_ERR, "Waiting for retry %d", i);
 		usleep(IO_URING_WAIT_US);
 	}
 
 	if (!sqe) {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_get_sqe failed");
 		close(fd);
 		io_context_free(ic);
 		return -ENOMEM;
@@ -72,17 +71,13 @@ int request_accept_op(int fd, struct connection_info *ci, struct io_uring *ring)
 			     (socklen_t *)&ic->ic_buffer_len, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
-	      "On fd = %d sent a context of type %s and id %d", fd,
-	      op_type_to_str(ic->ic_op_type), ic->ic_id);
+	trace_io_accept_submit(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
-			TRACE(write_fragment_trace_get(),
-			      "context=%p resubmission %d", (void *)ic, i);
 			usleep(IO_URING_WAIT_US);
 			break; // right now we don't know what io_uring is doing!
 		} else
@@ -90,8 +85,6 @@ int request_accept_op(int fd, struct connection_info *ci, struct io_uring *ring)
 	}
 
 	if (ret < 0) {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed with %s",
-		      strerror(-ret));
 		close(fd);
 		io_context_free(ic);
 	} else {
@@ -115,8 +108,6 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 			&ic->ic_ci.ci_peer_len) == 0) {
 		addr_to_string(&ic->ic_ci.ci_peer, addr_str, INET6_ADDRSTRLEN,
 			       &port);
-		TRACE(REFFS_TRACE_LEVEL_WARNING,
-		      "Client connected from %s port %d", addr_str, port);
 	} else {
 		LOG("Failed to get peer information: %s", strerror(errno));
 		memset(&ic->ic_ci.ci_peer, 0, sizeof(ic->ic_ci.ci_peer));
@@ -128,16 +119,11 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 			&ic->ic_ci.ci_local_len) == 0) {
 		addr_to_string(&ic->ic_ci.ci_local, addr_str, INET6_ADDRSTRLEN,
 			       &port);
-		TRACE(REFFS_TRACE_LEVEL_WARNING,
-		      "Server local endpoint - %s port %d", addr_str, port);
 	} else {
 		LOG("Failed to get local information: %s", strerror(errno));
 		memset(&ic->ic_ci.ci_local, 0, sizeof(ic->ic_ci.ci_local));
 		ic->ic_ci.ci_local_len = 0;
 	}
-
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "New connection accepted (fd: %d)",
-	      client_fd);
 
 	// Register this client
 	register_client_fd(client_fd);

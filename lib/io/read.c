@@ -31,18 +31,7 @@
 #include "reffs/task.h"
 #include "reffs/test.h"
 #include "reffs/io.h"
-
-enum reffs_trace_level packet_assembly_trace = REFFS_TRACE_LEVEL_NOTICE;
-
-void packet_assembly_trace_set(enum reffs_trace_level lvl)
-{
-	packet_assembly_trace = lvl;
-}
-
-enum reffs_trace_level packet_assembly_trace_get(void)
-{
-	return packet_assembly_trace;
-}
+#include "reffs/trace/io.h"
 
 /*
  * Let the caller shut things down if there is an error
@@ -59,27 +48,22 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 		sqe = io_uring_get_sqe(ring);
 		if (sqe)
 			break;
-		TRACE(REFFS_TRACE_LEVEL_ERR, "Waiting for retry %d", i);
 		usleep(IO_URING_WAIT_US);
 	}
 
 	if (!sqe) {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_get_sqe failed");
 		return -ENOMEM;
 	}
 
 	io_uring_prep_read(sqe, bs->bs_fd, ic->ic_buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
-	TRACE(packet_assembly_trace,
-	      "On fd = %d sent a context of type %s and id %d", ic->ic_fd,
-	      op_type_to_str(ic->ic_op_type), ic->ic_id);
+	trace_io_read_submit(ic);
+
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
-			TRACE(write_fragment_trace_get(),
-			      "Context=%p resubmission %d", (void *)ic, i);
 			usleep(IO_URING_WAIT_US);
 			ret = 0;
 			break; // Right now we don't know what io_uring is doing!
@@ -87,10 +71,7 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 			break;
 	}
 
-	if (ret < 0)
-		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed with %s",
-		      strerror(-ret));
-	else
+	if (ret > 0)
 		ret = 0;
 
 	return ret;
@@ -125,12 +106,10 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 		sqe = io_uring_get_sqe(ring);
 		if (sqe)
 			break;
-		TRACE(REFFS_TRACE_LEVEL_ERR, "Waiting for retry %d", i);
 		usleep(IO_URING_WAIT_US);
 	}
 
 	if (!sqe) {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_get_sqe failed");
 		free(buffer);
 		close(fd);
 		io_context_free(ic);
@@ -140,17 +119,13 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 	io_uring_prep_read(sqe, fd, buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
-	TRACE(packet_assembly_trace,
-	      "On fd = %d sent a context of type %s and id %d", fd,
-	      op_type_to_str(ic->ic_op_type), ic->ic_id);
+	trace_io_read_submit(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
-			TRACE(write_fragment_trace_get(),
-			      "Context=%p resubmission %d", (void *)ic, i);
 			usleep(IO_URING_WAIT_US);
 			ret = 0;
 			break; // Right now we don't know what io_uring is doing!
@@ -159,8 +134,6 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 	}
 
 	if (ret < 0) {
-		TRACE(REFFS_TRACE_LEVEL_ERR, "io_uring_submit failed with %s",
-		      strerror(-ret));
 		free(buffer);
 		close(fd);
 		io_context_free(ic);
@@ -182,17 +155,8 @@ static int process_record_marker(struct buffer_state *bs)
 	size_t filled = bs->bs_filled;
 	struct record_state *rs = &bs->bs_record;
 
-	TRACE(packet_assembly_trace,
-	      "ENTRY: filled=%zu, rs_position=%u, rs_total_len=%zu, rs_fragment_len=%u, rs_last_fragment=%d",
-	      filled, rs->rs_position, rs->rs_total_len, rs->rs_fragment_len,
-	      rs->rs_last_fragment);
-
 	// If continuing an existing fragment
 	if (rs->rs_fragment_len > 0) {
-		TRACE(packet_assembly_trace,
-		      "Continuing fragment: position=%u, fragment_len=%u, filled=%zu",
-		      rs->rs_position, rs->rs_fragment_len, filled);
-
 		// Calculate remaining bytes needed
 		size_t bytes_remaining = rs->rs_fragment_len - rs->rs_position;
 		size_t to_copy = (filled > bytes_remaining) ? bytes_remaining :
@@ -202,20 +166,12 @@ static int process_record_marker(struct buffer_state *bs)
 		memcpy(rs->rs_data + rs->rs_position, data, to_copy);
 		rs->rs_position += to_copy;
 
-		TRACE(packet_assembly_trace,
-		      "Copied %zu more bytes, new position=%u of %u", to_copy,
-		      rs->rs_position, rs->rs_fragment_len);
-
 		// Advance the input buffer
 		data += to_copy;
 		filled -= to_copy;
 
 		// Check if we've completed this fragment
 		if (rs->rs_position >= rs->rs_fragment_len) {
-			TRACE(packet_assembly_trace,
-			      "Fragment complete, last_fragment=%d",
-			      rs->rs_last_fragment);
-
 			// If this was the last fragment, we've got a complete message
 			if (rs->rs_last_fragment) {
 				size_t message_size = rs->rs_position;
@@ -232,10 +188,6 @@ static int process_record_marker(struct buffer_state *bs)
 				} else {
 					bs->bs_filled = 0;
 				}
-
-				TRACE(packet_assembly_trace,
-				      "Complete message assembled, size=%zu, filled=%zu, bs_filled=%zu",
-				      message_size, filled, bs->bs_filled);
 
 				return message_size;
 			}
@@ -263,10 +215,6 @@ static int process_record_marker(struct buffer_state *bs)
 				bs->bs_filled = 0;
 			}
 
-			TRACE(packet_assembly_trace,
-			      "Fragment incomplete, position=%u of %u, requesting more data, filled=%zu, bs_filled=%zu",
-			      rs->rs_position, rs->rs_fragment_len, filled,
-			      bs->bs_filled);
 			return 0;
 		}
 	}
@@ -276,9 +224,6 @@ static int process_record_marker(struct buffer_state *bs)
 	// Need at least 4 bytes for the record marker
 	if (filled < 4) {
 		bs->bs_filled = filled;
-		TRACE(packet_assembly_trace,
-		      "Requesting more data, filled=%zu, bs_filled=%zu", filled,
-		      bs->bs_filled);
 		return 0;
 	}
 
@@ -287,14 +232,10 @@ static int process_record_marker(struct buffer_state *bs)
 	bool last_fragment = (marker & 0x80000000) != 0;
 	uint32_t fragment_len = marker & 0x7FFFFFFF;
 
-	TRACE(packet_assembly_trace,
-	      "Starting a new message Len=%u, last_fragment=%d, marker=0x%08x",
-	      fragment_len, last_fragment, marker);
+	trace_io_record_marker(bs, marker, last_fragment, marker);
 
 	// Skip invalid markers
 	if (fragment_len == 0) {
-		TRACE(REFFS_TRACE_LEVEL_ERR,
-		      "Invalid zero-length fragment, skipping");
 		data += 4;
 		filled -= 4;
 		if (filled < 4) {
@@ -302,17 +243,11 @@ static int process_record_marker(struct buffer_state *bs)
 				memmove(bs->bs_data, data, filled);
 			}
 			bs->bs_filled = filled;
-			TRACE(packet_assembly_trace,
-			      "Requesting more data, filled=%zu, bs_filled=%zu",
-			      filled, bs->bs_filled);
 			return 0;
 		}
 		// Update buffer and return instead of recursing
 		memmove(bs->bs_data, data, filled);
 		bs->bs_filled = filled;
-		TRACE(packet_assembly_trace,
-		      "Requesting more data, filled=%zu, bs_filled=%zu", filled,
-		      bs->bs_filled);
 		return 0;
 	}
 
@@ -326,21 +261,13 @@ static int process_record_marker(struct buffer_state *bs)
 		rs->rs_capacity = fragment_len * 2;
 		rs->rs_data = malloc(rs->rs_capacity);
 		if (!rs->rs_data) {
-			TRACE(REFFS_TRACE_LEVEL_ERR,
-			      "Failed to allocate record buffer");
 			return -ENOMEM;
 		}
 	} else if (fragment_len > rs->rs_capacity) {
 		size_t new_capacity = fragment_len * 2;
 
-		TRACE(packet_assembly_trace,
-		      "Resizing buffer from %zu to %zu bytes", rs->rs_capacity,
-		      new_capacity);
-
 		char *new_data = realloc(rs->rs_data, new_capacity);
 		if (!new_data) {
-			TRACE(REFFS_TRACE_LEVEL_ERR,
-			      "Failed to resize record buffer");
 			return -ENOMEM;
 		}
 		rs->rs_data = new_data;
@@ -354,18 +281,11 @@ static int process_record_marker(struct buffer_state *bs)
 	// If no data after marker, request more
 	if (filled == 0) {
 		bs->bs_filled = 0;
-		TRACE(packet_assembly_trace,
-		      "Requesting more data, filled=%zu, bs_filled=%zu", filled,
-		      bs->bs_filled);
 		return 0;
 	}
 
 	// Copy available data for this fragment
 	size_t to_copy = (filled > fragment_len) ? fragment_len : filled;
-
-	TRACE(packet_assembly_trace,
-	      "Copying %zu bytes, fragment_len=%u, filled=%zu", to_copy,
-	      fragment_len, filled);
 
 	memcpy(rs->rs_data, data, to_copy);
 	rs->rs_position = to_copy;
@@ -395,10 +315,6 @@ static int process_record_marker(struct buffer_state *bs)
 				bs->bs_filled = 0;
 			}
 
-			TRACE(packet_assembly_trace,
-			      "Complete message assembled, size=%zu, filled=%zu, bs_filled=%zu",
-			      message_size, filled, bs->bs_filled);
-
 			return message_size;
 		}
 
@@ -411,18 +327,12 @@ static int process_record_marker(struct buffer_state *bs)
 				memmove(bs->bs_data, data, filled);
 			}
 			bs->bs_filled = filled;
-			TRACE(packet_assembly_trace,
-			      "Requesting more data, filled=%zu, bs_filled=%zu",
-			      filled, bs->bs_filled);
 			return 0;
 		}
 
 		// Update buffer state instead of recursing
 		memmove(bs->bs_data, data, filled);
 		bs->bs_filled = filled;
-		TRACE(packet_assembly_trace,
-		      "Requesting more data, filled=%zu, bs_filled=%zu", filled,
-		      bs->bs_filled);
 		return 0;
 	}
 
@@ -430,10 +340,9 @@ static int process_record_marker(struct buffer_state *bs)
 	if (filled > 0) {
 		memmove(bs->bs_data, data, filled);
 	}
+
 	bs->bs_filled = filled;
-	TRACE(packet_assembly_trace,
-	      "Need more data for current fragment: position=%u, fragment_len=%u, filled=%zu, bs_filled=%zu",
-	      rs->rs_position, fragment_len, filled, bs->bs_filled);
+
 	return 0;
 }
 
@@ -485,11 +394,6 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		if (complete_size == 0)
 			break;
 
-		// We have a complete RPC message
-		TRACE(REFFS_TRACE_LEVEL_ERR,
-		      "Complete RPC message assembled (%d bytes)",
-		      complete_size);
-
 		// Create a task for processing
 		struct task *t = calloc(1, sizeof(struct task));
 		if (t) {
@@ -514,6 +418,9 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 			} else {
 				t->t_xid = 0;
 			}
+
+			trace_io_message_complete(client_fd, t->t_xid,
+						  complete_size);
 
 			// Queue it for processing
 			add_task(t);

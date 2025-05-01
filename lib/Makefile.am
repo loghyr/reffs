@@ -3,4 +3,4 @@
 
 # Order is important!
 # xdr at the front and tests at the end
-SUBDIRS = include xdr scripts fs mount3 nfs3 nfs4 rpc io utils tests
+SUBDIRS = include xdr scripts fs mount3 nfs3 nfs4 rpc io utils trace tests

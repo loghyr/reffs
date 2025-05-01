@@ -38,18 +38,7 @@
 #include "reffs/task.h"
 #include "reffs/test.h"
 #include "reffs/io.h"
-
-enum reffs_trace_level write_fragment_trace = REFFS_TRACE_LEVEL_NOTICE;
-
-void write_fragment_trace_set(enum reffs_trace_level lvl)
-{
-	write_fragment_trace = lvl;
-}
-
-enum reffs_trace_level write_fragment_trace_get(void)
-{
-	return write_fragment_trace;
-}
+#include "reffs/trace/io.h"
 
 // NFS request context for tracking operations
 struct nfs_request_context {
@@ -149,15 +138,15 @@ static void handle_getattr_response(struct nfs_request_context *nrc,
 				    int __attribute__((unused)) res_len,
 				    int status)
 {
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	LOG(
 	      "GETATTR response received: xid=0x%08x, status=%d", nrc->nrc_xid,
 	      status);
 
 	if (status == 0 && response) {
-		TRACE(REFFS_TRACE_LEVEL_WARNING, "File attributes received");
+		LOG("File attributes received");
 		// In a real implementation, you would process the attributes here
 	} else {
-		TRACE(REFFS_TRACE_LEVEL_WARNING, "GETATTR failed");
+		LOG("GETATTR failed");
 	}
 
 	// Free the context
@@ -282,10 +271,8 @@ static int send_nfs_response(struct io_uring *ring, int fd, char *buffer,
 
 	// Associate with the io context
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
+	trace_io_write_submit(ic);
 
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
-	      "On fd = %d sent a context of type %s and id %d", ic->ic_fd,
-	      op_type_to_str(ic->ic_op_type), ic->ic_id);
 	io_uring_submit(ring);
 	return 0;
 }
@@ -307,7 +294,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			__atomic_load(running_flag, &running_local,
 				      __ATOMIC_SEQ_CST);
 			if (!running_local) {
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
+				LOG(
 				      "Detected shutdown flag, breaking main loop");
 				break;
 			}
@@ -332,11 +319,6 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
-		TRACE(write_fragment_trace,
-		      "context %p (%d) with fd=%d of type %s and id %d",
-		      (void *)ic, cqe->res, ic->ic_fd,
-		      op_type_to_str(ic->ic_op_type), ic->ic_id);
-
 		if (cqe->res < 0) {
 			LOG("CQE error for op=%s, fd=%d: %s",
 			    op_type_to_str(ic->ic_op_type), ic->ic_fd,
@@ -346,9 +328,6 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			close(ic->ic_fd);
 			io_context_free(ic);
 		} else {
-			enum op_type op = ic->ic_op_type;
-			int ret = 0;
-
 			switch (ic->ic_op_type) {
 			case OP_TYPE_ACCEPT:
 				ret = io_handle_accept(ic, cqe->res, ring);
@@ -359,15 +338,10 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				break;
 
 			case OP_TYPE_WRITE:
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
-				      "Successfully wrote %d bytes for (xid=0x%08x)",
-				      cqe->res, ic->ic_xid);
 				ret = io_handle_write(ic, cqe->res, ring);
 				break;
 
 			case OP_TYPE_RPC_REQ:
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
-				      "NFS request sent successfully");
 				io_context_free(ic);
 				ret = 0;
 				break;
@@ -379,9 +353,6 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				ret = 0;
 				break;
 			}
-
-			TRACE(REFFS_TRACE_LEVEL_NOTICE, "%s returned %d",
-			      op_type_to_str(op), ret);
 		}
 
 		io_uring_cqe_seen(ring, cqe);
@@ -399,7 +370,6 @@ void io_handler_cleanup(struct io_uring *ring)
 		int ret = io_uring_wait_cqe_timeout(ring, &cqe, &ts);
 		if (ret == -ETIME) {
 			// No more completions
-			TRACE(REFFS_TRACE_LEVEL_WARNING, "No more completions");
 			break;
 		} else if (ret < 0) {
 			LOG("Error draining io_uring: %s", strerror(-ret));
@@ -411,10 +381,6 @@ void io_handler_cleanup(struct io_uring *ring)
 			struct io_context *ic =
 				(struct io_context *)(uintptr_t)cqe->user_data;
 			if (ic) {
-				TRACE(REFFS_TRACE_LEVEL_WARNING,
-				      "Cleaning up io_context of type %s and id %d",
-				      op_type_to_str(ic->ic_op_type),
-				      ic->ic_id);
 				io_context_free(ic);
 			}
 		}
@@ -426,7 +392,7 @@ void io_handler_cleanup(struct io_uring *ring)
 	wait_for_worker_threads();
 
 	// Cleanup any pending requests
-	TRACE(REFFS_TRACE_LEVEL_WARNING, "Cleaning up pending requests...");
+	LOG("Cleaning up pending requests...");
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i]) {

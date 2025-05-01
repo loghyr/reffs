@@ -71,12 +71,6 @@ struct buffer_state {
 	struct record_state bs_record;
 };
 
-// Tracing levels
-void packet_assembly_trace_set(enum reffs_trace_level lvl);
-void write_fragment_trace_set(enum reffs_trace_level lvl);
-enum reffs_trace_level packet_assembly_trace_get(void);
-enum reffs_trace_level write_fragment_trace_get(void);
-
 // Function declarations
 int io_handler_init(struct io_uring *ring);
 void io_handler_cleanup(struct io_uring *ring);

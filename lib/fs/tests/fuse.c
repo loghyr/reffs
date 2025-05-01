@@ -50,8 +50,6 @@ int main(void)
 
 	rcu_register_thread();
 
-	reffs_tracing_set(REFFS_TRACE_LEVEL_DEBUG);
-
 	ret = reffs_ns_init();
 	if (ret)
 		goto out;

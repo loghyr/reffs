@@ -32,6 +32,7 @@
 #include "reffs/rpc.h"
 #include "reffs/network.h"
 #include "reffs/task.h"
+#include "reffs/trace/rpc.h"
 
 CDS_LIST_HEAD(rpc_program_handler_list);
 
@@ -97,9 +98,6 @@ struct rpc_program_handler *rpc_program_handler_find(uint32_t program,
 		if (program == tmp->rph_program &&
 		    version == tmp->rph_version) {
 			rph = rpc_program_handler_get(tmp);
-			TRACE(REFFS_TRACE_LEVEL_INFO,
-			      "RPC program %u and version %u have a match",
-			      program, version);
 			break;
 		}
 	rcu_read_unlock();
@@ -170,19 +168,12 @@ int rpc_protocol_allocate_call(struct rpc_trans *rt)
 	rt->rt_rph = rpc_program_handler_find(rt->rt_info.ri_program,
 					      rt->rt_info.ri_version);
 	if (!rt->rt_rph) {
-		TRACE(REFFS_TRACE_LEVEL_WARNING,
-		      "RPC program %u and version %u have no handler",
-		      rt->rt_info.ri_program, rt->rt_info.ri_version);
 		return ENOENT;
 	}
 
 	for (size_t i = 0; i < rt->rt_rph->rph_ops_len; i++) {
 		if (rt->rt_rph->rph_ops[i].roh_operation ==
 		    rt->rt_info.ri_procedure) {
-			TRACE(REFFS_TRACE_LEVEL_INFO,
-			      "RPC program %u and version %u matches operation %d",
-			      rt->rt_info.ri_program, rt->rt_info.ri_version,
-			      rt->rt_info.ri_procedure);
 			if (!rt->rt_rph->rph_ops[i].roh_action)
 				return 0;
 
@@ -212,9 +203,6 @@ int rpc_protocol_allocate_call(struct rpc_trans *rt)
 		}
 	}
 
-	TRACE(REFFS_TRACE_LEVEL_WARNING,
-	      "RPC program %u and version %u have no operation",
-	      rt->rt_info.ri_program, rt->rt_info.ri_version);
 	return ENOENT;
 }
 
@@ -244,12 +232,7 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 		uint64_t avg_duration = ph->ph_op_handler->roh_duration_total /
 					ph->ph_op_handler->roh_calls;
 
-		TRACE(REFFS_TRACE_LEVEL_WARNING,
-		      "OP: %u,%u,%u took %lu ns (max: %lu ns, avg: %lu ns, calls: %lu)",
-		      rt->rt_info.ri_program, rt->rt_info.ri_version,
-		      rt->rt_info.ri_procedure, duration_ns,
-		      ph->ph_op_handler->roh_duration_max, avg_duration,
-		      ph->ph_op_handler->roh_calls);
+		trace_rpc_duration(rt, duration_ns, avg_duration);
 	} else {
 		rt->rt_info.ri_accept_stat = PROG_UNAVAIL;
 	}
@@ -475,10 +458,6 @@ static int rpc_process_task_call(struct task *t)
 
 handle_rpc_error:
 	rt->rt_offset = 0;
-	TRACE(REFFS_TRACE_LEVEL_NOTICE,
-	      "Encoding reply_stat=%d, reject_stat=%d accept_stat=%d ret=%d RPC reply xid=0x%08x",
-	      rt->rt_info.ri_reply_stat, rt->rt_info.ri_reject_stat,
-	      rt->rt_info.ri_accept_stat, ret, rt->rt_info.ri_xid);
 
 	if (rt->rt_info.ri_reply_stat == MSG_DENIED) {
 		if (rt->rt_info.ri_reject_stat == RPC_MISMATCH) {
@@ -486,9 +465,6 @@ handle_rpc_error:
 			msg_len = rt->rt_reply_len - sizeof(uint32_t);
 			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
 			if (!rt->rt_reply) {
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -497,9 +473,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -507,9 +480,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -517,9 +487,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -527,9 +494,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -538,9 +502,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -548,9 +509,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -558,9 +516,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 		} else {
@@ -569,9 +524,6 @@ handle_rpc_error:
 			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
 			if (!rt->rt_reply) {
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 			p = (uint32_t *)rt->rt_reply;
@@ -580,9 +532,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -590,9 +539,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -600,9 +546,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -610,9 +553,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 
@@ -621,9 +561,6 @@ handle_rpc_error:
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto drop_on_floor;
 			}
 		}
@@ -632,9 +569,6 @@ handle_rpc_error:
 		msg_len = rt->rt_reply_len - sizeof(uint32_t);
 		rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
 		if (!rt->rt_reply) {
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto drop_on_floor;
 		}
 
@@ -643,9 +577,6 @@ handle_rpc_error:
 		if (!p) {
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto drop_on_floor;
 		}
 
@@ -653,9 +584,6 @@ handle_rpc_error:
 		if (!p) {
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto drop_on_floor;
 		}
 
@@ -663,9 +591,6 @@ handle_rpc_error:
 		if (!p) {
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto drop_on_floor;
 		}
 
@@ -673,9 +598,6 @@ handle_rpc_error:
 		if (!p) {
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto drop_on_floor;
 		}
 
@@ -683,9 +605,6 @@ handle_rpc_error:
 		if (!p) {
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto drop_on_floor;
 		}
 
@@ -693,9 +612,6 @@ handle_rpc_error:
 		if (!p) {
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto drop_on_floor;
 		}
 
@@ -703,9 +619,6 @@ handle_rpc_error:
 		if (!p) {
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto drop_on_floor;
 		}
 
@@ -713,9 +626,6 @@ handle_rpc_error:
 		if (!p) {
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto drop_on_floor;
 		}
 	} else {
@@ -738,16 +648,8 @@ handle_rpc_error:
 		msg_len = rt->rt_reply_len - sizeof(uint32_t);
 		rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
 		if (!rt->rt_reply) {
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto drop_on_floor;
 		}
-
-		TRACE(REFFS_TRACE_LEVEL_NOTICE,
-		      "Encoding at %p for length %lu for xid=0x%08x",
-		      (void *)rt->rt_reply, rt->rt_reply_len,
-		      rt->rt_info.ri_xid);
 
 		p = (uint32_t *)rt->rt_reply;
 		p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
@@ -755,9 +657,6 @@ handle_rpc_error:
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto handle_rpc_error;
 		}
 
@@ -766,9 +665,6 @@ handle_rpc_error:
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto handle_rpc_error;
 		}
 
@@ -777,9 +673,6 @@ handle_rpc_error:
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto handle_rpc_error;
 		}
 
@@ -788,9 +681,6 @@ handle_rpc_error:
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto handle_rpc_error;
 		}
 
@@ -799,9 +689,6 @@ handle_rpc_error:
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto handle_rpc_error;
 		}
 
@@ -810,9 +697,6 @@ handle_rpc_error:
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto handle_rpc_error;
 		}
 
@@ -821,9 +705,6 @@ handle_rpc_error:
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto handle_rpc_error;
 		}
 
@@ -831,9 +712,6 @@ handle_rpc_error:
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
-			TRACE(REFFS_TRACE_LEVEL_DEBUG,
-			      "Could not encode RPC reply xid=0x%08x",
-			      rt->rt_info.ri_xid);
 			goto handle_rpc_error;
 		}
 
@@ -849,9 +727,6 @@ handle_rpc_error:
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
-				TRACE(REFFS_TRACE_LEVEL_DEBUG,
-				      "Could not encode RPC reply xid=0x%08x",
-				      rt->rt_info.ri_xid);
 				goto handle_rpc_error;
 			}
 
@@ -864,19 +739,12 @@ handle_rpc_error:
 			rt->rt_offset += len;
 		}
 
-		TRACE(REFFS_TRACE_LEVEL_NOTICE,
-		      "Final offset=%zu len=%zu for xid=0x%08x", rt->rt_offset,
-		      rt->rt_reply_len, rt->rt_info.ri_xid);
 		assert(rt->rt_offset == rt->rt_reply_len);
 	}
 
 	if (rt->rt_reply && rt->rt_reply_len > 0) {
 		rt->rt_ring = t->t_ring;
 		rt->rt_cb(rt);
-	} else {
-		TRACE(REFFS_TRACE_LEVEL_ERR,
-		      "Dropped RPC reply xid=0x%08x due to no data",
-		      rt->rt_info.ri_xid);
 	}
 
 drop_on_floor:
@@ -891,20 +759,11 @@ int rpc_process_task(struct task *t)
 		return EINVAL;
 
 	if (t->t_bytes_read < (int)(2 * sizeof(uint32_t))) {
-		TRACE(REFFS_TRACE_LEVEL_NOTICE,
-		      "Dropped RPC reply due to no data");
 		return 0;
 	}
 
-	// Extract XID from the message (first 4 bytes)
-	uint32_t xid = ntohl(*(uint32_t *)t->t_buffer);
-
 	// Extract the RPC message type (call=0, reply=1)
 	uint32_t msg_type = ntohl(*(uint32_t *)(t->t_buffer + 4));
-
-	// Print basic info about the message
-	TRACE(REFFS_TRACE_LEVEL_NOTICE, "RPC Message: xid=0x%08x, Type=%s", xid,
-	      msg_type == 0 ? "CALL" : "REPLY");
 
 	if (msg_type == 0) { // It's a call
 		return rpc_process_task_call(t);

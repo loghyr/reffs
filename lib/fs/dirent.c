@@ -25,14 +25,9 @@
 #include "reffs/test.h"
 #include "reffs/types.h"
 #include "reffs/cmp.h"
+#include "reffs/trace/fs.h"
 
 CDS_LIST_HEAD(dirent_list);
-
-#ifdef DEBUG_DIRENT_ACCESS
-#define DIRENT_TRACE REFFS_TRACE_LEVEL_ERR
-#else
-#define DIRENT_TRACE REFFS_TRACE_LEVEL_DEBUG
-#endif
 
 void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 			  enum reffs_life_action rla)
@@ -69,7 +64,7 @@ static void dirent_free_rcu(struct rcu_head *rcu)
 {
 	struct dirent *de = caa_container_of(rcu, struct dirent, d_rcu);
 
-	TRACE(DIRENT_TRACE, "%p - %ld", (void *)de, de->d_ref.refcount);
+	trace_fs_dirent(de, __func__);
 
 	pthread_rwlock_destroy(&de->d_rwlock);
 
@@ -81,7 +76,7 @@ static void dirent_release(struct urcu_ref *ref)
 {
 	struct dirent *de = caa_container_of(ref, struct dirent, d_ref);
 
-	TRACE(DIRENT_TRACE, "%p - %ld", (void *)de, de->d_ref.refcount);
+	trace_fs_dirent(de, __func__);
 
 	if (de->d_inode)
 		inode_put(de->d_inode);
@@ -114,7 +109,7 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name,
 	urcu_ref_init(&de->d_ref);
 	de->d_cookie_next = 2;
 
-	TRACE(DIRENT_TRACE, "%p - %ld", (void *)de, de->d_ref.refcount);
+	trace_fs_dirent(de, __func__);
 
 	pthread_rwlock_init(&de->d_rwlock, NULL);
 
@@ -158,7 +153,7 @@ struct dirent *dirent_get(struct dirent *de)
 	if (!urcu_ref_get_unless_zero(&de->d_ref))
 		return NULL;
 
-	TRACE(DIRENT_TRACE, "%p - %ld", (void *)de, de->d_ref.refcount);
+	trace_fs_dirent(de, __func__);
 
 	return de;
 }
@@ -168,7 +163,7 @@ void dirent_put(struct dirent *de)
 	if (!de)
 		return;
 
-	TRACE(DIRENT_TRACE, "%p - %ld", (void *)de, de->d_ref.refcount);
+	trace_fs_dirent(de, __func__);
 	urcu_ref_put(&de->d_ref, dirent_release);
 }
 

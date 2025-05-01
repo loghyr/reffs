@@ -32,6 +32,7 @@
 #include "reffs/log.h"
 #include "reffs/fs.h"
 #include "reffs/ns.h"
+#include "reffs/trace/trace.h"
 
 static struct fuse_operations operations = {
 	.access = reffs_fuse_access,
@@ -67,19 +68,11 @@ static void usage(const char *me)
 	fprintf(stdout, " -h  --help         Show help\n");
 	fprintf(stdout,
 		" -f  --filesystem   Path to root of fuse filesystem\n");
-	printf("  -t  --tracing=lvl          Enable tracing at a level");
-	printf("                                   0 - Debug");
-	printf("                                   1 - Info");
-	printf("                                   2 - Notice");
-	printf("                                   3 - Warning");
-	printf("                                   4 - Error");
-	printf("                                   5 - Disabled");
 }
 
 static struct option options[] = {
 	{ "help", no_argument, 0, 'h' },
 	{ "filesystem", required_argument, 0, 'f' },
-	{ "tracing", required_argument, 0, 't' },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -103,17 +96,6 @@ int main(int argc, char *argv[])
 		case 'f':
 			fuse_argv[2] = optarg;
 			break;
-		case 't': {
-			int tracing = atoi(optarg);
-			enum reffs_trace_level level = tracing;
-			if (tracing < 0)
-				level = REFFS_TRACE_LEVEL_DEBUG;
-			else if (tracing > REFFS_TRACE_LEVEL_DISABLED)
-				level = REFFS_TRACE_LEVEL_DISABLED;
-			reffs_tracing_set(level);
-
-			break;
-		}
 		case 'h':
 			usage(argv[0]);
 			exit(1);

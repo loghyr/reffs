@@ -30,12 +30,8 @@
 static bool gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
 {
 	for (uint32_t i = 0; i < len; i++)
-		if (gid == gids[i]) {
-			TRACE(REFFS_TRACE_LEVEL_WARNING,
-			      "gids stop, gid=%u len=%u gids=%p", gid, len,
-			      (void *)gids);
+		if (gid == gids[i])
 			return true;
-		}
 
 	return false;
 }

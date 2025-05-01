@@ -32,8 +32,7 @@ static void super_block_remove_all_inodes(struct cds_lfht *ht)
 	unsigned long count = 0;
 	int sleep_em = INODE_RELEASE_HARVEST + 1;
 
-	TRACE(REFFS_TRACE_LEVEL_DEBUG,
-	      "Sleep for %d seconds to let inodes drain", sleep_em);
+	LOG("Sleep for %d seconds to let inodes drain", sleep_em);
 	sleep(sleep_em);
 
 	rcu_barrier();
@@ -57,9 +56,6 @@ static void super_block_free_rcu(struct rcu_head *rcu)
 	struct super_block *sb =
 		caa_container_of(rcu, struct super_block, sb_rcu);
 
-	TRACE(REFFS_TRACE_LEVEL_DEBUG, "%p - %ld", (void *)sb,
-	      sb->sb_ref.refcount);
-
 	ret = cds_lfht_destroy(sb->sb_inodes, NULL);
 	if (ret < 0) {
 		LOG("Could not delete a hash table: %m");
@@ -73,9 +69,6 @@ static void super_block_release(struct urcu_ref *ref)
 {
 	struct super_block *sb =
 		caa_container_of(ref, struct super_block, sb_ref);
-
-	TRACE(REFFS_TRACE_LEVEL_DEBUG, "%p - %ld", (void *)sb,
-	      sb->sb_ref.refcount);
 
 	uint64_t flags = __atomic_fetch_and(&sb->sb_state, ~SB_IN_LIST,
 					    __ATOMIC_ACQUIRE);
@@ -152,9 +145,6 @@ struct super_block *super_block_alloc(uint64_t id, char *path)
 	__atomic_fetch_or(&sb->sb_state, SB_IN_LIST, __ATOMIC_RELEASE);
 	cds_list_add_rcu(&sb->sb_link, &super_block_list);
 
-	TRACE(REFFS_TRACE_LEVEL_DEBUG, "%p - %ld", (void *)sb,
-	      sb->sb_ref.refcount);
-
 	sb->sb_bytes_max = SIZE_MAX;
 	sb->sb_inodes_max = SIZE_MAX;
 
@@ -185,9 +175,6 @@ struct super_block *super_block_get(struct super_block *sb)
 	if (!urcu_ref_get_unless_zero(&sb->sb_ref))
 		return NULL;
 
-	TRACE(REFFS_TRACE_LEVEL_DEBUG, "%p - %ld", (void *)sb,
-	      sb->sb_ref.refcount);
-
 	return sb;
 }
 
@@ -195,9 +182,6 @@ void super_block_put(struct super_block *sb)
 {
 	if (!sb)
 		return;
-
-	TRACE(REFFS_TRACE_LEVEL_DEBUG, "%p - %ld", (void *)sb,
-	      sb->sb_ref.refcount);
 
 	urcu_ref_put(&sb->sb_ref, super_block_release);
 }
