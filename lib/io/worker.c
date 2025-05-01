@@ -1,0 +1,172 @@
+/*
+ * SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+ * SPDX-License-Identifier: GPL-2.0+
+ */
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <liburing.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <errno.h>
+#include <urcu.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <stdint.h>
+#include <time.h>
+#include <stdbool.h>
+
+#include "reffs/log.h"
+#include "reffs/rpc.h"
+#include "reffs/network.h"
+#include "reffs/server.h"
+#include "reffs/task.h"
+#include "reffs/test.h"
+#include "reffs/io.h"
+
+// Queue for worker threads
+pthread_mutex_t task_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t task_queue_cond = PTHREAD_COND_INITIALIZER;
+struct task *task_queue[QUEUE_DEPTH];
+int task_queue_head = 0;
+int task_queue_tail = 0;
+
+// Thread management
+pthread_t worker_threads[MAX_WORKER_THREADS];
+int num_worker_threads = 0;
+
+struct thread_data {
+	int thread_id;
+	volatile sig_atomic_t *running;
+};
+
+// Worker thread function
+void *io_worker_thread(void *vtd)
+{
+	struct thread_data *td = (struct thread_data *)vtd;
+
+	int thread_id = td->thread_id;
+	volatile sig_atomic_t *running = td->running;
+
+	free(vtd);
+
+	// Register this thread with userspace RCU
+	rcu_register_thread();
+
+	TRACE(REFFS_TRACE_LEVEL_NOTICE, "Worker thread %d started", thread_id);
+
+	while (*running) {
+		struct task *t = NULL;
+
+		// Use a timeout when checking for tasks during shutdown
+		if (!running) {
+			break;
+		}
+
+		pthread_mutex_lock(&task_queue_mutex);
+		if (task_queue_head != task_queue_tail) {
+			t = task_queue[task_queue_head];
+			task_queue_head = (task_queue_head + 1) % QUEUE_DEPTH;
+			pthread_mutex_unlock(&task_queue_mutex);
+		} else {
+			// Wait with timeout during normal operation
+			struct timespec ts;
+			clock_gettime(CLOCK_REALTIME, &ts);
+			ts.tv_sec += 1; // 1 second timeout
+
+			int rc = pthread_cond_timedwait(&task_queue_cond,
+							&task_queue_mutex, &ts);
+			pthread_mutex_unlock(&task_queue_mutex);
+
+			if (rc == ETIMEDOUT && !running) {
+				break;
+			}
+
+			continue;
+		}
+
+		if (t) {
+			if (t->t_fd > 0) {
+				t->t_cb = io_rpc_trans_cb;
+				TRACE(REFFS_TRACE_LEVEL_NOTICE,
+				      "Complete RPC message processed (%d bytes)",
+				      t->t_bytes_read);
+				int rc = rpc_process_task(t);
+				if (rc == ENOMEM) {
+					TRACE(REFFS_TRACE_LEVEL_ERR,
+					      "Worker thread %d rescheduling",
+					      thread_id);
+					add_task(t);
+					continue;
+				}
+			}
+
+			free(t->t_buffer);
+			free(t);
+		}
+	}
+
+	TRACE(REFFS_TRACE_LEVEL_NOTICE, "Worker thread %d exiting", thread_id);
+
+	// Unregister this thread from userspace RCU
+	rcu_unregister_thread();
+
+	return NULL;
+}
+
+void add_task(struct task *task)
+{
+	pthread_mutex_lock(&task_queue_mutex);
+	task_queue[task_queue_tail] = task;
+	task_queue_tail = (task_queue_tail + 1) % QUEUE_DEPTH;
+	pthread_cond_signal(&task_queue_cond);
+	pthread_mutex_unlock(&task_queue_mutex);
+}
+
+int create_worker_threads(volatile sig_atomic_t *running)
+{
+	// Create worker threads
+	for (int i = 0; i < MAX_WORKER_THREADS; i++) {
+		struct thread_data *td = malloc(sizeof(*td));
+		if (!td) {
+			LOG("Failed to create worker thread %d", i);
+			continue;
+		}
+
+		td->thread_id = i;
+		td->running = running;
+
+		if (pthread_create(&worker_threads[i], NULL, io_worker_thread,
+				   td) == 0) {
+			num_worker_threads++;
+		} else {
+			free(td);
+			LOG("Failed to create worker thread %d", i);
+		}
+	}
+
+	return 0;
+}
+
+void wait_for_worker_threads(void)
+{
+	// Wait for worker threads to finish
+	TRACE(REFFS_TRACE_LEVEL_WARNING,
+	      "Waiting for worker threads to exit...");
+	for (int i = 0; i < num_worker_threads; i++) {
+		pthread_join(worker_threads[i], NULL);
+	}
+}
+
+void wake_worker_threads(void)
+{
+	pthread_cond_broadcast(&task_queue_cond);
+}
