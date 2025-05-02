@@ -237,45 +237,6 @@ bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len)
 	return true;
 }
 
-// Send NFS response using io_uring
-static int send_nfs_response(struct io_uring *ring, int fd, char *buffer,
-			     int len)
-{
-	// Prefix with record marker (last fragment + length)
-	uint32_t marker = htonl(0x80000000 | len);
-
-	// Prepare combined buffer with marker + data
-	char *send_buffer = malloc(len + 4);
-	if (!send_buffer) {
-		return -ENOMEM;
-	}
-
-	// Copy marker and data
-	memcpy(send_buffer, &marker, 4);
-	memcpy(send_buffer + 4, buffer, len);
-
-	// Missing error checking since no callers yet
-
-	// Create an IO context for the write operation
-	struct io_context *ic =
-		io_context_create(OP_TYPE_WRITE, fd, send_buffer, len + 4);
-	if (!ic) {
-		free(send_buffer);
-		return -ENOMEM;
-	}
-
-	// Submit the write operation to io_uring
-	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-	io_uring_prep_write(sqe, fd, send_buffer, len + 4, 0);
-
-	// Associate with the io context
-	sqe->user_data = (uint64_t)(uintptr_t)ic;
-	trace_io_write_submit(ic);
-
-	io_uring_submit(ring);
-	return 0;
-}
-
 volatile sig_atomic_t *running_context;
 
 void io_handler_stop(void)
