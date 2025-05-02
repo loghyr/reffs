@@ -19,11 +19,11 @@ static inline void trace_rpc_duration(struct rpc_trans *rt,
 
 	reffs_trace_event(
 		REFFS_TRACE_CAT_RPC, "rpc_duration",
-		"OP: %u,%u,%u took %lu ns (max: %lu ns, avg: %lu ns, calls: %lu)",
+		"OP: %u,%u,%u took %lu ns (max=%lu ns, avg=%lu ns, calls=%lu fails=%lu)",
 		rt->rt_info.ri_program, rt->rt_info.ri_version,
 		rt->rt_info.ri_procedure, duration_ns,
 		ph->ph_op_handler->roh_duration_max, avg_duration,
-		ph->ph_op_handler->roh_calls);
+		ph->ph_op_handler->roh_calls, ph->ph_op_handler->roh_fails);
 }
 
 #endif /* _REFFS_TRACE_RPC_H */
