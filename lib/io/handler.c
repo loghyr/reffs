@@ -138,9 +138,8 @@ static void handle_getattr_response(struct nfs_request_context *nrc,
 				    int __attribute__((unused)) res_len,
 				    int status)
 {
-	LOG(
-	      "GETATTR response received: xid=0x%08x, status=%d", nrc->nrc_xid,
-	      status);
+	LOG("GETATTR response received: xid=0x%08x, status=%d", nrc->nrc_xid,
+	    status);
 
 	if (status == 0 && response) {
 		LOG("File attributes received");
@@ -277,10 +276,20 @@ static int send_nfs_response(struct io_uring *ring, int fd, char *buffer,
 	return 0;
 }
 
+volatile sig_atomic_t *running_context;
+
+void io_handler_stop(void)
+{
+	if (running_context)
+		*running_context = 0;
+}
+
 void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			  struct io_uring *ring)
 {
 	struct io_uring_cqe *cqe;
+
+	running_context = running_flag;
 
 	while (1) {
 		// Set a timeout for io_uring_wait_cqe to allow checking the running flag
@@ -294,8 +303,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			__atomic_load(running_flag, &running_local,
 				      __ATOMIC_SEQ_CST);
 			if (!running_local) {
-				LOG(
-				      "Detected shutdown flag, breaking main loop");
+				LOG("Detected shutdown flag, breaking main loop");
 				break;
 			}
 			last_check = now;
