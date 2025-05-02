@@ -23,6 +23,7 @@ LDADD = \
 	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
 	$(top_builddir)/lib/mount3/libreffs_mount3.la	\
 	$(top_builddir)/lib/nfs3/libreffs_nfs3.la	\
+	$(top_builddir)/lib/stat1/libreffs_stat1.la	\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
 	$(TIRPC_LIBS)					\

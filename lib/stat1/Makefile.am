@@ -10,6 +10,6 @@ AM_CFLAGS = -Im4 -I. \
 	$(TIRPC_CFLAGS)			\
 	$(FUSE_CFLAGS)
 
-lib_LTLIBRARIES = libreffs_stats.la
-libreffs_stats_la_SOURCES = \
-	stats1_server.c
+lib_LTLIBRARIES = libreffs_stat1.la
+libreffs_stat1_la_SOURCES = \
+	stat1_server.c

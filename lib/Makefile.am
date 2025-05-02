@@ -13,7 +13,7 @@ SUBDIRS =		\
 	nfs4		\
 	rpc		\
 	io		\
-	stats		\
+	stat1		\
 	utils		\
 	trace		\
 	tests

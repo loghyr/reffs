@@ -32,6 +32,7 @@
 #include "reffs/rpc.h"
 #include "reffs/nfs3.h"
 #include "reffs/mount3.h"
+#include "reffs/stat1.h"
 #include "reffs/server.h"
 #include "reffs/ns.h"
 #include "reffs/io.h"
@@ -151,6 +152,11 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	if (stat1_protocol_register()) {
+		exit_code = 1;
+		goto out;
+	}
+
 	exit_code = reffs_ns_init();
 	if (exit_code)
 		goto out;
@@ -219,6 +225,7 @@ out:
 	TRACE("Calling rcu_barrier()...");
 	rcu_barrier();
 
+	stat1_protocol_deregister();
 	mount3_protocol_deregister();
 	nfs3_protocol_deregister();
 
