@@ -30,6 +30,7 @@
 
 #include "reffs/log.h"
 #include "reffs/rpc.h"
+#include "reffs/io.h"
 #include "reffs/network.h"
 #include "reffs/task.h"
 #include "reffs/trace/rpc.h"
@@ -199,14 +200,15 @@ int rpc_protocol_allocate_call(struct rpc_trans *rt)
 				}
 			}
 
-			return rpc_parse_call_data(rt);
+			return 0;
 		}
 	}
 
 	return ENOENT;
 }
 
-static void update_max_duration_rcu(uint64_t duration_ns, struct protocol_handler *ph)
+static void update_max_duration_rcu(uint64_t duration_ns,
+				    struct protocol_handler *ph)
 {
 	uint64_t old_max;
 
@@ -214,7 +216,8 @@ static void update_max_duration_rcu(uint64_t duration_ns, struct protocol_handle
 	rcu_read_lock();
 
 	// Read the current maximum value
-	old_max = uatomic_read(&ph->ph_op_handler->roh_duration_max, __ATOMIC_RELAXED);
+	old_max = uatomic_read(&ph->ph_op_handler->roh_duration_max,
+			       __ATOMIC_RELAXED);
 
 	// Only attempt update if new value is larger
 	if (duration_ns > old_max) {
@@ -318,7 +321,7 @@ void rpc_protocol_free(struct rpc_trans *rt)
 	free(rt);
 }
 
-static struct rpc_trans *rpc_trans_create(struct task *t)
+struct rpc_trans *rpc_trans_create(void)
 {
 	struct rpc_trans *rt = calloc(1, sizeof(*rt));
 	if (!rt)
@@ -336,6 +339,16 @@ static struct rpc_trans *rpc_trans_create(struct task *t)
 	}
 
 	rt->rt_context = (void *)ph;
+
+	return rt;
+}
+
+static struct rpc_trans *rpc_trans_create_from_task(struct task *t)
+{
+	struct rpc_trans *rt = rpc_trans_create();
+	if (!rt)
+		return NULL;
+
 	rt->rt_cb = t->t_cb;
 
 	rt->rt_fd = t->t_fd;
@@ -347,14 +360,137 @@ static struct rpc_trans *rpc_trans_create(struct task *t)
 	return rt;
 }
 
-static int rpc_process_task_call(struct task *t)
+// Generate a unique transaction ID for RPC
+static uint32_t generate_xid(void)
+{
+	static uint32_t next_xid = 1;
+	static pthread_mutex_t xid_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+	pthread_mutex_lock(&xid_mutex);
+	uint32_t xid = next_xid++;
+	pthread_mutex_unlock(&xid_mutex);
+
+	return xid;
+}
+
+int rpc_prepare_send_call(struct rpc_trans *rt)
+{
+	u_long msg_len = 0;
+
+	uint32_t *p;
+
+	uatomic_inc(&rt->rt_rph->rph_calls, __ATOMIC_RELAXED);
+
+	p = (uint32_t *)rt->rt_body;
+
+	rt->rt_offset = 0;
+
+	XDR xdrs = { 0 };
+
+	uint32_t start_pos, end_pos;
+	size_t len;
+
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+
+	u_long xdr_size = 0;
+
+	if (ph->ph_op_handler->roh_res_f) {
+		xdr_size = xdr_sizeof(ph->ph_op_handler->roh_res_f, ph->ph_res);
+	}
+
+	rt->rt_reply_len = 7 * sizeof(uint32_t) + xdr_size;
+	msg_len = rt->rt_reply_len - sizeof(uint32_t);
+	rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
+	if (!rt->rt_reply) {
+		return ENOMEM;
+	}
+
+	p = (uint32_t *)rt->rt_reply;
+	p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	rt->rt_info.ri_xid = generate_xid();
+
+	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, 1);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, 0);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, 0);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, 0);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, 0);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	if (rt->rt_offset + xdr_size > rt->rt_reply_len) {
+		goto drop_on_floor;
+	}
+
+	if (ph->ph_op_handler->roh_args_f) {
+		xdrmem_create(&xdrs, (char *)p,
+			      rt->rt_reply_len - rt->rt_offset, XDR_ENCODE);
+
+		start_pos = xdr_getpos(&xdrs);
+
+		if (!ph->ph_op_handler->roh_args_f(&xdrs, ph->ph_args)) {
+			xdr_destroy(&xdrs);
+			goto drop_on_floor;
+		}
+
+		end_pos = xdr_getpos(&xdrs);
+
+		len = end_pos - start_pos;
+
+		xdr_destroy(&xdrs);
+
+		rt->rt_offset += len;
+	}
+
+	assert(rt->rt_offset == rt->rt_reply_len);
+
+	return 0;
+
+drop_on_floor:
+	free(rt->rt_reply);
+	rt->rt_reply = NULL;
+	return EINVAL;
+}
+
+int rpc_process_task(struct task *t)
 {
 	u_long msg_len = 0;
 	int ret = 0;
 
 	uint32_t *p;
 
-	struct rpc_trans *rt = rpc_trans_create(t);
+	if (!t)
+		return EINVAL;
+
+	if (t->t_bytes_read < (int)(2 * sizeof(uint32_t)))
+		return 0;
+
+	struct rpc_trans *rt = rpc_trans_create_from_task(t);
 	if (!rt)
 		return ENOMEM;
 
@@ -374,6 +510,20 @@ static int rpc_process_task_call(struct task *t)
 		rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
 		uatomic_inc(&rt->rt_rph->rph_accepted_errors, __ATOMIC_RELAXED);
 		goto handle_rpc_error;
+	}
+
+	if (rt->rt_info.ri_type) {
+		struct rpc_trans *rt_old =
+			io_find_request_by_xid(rt->rt_info.ri_xid);
+		if (!rt_old)
+			goto drop_on_floor;
+
+		io_unregister_request(rt->rt_info.ri_xid);
+		rt->rt_ring = rt_old->rt_ring;
+		rt->rt_cb = rt_old->rt_cb;
+
+		// Caller is responsible for releasing rt_old
+		// Also, should share the args and res between the two!
 	}
 
 	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_rpc_version);
@@ -509,12 +659,15 @@ static int rpc_process_task_call(struct task *t)
 	}
 
 	ret = rpc_protocol_allocate_call(rt);
+	if (!ret)
+		ret = rpc_parse_call_data(rt);
+
 	if (ret == ENOENT) {
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 		rt->rt_info.ri_accept_stat = PROG_UNAVAIL;
 		uatomic_inc(&rt->rt_rph->rph_replied_errors, __ATOMIC_RELAXED);
 		uatomic_inc(&rt->rt_rph->rph_accepted_errors, __ATOMIC_RELAXED);
-	} else if (ret == ENOMEM) {
+	} else if (ret) {
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 		rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 		uatomic_inc(&rt->rt_rph->rph_replied_errors, __ATOMIC_RELAXED);
@@ -804,7 +957,8 @@ handle_rpc_error:
 		if (ph->ph_op_handler->roh_res_f) {
 			xdrmem_create(&xdrs, (char *)p,
 				      rt->rt_reply_len - rt->rt_offset,
-				      XDR_ENCODE);
+				      rt->rt_info.ri_type == 0 ? XDR_ENCODE :
+								 XDR_DECODE);
 
 			start_pos = xdr_getpos(&xdrs);
 
@@ -837,27 +991,6 @@ handle_rpc_error:
 
 drop_on_floor:
 	rpc_protocol_free(rt);
-
-	return 0;
-}
-
-int rpc_process_task(struct task *t)
-{
-	if (!t)
-		return EINVAL;
-
-	if (t->t_bytes_read < (int)(2 * sizeof(uint32_t))) {
-		return 0;
-	}
-
-	// Extract the RPC message type (call=0, reply=1)
-	uint32_t msg_type = ntohl(*(uint32_t *)(t->t_buffer + 4));
-
-	if (msg_type == 0) { // It's a call
-		return rpc_process_task_call(t);
-	} else {
-		verify(0);
-	}
 
 	return 0;
 }

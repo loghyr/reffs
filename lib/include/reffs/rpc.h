@@ -65,6 +65,8 @@ struct rpc_trans {
 	struct io_uring *rt_ring;
 	int (*rt_cb)(struct rpc_trans *rt); // Callback function pointer
 	struct rpc_program_handler *rt_rph;
+	uint16_t rt_port;
+	char *rt_addr_str;
 };
 
 /*
@@ -167,5 +169,7 @@ rpc_program_handler_get(struct rpc_program_handler *rph);
 void rpc_program_handler_put(struct rpc_program_handler *rph);
 
 int rpc_process_task(struct task *t);
+struct rpc_trans *rpc_trans_create(void);
+int rpc_prepare_send_call(struct rpc_trans *rt);
 
 #endif

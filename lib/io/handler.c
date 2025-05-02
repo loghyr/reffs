@@ -40,75 +40,66 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
-// NFS request context for tracking operations
-struct nfs_request_context {
-	uint32_t nrc_xid; // RPC transaction ID
-	int nrc_operation; // NFS operation (GETATTR, READ, etc.)
-	int nrc_sockfd; // Socket this request was sent on
-	void *nrc_private_data; // Application-specific context
-	void (*nrc_cb)(struct nfs_request_context *nrc, void *response,
-		       int res_len, int status);
-	char *nrc_buffer; // Buffer for response
-};
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunused-function"
-
 // Request tracking
-struct nfs_request_context *pending_requests[MAX_PENDING_REQUESTS];
+struct rpc_trans *pending_requests[MAX_PENDING_REQUESTS];
 pthread_mutex_t request_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+//
+// Need to prune out connections that get timed out
+//
 
 // Store buffer states by fd
 struct buffer_state *conn_buffers[MAX_CONNECTIONS];
 
-// Generate a unique transaction ID for RPC
-static uint32_t generate_xid(void)
-{
-	static uint32_t next_xid = 1;
-	static pthread_mutex_t xid_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-	pthread_mutex_lock(&xid_mutex);
-	uint32_t xid = next_xid++;
-	pthread_mutex_unlock(&xid_mutex);
-
-	return xid;
-}
-
 // Register a new request for tracking
-static int register_request(struct nfs_request_context *nrc)
+int io_register_request(struct rpc_trans *rt)
 {
 	pthread_mutex_lock(&request_mutex);
 
 	// Find an empty slot
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] == NULL) {
-			pending_requests[i] = nrc;
+			pending_requests[i] = rt;
 			pthread_mutex_unlock(&request_mutex);
 			return 0;
 		}
 	}
 
 	pthread_mutex_unlock(&request_mutex);
-	return -1; // No free slots
+	return ENOENT;
 }
 
 // Find a request by XID
-static struct nfs_request_context *find_request_by_xid(uint32_t xid)
+struct rpc_trans *io_find_request_by_xid(uint32_t xid)
 {
-	struct nfs_request_context *nrc = NULL;
+	struct rpc_trans *rt = NULL;
 
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] &&
-		    pending_requests[i]->nrc_xid == xid) {
-			nrc = pending_requests[i];
-			pending_requests[i] = NULL; // Remove from tracking
+		    pending_requests[i]->rt_info.ri_xid == xid) {
+			rt = pending_requests[i];
 			break;
 		}
 	}
 	pthread_mutex_unlock(&request_mutex);
 
-	return nrc;
+	return rt;
+}
+
+int io_unregister_request(uint32_t xid)
+{
+	pthread_mutex_lock(&request_mutex);
+	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
+		if (pending_requests[i] &&
+		    pending_requests[i]->rt_info.ri_xid == xid) {
+				pending_requests[i] = NULL;
+			return 0;
+		}
+	}
+	pthread_mutex_unlock(&request_mutex);
+
+	return ENOENT;
 }
 
 // Register client fd
@@ -130,32 +121,6 @@ void unregister_client_fd(int fd)
 		free(bs);
 		conn_buffers[fd % MAX_CONNECTIONS] = NULL;
 	}
-}
-
-// Handler for GETATTR response
-static void handle_getattr_response(struct nfs_request_context *nrc,
-				    void *response,
-				    int __attribute__((unused)) res_len,
-				    int status)
-{
-	LOG("GETATTR response received: xid=0x%08x, status=%d", nrc->nrc_xid,
-	    status);
-
-	if (status == 0 && response) {
-		LOG("File attributes received");
-		// In a real implementation, you would process the attributes here
-	} else {
-		LOG("GETATTR failed");
-	}
-
-	// Free the context
-	if (nrc->nrc_private_data) {
-		free(nrc->nrc_private_data);
-	}
-	if (nrc->nrc_buffer) {
-		free(nrc->nrc_buffer);
-	}
-	free(nrc);
 }
 
 // Initialize io_uring
@@ -310,9 +275,8 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				ret = io_handle_write(ic, cqe->res, ring);
 				break;
 
-			case OP_TYPE_RPC_REQ:
-				io_context_free(ic);
-				ret = 0;
+			case OP_TYPE_CONNECT:
+				ret = io_handle_connect(ic, cqe->res, ring);
 				break;
 
 			default:
@@ -365,13 +329,7 @@ void io_handler_cleanup(struct io_uring *ring)
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i]) {
-			if (pending_requests[i]->nrc_private_data) {
-				free(pending_requests[i]->nrc_private_data);
-			}
-			if (pending_requests[i]->nrc_buffer) {
-				free(pending_requests[i]->nrc_buffer);
-			}
-			free(pending_requests[i]);
+			rpc_protocol_free(pending_requests[i]);
 			pending_requests[i] = NULL;
 		}
 	}

@@ -358,7 +358,7 @@ AC_CONFIG_FILES([
 	lib/rpc/tests/Makefile
 	lib/scripts/Makefile
 	lib/scripts/reffs/Makefile
-	lib/stat1/Makefile
+	lib/probe1/Makefile
 	lib/tests/Makefile
 	lib/trace/Makefile
 	lib/utils/Makefile

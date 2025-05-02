@@ -16,8 +16,8 @@ GEN_SOURCES = \
 	mntv3_xdr.c		\
 	nfsv3_xdr.h		\
 	nfsv3_xdr.c		\
-	stats1_xdr.h		\
-	stats1_xdr.c
+	probe1_xdr.h		\
+	probe1_xdr.c
 
 CLEANFILES = $(GEN_SOURCES)
 
@@ -30,7 +30,7 @@ libreffs_xdr_la_SOURCES =	\
 	mntv3_xdr.x		\
 	nfsv3_xdr.x		\
 	rpc_xdr.x		\
-	stats1_xdr.x
+	stat1_xdr.x
 
 %.c: %.x %.h
 	rpcgen -C -c $< > $@

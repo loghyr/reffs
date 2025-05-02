@@ -12,6 +12,7 @@ AM_LDFLAGS = -rdynamic
 lib_LTLIBRARIES = libreffs_io.la
 libreffs_io_la_SOURCES =	\
 	accept.c		\
+	connect.c		\
 	context.c		\
 	handler.c		\
 	lsnr.c			\

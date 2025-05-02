@@ -20,6 +20,14 @@ static inline void trace_io_accept_submit(struct io_context *ic)
 			  ic->ic_buffer_len);
 }
 
+static inline void trace_io_connect_submit(struct io_context *ic)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_connect_submit",
+			  "fd=%d, op=%s, id=%u, len=%zu", ic->ic_fd,
+			  op_type_to_str(ic->ic_op_type), ic->ic_id,
+			  ic->ic_buffer_len);
+}
+
 static inline void trace_io_read_submit(struct io_context *ic)
 {
 	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_read_submit",

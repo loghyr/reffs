@@ -18,10 +18,10 @@ reffsinclude_HEADERS = \
 	network.h \
 	nfs3.h \
 	ns.h \
+	probe1.h \
 	rcu.h \
 	rpc.h \
 	server.h \
-	stat1.h \
 	super_block.h \
 	task.h \
 	test.h \

@@ -102,12 +102,14 @@ struct buffer_state *get_buffer_state(int fd);
 
 int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 			   struct io_context *ic);
+
+int io_handle_accept(struct io_context *ic, int client_fd,
+		     struct io_uring *ring);
+int io_handle_connect(struct io_context *ic, int result, struct io_uring *ring);
 int io_handle_read(struct io_context *ic, int bytes_read,
 		   struct io_uring *ring);
 int io_handle_write(struct io_context *ic, int bytes_written,
 		    struct io_uring *ring);
-int io_handle_accept(struct io_context *ic, int client_fd,
-		     struct io_uring *ring);
 
 struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 				     size_t buffer_len);
@@ -117,6 +119,10 @@ void *io_worker_thread(void *arg);
 void wake_worker_threads(void);
 
 int io_rpc_trans_cb(struct rpc_trans *rt);
+
+int io_register_request(struct rpc_trans *rt);
+struct rpc_trans *io_find_request_by_xid(uint32_t xid);
+int io_unregister_request(uint32_t xid);
 
 static inline const char *op_type_to_str(enum op_type op)
 {

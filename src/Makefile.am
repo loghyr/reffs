@@ -23,7 +23,7 @@ LDADD = \
 	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
 	$(top_builddir)/lib/mount3/libreffs_mount3.la	\
 	$(top_builddir)/lib/nfs3/libreffs_nfs3.la	\
-	$(top_builddir)/lib/stat1/libreffs_stat1.la	\
+	$(top_builddir)/lib/probe1/libreffs_probe1.la	\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
 	$(TIRPC_LIBS)					\
@@ -52,12 +52,16 @@ reffs_fuse_LDADD = $(LDADD)
 reffs_nfs3_srv_SOURCES = nfs3_server.c
 reffs_nfs3_srv_LDADD = $(LDADD)
 
-bin_PROGRAMS = \
-	recho_cl \
-	recho_ev \
-	reffs_fuse \
-	reffs	\
-	reffs_nfs3_srv
+reffs_probe1_clnt_SOURCES = probe1_client.c
+reffs_probe1_clnt_LDADD = $(LDADD)
+
+bin_PROGRAMS =			\
+	recho_cl		\
+	recho_ev		\
+	reffs_fuse		\
+	reffs			\
+	reffs_nfs3_srv		\
+	reffs_probe1_clnt
 
 EXTRA_DIST = asan_nfs3_server.sh asan-suppressions.txt
 dist_data_DATA = asan-suppressions.txt

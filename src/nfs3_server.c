@@ -27,12 +27,13 @@
 
 #include "nfsv3_xdr.h"
 #include "mntv3_xdr.h"
+#include "probe1_xdr.h"
 
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/nfs3.h"
 #include "reffs/mount3.h"
-#include "reffs/stat1.h"
+#include "reffs/probe1.h"
 #include "reffs/server.h"
 #include "reffs/ns.h"
 #include "reffs/io.h"
@@ -78,7 +79,9 @@ static struct option long_opts[] = {
 
 int main(int argc, char *argv[])
 {
-	int listener_fd;
+	int listener_nfs_fd;
+	int listener_probe_fd;
+
 	int exit_code = 0;
 	int port = NFS_PORT;
 	int opt;
@@ -152,7 +155,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	if (stat1_protocol_register()) {
+	if (probe1_protocol_register()) {
 		exit_code = 1;
 		goto out;
 	}
@@ -170,14 +173,23 @@ int main(int argc, char *argv[])
 	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
 
 	// Setup NFS listener
-	listener_fd = setup_listener(port);
-	if (listener_fd < 0) {
+	listener_nfs_fd = setup_listener(port);
+	if (listener_nfs_fd < 0) {
 		LOG("Failed to setup listener on port %d", port);
 		exit_code = 1;
 		goto out;
 	}
 
-	request_accept_op(listener_fd, NULL, &ring);
+	request_accept_op(listener_nfs_fd, NULL, &ring);
+
+	listener_probe_fd = setup_listener(PROBE_PORT);
+	if (listener_probe_fd < 0) {
+		LOG("Failed to setup listener on port %d", PROBE_PORT);
+		exit_code = 1;
+		goto out;
+	}
+
+	request_accept_op(listener_probe_fd, NULL, &ring);
 
 	if (!pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
 		LOG("Failed to register with portmapper for NFSv3");
@@ -198,7 +210,8 @@ int main(int argc, char *argv[])
 	TRACE("Main loop exited, cleaning up...");
 
 	// Cleanup listener socket
-	close(listener_fd);
+	close(listener_probe_fd);
+	close(listener_nfs_fd);
 
 	// Clean up IO handler
 	io_handler_cleanup(&ring);
@@ -225,7 +238,7 @@ out:
 	TRACE("Calling rcu_barrier()...");
 	rcu_barrier();
 
-	stat1_protocol_deregister();
+	probe1_protocol_deregister();
 	mount3_protocol_deregister();
 	nfs3_protocol_deregister();
 

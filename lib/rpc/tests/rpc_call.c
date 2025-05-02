@@ -450,6 +450,9 @@ int main(void)
 	ret = rpc_protocol_allocate_call(rt);
 	verify(ret == 0);
 
+	ret = rpc_parse_call_data(rt);
+	verify(ret == 0);
+
 	ret = rpc_protocol_op_call(rt);
 	LOG("action returned %d", ret);
 	if (!ret) {
