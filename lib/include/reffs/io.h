@@ -60,7 +60,9 @@ struct io_context {
 	uint32_t ic_xid;
 
 #define IO_CONTEXT_IS_HASHED (1ULL << 0)
-#define IO_CONTEXT_IS_CANCELLED (1ULL << 1)
+#define IO_CONTEXT_MARKED_CANCELLED (1ULL << 1)
+#define IO_CONTEXT_IS_CANCELLED (1ULL << 2)
+#define IO_CONTEXT_IS_CANCELLED_HASH (1ULL << 3)
 	uint64_t ic_state;
 
 	time_t ic_creation_time;
@@ -162,6 +164,7 @@ struct buffer_state *get_buffer_state(int fd);
 int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 			   struct io_context *ic);
 
+// Handlers
 int io_handle_accept(struct io_context *ic, int client_fd,
 		     struct io_uring *ring);
 int io_handle_connect(struct io_context *ic, int result, struct io_uring *ring);
@@ -170,14 +173,16 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 int io_handle_write(struct io_context *ic, int bytes_written,
 		    struct io_uring *ring);
 
+// Context handling
 struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 				     size_t buffer_len);
 struct io_context *io_context_get(struct io_context *ic);
 void io_context_put(struct io_context *ic);
 
-void io_dump_active_contexts(void);
-void io_release_active_contexts(struct io_uring *ring);
-void io_check_stalled_operations(struct io_uring *ring);
+void io_context_list_active(void);
+void io_context_release_active(struct io_uring *ring);
+void io_context_check_stalled(struct io_uring *ring);
+void io_context_release_cancelled(void);
 
 int io_context_init(void);
 int io_context_fini(void);

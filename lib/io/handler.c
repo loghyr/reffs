@@ -262,8 +262,9 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			LOG("HEARTBEAT: Main loop is running at timestamp %ld ctx(c=%d, f=%d) lsnrs=%d",
 			    (long)now, get_context_created(),
 			    get_context_freed(), num_listeners);
-			io_dump_active_contexts();
-			io_check_stalled_operations(ring);
+			io_context_list_active();
+			io_context_check_stalled(ring);
+			io_context_release_cancelled();
 		}
 
 		if (now - last_check >= 1) { // Check signal flag every second
@@ -394,7 +395,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			    (void *)ic, io_op_type_to_str(ic->ic_op_type),
 			    ic->ic_fd, ic->ic_id);
 
-			// Clean up context
+			// Put on the cancelled list == indirectly
 			io_context_put(ic);
 		} else if (cqe->res < 0) {
 			LOG("CQE error for op=%s, fd=%d: %s",
@@ -404,6 +405,13 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			io_socket_close(ic->ic_fd, -cqe->res);
 			io_context_put(ic);
 		} else {
+			uint64_t state;
+			__atomic_load(&ic->ic_state, &state, __ATOMIC_RELAXED);
+			if (state & IO_CONTEXT_IS_CANCELLED) {
+				io_uring_cqe_seen(ring, cqe);
+				continue;
+			}
+
 			switch (ic->ic_op_type) {
 			case OP_TYPE_ACCEPT:
 				ret = io_handle_accept(ic, cqe->res, ring);
@@ -491,7 +499,7 @@ void io_handler_fini(struct io_uring *ring)
 	}
 
 	LOG("Cleaning up remaining active contexts...");
-	io_release_active_contexts(ring);
+	io_context_release_active(ring);
 
 	io_context_fini();
 }

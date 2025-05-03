@@ -37,6 +37,7 @@ static int context_created = 0;
 static int context_freed = 0;
 
 struct cds_lfht *io_context_ht = NULL;
+struct cds_lfht *io_cancelled_ht = NULL;
 
 static bool io_context_unhash(struct io_context *ic)
 {
@@ -58,13 +59,40 @@ static bool io_context_unhash(struct io_context *ic)
 	return false;
 }
 
+static bool io_cancelled_unhash(struct io_context *ic)
+{
+	int ret;
+	bool b;
+	uint64_t state;
+
+	state = __atomic_fetch_and(&ic->ic_state, ~IO_CONTEXT_IS_CANCELLED_HASH,
+				   __ATOMIC_ACQUIRE);
+	b = state & IO_CONTEXT_IS_CANCELLED_HASH;
+	if (b) {
+		ret = cds_lfht_del(io_cancelled_ht, &ic->ic_next);
+		if (ret)
+			LOG("ret = %d", ret);
+		assert(!ret);
+		return true;
+	}
+
+	return false;
+}
+
 int io_context_init(void)
 {
 	io_context_ht = cds_lfht_new(1024, 1024, 0,
 				     CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING,
 				     NULL);
 	if (!io_context_ht) {
-		LOG("Could not create the io context  hash table");
+		LOG("Could not create the io context hash table");
+		return ENOMEM;
+	}
+
+	io_cancelled_ht = cds_lfht_new(
+		8, 8, 0, CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING, NULL);
+	if (!io_context_ht) {
+		LOG("Could not create the io context cancelled hash table");
 		return ENOMEM;
 	}
 
@@ -75,25 +103,48 @@ int io_context_fini(void)
 {
 	struct cds_lfht_iter iter = { 0 };
 	struct io_context *ic;
-	int count = 0;
+	int count;
 	int ret = 0;
 
-	rcu_read_lock();
-	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
-		if (io_context_unhash(ic))
-			count++;
+	if (io_context_ht) {
+		count = 0;
+		rcu_read_lock();
+		cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
+			if (io_context_unhash(ic))
+				count++;
+		}
+		rcu_read_unlock();
+
+		if (count)
+			LOG("Contexts = %d", count);
+
+		ret = cds_lfht_destroy(io_context_ht, NULL);
+		if (ret < 0) {
+			LOG("Could not delete a hash table: %m");
+		}
+
+		io_context_ht = NULL;
 	}
-	rcu_read_unlock();
 
-	if (count)
-		LOG("count = %d", count);
+	if (io_cancelled_ht) {
+		count = 0;
+		rcu_read_lock();
+		cds_lfht_for_each_entry(io_cancelled_ht, &iter, ic, ic_next) {
+			if (io_cancelled_unhash(ic))
+				count++;
+		}
+		rcu_read_unlock();
 
-	ret = cds_lfht_destroy(io_context_ht, NULL);
-	if (ret < 0) {
-		LOG("Could not delete a hash table: %m");
+		if (count)
+			LOG("Cancelled = %d", count);
+
+		ret = cds_lfht_destroy(io_cancelled_ht, NULL);
+		if (ret < 0) {
+			LOG("Could not delete a hash table: %m");
+		}
+
+		io_cancelled_ht = NULL;
 	}
-
-	io_context_ht = NULL;
 
 	return 0;
 }
@@ -201,7 +252,7 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 	return ic;
 }
 
-void io_dump_active_contexts(void)
+void io_context_list_active(void)
 {
 	LOG("=== Active Contexts ===");
 
@@ -224,7 +275,7 @@ void io_dump_active_contexts(void)
 	LOG("======================");
 }
 
-void io_release_active_contexts(struct io_uring *ring)
+void io_context_release_active(struct io_uring *ring)
 {
 	LOG("=== Freeing Orphaned Contexts ===");
 
@@ -244,7 +295,7 @@ void io_release_active_contexts(struct io_uring *ring)
 		struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 		if (sqe) {
 			__atomic_fetch_or(&ic->ic_state,
-					  IO_CONTEXT_IS_CANCELLED,
+					  IO_CONTEXT_MARKED_CANCELLED,
 					  __ATOMIC_ACQUIRE);
 			io_uring_prep_cancel(sqe, ic, 0);
 			sqe->cancel_flags |= IORING_ASYNC_CANCEL_ALL;
@@ -260,7 +311,7 @@ void io_release_active_contexts(struct io_uring *ring)
 	LOG("======================");
 }
 
-void io_check_stalled_operations(struct io_uring *ring)
+void io_context_check_stalled(struct io_uring *ring)
 {
 	struct cds_lfht_iter iter = { 0 };
 	struct io_context *ic;
@@ -290,7 +341,7 @@ void io_check_stalled_operations(struct io_uring *ring)
 		struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 		if (sqe) {
 			__atomic_fetch_or(&ic->ic_state,
-					  IO_CONTEXT_IS_CANCELLED,
+					  IO_CONTEXT_MARKED_CANCELLED,
 					  __ATOMIC_ACQUIRE);
 			io_uring_prep_cancel(sqe, ic, 0);
 			sqe->cancel_flags |= IORING_ASYNC_CANCEL_ALL;
@@ -328,11 +379,81 @@ struct io_context *io_context_get(struct io_context *ic)
 	return ic;
 }
 
+void io_context_release_cancelled(void)
+{
+	struct cds_lfht_iter iter = { 0 };
+	struct io_context *ic;
+	int count = 0;
+	time_t now = time(NULL);
+
+	LOG("=== Freeing Cancelled Contexts ===");
+
+	rcu_read_lock();
+	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
+		time_t age = now - ic->ic_creation_time;
+
+		if (age < 60)
+			continue;
+
+		LOG("Detected cancelled operation: %p op=%s fd=%d age=%ld id=%u",
+		    (void *)ic, io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
+		    (long)(now - ic->ic_creation_time), ic->ic_id);
+
+		io_cancelled_unhash(ic);
+		io_context_put(ic);
+
+		count++;
+	}
+	rcu_read_unlock();
+
+	LOG("Total cancelled contexts: %d", count);
+	LOG("======================");
+}
+
+bool mark_io_context_cancelled(struct io_context *ic)
+{
+        uint64_t old_state, new_state;
+
+        __atomic_load(&ic->ic_state, &old_state, __ATOMIC_ACQUIRE);
+
+        if ((old_state & IO_CONTEXT_MARKED_CANCELLED) &&
+            !(old_state & IO_CONTEXT_IS_CANCELLED)) {
+                new_state = old_state | IO_CONTEXT_IS_CANCELLED;
+
+                if (__atomic_compare_exchange(&ic->ic_state,
+                                             &old_state,
+                                             &new_state,
+                                             0,
+                                             __ATOMIC_SEQ_CST,
+                                             __ATOMIC_SEQ_CST)) {
+                        return true;
+                }
+
+                return false;
+        }
+
+        return false;
+}
+
 void io_context_put(struct io_context *ic)
 {
 	if (!ic)
 		return;
 
 	trace_io_context(ic, __func__);
+
+	// Steal the put if we got cancelled
+	if (mark_io_context_cancelled(ic)) {
+		io_context_unhash(ic);
+		ic->ic_creation_time = time(NULL);
+		rcu_read_lock();
+		__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_IS_CANCELLED_HASH,
+				  __ATOMIC_ACQUIRE);
+		cds_lfht_add(io_cancelled_ht, ic->ic_id, &ic->ic_next);
+		rcu_read_unlock();
+
+		return;
+	}
+
 	urcu_ref_put(&ic->ic_ref, io_context_release);
 }
