@@ -46,8 +46,8 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 	STATS_GATHER1resok *resok = &res->STATS_GATHER1res_u.psgr_resok;
 	stat_program1 *sp = &resok->psgr_program;
 
-	struct rpc_program_handler *rph =
-		rpc_program_handler_find(args->psga_program, args->psga_version);
+	struct rpc_program_handler *rph = rpc_program_handler_find(
+		args->psga_program, args->psga_version);
 
 	if (!rph) {
 		res->psgr_status = PROBE1ERR_NOENT;
@@ -64,30 +64,32 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 	sp->sp_ops.sp_ops_len = rt->rt_rph->rph_ops_len;
 	sp->sp_program = rt->rt_info.ri_program;
 	sp->sp_version = rt->rt_info.ri_version;
-	sp->sp_count = uatomic_read(&rt->rt_rph->rph_calls, __ATOMIC_RELAXED);
-	sp->sp_replied_errors =
-		uatomic_read(&rt->rt_rph->rph_replied_errors, __ATOMIC_RELAXED);
-	sp->sp_rejected_errors = uatomic_read(&rt->rt_rph->rph_rejected_errors,
-					      __ATOMIC_RELAXED);
-	sp->sp_accepted_errors = uatomic_read(&rt->rt_rph->rph_accepted_errors,
-					      __ATOMIC_RELAXED);
-	sp->sp_authed_errors =
-		uatomic_read(&rt->rt_rph->rph_authed_errors, __ATOMIC_RELAXED);
+	__atomic_load(&rt->rt_rph->rph_calls, &sp->sp_count, __ATOMIC_RELAXED);
+	__atomic_load(&rt->rt_rph->rph_replied_errors, &sp->sp_replied_errors,
+		      __ATOMIC_RELAXED);
+	__atomic_load(&rt->rt_rph->rph_rejected_errors, &sp->sp_rejected_errors,
+		      __ATOMIC_RELAXED);
+	__atomic_load(&rt->rt_rph->rph_accepted_errors, &sp->sp_accepted_errors,
+		      __ATOMIC_RELAXED);
+	__atomic_load(&rt->rt_rph->rph_authed_errors, &sp->sp_authed_errors,
+		      __ATOMIC_RELAXED);
 
 	for (size_t i = 0; i < rt->rt_rph->rph_ops_len; i++) {
-		sp->sp_ops.sp_ops_val[i].so_op =
-			uatomic_read(&rt->rt_rph->rph_ops[i].roh_operation,
-				     __ATOMIC_RELAXED);
-		sp->sp_ops.sp_ops_val[i].so_calls = uatomic_read(
-			&rt->rt_rph->rph_ops[i].roh_calls, __ATOMIC_RELAXED);
-		sp->sp_ops.sp_ops_val[i].so_errors = uatomic_read(
-			&rt->rt_rph->rph_ops[i].roh_fails, __ATOMIC_RELAXED);
-		sp->sp_ops.sp_ops_val[i].so_max_duration =
-			uatomic_read(&rt->rt_rph->rph_ops[i].roh_duration_max,
-				     __ATOMIC_RELAXED);
-		sp->sp_ops.sp_ops_val[i].so_total_duration =
-			uatomic_read(&rt->rt_rph->rph_ops[i].roh_duration_total,
-				     __ATOMIC_RELAXED);
+		__atomic_load(&rt->rt_rph->rph_ops[i].roh_operation,
+			      &sp->sp_ops.sp_ops_val[i].so_op,
+			      __ATOMIC_RELAXED);
+		__atomic_load(&rt->rt_rph->rph_ops[i].roh_calls,
+			      &sp->sp_ops.sp_ops_val[i].so_calls,
+			      __ATOMIC_RELAXED);
+		__atomic_load(&rt->rt_rph->rph_ops[i].roh_fails,
+			      &sp->sp_ops.sp_ops_val[i].so_errors,
+			      __ATOMIC_RELAXED);
+		__atomic_load(&rt->rt_rph->rph_ops[i].roh_duration_max,
+			      &sp->sp_ops.sp_ops_val[i].so_max_duration,
+			      __ATOMIC_RELAXED);
+		__atomic_load(&rt->rt_rph->rph_ops[i].roh_duration_total,
+			      &sp->sp_ops.sp_ops_val[i].so_total_duration,
+			      __ATOMIC_RELAXED);
 	}
 
 out:

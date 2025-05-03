@@ -77,7 +77,8 @@ static void inode_release(struct urcu_ref *ref)
 
 	inode_unhash(inode);
 	if (inode->i_sb)
-		uatomic_inc(&inode->i_sb->sb_inodes_used, __ATOMIC_RELAXED);
+		__atomic_fetch_add(&inode->i_sb->sb_inodes_used, 1,
+				   __ATOMIC_RELAXED);
 	super_block_put(inode->i_sb);
 
 	call_rcu(&inode->i_rcu, inode_free_rcu);
@@ -114,8 +115,8 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 		assert(inode->i_sb);
 
 		if (inode->i_sb) {
-			uatomic_inc(&inode->i_sb->sb_inodes_used,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&inode->i_sb->sb_inodes_used, 1,
+					   __ATOMIC_RELAXED);
 
 			/* Make sure no one else beat us to it */
 			rcu_read_lock();

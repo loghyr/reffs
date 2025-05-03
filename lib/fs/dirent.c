@@ -38,9 +38,9 @@ void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 	rcu_read_lock();
 	de->d_parent = dirent_get(parent);
 	verify(parent->d_inode->i_mode & S_IFDIR);
-	uatomic_inc(&parent->d_inode->i_nlink, __ATOMIC_RELAXED);
+	__atomic_fetch_add(&parent->d_inode->i_nlink, 1, __ATOMIC_RELAXED);
 	de->d_cookie =
-		uatomic_add_return(&parent->d_cookie_next, 1, __ATOMIC_RELAXED);
+		__atomic_add_fetch(&parent->d_cookie_next, 1, __ATOMIC_RELAXED);
 	cds_list_add_tail_rcu(&de->d_siblings, &parent->d_inode->i_children);
 	dirent_get(de); // One for the linked list
 
@@ -49,7 +49,8 @@ void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 			de->d_inode->i_parent =
 				parent; // Do not take a reference, manage carefully
 		else
-			uatomic_inc(&de->d_inode->i_nlink, __ATOMIC_RELAXED);
+			__atomic_fetch_add(&de->d_inode->i_nlink, 1,
+					   __ATOMIC_RELAXED);
 	}
 
 	if (rla == reffs_life_action_birth || rla == reffs_life_action_update) {
@@ -195,7 +196,8 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 	rcu_read_lock();
 	parent = rcu_xchg_pointer(&de->d_parent, NULL);
 	if (parent) {
-		uatomic_dec(&parent->d_inode->i_nlink, __ATOMIC_RELAXED);
+		__atomic_fetch_sub(&parent->d_inode->i_nlink, 1,
+				   __ATOMIC_RELAXED);
 		cds_list_del_init(&de->d_siblings);
 
 		if (de->d_inode && de->d_inode->i_mode & S_IFDIR)
@@ -212,7 +214,8 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 		dirent_put(parent);
 
 		if (de->d_inode) {
-			uatomic_dec(&de->d_inode->i_nlink, __ATOMIC_RELAXED);
+			__atomic_fetch_sub(&de->d_inode->i_nlink, 1,
+					   __ATOMIC_RELAXED);
 
 			if (rla == reffs_life_action_delayed_death)
 				inode_schedule_delayed_release(

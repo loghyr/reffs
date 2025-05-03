@@ -133,13 +133,15 @@ static struct listener *listener_find(int fd)
 	struct listener *tmp;
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(tmp, &listener_list, l_link)
-		if (!(uatomic_read(&tmp->l_flags, __ATOMIC_RELAXED) &
-		      LISTENER_IS_DEAF) &&
-		    fd == tmp->l_fd) {
+	cds_list_for_each_entry_rcu(tmp, &listener_list, l_link) {
+		uint32_t l_flags;
+		__atomic_load(&tmp->l_flags, &l_flags, __ATOMIC_RELAXED);
+
+		if (!(l_flags & LISTENER_IS_DEAF) && fd == tmp->l_fd) {
 			lsnr = listener_get(tmp);
 			break;
 		}
+	}
 	rcu_read_unlock();
 
 	return lsnr;
@@ -150,16 +152,18 @@ static void listener_find_and_close(int fd)
 	struct listener *lsnr;
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(lsnr, &listener_list, l_link)
-		if (!(uatomic_read(&lsnr->l_flags, __ATOMIC_RELAXED) &
-		      LISTENER_IS_DEAF) &&
-		    fd == lsnr->l_fd) {
-			uatomic_or(&lsnr->l_flags, LISTENER_IS_DEAF,
-				   __ATOMIC_RELAXED);
+	cds_list_for_each_entry_rcu(lsnr, &listener_list, l_link) {
+		uint32_t l_flags;
+		__atomic_load(&lsnr->l_flags, &l_flags, __ATOMIC_RELAXED);
+
+		if (!(l_flags & LISTENER_IS_DEAF) && fd == lsnr->l_fd) {
+			__atomic_fetch_or(&lsnr->l_flags, LISTENER_IS_DEAF,
+					  __ATOMIC_RELAXED);
 			cds_list_del(&lsnr->l_link);
 			listener_put(lsnr);
 			break;
 		}
+	}
 	rcu_read_unlock();
 }
 
@@ -173,7 +177,7 @@ struct listener *listener_alloc(uint32_t flags)
 
 	lsnr->l_flags = flags;
 
-	lsnr->l_id = uatomic_add_return(&next_id, 1, __ATOMIC_RELAXED);
+	lsnr->l_id = __atomic_add_fetch(&next_id, 1, __ATOMIC_RELAXED);
 	cds_list_add_rcu(&lsnr->l_link, &listener_list);
 	urcu_ref_init(&lsnr->l_ref);
 
@@ -274,8 +278,8 @@ static void *connector_thread(void *vqueue)
 			FAIL("Could not write to socket: %ld", n);
 
 		if (!strncmp(buf, "done", 4)) {
-			uatomic_or(&lsnr->l_flags, LISTENER_IS_DEAF,
-				   __ATOMIC_RELAXED);
+			__atomic_fetch_or(&lsnr->l_flags, LISTENER_IS_DEAF,
+					  __ATOMIC_RELAXED);
 			cds_list_del(&lsnr->l_link);
 			listener_put(lsnr);
 		}
@@ -303,7 +307,12 @@ static void server(int epfd, struct queue *queue)
 
 	struct listener_queue *lq;
 
-	while (!uatomic_read(&stop_processing, __ATOMIC_RELAXED)) {
+	while (1) {
+		bool b;
+		__atomic_load(&stop_processing, &b, __ATOMIC_RELAXED);
+		if (b)
+			break;
+
 		count = epoll_wait(epfd, events, MAX_EVENTS, 30000);
 
 		for (i = 0; i < count; i++) {
@@ -362,7 +371,8 @@ static void shutdown_signal_handler(int signum)
 	sigaction(SIGQUIT, &sa, NULL);
 
 	LOG("Got signal %d", signum);
-	uatomic_set(&stop_processing, true, __ATOMIC_RELAXED);
+	bool b = true;
+	__atomic_store(&stop_processing, &b, __ATOMIC_RELAXED);
 }
 
 int main(int argc, char *argv[])

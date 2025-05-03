@@ -27,7 +27,7 @@ START_TEST(add_sb_1)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -41,7 +41,7 @@ START_TEST(add_sb_2)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -58,7 +58,7 @@ START_TEST(find_sb_inode)
 	int ret;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -87,7 +87,7 @@ START_TEST(find_sb_inode_put)
 	int ret;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -116,7 +116,7 @@ START_TEST(find_sb_inode_unhash)
 	int ret;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -143,7 +143,7 @@ START_TEST(add_inode_1)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -165,7 +165,7 @@ START_TEST(add_inode_2)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -194,7 +194,7 @@ START_TEST(put_inode_1)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -227,7 +227,7 @@ START_TEST(get_inode_1)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -263,7 +263,7 @@ START_TEST(sb_put_inode_1)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -292,7 +292,7 @@ START_TEST(find_inode_1)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -317,7 +317,7 @@ START_TEST(find_inode_1_sb_NULL)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -342,7 +342,7 @@ START_TEST(find_inode_3)
 	struct super_block *sb;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/");
 	ck_assert(sb);
@@ -376,7 +376,7 @@ START_TEST(find_sb_1)
 	struct super_block *sb1, *sb2;
 	uint64_t sb_id;
 
-	sb_id = uatomic_add_return(&sb_id_next, 1, __ATOMIC_RELAXED);
+	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb1 = super_block_alloc(sb_id, "/");
 	ck_assert(sb1);

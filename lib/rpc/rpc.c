@@ -212,36 +212,28 @@ static void update_max_duration_rcu(uint64_t duration_ns,
 {
 	uint64_t old_max;
 
-	// RCU read section
-	rcu_read_lock();
+	__atomic_load(&ph->ph_op_handler->roh_duration_max, &old_max,
+		      __ATOMIC_RELAXED);
 
-	// Read the current maximum value
-	old_max = uatomic_read(&ph->ph_op_handler->roh_duration_max,
-			       __ATOMIC_RELAXED);
-
-	// Only attempt update if new value is larger
 	if (duration_ns > old_max) {
-		// Try to update with compare and exchange
 		// Keep trying until either we succeed or someone else updates to larger value
 		while (1) {
-			uint64_t result = uatomic_cmpxchg(
-				&ph->ph_op_handler->roh_duration_max, old_max,
-				duration_ns, __ATOMIC_RELAXED);
+			uint64_t expected = old_max;
+			uint64_t desired = duration_ns;
+			bool success = __atomic_compare_exchange(
+				&ph->ph_op_handler->roh_duration_max, &expected,
+				&desired, 0, __ATOMIC_RELAXED,
+				__ATOMIC_RELAXED);
 
-			// If the comparison was successful, break out
-			if (result == old_max)
+			if (success)
 				break;
 
-			// Update old_max with the current value
-			old_max = result;
+			old_max = expected;
 
-			// If our duration is no longer greater than current max, we're done
 			if (duration_ns <= old_max)
 				break;
 		}
 	}
-
-	rcu_read_unlock();
 }
 
 int rpc_protocol_op_call(struct rpc_trans *rt)
@@ -260,14 +252,14 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 		duration_ns = (end.tv_sec - start.tv_sec) * 1000000000ULL +
 			      (end.tv_nsec - start.tv_nsec);
 
-		uint64_t calls = uatomic_add_return(
+		uint64_t calls = __atomic_add_fetch(
 			&ph->ph_op_handler->roh_calls, 1, __ATOMIC_RELAXED);
-		uint64_t duration_total = uatomic_add_return(
+		uint64_t duration_total = __atomic_add_fetch(
 			&ph->ph_op_handler->roh_duration_total, duration_ns,
 			__ATOMIC_RELAXED);
 		if (ret)
-			uatomic_inc(&ph->ph_op_handler->roh_fails,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&ph->ph_op_handler->roh_fails, 1,
+					   __ATOMIC_RELAXED);
 
 		update_max_duration_rcu(duration_ns, ph);
 
@@ -379,7 +371,7 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 
 	uint32_t *p;
 
-	uatomic_inc(&rt->rt_rph->rph_calls, __ATOMIC_RELAXED);
+	__atomic_fetch_add(&rt->rt_rph->rph_calls, 1, __ATOMIC_RELAXED);
 
 	p = (uint32_t *)rt->rt_body;
 
@@ -395,7 +387,8 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 	u_long xdr_size = 0;
 
 	if (ph->ph_op_handler->roh_args_f) {
-		xdr_size = xdr_sizeof(ph->ph_op_handler->roh_args_f, ph->ph_args);
+		xdr_size =
+			xdr_sizeof(ph->ph_op_handler->roh_args_f, ph->ph_args);
 	}
 
 	rt->rt_reply_len = 7 * sizeof(uint32_t) + xdr_size;
@@ -554,19 +547,21 @@ int rpc_process_task(struct task *t)
 		goto handle_rpc_error;
 	}
 
-	uatomic_inc(&rph->rph_calls, __ATOMIC_RELAXED);
+	__atomic_fetch_add(&rph->rph_calls, 1, __ATOMIC_RELAXED);
 
 	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_procedure);
 	if (!p) {
 		rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-		uatomic_inc(&rph->rph_accepted_errors, __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+				   __ATOMIC_RELAXED);
 		goto handle_rpc_error;
 	}
 
 	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_cred.rc_flavor);
 	if (!p) {
 		rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-		uatomic_inc(&rph->rph_accepted_errors, __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+				   __ATOMIC_RELAXED);
 		goto handle_rpc_error;
 	}
 
@@ -576,8 +571,8 @@ int rpc_process_task(struct task *t)
 		p = rpc_decode_uint32_t(rt, p, &len);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			goto handle_rpc_error;
 		}
 		break;
@@ -589,8 +584,8 @@ int rpc_process_task(struct task *t)
 		p = rpc_decode_uint32_t(rt, p, &len);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			goto handle_rpc_error;
 		}
 
@@ -603,10 +598,12 @@ int rpc_process_task(struct task *t)
 			rt->rt_info.ri_auth_stat = AUTH_BADCRED;
 			rt->rt_info.ri_reply_stat = MSG_DENIED;
 			rt->rt_info.ri_reject_stat = AUTH_ERROR;
-			uatomic_inc(&rph->rph_authed_errors, __ATOMIC_RELAXED);
-			uatomic_inc(&rph->rph_replied_errors, __ATOMIC_RELAXED);
-			uatomic_inc(&rph->rph_rejected_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_authed_errors, 1,
+					   __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_replied_errors, 1,
+					   __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_rejected_errors, 1,
+					   __ATOMIC_RELAXED);
 			xdr_destroy(&xdrs);
 			goto handle_rpc_error;
 		}
@@ -623,16 +620,20 @@ int rpc_process_task(struct task *t)
 		rt->rt_info.ri_auth_stat = AUTH_BADCRED;
 		rt->rt_info.ri_reply_stat = MSG_DENIED;
 		rt->rt_info.ri_reject_stat = AUTH_ERROR;
-		uatomic_inc(&rph->rph_authed_errors, __ATOMIC_RELAXED);
-		uatomic_inc(&rph->rph_replied_errors, __ATOMIC_RELAXED);
-		uatomic_inc(&rph->rph_rejected_errors, __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_authed_errors, 1,
+				   __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_replied_errors, 1,
+				   __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_rejected_errors, 1,
+				   __ATOMIC_RELAXED);
 		break;
 	}
 
 	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_verifier_flavor);
 	if (!p) {
 		rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-		uatomic_inc(&rph->rph_accepted_errors, __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+				   __ATOMIC_RELAXED);
 		goto handle_rpc_error;
 	}
 
@@ -642,8 +643,8 @@ int rpc_process_task(struct task *t)
 		p = rpc_decode_uint32_t(rt, p, &len);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			goto handle_rpc_error;
 		}
 		break;
@@ -654,7 +655,8 @@ int rpc_process_task(struct task *t)
 	case RPCSEC_GSS:
 	default:
 		rt->rt_info.ri_auth_stat = AUTH_BADVERF;
-		uatomic_inc(&rph->rph_authed_errors, __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_authed_errors, 1,
+				   __ATOMIC_RELAXED);
 		break;
 	}
 
@@ -665,13 +667,17 @@ int rpc_process_task(struct task *t)
 	if (ret == ENOENT) {
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 		rt->rt_info.ri_accept_stat = PROG_UNAVAIL;
-		uatomic_inc(&rph->rph_replied_errors, __ATOMIC_RELAXED);
-		uatomic_inc(&rph->rph_accepted_errors, __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_replied_errors, 1,
+				   __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+				   __ATOMIC_RELAXED);
 	} else if (ret) {
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 		rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-		uatomic_inc(&rph->rph_replied_errors, __ATOMIC_RELAXED);
-		uatomic_inc(&rph->rph_accepted_errors, __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_replied_errors, 1,
+				   __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+				   __ATOMIC_RELAXED);
 	} else {
 		ret = rpc_protocol_op_call(rt);
 		if (!ret) {
@@ -878,8 +884,8 @@ handle_rpc_error:
 		p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
 			goto handle_rpc_error;
@@ -888,8 +894,8 @@ handle_rpc_error:
 		p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
 			goto handle_rpc_error;
@@ -898,8 +904,8 @@ handle_rpc_error:
 		p = rpc_encode_uint32_t(rt, p, 1);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
 			goto handle_rpc_error;
@@ -908,8 +914,8 @@ handle_rpc_error:
 		p = rpc_encode_uint32_t(rt, p, 0);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
 			goto handle_rpc_error;
@@ -918,8 +924,8 @@ handle_rpc_error:
 		p = rpc_encode_uint32_t(rt, p, 0);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
 			goto handle_rpc_error;
@@ -928,8 +934,8 @@ handle_rpc_error:
 		p = rpc_encode_uint32_t(rt, p, 0);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
 			goto handle_rpc_error;
@@ -938,8 +944,8 @@ handle_rpc_error:
 		p = rpc_encode_uint32_t(rt, p, 0);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
 			goto handle_rpc_error;
@@ -947,8 +953,8 @@ handle_rpc_error:
 
 		if (rt->rt_offset + xdr_size > rt->rt_reply_len) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			uatomic_inc(&rph->rph_accepted_errors,
-				    __ATOMIC_RELAXED);
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
 			goto handle_rpc_error;
@@ -965,8 +971,8 @@ handle_rpc_error:
 			if (!ph->ph_op_handler->roh_res_f(&xdrs, ph->ph_res)) {
 				xdr_destroy(&xdrs);
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-				uatomic_inc(&rph->rph_accepted_errors,
-					    __ATOMIC_RELAXED);
+				__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+						   __ATOMIC_RELAXED);
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
 				goto handle_rpc_error;

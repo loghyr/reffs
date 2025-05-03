@@ -173,7 +173,7 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 
 		inode->i_used =
 			inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
-		uatomic_add_return(&inode->i_sb->sb_bytes_used,
+		__atomic_add_fetch(&inode->i_sb->sb_bytes_used,
 				   inode->i_size - size, __ATOMIC_RELAXED);
 		if (flags)
 			*flags |= REFFS_INODE_UPDATE_CTIME |
@@ -957,7 +957,7 @@ static int nfs3_op_write(struct rpc_trans *rt)
 	inode->i_size = inode->i_db->db_size;
 	inode->i_used = inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
 
-	uatomic_add_return(&inode->i_sb->sb_bytes_used,
+	__atomic_add_fetch(&inode->i_sb->sb_bytes_used,
 			   inode->i_db->db_size - size, __ATOMIC_RELAXED);
 
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
@@ -1099,7 +1099,7 @@ static int nfs3_op_create(struct rpc_trans *rt)
 		}
 
 		de->d_inode =
-			inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+			inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
 							   __ATOMIC_RELAXED));
 		if (!de->d_inode) {
 			dirent_parent_release(de, reffs_life_action_death);
@@ -1247,7 +1247,7 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+	de->d_inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
 							 __ATOMIC_RELAXED));
 	if (!de->d_inode) {
 		dirent_parent_release(de, reffs_life_action_death);
@@ -1395,7 +1395,7 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+	de->d_inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
 							 __ATOMIC_RELAXED));
 	if (!de->d_inode) {
 		dirent_parent_release(de, reffs_life_action_death);
@@ -1552,7 +1552,7 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	de->d_inode = inode_alloc(sb, uatomic_add_return(&sb->sb_next_ino, 1,
+	de->d_inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
 							 __ATOMIC_RELAXED));
 	if (!de->d_inode) {
 		dirent_parent_release(de, reffs_life_action_death);
@@ -2169,7 +2169,7 @@ static int nfs3_op_link(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	uatomic_inc(&inode->i_nlink, __ATOMIC_RELAXED);
+	__atomic_fetch_add(&inode->i_nlink, 1, __ATOMIC_RELAXED);
 
 	pthread_rwlock_unlock(&inode_dir->i_parent->d_rwlock);
 

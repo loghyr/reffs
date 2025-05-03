@@ -104,7 +104,8 @@ static void *watcher(void __attribute__((unused)) * unused)
 		abort();
 	}
 
-	uatomic_set(&clean_up, true, __ATOMIC_RELAXED);
+	bool b = true;
+	__atomic_store(&clean_up, &b, __ATOMIC_RELAXED);
 	pthread_cond_signal(&work_item_cond);
 	pthread_mutex_unlock(&work_item_lock);
 
@@ -122,8 +123,13 @@ static void *actor(void __attribute__((unused)) * unused)
 	rcu_register_thread();
 
 	while (true) {
-		for (i = 0; i < uatomic_read(&next_id, __ATOMIC_RELAXED) + 1;
-		     i++) {
+		for (i = 0;; i++) {
+			uint64_t id;
+			__atomic_load(&next_id, &id, __ATOMIC_RELAXED);
+
+			if (i < id + 1)
+				break;
+
 			rcu_read_lock();
 			wi = NULL;
 			cds_list_for_each_entry_rcu(tmp, &work_item_list,
@@ -189,7 +195,7 @@ int main(int argc, char *argv[])
 			abort();
 		}
 
-		wi->wi_id = uatomic_add_return(&next_id, 1, __ATOMIC_RELAXED);
+		wi->wi_id = __atomic_add_fetch(&next_id, 1, __ATOMIC_RELAXED);
 		cds_list_add_rcu(&wi->wi_link, &work_item_list);
 		urcu_ref_init(&wi->wi_ref);
 	}
@@ -210,7 +216,7 @@ int main(int argc, char *argv[])
 	pthread_mutex_lock(&work_item_lock);
 	while (!done) {
 		pthread_cond_wait(&work_item_cond, &work_item_lock);
-		done = uatomic_read(&clean_up, __ATOMIC_RELAXED);
+		__atomic_load(&clean_up, &done, __ATOMIC_RELAXED);
 	}
 	pthread_mutex_unlock(&work_item_lock);
 
