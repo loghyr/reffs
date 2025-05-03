@@ -362,9 +362,10 @@ static int process_record_marker(struct buffer_state *bs)
 }
 
 // Handle read completions
+// Handle read completions
 int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 {
-	int ret;
+	int ret = 0;
 
 	// Extract data from context
 	char *buffer = (char *)ic->ic_buffer;
@@ -379,6 +380,8 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		io_socket_close(client_fd,
 				bytes_read < 0 ? -bytes_read : ECONNRESET);
 		io_context_free(ic);
+
+		// No need to request a new read operation on a closed socket
 		return 0;
 	}
 
@@ -391,6 +394,16 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	if (!bs) {
 		bs = create_buffer_state(client_fd);
 		if (!bs) {
+			LOG("Failed to create buffer state for fd: %d",
+			    client_fd);
+			// Try to set up a new read operation despite the error
+			ret = request_additional_read_data(client_fd,
+							   &ic->ic_ci, ring);
+			if (ret) {
+				LOG("Failed to request additional read after buffer state creation error: %s",
+				    strerror(ret));
+				io_socket_close(client_fd, ENOMEM);
+			}
 			io_context_free(ic);
 			return -ENOMEM;
 		}
@@ -398,6 +411,14 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 	// Append new data to existing buffer
 	if (!append_to_buffer(bs, buffer, bytes_read)) {
+		LOG("Failed to append to buffer for fd: %d", client_fd);
+		// Try to set up a new read operation despite the error
+		ret = request_additional_read_data(client_fd, &ic->ic_ci, ring);
+		if (ret) {
+			LOG("Failed to request additional read after buffer append error: %s",
+			    strerror(ret));
+			io_socket_close(client_fd, ENOMEM);
+		}
 		io_context_free(ic);
 		return -ENOMEM;
 	}
@@ -406,7 +427,9 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	while (bs->bs_filled >= 4) {
 		int complete_size = process_record_marker(bs);
 		if (complete_size < 0) {
-			io_socket_close(ic->ic_fd, ENOBUFS);
+			LOG("Error processing record marker for fd: %d: %s",
+			    client_fd, strerror(-complete_size));
+			io_socket_close(client_fd, ENOBUFS);
 			io_context_free(ic);
 			return 0;
 		}
@@ -421,6 +444,15 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 			t->t_buffer = malloc(complete_size);
 			if (!t->t_buffer) {
 				free(t);
+				// Continue reading despite task allocation failure
+				ret = request_additional_read_data(
+					client_fd, &ic->ic_ci, ring);
+				if (ret) {
+					LOG("Failed to request additional read after task buffer allocation error: %s",
+					    strerror(ret));
+					io_socket_close(client_fd, ENOMEM);
+				}
+				io_context_free(ic);
 				return -ENOMEM;
 			}
 
@@ -450,12 +482,37 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 			// Reset the record state for the next message
 			bs->bs_record.rs_total_len = 0;
 			bs->bs_record.rs_position = 0;
+		} else {
+			// Failed to allocate task
+			LOG("Failed to allocate task for fd: %d", client_fd);
+			// Continue reading despite task allocation failure
+			ret = request_additional_read_data(client_fd,
+							   &ic->ic_ci, ring);
+			if (ret) {
+				LOG("Failed to request additional read after task allocation error: %s",
+				    strerror(ret));
+				io_socket_close(client_fd, ENOMEM);
+			}
+			io_context_free(ic);
+			return -ENOMEM;
 		}
 	}
 
+	// Try to use request_more_read_data first (which reuses the current context)
 	ret = request_more_read_data(bs, ring, ic);
 	if (ret) {
-		io_socket_close(ic->ic_fd, ret);
+		LOG("Failed to request more read data with existing context: %s",
+		    strerror(ret));
+		// If that fails, try request_additional_read_data before giving up
+		ret = request_additional_read_data(client_fd, &ic->ic_ci, ring);
+		if (ret) {
+			LOG("Failed to request additional read data with new context: %s",
+			    strerror(ret));
+			io_socket_close(client_fd, ret);
+		} else {
+			LOG("Successfully requested additional read with new context for fd: %d",
+			    client_fd);
+		}
 		io_context_free(ic);
 	}
 

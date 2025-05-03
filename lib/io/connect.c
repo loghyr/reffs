@@ -163,8 +163,6 @@ int io_conn_add_read_op(int fd)
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
 		connections[idx]->ci_read_count++;
 		connections[idx]->ci_last_activity = time(NULL);
-		LOG("Connection fd=%d: added read op (count=%d)", fd,
-		    connections[idx]->ci_read_count);
 
 		// Update the connection state based on the new count
 		enum conn_state old_state = connections[idx]->ci_state;
