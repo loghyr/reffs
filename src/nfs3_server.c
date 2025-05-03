@@ -48,7 +48,8 @@ volatile sig_atomic_t running = 1;
 static void signal_handler(int sig)
 {
 	TRACE("Received signal %d, initiating shutdown...", sig);
-	running = 0;
+
+	__atomic_store(&running, &(int){ 0 }, __ATOMIC_SEQ_CST);
 
 	// Wake up any waiting worker threads
 	wake_worker_threads();
@@ -183,6 +184,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	io_add_listener(listener_nfs_fd);
 	request_accept_op(listener_nfs_fd, NULL, &ring);
 
 	listener_probe_fd = setup_listener(PROBE_PORT);
@@ -192,6 +194,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	io_add_listener(listener_probe_fd);
 	request_accept_op(listener_probe_fd, NULL, &ring);
 
 	if (!pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
@@ -207,14 +210,26 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	__atomic_store(&running, &(int){ 1 }, __ATOMIC_SEQ_CST);
+
 	// Run the main IO processing loop
 	io_handler_main_loop(&running, &ring);
 
 	TRACE("Main loop exited, cleaning up...");
 
 	// Cleanup listener socket
-	close(listener_probe_fd);
-	close(listener_nfs_fd);
+	if (listener_probe_fd > 0) {
+		close(listener_probe_fd);
+		listener_probe_fd = -1;
+	}
+
+	if (listener_nfs_fd > 0) {
+		close(listener_nfs_fd);
+		listener_nfs_fd = -1;
+	}
+
+	io_handler_cleanup(&ring);
+	io_uring_queue_exit(&ring);
 
 	// Clean up IO handler
 	io_handler_cleanup(&ring);

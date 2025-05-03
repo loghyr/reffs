@@ -33,6 +33,409 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
+// Array to track connection states
+static struct conn_info *connections[MAX_CONNECTIONS];
+static pthread_mutex_t conn_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Initialize connection tracking
+int io_conn_init(void)
+{
+	pthread_mutex_lock(&conn_mutex);
+	memset(connections, 0, sizeof(connections));
+	pthread_mutex_unlock(&conn_mutex);
+	return 0;
+}
+
+// Register a new connection
+struct conn_info *io_conn_register(int fd, enum conn_state initial_state,
+				   enum conn_role role)
+{
+	struct conn_info *ci = NULL;
+
+	pthread_mutex_lock(&conn_mutex);
+
+	// Find unused slot or reuse existing slot for this fd
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		ci = connections[idx];
+	} else if (!connections[idx] ||
+		   connections[idx]->ci_state == CONN_UNUSED) {
+		// Allocate new conn_info if needed
+		if (!connections[idx]) {
+			connections[idx] = malloc(sizeof(struct conn_info));
+			if (!connections[idx]) {
+				pthread_mutex_unlock(&conn_mutex);
+				return NULL;
+			}
+		}
+
+		ci = connections[idx];
+		memset(ci, 0, sizeof(struct conn_info));
+		ci->ci_fd = fd;
+	} else {
+		// Collision with another active connection
+		LOG("Connection slot collision for fd=%d", fd);
+	}
+
+	if (ci) {
+		ci->ci_state = initial_state;
+		ci->ci_role = role;
+		ci->ci_last_activity = time(NULL);
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ci;
+}
+
+// Update connection state
+int io_conn_set_state(int fd, enum conn_state new_state, int error_code)
+{
+	int ret = -1;
+
+	if (new_state < CONN_UNUSED || new_state > CONN_ERROR) {
+		LOG("Invalid connection state value: %d", new_state);
+		return -EINVAL;
+	}
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		// Validate state transition
+		enum conn_state old_state = connections[idx]->ci_state;
+		bool valid_transition =
+			is_valid_state_transition(old_state, new_state);
+
+		if (!valid_transition) {
+			LOG("Invalid state transition for fd=%d: %s -> %s", fd,
+			    conn_state_to_str(old_state),
+			    conn_state_to_str(new_state));
+			pthread_mutex_unlock(&conn_mutex);
+			return -EINVAL;
+		}
+
+		LOG("Connection fd=%d state change: %s -> %s", fd,
+		    conn_state_to_str(old_state), conn_state_to_str(new_state));
+
+		connections[idx]->ci_state = new_state;
+		connections[idx]->ci_last_activity = time(NULL);
+
+		if (error_code) {
+			connections[idx]->ci_error = error_code;
+		}
+
+		ret = 0;
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
+}
+
+int io_socket_close(int fd, int error)
+{
+	if (fd <= 0) {
+		return -EBADF;
+	}
+
+	struct conn_info *conn = io_conn_get(fd);
+	if (conn) {
+		io_conn_set_state(fd, CONN_ERROR, error);
+		io_conn_unregister(fd);
+	}
+
+	unregister_client_fd(fd);
+	return close(fd);
+}
+
+// Get connection info
+struct conn_info *io_conn_get(int fd)
+{
+	struct conn_info *ci = NULL;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		ci = connections[idx];
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ci;
+}
+
+// Check if a connection is in a particular state
+bool io_conn_is_state(int fd, enum conn_state state)
+{
+	bool result = false;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		result = (connections[idx]->ci_state == state);
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return result;
+}
+
+// Unregister a connection
+int io_conn_unregister(int fd)
+{
+	int ret = -1;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		LOG("Unregistering connection fd=%d (state=%s, role=%s)", fd,
+		    conn_state_to_str(connections[idx]->ci_state),
+		    conn_role_to_str(connections[idx]->ci_role));
+
+		// Mark as unused, but keep the structure for reuse
+		connections[idx]->ci_state = CONN_UNUSED;
+		connections[idx]->ci_fd = -1;
+		ret = 0;
+	} else {
+		LOG("Failed to unregister connection fd=%d - not found or mismatch",
+		    fd);
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
+}
+
+// Clean up connection tracking
+void io_conn_cleanup(void)
+{
+	pthread_mutex_lock(&conn_mutex);
+
+	for (int i = 0; i < MAX_CONNECTIONS; i++) {
+		if (connections[i]) {
+			free(connections[i]);
+			connections[i] = NULL;
+		}
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+}
+
+/*
+ * Validates whether a state transition is allowed
+ * Returns true if the transition is valid, false otherwise
+ */
+bool is_valid_state_transition(enum conn_state old_state,
+			       enum conn_state new_state)
+{
+	// Some transitions are always valid
+	if (new_state == CONN_ERROR) {
+		return true; // Can always transition to error state
+	}
+
+	// Define valid transitions based on the current state
+	switch (old_state) {
+	case CONN_UNUSED:
+		// From unused, can only go to listening, connecting or accepted
+		return (new_state == CONN_LISTENING ||
+			new_state == CONN_CONNECTING ||
+			new_state == CONN_ACCEPTED);
+
+	case CONN_LISTENING:
+		// From listening, can go to accepting or error
+		return (new_state == CONN_ACCEPTING);
+
+	case CONN_ACCEPTING:
+		// From accepting, can go back to listening or to error
+		return (new_state == CONN_LISTENING);
+
+	case CONN_ACCEPTED:
+		// After accepting, can go to connected, reading or error
+		return (new_state == CONN_CONNECTED);
+
+	case CONN_CONNECTING:
+		// From connecting, can go to connected or error
+		return (new_state == CONN_CONNECTED);
+
+	case CONN_CONNECTED:
+		// From connected, can go to reading, writing, disconnecting or error
+		return (new_state == CONN_READING ||
+			new_state == CONN_WRITING ||
+			new_state == CONN_DISCONNECTING);
+
+	case CONN_READING:
+		// From reading, can go to connected, writing or error
+		return (new_state == CONN_CONNECTED ||
+			new_state == CONN_WRITING);
+
+	case CONN_WRITING:
+		// From writing, can go to connected, reading or error
+		return (new_state == CONN_CONNECTED ||
+			new_state == CONN_READING);
+
+	case CONN_DISCONNECTING:
+		// From disconnecting, can only go to unused or error
+		return (new_state == CONN_UNUSED);
+
+	case CONN_ERROR:
+		// From error, can go to unused
+		return (new_state == CONN_UNUSED);
+
+	default:
+		return false; // Unknown states aren't valid
+	}
+}
+
+// Utility function to get connection state as string
+const char *conn_state_to_str(enum conn_state state)
+{
+	switch (state) {
+	case CONN_UNUSED:
+		return "UNUSED";
+	case CONN_LISTENING:
+		return "LISTENING";
+	case CONN_ACCEPTING:
+		return "ACCEPTING";
+	case CONN_ACCEPTED:
+		return "ACCEPTED";
+	case CONN_CONNECTING:
+		return "CONNECTING";
+	case CONN_CONNECTED:
+		return "CONNECTED";
+	case CONN_READING:
+		return "READING";
+	case CONN_WRITING:
+		return "WRITING";
+	case CONN_DISCONNECTING:
+		return "DISCONNECTING";
+	case CONN_ERROR:
+		return "ERROR";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+// Dump information about a specific connection
+void io_conn_dump(int fd)
+{
+	struct conn_info *conn = io_conn_get(fd);
+	if (!conn) {
+		LOG("No connection info for fd=%d", fd);
+		return;
+	}
+
+	char peer_addr[INET6_ADDRSTRLEN] = { 0 };
+	char local_addr[INET6_ADDRSTRLEN] = { 0 };
+	uint16_t peer_port = 0, local_port = 0;
+
+	if (conn->ci_peer_len > 0) {
+		// Fix: Cast to sockaddr_storage* instead of sockaddr*
+		addr_to_string((const struct sockaddr_storage *)&conn->ci_peer,
+			       peer_addr, INET6_ADDRSTRLEN, &peer_port);
+	}
+
+	if (conn->ci_local_len > 0) {
+		// Fix: Cast to sockaddr_storage* instead of sockaddr*
+		addr_to_string((const struct sockaddr_storage *)&conn->ci_local,
+			       local_addr, INET6_ADDRSTRLEN, &local_port);
+	}
+
+	LOG("Connection fd=%d: state=%s, role=%s, peer=%s:%d, local=%s:%d, xid=%u, last_activity=%ld",
+	    fd, conn_state_to_str(conn->ci_state),
+	    conn_role_to_str(conn->ci_role), peer_addr, peer_port, local_addr,
+	    local_port, conn->ci_xid, conn->ci_last_activity);
+}
+
+// Helper function to convert role to string
+const char *conn_role_to_str(enum conn_role role)
+{
+	switch (role) {
+	case CONN_ROLE_UNKNOWN:
+		return "UNKNOWN";
+	case CONN_ROLE_CLIENT:
+		return "CLIENT";
+	case CONN_ROLE_SERVER:
+		return "SERVER";
+	case CONN_ROLE_ACCEPTED:
+		return "ACCEPTED";
+	default:
+		return "INVALID";
+	}
+}
+
+// Dump all active connections
+void io_conn_dump_all(void)
+{
+	pthread_mutex_lock(&conn_mutex);
+
+	LOG("=== Active Connections ===");
+	int active_count = 0;
+
+	for (int i = 0; i < MAX_CONNECTIONS; i++) {
+		if (connections[i] && connections[i]->ci_state != CONN_UNUSED) {
+			active_count++;
+			struct conn_info *conn = connections[i];
+
+			char peer_addr[INET6_ADDRSTRLEN] = { 0 };
+			char local_addr[INET6_ADDRSTRLEN] = { 0 };
+			uint16_t peer_port = 0, local_port = 0;
+
+			if (conn->ci_peer_len > 0) {
+				addr_to_string((const struct sockaddr_storage
+							*)&conn->ci_peer,
+					       peer_addr, INET6_ADDRSTRLEN,
+					       &peer_port);
+			}
+
+			if (conn->ci_local_len > 0) {
+				addr_to_string((const struct sockaddr_storage
+							*)&conn->ci_local,
+					       local_addr, INET6_ADDRSTRLEN,
+					       &local_port);
+			}
+
+			LOG("[%d] fd=%d: state=%s, role=%s, peer=%s:%d, local=%s:%d, xid=%u, last_activity=%ld",
+			    i, conn->ci_fd, conn_state_to_str(conn->ci_state),
+			    conn_role_to_str(conn->ci_role), peer_addr,
+			    peer_port, local_addr, local_port, conn->ci_xid,
+			    time(NULL) - conn->ci_last_activity);
+		}
+	}
+
+	LOG("Total active connections: %d", active_count);
+	LOG("==========================");
+
+	pthread_mutex_unlock(&conn_mutex);
+}
+
+// Periodically check for timed-out connections
+int io_conn_check_timeouts(time_t timeout_seconds)
+{
+	time_t now = time(NULL);
+	int closed = 0;
+
+	pthread_mutex_lock(&conn_mutex);
+
+	for (int i = 0; i < MAX_CONNECTIONS; i++) {
+		if (connections[i] && connections[i]->ci_state != CONN_UNUSED &&
+		    connections[i]->ci_fd >= 0) {
+			// Check if connection has timed out
+			if (now - connections[i]->ci_last_activity >
+			    timeout_seconds) {
+				LOG("Connection fd=%d timed out (%ld seconds inactive)",
+				    connections[i]->ci_fd,
+				    now - connections[i]->ci_last_activity);
+
+				// Close the socket
+				close(connections[i]->ci_fd);
+
+				// Mark as unused
+				connections[i]->ci_state = CONN_UNUSED;
+				connections[i]->ci_fd = -1;
+
+				closed++;
+			}
+		}
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return closed;
+}
+
 int io_send_request(struct rpc_trans *rt)
 {
 	int ret;
@@ -60,6 +463,16 @@ int io_send_request(struct rpc_trans *rt)
 			return errno;
 		}
 
+		// Register connection with CONNECTING state
+		struct conn_info *ci = io_conn_register(sockfd, CONN_CONNECTING,
+							CONN_ROLE_CLIENT);
+		if (!ci) {
+			LOG("Failed to register connection");
+			io_socket_close(sockfd, ENOMEM);
+			free(addr);
+			return ENOMEM;
+		}
+
 		// Set non-blocking
 		int flags = fcntl(sockfd, F_GETFL, 0);
 		fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
@@ -72,7 +485,7 @@ int io_send_request(struct rpc_trans *rt)
 		// Convert IP address from string to binary form
 		if (inet_pton(AF_INET, rt->rt_addr_str, &addr->sin_addr) <= 0) {
 			LOG("Invalid address: %s", rt->rt_addr_str);
-			close(sockfd);
+			io_socket_close(sockfd, EINVAL);
 			free(addr);
 			return EINVAL;
 		}
@@ -85,7 +498,7 @@ int io_send_request(struct rpc_trans *rt)
 			OP_TYPE_CONNECT, sockfd, addr, sizeof(*addr));
 		if (!ic) {
 			free(addr);
-			close(sockfd);
+			io_socket_close(sockfd, ENOMEM);
 			return ENOMEM;
 		}
 
@@ -94,11 +507,16 @@ int io_send_request(struct rpc_trans *rt)
 		// Store XID for later matching
 		ic->ic_xid = rt->rt_info.ri_xid;
 
+		// Store XID in connection info
+		struct conn_info *conn = io_conn_get(sockfd);
+		if (conn) {
+			conn->ci_xid = rt->rt_info.ri_xid;
+		}
+
 		// Submit connect operation to io_uring
 		struct io_uring_sqe *sqe = io_uring_get_sqe(rt->rt_ring);
 		if (!sqe) {
-			io_context_free(ic);
-			close(sockfd);
+			io_socket_close(sockfd, ENOBUFS);
 			return ENOBUFS;
 		}
 
@@ -110,10 +528,13 @@ int io_send_request(struct rpc_trans *rt)
 		// Submit and wait for connect completion
 		io_uring_submit(rt->rt_ring);
 
-		// For synchronous connect, you might want to wait here
-		// Or return and let the callback handle it when connect completes
-
 		return 0; // Connection initiated, will be handled by callback
+	}
+
+	// If we already have a connection, check if it's in the CONNECTED state
+	if (!io_conn_is_state(rt->rt_fd, CONN_CONNECTED)) {
+		LOG("Connection is not ready for fd=%d", rt->rt_fd);
+		return ENOTCONN;
 	}
 
 	// If we already have a connection or after establishing one synchronously
@@ -129,22 +550,30 @@ int io_handle_connect(struct io_context *ic, int result,
 	if (result < 0) {
 		LOG("Connect failed for fd=%d: %s", ic->ic_fd,
 		    strerror(-result));
-		close(ic->ic_fd);
+
+		io_socket_close(ic->ic_fd, -result);
 		io_context_free(ic);
 		return -result;
 	}
 
+	// Try to get peer information
 	ic->ic_ci.ci_peer_len = sizeof(ic->ic_ci.ci_peer);
 	if (getpeername(ic->ic_fd, (struct sockaddr *)&ic->ic_ci.ci_peer,
-			&ic->ic_ci.ci_peer_len) == 0) {
-		addr_to_string(&ic->ic_ci.ci_peer, addr_str, INET6_ADDRSTRLEN,
-			       &port);
-	} else {
+			&ic->ic_ci.ci_peer_len) != 0) {
 		LOG("Failed to get peer information: %s", strerror(errno));
+
+		// This is a critical error - the socket is not properly connected
+		io_conn_set_state(ic->ic_fd, CONN_ERROR, errno);
+
 		memset(&ic->ic_ci.ci_peer, 0, sizeof(ic->ic_ci.ci_peer));
 		ic->ic_ci.ci_peer_len = 0;
+
+		io_socket_close(ic->ic_fd, errno);
+		io_context_free(ic);
+		return errno;
 	}
 
+	// Get local socket information
 	ic->ic_ci.ci_local_len = sizeof(ic->ic_ci.ci_local);
 	if (getsockname(ic->ic_fd, (struct sockaddr *)&ic->ic_ci.ci_local,
 			&ic->ic_ci.ci_local_len) == 0) {
@@ -158,14 +587,32 @@ int io_handle_connect(struct io_context *ic, int result,
 
 	LOG("Connection established for fd=%d", ic->ic_fd);
 
+	// Update connection state to CONNECTED
+	io_conn_set_state(ic->ic_fd, CONN_CONNECTED, 0);
+
+	// Update connection info with peer and local addresses
+	struct conn_info *conn = io_conn_get(ic->ic_fd);
+	if (conn) {
+		memcpy(&conn->ci_peer, &ic->ic_ci.ci_peer,
+		       ic->ic_ci.ci_peer_len);
+		conn->ci_peer_len = ic->ic_ci.ci_peer_len;
+
+		memcpy(&conn->ci_local, &ic->ic_ci.ci_local,
+		       ic->ic_ci.ci_local_len);
+		conn->ci_local_len = ic->ic_ci.ci_local_len;
+	}
+
 	// Find the corresponding RPC transaction using XID
 	struct rpc_trans *rt = io_find_request_by_xid(ic->ic_xid);
 	if (!rt) {
 		LOG("No matching rpc_trans found for XID=%u", ic->ic_xid);
-		close(ic->ic_fd);
+
+		io_socket_close(ic->ic_fd, ENOENT);
 		io_context_free(ic);
 		return ENOENT;
 	}
+
+	rt->rt_fd = ic->ic_fd;
 
 	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);
 	io_context_free(ic);

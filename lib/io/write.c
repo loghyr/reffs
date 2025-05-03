@@ -71,14 +71,18 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
 	int ret = 0;
 
+	struct conn_info *conn = io_conn_get(ic->ic_fd);
+
 	// If no more data to send, we're done
 	if (remaining == 0) {
+		if (conn) {
+			io_conn_set_state(ic->ic_fd, CONN_CONNECTED, 0);
+		}
 		io_context_free(ic);
 		return 0;
 	} else if (remaining < 0) {
 		// Error case - shouldn't happen with correct position tracking
-		unregister_client_fd(ic->ic_fd);
-		close(ic->ic_fd);
+		io_socket_close(ic->ic_fd, EINVAL);
 		io_context_free(ic);
 		return 0;
 	}
@@ -117,8 +121,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	}
 
 	if (!sqe) {
-		unregister_client_fd(ic->ic_fd);
-		close(ic->ic_fd);
+		io_socket_close(ic->ic_fd, ENOBUFS);
 		io_context_free(ic);
 		return ENOMEM;
 	}
@@ -130,6 +133,10 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	} else {
 		// For subsequent fragments, position points to end of payload (excluding marker)
 		ic->ic_position += (chunk_size - 4);
+	}
+
+	if (conn) {
+		conn->ci_last_activity = time(NULL);
 	}
 
 	// Submit the write operation
@@ -150,8 +157,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	}
 
 	if (ret < 0) {
-		unregister_client_fd(ic->ic_fd);
-		close(ic->ic_fd);
+		io_socket_close(ic->ic_fd, -ret);
 		io_context_free(ic);
 	} else {
 		ret = 0;
@@ -163,6 +169,26 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 int io_rpc_trans_cb(struct rpc_trans *rt)
 {
 	struct io_context *ic;
+
+	struct conn_info *conn = io_conn_get(rt->rt_fd);
+	if (!conn) {
+		LOG("Connection not tracked for fd=%d", rt->rt_fd);
+		return ENOTCONN;
+	}
+
+	io_conn_dump(rt->rt_fd);
+
+	// Only proceed if connection is in a valid state for writing
+	// Accept CONNECTED or READING states as valid
+	if (conn->ci_state != CONN_CONNECTED &&
+	    conn->ci_state != CONN_READING) {
+		LOG("Connection not in valid state for RPC transmission on fd=%d (current state: %s)",
+		    rt->rt_fd, conn_state_to_str(conn->ci_state));
+		return ENOTCONN;
+	}
+
+	// Update state to WRITING
+	io_conn_set_state(rt->rt_fd, CONN_WRITING, 0);
 
 	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
 			       rt->rt_reply_len);
@@ -179,7 +205,29 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 	return rpc_trans_writer(ic, rt->rt_ring);
 }
 
-int io_handle_write(struct io_context *ic, int __attribute__((unused)) bytes_written, struct io_uring *ring)
+int io_handle_write(struct io_context *ic,
+		    int __attribute__((unused)) bytes_written,
+		    struct io_uring *ring)
 {
+	// Check connection state
+	struct conn_info *conn = io_conn_get(ic->ic_fd);
+
+	// Verify we wrote the expected amount
+	if (bytes_written <= 0) {
+		LOG("Write operation failed for fd=%d: %s", ic->ic_fd,
+		    bytes_written < 0 ? strerror(-bytes_written) :
+					"connection closed");
+
+		io_socket_close(ic->ic_fd, bytes_written < 0 ? -bytes_written :
+							       ECONNRESET);
+		io_context_free(ic);
+		return bytes_written < 0 ? -bytes_written : ECONNRESET;
+	}
+
+	// Update connection activity
+	if (conn) {
+		conn->ci_last_activity = time(NULL);
+	}
+
 	return rpc_trans_writer(ic, ring);
 }

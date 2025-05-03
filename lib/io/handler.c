@@ -44,6 +44,8 @@
 struct rpc_trans *pending_requests[MAX_PENDING_REQUESTS];
 pthread_mutex_t request_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+static time_t last_accept_check;
+
 //
 // Need to prune out connections that get timed out
 //
@@ -93,7 +95,7 @@ int io_unregister_request(uint32_t xid)
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] &&
 		    pending_requests[i]->rt_info.ri_xid == xid) {
-				pending_requests[i] = NULL;
+			pending_requests[i] = NULL;
 			return 0;
 		}
 	}
@@ -142,6 +144,8 @@ int io_handler_init(struct io_uring *ring)
 	if (setup_io_uring(ring) < 0) {
 		return -1;
 	}
+
+	last_accept_check = time(NULL);
 
 	return 0;
 }
@@ -210,10 +214,23 @@ void io_handler_stop(void)
 		*running_context = 0;
 }
 
+
+// Set of listener sockets to monitor
+int listener_fds[MAX_LISTENERS];
+int num_listeners = 0;
+
+void io_add_listener(int fd)
+{
+	if (fd > 0)
+		listener_fds[num_listeners++] = fd;
+}
+
 void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			  struct io_uring *ring)
 {
 	struct io_uring_cqe *cqe;
+
+	io_conn_init();
 
 	running_context = running_flag;
 
@@ -232,7 +249,44 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				LOG("Detected shutdown flag, breaking main loop");
 				break;
 			}
-			last_check = now;
+
+			if (now - last_accept_check >= 5) {
+				bool accept_failures = false;
+
+				// Check each listener
+				for (int i = 0; i < num_listeners; i++) {
+					int fd = listener_fds[i];
+					if (fd <= 0)
+						continue;
+
+					struct conn_info *conn =
+						io_conn_get(fd);
+					if (!conn ||
+					    conn->ci_state != CONN_LISTENING) {
+						LOG("Listener fd=%d not in LISTENING state - resubmitting accept",
+						    fd);
+
+						// Try to resubmit accept operation
+						int ret = request_accept_op(
+							fd, NULL, ring);
+						if (ret != 0) {
+							accept_failures = true;
+							LOG("Watchdog failed to resubmit accept for fd=%d: %s",
+							    fd, strerror(ret));
+						} else {
+							LOG("Watchdog successfully resubmitted accept for fd=%d",
+							    fd);
+						}
+					}
+				}
+
+				// If we had failures, check again more quickly next time
+				last_accept_check = now;
+				if (accept_failures) {
+					// Force another check sooner than usual
+					last_accept_check -= 3;
+				}
+			}
 		}
 
 		int ret = io_uring_wait_cqe_timeout(ring, &cqe, &ts);
@@ -258,8 +312,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			    op_type_to_str(ic->ic_op_type), ic->ic_fd,
 			    strerror(-cqe->res));
 
-			unregister_client_fd(ic->ic_fd);
-			close(ic->ic_fd);
+			io_socket_close(ic->ic_fd, -cqe->res);
 			io_context_free(ic);
 		} else {
 			switch (ic->ic_op_type) {
@@ -290,6 +343,8 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 
 		io_uring_cqe_seen(ring, cqe);
 	}
+
+	io_conn_cleanup();
 }
 
 void io_handler_cleanup(struct io_uring *ring)

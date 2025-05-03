@@ -44,6 +44,11 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 
 	ic->ic_fd = bs->bs_fd;
 
+	struct conn_info *conn = io_conn_get(ic->ic_fd);
+	if (conn) {
+		io_conn_set_state(ic->ic_fd, CONN_READING, 0);
+	}
+
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		sqe = io_uring_get_sqe(ring);
 		if (sqe)
@@ -83,10 +88,26 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
 
+	if (fd <= 0 || fd >= MAX_CONNECTIONS) {
+		LOG("Invalid fd: %d", fd);
+		return -EINVAL;
+	}
+
+	struct conn_info *conn = io_conn_get(fd);
+	if (conn) {
+		if (conn->ci_state == CONN_CONNECTED ||
+		    conn->ci_state == CONN_ACCEPTED) {
+			io_conn_set_state(fd, CONN_READING, 0);
+		} else {
+			LOG("Warning: Not changing state from %s to READING",
+			    conn_state_to_str(conn->ci_state));
+		}
+	}
+
 	char *buffer = malloc(BUFFER_SIZE);
 	if (!buffer) {
 		LOG("Failed to allocate buffer");
-		close(fd);
+		io_socket_close(fd, ENOMEM);
 		return ENOMEM;
 	}
 
@@ -95,7 +116,7 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 	if (!ic) {
 		LOG("Failed to create read context");
 		free(buffer);
-		close(fd);
+		io_socket_close(fd, ENOMEM);
 		return ENOMEM;
 	}
 
@@ -111,9 +132,9 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 
 	if (!sqe) {
 		free(buffer);
-		close(fd);
+		io_socket_close(fd, ENOMEM);
 		io_context_free(ic);
-		return -ENOMEM;
+		return ENOMEM;
 	}
 
 	io_uring_prep_read(sqe, fd, buffer, BUFFER_SIZE, 0);
@@ -135,7 +156,7 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 
 	if (ret < 0) {
 		free(buffer);
-		close(fd);
+		io_socket_close(fd, -ret);
 		io_context_free(ic);
 	} else {
 		ret = 0;
@@ -355,14 +376,22 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	char *buffer = (char *)ic->ic_buffer;
 	int client_fd = ic->ic_fd;
 
+	struct conn_info *conn = io_conn_get(client_fd);
+
 	if (bytes_read <= 0) {
 		// Connection closed or error
 		LOG("Connection closed or error (fd: %d, res: %d)", client_fd,
 		    bytes_read);
-		unregister_client_fd(client_fd);
-		close(client_fd);
+		io_socket_close(client_fd,
+				bytes_read < 0 ? -bytes_read : ECONNRESET);
 		io_context_free(ic);
 		return 0;
+	}
+
+	if (conn) {
+		conn->ci_last_activity = time(NULL);
+		// Set state back to CONNECTED after successful read
+		io_conn_set_state(client_fd, CONN_CONNECTED, 0);
 	}
 
 	// Get or create buffer state for this connection
@@ -385,8 +414,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	while (bs->bs_filled >= 4) {
 		int complete_size = process_record_marker(bs);
 		if (complete_size < 0) {
-			unregister_client_fd(ic->ic_fd);
-			close(ic->ic_fd);
+			io_socket_close(ic->ic_fd, ENOBUFS);
 			io_context_free(ic);
 			return 0;
 		}
@@ -433,8 +461,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 	ret = request_more_read_data(bs, ring, ic);
 	if (ret) {
-		unregister_client_fd(ic->ic_fd);
-		close(ic->ic_fd);
+		io_socket_close(ic->ic_fd, ret);
 		io_context_free(ic);
 	}
 

@@ -20,6 +20,7 @@
 #define MAX_WORKER_THREADS 4
 #define MAX_PENDING_REQUESTS 256
 #define MAX_CONNECTIONS 1024 // Maximum number of concurrent client connections
+#define MAX_LISTENERS 1024
 
 #define IO_URING_WAIT_SEC (0)
 #define IO_URING_WAIT_NSEC (100000000)
@@ -69,6 +70,44 @@ struct buffer_state {
 	size_t bs_filled;
 	size_t bs_capacity;
 	struct record_state bs_record;
+};
+
+#define CONNECTION_TIMEOUT_SECONDS 60 // Seconds of inactivity before timeout
+#define CONNECTION_TIMEOUT_CHECK_INTERVAL 10 // Check every 10 seconds
+
+// Connection states
+enum conn_state {
+	CONN_UNUSED = 0, // Socket slot not in use
+	CONN_LISTENING, // Server socket listening for connections
+	CONN_ACCEPTING, // Server socket in the midst of accepting connection
+	CONN_ACCEPTED, // Client connection just accepted
+	CONN_CONNECTING, // Client-initiated connection in progress
+	CONN_CONNECTED, // Successfully connected (both client and server)
+	CONN_READING, // Socket reading in progress
+	CONN_WRITING, // Socket writing in progress
+	CONN_DISCONNECTING, // In the process of disconnecting
+	CONN_ERROR // Connection in error state
+};
+
+enum conn_role {
+	CONN_ROLE_UNKNOWN = 0,
+	CONN_ROLE_CLIENT, // Client-initiated connection
+	CONN_ROLE_SERVER, // Server listener
+	CONN_ROLE_ACCEPTED // Server-accepted client connection
+};
+
+// Connection info structure
+struct conn_info {
+	int ci_fd; // File descriptor
+	enum conn_state ci_state; // Current connection state
+	enum conn_role ci_role; // Connection role
+	time_t ci_last_activity; // Last activity timestamp
+	struct sockaddr_storage ci_peer; // Peer address
+	socklen_t ci_peer_len; // Peer address length
+	struct sockaddr_storage ci_local; // Local address
+	socklen_t ci_local_len; // Local address length
+	uint32_t ci_xid; // Associated XID
+	int ci_error; // Last error code
 };
 
 // Function declarations
@@ -124,6 +163,8 @@ int io_register_request(struct rpc_trans *rt);
 struct rpc_trans *io_find_request_by_xid(uint32_t xid);
 int io_unregister_request(uint32_t xid);
 
+int io_send_request(struct rpc_trans *rt);
+
 static inline const char *op_type_to_str(enum op_type op)
 {
 	switch (op) {
@@ -142,4 +183,24 @@ static inline const char *op_type_to_str(enum op_type op)
 	return "unknown";
 }
 
+// Connection tracking functions
+int io_conn_init(void);
+struct conn_info *io_conn_register(int fd, enum conn_state initial_state,
+				   enum conn_role role);
+int io_conn_set_state(int fd, enum conn_state new_state, int error_code);
+struct conn_info *io_conn_get(int fd);
+bool io_conn_is_state(int fd, enum conn_state state);
+int io_conn_unregister(int fd);
+void io_conn_cleanup(void);
+const char *conn_state_to_str(enum conn_state state);
+const char *conn_role_to_str(enum conn_role role);
+int io_conn_check_timeouts(time_t timeout_seconds);
+
+int io_socket_close(int fd, int error);
+void io_add_listener(int fd);
+
+void io_conn_dump(int fd);
+
+bool is_valid_state_transition(enum conn_state old_state,
+			       enum conn_state new_state);
 #endif /* _REFFS_IO_H */
