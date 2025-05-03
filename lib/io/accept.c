@@ -225,20 +225,14 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 		ic->ic_ci.ci_local_len = 0;
 	}
 
-	// Update connection state to CONNECTED
-	io_conn_set_state(client_fd, CONN_CONNECTED, 0);
-
 	// Register this client in buffer state tracking
 	register_client_fd(client_fd);
 
 	struct conn_info *conn = io_conn_get(client_fd);
 	if (conn) {
-		// Make sure it's in CONNECTED state before we proceed
-		if (conn->ci_state != CONN_CONNECTED) {
-			LOG("Warning: Connection fd=%d not in CONNECTED state after accept, fixing",
-			    client_fd);
-			io_conn_set_state(client_fd, CONN_CONNECTED, 0);
-		}
+		// No need to check state since we're using operation counts
+		// Just ensure the state is properly set to CONNECTED initially
+		LOG("Accepted new connection fd=%d", client_fd);
 	} else {
 		LOG("Warning: Connection fd=%d not found after registration",
 		    client_fd);

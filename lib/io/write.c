@@ -76,7 +76,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	// If no more data to send, we're done
 	if (remaining == 0) {
 		if (conn) {
-			io_conn_set_state(ic->ic_fd, CONN_CONNECTED, 0);
+			io_conn_remove_write_op(ic->ic_fd);
 		}
 		io_context_free(ic);
 		return 0;
@@ -178,18 +178,7 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 
 	io_conn_dump(rt->rt_fd);
 
-	// Only proceed if connection is in a valid state for writing
-	// Accept CONNECTED or READING states as valid
-	if (conn->ci_state != CONN_CONNECTED &&
-	    conn->ci_state != CONN_READING &&
-	    conn->ci_state != CONN_WRITING) {
-		LOG("Connection not in valid state for RPC transmission on fd=%d (current state: %s)",
-		    rt->rt_fd, conn_state_to_str(conn->ci_state));
-		return ENOTCONN;
-	}
-
-	// Update state to WRITING
-	io_conn_set_state(rt->rt_fd, CONN_WRITING, 0);
+	io_conn_add_write_op(rt->rt_fd);
 
 	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
 			       rt->rt_reply_len);

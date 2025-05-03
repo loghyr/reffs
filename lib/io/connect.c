@@ -31,6 +31,7 @@
 #include "reffs/task.h"
 #include "reffs/test.h"
 #include "reffs/io.h"
+#include "reffs/stack.h"
 #include "reffs/trace/io.h"
 
 // Array to track connection states
@@ -81,68 +82,16 @@ struct conn_info *io_conn_register(int fd, enum conn_state initial_state,
 		ci->ci_state = initial_state;
 		ci->ci_role = role;
 		ci->ci_last_activity = time(NULL);
+
+		// Initialize operation counters
+		ci->ci_read_count = 0;
+		ci->ci_write_count = 0;
+		ci->ci_accept_count = 0;
+		ci->ci_connect_count = 0;
 	}
 
 	pthread_mutex_unlock(&conn_mutex);
 	return ci;
-}
-
-// Update connection state
-int io_conn_set_state(int fd, enum conn_state new_state, int error_code)
-{
-	int ret = -1;
-
-	if (new_state < CONN_UNUSED || new_state > CONN_ERROR) {
-		LOG("Invalid connection state value: %d", new_state);
-		return -EINVAL;
-	}
-
-	int idx = fd % MAX_CONNECTIONS;
-	if (connections[idx] && connections[idx]->ci_fd == fd) {
-		// Validate state transition
-		enum conn_state old_state = connections[idx]->ci_state;
-		bool valid_transition =
-			is_valid_state_transition(old_state, new_state);
-
-		if (!valid_transition) {
-			LOG("Invalid state transition for fd=%d: %s -> %s", fd,
-			    conn_state_to_str(old_state),
-			    conn_state_to_str(new_state));
-			pthread_mutex_unlock(&conn_mutex);
-			return -EINVAL;
-		}
-
-		LOG("Connection fd=%d state change: %s -> %s", fd,
-		    conn_state_to_str(old_state), conn_state_to_str(new_state));
-
-		connections[idx]->ci_state = new_state;
-		connections[idx]->ci_last_activity = time(NULL);
-
-		if (error_code) {
-			connections[idx]->ci_error = error_code;
-		}
-
-		ret = 0;
-	}
-
-	pthread_mutex_unlock(&conn_mutex);
-	return ret;
-}
-
-int io_socket_close(int fd, int error)
-{
-	if (fd <= 0) {
-		return -EBADF;
-	}
-
-	struct conn_info *conn = io_conn_get(fd);
-	if (conn) {
-		io_conn_set_state(fd, CONN_ERROR, error);
-		io_conn_unregister(fd);
-	}
-
-	unregister_client_fd(fd);
-	return close(fd);
 }
 
 // Get connection info
@@ -158,6 +107,362 @@ struct conn_info *io_conn_get(int fd)
 
 	pthread_mutex_unlock(&conn_mutex);
 	return ci;
+}
+
+// Update the connection state based on operation counts
+void io_conn_update_state(int fd)
+{
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		enum conn_state old_state = connections[idx]->ci_state;
+		enum conn_state new_state;
+
+		// Determine the new state based on operation counts
+		if (connections[idx]->ci_read_count > 0) {
+			if (connections[idx]->ci_write_count > 0) {
+				new_state = CONN_READWRITE;
+			} else {
+				new_state = CONN_READING;
+			}
+		} else if (connections[idx]->ci_write_count > 0) {
+			new_state = CONN_WRITING;
+		} else if (connections[idx]->ci_accept_count > 0) {
+			new_state = CONN_ACCEPTING;
+		} else if (connections[idx]->ci_connect_count > 0) {
+			new_state = CONN_CONNECTING;
+		} else if (old_state == CONN_ERROR ||
+			   old_state == CONN_DISCONNECTING ||
+			   old_state == CONN_UNUSED) {
+			// Don't change these special states if no ops are pending
+			new_state = old_state;
+		} else {
+			new_state = CONN_CONNECTED;
+		}
+
+		// Only log if state actually changes
+		if (old_state != new_state) {
+			LOG("Connection fd=%d state change: %s -> %s", fd,
+			    conn_state_to_str(old_state),
+			    conn_state_to_str(new_state));
+			connections[idx]->ci_state = new_state;
+		}
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+}
+
+// Function to add a read operation
+int io_conn_add_read_op(int fd)
+{
+	int ret = -1;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		connections[idx]->ci_read_count++;
+		connections[idx]->ci_last_activity = time(NULL);
+		LOG("Connection fd=%d: added read op (count=%d)", fd,
+		    connections[idx]->ci_read_count);
+
+		// Update the connection state based on the new count
+		enum conn_state old_state = connections[idx]->ci_state;
+		enum conn_state new_state;
+
+		if (connections[idx]->ci_write_count > 0) {
+			new_state = CONN_READWRITE;
+		} else {
+			new_state = CONN_READING;
+		}
+
+		if (old_state != new_state) {
+			LOG("Connection fd=%d state change: %s -> %s", fd,
+			    conn_state_to_str(old_state),
+			    conn_state_to_str(new_state));
+			connections[idx]->ci_state = new_state;
+		}
+
+		ret = 0;
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
+}
+
+// Function to remove a read operation
+int io_conn_remove_read_op(int fd)
+{
+	int ret = -1;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		if (connections[idx]->ci_read_count > 0) {
+			connections[idx]->ci_read_count--;
+			LOG("Connection fd=%d: removed read op (count=%d)", fd,
+			    connections[idx]->ci_read_count);
+
+			// Update state based on remaining operations
+			enum conn_state old_state = connections[idx]->ci_state;
+			enum conn_state new_state;
+
+			if (connections[idx]->ci_read_count > 0) {
+				if (connections[idx]->ci_write_count > 0) {
+					new_state = CONN_READWRITE;
+				} else {
+					new_state = CONN_READING;
+				}
+			} else if (connections[idx]->ci_write_count > 0) {
+				new_state = CONN_WRITING;
+			} else {
+				new_state = CONN_CONNECTED;
+			}
+
+			if (old_state != new_state) {
+				LOG("Connection fd=%d state change: %s -> %s",
+				    fd, conn_state_to_str(old_state),
+				    conn_state_to_str(new_state));
+				connections[idx]->ci_state = new_state;
+			}
+		} else {
+			LOG("Warning: Attempt to remove read op when count is zero for fd=%d",
+			    fd);
+		}
+		connections[idx]->ci_last_activity = time(NULL);
+		ret = 0;
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
+}
+
+// Function to add a write operation
+int io_conn_add_write_op(int fd)
+{
+	int ret = -1;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		connections[idx]->ci_write_count++;
+		connections[idx]->ci_last_activity = time(NULL);
+		LOG("Connection fd=%d: added write op (count=%d)", fd,
+		    connections[idx]->ci_write_count);
+
+		// Update the connection state based on the new count
+		enum conn_state old_state = connections[idx]->ci_state;
+		enum conn_state new_state;
+
+		if (connections[idx]->ci_read_count > 0) {
+			new_state = CONN_READWRITE;
+		} else {
+			new_state = CONN_WRITING;
+		}
+
+		if (old_state != new_state) {
+			LOG("Connection fd=%d state change: %s -> %s", fd,
+			    conn_state_to_str(old_state),
+			    conn_state_to_str(new_state));
+			connections[idx]->ci_state = new_state;
+		}
+
+		ret = 0;
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
+}
+
+// Function to remove a write operation
+int io_conn_remove_write_op(int fd)
+{
+	int ret = -1;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		if (connections[idx]->ci_write_count > 0) {
+			connections[idx]->ci_write_count--;
+			LOG("Connection fd=%d: removed write op (count=%d)", fd,
+			    connections[idx]->ci_write_count);
+
+			// Update state based on remaining operations
+			enum conn_state old_state = connections[idx]->ci_state;
+			enum conn_state new_state;
+
+			if (connections[idx]->ci_write_count > 0) {
+				if (connections[idx]->ci_read_count > 0) {
+					new_state = CONN_READWRITE;
+				} else {
+					new_state = CONN_WRITING;
+				}
+			} else if (connections[idx]->ci_read_count > 0) {
+				new_state = CONN_READING;
+			} else {
+				new_state = CONN_CONNECTED;
+			}
+
+			if (old_state != new_state) {
+				LOG("Connection fd=%d state change: %s -> %s",
+				    fd, conn_state_to_str(old_state),
+				    conn_state_to_str(new_state));
+				connections[idx]->ci_state = new_state;
+			}
+		} else {
+			LOG("Warning: Attempt to remove write op when count is zero for fd=%d",
+			    fd);
+		}
+		connections[idx]->ci_last_activity = time(NULL);
+		ret = 0;
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
+}
+
+// Function to add an accept operation
+int io_conn_add_accept_op(int fd)
+{
+	int ret = -1;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		connections[idx]->ci_accept_count++;
+		connections[idx]->ci_last_activity = time(NULL);
+		LOG("Connection fd=%d: added accept op (count=%d)", fd,
+		    connections[idx]->ci_accept_count);
+
+		// Update state to ACCEPTING
+		if (connections[idx]->ci_state != CONN_ACCEPTING) {
+			LOG("Connection fd=%d state change: %s -> %s", fd,
+			    conn_state_to_str(connections[idx]->ci_state),
+			    conn_state_to_str(CONN_ACCEPTING));
+			connections[idx]->ci_state = CONN_ACCEPTING;
+		}
+
+		ret = 0;
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
+}
+
+// Function to remove an accept operation
+int io_conn_remove_accept_op(int fd)
+{
+	int ret = -1;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		if (connections[idx]->ci_accept_count > 0) {
+			connections[idx]->ci_accept_count--;
+			LOG("Connection fd=%d: removed accept op (count=%d)",
+			    fd, connections[idx]->ci_accept_count);
+
+			// Update state based on remaining operations
+			if (connections[idx]->ci_accept_count == 0 &&
+			    connections[idx]->ci_state == CONN_ACCEPTING) {
+				LOG("Connection fd=%d state change: %s -> %s",
+				    fd, conn_state_to_str(CONN_ACCEPTING),
+				    conn_state_to_str(CONN_LISTENING));
+				connections[idx]->ci_state = CONN_LISTENING;
+			}
+		} else {
+			LOG("Warning: Attempt to remove accept op when count is zero for fd=%d",
+			    fd);
+		}
+		connections[idx]->ci_last_activity = time(NULL);
+		ret = 0;
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
+}
+
+// Function to add a connect operation
+int io_conn_add_connect_op(int fd)
+{
+	int ret = -1;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		connections[idx]->ci_connect_count++;
+		connections[idx]->ci_last_activity = time(NULL);
+		LOG("Connection fd=%d: added connect op (count=%d)", fd,
+		    connections[idx]->ci_connect_count);
+
+		// Update state to CONNECTING
+		if (connections[idx]->ci_state != CONN_CONNECTING) {
+			LOG("Connection fd=%d state change: %s -> %s", fd,
+			    conn_state_to_str(connections[idx]->ci_state),
+			    conn_state_to_str(CONN_CONNECTING));
+			connections[idx]->ci_state = CONN_CONNECTING;
+		}
+
+		ret = 0;
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
+}
+
+// Function to remove a connect operation
+int io_conn_remove_connect_op(int fd)
+{
+	int ret = -1;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		if (connections[idx]->ci_connect_count > 0) {
+			connections[idx]->ci_connect_count--;
+			LOG("Connection fd=%d: removed connect op (count=%d)",
+			    fd, connections[idx]->ci_connect_count);
+
+			// Update state based on remaining operations
+			if (connections[idx]->ci_connect_count == 0 &&
+			    connections[idx]->ci_state == CONN_CONNECTING) {
+				LOG("Connection fd=%d state change: %s -> %s",
+				    fd, conn_state_to_str(CONN_CONNECTING),
+				    conn_state_to_str(CONN_CONNECTED));
+				connections[idx]->ci_state = CONN_CONNECTED;
+			}
+		} else {
+			LOG("Warning: Attempt to remove connect op when count is zero for fd=%d",
+			    fd);
+		}
+		connections[idx]->ci_last_activity = time(NULL);
+		ret = 0;
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
+}
+
+// Set connection to error state
+int io_conn_set_error(int fd, int error_code)
+{
+	int ret = -1;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		LOG("Connection fd=%d state change: %s -> %s", fd,
+		    conn_state_to_str(connections[idx]->ci_state),
+		    conn_state_to_str(CONN_ERROR));
+
+		connections[idx]->ci_state = CONN_ERROR;
+		connections[idx]->ci_error = error_code;
+		connections[idx]->ci_last_activity = time(NULL);
+		ret = 0;
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return ret;
 }
 
 // Check if a connection is in a particular state
@@ -190,6 +495,10 @@ int io_conn_unregister(int fd)
 		// Mark as unused, but keep the structure for reuse
 		connections[idx]->ci_state = CONN_UNUSED;
 		connections[idx]->ci_fd = -1;
+		connections[idx]->ci_read_count = 0;
+		connections[idx]->ci_write_count = 0;
+		connections[idx]->ci_accept_count = 0;
+		connections[idx]->ci_connect_count = 0;
 		ret = 0;
 	} else {
 		LOG("Failed to unregister connection fd=%d - not found or mismatch",
@@ -198,6 +507,36 @@ int io_conn_unregister(int fd)
 
 	pthread_mutex_unlock(&conn_mutex);
 	return ret;
+}
+
+// Function to check if there are any active read operations
+bool io_conn_has_read_ops(int fd)
+{
+	bool has_ops = false;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		has_ops = (connections[idx]->ci_read_count > 0);
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return has_ops;
+}
+
+// Function to check if there are any active write operations
+bool io_conn_has_write_ops(int fd)
+{
+	bool has_ops = false;
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		has_ops = (connections[idx]->ci_write_count > 0);
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return has_ops;
 }
 
 // Clean up connection tracking
@@ -215,69 +554,22 @@ void io_conn_cleanup(void)
 	pthread_mutex_unlock(&conn_mutex);
 }
 
-/*
- * Validates whether a state transition is allowed
- * Returns true if the transition is valid, false otherwise
- */
-bool is_valid_state_transition(enum conn_state old_state,
-			       enum conn_state new_state)
+int io_socket_close(int fd, int error)
 {
-	// Some transitions are always valid
-	if (new_state == CONN_ERROR) {
-		return true; // Can always transition to error state
+	if (fd <= 0) {
+		return -EBADF;
 	}
 
-	// Define valid transitions based on the current state
-	switch (old_state) {
-	case CONN_UNUSED:
-		// From unused, can only go to listening, connecting or accepted
-		return (new_state == CONN_LISTENING ||
-			new_state == CONN_CONNECTING ||
-			new_state == CONN_ACCEPTED);
-
-	case CONN_LISTENING:
-		// From listening, can go to accepting or error
-		return (new_state == CONN_ACCEPTING);
-
-	case CONN_ACCEPTING:
-		// From accepting, can go back to listening or to error
-		return (new_state == CONN_LISTENING);
-
-	case CONN_ACCEPTED:
-		// After accepting, can go to connected, reading or error
-		return (new_state == CONN_CONNECTED);
-
-	case CONN_CONNECTING:
-		// From connecting, can go to connected or error
-		return (new_state == CONN_CONNECTED);
-
-	case CONN_CONNECTED:
-		// From connected, can go to reading, writing, disconnecting or error
-		return (new_state == CONN_READING ||
-			new_state == CONN_WRITING ||
-			new_state == CONN_DISCONNECTING);
-
-	case CONN_READING:
-		// From reading, can go to connected, writing or error
-		return (new_state == CONN_CONNECTED ||
-			new_state == CONN_WRITING);
-
-	case CONN_WRITING:
-		// From writing, can go to connected, reading or error
-		return (new_state == CONN_CONNECTED ||
-			new_state == CONN_READING);
-
-	case CONN_DISCONNECTING:
-		// From disconnecting, can only go to unused or error
-		return (new_state == CONN_UNUSED);
-
-	case CONN_ERROR:
-		// From error, can go to unused
-		return (new_state == CONN_UNUSED);
-
-	default:
-		return false; // Unknown states aren't valid
+	struct conn_info *conn = io_conn_get(fd);
+	if (conn) {
+		io_conn_set_error(fd, error);
+		io_conn_unregister(fd);
 	}
+
+	LOG("Closing %d", fd);
+
+	unregister_client_fd(fd);
+	return close(fd);
 }
 
 // Utility function to get connection state as string
@@ -300,6 +592,8 @@ const char *conn_state_to_str(enum conn_state state)
 		return "READING";
 	case CONN_WRITING:
 		return "WRITING";
+	case CONN_READWRITE:
+		return "READWRITE";
 	case CONN_DISCONNECTING:
 		return "DISCONNECTING";
 	case CONN_ERROR:
@@ -307,37 +601,6 @@ const char *conn_state_to_str(enum conn_state state)
 	default:
 		return "UNKNOWN";
 	}
-}
-
-// Dump information about a specific connection
-void io_conn_dump(int fd)
-{
-	struct conn_info *conn = io_conn_get(fd);
-	if (!conn) {
-		LOG("No connection info for fd=%d", fd);
-		return;
-	}
-
-	char peer_addr[INET6_ADDRSTRLEN] = { 0 };
-	char local_addr[INET6_ADDRSTRLEN] = { 0 };
-	uint16_t peer_port = 0, local_port = 0;
-
-	if (conn->ci_peer_len > 0) {
-		// Fix: Cast to sockaddr_storage* instead of sockaddr*
-		addr_to_string((const struct sockaddr_storage *)&conn->ci_peer,
-			       peer_addr, INET6_ADDRSTRLEN, &peer_port);
-	}
-
-	if (conn->ci_local_len > 0) {
-		// Fix: Cast to sockaddr_storage* instead of sockaddr*
-		addr_to_string((const struct sockaddr_storage *)&conn->ci_local,
-			       local_addr, INET6_ADDRSTRLEN, &local_port);
-	}
-
-	LOG("Connection fd=%d: state=%s, role=%s, peer=%s:%d, local=%s:%d, xid=%u, last_activity=%ld",
-	    fd, conn_state_to_str(conn->ci_state),
-	    conn_role_to_str(conn->ci_role), peer_addr, peer_port, local_addr,
-	    local_port, conn->ci_xid, conn->ci_last_activity);
 }
 
 // Helper function to convert role to string
@@ -355,6 +618,38 @@ const char *conn_role_to_str(enum conn_role role)
 	default:
 		return "INVALID";
 	}
+}
+
+// Dump information about a specific connection
+void io_conn_dump(int fd)
+{
+	struct conn_info *conn = io_conn_get(fd);
+	if (!conn) {
+		LOG("No connection info for fd=%d", fd);
+		return;
+	}
+
+	char peer_addr[INET6_ADDRSTRLEN] = { 0 };
+	char local_addr[INET6_ADDRSTRLEN] = { 0 };
+	uint16_t peer_port = 0, local_port = 0;
+
+	if (conn->ci_peer_len > 0) {
+		// Cast to sockaddr_storage* instead of sockaddr*
+		addr_to_string((const struct sockaddr_storage *)&conn->ci_peer,
+			       peer_addr, INET6_ADDRSTRLEN, &peer_port);
+	}
+
+	if (conn->ci_local_len > 0) {
+		// Cast to sockaddr_storage* instead of sockaddr*
+		addr_to_string((const struct sockaddr_storage *)&conn->ci_local,
+			       local_addr, INET6_ADDRSTRLEN, &local_port);
+	}
+
+	LOG("Connection fd=%d: state=%s, role=%s, peer=%s:%d, local=%s:%d, xid=%u, last_activity=%ld, reads=%d, writes=%d",
+	    fd, conn_state_to_str(conn->ci_state),
+	    conn_role_to_str(conn->ci_role), peer_addr, peer_port, local_addr,
+	    local_port, conn->ci_xid, conn->ci_last_activity,
+	    conn->ci_read_count, conn->ci_write_count);
 }
 
 // Dump all active connections
@@ -388,11 +683,12 @@ void io_conn_dump_all(void)
 					       &local_port);
 			}
 
-			LOG("[%d] fd=%d: state=%s, role=%s, peer=%s:%d, local=%s:%d, xid=%u, last_activity=%ld",
+			LOG("[%d] fd=%d: state=%s, role=%s, peer=%s:%d, local=%s:%d, xid=%u, last_activity=%ld, reads=%d, writes=%d",
 			    i, conn->ci_fd, conn_state_to_str(conn->ci_state),
 			    conn_role_to_str(conn->ci_role), peer_addr,
 			    peer_port, local_addr, local_port, conn->ci_xid,
-			    time(NULL) - conn->ci_last_activity);
+			    time(NULL) - conn->ci_last_activity,
+			    conn->ci_read_count, conn->ci_write_count);
 		}
 	}
 
@@ -426,6 +722,10 @@ int io_conn_check_timeouts(time_t timeout_seconds)
 				// Mark as unused
 				connections[i]->ci_state = CONN_UNUSED;
 				connections[i]->ci_fd = -1;
+				connections[i]->ci_read_count = 0;
+				connections[i]->ci_write_count = 0;
+				connections[i]->ci_accept_count = 0;
+				connections[i]->ci_connect_count = 0;
 
 				closed++;
 			}
@@ -472,6 +772,9 @@ int io_send_request(struct rpc_trans *rt)
 			free(addr);
 			return ENOMEM;
 		}
+
+		// Increment connect operation count
+		io_conn_add_connect_op(sockfd);
 
 		// Set non-blocking
 		int flags = fcntl(sockfd, F_GETFL, 0);
@@ -520,7 +823,7 @@ int io_send_request(struct rpc_trans *rt)
 			return ENOBUFS;
 		}
 
-		io_uring_prep_connect(sqe, sockfd, (struct sockaddr *)&addr,
+		io_uring_prep_connect(sqe, sockfd, (struct sockaddr *)addr,
 				      sizeof(addr));
 		io_uring_sqe_set_data(sqe, ic);
 		trace_io_connect_submit(ic);
@@ -532,7 +835,11 @@ int io_send_request(struct rpc_trans *rt)
 	}
 
 	// If we already have a connection, check if it's in the CONNECTED state
-	if (!io_conn_is_state(rt->rt_fd, CONN_CONNECTED)) {
+	struct conn_info *conn = io_conn_get(rt->rt_fd);
+	if (!conn ||
+	    (conn->ci_state != CONN_CONNECTED &&
+	     conn->ci_state != CONN_READING && conn->ci_state != CONN_WRITING &&
+	     conn->ci_state != CONN_READWRITE)) {
 		LOG("Connection is not ready for fd=%d", rt->rt_fd);
 		return ENOTCONN;
 	}
@@ -546,6 +853,9 @@ int io_handle_connect(struct io_context *ic, int result,
 {
 	char addr_str[INET6_ADDRSTRLEN];
 	uint16_t port;
+
+	// Remove the connect operation
+	io_conn_remove_connect_op(ic->ic_fd);
 
 	if (result < 0) {
 		LOG("Connect failed for fd=%d: %s", ic->ic_fd,
@@ -563,7 +873,7 @@ int io_handle_connect(struct io_context *ic, int result,
 		LOG("Failed to get peer information: %s", strerror(errno));
 
 		// This is a critical error - the socket is not properly connected
-		io_conn_set_state(ic->ic_fd, CONN_ERROR, errno);
+		io_conn_set_error(ic->ic_fd, errno);
 
 		memset(&ic->ic_ci.ci_peer, 0, sizeof(ic->ic_ci.ci_peer));
 		ic->ic_ci.ci_peer_len = 0;
@@ -586,9 +896,6 @@ int io_handle_connect(struct io_context *ic, int result,
 	}
 
 	LOG("Connection established for fd=%d", ic->ic_fd);
-
-	// Update connection state to CONNECTED
-	io_conn_set_state(ic->ic_fd, CONN_CONNECTED, 0);
 
 	// Update connection info with peer and local addresses
 	struct conn_info *conn = io_conn_get(ic->ic_fd);

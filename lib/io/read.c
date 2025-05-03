@@ -46,7 +46,7 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 
 	struct conn_info *conn = io_conn_get(ic->ic_fd);
 	if (conn) {
-		io_conn_set_state(ic->ic_fd, CONN_READING, 0);
+		io_conn_add_read_op(ic->ic_fd);
 	}
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
@@ -95,13 +95,7 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 
 	struct conn_info *conn = io_conn_get(fd);
 	if (conn) {
-		if (conn->ci_state == CONN_CONNECTED ||
-		    conn->ci_state == CONN_ACCEPTED) {
-			io_conn_set_state(fd, CONN_READING, 0);
-		} else {
-			LOG("Warning: Not changing state from %s to READING",
-			    conn_state_to_str(conn->ci_state));
-		}
+		io_conn_add_read_op(fd);
 	}
 
 	char *buffer = malloc(BUFFER_SIZE);
@@ -390,8 +384,6 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 	if (conn) {
 		conn->ci_last_activity = time(NULL);
-		// Set state back to CONNECTED after successful read
-		io_conn_set_state(client_fd, CONN_CONNECTED, 0);
 	}
 
 	// Get or create buffer state for this connection
@@ -452,6 +444,8 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 			// Queue it for processing
 			add_task(t);
+
+			io_conn_remove_read_op(client_fd);
 
 			// Reset the record state for the next message
 			bs->bs_record.rs_total_len = 0;

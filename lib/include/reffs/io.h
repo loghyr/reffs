@@ -85,6 +85,7 @@ enum conn_state {
 	CONN_CONNECTED, // Successfully connected (both client and server)
 	CONN_READING, // Socket reading in progress
 	CONN_WRITING, // Socket writing in progress
+	CONN_READWRITE, // Socket with both read and write in progress
 	CONN_DISCONNECTING, // In the process of disconnecting
 	CONN_ERROR // Connection in error state
 };
@@ -108,6 +109,10 @@ struct conn_info {
 	socklen_t ci_local_len; // Local address length
 	uint32_t ci_xid; // Associated XID
 	int ci_error; // Last error code
+	int ci_read_count; // Number of pending read operations
+	int ci_write_count; // Number of pending write operations
+	int ci_accept_count; // Number of pending accept operations
+	int ci_connect_count; // Number of pending connect operations
 };
 
 // Function declarations
@@ -187,8 +192,8 @@ static inline const char *op_type_to_str(enum op_type op)
 int io_conn_init(void);
 struct conn_info *io_conn_register(int fd, enum conn_state initial_state,
 				   enum conn_role role);
-int io_conn_set_state(int fd, enum conn_state new_state, int error_code);
 struct conn_info *io_conn_get(int fd);
+void io_conn_update_state(int fd);
 bool io_conn_is_state(int fd, enum conn_state state);
 int io_conn_unregister(int fd);
 void io_conn_cleanup(void);
@@ -200,7 +205,21 @@ int io_socket_close(int fd, int error);
 void io_add_listener(int fd);
 
 void io_conn_dump(int fd);
+void io_conn_dump_all(void);
 
-bool is_valid_state_transition(enum conn_state old_state,
-			       enum conn_state new_state);
+// New reference counting API
+int io_conn_add_read_op(int fd);
+int io_conn_remove_read_op(int fd);
+int io_conn_add_write_op(int fd);
+int io_conn_remove_write_op(int fd);
+int io_conn_add_accept_op(int fd);
+int io_conn_remove_accept_op(int fd);
+int io_conn_add_connect_op(int fd);
+int io_conn_remove_connect_op(int fd);
+int io_conn_set_error(int fd, int error_code);
+
+// Helper functions for operation tracking
+bool io_conn_has_read_ops(int fd);
+bool io_conn_has_write_ops(int fd);
+
 #endif /* _REFFS_IO_H */
