@@ -153,4 +153,3 @@ int probe1_protocol_deregister(void)
 
 	return 0;
 }
-

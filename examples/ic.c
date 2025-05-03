@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: GPL-2.0+
- */     
+ */
 
 // A simple buffer pool structure
 struct buffer_pool {

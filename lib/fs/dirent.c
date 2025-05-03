@@ -226,4 +226,3 @@ void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
 	}
 	rcu_read_unlock();
 }
-

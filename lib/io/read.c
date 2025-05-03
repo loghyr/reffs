@@ -362,10 +362,11 @@ static int process_record_marker(struct buffer_state *bs)
 }
 
 // Handle read completions
-// Handle read completions
+
 int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 {
 	int ret = 0;
+	bool needs_new_read = true;
 
 	// Extract data from context
 	char *buffer = (char *)ic->ic_buffer;
@@ -379,10 +380,11 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		    bytes_read);
 		io_socket_close(client_fd,
 				bytes_read < 0 ? -bytes_read : ECONNRESET);
-		io_context_free(ic);
 
-		// No need to request a new read operation on a closed socket
-		return 0;
+		io_check_for_listener_restart(client_fd, &ic->ic_ci, ring);
+
+		io_context_free(ic);
+		return 0; // No new read needed for closed connections
 	}
 
 	if (conn) {
@@ -396,42 +398,29 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		if (!bs) {
 			LOG("Failed to create buffer state for fd: %d",
 			    client_fd);
-			// Try to set up a new read operation despite the error
-			ret = request_additional_read_data(client_fd,
-							   &ic->ic_ci, ring);
-			if (ret) {
-				LOG("Failed to request additional read after buffer state creation error: %s",
-				    strerror(ret));
-				io_socket_close(client_fd, ENOMEM);
-			}
-			io_context_free(ic);
-			return -ENOMEM;
+			// Socket remains open but we couldn't allocate buffer state
+			goto cleanup;
 		}
 	}
 
 	// Append new data to existing buffer
 	if (!append_to_buffer(bs, buffer, bytes_read)) {
 		LOG("Failed to append to buffer for fd: %d", client_fd);
-		// Try to set up a new read operation despite the error
-		ret = request_additional_read_data(client_fd, &ic->ic_ci, ring);
-		if (ret) {
-			LOG("Failed to request additional read after buffer append error: %s",
-			    strerror(ret));
-			io_socket_close(client_fd, ENOMEM);
-		}
-		io_context_free(ic);
-		return -ENOMEM;
+		// Memory allocation failure but socket is still valid
+		goto cleanup;
 	}
 
 	// Process the RPC record marker to get a complete RPC message
 	while (bs->bs_filled >= 4) {
 		int complete_size = process_record_marker(bs);
 		if (complete_size < 0) {
-			LOG("Error processing record marker for fd: %d: %s",
-			    client_fd, strerror(-complete_size));
+			LOG("Error processing record marker for fd: %d",
+			    client_fd);
+			io_check_for_listener_restart(client_fd, &ic->ic_ci,
+						      ring);
 			io_socket_close(client_fd, ENOBUFS);
-			io_context_free(ic);
-			return 0;
+			needs_new_read = false;
+			goto cleanup;
 		}
 
 		if (complete_size == 0)
@@ -439,82 +428,69 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 		// Create a task for processing
 		struct task *t = calloc(1, sizeof(struct task));
-		if (t) {
-			// Copy the complete message
-			t->t_buffer = malloc(complete_size);
-			if (!t->t_buffer) {
-				free(t);
-				// Continue reading despite task allocation failure
-				ret = request_additional_read_data(
-					client_fd, &ic->ic_ci, ring);
-				if (ret) {
-					LOG("Failed to request additional read after task buffer allocation error: %s",
-					    strerror(ret));
-					io_socket_close(client_fd, ENOMEM);
-				}
-				io_context_free(ic);
-				return -ENOMEM;
-			}
-
-			memcpy(t->t_buffer, bs->bs_record.rs_data,
-			       complete_size);
-			t->t_bytes_read = complete_size;
-			t->t_fd = client_fd;
-			t->t_ring = ring;
-
-			copy_connection_info(&t->t_ci, &ic->ic_ci);
-
-			// Extract XID for convenience
-			if (complete_size >= 4) {
-				t->t_xid = ntohl(*(uint32_t *)t->t_buffer);
-			} else {
-				t->t_xid = 0;
-			}
-
-			trace_io_message_complete(client_fd, t->t_xid,
-						  complete_size);
-
-			// Queue it for processing
-			add_task(t);
-
-			io_conn_remove_read_op(client_fd);
-
-			// Reset the record state for the next message
-			bs->bs_record.rs_total_len = 0;
-			bs->bs_record.rs_position = 0;
-		} else {
-			// Failed to allocate task
+		if (!t) {
 			LOG("Failed to allocate task for fd: %d", client_fd);
-			// Continue reading despite task allocation failure
-			ret = request_additional_read_data(client_fd,
-							   &ic->ic_ci, ring);
-			if (ret) {
-				LOG("Failed to request additional read after task allocation error: %s",
-				    strerror(ret));
-				io_socket_close(client_fd, ENOMEM);
-			}
-			io_context_free(ic);
-			return -ENOMEM;
+			goto cleanup;
 		}
+
+		// Copy the complete message
+		t->t_buffer = malloc(complete_size);
+		if (!t->t_buffer) {
+			free(t);
+			LOG("Failed to allocate task buffer for fd: %d",
+			    client_fd);
+			goto cleanup;
+		}
+
+		memcpy(t->t_buffer, bs->bs_record.rs_data, complete_size);
+		t->t_bytes_read = complete_size;
+		t->t_fd = client_fd;
+		t->t_ring = ring;
+
+		copy_connection_info(&t->t_ci, &ic->ic_ci);
+
+		// Extract XID for convenience
+		if (complete_size >= 4) {
+			t->t_xid = ntohl(*(uint32_t *)t->t_buffer);
+		} else {
+			t->t_xid = 0;
+		}
+
+		trace_io_message_complete(client_fd, t->t_xid, complete_size);
+
+		// Queue it for processing
+		add_task(t);
+
+		io_conn_remove_read_op(client_fd);
+
+		// Reset the record state for the next message
+		bs->bs_record.rs_total_len = 0;
+		bs->bs_record.rs_position = 0;
 	}
 
 	// Try to use request_more_read_data first (which reuses the current context)
 	ret = request_more_read_data(bs, ring, ic);
-	if (ret) {
-		LOG("Failed to request more read data with existing context: %s",
-		    strerror(ret));
-		// If that fails, try request_additional_read_data before giving up
-		ret = request_additional_read_data(client_fd, &ic->ic_ci, ring);
-		if (ret) {
-			LOG("Failed to request additional read data with new context: %s",
-			    strerror(ret));
-			io_socket_close(client_fd, ret);
-		} else {
-			LOG("Successfully requested additional read with new context for fd: %d",
-			    client_fd);
-		}
-		io_context_free(ic);
+	if (ret == 0) {
+		// Successfully submitted new read operation
+		needs_new_read = false;
+	} else {
+		LOG("Failed to request more read data: %s", strerror(ret));
 	}
+
+cleanup:
+	if (needs_new_read) {
+		// If we still need a read operation, try request_additional_read_data
+		ret = request_additional_read_data(client_fd, &ic->ic_ci, ring);
+		if (ret != 0) {
+			LOG("Failed to request additional read: %s",
+			    strerror(ret));
+			// If we can't submit a read, the connection is effectively dead
+			io_socket_close(client_fd, ret);
+		}
+		io_context_free(
+			ic); // Free the current context since we're creating a new one
+	}
+	// Otherwise, ic is being reused by request_more_read_data and shouldn't be freed
 
 	return 0;
 }

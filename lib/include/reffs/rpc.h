@@ -95,11 +95,11 @@ struct rpc_program_handler {
 	uint32_t rph_version; // Which version?
 	struct rpc_operations_handler *rph_ops; // Array of operations
 	size_t rph_ops_len; // Length of operations array
-        uint64_t rph_calls;
-        uint64_t rph_replied_errors;
-        uint64_t rph_rejected_errors;
-        uint64_t rph_accepted_errors;
-        uint64_t rph_authed_errors;
+	uint64_t rph_calls;
+	uint64_t rph_replied_errors;
+	uint64_t rph_rejected_errors;
+	uint64_t rph_accepted_errors;
+	uint64_t rph_authed_errors;
 	struct rcu_head rph_rcu;
 	struct urcu_ref rph_ref;
 	struct cds_list_head rph_list;

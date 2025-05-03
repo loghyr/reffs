@@ -214,7 +214,6 @@ void io_handler_stop(void)
 		*running_context = 0;
 }
 
-
 // Set of listener sockets to monitor
 int listener_fds[MAX_LISTENERS];
 int num_listeners = 0;
@@ -223,6 +222,18 @@ void io_add_listener(int fd)
 {
 	if (fd > 0)
 		listener_fds[num_listeners++] = fd;
+}
+
+void io_check_for_listener_restart(int fd, struct connection_info *ci,
+				   struct io_uring *ring)
+{
+	for (int i = 0; i < num_listeners; i++) {
+		if (fd == listener_fds[i]) {
+			LOG("Listener socket closed, immediately resubmitting accept");
+			request_accept_op(fd, ci, ring);
+			break;
+		}
+	}
 }
 
 void io_handler_main_loop(volatile sig_atomic_t *running_flag,
@@ -241,6 +252,15 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 
 		static time_t last_check = 0;
 		time_t now = time(NULL);
+
+		static time_t last_heartbeat = 0;
+		if (now - last_heartbeat >=
+		    60) { // Log heartbeat every 60 seconds
+			last_heartbeat = now;
+			LOG("HEARTBEAT: Main loop is running at timestamp %ld",
+			    (long)now);
+		}
+
 		if (now - last_check >= 1) { // Check signal flag every second
 			int running_local;
 			__atomic_load(running_flag, &running_local,
@@ -280,6 +300,56 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 					}
 				}
 
+				// Define timeout in seconds
+				const int conn_timeout = 60; // 1 minute timeout
+
+				// Scan all active connections
+				for (int fd = 3; fd < MAX_CONNECTIONS; fd++) {
+					struct conn_info *conn =
+						io_conn_get(fd);
+					if (conn &&
+					    conn->ci_state == CONN_CONNECTED) {
+						// Check for stale connections
+						if (now - conn->ci_last_activity >
+						    conn_timeout) {
+							LOG("Connection fd=%d inactive for %ld seconds - closing",
+							    fd,
+							    (long)(now -
+								   conn->ci_last_activity));
+							io_socket_close(
+								fd, ETIMEDOUT);
+							continue;
+						}
+
+						// Ensure each active connection has a pending read operation
+						if (conn->ci_read_count == 0) {
+							LOG("Connection fd=%d has no pending read operations - submitting read",
+							    fd);
+							int ret =
+								request_additional_read_data(
+									fd,
+									NULL,
+									ring);
+							if (ret != 0) {
+								LOG("Failed to submit read for fd=%d: %s",
+								    fd,
+								    strerror(
+									    ret));
+								// If we can't submit a read, the connection is effectively dead
+								io_socket_close(
+									fd,
+									ret);
+							}
+						} else if (conn->ci_read_count >
+							   1) {
+							// This is a potential issue - more than one reader
+							LOG("Warning: Connection fd=%d has %d pending read operations",
+							    fd,
+							    conn->ci_read_count);
+						}
+					}
+				}
+
 				// If we had failures, check again more quickly next time
 				last_accept_check = now;
 				if (accept_failures) {
@@ -293,9 +363,15 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		if (ret == -ETIME) {
 			// Timeout - check running flag and continue
 			continue;
+		} else if (ret == -EINTR) {
+			// Interrupted system call - this is normal when using pstack or other debugging
+			LOG("io_uring_wait_cqe_timeout interrupted, continuing");
+			continue;
 		} else if (ret < 0) {
 			LOG("io_uring_wait_cqe_timeout error: %s",
 			    strerror(-ret));
+			// Maybe add a small sleep to avoid spinning on persistent errors
+			usleep(10000); // 10ms
 			continue;
 		}
 

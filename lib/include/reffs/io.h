@@ -222,4 +222,7 @@ int io_conn_set_error(int fd, int error_code);
 bool io_conn_has_read_ops(int fd);
 bool io_conn_has_write_ops(int fd);
 
+void io_check_for_listener_restart(int fd, struct connection_info *ci,
+				   struct io_uring *ring);
+
 #endif /* _REFFS_IO_H */

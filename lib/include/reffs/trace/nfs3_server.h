@@ -184,7 +184,8 @@ static inline void trace_nfs3_srv_rmdir(struct rpc_trans *rt, RMDIR3args *args)
 			  args->object.name, crc);
 }
 
-static inline void trace_nfs3_srv_rename(struct rpc_trans *rt, RENAME3args *args)
+static inline void trace_nfs3_srv_rename(struct rpc_trans *rt,
+					 RENAME3args *args)
 {
 	uint32_t crc_src = nfs3_getfh_crc(&args->from.dir);
 	uint32_t crc_to = nfs3_getfh_crc(&args->to.dir);
@@ -243,7 +244,8 @@ static inline void trace_nfs3_srv_readdirplus(struct rpc_trans *rt,
 			  args->cookie, crc);
 }
 
-static inline void trace_nfs3_srv_fsstat(struct rpc_trans *rt, FSSTAT3args *args)
+static inline void trace_nfs3_srv_fsstat(struct rpc_trans *rt,
+					 FSSTAT3args *args)
 {
 	uint32_t crc = nfs3_getfh_crc(&args->fsroot);
 	struct network_file_handle *nfh =
