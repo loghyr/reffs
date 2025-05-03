@@ -15,4 +15,5 @@ libreffs_utils_la_SOURCES =	\
 	identity.c		\
 	network.c		\
 	rcu.c			\
-	server.c
+	server.c		\
+	stack.c
