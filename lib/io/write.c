@@ -181,7 +181,8 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 	// Only proceed if connection is in a valid state for writing
 	// Accept CONNECTED or READING states as valid
 	if (conn->ci_state != CONN_CONNECTED &&
-	    conn->ci_state != CONN_READING) {
+	    conn->ci_state != CONN_READING &&
+	    conn->ci_state != CONN_WRITING) {
 		LOG("Connection not in valid state for RPC transmission on fd=%d (current state: %s)",
 		    rt->rt_fd, conn_state_to_str(conn->ci_state));
 		return ENOTCONN;
