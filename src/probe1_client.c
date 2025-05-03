@@ -35,6 +35,16 @@
 // Global flag for clean shutdown
 volatile sig_atomic_t running = 1;
 
+// Signal handler
+static void signal_handler(int sig)
+{
+	TRACE("Received signal %d, initiating shutdown...", sig);
+	running = 0;
+
+	// Wake up any waiting worker threads
+	wake_worker_threads();
+}
+
 static void usage(const char *prog)
 {
 	printf("Usage: %s [options]\n", prog);
@@ -112,6 +122,27 @@ int main(int argc, char *argv[])
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	reffs_trace_init(trace_file);
 
+	// Ignore SIGPIPE
+	signal(SIGPIPE, SIG_IGN);
+
+	// Setup signal handlers
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = signal_handler;
+	sa.sa_flags = SA_RESTART; // Restart interrupted system calls
+	sigemptyset(&sa.sa_mask);
+	sigaddset(&sa.sa_mask, SIGINT);
+	sigaddset(&sa.sa_mask, SIGTERM);
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGTERM, &sa, NULL);
+
+	sigset_t mask;
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGINT);
+	sigaddset(&mask, SIGTERM);
+	// Block signals in main thread temporarily
+	pthread_sigmask(SIG_BLOCK, &mask, NULL);
+
 	// Initialize IO handler
 	if (io_handler_init(&ring) < 0) {
 		return 1;
@@ -123,9 +154,9 @@ int main(int argc, char *argv[])
 	}
 
 	if (create_worker_threads(&running) < 0) {
-                exit_code = 1;
-                goto out;
-        }
+		exit_code = 1;
+		goto out;
+	}
 
 	if (!strcmp(op, "gather")) {
 		rt = probe1_client_op_stats_gather(PROBE_PROGRAM, PROBE_V1);
@@ -147,9 +178,18 @@ int main(int argc, char *argv[])
 	if (ret)
 		goto done;
 
-	while (running) {
-		usleep(100);
-	}
+	rt->rt_ring = &ring;
+
+	ret = io_send_request(rt);
+	if (ret)
+		goto done;
+
+	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
+
+	// Run the main IO processing loop
+	io_handler_main_loop(&running, &ring);
+
+	TRACE("Main loop exited, cleaning up...");
 
 	close(rt->rt_fd);
 	rpc_protocol_free(rt);
