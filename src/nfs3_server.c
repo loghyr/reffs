@@ -121,6 +121,9 @@ int main(int argc, char *argv[])
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	reffs_trace_init(trace_file);
 
+	// Ignore SIGPIPE
+	signal(SIGPIPE, SIG_IGN);
+
 	// Setup signal handlers
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
