@@ -360,11 +360,11 @@ AC_CONFIG_FILES([
 	lib/scripts/reffs/Makefile
 	lib/probe1/Makefile
 	lib/tests/Makefile
-	lib/tools/Makefile
 	lib/trace/Makefile
 	lib/utils/Makefile
 	lib/xdr/Makefile
-	src/Makefile])
+	src/Makefile
+	tools/Makefile])
 
 AC_CONFIG_FILES([lib/xdr/insert_pragmas.sh],[chmod +x lib/xdr/insert_pragmas.sh])
 AC_CONFIG_FILES([lib/scripts/reffs/xdrgen.py],[chmod +x lib/scripts/reffs/xdrgen.py])
