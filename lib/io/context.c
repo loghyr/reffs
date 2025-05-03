@@ -275,6 +275,34 @@ void io_context_list_active(void)
 	LOG("======================");
 }
 
+void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
+{
+	switch (ic->ic_op_type) {
+	case OP_TYPE_READ:
+		request_additional_read_data(ic->ic_fd, &ic->ic_ci, ring);
+		break;
+	case OP_TYPE_WRITE:
+		break;
+	case OP_TYPE_ACCEPT:
+		request_accept_op(ic->ic_fd, &ic->ic_ci, ring);
+		break;
+	case OP_TYPE_CONNECT:
+		break;
+	default:
+		break;
+	}
+
+	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+	if (sqe) {
+		__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_MARKED_CANCELLED,
+				  __ATOMIC_ACQUIRE);
+		io_uring_prep_cancel(sqe, ic, 0);
+		sqe->cancel_flags |= IORING_ASYNC_CANCEL_ALL;
+		io_uring_sqe_set_data(sqe, NULL);
+		io_uring_submit(ring);
+	}
+}
+
 void io_context_release_active(struct io_uring *ring)
 {
 	LOG("=== Freeing Orphaned Contexts ===");
@@ -292,16 +320,7 @@ void io_context_release_active(struct io_uring *ring)
 		    io_op_type_to_str(ic->ic_op_type), ic->ic_fd, (long)(age),
 		    ic->ic_id);
 
-		struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-		if (sqe) {
-			__atomic_fetch_or(&ic->ic_state,
-					  IO_CONTEXT_MARKED_CANCELLED,
-					  __ATOMIC_ACQUIRE);
-			io_uring_prep_cancel(sqe, ic, 0);
-			sqe->cancel_flags |= IORING_ASYNC_CANCEL_ALL;
-			io_uring_sqe_set_data(sqe, NULL);
-			io_uring_submit(ring);
-		}
+		ic_context_cancel(ic, ring);
 
 		count++;
 	}
@@ -338,16 +357,8 @@ void io_context_check_stalled(struct io_uring *ring)
 			    ic->ic_fd, (long)(now - ic->ic_creation_time),
 			    ic->ic_id);
 
-		struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
-		if (sqe) {
-			__atomic_fetch_or(&ic->ic_state,
-					  IO_CONTEXT_MARKED_CANCELLED,
-					  __ATOMIC_ACQUIRE);
-			io_uring_prep_cancel(sqe, ic, 0);
-			sqe->cancel_flags |= IORING_ASYNC_CANCEL_ALL;
-			io_uring_sqe_set_data(sqe, NULL);
-			io_uring_submit(ring);
-		}
+		ic_context_cancel(ic, ring);
+
 		count++;
 	}
 	rcu_read_unlock();
@@ -412,27 +423,24 @@ void io_context_release_cancelled(void)
 
 bool mark_io_context_cancelled(struct io_context *ic)
 {
-        uint64_t old_state, new_state;
+	uint64_t old_state, new_state;
 
-        __atomic_load(&ic->ic_state, &old_state, __ATOMIC_ACQUIRE);
+	__atomic_load(&ic->ic_state, &old_state, __ATOMIC_ACQUIRE);
 
-        if ((old_state & IO_CONTEXT_MARKED_CANCELLED) &&
-            !(old_state & IO_CONTEXT_IS_CANCELLED)) {
-                new_state = old_state | IO_CONTEXT_IS_CANCELLED;
+	if ((old_state & IO_CONTEXT_MARKED_CANCELLED) &&
+	    !(old_state & IO_CONTEXT_IS_CANCELLED)) {
+		new_state = old_state | IO_CONTEXT_IS_CANCELLED;
 
-                if (__atomic_compare_exchange(&ic->ic_state,
-                                             &old_state,
-                                             &new_state,
-                                             0,
-                                             __ATOMIC_SEQ_CST,
-                                             __ATOMIC_SEQ_CST)) {
-                        return true;
-                }
+		if (__atomic_compare_exchange(&ic->ic_state, &old_state,
+					      &new_state, 0, __ATOMIC_SEQ_CST,
+					      __ATOMIC_SEQ_CST)) {
+			return true;
+		}
 
-                return false;
-        }
+		return false;
+	}
 
-        return false;
+	return false;
 }
 
 void io_context_put(struct io_context *ic)
