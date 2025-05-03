@@ -394,8 +394,8 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 
 	u_long xdr_size = 0;
 
-	if (ph->ph_op_handler->roh_res_f) {
-		xdr_size = xdr_sizeof(ph->ph_op_handler->roh_res_f, ph->ph_res);
+	if (ph->ph_op_handler->roh_args_f) {
+		xdr_size = xdr_sizeof(ph->ph_op_handler->roh_args_f, ph->ph_args);
 	}
 
 	rt->rt_reply_len = 7 * sizeof(uint32_t) + xdr_size;
