@@ -117,7 +117,7 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 	if (!sqe) {
 		free(buffer);
 		io_socket_close(fd, ENOMEM);
-		io_context_free(ic);
+		io_context_put(ic);
 		return ENOMEM;
 	}
 
@@ -141,7 +141,7 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 	if (ret < 0) {
 		free(buffer);
 		io_socket_close(fd, -ret);
-		io_context_free(ic);
+		io_context_put(ic);
 	} else {
 		ret = 0;
 	}
@@ -374,7 +374,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 		io_check_for_listener_restart(client_fd, &ic->ic_ci, ring);
 
-		io_context_free(ic);
+		io_context_put(ic);
 		return 0; // No new read needed for closed connections
 	}
 
@@ -474,7 +474,7 @@ cleanup:
 			    strerror(ret));
 			io_socket_close(client_fd, ret);
 		}
-		io_context_free(ic);
+		io_context_put(ic);
 	}
 
 	return 0;

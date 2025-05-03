@@ -89,7 +89,7 @@ int request_accept_op(int fd, struct connection_info *ci, struct io_uring *ring)
 		if (!sqe) {
 			LOG("Failed to get SQE for accept - retry %d/%d",
 			    retry_count + 1, max_retries);
-			io_context_free(ic);
+			io_context_put(ic);
 
 			// Sleep before retry
 			usleep(100000); // 100ms
@@ -119,7 +119,7 @@ int request_accept_op(int fd, struct connection_info *ci, struct io_uring *ring)
 		if (!submitted) {
 			LOG("Failed to submit accept operation - retry %d/%d: %s",
 			    retry_count + 1, max_retries, strerror(-ret));
-			io_context_free(ic);
+			io_context_put(ic);
 
 			// Sleep before retry
 			usleep(100000); // 100ms
@@ -174,7 +174,7 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 			request_accept_op(listen_fd, &ic->ic_ci, ring);
 		}
 
-		io_context_free(ic);
+		io_context_put(ic);
 		return -client_fd;
 	}
 
@@ -184,7 +184,7 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 	if (!client_conn) {
 		LOG("Failed to register client connection fd=%d", client_fd);
 		io_socket_close(client_fd, ENOMEM);
-		io_context_free(ic);
+		io_context_put(ic);
 		return ENOMEM;
 	}
 
@@ -246,6 +246,6 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 		request_accept_op(listen_fd, &ic->ic_ci, ring);
 	}
 
-	io_context_free(ic); // Free the completed accept context
+	io_context_put(ic);
 	return 0;
 }

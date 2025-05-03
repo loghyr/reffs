@@ -854,7 +854,7 @@ int io_handle_connect(struct io_context *ic, int result,
 		    strerror(-result));
 
 		io_socket_close(ic->ic_fd, -result);
-		io_context_free(ic);
+		io_context_put(ic);
 		return -result;
 	}
 
@@ -871,7 +871,7 @@ int io_handle_connect(struct io_context *ic, int result,
 		ic->ic_ci.ci_peer_len = 0;
 
 		io_socket_close(ic->ic_fd, errno);
-		io_context_free(ic);
+		io_context_put(ic);
 		return errno;
 	}
 
@@ -907,14 +907,14 @@ int io_handle_connect(struct io_context *ic, int result,
 		LOG("No matching rpc_trans found for XID=%u", ic->ic_xid);
 
 		io_socket_close(ic->ic_fd, ENOENT);
-		io_context_free(ic);
+		io_context_put(ic);
 		return ENOENT;
 	}
 
 	rt->rt_fd = ic->ic_fd;
 
 	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);
-	io_context_free(ic);
+	io_context_put(ic);
 
 	// Now that we're connected, prepare the RPC write request
 	return io_rpc_trans_cb(rt);

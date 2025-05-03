@@ -73,12 +73,12 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 
 	// If no more data to send, we're done
 	if (remaining == 0) {
-		io_context_free(ic);
+		io_context_put(ic);
 		return 0;
 	} else if (remaining < 0) {
 		// Error case - shouldn't happen with correct position tracking
 		io_socket_close(ic->ic_fd, EINVAL);
-		io_context_free(ic);
+		io_context_put(ic);
 		return 0;
 	}
 
@@ -116,7 +116,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	}
 
 	if (!sqe) {
-		io_context_free(ic);
+		io_context_put(ic);
 		return ENOMEM;
 	}
 
@@ -153,7 +153,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 
 	if (ret < 0) {
 		io_socket_close(ic->ic_fd, -ret);
-		io_context_free(ic);
+		io_context_put(ic);
 	} else {
 		ret = 0;
 	}
@@ -203,7 +203,7 @@ int io_handle_write(struct io_context *ic,
 
 		io_socket_close(ic->ic_fd, bytes_written < 0 ? -bytes_written :
 							       ECONNRESET);
-		io_context_free(ic);
+		io_context_put(ic);
 		return bytes_written < 0 ? -bytes_written : ECONNRESET;
 	}
 

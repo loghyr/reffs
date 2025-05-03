@@ -228,11 +228,8 @@ int main(int argc, char *argv[])
 		listener_nfs_fd = -1;
 	}
 
-	io_handler_cleanup(&ring);
+	io_handler_fini(&ring);
 	io_uring_queue_exit(&ring);
-
-	// Clean up IO handler
-	io_handler_cleanup(&ring);
 
 	// Wait for worker threads to finish
 	wait_for_worker_threads();

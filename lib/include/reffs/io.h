@@ -11,6 +11,11 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <sys/socket.h>
+
+#include <urcu.h>
+#include <urcu/rculfhash.h>
+#include <urcu/ref.h>
+
 #include "reffs/task.h"
 #include "reffs/network.h"
 
@@ -41,6 +46,10 @@ enum op_type {
 
 // IO operation context structure
 struct io_context {
+	struct rcu_head ic_rcu;
+	struct urcu_ref ic_ref;
+	struct cds_lfht_node ic_next;
+
 	enum op_type ic_op_type;
 	int ic_fd;
 	uint32_t ic_id;
@@ -50,8 +59,11 @@ struct io_context {
 	size_t ic_position;
 	uint32_t ic_xid;
 
+#define IO_CONTEXT_IS_HASHED (1ULL << 0)
+#define IO_CONTEXT_IS_CANCELLED (1ULL << 1)
+	uint64_t ic_state;
+
 	time_t ic_creation_time;
-	bool ic_cancelled;
 
 	struct connection_info ic_ci;
 };
@@ -120,7 +132,7 @@ struct conn_info {
 
 // Function declarations
 int io_handler_init(struct io_uring *ring);
-void io_handler_cleanup(struct io_uring *ring);
+void io_handler_fini(struct io_uring *ring);
 void io_handler_main_loop(volatile sig_atomic_t *running,
 			  struct io_uring *ring);
 void io_handler_stop(void);
@@ -160,7 +172,15 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 
 struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 				     size_t buffer_len);
-void io_context_free(struct io_context *ic);
+struct io_context *io_context_get(struct io_context *ic);
+void io_context_put(struct io_context *ic);
+
+void io_dump_active_contexts(void);
+void io_release_active_contexts(struct io_uring *ring);
+void io_check_stalled_operations(struct io_uring *ring);
+
+int io_context_init(void);
+int io_context_fini(void);
 
 void *io_worker_thread(void *arg);
 void wake_worker_threads(void);
@@ -173,7 +193,7 @@ int io_unregister_request(uint32_t xid);
 
 int io_send_request(struct rpc_trans *rt);
 
-static inline const char *op_type_to_str(enum op_type op)
+static inline const char *io_op_type_to_str(enum op_type op)
 {
 	switch (op) {
 	case OP_TYPE_ACCEPT:
@@ -227,9 +247,5 @@ bool io_conn_has_write_ops(int fd);
 
 void io_check_for_listener_restart(int fd, struct connection_info *ci,
 				   struct io_uring *ring);
-
-void io_dump_active_contexts(void);
-void io_release_active_contexts(struct io_uring *ring);
-void io_check_stalled_operations(struct io_uring *ring);
 
 #endif /* _REFFS_IO_H */

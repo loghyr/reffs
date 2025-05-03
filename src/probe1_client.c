@@ -197,15 +197,12 @@ int main(int argc, char *argv[])
 	close(rt->rt_fd);
 	rpc_protocol_free(rt);
 
-	io_handler_cleanup(&ring);
+	io_handler_fini(&ring);
 	io_uring_queue_exit(&ring);
 
 done:
 	running = 0;
 	wake_worker_threads();
-
-	// Clean up IO handler
-	io_handler_cleanup(&ring);
 
 	wait_for_worker_threads();
 out:

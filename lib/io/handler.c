@@ -145,11 +145,13 @@ int io_handler_init(struct io_uring *ring)
 	memset(conn_buffers, 0, sizeof(conn_buffers));
 
 	// Setup io_uring
-	if (setup_io_uring(ring) < 0) {
+	if (setup_io_uring(ring) < 0)
 		return -1;
-	}
 
 	last_accept_check = time(NULL);
+
+	if (io_context_init())
+		return -1;
 
 	return 0;
 }
@@ -387,26 +389,20 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
-		if (!cqe->user_data) {
-			LOG("Cancellation operation completed with result: %d",
-			    cqe->res);
-			continue;
-		}
-
 		if (cqe->res == -ECANCELED) {
 			LOG("Operation was cancelled: %p op=%s fd=%d id=%u",
-			    (void *)ic, op_type_to_str(ic->ic_op_type),
+			    (void *)ic, io_op_type_to_str(ic->ic_op_type),
 			    ic->ic_fd, ic->ic_id);
 
 			// Clean up context
-			io_context_free(ic);
+			io_context_put(ic);
 		} else if (cqe->res < 0) {
 			LOG("CQE error for op=%s, fd=%d: %s",
-			    op_type_to_str(ic->ic_op_type), ic->ic_fd,
+			    io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
 			    strerror(-cqe->res));
 
 			io_socket_close(ic->ic_fd, -cqe->res);
-			io_context_free(ic);
+			io_context_put(ic);
 		} else {
 			switch (ic->ic_op_type) {
 			case OP_TYPE_ACCEPT:
@@ -428,7 +424,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			default:
 				LOG("Unknown operation type: %d",
 				    ic->ic_op_type);
-				io_context_free(ic);
+				io_context_put(ic);
 				ret = 0;
 				break;
 			}
@@ -440,7 +436,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 	io_conn_cleanup();
 }
 
-void io_handler_cleanup(struct io_uring *ring)
+void io_handler_fini(struct io_uring *ring)
 {
 	// Drain pending io_uring operations
 	while (1) {
@@ -461,9 +457,7 @@ void io_handler_cleanup(struct io_uring *ring)
 		if (cqe->user_data) {
 			struct io_context *ic =
 				(struct io_context *)(uintptr_t)cqe->user_data;
-			if (ic) {
-				io_context_free(ic);
-			}
+				io_context_put(ic);
 		}
 
 		io_uring_cqe_seen(ring, cqe);
@@ -498,4 +492,6 @@ void io_handler_cleanup(struct io_uring *ring)
 
 	LOG("Cleaning up remaining active contexts...");
 	io_release_active_contexts(ring);
+
+	io_context_fini();
 }
