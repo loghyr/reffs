@@ -771,9 +771,6 @@ int io_send_request(struct rpc_trans *rt)
 			return ENOMEM;
 		}
 
-		// Increment connect operation count
-		io_conn_add_connect_op(sockfd);
-
 		// Set non-blocking
 		int flags = fcntl(sockfd, F_GETFL, 0);
 		fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
@@ -851,9 +848,6 @@ int io_handle_connect(struct io_context *ic, int result,
 {
 	char addr_str[INET6_ADDRSTRLEN];
 	uint16_t port;
-
-	// Remove the connect operation
-	io_conn_remove_connect_op(ic->ic_fd);
 
 	if (result < 0) {
 		LOG("Connect failed for fd=%d: %s", ic->ic_fd,

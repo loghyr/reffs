@@ -50,6 +50,9 @@ struct io_context {
 	size_t ic_position;
 	uint32_t ic_xid;
 
+	time_t ic_creation_time;
+	bool ic_cancelled;
+
 	struct connection_info ic_ci;
 };
 
@@ -224,5 +227,9 @@ bool io_conn_has_write_ops(int fd);
 
 void io_check_for_listener_restart(int fd, struct connection_info *ci,
 				   struct io_uring *ring);
+
+void io_dump_active_contexts(void);
+void io_release_active_contexts(struct io_uring *ring);
+void io_check_stalled_operations(struct io_uring *ring);
 
 #endif /* _REFFS_IO_H */

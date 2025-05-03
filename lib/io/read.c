@@ -44,11 +44,6 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 
 	ic->ic_fd = bs->bs_fd;
 
-	struct conn_info *conn = io_conn_get(ic->ic_fd);
-	if (conn) {
-		io_conn_add_read_op(ic->ic_fd);
-	}
-
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		sqe = io_uring_get_sqe(ring);
 		if (sqe)
@@ -91,11 +86,6 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 	if (fd <= 0 || fd >= MAX_CONNECTIONS) {
 		LOG("Invalid fd: %d", fd);
 		return -EINVAL;
-	}
-
-	struct conn_info *conn = io_conn_get(fd);
-	if (conn) {
-		io_conn_add_read_op(fd);
 	}
 
 	char *buffer = malloc(BUFFER_SIZE);
@@ -378,6 +368,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		// Connection closed or error
 		LOG("Connection closed or error (fd: %d, res: %d)", client_fd,
 		    bytes_read);
+
 		io_socket_close(client_fd,
 				bytes_read < 0 ? -bytes_read : ECONNRESET);
 
@@ -461,8 +452,6 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		// Queue it for processing
 		add_task(t);
 
-		io_conn_remove_read_op(client_fd);
-
 		// Reset the record state for the next message
 		bs->bs_record.rs_total_len = 0;
 		bs->bs_record.rs_position = 0;
@@ -470,7 +459,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 	// Try to use request_more_read_data first (which reuses the current context)
 	ret = request_more_read_data(bs, ring, ic);
-	if (ret == 0) {
+	if (ret == 0 || ret == EAGAIN) {
 		// Successfully submitted new read operation
 		needs_new_read = false;
 	} else {
@@ -479,18 +468,14 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 cleanup:
 	if (needs_new_read) {
-		// If we still need a read operation, try request_additional_read_data
 		ret = request_additional_read_data(client_fd, &ic->ic_ci, ring);
 		if (ret != 0) {
 			LOG("Failed to request additional read: %s",
 			    strerror(ret));
-			// If we can't submit a read, the connection is effectively dead
 			io_socket_close(client_fd, ret);
 		}
-		io_context_free(
-			ic); // Free the current context since we're creating a new one
+		io_context_free(ic);
 	}
-	// Otherwise, ic is being reused by request_more_read_data and shouldn't be freed
 
 	return 0;
 }

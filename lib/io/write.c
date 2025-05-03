@@ -71,13 +71,8 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
 	int ret = 0;
 
-	struct conn_info *conn = io_conn_get(ic->ic_fd);
-
 	// If no more data to send, we're done
 	if (remaining == 0) {
-		if (conn) {
-			io_conn_remove_write_op(ic->ic_fd);
-		}
 		io_context_free(ic);
 		return 0;
 	} else if (remaining < 0) {
@@ -121,7 +116,6 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	}
 
 	if (!sqe) {
-		io_socket_close(ic->ic_fd, ENOBUFS);
 		io_context_free(ic);
 		return ENOMEM;
 	}
@@ -135,6 +129,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 		ic->ic_position += (chunk_size - 4);
 	}
 
+	struct conn_info *conn = io_conn_get(ic->ic_fd);
 	if (conn) {
 		conn->ci_last_activity = time(NULL);
 	}
@@ -177,8 +172,6 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 	}
 
 	io_conn_dump(rt->rt_fd);
-
-	io_conn_add_write_op(rt->rt_fd);
 
 	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
 			       rt->rt_reply_len);

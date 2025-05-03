@@ -46,6 +46,10 @@ pthread_mutex_t request_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static time_t last_accept_check;
 
+// Set of listener sockets to monitor
+int listener_fds[MAX_LISTENERS];
+int num_listeners = 0;
+
 //
 // Need to prune out connections that get timed out
 //
@@ -214,10 +218,6 @@ void io_handler_stop(void)
 		*running_context = 0;
 }
 
-// Set of listener sockets to monitor
-int listener_fds[MAX_LISTENERS];
-int num_listeners = 0;
-
 void io_add_listener(int fd)
 {
 	if (fd > 0)
@@ -257,8 +257,11 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		if (now - last_heartbeat >=
 		    60) { // Log heartbeat every 60 seconds
 			last_heartbeat = now;
-			LOG("HEARTBEAT: Main loop is running at timestamp %ld",
-			    (long)now);
+			LOG("HEARTBEAT: Main loop is running at timestamp %ld ctx(c=%d, f=%d) lsnrs=%d",
+			    (long)now, get_context_created(),
+			    get_context_freed(), num_listeners);
+			io_dump_active_contexts();
+			io_check_stalled_operations(ring);
 		}
 
 		if (now - last_check >= 1) { // Check signal flag every second
@@ -281,8 +284,9 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 
 					struct conn_info *conn =
 						io_conn_get(fd);
-					if (!conn ||
-					    conn->ci_state != CONN_LISTENING) {
+					if (conn &&
+					    conn->ci_state != CONN_LISTENING &&
+					    conn->ci_accept_count == 0) {
 						LOG("Listener fd=%d not in LISTENING state - resubmitting accept",
 						    fd);
 
@@ -383,7 +387,20 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
-		if (cqe->res < 0) {
+		if (!cqe->user_data) {
+			LOG("Cancellation operation completed with result: %d",
+			    cqe->res);
+			continue;
+		}
+
+		if (cqe->res == -ECANCELED) {
+			LOG("Operation was cancelled: %p op=%s fd=%d id=%u",
+			    (void *)ic, op_type_to_str(ic->ic_op_type),
+			    ic->ic_fd, ic->ic_id);
+
+			// Clean up context
+			io_context_free(ic);
+		} else if (cqe->res < 0) {
 			LOG("CQE error for op=%s, fd=%d: %s",
 			    op_type_to_str(ic->ic_op_type), ic->ic_fd,
 			    strerror(-cqe->res));
@@ -478,4 +495,7 @@ void io_handler_cleanup(struct io_uring *ring)
 			free(conn_buffers[i]);
 		}
 	}
+
+	LOG("Cleaning up remaining active contexts...");
+	io_release_active_contexts(ring);
 }
