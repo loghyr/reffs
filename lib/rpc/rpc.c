@@ -138,7 +138,7 @@ static int rpc_parse_call_data(struct rpc_trans *rt)
 
 	uint32_t start_pos, end_pos;
 
-	if (!ph->ph_op_handler->roh_args_f)
+	if (!ph->ph_op_handler || !ph->ph_op_handler->roh_args_f)
 		return 0;
 
 	xdrmem_create(&xdrs, (char *)p, rt->rt_body_len - rt->rt_offset,
