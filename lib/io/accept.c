@@ -110,7 +110,10 @@ int request_accept_op(int fd, struct connection_info *ci, struct io_uring *ring)
 				break;
 			}
 			if (ret == -EAGAIN) {
+				submitted = true;
 				usleep(IO_URING_WAIT_US);
+				ret = 0;	// Fix once we know io_uring can handle it!
+				break;
 			} else {
 				break;
 			}
