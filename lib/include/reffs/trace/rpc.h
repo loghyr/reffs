@@ -18,7 +18,7 @@ static inline void trace_rpc_duration(struct rpc_trans *rt,
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
 	reffs_trace_event(
-		REFFS_TRACE_CAT_RPC, "rpc_duration",
+		REFFS_TRACE_CAT_RPC, "rpc_duration", __LINE__,
 		"OP: %u,%u,%u took %lu ns (max=%lu ns, avg=%lu ns, calls=%lu fails=%lu)",
 		rt->rt_info.ri_program, rt->rt_info.ri_version,
 		rt->rt_info.ri_procedure, duration_ns,

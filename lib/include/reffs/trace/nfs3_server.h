@@ -20,7 +20,7 @@ static inline uint32_t nfs3_getfh_crc(nfs_fh3 *fh)
 /* NFS3 operation trace functions */
 static inline void trace_nfs3_srv_null(struct rpc_trans *rt)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_null", "xid=0x%08x",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_null", __LINE__, "xid=0x%08x",
 			  rt->rt_info.ri_xid);
 }
 
@@ -31,7 +31,7 @@ static inline void trace_nfs3_srv_getattr(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->object.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_getattr",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_getattr", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
@@ -43,7 +43,7 @@ static inline void trace_nfs3_srv_setattr(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->object.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_setattr",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_setattr", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
@@ -55,7 +55,7 @@ static inline void trace_nfs3_srv_lookup(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->what.dir.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_lookup",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_lookup", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
@@ -67,7 +67,7 @@ static inline void trace_nfs3_srv_access(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->object.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_access",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_access", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
@@ -79,7 +79,7 @@ static inline void trace_nfs3_srv_readlink(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->symlink.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_readlink",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_readlink", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
@@ -91,7 +91,7 @@ static inline void trace_nfs3_srv_read(struct rpc_trans *rt, READ3args *args)
 		(struct network_file_handle *)args->file.data.data_val;
 
 	reffs_trace_event(
-		REFFS_TRACE_CAT_NFS, "nfs3_read",
+		REFFS_TRACE_CAT_NFS, "nfs3_read", __LINE__,
 		"xid=0x%08x sb=%lu ino=%lu off=%zu count=%u crc=0x%08x",
 		rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, args->offset,
 		args->count, crc);
@@ -103,7 +103,7 @@ static inline void trace_nfs3_srv_write(struct rpc_trans *rt, WRITE3args *args)
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->file.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_write",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_write", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu off=%lu len=%u crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->offset, args->data.data_len, crc);
@@ -116,7 +116,7 @@ static inline void trace_nfs3_srv_create(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->where.dir.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_create",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_create", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->where.name, crc);
@@ -128,7 +128,7 @@ static inline void trace_nfs3_srv_mkdir(struct rpc_trans *rt, MKDIR3args *args)
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->where.dir.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_mkdir",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_mkdir", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->where.name, crc);
@@ -141,7 +141,7 @@ static inline void trace_nfs3_srv_symlink(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->where.dir.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_symlink",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_symlink", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->symlink.symlink_data, crc);
@@ -153,7 +153,7 @@ static inline void trace_nfs3_srv_mknod(struct rpc_trans *rt, MKNOD3args *args)
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->where.dir.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_mknod",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_mknod", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->where.name, crc);
@@ -166,7 +166,7 @@ static inline void trace_nfs3_srv_remove(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->object.dir.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_remove",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_remove", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->object.name, crc);
@@ -178,7 +178,7 @@ static inline void trace_nfs3_srv_rmdir(struct rpc_trans *rt, RMDIR3args *args)
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->object.dir.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_rmdir",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_rmdir", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->object.name, crc);
@@ -195,7 +195,7 @@ static inline void trace_nfs3_srv_rename(struct rpc_trans *rt,
 		(struct network_file_handle *)args->to.dir.data.data_val;
 
 	reffs_trace_event(
-		REFFS_TRACE_CAT_NFS, "nfs3_rename",
+		REFFS_TRACE_CAT_NFS, "nfs3_rename", __LINE__,
 		"xid=0x%08x sb_src=%lu ino_src=%lu sb_dst=%lu ino_dst=%lu name=%s crc_src=0x%08x crc_to=0x%08x",
 		rt->rt_info.ri_xid, nfh_src->nfh_sb, nfh_src->nfh_ino,
 		nfh_dst->nfh_sb, nfh_dst->nfh_ino, args->to.name, crc_src,
@@ -212,7 +212,7 @@ static inline void trace_nfs3_srv_link(struct rpc_trans *rt, LINK3args *args)
 		(struct network_file_handle *)args->link.dir.data.data_val;
 
 	reffs_trace_event(
-		REFFS_TRACE_CAT_NFS, "nfs3_link",
+		REFFS_TRACE_CAT_NFS, "nfs3_link", __LINE__,
 		"xid=0x%08x sb=%lu ino=%lu sb_dir=%lu ino_dir=%lu name=%s crc=0x%08x crc_dir=0x%08x",
 		rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, nfh_dir->nfh_sb,
 		nfh_dir->nfh_ino, args->link.name, crc, crc_dir);
@@ -225,7 +225,7 @@ static inline void trace_nfs3_srv_readdir(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->dir.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_readdir",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_readdir", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu cookie=0x%08lx crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->cookie, crc);
@@ -238,7 +238,7 @@ static inline void trace_nfs3_srv_readdirplus(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->dir.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_readdirplus",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_readdirplus", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu cookie=0x%08lx crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->cookie, crc);
@@ -251,7 +251,7 @@ static inline void trace_nfs3_srv_fsstat(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->fsroot.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_fsstat",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_fsstat", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
@@ -263,7 +263,7 @@ static inline void trace_nfs3_srv_fsinfo(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->fsroot.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_fsinfo",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_fsinfo", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
@@ -275,7 +275,7 @@ static inline void trace_nfs3_srv_pathconf(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->object.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_pathconf",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_pathconf", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
@@ -287,7 +287,7 @@ static inline void trace_nfs3_srv_commit(struct rpc_trans *rt,
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->file.data.data_val;
 
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_commit",
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_commit", __LINE__,
 			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }

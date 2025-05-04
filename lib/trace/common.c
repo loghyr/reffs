@@ -84,7 +84,7 @@ bool reffs_should_trace(enum reffs_trace_category category)
 
 /* Write trace event */
 void reffs_trace_event(enum reffs_trace_category category,
-		       const char *event_name, const char *format, ...)
+		       const char *name, const int line, const char *format, ...)
 {
 	if (!reffs_should_trace(category)) {
 		return;
@@ -100,8 +100,8 @@ void reffs_trace_event(enum reffs_trace_category category,
 
 	pthread_mutex_lock(&trace_mutex);
 	if (trace_fp != NULL) {
-		fprintf(trace_fp, "[%s.%09ld] [%d] (%s): ", time_str,
-			ts.tv_nsec, getpid(), event_name);
+		fprintf(trace_fp, "[%s.%09ld] [%d] (%s:%d): ", time_str,
+			ts.tv_nsec, getpid(), name, line);
 
 		va_start(args, format);
 		vfprintf(trace_fp, format, args);

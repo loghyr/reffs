@@ -21,8 +21,8 @@ bool reffs_trace_is_category_enabled(enum reffs_trace_category category);
 bool reffs_should_trace(enum reffs_trace_category category);
 
 /* General trace functions */
-void reffs_trace_event(enum reffs_trace_category category,
-		       const char *event_name, const char *format, ...)
-	__attribute__((format(printf, 3, 4)));
+void reffs_trace_event(enum reffs_trace_category category, const char *name,
+		       const int line, const char *format, ...)
+	__attribute__((format(printf, 4, 5)));
 
 #endif /* _REFFS_TRACE_H */

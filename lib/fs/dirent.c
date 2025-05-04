@@ -65,7 +65,7 @@ static void dirent_free_rcu(struct rcu_head *rcu)
 {
 	struct dirent *de = caa_container_of(rcu, struct dirent, d_rcu);
 
-	trace_fs_dirent(de, __func__);
+	trace_fs_dirent(de, __func__, __LINE__);
 
 	pthread_rwlock_destroy(&de->d_rwlock);
 
@@ -77,7 +77,7 @@ static void dirent_release(struct urcu_ref *ref)
 {
 	struct dirent *de = caa_container_of(ref, struct dirent, d_ref);
 
-	trace_fs_dirent(de, __func__);
+	trace_fs_dirent(de, __func__, __LINE__);
 
 	if (de->d_inode)
 		inode_put(de->d_inode);
@@ -110,7 +110,7 @@ struct dirent *dirent_alloc(struct dirent *parent, char *name,
 	urcu_ref_init(&de->d_ref);
 	de->d_cookie_next = 2;
 
-	trace_fs_dirent(de, __func__);
+	trace_fs_dirent(de, __func__, __LINE__);
 
 	pthread_rwlock_init(&de->d_rwlock, NULL);
 
@@ -154,7 +154,7 @@ struct dirent *dirent_get(struct dirent *de)
 	if (!urcu_ref_get_unless_zero(&de->d_ref))
 		return NULL;
 
-	trace_fs_dirent(de, __func__);
+	trace_fs_dirent(de, __func__, __LINE__);
 
 	return de;
 }
@@ -164,7 +164,7 @@ void dirent_put(struct dirent *de)
 	if (!de)
 		return;
 
-	trace_fs_dirent(de, __func__);
+	trace_fs_dirent(de, __func__, __LINE__);
 	urcu_ref_put(&de->d_ref, dirent_release);
 }
 

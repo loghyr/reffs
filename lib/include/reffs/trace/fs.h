@@ -10,9 +10,10 @@
 #include "reffs/dirent.h"
 #include "reffs/trace/trace.h"
 
-static inline void trace_fs_dirent(struct dirent *de, const char *action)
+static inline void trace_fs_dirent(struct dirent *de, const char *event,
+				   int line)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_FS, action, "de=%p ref=%ld",
+	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line, "de=%p ref=%ld",
 			  (void *)de, de->d_ref.refcount);
 }
 

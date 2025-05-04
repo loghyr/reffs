@@ -14,7 +14,7 @@
 /* IO specific trace functions */
 static inline void trace_io_accept_submit(struct io_context *ic)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_accept_submit",
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_accept_submit", __LINE__,
 			  "fd=%d, op=%s, id=%u, len=%zu", ic->ic_fd,
 			  io_op_type_to_str(ic->ic_op_type), ic->ic_id,
 			  ic->ic_buffer_len);
@@ -22,7 +22,7 @@ static inline void trace_io_accept_submit(struct io_context *ic)
 
 static inline void trace_io_connect_submit(struct io_context *ic)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_connect_submit",
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_connect_submit", __LINE__,
 			  "fd=%d, op=%s, id=%u, len=%zu", ic->ic_fd,
 			  io_op_type_to_str(ic->ic_op_type), ic->ic_id,
 			  ic->ic_buffer_len);
@@ -30,7 +30,7 @@ static inline void trace_io_connect_submit(struct io_context *ic)
 
 static inline void trace_io_read_submit(struct io_context *ic)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_read_submit",
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_read_submit", __LINE__,
 			  "fd=%d, op=%s, id=%u, len=%zu", ic->ic_fd,
 			  io_op_type_to_str(ic->ic_op_type), ic->ic_id,
 			  ic->ic_buffer_len);
@@ -38,7 +38,7 @@ static inline void trace_io_read_submit(struct io_context *ic)
 
 static inline void trace_io_write_submit(struct io_context *ic)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_write_submit",
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_write_submit", __LINE__,
 			  "fd=%d, op=%s, id=%u, len=%zu", ic->ic_fd,
 			  io_op_type_to_str(ic->ic_op_type), ic->ic_id,
 			  ic->ic_buffer_len);
@@ -48,7 +48,7 @@ static inline void trace_io_record_marker(struct buffer_state *bs,
 					  uint32_t marker, bool last_fragment,
 					  uint32_t fragment_len)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_record_marker",
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_record_marker", __LINE__,
 			  "fd=%d, marker=0x%08x, last=%d, len=%u, filled=%zu",
 			  bs->bs_fd, marker, last_fragment, fragment_len,
 			  bs->bs_filled);
@@ -56,7 +56,7 @@ static inline void trace_io_record_marker(struct buffer_state *bs,
 
 static inline void trace_io_message_complete(int fd, uint32_t xid, size_t size)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_message_complete",
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_message_complete", __LINE__,
 			  "fd=%d, xid=0x%08x, size=%zu", fd, xid, size);
 }
 
@@ -67,9 +67,8 @@ static inline void trace_io_context(struct io_context *ic, const char *func,
 		time_t now = time(NULL);
 		time_t age = now - ic->ic_action_time;
 
-		reffs_trace_event(REFFS_TRACE_CAT_IO, func,
-				  "line=%d ic=%p op=%s fd=%d age=%ld id=%u",
-				  line, (void *)ic,
+		reffs_trace_event(REFFS_TRACE_CAT_IO, func, line,
+				  "ic=%p op=%s fd=%d age=%ld id=%u", (void *)ic,
 				  io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
 				  age, ic->ic_id);
 	}
