@@ -60,6 +60,23 @@ static inline void trace_io_message_complete(int fd, uint32_t xid, size_t size)
 			  "fd=%d, xid=0x%08x, size=%zu", fd, xid, size);
 }
 
+static inline void trace_io_connection_count(int fd, int count,
+					     const char *func, int line)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_IO, func, line, "fd=%d count=%d", fd,
+			  count);
+}
+
+static inline void trace_io_connection_state_change(int fd, int old_state,
+						    int new_state,
+						    const char *func, int line)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_IO, func, line,
+			  "fd=%d state change: %s -> %s", fd,
+			  conn_state_to_str(old_state),
+			  conn_state_to_str(new_state));
+}
+
 static inline void trace_io_context(struct io_context *ic, const char *func,
 				    int line)
 {
@@ -67,10 +84,11 @@ static inline void trace_io_context(struct io_context *ic, const char *func,
 		time_t now = time(NULL);
 		time_t age = now - ic->ic_action_time;
 
-		reffs_trace_event(REFFS_TRACE_CAT_IO, func, line,
-				  "ic=%p op=%s fd=%d state=0x%lx age=%ld id=%u",
-				  (void *)ic, io_op_type_to_str(ic->ic_op_type),
-				  ic->ic_fd, ic->ic_state, age, ic->ic_id);
+		reffs_trace_event(
+			REFFS_TRACE_CAT_IO, func, line,
+			"ic=%p op=%s fd=%d state=0x%lx age=%ld count=%ld id=%u",
+			(void *)ic, io_op_type_to_str(ic->ic_op_type),
+			ic->ic_fd, ic->ic_state, age, ic->ic_count, ic->ic_id);
 	}
 }
 
@@ -79,4 +97,31 @@ static inline void trace_io_context_ptr(struct io_context *ic, const char *func,
 {
 	reffs_trace_event(REFFS_TRACE_CAT_IO, func, line, "ic=%p", (void *)ic);
 }
+
+static inline void trace_io_writer(struct io_context *ic, const char *func,
+				   int line)
+{
+	if (reffs_trace_is_category_enabled(REFFS_TRACE_CAT_IO)) {
+		size_t remaining = ic->ic_buffer_len - ic->ic_position;
+		uint32_t chunk_size;
+
+		if (ic->ic_position == 0) {
+			chunk_size = remaining > IO_MAX_WRITE_SIZE ?
+					     IO_MAX_WRITE_SIZE :
+					     remaining;
+		} else {
+			chunk_size = remaining > (IO_MAX_WRITE_SIZE - 4) ?
+					     IO_MAX_WRITE_SIZE :
+					     (remaining + 4);
+		}
+
+		reffs_trace_event(
+			REFFS_TRACE_CAT_IO, func, line,
+			"ic=%p fd=%d bl=%ld ip=%ld r=%ld cs=%d count=%ld id=%u",
+			(void *)ic, ic->ic_fd, ic->ic_buffer_len,
+			ic->ic_position, remaining, chunk_size, ic->ic_count,
+			ic->ic_id);
+	}
+}
+
 #endif /* _REFFS_TRACE_IO_H */

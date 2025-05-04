@@ -19,6 +19,9 @@
 #include "reffs/task.h"
 #include "reffs/network.h"
 
+// Maximum size for a single write
+#define IO_MAX_WRITE_SIZE (1024 * 1024)
+
 #define BUFFER_SIZE 4096
 #define QUEUE_DEPTH 2048
 #define NUM_LISTENERS 1
@@ -70,6 +73,8 @@ struct io_context {
 	uint64_t ic_state;
 
 	time_t ic_action_time;
+
+	uint64_t ic_count;
 
 	struct connection_info ic_ci;
 };

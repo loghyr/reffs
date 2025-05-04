@@ -33,9 +33,6 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
-// Maximum size for a single write
-#define MAX_WRITE_SIZE (1024 * 1024)
-
 /*
  * Creating responses:
  *
@@ -72,6 +69,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	int ret = 0;
 
 	trace_io_context(ic, __func__, __LINE__); // loghyr
+	trace_io_writer(ic, __func__, __LINE__);
 
 	// If no more data to send, we're done
 	if (remaining == 0) {
@@ -85,7 +83,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	}
 
 	// Determine if this is the last fragment to send
-	bool last_fragment = (remaining <= MAX_WRITE_SIZE);
+	bool last_fragment = (remaining <= IO_MAX_WRITE_SIZE);
 
 	// Calculate size for this fragment
 	uint32_t chunk_size;
@@ -94,16 +92,19 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 
 	if (ic->ic_position == 0) {
 		// First fragment - record marker is already in the buffer
-		chunk_size = remaining > MAX_WRITE_SIZE ? MAX_WRITE_SIZE :
-							  remaining;
+		chunk_size = remaining > IO_MAX_WRITE_SIZE ? IO_MAX_WRITE_SIZE :
+							     remaining;
 		buffer = (char *)ic->ic_buffer;
 	} else {
-		// Calculate chunk size: either MAX_WRITE_SIZE or remaining + 4 bytes for marker
-		chunk_size = remaining > (MAX_WRITE_SIZE - 4) ? MAX_WRITE_SIZE :
-								(remaining + 4);
+		// Calculate chunk size: either IO_MAX_WRITE_SIZE or remaining + 4 bytes for marker
+		chunk_size = remaining > (IO_MAX_WRITE_SIZE - 4) ?
+				     IO_MAX_WRITE_SIZE :
+				     (remaining + 4);
 
 		// Subsequent fragments - we need to reuse the preceding 4 bytes for the record marker
 		buffer = (char *)ic->ic_buffer + (ic->ic_position - 4);
+
+		ic->ic_count++;
 	}
 
 	// Set the record marker to reflect the payload size (excluding the marker itself)

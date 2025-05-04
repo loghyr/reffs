@@ -143,9 +143,8 @@ void io_conn_update_state(int fd)
 
 		// Only log if state actually changes
 		if (old_state != new_state) {
-			LOG("Connection fd=%d state change: %s -> %s", fd,
-			    conn_state_to_str(old_state),
-			    conn_state_to_str(new_state));
+			trace_io_connection_state_change(
+				fd, old_state, new_state, __func__, __LINE__);
 			connections[idx]->ci_state = new_state;
 		}
 	}
@@ -175,9 +174,8 @@ int io_conn_add_read_op(int fd)
 		}
 
 		if (old_state != new_state) {
-			LOG("Connection fd=%d state change: %s -> %s", fd,
-			    conn_state_to_str(old_state),
-			    conn_state_to_str(new_state));
+			trace_io_connection_state_change(
+				fd, old_state, new_state, __func__, __LINE__);
 			connections[idx]->ci_state = new_state;
 		}
 
@@ -198,8 +196,9 @@ int io_conn_remove_read_op(int fd)
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
 		if (connections[idx]->ci_read_count > 0) {
 			connections[idx]->ci_read_count--;
-			LOG("Connection fd=%d: removed read op (count=%d)", fd,
-			    connections[idx]->ci_read_count);
+			trace_io_connection_count(
+				fd, connections[idx]->ci_read_count, __func__,
+				__LINE__);
 
 			// Update state based on remaining operations
 			enum conn_state old_state = connections[idx]->ci_state;
@@ -218,9 +217,10 @@ int io_conn_remove_read_op(int fd)
 			}
 
 			if (old_state != new_state) {
-				LOG("Connection fd=%d state change: %s -> %s",
-				    fd, conn_state_to_str(old_state),
-				    conn_state_to_str(new_state));
+				trace_io_connection_state_change(fd, old_state,
+								 new_state,
+								 __func__,
+								 __LINE__);
 				connections[idx]->ci_state = new_state;
 			}
 		} else {
@@ -245,8 +245,8 @@ int io_conn_add_write_op(int fd)
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
 		connections[idx]->ci_write_count++;
 		connections[idx]->ci_last_activity = time(NULL);
-		LOG("Connection fd=%d: added write op (count=%d)", fd,
-		    connections[idx]->ci_write_count);
+		trace_io_connection_count(fd, connections[idx]->ci_write_count,
+					  __func__, __LINE__);
 
 		// Update the connection state based on the new count
 		enum conn_state old_state = connections[idx]->ci_state;
@@ -259,9 +259,8 @@ int io_conn_add_write_op(int fd)
 		}
 
 		if (old_state != new_state) {
-			LOG("Connection fd=%d state change: %s -> %s", fd,
-			    conn_state_to_str(old_state),
-			    conn_state_to_str(new_state));
+			trace_io_connection_state_change(
+				fd, old_state, new_state, __func__, __LINE__);
 			connections[idx]->ci_state = new_state;
 		}
 
@@ -282,8 +281,10 @@ int io_conn_remove_write_op(int fd)
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
 		if (connections[idx]->ci_write_count > 0) {
 			connections[idx]->ci_write_count--;
-			LOG("Connection fd=%d: removed write op (count=%d)", fd,
-			    connections[idx]->ci_write_count);
+
+			trace_io_connection_count(
+				fd, connections[idx]->ci_write_count, __func__,
+				__LINE__);
 
 			// Update state based on remaining operations
 			enum conn_state old_state = connections[idx]->ci_state;
@@ -302,9 +303,10 @@ int io_conn_remove_write_op(int fd)
 			}
 
 			if (old_state != new_state) {
-				LOG("Connection fd=%d state change: %s -> %s",
-				    fd, conn_state_to_str(old_state),
-				    conn_state_to_str(new_state));
+				trace_io_connection_state_change(fd, old_state,
+								 new_state,
+								 __func__,
+								 __LINE__);
 				connections[idx]->ci_state = new_state;
 			}
 		} else {
@@ -329,14 +331,14 @@ int io_conn_add_accept_op(int fd)
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
 		connections[idx]->ci_accept_count++;
 		connections[idx]->ci_last_activity = time(NULL);
-		LOG("Connection fd=%d: added accept op (count=%d)", fd,
-		    connections[idx]->ci_accept_count);
+		trace_io_connection_count(fd, connections[idx]->ci_accept_count,
+					  __func__, __LINE__);
 
 		// Update state to ACCEPTING
 		if (connections[idx]->ci_state != CONN_ACCEPTING) {
-			LOG("Connection fd=%d state change: %s -> %s", fd,
-			    conn_state_to_str(connections[idx]->ci_state),
-			    conn_state_to_str(CONN_ACCEPTING));
+			trace_io_connection_state_change(
+				fd, connections[idx]->ci_state, CONN_ACCEPTING,
+				__func__, __LINE__);
 			connections[idx]->ci_state = CONN_ACCEPTING;
 		}
 
@@ -357,15 +359,16 @@ int io_conn_remove_accept_op(int fd)
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
 		if (connections[idx]->ci_accept_count > 0) {
 			connections[idx]->ci_accept_count--;
-			LOG("Connection fd=%d: removed accept op (count=%d)",
-			    fd, connections[idx]->ci_accept_count);
+			trace_io_connection_count(
+				fd, connections[idx]->ci_accept_count, __func__,
+				__LINE__);
 
 			// Update state based on remaining operations
 			if (connections[idx]->ci_accept_count == 0 &&
 			    connections[idx]->ci_state == CONN_ACCEPTING) {
-				LOG("Connection fd=%d state change: %s -> %s",
-				    fd, conn_state_to_str(CONN_ACCEPTING),
-				    conn_state_to_str(CONN_LISTENING));
+				trace_io_connection_state_change(
+					fd, CONN_ACCEPTING, CONN_LISTENING,
+					__func__, __LINE__);
 				connections[idx]->ci_state = CONN_LISTENING;
 			}
 		} else {
@@ -390,14 +393,15 @@ int io_conn_add_connect_op(int fd)
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
 		connections[idx]->ci_connect_count++;
 		connections[idx]->ci_last_activity = time(NULL);
-		LOG("Connection fd=%d: added connect op (count=%d)", fd,
-		    connections[idx]->ci_connect_count);
+		trace_io_connection_count(fd,
+					  connections[idx]->ci_connect_count,
+					  __func__, __LINE__);
 
 		// Update state to CONNECTING
 		if (connections[idx]->ci_state != CONN_CONNECTING) {
-			LOG("Connection fd=%d state change: %s -> %s", fd,
-			    conn_state_to_str(connections[idx]->ci_state),
-			    conn_state_to_str(CONN_CONNECTING));
+			trace_io_connection_state_change(
+				fd, connections[idx]->ci_state, CONN_CONNECTING,
+				__func__, __LINE__);
 			connections[idx]->ci_state = CONN_CONNECTING;
 		}
 
@@ -418,15 +422,16 @@ int io_conn_remove_connect_op(int fd)
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
 		if (connections[idx]->ci_connect_count > 0) {
 			connections[idx]->ci_connect_count--;
-			LOG("Connection fd=%d: removed connect op (count=%d)",
-			    fd, connections[idx]->ci_connect_count);
+			trace_io_connection_count(
+				fd, connections[idx]->ci_connect_count,
+				__func__, __LINE__);
 
 			// Update state based on remaining operations
 			if (connections[idx]->ci_connect_count == 0 &&
 			    connections[idx]->ci_state == CONN_CONNECTING) {
-				LOG("Connection fd=%d state change: %s -> %s",
-				    fd, conn_state_to_str(CONN_CONNECTING),
-				    conn_state_to_str(CONN_CONNECTED));
+				trace_io_connection_state_change(
+					fd, CONN_CONNECTING, CONN_CONNECTED,
+					__func__, __LINE__);
 				connections[idx]->ci_state = CONN_CONNECTED;
 			}
 		} else {
@@ -449,9 +454,9 @@ int io_conn_set_error(int fd, int error_code)
 
 	int idx = fd % MAX_CONNECTIONS;
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
-		LOG("Connection fd=%d state change: %s -> %s", fd,
-		    conn_state_to_str(connections[idx]->ci_state),
-		    conn_state_to_str(CONN_ERROR));
+		trace_io_connection_state_change(fd, connections[idx]->ci_state,
+						 CONN_ERROR, __func__,
+						 __LINE__);
 
 		connections[idx]->ci_state = CONN_ERROR;
 		connections[idx]->ci_error = error_code;

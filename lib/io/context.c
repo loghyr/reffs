@@ -270,7 +270,7 @@ void io_context_destroy(struct io_context *ic)
 
 	uint64_t state = __atomic_fetch_or(
 		&ic->ic_state, IO_CONTEXT_MARKED_DESTROYED, __ATOMIC_ACQUIRE);
-	if (!(state & IO_CONTEXT_MARKED_DESTROYED))
+	if (state & IO_CONTEXT_MARKED_DESTROYED)
 		return;
 
 	atomic_fetch_add(&active_to_destroyed, 1);
@@ -410,7 +410,7 @@ void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 {
 	uint64_t state = __atomic_fetch_or(
 		&ic->ic_state, IO_CONTEXT_MARKED_CANCELLED, __ATOMIC_ACQUIRE);
-	if (!(state & IO_CONTEXT_MARKED_CANCELLED))
+	if (state & IO_CONTEXT_MARKED_CANCELLED)
 		return;
 
 	atomic_fetch_add(&active_to_cancelled, 1);
@@ -578,6 +578,7 @@ void io_context_release_destroyed(void)
 			continue;
 
 		trace_io_context(ic, __func__, __LINE__);
+		ic_destroy_unhash(ic);
 		atomic_fetch_add(&destroyed_to_freed, 1);
 		call_rcu(&ic->ic_rcu, io_context_free_rcu);
 
