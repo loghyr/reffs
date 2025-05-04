@@ -38,6 +38,7 @@ static int context_freed = 0;
 
 struct cds_lfht *io_context_ht = NULL;
 struct cds_lfht *io_cancelled_ht = NULL;
+struct cds_lfht *io_destroyed_ht = NULL;
 
 static bool io_context_unhash(struct io_context *ic)
 {
@@ -79,6 +80,26 @@ static bool io_cancelled_unhash(struct io_context *ic)
 	return false;
 }
 
+static bool io_destroyed_unhash(struct io_context *ic)
+{
+	int ret;
+	bool b;
+	uint64_t state;
+
+	state = __atomic_fetch_and(&ic->ic_state, ~IO_CONTEXT_IS_DESTROYED_HASH,
+				   __ATOMIC_ACQUIRE);
+	b = state & IO_CONTEXT_IS_DESTROYED_HASH;
+	if (b) {
+		ret = cds_lfht_del(io_destroyed_ht, &ic->ic_next);
+		if (ret)
+			LOG("ret = %d", ret);
+		assert(!ret);
+		return true;
+	}
+
+	return false;
+}
+
 int io_context_init(void)
 {
 	io_context_ht = cds_lfht_new(1024, 1024, 0,
@@ -96,6 +117,13 @@ int io_context_init(void)
 		return ENOMEM;
 	}
 
+	io_destroyed_ht =
+		cds_lfht_new(1024, 1024, 0,
+			     CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING, NULL);
+	if (!io_context_ht) {
+		LOG("Could not create the io context destroyed hash table");
+		return ENOMEM;
+	}
 	return 0;
 }
 
@@ -130,8 +158,13 @@ int io_context_fini(void)
 		count = 0;
 		rcu_read_lock();
 		cds_lfht_for_each_entry(io_cancelled_ht, &iter, ic, ic_next) {
-			if (io_cancelled_unhash(ic))
+			if (io_cancelled_unhash(ic)) {
 				count++;
+				trace_io_context(ic, __func__,
+						 __LINE__); // loghyr
+				free(ic->ic_buffer);
+				free(ic);
+			}
 		}
 		rcu_read_unlock();
 
@@ -144,6 +177,31 @@ int io_context_fini(void)
 		}
 
 		io_cancelled_ht = NULL;
+	}
+
+	if (io_destroyed_ht) {
+		count = 0;
+		rcu_read_lock();
+		cds_lfht_for_each_entry(io_destroyed_ht, &iter, ic, ic_next) {
+			if (io_cancelled_unhash(ic)) {
+				count++;
+				trace_io_context(ic, __func__,
+						 __LINE__); // loghyr
+				free(ic->ic_buffer);
+				free(ic);
+			}
+		}
+		rcu_read_unlock();
+
+		if (count)
+			LOG("Destroyed = %d", count);
+
+		ret = cds_lfht_destroy(io_destroyed_ht, NULL);
+		if (ret < 0) {
+			LOG("Could not delete a hash table: %m");
+		}
+
+		io_destroyed_ht = NULL;
 	}
 
 	return 0;
@@ -169,8 +227,37 @@ void io_context_update_time(struct io_context *ic)
 	trace_io_context(ic, __func__, __LINE__); // loghyr
 }
 
+static bool mark_io_context_destroyed(struct io_context *ic)
+{
+	uint64_t old_state, new_state;
+
+	__atomic_load(&ic->ic_state, &old_state, __ATOMIC_ACQUIRE);
+
+	if ((old_state & IO_CONTEXT_MARKED_DESTROYED) &&
+	    !(old_state & IO_CONTEXT_IS_DESTROYED)) {
+		new_state = old_state | IO_CONTEXT_IS_DESTROYED;
+
+		if (__atomic_compare_exchange(&ic->ic_state, &old_state,
+					      &new_state, 0, __ATOMIC_SEQ_CST,
+					      __ATOMIC_SEQ_CST)) {
+			return true;
+		}
+
+		return false;
+	}
+
+	return false;
+}
+
 void io_context_destroy(struct io_context *ic)
 {
+	trace_io_context(ic, __func__, __LINE__);
+
+	uint64_t state = __atomic_fetch_or(
+		&ic->ic_state, IO_CONTEXT_MARKED_DESTROYED, __ATOMIC_ACQUIRE);
+	if (!(state & IO_CONTEXT_MARKED_DESTROYED))
+		return;
+
 	context_freed++;
 
 	switch (ic->ic_op_type) {
@@ -192,6 +279,18 @@ void io_context_destroy(struct io_context *ic)
 	}
 
 	trace_io_context(ic, __func__, __LINE__);
+
+	if (mark_io_context_destroyed(ic)) {
+		io_context_unhash(ic);
+		ic->ic_action_time = time(NULL);
+		rcu_read_lock();
+		__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_IS_DESTROYED_HASH,
+				  __ATOMIC_ACQUIRE);
+		cds_lfht_add(io_cancelled_ht, ic->ic_id, &ic->ic_next);
+		rcu_read_unlock();
+
+		return;
+	}
 
 	io_context_unhash(ic);
 	free(ic->ic_buffer);
@@ -419,14 +518,49 @@ void io_context_release_cancelled(void)
 		    (void *)ic, io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
 		    (long)(now - ic->ic_action_time), ic->ic_id);
 
+		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_cancelled_unhash(ic);
-		io_context_destroy(ic);
+		free(ic->ic_buffer);
+		free(ic);
 
 		count++;
 	}
 	rcu_read_unlock();
 
 	LOG("Total cancelled contexts: %d", count);
+	LOG("======================");
+}
+
+void io_context_release_destroyed(void)
+{
+	struct cds_lfht_iter iter = { 0 };
+	struct io_context *ic;
+	int count = 0;
+	time_t now = time(NULL);
+
+	LOG("=== Freeing Destroyed Contexts ===");
+
+	rcu_read_lock();
+	cds_lfht_for_each_entry(io_destroyed_ht, &iter, ic, ic_next) {
+		time_t age = now - ic->ic_action_time;
+
+		if (age < 60)
+			continue;
+
+		LOG("Detected destroyed operation: %p op=%s fd=%d age=%ld id=%u",
+		    (void *)ic, io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
+		    (long)(now - ic->ic_action_time), ic->ic_id);
+
+		trace_io_context(ic, __func__, __LINE__); // loghyr
+		io_destroyed_unhash(ic);
+		free(ic->ic_buffer);
+		free(ic);
+
+		count++;
+	}
+	rcu_read_unlock();
+
+	LOG("Total destroyed contexts: %d", count);
 	LOG("======================");
 }
 

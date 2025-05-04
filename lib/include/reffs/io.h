@@ -61,6 +61,9 @@ struct io_context {
 #define IO_CONTEXT_MARKED_CANCELLED (1ULL << 1)
 #define IO_CONTEXT_IS_CANCELLED (1ULL << 2)
 #define IO_CONTEXT_IS_CANCELLED_HASH (1ULL << 3)
+#define IO_CONTEXT_MARKED_DESTROYED (1ULL << 4)
+#define IO_CONTEXT_IS_DESTROYED (1ULL << 5)
+#define IO_CONTEXT_IS_DESTROYED_HASH (1ULL << 6)
 	uint64_t ic_state;
 
 	time_t ic_action_time;
@@ -181,6 +184,7 @@ void io_context_list_active(void);
 void io_context_release_active(struct io_uring *ring);
 void io_context_check_stalled(struct io_uring *ring);
 void io_context_release_cancelled(void);
+void io_context_release_destroyed(void);
 
 int io_context_init(void);
 int io_context_fini(void);
