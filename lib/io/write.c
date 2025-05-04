@@ -179,6 +179,7 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 		LOG("Failed to create write context");
 		return 0;
 	}
+	trace_io_context(ic, __func__);
 
 	ic->ic_xid = rt->rt_info.ri_xid;
 	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);

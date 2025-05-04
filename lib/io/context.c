@@ -154,8 +154,10 @@ static uint32_t generate_id(void)
 	static uint32_t next_id = 1;
 	static pthread_mutex_t id_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+	uint32_t id;
+
 	pthread_mutex_lock(&id_mutex);
-	uint32_t id = next_id++;
+	id = __atomic_add_fetch(&next_id, 1, __ATOMIC_RELAXED);
 	pthread_mutex_unlock(&id_mutex);
 
 	return id;
@@ -277,6 +279,11 @@ void io_context_list_active(void)
 
 void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 {
+	uint64_t state = __atomic_fetch_or(
+		&ic->ic_state, IO_CONTEXT_MARKED_CANCELLED, __ATOMIC_ACQUIRE);
+	if (!(state & IO_CONTEXT_MARKED_CANCELLED))
+		return;
+
 	switch (ic->ic_op_type) {
 	case OP_TYPE_READ:
 		request_additional_read_data(ic->ic_fd, &ic->ic_ci, ring);
@@ -294,8 +301,6 @@ void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 
 	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 	if (sqe) {
-		__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_MARKED_CANCELLED,
-				  __ATOMIC_ACQUIRE);
 		io_uring_prep_cancel(sqe, ic, 0);
 		sqe->cancel_flags |= IORING_ASYNC_CANCEL_ALL;
 		io_uring_sqe_set_data(sqe, NULL);
@@ -400,7 +405,7 @@ void io_context_release_cancelled(void)
 	LOG("=== Freeing Cancelled Contexts ===");
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
+	cds_lfht_for_each_entry(io_cancelled_ht, &iter, ic, ic_next) {
 		time_t age = now - ic->ic_creation_time;
 
 		if (age < 60)

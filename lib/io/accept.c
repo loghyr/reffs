@@ -159,6 +159,8 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 
 	bool accept_resubmitted = false;
 
+	trace_io_context(ic, __func__);
+
 	// Always try to set up the next accept first, to ensure we don't miss connections
 	int accept_ret = request_accept_op(listen_fd, &ic->ic_ci, ring);
 	if (accept_ret == 0) {
