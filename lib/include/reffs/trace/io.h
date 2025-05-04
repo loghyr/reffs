@@ -68,9 +68,9 @@ static inline void trace_io_context(struct io_context *ic, const char *func,
 		time_t age = now - ic->ic_action_time;
 
 		reffs_trace_event(REFFS_TRACE_CAT_IO, func, line,
-				  "ic=%p op=%s fd=%d age=%ld id=%u", (void *)ic,
-				  io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
-				  age, ic->ic_id);
+				  "ic=%p op=%s fd=%d state=0x%lx age=%ld id=%u",
+				  (void *)ic, io_op_type_to_str(ic->ic_op_type),
+				  ic->ic_fd, ic->ic_state, age, ic->ic_id);
 	}
 }
 #endif /* _REFFS_TRACE_IO_H */

@@ -475,9 +475,7 @@ void io_context_check_stalled(struct io_uring *ring)
 		if (age < 60 || ic->ic_op_type != OP_TYPE_WRITE)
 			continue;
 
-		LOG("Detected stalled operation: %p op=%s fd=%d age=%ld id=%u",
-		    (void *)ic, io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
-		    (long)(now - ic->ic_action_time), ic->ic_id);
+		trace_io_context(ic, __func__, __LINE__);
 
 		ic_context_cancel(ic, ring);
 
@@ -505,11 +503,7 @@ void io_context_release_cancelled(void)
 		if (age < 60)
 			continue;
 
-		LOG("Detected cancelled operation: %p op=%s fd=%d age=%ld id=%u",
-		    (void *)ic, io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
-		    (long)(now - ic->ic_action_time), ic->ic_id);
-
-		trace_io_context(ic, __func__, __LINE__); // loghyr
+		trace_io_context(ic, __func__, __LINE__);
 		io_cancelled_unhash(ic);
 		count++;
 		call_rcu(&ic->ic_rcu, io_context_free_rcu);
@@ -536,11 +530,7 @@ void io_context_release_destroyed(void)
 		if (age < 60)
 			continue;
 
-		LOG("Detected destroyed operation: %p op=%s fd=%d age=%ld id=%u",
-		    (void *)ic, io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
-		    (long)(now - ic->ic_action_time), ic->ic_id);
-
-		trace_io_context(ic, __func__, __LINE__); // loghyr
+		trace_io_context(ic, __func__, __LINE__);
 		call_rcu(&ic->ic_rcu, io_context_free_rcu);
 
 		count++;
