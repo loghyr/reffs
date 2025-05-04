@@ -469,16 +469,9 @@ void io_context_check_stalled(struct io_uring *ring)
 		if (age < 60 || ic->ic_op_type == OP_TYPE_ACCEPT)
 			continue;
 
-		if (age > 180) {
-			io_socket_close(ic->ic_fd, ETIMEDOUT);
-			LOG("FORCE CLEANUP: stalled operation: %p op=%s fd=%d age=%ld id=%u",
-			    (void *)ic, io_op_type_to_str(ic->ic_op_type),
-			    ic->ic_fd, (long)age, ic->ic_id);
-		} else
-			LOG("Detected stalled operation: %p op=%s fd=%d age=%ld id=%u",
-			    (void *)ic, io_op_type_to_str(ic->ic_op_type),
-			    ic->ic_fd, (long)(now - ic->ic_action_time),
-			    ic->ic_id);
+		LOG("Detected stalled operation: %p op=%s fd=%d age=%ld id=%u",
+		    (void *)ic, io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
+		    (long)(now - ic->ic_action_time), ic->ic_id);
 
 		ic_context_cancel(ic, ring);
 
