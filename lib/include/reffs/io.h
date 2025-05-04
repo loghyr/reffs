@@ -157,9 +157,6 @@ void unregister_client_fd(int fd);
 
 bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len);
 
-int get_context_created(void);
-int get_context_freed(void);
-
 struct buffer_state *create_buffer_state(int fd);
 struct buffer_state *get_buffer_state(int fd);
 
@@ -189,6 +186,10 @@ void io_context_release_destroyed(void);
 
 int io_context_init(void);
 int io_context_fini(void);
+
+uint64_t io_context_get_created(void);
+uint64_t io_context_get_freed(void);
+void io_context_log_stats(void);
 
 void *io_worker_thread(void *arg);
 void wake_worker_threads(void);

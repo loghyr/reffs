@@ -239,9 +239,9 @@ int main(int argc, char *argv[])
 	pmap_unset(NFS3_PROGRAM, NFS_V3);
 
 out:
-	TRACE("Final io_context statistics: created=%d, freed=%d, difference=%d",
-	      get_context_created(), get_context_freed(),
-	      get_context_created() - get_context_freed());
+	TRACE("Final io_context statistics: created=%ld, freed=%ld, difference=%ld",
+	      io_context_get_created(), io_context_get_freed(),
+	      io_context_get_created() - io_context_get_freed());
 
 	// Wait for RCU grace period
 	TRACE("Calling rcu_barrier()...");

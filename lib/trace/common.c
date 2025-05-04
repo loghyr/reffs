@@ -28,7 +28,9 @@ void reffs_trace_init(const char *filename)
 {
 	pthread_mutex_lock(&trace_mutex);
 	if (trace_fp == NULL && filename != NULL) {
-		trace_fp = fopen(filename, "w");	// For right now, with a RAM backed storage
+		trace_fp =
+			fopen(filename,
+			      "w"); // For right now, with a RAM backed storage
 	}
 	if (trace_fp == NULL) {
 		trace_fp = stderr;

@@ -33,8 +33,13 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
-static int context_created = 0;
-static int context_freed = 0;
+static _Atomic uint64_t context_created;
+static _Atomic uint64_t context_freed;
+
+static _Atomic uint64_t active_to_cancelled;
+static _Atomic uint64_t active_to_destroyed;
+static _Atomic uint64_t cancelled_to_freed;
+static _Atomic uint64_t destroyed_to_freed;
 
 struct cds_lfht *io_context_ht = NULL;
 struct cds_lfht *io_cancelled_ht = NULL;
@@ -124,6 +129,14 @@ int io_context_init(void)
 		LOG("Could not create the io context destroyed hash table");
 		return ENOMEM;
 	}
+
+	atomic_store(&active_to_cancelled, 0);
+	atomic_store(&active_to_destroyed, 0);
+	atomic_store(&cancelled_to_freed, 0);
+	atomic_store(&destroyed_to_freed, 0);
+	atomic_store(&context_created, 0);
+	atomic_store(&context_freed, 0);
+
 	return 0;
 }
 
@@ -132,6 +145,7 @@ static void io_context_free_rcu(struct rcu_head *rcu)
 	struct io_context *ic =
 		caa_container_of(rcu, struct io_context, ic_rcu);
 
+	atomic_fetch_add(&context_freed, 1);
 	trace_io_context(ic, __func__, __LINE__); // loghyr
 	free(ic->ic_buffer);
 	free(ic);
@@ -170,6 +184,7 @@ int io_context_fini(void)
 		cds_lfht_for_each_entry(io_cancelled_ht, &iter, ic, ic_next) {
 			if (io_cancelled_unhash(ic)) {
 				count++;
+				atomic_fetch_add(&cancelled_to_freed, 1);
 				call_rcu(&ic->ic_rcu, io_context_free_rcu);
 			}
 		}
@@ -192,6 +207,7 @@ int io_context_fini(void)
 		cds_lfht_for_each_entry(io_destroyed_ht, &iter, ic, ic_next) {
 			if (io_destroyed_unhash(ic)) {
 				count++;
+				atomic_fetch_add(&destroyed_to_freed, 1);
 				call_rcu(&ic->ic_rcu, io_context_free_rcu);
 			}
 		}
@@ -254,7 +270,7 @@ void io_context_destroy(struct io_context *ic)
 	if (!(state & IO_CONTEXT_MARKED_DESTROYED))
 		return;
 
-	context_freed++;
+	atomic_fetch_add(&active_to_destroyed, 1);
 
 	switch (ic->ic_op_type) {
 	case OP_TYPE_READ:
@@ -282,7 +298,7 @@ void io_context_destroy(struct io_context *ic)
 		rcu_read_lock();
 		__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_IS_DESTROYED_HASH,
 				  __ATOMIC_ACQUIRE);
-		cds_lfht_add(io_cancelled_ht, ic->ic_id, &ic->ic_next);
+		cds_lfht_add(io_destroyed_ht, ic->ic_id, &ic->ic_next);
 		rcu_read_unlock();
 
 		return;
@@ -305,7 +321,7 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 	ic->ic_buffer_len = buffer_len;
 	ic->ic_action_time = time(NULL);
 
-	context_created++;
+	atomic_fetch_add(&context_created, 1);
 
 	switch (op_type) {
 	case OP_TYPE_READ:
@@ -390,6 +406,8 @@ void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 	if (!(state & IO_CONTEXT_MARKED_CANCELLED))
 		return;
 
+	atomic_fetch_add(&active_to_cancelled, 1);
+
 	switch (ic->ic_op_type) {
 	case OP_TYPE_READ:
 		request_additional_read_data(ic->ic_fd, &ic->ic_ci, ring);
@@ -455,6 +473,21 @@ void io_context_release_active(struct io_uring *ring)
 	LOG("======================");
 }
 
+static int adaptive_timeout(void)
+{
+	int to = 60;
+
+	uint64_t active_count = context_created - context_freed;
+	if (active_count > 100000)
+		to = 240;
+	else if (active_count > 50000)
+		to = 180;
+	else if (active_count > 10000)
+		to = 120;
+
+	return to;
+}
+
 void io_context_check_stalled(struct io_uring *ring)
 {
 	struct cds_lfht_iter iter = { 0 };
@@ -464,6 +497,8 @@ void io_context_check_stalled(struct io_uring *ring)
 
 	LOG("=== Freeing Stalled Contexts ===");
 
+	int to = adaptive_timeout();
+
 	rcu_read_lock();
 	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
 		time_t age = now - ic->ic_action_time;
@@ -472,7 +507,7 @@ void io_context_check_stalled(struct io_uring *ring)
 		 * READ and ACCEPT can both sit there forever
 		 * waiting on the client to do IO.
 		 */
-		if (age < 60 || ic->ic_op_type != OP_TYPE_WRITE)
+		if (age < to || ic->ic_op_type != OP_TYPE_WRITE)
 			continue;
 
 		trace_io_context(ic, __func__, __LINE__);
@@ -496,16 +531,19 @@ void io_context_release_cancelled(void)
 
 	LOG("=== Freeing Cancelled Contexts ===");
 
+	int to = adaptive_timeout();
+
 	rcu_read_lock();
 	cds_lfht_for_each_entry(io_cancelled_ht, &iter, ic, ic_next) {
 		time_t age = now - ic->ic_action_time;
 
-		if (age < 60)
+		if (age < to)
 			continue;
 
 		trace_io_context(ic, __func__, __LINE__);
 		io_cancelled_unhash(ic);
 		count++;
+		atomic_fetch_add(&cancelled_to_freed, 1);
 		call_rcu(&ic->ic_rcu, io_context_free_rcu);
 	}
 	rcu_read_unlock();
@@ -523,14 +561,17 @@ void io_context_release_destroyed(void)
 
 	LOG("=== Freeing Destroyed Contexts ===");
 
+	int to = adaptive_timeout();
+
 	rcu_read_lock();
 	cds_lfht_for_each_entry(io_destroyed_ht, &iter, ic, ic_next) {
 		time_t age = now - ic->ic_action_time;
 
-		if (age < 60)
+		if (age < to)
 			continue;
 
 		trace_io_context(ic, __func__, __LINE__);
+		atomic_fetch_add(&destroyed_to_freed, 1);
 		call_rcu(&ic->ic_rcu, io_context_free_rcu);
 
 		count++;
@@ -541,12 +582,22 @@ void io_context_release_destroyed(void)
 	LOG("======================");
 }
 
-int get_context_created(void)
+uint64_t io_context_get_created(void)
 {
 	return context_created;
 }
 
-int get_context_freed(void)
+uint64_t io_context_get_freed(void)
 {
 	return context_freed;
+}
+
+void io_context_log_stats(void)
+{
+	LOG("Context state transitions: active_cancelled=%ld, active_destroyed=%ld, "
+	    "cancelled_freed=%ld, destroyed_freed=%ld created=%ld freed=%ld",
+	    atomic_load(&active_to_cancelled),
+	    atomic_load(&active_to_destroyed), atomic_load(&cancelled_to_freed),
+	    atomic_load(&destroyed_to_freed), atomic_load(&context_created),
+	    atomic_load(&context_freed));
 }

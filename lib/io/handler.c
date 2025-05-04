@@ -280,20 +280,21 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		if (now - last_heartbeat >=
 		    60) { // Log heartbeat every 60 seconds
 			last_heartbeat = now;
-			LOG("HEARTBEAT: Main loop is running at timestamp %ld ctx(c=%d, f=%d) lsnrs=%d",
-			    (long)now, get_context_created(),
-			    get_context_freed(), num_listeners);
+			LOG("HEARTBEAT: Main loop is running at timestamp %ld ctx(c=%ld, f=%ld) lsnrs=%d",
+			    (long)now, io_context_get_created(),
+			    io_context_get_freed(), num_listeners);
 			io_context_list_active(false);
 			io_context_check_stalled(ring);
 			io_context_release_cancelled();
 			io_context_release_destroyed();
+			io_context_log_stats();
 		}
 
 		if (now - last_overflow_check >= 10) {
 			if (io_uring_cq_has_overflow(ring)) {
-				LOG("WARNING: CQ ring overflow detected! Context count: %d",
-				    get_context_created() -
-					    get_context_freed());
+				LOG("WARNING: CQ ring overflow detected! Context count: %ld",
+				    io_context_get_created() -
+					    io_context_get_freed());
 
 				last_overflow_check = now;
 

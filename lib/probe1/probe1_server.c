@@ -103,8 +103,8 @@ static int probe1_op_context(struct rpc_trans *rt)
 	CONTEXT1res *res = ph->ph_res;
 	CONTEXT1resok *resok = &res->CONTEXT1res_u.pcr_resok;
 
-	resok->pcr_created = get_context_created();
-	resok->pcr_freed = get_context_freed();
+	resok->pcr_created = io_context_get_created();
+	resok->pcr_freed = io_context_get_freed();
 
 	return 0;
 }
