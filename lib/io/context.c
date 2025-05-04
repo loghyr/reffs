@@ -127,6 +127,15 @@ int io_context_init(void)
 	return 0;
 }
 
+static void io_context_free_rcu(struct rcu_head *rcu)
+{
+	struct io_context *ic = caa_container_of(rcu, struct io_context, ic_rcu);
+
+	trace_io_context(ic, __func__, __LINE__); // loghyr
+	free(ic->ic_buffer);
+	free(ic);
+}
+
 int io_context_fini(void)
 {
 	struct cds_lfht_iter iter = { 0 };
@@ -160,10 +169,7 @@ int io_context_fini(void)
 		cds_lfht_for_each_entry(io_cancelled_ht, &iter, ic, ic_next) {
 			if (io_cancelled_unhash(ic)) {
 				count++;
-				trace_io_context(ic, __func__,
-						 __LINE__); // loghyr
-				free(ic->ic_buffer);
-				free(ic);
+				call_rcu(&ic->ic_rcu, io_context_free_rcu);
 			}
 		}
 		rcu_read_unlock();
@@ -183,12 +189,9 @@ int io_context_fini(void)
 		count = 0;
 		rcu_read_lock();
 		cds_lfht_for_each_entry(io_destroyed_ht, &iter, ic, ic_next) {
-			if (io_cancelled_unhash(ic)) {
+			if (io_destroyed_unhash(ic)) {
 				count++;
-				trace_io_context(ic, __func__,
-						 __LINE__); // loghyr
-				free(ic->ic_buffer);
-				free(ic);
+				call_rcu(&ic->ic_rcu, io_context_free_rcu);
 			}
 		}
 		rcu_read_unlock();
@@ -283,10 +286,6 @@ void io_context_destroy(struct io_context *ic)
 
 		return;
 	}
-
-	io_context_unhash(ic);
-	free(ic->ic_buffer);
-	free(ic);
 }
 
 // Create an IO context for operations
@@ -512,10 +511,8 @@ void io_context_release_cancelled(void)
 
 		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_cancelled_unhash(ic);
-		free(ic->ic_buffer);
-		free(ic);
-
 		count++;
+		call_rcu(&ic->ic_rcu, io_context_free_rcu);
 	}
 	rcu_read_unlock();
 
@@ -544,9 +541,7 @@ void io_context_release_destroyed(void)
 		    (long)(now - ic->ic_action_time), ic->ic_id);
 
 		trace_io_context(ic, __func__, __LINE__); // loghyr
-		io_destroyed_unhash(ic);
-		free(ic->ic_buffer);
-		free(ic);
+		call_rcu(&ic->ic_rcu, io_context_free_rcu);
 
 		count++;
 	}
