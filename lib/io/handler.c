@@ -129,13 +129,29 @@ void unregister_client_fd(int fd)
 	}
 }
 
-// Initialize io_uring
+// Initialize io_uring with larger CQ ring
 static int setup_io_uring(struct io_uring *ring)
 {
-	if (io_uring_queue_init(QUEUE_DEPTH, ring, 0) < 0) {
-		LOG("io_uring_queue_init: %s", strerror(errno));
+	struct io_uring_params params = { 0 };
+
+	// Request NODROP feature to prevent losing events
+	params.flags = IORING_SETUP_CQSIZE;
+	params.cq_entries = 4 * QUEUE_DEPTH;
+
+	if (io_uring_queue_init_params(QUEUE_DEPTH, ring, &params) < 0) {
+		LOG("io_uring_queue_init_params: %s", strerror(errno));
 		return -1;
 	}
+
+	// Check if NODROP feature is supported
+	if (params.features & IORING_FEAT_NODROP) {
+		LOG("io_uring NODROP feature is supported - CQ entries won't be lost");
+	} else {
+		LOG("WARNING: io_uring NODROP feature not supported - CQ overflow will drop entries");
+	}
+
+	LOG("Initialized io_uring with SQ size %d, CQ size %d",
+	    params.sq_entries, params.cq_entries);
 	return 0;
 }
 
@@ -243,6 +259,11 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 {
 	struct io_uring_cqe *cqe;
 
+	static uint64_t total_completions = 0;
+	static time_t last_stat_time = 0;
+	static uint64_t last_completions = 0;
+	static time_t last_overflow_check = 0;
+
 	io_conn_init();
 
 	running_context = running_flag;
@@ -266,6 +287,26 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			io_context_check_stalled(ring);
 			io_context_release_cancelled();
 			io_context_release_destroyed();
+		}
+
+		if (now - last_overflow_check >= 10) {
+			if (io_uring_cq_has_overflow(ring)) {
+				LOG("WARNING: CQ ring overflow detected! Context count: %d",
+				    get_context_created() -
+					    get_context_freed());
+
+				last_overflow_check = now;
+
+				// Try to flush events from overflow
+				int ret = io_uring_get_events(ring);
+				if (ret < 0) {
+					LOG("Error getting events: %s",
+					    strerror(-ret));
+				} else {
+					LOG("Flushed %d events from overflow",
+					    ret);
+				}
+			}
 		}
 
 		if (now - last_check >= 1) { // Check signal flag every second
@@ -368,6 +409,16 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		}
 
 		int ret = io_uring_wait_cqe_timeout(ring, &cqe, &ts);
+
+		total_completions++;
+		if (now - last_stat_time >= 10) {
+			uint64_t rate = (total_completions - last_completions) /
+					(now - last_stat_time);
+			LOG("Completion processing rate: %lu/sec (total: %lu)",
+			    rate, total_completions);
+			last_completions = total_completions;
+			last_stat_time = now;
+		}
 		if (ret == -ETIME) {
 			// Timeout - check running flag and continue
 			continue;

@@ -20,7 +20,7 @@
 #include "reffs/network.h"
 
 #define BUFFER_SIZE 4096
-#define QUEUE_DEPTH 1024
+#define QUEUE_DEPTH 2048
 #define NUM_LISTENERS 1
 #define MAX_WORKER_THREADS 4
 #define MAX_PENDING_REQUESTS 256
