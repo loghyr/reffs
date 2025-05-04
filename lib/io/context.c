@@ -336,7 +336,7 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 	return ic;
 }
 
-void io_context_list_active(void)
+void io_context_list_active(bool listem)
 {
 	LOG("=== Active Contexts ===");
 
@@ -347,10 +347,12 @@ void io_context_list_active(void)
 
 	rcu_read_lock();
 	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
-		time_t age = now - ic->ic_action_time;
-		LOG("%p op=%s fd=%d age=%ld id=%u", (void *)ic,
-		    io_op_type_to_str(ic->ic_op_type), ic->ic_fd, (long)age,
-		    ic->ic_id);
+		if (listem) {
+			time_t age = now - ic->ic_action_time;
+			LOG("%p op=%s fd=%d age=%ld id=%u", (void *)ic,
+			    io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
+			    (long)age, ic->ic_id);
+		}
 		count++;
 	}
 	rcu_read_unlock();

@@ -262,7 +262,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			LOG("HEARTBEAT: Main loop is running at timestamp %ld ctx(c=%d, f=%d) lsnrs=%d",
 			    (long)now, get_context_created(),
 			    get_context_freed(), num_listeners);
-			io_context_list_active();
+			io_context_list_active(false);
 			io_context_check_stalled(ring);
 			io_context_release_cancelled();
 			io_context_release_destroyed();

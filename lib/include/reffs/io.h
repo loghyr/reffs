@@ -181,7 +181,7 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 void io_context_destroy(struct io_context *ic);
 void io_context_update_time(struct io_context *ic);
 
-void io_context_list_active(void);
+void io_context_list_active(bool list_em);
 void io_context_release_active(struct io_uring *ring);
 void io_context_check_stalled(struct io_uring *ring);
 void io_context_release_cancelled(void);
