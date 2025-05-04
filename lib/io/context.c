@@ -209,16 +209,8 @@ int io_context_fini(void)
 
 static uint32_t generate_id(void)
 {
-	static uint32_t next_id = 1;
-	static pthread_mutex_t id_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-	uint32_t id;
-
-	pthread_mutex_lock(&id_mutex);
-	id = __atomic_add_fetch(&next_id, 1, __ATOMIC_RELAXED);
-	pthread_mutex_unlock(&id_mutex);
-
-	return id;
+	static _Atomic uint32_t next_id = 1;
+	return atomic_fetch_add_explicit(&next_id, 1, memory_order_seq_cst) + 1;
 }
 
 void io_context_update_time(struct io_context *ic)

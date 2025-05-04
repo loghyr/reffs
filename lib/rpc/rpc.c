@@ -355,14 +355,8 @@ static struct rpc_trans *rpc_trans_create_from_task(struct task *t)
 // Generate a unique transaction ID for RPC
 static uint32_t generate_xid(void)
 {
-	static uint32_t next_xid = 1;
-	static pthread_mutex_t xid_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-	pthread_mutex_lock(&xid_mutex);
-	uint32_t xid = next_xid++;
-	pthread_mutex_unlock(&xid_mutex);
-
-	return xid;
+	static _Atomic uint32_t next_id = 1;
+	return atomic_fetch_add_explicit(&next_id, 1, memory_order_seq_cst) + 1;
 }
 
 int rpc_prepare_send_call(struct rpc_trans *rt)
