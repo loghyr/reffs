@@ -59,6 +59,7 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 	io_uring_prep_read(sqe, bs->bs_fd, ic->ic_buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 	trace_io_read_submit(ic);
+	io_context_update_time(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
@@ -129,7 +130,6 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
 	trace_io_read_submit(ic);
-	io_context_update_time(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
