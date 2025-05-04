@@ -15,6 +15,7 @@ libreffs_io_la_SOURCES =	\
 	connect.c		\
 	context.c		\
 	handler.c		\
+	heartbeat.c		\
 	lsnr.c			\
 	read.c			\
 	worker.c		\

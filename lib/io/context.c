@@ -426,6 +426,8 @@ void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 		break;
 	case OP_TYPE_CONNECT:
 		break;
+	case OP_TYPE_HEARTBEAT:
+		break;
 	default:
 		break;
 	}

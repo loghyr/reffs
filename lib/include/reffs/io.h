@@ -44,7 +44,8 @@ enum op_type {
 	OP_TYPE_READ = 2,
 	OP_TYPE_WRITE = 3,
 	OP_TYPE_CONNECT = 4,
-	OP_TYPE_RPC_REQ = 5
+	OP_TYPE_RPC_REQ = 5,
+	OP_TYPE_HEARTBEAT = 6
 };
 
 // IO operation context structure
@@ -222,6 +223,8 @@ static inline const char *io_op_type_to_str(enum op_type op)
 		return "CONNECT";
 	case OP_TYPE_RPC_REQ:
 		return "RPC_REQ";
+	case OP_TYPE_HEARTBEAT:
+		return "HEARTBEAT";
 	}
 
 	return "unknown";
@@ -263,5 +266,12 @@ bool io_conn_has_write_ops(int fd);
 
 void io_check_for_listener_restart(int fd, struct connection_info *ci,
 				   struct io_uring *ring);
+
+// Heartbeat code:
+int io_heartbeat_init(struct io_uring *ring);
+int io_schedule_heartbeat(struct io_uring *ring, unsigned int seconds);
+int io_handle_heartbeat(struct io_context *ic, int result, struct io_uring *ring);
+void io_heartbeat_update_completions(uint64_t count);
+int *io_heartbeat_get_listeners(int *num);
 
 #endif /* _REFFS_IO_H */

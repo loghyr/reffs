@@ -254,172 +254,42 @@ void io_check_for_listener_restart(int fd, struct connection_info *ci,
 	}
 }
 
+int *io_heartbeat_get_listeners(int *num)
+{
+	*num = num_listeners;
+	return listener_fds;
+}
+
 void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			  struct io_uring *ring)
 {
 	struct io_uring_cqe *cqe;
 
-	static uint64_t total_completions = 0;
-	static time_t last_stat_time = 0;
-	static uint64_t last_completions = 0;
-	static time_t last_overflow_check = 0;
-
 	io_conn_init();
-
 	running_context = running_flag;
+
+	// Initialize heartbeat system
+	if (io_heartbeat_init(ring) < 0) {
+		LOG("Failed to initialize heartbeat system");
+		return;
+	}
 
 	while (1) {
 		// Set a timeout for io_uring_wait_cqe to allow checking the running flag
 		struct __kernel_timespec ts = { .tv_sec = IO_URING_WAIT_SEC,
 						.tv_nsec = IO_URING_WAIT_NSEC };
 
-		static time_t last_check = 0;
-		time_t now = time(NULL);
-
-		static time_t last_heartbeat = 0;
-		if (now - last_heartbeat >=
-		    60) { // Log heartbeat every 60 seconds
-			last_heartbeat = now;
-			LOG("HEARTBEAT: Main loop is running at timestamp %ld ctx(c=%ld, f=%ld) lsnrs=%d",
-			    (long)now, io_context_get_created(),
-			    io_context_get_freed(), num_listeners);
-			io_context_list_active(false);
-			io_context_check_stalled(ring);
-			io_context_release_cancelled();
-			io_context_release_destroyed();
-			io_context_log_stats();
+		// Check if we're still supposed to be running
+		int running_local;
+		__atomic_load(running_flag, &running_local, __ATOMIC_SEQ_CST);
+		if (!running_local) {
+			LOG("Detected shutdown flag, breaking main loop");
+			break;
 		}
 
-		if (now - last_overflow_check >= 10) {
-			if (io_uring_cq_has_overflow(ring)) {
-				LOG("WARNING: CQ ring overflow detected! Context count: %ld",
-				    io_context_get_created() -
-					    io_context_get_freed());
-
-				last_overflow_check = now;
-
-				// Try to flush events from overflow
-				int ret = io_uring_get_events(ring);
-				if (ret < 0) {
-					LOG("Error getting events: %s",
-					    strerror(-ret));
-				} else {
-					LOG("Flushed %d events from overflow",
-					    ret);
-				}
-			}
-		}
-
-		if (now - last_check >= 1) { // Check signal flag every second
-			int running_local;
-			__atomic_load(running_flag, &running_local,
-				      __ATOMIC_SEQ_CST);
-			if (!running_local) {
-				LOG("Detected shutdown flag, breaking main loop");
-				break;
-			}
-
-			if (now - last_accept_check >= 5) {
-				bool accept_failures = false;
-
-				// Check each listener
-				for (int i = 0; i < num_listeners; i++) {
-					int fd = listener_fds[i];
-					if (fd <= 0)
-						continue;
-
-					struct conn_info *conn =
-						io_conn_get(fd);
-					if (conn &&
-					    conn->ci_state != CONN_LISTENING &&
-					    conn->ci_accept_count == 0) {
-						LOG("Listener fd=%d not in LISTENING state - resubmitting accept",
-						    fd);
-
-						// Try to resubmit accept operation
-						int ret = request_accept_op(
-							fd, NULL, ring);
-						if (ret != 0) {
-							accept_failures = true;
-							LOG("Watchdog failed to resubmit accept for fd=%d: %s",
-							    fd, strerror(ret));
-						} else {
-							LOG("Watchdog successfully resubmitted accept for fd=%d",
-							    fd);
-						}
-					}
-				}
-
-				// Define timeout in seconds
-				const int conn_timeout = 60; // 1 minute timeout
-
-				// Scan all active connections
-				for (int fd = 3; fd < MAX_CONNECTIONS; fd++) {
-					struct conn_info *conn =
-						io_conn_get(fd);
-					if (conn &&
-					    conn->ci_state == CONN_CONNECTED) {
-						// Check for stale connections
-						if (now - conn->ci_last_activity >
-						    conn_timeout) {
-							LOG("Connection fd=%d inactive for %ld seconds - closing",
-							    fd,
-							    (long)(now -
-								   conn->ci_last_activity));
-							io_socket_close(
-								fd, ETIMEDOUT);
-							continue;
-						}
-
-						// Ensure each active connection has a pending read operation
-						if (conn->ci_read_count == 0) {
-							LOG("Connection fd=%d has no pending read operations - submitting read",
-							    fd);
-							int ret =
-								request_additional_read_data(
-									fd,
-									NULL,
-									ring);
-							if (ret != 0) {
-								LOG("Failed to submit read for fd=%d: %s",
-								    fd,
-								    strerror(
-									    ret));
-								// If we can't submit a read, the connection is effectively dead
-								io_socket_close(
-									fd,
-									ret);
-							}
-						} else if (conn->ci_read_count >
-							   1) {
-							// This is a potential issue - more than one reader
-							LOG("Warning: Connection fd=%d has %d pending read operations",
-							    fd,
-							    conn->ci_read_count);
-						}
-					}
-				}
-
-				// If we had failures, check again more quickly next time
-				last_accept_check = now;
-				if (accept_failures) {
-					// Force another check sooner than usual
-					last_accept_check -= 3;
-				}
-			}
-		}
-
+		// Wait for completion events
 		int ret = io_uring_wait_cqe_timeout(ring, &cqe, &ts);
 
-		total_completions++;
-		if (now - last_stat_time >= 10) {
-			uint64_t rate = (total_completions - last_completions) /
-					(now - last_stat_time);
-			LOG("Completion processing rate: %lu/sec (total: %lu)",
-			    rate, total_completions);
-			last_completions = total_completions;
-			last_stat_time = now;
-		}
 		if (ret == -ETIME) {
 			// Timeout - check running flag and continue
 			continue;
@@ -435,9 +305,10 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
-		trace_io_context_ptr((void *)(uintptr_t)cqe->user_data,
-				     __func__, __LINE__); // loghyr
+		// Update completion count for statistics
+		io_heartbeat_update_completions(1);
 
+		// Get the io_context from the user_data
 		struct io_context *ic =
 			(struct io_context *)(uintptr_t)cqe->user_data;
 		if (!ic) {
@@ -446,10 +317,11 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
-		trace_io_context(ic, __func__, __LINE__); // loghyr
+		trace_io_context(ic, __func__, __LINE__);
 
+		// Handle the completion based on the operation type
 		if (cqe->res == -ECANCELED) {
-			trace_io_context(ic, __func__, __LINE__); // loghyr
+			trace_io_context(ic, __func__, __LINE__);
 
 			LOG("Operation was cancelled: cqe=%p %p op=%s fd=%d id=%u",
 			    (void *)cqe, (void *)ic,
@@ -460,10 +332,15 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			    io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
 			    strerror(-cqe->res));
 
-			trace_io_context(ic, __func__, __LINE__); // loghyr
+			trace_io_context(ic, __func__, __LINE__);
 
-			io_socket_close(ic->ic_fd, -cqe->res);
-			io_context_destroy(ic);
+			// Handle timeout for heartbeat operation specially
+			if (ic->ic_op_type == OP_TYPE_HEARTBEAT) {
+				ret = io_handle_heartbeat(ic, cqe->res, ring);
+			} else {
+				io_socket_close(ic->ic_fd, -cqe->res);
+				io_context_destroy(ic);
+			}
 		} else {
 			uint64_t state;
 			__atomic_load(&ic->ic_state, &state, __ATOMIC_RELAXED);
@@ -483,8 +360,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				break;
 
 			case OP_TYPE_READ:
-				trace_io_context(ic, __func__,
-						 __LINE__); // loghyr
+				trace_io_context(ic, __func__, __LINE__);
 				ret = io_handle_read(ic, cqe->res, ring);
 				break;
 
@@ -494,6 +370,10 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 
 			case OP_TYPE_CONNECT:
 				ret = io_handle_connect(ic, cqe->res, ring);
+				break;
+
+			case OP_TYPE_HEARTBEAT:
+				ret = io_handle_heartbeat(ic, cqe->res, ring);
 				break;
 
 			default:
