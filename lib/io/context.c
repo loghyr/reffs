@@ -466,7 +466,11 @@ void io_context_check_stalled(struct io_uring *ring)
 	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
 		time_t age = now - ic->ic_action_time;
 
-		if (age < 60 || ic->ic_op_type == OP_TYPE_ACCEPT)
+		/*
+		 * READ and ACCEPT can both sit there forever
+		 * waiting on the client to do IO.
+		 */
+		if (age < 60 || ic->ic_op_type != OP_TYPE_WRITE)
 			continue;
 
 		LOG("Detected stalled operation: %p op=%s fd=%d age=%ld id=%u",
