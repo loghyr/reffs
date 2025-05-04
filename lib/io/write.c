@@ -176,8 +176,6 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 		return ENOTCONN;
 	}
 
-	io_conn_dump(rt->rt_fd);
-
 	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
 			       rt->rt_reply_len);
 	if (!ic) {
