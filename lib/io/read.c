@@ -52,6 +52,7 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 	}
 
 	if (!sqe) {
+		trace_io_context(ic, __func__, __LINE__); // loghyr
 		return -ENOMEM;
 	}
 
@@ -73,6 +74,8 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 
 	if (ret > 0)
 		ret = 0;
+	else
+		trace_io_context(ic, __func__, __LINE__); // loghyr
 
 	return ret;
 }
@@ -116,8 +119,9 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 
 	if (!sqe) {
 		free(buffer);
+		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(fd, ENOMEM);
-		io_context_put(ic);
+		io_context_destroy(ic);
 		return ENOMEM;
 	}
 
@@ -125,6 +129,7 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
 	trace_io_read_submit(ic);
+	io_context_update_time(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
@@ -140,8 +145,9 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 
 	if (ret < 0) {
 		free(buffer);
+		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(fd, -ret);
-		io_context_put(ic);
+		io_context_destroy(ic);
 	} else {
 		ret = 0;
 	}
@@ -374,7 +380,8 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 		io_check_for_listener_restart(client_fd, &ic->ic_ci, ring);
 
-		io_context_put(ic);
+		trace_io_context(ic, __func__, __LINE__); // loghyr
+		io_context_destroy(ic);
 		return 0; // No new read needed for closed connections
 	}
 
@@ -448,6 +455,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		}
 
 		trace_io_message_complete(client_fd, t->t_xid, complete_size);
+		trace_io_context(ic, __func__, __LINE__); // loghyr
 
 		// Queue it for processing
 		add_task(t);
@@ -474,8 +482,10 @@ cleanup:
 			    strerror(ret));
 			io_socket_close(client_fd, ret);
 		}
-		io_context_put(ic);
+		trace_io_context(ic, __func__, __LINE__); // loghyr
+		io_context_destroy(ic);
 	}
+	trace_io_context(ic, __func__, __LINE__); // loghyr
 
 	return 0;
 }

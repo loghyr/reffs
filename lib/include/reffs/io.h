@@ -46,8 +46,6 @@ enum op_type {
 
 // IO operation context structure
 struct io_context {
-	struct rcu_head ic_rcu;
-	struct urcu_ref ic_ref;
 	struct cds_lfht_node ic_next;
 
 	enum op_type ic_op_type;
@@ -65,7 +63,7 @@ struct io_context {
 #define IO_CONTEXT_IS_CANCELLED_HASH (1ULL << 3)
 	uint64_t ic_state;
 
-	time_t ic_creation_time;
+	time_t ic_action_time;
 
 	struct connection_info ic_ci;
 };
@@ -176,8 +174,8 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 // Context handling
 struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 				     size_t buffer_len);
-struct io_context *io_context_get(struct io_context *ic);
-void io_context_put(struct io_context *ic);
+void io_context_destroy(struct io_context *ic);
+void io_context_update_time(struct io_context *ic);
 
 void io_context_list_active(void);
 void io_context_release_active(struct io_uring *ring);

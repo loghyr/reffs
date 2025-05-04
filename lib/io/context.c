@@ -163,13 +163,14 @@ static uint32_t generate_id(void)
 	return id;
 }
 
-static void io_context_free_rcu(struct rcu_head *rcu)
+void io_context_update_time(struct io_context *ic)
 {
-	struct io_context *ic =
-		caa_container_of(rcu, struct io_context, ic_rcu);
+	ic->ic_action_time = time(NULL);
+	trace_io_context(ic, __func__, __LINE__); // loghyr
+}
 
-	trace_io_context(ic, __func__);
-
+void io_context_destroy(struct io_context *ic)
+{
 	context_freed++;
 
 	switch (ic->ic_op_type) {
@@ -190,19 +191,11 @@ static void io_context_free_rcu(struct rcu_head *rcu)
 		break;
 	}
 
-	free(ic->ic_buffer);
-	free(ic);
-}
-
-static void io_context_release(struct urcu_ref *ref)
-{
-	struct io_context *ic =
-		caa_container_of(ref, struct io_context, ic_ref);
+	trace_io_context(ic, __func__, __LINE__);
 
 	io_context_unhash(ic);
-	trace_io_context(ic, __func__);
-
-	call_rcu(&ic->ic_rcu, io_context_free_rcu);
+	free(ic->ic_buffer);
+	free(ic);
 }
 
 // Create an IO context for operations
@@ -219,9 +212,7 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 	ic->ic_id = generate_id();
 	ic->ic_buffer = buffer;
 	ic->ic_buffer_len = buffer_len;
-	ic->ic_creation_time = time(NULL);
-
-	urcu_ref_init(&ic->ic_ref);
+	ic->ic_action_time = time(NULL);
 
 	context_created++;
 
@@ -249,7 +240,7 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 	cds_lfht_add(io_context_ht, ic->ic_id, &ic->ic_next);
 	rcu_read_unlock();
 
-	trace_io_context(ic, __func__);
+	trace_io_context(ic, __func__, __LINE__);
 
 	return ic;
 }
@@ -265,7 +256,7 @@ void io_context_list_active(void)
 
 	rcu_read_lock();
 	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
-		time_t age = now - ic->ic_creation_time;
+		time_t age = now - ic->ic_action_time;
 		LOG("%p op=%s fd=%d age=%ld id=%u", (void *)ic,
 		    io_op_type_to_str(ic->ic_op_type), ic->ic_fd, (long)age,
 		    ic->ic_id);
@@ -275,6 +266,28 @@ void io_context_list_active(void)
 
 	LOG("Total active contexts: %d", count);
 	LOG("======================");
+}
+
+static bool mark_io_context_cancelled(struct io_context *ic)
+{
+	uint64_t old_state, new_state;
+
+	__atomic_load(&ic->ic_state, &old_state, __ATOMIC_ACQUIRE);
+
+	if ((old_state & IO_CONTEXT_MARKED_CANCELLED) &&
+	    !(old_state & IO_CONTEXT_IS_CANCELLED)) {
+		new_state = old_state | IO_CONTEXT_IS_CANCELLED;
+
+		if (__atomic_compare_exchange(&ic->ic_state, &old_state,
+					      &new_state, 0, __ATOMIC_SEQ_CST,
+					      __ATOMIC_SEQ_CST)) {
+			return true;
+		}
+
+		return false;
+	}
+
+	return false;
 }
 
 void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
@@ -299,6 +312,20 @@ void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 		break;
 	}
 
+	trace_io_context(ic, __func__, __LINE__);
+
+	if (mark_io_context_cancelled(ic)) {
+		io_context_unhash(ic);
+		ic->ic_action_time = time(NULL);
+		rcu_read_lock();
+		__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_IS_CANCELLED_HASH,
+				  __ATOMIC_ACQUIRE);
+		cds_lfht_add(io_cancelled_ht, ic->ic_id, &ic->ic_next);
+		rcu_read_unlock();
+
+		return;
+	}
+
 	struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
 	if (sqe) {
 		io_uring_prep_cancel(sqe, ic, 0);
@@ -319,7 +346,7 @@ void io_context_release_active(struct io_uring *ring)
 
 	rcu_read_lock();
 	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
-		time_t age = now - ic->ic_creation_time;
+		time_t age = now - ic->ic_action_time;
 
 		LOG("%p op=%s fd=%d age=%ld id=%u", (void *)ic,
 		    io_op_type_to_str(ic->ic_op_type), ic->ic_fd, (long)(age),
@@ -346,7 +373,7 @@ void io_context_check_stalled(struct io_uring *ring)
 
 	rcu_read_lock();
 	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
-		time_t age = now - ic->ic_creation_time;
+		time_t age = now - ic->ic_action_time;
 
 		if (age < 60 || ic->ic_op_type == OP_TYPE_ACCEPT)
 			continue;
@@ -359,7 +386,7 @@ void io_context_check_stalled(struct io_uring *ring)
 		} else
 			LOG("Detected stalled operation: %p op=%s fd=%d age=%ld id=%u",
 			    (void *)ic, io_op_type_to_str(ic->ic_op_type),
-			    ic->ic_fd, (long)(now - ic->ic_creation_time),
+			    ic->ic_fd, (long)(now - ic->ic_action_time),
 			    ic->ic_id);
 
 		ic_context_cancel(ic, ring);
@@ -370,29 +397,6 @@ void io_context_check_stalled(struct io_uring *ring)
 
 	LOG("Total stalled contexts: %d", count);
 	LOG("======================");
-}
-
-int get_context_created(void)
-{
-	return context_created;
-}
-
-int get_context_freed(void)
-{
-	return context_freed;
-}
-
-struct io_context *io_context_get(struct io_context *ic)
-{
-	if (!ic)
-		return NULL;
-
-	if (!urcu_ref_get_unless_zero(&ic->ic_ref))
-		return NULL;
-
-	trace_io_context(ic, __func__);
-
-	return ic;
 }
 
 void io_context_release_cancelled(void)
@@ -406,17 +410,17 @@ void io_context_release_cancelled(void)
 
 	rcu_read_lock();
 	cds_lfht_for_each_entry(io_cancelled_ht, &iter, ic, ic_next) {
-		time_t age = now - ic->ic_creation_time;
+		time_t age = now - ic->ic_action_time;
 
 		if (age < 60)
 			continue;
 
 		LOG("Detected cancelled operation: %p op=%s fd=%d age=%ld id=%u",
 		    (void *)ic, io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
-		    (long)(now - ic->ic_creation_time), ic->ic_id);
+		    (long)(now - ic->ic_action_time), ic->ic_id);
 
 		io_cancelled_unhash(ic);
-		io_context_put(ic);
+		io_context_destroy(ic);
 
 		count++;
 	}
@@ -426,47 +430,12 @@ void io_context_release_cancelled(void)
 	LOG("======================");
 }
 
-bool mark_io_context_cancelled(struct io_context *ic)
+int get_context_created(void)
 {
-	uint64_t old_state, new_state;
-
-	__atomic_load(&ic->ic_state, &old_state, __ATOMIC_ACQUIRE);
-
-	if ((old_state & IO_CONTEXT_MARKED_CANCELLED) &&
-	    !(old_state & IO_CONTEXT_IS_CANCELLED)) {
-		new_state = old_state | IO_CONTEXT_IS_CANCELLED;
-
-		if (__atomic_compare_exchange(&ic->ic_state, &old_state,
-					      &new_state, 0, __ATOMIC_SEQ_CST,
-					      __ATOMIC_SEQ_CST)) {
-			return true;
-		}
-
-		return false;
-	}
-
-	return false;
+	return context_created;
 }
 
-void io_context_put(struct io_context *ic)
+int get_context_freed(void)
 {
-	if (!ic)
-		return;
-
-	trace_io_context(ic, __func__);
-
-	// Steal the put if we got cancelled
-	if (mark_io_context_cancelled(ic)) {
-		io_context_unhash(ic);
-		ic->ic_creation_time = time(NULL);
-		rcu_read_lock();
-		__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_IS_CANCELLED_HASH,
-				  __ATOMIC_ACQUIRE);
-		cds_lfht_add(io_cancelled_ht, ic->ic_id, &ic->ic_next);
-		rcu_read_unlock();
-
-		return;
-	}
-
-	urcu_ref_put(&ic->ic_ref, io_context_release);
+	return context_freed;
 }

@@ -60,15 +60,16 @@ static inline void trace_io_message_complete(int fd, uint32_t xid, size_t size)
 			  "fd=%d, xid=0x%08x, size=%zu", fd, xid, size);
 }
 
-static inline void trace_io_context(struct io_context *ic, const char *action)
+static inline void trace_io_context(struct io_context *ic, const char *func,
+				    int line)
 {
 	if (reffs_trace_is_category_enabled(REFFS_TRACE_CAT_IO)) {
 		time_t now = time(NULL);
-		time_t age = now - ic->ic_creation_time;
+		time_t age = now - ic->ic_action_time;
 
-		reffs_trace_event(REFFS_TRACE_CAT_IO, action,
-				  "ic=%p ref=%ld op=%s fd=%d age=%ld id=%u",
-				  (void *)ic, ic->ic_ref.refcount,
+		reffs_trace_event(REFFS_TRACE_CAT_IO, func,
+				  "line=%d ic=%p op=%s fd=%d age=%ld id=%u",
+				  line, (void *)ic,
 				  io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
 				  age, ic->ic_id);
 	}

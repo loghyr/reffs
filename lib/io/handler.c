@@ -382,6 +382,8 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
+		LOG("%p", (void *)(uintptr_t)cqe->user_data); // loghyr
+
 		struct io_context *ic =
 			(struct io_context *)(uintptr_t)cqe->user_data;
 		if (!ic) {
@@ -390,25 +392,30 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
-		if (cqe->res == -ECANCELED) {
-			LOG("Operation was cancelled: %p op=%s fd=%d id=%u",
-			    (void *)ic, io_op_type_to_str(ic->ic_op_type),
-			    ic->ic_fd, ic->ic_id);
+		trace_io_context(ic, __func__, __LINE__); // loghyr
 
-			// Put on the cancelled list == indirectly
-			io_context_put(ic);
+		if (cqe->res == -ECANCELED) {
+			trace_io_context(ic, __func__, __LINE__); // loghyr
+
+			LOG("Operation was cancelled: cqe=%p %p op=%s fd=%d id=%u",
+			    (void *)cqe, (void *)ic,
+			    io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
+			    ic->ic_id);
 		} else if (cqe->res < 0) {
 			LOG("CQE error for op=%s, fd=%d: %s",
 			    io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
 			    strerror(-cqe->res));
 
+			trace_io_context(ic, __func__, __LINE__); // loghyr
+
 			io_socket_close(ic->ic_fd, -cqe->res);
-			io_context_put(ic);
+			io_context_destroy(ic);
 		} else {
 			uint64_t state;
 			__atomic_load(&ic->ic_state, &state, __ATOMIC_RELAXED);
 			if (state & IO_CONTEXT_IS_CANCELLED) {
 				io_uring_cqe_seen(ring, cqe);
+				trace_io_context(ic, __func__, __LINE__); // loghyr
 				continue;
 			}
 
@@ -418,6 +425,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				break;
 
 			case OP_TYPE_READ:
+				trace_io_context(ic, __func__, __LINE__); // loghyr
 				ret = io_handle_read(ic, cqe->res, ring);
 				break;
 
@@ -432,7 +440,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			default:
 				LOG("Unknown operation type: %d",
 				    ic->ic_op_type);
-				io_context_put(ic);
+				io_context_destroy(ic);
 				ret = 0;
 				break;
 			}
@@ -465,7 +473,7 @@ void io_handler_fini(struct io_uring *ring)
 		if (cqe->user_data) {
 			struct io_context *ic =
 				(struct io_context *)(uintptr_t)cqe->user_data;
-				io_context_put(ic);
+			io_context_destroy(ic);
 		}
 
 		io_uring_cqe_seen(ring, cqe);

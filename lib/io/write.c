@@ -71,14 +71,16 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
 	int ret = 0;
 
+	trace_io_context(ic, __func__, __LINE__); // loghyr
+
 	// If no more data to send, we're done
 	if (remaining == 0) {
-		io_context_put(ic);
+		io_context_destroy(ic);
 		return 0;
 	} else if (remaining < 0) {
 		// Error case - shouldn't happen with correct position tracking
 		io_socket_close(ic->ic_fd, EINVAL);
-		io_context_put(ic);
+		io_context_destroy(ic);
 		return 0;
 	}
 
@@ -116,7 +118,8 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	}
 
 	if (!sqe) {
-		io_context_put(ic);
+		trace_io_context(ic, __func__, __LINE__); // loghyr
+		io_context_destroy(ic);
 		return ENOMEM;
 	}
 
@@ -138,6 +141,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	io_uring_prep_write(sqe, ic->ic_fd, buffer, chunk_size, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 	trace_io_write_submit(ic);
+	io_context_update_time(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
@@ -152,8 +156,9 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	}
 
 	if (ret < 0) {
+		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(ic->ic_fd, -ret);
-		io_context_put(ic);
+		io_context_destroy(ic);
 	} else {
 		ret = 0;
 	}
@@ -179,7 +184,7 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 		LOG("Failed to create write context");
 		return 0;
 	}
-	trace_io_context(ic, __func__);
+	trace_io_context(ic, __func__, __LINE__); // loghyr
 
 	ic->ic_xid = rt->rt_info.ri_xid;
 	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);
@@ -202,9 +207,10 @@ int io_handle_write(struct io_context *ic,
 		    bytes_written < 0 ? strerror(-bytes_written) :
 					"connection closed");
 
+		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(ic->ic_fd, bytes_written < 0 ? -bytes_written :
 							       ECONNRESET);
-		io_context_put(ic);
+		io_context_destroy(ic);
 		return bytes_written < 0 ? -bytes_written : ECONNRESET;
 	}
 
