@@ -20,8 +20,8 @@ static inline uint32_t nfs3_getfh_crc(nfs_fh3 *fh)
 /* NFS3 operation trace functions */
 static inline void trace_nfs3_srv_null(struct rpc_trans *rt)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_null", __LINE__, "xid=0x%08x",
-			  rt->rt_info.ri_xid);
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_null", __LINE__,
+			  "xid=0x%08x", rt->rt_info.ri_xid);
 }
 
 static inline void trace_nfs3_srv_getattr(struct rpc_trans *rt,

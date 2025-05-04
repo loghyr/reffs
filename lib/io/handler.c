@@ -430,7 +430,8 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				break;
 
 			case OP_TYPE_READ:
-				trace_io_context(ic, __func__, __LINE__); // loghyr
+				trace_io_context(ic, __func__,
+						 __LINE__); // loghyr
 				ret = io_handle_read(ic, cqe->res, ring);
 				break;
 

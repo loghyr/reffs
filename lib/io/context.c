@@ -129,7 +129,8 @@ int io_context_init(void)
 
 static void io_context_free_rcu(struct rcu_head *rcu)
 {
-	struct io_context *ic = caa_container_of(rcu, struct io_context, ic_rcu);
+	struct io_context *ic =
+		caa_container_of(rcu, struct io_context, ic_rcu);
 
 	trace_io_context(ic, __func__, __LINE__); // loghyr
 	free(ic->ic_buffer);

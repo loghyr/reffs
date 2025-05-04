@@ -83,8 +83,8 @@ bool reffs_should_trace(enum reffs_trace_category category)
 }
 
 /* Write trace event */
-void reffs_trace_event(enum reffs_trace_category category,
-		       const char *name, const int line, const char *format, ...)
+void reffs_trace_event(enum reffs_trace_category category, const char *name,
+		       const int line, const char *format, ...)
 {
 	if (!reffs_should_trace(category)) {
 		return;
