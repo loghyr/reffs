@@ -435,7 +435,8 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
-		LOG("%p", (void *)(uintptr_t)cqe->user_data); // loghyr
+		trace_io_context_ptr((void *)(uintptr_t)cqe->user_data,
+				     __func__, __LINE__); // loghyr
 
 		struct io_context *ic =
 			(struct io_context *)(uintptr_t)cqe->user_data;

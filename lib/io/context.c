@@ -41,11 +41,11 @@ static _Atomic uint64_t active_to_destroyed;
 static _Atomic uint64_t cancelled_to_freed;
 static _Atomic uint64_t destroyed_to_freed;
 
-struct cds_lfht *io_context_ht = NULL;
-struct cds_lfht *io_cancelled_ht = NULL;
-struct cds_lfht *io_destroyed_ht = NULL;
+struct cds_lfht *io_active_ht = NULL;
+struct cds_lfht *io_cancel_ht = NULL;
+struct cds_lfht *io_destroy_ht = NULL;
 
-static bool io_context_unhash(struct io_context *ic)
+static bool active_unhash(struct io_context *ic)
 {
 	int ret;
 	bool b;
@@ -55,7 +55,7 @@ static bool io_context_unhash(struct io_context *ic)
 				   __ATOMIC_ACQUIRE);
 	b = state & IO_CONTEXT_IS_HASHED;
 	if (b) {
-		ret = cds_lfht_del(io_context_ht, &ic->ic_next);
+		ret = cds_lfht_del(io_active_ht, &ic->ic_active_node);
 		if (ret)
 			LOG("ret = %d", ret);
 		assert(!ret);
@@ -65,7 +65,7 @@ static bool io_context_unhash(struct io_context *ic)
 	return false;
 }
 
-static bool io_cancelled_unhash(struct io_context *ic)
+static bool cancel_unhash(struct io_context *ic)
 {
 	int ret;
 	bool b;
@@ -75,7 +75,7 @@ static bool io_cancelled_unhash(struct io_context *ic)
 				   __ATOMIC_ACQUIRE);
 	b = state & IO_CONTEXT_IS_CANCELLED_HASH;
 	if (b) {
-		ret = cds_lfht_del(io_cancelled_ht, &ic->ic_next);
+		ret = cds_lfht_del(io_cancel_ht, &ic->ic_cancel_node);
 		if (ret)
 			LOG("ret = %d", ret);
 		assert(!ret);
@@ -85,7 +85,7 @@ static bool io_cancelled_unhash(struct io_context *ic)
 	return false;
 }
 
-static bool io_destroyed_unhash(struct io_context *ic)
+static bool ic_destroy_unhash(struct io_context *ic)
 {
 	int ret;
 	bool b;
@@ -95,7 +95,7 @@ static bool io_destroyed_unhash(struct io_context *ic)
 				   __ATOMIC_ACQUIRE);
 	b = state & IO_CONTEXT_IS_DESTROYED_HASH;
 	if (b) {
-		ret = cds_lfht_del(io_destroyed_ht, &ic->ic_next);
+		ret = cds_lfht_del(io_destroy_ht, &ic->ic_destroy_node);
 		if (ret)
 			LOG("ret = %d", ret);
 		assert(!ret);
@@ -107,25 +107,25 @@ static bool io_destroyed_unhash(struct io_context *ic)
 
 int io_context_init(void)
 {
-	io_context_ht = cds_lfht_new(1024, 1024, 0,
-				     CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING,
-				     NULL);
-	if (!io_context_ht) {
+	io_active_ht = cds_lfht_new(1024, 1024, 0,
+				    CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING,
+				    NULL);
+	if (!io_active_ht) {
 		LOG("Could not create the io context hash table");
 		return ENOMEM;
 	}
 
-	io_cancelled_ht = cds_lfht_new(
+	io_cancel_ht = cds_lfht_new(
 		8, 8, 0, CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING, NULL);
-	if (!io_context_ht) {
+	if (!io_active_ht) {
 		LOG("Could not create the io context cancelled hash table");
 		return ENOMEM;
 	}
 
-	io_destroyed_ht =
-		cds_lfht_new(1024, 1024, 0,
-			     CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING, NULL);
-	if (!io_context_ht) {
+	io_destroy_ht = cds_lfht_new(1024, 1024, 0,
+				     CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING,
+				     NULL);
+	if (!io_active_ht) {
 		LOG("Could not create the io context destroyed hash table");
 		return ENOMEM;
 	}
@@ -158,11 +158,12 @@ int io_context_fini(void)
 	int count;
 	int ret = 0;
 
-	if (io_context_ht) {
+	if (io_active_ht) {
 		count = 0;
 		rcu_read_lock();
-		cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
-			if (io_context_unhash(ic))
+		cds_lfht_for_each_entry(io_active_ht, &iter, ic,
+					ic_active_node) {
+			if (active_unhash(ic))
 				count++;
 		}
 		rcu_read_unlock();
@@ -170,19 +171,20 @@ int io_context_fini(void)
 		if (count)
 			LOG("Contexts = %d", count);
 
-		ret = cds_lfht_destroy(io_context_ht, NULL);
+		ret = cds_lfht_destroy(io_active_ht, NULL);
 		if (ret < 0) {
 			LOG("Could not delete a hash table: %m");
 		}
 
-		io_context_ht = NULL;
+		io_active_ht = NULL;
 	}
 
-	if (io_cancelled_ht) {
+	if (io_cancel_ht) {
 		count = 0;
 		rcu_read_lock();
-		cds_lfht_for_each_entry(io_cancelled_ht, &iter, ic, ic_next) {
-			if (io_cancelled_unhash(ic)) {
+		cds_lfht_for_each_entry(io_cancel_ht, &iter, ic,
+					ic_cancel_node) {
+			if (cancel_unhash(ic)) {
 				count++;
 				atomic_fetch_add(&cancelled_to_freed, 1);
 				call_rcu(&ic->ic_rcu, io_context_free_rcu);
@@ -193,19 +195,20 @@ int io_context_fini(void)
 		if (count)
 			LOG("Cancelled = %d", count);
 
-		ret = cds_lfht_destroy(io_cancelled_ht, NULL);
+		ret = cds_lfht_destroy(io_cancel_ht, NULL);
 		if (ret < 0) {
 			LOG("Could not delete a hash table: %m");
 		}
 
-		io_cancelled_ht = NULL;
+		io_cancel_ht = NULL;
 	}
 
-	if (io_destroyed_ht) {
+	if (io_destroy_ht) {
 		count = 0;
 		rcu_read_lock();
-		cds_lfht_for_each_entry(io_destroyed_ht, &iter, ic, ic_next) {
-			if (io_destroyed_unhash(ic)) {
+		cds_lfht_for_each_entry(io_destroy_ht, &iter, ic,
+					ic_destroy_node) {
+			if (ic_destroy_unhash(ic)) {
 				count++;
 				atomic_fetch_add(&destroyed_to_freed, 1);
 				call_rcu(&ic->ic_rcu, io_context_free_rcu);
@@ -216,12 +219,12 @@ int io_context_fini(void)
 		if (count)
 			LOG("Destroyed = %d", count);
 
-		ret = cds_lfht_destroy(io_destroyed_ht, NULL);
+		ret = cds_lfht_destroy(io_destroy_ht, NULL);
 		if (ret < 0) {
 			LOG("Could not delete a hash table: %m");
 		}
 
-		io_destroyed_ht = NULL;
+		io_destroy_ht = NULL;
 	}
 
 	return 0;
@@ -293,12 +296,12 @@ void io_context_destroy(struct io_context *ic)
 	trace_io_context(ic, __func__, __LINE__);
 
 	if (mark_io_context_destroyed(ic)) {
-		io_context_unhash(ic);
+		active_unhash(ic);
 		ic->ic_action_time = time(NULL);
 		rcu_read_lock();
 		__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_IS_DESTROYED_HASH,
 				  __ATOMIC_ACQUIRE);
-		cds_lfht_add(io_destroyed_ht, ic->ic_id, &ic->ic_next);
+		cds_lfht_add(io_destroy_ht, ic->ic_id, &ic->ic_destroy_node);
 		rcu_read_unlock();
 
 		return;
@@ -320,6 +323,10 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 	ic->ic_buffer = buffer;
 	ic->ic_buffer_len = buffer_len;
 	ic->ic_action_time = time(NULL);
+
+	cds_lfht_node_init(&ic->ic_active_node);
+	cds_lfht_node_init(&ic->ic_destroy_node);
+	cds_lfht_node_init(&ic->ic_cancel_node);
 
 	atomic_fetch_add(&context_created, 1);
 
@@ -344,7 +351,7 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 	rcu_read_lock();
 	__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_IS_HASHED,
 			  __ATOMIC_ACQUIRE);
-	cds_lfht_add(io_context_ht, ic->ic_id, &ic->ic_next);
+	cds_lfht_add(io_active_ht, ic->ic_id, &ic->ic_active_node);
 	rcu_read_unlock();
 
 	trace_io_context(ic, __func__, __LINE__);
@@ -362,7 +369,7 @@ void io_context_list_active(bool listem)
 	time_t now = time(NULL);
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
+	cds_lfht_for_each_entry(io_active_ht, &iter, ic, ic_active_node) {
 		if (listem) {
 			time_t age = now - ic->ic_action_time;
 			LOG("%p op=%s fd=%d age=%ld id=%u", (void *)ic,
@@ -426,12 +433,12 @@ void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 	trace_io_context(ic, __func__, __LINE__);
 
 	if (mark_io_context_cancelled(ic)) {
-		io_context_unhash(ic);
+		active_unhash(ic);
 		ic->ic_action_time = time(NULL);
 		rcu_read_lock();
 		__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_IS_CANCELLED_HASH,
 				  __ATOMIC_ACQUIRE);
-		cds_lfht_add(io_cancelled_ht, ic->ic_id, &ic->ic_next);
+		cds_lfht_add(io_cancel_ht, ic->ic_id, &ic->ic_cancel_node);
 		rcu_read_unlock();
 
 		return;
@@ -456,7 +463,7 @@ void io_context_release_active(struct io_uring *ring)
 	time_t now = time(NULL);
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
+	cds_lfht_for_each_entry(io_active_ht, &iter, ic, ic_active_node) {
 		time_t age = now - ic->ic_action_time;
 
 		LOG("%p op=%s fd=%d age=%ld id=%u", (void *)ic,
@@ -500,7 +507,7 @@ void io_context_check_stalled(struct io_uring *ring)
 	int to = adaptive_timeout();
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(io_context_ht, &iter, ic, ic_next) {
+	cds_lfht_for_each_entry(io_active_ht, &iter, ic, ic_active_node) {
 		time_t age = now - ic->ic_action_time;
 
 		/*
@@ -534,14 +541,14 @@ void io_context_release_cancelled(void)
 	int to = adaptive_timeout();
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(io_cancelled_ht, &iter, ic, ic_next) {
+	cds_lfht_for_each_entry(io_cancel_ht, &iter, ic, ic_cancel_node) {
 		time_t age = now - ic->ic_action_time;
 
 		if (age < to)
 			continue;
 
 		trace_io_context(ic, __func__, __LINE__);
-		io_cancelled_unhash(ic);
+		cancel_unhash(ic);
 		count++;
 		atomic_fetch_add(&cancelled_to_freed, 1);
 		call_rcu(&ic->ic_rcu, io_context_free_rcu);
@@ -564,7 +571,7 @@ void io_context_release_destroyed(void)
 	int to = adaptive_timeout();
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(io_destroyed_ht, &iter, ic, ic_next) {
+	cds_lfht_for_each_entry(io_destroy_ht, &iter, ic, ic_destroy_node) {
 		time_t age = now - ic->ic_action_time;
 
 		if (age < to)

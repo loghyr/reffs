@@ -73,4 +73,10 @@ static inline void trace_io_context(struct io_context *ic, const char *func,
 				  ic->ic_fd, ic->ic_state, age, ic->ic_id);
 	}
 }
+
+static inline void trace_io_context_ptr(struct io_context *ic, const char *func,
+					int line)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_IO, func, line, "ic=%p", (void *)ic);
+}
 #endif /* _REFFS_TRACE_IO_H */

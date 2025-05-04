@@ -47,7 +47,9 @@ enum op_type {
 // IO operation context structure
 struct io_context {
 	struct rcu_head ic_rcu;
-	struct cds_lfht_node ic_next;
+	struct cds_lfht_node ic_active_node;
+	struct cds_lfht_node ic_cancel_node;
+	struct cds_lfht_node ic_destroy_node;
 
 	enum op_type ic_op_type;
 	int ic_fd;
