@@ -93,14 +93,14 @@ struct rpc_trans *probe1_client_op_stats_gather(uint32_t program, uint32_t vers)
 
 	rt->rt_cb = stats_gather_cb;
 
+	STATS_GATHER1args *args = ph->ph_args;
+	args->psga_program = program;
+	args->psga_version = vers;
+
 	if (rpc_prepare_send_call(rt)) {
 		rpc_protocol_free(rt);
 		rt = NULL;
 	}
-
-	STATS_GATHER1args *args = ph->ph_args;
-	args->psga_program = program;
-	args->psga_version = vers;
 
 	return rt;
 }

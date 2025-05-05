@@ -32,6 +32,7 @@
 #include "reffs/rpc.h"
 #include "reffs/io.h"
 #include "reffs/network.h"
+#include "reffs/stack.h"
 #include "reffs/task.h"
 #include "reffs/trace/rpc.h"
 
@@ -236,6 +237,28 @@ static void update_max_duration_rcu(uint64_t duration_ns,
 	}
 }
 
+void rpc_log_packet(const char *prefix, const void *data, size_t len)
+{
+	const unsigned char *bytes = (const unsigned char *)data;
+	char line[256];
+	char *ptr;
+	int i, j;
+
+	for (i = 0; i < (int)len; i += 16) {
+		ptr = line;
+		ptr += sprintf(ptr, "%04x  ", i);
+
+		for (j = 0; j < 16; j++) {
+			if (i + j < (int)len)
+				ptr += sprintf(ptr, "%02x ", bytes[i + j]);
+			else
+				ptr += sprintf(ptr, "   ");
+		}
+
+		LOG("%s%s", prefix, line);
+	}
+}
+
 int rpc_protocol_op_call(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -385,7 +408,7 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 			xdr_sizeof(ph->ph_op_handler->roh_args_f, ph->ph_args);
 	}
 
-	rt->rt_reply_len = 7 * sizeof(uint32_t) + xdr_size;
+	rt->rt_reply_len = 11 * sizeof(uint32_t) + xdr_size;
 	msg_len = rt->rt_reply_len - sizeof(uint32_t);
 	rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
 	if (!rt->rt_reply) {
@@ -405,7 +428,32 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 		goto drop_on_floor;
 	}
 
-	p = rpc_encode_uint32_t(rt, p, 1);
+	p = rpc_encode_uint32_t(rt, p, 0);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, 2);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_program);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_version);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_procedure);
+	if (!p) {
+		goto drop_on_floor;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, AUTH_NONE);
 	if (!p) {
 		goto drop_on_floor;
 	}
@@ -415,12 +463,7 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 		goto drop_on_floor;
 	}
 
-	p = rpc_encode_uint32_t(rt, p, 0);
-	if (!p) {
-		goto drop_on_floor;
-	}
-
-	p = rpc_encode_uint32_t(rt, p, 0);
+	p = rpc_encode_uint32_t(rt, p, AUTH_NONE);
 	if (!p) {
 		goto drop_on_floor;
 	}
@@ -456,6 +499,8 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 
 	assert(rt->rt_offset == rt->rt_reply_len);
 
+	// rpc_log_packet("  ", rt->rt_reply, rt->rt_reply_len);
+
 	return 0;
 
 drop_on_floor:
@@ -474,8 +519,10 @@ int rpc_process_task(struct task *t)
 	if (!t)
 		return EINVAL;
 
-	if (t->t_bytes_read < (int)(2 * sizeof(uint32_t)))
+	if (t->t_bytes_read < (int)(2 * sizeof(uint32_t))) {
+		LOG("%p", (void *)t);
 		return 0;
+	}
 
 	struct rpc_trans *rt = rpc_trans_create_from_task(t);
 	if (!rt)
@@ -653,6 +700,8 @@ int rpc_process_task(struct task *t)
 				   __ATOMIC_RELAXED);
 		break;
 	}
+
+	trace_rpc_task(rt, __func__, __LINE__);
 
 	ret = rpc_protocol_allocate_call(rt);
 	if (!ret)

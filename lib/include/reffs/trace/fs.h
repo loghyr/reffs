@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 #include "reffs/dirent.h"
-#include "reffs/trace/trace.h"
+#include "reffs/trace/common.h"
 
 static inline void trace_fs_dirent(struct dirent *de, const char *event,
 				   int line)

@@ -111,10 +111,10 @@ void *io_worker_thread(void *vtd)
 	return NULL;
 }
 
-void add_task(struct task *task)
+void add_task(struct task *t)
 {
 	pthread_mutex_lock(&task_queue_mutex);
-	task_queue[task_queue_tail] = task;
+	task_queue[task_queue_tail] = t;
 	task_queue_tail = (task_queue_tail + 1) % QUEUE_DEPTH;
 	pthread_cond_signal(&task_queue_cond);
 	pthread_mutex_unlock(&task_queue_mutex);

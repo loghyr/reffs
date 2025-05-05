@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "reffs/io.h"
-#include "reffs/trace/trace.h"
+#include "reffs/trace/common.h"
 
 /* IO specific trace functions */
 static inline void trace_io_accept_submit(struct io_context *ic)

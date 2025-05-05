@@ -14,7 +14,7 @@
 #include <time.h>
 #include <pthread.h>
 #include <string.h>
-#include "reffs/trace/trace.h"
+#include "reffs/trace/common.h"
 #include "reffs/trace/types.h"
 
 /* Global trace state */

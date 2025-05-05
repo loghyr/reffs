@@ -172,4 +172,6 @@ int rpc_process_task(struct task *t);
 struct rpc_trans *rpc_trans_create(void);
 int rpc_prepare_send_call(struct rpc_trans *rt);
 
+void rpc_log_packet(const char *prefix, const void *data, size_t len);
+
 #endif

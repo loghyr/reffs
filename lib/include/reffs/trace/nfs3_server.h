@@ -8,7 +8,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "reffs/trace/trace.h"
+#include "reffs/trace/common.h"
 #include "reffs/rpc.h"
 #include "nfsv3_xdr.h"
 

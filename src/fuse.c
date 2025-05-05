@@ -32,7 +32,7 @@
 #include "reffs/log.h"
 #include "reffs/fs.h"
 #include "reffs/ns.h"
-#include "reffs/trace/trace.h"
+#include "reffs/trace/common.h"
 
 static struct fuse_operations operations = {
 	.access = reffs_fuse_access,

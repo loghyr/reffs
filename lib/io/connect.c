@@ -416,6 +416,7 @@ int io_conn_add_connect_op(int fd)
 int io_conn_remove_connect_op(int fd)
 {
 	int ret = -1;
+
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
@@ -802,8 +803,6 @@ int io_send_request(struct rpc_trans *rt)
 			return ENOMEM;
 		}
 
-		addr = NULL;
-
 		// Store XID for later matching
 		ic->ic_xid = rt->rt_info.ri_xid;
 
@@ -817,13 +816,16 @@ int io_send_request(struct rpc_trans *rt)
 		struct io_uring_sqe *sqe = io_uring_get_sqe(rt->rt_ring);
 		if (!sqe) {
 			io_socket_close(sockfd, ENOBUFS);
+			io_context_destroy(ic);
 			return ENOBUFS;
 		}
 
 		io_uring_prep_connect(sqe, sockfd, (struct sockaddr *)addr,
-				      sizeof(addr));
+				      sizeof(*addr));
 		io_uring_sqe_set_data(sqe, ic);
 		trace_io_connect_submit(ic);
+
+		addr = NULL;
 
 		// Submit and wait for connect completion
 		io_uring_submit(rt->rt_ring);

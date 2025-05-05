@@ -171,6 +171,8 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 {
 	struct io_context *ic;
 
+	LOG("%p", (void *)rt);
+
 	struct conn_info *ci = io_conn_get(rt->rt_fd);
 	if (!ci) {
 		LOG("Connection not tracked for fd=%d", rt->rt_fd);

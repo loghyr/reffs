@@ -4,10 +4,10 @@
 reffsincludedir = $(includedir)/reffs/trace
 
 reffsinclude_HEADERS =	\
+	common.h	\
 	events.h	\
 	fs.h		\
 	io.h		\
 	nfs3_server.h	\
 	rpc.h		\
-	trace.h		\
 	types.h

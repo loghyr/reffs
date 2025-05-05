@@ -33,7 +33,7 @@
 #include "reffs/probe1.h"
 #include "reffs/trace/rpc.h"
 
-static int probe1_op_null(struct rpc_trans __attribute__((unused)) * rt)
+static int probe1_op_null(struct rpc_trans __attribute__((unused)) *rt)
 {
 	return 0;
 }
@@ -48,7 +48,6 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 
 	struct rpc_program_handler *rph = rpc_program_handler_find(
 		args->psga_program, args->psga_version);
-
 	if (!rph) {
 		res->psgr_status = PROBE1ERR_NOENT;
 		goto out;

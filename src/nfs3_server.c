@@ -37,7 +37,7 @@
 #include "reffs/server.h"
 #include "reffs/ns.h"
 #include "reffs/io.h"
-#include "reffs/trace/trace.h"
+#include "reffs/trace/common.h"
 
 #define NFS_PORT 2049
 
@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
 
 	struct io_uring ring;
 
-	char *trace_file = "./reffs_nfs3_srv.log";
+	char *trace_file = "./nfs3_srv.log";
 
 	// Initialize userspace RCU
 	rcu_init();

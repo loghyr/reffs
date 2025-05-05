@@ -30,7 +30,7 @@
 #include "reffs/probe1.h"
 #include "reffs/server.h"
 #include "reffs/io.h"
-#include "reffs/trace/trace.h"
+#include "reffs/trace/common.h"
 
 // Global flag for clean shutdown
 volatile sig_atomic_t running = 1;
@@ -53,6 +53,8 @@ static void usage(const char *prog)
 	printf("  -h  --help                   Print this usage and exit\n");
 	printf("  -f  --file=fname             Save tracing data to this file \"fname\"\n");
 	printf("  -o  --op=op                  Perform the \"op\"\n");
+	printf("  -g  --program=pgm            Probe this program \"pgm\"\n");
+	printf("  -v  --version=v              Probe this program version \"vers\"\n");
 	printf("  -p  --port=port              Connect to server at the \"port\"\n");
 	printf("  -s  --server=server          Connect to server at the \"server\"\n");
 	printf("  -c  --category=cat           Enable tracing for a category");
@@ -66,8 +68,11 @@ static void usage(const char *prog)
 static struct option long_opts[] = {
 	{ "category", required_argument, 0, 'c' },
 	{ "file", required_argument, 0, 'f' },
+	{ "program", required_argument, 0, 'g' },
+	{ "op", required_argument, 0, 'o' },
 	{ "port", required_argument, 0, 'p' },
 	{ "server", required_argument, 0, 's' },
+	{ "version", required_argument, 0, 'v' },
 	{ "help", no_argument, 0, 'h' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -79,19 +84,21 @@ int main(int argc, char *argv[])
 	char *server = "127.0.0.1";
 	int opt;
 	int ret;
+	int program = 100003;
+	int version = 3;
 
 	struct rpc_trans *rt = NULL;
 
 	struct io_uring ring;
 
-	char *trace_file = "/tmp/reffs_probe1_clnt.log";
+	char *trace_file = "./probe1_clnt.log";
 
 	char *op = "gather";
 
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "hc:f:p:o:s:";
+	char *opts = "hc:f:p:o:s:g:v:";
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -110,6 +117,12 @@ int main(int argc, char *argv[])
 			return 0;
 		case 'o':
 			op = optarg;
+			break;
+		case 'g':
+			program = atoi(optarg);
+			break;
+		case 'v':
+			version = atoi(optarg);
 			break;
 		case 'p':
 			port = atoi(optarg);
@@ -160,7 +173,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (!strcmp(op, "gather")) {
-		rt = probe1_client_op_stats_gather(PROBE_PROGRAM, PROBE_V1);
+		rt = probe1_client_op_stats_gather(program, version);
 	} else if (!strcmp(op, "context")) {
 		rt = probe1_client_op_context();
 	} else if (!strcmp(op, "null")) {
@@ -175,15 +188,13 @@ int main(int argc, char *argv[])
 	rt->rt_port = port;
 	rt->rt_addr_str = server;
 
-	ret = rpc_prepare_send_call(rt);
-	if (ret)
-		goto done;
-
 	rt->rt_ring = &ring;
 
 	ret = io_send_request(rt);
-	if (ret)
+	if (ret) {
+		rpc_protocol_free(rt);
 		goto done;
+	}
 
 	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
 
@@ -193,9 +204,6 @@ int main(int argc, char *argv[])
 	io_handler_main_loop(&running, &ring);
 
 	TRACE("Main loop exited, cleaning up...");
-
-	close(rt->rt_fd);
-	rpc_protocol_free(rt);
 
 	io_handler_fini(&ring);
 	io_uring_queue_exit(&ring);

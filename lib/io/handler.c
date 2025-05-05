@@ -169,6 +169,8 @@ int io_handler_init(struct io_uring *ring)
 	if (io_context_init())
 		return -1;
 
+	io_conn_init();
+
 	return 0;
 }
 
@@ -265,7 +267,6 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 {
 	struct io_uring_cqe *cqe;
 
-	io_conn_init();
 	running_context = running_flag;
 
 	// Initialize heartbeat system
@@ -393,12 +394,12 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 
 		io_uring_cqe_seen(ring, cqe);
 	}
-
-	io_conn_cleanup();
 }
 
 void io_handler_fini(struct io_uring *ring)
 {
+	io_conn_cleanup();
+
 	// Drain pending io_uring operations
 	while (1) {
 		struct io_uring_cqe *cqe;
