@@ -102,8 +102,16 @@ static int probe1_op_context(struct rpc_trans *rt)
 	CONTEXT1res *res = ph->ph_res;
 	CONTEXT1resok *resok = &res->CONTEXT1res_u.pcr_resok;
 
-	resok->pcr_created = io_context_get_created();
-	resok->pcr_freed = io_context_get_freed();
+	struct io_context_stats ics;
+
+	io_context_stats(&ics);
+
+	resok->pcr_created = ics.ics_created;
+	resok->pcr_freed = ics.ics_freed;
+	resok->pcr_active_cancelled = ics.ics_active_cancelled;
+	resok->pcr_active_destroyed = ics.ics_active_destroyed;
+	resok->pcr_cancelled_freed = ics.ics_cancelled_freed;
+	resok->pcr_destroyed_freed = ics.ics_destroyed_freed;
 
 	return 0;
 }

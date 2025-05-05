@@ -249,6 +249,17 @@ void io_add_listener(int fd);
 void io_conn_dump(int fd);
 void io_conn_dump_all(void);
 
+struct io_context_stats {
+	uint64_t ics_created;
+	uint64_t ics_freed;
+	uint64_t ics_active_cancelled;
+	uint64_t ics_active_destroyed;
+	uint64_t ics_cancelled_freed;
+	uint64_t ics_destroyed_freed;
+};
+
+void io_context_stats(struct io_context_stats *ics);
+
 // New reference counting API
 int io_conn_add_read_op(int fd);
 int io_conn_remove_read_op(int fd);

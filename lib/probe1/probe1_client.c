@@ -114,8 +114,10 @@ static int context_cb(struct rpc_trans *rt)
 	if (res->pcr_status)
 		LOG("error = %d", res->pcr_status);
 	else
-		LOG("created=%lu, freed=%lu", resok->pcr_created,
-		    resok->pcr_freed);
+		LOG("created=%lu freed=%lu active_cancelled=%lu active_destroyed=%lu cancelled_freed=%lu destroyed_freed=%lu",
+		    resok->pcr_created, resok->pcr_freed,
+		    resok->pcr_active_cancelled, resok->pcr_active_destroyed,
+		    resok->pcr_cancelled_freed, resok->pcr_destroyed_freed);
 
 	io_handler_stop();
 	return 0;

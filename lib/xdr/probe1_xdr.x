@@ -72,6 +72,10 @@ union STATS_GATHER1res switch (stat_stat1 psgr_status) {
 struct CONTEXT1resok {
 	unsigned hyper	pcr_created;
 	unsigned hyper	pcr_freed;
+	unsigned hyper	pcr_active_cancelled;
+	unsigned hyper	pcr_active_destroyed;
+	unsigned hyper	pcr_cancelled_freed;
+	unsigned hyper	pcr_destroyed_freed;
 };
 
 union CONTEXT1res switch (stat_stat1 pcr_status) {

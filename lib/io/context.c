@@ -36,10 +36,10 @@
 static _Atomic uint64_t context_created;
 static _Atomic uint64_t context_freed;
 
-static _Atomic uint64_t active_to_cancelled;
-static _Atomic uint64_t active_to_destroyed;
-static _Atomic uint64_t cancelled_to_freed;
-static _Atomic uint64_t destroyed_to_freed;
+static _Atomic uint64_t active_cancelled;
+static _Atomic uint64_t active_destroyed;
+static _Atomic uint64_t cancelled_freed;
+static _Atomic uint64_t destroyed_freed;
 
 struct cds_lfht *io_active_ht = NULL;
 struct cds_lfht *io_cancel_ht = NULL;
@@ -130,10 +130,10 @@ int io_context_init(void)
 		return ENOMEM;
 	}
 
-	atomic_store(&active_to_cancelled, 0);
-	atomic_store(&active_to_destroyed, 0);
-	atomic_store(&cancelled_to_freed, 0);
-	atomic_store(&destroyed_to_freed, 0);
+	atomic_store(&active_cancelled, 0);
+	atomic_store(&active_destroyed, 0);
+	atomic_store(&cancelled_freed, 0);
+	atomic_store(&destroyed_freed, 0);
 	atomic_store(&context_created, 0);
 	atomic_store(&context_freed, 0);
 
@@ -186,7 +186,7 @@ int io_context_fini(void)
 					ic_cancel_node) {
 			if (cancel_unhash(ic)) {
 				count++;
-				atomic_fetch_add(&cancelled_to_freed, 1);
+				atomic_fetch_add(&cancelled_freed, 1);
 				call_rcu(&ic->ic_rcu, io_context_free_rcu);
 			}
 		}
@@ -210,7 +210,7 @@ int io_context_fini(void)
 					ic_destroy_node) {
 			if (ic_destroy_unhash(ic)) {
 				count++;
-				atomic_fetch_add(&destroyed_to_freed, 1);
+				atomic_fetch_add(&destroyed_freed, 1);
 				call_rcu(&ic->ic_rcu, io_context_free_rcu);
 			}
 		}
@@ -273,7 +273,7 @@ void io_context_destroy(struct io_context *ic)
 	if (state & IO_CONTEXT_MARKED_DESTROYED)
 		return;
 
-	atomic_fetch_add(&active_to_destroyed, 1);
+	atomic_fetch_add(&active_destroyed, 1);
 
 	switch (ic->ic_op_type) {
 	case OP_TYPE_READ:
@@ -413,7 +413,7 @@ void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 	if (state & IO_CONTEXT_MARKED_CANCELLED)
 		return;
 
-	atomic_fetch_add(&active_to_cancelled, 1);
+	atomic_fetch_add(&active_cancelled, 1);
 
 	switch (ic->ic_op_type) {
 	case OP_TYPE_READ:
@@ -552,7 +552,7 @@ void io_context_release_cancelled(void)
 		trace_io_context(ic, __func__, __LINE__);
 		cancel_unhash(ic);
 		count++;
-		atomic_fetch_add(&cancelled_to_freed, 1);
+		atomic_fetch_add(&cancelled_freed, 1);
 		call_rcu(&ic->ic_rcu, io_context_free_rcu);
 	}
 	rcu_read_unlock();
@@ -581,7 +581,7 @@ void io_context_release_destroyed(void)
 
 		trace_io_context(ic, __func__, __LINE__);
 		ic_destroy_unhash(ic);
-		atomic_fetch_add(&destroyed_to_freed, 1);
+		atomic_fetch_add(&destroyed_freed, 1);
 		call_rcu(&ic->ic_rcu, io_context_free_rcu);
 
 		count++;
@@ -602,12 +602,21 @@ uint64_t io_context_get_freed(void)
 	return context_freed;
 }
 
+void io_context_stats(struct io_context_stats *ics)
+{
+	ics->ics_created = atomic_load(&context_created);
+	ics->ics_freed = atomic_load(&context_freed);
+	ics->ics_active_cancelled = atomic_load(&active_cancelled);
+	ics->ics_active_destroyed = atomic_load(&active_destroyed);
+	ics->ics_cancelled_freed = atomic_load(&cancelled_freed);
+	ics->ics_destroyed_freed = atomic_load(&destroyed_freed);
+}
+
 void io_context_log_stats(void)
 {
 	LOG("Context state transitions: active_cancelled=%ld, active_destroyed=%ld, "
 	    "cancelled_freed=%ld, destroyed_freed=%ld created=%ld freed=%ld",
-	    atomic_load(&active_to_cancelled),
-	    atomic_load(&active_to_destroyed), atomic_load(&cancelled_to_freed),
-	    atomic_load(&destroyed_to_freed), atomic_load(&context_created),
-	    atomic_load(&context_freed));
+	    atomic_load(&active_cancelled), atomic_load(&active_destroyed),
+	    atomic_load(&cancelled_freed), atomic_load(&destroyed_freed),
+	    atomic_load(&context_created), atomic_load(&context_freed));
 }

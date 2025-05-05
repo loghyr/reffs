@@ -75,8 +75,12 @@ def context(client, args):
 
     resok = res.pcr_resok
 
-    print('Created = {}'.format(resok.pcr_created))
-    print('Freed = {}'.format(resok.pcr_freed))
+    print('Created          = {}'.format(resok.pcr_created))
+    print('Freed            = {}'.format(resok.pcr_freed))
+    print('Active Cancelled = {}'.format(resok.pcr_active_cancelled))
+    print('Active Destroyed = {}'.format(resok.pcr_active_destroyed))
+    print('Cancelled Freed  = {}'.format(resok.pcr_cancelled_freed))
+    print('Destroyed Freed  = {}'.format(resok.pcr_destroyed_freed))
 
 
 def parse_args():
