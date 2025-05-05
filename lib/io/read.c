@@ -368,7 +368,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	char *buffer = (char *)ic->ic_buffer;
 	int client_fd = ic->ic_fd;
 
-	struct conn_info *conn = io_conn_get(client_fd);
+	struct conn_info *ci = io_conn_get(client_fd);
 
 	if (bytes_read <= 0) {
 		// Connection closed or error
@@ -385,8 +385,8 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		return 0; // No new read needed for closed connections
 	}
 
-	if (conn) {
-		conn->ci_last_activity = time(NULL);
+	if (ci) {
+		ci->ci_last_activity = time(NULL);
 	}
 
 	// Get or create buffer state for this connection

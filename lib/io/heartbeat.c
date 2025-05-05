@@ -188,9 +188,9 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 			if (fd <= 0)
 				continue;
 
-			struct conn_info *conn = io_conn_get(fd);
-			if (conn && conn->ci_state != CONN_LISTENING &&
-			    conn->ci_accept_count == 0) {
+			struct conn_info *ci = io_conn_get(fd);
+			if (ci && ci->ci_state != CONN_LISTENING &&
+			    ci->ci_accept_count == 0) {
 				LOG("Listener fd=%d not in LISTENING state - resubmitting accept",
 				    fd);
 
@@ -216,20 +216,20 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 
 		// Scan all active connections
 		for (int fd = 3; fd < MAX_CONNECTIONS; fd++) {
-			struct conn_info *conn = io_conn_get(fd);
-			if (!conn || conn->ci_state != CONN_CONNECTED)
+			struct conn_info *ci = io_conn_get(fd);
+			if (!ci || ci->ci_state != CONN_CONNECTED)
 				continue;
 
 			// Check for stale connections
-			if (now - conn->ci_last_activity > conn_timeout) {
+			if (now - ci->ci_last_activity > conn_timeout) {
 				LOG("Connection fd=%d inactive for %ld seconds - closing",
-				    fd, (long)(now - conn->ci_last_activity));
+				    fd, (long)(now - ci->ci_last_activity));
 				io_socket_close(fd, ETIMEDOUT);
 				continue;
 			}
 
 			// Ensure each active connection has a pending read operation
-			if (conn->ci_read_count == 0) {
+			if (ci->ci_read_count == 0) {
 				LOG("Connection fd=%d has no pending read operations - submitting read",
 				    fd);
 				int ret = request_additional_read_data(fd, NULL,
@@ -240,10 +240,10 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 					// If we can't submit a read, the connection is effectively dead
 					io_socket_close(fd, ret);
 				}
-			} else if (conn->ci_read_count > 1) {
+			} else if (ci->ci_read_count > 1) {
 				// This is a potential issue - more than one reader
 				LOG("Warning: Connection fd=%d has %d pending read operations",
-				    fd, conn->ci_read_count);
+				    fd, ci->ci_read_count);
 			}
 		}
 

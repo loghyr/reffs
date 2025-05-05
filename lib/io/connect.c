@@ -626,8 +626,8 @@ const char *io_conn_role_to_str(enum conn_role role)
 // Dump information about a specific connection
 void io_conn_dump(int fd)
 {
-	struct conn_info *conn = io_conn_get(fd);
-	if (!conn) {
+	struct conn_info *ci = io_conn_get(fd);
+	if (!ci) {
 		LOG("No connection info for fd=%d", fd);
 		return;
 	}
@@ -635,24 +635,22 @@ void io_conn_dump(int fd)
 	char peer_addr[INET6_ADDRSTRLEN] = { 0 };
 	char local_addr[INET6_ADDRSTRLEN] = { 0 };
 	uint16_t peer_port = 0, local_port = 0;
+	time_t now = time(NULL);
 
-	if (conn->ci_peer_len > 0) {
+	if (ci->ci_peer_len > 0) {
 		// Cast to sockaddr_storage* instead of sockaddr*
-		addr_to_string((const struct sockaddr_storage *)&conn->ci_peer,
+		addr_to_string((const struct sockaddr_storage *)&ci->ci_peer,
 			       peer_addr, INET6_ADDRSTRLEN, &peer_port);
 	}
 
-	if (conn->ci_local_len > 0) {
+	if (ci->ci_local_len > 0) {
 		// Cast to sockaddr_storage* instead of sockaddr*
-		addr_to_string((const struct sockaddr_storage *)&conn->ci_local,
+		addr_to_string((const struct sockaddr_storage *)&ci->ci_local,
 			       local_addr, INET6_ADDRSTRLEN, &local_port);
 	}
 
-	LOG("Connection fd=%d: state=%s, role=%s, peer=%s:%d, local=%s:%d, xid=%u, last_activity=%ld, reads=%d, writes=%d",
-	    fd, io_conn_state_to_str(conn->ci_state),
-	    io_conn_role_to_str(conn->ci_role), peer_addr, peer_port,
-	    local_addr, local_port, conn->ci_xid, conn->ci_last_activity,
-	    conn->ci_read_count, conn->ci_write_count);
+	trace_io_active_connections(ci, peer_addr, peer_port, local_addr,
+				    local_port, now, __func__, __LINE__);
 }
 
 // Dump all active connections
@@ -810,9 +808,9 @@ int io_send_request(struct rpc_trans *rt)
 		ic->ic_xid = rt->rt_info.ri_xid;
 
 		// Store XID in connection info
-		struct conn_info *conn = io_conn_get(sockfd);
-		if (conn) {
-			conn->ci_xid = rt->rt_info.ri_xid;
+		ci = io_conn_get(sockfd);
+		if (ci) {
+			ci->ci_xid = rt->rt_info.ri_xid;
 		}
 
 		// Submit connect operation to io_uring
@@ -834,11 +832,10 @@ int io_send_request(struct rpc_trans *rt)
 	}
 
 	// If we already have a connection, check if it's in the CONNECTED state
-	struct conn_info *conn = io_conn_get(rt->rt_fd);
-	if (!conn ||
-	    (conn->ci_state != CONN_CONNECTED &&
-	     conn->ci_state != CONN_READING && conn->ci_state != CONN_WRITING &&
-	     conn->ci_state != CONN_READWRITE)) {
+	struct conn_info *ci = io_conn_get(rt->rt_fd);
+	if (!ci ||
+	    (ci->ci_state != CONN_CONNECTED && ci->ci_state != CONN_READING &&
+	     ci->ci_state != CONN_WRITING && ci->ci_state != CONN_READWRITE)) {
 		LOG("Connection is not ready for fd=%d", rt->rt_fd);
 		return ENOTCONN;
 	}
@@ -894,15 +891,14 @@ int io_handle_connect(struct io_context *ic, int result,
 	LOG("Connection established for fd=%d", ic->ic_fd);
 
 	// Update connection info with peer and local addresses
-	struct conn_info *conn = io_conn_get(ic->ic_fd);
-	if (conn) {
-		memcpy(&conn->ci_peer, &ic->ic_ci.ci_peer,
-		       ic->ic_ci.ci_peer_len);
-		conn->ci_peer_len = ic->ic_ci.ci_peer_len;
+	struct conn_info *ci = io_conn_get(ic->ic_fd);
+	if (ci) {
+		memcpy(&ci->ci_peer, &ic->ic_ci.ci_peer, ic->ic_ci.ci_peer_len);
+		ci->ci_peer_len = ic->ic_ci.ci_peer_len;
 
-		memcpy(&conn->ci_local, &ic->ic_ci.ci_local,
+		memcpy(&ci->ci_local, &ic->ic_ci.ci_local,
 		       ic->ic_ci.ci_local_len);
-		conn->ci_local_len = ic->ic_ci.ci_local_len;
+		ci->ci_local_len = ic->ic_ci.ci_local_len;
 	}
 
 	// Find the corresponding RPC transaction using XID

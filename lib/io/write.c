@@ -133,9 +133,9 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 		ic->ic_position += (chunk_size - 4);
 	}
 
-	struct conn_info *conn = io_conn_get(ic->ic_fd);
-	if (conn) {
-		conn->ci_last_activity = time(NULL);
+	struct conn_info *ci = io_conn_get(ic->ic_fd);
+	if (ci) {
+		ci->ci_last_activity = time(NULL);
 	}
 
 	// Submit the write operation
@@ -171,8 +171,8 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 {
 	struct io_context *ic;
 
-	struct conn_info *conn = io_conn_get(rt->rt_fd);
-	if (!conn) {
+	struct conn_info *ci = io_conn_get(rt->rt_fd);
+	if (!ci) {
 		LOG("Connection not tracked for fd=%d", rt->rt_fd);
 		return ENOTCONN;
 	}
@@ -198,7 +198,7 @@ int io_handle_write(struct io_context *ic,
 		    struct io_uring *ring)
 {
 	// Check connection state
-	struct conn_info *conn = io_conn_get(ic->ic_fd);
+	struct conn_info *ci = io_conn_get(ic->ic_fd);
 
 	// Verify we wrote the expected amount
 	if (bytes_written <= 0) {
@@ -214,8 +214,8 @@ int io_handle_write(struct io_context *ic,
 	}
 
 	// Update connection activity
-	if (conn) {
-		conn->ci_last_activity = time(NULL);
+	if (ci) {
+		ci->ci_last_activity = time(NULL);
 	}
 
 	return rpc_trans_writer(ic, ring);
