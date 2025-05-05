@@ -3,5 +3,5 @@
 
 SUBDIRS = reffs
 
-#dist_bin_SCRIPTS =
-
+dist_bin_SCRIPTS =	\
+	reffs_probe.py

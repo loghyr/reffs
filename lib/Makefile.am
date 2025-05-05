@@ -6,7 +6,6 @@
 SUBDIRS =		\
 	include		\
 	xdr		\
-	scripts		\
 	fs		\
 	mount3		\
 	nfs3		\

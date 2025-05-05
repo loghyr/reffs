@@ -356,17 +356,31 @@ AC_CONFIG_FILES([
 	lib/nfs4/tests/Makefile
 	lib/rpc/Makefile
 	lib/rpc/tests/Makefile
-	lib/scripts/Makefile
-	lib/scripts/reffs/Makefile
 	lib/probe1/Makefile
 	lib/tests/Makefile
 	lib/trace/Makefile
 	lib/utils/Makefile
 	lib/xdr/Makefile
+	scripts/Makefile
+	scripts/reffs/Makefile
+	scripts/reffs/pynfs/Makefile
+	scripts/reffs/pynfs/xdr/Makefile
+	scripts/reffs/pynfs/rpc/Makefile
 	src/Makefile
 	tools/Makefile])
 
 AC_CONFIG_FILES([lib/xdr/insert_pragmas.sh],[chmod +x lib/xdr/insert_pragmas.sh])
-AC_CONFIG_FILES([lib/scripts/reffs/xdrgen.py],[chmod +x lib/scripts/reffs/xdrgen.py])
+AC_CONFIG_FILES([scripts/reffs/pynfs/xdr/xdrgen.py],[chmod +x scripts/reffs/pynfs/xdr/xdrgen.py])
+AC_CONFIG_FILES([scripts/reffs_probe.py],[chmod +x scripts/reffs_probe.py])
+AC_CONFIG_FILES([scripts/reffs/probe_client.py],[chmod +x scripts/reffs/probe_client.py])
+AC_CONFIG_FILES([scripts/reffs/protocol_client.py],[chmod +x scripts/reffs/protocol_client.py])
+AC_CONFIG_FILES([scripts/reffs/pynfs/rpc/rpc.py],[chmod +x scripts/reffs/pynfs/rpc/rpc.py])
+AC_CONFIG_FILES([scripts/reffs/pynfs/rpc/rpclib.py],[chmod +x scripts/reffs/pynfs/rpc/rpclib.py])
+AC_CONFIG_FILES([scripts/reffs/pynfs/rpc/security.py],[chmod +x scripts/reffs/pynfs/rpc/security.py])
+AC_CONFIG_FILES([scripts/reffs/pynfs/xdr/__init__.py])
+AC_CONFIG_FILES([scripts/reffs/pynfs/rpc/__init__.py])
+AC_CONFIG_FILES([scripts/reffs/pynfs/__init__.py])
+AC_CONFIG_FILES([scripts/reffs/__init__.py])
+AC_CONFIG_FILES([scripts/__init__.py])
 
 AC_OUTPUT
