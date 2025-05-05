@@ -345,8 +345,14 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			uint64_t state;
 			__atomic_load(&ic->ic_state, &state, __ATOMIC_RELAXED);
 			if (state & IO_CONTEXT_IS_DESTROYED) {
+				LOG("Ignoring completion for already destroyed context: ic=%p op=%s fd=%d id=%u state=0x%lx",
+				    (void *)ic,
+				    io_op_type_to_str(ic->ic_op_type),
+				    ic->ic_fd, ic->ic_id, state);
+
 				trace_io_context(ic, __func__, __LINE__);
-				abort();
+				io_uring_cqe_seen(ring, cqe);
+				// abort(); // Turn into an option
 				continue;
 			} else if (state & IO_CONTEXT_IS_CANCELLED) {
 				io_uring_cqe_seen(ring, cqe);
