@@ -33,7 +33,7 @@
 #include "reffs/probe1.h"
 #include "reffs/trace/rpc.h"
 
-static int probe1_op_null(struct rpc_trans __attribute__((unused)) *rt)
+static int probe1_op_null(struct rpc_trans __attribute__((unused)) * rt)
 {
 	return 0;
 }
@@ -74,6 +74,8 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 		      __ATOMIC_RELAXED);
 
 	for (size_t i = 0; i < rt->rt_rph->rph_ops_len; i++) {
+		sp->sp_ops.sp_ops_val[i].so_name =
+			strdup(rt->rt_rph->rph_ops[i].roh_name);
 		__atomic_load(&rt->rt_rph->rph_ops[i].roh_operation,
 			      &sp->sp_ops.sp_ops_val[i].so_op,
 			      __ATOMIC_RELAXED);

@@ -49,17 +49,18 @@ static int stats_gather_cb(struct rpc_trans *rt)
 	    sp->sp_count, sp->sp_replied_errors, sp->sp_rejected_errors,
 	    sp->sp_accepted_errors, sp->sp_authed_errors);
 
-	LOG("\n%3s %10s %16s %16s %16s %16s", "OP", "Calls", "Errors", "Max",
+	LOG("\n%3s %10s %10s %16s %16s %16s %16s", "OP", "Name", "Calls", "Errors", "Max",
 	    "Total", "Average");
-	LOG("%3s %10s %16s %16s %16s %16s", "---", "----------",
+	LOG("%3s %10s %10s %16s %16s %16s %16s", "---", "----------", "----------",
 	    "----------------", "----------------", "----------------",
 	    "----------------");
 
 	for (uint32_t i = 0; i < sp->sp_ops.sp_ops_len; i++) {
 		uint64_t avg = sp->sp_ops.sp_ops_val[i].so_total_duration /
 			       sp->sp_ops.sp_ops_val[i].so_calls;
-		LOG("%3u %10lu %16lu %16lu %16lu %16lu",
+		LOG("%3u %10s %10lu %16lu %16lu %16lu %16lu",
 		    sp->sp_ops.sp_ops_val[i].so_op,
+		    sp->sp_ops.sp_ops_val[i].so_name,
 		    sp->sp_ops.sp_ops_val[i].so_calls,
 		    sp->sp_ops.sp_ops_val[i].so_errors,
 		    sp->sp_ops.sp_ops_val[i].so_max_duration,

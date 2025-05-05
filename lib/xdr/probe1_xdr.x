@@ -36,6 +36,7 @@ enum stat_stat1 {
 
 struct stat_op1 {
 	unsigned int	so_op;
+	string		so_name<>;
 	unsigned hyper	so_calls;
 	unsigned hyper	so_errors;
 	unsigned hyper	so_max_duration;
