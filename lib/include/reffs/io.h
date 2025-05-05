@@ -239,8 +239,8 @@ void io_conn_update_state(int fd);
 bool io_conn_is_state(int fd, enum conn_state state);
 int io_conn_unregister(int fd);
 void io_conn_cleanup(void);
-const char *conn_state_to_str(enum conn_state state);
-const char *conn_role_to_str(enum conn_role role);
+const char *io_conn_state_to_str(enum conn_state state);
+const char *io_conn_role_to_str(enum conn_role role);
 int io_conn_check_timeouts(time_t timeout_seconds);
 
 int io_socket_close(int fd, int error);

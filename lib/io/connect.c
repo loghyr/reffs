@@ -492,8 +492,8 @@ int io_conn_unregister(int fd)
 	int idx = fd % MAX_CONNECTIONS;
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
 		LOG("Unregistering connection fd=%d (state=%s, role=%s)", fd,
-		    conn_state_to_str(connections[idx]->ci_state),
-		    conn_role_to_str(connections[idx]->ci_role));
+		    io_conn_state_to_str(connections[idx]->ci_state),
+		    io_conn_role_to_str(connections[idx]->ci_role));
 
 		// Mark as unused, but keep the structure for reuse
 		connections[idx]->ci_state = CONN_UNUSED;
@@ -576,7 +576,7 @@ int io_socket_close(int fd, int error)
 }
 
 // Utility function to get connection state as string
-const char *conn_state_to_str(enum conn_state state)
+const char *io_conn_state_to_str(enum conn_state state)
 {
 	switch (state) {
 	case CONN_UNUSED:
@@ -607,7 +607,7 @@ const char *conn_state_to_str(enum conn_state state)
 }
 
 // Helper function to convert role to string
-const char *conn_role_to_str(enum conn_role role)
+const char *io_conn_role_to_str(enum conn_role role)
 {
 	switch (role) {
 	case CONN_ROLE_UNKNOWN:
@@ -649,9 +649,9 @@ void io_conn_dump(int fd)
 	}
 
 	LOG("Connection fd=%d: state=%s, role=%s, peer=%s:%d, local=%s:%d, xid=%u, last_activity=%ld, reads=%d, writes=%d",
-	    fd, conn_state_to_str(conn->ci_state),
-	    conn_role_to_str(conn->ci_role), peer_addr, peer_port, local_addr,
-	    local_port, conn->ci_xid, conn->ci_last_activity,
+	    fd, io_conn_state_to_str(conn->ci_state),
+	    io_conn_role_to_str(conn->ci_role), peer_addr, peer_port,
+	    local_addr, local_port, conn->ci_xid, conn->ci_last_activity,
 	    conn->ci_read_count, conn->ci_write_count);
 }
 
