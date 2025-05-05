@@ -67,6 +67,22 @@ static inline void trace_io_connection_count(int fd, int count,
 			  count);
 }
 
+static inline void trace_io_active_connections(struct conn_info *ci,
+					       char *peer_addr,
+					       uint16_t peer_port,
+					       char *local_addr,
+					       uint16_t local_port, time_t now,
+					       const char *func, int line)
+{
+	reffs_trace_event(
+		REFFS_TRACE_CAT_IO, func, line,
+		"fd=%d state=%s role=%s peer=%s:%d local=%s:%d xid=0x%08x last_activity=%ld reads=%d writes=%d",
+		ci->ci_fd, conn_state_to_str(ci->ci_state),
+		conn_role_to_str(ci->ci_role), peer_addr, peer_port, local_addr,
+		local_port, ci->ci_xid, now - ci->ci_last_activity,
+		ci->ci_read_count, ci->ci_write_count);
+}
+
 static inline void trace_io_connection_state_change(int fd, int old_state,
 						    int new_state,
 						    const char *func, int line)

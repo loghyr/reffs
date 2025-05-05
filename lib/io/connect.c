@@ -663,35 +663,34 @@ void io_conn_dump_all(void)
 	LOG("=== Active Connections ===");
 	int active_count = 0;
 
+	time_t now = time(NULL);
+
 	for (int i = 0; i < MAX_CONNECTIONS; i++) {
 		if (connections[i] && connections[i]->ci_state != CONN_UNUSED) {
 			active_count++;
-			struct conn_info *conn = connections[i];
+			struct conn_info *ci = connections[i];
 
 			char peer_addr[INET6_ADDRSTRLEN] = { 0 };
 			char local_addr[INET6_ADDRSTRLEN] = { 0 };
 			uint16_t peer_port = 0, local_port = 0;
 
-			if (conn->ci_peer_len > 0) {
+			if (ci->ci_peer_len > 0) {
 				addr_to_string((const struct sockaddr_storage
-							*)&conn->ci_peer,
+							*)&ci->ci_peer,
 					       peer_addr, INET6_ADDRSTRLEN,
 					       &peer_port);
 			}
 
-			if (conn->ci_local_len > 0) {
+			if (ci->ci_local_len > 0) {
 				addr_to_string((const struct sockaddr_storage
-							*)&conn->ci_local,
+							*)&ci->ci_local,
 					       local_addr, INET6_ADDRSTRLEN,
 					       &local_port);
 			}
 
-			LOG("[%d] fd=%d: state=%s, role=%s, peer=%s:%d, local=%s:%d, xid=%u, last_activity=%ld, reads=%d, writes=%d",
-			    i, conn->ci_fd, conn_state_to_str(conn->ci_state),
-			    conn_role_to_str(conn->ci_role), peer_addr,
-			    peer_port, local_addr, local_port, conn->ci_xid,
-			    time(NULL) - conn->ci_last_activity,
-			    conn->ci_read_count, conn->ci_write_count);
+			trace_io_active_connections(ci, peer_addr, peer_port,
+						    local_addr, local_port, now,
+						    __func__, __LINE__);
 		}
 	}
 
