@@ -250,6 +250,8 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 		hb_state.last_connection_check = now;
 	}
 
+	io_conn_dump_all();
+
 	// We should destroy the context here only if it wasn't already handled
 	// by the main error handler
 	if (result == 0) {
