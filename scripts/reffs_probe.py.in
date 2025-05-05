@@ -53,7 +53,7 @@ def stats_gather(client, args):
     res = client.stats_gather(args.program, args.version)
     probe_error_handler(res.psgr_status)
 
-    sp = res.STATS_GATHER1res_u.psgr_resok.psgr_program
+    sp = res.psgr_resok.psgr_program
 
     print('Reply Errors = {}'.format(sp.sp_replied_errors))
     print('Reject Errors = {}'.format(sp.sp_rejected_errors))
@@ -73,7 +73,7 @@ def context(client, args):
     res = client.context()
     probe_error_handler(res.pcr_status)
 
-    resok = res.CONTEXT1res_u.pcr_resok
+    resok = res.pcr_resok
 
     print('Created = {}'.format(resok.pcr_created))
     print('Freed = {}'.format(resok.pcr_freed))

@@ -812,21 +812,24 @@ class ConnectionHandler(object):
         """
         log_t.info("Called connect(%r)" % (address,))
         host, port = address
-        err = None
+        s = None
         for res in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM):
             af, socktype, proto, cannonname, sa = res
-            sock = None
             try:
                 s = socket.socket(af, socktype, proto)
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 if secure:
                     self.bindsocket(s)
                 s.connect(sa)
-                err = None
-                break
+                break  # Successfully connected
             except:
                 if s is not None:
                     s.close()
+                    s = None
+
+        # Check if we successfully connected to any address
+        if s is None:
+            raise socket.error("Could not connect to any of the addresses for %s:%s" % (host, port))
 
         s.setblocking(0)
         pipe = RpcPipe(s, self._alarm)
