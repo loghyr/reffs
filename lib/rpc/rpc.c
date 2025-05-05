@@ -499,6 +499,8 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 
 	assert(rt->rt_offset == rt->rt_reply_len);
 
+	LOG("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
+
 	// rpc_log_packet("  ", rt->rt_reply, rt->rt_reply_len);
 
 	return 0;
@@ -545,6 +547,8 @@ int rpc_process_task(struct task *t)
 	}
 
 	if (rt->rt_info.ri_type) {
+		LOG("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
+
 		struct rpc_trans *rt_old =
 			io_find_request_by_xid(rt->rt_info.ri_xid);
 		if (!rt_old)

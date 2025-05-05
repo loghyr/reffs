@@ -741,6 +741,8 @@ int io_send_request(struct rpc_trans *rt)
 {
 	int ret;
 
+	LOG("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
+
 	// Register the request for tracking
 	ret = io_register_request(rt);
 	if (ret)

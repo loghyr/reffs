@@ -62,9 +62,11 @@ int io_register_request(struct rpc_trans *rt)
 {
 	pthread_mutex_lock(&request_mutex);
 
+	LOG("rt=%p xid=0x%08x", (void *)rt, rt->rt_info.ri_xid);
 	// Find an empty slot
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] == NULL) {
+			LOG("rt=%p xid=0x%08x", (void *)rt, rt->rt_info.ri_xid);
 			pending_requests[i] = rt;
 			pthread_mutex_unlock(&request_mutex);
 			return 0;
@@ -80,10 +82,13 @@ struct rpc_trans *io_find_request_by_xid(uint32_t xid)
 {
 	struct rpc_trans *rt = NULL;
 
+	LOG("xid=0x%08x", xid);
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] &&
 		    pending_requests[i]->rt_info.ri_xid == xid) {
+			LOG("rt=%p xid=0x%08x", (void *)pending_requests[i],
+			    xid);
 			rt = pending_requests[i];
 			break;
 		}
@@ -95,10 +100,13 @@ struct rpc_trans *io_find_request_by_xid(uint32_t xid)
 
 int io_unregister_request(uint32_t xid)
 {
+	LOG("xid=0x%08x", xid);
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] &&
 		    pending_requests[i]->rt_info.ri_xid == xid) {
+			LOG("rt=%p xid=0x%08x", (void *)pending_requests[i],
+			    xid);
 			pending_requests[i] = NULL;
 			return 0;
 		}
@@ -157,6 +165,8 @@ static int setup_io_uring(struct io_uring *ring)
 
 int io_handler_init(struct io_uring *ring)
 {
+	LOG();
+
 	// Initialize pending requests array
 	memset(conn_buffers, 0, sizeof(conn_buffers));
 
