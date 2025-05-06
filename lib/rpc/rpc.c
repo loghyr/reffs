@@ -43,6 +43,11 @@ static void rpc_program_handler_free_rcu(struct rcu_head *rcu)
 	struct rpc_program_handler *rph =
 		caa_container_of(rcu, struct rpc_program_handler, rph_rcu);
 
+	for (size_t i = 0; i < rph->rph_ops_len; i++) {
+		free(rph->rph_ops[i].roh_stats.rs_histogram);
+		rph->rph_ops[i].roh_stats.rs_histogram = NULL;
+	}
+
 	free(rph);
 }
 
@@ -61,7 +66,7 @@ static void rpc_program_handler_release(struct urcu_ref *ref)
 
 struct rpc_program_handler *
 rpc_program_handler_alloc(uint32_t program, uint32_t version,
-			  struct rpc_operations_handler *ops, size_t ops_len)
+			  struct rpc_operations_handler *roh, size_t roh_len)
 {
 	struct rpc_program_handler *rph;
 
@@ -79,12 +84,17 @@ rpc_program_handler_alloc(uint32_t program, uint32_t version,
 
 	rph->rph_program = program;
 	rph->rph_version = version;
-	rph->rph_ops = ops;
-	rph->rph_ops_len = ops_len;
+	rph->rph_ops = roh;
+	rph->rph_ops_len = roh_len;
 
 	urcu_ref_init(&rph->rph_ref);
 	__atomic_fetch_or(&rph->rph_flags, RPH_IN_LIST, __ATOMIC_RELEASE);
 	cds_list_add_rcu(&rph->rph_list, &rpc_program_handler_list);
+
+	for (size_t i = 0; i < roh_len; i++) {
+		hdr_init(1, INT64_C(3600000000000), 3,
+			 &roh[i].roh_stats.rs_histogram);
+	}
 
 	return rph;
 }
@@ -125,6 +135,51 @@ void rpc_program_handler_put(struct rpc_program_handler *rph)
 		return;
 
 	urcu_ref_put(&rph->rph_ref, rpc_program_handler_release);
+}
+
+static void update_max_duration_rcu(uint64_t duration_ns,
+				    struct rpc_operations_handler *roh)
+{
+	uint64_t old_max;
+
+	__atomic_load(&roh->roh_stats.rs_duration_max, &old_max,
+		      __ATOMIC_RELAXED);
+
+	if (duration_ns > old_max) {
+		// Keep trying until either we succeed or someone else updates to larger value
+		while (1) {
+			uint64_t expected = old_max;
+			uint64_t desired = duration_ns;
+			bool success = __atomic_compare_exchange(
+				&roh->roh_stats.rs_duration_max, &expected,
+				&desired, 0, __ATOMIC_RELAXED,
+				__ATOMIC_RELAXED);
+
+			if (success)
+				break;
+
+			old_max = expected;
+
+			if (duration_ns <= old_max)
+				break;
+		}
+	}
+}
+
+static void rpc_record_operation_stats(struct rpc_operations_handler *roh,
+				       int64_t duration_ns, int ret)
+{
+	update_max_duration_rcu(duration_ns, roh);
+
+	__atomic_add_fetch(&roh->roh_stats.rs_calls, 1, __ATOMIC_RELAXED);
+
+	__atomic_add_fetch(&roh->roh_stats.rs_duration_total, duration_ns,
+			   __ATOMIC_RELAXED);
+	if (ret)
+		__atomic_fetch_add(&roh->roh_stats.rs_fails, 1,
+				   __ATOMIC_RELAXED);
+
+	hdr_record_value(roh->roh_stats.rs_histogram, duration_ns);
 }
 
 static int rpc_parse_call_data(struct rpc_trans *rt)
@@ -208,35 +263,6 @@ int rpc_protocol_allocate_call(struct rpc_trans *rt)
 	return ENOENT;
 }
 
-static void update_max_duration_rcu(uint64_t duration_ns,
-				    struct protocol_handler *ph)
-{
-	uint64_t old_max;
-
-	__atomic_load(&ph->ph_op_handler->roh_duration_max, &old_max,
-		      __ATOMIC_RELAXED);
-
-	if (duration_ns > old_max) {
-		// Keep trying until either we succeed or someone else updates to larger value
-		while (1) {
-			uint64_t expected = old_max;
-			uint64_t desired = duration_ns;
-			bool success = __atomic_compare_exchange(
-				&ph->ph_op_handler->roh_duration_max, &expected,
-				&desired, 0, __ATOMIC_RELAXED,
-				__ATOMIC_RELAXED);
-
-			if (success)
-				break;
-
-			old_max = expected;
-
-			if (duration_ns <= old_max)
-				break;
-		}
-	}
-}
-
 void rpc_log_packet(const char *prefix, const void *data, size_t len)
 {
 	const unsigned char *bytes = (const unsigned char *)data;
@@ -275,20 +301,7 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 		duration_ns = (end.tv_sec - start.tv_sec) * 1000000000ULL +
 			      (end.tv_nsec - start.tv_nsec);
 
-		uint64_t calls = __atomic_add_fetch(
-			&ph->ph_op_handler->roh_calls, 1, __ATOMIC_RELAXED);
-		uint64_t duration_total = __atomic_add_fetch(
-			&ph->ph_op_handler->roh_duration_total, duration_ns,
-			__ATOMIC_RELAXED);
-		if (ret)
-			__atomic_fetch_add(&ph->ph_op_handler->roh_fails, 1,
-					   __ATOMIC_RELAXED);
-
-		update_max_duration_rcu(duration_ns, ph);
-
-		uint64_t avg_duration = duration_total / calls;
-
-		trace_rpc_duration(rt, duration_ns, avg_duration);
+		rpc_record_operation_stats(ph->ph_op_handler, duration_ns, ret);
 	} else {
 		rt->rt_info.ri_accept_stat = PROG_UNAVAIL;
 	}

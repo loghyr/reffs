@@ -55,6 +55,73 @@ def probe_null(client, args):
     print("Null procedure completed successfully")
 
 
+def print_stats(sp, args):
+    print(f'{"OP":<10} {"Name":<15} {"Calls":<10} {"Errors":<10} {"Max Duration":<15} {"Total Duration":<15} {"Average Duration":<15}')
+
+    for so in sorted(sp.sp_ops, key=lambda so: so.so_op):
+        if so.so_calls:
+            avg_dur = so.so_total_duration / so.so_calls
+        else:
+            avg_dur = 0
+        print(f'{so.so_op:<10} {so.so_name.decode():<15} {so.so_calls:<10} {so.so_errors:<10} {so.so_max_duration:<15} {so.so_total_duration:<15} {avg_dur:<15}')
+
+    if args.histogram:
+        print("\n--- Histogram Data (Counts) ---")
+        print(f"\n{'OP':<5} {'Name':<15} {'<1ms':<10} {'1-10ms':<10} {'10-100ms':<10} {'100ms-1s':<10} {'1-10s':<10} {'≥10s':<10}")
+
+        for so in sorted(sp.sp_ops, key=lambda so: so.so_op):
+            if so.so_calls > 0:  # Only show operations that were called
+                print(f'{so.so_op:<5} '
+                      f'{so.so_name.decode():<15} '
+                      f'{so.so_bucket_1ms:<10} '
+                      f'{so.so_bucket_10ms:<10} '
+                      f'{so.so_bucket_100ms:<10} '
+                      f'{so.so_bucket_1s:<10} '
+                      f'{so.so_bucket_10s:<10} '
+                      f'{so.so_bucket_rest:<10}')
+
+    if args.percentages:
+        print("\n--- Histogram Data (Percentages) ---")
+        print(f"\n{'OP':<5} {'Name':<15} {'<1ms':<10} {'1-10ms':<10} {'10-100ms':<10} {'100ms-1s':<10} {'1-10s':<10} {'≥10s':<10}")
+
+        for so in sorted(sp.sp_ops, key=lambda so: so.so_op):
+            if so.so_calls > 0:  # Only show operations that were called
+                total = so.so_calls
+
+                # Calculate percentages
+                pct_1ms = (so.so_bucket_1ms / total) * 100
+                pct_10ms = (so.so_bucket_10ms / total) * 100
+                pct_100ms = (so.so_bucket_100ms / total) * 100
+                pct_1s = (so.so_bucket_1s / total) * 100
+                pct_10s = (so.so_bucket_10s / total) * 100
+                pct_rest = (so.so_bucket_rest / total) * 100
+
+                print(f'{so.so_op:<5} '
+                      f'{so.so_name.decode():<15} '
+                      f'{pct_1ms:6.1f}% '
+                      f'{pct_10ms:6.1f}% '
+                      f'{pct_100ms:6.1f}% '
+                      f'{pct_1s:6.1f}% '
+                      f'{pct_10s:6.1f}% '
+                      f'{pct_rest:6.1f}%')
+
+    if args.histogram or args.percentages:
+        print("\n--- Percentile Statistics (ns) ---")
+        print(f"\n{'OP':<5} {'Name':<15} {'Min':<15} {'Median':<15} {'90th':<15} {'99th':<15} {'99.9th':<15} {'Max':<15} {'Mean':<15}")
+
+        for so in sorted(sp.sp_ops, key=lambda so: so.so_op):
+            if so.so_calls > 0:
+                print(f'{so.so_op:<5} '
+                      f'{so.so_name.decode():<15} '
+                      f'{so.so_min_ns:<15} '
+                      f'{so.so_median_ns:<15} '
+                      f'{so.so_p90_ns:<15} '
+                      f'{so.so_p99_ns:<15} '
+                      f'{so.so_p999_ns:<15} '
+                      f'{so.so_max_ns:<15} '
+                      f'{so.so_mean_ns:<15}')
+
+
 def stats_gather(client, args):
     if args.program_id:
         program_id = args.program_id
@@ -71,15 +138,7 @@ def stats_gather(client, args):
     print(f'Accept Errors = {sp.sp_accepted_errors}')
     print(f'Auth Errors = {sp.sp_authed_errors}')
 
-    # Using fixed-width fields for better alignment
-    print(f'{"OP":<10} {"Name":<15} {"Calls":<10} {"Errors":<10} {"Max Duration":<15} {"Total Duration":<15} {"Average Duration":<15}')
-
-    for so in sorted(sp.sp_ops, key=lambda so: so.so_op):
-        if so.so_calls:
-            avg_dur = so.so_total_duration / so.so_calls
-        else:
-            avg_dur = 0
-        print(f'{so.so_op:<10} {so.so_name.decode():<15} {so.so_calls:<10} {so.so_errors:<10} {so.so_max_duration:<15} {so.so_total_duration:<15} {avg_dur:<15}')
+    print_stats(sp, args)
 
 
 def context(client, args):
@@ -142,7 +201,18 @@ def parse_args():
                           required=True,
                           type=int,
                           help='Program version to gather stats')
-    p_gather.set_defaults(func=stats_gather)
+
+    p_gather.add_argument('--histogram',
+                          dest='histogram',
+                          action='store_true',
+                          help='Display the histogram (default is not to show)')
+
+    p_gather.add_argument('--percentages',
+                          dest='percentages',
+                          action='store_true',
+                          help='Display histogram data as percentages (default is not to show)')
+
+    p_gather.set_defaults(func=stats_gather, histogram=False)
 
     p_context = subparsers.add_parser('context',
                                       help='Get the context stats')

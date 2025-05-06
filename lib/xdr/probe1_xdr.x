@@ -41,6 +41,19 @@ struct stat_op1 {
 	unsigned hyper	so_errors;
 	unsigned hyper	so_max_duration;
 	unsigned hyper	so_total_duration;
+	unsigned hyper	so_bucket_1ms;
+	unsigned hyper	so_bucket_10ms;
+	unsigned hyper	so_bucket_100ms;
+	unsigned hyper	so_bucket_1s;
+	unsigned hyper	so_bucket_10s;
+	unsigned hyper	so_bucket_rest;
+	unsigned hyper	so_median_ns;
+	unsigned hyper	so_p90_ns;
+	unsigned hyper	so_p99_ns;
+	unsigned hyper	so_p999_ns;
+	unsigned hyper	so_min_ns;
+	unsigned hyper	so_max_ns;
+	unsigned hyper	so_mean_ns;
 };
 
 struct stat_program1 {

@@ -14,6 +14,7 @@ AM_CFLAGS = \
 	$(ZLIB_CFLAGS)			\
 	$(URING_CFLAGS)			\
 	$(PTHREAD_CFLAGS)		\
+	$(HDR_HISTOGRAM_CFLAGS)		\
 	$(JEMALLOC_FLAGS)
 
 LDADD = \
@@ -35,6 +36,7 @@ LDADD = \
 	$(ZLIB_LIBS)					\
 	$(URING_LIBS)					\
 	$(FUSE_LIBS)					\
+	$(HDR_HISTOGRAM_LIBS)				\
 	$(JEMALLOC_LIBS)
 
 recho_ev_SOURCES = recho_ev.c

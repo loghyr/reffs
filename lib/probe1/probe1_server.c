@@ -33,6 +33,49 @@
 #include "reffs/probe1.h"
 #include "reffs/trace/rpc.h"
 
+#define BUCKET_COUNT 5
+static const int64_t rpc_bucket_boundaries[BUCKET_COUNT] = {
+	1000000, // 1ms
+	10000000, // 10ms
+	100000000, // 100ms
+	1000000000, // 1s
+	10000000000 // 10s
+	// Last bucket is >=10s
+};
+
+void calculate_bucket_counts(struct hdr_histogram *hh, int64_t *counts)
+{
+	struct hdr_iter iter;
+
+	// Initialize all counts to 0
+	for (int i = 0; i <= BUCKET_COUNT; i++) {
+		counts[i] = 0;
+	}
+
+	// Initialize iterator to go through all values
+	hdr_iter_init(&iter, hh);
+
+	// Iterate through all values and add them to the appropriate bucket
+	while (hdr_iter_next(&iter)) {
+		int64_t value = iter.value;
+		int64_t count = iter.count;
+
+		// Determine which bucket this value belongs to
+		int bucket_index =
+			BUCKET_COUNT; // Default to the last bucket (≥10s)
+
+		for (int i = 0; i < BUCKET_COUNT; i++) {
+			if (value < rpc_bucket_boundaries[i]) {
+				bucket_index = i;
+				break;
+			}
+		}
+
+		// Add the count to the appropriate bucket
+		counts[bucket_index] += count;
+	}
+}
+
 static int probe1_op_null(struct rpc_trans __attribute__((unused)) * rt)
 {
 	return 0;
@@ -45,6 +88,8 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 	STATS_GATHER1res *res = ph->ph_res;
 	STATS_GATHER1resok *resok = &res->STATS_GATHER1res_u.psgr_resok;
 	stat_program1 *sp = &resok->psgr_program;
+
+	int64_t counts[BUCKET_COUNT + 1]; // +1 for the >=10s bucket
 
 	struct rpc_program_handler *rph = rpc_program_handler_find(
 		args->psga_program, args->psga_version);
@@ -78,18 +123,42 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 		__atomic_load(&rph->rph_ops[i].roh_operation,
 			      &sp->sp_ops.sp_ops_val[i].so_op,
 			      __ATOMIC_RELAXED);
-		__atomic_load(&rph->rph_ops[i].roh_calls,
+		__atomic_load(&rph->rph_ops[i].roh_stats.rs_calls,
 			      &sp->sp_ops.sp_ops_val[i].so_calls,
 			      __ATOMIC_RELAXED);
-		__atomic_load(&rph->rph_ops[i].roh_fails,
+		__atomic_load(&rph->rph_ops[i].roh_stats.rs_fails,
 			      &sp->sp_ops.sp_ops_val[i].so_errors,
 			      __ATOMIC_RELAXED);
-		__atomic_load(&rph->rph_ops[i].roh_duration_max,
+		__atomic_load(&rph->rph_ops[i].roh_stats.rs_duration_max,
 			      &sp->sp_ops.sp_ops_val[i].so_max_duration,
 			      __ATOMIC_RELAXED);
-		__atomic_load(&rph->rph_ops[i].roh_duration_total,
+		__atomic_load(&rph->rph_ops[i].roh_stats.rs_duration_total,
 			      &sp->sp_ops.sp_ops_val[i].so_total_duration,
 			      __ATOMIC_RELAXED);
+
+		struct hdr_histogram *hh =
+			rph->rph_ops[i].roh_stats.rs_histogram;
+		calculate_bucket_counts(hh, counts);
+
+		sp->sp_ops.sp_ops_val[i].so_bucket_1ms = counts[0];
+		sp->sp_ops.sp_ops_val[i].so_bucket_10ms = counts[1];
+		sp->sp_ops.sp_ops_val[i].so_bucket_100ms = counts[2];
+		sp->sp_ops.sp_ops_val[i].so_bucket_1s = counts[3];
+		sp->sp_ops.sp_ops_val[i].so_bucket_10s = counts[4];
+		sp->sp_ops.sp_ops_val[i].so_bucket_rest = counts[5];
+
+		sp->sp_ops.sp_ops_val[i].so_median_ns =
+			hdr_value_at_percentile(hh, 50.0);
+		sp->sp_ops.sp_ops_val[i].so_p90_ns =
+			hdr_value_at_percentile(hh, 90.0);
+		sp->sp_ops.sp_ops_val[i].so_p99_ns =
+			hdr_value_at_percentile(hh, 99.0);
+		sp->sp_ops.sp_ops_val[i].so_p999_ns =
+			hdr_value_at_percentile(hh, 99.9);
+
+		sp->sp_ops.sp_ops_val[i].so_min_ns = hdr_min(hh);
+		sp->sp_ops.sp_ops_val[i].so_max_ns = hdr_max(hh);
+		sp->sp_ops.sp_ops_val[i].so_mean_ns = hdr_mean(hh);
 	}
 
 out:

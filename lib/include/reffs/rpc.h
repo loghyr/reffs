@@ -23,6 +23,8 @@
 
 #include <liburing.h>
 
+#include <hdr/hdr_histogram.h>
+
 #include "reffs/network.h"
 #include "reffs/log.h"
 #include "reffs/task.h"
@@ -69,6 +71,14 @@ struct rpc_trans {
 	char *rt_addr_str;
 };
 
+struct rpc_stats {
+	struct hdr_histogram *rs_histogram;
+	uint64_t rs_duration_max;
+	uint64_t rs_duration_total;
+	uint64_t rs_calls;
+	uint64_t rs_fails;
+};
+
 /*
  * The per protocol operation handler.
  */
@@ -81,10 +91,7 @@ struct rpc_operations_handler {
 	size_t roh_res_size; // The size of the base res structure
 	int (*roh_action)(
 		struct rpc_trans *rt); // The protocol handler for calls
-	uint64_t roh_duration_max;
-	uint64_t roh_duration_total;
-	uint64_t roh_calls;
-	uint64_t roh_fails;
+	struct rpc_stats roh_stats;
 };
 
 /*

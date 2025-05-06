@@ -34,6 +34,7 @@ BuildRequires: bear
 BuildRequires: clang-tidy
 BuildRequires: scan-build
 BuildRequires: zlib-devel
+BuildRequires: HdrHistogram_c-devel >= 0.9.13
 
 Requires: check
 Requires: fuse
@@ -44,6 +45,7 @@ Requires: libuuid
 Requires: pthreads
 Requires: userspace-rcu
 Requires: xxhash
+Requires: HdrHistogram_c >= 0.9.13
 
 Buildroot: %{_tmppath}/%{name}-root
 

@@ -289,6 +289,10 @@ else
         UBSAN_ENABLED=0
 fi
 
+# Check for HdrHistogram_c
+AC_CHECK_HEADERS([hdr/hdr_histogram.h], [], [AC_MSG_ERROR([hdr_histogram.h not found. Please install HdrHistogram_c-devel])])
+AC_CHECK_LIB([hdr_histogram], [hdr_init], [], [AC_MSG_ERROR([libhdr_histogram not found. Please install HdrHistogram_c])])
+
 AC_ARG_ENABLE([debug],
     [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
     [enable_debug=$enableval], [enable_debug=no])
