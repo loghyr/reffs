@@ -14,6 +14,7 @@ AM_CFLAGS = \
 	$(ZLIB_CFLAGS)			\
 	$(URING_CFLAGS)			\
 	$(PTHREAD_CFLAGS)		\
+	$(OPENSSL_CFLAGS)		\
 	$(HDR_HISTOGRAM_CFLAGS)		\
 	$(JEMALLOC_FLAGS)
 
@@ -36,6 +37,7 @@ LDADD = \
 	$(ZLIB_LIBS)					\
 	$(URING_LIBS)					\
 	$(FUSE_LIBS)					\
+	$(OPENSSL_LIBS)					\
 	$(HDR_HISTOGRAM_LIBS)				\
 	$(JEMALLOC_LIBS)
 

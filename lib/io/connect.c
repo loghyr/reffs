@@ -484,6 +484,24 @@ bool io_conn_is_state(int fd, enum conn_state state)
 	return result;
 }
 
+void io_conn_destroy(struct conn_info *ci)
+{
+	if (!ci)
+		return;
+
+	// Clean up SSL if present
+	if (ci->ci_ssl) {
+		SSL_shutdown(ci->ci_ssl);
+		SSL_free(ci->ci_ssl);
+		ci->ci_ssl = NULL;
+	}
+	ci->ci_tls_enabled = false;
+	ci->ci_tls_handshaking = false;
+
+	// Free the connection structure itself
+	free(ci);
+}
+
 // Unregister a connection
 int io_conn_unregister(int fd)
 {
@@ -495,6 +513,14 @@ int io_conn_unregister(int fd)
 		LOG("Unregistering connection fd=%d (state=%s, role=%s)", fd,
 		    io_conn_state_to_str(connections[idx]->ci_state),
 		    io_conn_role_to_str(connections[idx]->ci_role));
+
+		if (connections[idx]->ci_ssl) {
+			SSL_shutdown(connections[idx]->ci_ssl);
+			SSL_free(connections[idx]->ci_ssl);
+			connections[idx]->ci_ssl = NULL;
+			connections[idx]->ci_tls_enabled = false;
+			connections[idx]->ci_tls_handshaking = false;
+		}
 
 		// Mark as unused, but keep the structure for reuse
 		connections[idx]->ci_state = CONN_UNUSED;
@@ -550,6 +576,12 @@ void io_conn_cleanup(void)
 
 	for (int i = 0; i < MAX_CONNECTIONS; i++) {
 		if (connections[i]) {
+			if (connections[i]->ci_ssl) {
+				SSL_shutdown(connections[i]->ci_ssl);
+				SSL_free(connections[i]->ci_ssl);
+				connections[i]->ci_ssl = NULL;
+			}
+
 			free(connections[i]);
 			connections[i] = NULL;
 		}

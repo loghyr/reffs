@@ -35,6 +35,7 @@ BuildRequires: clang-tidy
 BuildRequires: scan-build
 BuildRequires: zlib-devel
 BuildRequires: HdrHistogram_c-devel >= 0.9.13
+BuildRequires: openssl-devel >= 1.0.2
 
 Requires: check
 Requires: fuse
@@ -46,6 +47,7 @@ Requires: pthreads
 Requires: userspace-rcu
 Requires: xxhash
 Requires: HdrHistogram_c >= 0.9.13
+Requires: openssl >= 1.0.2
 
 Buildroot: %{_tmppath}/%{name}-root
 

@@ -218,6 +218,89 @@ static int rpc_parse_call_data(struct rpc_trans *rt)
 	return 0;
 }
 
+static int send_auth_tls_response(struct rpc_trans *rt)
+{
+	uint32_t msg_len;
+	uint32_t *p;
+
+	// Calculate reply size (include space for STARTTLS verifier)
+	size_t verifier_len =
+		strlen(STARTTLS_VERIFIER) + 1; // +1 for null terminator
+
+	// Align to 4-byte boundary if needed
+	size_t aligned_verifier_len = (verifier_len + 3) & ~3;
+
+	rt->rt_reply_len = 7 * sizeof(uint32_t) + aligned_verifier_len;
+	msg_len = rt->rt_reply_len - sizeof(uint32_t);
+
+	// Allocate memory for reply
+	rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
+	if (!rt->rt_reply) {
+		return ENOMEM;
+	}
+
+	p = (uint32_t *)rt->rt_reply;
+
+	// Record marker
+	p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
+	if (!p)
+		goto error;
+
+	// XID
+	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
+	if (!p)
+		goto error;
+
+	// Reply type (1 for reply)
+	p = rpc_encode_uint32_t(rt, p, 1);
+	if (!p)
+		goto error;
+
+	// Reply stat (0 for MSG_ACCEPTED)
+	p = rpc_encode_uint32_t(rt, p, 0);
+	if (!p)
+		goto error;
+
+	// AUTH_NONE verifier flavor
+	p = rpc_encode_uint32_t(rt, p, AUTH_NONE);
+	if (!p)
+		goto error;
+
+	// Verifier length
+	p = rpc_encode_uint32_t(rt, p, verifier_len);
+	if (!p)
+		goto error;
+
+	// Copy STARTTLS verifier
+	memcpy(p, STARTTLS_VERIFIER, verifier_len);
+
+	// Update position past verifier (with alignment)
+	p = (uint32_t *)((char *)p + aligned_verifier_len);
+
+	// SUCCESS accept_stat
+	p = rpc_encode_uint32_t(rt, p, 0);
+	if (!p)
+		goto error;
+
+	// Update the offset
+	rt->rt_offset = rt->rt_reply_len;
+
+	LOG("Sending STARTTLS response for fd=%d xid=0x%08x", rt->rt_fd,
+	    rt->rt_info.ri_xid);
+
+	// Send the response via callback
+	if (rt->rt_ring && rt->rt_cb) {
+		rt->rt_cb(rt);
+	}
+
+	return 0;
+
+error:
+	free(rt->rt_reply);
+	rt->rt_reply = NULL;
+	return EINVAL;
+}
+
 int rpc_protocol_allocate_call(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -695,10 +778,10 @@ int rpc_process_task(struct task *t)
 		goto handle_rpc_error;
 	}
 
+	uint32_t verifier_len;
 	switch (rt->rt_info.ri_verifier_flavor) {
 	case AUTH_NONE: {
-		uint32_t len;
-		p = rpc_decode_uint32_t(rt, p, &len);
+		p = rpc_decode_uint32_t(rt, p, &verifier_len);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
 			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
@@ -719,6 +802,38 @@ int rpc_process_task(struct task *t)
 	}
 
 	trace_rpc_task(rt, __func__, __LINE__);
+
+	if (rt->rt_info.ri_cred.rc_flavor == AUTH_TLS &&
+	    rt->rt_info.ri_procedure == 0) {
+		LOG("AUTH_TLS probe detected on fd=%d, xid=0x%08x", rt->rt_fd,
+		    rt->rt_info.ri_xid);
+
+		if (verifier_len != 8 ||
+		    memcmp(p, STARTTLS_VERIFIER, strlen(STARTTLS_VERIFIER))) {
+			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
+			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+					   __ATOMIC_RELAXED);
+			goto handle_rpc_error;
+		}
+
+		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
+		rt->rt_info.ri_accept_stat = SUCCESS;
+
+		// Send STARTTLS response
+		ret = send_auth_tls_response(rt);
+
+		// Mark connection as waiting for TLS handshake
+		struct conn_info *ci = io_conn_get(rt->rt_fd);
+		if (ci) {
+			ci->ci_tls_handshaking = true;
+		}
+
+		rpc_program_handler_put(rph);
+
+		// Don't continue with regular RPC processing
+		rpc_protocol_free(rt);
+		return ret;
+	}
 
 	ret = rpc_protocol_allocate_call(rt);
 	if (!ret)

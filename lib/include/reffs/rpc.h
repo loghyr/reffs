@@ -28,6 +28,7 @@
 #include "reffs/network.h"
 #include "reffs/log.h"
 #include "reffs/task.h"
+#include "reffs/tls.h"
 
 struct rpc_cred {
 	uint32_t rc_flavor;

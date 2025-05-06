@@ -293,6 +293,14 @@ fi
 AC_CHECK_HEADERS([hdr/hdr_histogram.h], [], [AC_MSG_ERROR([hdr_histogram.h not found. Please install HdrHistogram_c-devel])])
 AC_CHECK_LIB([hdr_histogram], [hdr_init], [], [AC_MSG_ERROR([libhdr_histogram not found. Please install HdrHistogram_c])])
 
+# Check for OpenSSL
+PKG_CHECK_MODULES([OPENSSL], [openssl >= 1.0.2], [],
+    [AC_MSG_ERROR([OpenSSL 1.0.2 or higher required])])
+
+# Add OpenSSL flags to CFLAGS and LDFLAGS
+AC_SUBST([OPENSSL_CFLAGS])
+AC_SUBST([OPENSSL_LIBS])
+
 AC_ARG_ENABLE([debug],
     [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
     [enable_debug=$enableval], [enable_debug=no])

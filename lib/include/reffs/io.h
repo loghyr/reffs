@@ -18,6 +18,7 @@
 
 #include "reffs/task.h"
 #include "reffs/network.h"
+#include "reffs/tls.h"
 
 // Maximum size for a single write
 #define IO_MAX_WRITE_SIZE (1024 * 1024)
@@ -135,6 +136,9 @@ struct conn_info {
 	struct sockaddr_storage ci_local; // Local address
 	socklen_t ci_local_len; // Local address length
 	uint32_t ci_xid; // Associated XID
+	bool ci_tls_enabled;
+	bool ci_tls_handshaking;
+	SSL *ci_ssl;
 	int ci_error; // Last error code
 	int ci_read_count; // Number of pending read operations
 	int ci_write_count; // Number of pending write operations

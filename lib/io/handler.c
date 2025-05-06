@@ -179,6 +179,10 @@ int io_handler_init(struct io_uring *ring)
 	if (io_context_init())
 		return -1;
 
+	SSL_library_init();
+	OpenSSL_add_all_algorithms();
+	SSL_load_error_strings();
+
 	io_conn_init();
 
 	return 0;

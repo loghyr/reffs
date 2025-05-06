@@ -27,4 +27,5 @@ reffsinclude_HEADERS = \
 	task.h \
 	test.h \
 	time.h \
+	tls.h \
 	types.h

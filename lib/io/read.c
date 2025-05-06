@@ -33,6 +33,153 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
+// Function to detect a TLS ClientHello
+static bool is_tls_client_hello(const unsigned char *buf, size_t len)
+{
+	// Minimum TLS record is 5 bytes (header) + data
+	if (len < 6)
+		return false;
+
+	// Check TLS record header:
+	// Byte 0: Content type (22 for handshake)
+	// Bytes 1-2: TLS version (0x03 0x01/0x03/etc. for TLS)
+	// Handshake type (after record header 5 bytes) should be 1 for ClientHello
+	return (buf[0] == REFFS_TLS_HANDSHAKE &&
+		buf[1] == REFFS_TLS_MAJOR_VERSION &&
+		buf[5] == 0x01); // Handshake type 1 = ClientHello
+}
+
+// Function to handle the TLS handshake
+static int handle_tls_handshake(int fd, const void *data, size_t len)
+{
+	struct conn_info *ci = io_conn_get(fd);
+	if (!ci) {
+		LOG("Connection not tracked for fd=%d", fd);
+		return ENOTCONN;
+	}
+
+	// Initialize TLS if not already done
+	if (io_tls_init_server_context() != 0) {
+		LOG("Failed to initialize TLS context");
+		return EINVAL;
+	}
+
+	// If handshake already in progress, use existing SSL object
+	if (ci->ci_tls_handshaking && ci->ci_ssl) {
+		// Feed the data to SSL
+		BIO *rbio = SSL_get_rbio(ci->ci_ssl);
+		BIO_write(rbio, data, len);
+
+		// Try to continue the handshake
+		int ret = SSL_accept(ci->ci_ssl);
+		if (ret <= 0) {
+			int ssl_err = SSL_get_error(ci->ci_ssl, ret);
+			if (ssl_err == SSL_ERROR_WANT_READ ||
+			    ssl_err == SSL_ERROR_WANT_WRITE) {
+				// Need more data
+				LOG("TLS handshake continuing for fd=%d, need more data",
+				    fd);
+				return 0;
+			}
+
+			// Handshake failed
+			char err_buf[256];
+			ERR_error_string_n(ERR_get_error(), err_buf,
+					   sizeof(err_buf));
+			LOG("TLS handshake failed for fd=%d: %s", fd, err_buf);
+
+			SSL_free(ci->ci_ssl);
+			ci->ci_ssl = NULL;
+			ci->ci_tls_handshaking = false;
+			return EINVAL;
+		}
+
+		// Handshake complete
+		ci->ci_tls_enabled = true;
+		ci->ci_tls_handshaking = false;
+
+		LOG("TLS handshake completed for fd=%d", fd);
+
+		// Check for kTLS support
+#ifdef BIO_get_ktls_send
+		int ktls_send = BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
+		int ktls_recv = BIO_get_ktls_recv(SSL_get_rbio(ci->ci_ssl));
+		LOG("kTLS status for fd=%d: send=%d, recv=%d", fd, ktls_send,
+		    ktls_recv);
+#endif
+
+		return 0;
+	}
+
+	// Create a new SSL structure for this connection
+	SSL *ssl = SSL_new(reffs_server_ssl_ctx);
+	if (!ssl) {
+		LOG("Failed to create SSL for fd=%d", fd);
+		return EINVAL;
+	}
+
+	// Set the file descriptor for SSL I/O
+	if (SSL_set_fd(ssl, fd) != 1) {
+		LOG("Failed to set fd for SSL");
+		SSL_free(ssl);
+		return EINVAL;
+	}
+
+	// Create memory BIOs for I/O
+	BIO *rbio = BIO_new(BIO_s_mem());
+	BIO *wbio = BIO_new(BIO_s_mem());
+
+	if (!rbio || !wbio) {
+		if (rbio)
+			BIO_free(rbio);
+		if (wbio)
+			BIO_free(wbio);
+		SSL_free(ssl);
+		LOG("Failed to create memory BIOs");
+		return EINVAL;
+	}
+
+	// Set BIOs for SSL
+	SSL_set_bio(ssl, rbio, wbio);
+
+	// Write initial data to read BIO
+	BIO_write(rbio, data, len);
+
+	// Start handshake
+	int ret = SSL_accept(ssl);
+	if (ret <= 0) {
+		int ssl_err = SSL_get_error(ssl, ret);
+		if (ssl_err == SSL_ERROR_WANT_READ ||
+		    ssl_err == SSL_ERROR_WANT_WRITE) {
+			// Handshake in progress, need more data
+			ci->ci_ssl = ssl;
+			ci->ci_tls_handshaking = true;
+			ci->ci_tls_enabled = false;
+
+			LOG("TLS handshake started for fd=%d, need more data",
+			    fd);
+			return 0;
+		}
+
+		// Handshake failed immediately
+		char err_buf[256];
+		ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+		LOG("TLS handshake failed immediately for fd=%d: %s", fd,
+		    err_buf);
+
+		SSL_free(ssl);
+		return EINVAL;
+	}
+
+	// Handshake completed immediately (unlikely)
+	ci->ci_ssl = ssl;
+	ci->ci_tls_enabled = true;
+	ci->ci_tls_handshaking = false;
+
+	LOG("TLS handshake completed immediately for fd=%d", fd);
+	return 0;
+}
+
 /*
  * Let the caller shut things down if there is an error
  */
@@ -387,6 +534,55 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
+		// If TLS handshaking is in progress, continue it
+
+		if (ci->ci_tls_handshaking) {
+			handle_tls_handshake(ic->ic_fd, ic->ic_buffer,
+					     bytes_read);
+
+			goto cleanup;
+		}
+
+		// If TLS is enabled, decrypt the data
+		if (ci->ci_tls_enabled && ci->ci_ssl) {
+			// Feed data to SSL
+			BIO *rbio = SSL_get_rbio(ci->ci_ssl);
+			BIO_write(rbio, ic->ic_buffer, bytes_read);
+
+			// Read decrypted data
+			int decrypted = SSL_read(ci->ci_ssl, ic->ic_buffer,
+						 ic->ic_buffer_len);
+			if (decrypted <= 0) {
+				int ssl_err =
+					SSL_get_error(ci->ci_ssl, decrypted);
+				if (ssl_err == SSL_ERROR_WANT_READ ||
+				    ssl_err == SSL_ERROR_WANT_WRITE) {
+					goto cleanup;
+				}
+
+				// SSL error
+				char err_buf[256];
+				ERR_error_string_n(ERR_get_error(), err_buf,
+						   sizeof(err_buf));
+				LOG("SSL_read error on fd=%d: %s", ic->ic_fd,
+				    err_buf);
+				io_socket_close(ic->ic_fd, EINVAL);
+				io_context_destroy(ic);
+				goto cleanup;
+			}
+
+			// Update bytes_read with decrypted count
+			bytes_read = decrypted;
+		}
+	}
+
+	// Check for TLS ClientHello
+	if (is_tls_client_hello(ic->ic_buffer, bytes_read)) {
+		LOG("TLS ClientHello detected on fd=%d", ic->ic_fd);
+		handle_tls_handshake(ic->ic_fd, ic->ic_buffer, bytes_read);
+
+		// Submit another read for more handshake data or RPC
+		goto cleanup;
 	}
 
 	// Get or create buffer state for this connection

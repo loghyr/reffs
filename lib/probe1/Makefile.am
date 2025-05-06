@@ -8,6 +8,7 @@ AM_CFLAGS = -Im4 -I. \
 	$(URCU_CFLAGS)			\
 	$(URCU_CDS_CFLAGS)		\
 	$(TIRPC_CFLAGS)			\
+	$(OPENSSL_CFLAGS)		\
 	$(FUSE_CFLAGS)
 
 lib_LTLIBRARIES = libreffs_probe1.la

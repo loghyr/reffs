@@ -33,6 +33,71 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
+static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring);
+
+/*
+ * Returns < 1 for error
+ * 0 for no need for further processing
+ * 1 for using kTLS and fall through.
+ */
+static int io_do_tls(struct io_context *ic, struct io_uring *ring)
+{
+	struct conn_info *ci = io_conn_get(ic->ic_fd);
+
+	// For TLS connections, we might need to do userspace TLS
+	size_t remaining = ic->ic_buffer_len - ic->ic_position;
+
+	if (remaining == 0) {
+		io_context_destroy(ic);
+		return 0;
+	}
+
+	// Write directly using TLS if not using kTLS
+	int ktls_enabled = 0;
+#ifdef BIO_get_ktls_send
+	ktls_enabled = BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
+#endif
+
+	if (!ktls_enabled) {
+		// Handle in userspace
+		int ret = SSL_write(ci->ci_ssl,
+				    (char *)ic->ic_buffer + ic->ic_position,
+				    remaining);
+
+		if (ret <= 0) {
+			int err = SSL_get_error(ci->ci_ssl, ret);
+			if (err == SSL_ERROR_WANT_WRITE ||
+			    err == SSL_ERROR_WANT_READ) {
+				// Would block, try again later
+				return 0;
+			}
+
+			// Real error
+			char ssl_err[256];
+			ERR_error_string_n(ERR_get_error(), ssl_err,
+					   sizeof(ssl_err));
+			LOG("SSL_write error on fd=%d: %s", ic->ic_fd, ssl_err);
+			io_socket_close(ic->ic_fd, EINVAL);
+			io_context_destroy(ic);
+			return -EINVAL;
+		}
+
+		// Successfully wrote data
+		ic->ic_position += ret;
+
+		// If more data to write, call ourselves again
+		if (ic->ic_position < ic->ic_buffer_len) {
+			return rpc_trans_writer(ic, ring);
+		}
+
+		// All data written
+		io_context_destroy(ic);
+		return 0;
+	}
+
+	return 1;
+}
+
 /*
  * Creating responses:
  *
@@ -70,6 +135,13 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 
 	trace_io_context(ic, __func__, __LINE__); // loghyr
 	trace_io_writer(ic, __func__, __LINE__);
+
+	struct conn_info *ci = io_conn_get(ic->ic_fd);
+	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
+		ret = io_do_tls(ic, ring);
+		if (ret <= 0)
+			return ret;
+	}
 
 	// If no more data to send, we're done
 	if (remaining == 0) {
@@ -133,7 +205,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 		ic->ic_position += (chunk_size - 4);
 	}
 
-	struct conn_info *ci = io_conn_get(ic->ic_fd);
+	ci = io_conn_get(ic->ic_fd);
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
 	}

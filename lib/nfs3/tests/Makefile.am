@@ -5,6 +5,7 @@ AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/fs @CHECK_CFLAGS@		\
 	$(URCU_CFLAGS) $(URCU_CDS_CFLAGS) $(FUSE_CFLAGS)	\
 	$(TIRPC_CFLAGS) $(ZLIB_CFLAGS)				\
 	$(JEMALLOC_CFLAGS) $(HDR_HISTOGRAM_CFLAGS)		\
+	$(OPENSSL_CFLAGS)					\
 	-I$(top_srcdir)/lib/include				\
 	-I$(top_builddir)/lib/xdr				\
 	-I$(top_builddir)/lib/rpc/tests
@@ -18,6 +19,7 @@ LDADD = \
 	-lpthread					\
 	$(URCU_LIBS) $(URCU_CDS_LIBS) $(FUSE_LIBS)	\
 	$(TIRPC_LIBS) $(ZLIB_LIBS)			\
+	$(OPENSSL_LIBS)					\
 	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
 
 # check_PROGRAMS = $(TESTS)
