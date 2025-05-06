@@ -6,10 +6,8 @@
 
 import sys
 import os
-
 import argparse
 import argcomplete
-
 import struct
 import time
 
@@ -36,11 +34,19 @@ except ModuleNotFoundError:
     from reffs.probe1_xdr_const import *
     from reffs.probe_client import Probe1Client
 
+PROGRAM_MAP = {
+    100003: 'nfs',
+    100005: 'mount',
+    211768: 'probe'
+}
+
+PROGRAM_NAME_TO_ID = {name: id for id, name in PROGRAM_MAP.items()}
+
 def probe_error_handler(ret):
     if ret == PROBE1_OK:
         return
 
-    print('Error: {}'.format(ret))
+    print(f'Error: {ret}')
     sys.exit(ret)
 
 
@@ -50,28 +56,30 @@ def probe_null(client, args):
 
 
 def stats_gather(client, args):
-    res = client.stats_gather(args.program, args.version)
+    if args.program_id:
+        program_id = args.program_id
+    elif args.program_name:
+        program_id = PROGRAM_NAME_TO_ID[args.program_name]
+
+    res = client.stats_gather(program_id, args.version)
     probe_error_handler(res.psgr_status)
 
     sp = res.psgr_resok.psgr_program
 
-    print('Reply Errors = {}'.format(sp.sp_replied_errors))
-    print('Reject Errors = {}'.format(sp.sp_rejected_errors))
-    print('Accept Errors = {}'.format(sp.sp_accepted_errors))
-    print('Auth Errors = {}'.format(sp.sp_authed_errors))
+    print(f'Reply Errors = {sp.sp_replied_errors}')
+    print(f'Reject Errors = {sp.sp_rejected_errors}')
+    print(f'Accept Errors = {sp.sp_accepted_errors}')
+    print(f'Auth Errors = {sp.sp_authed_errors}')
 
     # Using fixed-width fields for better alignment
-    print('{:<10} {:<15} {:<10} {:<10} {:<15} {:<15} {:<15}'.format(
-        'OP', 'Name', 'Calls', 'Errors', 'Max Duration', 'Total Duration', 'Avenage Duration'))
-    
+    print(f'{"OP":<10} {"Name":<15} {"Calls":<10} {"Errors":<10} {"Max Duration":<15} {"Total Duration":<15} {"Average Duration":<15}')
+
     for so in sorted(sp.sp_ops, key=lambda so: so.so_op):
         if so.so_calls:
             avg_dur = so.so_total_duration / so.so_calls
         else:
             avg_dur = 0
-        print('{:<10} {:<15} {:<10} {:<10} {:<15} {:<15} {:<15}'.format(
-            so.so_op, so.so_name.decode(), so.so_calls, so.so_errors,
-            so.so_max_duration, so.so_total_duration, avg_dur))
+        print(f'{so.so_op:<10} {so.so_name.decode():<15} {so.so_calls:<10} {so.so_errors:<10} {so.so_max_duration:<15} {so.so_total_duration:<15} {avg_dur:<15}')
 
 
 def context(client, args):
@@ -80,19 +88,19 @@ def context(client, args):
 
     resok = res.pcr_resok
 
-    print('Created          = {}'.format(resok.pcr_created))
-    print('Freed            = {}'.format(resok.pcr_freed))
-    print('Active Cancelled = {}'.format(resok.pcr_active_cancelled))
-    print('Active Destroyed = {}'.format(resok.pcr_active_destroyed))
-    print('Cancelled Freed  = {}'.format(resok.pcr_cancelled_freed))
-    print('Destroyed Freed  = {}'.format(resok.pcr_destroyed_freed))
+    print(f'Created          = {resok.pcr_created}')
+    print(f'Freed            = {resok.pcr_freed}')
+    print(f'Active Cancelled = {resok.pcr_active_cancelled}')
+    print(f'Active Destroyed = {resok.pcr_active_destroyed}')
+    print(f'Cancelled Freed  = {resok.pcr_cancelled_freed}')
+    print(f'Destroyed Freed  = {resok.pcr_destroyed_freed}')
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Probe reffs servers')
 
     parser.add_argument('--port',
-                        help='set port, default is {}'.format(PROBE_PORT),
+                        help=f'set port, default is {PROBE_PORT}',
                         required=False,
                         type=int,
                         default=PROBE_PORT)
@@ -115,15 +123,24 @@ def parse_args():
 
     p_gather = subparsers.add_parser('gather',
                                      help='Gather stats for an RPC program')
-    p_gather.add_argument('--program',
-                          dest='program',
-                          required=True,
-                          type=int,
-                          help='Program to gather stats')
+    a_program = p_gather.add_mutually_exclusive_group(required=True)
+
+    a_program.add_argument('--program-id',
+                           dest='program_id',
+                           type=int,
+                           choices=list(PROGRAM_MAP.keys()),
+                           help=f'Program id to gather stats (options: {", ".join(map(str, PROGRAM_MAP.keys()))})')
+
+    a_program.add_argument('--program-name',
+                           dest='program_name',
+                           type=str,
+                           choices=list(PROGRAM_MAP.values()),
+                           help=f'Program name to gather stats (options: {", ".join(PROGRAM_MAP.values())})')
+
     p_gather.add_argument('--version',
                           dest='version',
                           required=True,
-                          type=int,      
+                          type=int,
                           help='Program version to gather stats')
     p_gather.set_defaults(func=stats_gather)
 
@@ -155,7 +172,7 @@ def main():
     if args.time:
         te = time.time()
         duration = te - ts
-        print('Time elapsed: {:.2f} seconds'.format(duration))
+        print(f'Time elapsed: {duration:.2f} seconds')
 
 if __name__ == '__main__':
     main()
