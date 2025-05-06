@@ -46,6 +46,7 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 	STATS_GATHER1resok *resok = &res->STATS_GATHER1res_u.psgr_resok;
 	stat_program1 *sp = &resok->psgr_program;
 
+	LOG("%u %u", args->psga_program, args->psga_version);
 	struct rpc_program_handler *rph = rpc_program_handler_find(
 		args->psga_program, args->psga_version);
 	if (!rph) {

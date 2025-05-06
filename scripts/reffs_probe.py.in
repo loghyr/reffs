@@ -61,12 +61,13 @@ def stats_gather(client, args):
     print('Auth Errors = {}'.format(sp.sp_authed_errors))
 
     # Using fixed-width fields for better alignment
-    print('{:<10} {:<10} {:<10} {:<10} {:<15} {:<15}'.format(
+    print('{:<10} {:<15} {:<10} {:<10} {:<15} {:<15}'.format(
         'OP', 'Name', 'Calls', 'Errors', 'Max Duration', 'Total Duration'))
     
     for so in sorted(sp.sp_ops, key=lambda so: so.so_op):
-        print('{:<10} {:<10} {:<10} {:<10} {:<15} {:<15}'.format(
-            so.so_op, so.so_name, so.so_calls, so.so_errors, so.so_max_duration, so.so_total_duration))
+        print('{:<10} {:<15} {:<10} {:<10} {:<15} {:<15}'.format(
+            so.so_op, so.so_name.decode(), so.so_calls, so.so_errors,
+            so.so_max_duration, so.so_total_duration))
 
 
 def context(client, args):
