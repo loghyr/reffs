@@ -96,7 +96,7 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		pending = BIO_pending(wbio);
 
 		LOG("SSL_accept returned %d (ssl_err=%d), pending data: %d bytes",
-		    ret, ssl_err, pending);
+		    accept, ssl_err, pending);
 
 		if (pending > 0) {
 			// There is data that needs to be sent back to the client
