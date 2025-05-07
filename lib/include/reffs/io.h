@@ -138,6 +138,8 @@ struct conn_info {
 	uint32_t ci_xid; // Associated XID
 	bool ci_tls_enabled;
 	bool ci_tls_handshaking;
+	bool ci_handshake_final_pending;
+	int ci_handshake_final_bytes;
 	SSL *ci_ssl;
 	int ci_error; // Last error code
 	int ci_read_count; // Number of pending read operations

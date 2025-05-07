@@ -182,4 +182,6 @@ int rpc_prepare_send_call(struct rpc_trans *rt);
 
 void rpc_log_packet(const char *prefix, const void *data, size_t len);
 
+int rpc_parse_call_data(struct rpc_trans *rt);
+
 #endif

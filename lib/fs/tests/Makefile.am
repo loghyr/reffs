@@ -12,6 +12,7 @@ AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/fs @CHECK_CFLAGS@		\
 LDADD = \
 	@CHECK_LIBS@					\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\
+	$(top_builddir)/lib/trace/libreffs_trace.la	\
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
 	-lxxhash					\
 	-lpthread					\

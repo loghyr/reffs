@@ -330,7 +330,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
-		trace_io_context(ic, __func__, __LINE__);
+		// trace_io_context(ic, __func__, __LINE__);
 
 		// Handle the completion based on the operation type
 		if (cqe->res == -ECANCELED) {
@@ -379,7 +379,6 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				break;
 
 			case OP_TYPE_READ:
-				trace_io_context(ic, __func__, __LINE__);
 				ret = io_handle_read(ic, cqe->res, ring);
 				break;
 

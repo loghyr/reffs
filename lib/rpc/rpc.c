@@ -182,7 +182,7 @@ static void rpc_record_operation_stats(struct rpc_operations_handler *roh,
 	hdr_record_value(roh->roh_stats.rs_histogram, duration_ns);
 }
 
-static int rpc_parse_call_data(struct rpc_trans *rt)
+int rpc_parse_call_data(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
@@ -797,6 +797,8 @@ int rpc_process_task(struct task *t)
 	}
 
 	trace_rpc_task(rt, __func__, __LINE__);
+	LOG("%p %u,%u,%u", (void *)rt, rt->rt_info.ri_program,
+	    rt->rt_info.ri_version, rt->rt_info.ri_procedure);
 
 	if (rt->rt_info.ri_cred.rc_flavor == AUTH_TLS &&
 	    rt->rt_info.ri_procedure == 0) {

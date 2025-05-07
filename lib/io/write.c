@@ -80,6 +80,63 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 			io_socket_close(ic->ic_fd, EINVAL);
 			io_context_destroy(ic);
 			return -EINVAL;
+		} else {
+			// Get data that was encrypted and is ready to be sent
+			BIO *wbio = SSL_get_wbio(ci->ci_ssl);
+			int pending = BIO_pending(wbio);
+
+			LOG("SSL_write processed %d bytes, resulting in %d bytes of TLS data",
+			    ret, pending);
+
+			if (pending > 0) {
+				// Read the encrypted data from the BIO
+				char *encrypted_data = malloc(pending);
+				if (encrypted_data) {
+					int bytes_read = BIO_read(
+						wbio, encrypted_data, pending);
+					LOG("Read %d bytes of encrypted data from BIO",
+					    bytes_read);
+
+					// Log first few bytes of the encrypted data
+					if (bytes_read > 0) {
+						LOG("First 16 bytes of TLS record: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+						    (unsigned char)
+							    encrypted_data[0],
+						    (unsigned char)
+							    encrypted_data[1],
+						    (unsigned char)
+							    encrypted_data[2],
+						    (unsigned char)
+							    encrypted_data[3],
+						    (unsigned char)
+							    encrypted_data[4],
+						    (unsigned char)
+							    encrypted_data[5],
+						    (unsigned char)
+							    encrypted_data[6],
+						    (unsigned char)
+							    encrypted_data[7],
+						    (unsigned char)
+							    encrypted_data[8],
+						    (unsigned char)
+							    encrypted_data[9],
+						    (unsigned char)
+							    encrypted_data[10],
+						    (unsigned char)
+							    encrypted_data[11],
+						    (unsigned char)
+							    encrypted_data[12],
+						    (unsigned char)
+							    encrypted_data[13],
+						    (unsigned char)
+							    encrypted_data[14],
+						    (unsigned char)
+							    encrypted_data[15]);
+					}
+
+					free(encrypted_data);
+				}
+			}
 		}
 
 		// Successfully wrote data
@@ -125,7 +182,6 @@ int io_request_write_op(int fd, char *buf, int len, struct connection_info *ci,
 	}
 
 	if (!sqe) {
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(fd, ENOMEM);
 		io_context_destroy(ic);
 		return -ENOMEM;
@@ -149,7 +205,6 @@ int io_request_write_op(int fd, char *buf, int len, struct connection_info *ci,
 	}
 
 	if (ret < 0) {
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(fd, -ret);
 		io_context_destroy(ic);
 	} else {
@@ -194,7 +249,6 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
 	int ret = 0;
 
-	trace_io_context(ic, __func__, __LINE__); // loghyr
 	trace_io_writer(ic, __func__, __LINE__);
 
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
@@ -252,7 +306,6 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	}
 
 	if (!sqe) {
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_context_destroy(ic);
 		return ENOMEM;
 	}
@@ -293,7 +346,6 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	}
 
 	if (ret < 0) {
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(ic->ic_fd, -ret);
 		io_context_destroy(ic);
 	} else {
@@ -324,7 +376,6 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 		LOG("Failed to create write context");
 		return 0;
 	}
-	trace_io_context(ic, __func__, __LINE__); // loghyr
 
 	ic->ic_xid = rt->rt_info.ri_xid;
 	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);
@@ -346,7 +397,6 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 		    bytes_written < 0 ? strerror(-bytes_written) :
 					"connection closed");
 
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(ic->ic_fd, bytes_written < 0 ? -bytes_written :
 							       ECONNRESET);
 		io_context_destroy(ic);
@@ -356,9 +406,35 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 	// Update connection activity
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
-		LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci,
-		    ci->ci_tls_handshaking, ci->ci_tls_enabled,
-		    (void *)ci->ci_ssl);
+
+		// Check if this was the final handshake message
+		if (ci->ci_handshake_final_pending) {
+			LOG("Final TLS handshake message sent for fd=%d",
+			    ic->ic_fd);
+
+			// Clear the pending flag
+			ci->ci_handshake_final_pending = false;
+
+			// NOW we can enable TLS mode
+			ci->ci_tls_enabled = true;
+
+			// Make sure any buffered BIO data is flushed
+			BIO_flush(SSL_get_wbio(ci->ci_ssl));
+
+			LOG("TLS mode now active for fd=%d", ic->ic_fd);
+
+#ifdef BIO_get_ktls_send
+			int ktls_send =
+				BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
+			int ktls_recv =
+				BIO_get_ktls_recv(SSL_get_rbio(ci->ci_ssl));
+			LOG("kTLS status for fd=%d: send=%d, recv=%d",
+			    ic->ic_fd, ktls_send, ktls_recv);
+#endif
+
+			// The handshake is now fully complete and TLS is active
+			// Continue with normal processing
+		}
 	}
 
 	return rpc_trans_writer(ic, ring);

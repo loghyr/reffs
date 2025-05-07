@@ -7,6 +7,7 @@
 #define _REFFS_LOG_H
 
 #include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdarg.h>

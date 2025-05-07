@@ -101,6 +101,18 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 			int bytes = BIO_read(wbio, write_buffer, pending);
 			LOG("Reading %d bytes from wbio for fd=%d", bytes, fd);
 
+			// If handshake is complete, this is the final handshake message
+			// Mark it as a final handshake message in the connection info
+			if (accept > 0) {
+				ci->ci_handshake_final_pending = true;
+				// Store the bytes count for verification
+				ci->ci_handshake_final_bytes = bytes;
+
+				// We don't set ci_tls_enabled yet!
+				LOG("Handshake logically complete, sending final message (%d bytes) for fd=%d",
+				    bytes, fd);
+			}
+
 			ret = io_request_write_op(fd, write_buffer, bytes, NULL,
 						  ring);
 			if (ret) {
@@ -124,23 +136,22 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 			// Handshake failed
 			io_ssl_err_print(fd, "handshake failed", __func__,
 					 __LINE__);
-
 			return EINVAL;
 		}
 
-		// Handshake complete
-		ci->ci_tls_enabled = true;
-		ci->ci_tls_handshaking = false;
+		// Handshake is logically complete, but we don't enable TLS yet
+		// That will happen in io_handle_write after final message is sent
+		ci->ci_tls_handshaking =
+			false; // No longer in handshaking state
 
-		LOG("TLS handshake completed for fd=%d", fd);
+		// Not setting ci_tls_enabled = true here anymore!
+		// ci->ci_tls_enabled = true;
 
-		// Check for kTLS support
-#ifdef BIO_get_ktls_send
-		int ktls_send = BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
-		int ktls_recv = BIO_get_ktls_recv(SSL_get_rbio(ci->ci_ssl));
-		LOG("kTLS status for fd=%d: send=%d, recv=%d", fd, ktls_send,
-		    ktls_recv);
-#endif
+		LOG("TLS handshake completed logically for fd=%d, waiting for final message to be sent",
+		    fd);
+
+		// Note: Not flushing the BIO here as we'll handle the final message separately
+		// BIO_flush(SSL_get_wbio(ci->ci_ssl));
 
 		return 0;
 	}
@@ -189,6 +200,13 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		LOG("Initial handshake generated %d bytes to send for fd=%d",
 		    bytes, fd);
 
+		// If handshake completed immediately, mark this as the final message
+		if (accept > 0) {
+			ci->ci_handshake_final_pending = true;
+			ci->ci_handshake_final_bytes = bytes;
+			LOG("Handshake completed immediately, sending final message");
+		}
+
 		ret = io_request_write_op(fd, write_buffer, bytes, NULL, ring);
 		if (ret) {
 			free(write_buffer);
@@ -208,6 +226,7 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 			ci->ci_ssl = ssl;
 			ci->ci_tls_handshaking = true;
 			ci->ci_tls_enabled = false;
+			ci->ci_handshake_final_pending = false;
 
 			LOG("TLS handshake started for fd=%d, need more data",
 			    fd);
@@ -217,17 +236,20 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		// Handshake failed immediately
 		io_ssl_err_print(fd, "handshake failed immediately", __func__,
 				 __LINE__);
-
 		SSL_free(ssl);
 		return EINVAL;
 	}
 
 	// Handshake completed immediately (unlikely)
 	ci->ci_ssl = ssl;
-	ci->ci_tls_enabled = true;
+	// Not setting ci_tls_enabled yet!
+	// ci->ci_tls_enabled = true;
 	ci->ci_tls_handshaking = false;
+	// Final handshake message is being sent
+	ci->ci_handshake_final_pending = true;
 
-	LOG("TLS handshake completed immediately for fd=%d", fd);
+	LOG("TLS handshake completed immediately for fd=%d, waiting for final message to be sent",
+	    fd);
 	return 0;
 }
 
@@ -250,7 +272,6 @@ static int request_more_read_data(int fd, struct io_uring *ring,
 	}
 
 	if (!sqe) {
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 		return -ENOMEM;
 	}
 
@@ -273,8 +294,6 @@ static int request_more_read_data(int fd, struct io_uring *ring,
 
 	if (ret > 0)
 		ret = 0;
-	else
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 
 	return ret;
 }
@@ -318,7 +337,6 @@ int io_request_read_op(int fd, struct connection_info *ci,
 
 	if (!sqe) {
 		free(buffer);
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(fd, ENOMEM);
 		io_context_destroy(ic);
 		return -ENOMEM;
@@ -343,7 +361,6 @@ int io_request_read_op(int fd, struct connection_info *ci,
 
 	if (ret < 0) {
 		free(buffer);
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(fd, -ret);
 		io_context_destroy(ic);
 	} else {
@@ -581,12 +598,9 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 		io_check_for_listener_restart(client_fd, &ic->ic_ci, ring);
 
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_context_destroy(ic);
 		return 0; // No new read needed for closed connections
 	}
-
-	LOG();
 
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
@@ -603,9 +617,6 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 				ci->ci_ssl = NULL;
 				ci->ci_tls_handshaking = false;
 				io_socket_close(ic->ic_fd, EINVAL);
-
-				trace_io_context(ic, __func__,
-						 __LINE__); // loghyr
 				io_context_destroy(ic);
 				return 0;
 			}
@@ -732,7 +743,6 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		}
 
 		trace_io_message_complete(client_fd, t->t_xid, complete_size);
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 
 		// Queue it for processing
 		add_task(t);
@@ -760,10 +770,8 @@ cleanup:
 			    strerror(ret));
 			io_socket_close(client_fd, ret);
 		}
-		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_context_destroy(ic);
 	}
-	trace_io_context(ic, __func__, __LINE__); // loghyr
 
 	return 0;
 }

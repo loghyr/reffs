@@ -66,7 +66,16 @@ int io_tls_init_server_context(void)
 		return EINVAL;
 	}
 
+	SSL_CTX_clear_options(reffs_server_ssl_ctx, SSL_OP_ALL);
+	SSL_CTX_set_options(
+		reffs_server_ssl_ctx,
+		SSL_OP_NO_TICKET |
+			SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION |
+			SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
+
 	SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx, TLS1_3_VERSION);
+	SSL_CTX_set_max_send_fragment(reffs_server_ssl_ctx,
+				      512); // 512 bytes max
 
 	// Load certificates and private key
 	if (SSL_CTX_use_certificate_file(reffs_server_ssl_ctx,

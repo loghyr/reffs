@@ -146,7 +146,6 @@ static void io_context_free_rcu(struct rcu_head *rcu)
 		caa_container_of(rcu, struct io_context, ic_rcu);
 
 	atomic_fetch_add(&context_freed, 1);
-	trace_io_context(ic, __func__, __LINE__); // loghyr
 	free(ic->ic_buffer);
 	free(ic);
 }
@@ -239,7 +238,6 @@ static uint32_t generate_id(void)
 void io_context_update_time(struct io_context *ic)
 {
 	ic->ic_action_time = time(NULL);
-	trace_io_context(ic, __func__, __LINE__); // loghyr
 }
 
 static bool mark_io_context_destroyed(struct io_context *ic)
