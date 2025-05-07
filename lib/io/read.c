@@ -64,6 +64,7 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 	BIO *rbio;
 	int pending;
 	int ret;
+	int accept;
 	int ssl_err;
 
 	struct conn_info *ci = io_conn_get(fd);
@@ -87,8 +88,8 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		BIO_write(rbio, data, len);
 
 		// Try to continue the handshake
-		ret = SSL_accept(ci->ci_ssl);
-		ssl_err = SSL_get_error(ci->ci_ssl, ret);
+		accept = SSL_accept(ci->ci_ssl);
+		ssl_err = SSL_get_error(ci->ci_ssl, accept);
 
 		// Check if there's data to send back to the client
 		wbio = SSL_get_wbio(ci->ci_ssl);
@@ -119,7 +120,7 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 			    bytes, fd);
 		}
 
-		if (ret <= 0) {
+		if (accept <= 0) {
 			if (ssl_err == SSL_ERROR_WANT_READ ||
 			    ssl_err == SSL_ERROR_WANT_WRITE) {
 				// Need more data
@@ -179,8 +180,8 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 	BIO_write(rbio, data, len);
 
 	// Start handshake
-	ret = SSL_accept(ssl);
-	ssl_err = SSL_get_error(ssl, ret);
+	accept = SSL_accept(ssl);
+	ssl_err = SSL_get_error(ssl, accept);
 
 	// Check for data to write back, regardless of SSL_accept result
 	pending = BIO_pending(wbio);
@@ -208,7 +209,7 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 	}
 
 	// Now process the SSL_accept result
-	if (ret <= 0) {
+	if (accept <= 0) {
 		if (ssl_err == SSL_ERROR_WANT_READ ||
 		    ssl_err == SSL_ERROR_WANT_WRITE) {
 			// Handshake in progress, need more data
