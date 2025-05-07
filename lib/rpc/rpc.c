@@ -1167,6 +1167,7 @@ handle_rpc_error:
 
 	if (rt->rt_reply && rt->rt_reply_len > 0) {
 		rt->rt_ring = t->t_ring;
+		rpc_log_packet("TX: ", rt->rt_reply, rt->rt_reply_len);
 		rt->rt_cb(rt);
 	}
 
