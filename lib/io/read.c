@@ -31,6 +31,7 @@
 #include "reffs/task.h"
 #include "reffs/test.h"
 #include "reffs/io.h"
+#include "reffs/stack.h"
 #include "reffs/trace/io.h"
 
 // Function to detect a TLS ClientHello
@@ -586,9 +587,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	struct conn_info *ci = io_conn_get(client_fd);
 	struct buffer_state *bs = NULL;
 
-	if (bytes_read == 0) {
-		goto get_more;
-	} else if (bytes_read < 0) {
+	if (bytes_read <= 0) {
 		// Connection closed or error
 		LOG("Connection closed or error (fd: %d, res: %d)", client_fd,
 		    bytes_read);
