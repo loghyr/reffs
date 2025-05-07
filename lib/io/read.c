@@ -714,7 +714,6 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	// Check for TLS ClientHello
 	if (is_tls_client_hello(ic->ic_buffer, bytes_read)) {
 		LOG("TLS ClientHello detected on fd=%d", ic->ic_fd);
-		LOG();
 		ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer, bytes_read,
 					   ring);
 		if (ret) {

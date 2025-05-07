@@ -66,6 +66,8 @@ int io_tls_init_server_context(void)
 		return EINVAL;
 	}
 
+	SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx, TLS1_3_VERSION);
+
 	// Load certificates and private key
 	if (SSL_CTX_use_certificate_file(reffs_server_ssl_ctx,
 					 "./.rpc-tls-certs/cert.pem",

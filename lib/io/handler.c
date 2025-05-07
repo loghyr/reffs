@@ -165,8 +165,6 @@ static int setup_io_uring(struct io_uring *ring)
 
 int io_handler_init(struct io_uring *ring)
 {
-	LOG();
-
 	// Initialize pending requests array
 	memset(conn_buffers, 0, sizeof(conn_buffers));
 
