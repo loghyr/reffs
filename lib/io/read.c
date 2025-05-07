@@ -287,67 +287,6 @@ static int request_more_read_data(int fd, struct io_uring *ring,
 	return ret;
 }
 
-int io_request_write_op(int fd, char *buf, int len, struct connection_info *ci,
-			struct io_uring *ring)
-{
-	struct io_uring_sqe *sqe = NULL;
-	int ret = 0;
-
-	if (fd <= 0 || fd >= MAX_CONNECTIONS) {
-		LOG("Invalid fd: %d", fd);
-		return -EINVAL;
-	}
-
-	struct io_context *ic = io_context_create(OP_TYPE_WRITE, fd, buf, len);
-	if (!ic) {
-		return -ENOMEM;
-	}
-
-	if (ci)
-		copy_connection_info(&ic->ic_ci, ci);
-
-	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		sqe = io_uring_get_sqe(ring);
-		if (sqe)
-			break;
-		usleep(IO_URING_WAIT_US);
-	}
-
-	if (!sqe) {
-		trace_io_context(ic, __func__, __LINE__); // loghyr
-		io_socket_close(fd, ENOMEM);
-		io_context_destroy(ic);
-		return -ENOMEM;
-	}
-
-	io_uring_prep_write(sqe, fd, buf, len, 0);
-	io_uring_sqe_set_data(sqe, ic); // loghyr - fix this everywhere
-
-	trace_io_write_submit(ic);
-
-	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		ret = io_uring_submit(ring);
-		if (ret >= 0)
-			break;
-		if (ret == -EAGAIN) {
-			usleep(IO_URING_WAIT_US);
-			ret = 0;
-			break; // Right now we don't know what io_uring is doing!
-		} else
-			break;
-	}
-
-	if (ret < 0) {
-		trace_io_context(ic, __func__, __LINE__); // loghyr
-		io_socket_close(fd, -ret);
-		io_context_destroy(ic);
-	} else {
-		ret = 0;
-	}
-
-	return 0;
-}
-
 int io_request_read_op(int fd, struct connection_info *ci,
 		       struct io_uring *ring)
 {
