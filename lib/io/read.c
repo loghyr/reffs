@@ -639,6 +639,8 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	struct buffer_state *bs = NULL;
 
 	if (bytes_read <= 0) {
+		goto get_more;
+	} else if (bytes_read < 0) {
 		// Connection closed or error
 		LOG("Connection closed or error (fd: %d, res: %d)", client_fd,
 		    bytes_read);
