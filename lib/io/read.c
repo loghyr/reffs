@@ -594,6 +594,8 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		return 0; // No new read needed for closed connections
 	}
 
+	LOG();
+
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
 		// If TLS handshaking is in progress, continue it
