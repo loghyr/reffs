@@ -813,7 +813,6 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 get_more:
 	// Try to use request_more_read_data first (which reuses the current context)
 	ret = request_more_read_data(client_fd, ring, ic);
-	LOG("%d", ret);
 	if (ret == 0 || ret == EAGAIN) {
 		// Successfully submitted new read operation
 		needs_new_read = false;
@@ -824,7 +823,6 @@ get_more:
 cleanup:
 	if (needs_new_read) {
 		ret = io_request_read_op(client_fd, &ic->ic_ci, ring);
-		LOG("%d", ret);
 		if (ret != 0) {
 			LOG("Failed to request additional read: %s",
 			    strerror(ret));
