@@ -30,7 +30,7 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
-int request_accept_op(int fd, struct connection_info *ci, struct io_uring *ring)
+int io_request_accept_op(int fd, struct connection_info *ci, struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
@@ -162,7 +162,7 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 	trace_io_context(ic, __func__, __LINE__);
 
 	// Always try to set up the next accept first, to ensure we don't miss connections
-	int accept_ret = request_accept_op(listen_fd, &ic->ic_ci, ring);
+	int accept_ret = io_request_accept_op(listen_fd, &ic->ic_ci, ring);
 	if (accept_ret == 0) {
 		accept_resubmitted = true;
 	} else {
@@ -176,7 +176,7 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 		// If we haven't already resubmitted the accept, try one more time
 		if (!accept_resubmitted) {
 			LOG("Trying one more time to resubmit accept");
-			request_accept_op(listen_fd, &ic->ic_ci, ring);
+			io_request_accept_op(listen_fd, &ic->ic_ci, ring);
 		}
 
 		io_context_destroy(ic);
@@ -244,11 +244,11 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 	}
 
 	// Prepare to read from this new connection
-	request_additional_read_data(client_fd, &ic->ic_ci, ring);
+	io_request_read_op(client_fd, &ic->ic_ci, ring);
 
 	// Accept more connections
 	if (!accept_resubmitted) {
-		request_accept_op(listen_fd, &ic->ic_ci, ring);
+		io_request_accept_op(listen_fd, &ic->ic_ci, ring);
 	}
 
 	io_context_destroy(ic);

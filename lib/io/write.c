@@ -208,6 +208,9 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	ci = io_conn_get(ic->ic_fd);
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
+		LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci,
+		    ci->ci_tls_handshaking, ci->ci_tls_enabled,
+		    (void *)ci->ci_ssl);
 	}
 
 	// Submit the write operation
@@ -251,6 +254,9 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 		return ENOTCONN;
 	}
 
+	LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci, ci->ci_tls_handshaking,
+	    ci->ci_tls_enabled, (void *)ci->ci_ssl);
+
 	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
 			       rt->rt_reply_len);
 	if (!ic) {
@@ -267,8 +273,7 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 	return rpc_trans_writer(ic, rt->rt_ring);
 }
 
-int io_handle_write(struct io_context *ic,
-		    int __attribute__((unused)) bytes_written,
+int io_handle_write(struct io_context *ic, int bytes_written,
 		    struct io_uring *ring)
 {
 	// Check connection state
@@ -290,6 +295,9 @@ int io_handle_write(struct io_context *ic,
 	// Update connection activity
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
+		LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci,
+		    ci->ci_tls_handshaking, ci->ci_tls_enabled,
+		    (void *)ci->ci_ssl);
 	}
 
 	return rpc_trans_writer(ic, ring);

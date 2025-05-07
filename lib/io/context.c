@@ -417,12 +417,12 @@ void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 
 	switch (ic->ic_op_type) {
 	case OP_TYPE_READ:
-		request_additional_read_data(ic->ic_fd, &ic->ic_ci, ring);
+		io_request_read_op(ic->ic_fd, &ic->ic_ci, ring);
 		break;
 	case OP_TYPE_WRITE:
 		break;
 	case OP_TYPE_ACCEPT:
-		request_accept_op(ic->ic_fd, &ic->ic_ci, ring);
+		io_request_accept_op(ic->ic_fd, &ic->ic_ci, ring);
 		break;
 	case OP_TYPE_CONNECT:
 		break;

@@ -195,7 +195,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 				    fd);
 
 				// Try to resubmit accept operation
-				int ret = request_accept_op(fd, NULL, ring);
+				int ret = io_request_accept_op(fd, NULL, ring);
 				if (ret != 0) {
 					LOG("Watchdog failed to resubmit accept for fd=%d: %s",
 					    fd, strerror(ret));
@@ -232,8 +232,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 			if (ci->ci_read_count == 0) {
 				LOG("Connection fd=%d has no pending read operations - submitting read",
 				    fd);
-				int ret = request_additional_read_data(fd, NULL,
-								       ring);
+				int ret = io_request_read_op(fd, NULL, ring);
 				if (ret != 0) {
 					LOG("Failed to submit read for fd=%d: %s",
 					    fd, strerror(ret));

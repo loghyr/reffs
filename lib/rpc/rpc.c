@@ -224,13 +224,9 @@ static int send_auth_tls_response(struct rpc_trans *rt)
 	uint32_t *p;
 
 	// Calculate reply size (include space for STARTTLS verifier)
-	size_t verifier_len =
-		strlen(STARTTLS_VERIFIER) + 1; // +1 for null terminator
+	size_t verifier_len = 8;
 
-	// Align to 4-byte boundary if needed
-	size_t aligned_verifier_len = (verifier_len + 3) & ~3;
-
-	rt->rt_reply_len = 7 * sizeof(uint32_t) + aligned_verifier_len;
+	rt->rt_reply_len = 7 * sizeof(uint32_t) + verifier_len;
 	msg_len = rt->rt_reply_len - sizeof(uint32_t);
 
 	// Allocate memory for reply
@@ -275,7 +271,7 @@ static int send_auth_tls_response(struct rpc_trans *rt)
 	memcpy(p, STARTTLS_VERIFIER, verifier_len);
 
 	// Update position past verifier (with alignment)
-	p = (uint32_t *)((char *)p + aligned_verifier_len);
+	p = (uint32_t *)((char *)p + verifier_len);
 
 	// SUCCESS accept_stat
 	p = rpc_encode_uint32_t(rt, p, 0);
@@ -706,10 +702,11 @@ int rpc_process_task(struct task *t)
 		goto handle_rpc_error;
 	}
 
+	uint32_t flavor_len;
 	switch (rt->rt_info.ri_cred.rc_flavor) {
-	case AUTH_NONE: {
-		uint32_t len;
-		p = rpc_decode_uint32_t(rt, p, &len);
+	case AUTH_NONE:
+	case AUTH_TLS:
+		p = rpc_decode_uint32_t(rt, p, &flavor_len);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
 			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
@@ -717,12 +714,10 @@ int rpc_process_task(struct task *t)
 			goto handle_rpc_error;
 		}
 		break;
-	}
 	case AUTH_SYS: {
 		XDR xdrs = { 0 };
 
-		uint32_t len;
-		p = rpc_decode_uint32_t(rt, p, &len);
+		p = rpc_decode_uint32_t(rt, p, &flavor_len);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
 			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
@@ -750,8 +745,8 @@ int rpc_process_task(struct task *t)
 		}
 
 		xdr_destroy(&xdrs);
-		rt->rt_offset += len;
-		p = (uint32_t *)(p + len / sizeof(uint32_t));
+		rt->rt_offset += flavor_len;
+		p = (uint32_t *)(p + flavor_len / sizeof(uint32_t));
 		break;
 	}
 	case AUTH_SHORT:
@@ -780,7 +775,8 @@ int rpc_process_task(struct task *t)
 
 	uint32_t verifier_len;
 	switch (rt->rt_info.ri_verifier_flavor) {
-	case AUTH_NONE: {
+	case AUTH_TLS:
+	case AUTH_NONE:
 		p = rpc_decode_uint32_t(rt, p, &verifier_len);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
@@ -789,7 +785,6 @@ int rpc_process_task(struct task *t)
 			goto handle_rpc_error;
 		}
 		break;
-	}
 	case AUTH_SYS:
 	case AUTH_SHORT:
 	case AUTH_DH:
@@ -805,9 +800,10 @@ int rpc_process_task(struct task *t)
 
 	if (rt->rt_info.ri_cred.rc_flavor == AUTH_TLS &&
 	    rt->rt_info.ri_procedure == 0) {
-		LOG("AUTH_TLS probe detected on fd=%d, xid=0x%08x", rt->rt_fd,
-		    rt->rt_info.ri_xid);
+		LOG("AUTH_TLS probe detected on fd=%d len=%u xid=0x%08x",
+		    rt->rt_fd, verifier_len, rt->rt_info.ri_xid);
 
+#ifdef NOT_NOW_BROWN_COW
 		if (verifier_len != 8 ||
 		    memcmp(p, STARTTLS_VERIFIER, strlen(STARTTLS_VERIFIER))) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
@@ -815,9 +811,13 @@ int rpc_process_task(struct task *t)
 					   __ATOMIC_RELAXED);
 			goto handle_rpc_error;
 		}
+#endif
 
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 		rt->rt_info.ri_accept_stat = SUCCESS;
+
+		rt->rt_ring = t->t_ring;
+		rt->rt_offset = 0;
 
 		// Send STARTTLS response
 		ret = send_auth_tls_response(rt);

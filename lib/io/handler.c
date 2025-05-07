@@ -264,7 +264,7 @@ void io_check_for_listener_restart(int fd, struct connection_info *ci,
 	for (int i = 0; i < num_listeners; i++) {
 		if (fd == listener_fds[i]) {
 			LOG("Listener socket closed, immediately resubmitting accept");
-			request_accept_op(fd, ci, ring);
+			io_request_accept_op(fd, ci, ring);
 			break;
 		}
 	}

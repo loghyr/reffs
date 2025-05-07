@@ -154,10 +154,13 @@ void io_handler_main_loop(volatile sig_atomic_t *running,
 void io_handler_stop(void);
 
 int setup_listener(int port);
-int request_accept_op(int fd, struct connection_info *ci,
-		      struct io_uring *ring);
-int request_additional_read_data(int fd, struct connection_info *ci,
-				 struct io_uring *ring);
+
+int io_request_accept_op(int fd, struct connection_info *ci,
+			 struct io_uring *ring);
+int io_request_read_op(int fd, struct connection_info *ci,
+		       struct io_uring *ring);
+int io_request_write_op(int fd, char *buf, int len, struct connection_info *ci,
+			struct io_uring *ring);
 
 int create_worker_threads(volatile sig_atomic_t *running);
 void wait_for_worker_threads(void);
@@ -171,9 +174,6 @@ bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len);
 
 struct buffer_state *create_buffer_state(int fd);
 struct buffer_state *get_buffer_state(int fd);
-
-int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
-			   struct io_context *ic);
 
 // Handlers
 int io_handle_accept(struct io_context *ic, int client_fd,
@@ -285,7 +285,8 @@ void io_check_for_listener_restart(int fd, struct connection_info *ci,
 // Heartbeat code:
 int io_heartbeat_init(struct io_uring *ring);
 int io_schedule_heartbeat(struct io_uring *ring, unsigned int seconds);
-int io_handle_heartbeat(struct io_context *ic, int result, struct io_uring *ring);
+int io_handle_heartbeat(struct io_context *ic, int result,
+			struct io_uring *ring);
 void io_heartbeat_update_completions(uint64_t count);
 int *io_heartbeat_get_listeners(int *num);
 

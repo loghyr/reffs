@@ -185,7 +185,7 @@ int main(int argc, char *argv[])
 	}
 
 	io_add_listener(listener_nfs_fd);
-	request_accept_op(listener_nfs_fd, NULL, &ring);
+	io_request_accept_op(listener_nfs_fd, NULL, &ring);
 
 	listener_probe_fd = setup_listener(PROBE_PORT);
 	if (listener_probe_fd < 0) {
@@ -195,7 +195,7 @@ int main(int argc, char *argv[])
 	}
 
 	io_add_listener(listener_probe_fd);
-	request_accept_op(listener_probe_fd, NULL, &ring);
+	io_request_accept_op(listener_probe_fd, NULL, &ring);
 
 	if (!pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
 		LOG("Failed to register with portmapper for NFSv3");

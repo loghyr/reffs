@@ -68,7 +68,7 @@ int io_tls_init_server_context(void)
 
 	// Load certificates and private key
 	if (SSL_CTX_use_certificate_file(reffs_server_ssl_ctx,
-					 "/etc/rpc.tlsservd/cert.pem",
+					 "./.rpc-tls-certs/cert.pem",
 					 SSL_FILETYPE_PEM) <= 0) {
 		LOG("Error loading certificate file");
 		SSL_CTX_free(reffs_server_ssl_ctx);
@@ -77,7 +77,7 @@ int io_tls_init_server_context(void)
 	}
 
 	if (SSL_CTX_use_PrivateKey_file(reffs_server_ssl_ctx,
-					"/etc/rpc.tlsservd/certkey.pem",
+					"./.rpc-tls-certs/certkey.pem",
 					SSL_FILETYPE_PEM) <= 0) {
 		LOG("Error loading private key file");
 		SSL_CTX_free(reffs_server_ssl_ctx);
@@ -100,27 +100,9 @@ int io_tls_init_server_context(void)
 	};
 #endif
 
-	SSL_CTX_set_alpn_select_cb(reffs_server_ssl_ctx,
-				       io_tls_alpn_select_cb, NULL);
+	SSL_CTX_set_alpn_select_cb(reffs_server_ssl_ctx, io_tls_alpn_select_cb,
+				   NULL);
 
 	LOG("Server TLS context initialized successfully");
 	return 0;
-}
-
-ssize_t io_tls_read(int fd, void *buf, size_t count)
-{
-	struct conn_info *ci = io_conn_get(fd);
-	if (!ci || !ci->ci_ssl)
-		return read(fd, buf, count); // Non-TLS connection
-
-	return SSL_read(ci->ci_ssl, buf, count);
-}
-
-ssize_t io_tls_write(int fd, const void *buf, size_t count)
-{
-	struct conn_info *ci = io_conn_get(fd);
-	if (!ci || !ci->ci_ssl)
-		return write(fd, buf, count); // Non-TLS connection
-
-	return SSL_write(ci->ci_ssl, buf, count);
 }

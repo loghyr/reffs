@@ -33,6 +33,14 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
+static inline void io_ssl_err_print(int fd, const char *msg, const char *func,
+				    const int line)
+{
+	char err_buf[256];
+	ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+	LOG("%s:%d: SSL error %s for fd=%d: %s", func, line, msg, fd, err_buf);
+}
+
 // Function to detect a TLS ClientHello
 static bool is_tls_client_hello(const unsigned char *buf, size_t len)
 {
@@ -49,14 +57,22 @@ static bool is_tls_client_hello(const unsigned char *buf, size_t len)
 		buf[5] == 0x01); // Handshake type 1 = ClientHello
 }
 
-// Function to handle the TLS handshake
-static int handle_tls_handshake(int fd, const void *data, size_t len)
+static int handle_tls_handshake(int fd, const void *data, size_t len,
+				struct io_uring *ring)
 {
+	BIO *wbio;
+	BIO *rbio;
+	int pending;
+	int ret;
+	int ssl_err;
+
 	struct conn_info *ci = io_conn_get(fd);
 	if (!ci) {
 		LOG("Connection not tracked for fd=%d", fd);
 		return ENOTCONN;
 	}
+
+	LOG("TLS handshake: processing %zu bytes for fd=%d", len, fd);
 
 	// Initialize TLS if not already done
 	if (io_tls_init_server_context() != 0) {
@@ -67,13 +83,43 @@ static int handle_tls_handshake(int fd, const void *data, size_t len)
 	// If handshake already in progress, use existing SSL object
 	if (ci->ci_tls_handshaking && ci->ci_ssl) {
 		// Feed the data to SSL
-		BIO *rbio = SSL_get_rbio(ci->ci_ssl);
+		rbio = SSL_get_rbio(ci->ci_ssl);
 		BIO_write(rbio, data, len);
 
 		// Try to continue the handshake
-		int ret = SSL_accept(ci->ci_ssl);
+		ret = SSL_accept(ci->ci_ssl);
+		ssl_err = SSL_get_error(ci->ci_ssl, ret);
+
+		// Check if there's data to send back to the client
+		wbio = SSL_get_wbio(ci->ci_ssl);
+		pending = BIO_pending(wbio);
+
+		LOG("SSL_accept returned %d (ssl_err=%d), pending data: %d bytes",
+		    ret, ssl_err, pending);
+
+		if (pending > 0) {
+			// There is data that needs to be sent back to the client
+			char *write_buffer = malloc(pending);
+			if (!write_buffer) {
+				LOG("Failed to allocate memory for TLS response");
+				return ENOMEM;
+			}
+
+			int bytes = BIO_read(wbio, write_buffer, pending);
+			LOG("Reading %d bytes from wbio for fd=%d", bytes, fd);
+
+			ret = io_request_write_op(fd, write_buffer, bytes, NULL,
+						  ring);
+			if (ret) {
+				free(write_buffer);
+				return -ret;
+			}
+
+			LOG("Submitted TLS response (%d bytes) for fd=%d",
+			    bytes, fd);
+		}
+
 		if (ret <= 0) {
-			int ssl_err = SSL_get_error(ci->ci_ssl, ret);
 			if (ssl_err == SSL_ERROR_WANT_READ ||
 			    ssl_err == SSL_ERROR_WANT_WRITE) {
 				// Need more data
@@ -83,14 +129,9 @@ static int handle_tls_handshake(int fd, const void *data, size_t len)
 			}
 
 			// Handshake failed
-			char err_buf[256];
-			ERR_error_string_n(ERR_get_error(), err_buf,
-					   sizeof(err_buf));
-			LOG("TLS handshake failed for fd=%d: %s", fd, err_buf);
+			io_ssl_err_print(fd, "handshake failed", __func__,
+					 __LINE__);
 
-			SSL_free(ci->ci_ssl);
-			ci->ci_ssl = NULL;
-			ci->ci_tls_handshaking = false;
 			return EINVAL;
 		}
 
@@ -118,17 +159,9 @@ static int handle_tls_handshake(int fd, const void *data, size_t len)
 		return EINVAL;
 	}
 
-	// Set the file descriptor for SSL I/O
-	if (SSL_set_fd(ssl, fd) != 1) {
-		LOG("Failed to set fd for SSL");
-		SSL_free(ssl);
-		return EINVAL;
-	}
-
 	// Create memory BIOs for I/O
-	BIO *rbio = BIO_new(BIO_s_mem());
-	BIO *wbio = BIO_new(BIO_s_mem());
-
+	rbio = BIO_new(BIO_s_mem());
+	wbio = BIO_new(BIO_s_mem());
 	if (!rbio || !wbio) {
 		if (rbio)
 			BIO_free(rbio);
@@ -146,9 +179,36 @@ static int handle_tls_handshake(int fd, const void *data, size_t len)
 	BIO_write(rbio, data, len);
 
 	// Start handshake
-	int ret = SSL_accept(ssl);
+	ret = SSL_accept(ssl);
+	ssl_err = SSL_get_error(ssl, ret);
+
+	// Check for data to write back, regardless of SSL_accept result
+	pending = BIO_pending(wbio);
+	if (pending > 0) {
+		char *write_buffer = malloc(pending);
+		if (!write_buffer) {
+			LOG("Failed to allocate memory for initial TLS response");
+			SSL_free(ssl);
+			return ENOMEM;
+		}
+
+		int bytes = BIO_read(wbio, write_buffer, pending);
+		LOG("Initial handshake generated %d bytes to send for fd=%d",
+		    bytes, fd);
+
+		ret = io_request_write_op(fd, write_buffer, bytes, NULL, ring);
+		if (ret) {
+			free(write_buffer);
+			SSL_free(ssl);
+			return -ret;
+		}
+
+		LOG("Submitted initial TLS response (%d bytes) for fd=%d",
+		    bytes, fd);
+	}
+
+	// Now process the SSL_accept result
 	if (ret <= 0) {
-		int ssl_err = SSL_get_error(ssl, ret);
 		if (ssl_err == SSL_ERROR_WANT_READ ||
 		    ssl_err == SSL_ERROR_WANT_WRITE) {
 			// Handshake in progress, need more data
@@ -162,10 +222,8 @@ static int handle_tls_handshake(int fd, const void *data, size_t len)
 		}
 
 		// Handshake failed immediately
-		char err_buf[256];
-		ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-		LOG("TLS handshake failed immediately for fd=%d: %s", fd,
-		    err_buf);
+		io_ssl_err_print(fd, "handshake failed immediately", __func__,
+				 __LINE__);
 
 		SSL_free(ssl);
 		return EINVAL;
@@ -183,13 +241,13 @@ static int handle_tls_handshake(int fd, const void *data, size_t len)
 /*
  * Let the caller shut things down if there is an error
  */
-int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
-			   struct io_context *ic)
+static int request_more_read_data(int fd, struct io_uring *ring,
+				  struct io_context *ic)
 {
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
 
-	ic->ic_fd = bs->bs_fd;
+	ic->ic_fd = fd;
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		sqe = io_uring_get_sqe(ring);
@@ -203,7 +261,7 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 		return -ENOMEM;
 	}
 
-	io_uring_prep_read(sqe, bs->bs_fd, ic->ic_buffer, BUFFER_SIZE, 0);
+	io_uring_prep_read(sqe, fd, ic->ic_buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 	trace_io_read_submit(ic);
 	io_context_update_time(ic);
@@ -228,8 +286,69 @@ int request_more_read_data(struct buffer_state *bs, struct io_uring *ring,
 	return ret;
 }
 
-int request_additional_read_data(int fd, struct connection_info *ci,
-				 struct io_uring *ring)
+int io_request_write_op(int fd, char *buf, int len, struct connection_info *ci,
+			struct io_uring *ring)
+{
+	struct io_uring_sqe *sqe = NULL;
+	int ret = 0;
+
+	if (fd <= 0 || fd >= MAX_CONNECTIONS) {
+		LOG("Invalid fd: %d", fd);
+		return -EINVAL;
+	}
+
+	struct io_context *ic = io_context_create(OP_TYPE_WRITE, fd, buf, len);
+	if (!ic) {
+		return -ENOMEM;
+	}
+
+	if (ci)
+		copy_connection_info(&ic->ic_ci, ci);
+
+	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
+		sqe = io_uring_get_sqe(ring);
+		if (sqe)
+			break;
+		usleep(IO_URING_WAIT_US);
+	}
+
+	if (!sqe) {
+		trace_io_context(ic, __func__, __LINE__); // loghyr
+		io_socket_close(fd, ENOMEM);
+		io_context_destroy(ic);
+		return -ENOMEM;
+	}
+
+	io_uring_prep_write(sqe, fd, buf, len, 0);
+	io_uring_sqe_set_data(sqe, ic); // loghyr - fix this everywhere
+
+	trace_io_write_submit(ic);
+
+	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
+		ret = io_uring_submit(ring);
+		if (ret >= 0)
+			break;
+		if (ret == -EAGAIN) {
+			usleep(IO_URING_WAIT_US);
+			ret = 0;
+			break; // Right now we don't know what io_uring is doing!
+		} else
+			break;
+	}
+
+	if (ret < 0) {
+		trace_io_context(ic, __func__, __LINE__); // loghyr
+		io_socket_close(fd, -ret);
+		io_context_destroy(ic);
+	} else {
+		ret = 0;
+	}
+
+	return 0;
+}
+
+int io_request_read_op(int fd, struct connection_info *ci,
+		       struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
@@ -243,7 +362,7 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 	if (!buffer) {
 		LOG("Failed to allocate buffer");
 		io_socket_close(fd, ENOMEM);
-		return ENOMEM;
+		return -ENOMEM;
 	}
 
 	struct io_context *ic =
@@ -252,7 +371,7 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 		LOG("Failed to create read context");
 		free(buffer);
 		io_socket_close(fd, ENOMEM);
-		return ENOMEM;
+		return -ENOMEM;
 	}
 
 	if (ci)
@@ -270,7 +389,7 @@ int request_additional_read_data(int fd, struct connection_info *ci,
 		trace_io_context(ic, __func__, __LINE__); // loghyr
 		io_socket_close(fd, ENOMEM);
 		io_context_destroy(ic);
-		return ENOMEM;
+		return -ENOMEM;
 	}
 
 	io_uring_prep_read(sqe, fd, buffer, BUFFER_SIZE, 0);
@@ -516,6 +635,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	int client_fd = ic->ic_fd;
 
 	struct conn_info *ci = io_conn_get(client_fd);
+	struct buffer_state *bs = NULL;
 
 	if (bytes_read <= 0) {
 		// Connection closed or error
@@ -536,11 +656,26 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		ci->ci_last_activity = time(NULL);
 		// If TLS handshaking is in progress, continue it
 
+		LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci,
+		    ci->ci_tls_handshaking, ci->ci_tls_enabled,
+		    (void *)ci->ci_ssl);
 		if (ci->ci_tls_handshaking) {
-			handle_tls_handshake(ic->ic_fd, ic->ic_buffer,
-					     bytes_read);
+			ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer,
+						   bytes_read, ring);
+			LOG("%d", ret);
+			if (ret) {
+				SSL_free(ci->ci_ssl);
+				ci->ci_ssl = NULL;
+				ci->ci_tls_handshaking = false;
+				io_socket_close(ic->ic_fd, EINVAL);
 
-			goto cleanup;
+				trace_io_context(ic, __func__,
+						 __LINE__); // loghyr
+				io_context_destroy(ic);
+				return 0;
+			}
+
+			goto get_more;
 		}
 
 		// If TLS is enabled, decrypt the data
@@ -561,14 +696,14 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 				}
 
 				// SSL error
-				char err_buf[256];
-				ERR_error_string_n(ERR_get_error(), err_buf,
-						   sizeof(err_buf));
-				LOG("SSL_read error on fd=%d: %s", ic->ic_fd,
-				    err_buf);
+				io_ssl_err_print(ic->ic_fd, "read error",
+						 __func__, __LINE__);
+				SSL_free(ci->ci_ssl);
+				ci->ci_ssl = NULL;
+				ci->ci_tls_handshaking = false;
 				io_socket_close(ic->ic_fd, EINVAL);
 				io_context_destroy(ic);
-				goto cleanup;
+				return 0;
 			}
 
 			// Update bytes_read with decrypted count
@@ -579,14 +714,26 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	// Check for TLS ClientHello
 	if (is_tls_client_hello(ic->ic_buffer, bytes_read)) {
 		LOG("TLS ClientHello detected on fd=%d", ic->ic_fd);
-		handle_tls_handshake(ic->ic_fd, ic->ic_buffer, bytes_read);
+		LOG();
+		ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer, bytes_read,
+					   ring);
+		if (ret) {
+			if (ci) {
+				SSL_free(ci->ci_ssl);
+				ci->ci_ssl = NULL;
+				ci->ci_tls_handshaking = false;
+				io_socket_close(ic->ic_fd, EINVAL);
+				io_context_destroy(ic);
 
-		// Submit another read for more handshake data or RPC
-		goto cleanup;
+				return 0;
+			}
+		}
+
+		goto get_more;
 	}
 
 	// Get or create buffer state for this connection
-	struct buffer_state *bs = get_buffer_state(client_fd);
+	bs = get_buffer_state(client_fd);
 	if (!bs) {
 		bs = create_buffer_state(client_fd);
 		if (!bs) {
@@ -661,8 +808,10 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		bs->bs_record.rs_position = 0;
 	}
 
+get_more:
 	// Try to use request_more_read_data first (which reuses the current context)
-	ret = request_more_read_data(bs, ring, ic);
+	ret = request_more_read_data(client_fd, ring, ic);
+	LOG("%d", ret);
 	if (ret == 0 || ret == EAGAIN) {
 		// Successfully submitted new read operation
 		needs_new_read = false;
@@ -672,7 +821,8 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 cleanup:
 	if (needs_new_read) {
-		ret = request_additional_read_data(client_fd, &ic->ic_ci, ring);
+		ret = io_request_read_op(client_fd, &ic->ic_ci, ring);
+		LOG("%d", ret);
 		if (ret != 0) {
 			LOG("Failed to request additional read: %s",
 			    strerror(ret));
