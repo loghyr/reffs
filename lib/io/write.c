@@ -333,18 +333,23 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	trace_io_write_submit(ic);
 	io_context_update_time(ic);
 
+	int pending = io_uring_sq_ready(ring);
+	printf("Pending SQEs before submit: %d\n", pending);
+
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
 			usleep(IO_URING_WAIT_US);
+			LOG("%d", ret);
 			ret = 0;
 			break; // Right now we don't know what io_uring is doing!
 		} else
 			break;
 	}
 
+	LOG("%d", ret);
 	if (ret < 0) {
 		io_socket_close(ic->ic_fd, -ret);
 		io_context_destroy(ic);

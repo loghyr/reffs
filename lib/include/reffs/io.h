@@ -31,8 +31,8 @@
 #define MAX_CONNECTIONS 1024 // Maximum number of concurrent client connections
 #define MAX_LISTENERS 1024
 
-#define IO_URING_WAIT_SEC (0)
-#define IO_URING_WAIT_NSEC (100000000)
+#define IO_URING_WAIT_SEC (1)
+#define IO_URING_WAIT_NSEC (0)
 
 #define IO_URING_WAIT_US \
 	((IO_URING_WAIT_SEC * 1000000) + (IO_URING_WAIT_NSEC / 1000))

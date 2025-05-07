@@ -277,7 +277,7 @@ static int request_more_read_data(int fd, struct io_uring *ring,
 
 	io_uring_prep_read(sqe, fd, ic->ic_buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
-	trace_io_read_submit(ic);
+	//trace_io_read_submit(ic);
 	io_context_update_time(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
@@ -345,7 +345,7 @@ int io_request_read_op(int fd, struct connection_info *ci,
 	io_uring_prep_read(sqe, fd, buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
-	trace_io_read_submit(ic);
+	//trace_io_read_submit(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
@@ -586,7 +586,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	struct conn_info *ci = io_conn_get(client_fd);
 	struct buffer_state *bs = NULL;
 
-	if (bytes_read <= 0) {
+	if (bytes_read == 0) {
 		goto get_more;
 	} else if (bytes_read < 0) {
 		// Connection closed or error
