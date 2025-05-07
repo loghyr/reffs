@@ -19,4 +19,12 @@ extern SSL_CTX *reffs_server_ssl_ctx;
 
 int io_tls_init_server_context(void);
 
+static inline void io_ssl_err_print(int fd, const char *msg, const char *func,
+				    const int line)
+{
+	char err_buf[256];
+	ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+	LOG("%s:%d: SSL error %s for fd=%d: %s", func, line, msg, fd, err_buf);
+}
+
 #endif /* _REFFS_TLS_H */

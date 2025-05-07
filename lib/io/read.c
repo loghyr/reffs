@@ -33,14 +33,6 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
-static inline void io_ssl_err_print(int fd, const char *msg, const char *func,
-				    const int line)
-{
-	char err_buf[256];
-	ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
-	LOG("%s:%d: SSL error %s for fd=%d: %s", func, line, msg, fd, err_buf);
-}
-
 // Function to detect a TLS ClientHello
 static bool is_tls_client_hello(const unsigned char *buf, size_t len)
 {

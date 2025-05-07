@@ -73,10 +73,8 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 			}
 
 			// Real error
-			char ssl_err[256];
-			ERR_error_string_n(ERR_get_error(), ssl_err,
-					   sizeof(ssl_err));
-			LOG("SSL_write error on fd=%d: %s", ic->ic_fd, ssl_err);
+			io_ssl_err_print(ic->ic_fd, "write error", __func__,
+					 __LINE__);
 			io_socket_close(ic->ic_fd, EINVAL);
 			io_context_destroy(ic);
 			return -EINVAL;
