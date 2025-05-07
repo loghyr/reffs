@@ -665,7 +665,6 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		if (ci->ci_tls_handshaking) {
 			ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer,
 						   bytes_read, ring);
-			LOG("%d", ret);
 			if (ret) {
 				SSL_free(ci->ci_ssl);
 				ci->ci_ssl = NULL;
