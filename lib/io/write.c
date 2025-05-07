@@ -58,6 +58,8 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 	ktls_enabled = BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
 #endif
 
+	LOG("ktls_enabled=%d", ktls_enabled);
+	rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
 	if (!ktls_enabled) {
 		// Handle in userspace
 		int ret = SSL_write(ci->ci_ssl,
