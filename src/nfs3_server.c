@@ -63,12 +63,12 @@ static void usage(const char *prog)
 	printf("  -r  --rpc_dump               Dump RPC msg bodies\n");
 	printf("  -p  --port=id                Serve NFS traffic from this \"port\"\n");
 	printf("  -f  --file=fname             Save tracing data to this file \"fname\"\n");
-	printf("  -c  --category=cat           Enable tracing for a category");
-	printf("                                     0 - General");
-	printf("                                     1 - IO");
-	printf("                                     2 - RPC");
-	printf("                                     3 - NFS");
-	printf("                                     4 - FS");
+	printf("  -c  --category=cat           Enable tracing for a category\n");
+	printf("                                     0 - General\n");
+	printf("                                     1 - IO\n");
+	printf("                                     2 - RPC\n");
+	printf("                                     3 - NFS\n");
+	printf("                                     4 - FS\n");
 }
 
 static struct option long_opts[] = {

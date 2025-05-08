@@ -57,12 +57,12 @@ static void usage(const char *prog)
 	printf("  -v  --version=v              Probe this program version \"vers\"\n");
 	printf("  -p  --port=port              Connect to server at the \"port\"\n");
 	printf("  -s  --server=server          Connect to server at the \"server\"\n");
-	printf("  -c  --category=cat           Enable tracing for a category");
-	printf("                                     0 - General");
-	printf("                                     1 - IO");
-	printf("                                     2 - RPC");
-	printf("                                     3 - NFS");
-	printf("                                     4 - FS");
+	printf("  -c  --category=cat           Enable tracing for a category\n");
+	printf("                                     0 - General\n");
+	printf("                                     1 - IO\n");
+	printf("                                     2 - RPC\n");
+	printf("                                     3 - NFS\n");
+	printf("                                     4 - FS\n");
 }
 
 static struct option long_opts[] = {
