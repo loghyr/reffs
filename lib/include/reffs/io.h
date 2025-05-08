@@ -157,7 +157,9 @@ void io_handler_main_loop(volatile sig_atomic_t *running,
 			  struct io_uring *ring);
 void io_handler_stop(void);
 
-int setup_listener(int port);
+int io_lsnr_setup_ipv4(int port);
+int io_lsnr_setup_ipv6(int port);
+int *io_lsnr_setup(int port);
 
 int io_request_accept_op(int fd, struct connection_info *ci,
 			 struct io_uring *ring);

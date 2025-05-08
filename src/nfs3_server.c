@@ -82,8 +82,10 @@ static struct option long_opts[] = {
 
 int main(int argc, char *argv[])
 {
-	int listener_nfs_fd;
-	int listener_probe_fd;
+	int lsnr_ipv4_nfs_fd;
+	int lsnr_ipv6_nfs_fd;
+	int lsnr_ipv4_probe_fd;
+	int lsnr_ipv6_probe_fd;
 
 	int exit_code = 0;
 	int port = NFS_PORT;
@@ -182,25 +184,45 @@ int main(int argc, char *argv[])
 	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
 
 	// Setup NFS listener
-	listener_nfs_fd = setup_listener(port);
-	if (listener_nfs_fd < 0) {
+	lsnr_ipv4_nfs_fd = io_lsnr_setup_ipv4(port);
+	if (lsnr_ipv4_nfs_fd < 0) {
 		LOG("Failed to setup listener on port %d", port);
 		exit_code = 1;
 		goto out;
 	}
 
-	io_add_listener(listener_nfs_fd);
-	io_request_accept_op(listener_nfs_fd, NULL, &ring);
+	io_add_listener(lsnr_ipv4_nfs_fd);
+	io_request_accept_op(lsnr_ipv4_nfs_fd, NULL, &ring);
 
-	listener_probe_fd = setup_listener(PROBE_PORT);
-	if (listener_probe_fd < 0) {
+	lsnr_ipv6_nfs_fd = io_lsnr_setup_ipv6(port);
+	if (lsnr_ipv6_nfs_fd < 0) {
+		LOG("Failed to setup listener on port %d", port);
+		exit_code = 1;
+		goto out;
+	}
+
+	io_add_listener(lsnr_ipv6_nfs_fd);
+	io_request_accept_op(lsnr_ipv6_nfs_fd, NULL, &ring);
+
+	lsnr_ipv4_probe_fd = io_lsnr_setup_ipv4(PROBE_PORT);
+	if (lsnr_ipv4_probe_fd < 0) {
 		LOG("Failed to setup listener on port %d", PROBE_PORT);
 		exit_code = 1;
 		goto out;
 	}
 
-	io_add_listener(listener_probe_fd);
-	io_request_accept_op(listener_probe_fd, NULL, &ring);
+	io_add_listener(lsnr_ipv4_probe_fd);
+	io_request_accept_op(lsnr_ipv4_probe_fd, NULL, &ring);
+
+	lsnr_ipv6_probe_fd = io_lsnr_setup_ipv6(PROBE_PORT);
+	if (lsnr_ipv6_probe_fd < 0) {
+		LOG("Failed to setup listener on port %d", PROBE_PORT);
+		exit_code = 1;
+		goto out;
+	}
+
+	io_add_listener(lsnr_ipv6_probe_fd);
+	io_request_accept_op(lsnr_ipv6_probe_fd, NULL, &ring);
 
 	if (!pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
 		LOG("Failed to register with portmapper for NFSv3");
@@ -223,14 +245,24 @@ int main(int argc, char *argv[])
 	TRACE("Main loop exited, cleaning up...");
 
 	// Cleanup listener socket
-	if (listener_probe_fd > 0) {
-		close(listener_probe_fd);
-		listener_probe_fd = -1;
+	if (lsnr_ipv4_probe_fd > 0) {
+		close(lsnr_ipv4_probe_fd);
+		lsnr_ipv4_probe_fd = -1;
 	}
 
-	if (listener_nfs_fd > 0) {
-		close(listener_nfs_fd);
-		listener_nfs_fd = -1;
+	if (lsnr_ipv4_nfs_fd > 0) {
+		close(lsnr_ipv4_nfs_fd);
+		lsnr_ipv4_nfs_fd = -1;
+	}
+
+	if (lsnr_ipv6_probe_fd > 0) {
+		close(lsnr_ipv6_probe_fd);
+		lsnr_ipv6_probe_fd = -1;
+	}
+
+	if (lsnr_ipv6_nfs_fd > 0) {
+		close(lsnr_ipv6_nfs_fd);
+		lsnr_ipv6_nfs_fd = -1;
 	}
 
 	io_handler_fini(&ring);
