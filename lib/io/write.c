@@ -249,8 +249,10 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	trace_io_writer(ic, __func__, __LINE__);
 
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
+#ifdef TLS_DEBUGGING
 	LOG("ci=%p ssl=%p tls=%d", (void *)ci, (void *)ci->ci_ssl,
 	    ci->ci_tls_enabled);
+#endif
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
 		ret = io_do_tls(ic, ring);
 		if (ret <= 0)
@@ -321,9 +323,11 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	ci = io_conn_get(ic->ic_fd);
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
+#ifdef TLS_DEBUGGING
 		LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci,
 		    ci->ci_tls_handshaking, ci->ci_tls_enabled,
 		    (void *)ci->ci_ssl);
+#endif
 	}
 
 	// Submit the write operation
@@ -365,8 +369,10 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 		return ENOTCONN;
 	}
 
+#ifdef TLS_DEBUGGING
 	LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci, ci->ci_tls_handshaking,
 	    ci->ci_tls_enabled, (void *)ci->ci_ssl);
+#endif
 
 	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
 			       rt->rt_reply_len);
