@@ -73,6 +73,7 @@ struct io_context {
 #define IO_CONTEXT_IS_DESTROYED (1ULL << 5)
 #define IO_CONTEXT_IS_DESTROYED_HASH (1ULL << 6)
 #define IO_CONTEXT_DIRECT_TLS_DATA (1ULL << 7)
+#define IO_CONTEXT_TLS_BIO_PROCESSED (1ULL << 8)
 	uint64_t ic_state;
 
 	time_t ic_action_time;

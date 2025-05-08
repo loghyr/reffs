@@ -43,8 +43,6 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring);
 static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 {
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
-
-	// For TLS connections, we might need to do userspace TLS
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
 
 	LOG("ic=%p fd=%d type=%s bl=%zu id=%u", (void *)ic, ic->ic_fd,
@@ -64,6 +62,14 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 	LOG("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
 	    io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
 	if (!ktls_enabled) {
+		// Check if we've already processed this context for TLS
+		if (ic->ic_state & IO_CONTEXT_TLS_BIO_PROCESSED) {
+			LOG("ic=%p id=%u already processed for TLS, destroying",
+			    (void *)ic, ic->ic_id);
+			io_context_destroy(ic);
+			return 0;
+		}
+
 		// Handle in userspace
 		int ret = SSL_write(ci->ci_ssl,
 				    (char *)ic->ic_buffer + ic->ic_position,
@@ -90,17 +96,50 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 
 			LOG("SSL_write processed %d bytes, resulting in %d bytes of TLS data",
 			    ret, pending);
+
+			// Mark that we've processed this context for TLS to avoid duplicates
+			ic->ic_state |= IO_CONTEXT_TLS_BIO_PROCESSED;
+
+			// Read the encrypted data from the BIO and send it
+			if (pending > 0) {
+				unsigned char *write_buffer = malloc(pending);
+				if (!write_buffer) {
+					LOG("Failed to allocate memory for TLS data");
+					io_socket_close(ic->ic_fd, ENOMEM);
+					io_context_destroy(ic);
+					return -ENOMEM;
+				}
+
+				int bytes =
+					BIO_read(wbio, write_buffer, pending);
+				LOG("Read %d bytes of encrypted data from BIO",
+				    bytes);
+
+				if (bytes > 0) {
+					ret = io_request_write_op(
+						ic->ic_fd, (char *)write_buffer,
+						bytes,
+						IO_CONTEXT_DIRECT_TLS_DATA,
+						&ic->ic_ci, ring);
+
+					if (ret != 0) {
+						LOG("Failed to submit TLS data write: %d",
+						    ret);
+						free(write_buffer);
+						io_socket_close(ic->ic_fd,
+								-ret);
+						io_context_destroy(ic);
+						return ret;
+					}
+
+					LOG("Submitted %d bytes of TLS data via io_request_write_op",
+					    bytes);
+				} else {
+					free(write_buffer);
+				}
+			}
 		}
 
-		// Successfully wrote data
-		ic->ic_position += ret;
-
-		// If more data to write, call ourselves again
-		if (ic->ic_position < ic->ic_buffer_len) {
-			return rpc_trans_writer(ic, ring);
-		}
-
-		// All data written
 		io_context_destroy(ic);
 		return 0;
 	}
@@ -210,6 +249,8 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	trace_io_writer(ic, __func__, __LINE__);
 
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
+	LOG("ci=%p ssl=%p tls=%d", (void *)ci, (void *)ci->ci_ssl,
+	    ci->ci_tls_enabled);
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
 		ret = io_do_tls(ic, ring);
 		if (ret <= 0)
@@ -304,7 +345,6 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 			break;
 	}
 
-	LOG("%d", ret);
 	if (ret < 0) {
 		io_socket_close(ic->ic_fd, -ret);
 		io_context_destroy(ic);
