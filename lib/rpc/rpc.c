@@ -812,15 +812,13 @@ int rpc_process_task(struct task *t)
 	}
 
 	trace_rpc_task(rt, __func__, __LINE__);
-	LOG("%p %u,%u,%u", (void *)rt, rt->rt_info.ri_program,
-	    rt->rt_info.ri_version, rt->rt_info.ri_procedure);
 
 	if (rt->rt_info.ri_cred.rc_flavor == AUTH_TLS &&
 	    rt->rt_info.ri_procedure == 0) {
 		LOG("AUTH_TLS probe detected on fd=%d len=%u xid=0x%08x",
 		    rt->rt_fd, verifier_len, rt->rt_info.ri_xid);
 
-#ifdef NOT_NOW_BROWN_COW
+#ifdef LINUX_IS_NOT_RFC_9289_COMPLIANT
 		if (verifier_len != 8 ||
 		    memcmp(p, STARTTLS_VERIFIER, strlen(STARTTLS_VERIFIER))) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;

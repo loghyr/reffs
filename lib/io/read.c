@@ -573,11 +573,11 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
-		// If TLS handshaking is in progress, continue it
-
+#ifdef TLS_DEBUGGING
 		LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci,
 		    ci->ci_tls_handshaking, ci->ci_tls_enabled,
 		    (void *)ci->ci_ssl);
+#endif
 		if (ci->ci_tls_handshaking) {
 			ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer,
 						   bytes_read, ring);
