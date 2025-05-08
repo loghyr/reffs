@@ -104,7 +104,7 @@ int main(int argc, char *argv[])
 		switch (opt) {
 		case 'c': {
 			int tracing = atoi(optarg);
-			if (tracing > 0 && tracing < REFFS_TRACE_CAT_MAX) {
+			if (tracing > 0 && tracing < REFFS_TRACE_CAT_ALL) {
 				reffs_trace_enable_category(tracing);
 			}
 			break;

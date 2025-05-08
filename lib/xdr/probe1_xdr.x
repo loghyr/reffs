@@ -101,6 +101,40 @@ union CONTEXT1res switch (probe_stat1 pcr_status) {
 
 typedef unsigned int probe_dump1;
 
+enum probe_trace_category1 {
+        PROBE1_TRACE_CAT_GENERAL = 0,
+        PROBE1_TRACE_CAT_IO = 1,
+        PROBE1_TRACE_CAT_RPC = 2,
+        PROBE1_TRACE_CAT_NFS = 3,
+        PROBE1_TRACE_CAT_FS = 4,
+        PROBE1_TRACE_CAT_ALL = 5
+};
+
+struct TRACE_SET1args {
+	probe_trace_category1	tsa_cat;
+	unsigned int		tsa_set;
+};
+
+struct TRACES_LIST1args {
+	probe_trace_category1	tla_cat;
+};
+
+struct probe_trace_list1 {
+	probe_trace_category1	ptl_cat;
+	unsigned int 		ptl_set;
+};
+
+struct TRACES_LIST1resok {
+	probe_trace_list1	tlr_list<>;
+};
+
+union TRACES_LIST1res switch (probe_stat1 tlr_status) {
+	case PROBE1_OK:
+		TRACES_LIST1resok	tlr_resok;
+	default:
+		void;
+};
+
 const PROBE_PORT = 20490;
 
 /*
@@ -113,5 +147,7 @@ program PROBE_PROGRAM {
 		STATS_GATHER1res PROBEPROC1_STATS_GATHER(STATS_GATHER1args) = 1;
 		CONTEXT1res PROBEPROC1_CONTEXT(void) = 2;
 		probe_stat1 PROBEPROC1_RPC_DUMP_SET(probe_dump1) = 3;
+		probe_stat1 PROBEPROC1_TRACE_SET(TRACE_SET1args) = 4;
+		TRACES_LIST1res PROBEPROC1_TRACES_LIST(TRACES_LIST1args) = 5;
 	} = 1;
 } = 211768;

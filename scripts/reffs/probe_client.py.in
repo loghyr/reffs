@@ -80,5 +80,32 @@ class Probe1Client(ProtocolClient):
         Returns:
             probe_stat1 enum value
         """
-        # Pass the integer directly with the specific response type
         return self.proc(PROBEPROC1_RPC_DUMP_SET, dump, response_type='probe_stat1')
+
+    def trace_set(self, category, tracing):
+        """
+        Set TRACE level for category
+
+        Args:
+            category: An integer specifying the category to set
+                      Set to PROBE1_TRACE_CAT_ALL to set all.
+            tracing: Set or unset the category
+
+        Returns:
+            probe_stat1 enum value
+        """
+        args = TRACE_SET1args(category, tracing)
+        return self.proc(PROBEPROC1_TRACE_SET, args, response_type='probe_stat1')
+
+    def traces_list(self, category):
+        """
+        Get TRACE levels for category
+
+        Args:
+            category: An integer specifying the category to list.
+                      Set to PROBE1_TRACE_CAT_ALL to get all.
+
+        Returns:
+            TRACES_LIST1res object containing list of set values
+        """
+        return self.proc(PROBEPROC1_TRACES_LIST, category, response_type='TRACES_LIST1res')

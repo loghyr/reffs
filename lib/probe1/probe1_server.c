@@ -199,6 +199,82 @@ static int probe1_op_rpc_dump_set(struct rpc_trans *rt)
 	return 0;
 }
 
+static int probe1_op_trace_set(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	TRACE_SET1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	if (args->tsa_cat == PROBE1_TRACE_CAT_ALL) {
+		for (probe_trace_category1 i = PROBE1_TRACE_CAT_GENERAL;
+		     i < PROBE1_TRACE_CAT_ALL; i++) {
+			if (args->tsa_set)
+				reffs_trace_enable_category(
+					(enum reffs_trace_category)i);
+			else
+				reffs_trace_disable_category(
+					(enum reffs_trace_category)i);
+		}
+	} else if (args->tsa_cat < PROBE1_TRACE_CAT_GENERAL ||
+		   args->tsa_cat > PROBE1_TRACE_CAT_ALL) {
+		*res = PROBE1ERR_INVAL;
+	} else {
+		if (args->tsa_set)
+			reffs_trace_enable_category(
+				(enum reffs_trace_category)args->tsa_cat);
+		else
+			reffs_trace_disable_category(
+				(enum reffs_trace_category)args->tsa_cat);
+	}
+
+	return 0;
+}
+
+static int probe1_op_traces_list(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	TRACES_LIST1args *args = ph->ph_args;
+	TRACES_LIST1res *res = ph->ph_res;
+	TRACES_LIST1resok *resok = &res->TRACES_LIST1res_u.tlr_resok;
+
+	if (args->tla_cat < PROBE1_TRACE_CAT_GENERAL ||
+	    args->tla_cat > PROBE1_TRACE_CAT_ALL) {
+		res->tlr_status = PROBE1ERR_INVAL;
+	} else if (args->tla_cat == PROBE1_TRACE_CAT_ALL) {
+		resok->tlr_list.tlr_list_val =
+			calloc(PROBE1_TRACE_CAT_ALL,
+			       sizeof(*resok->tlr_list.tlr_list_val));
+		if (!resok->tlr_list.tlr_list_val) {
+			res->tlr_status = PROBE1ERR_NOMEM;
+		} else {
+			resok->tlr_list.tlr_list_len = PROBE1_TRACE_CAT_ALL;
+
+			for (probe_trace_category1 i = PROBE1_TRACE_CAT_GENERAL;
+			     i < PROBE1_TRACE_CAT_ALL; i++) {
+				resok->tlr_list.tlr_list_val[i].ptl_cat = i;
+				resok->tlr_list.tlr_list_val[i].ptl_set =
+					reffs_trace_is_category_enabled(
+						(enum reffs_trace_category)i);
+			}
+		}
+	} else {
+		resok->tlr_list.tlr_list_val =
+			calloc(1, sizeof(*resok->tlr_list.tlr_list_val));
+		if (!resok->tlr_list.tlr_list_val) {
+			res->tlr_status = PROBE1ERR_NOMEM;
+		} else {
+			resok->tlr_list.tlr_list_len = 1;
+
+			resok->tlr_list.tlr_list_val[0].ptl_cat = args->tla_cat;
+			resok->tlr_list.tlr_list_val[0]
+				.ptl_set = reffs_trace_is_category_enabled(
+				(enum reffs_trace_category)args->tla_cat);
+		}
+	}
+
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -210,6 +286,12 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, RPC_DUMP_SET, xdr_probe_dump1,
 			   probe_dump1, xdr_probe_stat1, probe_stat1,
 			   probe1_op_rpc_dump_set),
+	RPC_OPERATION_INIT(PROBEPROC1, TRACE_SET, xdr_TRACE_SET1args,
+			   TRACE_SET1args, xdr_probe_stat1, probe_stat1,
+			   probe1_op_trace_set),
+	RPC_OPERATION_INIT(PROBEPROC1, TRACES_LIST, xdr_TRACES_LIST1args,
+			   TRACES_LIST1args, xdr_TRACES_LIST1res,
+			   TRACES_LIST1res, probe1_op_traces_list),
 };
 
 static struct rpc_program_handler *probe1_handler;
@@ -220,6 +302,11 @@ int probe1_protocol_register(void)
 {
 	if (probev1_registered)
 		return 0;
+
+	/* Verify that the generated enum matches the manually defined one */
+	static_assert((enum reffs_trace_category)PROBE1_TRACE_CAT_ALL ==
+			      REFFS_TRACE_CAT_ALL,
+		      "Enum values are out of sync between header and XDR");
 
 	probev1_registered = 1;
 

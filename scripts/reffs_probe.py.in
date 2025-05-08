@@ -42,6 +42,17 @@ PROGRAM_MAP = {
 
 PROGRAM_NAME_TO_ID = {name: id for id, name in PROGRAM_MAP.items()}
 
+TRACE_CAT_MAP = {
+    PROBE1_TRACE_CAT_GENERAL: 'general',
+    PROBE1_TRACE_CAT_IO: 'io',
+    PROBE1_TRACE_CAT_RPC: 'rpc',
+    PROBE1_TRACE_CAT_NFS: 'nfs',
+    PROBE1_TRACE_CAT_FS: 'fs',
+    PROBE1_TRACE_CAT_ALL: 'all'
+}
+
+TRACE_CAT_NAME_TO_ID = {name: id for id, name in TRACE_CAT_MAP.items()}
+
 def probe_error_handler(ret):
     if ret == PROBE1_OK:
         return
@@ -160,6 +171,28 @@ def rpc_dump_set(client, args):
     probe_error_handler(res)
 
 
+def trace_set(client, args):
+    category = TRACE_CAT_NAME_TO_ID[args.category]
+    res = client.trace_set(category, args.tracing)
+    probe_error_handler(res)
+
+
+def print_trace_categories(trace_list):
+    print(f"{'Category':<10} {'Status':<6}")
+    print("-" * 17)
+    for trace in sorted(trace_list, key=lambda t: t.ptl_cat):
+        category_name = TRACE_CAT_MAP.get(trace.ptl_cat, "unknown")
+        status = "Set" if trace.ptl_set else "Unset"
+        print(f"{category_name:<10} {status:<6}")
+
+def traces_list(client, args):
+    category = TRACE_CAT_NAME_TO_ID[args.category]
+    res = client.traces_list(category)
+    probe_error_handler(res.tlr_status)
+
+    print_trace_categories(res.tlr_resok.tlr_list)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Probe reffs servers')
 
@@ -237,6 +270,33 @@ def parse_args():
                           required=False,
                           action='store_false')
     p_rpc_dump_set.set_defaults(func=rpc_dump_set)
+
+    p_trace_set = subparsers.add_parser('trace-set',
+                                        help='Set the tracing for a category')
+    a_trace_set = p_trace_set.add_mutually_exclusive_group(required=True)
+    a_trace_set.add_argument('--set',
+                             help='Set TRACE category tracing',
+                             dest='tracing',
+                             required=False,
+                             action='store_true')
+    a_trace_set.add_argument('--unset',
+                             help='Unset TRACE category tracing',
+                             dest='tracing',
+                             required=False,
+                             action='store_false')
+    p_trace_set.add_argument('--category',
+                             type=str,
+                             choices=list(TRACE_CAT_MAP.values()),
+                             help=f'Category name to set tracing (options: {", ".join(TRACE_CAT_MAP.values())})')
+    p_trace_set.set_defaults(func=trace_set)
+
+    p_traces_list = subparsers.add_parser('traces-list',
+                                          help='List the tracing for a category')
+    p_traces_list.add_argument('--category',
+                              type=str,
+                              choices=list(TRACE_CAT_MAP.values()),
+                              help=f'Category name to list tracing (options: {", ".join(TRACE_CAT_MAP.values())})')
+    p_traces_list.set_defaults(func=traces_list)
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()

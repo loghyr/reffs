@@ -20,7 +20,7 @@
 /* Global trace state */
 static pthread_mutex_t trace_mutex = PTHREAD_MUTEX_INITIALIZER;
 static FILE *trace_fp = NULL;
-static bool category_enabled[REFFS_TRACE_CAT_MAX] = { false, false, true, true,
+static bool category_enabled[REFFS_TRACE_CAT_ALL] = { false, false, true, true,
 						      false };
 
 /* Initialize tracing */
@@ -52,7 +52,7 @@ void reffs_trace_close(void)
 /* Enable a trace category */
 void reffs_trace_enable_category(enum reffs_trace_category category)
 {
-	if (category < REFFS_TRACE_CAT_MAX) {
+	if (category < REFFS_TRACE_CAT_ALL) {
 		pthread_mutex_lock(&trace_mutex);
 		category_enabled[category] = true;
 		pthread_mutex_unlock(&trace_mutex);
@@ -62,7 +62,7 @@ void reffs_trace_enable_category(enum reffs_trace_category category)
 /* Disable a trace category */
 void reffs_trace_disable_category(enum reffs_trace_category category)
 {
-	if (category < REFFS_TRACE_CAT_MAX) {
+	if (category < REFFS_TRACE_CAT_ALL) {
 		pthread_mutex_lock(&trace_mutex);
 		category_enabled[category] = false;
 		pthread_mutex_unlock(&trace_mutex);
@@ -72,7 +72,7 @@ void reffs_trace_disable_category(enum reffs_trace_category category)
 /* Check if a category is enabled */
 bool reffs_trace_is_category_enabled(enum reffs_trace_category category)
 {
-	if (category < REFFS_TRACE_CAT_MAX) {
+	if (category < REFFS_TRACE_CAT_ALL) {
 		return category_enabled[category];
 	}
 	return false;
@@ -81,7 +81,7 @@ bool reffs_trace_is_category_enabled(enum reffs_trace_category category)
 /* Check if trace should be shown */
 bool reffs_should_trace(enum reffs_trace_category category)
 {
-	return (category < REFFS_TRACE_CAT_MAX && category_enabled[category]);
+	return (category < REFFS_TRACE_CAT_ALL && category_enabled[category]);
 }
 
 /* Write trace event */

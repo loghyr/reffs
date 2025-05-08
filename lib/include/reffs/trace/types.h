@@ -27,7 +27,7 @@ enum reffs_trace_category {
 	REFFS_TRACE_CAT_RPC = 2,
 	REFFS_TRACE_CAT_NFS = 3,
 	REFFS_TRACE_CAT_FS = 4,
-	REFFS_TRACE_CAT_MAX
+	REFFS_TRACE_CAT_ALL
 };
 
 /* Trace event information structure */
