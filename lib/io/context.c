@@ -45,129 +45,99 @@ struct cds_lfht *io_active_ht = NULL;
 struct cds_lfht *io_cancel_ht = NULL;
 struct cds_lfht *io_destroy_ht = NULL;
 
-/* Match function for the hash tables */
-static int context_match(struct cds_lfht_node *node, const void *key)
+int context_match(struct cds_lfht_node *node, const void *key)
 {
+	const uint32_t *id = key;
 	struct io_context *ic =
 		caa_container_of(node, struct io_context, ic_active_node);
-	return ic->ic_id == *(const uint32_t *)key;
+	return ic->ic_id == *id;
 }
 
 static bool active_unhash(struct io_context *ic)
 {
-	rcu_read_lock();
-
 	int ret;
 	bool b;
 	uint64_t state;
 
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	rcu_read_lock();
 	state = __atomic_fetch_and(&ic->ic_state, ~IO_CONTEXT_IS_HASHED,
-				   __ATOMIC_ACQUIRE);
+				   __ATOMIC_SEQ_CST);
 	b = state & IO_CONTEXT_IS_HASHED;
 
-	if (b) {
-		// Only try to delete if the node is still in the table
-		struct cds_lfht_iter iter;
-		cds_lfht_lookup(io_active_ht, ic->ic_id, context_match,
-				&ic->ic_id, &iter);
-		struct cds_lfht_node *node = cds_lfht_iter_get_node(&iter);
-		struct io_context *found_ic =
-			node ? caa_container_of(node, struct io_context,
-						ic_active_node) :
-			       NULL;
-
-		if (found_ic == ic) {
-			ret = cds_lfht_del(io_active_ht, &ic->ic_active_node);
-			if (ret) {
-				LOG("ret = %d", ret);
-				assert(!ret);
-			}
+	cds_lfht_lookup(io_active_ht, ic->ic_id, context_match, &ic->ic_id,
+			&iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (node == &ic->ic_active_node) {
+		ret = cds_lfht_del(io_active_ht, &ic->ic_active_node);
+		if (ret && ret != -ENOENT) {
+			LOG("ret = %d", ret);
+			assert(!ret);
 		}
-
-		rcu_read_unlock();
-		return true;
 	}
 
 	rcu_read_unlock();
-	return false;
+	return b;
 }
 
 static bool cancel_unhash(struct io_context *ic)
 {
-	rcu_read_lock();
-
 	int ret;
 	bool b;
 	uint64_t state;
 
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	rcu_read_lock();
 	state = __atomic_fetch_and(&ic->ic_state, ~IO_CONTEXT_IS_CANCELLED_HASH,
-				   __ATOMIC_ACQUIRE);
+				   __ATOMIC_SEQ_CST);
 	b = state & IO_CONTEXT_IS_CANCELLED_HASH;
 
-	if (b) {
-		// Only try to delete if the node is still in the table
-		struct cds_lfht_iter iter;
-		cds_lfht_lookup(io_cancel_ht, ic->ic_id, context_match,
-				&ic->ic_id, &iter);
-		struct cds_lfht_node *node = cds_lfht_iter_get_node(&iter);
-		struct io_context *found_ic =
-			node ? caa_container_of(node, struct io_context,
-						ic_cancel_node) :
-			       NULL;
-
-		if (found_ic == ic) {
-			ret = cds_lfht_del(io_cancel_ht, &ic->ic_cancel_node);
-			if (ret) {
-				LOG("ret = %d", ret);
-				assert(!ret);
-			}
+	cds_lfht_lookup(io_cancel_ht, ic->ic_id, context_match, &ic->ic_id,
+			&iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (node == &ic->ic_active_node) {
+		ret = cds_lfht_del(io_cancel_ht, &ic->ic_cancel_node);
+		if (ret && ret != -ENOENT) {
+			LOG("ret = %d", ret);
+			assert(!ret);
 		}
-
-		rcu_read_unlock();
-		return true;
 	}
 
 	rcu_read_unlock();
-	return false;
+	return b;
 }
 
 static bool ic_destroy_unhash(struct io_context *ic)
 {
-	rcu_read_lock();
-
 	int ret;
 	bool b;
 	uint64_t state;
 
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	rcu_read_lock();
 	state = __atomic_fetch_and(&ic->ic_state, ~IO_CONTEXT_IS_DESTROYED_HASH,
-				   __ATOMIC_ACQUIRE);
+				   __ATOMIC_SEQ_CST);
 	b = state & IO_CONTEXT_IS_DESTROYED_HASH;
 
-	if (b) {
-		// Only try to delete if the node is still in the table
-		struct cds_lfht_iter iter;
-		cds_lfht_lookup(io_destroy_ht, ic->ic_id, context_match,
-				&ic->ic_id, &iter);
-		struct cds_lfht_node *node = cds_lfht_iter_get_node(&iter);
-		struct io_context *found_ic =
-			node ? caa_container_of(node, struct io_context,
-						ic_destroy_node) :
-			       NULL;
-
-		if (found_ic == ic) {
-			ret = cds_lfht_del(io_destroy_ht, &ic->ic_destroy_node);
-			if (ret) {
-				LOG("ret = %d", ret);
-				assert(!ret);
-			}
+	cds_lfht_lookup(io_destroy_ht, ic->ic_id, context_match, &ic->ic_id,
+			&iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (node == &ic->ic_active_node) {
+		ret = cds_lfht_del(io_destroy_ht, &ic->ic_destroy_node);
+		if (ret && ret != -ENOENT) {
+			LOG("ret = %d", ret);
+			assert(!ret);
 		}
-
-		rcu_read_unlock();
-		return true;
 	}
 
 	rcu_read_unlock();
-	return false;
+	return b;
 }
 
 // Remove context from all hash tables to avoid any inconsistencies
@@ -219,6 +189,7 @@ static void io_context_free_rcu(struct rcu_head *rcu)
 		caa_container_of(rcu, struct io_context, ic_rcu);
 
 	atomic_fetch_add(&context_freed, 1);
+	trace_io_context(ic, __func__, __LINE__);
 	free(ic->ic_buffer);
 	free(ic);
 }
@@ -327,7 +298,7 @@ static bool mark_io_context_destroyed(struct io_context *ic)
 	uint64_t old_state, new_state;
 
 	do {
-		__atomic_load(&ic->ic_state, &old_state, __ATOMIC_ACQUIRE);
+		__atomic_load(&ic->ic_state, &old_state, __ATOMIC_SEQ_CST);
 
 		// Already destroyed or being destroyed by another thread
 		if (old_state & IO_CONTEXT_IS_DESTROYED)
@@ -350,7 +321,7 @@ void io_context_destroy(struct io_context *ic)
 
 	// Only continue if we can mark it
 	uint64_t state = __atomic_fetch_or(
-		&ic->ic_state, IO_CONTEXT_MARKED_DESTROYED, __ATOMIC_ACQUIRE);
+		&ic->ic_state, IO_CONTEXT_MARKED_DESTROYED, __ATOMIC_SEQ_CST);
 	if (state & IO_CONTEXT_MARKED_DESTROYED)
 		return;
 
@@ -384,6 +355,7 @@ void io_context_destroy(struct io_context *ic)
 		// Double-check the context isn't already unhashed
 		if (ic->ic_state & IO_CONTEXT_IS_HASHED) {
 			active_unhash(ic);
+			trace_io_context(ic, __func__, __LINE__);
 		}
 
 		// Only add to destroy hash if not already there
@@ -391,9 +363,10 @@ void io_context_destroy(struct io_context *ic)
 			ic->ic_action_time = time(NULL);
 			__atomic_fetch_or(&ic->ic_state,
 					  IO_CONTEXT_IS_DESTROYED_HASH,
-					  __ATOMIC_ACQUIRE);
+					  __ATOMIC_SEQ_CST);
 			cds_lfht_add(io_destroy_ht, ic->ic_id,
 				     &ic->ic_destroy_node);
+			trace_io_context(ic, __func__, __LINE__);
 		}
 
 		rcu_read_unlock();
@@ -442,7 +415,7 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 
 	rcu_read_lock();
 	__atomic_fetch_or(&ic->ic_state, IO_CONTEXT_IS_HASHED,
-			  __ATOMIC_ACQUIRE);
+			  __ATOMIC_SEQ_CST);
 	cds_lfht_add(io_active_ht, ic->ic_id, &ic->ic_active_node);
 	rcu_read_unlock();
 
@@ -491,7 +464,7 @@ static bool mark_io_context_cancelled(struct io_context *ic)
 	uint64_t old_state, new_state;
 
 	do {
-		__atomic_load(&ic->ic_state, &old_state, __ATOMIC_ACQUIRE);
+		__atomic_load(&ic->ic_state, &old_state, __ATOMIC_SEQ_CST);
 
 		// Already cancelled or being cancelled by another thread
 		if (old_state & IO_CONTEXT_IS_CANCELLED)
@@ -512,7 +485,7 @@ void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 {
 	// Only continue if we can mark it
 	uint64_t state = __atomic_fetch_or(
-		&ic->ic_state, IO_CONTEXT_MARKED_CANCELLED, __ATOMIC_ACQUIRE);
+		&ic->ic_state, IO_CONTEXT_MARKED_CANCELLED, __ATOMIC_SEQ_CST);
 	if (state & IO_CONTEXT_MARKED_CANCELLED)
 		return;
 
@@ -552,7 +525,7 @@ void ic_context_cancel(struct io_context *ic, struct io_uring *ring)
 			ic->ic_action_time = time(NULL);
 			__atomic_fetch_or(&ic->ic_state,
 					  IO_CONTEXT_IS_CANCELLED_HASH,
-					  __ATOMIC_ACQUIRE);
+					  __ATOMIC_SEQ_CST);
 			cds_lfht_add(io_cancel_ht, ic->ic_id,
 				     &ic->ic_cancel_node);
 		}
