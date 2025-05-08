@@ -61,10 +61,8 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 	ktls_enabled = BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
 #endif
 
-	LOG("ktls_enabled=%d", ktls_enabled);
 	LOG("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
 	    io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
-	rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
 	if (!ktls_enabled) {
 		// Handle in userspace
 		int ret = SSL_write(ci->ci_ssl,
@@ -92,56 +90,6 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 
 			LOG("SSL_write processed %d bytes, resulting in %d bytes of TLS data",
 			    ret, pending);
-
-			if (pending > 0) {
-				// Read the encrypted data from the BIO
-				char *encrypted_data = malloc(pending);
-				if (encrypted_data) {
-					int bytes_read = BIO_read(
-						wbio, encrypted_data, pending);
-					LOG("Read %d bytes of encrypted data from BIO",
-					    bytes_read);
-
-					// Log first few bytes of the encrypted data
-					if (bytes_read > 0) {
-						LOG("First 16 bytes of TLS record: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
-						    (unsigned char)
-							    encrypted_data[0],
-						    (unsigned char)
-							    encrypted_data[1],
-						    (unsigned char)
-							    encrypted_data[2],
-						    (unsigned char)
-							    encrypted_data[3],
-						    (unsigned char)
-							    encrypted_data[4],
-						    (unsigned char)
-							    encrypted_data[5],
-						    (unsigned char)
-							    encrypted_data[6],
-						    (unsigned char)
-							    encrypted_data[7],
-						    (unsigned char)
-							    encrypted_data[8],
-						    (unsigned char)
-							    encrypted_data[9],
-						    (unsigned char)
-							    encrypted_data[10],
-						    (unsigned char)
-							    encrypted_data[11],
-						    (unsigned char)
-							    encrypted_data[12],
-						    (unsigned char)
-							    encrypted_data[13],
-						    (unsigned char)
-							    encrypted_data[14],
-						    (unsigned char)
-							    encrypted_data[15]);
-					}
-
-					free(encrypted_data);
-				}
-			}
 		}
 
 		// Successfully wrote data
