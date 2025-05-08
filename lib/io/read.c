@@ -68,23 +68,19 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 
 	LOG("TLS handshake: processing %zu bytes for fd=%d", len, fd);
 
-	// Initialize TLS if not already done
 	if (io_tls_init_server_context() != 0) {
 		LOG("Failed to initialize TLS context");
 		return EINVAL;
 	}
 
-	// If handshake already in progress, use existing SSL object
 	if (ci->ci_tls_handshaking && ci->ci_ssl) {
 		// Feed the data to SSL
 		rbio = SSL_get_rbio(ci->ci_ssl);
 		BIO_write(rbio, data, len);
 
-		// Try to continue the handshake
 		accept = SSL_accept(ci->ci_ssl);
 		ssl_err = SSL_get_error(ci->ci_ssl, accept);
 
-		// Check if there's data to send back to the client
 		wbio = SSL_get_wbio(ci->ci_ssl);
 		pending = BIO_pending(wbio);
 
@@ -102,20 +98,16 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 			int bytes = BIO_read(wbio, write_buffer, pending);
 			LOG("Reading %d bytes from wbio for fd=%d", bytes, fd);
 
-			// If handshake is complete, this is the final handshake message
-			// Mark it as a final handshake message in the connection info
 			if (accept > 0) {
 				ci->ci_handshake_final_pending = true;
-				// Store the bytes count for verification
 				ci->ci_handshake_final_bytes = bytes;
-
-				// We don't set ci_tls_enabled yet!
 				LOG("Handshake logically complete, sending final message (%d bytes) for fd=%d",
 				    bytes, fd);
 			}
 
-			ret = io_request_write_op(fd, write_buffer, bytes, NULL,
-						  ring);
+			ret = io_request_write_op(fd, write_buffer, bytes,
+						  IO_CONTEXT_DIRECT_TLS_DATA,
+						  NULL, ring);
 			if (ret) {
 				free(write_buffer);
 				return -ret;
@@ -128,13 +120,11 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		if (accept <= 0) {
 			if (ssl_err == SSL_ERROR_WANT_READ ||
 			    ssl_err == SSL_ERROR_WANT_WRITE) {
-				// Need more data
 				LOG("TLS handshake continuing for fd=%d, need more data",
 				    fd);
 				return 0;
 			}
 
-			// Handshake failed
 			io_ssl_err_print(fd, "handshake failed", __func__,
 					 __LINE__);
 			return EINVAL;
@@ -142,29 +132,18 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 
 		// Handshake is logically complete, but we don't enable TLS yet
 		// That will happen in io_handle_write after final message is sent
-		ci->ci_tls_handshaking =
-			false; // No longer in handshaking state
-
-		// Not setting ci_tls_enabled = true here anymore!
-		// ci->ci_tls_enabled = true;
-
+		ci->ci_tls_handshaking = false;
 		LOG("TLS handshake completed logically for fd=%d, waiting for final message to be sent",
 		    fd);
-
-		// Note: Not flushing the BIO here as we'll handle the final message separately
-		// BIO_flush(SSL_get_wbio(ci->ci_ssl));
-
 		return 0;
 	}
 
-	// Create a new SSL structure for this connection
 	SSL *ssl = SSL_new(reffs_server_ssl_ctx);
 	if (!ssl) {
 		LOG("Failed to create SSL for fd=%d", fd);
 		return EINVAL;
 	}
 
-	// Create memory BIOs for I/O
 	rbio = BIO_new(BIO_s_mem());
 	wbio = BIO_new(BIO_s_mem());
 	if (!rbio || !wbio) {
@@ -177,13 +156,10 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		return EINVAL;
 	}
 
-	// Set BIOs for SSL
 	SSL_set_bio(ssl, rbio, wbio);
 
-	// Write initial data to read BIO
 	BIO_write(rbio, data, len);
 
-	// Start handshake
 	accept = SSL_accept(ssl);
 	ssl_err = SSL_get_error(ssl, accept);
 
@@ -201,14 +177,15 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		LOG("Initial handshake generated %d bytes to send for fd=%d",
 		    bytes, fd);
 
-		// If handshake completed immediately, mark this as the final message
 		if (accept > 0) {
 			ci->ci_handshake_final_pending = true;
 			ci->ci_handshake_final_bytes = bytes;
 			LOG("Handshake completed immediately, sending final message");
 		}
 
-		ret = io_request_write_op(fd, write_buffer, bytes, NULL, ring);
+		ret = io_request_write_op(fd, write_buffer, bytes,
+					  IO_CONTEXT_DIRECT_TLS_DATA, NULL,
+					  ring);
 		if (ret) {
 			free(write_buffer);
 			SSL_free(ssl);
@@ -219,11 +196,9 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		    bytes, fd);
 	}
 
-	// Now process the SSL_accept result
 	if (accept <= 0) {
 		if (ssl_err == SSL_ERROR_WANT_READ ||
 		    ssl_err == SSL_ERROR_WANT_WRITE) {
-			// Handshake in progress, need more data
 			ci->ci_ssl = ssl;
 			ci->ci_tls_handshaking = true;
 			ci->ci_tls_enabled = false;
@@ -234,19 +209,14 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 			return 0;
 		}
 
-		// Handshake failed immediately
 		io_ssl_err_print(fd, "handshake failed immediately", __func__,
 				 __LINE__);
 		SSL_free(ssl);
 		return EINVAL;
 	}
 
-	// Handshake completed immediately (unlikely)
 	ci->ci_ssl = ssl;
-	// Not setting ci_tls_enabled yet!
-	// ci->ci_tls_enabled = true;
 	ci->ci_tls_handshaking = false;
-	// Final handshake message is being sent
 	ci->ci_handshake_final_pending = true;
 
 	LOG("TLS handshake completed immediately for fd=%d, waiting for final message to be sent",

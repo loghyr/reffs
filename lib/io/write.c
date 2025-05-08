@@ -47,6 +47,9 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 	// For TLS connections, we might need to do userspace TLS
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
 
+	LOG("ic=%p fd=%d type=%s bl=%zu id=%u", (void *)ic, ic->ic_fd,
+	    io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
+
 	if (remaining == 0) {
 		io_context_destroy(ic);
 		return 0;
@@ -59,6 +62,8 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 #endif
 
 	LOG("ktls_enabled=%d", ktls_enabled);
+	LOG("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
+	    io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
 	rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
 	if (!ktls_enabled) {
 		// Handle in userspace
@@ -144,6 +149,7 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 
 		// If more data to write, call ourselves again
 		if (ic->ic_position < ic->ic_buffer_len) {
+			LOG();
 			return rpc_trans_writer(ic, ring);
 		}
 
@@ -155,8 +161,8 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 	return 1;
 }
 
-int io_request_write_op(int fd, char *buf, int len, struct connection_info *ci,
-			struct io_uring *ring)
+int io_request_write_op(int fd, char *buf, int len, uint64_t state,
+			struct connection_info *ci, struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
@@ -170,6 +176,8 @@ int io_request_write_op(int fd, char *buf, int len, struct connection_info *ci,
 	if (!ic) {
 		return -ENOMEM;
 	}
+
+	ic->ic_state = state;
 
 	if (ci)
 		copy_connection_info(&ic->ic_ci, ci);
@@ -209,6 +217,10 @@ int io_request_write_op(int fd, char *buf, int len, struct connection_info *ci,
 		io_context_destroy(ic);
 	} else {
 		ret = 0;
+		LOG("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
+		    io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len,
+		    ic->ic_id);
+		rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
 	}
 
 	return 0;
@@ -425,6 +437,7 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 
 			LOG("TLS mode now active for fd=%d", ic->ic_fd);
 
+// Log kTLS status
 #ifdef BIO_get_ktls_send
 			int ktls_send =
 				BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
@@ -433,11 +446,23 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 			LOG("kTLS status for fd=%d: send=%d, recv=%d",
 			    ic->ic_fd, ktls_send, ktls_recv);
 #endif
-
-			// The handshake is now fully complete and TLS is active
-			// Continue with normal processing
 		}
 	}
 
+	// If this was direct TLS data, we're done - no need to continue with normal write processing
+	if (ic->ic_state & IO_CONTEXT_DIRECT_TLS_DATA) {
+		LOG("Direct TLS data sent, skipping io_do_tls");
+		io_context_destroy(ic);
+		return 0;
+	}
+
+	// For TLS connections, handle encryption before further processing
+	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
+		int ret = io_do_tls(ic, ring);
+		if (ret <= 0)
+			return ret;
+	}
+
+	// Continue with normal write processing for application data
 	return rpc_trans_writer(ic, ring);
 }

@@ -72,6 +72,7 @@ struct io_context {
 #define IO_CONTEXT_MARKED_DESTROYED (1ULL << 4)
 #define IO_CONTEXT_IS_DESTROYED (1ULL << 5)
 #define IO_CONTEXT_IS_DESTROYED_HASH (1ULL << 6)
+#define IO_CONTEXT_DIRECT_TLS_DATA (1ULL << 7)
 	uint64_t ic_state;
 
 	time_t ic_action_time;
@@ -161,8 +162,8 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 			 struct io_uring *ring);
 int io_request_read_op(int fd, struct connection_info *ci,
 		       struct io_uring *ring);
-int io_request_write_op(int fd, char *buf, int len, struct connection_info *ci,
-			struct io_uring *ring);
+int io_request_write_op(int fd, char *buf, int len, uint64_t state,
+			struct connection_info *ci, struct io_uring *ring);
 
 int create_worker_threads(volatile sig_atomic_t *running);
 void wait_for_worker_threads(void);
