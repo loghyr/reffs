@@ -17,10 +17,6 @@ class ProtocolClient(rpc.Client):
     DEFAULT_PORT = None
     PackerClass = None
     UnpackerClass = None
-    
-    # Map of procedure numbers to their response types
-    # Should be overridden by subclasses if needed
-    PROC_RESPONSE_TYPES = {}
 
     def __init__(self, host='localhost', port=None, prog=None, vers=None):
         # Allow overriding class constants at instance level
@@ -72,7 +68,25 @@ class ProtocolClient(rpc.Client):
             # For void procedures, prepare an empty buffer or use appropriate packing
             return self.send_call(pipe, procnum, b'', credinfo)
 
-        # Pack the arguments using the protocol-specific packer
+        # Handle primitive types (like integers for RPC_DUMP_SET)
+        if isinstance(procarg, (int, bool, float, str)):
+            if self.PackerClass is None:
+                raise NotImplementedError("PackerClass must be defined in the subclass")
+            p = self.PackerClass(check_enum=checks, check_array=checks)
+
+            # Choose the appropriate pack method based on the type
+            if isinstance(procarg, int):
+                p.pack_uint(procarg)
+            elif isinstance(procarg, bool):
+                p.pack_bool(procarg)
+            elif isinstance(procarg, float):
+                p.pack_double(procarg)
+            elif isinstance(procarg, str):
+                p.pack_string(procarg)
+
+            return self.send_call(pipe, procnum, p.get_buffer(), credinfo)
+
+        # Pack the arguments using the protocol-specific packer for complex types
         if self.PackerClass is None:
             raise NotImplementedError("PackerClass must be defined in the subclass")
 
@@ -83,13 +97,14 @@ class ProtocolClient(rpc.Client):
         # Send the call and return the XID for later retrieval
         return self.send_call(pipe, procnum, p.get_buffer(), credinfo)
 
-    def proc(self, procnum, procarg=None, **kwargs):
+    def proc(self, procnum, procarg=None, response_type=None, **kwargs):
         """
         Send an RPC call and wait for the response.
 
         Args:
             procnum: Procedure number to call
             procarg: Argument object for the procedure
+            response_type: Optional string specifying the response type name
             **kwargs: Additional arguments to pass to proc_async and listen
 
         Returns:
@@ -98,20 +113,51 @@ class ProtocolClient(rpc.Client):
         xid = self.proc_async(procnum, procarg, **kwargs)
         pipe = kwargs.get("pipe", None)
         timeout = kwargs.get("timeout", 10.0)
-        
+
         # If the procedure is defined as returning void, just wait for the response
         # and return the raw data without unpacking
         if self.is_void_response_proc(procnum):
             header, data = (pipe or self.get_pipe()).listen(xid, timeout)
             return data
-            
-        # For procedures with structured responses but void arguments,
-        # we need to determine the response type differently
+
+        # If a specific response type was provided, use that
+        if response_type:
+            return self.listen_with_response_type(xid, response_type, pipe, timeout)
+
+        # For procedures with void arguments but structured responses,
+        # we still need to determine the response type somehow
         if procarg is None:
-            return self.listen_void_arg(xid, procnum, pipe, timeout)
-            
+            raise ValueError("For procedures with void arguments, you must specify response_type")
+
         return self.listen(xid, procarg=procarg, pipe=pipe, timeout=timeout)
-        
+
+    def listen_with_response_type(self, xid, response_type, pipe=None, timeout=10.0):
+        """
+        Listen for a response using a specific response type name.
+
+        Args:
+            xid: Transaction ID from proc_async
+            response_type: String specifying the response type name
+            pipe: RPC pipe to use (uses the one from get_pipe() if None)
+            timeout: How long to wait for a response
+
+        Returns:
+            The unpacked response object
+        """
+        if pipe is None:
+            pipe = self.get_pipe()
+
+        # Get the response
+        header, data = pipe.listen(xid, timeout)
+
+        if not data:
+            return None
+
+        # Unpack the response using the specific type
+        p = self.UnpackerClass(data)
+        res_unpacker = getattr(p, f'unpack_{response_type}')
+        return res_unpacker()
+
     def is_void_response_proc(self, procnum):
         """
         Check if a procedure returns void.
@@ -119,38 +165,6 @@ class ProtocolClient(rpc.Client):
         Subclasses can override this to specify other void procedures.
         """
         return procnum == 0
-        
-    def get_response_type_for_proc(self, procnum):
-        """
-        Get the response type name for a procedure with void argument.
-        Subclasses should override this to provide procedure-specific response types.
-        """
-        return self.PROC_RESPONSE_TYPES.get(procnum)
-        
-    def listen_void_arg(self, xid, procnum, pipe=None, timeout=10.0):
-        """
-        Listen for a response to a call with void argument.
-        This handles procedures that have void arguments but structured responses.
-        """
-        if pipe is None:
-            pipe = self.get_pipe()
-            
-        # Get the response
-        header, data = pipe.listen(xid, timeout)
-        
-        if not data:
-            return None
-            
-        # Get the response type name for this procedure
-        restype = self.get_response_type_for_proc(procnum)
-        if not restype:
-            # If no specific type is defined, just return the data
-            return data
-            
-        # Unpack the response using the specific type
-        p = self.UnpackerClass(data)
-        res_unpacker = getattr(p, f'unpack_{restype}')
-        return res_unpacker()
 
     def listen(self, xid, procarg=None, pipe=None, timeout=10.0):
         """

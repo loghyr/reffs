@@ -38,7 +38,7 @@ static int stats_gather_cb(struct rpc_trans *rt)
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 	STATS_GATHER1res *res = ph->ph_res;
 	STATS_GATHER1resok *resok = &res->STATS_GATHER1res_u.psgr_resok;
-	stat_program1 *sp = &resok->psgr_program;
+	probe_program1 *pp = &resok->psgr_program;
 
 	if (res->psgr_status) {
 		LOG("error = %d", res->psgr_status);
@@ -46,8 +46,8 @@ static int stats_gather_cb(struct rpc_trans *rt)
 	}
 
 	LOG("count=%lu replied=%lu rejected=%lu accepted=%lu authed=%lu",
-	    sp->sp_count, sp->sp_replied_errors, sp->sp_rejected_errors,
-	    sp->sp_accepted_errors, sp->sp_authed_errors);
+	    pp->pp_count, pp->pp_replied_errors, pp->pp_rejected_errors,
+	    pp->pp_accepted_errors, pp->pp_authed_errors);
 
 	LOG("\n%3s %15s %10s %16s %16s %16s %16s", "OP", "Name", "Calls",
 	    "Errors", "Max", "Total", "Average");
@@ -55,16 +55,16 @@ static int stats_gather_cb(struct rpc_trans *rt)
 	    "----------", "----------------", "----------------",
 	    "----------------", "----------------");
 
-	for (uint32_t i = 0; i < sp->sp_ops.sp_ops_len; i++) {
-		uint64_t avg = sp->sp_ops.sp_ops_val[i].so_total_duration /
-			       sp->sp_ops.sp_ops_val[i].so_calls;
+	for (uint32_t i = 0; i < pp->pp_ops.pp_ops_len; i++) {
+		uint64_t avg = pp->pp_ops.pp_ops_val[i].po_total_duration /
+			       pp->pp_ops.pp_ops_val[i].po_calls;
 		LOG("%3u %15s %10lu %16lu %16lu %16lu %16lu",
-		    sp->sp_ops.sp_ops_val[i].so_op,
-		    sp->sp_ops.sp_ops_val[i].so_name,
-		    sp->sp_ops.sp_ops_val[i].so_calls,
-		    sp->sp_ops.sp_ops_val[i].so_errors,
-		    sp->sp_ops.sp_ops_val[i].so_max_duration,
-		    sp->sp_ops.sp_ops_val[i].so_total_duration, avg);
+		    pp->pp_ops.pp_ops_val[i].po_op,
+		    pp->pp_ops.pp_ops_val[i].po_name,
+		    pp->pp_ops.pp_ops_val[i].po_calls,
+		    pp->pp_ops.pp_ops_val[i].po_errors,
+		    pp->pp_ops.pp_ops_val[i].po_max_duration,
+		    pp->pp_ops.pp_ops_val[i].po_total_duration, avg);
 	}
 
 done:

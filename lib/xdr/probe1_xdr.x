@@ -5,12 +5,12 @@
  * Gather stats from the reffs server
  */
 
-struct stat_time1 {
+struct probe_time1 {
 	unsigned int seconds;
 	unsigned int nseconds;
 };
 
-enum stat_stat1 {
+enum probe_stat1 {
         PROBE1_OK = 0,                      /* no error */
         PROBE1ERR_PERM = 1,                /* Not owner */
         PROBE1ERR_NOENT = 2,               /* No such file or directory */
@@ -34,37 +34,37 @@ enum stat_stat1 {
         PROBE1ERR_BADNAME = 10041          /* name not supported */
 };
 
-struct stat_op1 {
-	unsigned int	so_op;
-	string		so_name<>;
-	unsigned hyper	so_calls;
-	unsigned hyper	so_errors;
-	unsigned hyper	so_max_duration;
-	unsigned hyper	so_total_duration;
-	unsigned hyper	so_bucket_1ms;
-	unsigned hyper	so_bucket_10ms;
-	unsigned hyper	so_bucket_100ms;
-	unsigned hyper	so_bucket_1s;
-	unsigned hyper	so_bucket_10s;
-	unsigned hyper	so_bucket_rest;
-	unsigned hyper	so_median_ns;
-	unsigned hyper	so_p90_ns;
-	unsigned hyper	so_p99_ns;
-	unsigned hyper	so_p999_ns;
-	unsigned hyper	so_min_ns;
-	unsigned hyper	so_max_ns;
-	unsigned hyper	so_mean_ns;
+struct probe_op1 {
+	unsigned int	po_op;
+	string		po_name<>;
+	unsigned hyper	po_calls;
+	unsigned hyper	po_errors;
+	unsigned hyper	po_max_duration;
+	unsigned hyper	po_total_duration;
+	unsigned hyper	po_bucket_1ms;
+	unsigned hyper	po_bucket_10ms;
+	unsigned hyper	po_bucket_100ms;
+	unsigned hyper	po_bucket_1s;
+	unsigned hyper	po_bucket_10s;
+	unsigned hyper	po_bucket_rest;
+	unsigned hyper	po_median_ns;
+	unsigned hyper	po_p90_ns;
+	unsigned hyper	po_p99_ns;
+	unsigned hyper	po_p999_ns;
+	unsigned hyper	po_min_ns;
+	unsigned hyper	po_max_ns;
+	unsigned hyper	po_mean_ns;
 };
 
-struct stat_program1 {
-	unsigned int	sp_program;
-	unsigned int	sp_version;
-	unsigned hyper	sp_count;
-	unsigned hyper	sp_replied_errors;
-	unsigned hyper	sp_rejected_errors;
-	unsigned hyper	sp_accepted_errors;
-	unsigned hyper	sp_authed_errors;
-	stat_op1	sp_ops<>;
+struct probe_program1 {
+	unsigned int	pp_program;
+	unsigned int	pp_version;
+	unsigned hyper	pp_count;
+	unsigned hyper	pp_replied_errors;
+	unsigned hyper	pp_rejected_errors;
+	unsigned hyper	pp_accepted_errors;
+	unsigned hyper	pp_authed_errors;
+	probe_op1	pp_ops<>;
 };
 
 struct STATS_GATHER1args {
@@ -73,10 +73,10 @@ struct STATS_GATHER1args {
 };
 
 struct STATS_GATHER1resok {
-	stat_program1	psgr_program;
+	probe_program1	psgr_program;
 };
 
-union STATS_GATHER1res switch (stat_stat1 psgr_status) {
+union STATS_GATHER1res switch (probe_stat1 psgr_status) {
 	case PROBE1_OK:
 		STATS_GATHER1resok	psgr_resok;
 	default:
@@ -92,27 +92,26 @@ struct CONTEXT1resok {
 	unsigned hyper	pcr_destroyed_freed;
 };
 
-union CONTEXT1res switch (stat_stat1 pcr_status) {
+union CONTEXT1res switch (probe_stat1 pcr_status) {
 	case PROBE1_OK:
 		CONTEXT1resok	pcr_resok;
 	default:
 		void;
 };
 
-typedef stat_stat1 RPC_DUMP_SET1res;	/* Probe client expects names to be like this for now */
-typedef unsigned int RPC_DUMP_SET1args;
+typedef unsigned int probe_dump1;
 
 const PROBE_PORT = 20490;
 
 /*
  * All ops MUST have the first four bytes reserved for status.
- * By default, return a stat_stat1, not a void.
+ * By default, return a probe_stat1, not a void.
  */
 program PROBE_PROGRAM {
 	version PROBE_V1 {
 		void PROBEPROC1_NULL(void) = 0;
 		STATS_GATHER1res PROBEPROC1_STATS_GATHER(STATS_GATHER1args) = 1;
 		CONTEXT1res PROBEPROC1_CONTEXT(void) = 2;
-		RPC_DUMP_SET1res PROBEPROC1_RPC_DUMP_SET(RPC_DUMP_SET1args) = 3;
+		probe_stat1 PROBEPROC1_RPC_DUMP_SET(probe_dump1) = 3;
 	} = 1;
 } = 211768;

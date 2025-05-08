@@ -87,7 +87,7 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 	STATS_GATHER1args *args = ph->ph_args;
 	STATS_GATHER1res *res = ph->ph_res;
 	STATS_GATHER1resok *resok = &res->STATS_GATHER1res_u.psgr_resok;
-	stat_program1 *sp = &resok->psgr_program;
+	probe_program1 *pp = &resok->psgr_program;
 
 	int64_t counts[BUCKET_COUNT + 1]; // +1 for the >=10s bucket
 
@@ -98,67 +98,67 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 		goto out;
 	}
 
-	sp->sp_ops.sp_ops_val = calloc(rph->rph_ops_len, sizeof(stat_op1));
-	if (!sp->sp_ops.sp_ops_val) {
+	pp->pp_ops.pp_ops_val = calloc(rph->rph_ops_len, sizeof(probe_op1));
+	if (!pp->pp_ops.pp_ops_val) {
 		res->psgr_status = PROBE1ERR_NOMEM;
 		goto out;
 	}
 
-	sp->sp_ops.sp_ops_len = rph->rph_ops_len;
-	sp->sp_program = rph->rph_program;
-	sp->sp_version = rph->rph_version;
-	__atomic_load(&rph->rph_calls, &sp->sp_count, __ATOMIC_RELAXED);
-	__atomic_load(&rph->rph_replied_errors, &sp->sp_replied_errors,
+	pp->pp_ops.pp_ops_len = rph->rph_ops_len;
+	pp->pp_program = rph->rph_program;
+	pp->pp_version = rph->rph_version;
+	__atomic_load(&rph->rph_calls, &pp->pp_count, __ATOMIC_RELAXED);
+	__atomic_load(&rph->rph_replied_errors, &pp->pp_replied_errors,
 		      __ATOMIC_RELAXED);
-	__atomic_load(&rph->rph_rejected_errors, &sp->sp_rejected_errors,
+	__atomic_load(&rph->rph_rejected_errors, &pp->pp_rejected_errors,
 		      __ATOMIC_RELAXED);
-	__atomic_load(&rph->rph_accepted_errors, &sp->sp_accepted_errors,
+	__atomic_load(&rph->rph_accepted_errors, &pp->pp_accepted_errors,
 		      __ATOMIC_RELAXED);
-	__atomic_load(&rph->rph_authed_errors, &sp->sp_authed_errors,
+	__atomic_load(&rph->rph_authed_errors, &pp->pp_authed_errors,
 		      __ATOMIC_RELAXED);
 
 	for (size_t i = 0; i < rph->rph_ops_len; i++) {
-		sp->sp_ops.sp_ops_val[i].so_name =
+		pp->pp_ops.pp_ops_val[i].po_name =
 			strdup(rph->rph_ops[i].roh_name);
 		__atomic_load(&rph->rph_ops[i].roh_operation,
-			      &sp->sp_ops.sp_ops_val[i].so_op,
+			      &pp->pp_ops.pp_ops_val[i].po_op,
 			      __ATOMIC_RELAXED);
 		__atomic_load(&rph->rph_ops[i].roh_stats.rs_calls,
-			      &sp->sp_ops.sp_ops_val[i].so_calls,
+			      &pp->pp_ops.pp_ops_val[i].po_calls,
 			      __ATOMIC_RELAXED);
 		__atomic_load(&rph->rph_ops[i].roh_stats.rs_fails,
-			      &sp->sp_ops.sp_ops_val[i].so_errors,
+			      &pp->pp_ops.pp_ops_val[i].po_errors,
 			      __ATOMIC_RELAXED);
 		__atomic_load(&rph->rph_ops[i].roh_stats.rs_duration_max,
-			      &sp->sp_ops.sp_ops_val[i].so_max_duration,
+			      &pp->pp_ops.pp_ops_val[i].po_max_duration,
 			      __ATOMIC_RELAXED);
 		__atomic_load(&rph->rph_ops[i].roh_stats.rs_duration_total,
-			      &sp->sp_ops.sp_ops_val[i].so_total_duration,
+			      &pp->pp_ops.pp_ops_val[i].po_total_duration,
 			      __ATOMIC_RELAXED);
 
 		struct hdr_histogram *hh =
 			rph->rph_ops[i].roh_stats.rs_histogram;
 		calculate_bucket_counts(hh, counts);
 
-		sp->sp_ops.sp_ops_val[i].so_bucket_1ms = counts[0];
-		sp->sp_ops.sp_ops_val[i].so_bucket_10ms = counts[1];
-		sp->sp_ops.sp_ops_val[i].so_bucket_100ms = counts[2];
-		sp->sp_ops.sp_ops_val[i].so_bucket_1s = counts[3];
-		sp->sp_ops.sp_ops_val[i].so_bucket_10s = counts[4];
-		sp->sp_ops.sp_ops_val[i].so_bucket_rest = counts[5];
+		pp->pp_ops.pp_ops_val[i].po_bucket_1ms = counts[0];
+		pp->pp_ops.pp_ops_val[i].po_bucket_10ms = counts[1];
+		pp->pp_ops.pp_ops_val[i].po_bucket_100ms = counts[2];
+		pp->pp_ops.pp_ops_val[i].po_bucket_1s = counts[3];
+		pp->pp_ops.pp_ops_val[i].po_bucket_10s = counts[4];
+		pp->pp_ops.pp_ops_val[i].po_bucket_rest = counts[5];
 
-		sp->sp_ops.sp_ops_val[i].so_median_ns =
+		pp->pp_ops.pp_ops_val[i].po_median_ns =
 			hdr_value_at_percentile(hh, 50.0);
-		sp->sp_ops.sp_ops_val[i].so_p90_ns =
+		pp->pp_ops.pp_ops_val[i].po_p90_ns =
 			hdr_value_at_percentile(hh, 90.0);
-		sp->sp_ops.sp_ops_val[i].so_p99_ns =
+		pp->pp_ops.pp_ops_val[i].po_p99_ns =
 			hdr_value_at_percentile(hh, 99.0);
-		sp->sp_ops.sp_ops_val[i].so_p999_ns =
+		pp->pp_ops.pp_ops_val[i].po_p999_ns =
 			hdr_value_at_percentile(hh, 99.9);
 
-		sp->sp_ops.sp_ops_val[i].so_min_ns = hdr_min(hh);
-		sp->sp_ops.sp_ops_val[i].so_max_ns = hdr_max(hh);
-		sp->sp_ops.sp_ops_val[i].so_mean_ns = hdr_mean(hh);
+		pp->pp_ops.pp_ops_val[i].po_min_ns = hdr_min(hh);
+		pp->pp_ops.pp_ops_val[i].po_max_ns = hdr_max(hh);
+		pp->pp_ops.pp_ops_val[i].po_mean_ns = hdr_mean(hh);
 	}
 
 out:
@@ -189,7 +189,7 @@ static int probe1_op_context(struct rpc_trans *rt)
 static int probe1_op_rpc_dump_set(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
-	RPC_DUMP_SET1args *args = ph->ph_args;
+	probe_dump1 *args = ph->ph_args;
 
 	if (*args)
 		rpc_enable_packet_logging();
@@ -207,9 +207,9 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   STATS_GATHER1res, probe1_op_stats_gather),
 	RPC_OPERATION_INIT(PROBEPROC1, CONTEXT, NULL, NULL, xdr_CONTEXT1res,
 			   CONTEXT1res, probe1_op_context),
-	RPC_OPERATION_INIT(PROBEPROC1, RPC_DUMP_SET, xdr_RPC_DUMP_SET1args,
-			   RPC_DUMP_SET1args, xdr_RPC_DUMP_SET1res,
-			   RPC_DUMP_SET1res, probe1_op_rpc_dump_set),
+	RPC_OPERATION_INIT(PROBEPROC1, RPC_DUMP_SET, xdr_probe_dump1,
+			   probe_dump1, xdr_probe_stat1, probe_stat1,
+			   probe1_op_rpc_dump_set),
 };
 
 static struct rpc_program_handler *probe1_handler;

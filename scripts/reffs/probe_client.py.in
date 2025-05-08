@@ -8,6 +8,16 @@ from .probe1_xdr_const import *
 from .probe1_xdr_pack import PROBE1_XDRPacker, PROBE1_XDRUnpacker
 from .protocol_client import ProtocolClient
 
+# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: GPL-2.0+
+
+import struct
+import time
+from .probe1_xdr_type import *
+from .probe1_xdr_const import *
+from .probe1_xdr_pack import PROBE1_XDRPacker, PROBE1_XDRUnpacker
+from .protocol_client import ProtocolClient
+
 class Probe1Client(ProtocolClient):
     """
     Client implementation for Probe1.
@@ -21,12 +31,6 @@ class Probe1Client(ProtocolClient):
     PackerClass = PROBE1_XDRPacker
     UnpackerClass = PROBE1_XDRUnpacker
 
-    # Map procedure numbers to their response types for void argument procedures
-    PROC_RESPONSE_TYPES = {
-        PROBEPROC1_CONTEXT: 'CONTEXT1res',
-        # Add other procedures with void arguments but structured responses here
-    }
-
     def __init__(self, host='localhost', port=None):
         super().__init__(host=host, port=port)
 
@@ -39,27 +43,42 @@ class Probe1Client(ProtocolClient):
         """
         return procnum == PROBEPROC1_NULL
 
-    # Override get_response_name to match the XDR naming convention
-    def get_response_name(self, argname):
-        if argname == 'VoidArg':
-            # Special case for void arguments
-            return 'void'
-        # STATS_GATHER1args -> STATS_GATHER1res
-        if argname.endswith('args'):
-            return argname[:-4] + 'res'
-        return argname + 'res'
-
     def probe_null(self):
-        # Use the null method for the NULL procedure
+        """Call the null procedure (procedure 0)."""
         return self.null()
 
     def stats_gather(self, program, version):
+        """
+        Gather statistics for a specific program and version.
+
+        Args:
+            program: Program number to gather stats for
+            version: Version number to gather stats for
+
+        Returns:
+            STATS_GATHER1res object containing statistics
+        """
         args = STATS_GATHER1args(program, version)
         return self.proc(PROBEPROC1_STATS_GATHER, args)
 
     def context(self):
-        return self.proc(PROBEPROC1_CONTEXT)
+        """
+        Get context information from the server.
+
+        Returns:
+            CONTEXT1res object containing context information
+        """
+        return self.proc(PROBEPROC1_CONTEXT, response_type='CONTEXT1res')
 
     def rpc_dump_set(self, dump):
-        args = RPC_DUMP_SET1args(dump)
-        return self.proc(PROBEPROC1_RPC_DUMP_SET, args)
+        """
+        Set RPC dump level.
+
+        Args:
+            dump: An integer specifying the dump level (probe_dump1/unsigned int)
+
+        Returns:
+            probe_stat1 enum value
+        """
+        # Pass the integer directly with the specific response type
+        return self.proc(PROBEPROC1_RPC_DUMP_SET, dump, response_type='probe_stat1')
