@@ -149,7 +149,6 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 
 		// If more data to write, call ourselves again
 		if (ic->ic_position < ic->ic_buffer_len) {
-			LOG();
 			return rpc_trans_writer(ic, ring);
 		}
 
@@ -220,7 +219,6 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 		LOG("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
 		    io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len,
 		    ic->ic_id);
-		rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
 	}
 
 	return 0;

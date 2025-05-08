@@ -58,6 +58,8 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_STATS_GATHER, args)
 
     def context(self):
-        # For CONTEXT procedure, we can pass None directly
-        # The base class will handle unpacking the response properly
         return self.proc(PROBEPROC1_CONTEXT)
+
+    def rpc_dump_set(self, dump):
+        args = RPC_DUMP_SET1args(dump)
+        return self.proc(PROBEPROC1_RPC_DUMP_SET, args)

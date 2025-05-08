@@ -155,6 +155,11 @@ def context(client, args):
     print(f'Destroyed Freed  = {resok.pcr_destroyed_freed}')
 
 
+def rpc_dump_set(client, args):
+    res = client.rpc_dump_set(args.dump)
+    probe_error_handler(res)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Probe reffs servers')
 
@@ -217,6 +222,21 @@ def parse_args():
     p_context = subparsers.add_parser('context',
                                       help='Get the context stats')
     p_context.set_defaults(func=context)
+
+    p_rpc_dump_set = subparsers.add_parser('rpc-dump',
+                                           help='Dump RPC packets')
+    a_dumper = p_rpc_dump_set.add_mutually_exclusive_group(required=True)
+    a_dumper.add_argument('--set',
+                          help='Set RPC dumping',
+                          dest='dump',
+                          required=False,
+                          action='store_true')
+    a_dumper.add_argument('--unset',
+                          help='Unset RPC dumping',
+                          dest='dump',
+                          required=False,
+                          action='store_false')
+    p_rpc_dump_set.set_defaults(func=rpc_dump_set)
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()

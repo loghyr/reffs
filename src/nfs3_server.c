@@ -60,6 +60,7 @@ static void usage(const char *prog)
 	printf("Usage: %s [options]\n", prog);
 	printf("Options:\n");
 	printf("  -h  --help                   Print this usage and exit\n");
+	printf("  -r  --rpc_dump               Dump RPC msg bodies\n");
 	printf("  -p  --port=id                Serve NFS traffic from this \"port\"\n");
 	printf("  -f  --file=fname             Save tracing data to this file \"fname\"\n");
 	printf("  -c  --category=cat           Enable tracing for a category");
@@ -74,6 +75,7 @@ static struct option long_opts[] = {
 	{ "category", required_argument, 0, 'c' },
 	{ "file", required_argument, 0, 'f' },
 	{ "help", no_argument, 0, 'h' },
+	{ "rpc_dump", no_argument, 0, 'r' },
 	{ "port", required_argument, 0, 'p' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -96,7 +98,7 @@ int main(int argc, char *argv[])
 
 	server_boot_uuid_generate();
 
-	char *opts = "p:ht:c:f:";
+	char *opts = "p:hrt:c:f:";
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -112,6 +114,9 @@ int main(int argc, char *argv[])
 		}
 		case 'f':
 			trace_file = optarg;
+			break;
+		case 'r':
+			rpc_enable_packet_logging();
 			break;
 		case 'h':
 			usage(argv[0]);

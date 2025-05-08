@@ -186,6 +186,19 @@ static int probe1_op_context(struct rpc_trans *rt)
 	return 0;
 }
 
+static int probe1_op_rpc_dump_set(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	RPC_DUMP_SET1args *args = ph->ph_args;
+
+	if (*args)
+		rpc_enable_packet_logging();
+	else
+		rpc_disable_packet_logging();
+
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -194,6 +207,9 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   STATS_GATHER1res, probe1_op_stats_gather),
 	RPC_OPERATION_INIT(PROBEPROC1, CONTEXT, NULL, NULL, xdr_CONTEXT1res,
 			   CONTEXT1res, probe1_op_context),
+	RPC_OPERATION_INIT(PROBEPROC1, RPC_DUMP_SET, xdr_RPC_DUMP_SET1args,
+			   RPC_DUMP_SET1args, xdr_RPC_DUMP_SET1res,
+			   RPC_DUMP_SET1res, probe1_op_rpc_dump_set),
 };
 
 static struct rpc_program_handler *probe1_handler;

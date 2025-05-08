@@ -38,6 +38,18 @@
 
 CDS_LIST_HEAD(rpc_program_handler_list);
 
+static bool __rpc_log_packets = false;
+
+void rpc_enable_packet_logging(void)
+{
+	__rpc_log_packets = true;
+}
+
+void rpc_disable_packet_logging(void)
+{
+	__rpc_log_packets = false;
+}
+
 static void rpc_program_handler_free_rcu(struct rcu_head *rcu)
 {
 	struct rpc_program_handler *rph =
@@ -626,6 +638,9 @@ int rpc_process_task(struct task *t)
 
 	p = (uint32_t *)rt->rt_body;
 
+	if (__rpc_log_packets)
+		rpc_log_packet("RX: ", rt->rt_body, rt->rt_body_len);
+
 	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_xid);
 	if (!p) {
 		rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
@@ -1169,6 +1184,8 @@ handle_rpc_error:
 
 	if (rt->rt_reply && rt->rt_reply_len > 0) {
 		rt->rt_ring = t->t_ring;
+		if (__rpc_log_packets)
+			rpc_log_packet("TX: ", rt->rt_reply, rt->rt_reply_len);
 		rt->rt_cb(rt);
 	}
 

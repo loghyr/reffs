@@ -184,4 +184,7 @@ void rpc_log_packet(const char *prefix, const void *data, size_t len);
 
 int rpc_parse_call_data(struct rpc_trans *rt);
 
+void rpc_enable_packet_logging(void);
+void rpc_disable_packet_logging(void);
+
 #endif

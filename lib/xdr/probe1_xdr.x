@@ -99,6 +99,9 @@ union CONTEXT1res switch (stat_stat1 pcr_status) {
 		void;
 };
 
+typedef stat_stat1 RPC_DUMP_SET1res;	/* Probe client expects names to be like this for now */
+typedef unsigned int RPC_DUMP_SET1args;
+
 const PROBE_PORT = 20490;
 
 /*
@@ -110,5 +113,6 @@ program PROBE_PROGRAM {
 		void PROBEPROC1_NULL(void) = 0;
 		STATS_GATHER1res PROBEPROC1_STATS_GATHER(STATS_GATHER1args) = 1;
 		CONTEXT1res PROBEPROC1_CONTEXT(void) = 2;
+		RPC_DUMP_SET1res PROBEPROC1_RPC_DUMP_SET(RPC_DUMP_SET1args) = 3;
 	} = 1;
 } = 211768;
