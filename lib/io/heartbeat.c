@@ -26,7 +26,6 @@
 // Heartbeat interval in seconds
 #define HEARTBEAT_INTERVAL 60
 #define STALLED_CHECK_INTERVAL 60
-#define CANCELLED_CHECK_INTERVAL 60
 #define DESTROYED_CHECK_INTERVAL 60
 #define LISTENER_CHECK_INTERVAL 5
 #define CONNECTION_CHECK_INTERVAL 10
@@ -36,7 +35,6 @@
 struct heartbeat_state {
 	time_t last_heartbeat;
 	time_t last_stalled_check;
-	time_t last_cancelled_check;
 	time_t last_destroyed_check;
 	time_t last_listener_check;
 	time_t last_connection_check;
@@ -56,7 +54,6 @@ int io_heartbeat_init(struct io_uring *ring)
 	// Initialize timestamps
 	hb_state.last_heartbeat = now;
 	hb_state.last_stalled_check = now;
-	hb_state.last_cancelled_check = now;
 	hb_state.last_destroyed_check = now;
 	hb_state.last_listener_check = now;
 	hb_state.last_connection_check = now;
@@ -160,13 +157,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 	// Check for stalled contexts
 	if (now - hb_state.last_stalled_check >= STALLED_CHECK_INTERVAL) {
 		hb_state.last_stalled_check = now;
-		io_context_check_stalled(ring);
-	}
-
-	// Release cancelled contexts
-	if (now - hb_state.last_cancelled_check >= CANCELLED_CHECK_INTERVAL) {
-		hb_state.last_cancelled_check = now;
-		io_context_release_cancelled();
+		io_context_check_stalled();
 	}
 
 	// Release destroyed contexts

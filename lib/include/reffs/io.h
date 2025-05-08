@@ -51,11 +51,6 @@ enum op_type {
 
 // IO operation context structure
 struct io_context {
-	struct rcu_head ic_rcu;
-	struct cds_lfht_node ic_active_node;
-	struct cds_lfht_node ic_cancel_node;
-	struct cds_lfht_node ic_destroy_node;
-
 	enum op_type ic_op_type;
 	int ic_fd;
 	uint32_t ic_id;
@@ -65,15 +60,11 @@ struct io_context {
 	size_t ic_position;
 	uint32_t ic_xid;
 
-#define IO_CONTEXT_IS_HASHED (1ULL << 0)
-#define IO_CONTEXT_MARKED_CANCELLED (1ULL << 1)
-#define IO_CONTEXT_IS_CANCELLED (1ULL << 2)
-#define IO_CONTEXT_IS_CANCELLED_HASH (1ULL << 3)
-#define IO_CONTEXT_MARKED_DESTROYED (1ULL << 4)
-#define IO_CONTEXT_IS_DESTROYED (1ULL << 5)
-#define IO_CONTEXT_IS_DESTROYED_HASH (1ULL << 6)
-#define IO_CONTEXT_DIRECT_TLS_DATA (1ULL << 7)
-#define IO_CONTEXT_TLS_BIO_PROCESSED (1ULL << 8)
+#define IO_CONTEXT_ENTRY_STATE_ACTIVE (1ULL << 0)
+#define IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED (1ULL << 1)
+#define IO_CONTEXT_ENTRY_STATE_PENDING_FREE (1ULL << 2)
+#define IO_CONTEXT_DIRECT_TLS_DATA (1ULL << 3)
+#define IO_CONTEXT_TLS_BIO_PROCESSED (1ULL << 4)
 	uint64_t ic_state;
 
 	time_t ic_action_time;
@@ -81,6 +72,8 @@ struct io_context {
 	uint64_t ic_count;
 
 	struct connection_info ic_ci;
+
+	struct io_context *ic_next;
 };
 
 // Record state for reassembling fragmented RPC messages
@@ -197,9 +190,8 @@ void io_context_destroy(struct io_context *ic);
 void io_context_update_time(struct io_context *ic);
 
 void io_context_list_active(bool list_em);
-void io_context_release_active(struct io_uring *ring);
-void io_context_check_stalled(struct io_uring *ring);
-void io_context_release_cancelled(void);
+void io_context_release_active(void);
+void io_context_check_stalled(void);
 void io_context_release_destroyed(void);
 
 int io_context_init(void);
