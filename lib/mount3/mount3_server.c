@@ -132,6 +132,7 @@ static int mount3_exports(struct rpc_trans *rt)
 	return 0;
 out_unwind:
 
+	rcu_read_unlock();
 	for (en = en_head; en != NULL; en = next) {
 		next = en->ex_next;
 		free(en->ex_dir);
