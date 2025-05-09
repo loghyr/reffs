@@ -166,13 +166,13 @@ void wait_for_worker_threads(void);
 
 void add_task(struct task *task);
 
-void register_client_fd(int fd);
-void unregister_client_fd(int fd);
+void io_client_fd_register(int fd);
+void io_client_fd_unregister(int fd);
 
-bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len);
-
-struct buffer_state *create_buffer_state(int fd);
-struct buffer_state *get_buffer_state(int fd);
+// Buffers
+bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len);
+struct buffer_state *io_buffer_state_create(int fd);
+struct buffer_state *io_buffer_state_get(int fd);
 
 // Handlers
 int io_handle_accept(struct io_context *ic, int client_fd,

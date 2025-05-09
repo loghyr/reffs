@@ -647,9 +647,9 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	}
 
 	// Get or create buffer state for this connection
-	bs = get_buffer_state(client_fd);
+	bs = io_buffer_state_get(client_fd);
 	if (!bs) {
-		bs = create_buffer_state(client_fd);
+		bs = io_buffer_state_create(client_fd);
 		if (!bs) {
 			LOG("Failed to create buffer state for fd: %d",
 			    client_fd);
@@ -659,7 +659,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	}
 
 	// Append new data to existing buffer
-	if (!append_to_buffer(bs, buffer, bytes_read)) {
+	if (!io_buffer_append(bs, buffer, bytes_read)) {
 		LOG("Failed to append to buffer for fd: %d", client_fd);
 		// Memory allocation failure but socket is still valid
 		goto cleanup;

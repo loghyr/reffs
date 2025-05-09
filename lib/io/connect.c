@@ -604,7 +604,7 @@ int io_socket_close(int fd, int error)
 
 	LOG("Closing %d", fd);
 
-	unregister_client_fd(fd);
+	io_client_fd_unregister(fd);
 	return close(fd);
 }
 

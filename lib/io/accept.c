@@ -231,7 +231,7 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 	}
 
 	// Register this client in buffer state tracking
-	register_client_fd(client_fd);
+	io_client_fd_register(client_fd);
 
 	struct conn_info *conn = io_conn_get(client_fd);
 	if (conn) {

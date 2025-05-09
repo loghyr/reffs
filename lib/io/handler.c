@@ -117,16 +117,16 @@ int io_unregister_request(uint32_t xid)
 }
 
 // Register client fd
-void register_client_fd(int fd)
+void io_client_fd_register(int fd)
 {
 	// In this simplified version, we just track buffer state
-	create_buffer_state(fd);
+	io_buffer_state_create(fd);
 }
 
 // Unregister client fd
-void unregister_client_fd(int fd)
+void io_client_fd_unregister(int fd)
 {
-	struct buffer_state *bs = get_buffer_state(fd);
+	struct buffer_state *bs = io_buffer_state_get(fd);
 	if (bs) {
 		free(bs->bs_data);
 		if (bs->bs_record.rs_data) {
@@ -187,7 +187,7 @@ int io_handler_init(struct io_uring *ring)
 }
 
 // Create buffer state for a connection
-struct buffer_state *create_buffer_state(int fd)
+struct buffer_state *io_buffer_state_create(int fd)
 {
 	struct buffer_state *bs = malloc(sizeof(struct buffer_state));
 	if (!bs)
@@ -216,17 +216,35 @@ struct buffer_state *create_buffer_state(int fd)
 }
 
 // Get buffer state for a connection
-struct buffer_state *get_buffer_state(int fd)
+struct buffer_state *io_buffer_state_get(int fd)
 {
 	return conn_buffers[fd % MAX_CONNECTIONS];
 }
 
 // Append data to a buffer, resizing if necessary
-bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len)
+bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len)
 {
+	// Avoid integer overflow in capacity calculation
+	if (len > SIZE_MAX / 2 || bs->bs_filled > SIZE_MAX - len) {
+		return false; // Prevent integer overflow
+	}
+
 	// Check if we need to resize
 	if (bs->bs_filled + len > bs->bs_capacity) {
-		size_t new_capacity = bs->bs_capacity * 2;
+		// Calculate new capacity, ensuring we allocate enough space
+		size_t min_needed = bs->bs_filled + len;
+		size_t new_capacity = bs->bs_capacity;
+
+		// Double capacity until it's enough
+		while (new_capacity < min_needed) {
+			if (new_capacity > SIZE_MAX / 2) {
+				// Would overflow
+				return false;
+			}
+			new_capacity *= 2;
+		}
+
+		// Perform reallocation
 		char *new_data = realloc(bs->bs_data, new_capacity);
 		if (!new_data)
 			return false;
@@ -235,7 +253,7 @@ bool append_to_buffer(struct buffer_state *bs, const char *data, size_t len)
 		bs->bs_capacity = new_capacity;
 	}
 
-	// Append the data
+	// Append the data after successful reallocation
 	memcpy(bs->bs_data + bs->bs_filled, data, len);
 	bs->bs_filled += len;
 
