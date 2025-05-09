@@ -32,6 +32,8 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
+#define IO_CONTEXT_TIMEOUT (60)
+
 static _Atomic uint64_t context_created;
 static _Atomic uint64_t context_freed;
 
@@ -152,21 +154,6 @@ void io_context_destroy(struct io_context *ic)
 	// Update the action time to track when it was destroyed
 	ic->ic_action_time = time(NULL);
 	trace_io_context(ic, __func__, __LINE__);
-}
-
-static int adaptive_timeout(void)
-{
-	int to = 60;
-
-	uint64_t active_count = context_created - context_freed;
-	if (active_count > 100000)
-		to = 240;
-	else if (active_count > 50000)
-		to = 180;
-	else if (active_count > 10000)
-		to = 120;
-
-	return to;
 }
 
 // Create an IO context for operations
@@ -344,7 +331,7 @@ void io_context_check_stalled(void)
 
 	int count = 0;
 	time_t now = time(NULL);
-	int to = adaptive_timeout();
+	int to = IO_CONTEXT_TIMEOUT;
 
 	for (unsigned int i = 0; i < CONTEXT_HASH_SIZE; i++) {
 		for (struct io_context *ic = context_hash[i]; ic != NULL;
@@ -380,7 +367,7 @@ void io_context_release_destroyed(void)
 
 	int count = 0;
 	time_t now = time(NULL);
-	int to = adaptive_timeout();
+	int to = IO_CONTEXT_TIMEOUT;
 
 	LOG("=== Freeing Destroyed Contexts ===");
 
