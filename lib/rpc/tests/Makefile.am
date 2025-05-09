@@ -7,6 +7,7 @@ AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/fs @CHECK_CFLAGS@		\
 	$(JEMALLOC_CFLAGS) $(HDR_HISTOGRAM_CFLAGS)		\
 	$(OPENSSL_CFLAGS)					\
 	$(URING_CFLAGS)						\
+	$(ZSTD_CFLAGS)						\
 	-I$(top_srcdir)/lib/include				\
 	-I$(top_builddir)/lib/xdr
 
@@ -24,6 +25,7 @@ LDADD = \
 	$(TIRPC_LIBS) $(ZLIB_LIBS) $(UUID_LIBS)		\
 	$(OPENSSL_LIBS)					\
 	$(URING_LIBS)					\
+	$(ZSTD_LIBS)					\
 	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
 
 check_PROGRAMS = $(TESTS)

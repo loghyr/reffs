@@ -11,6 +11,7 @@ AM_CFLAGS = -Im4 -I. \
 	$(URCU_CDS_CFLAGS)		\
 	$(TIRPC_CFLAGS)			\
 	$(OPENSSL_CFLAGS)		\
+	$(ZSTD_CFLAGS)			\
 	$(FUSE_CFLAGS)
 
 lib_LTLIBRARIES = libreffs_fs.la

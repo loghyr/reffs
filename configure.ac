@@ -124,6 +124,19 @@ AC_CHECK_LIB([uuid], [uuid_generate_time_safe],
 AC_CHECK_HEADER([zlib.h], [], [AC_MSG_ERROR([zlib.h not found])])
 AC_CHECK_LIB([z], [crc32], [], [AC_MSG_ERROR([zlib library not found])])
 
+AC_PATH_PROG([PKG_CONFIG], [pkg-config], [no])
+if test "x$PKG_CONFIG" = "xno"; then
+  AC_MSG_ERROR([pkg-config not found])
+fi
+
+PKG_CHECK_MODULES([ZSTD], [libzstd >= 1.4.0],
+  [AC_DEFINE([HAVE_LIBZSTD], [1], [Define if libzstd is available])],
+  [AC_MSG_ERROR([libzstd >= 1.4.0 is required])]
+)
+
+AC_SUBST([ZSTD_CFLAGS])
+AC_SUBST([ZSTD_LIBS])
+
 # Check for io_uring support
 AC_ARG_ENABLE([linux-io_uring],
     [AS_HELP_STRING([--enable-linux-io_uring], [enable Linux io_uring support @<:@default=yes@:>@])],
