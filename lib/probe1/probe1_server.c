@@ -432,12 +432,8 @@ static int probe1_op_fd_infos_list(struct rpc_trans *rt)
 
 	probe_fd1 *pf = NULL;
 
-	ic_list = io_context_probe(
-		args->fila_fd, OP_TYPE_ACCEPT,
-		IO_CONTEXT_ENTRY_STATE_ACTIVE |
-			IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED |
-			IO_CONTEXT_ENTRY_STATE_PENDING_FREE,
-		&count);
+	ic_list = io_context_probe(args->fila_fd, OP_TYPE_READ,
+				   IO_CONTEXT_ENTRY_STATE_ACTIVE, &count);
 	if (!ic_list) {
 		res->filr_status = PROBE1ERR_NOENT;
 		goto out;
