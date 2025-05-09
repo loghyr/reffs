@@ -396,7 +396,7 @@ AC_CONFIG_FILES([
 
 AC_CONFIG_FILES([lib/xdr/insert_pragmas.sh],[chmod +x lib/xdr/insert_pragmas.sh])
 AC_CONFIG_FILES([scripts/reffs/pynfs/xdr/xdrgen.py],[chmod +x scripts/reffs/pynfs/xdr/xdrgen.py])
-AC_CONFIG_FILES([scripts/reffs_probe.py],[chmod +x scripts/reffs_probe.py])
+AC_CONFIG_FILES([scripts/reffs-probe.py],[chmod +x scripts/reffs-probe.py])
 AC_CONFIG_FILES([scripts/reffs/probe_client.py],[chmod +x scripts/reffs/probe_client.py])
 AC_CONFIG_FILES([scripts/reffs/protocol_client.py],[chmod +x scripts/reffs/protocol_client.py])
 AC_CONFIG_FILES([scripts/reffs/pynfs/rpc/rpc.py],[chmod +x scripts/reffs/pynfs/rpc/rpc.py])

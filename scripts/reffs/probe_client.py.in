@@ -134,3 +134,31 @@ class Probe1Client(ProtocolClient):
         """
         args = HEARTBEAT1args(period, period_set)
         return self.proc(PROBEPROC1_HEARTBEAT, args, response_type='HEARTBEAT1res')
+
+    def io_contexts_list(self, fd, op, state):
+        """
+        Get the io_context list from the server
+
+        Args:
+            fd: fd to match, 0 means all
+            op: Which type of op to match
+            state: Which state of the ic to match
+
+        Returns:
+            IO_CONTEXTS_LIST1res object containing array of matching ICs
+        """
+        args = IO_CONTEXTS_LIST1args(fd, op, state)
+        return self.proc(PROBEPROC1_IO_CONTEXTS_LIST, args, response_type='IO_CONTEXTS_LIST1res')
+
+    def fd_infos_list(self, fd):
+        """
+        Get the list of fds and what they are listening to
+
+        Args:
+            fd: fd to match, 0 means all
+
+        Returns:
+            FD_INFOS_LIST1res object containing array client information
+        """
+        args = FD_INFOS_LIST1args(fd)
+        return self.proc(PROBEPROC1_FD_INFOS_LIST, args, response_type='FD_INFOS_LIST1res')

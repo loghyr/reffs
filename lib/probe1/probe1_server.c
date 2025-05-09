@@ -21,6 +21,9 @@
 #include <rpc/rpc_msg.h>
 #include <errno.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
 #include "probe1_xdr.h"
 
 #include "reffs/test.h"
@@ -32,6 +35,19 @@
 #include "reffs/io.h"
 #include "reffs/probe1.h"
 #include "reffs/trace/rpc.h"
+
+struct probe_time1 probe_time1_from_time_t(time_t ts)
+{
+	struct probe_time1 pt;
+	pt.seconds = (unsigned int)ts;
+	pt.nseconds = 0;
+	return pt;
+}
+
+time_t probe_time1_to_time_t(struct probe_time1 pt)
+{
+	return (time_t)pt.seconds;
+}
 
 #define BUCKET_COUNT 5
 static const int64_t rpc_bucket_boundaries[BUCKET_COUNT] = {
@@ -74,6 +90,43 @@ void calculate_bucket_counts(struct hdr_histogram *hh, int64_t *counts)
 		// Add the count to the appropriate bucket
 		counts[bucket_index] += count;
 	}
+}
+
+void probe_fd1_get_addr(struct probe_fd1 *pf, struct connection_info *ci)
+{
+	char ip[INET6_ADDRSTRLEN];
+	uint16_t port;
+
+	// Extract server (local) port
+	if (ci->ci_local.ss_family == AF_INET) {
+		struct sockaddr_in *sa = (struct sockaddr_in *)&ci->ci_local;
+		pf->pf_server_port = ntohs(sa->sin_port);
+	} else if (ci->ci_local.ss_family == AF_INET6) {
+		struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)&ci->ci_local;
+		pf->pf_server_port = ntohs(sa6->sin6_port);
+	} else {
+		pf->pf_server_port = 0;
+	}
+
+	// Extract client IP and port
+	if (ci->ci_peer.ss_family == AF_INET) {
+		struct sockaddr_in *peer = (struct sockaddr_in *)&ci->ci_peer;
+		inet_ntop(AF_INET, &peer->sin_addr, ip, sizeof(ip));
+		port = ntohs(peer->sin_port);
+	} else if (ci->ci_peer.ss_family == AF_INET6) {
+		struct sockaddr_in6 *peer6 =
+			(struct sockaddr_in6 *)&ci->ci_peer;
+		inet_ntop(AF_INET6, &peer6->sin6_addr, ip, sizeof(ip));
+		port = ntohs(peer6->sin6_port);
+	} else {
+		snprintf(pf->pf_client, PROBE1_ADDR_LEN, "<invalid>");
+		return;
+	}
+
+	// Format: IP.%hhu.%hhu (truncated port bytes)
+	snprintf((char *)pf->pf_client, PROBE1_ADDR_LEN, "%s.%hhu.%hhu", ip,
+		 (unsigned char)((port >> 8) & 0xFF),
+		 (unsigned char)(port & 0xFF));
 }
 
 static int probe1_op_null(struct rpc_trans __attribute__((unused)) * rt)
@@ -299,6 +352,125 @@ static int probe1_op_heartbeat(struct rpc_trans *rt)
 	return 0;
 }
 
+static int probe1_op_io_contexts_list(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	IO_CONTEXTS_LIST1args *args = ph->ph_args;
+	IO_CONTEXTS_LIST1res *res = ph->ph_res;
+	IO_CONTEXTS_LIST1resok *resok = &res->IO_CONTEXTS_LIST1res_u.iclr_resok;
+
+	struct io_context *ic_list = NULL;
+	struct io_context *ic;
+	int count;
+	int i = 0;
+
+	probe_io_context1 *pic = NULL;
+	time_t now = time(NULL);
+
+	ic_list = io_context_probe(
+		args->icla_fd, (enum op_type)args->icla_op,
+		IO_CONTEXT_ENTRY_STATE_ACTIVE |
+			IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED |
+			IO_CONTEXT_ENTRY_STATE_PENDING_FREE,
+		&count);
+	if (!ic_list) {
+		res->iclr_status = PROBE1ERR_NOENT;
+		goto out;
+	}
+
+	pic = calloc(count, sizeof(*pic));
+	if (!pic) {
+		res->iclr_status = PROBE1ERR_NOMEM;
+		goto out;
+	}
+
+	resok->iclr_now = probe_time1_from_time_t(now);
+
+	resok->iclr_pic.iclr_pic_val = pic;
+	resok->iclr_pic.iclr_pic_len = count;
+
+	for (ic = ic_list; ic; ic = ic_list) {
+		pic[i].pic_op_type = (probe_op_type1)ic->ic_op_type;
+		pic[i].pic_fd = ic->ic_fd;
+		pic[i].pic_id = ic->ic_id;
+		pic[i].pic_xid = ic->ic_xid;
+		pic[i].pic_buffer_len = ic->ic_buffer_len;
+		pic[i].pic_position = ic->ic_position;
+		pic[i].pic_state = ic->ic_state;
+		pic[i].pic_count = ic->ic_count;
+
+		pic[i].pic_action_time =
+			probe_time1_from_time_t(ic->ic_action_time);
+
+		ic_list = ic->ic_next;
+		i++;
+		free(ic);
+	}
+
+out:
+	if (ic_list) {
+		for (ic = ic_list; ic; ic = ic_list) {
+			ic_list = ic->ic_next;
+			free(ic);
+		}
+	}
+
+	return 0;
+}
+
+static int probe1_op_fd_infos_list(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	FD_INFOS_LIST1args *args = ph->ph_args;
+	FD_INFOS_LIST1res *res = ph->ph_res;
+	FD_INFOS_LIST1resok *resok = &res->FD_INFOS_LIST1res_u.filr_resok;
+
+	struct io_context *ic_list = NULL;
+	struct io_context *ic;
+	int count;
+	int i = 0;
+
+	probe_fd1 *pf = NULL;
+
+	ic_list = io_context_probe(
+		args->fila_fd, OP_TYPE_ACCEPT,
+		IO_CONTEXT_ENTRY_STATE_ACTIVE |
+			IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED |
+			IO_CONTEXT_ENTRY_STATE_PENDING_FREE,
+		&count);
+	if (!ic_list) {
+		res->filr_status = PROBE1ERR_NOENT;
+		goto out;
+	}
+
+	pf = calloc(count, sizeof(*pf));
+	if (!pf) {
+		res->filr_status = PROBE1ERR_NOMEM;
+		goto out;
+	}
+
+	resok->filr_pf.filr_pf_val = pf;
+	resok->filr_pf.filr_pf_len = count;
+
+	for (ic = ic_list; ic; ic = ic_list) {
+		pf[i].pf_fd = ic->ic_fd;
+		probe_fd1_get_addr(&pf[i], &ic->ic_ci);
+
+		ic_list = ic->ic_next;
+		i++;
+		free(ic);
+	}
+
+out:
+	if (ic_list) {
+		for (ic = ic_list; ic; ic = ic_list) {
+			ic_list = ic->ic_next;
+			free(ic);
+		}
+	}
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -322,6 +494,13 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, HEARTBEAT, xdr_HEARTBEAT1args,
 			   HEARTBEAT1args, xdr_HEARTBEAT1res, HEARTBEAT1res,
 			   probe1_op_heartbeat),
+	RPC_OPERATION_INIT(PROBEPROC1, IO_CONTEXTS_LIST,
+			   xdr_IO_CONTEXTS_LIST1args, IO_CONTEXTS_LIST1args,
+			   xdr_IO_CONTEXTS_LIST1res, IO_CONTEXTS_LIST1res,
+			   probe1_op_io_contexts_list),
+	RPC_OPERATION_INIT(PROBEPROC1, FD_INFOS_LIST, xdr_FD_INFOS_LIST1args,
+			   FD_INFOS_LIST1args, xdr_FD_INFOS_LIST1res,
+			   FD_INFOS_LIST1res, probe1_op_fd_infos_list),
 };
 
 static struct rpc_program_handler *probe1_handler;
@@ -337,6 +516,25 @@ int probe1_protocol_register(void)
 	static_assert((enum reffs_trace_category)PROBE1_TRACE_CAT_ALL ==
 			      REFFS_TRACE_CAT_ALL,
 		      "Enum values are out of sync between header and XDR");
+
+	static_assert((enum op_type)PROBE1_OP_TYPE_ALL == OP_TYPE_ALL,
+		      "Enum values are out of sync between header and XDR");
+
+	static_assert(PROBE1_IO_CONTEXT_ENTRY_STATE_ACTIVE ==
+			      (uint64_t)IO_CONTEXT_ENTRY_STATE_ACTIVE,
+		      "IO_CONTEXT flags out of sync");
+	static_assert(PROBE1_IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED ==
+			      (uint64_t)IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED,
+		      "IO_CONTEXT flags out of sync");
+	static_assert(PROBE1_IO_CONTEXT_ENTRY_STATE_PENDING_FREE ==
+			      (uint64_t)IO_CONTEXT_ENTRY_STATE_PENDING_FREE,
+		      "IO_CONTEXT flags out of sync");
+	static_assert(PROBE1_IO_CONTEXT_DIRECT_TLS_DATA ==
+			      (uint64_t)IO_CONTEXT_DIRECT_TLS_DATA,
+		      "IO_CONTEXT flags out of sync");
+	static_assert(PROBE1_IO_CONTEXT_TLS_BIO_PROCESSED ==
+			      (uint64_t)IO_CONTEXT_TLS_BIO_PROCESSED,
+		      "IO_CONTEXT flags out of sync");
 
 	probev1_registered = 1;
 

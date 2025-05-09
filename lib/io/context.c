@@ -220,6 +220,51 @@ struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
 	return ic;
 }
 
+struct io_context *io_context_probe(int fd, enum op_type op, uint64_t state,
+				    int *count)
+{
+	struct io_context *head = NULL;
+	struct io_context *tail = NULL;
+	int matched = 0;
+
+	pthread_mutex_lock(&context_mutex);
+
+	for (unsigned int i = 0; i < CONTEXT_HASH_SIZE; i++) {
+		for (struct io_context *ic = context_hash[i]; ic != NULL;
+		     ic = ic->ic_next) {
+			if ((ic->ic_state & state) == 0)
+				continue;
+
+			if ((fd != 0 && ic->ic_fd != fd) ||
+			    (op != OP_TYPE_ALL && ic->ic_op_type != op))
+				continue;
+
+			struct io_context *copy =
+				calloc(1, sizeof(struct io_context));
+			if (!copy)
+				continue;
+
+			memcpy(copy, ic, sizeof(struct io_context));
+			copy->ic_next = NULL;
+
+			if (tail)
+				tail->ic_next = copy;
+			else
+				head = copy;
+
+			tail = copy;
+			matched++;
+		}
+	}
+
+	pthread_mutex_unlock(&context_mutex);
+
+	if (count)
+		*count = matched;
+
+	return head;
+}
+
 void io_context_list_active(bool listem)
 {
 	LOG("=== Active Contexts ===");

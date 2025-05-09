@@ -12,6 +12,11 @@
 #include <stdbool.h>
 #include <sys/socket.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <string.h>
+
 #include <urcu.h>
 #include <urcu/rculfhash.h>
 #include <urcu/ref.h>
@@ -46,7 +51,8 @@ enum op_type {
 	OP_TYPE_WRITE = 3,
 	OP_TYPE_CONNECT = 4,
 	OP_TYPE_RPC_REQ = 5,
-	OP_TYPE_HEARTBEAT = 6
+	OP_TYPE_HEARTBEAT = 6,
+	OP_TYPE_ALL = 7
 };
 
 // IO operation context structure
@@ -227,6 +233,8 @@ static inline const char *io_op_type_to_str(enum op_type op)
 		return "RPC_REQ";
 	case OP_TYPE_HEARTBEAT:
 		return "HEARTBEAT";
+	case OP_TYPE_ALL:
+		return "ALL";
 	}
 
 	return "unknown";
@@ -289,5 +297,8 @@ void io_heartbeat_update_completions(uint64_t count);
 int *io_heartbeat_get_listeners(int *num);
 uint32_t io_heartbeat_period_get(void);
 uint32_t io_heartbeat_period_set(uint32_t seconds);
+
+struct io_context *io_context_probe(int fd, enum op_type op, uint64_t state,
+				    int *count);
 
 #endif /* _REFFS_IO_H */

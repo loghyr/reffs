@@ -5,6 +5,11 @@
  * Gather stats from the reffs server
  */
 
+/* INET6_ADDRSTRLEN + 8: %s.%hhu.%hhu */
+const PROBE1_ADDR_LEN = 54;
+
+typedef opaque probe1_address_string[PROBE1_ADDR_LEN];
+
 struct probe_time1 {
 	unsigned int seconds;
 	unsigned int nseconds;
@@ -151,6 +156,78 @@ union HEARTBEAT1res switch (probe_stat1 hbr_status) {
 		void;
 };
 
+enum probe_op_type1 {
+	PROBE1_OP_TYPE_ACCEPT = 1,
+	PROBE1_OP_TYPE_READ = 2,
+	PROBE1_OP_TYPE_WRITE = 3,
+	PROBE1_OP_TYPE_CONNECT = 4,
+	PROBE1_OP_TYPE_RPC_REQ = 5,
+	PROBE1_OP_TYPE_HEARTBEAT = 6,
+	PROBE1_OP_TYPE_ALL = 7
+};
+
+const PROBE1_IO_CONTEXT_ENTRY_STATE_ACTIVE           = 0x00000001;
+const PROBE1_IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED = 0x00000002;
+const PROBE1_IO_CONTEXT_ENTRY_STATE_PENDING_FREE     = 0x00000004;
+const PROBE1_IO_CONTEXT_DIRECT_TLS_DATA              = 0x00000008;
+const PROBE1_IO_CONTEXT_TLS_BIO_PROCESSED            = 0x00000010;
+
+struct probe_io_context1 {
+	probe_op_type1		pic_op_type;
+	int			pic_fd;
+	unsigned int		pic_id;
+	unsigned int		pic_xid;
+
+	unsigned hyper		pic_buffer_len;
+	unsigned hyper		pic_position;
+
+	unsigned hyper		pic_state;
+	unsigned hyper		pic_count;
+
+	probe_time1		pic_action_time;
+};
+
+struct probe_fd1 {
+	int			pf_fd;
+	unsigned int		pf_server_port;
+	probe1_address_string	pf_client;
+};
+
+/* 0 means all fds */
+struct IO_CONTEXTS_LIST1args {
+	int			icla_fd;
+	probe_op_type1		icla_op;
+	unsigned hyper		icla_state;
+};
+
+struct IO_CONTEXTS_LIST1resok {
+	probe_io_context1	iclr_pic<>;
+	probe_time1		iclr_now;
+};
+
+union IO_CONTEXTS_LIST1res switch (probe_stat1 iclr_status) {
+	case PROBE1_OK:
+		IO_CONTEXTS_LIST1resok	iclr_resok;
+	default:
+		void;
+};
+
+/* 0 means all fds */
+struct FD_INFOS_LIST1args {
+	int			fila_fd;
+};
+
+struct FD_INFOS_LIST1resok {
+	probe_fd1		filr_pf<>;
+};
+
+union FD_INFOS_LIST1res switch (probe_stat1 filr_status) {
+	case PROBE1_OK:
+		FD_INFOS_LIST1resok	filr_resok;
+	default:
+		void;
+};
+
 const PROBE_PORT = 20490;
 
 /*
@@ -167,5 +244,7 @@ program PROBE_PROGRAM {
 		TRACES_LIST1res PROBEPROC1_TRACES_LIST(TRACES_LIST1args) = 5;
 		probe_stat1 PROBEPROC1_GRACEFUL_CLEANUP(void) = 6;
 		HEARTBEAT1res PROBEPROC1_HEARTBEAT(HEARTBEAT1args) = 7;
+		IO_CONTEXTS_LIST1args PROBEPROC1_IO_CONTEXTS_LIST(IO_CONTEXTS_LIST1args) = 8;
+		FD_INFOS_LIST1res PROBEPROC1_FD_INFOS_LIST(FD_INFOS_LIST1args) = 9;
 	} = 1;
 } = 211768;

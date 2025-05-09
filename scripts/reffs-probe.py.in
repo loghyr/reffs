@@ -10,6 +10,7 @@ import argparse
 import argcomplete
 import struct
 import time
+import ipaddress
 
 # Try both naming conventions to handle both local and installed versions
 try:
@@ -52,6 +53,31 @@ TRACE_CAT_MAP = {
 }
 
 TRACE_CAT_NAME_TO_ID = {name: id for id, name in TRACE_CAT_MAP.items()}
+
+OP_TYPE_MAP = {
+    PROBE1_OP_TYPE_ACCEPT : 'accept',
+    PROBE1_OP_TYPE_READ : 'read',
+    PROBE1_OP_TYPE_WRITE : 'write',
+    PROBE1_OP_TYPE_CONNECT : 'connect',
+    PROBE1_OP_TYPE_RPC_REQ : 'rpc_req',
+    PROBE1_OP_TYPE_HEARTBEAT : 'heartbeat',
+    PROBE1_OP_TYPE_ALL : 'all'
+}
+
+OP_TYPE_NAME_TO_ID = {name: id for id, name in OP_TYPE_MAP.items()}
+
+context_state_all = (PROBE1_IO_CONTEXT_ENTRY_STATE_ACTIVE |
+                     PROBE1_IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED |
+                     PROBE1_IO_CONTEXT_ENTRY_STATE_PENDING_FREE)
+
+CONTEXT_STATE_MAP = {
+    PROBE1_IO_CONTEXT_ENTRY_STATE_ACTIVE : 'active',
+    PROBE1_IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED : 'destroyed',
+    PROBE1_IO_CONTEXT_ENTRY_STATE_PENDING_FREE : 'pending',
+    context_state_all : 'all'
+}
+
+CONTEXT_STATE_NAME_TO_ID = {name: id for id, name in CONTEXT_STATE_MAP.items()}
 
 def probe_error_handler(ret):
     if ret == PROBE1_OK:
@@ -213,6 +239,94 @@ def heartbeat(client, args):
     print(f"Heartbeat peiod: {res.hbr_resok.hbr_period}")
 
 
+def decode_io_context_state(state):
+    flags = []
+    if state & PROBE1_IO_CONTEXT_ENTRY_STATE_ACTIVE:
+        flags.append("ACTIVE")
+    if state & PROBE1_IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED:
+        flags.append("DESTROYED")
+    if state & PROBE1_IO_CONTEXT_ENTRY_STATE_PENDING_FREE:
+        flags.append("PENDING_FREE")
+    if state & PROBE1_IO_CONTEXT_DIRECT_TLS_DATA:
+        flags.append("TLS_DATA")
+    if state & PROBE1_IO_CONTEXT_TLS_BIO_PROCESSED:
+        flags.append("TLS_BIO")
+    return ",".join(flags) if flags else "NONE"
+
+
+def print_io_contexts(resok):
+    print(f"{'ID':<12} {'FD':<4} {'Op':<10} {'XID':<10} {'Len':<10} {'Pos':<10} "
+          f"{'State':<32} {'Count':<10} {'Age (s)'}")
+
+    now_sec = resok.iclr_now.seconds
+    now_nsec = resok.iclr_now.nseconds
+
+    for ctx in sorted(resok.iclr_pic, key=lambda ctx: ctx.pic_id):
+        state_str = decode_io_context_state(ctx.pic_state)
+        op_type = OP_TYPE_MAP.get(ctx.pic_op_type, "unknown")
+
+        delta_sec = now_sec - ctx.pic_action_time.seconds
+        delta_nsec = now_nsec - ctx.pic_action_time.nseconds
+        if delta_nsec < 0:
+            delta_sec -= 1
+            delta_nsec += 1_000_000_000
+        age = f"{delta_sec}.{delta_nsec:09}"
+
+        print(f"{ctx.pic_id:<12} {ctx.pic_fd:<4} {op_type:<10} "
+              f"0x{ctx.pic_xid:08x} {ctx.pic_buffer_len:<10} {ctx.pic_position:<10} "
+              f"{state_str:<32} {ctx.pic_count:<10} {age}")
+
+
+def io_contexts_list(client, args):
+    op = OP_TYPE_NAME_TO_ID[args.op]
+
+    state = CONTEXT_STATE_NAME_TO_ID[args.state]
+
+    res = client.io_contexts_list(args.fd, op, state)
+    probe_error_handler(res.iclr_status)
+
+    print_io_contexts(res.iclr_resok)
+
+
+def decode_probe1_address_string(addr_bytes):
+    try:
+        s = addr_bytes.decode('utf-8').rstrip('\x00')
+    except Exception:
+        return ("<decode-error>", 0)
+
+    parts = s.rsplit('.', 2)
+    if len(parts) < 3:
+        return (s, 0)
+
+    ip_str = '.'.join(parts[:-2])
+    try:
+        port = (int(parts[-2]) << 8) | int(parts[-1])
+    except ValueError:
+        return (s, 0)
+
+    try:
+        ip_obj = ipaddress.ip_address(ip_str)
+        ip_expanded = ip_obj.exploded
+    except ValueError:
+        ip_expanded = ip_str
+
+    return (ip_expanded, port)
+
+
+def print_fd_infos(fd_infos):
+    print(f"{'FD':<4} {'Server Port':<12} {'Client Port':<12} {'Client'}")
+    for fd in sorted(fd_infos, key=lambda fd: fd.pf_fd):
+        ip, port = decode_probe1_address_string(fd.pf_client)
+        print(f"{fd.pf_fd:<4} {fd.pf_server_port:<12} {port:<12} {ip}")
+
+
+def fd_infos_list(client, args):
+    res = client.fd_infos_list(args.fd)
+    probe_error_handler(res.filr_status)
+
+    print_fd_infos(res.filr_resok.filr_pf)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Probe reffs servers')
 
@@ -330,6 +444,32 @@ def parse_args():
                              type=int,
                              help='Set the heartbeat period in seconds')
     p_heartbeat.set_defaults(func=heartbeat)
+
+    p_io_contexts_list = subparsers.add_parser('io-contexts-list',
+                                               help='List the io contexts')
+    p_io_contexts_list.add_argument('--fd',
+                                    dest='fd',
+                                    required=False,
+                                    type=int,
+                                    help='File descriptor socket is listening on, -1 for inactive, 0 for all')
+    p_io_contexts_list.add_argument('--op',
+                                    type=str,
+                                    choices=list(OP_TYPE_MAP.values()),
+                                    help=f'Type of operation to display (options: {", ".join(OP_TYPE_MAP.values())})')
+    p_io_contexts_list.add_argument('--state',
+                                    type=str,
+                                    choices=list(CONTEXT_STATE_MAP.values()),
+                                    help=f'Type of operation to display (options: {", ".join(CONTEXT_STATE_MAP.values())})')
+    p_io_contexts_list.set_defaults(func=io_contexts_list, fd=0, op='all', state='all')
+
+    p_fd_infos_list = subparsers.add_parser('fd-infos-list',
+                                            help='List the fd listners')
+    p_fd_infos_list.add_argument('--fd',
+                                 dest='fd',
+                                 required=False,
+                                 type=int,
+                                 help='File descriptor socket is listening on, -1 for inactive, 0 for all')
+    p_fd_infos_list.set_defaults(func=fd_infos_list, fd=0)
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()
