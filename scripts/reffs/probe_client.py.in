@@ -120,3 +120,17 @@ class Probe1Client(ProtocolClient):
             probe_stat1 enum value
         """
         return self.proc(PROBEPROC1_GRACEFUL_CLEANUP, response_type='probe_stat1')
+
+    def heartbeat(self, period, period_set):
+        """
+        Tell server the heartbeat period
+
+        Args:
+            period: How long in seconds between heartbeats
+            period_set: Whether we are setting the period or not
+
+        Returns:
+            HEARTBEAT1res object containing heartbeat info
+        """
+        args = HEARTBEAT1args(period, period_set)
+        return self.proc(PROBEPROC1_HEARTBEAT, args, response_type='HEARTBEAT1res')

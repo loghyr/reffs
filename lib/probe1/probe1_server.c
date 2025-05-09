@@ -282,6 +282,23 @@ static int probe1_op_graceful_cleanup(struct rpc_trans __attribute__((unused)) *
 	return 0;
 }
 
+static int probe1_op_heartbeat(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	HEARTBEAT1args *args = ph->ph_args;
+	HEARTBEAT1res *res = ph->ph_res;
+	HEARTBEAT1resok *resok = &res->HEARTBEAT1res_u.hbr_resok;
+
+	/* Return what it was */
+	resok->hbr_period = io_heartbeat_period_get();
+
+	if (args->hba_period_set) {
+		io_heartbeat_period_set(args->hba_period);
+	}
+
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -302,6 +319,9 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, GRACEFUL_CLEANUP, NULL, NULL,
 			   xdr_probe_stat1, probe_stat1,
 			   probe1_op_graceful_cleanup),
+	RPC_OPERATION_INIT(PROBEPROC1, HEARTBEAT, xdr_HEARTBEAT1args,
+			   HEARTBEAT1args, xdr_HEARTBEAT1res, HEARTBEAT1res,
+			   probe1_op_heartbeat),
 };
 
 static struct rpc_program_handler *probe1_handler;

@@ -199,6 +199,20 @@ def graceful_cleanup(client, args):
     probe_error_handler(res)
 
 
+def heartbeat(client, args):
+    if args.period is None:
+        period = 0
+        period_set = False
+    else:
+        period = args.period
+        period_set = True
+
+    res = client.heartbeat(period, period_set)
+    probe_error_handler(res.hbr_status)
+
+    print(f"Heartbeat peiod: {res.hbr_resok.hbr_period}")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Probe reffs servers')
 
@@ -305,8 +319,17 @@ def parse_args():
     p_traces_list.set_defaults(func=traces_list)
 
     p_graceful_cleanup = subparsers.add_parser('graceful-cleanup',
-                                               help='Have reffs program gracefully cleanup and exit')
+                                               help='Have reffs server gracefully cleanup and exit')
     p_graceful_cleanup.set_defaults(func=graceful_cleanup)
+
+    p_heartbeat = subparsers.add_parser('heartbeat',
+                                        help='Manage the heartbeat for reffs server')
+    p_heartbeat.add_argument('--period',
+                             dest='period',
+                             required=False,
+                             type=int,
+                             help='Set the heartbeat period in seconds')
+    p_heartbeat.set_defaults(func=heartbeat)
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()

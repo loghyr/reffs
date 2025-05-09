@@ -135,6 +135,22 @@ union TRACES_LIST1res switch (probe_stat1 tlr_status) {
 		void;
 };
 
+struct HEARTBEAT1args {
+	unsigned int		hba_period;
+	unsigned int		hba_period_set;
+};
+
+struct HEARTBEAT1resok {
+	unsigned int		hbr_period;
+};
+
+union HEARTBEAT1res switch (probe_stat1 hbr_status) {
+	case PROBE1_OK:
+		HEARTBEAT1resok		hbr_resok;
+	default:
+		void;
+};
+
 const PROBE_PORT = 20490;
 
 /*
@@ -150,5 +166,6 @@ program PROBE_PROGRAM {
 		probe_stat1 PROBEPROC1_TRACE_SET(TRACE_SET1args) = 4;
 		TRACES_LIST1res PROBEPROC1_TRACES_LIST(TRACES_LIST1args) = 5;
 		probe_stat1 PROBEPROC1_GRACEFUL_CLEANUP(void) = 6;
+		HEARTBEAT1res PROBEPROC1_HEARTBEAT(HEARTBEAT1args) = 7;
 	} = 1;
 } = 211768;

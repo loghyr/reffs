@@ -282,10 +282,12 @@ void io_check_for_listener_restart(int fd, struct connection_info *ci,
 
 // Heartbeat code:
 int io_heartbeat_init(struct io_uring *ring);
-int io_schedule_heartbeat(struct io_uring *ring, unsigned int seconds);
+int io_schedule_heartbeat(struct io_uring *ring);
 int io_handle_heartbeat(struct io_context *ic, int result,
 			struct io_uring *ring);
 void io_heartbeat_update_completions(uint64_t count);
 int *io_heartbeat_get_listeners(int *num);
+uint32_t io_heartbeat_period_get(void);
+uint32_t io_heartbeat_period_set(uint32_t seconds);
 
 #endif /* _REFFS_IO_H */

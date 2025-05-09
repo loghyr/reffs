@@ -31,6 +31,8 @@
 #define CONNECTION_CHECK_INTERVAL 10
 #define STATS_LOG_INTERVAL 10
 
+static uint32_t io_heartbeat_period = HEARTBEAT_INTERVAL;
+
 // Structure to track when different checks were last performed
 struct heartbeat_state {
 	time_t last_heartbeat;
@@ -63,11 +65,23 @@ int io_heartbeat_init(struct io_uring *ring)
 	hb_state.total_completions = 0;
 
 	// Schedule the first heartbeat
-	return io_schedule_heartbeat(ring, HEARTBEAT_INTERVAL);
+	return io_schedule_heartbeat(ring);
+}
+
+uint32_t io_heartbeat_period_get(void)
+{
+	return io_heartbeat_period;
+}
+
+uint32_t io_heartbeat_period_set(uint32_t seconds)
+{
+	uint32_t hb = io_heartbeat_period;
+	io_heartbeat_period = seconds;
+	return hb;
 }
 
 // Schedule a heartbeat operation using io_uring timeout
-int io_schedule_heartbeat(struct io_uring *ring, unsigned int seconds)
+int io_schedule_heartbeat(struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe;
 	struct __kernel_timespec ts;
@@ -89,14 +103,14 @@ int io_schedule_heartbeat(struct io_uring *ring, unsigned int seconds)
 	}
 
 	// Set up the timeout
-	ts.tv_sec = seconds;
+	ts.tv_sec = io_heartbeat_period;
 	ts.tv_nsec = 0;
 
 	// Prepare the timeout operation
 	io_uring_prep_timeout(sqe, &ts, 0, 0);
 	io_uring_sqe_set_data(sqe, ic);
 
-	LOG("Scheduled next heartbeat in %u seconds", seconds);
+	LOG("Scheduled next heartbeat in %u seconds", io_heartbeat_period);
 
 	// Submit the operation
 	return io_uring_submit(ring);
@@ -252,7 +266,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 	    *ring->sq.ktail, *ring->cq.khead, *ring->cq.ktail);
 
 	// Schedule the next heartbeat
-	return io_schedule_heartbeat(ring, HEARTBEAT_INTERVAL);
+	return io_schedule_heartbeat(ring);
 }
 
 // Function to update completion count - called from main loop
