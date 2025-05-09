@@ -218,7 +218,7 @@ def parse_args():
                                    help='Ping the server')
     p_null.set_defaults(func=probe_null)
 
-    p_gather = subparsers.add_parser('gather',
+    p_gather = subparsers.add_parser('stats-gather',
                                      help='Gather stats for an RPC program')
     a_program = p_gather.add_mutually_exclusive_group(required=True)
 
