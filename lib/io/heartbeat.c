@@ -248,6 +248,9 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 		io_context_destroy(ic);
 	}
 
+	LOG("SQ head=%u, tail=%u; CQ head=%u, tail=%u", *ring->sq.khead,
+	    *ring->sq.ktail, *ring->cq.khead, *ring->cq.ktail);
+
 	// Schedule the next heartbeat
 	return io_schedule_heartbeat(ring, HEARTBEAT_INTERVAL);
 }
