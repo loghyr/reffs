@@ -15,7 +15,7 @@
 static inline void trace_io_accept_submit(struct io_context *ic)
 {
 	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_accept_submit", __LINE__,
-			  "fd=%d, op=%s, id=%u, len=%zu", ic->ic_fd,
+			  "fd=%d op=%s id=%u len=%zu", ic->ic_fd,
 			  io_op_type_to_str(ic->ic_op_type), ic->ic_id,
 			  ic->ic_buffer_len);
 }
@@ -23,7 +23,7 @@ static inline void trace_io_accept_submit(struct io_context *ic)
 static inline void trace_io_connect_submit(struct io_context *ic)
 {
 	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_connect_submit", __LINE__,
-			  "fd=%d, op=%s, id=%u, len=%zu", ic->ic_fd,
+			  "fd=%d op=%s id=%u len=%zu", ic->ic_fd,
 			  io_op_type_to_str(ic->ic_op_type), ic->ic_id,
 			  ic->ic_buffer_len);
 }
@@ -31,17 +31,19 @@ static inline void trace_io_connect_submit(struct io_context *ic)
 static inline void trace_io_read_submit(struct io_context *ic)
 {
 	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_read_submit", __LINE__,
-			  "fd=%d, op=%s, id=%u, len=%zu", ic->ic_fd,
-			  io_op_type_to_str(ic->ic_op_type), ic->ic_id,
-			  ic->ic_buffer_len);
+			  "fd=%d op=%s id=%u len=%zu pos=%zu state=0x%lx",
+			  ic->ic_fd, io_op_type_to_str(ic->ic_op_type),
+			  ic->ic_id, ic->ic_buffer_len, ic->ic_position,
+			  ic->ic_state);
 }
 
 static inline void trace_io_write_submit(struct io_context *ic)
 {
 	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_write_submit", __LINE__,
-			  "fd=%d, op=%s, id=%u, len=%zu", ic->ic_fd,
-			  io_op_type_to_str(ic->ic_op_type), ic->ic_id,
-			  ic->ic_buffer_len);
+			  "fd=%d op=%s id=%u len=%zu pos=%zu state=0x%lx",
+			  ic->ic_fd, io_op_type_to_str(ic->ic_op_type),
+			  ic->ic_id, ic->ic_buffer_len, ic->ic_position,
+			  ic->ic_state);
 }
 
 static inline void trace_io_record_marker(struct buffer_state *bs,
@@ -49,7 +51,7 @@ static inline void trace_io_record_marker(struct buffer_state *bs,
 					  uint32_t fragment_len)
 {
 	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_record_marker", __LINE__,
-			  "fd=%d, marker=0x%08x, last=%d, len=%u, filled=%zu",
+			  "fd=%d marker=0x%08x last=%d len=%u filled=%zu",
 			  bs->bs_fd, marker, last_fragment, fragment_len,
 			  bs->bs_filled);
 }
@@ -57,7 +59,7 @@ static inline void trace_io_record_marker(struct buffer_state *bs,
 static inline void trace_io_message_complete(int fd, uint32_t xid, size_t size)
 {
 	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_message_complete", __LINE__,
-			  "fd=%d, xid=0x%08x, size=%zu", fd, xid, size);
+			  "fd=%d xid=0x%08x size=%zu", fd, xid, size);
 }
 
 static inline void trace_io_connection_count(int fd, int count,
@@ -102,9 +104,10 @@ static inline void trace_io_context(struct io_context *ic, const char *func,
 
 		reffs_trace_event(
 			REFFS_TRACE_CAT_IO, func, line,
-			"ic=%p op=%s fd=%d state=0x%lx age=%ld count=%ld id=%u",
+			"ic=%p op=%s fd=%d state=0x%lx age=%ld count=%ld pos=%zu len=%zu id=%u",
 			(void *)ic, io_op_type_to_str(ic->ic_op_type),
-			ic->ic_fd, ic->ic_state, age, ic->ic_count, ic->ic_id);
+			ic->ic_fd, ic->ic_state, age, ic->ic_count,
+			ic->ic_position, ic->ic_buffer_len, ic->ic_id);
 	}
 }
 

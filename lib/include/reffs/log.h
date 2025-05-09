@@ -12,35 +12,38 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <sys/syscall.h>
 
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
 #endif
 
-#define reffs_fail(fmt, ...)                                                \
-	do {                                                                \
-		struct timespec ts;                                         \
-		clock_gettime(CLOCK_REALTIME, &ts);                         \
-		struct tm *tm_info = localtime(&ts.tv_sec);                 \
-		char time_str[32];                                          \
-		strftime(time_str, 20, "%Y-%m-%d %H:%M:%S", tm_info);       \
-		fprintf(stderr, "[%s.%09ld] [%d] (%s:%d): " fmt "\n",       \
-			time_str, ts.tv_nsec, getpid(), __func__, __LINE__, \
-			##__VA_ARGS__);                                     \
-		abort();                                                    \
+#define reffs_fail(fmt, ...)                                             \
+	do {                                                             \
+		struct timespec ts;                                      \
+		clock_gettime(CLOCK_REALTIME, &ts);                      \
+		struct tm *tm_info = localtime(&ts.tv_sec);              \
+		char time_str[32];                                       \
+		pid_t tid = syscall(SYS_gettid);                         \
+		strftime(time_str, 20, "%Y-%m-%d %H:%M:%S", tm_info);    \
+		fprintf(stderr, "[%s.%09ld] [%d:%d] (%s:%d): " fmt "\n", \
+			time_str, ts.tv_nsec, getpid(), tid, __func__,   \
+			__LINE__, ##__VA_ARGS__);                        \
+		abort();                                                 \
 	} while (0)
 
-#define reffs_log(fmt, ...)                                                 \
-	do {                                                                \
-		struct timespec ts;                                         \
-		clock_gettime(CLOCK_REALTIME, &ts);                         \
-		struct tm *tm_info = localtime(&ts.tv_sec);                 \
-		char time_str[32];                                          \
-		strftime(time_str, 20, "%Y-%m-%d %H:%M:%S", tm_info);       \
-		fprintf(stdout, "[%s.%09ld] [%d] (%s:%d): " fmt "\n",       \
-			time_str, ts.tv_nsec, getpid(), __func__, __LINE__, \
-			##__VA_ARGS__);                                     \
+#define reffs_log(fmt, ...)                                              \
+	do {                                                             \
+		struct timespec ts;                                      \
+		clock_gettime(CLOCK_REALTIME, &ts);                      \
+		struct tm *tm_info = localtime(&ts.tv_sec);              \
+		char time_str[32];                                       \
+		pid_t tid = syscall(SYS_gettid);                         \
+		strftime(time_str, 20, "%Y-%m-%d %H:%M:%S", tm_info);    \
+		fprintf(stdout, "[%s.%09ld] [%d:%d] (%s:%d): " fmt "\n", \
+			time_str, ts.tv_nsec, getpid(), tid, __func__,   \
+			__LINE__, ##__VA_ARGS__);                        \
 	} while (0)
 
 void reffs_trace(const char *function, int line, const char *msg, ...);

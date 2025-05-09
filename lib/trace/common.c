@@ -10,10 +10,16 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <sys/syscall.h>
+#include <inttypes.h>
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <stdlib.h>
+#include <errno.h>
 #include "reffs/trace/common.h"
 #include "reffs/trace/types.h"
 
@@ -84,7 +90,54 @@ bool reffs_should_trace(enum reffs_trace_category category)
 	return (category < REFFS_TRACE_CAT_ALL && category_enabled[category]);
 }
 
-/* Write trace event */
+#define MAX_TRACE_SIZE (512 * 1024 * 1024)
+#define BASE_TRACE_NAME "trace.log"
+
+static off_t trace_bytes_written = 0;
+static int trace_file_index = 0;
+
+static void rotate_trace_if_needed_locked(void)
+{
+	if (trace_fp == NULL || trace_fp == stderr)
+		return;
+
+	// Check size
+	if (trace_bytes_written < MAX_TRACE_SIZE)
+		return;
+
+	char rotated_name[256];
+	snprintf(rotated_name, sizeof(rotated_name), "trace-%d.log",
+		 trace_file_index++);
+
+	fclose(trace_fp);
+	trace_fp = NULL;
+
+	// Rename the old trace
+	if (rename(BASE_TRACE_NAME, rotated_name) != 0) {
+		fprintf(stderr, "Failed to rotate trace log: %s\n",
+			strerror(errno));
+		return;
+	}
+
+	// Launch zstd in the background
+	pid_t pid = fork();
+	if (pid == 0) {
+		// Child process
+		execlp("zstd", "zstd", rotated_name, NULL);
+		_exit(1); // If execlp fails
+	}
+
+	// Reopen a new trace.log
+	trace_fp = fopen(BASE_TRACE_NAME, "w");
+	if (!trace_fp) {
+		trace_fp = stderr;
+	}
+
+	trace_bytes_written = 0;
+}
+
+__thread struct timespec last_event_ts = {0};
+
 void reffs_trace_event(enum reffs_trace_category category, const char *name,
 		       const int line, const char *format, ...)
 {
@@ -100,17 +153,36 @@ void reffs_trace_event(enum reffs_trace_category category, const char *name,
 	struct tm *tm_info = localtime(&ts.tv_sec);
 	strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
 
+	uint64_t epoch_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+
+	// Compute time delta in microseconds
+	uint64_t delta_us = 0;
+	if (last_event_ts.tv_sec != 0) {
+		delta_us = (ts.tv_sec - last_event_ts.tv_sec) * 1000000ULL +
+			   (ts.tv_nsec - last_event_ts.tv_nsec) / 1000ULL;
+	}
+	last_event_ts = ts;
+
+	pid_t tid = syscall(SYS_gettid);
+
 	pthread_mutex_lock(&trace_mutex);
 	if (trace_fp != NULL) {
-		fprintf(trace_fp, "[%s.%09ld] [%d] (%s:%d): ", time_str,
-			ts.tv_nsec, getpid(), name, line);
+		int n = fprintf(trace_fp,
+				"[%s.%09ld] [epoch_ns=%" PRIu64 "] [Δ+%6" PRIu64
+				"us] [%d:%d] (%s:%d): ",
+				time_str, ts.tv_nsec, epoch_ns, delta_us,
+				getpid(), tid, name, line);
 
 		va_start(args, format);
-		vfprintf(trace_fp, format, args);
+		n += vfprintf(trace_fp, format, args);
 		va_end(args);
 
-		fprintf(trace_fp, "\n");
+		n += fprintf(trace_fp, "\n");
 		fflush(trace_fp);
+
+		trace_bytes_written += n;
+		rotate_trace_if_needed_locked();
 	}
 	pthread_mutex_unlock(&trace_mutex);
 }
+
