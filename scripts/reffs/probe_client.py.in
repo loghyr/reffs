@@ -109,3 +109,14 @@ class Probe1Client(ProtocolClient):
             TRACES_LIST1res object containing list of set values
         """
         return self.proc(PROBEPROC1_TRACES_LIST, category, response_type='TRACES_LIST1res')
+
+    def graceful_cleanup(self):
+        """
+        Tell server to gracefully end
+
+        Args:
+
+        Returns:
+            probe_stat1 enum value
+        """
+        return self.proc(PROBEPROC1_GRACEFUL_CLEANUP, response_type='probe_stat1')

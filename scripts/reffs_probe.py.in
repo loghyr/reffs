@@ -185,12 +185,18 @@ def print_trace_categories(trace_list):
         status = "Set" if trace.ptl_set else "Unset"
         print(f"{category_name:<10} {status:<6}")
 
+
 def traces_list(client, args):
     category = TRACE_CAT_NAME_TO_ID[args.category]
     res = client.traces_list(category)
     probe_error_handler(res.tlr_status)
 
     print_trace_categories(res.tlr_resok.tlr_list)
+
+
+def graceful_cleanup(client, args):
+    res = client.graceful_cleanup()
+    probe_error_handler(res)
 
 
 def parse_args():
@@ -297,6 +303,10 @@ def parse_args():
                               choices=list(TRACE_CAT_MAP.values()),
                               help=f'Category name to list tracing (options: {", ".join(TRACE_CAT_MAP.values())})')
     p_traces_list.set_defaults(func=traces_list)
+
+    p_graceful_cleanup = subparsers.add_parser('graceful-cleanup',
+                                               help='Have reffs program gracefully cleanup and exit')
+    p_graceful_cleanup.set_defaults(func=graceful_cleanup)
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()

@@ -275,6 +275,13 @@ static int probe1_op_traces_list(struct rpc_trans *rt)
 	return 0;
 }
 
+static int probe1_op_graceful_cleanup(struct rpc_trans __attribute__((unused)) *
+				      rt)
+{
+	io_handler_stop();
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -292,6 +299,9 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, TRACES_LIST, xdr_TRACES_LIST1args,
 			   TRACES_LIST1args, xdr_TRACES_LIST1res,
 			   TRACES_LIST1res, probe1_op_traces_list),
+	RPC_OPERATION_INIT(PROBEPROC1, GRACEFUL_CLEANUP, NULL, NULL,
+			   xdr_probe_stat1, probe_stat1,
+			   probe1_op_graceful_cleanup),
 };
 
 static struct rpc_program_handler *probe1_handler;

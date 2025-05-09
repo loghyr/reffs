@@ -149,5 +149,6 @@ program PROBE_PROGRAM {
 		probe_stat1 PROBEPROC1_RPC_DUMP_SET(probe_dump1) = 3;
 		probe_stat1 PROBEPROC1_TRACE_SET(TRACE_SET1args) = 4;
 		TRACES_LIST1res PROBEPROC1_TRACES_LIST(TRACES_LIST1args) = 5;
+		probe_stat1 PROBEPROC1_GRACEFUL_CLEANUP(void) = 6;
 	} = 1;
 } = 211768;
