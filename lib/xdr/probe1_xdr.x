@@ -180,6 +180,7 @@ struct probe_io_context1 {
 
 	unsigned hyper		pic_buffer_len;
 	unsigned hyper		pic_position;
+	unsigned hyper		pic_expected_len;
 
 	unsigned hyper		pic_state;
 	unsigned hyper		pic_count;

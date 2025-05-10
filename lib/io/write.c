@@ -1,3 +1,5 @@
+/* Also update rpc_trans_writer to handle multi-fragment messages correctly */
+
 /*
  * SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: GPL-2.0+
@@ -181,6 +183,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 		return -ENOMEM;
 	}
 
+	ic->ic_expected_len = len;
 	io_uring_prep_write(sqe, fd, buf, len, 0);
 	io_uring_sqe_set_data(sqe, ic); // loghyr - fix this everywhere
 
@@ -243,15 +246,27 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe;
-	size_t remaining = ic->ic_buffer_len - ic->ic_position;
+	size_t remaining;
 	int ret = 0;
+
+	// Check if we're done first
+	if (ic->ic_position >= ic->ic_buffer_len) {
+#ifdef PARTIAL_WRITE_DEBUG
+		LOG("Buffer complete: ic=%p id=%u position=%zu, buffer_len=%zu",
+		    (void *)ic, ic->ic_id, ic->ic_position, ic->ic_buffer_len);
+#endif
+		io_context_destroy(ic);
+		return 0;
+	}
+
+	remaining = ic->ic_buffer_len - ic->ic_position;
 
 	trace_io_writer(ic, __func__, __LINE__);
 
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
 #ifdef TLS_DEBUGGING
-	LOG("ci=%p ssl=%p tls=%d", (void *)ci, (void *)ci->ci_ssl,
-	    ci->ci_tls_enabled);
+	LOG("ci=%p ssl=%p tls=%d", (void *)ci, ci ? (void *)ci->ci_ssl : NULL,
+	    ci ? ci->ci_tls_enabled : 0);
 #endif
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
 		ret = io_do_tls(ic, ring);
@@ -259,46 +274,27 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 			return ret;
 	}
 
-	// If no more data to send, we're done
-	if (remaining == 0) {
-		io_context_destroy(ic);
-		return 0;
-	} else if (remaining < 0) {
-		// Error case - shouldn't happen with correct position tracking
-		io_socket_close(ic->ic_fd, EINVAL);
-		io_context_destroy(ic);
-		return 0;
-	}
+	// Always continue from current position without modifying the buffer
+	uint32_t chunk_size =
+		(remaining > IO_MAX_WRITE_SIZE) ? IO_MAX_WRITE_SIZE : remaining;
+	char *buffer = (char *)ic->ic_buffer + ic->ic_position;
 
-	// Determine if this is the last fragment to send
-	bool last_fragment = (remaining <= IO_MAX_WRITE_SIZE);
-
-	// Calculate size for this fragment
-	uint32_t chunk_size;
-	char *buffer;
-	uint32_t *p;
-
+	// Log what we're doing
+#ifdef PARTIAL_WRITE_DEBUG
 	if (ic->ic_position == 0) {
-		// First fragment - record marker is already in the buffer
-		chunk_size = remaining > IO_MAX_WRITE_SIZE ? IO_MAX_WRITE_SIZE :
-							     remaining;
-		buffer = (char *)ic->ic_buffer;
+		uint32_t *p = (uint32_t *)buffer;
+		uint32_t marker = ntohl(*p);
+		LOG("First fragment: ic=%p id=%u pos=%zu, remaining=%zu, chunk_size=%u, marker=0x%08x",
+		    (void *)ic, ic->ic_id, ic->ic_position, remaining,
+		    chunk_size, marker);
 	} else {
-		// Calculate chunk size: either IO_MAX_WRITE_SIZE or remaining + 4 bytes for marker
-		chunk_size = remaining > (IO_MAX_WRITE_SIZE - 4) ?
-				     IO_MAX_WRITE_SIZE :
-				     (remaining + 4);
-
-		// Subsequent fragments - we need to reuse the preceding 4 bytes for the record marker
-		buffer = (char *)ic->ic_buffer + (ic->ic_position - 4);
-
-		ic->ic_count++;
+		LOG("Continuing fragment: ic=%p id=%u pos=%zu, remaining=%zu, chunk_size=%u",
+		    (void *)ic, ic->ic_id, ic->ic_position, remaining,
+		    chunk_size);
 	}
+#endif
 
-	// Set the record marker to reflect the payload size (excluding the marker itself)
-	p = (uint32_t *)buffer;
-	*p = htonl((last_fragment ? 0x80000000 : 0) | (chunk_size - 4));
-
+	// Get SQE and submit
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		sqe = io_uring_get_sqe(ring);
 		if (sqe)
@@ -311,30 +307,9 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 		return ENOMEM;
 	}
 
-	// Update position for next fragment
-	if (ic->ic_position == 0) {
-		// After first fragment, position points to end of this chunk
-		ic->ic_position += chunk_size;
-	} else {
-		// For subsequent fragments, position points to end of payload (excluding marker)
-		ic->ic_position += (chunk_size - 4);
-	}
-
-	ci = io_conn_get(ic->ic_fd);
-	if (ci) {
-		ci->ci_last_activity = time(NULL);
-#ifdef TLS_DEBUGGING
-		LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci,
-		    ci->ci_tls_handshaking, ci->ci_tls_enabled,
-		    (void *)ci->ci_ssl);
-#endif
-	}
-
-	// Submit the write operation
+	ic->ic_expected_len = chunk_size;
 	io_uring_prep_write(sqe, ic->ic_fd, buffer, chunk_size, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
-	trace_io_write_submit(ic);
-	io_context_update_time(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(ring);
@@ -342,21 +317,17 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 			break;
 		if (ret == -EAGAIN) {
 			usleep(IO_URING_WAIT_US);
-			LOG("%d", ret);
 			ret = 0;
-			break; // Right now we don't know what io_uring is doing!
-		} else
 			break;
+		}
 	}
 
 	if (ret < 0) {
 		io_socket_close(ic->ic_fd, -ret);
 		io_context_destroy(ic);
-	} else {
-		ret = 0;
 	}
 
-	return 0;
+	return ret;
 }
 
 int io_rpc_trans_cb(struct rpc_trans *rt)
@@ -377,12 +348,26 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
 			       rt->rt_reply_len);
 	if (!ic) {
+		ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
+				       rt->rt_reply_len);
 		LOG("Failed to create write context");
 		return 0;
 	}
 
 	ic->ic_xid = rt->rt_info.ri_xid;
 	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);
+
+	if (rt->rt_reply_len >= 4) {
+		uint32_t *marker_ptr = (uint32_t *)rt->rt_reply;
+		uint32_t data_len = rt->rt_reply_len - 4;
+
+		// Always set the last fragment bit for the complete message
+		// The message is already properly formed - don't try to fragment it
+		*marker_ptr = htonl(0x80000000 | data_len);
+#ifdef PARTIAL_WRITE_DEBUG
+		LOG("RPC message: setting marker for %u bytes", data_len);
+#endif
+	}
 
 	rt->rt_reply = NULL;
 
@@ -397,7 +382,8 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 
 	// Verify we wrote the expected amount
 	if (bytes_written <= 0) {
-		LOG("Write operation failed for fd=%d: %s", ic->ic_fd,
+		LOG("Write operation failed for %p fd=%d: %s", (void *)ic,
+		    ic->ic_fd,
 		    bytes_written < 0 ? strerror(-bytes_written) :
 					"connection closed");
 
@@ -453,6 +439,50 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 			return ret;
 	}
 
-	// Continue with normal write processing for application data
+	if ((size_t)bytes_written < ic->ic_expected_len) {
+		LOG("Partial write: ic=%p id=%u fd=%d expected=%zu wrote=%d position=%zu buffer_len=%zu",
+		    (void *)ic, ic->ic_id, ic->ic_fd, ic->ic_expected_len,
+		    bytes_written, ic->ic_position, ic->ic_buffer_len);
+
+		// Update position by actual bytes written
+		ic->ic_position += bytes_written;
+
+		// Create a new context that owns the buffer
+		struct io_context *new_ic =
+			io_context_create(OP_TYPE_WRITE, ic->ic_fd,
+					  ic->ic_buffer, ic->ic_buffer_len);
+		if (!new_ic) {
+			io_socket_close(ic->ic_fd, ENOMEM);
+			io_context_destroy(ic);
+			return ENOMEM;
+		}
+
+		// Copy state to new context
+		new_ic->ic_position = ic->ic_position;
+		new_ic->ic_xid = ic->ic_xid;
+		new_ic->ic_count = ic->ic_count;
+		copy_connection_info(&new_ic->ic_ci, &ic->ic_ci);
+
+		// Clear buffer ownership in old context to prevent double-free
+		ic->ic_buffer = NULL;
+		ic->ic_buffer_len = 0;
+
+		// Destroy old context without freeing the buffer
+		io_context_destroy(ic);
+
+		// Continue with the new context
+		return rpc_trans_writer(new_ic, ring);
+	}
+
+	// Full chunk written - simply advance position
+	ic->ic_position += ic->ic_expected_len;
+
+#ifdef PARTIAL_WRITE_DEBUG
+	LOG("After write: ic=%p id=%u old_pos=%zu new_pos=%zu buffer_len=%zu",
+	    (void *)ic, ic->ic_id, ic->ic_position - ic->ic_expected_len,
+	    ic->ic_position, ic->ic_buffer_len);
+#endif
+
+	// Continue with next fragment
 	return rpc_trans_writer(ic, ring);
 }

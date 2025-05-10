@@ -396,6 +396,7 @@ static int probe1_op_io_contexts_list(struct rpc_trans *rt)
 		pic[i].pic_xid = ic->ic_xid;
 		pic[i].pic_buffer_len = ic->ic_buffer_len;
 		pic[i].pic_position = ic->ic_position;
+		pic[i].pic_expected_len = ic->ic_expected_len;
 		pic[i].pic_state = ic->ic_state;
 		pic[i].pic_count = ic->ic_count;
 

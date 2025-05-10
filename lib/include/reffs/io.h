@@ -64,6 +64,8 @@ struct io_context {
 
 	size_t ic_buffer_len;
 	size_t ic_position;
+	size_t ic_expected_len;
+
 	uint32_t ic_xid;
 
 #define IO_CONTEXT_ENTRY_STATE_ACTIVE (1ULL << 0)

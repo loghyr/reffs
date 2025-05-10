@@ -256,7 +256,7 @@ def decode_io_context_state(state):
 
 def print_io_contexts(resok):
     print(f"{'ID':<12} {'FD':<4} {'Op':<10} {'XID':<10} {'Len':<10} {'Pos':<10} "
-          f"{'State':<32} {'Count':<10} {'Age (s)'}")
+          f"{'Exp Len':<10} {'State':<32} {'Count':<10} {'Age (s)'}")
 
     now_sec = resok.iclr_now.seconds
     now_nsec = resok.iclr_now.nseconds
@@ -274,7 +274,7 @@ def print_io_contexts(resok):
 
         print(f"{ctx.pic_id:<12} {ctx.pic_fd:<4} {op_type:<10} "
               f"0x{ctx.pic_xid:08x} {ctx.pic_buffer_len:<10} {ctx.pic_position:<10} "
-              f"{state_str:<32} {ctx.pic_count:<10} {age}")
+              f"{ctx.pic_expected_len:<10} {state_str:<32} {ctx.pic_count:<10} {age}")
 
 
 def io_contexts_list(client, args):

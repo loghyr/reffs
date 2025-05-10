@@ -30,20 +30,22 @@ static inline void trace_io_connect_submit(struct io_context *ic)
 
 static inline void trace_io_read_submit(struct io_context *ic)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_read_submit", __LINE__,
-			  "fd=%d op=%s id=%u len=%zu pos=%zu state=0x%lx",
-			  ic->ic_fd, io_op_type_to_str(ic->ic_op_type),
-			  ic->ic_id, ic->ic_buffer_len, ic->ic_position,
-			  ic->ic_state);
+	reffs_trace_event(
+		REFFS_TRACE_CAT_IO, "io_read_submit", __LINE__,
+		"fd=%d op=%s id=%u len=%zu pos=%zu el=%zu state=0x%lx",
+		ic->ic_fd, io_op_type_to_str(ic->ic_op_type), ic->ic_id,
+		ic->ic_buffer_len, ic->ic_position, ic->ic_expected_len,
+		ic->ic_state);
 }
 
 static inline void trace_io_write_submit(struct io_context *ic)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_write_submit", __LINE__,
-			  "fd=%d op=%s id=%u len=%zu pos=%zu state=0x%lx",
-			  ic->ic_fd, io_op_type_to_str(ic->ic_op_type),
-			  ic->ic_id, ic->ic_buffer_len, ic->ic_position,
-			  ic->ic_state);
+	reffs_trace_event(
+		REFFS_TRACE_CAT_IO, "io_write_submit", __LINE__,
+		"fd=%d op=%s id=%u len=%zu pos=%zu el=%zu state=0x%lx",
+		ic->ic_fd, io_op_type_to_str(ic->ic_op_type), ic->ic_id,
+		ic->ic_buffer_len, ic->ic_position, ic->ic_expected_len,
+		ic->ic_state);
 }
 
 static inline void trace_io_record_marker(struct buffer_state *bs,
@@ -104,10 +106,11 @@ static inline void trace_io_context(struct io_context *ic, const char *func,
 
 		reffs_trace_event(
 			REFFS_TRACE_CAT_IO, func, line,
-			"ic=%p op=%s fd=%d state=0x%lx age=%ld count=%ld pos=%zu len=%zu id=%u",
+			"ic=%p op=%s fd=%d state=0x%lx age=%ld count=%ld pos=%zu el=%zu len=%zu id=%u",
 			(void *)ic, io_op_type_to_str(ic->ic_op_type),
 			ic->ic_fd, ic->ic_state, age, ic->ic_count,
-			ic->ic_position, ic->ic_buffer_len, ic->ic_id);
+			ic->ic_position, ic->ic_expected_len, ic->ic_buffer_len,
+			ic->ic_id);
 	}
 }
 
@@ -136,10 +139,10 @@ static inline void trace_io_writer(struct io_context *ic, const char *func,
 
 		reffs_trace_event(
 			REFFS_TRACE_CAT_IO, func, line,
-			"ic=%p fd=%d bl=%ld ip=%ld r=%ld cs=%d count=%ld id=%u",
+			"ic=%p fd=%d bl=%ld ip=%ld el=%ld r=%ld cs=%d count=%ld id=%u",
 			(void *)ic, ic->ic_fd, ic->ic_buffer_len,
-			ic->ic_position, remaining, chunk_size, ic->ic_count,
-			ic->ic_id);
+			ic->ic_position, ic->ic_expected_len, remaining,
+			chunk_size, ic->ic_count, ic->ic_id);
 	}
 }
 

@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <liburing.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -30,7 +31,8 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
-int io_request_accept_op(int fd, struct connection_info *ci, struct io_uring *ring)
+int io_request_accept_op(int fd, struct connection_info *ci,
+			 struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
@@ -181,6 +183,13 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 
 		io_context_destroy(ic);
 		return -client_fd;
+	}
+
+	int flag = 1;
+	if (setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &flag,
+		       sizeof(flag)) < 0) {
+		LOG("setsockopt TCP_NODELAY failed for fd=%d: %s", client_fd,
+		    strerror(errno));
 	}
 
 	// Immediately register the new client connection with ACCEPTED state
