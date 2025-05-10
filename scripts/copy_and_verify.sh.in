@@ -1,0 +1,95 @@
+#!/bin/bash
+
+# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: GPL-2.0+
+
+
+usage() {
+    echo "Usage: $0 [SRC_BASE_DIR] [DST_BASE_DIR] [ITERATIONS] [--keep]"
+    echo ""
+    echo "Defaults:"
+    echo "  SRC_BASE_DIR  = /tmp"
+    echo "  DST_BASE_DIR  = /mnt/reffs"
+    echo "  ITERATIONS    = 1"
+    echo "  --keep        = Do not delete test files after each iteration"
+    exit 1
+}
+
+# Parse arguments
+SRC_BASE="${1:-/tmp}"
+DST_BASE="${2:-/mnt/reffs}"
+ITERATIONS="${3:-1}"
+KEEP_FILES="false"
+if [[ "${4:-}" == "--keep" ]]; then
+    KEEP_FILES="true"
+fi
+
+# Sizes: 0, 1, 2, 4, ..., 32M
+SIZES=(0)
+for ((i=0; i<=25; i++)); do
+    SIZES+=($((1 << i)))
+done
+
+generate_random_file() {
+    local path="$1"
+    local size="$2"
+    if [ "$size" -eq 0 ]; then
+        : > "$path"
+    else
+        head -c "$size" /dev/urandom > "$path"
+    fi
+}
+
+flush_caches() {
+    sync
+    echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
+}
+
+for ((iter=1; iter<=ITERATIONS; iter++)); do
+    echo "=== Iteration $iter ==="
+
+    SRC_DIR="$SRC_BASE/cav_src_$iter"
+    DST_DIR="$DST_BASE/cav_dst_$iter"
+    mkdir -p "$SRC_DIR" "$DST_DIR"
+
+    declare -A CHECKSUMS=()
+
+    for size in "${SIZES[@]}"; do
+        fname="file_${size}"
+        src_path="$SRC_DIR/$fname"
+        dst_path="$DST_DIR/$fname"
+
+        echo "Generating $fname ($size bytes)"
+        generate_random_file "$src_path" "$size"
+        sum=$(md5sum "$src_path" | awk '{print $1}')
+        CHECKSUMS["$fname"]="$sum"
+
+        cp "$src_path" "$dst_path"
+    done
+
+    flush_caches
+
+    for size in "${SIZES[@]}"; do
+        fname="file_${size}"
+        dst_path="$DST_DIR/$fname"
+
+        sum=$(md5sum "$dst_path" | awk '{print $1}')
+        if [ "$sum" != "${CHECKSUMS[$fname]}" ]; then
+            echo "❌ ERROR: Checksum mismatch for $fname"
+            echo "Source: ${CHECKSUMS[$fname]}"
+            echo "Dest  : $sum"
+            exit 1
+        fi
+    done
+
+    echo "✅ Checksums match for iteration $iter"
+
+    if [ "$KEEP_FILES" != "true" ]; then
+        rm -rf "$SRC_DIR" "$DST_DIR"
+    else
+        echo "⚠️  Keeping files in $SRC_DIR and $DST_DIR"
+    fi
+done
+
+echo "🎉 All iterations completed successfully."
+

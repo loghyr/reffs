@@ -395,6 +395,7 @@ AC_CONFIG_FILES([
 	tools/Makefile])
 
 AC_CONFIG_FILES([lib/xdr/insert_pragmas.sh],[chmod +x lib/xdr/insert_pragmas.sh])
+AC_CONFIG_FILES([scripts/copy_and_verify.sh],[chmod +x scripts/copy_and_verify.sh])
 AC_CONFIG_FILES([scripts/reffs/pynfs/xdr/xdrgen.py],[chmod +x scripts/reffs/pynfs/xdr/xdrgen.py])
 AC_CONFIG_FILES([scripts/reffs-probe.py],[chmod +x scripts/reffs-probe.py])
 AC_CONFIG_FILES([scripts/reffs/probe_client.py],[chmod +x scripts/reffs/probe_client.py])
