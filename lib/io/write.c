@@ -9,6 +9,8 @@
 #include "config.h"
 #endif
 
+#define PARTIAL_WRITE_DEBUG
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -73,6 +75,7 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 		}
 
 		// Handle in userspace
+		rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
 		int ret = SSL_write(ci->ci_ssl,
 				    (char *)ic->ic_buffer + ic->ic_position,
 				    remaining);
@@ -427,7 +430,36 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 
 	// If this was direct TLS data, we're done - no need to continue with normal write processing
 	if (ic->ic_state & IO_CONTEXT_DIRECT_TLS_DATA) {
-		LOG("Direct TLS data sent, skipping io_do_tls");
+		LOG("Direct TLS data sent for fd=%d", ic->ic_fd);
+
+		// Check if this was part of a TLS handshake
+		struct conn_info *ci = io_conn_get(ic->ic_fd);
+		if (ci && ci->ci_handshake_final_pending) {
+			LOG("Final TLS handshake message sent for fd=%d",
+			    ic->ic_fd);
+
+			// Clear the pending flag
+			ci->ci_handshake_final_pending = false;
+
+			// NOW we can enable TLS mode
+			// ci->ci_tls_enabled = true;
+
+			// Make sure any buffered BIO data is flushed
+			BIO_flush(SSL_get_wbio(ci->ci_ssl));
+
+			LOG("TLS mode now active for fd=%d", ic->ic_fd);
+
+			// Log kTLS status if available
+#ifdef BIO_get_ktls_send
+			int ktls_send =
+				BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
+			int ktls_recv =
+				BIO_get_ktls_recv(SSL_get_rbio(ci->ci_ssl));
+			LOG("kTLS status for fd=%d: send=%d, recv=%d",
+			    ic->ic_fd, ktls_send, ktls_recv);
+#endif
+		}
+
 		io_context_destroy(ic);
 		return 0;
 	}

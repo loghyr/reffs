@@ -34,7 +34,6 @@
 #include "reffs/stack.h"
 #include "reffs/trace/io.h"
 
-// Function to detect a TLS ClientHello
 static bool is_tls_client_hello(const unsigned char *buf, size_t len)
 {
 	// Minimum TLS record is 5 bytes (header) + data
@@ -50,102 +49,300 @@ static bool is_tls_client_hello(const unsigned char *buf, size_t len)
 		buf[5] == 0x01); // Handshake type 1 = ClientHello
 }
 
+static void log_client_hello_details(const unsigned char *buf, size_t len)
+{
+	if (len < 50)
+		return; // Too short to contain useful TLS details
+
+	LOG("TLS ClientHello version: 0x%02x%02x", buf[1], buf[2]);
+
+	// Look for key extensions
+	bool found_alpn = false;
+	bool found_sni = false;
+
+	// Skip past fixed header to extensions area (simplified - real parsing is more complex)
+	size_t i =
+		43; // Skip past record header, handshake type, length, version, random, session ID
+
+	// Skip session ID
+	if (i < len) {
+		size_t session_id_len = buf[i];
+		i += 1 + session_id_len;
+	}
+
+	// Skip cipher suites
+	if (i + 1 < len) {
+		size_t cipher_suites_len = (buf[i] << 8) | buf[i + 1];
+		i += 2 + cipher_suites_len;
+	}
+
+	// Skip compression methods
+	if (i < len) {
+		size_t compression_methods_len = buf[i];
+		i += 1 + compression_methods_len;
+	}
+
+	// Now at extensions, if present
+	if (i + 1 < len) {
+		size_t extensions_len = (buf[i] << 8) | buf[i + 1];
+		i += 2;
+
+		// Parse extensions
+		size_t extensions_end = i + extensions_len;
+		while (i + 3 < extensions_end && i + 3 < len) {
+			uint16_t ext_type = (buf[i] << 8) | buf[i + 1];
+			uint16_t ext_len = (buf[i + 2] << 8) | buf[i + 3];
+			i += 4;
+
+			if (ext_type == 0x0000) { // SNI
+				found_sni = true;
+				LOG("ClientHello includes SNI extension");
+			} else if (ext_type == 0x0010) { // ALPN
+				found_alpn = true;
+				LOG("ClientHello includes ALPN extension");
+
+				// Try to extract protocols (simplified)
+				if (i + 2 < len && i + 2 < extensions_end) {
+					size_t proto_list_len = (buf[i] << 8) |
+								buf[i + 1];
+					i += 2;
+
+					size_t proto_end = i + proto_list_len;
+					while (i < proto_end && i < len) {
+						size_t proto_len = buf[i];
+						i++;
+
+						if (i + proto_len <= len &&
+						    proto_len > 0) {
+							LOG("ALPN protocol offered: %.*s",
+							    (int)proto_len,
+							    buf + i);
+						}
+						i += proto_len;
+					}
+				}
+			} else {
+				// Skip this extension
+				i += ext_len;
+			}
+		}
+	}
+
+	if (!found_alpn) {
+		LOG("WARNING: ClientHello does not contain ALPN extension - this may prevent NFSv3 over TLS");
+	}
+
+	if (!found_sni) {
+		LOG("NOTE: ClientHello does not contain SNI extension");
+	}
+}
+
+static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
+			      const void *data, size_t len,
+			      struct io_uring *ring)
+{
+	BIO *rbio = SSL_get_rbio(ssl);
+	BIO *wbio = SSL_get_wbio(ssl);
+	int accept;
+	int ssl_err;
+	int pending;
+	int ret;
+
+	BIO_write(rbio, data, len);
+
+	SSL_set_mode(ssl,
+		     SSL_MODE_AUTO_RETRY | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+
+	accept = SSL_accept(ssl);
+	ssl_err = SSL_get_error(ssl, accept);
+
+	pending = BIO_pending(wbio);
+
+#ifdef TLS_DEBUGGING
+	// Log SSL state
+	const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl);
+	LOG("TLS Info: Protocol=%s Cipher=%s", SSL_get_version(ssl),
+	    cipher ? SSL_CIPHER_get_name(cipher) : "NONE");
+
+	LOG("TLS state: %s", SSL_state_string_long(ssl));
+#endif
+
+	// Check if handshake completed
+	if (SSL_is_init_finished(ssl)) {
+		LOG("TLS handshake finished, session established");
+
+		// Check ALPN result but don't fail if not present
+		const unsigned char *proto = NULL;
+		unsigned int proto_len = 0;
+		SSL_get0_alpn_selected(ssl, &proto, &proto_len);
+
+		if (proto_len > 0) {
+			LOG("ALPN protocol selected: %.*s", proto_len, proto);
+		} else {
+			LOG("No ALPN protocol was selected - continuing anyway for compatibility");
+		}
+
+		// Always enable TLS if handshake completes, regardless of ALPN
+		ci->ci_tls_enabled = true;
+		ci->ci_tls_handshaking = false;
+	} else {
+		LOG("TLS handshake not yet complete");
+
+		// Special case: detect completed handshake without ALPN
+		if (len == 6 && ((const unsigned char *)data)[0] == 0x14 &&
+		    ((const unsigned char *)data)[1] == 0x03 &&
+		    ((const unsigned char *)data)[2] == 0x03) {
+			LOG("ChangeCipherSpec detected - checking if this is final handshake message");
+
+			// Special fedora client compatibility - consider handshake complete at this point
+			if (SSL_state_string_long(ssl) &&
+			    strstr(SSL_state_string_long(ssl), "early data")) {
+				LOG("Special case: Detected likely completed handshake - enabling TLS");
+				ci->ci_tls_enabled = true;
+				ci->ci_tls_handshaking = false;
+				ci->ci_handshake_final_pending = true;
+				ci->ci_handshake_final_bytes = 0;
+			} else {
+				LOG("ChangeCipherSpec detected, continuing normal handshake");
+			}
+		}
+	}
+
+	// If there's data to send back to the client
+	if (pending > 0) {
+		char *write_buffer = malloc(pending);
+		if (!write_buffer) {
+			LOG("Failed to allocate memory for TLS response");
+			return ENOMEM;
+		}
+
+		int bytes = BIO_read(wbio, write_buffer, pending);
+#ifdef TLS_DEBUGGING
+		LOG("Reading %d bytes from wbio for fd=%d", bytes, fd);
+		rpc_log_packet("BIO: ", write_buffer, bytes);
+#endif
+
+		// Mark pending handshake completion if appropriate
+		if (accept > 0 || SSL_is_init_finished(ssl)) {
+			ci->ci_handshake_final_pending = true;
+			ci->ci_handshake_final_bytes = bytes;
+			LOG("Final handshake message prepared for fd=%d", fd);
+		}
+
+		// Send the data
+		ret = io_request_write_op(fd, write_buffer, bytes,
+					  IO_CONTEXT_DIRECT_TLS_DATA, NULL,
+					  ring);
+		if (ret) {
+			free(write_buffer);
+			return -ret;
+		}
+
+		LOG("Submitted TLS response (%d bytes) for fd=%d", bytes, fd);
+	}
+
+	// Handle SSL accept result
+	if (accept <= 0) {
+		if (ssl_err == SSL_ERROR_WANT_READ ||
+		    ssl_err == SSL_ERROR_WANT_WRITE) {
+			LOG("TLS handshake continuing for fd=%d, need more data",
+			    fd);
+			return 0;
+		}
+
+		io_ssl_err_print(fd, "handshake failed", __func__, __LINE__);
+		return EINVAL;
+	}
+
+	// If we get here, the handshake is complete
+	ci->ci_tls_handshaking = false;
+	LOG("TLS handshake completed logically for fd=%d, waiting for final message to be sent",
+	    fd);
+	return 0;
+}
+
 static int handle_tls_handshake(int fd, const void *data, size_t len,
 				struct io_uring *ring)
 {
-	BIO *wbio;
-	BIO *rbio;
-	int pending;
-	int ret;
-	int accept;
-	int ssl_err;
-
 	struct conn_info *ci = io_conn_get(fd);
 	if (!ci) {
 		LOG("Connection not tracked for fd=%d", fd);
 		return ENOTCONN;
 	}
 
-	LOG("TLS handshake: processing %zu bytes for fd=%d", len, fd);
+#ifdef TLS_DEBUGGING
+	const unsigned char *bytes = (const unsigned char *)data;
+	char hexdump[100] = { 0 };
+	size_t hexlen = 0;
 
+	// Format at most the first 16 bytes for logging
+	for (size_t i = 0; i < len && i < 16 && hexlen < sizeof(hexdump) - 4;
+	     i++) {
+		hexlen += snprintf(hexdump + hexlen, sizeof(hexdump) - hexlen,
+				   "%02x ", bytes[i]);
+	}
+
+	LOG("TLS data first bytes: %s", hexdump);
+	LOG("TLS handshake: processing %zu bytes for fd=%d", len, fd);
+#endif
+
+	// Log detailed ClientHello info if this is one
+	if (is_tls_client_hello(bytes, len)) {
+		log_client_hello_details(bytes, len);
+	}
+
+	// Initialize TLS context if needed
 	if (io_tls_init_server_context() != 0) {
 		LOG("Failed to initialize TLS context");
 		return EINVAL;
 	}
 
+	// Case 1: Continuing an existing handshake
 	if (ci->ci_tls_handshaking && ci->ci_ssl) {
-		// Feed the data to SSL
-		rbio = SSL_get_rbio(ci->ci_ssl);
-		BIO_write(rbio, data, len);
+		int ret =
+			process_ssl_accept(ci->ci_ssl, ci, fd, data, len, ring);
 
-		accept = SSL_accept(ci->ci_ssl);
-		ssl_err = SSL_get_error(ci->ci_ssl, accept);
-
-		wbio = SSL_get_wbio(ci->ci_ssl);
-		pending = BIO_pending(wbio);
-
-		LOG("SSL_accept returned %d (ssl_err=%d), pending data: %d bytes",
-		    accept, ssl_err, pending);
-
-		if (pending > 0) {
-			// There is data that needs to be sent back to the client
-			char *write_buffer = malloc(pending);
-			if (!write_buffer) {
-				LOG("Failed to allocate memory for TLS response");
-				return ENOMEM;
-			}
-
-			int bytes = BIO_read(wbio, write_buffer, pending);
-			LOG("Reading %d bytes from wbio for fd=%d", bytes, fd);
-
-			if (accept > 0) {
-				ci->ci_handshake_final_pending = true;
-				ci->ci_handshake_final_bytes = bytes;
-				LOG("Handshake logically complete, sending final message (%d bytes) for fd=%d",
-				    bytes, fd);
-			}
-
-			ret = io_request_write_op(fd, write_buffer, bytes,
-						  IO_CONTEXT_DIRECT_TLS_DATA,
-						  NULL, ring);
-			if (ret) {
-				free(write_buffer);
-				return -ret;
-			}
-
-			LOG("Submitted TLS response (%d bytes) for fd=%d",
-			    bytes, fd);
+		const unsigned char *bytes = (const unsigned char *)data;
+		if (bytes[0] == 0x14 && bytes[1] == 0x03 && bytes[2] == 0x03 &&
+		    len == 6) {
+			LOG("ChangeCipherSpec received, forcing TLS compatibility mode for Fedora client");
+			ci->ci_tls_enabled = true;
+			ci->ci_tls_handshaking = false;
 		}
 
-		if (accept <= 0) {
-			if (ssl_err == SSL_ERROR_WANT_READ ||
-			    ssl_err == SSL_ERROR_WANT_WRITE) {
-				LOG("TLS handshake continuing for fd=%d, need more data",
-				    fd);
-				return 0;
-			}
-
-			io_ssl_err_print(fd, "handshake failed", __func__,
-					 __LINE__);
-			return EINVAL;
-		}
-
-		// Handshake is logically complete, but we don't enable TLS yet
-		// That will happen in io_handle_write after final message is sent
-		ci->ci_tls_handshaking = false;
-		LOG("TLS handshake completed logically for fd=%d, waiting for final message to be sent",
-		    fd);
-		return 0;
+		return ret;
 	}
-
+	// Case 2: New handshake - create SSL object
 	SSL *ssl = SSL_new(reffs_server_ssl_ctx);
 	if (!ssl) {
 		LOG("Failed to create SSL for fd=%d", fd);
 		return EINVAL;
 	}
 
-	rbio = BIO_new(BIO_s_mem());
-	wbio = BIO_new(BIO_s_mem());
+#ifdef TLS_DEBUGGING
+	LOG("SSL %p using SSL_CTX %p", (void *)ssl,
+	    (void *)SSL_get_SSL_CTX(ssl));
+	LOG("reffs_server_ssl_ctx is %p", (void *)reffs_server_ssl_ctx);
+
+	// Log current ALPN state
+	const unsigned char *proto = NULL;
+	unsigned int proto_len = 0;
+	SSL_get0_alpn_selected(ssl, &proto, &proto_len);
+	if (proto_len == 0) {
+		LOG("ALPN not selected at this point");
+	} else {
+		LOG("ALPN selected at this point: %.*s", proto_len, proto);
+	}
+#endif
+
+	// Set up SSL for server role
+	SSL_set_accept_state(ssl);
+	SSL_set_mode(ssl,
+		     SSL_MODE_AUTO_RETRY | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+
+	// Create memory BIOs for SSL I/O
+	BIO *rbio = BIO_new(BIO_s_mem());
+	BIO *wbio = BIO_new(BIO_s_mem());
 	if (!rbio || !wbio) {
 		if (rbio)
 			BIO_free(rbio);
@@ -156,72 +353,27 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		return EINVAL;
 	}
 
+	// Associate BIOs with SSL object
 	SSL_set_bio(ssl, rbio, wbio);
 
-	BIO_write(rbio, data, len);
-
-	accept = SSL_accept(ssl);
-	ssl_err = SSL_get_error(ssl, accept);
-
-	// Check for data to write back, regardless of SSL_accept result
-	pending = BIO_pending(wbio);
-	if (pending > 0) {
-		char *write_buffer = malloc(pending);
-		if (!write_buffer) {
-			LOG("Failed to allocate memory for initial TLS response");
-			SSL_free(ssl);
-			return ENOMEM;
-		}
-
-		int bytes = BIO_read(wbio, write_buffer, pending);
-		LOG("Initial handshake generated %d bytes to send for fd=%d",
-		    bytes, fd);
-
-		if (accept > 0) {
-			ci->ci_handshake_final_pending = true;
-			ci->ci_handshake_final_bytes = bytes;
-			LOG("Handshake completed immediately, sending final message");
-		}
-
-		ret = io_request_write_op(fd, write_buffer, bytes,
-					  IO_CONTEXT_DIRECT_TLS_DATA, NULL,
-					  ring);
-		if (ret) {
-			free(write_buffer);
-			SSL_free(ssl);
-			return -ret;
-		}
-
-		LOG("Submitted initial TLS response (%d bytes) for fd=%d",
-		    bytes, fd);
-	}
-
-	if (accept <= 0) {
-		if (ssl_err == SSL_ERROR_WANT_READ ||
-		    ssl_err == SSL_ERROR_WANT_WRITE) {
-			ci->ci_ssl = ssl;
-			ci->ci_tls_handshaking = true;
-			ci->ci_tls_enabled = false;
-			ci->ci_handshake_final_pending = false;
-
-			LOG("TLS handshake started for fd=%d, need more data",
-			    fd);
-			return 0;
-		}
-
-		io_ssl_err_print(fd, "handshake failed immediately", __func__,
-				 __LINE__);
-		SSL_free(ssl);
-		return EINVAL;
-	}
-
+	// Store the SSL object in the connection info
 	ci->ci_ssl = ssl;
-	ci->ci_tls_handshaking = false;
-	ci->ci_handshake_final_pending = true;
+	ci->ci_tls_handshaking = true;
+	ci->ci_tls_enabled = false;
+	ci->ci_handshake_final_pending = false;
 
-	LOG("TLS handshake completed immediately for fd=%d, waiting for final message to be sent",
-	    fd);
-	return 0;
+	int ret = process_ssl_accept(ssl, ci, fd, data, len, ring);
+
+#ifdef TLS_DEBUGGING
+	if (len == 6 && bytes[0] == 0x14 && bytes[1] == 0x03 &&
+	    bytes[2] == 0x03) {
+		LOG("ChangeCipherSpec received, forcing TLS compatibility mode for Fedora client");
+		ci->ci_tls_enabled = true;
+		ci->ci_tls_handshaking = false;
+	}
+#endif
+
+	return ret;
 }
 
 /*
@@ -589,7 +741,6 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 				io_context_destroy(ic);
 				return 0;
 			}
-
 			goto get_more;
 		}
 
@@ -602,9 +753,19 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 			// Read decrypted data
 			int decrypted = SSL_read(ci->ci_ssl, ic->ic_buffer,
 						 ic->ic_buffer_len);
+			rpc_log_packet("TLS: ", ic->ic_buffer,
+				       ic->ic_buffer_len);
+
 			if (decrypted <= 0) {
 				int ssl_err =
 					SSL_get_error(ci->ci_ssl, decrypted);
+				long alert = ERR_get_error();
+				char alert_str[256];
+				ERR_error_string_n(alert, alert_str,
+						   sizeof(alert_str));
+				LOG("SSL error %d, alert: %s", ssl_err,
+				    alert_str);
+
 				if (ssl_err == SSL_ERROR_WANT_READ ||
 				    ssl_err == SSL_ERROR_WANT_WRITE) {
 					goto cleanup;

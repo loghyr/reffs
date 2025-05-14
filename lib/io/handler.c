@@ -376,14 +376,30 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			uint64_t state;
 			__atomic_load(&ic->ic_state, &state, __ATOMIC_RELAXED);
 			if (!(state & IO_CONTEXT_ENTRY_STATE_ACTIVE)) {
-				LOG("Ignoring completion for already destroyed context: ic=%p op=%s fd=%d id=%u state=0x%lx",
+				LOG("Received completion for non-active context: ic=%p op=%s fd=%d id=%u state=0x%lx",
 				    (void *)ic,
 				    io_op_type_to_str(ic->ic_op_type),
 				    ic->ic_fd, ic->ic_id, state);
 
+				// For TLS handshake, we need to process even non-active contexts
+				if (ic->ic_op_type == OP_TYPE_WRITE &&
+				    (ic->ic_state &
+				     IO_CONTEXT_DIRECT_TLS_DATA)) {
+					struct conn_info *ci =
+						io_conn_get(ic->ic_fd);
+					if (ci &&
+					    (ci->ci_tls_handshaking ||
+					     ci->ci_handshake_final_pending)) {
+						LOG("Processing TLS write completion for special context state");
+						ret = io_handle_write(
+							ic, cqe->res, ring);
+					} else {
+						LOG("Skipping processing for non-TLS-handshake context");
+					}
+				}
+
 				trace_io_context(ic, __func__, __LINE__);
 				io_uring_cqe_seen(ring, cqe);
-				// abort(); // Turn into an option
 				continue;
 			}
 
