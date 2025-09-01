@@ -287,8 +287,8 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 #endif
 
 	// Log detailed ClientHello info if this is one
-	if (is_tls_client_hello(bytes, len)) {
-		log_client_hello_details(bytes, len);
+	if (is_tls_client_hello(data, len)) {
+		log_client_hello_details(data, len);
 	}
 
 	// Initialize TLS context if needed
