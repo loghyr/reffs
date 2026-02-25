@@ -84,12 +84,19 @@ uint32_t io_heartbeat_period_set(uint32_t seconds)
 int io_schedule_heartbeat(struct io_uring *ring)
 {
 	struct io_uring_sqe *sqe;
-	struct __kernel_timespec ts;
+	struct __kernel_timespec *ts;
 	struct io_context *ic;
 
+	ts = calloc(1, sizeof(*ts));
+	if (!ts) {
+		LOG("Failed to create heartbeat timestamp");
+		return -ENOMEM;
+	}
+
 	// Create a context for the heartbeat operation
-	ic = io_context_create(OP_TYPE_HEARTBEAT, -1, NULL, 0);
+	ic = io_context_create(OP_TYPE_HEARTBEAT, -1, ts, sizeof(*ts));
 	if (!ic) {
+		free(ts);
 		LOG("Failed to create heartbeat context");
 		return -ENOMEM;
 	}
@@ -103,11 +110,12 @@ int io_schedule_heartbeat(struct io_uring *ring)
 	}
 
 	// Set up the timeout
-	ts.tv_sec = io_heartbeat_period;
-	ts.tv_nsec = 0;
+	ts->tv_sec = io_heartbeat_period;
+	ts->tv_nsec = 0;
 
 	// Prepare the timeout operation
-	io_uring_prep_timeout(sqe, &ts, 0, 0);
+	io_uring_prep_timeout(sqe, (struct __kernel_timespec *)ic->ic_buffer, 0,
+			      0);
 	io_uring_sqe_set_data(sqe, ic);
 
 	LOG("Scheduled next heartbeat in %u seconds", io_heartbeat_period);
@@ -266,6 +274,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 	    *ring->sq.ktail, *ring->cq.khead, *ring->cq.ktail);
 
 	// Schedule the next heartbeat
+	io_context_destroy(ic); // always destroy before rescheduling
 	return io_schedule_heartbeat(ring);
 }
 
