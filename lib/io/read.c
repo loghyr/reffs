@@ -385,6 +385,7 @@ static int request_more_read_data(int fd, struct ring_context *rc,
 
 	ic->ic_fd = fd;
 
+	pthread_mutex_lock(&rc->rc_mutex);
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
@@ -393,6 +394,7 @@ static int request_more_read_data(int fd, struct ring_context *rc,
 	}
 
 	if (!sqe) {
+		pthread_mutex_unlock(&rc->rc_mutex);
 		return -ENOMEM;
 	}
 
@@ -412,6 +414,7 @@ static int request_more_read_data(int fd, struct ring_context *rc,
 		} else
 			break;
 	}
+	pthread_mutex_unlock(&rc->rc_mutex);
 
 	if (ret > 0)
 		ret = 0;
@@ -449,6 +452,7 @@ int io_request_read_op(int fd, struct connection_info *ci,
 	if (ci)
 		copy_connection_info(&ic->ic_ci, ci);
 
+	pthread_mutex_lock(&rc->rc_mutex);
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
@@ -457,6 +461,7 @@ int io_request_read_op(int fd, struct connection_info *ci,
 	}
 
 	if (!sqe) {
+		pthread_mutex_unlock(&rc->rc_mutex);
 		free(buffer);
 		io_socket_close(fd, ENOMEM);
 		io_context_destroy(ic);
@@ -479,6 +484,7 @@ int io_request_read_op(int fd, struct connection_info *ci,
 		} else
 			break;
 	}
+	pthread_mutex_unlock(&rc->rc_mutex);
 
 	if (ret < 0) {
 		free(buffer);
