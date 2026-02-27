@@ -173,6 +173,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 	if (ci)
 		copy_connection_info(&ic->ic_ci, ci);
 
+	pthread_mutex_lock(&rc->rc_mutex);
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
@@ -181,6 +182,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 	}
 
 	if (!sqe) {
+		pthread_mutex_unlock(&rc->rc_mutex);
 		io_socket_close(fd, ENOMEM);
 		io_context_destroy(ic);
 		return -ENOMEM;
@@ -203,6 +205,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 		} else
 			break;
 	}
+	pthread_mutex_unlock(&rc->rc_mutex);
 
 	if (ret < 0) {
 		io_socket_close(fd, -ret);
@@ -298,6 +301,7 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 #endif
 
 	// Get SQE and submit
+	pthread_mutex_lock(&rc->rc_mutex);
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
@@ -306,6 +310,7 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	}
 
 	if (!sqe) {
+		pthread_mutex_unlock(&rc->rc_mutex);
 		io_context_destroy(ic);
 		return ENOMEM;
 	}
@@ -324,6 +329,7 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 			break;
 		}
 	}
+	pthread_mutex_unlock(&rc->rc_mutex);
 
 	if (ret < 0) {
 		io_socket_close(ic->ic_fd, -ret);

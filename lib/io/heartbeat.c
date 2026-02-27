@@ -87,6 +87,8 @@ int io_schedule_heartbeat(struct ring_context *rc)
 	struct __kernel_timespec *ts;
 	struct io_context *ic;
 
+	int ret = 0;
+
 	ts = calloc(1, sizeof(*ts));
 	if (!ts) {
 		LOG("Failed to create heartbeat timestamp");
@@ -102,8 +104,10 @@ int io_schedule_heartbeat(struct ring_context *rc)
 	}
 
 	// Get a submission queue entry
+	pthread_mutex_lock(&rc->rc_mutex);
 	sqe = io_uring_get_sqe(&rc->rc_ring);
 	if (!sqe) {
+		pthread_mutex_unlock(&rc->rc_mutex);
 		LOG("Failed to get SQE for heartbeat");
 		io_context_destroy(ic);
 		return -ENOSPC;
@@ -121,7 +125,9 @@ int io_schedule_heartbeat(struct ring_context *rc)
 	LOG("Scheduled next heartbeat in %u seconds", io_heartbeat_period);
 
 	// Submit the operation
-	return io_uring_submit(&rc->rc_ring);
+	ret = io_uring_submit(&rc->rc_ring);
+	pthread_mutex_unlock(&rc->rc_mutex);
+	return ret;
 }
 
 // Handle heartbeat completion - perform health checks and reschedule

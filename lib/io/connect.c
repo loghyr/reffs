@@ -847,9 +847,11 @@ int io_send_request(struct rpc_trans *rt)
 		}
 
 		// Submit connect operation to io_uring
+		pthread_mutex_lock(&rt->rt_rc->rc_mutex);
 		struct io_uring_sqe *sqe =
 			io_uring_get_sqe(&rt->rt_rc->rc_ring);
 		if (!sqe) {
+			pthread_mutex_unlock(&rt->rt_rc->rc_mutex);
 			io_socket_close(sockfd, ENOBUFS);
 			io_context_destroy(ic);
 			return ENOBUFS;
@@ -864,6 +866,7 @@ int io_send_request(struct rpc_trans *rt)
 
 		// Submit and wait for connect completion
 		io_uring_submit(&rt->rt_rc->rc_ring);
+		pthread_mutex_unlock(&rt->rt_rc->rc_mutex);
 
 		return 0; // Connection initiated, will be handled by callback
 	}
