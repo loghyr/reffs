@@ -297,4 +297,3 @@ void reffs_trace_event(enum reffs_trace_category category, const char *name,
 	}
 	pthread_mutex_unlock(&trace_mutex);
 }
-
