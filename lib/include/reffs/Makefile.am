@@ -20,6 +20,7 @@ reffsinclude_HEADERS = \
 	ns.h \
 	probe1.h \
 	rcu.h \
+	ring.h \
 	rpc.h \
 	server.h \
 	stack.h	\

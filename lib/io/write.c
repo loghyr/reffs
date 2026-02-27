@@ -37,14 +37,14 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
-static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring);
+static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc);
 
 /*
  * Returns < 1 for error
  * 0 for no need for further processing
  * 1 for using kTLS and fall through.
  */
-static int io_do_tls(struct io_context *ic, struct io_uring *ring)
+static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 {
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
@@ -125,7 +125,7 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 						ic->ic_fd, (char *)write_buffer,
 						bytes,
 						IO_CONTEXT_DIRECT_TLS_DATA,
-						&ic->ic_ci, ring);
+						&ic->ic_ci, rc);
 
 					if (ret != 0) {
 						LOG("Failed to submit TLS data write: %d",
@@ -153,7 +153,7 @@ static int io_do_tls(struct io_context *ic, struct io_uring *ring)
 }
 
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
-			struct connection_info *ci, struct io_uring *ring)
+			struct connection_info *ci, struct ring_context *rc)
 {
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
@@ -174,7 +174,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 		copy_connection_info(&ic->ic_ci, ci);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		sqe = io_uring_get_sqe(ring);
+		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
 			break;
 		usleep(IO_URING_WAIT_US);
@@ -193,7 +193,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 	trace_io_write_submit(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		ret = io_uring_submit(ring);
+		ret = io_uring_submit(&rc->rc_ring);
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
@@ -246,7 +246,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
  * record marker for the current fragment.
  *
  */
-static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
+static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 {
 	struct io_uring_sqe *sqe;
 	size_t remaining;
@@ -272,7 +272,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	    ci ? ci->ci_tls_enabled : 0);
 #endif
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
-		ret = io_do_tls(ic, ring);
+		ret = io_do_tls(ic, rc);
 		if (ret <= 0)
 			return ret;
 	}
@@ -299,7 +299,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 
 	// Get SQE and submit
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		sqe = io_uring_get_sqe(ring);
+		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
 			break;
 		usleep(IO_URING_WAIT_US);
@@ -315,7 +315,7 @@ static int rpc_trans_writer(struct io_context *ic, struct io_uring *ring)
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		ret = io_uring_submit(ring);
+		ret = io_uring_submit(&rc->rc_ring);
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
@@ -374,11 +374,11 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 
 	rt->rt_reply = NULL;
 
-	return rpc_trans_writer(ic, rt->rt_ring);
+	return rpc_trans_writer(ic, rt->rt_rc);
 }
 
 int io_handle_write(struct io_context *ic, int bytes_written,
-		    struct io_uring *ring)
+		    struct ring_context *rc)
 {
 	// Check connection state
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
@@ -466,7 +466,7 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 
 	// For TLS connections, handle encryption before further processing
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
-		int ret = io_do_tls(ic, ring);
+		int ret = io_do_tls(ic, rc);
 		if (ret <= 0)
 			return ret;
 	}
@@ -503,7 +503,7 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 		io_context_destroy(ic);
 
 		// Continue with the new context
-		return rpc_trans_writer(new_ic, ring);
+		return rpc_trans_writer(new_ic, rc);
 	}
 
 	// Full chunk written - simply advance position
@@ -516,5 +516,5 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 #endif
 
 	// Continue with next fragment
-	return rpc_trans_writer(ic, ring);
+	return rpc_trans_writer(ic, rc);
 }

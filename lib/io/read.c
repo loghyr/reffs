@@ -139,7 +139,7 @@ static void log_client_hello_details(const unsigned char *buf, size_t len)
 
 static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 			      const void *data, size_t len,
-			      struct io_uring *ring)
+			      struct ring_context *rc)
 {
 	BIO *rbio = SSL_get_rbio(ssl);
 	BIO *wbio = SSL_get_wbio(ssl);
@@ -231,8 +231,7 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 
 		// Send the data
 		ret = io_request_write_op(fd, write_buffer, bytes,
-					  IO_CONTEXT_DIRECT_TLS_DATA, NULL,
-					  ring);
+					  IO_CONTEXT_DIRECT_TLS_DATA, NULL, rc);
 		if (ret) {
 			free(write_buffer);
 			return -ret;
@@ -262,7 +261,7 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 }
 
 static int handle_tls_handshake(int fd, const void *data, size_t len,
-				struct io_uring *ring)
+				struct ring_context *rc)
 {
 	struct conn_info *ci = io_conn_get(fd);
 	if (!ci) {
@@ -299,8 +298,7 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 
 	// Case 1: Continuing an existing handshake
 	if (ci->ci_tls_handshaking && ci->ci_ssl) {
-		int ret =
-			process_ssl_accept(ci->ci_ssl, ci, fd, data, len, ring);
+		int ret = process_ssl_accept(ci->ci_ssl, ci, fd, data, len, rc);
 
 		const unsigned char *bytes = (const unsigned char *)data;
 		if (bytes[0] == 0x14 && bytes[1] == 0x03 && bytes[2] == 0x03 &&
@@ -362,7 +360,7 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 	ci->ci_tls_enabled = false;
 	ci->ci_handshake_final_pending = false;
 
-	int ret = process_ssl_accept(ssl, ci, fd, data, len, ring);
+	int ret = process_ssl_accept(ssl, ci, fd, data, len, rc);
 
 #ifdef TLS_DEBUGGING
 	if (len == 6 && bytes[0] == 0x14 && bytes[1] == 0x03 &&
@@ -379,7 +377,7 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 /*
  * Let the caller shut things down if there is an error
  */
-static int request_more_read_data(int fd, struct io_uring *ring,
+static int request_more_read_data(int fd, struct ring_context *rc,
 				  struct io_context *ic)
 {
 	struct io_uring_sqe *sqe = NULL;
@@ -388,7 +386,7 @@ static int request_more_read_data(int fd, struct io_uring *ring,
 	ic->ic_fd = fd;
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		sqe = io_uring_get_sqe(ring);
+		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
 			break;
 		usleep(IO_URING_WAIT_US);
@@ -404,7 +402,7 @@ static int request_more_read_data(int fd, struct io_uring *ring,
 	io_context_update_time(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		ret = io_uring_submit(ring);
+		ret = io_uring_submit(&rc->rc_ring);
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
@@ -422,7 +420,7 @@ static int request_more_read_data(int fd, struct io_uring *ring,
 }
 
 int io_request_read_op(int fd, struct connection_info *ci,
-		       struct io_uring *ring)
+		       struct ring_context *rc)
 {
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
@@ -452,7 +450,7 @@ int io_request_read_op(int fd, struct connection_info *ci,
 		copy_connection_info(&ic->ic_ci, ci);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		sqe = io_uring_get_sqe(ring);
+		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
 			break;
 		usleep(IO_URING_WAIT_US);
@@ -471,7 +469,7 @@ int io_request_read_op(int fd, struct connection_info *ci,
 	//trace_io_read_submit(ic);
 
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		ret = io_uring_submit(ring);
+		ret = io_uring_submit(&rc->rc_ring);
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
@@ -697,7 +695,8 @@ static int process_record_marker(struct buffer_state *bs)
 
 // Handle read completions
 
-int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
+int io_handle_read(struct io_context *ic, int bytes_read,
+		   struct ring_context *rc)
 {
 	int ret = 0;
 	bool needs_new_read = true;
@@ -717,7 +716,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		io_socket_close(client_fd,
 				bytes_read < 0 ? -bytes_read : ECONNRESET);
 
-		io_check_for_listener_restart(client_fd, &ic->ic_ci, ring);
+		io_check_for_listener_restart(client_fd, &ic->ic_ci, rc);
 
 		io_context_destroy(ic);
 		return 0; // No new read needed for closed connections
@@ -732,7 +731,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 #endif
 		if (ci->ci_tls_handshaking) {
 			ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer,
-						   bytes_read, ring);
+						   bytes_read, rc);
 			if (ret) {
 				SSL_free(ci->ci_ssl);
 				ci->ci_ssl = NULL;
@@ -791,7 +790,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 	if (is_tls_client_hello(ic->ic_buffer, bytes_read)) {
 		LOG("TLS ClientHello detected on fd=%d", ic->ic_fd);
 		ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer, bytes_read,
-					   ring);
+					   rc);
 		if (ret) {
 			if (ci) {
 				SSL_free(ci->ci_ssl);
@@ -833,7 +832,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 			LOG("Error processing record marker for fd: %d",
 			    client_fd);
 			io_check_for_listener_restart(client_fd, &ic->ic_ci,
-						      ring);
+						      rc);
 			io_socket_close(client_fd, ENOBUFS);
 			needs_new_read = false;
 			goto cleanup;
@@ -861,7 +860,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 		memcpy(t->t_buffer, bs->bs_record.rs_data, complete_size);
 		t->t_bytes_read = complete_size;
 		t->t_fd = client_fd;
-		t->t_ring = ring;
+		t->t_rc = rc;
 
 		copy_connection_info(&t->t_ci, &ic->ic_ci);
 
@@ -884,7 +883,7 @@ int io_handle_read(struct io_context *ic, int bytes_read, struct io_uring *ring)
 
 get_more:
 	// Try to use request_more_read_data first (which reuses the current context)
-	ret = request_more_read_data(client_fd, ring, ic);
+	ret = request_more_read_data(client_fd, rc, ic);
 	if (ret == 0 || ret == EAGAIN) {
 		// Successfully submitted new read operation
 		needs_new_read = false;
@@ -894,7 +893,7 @@ get_more:
 
 cleanup:
 	if (needs_new_read) {
-		ret = io_request_read_op(client_fd, &ic->ic_ci, ring);
+		ret = io_request_read_op(client_fd, &ic->ic_ci, rc);
 		if (ret != 0) {
 			LOG("Failed to request additional read: %s",
 			    strerror(ret));

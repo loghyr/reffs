@@ -8,6 +8,7 @@
 
 #include <unistd.h>
 #include <liburing.h>
+#include "reffs/ring.h"
 #include "reffs/network.h"
 
 struct rpc_trans;
@@ -19,7 +20,7 @@ struct task {
 	uint32_t t_xid;
 	int t_fd; // For sending responses
 	struct connection_info t_ci;
-	struct io_uring *t_ring;
+	struct ring_context *t_rc;
 	int (*t_cb)(struct rpc_trans *rt);
 };
 

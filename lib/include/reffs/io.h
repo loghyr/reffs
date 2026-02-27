@@ -21,6 +21,7 @@
 #include <urcu/rculfhash.h>
 #include <urcu/ref.h>
 
+#include "reffs/ring.h"
 #include "reffs/task.h"
 #include "reffs/network.h"
 #include "reffs/tls.h"
@@ -152,10 +153,10 @@ struct conn_info {
 };
 
 // Function declarations
-int io_handler_init(struct io_uring *ring);
-void io_handler_fini(struct io_uring *ring);
+int io_handler_init(struct ring_context *rc);
+void io_handler_fini(struct ring_context *rc);
 void io_handler_main_loop(volatile sig_atomic_t *running,
-			  struct io_uring *ring);
+			  struct ring_context *rc);
 void io_handler_stop(void);
 
 int io_lsnr_setup_ipv4(int port);
@@ -163,11 +164,11 @@ int io_lsnr_setup_ipv6(int port);
 int *io_lsnr_setup(int port);
 
 int io_request_accept_op(int fd, struct connection_info *ci,
-			 struct io_uring *ring);
+			 struct ring_context *rc);
 int io_request_read_op(int fd, struct connection_info *ci,
-		       struct io_uring *ring);
+		       struct ring_context *rc);
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
-			struct connection_info *ci, struct io_uring *ring);
+			struct connection_info *ci, struct ring_context *rc);
 
 int create_worker_threads(volatile sig_atomic_t *running);
 void wait_for_worker_threads(void);
@@ -184,12 +185,13 @@ struct buffer_state *io_buffer_state_get(int fd);
 
 // Handlers
 int io_handle_accept(struct io_context *ic, int client_fd,
-		     struct io_uring *ring);
-int io_handle_connect(struct io_context *ic, int result, struct io_uring *ring);
+		     struct ring_context *rc);
+int io_handle_connect(struct io_context *ic, int result,
+		      struct ring_context *rc);
 int io_handle_read(struct io_context *ic, int bytes_read,
-		   struct io_uring *ring);
+		   struct ring_context *rc);
 int io_handle_write(struct io_context *ic, int bytes_written,
-		    struct io_uring *ring);
+		    struct ring_context *rc);
 
 // Context handling
 struct io_context *io_context_create(enum op_type op_type, int fd, void *buffer,
@@ -288,13 +290,13 @@ bool io_conn_has_read_ops(int fd);
 bool io_conn_has_write_ops(int fd);
 
 void io_check_for_listener_restart(int fd, struct connection_info *ci,
-				   struct io_uring *ring);
+				   struct ring_context *rc);
 
 // Heartbeat code:
-int io_heartbeat_init(struct io_uring *ring);
-int io_schedule_heartbeat(struct io_uring *ring);
+int io_heartbeat_init(struct ring_context *rc);
+int io_schedule_heartbeat(struct ring_context *rc);
 int io_handle_heartbeat(struct io_context *ic, int result,
-			struct io_uring *ring);
+			struct ring_context *rc);
 void io_heartbeat_update_completions(uint64_t count);
 int *io_heartbeat_get_listeners(int *num);
 uint32_t io_heartbeat_period_get(void);

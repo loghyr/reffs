@@ -37,7 +37,7 @@ struct accept_context {
 };
 
 int io_request_accept_op(int fd, struct connection_info *ci,
-			 struct io_uring *ring)
+			 struct ring_context *rc)
 {
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
@@ -90,7 +90,7 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 		bool submitted = false;
 
 		for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-			sqe = io_uring_get_sqe(ring);
+			sqe = io_uring_get_sqe(&rc->rc_ring);
 			if (sqe)
 				break;
 			usleep(IO_URING_WAIT_US);
@@ -114,7 +114,7 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 		trace_io_accept_submit(ic);
 
 		for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-			ret = io_uring_submit(ring);
+			ret = io_uring_submit(&rc->rc_ring);
 			if (ret >= 0) {
 				submitted = true;
 				break;
@@ -159,7 +159,7 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 }
 
 int io_handle_accept(struct io_context *ic, int client_fd,
-		     struct io_uring *ring)
+		     struct ring_context *rc)
 {
 	char addr_str[INET6_ADDRSTRLEN];
 	uint16_t port;
@@ -172,7 +172,7 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 	trace_io_context(ic, __func__, __LINE__);
 
 	// Always try to set up the next accept first, to ensure we don't miss connections
-	int accept_ret = io_request_accept_op(listen_fd, &ic->ic_ci, ring);
+	int accept_ret = io_request_accept_op(listen_fd, &ic->ic_ci, rc);
 	if (accept_ret == 0) {
 		accept_resubmitted = true;
 	} else {
@@ -186,7 +186,7 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 		// If we haven't already resubmitted the accept, try one more time
 		if (!accept_resubmitted) {
 			LOG("Trying one more time to resubmit accept");
-			io_request_accept_op(listen_fd, &ic->ic_ci, ring);
+			io_request_accept_op(listen_fd, &ic->ic_ci, rc);
 		}
 
 		io_context_destroy(ic);
@@ -261,11 +261,11 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 	}
 
 	// Prepare to read from this new connection
-	io_request_read_op(client_fd, &ic->ic_ci, ring);
+	io_request_read_op(client_fd, &ic->ic_ci, rc);
 
 	// Accept more connections
 	if (!accept_resubmitted) {
-		io_request_accept_op(listen_fd, &ic->ic_ci, ring);
+		io_request_accept_op(listen_fd, &ic->ic_ci, rc);
 	}
 
 	io_context_destroy(ic);

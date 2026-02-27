@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
 
 	struct rpc_trans *rt = NULL;
 
-	struct io_uring ring;
+	struct ring_context rc;
 
 	char *trace_file = "./probe1_clnt.log";
 
@@ -158,7 +158,7 @@ int main(int argc, char *argv[])
 	pthread_sigmask(SIG_BLOCK, &mask, NULL);
 
 	// Initialize IO handler
-	if (io_handler_init(&ring) < 0) {
+	if (io_handler_init(&rc) < 0) {
 		return 1;
 	}
 
@@ -188,7 +188,7 @@ int main(int argc, char *argv[])
 	rt->rt_port = port;
 	rt->rt_addr_str = server;
 
-	rt->rt_ring = &ring;
+	rt->rt_rc = &rc;
 
 	ret = io_send_request(rt);
 	if (ret) {
@@ -201,12 +201,12 @@ int main(int argc, char *argv[])
 	__atomic_store(&running, &(int){ 1 }, __ATOMIC_SEQ_CST);
 
 	// Run the main IO processing loop
-	io_handler_main_loop(&running, &ring);
+	io_handler_main_loop(&running, &rc);
 
 	TRACE("Main loop exited, cleaning up...");
 
-	io_handler_fini(&ring);
-	io_uring_queue_exit(&ring);
+	io_handler_fini(&rc);
+	io_uring_queue_exit(&rc.rc_ring);
 
 done:
 	running = 0;
