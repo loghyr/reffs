@@ -266,7 +266,6 @@ int main(int argc, char *argv[])
 	}
 
 	io_handler_fini(&rc);
-	io_uring_queue_exit(&rc.rc_ring);
 
 	// Wait for worker threads to finish
 	wait_for_worker_threads();
