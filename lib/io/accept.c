@@ -31,6 +31,11 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
+struct accept_context {
+	struct sockaddr_storage ac_addr;
+	socklen_t ac_addrlen;
+};
+
 int io_request_accept_op(int fd, struct connection_info *ci,
 			 struct io_uring *ring)
 {
@@ -51,8 +56,9 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 
 	// Use a retry loop instead of recursion
 	while (retry_count < max_retries) {
-		struct sockaddr *buffer = malloc(sizeof(struct sockaddr));
-		if (!buffer) {
+		struct accept_context *actx =
+			calloc(1, sizeof(struct accept_context));
+		if (!actx) {
 			LOG("Failed to allocate buffer for accept - retry %d/%d",
 			    retry_count + 1, max_retries);
 
@@ -62,12 +68,14 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 			continue;
 		}
 
-		struct io_context *ic = io_context_create(
-			OP_TYPE_ACCEPT, fd, buffer, sizeof(struct sockaddr));
+		actx->ac_addrlen = sizeof(struct sockaddr_storage);
+
+		struct io_context *ic = io_context_create(OP_TYPE_ACCEPT, fd,
+							  actx, sizeof(*actx));
 		if (!ic) {
 			LOG("Failed to create accept context - retry %d/%d",
 			    retry_count + 1, max_retries);
-			free(buffer);
+			free(actx);
 
 			// Sleep before retry
 			usleep(100000); // 100ms
@@ -99,8 +107,8 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 			continue;
 		}
 
-		io_uring_prep_accept(sqe, fd, ic->ic_buffer,
-				     (socklen_t *)&ic->ic_buffer_len, 0);
+		io_uring_prep_accept(sqe, fd, (struct sockaddr *)&actx->ac_addr,
+				     &actx->ac_addrlen, 0);
 		sqe->user_data = (uint64_t)(uintptr_t)ic;
 
 		trace_io_accept_submit(ic);
