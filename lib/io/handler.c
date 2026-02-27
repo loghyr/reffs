@@ -447,6 +447,40 @@ void io_handler_fini(struct ring_context *rc)
 {
 	io_conn_cleanup();
 
+	// Stop workers before cancelling so no new submissions race with the cancel
+	wait_for_worker_threads();
+
+	// Now safe to cancel without contention
+	pthread_mutex_lock(&rc->rc_mutex);
+	struct io_uring_sqe *sqe = io_uring_get_sqe(&rc->rc_ring);
+	if (sqe) {
+		io_uring_prep_cancel(sqe, NULL, IORING_ASYNC_CANCEL_ALL);
+		io_uring_submit(&rc->rc_ring);
+	}
+	pthread_mutex_unlock(&rc->rc_mutex);
+
+	// Drain pending io_uring operations
+	while (1) {
+		struct io_uring_cqe *cqe;
+		struct __kernel_timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
+
+		int ret = io_uring_wait_cqe_timeout(&rc->rc_ring, &cqe, &ts);
+		if (ret == -ETIME) {
+			break;
+		} else if (ret < 0) {
+			LOG("Error draining io_uring: %s", strerror(-ret));
+			break;
+		}
+
+		if (cqe->user_data) {
+			struct io_context *ic =
+				(struct io_context *)(uintptr_t)cqe->user_data;
+			io_context_destroy(ic);
+		}
+
+		io_uring_cqe_seen(&rc->rc_ring, cqe);
+	}
+
 	// Drain pending io_uring operations
 	while (1) {
 		struct io_uring_cqe *cqe;
@@ -471,9 +505,6 @@ void io_handler_fini(struct ring_context *rc)
 
 		io_uring_cqe_seen(&rc->rc_ring, cqe);
 	}
-
-	// Wait for worker threads to finish
-	wait_for_worker_threads();
 
 	// Cleanup any pending requests
 	LOG("Cleaning up pending requests...");
