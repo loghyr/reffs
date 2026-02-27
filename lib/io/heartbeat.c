@@ -264,12 +264,6 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 
 	io_conn_dump_all();
 
-	// We should destroy the context here only if it wasn't already handled
-	// by the main error handler
-	if (result == 0) {
-		io_context_destroy(ic);
-	}
-
 	LOG("SQ head=%u, tail=%u; CQ head=%u, tail=%u", *ring->sq.khead,
 	    *ring->sq.ktail, *ring->cq.khead, *ring->cq.ktail);
 
