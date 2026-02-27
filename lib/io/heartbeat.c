@@ -49,7 +49,7 @@ struct heartbeat_state {
 static struct heartbeat_state hb_state = { 0 };
 
 // Initialize the heartbeat system
-int io_heartbeat_init(struct io_uring *ring)
+int io_heartbeat_init(struct ring_context *rc)
 {
 	time_t now = time(NULL);
 
@@ -65,7 +65,7 @@ int io_heartbeat_init(struct io_uring *ring)
 	hb_state.total_completions = 0;
 
 	// Schedule the first heartbeat
-	return io_schedule_heartbeat(ring);
+	return io_schedule_heartbeat(rc);
 }
 
 uint32_t io_heartbeat_period_get(void)
@@ -81,7 +81,7 @@ uint32_t io_heartbeat_period_set(uint32_t seconds)
 }
 
 // Schedule a heartbeat operation using io_uring timeout
-int io_schedule_heartbeat(struct io_uring *ring)
+int io_schedule_heartbeat(struct ring_context *rc)
 {
 	struct io_uring_sqe *sqe;
 	struct __kernel_timespec *ts;
@@ -102,7 +102,7 @@ int io_schedule_heartbeat(struct io_uring *ring)
 	}
 
 	// Get a submission queue entry
-	sqe = io_uring_get_sqe(ring);
+	sqe = io_uring_get_sqe(&rc->rc_ring);
 	if (!sqe) {
 		LOG("Failed to get SQE for heartbeat");
 		io_context_destroy(ic);
@@ -121,12 +121,12 @@ int io_schedule_heartbeat(struct io_uring *ring)
 	LOG("Scheduled next heartbeat in %u seconds", io_heartbeat_period);
 
 	// Submit the operation
-	return io_uring_submit(ring);
+	return io_uring_submit(&rc->rc_ring);
 }
 
 // Handle heartbeat completion - perform health checks and reschedule
 int io_handle_heartbeat(struct io_context *ic, int result,
-			struct io_uring *ring)
+			struct ring_context *rc)
 {
 	time_t now = time(NULL);
 
@@ -142,14 +142,14 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 
 	// Check for CQ ring overflow
 	if (now - hb_state.last_overflow_check >= 10) {
-		if (io_uring_cq_has_overflow(ring)) {
+		if (io_uring_cq_has_overflow(&rc->rc_ring)) {
 			LOG("WARNING: CQ ring overflow detected! Context count: %ld",
 			    io_context_get_created() - io_context_get_freed());
 
 			hb_state.last_overflow_check = now;
 
 			// Try to flush events from overflow
-			int ret = io_uring_get_events(ring);
+			int ret = io_uring_get_events(&rc->rc_ring);
 			if (ret < 0) {
 				LOG("Error getting events: %s", strerror(-ret));
 			} else {
@@ -208,7 +208,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 				    fd);
 
 				// Try to resubmit accept operation
-				int ret = io_request_accept_op(fd, NULL, ring);
+				int ret = io_request_accept_op(fd, NULL, rc);
 				if (ret != 0) {
 					LOG("Watchdog failed to resubmit accept for fd=%d: %s",
 					    fd, strerror(ret));
@@ -245,7 +245,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 			if (ci->ci_read_count == 0) {
 				LOG("Connection fd=%d has no pending read operations - submitting read",
 				    fd);
-				int ret = io_request_read_op(fd, NULL, ring);
+				int ret = io_request_read_op(fd, NULL, rc);
 				if (ret != 0) {
 					LOG("Failed to submit read for fd=%d: %s",
 					    fd, strerror(ret));
@@ -264,12 +264,13 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 
 	io_conn_dump_all();
 
-	LOG("SQ head=%u, tail=%u; CQ head=%u, tail=%u", *ring->sq.khead,
-	    *ring->sq.ktail, *ring->cq.khead, *ring->cq.ktail);
+	LOG("SQ head=%u, tail=%u; CQ head=%u, tail=%u", *rc->rc_ring.sq.khead,
+	    *rc->rc_ring.sq.ktail, *rc->rc_ring.cq.khead,
+	    *rc->rc_ring.cq.ktail);
 
 	// Schedule the next heartbeat
 	io_context_destroy(ic); // always destroy before rescheduling
-	return io_schedule_heartbeat(ring);
+	return io_schedule_heartbeat(rc);
 }
 
 // Function to update completion count - called from main loop

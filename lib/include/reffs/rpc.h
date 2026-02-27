@@ -25,6 +25,7 @@
 
 #include <hdr/hdr_histogram.h>
 
+#include "reffs/ring.h"
 #include "reffs/network.h"
 #include "reffs/log.h"
 #include "reffs/task.h"
@@ -65,7 +66,7 @@ struct rpc_trans {
 	char *rt_reply; // The raw RPC payload
 	size_t rt_reply_len; // The length of the payload
 	void *rt_context; // Protocol specific context
-	struct io_uring *rt_ring;
+	struct ring_context *rt_rc;
 	int (*rt_cb)(struct rpc_trans *rt); // Callback function pointer
 	struct rpc_program_handler *rt_rph;
 	uint16_t rt_port;

@@ -138,7 +138,7 @@ void io_client_fd_unregister(int fd)
 }
 
 // Initialize io_uring with larger CQ ring
-static int setup_io_uring(struct io_uring *ring)
+static int setup_io_uring(struct ring_context *rc)
 {
 	struct io_uring_params params = { 0 };
 
@@ -146,7 +146,8 @@ static int setup_io_uring(struct io_uring *ring)
 	params.flags = IORING_SETUP_CQSIZE;
 	params.cq_entries = 4 * QUEUE_DEPTH;
 
-	if (io_uring_queue_init_params(QUEUE_DEPTH, ring, &params) < 0) {
+	if (io_uring_queue_init_params(QUEUE_DEPTH, &rc->rc_ring, &params) <
+	    0) {
 		LOG("io_uring_queue_init_params: %s", strerror(errno));
 		return -1;
 	}
@@ -163,13 +164,13 @@ static int setup_io_uring(struct io_uring *ring)
 	return 0;
 }
 
-int io_handler_init(struct io_uring *ring)
+int io_handler_init(struct ring_context *rc)
 {
 	// Initialize pending requests array
 	memset(conn_buffers, 0, sizeof(conn_buffers));
 
 	// Setup io_uring
-	if (setup_io_uring(ring) < 0)
+	if (setup_io_uring(rc) < 0)
 		return -1;
 
 	last_accept_check = time(NULL);
@@ -275,12 +276,12 @@ void io_add_listener(int fd)
 }
 
 void io_check_for_listener_restart(int fd, struct connection_info *ci,
-				   struct io_uring *ring)
+				   struct ring_context *rc)
 {
 	for (int i = 0; i < num_listeners; i++) {
 		if (fd == listener_fds[i]) {
 			LOG("Listener socket closed, immediately resubmitting accept");
-			io_request_accept_op(fd, ci, ring);
+			io_request_accept_op(fd, ci, rc);
 			break;
 		}
 	}
@@ -293,14 +294,14 @@ int *io_heartbeat_get_listeners(int *num)
 }
 
 void io_handler_main_loop(volatile sig_atomic_t *running_flag,
-			  struct io_uring *ring)
+			  struct ring_context *rc)
 {
 	struct io_uring_cqe *cqe;
 
 	running_context = running_flag;
 
 	// Initialize heartbeat system
-	if (io_heartbeat_init(ring) < 0) {
+	if (io_heartbeat_init(rc) < 0) {
 		LOG("Failed to initialize heartbeat system");
 		return;
 	}
@@ -319,7 +320,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		}
 
 		// Wait for completion events
-		int ret = io_uring_wait_cqe_timeout(ring, &cqe, &ts);
+		int ret = io_uring_wait_cqe_timeout(&rc->rc_ring, &cqe, &ts);
 
 		if (ret == -ETIME) {
 			// Timeout - check running flag and continue
@@ -344,7 +345,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			(struct io_context *)(uintptr_t)cqe->user_data;
 		if (!ic) {
 			LOG("Error: NULL io context");
-			io_uring_cqe_seen(ring, cqe);
+			io_uring_cqe_seen(&rc->rc_ring, cqe);
 			continue;
 		}
 
@@ -367,7 +368,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 
 			// Handle timeout for heartbeat operation specially
 			if (ic->ic_op_type == OP_TYPE_HEARTBEAT) {
-				ret = io_handle_heartbeat(ic, cqe->res, ring);
+				ret = io_handle_heartbeat(ic, cqe->res, rc);
 			} else {
 				io_socket_close(ic->ic_fd, -cqe->res);
 				io_context_destroy(ic);
@@ -392,36 +393,36 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 					     ci->ci_handshake_final_pending)) {
 						LOG("Processing TLS write completion for special context state");
 						ret = io_handle_write(
-							ic, cqe->res, ring);
+							ic, cqe->res, rc);
 					} else {
 						LOG("Skipping processing for non-TLS-handshake context");
 					}
 				}
 
 				trace_io_context(ic, __func__, __LINE__);
-				io_uring_cqe_seen(ring, cqe);
+				io_uring_cqe_seen(&rc->rc_ring, cqe);
 				continue;
 			}
 
 			switch (ic->ic_op_type) {
 			case OP_TYPE_ACCEPT:
-				ret = io_handle_accept(ic, cqe->res, ring);
+				ret = io_handle_accept(ic, cqe->res, rc);
 				break;
 
 			case OP_TYPE_READ:
-				ret = io_handle_read(ic, cqe->res, ring);
+				ret = io_handle_read(ic, cqe->res, rc);
 				break;
 
 			case OP_TYPE_WRITE:
-				ret = io_handle_write(ic, cqe->res, ring);
+				ret = io_handle_write(ic, cqe->res, rc);
 				break;
 
 			case OP_TYPE_CONNECT:
-				ret = io_handle_connect(ic, cqe->res, ring);
+				ret = io_handle_connect(ic, cqe->res, rc);
 				break;
 
 			case OP_TYPE_HEARTBEAT:
-				ret = io_handle_heartbeat(ic, cqe->res, ring);
+				ret = io_handle_heartbeat(ic, cqe->res, rc);
 				break;
 
 			default:
@@ -433,11 +434,11 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			}
 		}
 
-		io_uring_cqe_seen(ring, cqe);
+		io_uring_cqe_seen(&rc->rc_ring, cqe);
 	}
 }
 
-void io_handler_fini(struct io_uring *ring)
+void io_handler_fini(struct ring_context *rc)
 {
 	io_conn_cleanup();
 
@@ -447,7 +448,7 @@ void io_handler_fini(struct io_uring *ring)
 		struct __kernel_timespec ts = { .tv_sec = 0,
 						.tv_nsec = 100000000 };
 
-		int ret = io_uring_wait_cqe_timeout(ring, &cqe, &ts);
+		int ret = io_uring_wait_cqe_timeout(&rc->rc_ring, &cqe, &ts);
 		if (ret == -ETIME) {
 			// No more completions
 			break;
@@ -463,7 +464,7 @@ void io_handler_fini(struct io_uring *ring)
 			io_context_destroy(ic);
 		}
 
-		io_uring_cqe_seen(ring, cqe);
+		io_uring_cqe_seen(&rc->rc_ring, cqe);
 	}
 
 	// Wait for worker threads to finish

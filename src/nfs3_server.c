@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
 	int port = NFS_PORT;
 	int opt;
 
-	struct io_uring ring;
+	struct ring_context rc;
 
 	char *trace_file = "./nfs3_srv.log";
 
@@ -151,7 +151,7 @@ int main(int argc, char *argv[])
 	pthread_sigmask(SIG_BLOCK, &mask, NULL);
 
 	// Initialize IO handler
-	if (io_handler_init(&ring) < 0) {
+	if (io_handler_init(&rc) < 0) {
 		return 1;
 	}
 
@@ -192,7 +192,7 @@ int main(int argc, char *argv[])
 	}
 
 	io_add_listener(lsnr_ipv4_nfs_fd);
-	io_request_accept_op(lsnr_ipv4_nfs_fd, NULL, &ring);
+	io_request_accept_op(lsnr_ipv4_nfs_fd, NULL, &rc);
 
 	lsnr_ipv6_nfs_fd = io_lsnr_setup_ipv6(port);
 	if (lsnr_ipv6_nfs_fd < 0) {
@@ -202,7 +202,7 @@ int main(int argc, char *argv[])
 	}
 
 	io_add_listener(lsnr_ipv6_nfs_fd);
-	io_request_accept_op(lsnr_ipv6_nfs_fd, NULL, &ring);
+	io_request_accept_op(lsnr_ipv6_nfs_fd, NULL, &rc);
 
 	lsnr_ipv4_probe_fd = io_lsnr_setup_ipv4(PROBE_PORT);
 	if (lsnr_ipv4_probe_fd < 0) {
@@ -212,7 +212,7 @@ int main(int argc, char *argv[])
 	}
 
 	io_add_listener(lsnr_ipv4_probe_fd);
-	io_request_accept_op(lsnr_ipv4_probe_fd, NULL, &ring);
+	io_request_accept_op(lsnr_ipv4_probe_fd, NULL, &rc);
 
 	lsnr_ipv6_probe_fd = io_lsnr_setup_ipv6(PROBE_PORT);
 	if (lsnr_ipv6_probe_fd < 0) {
@@ -222,7 +222,7 @@ int main(int argc, char *argv[])
 	}
 
 	io_add_listener(lsnr_ipv6_probe_fd);
-	io_request_accept_op(lsnr_ipv6_probe_fd, NULL, &ring);
+	io_request_accept_op(lsnr_ipv6_probe_fd, NULL, &rc);
 
 	if (!pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
 		LOG("Failed to register with portmapper for NFSv3");
@@ -240,7 +240,7 @@ int main(int argc, char *argv[])
 	__atomic_store(&running, &(int){ 1 }, __ATOMIC_SEQ_CST);
 
 	// Run the main IO processing loop
-	io_handler_main_loop(&running, &ring);
+	io_handler_main_loop(&running, &rc);
 
 	TRACE("Main loop exited, cleaning up...");
 
@@ -265,8 +265,8 @@ int main(int argc, char *argv[])
 		lsnr_ipv6_nfs_fd = -1;
 	}
 
-	io_handler_fini(&ring);
-	io_uring_queue_exit(&ring);
+	io_handler_fini(&rc);
+	io_uring_queue_exit(&rc.rc_ring);
 
 	// Wait for worker threads to finish
 	wait_for_worker_threads();

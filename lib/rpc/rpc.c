@@ -297,7 +297,7 @@ static int send_auth_tls_response(struct rpc_trans *rt)
 	    rt->rt_info.ri_xid);
 
 	// Send the response via callback
-	if (rt->rt_ring && rt->rt_cb) {
+	if (rt->rt_rc && rt->rt_cb) {
 		rt->rt_cb(rt);
 	}
 
@@ -662,7 +662,7 @@ int rpc_process_task(struct task *t)
 			goto drop_on_floor;
 
 		io_unregister_request(rt->rt_info.ri_xid);
-		rt->rt_ring = rt_old->rt_ring;
+		rt->rt_rc = rt_old->rt_rc;
 		rt->rt_cb = rt_old->rt_cb;
 
 		// Caller is responsible for releasing rt_old
@@ -831,7 +831,7 @@ int rpc_process_task(struct task *t)
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 		rt->rt_info.ri_accept_stat = SUCCESS;
 
-		rt->rt_ring = t->t_ring;
+		rt->rt_rc = t->t_rc;
 		rt->rt_offset = 0;
 
 		// Send STARTTLS response
@@ -1181,7 +1181,7 @@ handle_rpc_error:
 	}
 
 	if (rt->rt_reply && rt->rt_reply_len > 0) {
-		rt->rt_ring = t->t_ring;
+		rt->rt_rc = t->t_rc;
 		if (__rpc_log_packets)
 			rpc_log_packet("TX: ", rt->rt_reply, rt->rt_reply_len);
 		rt->rt_cb(rt);

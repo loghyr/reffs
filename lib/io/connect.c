@@ -847,7 +847,8 @@ int io_send_request(struct rpc_trans *rt)
 		}
 
 		// Submit connect operation to io_uring
-		struct io_uring_sqe *sqe = io_uring_get_sqe(rt->rt_ring);
+		struct io_uring_sqe *sqe =
+			io_uring_get_sqe(&rt->rt_rc->rc_ring);
 		if (!sqe) {
 			io_socket_close(sockfd, ENOBUFS);
 			io_context_destroy(ic);
@@ -862,7 +863,7 @@ int io_send_request(struct rpc_trans *rt)
 		addr = NULL;
 
 		// Submit and wait for connect completion
-		io_uring_submit(rt->rt_ring);
+		io_uring_submit(&rt->rt_rc->rc_ring);
 
 		return 0; // Connection initiated, will be handled by callback
 	}
@@ -881,7 +882,7 @@ int io_send_request(struct rpc_trans *rt)
 }
 
 int io_handle_connect(struct io_context *ic, int result,
-		      struct io_uring __attribute__((unused)) * ring)
+		      struct ring_context __attribute__((unused)) * rc)
 {
 	char addr_str[INET6_ADDRSTRLEN];
 	uint16_t port;
