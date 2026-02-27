@@ -267,9 +267,6 @@ int main(int argc, char *argv[])
 
 	io_handler_fini(&rc);
 
-	// Wait for worker threads to finish
-	wait_for_worker_threads();
-
 	TRACE("Unregistering Port Mapper");
 	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
 	pmap_unset(NFS3_PROGRAM, NFS_V3);
