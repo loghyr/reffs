@@ -169,6 +169,11 @@ int io_handler_init(struct ring_context *rc)
 	// Initialize pending requests array
 	memset(conn_buffers, 0, sizeof(conn_buffers));
 
+	if (pthread_mutex_init(&rc->rc_mutex, NULL) != 0) {
+		LOG("Failed to initialize ring mutex");
+		return -1;
+	}
+
 	// Setup io_uring
 	if (setup_io_uring(rc) < 0)
 		return -1;
@@ -498,4 +503,6 @@ void io_handler_fini(struct ring_context *rc)
 	io_context_release_active();
 
 	io_context_fini();
+
+	pthread_mutex_destroy(&rc->rc_mutex);
 }
