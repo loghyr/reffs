@@ -206,7 +206,6 @@ int main(int argc, char *argv[])
 	TRACE("Main loop exited, cleaning up...");
 
 	io_handler_fini(&rc);
-	io_uring_queue_exit(&rc.rc_ring);
 
 done:
 	running = 0;

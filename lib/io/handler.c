@@ -504,5 +504,6 @@ void io_handler_fini(struct ring_context *rc)
 
 	io_context_fini();
 
+	io_uring_queue_exit(&rc->rc_ring);
 	pthread_mutex_destroy(&rc->rc_mutex);
 }
