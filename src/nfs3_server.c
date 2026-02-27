@@ -136,7 +136,6 @@ int main(int argc, char *argv[])
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = signal_handler;
-	sa.sa_flags = SA_RESTART; // Restart interrupted system calls
 	sigemptyset(&sa.sa_mask);
 	sigaddset(&sa.sa_mask, SIGINT);
 	sigaddset(&sa.sa_mask, SIGTERM);
