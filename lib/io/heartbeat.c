@@ -24,14 +24,15 @@
 #include "reffs/trace/io.h"
 
 // Heartbeat interval in seconds
-#define HEARTBEAT_INTERVAL 60
-#define STALLED_CHECK_INTERVAL 60
-
 #ifdef HAVE_VM
-#define DESTROYED_CHECK_INTERVAL 1
+#define HEARTBEAT_INTERVAL 5
+#define STALLED_CHECK_INTERVAL 5
 #else
 #define DESTROYED_CHECK_INTERVAL 60
+#define STALLED_CHECK_INTERVAL 60
 #endif
+
+#define DESTROYED_CHECK_INTERVAL 1
 
 #define LISTENER_CHECK_INTERVAL 5
 #define CONNECTION_CHECK_INTERVAL 10
@@ -274,7 +275,9 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 		hb_state.last_connection_check = now;
 	}
 
+#ifndef HAVE_VM
 	io_conn_dump_all();
+#endif
 
 	LOG("SQ head=%u, tail=%u; CQ head=%u, tail=%u", *rc->rc_ring.sq.khead,
 	    *rc->rc_ring.sq.ktail, *rc->rc_ring.cq.khead,

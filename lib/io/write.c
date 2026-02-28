@@ -177,16 +177,16 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 	if (ci)
 		copy_connection_info(&ic->ic_ci, ci);
 
-	pthread_mutex_lock(&rc->rc_mutex);
-	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
+	for (int i = 0; i < REFFS_IO_RING_RETRIES; i++) {
+		pthread_mutex_lock(&rc->rc_mutex);
 		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
 			break;
-		usleep(IO_URING_WAIT_US);
+		pthread_mutex_unlock(&rc->rc_mutex);
+		sched_yield();
 	}
 
 	if (!sqe) {
-		pthread_mutex_unlock(&rc->rc_mutex);
 		io_socket_close(fd, ENOMEM);
 		io_context_destroy(ic);
 		return -ENOMEM;
@@ -208,7 +208,9 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 			LOG("-EAGAIN on write submit (retry %d/%d)", i + 1,
 			    REFFS_IO_MAX_RETRIES);
 			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
-			usleep(IO_URING_WAIT_US);
+			pthread_mutex_unlock(&rc->rc_mutex);
+			sched_yield();
+			pthread_mutex_lock(&rc->rc_mutex);
 		} else
 			break;
 	}
@@ -268,11 +270,13 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 		LOG("Buffer complete: ic=%p id=%u position=%zu, buffer_len=%zu",
 		    (void *)ic, ic->ic_id, ic->ic_position, ic->ic_buffer_len);
 #endif
+#ifdef NOT_NOW_BROWN_COW
 #ifdef HAVE_JEMALLOC
 #ifdef HAVE_VM
 		// Purge all arenas
 		LOG("Purging all arenas");
 		mallctl("arena.4096.purge", NULL, NULL, NULL, 0);
+#endif
 #endif
 #endif
 		io_context_destroy(ic);
@@ -315,16 +319,16 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 #endif
 
 	// Get SQE and submit
-	pthread_mutex_lock(&rc->rc_mutex);
-	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
+	for (int i = 0; i < REFFS_IO_RING_RETRIES; i++) {
+		pthread_mutex_lock(&rc->rc_mutex);
 		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
 			break;
-		usleep(IO_URING_WAIT_US);
+		pthread_mutex_unlock(&rc->rc_mutex);
+		sched_yield();
 	}
 
 	if (!sqe) {
-		pthread_mutex_unlock(&rc->rc_mutex);
 		io_context_destroy(ic);
 		return ENOMEM;
 	}
@@ -343,7 +347,9 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 			LOG("-EAGAIN on rpc_trans_writer (retry %d/%d)", i + 1,
 			    REFFS_IO_MAX_RETRIES);
 			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
-			usleep(IO_URING_WAIT_US);
+			pthread_mutex_unlock(&rc->rc_mutex);
+			sched_yield();
+			pthread_mutex_lock(&rc->rc_mutex);
 		}
 	}
 	pthread_mutex_unlock(&rc->rc_mutex);

@@ -89,16 +89,16 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 		// Flag to track if we successfully submitted the request
 		bool submitted = false;
 
-		pthread_mutex_lock(&rc->rc_mutex);
-		for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
+		for (int i = 0; i < REFFS_IO_RING_RETRIES; i++) {
+			pthread_mutex_lock(&rc->rc_mutex);
 			sqe = io_uring_get_sqe(&rc->rc_ring);
 			if (sqe)
 				break;
-			usleep(IO_URING_WAIT_US);
+			pthread_mutex_unlock(&rc->rc_mutex);
+			sched_yield();
 		}
 
 		if (!sqe) {
-			pthread_mutex_unlock(&rc->rc_mutex);
 			LOG("Failed to get SQE for accept - retry %d/%d",
 			    retry_count + 1, max_retries);
 			io_context_destroy(ic);
@@ -123,7 +123,9 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 			} else if (ret == -EAGAIN) {
 				LOG("-EAGAIN in io_request_accept_op (retry %d/%d)",
 				    i + 1, REFFS_IO_MAX_RETRIES);
-				usleep(IO_URING_WAIT_US);
+				pthread_mutex_unlock(&rc->rc_mutex);
+				sched_yield();
+				pthread_mutex_lock(&rc->rc_mutex);
 			} else {
 				break;
 			}

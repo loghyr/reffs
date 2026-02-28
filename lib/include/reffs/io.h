@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <sched.h>
 #include <urcu.h>
 #include <urcu/rculfhash.h>
 #include <urcu/ref.h>
@@ -49,7 +50,10 @@
 #define IO_URING_WAIT_US \
 	((IO_URING_WAIT_SEC * 1000000) + (IO_URING_WAIT_NSEC / 1000))
 
+#define REFFS_IO_RETRY_US (1000) // 1ms for ring contention retries
+
 #define REFFS_IO_MAX_RETRIES (3)
+#define REFFS_IO_RING_RETRIES (100) // Aggressive retries for SQE acquisition
 
 // Opcodes for different packet types
 enum op_type {
