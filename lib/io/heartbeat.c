@@ -195,12 +195,13 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 		io_context_check_stalled();
 	}
 
-	// Release destroyed contexts
+// Release destroyed contexts
+#ifdef HAVE_DESTROY_CACHE
 	if (now - hb_state.last_destroyed_check >= DESTROYED_CHECK_INTERVAL) {
 		hb_state.last_destroyed_check = now;
 		io_context_release_destroyed();
 	}
-
+#endif
 	// Check listener sockets
 	if (now - hb_state.last_listener_check >= LISTENER_CHECK_INTERVAL) {
 		int num_listeners;
