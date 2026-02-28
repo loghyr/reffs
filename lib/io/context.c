@@ -33,7 +33,7 @@
 #include "reffs/trace/io.h"
 
 #ifdef HAVE_VM
-#define IO_CONTEXT_TIMEOUT (15)
+#define IO_CONTEXT_TIMEOUT (5)
 #else
 #define IO_CONTEXT_TIMEOUT (60)
 #endif
@@ -46,7 +46,7 @@ static _Atomic uint64_t cancelled_freed;
 static _Atomic uint64_t destroyed_freed;
 
 // Hash table buckets - now contains io_context pointers directly
-#define CONTEXT_HASH_SIZE 1024
+#define CONTEXT_HASH_SIZE 65536
 static struct io_context *context_hash[CONTEXT_HASH_SIZE] = { 0 };
 static pthread_mutex_t context_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -120,6 +120,25 @@ struct io_context *io_context_find(uint32_t id)
 	return ic;
 }
 
+// Remove a context from the hash table
+static void io_context_unregister(struct io_context *ic)
+{
+	pthread_mutex_lock(&context_mutex);
+	unsigned int bucket = hash_id(ic->ic_id);
+	struct io_context **prev_ptr = &context_hash[bucket];
+	struct io_context *curr = context_hash[bucket];
+
+	while (curr != NULL) {
+		if (curr == ic) {
+			*prev_ptr = curr->ic_next;
+			break;
+		}
+		prev_ptr = &curr->ic_next;
+		curr = curr->ic_next;
+	}
+	pthread_mutex_unlock(&context_mutex);
+}
+
 void io_context_destroy(struct io_context *ic)
 {
 	trace_io_context(ic, __func__, __LINE__);
@@ -155,9 +174,18 @@ void io_context_destroy(struct io_context *ic)
 		break;
 	}
 
+#ifdef HAVE_DESTROY_CACHE
 	// Update the action time to track when it was destroyed
 	ic->ic_action_time = time(NULL);
 	trace_io_context(ic, __func__, __LINE__);
+#else
+	// Immediate free
+	io_context_unregister(ic);
+	free(ic->ic_buffer);
+	free(ic);
+	atomic_fetch_add(&context_freed, 1);
+	atomic_fetch_add(&destroyed_freed, 1);
+#endif
 }
 
 // Create an IO context for operations
@@ -365,14 +393,14 @@ void io_context_check_stalled(void)
 	LOG("======================");
 }
 
+#ifdef HAVE_DESTROY_CACHE
 void io_context_release_destroyed(void)
 {
 	pthread_mutex_lock(&context_mutex);
 
 	int count = 0;
-	int limit = 100; // Don't block for too long
+	int limit = 100000; // Don't block for too long
 	time_t now = time(NULL);
-	int to = IO_CONTEXT_TIMEOUT;
 
 	LOG("=== Freeing Destroyed Contexts ===");
 
@@ -381,12 +409,11 @@ void io_context_release_destroyed(void)
 		struct io_context *ic = context_hash[i];
 
 		while (ic != NULL && count < limit) {
-			// Check if it's marked as destroyed and old enough
+			// Check if it's marked as destroyed
 			if ((ic->ic_state &
 			     IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED) &&
 			    !(ic->ic_state &
-			      IO_CONTEXT_ENTRY_STATE_PENDING_FREE) &&
-			    (now - ic->ic_action_time) >= to) {
+			      IO_CONTEXT_ENTRY_STATE_PENDING_FREE)) {
 				// Mark as pending free
 				__atomic_fetch_or(
 					&ic->ic_state,
@@ -424,6 +451,7 @@ void io_context_release_destroyed(void)
 	LOG("Total destroyed contexts: %d", count);
 	LOG("======================");
 }
+#endif
 
 int io_context_fini(void)
 {

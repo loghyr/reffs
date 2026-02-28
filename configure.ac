@@ -198,6 +198,14 @@ AC_ARG_ENABLE([io-uring-stress],
         [AC_DEFINE([HAVE_IO_URING_STRESS], [1], [Define if stress testing io_uring])])],
     [])
 
+# Check if we should use the destroyed context cache
+AC_ARG_ENABLE([destroy-cache],
+    [AS_HELP_STRING([--enable-destroy-cache],
+        [Enable deferred destruction of IO contexts to avoid UAF])],
+    [AS_IF([test "x$enableval" = "xyes"],
+        [AC_DEFINE([HAVE_DESTROY_CACHE], [1], [Define if using destroyed context cache])])],
+    [])
+
 AC_ARG_ENABLE(asan,
 [  --enable-asan      Compile with address sanitizer],
 [case "${enableval}" in
