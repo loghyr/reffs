@@ -32,7 +32,11 @@
 #include "reffs/io.h"
 #include "reffs/trace/io.h"
 
+#ifdef HAVE_VM
+#define IO_CONTEXT_TIMEOUT (15)
+#else
 #define IO_CONTEXT_TIMEOUT (60)
+#endif
 
 static _Atomic uint64_t context_created;
 static _Atomic uint64_t context_freed;
