@@ -80,6 +80,7 @@ struct io_context {
 #define IO_CONTEXT_ENTRY_STATE_PENDING_FREE (1ULL << 2)
 #define IO_CONTEXT_DIRECT_TLS_DATA (1ULL << 3)
 #define IO_CONTEXT_TLS_BIO_PROCESSED (1ULL << 4)
+#define IO_CONTEXT_SUBMITTED_EAGAIN (1ULL << 5)
 	uint64_t ic_state;
 
 	time_t ic_action_time;
