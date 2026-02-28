@@ -156,25 +156,29 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 	if (sa->size.set_it) {
 		if (inode->i_mode & S_IFDIR)
 			return NFS3ERR_ISDIR;
-		size_t size = inode->i_size;
-		size_t sz = data_block_resize(inode->i_db,
-					      sa->size.set_size3_u.size);
-		if (sz < 0)
-			return -sz;
-		if (!inode->i_db && size) {
-			inode->i_db = data_block_alloc(
-				NULL, sa->size.set_size3_u.size, 0);
-			if (!inode->i_db) {
-				return ENOMEM;
-			}
-		}
+		size_t old_size = inode->i_size;
+		size_t new_size = sa->size.set_size3_u.size;
 
-		inode->i_size = sz;
+		if (!inode->i_db) {
+			if (new_size > 0) {
+				inode->i_db =
+					data_block_alloc(NULL, new_size, 0);
+				if (!inode->i_db)
+					return NFS3ERR_NOSPC;
+			}
+			inode->i_size = new_size;
+		} else {
+			size_t sz = data_block_resize(inode->i_db, new_size);
+			if ((ssize_t)sz < 0)
+				return NFS3ERR_NOSPC;
+			inode->i_size = sz;
+		}
 
 		inode->i_used =
 			inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
 		__atomic_add_fetch(&inode->i_sb->sb_bytes_used,
-				   inode->i_size - size, __ATOMIC_RELAXED);
+				   (ssize_t)inode->i_size - (ssize_t)old_size,
+				   __ATOMIC_RELAXED);
 		if (flags)
 			*flags |= REFFS_INODE_UPDATE_CTIME |
 				  REFFS_INODE_UPDATE_MTIME;
@@ -1069,14 +1073,15 @@ static int nfs3_op_create(struct rpc_trans *rt)
 			goto update_wcc;
 		case EXCLUSIVE:
 			timespec_to_createverf3(&exists->i_ctime, cv);
-			if (!memcmp(cv, args->how.createhow3_u.verf,
-				    NFS3_CREATEVERFSIZE)) {
+			if (memcmp(cv, args->how.createhow3_u.verf,
+				   NFS3_CREATEVERFSIZE)) {
 				res->status = NFS3ERR_EXIST;
 				pthread_rwlock_unlock(
 					&inode->i_parent->d_rwlock);
 				wcc = &resfail->dir_wcc;
 				goto update_wcc;
 			}
+			res->status = NFS3_OK;
 			break;
 		}
 
