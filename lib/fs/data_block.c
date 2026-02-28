@@ -106,26 +106,18 @@ size_t data_block_read(struct data_block *db, char *buffer, size_t size,
 size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 			off_t offset)
 {
-	char *new;
-	char *old;
+	if (!db)
+		return -EINVAL;
 
-	rcu_read_lock();
 	if (size + offset > db->db_size) {
-		new = calloc(offset + size, sizeof(*new));
-		if (!new) {
-			LOG("Could not alloc a db's storage");
-			free(db);
-			rcu_read_unlock();
+		char *new_buffer = realloc(db->db_buffer, offset + size);
+		if (!new_buffer) {
+			LOG("Could not realloc a db's storage");
 			return -ENOSPC;
 		}
-
-		if (db->db_buffer)
-			memcpy(new, db->db_buffer, db->db_size);
-		old = rcu_xchg_pointer(&db->db_buffer, new);
-		reffs_string_release(old);
+		db->db_buffer = new_buffer;
 		db->db_size = offset + size;
 	}
-	rcu_read_unlock();
 
 	memcpy(db->db_buffer + offset, buffer, size);
 
@@ -134,44 +126,17 @@ size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 
 size_t data_block_resize(struct data_block *db, size_t size)
 {
-	char *new;
-	char *old;
-
 	if (!db || size == db->db_size)
-		return size;
+		return db ? db->db_size : 0;
 
-	rcu_read_lock();
-	if (size > db->db_size) {
-		new = calloc(size, sizeof(*new));
-		if (!new) {
-			LOG("Could not alloc a db's storage");
-			free(db);
-			rcu_read_unlock();
-			return -ENOSPC;
-		}
-
-		memcpy(new, db->db_buffer, db->db_size);
-		old = rcu_xchg_pointer(&db->db_buffer, new);
-		reffs_string_release(old);
-	} else if (size == 0) {
-		old = rcu_xchg_pointer(&db->db_buffer, NULL);
-		reffs_string_release(old);
-	} else {
-		new = calloc(size, sizeof(*new));
-		if (!new) {
-			LOG("Could not alloc a db's storage");
-			free(db);
-			rcu_read_unlock();
-			return -ENOSPC;
-		}
-
-		memcpy(new, db->db_buffer, size);
-		old = rcu_xchg_pointer(&db->db_buffer, new);
-		reffs_string_release(old);
+	char *new_buffer = realloc(db->db_buffer, size);
+	if (size > 0 && !new_buffer) {
+		LOG("Could not realloc a db's storage");
+		return -ENOSPC;
 	}
 
+	db->db_buffer = new_buffer;
 	db->db_size = size;
-	rcu_read_unlock();
 
-	return db->db_size;
+	return size;
 }
