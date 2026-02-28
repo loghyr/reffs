@@ -198,21 +198,23 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 
 	trace_io_write_submit(ic);
 
+	bool submitted = false;
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(&rc->rc_ring);
-		if (ret >= 0)
+		if (ret >= 0) {
+			submitted = true;
 			break;
-		if (ret == -EAGAIN) {
+		} else if (ret == -EAGAIN) {
+			LOG("-EAGAIN on write submit (retry %d/%d)", i + 1,
+			    REFFS_IO_MAX_RETRIES);
 			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
 			usleep(IO_URING_WAIT_US);
-			ret = 0;
-			break; // Right now we don't know what io_uring is doing!
 		} else
 			break;
 	}
 	pthread_mutex_unlock(&rc->rc_mutex);
 
-	if (ret < 0) {
+	if (!submitted && ret < 0) {
 		io_socket_close(fd, -ret);
 		io_context_destroy(ic);
 	} else {
@@ -222,7 +224,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 		    ic->ic_id);
 	}
 
-	return 0;
+	return ret;
 }
 
 /*
@@ -331,25 +333,26 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	io_uring_prep_write(sqe, ic->ic_fd, buffer, chunk_size, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
+	bool submitted = false;
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(&rc->rc_ring);
-		if (ret >= 0)
+		if (ret >= 0) {
+			submitted = true;
 			break;
-		if (ret == -EAGAIN) {
+		} else if (ret == -EAGAIN) {
+			LOG("-EAGAIN on rpc_trans_writer (retry %d/%d)", i + 1,
+			    REFFS_IO_MAX_RETRIES);
 			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
-			reffs_fail(
-				"EAGAIN DETECTED: ic=%p id=%u. Masking as success.",
-				(void *)ic, ic->ic_id);
 			usleep(IO_URING_WAIT_US);
-			ret = 0;
-			break;
 		}
 	}
 	pthread_mutex_unlock(&rc->rc_mutex);
 
-	if (ret < 0) {
+	if (!submitted && ret < 0) {
 		io_socket_close(ic->ic_fd, -ret);
 		io_context_destroy(ic);
+	} else {
+		ret = 0;
 	}
 
 	return ret;
@@ -406,9 +409,8 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
 
 	if (bytes_written > 0 && ic->ic_position == 0) {
-		reffs_fail(
-			"WRITE START: ic=%p id=%u fd=%d starting fresh write.",
-			(void *)ic, ic->ic_id, ic->ic_fd);
+		LOG("WRITE START: ic=%p id=%u fd=%d starting fresh write.",
+		    (void *)ic, ic->ic_id, ic->ic_fd);
 	}
 
 	// Verify we wrote the expected amount
