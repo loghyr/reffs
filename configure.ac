@@ -190,6 +190,14 @@ AC_ARG_ENABLE([vm],
         [AC_DEFINE([HAVE_VM], [1], [Define if running in a VM environment])])],
     [])
 
+# Check if testing for io_uring stress
+AC_ARG_ENABLE([io-uring-stress],
+    [AS_HELP_STRING([--enable-io-uring-stress],
+        [Enable io_uring stress testing ])],
+    [AS_IF([test "x$enableval" = "xyes"],
+        [AC_DEFINE([HAVE_IO_URING_STRESS], [1], [Define if stress testing io_uring])])],
+    [])
+
 AC_ARG_ENABLE(asan,
 [  --enable-asan      Compile with address sanitizer],
 [case "${enableval}" in

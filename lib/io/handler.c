@@ -354,6 +354,13 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
+#ifdef HAVE_IO_URING_STRESS
+		// Fake a slow event loop to cause CQ ring backpressure
+		if (ic->ic_op_type == OP_TYPE_WRITE) {
+			usleep(5000); // 5ms delay per completion
+		}
+#endif
+
 		// trace_io_context(ic, __func__, __LINE__);
 
 		// Handle the completion based on the operation type
