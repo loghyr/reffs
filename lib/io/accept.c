@@ -120,12 +120,10 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 			if (ret >= 0) {
 				submitted = true;
 				break;
-			}
-			if (ret == -EAGAIN) {
-				submitted = true;
+			} else if (ret == -EAGAIN) {
+				LOG("-EAGAIN in io_request_accept_op (retry %d/%d)",
+				    i + 1, REFFS_IO_MAX_RETRIES);
 				usleep(IO_URING_WAIT_US);
-				ret = 0; // Fix once we know io_uring can handle it!
-				break;
 			} else {
 				break;
 			}

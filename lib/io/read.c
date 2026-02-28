@@ -403,23 +403,23 @@ static int request_more_read_data(int fd, struct ring_context *rc,
 	//trace_io_read_submit(ic);
 	io_context_update_time(ic);
 
+	bool submitted = false;
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(&rc->rc_ring);
-		if (ret >= 0)
+		if (ret >= 0) {
+			submitted = true;
 			break;
-		if (ret == -EAGAIN) {
+		} else if (ret == -EAGAIN) {
+			LOG("-EAGAIN in request_more_read_data (retry %d/%d)",
+			    i + 1, REFFS_IO_MAX_RETRIES);
+			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
 			usleep(IO_URING_WAIT_US);
-			ret = 0;
-			break; // Right now we don't know what io_uring is doing!
 		} else
 			break;
 	}
 	pthread_mutex_unlock(&rc->rc_mutex);
 
-	if (ret > 0)
-		ret = 0;
-
-	return ret;
+	return (submitted || ret == 0) ? 0 : ret;
 }
 
 int io_request_read_op(int fd, struct connection_info *ci,
@@ -473,25 +473,27 @@ int io_request_read_op(int fd, struct connection_info *ci,
 
 	//trace_io_read_submit(ic);
 
+	bool submitted = false;
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(&rc->rc_ring);
-		if (ret >= 0)
+		if (ret >= 0) {
+			submitted = true;
 			break;
-		if (ret == -EAGAIN) {
+		} else if (ret == -EAGAIN) {
+			LOG("-EAGAIN in io_request_read_op (retry %d/%d)",
+			    i + 1, REFFS_IO_MAX_RETRIES);
+			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
 			usleep(IO_URING_WAIT_US);
-			ret = 0;
-			break; // Right now we don't know what io_uring is doing!
 		} else
 			break;
 	}
 	pthread_mutex_unlock(&rc->rc_mutex);
 
-	if (ret < 0) {
+	if (!submitted && ret < 0) {
 		free(buffer);
 		io_socket_close(fd, -ret);
 		io_context_destroy(ic);
-	} else {
-		ret = 0;
+		return ret;
 	}
 
 	return 0;
@@ -890,7 +892,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 get_more:
 	// Try to use request_more_read_data first (which reuses the current context)
 	ret = request_more_read_data(client_fd, rc, ic);
-	if (ret == 0 || ret == EAGAIN) {
+	if (ret == 0) {
 		// Successfully submitted new read operation
 		needs_new_read = false;
 	} else {
