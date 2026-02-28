@@ -385,16 +385,16 @@ static int request_more_read_data(int fd, struct ring_context *rc,
 
 	ic->ic_fd = fd;
 
-	pthread_mutex_lock(&rc->rc_mutex);
-	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
+	for (int i = 0; i < REFFS_IO_RING_RETRIES; i++) {
+		pthread_mutex_lock(&rc->rc_mutex);
 		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
 			break;
-		usleep(IO_URING_WAIT_US);
+		pthread_mutex_unlock(&rc->rc_mutex);
+		sched_yield();
 	}
 
 	if (!sqe) {
-		pthread_mutex_unlock(&rc->rc_mutex);
 		return -ENOMEM;
 	}
 
@@ -413,7 +413,9 @@ static int request_more_read_data(int fd, struct ring_context *rc,
 			LOG("-EAGAIN in request_more_read_data (retry %d/%d)",
 			    i + 1, REFFS_IO_MAX_RETRIES);
 			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
-			usleep(IO_URING_WAIT_US);
+			pthread_mutex_unlock(&rc->rc_mutex);
+			sched_yield();
+			pthread_mutex_lock(&rc->rc_mutex);
 		} else
 			break;
 	}
@@ -452,16 +454,16 @@ int io_request_read_op(int fd, struct connection_info *ci,
 	if (ci)
 		copy_connection_info(&ic->ic_ci, ci);
 
-	pthread_mutex_lock(&rc->rc_mutex);
-	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
+	for (int i = 0; i < REFFS_IO_RING_RETRIES; i++) {
+		pthread_mutex_lock(&rc->rc_mutex);
 		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe)
 			break;
-		usleep(IO_URING_WAIT_US);
+		pthread_mutex_unlock(&rc->rc_mutex);
+		sched_yield();
 	}
 
 	if (!sqe) {
-		pthread_mutex_unlock(&rc->rc_mutex);
 		free(buffer);
 		io_socket_close(fd, ENOMEM);
 		io_context_destroy(ic);
@@ -483,7 +485,9 @@ int io_request_read_op(int fd, struct connection_info *ci,
 			LOG("-EAGAIN in io_request_read_op (retry %d/%d)",
 			    i + 1, REFFS_IO_MAX_RETRIES);
 			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
-			usleep(IO_URING_WAIT_US);
+			pthread_mutex_unlock(&rc->rc_mutex);
+			sched_yield();
+			pthread_mutex_lock(&rc->rc_mutex);
 		} else
 			break;
 	}

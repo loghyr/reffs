@@ -370,16 +370,17 @@ void io_context_release_destroyed(void)
 	pthread_mutex_lock(&context_mutex);
 
 	int count = 0;
+	int limit = 100; // Don't block for too long
 	time_t now = time(NULL);
 	int to = IO_CONTEXT_TIMEOUT;
 
 	LOG("=== Freeing Destroyed Contexts ===");
 
-	for (unsigned int i = 0; i < CONTEXT_HASH_SIZE; i++) {
+	for (unsigned int i = 0; i < CONTEXT_HASH_SIZE && count < limit; i++) {
 		struct io_context **prev_ptr = &context_hash[i];
 		struct io_context *ic = context_hash[i];
 
-		while (ic != NULL) {
+		while (ic != NULL && count < limit) {
 			// Check if it's marked as destroyed and old enough
 			if ((ic->ic_state &
 			     IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED) &&
