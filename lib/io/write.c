@@ -11,6 +11,10 @@
 
 #define PARTIAL_WRITE_DEBUG
 
+#ifdef HAVE_JEMALLOC
+#include <jemalloc/jemalloc.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -260,6 +264,13 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 #ifdef PARTIAL_WRITE_DEBUG
 		LOG("Buffer complete: ic=%p id=%u position=%zu, buffer_len=%zu",
 		    (void *)ic, ic->ic_id, ic->ic_position, ic->ic_buffer_len);
+#endif
+#ifdef HAVE_JEMALLOC
+#ifdef HAVE_VM
+	// Purge all arenas
+	LOG("Purging all arenas");
+	mallctl("arena.4096.purge", NULL, NULL, NULL, 0);
+#endif
 #endif
 		io_context_destroy(ic);
 		return 0;

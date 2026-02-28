@@ -95,6 +95,14 @@ int main(int argc, char *argv[])
 
 	char *trace_file = "./nfs3_srv.log";
 
+#ifdef HAVE_JEMALLOC
+#ifdef HAVE_VM
+	/* Release virtual address space immediately on free */
+	mallctl("dirty_decay_ms", NULL, NULL, &(ssize_t){ 0 }, sizeof(ssize_t));
+	mallctl("muzzy_decay_ms", NULL, NULL, &(ssize_t){ 0 }, sizeof(ssize_t));
+#endif
+#endif
+
 	// Initialize userspace RCU
 	rcu_init();
 

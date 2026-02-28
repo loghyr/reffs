@@ -182,6 +182,14 @@ AS_IF([test "x$with_jemalloc" != xno], [
 
 AM_CONDITIONAL([HAVE_JEMALLOC], [test "x$have_jemalloc" = xyes])
 
+# Check if building for VM environment (enables memory optimizations)
+AC_ARG_ENABLE([vm],
+    [AS_HELP_STRING([--enable-vm],
+        [Enable VM memory optimizations (e.g. jemalloc arena purging)])],
+    [AS_IF([test "x$enableval" = "xyes"],
+        [AC_DEFINE([HAVE_VM], [1], [Define if running in a VM environment])])],
+    [])
+
 AC_ARG_ENABLE(asan,
 [  --enable-asan      Compile with address sanitizer],
 [case "${enableval}" in
