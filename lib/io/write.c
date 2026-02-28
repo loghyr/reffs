@@ -203,6 +203,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
+			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
 			usleep(IO_URING_WAIT_US);
 			ret = 0;
 			break; // Right now we don't know what io_uring is doing!
@@ -267,9 +268,9 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 #endif
 #ifdef HAVE_JEMALLOC
 #ifdef HAVE_VM
-	// Purge all arenas
-	LOG("Purging all arenas");
-	mallctl("arena.4096.purge", NULL, NULL, NULL, 0);
+		// Purge all arenas
+		LOG("Purging all arenas");
+		mallctl("arena.4096.purge", NULL, NULL, NULL, 0);
 #endif
 #endif
 		io_context_destroy(ic);
@@ -335,6 +336,10 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 		if (ret >= 0)
 			break;
 		if (ret == -EAGAIN) {
+			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
+			reffs_fail(
+				"EAGAIN DETECTED: ic=%p id=%u. Masking as success.",
+				(void *)ic, ic->ic_id);
 			usleep(IO_URING_WAIT_US);
 			ret = 0;
 			break;
@@ -399,6 +404,12 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 {
 	// Check connection state
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
+
+	if (bytes_written > 0 && ic->ic_position == 0) {
+		reffs_fail(
+			"WRITE START: ic=%p id=%u fd=%d starting fresh write.",
+			(void *)ic, ic->ic_id, ic->ic_fd);
+	}
 
 	// Verify we wrote the expected amount
 	if (bytes_written <= 0) {
