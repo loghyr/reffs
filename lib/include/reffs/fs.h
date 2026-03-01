@@ -9,9 +9,9 @@
 #include <sys/stat.h>
 #include "reffs/types.h"
 
-struct dirent;
+struct reffs_dirent;
 struct name_match {
-	struct dirent *nm_dirent;
+	struct reffs_dirent *nm_dirent;
 	char *nm_name;
 };
 

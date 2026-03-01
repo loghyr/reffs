@@ -70,10 +70,10 @@ static int find_sb_inode(void)
 	verify(ret == 0);
 
 	inode1 = inode_alloc(sb, 1);
-	verify(inode1 == sb->sb_dirent->d_inode);
+	verify(inode1 == sb->sb_dirent->rd_inode);
 
 	inode2 = inode_find(sb, 1);
-	verify(inode2 == sb->sb_dirent->d_inode);
+	verify(inode2 == sb->sb_dirent->rd_inode);
 
 	inode_put(inode1);
 	inode_put(inode2);
@@ -101,10 +101,10 @@ static int find_sb_inode_put(void)
 	verify(ret == 0);
 
 	inode1 = inode_alloc(sb, 1);
-	verify(inode1 == sb->sb_dirent->d_inode);
+	verify(inode1 == sb->sb_dirent->rd_inode);
 
 	inode2 = inode_find(sb, 1);
-	verify(inode2 == sb->sb_dirent->d_inode);
+	verify(inode2 == sb->sb_dirent->rd_inode);
 
 	super_block_put(sb);
 	super_block_dirent_release(sb, reffs_life_action_death);
@@ -132,10 +132,10 @@ static int find_sb_inode_unhash(void)
 	verify(ret == 0);
 
 	inode1 = inode_alloc(sb, 1);
-	verify(inode1 == sb->sb_dirent->d_inode);
+	verify(inode1 == sb->sb_dirent->rd_inode);
 
 	inode2 = inode_find(sb, 1);
-	verify(inode2 == sb->sb_dirent->d_inode);
+	verify(inode2 == sb->sb_dirent->rd_inode);
 
 	inode_put(inode1);
 	inode_put(inode2);

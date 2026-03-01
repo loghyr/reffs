@@ -55,7 +55,7 @@ static int mount3_mnt(struct rpc_trans *rt)
 	if (mr->fhs_status)
 		goto out;
 
-	inode = nm->nm_dirent->d_inode;
+	inode = nm->nm_dirent->rd_inode;
 	ino = inode->i_ino;
 	sb_id = inode->i_sb->sb_id;
 

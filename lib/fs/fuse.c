@@ -99,7 +99,7 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 		       struct fuse_file_info __attribute__((unused)) * fi)
 {
 	struct name_match *nm;
-	struct dirent *de;
+	struct reffs_dirent *rd;
 	struct stat st;
 
 	int ret;
@@ -113,22 +113,22 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 		return ret;
 
 	if (offset == 0) {
-		fill_stat(&st, nm->nm_dirent->d_inode);
+		fill_stat(&st, nm->nm_dirent->rd_inode);
 		filler(buffer, ".", &st, ++offset);
-		if (nm->nm_dirent->d_parent)
-			fill_stat(&st, nm->nm_dirent->d_parent->d_inode);
+		if (nm->nm_dirent->rd_parent)
+			fill_stat(&st, nm->nm_dirent->rd_parent->rd_inode);
 		else
-			fill_stat(&st, nm->nm_dirent->d_inode);
+			fill_stat(&st, nm->nm_dirent->rd_inode);
 		filler(buffer, "..", &st, ++offset);
 	}
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(de, &nm->nm_dirent->d_inode->i_children,
-				    d_siblings) {
+	cds_list_for_each_entry_rcu(rd, &nm->nm_dirent->rd_inode->i_children,
+				    rd_siblings) {
 		if (cur++ < offset)
 			continue;
-		fill_stat(&st, de->d_inode);
-		ret = filler(buffer, de->d_name, &st, cur);
+		fill_stat(&st, rd->rd_inode);
+		ret = filler(buffer, rd->rd_name, &st, cur);
 		if (ret)
 			break;
 	}

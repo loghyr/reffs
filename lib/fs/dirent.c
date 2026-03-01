@@ -29,32 +29,32 @@
 
 CDS_LIST_HEAD(dirent_list);
 
-void dirent_parent_attach(struct dirent *de, struct dirent *parent,
+void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 			  enum reffs_life_action rla)
 {
-	if (!parent || !parent->d_inode)
+	if (!parent || !parent->rd_inode)
 		return;
 
 	rcu_read_lock();
-	de->d_parent = dirent_get(parent);
-	verify(parent->d_inode->i_mode & S_IFDIR);
-	__atomic_fetch_add(&parent->d_inode->i_nlink, 1, __ATOMIC_RELAXED);
-	de->d_cookie =
-		__atomic_add_fetch(&parent->d_cookie_next, 1, __ATOMIC_RELAXED);
-	cds_list_add_tail_rcu(&de->d_siblings, &parent->d_inode->i_children);
-	dirent_get(de); // One for the linked list
+	rd->rd_parent = dirent_get(parent);
+	verify(parent->rd_inode->i_mode & S_IFDIR);
+	__atomic_fetch_add(&parent->rd_inode->i_nlink, 1, __ATOMIC_RELAXED);
+	rd->rd_cookie = __atomic_add_fetch(&parent->rd_cookie_next, 1,
+					   __ATOMIC_RELAXED);
+	cds_list_add_tail_rcu(&rd->rd_siblings, &parent->rd_inode->i_children);
+	dirent_get(rd); // One for the linked list
 
-	if (de->d_inode) {
-		if (de->d_inode->i_mode & S_IFDIR)
-			de->d_inode->i_parent =
+	if (rd->rd_inode) {
+		if (rd->rd_inode->i_mode & S_IFDIR)
+			rd->rd_inode->i_parent =
 				parent; // Do not take a reference, manage carefully
 		else
-			__atomic_fetch_add(&de->d_inode->i_nlink, 1,
+			__atomic_fetch_add(&rd->rd_inode->i_nlink, 1,
 					   __ATOMIC_RELAXED);
 	}
 
 	if (rla == reffs_life_action_birth || rla == reffs_life_action_update) {
-		inode_update_times_now(parent->d_inode,
+		inode_update_times_now(parent->rd_inode,
 				       REFFS_INODE_UPDATE_CTIME |
 					       REFFS_INODE_UPDATE_MTIME);
 	}
@@ -63,166 +63,169 @@ void dirent_parent_attach(struct dirent *de, struct dirent *parent,
 
 static void dirent_free_rcu(struct rcu_head *rcu)
 {
-	struct dirent *de = caa_container_of(rcu, struct dirent, d_rcu);
+	struct reffs_dirent *rd =
+		caa_container_of(rcu, struct reffs_dirent, rd_rcu);
 
-	trace_fs_dirent(de, __func__, __LINE__);
+	trace_fs_dirent(rd, __func__, __LINE__);
 
-	pthread_rwlock_destroy(&de->d_rwlock);
+	pthread_rwlock_destroy(&rd->rd_rwlock);
 
-	free(de->d_name);
-	free(de);
+	free(rd->rd_name);
+	free(rd);
 }
 
 static void dirent_release(struct urcu_ref *ref)
 {
-	struct dirent *de = caa_container_of(ref, struct dirent, d_ref);
+	struct reffs_dirent *rd =
+		caa_container_of(ref, struct reffs_dirent, rd_ref);
 
-	trace_fs_dirent(de, __func__, __LINE__);
+	trace_fs_dirent(rd, __func__, __LINE__);
 
-	if (de->d_inode)
-		inode_put(de->d_inode);
+	if (rd->rd_inode)
+		inode_put(rd->rd_inode);
 
 	// Basically trying to prep for when we are no longer a RAM disk!
-	dirent_parent_release(de, reffs_life_action_unload);
+	dirent_parent_release(rd, reffs_life_action_unload);
 
-	call_rcu(&de->d_rcu, dirent_free_rcu);
+	call_rcu(&rd->rd_rcu, dirent_free_rcu);
 }
 
 // name should be utf8
-struct dirent *dirent_alloc(struct dirent *parent, char *name,
-			    enum reffs_life_action rla)
+struct reffs_dirent *dirent_alloc(struct reffs_dirent *parent, char *name,
+				  enum reffs_life_action rla)
 {
-	struct dirent *de;
+	struct reffs_dirent *rd;
 
-	de = calloc(1, sizeof(*de));
-	if (!de) {
-		LOG("Could not alloc a de");
+	rd = calloc(1, sizeof(*rd));
+	if (!rd) {
+		LOG("Could not alloc a rd");
 		return NULL;
 	}
 
-	de->d_name = strdup(name);
-	if (!de->d_name) {
-		LOG("Could not alloc a de->d_name");
-		free(de);
+	rd->rd_name = strdup(name);
+	if (!rd->rd_name) {
+		LOG("Could not alloc a rd->rd_name");
+		free(rd);
 		return NULL;
 	}
 
-	urcu_ref_init(&de->d_ref);
-	de->d_cookie_next = 2;
+	urcu_ref_init(&rd->rd_ref);
+	rd->rd_cookie_next = 2;
 
-	trace_fs_dirent(de, __func__, __LINE__);
+	trace_fs_dirent(rd, __func__, __LINE__);
 
-	pthread_rwlock_init(&de->d_rwlock, NULL);
+	pthread_rwlock_init(&rd->rd_rwlock, NULL);
 
-	CDS_INIT_LIST_HEAD(&de->d_siblings);
+	CDS_INIT_LIST_HEAD(&rd->rd_siblings);
 	if (parent)
-		dirent_parent_attach(de, parent, rla);
+		dirent_parent_attach(rd, parent, rla);
 
-	return de;
+	return rd;
 }
 
-struct dirent *dirent_find(struct dirent *parent, enum reffs_text_case rtc,
-			   char *name)
+struct reffs_dirent *dirent_find(struct reffs_dirent *parent,
+				 enum reffs_text_case rtc, char *name)
 {
-	struct dirent *de = NULL;
-	struct dirent *tmp;
+	struct reffs_dirent *rd = NULL;
+	struct reffs_dirent *tmp;
 	reffs_strng_compare cmp = reffs_text_case_cmp_of(rtc);
 
 	assert(parent);
 	assert(name);
 
 	if (!name)
-		return de;
+		return rd;
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(tmp, &parent->d_inode->i_children,
-				    d_siblings)
-		if (!cmp(tmp->d_name, name)) {
-			de = dirent_get(tmp);
+	cds_list_for_each_entry_rcu(tmp, &parent->rd_inode->i_children,
+				    rd_siblings)
+		if (!cmp(tmp->rd_name, name)) {
+			rd = dirent_get(tmp);
 			break;
 		}
 	rcu_read_unlock();
 
-	return de;
+	return rd;
 }
 
-struct dirent *dirent_get(struct dirent *de)
+struct reffs_dirent *dirent_get(struct reffs_dirent *rd)
 {
-	if (!de)
+	if (!rd)
 		return NULL;
 
-	if (!urcu_ref_get_unless_zero(&de->d_ref))
+	if (!urcu_ref_get_unless_zero(&rd->rd_ref))
 		return NULL;
 
-	trace_fs_dirent(de, __func__, __LINE__);
+	trace_fs_dirent(rd, __func__, __LINE__);
 
-	return de;
+	return rd;
 }
 
-void dirent_put(struct dirent *de)
+void dirent_put(struct reffs_dirent *rd)
 {
-	if (!de)
+	if (!rd)
 		return;
 
-	trace_fs_dirent(de, __func__, __LINE__);
-	urcu_ref_put(&de->d_ref, dirent_release);
+	trace_fs_dirent(rd, __func__, __LINE__);
+	urcu_ref_put(&rd->rd_ref, dirent_release);
 }
 
-void dirent_children_release(struct dirent *parent, enum reffs_life_action rla)
+void dirent_children_release(struct reffs_dirent *parent,
+			     enum reffs_life_action rla)
 {
-	struct dirent *de;
+	struct reffs_dirent *rd;
 
 	if (!parent)
 		return;
 
 	rcu_read_lock();
-	while (!cds_list_empty(&parent->d_inode->i_children)) {
-		de = cds_list_first_entry(&parent->d_inode->i_children,
-					  struct dirent, d_siblings);
-		dirent_parent_release(de, rla);
-		dirent_children_release(de, rla);
-		dirent_put(de);
+	while (!cds_list_empty(&parent->rd_inode->i_children)) {
+		rd = cds_list_first_entry(&parent->rd_inode->i_children,
+					  struct reffs_dirent, rd_siblings);
+		dirent_parent_release(rd, rla);
+		dirent_children_release(rd, rla);
+		dirent_put(rd);
 	}
 	rcu_read_unlock();
 }
 
-void dirent_parent_release(struct dirent *de, enum reffs_life_action rla)
+void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 {
-	struct dirent *parent;
+	struct reffs_dirent *parent;
 
-	if (!de)
+	if (!rd)
 		return;
 
 	rcu_read_lock();
-	parent = rcu_xchg_pointer(&de->d_parent, NULL);
+	parent = rcu_xchg_pointer(&rd->rd_parent, NULL);
 	if (parent) {
-		__atomic_fetch_sub(&parent->d_inode->i_nlink, 1,
+		__atomic_fetch_sub(&parent->rd_inode->i_nlink, 1,
 				   __ATOMIC_RELAXED);
-		cds_list_del_init(&de->d_siblings);
+		cds_list_del_init(&rd->rd_siblings);
 
-		if (de->d_inode && de->d_inode->i_mode & S_IFDIR)
-			de->d_inode->i_parent = NULL; // Prevent use-after-free
+		if (rd->rd_inode && rd->rd_inode->i_mode & S_IFDIR)
+			rd->rd_inode->i_parent = NULL; // Prevent use-after-free
 
 		if (rla == reffs_life_action_death ||
 		    rla == reffs_life_action_update ||
 		    rla == reffs_life_action_delayed_death) {
 			inode_update_times_now(
-				parent->d_inode,
+				parent->rd_inode,
 				REFFS_INODE_UPDATE_CTIME |
 					REFFS_INODE_UPDATE_MTIME);
 		}
 		dirent_put(parent);
 
-		if (de->d_inode) {
-			__atomic_fetch_sub(&de->d_inode->i_nlink, 1,
+		if (rd->rd_inode) {
+			__atomic_fetch_sub(&rd->rd_inode->i_nlink, 1,
 					   __ATOMIC_RELAXED);
 
 			if (rla == reffs_life_action_delayed_death)
 				inode_schedule_delayed_release(
-					de->d_inode, INODE_RELEASE_HARVEST);
+					rd->rd_inode, INODE_RELEASE_HARVEST);
 		}
 
-		dirent_put(de);
+		dirent_put(rd);
 	}
 	rcu_read_unlock();
 }
