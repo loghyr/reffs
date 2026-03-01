@@ -13,6 +13,7 @@
 #include <time.h>
 #include <urcu.h>
 #include <urcu/ref.h>
+#include "reffs/types.h"
 
 struct data_block {
 	struct rcu_head db_rcu;
@@ -20,12 +21,25 @@ struct data_block {
 
 	pthread_mutex_t db_lock;
 
-	char *db_buffer;
-	size_t db_size; /* Length of db_buffer */
+	enum reffs_storage_type db_type;
+
+	union {
+		struct {
+			char *db_buffer;
+		} ram;
+		struct {
+			int db_fd;
+			char *db_path;
+		} posix;
+	} u;
+
+	size_t db_size; /* Length of db_buffer or file size */
 };
 
-struct data_block *data_block_alloc(const char *buffer, size_t size,
-				    off_t offset);
+struct inode;
+
+struct data_block *data_block_alloc(struct inode *inode, const char *buffer,
+				    size_t size, off_t offset);
 struct data_block *data_block_get(struct data_block *db);
 void data_block_put(struct data_block *db);
 size_t data_block_read(struct data_block *db, char *buffer, size_t size,

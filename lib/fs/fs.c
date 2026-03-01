@@ -36,6 +36,30 @@
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
+static enum reffs_storage_type global_storage_type = REFFS_STORAGE_RAM;
+static char *global_backend_path = NULL;
+
+void reffs_fs_set_storage(enum reffs_storage_type type, const char *path)
+{
+	global_storage_type = type;
+	if (global_backend_path)
+		free(global_backend_path);
+	if (path)
+		global_backend_path = strdup(path);
+	else
+		global_backend_path = NULL;
+}
+
+enum reffs_storage_type reffs_fs_get_storage_type(void)
+{
+	return global_storage_type;
+}
+
+char *reffs_fs_get_backend_path(void)
+{
+	return global_backend_path;
+}
+
 static bool name_is_child(struct name_match *nm, char *name)
 {
 	bool exists = false;
@@ -916,7 +940,7 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 	}
 
 	if (!inode->i_db) {
-		inode->i_db = data_block_alloc(buffer, size, offset);
+		inode->i_db = data_block_alloc(inode, buffer, size, offset);
 		if (!inode->i_db) {
 			ret = -ENOSPC;
 			goto out_unlock;

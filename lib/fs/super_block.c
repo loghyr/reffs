@@ -62,6 +62,7 @@ static void super_block_free_rcu(struct rcu_head *rcu)
 	}
 
 	free(sb->sb_path);
+	free(sb->sb_backend_path);
 	free(sb);
 }
 
@@ -111,7 +112,9 @@ void super_block_dirent_release(struct super_block *sb,
 	rcu_read_unlock();
 }
 
-struct super_block *super_block_alloc(uint64_t id, char *path)
+struct super_block *super_block_alloc(uint64_t id, char *path,
+				      enum reffs_storage_type type,
+				      const char *backend_path)
 {
 	struct super_block *sb;
 
@@ -121,12 +124,19 @@ struct super_block *super_block_alloc(uint64_t id, char *path)
 		return NULL;
 	}
 
+	sb->sb_id = id;
+	sb->sb_path = strdup(path);
+	sb->sb_storage_type = type;
+	if (backend_path)
+		sb->sb_backend_path = strdup(backend_path);
+
 	CDS_INIT_LIST_HEAD(&sb->sb_link);
 
 	sb->sb_inodes = cds_lfht_new(
 		8, 8, 0, CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING, NULL);
 	if (!sb->sb_inodes) {
 		LOG("Could not create a new hash table");
+		free(sb->sb_backend_path);
 		free(sb);
 		return NULL;
 	}
@@ -136,6 +146,7 @@ struct super_block *super_block_alloc(uint64_t id, char *path)
 	sb->sb_id = id;
 	sb->sb_path = strdup(path);
 	if (!sb->sb_path) {
+		free(sb->sb_backend_path);
 		free(sb);
 		return NULL;
 	}

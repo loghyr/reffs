@@ -28,7 +28,7 @@ static int add_sb_1(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	super_block_dirent_release(sb, reffs_life_action_death);
@@ -44,7 +44,7 @@ static int add_sb_2(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	super_block_put(sb);
@@ -63,7 +63,7 @@ static int find_sb_inode(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
@@ -94,7 +94,7 @@ static int find_sb_inode_put(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
@@ -125,7 +125,7 @@ static int find_sb_inode_unhash(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
@@ -154,7 +154,7 @@ static int add_inode_1(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	inode = inode_alloc(sb, 2);
@@ -178,7 +178,7 @@ static int add_inode_2(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	inode1 = inode_alloc(sb, 2);
@@ -209,7 +209,7 @@ static int put_inode_1(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 	inode1 = inode_alloc(sb, 2);
 	verify(inode1);
@@ -244,7 +244,7 @@ static int get_inode_1(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	inode1 = inode_alloc(sb, 2);
@@ -282,7 +282,7 @@ static int sb_put_inode_1(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	inode1 = inode_alloc(sb, 2);
@@ -313,7 +313,7 @@ static int find_inode_1(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 	inode1 = inode_alloc(sb, 2);
 	verify(inode1);
@@ -340,7 +340,7 @@ static int find_inode_1_sb_NULL(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	inode1 = inode_alloc(sb, 2);
@@ -367,7 +367,7 @@ static int find_inode_3(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb = super_block_alloc(sb_id, "/");
+	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
 	inode1 = inode_alloc(sb, 2);
@@ -403,7 +403,7 @@ static int find_sb_1(void)
 
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
-	sb1 = super_block_alloc(sb_id, "/");
+	sb1 = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb1);
 
 	sb2 = super_block_find(sb_id);

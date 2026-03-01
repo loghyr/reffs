@@ -161,8 +161,9 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 
 		if (!inode->i_db) {
 			if (new_size > 0) {
-				inode->i_db =
-					data_block_alloc(NULL, new_size, 0);
+				inode->i_db = data_block_alloc(inode, NULL,
+							       new_size, 0);
+
 				if (!inode->i_db)
 					return NFS3ERR_NOSPC;
 			}
@@ -909,8 +910,9 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 	pthread_rwlock_wrlock(&inode->i_db_rwlock);
 	if (!inode->i_db) {
-		inode->i_db = data_block_alloc(
-			args->data.data_val, args->data.data_len, args->offset);
+		inode->i_db = data_block_alloc(inode, args->data.data_val,
+					       args->data.data_len,
+					       args->offset);
 		if (!inode->i_db) {
 			res->status = NFS3ERR_NOSPC;
 			wcc = &res->WRITE3res_u.resfail.file_wcc;

@@ -37,6 +37,7 @@
 #include "reffs/server.h"
 #include "reffs/ns.h"
 #include "reffs/io.h"
+#include "reffs/fs.h"
 #include "reffs/trace/common.h"
 
 #define NFS_PORT 2049
@@ -63,6 +64,8 @@ static void usage(const char *prog)
 	printf("  -r  --rpc_dump               Dump RPC msg bodies\n");
 	printf("  -p  --port=id                Serve NFS traffic from this \"port\"\n");
 	printf("  -f  --file=fname             Save tracing data to this file \"fname\"\n");
+	printf("  -b  --backend=type           Storage backend (ram, posix)\n");
+	printf("  -B  --backend-path=path      Path for POSIX backend\n");
 	printf("  -c  --category=cat           Enable tracing for a category\n");
 	printf("                                     0 - General\n");
 	printf("                                     1 - IO\n");
@@ -77,6 +80,8 @@ static struct option long_opts[] = {
 	{ "help", no_argument, 0, 'h' },
 	{ "rpc_dump", no_argument, 0, 'r' },
 	{ "port", required_argument, 0, 'p' },
+	{ "backend", required_argument, 0, 'b' },
+	{ "backend-path", required_argument, 0, 'B' },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -108,12 +113,23 @@ int main(int argc, char *argv[])
 
 	server_boot_uuid_generate();
 
-	char *opts = "p:hrt:c:f:";
+	char *opts = "p:hrt:c:f:b:B:";
+	enum reffs_storage_type storage_type = REFFS_STORAGE_RAM;
+	char *backend_path = NULL;
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
 		case 'p':
 			port = atoi(optarg);
+			break;
+		case 'b':
+			if (strcasecmp(optarg, "posix") == 0)
+				storage_type = REFFS_STORAGE_POSIX;
+			else if (strcasecmp(optarg, "ram") == 0)
+				storage_type = REFFS_STORAGE_RAM;
+			break;
+		case 'B':
+			backend_path = optarg;
 			break;
 		case 'c': {
 			int tracing = atoi(optarg);
@@ -136,6 +152,7 @@ int main(int argc, char *argv[])
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	reffs_trace_init(trace_file);
+	reffs_fs_set_storage(storage_type, backend_path);
 
 	// Ignore SIGPIPE
 	signal(SIGPIPE, SIG_IGN);

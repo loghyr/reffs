@@ -15,6 +15,7 @@
 #include <urcu/ref.h>
 
 #include "reffs/dirent.h"
+#include "reffs/types.h"
 
 struct super_block {
 	struct rcu_head sb_rcu;
@@ -28,6 +29,9 @@ struct super_block {
 	uint64_t sb_next_ino;
 
 	char *sb_path;
+
+	enum reffs_storage_type sb_storage_type;
+	char *sb_backend_path;
 
 	uuid_t sb_uuid;
 
@@ -43,7 +47,9 @@ struct super_block {
 	uint64_t sb_state;
 };
 
-struct super_block *super_block_alloc(uint64_t id, char *path);
+struct super_block *super_block_alloc(uint64_t id, char *path,
+				      enum reffs_storage_type type,
+				      const char *backend_path);
 struct super_block *super_block_find(uint64_t id);
 struct super_block *super_block_get(struct super_block *sb);
 void super_block_put(struct super_block *sb);

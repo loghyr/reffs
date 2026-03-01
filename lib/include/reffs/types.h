@@ -18,4 +18,11 @@ enum reffs_life_action {
 	reffs_life_action_update = 5
 };
 
+enum reffs_storage_type {
+	REFFS_STORAGE_RAM = 0,
+	REFFS_STORAGE_POSIX = 1,
+	REFFS_STORAGE_ROCKSDB = 2,
+	REFFS_STORAGE_FUSE = 3
+};
+
 #endif /* _REFFS_TYPES_H */
