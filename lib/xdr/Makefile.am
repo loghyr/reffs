@@ -18,6 +18,8 @@ GEN_SOURCES = \
 	nfsv3_xdr.c		\
 	nlm_prot.h		\
 	nlm_prot.c		\
+	nlm4_prot.h		\
+	nlm4_prot.c		\
 	sm_inter.h		\
 	sm_inter.c		\
 	probe1_xdr.h		\
@@ -34,6 +36,7 @@ libreffs_xdr_la_SOURCES =	\
 	mntv3_xdr.x		\
 	nfsv3_xdr.x		\
 	nlm_prot.x		\
+	nlm4_prot.x		\
 	sm_inter.x		\
 	rpc_xdr.x
 
