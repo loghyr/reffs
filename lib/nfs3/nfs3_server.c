@@ -523,8 +523,11 @@ static int nfs3_op_lookup(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
+	pthread_mutex_lock(&exists->i_attr_mutex);
+
 	// When we add more than one sb, be careul here
 	nfh = network_file_handle_construct(sb->sb_id, exists->i_ino);
+	pthread_mutex_unlock(&exists->i_attr_mutex);
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		poa = &res->LOOKUP3res_u.resfail.dir_attributes;
