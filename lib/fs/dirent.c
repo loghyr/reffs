@@ -118,7 +118,7 @@ struct reffs_dirent *dirent_alloc(struct reffs_dirent *parent, char *name,
 	}
 
 	urcu_ref_init(&rd->rd_ref);
-	rd->rd_cookie_next = 2;
+	rd->rd_cookie_next = 3;
 
 	trace_fs_dirent(rd, __func__, __LINE__);
 

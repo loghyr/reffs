@@ -814,7 +814,8 @@ static int nfs3_op_read(struct rpc_trans *rt)
 		} else if (dbr < 0) {
 			free(resok->data.data_val);
 			resok->count = resok->data.data_len = 0;
-			res->status = -dbr; // What about ENOMEM? Need errno_to_v3()
+			res->status =
+				-dbr; // What about ENOMEM? Need errno_to_v3()
 			poa = &res->READ3res_u.resfail.file_attributes;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
@@ -2276,6 +2277,12 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	pthread_rwlock_rdlock(&inode->i_parent->rd_rwlock);
 
+	/* Determine parent ino for .. entry */
+	uint64_t parent_ino =
+		(inode->i_parent && inode->i_parent->rd_inode) ?
+			inode->i_parent->rd_inode->i_ino :
+			inode->i_ino; /* root: .. points to self */
+
 	dl = &resok->reply;
 
 	if (cookie == 0) {
@@ -2292,7 +2299,7 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 		}
 
 		e->fileid = inode->i_ino;
-		e->cookie = 0;
+		e->cookie = 1;
 		e->name = strdup(".");
 		if (!e->name) {
 			free(e);
@@ -2335,8 +2342,8 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 			goto past_eof;
 		}
 
-		e->fileid = inode->i_ino;
-		e->cookie = 1;
+		e->fileid = parent_ino;
+		e->cookie = 2;
 		e->name = strdup("..");
 		if (!e->name) {
 			free(e);
@@ -2499,6 +2506,12 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 
 	dl = &resok->reply;
 
+	/* Determine parent ino for .. entry */
+	uint64_t parent_ino =
+		(inode->i_parent && inode->i_parent->rd_inode) ?
+			inode->i_parent->rd_inode->i_ino :
+			inode->i_ino; /* root: .. points to self */
+
 	if (cookie == 0) {
 		entryplus3 *e = calloc(1, sizeof(*e));
 		if (!e) {
@@ -2514,7 +2527,7 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 		}
 
 		e->fileid = inode->i_ino;
-		e->cookie = 0;
+		e->cookie = 1;
 		e->name = strdup(".");
 		if (!e->name) {
 			free(e);
@@ -2595,8 +2608,8 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 			goto past_eof;
 		}
 
-		e->fileid = inode->i_ino;
-		e->cookie = 1;
+		e->fileid = parent_ino;
+		e->cookie = 2;
 		e->name = strdup("..");
 		if (!e->name) {
 			free(e);
@@ -2612,7 +2625,7 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 		}
 
 		// With multi-sb, check for mounted on
-		nfh = network_file_handle_construct(sb->sb_id, inode->i_ino);
+		nfh = network_file_handle_construct(sb->sb_id, parent_ino);
 		if (!nfh) {
 			free(e->name);
 			free(e);
