@@ -21,7 +21,7 @@ struct data_block {
 
 	pthread_mutex_t db_lock;
 
-	enum reffs_storage_type db_type;
+	enum reffs_storage_type db_storage_type;
 
 	union {
 		struct {
@@ -48,5 +48,7 @@ bool data_block_unhash(struct data_block *db);
 size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 			off_t offset);
 size_t data_block_resize(struct data_block *db, size_t size);
+
+size_t data_block_get_size(struct data_block *db);
 
 #endif /* _REFFS_DATA_BLOCK_H */

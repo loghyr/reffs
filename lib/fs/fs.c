@@ -403,7 +403,7 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	st->st_size = inode->i_size;
 	st->st_nlink = inode->i_nlink;
 	st->st_blocks = inode->i_used;
-	st->st_blksize = 4096;
+	st->st_blksize = inode->i_sb->sb_block_size;
 
 	dirent_put(nm->nm_dirent);
 	free(nm);
@@ -464,7 +464,7 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	rd->rd_inode->i_btime = inode->i_mtime;
 	rd->rd_inode->i_ctime = inode->i_mtime;
 	rd->rd_inode->i_mode = S_IFDIR | mode;
-	rd->rd_inode->i_size = 4096;
+	rd->rd_inode->i_size = inode->i_sb->sb_block_size;
 	rd->rd_inode->i_used = 8;
 	rd->rd_inode->i_nlink = 2;
 
@@ -964,7 +964,8 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
 	inode->i_size = inode->i_db->db_size;
-	inode->i_used = inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
+	inode->i_used = inode->i_size / inode->i_sb->sb_block_size +
+			(inode->i_size % inode->i_sb->sb_block_size ? 1 : 0);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	ret = size;

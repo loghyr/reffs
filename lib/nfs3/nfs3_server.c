@@ -176,7 +176,7 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 		}
 
 		inode->i_used =
-			inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
+			inode->i_size / inode->i_sb->sb_block_size + (inode->i_size % inode->i_sb->sb_block_size ? 1 : 0);
 		__atomic_add_fetch(&inode->i_sb->sb_bytes_used,
 				   (ssize_t)inode->i_size - (ssize_t)old_size,
 				   __ATOMIC_RELAXED);
@@ -866,6 +866,8 @@ static int nfs3_op_write(struct rpc_trans *rt)
 	nfstime3 mtime;
 	nfstime3 ctime;
 
+	size_t db_size;
+
 	trace_nfs3_srv_write(rt, args);
 
 	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
@@ -960,10 +962,13 @@ static int nfs3_op_write(struct rpc_trans *rt)
 	memcpy(resok->verf, (*uuid) + 8, NFS3_WRITEVERFSIZE);
 
 	inode->i_size = inode->i_db->db_size;
-	inode->i_used = inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
+	inode->i_used = inode->i_size / sb->sb_block_size +
+			(inode->i_size % sb->sb_block_size ? 1 : 0);
+
+	db_size = data_block_get_size(inode->i_db);
 
 	__atomic_add_fetch(&inode->i_sb->sb_bytes_used,
-			   inode->i_db->db_size - size, __ATOMIC_RELAXED);
+			   db_size - size, __ATOMIC_RELAXED);
 
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 
@@ -1271,8 +1276,8 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
 	rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
 	rd->rd_inode->i_mode = S_IFDIR | inode->i_mode;
-	rd->rd_inode->i_size = 4096;
-	rd->rd_inode->i_used = 4096;
+	rd->rd_inode->i_size = sb->sb_block_size;
+	rd->rd_inode->i_used = sb->sb_block_size;
 	rd->rd_inode->i_nlink = 2;
 
 	res->status = nfs3_apply_sattr3(rd->rd_inode, sa, NULL, NULL);
@@ -1419,8 +1424,8 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 	rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
 	rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
 	rd->rd_inode->i_mode = (S_IFLNK | inode->i_mode) & ~S_IFDIR;
-	rd->rd_inode->i_size = 4096;
-	rd->rd_inode->i_used = 0;
+	rd->rd_inode->i_size = sb->sb_block_size;
+	rd->rd_inode->i_used = sb->sb_block_size;
 	rd->rd_inode->i_nlink = 1;
 
 	nfh_new = network_file_handle_construct(sb->sb_id, rd->rd_inode->i_ino);
@@ -2909,10 +2914,10 @@ static int nfs3_op_fsinfo(struct rpc_trans *rt)
 	nfstime3 gran = { .seconds = 0, .nseconds = 1 };
 	resok->rtmax = 1048576;
 	resok->rtpref = resok->rtmax;
-	resok->rtmult = 4096;
+	resok->rtmult = sb->sb_block_size;
 	resok->wtmax = resok->rtmax;
 	resok->wtpref = resok->wtmax;
-	resok->wtmult = 4096;
+	resok->wtmult = sb->sb_block_size;
 	resok->dtpref = resok->wtmax;
 	resok->maxfilesize = 9223372036854775807;
 	resok->time_delta = gran;
