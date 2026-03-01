@@ -198,8 +198,8 @@ static inline void trace_nfs3_srv_rename(struct rpc_trans *rt,
 		REFFS_TRACE_CAT_NFS, "nfs3_rename", __LINE__,
 		"xid=0x%08x sb_src=%lu ino_src=%lu sb_dst=%lu ino_dst=%lu from=%s to=%s crc_src=0x%08x crc_to=0x%08x",
 		rt->rt_info.ri_xid, nfh_src->nfh_sb, nfh_src->nfh_ino,
-		nfh_dst->nfh_sb, nfh_dst->nfh_ino, args->from.name, args->to.name,
-		crc_src, crc_to);
+		nfh_dst->nfh_sb, nfh_dst->nfh_ino, args->from.name,
+		args->to.name, crc_src, crc_to);
 }
 
 static inline void trace_nfs3_srv_link(struct rpc_trans *rt, LINK3args *args)

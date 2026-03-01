@@ -18,9 +18,10 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include "reffs/rcu.h"
 #include "reffs/log.h"
-#include "reffs/test.h"
+#include "reffs/fs.h"
+#include "reffs/rcu.h"
+
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/data_block.h"
@@ -74,7 +75,8 @@ int reffs_ns_init(void)
 	inode->i_nlink = 2;
 
 	inode_put(inode);
-	reffs_root_sb = super_block_alloc(1, "/");
+	reffs_root_sb = super_block_alloc(1, "/", reffs_fs_get_storage_type(),
+					  reffs_fs_get_backend_path());
 	if (!reffs_root_sb) {
 		ret = ENOMEM;
 		goto out;

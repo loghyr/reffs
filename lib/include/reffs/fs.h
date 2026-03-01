@@ -7,6 +7,7 @@
 #define _REFFS_FS_H
 
 #include <sys/stat.h>
+#include "reffs/types.h"
 
 struct dirent;
 struct name_match {
@@ -18,6 +19,10 @@ struct name_match {
 #define LAST_COMPONENT_IS_NEW (false)
 int find_matching_directory_entry(struct name_match **nm, const char *path,
 				  bool match_end);
+
+void reffs_fs_set_storage(enum reffs_storage_type type, const char *path);
+enum reffs_storage_type reffs_fs_get_storage_type(void);
+char *reffs_fs_get_backend_path(void);
 
 int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid);
 int reffs_fs_chmod(const char *path, mode_t mode);
