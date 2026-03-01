@@ -53,4 +53,6 @@ void dirent_parent_attach(struct reffs_dirent *de, struct reffs_dirent *parent,
 void dirent_parent_release(struct reffs_dirent *de, enum reffs_life_action rla);
 void dirent_put(struct reffs_dirent *de);
 
+void dirent_sync_to_disk(struct reffs_dirent *parent);
+
 #endif /* _REFFS_DIRENT_H */

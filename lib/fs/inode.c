@@ -7,6 +7,12 @@
 #include "config.h"
 #endif
 
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
 #include <xxhash.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -199,6 +205,42 @@ void inode_update_times_now(struct inode *inode, uint64_t flags)
 
 	if (flags & REFFS_INODE_UPDATE_MTIME)
 		inode->i_mtime = now;
+
+	inode_sync_to_disk(inode);
+}
+
+void inode_sync_to_disk(struct inode *inode)
+{
+	struct super_block *sb = inode->i_sb;
+	if (!sb || sb->sb_storage_type != REFFS_STORAGE_POSIX)
+		return;
+
+	struct inode_disk id;
+	id.id_uid = inode->i_uid;
+	id.id_gid = inode->i_gid;
+	id.id_nlink = inode->i_nlink;
+	id.id_mode = inode->i_mode;
+	id.id_size = inode->i_size;
+	id.id_atime = inode->i_atime;
+	id.id_ctime = inode->i_ctime;
+	id.id_mtime = inode->i_mtime;
+
+	char path[1024];
+	snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.meta",
+		 sb->sb_backend_path ? sb->sb_backend_path : ".", sb->sb_id,
+		 inode->i_ino);
+
+	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+	if (fd >= 0) {
+		if (write(fd, &id, sizeof(id)) != sizeof(id)) {
+			LOG("Failed to write metadata to %s: %s", path,
+			    strerror(errno));
+		}
+		close(fd);
+	} else {
+		LOG("Failed to open metadata file %s: %s", path,
+		    strerror(errno));
+	}
 }
 
 bool inode_name_is_child(struct inode *inode, char *name)

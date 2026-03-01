@@ -20,6 +20,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <string.h>
+#include <dirent.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
@@ -360,6 +361,8 @@ int reffs_fs_create(const char *path, mode_t mode)
 	rd->rd_inode->i_used = 0;
 	rd->rd_inode->i_nlink = 1;
 
+	inode_sync_to_disk(rd->rd_inode);
+
 out_puts:
 	dirent_put(rd);
 	dirent_put(nm->nm_dirent);
@@ -465,6 +468,8 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	rd->rd_inode->i_used = 8;
 	rd->rd_inode->i_nlink = 2;
 
+	inode_sync_to_disk(rd->rd_inode);
+
 out_puts:
 	dirent_put(rd);
 	dirent_put(nm->nm_dirent);
@@ -535,7 +540,7 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 	rd->rd_inode->i_used = 0;
 	rd->rd_inode->i_nlink = 1;
 
-	rd->rd_inode->i_parent = rd;
+	inode_sync_to_disk(rd->rd_inode);
 
 out_puts:
 	dirent_put(rd);
@@ -910,6 +915,8 @@ int reffs_fs_utimensat(const char *path, const struct timespec times[2])
 	inode->i_atime = times[0];
 	inode->i_mtime = times[1];
 
+	inode_sync_to_disk(inode);
+
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
@@ -969,4 +976,105 @@ out_unlock:
 out:
 	TRACE("ret=%d", ret);
 	return ret;
+}
+
+static int load_inode_attributes(struct inode *inode)
+{
+	struct super_block *sb = inode->i_sb;
+	struct inode_disk id;
+	char path[1024];
+
+	snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.meta",
+		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
+
+	int fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return -errno;
+
+	if (read(fd, &id, sizeof(id)) != sizeof(id)) {
+		close(fd);
+		return -EIO;
+	}
+	close(fd);
+
+	inode->i_uid = id.id_uid;
+	inode->i_gid = id.id_gid;
+	inode->i_nlink = id.id_nlink;
+	inode->i_mode = id.id_mode;
+	inode->i_size = id.id_size;
+	inode->i_atime = id.id_atime;
+	inode->i_ctime = id.id_ctime;
+	inode->i_mtime = id.id_mtime;
+
+	if (inode->i_ino >= sb->sb_next_ino)
+		sb->sb_next_ino = inode->i_ino + 1;
+
+	// Also check if data file exists
+	snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.dat",
+		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
+	if (access(path, F_OK) == 0) {
+		inode->i_db = data_block_alloc(inode, NULL, 0, 0);
+		// Note: we don't open the FD here, data_block_alloc will do it if we are careful
+		// or we might need a specific 'load' variant.
+		// For now, let's assume data_block_alloc can handle existing files.
+	}
+
+	return 0;
+}
+
+static void recover_directory_recursive(struct reffs_dirent *parent)
+{
+	struct inode *inode = parent->rd_inode;
+	struct super_block *sb = inode->i_sb;
+	char path[1024];
+
+	snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.dir",
+		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
+
+	int fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return;
+
+	uint64_t ino;
+	uint16_t name_len;
+	char name[256];
+
+	while (read(fd, &ino, sizeof(ino)) == sizeof(ino)) {
+		if (read(fd, &name_len, sizeof(name_len)) != sizeof(name_len))
+			break;
+		if (read(fd, name, name_len) != (ssize_t)name_len)
+			break;
+		name[name_len] = '\0';
+
+		struct reffs_dirent *rd =
+			dirent_alloc(parent, name, reffs_life_action_load);
+		if (rd) {
+			rd->rd_inode = inode_alloc(sb, ino);
+			if (rd->rd_inode) {
+				load_inode_attributes(rd->rd_inode);
+				if (rd->rd_inode->i_mode & S_IFDIR) {
+					recover_directory_recursive(rd);
+				}
+			}
+			dirent_put(rd);
+		}
+	}
+	close(fd);
+}
+
+void reffs_fs_recover(struct super_block *sb)
+{
+	if (!sb || sb->sb_storage_type != REFFS_STORAGE_POSIX ||
+	    !sb->sb_backend_path)
+		return;
+
+	LOG("Starting recovery from %s", sb->sb_backend_path);
+
+	// Root inode is 1
+	struct inode *root_inode = sb->sb_dirent->rd_inode;
+	if (load_inode_attributes(root_inode) == 0) {
+		recover_directory_recursive(sb->sb_dirent);
+	}
+
+	LOG("Recovery complete. Max inode: %lu", sb->sb_next_ino);
 }
