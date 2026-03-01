@@ -54,7 +54,9 @@ struct nlm4_testres {
 struct nlm4_res {
 	netobj cookie;
 	nlm4_stat stat;
+	int32 state;
 };
+
 
 struct nlm4_lock {
 	string caller_name<LM_MAXSTRLEN>;
@@ -124,7 +126,9 @@ struct nlm4_shareres {
 	netobj cookie;
 	nlm4_stats stat;
 	int32 sequence;
+	int32 state;
 };
+
 
 struct nlm4_notify {
 	string name<MAXNAMELEN>;

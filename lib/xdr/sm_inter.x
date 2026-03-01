@@ -35,7 +35,13 @@
 
 program SM_PROG {
 	version SM_VERS  {
+		void					 SM_PROC_NULL(void) = 0;
+
 		/* res_stat = stat_succ if status monitor agrees to monitor */
+
+
+
+
 		/* res_stat = stat_fail if status monitor cannot monitor */
 		/* if res_stat == stat_succ, state = state number of site sm_name */
 		struct sm_stat_res			 SM_STAT(struct sm_name) = 1;
@@ -53,7 +59,10 @@ program SM_PROG {
 
 		void					 SM_SIMU_CRASH(void) = 5;
 
+		void					 SM_NOTIFY(struct status) = 6;
+
 	} = 1;
+
 } = 100024;
 
 const	SM_MAXSTRLEN = 1024;

@@ -1076,3 +1076,20 @@ void reffs_fs_recover(struct super_block *sb)
 
 	LOG("Recovery complete. Max inode: %lu", sb->sb_next_ino);
 }
+
+void reffs_fs_for_each_inode(int (*cb)(struct inode *, void *), void *arg)
+{
+	struct super_block *sb;
+	struct inode *inode;
+	struct cds_lfht_iter iter;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(sb, super_block_list_head(), sb_link) {
+		cds_lfht_for_each_entry(sb->sb_inodes, &iter, inode, i_node) {
+			if (cb(inode, arg)) {
+				/* Callback can return non-zero to stop early, but we don't need it yet */
+			}
+		}
+	}
+	rcu_read_unlock();
+}
