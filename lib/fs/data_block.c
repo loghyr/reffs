@@ -109,14 +109,16 @@ size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 	if (!db)
 		return -EINVAL;
 
-	if (size + offset > db->db_size) {
-		char *new_buffer = realloc(db->db_buffer, offset + size);
+	size_t new_total = (size_t)offset + size;
+
+	if (new_total > db->db_size) {
+		char *new_buffer = realloc(db->db_buffer, new_total);
 		if (!new_buffer) {
 			LOG("Could not realloc a db's storage");
 			return -ENOSPC;
 		}
 		db->db_buffer = new_buffer;
-		db->db_size = offset + size;
+		db->db_size = new_total;
 	}
 
 	memcpy(db->db_buffer + offset, buffer, size);
