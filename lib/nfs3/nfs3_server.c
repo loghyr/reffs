@@ -1665,7 +1665,6 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 
 	struct super_block *sb = NULL;
 	struct inode *inode = NULL;
-	struct inode *inode_pin = NULL;
 	struct reffs_dirent *rd = NULL;
 
 	REMOVE3args *args = ph->ph_args;
@@ -1744,7 +1743,6 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
-	inode_put(inode_pin);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
