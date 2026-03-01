@@ -846,13 +846,6 @@ out:
 	return res->status;
 }
 
-static void timespec_to_writeverf3(struct timespec *ts, writeverf3 verf)
-{
-	// First 4 bytes for tv_sec, last 4 bytes for tv_nsec
-	memcpy(verf, &ts->tv_sec, 4);
-	memcpy(verf + 4, &ts->tv_nsec, 4);
-}
-
 static int nfs3_op_write(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -963,7 +956,8 @@ static int nfs3_op_write(struct rpc_trans *rt)
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
 
-	timespec_to_writeverf3(&inode->i_ctime, resok->verf);
+	uuid_t *uuid = server_boot_uuid_get();
+	memcpy(resok->verf, (*uuid) + 8, NFS3_WRITEVERFSIZE);
 
 	inode->i_size = inode->i_db->db_size;
 	inode->i_used = inode->i_size / 4096 + (inode->i_size % 4096 ? 1 : 0);
