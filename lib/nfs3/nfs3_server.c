@@ -1133,7 +1133,6 @@ static int nfs3_op_create(struct rpc_trans *rt)
 		tmp->i_ctime = tmp->i_mtime;
 		tmp->i_mode = (S_IFREG | inode->i_mode) & ~S_IFDIR;
 	}
-	pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
 
 	if (args->how.mode == EXCLUSIVE) {
 		createverf3_to_timespec(args->how.createhow3_u.verf,
@@ -1172,6 +1171,7 @@ update_wcc:
 	fa = &wcc->after.post_op_attr_u.attributes;
 	inode_attr_to_fattr(inode, fa);
 
+	pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
