@@ -27,8 +27,10 @@
 
 #include "nfsv3_xdr.h"
 #include "mntv3_xdr.h"
+#include "nlm_prot.h"
 #include "nlm4_prot.h"
 #include "sm_inter.h"
+
 #include "probe1_xdr.h"
 
 #include "reffs/log.h"
@@ -91,7 +93,27 @@ static struct option long_opts[] = {
 	{ NULL, 0, NULL, 0 },
 };
 
+static void *portmapper_watchdog(void *arg)
+{
+	int port = *(int *)arg;
+	while (__atomic_load_n(&running, __ATOMIC_RELAXED)) {
+		/* aggressive cleanup and re-register */
+		for (int v = 1; v <= 4; v++) {
+			pmap_unset(NLM_PROG, v);
+			pmap_set(NLM_PROG, v, IPPROTO_TCP, port);
+			pmap_set(NLM_PROG, v, IPPROTO_UDP, port);
+		}
+		pmap_unset(SM_PROG, SM_VERS);
+		pmap_set(SM_PROG, SM_VERS, IPPROTO_TCP, port);
+		pmap_set(SM_PROG, SM_VERS, IPPROTO_UDP, port);
+
+		sleep(1);
+	}
+	return NULL;
+}
+
 int main(int argc, char *argv[])
+
 {
 	int lsnr_ipv4_nfs_fd;
 	int lsnr_ipv6_nfs_fd;
@@ -201,6 +223,11 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	if (nlm_protocol_register()) {
+		exit_code = 1;
+		goto out;
+	}
+
 	if (sm_protocol_register()) {
 		exit_code = 1;
 		goto out;
@@ -271,44 +298,77 @@ int main(int argc, char *argv[])
 	io_add_listener(lsnr_ipv6_probe_fd);
 	io_request_accept_op(lsnr_ipv6_probe_fd, NULL, &rc);
 
-	if (!pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
-		LOG("Failed to register with portmapper for NFSv3");
-		exit_code = 1;
-		goto out;
+	/* aggressive cleanup of old registrations */
+	for (int v = 1; v <= 4; v++) {
+		pmap_unset(NLM_PROG, v);
 	}
+	pmap_unset(SM_PROG, SM_VERS);
+	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
+	pmap_unset(NFS3_PROGRAM, NFS_V3);
 
-	if (!pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, port)) {
-		LOG("Failed to register with portmapper for MOUNTv3");
-		pmap_unset(NFS3_PROGRAM, NFS_V3);
-		exit_code = 1;
-		goto out;
+	/* NFSv3 */
+	if (pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
+		LOG("Registered NFSv3 TCP on port %d", port);
+	} else {
+		LOG("Failed to register NFSv3 TCP");
 	}
+	pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_UDP, port);
 
-	if (!pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_TCP, port)) {
-		LOG("Failed to register with portmapper for NLMv4");
-		pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
-		pmap_unset(NFS3_PROGRAM, NFS_V3);
-		exit_code = 1;
-		goto out;
+	/* MOUNTv3 */
+	if (pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, port)) {
+		LOG("Registered MOUNTv3 TCP on port %d", port);
+	} else {
+		LOG("Failed to register MOUNTv3 TCP");
 	}
+	pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_UDP, port);
 
-	if (!pmap_set(SM_PROG, SM_VERS, IPPROTO_TCP, port)) {
-		LOG("Failed to register with portmapper for NSM");
-		pmap_unset(NLM_PROG, NLM4_VERS);
-		pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
-		pmap_unset(NFS3_PROGRAM, NFS_V3);
-		exit_code = 1;
-		goto out;
+	/* NLMv4 */
+	if (pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_TCP, port)) {
+		LOG("Registered NLMv4 TCP on port %d", port);
+	} else {
+		LOG("Failed to register NLMv4 TCP");
 	}
+	pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_UDP, port);
+
+	/* NLMv3 */
+	if (pmap_set(NLM_PROG, NLM_VERSX, IPPROTO_TCP, port)) {
+		LOG("Registered NLMv3 TCP on port %d", port);
+	} else {
+		LOG("Failed to register NLMv3 TCP");
+	}
+	pmap_set(NLM_PROG, NLM_VERSX, IPPROTO_UDP, port);
+
+	/* NLMv1 */
+	if (pmap_set(NLM_PROG, NLM_VERS, IPPROTO_TCP, port)) {
+		LOG("Registered NLMv1 TCP on port %d", port);
+	} else {
+		LOG("Failed to register NLMv1 TCP");
+	}
+	pmap_set(NLM_PROG, NLM_VERS, IPPROTO_UDP, port);
+
+	/* NSM */
+	if (pmap_set(SM_PROG, SM_VERS, IPPROTO_TCP, port)) {
+		LOG("Registered NSM TCP on port %d", port);
+	} else {
+		LOG("Failed to register NSM TCP");
+	}
+	pmap_set(SM_PROG, SM_VERS, IPPROTO_UDP, port);
 
 	__atomic_store(&running, &(int){ 1 }, __ATOMIC_SEQ_CST);
 
+	pthread_t watchdog_tid;
+	pthread_create(&watchdog_tid, NULL, portmapper_watchdog, &port);
+
 	// Run the main IO processing loop
+
 	io_handler_main_loop(&running, &rc);
 
 	TRACE("Main loop exited, cleaning up...");
 
+	pthread_join(watchdog_tid, NULL);
+
 	// Cleanup listener socket
+
 	if (lsnr_ipv4_probe_fd > 0) {
 		close(lsnr_ipv4_probe_fd);
 		lsnr_ipv4_probe_fd = -1;
@@ -351,6 +411,9 @@ out:
 	rcu_barrier();
 
 	probe1_protocol_deregister();
+	sm_protocol_deregister();
+	nlm4_protocol_deregister();
+	nlm_protocol_deregister();
 	mount3_protocol_deregister();
 	nfs3_protocol_deregister();
 

@@ -60,9 +60,9 @@ static void super_block_free(struct super_block *sb)
 		LOG("Could not delete a hash table: %m");
 	}
 
-        free(sb->sb_path);
-        free(sb->sb_backend_path);
-        free(sb);
+	free(sb->sb_path);
+	free(sb->sb_backend_path);
+	free(sb);
 }
 
 static void super_block_free_rcu(struct rcu_head *rcu)
