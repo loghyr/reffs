@@ -16,6 +16,10 @@ GEN_SOURCES = \
 	mntv3_xdr.c		\
 	nfsv3_xdr.h		\
 	nfsv3_xdr.c		\
+	nlm_prot.h		\
+	nlm_prot.c		\
+	sm_inter.h		\
+	sm_inter.c		\
 	probe1_xdr.h		\
 	probe1_xdr.c
 
@@ -29,8 +33,10 @@ libreffs_xdr_la_SOURCES =	\
 	nfsv42_xdr.x		\
 	mntv3_xdr.x		\
 	nfsv3_xdr.x		\
-	rpc_xdr.x		\
-	stat1_xdr.x
+	nlm_prot.x		\
+	sm_inter.x		\
+	rpc_xdr.x
+
 
 %.c: %.x %.h
 	rpcgen -C -c $< > $@
