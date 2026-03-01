@@ -27,13 +27,18 @@
 
 #include "nfsv3_xdr.h"
 #include "mntv3_xdr.h"
+#include "nlm4_prot.h"
+#include "sm_inter.h"
 #include "probe1_xdr.h"
 
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/nfs3.h"
 #include "reffs/mount3.h"
+#include "reffs/nlm.h"
+#include "reffs/nsm.h"
 #include "reffs/probe1.h"
+
 #include "reffs/server.h"
 #include "reffs/ns.h"
 #include "reffs/super_block.h"
@@ -191,6 +196,16 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	if (nlm4_protocol_register()) {
+		exit_code = 1;
+		goto out;
+	}
+
+	if (sm_protocol_register()) {
+		exit_code = 1;
+		goto out;
+	}
+
 	if (probe1_protocol_register()) {
 		exit_code = 1;
 		goto out;
@@ -264,6 +279,23 @@ int main(int argc, char *argv[])
 
 	if (!pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, port)) {
 		LOG("Failed to register with portmapper for MOUNTv3");
+		pmap_unset(NFS3_PROGRAM, NFS_V3);
+		exit_code = 1;
+		goto out;
+	}
+
+	if (!pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_TCP, port)) {
+		LOG("Failed to register with portmapper for NLMv4");
+		pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
+		pmap_unset(NFS3_PROGRAM, NFS_V3);
+		exit_code = 1;
+		goto out;
+	}
+
+	if (!pmap_set(SM_PROG, SM_VERS, IPPROTO_TCP, port)) {
+		LOG("Failed to register with portmapper for NSM");
+		pmap_unset(NLM_PROG, NLM4_VERS);
+		pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
 		pmap_unset(NFS3_PROGRAM, NFS_V3);
 		exit_code = 1;
 		goto out;

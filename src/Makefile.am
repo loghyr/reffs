@@ -25,6 +25,8 @@ LDADD = \
 	$(top_builddir)/lib/io/libreffs_io.la		\
 	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
 	$(top_builddir)/lib/mount3/libreffs_mount3.la	\
+	$(top_builddir)/lib/nlm/libnlm.la		\
+	$(top_builddir)/lib/nsm/libnsm.la		\
 	$(top_builddir)/lib/nfs3/libreffs_nfs3.la	\
 	$(top_builddir)/lib/probe1/libreffs_probe1.la	\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\
