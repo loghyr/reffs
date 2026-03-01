@@ -36,6 +36,7 @@
 #include "reffs/probe1.h"
 #include "reffs/server.h"
 #include "reffs/ns.h"
+#include "reffs/super_block.h"
 #include "reffs/io.h"
 #include "reffs/fs.h"
 #include "reffs/trace/common.h"
@@ -196,6 +197,13 @@ int main(int argc, char *argv[])
 	}
 
 	exit_code = reffs_ns_init();
+	if (exit_code == 0) {
+		struct super_block *sb = super_block_find(1);
+		if (sb) {
+			reffs_fs_recover(sb);
+			super_block_put(sb);
+		}
+	}
 	if (exit_code)
 		goto out;
 

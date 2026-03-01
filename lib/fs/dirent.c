@@ -16,11 +16,16 @@
 #include <strings.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <errno.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
 
 #include "reffs/dirent.h"
+#include "reffs/inode.h"
+#include "reffs/super_block.h"
 #include "reffs/log.h"
 #include "reffs/test.h"
 #include "reffs/types.h"
@@ -51,6 +56,7 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 		else
 			__atomic_fetch_add(&rd->rd_inode->i_nlink, 1,
 					   __ATOMIC_RELAXED);
+		inode_sync_to_disk(rd->rd_inode);
 	}
 
 	if (rla == reffs_life_action_birth || rla == reffs_life_action_update) {
@@ -58,6 +64,8 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 				       REFFS_INODE_UPDATE_CTIME |
 					       REFFS_INODE_UPDATE_MTIME);
 	}
+
+	dirent_sync_to_disk(parent);
 	rcu_read_unlock();
 }
 
@@ -214,18 +222,61 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 				REFFS_INODE_UPDATE_CTIME |
 					REFFS_INODE_UPDATE_MTIME);
 		}
-		dirent_put(parent);
 
 		if (rd->rd_inode) {
 			__atomic_fetch_sub(&rd->rd_inode->i_nlink, 1,
 					   __ATOMIC_RELAXED);
+			inode_sync_to_disk(rd->rd_inode);
 
 			if (rla == reffs_life_action_delayed_death)
 				inode_schedule_delayed_release(
 					rd->rd_inode, INODE_RELEASE_HARVEST);
 		}
 
+		dirent_sync_to_disk(parent);
+		dirent_put(parent);
 		dirent_put(rd);
 	}
 	rcu_read_unlock();
+}
+
+void dirent_sync_to_disk(struct reffs_dirent *parent)
+{
+	if (!parent || !parent->rd_inode)
+		return;
+
+	struct inode *inode = parent->rd_inode;
+	struct super_block *sb = inode->i_sb;
+
+	if (!sb || sb->sb_storage_type != REFFS_STORAGE_POSIX)
+		return;
+
+	char path[1024];
+	snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.dir",
+		 sb->sb_backend_path ? sb->sb_backend_path : ".", sb->sb_id,
+		 inode->i_ino);
+
+	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+	if (fd < 0) {
+		LOG("Failed to open directory file %s: %s", path,
+		    strerror(errno));
+		return;
+	}
+
+	struct reffs_dirent *rd;
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings) {
+		uint64_t ino = rd->rd_inode ? rd->rd_inode->i_ino : 0;
+		uint16_t name_len = strlen(rd->rd_name);
+
+		if (write(fd, &ino, sizeof(ino)) != sizeof(ino))
+			LOG("write ino failed");
+		if (write(fd, &name_len, sizeof(name_len)) != sizeof(name_len))
+			LOG("write name_len failed");
+		if (write(fd, rd->rd_name, name_len) != (ssize_t)name_len)
+			LOG("write name failed");
+	}
+	rcu_read_unlock();
+
+	close(fd);
 }

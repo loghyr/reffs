@@ -66,6 +66,17 @@ struct inode {
 	char *i_symlink;
 };
 
+struct inode_disk {
+	uint32_t id_uid;
+	uint32_t id_gid;
+	uint32_t id_nlink;
+	uint16_t id_mode;
+	int64_t id_size;
+	struct timespec id_atime;
+	struct timespec id_ctime;
+	struct timespec id_mtime;
+};
+
 struct inode *inode_alloc(struct super_block *sb, uint64_t ino);
 struct inode *inode_find(struct super_block *sb, uint64_t ino);
 struct inode *inode_get(struct inode *inode);
@@ -82,5 +93,7 @@ struct inode *inode_name_get_inode(struct inode *inode, char *name);
 
 #define INODE_RELEASE_HARVEST (2)
 void inode_schedule_delayed_release(struct inode *inode, int delay_seconds);
+
+void inode_sync_to_disk(struct inode *inode);
 
 #endif /* _REFFS_INODE_H */
