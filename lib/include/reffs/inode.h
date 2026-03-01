@@ -46,7 +46,13 @@ struct inode {
 	pthread_rwlock_t i_db_rwlock;
 	pthread_mutex_t i_attr_mutex;
 
+	/* locking */
+	pthread_mutex_t i_lock_mutex;
+	struct cds_list_head i_locks;
+	struct cds_list_head i_shares;
+
 	/* attributes */
+
 	pthread_mutex_t i_attrs_lock;
 	uint32_t i_uid;
 	uint32_t i_gid;

@@ -26,6 +26,7 @@ enum reffs_storage_type reffs_fs_get_storage_type(void);
 char *reffs_fs_get_backend_path(void);
 
 void reffs_fs_recover(struct super_block *sb);
+void reffs_fs_for_each_inode(int (*cb)(struct inode *, void *), void *arg);
 
 int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid);
 int reffs_fs_chmod(const char *path, mode_t mode);
