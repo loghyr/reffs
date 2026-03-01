@@ -802,18 +802,19 @@ static int nfs3_op_read(struct rpc_trans *rt)
 		resok->data.data_len = args->count;
 
 		pthread_rwlock_rdlock(&inode->i_db_rwlock);
-		res->status = data_block_read(inode->i_db, resok->data.data_val,
+		ssize_t dbr = data_block_read(inode->i_db, resok->data.data_val,
 					      args->count, args->offset);
-		if (res->status == 0 && args->count > 0) {
+		if (dbr == 0 && args->count > 0) {
 			// Read beyond current size
 			resok->count = resok->data.data_len = 0;
 			resok->eof = true;
 			res->status = NFS3_OK;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
-		} else if ((ssize_t)res->status < 0) {
+		} else if (dbr < 0) {
 			free(resok->data.data_val);
 			resok->count = resok->data.data_len = 0;
+			res->status = -dbr; // What about ENOMEM? Need errno_to_v3()
 			poa = &res->READ3res_u.resfail.file_attributes;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
