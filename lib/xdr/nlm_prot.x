@@ -123,18 +123,19 @@ struct nlm_unlockargs {
 % */
 #endif
 enum	fsh_mode {
-	fsm_DN  = 0,	/* deny none */
-	fsm_DR  = 1,	/* deny read */
-	fsm_DW  = 2,	/* deny write */
-	fsm_DRW = 3	/* deny read/write */
+	fsm_v3_DN  = 0,	/* deny none */
+	fsm_v3_DR  = 1,	/* deny read */
+	fsm_v3_DW  = 2,	/* deny write */
+	fsm_v3_DRW = 3	/* deny read/write */
 };
 
 enum	fsh_access {
-	fsa_NONE = 0,	/* for completeness */
-	fsa_R    = 1,	/* read only */
-	fsa_W    = 2,	/* write only */
-	fsa_RW   = 3	/* read/write */
+	fsa_v3_NONE = 0,	/* for completeness */
+	fsa_v3_R    = 1,	/* read only */
+	fsa_v3_W    = 2,	/* write only */
+	fsa_v3_RW   = 3	/* read/write */
 };
+
 
 struct	nlm_share {
 	string caller_name<LM_MAXSTRLEN>;
@@ -167,8 +168,11 @@ struct	nlm_notify {
 
 program NLM_PROG {
 	version NLM_VERS {
+		void		NLMPROC_NULL(void) = 0;
 
 		nlm_testres	NLM_TEST(struct nlm_testargs) =	1;
+
+
 
 		nlm_res		NLM_LOCK(struct nlm_lockargs) =	2;
 
@@ -195,7 +199,10 @@ program NLM_PROG {
 	} = 1;
 
 	version NLM_VERSX {
+		void		NLMPROC_NULL(void) = 0;
 		nlm_shareres	NLM_SHARE(nlm_shareargs) = 20;
+
+
 		nlm_shareres	NLM_UNSHARE(nlm_shareargs) = 21;
 		nlm_res		NLM_NM_LOCK(nlm_lockargs) = 22;
 		void		NLM_FREE_ALL(nlm_notify) = 23;

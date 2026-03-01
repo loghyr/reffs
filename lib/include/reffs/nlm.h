@@ -8,5 +8,7 @@
 
 int nlm4_protocol_register(void);
 int nlm4_protocol_deregister(void);
+int nlm_protocol_register(void);
+int nlm_protocol_deregister(void);
 
 #endif
