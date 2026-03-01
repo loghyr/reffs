@@ -510,7 +510,7 @@ static int nfs3_op_lookup(struct rpc_trans *rt)
 		goto out;
 	}
 
-	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
+	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, X_OK, &res->status);
 	if (res->status)
 		goto out;
 
