@@ -7,6 +7,8 @@ SUBDIRS =		\
 	include		\
 	xdr		\
 	fs		\
+	nlm		\
+	nsm		\
 	mount3		\
 	nfs3		\
 	nfs4		\
