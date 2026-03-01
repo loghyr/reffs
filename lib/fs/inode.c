@@ -204,13 +204,13 @@ void inode_update_times_now(struct inode *inode, uint64_t flags)
 bool inode_name_is_child(struct inode *inode, char *name)
 {
 	bool exists = false;
-	struct dirent *de;
+	struct reffs_dirent *rd;
 
 	reffs_strng_compare cmp = reffs_text_case_cmp();
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(de, &inode->i_children, d_siblings) {
-		if (!cmp(de->d_name, name)) {
+	cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings) {
+		if (!cmp(rd->rd_name, name)) {
 			exists = true;
 			break;
 		}
@@ -223,14 +223,14 @@ bool inode_name_is_child(struct inode *inode, char *name)
 struct inode *inode_name_get_inode(struct inode *inode, char *name)
 {
 	struct inode *exists = NULL;
-	struct dirent *de;
+	struct reffs_dirent *rd;
 
 	reffs_strng_compare cmp = reffs_text_case_cmp();
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(de, &inode->i_children, d_siblings) {
-		if (!cmp(de->d_name, name)) {
-			exists = inode_get(de->d_inode);
+	cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings) {
+		if (!cmp(rd->rd_name, name)) {
+			exists = inode_get(rd->rd_inode);
 			break;
 		}
 	}

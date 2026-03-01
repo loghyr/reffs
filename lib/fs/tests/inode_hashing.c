@@ -67,10 +67,10 @@ START_TEST(find_sb_inode)
 	ck_assert_int_eq(ret, 0);
 
 	inode1 = inode_alloc(sb, 1);
-	ck_assert(inode1 == sb->sb_dirent->d_inode);
+	ck_assert(inode1 == sb->sb_dirent->rd_inode);
 
 	inode2 = inode_find(sb, 1);
-	ck_assert(inode2 == sb->sb_dirent->d_inode);
+	ck_assert(inode2 == sb->sb_dirent->rd_inode);
 
 	inode_put(inode1);
 	inode_put(inode2);
@@ -96,10 +96,10 @@ START_TEST(find_sb_inode_put)
 	ck_assert_int_eq(ret, 0);
 
 	inode1 = inode_alloc(sb, 1);
-	ck_assert(inode1 == sb->sb_dirent->d_inode);
+	ck_assert(inode1 == sb->sb_dirent->rd_inode);
 
 	inode2 = inode_find(sb, 1);
-	ck_assert(inode2 == sb->sb_dirent->d_inode);
+	ck_assert(inode2 == sb->sb_dirent->rd_inode);
 
 	super_block_put(sb);
 	super_block_dirent_release(sb, reffs_life_action_death);
@@ -125,10 +125,10 @@ START_TEST(find_sb_inode_unhash)
 	ck_assert_int_eq(ret, 0);
 
 	inode1 = inode_alloc(sb, 1);
-	ck_assert(inode1 == sb->sb_dirent->d_inode);
+	ck_assert(inode1 == sb->sb_dirent->rd_inode);
 
 	inode2 = inode_find(sb, 1);
-	ck_assert(inode2 == sb->sb_dirent->d_inode);
+	ck_assert(inode2 == sb->sb_dirent->rd_inode);
 
 	inode_put(inode1);
 	inode_put(inode2);

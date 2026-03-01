@@ -81,16 +81,16 @@ static void super_block_release(struct urcu_ref *ref)
 	call_rcu(&sb->sb_rcu, super_block_free_rcu);
 }
 
-int super_block_dirent_create(struct super_block *sb, struct dirent *de,
+int super_block_dirent_create(struct super_block *sb, struct reffs_dirent *rd,
 			      enum reffs_life_action rla)
 {
-	sb->sb_dirent = dirent_alloc(de, "/", rla);
+	sb->sb_dirent = dirent_alloc(rd, "/", rla);
 	if (!sb->sb_dirent)
 		return ENOMEM;
 
-	sb->sb_dirent->d_inode = inode_alloc(
+	sb->sb_dirent->rd_inode = inode_alloc(
 		sb, __atomic_add_fetch(&sb->sb_next_ino, 1, __ATOMIC_RELAXED));
-	if (!sb->sb_dirent->d_inode) {
+	if (!sb->sb_dirent->rd_inode) {
 		dirent_put(sb->sb_dirent);
 		return ENOMEM;
 	}
@@ -101,13 +101,13 @@ int super_block_dirent_create(struct super_block *sb, struct dirent *de,
 void super_block_dirent_release(struct super_block *sb,
 				enum reffs_life_action rla)
 {
-	struct dirent *de;
+	struct reffs_dirent *rd;
 
 	rcu_read_lock();
-	de = rcu_xchg_pointer(&sb->sb_dirent, NULL);
-	if (de) {
-		dirent_parent_release(de, rla);
-		dirent_put(de);
+	rd = rcu_xchg_pointer(&sb->sb_dirent, NULL);
+	if (rd) {
+		dirent_parent_release(rd, rla);
+		dirent_put(rd);
 	}
 	rcu_read_unlock();
 }

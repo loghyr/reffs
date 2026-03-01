@@ -19,37 +19,38 @@
 
 #define REFFS_MAX_NAME (255)
 
-struct dirent {
-	struct rcu_head d_rcu;
-	struct urcu_ref d_ref;
+struct reffs_dirent {
+	struct rcu_head rd_rcu;
+	struct urcu_ref rd_ref;
 
 	/*
 	 * This entry is in the children of either the inode
 	 * above it or is the root of the superblock.
 	 */
-	struct cds_list_head d_siblings;
+	struct cds_list_head rd_siblings;
 
-	struct dirent *d_parent;
+	struct reffs_dirent *rd_parent;
 
-	pthread_rwlock_t d_rwlock;
+	pthread_rwlock_t rd_rwlock;
 
-	uint64_t d_cookie;
-	uint64_t d_cookie_next;
+	uint64_t rd_cookie;
+	uint64_t rd_cookie_next;
 
-	char *d_name;
-	struct inode *d_inode;
+	char *rd_name;
+	struct inode *rd_inode;
 };
 
-struct dirent *dirent_alloc(struct dirent *parent, char *name,
-			    enum reffs_life_action rla);
+struct reffs_dirent *dirent_alloc(struct reffs_dirent *parent, char *name,
+				  enum reffs_life_action rla);
 
-void dirent_children_release(struct dirent *de, enum reffs_life_action rla);
-struct dirent *dirent_find(struct dirent *parent, enum reffs_text_case rtc,
-			   char *name);
-struct dirent *dirent_get(struct dirent *de);
-void dirent_parent_attach(struct dirent *de, struct dirent *parent,
+void dirent_children_release(struct reffs_dirent *de,
+			     enum reffs_life_action rla);
+struct reffs_dirent *dirent_find(struct reffs_dirent *parent,
+				 enum reffs_text_case rtc, char *name);
+struct reffs_dirent *dirent_get(struct reffs_dirent *de);
+void dirent_parent_attach(struct reffs_dirent *de, struct reffs_dirent *parent,
 			  enum reffs_life_action rla);
-void dirent_parent_release(struct dirent *de, enum reffs_life_action rla);
-void dirent_put(struct dirent *de);
+void dirent_parent_release(struct reffs_dirent *de, enum reffs_life_action rla);
+void dirent_put(struct reffs_dirent *de);
 
 #endif /* _REFFS_DIRENT_H */

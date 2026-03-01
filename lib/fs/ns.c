@@ -31,7 +31,7 @@
 
 volatile sig_atomic_t reffs_namespace_initialized = 0;
 static struct super_block *reffs_root_sb = NULL;
-static struct dirent *reffs_root_de = NULL;
+static struct reffs_dirent *reffs_root_de = NULL;
 
 int reffs_ns_init(void)
 {
@@ -49,13 +49,13 @@ int reffs_ns_init(void)
 		goto out;
 	}
 
-	reffs_root_de->d_inode = inode_alloc(NULL, 1);
-	if (!reffs_root_de->d_inode) {
+	reffs_root_de->rd_inode = inode_alloc(NULL, 1);
+	if (!reffs_root_de->rd_inode) {
 		ret = ENOMEM;
 		goto out;
 	}
 
-	inode = inode_get(reffs_root_de->d_inode);
+	inode = inode_get(reffs_root_de->rd_inode);
 	assert(inode);
 	if (!inode) {
 		ret = ENOENT;
@@ -87,7 +87,7 @@ int reffs_ns_init(void)
 	if (ret)
 		goto out;
 
-	inode = inode_get(reffs_root_sb->sb_dirent->d_inode);
+	inode = inode_get(reffs_root_sb->sb_dirent->rd_inode);
 	assert(inode);
 	if (!inode) {
 		ret = ENOENT;
@@ -119,37 +119,37 @@ out:
 	return ret;
 }
 
-static void release_dirents_recursive(struct dirent *de_parent)
+static void release_dirents_recursive(struct reffs_dirent *rd_parent)
 {
-	struct dirent *de;
+	struct reffs_dirent *rd;
 
-	if (!de_parent || !de_parent->d_inode)
+	if (!rd_parent || !rd_parent->rd_inode)
 		return;
 
-	cds_list_for_each_entry_rcu(de, &de_parent->d_inode->i_children,
-				    d_siblings) {
-		release_dirents_recursive(de);
-		dirent_put(de);
+	cds_list_for_each_entry_rcu(rd, &rd_parent->rd_inode->i_children,
+				    rd_siblings) {
+		release_dirents_recursive(rd);
+		dirent_put(rd);
 	}
 }
 
 static void release_all_fs_dirents(void)
 {
 	struct super_block *sb, *tmp;
-	struct dirent *de_parent;
+	struct reffs_dirent *rd_parent;
 	char uuid_str[UUID_STR_LEN];
 
 	struct cds_list_head *sb_list = super_block_list_head();
 
 	cds_list_for_each_entry_safe(sb, tmp, sb_list, sb_link) {
 		uuid_unparse(sb->sb_uuid, uuid_str);
-		de_parent = dirent_get(sb->sb_dirent);
-		if (de_parent) {
-			release_dirents_recursive(de_parent);
+		rd_parent = dirent_get(sb->sb_dirent);
+		if (rd_parent) {
+			release_dirents_recursive(rd_parent);
 
-			dirent_parent_release(de_parent,
+			dirent_parent_release(rd_parent,
 					      reffs_life_action_death);
-			dirent_put(de_parent);
+			dirent_put(rd_parent);
 		}
 
 		super_block_put(sb);
