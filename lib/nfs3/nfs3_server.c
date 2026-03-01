@@ -1951,11 +1951,16 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 	if (inode_src == inode_dst) {
 		pthread_mutex_lock(&inode_src->i_attr_mutex);
 		pthread_rwlock_wrlock(&inode_src->i_parent->rd_rwlock);
-	} else {
+	} else if (inode_src->i_ino < inode_dst->i_ino) {
 		pthread_mutex_lock(&inode_src->i_attr_mutex);
 		pthread_rwlock_wrlock(&inode_src->i_parent->rd_rwlock);
 		pthread_mutex_lock(&inode_dst->i_attr_mutex);
 		pthread_rwlock_wrlock(&inode_dst->i_parent->rd_rwlock);
+	} else {
+		pthread_mutex_lock(&inode_dst->i_attr_mutex);
+		pthread_rwlock_wrlock(&inode_dst->i_parent->rd_rwlock);
+		pthread_mutex_lock(&inode_src->i_attr_mutex);
+		pthread_rwlock_wrlock(&inode_src->i_parent->rd_rwlock);
 	}
 
 	size_src = inode_src->i_size;
@@ -2043,11 +2048,16 @@ update_wcc:
 	if (inode_src == inode_dst) {
 		pthread_rwlock_unlock(&inode_src->i_parent->rd_rwlock);
 		pthread_mutex_unlock(&inode_src->i_attr_mutex);
-	} else {
+	} else if (inode_src->i_ino < inode_dst->i_ino) {
 		pthread_rwlock_unlock(&inode_dst->i_parent->rd_rwlock);
 		pthread_mutex_unlock(&inode_dst->i_attr_mutex);
 		pthread_rwlock_unlock(&inode_src->i_parent->rd_rwlock);
 		pthread_mutex_unlock(&inode_src->i_attr_mutex);
+	} else {
+		pthread_rwlock_unlock(&inode_src->i_parent->rd_rwlock);
+		pthread_mutex_unlock(&inode_src->i_attr_mutex);
+		pthread_rwlock_unlock(&inode_dst->i_parent->rd_rwlock);
+		pthread_mutex_unlock(&inode_dst->i_attr_mutex);
 	}
 
 out:
