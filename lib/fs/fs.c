@@ -1050,6 +1050,7 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 			if (rd->rd_inode) {
 				load_inode_attributes(rd->rd_inode);
 				if (rd->rd_inode->i_mode & S_IFDIR) {
+					rd->rd_inode->i_parent = rd;
 					recover_directory_recursive(rd);
 				}
 			}
