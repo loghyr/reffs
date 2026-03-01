@@ -2885,7 +2885,7 @@ static int nfs3_op_fsinfo(struct rpc_trans *rt)
 
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	nfstime3 gran = { .seconds = 1, .nseconds = 0 };
+	nfstime3 gran = { .seconds = 0, .nseconds = 1 };
 	resok->rtmax = 1048576;
 	resok->rtpref = resok->rtmax;
 	resok->rtmult = 4096;
