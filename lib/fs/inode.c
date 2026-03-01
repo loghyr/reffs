@@ -226,7 +226,7 @@ void inode_sync_to_disk(struct inode *inode)
 	id.id_mtime = inode->i_mtime;
 
 	char path[1024];
-	snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.meta",
+	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.meta",
 		 sb->sb_backend_path ? sb->sb_backend_path : ".", sb->sb_id,
 		 inode->i_ino);
 
