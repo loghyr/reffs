@@ -91,7 +91,7 @@ static void fill_stat(struct stat *st, struct inode *inode)
 	st->st_size = inode->i_size;
 	st->st_nlink = inode->i_nlink;
 	st->st_blocks = inode->i_used;
-	st->st_blksize = 4096;
+	st->st_blksize = inode->i_sb->sb_block_size;
 }
 
 int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,

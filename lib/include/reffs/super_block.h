@@ -41,6 +41,8 @@ struct super_block {
 	size_t sb_inodes_max;
 	size_t sb_inodes_used;
 
+	size_t sb_block_size;
+
 #define SB_IN_LIST (1ULL << 0)
 #define SB_IS_READ_ONLY (1ULL << 1)
 #define SB_IS_MOUNTED (1ULL << 2)

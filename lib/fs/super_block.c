@@ -9,6 +9,7 @@
 
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include "reffs/super_block.h"
 #include "reffs/log.h"
 #include "reffs/inode.h"
@@ -120,10 +121,11 @@ void super_block_dirent_release(struct super_block *sb,
 }
 
 struct super_block *super_block_alloc(uint64_t id, char *path,
-				      enum reffs_storage_type type,
+				      enum reffs_storage_type storage_type,
 				      const char *backend_path)
 {
 	struct super_block *sb;
+	struct statvfs sv;
 
 	sb = calloc(1, sizeof(*sb));
 	if (!sb) {
@@ -133,10 +135,10 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 
 	sb->sb_id = id;
 	sb->sb_path = strdup(path);
-	sb->sb_storage_type = type;
+	sb->sb_storage_type = storage_type;
 	if (backend_path) {
 		sb->sb_backend_path = strdup(backend_path);
-		if (type == REFFS_STORAGE_POSIX) {
+		if (storage_type == REFFS_STORAGE_POSIX) {
 			char sb_dir[1024];
 			snprintf(sb_dir, sizeof(sb_dir), "%s/sb_%lu",
 				 backend_path, id);
@@ -170,6 +172,23 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 
 	sb->sb_bytes_max = SIZE_MAX;
 	sb->sb_inodes_max = SIZE_MAX;
+
+	switch (storage_type) {
+	case REFFS_STORAGE_POSIX:
+		if (statvfs(backend_path, &sv) == 0) {
+			sb->sb_block_size = sv.f_bsize;
+		} else {
+			sb->sb_block_size = 4096; /* fallback */
+		}
+		break;
+	case REFFS_STORAGE_RAM:
+		sb->sb_block_size = 4096;
+		break;
+	default:
+		reffs_fail("Storage Type of %u is not supported!",
+			   sb->sb_storage_type);
+		break;
+	}
 
 	return sb;
 }
