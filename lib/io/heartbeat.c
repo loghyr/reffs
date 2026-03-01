@@ -25,8 +25,8 @@
 
 // Heartbeat interval in seconds
 #ifdef HAVE_VM
-#define HEARTBEAT_INTERVAL 5
-#define STALLED_CHECK_INTERVAL 5
+#define HEARTBEAT_INTERVAL 1
+#define STALLED_CHECK_INTERVAL 1
 #else
 #define DESTROYED_CHECK_INTERVAL 60
 #define STALLED_CHECK_INTERVAL 60
