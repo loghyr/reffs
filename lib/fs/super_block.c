@@ -50,21 +50,27 @@ static void super_block_remove_all_inodes(struct cds_lfht *ht)
 	assert(!count);
 }
 
-static void super_block_free_rcu(struct rcu_head *rcu)
+static void super_block_free(struct super_block *sb)
 {
-	int ret;
+	if (!sb)
+		return;
 
-	struct super_block *sb =
-		caa_container_of(rcu, struct super_block, sb_rcu);
-
-	ret = cds_lfht_destroy(sb->sb_inodes, NULL);
+	int ret = cds_lfht_destroy(sb->sb_inodes, NULL);
 	if (ret < 0) {
 		LOG("Could not delete a hash table: %m");
 	}
 
-	free(sb->sb_path);
-	free(sb->sb_backend_path);
-	free(sb);
+        free(sb->sb_path);
+        free(sb->sb_backend_path);
+        free(sb);
+}
+
+static void super_block_free_rcu(struct rcu_head *rcu)
+{
+	struct super_block *sb =
+		caa_container_of(rcu, struct super_block, sb_rcu);
+
+	super_block_free(sb);
 }
 
 static void super_block_release(struct urcu_ref *ref)
@@ -144,8 +150,7 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 		8, 8, 0, CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING, NULL);
 	if (!sb->sb_inodes) {
 		LOG("Could not create a new hash table");
-		free(sb->sb_backend_path);
-		free(sb);
+		super_block_free(sb);
 		return NULL;
 	}
 
@@ -154,8 +159,7 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 	sb->sb_id = id;
 	sb->sb_path = strdup(path);
 	if (!sb->sb_path) {
-		free(sb->sb_backend_path);
-		free(sb);
+		super_block_free(sb);
 		return NULL;
 	}
 
