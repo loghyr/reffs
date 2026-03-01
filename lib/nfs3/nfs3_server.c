@@ -2814,8 +2814,8 @@ static int nfs3_op_fsstat(struct rpc_trans *rt)
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
 
 	resok->tbytes = sb->sb_bytes_max;
-	resok->fbytes = sb->sb_bytes_used;
-	resok->abytes = resok->tbytes - resok->abytes;
+	resok->fbytes = sb->sb_bytes_max - sb->sb_bytes_used;
+	resok->abytes = resok->fbytes;
 	resok->tfiles = sb->sb_inodes_max;
 	resok->ffiles = sb->sb_inodes_used;
 	resok->afiles = resok->tfiles - resok->ffiles;
