@@ -8,6 +8,7 @@
 #endif
 
 #include <unistd.h>
+#include <sys/stat.h>
 #include "reffs/super_block.h"
 #include "reffs/log.h"
 #include "reffs/inode.h"
@@ -127,8 +128,15 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 	sb->sb_id = id;
 	sb->sb_path = strdup(path);
 	sb->sb_storage_type = type;
-	if (backend_path)
+	if (backend_path) {
 		sb->sb_backend_path = strdup(backend_path);
+		if (type == REFFS_STORAGE_POSIX) {
+			char sb_dir[1024];
+			snprintf(sb_dir, sizeof(sb_dir), "%s/sb_%lu",
+				 backend_path, id);
+			mkdir(sb_dir, 0755);
+		}
+	}
 
 	CDS_INIT_LIST_HEAD(&sb->sb_link);
 

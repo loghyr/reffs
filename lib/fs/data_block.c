@@ -73,7 +73,7 @@ struct data_block *data_block_alloc(struct inode *inode, const char *buffer,
 			memcpy(db->u.ram.db_buffer + offset, buffer, size);
 	} else if (db->db_type == REFFS_STORAGE_POSIX) {
 		char path[1024];
-		snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.dat",
+		snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dat",
 			 sb->sb_backend_path ? sb->sb_backend_path : ".",
 			 sb->sb_id, inode->i_ino);
 

@@ -252,7 +252,7 @@ void dirent_sync_to_disk(struct reffs_dirent *parent)
 		return;
 
 	char path[1024];
-	snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.dir",
+	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dir",
 		 sb->sb_backend_path ? sb->sb_backend_path : ".", sb->sb_id,
 		 inode->i_ino);
 

@@ -984,7 +984,7 @@ static int load_inode_attributes(struct inode *inode)
 	struct inode_disk id;
 	char path[1024];
 
-	snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.meta",
+	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.meta",
 		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
 
 	int fd = open(path, O_RDONLY);
@@ -1010,13 +1010,10 @@ static int load_inode_attributes(struct inode *inode)
 		sb->sb_next_ino = inode->i_ino + 1;
 
 	// Also check if data file exists
-	snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.dat",
+	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dat",
 		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
 	if (access(path, F_OK) == 0) {
 		inode->i_db = data_block_alloc(inode, NULL, 0, 0);
-		// Note: we don't open the FD here, data_block_alloc will do it if we are careful
-		// or we might need a specific 'load' variant.
-		// For now, let's assume data_block_alloc can handle existing files.
 	}
 
 	return 0;
@@ -1028,7 +1025,7 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 	struct super_block *sb = inode->i_sb;
 	char path[1024];
 
-	snprintf(path, sizeof(path), "%s/sb_%lu_ino_%lu.dir",
+	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dir",
 		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
 
 	int fd = open(path, O_RDONLY);
