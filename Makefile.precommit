@@ -1,73 +1,111 @@
 # SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: GPL-2.0+
 
+# Determine the project root directory
+ROOT_DIR := $(shell git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+# Docker configuration
+DOCKER = docker
+IMAGE_NAME = reffs-dev
+
 # Default target: style and license check
 all: style license
 
-# Configure the build (for build-related checks)
-configure: reconf
+# Help target
+help:
+	@echo "Available targets:"
+	@echo "  all             - style and license (default)"
+	@echo "  build           - Build the project incrementally"
+	@echo "  check           - Run unit tests"
+	@echo "  style           - Check code style (clang-format)"
+	@echo "  fix-style       - Automatically fix code style"
+	@echo "  license         - Check for SPDX license headers"
+	@echo "  clean           - Remove build artifacts"
+	@echo "  mrproper        - Aggressive clean (removes all untracked files)"
+	@echo "  image           - Build the developer docker image"
+	@echo "  build-in-docker - Build the project inside the docker container"
+	@echo "  run-image       - Run the NFS server in the docker container"
+	@echo "  reconf          - Force re-generation of build system (autoreconf)"
+
+# --- Build targets ---
+
+# Re-generate the configure script if configure.ac or Makefile.am changes
+$(ROOT_DIR)/configure: $(ROOT_DIR)/configure.ac $(ROOT_DIR)/Makefile.am
+	@echo "Re-generating configure script..."
+	autoreconf -fi
+
+# Re-generate the build directory and Makefile if the configure script changes
+build/Makefile: $(ROOT_DIR)/configure
 	mkdir -p build
 	cd build && ../configure $(filter --with-cc=%,$(MAKEOVERRIDES))
 
-# Build the project (for build-related checks)
-build: configure
-	cd build && make
+# Build the project (incremental)
+build: build/Makefile
+	$(MAKE) -C build
+
+# Configure the build (manual trigger)
+configure: build/Makefile
 
 # Run tests (for build-related checks)
 check: build
-	cd build && make check
+	$(MAKE) -C build check
 
 # Run scan-build (for static analysis)
-scanbuild: configure
+scanbuild: build/Makefile
 	cd build && scan-build make
+
+# --- Quality targets ---
 
 # Check license headers
 license:
-	./check_license.sh
+	@$(ROOT_DIR)/check_license.sh
+
+# Find all source files for style checking (consistent with Makefile.am)
+FIND_SOURCES = find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print
 
 # Check code style
 style:
-	find . -name xdr -prune -o \( ! -name 'config.h' \) -a \( -name '*.c' -o -name '*.h' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format --dry-run -Werror
+	@$(FIND_SOURCES) | tr '\n' '\0' | xargs -0 clang-format --dry-run -Werror
 
 # Fix code style (if needed)
 fix-style:
-	find . -name xdr -prune -o \( ! -name 'config.h' \) -a \( -name '*.c' -o -name '*.h' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
+	@$(FIND_SOURCES) | tr '\n' '\0' | xargs -0 clang-format -i
 
-# Clean build artifacts (less aggressive than git clean)
-untracked_files := $(shell git ls-files --other --directory --exclude-standard)
+# --- Cleanup targets ---
+
+# Clean build artifacts
 clean:
 	rm -rf build
-ifneq ("$(untracked_files)","")
-	echo "ERROR: Untracked files found. Please add or remove them before proceeding:"
-	echo "$(untracked_files)"
-	exit 1
-endif
 
 # Remove generated files and build directories (more aggressive)
 mrproper:
 	git clean -f -x -d
 	rm -rf build
 
-# Docker image tag
-IMAGE_NAME = reffs-dev
+# --- Docker targets ---
 
 # Build the docker image
 image:
-	docker build -t $(IMAGE_NAME) .
+	$(DOCKER) build -t $(IMAGE_NAME) .
 
 # Run the server in a docker container (sandbox)
 # This uses --privileged to allow FUSE and bypasses host RPC conflicts
 run-image: build-in-docker
-	docker run --rm -it --privileged \
-		-p 2049:2049 -p 111:111 \
-		-v $(shell pwd):/reffs \
+	$(DOCKER) run --rm -it --privileged \
+		-p 2049:2049 -p 2049:2049/udp -p 111:111 -p 111:111/udp \
+		-v $(ROOT_DIR):/reffs:Z \
 		$(IMAGE_NAME) \
-		/bin/bash -c "cd /reffs/build && script -q -c './src/reffs_nfs3_srv --port 2049 --file=../reffs.trc --backend=posix --backend-path=/tmp/reffs_data' ../reffs.console"
+		/bin/bash -c "rm -rf /tmp/reffs_data && mkdir -p /tmp/reffs_data && cd /reffs/build && script -q -c './src/reffs_nfs3_srv --port 2049 -r --file=../reffs.trc --backend=posix --backend-path=/tmp/reffs_data' ../reffs.console"
 
-# Build the project inside the existing container
+# Build the project inside the container using the Makefile's own build target
 build-in-docker:
-	docker run --rm -v $(shell pwd):/reffs $(IMAGE_NAME) /bin/bash -c "cd /reffs && ./autogen.sh && mkdir -p build && cd build && ../configure && make"
+	$(DOCKER) run --rm -v $(ROOT_DIR):/reffs:Z $(IMAGE_NAME) make -f Makefile.precommit build
 
-# Reconfigure the build system (for developers)
-reconf: clean
-	autoreconf -i
+# Reconfigure the build system (force)
+reconf:
+	autoreconf -fi
+	@if [ -d build ]; then \
+		$(MAKE) -f Makefile.precommit build/Makefile; \
+	fi
+
+.PHONY: all help build check configure scanbuild style fix-style license clean mrproper image build-in-docker run-image reconf
