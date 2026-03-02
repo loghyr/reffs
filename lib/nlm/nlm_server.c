@@ -349,10 +349,9 @@ int nlm4_protocol_register(void)
 	if (nlm4_registered)
 		return 0;
 
-	reffs_nlm4_init_grace(2);
+	reffs_nlm4_init_grace(REFFS_NLM4_GRACE_PERIOD);
 
 	nlm4_handler = rpc_program_handler_alloc(
-
 		NLM_PROG, NLM4_VERS, nlm4_operations_handler,
 		sizeof(nlm4_operations_handler) /
 			sizeof(*nlm4_operations_handler));

@@ -38,6 +38,7 @@ struct nlm4_share_entry {
 };
 
 /* Lock Manager Functions */
+#define REFFS_NLM4_GRACE_PERIOD 45
 void reffs_nlm4_init_grace(uint32_t seconds);
 bool reffs_nlm4_in_grace(void);
 
