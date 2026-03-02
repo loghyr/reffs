@@ -129,7 +129,7 @@ int io_schedule_heartbeat(struct ring_context *rc)
 			      0);
 	io_uring_sqe_set_data(sqe, ic);
 
-	LOG("Scheduled next heartbeat in %u seconds", io_heartbeat_period);
+	TRACE("Scheduled next heartbeat in %u seconds", io_heartbeat_period);
 
 	// Submit the operation
 	ret = io_uring_submit(&rc->rc_ring);
@@ -150,8 +150,8 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 		    strerror(-result));
 	}
 
-	LOG("HEARTBEAT: Processing at timestamp %ld ctx(c=%ld, f=%ld)",
-	    (long)now, io_context_get_created(), io_context_get_freed());
+	TRACE("HEARTBEAT: Processing at timestamp %ld ctx(c=%ld, f=%ld)",
+	      (long)now, io_context_get_created(), io_context_get_freed());
 
 	// Check for CQ ring overflow
 	if (now - hb_state.last_overflow_check >= 10) {
@@ -176,8 +176,8 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 		uint64_t rate = (hb_state.total_completions -
 				 hb_state.last_completions) /
 				(now - hb_state.last_stat_time);
-		LOG("Completion processing rate: %lu/sec (total: %lu)", rate,
-		    hb_state.total_completions);
+		TRACE("Completion processing rate: %lu/sec (total: %lu)", rate,
+		      hb_state.total_completions);
 		hb_state.last_completions = hb_state.total_completions;
 		hb_state.last_stat_time = now;
 	}
@@ -280,9 +280,9 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 	io_conn_dump_all();
 #endif
 
-	LOG("SQ head=%u, tail=%u; CQ head=%u, tail=%u", *rc->rc_ring.sq.khead,
-	    *rc->rc_ring.sq.ktail, *rc->rc_ring.cq.khead,
-	    *rc->rc_ring.cq.ktail);
+	TRACE("SQ head=%u, tail=%u; CQ head=%u, tail=%u", *rc->rc_ring.sq.khead,
+	      *rc->rc_ring.sq.ktail, *rc->rc_ring.cq.khead,
+	      *rc->rc_ring.cq.ktail);
 
 	// Schedule the next heartbeat
 	io_context_destroy(ic); // always destroy before rescheduling
