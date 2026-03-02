@@ -56,7 +56,9 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 		else
 			__atomic_fetch_add(&rd->rd_inode->i_nlink, 1,
 					   __ATOMIC_RELAXED);
-		inode_sync_to_disk(rd->rd_inode);
+		if (rla != reffs_life_action_load &&
+		    rla != reffs_life_action_unload)
+			inode_sync_to_disk(rd->rd_inode);
 	}
 
 	if (rla == reffs_life_action_birth || rla == reffs_life_action_update) {
@@ -65,7 +67,8 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 					       REFFS_INODE_UPDATE_MTIME);
 	}
 
-	dirent_sync_to_disk(parent);
+	if (rla != reffs_life_action_load && rla != reffs_life_action_unload)
+		dirent_sync_to_disk(parent);
 	rcu_read_unlock();
 }
 
@@ -226,14 +229,18 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 		if (rd->rd_inode) {
 			__atomic_fetch_sub(&rd->rd_inode->i_nlink, 1,
 					   __ATOMIC_RELAXED);
-			inode_sync_to_disk(rd->rd_inode);
+			if (rla != reffs_life_action_load &&
+			    rla != reffs_life_action_unload)
+				inode_sync_to_disk(rd->rd_inode);
 
 			if (rla == reffs_life_action_delayed_death)
 				inode_schedule_delayed_release(
 					rd->rd_inode, INODE_RELEASE_HARVEST);
 		}
 
-		dirent_sync_to_disk(parent);
+		if (rla != reffs_life_action_load &&
+		    rla != reffs_life_action_unload)
+			dirent_sync_to_disk(parent);
 		dirent_put(parent);
 		dirent_put(rd);
 	}
