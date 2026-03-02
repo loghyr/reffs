@@ -206,6 +206,16 @@ AC_ARG_ENABLE([destroy-cache],
         [AC_DEFINE([HAVE_DESTROY_CACHE], [1], [Define if using destroyed context cache])])],
     [])
 
+# Check if we should enable all trace categories by default
+AC_ARG_ENABLE([all-trace-categories],
+    [AS_HELP_STRING([--enable-all-trace-categories],
+        [Enable all trace categories by default @<:@default=yes@:>@])],
+    [enable_all_trace_categories=$enableval],
+    [enable_all_trace_categories=yes])
+
+AS_IF([test "x$enable_all_trace_categories" = "xyes"],
+    [AC_DEFINE([ENABLE_ALL_TRACE_CATEGORIES], [1], [Define if all trace categories should be enabled by default])])
+
 AC_ARG_ENABLE(asan,
 [  --enable-asan      Compile with address sanitizer],
 [case "${enableval}" in
