@@ -90,7 +90,7 @@ static void fill_stat(struct stat *st, struct inode *inode)
 	st->st_mode = inode->i_mode;
 	st->st_size = inode->i_size;
 	st->st_nlink = inode->i_nlink;
-	st->st_blocks = inode->i_used;
+	st->st_blocks = inode->i_used * (inode->i_sb->sb_block_size / 512);
 	st->st_blksize = inode->i_sb->sb_block_size;
 }
 

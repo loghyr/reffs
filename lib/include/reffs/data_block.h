@@ -42,11 +42,11 @@ struct data_block *data_block_alloc(struct inode *inode, const char *buffer,
 				    size_t size, off_t offset);
 struct data_block *data_block_get(struct data_block *db);
 void data_block_put(struct data_block *db);
-size_t data_block_read(struct data_block *db, char *buffer, size_t size,
-		       off_t offset);
-bool data_block_unhash(struct data_block *db);
-size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
+ssize_t data_block_read(struct data_block *db, char *buffer, size_t size,
 			off_t offset);
+bool data_block_unhash(struct data_block *db);
+ssize_t data_block_write(struct data_block *db, const char *buffer, size_t size,
+			 off_t offset);
 size_t data_block_resize(struct data_block *db, size_t size);
 
 size_t data_block_get_size(struct data_block *db);

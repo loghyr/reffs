@@ -295,12 +295,22 @@ int main(int argc, char *argv[])
 	} else {
 		LOG("Failed to register NFSv3 TCP");
 	}
+	if (pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_UDP, port)) {
+		LOG("Registered NFSv3 UDP on port %d", port);
+	} else {
+		LOG("Failed to register NFSv3 UDP");
+	}
 
 	/* MOUNTv3 */
 	if (pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, port)) {
 		LOG("Registered MOUNTv3 TCP on port %d", port);
 	} else {
 		LOG("Failed to register MOUNTv3 TCP");
+	}
+	if (pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_UDP, port)) {
+		LOG("Registered MOUNTv3 UDP on port %d", port);
+	} else {
+		LOG("Failed to register MOUNTv3 UDP");
 	}
 
 	/* NLMv4 */
@@ -309,12 +319,22 @@ int main(int argc, char *argv[])
 	} else {
 		LOG("Failed to register NLMv4 TCP");
 	}
+	if (pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_UDP, port)) {
+		LOG("Registered NLMv4 UDP on port %d", port);
+	} else {
+		LOG("Failed to register NLMv4 UDP");
+	}
 
 	/* NLMv3 */
 	if (pmap_set(NLM_PROG, NLM_VERSX, IPPROTO_TCP, port)) {
 		LOG("Registered NLMv3 TCP on port %d", port);
 	} else {
 		LOG("Failed to register NLMv3 TCP");
+	}
+	if (pmap_set(NLM_PROG, NLM_VERSX, IPPROTO_UDP, port)) {
+		LOG("Registered NLMv3 UDP on port %d", port);
+	} else {
+		LOG("Failed to register NLMv3 UDP");
 	}
 
 	/* NLMv1 */
@@ -323,12 +343,22 @@ int main(int argc, char *argv[])
 	} else {
 		LOG("Failed to register NLMv1 TCP");
 	}
+	if (pmap_set(NLM_PROG, NLM_VERS, IPPROTO_UDP, port)) {
+		LOG("Registered NLMv1 UDP on port %d", port);
+	} else {
+		LOG("Failed to register NLMv1 UDP");
+	}
 
 	/* NSM */
 	if (pmap_set(SM_PROG, SM_VERS, IPPROTO_TCP, port)) {
 		LOG("Registered NSM TCP on port %d", port);
 	} else {
 		LOG("Failed to register NSM TCP");
+	}
+	if (pmap_set(SM_PROG, SM_VERS, IPPROTO_UDP, port)) {
+		LOG("Registered NSM UDP on port %d", port);
+	} else {
+		LOG("Failed to register NSM UDP");
 	}
 
 	__atomic_store(&running, &(int){ 1 }, __ATOMIC_SEQ_CST);

@@ -169,10 +169,10 @@ void data_block_put(struct data_block *db)
 	urcu_ref_put(&db->db_ref, data_block_release);
 }
 
-size_t data_block_read(struct data_block *db, char *buffer, size_t size,
-		       off_t offset)
+ssize_t data_block_read(struct data_block *db, char *buffer, size_t size,
+			off_t offset)
 {
-	size_t read_len = 0;
+	ssize_t read_len = 0;
 
 	if ((size_t)offset >= db->db_size)
 		return 0;
@@ -183,14 +183,17 @@ size_t data_block_read(struct data_block *db, char *buffer, size_t size,
 		read_len = size;
 
 	switch (db->db_storage_type) {
-	case REFFS_STORAGE_POSIX:
-		read_len = pread(db->u.posix.db_fd, buffer, read_len, offset);
-		if (read_len < 0) {
+	case REFFS_STORAGE_POSIX: {
+		ssize_t ret =
+			pread(db->u.posix.db_fd, buffer, read_len, offset);
+		if (ret < 0) {
 			LOG("pread from %s failed: %s", db->u.posix.db_path,
 			    strerror(errno));
 			return -errno;
 		}
+		read_len = ret;
 		break;
+	}
 	case REFFS_STORAGE_RAM:
 		memcpy(buffer, db->u.ram.db_buffer + offset, read_len);
 		break;
@@ -203,8 +206,8 @@ size_t data_block_read(struct data_block *db, char *buffer, size_t size,
 	return read_len;
 }
 
-size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
-			off_t offset)
+ssize_t data_block_write(struct data_block *db, const char *buffer, size_t size,
+			 off_t offset)
 {
 	if (!db)
 		return -EINVAL;
@@ -238,17 +241,22 @@ size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 		db->db_size = new_total;
 	}
 
+	ssize_t written = 0;
 	switch (db->db_storage_type) {
-	case REFFS_STORAGE_POSIX:
-		size = pwrite(db->u.posix.db_fd, buffer, size, (off_t)offset);
-		if (size < 0) {
+	case REFFS_STORAGE_POSIX: {
+		ssize_t ret =
+			pwrite(db->u.posix.db_fd, buffer, size, (off_t)offset);
+		if (ret < 0) {
 			LOG("pwrite to %s failed: %s", db->u.posix.db_path,
 			    strerror(errno));
 			return -errno;
 		}
+		written = ret;
 		break;
+	}
 	case REFFS_STORAGE_RAM:
 		memcpy(db->u.ram.db_buffer + offset, buffer, size);
+		written = size;
 		break;
 	default:
 		reffs_fail("Storage Type of %u is not supported!",
@@ -256,7 +264,7 @@ size_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 		break;
 	}
 
-	return size;
+	return written;
 }
 
 size_t data_block_resize(struct data_block *db, size_t size)
