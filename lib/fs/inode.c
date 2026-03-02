@@ -230,19 +230,29 @@ void inode_sync_to_disk(struct inode *inode)
 	id.id_mtime = inode->i_mtime;
 
 	char path[1024];
+	char tmp_path[1024];
 	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.meta",
 		 sb->sb_backend_path ? sb->sb_backend_path : ".", sb->sb_id,
 		 inode->i_ino);
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
 
-	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 	if (fd >= 0) {
 		if (write(fd, &id, sizeof(id)) != sizeof(id)) {
-			LOG("Failed to write metadata to %s: %s", path,
+			LOG("Failed to write metadata to %s: %s", tmp_path,
 			    strerror(errno));
+			close(fd);
+			unlink(tmp_path);
+		} else {
+			close(fd);
+			if (rename(tmp_path, path) < 0) {
+				LOG("rename %s to %s failed: %s", tmp_path,
+				    path, strerror(errno));
+				unlink(tmp_path);
+			}
 		}
-		close(fd);
 	} else {
-		LOG("Failed to open metadata file %s: %s", path,
+		LOG("Failed to open metadata file %s: %s", tmp_path,
 		    strerror(errno));
 	}
 
@@ -250,14 +260,23 @@ void inode_sync_to_disk(struct inode *inode)
 		snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.lnk",
 			 sb->sb_backend_path ? sb->sb_backend_path : ".",
 			 sb->sb_id, inode->i_ino);
-		fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+		snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+		fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 		if (fd >= 0) {
 			size_t len = strlen(inode->i_symlink);
 			if (write(fd, inode->i_symlink, len) != (ssize_t)len) {
-				LOG("Failed to write symlink to %s: %s", path,
-				    strerror(errno));
+				LOG("Failed to write symlink to %s: %s",
+				    tmp_path, strerror(errno));
+				close(fd);
+				unlink(tmp_path);
+			} else {
+				close(fd);
+				if (rename(tmp_path, path) < 0) {
+					LOG("rename %s to %s failed: %s",
+					    tmp_path, path, strerror(errno));
+					unlink(tmp_path);
+				}
 			}
-			close(fd);
 		}
 	}
 }
