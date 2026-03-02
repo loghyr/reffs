@@ -43,7 +43,9 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 	rcu_read_lock();
 	rd->rd_parent = dirent_get(parent);
 	verify(parent->rd_inode->i_mode & S_IFDIR);
-	__atomic_fetch_add(&parent->rd_inode->i_nlink, 1, __ATOMIC_RELAXED);
+	if (rla != reffs_life_action_load)
+		__atomic_fetch_add(&parent->rd_inode->i_nlink, 1,
+				   __ATOMIC_RELAXED);
 	if (rla != reffs_life_action_load) {
 		rd->rd_cookie = __atomic_add_fetch(&parent->rd_cookie_next, 1,
 						   __ATOMIC_RELAXED);
@@ -55,7 +57,7 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 		if (rd->rd_inode->i_mode & S_IFDIR)
 			rd->rd_inode->i_parent =
 				parent; // Do not take a reference, manage carefully
-		else
+		else if (rla != reffs_life_action_load)
 			__atomic_fetch_add(&rd->rd_inode->i_nlink, 1,
 					   __ATOMIC_RELAXED);
 		if (rla != reffs_life_action_load &&
