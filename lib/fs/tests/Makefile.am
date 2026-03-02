@@ -38,6 +38,7 @@ LDADD = \
 
 TESTS = \
 	fuse \
+	inode_hashing \
 	inode_hashing_no_check \
 	lock_range_1 \
 	lock_conflict_2 \

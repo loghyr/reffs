@@ -47,8 +47,8 @@ static int add_sb_2(void)
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
 
-	super_block_put(sb);
 	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_put(sb);
 
 	return 0;
 }
@@ -78,8 +78,8 @@ static int find_sb_inode(void)
 	inode_put(inode1);
 	inode_put(inode2);
 
-	super_block_put(sb);
 	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_put(sb);
 
 	return 0;
 }
@@ -106,8 +106,8 @@ static int find_sb_inode_put(void)
 	inode2 = inode_find(sb, 1);
 	verify(inode2 == sb->sb_dirent->rd_inode);
 
-	super_block_put(sb);
 	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_put(sb);
 
 	inode_put(inode1);
 	inode_put(inode2);
@@ -140,8 +140,8 @@ static int find_sb_inode_unhash(void)
 	inode_put(inode1);
 	inode_put(inode2);
 
-	super_block_put(sb);
 	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_put(sb);
 
 	return 0;
 }
