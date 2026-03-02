@@ -44,8 +44,10 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 	rd->rd_parent = dirent_get(parent);
 	verify(parent->rd_inode->i_mode & S_IFDIR);
 	__atomic_fetch_add(&parent->rd_inode->i_nlink, 1, __ATOMIC_RELAXED);
-	rd->rd_cookie = __atomic_add_fetch(&parent->rd_cookie_next, 1,
-					   __ATOMIC_RELAXED);
+	if (rla != reffs_life_action_load) {
+		rd->rd_cookie = __atomic_add_fetch(&parent->rd_cookie_next, 1,
+						   __ATOMIC_RELAXED);
+	}
 	cds_list_add_tail_rcu(&rd->rd_siblings, &parent->rd_inode->i_children);
 	dirent_get(rd); // One for the linked list
 
@@ -270,12 +272,23 @@ void dirent_sync_to_disk(struct reffs_dirent *parent)
 		return;
 	}
 
+	if (write(fd, &parent->rd_cookie_next,
+		  sizeof(parent->rd_cookie_next)) !=
+	    sizeof(parent->rd_cookie_next)) {
+		LOG("write cookie_next failed");
+		close(fd);
+		return;
+	}
+
 	struct reffs_dirent *rd;
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings) {
+		uint64_t cookie = rd->rd_cookie;
 		uint64_t ino = rd->rd_inode ? rd->rd_inode->i_ino : 0;
 		uint16_t name_len = strlen(rd->rd_name);
 
+		if (write(fd, &cookie, sizeof(cookie)) != sizeof(cookie))
+			LOG("write cookie failed");
 		if (write(fd, &ino, sizeof(ino)) != sizeof(ino))
 			LOG("write ino failed");
 		if (write(fd, &name_len, sizeof(name_len)) != sizeof(name_len))
