@@ -1033,11 +1033,23 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 	if (fd < 0)
 		return;
 
+	uint64_t cookie_next;
+	if (read(fd, &cookie_next, sizeof(cookie_next)) ==
+	    sizeof(cookie_next)) {
+		parent->rd_cookie_next = cookie_next;
+	} else {
+		/* Fallback for old format or empty file */
+		parent->rd_cookie_next = 3;
+	}
+
+	uint64_t cookie;
 	uint64_t ino;
 	uint16_t name_len;
 	char name[256];
 
-	while (read(fd, &ino, sizeof(ino)) == sizeof(ino)) {
+	while (read(fd, &cookie, sizeof(cookie)) == sizeof(cookie)) {
+		if (read(fd, &ino, sizeof(ino)) != sizeof(ino))
+			break;
 		if (read(fd, &name_len, sizeof(name_len)) != sizeof(name_len))
 			break;
 		if (read(fd, name, name_len) != (ssize_t)name_len)
@@ -1047,6 +1059,7 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 		struct reffs_dirent *rd =
 			dirent_alloc(parent, name, reffs_life_action_load);
 		if (rd) {
+			rd->rd_cookie = cookie;
 			rd->rd_inode = inode_alloc(sb, ino);
 			if (rd->rd_inode) {
 				load_inode_attributes(rd->rd_inode);
