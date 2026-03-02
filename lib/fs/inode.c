@@ -245,6 +245,21 @@ void inode_sync_to_disk(struct inode *inode)
 		LOG("Failed to open metadata file %s: %s", path,
 		    strerror(errno));
 	}
+
+	if (inode->i_symlink) {
+		snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.lnk",
+			 sb->sb_backend_path ? sb->sb_backend_path : ".",
+			 sb->sb_id, inode->i_ino);
+		fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+		if (fd >= 0) {
+			size_t len = strlen(inode->i_symlink);
+			if (write(fd, inode->i_symlink, len) != (ssize_t)len) {
+				LOG("Failed to write symlink to %s: %s", path,
+				    strerror(errno));
+			}
+			close(fd);
+		}
+	}
 }
 
 bool inode_name_is_child(struct inode *inode, char *name)
