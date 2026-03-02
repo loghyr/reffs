@@ -43,38 +43,6 @@ int reffs_ns_init(void)
 
 	reffs_namespace_initialized = 1;
 
-	reffs_root_de = dirent_alloc(NULL, "/", reffs_life_action_birth);
-	if (!reffs_root_de) {
-		ret = ENOMEM;
-		goto out;
-	}
-
-	reffs_root_de->rd_inode = inode_alloc(NULL, 1);
-	if (!reffs_root_de->rd_inode) {
-		ret = ENOMEM;
-		goto out;
-	}
-
-	inode = inode_get(reffs_root_de->rd_inode);
-	assert(inode);
-	if (!inode) {
-		ret = ENOENT;
-		LOG("No root inode on root sb");
-		goto out;
-	}
-
-	inode->i_uid = 0;
-	inode->i_gid = 0;
-	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
-	inode->i_atime = inode->i_mtime;
-	inode->i_btime = inode->i_mtime;
-	inode->i_ctime = inode->i_mtime;
-	inode->i_mode = S_IFDIR | 0755;
-	inode->i_size = inode->i_sb->sb_block_size;
-	inode->i_used = inode->i_sb->sb_block_size;
-	inode->i_nlink = 2;
-
-	inode_put(inode);
 	reffs_root_sb = super_block_alloc(1, "/", reffs_fs_get_storage_type(),
 					  reffs_fs_get_backend_path());
 	if (!reffs_root_sb) {
@@ -82,10 +50,12 @@ int reffs_ns_init(void)
 		goto out;
 	}
 
-	ret = super_block_dirent_create(reffs_root_sb, reffs_root_de,
+	ret = super_block_dirent_create(reffs_root_sb, NULL,
 					reffs_life_action_birth);
 	if (ret)
 		goto out;
+
+	reffs_root_de = dirent_get(reffs_root_sb->sb_dirent);
 
 	inode = inode_get(reffs_root_sb->sb_dirent->rd_inode);
 	assert(inode);
