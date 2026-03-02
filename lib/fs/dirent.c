@@ -231,7 +231,8 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 		}
 
 		if (rd->rd_inode) {
-			__atomic_fetch_sub(&rd->rd_inode->i_nlink, 1,
+			int n = (rd->rd_inode->i_mode & S_IFDIR) ? 2 : 1;
+			__atomic_fetch_sub(&rd->rd_inode->i_nlink, n,
 					   __ATOMIC_RELAXED);
 			if (rla != reffs_life_action_load &&
 			    rla != reffs_life_action_unload)
