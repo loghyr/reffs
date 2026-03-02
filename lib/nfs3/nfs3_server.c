@@ -176,7 +176,8 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 		}
 
 		inode->i_used =
-			inode->i_size / inode->i_sb->sb_block_size + (inode->i_size % inode->i_sb->sb_block_size ? 1 : 0);
+			inode->i_size / inode->i_sb->sb_block_size +
+			(inode->i_size % inode->i_sb->sb_block_size ? 1 : 0);
 		__atomic_add_fetch(&inode->i_sb->sb_bytes_used,
 				   (ssize_t)inode->i_size - (ssize_t)old_size,
 				   __ATOMIC_RELAXED);
@@ -967,8 +968,8 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 	db_size = data_block_get_size(inode->i_db);
 
-	__atomic_add_fetch(&inode->i_sb->sb_bytes_used,
-			   db_size - size, __ATOMIC_RELAXED);
+	__atomic_add_fetch(&inode->i_sb->sb_bytes_used, db_size - size,
+			   __ATOMIC_RELAXED);
 
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 

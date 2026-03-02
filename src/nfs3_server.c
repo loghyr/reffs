@@ -93,7 +93,6 @@ static struct option long_opts[] = {
 	{ NULL, 0, NULL, 0 },
 };
 
-
 int main(int argc, char *argv[])
 
 {

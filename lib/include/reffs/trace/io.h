@@ -98,7 +98,7 @@ static inline void trace_io_connection_state_change(int fd, int old_state,
 }
 
 static inline void trace_io_eagain(struct io_context *ic, const char *func,
-				    int line)
+				   int line)
 {
 	time_t now = time(NULL);
 	time_t age = now - ic->ic_action_time;
