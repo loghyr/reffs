@@ -22,6 +22,63 @@
 static CDS_LIST_HEAD(nlm4_owners);
 static pthread_mutex_t nlm4_owners_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+struct nlm4_host {
+	struct cds_list_head h_list;
+	char *h_name;
+	struct cds_list_head h_locks;
+	struct cds_list_head h_shares;
+};
+
+static CDS_LIST_HEAD(nlm4_hosts);
+static pthread_mutex_t nlm4_hosts_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static struct nlm4_host *nlm4_get_host(const char *hostname)
+{
+	struct nlm4_host *host;
+
+	pthread_mutex_lock(&nlm4_hosts_mutex);
+	cds_list_for_each_entry(host, &nlm4_hosts, h_list) {
+		if (strcmp(host->h_name, hostname) == 0) {
+			pthread_mutex_unlock(&nlm4_hosts_mutex);
+			return host;
+		}
+	}
+
+	host = calloc(1, sizeof(*host));
+	if (host) {
+		host->h_name = strdup(hostname);
+		if (!host->h_name) {
+			free(host);
+			pthread_mutex_unlock(&nlm4_hosts_mutex);
+			return NULL;
+		}
+
+		CDS_INIT_LIST_HEAD(&host->h_locks);
+		CDS_INIT_LIST_HEAD(&host->h_shares);
+		cds_list_add(&host->h_list, &nlm4_hosts);
+	}
+	pthread_mutex_unlock(&nlm4_hosts_mutex);
+	return host;
+}
+
+static void nlm4_lock_entry_free(struct nlm4_lock_entry *le)
+{
+	if (!le)
+		return;
+	inode_put(le->le_inode);
+	reffs_nlm4_owner_put(le->le_owner);
+	free(le);
+}
+
+static void nlm4_share_entry_free(struct nlm4_share_entry *se)
+{
+	if (!se)
+		return;
+	inode_put(se->se_inode);
+	reffs_nlm4_owner_put(se->se_owner);
+	free(se);
+}
+
 static time_t grace_period_end = 0;
 
 void reffs_nlm4_init_grace(uint32_t seconds)
@@ -78,7 +135,7 @@ static void nlm4_owner_release(struct urcu_ref *ref)
 	free(lo);
 }
 
-static void nlm4_owner_put(struct nlm4_lock_owner *lo)
+void reffs_nlm4_owner_put(struct nlm4_lock_owner *lo)
 {
 	if (lo)
 		urcu_ref_put(&lo->lo_ref, nlm4_owner_release);
@@ -97,12 +154,25 @@ static struct nlm4_lock_owner *nlm4_get_owner(struct nlm4_lock *lock)
 			lo->lo_svid = lock->svid;
 			lo->lo_oh.n_len = lock->oh.n_len;
 			lo->lo_oh.n_bytes = malloc(lock->oh.n_len);
+			if (!lo->lo_oh.n_bytes) {
+				free(lo);
+				lo = NULL;
+				goto no_memory;
+			}
 			memcpy(lo->lo_oh.n_bytes, lock->oh.n_bytes,
 			       lock->oh.n_len);
 			lo->lo_caller = strdup(lock->caller_name);
-			cds_list_add(&lo->lo_list, &nlm4_owners);
+			if (!lo->lo_caller) {
+				free(lo->lo_oh.n_bytes);
+				free(lo);
+				lo = NULL;
+				goto no_memory;
+			} else {
+				cds_list_add(&lo->lo_list, &nlm4_owners);
+			}
 		}
 	}
+no_memory:
 	pthread_mutex_unlock(&nlm4_owners_mutex);
 	return lo;
 }
@@ -176,8 +246,24 @@ int reffs_nlm4_lock(struct inode *inode, struct nlm4_lockargs *args)
 	le->le_offset = args->alock.l_offset;
 	le->le_len = args->alock.l_len;
 	le->le_exclusive = args->exclusive;
+	le->le_inode = inode_get(inode);
+	if (!le->le_inode) {
+		nlm4_lock_entry_free(le);
+		pthread_mutex_unlock(&inode->i_lock_mutex);
+		return NLM4_DENIED_NOLOCKS;
+	}
+
+	struct nlm4_host *host = nlm4_get_host(args->alock.caller_name);
+	if (!host) {
+		nlm4_lock_entry_free(le);
+		pthread_mutex_unlock(&inode->i_lock_mutex);
+		return NLM4_DENIED_NOLOCKS;
+	}
 
 	cds_list_add(&le->le_list, &inode->i_locks);
+	pthread_mutex_lock(&nlm4_hosts_mutex);
+	cds_list_add(&le->le_host_list, &host->h_locks);
+	pthread_mutex_unlock(&nlm4_hosts_mutex);
 
 	pthread_mutex_unlock(&inode->i_lock_mutex);
 	return NLM4_GRANTED;
@@ -197,8 +283,10 @@ int reffs_nlm4_unlock(struct inode *inode, struct nlm4_unlockargs *args)
 		    le->le_offset == args->alock.l_offset &&
 		    le->le_len == args->alock.l_len) {
 			cds_list_del(&le->le_list);
-			nlm4_owner_put(le->le_owner);
-			free(le);
+			pthread_mutex_lock(&nlm4_hosts_mutex);
+			cds_list_del(&le->le_host_list);
+			pthread_mutex_unlock(&nlm4_hosts_mutex);
+			nlm4_lock_entry_free(le);
 		}
 	}
 
@@ -224,6 +312,11 @@ int reffs_nlm4_test(struct inode *inode, struct nlm4_testargs *args,
 			le_conflict->le_owner->lo_oh.n_len;
 		res->stat.nlm4_testrply_u.holder.oh.n_bytes =
 			malloc(le_conflict->le_owner->lo_oh.n_len);
+		if (!res->stat.nlm4_testrply_u.holder.oh.n_bytes) {
+			res->stat.stat = NLM4_FAILED;
+			pthread_mutex_unlock(&inode->i_lock_mutex);
+			return 0;
+		}
 		memcpy(res->stat.nlm4_testrply_u.holder.oh.n_bytes,
 		       le_conflict->le_owner->lo_oh.n_bytes,
 		       le_conflict->le_owner->lo_oh.n_len);
@@ -271,8 +364,24 @@ int reffs_nlm4_share(struct inode *inode, struct nlm4_shareargs *args)
 	se->se_owner = nlm4_get_owner(&tmp_lock);
 	se->se_mode = args->share.mode;
 	se->se_access = args->share.access;
+	se->se_inode = inode_get(inode);
+	if (!se->se_inode) {
+		nlm4_share_entry_free(se);
+		pthread_mutex_unlock(&inode->i_lock_mutex);
+		return NLM4_DENIED_NOLOCKS;
+	}
+
+	struct nlm4_host *host = nlm4_get_host(args->share.caller_name);
+	if (!host) {
+		nlm4_share_entry_free(se);
+		pthread_mutex_unlock(&inode->i_lock_mutex);
+		return NLM4_DENIED_NOLOCKS;
+	}
 
 	cds_list_add(&se->se_list, &inode->i_shares);
+	pthread_mutex_lock(&nlm4_hosts_mutex);
+	cds_list_add(&se->se_host_list, &host->h_shares);
+	pthread_mutex_unlock(&nlm4_hosts_mutex);
 
 	pthread_mutex_unlock(&inode->i_lock_mutex);
 	return NLM4_GRANTED;
@@ -292,8 +401,10 @@ int reffs_nlm4_unshare(struct inode *inode, struct nlm4_shareargs *args)
 	cds_list_for_each_entry_safe(se, tmp, &inode->i_shares, se_list) {
 		if (nlm4_owner_match(se->se_owner, &tmp_lock)) {
 			cds_list_del(&se->se_list);
-			nlm4_owner_put(se->se_owner);
-			free(se);
+			pthread_mutex_lock(&nlm4_hosts_mutex);
+			cds_list_del(&se->se_host_list);
+			pthread_mutex_unlock(&nlm4_hosts_mutex);
+			nlm4_share_entry_free(se);
 		}
 	}
 
@@ -301,41 +412,47 @@ int reffs_nlm4_unshare(struct inode *inode, struct nlm4_shareargs *args)
 	return NLM4_GRANTED;
 }
 
-static void nlm4_free_inode_locks(struct inode *inode, const char *hostname)
+void reffs_nlm4_free_all(struct nlm4_notify *args)
 {
+	struct nlm4_host *host = NULL;
 	struct nlm4_lock_entry *le, *le_tmp;
 	struct nlm4_share_entry *se, *se_tmp;
 
-	pthread_mutex_lock(&inode->i_lock_mutex);
-
-	cds_list_for_each_entry_safe(le, le_tmp, &inode->i_locks, le_list) {
-		if (strcmp(le->le_owner->lo_caller, hostname) == 0) {
-			cds_list_del(&le->le_list);
-			nlm4_owner_put(le->le_owner);
-			free(le);
-		}
-	}
-
-	cds_list_for_each_entry_safe(se, se_tmp, &inode->i_shares, se_list) {
-		if (strcmp(se->se_owner->lo_caller, hostname) == 0) {
-			cds_list_del(&se->se_list);
-			nlm4_owner_put(se->se_owner);
-			free(se);
-		}
-	}
-
-	pthread_mutex_unlock(&inode->i_lock_mutex);
-}
-
-static int nlm4_free_host_callback(struct inode *inode, void *arg)
-{
-	const char *hostname = arg;
-	nlm4_free_inode_locks(inode, hostname);
-	return 0;
-}
-
-void reffs_nlm4_free_all(struct nlm4_notify *args)
-{
 	LOG("NLM4: FREE_ALL for host %s", args->name);
-	reffs_fs_for_each_inode(nlm4_free_host_callback, args->name);
+
+	pthread_mutex_lock(&nlm4_hosts_mutex);
+	cds_list_for_each_entry(host, &nlm4_hosts, h_list) {
+		if (strcmp(host->h_name, args->name) == 0) {
+			break;
+		}
+	}
+	if (!host) {
+		pthread_mutex_unlock(&nlm4_hosts_mutex);
+		return;
+	}
+
+	/* Process locks */
+	cds_list_for_each_entry_safe(le, le_tmp, &host->h_locks, le_host_list) {
+		struct inode *inode = le->le_inode;
+		pthread_mutex_lock(&inode->i_lock_mutex);
+		cds_list_del(&le->le_list);
+		cds_list_del(&le->le_host_list);
+		pthread_mutex_unlock(&inode->i_lock_mutex);
+
+		nlm4_lock_entry_free(le);
+	}
+
+	/* Process shares */
+	cds_list_for_each_entry_safe(se, se_tmp, &host->h_shares,
+				     se_host_list) {
+		struct inode *inode = se->se_inode;
+		pthread_mutex_lock(&inode->i_lock_mutex);
+		cds_list_del(&se->se_list);
+		cds_list_del(&se->se_host_list);
+		pthread_mutex_unlock(&inode->i_lock_mutex);
+
+		nlm4_share_entry_free(se);
+	}
+
+	pthread_mutex_unlock(&nlm4_hosts_mutex);
 }

@@ -24,6 +24,8 @@ struct nlm4_lock_owner {
 
 struct nlm4_lock_entry {
 	struct cds_list_head le_list; /* link in inode->i_locks */
+	struct cds_list_head le_host_list; /* link in host->h_locks */
+	struct inode *le_inode;
 	struct nlm4_lock_owner *le_owner;
 	uint64_t le_offset;
 	uint64_t le_len;
@@ -32,6 +34,8 @@ struct nlm4_lock_entry {
 
 struct nlm4_share_entry {
 	struct cds_list_head se_list; /* link in inode->i_shares */
+	struct cds_list_head se_host_list; /* link in host->h_shares */
+	struct inode *se_inode;
 	struct nlm4_lock_owner *se_owner;
 	fsh4_mode se_mode;
 	fsh4_access se_access;
@@ -53,5 +57,7 @@ int reffs_nlm4_share(struct inode *inode, struct nlm4_shareargs *args);
 int reffs_nlm4_unshare(struct inode *inode, struct nlm4_shareargs *args);
 
 void reffs_nlm4_free_all(struct nlm4_notify *args);
+
+void reffs_nlm4_owner_put(struct nlm4_lock_owner *lo);
 
 #endif /* _REFFS_NLM_LOCK_H */
