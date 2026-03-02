@@ -22,5 +22,6 @@ libreffs_fs_la_SOURCES = \
 	fs.c \
 	fuse.c \
 	inode.c \
+	lock.c \
 	ns.c \
 	super_block.c
