@@ -272,21 +272,76 @@ int reffs_nlm4_lock(struct inode *inode, struct nlm4_lockargs *args)
 int reffs_nlm4_unlock(struct inode *inode, struct nlm4_unlockargs *args)
 {
 	struct nlm4_lock_entry *le, *tmp;
+	uint64_t u_off = args->alock.l_offset;
+	uint64_t u_len = args->alock.l_len;
+	uint64_t u_end = (u_len == 0) ? UINT64_MAX : u_off + u_len - 1;
 
 	pthread_mutex_lock(&inode->i_lock_mutex);
 
-	/* For now, just remove exactly matching locks.
-	 * TODO: Implement splitting of locks for partial unlocks.
-	 */
 	cds_list_for_each_entry_safe(le, tmp, &inode->i_locks, le_list) {
-		if (nlm4_owner_match(le->le_owner, &args->alock) &&
-		    le->le_offset == args->alock.l_offset &&
-		    le->le_len == args->alock.l_len) {
+		if (!nlm4_owner_match(le->le_owner, &args->alock))
+			continue;
+
+		uint64_t l_off = le->le_offset;
+		uint64_t l_len = le->le_len;
+		uint64_t l_end = (l_len == 0) ? UINT64_MAX : l_off + l_len - 1;
+
+		if (!nlm4_range_overlap(l_off, l_len, u_off, u_len))
+			continue;
+
+		if (u_off <= l_off && u_end >= l_end) {
+			/* Case 1: Full removal */
 			cds_list_del(&le->le_list);
 			pthread_mutex_lock(&nlm4_hosts_mutex);
 			cds_list_del(&le->le_host_list);
 			pthread_mutex_unlock(&nlm4_hosts_mutex);
 			nlm4_lock_entry_free(le);
+		} else if (u_off > l_off && u_end < l_end) {
+			/* Case 2: Split in middle */
+			struct nlm4_lock_entry *new_le =
+				calloc(1, sizeof(*new_le));
+			if (!new_le) {
+				pthread_mutex_unlock(&inode->i_lock_mutex);
+				return NLM4_DENIED_NOLOCKS;
+			}
+
+			/* New lock for the tail part */
+			new_le->le_owner = le->le_owner;
+			urcu_ref_get(&new_le->le_owner->lo_ref);
+			new_le->le_inode = inode_get(le->le_inode);
+			new_le->le_exclusive = le->le_exclusive;
+			new_le->le_offset = u_end + 1;
+			new_le->le_len =
+				(l_len == 0) ? 0 :
+					       (l_end - new_le->le_offset + 1);
+
+			/* Update existing lock to be the head part */
+			le->le_len = u_off - l_off;
+
+			/* Add new tail lock to lists */
+			cds_list_add(&new_le->le_list, &le->le_list);
+
+			struct nlm4_host *host =
+				nlm4_get_host(args->alock.caller_name);
+			if (host) {
+				pthread_mutex_lock(&nlm4_hosts_mutex);
+				cds_list_add(&new_le->le_host_list,
+					     &host->h_locks);
+				pthread_mutex_unlock(&nlm4_hosts_mutex);
+			} else {
+				/* Should not happen if owner exists */
+				nlm4_lock_entry_free(new_le);
+				pthread_mutex_unlock(&inode->i_lock_mutex);
+				return NLM4_FAILED;
+			}
+		} else if (u_off <= l_off) {
+			/* Case 3: Truncate start */
+			le->le_offset = u_end + 1;
+			le->le_len = (l_len == 0) ? 0 :
+						    (l_end - le->le_offset + 1);
+		} else {
+			/* Case 4: Truncate end */
+			le->le_len = u_off - l_off;
 		}
 	}
 
