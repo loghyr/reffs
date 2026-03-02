@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
+#include <pthread.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/rculfhash.h>
@@ -48,8 +49,8 @@ struct inode {
 
 	/* locking */
 	pthread_mutex_t i_lock_mutex;
-	struct cds_list_head i_locks;
-	struct cds_list_head i_shares;
+	struct cds_list_head i_locks; /* List of struct reffs_lock */
+	struct cds_list_head i_shares; /* List of struct reffs_share */
 
 	/* attributes */
 
