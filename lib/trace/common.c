@@ -34,8 +34,13 @@ static off_t trace_bytes_written = 0;
 /* Global trace state */
 static pthread_mutex_t trace_mutex = PTHREAD_MUTEX_INITIALIZER;
 static FILE *trace_fp = NULL;
+#ifdef ENABLE_ALL_TRACE_CATEGORIES
 static bool category_enabled[REFFS_TRACE_CAT_ALL] = { true, true, true,
 						      true, true, true };
+#else
+static bool category_enabled[REFFS_TRACE_CAT_ALL] = { false, true, true,
+						      true,  true, false };
+#endif
 
 static char *trace_compress_queue[MAX_TRACE_QUEUE];
 static int trace_compress_head = 0;
