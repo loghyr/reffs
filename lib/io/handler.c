@@ -62,11 +62,11 @@ int io_register_request(struct rpc_trans *rt)
 {
 	pthread_mutex_lock(&request_mutex);
 
-	LOG("rt=%p xid=0x%08x", (void *)rt, rt->rt_info.ri_xid);
+	TRACE("rt=%p xid=0x%08x", (void *)rt, rt->rt_info.ri_xid);
 	// Find an empty slot
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] == NULL) {
-			LOG("rt=%p xid=0x%08x", (void *)rt, rt->rt_info.ri_xid);
+			TRACE("rt=%p xid=0x%08x", (void *)rt, rt->rt_info.ri_xid);
 			pending_requests[i] = rt;
 			pthread_mutex_unlock(&request_mutex);
 			return 0;
@@ -82,13 +82,13 @@ struct rpc_trans *io_find_request_by_xid(uint32_t xid)
 {
 	struct rpc_trans *rt = NULL;
 
-	LOG("xid=0x%08x", xid);
+	TRACE("xid=0x%08x", xid);
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] &&
 		    pending_requests[i]->rt_info.ri_xid == xid) {
-			LOG("rt=%p xid=0x%08x", (void *)pending_requests[i],
-			    xid);
+			TRACE("rt=%p xid=0x%08x", (void *)pending_requests[i],
+			      xid);
 			rt = pending_requests[i];
 			break;
 		}
@@ -100,14 +100,15 @@ struct rpc_trans *io_find_request_by_xid(uint32_t xid)
 
 int io_unregister_request(uint32_t xid)
 {
-	LOG("xid=0x%08x", xid);
+	TRACE("xid=0x%08x", xid);
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] &&
 		    pending_requests[i]->rt_info.ri_xid == xid) {
-			LOG("rt=%p xid=0x%08x", (void *)pending_requests[i],
-			    xid);
+			TRACE("rt=%p xid=0x%08x", (void *)pending_requests[i],
+			      xid);
 			pending_requests[i] = NULL;
+			pthread_mutex_unlock(&request_mutex);
 			return 0;
 		}
 	}
@@ -362,8 +363,8 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 #endif
 
 		if (ic->ic_state & IO_CONTEXT_SUBMITTED_EAGAIN) {
-			LOG("ZOMBIE COMPLETION: Received CQE for ic=%p id=%u that previously hit EAGAIN. res=%d",
-			    (void *)ic, ic->ic_id, cqe->res);
+			TRACE("ZOMBIE COMPLETION: Received CQE for ic=%p id=%u that previously hit EAGAIN. res=%d",
+			      (void *)ic, ic->ic_id, cqe->res);
 			trace_io_eagain(ic, __func__, __LINE__);
 		}
 
@@ -373,10 +374,10 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		if (cqe->res == -ECANCELED) {
 			trace_io_context(ic, __func__, __LINE__);
 
-			LOG("Operation was cancelled: cqe=%p %p op=%s fd=%d id=%u",
-			    (void *)cqe, (void *)ic,
-			    io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
-			    ic->ic_id);
+			TRACE("Operation was cancelled: cqe=%p %p op=%s fd=%d id=%u",
+			      (void *)cqe, (void *)ic,
+			      io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
+			      ic->ic_id);
 		} else if (cqe->res < 0) {
 			LOG("CQE error for op=%s, fd=%d: %s",
 			    io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
@@ -395,12 +396,12 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			uint64_t state;
 			__atomic_load(&ic->ic_state, &state, __ATOMIC_RELAXED);
 			if (!(state & IO_CONTEXT_ENTRY_STATE_ACTIVE)) {
-				LOG("STRAY COMPLETION: ic=%p id=%u is NOT ACTIVE but received CQE. res=%d",
-				    (void *)ic, ic->ic_id, cqe->res);
-				LOG("Received completion for non-active context: ic=%p op=%s fd=%d id=%u state=0x%lx res=%d",
-				    (void *)ic,
-				    io_op_type_to_str(ic->ic_op_type),
-				    ic->ic_fd, ic->ic_id, state, cqe->res);
+				TRACE("STRAY COMPLETION: ic=%p id=%u is NOT ACTIVE but received CQE. res=%d",
+				      (void *)ic, ic->ic_id, cqe->res);
+				TRACE("Received completion for non-active context: ic=%p op=%s fd=%d id=%u state=0x%lx res=%d",
+				      (void *)ic,
+				      io_op_type_to_str(ic->ic_op_type),
+				      ic->ic_fd, ic->ic_id, state, cqe->res);
 
 				// For TLS handshake, we need to process even non-active contexts
 				if (ic->ic_op_type == OP_TYPE_WRITE &&

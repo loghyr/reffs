@@ -288,7 +288,7 @@ struct io_context *io_context_probe(int fd, enum op_type op, uint64_t state,
 
 void io_context_list_active(bool listem)
 {
-	LOG("=== Active Contexts ===");
+	TRACE("=== Active Contexts ===");
 
 	pthread_mutex_lock(&context_mutex);
 
@@ -302,10 +302,10 @@ void io_context_list_active(bool listem)
 			if (ic->ic_state & IO_CONTEXT_ENTRY_STATE_ACTIVE) {
 				if (listem) {
 					time_t age = now - ic->ic_action_time;
-					LOG("%p op=%s fd=%d age=%ld id=%u",
-					    (void *)ic,
-					    io_op_type_to_str(ic->ic_op_type),
-					    ic->ic_fd, (long)age, ic->ic_id);
+					TRACE("%p op=%s fd=%d age=%ld id=%u",
+					      (void *)ic,
+					      io_op_type_to_str(ic->ic_op_type),
+					      ic->ic_fd, (long)age, ic->ic_id);
 				}
 				count++;
 			}
@@ -314,13 +314,13 @@ void io_context_list_active(bool listem)
 
 	pthread_mutex_unlock(&context_mutex);
 
-	LOG("Total active contexts: %d", count);
-	LOG("======================");
+	TRACE("Total active contexts: %d", count);
+	TRACE("======================");
 }
 
 void io_context_release_active(void)
 {
-	LOG("=== Freeing Orphaned Contexts ===");
+	TRACE("=== Freeing Orphaned Contexts ===");
 
 	pthread_mutex_lock(&context_mutex);
 
@@ -334,9 +334,9 @@ void io_context_release_active(void)
 			if (ic->ic_state & IO_CONTEXT_ENTRY_STATE_ACTIVE) {
 				time_t age = now - ic->ic_action_time;
 
-				LOG("%p op=%s fd=%d age=%ld id=%u", (void *)ic,
-				    io_op_type_to_str(ic->ic_op_type),
-				    ic->ic_fd, (long)(age), ic->ic_id);
+				TRACE("%p op=%s fd=%d age=%ld id=%u", (void *)ic,
+				      io_op_type_to_str(ic->ic_op_type),
+				      ic->ic_fd, (long)(age), ic->ic_id);
 
 				// Mark as destroyed and clear active state in a single atomic operation
 				uint64_t new_state =
@@ -353,13 +353,13 @@ void io_context_release_active(void)
 
 	pthread_mutex_unlock(&context_mutex);
 
-	LOG("Total orphaned contexts: %d", count);
-	LOG("======================");
+	TRACE("Total orphaned contexts: %d", count);
+	TRACE("======================");
 }
 
 void io_context_check_stalled(void)
 {
-	LOG("=== Freeing Stalled Contexts ===");
+	TRACE("=== Freeing Stalled Contexts ===");
 
 	pthread_mutex_lock(&context_mutex);
 
@@ -391,8 +391,8 @@ void io_context_check_stalled(void)
 
 	pthread_mutex_unlock(&context_mutex);
 
-	LOG("Total stalled contexts: %d", count);
-	LOG("======================");
+	TRACE("Total stalled contexts: %d", count);
+	TRACE("======================");
 }
 
 #ifdef HAVE_DESTROY_CACHE
@@ -404,7 +404,7 @@ void io_context_release_destroyed(void)
 	int limit = 100000; // Don't block for too long
 	time_t now = time(NULL);
 
-	LOG("=== Freeing Destroyed Contexts ===");
+	TRACE("=== Freeing Destroyed Contexts ===");
 
 	for (unsigned int i = 0; i < CONTEXT_HASH_SIZE && count < limit; i++) {
 		struct io_context **prev_ptr = &context_hash[i];
@@ -450,8 +450,8 @@ void io_context_release_destroyed(void)
 
 	pthread_mutex_unlock(&context_mutex);
 
-	LOG("Total destroyed contexts: %d", count);
-	LOG("======================");
+	TRACE("Total destroyed contexts: %d", count);
+	TRACE("======================");
 }
 #endif
 
@@ -499,7 +499,7 @@ void io_context_validate_hash_tables(void)
 
 	bool warned = false;
 
-	LOG("=== Validating Context Hash Tables ===");
+	TRACE("=== Validating Context Hash Tables ===");
 
 	for (unsigned int i = 0; i < CONTEXT_HASH_SIZE; i++) {
 		for (struct io_context *ic = context_hash[i]; ic != NULL;
@@ -532,9 +532,9 @@ void io_context_validate_hash_tables(void)
 
 	pthread_mutex_unlock(&context_mutex);
 
-	LOG("Examined %d contexts, found %d inconsistencies, fixed %d", count,
-	    inconsistent_count, fixed_count);
-	LOG("======================");
+	TRACE("Examined %d contexts, found %d inconsistencies, fixed %d", count,
+	      inconsistent_count, fixed_count);
+	TRACE("======================");
 }
 
 uint64_t io_context_get_created(void)
@@ -559,11 +559,11 @@ void io_context_stats(struct io_context_stats *ics)
 
 void io_context_log_stats(void)
 {
-	LOG("Context state transitions: active_cancelled=0, active_destroyed=%ld, "
-	    "cancelled_freed=%ld, destroyed_freed=%ld created=%ld freed=%ld",
-	    atomic_load(&active_destroyed), atomic_load(&cancelled_freed),
-	    atomic_load(&destroyed_freed), atomic_load(&context_created),
-	    atomic_load(&context_freed));
+	TRACE("Context state transitions: active_cancelled=0, active_destroyed=%ld, "
+	      "cancelled_freed=%ld, destroyed_freed=%ld created=%ld freed=%ld",
+	      atomic_load(&active_destroyed), atomic_load(&cancelled_freed),
+	      atomic_load(&destroyed_freed), atomic_load(&context_created),
+	      atomic_load(&context_freed));
 
 	// Periodically validate hash tables to catch issues early
 	io_context_validate_hash_tables();
