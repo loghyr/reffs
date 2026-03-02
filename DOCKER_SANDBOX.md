@@ -14,20 +14,20 @@ The sandbox environment provides a clean, isolated Linux environment (Fedora-bas
 ### 1. Build the Sandbox Image
 This step only needs to be performed once or whenever the `Dockerfile` changes.
 ```bash
-sudo make -f Makefile.precommit image
+make -f Makefile.precommit image
 ```
 
 ### 2. Build the Project in the Sandbox
 To ensure the project compiles correctly in the isolated environment without modifying your host system's libraries:
 ```bash
-sudo make -f Makefile.precommit build-in-docker
+make -f Makefile.precommit build-in-docker
 ```
 This target mounts your current directory into the container and runs an incremental build using the container's tools (`clang`, `liburing`, etc.).
 
 ### 3. Run the Server in the Sandbox
 This command ensures the project is built inside the container and then starts the `reffs_nfs3_srv`.
 ```bash
-sudo make -f Makefile.precommit run-image
+make -f Makefile.precommit run-image
 ```
 The server is started with the following configuration:
 - **Port**: 2049 (mapped to host 2049)
