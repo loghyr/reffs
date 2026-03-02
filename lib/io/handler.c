@@ -364,6 +364,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		if (ic->ic_state & IO_CONTEXT_SUBMITTED_EAGAIN) {
 			LOG("ZOMBIE COMPLETION: Received CQE for ic=%p id=%u that previously hit EAGAIN. res=%d",
 			    (void *)ic, ic->ic_id, cqe->res);
+			trace_io_eagain(ic, __func__, __LINE__);
 		}
 
 		// trace_io_context(ic, __func__, __LINE__);
