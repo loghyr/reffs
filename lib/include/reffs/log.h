@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <time.h>
 #include <sys/syscall.h>
 
 #ifdef __clang__

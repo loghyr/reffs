@@ -1015,6 +1015,21 @@ static int load_inode_attributes(struct inode *inode)
 		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
 	if (access(path, F_OK) == 0) {
 		inode->i_db = data_block_alloc(inode, NULL, 0, 0);
+		if (inode->i_db) {
+			/*
+			 * Accumulate sb_bytes_used from the real on-disk size.
+			 * data_block_alloc() with size=0 calls fstat() to
+			 * populate db_size, so this reflects actual disk usage
+			 * rather than the size stored in the .meta file.
+			 * Mirror what the write path in nfs3_server.c does so
+			 * that FSSTAT returns correct values after recovery.
+			 */
+			size_t db_size = inode->i_db->db_size;
+			__atomic_add_fetch(&sb->sb_bytes_used, db_size,
+					   __ATOMIC_RELAXED);
+			inode->i_used = db_size / sb->sb_block_size +
+					(db_size % sb->sb_block_size ? 1 : 0);
+		}
 	}
 
 	// Also check if symlink file exists

@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <pthread.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
