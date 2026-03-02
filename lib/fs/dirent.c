@@ -263,13 +263,15 @@ void dirent_sync_to_disk(struct reffs_dirent *parent)
 		return;
 
 	char path[1024];
+	char tmp_path[1024];
 	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dir",
 		 sb->sb_backend_path ? sb->sb_backend_path : ".", sb->sb_id,
 		 inode->i_ino);
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
 
-	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 	if (fd < 0) {
-		LOG("Failed to open directory file %s: %s", path,
+		LOG("Failed to open directory file %s: %s", tmp_path,
 		    strerror(errno));
 		return;
 	}
@@ -279,6 +281,7 @@ void dirent_sync_to_disk(struct reffs_dirent *parent)
 	    sizeof(parent->rd_cookie_next)) {
 		LOG("write cookie_next failed");
 		close(fd);
+		unlink(tmp_path);
 		return;
 	}
 
@@ -301,4 +304,9 @@ void dirent_sync_to_disk(struct reffs_dirent *parent)
 	rcu_read_unlock();
 
 	close(fd);
+	if (rename(tmp_path, path) < 0) {
+		LOG("rename %s to %s failed: %s", tmp_path, path,
+		    strerror(errno));
+		unlink(tmp_path);
+	}
 }
