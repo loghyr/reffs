@@ -61,24 +61,6 @@ static struct nlm4_host *nlm4_get_host(const char *hostname)
 	return host;
 }
 
-static void nlm4_lock_entry_free(struct nlm4_lock_entry *le)
-{
-	if (!le)
-		return;
-	inode_put(le->le_inode);
-	reffs_nlm4_owner_put(le->le_owner);
-	free(le);
-}
-
-static void nlm4_share_entry_free(struct nlm4_share_entry *se)
-{
-	if (!se)
-		return;
-	inode_put(se->se_inode);
-	reffs_nlm4_owner_put(se->se_owner);
-	free(se);
-}
-
 static time_t grace_period_end = 0;
 
 void reffs_nlm4_init_grace(uint32_t seconds)
@@ -99,46 +81,44 @@ bool reffs_nlm4_in_grace(void)
 
 /* Helper to compare lock owners */
 
-static bool nlm4_owner_match(struct nlm4_lock_owner *a, struct nlm4_lock *b)
-{
-	if (a->lo_svid != (uint32_t)b->svid)
-		return false;
-	if (a->lo_oh.n_len != b->oh.n_len)
-		return false;
-	if (strcmp(a->lo_caller, b->caller_name) != 0)
-		return false;
-	return memcmp(a->lo_oh.n_bytes, b->oh.n_bytes, b->oh.n_len) == 0;
-}
-
-static struct nlm4_lock_owner *nlm4_find_owner(struct nlm4_lock *lock)
-{
-	struct nlm4_lock_owner *lo;
-
-	cds_list_for_each_entry(lo, &nlm4_owners, lo_list) {
-		if (nlm4_owner_match(lo, lock)) {
-			urcu_ref_get(&lo->lo_ref);
-			return lo;
-		}
-	}
-	return NULL;
-}
-
 static void nlm4_owner_release(struct urcu_ref *ref)
 {
 	struct nlm4_lock_owner *lo =
-		caa_container_of(ref, struct nlm4_lock_owner, lo_ref);
+		caa_container_of(ref, struct nlm4_lock_owner, lo_base.lo_ref);
 	pthread_mutex_lock(&nlm4_owners_mutex);
-	cds_list_del(&lo->lo_list);
+	cds_list_del(&lo->lo_base.lo_list);
 	pthread_mutex_unlock(&nlm4_owners_mutex);
 	free(lo->lo_oh.n_bytes);
 	free(lo->lo_caller);
 	free(lo);
 }
 
-void reffs_nlm4_owner_put(struct nlm4_lock_owner *lo)
+static bool nlm4_owner_match_op(struct reffs_lock_owner *lo_base, void *arg)
 {
-	if (lo)
-		urcu_ref_put(&lo->lo_ref, nlm4_owner_release);
+	struct nlm4_lock_owner *lo =
+		caa_container_of(lo_base, struct nlm4_lock_owner, lo_base);
+	struct nlm4_lock *lock = arg;
+
+	if (lo->lo_svid != (uint32_t)lock->svid)
+		return false;
+	if (lo->lo_oh.n_len != lock->oh.n_len)
+		return false;
+	if (strcmp(lo->lo_caller, lock->caller_name) != 0)
+		return false;
+	return memcmp(lo->lo_oh.n_bytes, lock->oh.n_bytes, lock->oh.n_len) == 0;
+}
+
+static struct nlm4_lock_owner *nlm4_find_owner(struct nlm4_lock *lock)
+{
+	struct nlm4_lock_owner *lo;
+
+	cds_list_for_each_entry(lo, &nlm4_owners, lo_base.lo_list) {
+		if (nlm4_owner_match_op(&lo->lo_base, lock)) {
+			urcu_ref_get(&lo->lo_base.lo_ref);
+			return lo;
+		}
+	}
+	return NULL;
 }
 
 static struct nlm4_lock_owner *nlm4_get_owner(struct nlm4_lock *lock)
@@ -150,7 +130,9 @@ static struct nlm4_lock_owner *nlm4_get_owner(struct nlm4_lock *lock)
 	if (!lo) {
 		lo = calloc(1, sizeof(*lo));
 		if (lo) {
-			urcu_ref_init(&lo->lo_ref);
+			urcu_ref_init(&lo->lo_base.lo_ref);
+			lo->lo_base.lo_release = nlm4_owner_release;
+			lo->lo_base.lo_match = nlm4_owner_match_op;
 			lo->lo_svid = lock->svid;
 			lo->lo_oh.n_len = lock->oh.n_len;
 			lo->lo_oh.n_bytes = malloc(lock->oh.n_len);
@@ -167,9 +149,8 @@ static struct nlm4_lock_owner *nlm4_get_owner(struct nlm4_lock *lock)
 				free(lo);
 				lo = NULL;
 				goto no_memory;
-			} else {
-				cds_list_add(&lo->lo_list, &nlm4_owners);
 			}
+			cds_list_add(&lo->lo_base.lo_list, &nlm4_owners);
 		}
 	}
 no_memory:
@@ -177,173 +158,78 @@ no_memory:
 	return lo;
 }
 
-/* Helper to check if two ranges overlap */
-static bool nlm4_range_overlap(uint64_t off1, uint64_t len1, uint64_t off2,
-			       uint64_t len2)
-{
-	uint64_t end1 = (len1 == 0) ? UINT64_MAX : off1 + len1 - 1;
-	uint64_t end2 = (len2 == 0) ? UINT64_MAX : off2 + len2 - 1;
-
-	return (off1 <= end2) && (off2 <= end1);
-}
-
 /* Check for conflicts */
-static struct nlm4_lock_entry *
-nlm4_find_conflict(struct inode *inode, struct nlm4_lock *lock, bool exclusive)
-{
-	struct nlm4_lock_entry *le;
-
-	cds_list_for_each_entry(le, &inode->i_locks, le_list) {
-		/* If both are shared, no conflict */
-		if (!exclusive && !le->le_exclusive)
-			continue;
-
-		/* If same owner, no conflict (it's a re-lock or upgrade/downgrade) */
-		if (nlm4_owner_match(le->le_owner, lock))
-			continue;
-
-		/* Check for overlap */
-		if (nlm4_range_overlap(le->le_offset, le->le_len,
-				       lock->l_offset, lock->l_len))
-			return le;
-	}
-
-	return NULL;
-}
 
 int reffs_nlm4_lock(struct inode *inode, struct nlm4_lockargs *args)
 {
-	struct nlm4_lock_entry *le_conflict;
-	struct nlm4_lock_entry *le;
+	struct nlm4_lock_owner *lo;
+	struct reffs_lock *conflict;
+	struct reffs_lock *lock;
+	int ret;
+
+	lo = nlm4_get_owner(&args->alock);
+	if (!lo)
+		return NLM4_DENIED_NOLOCKS;
 
 	pthread_mutex_lock(&inode->i_lock_mutex);
 
-	le_conflict = nlm4_find_conflict(inode, &args->alock, args->exclusive);
-	if (le_conflict) {
+	conflict = reffs_lock_find_conflict(inode, args->alock.l_offset,
+					    args->alock.l_len, args->exclusive,
+					    &lo->lo_base, &args->alock);
+	if (conflict) {
+		urcu_ref_put(&lo->lo_base.lo_ref, lo->lo_base.lo_release);
 		pthread_mutex_unlock(&inode->i_lock_mutex);
 		return NLM4_DENIED;
 	}
 
-	/* Handle re-lock by same owner: if same range, just update exclusivity */
-	cds_list_for_each_entry(le, &inode->i_locks, le_list) {
-		if (nlm4_owner_match(le->le_owner, &args->alock) &&
-		    le->le_offset == args->alock.l_offset &&
-		    le->le_len == args->alock.l_len) {
-			le->le_exclusive = args->exclusive;
-			pthread_mutex_unlock(&inode->i_lock_mutex);
-			return NLM4_GRANTED;
-		}
-	}
-
-	/* Success! Create new lock entry */
-	le = calloc(1, sizeof(*le));
-	if (!le) {
+	lock = calloc(1, sizeof(*lock));
+	if (!lock) {
+		urcu_ref_put(&lo->lo_base.lo_ref, lo->lo_base.lo_release);
 		pthread_mutex_unlock(&inode->i_lock_mutex);
 		return NLM4_DENIED_NOLOCKS;
 	}
 
-	le->le_owner = nlm4_get_owner(&args->alock);
-	le->le_offset = args->alock.l_offset;
-	le->le_len = args->alock.l_len;
-	le->le_exclusive = args->exclusive;
-	le->le_inode = inode_get(inode);
-	if (!le->le_inode) {
-		nlm4_lock_entry_free(le);
+	lock->l_owner = &lo->lo_base; /* Already held lo_ref from get_owner */
+	lock->l_offset = args->alock.l_offset;
+	lock->l_len = args->alock.l_len;
+	lock->l_exclusive = args->exclusive;
+	lock->l_inode = inode_get(inode);
+	if (!lock->l_inode) {
+		reffs_lock_free(lock);
 		pthread_mutex_unlock(&inode->i_lock_mutex);
 		return NLM4_DENIED_NOLOCKS;
 	}
 
 	struct nlm4_host *host = nlm4_get_host(args->alock.caller_name);
 	if (!host) {
-		nlm4_lock_entry_free(le);
+		reffs_lock_free(lock);
 		pthread_mutex_unlock(&inode->i_lock_mutex);
 		return NLM4_DENIED_NOLOCKS;
 	}
 
-	cds_list_add(&le->le_list, &inode->i_locks);
-	pthread_mutex_lock(&nlm4_hosts_mutex);
-	cds_list_add(&le->le_host_list, &host->h_locks);
-	pthread_mutex_unlock(&nlm4_hosts_mutex);
+	ret = reffs_lock_add(inode, lock, &host->h_locks);
 
 	pthread_mutex_unlock(&inode->i_lock_mutex);
-	return NLM4_GRANTED;
+	return (ret == 0) ? NLM4_GRANTED : NLM4_DENIED;
 }
 
 int reffs_nlm4_unlock(struct inode *inode, struct nlm4_unlockargs *args)
 {
-	struct nlm4_lock_entry *le, *tmp;
-	uint64_t u_off = args->alock.l_offset;
-	uint64_t u_len = args->alock.l_len;
-	uint64_t u_end = (u_len == 0) ? UINT64_MAX : u_off + u_len - 1;
+	struct nlm4_lock_owner *lo;
+	struct nlm4_host *host;
+
+	lo = nlm4_get_owner(&args->alock);
+	if (!lo)
+		return NLM4_DENIED_NOLOCKS;
+
+	host = nlm4_get_host(args->alock.caller_name);
+	/* Put the extra ref from get_owner immediately, we only need to use it for comparison */
+	urcu_ref_put(&lo->lo_base.lo_ref, lo->lo_base.lo_release);
 
 	pthread_mutex_lock(&inode->i_lock_mutex);
 
-	cds_list_for_each_entry_safe(le, tmp, &inode->i_locks, le_list) {
-		if (!nlm4_owner_match(le->le_owner, &args->alock))
-			continue;
-
-		uint64_t l_off = le->le_offset;
-		uint64_t l_len = le->le_len;
-		uint64_t l_end = (l_len == 0) ? UINT64_MAX : l_off + l_len - 1;
-
-		if (!nlm4_range_overlap(l_off, l_len, u_off, u_len))
-			continue;
-
-		if (u_off <= l_off && u_end >= l_end) {
-			/* Case 1: Full removal */
-			cds_list_del(&le->le_list);
-			pthread_mutex_lock(&nlm4_hosts_mutex);
-			cds_list_del(&le->le_host_list);
-			pthread_mutex_unlock(&nlm4_hosts_mutex);
-			nlm4_lock_entry_free(le);
-		} else if (u_off > l_off && u_end < l_end) {
-			/* Case 2: Split in middle */
-			struct nlm4_lock_entry *new_le =
-				calloc(1, sizeof(*new_le));
-			if (!new_le) {
-				pthread_mutex_unlock(&inode->i_lock_mutex);
-				return NLM4_DENIED_NOLOCKS;
-			}
-
-			/* New lock for the tail part */
-			new_le->le_owner = le->le_owner;
-			urcu_ref_get(&new_le->le_owner->lo_ref);
-			new_le->le_inode = inode_get(le->le_inode);
-			new_le->le_exclusive = le->le_exclusive;
-			new_le->le_offset = u_end + 1;
-			new_le->le_len =
-				(l_len == 0) ? 0 :
-					       (l_end - new_le->le_offset + 1);
-
-			/* Update existing lock to be the head part */
-			le->le_len = u_off - l_off;
-
-			/* Add new tail lock to lists */
-			cds_list_add(&new_le->le_list, &le->le_list);
-
-			struct nlm4_host *host =
-				nlm4_get_host(args->alock.caller_name);
-			if (host) {
-				pthread_mutex_lock(&nlm4_hosts_mutex);
-				cds_list_add(&new_le->le_host_list,
-					     &host->h_locks);
-				pthread_mutex_unlock(&nlm4_hosts_mutex);
-			} else {
-				/* Should not happen if owner exists */
-				nlm4_lock_entry_free(new_le);
-				pthread_mutex_unlock(&inode->i_lock_mutex);
-				return NLM4_FAILED;
-			}
-		} else if (u_off <= l_off) {
-			/* Case 3: Truncate start */
-			le->le_offset = u_end + 1;
-			le->le_len = (l_len == 0) ? 0 :
-						    (l_end - le->le_offset + 1);
-		} else {
-			/* Case 4: Truncate end */
-			le->le_len = u_off - l_off;
-		}
-	}
+	reffs_lock_remove(inode, args->alock.l_offset, args->alock.l_len,
+			  &lo->lo_base, host ? &host->h_locks : NULL);
 
 	pthread_mutex_unlock(&inode->i_lock_mutex);
 	return NLM4_GRANTED;
@@ -352,36 +238,46 @@ int reffs_nlm4_unlock(struct inode *inode, struct nlm4_unlockargs *args)
 int reffs_nlm4_test(struct inode *inode, struct nlm4_testargs *args,
 		    nlm4_testres *res)
 {
-	struct nlm4_lock_entry *le_conflict;
+	struct nlm4_lock_owner *lo;
+	struct reffs_lock *conflict;
+
+	lo = nlm4_get_owner(&args->alock);
+	if (!lo) {
+		res->stat.stat = NLM4_DENIED_NOLOCKS;
+		return 0;
+	}
 
 	pthread_mutex_lock(&inode->i_lock_mutex);
 
-	le_conflict = nlm4_find_conflict(inode, &args->alock, args->exclusive);
-	if (le_conflict) {
+	conflict = reffs_lock_find_conflict(inode, args->alock.l_offset,
+					    args->alock.l_len, args->exclusive,
+					    &lo->lo_base, &args->alock);
+	if (conflict) {
+		struct nlm4_lock_owner *clo = caa_container_of(
+			conflict->l_owner, struct nlm4_lock_owner, lo_base);
 		res->stat.stat = NLM4_DENIED;
 		res->stat.nlm4_testrply_u.holder.exclusive =
-			le_conflict->le_exclusive;
-		res->stat.nlm4_testrply_u.holder.svid =
-			le_conflict->le_owner->lo_svid;
-		res->stat.nlm4_testrply_u.holder.oh.n_len =
-			le_conflict->le_owner->lo_oh.n_len;
+			conflict->l_exclusive;
+		res->stat.nlm4_testrply_u.holder.svid = clo->lo_svid;
+		res->stat.nlm4_testrply_u.holder.oh.n_len = clo->lo_oh.n_len;
 		res->stat.nlm4_testrply_u.holder.oh.n_bytes =
-			malloc(le_conflict->le_owner->lo_oh.n_len);
+			malloc(clo->lo_oh.n_len);
 		if (!res->stat.nlm4_testrply_u.holder.oh.n_bytes) {
 			res->stat.stat = NLM4_FAILED;
+			urcu_ref_put(&lo->lo_base.lo_ref,
+				     lo->lo_base.lo_release);
 			pthread_mutex_unlock(&inode->i_lock_mutex);
 			return 0;
 		}
 		memcpy(res->stat.nlm4_testrply_u.holder.oh.n_bytes,
-		       le_conflict->le_owner->lo_oh.n_bytes,
-		       le_conflict->le_owner->lo_oh.n_len);
-		res->stat.nlm4_testrply_u.holder.l_offset =
-			le_conflict->le_offset;
-		res->stat.nlm4_testrply_u.holder.l_len = le_conflict->le_len;
+		       clo->lo_oh.n_bytes, clo->lo_oh.n_len);
+		res->stat.nlm4_testrply_u.holder.l_offset = conflict->l_offset;
+		res->stat.nlm4_testrply_u.holder.l_len = conflict->l_len;
 	} else {
 		res->stat.stat = NLM4_GRANTED;
 	}
 
+	urcu_ref_put(&lo->lo_base.lo_ref, lo->lo_base.lo_release);
 	pthread_mutex_unlock(&inode->i_lock_mutex);
 	return 0;
 }
@@ -396,72 +292,73 @@ int reffs_nlm4_cancel(struct inode *inode, struct nlm4_cancargs *args)
 
 int reffs_nlm4_share(struct inode *inode, struct nlm4_shareargs *args)
 {
-	struct nlm4_share_entry *se;
+	struct nlm4_lock_owner *lo;
+	struct reffs_share *share;
+	struct nlm4_host *host;
+	int ret;
 
-	pthread_mutex_lock(&inode->i_lock_mutex);
-
-	/* Check for existing conflicting shares */
-	/* TODO: Implement full share reservation logic */
-
-	se = calloc(1, sizeof(*se));
-	if (!se) {
-		pthread_mutex_unlock(&inode->i_lock_mutex);
-		return NLM4_DENIED_NOLOCKS;
-	}
-
-	/* Create a temporary lock object to get the owner */
-	struct nlm4_lock tmp_lock = {
-		.caller_name = args->share.caller_name,
-		.oh = args->share.oh,
-		.svid = 0, /* svid not used in share */
-	};
-
-	se->se_owner = nlm4_get_owner(&tmp_lock);
-	se->se_mode = args->share.mode;
-	se->se_access = args->share.access;
-	se->se_inode = inode_get(inode);
-	if (!se->se_inode) {
-		nlm4_share_entry_free(se);
-		pthread_mutex_unlock(&inode->i_lock_mutex);
-		return NLM4_DENIED_NOLOCKS;
-	}
-
-	struct nlm4_host *host = nlm4_get_host(args->share.caller_name);
-	if (!host) {
-		nlm4_share_entry_free(se);
-		pthread_mutex_unlock(&inode->i_lock_mutex);
-		return NLM4_DENIED_NOLOCKS;
-	}
-
-	cds_list_add(&se->se_list, &inode->i_shares);
-	pthread_mutex_lock(&nlm4_hosts_mutex);
-	cds_list_add(&se->se_host_list, &host->h_shares);
-	pthread_mutex_unlock(&nlm4_hosts_mutex);
-
-	pthread_mutex_unlock(&inode->i_lock_mutex);
-	return NLM4_GRANTED;
-}
-
-int reffs_nlm4_unshare(struct inode *inode, struct nlm4_shareargs *args)
-{
-	struct nlm4_share_entry *se, *tmp;
 	struct nlm4_lock tmp_lock = {
 		.caller_name = args->share.caller_name,
 		.oh = args->share.oh,
 		.svid = 0,
 	};
 
+	lo = nlm4_get_owner(&tmp_lock);
+	if (!lo)
+		return NLM4_DENIED_NOLOCKS;
+
 	pthread_mutex_lock(&inode->i_lock_mutex);
 
-	cds_list_for_each_entry_safe(se, tmp, &inode->i_shares, se_list) {
-		if (nlm4_owner_match(se->se_owner, &tmp_lock)) {
-			cds_list_del(&se->se_list);
-			pthread_mutex_lock(&nlm4_hosts_mutex);
-			cds_list_del(&se->se_host_list);
-			pthread_mutex_unlock(&nlm4_hosts_mutex);
-			nlm4_share_entry_free(se);
-		}
+	share = calloc(1, sizeof(*share));
+	if (!share) {
+		urcu_ref_put(&lo->lo_base.lo_ref, lo->lo_base.lo_release);
+		pthread_mutex_unlock(&inode->i_lock_mutex);
+		return NLM4_DENIED_NOLOCKS;
 	}
+
+	share->s_owner = &lo->lo_base;
+	share->s_mode = args->share.mode;
+	share->s_access = args->share.access;
+	share->s_inode = inode_get(inode);
+	if (!share->s_inode) {
+		reffs_share_free(share);
+		pthread_mutex_unlock(&inode->i_lock_mutex);
+		return NLM4_DENIED_NOLOCKS;
+	}
+
+	host = nlm4_get_host(args->share.caller_name);
+	if (!host) {
+		reffs_share_free(share);
+		pthread_mutex_unlock(&inode->i_lock_mutex);
+		return NLM4_DENIED_NOLOCKS;
+	}
+
+	ret = reffs_share_add(inode, share, &host->h_shares);
+
+	pthread_mutex_unlock(&inode->i_lock_mutex);
+	return (ret == 0) ? NLM4_GRANTED : NLM4_DENIED;
+}
+
+int reffs_nlm4_unshare(struct inode *inode, struct nlm4_shareargs *args)
+{
+	struct nlm4_lock_owner *lo;
+	struct nlm4_host *host;
+	struct nlm4_lock tmp_lock = {
+		.caller_name = args->share.caller_name,
+		.oh = args->share.oh,
+		.svid = 0,
+	};
+
+	lo = nlm4_get_owner(&tmp_lock);
+	if (!lo)
+		return NLM4_DENIED_NOLOCKS;
+
+	host = nlm4_get_host(args->share.caller_name);
+	urcu_ref_put(&lo->lo_base.lo_ref, lo->lo_base.lo_release);
+
+	pthread_mutex_lock(&inode->i_lock_mutex);
+
+	reffs_share_remove(inode, &lo->lo_base, host ? &host->h_shares : NULL);
 
 	pthread_mutex_unlock(&inode->i_lock_mutex);
 	return NLM4_GRANTED;
@@ -470,8 +367,8 @@ int reffs_nlm4_unshare(struct inode *inode, struct nlm4_shareargs *args)
 void reffs_nlm4_free_all(struct nlm4_notify *args)
 {
 	struct nlm4_host *host = NULL;
-	struct nlm4_lock_entry *le, *le_tmp;
-	struct nlm4_share_entry *se, *se_tmp;
+	struct reffs_lock *le, *le_tmp;
+	struct reffs_share *se, *se_tmp;
 
 	LOG("NLM4: FREE_ALL for host %s", args->name);
 
@@ -487,26 +384,25 @@ void reffs_nlm4_free_all(struct nlm4_notify *args)
 	}
 
 	/* Process locks */
-	cds_list_for_each_entry_safe(le, le_tmp, &host->h_locks, le_host_list) {
-		struct inode *inode = le->le_inode;
+	cds_list_for_each_entry_safe(le, le_tmp, &host->h_locks, l_host_list) {
+		struct inode *inode = le->l_inode;
 		pthread_mutex_lock(&inode->i_lock_mutex);
-		cds_list_del(&le->le_list);
-		cds_list_del(&le->le_host_list);
+		cds_list_del(&le->l_list);
+		cds_list_del(&le->l_host_list);
 		pthread_mutex_unlock(&inode->i_lock_mutex);
 
-		nlm4_lock_entry_free(le);
+		reffs_lock_free(le);
 	}
 
 	/* Process shares */
-	cds_list_for_each_entry_safe(se, se_tmp, &host->h_shares,
-				     se_host_list) {
-		struct inode *inode = se->se_inode;
+	cds_list_for_each_entry_safe(se, se_tmp, &host->h_shares, s_host_list) {
+		struct inode *inode = se->s_inode;
 		pthread_mutex_lock(&inode->i_lock_mutex);
-		cds_list_del(&se->se_list);
-		cds_list_del(&se->se_host_list);
+		cds_list_del(&se->s_list);
+		cds_list_del(&se->s_host_list);
 		pthread_mutex_unlock(&inode->i_lock_mutex);
 
-		nlm4_share_entry_free(se);
+		reffs_share_free(se);
 	}
 
 	pthread_mutex_unlock(&nlm4_hosts_mutex);

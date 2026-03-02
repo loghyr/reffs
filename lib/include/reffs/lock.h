@@ -47,7 +47,8 @@ bool reffs_lock_range_overlap(uint64_t off1, uint64_t len1, uint64_t off2,
 struct reffs_lock *reffs_lock_find_conflict(struct inode *inode,
 					    uint64_t offset, uint64_t len,
 					    bool exclusive,
-					    struct reffs_lock_owner *owner);
+					    struct reffs_lock_owner *owner,
+					    void *match_arg);
 
 int reffs_lock_add(struct inode *inode, struct reffs_lock *lock,
 		   struct cds_list_head *host_list);

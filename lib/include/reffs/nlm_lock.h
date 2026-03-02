@@ -11,34 +11,15 @@
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include "nlm4_prot.h"
+#include "reffs/lock.h"
 
 struct inode;
 
 struct nlm4_lock_owner {
-	struct urcu_ref lo_ref;
-	struct cds_list_head lo_list; /* link in nlm4_owners */
+	struct reffs_lock_owner lo_base;
 	netobj lo_oh;
 	uint32_t lo_svid;
 	char *lo_caller;
-};
-
-struct nlm4_lock_entry {
-	struct cds_list_head le_list; /* link in inode->i_locks */
-	struct cds_list_head le_host_list; /* link in host->h_locks */
-	struct inode *le_inode;
-	struct nlm4_lock_owner *le_owner;
-	uint64_t le_offset;
-	uint64_t le_len;
-	bool le_exclusive;
-};
-
-struct nlm4_share_entry {
-	struct cds_list_head se_list; /* link in inode->i_shares */
-	struct cds_list_head se_host_list; /* link in host->h_shares */
-	struct inode *se_inode;
-	struct nlm4_lock_owner *se_owner;
-	fsh4_mode se_mode;
-	fsh4_access se_access;
 };
 
 /* Lock Manager Functions */
