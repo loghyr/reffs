@@ -270,15 +270,6 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 		LOG("Buffer complete: ic=%p id=%u position=%zu, buffer_len=%zu",
 		    (void *)ic, ic->ic_id, ic->ic_position, ic->ic_buffer_len);
 #endif
-#ifdef NOT_NOW_BROWN_COW
-#ifdef HAVE_JEMALLOC
-#ifdef HAVE_VM
-		// Purge all arenas
-		LOG("Purging all arenas");
-		mallctl("arena.4096.purge", NULL, NULL, NULL, 0);
-#endif
-#endif
-#endif
 		io_context_destroy(ic);
 		return 0;
 	}
