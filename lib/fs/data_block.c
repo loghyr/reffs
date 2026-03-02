@@ -78,8 +78,17 @@ struct data_block *data_block_alloc(struct inode *inode, const char *buffer,
 			 sb->sb_id, inode->i_ino);
 
 		db->u.posix.db_path = strdup(path);
-		db->u.posix.db_fd =
-			open(path, O_RDWR | O_CREAT | O_TRUNC, 0666);
+
+		/*
+		 * Only truncate if we are providing a buffer or a specific size.
+		 * If buffer is NULL and size is 0, we are opening an existing
+		 * file (e.g. during recovery).
+		 */
+		int flags = O_RDWR | O_CREAT;
+		if (buffer || size > 0 || offset > 0)
+			flags |= O_TRUNC;
+
+		db->u.posix.db_fd = open(path, flags, 0666);
 		if (db->u.posix.db_fd < 0) {
 			LOG("Could not open/create backend file %s: %s", path,
 			    strerror(errno));
@@ -88,7 +97,15 @@ struct data_block *data_block_alloc(struct inode *inode, const char *buffer,
 			return NULL;
 		}
 
-		if (db->db_size > 0) {
+		if (buffer == NULL && size == 0 && offset == 0) {
+			/* Recovery/Open existing: get the real size from disk */
+			struct stat st;
+			if (fstat(db->u.posix.db_fd, &st) == 0) {
+				db->db_size = st.st_size;
+			}
+		}
+
+		if (db->db_size > 0 && (flags & O_TRUNC)) {
 			if (ftruncate(db->u.posix.db_fd, db->db_size) < 0) {
 				LOG("Could not truncate backend file %s: %s",
 				    path, strerror(errno));
