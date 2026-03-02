@@ -5,7 +5,9 @@
 ROOT_DIR := $(shell git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 # Docker configuration
-DOCKER = docker
+# Auto-detect if sudo is needed for docker
+SUDO ?= $(shell docker ps >/dev/null 2>&1 || echo sudo)
+DOCKER = $(SUDO) docker
 IMAGE_NAME = reffs-dev
 
 # Default target: style and license check
