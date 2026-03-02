@@ -1017,6 +1017,30 @@ static int load_inode_attributes(struct inode *inode)
 		inode->i_db = data_block_alloc(inode, NULL, 0, 0);
 	}
 
+	// Also check if symlink file exists
+	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.lnk",
+		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
+	if (access(path, F_OK) == 0) {
+		fd = open(path, O_RDONLY);
+		if (fd >= 0) {
+			struct stat st;
+			if (fstat(fd, &st) == 0) {
+				inode->i_symlink = malloc(st.st_size + 1);
+				if (inode->i_symlink) {
+					if (read(fd, inode->i_symlink,
+						 st.st_size) == st.st_size) {
+						inode->i_symlink[st.st_size] =
+							'\0';
+					} else {
+						free(inode->i_symlink);
+						inode->i_symlink = NULL;
+					}
+				}
+			}
+			close(fd);
+		}
+	}
+
 	return 0;
 }
 
