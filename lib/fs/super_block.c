@@ -172,6 +172,8 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 	case REFFS_STORAGE_POSIX:
 		if (statvfs(backend_path, &sv) == 0) {
 			sb->sb_block_size = sv.f_bsize;
+			sb->sb_bytes_max = (size_t)sv.f_blocks * sv.f_frsize;
+			sb->sb_inodes_max = sv.f_files;
 		} else {
 			sb->sb_block_size = 4096; /* fallback */
 		}

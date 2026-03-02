@@ -83,9 +83,45 @@ static void inode_release(struct urcu_ref *ref)
 	struct inode *inode = caa_container_of(ref, struct inode, i_ref);
 
 	inode_unhash(inode);
-	if (inode->i_sb)
+	if (inode->i_sb) {
 		__atomic_fetch_sub(&inode->i_sb->sb_inodes_used, 1,
 				   __ATOMIC_RELAXED);
+
+		if (inode->i_nlink == 0) {
+			__atomic_fetch_sub(&inode->i_sb->sb_bytes_used,
+					   inode->i_size, __ATOMIC_RELAXED);
+
+			if (inode->i_sb->sb_storage_type ==
+			    REFFS_STORAGE_POSIX) {
+				char path[1024];
+				struct super_block *sb = inode->i_sb;
+
+				snprintf(path, sizeof(path),
+					 "%s/sb_%lu/ino_%lu.meta",
+					 sb->sb_backend_path, sb->sb_id,
+					 inode->i_ino);
+				unlink(path);
+
+				snprintf(path, sizeof(path),
+					 "%s/sb_%lu/ino_%lu.dat",
+					 sb->sb_backend_path, sb->sb_id,
+					 inode->i_ino);
+				unlink(path);
+
+				snprintf(path, sizeof(path),
+					 "%s/sb_%lu/ino_%lu.dir",
+					 sb->sb_backend_path, sb->sb_id,
+					 inode->i_ino);
+				unlink(path);
+
+				snprintf(path, sizeof(path),
+					 "%s/sb_%lu/ino_%lu.lnk",
+					 sb->sb_backend_path, sb->sb_id,
+					 inode->i_ino);
+				unlink(path);
+			}
+		}
+	}
 	super_block_put(inode->i_sb);
 
 	call_rcu(&inode->i_rcu, inode_free_rcu);
