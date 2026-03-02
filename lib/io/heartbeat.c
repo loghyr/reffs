@@ -24,15 +24,15 @@
 #include "reffs/trace/io.h"
 
 // Heartbeat interval in seconds
-#ifdef HAVE_VM
 #define HEARTBEAT_INTERVAL 1
+
+#ifdef HAVE_VM
 #define STALLED_CHECK_INTERVAL 1
+#define DESTROYED_CHECK_INTERVAL 1
 #else
 #define DESTROYED_CHECK_INTERVAL 60
 #define STALLED_CHECK_INTERVAL 60
 #endif
-
-#define DESTROYED_CHECK_INTERVAL 1
 
 #define LISTENER_CHECK_INTERVAL 5
 #define CONNECTION_CHECK_INTERVAL 10
