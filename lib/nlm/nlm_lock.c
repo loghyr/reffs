@@ -18,6 +18,7 @@
 #include "reffs/super_block.h"
 #include "reffs/fs.h"
 #include "reffs/nlm_lock.h"
+#include "reffs/trace/nlm.h"
 
 static CDS_LIST_HEAD(nlm4_owners);
 static pthread_mutex_t nlm4_owners_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -167,7 +168,11 @@ int reffs_nlm4_lock(struct inode *inode, struct nlm4_lockargs *args)
 	struct reffs_lock *lock;
 	int ret;
 
+	trace_nlm4_lock(inode, args->alock.svid, args->alock.l_offset,
+			args->alock.l_len, args->exclusive);
+
 	lo = nlm4_get_owner(&args->alock);
+
 	if (!lo)
 		return NLM4_DENIED_NOLOCKS;
 
@@ -218,7 +223,11 @@ int reffs_nlm4_unlock(struct inode *inode, struct nlm4_unlockargs *args)
 	struct nlm4_lock_owner *lo;
 	struct nlm4_host *host;
 
+	trace_nlm4_unlock(inode, args->alock.svid, args->alock.l_offset,
+			  args->alock.l_len);
+
 	lo = nlm4_get_owner(&args->alock);
+
 	if (!lo)
 		return NLM4_DENIED_NOLOCKS;
 
@@ -241,7 +250,11 @@ int reffs_nlm4_test(struct inode *inode, struct nlm4_testargs *args,
 	struct nlm4_lock_owner *lo;
 	struct reffs_lock *conflict;
 
+	trace_nlm4_test(inode, args->alock.svid, args->alock.l_offset,
+			args->alock.l_len, args->exclusive);
+
 	lo = nlm4_get_owner(&args->alock);
+
 	if (!lo) {
 		res->stat.stat = NLM4_DENIED_NOLOCKS;
 		return 0;

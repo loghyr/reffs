@@ -34,8 +34,8 @@ static off_t trace_bytes_written = 0;
 /* Global trace state */
 static pthread_mutex_t trace_mutex = PTHREAD_MUTEX_INITIALIZER;
 static FILE *trace_fp = NULL;
-static bool category_enabled[REFFS_TRACE_CAT_ALL] = { false, false, true, true,
-						      false };
+static bool category_enabled[REFFS_TRACE_CAT_ALL] = { true, true, true,
+						      true, true, true };
 
 static char *trace_compress_queue[MAX_TRACE_QUEUE];
 static int trace_compress_head = 0;
@@ -270,8 +270,11 @@ void reffs_trace_event(enum reffs_trace_category category, const char *name,
 	// Compute time delta in microseconds
 	uint64_t delta_us = 0;
 	if (last_event_ts.tv_sec != 0) {
-		delta_us = (ts.tv_sec - last_event_ts.tv_sec) * 1000000ULL +
-			   (ts.tv_nsec - last_event_ts.tv_nsec) / 1000ULL;
+		int64_t sec_diff = (int64_t)ts.tv_sec - last_event_ts.tv_sec;
+		int64_t nsec_diff = (int64_t)ts.tv_nsec - last_event_ts.tv_nsec;
+		int64_t total_us =
+			(sec_diff * 1000000LL) + (nsec_diff / 1000LL);
+		delta_us = (total_us > 0) ? (uint64_t)total_us : 0;
 	}
 	last_event_ts = ts;
 

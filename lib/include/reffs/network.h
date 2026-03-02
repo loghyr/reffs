@@ -9,6 +9,7 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <string.h>
+#include <stdbool.h>
 
 struct connection_info {
 	struct sockaddr_storage ci_peer;

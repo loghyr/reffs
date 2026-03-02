@@ -160,4 +160,32 @@ static inline void trace_io_writer(struct io_context *ic, const char *func,
 	}
 }
 
+static inline void trace_io_read(int fd, int bytes)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_read", __LINE__,
+			  "fd=%d bytes=%d", fd, bytes);
+}
+
+static inline void trace_io_queued_task(int fd, uint32_t xid, int len)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_queued_task", __LINE__,
+			  "fd=%d xid=0x%08x len=%d", fd, xid, len);
+}
+
+static inline void trace_io_submit_write(int fd, struct io_context *ic,
+					 uint32_t len)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_submit_write", __LINE__,
+			  "fd=%d ic=%p id=%u len=%u", fd, (void *)ic, ic->ic_id,
+			  len);
+}
+
+static inline void trace_io_write_complete(int fd, int res,
+					   struct io_context *ic)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_IO, "io_write_complete", __LINE__,
+			  "fd=%d res=%d ic=%p id=%u", fd, res, (void *)ic,
+			  ic->ic_id);
+}
+
 #endif /* _REFFS_TRACE_IO_H */

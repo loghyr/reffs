@@ -229,6 +229,7 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 
 		LOG("Accepted connection from %s:%d on fd=%d", addr_str, port,
 		    client_fd);
+		TRACE("ACCEPTED: fd=%d from %s:%d", client_fd, addr_str, port);
 	} else {
 		LOG("Failed to get peer information: %s", strerror(errno));
 		memset(&ic->ic_ci.ci_peer, 0, sizeof(ic->ic_ci.ci_peer));

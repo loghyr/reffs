@@ -474,6 +474,8 @@ int io_request_read_op(int fd, struct connection_info *ci,
 	io_uring_prep_read(sqe, fd, buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
 
+	TRACE("SUBMIT READ: fd=%d ic=%p id=%u", fd, (void *)ic, ic->ic_id);
+
 	//trace_io_read_submit(ic);
 
 	bool submitted = false;
@@ -593,7 +595,7 @@ static int process_record_marker(struct buffer_state *bs)
 	bool last_fragment = (marker & 0x80000000) != 0;
 	uint32_t fragment_len = marker & 0x7FFFFFFF;
 
-	trace_io_record_marker(bs, marker, last_fragment, marker);
+	trace_io_record_marker(bs, marker, last_fragment, fragment_len);
 
 	// Skip invalid markers
 	if (fragment_len == 0) {
@@ -718,6 +720,8 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 	// Extract data from context
 	char *buffer = (char *)ic->ic_buffer;
 	int client_fd = ic->ic_fd;
+
+	trace_io_read(client_fd, bytes_read);
 
 	struct conn_info *ci = io_conn_get(client_fd);
 	struct buffer_state *bs = NULL;
@@ -886,6 +890,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 		}
 
 		trace_io_message_complete(client_fd, t->t_xid, complete_size);
+		trace_io_queued_task(client_fd, t->t_xid, complete_size);
 
 		// Queue it for processing
 		add_task(t);
