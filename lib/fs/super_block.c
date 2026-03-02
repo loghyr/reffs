@@ -158,13 +158,6 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 
 	urcu_ref_init(&sb->sb_ref);
 
-	sb->sb_id = id;
-	sb->sb_path = strdup(path);
-	if (!sb->sb_path) {
-		super_block_free(sb);
-		return NULL;
-	}
-
 	uuid_generate(sb->sb_uuid);
 
 	__atomic_fetch_or(&sb->sb_state, SB_IN_LIST, __ATOMIC_RELEASE);
