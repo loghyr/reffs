@@ -149,9 +149,17 @@ void reffs_lock_free(struct reffs_lock *lock)
 static bool reffs_share_conflict(uint32_t s1_mode, uint32_t s1_access,
 				 uint32_t s2_mode, uint32_t s2_access)
 {
-	if ((s2_access & s1_mode))
+	/*
+	 * fsh4_mode (deny) enums: fsm_DN=0, fsm_DR=1, fsm_DW=2, fsm_DRW=3
+	 * fsh4_access enums: fsa_NONE=0, fsa_R=1, fsa_W=2, fsa_RW=3
+	 * These enums conveniently act as bitmasks (bit 0 = READ, bit 1 = WRITE).
+	 */
+
+	/* If S2 wants access that S1 denies, conflict */
+	if ((s2_access & s1_mode) != 0)
 		return true;
-	if ((s1_access & s2_mode))
+	/* If S1 has access that S2 denies, conflict */
+	if ((s1_access & s2_mode) != 0)
 		return true;
 	return false;
 }
@@ -159,15 +167,25 @@ static bool reffs_share_conflict(uint32_t s1_mode, uint32_t s1_access,
 int reffs_share_add(struct inode *inode, struct reffs_share *share,
 		    struct cds_list_head *host_list)
 {
-	struct reffs_share *se;
+	struct reffs_share *se, *existing = NULL;
 
 	cds_list_for_each_entry(se, &inode->i_shares, s_list) {
-		if (se->s_owner == share->s_owner)
+		if (se->s_owner == share->s_owner) {
+			existing = se;
 			continue;
+		}
 
 		if (reffs_share_conflict(se->s_mode, se->s_access,
 					 share->s_mode, share->s_access))
 			return -EACCES;
+	}
+
+	if (existing) {
+		/* Upgrade/Update existing share */
+		existing->s_mode = share->s_mode;
+		existing->s_access = share->s_access;
+		reffs_share_free(share);
+		return 0;
 	}
 
 	cds_list_add(&share->s_list, &inode->i_shares);
