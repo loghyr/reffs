@@ -183,6 +183,8 @@ int main(int argc, char *argv[])
 	// Block signals in main thread temporarily
 	pthread_sigmask(SIG_BLOCK, &mask, NULL);
 
+	server_port_set(port);
+
 	// Initialize IO handler
 	if (io_handler_init(&rc) < 0) {
 		return 1;
@@ -293,7 +295,6 @@ int main(int argc, char *argv[])
 	} else {
 		LOG("Failed to register NFSv3 TCP");
 	}
-	pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_UDP, port);
 
 	/* MOUNTv3 */
 	if (pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, port)) {
@@ -301,7 +302,6 @@ int main(int argc, char *argv[])
 	} else {
 		LOG("Failed to register MOUNTv3 TCP");
 	}
-	pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_UDP, port);
 
 	/* NLMv4 */
 	if (pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_TCP, port)) {
@@ -309,7 +309,6 @@ int main(int argc, char *argv[])
 	} else {
 		LOG("Failed to register NLMv4 TCP");
 	}
-	pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_UDP, port);
 
 	/* NLMv3 */
 	if (pmap_set(NLM_PROG, NLM_VERSX, IPPROTO_TCP, port)) {
@@ -317,7 +316,6 @@ int main(int argc, char *argv[])
 	} else {
 		LOG("Failed to register NLMv3 TCP");
 	}
-	pmap_set(NLM_PROG, NLM_VERSX, IPPROTO_UDP, port);
 
 	/* NLMv1 */
 	if (pmap_set(NLM_PROG, NLM_VERS, IPPROTO_TCP, port)) {
@@ -325,7 +323,6 @@ int main(int argc, char *argv[])
 	} else {
 		LOG("Failed to register NLMv1 TCP");
 	}
-	pmap_set(NLM_PROG, NLM_VERS, IPPROTO_UDP, port);
 
 	/* NSM */
 	if (pmap_set(SM_PROG, SM_VERS, IPPROTO_TCP, port)) {
@@ -333,7 +330,6 @@ int main(int argc, char *argv[])
 	} else {
 		LOG("Failed to register NSM TCP");
 	}
-	pmap_set(SM_PROG, SM_VERS, IPPROTO_UDP, port);
 
 	__atomic_store(&running, &(int){ 1 }, __ATOMIC_SEQ_CST);
 

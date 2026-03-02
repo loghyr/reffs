@@ -888,6 +888,7 @@ handle_rpc_error:
 			}
 
 			p = (uint32_t *)rt->rt_reply;
+
 			p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
 			if (!p) {
 				free(rt->rt_reply);
@@ -992,6 +993,7 @@ handle_rpc_error:
 		}
 
 		p = (uint32_t *)rt->rt_reply;
+
 		p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
 		if (!p) {
 			free(rt->rt_reply);
@@ -1071,6 +1073,7 @@ handle_rpc_error:
 		}
 
 		p = (uint32_t *)rt->rt_reply;
+
 		p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
@@ -1185,9 +1188,15 @@ handle_rpc_error:
 		if (__rpc_log_packets)
 			rpc_log_packet("TX: ", rt->rt_reply, rt->rt_reply_len);
 		rt->rt_cb(rt);
+
+		// Successfully processed and queued for writing
+		rpc_program_handler_put(rph);
+		rpc_protocol_free(rt);
+		return 0;
 	}
 
 drop_on_floor:
+	TRACE("DROPPED TASK: fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
 	rpc_program_handler_put(rph);
 	rpc_protocol_free(rt);
 

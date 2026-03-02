@@ -194,9 +194,9 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 
 	ic->ic_expected_len = len;
 	io_uring_prep_write(sqe, fd, buf, len, 0);
-	io_uring_sqe_set_data(sqe, ic); // loghyr - fix this everywhere
+	io_uring_sqe_set_data(sqe, ic);
 
-	trace_io_write_submit(ic);
+	trace_io_submit_write(fd, ic, len);
 
 	bool submitted = false;
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
@@ -271,6 +271,7 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 		LOG("Buffer complete: ic=%p id=%u position=%zu, buffer_len=%zu",
 		    (void *)ic, ic->ic_id, ic->ic_position, ic->ic_buffer_len);
 #endif
+		trace_io_write_complete(ic->ic_fd, 0, ic);
 		io_context_destroy(ic);
 		return 0;
 	}
@@ -328,6 +329,8 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	ic->ic_expected_len = chunk_size;
 	io_uring_prep_write(sqe, ic->ic_fd, buffer, chunk_size, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
+
+	trace_io_submit_write(ic->ic_fd, ic, chunk_size);
 
 	bool submitted = false;
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
@@ -404,6 +407,8 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 int io_handle_write(struct io_context *ic, int bytes_written,
 		    struct ring_context *rc)
 {
+	trace_io_write_complete(ic->ic_fd, bytes_written, ic);
+
 	// Check connection state
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
 

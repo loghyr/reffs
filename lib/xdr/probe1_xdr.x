@@ -111,8 +111,9 @@ enum probe_trace_category1 {
         PROBE1_TRACE_CAT_IO = 1,
         PROBE1_TRACE_CAT_RPC = 2,
         PROBE1_TRACE_CAT_NFS = 3,
-        PROBE1_TRACE_CAT_FS = 4,
-        PROBE1_TRACE_CAT_ALL = 5
+        PROBE1_TRACE_CAT_NLM = 4,
+        PROBE1_TRACE_CAT_FS = 5,
+        PROBE1_TRACE_CAT_ALL = 6
 };
 
 struct TRACE_SET1args {

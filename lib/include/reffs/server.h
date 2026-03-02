@@ -11,4 +11,7 @@
 void server_boot_uuid_generate(void);
 uuid_t *server_boot_uuid_get(void);
 
+void server_port_set(int port);
+int server_port_get(void);
+
 #endif /* _REFFS_SERVER_H */

@@ -141,6 +141,8 @@ static void io_context_unregister(struct io_context *ic)
 
 void io_context_destroy(struct io_context *ic)
 {
+	TRACE("DESTROY: ic=%p op=%s fd=%d id=%u", (void *)ic,
+	      io_op_type_to_str(ic->ic_op_type), ic->ic_fd, ic->ic_id);
 	trace_io_context(ic, __func__, __LINE__);
 
 	// Only continue if we can mark it
