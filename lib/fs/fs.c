@@ -983,7 +983,7 @@ static int load_inode_attributes(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct inode_disk id;
-	char path[1024];
+	char path[PATH_MAX];
 
 	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.meta",
 		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
@@ -1024,7 +1024,7 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 {
 	struct inode *inode = parent->rd_inode;
 	struct super_block *sb = inode->i_sb;
-	char path[1024];
+	char path[PATH_MAX];
 
 	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dir",
 		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
@@ -1068,6 +1068,24 @@ void reffs_fs_recover(struct super_block *sb)
 		return;
 
 	LOG("Starting recovery from %s", sb->sb_backend_path);
+
+	/* Scan directory for all meta files to find the true max inode number */
+	char sb_path[PATH_MAX];
+	snprintf(sb_path, sizeof(sb_path), "%s/sb_%lu", sb->sb_backend_path,
+		 sb->sb_id);
+
+	DIR *dir = opendir(sb_path);
+	if (dir) {
+		struct dirent *de;
+		while ((de = readdir(dir)) != NULL) {
+			uint64_t ino;
+			if (sscanf(de->d_name, "ino_%lu.meta", &ino) == 1) {
+				if (ino >= sb->sb_next_ino)
+					sb->sb_next_ino = ino + 1;
+			}
+		}
+		closedir(dir);
+	}
 
 	// Root inode is 1
 	struct inode *root_inode = sb->sb_dirent->rd_inode;
