@@ -41,6 +41,8 @@ struct super_block {
 	size_t sb_inodes_max;
 	size_t sb_inodes_used;
 
+	uint64_t sb_delayed_count;
+
 	size_t sb_block_size;
 
 #define SB_IN_LIST (1ULL << 0)
