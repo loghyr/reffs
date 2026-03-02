@@ -27,20 +27,22 @@ struct cds_list_head *super_block_list_head(void)
 	return &super_block_list;
 }
 
-static void super_block_remove_all_inodes(struct cds_lfht *ht)
+static void super_block_remove_all_inodes(struct super_block *sb)
 {
 	struct cds_lfht_iter iter;
 	struct inode *inode;
 	unsigned long count = 0;
-	int sleep_em = INODE_RELEASE_HARVEST + 1;
 
-	LOG("Sleep for %d seconds to let inodes drain", sleep_em);
-	sleep(sleep_em);
+	while (__atomic_load_n(&sb->sb_delayed_count, __ATOMIC_RELAXED) > 0) {
+		LOG("Waiting for delayed releases to drain (%lu remaining)",
+		    sb->sb_delayed_count);
+		sleep(1);
+	}
 
 	rcu_barrier();
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(ht, &iter, inode, i_node) {
+	cds_lfht_for_each_entry(sb->sb_inodes, &iter, inode, i_node) {
 		if (inode_unhash(inode))
 			count++;
 	}
@@ -84,7 +86,7 @@ static void super_block_release(struct urcu_ref *ref)
 	if (flags & SB_IN_LIST)
 		cds_list_del_init(&sb->sb_link);
 
-	super_block_remove_all_inodes(sb->sb_inodes);
+	super_block_remove_all_inodes(sb);
 
 	call_rcu(&sb->sb_rcu, super_block_free_rcu);
 }
