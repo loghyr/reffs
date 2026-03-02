@@ -82,7 +82,7 @@ static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 	fa->uid = inode->i_uid;
 	fa->gid = inode->i_gid;
 	fa->size = inode->i_size;
-	fa->used = inode->i_used;
+	fa->used = inode->i_used * inode->i_sb->sb_block_size;
 	fa->rdev.specdata1 = inode->i_dev_major;
 	fa->rdev.specdata2 = inode->i_dev_minor;
 	fa->fsid = inode->i_sb->sb_id;
@@ -822,14 +822,12 @@ static int nfs3_op_read(struct rpc_trans *rt)
 			goto update_wcc;
 		}
 
-		resok->count = resok->data.data_len = res->status;
+		resok->count = resok->data.data_len = dbr;
 		res->status = NFS3_OK;
 
 		if (args->offset + resok->count >= inode->i_db->db_size)
 			resok->eof = true;
 		pthread_rwlock_unlock(&inode->i_db_rwlock);
-
-		resok->count = resok->data.data_len;
 	}
 
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
@@ -923,17 +921,17 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 		resok->count = args->data.data_len;
 	} else {
-		res->status = data_block_write(inode->i_db, args->data.data_val,
+		ssize_t dbw = data_block_write(inode->i_db, args->data.data_val,
 					       args->data.data_len,
 					       args->offset);
-		if (res->status < 0) {
-			res->status = -res->status;
+		if (dbw < 0) {
+			res->status = -dbw;
 			wcc = &res->WRITE3res_u.resfail.file_wcc;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
 		}
 
-		resok->count = res->status;
+		resok->count = dbw;
 		res->status = NFS3_OK;
 	}
 
