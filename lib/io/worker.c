@@ -48,6 +48,8 @@ struct thread_data {
 	volatile sig_atomic_t *running;
 };
 
+pthread_cond_t task_queue_full_cond = PTHREAD_COND_INITIALIZER;
+
 // Worker thread function
 void *io_worker_thread(void *vtd)
 {
@@ -72,6 +74,7 @@ void *io_worker_thread(void *vtd)
 		if (task_queue_head != task_queue_tail) {
 			t = task_queue[task_queue_head];
 			task_queue_head = (task_queue_head + 1) % QUEUE_DEPTH;
+			pthread_cond_signal(&task_queue_full_cond);
 			pthread_mutex_unlock(&task_queue_mutex);
 		} else {
 			// Wait with timeout during normal operation
@@ -114,6 +117,10 @@ void *io_worker_thread(void *vtd)
 void add_task(struct task *t)
 {
 	pthread_mutex_lock(&task_queue_mutex);
+	// Wait while the queue is full
+	while (((task_queue_tail + 1) % QUEUE_DEPTH) == task_queue_head) {
+		pthread_cond_wait(&task_queue_full_cond, &task_queue_mutex);
+	}
 	task_queue[task_queue_tail] = t;
 	task_queue_tail = (task_queue_tail + 1) % QUEUE_DEPTH;
 	pthread_cond_signal(&task_queue_cond);

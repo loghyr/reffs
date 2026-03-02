@@ -35,7 +35,7 @@
 #ifdef HAVE_IO_URING_STRESS
 #define QUEUE_DEPTH 128
 #else
-#define QUEUE_DEPTH 128
+#define QUEUE_DEPTH 2048
 #endif
 
 #define NUM_LISTENERS 1
