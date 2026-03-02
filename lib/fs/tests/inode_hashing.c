@@ -46,8 +46,8 @@ START_TEST(add_sb_2)
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	ck_assert(sb);
 
-	super_block_put(sb);
 	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_put(sb);
 }
 
 START_TEST(find_sb_inode)
@@ -75,8 +75,8 @@ START_TEST(find_sb_inode)
 	inode_put(inode1);
 	inode_put(inode2);
 
-	super_block_put(sb);
 	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_put(sb);
 }
 
 START_TEST(find_sb_inode_put)
@@ -101,8 +101,8 @@ START_TEST(find_sb_inode_put)
 	inode2 = inode_find(sb, 1);
 	ck_assert(inode2 == sb->sb_dirent->rd_inode);
 
-	super_block_put(sb);
 	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_put(sb);
 
 	inode_put(inode1);
 	inode_put(inode2);
@@ -133,8 +133,8 @@ START_TEST(find_sb_inode_unhash)
 	inode_put(inode1);
 	inode_put(inode2);
 
-	super_block_put(sb);
 	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_put(sb);
 }
 
 START_TEST(add_inode_1)
@@ -155,8 +155,8 @@ START_TEST(add_inode_1)
 	inode = inode_find(sb, 2);
 	ck_assert(!inode);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
 	super_block_put(sb);
+	super_block_dirent_release(sb, reffs_life_action_death);
 }
 
 START_TEST(add_inode_2)
