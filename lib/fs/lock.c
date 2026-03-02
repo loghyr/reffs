@@ -26,7 +26,8 @@ bool reffs_lock_range_overlap(uint64_t off1, uint64_t len1, uint64_t off2,
 struct reffs_lock *reffs_lock_find_conflict(struct inode *inode,
 					    uint64_t offset, uint64_t len,
 					    bool exclusive,
-					    struct reffs_lock_owner *owner)
+					    struct reffs_lock_owner *owner,
+					    void *match_arg)
 {
 	struct reffs_lock *rl;
 
@@ -34,7 +35,15 @@ struct reffs_lock *reffs_lock_find_conflict(struct inode *inode,
 		if (!exclusive && !rl->l_exclusive)
 			continue;
 
-		if (rl->l_owner == owner)
+		if (owner && rl->l_owner == owner)
+			continue;
+
+		/*
+		 * If we have a match function, use it to check if it's the same owner
+		 * even if the pointers differ (e.g. NLM vs NFSv4)
+		 */
+		if (owner && owner->lo_match &&
+		    owner->lo_match(rl->l_owner, match_arg))
 			continue;
 
 		if (reffs_lock_range_overlap(rl->l_offset, rl->l_len, offset,
