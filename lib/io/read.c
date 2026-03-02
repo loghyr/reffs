@@ -413,6 +413,7 @@ static int request_more_read_data(int fd, struct ring_context *rc,
 			LOG("-EAGAIN in request_more_read_data (retry %d/%d)",
 			    i + 1, REFFS_IO_MAX_RETRIES);
 			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
+			trace_io_eagain(ic, __func__, __LINE__);
 			pthread_mutex_unlock(&rc->rc_mutex);
 			sched_yield();
 			pthread_mutex_lock(&rc->rc_mutex);
@@ -485,6 +486,7 @@ int io_request_read_op(int fd, struct connection_info *ci,
 			LOG("-EAGAIN in io_request_read_op (retry %d/%d)",
 			    i + 1, REFFS_IO_MAX_RETRIES);
 			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
+			trace_io_eagain(ic, __func__, __LINE__);
 			pthread_mutex_unlock(&rc->rc_mutex);
 			sched_yield();
 			pthread_mutex_lock(&rc->rc_mutex);

@@ -97,6 +97,20 @@ static inline void trace_io_connection_state_change(int fd, int old_state,
 			  io_conn_state_to_str(new_state));
 }
 
+static inline void trace_io_eagain(struct io_context *ic, const char *func,
+				    int line)
+{
+	time_t now = time(NULL);
+	time_t age = now - ic->ic_action_time;
+
+	reffs_trace_event(
+		REFFS_TRACE_CAT_IO, func, line,
+		"EAGAIN: ic=%p op=%s fd=%d state=0x%lx age=%ld count=%ld pos=%zu el=%zu len=%zu id=%u",
+		(void *)ic, io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
+		ic->ic_state, age, ic->ic_count, ic->ic_position,
+		ic->ic_expected_len, ic->ic_buffer_len, ic->ic_id);
+}
+
 static inline void trace_io_context(struct io_context *ic, const char *func,
 				    int line)
 {
