@@ -93,24 +93,6 @@ static struct option long_opts[] = {
 	{ NULL, 0, NULL, 0 },
 };
 
-static void *portmapper_watchdog(void *arg)
-{
-	int port = *(int *)arg;
-	while (__atomic_load_n(&running, __ATOMIC_RELAXED)) {
-		/* aggressive cleanup and re-register */
-		for (int v = 1; v <= 4; v++) {
-			pmap_unset(NLM_PROG, v);
-			pmap_set(NLM_PROG, v, IPPROTO_TCP, port);
-			pmap_set(NLM_PROG, v, IPPROTO_UDP, port);
-		}
-		pmap_unset(SM_PROG, SM_VERS);
-		pmap_set(SM_PROG, SM_VERS, IPPROTO_TCP, port);
-		pmap_set(SM_PROG, SM_VERS, IPPROTO_UDP, port);
-
-		sleep(1);
-	}
-	return NULL;
-}
 
 int main(int argc, char *argv[])
 
@@ -356,16 +338,11 @@ int main(int argc, char *argv[])
 
 	__atomic_store(&running, &(int){ 1 }, __ATOMIC_SEQ_CST);
 
-	pthread_t watchdog_tid;
-	pthread_create(&watchdog_tid, NULL, portmapper_watchdog, &port);
-
 	// Run the main IO processing loop
 
 	io_handler_main_loop(&running, &rc);
 
 	TRACE("Main loop exited, cleaning up...");
-
-	pthread_join(watchdog_tid, NULL);
 
 	// Cleanup listener socket
 
