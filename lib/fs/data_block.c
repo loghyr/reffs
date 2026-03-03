@@ -31,8 +31,6 @@ static void data_block_free_rcu(struct rcu_head *rcu)
 
 	switch (db->db_storage_type) {
 	case REFFS_STORAGE_POSIX:
-		if (db->u.posix.db_fd >= 0)
-			close(db->u.posix.db_fd);
 		free(db->u.posix.db_path);
 		break;
 	case REFFS_STORAGE_RAM:
@@ -51,6 +49,17 @@ static void data_block_release(struct urcu_ref *ref)
 {
 	struct data_block *db =
 		caa_container_of(ref, struct data_block, db_ref);
+
+	switch (db->db_storage_type) {
+	case REFFS_STORAGE_POSIX:
+		if (db->u.posix.db_fd >= 0) {
+			close(db->u.posix.db_fd);
+			db->u.posix.db_fd = -1;
+		}
+		break;
+	default:
+		break;
+	}
 
 	call_rcu(&db->db_rcu, data_block_free_rcu);
 }
