@@ -63,6 +63,10 @@ void reffs_trace(const char *function, int line, const char *msg, ...);
 #define TRACE(fmt, ...) \
 	reffs_trace_event(REFFS_TRACE_CAT_ALL, __func__, __LINE__, fmt, ##__VA_ARGS__)
 
+// TRC is for high-priority trace events that should always be emitted to the trace file
+#define TRC(fmt, ...) \
+	reffs_trace_event(REFFS_TRACE_CAT_ALL, __func__, __LINE__, fmt, ##__VA_ARGS__)
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif

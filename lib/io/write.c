@@ -53,8 +53,8 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
 
-	LOG("ic=%p fd=%d type=%s bl=%zu id=%u", (void *)ic, ic->ic_fd,
-	    io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
+	TRACE("ic=%p fd=%d type=%s bl=%zu id=%u", (void *)ic, ic->ic_fd,
+	      io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
 
 	if (remaining == 0) {
 		io_context_destroy(ic);
@@ -67,13 +67,13 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 	ktls_enabled = BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
 #endif
 
-	LOG("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
-	    io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
+	TRACE("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
+	      io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
 	if (!ktls_enabled) {
 		// Check if we've already processed this context for TLS
 		if (ic->ic_state & IO_CONTEXT_TLS_BIO_PROCESSED) {
-			LOG("ic=%p id=%u already processed for TLS, destroying",
-			    (void *)ic, ic->ic_id);
+			TRACE("ic=%p id=%u already processed for TLS, destroying",
+			      (void *)ic, ic->ic_id);
 			io_context_destroy(ic);
 			return 0;
 		}
@@ -103,8 +103,8 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 			BIO *wbio = SSL_get_wbio(ci->ci_ssl);
 			int pending = BIO_pending(wbio);
 
-			LOG("SSL_write processed %d bytes, resulting in %d bytes of TLS data",
-			    ret, pending);
+			TRACE("SSL_write processed %d bytes, resulting in %d bytes of TLS data",
+			      ret, pending);
 
 			// Mark that we've processed this context for TLS to avoid duplicates
 			ic->ic_state |= IO_CONTEXT_TLS_BIO_PROCESSED;
@@ -121,8 +121,8 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 
 				int bytes =
 					BIO_read(wbio, write_buffer, pending);
-				LOG("Read %d bytes of encrypted data from BIO",
-				    bytes);
+				TRACE("Read %d bytes of encrypted data from BIO",
+				      bytes);
 
 				if (bytes > 0) {
 					ret = io_request_write_op(
@@ -141,8 +141,8 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 						return ret;
 					}
 
-					LOG("Submitted %d bytes of TLS data via io_request_write_op",
-					    bytes);
+					TRACE("Submitted %d bytes of TLS data via io_request_write_op",
+					      bytes);
 				} else {
 					free(write_buffer);
 				}
@@ -222,9 +222,9 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 		io_context_destroy(ic);
 	} else {
 		ret = 0;
-		LOG("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
-		    io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len,
-		    ic->ic_id);
+		TRACE("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
+		      io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len,
+		      ic->ic_id);
 	}
 
 	return ret;
@@ -268,8 +268,8 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	// Check if we're done first
 	if (ic->ic_position >= ic->ic_buffer_len) {
 #ifdef PARTIAL_WRITE_DEBUG
-		LOG("Buffer complete: ic=%p id=%u position=%zu, buffer_len=%zu",
-		    (void *)ic, ic->ic_id, ic->ic_position, ic->ic_buffer_len);
+		TRACE("Buffer complete: ic=%p id=%u position=%zu, buffer_len=%zu",
+		      (void *)ic, ic->ic_id, ic->ic_position, ic->ic_buffer_len);
 #endif
 		trace_io_write_complete(ic->ic_fd, 0, ic);
 		io_context_destroy(ic);
@@ -301,13 +301,13 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	if (ic->ic_position == 0) {
 		uint32_t *p = (uint32_t *)buffer;
 		uint32_t marker = ntohl(*p);
-		LOG("First fragment: ic=%p id=%u pos=%zu, remaining=%zu, chunk_size=%u, marker=0x%08x",
-		    (void *)ic, ic->ic_id, ic->ic_position, remaining,
-		    chunk_size, marker);
+		TRACE("First fragment: ic=%p id=%u pos=%zu, remaining=%zu, chunk_size=%u, marker=0x%08x",
+		      (void *)ic, ic->ic_id, ic->ic_position, remaining,
+		      chunk_size, marker);
 	} else {
-		LOG("Continuing fragment: ic=%p id=%u pos=%zu, remaining=%zu, chunk_size=%u",
-		    (void *)ic, ic->ic_id, ic->ic_position, remaining,
-		    chunk_size);
+		TRACE("Continuing fragment: ic=%p id=%u pos=%zu, remaining=%zu, chunk_size=%u",
+		      (void *)ic, ic->ic_id, ic->ic_position, remaining,
+		      chunk_size);
 	}
 #endif
 
@@ -436,8 +436,8 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 
 		// Check if this was the final handshake message
 		if (ci->ci_handshake_final_pending) {
-			LOG("Final TLS handshake message sent for fd=%d",
-			    ic->ic_fd);
+			TRACE("Final TLS handshake message sent for fd=%d",
+			      ic->ic_fd);
 
 			// Clear the pending flag
 			ci->ci_handshake_final_pending = false;
@@ -448,7 +448,7 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 			// Make sure any buffered BIO data is flushed
 			BIO_flush(SSL_get_wbio(ci->ci_ssl));
 
-			LOG("TLS mode now active for fd=%d", ic->ic_fd);
+			TRACE("TLS mode now active for fd=%d", ic->ic_fd);
 
 // Log kTLS status
 #ifdef BIO_get_ktls_send
@@ -456,21 +456,21 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 				BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
 			int ktls_recv =
 				BIO_get_ktls_recv(SSL_get_rbio(ci->ci_ssl));
-			LOG("kTLS status for fd=%d: send=%d, recv=%d",
-			    ic->ic_fd, ktls_send, ktls_recv);
+			TRACE("kTLS status for fd=%d: send=%d, recv=%d",
+			      ic->ic_fd, ktls_send, ktls_recv);
 #endif
 		}
 	}
 
 	// If this was direct TLS data, we're done - no need to continue with normal write processing
 	if (ic->ic_state & IO_CONTEXT_DIRECT_TLS_DATA) {
-		LOG("Direct TLS data sent for fd=%d", ic->ic_fd);
+		TRACE("Direct TLS data sent for fd=%d", ic->ic_fd);
 
 		// Check if this was part of a TLS handshake
 		struct conn_info *ci = io_conn_get(ic->ic_fd);
 		if (ci && ci->ci_handshake_final_pending) {
-			LOG("Final TLS handshake message sent for fd=%d",
-			    ic->ic_fd);
+			TRACE("Final TLS handshake message sent for fd=%d",
+			      ic->ic_fd);
 
 			// Clear the pending flag
 			ci->ci_handshake_final_pending = false;
@@ -481,7 +481,7 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 			// Make sure any buffered BIO data is flushed
 			BIO_flush(SSL_get_wbio(ci->ci_ssl));
 
-			LOG("TLS mode now active for fd=%d", ic->ic_fd);
+			TRACE("TLS mode now active for fd=%d", ic->ic_fd);
 
 			// Log kTLS status if available
 #ifdef BIO_get_ktls_send
@@ -489,8 +489,8 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 				BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
 			int ktls_recv =
 				BIO_get_ktls_recv(SSL_get_rbio(ci->ci_ssl));
-			LOG("kTLS status for fd=%d: send=%d, recv=%d",
-			    ic->ic_fd, ktls_send, ktls_recv);
+			TRACE("kTLS status for fd=%d: send=%d, recv=%d",
+			      ic->ic_fd, ktls_send, ktls_recv);
 #endif
 		}
 
@@ -506,9 +506,9 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 	}
 
 	if ((size_t)bytes_written < ic->ic_expected_len) {
-		LOG("Partial write: ic=%p id=%u fd=%d expected=%zu wrote=%d position=%zu buffer_len=%zu",
-		    (void *)ic, ic->ic_id, ic->ic_fd, ic->ic_expected_len,
-		    bytes_written, ic->ic_position, ic->ic_buffer_len);
+		TRACE("Partial write: ic=%p id=%u fd=%d expected=%zu wrote=%d position=%zu buffer_len=%zu",
+		      (void *)ic, ic->ic_id, ic->ic_fd, ic->ic_expected_len,
+		      bytes_written, ic->ic_position, ic->ic_buffer_len);
 
 		// Update position by actual bytes written
 		ic->ic_position += bytes_written;
@@ -544,9 +544,9 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 	ic->ic_position += ic->ic_expected_len;
 
 #ifdef PARTIAL_WRITE_DEBUG
-	LOG("After write: ic=%p id=%u old_pos=%zu new_pos=%zu buffer_len=%zu",
-	    (void *)ic, ic->ic_id, ic->ic_position - ic->ic_expected_len,
-	    ic->ic_position, ic->ic_buffer_len);
+	TRACE("After write: ic=%p id=%u old_pos=%zu new_pos=%zu buffer_len=%zu",
+	      (void *)ic, ic->ic_id, ic->ic_position - ic->ic_expected_len,
+	      ic->ic_position, ic->ic_buffer_len);
 #endif
 
 	// Continue with next fragment

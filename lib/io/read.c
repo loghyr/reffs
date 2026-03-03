@@ -54,7 +54,7 @@ static void log_client_hello_details(const unsigned char *buf, size_t len)
 	if (len < 50)
 		return; // Too short to contain useful TLS details
 
-	LOG("TLS ClientHello version: 0x%02x%02x", buf[1], buf[2]);
+	TRC("TLS ClientHello version: 0x%02x%02x", buf[1], buf[2]);
 
 	// Look for key extensions
 	bool found_alpn = false;
@@ -96,10 +96,10 @@ static void log_client_hello_details(const unsigned char *buf, size_t len)
 
 			if (ext_type == 0x0000) { // SNI
 				found_sni = true;
-				LOG("ClientHello includes SNI extension");
+				TRC("ClientHello includes SNI extension");
 			} else if (ext_type == 0x0010) { // ALPN
 				found_alpn = true;
-				LOG("ClientHello includes ALPN extension");
+				TRC("ClientHello includes ALPN extension");
 
 				// Try to extract protocols (simplified)
 				if (i + 2 < len && i + 2 < extensions_end) {
@@ -114,7 +114,7 @@ static void log_client_hello_details(const unsigned char *buf, size_t len)
 
 						if (i + proto_len <= len &&
 						    proto_len > 0) {
-							LOG("ALPN protocol offered: %.*s",
+							TRC("ALPN protocol offered: %.*s",
 							    (int)proto_len,
 							    buf + i);
 						}
@@ -129,11 +129,11 @@ static void log_client_hello_details(const unsigned char *buf, size_t len)
 	}
 
 	if (!found_alpn) {
-		LOG("WARNING: ClientHello does not contain ALPN extension - this may prevent NFSv3 over TLS");
+		TRC("WARNING: ClientHello does not contain ALPN extension - this may prevent NFSv3 over TLS");
 	}
 
 	if (!found_sni) {
-		LOG("NOTE: ClientHello does not contain SNI extension");
+		TRC("NOTE: ClientHello does not contain SNI extension");
 	}
 }
 
@@ -169,7 +169,7 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 
 	// Check if handshake completed
 	if (SSL_is_init_finished(ssl)) {
-		LOG("TLS handshake finished, session established");
+		TRC("TLS handshake finished, session established");
 
 		// Check ALPN result but don't fail if not present
 		const unsigned char *proto = NULL;
@@ -177,33 +177,33 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 		SSL_get0_alpn_selected(ssl, &proto, &proto_len);
 
 		if (proto_len > 0) {
-			LOG("ALPN protocol selected: %.*s", proto_len, proto);
+			TRC("ALPN protocol selected: %.*s", proto_len, proto);
 		} else {
-			LOG("No ALPN protocol was selected - continuing anyway for compatibility");
+			TRC("No ALPN protocol was selected - continuing anyway for compatibility");
 		}
 
 		// Always enable TLS if handshake completes, regardless of ALPN
 		ci->ci_tls_enabled = true;
 		ci->ci_tls_handshaking = false;
 	} else {
-		LOG("TLS handshake not yet complete");
+		TRC("TLS handshake not yet complete");
 
 		// Special case: detect completed handshake without ALPN
 		if (len == 6 && ((const unsigned char *)data)[0] == 0x14 &&
 		    ((const unsigned char *)data)[1] == 0x03 &&
 		    ((const unsigned char *)data)[2] == 0x03) {
-			LOG("ChangeCipherSpec detected - checking if this is final handshake message");
+			TRC("ChangeCipherSpec detected - checking if this is final handshake message");
 
 			// Special fedora client compatibility - consider handshake complete at this point
 			if (SSL_state_string_long(ssl) &&
 			    strstr(SSL_state_string_long(ssl), "early data")) {
-				LOG("Special case: Detected likely completed handshake - enabling TLS");
+				TRC("Special case: Detected likely completed handshake - enabling TLS");
 				ci->ci_tls_enabled = true;
 				ci->ci_tls_handshaking = false;
 				ci->ci_handshake_final_pending = true;
 				ci->ci_handshake_final_bytes = 0;
 			} else {
-				LOG("ChangeCipherSpec detected, continuing normal handshake");
+				TRC("ChangeCipherSpec detected, continuing normal handshake");
 			}
 		}
 	}
@@ -226,7 +226,7 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 		if (accept > 0 || SSL_is_init_finished(ssl)) {
 			ci->ci_handshake_final_pending = true;
 			ci->ci_handshake_final_bytes = bytes;
-			LOG("Final handshake message prepared for fd=%d", fd);
+			TRC("Final handshake message prepared for fd=%d", fd);
 		}
 
 		// Send the data
@@ -237,14 +237,14 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 			return -ret;
 		}
 
-		LOG("Submitted TLS response (%d bytes) for fd=%d", bytes, fd);
+		TRC("Submitted TLS response (%d bytes) for fd=%d", bytes, fd);
 	}
 
 	// Handle SSL accept result
 	if (accept <= 0) {
 		if (ssl_err == SSL_ERROR_WANT_READ ||
 		    ssl_err == SSL_ERROR_WANT_WRITE) {
-			LOG("TLS handshake continuing for fd=%d, need more data",
+			TRC("TLS handshake continuing for fd=%d, need more data",
 			    fd);
 			return 0;
 		}
@@ -255,7 +255,7 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 
 	// If we get here, the handshake is complete
 	ci->ci_tls_handshaking = false;
-	LOG("TLS handshake completed logically for fd=%d, waiting for final message to be sent",
+	TRC("TLS handshake completed logically for fd=%d, waiting for final message to be sent",
 	    fd);
 	return 0;
 }
@@ -303,13 +303,14 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		const unsigned char *bytes = (const unsigned char *)data;
 		if (bytes[0] == 0x14 && bytes[1] == 0x03 && bytes[2] == 0x03 &&
 		    len == 6) {
-			LOG("ChangeCipherSpec received, forcing TLS compatibility mode for Fedora client");
+			TRC("ChangeCipherSpec received, forcing TLS compatibility mode for Fedora client");
 			ci->ci_tls_enabled = true;
 			ci->ci_tls_handshaking = false;
 		}
 
 		return ret;
 	}
+
 	// Case 2: New handshake - create SSL object
 	SSL *ssl = SSL_new(reffs_server_ssl_ctx);
 	if (!ssl) {
@@ -728,8 +729,8 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 
 	if (bytes_read <= 0) {
 		// Connection closed or error
-		LOG("Connection closed or error (fd: %d, res: %d)", client_fd,
-		    bytes_read);
+		TRACE("Connection closed or error (fd: %d, res: %d)", client_fd,
+		      bytes_read);
 
 		io_socket_close(client_fd,
 				bytes_read < 0 ? -bytes_read : ECONNRESET);
@@ -806,7 +807,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 
 	// Check for TLS ClientHello
 	if (is_tls_client_hello(ic->ic_buffer, bytes_read)) {
-		LOG("TLS ClientHello detected on fd=%d", ic->ic_fd);
+		TRACE("TLS ClientHello detected on fd=%d", ic->ic_fd);
 		ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer, bytes_read,
 					   rc);
 		if (ret) {
