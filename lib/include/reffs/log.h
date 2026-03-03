@@ -58,11 +58,10 @@ void reffs_trace(const char *function, int line, const char *msg, ...);
 			reffs_log(fmt, ##__VA_ARGS__); \
 	} while (0)
 
-// FIXME: Expose it as a global to bypass a function call
-#define TRACE(fmt, ...)                        \
-	do {                                   \
-		reffs_log(fmt, ##__VA_ARGS__); \
-	} while (0)
+// Use reffs_trace_event for high-volume events to avoid console spam
+#include "reffs/trace/common.h"
+#define TRACE(fmt, ...) \
+	reffs_trace_event(REFFS_TRACE_CAT_ALL, __func__, __LINE__, fmt, ##__VA_ARGS__)
 
 #ifdef __clang__
 #pragma clang diagnostic pop
