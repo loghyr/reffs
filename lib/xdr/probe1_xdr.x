@@ -230,11 +230,6 @@ union FD_INFOS_LIST1res switch (probe_stat1 filr_status) {
 		void;
 };
 
-struct FS_USAGE1args {
-	bool	fua_human_readable;
-	string	fua_mount_path<>;
-};
-
 struct FS_USAGE1resok {
 	unsigned hyper	fur_total_bytes;
 	unsigned hyper	fur_free_bytes;
@@ -269,6 +264,6 @@ program PROBE_PROGRAM {
 		HEARTBEAT1res PROBEPROC1_HEARTBEAT(HEARTBEAT1args) = 7;
 		IO_CONTEXTS_LIST1res PROBEPROC1_IO_CONTEXTS_LIST(IO_CONTEXTS_LIST1args) = 8;
 		FD_INFOS_LIST1res PROBEPROC1_FD_INFOS_LIST(FD_INFOS_LIST1args) = 9;
-		FS_USAGE1res PROBEPROC1_FS_USAGE(FS_USAGE1args) = 10;
+		FS_USAGE1res PROBEPROC1_FS_USAGE(void) = 10;
 	} = 1;
 } = 211768;

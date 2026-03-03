@@ -48,11 +48,15 @@ static void signal_handler(int sig)
 
 static void usage(const char *prog)
 {
-	printf("Usage: %s [options]\n", prog);
+	printf("Usage: %s [options] [mount_path]\n", prog);
 	printf("Options:\n");
 	printf("  -h  --help                   Print this usage and exit\n");
 	printf("  -f  --file=fname             Save tracing data to this file \"fname\"\n");
-	printf("  -o  --op=op                  Perform the \"op\"\n");
+	printf("  -o  --op=op                  Perform the \"op\":\n");
+	printf("                                     gather  - Gather program statistics (default)\n");
+	printf("                                     context - Get context statistics\n");
+	printf("                                     usage   - Get filesystem usage comparison\n");
+	printf("                                     null    - Ping the server\n");
 	printf("  -g  --program=pgm            Probe this program \"pgm\"\n");
 	printf("  -v  --version=v              Probe this program version \"vers\"\n");
 	printf("  -p  --port=port              Connect to server at the \"port\"\n");
@@ -64,8 +68,6 @@ static void usage(const char *prog)
 	printf("                                     3 - NFS\n");
 	printf("                                     4 - FS\n");
 	printf("  -H  --human                  Human readable output\n");
-	printf("\nArguments:\n");
-	printf("  [mount_path]                 Optional path to a mount point for usage comparison\n");
 }
 
 static struct option long_opts[] = {

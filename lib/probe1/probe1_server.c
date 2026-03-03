@@ -519,9 +519,8 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, FD_INFOS_LIST, xdr_FD_INFOS_LIST1args,
 			   FD_INFOS_LIST1args, xdr_FD_INFOS_LIST1res,
 			   FD_INFOS_LIST1res, probe1_op_fd_infos_list),
-	RPC_OPERATION_INIT(PROBEPROC1, FS_USAGE, xdr_FS_USAGE1args,
-			   FS_USAGE1args, xdr_FS_USAGE1res, FS_USAGE1res,
-			   probe1_op_fs_usage),
+	RPC_OPERATION_INIT(PROBEPROC1, FS_USAGE, NULL, NULL, xdr_FS_USAGE1res,
+			   FS_USAGE1res, probe1_op_fs_usage),
 };
 
 static struct rpc_program_handler *probe1_handler;

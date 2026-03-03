@@ -185,7 +185,6 @@ static void format_size_c(char *buf, size_t buf_len, int64_t size, bool human)
 static int fs_usage_cb(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
-	FS_USAGE1args *args = ph->ph_args;
 	FS_USAGE1res *res = ph->ph_res;
 	FS_USAGE1resok *resok = &res->FS_USAGE1res_u.fur_resok;
 
@@ -194,22 +193,22 @@ static int fs_usage_cb(struct rpc_trans *rt)
 	} else {
 		struct statvfs sv;
 		bool have_mount = false;
-		if (args->fua_mount_path && strlen(args->fua_mount_path) > 0) {
-			if (statvfs(args->fua_mount_path, &sv) == 0) {
+		if (ph->ph_path && strlen(ph->ph_path) > 0) {
+			if (statvfs(ph->ph_path, &sv) == 0) {
 				have_mount = true;
 			} else {
 				LOG("Warning: Could not get stats for mount path %s: %s",
-				    args->fua_mount_path, strerror(errno));
+				    ph->ph_path, strerror(errno));
 			}
 		}
 
 		char r_total[32], r_used[32], r_free[32];
 		format_size_c(r_total, sizeof(r_total), resok->fur_total_bytes,
-			      args->fua_human_readable);
+			      ph->ph_human);
 		format_size_c(r_used, sizeof(r_used), resok->fur_used_bytes,
-			      args->fua_human_readable);
+			      ph->ph_human);
 		format_size_c(r_free, sizeof(r_free), resok->fur_free_bytes,
-			      args->fua_human_readable);
+			      ph->ph_human);
 
 		if (have_mount) {
 			char m_total[32], m_used[32], m_free[32];
@@ -222,21 +221,21 @@ static int fs_usage_cb(struct rpc_trans *rt)
 				sv.f_frsize;
 
 			format_size_c(m_total, sizeof(m_total), ms_total,
-				      args->fua_human_readable);
+				      ph->ph_human);
 			format_size_c(m_used, sizeof(m_used), ms_used,
-				      args->fua_human_readable);
+				      ph->ph_human);
 			format_size_c(m_free, sizeof(m_free), ms_free,
-				      args->fua_human_readable);
+				      ph->ph_human);
 
 			format_size_c(d_total, sizeof(d_total),
 				      resok->fur_total_bytes - ms_total,
-				      args->fua_human_readable);
+				      ph->ph_human);
 			format_size_c(d_used, sizeof(d_used),
 				      resok->fur_used_bytes - ms_used,
-				      args->fua_human_readable);
+				      ph->ph_human);
 			format_size_c(d_free, sizeof(d_free),
 				      resok->fur_free_bytes - ms_free,
-				      args->fua_human_readable);
+				      ph->ph_human);
 
 			LOG("%-15s %20s %20s %15s", "Metric", "Server (RPC)",
 			    "Mount (statvfs)", "Diff");
@@ -255,7 +254,7 @@ static int fs_usage_cb(struct rpc_trans *rt)
 			    resok->fur_used_files,
 			    (uint64_t)sv.f_files - (uint64_t)sv.f_ffree,
 			    (long)resok->fur_used_files -
-				    (long)(sv.f_files - sv.f_ffree));
+				    (long)(sv.f_files - (uint64_t)sv.f_ffree));
 			LOG("%-15s %20lu %20lu %15ld", "Free Inodes",
 			    resok->fur_free_files, (uint64_t)sv.f_ffree,
 			    (long)resok->fur_free_files - (long)sv.f_ffree);
@@ -292,9 +291,8 @@ struct rpc_trans *probe1_client_op_fs_usage(bool human, const char *path)
 	}
 
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
-	FS_USAGE1args *args = ph->ph_args;
-	args->fua_human_readable = human;
-	args->fua_mount_path = path ? strdup(path) : strdup("");
+	ph->ph_human = human;
+	ph->ph_path = path ? strdup(path) : strdup("");
 
 	rt->rt_cb = fs_usage_cb;
 

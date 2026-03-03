@@ -428,8 +428,7 @@ def format_size(size_bytes, human_readable=False):
 
 
 def fs_usage(client, args):
-    res = client.fs_usage(human_readable=args.human_readable,
-                          mount_path=args.mount_path if args.mount_path else "")
+    res = client.fs_usage()
     probe_error_handler(res.fur_status)
 
     resok = res.fur_resok
