@@ -395,7 +395,7 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 		// The message is already properly formed - don't try to fragment it
 		*marker_ptr = htonl(0x80000000 | data_len);
 #ifdef PARTIAL_WRITE_DEBUG
-		LOG("RPC message: setting marker for %u bytes", data_len);
+		TRACE("RPC message: setting marker for %u bytes", data_len);
 #endif
 	}
 
@@ -413,8 +413,8 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
 
 	if (bytes_written > 0 && ic->ic_position == 0) {
-		LOG("WRITE START: ic=%p id=%u fd=%d starting fresh write.",
-		    (void *)ic, ic->ic_id, ic->ic_fd);
+		TRACE("WRITE START: ic=%p id=%u fd=%d starting fresh write.",
+		      (void *)ic, ic->ic_id, ic->ic_fd);
 	}
 
 	// Verify we wrote the expected amount
