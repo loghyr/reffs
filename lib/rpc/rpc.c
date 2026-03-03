@@ -431,6 +431,7 @@ void rpc_protocol_free(struct rpc_trans *rt)
 				free(ph->ph_res);
 			}
 		}
+		free(ph->ph_path);
 		free(ph);
 	}
 

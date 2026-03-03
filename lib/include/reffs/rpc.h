@@ -125,6 +125,8 @@ struct protocol_handler {
 	void *ph_res; // The base res
 	int ph_stat; // Protocol error code
 	struct rpc_operations_handler *ph_op_handler;
+	bool ph_human;
+	char *ph_path;
 };
 
 #define RPC_OPERATION_INIT(PROTOCOL, NAME, ARGS_F, ARGS, RES_F, RES, CALL) \
