@@ -465,7 +465,7 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	rd->rd_inode->i_ctime = inode->i_mtime;
 	rd->rd_inode->i_mode = S_IFDIR | mode;
 	rd->rd_inode->i_size = inode->i_sb->sb_block_size;
-	rd->rd_inode->i_used = 8;
+	rd->rd_inode->i_used = 1;
 	rd->rd_inode->i_nlink = 2;
 
 	inode_sync_to_disk(rd->rd_inode);
