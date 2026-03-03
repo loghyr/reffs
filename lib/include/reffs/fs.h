@@ -28,6 +28,17 @@ char *reffs_fs_get_backend_path(void);
 void reffs_fs_recover(struct super_block *sb);
 void reffs_fs_for_each_inode(int (*cb)(struct inode *, void *), void *arg);
 
+struct reffs_fs_usage_stats {
+	uint64_t total_bytes;
+	uint64_t used_bytes;
+	uint64_t free_bytes;
+	uint64_t total_files;
+	uint64_t used_files;
+	uint64_t free_files;
+};
+
+int reffs_fs_usage(struct reffs_fs_usage_stats *stats);
+
 int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid);
 int reffs_fs_chmod(const char *path, mode_t mode);
 int reffs_fs_chown(const char *path, uid_t uid, gid_t gid);

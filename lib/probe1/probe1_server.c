@@ -33,6 +33,7 @@
 #include "reffs/network.h"
 #include "reffs/task.h"
 #include "reffs/io.h"
+#include "reffs/fs.h"
 #include "reffs/probe1.h"
 #include "reffs/trace/rpc.h"
 
@@ -468,6 +469,26 @@ out:
 	return 0;
 }
 
+static int probe1_op_fs_usage(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	FS_USAGE1res *res = ph->ph_res;
+	FS_USAGE1resok *resok = &res->FS_USAGE1res_u.fur_resok;
+
+	struct reffs_fs_usage_stats stats;
+
+	reffs_fs_usage(&stats);
+
+	resok->fur_total_bytes = stats.total_bytes;
+	resok->fur_used_bytes = stats.used_bytes;
+	resok->fur_free_bytes = stats.free_bytes;
+	resok->fur_total_files = stats.total_files;
+	resok->fur_used_files = stats.used_files;
+	resok->fur_free_files = stats.free_files;
+
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -498,6 +519,9 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, FD_INFOS_LIST, xdr_FD_INFOS_LIST1args,
 			   FD_INFOS_LIST1args, xdr_FD_INFOS_LIST1res,
 			   FD_INFOS_LIST1res, probe1_op_fd_infos_list),
+	RPC_OPERATION_INIT(PROBEPROC1, FS_USAGE, xdr_FS_USAGE1args,
+			   FS_USAGE1args, xdr_FS_USAGE1res, FS_USAGE1res,
+			   probe1_op_fs_usage),
 };
 
 static struct rpc_program_handler *probe1_handler;
