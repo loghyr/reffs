@@ -71,10 +71,11 @@ int reffs_ns_init(void)
 	inode->i_atime = inode->i_mtime;
 	inode->i_btime = inode->i_mtime;
 	inode->i_ctime = inode->i_mtime;
-	inode->i_mode = S_IFDIR | 0777;
+	inode->i_mode = S_IFDIR | 0755;
 	inode->i_size = inode->i_sb->sb_block_size;
-	inode->i_used = inode->i_sb->sb_block_size;
+	inode->i_used = 1;
 	inode->i_nlink = 2;
+
 
 	inode->i_parent = reffs_root_sb->sb_dirent;
 

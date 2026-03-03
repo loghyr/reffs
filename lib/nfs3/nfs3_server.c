@@ -1313,8 +1313,9 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
 	rd->rd_inode->i_mode = S_IFDIR | inode->i_mode;
 	rd->rd_inode->i_size = sb->sb_block_size;
-	rd->rd_inode->i_used = sb->sb_block_size;
+	rd->rd_inode->i_used = 1;
 	rd->rd_inode->i_nlink = 2;
+
 
 	res->status = nfs3_apply_sattr3(rd->rd_inode, sa, NULL, NULL);
 	if (res->status) {
@@ -1461,7 +1462,7 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 	rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
 	rd->rd_inode->i_mode = (S_IFLNK | inode->i_mode) & ~S_IFDIR;
 	rd->rd_inode->i_size = sb->sb_block_size;
-	rd->rd_inode->i_used = sb->sb_block_size;
+	rd->rd_inode->i_used = 1;
 	rd->rd_inode->i_nlink = 1;
 
 	nfh_new = network_file_handle_construct(sb->sb_id, rd->rd_inode->i_ino);
