@@ -94,6 +94,7 @@ image:
 # This uses --privileged to allow FUSE and bypasses host RPC conflicts
 run-image: build-in-docker
 	$(DOCKER) run --rm -it --privileged \
+		--ulimit nofile=65536:65536 \
 		-p 2049:2049 -p 2049:2049/udp -p 111:111 -p 111:111/udp \
 		-v $(ROOT_DIR):/reffs:Z \
 		$(IMAGE_NAME) \
