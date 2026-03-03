@@ -104,7 +104,7 @@ def xdr_to_dict(obj):
             # Skip internal XDR state
             if key.startswith('_'):
                 continue
-            
+
             # Strip XDR prefix (e.g., pcr_created -> created)
             new_key = key
             if '_' in key:
@@ -112,7 +112,7 @@ def xdr_to_dict(obj):
                 # Heuristic: prefix is usually 2-4 lowercase chars
                 if 2 <= len(parts[0]) <= 4 and parts[0].islower():
                      new_key = parts[1]
-            
+
             res[new_key] = xdr_to_dict(value)
         return res
     if isinstance(obj, bytes):
@@ -428,7 +428,7 @@ def format_size(size_bytes, human_readable=False):
 
 
 def fs_usage(client, args):
-    res = client.fs_usage(human_readable=args.human_readable, 
+    res = client.fs_usage(human_readable=args.human_readable,
                           mount_path=args.mount_path if args.mount_path else "")
     probe_error_handler(res.fur_status)
 
@@ -645,9 +645,6 @@ def parse_args():
 
     p_fs_usage = subparsers.add_parser('fs-usage',
                                        help='Get internal/external filesystem usage')
-    p_fs_usage.add_argument('mount_path',
-                            nargs='?',
-                            help='Optional path to mount point for comparison')
     a_legible = p_fs_usage.add_mutually_exclusive_group(required=False)
     a_legible.add_argument('--not_human_readable',
                            help='Do not provide sizes in human readable form',
@@ -657,6 +654,11 @@ def parse_args():
                            help='Provide sizes in human readable form',
                            dest='human_readable',
                            action='store_true')
+    p_fs_usage.add_argument('--mount-path',
+                            dest='mount_path',
+                            required=False,
+                            type=str,
+                            help='Optional path to mount point for comparison')
     p_fs_usage.set_defaults(func=fs_usage,human_readable=True)
 
     argcomplete.autocomplete(parser)
