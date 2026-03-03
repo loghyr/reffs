@@ -198,6 +198,14 @@ AC_ARG_ENABLE([io-uring-stress],
         [AC_DEFINE([HAVE_IO_URING_STRESS], [1], [Define if stress testing io_uring])])],
     [])
 
+# Check if we should enable verbose debugging output
+AC_ARG_ENABLE([verbose-debug],
+    [AS_HELP_STRING([--enable-verbose-debug],
+        [Enable verbose debugging output (high volume status dumps)])],
+    [AS_IF([test "x$enableval" = "xyes"],
+        [AC_DEFINE([VERBOSE_DEBUG], [1], [Define if verbose debugging is enabled])])],
+    [])
+
 # Check if we should use the destroyed context cache
 AC_ARG_ENABLE([destroy-cache],
     [AS_HELP_STRING([--enable-destroy-cache],
