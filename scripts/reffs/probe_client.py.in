@@ -8,16 +8,6 @@ from .probe1_xdr_const import *
 from .probe1_xdr_pack import PROBE1_XDRPacker, PROBE1_XDRUnpacker
 from .protocol_client import ProtocolClient
 
-# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
-# SPDX-License-Identifier: GPL-2.0+
-
-import struct
-import time
-from .probe1_xdr_type import *
-from .probe1_xdr_const import *
-from .probe1_xdr_pack import PROBE1_XDRPacker, PROBE1_XDRUnpacker
-from .protocol_client import ProtocolClient
-
 class Probe1Client(ProtocolClient):
     """
     Client implementation for Probe1.
