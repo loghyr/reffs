@@ -185,14 +185,18 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 	// Heartbeat actions
 	if (now - hb_state.last_heartbeat >= HEARTBEAT_INTERVAL) {
 		hb_state.last_heartbeat = now;
+#ifdef VERBOSE_DEBUG
 		io_context_list_active(false);
 		io_context_log_stats();
+#endif
 	}
 
 	// Check for stalled contexts
 	if (now - hb_state.last_stalled_check >= STALLED_CHECK_INTERVAL) {
 		hb_state.last_stalled_check = now;
+#ifdef VERBOSE_DEBUG
 		io_context_check_stalled();
+#endif
 	}
 
 // Release destroyed contexts
@@ -276,8 +280,10 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 		hb_state.last_connection_check = now;
 	}
 
+#ifdef VERBOSE_DEBUG
 #ifndef HAVE_VM
 	io_conn_dump_all();
+#endif
 #endif
 
 	TRACE("SQ head=%u, tail=%u; CQ head=%u, tail=%u", *rc->rc_ring.sq.khead,
