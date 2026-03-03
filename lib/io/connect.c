@@ -510,9 +510,9 @@ int io_conn_unregister(int fd)
 
 	int idx = fd % MAX_CONNECTIONS;
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
-		LOG("Unregistering connection fd=%d (state=%s, role=%s)", fd,
-		    io_conn_state_to_str(connections[idx]->ci_state),
-		    io_conn_role_to_str(connections[idx]->ci_role));
+		TRACE("Unregistering connection fd=%d (state=%s, role=%s)", fd,
+		      io_conn_state_to_str(connections[idx]->ci_state),
+		      io_conn_role_to_str(connections[idx]->ci_role));
 
 		if (connections[idx]->ci_ssl) {
 			SSL_shutdown(connections[idx]->ci_ssl);
@@ -602,7 +602,7 @@ int io_socket_close(int fd, int error)
 		io_conn_unregister(fd);
 	}
 
-	LOG("Closing %d", fd);
+	TRACE("Closing %d", fd);
 
 	io_client_fd_unregister(fd);
 	return close(fd);
@@ -773,7 +773,7 @@ int io_send_request(struct rpc_trans *rt)
 {
 	int ret;
 
-	LOG("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
+	TRACE("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
 
 	// Register the request for tracking
 	ret = io_register_request(rt);
@@ -928,7 +928,7 @@ int io_handle_connect(struct io_context *ic, int result,
 		ic->ic_ci.ci_local_len = 0;
 	}
 
-	LOG("Connection established for fd=%d", ic->ic_fd);
+	TRACE("Connection established for fd=%d", ic->ic_fd);
 
 	// Update connection info with peer and local addresses
 	struct conn_info *ci = io_conn_get(ic->ic_fd);

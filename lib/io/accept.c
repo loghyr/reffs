@@ -227,8 +227,8 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 		       ic->ic_ci.ci_peer_len);
 		client_conn->ci_peer_len = ic->ic_ci.ci_peer_len;
 
-		LOG("Accepted connection from %s:%d on fd=%d", addr_str, port,
-		    client_fd);
+		TRACE("Accepted connection from %s:%d on fd=%d", addr_str, port,
+		      client_fd);
 		TRACE("ACCEPTED: fd=%d from %s:%d", client_fd, addr_str, port);
 	} else {
 		LOG("Failed to get peer information: %s", strerror(errno));
@@ -260,7 +260,7 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 	if (conn) {
 		// No need to check state since we're using operation counts
 		// Just ensure the state is properly set to CONNECTED initially
-		LOG("Accepted new connection fd=%d", client_fd);
+		TRACE("Accepted new connection fd=%d", client_fd);
 	} else {
 		LOG("Warning: Connection fd=%d not found after registration",
 		    client_fd);
