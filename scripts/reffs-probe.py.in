@@ -14,27 +14,32 @@ import ipaddress
 import json
 
 # Try both naming conventions to handle both local and installed versions
-try:
-    # First try the installed package path
-    from reffs.probe1_xdr_type import *
-    from reffs.probe1_xdr_const import *
-    from reffs.probe_client import Probe1Client
-except ModuleNotFoundError:
-    # If that fails, try the local development path
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+script_dir = os.path.dirname(os.path.abspath(__file__))
+local_reffs = os.path.join(script_dir, "reffs")
+
+# Prioritize local development path if it exists
+if os.path.isdir(local_reffs):
     if script_dir not in sys.path:
         sys.path.insert(0, script_dir)
-
     # Make sure __init__.py exists
-    init_file = os.path.join(script_dir, "reffs", "__init__.py")
+    init_file = os.path.join(local_reffs, "__init__.py")
     if not os.path.exists(init_file):
         with open(init_file, 'w') as f:
             pass  # Create empty file
 
-    # Try with the XDR naming convention
+try:
     from reffs.probe1_xdr_type import *
     from reffs.probe1_xdr_const import *
     from reffs.probe_client import Probe1Client
+except ImportError:
+    # Fallback to installed version if local not found or failed
+    try:
+        from reffs.probe1_xdr_type import *
+        from reffs.probe1_xdr_const import *
+        from reffs.probe_client import Probe1Client
+    except ImportError:
+        print("Error: Could not import reffs package. Make sure it is installed or in the current directory.")
+        sys.exit(1)
 
 PROGRAM_MAP = {
     100003: 'nfs',
@@ -87,7 +92,7 @@ CONTEXT_STATE_NAME_TO_ID = {name: id for id, name in CONTEXT_STATE_MAP.items()}
 
 def xdr_to_dict(obj):
     """
-    Recursively convert XDR objects to dictionaries.
+    Recursively convert XDR objects to dictionaries, stripping prefixes.
     """
     if isinstance(obj, list):
         return [xdr_to_dict(item) for item in obj]
@@ -99,7 +104,16 @@ def xdr_to_dict(obj):
             # Skip internal XDR state
             if key.startswith('_'):
                 continue
-            res[key] = xdr_to_dict(value)
+            
+            # Strip XDR prefix (e.g., pcr_created -> created)
+            new_key = key
+            if '_' in key:
+                parts = key.split('_', 1)
+                # Heuristic: prefix is usually 2-4 lowercase chars
+                if 2 <= len(parts[0]) <= 4 and parts[0].islower():
+                     new_key = parts[1]
+            
+            res[new_key] = xdr_to_dict(value)
         return res
     if isinstance(obj, bytes):
         return obj.decode('utf-8', errors='replace').rstrip('\x00')
@@ -414,7 +428,8 @@ def format_size(size_bytes, human_readable=False):
 
 
 def fs_usage(client, args):
-    res = client.fs_usage(args.human_readable, args.mount_path if args.mount_path else "")
+    res = client.fs_usage(human_readable=args.human_readable, 
+                          mount_path=args.mount_path if args.mount_path else "")
     probe_error_handler(res.fur_status)
 
     resok = res.fur_resok
