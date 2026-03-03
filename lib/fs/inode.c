@@ -82,6 +82,9 @@ static void inode_release(struct urcu_ref *ref)
 {
 	struct inode *inode = caa_container_of(ref, struct inode, i_ref);
 
+	TRACE("ino=%lu nlink=%u size=%lu", inode->i_ino, inode->i_nlink,
+	      inode->i_size);
+
 	inode_unhash(inode);
 	if (inode->i_sb) {
 		__atomic_fetch_sub(&inode->i_sb->sb_inodes_used, 1,

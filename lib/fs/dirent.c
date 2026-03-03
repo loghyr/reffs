@@ -232,8 +232,10 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 
 		if (rd->rd_inode) {
 			int n = (rd->rd_inode->i_mode & S_IFDIR) ? 2 : 1;
-			__atomic_fetch_sub(&rd->rd_inode->i_nlink, n,
-					   __ATOMIC_RELAXED);
+			uint32_t old_nlink = __atomic_fetch_sub(
+				&rd->rd_inode->i_nlink, n, __ATOMIC_RELAXED);
+			TRACE("ino=%lu old_nlink=%u sub=%d new_nlink=%u",
+			      rd->rd_inode->i_ino, old_nlink, n, old_nlink - n);
 			if (rla != reffs_life_action_load &&
 			    rla != reffs_life_action_unload)
 				inode_sync_to_disk(rd->rd_inode);

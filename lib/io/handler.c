@@ -66,7 +66,8 @@ int io_register_request(struct rpc_trans *rt)
 	// Find an empty slot
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i] == NULL) {
-			TRACE("rt=%p xid=0x%08x", (void *)rt, rt->rt_info.ri_xid);
+			TRACE("rt=%p xid=0x%08x", (void *)rt,
+			      rt->rt_info.ri_xid);
 			pending_requests[i] = rt;
 			pthread_mutex_unlock(&request_mutex);
 			return 0;

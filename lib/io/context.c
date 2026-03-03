@@ -334,7 +334,8 @@ void io_context_release_active(void)
 			if (ic->ic_state & IO_CONTEXT_ENTRY_STATE_ACTIVE) {
 				time_t age = now - ic->ic_action_time;
 
-				TRACE("%p op=%s fd=%d age=%ld id=%u", (void *)ic,
+				TRACE("%p op=%s fd=%d age=%ld id=%u",
+				      (void *)ic,
 				      io_op_type_to_str(ic->ic_op_type),
 				      ic->ic_fd, (long)(age), ic->ic_id);
 
