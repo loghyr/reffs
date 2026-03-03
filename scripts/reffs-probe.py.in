@@ -11,6 +11,7 @@ import argcomplete
 import struct
 import time
 import ipaddress
+import json
 
 # Try both naming conventions to handle both local and installed versions
 try:
@@ -38,7 +39,11 @@ except ModuleNotFoundError:
 PROGRAM_MAP = {
     100003: 'nfs',
     100005: 'mount',
-    211768: 'probe'
+    100021: 'nlm',
+    100024: 'sm',
+    211768: 'probe',
+    304097: 'echo',
+    304098: 'rcp'
 }
 
 PROGRAM_NAME_TO_ID = {name: id for id, name in PROGRAM_MAP.items()}
@@ -80,6 +85,31 @@ CONTEXT_STATE_MAP = {
 
 CONTEXT_STATE_NAME_TO_ID = {name: id for id, name in CONTEXT_STATE_MAP.items()}
 
+def xdr_to_dict(obj):
+    """
+    Recursively convert XDR objects to dictionaries.
+    """
+    if isinstance(obj, list):
+        return [xdr_to_dict(item) for item in obj]
+    if isinstance(obj, dict):
+        return {key: xdr_to_dict(value) for key, value in obj.items()}
+    if hasattr(obj, '__dict__'):
+        res = {}
+        for key, value in obj.__dict__.items():
+            # Skip internal XDR state
+            if key.startswith('_'):
+                continue
+            res[key] = xdr_to_dict(value)
+        return res
+    if isinstance(obj, bytes):
+        return obj.decode('utf-8', errors='replace').rstrip('\x00')
+    return obj
+
+
+def json_output(data):
+    print(json.dumps(xdr_to_dict(data), indent=4))
+
+
 def probe_error_handler(ret):
     if ret == PROBE1_OK:
         return
@@ -90,6 +120,9 @@ def probe_error_handler(ret):
 
 def probe_null(client, args):
     res = client.probe_null()
+    if args.json:
+        json_output({"status": "OK"})
+        return
     print("Null procedure completed successfully")
 
 
@@ -169,6 +202,10 @@ def stats_gather(client, args):
     res = client.stats_gather(program_id, args.version)
     probe_error_handler(res.psgr_status)
 
+    if args.json:
+        json_output(res.psgr_resok.psgr_program)
+        return
+
     pp = res.psgr_resok.psgr_program
 
     print(f'Reply Errors = {pp.pp_replied_errors}')
@@ -183,6 +220,10 @@ def context(client, args):
     res = client.context()
     probe_error_handler(res.pcr_status)
 
+    if args.json:
+        json_output(res.pcr_resok)
+        return
+
     resok = res.pcr_resok
 
     print(f'Created          = {resok.pcr_created}')
@@ -196,12 +237,16 @@ def context(client, args):
 def rpc_dump_set(client, args):
     res = client.rpc_dump_set(args.dump)
     probe_error_handler(res)
+    if args.json:
+        json_output({"status": "OK", "dump": args.dump})
 
 
 def trace_set(client, args):
     category = TRACE_CAT_NAME_TO_ID[args.category]
     res = client.trace_set(category, args.tracing)
     probe_error_handler(res)
+    if args.json:
+        json_output({"status": "OK", "category": args.category, "set": args.tracing})
 
 
 def print_trace_categories(trace_list):
@@ -218,12 +263,18 @@ def traces_list(client, args):
     res = client.traces_list(category)
     probe_error_handler(res.tlr_status)
 
+    if args.json:
+        json_output(res.tlr_resok.tlr_list)
+        return
+
     print_trace_categories(res.tlr_resok.tlr_list)
 
 
 def graceful_cleanup(client, args):
     res = client.graceful_cleanup()
     probe_error_handler(res)
+    if args.json:
+        json_output({"status": "OK"})
 
 
 def heartbeat(client, args):
@@ -237,7 +288,11 @@ def heartbeat(client, args):
     res = client.heartbeat(period, period_set)
     probe_error_handler(res.hbr_status)
 
-    print(f"Heartbeat peiod: {res.hbr_resok.hbr_period}")
+    if args.json:
+        json_output(res.hbr_resok)
+        return
+
+    print(f"Heartbeat period: {res.hbr_resok.hbr_period}")
 
 
 def decode_io_context_state(state):
@@ -286,6 +341,10 @@ def io_contexts_list(client, args):
     res = client.io_contexts_list(args.fd, op, state)
     probe_error_handler(res.iclr_status)
 
+    if args.json:
+        json_output(res.iclr_resok)
+        return
+
     print_io_contexts(res.iclr_resok)
 
 
@@ -325,6 +384,10 @@ def fd_infos_list(client, args):
     res = client.fd_infos_list(args.fd)
     probe_error_handler(res.filr_status)
 
+    if args.json:
+        json_output(res.filr_resok.filr_pf)
+        return
+
     print_fd_infos(res.filr_resok.filr_pf)
 
 
@@ -355,6 +418,11 @@ def fs_usage(client, args):
     probe_error_handler(res.fur_status)
 
     resok = res.fur_resok
+
+    if args.json:
+        json_output(resok)
+        return
+
     hr = args.human_readable
 
     mount_stats = None
@@ -417,6 +485,16 @@ def parse_args():
                         help='set host, default is ::1',
                         required=False,
                         default='::1')
+    parser.add_argument('-H', '--human',
+                        help='Human readable output',
+                        required=False,
+                        action='store_true',
+                        default=False)
+    parser.add_argument('-j', '--json',
+                        help='Output in JSON format',
+                        required=False,
+                        action='store_true',
+                        default=False)
     parser.add_argument('--time',
                         help='Time the call',
                         required=False,
@@ -424,6 +502,7 @@ def parse_args():
                         default=False)
 
     subparsers = parser.add_subparsers(help='sub-command help', dest='command')
+
     subparsers.required = True  # Make subcommand required
 
     p_null = subparsers.add_parser('null',
@@ -589,7 +668,8 @@ def main():
     if args.time:
         te = time.time()
         duration = te - ts
-        print(f'Time elapsed: {duration:.2f} seconds')
+        if not args.json:
+            print(f'Time elapsed: {duration:.2f} seconds')
 
 if __name__ == '__main__':
     main()
