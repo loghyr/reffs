@@ -1011,6 +1011,8 @@ static int load_inode_attributes(struct inode *inode)
 	if (inode->i_ino >= sb->sb_next_ino)
 		sb->sb_next_ino = inode->i_ino + 1;
 
+	__atomic_fetch_add(&sb->sb_inodes_used, 1, __ATOMIC_RELAXED);
+
 	// Also check if data file exists
 	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dat",
 		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
@@ -1157,39 +1159,34 @@ void reffs_fs_recover(struct super_block *sb)
 	LOG("Recovery complete. Max inode: %lu", sb->sb_next_ino);
 }
 
-static int calculate_usage_cb(struct inode *inode, void *arg)
-{
-	struct reffs_fs_usage_stats *stats = (struct reffs_fs_usage_stats *)arg;
-
-	stats->used_files++;
-	stats->used_bytes += inode->i_size;
-
-	return 0;
-}
-
 int reffs_fs_usage(struct reffs_fs_usage_stats *stats)
 {
+	struct super_block *sb;
+
 	memset(stats, 0, sizeof(*stats));
 
-	// Calculate internal usage by traversing in-memory inodes
-	reffs_fs_for_each_inode(calculate_usage_cb, stats);
-
-	// Get external usage from the backend filesystem if applicable
-	if (global_storage_type == REFFS_STORAGE_POSIX && global_backend_path) {
-		struct statvfs sv;
-		if (statvfs(global_backend_path, &sv) == 0) {
-			stats->total_bytes = (uint64_t)sv.f_blocks * sv.f_frsize;
-			stats->free_bytes = (uint64_t)sv.f_bavail * sv.f_frsize;
-			stats->total_files = sv.f_files;
-			stats->free_files = sv.f_ffree;
-		}
-	} else {
-		// Fallback/Mock for RAM storage
-		stats->total_bytes = 1024ULL * 1024 * 1024; // 1GB mock
-		stats->free_bytes = stats->total_bytes - stats->used_bytes;
-		stats->total_files = 1000000;
-		stats->free_files = stats->total_files - stats->used_files;
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(sb, super_block_list_head(), sb_link) {
+		stats->used_bytes += sb->sb_bytes_used;
+		stats->used_files += sb->sb_inodes_used;
+		stats->total_bytes += sb->sb_bytes_max;
+		stats->total_files += sb->sb_inodes_max;
 	}
+	rcu_read_unlock();
+
+	if (stats->total_bytes > stats->used_bytes)
+		stats->free_bytes = stats->total_bytes - stats->used_bytes;
+	else
+		stats->free_bytes = 0;
+
+	if (stats->total_files > stats->used_files)
+		stats->free_files = stats->total_files - stats->used_files;
+	else
+		stats->free_files = 0;
+
+	TRACE("internal: used_bytes=%lu free_bytes=%lu total_bytes=%lu used_files=%lu free_files=%lu total_files=%lu",
+	      stats->used_bytes, stats->free_bytes, stats->total_bytes,
+	      stats->used_files, stats->free_files, stats->total_files);
 
 	return 0;
 }
