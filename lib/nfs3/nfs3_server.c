@@ -178,9 +178,28 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 		inode->i_used =
 			inode->i_size / inode->i_sb->sb_block_size +
 			(inode->i_size % inode->i_sb->sb_block_size ? 1 : 0);
-		__atomic_add_fetch(&inode->i_sb->sb_bytes_used,
-				   (ssize_t)inode->i_size - (ssize_t)old_size,
-				   __ATOMIC_RELAXED);
+
+		size_t old_used;
+		size_t new_used;
+		do {
+			__atomic_load(&inode->i_sb->sb_bytes_used, &old_used,
+				      __ATOMIC_RELAXED);
+			if ((size_t)inode->i_size > old_size) {
+				new_used = old_used +
+					   ((size_t)inode->i_size - old_size);
+			} else if (old_size > (size_t)inode->i_size) {
+				size_t diff = old_size - (size_t)inode->i_size;
+				if (old_used >= diff)
+					new_used = old_used - diff;
+				else
+					new_used = 0;
+			} else {
+				new_used = old_used;
+			}
+		} while (!__atomic_compare_exchange(
+			&inode->i_sb->sb_bytes_used, &old_used, &new_used, false,
+			__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+
 		if (flags)
 			*flags |= REFFS_INODE_UPDATE_CTIME |
 				  REFFS_INODE_UPDATE_MTIME;
@@ -966,8 +985,26 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 	db_size = data_block_get_size(inode->i_db);
 
-	__atomic_add_fetch(&inode->i_sb->sb_bytes_used, db_size - size,
-			   __ATOMIC_RELAXED);
+	size_t old_used;
+	size_t new_used;
+	do {
+		__atomic_load(&inode->i_sb->sb_bytes_used, &old_used,
+			      __ATOMIC_RELAXED);
+		if (db_size > (size_t)size) {
+			new_used = old_used + (db_size - (size_t)size);
+		} else if ((size_t)size > db_size) {
+			size_t diff = (size_t)size - db_size;
+			if (old_used >= diff)
+				new_used = old_used - diff;
+			else
+				new_used = 0;
+		} else {
+			new_used = old_used;
+		}
+	} while (!__atomic_compare_exchange(&inode->i_sb->sb_bytes_used,
+					    &old_used, &new_used, false,
+					    __ATOMIC_SEQ_CST,
+					    __ATOMIC_RELAXED));
 
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 
@@ -2837,7 +2874,10 @@ static int nfs3_op_fsstat(struct rpc_trans *rt)
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
 
 	resok->tbytes = sb->sb_bytes_max;
-	resok->fbytes = sb->sb_bytes_max - sb->sb_bytes_used;
+	if (sb->sb_bytes_used < sb->sb_bytes_max)
+		resok->fbytes = sb->sb_bytes_max - sb->sb_bytes_used;
+	else
+		resok->fbytes = 0;
 	resok->abytes = resok->fbytes;
 	resok->tfiles = sb->sb_inodes_max;
 	resok->ffiles = sb->sb_inodes_used;

@@ -91,8 +91,21 @@ static void inode_release(struct urcu_ref *ref)
 				   __ATOMIC_RELAXED);
 
 		if (inode->i_nlink == 0) {
-			__atomic_fetch_sub(&inode->i_sb->sb_bytes_used,
-					   inode->i_size, __ATOMIC_RELAXED);
+			size_t size = inode->i_size;
+			size_t old_used;
+			size_t new_used;
+
+			do {
+				__atomic_load(&inode->i_sb->sb_bytes_used,
+					      &old_used, __ATOMIC_RELAXED);
+				if (old_used >= size)
+					new_used = old_used - size;
+				else
+					new_used = 0;
+			} while (!__atomic_compare_exchange(
+				&inode->i_sb->sb_bytes_used, &old_used,
+				&new_used, false, __ATOMIC_SEQ_CST,
+				__ATOMIC_RELAXED));
 
 			if (inode->i_sb->sb_storage_type ==
 			    REFFS_STORAGE_POSIX) {
