@@ -63,6 +63,9 @@ static void usage(const char *prog)
 	printf("                                     2 - RPC\n");
 	printf("                                     3 - NFS\n");
 	printf("                                     4 - FS\n");
+	printf("  -H  --human                  Human readable output\n");
+	printf("\nArguments:\n");
+	printf("  [mount_path]                 Optional path to a mount point for usage comparison\n");
 }
 
 static struct option long_opts[] = {
@@ -73,9 +76,13 @@ static struct option long_opts[] = {
 	{ "port", required_argument, 0, 'p' },
 	{ "server", required_argument, 0, 's' },
 	{ "version", required_argument, 0, 'v' },
+	{ "human", no_argument, 0, 'H' },
 	{ "help", no_argument, 0, 'h' },
 	{ NULL, 0, NULL, 0 },
 };
+
+bool human_readable = false;
+char *mount_path = NULL;
 
 int main(int argc, char *argv[])
 {
@@ -98,7 +105,7 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "hc:f:p:o:s:g:v:";
+	char *opts = "hc:f:p:o:s:g:v:H";
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -130,7 +137,14 @@ int main(int argc, char *argv[])
 		case 's':
 			server = optarg;
 			break;
+		case 'H':
+			human_readable = true;
+			break;
 		}
+	}
+
+	if (optind < argc) {
+		mount_path = argv[optind];
 	}
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
@@ -176,6 +190,8 @@ int main(int argc, char *argv[])
 		rt = probe1_client_op_stats_gather(program, version);
 	} else if (!strcmp(op, "context")) {
 		rt = probe1_client_op_context();
+	} else if (!strcmp(op, "usage")) {
+		rt = probe1_client_op_fs_usage(human_readable, mount_path);
 	} else if (!strcmp(op, "null")) {
 		rt = probe1_client_op_null();
 	} else {

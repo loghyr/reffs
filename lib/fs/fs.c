@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <time.h>
 #include <string.h>
@@ -1154,6 +1155,43 @@ void reffs_fs_recover(struct super_block *sb)
 	}
 
 	LOG("Recovery complete. Max inode: %lu", sb->sb_next_ino);
+}
+
+static int calculate_usage_cb(struct inode *inode, void *arg)
+{
+	struct reffs_fs_usage_stats *stats = (struct reffs_fs_usage_stats *)arg;
+
+	stats->used_files++;
+	stats->used_bytes += inode->i_size;
+
+	return 0;
+}
+
+int reffs_fs_usage(struct reffs_fs_usage_stats *stats)
+{
+	memset(stats, 0, sizeof(*stats));
+
+	// Calculate internal usage by traversing in-memory inodes
+	reffs_fs_for_each_inode(calculate_usage_cb, stats);
+
+	// Get external usage from the backend filesystem if applicable
+	if (global_storage_type == REFFS_STORAGE_POSIX && global_backend_path) {
+		struct statvfs sv;
+		if (statvfs(global_backend_path, &sv) == 0) {
+			stats->total_bytes = (uint64_t)sv.f_blocks * sv.f_frsize;
+			stats->free_bytes = (uint64_t)sv.f_bavail * sv.f_frsize;
+			stats->total_files = sv.f_files;
+			stats->free_files = sv.f_ffree;
+		}
+	} else {
+		// Fallback/Mock for RAM storage
+		stats->total_bytes = 1024ULL * 1024 * 1024; // 1GB mock
+		stats->free_bytes = stats->total_bytes - stats->used_bytes;
+		stats->total_files = 1000000;
+		stats->free_files = stats->total_files - stats->used_files;
+	}
+
+	return 0;
 }
 
 void reffs_fs_for_each_inode(int (*cb)(struct inode *, void *), void *arg)

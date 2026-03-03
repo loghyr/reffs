@@ -328,6 +328,83 @@ def fd_infos_list(client, args):
     print_fd_infos(res.filr_resok.filr_pf)
 
 
+def format_size(size_bytes, human_readable=False):
+    if not human_readable:
+        return str(size_bytes)
+
+    if size_bytes == 0:
+        return "0B"
+
+    units = ["B", "K", "M", "G", "T", "P", "E"]
+    i = 0
+    size = float(size_bytes)
+
+    while size >= 1024 and i < len(units) - 1:
+        size /= 1024.0
+        i += 1
+
+    # Match typical du -h style formatting
+    if size >= 10 or size.is_integer():
+        return f"{int(size)}{units[i]}"
+    else:
+        return f"{size:.1f}{units[i]}"
+
+
+def fs_usage(client, args):
+    res = client.fs_usage(args.human_readable, args.mount_path if args.mount_path else "")
+    probe_error_handler(res.fur_status)
+
+    resok = res.fur_resok
+    hr = args.human_readable
+
+    mount_stats = None
+    if args.mount_path:
+        try:
+            import os
+            sv = os.statvfs(args.mount_path)
+            mount_stats = {
+                'total_bytes': sv.f_blocks * sv.f_frsize,
+                'free_bytes': sv.f_bavail * sv.f_frsize,
+                'used_bytes': (sv.f_blocks - sv.f_bfree) * sv.f_frsize,
+                'total_files': sv.f_files,
+                'free_files': sv.f_ffree,
+                'used_files': sv.f_files - sv.f_ffree
+            }
+        except Exception as e:
+            print(f"Warning: Could not get stats for mount path {args.mount_path}: {e}")
+
+    if mount_stats:
+        header = f"{'Metric':<15} {'Server (RPC)':>20} {'Mount (statvfs)':>20} {'Diff':>15}"
+        print(header)
+        print("-" * len(header))
+
+        metrics = [
+            ('Total Bytes', resok.fur_total_bytes, mount_stats['total_bytes'], True),
+            ('Used Bytes', resok.fur_used_bytes, mount_stats['used_bytes'], True),
+            ('Free Bytes', resok.fur_free_bytes, mount_stats['free_bytes'], True),
+            ('Total Inodes', resok.fur_total_files, mount_stats['total_files'], False),
+            ('Used Inodes', resok.fur_used_files, mount_stats['used_files'], False),
+            ('Free Inodes', resok.fur_free_files, mount_stats['free_files'], False),
+        ]
+
+        for label, r_val, m_val, is_bytes in metrics:
+            r_str = format_size(r_val, hr if is_bytes else False)
+            m_str = format_size(m_val, hr if is_bytes else False)
+            diff = r_val - m_val
+            diff_str = format_size(diff, hr if is_bytes else False)
+            print(f"{label:<15} {r_str:>20} {m_str:>20} {diff_str:>15}")
+    else:
+        print("Filesystem Usage (Internal/External):")
+        print("  Bytes:")
+        print(f"    Total: {format_size(resok.fur_total_bytes, hr):>15}")
+        print(f"    Used:  {format_size(resok.fur_used_bytes, hr):>15}")
+        print(f"    Free:  {format_size(resok.fur_free_bytes, hr):>15}")
+        print("  Inodes:")
+        print(f"    Total: {resok.fur_total_files:>15}")
+        print(f"    Used:  {resok.fur_used_files:>15}")
+        print(f"    Free:  {resok.fur_free_files:>15}")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Probe reffs servers')
 
@@ -471,6 +548,22 @@ def parse_args():
                                  type=int,
                                  help='File descriptor socket is listening on, -1 for inactive, 0 for all')
     p_fd_infos_list.set_defaults(func=fd_infos_list, fd=0)
+
+    p_fs_usage = subparsers.add_parser('fs-usage',
+                                       help='Get internal/external filesystem usage')
+    p_fs_usage.add_argument('mount_path',
+                            nargs='?',
+                            help='Optional path to mount point for comparison')
+    a_legible = p_fs_usage.add_mutually_exclusive_group(required=False)
+    a_legible.add_argument('--not_human_readable',
+                           help='Do not provide sizes in human readable form',
+                           dest='human_readable',
+                           action='store_false')
+    a_legible.add_argument('--human_readable',
+                           help='Provide sizes in human readable form',
+                           dest='human_readable',
+                           action='store_true')
+    p_fs_usage.set_defaults(func=fs_usage,human_readable=True)
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()

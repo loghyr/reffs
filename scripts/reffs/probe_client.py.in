@@ -162,3 +162,17 @@ class Probe1Client(ProtocolClient):
         """
         args = FD_INFOS_LIST1args(fd)
         return self.proc(PROBEPROC1_FD_INFOS_LIST, args, response_type='FD_INFOS_LIST1res')
+
+    def fs_usage(self, human_readable=False, mount_path=""):
+        """
+        Get filesystem usage from the server.
+
+        Args:
+            human_readable: Whether to format sizes
+            mount_path: Optional local path for comparison
+
+        Returns:
+            FS_USAGE1res object containing filesystem usage information
+        """
+        args = FS_USAGE1args(human_readable, mount_path)
+        return self.proc(PROBEPROC1_FS_USAGE, args, response_type='FS_USAGE1res')
