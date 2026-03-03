@@ -1025,8 +1025,16 @@ static int load_inode_attributes(struct inode *inode)
 			 * that FSSTAT returns correct values after recovery.
 			 */
 			size_t db_size = inode->i_db->db_size;
-			__atomic_add_fetch(&sb->sb_bytes_used, db_size,
-					   __ATOMIC_RELAXED);
+			size_t old_used;
+			size_t new_used;
+			do {
+				__atomic_load(&sb->sb_bytes_used, &old_used,
+					      __ATOMIC_RELAXED);
+				new_used = old_used + db_size;
+			} while (!__atomic_compare_exchange(
+				&sb->sb_bytes_used, &old_used, &new_used, false,
+				__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+
 			inode->i_used = db_size / sb->sb_block_size +
 					(db_size % sb->sb_block_size ? 1 : 0);
 		}
