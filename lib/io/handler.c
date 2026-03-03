@@ -380,9 +380,14 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			      io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
 			      ic->ic_id);
 		} else if (cqe->res < 0) {
-			LOG("CQE error for op=%s, fd=%d: %s",
-			    io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
-			    strerror(-cqe->res));
+			if (ic->ic_op_type == OP_TYPE_HEARTBEAT &&
+			    cqe->res == -ETIME) {
+				TRACE("Heartbeat timer expired (expected)");
+			} else {
+				LOG("CQE error for op=%s, fd=%d: %s",
+				    io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
+				    strerror(-cqe->res));
+			}
 
 			trace_io_context(ic, __func__, __LINE__);
 
