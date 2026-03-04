@@ -22,10 +22,10 @@ To ensure the project compiles correctly in the isolated environment without mod
 ```bash
 make -f Makefile.precommit build-in-docker
 ```
-This target mounts your current directory into the container and runs an incremental build using the container's tools (`clang`, `liburing`, etc.).
+This target mounts your current directory into the container as **read-only**, copies the source to an internal container directory, and runs the build there. This prevents root-owned objects from polluting your host git repository.
 
 ### 3. Run the Server in the Sandbox
-This command ensures the project is built inside the container and then starts the `reffs_nfs3_srv`.
+This command builds the project inside the container and then starts the `reffs_nfs3_srv`.
 ```bash
 make -f Makefile.precommit run-image
 ```
@@ -34,8 +34,10 @@ The server is started with the following configuration:
 - **RPCPort**: 111 (mapped to host 111)
 - **Backend**: POSIX
 - **Data Path**: `/tmp/reffs_data` (internal to container)
-- **Trace File**: `reffs.trc` (written to host project root)
-- **Console Log**: `reffs.console` (written to host project root)
+- **Trace File**: `reffs.trc` (written to host project's sibling `../reffs_logs/` directory)
+- **Console Log**: `reffs.console` (written to host project's sibling `../reffs_logs/` directory)
+
+All build artifacts generated during this process stay inside the container and are removed when the container exits.
 
 ### 4. Running Tests on the Host
 While the server is running in the sandbox, you can run tests (like `cthon04`) from your host machine. The client will communicate with the container via the forwarded ports.

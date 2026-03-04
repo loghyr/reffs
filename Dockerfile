@@ -47,6 +47,7 @@ RUN dnf -y install \
     python3-pip \
     rpcbind \
     rpcgen \
+    rsync \
     rocksdb-devel \
     scan-build \
     script \
@@ -65,9 +66,9 @@ RUN pip3 install --no-cache-dir \
     xml2rfc
 
 # Create workspace directories
-RUN mkdir -p /reffs /backend
+RUN mkdir -p /reffs /backend /src /build /logs
 
-WORKDIR /reffs
+WORKDIR /build
 
 # Create a startup script to ensure rpcbind is running
 RUN printf '#!/bin/bash\nrpcbind -w\nexec "$@"\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
