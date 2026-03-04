@@ -87,19 +87,33 @@ mrproper:
 
 # --- Docker targets ---
 
+# Define logs directory for the docker container as a sibling to avoid pollution
+LOGS_DIR = $(abspath $(ROOT_DIR)/../reffs_logs)
+
+# Target to ensure logs directory exists
+$(LOGS_DIR):
+	@mkdir -p $@
+
 # Build the docker image
 image:
 	$(DOCKER) build -t $(IMAGE_NAME) .
 
 # Run the server in a docker container (sandbox)
 # This uses --privileged to allow FUSE and bypasses host RPC conflicts
-run-image: build-in-docker stop-image
+# It also builds in a clean internal directory to avoid polluting the host
+# Using rsync to exclude host-side artifacts from the internal build
+run-image: $(LOGS_DIR) stop-image
 	$(DOCKER) run --rm -it --privileged \
 		--ulimit nofile=65536:65536 \
 		-p 2049:2049 -p 2049:2049/udp -p 20490:20490 -p 20490:20490/udp -p 111:111 -p 111:111/udp \
-		-v $(ROOT_DIR):/reffs:Z \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
 		$(IMAGE_NAME) \
-		/bin/bash -c "rm -rf /tmp/reffs_data && mkdir -p /tmp/reffs_data && cd /reffs/build && script -q -c './src/reffs_nfs3_srv --port 2049 --file=../reffs.trc --backend=posix --backend-path=/tmp/reffs_data' ../reffs.console"
+		/bin/bash -c "rm -rf /tmp/reffs_data && mkdir -p /tmp/reffs_data && \
+			rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
+			cd /src && autoreconf -fi && \
+			cd /build && ../src/configure && make && \
+			script -q -c './src/reffs_nfs3_srv --port 2049 --file=/logs/reffs.trc --backend=posix --backend-path=/tmp/reffs_data' /logs/reffs.console"
 
 # Stop and remove any running sandbox containers
 stop-image:
@@ -110,9 +124,15 @@ stop-image:
 		$(DOCKER) rm -f $$CONTAINERS 2>/dev/null || true; \
 	fi
 
-# Build the project inside the container using the Makefile's own build target
+# Build the project inside the container using the internal build directory
+# This avoids root-owned objects in the host git repo
 build-in-docker:
-	$(DOCKER) run --rm -v $(ROOT_DIR):/reffs:Z $(IMAGE_NAME) make -f Makefile.precommit build
+	$(DOCKER) run --rm \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		$(IMAGE_NAME) \
+		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
+			cd /src && autoreconf -fi && \
+			cd /build && ../src/configure && make"
 
 # Reconfigure the build system (force)
 reconf:
