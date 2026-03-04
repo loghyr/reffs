@@ -409,7 +409,9 @@ AC_CONFIG_FILES([
 	reffs-echo.service
 	LICENSES/Makefile
 	lib/Makefile
+	lib/backends/Makefile
 	lib/fs/Makefile
+
 	lib/fs/tests/Makefile
 	lib/nlm/Makefile
 	lib/nsm/Makefile

@@ -6,6 +6,7 @@
 SUBDIRS =		\
 	include		\
 	xdr		\
+	backends	\
 	fs		\
 	nlm		\
 	nsm		\

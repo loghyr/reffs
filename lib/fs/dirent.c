@@ -262,54 +262,7 @@ void dirent_sync_to_disk(struct reffs_dirent *parent)
 	struct inode *inode = parent->rd_inode;
 	struct super_block *sb = inode->i_sb;
 
-	if (!sb || sb->sb_storage_type != REFFS_STORAGE_POSIX)
-		return;
-
-	char path[1024];
-	char tmp_path[1024];
-	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dir",
-		 sb->sb_backend_path ? sb->sb_backend_path : ".", sb->sb_id,
-		 inode->i_ino);
-	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
-
-	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-	if (fd < 0) {
-		LOG("Failed to open directory file %s: %s", tmp_path,
-		    strerror(errno));
-		return;
-	}
-
-	if (write(fd, &parent->rd_cookie_next,
-		  sizeof(parent->rd_cookie_next)) !=
-	    sizeof(parent->rd_cookie_next)) {
-		LOG("write cookie_next failed");
-		close(fd);
-		unlink(tmp_path);
-		return;
-	}
-
-	struct reffs_dirent *rd;
-	rcu_read_lock();
-	cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings) {
-		uint64_t cookie = rd->rd_cookie;
-		uint64_t ino = rd->rd_inode ? rd->rd_inode->i_ino : 0;
-		uint16_t name_len = strlen(rd->rd_name);
-
-		if (write(fd, &cookie, sizeof(cookie)) != sizeof(cookie))
-			LOG("write cookie failed");
-		if (write(fd, &ino, sizeof(ino)) != sizeof(ino))
-			LOG("write ino failed");
-		if (write(fd, &name_len, sizeof(name_len)) != sizeof(name_len))
-			LOG("write name_len failed");
-		if (write(fd, rd->rd_name, name_len) != (ssize_t)name_len)
-			LOG("write name failed");
-	}
-	rcu_read_unlock();
-
-	close(fd);
-	if (rename(tmp_path, path) < 0) {
-		LOG("rename %s to %s failed: %s", tmp_path, path,
-		    strerror(errno));
-		unlink(tmp_path);
+	if (sb && sb->sb_ops && sb->sb_ops->dir_sync) {
+		sb->sb_ops->dir_sync(inode);
 	}
 }

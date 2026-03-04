@@ -14,6 +14,7 @@
 #include <urcu.h>
 #include <urcu/ref.h>
 #include "reffs/types.h"
+#include "reffs/backend.h"
 
 struct data_block {
 	struct rcu_head db_rcu;
@@ -21,17 +22,8 @@ struct data_block {
 
 	pthread_mutex_t db_lock;
 
-	enum reffs_storage_type db_storage_type;
-
-	union {
-		struct {
-			char *db_buffer;
-		} ram;
-		struct {
-			int db_fd;
-			char *db_path;
-		} posix;
-	} u;
+	const struct reffs_storage_ops *db_ops;
+	void *db_storage_private;
 
 	size_t db_size; /* Length of db_buffer or file size */
 };

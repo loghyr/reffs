@@ -13,6 +13,7 @@
 #include "reffs/super_block.h"
 #include "reffs/log.h"
 #include "reffs/inode.h"
+#include "reffs/backend.h"
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
@@ -57,6 +58,9 @@ static void super_block_free(struct super_block *sb)
 {
 	if (!sb)
 		return;
+
+	if (sb->sb_ops && sb->sb_ops->sb_free)
+		sb->sb_ops->sb_free(sb);
 
 	int ret = cds_lfht_destroy(sb->sb_inodes, NULL);
 	if (ret < 0) {
@@ -129,7 +133,6 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 				      const char *backend_path)
 {
 	struct super_block *sb;
-	struct statvfs sv;
 
 	sb = calloc(1, sizeof(*sb));
 	if (!sb) {
@@ -140,14 +143,15 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 	sb->sb_id = id;
 	sb->sb_path = strdup(path);
 	sb->sb_storage_type = storage_type;
-	if (backend_path) {
+	if (backend_path)
 		sb->sb_backend_path = strdup(backend_path);
-		if (storage_type == REFFS_STORAGE_POSIX) {
-			char sb_dir[1024];
-			snprintf(sb_dir, sizeof(sb_dir), "%s/sb_%lu",
-				 backend_path, id);
-			mkdir(sb_dir, 0755);
-		}
+
+	sb->sb_ops = reffs_backend_get_ops(storage_type);
+	if (!sb->sb_ops) {
+		free(sb->sb_path);
+		free(sb->sb_backend_path);
+		free(sb);
+		return NULL;
 	}
 
 	CDS_INIT_LIST_HEAD(&sb->sb_link);
@@ -170,23 +174,12 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 	sb->sb_bytes_max = SIZE_MAX;
 	sb->sb_inodes_max = SIZE_MAX;
 
-	switch (storage_type) {
-	case REFFS_STORAGE_POSIX:
-		if (statvfs(backend_path, &sv) == 0) {
-			sb->sb_block_size = sv.f_bsize;
-			sb->sb_bytes_max = (size_t)sv.f_blocks * sv.f_frsize;
-			sb->sb_inodes_max = sv.f_files;
-		} else {
-			sb->sb_block_size = 4096; /* fallback */
+	if (sb->sb_ops->sb_alloc) {
+		int ret = sb->sb_ops->sb_alloc(sb, backend_path);
+		if (ret != 0) {
+			super_block_free(sb);
+			return NULL;
 		}
-		break;
-	case REFFS_STORAGE_RAM:
-		sb->sb_block_size = 4096;
-		break;
-	default:
-		reffs_fail("Storage Type of %u is not supported!",
-			   sb->sb_storage_type);
-		break;
 	}
 
 	return sb;

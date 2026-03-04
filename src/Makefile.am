@@ -21,6 +21,7 @@ AM_CFLAGS = \
 
 LDADD = \
 	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
+	$(top_builddir)/lib/backends/libbackends.la	\
 	$(top_builddir)/lib/trace/libreffs_trace.la	\
 	$(top_builddir)/lib/io/libreffs_io.la		\
 	$(top_builddir)/lib/rpc/libreffs_rpc.la		\

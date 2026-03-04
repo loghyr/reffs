@@ -25,3 +25,5 @@ libreffs_fs_la_SOURCES = \
 	lock.c \
 	ns.c \
 	super_block.c
+
+libreffs_fs_la_LIBADD = $(top_builddir)/lib/backends/libbackends.la
