@@ -76,6 +76,8 @@ TESTS = \
 	posix_recovery_10 \
 	posix_recovery_11 \
 	posix_recovery_12 \
-	posix_recovery_13
+	posix_recovery_13 \
+	fs_usage_ram \
+	fs_usage_posix
 
 check_PROGRAMS = $(TESTS)
