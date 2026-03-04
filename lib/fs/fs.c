@@ -964,9 +964,32 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
+	size_t old_size = inode->i_size;
 	inode->i_size = inode->i_db->db_size;
+	size_t new_size = inode->i_size;
 	inode->i_used = inode->i_size / inode->i_sb->sb_block_size +
 			(inode->i_size % inode->i_sb->sb_block_size ? 1 : 0);
+
+	size_t old_used;
+	size_t new_used;
+	do {
+		__atomic_load(&inode->i_sb->sb_bytes_used, &old_used,
+			      __ATOMIC_RELAXED);
+		if (new_size > old_size) {
+			new_used = old_used + (new_size - old_size);
+		} else if (old_size > new_size) {
+			size_t diff = old_size - new_size;
+			if (old_used >= diff)
+				new_used = old_used - diff;
+			else
+				new_used = 0;
+		} else {
+			new_used = old_used;
+		}
+	} while (!__atomic_compare_exchange(
+		&inode->i_sb->sb_bytes_used, &old_used, &new_used, false,
+		__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	ret = size;
