@@ -257,7 +257,7 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
-	inode->i_mode = (mode & 07777);
+	inode->i_mode = (inode->i_mode & S_IFMT) | (mode & 07777);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);

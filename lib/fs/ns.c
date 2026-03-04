@@ -76,7 +76,6 @@ int reffs_ns_init(void)
 	inode->i_used = 1;
 	inode->i_nlink = 2;
 
-
 	inode->i_parent = reffs_root_sb->sb_dirent;
 
 	inode_put(inode);
@@ -92,15 +91,20 @@ out:
 
 static void release_dirents_recursive(struct reffs_dirent *rd_parent)
 {
-	struct reffs_dirent *rd;
+	struct reffs_dirent *rd, *tmp;
 
 	if (!rd_parent || !rd_parent->rd_inode)
 		return;
 
-	cds_list_for_each_entry_rcu(rd, &rd_parent->rd_inode->i_children,
-				    rd_siblings) {
+	/*
+	 * Use _safe variant: dirent_parent_release removes the entry from
+	 * i_children so we must not hold a pointer to rd_siblings across it.
+	 * Collect the next pointer before the list is mutated.
+	 */
+	cds_list_for_each_entry_safe(rd, tmp, &rd_parent->rd_inode->i_children,
+				     rd_siblings) {
 		release_dirents_recursive(rd);
-		dirent_put(rd);
+		dirent_parent_release(rd, reffs_life_action_death);
 	}
 }
 
@@ -135,15 +139,17 @@ int reffs_ns_fini(void)
 	reffs_namespace_initialized = 0;
 
 	if (reffs_root_sb) {
+		/*
+		 * Walk children first, before super_block_dirent_release()
+		 * nulls out sb->sb_dirent. release_all_fs_dirents() uses
+		 * sb->sb_dirent as the root of the walk — if we call
+		 * super_block_dirent_release() first it is already NULL and
+		 * the walk is skipped entirely, leaving child inodes hashed
+		 * when super_block_put() fires super_block_remove_all_inodes().
+		 */
+		release_all_fs_dirents();
 		super_block_dirent_release(reffs_root_sb,
 					   reffs_life_action_death);
-		release_all_fs_dirents();
-		/*
-		 * Normally we would still have a reference to the sb
-		 * here, but as we strong armed all sbs to be
-		 * put in release_all_fs_dirents(), we don't!
-		 */
-		//super_block_put(reffs_root_sb);
 		reffs_root_sb = NULL;
 	}
 
