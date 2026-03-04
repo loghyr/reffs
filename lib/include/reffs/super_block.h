@@ -16,6 +16,7 @@
 
 #include "reffs/dirent.h"
 #include "reffs/types.h"
+#include "reffs/backend.h"
 
 struct super_block {
 	struct rcu_head sb_rcu;
@@ -32,6 +33,9 @@ struct super_block {
 
 	enum reffs_storage_type sb_storage_type;
 	char *sb_backend_path;
+
+	const struct reffs_storage_ops *sb_ops;
+	void *sb_storage_private;
 
 	uuid_t sb_uuid;
 

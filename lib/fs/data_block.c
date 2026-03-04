@@ -12,35 +12,21 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 #include <unistd.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
 #include <urcu/ref.h>
 #include "reffs/data_block.h"
-#include "reffs/inode.h"
 #include "reffs/super_block.h"
+#include "reffs/inode.h"
 #include "reffs/log.h"
 #include "reffs/rcu.h"
+#include "reffs/backend.h"
 
 static void data_block_free_rcu(struct rcu_head *rcu)
 {
 	struct data_block *db =
 		caa_container_of(rcu, struct data_block, db_rcu);
-
-	switch (db->db_storage_type) {
-	case REFFS_STORAGE_POSIX:
-		free(db->u.posix.db_path);
-		break;
-	case REFFS_STORAGE_RAM:
-		free(db->u.ram.db_buffer);
-		break;
-	default:
-		reffs_fail("Storage Type of %u is not supported!",
-			   db->db_storage_type);
-		break;
-	}
 
 	free(db);
 }
@@ -50,16 +36,8 @@ static void data_block_release(struct urcu_ref *ref)
 	struct data_block *db =
 		caa_container_of(ref, struct data_block, db_ref);
 
-	switch (db->db_storage_type) {
-	case REFFS_STORAGE_POSIX:
-		if (db->u.posix.db_fd >= 0) {
-			close(db->u.posix.db_fd);
-			db->u.posix.db_fd = -1;
-		}
-		break;
-	default:
-		break;
-	}
+	if (db->db_ops && db->db_ops->db_free)
+		db->db_ops->db_free(db);
 
 	call_rcu(&db->db_rcu, data_block_free_rcu);
 }
@@ -69,7 +47,6 @@ struct data_block *data_block_alloc(struct inode *inode, const char *buffer,
 {
 	struct data_block *db;
 	struct super_block *sb = inode->i_sb;
-	char path[1024];
 
 	db = calloc(1, sizeof(*db));
 	if (!db) {
@@ -77,80 +54,15 @@ struct data_block *data_block_alloc(struct inode *inode, const char *buffer,
 		return NULL;
 	}
 
-	db->db_storage_type = sb->sb_storage_type;
 	db->db_size = offset + size;
+	db->db_ops = sb->sb_ops;
 
-	switch (db->db_storage_type) {
-	case REFFS_STORAGE_POSIX:
-		snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dat",
-			 sb->sb_backend_path ? sb->sb_backend_path : ".",
-			 sb->sb_id, inode->i_ino);
-
-		db->u.posix.db_path = strdup(path);
-
-		/*
-		 * Only truncate if we are providing a buffer or a specific size.
-		 * If buffer is NULL and size is 0, we are opening an existing
-		 * file (e.g. during recovery).
-		 */
-		int flags = O_RDWR | O_CREAT;
-		if (buffer || size > 0 || offset > 0)
-			flags |= O_TRUNC;
-
-		db->u.posix.db_fd = open(path, flags, 0666);
-		if (db->u.posix.db_fd < 0) {
-			LOG("Could not open/create backend file %s: %s", path,
-			    strerror(errno));
-			free(db->u.posix.db_path);
+	if (db->db_ops && db->db_ops->db_alloc) {
+		int ret = db->db_ops->db_alloc(db, inode, buffer, size, offset);
+		if (ret != 0) {
 			free(db);
 			return NULL;
 		}
-
-		if (buffer == NULL && size == 0 && offset == 0) {
-			/* Recovery/Open existing: get the real size from disk */
-			struct stat st;
-			if (fstat(db->u.posix.db_fd, &st) == 0) {
-				db->db_size = st.st_size;
-			}
-		}
-
-		if (db->db_size > 0 && (flags & O_TRUNC)) {
-			if (ftruncate(db->u.posix.db_fd, db->db_size) < 0) {
-				LOG("Could not truncate backend file %s: %s",
-				    path, strerror(errno));
-				close(db->u.posix.db_fd);
-				free(db->u.posix.db_path);
-				free(db);
-				return NULL;
-			}
-			if (buffer) {
-				if (pwrite(db->u.posix.db_fd, buffer, size,
-					   offset) < 0) {
-					LOG("Could not write to backend file %s: %s",
-					    path, strerror(errno));
-					close(db->u.posix.db_fd);
-					free(db->u.posix.db_path);
-					free(db);
-					return NULL;
-				}
-			}
-		}
-
-		break;
-	case REFFS_STORAGE_RAM:
-		db->u.ram.db_buffer = calloc(db->db_size, 1);
-		if (!db->u.ram.db_buffer) {
-			LOG("Could not alloc a db's storage");
-			free(db);
-			return NULL;
-		}
-		if (buffer)
-			memcpy(db->u.ram.db_buffer + offset, buffer, size);
-		break;
-	default:
-		reffs_fail("Storage Type of %u is not supported!",
-			   db->db_storage_type);
-		break;
 	}
 
 	pthread_mutex_init(&db->db_lock, NULL);
@@ -181,38 +93,13 @@ void data_block_put(struct data_block *db)
 ssize_t data_block_read(struct data_block *db, char *buffer, size_t size,
 			off_t offset)
 {
-	ssize_t read_len = 0;
+	if (!db)
+		return -EINVAL;
 
-	if ((size_t)offset >= db->db_size)
-		return 0;
+	if (db->db_ops && db->db_ops->db_read)
+		return db->db_ops->db_read(db, buffer, size, offset);
 
-	if (size + offset > db->db_size)
-		read_len = db->db_size - offset;
-	else
-		read_len = size;
-
-	switch (db->db_storage_type) {
-	case REFFS_STORAGE_POSIX: {
-		ssize_t ret =
-			pread(db->u.posix.db_fd, buffer, read_len, offset);
-		if (ret < 0) {
-			LOG("pread from %s failed: %s", db->u.posix.db_path,
-			    strerror(errno));
-			return -errno;
-		}
-		read_len = ret;
-		break;
-	}
-	case REFFS_STORAGE_RAM:
-		memcpy(buffer, db->u.ram.db_buffer + offset, read_len);
-		break;
-	default:
-		reffs_fail("Storage Type of %u is not supported!",
-			   db->db_storage_type);
-		break;
-	}
-
-	return read_len;
+	return -ENOSYS;
 }
 
 ssize_t data_block_write(struct data_block *db, const char *buffer, size_t size,
@@ -221,113 +108,30 @@ ssize_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 	if (!db)
 		return -EINVAL;
 
-	size_t new_total = (size_t)offset + size;
-	char *new_buffer;
+	if (db->db_ops && db->db_ops->db_write)
+		return db->db_ops->db_write(db, buffer, size, offset);
 
-	if (new_total > db->db_size) {
-		switch (db->db_storage_type) {
-		case REFFS_STORAGE_POSIX:
-			if (ftruncate(db->u.posix.db_fd, new_total) < 0) {
-				LOG("ftruncate of %s failed: %s",
-				    db->u.posix.db_path, strerror(errno));
-				return -errno;
-			}
-			break;
-		case REFFS_STORAGE_RAM:
-			new_buffer = realloc(db->u.ram.db_buffer, new_total);
-			if (!new_buffer) {
-				LOG("Could not realloc a db's storage");
-				return -ENOSPC;
-			}
-			db->u.ram.db_buffer = new_buffer;
-			break;
-		default:
-			reffs_fail("Storage Type of %u is not supported!",
-				   db->db_storage_type);
-			break;
-		}
-
-		db->db_size = new_total;
-	}
-
-	ssize_t written = 0;
-	switch (db->db_storage_type) {
-	case REFFS_STORAGE_POSIX: {
-		ssize_t ret =
-			pwrite(db->u.posix.db_fd, buffer, size, (off_t)offset);
-		if (ret < 0) {
-			LOG("pwrite to %s failed: %s", db->u.posix.db_path,
-			    strerror(errno));
-			return -errno;
-		}
-		written = ret;
-		break;
-	}
-	case REFFS_STORAGE_RAM:
-		memcpy(db->u.ram.db_buffer + offset, buffer, size);
-		written = size;
-		break;
-	default:
-		reffs_fail("Storage Type of %u is not supported!",
-			   db->db_storage_type);
-		break;
-	}
-
-	return written;
+	return -ENOSYS;
 }
 
 size_t data_block_resize(struct data_block *db, size_t size)
 {
-	char *new_buffer;
+	if (!db)
+		return 0;
 
-	if (!db || size == db->db_size)
-		return db ? db->db_size : 0;
+	if (db->db_ops && db->db_ops->db_resize)
+		return db->db_ops->db_resize(db, size);
 
-	switch (db->db_storage_type) {
-	case REFFS_STORAGE_POSIX:
-		if (ftruncate(db->u.posix.db_fd, size) < 0) {
-			LOG("ftruncate of %s failed: %s", db->u.posix.db_path,
-			    strerror(errno));
-			return -errno;
-		}
-		break;
-	case REFFS_STORAGE_RAM:
-		new_buffer = realloc(db->u.ram.db_buffer, size);
-		if (size > 0 && !new_buffer) {
-			LOG("Could not realloc a db's storage");
-			return -ENOSPC;
-		}
-		db->u.ram.db_buffer = new_buffer;
-		break;
-	default:
-		reffs_fail("Storage Type of %u is not supported!",
-			   db->db_storage_type);
-		break;
-	}
-
-	db->db_size = size;
-
-	return size;
+	return db->db_size;
 }
 
 size_t data_block_get_size(struct data_block *db)
 {
-	struct stat st;
+	if (!db)
+		return 0;
 
-	switch (db->db_storage_type) {
-	case REFFS_STORAGE_POSIX:
-		if (fstat(db->u.posix.db_fd, &st) == 0) {
-			return st.st_size;
-		}
-		/* fallback on error */
-		return db->db_size;
-	case REFFS_STORAGE_RAM:
-		return db->db_size;
-	default:
-		reffs_fail("Storage Type of %u is not supported!",
-			   db->db_storage_type);
-		break;
-	}
+	if (db->db_ops && db->db_ops->db_get_size)
+		return db->db_ops->db_get_size(db);
 
-	return 0;
+	return db->db_size;
 }

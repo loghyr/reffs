@@ -31,6 +31,7 @@
 #include "reffs/log.h"
 #include "reffs/cmp.h"
 #include "reffs/test.h"
+#include "reffs/backend.h"
 
 static int inode_match(struct cds_lfht_node *ht_node, const void *vkey)
 {
@@ -44,8 +45,6 @@ static void inode_free_rcu(struct rcu_head *rcu)
 {
 	struct inode *inode = caa_container_of(rcu, struct inode, i_rcu);
 
-	// Eventually we will have to abstract this layer, perhaps
-	// as a property of the sb?
 	if (inode->i_db)
 		data_block_put(inode->i_db);
 
@@ -63,7 +62,6 @@ bool inode_unhash(struct inode *inode)
 	bool b;
 	uint64_t state;
 
-	// Do we want to hide the memory model with an inline function?
 	state = __atomic_fetch_and(&inode->i_state, ~INODE_IS_HASHED,
 				   __ATOMIC_ACQUIRE);
 	b = state & INODE_IS_HASHED;
@@ -107,34 +105,9 @@ static void inode_release(struct urcu_ref *ref)
 				&new_used, false, __ATOMIC_SEQ_CST,
 				__ATOMIC_RELAXED));
 
-			if (inode->i_sb->sb_storage_type ==
-			    REFFS_STORAGE_POSIX) {
-				char path[1024];
-				struct super_block *sb = inode->i_sb;
-
-				snprintf(path, sizeof(path),
-					 "%s/sb_%lu/ino_%lu.meta",
-					 sb->sb_backend_path, sb->sb_id,
-					 inode->i_ino);
-				unlink(path);
-
-				snprintf(path, sizeof(path),
-					 "%s/sb_%lu/ino_%lu.dat",
-					 sb->sb_backend_path, sb->sb_id,
-					 inode->i_ino);
-				unlink(path);
-
-				snprintf(path, sizeof(path),
-					 "%s/sb_%lu/ino_%lu.dir",
-					 sb->sb_backend_path, sb->sb_id,
-					 inode->i_ino);
-				unlink(path);
-
-				snprintf(path, sizeof(path),
-					 "%s/sb_%lu/ino_%lu.lnk",
-					 sb->sb_backend_path, sb->sb_id,
-					 inode->i_ino);
-				unlink(path);
+			if (inode->i_sb->sb_ops &&
+			    inode->i_sb->sb_ops->inode_free) {
+				inode->i_sb->sb_ops->inode_free(inode);
 			}
 		}
 	}
@@ -201,6 +174,15 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 
 	inode->i_ino = ino;
 
+	if (inode->i_sb && inode->i_sb->sb_ops &&
+	    inode->i_sb->sb_ops->inode_alloc) {
+		int ret = inode->i_sb->sb_ops->inode_alloc(inode);
+		if (ret != 0) {
+			inode_put(inode);
+			return NULL;
+		}
+	}
+
 	return inode;
 }
 
@@ -212,7 +194,6 @@ struct inode *inode_find(struct super_block *sb, uint64_t ino)
 	struct cds_lfht_node *node;
 	unsigned long hash = XXH3_64bits(&ino, sizeof(ino));
 
-	// Is this just for unit testing?
 	if (!sb)
 		return NULL;
 
@@ -267,69 +248,9 @@ void inode_update_times_now(struct inode *inode, uint64_t flags)
 
 void inode_sync_to_disk(struct inode *inode)
 {
-	struct super_block *sb = inode->i_sb;
-	if (!sb || sb->sb_storage_type != REFFS_STORAGE_POSIX)
-		return;
-
-	struct inode_disk id;
-	id.id_uid = inode->i_uid;
-	id.id_gid = inode->i_gid;
-	id.id_nlink = inode->i_nlink;
-	id.id_mode = inode->i_mode;
-	id.id_size = inode->i_size;
-	id.id_atime = inode->i_atime;
-	id.id_ctime = inode->i_ctime;
-	id.id_mtime = inode->i_mtime;
-
-	char path[1024];
-	char tmp_path[1024];
-	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.meta",
-		 sb->sb_backend_path ? sb->sb_backend_path : ".", sb->sb_id,
-		 inode->i_ino);
-	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
-
-	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-	if (fd >= 0) {
-		if (write(fd, &id, sizeof(id)) != sizeof(id)) {
-			LOG("Failed to write metadata to %s: %s", tmp_path,
-			    strerror(errno));
-			close(fd);
-			unlink(tmp_path);
-		} else {
-			close(fd);
-			if (rename(tmp_path, path) < 0) {
-				LOG("rename %s to %s failed: %s", tmp_path,
-				    path, strerror(errno));
-				unlink(tmp_path);
-			}
-		}
-	} else {
-		LOG("Failed to open metadata file %s: %s", tmp_path,
-		    strerror(errno));
-	}
-
-	if (inode->i_symlink) {
-		snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.lnk",
-			 sb->sb_backend_path ? sb->sb_backend_path : ".",
-			 sb->sb_id, inode->i_ino);
-		snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
-		fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-		if (fd >= 0) {
-			size_t len = strlen(inode->i_symlink);
-			if (write(fd, inode->i_symlink, len) != (ssize_t)len) {
-				LOG("Failed to write symlink to %s: %s",
-				    tmp_path, strerror(errno));
-				close(fd);
-				unlink(tmp_path);
-			} else {
-				close(fd);
-				if (rename(tmp_path, path) < 0) {
-					LOG("rename %s to %s failed: %s",
-					    tmp_path, path, strerror(errno));
-					unlink(tmp_path);
-				}
-			}
-		}
+	if (inode->i_sb && inode->i_sb->sb_ops &&
+	    inode->i_sb->sb_ops->inode_sync) {
+		inode->i_sb->sb_ops->inode_sync(inode);
 	}
 }
 

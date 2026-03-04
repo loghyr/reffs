@@ -34,6 +34,7 @@
 #include "reffs/fs.h"
 #include "reffs/log.h"
 #include "reffs/cmp.h"
+#include "reffs/backend.h"
 
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -1149,7 +1150,7 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 
 void reffs_fs_recover(struct super_block *sb)
 {
-	if (!sb || sb->sb_storage_type != REFFS_STORAGE_POSIX ||
+	if (!sb || sb->sb_ops->type != REFFS_STORAGE_POSIX ||
 	    !sb->sb_backend_path)
 		return;
 
@@ -1168,6 +1169,12 @@ void reffs_fs_recover(struct super_block *sb)
 			if (sscanf(de->d_name, "ino_%lu.meta", &ino) == 1) {
 				if (ino >= sb->sb_next_ino)
 					sb->sb_next_ino = ino + 1;
+			} else if (strstr(de->d_name, ".tmp")) {
+				char tmp_path[PATH_MAX];
+				snprintf(tmp_path, sizeof(tmp_path), "%s/%s",
+					 sb_path, de->d_name);
+				LOG("Deleting stray tmp file %s", tmp_path);
+				unlink(tmp_path);
 			}
 		}
 		closedir(dir);

@@ -28,6 +28,7 @@
 #include "reffs/server.h"
 #include "reffs/ns.h"
 #include "reffs/filehandle.h"
+#include "reffs/backend.h"
 
 volatile sig_atomic_t reffs_namespace_initialized = 0;
 static struct super_block *reffs_root_sb = NULL;
@@ -42,6 +43,8 @@ int reffs_ns_init(void)
 		return EALREADY;
 
 	reffs_namespace_initialized = 1;
+
+	reffs_backend_init();
 
 	reffs_root_sb = super_block_alloc(1, "/", reffs_fs_get_storage_type(),
 					  reffs_fs_get_backend_path());

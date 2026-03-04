@@ -14,6 +14,7 @@
 #include <urcu/rculist.h>
 #include <urcu/rculfhash.h>
 #include <urcu/ref.h>
+#include "reffs/backend.h"
 
 struct super_block;
 struct data_block;
@@ -37,6 +38,8 @@ struct inode {
 	struct reffs_file_handle i_on;
 	struct super_block *i_sb;
 	struct data_block *i_db;
+
+	void *i_storage_private;
 
 	/* Do this as a linked list for now */
 	struct cds_list_head i_children;
