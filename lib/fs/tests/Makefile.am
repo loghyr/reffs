@@ -19,9 +19,11 @@ lib_LTLIBRARIES = libreffs_fs_test.la
 libreffs_fs_test_la_SOURCES =				\
 	posix_recovery.c
 
-noinst_HEADERS =					\
-	posix_recovery.h				\
-	lock_test.h
+noinst_HEADERS = \
+	fuse_harness.h \
+	lock_test.h \
+	fs_test_harness.h \
+	posix_recovery.h
 
 LDADD = \
 	@CHECK_LIBS@					\
@@ -37,13 +39,31 @@ LDADD = \
 	$(UUID_LIBS) $(JEMALLOC_LIBS)
 
 TESTS = \
-	fuse \
+	fuse_1 \
+	fuse_2 \
+	fuse_3 \
+	fuse_4 \
+	fuse_5 \
+	fuse_6 \
+	fuse_7 \
+	fuse_8 \
+	fuse_9 \
 	inode_hashing \
 	inode_hashing_no_check \
 	lock_range_1 \
 	lock_conflict_2 \
 	lock_remove_3 \
 	lock_share_4 \
+	fs_test_access \
+	fs_test_chmod_chown \
+	fs_test_create \
+	fs_test_getattr \
+	fs_test_mkdir \
+	fs_test_mkdir_timestamps \
+	fs_test_rename \
+	fs_test_unlink \
+	fs_test_utimensat \
+	fs_test_write_read \
 	posix_recovery_1 \
 	posix_recovery_2 \
 	posix_recovery_3 \
