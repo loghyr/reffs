@@ -269,7 +269,8 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	if (ic->ic_position >= ic->ic_buffer_len) {
 #ifdef PARTIAL_WRITE_DEBUG
 		TRACE("Buffer complete: ic=%p id=%u position=%zu, buffer_len=%zu",
-		      (void *)ic, ic->ic_id, ic->ic_position, ic->ic_buffer_len);
+		      (void *)ic, ic->ic_id, ic->ic_position,
+		      ic->ic_buffer_len);
 #endif
 		trace_io_write_complete(ic->ic_fd, 0, ic);
 		io_context_destroy(ic);

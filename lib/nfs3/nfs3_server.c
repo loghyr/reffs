@@ -197,8 +197,8 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 				new_used = old_used;
 			}
 		} while (!__atomic_compare_exchange(
-			&inode->i_sb->sb_bytes_used, &old_used, &new_used, false,
-			__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+			&inode->i_sb->sb_bytes_used, &old_used, &new_used,
+			false, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
 
 		if (flags)
 			*flags |= REFFS_INODE_UPDATE_CTIME |
@@ -1001,10 +1001,9 @@ static int nfs3_op_write(struct rpc_trans *rt)
 		} else {
 			new_used = old_used;
 		}
-	} while (!__atomic_compare_exchange(&inode->i_sb->sb_bytes_used,
-					    &old_used, &new_used, false,
-					    __ATOMIC_SEQ_CST,
-					    __ATOMIC_RELAXED));
+	} while (!__atomic_compare_exchange(
+		&inode->i_sb->sb_bytes_used, &old_used, &new_used, false,
+		__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
 
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 
@@ -1315,7 +1314,6 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	rd->rd_inode->i_size = sb->sb_block_size;
 	rd->rd_inode->i_used = 1;
 	rd->rd_inode->i_nlink = 2;
-
 
 	res->status = nfs3_apply_sattr3(rd->rd_inode, sa, NULL, NULL);
 	if (res->status) {
