@@ -337,7 +337,8 @@ int reffs_fs_create(const char *path, mode_t mode)
 	}
 
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth);
+	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
+			  false);
 	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
 	if (!rd) {
 		ret = -ENOENT;
@@ -495,7 +496,7 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	inode = nm->nm_dirent->rd_inode;
 	sb = inode->i_sb;
 
-	if (!(inode->i_mode & S_IFDIR)) {
+	if (!S_ISDIR(inode->i_mode)) {
 		ret = -ENOTDIR;
 		goto out_puts;
 	}
@@ -506,7 +507,7 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	}
 
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth);
+	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth, true);
 	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
 	if (!rd) {
 		ret = -ENOENT;
@@ -567,18 +568,14 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 		goto out_puts;
 	}
 
-	if (S_ISDIR(mode)) {
-		ret = -EISDIR;
-		goto out_puts;
-	}
-
 	if (!strcmp(nm->nm_name, "..")) {
 		ret = -ENOTEMPTY;
 		goto out_puts;
 	}
 
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth);
+	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
+			  false);
 	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
 	if (!rd) {
 		ret = -ENOENT;
@@ -803,17 +800,10 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		dst_exists = true;
 	}
 
-	if (!dst_exists) {
-		if (!(nm_dst->nm_dirent->rd_inode->i_mode & S_IFDIR)) {
-			ret = -ENOTDIR;
-			goto out_unlock;
-#ifdef NOT_NOW
-		} else if (!cds_list_empty(&(
-				   nm_dst->nm_dirent->rd_inode->i_children))) {
-			// man page says it must be empty
+	if (dst_exists && S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode)) {
+		if (!cds_list_empty(&nm_dst->nm_dirent->rd_inode->i_children)) {
 			ret = -ENOTEMPTY;
 			goto out_unlock;
-#endif
 		}
 	}
 
@@ -830,30 +820,48 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		goto out_unlock;
 	}
 
-	if (nm_src->nm_dirent == nm_dst->nm_dirent) {
-		TRACE("Renaming within the same parent");
-		ret = rename_dest(nm_src, nm_dst->nm_dirent, nm_dst->nm_name);
+	struct reffs_dirent *rd_dst_parent_found;
+	if (dst_exists)
+		rd_dst_parent_found = nm_dst->nm_dirent->rd_parent;
+	else
+		rd_dst_parent_found = nm_dst->nm_dirent;
+
+	if (nm_src->nm_dirent->rd_parent == rd_dst_parent_found) {
+		if (dst_exists) {
+			if (S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode) !=
+			    S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode)) {
+				ret = S_ISDIR(nm_src->nm_dirent->rd_inode
+						      ->i_mode) ?
+					      -ENOTDIR :
+					      -EISDIR;
+				goto out_unlock;
+			}
+			if (S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode) &&
+			    !cds_list_empty(&nm_dst->nm_dirent->rd_inode->i_children)) {
+				ret = -ENOTEMPTY;
+				goto out_unlock;
+			}
+		}
+
+		struct reffs_dirent *rd_delete_dst = NULL;
+		if (dst_exists) {
+			rd_delete_dst = dirent_get(nm_dst->nm_dirent);
+		}
+
+		ret = rename_dest(nm_src, rd_dst_parent_found, nm_dst->nm_name);
+
+		if (rd_delete_dst) {
+			dirent_parent_release(rd_delete_dst,
+					      reffs_life_action_death);
+			dirent_put(rd_delete_dst);
+		}
 	} else {
 		struct reffs_dirent *rd_src_pin;
 		struct reffs_dirent *rd_dst_parent;
 		struct reffs_dirent *rd_dst_pin;
 		struct reffs_dirent *rd_delete_dst = NULL;
 
-		/*
-		 * FIXME: Detect other sb boundaries!
-		 */
-		if (!(nm_dst->nm_dirent->rd_parent)) {
-			TRACE("Destination is root");
-			struct super_block *sb = super_block_find(1);
-			verify(sb);
-
-			rd_dst_parent = dirent_get(sb->sb_dirent);
-			super_block_put(sb);
-		} else {
-			rd_dst_parent =
-				dirent_get(nm_dst->nm_dirent->rd_parent);
-		}
-		TRACE("dst parent de=%s", rd_dst_parent->rd_name);
+		rd_dst_parent = dirent_get(rd_dst_parent_found);
 
 		verify(rd_dst_parent);
 		verify(nm_src->nm_dirent->rd_parent);
@@ -861,25 +869,36 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		rd_src_pin = dirent_get(nm_src->nm_dirent->rd_parent);
 
 		if (dst_exists) {
-			if ((nm_dst->nm_dirent->rd_inode->i_mode & S_IFDIR))
-				rd_dst_pin = dirent_get(nm_dst->nm_dirent);
-			else {
-				rd_dst_pin = dirent_get(rd_dst_parent);
-				rd_delete_dst = dirent_get(nm_dst->nm_dirent);
+			if (S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode) !=
+			    S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode)) {
+				ret = S_ISDIR(nm_src->nm_dirent->rd_inode
+						      ->i_mode) ?
+					      -ENOTDIR :
+					      -EISDIR;
+				dirent_put(rd_src_pin);
+				dirent_put(rd_dst_parent);
+				goto out_unlock;
 			}
-		} else {
-			rd_dst_pin = dirent_get(nm_dst->nm_dirent);
-			TRACE("Pinned parent de=%s", rd_dst_pin->rd_name);
+			if (S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode) &&
+			    !cds_list_empty(&nm_dst->nm_dirent->rd_inode->i_children)) {
+				ret = -ENOTEMPTY;
+				dirent_put(rd_src_pin);
+				dirent_put(rd_dst_parent);
+				goto out_unlock;
+			}
+			rd_delete_dst = dirent_get(nm_dst->nm_dirent);
 		}
+		rd_dst_pin = dirent_get(rd_dst_parent);
 
 		pthread_rwlock_wrlock(&rd_dst_pin->rd_rwlock);
 		if (rd_dst_pin != rd_src_pin)
 			pthread_rwlock_wrlock(&rd_src_pin->rd_rwlock);
 
 		dirent_parent_release(nm_src->nm_dirent,
-				      reffs_life_action_update);
-		dirent_parent_attach(nm_src->nm_dirent, rd_dst_pin,
-				     reffs_life_action_update);
+				      reffs_life_action_move);
+		dirent_parent_attach(
+			nm_src->nm_dirent, rd_dst_pin, reffs_life_action_update,
+			S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode));
 		ret = rename_dest_locked(nm_src, rd_dst_pin, nm_dst->nm_name);
 		if (rd_dst_pin != rd_src_pin)
 			pthread_rwlock_unlock(&rd_src_pin->rd_rwlock);
@@ -892,7 +911,6 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		dirent_parent_release(rd_delete_dst, reffs_life_action_death);
 		dirent_put(rd_delete_dst);
 	}
-
 out_unlock:
 	dirent_put(nm_src->nm_dirent);
 	free(nm_src);
@@ -946,15 +964,6 @@ out_unlock:
 	dirent_put(nm->nm_dirent);
 	free(nm);
 out:
-	TRACE("ret=%d", ret);
-	return ret;
-}
-
-int reffs_fs_symlink(const char *path, const char *new_path)
-{
-	int ret = 0;
-
-	TRACE("path=%s new_path=%s", path, new_path);
 	TRACE("ret=%d", ret);
 	return ret;
 }
@@ -1288,8 +1297,8 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 			break;
 		name[name_len] = '\0';
 
-		struct reffs_dirent *rd =
-			dirent_alloc(parent, name, reffs_life_action_load);
+		struct reffs_dirent *rd = dirent_alloc(
+			parent, name, reffs_life_action_load, false);
 		if (rd) {
 			rd->rd_cookie = cookie;
 			rd->rd_inode = inode_alloc(sb, ino);

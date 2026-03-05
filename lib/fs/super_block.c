@@ -98,7 +98,7 @@ static void super_block_release(struct urcu_ref *ref)
 int super_block_dirent_create(struct super_block *sb, struct reffs_dirent *rd,
 			      enum reffs_life_action rla)
 {
-	sb->sb_dirent = dirent_alloc(rd, "/", rla);
+	sb->sb_dirent = dirent_alloc(rd, "/", rla, true);
 	if (!sb->sb_dirent)
 		return ENOMEM;
 
