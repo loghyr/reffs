@@ -9,7 +9,7 @@ ROOT_DIR=$(git rev-parse --show-toplevel)
 cd "$ROOT_DIR"
 
 # Execute the pre-commit build
-make -f Makefile.precommit reconf
+make -f Makefile.reffs reconf
 
 # Check the exit status of the make command
 if [ $? -ne 0 ]; then

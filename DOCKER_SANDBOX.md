@@ -14,20 +14,20 @@ The sandbox environment provides a clean, isolated Linux environment (Fedora-bas
 ### 1. Build the Sandbox Image
 This step only needs to be performed once or whenever the `Dockerfile` changes.
 ```bash
-make -f Makefile.precommit image
+make -f Makefile.reffs image
 ```
 
 ### 2. Build the Project in the Sandbox
 To ensure the project compiles correctly in the isolated environment without modifying your host system's libraries:
 ```bash
-make -f Makefile.precommit build-in-docker
+make -f Makefile.reffs build-in-docker
 ```
 This target mounts your current directory into the container as **read-only**, copies the source to an internal container directory, and runs the build there. This prevents root-owned objects from polluting your host git repository.
 
 ### 3. Run the Server in the Sandbox
 This command builds the project inside the container and then starts the `reffs_nfs3_srv`.
 ```bash
-make -f Makefile.precommit run-image
+make -f Makefile.reffs run-image
 ```
 The server is started with the following configuration:
 - **Port**: 2049 (mapped to host 2049)
@@ -57,10 +57,10 @@ sudo docker exec -it $(sudo docker ps -q --filter ancestor=reffs-dev) /bin/bash
 ```
 
 ## Useful Commands
-The `Makefile.precommit` provides several utility targets for the sandbox workflow:
-- `make -f Makefile.precommit help`: Show all available targets.
-- `make -f Makefile.precommit reconf`: Force re-generation of the `configure` script inside the sandbox.
-- `make -f Makefile.precommit clean`: Remove build artifacts from the `build/` directory.
+The `Makefile.reffs` provides several utility targets for the sandbox workflow:
+- `make -f Makefile.reffs help`: Show all available targets.
+- `make -f Makefile.reffs reconf`: Force re-generation of the `configure` script inside the sandbox.
+- `make -f Makefile.reffs clean`: Remove build artifacts from the `build/` directory.
 
 ## Troubleshooting
 - **Privileged Mode**: The sandbox runs with `--privileged` to allow FUSE mounts and advanced networking.
@@ -77,4 +77,4 @@ The `Makefile.precommit` provides several utility targets for the sandbox workfl
      ```bash
      sudo systemctl restart docker
      ```
-- **Shared Build Directory**: The `build/` directory is shared between the host and the container. If you have previously run `./configure` in the root directory, you may encounter an error. Use `make -f Makefile.precommit mrproper` to clean the environment if this happens.
+- **Shared Build Directory**: The `build/` directory is shared between the host and the container. If you have previously run `./configure` in the root directory, you may encounter an error. Use `make -f Makefile.reffs mrproper` to clean the environment if this happens.

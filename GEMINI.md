@@ -41,10 +41,10 @@ Reffs is a high-performance Reference File System project focused on providing r
 
 ### Docker Sandbox (Recommended)
 To avoid host-level conflicts with NFS services (`rpcbind`, `lockd`), use the isolated Docker environment:
--   **Build Image:** `make -f Makefile.precommit image`
--   **Build in Docker:** `make -f Makefile.precommit build-in-docker`
--   **Run Server:** `make -f Makefile.precommit run-image`
--   **Clean Sandbox:** `make -f Makefile.precommit mrproper`
+-   **Build Image:** `make -f Makefile.reffs image`
+-   **Build in Docker:** `make -f Makefile.reffs build-in-docker`
+-   **Run Server:** `make -f Makefile.reffs run-image`
+-   **Clean Sandbox:** `make -f Makefile.reffs mrproper`
 
 ## Key Technologies
 
