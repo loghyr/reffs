@@ -60,9 +60,11 @@ TESTS = \
 	fs_test_getattr \
 	fs_test_mkdir \
 	fs_test_mkdir_timestamps \
+	fs_test_nlink_semantics \
 	fs_test_rename \
 	fs_test_unlink \
 	fs_test_utimensat \
+	test_rmdir_leak \
 	fs_test_write_read \
 	posix_recovery_1 \
 	posix_recovery_2 \

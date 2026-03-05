@@ -30,7 +30,7 @@ static void teardown(void)
 	fuse_test_teardown();
 }
 
-START_TEST(test_unlink_decrements_parent_nlink)
+START_TEST(test_unlink_does_not_decrement_parent_nlink)
 {
 	struct stat st_before, st_after;
 
@@ -41,7 +41,7 @@ START_TEST(test_unlink_decrements_parent_nlink)
 	ck_assert_int_eq(reffs_fuse_unlink("/d/f"), 0);
 	ck_assert_int_eq(reffs_fuse_getattr("/d", &st_after), 0);
 
-	ck_assert_uint_eq(st_before.st_nlink, st_after.st_nlink + 1);
+	ck_assert_uint_eq(st_before.st_nlink, st_after.st_nlink);
 
 	ck_assert_int_eq(reffs_fuse_rmdir("/d"), 0);
 }
@@ -84,7 +84,7 @@ Suite *fuse_suite(void)
 	Suite *s = suite_create("fuse 5: unlink nlink and parent timestamps");
 	TCase *tc = tcase_create("Core");
 	tcase_add_checked_fixture(tc, setup, teardown);
-	tcase_add_test(tc, test_unlink_decrements_parent_nlink);
+	tcase_add_test(tc, test_unlink_does_not_decrement_parent_nlink);
 	tcase_add_test(tc, test_unlink_parent_timestamps);
 	suite_add_tcase(s, tc);
 	return s;

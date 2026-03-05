@@ -235,16 +235,16 @@ START_TEST(test_rename_file_into_subdir)
 	ck_assert_timespec_eq(st_file_pre.st_mtim, st_file_post.st_mtim);
 	ck_assert_timespec_eq(st_file_pre.st_ctim, st_file_post.st_ctim);
 
-	/* source parent: nlink down, mtime/ctime advanced, atime unchanged */
+	/* source parent: nlink unchanged, mtime/ctime advanced, atime unchanged */
 	ck_assert_int_eq(reffs_fs_getattr("/", &st_src_post), 0);
-	ck_assert_uint_eq(st_src_pre.st_nlink, st_src_post.st_nlink + 1);
+	ck_assert_uint_eq(st_src_pre.st_nlink, st_src_post.st_nlink);
 	ck_assert_timespec_eq(st_src_pre.st_atim, st_src_post.st_atim);
 	ck_assert_timespec_lt(st_src_pre.st_mtim, st_src_post.st_mtim);
 	ck_assert_timespec_lt(st_src_pre.st_ctim, st_src_post.st_ctim);
 
-	/* dest parent: nlink up, mtime/ctime advanced, atime unchanged */
+	/* dest parent: nlink unchanged, mtime/ctime advanced, atime unchanged */
 	ck_assert_int_eq(reffs_fs_getattr("/d", &st_dst_post), 0);
-	ck_assert_uint_eq(st_dst_pre.st_nlink, st_dst_post.st_nlink - 1);
+	ck_assert_uint_eq(st_dst_pre.st_nlink, st_dst_post.st_nlink);
 	ck_assert_timespec_eq(st_dst_pre.st_atim, st_dst_post.st_atim);
 	ck_assert_timespec_lt(st_dst_pre.st_mtim, st_dst_post.st_mtim);
 	ck_assert_timespec_lt(st_dst_pre.st_ctim, st_dst_post.st_ctim);
@@ -281,13 +281,13 @@ START_TEST(test_rename_file_out_of_subdir)
 	ck_assert_timespec_eq(st_file_pre.st_ctim, st_file_post.st_ctim);
 
 	ck_assert_int_eq(reffs_fs_getattr("/d", &st_src_post), 0);
-	ck_assert_uint_eq(st_src_pre.st_nlink, st_src_post.st_nlink + 1);
+	ck_assert_uint_eq(st_src_pre.st_nlink, st_src_post.st_nlink);
 	ck_assert_timespec_eq(st_src_pre.st_atim, st_src_post.st_atim);
 	ck_assert_timespec_lt(st_src_pre.st_mtim, st_src_post.st_mtim);
 	ck_assert_timespec_lt(st_src_pre.st_ctim, st_src_post.st_ctim);
 
 	ck_assert_int_eq(reffs_fs_getattr("/", &st_dst_post), 0);
-	ck_assert_uint_eq(st_dst_pre.st_nlink, st_dst_post.st_nlink - 1);
+	ck_assert_uint_eq(st_dst_pre.st_nlink, st_dst_post.st_nlink);
 	ck_assert_timespec_eq(st_dst_pre.st_atim, st_dst_post.st_atim);
 	ck_assert_timespec_lt(st_dst_pre.st_mtim, st_dst_post.st_mtim);
 	ck_assert_timespec_lt(st_dst_pre.st_ctim, st_dst_post.st_ctim);
@@ -429,12 +429,10 @@ START_TEST(test_rename_nonempty_dir_cross_dir)
 	assert_exists("/dstdir/sub/file");
 
 	/*
-	 * sub's nlink is 3: the initial 2 (from mkdir) plus 1 added when
-	 * /srcdir/sub/file was created (dirent_parent_attach increments the
-	 * parent's nlink for every child entry, including regular files).
-	 * The rename does not change sub's own nlink.
+	 * sub's nlink is 2: the initial 2 (from mkdir).
+	 * dirent_parent_attach correctly no longer increments for regular files.
 	 */
-	ck_assert_uint_eq(get_nlink("/dstdir/sub"), 3);
+	ck_assert_uint_eq(get_nlink("/dstdir/sub"), 2);
 
 	ck_assert_int_eq(reffs_fs_unlink("/dstdir/sub/file"), 0);
 	ck_assert_int_eq(reffs_fs_rmdir("/dstdir/sub"), 0);
@@ -443,61 +441,53 @@ START_TEST(test_rename_nonempty_dir_cross_dir)
 }
 END_TEST
 
-/* ------------------------------------------------------------------ */
-/* Destination already exists as a directory                            */
-/* ------------------------------------------------------------------ */
+/*
+ * Destination already exists as a directory
+ */
 
 /*
- * When the destination already exists as a directory the implementation
- * reparents src *into* that directory (rd_dst_pin is the existing dir)
- * and then renames the entry to nm_dst->nm_name, which is the basename
- * of the dst path — i.e. "dstdir" when dst_path is "/dstdir".
- *
- * So rename("/f", "/dstdir") produces /dstdir/dstdir, not /dstdir/f.
- * This is a quirk of the implementation; standard mv(1) behaviour would
- * be to produce /dstdir/f.  The tests below document what the code
- * actually does so that any change to this behaviour is caught.
+ * POSIX: "If the new argument points to an existing directory, it shall
+ * fail." (when src is a file). Linux rename(2) specifies -EISDIR.
  */
 START_TEST(test_rename_file_into_existing_dir)
 {
-	ino_t file_ino;
-
 	ck_assert_int_eq(reffs_fs_mkdir("/dstdir", 0755), 0);
 	ck_assert_int_eq(reffs_fs_create("/f", S_IFREG | 0644), 0);
-	file_ino = get_ino("/f");
 
-	ck_assert_int_eq(reffs_fs_rename("/f", "/dstdir"), 0);
+	ck_assert_int_eq(reffs_fs_rename("/f", "/dstdir"), -EISDIR);
 
-	assert_not_exists("/f");
-	/* Entry lands under the dst basename, not the src basename */
-	ck_assert_uint_eq(get_ino("/dstdir/dstdir"), file_ino);
+	assert_exists("/f");
+	assert_exists("/dstdir");
 
-	ck_assert_int_eq(reffs_fs_unlink("/dstdir/dstdir"), 0);
+	ck_assert_int_eq(reffs_fs_unlink("/f"), 0);
 	ck_assert_int_eq(reffs_fs_rmdir("/dstdir"), 0);
 }
 END_TEST
 
+/*
+ * POSIX: "If new points to an existing directory, old shall also point
+ * to an existing directory... the directory new is removed and the
+ * directory old is renamed to new."
+ */
 START_TEST(test_rename_dir_into_existing_dir)
 {
 	ino_t child_ino;
-	nlink_t dstdir_before, dstdir_after;
+	nlink_t root_before, root_after;
 
 	ck_assert_int_eq(reffs_fs_mkdir("/dstdir", 0755), 0);
 	ck_assert_int_eq(reffs_fs_mkdir("/child", 0755), 0);
 	child_ino = get_ino("/child");
-	dstdir_before = get_nlink("/dstdir");
+	root_before = get_nlink("/");
 
 	ck_assert_int_eq(reffs_fs_rename("/child", "/dstdir"), 0);
 
 	assert_not_exists("/child");
-	/* Entry lands under the dst basename, not the src basename */
-	ck_assert_uint_eq(get_ino("/dstdir/dstdir"), child_ino);
+	ck_assert_uint_eq(get_ino("/dstdir"), child_ino);
 
-	/* dstdir gained one ".." link from the moved directory */
-	dstdir_after = get_nlink("/dstdir");
-	ck_assert_uint_eq(dstdir_after, dstdir_before + 1);
+	/* root lost one link (the 'child' entry) */
+	root_after = get_nlink("/");
+	ck_assert_uint_eq(root_after, root_before - 1);
 
-	ck_assert_int_eq(reffs_fs_rmdir("/dstdir/dstdir"), 0);
 	ck_assert_int_eq(reffs_fs_rmdir("/dstdir"), 0);
 }
 END_TEST

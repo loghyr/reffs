@@ -60,16 +60,16 @@ START_TEST(test_rename_file_to_subdir)
 	ck_assert_timespec_eq(st_file_before.st_mtim, st_file_after.st_mtim);
 	ck_assert_timespec_eq(st_file_before.st_ctim, st_file_after.st_ctim);
 
-	/* src directory: nlink decreased, mtime/ctime advanced */
+	/* src directory: nlink unchanged, mtime/ctime advanced */
 	ck_assert_int_eq(reffs_fuse_getattr("/", &st_src_after), 0);
-	ck_assert_uint_eq(st_src_before.st_nlink, st_src_after.st_nlink + 1);
+	ck_assert_uint_eq(st_src_before.st_nlink, st_src_after.st_nlink);
 	ck_assert_timespec_eq(st_src_before.st_atim, st_src_after.st_atim);
 	ck_assert_timespec_lt(st_src_before.st_mtim, st_src_after.st_mtim);
 	ck_assert_timespec_lt(st_src_before.st_ctim, st_src_after.st_ctim);
 
-	/* dst directory: nlink increased, mtime/ctime advanced */
+	/* dst directory: nlink unchanged, mtime/ctime advanced */
 	ck_assert_int_eq(reffs_fuse_getattr("/d", &st_dst_after), 0);
-	ck_assert_uint_eq(st_dst_before.st_nlink, st_dst_after.st_nlink - 1);
+	ck_assert_uint_eq(st_dst_before.st_nlink, st_dst_after.st_nlink);
 	ck_assert_timespec_eq(st_dst_before.st_atim, st_dst_after.st_atim);
 	ck_assert_timespec_lt(st_dst_before.st_mtim, st_dst_after.st_mtim);
 	ck_assert_timespec_lt(st_dst_before.st_ctim, st_dst_after.st_ctim);
@@ -104,10 +104,10 @@ START_TEST(test_rename_file_back_to_root)
 	ck_assert_timespec_eq(st_file_before.st_ctim, st_file_after.st_ctim);
 
 	ck_assert_int_eq(reffs_fuse_getattr("/d", &st_src_after), 0);
-	ck_assert_uint_eq(st_src_before.st_nlink, st_src_after.st_nlink + 1);
+	ck_assert_uint_eq(st_src_before.st_nlink, st_src_after.st_nlink);
 
 	ck_assert_int_eq(reffs_fuse_getattr("/", &st_dst_after), 0);
-	ck_assert_uint_eq(st_dst_before.st_nlink, st_dst_after.st_nlink - 1);
+	ck_assert_uint_eq(st_dst_before.st_nlink, st_dst_after.st_nlink);
 
 	ck_assert_int_eq(reffs_fuse_unlink("/f"), 0);
 	ck_assert_int_eq(reffs_fuse_rmdir("/d"), 0);
