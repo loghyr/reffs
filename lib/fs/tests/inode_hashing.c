@@ -410,7 +410,8 @@ Suite *error_suite(void)
 	/* Core test case */
 	tc_core = tcase_create("Core");
 
-	tcase_add_checked_fixture(tc_core, fs_test_perm_setup, fs_test_perm_teardown);
+	tcase_add_checked_fixture(tc_core, fs_test_perm_setup,
+				  fs_test_perm_teardown);
 
 	tcase_add_test(tc_core, add_sb_1);
 	tcase_add_test(tc_core, add_inode_1);
