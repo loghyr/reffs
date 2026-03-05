@@ -13,6 +13,7 @@ AM_LDFLAGS = -rdynamic
 lib_LTLIBRARIES = libreffs_utils.la
 libreffs_utils_la_SOURCES =	\
 	cmp.c			\
+	context.c		\
 	identity.c		\
 	network.c		\
 	rcu.c			\

@@ -26,56 +26,75 @@
 #include "reffs/fuse.h"
 #include "reffs/log.h"
 
+#include "reffs/context.h"
+
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
+static void set_fuse_context(void)
+{
+	struct fuse_context *fctx = fuse_get_context();
+	struct reffs_context ctx = {
+		.uid = fctx->uid,
+		.gid = fctx->gid
+	};
+	reffs_set_context(&ctx);
+}
+
 int reffs_fuse_access(const char *path, int mode)
 {
-	struct fuse_context *context = fuse_get_context();
-
-	return reffs_fs_access(path, mode, context->uid, context->gid);
+	set_fuse_context();
+	return reffs_fs_access(path, mode, 0, 0);
 }
 
 int reffs_fuse_chmod(const char *path, mode_t mode)
 {
+	set_fuse_context();
 	return reffs_fs_chmod(path, mode);
 }
 
 int reffs_fuse_chown(const char *path, uid_t uid, gid_t gid)
 {
+	set_fuse_context();
 	return reffs_fs_chown(path, uid, gid);
 }
 
 int reffs_fuse_create(const char *path, mode_t mode,
 		      struct fuse_file_info __attribute__((unused)) * info)
 {
+	set_fuse_context();
 	return reffs_fs_create(path, mode);
 }
 
 int reffs_fuse_fallocate(const char *path, int mode, off_t offset, off_t len,
 			 struct fuse_file_info __attribute__((unused)) * info)
 {
+	set_fuse_context();
 	return reffs_fs_fallocate(path, mode, offset, len);
 }
 
 int reffs_fuse_getattr(const char *path, struct stat *st)
 {
+	set_fuse_context();
 	return reffs_fs_getattr(path, st);
 }
 
 int reffs_fuse_mkdir(const char *path, mode_t mode)
 {
+	set_fuse_context();
 	return reffs_fs_mkdir(path, mode);
 }
 
 int reffs_fuse_mknod(const char *path, mode_t mode, dev_t rdev)
 {
+	set_fuse_context();
 	return reffs_fs_mknod(path, mode, rdev);
 }
 
 int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
 		    struct fuse_file_info __attribute__((unused)) * fi)
 {
+	set_fuse_context();
 	return reffs_fs_read(path, buffer, size, offset);
 }
 
@@ -142,21 +161,25 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 
 int reffs_fuse_readlink(const char *path, char *buffer, size_t len)
 {
+	set_fuse_context();
 	return reffs_fs_readlink(path, buffer, len);
 }
 
 int reffs_fuse_rename(const char *src_path, const char *dst_path)
 {
+	set_fuse_context();
 	return reffs_fs_rename(src_path, dst_path);
 }
 
 int reffs_fuse_rmdir(const char *path)
 {
+	set_fuse_context();
 	return reffs_fs_rmdir(path);
 }
 
 int reffs_fuse_symlink(const char *path, const char *new_path)
 {
+	set_fuse_context();
 	return reffs_fs_symlink(path, new_path);
 }
 
@@ -164,16 +187,19 @@ int reffs_fuse_write(const char *path, const char *buffer, size_t size,
 		     off_t offset,
 		     struct fuse_file_info __attribute__((unused)) * info)
 {
+	set_fuse_context();
 	return reffs_fs_write(path, buffer, size, offset);
 }
 
 int reffs_fuse_unlink(const char *path)
 {
+	set_fuse_context();
 	return reffs_fs_unlink(path);
 }
 
 int reffs_fuse_link(const char *oldpath, const char *newpath)
 {
+	set_fuse_context();
 	return reffs_fs_link(oldpath, newpath);
 }
 
@@ -225,5 +251,6 @@ int reffs_fuse_statfs(const char *path, struct statvfs *buf)
 
 int reffs_fuse_utimensat(const char *path, const struct timespec times[2])
 {
+	set_fuse_context();
 	return reffs_fs_utimensat(path, times);
 }

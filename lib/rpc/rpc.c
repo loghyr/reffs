@@ -35,6 +35,7 @@
 #include "reffs/stack.h"
 #include "reffs/task.h"
 #include "reffs/trace/rpc.h"
+#include "reffs/context.h"
 
 CDS_LIST_HEAD(rpc_program_handler_list);
 
@@ -813,6 +814,16 @@ int rpc_process_task(struct task *t)
 	}
 
 	trace_rpc_task(rt, __func__, __LINE__);
+
+	if (rt->rt_info.ri_cred.rc_flavor == AUTH_SYS) {
+		struct reffs_context ctx = {
+			.uid = rt->rt_info.ri_cred.rc_unix.aup_uid,
+			.gid = rt->rt_info.ri_cred.rc_unix.aup_gid
+		};
+		reffs_set_context(&ctx);
+	} else {
+		reffs_set_context(NULL);
+	}
 
 	if (rt->rt_info.ri_cred.rc_flavor == AUTH_TLS &&
 	    rt->rt_info.ri_procedure == 0) {
