@@ -36,8 +36,43 @@
 #include "reffs/cmp.h"
 #include "reffs/backend.h"
 
+#include "reffs/context.h"
+
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+
+static int check_permission(struct inode *inode, int mask)
+{
+	struct reffs_context *ctx = reffs_get_context();
+
+	if (ctx->uid == 0)
+		return 0;
+
+	if (ctx->uid == inode->i_uid) {
+		if ((mask & W_OK) && !(inode->i_mode & S_IWUSR))
+			return -EACCES;
+		if ((mask & R_OK) && !(inode->i_mode & S_IRUSR))
+			return -EACCES;
+		if ((mask & X_OK) && !(inode->i_mode & S_IXUSR))
+			return -EACCES;
+	} else if (ctx->gid == inode->i_gid) {
+		if ((mask & W_OK) && !(inode->i_mode & S_IWGRP))
+			return -EACCES;
+		if ((mask & R_OK) && !(inode->i_mode & S_IRGRP))
+			return -EACCES;
+		if ((mask & X_OK) && !(inode->i_mode & S_IXGRP))
+			return -EACCES;
+	} else {
+		if ((mask & W_OK) && !(inode->i_mode & S_IWOTH))
+			return -EACCES;
+		if ((mask & R_OK) && !(inode->i_mode & S_IROTH))
+			return -EACCES;
+		if ((mask & X_OK) && !(inode->i_mode & S_IXOTH))
+			return -EACCES;
+	}
+
+	return 0;
+}
 
 static enum reffs_storage_type global_storage_type = REFFS_STORAGE_RAM;
 static char *global_backend_path = NULL;
@@ -137,9 +172,14 @@ int find_matching_directory_entry(struct name_match **nm, const char *path,
 			}
 		}
 
-		if (str)
+		if (str) {
+			/* POSIX: Search permission (X) required on all path components */
+			ret = check_permission(new->nm_dirent->rd_inode, X_OK);
+			if (ret)
+				goto found;
+
 			exists = name_is_child(new, str);
-		else
+		} else
 			exists = false;
 
 		if (!exists) {
@@ -175,10 +215,17 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 {
 	struct name_match *nm;
 	struct inode *inode;
+	struct reffs_context *ctx = reffs_get_context();
 
 	int ret;
 
-	TRACE("path=%s mode=0%o", path, mode);
+	TRACE("path=%s mode=0%o uid=%u gid=%u", path, mode, uid, gid);
+
+	/* If uid/gid are 0, check if we have a context-based override */
+	if (uid == 0 && ctx->uid != 0) {
+		uid = ctx->uid;
+		gid = ctx->gid;
+	}
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -188,6 +235,11 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 		goto out_puts;
 
 	inode = nm->nm_dirent->rd_inode;
+
+	/* Root bypass */
+	if (uid == 0)
+		goto out_puts;
+
 	if (uid == inode->i_uid) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR)) {
 			ret = -EACCES;
@@ -318,6 +370,11 @@ int reffs_fs_create(const char *path, mode_t mode)
 	if (ret)
 		goto out;
 
+	/* POSIX: Write permission required in parent directory */
+	ret = check_permission(nm->nm_dirent->rd_inode, W_OK);
+	if (ret)
+		goto out_puts;
+
 	inode = nm->nm_dirent->rd_inode;
 	sb = inode->i_sb;
 
@@ -430,6 +487,14 @@ int reffs_fs_link(const char *old_path, const char *new_path)
 	if (ret)
 		goto out;
 
+	/* POSIX: Write permission required in parent directory of destination */
+	ret = check_permission(nm_src->nm_dirent->rd_parent->rd_inode, W_OK);
+	if (ret) {
+		dirent_put(nm_src->nm_dirent);
+		free(nm_src);
+		goto out;
+	}
+
 	if (S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode)) {
 		ret = -EPERM;
 		goto out_src;
@@ -442,6 +507,12 @@ int reffs_fs_link(const char *old_path, const char *new_path)
 		dirent_put(nm_dst->nm_dirent);
 		free(nm_dst);
 		goto out_src;
+
+	/* POSIX: Write permission required in parent directory of destination */
+	ret = check_permission(nm_dst->nm_dirent->rd_inode, W_OK);
+	if (ret) {
+		goto out_dst;
+	}
 	} else if (ret != -ENOENT) {
 		goto out_src;
 	}
@@ -492,6 +563,11 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
 		goto out;
+
+	/* POSIX: Write permission required in parent directory */
+	ret = check_permission(nm->nm_dirent->rd_inode, W_OK);
+	if (ret)
+		goto out_puts;
 
 	inode = nm->nm_dirent->rd_inode;
 	sb = inode->i_sb;
@@ -559,6 +635,11 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
 		goto out;
+
+	/* POSIX: Write permission required in parent directory */
+	ret = check_permission(nm->nm_dirent->rd_inode, W_OK);
+	if (ret)
+		goto out_puts;
 
 	inode = nm->nm_dirent->rd_inode;
 	sb = inode->i_sb;
@@ -778,6 +859,15 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		goto out;
+
+	/* POSIX: Write permission is required for the directory containing 'old' */
+	ret = check_permission(nm_src->nm_dirent->rd_parent->rd_inode, W_OK);
+	if (ret) {
+		dirent_put(nm_src->nm_dirent);
+		free(nm_src);
+		goto out;
+	}
+
 	TRACE("nm_src=%s, de=%s", nm_src->nm_name, nm_src->nm_dirent->rd_name);
 
 	// TODO: make sure the paths are not overlapped if dirs
@@ -799,6 +889,11 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		TRACE("Already exists");
 		dst_exists = true;
 	}
+
+	/* POSIX: Write permission is required for the directory containing 'new' */
+	ret = check_permission(nm_dst->nm_dirent->rd_inode, W_OK);
+	if (ret)
+		goto out_unlock;
 
 	if (dst_exists && S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode)) {
 		if (!cds_list_empty(&nm_dst->nm_dirent->rd_inode->i_children)) {
@@ -940,6 +1035,14 @@ int reffs_fs_rmdir(const char *path)
 	if (ret)
 		goto out;
 
+	/* POSIX: Write permission required in parent directory */
+	ret = check_permission(nm->nm_dirent->rd_parent->rd_inode, W_OK);
+	if (ret) {
+		dirent_put(nm->nm_dirent);
+		free(nm);
+		goto out;
+	}
+
 	inode = nm->nm_dirent->rd_inode;
 
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
@@ -972,7 +1075,7 @@ int reffs_fs_symlink(const char *target, const char *linkpath)
 {
 	struct name_match *nm;
 	struct reffs_dirent *rd;
-	struct super_block *sb;
+	struct super_block *sb = NULL;
 	int ret;
 
 	TRACE("target=%s linkpath=%s", target, linkpath);
@@ -990,6 +1093,11 @@ int reffs_fs_symlink(const char *target, const char *linkpath)
 
 	ret = find_matching_directory_entry(&nm, linkpath,
 					    LAST_COMPONENT_IS_NEW);
+
+	/* POSIX: Write permission required in parent directory */
+	ret = check_permission(nm->nm_dirent->rd_inode, W_OK);
+	if (ret)
+		goto out_puts;
 	if (ret)
 		goto out;
 
@@ -1039,7 +1147,6 @@ int reffs_fs_unlink(const char *path)
 {
 	struct name_match *nm;
 	struct inode *inode = NULL;
-
 	int ret;
 
 	TRACE("path=%s", path);
@@ -1047,6 +1154,14 @@ int reffs_fs_unlink(const char *path)
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		goto out;
+
+	/* POSIX: Write permission required in parent directory */
+	ret = check_permission(nm->nm_dirent->rd_parent->rd_inode, W_OK);
+	if (ret) {
+		dirent_put(nm->nm_dirent);
+		free(nm);
+		goto out;
+	}
 
 	inode = nm->nm_dirent->rd_inode;
 
