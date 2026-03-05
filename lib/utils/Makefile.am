@@ -15,6 +15,7 @@ libreffs_utils_la_SOURCES =	\
 	cmp.c			\
 	context.c		\
 	identity.c		\
+	log.c			\
 	network.c		\
 	rcu.c			\
 	server.c		\

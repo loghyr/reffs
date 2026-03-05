@@ -67,6 +67,7 @@ static inline void fs_test_setup(void)
 
 	reffs_trace_init(NULL);
 	reffs_trace_enable_all_categories();
+	reffs_log_file = stderr;
 
 	reffs_set_context(NULL);
 	ret = reffs_ns_init();

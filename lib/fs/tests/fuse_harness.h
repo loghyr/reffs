@@ -83,6 +83,7 @@ static inline void fuse_test_setup(void)
 
 	reffs_trace_init(NULL);
 	reffs_trace_enable_all_categories();
+	reffs_log_file = stderr;
 
 	ret = reffs_ns_init();
 	ck_assert_int_eq(ret, 0);
