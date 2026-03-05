@@ -107,6 +107,27 @@ START_TEST(test_unlink_advances_parent_mtime_ctime)
 }
 END_TEST
 
+START_TEST(test_unlink_multiply_linked_updates_ctime)
+{
+	struct stat st_pre, st_post;
+
+	ck_assert_int_eq(reffs_fs_create("/f", S_IFREG | 0644), 0);
+	ck_assert_int_eq(reffs_fs_link("/f", "/f_link"), 0);
+
+	ck_assert_int_eq(reffs_fs_getattr("/f", &st_pre), 0);
+	ck_assert_uint_eq(st_pre.st_nlink, 2);
+
+	usleep(100000);
+	ck_assert_int_eq(reffs_fs_unlink("/f"), 0);
+
+	ck_assert_int_eq(reffs_fs_getattr("/f_link", &st_post), 0);
+	ck_assert_uint_eq(st_post.st_nlink, 1);
+	ck_assert_timespec_lt(st_pre.st_ctim, st_post.st_ctim);
+
+	ck_assert_int_eq(reffs_fs_unlink("/f_link"), 0);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 
 Suite *fs_unlink_suite(void)
@@ -119,6 +140,7 @@ Suite *fs_unlink_suite(void)
 	tcase_add_test(tc, test_unlink_enoent);
 	tcase_add_test(tc, test_unlink_does_not_decrement_parent_nlink);
 	tcase_add_test(tc, test_unlink_advances_parent_mtime_ctime);
+	tcase_add_test(tc, test_unlink_multiply_linked_updates_ctime);
 	suite_add_tcase(s, tc);
 	return s;
 }

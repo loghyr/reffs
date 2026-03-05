@@ -429,12 +429,21 @@ int reffs_fs_create(const char *path, mode_t mode)
 		goto out_puts;
 	}
 
+	/* POSIX: Destination must not exist */
+	struct reffs_dirent *existing;
+	existing = dirent_find(nm->nm_dirent, reffs_case_get(), nm->nm_name);
+	if (existing) {
+		dirent_put(existing);
+		ret = -EEXIST;
+		goto out_puts;
+	}
+
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
 	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
 			  false);
 	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
 	if (!rd) {
-		ret = -ENOENT;
+		ret = -ENOMEM;
 		goto out_puts;
 	}
 
@@ -442,7 +451,7 @@ int reffs_fs_create(const char *path, mode_t mode)
 							  __ATOMIC_RELAXED));
 	if (!rd->rd_inode) {
 		dirent_parent_release(rd, reffs_life_action_death);
-		ret = -ENOENT;
+		ret = -ENOMEM;
 		goto out_puts;
 	}
 
@@ -450,9 +459,9 @@ int reffs_fs_create(const char *path, mode_t mode)
 	rd->rd_inode->i_uid = ctx->uid ? ctx->uid : getuid();
 	rd->rd_inode->i_gid = ctx->gid ? ctx->gid : getgid();
 	clock_gettime(CLOCK_REALTIME, &rd->rd_inode->i_mtime);
-	rd->rd_inode->i_atime = inode->i_mtime;
-	rd->rd_inode->i_btime = inode->i_mtime;
-	rd->rd_inode->i_ctime = inode->i_mtime;
+	rd->rd_inode->i_atime = rd->rd_inode->i_mtime;
+	rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
+	rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
 	rd->rd_inode->i_mode = mode; // For now, assume a file!
 	rd->rd_inode->i_size = 0;
 	rd->rd_inode->i_used = 0;
@@ -535,25 +544,25 @@ int reffs_fs_link(const char *old_path, const char *new_path)
 	}
 
 	ret = find_matching_directory_entry(&nm_dst, new_path,
-					    LAST_COMPONENT_IS_MATCH);
-	if (ret == 0) {
-		ret = -EEXIST;
-		name_match_free(nm_dst);
-		goto out_src;
-
-		/* POSIX: Write permission required in parent directory of destination */
-		ret = check_permission(nm_dst->nm_dirent->rd_inode, W_OK);
-		if (ret) {
-			goto out_dst;
-		}
-	} else if (ret != -ENOENT) {
-		goto out_src;
-	}
-
-	ret = find_matching_directory_entry(&nm_dst, new_path,
 					    LAST_COMPONENT_IS_NEW);
 	if (ret)
 		goto out_src;
+
+	/* POSIX: Write permission required in parent directory of destination */
+	ret = check_permission(nm_dst->nm_dirent->rd_inode, W_OK);
+	if (ret) {
+		goto out_dst;
+	}
+
+	/* POSIX: Destination must not exist */
+	struct reffs_dirent *existing;
+	existing = dirent_find(nm_dst->nm_dirent, reffs_case_get(),
+			       nm_dst->nm_name);
+	if (existing) {
+		dirent_put(existing);
+		ret = -EEXIST;
+		goto out_dst;
+	}
 
 	pthread_rwlock_wrlock(&nm_dst->nm_dirent->rd_rwlock);
 	rd = dirent_alloc(nm_dst->nm_dirent, nm_dst->nm_name,
@@ -570,6 +579,8 @@ int reffs_fs_link(const char *old_path, const char *new_path)
 
 	inode_update_times_now(rd->rd_inode, REFFS_INODE_UPDATE_CTIME);
 	inode_sync_to_disk(rd->rd_inode);
+
+	dirent_put(rd);
 
 out_dst:
 	name_match_free(nm_dst);
@@ -686,12 +697,21 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 		goto out_puts;
 	}
 
+	/* POSIX: Destination must not exist */
+	struct reffs_dirent *existing;
+	existing = dirent_find(nm->nm_dirent, reffs_case_get(), nm->nm_name);
+	if (existing) {
+		dirent_put(existing);
+		ret = -EEXIST;
+		goto out_puts;
+	}
+
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
 	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
 			  false);
 	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
 	if (!rd) {
-		ret = -ENOENT;
+		ret = -ENOMEM;
 		goto out_puts;
 	}
 
@@ -699,7 +719,7 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 							  __ATOMIC_RELAXED));
 	if (!rd->rd_inode) {
 		dirent_parent_release(rd, reffs_life_action_death);
-		ret = -ENOENT;
+		ret = -ENOMEM;
 		goto out_puts;
 	}
 
@@ -707,9 +727,9 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 	rd->rd_inode->i_uid = ctx->uid ? ctx->uid : getuid();
 	rd->rd_inode->i_gid = ctx->gid ? ctx->gid : getgid();
 	clock_gettime(CLOCK_REALTIME, &rd->rd_inode->i_mtime);
-	rd->rd_inode->i_atime = inode->i_mtime;
-	rd->rd_inode->i_btime = inode->i_mtime;
-	rd->rd_inode->i_ctime = inode->i_mtime;
+	rd->rd_inode->i_atime = rd->rd_inode->i_mtime;
+	rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
+	rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
 	rd->rd_inode->i_mode = mode; // For now, assume a file!
 	rd->rd_inode->i_size = 0;
 	rd->rd_inode->i_used = 0;
@@ -1001,6 +1021,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		ret = rename_dest(nm_src, rd_dst_parent_found, nm_dst->nm_name);
 
 		if (rd_delete_dst) {
+			inode_update_times_now(rd_delete_dst->rd_inode,
+					       REFFS_INODE_UPDATE_CTIME);
 			dirent_parent_release(rd_delete_dst,
 					      reffs_life_action_death);
 			dirent_put(rd_delete_dst);
@@ -1060,6 +1082,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		dirent_put(rd_dst_parent);
 
 		if (rd_delete_dst) {
+			inode_update_times_now(rd_delete_dst->rd_inode,
+					       REFFS_INODE_UPDATE_CTIME);
 			dirent_parent_release(rd_delete_dst,
 					      reffs_life_action_death);
 			dirent_put(rd_delete_dst);
@@ -1117,6 +1141,8 @@ int reffs_fs_rmdir(const char *path)
 		goto out_puts;
 	}
 
+	inode_update_times_now(nm->nm_dirent->rd_inode,
+			       REFFS_INODE_UPDATE_CTIME);
 	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
 out_puts:
 	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
@@ -1129,7 +1155,7 @@ out:
 int reffs_fs_symlink(const char *target, const char *linkpath)
 {
 	struct name_match *nm;
-	struct reffs_dirent *rd;
+	struct reffs_dirent *rd = NULL;
 	struct super_block *sb = NULL;
 	int ret;
 
@@ -1155,16 +1181,8 @@ int reffs_fs_symlink(const char *target, const char *linkpath)
 	if (ret)
 		goto out_puts;
 
-	sb = super_block_find(1);
-	verify(sb);
+	sb = nm->nm_dirent->rd_inode->i_sb;
 
-	/* Sticky bit check */
-	ret = check_sticky_bit(nm->nm_dirent->rd_parent->rd_inode,
-			       nm->nm_dirent->rd_inode);
-	if (ret) {
-		name_match_free(nm);
-		goto out;
-	}
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
 	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
 			  false);
@@ -1193,11 +1211,16 @@ int reffs_fs_symlink(const char *target, const char *linkpath)
 	rd->rd_inode->i_mode = S_IFLNK | 0777;
 	rd->rd_inode->i_size = strlen(target);
 	rd->rd_inode->i_symlink = strdup(target);
+	if (!rd->rd_inode->i_symlink) {
+		dirent_parent_release(rd, reffs_life_action_death);
+		ret = -ENOMEM;
+		goto out_puts;
+	}
 
 	inode_sync_to_disk(rd->rd_inode);
 
 out_puts:
-	super_block_put(sb);
+	dirent_put(rd);
 	name_match_free(nm);
 out:
 	TRACE("ret=%d", ret);
@@ -1238,6 +1261,8 @@ int reffs_fs_unlink(const char *path)
 		goto out_puts;
 	}
 
+	inode_update_times_now(nm->nm_dirent->rd_inode,
+			       REFFS_INODE_UPDATE_CTIME);
 	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
 out_puts:
 	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
