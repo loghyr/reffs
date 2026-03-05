@@ -2204,7 +2204,7 @@ static int nfs3_op_link(struct rpc_trans *rt)
 	}
 
 	rd = dirent_alloc(inode_dir->i_parent, args->link.name,
-			  reffs_life_action_birth);
+			  reffs_life_action_birth, false);
 	if (!rd) {
 		res->status = NFS3ERR_NOENT;
 		pthread_rwlock_unlock(&inode_dir->i_parent->rd_rwlock);

@@ -35,7 +35,7 @@
 CDS_LIST_HEAD(dirent_list);
 
 void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
-			  enum reffs_life_action rla)
+			  enum reffs_life_action rla, bool is_dir)
 {
 	if (!parent || !parent->rd_inode)
 		return;
@@ -43,7 +43,7 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 	rcu_read_lock();
 	rd->rd_parent = dirent_get(parent);
 	verify(S_ISDIR(parent->rd_inode->i_mode));
-	if (rla != reffs_life_action_load)
+	if (rla != reffs_life_action_load && is_dir)
 		__atomic_fetch_add(&parent->rd_inode->i_nlink, 1,
 				   __ATOMIC_RELAXED);
 	if (rla != reffs_life_action_load) {
@@ -57,9 +57,7 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 		if (S_ISDIR(rd->rd_inode->i_mode))
 			rd->rd_inode->i_parent =
 				parent; // Do not take a reference, manage carefully
-		else if (rla != reffs_life_action_load)
-			__atomic_fetch_add(&rd->rd_inode->i_nlink, 1,
-					   __ATOMIC_RELAXED);
+
 		if (rla != reffs_life_action_load &&
 		    rla != reffs_life_action_unload)
 			inode_sync_to_disk(rd->rd_inode);
@@ -107,7 +105,7 @@ static void dirent_release(struct urcu_ref *ref)
 
 // name should be utf8
 struct reffs_dirent *dirent_alloc(struct reffs_dirent *parent, char *name,
-				  enum reffs_life_action rla)
+				  enum reffs_life_action rla, bool is_dir)
 {
 	struct reffs_dirent *rd;
 
@@ -133,7 +131,7 @@ struct reffs_dirent *dirent_alloc(struct reffs_dirent *parent, char *name,
 
 	CDS_INIT_LIST_HEAD(&rd->rd_siblings);
 	if (parent)
-		dirent_parent_attach(rd, parent, rla);
+		dirent_parent_attach(rd, parent, rla, is_dir);
 
 	return rd;
 }
@@ -214,8 +212,20 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 	rcu_read_lock();
 	parent = rcu_xchg_pointer(&rd->rd_parent, NULL);
 	if (parent) {
-		__atomic_fetch_sub(&parent->rd_inode->i_nlink, 1,
-				   __ATOMIC_RELAXED);
+		if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode) &&
+		    (rla == reffs_life_action_death ||
+		     rla == reffs_life_action_move ||
+		     rla == reffs_life_action_delayed_death)) {
+			uint32_t old_nlink =
+				__atomic_fetch_sub(&parent->rd_inode->i_nlink,
+						   1, __ATOMIC_RELAXED);
+			if (old_nlink <= 2) {
+				LOG("WARNING: nlink for directory (ino %lu) dropped to %u! Resetting to 2 to prevent corruption.",
+				    parent->rd_inode->i_ino, old_nlink - 1);
+				__atomic_store_n(&parent->rd_inode->i_nlink, 2,
+						 __ATOMIC_RELAXED);
+			}
+		}
 		cds_list_del_init(&rd->rd_siblings);
 
 		if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode))
@@ -223,39 +233,20 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 
 		if (rla == reffs_life_action_death ||
 		    rla == reffs_life_action_update ||
+		    rla == reffs_life_action_move ||
 		    rla == reffs_life_action_delayed_death) {
 			inode_update_times_now(
 				parent->rd_inode,
 				REFFS_INODE_UPDATE_CTIME |
 					REFFS_INODE_UPDATE_MTIME);
 		}
-
-		if (rd->rd_inode) {
-			/*
-			 * On death the directory loses both its own "." link
-			 * and the ".." back-link it contributed to the parent,
-			 * so subtract 2.  On a rename (update) the inode keeps
-			 * existing under a new parent — its own nlink is
-			 * unchanged; only the parent's nlink was adjusted above.
-			 * Files always lose exactly 1 link regardless of action.
-			 */
-			int n;
-			if (S_ISDIR(rd->rd_inode->i_mode)) {
-				n = (rla == reffs_life_action_death ||
-				     rla == reffs_life_action_delayed_death) ?
-					    2 :
-					    0;
-			} else {
-				n = 1;
-			}
-			if (n) {
-				uint32_t old_nlink = __atomic_fetch_sub(
-					&rd->rd_inode->i_nlink, n,
-					__ATOMIC_RELAXED);
-				TRACE("ino=%lu old_nlink=%u sub=%d new_nlink=%u",
-				      rd->rd_inode->i_ino, old_nlink, n,
-				      old_nlink - n);
-			}
+		if (rd->rd_inode && (rla == reffs_life_action_death ||
+				     rla == reffs_life_action_delayed_death)) {
+			int n = S_ISDIR(rd->rd_inode->i_mode) ? 2 : 1;
+			uint32_t old_nlink = __atomic_fetch_sub(
+				&rd->rd_inode->i_nlink, n, __ATOMIC_RELAXED);
+			TRACE("ino=%lu old_nlink=%u sub=%d new_nlink=%u",
+			      rd->rd_inode->i_ino, old_nlink, n, old_nlink - n);
 			if (rla != reffs_life_action_load &&
 			    rla != reffs_life_action_unload)
 				inode_sync_to_disk(rd->rd_inode);
