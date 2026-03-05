@@ -60,6 +60,7 @@ extern gid_t fuse_test_gid;
 static inline int fuse_test_global_init(void)
 {
 	rcu_register_thread();
+	setenv("REFFS_FUSE_UNIT_TEST", "1", 1);
 	return 0;
 }
 

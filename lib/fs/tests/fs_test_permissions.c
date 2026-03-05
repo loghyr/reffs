@@ -84,12 +84,18 @@ START_TEST(test_rename_search_permission_failure)
 }
 END_TEST
 
+static void fs_test_perm_teardown(void)
+{
+	reffs_set_context(NULL);
+	fs_test_teardown();
+}
+
 Suite *fs_permission_suite(void)
 {
 	Suite *s = suite_create("fs: permissions");
 	TCase *tc = tcase_create("Core");
 
-	tcase_add_checked_fixture(tc, fs_test_setup, fs_test_teardown);
+	tcase_add_checked_fixture(tc, fs_test_setup, fs_test_perm_teardown);
 	tcase_add_test(tc, test_rename_src_parent_no_write);
 	tcase_add_test(tc, test_mkdir_no_write_permission);
 	tcase_add_test(tc, test_rename_search_permission_failure);

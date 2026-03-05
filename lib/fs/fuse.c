@@ -33,12 +33,23 @@
 
 static void set_fuse_context(void)
 {
-	struct fuse_context *fctx = fuse_get_context();
-	struct reffs_context ctx = {
-		.uid = fctx->uid,
-		.gid = fctx->gid
-	};
-	reffs_set_context(&ctx);
+	struct fuse_context *fctx;
+
+	if (getenv("REFFS_FUSE_UNIT_TEST")) {
+		reffs_set_context(NULL);
+		return;
+	}
+
+	fctx = fuse_get_context();
+	if (fctx && fctx->fuse) {
+		struct reffs_context ctx = {
+			.uid = fctx->uid,
+			.gid = fctx->gid
+		};
+		reffs_set_context(&ctx);
+	} else {
+		reffs_set_context(NULL);
+	}
 }
 
 int reffs_fuse_access(const char *path, int mode)
