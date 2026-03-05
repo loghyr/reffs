@@ -20,6 +20,8 @@
 #pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
 #endif
 
+extern FILE *reffs_log_file;
+
 #define reffs_fail(fmt, ...)                                             \
 	do {                                                             \
 		struct timespec ts;                                      \
@@ -34,17 +36,18 @@
 		abort();                                                 \
 	} while (0)
 
-#define reffs_log(fmt, ...)                                              \
-	do {                                                             \
-		struct timespec ts;                                      \
-		clock_gettime(CLOCK_REALTIME, &ts);                      \
-		struct tm *tm_info = localtime(&ts.tv_sec);              \
-		char time_str[32];                                       \
-		pid_t tid = syscall(SYS_gettid);                         \
-		strftime(time_str, 20, "%Y-%m-%d %H:%M:%S", tm_info);    \
-		fprintf(stdout, "[%s.%09ld] [%d:%d] (%s:%d): " fmt "\n", \
-			time_str, ts.tv_nsec, getpid(), tid, __func__,   \
-			__LINE__, ##__VA_ARGS__);                        \
+#define reffs_log(fmt, ...)                                                \
+	do {                                                               \
+		struct timespec ts;                                        \
+		clock_gettime(CLOCK_REALTIME, &ts);                        \
+		struct tm *tm_info = localtime(&ts.tv_sec);                \
+		char time_str[32];                                         \
+		pid_t tid = syscall(SYS_gettid);                           \
+		strftime(time_str, 20, "%Y-%m-%d %H:%M:%S", tm_info);      \
+		fprintf(reffs_log_file ? reffs_log_file : stdout,          \
+			"[%s.%09ld] [%d:%d] (%s:%d): " fmt "\n", time_str, \
+			ts.tv_nsec, getpid(), tid, __func__, __LINE__,     \
+			##__VA_ARGS__);                                    \
 	} while (0)
 
 void reffs_trace(const char *function, int line, const char *msg, ...);
