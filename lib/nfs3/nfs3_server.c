@@ -154,7 +154,7 @@ static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
 
 	/* Handle file size changes */
 	if (sa->size.set_it) {
-		if (inode->i_mode & S_IFDIR)
+		if (S_ISDIR(inode->i_mode))
 			return NFS3ERR_ISDIR;
 		size_t old_size = inode->i_size;
 		size_t new_size = sa->size.set_size3_u.size;
@@ -335,7 +335,7 @@ static struct inode *directory_inode_find(struct super_block *sb, uint64_t ino,
 		goto out;
 	}
 
-	if (!(inode->i_mode & S_IFDIR)) {
+	if (!(S_ISDIR(inode->i_mode))) {
 		*status = NFS3ERR_NOTDIR;
 		goto out;
 	}
@@ -631,7 +631,7 @@ static int nfs3_op_access(struct rpc_trans *rt)
 			resok->access |= ACCESS3_READ;
 	}
 
-	if (args->access & ACCESS3_LOOKUP && (inode->i_mode & S_IFDIR)) {
+	if (args->access & ACCESS3_LOOKUP && (S_ISDIR(inode->i_mode))) {
 		status = inode_access_check(inode, &ap, X_OK);
 		if (!status)
 			resok->access |= ACCESS3_LOOKUP;
@@ -649,13 +649,13 @@ static int nfs3_op_access(struct rpc_trans *rt)
 			resok->access |= ACCESS3_EXTEND;
 	}
 
-	if (args->access & ACCESS3_DELETE && (inode->i_mode & S_IFDIR)) {
+	if (args->access & ACCESS3_DELETE && (S_ISDIR(inode->i_mode))) {
 		status = inode_access_check(inode, &ap, W_OK);
 		if (!status)
 			resok->access |= ACCESS3_DELETE;
 	}
 
-	if (args->access & ACCESS3_EXECUTE && !(inode->i_mode & S_IFDIR)) {
+	if (args->access & ACCESS3_EXECUTE && !(S_ISDIR(inode->i_mode))) {
 		status = inode_access_check(inode, &ap, X_OK);
 		if (!status)
 			resok->access |= ACCESS3_EXECUTE;
@@ -726,7 +726,7 @@ static int nfs3_op_readlink(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
-	if (!(inode->i_mode & S_IFLNK)) {
+	if (!S_ISLNK(inode->i_mode)) {
 		res->status = NFS3ERR_INVAL;
 		goto out;
 	}
@@ -801,7 +801,7 @@ static int nfs3_op_read(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
-	if (inode->i_mode & S_IFDIR) {
+	if (S_ISDIR(inode->i_mode)) {
 		res->status = NFS3ERR_ISDIR;
 		goto out;
 	}
@@ -915,7 +915,7 @@ static int nfs3_op_write(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
-	if (inode->i_mode & S_IFDIR) {
+	if (S_ISDIR(inode->i_mode)) {
 		res->status = NFS3ERR_ISDIR;
 		goto out;
 	}
@@ -1854,7 +1854,7 @@ static int nfs3_op_rmdir(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	if (!(exists->i_mode & S_IFDIR)) {
+	if (!(S_ISDIR(exists->i_mode))) {
 		res->status = NFS3ERR_NOTDIR;
 		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
 		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
@@ -2176,7 +2176,7 @@ static int nfs3_op_link(struct rpc_trans *rt)
 		goto out;
 	}
 
-	if (!(inode_dir->i_mode & S_IFDIR)) {
+	if (!(S_ISDIR(inode_dir->i_mode))) {
 		res->status = NFS3ERR_NOTDIR;
 		goto out;
 	}

@@ -42,7 +42,7 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 
 	rcu_read_lock();
 	rd->rd_parent = dirent_get(parent);
-	verify(parent->rd_inode->i_mode & S_IFDIR);
+	verify(S_ISDIR(parent->rd_inode->i_mode));
 	if (rla != reffs_life_action_load)
 		__atomic_fetch_add(&parent->rd_inode->i_nlink, 1,
 				   __ATOMIC_RELAXED);
@@ -54,7 +54,7 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 	dirent_get(rd); // One for the linked list
 
 	if (rd->rd_inode) {
-		if (rd->rd_inode->i_mode & S_IFDIR)
+		if (S_ISDIR(rd->rd_inode->i_mode))
 			rd->rd_inode->i_parent =
 				parent; // Do not take a reference, manage carefully
 		else if (rla != reffs_life_action_load)
@@ -218,7 +218,7 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 				   __ATOMIC_RELAXED);
 		cds_list_del_init(&rd->rd_siblings);
 
-		if (rd->rd_inode && rd->rd_inode->i_mode & S_IFDIR)
+		if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode))
 			rd->rd_inode->i_parent = NULL; // Prevent use-after-free
 
 		if (rla == reffs_life_action_death ||
@@ -240,7 +240,7 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 			 * Files always lose exactly 1 link regardless of action.
 			 */
 			int n;
-			if (rd->rd_inode->i_mode & S_IFDIR) {
+			if (S_ISDIR(rd->rd_inode->i_mode)) {
 				n = (rla == reffs_life_action_death ||
 				     rla == reffs_life_action_delayed_death) ?
 					    2 :

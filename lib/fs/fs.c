@@ -321,12 +321,12 @@ int reffs_fs_create(const char *path, mode_t mode)
 	inode = nm->nm_dirent->rd_inode;
 	sb = inode->i_sb;
 
-	if (!(inode->i_mode & S_IFDIR)) {
+	if (!S_ISDIR(inode->i_mode)) {
 		ret = -ENOTDIR;
 		goto out_puts;
 	}
 
-	if (mode & S_IFDIR) {
+	if (S_ISDIR(mode)) {
 		ret = -EISDIR;
 		goto out_puts;
 	}
@@ -500,12 +500,12 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 	inode = nm->nm_dirent->rd_inode;
 	sb = inode->i_sb;
 
-	if (!(inode->i_mode & S_IFDIR)) {
+	if (!S_ISDIR(inode->i_mode)) {
 		ret = -ENOTDIR;
 		goto out_puts;
 	}
 
-	if (mode & S_IFDIR) {
+	if (S_ISDIR(mode)) {
 		ret = -EISDIR;
 		goto out_puts;
 	}
@@ -572,7 +572,7 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 	// Perhaps a reader/write lock?
 	pthread_rwlock_rdlock(&inode->i_db_rwlock);
 
-	if (inode->i_mode & S_IFDIR) {
+	if (S_ISDIR(inode->i_mode)) {
 		ret = -EISDIR;
 		goto out_unlock;
 	}
@@ -834,7 +834,7 @@ int reffs_fs_rmdir(const char *path)
 	inode = nm->nm_dirent->rd_inode;
 
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	if (!(inode->i_mode & S_IFDIR)) {
+	if (!S_ISDIR(inode->i_mode)) {
 		ret = -ENOTDIR;
 		goto out_unlock;
 	}
@@ -884,7 +884,7 @@ int reffs_fs_unlink(const char *path)
 	inode = nm->nm_dirent->rd_inode;
 
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	if (inode->i_mode & S_IFDIR) {
+	if (S_ISDIR(inode->i_mode)) {
 		ret = -EISDIR;
 		goto out_unlock;
 	}
@@ -944,7 +944,7 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 
 	pthread_rwlock_wrlock(&inode->i_db_rwlock);
 
-	if (inode->i_mode & S_IFDIR) {
+	if (S_ISDIR(inode->i_mode)) {
 		ret = -EISDIR;
 		goto out_unlock;
 	}
@@ -1137,7 +1137,7 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 			rd->rd_inode = inode_alloc(sb, ino);
 			if (rd->rd_inode) {
 				load_inode_attributes(rd->rd_inode);
-				if (rd->rd_inode->i_mode & S_IFDIR) {
+				if (S_ISDIR(rd->rd_inode->i_mode)) {
 					rd->rd_inode->i_parent = rd;
 					recover_directory_recursive(rd);
 				}
