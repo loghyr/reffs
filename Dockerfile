@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: GPL-2.0+
 
-FROM fedora:41
+FROM fedora:43
 
 # Optimize DNF for robustness and speed
 RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf && \
