@@ -84,6 +84,62 @@ START_TEST(test_rename_search_permission_failure)
 }
 END_TEST
 
+START_TEST(test_sticky_bit_semantics)
+{
+	struct reffs_context ctx_a = {.uid = 1001, .gid = 1001};
+	struct reffs_context ctx_b = {.uid = 1002, .gid = 1002};
+	struct reffs_context ctx_c = {.uid = 1003, .gid = 1003};
+
+	/* 1. Setup: Create a sticky directory with 1777 perms as root */
+	reffs_set_context(NULL);
+	ck_assert_int_eq(reffs_fs_mkdir("/sticky", S_ISVTX | 0777), 0);
+	ck_assert_int_eq(reffs_fs_chown("/sticky", 1001, 1001), 0);
+	ck_assert_int_eq(reffs_fs_chmod("/sticky", S_ISVTX | 0777), 0);
+
+	/* 2. User B creates a file in the sticky directory */
+	reffs_set_context(&ctx_b);
+	ck_assert_int_eq(reffs_fs_create("/sticky/file_b", S_IFREG | 0644), 0);
+
+	/* 3. Unauthorized: User C tries to unlink User B's file -> EACCES */
+	reffs_set_context(&ctx_c);
+	ck_assert_int_eq(reffs_fs_unlink("/sticky/file_b"), -EACCES);
+
+	/* 4. Unauthorized: User C tries to rename User B's file -> EACCES */
+	ck_assert_int_eq(reffs_fs_rename("/sticky/file_b", "/sticky/file_c"), -EACCES);
+
+	/* 5. Authorized: User B (owner) can rename their own file */
+	reffs_set_context(&ctx_b);
+	ck_assert_int_eq(reffs_fs_rename("/sticky/file_b", "/sticky/file_b2"), 0);
+
+	/* 6. Authorized: User A (dir owner) can unlink User B's file */
+	reffs_set_context(&ctx_a);
+	ck_assert_int_eq(reffs_fs_unlink("/sticky/file_b2"), 0);
+
+	/* 7. Replacement: User B creates f1, User C creates f2. User B can't overwrite f2. */
+	reffs_set_context(&ctx_b);
+	ck_assert_int_eq(reffs_fs_create("/sticky/f1", S_IFREG | 0644), 0);
+	reffs_set_context(&ctx_c);
+	ck_assert_int_eq(reffs_fs_create("/sticky/f2", S_IFREG | 0644), 0);
+
+	reffs_set_context(&ctx_b);
+	/* Rename f1 -> f2 should fail because User B doesn't own f2 (the entry being replaced) */
+	ck_assert_int_eq(reffs_fs_rename("/sticky/f1", "/sticky/f2"), -EACCES);
+
+	/* Cleanup as root */
+	reffs_set_context(NULL);
+	ck_assert_int_eq(reffs_fs_unlink("/sticky/f1"), 0);
+	ck_assert_int_eq(reffs_fs_unlink("/sticky/f2"), 0);
+	ck_assert_int_eq(reffs_fs_rmdir("/sticky"), 0);
+}
+END_TEST
+
+static void fs_test_perm_setup(void)
+{
+	fs_test_setup();
+	fs_test_uid = getuid();
+	fs_test_gid = getgid();
+}
+
 static void fs_test_perm_teardown(void)
 {
 	reffs_set_context(NULL);
@@ -95,10 +151,11 @@ Suite *fs_permission_suite(void)
 	Suite *s = suite_create("fs: permissions");
 	TCase *tc = tcase_create("Core");
 
-	tcase_add_checked_fixture(tc, fs_test_setup, fs_test_perm_teardown);
+	tcase_add_checked_fixture(tc, fs_test_perm_setup, fs_test_perm_teardown);
 	tcase_add_test(tc, test_rename_src_parent_no_write);
 	tcase_add_test(tc, test_mkdir_no_write_permission);
 	tcase_add_test(tc, test_rename_search_permission_failure);
+	tcase_add_test(tc, test_sticky_bit_semantics);
 
 	suite_add_tcase(s, tc);
 	return s;
@@ -107,12 +164,17 @@ Suite *fs_permission_suite(void)
 int main(void)
 {
 	int number_failed;
+
+	fs_test_global_init();
+
 	SRunner *sr = srunner_create(fs_permission_suite());
 
 	srunner_set_fork_status(sr, CK_NOFORK);
 	srunner_run_all(sr, CK_NORMAL);
 	number_failed = srunner_ntests_failed(sr);
 	srunner_free(sr);
+
+	fs_test_global_fini();
 
 	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

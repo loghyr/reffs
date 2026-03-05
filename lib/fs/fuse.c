@@ -164,8 +164,7 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	}
 	rcu_read_unlock();
 
-	dirent_put(nm->nm_dirent);
-	free(nm);
+	name_match_free(nm);
 
 	return 0;
 }

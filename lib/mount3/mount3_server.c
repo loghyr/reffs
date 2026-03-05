@@ -91,10 +91,7 @@ static int mount3_mnt(struct rpc_trans *rt)
 out:
 	free(flavors);
 	free(nfh);
-	if (nm) {
-		dirent_put(nm->nm_dirent);
-		free(nm);
-	}
+	name_match_free(nm);
 	return mr->fhs_status;
 }
 
