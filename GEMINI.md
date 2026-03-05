@@ -34,9 +34,9 @@ Reffs is a high-performance Reference File System project focused on providing r
 ## Development Workflows
 
 ### Build & Test (Local)
-1.  **Configure:** `./configure` (add sanitizer flags as needed).
-2.  **Build:** `make -j$(nproc)`
-3.  **Test:** `make check` (runs C unit tests in `lib/*/tests/`).
+1.  **Configure:** `cd build && ../configure` (add sanitizer flags as needed).
+2.  **Build:** `cd build && make -j$(nproc)`
+3.  **Test:** `cd build && make check` (runs C unit tests in `lib/*/tests/`).
 4.  **Protocol Probing:** Use `scripts/reffs-probe.py` for protocol-level verification.
 
 ### Docker Sandbox (Recommended)
