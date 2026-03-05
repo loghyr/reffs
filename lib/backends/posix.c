@@ -41,7 +41,11 @@ static int posix_sb_alloc(struct super_block *sb, const char *backend_path)
 
 	char sb_dir[1024];
 	snprintf(sb_dir, sizeof(sb_dir), "%s/sb_%lu", backend_path, sb->sb_id);
-	mkdir(sb_dir, 0755);
+	if (mkdir(sb_dir, 0755) < 0 && errno != EEXIST) {
+		LOG("mkdir %s failed: %s", sb_dir, strerror(errno));
+		free(priv);
+		return errno;
+	}
 	priv->sb_dir = strdup(sb_dir);
 
 	struct statvfs sv;
