@@ -310,10 +310,11 @@ END_TEST
  * renamed to new."  The removal is atomic from the caller's perspective.
  * After the rename /dst must carry the source's inode and size; /src
  * must be gone; the old destination inode must be unreachable.
+ * If the destination was multiply linked, its ctime must be updated.
  */
 START_TEST(test_rename_file_clobbers_existing_file)
 {
-	struct stat st_src_pre, st_post;
+	struct stat st_src_pre, st_post, st_dst_pre, st_dstlnk_post;
 
 	ck_assert_int_eq(reffs_fs_create("/src", S_IFREG | 0644), 0);
 	ck_assert_int_eq(reffs_fs_write("/src", "source", 6, 0), 6);
@@ -321,9 +322,15 @@ START_TEST(test_rename_file_clobbers_existing_file)
 
 	ck_assert_int_eq(reffs_fs_create("/dst", S_IFREG | 0644), 0);
 	ck_assert_int_eq(reffs_fs_write("/dst", "old", 3, 0), 3);
+	ck_assert_int_eq(reffs_fs_link("/dst", "/dstlnk"), 0);
+	ck_assert_int_eq(reffs_fs_getattr("/dst", &st_dst_pre), 0);
+	ck_assert_uint_eq(st_dst_pre.st_nlink, 2);
 
 	/* Sanity: distinct inodes before the rename */
 	ck_assert(st_src_pre.st_ino != get_ino("/dst"));
+
+	/* Ensure some time passes for ctime change */
+	usleep(100000);
 
 	ck_assert_int_eq(reffs_fs_rename("/src", "/dst"), 0);
 
@@ -336,7 +343,14 @@ START_TEST(test_rename_file_clobbers_existing_file)
 	ck_assert_int_eq(st_post.st_size, 6);
 	ck_assert_uint_eq(st_post.st_nlink, 1);
 
+	/* /dstlnk still exists, its nlink is now 1, and its ctime was updated */
+	ck_assert_int_eq(reffs_fs_getattr("/dstlnk", &st_dstlnk_post), 0);
+	ck_assert_uint_eq(st_dstlnk_post.st_ino, st_dst_pre.st_ino);
+	ck_assert_uint_eq(st_dstlnk_post.st_nlink, 1);
+	ck_assert_timespec_lt(st_dst_pre.st_ctim, st_dstlnk_post.st_ctim);
+
 	ck_assert_int_eq(reffs_fs_unlink("/dst"), 0);
+	ck_assert_int_eq(reffs_fs_unlink("/dstlnk"), 0);
 }
 END_TEST
 
