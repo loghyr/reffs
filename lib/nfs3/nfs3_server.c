@@ -323,6 +323,21 @@ static void print_nfs_fh3_hex(nfs_fh3 *fh)
 }
 #endif
 
+static nfsstat3 check_sticky_bit_nfs(struct inode *dir, struct inode *file,
+				     struct authunix_parms *ap)
+{
+	if (!ap || ap->aup_uid == 0)
+		return NFS3_OK;
+
+	if (!(dir->i_mode & S_ISVTX))
+		return NFS3_OK;
+
+	if (ap->aup_uid == file->i_uid || ap->aup_uid == dir->i_uid)
+		return NFS3_OK;
+
+	return NFS3ERR_ACCES;
+}
+
 static struct inode *directory_inode_find(struct super_block *sb, uint64_t ino,
 					  struct authunix_parms *ap, int mode,
 					  nfsstat3 *status)
@@ -1763,6 +1778,15 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
+	/* Sticky bit check */
+	res->status = check_sticky_bit_nfs(inode, rd->rd_inode, &ap);
+	if (res->status) {
+		wcc = &res->REMOVE3res_u.resfail.dir_wcc;
+		dirent_put(rd);
+		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
+		goto update_wcc;
+	}
+
 	if (S_ISDIR(rd->rd_inode->i_mode)) {
 		res->status = NFS3ERR_ISDIR;
 		wcc = &res->REMOVE3res_u.resfail.dir_wcc;
@@ -1880,6 +1904,15 @@ static int nfs3_op_rmdir(struct rpc_trans *rt)
 	if (!rd) {
 		res->status = NFS3ERR_NOENT;
 		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
+		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
+		goto update_wcc;
+	}
+
+	/* Sticky bit check */
+	res->status = check_sticky_bit_nfs(inode, rd->rd_inode, &ap);
+	if (res->status) {
+		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
+		dirent_put(rd);
 		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
 		goto update_wcc;
 	}
@@ -2029,9 +2062,36 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
+	/* Sticky bit check for source */
+	res->status = check_sticky_bit_nfs(inode_src, rd_src->rd_inode, &ap);
+	if (res->status) {
+		wcc_src = &res->RENAME3res_u.resfail.fromdir_wcc;
+		wcc_dst = &res->RENAME3res_u.resfail.todir_wcc;
+		goto update_wcc;
+	}
+
+	/* If moving a directory to a different parent, we must have write permission
+	 * on the directory itself (to update its '..' link). */
+	if (S_ISDIR(rd_src->rd_inode->i_mode) && inode_src != inode_dst) {
+		res->status = inode_access_check(rd_src->rd_inode, &ap, W_OK);
+		if (res->status) {
+			wcc_src = &res->RENAME3res_u.resfail.fromdir_wcc;
+			wcc_dst = &res->RENAME3res_u.resfail.todir_wcc;
+			goto update_wcc;
+		}
+	}
+
 	rd_dst = dirent_find(inode_dst->i_parent, rtc, args->to.name);
 
 	if (rd_dst) {
+		/* Sticky bit check for destination */
+		res->status =
+			check_sticky_bit_nfs(inode_dst, rd_dst->rd_inode, &ap);
+		if (res->status) {
+			wcc_src = &res->RENAME3res_u.resfail.fromdir_wcc;
+			wcc_dst = &res->RENAME3res_u.resfail.todir_wcc;
+			goto update_wcc;
+		}
 		if (S_ISDIR(rd_src->rd_inode->i_mode) !=
 		    S_ISDIR(rd_dst->rd_inode->i_mode)) {
 			res->status = S_ISDIR(rd_src->rd_inode->i_mode) ?
