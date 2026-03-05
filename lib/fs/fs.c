@@ -936,6 +936,17 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 	if (ret)
 		goto out_puts;
 
+	/*
+	 * POSIX: If the source is a directory and we are moving it to a different parent,
+	 * we must have write permission on the directory itself (to update its '..' link).
+	 */
+	if (S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode) &&
+	    nm_src->nm_dirent->rd_parent != rd_dst_parent_found) {
+		ret = check_permission(nm_src->nm_dirent->rd_inode, W_OK);
+		if (ret)
+			goto out_puts;
+	}
+
 	/* Sticky bit check for destination (if it exists) */
 	if (dst_exists) {
 		ret = check_sticky_bit(rd_dst_parent_found->rd_inode,
