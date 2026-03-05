@@ -201,7 +201,8 @@ void reffs_trace_init(const char *filename)
 {
 	reffs_trace_name = filename;
 	pthread_create(&trace_compress_tid, NULL, trace_compress_thread, NULL);
-	trace_fp = fopen(reffs_trace_name, "w");
+	if (reffs_trace_name)
+		trace_fp = fopen(reffs_trace_name, "w");
 	if (!trace_fp)
 		trace_fp = stderr;
 	trace_bytes_written = 0;

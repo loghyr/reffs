@@ -55,17 +55,19 @@ extern gid_t fuse_test_gid;
 
 /*
  * Call once per process before srunner_run_all().  Registers the RCU thread.
- * Returns 0 on success.
  */
-static inline int fuse_test_global_init(void)
+static inline void fuse_test_global_init(void)
 {
 	rcu_register_thread();
 	setenv("REFFS_FUSE_UNIT_TEST", "1", 1);
-	return 0;
+	reffs_trace_init(NULL);
+	reffs_trace_enable_all_categories();
+	reffs_log_file = stderr;
 }
 
 static inline void fuse_test_global_fini(void)
 {
+	reffs_trace_close();
 	synchronize_rcu();
 	rcu_barrier();
 	rcu_unregister_thread();
@@ -80,10 +82,6 @@ static inline void fuse_test_setup(void)
 	struct super_block *sb;
 	struct inode *inode;
 	int ret;
-
-	reffs_trace_init(NULL);
-	reffs_trace_enable_all_categories();
-	reffs_log_file = stderr;
 
 	ret = reffs_ns_init();
 	ck_assert_int_eq(ret, 0);

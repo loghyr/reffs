@@ -65,10 +65,6 @@ static inline void fs_test_setup(void)
 	struct inode *inode;
 	int ret;
 
-	reffs_trace_init(NULL);
-	reffs_trace_enable_all_categories();
-	reffs_log_file = stderr;
-
 	reffs_set_context(NULL);
 	ret = reffs_ns_init();
 	ck_assert_int_eq(ret, 0);
@@ -96,10 +92,14 @@ static inline void fs_test_teardown(void)
 static inline void fs_test_global_init(void)
 {
 	rcu_register_thread();
+	reffs_trace_init(NULL);
+	reffs_trace_enable_all_categories();
+	reffs_log_file = stderr;
 }
 
 static inline void fs_test_global_fini(void)
 {
+	reffs_trace_close();
 	synchronize_rcu();
 	rcu_barrier();
 	rcu_unregister_thread();
