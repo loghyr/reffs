@@ -61,6 +61,7 @@ TESTS = \
 	fs_test_mkdir \
 	fs_test_mkdir_timestamps \
 	fs_test_nlink_semantics \
+	fs_test_permissions \
 	fs_test_rename \
 	fs_test_unlink \
 	fs_test_utimensat \
