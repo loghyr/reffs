@@ -11,10 +11,7 @@
 #include <stdlib.h>
 #include "reffs/context.h"
 
-static __thread struct reffs_context thread_ctx = {
-	.uid = 0,
-	.gid = 0
-};
+static __thread struct reffs_context thread_ctx = { .uid = 0, .gid = 0 };
 
 void reffs_set_context(struct reffs_context *ctx)
 {

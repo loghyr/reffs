@@ -2035,7 +2035,8 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 		if (S_ISDIR(rd_src->rd_inode->i_mode) !=
 		    S_ISDIR(rd_dst->rd_inode->i_mode)) {
 			res->status = S_ISDIR(rd_src->rd_inode->i_mode) ?
-				      NFS3ERR_NOTDIR : NFS3ERR_ISDIR;
+					      NFS3ERR_NOTDIR :
+					      NFS3ERR_ISDIR;
 			wcc_src = &res->RENAME3res_u.resfail.fromdir_wcc;
 			wcc_dst = &res->RENAME3res_u.resfail.todir_wcc;
 			goto update_wcc;
