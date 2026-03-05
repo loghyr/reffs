@@ -49,6 +49,7 @@
 #include "reffs/inode.h"
 #include "reffs/fs.h"
 #include "reffs/ns.h"
+#include "reffs/context.h"
 #include "reffs/log.h"
 
 /*
@@ -64,6 +65,7 @@ static inline void fs_test_setup(void)
 	struct inode *inode;
 	int ret;
 
+	reffs_set_context(NULL);
 	ret = reffs_ns_init();
 	ck_assert_int_eq(ret, 0);
 
