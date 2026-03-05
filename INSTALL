@@ -19,4 +19,4 @@ A Quick Summary
 
 Note, to switch to gcc:
 
-make -f Makefile.precommit build -- --with-cc=gcc
+make -f Makefile.reffs build -- --with-cc=gcc

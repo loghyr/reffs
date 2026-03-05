@@ -138,7 +138,7 @@ build-in-docker:
 reconf:
 	autoreconf -fi
 	@if [ -d build ]; then \
-		$(MAKE) -f Makefile.precommit build/Makefile; \
+		$(MAKE) -f Makefile.reffs build/Makefile; \
 	fi
 
 .PHONY: all help build check configure scanbuild style fix-style license clean mrproper image build-in-docker run-image reconf
