@@ -228,6 +228,15 @@ void reffs_trace_enable_category(enum reffs_trace_category category)
 	}
 }
 
+/* Enable all trace categories */
+void reffs_trace_enable_all_categories(void)
+{
+	pthread_mutex_lock(&trace_mutex);
+	for (int i = 0; i < REFFS_TRACE_CAT_ALL; i++)
+		category_enabled[i] = true;
+	pthread_mutex_unlock(&trace_mutex);
+}
+
 /* Disable a trace category */
 void reffs_trace_disable_category(enum reffs_trace_category category)
 {

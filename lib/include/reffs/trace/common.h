@@ -14,6 +14,7 @@ void reffs_trace_close(void);
 
 /* Enabling/disabling trace categories */
 void reffs_trace_enable_category(enum reffs_trace_category category);
+void reffs_trace_enable_all_categories(void);
 void reffs_trace_disable_category(enum reffs_trace_category category);
 bool reffs_trace_is_category_enabled(enum reffs_trace_category category);
 
