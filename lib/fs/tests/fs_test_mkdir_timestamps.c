@@ -3,6 +3,10 @@
  * SPDX-License-Identifier: GPL-2.0+
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 /*
  * fs_test_mkdir_timestamps.c — mkdir/rmdir mtime/ctime semantics
  *

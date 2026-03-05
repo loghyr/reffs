@@ -3,6 +3,10 @@
  * SPDX-License-Identifier: GPL-2.0+
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include "fs_test_harness.h"
 
 uid_t fs_test_uid;

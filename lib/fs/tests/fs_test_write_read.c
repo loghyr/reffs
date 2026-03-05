@@ -3,6 +3,10 @@
  * SPDX-License-Identifier: GPL-2.0+
  */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 /*
  * fs_test_write_read.c — reffs_fs_write() and reffs_fs_read() semantics
  *
