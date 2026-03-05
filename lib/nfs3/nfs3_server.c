@@ -1136,7 +1136,7 @@ static int nfs3_op_create(struct rpc_trans *rt)
 		tmp = exists;
 	} else {
 		rd = dirent_alloc(inode->i_parent, args->where.name,
-				  reffs_life_action_birth);
+				  reffs_life_action_birth, false);
 		if (!rd) {
 			res->status = NFS3ERR_NOENT;
 			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
@@ -1285,7 +1285,7 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	}
 
 	rd = dirent_alloc(inode->i_parent, args->where.name,
-			  reffs_life_action_birth);
+			  reffs_life_action_birth, true);
 	if (!rd) {
 		res->status = NFS3ERR_NOENT;
 		wcc = &resfail->dir_wcc;
@@ -1433,7 +1433,7 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 	}
 
 	rd = dirent_alloc(inode->i_parent, args->where.name,
-			  reffs_life_action_birth);
+			  reffs_life_action_birth, false);
 	if (!rd) {
 		res->status = NFS3ERR_NOENT;
 		wcc = &resfail->dir_wcc;
@@ -1589,7 +1589,7 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 	}
 
 	rd = dirent_alloc(inode->i_parent, args->where.name,
-			  reffs_life_action_birth);
+			  reffs_life_action_birth, false);
 	if (!rd) {
 		res->status = NFS3ERR_NOENT;
 		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
@@ -1763,6 +1763,14 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
+	if (S_ISDIR(rd->rd_inode->i_mode)) {
+		res->status = NFS3ERR_ISDIR;
+		wcc = &res->REMOVE3res_u.resfail.dir_wcc;
+		dirent_put(rd);
+		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
+		goto update_wcc;
+	}
+
 	dirent_parent_release(rd, reffs_life_action_delayed_death);
 	dirent_put(rd); // One for remove
 	dirent_put(rd); // One for the find
@@ -1861,7 +1869,7 @@ static int nfs3_op_rmdir(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	if (exists->i_nlink > 2) {
+	if (!cds_list_empty(&exists->i_children)) {
 		res->status = NFS3ERR_NOTEMPTY;
 		wcc = &res->RMDIR3res_u.resfail.dir_wcc;
 		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
@@ -2023,6 +2031,24 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 
 	rd_dst = dirent_find(inode_dst->i_parent, rtc, args->to.name);
 
+	if (rd_dst) {
+		if (S_ISDIR(rd_src->rd_inode->i_mode) !=
+		    S_ISDIR(rd_dst->rd_inode->i_mode)) {
+			res->status = S_ISDIR(rd_src->rd_inode->i_mode) ?
+				      NFS3ERR_NOTDIR : NFS3ERR_ISDIR;
+			wcc_src = &res->RENAME3res_u.resfail.fromdir_wcc;
+			wcc_dst = &res->RENAME3res_u.resfail.todir_wcc;
+			goto update_wcc;
+		}
+		if (S_ISDIR(rd_dst->rd_inode->i_mode) &&
+		    !cds_list_empty(&rd_dst->rd_inode->i_children)) {
+			res->status = NFS3ERR_NOTEMPTY;
+			wcc_src = &res->RENAME3res_u.resfail.fromdir_wcc;
+			wcc_dst = &res->RENAME3res_u.resfail.todir_wcc;
+			goto update_wcc;
+		}
+	}
+
 	if (strlen(args->to.name) > NFS3_NAME_MAX) {
 		res->status = NFS3ERR_NAMETOOLONG;
 		goto out;
@@ -2040,7 +2066,7 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 	old = rcu_xchg_pointer(&rd_src->rd_name, name);
 	reffs_string_release(old);
 
-	if (inode_src->i_parent == inode_dst->i_parent) {
+	if (inode_src == inode_dst) {
 		if (rd_dst) {
 			// Rename over file in same dir
 			dirent_parent_release(rd_dst, reffs_life_action_death);
@@ -2051,9 +2077,10 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 			dirent_parent_release(rd_dst, reffs_life_action_death);
 		}
 
-		dirent_parent_release(rd_src, reffs_life_action_update);
+		dirent_parent_release(rd_src, reffs_life_action_move);
 		dirent_parent_attach(rd_src, inode_dst->i_parent,
-				     reffs_life_action_update);
+				     reffs_life_action_update,
+				     S_ISDIR(rd_src->rd_inode->i_mode));
 	}
 
 	inode_update_times_now(inode_src, REFFS_INODE_UPDATE_CTIME |
