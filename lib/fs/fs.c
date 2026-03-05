@@ -74,6 +74,29 @@ static int check_permission(struct inode *inode, int mask)
 	return 0;
 }
 
+/*
+ * POSIX Sticky Bit (S_ISVTX) logic:
+ * A file in a sticky directory can be unlinked or renamed only if:
+ * 1. The user is root (handled in check_permission).
+ * 2. The user owns the file.
+ * 3. The user owns the directory.
+ */
+static int check_sticky_bit(struct inode *dir, struct inode *file)
+{
+	struct reffs_context *ctx = reffs_get_context();
+
+	if (ctx->uid == 0)
+		return 0;
+
+	if (!(dir->i_mode & S_ISVTX))
+		return 0;
+
+	if (ctx->uid == file->i_uid || ctx->uid == dir->i_uid)
+		return 0;
+
+	return -EACCES;
+}
+
 static enum reffs_storage_type global_storage_type = REFFS_STORAGE_RAM;
 static char *global_backend_path = NULL;
 
@@ -508,11 +531,11 @@ int reffs_fs_link(const char *old_path, const char *new_path)
 		free(nm_dst);
 		goto out_src;
 
-	/* POSIX: Write permission required in parent directory of destination */
-	ret = check_permission(nm_dst->nm_dirent->rd_inode, W_OK);
-	if (ret) {
-		goto out_dst;
-	}
+		/* POSIX: Write permission required in parent directory of destination */
+		ret = check_permission(nm_dst->nm_dirent->rd_inode, W_OK);
+		if (ret) {
+			goto out_dst;
+		}
 	} else if (ret != -ENOENT) {
 		goto out_src;
 	}
@@ -583,7 +606,8 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	}
 
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth, true);
+	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
+			  true);
 	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
 	if (!rd) {
 		ret = -ENOENT;
@@ -868,6 +892,15 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		goto out;
 	}
 
+	/* Sticky bit check for source */
+	ret = check_sticky_bit(nm_src->nm_dirent->rd_parent->rd_inode,
+			       nm_src->nm_dirent->rd_inode);
+	if (ret) {
+		dirent_put(nm_src->nm_dirent);
+		free(nm_src);
+		goto out;
+	}
+
 	TRACE("nm_src=%s, de=%s", nm_src->nm_name, nm_src->nm_dirent->rd_name);
 
 	// TODO: make sure the paths are not overlapped if dirs
@@ -894,6 +927,14 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 	ret = check_permission(nm_dst->nm_dirent->rd_inode, W_OK);
 	if (ret)
 		goto out_unlock;
+
+	/* Sticky bit check for destination (if it exists) */
+	if (dst_exists) {
+		ret = check_sticky_bit(nm_dst->nm_dirent->rd_inode,
+				       nm_dst->nm_dirent->rd_inode);
+		if (ret)
+			goto out_unlock;
+	}
 
 	if (dst_exists && S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode)) {
 		if (!cds_list_empty(&nm_dst->nm_dirent->rd_inode->i_children)) {
@@ -932,7 +973,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 				goto out_unlock;
 			}
 			if (S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode) &&
-			    !cds_list_empty(&nm_dst->nm_dirent->rd_inode->i_children)) {
+			    !cds_list_empty(
+				    &nm_dst->nm_dirent->rd_inode->i_children)) {
 				ret = -ENOTEMPTY;
 				goto out_unlock;
 			}
@@ -975,7 +1017,8 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 				goto out_unlock;
 			}
 			if (S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode) &&
-			    !cds_list_empty(&nm_dst->nm_dirent->rd_inode->i_children)) {
+			    !cds_list_empty(
+				    &nm_dst->nm_dirent->rd_inode->i_children)) {
 				ret = -ENOTEMPTY;
 				dirent_put(rd_src_pin);
 				dirent_put(rd_dst_parent);
@@ -1093,20 +1136,28 @@ int reffs_fs_symlink(const char *target, const char *linkpath)
 
 	ret = find_matching_directory_entry(&nm, linkpath,
 					    LAST_COMPONENT_IS_NEW);
+	if (ret)
+		goto out;
 
 	/* POSIX: Write permission required in parent directory */
 	ret = check_permission(nm->nm_dirent->rd_inode, W_OK);
 	if (ret)
 		goto out_puts;
-	if (ret)
-		goto out;
 
 	sb = super_block_find(1);
 	verify(sb);
 
+	/* Sticky bit check */
+	ret = check_sticky_bit(nm->nm_dirent->rd_parent->rd_inode,
+			       nm->nm_dirent->rd_inode);
+	if (ret) {
+		dirent_put(nm->nm_dirent);
+		free(nm);
+		goto out;
+	}
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	rd = dirent_alloc(nm->nm_dirent, nm->nm_name,
-			  reffs_life_action_birth, false);
+	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
+			  false);
 	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
 
 	if (!rd) {
@@ -1163,6 +1214,14 @@ int reffs_fs_unlink(const char *path)
 		goto out;
 	}
 
+	/* Sticky bit check */
+	ret = check_sticky_bit(nm->nm_dirent->rd_parent->rd_inode,
+			       nm->nm_dirent->rd_inode);
+	if (ret) {
+		dirent_put(nm->nm_dirent);
+		free(nm);
+		goto out;
+	}
 	inode = nm->nm_dirent->rd_inode;
 
 	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
