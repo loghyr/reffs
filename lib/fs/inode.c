@@ -173,6 +173,7 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 	}
 
 	inode->i_ino = ino;
+	inode->i_nlink = 1;
 
 	if (inode->i_sb && inode->i_sb->sb_ops &&
 	    inode->i_sb->sb_ops->inode_alloc) {
