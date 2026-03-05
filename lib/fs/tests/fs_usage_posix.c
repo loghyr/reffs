@@ -26,6 +26,7 @@
 #include "reffs/test.h"
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
+#include "fs_test_harness.h"
 
 /* Helper to setup a private tmpfs mount for testing limits */
 static int setup_private_tmpfs(const char *mountpoint, size_t size_mb)
@@ -144,11 +145,12 @@ Suite *fs_usage_posix_suite(void)
 int main(void)
 {
 	int failed;
-	rcu_register_thread();
+	fs_test_global_init();
 	SRunner *sr = srunner_create(fs_usage_posix_suite());
+	srunner_set_fork_status(sr, CK_NOFORK);
 	srunner_run_all(sr, CK_NORMAL);
 	failed = srunner_ntests_failed(sr);
 	srunner_free(sr);
-	rcu_unregister_thread();
+	fs_test_global_fini();
 	return failed ? EXIT_FAILURE : EXIT_SUCCESS;
 }

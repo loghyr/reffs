@@ -20,6 +20,7 @@ struct name_match {
 #define LAST_COMPONENT_IS_NEW (false)
 int find_matching_directory_entry(struct name_match **nm, const char *path,
 				  bool match_end);
+void name_match_free(struct name_match *nm);
 
 void reffs_fs_set_storage(enum reffs_storage_type type, const char *path);
 enum reffs_storage_type reffs_fs_get_storage_type(void);

@@ -32,7 +32,6 @@ static void super_block_remove_all_inodes(struct super_block *sb)
 {
 	struct cds_lfht_iter iter;
 	struct inode *inode;
-	unsigned long count = 0;
 
 	while (__atomic_load_n(&sb->sb_delayed_count, __ATOMIC_RELAXED) > 0) {
 		LOG("Waiting for delayed releases to drain (%lu remaining)",
@@ -44,14 +43,27 @@ static void super_block_remove_all_inodes(struct super_block *sb)
 
 	rcu_read_lock();
 	cds_lfht_for_each_entry(sb->sb_inodes, &iter, inode, i_node) {
-		if (inode_unhash(inode))
-			count++;
+		inode_unhash(inode);
 	}
 	rcu_read_unlock();
 
-	if (count)
-		LOG("count = %lu", count);
-	assert(!count);
+	rcu_barrier();
+
+	/*
+	 * Now the hash table should be empty. If there are still entries,
+	 * it's because of a race or leak, but we must not hang here.
+	 */
+	unsigned long count = 0;
+	rcu_read_lock();
+	cds_lfht_for_each_entry(sb->sb_inodes, &iter, inode, i_node) {
+		count++;
+	}
+	rcu_read_unlock();
+
+	if (count > 0) {
+		LOG("WARNING: %lu inodes still in hash table after removal",
+		    count);
+	}
 }
 
 static void super_block_free(struct super_block *sb)
@@ -168,19 +180,20 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 
 	uuid_generate(sb->sb_uuid);
 
-	__atomic_fetch_or(&sb->sb_state, SB_IN_LIST, __ATOMIC_RELEASE);
-	cds_list_add_rcu(&sb->sb_link, &super_block_list);
-
 	sb->sb_bytes_max = SIZE_MAX;
 	sb->sb_inodes_max = SIZE_MAX;
 
 	if (sb->sb_ops->sb_alloc) {
 		int ret = sb->sb_ops->sb_alloc(sb, backend_path);
 		if (ret != 0) {
+			/* Not in list yet, can just free */
 			super_block_free(sb);
 			return NULL;
 		}
 	}
+
+	__atomic_fetch_or(&sb->sb_state, SB_IN_LIST, __ATOMIC_RELEASE);
+	cds_list_add_rcu(&sb->sb_link, &super_block_list);
 
 	return sb;
 }

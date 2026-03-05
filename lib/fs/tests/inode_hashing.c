@@ -19,8 +19,11 @@
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
 #include "reffs/test.h"
+#include "fs_test_harness.h"
 
 static uint64_t sb_id_next = 0;
+uid_t fs_test_uid;
+gid_t fs_test_gid;
 
 START_TEST(add_sb_1)
 {
@@ -389,6 +392,14 @@ START_TEST(find_sb_1)
 	super_block_put(sb2);
 }
 
+static void fs_test_perm_setup(void)
+{
+}
+
+static void fs_test_perm_teardown(void)
+{
+}
+
 Suite *error_suite(void)
 {
 	Suite *s;
@@ -398,6 +409,8 @@ Suite *error_suite(void)
 
 	/* Core test case */
 	tc_core = tcase_create("Core");
+
+	tcase_add_checked_fixture(tc_core, fs_test_perm_setup, fs_test_perm_teardown);
 
 	tcase_add_test(tc_core, add_sb_1);
 	tcase_add_test(tc_core, add_inode_1);
@@ -425,19 +438,17 @@ int main(void)
 	Suite *s;
 	SRunner *sr;
 
-	rcu_register_thread();
+	fs_test_global_init();
 
 	s = error_suite();
 	sr = srunner_create(s);
 
+	srunner_set_fork_status(sr, CK_NOFORK);
 	srunner_run_all(sr, CK_NORMAL);
 	number_failed = srunner_ntests_failed(sr);
 	srunner_free(sr);
 
-	synchronize_rcu();
-	rcu_barrier();
-
-	rcu_unregister_thread();
+	fs_test_global_fini();
 
 	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }

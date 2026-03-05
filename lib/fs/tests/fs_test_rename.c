@@ -534,9 +534,9 @@ END_TEST
 START_TEST(test_rename_dst_parent_missing_enoent)
 {
 	ck_assert_int_eq(reffs_fs_create("/f", S_IFREG | 0644), 0);
-	/* BUG: should be -ENOENT; currently succeeds as a no-op rename */
-	ck_assert_int_eq(reffs_fs_rename("/f", "/missing/f"), 0);
-	/* /f must still exist — it was renamed to itself */
+	/* Now correctly returns -ENOENT because find_matching_directory_entry is fixed */
+	ck_assert_int_eq(reffs_fs_rename("/f", "/missing/f"), -ENOENT);
+	/* /f must still exist */
 	assert_exists("/f");
 	ck_assert_int_eq(reffs_fs_unlink("/f"), 0);
 }
