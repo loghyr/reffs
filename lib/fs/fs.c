@@ -415,6 +415,68 @@ out:
 	return ret;
 }
 
+int reffs_fs_link(const char *old_path, const char *new_path)
+{
+	struct name_match *nm_src;
+	struct name_match *nm_dst;
+	struct reffs_dirent *rd;
+	int ret;
+
+	TRACE("old_path=%s new_path=%s", old_path, new_path);
+
+	ret = find_matching_directory_entry(&nm_src, old_path,
+					    LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		goto out;
+
+	if (S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode)) {
+		ret = -EPERM;
+		goto out_src;
+	}
+
+	ret = find_matching_directory_entry(&nm_dst, new_path,
+					    LAST_COMPONENT_IS_MATCH);
+	if (ret == 0) {
+		ret = -EEXIST;
+		dirent_put(nm_dst->nm_dirent);
+		free(nm_dst);
+		goto out_src;
+	} else if (ret != -ENOENT) {
+		goto out_src;
+	}
+
+	ret = find_matching_directory_entry(&nm_dst, new_path,
+					    LAST_COMPONENT_IS_NEW);
+	if (ret)
+		goto out_src;
+
+	pthread_rwlock_wrlock(&nm_dst->nm_dirent->rd_rwlock);
+	rd = dirent_alloc(nm_dst->nm_dirent, nm_dst->nm_name,
+			  reffs_life_action_birth, false);
+	pthread_rwlock_unlock(&nm_dst->nm_dirent->rd_rwlock);
+
+	if (!rd) {
+		ret = -ENOMEM;
+		goto out_dst;
+	}
+
+	rd->rd_inode = inode_get(nm_src->nm_dirent->rd_inode);
+	__atomic_fetch_add(&rd->rd_inode->i_nlink, 1, __ATOMIC_RELAXED);
+
+	inode_update_times_now(rd->rd_inode, REFFS_INODE_UPDATE_CTIME);
+	inode_sync_to_disk(rd->rd_inode);
+
+out_dst:
+	dirent_put(nm_dst->nm_dirent);
+	free(nm_dst);
+out_src:
+	dirent_put(nm_src->nm_dirent);
+	free(nm_src);
+out:
+	TRACE("ret=%d", ret);
+	return ret;
+}
+
 int reffs_fs_mkdir(const char *path, mode_t mode)
 {
 	struct name_match *nm;
@@ -612,9 +674,38 @@ int reffs_fs_readdir(const char *path, void *buffer, char *filler, off_t offset)
 
 int reffs_fs_readlink(const char *path, char *buffer, size_t len)
 {
-	int ret = 0;
+	struct name_match *nm;
+	struct inode *inode;
+	int ret;
+
 	TRACE("path=%s len=%lu", path, len);
 
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		goto out;
+
+	inode = nm->nm_dirent->rd_inode;
+	if (!S_ISLNK(inode->i_mode)) {
+		ret = -EINVAL;
+		goto out_nm;
+	}
+
+	if (!inode->i_symlink) {
+		ret = -EIO;
+		goto out_nm;
+	}
+
+	size_t sym_len = strlen(inode->i_symlink);
+	size_t copy_len = (sym_len < len) ? sym_len : len;
+
+	memcpy(buffer, inode->i_symlink, copy_len);
+	if (copy_len < len)
+		buffer[copy_len] = '\0';
+
+out_nm:
+	dirent_put(nm->nm_dirent);
+	free(nm);
+out:
 	TRACE("ret=%d", ret);
 	return ret;
 }
@@ -864,6 +955,73 @@ int reffs_fs_symlink(const char *path, const char *new_path)
 	int ret = 0;
 
 	TRACE("path=%s new_path=%s", path, new_path);
+	TRACE("ret=%d", ret);
+	return ret;
+}
+
+int reffs_fs_symlink(const char *target, const char *linkpath)
+{
+	struct name_match *nm;
+	struct reffs_dirent *rd;
+	struct super_block *sb;
+	int ret;
+
+	TRACE("target=%s linkpath=%s", target, linkpath);
+
+	ret = find_matching_directory_entry(&nm, linkpath,
+					    LAST_COMPONENT_IS_MATCH);
+	if (ret == 0) {
+		ret = -EEXIST;
+		dirent_put(nm->nm_dirent);
+		free(nm);
+		goto out;
+	} else if (ret != -ENOENT) {
+		goto out;
+	}
+
+	ret = find_matching_directory_entry(&nm, linkpath,
+					    LAST_COMPONENT_IS_NEW);
+	if (ret)
+		goto out;
+
+	sb = super_block_find(1);
+	verify(sb);
+
+	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
+	rd = dirent_alloc(nm->nm_dirent, nm->nm_name,
+			  reffs_life_action_birth, false);
+	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
+
+	if (!rd) {
+		ret = -ENOMEM;
+		goto out_puts;
+	}
+
+	rd->rd_inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
+							  __ATOMIC_RELAXED));
+	if (!rd->rd_inode) {
+		dirent_parent_release(rd, reffs_life_action_death);
+		ret = -ENOMEM;
+		goto out_puts;
+	}
+
+	rd->rd_inode->i_uid = getuid();
+	rd->rd_inode->i_gid = getgid();
+	clock_gettime(CLOCK_REALTIME, &rd->rd_inode->i_mtime);
+	rd->rd_inode->i_atime = rd->rd_inode->i_mtime;
+	rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
+	rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
+	rd->rd_inode->i_mode = S_IFLNK | 0777;
+	rd->rd_inode->i_size = strlen(target);
+	rd->rd_inode->i_symlink = strdup(target);
+
+	inode_sync_to_disk(rd->rd_inode);
+
+out_puts:
+	super_block_put(sb);
+	dirent_put(nm->nm_dirent);
+	free(nm);
+out:
 	TRACE("ret=%d", ret);
 	return ret;
 }

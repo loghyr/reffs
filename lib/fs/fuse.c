@@ -174,9 +174,7 @@ int reffs_fuse_unlink(const char *path)
 
 int reffs_fuse_link(const char *oldpath, const char *newpath)
 {
-	TRACE("old path=%s new path=%s", oldpath, newpath);
-
-	return 0;
+	return reffs_fs_link(oldpath, newpath);
 }
 
 int reffs_fuse_truncate(const char *path, off_t len)

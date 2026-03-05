@@ -45,6 +45,8 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid);
 int reffs_fs_create(const char *path, mode_t mode);
 int reffs_fs_fallocate(const char *path, int mode, off_t offset, off_t len);
 int reffs_fs_getattr(const char *path, struct stat *st);
+int reffs_fs_getattr(const char *path, struct stat *st);
+int reffs_fs_link(const char *old_path, const char *new_path);
 int reffs_fs_mkdir(const char *path, mode_t mode);
 int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev);
 int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset);
@@ -53,7 +55,7 @@ int reffs_fs_readdir(const char *path, void *buffer, char *filler,
 int reffs_fs_readlink(const char *path, char *buffer, size_t len);
 int reffs_fs_rename(const char *path, const char *new_path);
 int reffs_fs_rmdir(const char *path);
-int reffs_fs_symlink(const char *path, const char *new_path);
+int reffs_fs_symlink(const char *target, const char *linkpath);
 int reffs_fs_unlink(const char *path);
 int reffs_fs_utimensat(const char *path, const struct timespec times[2]);
 int reffs_fs_write(const char *path, const char *buffer, size_t size,
