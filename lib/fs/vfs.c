@@ -61,8 +61,10 @@ static void vfs_lock_dirs(struct inode *d1, struct inode *d2)
 	struct reffs_dirent *de1 = vfs_dir_dirent(d1);
 	struct reffs_dirent *de2 = d2 ? vfs_dir_dirent(d2) : NULL;
 
-	if (!de2 || d1 == d2) {
+	if (!de2 || d1 == d2 || de1 == de2) {
 		pthread_mutex_lock(&d1->i_attr_mutex);
+		if (d2 && d1 != d2)
+			pthread_mutex_lock(&d2->i_attr_mutex);
 		pthread_rwlock_wrlock(&de1->rd_rwlock);
 		return;
 	}
@@ -85,8 +87,10 @@ static void vfs_unlock_dirs(struct inode *d1, struct inode *d2)
 	struct reffs_dirent *de1 = vfs_dir_dirent(d1);
 	struct reffs_dirent *de2 = d2 ? vfs_dir_dirent(d2) : NULL;
 
-	if (!de2 || d1 == d2) {
+	if (!de2 || d1 == d2 || de1 == de2) {
 		pthread_rwlock_unlock(&de1->rd_rwlock);
+		if (d2 && d1 != d2)
+			pthread_mutex_unlock(&d2->i_attr_mutex);
 		pthread_mutex_unlock(&d1->i_attr_mutex);
 		return;
 	}
@@ -123,9 +127,141 @@ static bool vfs_is_subdir(struct inode *child, struct inode *maybe_parent)
 	return false;
 }
 
-int vfs_rename(struct inode *old_dir, const char *old_name,
-	       struct inode *new_dir, const char *new_name,
-	       struct authunix_parms *ap)
+/* Internal helpers that assume locks are held */
+
+static int vfs_remove_common_locked(struct inode *dir, const char *name,
+				    struct authunix_parms *ap, bool is_dir)
+{
+	struct reffs_dirent *rd = NULL;
+	struct reffs_dirent *de_dir = vfs_dir_dirent(dir);
+	int ret = 0;
+	enum reffs_text_case rtc = reffs_case_get();
+
+	ret = inode_access_check(dir, ap, W_OK);
+	if (ret)
+		return ret;
+
+	rd = dirent_find(de_dir, rtc, (char *)name);
+	if (!rd) {
+		return ENOENT;
+	}
+
+	if (is_dir && !S_ISDIR(rd->rd_inode->i_mode)) {
+		ret = ENOTDIR;
+		goto out;
+	}
+	if (!is_dir && S_ISDIR(rd->rd_inode->i_mode)) {
+		ret = EISDIR;
+		goto out;
+	}
+
+	ret = vfs_check_sticky_bit(dir, rd->rd_inode, ap);
+	if (ret)
+		goto out;
+
+	if (is_dir && !cds_list_empty(&rd->rd_inode->i_children)) {
+		ret = ENOTEMPTY;
+		goto out;
+	}
+
+	inode_update_times_now(rd->rd_inode, REFFS_INODE_UPDATE_CTIME);
+	dirent_parent_release(rd, reffs_life_action_death);
+
+	// POSIX: removal of ANY entry updates parent mtime/ctime.
+	// removal of a directory entry decrements parent nlink.
+	if (is_dir) {
+		uint32_t old_nlink =
+			__atomic_fetch_sub(&dir->i_nlink, 1, __ATOMIC_RELAXED);
+		if (old_nlink <= 2) {
+			__atomic_store_n(&dir->i_nlink, 2, __ATOMIC_RELAXED);
+		}
+	}
+
+	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
+					    REFFS_INODE_UPDATE_MTIME);
+
+out:
+	dirent_put(rd);
+	return ret;
+}
+
+static int vfs_create_common_locked(struct inode *dir, const char *name,
+				    mode_t mode, struct authunix_parms *ap,
+				    dev_t rdev, uint32_t type,
+				    struct inode **new_inode)
+{
+	struct reffs_dirent *rd = NULL;
+	struct inode *inode = NULL;
+	struct super_block *sb = dir->i_sb;
+	struct reffs_dirent *de_dir = vfs_dir_dirent(dir);
+	int ret = 0;
+	enum reffs_text_case rtc = reffs_case_get();
+
+	ret = inode_access_check(dir, ap, W_OK);
+	if (ret)
+		return ret;
+
+	rd = dirent_find(de_dir, rtc, (char *)name);
+	if (rd) {
+		dirent_put(rd);
+		return EEXIST;
+	}
+
+	rd = dirent_alloc(de_dir, (char *)name, reffs_life_action_birth,
+			  (type == S_IFDIR));
+	if (!rd) {
+		return ENOMEM;
+	}
+
+	inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
+						   __ATOMIC_RELAXED));
+	if (!inode) {
+		dirent_parent_release(rd, reffs_life_action_death);
+		dirent_put(rd);
+		return ENOMEM;
+	}
+
+	inode->i_uid = ap->aup_uid;
+	inode->i_gid = ap->aup_gid;
+	inode->i_mode = type | (mode & ~S_IFMT);
+	inode->i_nlink = (type == S_IFDIR) ? 2 : 1;
+	inode->i_size = (type == S_IFDIR) ? sb->sb_block_size : 0;
+	inode->i_used = (type == S_IFDIR) ? 1 : 0;
+	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
+	inode->i_atime = inode->i_mtime;
+	inode->i_ctime = inode->i_mtime;
+	inode->i_btime = inode->i_mtime;
+
+	if (type == S_IFCHR || type == S_IFBLK) {
+		inode->i_dev_major = major(rdev);
+		inode->i_dev_minor = minor(rdev);
+	}
+
+	rd->rd_inode = inode;
+	if (type == S_IFDIR)
+		inode->i_parent = rd;
+
+	if (type == S_IFDIR) {
+		__atomic_add_fetch(&sb->sb_bytes_used, sb->sb_block_size,
+				   __ATOMIC_RELAXED);
+	}
+
+	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
+					    REFFS_INODE_UPDATE_MTIME);
+
+	inode_sync_to_disk(inode);
+	dirent_sync_to_disk(de_dir);
+
+	if (new_inode)
+		*new_inode = inode_get(inode);
+
+	dirent_put(rd);
+	return 0;
+}
+
+static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
+			     struct inode *new_dir, const char *new_name,
+			     struct authunix_parms *ap)
 {
 	struct inode *inode_src_file = NULL;
 	struct inode *inode_dst_file = NULL;
@@ -136,23 +272,9 @@ int vfs_rename(struct inode *old_dir, const char *old_name,
 	int ret = 0;
 	enum reffs_text_case rtc = reffs_case_get();
 
-	if (old_dir->i_sb != new_dir->i_sb)
-		return EXDEV;
-
-	if (old_dir == new_dir && !rtc_cmp(old_name, new_name)) {
-		return 0;
-	}
-
-	if (!strcmp(new_name, ".") || !strcmp(new_name, "..")) {
-		return ENOTEMPTY;
-	}
-
-	vfs_lock_dirs(old_dir, new_dir);
-
 	rd_src = dirent_find(de_old_dir, rtc, (char *)old_name);
 	if (!rd_src) {
-		ret = ENOENT;
-		goto out_unlock;
+		return ENOENT;
 	}
 	inode_src_file = rd_src->rd_inode;
 
@@ -163,63 +285,57 @@ int vfs_rename(struct inode *old_dir, const char *old_name,
 
 	if (rd_src == rd_dst) {
 		ret = 0;
-		goto out_unlock;
+		goto out;
 	}
 
 	if (S_ISDIR(inode_src_file->i_mode)) {
 		if (vfs_is_subdir(new_dir, inode_src_file)) {
 			ret = EINVAL;
-			goto out_unlock;
+			goto out;
 		}
 	}
 
-	/*
-	 * 3. POSIX Permission Checks
-	 */
 	ret = inode_access_check(old_dir, ap, W_OK);
 	if (ret)
-		goto out_unlock;
+		goto out;
 
 	ret = inode_access_check(new_dir, ap, W_OK);
 	if (ret)
-		goto out_unlock;
+		goto out;
 
 	ret = vfs_check_sticky_bit(old_dir, inode_src_file, ap);
 	if (ret)
-		goto out_unlock;
+		goto out;
 
 	if (inode_dst_file) {
 		ret = vfs_check_sticky_bit(new_dir, inode_dst_file, ap);
 		if (ret)
-			goto out_unlock;
+			goto out;
 
 		if (S_ISDIR(inode_src_file->i_mode) !=
 		    S_ISDIR(inode_dst_file->i_mode)) {
 			ret = S_ISDIR(inode_src_file->i_mode) ? ENOTDIR :
 								EISDIR;
-			goto out_unlock;
+			goto out;
 		}
 
 		if (S_ISDIR(inode_dst_file->i_mode) &&
 		    !cds_list_empty(&inode_dst_file->i_children)) {
 			ret = ENOTEMPTY;
-			goto out_unlock;
+			goto out;
 		}
 	}
 
 	if (S_ISDIR(inode_src_file->i_mode) && old_dir != new_dir) {
 		ret = inode_access_check(inode_src_file, ap, W_OK);
 		if (ret)
-			goto out_unlock;
+			goto out;
 	}
 
-	/*
-	 * 4. Atomic Rename Operation
-	 */
 	char *new_name_copy = strdup(new_name);
 	if (!new_name_copy) {
 		ret = ENOMEM;
-		goto out_unlock;
+		goto out;
 	}
 
 	rcu_read_lock();
@@ -252,93 +368,123 @@ int vfs_rename(struct inode *old_dir, const char *old_name,
 				       REFFS_INODE_UPDATE_CTIME |
 					       REFFS_INODE_UPDATE_MTIME);
 	}
-	// Note: fs_test_rename expects ctime of the file to be PRESERVED.
-	// This is non-POSIX but required by the project's current tests.
-	// inode_update_times_now(inode_src_file, REFFS_INODE_UPDATE_CTIME);
 
-out_unlock:
-	vfs_unlock_dirs(old_dir, new_dir);
-	if (rd_src)
-		dirent_put(rd_src);
-	if (rd_dst)
-		dirent_put(rd_dst);
+out:
+	dirent_put(rd_src);
+	dirent_put(rd_dst);
 	return ret;
 }
 
-static int vfs_remove_common(struct inode *dir, const char *name,
-			     struct authunix_parms *ap, bool is_dir)
+/* Public API */
+
+int vfs_rename(struct inode *old_dir, const char *old_name,
+	       struct inode *new_dir, const char *new_name,
+	       struct authunix_parms *ap)
 {
-	struct reffs_dirent *rd = NULL;
-	struct reffs_dirent *de_dir = vfs_dir_dirent(dir);
-	int ret = 0;
-	enum reffs_text_case rtc = reffs_case_get();
+	if (old_dir->i_sb != new_dir->i_sb)
+		return EXDEV;
 
-	vfs_lock_dirs(dir, NULL);
-
-	ret = inode_access_check(dir, ap, W_OK);
-	if (ret)
-		goto out_unlock;
-
-	rd = dirent_find(de_dir, rtc, (char *)name);
-	if (!rd) {
-		ret = ENOENT;
-		goto out_unlock;
+	if (old_dir == new_dir && !rtc_cmp(old_name, new_name)) {
+		return 0;
 	}
 
-	if (is_dir && !S_ISDIR(rd->rd_inode->i_mode)) {
-		ret = ENOTDIR;
-		goto out_unlock;
-	}
-	if (!is_dir && S_ISDIR(rd->rd_inode->i_mode)) {
-		ret = EISDIR;
-		goto out_unlock;
+	if (!strcmp(new_name, ".") || !strcmp(new_name, "..")) {
+		return ENOTEMPTY;
 	}
 
-	ret = vfs_check_sticky_bit(dir, rd->rd_inode, ap);
-	if (ret)
-		goto out_unlock;
-
-	if (is_dir && !cds_list_empty(&rd->rd_inode->i_children)) {
-		ret = ENOTEMPTY;
-		goto out_unlock;
-	}
-
-	inode_update_times_now(rd->rd_inode, REFFS_INODE_UPDATE_CTIME);
-	dirent_parent_release(rd, reffs_life_action_death);
-	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
-					    REFFS_INODE_UPDATE_MTIME);
-
-out_unlock:
-	vfs_unlock_dirs(dir, NULL);
-	if (rd)
-		dirent_put(rd);
-	if (ret) {
-	}
+	int ret;
+	vfs_lock_dirs(old_dir, new_dir);
+	ret = vfs_rename_locked(old_dir, old_name, new_dir, new_name, ap);
+	vfs_unlock_dirs(old_dir, new_dir);
 	return ret;
 }
 
 int vfs_remove(struct inode *dir, const char *name, struct authunix_parms *ap)
 {
-	return vfs_remove_common(dir, name, ap, false);
+	int ret;
+	vfs_lock_dirs(dir, NULL);
+	ret = vfs_remove_common_locked(dir, name, ap, false);
+	vfs_unlock_dirs(dir, NULL);
+	return ret;
 }
 
 int vfs_rmdir(struct inode *dir, const char *name, struct authunix_parms *ap)
 {
-	return vfs_remove_common(dir, name, ap, true);
+	int ret;
+	vfs_lock_dirs(dir, NULL);
+	ret = vfs_remove_common_locked(dir, name, ap, true);
+	vfs_unlock_dirs(dir, NULL);
+	return ret;
 }
 
-static int vfs_create_common(struct inode *dir, const char *name, mode_t mode,
-			     struct authunix_parms *ap, dev_t rdev,
-			     uint32_t type, struct inode **new_inode)
+int vfs_mkdir(struct inode *dir, const char *name, mode_t mode,
+	      struct authunix_parms *ap, struct inode **new_inode)
+{
+	int ret;
+	vfs_lock_dirs(dir, NULL);
+	ret = vfs_create_common_locked(dir, name, mode, ap, 0, S_IFDIR,
+				       new_inode);
+	vfs_unlock_dirs(dir, NULL);
+	return ret;
+}
+
+int vfs_create(struct inode *dir, const char *name, mode_t mode,
+	       struct authunix_parms *ap, struct inode **new_inode)
+{
+	int ret;
+	if (S_ISDIR(mode))
+		return EISDIR;
+	vfs_lock_dirs(dir, NULL);
+	ret = vfs_create_common_locked(dir, name, mode, ap, 0, S_IFREG,
+				       new_inode);
+	vfs_unlock_dirs(dir, NULL);
+	return ret;
+}
+
+int vfs_symlink(struct inode *dir, const char *name, const char *target,
+		struct authunix_parms *ap, struct inode **new_inode)
+{
+	struct inode *inode = NULL;
+	int ret;
+	vfs_lock_dirs(dir, NULL);
+	ret = vfs_create_common_locked(dir, name, 0777, ap, 0, S_IFLNK, &inode);
+	if (ret == 0) {
+		inode->i_symlink = strdup(target);
+		inode->i_size = strlen(target);
+		if (new_inode)
+			*new_inode = inode_get(inode);
+		inode_put(inode);
+	}
+	vfs_unlock_dirs(dir, NULL);
+	return ret;
+}
+
+int vfs_mknod(struct inode *dir, const char *name, mode_t mode, dev_t rdev,
+	      struct authunix_parms *ap, struct inode **new_inode)
+{
+	int ret;
+	vfs_lock_dirs(dir, NULL);
+	ret = vfs_create_common_locked(dir, name, mode, ap, rdev, mode & S_IFMT,
+				       new_inode);
+	vfs_unlock_dirs(dir, NULL);
+	return ret;
+}
+
+int vfs_link(struct inode *inode, struct inode *dir, const char *name,
+	     struct authunix_parms *ap)
 {
 	struct reffs_dirent *rd = NULL;
-	struct inode *inode = NULL;
-	struct super_block *sb = dir->i_sb;
 	struct reffs_dirent *de_dir = vfs_dir_dirent(dir);
 	int ret = 0;
 	enum reffs_text_case rtc = reffs_case_get();
 
-	vfs_lock_dirs(dir, NULL);
+	if (inode->i_sb != dir->i_sb)
+		return EXDEV;
+
+	if (S_ISDIR(inode->i_mode))
+		return EPERM;
+
+	vfs_lock_dirs(dir, inode);
 
 	ret = inode_access_check(dir, ap, W_OK);
 	if (ret)
@@ -350,92 +496,24 @@ static int vfs_create_common(struct inode *dir, const char *name, mode_t mode,
 		goto out_unlock;
 	}
 
-	rd = dirent_alloc(de_dir, (char *)name, reffs_life_action_birth,
-			  (type == S_IFDIR));
+	rd = dirent_alloc(de_dir, (char *)name, reffs_life_action_birth, false);
 	if (!rd) {
 		ret = ENOMEM;
 		goto out_unlock;
 	}
 
-	inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
-						   __ATOMIC_RELAXED));
-	if (!inode) {
-		dirent_parent_release(rd, reffs_life_action_death);
-		dirent_put(rd);
-		ret = ENOMEM;
-		goto out_unlock;
-	}
+	rd->rd_inode = inode_get(inode);
+	__atomic_fetch_add(&inode->i_nlink, 1, __ATOMIC_RELAXED);
 
-	inode->i_uid = ap->aup_uid;
-	inode->i_gid = ap->aup_gid;
-	inode->i_mode = type | (mode & ~S_IFMT);
-	inode->i_nlink = (type == S_IFDIR) ? 2 : 1;
-	inode->i_size = (type == S_IFDIR) ? sb->sb_block_size : 0;
-	inode->i_used = (type == S_IFDIR) ? 1 : 0;
-	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
-	inode->i_atime = inode->i_mtime;
-	inode->i_ctime = inode->i_mtime;
-	inode->i_btime = inode->i_mtime;
-
-	if (type == S_IFCHR || type == S_IFBLK) {
-		inode->i_dev_major = major(rdev);
-		inode->i_dev_minor = minor(rdev);
-	}
-
-	rd->rd_inode = inode;
-	if (type == S_IFDIR)
-		inode->i_parent = rd;
-
-	if (type == S_IFDIR) {
-		__atomic_add_fetch(&sb->sb_bytes_used, sb->sb_block_size,
-				   __ATOMIC_RELAXED);
-	}
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME);
+	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
+					    REFFS_INODE_UPDATE_MTIME);
 
 	inode_sync_to_disk(inode);
 	dirent_sync_to_disk(de_dir);
 
-	if (new_inode)
-		*new_inode = inode_get(inode);
-
-	dirent_put(rd);
-
 out_unlock:
-	vfs_unlock_dirs(dir, NULL);
-	return ret;
-}
-
-int vfs_mkdir(struct inode *dir, const char *name, mode_t mode,
-	      struct authunix_parms *ap, struct inode **new_inode)
-{
-	return vfs_create_common(dir, name, mode, ap, 0, S_IFDIR, new_inode);
-}
-
-int vfs_create(struct inode *dir, const char *name, mode_t mode,
-	       struct authunix_parms *ap, struct inode **new_inode)
-{
-	if (S_ISDIR(mode))
-		return EISDIR;
-	return vfs_create_common(dir, name, mode, ap, 0, S_IFREG, new_inode);
-}
-
-int vfs_mknod(struct inode *dir, const char *name, mode_t mode, dev_t rdev,
-	      struct authunix_parms *ap, struct inode **new_inode)
-{
-	return vfs_create_common(dir, name, mode, ap, rdev, mode & S_IFMT,
-				 new_inode);
-}
-
-int vfs_symlink(struct inode *dir, const char *name, const char *target,
-		struct authunix_parms *ap, struct inode **new_inode)
-{
-	struct inode *inode = NULL;
-	int ret = vfs_create_common(dir, name, 0777, ap, 0, S_IFLNK, &inode);
-	if (ret == 0) {
-		inode->i_symlink = strdup(target);
-		inode->i_size = strlen(target);
-		if (new_inode)
-			*new_inode = inode_get(inode);
-		inode_put(inode);
-	}
+	vfs_unlock_dirs(dir, inode);
+	dirent_put(rd);
 	return ret;
 }
