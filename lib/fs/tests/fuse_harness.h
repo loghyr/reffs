@@ -45,6 +45,7 @@
 #include "reffs/log.h"
 #include "reffs/fs.h"
 #include "reffs/ns.h"
+#include "reffs/context.h"
 
 /*
  * Root uid/gid captured during setup; tests that verify uid/gid inheritance
@@ -82,6 +83,13 @@ static inline void fuse_test_setup(void)
 	struct super_block *sb;
 	struct inode *inode;
 	int ret;
+	struct reffs_context ctx;
+
+	fuse_test_uid = getuid();
+	fuse_test_gid = getgid();
+	ctx.uid = fuse_test_uid;
+	ctx.gid = fuse_test_gid;
+	reffs_set_context(&ctx);
 
 	ret = reffs_ns_init();
 	ck_assert_int_eq(ret, 0);

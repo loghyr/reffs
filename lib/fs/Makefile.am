@@ -24,6 +24,7 @@ libreffs_fs_la_SOURCES = \
 	inode.c \
 	lock.c \
 	ns.c \
-	super_block.c
+	super_block.c \
+	vfs.c
 
 libreffs_fs_la_LIBADD = $(top_builddir)/lib/backends/libbackends.la

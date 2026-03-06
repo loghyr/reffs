@@ -64,8 +64,14 @@ static inline void fs_test_setup(void)
 	struct super_block *sb;
 	struct inode *inode;
 	int ret;
+	struct reffs_context ctx;
 
-	reffs_set_context(NULL);
+	fs_test_uid = getuid();
+	fs_test_gid = getgid();
+	ctx.uid = fs_test_uid;
+	ctx.gid = fs_test_gid;
+	reffs_set_context(&ctx);
+
 	ret = reffs_ns_init();
 	ck_assert_int_eq(ret, 0);
 

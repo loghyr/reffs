@@ -1,0 +1,42 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+ * SPDX-License-Identifier: GPL-2.0+
+ */
+
+#ifndef _REFFS_VFS_H
+#define _REFFS_VFS_H
+
+#include <rpc/auth_unix.h>
+#include "reffs/inode.h"
+
+/**
+ * vfs_rename - Rename a file or directory using inodes.
+ * @old_dir: Inode of the source directory.
+ * @old_name: Name of the entry in the source directory.
+ * @new_dir: Inode of the destination directory.
+ * @new_name: Name of the entry in the destination directory.
+ * @ap: Authentication parameters for permission checks.
+ *
+ * This is the core POSIX-enforcing rename operation, shared by all
+ * protocol frontends (NFS, FUSE).
+ *
+ * Returns 0 on success, or a positive errno value (consistent with
+ * the project's internal style, though some layers map these to NFS errors).
+ */
+int vfs_rename(struct inode *old_dir, const char *old_name,
+	       struct inode *new_dir, const char *new_name,
+	       struct authunix_parms *ap);
+
+int vfs_remove(struct inode *dir, const char *name, struct authunix_parms *ap);
+int vfs_rmdir(struct inode *dir, const char *name, struct authunix_parms *ap);
+
+int vfs_mkdir(struct inode *dir, const char *name, mode_t mode,
+	      struct authunix_parms *ap, struct inode **new_inode);
+int vfs_create(struct inode *dir, const char *name, mode_t mode,
+	       struct authunix_parms *ap, struct inode **new_inode);
+int vfs_symlink(struct inode *dir, const char *name, const char *target,
+		struct authunix_parms *ap, struct inode **new_inode);
+int vfs_mknod(struct inode *dir, const char *name, mode_t mode, dev_t rdev,
+	      struct authunix_parms *ap, struct inode **new_inode);
+
+#endif /* _REFFS_VFS_H */
