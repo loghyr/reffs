@@ -30,10 +30,33 @@ int vfs_rename(struct inode *old_dir, const char *old_name,
 int vfs_remove(struct inode *dir, const char *name, struct authunix_parms *ap);
 int vfs_rmdir(struct inode *dir, const char *name, struct authunix_parms *ap);
 
+struct reffs_sattr {
+	mode_t mode;
+	bool mode_set;
+	uid_t uid;
+	bool uid_set;
+	gid_t gid;
+	bool gid_set;
+	uint64_t size;
+	bool size_set;
+	struct timespec atime;
+	bool atime_set;
+	bool atime_now;
+	struct timespec mtime;
+	bool mtime_set;
+	bool mtime_now;
+};
+
+int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
+		struct authunix_parms *ap);
+
 int vfs_mkdir(struct inode *dir, const char *name, mode_t mode,
 	      struct authunix_parms *ap, struct inode **new_inode);
 int vfs_create(struct inode *dir, const char *name, mode_t mode,
 	       struct authunix_parms *ap, struct inode **new_inode);
+int vfs_exclusive_create(struct inode *dir, const char *name,
+			 struct timespec *verf, struct authunix_parms *ap,
+			 struct inode **new_inode);
 int vfs_symlink(struct inode *dir, const char *name, const char *target,
 		struct authunix_parms *ap, struct inode **new_inode);
 int vfs_mknod(struct inode *dir, const char *name, mode_t mode, dev_t rdev,

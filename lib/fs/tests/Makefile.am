@@ -57,13 +57,16 @@ TESTS = \
 	fs_test_access \
 	fs_test_chmod_chown \
 	fs_test_create \
+	fs_test_create_length \
 	fs_test_getattr \
 	fs_test_mkdir \
 	fs_test_mkdir_timestamps \
 	fs_test_nlink_semantics \
 	fs_test_permissions \
 	fs_test_rename \
+	fs_test_setattr_permissions \
 	fs_test_unlink \
+	fs_test_unlink_open \
 	fs_test_utimensat \
 	test_rmdir_leak \
 	fs_test_write_read \
