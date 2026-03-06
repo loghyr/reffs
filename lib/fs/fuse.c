@@ -36,7 +36,6 @@ static void set_fuse_context(void)
 	struct fuse_context *fctx;
 
 	if (getenv("REFFS_FUSE_UNIT_TEST")) {
-		reffs_set_context(NULL);
 		return;
 	}
 

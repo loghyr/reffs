@@ -32,6 +32,8 @@
 #include "reffs/time.h"
 #include "reffs/test.h"
 #include "reffs/fs.h"
+#include "reffs/vfs.h"
+#include "reffs/identity.h"
 #include "reffs/log.h"
 #include "reffs/cmp.h"
 #include "reffs/backend.h"
@@ -78,29 +80,6 @@ static int check_permission(struct inode *inode, int mask)
 		return -EACCES;
 
 	return 0;
-}
-
-/*
- * POSIX Sticky Bit (S_ISVTX) logic:
- * A file in a sticky directory can be unlinked or renamed only if:
- * 1. The user is root (handled in check_permission).
- * 2. The user owns the file.
- * 3. The user owns the directory.
- */
-static int check_sticky_bit(struct inode *dir, struct inode *file)
-{
-	struct reffs_context *ctx = reffs_get_context();
-
-	if (ctx->uid == 0)
-		return 0;
-
-	if (!(dir->i_mode & S_ISVTX))
-		return 0;
-
-	if (ctx->uid == file->i_uid || ctx->uid == dir->i_uid)
-		return 0;
-
-	return -EACCES;
 }
 
 static enum reffs_storage_type global_storage_type = REFFS_STORAGE_RAM;
@@ -234,6 +213,8 @@ found:
 	return 0;
 
 err:
+	if (ret) {
+	}
 	free(buf);
 	name_match_free(new);
 	super_block_put(sb);
@@ -254,78 +235,31 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 {
 	struct name_match *nm;
 	struct inode *inode;
-	struct reffs_context *ctx = reffs_get_context();
-
 	int ret;
+	struct authunix_parms ap;
 
 	TRACE("path=%s mode=0%o uid=%u gid=%u", path, mode, uid, gid);
 
-	/* If uid/gid are 0, check if we have a context-based override */
-	if (uid == 0 && ctx->uid != 0) {
-		uid = ctx->uid;
-		gid = ctx->gid;
-	}
-
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		goto out;
+		return ret;
 
-	if (mode == F_OK)
-		goto out_puts;
+	if (mode == F_OK) {
+		name_match_free(nm);
+		return 0;
+	}
 
 	inode = nm->nm_dirent->rd_inode;
 
-	/* Root bypass */
-	if (uid == 0)
-		goto out_puts;
+	ap.aup_uid = uid;
+	ap.aup_gid = gid;
+	ap.aup_len = 0;
+	ap.aup_gids = NULL;
 
-	if (uid == inode->i_uid) {
-		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR)) {
-			ret = -EACCES;
-			goto out_puts;
-		}
-		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR)) {
-			ret = -EACCES;
-			goto out_puts;
-		}
-		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR)) {
-			ret = -EACCES;
-			goto out_puts;
-		}
-	} else if (gid == inode->i_gid) {
-		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP)) {
-			ret = -EACCES;
-			goto out_puts;
-		}
-		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP)) {
-			ret = -EACCES;
-			goto out_puts;
-		}
-		if ((mode & X_OK) && !(inode->i_mode & S_IXGRP)) {
-			ret = -EACCES;
-			goto out_puts;
-		}
-	} else {
-		if ((mode & W_OK) && !(inode->i_mode & S_IWOTH)) {
-			ret = -EACCES;
-			goto out_puts;
-		}
-		if ((mode & R_OK) && !(inode->i_mode & S_IROTH)) {
-			ret = -EACCES;
-			goto out_puts;
-		}
-		if ((mode & X_OK) && !(inode->i_mode & S_IXOTH)) {
-			ret = -EACCES;
-			goto out_puts;
-		}
-	}
+	ret = inode_access_check(inode, &ap, mode);
 
-out_puts:
 	name_match_free(nm);
-
-out:
-	TRACE("ret=%d", ret);
-	return ret;
+	return ret ? -ret : 0;
 }
 
 int reffs_fs_chmod(const char *path, mode_t mode)
@@ -391,91 +325,92 @@ out:
 	return ret;
 }
 
+static void reffs_get_authunix_parms(struct authunix_parms *ap)
+{
+	struct reffs_context *ctx = reffs_get_context();
+	ap->aup_uid = ctx->uid;
+	ap->aup_gid = ctx->gid;
+	ap->aup_len = 0;
+	ap->aup_gids = NULL;
+}
+
 int reffs_fs_create(const char *path, mode_t mode)
 {
-	struct name_match *nm;
-	struct inode *inode = NULL;
-	struct super_block *sb;
-	struct reffs_dirent *rd = NULL;
-
+	struct name_match *nm = NULL;
 	int ret;
+	struct authunix_parms ap;
 
 	TRACE("path=%s mode=0%o", path, mode);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
-		goto out;
+		return ret;
 
-	/* POSIX: Write permission required in parent directory */
-	ret = check_permission(nm->nm_dirent->rd_inode, W_OK);
-	if (ret)
-		goto out_puts;
+	reffs_get_authunix_parms(&ap);
+	ret = vfs_create(nm->nm_dirent->rd_inode, nm->nm_name, mode, &ap, NULL);
 
-	inode = nm->nm_dirent->rd_inode;
-	sb = inode->i_sb;
-
-	if (!S_ISDIR(inode->i_mode)) {
-		ret = -ENOTDIR;
-		goto out_puts;
-	}
-
-	if (S_ISDIR(mode)) {
-		ret = -EISDIR;
-		goto out_puts;
-	}
-
-	if (!strcmp(nm->nm_name, "..")) {
-		ret = -ENOTEMPTY;
-		goto out_puts;
-	}
-
-	/* POSIX: Destination must not exist */
-	struct reffs_dirent *existing;
-	existing = dirent_find(nm->nm_dirent, reffs_case_get(), nm->nm_name);
-	if (existing) {
-		dirent_put(existing);
-		ret = -EEXIST;
-		goto out_puts;
-	}
-
-	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
-			  false);
-	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
-	if (!rd) {
-		ret = -ENOMEM;
-		goto out_puts;
-	}
-
-	rd->rd_inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
-							  __ATOMIC_RELAXED));
-	if (!rd->rd_inode) {
-		dirent_parent_release(rd, reffs_life_action_death);
-		ret = -ENOMEM;
-		goto out_puts;
-	}
-
-	struct reffs_context *ctx = reffs_get_context();
-	rd->rd_inode->i_uid = ctx->uid ? ctx->uid : getuid();
-	rd->rd_inode->i_gid = ctx->gid ? ctx->gid : getgid();
-	clock_gettime(CLOCK_REALTIME, &rd->rd_inode->i_mtime);
-	rd->rd_inode->i_atime = rd->rd_inode->i_mtime;
-	rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
-	rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
-	rd->rd_inode->i_mode = mode; // For now, assume a file!
-	rd->rd_inode->i_size = 0;
-	rd->rd_inode->i_used = 0;
-	rd->rd_inode->i_nlink = 1;
-
-	inode_sync_to_disk(rd->rd_inode);
-
-out_puts:
-	dirent_put(rd);
 	name_match_free(nm);
+	return ret ? -ret : 0;
+}
 
-out:
-	TRACE("ret=%d", ret);
-	return ret;
+int reffs_fs_mkdir(const char *path, mode_t mode)
+{
+	struct name_match *nm = NULL;
+	int ret;
+	struct authunix_parms ap;
+
+	TRACE("path=%s mode=0%o", path, mode);
+
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
+	if (ret)
+		return ret;
+
+	reffs_get_authunix_parms(&ap);
+	ret = vfs_mkdir(nm->nm_dirent->rd_inode, nm->nm_name, mode, &ap, NULL);
+
+	name_match_free(nm);
+	return ret ? -ret : 0;
+}
+
+int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
+{
+	struct name_match *nm = NULL;
+	int ret;
+	struct authunix_parms ap;
+
+	TRACE("path=%s mode=0%o rdev=%lu", path, mode, rdev);
+
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
+	if (ret)
+		return ret;
+
+	reffs_get_authunix_parms(&ap);
+	ret = vfs_mknod(nm->nm_dirent->rd_inode, nm->nm_name, mode, rdev, &ap,
+			NULL);
+
+	name_match_free(nm);
+	return ret ? -ret : 0;
+}
+
+int reffs_fs_symlink(const char *target, const char *linkpath)
+{
+	struct name_match *nm = NULL;
+	int ret;
+	struct authunix_parms ap;
+
+	TRACE("target=%s linkpath=%s", target, linkpath);
+
+	ret = find_matching_directory_entry(&nm, linkpath,
+					    LAST_COMPONENT_IS_NEW);
+	if (ret)
+		return ret;
+
+	reffs_get_authunix_parms(&ap);
+	ret = vfs_symlink(nm->nm_dirent->rd_inode, nm->nm_name, target, &ap,
+			  NULL);
+
+	name_match_free(nm);
+	return ret ? -ret : 0;
 }
 
 int reffs_fs_fallocate(const char *path, int mode, off_t offset, off_t len)
@@ -591,161 +526,6 @@ out:
 	return ret;
 }
 
-int reffs_fs_mkdir(const char *path, mode_t mode)
-{
-	struct name_match *nm;
-	struct inode *inode = NULL;
-	struct super_block *sb;
-	struct reffs_dirent *rd = NULL;
-
-	int ret;
-
-	TRACE("path=%s mode=0%o", path, mode);
-
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
-	if (ret)
-		goto out;
-
-	/* POSIX: Write permission required in parent directory */
-	ret = check_permission(nm->nm_dirent->rd_inode, W_OK);
-	if (ret)
-		goto out_puts;
-
-	inode = nm->nm_dirent->rd_inode;
-	sb = inode->i_sb;
-
-	if (!S_ISDIR(inode->i_mode)) {
-		ret = -ENOTDIR;
-		goto out_puts;
-	}
-
-	if (!strcmp(nm->nm_name, "..")) {
-		ret = -ENOTEMPTY;
-		goto out_puts;
-	}
-
-	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
-			  true);
-	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
-	if (!rd) {
-		ret = -ENOENT;
-		goto out_puts;
-	}
-
-	rd->rd_inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
-							  __ATOMIC_RELAXED));
-	if (!rd->rd_inode) {
-		dirent_parent_release(rd, reffs_life_action_death);
-		ret = -ENOENT;
-		goto out_puts;
-	}
-
-	struct reffs_context *ctx = reffs_get_context();
-	rd->rd_inode->i_uid = ctx->uid ? ctx->uid : getuid();
-	rd->rd_inode->i_gid = ctx->gid ? ctx->gid : getgid();
-	clock_gettime(CLOCK_REALTIME, &rd->rd_inode->i_mtime);
-	rd->rd_inode->i_atime = inode->i_mtime;
-	rd->rd_inode->i_btime = inode->i_mtime;
-	rd->rd_inode->i_ctime = inode->i_mtime;
-	rd->rd_inode->i_mode = S_IFDIR | mode;
-	rd->rd_inode->i_size = inode->i_sb->sb_block_size;
-	rd->rd_inode->i_used = 1;
-	rd->rd_inode->i_nlink = 2;
-
-	inode_sync_to_disk(rd->rd_inode);
-
-out_puts:
-	dirent_put(rd);
-	name_match_free(nm);
-
-out:
-	TRACE("ret=%d", ret);
-	return ret;
-}
-
-int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
-{
-	struct name_match *nm;
-	struct inode *inode = NULL;
-	struct super_block *sb;
-	struct reffs_dirent *rd = NULL;
-
-	int ret;
-
-	TRACE("path=%s mode=0%o rdev=%lu", path, mode, rdev);
-
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
-	if (ret)
-		goto out;
-
-	/* POSIX: Write permission required in parent directory */
-	ret = check_permission(nm->nm_dirent->rd_inode, W_OK);
-	if (ret)
-		goto out_puts;
-
-	inode = nm->nm_dirent->rd_inode;
-	sb = inode->i_sb;
-
-	if (!S_ISDIR(inode->i_mode)) {
-		ret = -ENOTDIR;
-		goto out_puts;
-	}
-
-	if (!strcmp(nm->nm_name, "..")) {
-		ret = -ENOTEMPTY;
-		goto out_puts;
-	}
-
-	/* POSIX: Destination must not exist */
-	struct reffs_dirent *existing;
-	existing = dirent_find(nm->nm_dirent, reffs_case_get(), nm->nm_name);
-	if (existing) {
-		dirent_put(existing);
-		ret = -EEXIST;
-		goto out_puts;
-	}
-
-	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
-			  false);
-	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
-	if (!rd) {
-		ret = -ENOMEM;
-		goto out_puts;
-	}
-
-	rd->rd_inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
-							  __ATOMIC_RELAXED));
-	if (!rd->rd_inode) {
-		dirent_parent_release(rd, reffs_life_action_death);
-		ret = -ENOMEM;
-		goto out_puts;
-	}
-
-	struct reffs_context *ctx = reffs_get_context();
-	rd->rd_inode->i_uid = ctx->uid ? ctx->uid : getuid();
-	rd->rd_inode->i_gid = ctx->gid ? ctx->gid : getgid();
-	clock_gettime(CLOCK_REALTIME, &rd->rd_inode->i_mtime);
-	rd->rd_inode->i_atime = rd->rd_inode->i_mtime;
-	rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
-	rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
-	rd->rd_inode->i_mode = mode; // For now, assume a file!
-	rd->rd_inode->i_size = 0;
-	rd->rd_inode->i_used = 0;
-	rd->rd_inode->i_nlink = 1;
-
-	inode_sync_to_disk(rd->rd_inode);
-
-out_puts:
-	dirent_put(rd);
-	name_match_free(nm);
-
-out:
-	TRACE("ret=%d", ret);
-	return ret;
-}
-
 int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 {
 	struct name_match *nm;
@@ -838,51 +618,6 @@ out:
 	return ret;
 }
 
-static int rename_dest_locked(struct name_match *nm_src,
-			      struct reffs_dirent *rd_dst, char *dst_name)
-{
-	int ret = 0;
-	reffs_strng_compare cmp = reffs_text_case_cmp();
-	char *name;
-	char *old;
-
-	TRACE("nm_src=%s(%s) dst=%s name=%s", nm_src->nm_name,
-	      nm_src->nm_dirent->rd_name, rd_dst->rd_name, dst_name);
-
-	/* If they are the same path, do nothing */
-	if (nm_src->nm_dirent == rd_dst && !cmp(nm_src->nm_name, dst_name))
-		return 0;
-
-	name = strdup(dst_name);
-	if (!name) {
-		ret = -ENOMEM;
-	} else {
-		rcu_read_lock();
-		old = rcu_xchg_pointer(&nm_src->nm_dirent->rd_name, name);
-		rcu_read_unlock();
-		free(old);
-		pthread_mutex_lock(&rd_dst->rd_inode->i_attr_mutex);
-		inode_update_times_now(rd_dst->rd_inode,
-				       REFFS_INODE_UPDATE_CTIME |
-					       REFFS_INODE_UPDATE_MTIME);
-		pthread_mutex_unlock(&rd_dst->rd_inode->i_attr_mutex);
-	}
-
-	return ret;
-}
-
-static int rename_dest(struct name_match *nm_src, struct reffs_dirent *rd_dst,
-		       char *dst_name)
-{
-	int ret;
-
-	pthread_rwlock_wrlock(&nm_src->nm_dirent->rd_parent->rd_rwlock);
-	ret = rename_dest_locked(nm_src, rd_dst, dst_name);
-	pthread_rwlock_unlock(&nm_src->nm_dirent->rd_parent->rd_rwlock);
-
-	return ret;
-}
-
 //
 // FIXME: Symlinks
 //
@@ -893,383 +628,92 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 {
 	struct name_match *nm_src = NULL;
 	struct name_match *nm_dst = NULL;
-
 	int ret;
-
+	struct authunix_parms ap;
 	bool dst_exists = false;
 
 	TRACE("src_path=%s dst_path=%s", src_path, dst_path);
 
 	if (!strcmp(src_path, "/") || !strcmp(dst_path, "/")) {
-		ret = -EFAULT;
-		goto out;
+		return -EFAULT;
 	}
 
 	ret = find_matching_directory_entry(&nm_src, src_path,
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		goto out;
+		return ret;
 
-	/* POSIX: Write permission is required for the directory containing 'old' */
-	ret = check_permission(nm_src->nm_dirent->rd_parent->rd_inode, W_OK);
-	if (ret) {
-		goto out_puts;
-	}
-
-	/* Sticky bit check for source */
-	ret = check_sticky_bit(nm_src->nm_dirent->rd_parent->rd_inode,
-			       nm_src->nm_dirent->rd_inode);
-	if (ret) {
-		goto out_puts;
-	}
-
-	TRACE("nm_src=%s, de=%s", nm_src->nm_name, nm_src->nm_dirent->rd_name);
-
-	// TODO: make sure the paths are not overlapped if dirs
 	ret = find_matching_directory_entry(&nm_dst, dst_path,
 					    LAST_COMPONENT_IS_MATCH);
-	if (ret) {
-		if (ret == -ENOENT) {
-			TRACE("Finding target directory");
-			ret = find_matching_directory_entry(
-				&nm_dst, dst_path, LAST_COMPONENT_IS_NEW);
-		}
-
-		if (ret) {
-			goto out_puts;
-		}
-	} else {
-		TRACE("Already exists");
+	if (ret == 0) {
 		dst_exists = true;
-	}
-
-	/* Already found dst_exists logic above */
-
-	struct reffs_dirent *rd_dst_parent_found;
-	if (dst_exists)
-		rd_dst_parent_found = nm_dst->nm_dirent->rd_parent;
-	else
-		rd_dst_parent_found = nm_dst->nm_dirent;
-
-	/* POSIX: Write permission is required for the directory containing 'new' */
-	ret = check_permission(rd_dst_parent_found->rd_inode, W_OK);
-	if (ret)
-		goto out_puts;
-
-	/*
-	 * POSIX: If the source is a directory and we are moving it to a different parent,
-	 * we must have write permission on the directory itself (to update its '..' link).
-	 */
-	if (S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode) &&
-	    nm_src->nm_dirent->rd_parent != rd_dst_parent_found) {
-		ret = check_permission(nm_src->nm_dirent->rd_inode, W_OK);
-		if (ret)
-			goto out_puts;
-	}
-
-	/* Sticky bit check for destination (if it exists) */
-	if (dst_exists) {
-		ret = check_sticky_bit(rd_dst_parent_found->rd_inode,
-				       nm_dst->nm_dirent->rd_inode);
-		if (ret)
-			goto out_puts;
-	}
-
-	if (dst_exists && S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode)) {
-		if (!cds_list_empty(&nm_dst->nm_dirent->rd_inode->i_children)) {
-			ret = -ENOTEMPTY;
-			goto out_puts;
-		}
-	}
-
-	TRACE("nm_dst=%s, de=%s", nm_dst->nm_name, nm_dst->nm_dirent->rd_name);
-
-	if (!strcmp(nm_dst->nm_name, "..")) {
-		ret = -ENOTEMPTY;
-		goto out_puts;
-	}
-
-	if (nm_dst->nm_dirent->rd_inode->i_ino ==
-	    nm_src->nm_dirent->rd_inode->i_ino) {
-		ret = 0;
-		goto out_puts;
-	}
-
-	if (nm_src->nm_dirent->rd_parent == rd_dst_parent_found) {
-		if (dst_exists) {
-			if (S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode) !=
-			    S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode)) {
-				ret = S_ISDIR(nm_src->nm_dirent->rd_inode
-						      ->i_mode) ?
-					      -ENOTDIR :
-					      -EISDIR;
-				goto out_puts;
-			}
-			if (S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode) &&
-			    !cds_list_empty(
-				    &nm_dst->nm_dirent->rd_inode->i_children)) {
-				ret = -ENOTEMPTY;
-				goto out_puts;
-			}
-		}
-
-		struct reffs_dirent *rd_delete_dst = NULL;
-		if (dst_exists) {
-			rd_delete_dst = dirent_get(nm_dst->nm_dirent);
-		}
-
-		ret = rename_dest(nm_src, rd_dst_parent_found, nm_dst->nm_name);
-
-		if (rd_delete_dst) {
-			inode_update_times_now(rd_delete_dst->rd_inode,
-					       REFFS_INODE_UPDATE_CTIME);
-			dirent_parent_release(rd_delete_dst,
-					      reffs_life_action_death);
-			dirent_put(rd_delete_dst);
+	} else if (ret == -ENOENT) {
+		ret = find_matching_directory_entry(&nm_dst, dst_path,
+						    LAST_COMPONENT_IS_NEW);
+		if (ret) {
+			name_match_free(nm_src);
+			return ret;
 		}
 	} else {
-		struct reffs_dirent *rd_src_pin;
-		struct reffs_dirent *rd_dst_parent;
-		struct reffs_dirent *rd_dst_pin;
-		struct reffs_dirent *rd_delete_dst = NULL;
-
-		rd_dst_parent = dirent_get(rd_dst_parent_found);
-
-		verify(rd_dst_parent);
-		verify(nm_src->nm_dirent->rd_parent);
-
-		rd_src_pin = dirent_get(nm_src->nm_dirent->rd_parent);
-
-		if (dst_exists) {
-			if (S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode) !=
-			    S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode)) {
-				ret = S_ISDIR(nm_src->nm_dirent->rd_inode
-						      ->i_mode) ?
-					      -ENOTDIR :
-					      -EISDIR;
-				dirent_put(rd_src_pin);
-				dirent_put(rd_dst_parent);
-				goto out_puts;
-			}
-			if (S_ISDIR(nm_dst->nm_dirent->rd_inode->i_mode) &&
-			    !cds_list_empty(
-				    &nm_dst->nm_dirent->rd_inode->i_children)) {
-				ret = -ENOTEMPTY;
-				dirent_put(rd_src_pin);
-				dirent_put(rd_dst_parent);
-				goto out_puts;
-			}
-			rd_delete_dst = dirent_get(nm_dst->nm_dirent);
-		}
-		rd_dst_pin = dirent_get(rd_dst_parent);
-
-		pthread_rwlock_wrlock(&rd_dst_pin->rd_rwlock);
-		if (rd_dst_pin != rd_src_pin)
-			pthread_rwlock_wrlock(&rd_src_pin->rd_rwlock);
-
-		dirent_parent_release(nm_src->nm_dirent,
-				      reffs_life_action_move);
-		dirent_parent_attach(
-			nm_src->nm_dirent, rd_dst_pin, reffs_life_action_update,
-			S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode));
-		ret = rename_dest_locked(nm_src, rd_dst_pin, nm_dst->nm_name);
-		if (rd_dst_pin != rd_src_pin)
-			pthread_rwlock_unlock(&rd_src_pin->rd_rwlock);
-		pthread_rwlock_unlock(&rd_dst_pin->rd_rwlock);
-
-		dirent_put(rd_src_pin);
-		dirent_put(rd_dst_pin);
-		dirent_put(rd_dst_parent);
-
-		if (rd_delete_dst) {
-			inode_update_times_now(rd_delete_dst->rd_inode,
-					       REFFS_INODE_UPDATE_CTIME);
-			dirent_parent_release(rd_delete_dst,
-					      reffs_life_action_death);
-			dirent_put(rd_delete_dst);
-		}
+		name_match_free(nm_src);
+		return ret;
 	}
-out_puts:
+
+	struct inode *old_dir = nm_src->nm_dirent->rd_parent->rd_inode;
+	struct inode *new_dir = dst_exists ?
+					nm_dst->nm_dirent->rd_parent->rd_inode :
+					nm_dst->nm_dirent->rd_inode;
+
+	reffs_get_authunix_parms(&ap);
+	ret = vfs_rename(old_dir, nm_src->nm_name, new_dir, nm_dst->nm_name,
+			 &ap);
+
 	name_match_free(nm_src);
 	name_match_free(nm_dst);
 
-out:
-	TRACE("ret=%d", ret);
-	return ret;
+	return ret ? -ret : 0;
 }
 
 int reffs_fs_rmdir(const char *path)
 {
-	struct name_match *nm;
-	struct inode *inode = NULL;
-
+	struct name_match *nm = NULL;
 	int ret;
+	struct authunix_parms ap;
 
 	TRACE("path=%s", path);
 
 	if (!strcmp("/", path)) {
-		ret = -EBUSY;
-		goto out;
+		return -EBUSY;
 	}
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		goto out;
+		return ret;
 
-	/* POSIX: Write permission required in parent directory */
-	ret = check_permission(nm->nm_dirent->rd_parent->rd_inode, W_OK);
-	if (ret) {
-		name_match_free(nm);
-		goto out;
-	}
+	reffs_get_authunix_parms(&ap);
+	ret = vfs_rmdir(nm->nm_dirent->rd_parent->rd_inode, nm->nm_name, &ap);
 
-	inode = nm->nm_dirent->rd_inode;
-
-	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	if (!S_ISDIR(inode->i_mode)) {
-		ret = -ENOTDIR;
-		goto out_puts;
-	}
-
-	if (!cds_list_empty(&(nm->nm_dirent->rd_inode->i_children))) {
-		ret = -ENOTEMPTY;
-		goto out_puts;
-	}
-
-	if (!strcmp(nm->nm_name, "..")) {
-		ret = -ENOTEMPTY;
-		goto out_puts;
-	}
-
-	inode_update_times_now(nm->nm_dirent->rd_inode,
-			       REFFS_INODE_UPDATE_CTIME);
-	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
-out_puts:
-	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
 	name_match_free(nm);
-out:
-	TRACE("ret=%d", ret);
-	return ret;
-}
-
-int reffs_fs_symlink(const char *target, const char *linkpath)
-{
-	struct name_match *nm;
-	struct reffs_dirent *rd = NULL;
-	struct super_block *sb = NULL;
-	int ret;
-
-	TRACE("target=%s linkpath=%s", target, linkpath);
-
-	ret = find_matching_directory_entry(&nm, linkpath,
-					    LAST_COMPONENT_IS_MATCH);
-	if (ret == 0) {
-		ret = -EEXIST;
-		name_match_free(nm);
-		goto out;
-	} else if (ret != -ENOENT) {
-		goto out;
-	}
-
-	ret = find_matching_directory_entry(&nm, linkpath,
-					    LAST_COMPONENT_IS_NEW);
-	if (ret)
-		goto out;
-
-	/* POSIX: Write permission required in parent directory */
-	ret = check_permission(nm->nm_dirent->rd_inode, W_OK);
-	if (ret)
-		goto out_puts;
-
-	sb = nm->nm_dirent->rd_inode->i_sb;
-
-	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	rd = dirent_alloc(nm->nm_dirent, nm->nm_name, reffs_life_action_birth,
-			  false);
-	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
-
-	if (!rd) {
-		ret = -ENOMEM;
-		goto out_puts;
-	}
-
-	rd->rd_inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
-							  __ATOMIC_RELAXED));
-	if (!rd->rd_inode) {
-		dirent_parent_release(rd, reffs_life_action_death);
-		ret = -ENOMEM;
-		goto out_puts;
-	}
-
-	struct reffs_context *ctx = reffs_get_context();
-	rd->rd_inode->i_uid = ctx->uid ? ctx->uid : getuid();
-	rd->rd_inode->i_gid = ctx->gid ? ctx->gid : getgid();
-	clock_gettime(CLOCK_REALTIME, &rd->rd_inode->i_mtime);
-	rd->rd_inode->i_atime = rd->rd_inode->i_mtime;
-	rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
-	rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
-	rd->rd_inode->i_mode = S_IFLNK | 0777;
-	rd->rd_inode->i_size = strlen(target);
-	rd->rd_inode->i_symlink = strdup(target);
-	if (!rd->rd_inode->i_symlink) {
-		dirent_parent_release(rd, reffs_life_action_death);
-		ret = -ENOMEM;
-		goto out_puts;
-	}
-
-	inode_sync_to_disk(rd->rd_inode);
-
-out_puts:
-	dirent_put(rd);
-	name_match_free(nm);
-out:
-	TRACE("ret=%d", ret);
-	return ret;
+	return ret ? -ret : 0;
 }
 
 int reffs_fs_unlink(const char *path)
 {
-	struct name_match *nm;
-	struct inode *inode = NULL;
+	struct name_match *nm = NULL;
 	int ret;
+	struct authunix_parms ap;
 
 	TRACE("path=%s", path);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		goto out;
+		return ret;
 
-	/* POSIX: Write permission required in parent directory */
-	ret = check_permission(nm->nm_dirent->rd_parent->rd_inode, W_OK);
-	if (ret) {
-		name_match_free(nm);
-		goto out;
-	}
+	reffs_get_authunix_parms(&ap);
+	ret = vfs_remove(nm->nm_dirent->rd_parent->rd_inode, nm->nm_name, &ap);
 
-	/* Sticky bit check */
-	ret = check_sticky_bit(nm->nm_dirent->rd_parent->rd_inode,
-			       nm->nm_dirent->rd_inode);
-	if (ret) {
-		name_match_free(nm);
-		goto out;
-	}
-	inode = nm->nm_dirent->rd_inode;
-
-	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
-	if (S_ISDIR(inode->i_mode)) {
-		ret = -EISDIR;
-		goto out_puts;
-	}
-
-	inode_update_times_now(nm->nm_dirent->rd_inode,
-			       REFFS_INODE_UPDATE_CTIME);
-	dirent_parent_release(nm->nm_dirent, reffs_life_action_death);
-out_puts:
-	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
 	name_match_free(nm);
-out:
-	TRACE("ret=%d", ret);
-	return ret;
+	return ret ? -ret : 0;
 }
 
 int reffs_fs_utimensat(const char *path, const struct timespec times[2])

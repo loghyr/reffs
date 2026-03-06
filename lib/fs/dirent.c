@@ -37,7 +37,7 @@ CDS_LIST_HEAD(dirent_list);
 void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 			  enum reffs_life_action rla, bool is_dir)
 {
-	if (!parent || !parent->rd_inode)
+	if (!rd || !parent)
 		return;
 
 	rcu_read_lock();
@@ -56,7 +56,7 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 	if (rd->rd_inode) {
 		if (S_ISDIR(rd->rd_inode->i_mode))
 			rd->rd_inode->i_parent =
-				parent; // Do not take a reference, manage carefully
+				rd; // Point to our own dirent, not parent's dirent!
 
 		if (rla != reffs_life_action_load &&
 		    rla != reffs_life_action_unload)
@@ -148,15 +148,17 @@ struct reffs_dirent *dirent_find(struct reffs_dirent *parent,
 
 	if (!name)
 		return rd;
-
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(tmp, &parent->rd_inode->i_children,
-				    rd_siblings)
+				    rd_siblings) {
 		if (!cmp(tmp->rd_name, name)) {
 			rd = dirent_get(tmp);
 			break;
 		}
+	}
 	rcu_read_unlock();
+	if (!rd) {
+	}
 
 	return rd;
 }
@@ -226,7 +228,7 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 						 __ATOMIC_RELAXED);
 			}
 		}
-		cds_list_del_init(&rd->rd_siblings);
+		cds_list_del_rcu(&rd->rd_siblings);
 
 		if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode))
 			rd->rd_inode->i_parent = NULL; // Prevent use-after-free
