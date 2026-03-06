@@ -37,9 +37,6 @@
 #include "reffs/identity.h"
 #include "reffs/trace/nfs3_server.h"
 
-#define NFS3_PATH_MAX (1023)
-#define NFS3_NAME_MAX (255)
-
 /*
  * On locking order:
  *
@@ -1136,7 +1133,7 @@ static int nfs3_op_create(struct rpc_trans *rt)
 		goto out;
 	}
 
-	if (strlen(args->where.name) > NFS3_NAME_MAX) {
+	if (strlen(args->where.name) > REFFS_MAX_NAME) {
 		res->status = NFS3ERR_NAMETOOLONG;
 		goto out;
 	}
@@ -1323,7 +1320,7 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
-	if (strlen(args->where.name) > NFS3_NAME_MAX) {
+	if (strlen(args->where.name) > REFFS_MAX_NAME) {
 		res->status = NFS3ERR_NAMETOOLONG;
 		goto out;
 	}
@@ -1475,7 +1472,7 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
-	if (strlen(args->symlink.symlink_data) > NFS3_PATH_MAX) {
+	if (strlen(args->symlink.symlink_data) > REFFS_MAX_PATH) {
 		res->status = NFS3ERR_NAMETOOLONG;
 		goto out;
 	}
@@ -1630,7 +1627,7 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 		goto out;
 	}
 
-	if (strlen(args->where.name) > NFS3_NAME_MAX) {
+	if (strlen(args->where.name) > REFFS_MAX_NAME) {
 		res->status = NFS3ERR_NAMETOOLONG;
 		goto out;
 	}
@@ -1839,7 +1836,7 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 	ctime = inode->i_ctime;
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	if (strlen(args->object.name) > NFS3_NAME_MAX) {
+	if (strlen(args->object.name) > REFFS_MAX_NAME) {
 		res->status = NFS3ERR_NAMETOOLONG;
 		goto update_wcc;
 	}
@@ -1916,7 +1913,7 @@ static int nfs3_op_rmdir(struct rpc_trans *rt)
 	ctime = inode->i_ctime;
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	if (strlen(args->object.name) > NFS3_NAME_MAX) {
+	if (strlen(args->object.name) > REFFS_MAX_NAME) {
 		res->status = NFS3ERR_NAMETOOLONG;
 		goto update_wcc;
 	}
@@ -2023,8 +2020,8 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 	ctime_dst = inode_dst->i_ctime;
 	pthread_mutex_unlock(&inode_dst->i_attr_mutex);
 
-	if (strlen(args->from.name) > NFS3_NAME_MAX ||
-	    strlen(args->to.name) > NFS3_NAME_MAX) {
+	if (strlen(args->from.name) > REFFS_MAX_NAME ||
+	    strlen(args->to.name) > REFFS_MAX_NAME) {
 		res->status = NFS3ERR_NAMETOOLONG;
 		goto update_wcc;
 	}
@@ -2137,7 +2134,7 @@ static int nfs3_op_link(struct rpc_trans *rt)
 	ctime = inode_dir->i_ctime;
 	pthread_mutex_unlock(&inode_dir->i_attr_mutex);
 
-	if (strlen(args->link.name) > NFS3_NAME_MAX) {
+	if (strlen(args->link.name) > REFFS_MAX_NAME) {
 		res->status = NFS3ERR_NAMETOOLONG;
 		goto update_wcc;
 	}
@@ -2949,7 +2946,7 @@ static int nfs3_op_pathconf(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	resok->linkmax = 255;
-	resok->name_max = NFS3_NAME_MAX;
+	resok->name_max = REFFS_MAX_NAME;
 	resok->no_trunc = false;
 	resok->chown_restricted = false;
 	resok->case_insensitive =

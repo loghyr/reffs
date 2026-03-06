@@ -19,6 +19,7 @@
 #include "reffs/cmp.h"
 
 #define REFFS_MAX_NAME (255)
+#define REFFS_MAX_PATH (1023)
 
 struct reffs_dirent {
 	struct rcu_head rd_rcu;

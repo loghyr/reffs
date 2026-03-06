@@ -23,6 +23,7 @@
 #include "reffs/dirent.h"
 #include "reffs/identity.h"
 #include "reffs/time.h"
+#include "reffs/data_block.h"
 #include "reffs/log.h"
 #include "reffs/cmp.h"
 #include "reffs/super_block.h"
@@ -167,18 +168,6 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 	inode_update_times_now(rd->rd_inode, REFFS_INODE_UPDATE_CTIME);
 	dirent_parent_release(rd, reffs_life_action_death);
 
-	// POSIX: removal of ANY entry updates parent mtime/ctime.
-	// removal of a directory entry decrements parent nlink.
-	if (is_dir) {
-		uint32_t old_nlink =
-			__atomic_fetch_sub(&dir->i_nlink, 1, __ATOMIC_RELAXED);
-		if (old_nlink <= 2) {
-			LOG("WARNING: nlink for directory (ino %lu) dropped to %u! Resetting to 2 to prevent corruption.",
-			    dir->i_ino, old_nlink - 1);
-			__atomic_store_n(&dir->i_nlink, 2, __ATOMIC_RELAXED);
-		}
-	}
-
 	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
 					    REFFS_INODE_UPDATE_MTIME);
 
@@ -202,6 +191,10 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 	ret = inode_access_check(dir, ap, W_OK);
 	if (ret)
 		return ret;
+
+	if (strlen(name) > REFFS_MAX_NAME) {
+		return ENAMETOOLONG;
+	}
 
 	rd = dirent_find(de_dir, rtc, (char *)name);
 	if (rd) {
@@ -419,6 +412,292 @@ int vfs_rmdir(struct inode *dir, const char *name, struct authunix_parms *ap)
 	return ret;
 }
 
+int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
+		struct authunix_parms *ap)
+{
+	int ret = 0;
+	uint64_t flags = 0;
+	bool user_in_current_group =
+		is_user_in_group(ap ? ap->aup_uid : 0, inode->i_gid, ap);
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	/* If no auth params or root user, allow all changes */
+	if (ap && ap->aup_uid != 0) {
+		/* Non-root user permissions checks */
+		if (sattr->uid_set && ap->aup_uid != inode->i_uid) {
+			ret = EPERM;
+			goto out_unlock;
+		}
+
+		/* Changing owner to someone else requires root */
+		if (sattr->uid_set && sattr->uid != (uid_t)-1 &&
+		    sattr->uid != inode->i_uid) {
+			ret = EPERM;
+			goto out_unlock;
+		}
+
+		/* Changing group requires being the owner */
+		if (sattr->gid_set && ap->aup_uid != inode->i_uid) {
+			ret = EPERM;
+			goto out_unlock;
+		}
+
+		/* Changing group to a real value requires membership */
+		if (sattr->gid_set && sattr->gid != (gid_t)-1) {
+			gid_t target_gid = sattr->gid;
+			bool user_in_target_group = false;
+
+			if (ap->aup_gid == target_gid)
+				user_in_target_group = true;
+
+			if (!user_in_target_group && ap->aup_len > 0) {
+				for (uint32_t i = 0; i < ap->aup_len; i++) {
+					if (ap->aup_gids[i] == target_gid) {
+						user_in_target_group = true;
+						break;
+					}
+				}
+			}
+
+			if (!user_in_target_group) {
+				ret = EPERM;
+				goto out_unlock;
+			}
+		}
+
+		if (sattr->mode_set && ap->aup_uid != inode->i_uid) {
+			ret = EPERM;
+			goto out_unlock;
+		}
+
+		if (sattr->atime_set && ap->aup_uid != inode->i_uid) {
+			if (!sattr->atime_now) {
+				ret = EPERM;
+				goto out_unlock;
+			}
+
+			ret = inode_access_check(inode, ap, W_OK);
+			if (ret)
+				goto out_unlock;
+		}
+
+		if (sattr->mtime_set && ap->aup_uid != inode->i_uid) {
+			if (!sattr->mtime_now) {
+				ret = EPERM;
+				goto out_unlock;
+			}
+
+			ret = inode_access_check(inode, ap, W_OK);
+			if (ret)
+				goto out_unlock;
+		}
+	}
+
+	/* Handle file size changes */
+	if (sattr->size_set) {
+		if (S_ISDIR(inode->i_mode)) {
+			ret = EISDIR;
+			goto out_unlock;
+		}
+
+		pthread_rwlock_wrlock(&inode->i_db_rwlock);
+		size_t old_size = inode->i_size;
+		size_t new_size = sattr->size;
+
+		if (!inode->i_db) {
+			if (new_size > 0) {
+				inode->i_db = data_block_alloc(inode, NULL,
+							       new_size, 0);
+				if (!inode->i_db) {
+					pthread_rwlock_unlock(
+						&inode->i_db_rwlock);
+					ret = ENOSPC;
+					goto out_unlock;
+				}
+			}
+			inode->i_size = new_size;
+		} else {
+			size_t sz = data_block_resize(inode->i_db, new_size);
+			if ((ssize_t)sz < 0) {
+				pthread_rwlock_unlock(&inode->i_db_rwlock);
+				ret = ENOSPC;
+				goto out_unlock;
+			}
+			inode->i_size = sz;
+		}
+
+		inode->i_used =
+			inode->i_size / inode->i_sb->sb_block_size +
+			(inode->i_size % inode->i_sb->sb_block_size ? 1 : 0);
+
+		size_t old_used;
+		size_t new_used;
+		do {
+			__atomic_load(&inode->i_sb->sb_bytes_used, &old_used,
+				      __ATOMIC_RELAXED);
+			if ((size_t)inode->i_size > old_size) {
+				new_used = old_used +
+					   ((size_t)inode->i_size - old_size);
+			} else if (old_size > (size_t)inode->i_size) {
+				size_t diff = old_size - (size_t)inode->i_size;
+				if (old_used >= diff)
+					new_used = old_used - diff;
+				else
+					new_used = 0;
+			} else {
+				new_used = old_used;
+			}
+		} while (!__atomic_compare_exchange(
+			&inode->i_sb->sb_bytes_used, &old_used, &new_used,
+			false, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+
+		pthread_rwlock_unlock(&inode->i_db_rwlock);
+		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
+	}
+
+	if (sattr->mode_set) {
+		uint16_t file_type = inode->i_mode & S_IFMT;
+		uint16_t new_mode = sattr->mode & 07777;
+
+		if ((new_mode & S_ISGID) && S_ISREG(inode->i_mode) && ap &&
+		    ap->aup_uid != 0 && !user_in_current_group) {
+			new_mode &= ~S_ISGID;
+		}
+
+		inode->i_mode = new_mode | file_type;
+		flags |= REFFS_INODE_UPDATE_CTIME;
+	}
+
+	bool is_uid_change = sattr->uid_set && sattr->uid != (uid_t)-1 &&
+			     sattr->uid != inode->i_uid;
+	bool is_gid_change = sattr->gid_set && sattr->gid != (gid_t)-1 &&
+			     sattr->gid != inode->i_gid;
+
+	if (sattr->uid_set && sattr->uid != (uid_t)-1) {
+		inode->i_uid = sattr->uid;
+		flags |= REFFS_INODE_UPDATE_CTIME;
+	}
+	if (sattr->gid_set && sattr->gid != (gid_t)-1) {
+		inode->i_gid = sattr->gid;
+		flags |= REFFS_INODE_UPDATE_CTIME;
+	}
+
+	if (is_uid_change || is_gid_change) {
+		if (ap && ap->aup_uid != 0) {
+			inode->i_mode &= ~(S_ISUID | S_ISGID);
+		}
+	}
+
+	if (sattr->atime_set) {
+		if (sattr->atime_now)
+			clock_gettime(CLOCK_REALTIME, &inode->i_atime);
+		else
+			inode->i_atime = sattr->atime;
+		flags |= REFFS_INODE_UPDATE_CTIME;
+	}
+	if (sattr->mtime_set) {
+		if (sattr->mtime_now)
+			clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
+		else
+			inode->i_mtime = sattr->mtime;
+		flags |= REFFS_INODE_UPDATE_CTIME;
+	}
+
+	if (flags)
+		inode_update_times_now(inode, flags);
+
+	inode_sync_to_disk(inode);
+
+out_unlock:
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+	return ret;
+}
+
+static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
+				       struct timespec *verf,
+				       struct authunix_parms *ap,
+				       struct inode **new_inode)
+{
+	struct reffs_dirent *rd = NULL;
+	struct inode *inode = NULL;
+	struct super_block *sb = dir->i_sb;
+	struct reffs_dirent *de_dir = vfs_dir_dirent(dir);
+	int ret = 0;
+	enum reffs_text_case rtc = reffs_case_get();
+
+	ret = inode_access_check(dir, ap, W_OK);
+	if (ret)
+		return ret;
+
+	if (strlen(name) > REFFS_MAX_NAME) {
+		return ENAMETOOLONG;
+	}
+
+	rd = dirent_find(de_dir, rtc, (char *)name);
+	if (rd) {
+		// POSIX: For exclusive, if it exists, check verifier
+		if (rd->rd_inode->i_ctime.tv_sec == verf->tv_sec &&
+		    rd->rd_inode->i_ctime.tv_nsec == verf->tv_nsec) {
+			if (new_inode)
+				*new_inode = inode_get(rd->rd_inode);
+			dirent_put(rd);
+			return 0;
+		}
+		dirent_put(rd);
+		return EEXIST;
+	}
+
+	rd = dirent_alloc(de_dir, (char *)name, reffs_life_action_birth, false);
+	if (!rd) {
+		return ENOMEM;
+	}
+
+	inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
+						   __ATOMIC_RELAXED));
+	if (!inode) {
+		dirent_parent_release(rd, reffs_life_action_death);
+		dirent_put(rd);
+		return ENOMEM;
+	}
+
+	inode->i_uid = ap->aup_uid;
+	inode->i_gid = ap->aup_gid;
+	inode->i_mode = S_IFREG | (dir->i_mode & 0777);
+	inode->i_nlink = 1;
+	inode->i_size = 0;
+	inode->i_used = 0;
+	inode->i_ctime = *verf; // The verifier!
+	inode->i_atime = inode->i_ctime;
+	inode->i_mtime = inode->i_ctime;
+	inode->i_btime = inode->i_ctime;
+
+	rd->rd_inode = inode;
+
+	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
+					    REFFS_INODE_UPDATE_MTIME);
+
+	inode_sync_to_disk(inode);
+	dirent_sync_to_disk(de_dir);
+
+	if (new_inode)
+		*new_inode = inode_get(inode);
+
+	dirent_put(rd);
+	return 0;
+}
+
+int vfs_exclusive_create(struct inode *dir, const char *name,
+			 struct timespec *verf, struct authunix_parms *ap,
+			 struct inode **new_inode)
+{
+	int ret;
+	vfs_lock_dirs(dir, NULL);
+	ret = vfs_exclusive_create_locked(dir, name, verf, ap, new_inode);
+	vfs_unlock_dirs(dir, NULL);
+	return ret;
+}
+
 int vfs_mkdir(struct inode *dir, const char *name, mode_t mode,
 	      struct authunix_parms *ap, struct inode **new_inode)
 {
@@ -448,6 +727,11 @@ int vfs_symlink(struct inode *dir, const char *name, const char *target,
 {
 	struct inode *inode = NULL;
 	int ret;
+
+	if (strlen(target) > REFFS_MAX_PATH) {
+		return ENAMETOOLONG;
+	}
+
 	vfs_lock_dirs(dir, NULL);
 	ret = vfs_create_common_locked(dir, name, 0777, ap, 0, S_IFLNK, &inode);
 	if (ret == 0) {

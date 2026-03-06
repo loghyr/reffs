@@ -676,27 +676,45 @@ int reffs_fs_unlink(const char *path)
 int reffs_fs_utimensat(const char *path, const struct timespec times[2])
 {
 	struct name_match *nm;
-	struct inode *inode = NULL;
-
+	struct authunix_parms ap;
+	struct reffs_sattr rs;
 	int ret;
 
-	TRACE("path=%s atime=(%lu.%ld) mtime=(%lu.%ld)", path, times[0].tv_sec,
-	      times[0].tv_nsec, times[1].tv_sec, times[1].tv_nsec);
+	TRACE("path=%s", path);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		goto out;
+		return ret;
 
-	inode = nm->nm_dirent->rd_inode;
-	inode->i_atime = times[0];
-	inode->i_mtime = times[1];
+	reffs_get_authunix_parms(&ap);
+	memset(&rs, 0, sizeof(rs));
 
-	inode_sync_to_disk(inode);
+	if (times == NULL) {
+		rs.atime_set = true;
+		rs.atime_now = true;
+		rs.mtime_set = true;
+		rs.mtime_now = true;
+	} else {
+		if (times[0].tv_nsec != UTIME_OMIT) {
+			rs.atime_set = true;
+			if (times[0].tv_nsec == UTIME_NOW)
+				rs.atime_now = true;
+			else
+				rs.atime = times[0];
+		}
+		if (times[1].tv_nsec != UTIME_OMIT) {
+			rs.mtime_set = true;
+			if (times[1].tv_nsec == UTIME_NOW)
+				rs.mtime_now = true;
+			else
+				rs.mtime = times[1];
+		}
+	}
+
+	ret = vfs_setattr(nm->nm_dirent->rd_inode, &rs, &ap);
 
 	name_match_free(nm);
-out:
-	TRACE("ret=%d", ret);
-	return ret;
+	return -ret;
 }
 
 int reffs_fs_write(const char *path, const char *buffer, size_t size,
