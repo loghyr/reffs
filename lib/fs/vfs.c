@@ -173,6 +173,8 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 		uint32_t old_nlink =
 			__atomic_fetch_sub(&dir->i_nlink, 1, __ATOMIC_RELAXED);
 		if (old_nlink <= 2) {
+			LOG("WARNING: nlink for directory (ino %lu) dropped to %u! Resetting to 2 to prevent corruption.",
+			    dir->i_ino, old_nlink - 1);
 			__atomic_store_n(&dir->i_nlink, 2, __ATOMIC_RELAXED);
 		}
 	}
