@@ -39,4 +39,7 @@ int vfs_symlink(struct inode *dir, const char *name, const char *target,
 int vfs_mknod(struct inode *dir, const char *name, mode_t mode, dev_t rdev,
 	      struct authunix_parms *ap, struct inode **new_inode);
 
+int vfs_link(struct inode *inode, struct inode *dir, const char *name,
+	     struct authunix_parms *ap);
+
 #endif /* _REFFS_VFS_H */

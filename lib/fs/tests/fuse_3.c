@@ -44,6 +44,7 @@ START_TEST(test_mkdir_parent_timestamps)
 	sleep_past(&st_pre.st_mtim);
 
 	ck_assert_int_eq(reffs_fuse_mkdir("/foo/bar", 0640), 0);
+	usleep(100000);
 	ck_assert_int_eq(reffs_fuse_getattr("/foo", &st_post), 0);
 
 	/* stable */

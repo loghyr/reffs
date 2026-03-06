@@ -454,76 +454,33 @@ out:
 
 int reffs_fs_link(const char *old_path, const char *new_path)
 {
-	struct name_match *nm_src;
-	struct name_match *nm_dst;
-	struct reffs_dirent *rd;
+	struct name_match *nm_src = NULL;
+	struct name_match *nm_dst = NULL;
 	int ret;
+	struct authunix_parms ap;
 
 	TRACE("old_path=%s new_path=%s", old_path, new_path);
 
 	ret = find_matching_directory_entry(&nm_src, old_path,
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		goto out;
-
-	/* POSIX: Write permission required in parent directory of destination */
-	ret = check_permission(nm_src->nm_dirent->rd_parent->rd_inode, W_OK);
-	if (ret) {
-		name_match_free(nm_src);
-		goto out;
-	}
-
-	if (S_ISDIR(nm_src->nm_dirent->rd_inode->i_mode)) {
-		ret = -EPERM;
-		goto out_src;
-	}
+		return ret;
 
 	ret = find_matching_directory_entry(&nm_dst, new_path,
 					    LAST_COMPONENT_IS_NEW);
-	if (ret)
-		goto out_src;
-
-	/* POSIX: Write permission required in parent directory of destination */
-	ret = check_permission(nm_dst->nm_dirent->rd_inode, W_OK);
 	if (ret) {
-		goto out_dst;
+		name_match_free(nm_src);
+		return ret;
 	}
 
-	/* POSIX: Destination must not exist */
-	struct reffs_dirent *existing;
-	existing = dirent_find(nm_dst->nm_dirent, reffs_case_get(),
-			       nm_dst->nm_name);
-	if (existing) {
-		dirent_put(existing);
-		ret = -EEXIST;
-		goto out_dst;
-	}
+	reffs_get_authunix_parms(&ap);
+	ret = vfs_link(nm_src->nm_dirent->rd_inode, nm_dst->nm_dirent->rd_inode,
+		       nm_dst->nm_name, &ap);
 
-	pthread_rwlock_wrlock(&nm_dst->nm_dirent->rd_rwlock);
-	rd = dirent_alloc(nm_dst->nm_dirent, nm_dst->nm_name,
-			  reffs_life_action_birth, false);
-	pthread_rwlock_unlock(&nm_dst->nm_dirent->rd_rwlock);
-
-	if (!rd) {
-		ret = -ENOMEM;
-		goto out_dst;
-	}
-
-	rd->rd_inode = inode_get(nm_src->nm_dirent->rd_inode);
-	__atomic_fetch_add(&rd->rd_inode->i_nlink, 1, __ATOMIC_RELAXED);
-
-	inode_update_times_now(rd->rd_inode, REFFS_INODE_UPDATE_CTIME);
-	inode_sync_to_disk(rd->rd_inode);
-
-	dirent_put(rd);
-
-out_dst:
-	name_match_free(nm_dst);
-out_src:
 	name_match_free(nm_src);
-out:
-	TRACE("ret=%d", ret);
-	return ret;
+	name_match_free(nm_dst);
+
+	return ret ? -ret : 0;
 }
 
 int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)

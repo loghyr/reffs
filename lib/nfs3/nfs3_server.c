@@ -2074,25 +2074,21 @@ static int nfs3_op_link(struct rpc_trans *rt)
 	struct super_block *sb = NULL;
 	struct inode *inode = NULL;
 	struct inode *inode_dir = NULL;
-	struct inode *exists = NULL;
 
 	LINK3args *args = ph->ph_args;
 	LINK3res *res = ph->ph_res;
 	LINK3resok *resok = &res->LINK3res_u.resok;
-	LINK3resfail *resfail = &res->LINK3res_u.resfail;
-
 	wcc_data *wcc = &resok->linkdir_wcc;
 	post_op_attr *poa = &resok->file_attributes;
-	fattr3 *fa;
-
-	size3 size;
-	nfstime3 mtime;
-	nfstime3 ctime;
 
 	struct network_file_handle *nfh = NULL;
 	struct network_file_handle *nfh_dir = NULL;
 
 	struct authunix_parms ap;
+
+	uint64_t size;
+	struct timespec mtime;
+	struct timespec ctime;
 
 	trace_nfs3_srv_link(rt, args);
 
@@ -2104,13 +2100,12 @@ static int nfs3_op_link(struct rpc_trans *rt)
 		res->status = NFS3ERR_BADHANDLE;
 		goto out;
 	}
+	nfh = (struct network_file_handle *)args->file.data.data_val;
 
-	if (args->link.dir.data.data_len != sizeof(*nfh)) {
+	if (args->link.dir.data.data_len != sizeof(*nfh_dir)) {
 		res->status = NFS3ERR_BADHANDLE;
 		goto out;
 	}
-
-	nfh = (struct network_file_handle *)args->file.data.data_val;
 	nfh_dir = (struct network_file_handle *)args->link.dir.data.data_val;
 
 	if (nfh->nfh_sb != nfh_dir->nfh_sb) {
@@ -2132,90 +2127,43 @@ static int nfs3_op_link(struct rpc_trans *rt)
 
 	inode_dir = directory_inode_find(sb, nfh_dir->nfh_ino, &ap, W_OK,
 					 &res->status);
-	if (!inode_dir) {
-		res->status = NFS3ERR_NOENT;
+	if (res->status)
 		goto out;
-	}
 
-	if (!(S_ISDIR(inode_dir->i_mode))) {
-		res->status = NFS3ERR_NOTDIR;
-		goto out;
-	}
+	/* Pre-op attributes of the directory */
+	pthread_mutex_lock(&inode_dir->i_attr_mutex);
+	size = inode_dir->i_size;
+	mtime = inode_dir->i_mtime;
+	ctime = inode_dir->i_ctime;
+	pthread_mutex_unlock(&inode_dir->i_attr_mutex);
 
 	if (strlen(args->link.name) > NFS3_NAME_MAX) {
 		res->status = NFS3ERR_NAMETOOLONG;
-		goto out;
-	}
-
-	pthread_mutex_lock(&inode_dir->i_attr_mutex);
-	pthread_mutex_lock(&inode->i_attr_mutex);
-
-	size = inode_dir->i_size;
-	timespec_to_nfstime3(&inode_dir->i_ctime, &ctime);
-	timespec_to_nfstime3(&inode_dir->i_mtime, &mtime);
-
-	pthread_rwlock_wrlock(&inode_dir->i_parent->rd_rwlock);
-	exists = inode_name_get_inode(inode_dir, args->link.name);
-	if (exists) {
-		res->status = NFS3ERR_EXIST;
-		pthread_rwlock_unlock(&inode_dir->i_parent->rd_rwlock);
-		wcc = &resfail->linkdir_wcc;
-		poa = &resfail->file_attributes;
 		goto update_wcc;
 	}
 
-	{
-		struct reffs_dirent *rd;
-
-		rd = dirent_alloc(inode_dir->i_parent, args->link.name,
-				  reffs_life_action_birth, false);
-		if (!rd) {
-			res->status = NFS3ERR_NOENT;
-			pthread_rwlock_unlock(&inode_dir->i_parent->rd_rwlock);
-			wcc = &resfail->linkdir_wcc;
-			poa = &resfail->file_attributes;
-			goto update_wcc;
-		}
-
-		rd->rd_inode = inode_get(inode);
-		if (!rd->rd_inode) {
-			dirent_parent_release(rd, reffs_life_action_death);
-			dirent_put(rd);
-			res->status = NFS3ERR_NOENT;
-			pthread_rwlock_unlock(&inode_dir->i_parent->rd_rwlock);
-			wcc = &resfail->linkdir_wcc;
-			poa = &resfail->file_attributes;
-			goto update_wcc;
-		}
-
-		__atomic_fetch_add(&inode->i_nlink, 1, __ATOMIC_RELAXED);
-
-		pthread_rwlock_unlock(&inode_dir->i_parent->rd_rwlock);
-
-		inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME);
-
-		dirent_put(rd);
-	}
+	int ret = vfs_link(inode, inode_dir, args->link.name, &ap);
+	res->status = errno_to_nfs3(ret);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
-	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
-	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+	timespec_to_nfstime3(&mtime,
+			     &wcc->before.pre_op_attr_u.attributes.mtime);
+	timespec_to_nfstime3(&ctime,
+			     &wcc->before.pre_op_attr_u.attributes.ctime);
 
 	poa->attributes_follow = true;
-	fa = &poa->post_op_attr_u.attributes;
-	inode_attr_to_fattr(inode, fa);
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	inode_attr_to_fattr(inode, &poa->post_op_attr_u.attributes);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	wcc->after.attributes_follow = true;
-	fa = &wcc->after.post_op_attr_u.attributes;
-	inode_attr_to_fattr(inode_dir, fa);
-
-	pthread_mutex_unlock(&inode->i_attr_mutex);
+	pthread_mutex_lock(&inode_dir->i_attr_mutex);
+	inode_attr_to_fattr(inode_dir, &wcc->after.post_op_attr_u.attributes);
 	pthread_mutex_unlock(&inode_dir->i_attr_mutex);
 
 out:
-	inode_put(exists);
 	inode_put(inode);
 	inode_put(inode_dir);
 	super_block_put(sb);

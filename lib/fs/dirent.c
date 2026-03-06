@@ -63,12 +63,6 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 			inode_sync_to_disk(rd->rd_inode);
 	}
 
-	if (rla == reffs_life_action_birth || rla == reffs_life_action_update) {
-		inode_update_times_now(parent->rd_inode,
-				       REFFS_INODE_UPDATE_CTIME |
-					       REFFS_INODE_UPDATE_MTIME);
-	}
-
 	if (rla != reffs_life_action_load && rla != reffs_life_action_unload)
 		dirent_sync_to_disk(parent);
 	rcu_read_unlock();
@@ -233,15 +227,6 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 		if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode))
 			rd->rd_inode->i_parent = NULL; // Prevent use-after-free
 
-		if (rla == reffs_life_action_death ||
-		    rla == reffs_life_action_update ||
-		    rla == reffs_life_action_move ||
-		    rla == reffs_life_action_delayed_death) {
-			inode_update_times_now(
-				parent->rd_inode,
-				REFFS_INODE_UPDATE_CTIME |
-					REFFS_INODE_UPDATE_MTIME);
-		}
 		if (rd->rd_inode && (rla == reffs_life_action_death ||
 				     rla == reffs_life_action_delayed_death)) {
 			int n = S_ISDIR(rd->rd_inode->i_mode) ? 2 : 1;
