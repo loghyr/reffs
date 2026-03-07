@@ -217,7 +217,7 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 	ret = inode_access_check(inode, &ap, mode);
 
 	name_match_free(nm);
-	return ret ? -ret : 0;
+	return ret;
 }
 
 int reffs_fs_chmod(const char *path, mode_t mode)
@@ -240,7 +240,7 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 	name_match_free(nm);
 
 	TRACE("ret=%d", ret);
-	return ret ? -ret : 0;
+	return ret;
 }
 
 int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
@@ -269,7 +269,7 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 	name_match_free(nm);
 
 	TRACE("ret=%d", ret);
-	return ret ? -ret : 0;
+	return ret;
 }
 
 static void reffs_get_authunix_parms(struct authunix_parms *ap);
@@ -290,7 +290,7 @@ int reffs_fs_create(const char *path, mode_t mode)
 	ret = vfs_create(nm->nm_dirent->rd_inode, nm->nm_name, mode, &ap, NULL);
 
 	name_match_free(nm);
-	return ret ? -ret : 0;
+	return ret;
 }
 
 int reffs_fs_mkdir(const char *path, mode_t mode)
@@ -309,7 +309,7 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	ret = vfs_mkdir(nm->nm_dirent->rd_inode, nm->nm_name, mode, &ap, NULL);
 
 	name_match_free(nm);
-	return ret ? -ret : 0;
+	return ret;
 }
 
 int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
@@ -329,7 +329,7 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 			NULL);
 
 	name_match_free(nm);
-	return ret ? -ret : 0;
+	return ret;
 }
 
 int reffs_fs_symlink(const char *target, const char *linkpath)
@@ -350,7 +350,7 @@ int reffs_fs_symlink(const char *target, const char *linkpath)
 			  NULL);
 
 	name_match_free(nm);
-	return ret ? -ret : 0;
+	return ret;
 }
 
 int reffs_fs_fallocate(const char *path, int mode, off_t offset, off_t len)
@@ -568,7 +568,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 	name_match_free(nm_src);
 	name_match_free(nm_dst);
 
-	return ret ? -ret : 0;
+	return ret;
 }
 
 int reffs_fs_rmdir(const char *path)
@@ -591,7 +591,7 @@ int reffs_fs_rmdir(const char *path)
 	ret = vfs_rmdir(nm->nm_dirent->rd_parent->rd_inode, nm->nm_name, &ap);
 
 	name_match_free(nm);
-	return ret ? -ret : 0;
+	return ret;
 }
 
 int reffs_fs_unlink(const char *path)
@@ -610,7 +610,7 @@ int reffs_fs_unlink(const char *path)
 	ret = vfs_remove(nm->nm_dirent->rd_parent->rd_inode, nm->nm_name, &ap);
 
 	name_match_free(nm);
-	return ret ? -ret : 0;
+	return ret;
 }
 
 int reffs_fs_utimensat(const char *path, const struct timespec times[2])
@@ -654,7 +654,7 @@ int reffs_fs_utimensat(const char *path, const struct timespec times[2])
 	ret = vfs_setattr(nm->nm_dirent->rd_inode, &rs, &ap);
 
 	name_match_free(nm);
-	return -ret;
+	return ret;
 }
 
 int reffs_fs_write(const char *path, const char *buffer, size_t size,
