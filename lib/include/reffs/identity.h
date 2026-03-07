@@ -25,8 +25,13 @@ int rpc_cred_to_authunix_parms(struct rpc_cred *cred,
 bool is_user_in_group(uid_t uid, gid_t group_to_check,
 		      struct authunix_parms *ap);
 
+#define REFFS_ACCESS_OWNER_OVERRIDE 0x1
+
 int inode_access_check(struct inode *inode, struct authunix_parms *ap,
 		       int mode);
+
+int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
+			     int mode, int flags);
 
 enum privilege_op {
 	PRIV_CHANGE_OWNER,

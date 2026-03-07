@@ -62,16 +62,37 @@ int rpc_cred_to_authunix_parms(struct rpc_cred *cred, struct authunix_parms *ap)
 
 int inode_access_check(struct inode *inode, struct authunix_parms *ap, int mode)
 {
+	return inode_access_check_flags(inode, ap, mode, 0);
+}
+
+int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
+			     int mode, int flags)
+{
 	/* Superuser mode for now */
 	if (ap->aup_uid == 0)
 		return 0;
 
 	if (ap->aup_uid == inode->i_uid) {
+		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
+			return -EACCES;
+
+		/*
+		 * Git over NFS requires that the owner be able to write to
+		 * a regular file even if the write bit is not set (e.g. 0444).
+		 * Standard NFS servers (like Linux nfsd) allow this.
+		 * However, this violates strict POSIX semantics.
+		 */
+#ifndef HAVE_STRICT_POSIX
+		if ((flags & REFFS_ACCESS_OWNER_OVERRIDE) &&
+		    S_ISREG(inode->i_mode))
+			return 0;
+#else
+		(void)flags;
+#endif
+
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))
 			return -EACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
-			return -EACCES;
-		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
 			return -EACCES;
 	} else if (ap->aup_gid == inode->i_gid ||
 		   gid_in_gids(inode->i_gid, ap->aup_len, ap->aup_gids)) {

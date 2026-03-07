@@ -446,7 +446,8 @@ static int nfs3_op_access(struct rpc_trans *rt)
 	}
 
 	if (args->access & ACCESS3_READ) {
-		if (inode_access_check(inode, &ap, R_OK) == 0)
+		if (inode_access_check_flags(inode, &ap, R_OK,
+					     REFFS_ACCESS_OWNER_OVERRIDE) == 0)
 			resok->access |= ACCESS3_READ;
 	}
 
@@ -456,12 +457,14 @@ static int nfs3_op_access(struct rpc_trans *rt)
 	}
 
 	if (args->access & ACCESS3_MODIFY) {
-		if (inode_access_check(inode, &ap, W_OK) == 0)
+		if (inode_access_check_flags(inode, &ap, W_OK,
+					     REFFS_ACCESS_OWNER_OVERRIDE) == 0)
 			resok->access |= ACCESS3_MODIFY;
 	}
 
 	if (args->access & ACCESS3_EXTEND) {
-		if (inode_access_check(inode, &ap, W_OK) == 0)
+		if (inode_access_check_flags(inode, &ap, W_OK,
+					     REFFS_ACCESS_OWNER_OVERRIDE) == 0)
 			resok->access |= ACCESS3_EXTEND;
 	}
 
@@ -730,7 +733,8 @@ static int nfs3_op_write(struct rpc_trans *rt)
 		goto out;
 	}
 
-	ret = inode_access_check(inode, &ap, W_OK);
+	ret = inode_access_check_flags(inode, &ap, W_OK,
+				       REFFS_ACCESS_OWNER_OVERRIDE);
 	if (ret)
 		goto out;
 
@@ -2646,7 +2650,8 @@ static int nfs3_op_commit(struct rpc_trans *rt)
 		goto out;
 	}
 
-	ret = inode_access_check(inode, &ap, R_OK);
+	ret = inode_access_check_flags(inode, &ap, W_OK,
+				       REFFS_ACCESS_OWNER_OVERRIDE);
 	if (ret)
 		goto out;
 
