@@ -65,4 +65,13 @@ int vfs_mknod(struct inode *dir, const char *name, mode_t mode, dev_t rdev,
 int vfs_link(struct inode *inode, struct inode *dir, const char *name,
 	     struct authunix_parms *ap);
 
+/**
+ * vfs_is_subdir - Check if an inode is a subdirectory (at any depth) of another.
+ * @child: The potential subdirectory to check.
+ * @parent: The potential parent directory.
+ *
+ * Returns 1 if child is a subdirectory of parent, 0 otherwise.
+ */
+int vfs_is_subdir(struct inode *child, struct inode *parent);
+
 #endif /* _REFFS_VFS_H */

@@ -74,6 +74,7 @@ TESTS = \
 	test_rmdir_leak \
 	fs_test_write_read \
 	dirent_lifecycle \
+	vfs_integrity \
 	posix_recovery_1 \
 	posix_recovery_2 \
 	posix_recovery_3 \

@@ -114,18 +114,18 @@ static int rtc_cmp(const char *s1, const char *s2)
 	return reffs_text_case_cmp_of(reffs_case_get())(s1, s2);
 }
 
-static bool vfs_is_subdir(struct inode *child, struct inode *maybe_parent)
+int vfs_is_subdir(struct inode *child, struct inode *maybe_parent)
 {
 	struct inode *curr = child;
 	while (curr) {
 		if (curr == maybe_parent)
-			return true;
+			return 1;
 		if (curr->i_parent && curr->i_parent->rd_parent)
 			curr = curr->i_parent->rd_parent->rd_inode;
 		else
 			curr = NULL;
 	}
-	return false;
+	return 0;
 }
 
 /* Internal helpers that assume locks are held */
