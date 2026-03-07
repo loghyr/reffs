@@ -178,8 +178,8 @@ static void posix_db_release_resources(struct data_block *db)
 	}
 }
 
-static size_t posix_db_read(struct data_block *db, char *buffer, size_t size,
-			    off_t offset)
+static ssize_t posix_db_read(struct data_block *db, char *buffer, size_t size,
+			     off_t offset)
 {
 	struct posix_db_private *priv = db->db_storage_private;
 	if (!priv || priv->db_fd < 0)
@@ -193,8 +193,8 @@ static size_t posix_db_read(struct data_block *db, char *buffer, size_t size,
 	return ret;
 }
 
-static size_t posix_db_write(struct data_block *db, const char *buffer,
-			     size_t size, off_t offset)
+static ssize_t posix_db_write(struct data_block *db, const char *buffer,
+			      size_t size, off_t offset)
 {
 	struct posix_db_private *priv = db->db_storage_private;
 	if (!priv || priv->db_fd < 0)
@@ -218,7 +218,7 @@ static size_t posix_db_write(struct data_block *db, const char *buffer,
 	return ret;
 }
 
-static size_t posix_db_resize(struct data_block *db, size_t size)
+static ssize_t posix_db_resize(struct data_block *db, size_t size)
 {
 	struct posix_db_private *priv = db->db_storage_private;
 	if (!priv || priv->db_fd < 0)
@@ -230,7 +230,7 @@ static size_t posix_db_resize(struct data_block *db, size_t size)
 		return -errno;
 	}
 	db->db_size = size;
-	return size;
+	return (ssize_t)size;
 }
 
 static size_t posix_db_get_size(struct data_block *db)
