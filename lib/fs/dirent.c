@@ -192,6 +192,7 @@ void dirent_children_release(struct reffs_dirent *parent,
 	while (!cds_list_empty(&parent->rd_inode->i_children)) {
 		rd = cds_list_first_entry(&parent->rd_inode->i_children,
 					  struct reffs_dirent, rd_siblings);
+		dirent_get(rd);
 		dirent_parent_release(rd, rla);
 		dirent_children_release(rd, rla);
 		dirent_put(rd);
@@ -213,12 +214,20 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 		    (rla == reffs_life_action_death ||
 		     rla == reffs_life_action_move ||
 		     rla == reffs_life_action_delayed_death)) {
-			__atomic_fetch_sub(&parent->rd_inode->i_nlink, 1,
-					   __ATOMIC_RELAXED);
+			uint32_t old_nlink =
+				__atomic_fetch_sub(&parent->rd_inode->i_nlink,
+						   1, __ATOMIC_RELAXED);
+			if (old_nlink <= 2) {
+				LOG("WARNING: nlink for directory (ino %lu) dropped to %u! Resetting to 2 to prevent corruption.",
+				    parent->rd_inode->i_ino, old_nlink - 1);
+				__atomic_store_n(&parent->rd_inode->i_nlink, 2,
+						 __ATOMIC_RELAXED);
+			}
 		}
 		cds_list_del_rcu(&rd->rd_siblings);
 
-		if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode))
+		if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode) &&
+		    rla != reffs_life_action_move)
 			rd->rd_inode->i_parent = NULL; // Prevent use-after-free
 
 		if (rd->rd_inode && (rla == reffs_life_action_death ||
