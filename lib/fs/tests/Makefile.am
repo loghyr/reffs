@@ -4,6 +4,7 @@
 AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/fs @CHECK_CFLAGS@		\
 	$(URCU_CFLAGS) $(URCU_CDS_CFLAGS) $(FUSE_CFLAGS)	\
 	$(UUID_CFLAGS)						\
+	$(TIRPC_CFLAGS)						\
 	$(OPENSSL_CFLAGS)					\
 	$(ZSTD_CFLAGS)						\
 	$(JEMALLOC_FLAGS)					\
@@ -34,6 +35,7 @@ LDADD = \
 	-lxxhash					\
 	-lpthread					\
 	$(URCU_LIBS) $(URCU_CDS_LIBS) $(FUSE_LIBS)	\
+	$(TIRPC_LIBS)					\
 	$(OPENSSL_LIBS)					\
 	$(ZSTD_LIBS)					\
 	$(UUID_LIBS) $(JEMALLOC_LIBS)
@@ -58,6 +60,7 @@ TESTS = \
 	fs_test_chmod_chown \
 	fs_test_create \
 	fs_test_create_length \
+	fs_test_vfs_unchecked_create \
 	fs_test_getattr \
 	fs_test_mkdir \
 	fs_test_mkdir_timestamps \
