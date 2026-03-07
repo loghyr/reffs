@@ -437,7 +437,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			goto out_unlock;
 		}
 
-		/* Changing group requires being the owner */
+		/* Changing group requires being the owner (or root) */
 		if (sattr->gid_set && ap->aup_uid != inode->i_uid) {
 			ret = EPERM;
 			goto out_unlock;
@@ -446,19 +446,8 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 		/* Changing group to a real value requires membership */
 		if (sattr->gid_set && sattr->gid != (gid_t)-1) {
 			gid_t target_gid = sattr->gid;
-			bool user_in_target_group = false;
-
-			if (ap->aup_gid == target_gid)
-				user_in_target_group = true;
-
-			if (!user_in_target_group && ap->aup_len > 0) {
-				for (uint32_t i = 0; i < ap->aup_len; i++) {
-					if (ap->aup_gids[i] == target_gid) {
-						user_in_target_group = true;
-						break;
-					}
-				}
-			}
+			bool user_in_target_group =
+				is_user_in_group(ap->aup_uid, target_gid, ap);
 
 			if (!user_in_target_group) {
 				ret = EPERM;
@@ -478,8 +467,9 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			}
 
 			ret = inode_access_check(inode, ap, W_OK);
-			if (ret)
+			if (ret) {
 				goto out_unlock;
+			}
 		}
 
 		if (sattr->mtime_set && ap->aup_uid != inode->i_uid) {
@@ -489,8 +479,9 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			}
 
 			ret = inode_access_check(inode, ap, W_OK);
-			if (ret)
+			if (ret) {
 				goto out_unlock;
+			}
 		}
 	}
 
@@ -566,7 +557,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 		}
 
 		inode->i_mode = new_mode | file_type;
-		flags |= REFFS_INODE_UPDATE_CTIME;
+		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
 	}
 
 	bool is_uid_change = sattr->uid_set && sattr->uid != (uid_t)-1 &&
@@ -576,17 +567,15 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 
 	if (sattr->uid_set && sattr->uid != (uid_t)-1) {
 		inode->i_uid = sattr->uid;
-		flags |= REFFS_INODE_UPDATE_CTIME;
+		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
 	}
 	if (sattr->gid_set && sattr->gid != (gid_t)-1) {
 		inode->i_gid = sattr->gid;
-		flags |= REFFS_INODE_UPDATE_CTIME;
+		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
 	}
 
 	if (is_uid_change || is_gid_change) {
-		if (ap && ap->aup_uid != 0) {
-			inode->i_mode &= ~(S_ISUID | S_ISGID);
-		}
+		inode->i_mode &= ~(S_ISUID | S_ISGID);
 	}
 
 	if (sattr->atime_set) {
