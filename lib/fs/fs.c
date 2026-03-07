@@ -442,7 +442,7 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 
 	inode = nm->nm_dirent->rd_inode;
 
-	// Perhaps a reader/write lock?
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	pthread_rwlock_rdlock(&inode->i_db_rwlock);
 
 	if (S_ISDIR(inode->i_mode)) {
@@ -459,12 +459,11 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 		}
 	}
 
-	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
-	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out_puts:
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 	name_match_free(nm);
 
 out:
@@ -677,6 +676,7 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 
 	inode = nm->nm_dirent->rd_inode;
 
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	pthread_rwlock_wrlock(&inode->i_db_rwlock);
 
 	if (S_ISDIR(inode->i_mode)) {
@@ -697,9 +697,6 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 		}
 	}
 
-	pthread_mutex_lock(&inode->i_attr_mutex);
-	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
-					      REFFS_INODE_UPDATE_MTIME);
 	size_t old_size = inode->i_size;
 	inode->i_size = inode->i_db->db_size;
 	size_t new_size = inode->i_size;
@@ -726,11 +723,13 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 		&inode->i_sb->sb_bytes_used, &old_used, &new_used, false,
 		__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
 
-	pthread_mutex_unlock(&inode->i_attr_mutex);
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
+					      REFFS_INODE_UPDATE_MTIME);
 
 	ret = size;
 out_puts:
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 	name_match_free(nm);
 
 out:

@@ -524,13 +524,13 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			}
 			inode->i_size = new_size;
 		} else {
-			size_t sz = data_block_resize(inode->i_db, new_size);
-			if ((ssize_t)sz < 0) {
+			ssize_t res = data_block_resize(inode->i_db, new_size);
+			if (res < 0) {
 				pthread_rwlock_unlock(&inode->i_db_rwlock);
 				ret = -ENOSPC;
 				goto out_unlock;
 			}
-			inode->i_size = sz;
+			inode->i_size = res;
 		}
 
 		inode->i_used =
