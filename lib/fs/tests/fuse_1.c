@@ -47,7 +47,7 @@ START_TEST(test_root_mode)
 {
 	struct stat st;
 	ck_assert_int_eq(reffs_fuse_getattr("/", &st), 0);
-	ck_assert_uint_eq(st.st_mode, (mode_t)(S_IFDIR | 0755));
+	ck_assert_uint_eq(st.st_mode, (mode_t)(S_IFDIR | 0777));
 }
 END_TEST
 

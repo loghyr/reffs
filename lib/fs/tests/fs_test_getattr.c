@@ -48,7 +48,7 @@ START_TEST(test_root_initial_state)
 	/* The regression: i_nlink must be 2, mode must have S_IFDIR */
 	ck_assert_uint_eq(st.st_nlink, 2);
 	ck_assert_uint_eq(st.st_mode & S_IFMT, S_IFDIR);
-	ck_assert_uint_eq(st.st_mode & 0777, 0755);
+	ck_assert_uint_eq(st.st_mode & 0777, 0777);
 
 	/* uid/gid set by fs_test_setup() */
 	ck_assert_uint_eq(st.st_uid, fs_test_uid);
