@@ -40,7 +40,7 @@ static int vfs_check_sticky_bit(struct inode *dir, struct inode *file,
 	if (ap->aup_uid == file->i_uid || ap->aup_uid == dir->i_uid)
 		return 0;
 
-	return EACCES;
+	return -EACCES;
 }
 
 static struct reffs_dirent *vfs_dir_dirent(struct inode *dir)
@@ -144,15 +144,15 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 
 	rd = dirent_find(de_dir, rtc, (char *)name);
 	if (!rd) {
-		return ENOENT;
+		return -ENOENT;
 	}
 
 	if (is_dir && !S_ISDIR(rd->rd_inode->i_mode)) {
-		ret = ENOTDIR;
+		ret = -ENOTDIR;
 		goto out;
 	}
 	if (!is_dir && S_ISDIR(rd->rd_inode->i_mode)) {
-		ret = EISDIR;
+		ret = -EISDIR;
 		goto out;
 	}
 
@@ -161,7 +161,7 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 		goto out;
 
 	if (is_dir && !cds_list_empty(&rd->rd_inode->i_children)) {
-		ret = ENOTEMPTY;
+		ret = -ENOTEMPTY;
 		goto out;
 	}
 
@@ -188,24 +188,28 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 	int ret = 0;
 	enum reffs_text_case rtc = reffs_case_get();
 
+	if (type == S_IFREG && (mode & S_IFMT) == S_IFDIR) {
+		return -EISDIR;
+	}
+
 	ret = inode_access_check(dir, ap, W_OK);
 	if (ret)
 		return ret;
 
 	if (strlen(name) > REFFS_MAX_NAME) {
-		return ENAMETOOLONG;
+		return -ENAMETOOLONG;
 	}
 
 	rd = dirent_find(de_dir, rtc, (char *)name);
 	if (rd) {
 		dirent_put(rd);
-		return EEXIST;
+		return -EEXIST;
 	}
 
 	rd = dirent_alloc(de_dir, (char *)name, reffs_life_action_birth,
 			  (type == S_IFDIR));
 	if (!rd) {
-		return ENOMEM;
+		return -ENOMEM;
 	}
 
 	inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
@@ -213,7 +217,7 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 	if (!inode) {
 		dirent_parent_release(rd, reffs_life_action_death);
 		dirent_put(rd);
-		return ENOMEM;
+		return -ENOMEM;
 	}
 
 	inode->i_uid = ap->aup_uid;
@@ -269,7 +273,7 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 
 	rd_src = dirent_find(de_old_dir, rtc, (char *)old_name);
 	if (!rd_src) {
-		return ENOENT;
+		return -ENOENT;
 	}
 	inode_src_file = rd_src->rd_inode;
 
@@ -285,7 +289,7 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 
 	if (S_ISDIR(inode_src_file->i_mode)) {
 		if (vfs_is_subdir(new_dir, inode_src_file)) {
-			ret = EINVAL;
+			ret = -EINVAL;
 			goto out;
 		}
 	}
@@ -309,14 +313,14 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 
 		if (S_ISDIR(inode_src_file->i_mode) !=
 		    S_ISDIR(inode_dst_file->i_mode)) {
-			ret = S_ISDIR(inode_src_file->i_mode) ? ENOTDIR :
-								EISDIR;
+			ret = S_ISDIR(inode_src_file->i_mode) ? -ENOTDIR :
+								-EISDIR;
 			goto out;
 		}
 
 		if (S_ISDIR(inode_dst_file->i_mode) &&
 		    !cds_list_empty(&inode_dst_file->i_children)) {
-			ret = ENOTEMPTY;
+			ret = -ENOTEMPTY;
 			goto out;
 		}
 	}
@@ -329,30 +333,41 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 
 	char *new_name_copy = strdup(new_name);
 	if (!new_name_copy) {
-		ret = ENOMEM;
+		ret = -ENOMEM;
 		goto out;
 	}
 
-	rcu_read_lock();
-	char *old_name_ptr = rcu_xchg_pointer(&rd_src->rd_name, new_name_copy);
-	reffs_string_release(old_name_ptr);
-	rcu_read_unlock();
-
+	/* Logic for actual moving/renaming */
 	if (old_dir == new_dir) {
 		if (rd_dst) {
 			inode_update_times_now(inode_dst_file,
 					       REFFS_INODE_UPDATE_CTIME);
 			dirent_parent_release(rd_dst, reffs_life_action_death);
 		}
+		rcu_read_lock();
+		char *old_name_ptr =
+			rcu_xchg_pointer(&rd_src->rd_name, new_name_copy);
+		reffs_string_release(old_name_ptr);
+		rcu_read_unlock();
 	} else {
 		if (rd_dst) {
 			inode_update_times_now(inode_dst_file,
 					       REFFS_INODE_UPDATE_CTIME);
 			dirent_parent_release(rd_dst, reffs_life_action_death);
 		}
-		dirent_parent_release(rd_src, reffs_life_action_move);
+		dirent_parent_release(rd_src, S_ISDIR(inode_src_file->i_mode) ?
+						      reffs_life_action_move :
+						      reffs_life_action_update);
+		rd_src->rd_parent = de_new_dir;
+		rcu_read_lock();
+		char *old_name_ptr =
+			rcu_xchg_pointer(&rd_src->rd_name, new_name_copy);
+		reffs_string_release(old_name_ptr);
+		rcu_read_unlock();
 		dirent_parent_attach(rd_src, de_new_dir,
-				     reffs_life_action_update,
+				     S_ISDIR(inode_src_file->i_mode) ?
+					     reffs_life_action_move :
+					     reffs_life_action_update,
 				     S_ISDIR(inode_src_file->i_mode));
 	}
 
@@ -377,14 +392,14 @@ int vfs_rename(struct inode *old_dir, const char *old_name,
 	       struct authunix_parms *ap)
 {
 	if (old_dir->i_sb != new_dir->i_sb)
-		return EXDEV;
+		return -EXDEV;
 
 	if (old_dir == new_dir && !rtc_cmp(old_name, new_name)) {
 		return 0;
 	}
 
 	if (!strcmp(new_name, ".") || !strcmp(new_name, "..")) {
-		return ENOTEMPTY;
+		return -ENOTEMPTY;
 	}
 
 	int ret;
@@ -426,20 +441,20 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 	if (ap && ap->aup_uid != 0) {
 		/* Non-root user permissions checks */
 		if (sattr->uid_set && ap->aup_uid != inode->i_uid) {
-			ret = EPERM;
+			ret = -EPERM;
 			goto out_unlock;
 		}
 
 		/* Changing owner to someone else requires root */
 		if (sattr->uid_set && sattr->uid != (uid_t)-1 &&
 		    sattr->uid != inode->i_uid) {
-			ret = EPERM;
+			ret = -EPERM;
 			goto out_unlock;
 		}
 
 		/* Changing group requires being the owner (or root) */
 		if (sattr->gid_set && ap->aup_uid != inode->i_uid) {
-			ret = EPERM;
+			ret = -EPERM;
 			goto out_unlock;
 		}
 
@@ -450,19 +465,19 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 				is_user_in_group(ap->aup_uid, target_gid, ap);
 
 			if (!user_in_target_group) {
-				ret = EPERM;
+				ret = -EPERM;
 				goto out_unlock;
 			}
 		}
 
 		if (sattr->mode_set && ap->aup_uid != inode->i_uid) {
-			ret = EPERM;
+			ret = -EPERM;
 			goto out_unlock;
 		}
 
 		if (sattr->atime_set && ap->aup_uid != inode->i_uid) {
 			if (!sattr->atime_now) {
-				ret = EPERM;
+				ret = -EPERM;
 				goto out_unlock;
 			}
 
@@ -474,7 +489,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 
 		if (sattr->mtime_set && ap->aup_uid != inode->i_uid) {
 			if (!sattr->mtime_now) {
-				ret = EPERM;
+				ret = -EPERM;
 				goto out_unlock;
 			}
 
@@ -488,7 +503,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 	/* Handle file size changes */
 	if (sattr->size_set) {
 		if (S_ISDIR(inode->i_mode)) {
-			ret = EISDIR;
+			ret = -EISDIR;
 			goto out_unlock;
 		}
 
@@ -503,7 +518,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 				if (!inode->i_db) {
 					pthread_rwlock_unlock(
 						&inode->i_db_rwlock);
-					ret = ENOSPC;
+					ret = -ENOSPC;
 					goto out_unlock;
 				}
 			}
@@ -512,7 +527,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			size_t sz = data_block_resize(inode->i_db, new_size);
 			if ((ssize_t)sz < 0) {
 				pthread_rwlock_unlock(&inode->i_db_rwlock);
-				ret = ENOSPC;
+				ret = -ENOSPC;
 				goto out_unlock;
 			}
 			inode->i_size = sz;
@@ -620,7 +635,7 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 		return ret;
 
 	if (strlen(name) > REFFS_MAX_NAME) {
-		return ENAMETOOLONG;
+		return -ENAMETOOLONG;
 	}
 
 	rd = dirent_find(de_dir, rtc, (char *)name);
@@ -634,12 +649,12 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 			return 0;
 		}
 		dirent_put(rd);
-		return EEXIST;
+		return -EEXIST;
 	}
 
 	rd = dirent_alloc(de_dir, (char *)name, reffs_life_action_birth, false);
 	if (!rd) {
-		return ENOMEM;
+		return -ENOMEM;
 	}
 
 	inode = inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
@@ -647,7 +662,7 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 	if (!inode) {
 		dirent_parent_release(rd, reffs_life_action_death);
 		dirent_put(rd);
-		return ENOMEM;
+		return -ENOMEM;
 	}
 
 	inode->i_uid = ap->aup_uid;
@@ -703,7 +718,7 @@ int vfs_create(struct inode *dir, const char *name, mode_t mode,
 {
 	int ret;
 	if (S_ISDIR(mode))
-		return EISDIR;
+		return -EISDIR;
 	vfs_lock_dirs(dir, NULL);
 	ret = vfs_create_common_locked(dir, name, mode, ap, 0, S_IFREG,
 				       new_inode);
@@ -718,7 +733,7 @@ int vfs_symlink(struct inode *dir, const char *name, const char *target,
 	int ret;
 
 	if (strlen(target) > REFFS_MAX_PATH) {
-		return ENAMETOOLONG;
+		return -ENAMETOOLONG;
 	}
 
 	vfs_lock_dirs(dir, NULL);
@@ -754,10 +769,10 @@ int vfs_link(struct inode *inode, struct inode *dir, const char *name,
 	enum reffs_text_case rtc = reffs_case_get();
 
 	if (inode->i_sb != dir->i_sb)
-		return EXDEV;
+		return -EXDEV;
 
 	if (S_ISDIR(inode->i_mode))
-		return EPERM;
+		return -EPERM;
 
 	vfs_lock_dirs(dir, inode);
 
@@ -767,13 +782,13 @@ int vfs_link(struct inode *inode, struct inode *dir, const char *name,
 
 	rd = dirent_find(de_dir, rtc, (char *)name);
 	if (rd) {
-		ret = EEXIST;
+		ret = -EEXIST;
 		goto out_unlock;
 	}
 
 	rd = dirent_alloc(de_dir, (char *)name, reffs_life_action_birth, false);
 	if (!rd) {
-		ret = ENOMEM;
+		ret = -ENOMEM;
 		goto out_unlock;
 	}
 
