@@ -36,6 +36,7 @@
 #include "reffs/server.h"
 #include "reffs/vfs.h"
 #include "reffs/identity.h"
+#include "reffs/errno.h"
 #include "reffs/trace/nfs3_server.h"
 
 /*
@@ -94,30 +95,38 @@ static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
 }
 
-static struct inode *directory_inode_find(struct super_block *sb, uint64_t ino,
-					  struct authunix_parms *ap, int mode,
-					  nfsstat3 *status)
+static int directory_inode_find(struct super_block *sb, uint64_t ino,
+				struct authunix_parms *ap, int mode,
+				struct inode **inode_out)
 {
 	struct inode *inode;
+	int ret = 0;
 
+	*inode_out = NULL;
 	inode = inode_find(sb, ino);
 	if (!inode) {
-		*status = NFS3ERR_NOENT;
-		goto out;
+		return -ENOENT;
 	}
 
 	if (!(S_ISDIR(inode->i_mode))) {
-		*status = NFS3ERR_NOTDIR;
-		goto out;
+		inode_put(inode);
+		return -ENOTDIR;
 	}
 
-	*status = inode_access_check(inode, ap, X_OK);
-	if (*status)
-		goto out;
+	ret = inode_access_check(inode, ap, X_OK);
+	if (ret) {
+		inode_put(inode);
+		return ret;
+	}
 
-	*status = inode_access_check(inode, ap, mode);
-out:
-	return inode;
+	ret = inode_access_check(inode, ap, mode);
+	if (ret) {
+		inode_put(inode);
+		return ret;
+	}
+
+	*inode_out = inode;
+	return 0;
 }
 static int nfs3_op_null(struct rpc_trans *rt)
 {
@@ -138,15 +147,16 @@ static int nfs3_op_getattr(struct rpc_trans *rt)
 
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_getattr(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->object.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -154,13 +164,13 @@ static int nfs3_op_getattr(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
@@ -169,6 +179,7 @@ static int nfs3_op_getattr(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -228,15 +239,16 @@ static int nfs3_op_setattr(struct rpc_trans *rt)
 	nfstime3 ctime;
 
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_setattr(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->object.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -244,13 +256,13 @@ static int nfs3_op_setattr(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
@@ -263,8 +275,7 @@ static int nfs3_op_setattr(struct rpc_trans *rt)
 	if (args->guard.check) {
 		if (!nfstime3_is_timespec(&args->guard.sattrguard3_u.obj_ctime,
 					  &inode->i_ctime)) {
-			res->status = NFS3ERR_NOT_SYNC;
-			wcc = &res->SETATTR3res_u.resfail.obj_wcc;
+			ret = -ENOTSYNC;
 			pthread_mutex_unlock(&inode->i_attr_mutex);
 			goto update_wcc_nolock;
 		}
@@ -274,14 +285,12 @@ static int nfs3_op_setattr(struct rpc_trans *rt)
 	struct reffs_sattr rs;
 	nfs3_sattr3_to_reffs_sattr(sa, &rs);
 
-	int ret = vfs_setattr(inode, &rs, &ap);
-	if (ret) {
-		res->status = errno_to_nfs3(ret);
-		wcc = &res->SETATTR3res_u.resfail.obj_wcc;
-		goto update_wcc_nolock;
-	}
+	ret = vfs_setattr(inode, &rs, &ap);
 
 update_wcc_nolock:
+	if (ret)
+		wcc = &res->SETATTR3res_u.resfail.obj_wcc;
+
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
 	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
@@ -293,6 +302,7 @@ update_wcc_nolock:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -316,15 +326,16 @@ static int nfs3_op_lookup(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_lookup(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->what.dir.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -332,32 +343,42 @@ static int nfs3_op_lookup(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
-	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, X_OK, &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, X_OK, &inode);
+	if (ret)
 		goto out;
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	exists = inode_name_get_inode(inode, args->what.name);
+
+	/* Get parent directory attributes for WCC */
+	poa->attributes_follow = true;
+	fa = &poa->post_op_attr_u.attributes;
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+	inode_attr_to_fattr(inode, fa);
+
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
 	if (!exists) {
-		res->status = NFS3ERR_NOENT;
-		poa = &res->LOOKUP3res_u.resfail.dir_attributes;
-		goto update_wcc;
+		ret = -ENOENT;
+		/* Use resfail instead of resok for attributes */
+		res->LOOKUP3res_u.resfail.dir_attributes = *poa;
+		goto out;
 	}
 
 	pthread_mutex_lock(&exists->i_attr_mutex);
 
 	// When we add more than one sb, be careul here
 	nfh = network_file_handle_construct(sb->sb_id, exists->i_ino);
-	pthread_mutex_unlock(&exists->i_attr_mutex);
 	if (!nfh) {
-		res->status = NFS3ERR_JUKEBOX;
-		poa = &res->LOOKUP3res_u.resfail.dir_attributes;
-		goto update_wcc;
+		pthread_mutex_unlock(&exists->i_attr_mutex);
+		ret = -EJUKEBOX;
+		res->LOOKUP3res_u.resfail.dir_attributes = *poa;
+		goto out;
 	}
 
 	resok->object.data.data_val = (char *)nfh;
@@ -365,19 +386,12 @@ static int nfs3_op_lookup(struct rpc_trans *rt)
 
 	resok->obj_attributes.attributes_follow = true;
 	fa = &resok->obj_attributes.post_op_attr_u.attributes;
-
-	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
 	inode_attr_to_fattr(exists, fa);
 
-update_wcc:
-	poa->attributes_follow = true;
-	fa = &poa->post_op_attr_u.attributes;
-
-	inode_attr_to_fattr(inode, fa);
-
-	pthread_mutex_unlock(&inode->i_attr_mutex);
+	pthread_mutex_unlock(&exists->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(exists);
 	inode_put(inode);
 	super_block_put(sb);
@@ -404,16 +418,16 @@ static int nfs3_op_access(struct rpc_trans *rt)
 
 	struct authunix_parms ap;
 
-	nfsstat3 status;
+	int ret = 0;
 
 	trace_nfs3_srv_access(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->object.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -421,49 +435,43 @@ static int nfs3_op_access(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
 	if (args->access & ACCESS3_READ) {
-		status = inode_access_check(inode, &ap, R_OK);
-		if (!status)
+		if (inode_access_check(inode, &ap, R_OK) == 0)
 			resok->access |= ACCESS3_READ;
 	}
 
 	if (args->access & ACCESS3_LOOKUP && (S_ISDIR(inode->i_mode))) {
-		status = inode_access_check(inode, &ap, X_OK);
-		if (!status)
+		if (inode_access_check(inode, &ap, X_OK) == 0)
 			resok->access |= ACCESS3_LOOKUP;
 	}
 
 	if (args->access & ACCESS3_MODIFY) {
-		status = inode_access_check(inode, &ap, W_OK);
-		if (!status)
+		if (inode_access_check(inode, &ap, W_OK) == 0)
 			resok->access |= ACCESS3_MODIFY;
 	}
 
 	if (args->access & ACCESS3_EXTEND) {
-		status = inode_access_check(inode, &ap, W_OK);
-		if (!status)
+		if (inode_access_check(inode, &ap, W_OK) == 0)
 			resok->access |= ACCESS3_EXTEND;
 	}
 
 	if (args->access & ACCESS3_DELETE && (S_ISDIR(inode->i_mode))) {
-		status = inode_access_check(inode, &ap, W_OK);
-		if (!status)
+		if (inode_access_check(inode, &ap, W_OK) == 0)
 			resok->access |= ACCESS3_DELETE;
 	}
 
 	if (args->access & ACCESS3_EXECUTE && !(S_ISDIR(inode->i_mode))) {
-		status = inode_access_check(inode, &ap, X_OK);
-		if (!status)
+		if (inode_access_check(inode, &ap, X_OK) == 0)
 			resok->access |= ACCESS3_EXECUTE;
 	}
 
@@ -478,6 +486,7 @@ static int nfs3_op_access(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -497,20 +506,21 @@ static int nfs3_op_readlink(struct rpc_trans *rt)
 	post_op_attr *poa = &resok->symlink_attributes;
 	fattr3 *fa;
 
-	char *name;
+	char *name = NULL;
 
 	struct network_file_handle *nfh = NULL;
 
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_readlink(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->symlink.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -518,28 +528,28 @@ static int nfs3_op_readlink(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
-	res->status = inode_access_check(inode, &ap, R_OK);
-	if (res->status)
+	ret = inode_access_check(inode, &ap, R_OK);
+	if (ret)
 		goto out;
 
 	if (!S_ISLNK(inode->i_mode)) {
-		res->status = NFS3ERR_INVAL;
+		ret = -EINVAL;
 		goto out;
 	}
 
 	name = strdup(inode->i_symlink);
 	if (!name) {
-		res->status = NFS3ERR_JUKEBOX;
+		ret = -EJUKEBOX;
 		goto out;
 	}
 
@@ -557,6 +567,8 @@ static int nfs3_op_readlink(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
+	free(name);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -577,15 +589,16 @@ static int nfs3_op_read(struct rpc_trans *rt)
 
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_read(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->file.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -593,22 +606,22 @@ static int nfs3_op_read(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
-	res->status = inode_access_check(inode, &ap, R_OK);
-	if (res->status)
+	ret = inode_access_check(inode, &ap, R_OK);
+	if (ret)
 		goto out;
 
 	if (S_ISDIR(inode->i_mode)) {
-		res->status = NFS3ERR_ISDIR;
+		ret = -EISDIR;
 		goto out;
 	}
 
@@ -620,7 +633,7 @@ static int nfs3_op_read(struct rpc_trans *rt)
 	} else {
 		resok->data.data_val = calloc(args->count, sizeof(char));
 		if (!resok->data.data_val) {
-			res->status = NFS3ERR_JUKEBOX;
+			ret = -EJUKEBOX;
 			poa = &res->READ3res_u.resfail.file_attributes;
 			goto update_wcc;
 		}
@@ -634,23 +647,21 @@ static int nfs3_op_read(struct rpc_trans *rt)
 			// Read beyond current size
 			resok->count = resok->data.data_len = 0;
 			resok->eof = true;
-			res->status = NFS3_OK;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
 		} else if (dbr < 0) {
 			free(resok->data.data_val);
+			resok->data.data_val = NULL;
 			resok->count = resok->data.data_len = 0;
-			res->status =
-				-dbr; // What about ENOMEM? Need errno_to_v3()
+			ret = dbr;
 			poa = &res->READ3res_u.resfail.file_attributes;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
 		}
 
 		resok->count = resok->data.data_len = dbr;
-		res->status = NFS3_OK;
 
-		if (args->offset + resok->count >= inode->i_db->db_size)
+		if (args->offset + resok->count >= (uint64_t)inode->i_size)
 			resok->eof = true;
 		pthread_rwlock_unlock(&inode->i_db_rwlock);
 	}
@@ -665,6 +676,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -691,15 +703,16 @@ static int nfs3_op_write(struct rpc_trans *rt)
 	nfstime3 ctime;
 
 	size_t db_size;
+	int ret = 0;
 
 	trace_nfs3_srv_write(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->file.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -707,22 +720,22 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
-	res->status = inode_access_check(inode, &ap, W_OK);
-	if (res->status)
+	ret = inode_access_check(inode, &ap, W_OK);
+	if (ret)
 		goto out;
 
 	if (S_ISDIR(inode->i_mode)) {
-		res->status = NFS3ERR_ISDIR;
+		ret = -EISDIR;
 		goto out;
 	}
 
@@ -738,7 +751,7 @@ static int nfs3_op_write(struct rpc_trans *rt)
 					       args->data.data_len,
 					       args->offset);
 		if (!inode->i_db) {
-			res->status = NFS3ERR_NOSPC;
+			ret = -ENOSPC;
 			wcc = &res->WRITE3res_u.resfail.file_wcc;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
@@ -750,14 +763,13 @@ static int nfs3_op_write(struct rpc_trans *rt)
 					       args->data.data_len,
 					       args->offset);
 		if (dbw < 0) {
-			res->status = -dbw;
+			ret = dbw;
 			wcc = &res->WRITE3res_u.resfail.file_wcc;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
 			goto update_wcc;
 		}
 
 		resok->count = dbw;
-		res->status = NFS3_OK;
 	}
 
 	if ((inode->i_mode & S_ISGID) && ap.aup_uid != 0 &&
@@ -814,6 +826,9 @@ static int nfs3_op_write(struct rpc_trans *rt)
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 
 update_wcc:
+	if (ret)
+		wcc = &res->WRITE3res_u.resfail.file_wcc;
+
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
 	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
@@ -825,6 +840,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -868,6 +884,14 @@ static nfsstat3 errno_to_nfs3(int err)
 		return NFS3ERR_INVAL;
 	case EFBIG:
 		return NFS3ERR_FBIG;
+	case EAGAIN:
+		return NFS3ERR_JUKEBOX;
+	case EBADHANDLE:
+		return NFS3ERR_BADHANDLE;
+	case ENOTSYNC:
+		return NFS3ERR_NOT_SYNC;
+	case EBADTYPE:
+		return NFS3ERR_BADTYPE;
 	case ENOSPC:
 		return NFS3ERR_NOSPC;
 	case EROFS:
@@ -912,15 +936,16 @@ static int nfs3_op_create(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_create(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->where.dir.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -928,12 +953,12 @@ static int nfs3_op_create(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
-	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
+	if (ret)
 		goto out;
 
 	/* Pre-op attributes */
@@ -943,7 +968,6 @@ static int nfs3_op_create(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	int ret;
 	if (args->how.mode == EXCLUSIVE) {
 		struct timespec verf;
 		createverf3_to_timespec(args->how.createhow3_u.verf, &verf);
@@ -957,18 +981,17 @@ static int nfs3_op_create(struct rpc_trans *rt)
 		ret = vfs_create(inode, args->where.name, mode, &ap,
 				 &new_inode);
 
-		if (ret == EEXIST && args->how.mode == UNCHECKED) {
+		if (ret == -EEXIST && args->how.mode == UNCHECKED) {
 			new_inode =
 				inode_name_get_inode(inode, args->where.name);
 			if (new_inode)
 				ret = 0;
 			else
-				ret = ENOENT;
+				ret = -ENOENT;
 		}
 	}
 
 	if (ret) {
-		res->status = errno_to_nfs3(ret);
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
@@ -979,7 +1002,6 @@ static int nfs3_op_create(struct rpc_trans *rt)
 		nfs3_sattr3_to_reffs_sattr(sa, &rs);
 		ret = vfs_setattr(new_inode, &rs, NULL);
 		if (ret) {
-			res->status = errno_to_nfs3(ret);
 			wcc = &resfail->dir_wcc;
 			goto update_wcc;
 		}
@@ -987,7 +1009,7 @@ static int nfs3_op_create(struct rpc_trans *rt)
 
 	nfh = network_file_handle_construct(sb->sb_id, new_inode->i_ino);
 	if (!nfh) {
-		res->status = NFS3ERR_JUKEBOX;
+		ret = -EJUKEBOX;
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
@@ -1012,6 +1034,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(new_inode);
 	inode_put(inode);
 	super_block_put(sb);
@@ -1041,15 +1064,16 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_mkdir(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->where.dir.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -1057,12 +1081,12 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
-	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
+	if (ret)
 		goto out;
 
 	/* Pre-op attributes */
@@ -1076,9 +1100,8 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	if (sa->mode.set_it)
 		mode = sa->mode.set_mode3_u.mode;
 
-	int ret = vfs_mkdir(inode, args->where.name, mode, &ap, &new_inode);
+	ret = vfs_mkdir(inode, args->where.name, mode, &ap, &new_inode);
 	if (ret) {
-		res->status = errno_to_nfs3(ret);
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
@@ -1088,14 +1111,13 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	nfs3_sattr3_to_reffs_sattr(sa, &rs);
 	ret = vfs_setattr(new_inode, &rs, NULL);
 	if (ret) {
-		res->status = errno_to_nfs3(ret);
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
 
 	nfh = network_file_handle_construct(sb->sb_id, new_inode->i_ino);
 	if (!nfh) {
-		res->status = NFS3ERR_JUKEBOX;
+		ret = -EJUKEBOX;
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
@@ -1120,6 +1142,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(new_inode);
 	inode_put(inode);
 	super_block_put(sb);
@@ -1149,15 +1172,16 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_symlink(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->where.dir.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -1165,16 +1189,16 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
-	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
+	if (ret)
 		goto out;
 
 	if (strlen(args->symlink.symlink_data) > REFFS_MAX_PATH) {
-		res->status = NFS3ERR_NAMETOOLONG;
+		ret = -ENAMETOOLONG;
 		goto out;
 	}
 
@@ -1185,10 +1209,9 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	int ret = vfs_symlink(inode, args->where.name,
-			      args->symlink.symlink_data, &ap, &new_inode);
+	ret = vfs_symlink(inode, args->where.name, args->symlink.symlink_data,
+			  &ap, &new_inode);
 	if (ret) {
-		res->status = errno_to_nfs3(ret);
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
@@ -1198,14 +1221,13 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 	nfs3_sattr3_to_reffs_sattr(sa, &rs);
 	ret = vfs_setattr(new_inode, &rs, NULL);
 	if (ret) {
-		res->status = errno_to_nfs3(ret);
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
 
 	nfh = network_file_handle_construct(sb->sb_id, new_inode->i_ino);
 	if (!nfh) {
-		res->status = NFS3ERR_JUKEBOX;
+		ret = -EJUKEBOX;
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
@@ -1219,6 +1241,9 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 			    &resok->obj_attributes.post_op_attr_u.attributes);
 
 update_wcc:
+	if (ret)
+		wcc = &resfail->dir_wcc;
+
 	wcc->after.attributes_follow = true;
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
@@ -1230,6 +1255,7 @@ update_wcc:
 	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(new_inode);
 	inode_put(inode);
 	super_block_put(sb);
@@ -1259,15 +1285,16 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_mknod(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->where.dir.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -1275,17 +1302,17 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	if (strlen(args->where.name) > REFFS_MAX_NAME) {
-		res->status = NFS3ERR_NAMETOOLONG;
+		ret = -ENAMETOOLONG;
 		goto out;
 	}
 
-	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
+	if (ret)
 		goto out;
 
 	dev_t rdev = 0;
@@ -1312,7 +1339,7 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 		sa = &args->what.mknoddata3_u.pipe_attributes;
 		break;
 	default:
-		res->status = NFS3ERR_BADTYPE;
+		ret = -EBADTYPE;
 		goto out;
 	}
 
@@ -1328,10 +1355,8 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	int ret =
-		vfs_mknod(inode, args->where.name, mode, rdev, &ap, &new_inode);
+	ret = vfs_mknod(inode, args->where.name, mode, rdev, &ap, &new_inode);
 	if (ret) {
-		res->status = errno_to_nfs3(ret);
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
@@ -1341,14 +1366,13 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 	nfs3_sattr3_to_reffs_sattr(sa, &rs);
 	ret = vfs_setattr(new_inode, &rs, NULL);
 	if (ret) {
-		res->status = errno_to_nfs3(ret);
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
 
 	nfh = network_file_handle_construct(sb->sb_id, new_inode->i_ino);
 	if (!nfh) {
-		res->status = NFS3ERR_JUKEBOX;
+		ret = -EJUKEBOX;
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
@@ -1362,6 +1386,9 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 			    &resok->obj_attributes.post_op_attr_u.attributes);
 
 update_wcc:
+	if (ret)
+		wcc = &resfail->dir_wcc;
+
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
 	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
@@ -1373,6 +1400,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(new_inode);
 	inode_put(inode);
 	super_block_put(sb);
@@ -1398,15 +1426,16 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 	uint64_t size;
 	struct timespec mtime;
 	struct timespec ctime;
+	int ret = 0;
 
 	trace_nfs3_srv_remove(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->object.dir.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -1414,12 +1443,12 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
-	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
+	if (ret)
 		goto out;
 
 	/* Pre-op attributes */
@@ -1430,12 +1459,11 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	if (strlen(args->object.name) > REFFS_MAX_NAME) {
-		res->status = NFS3ERR_NAMETOOLONG;
+		ret = -ENAMETOOLONG;
 		goto update_wcc;
 	}
 
-	int ret = vfs_remove(inode, args->object.name, &ap);
-	res->status = errno_to_nfs3(ret);
+	ret = vfs_remove(inode, args->object.name, &ap);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -1451,6 +1479,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -1475,15 +1504,16 @@ static int nfs3_op_rmdir(struct rpc_trans *rt)
 	uint64_t size;
 	struct timespec mtime;
 	struct timespec ctime;
+	int ret = 0;
 
 	trace_nfs3_srv_rmdir(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->object.dir.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -1491,12 +1521,12 @@ static int nfs3_op_rmdir(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
-	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
+	if (ret)
 		goto out;
 
 	/* Pre-op attributes */
@@ -1507,12 +1537,11 @@ static int nfs3_op_rmdir(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	if (strlen(args->object.name) > REFFS_MAX_NAME) {
-		res->status = NFS3ERR_NAMETOOLONG;
+		ret = -ENAMETOOLONG;
 		goto update_wcc;
 	}
 
-	int ret = vfs_rmdir(inode, args->object.name, &ap);
-	res->status = errno_to_nfs3(ret);
+	ret = vfs_rmdir(inode, args->object.name, &ap);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -1528,6 +1557,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -1560,44 +1590,43 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 	uint64_t size_dst;
 	struct timespec mtime_dst;
 	struct timespec ctime_dst;
+	int ret = 0;
 
 	trace_nfs3_srv_rename(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->from.dir.data.data_len != sizeof(*nfh_src)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 	nfh_src = (struct network_file_handle *)args->from.dir.data.data_val;
 
 	if (args->to.dir.data.data_len != sizeof(*nfh_dst)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 	nfh_dst = (struct network_file_handle *)args->to.dir.data.data_val;
 
 	if (nfh_src->nfh_sb != nfh_dst->nfh_sb) {
-		res->status = NFS3ERR_XDEV;
+		ret = -EXDEV;
 		goto out;
 	}
 
 	sb = super_block_find(nfh_src->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
-	inode_src = directory_inode_find(sb, nfh_src->nfh_ino, &ap, W_OK,
-					 &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh_src->nfh_ino, &ap, W_OK, &inode_src);
+	if (ret)
 		goto out;
 
-	inode_dst = directory_inode_find(sb, nfh_dst->nfh_ino, &ap, W_OK,
-					 &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh_dst->nfh_ino, &ap, W_OK, &inode_dst);
+	if (ret)
 		goto out;
 
 	/* Pre-op attributes */
@@ -1615,13 +1644,12 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 
 	if (strlen(args->from.name) > REFFS_MAX_NAME ||
 	    strlen(args->to.name) > REFFS_MAX_NAME) {
-		res->status = NFS3ERR_NAMETOOLONG;
+		ret = -ENAMETOOLONG;
 		goto update_wcc;
 	}
 
-	int ret = vfs_rename(inode_src, args->from.name, inode_dst,
-			     args->to.name, &ap);
-	res->status = errno_to_nfs3(ret);
+	ret = vfs_rename(inode_src, args->from.name, inode_dst, args->to.name,
+			 &ap);
 
 update_wcc:
 	wcc_src->before.attributes_follow = true;
@@ -1651,6 +1679,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode_dst->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode_src);
 	inode_put(inode_dst);
 	super_block_put(sb);
@@ -1679,45 +1708,45 @@ static int nfs3_op_link(struct rpc_trans *rt)
 	uint64_t size;
 	struct timespec mtime;
 	struct timespec ctime;
+	int ret = 0;
 
 	trace_nfs3_srv_link(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->file.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 	nfh = (struct network_file_handle *)args->file.data.data_val;
 
 	if (args->link.dir.data.data_len != sizeof(*nfh_dir)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 	nfh_dir = (struct network_file_handle *)args->link.dir.data.data_val;
 
 	if (nfh->nfh_sb != nfh_dir->nfh_sb) {
-		res->status = NFS3ERR_XDEV;
+		ret = -EXDEV;
 		goto out;
 	}
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
-	inode_dir = directory_inode_find(sb, nfh_dir->nfh_ino, &ap, W_OK,
-					 &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh_dir->nfh_ino, &ap, W_OK, &inode_dir);
+	if (ret)
 		goto out;
 
 	/* Pre-op attributes of the directory */
@@ -1728,12 +1757,11 @@ static int nfs3_op_link(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode_dir->i_attr_mutex);
 
 	if (strlen(args->link.name) > REFFS_MAX_NAME) {
-		res->status = NFS3ERR_NAMETOOLONG;
+		ret = -ENAMETOOLONG;
 		goto update_wcc;
 	}
 
-	int ret = vfs_link(inode, inode_dir, args->link.name, &ap);
-	res->status = errno_to_nfs3(ret);
+	ret = vfs_link(inode, inode_dir, args->link.name, &ap);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -1754,6 +1782,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode_dir->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	inode_put(inode_dir);
 	super_block_put(sb);
@@ -1783,15 +1812,16 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 	struct authunix_parms ap;
 
 	entry3 *e_next = NULL;
+	int ret = 0;
 
 	trace_nfs3_srv_readdir(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->dir.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -1799,17 +1829,17 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
-	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, R_OK, &inode);
+	if (ret)
 		goto out;
 
 	count = sizeof(READDIR3res);
 	if (count > args->count) {
-		res->status = NFS3ERR_INVAL;
+		ret = -EINVAL;
 		goto out;
 	}
 
@@ -1818,8 +1848,8 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 
 	/* Determine parent ino for .. entry */
 	uint64_t parent_ino =
-		(inode->i_parent && inode->i_parent->rd_inode) ?
-			inode->i_parent->rd_inode->i_ino :
+		(inode->i_parent && inode->i_parent->rd_parent) ?
+			inode->i_parent->rd_parent->rd_inode->i_ino :
 			inode->i_ino; /* root: .. points to self */
 
 	dl = &resok->reply;
@@ -1829,7 +1859,7 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 		if (!e) {
 			if (!dl->entries) {
 				free(dl);
-				res->status = NFS3ERR_JUKEBOX;
+				ret = -EJUKEBOX;
 				poa = &res->READDIR3res_u.resfail.dir_attributes;
 				goto update_wcc;
 			}
@@ -1844,7 +1874,7 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 			free(e);
 			if (!dl->entries) {
 				free(dl);
-				res->status = NFS3ERR_JUKEBOX;
+				ret = -EJUKEBOX;
 				poa = &res->READDIR3res_u.resfail.dir_attributes;
 				goto update_wcc;
 			}
@@ -1873,7 +1903,7 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 		if (!e) {
 			if (!dl->entries) {
 				free(dl);
-				res->status = NFS3ERR_JUKEBOX;
+				ret = -EJUKEBOX;
 				poa = &res->READDIR3res_u.resfail.dir_attributes;
 				goto update_wcc;
 			}
@@ -1888,7 +1918,7 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 			free(e);
 			if (!dl->entries) {
 				free(dl);
-				res->status = NFS3ERR_JUKEBOX;
+				ret = -EJUKEBOX;
 				poa = &res->READDIR3res_u.resfail.dir_attributes;
 				goto update_wcc;
 			}
@@ -1925,7 +1955,7 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 			if (!e) {
 				if (!dl->entries) {
 					free(dl);
-					res->status = NFS3ERR_JUKEBOX;
+					ret = -EJUKEBOX;
 					poa = &res->READDIR3res_u.resfail
 						       .dir_attributes;
 					rcu_read_unlock();
@@ -1942,7 +1972,7 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 				free(e);
 				if (!dl->entries) {
 					free(dl);
-					res->status = NFS3ERR_JUKEBOX;
+					ret = -EJUKEBOX;
 					poa = &res->READDIR3res_u.resfail
 						       .dir_attributes;
 					rcu_read_unlock();
@@ -1977,6 +2007,9 @@ past_eof:
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
 
 update_wcc:
+	if (ret)
+		poa = &res->READDIR3res_u.resfail.dir_attributes;
+
 	poa->attributes_follow = true;
 	fa = &poa->post_op_attr_u.attributes;
 	inode_attr_to_fattr(inode, fa);
@@ -1985,6 +2018,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -2015,15 +2049,16 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 	struct authunix_parms ap;
 
 	entryplus3 *e_next = NULL;
+	int ret = 0;
 
 	trace_nfs3_srv_readdirplus(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->dir.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -2031,17 +2066,17 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
-	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
-	if (res->status)
+	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, R_OK, &inode);
+	if (ret)
 		goto out;
 
 	maxcount = sizeof(READDIRPLUS3res);
 	if (maxcount > args->maxcount) {
-		res->status = NFS3ERR_INVAL;
+		ret = -EINVAL;
 		goto out;
 	}
 
@@ -2052,7 +2087,7 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 
 	/* Determine parent ino for .. entry */
 	uint64_t parent_ino =
-		(inode->i_parent && inode->i_parent->rd_inode) ?
+		(inode->i_parent && inode->i_parent->rd_parent) ?
 			inode->i_parent->rd_inode->i_ino :
 			inode->i_ino; /* root: .. points to self */
 
@@ -2061,7 +2096,7 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 		if (!e) {
 			if (!dl->entries) {
 				free(dl);
-				res->status = NFS3ERR_JUKEBOX;
+				ret = -EJUKEBOX;
 				poa = &res->READDIRPLUS3res_u.resfail
 					       .dir_attributes;
 				goto update_wcc;
@@ -2077,7 +2112,7 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 			free(e);
 			if (!dl->entries) {
 				free(dl);
-				res->status = NFS3ERR_JUKEBOX;
+				ret = -EJUKEBOX;
 				poa = &res->READDIRPLUS3res_u.resfail
 					       .dir_attributes;
 				goto update_wcc;
@@ -2094,7 +2129,7 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 
 			if (!dl->entries) {
 				free(dl);
-				res->status = NFS3ERR_JUKEBOX;
+				ret = -EJUKEBOX;
 				poa = &res->READDIRPLUS3res_u.resfail
 					       .dir_attributes;
 				goto update_wcc;
@@ -2354,15 +2389,16 @@ static int nfs3_op_fsstat(struct rpc_trans *rt)
 
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_fsstat(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->fsroot.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -2370,18 +2406,18 @@ static int nfs3_op_fsstat(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
-	res->status = inode_access_check(inode, &ap, R_OK);
-	if (res->status)
+	ret = inode_access_check(inode, &ap, R_OK);
+	if (ret)
 		goto out;
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
@@ -2406,6 +2442,7 @@ static int nfs3_op_fsstat(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -2426,15 +2463,16 @@ static int nfs3_op_fsinfo(struct rpc_trans *rt)
 
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_fsinfo(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->fsroot.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -2442,18 +2480,18 @@ static int nfs3_op_fsinfo(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
-	res->status = inode_access_check(inode, &ap, R_OK);
-	if (res->status)
+	ret = inode_access_check(inode, &ap, R_OK);
+	if (ret)
 		goto out;
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
@@ -2479,6 +2517,7 @@ static int nfs3_op_fsinfo(struct rpc_trans *rt)
 			    FSF3_CANSETTIME;
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -2499,15 +2538,16 @@ static int nfs3_op_pathconf(struct rpc_trans *rt)
 
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
+	int ret = 0;
 
 	trace_nfs3_srv_pathconf(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->object.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -2515,18 +2555,18 @@ static int nfs3_op_pathconf(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
-	res->status = inode_access_check(inode, &ap, R_OK);
-	if (res->status)
+	ret = inode_access_check(inode, &ap, R_OK);
+	if (ret)
 		goto out;
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
@@ -2547,6 +2587,7 @@ static int nfs3_op_pathconf(struct rpc_trans *rt)
 	resok->case_preserving = true;
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -2573,15 +2614,16 @@ static int nfs3_op_commit(struct rpc_trans *rt)
 	nfstime3 ctime;
 
 	uuid_t *uuid;
+	int ret = 0;
 
 	trace_nfs3_srv_commit(rt, args);
 
-	res->status = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
-	if (res->status)
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	if (ret)
 		goto out;
 
 	if (args->file.data.data_len != sizeof(*nfh)) {
-		res->status = NFS3ERR_BADHANDLE;
+		ret = -EBADHANDLE;
 		goto out;
 	}
 
@@ -2589,18 +2631,18 @@ static int nfs3_op_commit(struct rpc_trans *rt)
 
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		res->status = NFS3ERR_STALE;
+		ret = -ESTALE;
 		goto out;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		res->status = NFS3ERR_NOENT;
+		ret = -ENOENT;
 		goto out;
 	}
 
-	res->status = inode_access_check(inode, &ap, R_OK);
-	if (res->status)
+	ret = inode_access_check(inode, &ap, R_OK);
+	if (ret)
 		goto out;
 
 	uuid = server_boot_uuid_get();
@@ -2625,6 +2667,7 @@ static int nfs3_op_commit(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	res->status = errno_to_nfs3(ret);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;

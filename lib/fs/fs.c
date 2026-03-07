@@ -84,6 +84,10 @@ int find_matching_directory_entry(struct name_match **nm, const char *path,
 	struct reffs_dirent *current_de = NULL;
 	int ret = 0;
 
+	if (strlen(path) > REFFS_MAX_PATH) {
+		return -ENAMETOOLONG;
+	}
+
 	*nm = NULL;
 
 	sb = super_block_find(1);

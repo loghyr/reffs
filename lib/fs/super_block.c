@@ -122,6 +122,7 @@ int super_block_dirent_create(struct super_block *sb, struct reffs_dirent *rd,
 	}
 	sb->sb_dirent->rd_inode->i_nlink = 2;
 	sb->sb_dirent->rd_inode->i_mode = S_IFDIR | 0755;
+	sb->sb_dirent->rd_inode->i_parent = sb->sb_dirent;
 
 	return 0;
 }
