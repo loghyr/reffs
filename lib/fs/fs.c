@@ -43,44 +43,7 @@
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 
-static int check_permission(struct inode *inode, int mask)
-{
-	struct reffs_context *ctx = reffs_get_context();
-
-	if (ctx->uid == 0)
-		return 0;
-
-	mode_t mode = inode->i_mode;
-
-	if (ctx->uid == inode->i_uid) {
-		if ((mask & R_OK) && !(mode & S_IRUSR))
-			return -EACCES;
-		if ((mask & W_OK) && !(mode & S_IWUSR))
-			return -EACCES;
-		if ((mask & X_OK) && !(mode & S_IXUSR))
-			return -EACCES;
-		return 0;
-	}
-
-	if (ctx->gid == inode->i_gid) {
-		if ((mask & R_OK) && !(mode & S_IRGRP))
-			return -EACCES;
-		if ((mask & W_OK) && !(mode & S_IWGRP))
-			return -EACCES;
-		if ((mask & X_OK) && !(mode & S_IXGRP))
-			return -EACCES;
-		return 0;
-	}
-
-	if ((mask & R_OK) && !(mode & S_IROTH))
-		return -EACCES;
-	if ((mask & W_OK) && !(mode & S_IWOTH))
-		return -EACCES;
-	if ((mask & X_OK) && !(mode & S_IXOTH))
-		return -EACCES;
-
-	return 0;
-}
+static void reffs_get_authunix_parms(struct authunix_parms *ap);
 
 static enum reffs_storage_type global_storage_type = REFFS_STORAGE_RAM;
 static char *global_backend_path = NULL;
@@ -158,11 +121,6 @@ int find_matching_directory_entry(struct name_match **nm, const char *path,
 	token = strtok_r(buf, "/", &saveptr);
 	while (token != NULL) {
 		char *next_token = strtok_r(NULL, "/", &saveptr);
-
-		/* Search permission (X) required on each directory in the path */
-		ret = check_permission(current_de->rd_inode, X_OK);
-		if (ret)
-			goto err;
 
 		struct reffs_dirent *next_de = dirent_find(
 			current_de, reffs_text_case_sensitive, token);
@@ -264,75 +222,57 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 
 int reffs_fs_chmod(const char *path, mode_t mode)
 {
-	struct name_match *nm;
-	struct inode *inode = NULL;
-
+	struct name_match *nm = NULL;
 	int ret;
+	struct reffs_sattr rs;
 
 	TRACE("path=%s mode=0%o", path, mode);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		goto out;
+		return ret;
 
-	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
+	memset(&rs, 0, sizeof(rs));
+	rs.mode = mode;
+	rs.mode_set = true;
 
-	inode = nm->nm_dirent->rd_inode;
-
-	pthread_mutex_lock(&inode->i_attr_mutex);
-	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
-					      REFFS_INODE_UPDATE_MTIME);
-	inode->i_mode = (inode->i_mode & S_IFMT) | (mode & 07777);
-	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
+	ret = vfs_setattr(nm->nm_dirent->rd_inode, &rs, NULL);
 	name_match_free(nm);
 
-out:
 	TRACE("ret=%d", ret);
-	return ret;
+	return ret ? -ret : 0;
 }
 
 int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 {
-	struct name_match *nm;
-	struct inode *inode = NULL;
-
+	struct name_match *nm = NULL;
 	int ret;
+	struct reffs_sattr rs;
 
 	TRACE("path=%s uid=%u gid=%u", path, uid, gid);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
-		goto out;
+		return ret;
 
-	pthread_rwlock_wrlock(&nm->nm_dirent->rd_rwlock);
+	memset(&rs, 0, sizeof(rs));
+	if (uid != (uid_t)-1) {
+		rs.uid = uid;
+		rs.uid_set = true;
+	}
+	if (gid != (gid_t)-1) {
+		rs.gid = gid;
+		rs.gid_set = true;
+	}
 
-	inode = nm->nm_dirent->rd_inode;
-
-	pthread_mutex_lock(&inode->i_attr_mutex);
-	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
-					      REFFS_INODE_UPDATE_MTIME);
-	inode->i_uid = uid;
-	inode->i_gid = gid;
-	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-	pthread_rwlock_unlock(&nm->nm_dirent->rd_rwlock);
+	ret = vfs_setattr(nm->nm_dirent->rd_inode, &rs, NULL);
 	name_match_free(nm);
 
-out:
 	TRACE("ret=%d", ret);
-	return ret;
+	return ret ? -ret : 0;
 }
 
-static void reffs_get_authunix_parms(struct authunix_parms *ap)
-{
-	struct reffs_context *ctx = reffs_get_context();
-	ap->aup_uid = ctx->uid;
-	ap->aup_gid = ctx->gid;
-	ap->aup_len = 0;
-	ap->aup_gids = NULL;
-}
+static void reffs_get_authunix_parms(struct authunix_parms *ap);
 
 int reffs_fs_create(const char *path, mode_t mode)
 {
@@ -1026,4 +966,13 @@ void reffs_fs_for_each_inode(int (*cb)(struct inode *, void *), void *arg)
 		}
 	}
 	rcu_read_unlock();
+}
+
+static void reffs_get_authunix_parms(struct authunix_parms *ap)
+{
+	struct reffs_context *ctx = reffs_get_context();
+	ap->aup_uid = ctx->uid;
+	ap->aup_gid = ctx->gid;
+	ap->aup_len = 0;
+	ap->aup_gids = NULL;
 }
