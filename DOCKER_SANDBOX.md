@@ -39,7 +39,14 @@ The server is started with the following configuration:
 
 All build artifacts generated during this process stay inside the container and are removed when the container exits.
 
-### 4. Running Tests on the Host
+### 4. Clean Restart of the Sandbox
+If you need to ensure any previously running or hung containers are stopped and removed before starting a fresh server:
+```bash
+make -f Makefile.reffs test-image
+```
+This target explicitly runs `stop-image` before `run-image`, resolving issues where `docker-proxy` or previous container instances might interfere with new server runs.
+
+### 5. Running Tests on the Host
 While the server is running in the sandbox, you can run tests (like `cthon04`) from your host machine. The client will communicate with the container via the forwarded ports.
 
 **Important**: Use the `nolock` option to avoid dependencies on host RPC services (like `rpc-statd`) that might conflict with the sandbox.
@@ -59,6 +66,7 @@ sudo docker exec -it $(sudo docker ps -q --filter ancestor=reffs-dev) /bin/bash
 ## Useful Commands
 The `Makefile.reffs` provides several utility targets for the sandbox workflow:
 - `make -f Makefile.reffs help`: Show all available targets.
+- `make -f Makefile.reffs test-image`: Stop any existing sandboxes and start a fresh server.
 - `make -f Makefile.reffs reconf`: Force re-generation of the `configure` script inside the sandbox.
 - `make -f Makefile.reffs clean`: Remove build artifacts from the `build/` directory.
 
