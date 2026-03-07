@@ -279,6 +279,16 @@ struct inode *inode_name_get_inode(struct inode *inode, char *name)
 	struct inode *exists = NULL;
 	struct reffs_dirent *rd;
 
+	if (!strcmp(name, ".")) {
+		return inode_get(inode);
+	}
+
+	if (!strcmp(name, "..")) {
+		if (inode->i_parent && inode->i_parent->rd_parent)
+			return inode_get(inode->i_parent->rd_parent->rd_inode);
+		return inode_get(inode); /* root case */
+	}
+
 	reffs_strng_compare cmp = reffs_text_case_cmp();
 
 	rcu_read_lock();
