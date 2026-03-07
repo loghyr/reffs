@@ -65,8 +65,8 @@ static void ram_db_free(struct data_block *db)
 	}
 }
 
-static size_t ram_db_read(struct data_block *db, char *buffer, size_t size,
-			  off_t offset)
+static ssize_t ram_db_read(struct data_block *db, char *buffer, size_t size,
+			   off_t offset)
 {
 	struct ram_db_private *priv = db->db_storage_private;
 	if (!priv || !priv->db_buffer)
@@ -85,8 +85,8 @@ static size_t ram_db_read(struct data_block *db, char *buffer, size_t size,
 	return read_len;
 }
 
-static size_t ram_db_write(struct data_block *db, const char *buffer,
-			   size_t size, off_t offset)
+static ssize_t ram_db_write(struct data_block *db, const char *buffer,
+			    size_t size, off_t offset)
 {
 	struct ram_db_private *priv = db->db_storage_private;
 	if (!priv)
@@ -99,6 +99,11 @@ static size_t ram_db_write(struct data_block *db, const char *buffer,
 			LOG("Could not realloc a db's storage");
 			return -ENOSPC;
 		}
+		/* Zero out any gap between the old end and the new write start */
+		if (offset > (off_t)db->db_size) {
+			memset(new_buffer + db->db_size, 0,
+			       offset - db->db_size);
+		}
 		priv->db_buffer = new_buffer;
 		db->db_size = new_total;
 	}
@@ -107,16 +112,22 @@ static size_t ram_db_write(struct data_block *db, const char *buffer,
 	return size;
 }
 
-static size_t ram_db_resize(struct data_block *db, size_t size)
+static ssize_t ram_db_resize(struct data_block *db, size_t size)
 {
 	struct ram_db_private *priv = db->db_storage_private;
 	if (!priv)
 		return -EINVAL;
 
+	size_t old_size = db->db_size;
 	char *new_buffer = realloc(priv->db_buffer, size);
 	if (size > 0 && !new_buffer) {
 		LOG("Could not realloc a db's storage");
 		return -ENOSPC;
+	}
+
+	/* Zero out any newly allocated space if growing */
+	if (size > old_size) {
+		memset(new_buffer + old_size, 0, size - old_size);
 	}
 
 	priv->db_buffer = new_buffer;
