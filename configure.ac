@@ -416,6 +416,7 @@ AC_CONFIG_FILES([
 
 	lib/fs/tests/Makefile
 	lib/nlm/Makefile
+	lib/nlm/tests/Makefile
 	lib/nsm/Makefile
 	lib/include/Makefile
 	lib/include/reffs/Makefile
