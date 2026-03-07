@@ -836,9 +836,11 @@ static void createverf3_to_timespec(createverf3 verf, struct timespec *ts)
 	memcpy(&ts->tv_sec, verf, 4);
 	memcpy(&ts->tv_nsec, verf + 4, 4);
 }
-
 static nfsstat3 errno_to_nfs3(int err)
 {
+	if (err < 0)
+		err = -err;
+
 	switch (err) {
 	case 0:
 		return NFS3_OK;
