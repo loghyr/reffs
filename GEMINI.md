@@ -44,6 +44,7 @@ To avoid host-level conflicts with NFS services (`rpcbind`, `lockd`), use the is
 -   **Build Image:** `make -f Makefile.reffs image`
 -   **Build in Docker:** `make -f Makefile.reffs build-in-docker`
 -   **Run Server:** `make -f Makefile.reffs run-image`
+-   **Restart Server:** `make -f Makefile.reffs test-image` (stops any existing sandbox first)
 -   **Clean Sandbox:** `make -f Makefile.reffs mrproper`
 
 ## Key Technologies

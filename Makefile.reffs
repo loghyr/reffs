@@ -28,6 +28,7 @@ help:
 	@echo "  build-in-docker - Build the project inside the docker container"
 	@echo "  run-image       - Run the NFS server in the docker container"
 	@echo "  stop-image      - Stop and remove any running sandbox containers"
+	@echo "  test-image      - Stop any running containers and start a fresh one"
 	@echo "  reconf          - Force re-generation of build system (autoreconf)"
 
 # --- Build targets ---
@@ -124,6 +125,9 @@ stop-image:
 		$(DOCKER) rm -f $$CONTAINERS 2>/dev/null || true; \
 	fi
 
+# Clean stop and restart of the sandbox
+test-image: stop-image run-image
+
 # Build the project inside the container using the internal build directory
 # This avoids root-owned objects in the host git repo
 build-in-docker:
@@ -141,4 +145,4 @@ reconf:
 		$(MAKE) -f Makefile.reffs build/Makefile; \
 	fi
 
-.PHONY: all help build check configure scanbuild style fix-style license clean mrproper image build-in-docker run-image reconf
+.PHONY: all help build check configure scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image reconf
