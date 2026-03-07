@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/sysmacros.h>
 #include <rpc/xdr.h>
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
@@ -46,6 +47,9 @@
  * 2) Always take the i_db_rwlock of the inode after the
  * i_attr_mutex of the inode.
  */
+
+static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa);
+static nfsstat3 errno_to_nfs3(int err);
 
 static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 {
@@ -89,237 +93,6 @@ static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 	timespec_to_nfstime3(&inode->i_mtime, &fa->mtime);
 	timespec_to_nfstime3(&inode->i_ctime, &fa->ctime);
 }
-
-static nfsstat3 nfs3_apply_sattr3(struct inode *inode, sattr3 *sa,
-				  struct authunix_parms *ap, uint64_t *flags)
-{
-	/* Check if user is in the file's current group */
-	bool user_in_current_group =
-		is_user_in_group(ap ? ap->aup_uid : 0, inode->i_gid, ap);
-
-	/*
-         * Permission Checks:
-         * 1. Root can do anything
-         * 2. Non-root can only change ownership if they own the file
-         * 3. Non-root can only change group to a group they're a member of
-         */
-
-	/* If no auth params or root user, allow all changes */
-	if (!ap || ap->aup_uid == 0) {
-		/* Root can do anything */
-	} else { /* Non-root user */
-		/* Changing owner requires being the owner */
-		if (sa->uid.set_it && ap->aup_uid != inode->i_uid)
-			return NFS3ERR_PERM;
-
-		/* Changing owner to someone else requires root */
-		if (sa->uid.set_it && sa->uid.set_uid3_u.uid != (uid_t)-1 &&
-		    sa->uid.set_uid3_u.uid != inode->i_uid)
-			return NFS3ERR_PERM;
-
-		/* Changing group requires being the owner */
-		if (sa->gid.set_it && ap->aup_uid != inode->i_uid)
-			return NFS3ERR_PERM;
-
-		/* Changing group to a real value (not -1) requires membership */
-		if (sa->gid.set_it && sa->gid.set_gid3_u.gid != (gid_t)-1) {
-			gid_t target_gid = sa->gid.set_gid3_u.gid;
-			bool user_in_target_group = false;
-
-			/* Primary group membership */
-			if (ap->aup_gid == target_gid)
-				user_in_target_group = true;
-
-			/*
-			 * Supplementary groups membership
-                         * NFS protocol may use different representations for -1 groups
-                         * so be cautious and validate each group
-                         */
-			if (!user_in_target_group && ap->aup_len > 0) {
-				for (uint32_t i = 0; i < ap->aup_len; i++) {
-					if (ap->aup_gids[i] == target_gid) {
-						user_in_target_group = true;
-						break;
-					}
-				}
-			}
-
-			/* If not in any group, deny the change */
-			if (!user_in_target_group)
-				return NFS3ERR_PERM;
-		}
-	}
-
-	/* Handle file size changes */
-	if (sa->size.set_it) {
-		if (S_ISDIR(inode->i_mode))
-			return NFS3ERR_ISDIR;
-		size_t old_size = inode->i_size;
-		size_t new_size = sa->size.set_size3_u.size;
-
-		if (!inode->i_db) {
-			if (new_size > 0) {
-				inode->i_db = data_block_alloc(inode, NULL,
-							       new_size, 0);
-
-				if (!inode->i_db)
-					return NFS3ERR_NOSPC;
-			}
-			inode->i_size = new_size;
-		} else {
-			size_t sz = data_block_resize(inode->i_db, new_size);
-			if ((ssize_t)sz < 0)
-				return NFS3ERR_NOSPC;
-			inode->i_size = sz;
-		}
-
-		inode->i_used =
-			inode->i_size / inode->i_sb->sb_block_size +
-			(inode->i_size % inode->i_sb->sb_block_size ? 1 : 0);
-
-		size_t old_used;
-		size_t new_used;
-		do {
-			__atomic_load(&inode->i_sb->sb_bytes_used, &old_used,
-				      __ATOMIC_RELAXED);
-			if ((size_t)inode->i_size > old_size) {
-				new_used = old_used +
-					   ((size_t)inode->i_size - old_size);
-			} else if (old_size > (size_t)inode->i_size) {
-				size_t diff = old_size - (size_t)inode->i_size;
-				if (old_used >= diff)
-					new_used = old_used - diff;
-				else
-					new_used = 0;
-			} else {
-				new_used = old_used;
-			}
-		} while (!__atomic_compare_exchange(
-			&inode->i_sb->sb_bytes_used, &old_used, &new_used,
-			false, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
-
-		if (flags)
-			*flags |= REFFS_INODE_UPDATE_CTIME |
-				  REFFS_INODE_UPDATE_MTIME;
-	}
-
-	if (sa->mode.set_it) {
-		/* Check ownership for mode changes - only owner or root can change mode */
-		if (ap && ap->aup_uid != 0 && ap->aup_uid != inode->i_uid) {
-			return NFS3ERR_PERM;
-		}
-
-		uint16_t file_type = inode->i_mode & S_IFMT;
-		uint16_t new_mode = sa->mode.set_mode3_u.mode & 07777;
-
-		/* Only clear S_ISGID if attempting to set it AND user is not in the file's group */
-		if ((new_mode & S_ISGID) && /* Trying to set S_ISGID */
-		    S_ISREG(inode->i_mode) && /* Is a regular file */
-		    ap && ap->aup_uid != 0 && /* Not root */
-		    !user_in_current_group) { /* Not in file's group */
-			/* Clear the S_ISGID bit */
-			new_mode &= ~S_ISGID;
-		}
-
-		/* Apply the new mode */
-		inode->i_mode = new_mode | file_type;
-		if (flags)
-			*flags |= REFFS_INODE_UPDATE_CTIME;
-	}
-
-	/* Store original mode to check if we need to clear set-ID bits */
-	mode_t orig_mode = inode->i_mode;
-	bool is_uid_change = sa->uid.set_it &&
-			     sa->uid.set_uid3_u.uid != (uid_t)-1 &&
-			     sa->uid.set_uid3_u.uid != inode->i_uid;
-	bool is_gid_change = sa->gid.set_it &&
-			     sa->gid.set_gid3_u.gid != (gid_t)-1 &&
-			     sa->gid.set_gid3_u.gid != inode->i_gid;
-
-	/* Apply ownership changes */
-	if (sa->uid.set_it && sa->uid.set_uid3_u.uid != (uid_t)-1) {
-		inode->i_uid = sa->uid.set_uid3_u.uid;
-		if (flags)
-			*flags |= REFFS_INODE_UPDATE_CTIME;
-	}
-	if (sa->gid.set_it && sa->gid.set_gid3_u.gid != (gid_t)-1) {
-		inode->i_gid = sa->gid.set_gid3_u.gid;
-		if (flags)
-			*flags |= REFFS_INODE_UPDATE_CTIME;
-	}
-
-	/* Clear set-ID bits according to POSIX rules for chown */
-	if ((is_uid_change || is_gid_change) &&
-	    (orig_mode & (S_ISUID | S_ISGID))) {
-		if (ap && ap->aup_uid != 0) {
-			/* For non-root users: always clear both SUID and SGID bits when changing ownership */
-			inode->i_mode &= ~(S_ISUID | S_ISGID);
-		} else {
-			/* For root users: based on test expectations, either:
-                         * - Clear both bits (0555), or
-                         * - Keep both bits (06555)
-                         * We'll clear both to match the test expectations
-                         */
-			inode->i_mode &= ~(S_ISUID | S_ISGID);
-		}
-	}
-
-	if ((sa->atime.set_it != DONT_CHANGE ||
-	     sa->mtime.set_it != DONT_CHANGE) &&
-	    ap && ap->aup_uid != 0 && ap->aup_uid != inode->i_uid) {
-		return NFS3ERR_PERM;
-	}
-
-	/* Handle timestamp changes */
-	switch (sa->atime.set_it) {
-	case DONT_CHANGE:
-		break;
-	case SET_TO_SERVER_TIME:
-		if (flags)
-			*flags |= REFFS_INODE_UPDATE_CTIME |
-				  REFFS_INODE_UPDATE_ATIME;
-		break;
-	case SET_TO_CLIENT_TIME:
-		nfstime3_to_timespec(&sa->atime.set_atime_u.atime,
-				     &inode->i_atime);
-		if (flags)
-			*flags |= REFFS_INODE_UPDATE_CTIME;
-		break;
-	}
-	switch (sa->mtime.set_it) {
-	case DONT_CHANGE:
-		break;
-	case SET_TO_SERVER_TIME:
-		if (flags)
-			*flags |= REFFS_INODE_UPDATE_CTIME |
-				  REFFS_INODE_UPDATE_MTIME;
-		break;
-	case SET_TO_CLIENT_TIME:
-		nfstime3_to_timespec(&sa->mtime.set_mtime_u.mtime,
-				     &inode->i_mtime);
-		if (flags) {
-			*flags |= REFFS_INODE_UPDATE_CTIME;
-			*flags &= ~REFFS_INODE_UPDATE_MTIME;
-		}
-		break;
-	}
-	return NFS3_OK;
-}
-
-#ifdef NOT_NOW
-static void print_nfs_fh3_hex(nfs_fh3 *fh)
-{
-	uint32_t crc =
-		crc32(0L, (const Bytef *)fh->data.data_val, fh->data.data_len);
-
-	struct network_file_handle *nfh;
-
-	nfh = (struct network_file_handle *)fh;
-
-	TRACE("FileHandle: sb = %lu, ino =%lu, vers = %u, CRC32 = 0x%08x",
-	      nfh->nfh_sb, nfh->nfh_ino, nfh->nfh_vers, crc);
-}
-#endif
 
 static struct inode *directory_inode_find(struct super_block *sb, uint64_t ino,
 					  struct authunix_parms *ap, int mode,
@@ -401,6 +174,41 @@ out:
 	return res->status;
 }
 
+static void nfs3_sattr3_to_reffs_sattr(sattr3 *sa, struct reffs_sattr *rs)
+{
+	memset(rs, 0, sizeof(*rs));
+	if (sa->mode.set_it) {
+		rs->mode = sa->mode.set_mode3_u.mode;
+		rs->mode_set = true;
+	}
+	if (sa->uid.set_it) {
+		rs->uid = sa->uid.set_uid3_u.uid;
+		rs->uid_set = true;
+	}
+	if (sa->gid.set_it) {
+		rs->gid = sa->gid.set_gid3_u.gid;
+		rs->gid_set = true;
+	}
+	if (sa->size.set_it) {
+		rs->size = sa->size.set_size3_u.size;
+		rs->size_set = true;
+	}
+	if (sa->atime.set_it == SET_TO_CLIENT_TIME) {
+		nfstime3_to_timespec(&sa->atime.set_atime_u.atime, &rs->atime);
+		rs->atime_set = true;
+	} else if (sa->atime.set_it == SET_TO_SERVER_TIME) {
+		rs->atime_set = true;
+		rs->atime_now = true;
+	}
+	if (sa->mtime.set_it == SET_TO_CLIENT_TIME) {
+		nfstime3_to_timespec(&sa->mtime.set_mtime_u.mtime, &rs->mtime);
+		rs->mtime_set = true;
+	} else if (sa->mtime.set_it == SET_TO_SERVER_TIME) {
+		rs->mtime_set = true;
+		rs->mtime_now = true;
+	}
+}
+
 static int nfs3_op_setattr(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -419,7 +227,6 @@ static int nfs3_op_setattr(struct rpc_trans *rt)
 	nfstime3 mtime;
 	nfstime3 ctime;
 
-	uint64_t flags = 0;
 	struct authunix_parms ap;
 
 	trace_nfs3_srv_setattr(rt, args);
@@ -458,30 +265,31 @@ static int nfs3_op_setattr(struct rpc_trans *rt)
 					  &inode->i_ctime)) {
 			res->status = NFS3ERR_NOT_SYNC;
 			wcc = &res->SETATTR3res_u.resfail.obj_wcc;
-			goto update_wcc;
+			pthread_mutex_unlock(&inode->i_attr_mutex);
+			goto update_wcc_nolock;
 		}
 	}
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	pthread_rwlock_wrlock(&inode->i_db_rwlock);
-	res->status = nfs3_apply_sattr3(inode, sa, &ap, &flags);
-	pthread_rwlock_unlock(&inode->i_db_rwlock);
-	if (res->status) {
+	struct reffs_sattr rs;
+	nfs3_sattr3_to_reffs_sattr(sa, &rs);
+
+	int ret = vfs_setattr(inode, &rs, &ap);
+	if (ret) {
+		res->status = errno_to_nfs3(ret);
 		wcc = &res->SETATTR3res_u.resfail.obj_wcc;
-		goto update_wcc;
+		goto update_wcc_nolock;
 	}
 
-	if (flags)
-		inode_update_times_now(inode, flags);
-
-update_wcc:
+update_wcc_nolock:
 	wcc->before.attributes_follow = true;
-	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
 	wcc->before.pre_op_attr_u.attributes.size = size;
 	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
 	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
-	wcc->after.attributes_follow = true;
-	inode_attr_to_fattr(inode, fa);
 
+	wcc->after.attributes_follow = true;
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
@@ -1029,13 +837,6 @@ static void createverf3_to_timespec(createverf3 verf, struct timespec *ts)
 	memcpy(&ts->tv_nsec, verf + 4, 4);
 }
 
-static void timespec_to_createverf3(struct timespec *ts, createverf3 verf)
-{
-	// First 4 bytes for tv_sec, last 4 bytes for tv_nsec
-	memcpy(verf, &ts->tv_sec, 4);
-	memcpy(verf + 4, &ts->tv_nsec, 4);
-}
-
 static nfsstat3 errno_to_nfs3(int err)
 {
 	switch (err) {
@@ -1092,8 +893,7 @@ static int nfs3_op_create(struct rpc_trans *rt)
 
 	struct super_block *sb = NULL;
 	struct inode *inode = NULL;
-	struct inode *exists = NULL;
-	struct inode *tmp = NULL;
+	struct inode *new_inode = NULL;
 
 	CREATE3args *args = ph->ph_args;
 	CREATE3res *res = ph->ph_res;
@@ -1101,7 +901,6 @@ static int nfs3_op_create(struct rpc_trans *rt)
 	CREATE3resfail *resfail = &res->CREATE3res_u.resfail;
 
 	wcc_data *wcc = &resok->dir_wcc;
-	fattr3 *fa;
 	sattr3 *sa = &args->how.createhow3_u.obj_attributes;
 
 	size3 size;
@@ -1111,8 +910,6 @@ static int nfs3_op_create(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 
 	struct authunix_parms ap;
-
-	createverf3 cv;
 
 	trace_nfs3_srv_create(rt, args);
 
@@ -1133,111 +930,60 @@ static int nfs3_op_create(struct rpc_trans *rt)
 		goto out;
 	}
 
-	if (strlen(args->where.name) > REFFS_MAX_NAME) {
-		res->status = NFS3ERR_NAMETOOLONG;
-		goto out;
-	}
-
 	inode = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &res->status);
 	if (res->status)
 		goto out;
 
+	/* Pre-op attributes */
 	pthread_mutex_lock(&inode->i_attr_mutex);
-
 	size = inode->i_size;
-	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
+	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	pthread_rwlock_wrlock(&inode->i_parent->rd_rwlock);
-	exists = inode_name_get_inode(inode, args->where.name);
-	if (exists) {
-		switch (args->how.mode) {
-		case UNCHECKED:
-			break;
-		case GUARDED:
-			res->status = NFS3ERR_EXIST;
-			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-			wcc = &resfail->dir_wcc;
-			goto update_wcc;
-		case EXCLUSIVE:
-			timespec_to_createverf3(&exists->i_ctime, cv);
-			if (memcmp(cv, args->how.createhow3_u.verf,
-				   NFS3_CREATEVERFSIZE)) {
-				res->status = NFS3ERR_EXIST;
-				pthread_rwlock_unlock(
-					&inode->i_parent->rd_rwlock);
-				wcc = &resfail->dir_wcc;
-				goto update_wcc;
-			}
-			res->status = NFS3_OK;
-			break;
-		}
-
-		res->status = inode_access_check(exists, &ap, W_OK);
-		if (res->status) {
-			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-			wcc = &resfail->dir_wcc;
-			goto update_wcc;
-		}
-
-		tmp = exists;
-	} else {
-		struct reffs_dirent *rd;
-
-		rd = dirent_alloc(inode->i_parent, args->where.name,
-				  reffs_life_action_birth, false);
-		if (!rd) {
-			res->status = NFS3ERR_NOENT;
-			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-			wcc = &resfail->dir_wcc;
-			goto update_wcc;
-		}
-
-		rd->rd_inode =
-			inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
-							   __ATOMIC_RELAXED));
-		if (!rd->rd_inode) {
-			dirent_parent_release(rd, reffs_life_action_death);
-			dirent_put(rd);
-			res->status = NFS3ERR_NOENT;
-			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-			wcc = &resfail->dir_wcc;
-			goto update_wcc;
-		}
-
-		tmp = rd->rd_inode;
-
-		tmp->i_size = 0;
-		tmp->i_used = 0;
-		tmp->i_nlink = 1;
-
-		tmp->i_uid = ap.aup_uid;
-		tmp->i_gid = ap.aup_gid;
-		clock_gettime(CLOCK_REALTIME, &tmp->i_mtime);
-		tmp->i_atime = tmp->i_mtime;
-		tmp->i_btime = tmp->i_mtime;
-		tmp->i_ctime = tmp->i_mtime;
-		tmp->i_mode = (S_IFREG | inode->i_mode) & ~S_IFDIR;
-
-		/*
-		 * Drop the initial reference from dirent_alloc.
-		 * The parent now holds its own reference via dirent_parent_attach.
-		 */
-		dirent_put(rd);
-	}
-
+	int ret;
 	if (args->how.mode == EXCLUSIVE) {
-		createverf3_to_timespec(args->how.createhow3_u.verf,
-					&tmp->i_ctime);
+		struct timespec verf;
+		createverf3_to_timespec(args->how.createhow3_u.verf, &verf);
+		ret = vfs_exclusive_create(inode, args->where.name, &verf, &ap,
+					   &new_inode);
 	} else {
-		res->status = nfs3_apply_sattr3(tmp, sa, NULL, NULL);
-		if (res->status) {
+		mode_t mode = 0644;
+		if (sa->mode.set_it)
+			mode = sa->mode.set_mode3_u.mode;
+
+		ret = vfs_create(inode, args->where.name, mode, &ap,
+				 &new_inode);
+
+		if (ret == EEXIST && args->how.mode == UNCHECKED) {
+			new_inode =
+				inode_name_get_inode(inode, args->where.name);
+			if (new_inode)
+				ret = 0;
+			else
+				ret = ENOENT;
+		}
+	}
+
+	if (ret) {
+		res->status = errno_to_nfs3(ret);
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
+	}
+
+	/* Apply attributes if not exclusive (exclusive uses ctime for verifier) */
+	if (args->how.mode != EXCLUSIVE) {
+		struct reffs_sattr rs;
+		nfs3_sattr3_to_reffs_sattr(sa, &rs);
+		ret = vfs_setattr(new_inode, &rs, NULL);
+		if (ret) {
+			res->status = errno_to_nfs3(ret);
 			wcc = &resfail->dir_wcc;
 			goto update_wcc;
 		}
 	}
 
-	nfh = network_file_handle_construct(sb->sb_id, tmp->i_ino);
+	nfh = network_file_handle_construct(sb->sb_id, new_inode->i_ino);
 	if (!nfh) {
 		res->status = NFS3ERR_JUKEBOX;
 		wcc = &resfail->dir_wcc;
@@ -1248,26 +994,23 @@ static int nfs3_op_create(struct rpc_trans *rt)
 	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
 	resok->obj.handle_follows = true;
 
+	resok->obj_attributes.attributes_follow = true;
+	inode_attr_to_fattr(new_inode,
+			    &resok->obj_attributes.post_op_attr_u.attributes);
+
+update_wcc:
 	wcc->before.attributes_follow = true;
 	wcc->before.pre_op_attr_u.attributes.size = size;
 	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
 	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
 
-	resok->obj_attributes.attributes_follow = true;
-	fa = &resok->obj_attributes.post_op_attr_u.attributes;
-
-	inode_attr_to_fattr(tmp, fa);
-
-update_wcc:
 	wcc->after.attributes_follow = true;
-	fa = &wcc->after.post_op_attr_u.attributes;
-	inode_attr_to_fattr(inode, fa);
-
-	pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
-	inode_put(exists);
+	inode_put(new_inode);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -1279,6 +1022,7 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 
 	struct super_block *sb = NULL;
 	struct inode *inode = NULL;
+	struct inode *new_inode = NULL;
 
 	MKDIR3args *args = ph->ph_args;
 	MKDIR3res *res = ph->ph_res;
@@ -1286,7 +1030,6 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	MKDIR3resfail *resfail = &res->MKDIR3res_u.resfail;
 
 	wcc_data *wcc = &resok->dir_wcc;
-	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
 	sattr3 *sa = &args->attributes;
 
 	size3 size;
@@ -1320,103 +1063,62 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
-	if (strlen(args->where.name) > REFFS_MAX_NAME) {
-		res->status = NFS3ERR_NAMETOOLONG;
-		goto out;
-	}
-
+	/* Pre-op attributes */
 	pthread_mutex_lock(&inode->i_attr_mutex);
-
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	pthread_rwlock_wrlock(&inode->i_parent->rd_rwlock);
-	if (inode_name_is_child(inode, args->where.name)) {
-		res->status = NFS3ERR_EXIST;
+	mode_t mode = 0777;
+	if (sa->mode.set_it)
+		mode = sa->mode.set_mode3_u.mode;
+
+	int ret = vfs_mkdir(inode, args->where.name, mode, &ap, &new_inode);
+	if (ret) {
+		res->status = errno_to_nfs3(ret);
 		wcc = &resfail->dir_wcc;
-		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
 		goto update_wcc;
 	}
 
-	{
-		struct reffs_dirent *rd;
-
-		rd = dirent_alloc(inode->i_parent, args->where.name,
-				  reffs_life_action_birth, true);
-		if (!rd) {
-			res->status = NFS3ERR_NOENT;
-			wcc = &resfail->dir_wcc;
-			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-			goto update_wcc;
-		}
-
-		rd->rd_inode =
-			inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
-							   __ATOMIC_RELAXED));
-		if (!rd->rd_inode) {
-			dirent_parent_release(rd, reffs_life_action_death);
-			dirent_put(rd);
-			res->status = NFS3ERR_NOENT;
-			wcc = &resfail->dir_wcc;
-			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-			goto update_wcc;
-		}
-		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-
-		rd->rd_inode->i_uid = ap.aup_uid;
-		rd->rd_inode->i_gid = ap.aup_gid;
-		clock_gettime(CLOCK_REALTIME, &rd->rd_inode->i_mtime);
-		rd->rd_inode->i_atime = rd->rd_inode->i_mtime;
-		rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
-		rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
-		rd->rd_inode->i_mode = S_IFDIR | inode->i_mode;
-		rd->rd_inode->i_size = sb->sb_block_size;
-		rd->rd_inode->i_used = 1;
-		rd->rd_inode->i_nlink = 2;
-
-		res->status = nfs3_apply_sattr3(rd->rd_inode, sa, NULL, NULL);
-		if (res->status) {
-			wcc = &resfail->dir_wcc;
-			dirent_put(rd);
-			goto update_wcc;
-		}
-
-		nfh = network_file_handle_construct(sb->sb_id,
-						    rd->rd_inode->i_ino);
-		if (!nfh) {
-			res->status = NFS3ERR_JUKEBOX;
-			wcc = &resfail->dir_wcc;
-			dirent_put(rd);
-			goto update_wcc;
-		}
-
-		resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-		resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
-		resok->obj.handle_follows = true;
-
-		wcc->before.attributes_follow = true;
-		wcc->before.pre_op_attr_u.attributes.size = size;
-		wcc->before.pre_op_attr_u.attributes.mtime = mtime;
-		wcc->before.pre_op_attr_u.attributes.ctime = ctime;
-
-		resok->obj_attributes.attributes_follow = true;
-		fa = &resok->obj_attributes.post_op_attr_u.attributes;
-		inode_attr_to_fattr(rd->rd_inode, fa);
-
-		rd->rd_inode->i_parent = rd;
-
-		dirent_put(rd);
+	/* Apply other attributes (UID, GID, times) */
+	struct reffs_sattr rs;
+	nfs3_sattr3_to_reffs_sattr(sa, &rs);
+	ret = vfs_setattr(new_inode, &rs, NULL);
+	if (ret) {
+		res->status = errno_to_nfs3(ret);
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
 	}
 
-update_wcc:
-	wcc->after.attributes_follow = true;
-	fa = &wcc->after.post_op_attr_u.attributes;
-	inode_attr_to_fattr(inode, fa);
+	nfh = network_file_handle_construct(sb->sb_id, new_inode->i_ino);
+	if (!nfh) {
+		res->status = NFS3ERR_JUKEBOX;
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
+	}
 
+	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
+	resok->obj.handle_follows = true;
+
+	resok->obj_attributes.attributes_follow = true;
+	inode_attr_to_fattr(new_inode,
+			    &resok->obj_attributes.post_op_attr_u.attributes);
+
+update_wcc:
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+
+	wcc->after.attributes_follow = true;
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	inode_put(new_inode);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -1428,6 +1130,7 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 
 	struct super_block *sb = NULL;
 	struct inode *inode = NULL;
+	struct inode *new_inode = NULL;
 
 	SYMLINK3args *args = ph->ph_args;
 	SYMLINK3res *res = ph->ph_res;
@@ -1435,17 +1138,13 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 	SYMLINK3resfail *resfail = &res->SYMLINK3res_u.resfail;
 
 	wcc_data *wcc = &resok->dir_wcc;
-	fattr3 *fa;
 	sattr3 *sa = &args->symlink.symlink_attributes;
 
 	size3 size;
 	nfstime3 mtime;
 	nfstime3 ctime;
 
-	char *name = NULL;
-
 	struct network_file_handle *nfh = NULL;
-	struct network_file_handle *nfh_new = NULL;
 
 	struct authunix_parms ap;
 
@@ -1477,109 +1176,59 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 		goto out;
 	}
 
-	name = strdup(args->symlink.symlink_data);
-	if (!name) {
-		res->status = NFS3ERR_JUKEBOX;
-		goto out;
-	}
-
+	/* Pre-op attributes */
 	pthread_mutex_lock(&inode->i_attr_mutex);
-
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	pthread_rwlock_wrlock(&inode->i_parent->rd_rwlock);
-	if (inode_name_is_child(inode, args->where.name)) {
-		res->status = NFS3ERR_EXIST;
+	int ret = vfs_symlink(inode, args->where.name,
+			      args->symlink.symlink_data, &ap, &new_inode);
+	if (ret) {
+		res->status = errno_to_nfs3(ret);
 		wcc = &resfail->dir_wcc;
-		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
 		goto update_wcc;
 	}
 
-	{
-		struct reffs_dirent *rd;
-
-		rd = dirent_alloc(inode->i_parent, args->where.name,
-				  reffs_life_action_birth, false);
-		if (!rd) {
-			res->status = NFS3ERR_NOENT;
-			wcc = &resfail->dir_wcc;
-			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-			goto update_wcc;
-		}
-
-		rd->rd_inode =
-			inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
-							   __ATOMIC_RELAXED));
-		if (!rd->rd_inode) {
-			dirent_parent_release(rd, reffs_life_action_death);
-			dirent_put(rd);
-			res->status = NFS3ERR_NOENT;
-			wcc = &resfail->dir_wcc;
-			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-			goto update_wcc;
-		}
-		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-
-		rd->rd_inode->i_uid = ap.aup_uid;
-		rd->rd_inode->i_gid = ap.aup_gid;
-		clock_gettime(CLOCK_REALTIME, &rd->rd_inode->i_mtime);
-		rd->rd_inode->i_atime = rd->rd_inode->i_mtime;
-		rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
-		rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
-		rd->rd_inode->i_mode = (S_IFLNK | inode->i_mode) & ~S_IFDIR;
-		rd->rd_inode->i_size = sb->sb_block_size;
-		rd->rd_inode->i_used = 1;
-		rd->rd_inode->i_nlink = 1;
-
-		nfh_new = network_file_handle_construct(sb->sb_id,
-							rd->rd_inode->i_ino);
-		if (!nfh_new) {
-			res->status = NFS3ERR_JUKEBOX;
-			wcc = &resfail->dir_wcc;
-			dirent_put(rd);
-			goto update_wcc;
-		}
-
-		res->status = nfs3_apply_sattr3(rd->rd_inode, sa, NULL, NULL);
-		if (res->status) {
-			wcc = &resfail->dir_wcc;
-			dirent_put(rd);
-			goto update_wcc;
-		}
-
-		rd->rd_inode->i_symlink = name;
-		name = NULL;
-
-		resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh_new;
-		resok->obj.post_op_fh3_u.handle.data.data_len =
-			sizeof(*nfh_new);
-		resok->obj.handle_follows = true;
-		nfh_new = NULL;
-
-		wcc->before.attributes_follow = true;
-		wcc->before.pre_op_attr_u.attributes.size = size;
-		wcc->before.pre_op_attr_u.attributes.mtime = mtime;
-		wcc->before.pre_op_attr_u.attributes.ctime = ctime;
-
-		resok->obj_attributes.attributes_follow = true;
-		fa = &resok->obj_attributes.post_op_attr_u.attributes;
-		inode_attr_to_fattr(rd->rd_inode, fa);
-
-		dirent_put(rd);
+	/* Apply attributes (UID, GID, etc.) */
+	struct reffs_sattr rs;
+	nfs3_sattr3_to_reffs_sattr(sa, &rs);
+	ret = vfs_setattr(new_inode, &rs, NULL);
+	if (ret) {
+		res->status = errno_to_nfs3(ret);
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
 	}
+
+	nfh = network_file_handle_construct(sb->sb_id, new_inode->i_ino);
+	if (!nfh) {
+		res->status = NFS3ERR_JUKEBOX;
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
+	}
+
+	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
+	resok->obj.handle_follows = true;
+
+	resok->obj_attributes.attributes_follow = true;
+	inode_attr_to_fattr(new_inode,
+			    &resok->obj_attributes.post_op_attr_u.attributes);
 
 update_wcc:
 	wcc->after.attributes_follow = true;
-	fa = &wcc->after.post_op_attr_u.attributes;
-	inode_attr_to_fattr(inode, fa);
-
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+
 out:
-	free(nfh_new);
-	free(name);
+	inode_put(new_inode);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
@@ -1591,14 +1240,15 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 
 	struct super_block *sb = NULL;
 	struct inode *inode = NULL;
+	struct inode *new_inode = NULL;
 
 	MKNOD3args *args = ph->ph_args;
 	MKNOD3res *res = ph->ph_res;
 	MKNOD3resok *resok = &res->MKNOD3res_u.resok;
+	MKNOD3resfail *resfail = &res->MKNOD3res_u.resfail;
 
 	wcc_data *wcc = &resok->dir_wcc;
-	fattr3 *fa = &wcc->after.post_op_attr_u.attributes;
-	sattr3 *sa;
+	sattr3 *sa = NULL;
 
 	size3 size;
 	nfstime3 mtime;
@@ -1636,151 +1286,92 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 	if (res->status)
 		goto out;
 
+	dev_t rdev = 0;
+	mode_t mode = 0;
 	switch (args->what.type) {
-	case NF3REG:
-	case NF3DIR:
-	case NF3LNK:
+	case NF3BLK:
+		mode = S_IFBLK;
+		rdev = makedev(args->what.mknoddata3_u.device.spec.specdata1,
+			       args->what.mknoddata3_u.device.spec.specdata2);
+		sa = &args->what.mknoddata3_u.device.dev_attributes;
+		break;
+	case NF3CHR:
+		mode = S_IFCHR;
+		rdev = makedev(args->what.mknoddata3_u.device.spec.specdata1,
+			       args->what.mknoddata3_u.device.spec.specdata2);
+		sa = &args->what.mknoddata3_u.device.dev_attributes;
+		break;
+	case NF3SOCK:
+		mode = S_IFSOCK;
+		sa = &args->what.mknoddata3_u.pipe_attributes;
+		break;
+	case NF3FIFO:
+		mode = S_IFIFO;
+		sa = &args->what.mknoddata3_u.pipe_attributes;
+		break;
+	default:
 		res->status = NFS3ERR_BADTYPE;
 		goto out;
-	case NF3BLK:
-	case NF3CHR:
-	case NF3SOCK:
-	case NF3FIFO:
-		break;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_mutex);
+	if (sa->mode.set_it)
+		mode |= sa->mode.set_mode3_u.mode;
+	else
+		mode |= 0644;
 
+	/* Pre-op attributes */
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	pthread_rwlock_wrlock(&inode->i_parent->rd_rwlock);
-	if (inode_name_is_child(inode, args->where.name)) {
-		res->status = NFS3ERR_EXIST;
-		wcc = &res->MKNOD3res_u.resfail.dir_wcc;
-		fa = &wcc->after.post_op_attr_u.attributes;
-		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
+	int ret =
+		vfs_mknod(inode, args->where.name, mode, rdev, &ap, &new_inode);
+	if (ret) {
+		res->status = errno_to_nfs3(ret);
+		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
 
-	{
-		struct reffs_dirent *rd;
-
-		rd = dirent_alloc(inode->i_parent, args->where.name,
-				  reffs_life_action_birth, false);
-		if (!rd) {
-			res->status = NFS3ERR_NOENT;
-			wcc = &res->MKNOD3res_u.resfail.dir_wcc;
-			fa = &wcc->after.post_op_attr_u.attributes;
-			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-			goto update_wcc;
-		}
-
-		rd->rd_inode =
-			inode_alloc(sb, __atomic_add_fetch(&sb->sb_next_ino, 1,
-							   __ATOMIC_RELAXED));
-		if (!rd->rd_inode) {
-			dirent_parent_release(rd, reffs_life_action_death);
-			dirent_put(rd);
-			res->status = NFS3ERR_NOENT;
-			wcc = &res->MKNOD3res_u.resfail.dir_wcc;
-			fa = &wcc->after.post_op_attr_u.attributes;
-			pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-			goto update_wcc;
-		}
-		pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
-
-		rd->rd_inode->i_uid = ap.aup_uid;
-		rd->rd_inode->i_gid = ap.aup_gid;
-		clock_gettime(CLOCK_REALTIME, &rd->rd_inode->i_mtime);
-		rd->rd_inode->i_atime = rd->rd_inode->i_mtime;
-		rd->rd_inode->i_btime = rd->rd_inode->i_mtime;
-		rd->rd_inode->i_ctime = rd->rd_inode->i_mtime;
-		rd->rd_inode->i_mode = inode->i_mode & ~S_IFDIR;
-		rd->rd_inode->i_size = 4096;
-		rd->rd_inode->i_used = 0;
-		rd->rd_inode->i_nlink = 1;
-
-		switch (args->what.type) {
-		case NF3REG:
-		case NF3DIR:
-		case NF3LNK:
-			verify_msg(0, "Type changed: %u", args->what.type);
-			dirent_put(rd);
-			goto out;
-		case NF3BLK:
-			sa = &args->what.mknoddata3_u.device.dev_attributes;
-			rd->rd_inode->i_dev_major =
-				args->what.mknoddata3_u.device.spec.specdata1;
-			rd->rd_inode->i_dev_minor =
-				args->what.mknoddata3_u.device.spec.specdata2;
-			rd->rd_inode->i_mode |= S_IFBLK;
-			break;
-		case NF3CHR:
-			sa = &args->what.mknoddata3_u.device.dev_attributes;
-			rd->rd_inode->i_dev_major =
-				args->what.mknoddata3_u.device.spec.specdata1;
-			rd->rd_inode->i_dev_minor =
-				args->what.mknoddata3_u.device.spec.specdata2;
-			rd->rd_inode->i_mode |= S_IFCHR;
-			break;
-		case NF3SOCK:
-			sa = &args->what.mknoddata3_u.pipe_attributes;
-			rd->rd_inode->i_mode |= S_IFSOCK;
-			break;
-		case NF3FIFO:
-			sa = &args->what.mknoddata3_u.pipe_attributes;
-			rd->rd_inode->i_mode |= S_IFIFO;
-			break;
-		}
-
-		res->status = nfs3_apply_sattr3(rd->rd_inode, sa, NULL, NULL);
-		if (res->status) {
-			wcc = &res->MKNOD3res_u.resfail.dir_wcc;
-			fa = &wcc->after.post_op_attr_u.attributes;
-			dirent_put(rd);
-			goto update_wcc;
-		}
-
-		nfh = network_file_handle_construct(sb->sb_id,
-						    rd->rd_inode->i_ino);
-		if (!nfh) {
-			res->status = NFS3ERR_JUKEBOX;
-			wcc = &res->MKNOD3res_u.resfail.dir_wcc;
-			fa = &wcc->after.post_op_attr_u.attributes;
-			dirent_put(rd);
-			goto update_wcc;
-		}
-
-		resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
-		resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
-		resok->obj.handle_follows = true;
-
-		inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
-						      REFFS_INODE_UPDATE_MTIME);
-
-		wcc->before.attributes_follow = true;
-		wcc->before.pre_op_attr_u.attributes.size = size;
-		wcc->before.pre_op_attr_u.attributes.mtime = mtime;
-		wcc->before.pre_op_attr_u.attributes.ctime = ctime;
-
-		resok->obj_attributes.attributes_follow = true;
-		fa = &resok->obj_attributes.post_op_attr_u.attributes;
-
-		inode_attr_to_fattr(rd->rd_inode, fa);
-
-		dirent_put(rd);
+	/* Apply other attributes (UID, GID, etc.) */
+	struct reffs_sattr rs;
+	nfs3_sattr3_to_reffs_sattr(sa, &rs);
+	ret = vfs_setattr(new_inode, &rs, NULL);
+	if (ret) {
+		res->status = errno_to_nfs3(ret);
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
 	}
 
-update_wcc:
-	wcc->after.attributes_follow = true;
-	fa = &wcc->after.post_op_attr_u.attributes;
-	inode_attr_to_fattr(inode, fa);
+	nfh = network_file_handle_construct(sb->sb_id, new_inode->i_ino);
+	if (!nfh) {
+		res->status = NFS3ERR_JUKEBOX;
+		wcc = &resfail->dir_wcc;
+		goto update_wcc;
+	}
 
+	resok->obj.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+	resok->obj.post_op_fh3_u.handle.data.data_len = sizeof(*nfh);
+	resok->obj.handle_follows = true;
+
+	resok->obj_attributes.attributes_follow = true;
+	inode_attr_to_fattr(new_inode,
+			    &resok->obj_attributes.post_op_attr_u.attributes);
+
+update_wcc:
+	wcc->before.attributes_follow = true;
+	wcc->before.pre_op_attr_u.attributes.size = size;
+	wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+	wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+
+	wcc->after.attributes_follow = true;
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
+	inode_put(new_inode);
 	inode_put(inode);
 	super_block_put(sb);
 	return res->status;
