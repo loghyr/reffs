@@ -43,9 +43,10 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 	rcu_read_lock();
 	rd->rd_parent = dirent_get(parent);
 	verify(S_ISDIR(parent->rd_inode->i_mode));
-	if (rla != reffs_life_action_load && is_dir)
+	if (rla != reffs_life_action_load && is_dir) {
 		__atomic_fetch_add(&parent->rd_inode->i_nlink, 1,
 				   __ATOMIC_RELAXED);
+	}
 	if (rla != reffs_life_action_load) {
 		rd->rd_cookie = __atomic_add_fetch(&parent->rd_cookie_next, 1,
 						   __ATOMIC_RELAXED);
@@ -212,15 +213,8 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 		    (rla == reffs_life_action_death ||
 		     rla == reffs_life_action_move ||
 		     rla == reffs_life_action_delayed_death)) {
-			uint32_t old_nlink =
-				__atomic_fetch_sub(&parent->rd_inode->i_nlink,
-						   1, __ATOMIC_RELAXED);
-			if (old_nlink <= 2) {
-				LOG("WARNING: nlink for directory (ino %lu) dropped to %u! Resetting to 2 to prevent corruption.",
-				    parent->rd_inode->i_ino, old_nlink - 1);
-				__atomic_store_n(&parent->rd_inode->i_nlink, 2,
-						 __ATOMIC_RELAXED);
-			}
+			__atomic_fetch_sub(&parent->rd_inode->i_nlink, 1,
+					   __ATOMIC_RELAXED);
 		}
 		cds_list_del_rcu(&rd->rd_siblings);
 
