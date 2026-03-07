@@ -73,6 +73,7 @@ TESTS = \
 	fs_test_utimensat \
 	test_rmdir_leak \
 	fs_test_write_read \
+	fs_test_owner_write \
 	dirent_lifecycle \
 	vfs_integrity \
 	posix_recovery_1 \
