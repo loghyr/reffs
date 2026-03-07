@@ -1197,6 +1197,11 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 	if (ret)
 		goto out;
 
+	if (strlen(args->where.name) > REFFS_MAX_NAME) {
+		ret = -ENAMETOOLONG;
+		goto out;
+	}
+
 	if (strlen(args->symlink.symlink_data) > REFFS_MAX_PATH) {
 		ret = -ENAMETOOLONG;
 		goto out;

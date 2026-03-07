@@ -126,6 +126,11 @@ int find_matching_directory_entry(struct name_match **nm, const char *path,
 	while (token != NULL) {
 		char *next_token = strtok_r(NULL, "/", &saveptr);
 
+		if (strlen(token) > REFFS_MAX_NAME) {
+			ret = -ENAMETOOLONG;
+			goto err;
+		}
+
 		struct reffs_dirent *next_de = dirent_find(
 			current_de, reffs_text_case_sensitive, token);
 
