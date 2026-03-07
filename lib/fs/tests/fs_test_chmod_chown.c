@@ -154,6 +154,25 @@ START_TEST(test_chown_enoent)
 }
 END_TEST
 
+START_TEST(test_chown_clears_setid)
+{
+	struct stat st;
+
+	/* Create a file with S_ISUID | S_ISGID | 0755 */
+	ck_assert_int_eq(
+		reffs_fs_create("/f", S_IFREG | S_ISUID | S_ISGID | 0755), 0);
+	ck_assert_int_eq(reffs_fs_getattr("/f", &st), 0);
+	ck_assert_uint_eq(st.st_mode & (S_ISUID | S_ISGID), S_ISUID | S_ISGID);
+
+	/* Change owner - bits should be cleared */
+	ck_assert_int_eq(reffs_fs_chown("/f", 1234, -1), 0);
+	ck_assert_int_eq(reffs_fs_getattr("/f", &st), 0);
+	ck_assert_uint_eq((st.st_mode & (S_ISUID | S_ISGID)), 0);
+
+	ck_assert_int_eq(reffs_fs_unlink("/f"), 0);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 
 Suite *fs_chmod_chown_suite(void)
@@ -168,6 +187,7 @@ Suite *fs_chmod_chown_suite(void)
 	tcase_add_test(tc, test_chown_updates_uid_gid);
 	tcase_add_test(tc, test_chown_advances_mtime_ctime);
 	tcase_add_test(tc, test_chown_enoent);
+	tcase_add_test(tc, test_chown_clears_setid);
 	suite_add_tcase(s, tc);
 	return s;
 }
