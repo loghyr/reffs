@@ -68,9 +68,9 @@ START_TEST(test_vfs_create_unchecked_truncate)
 	inode_put(file);
 	file = NULL;
 
-	/* vfs_create returns EEXIST if file already exists */
+	/* vfs_create returns -EEXIST if file already exists */
 	ret = vfs_create(dir, name, 0644, &ap, &file);
-	ck_assert_int_eq(ret, EEXIST);
+	ck_assert_int_eq(ret, -EEXIST);
 
 	/* Get existing inode */
 	file = inode_name_get_inode(dir, (char *)name);
