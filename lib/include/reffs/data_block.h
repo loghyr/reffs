@@ -39,7 +39,7 @@ ssize_t data_block_read(struct data_block *db, char *buffer, size_t size,
 bool data_block_unhash(struct data_block *db);
 ssize_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 			 off_t offset);
-size_t data_block_resize(struct data_block *db, size_t size);
+ssize_t data_block_resize(struct data_block *db, size_t size);
 
 size_t data_block_get_size(struct data_block *db);
 

@@ -33,11 +33,11 @@ struct reffs_storage_ops {
 			const char *buffer, size_t size, off_t offset);
 	void (*db_free)(struct data_block *db);
 	void (*db_release_resources)(struct data_block *db);
-	size_t (*db_read)(struct data_block *db, char *buffer, size_t size,
-			  off_t offset);
-	size_t (*db_write)(struct data_block *db, const char *buffer,
-			   size_t size, off_t offset);
-	size_t (*db_resize)(struct data_block *db, size_t size);
+	ssize_t (*db_read)(struct data_block *db, char *buffer, size_t size,
+			   off_t offset);
+	ssize_t (*db_write)(struct data_block *db, const char *buffer,
+			    size_t size, off_t offset);
+	ssize_t (*db_resize)(struct data_block *db, size_t size);
 	size_t (*db_get_size)(struct data_block *db);
 
 	/* Directory operations */

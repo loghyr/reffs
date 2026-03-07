@@ -114,7 +114,7 @@ ssize_t data_block_write(struct data_block *db, const char *buffer, size_t size,
 	return -ENOSYS;
 }
 
-size_t data_block_resize(struct data_block *db, size_t size)
+ssize_t data_block_resize(struct data_block *db, size_t size)
 {
 	if (!db)
 		return 0;
