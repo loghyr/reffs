@@ -145,6 +145,16 @@ AC_ARG_ENABLE([linux-io_uring],
     [],
     [enable_linux_io_uring=yes])
 
+# Check for strict POSIX support
+AC_ARG_ENABLE([strict-posix],
+    [AS_HELP_STRING([--enable-strict-posix], [enable strict POSIX permissions (breaks git over NFS) @<:@default=no@:>@])],
+    [],
+    [enable_strict_posix=no])
+
+AS_IF([test "x$enable_strict_posix" = "xyes"], [
+    AC_DEFINE([HAVE_STRICT_POSIX], [1], [Define if strict POSIX permissions are enabled])
+])
+
 AS_IF([test "x$enable_linux_io_uring" != "xno"], [
     # Check for liburing
     AC_CHECK_HEADERS([liburing.h], [
