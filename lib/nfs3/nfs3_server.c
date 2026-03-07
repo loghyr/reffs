@@ -128,6 +128,7 @@ static int directory_inode_find(struct super_block *sb, uint64_t ino,
 	*inode_out = inode;
 	return 0;
 }
+
 static int nfs3_op_null(struct rpc_trans *rt)
 {
 	trace_nfs3_srv_null(rt);
