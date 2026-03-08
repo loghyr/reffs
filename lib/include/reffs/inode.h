@@ -25,6 +25,8 @@ struct reffs_file_handle {
 	uint64_t rfh_sb;
 };
 
+#define INODE_ROOT_ID (1)
+
 struct inode {
 	struct rcu_head i_rcu;
 	struct urcu_ref i_ref;
