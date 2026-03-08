@@ -4,30 +4,28 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#define _XOPEN_SOURCE 600
-//#define _POSIX_C_SOURCE 200809L
-#include <features.h>
-
-#include <unistd.h>
-#include <string.h>
-#include <strings.h>
+#include <assert.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <errno.h>
-#include <urcu.h>
-#include <urcu/rculist.h>
-#include <urcu/ref.h>
-
+#include "reffs/rcu.h"
+#include "reffs/backend.h"
+#include "reffs/cmp.h"
 #include "reffs/dirent.h"
 #include "reffs/inode.h"
-#include "reffs/super_block.h"
 #include "reffs/log.h"
+#include "reffs/super_block.h"
 #include "reffs/test.h"
+#include "reffs/trace/fs.h"
+#include "reffs/types.h"
+
+struct rcu_head;
 #include "reffs/types.h"
 #include "reffs/cmp.h"
 #include "reffs/trace/fs.h"

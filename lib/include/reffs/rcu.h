@@ -7,8 +7,10 @@
 #define _REFFS_RCU_H
 
 #include <string.h>
+#include <urcu/map/urcu-memb.h>
 #include <urcu.h>
 #include <urcu/rculist.h>
+#include <urcu/rculfhash.h>
 #include <urcu/ref.h>
 
 void reffs_string_release(char *s);

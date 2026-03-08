@@ -4,34 +4,34 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
+#include <arpa/inet.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <sys/epoll.h>
+#include <getopt.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
-#include <stdint.h>
+#include <stdatomic.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <sys/types.h>
+#include <strings.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
-#include <sys/un.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <getopt.h>
-#include <urcu.h>
-#include <urcu/rculist.h>
-#include <urcu/wfcqueue.h>
-#include <urcu/ref.h>
-#include "reffs/log.h"
+#include <sys/types.h>
+#include <unistd.h>
 
-#include <ev.h>
+#include "reffs/log.h"
+#include "reffs/rcu.h"
+
+#include <urcu/call-rcu.h>
+#include <urcu/compiler.h>
+#include <urcu/list.h>
+#include <urcu/wfcqueue.h>
 
 static void usage(const char *me)
 {

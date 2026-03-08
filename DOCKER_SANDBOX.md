@@ -25,7 +25,7 @@ make -f Makefile.reffs build-in-docker
 This target mounts your current directory into the container as **read-only**, copies the source to an internal container directory, and runs the build there. This prevents root-owned objects from polluting your host git repository.
 
 ### 3. Run the Server in the Sandbox
-This command builds the project inside the container and then starts the `reffs_nfs3_srv`.
+This command builds the project inside the container and then starts the `reffsd`.
 ```bash
 make -f Makefile.reffs run-image
 ```

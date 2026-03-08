@@ -4,47 +4,45 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#ifdef HAVE_JEMALLOC
-#include <jemalloc/jemalloc.h>
-#endif
-
+#include <getopt.h>
+#include <netinet/in.h>
+#include <rpc/pmap_clnt.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <signal.h>
-#include <getopt.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <errno.h>
-#include <urcu.h>
-#include <rpc/pmap_clnt.h>
 
-#include "nfsv3_xdr.h"
 #include "mntv3_xdr.h"
-#include "nlm_prot.h"
+#include "nfsv3_xdr.h"
+#include "nfsv42_xdr.h"
 #include "nlm4_prot.h"
-#include "sm_inter.h"
-
+#include "nlm_prot.h"
 #include "probe1_xdr.h"
-
+#include "reffs/fs.h"
 #include "reffs/log.h"
-#include "reffs/rpc.h"
-#include "reffs/nfs3.h"
+#include "reffs/io.h"
+#include "reffs/log.h"
 #include "reffs/mount3.h"
+#include "reffs/nfs3.h"
+#include "reffs/nfs4.h"
 #include "reffs/nlm.h"
+#include "reffs/ns.h"
 #include "reffs/nsm.h"
 #include "reffs/probe1.h"
-
+#include "reffs/rcu.h"
+#include "reffs/ring.h"
+#include "reffs/rpc.h"
 #include "reffs/server.h"
-#include "reffs/ns.h"
 #include "reffs/super_block.h"
-#include "reffs/io.h"
+#include "reffs/trace/common.h"
+#include "reffs/trace/types.h"
+#include "reffs/types.h"
+#include "sm_inter.h"
 #include "reffs/fs.h"
 #include "reffs/trace/common.h"
 
@@ -107,7 +105,7 @@ int main(int argc, char *argv[])
 
 	struct ring_context rc;
 
-	char *trace_file = "./nfs3_srv.log";
+	char *trace_file = "./reffsd.log";
 
 #ifdef HAVE_JEMALLOC
 #ifdef HAVE_VM
@@ -191,6 +189,11 @@ int main(int argc, char *argv[])
 	}
 
 	// Set up protocol handlers
+	if (nfs4_protocol_register()) {
+		exit_code = 1;
+		goto out;
+	}
+
 	if (nfs3_protocol_register()) {
 		exit_code = 1;
 		goto out;
@@ -288,6 +291,14 @@ int main(int argc, char *argv[])
 	pmap_unset(SM_PROG, SM_VERS);
 	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
 	pmap_unset(NFS3_PROGRAM, NFS_V3);
+	pmap_unset(NFS4_PROGRAM, NFS_V4);
+
+	/* NFSv4 */
+	if (pmap_set(NFS4_PROGRAM, NFS_V4, IPPROTO_TCP, port)) {
+		LOG("Registered NFSv4 TCP on port %d", port);
+	} else {
+		LOG("Failed to register NFSv4 TCP");
+	}
 
 	/* NFSv3 */
 	if (pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
@@ -396,6 +407,7 @@ int main(int argc, char *argv[])
 	TRACE("Unregistering Port Mapper");
 	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
 	pmap_unset(NFS3_PROGRAM, NFS_V3);
+	pmap_unset(NFS4_PROGRAM, NFS_V4);
 
 out:
 	TRACE("Final io_context statistics: created=%ld, freed=%ld, difference=%ld",
@@ -418,6 +430,7 @@ out:
 	nlm_protocol_deregister();
 	mount3_protocol_deregister();
 	nfs3_protocol_deregister();
+	nfs4_protocol_deregister();
 
 	LOG("Shutdown complete");
 	return exit_code;

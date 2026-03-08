@@ -4,22 +4,25 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <unistd.h>
-#include <sys/stat.h>
-#include <sys/statvfs.h>
-#include "reffs/super_block.h"
-#include "reffs/log.h"
-#include "reffs/inode.h"
-#include "reffs/backend.h"
-#include <urcu.h>
-#include <urcu/rculist.h>
-#include <urcu/ref.h>
-#include <urcu/rculfhash.h>
 #include <errno.h>
-#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include "reffs/rcu.h"
+#include "reffs/backend.h"
+#include "reffs/dirent.h"
+#include "reffs/inode.h"
+#include "reffs/log.h"
+#include "reffs/super_block.h"
+#include "reffs/types.h"
+
+struct rcu_head;
 
 CDS_LIST_HEAD(super_block_list);
 

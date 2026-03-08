@@ -4,17 +4,13 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
-#include <strings.h>
-#include <unistd.h>
-#include <errno.h>
-#include "reffs/inode.h"
-#include "reffs/super_block.h"
+#include <uuid/uuid.h>
+
 #include "reffs/filehandle.h"
 #include "reffs/server.h"
 

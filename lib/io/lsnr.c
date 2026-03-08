@@ -4,26 +4,19 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <netdb.h>
 #include <arpa/inet.h>
-#include <stdint.h>
-#include <stdbool.h>
+#include <errno.h>
+#include <netinet/in.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "reffs/log.h"
-#include "reffs/network.h"
-#include "reffs/test.h"
 #include "reffs/io.h"
+#include "reffs/log.h"
 
 int io_lsnr_setup_ipv4(int port)
 {

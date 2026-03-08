@@ -4,15 +4,18 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
 #include <errno.h>
-#include "reffs/lock.h"
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <urcu/list.h>
+#include <urcu/ref.h>
+
 #include "reffs/inode.h"
+#include "reffs/lock.h"
 
 bool reffs_lock_range_overlap(uint64_t off1, uint64_t len1, uint64_t off2,
 			      uint64_t len2)

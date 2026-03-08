@@ -4,38 +4,30 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <errno.h>
-#include <fcntl.h>
-#include <sys/epoll.h>
-#include <pthread.h>
-#include <signal.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <netconfig.h>
-#include <stdlib.h>
-#include <string.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <getopt.h>
 #include <assert.h>
-#include <urcu.h>
-#include <urcu/rculist.h>
-#include <urcu/wfcqueue.h>
-#include <urcu/ref.h>
-#include "reffs/log.h"
-#include "reffs_echo_xdr.h"
-
+#include <errno.h>
+#include <getopt.h>
+#include <limits.h>
 #include <netconfig.h>
 #include <rpc/rpcb_clnt.h>
-#include <rpc/nettype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include "reffs/log.h"
+#include "reffs_echo_xdr.h"
+#include "rpc/auth.h"
+#include "rpc/clnt.h"
+#include "rpc/clnt_stat.h"
+#include "rpc/svc.h"
+#include "rpc/types.h"
+#include "rpc/xdr.h"
 
 static int safe_gets(char *buf, size_t size)
 {

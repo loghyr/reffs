@@ -4,29 +4,31 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
 #define FUSE_USE_VERSION 31
 
-#include <fuse.h>
-
-#include <stdio.h>
-#include <unistd.h>
+#include <fuse/fuse.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
-#include <string.h>
-#include <stdlib.h>
-#include <errno.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <sys/types.h>
+#include <urcu/list.h>
+#include <urcu/map/urcu-memb.h>
+#include <urcu/rculist.h>
+
+#include "reffs/context.h"
 #include "reffs/dirent.h"
 #include "reffs/fs.h"
 #include "reffs/fuse.h"
+#include "reffs/inode.h"
 #include "reffs/log.h"
+#include "reffs/super_block.h"
 
-#include "reffs/context.h"
+struct fuse_file_info;
+struct statvfs;
+struct timespec;
 
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"

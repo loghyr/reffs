@@ -4,41 +4,32 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#ifdef HAVE_JEMALLOC
-#include <jemalloc/jemalloc.h>
-#endif
-
-#include <stdio.h>
+#include <errno.h>
+#include <liburing.h>
+#include <liburing/io_uring.h>
+#include <linux/time_types.h>
+#include <openssl/evp.h>
+#include <openssl/ssl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <liburing.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <errno.h>
-#include <signal.h>
-#include <urcu.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <stdint.h>
 #include <time.h>
-#include <stdbool.h>
+#include <unistd.h>
 
 #include "reffs/log.h"
-#include "reffs/rpc.h"
-#include "reffs/nfs3.h"
-#include "reffs/mount3.h"
-#include "reffs/network.h"
-#include "reffs/server.h"
-#include "reffs/task.h"
-#include "reffs/test.h"
 #include "reffs/io.h"
+#include "reffs/log.h"
+#include "reffs/ring.h"
+#include "reffs/rpc.h"
 #include "reffs/trace/io.h"
+
+struct connection_info;
 
 // Request tracking
 struct rpc_trans *pending_requests[MAX_PENDING_REQUESTS];

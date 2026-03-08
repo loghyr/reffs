@@ -4,29 +4,37 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
 #include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
-#include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
-#include <rpc/rpc.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
+
+#include <rpc/types.h>
+#include <rpc/xdr.h>
+#include <rpc/auth.h>
 #include <rpc/auth_unix.h>
 
 #include "reffs/rcu.h"
-#include "reffs/vfs.h"
-#include "reffs/inode.h"
+#include "reffs/cmp.h"
+#include "reffs/data_block.h"
 #include "reffs/dirent.h"
 #include "reffs/identity.h"
-#include "reffs/time.h"
-#include "reffs/data_block.h"
-#include "reffs/log.h"
-#include "reffs/cmp.h"
+#include "reffs/inode.h"
+#include "reffs/rcu.h"
 #include "reffs/super_block.h"
+#include "reffs/types.h"
+#include "reffs/vfs.h"
+
+struct timespec;
 
 static int vfs_check_sticky_bit(struct inode *dir, struct inode *file,
 				struct authunix_parms *ap)
@@ -37,7 +45,8 @@ static int vfs_check_sticky_bit(struct inode *dir, struct inode *file,
 	if (!(dir->i_mode & S_ISVTX))
 		return 0;
 
-	if (ap->aup_uid == file->i_uid || ap->aup_uid == dir->i_uid)
+	if ((uint32_t)ap->aup_uid == file->i_uid ||
+	    (uint32_t)ap->aup_uid == dir->i_uid)
 		return 0;
 
 	return -EACCES;
@@ -440,7 +449,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 	/* If no auth params or root user, allow all changes */
 	if (ap && ap->aup_uid != 0) {
 		/* Non-root user permissions checks */
-		if (sattr->uid_set && ap->aup_uid != inode->i_uid) {
+		if (sattr->uid_set && (uint32_t)ap->aup_uid != inode->i_uid) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
@@ -453,7 +462,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 		}
 
 		/* Changing group requires being the owner (or root) */
-		if (sattr->gid_set && ap->aup_uid != inode->i_uid) {
+		if (sattr->gid_set && (uint32_t)ap->aup_uid != inode->i_uid) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
@@ -470,12 +479,12 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			}
 		}
 
-		if (sattr->mode_set && ap->aup_uid != inode->i_uid) {
+		if (sattr->mode_set && (uint32_t)ap->aup_uid != inode->i_uid) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
 
-		if (sattr->atime_set && ap->aup_uid != inode->i_uid) {
+		if (sattr->atime_set && (uint32_t)ap->aup_uid != inode->i_uid) {
 			if (!sattr->atime_now) {
 				ret = -EPERM;
 				goto out_unlock;
@@ -487,7 +496,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			}
 		}
 
-		if (sattr->mtime_set && ap->aup_uid != inode->i_uid) {
+		if (sattr->mtime_set && (uint32_t)ap->aup_uid != inode->i_uid) {
 			if (!sattr->mtime_now) {
 				ret = -EPERM;
 				goto out_unlock;
