@@ -11,6 +11,7 @@ AM_CFLAGS = -Im4 -I.			\
 lib_LTLIBRARIES = libreffs_nfs4.la
 libreffs_nfs4_la_SOURCES = \
 	attr.c \
+	compound.c \
 	copy.c \
 	delegation.c \
 	dir.c \
@@ -28,5 +29,5 @@ libreffs_nfs4_la_SOURCES = \
 reffsincludedir = $(includedir)/reffs
 reffsinclude_HEADERS = \
 	errors.h \
-	nfs4_internal.h \
+	compound.h \
 	ops.h

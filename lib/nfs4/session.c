@@ -10,7 +10,7 @@
 #include "nfsv42_xdr.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
-#include "nfs4_internal.h"
+#include "compound.h"
 #include "ops.h"
 #include "errors.h"
 

@@ -39,7 +39,7 @@
 #include "reffs/trace/nfs4_server.h"
 #include "errors.h"
 #include "ops.h"
-#include "nfs4_internal.h"
+#include "compound.h"
 
 struct op_dispatch {
 	nfs_opnum4 op;
