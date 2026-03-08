@@ -94,7 +94,7 @@ static inline void fuse_test_setup(void)
 	ret = reffs_ns_init();
 	ck_assert_int_eq(ret, 0);
 
-	sb = super_block_find(1);
+	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(sb);
 
 	inode = inode_find(sb, 1);

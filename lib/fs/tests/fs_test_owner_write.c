@@ -31,7 +31,7 @@ START_TEST(test_owner_write_no_perm_bit)
 	struct authunix_parms ap;
 	int ret;
 
-	sb = super_block_find(1);
+	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(sb);
 
 	inode = inode_alloc(sb, 100);
@@ -75,7 +75,7 @@ START_TEST(test_owner_read_no_perm_bit)
 	struct authunix_parms ap;
 	int ret;
 
-	sb = super_block_find(1);
+	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(sb);
 
 	inode = inode_alloc(sb, 101);
@@ -119,7 +119,7 @@ START_TEST(test_owner_exec_no_perm_bit)
 	struct authunix_parms ap;
 	int ret;
 
-	sb = super_block_find(1);
+	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(sb);
 
 	inode = inode_alloc(sb, 102);
