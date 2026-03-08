@@ -748,6 +748,7 @@ static int load_inode_attributes(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct inode_disk id;
+	struct reffs_disk_header hdr;
 	char path[PATH_MAX];
 
 	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.meta",
@@ -756,6 +757,24 @@ static int load_inode_attributes(struct inode *inode)
 	int fd = open(path, O_RDONLY);
 	if (fd < 0)
 		return -errno;
+
+	if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+		close(fd);
+		return -EIO;
+	}
+
+	if (hdr.rdh_magic != REFFS_DISK_MAGIC_META) {
+		LOG("Invalid magic 0x%x for %s", hdr.rdh_magic, path);
+		close(fd);
+		return -EINVAL;
+	}
+
+	if (hdr.rdh_version != REFFS_DISK_VERSION_1) {
+		LOG("Unsupported meta version %u for %s", hdr.rdh_version,
+		    path);
+		close(fd);
+		return -EOPNOTSUPP;
+	}
 
 	if (read(fd, &id, sizeof(id)) != sizeof(id)) {
 		close(fd);
@@ -771,6 +790,7 @@ static int load_inode_attributes(struct inode *inode)
 	inode->i_atime = id.id_atime;
 	inode->i_ctime = id.id_ctime;
 	inode->i_mtime = id.id_mtime;
+	inode->i_attr_flags = id.id_attr_flags;
 
 	if (inode->i_ino >= sb->sb_next_ino)
 		sb->sb_next_ino = inode->i_ino + 1;
@@ -847,14 +867,32 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 	if (fd < 0)
 		return;
 
-	uint64_t cookie_next;
-	if (read(fd, &cookie_next, sizeof(cookie_next)) ==
-	    sizeof(cookie_next)) {
-		parent->rd_cookie_next = cookie_next;
-	} else {
-		/* Fallback for old format or empty file */
-		parent->rd_cookie_next = 3;
+	struct reffs_disk_header hdr;
+	if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+		close(fd);
+		return;
 	}
+
+	if (hdr.rdh_magic != REFFS_DISK_MAGIC_DIR) {
+		LOG("Invalid directory magic 0x%x for %s", hdr.rdh_magic, path);
+		close(fd);
+		return;
+	}
+
+	if (hdr.rdh_version != REFFS_DISK_VERSION_1) {
+		LOG("Unsupported directory version %u for %s", hdr.rdh_version,
+		    path);
+		close(fd);
+		return;
+	}
+
+	uint64_t cookie_next;
+	if (read(fd, &cookie_next, sizeof(cookie_next)) !=
+	    sizeof(cookie_next)) {
+		close(fd);
+		return;
+	}
+	parent->rd_cookie_next = cookie_next;
 
 	uint64_t cookie;
 	uint64_t ino;

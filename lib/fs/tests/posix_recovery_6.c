@@ -62,13 +62,17 @@ START_TEST(test_atomic_write)
 	 * Verify the written content round-trips correctly: read the .meta
 	 * file back and check the mode field.
 	 */
-	struct inode_disk id = { 0 };
+	struct {
+		struct reffs_disk_header hdr;
+		struct inode_disk id;
+	} meta = { 0 };
+
 	int fd = open(path, O_RDONLY);
 	ck_assert(fd >= 0);
-	ck_assert_int_eq(read(fd, &id, sizeof(id)), (int)sizeof(id));
+	ck_assert_int_eq(read(fd, &meta, sizeof(meta)), (int)sizeof(meta));
 	close(fd);
-	ck_assert_uint_eq(id.id_mode, inode->i_mode);
-	ck_assert_uint_eq(id.id_nlink, inode->i_nlink);
+	ck_assert_uint_eq(meta.id.id_mode, inode->i_mode);
+	ck_assert_uint_eq(meta.id.id_nlink, inode->i_nlink);
 
 	/* Do NOT call inode_put() here — the root inode is owned by the
 	 * root dirent and will be released by test_teardown(). */

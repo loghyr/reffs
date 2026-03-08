@@ -66,7 +66,17 @@ int test_write_meta(struct test_context *ctx, uint64_t ino,
 	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0)
 		return errno;
-	if (write(fd, id, sizeof(*id)) != sizeof(*id)) {
+
+	struct {
+		struct reffs_disk_header hdr;
+		struct inode_disk id;
+	} meta;
+
+	meta.hdr.rdh_magic = REFFS_DISK_MAGIC_META;
+	meta.hdr.rdh_version = REFFS_DISK_VERSION_1;
+	memcpy(&meta.id, id, sizeof(*id));
+
+	if (write(fd, &meta, sizeof(meta)) != sizeof(meta)) {
 		close(fd);
 		return EIO;
 	}
@@ -117,6 +127,16 @@ int test_write_dir_header(struct test_context *ctx, uint64_t ino,
 	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0)
 		return errno;
+
+	struct reffs_disk_header hdr = {
+		.rdh_magic = REFFS_DISK_MAGIC_DIR,
+		.rdh_version = REFFS_DISK_VERSION_1,
+	};
+	if (write(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+		close(fd);
+		return EIO;
+	}
+
 	if (write(fd, &cookie_next, sizeof(cookie_next)) !=
 	    sizeof(cookie_next)) {
 		close(fd);
