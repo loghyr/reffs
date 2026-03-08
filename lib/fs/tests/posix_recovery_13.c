@@ -97,7 +97,7 @@ START_TEST(test_meta_not_overwritten_during_recovery)
 	ck_assert(inode != NULL);
 	ck_assert_uint_eq(inode->i_uid, 1001);
 	ck_assert_uint_eq(inode->i_gid, 2002);
-	inode_put(inode);
+	inode_active_put(inode);
 
 	test_teardown(&ctx);
 }

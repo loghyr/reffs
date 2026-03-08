@@ -16,6 +16,7 @@
 #include <uuid/uuid.h>
 
 #include "reffs/backend.h"
+#include "reffs/rcu.h"
 #include "reffs/dirent.h"
 #include "reffs/filehandle.h"
 #include "reffs/fs.h"
@@ -35,7 +36,7 @@ int reffs_ns_init(void)
 	int ret = 0;
 
 	if (reffs_namespace_initialized)
-		return EALREADY;
+		return -EALREADY;
 
 	reffs_namespace_initialized = 1;
 
@@ -44,7 +45,7 @@ int reffs_ns_init(void)
 	reffs_root_sb = super_block_alloc(1, "/", reffs_fs_get_storage_type(),
 					  reffs_fs_get_backend_path());
 	if (!reffs_root_sb) {
-		ret = ENOMEM;
+		ret = -ENOMEM;
 		goto out;
 	}
 
@@ -88,44 +89,19 @@ out:
 	return ret;
 }
 
-static void release_dirents_recursive(struct reffs_dirent *rd_parent)
-{
-	struct reffs_dirent *rd, *tmp;
-
-	if (!rd_parent || !rd_parent->rd_inode)
-		return;
-
-	/*
-	 * Use _safe variant: dirent_parent_release removes the entry from
-	 * i_children so we must not hold a pointer to rd_siblings across it.
-	 * Collect the next pointer before the list is mutated.
-	 */
-	cds_list_for_each_entry_safe(rd, tmp, &rd_parent->rd_inode->i_children,
-				     rd_siblings) {
-		release_dirents_recursive(rd);
-		dirent_parent_release(rd, reffs_life_action_death);
-	}
-}
-
 static void release_all_fs_dirents(void)
 {
 	struct super_block *sb, *tmp;
-	struct reffs_dirent *rd_parent;
 	char uuid_str[UUID_STR_LEN];
 
 	struct cds_list_head *sb_list = super_block_list_head();
 
+	/* Preamble: drain all pending RCU callbacks before touching rd_inode */
+	rcu_barrier();
+
 	cds_list_for_each_entry_safe(sb, tmp, sb_list, sb_link) {
 		uuid_unparse(sb->sb_uuid, uuid_str);
-		rd_parent = dirent_get(sb->sb_dirent);
-		if (rd_parent) {
-			release_dirents_recursive(rd_parent);
-
-			dirent_parent_release(rd_parent,
-					      reffs_life_action_death);
-			dirent_put(rd_parent);
-		}
-
+		super_block_release_dirents(sb);
 		super_block_put(sb);
 	}
 }
@@ -133,27 +109,28 @@ static void release_all_fs_dirents(void)
 int reffs_ns_fini(void)
 {
 	if (!reffs_namespace_initialized)
-		return EALREADY;
+		return -EALREADY;
 
 	reffs_namespace_initialized = 0;
 
 	if (reffs_root_sb) {
 		/*
-		 * Walk children first, before super_block_dirent_release()
-		 * nulls out sb->sb_dirent. release_all_fs_dirents() uses
-		 * sb->sb_dirent as the root of the walk — if we call
-		 * super_block_dirent_release() first it is already NULL and
-		 * the walk is skipped entirely, leaving child inodes hashed
-		 * when super_block_put() fires super_block_remove_all_inodes().
+		 * release_all_fs_dirents() walks children, then calls
+		 * dirent_parent_release + dirent_put on sb->sb_dirent (the
+		 * root dirent), then super_block_put() for the sb's initial
+		 * urcu_ref.  Do NOT call super_block_dirent_release() after
+		 * this — it would double-release the root dirent.
 		 */
 		release_all_fs_dirents();
-		super_block_dirent_release(reffs_root_sb,
-					   reffs_life_action_death);
 		reffs_root_sb = NULL;
 	}
 
 	if (reffs_root_de) {
-		dirent_parent_release(reffs_root_de, reffs_life_action_death);
+		/*
+		 * reffs_root_de is the dirent_get() ref taken in ns_init.
+		 * The dirent itself was already fully released by
+		 * release_all_fs_dirents(); just drop our cached ref.
+		 */
 		dirent_put(reffs_root_de);
 		reffs_root_de = NULL;
 	}

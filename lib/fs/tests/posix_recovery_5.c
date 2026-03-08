@@ -60,7 +60,7 @@ START_TEST(test_data_integrity)
 	ck_assert_uint_eq(read_len, 12);
 	ck_assert_str_eq(buffer, test_data);
 
-	inode_put(inode);
+	inode_active_put(inode);
 
 	test_teardown(&ctx);
 }

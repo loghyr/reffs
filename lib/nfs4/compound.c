@@ -46,7 +46,7 @@ static void compound_free(struct compound *c)
 	if (!c)
 		return;
 
-	inode_put(c->c_inode);
+	inode_active_put(c->c_inode);
 	super_block_put(c->c_curr_sb);
 	super_block_put(c->c_saved_sb);
 	free(c);

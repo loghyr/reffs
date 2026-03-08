@@ -63,7 +63,7 @@ START_TEST(test_owner_write_no_perm_bit)
 	ck_assert_int_eq(ret, 0);
 #endif
 
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 }
 END_TEST
@@ -107,7 +107,7 @@ START_TEST(test_owner_read_no_perm_bit)
 	ck_assert_int_eq(ret, 0);
 #endif
 
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 }
 END_TEST
@@ -141,7 +141,7 @@ START_TEST(test_owner_exec_no_perm_bit)
 				       REFFS_ACCESS_OWNER_OVERRIDE);
 	ck_assert_int_eq(ret, -EACCES);
 
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 }
 END_TEST

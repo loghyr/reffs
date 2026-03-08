@@ -263,6 +263,14 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 	if (new_inode)
 		*new_inode = inode_get(inode);
 
+	/*
+	 * rd->rd_inode is a weak pointer and holds no active ref.
+	 * inode_alloc() returned with i_active=1; drop it now so the inode
+	 * goes onto the LRU when no other caller holds it active.
+	 * All inode field writes above must complete before this call.
+	 */
+	inode_active_put(inode);
+
 	dirent_put(rd);
 	return 0;
 }
@@ -696,6 +704,11 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 	if (new_inode)
 		*new_inode = inode_get(inode);
 
+	/*
+	 * rd->rd_inode is a weak pointer; drop the active ref from inode_alloc.
+	 */
+	inode_active_put(inode);
+
 	dirent_put(rd);
 	return 0;
 }
@@ -801,7 +814,13 @@ int vfs_link(struct inode *inode, struct inode *dir, const char *name,
 		goto out_unlock;
 	}
 
-	rd->rd_inode = inode_get(inode);
+	/*
+	 * rd->rd_inode is a weak pointer — assign without bumping i_ref.
+	 * The inode's lifetime is guaranteed by the hash table ref for as long
+	 * as nlink > 0.  inode_get() here would leak a ref since rd_inode is
+	 * never inode_put()'d.
+	 */
+	rd->rd_inode = inode;
 	__atomic_fetch_add(&inode->i_nlink, 1, __ATOMIC_RELAXED);
 
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME);

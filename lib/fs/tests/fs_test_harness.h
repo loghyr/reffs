@@ -72,6 +72,7 @@ static inline void fs_test_setup(void)
 	ctx.gid = fs_test_gid;
 	reffs_set_context(&ctx);
 
+	rcu_barrier();
 	ret = reffs_ns_init();
 	ck_assert_int_eq(ret, 0);
 
@@ -93,6 +94,7 @@ static inline void fs_test_setup(void)
 static inline void fs_test_teardown(void)
 {
 	reffs_ns_fini();
+	rcu_barrier();
 }
 
 static inline void fs_test_global_init(void)

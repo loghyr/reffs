@@ -72,10 +72,10 @@ void nfs4_op_putfh(struct compound *c)
 			goto out;
 		}
 
-		inode_put(c->c_inode);
+		inode_active_put(c->c_inode);
 		c->c_inode = NULL;
 	} else if (nfh->nfh_ino != c->c_curr_nfh.nfh_ino) {
-		inode_put(c->c_inode);
+		inode_active_put(c->c_inode);
 		c->c_inode = NULL;
 	}
 
@@ -110,10 +110,10 @@ void nfs4_op_putpubfh(struct compound *c)
 			*status = NFS4ERR_SERVERFAULT;
 			goto out;
 		}
-		inode_put(c->c_inode);
+		inode_active_put(c->c_inode);
 		c->c_inode = NULL;
 	} else if (c->c_curr_nfh.nfh_ino != INODE_ROOT_ID) {
-		inode_put(c->c_inode);
+		inode_active_put(c->c_inode);
 		c->c_inode = NULL;
 	}
 
@@ -140,10 +140,10 @@ void nfs4_op_putrootfh(struct compound *c)
 			*status = NFS4ERR_SERVERFAULT;
 			goto out;
 		}
-		inode_put(c->c_inode);
+		inode_active_put(c->c_inode);
 		c->c_inode = NULL;
 	} else if (c->c_curr_nfh.nfh_ino != INODE_ROOT_ID) {
-		inode_put(c->c_inode);
+		inode_active_put(c->c_inode);
 		c->c_inode = NULL;
 	}
 
@@ -181,7 +181,7 @@ void nfs4_op_restorefh(struct compound *c)
 	c->c_saved_sb = NULL;
 	c->c_curr_nfh = c->c_saved_nfh;
 	memset(&c->c_saved_nfh, '\0', sizeof(c->c_saved_nfh));
-	inode_put(c->c_inode);
+	inode_active_put(c->c_inode);
 	c->c_inode = NULL;
 
 	if (!c->c_inode) {

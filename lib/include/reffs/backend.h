@@ -54,6 +54,32 @@ struct reffs_storage_ops {
 
 	/* Directory operations */
 	void (*dir_sync)(struct inode *inode);
+
+	/*
+	 * Scan the on-disk directory for dir_ino looking for an entry whose
+	 * child ino matches child_ino.  On success fills name_out (NUL-
+	 * terminated, truncated to name_max-1) and *cookie_out, returns 0.
+	 * Returns ENOENT if not found, or an errno on I/O error.
+	 *
+	 * This is a cold-path helper used by inode_reconstruct_path_to_root()
+	 * to recover the name of an inode whose dirent was evicted.
+	 */
+	int (*dir_find_entry_by_ino)(struct super_block *sb, uint64_t dir_ino,
+				     uint64_t child_ino, char *name_out,
+				     size_t name_max, uint64_t *cookie_out);
+
+	/*
+	 * Scan the on-disk directory for dir_ino looking for an entry whose
+	 * name matches name.  On success fills *child_ino_out and
+	 * *cookie_out, returns 0.
+	 * Returns ENOENT if not found, or an errno on I/O error.
+	 *
+	 * Used by dirent_load_child_by_name() for LOOKUP misses when the
+	 * directory is not fully resident in memory.
+	 */
+	int (*dir_find_entry_by_name)(struct super_block *sb, uint64_t dir_ino,
+				      const char *name, uint64_t *child_ino_out,
+				      uint64_t *cookie_out);
 };
 
 void reffs_backend_init(void);

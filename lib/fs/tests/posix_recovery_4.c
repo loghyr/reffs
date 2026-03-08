@@ -51,7 +51,7 @@ START_TEST(test_symlink_restoration)
 	ck_assert(inode->i_symlink != NULL);
 	ck_assert_str_eq(inode->i_symlink, "/path/to/target");
 
-	inode_put(inode);
+	inode_active_put(inode);
 
 	test_teardown(&ctx);
 }

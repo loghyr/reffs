@@ -93,7 +93,7 @@ static int nlm4_op_test(struct rpc_trans *rt)
 
 	reffs_nlm4_test(inode, args, res);
 
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return 0;
 }
@@ -125,7 +125,7 @@ static int nlm4_op_lock(struct rpc_trans *rt)
 
 	res->stat.stat = reffs_nlm4_lock(inode, args);
 
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return 0;
 }
@@ -151,7 +151,7 @@ static int nlm4_op_unlock(struct rpc_trans *rt)
 
 	res->stat.stat = reffs_nlm4_unlock(inode, args);
 
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return 0;
 }
@@ -182,7 +182,7 @@ static int nlm4_op_cancel(struct rpc_trans *rt)
 
 	res->stat.stat = reffs_nlm4_cancel(inode, args);
 
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return 0;
 }
@@ -213,7 +213,7 @@ static int nlm4_op_share(struct rpc_trans *rt)
 
 	res->stat = reffs_nlm4_share(inode, args);
 
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return 0;
 }
@@ -239,7 +239,7 @@ static int nlm4_op_unshare(struct rpc_trans *rt)
 
 	res->stat = reffs_nlm4_unshare(inode, args);
 
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return 0;
 }
