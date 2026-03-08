@@ -12,6 +12,7 @@
 #include "reffs/rpc.h"
 #include "nfs4_internal.h"
 #include "ops.h"
+#include "errors.h"
 
 void nfs4_op_exchange_id(struct compound *c)
 {
@@ -24,8 +25,8 @@ void nfs4_op_exchange_id(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_create_session(struct compound *c)
@@ -39,8 +40,8 @@ void nfs4_op_create_session(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_destroy_session(struct compound *c)
@@ -53,7 +54,8 @@ void nfs4_op_destroy_session(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_sequence(struct compound *c)
@@ -67,8 +69,8 @@ void nfs4_op_sequence(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_renew(struct compound *c)
@@ -81,7 +83,8 @@ void nfs4_op_renew(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_setclientid(struct compound *c)
@@ -95,8 +98,8 @@ void nfs4_op_setclientid(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_setclientid_confirm(struct compound *c)
@@ -110,7 +113,8 @@ void nfs4_op_setclientid_confirm(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_destroy_clientid(struct compound *c)
@@ -124,7 +128,8 @@ void nfs4_op_destroy_clientid(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_reclaim_complete(struct compound *c)
@@ -140,8 +145,8 @@ void nfs4_op_reclaim_complete(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_bind_conn_to_session(struct compound *c)
@@ -157,8 +162,8 @@ void nfs4_op_bind_conn_to_session(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_backchannel_ctl(struct compound *c)
@@ -173,8 +178,8 @@ void nfs4_op_backchannel_ctl(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_set_ssv(struct compound *c)
@@ -188,6 +193,6 @@ void nfs4_op_set_ssv(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }

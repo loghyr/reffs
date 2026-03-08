@@ -12,6 +12,7 @@
 #include "reffs/rpc.h"
 #include "nfs4_internal.h"
 #include "ops.h"
+#include "errors.h"
 
 void nfs4_op_lookup(struct compound *c)
 {
@@ -24,8 +25,8 @@ void nfs4_op_lookup(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_lookupp(struct compound *c)
@@ -38,7 +39,8 @@ void nfs4_op_lookupp(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_readdir(struct compound *c)
@@ -52,8 +54,8 @@ void nfs4_op_readdir(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_create(struct compound *c)
@@ -67,8 +69,8 @@ void nfs4_op_create(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_remove(struct compound *c)
@@ -82,8 +84,8 @@ void nfs4_op_remove(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_rename(struct compound *c)
@@ -97,8 +99,8 @@ void nfs4_op_rename(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_link(struct compound *c)
@@ -112,8 +114,8 @@ void nfs4_op_link(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_openattr(struct compound *c)
@@ -127,8 +129,8 @@ void nfs4_op_openattr(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_readlink(struct compound *c)
@@ -141,5 +143,6 @@ void nfs4_op_readlink(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }

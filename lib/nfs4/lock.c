@@ -12,6 +12,7 @@
 #include "reffs/rpc.h"
 #include "nfs4_internal.h"
 #include "ops.h"
+#include "errors.h"
 
 void nfs4_op_lock(struct compound *c)
 {
@@ -24,8 +25,8 @@ void nfs4_op_lock(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_lockt(struct compound *c)
@@ -39,8 +40,8 @@ void nfs4_op_lockt(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_locku(struct compound *c)
@@ -54,8 +55,8 @@ void nfs4_op_locku(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_free_stateid(struct compound *c)
@@ -68,7 +69,8 @@ void nfs4_op_free_stateid(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_release_lockowner(struct compound *c)
@@ -82,7 +84,8 @@ void nfs4_op_release_lockowner(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_test_stateid(struct compound *c)
@@ -96,6 +99,6 @@ void nfs4_op_test_stateid(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
