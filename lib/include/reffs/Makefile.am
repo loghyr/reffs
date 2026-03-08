@@ -15,6 +15,7 @@ reffsinclude_HEADERS = \
 	inode.h \
 	io.h \
 	log.h \
+	memory.h \
 	network.h \
 	nfs3.h \
 	nfs4.h \
