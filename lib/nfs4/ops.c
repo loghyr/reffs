@@ -51,11 +51,14 @@ void nfs4_op_io_advise(struct compound *c)
 	IO_ADVISE4args *args = NFS4_OP_ARG_SETUP(c, ph, opio_advise);
 	IO_ADVISE4res *res = NFS4_OP_RES_SETUP(c, ph, opio_advise);
 	nfsstat4 *status = &res->ior_status;
+	IO_ADVISE4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, IO_ADVISE4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_illegal(struct compound *c)

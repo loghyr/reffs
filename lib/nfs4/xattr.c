@@ -12,6 +12,7 @@
 #include "reffs/rpc.h"
 #include "nfs4_internal.h"
 #include "ops.h"
+#include "errors.h"
 
 void nfs4_op_getxattr(struct compound *c)
 {
@@ -24,8 +25,8 @@ void nfs4_op_getxattr(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_setxattr(struct compound *c)
@@ -39,8 +40,8 @@ void nfs4_op_setxattr(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_listxattrs(struct compound *c)
@@ -51,11 +52,14 @@ void nfs4_op_listxattrs(struct compound *c)
 	LISTXATTRS4args *args = NFS4_OP_ARG_SETUP(c, ph, oplistxattrs);
 	LISTXATTRS4res *res = NFS4_OP_RES_SETUP(c, ph, oplistxattrs);
 	nfsstat4 *status = &res->lxr_status;
+	LISTXATTRS4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, LISTXATTRS4res_u, lxr_value);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_removexattr(struct compound *c)
@@ -69,6 +73,6 @@ void nfs4_op_removexattr(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }

@@ -22,11 +22,14 @@ void nfs4_op_layoutget(struct compound *c)
 	LAYOUTGET4args *args = NFS4_OP_ARG_SETUP(c, ph, oplayoutget);
 	LAYOUTGET4res *res = NFS4_OP_RES_SETUP(c, ph, oplayoutget);
 	nfsstat4 *status = &res->logr_status;
+	LAYOUTGET4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, LAYOUTGET4res_u, logr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_layoutcommit(struct compound *c)
@@ -37,11 +40,14 @@ void nfs4_op_layoutcommit(struct compound *c)
 	LAYOUTCOMMIT4args *args = NFS4_OP_ARG_SETUP(c, ph, oplayoutcommit);
 	LAYOUTCOMMIT4res *res = NFS4_OP_RES_SETUP(c, ph, oplayoutcommit);
 	nfsstat4 *status = &res->locr_status;
+	LAYOUTCOMMIT4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, LAYOUTCOMMIT4res_u, locr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_layoutreturn(struct compound *c)
@@ -67,11 +73,14 @@ void nfs4_op_getdeviceinfo(struct compound *c)
 	GETDEVICEINFO4args *args = NFS4_OP_ARG_SETUP(c, ph, opgetdeviceinfo);
 	GETDEVICEINFO4res *res = NFS4_OP_RES_SETUP(c, ph, opgetdeviceinfo);
 	nfsstat4 *status = &res->gdir_status;
+	GETDEVICEINFO4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, GETDEVICEINFO4res_u, gdir_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_getdevicelist(struct compound *c)
@@ -82,11 +91,14 @@ void nfs4_op_getdevicelist(struct compound *c)
 	GETDEVICELIST4args *args = NFS4_OP_ARG_SETUP(c, ph, opgetdevicelist);
 	GETDEVICELIST4res *res = NFS4_OP_RES_SETUP(c, ph, opgetdevicelist);
 	nfsstat4 *status = &res->gdlr_status;
+	GETDEVICELIST4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, GETDEVICELIST4res_u, gdlr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_layouterror(struct compound *c)

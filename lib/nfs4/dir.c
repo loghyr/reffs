@@ -51,11 +51,13 @@ void nfs4_op_readdir(struct compound *c)
 	READDIR4args *args = NFS4_OP_ARG_SETUP(c, ph, opreaddir);
 	READDIR4res *res = NFS4_OP_RES_SETUP(c, ph, opreaddir);
 	nfsstat4 *status = &res->status;
+	READDIR4resok *resok = NFS4_OP_RESOK_SETUP(res, READDIR4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_create(struct compound *c)
@@ -66,11 +68,13 @@ void nfs4_op_create(struct compound *c)
 	CREATE4args *args = NFS4_OP_ARG_SETUP(c, ph, opcreate);
 	CREATE4res *res = NFS4_OP_RES_SETUP(c, ph, opcreate);
 	nfsstat4 *status = &res->status;
+	CREATE4resok *resok = NFS4_OP_RESOK_SETUP(res, CREATE4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_remove(struct compound *c)
@@ -81,11 +85,13 @@ void nfs4_op_remove(struct compound *c)
 	REMOVE4args *args = NFS4_OP_ARG_SETUP(c, ph, opremove);
 	REMOVE4res *res = NFS4_OP_RES_SETUP(c, ph, opremove);
 	nfsstat4 *status = &res->status;
+	REMOVE4resok *resok = NFS4_OP_RESOK_SETUP(res, REMOVE4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_rename(struct compound *c)
@@ -96,11 +102,13 @@ void nfs4_op_rename(struct compound *c)
 	RENAME4args *args = NFS4_OP_ARG_SETUP(c, ph, oprename);
 	RENAME4res *res = NFS4_OP_RES_SETUP(c, ph, oprename);
 	nfsstat4 *status = &res->status;
+	RENAME4resok *resok = NFS4_OP_RESOK_SETUP(res, RENAME4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_link(struct compound *c)
@@ -111,11 +119,13 @@ void nfs4_op_link(struct compound *c)
 	LINK4args *args = NFS4_OP_ARG_SETUP(c, ph, oplink);
 	LINK4res *res = NFS4_OP_RES_SETUP(c, ph, oplink);
 	nfsstat4 *status = &res->status;
+	LINK4resok *resok = NFS4_OP_RESOK_SETUP(res, LINK4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_openattr(struct compound *c)
@@ -140,9 +150,11 @@ void nfs4_op_readlink(struct compound *c)
 
 	READLINK4res *res = NFS4_OP_RES_SETUP(c, ph, opreadlink);
 	nfsstat4 *status = &res->status;
+	READLINK4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, READLINK4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)res, (void *)resok);
 }

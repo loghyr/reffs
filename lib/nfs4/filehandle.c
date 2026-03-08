@@ -21,11 +21,12 @@ void nfs4_op_getfh(struct compound *c)
 
 	GETFH4res *res = NFS4_OP_RES_SETUP(c, ph, opgetfh);
 	nfsstat4 *status = &res->status;
+	GETFH4resok *resok = NFS4_OP_RESOK_SETUP(res, GETFH4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)res, (void *)resok);
 }
 
 void nfs4_op_putfh(struct compound *c)
