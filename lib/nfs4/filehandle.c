@@ -12,6 +12,7 @@
 #include "reffs/rpc.h"
 #include "nfs4_internal.h"
 #include "ops.h"
+#include "errors.h"
 
 void nfs4_op_getfh(struct compound *c)
 {
@@ -23,7 +24,8 @@ void nfs4_op_getfh(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_putfh(struct compound *c)
@@ -37,8 +39,8 @@ void nfs4_op_putfh(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_putpubfh(struct compound *c)
@@ -51,7 +53,8 @@ void nfs4_op_putpubfh(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_putrootfh(struct compound *c)
@@ -64,7 +67,8 @@ void nfs4_op_putrootfh(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_restorefh(struct compound *c)
@@ -77,7 +81,8 @@ void nfs4_op_restorefh(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_savefh(struct compound *c)
@@ -90,5 +95,6 @@ void nfs4_op_savefh(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }

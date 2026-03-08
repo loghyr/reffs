@@ -12,6 +12,7 @@
 #include "reffs/rpc.h"
 #include "nfs4_internal.h"
 #include "ops.h"
+#include "errors.h"
 
 void nfs4_op_secinfo(struct compound *c)
 {
@@ -24,8 +25,8 @@ void nfs4_op_secinfo(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_secinfo_no_name(struct compound *c)
@@ -38,7 +39,8 @@ void nfs4_op_secinfo_no_name(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)res);
 }
 
 void nfs4_op_io_advise(struct compound *c)
@@ -52,8 +54,8 @@ void nfs4_op_io_advise(struct compound *c)
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_illegal(struct compound *c)
@@ -70,8 +72,8 @@ void nfs4_op_illegal(struct compound *c)
 	resop->resop = OP_ILLEGAL;
 	*status = NFS4ERR_OP_ILLEGAL;
 
-	LOG("%s op=%s(%d) status=%d", __func__, nfs4_op_name(argop->argop),
-	    argop->argop, *status);
+	LOG("%s op=%s(%d) status=%s(%d)", __func__, nfs4_op_name(argop->argop),
+	    argop->argop, nfs4_err_name(*status), *status);
 }
 
 const char *nfs4_op_name(nfs_opnum4 op)
