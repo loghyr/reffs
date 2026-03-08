@@ -18,8 +18,8 @@ struct compound {
 	struct rpc_trans *c_rt;
 	u_int c_curr_op;
 	struct authunix_parms c_ap;
-	struct network_file_handle c_curr_fh;
-	struct network_file_handle c_saved_fh;
+	struct network_file_handle c_curr_nfh;
+	struct network_file_handle c_saved_nfh;
 	struct super_block *c_curr_sb;
 	struct super_block *c_saved_sb;
 	struct inode *c_inode;
