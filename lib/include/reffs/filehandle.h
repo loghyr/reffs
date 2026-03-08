@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <assert.h>
 
 #define FILEHANDLE_VERSION_1 (1)
 #define FILEHANDLE_VERSION_CURR (1)
@@ -19,7 +20,10 @@ struct network_file_handle {
 	uint16_t nfh_reserved_3;
 	uint64_t nfh_sb;
 	uint64_t nfh_ino;
-};
+} __attribute__((packed));
+
+static_assert(sizeof(struct network_file_handle) == 24,
+	      "network_file_handle has unexpected padding");
 
 static inline bool network_file_handles_equal(struct network_file_handle *a,
 					      struct network_file_handle *b)
