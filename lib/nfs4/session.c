@@ -22,11 +22,14 @@ void nfs4_op_exchange_id(struct compound *c)
 	EXCHANGE_ID4args *args = NFS4_OP_ARG_SETUP(c, ph, opexchange_id);
 	EXCHANGE_ID4res *res = NFS4_OP_RES_SETUP(c, ph, opexchange_id);
 	nfsstat4 *status = &res->eir_status;
+	EXCHANGE_ID4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, EXCHANGE_ID4res_u, eir_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_create_session(struct compound *c)
@@ -37,11 +40,14 @@ void nfs4_op_create_session(struct compound *c)
 	CREATE_SESSION4args *args = NFS4_OP_ARG_SETUP(c, ph, opcreate_session);
 	CREATE_SESSION4res *res = NFS4_OP_RES_SETUP(c, ph, opcreate_session);
 	nfsstat4 *status = &res->csr_status;
+	CREATE_SESSION4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, CREATE_SESSION4res_u, csr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_destroy_session(struct compound *c)
@@ -66,11 +72,14 @@ void nfs4_op_sequence(struct compound *c)
 	SEQUENCE4args *args = NFS4_OP_ARG_SETUP(c, ph, opsequence);
 	SEQUENCE4res *res = NFS4_OP_RES_SETUP(c, ph, opsequence);
 	nfsstat4 *status = &res->sr_status;
+	SEQUENCE4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, SEQUENCE4res_u, sr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_renew(struct compound *c)
@@ -95,11 +104,14 @@ void nfs4_op_setclientid(struct compound *c)
 	SETCLIENTID4args *args = NFS4_OP_ARG_SETUP(c, ph, opsetclientid);
 	SETCLIENTID4res *res = NFS4_OP_RES_SETUP(c, ph, opsetclientid);
 	nfsstat4 *status = &res->status;
+	SETCLIENTID4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, SETCLIENTID4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_setclientid_confirm(struct compound *c)
@@ -159,11 +171,14 @@ void nfs4_op_bind_conn_to_session(struct compound *c)
 	BIND_CONN_TO_SESSION4res *res =
 		NFS4_OP_RES_SETUP(c, ph, opbind_conn_to_session);
 	nfsstat4 *status = &res->bctsr_status;
+	BIND_CONN_TO_SESSION4resok *resok = NFS4_OP_RESOK_SETUP(
+		res, BIND_CONN_TO_SESSION4res_u, bctsr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_backchannel_ctl(struct compound *c)
@@ -190,9 +205,12 @@ void nfs4_op_set_ssv(struct compound *c)
 	SET_SSV4args *args = NFS4_OP_ARG_SETUP(c, ph, opset_ssv);
 	SET_SSV4res *res = NFS4_OP_RES_SETUP(c, ph, opset_ssv);
 	nfsstat4 *status = &res->ssr_status;
+	SET_SSV4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, SET_SSV4res_u, ssr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }

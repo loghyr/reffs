@@ -22,11 +22,13 @@ void nfs4_op_getattr(struct compound *c)
 	GETATTR4args *args = NFS4_OP_ARG_SETUP(c, ph, opgetattr);
 	GETATTR4res *res = NFS4_OP_RES_SETUP(c, ph, opgetattr);
 	nfsstat4 *status = &res->status;
+	GETATTR4resok *resok = NFS4_OP_RESOK_SETUP(res, GETATTR4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_setattr(struct compound *c)
@@ -82,11 +84,13 @@ void nfs4_op_access(struct compound *c)
 	ACCESS4args *args = NFS4_OP_ARG_SETUP(c, ph, opaccess);
 	ACCESS4res *res = NFS4_OP_RES_SETUP(c, ph, opaccess);
 	nfsstat4 *status = &res->status;
+	ACCESS4resok *resok = NFS4_OP_RESOK_SETUP(res, ACCESS4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_access_mask(struct compound *c)
@@ -97,9 +101,12 @@ void nfs4_op_access_mask(struct compound *c)
 	ACCESS_MASK4args *args = NFS4_OP_ARG_SETUP(c, ph, opaccess_mask);
 	ACCESS_MASK4res *res = NFS4_OP_RES_SETUP(c, ph, opaccess_mask);
 	nfsstat4 *status = &res->amr_status;
+	ACCESS_MASK4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, ACCESS_MASK4res_u, amr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }

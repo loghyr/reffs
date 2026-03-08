@@ -22,11 +22,13 @@ void nfs4_op_lock(struct compound *c)
 	LOCK4args *args = NFS4_OP_ARG_SETUP(c, ph, oplock);
 	LOCK4res *res = NFS4_OP_RES_SETUP(c, ph, oplock);
 	nfsstat4 *status = &res->status;
+	LOCK4resok *resok = NFS4_OP_RESOK_SETUP(res, LOCK4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_lockt(struct compound *c)
@@ -78,14 +80,16 @@ void nfs4_op_release_lockowner(struct compound *c)
 	struct protocol_handler *ph =
 		(struct protocol_handler *)c->c_rt->rt_context;
 
+	RELEASE_LOCKOWNER4args *args =
+		NFS4_OP_ARG_SETUP(c, ph, oprelease_lockowner);
 	RELEASE_LOCKOWNER4res *res =
 		NFS4_OP_RES_SETUP(c, ph, oprelease_lockowner);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_test_stateid(struct compound *c)
@@ -96,9 +100,12 @@ void nfs4_op_test_stateid(struct compound *c)
 	TEST_STATEID4args *args = NFS4_OP_ARG_SETUP(c, ph, optest_stateid);
 	TEST_STATEID4res *res = NFS4_OP_RES_SETUP(c, ph, optest_stateid);
 	nfsstat4 *status = &res->tsr_status;
+	TEST_STATEID4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, TEST_STATEID4res_u, tsr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }

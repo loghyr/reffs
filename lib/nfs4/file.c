@@ -22,11 +22,13 @@ void nfs4_op_open(struct compound *c)
 	OPEN4args *args = NFS4_OP_ARG_SETUP(c, ph, opopen);
 	OPEN4res *res = NFS4_OP_RES_SETUP(c, ph, opopen);
 	nfsstat4 *status = &res->status;
+	OPEN4resok *resok = NFS4_OP_RESOK_SETUP(res, OPEN4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_open_confirm(struct compound *c)
@@ -37,11 +39,14 @@ void nfs4_op_open_confirm(struct compound *c)
 	OPEN_CONFIRM4args *args = NFS4_OP_ARG_SETUP(c, ph, opopen_confirm);
 	OPEN_CONFIRM4res *res = NFS4_OP_RES_SETUP(c, ph, opopen_confirm);
 	nfsstat4 *status = &res->status;
+	OPEN_CONFIRM4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, OPEN_CONFIRM4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_open_downgrade(struct compound *c)
@@ -52,11 +57,14 @@ void nfs4_op_open_downgrade(struct compound *c)
 	OPEN_DOWNGRADE4args *args = NFS4_OP_ARG_SETUP(c, ph, opopen_downgrade);
 	OPEN_DOWNGRADE4res *res = NFS4_OP_RES_SETUP(c, ph, opopen_downgrade);
 	nfsstat4 *status = &res->status;
+	OPEN_DOWNGRADE4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, OPEN_DOWNGRADE4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_close(struct compound *c)
@@ -82,11 +90,13 @@ void nfs4_op_read(struct compound *c)
 	READ4args *args = NFS4_OP_ARG_SETUP(c, ph, opread);
 	READ4res *res = NFS4_OP_RES_SETUP(c, ph, opread);
 	nfsstat4 *status = &res->status;
+	READ4resok *resok = NFS4_OP_RESOK_SETUP(res, READ4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_read_plus(struct compound *c)
@@ -112,11 +122,13 @@ void nfs4_op_write(struct compound *c)
 	WRITE4args *args = NFS4_OP_ARG_SETUP(c, ph, opwrite);
 	WRITE4res *res = NFS4_OP_RES_SETUP(c, ph, opwrite);
 	nfsstat4 *status = &res->status;
+	WRITE4resok *resok = NFS4_OP_RESOK_SETUP(res, WRITE4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_write_same(struct compound *c)
@@ -142,11 +154,13 @@ void nfs4_op_commit(struct compound *c)
 	COMMIT4args *args = NFS4_OP_ARG_SETUP(c, ph, opcommit);
 	COMMIT4res *res = NFS4_OP_RES_SETUP(c, ph, opcommit);
 	nfsstat4 *status = &res->status;
+	COMMIT4resok *resok = NFS4_OP_RESOK_SETUP(res, COMMIT4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_seek(struct compound *c)
@@ -157,11 +171,13 @@ void nfs4_op_seek(struct compound *c)
 	SEEK4args *args = NFS4_OP_ARG_SETUP(c, ph, opseek);
 	SEEK4res *res = NFS4_OP_RES_SETUP(c, ph, opseek);
 	nfsstat4 *status = &res->sa_status;
+	seek_res4 *resok = NFS4_OP_RESOK_SETUP(res, SEEK4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
 }
 
 void nfs4_op_allocate(struct compound *c)

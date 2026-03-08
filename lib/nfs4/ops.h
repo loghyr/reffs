@@ -96,4 +96,7 @@ const char *nfs4_op_name(nfs_opnum4 op);
 		  ->resarray.resarray_val[(c)->c_curr_op] \
 		  .nfs_resop4_u.field)
 
+#define NFS4_OP_RESOK_SETUP(res, union_field, resok_field) \
+	(&(res)->union_field.resok_field)
+
 #endif /* _REFFS_NFS4_OPS_H */
