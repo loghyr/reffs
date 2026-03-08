@@ -744,116 +744,6 @@ out:
 	return ret;
 }
 
-static int load_inode_attributes(struct inode *inode)
-{
-	struct super_block *sb = inode->i_sb;
-	struct inode_disk id;
-	struct reffs_disk_header hdr;
-	char path[PATH_MAX];
-
-	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.meta",
-		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
-
-	int fd = open(path, O_RDONLY);
-	if (fd < 0)
-		return -errno;
-
-	if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
-		close(fd);
-		return -EIO;
-	}
-
-	if (hdr.rdh_magic != REFFS_DISK_MAGIC_META) {
-		LOG("Invalid magic 0x%x for %s", hdr.rdh_magic, path);
-		close(fd);
-		return -EINVAL;
-	}
-
-	if (hdr.rdh_version != REFFS_DISK_VERSION_1) {
-		LOG("Unsupported meta version %u for %s", hdr.rdh_version,
-		    path);
-		close(fd);
-		return -EOPNOTSUPP;
-	}
-
-	if (read(fd, &id, sizeof(id)) != sizeof(id)) {
-		close(fd);
-		return -EIO;
-	}
-	close(fd);
-
-	inode->i_uid = id.id_uid;
-	inode->i_gid = id.id_gid;
-	inode->i_nlink = id.id_nlink;
-	inode->i_mode = id.id_mode;
-	inode->i_size = id.id_size;
-	inode->i_atime = id.id_atime;
-	inode->i_ctime = id.id_ctime;
-	inode->i_mtime = id.id_mtime;
-	inode->i_attr_flags = id.id_attr_flags;
-
-	if (inode->i_ino >= sb->sb_next_ino)
-		sb->sb_next_ino = inode->i_ino + 1;
-
-	__atomic_fetch_add(&sb->sb_inodes_used, 1, __ATOMIC_RELAXED);
-
-	// Also check if data file exists
-	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dat",
-		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
-	if (access(path, F_OK) == 0) {
-		inode->i_db = data_block_alloc(inode, NULL, 0, 0);
-		if (inode->i_db) {
-			/*
-			 * Accumulate sb_bytes_used from the real on-disk size.
-			 * data_block_alloc() with size=0 calls fstat() to
-			 * populate db_size, so this reflects actual disk usage
-			 * rather than the size stored in the .meta file.
-			 * Mirror what the write path in nfs3_server.c does so
-			 * that FSSTAT returns correct values after recovery.
-			 */
-			size_t db_size = inode->i_db->db_size;
-			size_t old_used;
-			size_t new_used;
-			do {
-				__atomic_load(&sb->sb_bytes_used, &old_used,
-					      __ATOMIC_RELAXED);
-				new_used = old_used + db_size;
-			} while (!__atomic_compare_exchange(
-				&sb->sb_bytes_used, &old_used, &new_used, false,
-				__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
-
-			inode->i_used = db_size / sb->sb_block_size +
-					(db_size % sb->sb_block_size ? 1 : 0);
-		}
-	}
-
-	// Also check if symlink file exists
-	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.lnk",
-		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
-	if (access(path, F_OK) == 0) {
-		fd = open(path, O_RDONLY);
-		if (fd >= 0) {
-			struct stat st;
-			if (fstat(fd, &st) == 0) {
-				inode->i_symlink = malloc(st.st_size + 1);
-				if (inode->i_symlink) {
-					if (read(fd, inode->i_symlink,
-						 st.st_size) == st.st_size) {
-						inode->i_symlink[st.st_size] =
-							'\0';
-					} else {
-						free(inode->i_symlink);
-						inode->i_symlink = NULL;
-					}
-				}
-			}
-			close(fd);
-		}
-	}
-
-	return 0;
-}
-
 static void recover_directory_recursive(struct reffs_dirent *parent)
 {
 	struct inode *inode = parent->rd_inode;
@@ -913,12 +803,9 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 		if (rd) {
 			rd->rd_cookie = cookie;
 			rd->rd_inode = inode_alloc(sb, ino);
-			if (rd->rd_inode) {
-				load_inode_attributes(rd->rd_inode);
-				if (S_ISDIR(rd->rd_inode->i_mode)) {
-					rd->rd_inode->i_parent = rd;
-					recover_directory_recursive(rd);
-				}
+			if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode)) {
+				rd->rd_inode->i_parent = rd;
+				recover_directory_recursive(rd);
 			}
 			dirent_put(rd);
 		}
@@ -960,9 +847,11 @@ void reffs_fs_recover(struct super_block *sb)
 
 	// Root inode is 1
 	struct inode *root_inode = sb->sb_dirent->rd_inode;
-	if (load_inode_attributes(root_inode) == 0) {
-		recover_directory_recursive(sb->sb_dirent);
+	if (sb->sb_ops->inode_alloc) {
+		sb->sb_ops->inode_alloc(root_inode);
 	}
+
+	recover_directory_recursive(sb->sb_dirent);
 
 	LOG("Recovery complete. Max inode: %lu", sb->sb_next_ino);
 }
