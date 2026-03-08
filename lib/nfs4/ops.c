@@ -13,16 +13,6 @@
 #include "nfs4_internal.h"
 #include "ops.h"
 
-#define NFS4_OP_ARG_SETUP(c, ph, field)                   \
-	(&((COMPOUND4args *)(ph)->ph_args)                \
-		  ->argarray.argarray_val[(c)->c_curr_op] \
-		  .nfs_argop4_u.field)
-
-#define NFS4_OP_RES_SETUP(c, ph, field)                   \
-	(&((COMPOUND4res *)(ph)->ph_res)                  \
-		  ->resarray.resarray_val[(c)->c_curr_op] \
-		  .nfs_resop4_u.field)
-
 void nfs4_op_access(struct compound *c)
 {
 	struct protocol_handler *ph =
@@ -128,19 +118,6 @@ void nfs4_op_getattr(struct compound *c)
 	    (void *)res);
 }
 
-void nfs4_op_getfh(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	GETFH4res *res = NFS4_OP_RES_SETUP(c, ph, opgetfh);
-	nfsstat4 *status = &res->status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
-}
-
 void nfs4_op_link(struct compound *c)
 {
 	struct protocol_handler *ph =
@@ -148,51 +125,6 @@ void nfs4_op_link(struct compound *c)
 
 	LINK4args *args = NFS4_OP_ARG_SETUP(c, ph, oplink);
 	LINK4res *res = NFS4_OP_RES_SETUP(c, ph, oplink);
-	nfsstat4 *status = &res->status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
-}
-
-void nfs4_op_lock(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LOCK4args *args = NFS4_OP_ARG_SETUP(c, ph, oplock);
-	LOCK4res *res = NFS4_OP_RES_SETUP(c, ph, oplock);
-	nfsstat4 *status = &res->status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
-}
-
-void nfs4_op_lockt(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LOCKT4args *args = NFS4_OP_ARG_SETUP(c, ph, oplockt);
-	LOCKT4res *res = NFS4_OP_RES_SETUP(c, ph, oplockt);
-	nfsstat4 *status = &res->status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
-}
-
-void nfs4_op_locku(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LOCKU4args *args = NFS4_OP_ARG_SETUP(c, ph, oplocku);
-	LOCKU4res *res = NFS4_OP_RES_SETUP(c, ph, oplocku);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -304,47 +236,6 @@ void nfs4_op_open_downgrade(struct compound *c)
 	    (void *)res);
 }
 
-void nfs4_op_putfh(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	PUTFH4args *args = NFS4_OP_ARG_SETUP(c, ph, opputfh);
-	PUTFH4res *res = NFS4_OP_RES_SETUP(c, ph, opputfh);
-	nfsstat4 *status = &res->status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
-}
-
-void nfs4_op_putpubfh(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	PUTPUBFH4res *res = NFS4_OP_RES_SETUP(c, ph, opputpubfh);
-	nfsstat4 *status = &res->status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
-}
-
-void nfs4_op_putrootfh(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	PUTROOTFH4res *res = NFS4_OP_RES_SETUP(c, ph, opputrootfh);
-	nfsstat4 *status = &res->status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
-}
-
 void nfs4_op_read(struct compound *c)
 {
 	struct protocol_handler *ph =
@@ -424,32 +315,6 @@ void nfs4_op_renew(struct compound *c)
 		(struct protocol_handler *)c->c_rt->rt_context;
 
 	RENEW4res *res = NFS4_OP_RES_SETUP(c, ph, oprenew);
-	nfsstat4 *status = &res->status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
-}
-
-void nfs4_op_restorefh(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	RESTOREFH4res *res = NFS4_OP_RES_SETUP(c, ph, oprestorefh);
-	nfsstat4 *status = &res->status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
-}
-
-void nfs4_op_savefh(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	SAVEFH4res *res = NFS4_OP_RES_SETUP(c, ph, opsavefh);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -546,20 +411,6 @@ void nfs4_op_write(struct compound *c)
 	    (void *)res);
 }
 
-void nfs4_op_release_lockowner(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	RELEASE_LOCKOWNER4res *res =
-		NFS4_OP_RES_SETUP(c, ph, oprelease_lockowner);
-	nfsstat4 *status = &res->status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
-}
-
 void nfs4_op_backchannel_ctl(struct compound *c)
 {
 	struct protocol_handler *ph =
@@ -630,19 +481,6 @@ void nfs4_op_destroy_session(struct compound *c)
 
 	DESTROY_SESSION4res *res = NFS4_OP_RES_SETUP(c, ph, opdestroy_session);
 	nfsstat4 *status = &res->dsr_status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
-}
-
-void nfs4_op_free_stateid(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	FREE_STATEID4res *res = NFS4_OP_RES_SETUP(c, ph, opfree_stateid);
-	nfsstat4 *status = &res->fsr_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
@@ -777,21 +615,6 @@ void nfs4_op_set_ssv(struct compound *c)
 	SET_SSV4args *args = NFS4_OP_ARG_SETUP(c, ph, opset_ssv);
 	SET_SSV4res *res = NFS4_OP_RES_SETUP(c, ph, opset_ssv);
 	nfsstat4 *status = &res->ssr_status;
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
-	    (void *)res);
-}
-
-void nfs4_op_test_stateid(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	TEST_STATEID4args *args = NFS4_OP_ARG_SETUP(c, ph, optest_stateid);
-	TEST_STATEID4res *res = NFS4_OP_RES_SETUP(c, ph, optest_stateid);
-	nfsstat4 *status = &res->tsr_status;
 
 	*status = NFS4ERR_NOTSUPP;
 

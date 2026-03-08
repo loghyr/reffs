@@ -12,6 +12,8 @@ lib_LTLIBRARIES = libreffs_nfs4.la
 libreffs_nfs4_la_SOURCES = \
 	dispatch.c \
 	errors.c \
+	filehandle.c \
+	lock.c \
 	nfs4_server.c \
 	ops.c
 
