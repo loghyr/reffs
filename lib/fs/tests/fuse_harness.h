@@ -97,7 +97,7 @@ static inline void fuse_test_setup(void)
 	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(sb);
 
-	inode = inode_find(sb, 1);
+	inode = inode_find(sb, INODE_ROOT_ID);
 	ck_assert_ptr_nonnull(inode);
 
 	fuse_test_uid = getuid();

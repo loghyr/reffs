@@ -39,7 +39,7 @@ START_TEST(test_vfs_create_unchecked_truncate)
 
 	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(sb);
-	dir = inode_find(sb, 1);
+	dir = inode_find(sb, INODE_ROOT_ID);
 	ck_assert_ptr_nonnull(dir);
 
 	struct reffs_context *ctx = reffs_get_context();
