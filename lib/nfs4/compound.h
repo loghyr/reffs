@@ -10,10 +10,9 @@
 #include <sys/types.h>
 
 #include "reffs/filehandle.h"
-
-struct rpc_trans;
-struct super_block;
-struct inode;
+#include "reffs/rpc.h"
+#include "reffs/super_block.h"
+#include "reffs/inode.h"
 
 struct compound {
 	struct rpc_trans *c_rt;
