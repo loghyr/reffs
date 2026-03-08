@@ -7,6 +7,9 @@
 #include "config.h"
 #endif
 
+#include <errno.h>
+#include "reffs/errno.h"
+#include "reffs/log.h"
 #include "errors.h"
 
 #define NFS4_MAX_ERRORS_PER_OP (115)
@@ -1443,4 +1446,333 @@ bool nfs4_error_valid_for_cb_op(enum nfs_cb_opnum4 op, enum nfsstat4 stat)
 					return true;
 
 	return false;
+}
+
+nfsstat4 errno_to_nfs4(int error, nfs_opnum4 op)
+{
+	nfsstat4 status;
+
+	if (error == 0)
+		return NFS4_OK;
+
+	/*
+	 * Means it is the compound processing before
+	 * we got to an op.
+	 */
+	if (op < OP_ACCESS) {
+		return NFS4ERR_SERVERFAULT;
+	}
+
+	switch (error) {
+	case EPERM:
+		status = NFS4ERR_PERM;
+		break;
+	case ENOENT:
+		status = NFS4ERR_NOENT;
+		break;
+	case EIO:
+		status = NFS4ERR_IO;
+		break;
+	case ENXIO:
+		status = NFS4ERR_NXIO;
+		break;
+	case EACCES:
+		status = NFS4ERR_ACCESS;
+		break;
+	case EEXIST:
+		status = NFS4ERR_EXIST;
+		break;
+	case EXDEV:
+		status = NFS4ERR_XDEV;
+		break;
+	case ENODEV:
+		status = NFS4ERR_SERVERFAULT;
+		break;
+	case ENOTDIR:
+		status = NFS4ERR_NOTDIR;
+		break;
+	case EISDIR:
+		status = NFS4ERR_ISDIR;
+		break;
+	case EINVAL:
+		status = NFS4ERR_INVAL;
+		break;
+	case EFBIG:
+		status = NFS4ERR_FBIG;
+		break;
+	case ENOSPC:
+		status = NFS4ERR_NOSPC;
+		break;
+	case EROFS:
+		status = NFS4ERR_ROFS;
+		break;
+	case EMLINK:
+		status = NFS4ERR_MLINK;
+		break;
+	case ENAMETOOLONG:
+		status = NFS4ERR_NAMETOOLONG;
+		break;
+	case ENOTEMPTY:
+		status = NFS4ERR_NOTEMPTY;
+		break;
+	case EDQUOT:
+		status = NFS4ERR_DQUOT;
+		break;
+	case ESTALE:
+		status = NFS4ERR_STALE;
+		break;
+	case EBADHANDLE:
+		status = NFS4ERR_BADHANDLE;
+		break;
+	case ENOTSYNC:
+		status = NFS4ERR_SERVERFAULT;
+		break;
+	case EBADTYPE:
+		status = NFS4ERR_BADTYPE;
+		break;
+	case EJUKEBOX:
+		status = NFS4ERR_DELAY;
+		break;
+	case EBADNAME:
+		status = NFS4ERR_BADNAME;
+		break;
+	case EWRONGTYPE:
+		status = NFS4ERR_WRONG_TYPE;
+		break;
+	case EMSGSTARTED:
+		status = NFS4ERR_NOT_SAME;
+		break;
+	case EREADDIRFULL:
+		status = NFS4ERR_TOOSMALL;
+		break;
+	case ENAMETOOSMALL:
+		status = NFS4ERR_NAMETOOLONG;
+		break;
+	case EBADXDR:
+		status = NFS4ERR_BADXDR;
+		break;
+	case EATTRNOTSUP:
+		status = NFS4ERR_ATTRNOTSUPP;
+		break;
+	case EBADOWNER:
+		status = NFS4ERR_BADOWNER;
+		break;
+	default:
+		status = NFS4ERR_SERVERFAULT;
+		break;
+	}
+
+	/*
+	 * Look op if it is a valid error for the op
+	 * and if not, set it to NFS4ERR_SERVERFAULT!
+	 */
+	if (!nfs4_error_valid_for_op(op, status)) {
+		LOG("Error code %d for operation %d mapped to %d and became %d",
+		    error, op, status, NFS4ERR_SERVERFAULT);
+		status = NFS4ERR_SERVERFAULT;
+	}
+
+	return status;
+}
+
+const char *nfs4_err_name(nfsstat4 status)
+{
+	switch (status) {
+	case NFS4_OK:
+		return "OK";
+	case NFS4ERR_PERM:
+		return "PERM";
+	case NFS4ERR_NOENT:
+		return "NOENT";
+	case NFS4ERR_IO:
+		return "IO";
+	case NFS4ERR_NXIO:
+		return "NXIO";
+	case NFS4ERR_ACCESS:
+		return "ACCESS";
+	case NFS4ERR_EXIST:
+		return "EXIST";
+	case NFS4ERR_XDEV:
+		return "XDEV";
+	case NFS4ERR_NOTDIR:
+		return "NOTDIR";
+	case NFS4ERR_ISDIR:
+		return "ISDIR";
+	case NFS4ERR_INVAL:
+		return "INVAL";
+	case NFS4ERR_FBIG:
+		return "FBIG";
+	case NFS4ERR_NOSPC:
+		return "NOSPC";
+	case NFS4ERR_ROFS:
+		return "ROFS";
+	case NFS4ERR_MLINK:
+		return "MLINK";
+	case NFS4ERR_NAMETOOLONG:
+		return "NAMETOOLONG";
+	case NFS4ERR_NOTEMPTY:
+		return "NOTEMPTY";
+	case NFS4ERR_DQUOT:
+		return "DQUOT";
+	case NFS4ERR_STALE:
+		return "STALE";
+	case NFS4ERR_BADHANDLE:
+		return "BADHANDLE";
+	case NFS4ERR_BAD_COOKIE:
+		return "BAD_COOKIE";
+	case NFS4ERR_NOTSUPP:
+		return "NOTSUPP";
+	case NFS4ERR_TOOSMALL:
+		return "TOOSMALL";
+	case NFS4ERR_SERVERFAULT:
+		return "SERVERFAULT";
+	case NFS4ERR_BADTYPE:
+		return "BADTYPE";
+	case NFS4ERR_DELAY:
+		return "DELAY";
+	case NFS4ERR_SAME:
+		return "SAME";
+	case NFS4ERR_DENIED:
+		return "DENIED";
+	case NFS4ERR_EXPIRED:
+		return "EXPIRED";
+	case NFS4ERR_LOCKED:
+		return "LOCKED";
+	case NFS4ERR_GRACE:
+		return "GRACE";
+	case NFS4ERR_FHEXPIRED:
+		return "FHEXPIRED";
+	case NFS4ERR_SHARE_DENIED:
+		return "SHARE_DENIED";
+	case NFS4ERR_WRONGSEC:
+		return "WRONGSEC";
+	case NFS4ERR_CLID_INUSE:
+		return "CLID_INUSE";
+	case NFS4ERR_RESOURCE:
+		return "RESOURCE";
+	case NFS4ERR_MOVED:
+		return "MOVED";
+	case NFS4ERR_NOFILEHANDLE:
+		return "NOFILEHANDLE";
+	case NFS4ERR_STALE_CLIENTID:
+		return "STALE_CLIENTID";
+	case NFS4ERR_STALE_STATEID:
+		return "STALE_STATEID";
+	case NFS4ERR_OLD_STATEID:
+		return "OLD_STATEID";
+	case NFS4ERR_BAD_STATEID:
+		return "BAD_STATEID";
+	case NFS4ERR_BAD_SEQID:
+		return "BAD_SEQID";
+	case NFS4ERR_NOT_SAME:
+		return "NOT_SAME";
+	case NFS4ERR_LOCK_RANGE:
+		return "LOCK_RANGE";
+	case NFS4ERR_SYMLINK:
+		return "SYMLINK";
+	case NFS4ERR_RESTOREFH:
+		return "RESTOREFH";
+	case NFS4ERR_LEASE_MOVED:
+		return "LEASE_MOVED";
+	case NFS4ERR_ATTRNOTSUPP:
+		return "ATTRNOTSUPP";
+	case NFS4ERR_NO_GRACE:
+		return "NO_GRACE";
+	case NFS4ERR_RECLAIM_BAD:
+		return "RECLAIM_BAD";
+	case NFS4ERR_BADXDR:
+		return "BADXDR";
+	case NFS4ERR_LOCKS_HELD:
+		return "LOCKS_HELD";
+	case NFS4ERR_OPENMODE:
+		return "OPENMODE";
+	case NFS4ERR_BADOWNER:
+		return "BADOWNER";
+	case NFS4ERR_BADCHAR:
+		return "BADCHAR";
+	case NFS4ERR_BADNAME:
+		return "BADNAME";
+	case NFS4ERR_BAD_RANGE:
+		return "BAD_RANGE";
+	case NFS4ERR_LOCK_NOTSUPP:
+		return "LOCK_NOTSUPP";
+	case NFS4ERR_OP_ILLEGAL:
+		return "OP_ILLEGAL";
+	case NFS4ERR_DEADLOCK:
+		return "DEADLOCK";
+	case NFS4ERR_FILE_OPEN:
+		return "FILE_OPEN";
+	case NFS4ERR_ADMIN_REVOKED:
+		return "ADMIN_REVOKED";
+	case NFS4ERR_CB_PATH_DOWN:
+		return "CB_PATH_DOWN";
+	case NFS4ERR_BADIOMODE:
+		return "BADIOMODE";
+	case NFS4ERR_BADLAYOUT:
+		return "BADLAYOUT";
+	case NFS4ERR_BAD_SESSION_DIGEST:
+		return "BAD_SESSION_DIGEST";
+	case NFS4ERR_BADSESSION:
+		return "BADSESSION";
+	case NFS4ERR_BADSLOT:
+		return "BADSLOT";
+	case NFS4ERR_COMPLETE_ALREADY:
+		return "COMPLETE_ALREADY";
+	case NFS4ERR_CONN_NOT_BOUND_TO_SESSION:
+		return "CONN_NOT_BOUND_TO_SESSION";
+	case NFS4ERR_DELEG_ALREADY_WANTED:
+		return "DELEG_ALREADY_WANTED";
+	case NFS4ERR_BACK_CHAN_BUSY:
+		return "BACK_CHAN_BUSY";
+	case NFS4ERR_LAYOUTTRYLATER:
+		return "LAYOUTTRYLATER";
+	case NFS4ERR_LAYOUTUNAVAILABLE:
+		return "LAYOUTUNAVAILABLE";
+	case NFS4ERR_NOMATCHING_LAYOUT:
+		return "NOMATCHING_LAYOUT";
+	case NFS4ERR_RECALLCONFLICT:
+		return "RECALLCONFLICT";
+	case NFS4ERR_UNKNOWN_LAYOUTTYPE:
+		return "UNKNOWN_LAYOUTTYPE";
+	case NFS4ERR_SEQ_MISORDERED:
+		return "SEQ_MISORDERED";
+	case NFS4ERR_SEQUENCE_POS:
+		return "SEQUENCE_POS";
+	case NFS4ERR_REQ_TOO_BIG:
+		return "REQ_TOO_BIG";
+	case NFS4ERR_REP_TOO_BIG:
+		return "REP_TOO_BIG";
+	case NFS4ERR_TOO_MANY_OPS:
+		return "TOO_MANY_OPS";
+	case NFS4ERR_HASH_ALG_UNSUPP:
+		return "HASH_ALG_UNSUPP";
+	case NFS4ERR_CLIENTID_BUSY:
+		return "CLIENTID_BUSY";
+	case NFS4ERR_PNFS_IO_HOLE:
+		return "PNFS_IO_HOLE";
+	case NFS4ERR_BAD_HIGH_SLOT:
+		return "BAD_HIGH_SLOT";
+	case NFS4ERR_DEADSESSION:
+		return "DEADSESSION";
+	case NFS4ERR_PNFS_NO_LAYOUT:
+		return "PNFS_NO_LAYOUT";
+	case NFS4ERR_NOT_ONLY_OP:
+		return "NOT_ONLY_OP";
+	case NFS4ERR_WRONG_CRED:
+		return "WRONG_CRED";
+	case NFS4ERR_WRONG_TYPE:
+		return "WRONG_TYPE";
+	case NFS4ERR_REJECT_DELEG:
+		return "REJECT_DELEG";
+	case NFS4ERR_RETURNCONFLICT:
+		return "RETURNCONFLICT";
+	case NFS4ERR_DELEG_REVOKED:
+		return "DELEG_REVOKED";
+	case NFS4ERR_UNION_NOTSUPP:
+		return "UNION_NOTSUPP";
+	case NFS4ERR_OFFLOAD_DENIED:
+		return "OFFLOAD_DENIED";
+	default:
+		return "UNKNOWN";
+	}
 }

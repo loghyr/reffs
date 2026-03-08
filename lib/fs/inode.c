@@ -4,34 +4,29 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <string.h>
-#include <errno.h>
-#include <xxhash.h>
-#include <stdatomic.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
 #include <assert.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
-#include <urcu.h>
-#include <urcu/rculist.h>
-#include <urcu/ref.h>
-#include <urcu/rculfhash.h>
-
-#include "reffs/data_block.h"
-#include "reffs/inode.h"
-#include "reffs/super_block.h"
-#include "reffs/log.h"
-#include "reffs/cmp.h"
-#include "reffs/test.h"
+#include <unistd.h>
+#include <xxhash.h>
+#include "reffs/rcu.h"
 #include "reffs/backend.h"
+#include "reffs/cmp.h"
+#include "reffs/data_block.h"
+#include "reffs/dirent.h"
+#include "reffs/inode.h"
+#include "reffs/log.h"
+#include "reffs/super_block.h"
+#include "reffs/test.h"
+
+struct rcu_head;
 
 static int inode_match(struct cds_lfht_node *ht_node, const void *vkey)
 {

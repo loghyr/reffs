@@ -4,38 +4,37 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdio.h>
-#include <stdatomic.h>
-#include <stdlib.h>
-#include <string.h>
-#include <strings.h>
-#include <stdbool.h>
-#include <unistd.h>
-#include <time.h>
-#include <rpc/xdr.h>
+#include <assert.h>
+#include <errno.h>
+#include <hdr/hdr_histogram.h>
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
 #include <rpc/clnt.h>
 #include <rpc/rpc_msg.h>
-#include <errno.h>
-
-#include "reffs/test.h"
-
-#include <rpc/clnt.h>
-#include <rpc/rpc_msg.h>
-#include <rpc/pmap_clnt.h>
+#include <rpc/xdr.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <time.h>
 
 #include "reffs/log.h"
-#include "reffs/rpc.h"
+#include "reffs/context.h"
 #include "reffs/io.h"
 #include "reffs/network.h"
-#include "reffs/stack.h"
+#include "reffs/rcu.h"
+#include "reffs/rpc.h"
 #include "reffs/task.h"
+#include "reffs/tls.h"
 #include "reffs/trace/rpc.h"
-#include "reffs/context.h"
+
+struct rcu_head;
 
 CDS_LIST_HEAD(rpc_program_handler_list);
 

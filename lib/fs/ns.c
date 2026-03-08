@@ -4,31 +4,26 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <strings.h>
-#include <stdbool.h>
-#include <unistd.h>
+#include <assert.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include "reffs/log.h"
-#include "reffs/fs.h"
-#include "reffs/rcu.h"
+#include <time.h>
+#include <urcu/list.h>
+#include <uuid/uuid.h>
 
-#include "reffs/inode.h"
-#include "reffs/super_block.h"
-#include "reffs/data_block.h"
-#include "reffs/server.h"
-#include "reffs/ns.h"
-#include "reffs/filehandle.h"
 #include "reffs/backend.h"
+#include "reffs/dirent.h"
+#include "reffs/filehandle.h"
+#include "reffs/fs.h"
+#include "reffs/inode.h"
+#include "reffs/log.h"
+#include "reffs/ns.h"
+#include "reffs/super_block.h"
+#include "reffs/types.h"
 
 volatile sig_atomic_t reffs_namespace_initialized = 0;
 static struct super_block *reffs_root_sb = NULL;

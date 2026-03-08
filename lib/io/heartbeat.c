@@ -4,24 +4,22 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdio.h>
+#include <errno.h>
+#include <liburing.h>
+#include <linux/time_types.h>
+#include <pthread.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <time.h>
-#include <liburing.h>
-#include <errno.h>
 
 #include "reffs/log.h"
-#include "reffs/rpc.h"
-#include "reffs/network.h"
-#include "reffs/server.h"
-#include "reffs/task.h"
 #include "reffs/io.h"
-#include "reffs/trace/io.h"
+#include "reffs/log.h"
+#include "reffs/ring.h"
 
 // Heartbeat interval in seconds
 #define HEARTBEAT_INTERVAL 1

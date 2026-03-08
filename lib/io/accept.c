@@ -4,31 +4,28 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
+#include <errno.h>
+#include <liburing.h>
+#include <liburing/io_uring.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <liburing.h>
-#include <fcntl.h>
 #include <pthread.h>
-#include <errno.h>
-#include <urcu.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <stdint.h>
-#include <time.h>
+#include <sched.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "reffs/log.h"
-#include "reffs/network.h"
-#include "reffs/test.h"
 #include "reffs/io.h"
+#include "reffs/log.h"
+#include "reffs/network.h"
+#include "reffs/ring.h"
 #include "reffs/trace/io.h"
 
 struct accept_context {

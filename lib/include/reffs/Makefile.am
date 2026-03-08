@@ -17,6 +17,7 @@ reffsinclude_HEADERS = \
 	log.h \
 	network.h \
 	nfs3.h \
+	nfs4.h \
 	ns.h \
 	probe1.h \
 	rcu.h \

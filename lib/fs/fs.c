@@ -4,41 +4,43 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
+#include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include <string.h>
 #include <sys/stat.h>
-#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <time.h>
-#include <string.h>
-#include <dirent.h>
-#include <urcu.h>
+#include <unistd.h>
+#include <urcu/list.h>
+#include <urcu/map/urcu-memb.h>
+#include <urcu/rculfhash.h>
 #include <urcu/rculist.h>
-#include <urcu/ref.h>
-#include "reffs/data_block.h"
-#include "reffs/super_block.h"
-#include "reffs/dirent.h"
-#include "reffs/inode.h"
-#include "reffs/time.h"
-#include "reffs/test.h"
-#include "reffs/fs.h"
-#include "reffs/vfs.h"
-#include "reffs/identity.h"
-#include "reffs/log.h"
-#include "reffs/cmp.h"
-#include "reffs/backend.h"
 
+#include "reffs/backend.h"
+#include "reffs/cmp.h"
 #include "reffs/context.h"
+#include "reffs/data_block.h"
+#include "reffs/dirent.h"
+#include "reffs/fs.h"
+#include "reffs/identity.h"
+#include "reffs/inode.h"
+#include "reffs/log.h"
+#include "reffs/super_block.h"
+#include "reffs/types.h"
+#include "reffs/vfs.h"
+#include "rpc/auth_unix.h"
+
+struct timespec;
 
 // Remove once this gets fleshed out
 #pragma GCC diagnostic ignored "-Wunused-parameter"

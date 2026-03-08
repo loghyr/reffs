@@ -4,26 +4,21 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdio.h>
+#include <errno.h>
+#include <openssl/crypto.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/prov_ssl.h>
+#include <openssl/ssl.h>
+#include <openssl/types.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <stdint.h>
-#include <stdbool.h>
 
 #include "reffs/log.h"
-#include "reffs/network.h"
-#include "reffs/test.h"
-#include "reffs/io.h"
+#include "reffs/tls.h"
 
 SSL_CTX *reffs_server_ssl_ctx = NULL;
 

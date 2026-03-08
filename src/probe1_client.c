@@ -4,33 +4,27 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#ifdef HAVE_JEMALLOC
-#include <jemalloc/jemalloc.h>
-#endif
-
+#include <getopt.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <getopt.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <errno.h>
-#include <urcu.h>
 
 #include "probe1_xdr.h"
-
 #include "reffs/log.h"
-#include "reffs/rpc.h"
-#include "reffs/probe1.h"
-#include "reffs/server.h"
 #include "reffs/io.h"
+#include "reffs/log.h"
+#include "reffs/probe1.h"
+#include "reffs/rcu.h"
+#include "reffs/ring.h"
+#include "reffs/rpc.h"
 #include "reffs/trace/common.h"
+#include "reffs/trace/types.h"
 
 // Global flag for clean shutdown
 volatile sig_atomic_t running = 1;

@@ -4,33 +4,21 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <liburing.h>
-#include <fcntl.h>
-#include <pthread.h>
 #include <errno.h>
-#include <urcu.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <stdint.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdlib.h>
 #include <time.h>
-#include <stdbool.h>
 
 #include "reffs/log.h"
-#include "reffs/rpc.h"
-#include "reffs/network.h"
-#include "reffs/server.h"
-#include "reffs/task.h"
-#include "reffs/test.h"
 #include "reffs/io.h"
+#include "reffs/log.h"
+#include "reffs/rcu.h"
+#include "reffs/rpc.h"
+#include "reffs/task.h"
 
 // Queue for worker threads
 pthread_mutex_t task_queue_mutex = PTHREAD_MUTEX_INITIALIZER;

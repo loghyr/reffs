@@ -4,19 +4,14 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <errno.h>
 #include <pthread.h>
-#include <signal.h>
-#include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <urcu.h>
-#include <urcu/rculist.h>
-#include <urcu/ref.h>
+
+#include "reffs/rcu.h"
 
 int main(int __attribute__((unused)) argc,
 	 char __attribute__((unused)) * argv[])

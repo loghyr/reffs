@@ -4,24 +4,21 @@
  */
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 #include <errno.h>
+#include <pthread.h>
+#include <stdlib.h>
 #include <sys/types.h>
-#include <unistd.h>
-#include <urcu.h>
-#include <urcu/rculist.h>
-#include <urcu/ref.h>
-#include "reffs/data_block.h"
-#include "reffs/super_block.h"
-#include "reffs/inode.h"
-#include "reffs/log.h"
 #include "reffs/rcu.h"
 #include "reffs/backend.h"
+#include "reffs/data_block.h"
+#include "reffs/inode.h"
+#include "reffs/log.h"
+#include "reffs/super_block.h"
+
+struct rcu_head;
 
 static void data_block_free_rcu(struct rcu_head *rcu)
 {
