@@ -1,0 +1,85 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+ * SPDX-License-Identifier: GPL-2.0+
+ */
+
+#ifdef HAVE_CONFIG_H
+#include "config.h" // IWYU pragma: keep
+#endif
+
+#include "nfsv42_xdr.h"
+#include "reffs/log.h"
+#include "reffs/rpc.h"
+#include "nfs4_internal.h"
+#include "ops.h"
+
+void nfs4_op_copy(struct compound *c)
+{
+	struct protocol_handler *ph =
+		(struct protocol_handler *)c->c_rt->rt_context;
+
+	COPY4args *args = NFS4_OP_ARG_SETUP(c, ph, opcopy);
+	COPY4res *res = NFS4_OP_RES_SETUP(c, ph, opcopy);
+	nfsstat4 *status = &res->cr_status;
+
+	*status = NFS4ERR_NOTSUPP;
+
+	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
+	    (void *)res);
+}
+
+void nfs4_op_copy_notify(struct compound *c)
+{
+	struct protocol_handler *ph =
+		(struct protocol_handler *)c->c_rt->rt_context;
+
+	COPY_NOTIFY4args *args = NFS4_OP_ARG_SETUP(c, ph, opoffload_notify);
+	COPY_NOTIFY4res *res = NFS4_OP_RES_SETUP(c, ph, opcopy_notify);
+	nfsstat4 *status = &res->cnr_status;
+
+	*status = NFS4ERR_NOTSUPP;
+
+	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
+	    (void *)res);
+}
+
+void nfs4_op_clone(struct compound *c)
+{
+	struct protocol_handler *ph =
+		(struct protocol_handler *)c->c_rt->rt_context;
+
+	CLONE4args *args = NFS4_OP_ARG_SETUP(c, ph, opclone);
+	CLONE4res *res = NFS4_OP_RES_SETUP(c, ph, opclone);
+	nfsstat4 *status = &res->cl_status;
+
+	*status = NFS4ERR_NOTSUPP;
+
+	LOG("%s status=%d args=%p res=%p", __func__, *status, (void *)args,
+	    (void *)res);
+}
+
+void nfs4_op_offload_cancel(struct compound *c)
+{
+	struct protocol_handler *ph =
+		(struct protocol_handler *)c->c_rt->rt_context;
+
+	OFFLOAD_CANCEL4res *res = NFS4_OP_RES_SETUP(c, ph, opoffload_cancel);
+	nfsstat4 *status = &res->ocr_status;
+
+	*status = NFS4ERR_NOTSUPP;
+
+	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+}
+
+void nfs4_op_offload_status(struct compound *c)
+{
+	struct protocol_handler *ph =
+		(struct protocol_handler *)c->c_rt->rt_context;
+
+	OFFLOAD_STATUS4res *res = NFS4_OP_RES_SETUP(c, ph, opoffload_status);
+	nfsstat4 *status = &res->osr_status;
+
+	*status = NFS4ERR_NOTSUPP;
+
+	LOG("%s status=%d res=%p", __func__, *status, (void *)res);
+}
