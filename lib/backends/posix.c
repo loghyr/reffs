@@ -342,6 +342,114 @@ static void posix_dir_sync(struct inode *inode)
 	}
 }
 
+static int posix_inode_alloc(struct inode *inode)
+{
+	struct super_block *sb = inode->i_sb;
+	struct posix_sb_private *sb_priv = sb->sb_storage_private;
+	if (!sb_priv)
+		return EINVAL;
+
+	struct inode_disk id;
+	struct reffs_disk_header hdr;
+	char path[1024];
+
+	snprintf(path, sizeof(path), "%s/ino_%lu.meta", sb_priv->sb_dir,
+		 inode->i_ino);
+
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		if (errno == ENOENT)
+			return 0; // New inode
+		return errno;
+	}
+
+	if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+		close(fd);
+		return EIO;
+	}
+
+	if (hdr.rdh_magic != REFFS_DISK_MAGIC_META) {
+		LOG("Invalid magic 0x%x for %s", hdr.rdh_magic, path);
+		close(fd);
+		return EINVAL;
+	}
+
+	if (hdr.rdh_version != REFFS_DISK_VERSION_1) {
+		LOG("Unsupported meta version %u for %s", hdr.rdh_version,
+		    path);
+		close(fd);
+		return EOPNOTSUPP;
+	}
+
+	if (read(fd, &id, sizeof(id)) != sizeof(id)) {
+		close(fd);
+		return EIO;
+	}
+	close(fd);
+
+	inode->i_uid = id.id_uid;
+	inode->i_gid = id.id_gid;
+	inode->i_nlink = id.id_nlink;
+	inode->i_mode = id.id_mode;
+	inode->i_size = id.id_size;
+	inode->i_atime = id.id_atime;
+	inode->i_ctime = id.id_ctime;
+	inode->i_mtime = id.id_mtime;
+	inode->i_attr_flags = id.id_attr_flags;
+
+	if (inode->i_ino >= sb->sb_next_ino)
+		sb->sb_next_ino = inode->i_ino + 1;
+
+	// Also check if data file exists
+	snprintf(path, sizeof(path), "%s/ino_%lu.dat", sb_priv->sb_dir,
+		 inode->i_ino);
+	if (!inode->i_db && access(path, F_OK) == 0) {
+		inode->i_db = data_block_alloc(inode, NULL, 0, 0);
+		if (inode->i_db) {
+			size_t db_size = inode->i_db->db_size;
+			size_t old_used;
+			size_t new_used;
+			do {
+				__atomic_load(&sb->sb_bytes_used, &old_used,
+					      __ATOMIC_RELAXED);
+				new_used = old_used + db_size;
+			} while (!__atomic_compare_exchange(
+				&sb->sb_bytes_used, &old_used, &new_used, false,
+				__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+
+			inode->i_used = db_size / sb->sb_block_size +
+					(db_size % sb->sb_block_size ? 1 : 0);
+		}
+	}
+
+	// Also check if symlink file exists
+	snprintf(path, sizeof(path), "%s/ino_%lu.lnk", sb_priv->sb_dir,
+		 inode->i_ino);
+	if (!inode->i_symlink && access(path, F_OK) == 0) {
+		fd = open(path, O_RDONLY);
+		if (fd >= 0) {
+			struct stat st;
+			if (fstat(fd, &st) == 0) {
+				inode->i_symlink = malloc(st.st_size + 1);
+				if (inode->i_symlink) {
+					if (read(fd, inode->i_symlink,
+						 st.st_size) ==
+					    (ssize_t)st.st_size) {
+						inode->i_symlink[st.st_size] =
+							'\0';
+					} else {
+						free(inode->i_symlink);
+						inode->i_symlink = NULL;
+					}
+				}
+			}
+			close(fd);
+		}
+	}
+
+	return 0;
+}
+
 static void posix_inode_free(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
@@ -373,6 +481,7 @@ const struct reffs_storage_ops posix_storage_ops = {
 	.name = "posix",
 	.sb_alloc = posix_sb_alloc,
 	.sb_free = posix_sb_free,
+	.inode_alloc = posix_inode_alloc,
 	.inode_free = posix_inode_free,
 	.inode_sync = posix_inode_sync,
 	.db_alloc = posix_db_alloc,

@@ -91,7 +91,11 @@ TESTS = \
 	posix_recovery_13 \
 	posix_recovery_14 \
 	posix_recovery_15 \
+	posix_force_load \
 	fs_usage_ram \
 	fs_usage_posix
+
+posix_force_load_SOURCES = posix_force_load.c
+posix_force_load_LDADD = $(LDADD)
 
 check_PROGRAMS = $(TESTS)
