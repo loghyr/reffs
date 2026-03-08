@@ -10,12 +10,20 @@ AM_CFLAGS = -Im4 -I.			\
 
 lib_LTLIBRARIES = libreffs_nfs4.la
 libreffs_nfs4_la_SOURCES = \
+	attr.c \
+	copy.c \
+	delegation.c \
+	dir.c \
 	dispatch.c \
 	errors.c \
+	file.c \
 	filehandle.c \
+	layout.c \
 	lock.c \
 	nfs4_server.c \
-	ops.c
+	ops.c \
+	session.c \
+	xattr.c
 
 reffsincludedir = $(includedir)/reffs
 reffsinclude_HEADERS = \
