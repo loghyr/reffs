@@ -76,6 +76,7 @@ START_TEST(test_fs_usage_ram_multiple_sb)
 
 	/* Cleanup sb2 */
 	super_block_dirent_release(sb2, reffs_life_action_death);
+	super_block_drain(sb2);
 	super_block_put(sb2);
 }
 END_TEST

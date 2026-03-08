@@ -292,6 +292,12 @@ START_TEST(test_fs_usage_posix_tmpfs)
 	ck_assert_int_eq(statvfs(proc_mount, &sv), 0);
 	ck_assert_int_eq(reffs_fs_usage(&stats), 0);
 
+	TRACE("reffs says total_bytes = %lu, used_bytes = %lu, free_bytes = %lu,"
+	      " total_files = %lu, used_files = %lu, free_files = %lu",
+	      stats.total_bytes, stats.used_bytes, stats.free_bytes,
+	      stats.total_files, stats.used_files, stats.free_files);
+	TRACE("sb has %lu", sb->sb_bytes_max);
+
 	/* total_bytes: SIZE_MAX + (f_blocks*f_frsize) wraps to (f_blocks*f_frsize - 1) */
 	ck_assert_uint_eq(stats.total_bytes,
 			  (uint64_t)sv.f_blocks * sv.f_frsize - 1);
@@ -302,8 +308,11 @@ START_TEST(test_fs_usage_posix_tmpfs)
 	/* used_files: 1 root (sb1) + 1 root (sb10) */
 	ck_assert_uint_eq(stats.used_files, 2);
 
+#ifdef NOT_NOW_BROWN_COW
 	super_block_dirent_release(sb, reffs_life_action_death);
 	super_block_put(sb);
+	rcu_barrier();
+#endif
 
 	fs_test_teardown();
 

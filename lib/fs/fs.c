@@ -803,9 +803,12 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 		if (rd) {
 			rd->rd_cookie = cookie;
 			rd->rd_inode = inode_alloc(sb, ino);
-			if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode)) {
-				rd->rd_inode->i_parent = rd;
-				recover_directory_recursive(rd);
+			if (rd->rd_inode) {
+				if (S_ISDIR(rd->rd_inode->i_mode)) {
+					rd->rd_inode->i_parent = rd;
+					recover_directory_recursive(rd);
+				}
+				inode_active_put(rd->rd_inode);
 			}
 			dirent_put(rd);
 		}

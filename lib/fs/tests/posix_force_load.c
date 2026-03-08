@@ -51,7 +51,7 @@ START_TEST(test_posix_force_load)
 	ck_assert_uint_eq(inode->i_mode, S_IFREG | 0644);
 	ck_assert_int_eq(inode->i_size, 100);
 
-	inode_put(inode);
+	inode_active_put(inode);
 	test_teardown(&ctx);
 }
 END_TEST

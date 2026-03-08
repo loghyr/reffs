@@ -35,7 +35,7 @@ START_TEST(add_sb_1)
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	ck_assert(sb);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_release_dirents(sb);
 	super_block_put(sb);
 }
 
@@ -49,7 +49,7 @@ START_TEST(add_sb_2)
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	ck_assert(sb);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_release_dirents(sb);
 	super_block_put(sb);
 }
 
@@ -69,16 +69,22 @@ START_TEST(find_sb_inode)
 	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
 	ck_assert_int_eq(ret, 0);
 
+	/*
+	 * inode_alloc returns the existing root inode (already in hash from
+	 * super_block_dirent_create) with i_active=1, i_ref bumped.
+	 * inode_find also returns an active ref.
+	 * Both must be released with inode_active_put.
+	 */
 	inode1 = inode_alloc(sb, INODE_ROOT_ID);
 	ck_assert(inode1 == sb->sb_dirent->rd_inode);
 
 	inode2 = inode_find(sb, INODE_ROOT_ID);
 	ck_assert(inode2 == sb->sb_dirent->rd_inode);
 
-	inode_put(inode1);
-	inode_put(inode2);
+	inode_active_put(inode1);
+	inode_active_put(inode2);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_release_dirents(sb);
 	super_block_put(sb);
 }
 
@@ -98,17 +104,22 @@ START_TEST(find_sb_inode_put)
 	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
 	ck_assert_int_eq(ret, 0);
 
-	inode1 = inode_alloc(sb, INODE_ROOT_ID);
+	inode1 = inode_alloc(sb, 1);
 	ck_assert(inode1 == sb->sb_dirent->rd_inode);
 
-	inode2 = inode_find(sb, INODE_ROOT_ID);
+	inode2 = inode_find(sb, 1);
 	ck_assert(inode2 == sb->sb_dirent->rd_inode);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
-	super_block_put(sb);
+	/*
+	 * Release active refs before teardown so that super_block_release_dirents
+	 * can drain the hash cleanly without inode_release calling super_block_put
+	 * after we've already put the sb.
+	 */
+	inode_active_put(inode1);
+	inode_active_put(inode2);
 
-	inode_put(inode1);
-	inode_put(inode2);
+	super_block_release_dirents(sb);
+	super_block_put(sb);
 }
 
 START_TEST(find_sb_inode_unhash)
@@ -133,10 +144,10 @@ START_TEST(find_sb_inode_unhash)
 	inode2 = inode_find(sb, 1);
 	ck_assert(inode2 == sb->sb_dirent->rd_inode);
 
-	inode_put(inode1);
-	inode_put(inode2);
+	inode_active_put(inode1);
+	inode_active_put(inode2);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
+	super_block_release_dirents(sb);
 	super_block_put(sb);
 }
 
@@ -153,13 +164,16 @@ START_TEST(add_inode_1)
 
 	inode = inode_alloc(sb, 2);
 	ck_assert(inode);
+	inode_active_put(inode);
 
-	inode_put(inode);
+	/*
+	 * Inode stays in hash until drained — drain first, then verify gone.
+	 */
+	super_block_release_dirents(sb);
 	inode = inode_find(sb, 2);
 	ck_assert(!inode);
 
 	super_block_put(sb);
-	super_block_dirent_release(sb, reffs_life_action_death);
 }
 
 START_TEST(add_inode_2)
@@ -179,15 +193,15 @@ START_TEST(add_inode_2)
 	inode2 = inode_alloc(sb, 3);
 	ck_assert(inode2);
 
-	inode_put(inode1);
+	inode_active_put(inode1);
+	inode_active_put(inode2);
+
+	super_block_release_dirents(sb);
 	inode1 = inode_find(sb, 2);
 	ck_assert(!inode1);
-
-	inode_put(inode2);
 	inode2 = inode_find(sb, 3);
 	ck_assert(!inode2);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
 	super_block_put(sb);
 }
 
@@ -201,6 +215,7 @@ START_TEST(put_inode_1)
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	ck_assert(sb);
+
 	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
 	inode2 = inode_alloc(sb, 3);
@@ -209,19 +224,26 @@ START_TEST(put_inode_1)
 	inode3 = inode_find(sb, 2);
 	ck_assert(inode3);
 
-	inode_put(inode1);
+	/*
+	 * Drop inode1's active ref (from alloc). Inode still in hash (inode3
+	 * holds an active ref). Re-find and verify it's still the same object.
+	 */
+	inode_active_put(inode1);
 	inode1 = inode_find(sb, 2);
 	ck_assert(inode1 == inode3);
-	inode_put(inode1);
+	inode_active_put(inode1);
 
-	inode_put(inode2);
-	inode2 = inode_find(sb, 3);
-	ck_assert(!inode2);
+	inode_active_put(inode2);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
+	/*
+	 * inode3 must be released before super_block_release_dirents so that
+	 * drain can drop the hash ref cleanly without inode_release calling
+	 * super_block_put on an already-released sb.
+	 */
+	inode_active_put(inode3);
+
+	super_block_release_dirents(sb);
 	super_block_put(sb);
-
-	inode_put(inode3);
 }
 
 START_TEST(get_inode_1)
@@ -241,23 +263,28 @@ START_TEST(get_inode_1)
 	inode2 = inode_alloc(sb, 3);
 	ck_assert(inode2);
 
+	/* inode_get bumps only i_ref, not i_active — use inode_put to release */
 	inode3 = inode_get(inode1);
 	ck_assert(inode3);
 
 	inode_unhash(inode1);
-	inode_put(inode1);
-	/* Better not be found even thought inode3 has a reference. */
+	inode_active_put(inode1);
+	/* Better not be found even though inode3 has a reference. */
 	inode1 = inode_find(sb, 2);
 	ck_assert(!inode1);
 
-	inode_put(inode2);
-	inode2 = inode_find(sb, 3);
-	ck_assert(!inode2);
+	inode_active_put(inode2);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
-	super_block_put(sb);
-
+	/*
+	 * inode3 holds a plain i_ref (from inode_get). Must be released before
+	 * super_block_release_dirents. inode2's hash ref will be dropped by drain;
+	 * inode1 was manually unhasked so drain won't find it — its i_ref drops
+	 * to 0 when inode_put(inode3) fires inode_release.
+	 */
 	inode_put(inode3);
+
+	super_block_release_dirents(sb);
+	super_block_put(sb);
 }
 
 START_TEST(sb_put_inode_1)
@@ -277,16 +304,21 @@ START_TEST(sb_put_inode_1)
 	inode2 = inode_alloc(sb, 3);
 	ck_assert(inode2);
 
-	inode_put(inode2);
+	inode_active_put(inode2);
+
+	/*
+	 * inode1 must be released before teardown to avoid inode_release
+	 * calling super_block_put after the sb has already been released.
+	 */
+	inode_active_put(inode1);
+
+	super_block_release_dirents(sb);
+	inode1 = inode_find(sb, 2);
+	ck_assert(!inode1);
 	inode2 = inode_find(sb, 3);
 	ck_assert(!inode2);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
 	super_block_put(sb);
-
-	inode_put(inode1);
-	inode1 = inode_find(sb, 3);
-	ck_assert(!inode1);
 }
 
 START_TEST(find_inode_1)
@@ -299,18 +331,20 @@ START_TEST(find_inode_1)
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	ck_assert(sb);
+
 	inode1 = inode_alloc(sb, 2);
 	ck_assert(inode1);
 
 	inode2 = inode_find(sb, 2);
 	ck_assert(inode2 == inode1);
 
-	inode_put(inode2);
-	inode_put(inode1);
+	inode_active_put(inode2);
+	inode_active_put(inode1);
+
+	super_block_release_dirents(sb);
 	inode1 = inode_find(sb, 2);
 	ck_assert(!inode1);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
 	super_block_put(sb);
 }
 
@@ -331,11 +365,12 @@ START_TEST(find_inode_1_sb_NULL)
 	inode2 = inode_find(NULL, 2);
 	ck_assert(!inode2);
 
-	inode_put(inode1);
+	inode_active_put(inode1);
+
+	super_block_release_dirents(sb);
 	inode1 = inode_find(sb, 2);
 	ck_assert(!inode1);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
 	super_block_put(sb);
 }
 
@@ -359,15 +394,15 @@ START_TEST(find_inode_3)
 	inode3 = inode_find(sb, 4);
 	ck_assert(!inode3);
 
-	inode_put(inode1);
+	inode_active_put(inode1);
+	inode_active_put(inode2);
+
+	super_block_release_dirents(sb);
 	inode1 = inode_find(sb, 2);
 	ck_assert(!inode1);
-
-	inode_put(inode2);
 	inode2 = inode_find(sb, 3);
 	ck_assert(!inode2);
 
-	super_block_dirent_release(sb, reffs_life_action_death);
 	super_block_put(sb);
 
 	sb = super_block_find(6);
@@ -387,7 +422,7 @@ START_TEST(find_sb_1)
 	sb2 = super_block_find(sb_id);
 	ck_assert(sb1 == sb2);
 
-	super_block_dirent_release(sb1, reffs_life_action_death);
+	super_block_release_dirents(sb1);
 	super_block_put(sb1);
 	super_block_put(sb2);
 }

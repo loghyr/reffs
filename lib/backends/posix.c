@@ -101,6 +101,7 @@ static void posix_inode_sync(struct inode *inode)
 	meta.id.id_ctime = inode->i_ctime;
 	meta.id.id_mtime = inode->i_mtime;
 	meta.id.id_attr_flags = inode->i_attr_flags;
+	meta.id.id_parent_ino = inode->i_parent_ino; /* NEW */
 
 	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd >= 0) {
@@ -151,11 +152,11 @@ static int posix_db_alloc(struct data_block *db, struct inode *inode,
 	struct super_block *sb = inode->i_sb;
 	struct posix_sb_private *sb_priv = sb->sb_storage_private;
 	if (!sb_priv)
-		return EINVAL;
+		return -EINVAL;
 
 	struct posix_db_private *priv = calloc(1, sizeof(*priv));
 	if (!priv)
-		return ENOMEM;
+		return -ENOMEM;
 
 	char path[1024];
 	snprintf(path, sizeof(path), "%s/ino_%lu.dat", sb_priv->sb_dir,
@@ -167,7 +168,7 @@ static int posix_db_alloc(struct data_block *db, struct inode *inode,
 		LOG("Failed to open %s: %s", path, strerror(errno));
 		free(priv->db_path);
 		free(priv);
-		return errno;
+		return -errno;
 	}
 
 	if (size == 0) {
@@ -320,7 +321,11 @@ static void posix_dir_sync(struct inode *inode)
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings) {
 		uint64_t cookie = rd->rd_cookie;
-		uint64_t ino = rd->rd_inode ? rd->rd_inode->i_ino : 0;
+		/*
+		 * Use rd_ino (authoritative) rather than rd_inode->i_ino
+		 * so we can write even if rd_inode was evicted.
+		 */
+		uint64_t ino = rd->rd_ino;
 		uint16_t name_len = strlen(rd->rd_name);
 
 		if (write(fd, &cookie, sizeof(cookie)) != sizeof(cookie))
@@ -342,12 +347,22 @@ static void posix_dir_sync(struct inode *inode)
 	}
 }
 
-static int posix_inode_alloc(struct inode *inode)
+/*
+ * inode_load_from_disk -- previously posix_inode_alloc.
+ *
+ * Called by the storage backend's inode_alloc hook after the inode has
+ * already been inserted into sb_inodes by inode_alloc().  Its job is to
+ * populate the inode fields from the on-disk .meta file.
+ *
+ * If no .meta file exists this is a brand-new inode; return 0 and let the
+ * caller set fields (mode, nlink, etc.) as needed.
+ */
+static int inode_load_from_disk(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct posix_sb_private *sb_priv = sb->sb_storage_private;
 	if (!sb_priv)
-		return EINVAL;
+		return -EINVAL;
 
 	struct inode_disk id;
 	struct reffs_disk_header hdr;
@@ -359,31 +374,31 @@ static int posix_inode_alloc(struct inode *inode)
 	int fd = open(path, O_RDONLY);
 	if (fd < 0) {
 		if (errno == ENOENT)
-			return 0; // New inode
-		return errno;
+			return 0; /* New inode, nothing to load */
+		return -errno;
 	}
 
 	if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
 		close(fd);
-		return EIO;
+		return -EIO;
 	}
 
 	if (hdr.rdh_magic != REFFS_DISK_MAGIC_META) {
 		LOG("Invalid magic 0x%x for %s", hdr.rdh_magic, path);
 		close(fd);
-		return EINVAL;
+		return -EINVAL;
 	}
 
 	if (hdr.rdh_version != REFFS_DISK_VERSION_1) {
 		LOG("Unsupported meta version %u for %s", hdr.rdh_version,
 		    path);
 		close(fd);
-		return EOPNOTSUPP;
+		return -EOPNOTSUPP;
 	}
 
 	if (read(fd, &id, sizeof(id)) != sizeof(id)) {
 		close(fd);
-		return EIO;
+		return -EIO;
 	}
 	close(fd);
 
@@ -396,11 +411,12 @@ static int posix_inode_alloc(struct inode *inode)
 	inode->i_ctime = id.id_ctime;
 	inode->i_mtime = id.id_mtime;
 	inode->i_attr_flags = id.id_attr_flags;
+	inode->i_parent_ino = id.id_parent_ino; /* NEW */
 
 	if (inode->i_ino >= sb->sb_next_ino)
 		sb->sb_next_ino = inode->i_ino + 1;
 
-	// Also check if data file exists
+	/* Re-open the data file if it exists. */
 	snprintf(path, sizeof(path), "%s/ino_%lu.dat", sb_priv->sb_dir,
 		 inode->i_ino);
 	if (!inode->i_db && access(path, F_OK) == 0) {
@@ -422,7 +438,7 @@ static int posix_inode_alloc(struct inode *inode)
 		}
 	}
 
-	// Also check if symlink file exists
+	/* Re-load symlink target if it exists. */
 	snprintf(path, sizeof(path), "%s/ino_%lu.lnk", sb_priv->sb_dir,
 		 inode->i_ino);
 	if (!inode->i_symlink && access(path, F_OK) == 0) {
@@ -448,6 +464,164 @@ static int posix_inode_alloc(struct inode *inode)
 	}
 
 	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Directory scan helpers                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * posix_dir_open -- open and validate a .dir file for dir_ino.
+ * On success *fd_out is a readable fd positioned just after the header
+ * and cookie_next field.  Caller must close(*fd_out).
+ * Returns 0, ENOENT (file missing), or another errno.
+ */
+static int posix_dir_open(struct super_block *sb, uint64_t dir_ino, int *fd_out)
+{
+	struct posix_sb_private *sb_priv = sb->sb_storage_private;
+	if (!sb_priv)
+		return -EINVAL;
+
+	char path[1024];
+	snprintf(path, sizeof(path), "%s/ino_%lu.dir", sb_priv->sb_dir,
+		 dir_ino);
+
+	int fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return -errno; /* ENOENT if evicted before first dir_sync */
+
+	struct reffs_disk_header hdr;
+	if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+		close(fd);
+		return -EIO;
+	}
+	if (hdr.rdh_magic != REFFS_DISK_MAGIC_DIR) {
+		LOG("Bad magic 0x%x in %s", hdr.rdh_magic, path);
+		close(fd);
+		return -EINVAL;
+	}
+	if (hdr.rdh_version != REFFS_DISK_VERSION_1) {
+		LOG("Unsupported dir version %u in %s", hdr.rdh_version, path);
+		close(fd);
+		return -EOPNOTSUPP;
+	}
+
+	/* Skip cookie_next */
+	uint64_t cookie_next;
+	if (read(fd, &cookie_next, sizeof(cookie_next)) !=
+	    sizeof(cookie_next)) {
+		close(fd);
+		return -EIO;
+	}
+
+	*fd_out = fd;
+	return 0;
+}
+
+/*
+ * posix_dir_find_entry_by_ino -- scan dir_ino's .dir file for child_ino.
+ *
+ * Wire format per entry: uint64_t cookie, uint64_t ino,
+ *                        uint16_t name_len, char name[name_len]
+ */
+static int posix_dir_find_entry_by_ino(struct super_block *sb, uint64_t dir_ino,
+				       uint64_t child_ino, char *name_out,
+				       size_t name_max, uint64_t *cookie_out)
+{
+	int fd;
+	int err = posix_dir_open(sb, dir_ino, &fd);
+	if (err)
+		return err;
+
+	err = -ENOENT;
+	for (;;) {
+		uint64_t cookie, ino;
+		uint16_t name_len;
+
+		if (read(fd, &cookie, sizeof(cookie)) != sizeof(cookie))
+			break; /* EOF or error */
+		if (read(fd, &ino, sizeof(ino)) != sizeof(ino))
+			break;
+		if (read(fd, &name_len, sizeof(name_len)) != sizeof(name_len))
+			break;
+
+		if (name_len > REFFS_MAX_NAME) {
+			LOG("corrupt name_len %u in dir ino %lu", name_len,
+			    dir_ino);
+			err = -EIO;
+			break;
+		}
+
+		char name_buf[REFFS_MAX_NAME + 1];
+		if (read(fd, name_buf, name_len) != name_len)
+			break;
+		name_buf[name_len] = '\0';
+
+		if (ino == child_ino) {
+			size_t copy = name_len < name_max - 1 ? name_len :
+								name_max - 1;
+			memcpy(name_out, name_buf, copy);
+			name_out[copy] = '\0';
+			*cookie_out = cookie;
+			err = 0;
+			break;
+		}
+	}
+
+	close(fd);
+	return err;
+}
+
+/*
+ * posix_dir_find_entry_by_name -- scan dir_ino's .dir file for 'name'.
+ */
+static int posix_dir_find_entry_by_name(struct super_block *sb,
+					uint64_t dir_ino, const char *name,
+					uint64_t *child_ino_out,
+					uint64_t *cookie_out)
+{
+	int fd;
+	int err = posix_dir_open(sb, dir_ino, &fd);
+	if (err)
+		return err;
+
+	size_t target_len = strlen(name);
+	err = -ENOENT;
+
+	for (;;) {
+		uint64_t cookie, ino;
+		uint16_t name_len;
+
+		if (read(fd, &cookie, sizeof(cookie)) != sizeof(cookie))
+			break;
+		if (read(fd, &ino, sizeof(ino)) != sizeof(ino))
+			break;
+		if (read(fd, &name_len, sizeof(name_len)) != sizeof(name_len))
+			break;
+
+		if (name_len > REFFS_MAX_NAME) {
+			LOG("corrupt name_len %u in dir ino %lu", name_len,
+			    dir_ino);
+			err = -EIO;
+			break;
+		}
+
+		char name_buf[REFFS_MAX_NAME + 1];
+		if (read(fd, name_buf, name_len) != name_len)
+			break;
+		name_buf[name_len] = '\0';
+
+		if (name_len == target_len &&
+		    memcmp(name_buf, name, target_len) == 0) {
+			*child_ino_out = ino;
+			*cookie_out = cookie;
+			err = 0;
+			break;
+		}
+	}
+
+	close(fd);
+	return err;
 }
 
 static void posix_inode_free(struct inode *inode)
@@ -481,7 +655,7 @@ const struct reffs_storage_ops posix_storage_ops = {
 	.name = "posix",
 	.sb_alloc = posix_sb_alloc,
 	.sb_free = posix_sb_free,
-	.inode_alloc = posix_inode_alloc,
+	.inode_alloc = inode_load_from_disk, /* renamed */
 	.inode_free = posix_inode_free,
 	.inode_sync = posix_inode_sync,
 	.db_alloc = posix_db_alloc,
@@ -492,4 +666,6 @@ const struct reffs_storage_ops posix_storage_ops = {
 	.db_resize = posix_db_resize,
 	.db_get_size = posix_db_get_size,
 	.dir_sync = posix_dir_sync,
+	.dir_find_entry_by_ino = posix_dir_find_entry_by_ino,
+	.dir_find_entry_by_name = posix_dir_find_entry_by_name,
 };

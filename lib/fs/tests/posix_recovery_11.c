@@ -78,7 +78,7 @@ START_TEST(test_sb_bytes_used_accounting)
 	ck_assert_uint_eq(data_block_get_size(i2->i_db), 100);
 	ck_assert_int_eq(i2->i_size, 100);
 	ck_assert_uint_eq(i2->i_used, (100 + block_size - 1) / block_size);
-	inode_put(i2);
+	inode_active_put(i2);
 
 	struct inode *i3 = inode_find(ctx.sb, 3);
 	ck_assert(i3 != NULL);
@@ -86,7 +86,7 @@ START_TEST(test_sb_bytes_used_accounting)
 	ck_assert_uint_eq(data_block_get_size(i3->i_db), 5000);
 	ck_assert_int_eq(i3->i_size, 5000);
 	ck_assert_uint_eq(i3->i_used, (5000 + block_size - 1) / block_size);
-	inode_put(i3);
+	inode_active_put(i3);
 
 	/*
 	 * sb_bytes_used is in raw bytes (not block-rounded) — it tracks the

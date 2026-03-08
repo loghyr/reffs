@@ -64,7 +64,7 @@ START_TEST(test_symlink_missing_lnk_file)
 	 */
 	ck_assert(inode->i_symlink == NULL);
 
-	inode_put(inode);
+	inode_active_put(inode);
 	test_teardown(&ctx);
 }
 END_TEST

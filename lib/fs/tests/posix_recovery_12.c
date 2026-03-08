@@ -85,7 +85,7 @@ START_TEST(test_stray_tmp_ignored)
 	inode_sync_to_disk(inode);
 	ck_assert_int_ne(access(tmp_path, F_OK), 0); /* must not exist */
 
-	inode_put(inode);
+	inode_active_put(inode);
 	test_teardown(&ctx);
 }
 END_TEST

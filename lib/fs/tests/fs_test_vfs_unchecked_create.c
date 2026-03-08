@@ -104,8 +104,8 @@ START_TEST(test_vfs_create_unchecked_truncate)
 	/* Compare memory - should be all 'B' */
 	ck_assert_mem_eq(readbuf, buf, sizeof(buf));
 
-	inode_put(file);
-	inode_put(dir);
+	inode_active_put(file);
+	inode_active_put(dir);
 	super_block_put(sb);
 }
 END_TEST
@@ -164,8 +164,8 @@ START_TEST(test_vfs_write_gap_zero_fill)
 			      readbuf[i]);
 	}
 
-	inode_put(file);
-	inode_put(dir);
+	inode_active_put(file);
+	inode_active_put(dir);
 	super_block_put(sb);
 }
 END_TEST

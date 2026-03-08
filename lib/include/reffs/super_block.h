@@ -20,6 +20,13 @@
 
 #define SUPER_BLOCK_ROOT_ID (1)
 
+/*
+ * LRU limits -- tunable, but these are reasonable defaults.
+ * Eviction kicks in when the respective count exceeds the max.
+ */
+#define SB_INODE_LRU_MAX_DEFAULT (1024 * 64)
+#define SB_DIRENT_LRU_MAX_DEFAULT (1024 * 256)
+
 struct super_block {
 	struct rcu_head sb_rcu;
 	struct urcu_ref sb_ref;
@@ -51,6 +58,18 @@ struct super_block {
 
 	size_t sb_block_size;
 
+	/* Inode LRU -- inodes with i_active == 0 live here */
+	struct cds_list_head sb_inode_lru;
+	pthread_mutex_t sb_inode_lru_lock;
+	size_t sb_inode_lru_count;
+	size_t sb_inode_lru_max;
+
+	/* Dirent LRU -- dirents with rd_active == 0 and no children live here */
+	struct cds_list_head sb_dirent_lru;
+	pthread_mutex_t sb_dirent_lru_lock;
+	size_t sb_dirent_lru_count;
+	size_t sb_dirent_lru_max;
+
 #define SB_IN_LIST (1ULL << 0)
 #define SB_IS_READ_ONLY (1ULL << 1)
 #define SB_IS_MOUNTED (1ULL << 2)
@@ -70,5 +89,12 @@ void super_block_dirent_release(struct super_block *sb,
 				enum reffs_life_action rla);
 
 struct cds_list_head *super_block_list_head(void);
+
+void super_block_release_dirents(struct super_block *sb);
+
+/* Evict up to 'count' idle inodes / dirents from the LRU. */
+void super_block_evict_inodes(struct super_block *sb, size_t count);
+void super_block_evict_dirents(struct super_block *sb, size_t count);
+void super_block_drain(struct super_block *sb);
 
 #endif /* _REFFS_SB_H */

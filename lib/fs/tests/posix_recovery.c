@@ -45,8 +45,9 @@ int test_setup(struct test_context *ctx)
 void test_teardown(struct test_context *ctx)
 {
 	if (ctx->sb) {
-		super_block_dirent_release(ctx->sb, reffs_life_action_death);
+		super_block_release_dirents(ctx->sb);
 		super_block_put(ctx->sb);
+		ctx->sb = NULL;
 	}
 
 	/* Recursive delete of temp dir */

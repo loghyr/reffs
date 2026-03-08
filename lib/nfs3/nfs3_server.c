@@ -109,19 +109,19 @@ static int directory_inode_find(struct super_block *sb, uint64_t ino,
 	}
 
 	if (!(S_ISDIR(inode->i_mode))) {
-		inode_put(inode);
+		inode_active_put(inode);
 		return -ENOTDIR;
 	}
 
 	ret = inode_access_check(inode, ap, X_OK);
 	if (ret) {
-		inode_put(inode);
+		inode_active_put(inode);
 		return ret;
 	}
 
 	ret = inode_access_check(inode, ap, mode);
 	if (ret) {
-		inode_put(inode);
+		inode_active_put(inode);
 		return ret;
 	}
 
@@ -181,7 +181,7 @@ static int nfs3_op_getattr(struct rpc_trans *rt)
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -304,7 +304,7 @@ update_wcc_nolock:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -393,8 +393,8 @@ static int nfs3_op_lookup(struct rpc_trans *rt)
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(exists);
-	inode_put(inode);
+	inode_active_put(exists);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -491,7 +491,7 @@ static int nfs3_op_access(struct rpc_trans *rt)
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -573,7 +573,7 @@ static int nfs3_op_readlink(struct rpc_trans *rt)
 out:
 	res->status = errno_to_nfs3(ret);
 	free(name);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -681,7 +681,7 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -846,7 +846,7 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -1040,8 +1040,8 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(new_inode);
-	inode_put(inode);
+	inode_active_put(new_inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -1148,8 +1148,8 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(new_inode);
-	inode_put(inode);
+	inode_active_put(new_inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -1266,8 +1266,8 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(new_inode);
-	inode_put(inode);
+	inode_active_put(new_inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -1411,8 +1411,8 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(new_inode);
-	inode_put(inode);
+	inode_active_put(new_inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -1490,7 +1490,7 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -1568,7 +1568,7 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -1690,8 +1690,8 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode_src);
-	inode_put(inode_dst);
+	inode_active_put(inode_src);
+	inode_active_put(inode_dst);
 	super_block_put(sb);
 	return res->status;
 }
@@ -1793,8 +1793,8 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
-	inode_put(inode_dir);
+	inode_active_put(inode);
+	inode_active_put(inode_dir);
 	super_block_put(sb);
 	return res->status;
 }
@@ -2029,7 +2029,7 @@ update_wcc:
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -2379,7 +2379,7 @@ update_wcc:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -2453,7 +2453,7 @@ static int nfs3_op_fsstat(struct rpc_trans *rt)
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -2528,7 +2528,7 @@ static int nfs3_op_fsinfo(struct rpc_trans *rt)
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -2598,7 +2598,7 @@ static int nfs3_op_pathconf(struct rpc_trans *rt)
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }
@@ -2679,7 +2679,7 @@ static int nfs3_op_commit(struct rpc_trans *rt)
 
 out:
 	res->status = errno_to_nfs3(ret);
-	inode_put(inode);
+	inode_active_put(inode);
 	super_block_put(sb);
 	return res->status;
 }

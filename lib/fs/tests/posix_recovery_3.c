@@ -73,7 +73,7 @@ START_TEST(test_nlink_restoration)
 	 */
 	ck_assert(inode->i_db == NULL);
 
-	inode_put(inode);
+	inode_active_put(inode);
 
 	test_teardown(&ctx);
 }
