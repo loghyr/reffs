@@ -92,7 +92,7 @@ int find_matching_directory_entry(struct name_match **nm, const char *path,
 
 	*nm = NULL;
 
-	sb = super_block_find(1);
+	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	if (!sb)
 		return -ENODEV;
 

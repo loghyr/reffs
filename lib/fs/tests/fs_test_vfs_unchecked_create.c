@@ -37,7 +37,7 @@ START_TEST(test_vfs_create_unchecked_truncate)
 	char readbuf[1024];
 	struct reffs_sattr rs;
 
-	sb = super_block_find(1);
+	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(sb);
 	dir = inode_find(sb, 1);
 	ck_assert_ptr_nonnull(dir);
@@ -121,7 +121,7 @@ START_TEST(test_vfs_write_gap_zero_fill)
 	char buf[1024];
 	char readbuf[2048];
 
-	sb = super_block_find(1);
+	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	dir = inode_find(sb, 1);
 
 	struct reffs_context *ctx = reffs_get_context();

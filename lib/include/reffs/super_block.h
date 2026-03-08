@@ -18,6 +18,8 @@
 #include "reffs/types.h"
 #include "reffs/backend.h"
 
+#define SUPER_BLOCK_ROOT_ID (1)
+
 struct super_block {
 	struct rcu_head sb_rcu;
 	struct urcu_ref sb_ref;

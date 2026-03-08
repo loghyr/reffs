@@ -49,7 +49,7 @@ START_TEST(test_nlm_basic_lock_unlock)
 	struct nlm4_unlockargs uargs;
 	char *oh = "owner1";
 
-	sb = super_block_find(1);
+	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	inode = inode_find(sb, 1); /* Root inode */
 
 	init_lockargs(&args, oh, 6, "client1", 0, 100, true);
@@ -75,7 +75,7 @@ START_TEST(test_nlm_conflicting_locks)
 	struct nlm4_lockargs args1, args2;
 	struct nlm4_unlockargs uargs;
 
-	sb = super_block_find(1);
+	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	inode = inode_find(sb, 1);
 
 	/* Client 1 takes an exclusive lock on 0-100 */
@@ -113,7 +113,7 @@ START_TEST(test_nlm_shared_locks)
 	struct nlm4_lockargs args1, args2;
 	struct nlm4_unlockargs uargs;
 
-	sb = super_block_find(1);
+	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	inode = inode_find(sb, 1);
 
 	/* Client 1 takes shared lock on 0-100 */
