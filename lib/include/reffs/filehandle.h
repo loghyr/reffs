@@ -36,8 +36,9 @@ static inline bool network_file_handles_equal(struct network_file_handle *a,
 
 static inline bool network_file_handle_empty(struct network_file_handle *nfh)
 {
-	return a->nfh_sb == 0 && a->nfh_ino == 0 && a->nfh_reserved_1 == 0 &&
-	       a->nfh_reserved_2 == 0 && a->nfh_reserved_3 == 0;
+	return nfh->nfh_sb == 0 && nfh->nfh_ino == 0 &&
+	       nfh->nfh_reserved_1 == 0 && nfh->nfh_reserved_2 == 0 &&
+	       nfh->nfh_reserved_3 == 0;
 }
 
 struct network_file_handle *network_file_handle_construct(uint64_t sbi,
