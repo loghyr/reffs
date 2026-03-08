@@ -240,7 +240,7 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd)
 		return inode;
 
 	/* Miss: rd_inode was evicted.  Reload by ino number. */
-	if (!rd->rd_ino || !rd->rd_inode /* was set */) {
+	if (!rd->rd_ino) {
 		/*
 		 * rd_ino == 0 means the dirent was never fully attached
 		 * (e.g. mid-construction).
@@ -249,11 +249,13 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd)
 	}
 
 	/*
-	 * Find the superblock through the parent chain.  We walk up until we
+	 * Find the superblock through the parent chain.  Walk up until we
 	 * hit a dirent whose inode is still resident, then use its sb.
+	 * Start with rd itself (covers sb_dirent where rd_parent is NULL),
+	 * then walk up via rd_parent.
 	 */
 	struct super_block *sb = NULL;
-	struct reffs_dirent *p = rd->rd_parent;
+	struct reffs_dirent *p = rd;
 	while (p && !sb) {
 		rcu_read_lock();
 		if (p->rd_inode)
@@ -270,8 +272,7 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd)
 	inode = inode_alloc(sb, rd->rd_ino);
 	if (inode) {
 		/*
-		 * Re-attach the weak pointer so the next fast-path hits.
-		 * This is a benign race: worst case two threads both set it
+		 * Re-attach the weak pointer so the next fast-path hits.\n		 * This is a benign race: worst case two threads both set it
 		 * to the same value.
 		 */
 		rd->rd_inode = inode;

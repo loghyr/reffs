@@ -1854,12 +1854,20 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 	}
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
-	pthread_rwlock_rdlock(&inode->i_parent->rd_rwlock);
+
+	/*
+	 * dir_de is the dirent that owns this directory inode.
+	 * For the root inode i_parent is NULL; fall back to sb_dirent.
+	 */
+	struct reffs_dirent *dir_de = inode->i_parent ? inode->i_parent :
+							sb->sb_dirent;
+	bool dir_de_rdlocked = true;
+	pthread_rwlock_rdlock(&dir_de->rd_rwlock);
 
 	/* Determine parent ino for .. entry */
 	uint64_t parent_ino =
-		(inode->i_parent && inode->i_parent->rd_parent) ?
-			inode->i_parent->rd_parent->rd_inode->i_ino :
+		(dir_de->rd_parent && dir_de->rd_parent->rd_inode) ?
+			dir_de->rd_parent->rd_inode->i_ino :
 			inode->i_ino; /* root: .. points to self */
 
 	dl = &resok->reply;
@@ -1952,64 +1960,118 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 		e_next = e;
 	}
 
+	/*
+	 * Phase 1: snapshot dirent identity fields under rcu_read_lock.
+	 * rd_siblings is RCU-protected; we may not call dirent_ensure_inode
+	 * (which can block on I/O) while holding the read-side lock.
+	 */
+	struct {
+		struct reffs_dirent *rd;
+		uint64_t rd_ino;
+		uint64_t rd_cookie;
+		char *rd_name;
+	} *snap = NULL;
+	size_t snap_count = 0, snap_cap = 0;
+
 	rcu_read_lock();
 	{
 		struct reffs_dirent *rd;
-		cds_list_for_each_entry_rcu(
-			rd, &inode->i_parent->rd_inode->i_children,
-			rd_siblings) {
+		cds_list_for_each_entry_rcu(rd, &inode->i_children,
+					    rd_siblings) {
 			if (rd->rd_cookie <= cookie)
 				continue;
-
-			entry3 *e = calloc(1, sizeof(*e));
-			if (!e) {
-				if (!dl->entries) {
-					free(dl);
+			if (snap_count == snap_cap) {
+				size_t new_cap = snap_cap ? snap_cap * 2 : 16;
+				void *tmp =
+					realloc(snap, new_cap * sizeof(*snap));
+				if (!tmp) {
+					rcu_read_unlock();
+					free(snap);
 					ret = -EJUKEBOX;
 					poa = &res->READDIR3res_u.resfail
 						       .dir_attributes;
-					rcu_read_unlock();
 					goto update_wcc;
 				}
-
-				break;
+				snap = tmp;
+				snap_cap = new_cap;
 			}
-
-			e->fileid = rd->rd_inode->i_ino;
-			e->cookie = rd->rd_cookie;
-			e->name = strdup(rd->rd_name);
-			if (!e->name) {
-				free(e);
-				if (!dl->entries) {
-					free(dl);
-					ret = -EJUKEBOX;
-					poa = &res->READDIR3res_u.resfail
-						       .dir_attributes;
-					rcu_read_unlock();
-					goto update_wcc;
-				}
-
-				break;
-			}
-
-			count += sizeof(*e) + strlen(e->name) + 1;
-			if (count > args->count) {
-				free(e->name);
-				free(e);
-				rcu_read_unlock();
-				goto past_eof;
-			}
-
-			if (!dl->entries) {
-				dl->entries = e;
-			} else {
-				e_next->nextentry = e;
-			}
-
-			e_next = e;
+			snap[snap_count].rd = rd;
+			snap[snap_count].rd_ino = rd->rd_ino;
+			snap[snap_count].rd_cookie = rd->rd_cookie;
+			snap[snap_count].rd_name = rd->rd_name;
+			snap_count++;
 		}
 	}
 	rcu_read_unlock();
+
+	/*
+	 * Phase 1 complete: release rd_rwlock now.  Phase 2 calls
+	 * dirent_ensure_inode which may block on inode_alloc / LRU eviction.
+	 * Holding rd_rwlock across that would deadlock against vfs_lock_dirs
+	 * (which takes rd_rwlock as a writer) in concurrent create threads.
+	 */
+	pthread_rwlock_unlock(&dir_de->rd_rwlock);
+	dir_de_rdlocked = false;
+
+	/*
+	 * Phase 2: fault in inodes and build the reply list.
+	 * dirent_ensure_inode may call inode_alloc / hit the storage
+	 * backend; safe to call here with no RCU lock held.
+	 */
+	for (size_t si = 0; si < snap_count; si++) {
+		struct inode *rd_inode = dirent_ensure_inode(snap[si].rd);
+		if (!rd_inode) {
+			free(snap);
+			ret = -EIO;
+			poa = &res->READDIR3res_u.resfail.dir_attributes;
+			goto update_wcc;
+		}
+
+		entry3 *e = calloc(1, sizeof(*e));
+		if (!e) {
+			inode_active_put(rd_inode);
+			free(snap);
+			if (!dl->entries) {
+				free(dl);
+				ret = -EJUKEBOX;
+				poa = &res->READDIR3res_u.resfail.dir_attributes;
+				goto update_wcc;
+			}
+			goto past_eof;
+		}
+
+		e->fileid = rd_inode->i_ino;
+		e->cookie = snap[si].rd_cookie;
+		e->name = strdup(snap[si].rd_name);
+		inode_active_put(rd_inode);
+		if (!e->name) {
+			free(e);
+			free(snap);
+			if (!dl->entries) {
+				free(dl);
+				ret = -EJUKEBOX;
+				poa = &res->READDIR3res_u.resfail.dir_attributes;
+				goto update_wcc;
+			}
+			goto past_eof;
+		}
+
+		count += sizeof(*e) + strlen(e->name) + 1;
+		if (count > args->count) {
+			free(e->name);
+			free(e);
+			free(snap);
+			goto past_eof;
+		}
+
+		if (!dl->entries) {
+			dl->entries = e;
+		} else {
+			e_next->nextentry = e;
+		}
+		e_next = e;
+	}
+	free(snap);
 
 	dl->eof = true;
 
@@ -2024,7 +2086,8 @@ update_wcc:
 	fa = &poa->post_op_attr_u.attributes;
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
+	if (dir_de_rdlocked)
+		pthread_rwlock_unlock(&dir_de->rd_rwlock);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
@@ -2091,14 +2154,18 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 	}
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
-	pthread_rwlock_rdlock(&inode->i_parent->rd_rwlock);
+
+	struct reffs_dirent *dir_de = inode->i_parent ? inode->i_parent :
+							sb->sb_dirent;
+	bool dir_de_rdlocked = true;
+	pthread_rwlock_rdlock(&dir_de->rd_rwlock);
 
 	dl = &resok->reply;
 
 	/* Determine parent ino for .. entry */
 	uint64_t parent_ino =
-		(inode->i_parent && inode->i_parent->rd_parent) ?
-			inode->i_parent->rd_inode->i_ino :
+		(dir_de->rd_parent && dir_de->rd_parent->rd_inode) ?
+			dir_de->rd_parent->rd_inode->i_ino :
 			inode->i_ino; /* root: .. points to self */
 
 	if (cookie == 0) {
@@ -2265,105 +2332,156 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 		e_next = e;
 	}
 
+	/*
+	 * Phase 1: snapshot dirent identity fields under rcu_read_lock.
+	 * rd_siblings is RCU-protected; we may not call dirent_ensure_inode
+	 * (which can block on I/O) while holding the read-side lock.
+	 */
+	struct {
+		struct reffs_dirent *rd;
+		uint64_t rd_ino;
+		uint64_t rd_cookie;
+		char *rd_name;
+	} *snap = NULL;
+	size_t snap_count = 0, snap_cap = 0;
+
 	rcu_read_lock();
 	{
 		struct reffs_dirent *rd;
-		cds_list_for_each_entry_rcu(
-			rd, &inode->i_parent->rd_inode->i_children,
-			rd_siblings) {
+		cds_list_for_each_entry_rcu(rd, &inode->i_children,
+					    rd_siblings) {
 			if (rd->rd_cookie < cookie)
 				continue;
-
-			entryplus3 *e = calloc(1, sizeof(*e));
-			if (!e) {
-				if (!dl->entries) {
-					free(dl);
+			if (snap_count == snap_cap) {
+				size_t new_cap = snap_cap ? snap_cap * 2 : 16;
+				void *tmp =
+					realloc(snap, new_cap * sizeof(*snap));
+				if (!tmp) {
+					rcu_read_unlock();
+					free(snap);
 					res->status = NFS3ERR_JUKEBOX;
 					poa = &res->READDIRPLUS3res_u.resfail
 						       .dir_attributes;
-					rcu_read_unlock();
 					goto update_wcc;
 				}
-
-				break;
+				snap = tmp;
+				snap_cap = new_cap;
 			}
-
-			e->fileid = rd->rd_inode->i_ino;
-			e->cookie = rd->rd_cookie;
-			e->name = strdup(rd->rd_name);
-			if (!e->name) {
-				free(e);
-				if (!dl->entries) {
-					free(dl);
-					res->status = NFS3ERR_JUKEBOX;
-					poa = &res->READDIRPLUS3res_u.resfail
-						       .dir_attributes;
-					rcu_read_unlock();
-					goto update_wcc;
-				}
-
-				break;
-			}
-
-			// With multi-sb, check for mounted on
-			nfh = network_file_handle_construct(
-				sb->sb_id, rd->rd_inode->i_ino);
-			if (!nfh) {
-				free(e->name);
-				free(e);
-
-				if (!dl->entries) {
-					free(dl);
-					res->status = NFS3ERR_JUKEBOX;
-					poa = &res->READDIRPLUS3res_u.resfail
-						       .dir_attributes;
-					rcu_read_unlock();
-					goto update_wcc;
-				}
-
-				break;
-			}
-
-			e->name_handle.post_op_fh3_u.handle.data.data_val =
-				(char *)nfh;
-			e->name_handle.post_op_fh3_u.handle.data.data_len =
-				sizeof(*nfh);
-			e->name_handle.handle_follows = true;
-
-			poa_e = &e->name_attributes;
-			poa_e->attributes_follow = true;
-			fa = &poa_e->post_op_attr_u.attributes;
-			inode_attr_to_fattr(rd->rd_inode, fa);
-
-			dircount += sizeof(*e) - sizeof(post_op_attr);
-			if (dircount > args->dircount) {
-				free(nfh);
-				free(e->name);
-				free(e);
-				rcu_read_unlock();
-				goto past_eof;
-			}
-
-			maxcount +=
-				sizeof(*e) + strlen(e->name) + sizeof(*nfh) + 1;
-			if (maxcount > args->maxcount) {
-				free(nfh);
-				free(e->name);
-				free(e);
-				rcu_read_unlock();
-				goto past_eof;
-			}
-
-			if (!dl->entries) {
-				dl->entries = e;
-			} else {
-				e_next->nextentry = e;
-			}
-
-			e_next = e;
+			snap[snap_count].rd = rd;
+			snap[snap_count].rd_ino = rd->rd_ino;
+			snap[snap_count].rd_cookie = rd->rd_cookie;
+			snap[snap_count].rd_name = rd->rd_name;
+			snap_count++;
 		}
 	}
 	rcu_read_unlock();
+
+	/*
+	 * Phase 1 complete: release rd_rwlock before phase 2.
+	 * Same reasoning as readdir: dirent_ensure_inode may block,
+	 * and holding rd_rwlock (reader) would deadlock against
+	 * concurrent vfs_lock_dirs (writer) in create threads.
+	 */
+	pthread_rwlock_unlock(&dir_de->rd_rwlock);
+	dir_de_rdlocked = false;
+
+	/*
+	 * Phase 2: fault in inodes and build the reply list.
+	 */
+	for (size_t si = 0; si < snap_count; si++) {
+		struct inode *rd_inode = dirent_ensure_inode(snap[si].rd);
+		if (!rd_inode) {
+			free(snap);
+			res->status = NFS3ERR_SERVERFAULT;
+			poa = &res->READDIRPLUS3res_u.resfail.dir_attributes;
+			goto update_wcc;
+		}
+
+		entryplus3 *e = calloc(1, sizeof(*e));
+		if (!e) {
+			inode_active_put(rd_inode);
+			free(snap);
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+			goto past_eof;
+		}
+
+		e->fileid = rd_inode->i_ino;
+		e->cookie = snap[si].rd_cookie;
+		e->name = strdup(snap[si].rd_name);
+		if (!e->name) {
+			inode_active_put(rd_inode);
+			free(e);
+			free(snap);
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+			goto past_eof;
+		}
+
+		// With multi-sb, check for mounted on
+		nfh = network_file_handle_construct(sb->sb_id, rd_inode->i_ino);
+		if (!nfh) {
+			inode_active_put(rd_inode);
+			free(e->name);
+			free(e);
+			free(snap);
+			if (!dl->entries) {
+				free(dl);
+				res->status = NFS3ERR_JUKEBOX;
+				poa = &res->READDIRPLUS3res_u.resfail
+					       .dir_attributes;
+				goto update_wcc;
+			}
+			goto past_eof;
+		}
+
+		e->name_handle.post_op_fh3_u.handle.data.data_val = (char *)nfh;
+		e->name_handle.post_op_fh3_u.handle.data.data_len =
+			sizeof(*nfh);
+		e->name_handle.handle_follows = true;
+
+		poa_e = &e->name_attributes;
+		poa_e->attributes_follow = true;
+		fa = &poa_e->post_op_attr_u.attributes;
+		inode_attr_to_fattr(rd_inode, fa);
+		inode_active_put(rd_inode);
+
+		dircount += sizeof(*e) - sizeof(post_op_attr);
+		if (dircount > args->dircount) {
+			free(nfh);
+			free(e->name);
+			free(e);
+			free(snap);
+			goto past_eof;
+		}
+
+		maxcount += sizeof(*e) + strlen(e->name) + sizeof(*nfh) + 1;
+		if (maxcount > args->maxcount) {
+			free(nfh);
+			free(e->name);
+			free(e);
+			free(snap);
+			goto past_eof;
+		}
+
+		if (!dl->entries) {
+			dl->entries = e;
+		} else {
+			e_next->nextentry = e;
+		}
+		e_next = e;
+	}
+	free(snap);
 
 	dl->eof = true;
 
@@ -2375,7 +2493,8 @@ update_wcc:
 	fa = &poa->post_op_attr_u.attributes;
 	inode_attr_to_fattr(inode, fa);
 
-	pthread_rwlock_unlock(&inode->i_parent->rd_rwlock);
+	if (dir_de_rdlocked)
+		pthread_rwlock_unlock(&dir_de->rd_rwlock);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
