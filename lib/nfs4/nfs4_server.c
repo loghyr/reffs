@@ -38,7 +38,7 @@
 #include "reffs/identity.h"
 #include "reffs/errno.h"
 #include "reffs/trace/nfs4_server.h"
-#include "nfs4_internal.h"
+#include "compound.h"
 #include "errors.h"
 
 /*
@@ -51,69 +51,17 @@
  * i_attr_mutex of the inode.
  */
 
-static int nfs4_op_null(struct rpc_trans *rt)
+static int nfs4_proc_null(struct rpc_trans *rt)
 {
 	trace_nfs4_srv_null(rt);
 	return 0;
 }
 
-static void compound_free(struct compound *c)
-{
-	if (!c)
-		return;
-
-	inode_put(c->c_inode);
-	free(c);
-}
-
-static struct compound *compound_alloc(struct rpc_trans *rt)
-{
-	struct compound *c;
-	int ret = 0;
-
-	c = calloc(1, sizeof(*c));
-	if (!c)
-		return NULL;
-
-	c->c_rt = rt;
-
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &c->c_ap);
-	if (ret) {
-		free(c);
-		return NULL;
-	}
-
-	return c;
-}
-
-static int nfs4_op_compound(struct rpc_trans *rt)
-{
-	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
-
-	COMPOUND4res *res = ((COMPOUND4res *)ph->ph_res);
-
-	struct compound *c;
-
-	trace_nfs4_srv_compound(rt);
-
-	res->status = 0;
-
-	c = compound_alloc(rt);
-	if (!c) {
-		return NFS4ERR_DELAY;
-	}
-
-	dispatch_compound(c);
-
-	compound_free(c);
-	return res->status;
-}
-
 struct rpc_operations_handler nfs4_operations_handler[] = {
 	RPC_OPERATION_INIT(NFSPROC4, NULL, NULL, NULL, NULL, NULL,
-			   nfs4_op_null),
+			   nfs4_proc_null),
 	RPC_OPERATION_INIT(NFSPROC4, COMPOUND, xdr_COMPOUND4args, COMPOUND4args,
-			   xdr_COMPOUND4res, COMPOUND4res, nfs4_op_compound),
+			   xdr_COMPOUND4res, COMPOUND4res, nfs4_proc_compound),
 };
 
 static struct rpc_program_handler *nfs4_handler;
