@@ -84,19 +84,27 @@ static void posix_inode_sync(struct inode *inode)
 		 inode->i_ino);
 	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
 
-	struct inode_disk id;
-	id.id_uid = inode->i_uid;
-	id.id_gid = inode->i_gid;
-	id.id_nlink = inode->i_nlink;
-	id.id_mode = inode->i_mode;
-	id.id_size = inode->i_size;
-	id.id_atime = inode->i_atime;
-	id.id_ctime = inode->i_ctime;
-	id.id_mtime = inode->i_mtime;
+	struct {
+		struct reffs_disk_header hdr;
+		struct inode_disk id;
+	} meta;
+
+	meta.hdr.rdh_magic = REFFS_DISK_MAGIC_META;
+	meta.hdr.rdh_version = REFFS_DISK_VERSION_1;
+
+	meta.id.id_uid = inode->i_uid;
+	meta.id.id_gid = inode->i_gid;
+	meta.id.id_nlink = inode->i_nlink;
+	meta.id.id_mode = inode->i_mode;
+	meta.id.id_size = inode->i_size;
+	meta.id.id_atime = inode->i_atime;
+	meta.id.id_ctime = inode->i_ctime;
+	meta.id.id_mtime = inode->i_mtime;
+	meta.id.id_attr_flags = inode->i_attr_flags;
 
 	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd >= 0) {
-		if (write(fd, &id, sizeof(id)) == sizeof(id)) {
+		if (write(fd, &meta, sizeof(meta)) == sizeof(meta)) {
 			close(fd);
 			if (rename(tmp_path, path) < 0) {
 				LOG("rename %s to %s failed: %s", tmp_path,
@@ -111,6 +119,29 @@ static void posix_inode_sync(struct inode *inode)
 	} else {
 		LOG("Failed to open %s for sync: %s", tmp_path,
 		    strerror(errno));
+	}
+
+	if (S_ISLNK(inode->i_mode) && inode->i_symlink) {
+		snprintf(path, sizeof(path), "%s/ino_%lu.lnk", sb_priv->sb_dir,
+			 inode->i_ino);
+		snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+		fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		if (fd >= 0) {
+			size_t len = strlen(inode->i_symlink);
+			if (write(fd, inode->i_symlink, len) == (ssize_t)len) {
+				close(fd);
+				if (rename(tmp_path, path) < 0) {
+					LOG("rename %s to %s failed: %s",
+					    tmp_path, path, strerror(errno));
+					unlink(tmp_path);
+				}
+			} else {
+				LOG("Failed to write symlink target to %s",
+				    tmp_path);
+				close(fd);
+				unlink(tmp_path);
+			}
+		}
 	}
 }
 
@@ -262,6 +293,17 @@ static void posix_dir_sync(struct inode *inode)
 	if (fd < 0) {
 		LOG("Failed to open directory file %s: %s", tmp_path,
 		    strerror(errno));
+		return;
+	}
+
+	struct reffs_disk_header hdr = {
+		.rdh_magic = REFFS_DISK_MAGIC_DIR,
+		.rdh_version = REFFS_DISK_VERSION_1,
+	};
+	if (write(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+		LOG("write dir header failed");
+		close(fd);
+		unlink(tmp_path);
 		return;
 	}
 

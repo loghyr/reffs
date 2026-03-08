@@ -73,6 +73,10 @@ struct inode {
 	uint32_t i_dev_major;
 	uint32_t i_dev_minor;
 
+#define INODE_IS_OFFLINE (1ULL << 0)
+#define INODE_IS_HIDDEN (1ULL << 1)
+	uint64_t i_attr_flags;
+
 	char *i_symlink;
 };
 
@@ -85,6 +89,7 @@ struct inode_disk {
 	struct timespec id_atime;
 	struct timespec id_ctime;
 	struct timespec id_mtime;
+	uint64_t id_attr_flags;
 };
 
 struct inode *inode_alloc(struct super_block *sb, uint64_t ino);

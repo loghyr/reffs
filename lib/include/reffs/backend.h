@@ -15,6 +15,18 @@ struct super_block;
 struct inode;
 struct data_block;
 
+#define REFFS_DISK_MAGIC_META 0x5245464d /* 'REFM' */
+#define REFFS_DISK_MAGIC_DIR 0x52454644 /* 'REFD' */
+#define REFFS_DISK_MAGIC_DAT 0x52454641 /* 'REFA' (data) */
+#define REFFS_DISK_MAGIC_LNK 0x5245464c /* 'REFL' */
+
+#define REFFS_DISK_VERSION_1 1
+
+struct reffs_disk_header {
+	uint32_t rdh_magic;
+	uint32_t rdh_version;
+};
+
 struct reffs_storage_ops {
 	enum reffs_storage_type type;
 	const char *name;
