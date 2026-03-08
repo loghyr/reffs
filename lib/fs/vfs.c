@@ -246,6 +246,7 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 	}
 
 	rd->rd_inode = inode;
+	rd->rd_ino = inode->i_ino;
 	if (type == S_IFDIR)
 		inode->i_parent = rd;
 
@@ -260,16 +261,18 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 	inode_sync_to_disk(inode);
 	dirent_sync_to_disk(de_dir);
 
-	if (new_inode)
-		*new_inode = inode_get(inode);
-
 	/*
-	 * rd->rd_inode is a weak pointer and holds no active ref.
-	 * inode_alloc() returned with i_active=1; drop it now so the inode
-	 * goes onto the LRU when no other caller holds it active.
-	 * All inode field writes above must complete before this call.
+	 * Transfer the active ref from inode_alloc to the caller.
+	 * If the caller doesn't want it, drop it here; otherwise hand it
+	 * off via *new_inode so the NFS handler holds i_active > 0 until
+	 * the reply is sent (preventing LRU eviction between CREATE and
+	 * the client's subsequent WRITE/GETATTR).
 	 */
-	inode_active_put(inode);
+	if (new_inode) {
+		*new_inode = inode; /* transfer active ref to caller */
+	} else {
+		inode_active_put(inode);
+	}
 
 	dirent_put(rd);
 	return 0;
@@ -694,6 +697,7 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 	inode->i_btime = inode->i_ctime;
 
 	rd->rd_inode = inode;
+	rd->rd_ino = inode->i_ino;
 
 	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
 					    REFFS_INODE_UPDATE_MTIME);
@@ -701,13 +705,11 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 	inode_sync_to_disk(inode);
 	dirent_sync_to_disk(de_dir);
 
-	if (new_inode)
-		*new_inode = inode_get(inode);
-
-	/*
-	 * rd->rd_inode is a weak pointer; drop the active ref from inode_alloc.
-	 */
-	inode_active_put(inode);
+	if (new_inode) {
+		*new_inode = inode; /* transfer active ref to caller */
+	} else {
+		inode_active_put(inode);
+	}
 
 	dirent_put(rd);
 	return 0;
@@ -763,9 +765,11 @@ int vfs_symlink(struct inode *dir, const char *name, const char *target,
 	if (ret == 0) {
 		inode->i_symlink = strdup(target);
 		inode->i_size = strlen(target);
-		if (new_inode)
-			*new_inode = inode_get(inode);
-		inode_put(inode);
+		if (new_inode) {
+			*new_inode = inode; /* transfer active ref to caller */
+		} else {
+			inode_active_put(inode);
+		}
 	}
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
@@ -821,6 +825,7 @@ int vfs_link(struct inode *inode, struct inode *dir, const char *name,
 	 * never inode_put()'d.
 	 */
 	rd->rd_inode = inode;
+	rd->rd_ino = inode->i_ino;
 	__atomic_fetch_add(&inode->i_nlink, 1, __ATOMIC_RELAXED);
 
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME);
