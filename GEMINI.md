@@ -80,6 +80,12 @@ To avoid host-level conflicts with NFS services (`rpcbind`, `lockd`), use the is
 -   **Submission Retries:** Use `REFFS_IO_RING_RETRIES` (100) for SQE acquisition to handle transient ring-full states without failing the operation.
 -   **VM Optimization:** Use `sched_yield()` instead of `usleep()` in retry loops when running in VM environments.
 
+### Locking & Thread Pool Resilience (March 2026)
+-   **Minimizing Mutex Hold Time:** Do NOT hold `i_attr_mutex` during blocking I/O (e.g., `pread`/`pwrite` in the POSIX backend). This prevents thread pool exhaustion and deadlocks when high-concurrency operations (like `git clone`) saturate the worker threads. The `i_db_rwlock` is sufficient for data integrity during the I/O itself.
+-   **Worker Pool Sizing:** Use a sufficiently large worker pool (default 64) when backends perform blocking operations to prevent starvation of the RPC layer.
+-   **Trace Resilience:** Never call `LOG()` (which emits a trace event) from within the trace rotation logic to avoid recursive deadlocks on `trace_mutex`. Use `fprintf(stderr)` for rotation-level errors.
+-   **FD Capacity:** Ensure `MAX_CONNECTIONS` (65,536) matches system `ulimit` and Docker settings, as the POSIX backend maintains open file descriptors for active data blocks.
+
 ## Technical Integrity & Validation
 
 -   **Unit Tests:** Located in `lib/*/tests/`. Use the `check` library.
