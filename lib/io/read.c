@@ -431,7 +431,7 @@ int io_request_read_op(int fd, struct connection_info *ci,
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
 
-	if (fd <= 0 || fd >= MAX_CONNECTIONS) {
+	if (fd <= 0) {
 		LOG("Invalid fd: %d", fd);
 		return -EINVAL;
 	}
