@@ -39,10 +39,10 @@ The server is started with the following configuration:
 - **RPCPort**: 111 (mapped to host 111)
 - **Backend**: POSIX
 - **Data Path**: `/tmp/reffs_data` (internal to container)
-- **Trace File**: `reffs.trc` (written to host project's sibling `../reffs_logs/` directory)
-- **Console Log**: `reffs.console` (written to host project's sibling `../reffs_logs/` directory)
+- **Trace File**: `reffs.trc` (written to project's `logs/` directory)
+- **Console Log**: `reffs.console` (written to project's `logs/` directory)
 
-All build artifacts generated during this process stay inside the container and are removed when the container exits.
+All build artifacts generated during this process stay inside the container and are removed when the container exits (via the `--rm` flag). Logs persist on the host in the `logs/` directory.
 
 ### 4. Clean Restart of the Sandbox
 If you need to ensure any previously running or hung containers are stopped and removed before starting a fresh server:
@@ -61,10 +61,10 @@ This command identifies the `reffsd` process inside the container and outputs:
 - **User Stacks**: Using `gdb` to provide a full backtrace of the application code.
 
 ### 6. Post-Mortem Analysis
-The sandbox container is now named `reffs-dev-sandbox` and **persists** after the `reffsd` process exits (the `--rm` flag has been removed). This allows you to:
-- Inspect the final state of the build or logs: `sudo docker logs reffs-dev-sandbox`
-- Copy artifacts (like core dumps) out of the container: `sudo docker cp reffs-dev-sandbox:/build/core .`
-- Check the console output: `cat ../reffs_logs/reffs.console`
+The sandbox container uses the `--rm` flag and is removed when it exits. However, logs and traces are **persistent** because they are written to the host's `logs/` directory. This allows you to:
+- Inspect the final state of the logs: `ls logs/`
+- Check the console output: `cat logs/reffs.console`
+- Check the trace file: `tail -f logs/reffs.trc`
 
 ### 7. Triaging the Sandbox
 If you need to open a shell inside the active sandbox while the server is running:

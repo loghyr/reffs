@@ -31,3 +31,4 @@ test-driver
 .git/hooks/pre-commit
 cthon04
 pjdfstest
+logs/

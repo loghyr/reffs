@@ -25,7 +25,7 @@ set -euo pipefail
 NFS_TARGET="127.0.0.1:/"
 MOUNT_POINT="/mnt/reffs"
 REPO_URL="/home/loghyr/reffs"
-LOG_DIR="/home/loghyr/reffs/git_logs"
+LOG_DIR="/home/loghyr/reffs/logs"
 ITERS=1
 RUN_BUILD=true
 RUN_UNIT_TEST=true
