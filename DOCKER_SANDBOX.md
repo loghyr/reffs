@@ -46,27 +46,33 @@ make -f Makefile.reffs test-image
 ```
 This target explicitly runs `stop-image` before `run-image`, resolving issues where `docker-proxy` or previous container instances might interfere with new server runs.
 
-### 5. Running Tests on the Host
-While the server is running in the sandbox, you can run tests (like `cthon04`) from your host machine. The client will communicate with the container via the forwarded ports.
-
-**Important**: Use the `nolock` option to avoid dependencies on host RPC services (like `rpc-statd`) that might conflict with the sandbox.
-
+### 5. Debugging a Stuck Server
+If the server appears hung or slow, you can dump both kernel-side and user-side stack traces for all `reffsd` threads:
 ```bash
-sudo mount -o tcp,mountproto=tcp,vers=3,nolock 127.0.0.1:/ /mnt/reffs
-# Then run tests
-sudo ./cthon04/do_cthon.sh 127.0.0.1:/ /mnt/cthon04
+make -f Makefile.reffs stack
 ```
+This command identifies the `reffsd` process inside the container and outputs:
+- **Kernel Stacks**: From `/proc/[pid]/task/[tid]/stack`, showing where threads are blocked in the kernel (e.g., waiting for I/O).
+- **User Stacks**: Using `gdb` to provide a full backtrace of the application code.
 
-### 5. Triaging the Sandbox
+### 6. Post-Mortem Analysis
+The sandbox container is now named `reffs-dev-sandbox` and **persists** after the `reffsd` process exits (the `--rm` flag has been removed). This allows you to:
+- Inspect the final state of the build or logs: `sudo docker logs reffs-dev-sandbox`
+- Copy artifacts (like core dumps) out of the container: `sudo docker cp reffs-dev-sandbox:/build/core .`
+- Check the console output: `cat ../reffs_logs/reffs.console`
+
+### 7. Triaging the Sandbox
 If you need to open a shell inside the active sandbox while the server is running:
 ```bash
-sudo docker exec -it $(sudo docker ps -q --filter ancestor=reffs-dev) /bin/bash
+sudo docker exec -it reffs-dev-sandbox /bin/bash
 ```
+The image now includes debugging tools like `gdb`, `strace`, `pgrep`, `ps`, and `bash-completion`.
 
 ## Useful Commands
 The `Makefile.reffs` provides several utility targets for the sandbox workflow:
 - `make -f Makefile.reffs help`: Show all available targets.
 - `make -f Makefile.reffs test-image`: Stop any existing sandboxes and start a fresh server.
+- `make -f Makefile.reffs stack`: Dump stack traces for debugging hung processes.
 - `make -f Makefile.reffs reconf`: Force re-generation of the `configure` script inside the sandbox.
 - `make -f Makefile.reffs clean`: Remove build artifacts from the `build/` directory.
 
