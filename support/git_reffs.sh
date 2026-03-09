@@ -22,7 +22,7 @@ set -euo pipefail
 # --- Defaults ---
 NFS_TARGET="127.0.0.1:/"
 MOUNT_POINT="/mnt/reffs"
-REPO_URL="git@192.168.2.102:reffs.git"
+REPO_URL="/home/loghyr/reffs"
 LOG_DIR="/home/loghyr/reffs/git_logs"
 
 # --- Argument parsing ---
