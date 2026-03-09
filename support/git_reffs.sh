@@ -46,7 +46,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1" >&2
-            echo "Usage: $0 [--server <server:export>] [--mount <mountpoint>] [--iters <n>] [--cthon <cthon04-dir>] [--logdir <dir>]" >&2
+            echo "Usage: $0 [--server <server:export>] [--mount <mountpoint>] [--repo <git-url>] [--logdir <dir>]" >&2
             exit 1
             ;;
     esac
