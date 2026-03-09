@@ -17,4 +17,11 @@ static inline void trace_fs_dirent(struct reffs_dirent *rd, const char *event,
 			  (void *)rd, rd->rd_ref.refcount);
 }
 
+static inline void trace_fs_inode(struct inode *inode, const char *event,
+				  int line)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line, "inode=%p ref=%ld",
+			  (void *)inode, inode->i_ref.refcount);
+}
+
 #endif /* _REFFS_TRACE_FS_H */
