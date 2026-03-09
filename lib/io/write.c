@@ -154,9 +154,9 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
 
-	if (fd <= 0 || fd >= MAX_CONNECTIONS) {
+	if (fd <= 0) {
 		LOG("Invalid fd: %d", fd);
-		return -EINVAL;
+		return -EBADF;
 	}
 
 	struct io_context *ic = io_context_create(OP_TYPE_WRITE, fd, buf, len);

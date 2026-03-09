@@ -41,7 +41,7 @@
 #define NUM_LISTENERS 1
 #define MAX_WORKER_THREADS 64
 #define MAX_PENDING_REQUESTS 256
-#define MAX_CONNECTIONS 1024 // Maximum number of concurrent client connections
+#define MAX_CONNECTIONS 65536 // Maximum number of concurrent client connections
 #define MAX_LISTENERS 1024
 
 #define IO_URING_WAIT_SEC (1)
