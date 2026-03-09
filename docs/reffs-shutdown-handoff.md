@@ -171,3 +171,373 @@ Fix: `name_match_get_inode(nm)` helper returning active ref; `inode_active_put` 
 ### 6d. `dirent_ensure_inode` `!rd->rd_inode` removal — verify no callers relied on it
 The `!rd->rd_inode` bail guard was removed (Bug E). Confirm no other caller passed a
 dirent with `rd_ino != 0` but `rd_inode == NULL` intending to get NULL back.
+
+---
+
+## 7. Session 3 — LRU eviction unit tests (2026-03-08)
+
+**Session scope:** Writing `fs_test_lru.c` and `fs_test_ns_teardown.c`; debugging
+three successive ASAN crashes that exposed a structural invariant violation in
+`release_dirents_recursive`.
+
+### 7.1 New test files
+
+**`lib/fs/tests/fs_test_lru.c`**
+
+Tests the inode LRU lifecycle directly via `reffs_fs_*()` and internal APIs.
+Three suites:
+
+- *Eviction accounting and pressure* (always-run, must be green): lru_count
+  invariants, active-ref pinning, no-leak on rmdir/unlink, burst creates, Bug G
+  regression.
+- *Structural eviction probe* (always-run): verifies `i_active == -1` after organic
+  eviction, `i_ino` stability until `inode_free_rcu`, `inode_find` behaviour on a
+  fully-unhashed ino.
+- *Eviction fault-in* (non-blocking known-bug suite): tests that `reffs_fs_*()`
+  operations correctly reload an evicted inode via `dirent_ensure_inode`. All six
+  tests fail until §6c (`name_match_get_inode`) is fixed. They live in a separate
+  `SRunner` so failures appear in output but do not affect the exit status.
+
+**`lib/fs/tests/fs_test_ns_teardown.c`**
+
+Tests `reffs_ns_fini()` / `release_all_fs_dirents()` directly. Four suites:
+basic teardown (empty/file/dir/deep/wide/mixed tree), direct `rafd()` calls,
+ordering and RCU safety, idempotency.
+
+### 7.2 Critical invariant discovered: `release_dirents_recursive` and `rd_inode`
+
+`release_dirents_recursive()` in `super_block.c` dereferences
+`rd_parent->rd_inode->i_children` to walk the dirent tree during teardown.
+Combined with the fact that **`rd_inode` is never nulled by the LRU eviction path**
+(architecture doc §3), this creates a hard precondition:
+
+> **Every `rd_inode` in the dirent tree must point to live (non-freed) memory when
+> `release_dirents_recursive` runs.**
+
+After `super_block_evict_inodes` fires and the subsequent RCU grace period elapses,
+`inode_free_rcu` has run and the inode struct is freed memory. Any test that forces
+LRU eviction and leaves those dirents in the tree will UAF in teardown.
+
+Three successive crash attempts (2026-03-08) each found a new variant of this:
+
+| Attempt | Crash site | Why it failed |
+|---------|-----------|---------------|
+| Direct dereference (original code) | `super_block.c:159` READ 8 bytes | `rd_inode` is freed memory |
+| `dirent_ensure_inode` guard | `urcu/ref.h:83` READ 8 bytes in `urcu_ref_get_unless_zero` | fast path calls `inode_active_get(rd_inode)` without verifying struct is allocated; same UAF one frame deeper |
+| Phase-0 drain before dirent walk | `super_block.c:159` same crash | `super_block_drain` calls `rcu_barrier()` internally, which completes `inode_free_rcu`; walk runs on freed memory |
+
+**Root cause:** There is no back-pointer from inode to dirent. `inode_release` cannot
+null `rd_inode` on all dirents pointing at it because it does not know which dirents
+those are. `i_parent` covers directory inodes only; file inodes have no back-pointer.
+
+**Long-term fix (TODO):** Add `i_dirent` as a weak back-pointer on `struct inode`.
+Set it in `dirent_parent_attach` and `super_block_dirent_create`. Null `rd_inode` in
+`inode_release()` before `call_rcu`. This makes the invariant self-enforcing without
+any test-side workarounds.
+
+### 7.3 Test-side workaround for the invariant
+
+Until `i_dirent` lands, any test that forces LRU eviction must null the dangling
+`rd_inode` pointers before teardown. The safe window is **after `synchronize_rcu()`
+but before `rcu_barrier()`**:
+
+- After `synchronize_rcu()`: evicted inode structs are queued for `inode_free_rcu`
+  but not yet freed. `inode_active_get(rd_inode)` returns NULL safely (tombstone
+  check; `i_active == -1`). That NULL return is the signal to null `rd_inode`.
+- After `rcu_barrier()`: `inode_free_rcu` has run; the struct is freed memory.
+  Any dereference — even inside `rcu_read_lock`, even `inode_active_get` — is a UAF.
+
+**`fs_test_lru.c`** (known probe dirent): saves `probe_rd` via `dirent_find` before
+eviction, then after `inode_put + synchronize_rcu`:
+```c
+rcu_assign_pointer(probe_rd->rd_inode, NULL);
+synchronize_rcu();   /* flush NULL store */
+rcu_barrier();       /* now safe: inode_free_rcu completes after NULL */
+```
+
+**`fs_test_ns_teardown.c`** (unknown set of evicted dirents): `null_evicted_rd_inodes()`
+walks the full dirent tree after `synchronize_rcu()`, calling `inode_active_get` on
+each `rd_inode`. NULL return → `rcu_assign_pointer(rd->rd_inode, NULL)`. Then
+`synchronize_rcu() + rcu_barrier()`.
+
+### 7.4 `release_dirents_recursive` comment
+
+The function in `super_block.c` now carries a full explanation of the precondition,
+the two failed fix attempts, and the `i_dirent` TODO. The function body is
+**unchanged** from the original — the correct fix is the back-pointer, not a guard
+inside the walker.
+
+### 7.5 `test_teardown_with_pinned_inode` — nlink and leak
+
+**Assertion bug:** The test checked `pinned->i_nlink == 1` after `reffs_ns_fini()`.
+This is wrong: `dirent_parent_release(reffs_life_action_death)` subtracts nlink as
+part of the dirent walk, so `i_nlink == 0` is the correct post-teardown value.
+Fixed to assert `i_nlink == 0` and `i_ino == st.st_ino` (the latter proves the
+struct is still addressable, which is the actual invariant being tested).
+
+**Leak as consequence:** The wrong assertion caused libcheck to longjmp before
+`inode_active_put(pinned)` was called, leaving `i_ref = 1` permanently. LeakSanitizer
+reported 504 bytes (one inode struct). Once the assertion was fixed the leak
+disappeared — it was never a ref-counting bug in the production code.
+
+**Ref accounting for pinned-inode pattern** (for future reference):
+```
+reffs_fs_create → inode_alloc → i_ref=1(hash), i_active=1
+vfs returns → inode_active_put → i_active=0, i_ref=1(hash only)
+inode_find → inode_active_get → i_ref=2, i_active=1
+reffs_ns_fini → super_block_drain → inode_unhash+inode_put → i_ref=1
+inode_active_put(pinned) → i_active=0, inode_put → i_ref=0 → inode_release → call_rcu
+synchronize_rcu + rcu_barrier → inode_free_rcu → clean
+```
+
+### 7.6 Known-bug suite pattern
+
+For tests that document unfixed bugs without blocking CI, the correct libcheck
+idiom (with `CK_NOFORK`) is a **separate `SRunner`** whose failure count is not
+added to `failed`:
+
+```c
+/* Primary: controls exit status */
+SRunner *sr = srunner_create(fs_lru_suite());
+srunner_set_fork_status(sr, CK_NOFORK);
+srunner_run_all(sr, CK_NORMAL);
+failed = srunner_ntests_failed(sr);
+srunner_free(sr);
+
+/* Known bugs: visible in output, does not affect exit status */
+SRunner *sr_bugs = srunner_create(fs_lru_known_bugs_suite());
+srunner_set_fork_status(sr_bugs, CK_NOFORK);
+srunner_run_all(sr_bugs, CK_VERBOSE);
+srunner_free(sr_bugs);
+
+return failed ? EXIT_FAILURE : EXIT_SUCCESS;
+```
+
+`tcase_skip` is not usable with `CK_NOFORK` (it relies on `exit(77)` which kills
+the process). `ck_assert_msg(false, ...)` reports FAIL in the primary suite and
+blocks CI. The two-srunner split is the correct approach.
+
+---
+
+## 8. Updated pending issues
+
+### 8a. cthon04 re-hang (was §6a)
+Unchanged. See §4.
+
+### 8b. git clone hang (was §6b)
+Unchanged. Bug H fix applied, not re-tested.
+
+### 8c. Raw `rd_inode` UAF in `reffs_fs_*()` — `name_match_get_inode` (was §6c)
+All `reffs_fs_*()` operations and `vfs_remove_common_locked()` access `rd_inode`
+without `inode_active_get`. This is the blocker for the fault-in test suite.
+
+**Fix:** `name_match_get_inode(nm)` helper in `fs.c` that calls
+`dirent_ensure_inode(nm->nm_dirent)` and stores the result; `inode_active_put`
+before `name_match_free`. Same fix needed in `vfs_remove_common_locked` in `vfs.c`.
+
+Until this lands: the structural probe and `raw_rdino_bug_present()` in
+`fs_test_lru.c` use organic eviction + `rcu_assign_pointer` to null `rd_inode`
+before teardown (see §7.3).
+
+### 8d. `i_dirent` back-pointer — self-enforcing teardown invariant (new)
+`release_dirents_recursive` requires that no `rd_inode` in the tree is freed memory
+when it runs. Currently enforced only by test-side workarounds (§7.3).
+
+**Fix:** Add `i_dirent` weak back-pointer to `struct inode`. Set in
+`dirent_parent_attach` and `super_block_dirent_create`. In `inode_release()`,
+before `call_rcu`:
+```c
+if (inode->i_dirent)
+    rcu_assign_pointer(inode->i_dirent->rd_inode, NULL);
+```
+Once this lands, remove `null_evicted_rd_inodes()` from `fs_test_ns_teardown.c`,
+remove the `rcu_assign_pointer` blocks from `fs_test_lru.c`, and remove the TODO
+comment in `super_block.c`.
+
+### 8e. `dirent_ensure_inode` fast path not safe after `rcu_barrier` (new)
+`dirent_ensure_inode`'s fast path calls `inode_active_get(rd->rd_inode)` inside
+`rcu_read_lock`. This is safe during normal operation (the RCU grace period prevents
+struct freeing while a reader holds the lock). It is NOT safe after `rcu_barrier()`
+has already completed, because `inode_free_rcu` has run and the struct is freed
+memory before the RCU reader lock is acquired.
+
+Do not call `dirent_ensure_inode` on a potentially-evicted dirent after `rcu_barrier`.
+The safe window is after `synchronize_rcu()` and before `rcu_barrier()`.
+
+### 8f. `dirent_ensure_inode` `!rd->rd_inode` removal — verify callers (was §6d)
+Unchanged.
+
+---
+
+## 9. Session 4 — LRU teardown UAF final resolution; pinned-inode test fix (2026-03-08)
+
+**Session scope:** Resolving four additional ASAN crashes encountered while running
+the session-3 test files for the first time; fixing a wrong assertion in
+`test_teardown_with_pinned_inode`.
+
+### 9.1 Crash 1: `reffs_fs_unlink` after `drain_lru` — UAF in `vfs_remove_common_locked`
+
+The tombstone probe test originally ended with `reffs_fs_unlink("/tombstone_probe")`
+after `inode_put(inode) + rcu_barrier()`. LTTng trace:
+
+```
+reffs_fs_getattr:402  ret=0           ← succeeded; inode still live at this point
+inode_release:133     ino=2           ← drain_lru fired 10ms later during inode_put chain
+reffs_fs_unlink:613   path=/tombstone_probe
+vfs_remove_common_locked:163  READ 8 bytes  ← UAF on freed inode
+```
+
+`vfs_remove_common_locked` has the same raw `rd_inode` dereference as `fs.c:387` —
+the §6c / §9 bug affects every `vfs_*` function that touches inodes after a path walk,
+not just `reffs_fs_*()` in `fs.c`. **The fix scope is wider than originally described.**
+
+The rule: after `drain_lru()` (or any path that calls `rcu_barrier()` after eviction),
+no `reffs_fs_*()` call may be made on any path whose inode was evicted. The unlink
+calls were deleted from `raw_rdino_bug_present()` and `test_lru_eviction_produces_tombstone`;
+those files are left for teardown to clean up.
+
+**Additional finding from the trace:** `reffs_fs_getattr` succeeded (ret=0) even
+though `drain_lru()` fired 10ms later. This means `raw_rdino_bug_present()`'s earlier
+design — probing via `reffs_fs_getattr` before the `inode_find/inode_get` sequence —
+would have returned false even with the bug present, because timing prevented the
+tombstone from being visible. The atomic `i_active` read approach in the final
+implementation is the only reliable probe.
+
+### 9.2 Crash 2: organic eviction still UAFs in `release_dirents_recursive`
+
+After removing `drain_lru()` and replacing it with organic eviction (`lru_max=1` +
+one extra create), the tombstone probe still crashed:
+
+```
+inode_release:133  ino=2          ← triggered by /tombstone_trigger create
+dirent_get:156     ref=5          ← teardown starts walking
+release_directs_recursive:159  READ UAF  ← rd_inode on probe dirent is freed
+```
+
+The leaf-file assumption was wrong: `release_dirents_recursive` dereferences `rd_inode`
+on **every node it visits**, not just directories. Line 159 reads through `rd_inode`
+unconditionally before deciding whether to recurse. Even a leaf file's `rd_inode` is
+read during the dirent walk.
+
+This means organic eviction is just as unsafe as `drain_lru()` for any test that
+leaves an evicted inode's dirent in the tree.
+
+### 9.3 Safe window: after `synchronize_rcu()`, before `rcu_barrier()`
+
+The resolution is a test-side workaround using a narrow timing window:
+
+- After `synchronize_rcu()`: `inode_free_rcu` is queued but not yet run. The struct
+  is still allocated. `inode_active_get(rd_inode)` returns NULL safely — the tombstone
+  check (`i_active == -1`) fires before any memory access that could fault, and the
+  NULL return signals "evicted."
+- After `rcu_barrier()`: `inode_free_rcu` has run. The struct is freed. Any access —
+  even `inode_active_get` inside `rcu_read_lock` — is a UAF.
+
+**Critical ordering rule:** `rcu_assign_pointer(rd->rd_inode, NULL)` must be called
+after `synchronize_rcu()` but before `rcu_barrier()`.
+
+`fs_test_lru.c` uses this for the known probe dirent:
+```c
+inode_put(inode);
+synchronize_rcu();
+rcu_assign_pointer(probe_rd->rd_inode, NULL);  /* BEFORE rcu_barrier */
+synchronize_rcu();                              /* flush the NULL store */
+rcu_barrier();                                  /* now safe: struct freed after NULL */
+dirent_put(probe_rd);
+```
+
+`fs_test_ns_teardown.c` uses `null_evicted_rd_inodes()` for an unknown set:
+```c
+synchronize_rcu();   /* structs queued but live */
+/* walk tree: inode_active_get → NULL → rcu_assign_pointer(rd->rd_inode, NULL) */
+synchronize_rcu();
+rcu_barrier();
+```
+
+The `null_evicted_rd_inodes_recursive` walker loads `rd_parent->rd_inode` inside
+`rcu_read_lock` to protect the pointer load itself (the struct may still be freed
+between the load and `inode_active_get`; `rcu_read_lock` ensures the RCU grace period
+hasn't completed, so the struct is still allocated at load time).
+
+### 9.4 `dirent_ensure_inode` fast path: not safe after `rcu_barrier`
+
+The initial attempt to fix `release_directs_recursive` by adding a
+`dirent_ensure_inode` guard failed because `dirent_ensure_inode`'s fast path is:
+
+```c
+rcu_read_lock();
+inode = rd->rd_inode;
+if (inode)
+    inode = inode_active_get(inode);  /* calls urcu_ref_get_unless_zero */
+rcu_read_unlock();
+```
+
+`inode_active_get` calls `urcu_ref_get_unless_zero` which reads `inode->i_ref`.
+If `inode_free_rcu` has already run (i.e., `rcu_barrier()` has completed), the
+inode struct is freed memory and this read is a UAF — ASAN crashes at
+`urcu/ref.h:83`. `rcu_read_lock` does not help here because `rcu_barrier()` waited
+for all RCU callbacks to complete before the lock was acquired.
+
+Rule: Do not call `dirent_ensure_inode` on a potentially-evicted dirent after
+`rcu_barrier()` has run.
+
+### 9.5 `drain_lru` safe vs unsafe call sites
+
+`drain_lru()` remains in the file but is only safe in specific contexts:
+
+**Safe:**
+- Called *before* any creates (establishing a baseline lru_count).
+- Called *after* `rmdir` or `unlink` — those operations remove the dirent from the
+  tree, so no in-tree dirent has a dangling `rd_inode` after the drain.
+- Called inside fault-in tests (guarded by `SKIP_IF_RAW_RDINO_BUG()`) — only
+  reached when the `name_match_get_inode` fix is in place, at which point
+  `dirent_ensure_inode` works correctly.
+
+**Unsafe:**
+- Called after creates that leave files in the tree, when teardown will subsequently
+  call `reffs_ns_fini()`.
+
+### 9.6 `test_teardown_with_pinned_inode` — wrong assertion, leak as consequence
+
+**Assertion bug:** `ck_assert_uint_eq(pinned->i_nlink, 1)` failed with `i_nlink == 0`.
+`reffs_ns_fini()` calls `release_all_fs_dirents()` → `dirent_parent_release(reffs_life_action_death)`,
+which subtracts nlink as part of the dirent walk. `i_nlink == 0` is the correct
+post-teardown value. Fixed to:
+```c
+ck_assert_uint_eq(pinned->i_ino, st.st_ino);  /* memory validity check */
+ck_assert_uint_eq(pinned->i_nlink, 0);         /* correct post-teardown value */
+```
+
+**Leak as consequence:** The failing assertion caused libcheck's longjmp before
+`inode_active_put(pinned)` was called. `i_ref` stayed at 1 permanently → LeakSanitizer
+reported 504 bytes. Not a ref-counting bug in production code — fixing the assertion
+eliminated the leak entirely.
+
+**Ref accounting for pinned-inode pattern:**
+```
+reffs_fs_create → i_ref=1(hash), i_active=1
+vfs returns      → inode_active_put → i_active=0, i_ref=1(hash only)
+inode_find       → inode_active_get → i_ref=2, i_active=1
+reffs_ns_fini    → super_block_drain → inode_unhash+inode_put → i_ref=1
+inode_active_put → i_active=0, inode_put → i_ref=0 → inode_release → call_rcu
+synchronize_rcu + rcu_barrier → inode_free_rcu → clean
+```
+
+### 9.7 Updated pending issues (carry-forward from §8)
+
+**§8c (raw rd_inode UAF)** — wider than previously described. The bug is in every
+function that touches `rd_inode` without `inode_active_get`:
+- `reffs_fs_*()` in `fs.c` (all ops via `name_match_get_inode` path)
+- `vfs_remove_common_locked()` in `vfs.c` (confirmed by crash 1 above)
+- Likely other `vfs_*` functions as well
+
+The fix (`name_match_get_inode` + `inode_active_get`) must be applied to `vfs.c`
+as well as `fs.c`.
+
+**§8d (`i_dirent` back-pointer)** — still the cleanest long-term fix. Once it lands,
+all test-side workarounds (`null_evicted_rd_inodes`, `rcu_assign_pointer` blocks,
+`raw_rdino_bug_present`, `SKIP_IF_RAW_RDINO_BUG`) can be deleted. See §8d for the
+full transition checklist.
+
+**New — `dirent_children_release()` in `dirent.c:478`**: same raw `rd_inode->i_children`
+dereference pattern as `release_dirents_recursive`. Same latent bug; same fix needed.
