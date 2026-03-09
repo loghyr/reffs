@@ -112,7 +112,7 @@ int reffs_lock_remove(struct inode *inode, uint64_t offset, uint64_t len,
 
 			new_le->l_owner = le->l_owner;
 			urcu_ref_get(&new_le->l_owner->lo_ref);
-			new_le->l_inode = inode_get(le->l_inode);
+			new_le->l_inode = inode_active_get(le->l_inode);
 			new_le->l_exclusive = le->l_exclusive;
 			new_le->l_offset = u_end + 1;
 			new_le->l_len = (l_len == 0) ?
@@ -141,7 +141,7 @@ void reffs_lock_free(struct reffs_lock *lock)
 {
 	if (!lock)
 		return;
-	inode_put(lock->l_inode);
+	inode_active_put(lock->l_inode);
 	if (lock->l_owner)
 		urcu_ref_put(&lock->l_owner->lo_ref, lock->l_owner->lo_release);
 	free(lock);
@@ -217,7 +217,7 @@ void reffs_share_free(struct reffs_share *share)
 {
 	if (!share)
 		return;
-	inode_put(share->s_inode);
+	inode_active_put(share->s_inode);
 	if (share->s_owner)
 		urcu_ref_put(&share->s_owner->lo_ref,
 			     share->s_owner->lo_release);
