@@ -629,8 +629,6 @@ static int nfs3_op_read(struct rpc_trans *rt)
 		goto out;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_mutex);
-
 	if (!inode->i_db) {
 		resok->count = 0;
 		resok->eof = true;
@@ -639,6 +637,7 @@ static int nfs3_op_read(struct rpc_trans *rt)
 		if (!resok->data.data_val) {
 			ret = -EJUKEBOX;
 			poa = &res->READ3res_u.resfail.file_attributes;
+			pthread_mutex_lock(&inode->i_attr_mutex);
 			goto update_wcc;
 		}
 
@@ -652,6 +651,7 @@ static int nfs3_op_read(struct rpc_trans *rt)
 			resok->count = resok->data.data_len = 0;
 			resok->eof = true;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
+			pthread_mutex_lock(&inode->i_attr_mutex);
 			goto update_wcc;
 		} else if (dbr < 0) {
 			free(resok->data.data_val);
@@ -660,6 +660,7 @@ static int nfs3_op_read(struct rpc_trans *rt)
 			ret = dbr;
 			poa = &res->READ3res_u.resfail.file_attributes;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
+			pthread_mutex_lock(&inode->i_attr_mutex);
 			goto update_wcc;
 		}
 
@@ -670,6 +671,7 @@ static int nfs3_op_read(struct rpc_trans *rt)
 		pthread_rwlock_unlock(&inode->i_db_rwlock);
 	}
 
+	pthread_mutex_lock(&inode->i_attr_mutex);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
 
 update_wcc:
@@ -744,8 +746,6 @@ static int nfs3_op_write(struct rpc_trans *rt)
 		goto out;
 	}
 
-	pthread_mutex_lock(&inode->i_attr_mutex);
-
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
@@ -759,6 +759,7 @@ static int nfs3_op_write(struct rpc_trans *rt)
 			ret = -ENOSPC;
 			wcc = &res->WRITE3res_u.resfail.file_wcc;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
+			pthread_mutex_lock(&inode->i_attr_mutex);
 			goto update_wcc;
 		}
 
@@ -771,6 +772,7 @@ static int nfs3_op_write(struct rpc_trans *rt)
 			ret = dbw;
 			wcc = &res->WRITE3res_u.resfail.file_wcc;
 			pthread_rwlock_unlock(&inode->i_db_rwlock);
+			pthread_mutex_lock(&inode->i_attr_mutex);
 			goto update_wcc;
 		}
 
@@ -795,9 +797,6 @@ static int nfs3_op_write(struct rpc_trans *rt)
 		resok->committed = FILE_SYNC;
 		break;
 	};
-
-	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
-					      REFFS_INODE_UPDATE_MTIME);
 
 	uuid_t *uuid = server_boot_uuid_get();
 	memcpy(resok->verf, (*uuid) + 8, NFS3_WRITEVERFSIZE);
@@ -829,6 +828,10 @@ static int nfs3_op_write(struct rpc_trans *rt)
 		__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
 
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
+					      REFFS_INODE_UPDATE_MTIME);
 
 update_wcc:
 	if (ret)
