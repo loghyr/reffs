@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <zstd.h>
+#include "reffs/log.h"
 #include "reffs/trace/common.h"
 #include "reffs/trace/types.h"
 
@@ -205,6 +206,7 @@ void reffs_trace_init(const char *filename)
 		trace_fp = fopen(reffs_trace_name, "w");
 	if (!trace_fp)
 		trace_fp = stderr;
+	reffs_log_file = trace_fp;
 	trace_bytes_written = 0;
 }
 
@@ -215,6 +217,7 @@ void reffs_trace_close(void)
 	if (trace_fp != NULL && trace_fp != stderr) {
 		fclose(trace_fp);
 		trace_fp = NULL;
+		reffs_log_file = NULL;
 	}
 	pthread_mutex_unlock(&trace_mutex);
 }
