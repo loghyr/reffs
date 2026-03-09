@@ -12,6 +12,7 @@ RUN dnf -y install \
     autoconf \
     autoconf-archive \
     automake \
+    bash-completion \
     bear \
     ccache \
     check-devel \
@@ -28,6 +29,7 @@ RUN dnf -y install \
     htop \
     iostat \
     iproute \
+    iputils \
     jemalloc-devel \
     ktls-utils \
     libev-devel \
@@ -39,10 +41,13 @@ RUN dnf -y install \
     lldb \
     llvm-devel \
     make \
+    net-tools \
     ninja-build \
     nslookup \
     openssl-devel \
     perf \
+    procps-ng \
+    python3-argcomplete \
     python3-devel \
     python3-pip \
     rpcbind \
@@ -59,6 +64,11 @@ RUN dnf -y install \
     xxhash-devel \
     zlib-devel \
     && dnf clean all
+
+# Configure bash completion for the container shell
+RUN activate-global-python-argcomplete --user && \
+    echo 'eval "$(register-python-argcomplete reffs-probe.py)"' >> /root/.bashrc && \
+    echo 'source /etc/profile.d/bash_completion.sh' >> /root/.bashrc
 
 RUN pip3 install --no-cache-dir \
     ply \

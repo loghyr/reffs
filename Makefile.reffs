@@ -103,8 +103,9 @@ image:
 # This uses --privileged to allow FUSE and bypasses host RPC conflicts
 # It also builds in a clean internal directory to avoid polluting the host
 # Using rsync to exclude host-side artifacts from the internal build
+# We name the container and remove --rm to allow post-mortem debugging
 run-image: $(LOGS_DIR) stop-image
-	$(DOCKER) run --rm -it --privileged \
+	$(DOCKER) run -it --name $(IMAGE_NAME)-sandbox --privileged \
 		--ulimit nofile=65536:65536 \
 		-p 2049:2049 -p 2049:2049/udp -p 20490:20490 -p 20490:20490/udp -p 111:111 -p 111:111/udp \
 		-v $(ROOT_DIR):/reffs:ro,Z \
@@ -114,11 +115,37 @@ run-image: $(LOGS_DIR) stop-image
 			rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && autoreconf -fi && \
 			cd /build && ../src/configure && make && \
-			script -q -c './src/reffsd --port 2049 --file=/logs/reffs.trc --backend=posix --backend-path=/tmp/reffs_data' /logs/reffs.console"
+			script -f -q -c './src/reffsd --port 2049 --file=/logs/reffs.trc --backend=posix --backend-path=/tmp/reffs_data' /logs/reffs.console"
+
+# Dump stacks of the running reffsd process in the sandbox
+# This provides both kernel-side (wchan/stack) and user-side (gdb) views
+stack:
+	@CONTAINER=$$($(DOCKER) ps -q --filter ancestor=$(IMAGE_NAME) | head -n 1); \
+	if [ -z "$$CONTAINER" ]; then \
+		echo "No running sandbox container found."; \
+		exit 1; \
+	fi; \
+	$(DOCKER) exec $$CONTAINER /bin/bash -c '\
+		PID=$$(pgrep -x reffsd); \
+		if [ -z "$$PID" ]; then echo "reffsd not running"; exit 0; fi; \
+		echo "=== Kernel Stacks (from /proc) ==="; \
+		for TID in /proc/$$PID/task/*/; do \
+			TID_NUM=$$(basename $$TID); \
+			COMM=$$(cat $$TID/comm 2>/dev/null); \
+			WCHAN=$$(cat $$TID/wchan 2>/dev/null); \
+			echo "Thread $$TID_NUM ($$COMM) wchan: $$WCHAN"; \
+			cat $$TID/stack 2>/dev/null; \
+			echo ""; \
+		done; \
+		if command -v gdb >/dev/null; then \
+			echo "=== User Stacks (GDB) ==="; \
+			gdb -batch -ex \"thread apply all bt\" -p $$PID 2>/dev/null || echo "GDB failed to attach (check ptrace_scope)"; \
+		fi'; \
+	exit 0
 
 # Stop and remove any running sandbox containers
 stop-image:
-	@CONTAINERS=$$($(DOCKER) ps -aq --filter ancestor=$(IMAGE_NAME)); \
+	@CONTAINERS=$$($(DOCKER) ps -aq --filter name=$(IMAGE_NAME)-sandbox --filter ancestor=$(IMAGE_NAME)); \
 	if [ -n "$$CONTAINERS" ]; then \
 		echo "Stopping and removing containers: $$CONTAINERS"; \
 		$(DOCKER) stop $$CONTAINERS 2>/dev/null || true; \
