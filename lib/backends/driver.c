@@ -37,5 +37,6 @@ reffs_backend_get_ops(enum reffs_storage_type type)
 		LOG("Unknown storage type: %d", type);
 		return NULL;
 	}
+	TRACE("Storage type is %d:", type);
 	return backends[type];
 }
