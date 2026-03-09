@@ -1,7 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0+ */
 /*
- * Copyright (C) 2025 Thomas D. Haynes <loghyr@gmail.com> All Rights Reserved.
- *
+ * SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+ * SPDX-License-Identifier: GPL-2.0+
+ */
+
+/*
  * Gather stats from the reffs server
  */
 
@@ -113,7 +115,8 @@ enum probe_trace_category1 {
         PROBE1_TRACE_CAT_NFS = 3,
         PROBE1_TRACE_CAT_NLM = 4,
         PROBE1_TRACE_CAT_FS = 5,
-        PROBE1_TRACE_CAT_ALL = 6
+        PROBE1_TRACE_CAT_LOG = 6,
+        PROBE1_TRACE_CAT_ALL = 7
 };
 
 struct TRACE_SET1args {

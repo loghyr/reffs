@@ -48,6 +48,8 @@ extern FILE *reffs_log_file;
 			"[%s.%09ld] [%d:%d] (%s:%d): " fmt "\n", time_str, \
 			ts.tv_nsec, getpid(), tid, __func__, __LINE__,     \
 			##__VA_ARGS__);                                    \
+		reffs_trace_event(REFFS_TRACE_CAT_LOG, __func__, __LINE__, \
+				  fmt, ##__VA_ARGS__);                     \
 	} while (0)
 
 void reffs_trace(const char *function, int line, const char *msg, ...);
