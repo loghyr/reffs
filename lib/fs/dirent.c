@@ -272,7 +272,8 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd)
 	inode = inode_alloc(sb, rd->rd_ino);
 	if (inode) {
 		/*
-		 * Re-attach the weak pointer so the next fast-path hits.\n		 * This is a benign race: worst case two threads both set it
+		 * Re-attach the weak pointer so the next fast-path hits.
+		 * This is a benign race: worst case two threads both set it
 		 * to the same value.
 		 */
 		rd->rd_inode = inode;
