@@ -21,7 +21,6 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <zstd.h>
-#include "reffs/log.h"
 #include "reffs/trace/common.h"
 #include "reffs/trace/types.h"
 
@@ -36,12 +35,15 @@ static off_t trace_bytes_written = 0;
 static pthread_mutex_t trace_mutex = PTHREAD_MUTEX_INITIALIZER;
 static FILE *trace_fp = NULL;
 #ifdef ENABLE_ALL_TRACE_CATEGORIES
-static bool category_enabled[REFFS_TRACE_CAT_ALL] = { true, true, true,
+static bool category_enabled[REFFS_TRACE_CAT_ALL] = { true, true, true, true,
 						      true, true, true };
 #else
-static bool category_enabled[REFFS_TRACE_CAT_ALL] = { false, true, true,
-						      true,  true, false };
+static bool category_enabled[REFFS_TRACE_CAT_ALL] = { false, true,  true, true,
+						      true,  false, true };
 #endif
+
+static const char *category_names[] = { "GENERAL", "IO", "RPC", "NFS",
+					"NLM",	   "FS", "LOG" };
 
 static char *trace_compress_queue[MAX_TRACE_QUEUE];
 static int trace_compress_head = 0;
@@ -206,7 +208,6 @@ void reffs_trace_init(const char *filename)
 		trace_fp = fopen(reffs_trace_name, "w");
 	if (!trace_fp)
 		trace_fp = stderr;
-	reffs_log_file = trace_fp;
 	trace_bytes_written = 0;
 }
 
@@ -217,7 +218,6 @@ void reffs_trace_close(void)
 	if (trace_fp != NULL && trace_fp != stderr) {
 		fclose(trace_fp);
 		trace_fp = NULL;
-		reffs_log_file = NULL;
 	}
 	pthread_mutex_unlock(&trace_mutex);
 }
@@ -301,10 +301,10 @@ void reffs_trace_event(enum reffs_trace_category category, const char *name,
 	pthread_mutex_lock(&trace_mutex);
 	if (trace_fp != NULL) {
 		int n = fprintf(trace_fp,
-				"[%s.%09ld] [epoch_ns=%" PRIu64 "] [Δ+%6" PRIu64
-				"us] [%d:%d] (%s:%d): ",
-				time_str, ts.tv_nsec, epoch_ns, delta_us,
-				getpid(), tid, name, line);
+				"[%s.%09ld] [%s] [epoch_ns=%" PRIu64
+				"] [Δ+%6" PRIu64 "us] [%d:%d] (%s:%d): ",
+				time_str, ts.tv_nsec, category_names[category],
+				epoch_ns, delta_us, getpid(), tid, name, line);
 
 		va_start(args, format);
 		n += vfprintf(trace_fp, format, args);

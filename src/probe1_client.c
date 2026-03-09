@@ -60,7 +60,9 @@ static void usage(const char *prog)
 	printf("                                     1 - IO\n");
 	printf("                                     2 - RPC\n");
 	printf("                                     3 - NFS\n");
-	printf("                                     4 - FS\n");
+	printf("                                     4 - NLM\n");
+	printf("                                     5 - FS\n");
+	printf("                                     6 - LOG\n");
 	printf("  -H  --human                  Human readable output\n");
 }
 

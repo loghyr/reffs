@@ -28,6 +28,7 @@ enum reffs_trace_category {
 	REFFS_TRACE_CAT_NFS = 3,
 	REFFS_TRACE_CAT_NLM = 4,
 	REFFS_TRACE_CAT_FS = 5,
+	REFFS_TRACE_CAT_LOG = 6,
 	REFFS_TRACE_CAT_ALL
 };
 
