@@ -114,7 +114,7 @@ run-image: $(LOGS_DIR) stop-image
 		/bin/bash -c "rm -rf /tmp/reffs_data && mkdir -p /tmp/reffs_data && \
 			rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && autoreconf -fi && \
-			cd /build && ../src/configure && make && \
+			cd /build && ../src/configure --enable-asan && make && \
 			script -f -q -c './src/reffsd --port 2049 --file=/logs/reffs.trc --backend=posix --backend-path=/tmp/reffs_data' /logs/reffs.console"
 
 # Dump stacks of the running reffsd process in the sandbox
