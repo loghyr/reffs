@@ -56,8 +56,7 @@ int reffs_ns_init(void)
 
 	reffs_root_de = dirent_get(reffs_root_sb->sb_dirent);
 
-	inode = inode_get(reffs_root_sb->sb_dirent->rd_inode);
-	assert(inode);
+	inode = inode_active_get(reffs_root_sb->sb_dirent->rd_inode);
 	if (!inode) {
 		ret = ENOENT;
 		LOG("No root inode on root sb");
@@ -78,7 +77,7 @@ int reffs_ns_init(void)
 
 	inode->i_parent = reffs_root_sb->sb_dirent;
 
-	inode_put(inode);
+	inode_active_put(inode);
 
 	network_file_handle_init();
 
