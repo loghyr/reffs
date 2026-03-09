@@ -5,17 +5,18 @@
 # git_reffs.sh - Clone reffs.git onto a reffs mount and run tests
 #
 # Usage: ./git_reffs.sh [--server <server:export>] [--mount <mountpoint>]
-#                       [--repo <git-url>] [--logdir <dir>]
+#                       [--repo <git-url>] [--logdir <dir>] [--iters <count>]
 #
 # Defaults:
 #   --server  127.0.0.1:/
 #   --mount   /mnt/reffs
-#   --repo    git@192.168.2.102:reffs.git
+#   --repo    /home/loghyr/reffs
 #   --logdir  /home/loghyr/reffs/git_logs
+#   --iters   1
 #
 # Example:
 #   ./git_reffs.sh
-#   ./git_reffs.sh --server 127.0.0.1:/ --mount /mnt/reffs --repo git@192.168.2.102:reffs.git
+#   ./git_reffs.sh --server 127.0.0.1:/ --mount /mnt/reffs --repo /home/loghyr/reffs --iters 10
 
 set -euo pipefail
 
@@ -24,6 +25,7 @@ NFS_TARGET="127.0.0.1:/"
 MOUNT_POINT="/mnt/reffs"
 REPO_URL="/home/loghyr/reffs"
 LOG_DIR="/home/loghyr/reffs/git_logs"
+ITERS=1
 
 # --- Argument parsing ---
 while [[ $# -gt 0 ]]; do
@@ -44,9 +46,13 @@ while [[ $# -gt 0 ]]; do
             LOG_DIR="$2"
             shift 2
             ;;
+        --iters)
+            ITERS="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1" >&2
-            echo "Usage: $0 [--server <server:export>] [--mount <mountpoint>] [--repo <git-url>] [--logdir <dir>]" >&2
+            echo "Usage: $0 [--server <server:export>] [--mount <mountpoint>] [--repo <git-url>] [--logdir <dir>] [--iters <count>]" >&2
             exit 1
             ;;
     esac
@@ -95,34 +101,40 @@ log "Starting git clone test..."
 log "  Server : ${NFS_TARGET}"
 log "  Mount  : ${MOUNT_POINT}"
 log "  Repo   : ${REPO_URL}"
+log "  Iters  : ${ITERS}"
 
-cd "${MOUNT_POINT}"
+for ((i=1; i<=ITERS; i++)); do
+    log "Iteration $i / $ITERS"
 
-log "Cloning repository..."
-if git clone "${REPO_URL}"; then
-    log "Clone: PASSED"
-else
-    log "Clone: FAILED"
-    exit 1
-fi
+    cd "${MOUNT_POINT}"
 
-REPO_DIR="${MOUNT_POINT}/reffs"
-if [[ ! -d "${REPO_DIR}" ]]; then
-    # Fallback: find the directory created if it's not 'reffs'
-    REPO_DIR=$(ls -td "${MOUNT_POINT}"/*/ | head -1)
-fi
+    log "Cleaning up old clone..."
+    sudo rm -rf "reffs"
 
-cd "${REPO_DIR}"
+    log "Cloning repository..."
+    if git clone "${REPO_URL}"; then
+        log "Clone: PASSED"
+    else
+        log "Clone: FAILED"
+        exit 1
+    fi
 
-log "Building and running unit tests inside mount..."
-# Note: We use -f Makefile.reffs as requested. 
-# This usually scaffolds, builds, and runs checks.
-if make -f Makefile.reffs check; then
-    log "Tests: PASSED"
-else
-    log "Tests: FAILED"
-    exit 1
-fi
+    REPO_DIR="${MOUNT_POINT}/reffs"
+    if [[ ! -d "${REPO_DIR}" ]]; then
+        # Fallback: find the directory created if it's not 'reffs'
+        REPO_DIR=$(ls -td "${MOUNT_POINT}"/*/ | head -1)
+    fi
 
-log "Git Reffs test completed successfully."
+    cd "${REPO_DIR}"
+
+    log "Building and running unit tests inside mount..."
+    if make -f Makefile.reffs check; then
+        log "Tests: PASSED"
+    else
+        log "Tests: FAILED"
+        exit 1
+    fi
+done
+
+log "Git Reffs test completed successfully after ${ITERS} iterations."
 exit 0
