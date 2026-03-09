@@ -112,6 +112,7 @@ run-image: $(LOGS_DIR) stop-image
 		-v $(LOGS_DIR):/logs:Z \
 		$(IMAGE_NAME) \
 		/bin/bash -c "rm -rf /tmp/reffs_data && mkdir -p /tmp/reffs_data && \
+			rm -rf /src/* /build/* && \
 			rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && autoreconf -fi && \
 			cd /build && ../src/configure --enable-asan && make && \
@@ -145,7 +146,7 @@ stack:
 
 # Stop and remove any running sandbox containers
 stop-image:
-	@CONTAINERS=$$($(DOCKER) ps -aq --filter name=$(IMAGE_NAME)-sandbox --filter ancestor=$(IMAGE_NAME)); \
+	@CONTAINERS=$$($(DOCKER) ps -aq --filter name=$(IMAGE_NAME)-sandbox); \
 	if [ -n "$$CONTAINERS" ]; then \
 		echo "Stopping and removing containers: $$CONTAINERS"; \
 		$(DOCKER) stop $$CONTAINERS 2>/dev/null || true; \
