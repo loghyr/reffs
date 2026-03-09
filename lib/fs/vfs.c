@@ -125,6 +125,14 @@ static int rtc_cmp(const char *s1, const char *s2)
 
 int vfs_is_subdir(struct inode *child, struct inode *maybe_parent)
 {
+	/*
+	 * TODO: Each ->i_parent->rd_parent->rd_inode hop is a raw weak-pointer
+	 * dereference. child (inode_src_file) is held with an active ref by
+	 * vfs_rename_locked, but ancestor inodes are not. Under extreme LRU
+	 * pressure a directory ancestor could be evicted between hops.
+	 * Fix: add i_dirent back-pointer to inode so we can walk via
+	 * inode_active_get without touching rd_parent at all.
+	 */
 	struct inode *curr = child;
 	while (curr) {
 		if (curr == maybe_parent)
@@ -143,6 +151,7 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 				    struct authunix_parms *ap, bool is_dir)
 {
 	struct reffs_dirent *rd = NULL;
+	struct inode *rd_inode = NULL;
 	struct reffs_dirent *de_dir = vfs_dir_dirent(dir);
 	int ret = 0;
 	enum reffs_text_case rtc = reffs_case_get();
@@ -156,31 +165,38 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 		return -ENOENT;
 	}
 
-	if (is_dir && !S_ISDIR(rd->rd_inode->i_mode)) {
+	rd_inode = inode_active_get_from_dirent(rd);
+	if (!rd_inode) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	if (is_dir && !S_ISDIR(rd_inode->i_mode)) {
 		ret = -ENOTDIR;
 		goto out;
 	}
-	if (!is_dir && S_ISDIR(rd->rd_inode->i_mode)) {
+	if (!is_dir && S_ISDIR(rd_inode->i_mode)) {
 		ret = -EISDIR;
 		goto out;
 	}
 
-	ret = vfs_check_sticky_bit(dir, rd->rd_inode, ap);
+	ret = vfs_check_sticky_bit(dir, rd_inode, ap);
 	if (ret)
 		goto out;
 
-	if (is_dir && !cds_list_empty(&rd->rd_inode->i_children)) {
+	if (is_dir && !cds_list_empty(&rd_inode->i_children)) {
 		ret = -ENOTEMPTY;
 		goto out;
 	}
 
-	inode_update_times_now(rd->rd_inode, REFFS_INODE_UPDATE_CTIME);
+	inode_update_times_now(rd_inode, REFFS_INODE_UPDATE_CTIME);
 	dirent_parent_release(rd, reffs_life_action_death);
 
 	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
 					    REFFS_INODE_UPDATE_MTIME);
 
 out:
+	inode_active_put(rd_inode);
 	dirent_put(rd);
 	return ret;
 }
@@ -295,11 +311,20 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 	if (!rd_src) {
 		return -ENOENT;
 	}
-	inode_src_file = rd_src->rd_inode;
+	inode_src_file = inode_active_get_from_dirent(rd_src);
+	if (!inode_src_file) {
+		dirent_put(rd_src);
+		return -ENOENT;
+	}
 
 	rd_dst = dirent_find(de_new_dir, rtc, (char *)new_name);
 	if (rd_dst) {
-		inode_dst_file = rd_dst->rd_inode;
+		inode_dst_file = inode_active_get_from_dirent(rd_dst);
+		if (!inode_dst_file) {
+			/* dst dirent exists but inode evicted — treat as gone */
+			dirent_put(rd_dst);
+			rd_dst = NULL;
+		}
 	}
 
 	if (rd_src == rd_dst) {
@@ -400,6 +425,8 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 	}
 
 out:
+	inode_active_put(inode_src_file);
+	inode_active_put(inode_dst_file);
 	dirent_put(rd_src);
 	dirent_put(rd_dst);
 	return ret;
@@ -661,13 +688,18 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 	rd = dirent_find(de_dir, rtc, (char *)name);
 	if (rd) {
 		// POSIX: For exclusive, if it exists, check verifier
-		if (rd->rd_inode->i_ctime.tv_sec == verf->tv_sec &&
-		    rd->rd_inode->i_ctime.tv_nsec == verf->tv_nsec) {
-			if (new_inode)
-				*new_inode = inode_get(rd->rd_inode);
+		struct inode *existing = inode_active_get_from_dirent(rd);
+		if (existing) {
+			bool match =
+				(existing->i_ctime.tv_sec == verf->tv_sec &&
+				 existing->i_ctime.tv_nsec == verf->tv_nsec);
+			if (match && new_inode)
+				*new_inode = inode_get(existing);
+			inode_active_put(existing);
 			dirent_put(rd);
-			return 0;
+			return match ? 0 : -EEXIST;
 		}
+		/* inode evicted — treat as no verifier match */
 		dirent_put(rd);
 		return -EEXIST;
 	}

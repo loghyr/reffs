@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-08 (second session)
 **Session scope:** NFS3 READDIR/READDIRPLUS correctness, CREATE→WRITE active-ref fix, deadlock diagnosis
-**Status:** cthon04 basic tests pass. git clone hangs — root cause identified (reader/writer lock ordering), fix applied but not yet verified. cthon04 now re-hanging at basic test start — under investigation.
+**Status:** cthon04 basic tests pass. git clone passes. Both resolved in Session 4 (io_uring FD capacity fix — MAX_CONNECTIONS raised to 65536). LRU fault-in unit tests WIP pending i_dirent back-pointer (§8d/§10.5).
 
 ---
 
@@ -117,26 +117,21 @@ dir_de_rdlocked = false;
 
 ---
 
-## 4. Open investigation: cthon04 re-hang
+## 4. ~~Open investigation: cthon04 re-hang~~ — RESOLVED (see §8a)
 
-After the Bug H fix was deployed, cthon04 hangs again immediately at test start.
-The server is **not** deadlocked — gdb shows all threads idle (io_uring waiting,
-workers on `pthread_cond_timedwait`, RCU threads idle). The TCP connections have
-Recv-Q=0, Send-Q=0. The server console shows no RPCs received after startup.
+**RESOLVED in Session 4.** Root cause was io_uring FD capacity exhaustion
+(`MAX_CONNECTIONS=1024`), not a dispatch bug. See §8a for details.
 
-This suggests the RPC is arriving at TCP but not being dispatched by io_uring, or
-the mount itself is hanging before any test RPC. The NFS client shows 126K retransmits
-but those are cumulative from the prior cthon04 run that passed.
+Historical notes: After the Bug H fix was deployed, cthon04 hung again immediately
+at test start. The server was not deadlocked — gdb showed all threads idle. No RPCs
+were received after startup, suggesting the hang was at the io_uring dispatch layer.
+The next-steps investigation below was superseded by the FD capacity discovery.
 
-**Next steps:**
-1. Check the trace file (`/logs/reffs.trc`) — it will show what RPCs the server
-   actually received and whether any op is returning without sending a reply.
-2. Run `tcpdump -i lo port 2049` on dreamer during the hang to see if packets are
-   arriving and whether replies are sent.
-3. Check if the hang is on MOUNT (before any NFS ops) or on the first NFS op
-   (likely GETATTR on the root filehandle).
-4. The `script -q -c` wrapper in `run-image` — verify it's not buffering stdout
-   and preventing the server from seeing its own terminal.
+~~**Next steps:**~~
+~~1. Check the trace file (`/logs/reffs.trc`)~~
+~~2. Run `tcpdump -i lo port 2049`~~
+~~3. Check if the hang is on MOUNT or first NFS op~~
+~~4. The `script -q -c` wrapper in `run-image`~~
 
 ---
 
@@ -155,12 +150,11 @@ but those are cumulative from the prior cthon04 run that passed.
 
 ## 6. Pending issues
 
-### 6a. cthon04 re-hang after Bug H fix
-See §4 above. Server is live but not dispatching. Trace file investigation needed.
+### 6a. cthon04 re-hang after Bug H fix — RESOLVED
+See §8a. Fixed in Session 4 by raising MAX_CONNECTIONS to 65536.
 
-### 6b. git clone hang
-Bug H (rd_rwlock deadlock) was the identified cause. Fix applied to `nfs3_server.c`
-but git clone not yet re-tested with the new binary.
+### 6b. git clone hang — RESOLVED
+See §8b. Bug H fix plus MAX_CONNECTIONS increase both applied; git clone passes.
 
 ### 6c. `reffs_fs_*` access `rd_inode` without `inode_active_get` (from prior session §6b)
 All `reffs_fs_*` operations access `nm_dirent->rd_inode` as a raw pointer. Under LRU
@@ -321,11 +315,18 @@ blocks CI. The two-srunner split is the correct approach.
 
 ## 8. Updated pending issues
 
-### 8a. cthon04 re-hang (was §6a)
-Unchanged. See §4.
+### 8a. cthon04 re-hang (was §6a) — RESOLVED
+Fixed in Session 4. Root cause: io_uring FD capacity exhaustion. The POSIX backend
+holds one data-block FD open per inode; under high concurrency (cthon04, git clone)
+this exceeded the old `MAX_CONNECTIONS=1024` limit in `io.c`. Fix: raised
+`MAX_CONNECTIONS` to 65536 and removed the restrictive `fd >= MAX_CONNECTIONS`
+checks in `io_request_read_op` / `io_request_write_op`. Both cthon04 and git clone
+pass consistently with the new binary.
 
-### 8b. git clone hang (was §6b)
-Unchanged. Bug H fix applied, not re-tested.
+### 8b. git clone hang (was §6b) — RESOLVED
+Resolved by the same io_uring FD capacity fix as §8a. Bug H (rd_rwlock deadlock)
+was also a contributor but FD exhaustion was the primary cause of the hang under
+git clone's high concurrency. Both fixes are in place and git clone passes.
 
 ### 8c. Raw `rd_inode` UAF in `reffs_fs_*()` — `name_match_get_inode` (was §6c)
 All `reffs_fs_*()` operations and `vfs_remove_common_locked()` access `rd_inode`
@@ -541,3 +542,256 @@ full transition checklist.
 
 **New — `dirent_children_release()` in `dirent.c:478`**: same raw `rd_inode->i_children`
 dereference pattern as `release_dirents_recursive`. Same latent bug; same fix needed.
+
+---
+
+## Session 5 — 2026-03-09: rd_inode UAF fix + super_block_release_dirents repair
+
+### Summary
+
+Applied the fs.c / vfs.c `inode_active_get` fix from Session 4 and then drove the
+fault-in LRU tests to passing. This required fixing three additional bugs discovered
+during testing, all in the `release_dirents_recursive` / `inode_active_get` stack.
+The fault-in tests now run — but crash at `lru_max=1` due to a fundamental RCU
+limitation. The tests are left **WIP** pending `i_dirent` back-pointer (§8d).
+
+---
+
+### 10.1 fs_test_lru.c — known-bug scaffolding removed
+
+`fs_test_lru.c` was updated to remove all scaffolding that guarded against the
+now-fixed raw `rd_inode` UAF:
+
+- `raw_rdino_bug_present()` deleted
+- `fault_in_tcase_skip` flag deleted
+- `SKIP_IF_RAW_RDINO_BUG()` macro and all six call sites deleted
+- `fs_lru_known_bugs_suite()` and second `SRunner` in `main()` deleted
+- `fault_in_setup()` deleted; `tc_faultin` now uses plain `setup`/`teardown`
+- `test_lru_eviction_produces_tombstone` simplified: `probe_rd` /
+  `rcu_assign_pointer` / `dirent_put` workaround removed; files cleaned up
+  with `reffs_fs_unlink` before return
+- Header comment updated to reflect fix status
+
+---
+
+### 10.2 Bug: `release_dirents_recursive` — raw `rd_inode` dereference at teardown
+
+**Symptom:** ASAN heap-use-after-free at `super_block.c:188` inside
+`release_dirents_recursive`, triggered by `test_lru_eviction_fires` (organic
+eviction under `TEST_LRU_MAX=4` pressure evicts the root inode before teardown).
+
+**Root cause:** `release_dirents_recursive` uses `rd_parent->rd_inode->i_children`
+to walk the child list. After organic eviction + RCU grace period completion,
+the inode struct is freed while `rd_inode` still points at it.
+
+**Fix:** `release_dirents_recursive` now takes `struct super_block *sb` as a
+parameter and uses `inode_active_get` + `inode_alloc` fallback to safely pin the
+inode for the walk:
+
+```c
+static void release_dirents_recursive(struct super_block *sb,
+                                       struct reffs_dirent *rd_parent)
+{
+        struct inode *inode;
+
+        if (!rd_parent)
+                return;
+
+        rcu_read_lock();
+        inode = rcu_dereference(rd_parent->rd_inode);
+        if (inode)
+                inode = inode_active_get(inode);
+        rcu_read_unlock();
+
+        if (!inode && rd_parent->rd_ino)
+                inode = inode_alloc(sb, rd_parent->rd_ino);
+
+        if (!inode)
+                return;
+
+        cds_list_for_each_entry_safe(rd, tmp, &inode->i_children, rd_siblings) {
+                release_dirents_recursive(sb, rd);
+                dirent_parent_release(rd, reffs_life_action_death);
+        }
+        inode_active_put(inode);
+}
+```
+
+**Comment block** before the function replaced with a short accurate version
+documenting the `rd_inode` weak pointer nature and the `i_dirent` TODO.
+
+---
+
+### 10.3 Bug: `rcu_barrier()` in `release_all_fs_dirents` — fires before dirent walk
+
+**Symptom:** Crash moved to `urcu_ref_get_unless_zero` inside `inode_active_get`
+called from `release_dirents_recursive`. Even with the §10.2 fix in place,
+`inode_active_get` was reading freed memory.
+
+**Root cause:** `release_all_fs_dirents()` in `ns.c` called `rcu_barrier()` as a
+preamble "to drain pending RCU callbacks before touching rd_inode." This fires
+`inode_free_rcu` for all tombstoned inodes, freeing their structs — before the
+dirent walk starts. The `inode_active_get` inside `release_dirents_recursive` then
+reads the freed `urcu_ref` field.
+
+**Fix:** Remove the `rcu_barrier()` preamble from `release_all_fs_dirents()`.
+Each `super_block_release_dirents()` ends with `super_block_drain + rcu_barrier()`
+which is the correct place to drain. The preamble comment is replaced with a
+warning explaining why `rcu_barrier()` must NOT be called before the walk.
+
+Similarly, the `rcu_barrier()` that was at the top of `super_block_release_dirents`
+was also removed — it was moved to after the dirent walk (already in Phase 2).
+
+---
+
+### 10.4 Bug: `inode_active_get_from_dirent` — RCU window too late
+
+**Symptom:** After removing spurious `rcu_barrier()` calls, crash persisted in
+`test_lru_inode_find_after_evict`. `drain_lru()` calls `rcu_barrier()`, completing
+`inode_free_rcu`. Then `reffs_fs_getattr` loads `rd_inode` (outside RCU), calls
+`inode_active_get_from_dirent` — but by then the struct is already freed.
+
+**Investigation:** Added trace points to `inode_free_rcu` and
+`inode_active_get_from_dirent`. Confirmed: `inode_free_rcu` logs the address as
+freed on thread 1470075, then 10ms later the test thread loads the same address
+from `rd_inode` and crashes — the `rcu_read_lock` inside `inode_active_get_from_dirent`
+is acquired *after* the grace period already completed.
+
+**Root cause of original fix being wrong:** The original approach put `rcu_read_lock`
+inside `inode_active_get(struct inode *)`. But `inode_active_get` receives the
+already-loaded pointer — it cannot retroactively protect against a grace period that
+completed between the load and the call.
+
+**Fix:** New function `inode_active_get_from_dirent(struct reffs_dirent *rd)` that
+loads `rd_inode` *and* calls `inode_active_get` within the same unbroken
+`rcu_read_lock` critical section:
+
+```c
+struct inode *inode_active_get_from_dirent(struct reffs_dirent *rd)
+{
+        struct inode *inode;
+        if (!rd)
+                return NULL;
+        rcu_read_lock();
+        inode = rcu_dereference(rd->rd_inode);
+        if (inode)
+                inode = inode_active_get(inode);
+        rcu_read_unlock();
+        return inode;
+}
+```
+
+All call sites in `fs.c` and `vfs.c` updated from
+`inode_active_get(rd->rd_inode)` → `inode_active_get_from_dirent(rd)`.
+
+`inode_active_get(struct inode *)` reverted to its original form — no internal
+`rcu_read_lock`. Naming convention enforced: bare pointer → `inode_active_get`;
+dirent weak pointer → `inode_active_get_from_dirent`.
+
+---
+
+### 10.5 WIP: fault-in tests still crash at `lru_max=1` — fundamental RCU limit
+
+**Symptom:** `test_lru_inode_find_after_evict` still crashes after all the above
+fixes. Detailed tracing confirms:
+
+1. `reffs_fs_create("/evict_me")` with `lru_max=1`:
+   - New inode allocated, `i_ref=2`, `i_active=1`
+   - `inode_active_put` inside `vfs_create_common_locked`: `i_active→0`, LRU add
+   - Immediately evicted (LRU full at max=1): `inode_unhash` → `i_ref→0` →
+     `inode_release` → `call_rcu(inode_free_rcu)`
+2. `drain_lru()` calls `rcu_barrier()`: `inode_free_rcu` runs, struct freed
+3. `reffs_fs_getattr("/evict_me")`:
+   - `find_matching_directory_entry` returns `nm->nm_dirent` pointing at `/evict_me`
+   - `nm->nm_dirent->rd_inode` = freed struct pointer (never nulled by eviction path)
+   - `inode_active_get_from_dirent` enters `rcu_read_lock`, loads freed pointer,
+     crashes in `urcu_ref_get_unless_zero`
+
+**Why `rcu_read_lock` cannot help here:** The inode was freed by `rcu_barrier()` in
+`drain_lru()` — a completed grace period. `rcu_read_lock` only blocks *future* grace
+periods. Once `rcu_barrier()` has run, the struct is freed memory regardless of any
+subsequently acquired read-side lock.
+
+**Root cause — fundamental:** `rd_inode` is never nulled by the eviction path.
+After eviction + `rcu_barrier()`, `rd_inode` is a non-NULL pointer to freed memory.
+`inode_active_get_from_dirent` cannot distinguish this from a live pointer —
+`rcu_dereference` returns it, and the `inode_active_get` call crashes before it can
+check `i_active`.
+
+**The only correct fix:** The eviction path must null `rd_inode` on the dirent
+atomically when it tombstones the inode. This requires `i_dirent` back-pointer on
+`struct inode` (§8d) so `super_block_evict_inodes` can do:
+```c
+rcu_assign_pointer(inode->i_dirent->rd_inode, NULL);
+```
+before `call_rcu`. Without this, any `rd_inode` dereference after a completed grace
+period is a potential UAF.
+
+---
+
+### 10.6 Commit message (WIP)
+
+```
+fs/super_block,ns,inode: fix release_dirents_recursive UAF + inode_active_get RCU window
+
+Three bugs fixed in the teardown / inode-get path, exposed by the new
+LRU fault-in unit tests:
+
+1. release_dirents_recursive (super_block.c): added struct super_block *sb
+   parameter; now uses inode_active_get + inode_alloc fallback to safely
+   pin rd_parent's inode before walking i_children.  Previously accessed
+   rd_parent->rd_inode->i_children as a raw pointer; after organic LRU
+   eviction + RCU grace period completion the struct is freed memory.
+
+2. release_all_fs_dirents (ns.c): removed rcu_barrier() preamble that was
+   firing inode_free_rcu callbacks (freeing inode structs) before the dirent
+   tree walk.  Each super_block_release_dirents call ends with
+   super_block_drain + rcu_barrier() which is the correct drain point.
+
+3. inode_active_get_from_dirent (inode.c): new function that loads rd_inode
+   and calls inode_active_get within the same unbroken rcu_read_lock critical
+   section.  The previous pattern of loading rd_inode outside RCU and passing
+   the raw pointer to inode_active_get is unsafe: a grace period can complete
+   between the load and the call, freeing the struct.  All fs.c / vfs.c call
+   sites updated.
+
+WIP — fault-in LRU tests (test_lru_inode_find_after_evict and friends) still
+crash when lru_max=1.  Root cause: the eviction path never nulls rd_inode on
+the dirent, so after drain_lru() + rcu_barrier() the pointer is non-NULL but
+freed.  inode_active_get_from_dirent cannot safely distinguish this from a
+live pointer — rcu_read_lock does not protect against a completed grace period.
+
+Fix requires i_dirent back-pointer on struct inode (see architecture doc §8d)
+so super_block_evict_inodes can rcu_assign_pointer(inode->i_dirent->rd_inode,
+NULL) before call_rcu.  Until that lands, the fault-in tests are expected to
+fail at lru_max=1 (organic eviction immediately after create).
+```
+
+---
+
+### 10.7 Updated pending issues
+
+**§8d (`i_dirent` back-pointer)** — NOW BLOCKING the fault-in LRU tests.
+Required changes:
+- Add `struct reffs_dirent *i_dirent` weak pointer to `struct inode`
+- In `super_block_evict_inodes`, before `call_rcu`:
+  `rcu_assign_pointer(inode->i_dirent->rd_inode, NULL);`
+- In `inode_active_get_from_dirent`: miss path (NULL from `rcu_dereference`)
+  can now call `dirent_ensure_inode` safely since NULL means "evicted" not
+  "freed"
+- Delete test-side workarounds: `null_evicted_rd_inodes`, `rcu_assign_pointer`
+  blocks in `test_lru_eviction_produces_tombstone`
+- LRU fault-in tests should pass once this lands
+
+**`release_dirents_recursive` `inode_alloc` in shutdown path:** The fallback
+to `inode_alloc` when `inode_active_get` returns NULL (tombstoned) is correct
+for the POSIX backend (can reload from disk). Verify this is safe for the
+RocksDB backend before shipping.
+
+**`dirent_children_release()` in `dirent.c:478`** — same raw `rd_inode->i_children`
+dereference as the old `release_dirents_recursive`. Same fix needed.
+
+**`vfs_is_subdir` ancestor walk (`vfs.c:141`)** — each
+`curr->i_parent->rd_parent->rd_inode` hop is a raw weak dereference. Deferred;
+low risk under `vfs_lock_dirs` (directory inodes stay hot). Requires `i_dirent`
+for a clean fix. TODO comment in place.

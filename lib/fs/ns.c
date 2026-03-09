@@ -25,6 +25,7 @@
 #include "reffs/ns.h"
 #include "reffs/super_block.h"
 #include "reffs/types.h"
+#include "reffs/trace/fs.h"
 
 volatile sig_atomic_t reffs_namespace_initialized = 0;
 static struct super_block *reffs_root_sb = NULL;
@@ -63,6 +64,8 @@ int reffs_ns_init(void)
 		goto out;
 	}
 
+	trace_fs_inode(inode, __func__, __LINE__);
+
 	inode->i_uid = 0;
 	inode->i_gid = 0;
 	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
@@ -95,9 +98,15 @@ void release_all_fs_dirents(void)
 
 	struct cds_list_head *sb_list = super_block_list_head();
 
-	/* Preamble: drain all pending RCU callbacks before touching rd_inode */
-	rcu_barrier();
-
+	/*
+         * Do NOT call rcu_barrier() here.  Evicted inodes may have
+         * inode_free_rcu callbacks queued; completing them before the
+         * dirent walk would free inode structs while rd_inode still points
+         * at them.  release_dirents_recursive uses inode_active_get which
+         * reads the urcu_ref inside the struct — UAF if already freed.
+         * Each super_block_release_dirents call ends with super_block_drain
+         * + rcu_barrier(), which cleans up after the walk completes.
+         */
 	cds_list_for_each_entry_safe(sb, tmp, sb_list, sb_link) {
 		uuid_unparse(sb->sb_uuid, uuid_str);
 		super_block_release_dirents(sb);

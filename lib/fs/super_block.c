@@ -147,49 +147,48 @@ void super_block_evict_dirents(struct super_block *sb, size_t count)
 /*
  * release_dirents_recursive -- recursively release a dirent subtree.
  *
- * PRECONDITION: rd_parent->rd_inode must not be a freed pointer.
+ * rd_inode is a weak pointer that eviction never nulls.  We use
+ * inode_active_get() to safely pin the inode for the i_children walk;
+ * if it has been evicted, inode_alloc() reloads it from the backend.
+ * A NULL result (rd_ino == 0, mid-construction dirent) means no children.
  *
- * rd_inode is a weak pointer that is never nulled by the LRU eviction path
- * (super_block_evict_inodes sets i_active=-1 and drops the hash ref, but
- * does not null rd_inode on the dirent).  After inode_release calls
- * call_rcu(inode_free_rcu) and a grace period elapses, the inode struct is
- * freed while rd_inode still points at it.
- *
- * This function is safe to call only when no inode reachable via rd_inode
- * in the subtree has been freed.  That invariant is guaranteed by the normal
- * operational path (no test calls drain_lru before teardown).  If the LRU
- * eviction path is exercised before teardown, callers must ensure all evicted
- * inodes have their rd_inode nulled first.
- *
- * TODO: the correct long-term fix is to add an i_dirent weak back-pointer
- * to struct inode and null rd_inode from inode_release() before call_rcu,
- * making the invariant self-enforcing.  Until then, callers must not allow
- * evicted-inode dirents to remain in the tree at teardown time.
- *
- * Observed crashes (2026-03-08) from violating this invariant:
- *   READ of size 8 ... super_block.c:159  direct rd_inode dereference
- *   READ of size 8 ... urcu/ref.h:83      after dirent_ensure_inode attempt
- *     (dirent_ensure_inode's fast path calls inode_active_get on rd_inode
- *      without first verifying the struct is still allocated; same UAF,
- *      one frame deeper)
+ * TODO: add an i_dirent back-pointer to struct inode and null rd_inode
+ * from inode_release() before call_rcu, so evicted inodes are detectable
+ * via a NULL rd_inode without needing inode_alloc() here.
  */
-static void release_dirents_recursive(struct reffs_dirent *rd_parent)
+static void release_dirents_recursive(struct super_block *sb,
+				      struct reffs_dirent *rd_parent)
 {
 	struct reffs_dirent *rd, *tmp;
+	struct inode *inode;
 
-	if (!rd_parent || !rd_parent->rd_inode)
+	if (!rd_parent)
 		return;
 
 	/*
-	 * Use _safe variant: dirent_parent_release removes the entry from
-	 * i_children so we must not hold a pointer to rd_siblings across it.
-	 * Collect the next pointer before the list is mutated.
-	 */
-	cds_list_for_each_entry_safe(rd, tmp, &rd_parent->rd_inode->i_children,
-				     rd_siblings) {
-		release_dirents_recursive(rd);
+         * Get an active ref on rd_parent's inode so we can safely walk
+         * i_children.  If it was evicted, reload it from the hash/backend.
+         * If we genuinely cannot find it (rd_ino == 0, mid-construction
+         * dirent), there are no children to walk.
+         */
+	rcu_read_lock();
+	inode = rcu_dereference(rd_parent->rd_inode);
+	if (inode)
+		inode = inode_active_get(inode);
+	rcu_read_unlock();
+
+	if (!inode && rd_parent->rd_ino)
+		inode = inode_alloc(sb, rd_parent->rd_ino);
+
+	if (!inode)
+		return;
+
+	cds_list_for_each_entry_safe(rd, tmp, &inode->i_children, rd_siblings) {
+		release_dirents_recursive(sb, rd);
 		dirent_parent_release(rd, reffs_life_action_death);
 	}
+
+	inode_active_put(inode);
 }
 
 void super_block_release_dirents(struct super_block *sb)
@@ -199,19 +198,29 @@ void super_block_release_dirents(struct super_block *sb)
 
 	struct reffs_dirent *rd;
 
-	rcu_barrier();
-
-	/* Phase 1: walk and release the full dirent tree */
+	/* Phase 1: walk and release the full dirent tree.
+         *
+         * Do NOT call rcu_barrier() before this walk.  Evicted inodes
+         * may have inode_free_rcu callbacks queued; rcu_barrier() would
+         * complete them, freeing the inode structs while rd_inode still
+         * points at them.  release_dirents_recursive uses inode_active_get
+         * which reads the urcu_ref inside the inode struct — that is a UAF
+         * if the struct is already freed.
+         *
+         * inode_active_get on a tombstoned-but-not-yet-freed inode returns
+         * NULL (i_active == -1 fails the CAS), which is handled correctly
+         * by the inode_alloc fallback.
+         */
 	rd = rcu_xchg_pointer(&sb->sb_dirent, NULL);
 	if (rd) {
 		dirent_get(rd);
-		release_dirents_recursive(rd);
+		release_dirents_recursive(sb, rd);
 		dirent_parent_release(rd, reffs_life_action_death);
 		dirent_put(rd); /* walk ref */
 		dirent_put(rd); /* alloc ref */
 	}
 
-	/* Phase 2: drain inodes */
+	/* Phase 2: drain inodes and wait for all RCU callbacks. */
 	super_block_drain(sb);
 	rcu_barrier();
 }

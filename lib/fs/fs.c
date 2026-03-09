@@ -39,6 +39,7 @@
 #include "reffs/types.h"
 #include "reffs/vfs.h"
 #include "rpc/auth_unix.h"
+#include "reffs/trace/fs.h"
 
 struct timespec;
 
@@ -163,7 +164,16 @@ int find_matching_directory_entry(struct name_match **nm, const char *path,
 			goto err;
 		}
 
-		if (!S_ISDIR(next_de->rd_inode->i_mode)) {
+		struct inode *next_inode =
+			inode_active_get_from_dirent(next_de);
+		if (!next_inode) {
+			dirent_put(next_de);
+			ret = -ENOENT;
+			goto err;
+		}
+		bool next_is_dir = S_ISDIR(next_inode->i_mode);
+		inode_active_put(next_inode);
+		if (!next_is_dir) {
 			dirent_put(next_de);
 			ret = -ENOTDIR;
 			goto err;
@@ -218,7 +228,11 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 		return 0;
 	}
 
-	inode = nm->nm_dirent->rd_inode;
+	inode = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!inode) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
 
 	ap.aup_uid = uid;
 	ap.aup_gid = gid;
@@ -227,6 +241,7 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 
 	ret = inode_access_check(inode, &ap, mode);
 
+	inode_active_put(inode);
 	name_match_free(nm);
 	return ret;
 }
@@ -247,7 +262,13 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 	rs.mode = mode;
 	rs.mode_set = true;
 
-	ret = vfs_setattr(nm->nm_dirent->rd_inode, &rs, NULL);
+	struct inode *inode = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!inode) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
+	ret = vfs_setattr(inode, &rs, NULL);
+	inode_active_put(inode);
 	name_match_free(nm);
 
 	TRACE("ret=%d", ret);
@@ -276,7 +297,13 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 		rs.gid_set = true;
 	}
 
-	ret = vfs_setattr(nm->nm_dirent->rd_inode, &rs, NULL);
+	struct inode *inode = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!inode) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
+	ret = vfs_setattr(inode, &rs, NULL);
+	inode_active_put(inode);
 	name_match_free(nm);
 
 	TRACE("ret=%d", ret);
@@ -298,7 +325,18 @@ int reffs_fs_create(const char *path, mode_t mode)
 		return ret;
 
 	reffs_get_authunix_parms(&ap);
-	ret = vfs_create(nm->nm_dirent->rd_inode, nm->nm_name, mode, &ap, NULL);
+
+	struct inode *dir = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!dir) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
+
+	trace_fs_inode(dir, __func__, __LINE__);
+	TRACE("ino=%lu freeing struct at %p", dir->i_ino, (void *)dir);
+
+	ret = vfs_create(dir, nm->nm_name, mode, &ap, NULL);
+	inode_active_put(dir);
 
 	name_match_free(nm);
 	return ret;
@@ -317,7 +355,14 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 		return ret;
 
 	reffs_get_authunix_parms(&ap);
-	ret = vfs_mkdir(nm->nm_dirent->rd_inode, nm->nm_name, mode, &ap, NULL);
+
+	struct inode *dir = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!dir) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
+	ret = vfs_mkdir(dir, nm->nm_name, mode, &ap, NULL);
+	inode_active_put(dir);
 
 	name_match_free(nm);
 	return ret;
@@ -336,8 +381,14 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 		return ret;
 
 	reffs_get_authunix_parms(&ap);
-	ret = vfs_mknod(nm->nm_dirent->rd_inode, nm->nm_name, mode, rdev, &ap,
-			NULL);
+
+	struct inode *dir = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!dir) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
+	ret = vfs_mknod(dir, nm->nm_name, mode, rdev, &ap, NULL);
+	inode_active_put(dir);
 
 	name_match_free(nm);
 	return ret;
@@ -357,8 +408,14 @@ int reffs_fs_symlink(const char *target, const char *linkpath)
 		return ret;
 
 	reffs_get_authunix_parms(&ap);
-	ret = vfs_symlink(nm->nm_dirent->rd_inode, nm->nm_name, target, &ap,
-			  NULL);
+
+	struct inode *dir = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!dir) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
+	ret = vfs_symlink(dir, nm->nm_name, target, &ap, NULL);
+	inode_active_put(dir);
 
 	name_match_free(nm);
 	return ret;
@@ -382,7 +439,12 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	if (ret)
 		goto out;
 
-	inode = nm->nm_dirent->rd_inode;
+	inode = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!inode) {
+		ret = -ENOENT;
+		name_match_free(nm);
+		goto out;
+	}
 
 	st->st_ino = inode->i_ino;
 	st->st_uid = inode->i_uid;
@@ -396,6 +458,7 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	st->st_blocks = inode->i_used * (inode->i_sb->sb_block_size / 512);
 	st->st_blksize = inode->i_sb->sb_block_size;
 
+	inode_active_put(inode);
 	name_match_free(nm);
 
 out:
@@ -425,8 +488,24 @@ int reffs_fs_link(const char *old_path, const char *new_path)
 	}
 
 	reffs_get_authunix_parms(&ap);
-	ret = vfs_link(nm_src->nm_dirent->rd_inode, nm_dst->nm_dirent->rd_inode,
-		       nm_dst->nm_name, &ap);
+
+	struct inode *src_inode =
+		inode_active_get_from_dirent(nm_src->nm_dirent);
+	if (!src_inode) {
+		name_match_free(nm_src);
+		name_match_free(nm_dst);
+		return -ENOENT;
+	}
+	struct inode *dst_dir = inode_active_get_from_dirent(nm_dst->nm_dirent);
+	if (!dst_dir) {
+		inode_active_put(src_inode);
+		name_match_free(nm_src);
+		name_match_free(nm_dst);
+		return -ENOENT;
+	}
+	ret = vfs_link(src_inode, dst_dir, nm_dst->nm_name, &ap);
+	inode_active_put(src_inode);
+	inode_active_put(dst_dir);
 
 	name_match_free(nm_src);
 	name_match_free(nm_dst);
@@ -447,7 +526,12 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 	if (ret)
 		goto out;
 
-	inode = nm->nm_dirent->rd_inode;
+	inode = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!inode) {
+		name_match_free(nm);
+		ret = -ENOENT;
+		goto out;
+	}
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	pthread_rwlock_rdlock(&inode->i_db_rwlock);
@@ -471,6 +555,7 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 out_puts:
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
+	inode_active_put(inode);
 	name_match_free(nm);
 
 out:
@@ -500,15 +585,19 @@ int reffs_fs_readlink(const char *path, char *buffer, size_t len)
 	if (ret)
 		goto out;
 
-	inode = nm->nm_dirent->rd_inode;
+	inode = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!inode) {
+		ret = -ENOENT;
+		goto out_nm;
+	}
 	if (!S_ISLNK(inode->i_mode)) {
 		ret = -EINVAL;
-		goto out_nm;
+		goto out_inode;
 	}
 
 	if (!inode->i_symlink) {
 		ret = -EIO;
-		goto out_nm;
+		goto out_inode;
 	}
 
 	size_t sym_len = strlen(inode->i_symlink);
@@ -518,6 +607,8 @@ int reffs_fs_readlink(const char *path, char *buffer, size_t len)
 	if (copy_len < len)
 		buffer[copy_len] = '\0';
 
+out_inode:
+	inode_active_put(inode);
 out_nm:
 	name_match_free(nm);
 out:
@@ -566,15 +657,30 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		return ret;
 	}
 
-	struct inode *old_dir = nm_src->nm_dirent->rd_parent->rd_inode;
-	struct inode *new_dir = dst_exists ?
-					nm_dst->nm_dirent->rd_parent->rd_inode :
-					nm_dst->nm_dirent->rd_inode;
+	struct inode *old_dir =
+		inode_active_get_from_dirent(nm_src->nm_dirent->rd_parent);
+	if (!old_dir) {
+		name_match_free(nm_src);
+		name_match_free(nm_dst);
+		return -ENOENT;
+	}
+
+	struct reffs_dirent *dst_de =
+		dst_exists ? nm_dst->nm_dirent->rd_parent : nm_dst->nm_dirent;
+	struct inode *new_dir = inode_active_get_from_dirent(dst_de);
+	if (!new_dir) {
+		inode_active_put(old_dir);
+		name_match_free(nm_src);
+		name_match_free(nm_dst);
+		return -ENOENT;
+	}
 
 	reffs_get_authunix_parms(&ap);
 	ret = vfs_rename(old_dir, nm_src->nm_name, new_dir, nm_dst->nm_name,
 			 &ap);
 
+	inode_active_put(old_dir);
+	inode_active_put(new_dir);
 	name_match_free(nm_src);
 	name_match_free(nm_dst);
 
@@ -598,7 +704,15 @@ int reffs_fs_rmdir(const char *path)
 		return ret;
 
 	reffs_get_authunix_parms(&ap);
-	ret = vfs_rmdir(nm->nm_dirent->rd_parent->rd_inode, nm->nm_name, &ap);
+
+	struct inode *dir =
+		inode_active_get_from_dirent(nm->nm_dirent->rd_parent);
+	if (!dir) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
+	ret = vfs_rmdir(dir, nm->nm_name, &ap);
+	inode_active_put(dir);
 
 	name_match_free(nm);
 	return ret;
@@ -617,7 +731,15 @@ int reffs_fs_unlink(const char *path)
 		return ret;
 
 	reffs_get_authunix_parms(&ap);
-	ret = vfs_remove(nm->nm_dirent->rd_parent->rd_inode, nm->nm_name, &ap);
+
+	struct inode *udir =
+		inode_active_get_from_dirent(nm->nm_dirent->rd_parent);
+	if (!udir) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
+	ret = vfs_remove(udir, nm->nm_name, &ap);
+	inode_active_put(udir);
 
 	name_match_free(nm);
 	return ret;
@@ -661,7 +783,13 @@ int reffs_fs_utimensat(const char *path, const struct timespec times[2])
 		}
 	}
 
-	ret = vfs_setattr(nm->nm_dirent->rd_inode, &rs, &ap);
+	struct inode *inode = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!inode) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
+	ret = vfs_setattr(inode, &rs, &ap);
+	inode_active_put(inode);
 
 	name_match_free(nm);
 	return ret;
@@ -681,7 +809,12 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 	if (ret)
 		goto out;
 
-	inode = nm->nm_dirent->rd_inode;
+	inode = inode_active_get_from_dirent(nm->nm_dirent);
+	if (!inode) {
+		name_match_free(nm);
+		ret = -ENOENT;
+		goto out;
+	}
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	pthread_rwlock_wrlock(&inode->i_db_rwlock);
@@ -737,6 +870,7 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 out_puts:
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
+	inode_active_put(inode);
 	name_match_free(nm);
 
 out:
