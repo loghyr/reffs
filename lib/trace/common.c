@@ -164,9 +164,10 @@ static void rotate_trace_if_needed_locked(void)
 	trace_fp = NULL;
 
 	if (rename(reffs_trace_name, rotated_name) != 0) {
-		fprintf(stderr, "Failed to rename trace log: %s\n",
-			strerror(errno));
-		return;
+		fprintf(stderr, "Failed to rename trace log: %s (from %s to %s)\n",
+			strerror(errno), reffs_trace_name, rotated_name);
+		// Re-open original to continue tracing if rename fails
+		goto reopen;
 	}
 
 	char *queued = strdup(rotated_name);
