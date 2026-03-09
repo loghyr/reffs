@@ -471,12 +471,15 @@ void dirent_children_release(struct reffs_dirent *parent,
 {
 	struct reffs_dirent *rd;
 
-	if (!parent)
+	struct inode *inode;
+
+	inode = dirent_ensure_inode(parent);
+	if (!inode)
 		return;
 
 	rcu_read_lock();
-	while (!cds_list_empty(&parent->rd_inode->i_children)) {
-		rd = cds_list_first_entry(&parent->rd_inode->i_children,
+	while (!cds_list_empty(&inode->i_children)) {
+		rd = cds_list_first_entry(&inode->i_children,
 					  struct reffs_dirent, rd_siblings);
 		dirent_get(rd);
 		dirent_parent_release(rd, rla);
@@ -484,6 +487,8 @@ void dirent_children_release(struct reffs_dirent *parent,
 		dirent_put(rd);
 	}
 	rcu_read_unlock();
+
+	inode_active_put(inode);
 }
 
 /* ------------------------------------------------------------------ */

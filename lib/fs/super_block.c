@@ -147,8 +147,10 @@ void super_block_evict_dirents(struct super_block *sb, size_t count)
 static void release_dirents_recursive(struct reffs_dirent *rd_parent)
 {
 	struct reffs_dirent *rd, *tmp;
+	struct inode *inode;
 
-	if (!rd_parent || !rd_parent->rd_inode)
+	inode = dirent_ensure_inode(rd_parent);
+	if (!inode)
 		return;
 
 	/*
@@ -161,6 +163,8 @@ static void release_dirents_recursive(struct reffs_dirent *rd_parent)
 		release_dirents_recursive(rd);
 		dirent_parent_release(rd, reffs_life_action_death);
 	}
+
+	inode_active_put(inode);
 }
 
 void super_block_release_dirents(struct super_block *sb)
