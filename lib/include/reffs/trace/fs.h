@@ -20,8 +20,11 @@ static inline void trace_fs_dirent(struct reffs_dirent *rd, const char *event,
 static inline void trace_fs_inode(struct inode *inode, const char *event,
 				  int line)
 {
-	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line, "inode=%p ref=%ld",
-			  (void *)inode, inode->i_ref.refcount);
+	reffs_trace_event(
+		REFFS_TRACE_CAT_FS, event, line,
+		"inode=%p ref=%ld sb=%lu ino=%lu nlink=%u size=%lu mode=%u",
+		(void *)inode, inode->i_ref.refcount, inode->i_sb->sb_id,
+		inode->i_ino, inode->i_nlink, inode->i_size, inode->i_mode);
 }
 
 #endif /* _REFFS_TRACE_FS_H */
