@@ -26,6 +26,7 @@
 #include "reffs/inode.h"
 #include "reffs/log.h"
 #include "reffs/super_block.h"
+#include "reffs/trace/fs.h"
 #include "reffs/test.h"
 
 struct rcu_head;
@@ -216,6 +217,41 @@ struct inode *inode_active_get(struct inode *inode)
 		inode_lru_del_locked(inode);
 		pthread_mutex_unlock(&inode->i_sb->sb_inode_lru_lock);
 	}
+
+	return inode;
+}
+
+/*
+ * inode_active_get_from_dirent -- safely load rd_inode and acquire an
+ * active ref in a single RCU critical section.
+ *
+ * rd_inode is a weak pointer; the inode struct may be freed by
+ * inode_free_rcu after a grace period following eviction.  The pointer
+ * must be loaded and inode_get() called within the same unbroken
+ * rcu_read_lock critical section — rcu_read_lock prevents any grace
+ * period from completing while held, so the struct cannot be freed
+ * between the load and the urcu_ref increment.
+ *
+ * This is the correct call site for all fs.c / vfs.c paths that read
+ * rd_inode from a dirent after a path walk.  Do NOT load rd_inode
+ * first and pass it to inode_active_get() — a grace period may elapse
+ * between the load and the call.
+ *
+ * Returns the inode with an active ref held, or NULL if evicted.
+ * Caller must call inode_active_put() when done.
+ */
+struct inode *inode_active_get_from_dirent(struct reffs_dirent *rd)
+{
+	struct inode *inode;
+
+	if (!rd)
+		return NULL;
+
+	rcu_read_lock();
+	inode = rcu_dereference(rd->rd_inode);
+	if (inode)
+		inode = inode_active_get(inode);
+	rcu_read_unlock();
 
 	return inode;
 }
