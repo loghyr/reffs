@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: GPL-2.0+
+
 # do_cthon.sh - Run cthon04 basic, general, and special tests in a loop
 #
 # Usage: ./do_cthon.sh [--server <server:export>] [--mount <mountpoint>]

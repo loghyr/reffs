@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: GPL-2.0+
+-->
+
 # POSIX Recovery Unit Tests
 
 This document outlines the unit tests for verifying the POSIX backing store recovery logic in `reffs`.

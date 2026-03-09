@@ -1,4 +1,10 @@
-# Reffs VFS (Virtual File System) Layer
+<!--
+SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: GPL-2.0+
+-->
+
+# Reffs VFS (Virtual File System)
+ Layer
 
 ## Rationale
 The VFS layer was introduced to establish a protocol-agnostic, inode-based internal API. The primary goals are:
