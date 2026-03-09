@@ -533,9 +533,23 @@ int probe1_protocol_register(void)
 		return 0;
 
 	/* Verify that the generated enum matches the manually defined one */
-	static_assert((enum reffs_trace_category)PROBE1_TRACE_CAT_ALL ==
-			      REFFS_TRACE_CAT_ALL,
-		      "Enum values are out of sync between header and XDR");
+	static_assert((int)PROBE1_TRACE_CAT_GENERAL ==
+			      (int)REFFS_TRACE_CAT_GENERAL,
+		      "REFFS_TRACE_CAT_GENERAL out of sync");
+	static_assert((int)PROBE1_TRACE_CAT_IO == (int)REFFS_TRACE_CAT_IO,
+		      "REFFS_TRACE_CAT_IO out of sync");
+	static_assert((int)PROBE1_TRACE_CAT_RPC == (int)REFFS_TRACE_CAT_RPC,
+		      "REFFS_TRACE_CAT_RPC out of sync");
+	static_assert((int)PROBE1_TRACE_CAT_NFS == (int)REFFS_TRACE_CAT_NFS,
+		      "REFFS_TRACE_CAT_NFS out of sync");
+	static_assert((int)PROBE1_TRACE_CAT_NLM == (int)REFFS_TRACE_CAT_NLM,
+		      "REFFS_TRACE_CAT_NLM out of sync");
+	static_assert((int)PROBE1_TRACE_CAT_FS == (int)REFFS_TRACE_CAT_FS,
+		      "REFFS_TRACE_CAT_FS out of sync");
+	static_assert((int)PROBE1_TRACE_CAT_LOG == (int)REFFS_TRACE_CAT_LOG,
+		      "REFFS_TRACE_CAT_LOG out of sync");
+	static_assert((int)PROBE1_TRACE_CAT_ALL == (int)REFFS_TRACE_CAT_ALL,
+		      "REFFS_TRACE_CAT_ALL out of sync");
 
 	static_assert((enum op_type)PROBE1_OP_TYPE_ALL == OP_TYPE_ALL,
 		      "Enum values are out of sync between header and XDR");
