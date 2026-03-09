@@ -198,7 +198,7 @@ int reffs_nlm4_lock(struct inode *inode, struct nlm4_lockargs *args)
 	lock->l_offset = args->alock.l_offset;
 	lock->l_len = args->alock.l_len;
 	lock->l_exclusive = args->exclusive;
-	lock->l_inode = inode_get(inode);
+	lock->l_inode = inode_active_get(inode);
 	if (!lock->l_inode) {
 		reffs_lock_free(lock);
 		pthread_mutex_unlock(&inode->i_lock_mutex);
@@ -332,7 +332,7 @@ int reffs_nlm4_share(struct inode *inode, struct nlm4_shareargs *args)
 	share->s_owner = &lo->lo_base;
 	share->s_mode = args->share.mode;
 	share->s_access = args->share.access;
-	share->s_inode = inode_get(inode);
+	share->s_inode = inode_active_get(inode);
 	if (!share->s_inode) {
 		reffs_share_free(share);
 		pthread_mutex_unlock(&inode->i_lock_mutex);
