@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: GPL-2.0+
+-->
+
 # Reffs Docker Sandbox
 
 This document describes the Docker-based sandbox environment for developing and testing the **Reffs** NFS server.

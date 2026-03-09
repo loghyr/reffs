@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: GPL-2.0+
+
 # Suppress specific leaks in libtirpc
 interceptor_via_lib:libtirpc.so
 interceptor_via_fun:__rpc_uaddr2taddr_af

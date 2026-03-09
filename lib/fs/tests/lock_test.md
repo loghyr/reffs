@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: GPL-2.0+
+-->
+
 # Lock Unit Tests
 
 This document describes the unit tests for `lib/fs/lock.c`, which implements

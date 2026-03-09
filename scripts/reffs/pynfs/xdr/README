@@ -1,3 +1,6 @@
+SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: GPL-2.0+
+
 Python XDR parser and code generator.  Features hooks for dealing with
 opaques and flags to turn on/off checking of array lengths and enum values.
 
@@ -19,4 +22,3 @@ Finally, the most important classes are BASEPacker and BASEUnpacker
 defined in BASE_pack.py. These allow translation from XDR strings to
 python classes and back.  These basically inherit from xdrlib, so see
 the Python documentation on xdrlib for usage.
-

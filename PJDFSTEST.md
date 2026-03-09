@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: GPL-2.0+
+-->
+
 # PJDFSTEST Individual Execution Playbook
 
 Use this checklist to isolate and debug the specific POSIX violations identified in the global test runs. Execute these from the mount point of the filesystem.

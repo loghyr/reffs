@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: GPL-2.0+
+-->
+
 # Reffs: Reference File System
 
 Reffs is a high-performance Reference File System project focused on providing reference implementations for NFSv3, NFSv4.1 (with Flex Files support), and FUSE. It leverages modern Linux kernel features like `io_uring` for asynchronous I/O and `liburcu` for scalable, lock-free synchronization.

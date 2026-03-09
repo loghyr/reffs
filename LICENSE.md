@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: GPL-2.0+
+-->
+
 # Reference File System Reffs licensing
 
 This project is compliant with the [REUSE](https://reuse.software/spec/)
