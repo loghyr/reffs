@@ -978,6 +978,10 @@ static int nfs3_op_create(struct rpc_trans *rt)
 		createverf3_to_timespec(args->how.createhow3_u.verf, &verf);
 		ret = vfs_exclusive_create(inode, args->where.name, &verf, &ap,
 					   &new_inode);
+		if (new_inode)
+			ret = 0;
+		else
+			ret = -ENOENT;
 	} else {
 		mode_t mode = 0644;
 		if (sa->mode.set_it)
@@ -996,7 +1000,7 @@ static int nfs3_op_create(struct rpc_trans *rt)
 		}
 	}
 
-	if (ret) {
+	if (ret || !new_inode) {
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
 	}
