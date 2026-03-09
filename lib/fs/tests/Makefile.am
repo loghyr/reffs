@@ -62,9 +62,11 @@ TESTS = \
 	fs_test_create_length \
 	fs_test_vfs_unchecked_create \
 	fs_test_getattr \
+	fs_test_lru \
 	fs_test_mkdir \
 	fs_test_mkdir_timestamps \
 	fs_test_nlink_semantics \
+	fs_test_ns_teardown \
 	fs_test_permissions \
 	fs_test_rename \
 	fs_test_setattr_permissions \
