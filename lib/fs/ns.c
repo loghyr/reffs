@@ -89,7 +89,7 @@ out:
 	return ret;
 }
 
-static void release_all_fs_dirents(void)
+void release_all_fs_dirents(void)
 {
 	struct super_block *sb, *tmp;
 	char uuid_str[UUID_STR_LEN];
