@@ -220,11 +220,6 @@ struct inode *inode_active_get(struct inode *inode)
 	return inode;
 }
 
-struct inode *inode_active_get_from_dirent(struct reffs_dirent *rd)
-{
-	return dirent_ensure_inode(rd);
-}
-
 void inode_active_put(struct inode *inode)
 {
 	if (!inode)

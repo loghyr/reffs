@@ -127,7 +127,6 @@ void inode_put(struct inode *inode);
  * inode_active_get() returns NULL if the inode is already being torn down.
  */
 struct inode *inode_active_get(struct inode *inode);
-struct inode *inode_active_get_from_dirent(struct reffs_dirent *rd);
 void inode_active_put(struct inode *inode);
 
 bool inode_unhash(struct inode *inode);

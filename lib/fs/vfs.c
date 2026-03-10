@@ -165,7 +165,7 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 		return -ENOENT;
 	}
 
-	rd_inode = inode_active_get_from_dirent(rd);
+	rd_inode = dirent_ensure_inode(rd);
 	if (!rd_inode) {
 		ret = -ENOENT;
 		goto out;
@@ -311,7 +311,7 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 	if (!rd_src) {
 		return -ENOENT;
 	}
-	inode_src_file = inode_active_get_from_dirent(rd_src);
+	inode_src_file = dirent_ensure_inode(rd_src);
 	if (!inode_src_file) {
 		dirent_put(rd_src);
 		return -ENOENT;
@@ -319,7 +319,7 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 
 	rd_dst = dirent_find(de_new_dir, rtc, (char *)new_name);
 	if (rd_dst) {
-		inode_dst_file = inode_active_get_from_dirent(rd_dst);
+		inode_dst_file = dirent_ensure_inode(rd_dst);
 		if (!inode_dst_file) {
 			/* dst dirent exists but inode evicted — treat as gone */
 			dirent_put(rd_dst);
@@ -688,7 +688,7 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 	rd = dirent_find(de_dir, rtc, (char *)name);
 	if (rd) {
 		// POSIX: For exclusive, if it exists, check verifier
-		struct inode *existing = inode_active_get_from_dirent(rd);
+		struct inode *existing = dirent_ensure_inode(rd);
 		if (existing) {
 			bool match =
 				(existing->i_ctime.tv_sec == verf->tv_sec &&
