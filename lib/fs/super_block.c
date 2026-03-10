@@ -21,6 +21,7 @@
 #include "reffs/log.h"
 #include "reffs/super_block.h"
 #include "reffs/types.h"
+#include "reffs/trace/fs.h"
 
 struct rcu_head;
 
