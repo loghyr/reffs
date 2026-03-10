@@ -23,6 +23,7 @@
 #include "reffs/inode.h"
 #include "reffs/data_block.h"
 #include "reffs/log.h"
+#include "reffs/trace/fs.h"
 
 struct posix_sb_private {
 	char *sb_dir;
@@ -361,6 +362,7 @@ static int inode_load_from_disk(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct posix_sb_private *sb_priv = sb->sb_storage_private;
+
 	if (!sb_priv)
 		return -EINVAL;
 
@@ -462,6 +464,8 @@ static int inode_load_from_disk(struct inode *inode)
 			close(fd);
 		}
 	}
+
+	trace_fs_inode(inode, __func__, __LINE__);
 
 	return 0;
 }
