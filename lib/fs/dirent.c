@@ -231,9 +231,11 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd)
 	 * inode_active_get handles the LRU pull.
 	 */
 	rcu_read_lock();
-	inode = rd->rd_inode;
+	inode = rcu_dereference(rd->rd_inode);
 	if (inode)
 		inode = inode_active_get(inode);
+	if (inode)
+		trace_fs_inode(inode, __func__, __LINE__);
 	rcu_read_unlock();
 
 	if (inode)
@@ -276,7 +278,7 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd)
 		 * This is a benign race: worst case two threads both set it
 		 * to the same value.
 		 */
-		rd->rd_inode = inode;
+		rcu_assign_pointer(rd->rd_inode, inode);
 
 		/* Also restore i_parent for directory inodes. */
 		if (S_ISDIR(inode->i_mode) && !inode->i_parent)
