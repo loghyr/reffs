@@ -72,7 +72,8 @@ START_TEST(test_magic_and_versioning)
 			 0);
 
 	/* Simulate recovery */
-	struct super_block *sb2 = super_block_alloc(1, "/", REFFS_STORAGE_POSIX,
+	struct super_block *sb2 = super_block_alloc(SUPER_BLOCK_ROOT_ID, "/",
+						    REFFS_STORAGE_POSIX,
 						    ctx.backend_path);
 	ck_assert(sb2 != NULL);
 	super_block_dirent_create(sb2, NULL, reffs_life_action_birth);

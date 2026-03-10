@@ -33,8 +33,8 @@ int test_setup(struct test_context *ctx)
 	mkdir(sb_path, 0755);
 
 	/* Initialize superblock */
-	ctx->sb = super_block_alloc(1, "/", REFFS_STORAGE_POSIX,
-				    ctx->backend_path);
+	ctx->sb = super_block_alloc(SUPER_BLOCK_ROOT_ID, "/",
+				    REFFS_STORAGE_POSIX, ctx->backend_path);
 	if (!ctx->sb)
 		return ENOMEM;
 
