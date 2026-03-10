@@ -27,4 +27,12 @@ static inline void trace_fs_inode(struct inode *inode, const char *event,
 		inode->i_ino, inode->i_nlink, inode->i_size, inode->i_mode);
 }
 
+static inline void trace_fs_super_block(struct super_block *sb,
+					const char *event, int line)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line,
+			  "sb=%p ref=%ld id=%lu", (void *)sb,
+			  sb->sb_ref.refcount, sb->sb_id);
+}
+
 #endif /* _REFFS_TRACE_FS_H */
