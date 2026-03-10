@@ -47,6 +47,8 @@ static void inode_free_rcu(struct rcu_head *rcu)
 {
 	struct inode *inode = caa_container_of(rcu, struct inode, i_rcu);
 
+	trace_fs_inode(inode, __func__, __LINE__);
+
 	if (inode->i_db)
 		data_block_put(inode->i_db);
 
@@ -170,6 +172,8 @@ struct inode *inode_get(struct inode *inode)
 	if (!inode)
 		return NULL;
 
+	trace_fs_inode(inode, __func__, __LINE__);
+
 	if (!urcu_ref_get_unless_zero(&inode->i_ref))
 		return NULL;
 
@@ -180,6 +184,8 @@ void inode_put(struct inode *inode)
 {
 	if (!inode)
 		return;
+
+	trace_fs_inode(inode, __func__, __LINE__);
 
 	urcu_ref_put(&inode->i_ref, inode_release);
 }

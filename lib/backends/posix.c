@@ -85,6 +85,8 @@ static void posix_inode_sync(struct inode *inode)
 		 inode->i_ino);
 	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
 
+	trace_fs_inode(inode, __func__, __LINE__);
+
 	struct {
 		struct reffs_disk_header hdr;
 		struct inode_disk id;
@@ -283,6 +285,7 @@ static void posix_dir_sync(struct inode *inode)
 	if (!sb_priv || !inode->i_parent)
 		return;
 
+	trace_fs_inode(inode, __func__, __LINE__);
 	struct reffs_dirent *parent = inode->i_parent;
 
 	char path[1024];
@@ -365,6 +368,8 @@ static int inode_load_from_disk(struct inode *inode)
 
 	if (!sb_priv)
 		return -EINVAL;
+
+	trace_fs_inode(inode, __func__, __LINE__);
 
 	struct inode_disk id;
 	struct reffs_disk_header hdr;
@@ -634,6 +639,8 @@ static void posix_inode_free(struct inode *inode)
 	struct posix_sb_private *sb_priv = sb->sb_storage_private;
 	if (!sb_priv)
 		return;
+
+	trace_fs_inode(inode, __func__, __LINE__);
 
 	char path[1024];
 

@@ -202,6 +202,7 @@ void dirent_active_put(struct reffs_dirent *rd)
 	if (!rd)
 		return;
 
+	trace_fs_dirent(rd, __func__, __LINE__);
 	int64_t remaining =
 		__atomic_sub_fetch(&rd->rd_active, 1, __ATOMIC_ACQ_REL);
 	if (remaining == 0)
