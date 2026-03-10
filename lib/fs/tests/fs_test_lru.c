@@ -103,7 +103,7 @@ static void drain_lru(void)
         super_block_put(sb);
         synchronize_rcu();
         /* No rcu_barrier() here — we need inode structs to remain in memory
-         * so inode_active_get_from_dirent can safely read i_active and return
+         * so dirent_ensure_inode can safely read i_active and return
          * NULL on a tombstone.  inode_free_rcu runs in the background; by the
          * time it fires, any caller that got NULL has already reloaded via
          * inode_alloc and replaced rd_inode with a fresh pointer.
