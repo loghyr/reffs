@@ -130,8 +130,7 @@ static void inode_release(struct urcu_ref *ref)
 {
 	struct inode *inode = caa_container_of(ref, struct inode, i_ref);
 
-	TRACE("ino=%lu nlink=%u size=%lu", inode->i_ino, inode->i_nlink,
-	      inode->i_size);
+	trace_fs_inode(inode, __func__, __LINE__);
 
 	inode_unhash(inode);
 	if (inode->i_sb) {
@@ -221,39 +220,9 @@ struct inode *inode_active_get(struct inode *inode)
 	return inode;
 }
 
-/*
- * inode_active_get_from_dirent -- safely load rd_inode and acquire an
- * active ref in a single RCU critical section.
- *
- * rd_inode is a weak pointer; the inode struct may be freed by
- * inode_free_rcu after a grace period following eviction.  The pointer
- * must be loaded and inode_get() called within the same unbroken
- * rcu_read_lock critical section — rcu_read_lock prevents any grace
- * period from completing while held, so the struct cannot be freed
- * between the load and the urcu_ref increment.
- *
- * This is the correct call site for all fs.c / vfs.c paths that read
- * rd_inode from a dirent after a path walk.  Do NOT load rd_inode
- * first and pass it to inode_active_get() — a grace period may elapse
- * between the load and the call.
- *
- * Returns the inode with an active ref held, or NULL if evicted.
- * Caller must call inode_active_put() when done.
- */
 struct inode *inode_active_get_from_dirent(struct reffs_dirent *rd)
 {
-	struct inode *inode;
-
-	if (!rd)
-		return NULL;
-
-	rcu_read_lock();
-	inode = rcu_dereference(rd->rd_inode);
-	if (inode)
-		inode = inode_active_get(inode);
-	rcu_read_unlock();
-
-	return inode;
+	return dirent_ensure_inode(rd);
 }
 
 void inode_active_put(struct inode *inode)
@@ -364,6 +333,8 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 		}
 	}
 
+	trace_fs_inode(inode, __func__, __LINE__);
+
 	return inode;
 }
 
@@ -414,6 +385,7 @@ void inode_update_times_now(struct inode *inode, uint64_t flags)
 
 void inode_sync_to_disk(struct inode *inode)
 {
+	trace_fs_inode(inode, __func__, __LINE__);
 	if (inode->i_sb && inode->i_sb->sb_ops &&
 	    inode->i_sb->sb_ops->inode_sync) {
 		inode->i_sb->sb_ops->inode_sync(inode);
