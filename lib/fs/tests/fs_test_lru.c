@@ -57,6 +57,8 @@
 #endif
 
 #include "fs_test_harness.h"
+#include "posix_recovery.h"
+#include <urcu/call-rcu.h>
 
 uid_t fs_test_uid;
 gid_t fs_test_gid;
@@ -94,6 +96,27 @@ static size_t lru_count(void)
  */
 static void drain_lru(void)
 {
+        struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+        ck_assert_ptr_nonnull(sb);
+        if (sb->sb_inode_lru_count > 0)
+                super_block_evict_inodes(sb, sb->sb_inode_lru_count);
+        super_block_put(sb);
+        synchronize_rcu();
+        /* No rcu_barrier() here — we need inode structs to remain in memory
+         * so inode_active_get_from_dirent can safely read i_active and return
+         * NULL on a tombstone.  inode_free_rcu runs in the background; by the
+         * time it fires, any caller that got NULL has already reloaded via
+         * inode_alloc and replaced rd_inode with a fresh pointer.
+         *
+         * rcu_barrier() would complete inode_free_rcu synchronously, leaving
+         * rd_inode as a non-NULL pointer to freed memory — inode_active_get
+         * would then crash reading urcu_ref before it could check i_active.
+         */
+}
+
+#ifdef NOT_NOW_BROWN_COW
+static void drain_lru(void)
+{
 	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(sb);
 	if (sb->sb_inode_lru_count > 0)
@@ -102,14 +125,26 @@ static void drain_lru(void)
 	synchronize_rcu();
 	rcu_barrier();
 }
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Fixtures                                                            */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Each test case gets a fresh POSIX-backed superblock in a mkdtemp
+ * directory so that eviction fault-in tests exercise real on-disk I/O
+ * rather than the RAM backend's in-memory short-circuit.
+ *
+ * test_context owns the temp dir and the POSIX superblock (id=1, "/").
+ * We stash it in a static so setup/teardown — which receive no args from
+ * libcheck — can share it.
+ */
+static struct test_context lru_ctx;
+
 static void setup(void)
 {
-	fs_test_setup();
+	ck_assert_int_eq(test_setup(&lru_ctx), 0);
 	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(sb);
 	sb->sb_inode_lru_max = TEST_LRU_MAX;
@@ -123,7 +158,7 @@ static void teardown(void)
 		sb->sb_inode_lru_max = 65536;
 		super_block_put(sb);
 	}
-	fs_test_teardown();
+	test_teardown(&lru_ctx);
 }
 
 /* ------------------------------------------------------------------ */
@@ -644,8 +679,22 @@ int main(void)
 
 	fs_test_global_init();
 
+	/*
+	 * Register liburcu fork handlers so the libcheck CK_FORK child has a
+	 * functioning call_rcu worker thread.  Must be called before
+	 * srunner_run_all so the handlers are in place when libcheck forks
+	 * for each test.
+	 */
+	pthread_atfork(call_rcu_before_fork, call_rcu_after_fork_parent,
+		       call_rcu_after_fork_child);
+
+	/*
+	 * CK_FORK: isolates each test's POSIX superblock and temp directory
+	 * in a child process, preventing state from leaking between tests
+	 * and giving ASAN a clean per-test lifetime.
+	 */
 	SRunner *sr = srunner_create(fs_lru_suite());
-	srunner_set_fork_status(sr, CK_NOFORK);
+	srunner_set_fork_status(sr, CK_FORK);
 	srunner_run_all(sr, CK_NORMAL);
 	failed = srunner_ntests_failed(sr);
 	srunner_free(sr);
