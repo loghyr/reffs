@@ -24,7 +24,7 @@ set -euo pipefail
 NFS_TARGET="127.0.0.1:/"
 MOUNT_POINT="/mnt/cthon04"
 MAX_ITERS=1
-CTHON_DIR="/home/loghyr/reffs/cthon04"
+CTHON_DIR="/home/loghyr/cthon04"
 LOG_DIR="/home/loghyr/reffs/cthon_logs"
 
 # --- Argument parsing ---
