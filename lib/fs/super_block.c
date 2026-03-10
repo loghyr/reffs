@@ -268,6 +268,8 @@ static void super_block_free(struct super_block *sb)
 	if (!sb)
 		return;
 
+	trace_fs_super_block(sb, __func__, __LINE__);
+
 	if (sb->sb_ops && sb->sb_ops->sb_free)
 		sb->sb_ops->sb_free(sb);
 
@@ -315,6 +317,7 @@ static void super_block_release(struct urcu_ref *ref)
 	 * before dropping the last sb ref.
 	 */
 
+	trace_fs_super_block(sb, __func__, __LINE__);
 	call_rcu(&sb->sb_rcu, super_block_free_rcu);
 }
 
@@ -334,6 +337,7 @@ void super_block_drain(struct super_block *sb)
 {
 	if (!sb)
 		return;
+	trace_fs_super_block(sb, __func__, __LINE__);
 	super_block_remove_all_inodes(sb);
 }
 
@@ -454,6 +458,8 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 	__atomic_fetch_or(&sb->sb_state, SB_IN_LIST, __ATOMIC_RELEASE);
 	cds_list_add_rcu(&sb->sb_link, &super_block_list);
 
+	trace_fs_super_block(sb, __func__, __LINE__);
+
 	return sb;
 }
 
@@ -470,6 +476,9 @@ struct super_block *super_block_find(uint64_t id)
 		}
 	rcu_read_unlock();
 
+	if (sb)
+		trace_fs_super_block(sb, __func__, __LINE__);
+
 	return sb;
 }
 
@@ -477,6 +486,8 @@ struct super_block *super_block_get(struct super_block *sb)
 {
 	if (!sb)
 		return NULL;
+
+	trace_fs_super_block(sb, __func__, __LINE__);
 
 	if (!urcu_ref_get_unless_zero(&sb->sb_ref))
 		return NULL;
@@ -488,6 +499,8 @@ void super_block_put(struct super_block *sb)
 {
 	if (!sb)
 		return;
+
+	trace_fs_super_block(sb, __func__, __LINE__);
 
 	urcu_ref_put(&sb->sb_ref, super_block_release);
 }
