@@ -163,6 +163,7 @@ static void inode_release(struct urcu_ref *ref)
 		}
 	}
 	super_block_put(inode->i_sb);
+	inode->i_sb = NULL;
 
 	call_rcu(&inode->i_rcu, inode_free_rcu);
 }
