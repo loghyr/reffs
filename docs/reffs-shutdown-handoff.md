@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # reffs: NFS3 correctness debugging — session handoff
 
 **Date:** 2026-03-08 (second session)

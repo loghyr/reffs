@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
- * SPDX-License-Identifier: GPL-2.0+
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 #ifndef _REFFS_NFS4_OPS_H

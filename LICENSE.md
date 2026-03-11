@@ -1,6 +1,6 @@
 <!--
 SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
-SPDX-License-Identifier: GPL-2.0+
+SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
 # Reference File System Reffs licensing
@@ -11,8 +11,9 @@ tags, the full licenses can be found in the `LICENSES/` directory.
 
 ## Code
 
-The code is distributed under `GPL-2.0+`. See `LICENSES/GPL-2.0` for
+The code is distributed under `AGPL-3.0-or-later`. See `LICENSES/AGPL-3.0-or-later` for
 license details. Refer to the individual file headers for details.
+
 
 ## Generated data files
 

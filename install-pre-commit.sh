@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
-# SPDX-License-Identifier: GPL-2.0+
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Change to the root directory of the Git repository
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
