@@ -173,6 +173,8 @@ struct inode *inode_get(struct inode *inode)
 	if (!inode)
 		return NULL;
 
+	TRACE("inode = %p", (void *)inode);
+
 	trace_fs_inode(inode, __func__, __LINE__);
 
 	if (!urcu_ref_get_unless_zero(&inode->i_ref))
@@ -225,6 +227,34 @@ struct inode *inode_active_get(struct inode *inode)
 	}
 
 	return inode;
+}
+
+struct inode *inode_active_get_rcu(struct inode *inode)
+{
+	if (!inode)
+		return NULL;
+
+	if (!inode_get(inode))
+		return NULL;
+
+	int64_t prev =
+		__atomic_fetch_add(&inode->i_active, 1, __ATOMIC_ACQ_REL);
+	if (prev < 0) {
+		__atomic_fetch_sub(&inode->i_active, 1, __ATOMIC_RELAXED);
+		inode_put(inode);
+		return NULL;
+	}
+
+	return inode;
+}
+
+void inode_active_lru_pull(struct inode *inode)
+{
+	if (inode && inode->i_sb) {
+		pthread_mutex_lock(&inode->i_sb->sb_inode_lru_lock);
+		inode_lru_del_locked(inode);
+		pthread_mutex_unlock(&inode->i_sb->sb_inode_lru_lock);
+	}
 }
 
 void inode_active_put(struct inode *inode)
