@@ -1,5 +1,5 @@
 SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
-SPDX-License-Identifier: GPL-2.0+
+SPDX-License-Identifier: GPL-2.0
 
 Python XDR parser and code generator.  Features hooks for dealing with
 opaques and flags to turn on/off checking of array lengths and enum values.

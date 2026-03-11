@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
-# SPDX-License-Identifier: GPL-2.0+
+# SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Check if a build directory is provided as an argument
 if [ -n "$1" ]; then

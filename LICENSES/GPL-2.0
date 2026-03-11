@@ -12,7 +12,7 @@ Usage-Guide:
   or
     SPDX-License-Identifier: GPL-2.0-only
   For 'GNU General Public License (GPL) version 2 or any later version' use:
-    SPDX-License-Identifier: GPL-2.0+
+    SPDX-License-Identifier: AGPL-3.0-or-later
   or
     SPDX-License-Identifier: GPL-2.0-or-later
 License-Text:
