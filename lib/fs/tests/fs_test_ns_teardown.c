@@ -473,10 +473,11 @@ END_TEST
  * This is the test for the contract: "the sb ref bump inside inode_alloc
  * must keep the sb alive until the last inode is freed."
  *
- * NOTE: i_nlink will be 0 after reffs_ns_fini() — dirent_parent_release
- * with reffs_life_action_death subtracts nlink as part of teardown.
- * The assertion checks i_ino (memory validity) and i_nlink == 0 (correct
- * teardown behaviour), not i_nlink == 1.
+ * NOTE: i_nlink is NOT modified by teardown.  reffs_ns_fini() now uses
+ * reffs_life_action_shutdown which skips all accounting (nlink, sb_inodes_used,
+ * sb_bytes_used) because on-disk state is already consistent.  The inode
+ * retains whatever nlink it had at teardown time (1 for a regular file).
+ * The assertion checks i_ino (memory validity) only; i_nlink is left as-is.
  */
 START_TEST(test_teardown_with_pinned_inode)
 {
@@ -508,18 +509,16 @@ START_TEST(test_teardown_with_pinned_inode)
 	 * Verify the inode struct is still addressable — i_ref > 0 because
 	 * our active ref holds one inode_get inside it.
 	 *
-	 * Do NOT check i_nlink == 1 here.  reffs_ns_fini() calls
-	 * release_all_fs_dirents() → dirent_parent_release(reffs_life_action_death)
-	 * which subtracts nlink (1 for a regular file), bringing it to 0.
-	 * i_nlink == 0 is the correct post-teardown value; asserting 1 would
-	 * be testing the wrong invariant.
+	 * With reffs_life_action_shutdown, teardown skips all nlink accounting;
+	 * on-disk state is already authoritative.  i_nlink retains its live
+	 * value (1 for a regular file).
 	 *
 	 * What we actually want to verify: the memory is still valid (no ASAN
 	 * report on the read) and i_ino is the expected value (proving the
 	 * struct hasn't been overwritten by the allocator).
 	 */
 	ck_assert_uint_eq(pinned->i_ino, st.st_ino);
-	ck_assert_uint_eq(pinned->i_nlink, 0); /* teardown decremented it */
+	ck_assert_uint_eq(pinned->i_nlink, 1); /* shutdown leaves nlink intact */
 
 	inode_active_put(pinned);
 

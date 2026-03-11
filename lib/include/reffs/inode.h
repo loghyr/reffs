@@ -129,6 +129,26 @@ void inode_put(struct inode *inode);
 struct inode *inode_active_get(struct inode *inode);
 void inode_active_put(struct inode *inode);
 
+/*
+ * inode_active_get_rcu -- pin an inode for active use from within an
+ * rcu_read_lock critical section.  The caller must hold rcu_read_lock
+ * for the duration of this call.
+ *
+ * Unlike inode_active_get(), the LRU pull is NOT performed here because
+ * that requires taking sb_inode_lru_lock (a blocking mutex), which is
+ * illegal inside rcu_read_lock.  After dropping rcu_read_lock, the caller
+ * must call inode_active_lru_pull() to complete the activation.
+ *
+ * Returns NULL if the inode is already being torn down (tombstone).
+ */
+struct inode *inode_active_get_rcu(struct inode *inode);
+
+/*
+ * inode_active_lru_pull -- remove inode from the LRU after a successful
+ * inode_active_get_rcu().  Must be called outside rcu_read_lock.
+ */
+void inode_active_lru_pull(struct inode *inode);
+
 bool inode_unhash(struct inode *inode);
 
 #define REFFS_INODE_UPDATE_ATIME (1ULL << 0)

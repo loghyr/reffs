@@ -69,9 +69,9 @@ static inline void fuse_test_global_init(void)
 static inline void fuse_test_global_fini(void)
 {
 	reffs_trace_close();
+	rcu_unregister_thread();
 	synchronize_rcu();
 	rcu_barrier();
-	rcu_unregister_thread();
 }
 
 /*

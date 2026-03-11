@@ -229,18 +229,17 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd)
 
 	/*
 	 * Fast path: rd_inode is still in memory.  Grab an active ref;
-	 * inode_active_get handles the LRU pull.
 	 */
 	rcu_read_lock();
 	inode = rcu_dereference(rd->rd_inode);
 	if (inode)
-		inode = inode_active_get(inode);
-	if (inode)
-		trace_fs_inode(inode, __func__, __LINE__);
+		inode = inode_active_get_rcu(inode);
 	rcu_read_unlock();
 
-	if (inode)
+	if (inode) {
+		inode_active_lru_pull(inode);
 		return inode;
+	}
 
 	/* Miss: rd_inode was evicted.  Reload by ino number. */
 	if (!rd->rd_ino) {
@@ -261,11 +260,17 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd)
 	struct reffs_dirent *p = rd;
 	while (p && !sb) {
 		rcu_read_lock();
-		if (p->rd_inode)
-			sb = p->rd_inode->i_sb;
+		inode = rcu_dereference(p->rd_inode);
+		if (inode)
+			inode = inode_active_get_rcu(inode);
 		rcu_read_unlock();
-		if (!sb)
+
+		if (inode) {
+			sb = inode->i_sb;
+			inode_active_put(inode);
+		} else {
 			p = p->rd_parent;
+		}
 	}
 
 	if (!sb)
@@ -333,6 +338,26 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 
 	if (!rd)
 		return;
+
+	/*
+	 * Shutdown path: the filesystem is being torn down.  On-disk state is
+	 * already consistent so no accounting, nlink updates, or disk writes
+	 * are needed.  We must NOT dereference rd_inode or parent->rd_inode
+	 * because those inodes may have already been freed by
+	 * super_block_drain.  Just detach from the sibling list and drop the
+	 * dirent refs.
+	 */
+	if (rla == reffs_life_action_shutdown) {
+		rcu_read_lock();
+		parent = rcu_xchg_pointer(&rd->rd_parent, NULL);
+		if (parent) {
+			cds_list_del_rcu(&rd->rd_siblings);
+			dirent_put(parent);
+			dirent_put(rd);
+		}
+		rcu_read_unlock();
+		return;
+	}
 
 	rcu_read_lock();
 	parent = rcu_xchg_pointer(&rd->rd_parent, NULL);
@@ -474,8 +499,40 @@ void dirent_children_release(struct reffs_dirent *parent,
 			     enum reffs_life_action rla)
 {
 	struct reffs_dirent *rd;
-
 	struct inode *inode;
+
+	/*
+	 * Shutdown path: do not attempt to fault in evicted inodes.  The
+	 * inode may already have been freed by super_block_drain.  Walk
+	 * i_children only if rd_inode is still resident; if it has been
+	 * evicted (rd_inode == NULL) there are by definition no in-memory
+	 * children to release (the LRU only evicts leaf dirents).
+	 *
+	 * Note: recurse before release so that children are detached
+	 * bottom-up, keeping i_children empty by the time the parent's
+	 * dirent_parent_release runs.
+	 */
+	if (rla == reffs_life_action_shutdown) {
+		rcu_read_lock();
+		inode = rcu_dereference(parent->rd_inode);
+		if (inode)
+			inode = inode_active_get(inode);
+		rcu_read_unlock();
+
+		if (inode) {
+			while (!cds_list_empty(&inode->i_children)) {
+				rd = cds_list_first_entry(&inode->i_children,
+							  struct reffs_dirent,
+							  rd_siblings);
+				dirent_get(rd);
+				dirent_children_release(rd, rla);
+				dirent_parent_release(rd, rla);
+				dirent_put(rd);
+			}
+			inode_active_put(inode);
+		}
+		return;
+	}
 
 	inode = dirent_ensure_inode(parent);
 	if (!inode)
