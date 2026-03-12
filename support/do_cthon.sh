@@ -11,8 +11,8 @@
 #   --server  127.0.0.1:/
 #   --mount   /mnt/cthon04
 #   --iters   1
-#   --cthon   ./cthon04
-#   --logdir  ./cthon_logs
+#   --cthon   <repo-root>/cthon04
+#   --logdir  <repo-root>/cthon_logs
 #
 # Example:
 #   ./do_cthon.sh
@@ -20,12 +20,16 @@
 
 set -euo pipefail
 
+# --- Root Detection ---
+# Get the absolute path to the repository root
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
 # --- Defaults ---
 NFS_TARGET="127.0.0.1:/"
 MOUNT_POINT="/mnt/cthon04"
 MAX_ITERS=1
-CTHON_DIR="./cthon04"
-LOG_DIR="./cthon_logs"
+CTHON_DIR="${REPO_ROOT}/cthon04"
+LOG_DIR="${REPO_ROOT}/cthon_logs"
 
 # --- Argument parsing ---
 while [[ $# -gt 0 ]]; do

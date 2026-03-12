@@ -11,21 +11,25 @@
 # Defaults:
 #   --server  127.0.0.1:/
 #   --mount   /mnt/reffs
-#   --repo    .
-#   --logdir  ./logs
+#   --repo    <repo-root>
+#   --logdir  <repo-root>/logs
 #   --iters   1
 #
 # Example:
 #   ./git_reffs.sh
-#   ./git_reffs.sh --server 127.0.0.1:/ --mount /mnt/reffs --repo . --iters 10
+#   ./git_reffs.sh --server 127.0.0.1:/ --mount /mnt/reffs --repo /path/to/repo --iters 10
 
 set -euo pipefail
+
+# --- Root Detection ---
+# Get the absolute path to the repository root
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 # --- Defaults ---
 NFS_TARGET="127.0.0.1:/"
 MOUNT_POINT="/mnt/reffs"
-REPO_URL="."
-LOG_DIR="./logs"
+REPO_URL="${REPO_ROOT}"
+LOG_DIR="${REPO_ROOT}/logs"
 ITERS=1
 RUN_BUILD=true
 RUN_UNIT_TEST=true
