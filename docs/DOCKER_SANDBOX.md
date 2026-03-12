@@ -69,14 +69,16 @@ The sandbox container uses the `--rm` flag and is removed when it exits. However
 ### 7. Triaging the Sandbox
 If you need to open a shell inside the active sandbox while the server is running:
 ```bash
-sudo docker exec -it reffs-dev-sandbox /bin/bash
+make -f Makefile.reffs shell
 ```
+(Alternatively: `sudo docker exec -it reffs-dev-sandbox /bin/bash`)
 The image now includes debugging tools like `gdb`, `strace`, `pgrep`, `ps`, and `bash-completion`.
 
 ## Useful Commands
 The `Makefile.reffs` provides several utility targets for the sandbox workflow:
 - `make -f Makefile.reffs help`: Show all available targets.
 - `make -f Makefile.reffs test-image`: Stop any existing sandboxes and start a fresh server.
+- `make -f Makefile.reffs shell`: Open an interactive shell in the sandbox.
 - `make -f Makefile.reffs stack`: Dump stack traces for debugging hung processes.
 - `make -f Makefile.reffs reconf`: Force re-generation of the `configure` script inside the sandbox.
 - `make -f Makefile.reffs clean`: Remove build artifacts from the `build/` directory.
