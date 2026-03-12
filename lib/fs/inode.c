@@ -50,8 +50,8 @@ static void inode_free_rcu(struct rcu_head *rcu)
 	/*
 	 * NULL i_sb before calling trace so that trace_fs_inode cannot
 	 * dereference a superblock that may be freed concurrently.
-	 * We hold a super_block_get() ref (taken in inode_release) that
-	 * keeps the sb memory alive until super_block_put() below.
+	 * The ref taken in inode_alloc (stored in i_sb) keeps the sb memory
+	 * alive until super_block_put() below.
 	 */
 	struct super_block *sb = inode->i_sb;
 	inode->i_sb = NULL;
@@ -331,7 +331,6 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 	pthread_mutex_init(&inode->i_attr_mutex, NULL);
 	pthread_mutex_init(&inode->i_lock_mutex, NULL);
 
-	CDS_INIT_LIST_HEAD(&inode->i_children);
 	CDS_INIT_LIST_HEAD(&inode->i_locks);
 	CDS_INIT_LIST_HEAD(&inode->i_shares);
 
@@ -464,10 +463,14 @@ bool inode_name_is_child(struct inode *inode, char *name)
 	bool exists = false;
 	struct reffs_dirent *rd;
 
+	if (!inode || !inode->i_dirent)
+		return false;
+
 	reffs_strng_compare cmp = reffs_text_case_cmp();
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings) {
+	cds_list_for_each_entry_rcu(rd, &inode->i_dirent->rd_children,
+				    rd_siblings) {
 		if (!cmp(rd->rd_name, name)) {
 			exists = true;
 			break;
@@ -488,16 +491,20 @@ struct inode *inode_name_get_inode(struct inode *inode, char *name)
 	}
 
 	if (!strcmp(name, "..")) {
-		if (inode->i_parent && inode->i_parent->rd_parent)
+		if (inode->i_dirent && inode->i_dirent->rd_parent)
 			return inode_active_get(
-				inode->i_parent->rd_parent->rd_inode);
+				inode->i_dirent->rd_parent->rd_inode);
 		return inode_active_get(inode); /* root case */
 	}
+
+	if (!inode->i_dirent)
+		return NULL;
 
 	reffs_strng_compare cmp = reffs_text_case_cmp();
 
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings) {
+	cds_list_for_each_entry_rcu(rd, &inode->i_dirent->rd_children,
+				    rd_siblings) {
 		if (!cmp(rd->rd_name, name)) {
 			/*
 			 * rd_inode is weak -- use dirent_ensure_inode() to
@@ -517,12 +524,13 @@ struct inode *inode_name_get_inode(struct inode *inode, char *name)
 /* ------------------------------------------------------------------ */
 
 /*
- * Ensure inode->i_parent is populated.  Walk up via i_parent_ino if needed.
- * Returns a ref-held dirent (dirent_put when done), or NULL on failure.
+ * Ensure the parent dirent of this inode is available and return it ref-held.
+ * The common fast path: inode->i_dirent->rd_parent is already set.
+ * Miss path: load the parent inode, find its dirent, then search rd_children
+ * for the child entry that points back at us.
  *
- * The common case is a cache hit: i_parent != NULL.
- * On a miss we load the parent inode by ino number and then search its
- * children list for a dirent that points back at us.
+ * Returns a ref-held dirent; caller must dirent_put() it.
+ * Returns NULL only on OOM / corrupt fs.
  */
 struct reffs_dirent *inode_ensure_parent_dirent(struct inode *inode)
 {
@@ -532,9 +540,9 @@ struct reffs_dirent *inode_ensure_parent_dirent(struct inode *inode)
 	if (!inode)
 		return NULL;
 
-	/* Fast path: already have the parent dirent in memory. */
+	/* Fast path: i_dirent is set and its rd_parent is populated. */
 	rcu_read_lock();
-	rd = inode->i_parent;
+	rd = inode->i_dirent ? inode->i_dirent->rd_parent : NULL;
 	if (rd)
 		rd = dirent_get(rd);
 	rcu_read_unlock();
@@ -554,23 +562,24 @@ struct reffs_dirent *inode_ensure_parent_dirent(struct inode *inode)
 		return NULL;
 
 	/*
-	 * Walk the parent's children list looking for a dirent whose rd_ino
-	 * matches ours.
+	 * Walk the parent dirent's rd_children looking for a dirent whose
+	 * rd_ino matches ours.  The parent dirent must be reachable via the
+	 * parent inode's i_dirent.
 	 */
 	rcu_read_lock();
-	struct reffs_dirent *child;
 	rd = NULL;
-	cds_list_for_each_entry_rcu(child, &parent_inode->i_children,
-				    rd_siblings) {
-		if (child->rd_ino == inode->i_ino) {
-			rd = dirent_get(child);
-			break;
+	if (parent_inode->i_dirent) {
+		struct reffs_dirent *child;
+		cds_list_for_each_entry_rcu(
+			child, &parent_inode->i_dirent->rd_children,
+			rd_siblings) {
+			if (child->rd_ino == inode->i_ino) {
+				rd = dirent_get(child);
+				break;
+			}
 		}
 	}
 	rcu_read_unlock();
-
-	if (rd && S_ISDIR(inode->i_mode))
-		inode->i_parent = rd; /* weak, no extra ref */
 
 	inode_active_put(parent_inode);
 	return rd;
@@ -593,7 +602,7 @@ struct path_link {
 
 /*
  * inode_already_anchored -- return true if this inode already has its dirent
- * in memory (i_parent set, or it is the root).
+ * in memory (i_dirent->rd_parent set, or it is the root).
  */
 static bool inode_already_anchored(struct inode *inode)
 {
@@ -602,7 +611,7 @@ static bool inode_already_anchored(struct inode *inode)
 	if (inode->i_ino == inode->i_parent_ino)
 		return true; /* root */
 	rcu_read_lock();
-	bool anchored = (inode->i_parent != NULL);
+	bool anchored = (inode->i_dirent && inode->i_dirent->rd_parent != NULL);
 	rcu_read_unlock();
 	return anchored;
 }

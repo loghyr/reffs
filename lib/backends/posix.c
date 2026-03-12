@@ -282,11 +282,11 @@ static void posix_dir_sync(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct posix_sb_private *sb_priv = sb->sb_storage_private;
-	if (!sb_priv || !inode->i_parent)
+	if (!sb_priv || !inode->i_dirent)
 		return;
 
 	trace_fs_inode(inode, __func__, __LINE__);
-	struct reffs_dirent *parent = inode->i_parent;
+	struct reffs_dirent *self = inode->i_dirent;
 
 	char path[1024];
 	char tmp_path[1024];
@@ -312,9 +312,8 @@ static void posix_dir_sync(struct inode *inode)
 		return;
 	}
 
-	if (write(fd, &parent->rd_cookie_next,
-		  sizeof(parent->rd_cookie_next)) !=
-	    sizeof(parent->rd_cookie_next)) {
+	if (write(fd, &self->rd_cookie_next, sizeof(self->rd_cookie_next)) !=
+	    sizeof(self->rd_cookie_next)) {
 		LOG("write cookie_next failed");
 		close(fd);
 		unlink(tmp_path);
@@ -323,7 +322,8 @@ static void posix_dir_sync(struct inode *inode)
 
 	struct reffs_dirent *rd;
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings) {
+	cds_list_for_each_entry_rcu(rd, &inode->i_dirent->rd_children,
+				    rd_siblings) {
 		uint64_t cookie = rd->rd_cookie;
 		/*
 		 * Use rd_ino (authoritative) rather than rd_inode->i_ino

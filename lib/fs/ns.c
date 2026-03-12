@@ -78,8 +78,6 @@ int reffs_ns_init(void)
 	inode->i_used = 1;
 	inode->i_nlink = 2;
 
-	inode->i_parent = reffs_root_sb->sb_dirent;
-
 	inode_active_put(inode);
 
 	network_file_handle_init();

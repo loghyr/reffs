@@ -1864,9 +1864,9 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 
 	/*
 	 * dir_de is the dirent that owns this directory inode.
-	 * For the root inode i_parent is NULL; fall back to sb_dirent.
+	 * For the root inode i_dirent is NULL; fall back to sb_dirent.
 	 */
-	struct reffs_dirent *dir_de = inode->i_parent ? inode->i_parent :
+	struct reffs_dirent *dir_de = inode->i_dirent ? inode->i_dirent :
 							sb->sb_dirent;
 	bool dir_de_rdlocked = true;
 	pthread_rwlock_rdlock(&dir_de->rd_rwlock);
@@ -1983,7 +1983,7 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 	rcu_read_lock();
 	{
 		struct reffs_dirent *rd;
-		cds_list_for_each_entry_rcu(rd, &inode->i_children,
+		cds_list_for_each_entry_rcu(rd, &inode->i_dirent->rd_children,
 					    rd_siblings) {
 			if (rd->rd_cookie <= cookie)
 				continue;
@@ -2162,7 +2162,7 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 
-	struct reffs_dirent *dir_de = inode->i_parent ? inode->i_parent :
+	struct reffs_dirent *dir_de = inode->i_dirent ? inode->i_dirent :
 							sb->sb_dirent;
 	bool dir_de_rdlocked = true;
 	pthread_rwlock_rdlock(&dir_de->rd_rwlock);
@@ -2355,7 +2355,7 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 	rcu_read_lock();
 	{
 		struct reffs_dirent *rd;
-		cds_list_for_each_entry_rcu(rd, &inode->i_children,
+		cds_list_for_each_entry_rcu(rd, &inode->i_dirent->rd_children,
 					    rd_siblings) {
 			if (rd->rd_cookie < cookie)
 				continue;

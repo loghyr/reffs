@@ -9,7 +9,7 @@
  * recover_directory_recursive() recurses for every directory.  This test
  * builds a four-level tree (root → A → B → C → leaf file) and verifies:
  *   1. All directories and the leaf are present after recovery.
- *   2. i_parent pointers are set correctly at each level.
+ *   2. i_dirent pointers are set correctly at each level.
  *   3. sb_next_ino is the maximum inode + 1 across the entire tree.
  *
  * Nesting also exercises the "nlink handling during recovery" concern: each
@@ -113,10 +113,10 @@ START_TEST(test_deep_nested_tree)
 	ck_assert(de_f != NULL);
 	ck_assert((de_f->rd_inode->i_mode & S_IFMT) == S_IFREG);
 
-	/* i_parent pointers must be wired correctly */
-	ck_assert(de_a->rd_inode->i_parent == de_a);
-	ck_assert(de_b->rd_inode->i_parent == de_b);
-	ck_assert(de_c->rd_inode->i_parent == de_c);
+	/* i_dirent pointers must be wired correctly */
+	ck_assert(de_a->rd_inode->i_dirent == de_a);
+	ck_assert(de_b->rd_inode->i_dirent == de_b);
+	ck_assert(de_c->rd_inode->i_dirent == de_c);
 
 	dirent_put(de_f);
 	dirent_put(de_c);

@@ -93,7 +93,7 @@ void super_block_evict_inodes(struct super_block *sb, size_t count)
  *
  * A dirent is evicted by:
  *   1. Verifying rd_active is still 0.
- *   2. Verifying its inode's i_children list is still empty (still a leaf).
+ *   2. Verifying its rd_children list is still empty (still a leaf).
  *   3. Removing from parent's children list via dirent_parent_release.
  *   4. Dropping the list-held ref so dirent_release fires via RCU.
  *
@@ -116,7 +116,7 @@ void super_block_evict_dirents(struct super_block *sb, size_t count)
 			continue;
 
 		/* Must still be a leaf. */
-		if (rd->rd_inode && !cds_list_empty(&rd->rd_inode->i_children))
+		if (!cds_list_empty(&rd->rd_children))
 			continue;
 
 		/* Sync directory state before eviction. */
@@ -345,7 +345,7 @@ int super_block_dirent_create(struct super_block *sb, struct reffs_dirent *rd,
 	root_inode->i_parent_ino = new_ino; /* root: self */
 
 	/*
-	 * Wire up rd_inode / i_dirent / i_parent via the helper so
+	 * Wire up rd_inode / i_dirent via the helper so
 	 * inode_release can null rd_inode before call_rcu.
 	 */
 	dirent_attach_inode(sb->sb_dirent, root_inode);

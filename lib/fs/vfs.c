@@ -54,8 +54,8 @@ static int vfs_check_sticky_bit(struct inode *dir, struct inode *file,
 
 static struct reffs_dirent *vfs_dir_dirent(struct inode *dir)
 {
-	if (dir->i_parent)
-		return dir->i_parent;
+	if (dir->i_dirent)
+		return dir->i_dirent;
 	return dir->i_sb->sb_dirent;
 }
 
@@ -126,19 +126,16 @@ static int rtc_cmp(const char *s1, const char *s2)
 int vfs_is_subdir(struct inode *child, struct inode *maybe_parent)
 {
 	/*
-	 * TODO: Each ->i_parent->rd_parent->rd_inode hop is a raw weak-pointer
-	 * dereference. child (inode_src_file) is held with an active ref by
-	 * vfs_rename_locked, but ancestor inodes are not. Under extreme LRU
-	 * pressure a directory ancestor could be evicted between hops.
-	 * Fix: add i_dirent back-pointer to inode so we can walk via
-	 * inode_active_get without touching rd_parent at all.
+	 * TODO: ancestor inodes are not held with active refs during this walk.
+	 * Under extreme LRU pressure a directory ancestor could be evicted
+	 * between hops.  For now the weak-pointer walk is sufficient.
 	 */
 	struct inode *curr = child;
 	while (curr) {
 		if (curr == maybe_parent)
 			return 1;
-		if (curr->i_parent && curr->i_parent->rd_parent)
-			curr = curr->i_parent->rd_parent->rd_inode;
+		if (curr->i_dirent && curr->i_dirent->rd_parent)
+			curr = curr->i_dirent->rd_parent->rd_inode;
 		else
 			curr = NULL;
 	}
@@ -184,7 +181,7 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 	if (ret)
 		goto out;
 
-	if (is_dir && !cds_list_empty(&rd_inode->i_children)) {
+	if (is_dir && !cds_list_empty(&rd->rd_children)) {
 		ret = -ENOTEMPTY;
 		goto out;
 	}
@@ -364,7 +361,7 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 		}
 
 		if (S_ISDIR(inode_dst_file->i_mode) &&
-		    !cds_list_empty(&inode_dst_file->i_children)) {
+		    !cds_list_empty(&rd_dst->rd_children)) {
 			ret = -ENOTEMPTY;
 			goto out;
 		}

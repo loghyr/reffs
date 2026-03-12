@@ -50,7 +50,7 @@ static void dirent_lru_add(struct reffs_dirent *rd)
 		return;
 
 	/* Only leaf dirents can be evicted; skip directories with children. */
-	if (!cds_list_empty(&rd->rd_inode->i_children))
+	if (!cds_list_empty(&rd->rd_children))
 		return;
 
 	sb = rd->rd_inode->i_sb;
@@ -106,19 +106,13 @@ static void dirent_release(struct urcu_ref *ref)
 	struct reffs_dirent *rd =
 		caa_container_of(ref, struct reffs_dirent, rd_ref);
 	struct reffs_dirent *parent;
-	struct inode *inode;
 
 	trace_fs_dirent(rd, __func__, __LINE__);
 
-	/*
-	 * Capture rd_inode before nulling it: the parent-detach code below
-	 * needs to clear inode->i_parent for directory inodes.
-	 */
-	inode = rd->rd_inode;
 	rd->rd_inode = NULL; /* prevent stale access after RCU free */
 
 	/*
-	 * If rd_parent is still set, detach from the parent's i_children list
+	 * If rd_parent is still set, detach from the parent's rd_children list
 	 * and drop the parent's ref.  This is the "unload" cleanup path for
 	 * dirents that reached ref=0 without an explicit dirent_parent_release
 	 * call (e.g. error paths).
@@ -135,8 +129,6 @@ static void dirent_release(struct urcu_ref *ref)
 	parent = rcu_xchg_pointer(&rd->rd_parent, NULL);
 	if (parent) {
 		cds_list_del_rcu(&rd->rd_siblings);
-		if (inode && S_ISDIR(inode->i_mode))
-			inode->i_parent = NULL;
 		dirent_put(parent);
 		/* NOTE: dirent_put(rd) is deliberately omitted — rd_ref is already 0. */
 	}
@@ -295,8 +287,6 @@ void dirent_attach_inode(struct reffs_dirent *rd, struct inode *inode)
 {
 	rcu_assign_pointer(rd->rd_inode, inode);
 	inode->i_dirent = rd;
-	if (S_ISDIR(inode->i_mode))
-		inode->i_parent = rd;
 }
 
 /* ------------------------------------------------------------------ */
@@ -321,13 +311,10 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 		rd->rd_cookie = __atomic_add_fetch(&parent->rd_cookie_next, 1,
 						   __ATOMIC_RELAXED);
 	}
-	cds_list_add_tail_rcu(&rd->rd_siblings, &parent->rd_inode->i_children);
+	cds_list_add_tail_rcu(&rd->rd_siblings, &parent->rd_children);
 	dirent_get(rd); /* One for the linked list */
 
 	if (rd->rd_inode) {
-		if (S_ISDIR(rd->rd_inode->i_mode))
-			rd->rd_inode->i_parent = rd;
-
 		if (rla != reffs_life_action_load &&
 		    rla != reffs_life_action_unload)
 			inode_sync_to_disk(rd->rd_inode);
@@ -383,10 +370,6 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 			}
 		}
 		cds_list_del_rcu(&rd->rd_siblings);
-
-		if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode) &&
-		    rla != reffs_life_action_move)
-			rd->rd_inode->i_parent = NULL;
 
 		if (rd->rd_inode && (rla == reffs_life_action_death ||
 				     rla == reffs_life_action_delayed_death)) {
@@ -470,6 +453,7 @@ struct reffs_dirent *dirent_alloc(struct reffs_dirent *parent, char *name,
 	pthread_rwlock_init(&rd->rd_rwlock, NULL);
 
 	CDS_INIT_LIST_HEAD(&rd->rd_siblings);
+	CDS_INIT_LIST_HEAD(&rd->rd_children);
 	if (parent)
 		dirent_parent_attach(rd, parent, rla, is_dir);
 
@@ -489,12 +473,13 @@ struct reffs_dirent *dirent_find(struct reffs_dirent *parent,
 	if (!name)
 		return rd;
 
-	struct inode *inode = dirent_ensure_inode(parent);
-	if (!inode)
-		return NULL;
-
+	/*
+	 * Walk parent->rd_children directly.  The child list lives on the
+	 * stable dirent (not the evictable inode), so no inode fault-in is
+	 * needed here.  dirent_load_child_by_name handles the disk-miss path.
+	 */
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(tmp, &inode->i_children, rd_siblings) {
+	cds_list_for_each_entry_rcu(tmp, &parent->rd_children, rd_siblings) {
 		if (!cmp(tmp->rd_name, name)) {
 			rd = dirent_get(tmp);
 			break;
@@ -502,7 +487,6 @@ struct reffs_dirent *dirent_find(struct reffs_dirent *parent,
 	}
 	rcu_read_unlock();
 
-	inode_active_put(inode);
 	return rd;
 }
 
@@ -510,48 +494,37 @@ void dirent_children_release(struct reffs_dirent *parent,
 			     enum reffs_life_action rla)
 {
 	struct reffs_dirent *rd;
-	struct inode *inode;
 
 	/*
-	 * Shutdown path: do not attempt to fault in evicted inodes.  The
-	 * inode may already have been freed by super_block_drain.  Walk
-	 * i_children only if rd_inode is still resident; if it has been
-	 * evicted (rd_inode == NULL) there are by definition no in-memory
-	 * children to release (the LRU only evicts leaf dirents).
+	 * Walk parent->rd_children directly.  The child list lives on the
+	 * stable dirent, so no inode fault-in is needed and no concern about
+	 * the inode having been evicted.
 	 *
-	 * Note: recurse before release so that children are detached
-	 * bottom-up, keeping i_children empty by the time the parent's
+	 * Recurse before release so that children are detached bottom-up,
+	 * keeping rd_children empty by the time the parent's
 	 * dirent_parent_release runs.
+	 *
+	 * Shutdown path: avoid disk writes; just detach in-memory state.
+	 * Non-shutdown path: full accounting (nlink, disk sync).
 	 */
 	if (rla == reffs_life_action_shutdown) {
 		rcu_read_lock();
-		inode = rcu_dereference(parent->rd_inode);
-		if (inode)
-			inode = inode_active_get(inode);
-		rcu_read_unlock();
-
-		if (inode) {
-			while (!cds_list_empty(&inode->i_children)) {
-				rd = cds_list_first_entry(&inode->i_children,
-							  struct reffs_dirent,
-							  rd_siblings);
-				dirent_get(rd);
-				dirent_children_release(rd, rla);
-				dirent_parent_release(rd, rla);
-				dirent_put(rd);
-			}
-			inode_active_put(inode);
+		while (!cds_list_empty(&parent->rd_children)) {
+			rd = cds_list_first_entry(&parent->rd_children,
+						  struct reffs_dirent,
+						  rd_siblings);
+			dirent_get(rd);
+			dirent_children_release(rd, rla);
+			dirent_parent_release(rd, rla);
+			dirent_put(rd);
 		}
+		rcu_read_unlock();
 		return;
 	}
 
-	inode = dirent_ensure_inode(parent);
-	if (!inode)
-		return;
-
 	rcu_read_lock();
-	while (!cds_list_empty(&inode->i_children)) {
-		rd = cds_list_first_entry(&inode->i_children,
+	while (!cds_list_empty(&parent->rd_children)) {
+		rd = cds_list_first_entry(&parent->rd_children,
 					  struct reffs_dirent, rd_siblings);
 		dirent_get(rd);
 		dirent_parent_release(rd, rla);
@@ -559,8 +532,6 @@ void dirent_children_release(struct reffs_dirent *parent,
 		dirent_put(rd);
 	}
 	rcu_read_unlock();
-
-	inode_active_put(inode);
 }
 
 /* ------------------------------------------------------------------ */
@@ -630,7 +601,7 @@ struct reffs_dirent *dirent_load_child_by_name(struct reffs_dirent *parent_de,
 	/*
 	 * Allocate the dirent.  dirent_alloc calls dirent_parent_attach
 	 * with reffs_life_action_load which:
-	 *   - links into parent->rd_inode->i_children
+	 *   - links into parent->rd_children
 	 *   - does NOT bump nlink (already persisted on disk)
 	 *   - does NOT write to disk
 	 *   - does NOT bump rd_cookie_next

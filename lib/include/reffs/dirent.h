@@ -40,10 +40,18 @@ struct reffs_dirent {
 	uint64_t rd_state;
 
 	/*
-	 * This entry is in the children of either the inode
+	 * This entry is in the children of either the dirent
 	 * above it or is the root of the superblock.
 	 */
 	struct cds_list_head rd_siblings;
+
+	/*
+	 * rd_children is the list head for this directory's child dirents.
+	 * It lives here on the stable dirent (not on the evictable inode) so
+	 * that child-list walks survive inode eviction and reload.
+	 * Only meaningful for directory dirents.
+	 */
+	struct cds_list_head rd_children;
 
 	struct reffs_dirent *rd_parent;
 

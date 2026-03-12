@@ -199,15 +199,12 @@ The fix is to inline the parent-detach logic *without* the trailing `dirent_put(
 static void dirent_release(struct urcu_ref *ref)
 {
     struct reffs_dirent *rd = caa_container_of(...);
-    struct inode *inode = rd->rd_inode;
     rd->rd_inode = NULL;
 
     rcu_read_lock();
     parent = rcu_xchg_pointer(&rd->rd_parent, NULL);
     if (parent) {
         cds_list_del_rcu(&rd->rd_siblings);
-        if (inode && S_ISDIR(inode->i_mode))
-            inode->i_parent = NULL;
         dirent_put(parent);
         /* dirent_put(rd) deliberately omitted — rd_ref is already 0 */
     }
@@ -219,9 +216,9 @@ static void dirent_release(struct urcu_ref *ref)
 ### Dirent LRU
 
 Dirents have a parallel LRU (`sb_dirent_lru`). A leaf dirent (one with an empty
-`rd_inode->i_children` list) is added to the dirent LRU when its active-use drops.
+`rd_children` list) is added to the dirent LRU when its active-use drops.
 Eviction via `super_block_evict_dirents` calls `dirent_parent_release` on the
-dirent, removing it from the parent's `i_children` list and dropping the list ref.
+dirent, removing it from the parent's `rd_children` list and dropping the list ref.
 This is a space optimisation for very flat, large directories.
 
 ---
@@ -237,18 +234,17 @@ dirent_ensure_inode(rd):
     fast path:
         rcu_read_lock
         inode = rd->rd_inode
-        if inode: inode = inode_active_get(inode)   # handles tombstone
+        if inode: inode = inode_active_get_rcu(inode)   # handles tombstone
         rcu_read_unlock
-        if inode: return inode
+        if inode: inode_active_lru_pull(inode); return inode
 
-    miss path (rd_inode was evicted):
+    miss path (rd_inode was NULL — evicted or never loaded):
         if !rd->rd_ino: return NULL   # never fully attached
-        walk rd->rd_parent chain to find any resident inode -> sb
+        sb = rd->rd_sb                # direct sb ref, always valid for dirent lifetime
         if !sb: return NULL
         inode = inode_alloc(sb, rd->rd_ino)  # finds in hash or loads from backend
         if inode:
-            rd->rd_inode = inode   # restore weak pointer (benign race)
-            if dir: inode->i_parent = rd
+            dirent_attach_inode(rd, inode)   # sets rd->rd_inode and inode->i_dirent
         return inode
 ```
 
@@ -263,13 +259,13 @@ Key constraints:
 
 ---
 
-## 6. The `rd_rwlock` / `i_children` Locking Model
+## 6. The `rd_rwlock` / `rd_children` Locking Model
 
-`dir_de->rd_rwlock` (a `pthread_rwlock_t` on the dirent that *owns* a directory
-inode) protects the `inode->i_children` linked list:
+`dir_de->rd_rwlock` (a `pthread_rwlock_t` on the dirent that *is* a directory)
+protects the `dir_de->rd_children` linked list:
 
-- **Reader** — safe to traverse `i_children` (e.g. READDIR, READDIRPLUS snapshot phase)
-- **Writer** — required to modify `i_children` (e.g. `vfs_lock_dirs` in all create/rename/unlink ops)
+- **Reader** — safe to traverse `rd_children` (e.g. READDIR, READDIRPLUS snapshot phase)
+- **Writer** — required to modify `rd_children` (e.g. `vfs_lock_dirs` in all create/rename/unlink ops)
 
 `vfs_lock_dirs` acquires `rd_rwlock` as a **writer**, after acquiring `i_attr_mutex`,
 in inode-ID order to prevent deadlock between two-directory operations (rename).
@@ -278,13 +274,27 @@ in inode-ID order to prevent deadlock between two-directory operations (rename).
 `rcu_read_lock` is safe without holding `rd_rwlock`. Modification requires the
 writer lock.
 
+### Why `rd_children` lives on the dirent, not the inode
+
+Prior to the `rd_children` refactor, the child list was `inode->i_children`. This
+caused a use-after-free: when a directory inode was evicted and its struct freed,
+child dirents still held `rd_siblings` nodes pointing into the freed list head. On
+reload, `inode_alloc` returned a fresh inode with an empty `i_children`, so
+`dirent_find` would return `ENOENT` for every child of any directory whose inode
+had been evicted.
+
+**Fix:** The child list `rd_children` lives on `struct reffs_dirent`, which is
+stable for the full lifetime of the directory entry. Inode eviction and reload no
+longer affect child-list integrity. `dirent_find` and `dirent_children_release`
+walk `parent->rd_children` directly with no inode fault-in needed.
+
 ### Root inode special case
 
-The root inode has `i_parent == NULL`. Any code that needs `dir_de` (the dirent
-owning the directory) must guard:
+The root inode's `i_dirent` points to `sb->sb_dirent` (set by `dirent_attach_inode`
+in `super_block_dirent_create`). Code that needs `dir_de` for a given directory inode:
 ```c
 struct reffs_dirent *dir_de =
-    inode->i_parent ? inode->i_parent : sb->sb_dirent;
+    inode->i_dirent ? inode->i_dirent : sb->sb_dirent;
 ```
 `sb->sb_dirent` is always present for the lifetime of the superblock.
 
@@ -317,7 +327,7 @@ NFS3ERR_NOENT.
 instead of dropping it. The handler calls `inode_active_put(new_inode)` at its
 `out:` label, keeping `i_active > 0` for the entire RPC.
 
-### READDIR/READDIRPLUS deadlock (this session, Bug H)
+### READDIR/READDIRPLUS deadlock (Bug H)
 
 READDIR and READDIRPLUS held `dir_de->rd_rwlock` (reader) across phase 2, which
 included calls to `dirent_ensure_inode`. Under load (git clone, cthon04), all
@@ -339,6 +349,22 @@ Phase 2:  for each snap entry:
               dirent_ensure_inode(snap[i].rd)           ← safe: no locks held
               build reply entry
 ```
+
+### `i_children` on evictable inode → ENOENT after eviction (Bug I)
+
+`dirent_find` called `dirent_ensure_inode(parent)` to get an inode, then walked
+`inode->i_children`. When a directory inode was evicted, `i_children` was freed with
+it. Child dirents' `rd_siblings` nodes still pointed into the dead list head. On
+reload, `inode_alloc` returned a fresh empty inode, so every `dirent_find` on that
+directory returned ENOENT. `dirent_children_release` had the same flaw in shutdown.
+
+**Fix:** Moved `i_children` from `struct inode` to `struct reffs_dirent` as
+`rd_children`. Removed `inode->i_parent` (redundant with `inode->i_dirent->rd_parent`).
+`dirent_find` and `dirent_children_release` now operate on `parent->rd_children`
+directly with no inode access. `super_block_evict_dirents` leaf-check simplified to
+`!cds_list_empty(&rd->rd_children)`.
+
+Fixes: `test_lru_dir_evict_and_readdir`, `test_lru_nlink_survives_eviction`.
 
 ---
 
@@ -424,6 +450,12 @@ inode = dirent_ensure_inode(rd);     /* deadlock under concurrent creates */
 inode = inode_find(sb, ino);
 if (something_failed)
     return -EIO;                     /* leaked active ref */
+
+/* ❌ Walking inode->i_children (field removed — use parent_de->rd_children) */
+cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings) { ... }
+
+/* ❌ Using inode->i_parent (field removed — use inode->i_dirent->rd_parent) */
+struct reffs_dirent *de = inode->i_parent;
 ```
 
 ---
