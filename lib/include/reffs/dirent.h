@@ -16,6 +16,7 @@
 
 #include "reffs/types.h"
 #include "reffs/inode.h"
+struct super_block; /* forward decl for rd_sb */
 #include "reffs/cmp.h"
 
 #define REFFS_MAX_NAME (255)
@@ -52,6 +53,14 @@ struct reffs_dirent {
 	uint64_t rd_cookie_next;
 
 	char *rd_name;
+
+	/*
+	 * rd_sb is set at dirent_alloc time and never changes.  It gives
+	 * dirent_ensure_inode() a direct path to the superblock when all
+	 * ancestor inodes have been evicted, avoiding a parent-chain walk
+	 * that would fail if every ancestor's rd_inode is NULL.
+	 */
+	struct super_block *rd_sb; /* non-owning, valid for lifetime of dirent */
 
 	/*
 	 * rd_inode is a WEAK (non-owning) pointer.  It may be NULL if the
@@ -105,6 +114,8 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd);
  */
 struct reffs_dirent *dirent_load_child_by_name(struct reffs_dirent *parent_de,
 					       const char *name);
+
+void dirent_attach_inode(struct reffs_dirent *rd, struct inode *inode);
 
 void dirent_sync_to_disk(struct reffs_dirent *parent);
 

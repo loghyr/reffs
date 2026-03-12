@@ -47,6 +47,15 @@ static void inode_free_rcu(struct rcu_head *rcu)
 {
 	struct inode *inode = caa_container_of(rcu, struct inode, i_rcu);
 
+	/*
+	 * NULL i_sb before calling trace so that trace_fs_inode cannot
+	 * dereference a superblock that may be freed concurrently.
+	 * We hold a super_block_get() ref (taken in inode_release) that
+	 * keeps the sb memory alive until super_block_put() below.
+	 */
+	struct super_block *sb = inode->i_sb;
+	inode->i_sb = NULL;
+
 	trace_fs_inode(inode, __func__, __LINE__);
 
 	if (inode->i_db)
@@ -58,6 +67,9 @@ static void inode_free_rcu(struct rcu_head *rcu)
 
 	free(inode->i_symlink);
 	free(inode);
+
+	/* Drop the ref taken in inode_alloc (stored in i_sb); may free the superblock. */
+	super_block_put(sb);
 }
 
 bool inode_unhash(struct inode *inode)
@@ -162,9 +174,28 @@ static void inode_release(struct urcu_ref *ref)
 			}
 		}
 	}
-	super_block_put(inode->i_sb);
-	inode->i_sb = NULL;
 
+	/*
+	 * Null rd_inode on our dirent BEFORE scheduling the RCU free.
+	 *
+	 * This is the key invariant that closes the UAF in dirent_ensure_inode:
+	 * after this rcu_assign_pointer any reader that loads rd_inode under
+	 * rcu_read_lock will see either NULL (we won the race) or a valid
+	 * pointer (they loaded before this store and are protected by their
+	 * own grace period).  Either way no reader can load a freed pointer.
+	 *
+	 * i_dirent is set by dirent_parent_attach and cleared by
+	 * dirent_parent_release / dirent_release, so it is NULL if the dirent
+	 * was already detached before we get here.
+	 */
+	if (inode->i_dirent)
+		rcu_assign_pointer(inode->i_dirent->rd_inode, NULL);
+
+	/*
+	 * i_sb already holds the ref taken in inode_alloc; that ref keeps the
+	 * superblock alive until inode_free_rcu nulls i_sb and calls
+	 * super_block_put().  No additional get is needed here.
+	 */
 	call_rcu(&inode->i_rcu, inode_free_rcu);
 }
 
@@ -774,11 +805,11 @@ int inode_reconstruct_path_to_root(struct inode *inode)
 			child_de->rd_ino = link->pl_ino;
 			child_de->rd_cookie = link->pl_cookie;
 
-			/* Wire up the weak inode pointer if we have it. */
+			/* Wire up the weak inode pointer via dirent_attach_inode
+			 * so i_dirent is set and inode_release can null rd_inode.
+			 */
 			if (child_inode) {
-				child_de->rd_inode = child_inode;
-				if (is_dir)
-					child_inode->i_parent = child_de;
+				dirent_attach_inode(child_de, child_inode);
 				inode_active_put(child_inode);
 			}
 		}

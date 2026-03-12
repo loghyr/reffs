@@ -251,28 +251,11 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd)
 	}
 
 	/*
-	 * Find the superblock through the parent chain.  Walk up until we
-	 * hit a dirent whose inode is still resident, then use its sb.
-	 * Start with rd itself (covers sb_dirent where rd_parent is NULL),
-	 * then walk up via rd_parent.
+	 * rd_sb is set at alloc time (inherited from parent, or set directly
+	 * on the root dirent by super_block_dirent_create).  It is always
+	 * valid for the lifetime of the dirent, so no parent-chain walk needed.
 	 */
-	struct super_block *sb = NULL;
-	struct reffs_dirent *p = rd;
-	while (p && !sb) {
-		rcu_read_lock();
-		inode = rcu_dereference(p->rd_inode);
-		if (inode)
-			inode = inode_active_get_rcu(inode);
-		rcu_read_unlock();
-
-		if (inode) {
-			sb = inode->i_sb;
-			inode_active_put(inode);
-		} else {
-			p = p->rd_parent;
-		}
-	}
-
+	struct super_block *sb = rd->rd_sb;
 	if (!sb)
 		return NULL;
 
@@ -280,18 +263,40 @@ struct inode *dirent_ensure_inode(struct reffs_dirent *rd)
 	inode = inode_alloc(sb, rd->rd_ino);
 	if (inode) {
 		/*
-		 * Re-attach the weak pointer so the next fast-path hits.
-		 * This is a benign race: worst case two threads both set it
-		 * to the same value.
+		 * Re-attach via dirent_attach_inode so i_dirent is set on the
+		 * reloaded inode.  Without this, a subsequent eviction would
+		 * find i_dirent == NULL and skip nulling rd_inode, re-opening
+		 * the UAF window.
+		 *
+		 * Benign race: two threads may both call dirent_attach_inode
+		 * concurrently and set the same values.
 		 */
-		rcu_assign_pointer(rd->rd_inode, inode);
-
-		/* Also restore i_parent for directory inodes. */
-		if (S_ISDIR(inode->i_mode) && !inode->i_parent)
-			inode->i_parent = rd;
+		dirent_attach_inode(rd, inode);
 	}
 
 	return inode;
+}
+
+/* ------------------------------------------------------------------ */
+/* Inode attach                                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * dirent_attach_inode - canonical write site for rd->rd_inode / inode->i_dirent.
+ *
+ * Every place that wires up a new rd_inode must go through here so that
+ * inode_release() can null rd_inode (via i_dirent) before call_rcu, closing
+ * the UAF window in dirent_ensure_inode's fast path.
+ *
+ * Caller must hold a reference that keeps inode alive for the duration of
+ * this call (e.g. an active ref or the inode hash ref).
+ */
+void dirent_attach_inode(struct reffs_dirent *rd, struct inode *inode)
+{
+	rcu_assign_pointer(rd->rd_inode, inode);
+	inode->i_dirent = rd;
+	if (S_ISDIR(inode->i_mode))
+		inode->i_parent = rd;
 }
 
 /* ------------------------------------------------------------------ */
@@ -306,6 +311,7 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 
 	rcu_read_lock();
 	rd->rd_parent = dirent_get(parent);
+	rd->rd_sb = parent->rd_sb; /* inherit sb pointer from parent */
 	verify(S_ISDIR(parent->rd_inode->i_mode));
 	if (rla != reffs_life_action_load && is_dir) {
 		__atomic_fetch_add(&parent->rd_inode->i_nlink, 1,
@@ -482,9 +488,13 @@ struct reffs_dirent *dirent_find(struct reffs_dirent *parent,
 
 	if (!name)
 		return rd;
+
+	struct inode *inode = dirent_ensure_inode(parent);
+	if (!inode)
+		return NULL;
+
 	rcu_read_lock();
-	cds_list_for_each_entry_rcu(tmp, &parent->rd_inode->i_children,
-				    rd_siblings) {
+	cds_list_for_each_entry_rcu(tmp, &inode->i_children, rd_siblings) {
 		if (!cmp(tmp->rd_name, name)) {
 			rd = dirent_get(tmp);
 			break;
@@ -492,6 +502,7 @@ struct reffs_dirent *dirent_find(struct reffs_dirent *parent,
 	}
 	rcu_read_unlock();
 
+	inode_active_put(inode);
 	return rd;
 }
 

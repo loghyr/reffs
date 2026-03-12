@@ -150,6 +150,12 @@ void super_block_release_dirents(struct super_block *sb)
 	if (!sb)
 		return;
 
+	/* Drop permanent active ref on root inode before tearing down tree. */
+	struct inode *root_inode = sb->sb_root_inode;
+	sb->sb_root_inode = NULL;
+	if (root_inode)
+		inode_active_put(root_inode);
+
 	struct reffs_dirent *rd;
 
 	rd = rcu_xchg_pointer(&sb->sb_dirent, NULL);
@@ -178,12 +184,38 @@ static void super_block_remove_all_inodes(struct super_block *sb)
 
 	rcu_barrier();
 
+	/*
+	 * Unhash each inode and pull it off the LRU atomically under the
+	 * LRU lock.  We do this inode-by-inode so that we hold a valid
+	 * reference to the inode struct (via the hash iteration) when we
+	 * touch i_lru and i_state.
+	 *
+	 * We must NOT walk sb_inode_lru as a separate list pass: any
+	 * intervening rcu_barrier() (from another subsystem or a concurrent
+	 * call_rcu flush) could have already run inode_free_rcu on inodes
+	 * that were queued for RCU free before we got here, making their
+	 * i_lru fields freed memory.
+	 *
+	 * inode_release / inode_free_rcu never touch sb_inode_lru_count, so
+	 * we are responsible for decrementing it here for each LRU inode we
+	 * remove.
+	 */
+	pthread_mutex_lock(&sb->sb_inode_lru_lock);
 	rcu_read_lock();
 	cds_lfht_for_each_entry(sb->sb_inodes, &iter, inode, i_node) {
+		/* Pull off LRU if present, decrement count. */
+		uint64_t old = __atomic_fetch_and(
+			&inode->i_state, ~INODE_IS_ON_LRU, __ATOMIC_ACQ_REL);
+		if (old & INODE_IS_ON_LRU) {
+			cds_list_del_init(&inode->i_lru);
+			sb->sb_inode_lru_count--;
+		}
+
 		if (inode_unhash(inode))
 			inode_put(inode);
 	}
 	rcu_read_unlock();
+	pthread_mutex_unlock(&sb->sb_inode_lru_lock);
 
 	rcu_barrier();
 
@@ -302,17 +334,30 @@ int super_block_dirent_create(struct super_block *sb, struct reffs_dirent *rd,
 		dirent_put(sb->sb_dirent);
 		return -ENOMEM;
 	}
-	sb->sb_dirent->rd_inode = root_inode;
 	sb->sb_dirent->rd_ino = new_ino;
+	sb->sb_dirent->rd_sb =
+		sb; /* root dirent has no parent to inherit from */
 
 	if (rla == reffs_life_action_birth) {
 		root_inode->i_nlink = 2;
 		root_inode->i_mode = S_IFDIR | 0777;
 	}
-	root_inode->i_parent = sb->sb_dirent;
 	root_inode->i_parent_ino = new_ino; /* root: self */
 
-	inode_active_put(root_inode); /* drop active ref; weak ptr needs none */
+	/*
+	 * Wire up rd_inode / i_dirent / i_parent via the helper so
+	 * inode_release can null rd_inode before call_rcu.
+	 */
+	dirent_attach_inode(sb->sb_dirent, root_inode);
+
+	/*
+	 * Keep the active ref on root_inode alive for the lifetime of the
+	 * mount.  The root inode must never be evicted by the LRU (i_active
+	 * must stay > 0).  super_block_dirent_release drops this ref at
+	 * unmount time, after which the normal teardown path frees the inode.
+	 */
+	sb->sb_root_inode =
+		root_inode; /* strong active ref, dropped at release */
 
 	return 0;
 }
@@ -321,6 +366,17 @@ void super_block_dirent_release(struct super_block *sb,
 				enum reffs_life_action rla)
 {
 	struct reffs_dirent *rd;
+	struct inode *root_inode;
+
+	/*
+	 * Drop the permanent active ref on the root inode before releasing
+	 * the dirent tree, so inode_release can proceed normally during
+	 * teardown.
+	 */
+	root_inode = sb->sb_root_inode;
+	sb->sb_root_inode = NULL;
+	if (root_inode)
+		inode_active_put(root_inode);
 
 	rcu_read_lock();
 	rd = rcu_xchg_pointer(&sb->sb_dirent, NULL);

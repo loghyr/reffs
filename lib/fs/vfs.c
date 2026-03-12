@@ -261,10 +261,10 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 		inode->i_dev_minor = minor(rdev);
 	}
 
-	rd->rd_inode = inode;
+	dirent_attach_inode(rd, inode);
 	rd->rd_ino = inode->i_ino;
-	if (type == S_IFDIR)
-		inode->i_parent = rd;
+	inode->i_parent_ino =
+		dir->i_ino; /* needed by inode_reconstruct_path_to_root on reload */
 
 	if (type == S_IFDIR) {
 		__atomic_add_fetch(&sb->sb_bytes_used, sb->sb_block_size,
@@ -728,11 +728,10 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 	inode->i_mtime = inode->i_ctime;
 	inode->i_btime = inode->i_ctime;
 
-	rd->rd_inode = inode;
+	dirent_attach_inode(rd, inode);
 	rd->rd_ino = inode->i_ino;
-
-	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
-					    REFFS_INODE_UPDATE_MTIME);
+	inode->i_parent_ino =
+		dir->i_ino; /* needed by inode_reconstruct_path_to_root on reload */
 
 	inode_sync_to_disk(inode);
 	dirent_sync_to_disk(de_dir);
@@ -851,13 +850,16 @@ int vfs_link(struct inode *inode, struct inode *dir, const char *name,
 	}
 
 	/*
-	 * rd->rd_inode is a weak pointer — assign without bumping i_ref.
-	 * The inode's lifetime is guaranteed by the hash table ref for as long
-	 * as nlink > 0.  inode_get() here would leak a ref since rd_inode is
-	 * never inode_put()'d.
+	 * Wire up rd_inode / i_dirent via dirent_attach_inode so that
+	 * inode_release() can null rd_inode before call_rcu.
+	 * Note: reffs does not support hard links at the protocol level, so
+	 * i_dirent will point to the most-recently-linked dirent; that is
+	 * sufficient for the UAF fix since the eviction path nulls rd_inode
+	 * through whichever dirent i_dirent points to.
 	 */
-	rd->rd_inode = inode;
+	dirent_attach_inode(rd, inode);
 	rd->rd_ino = inode->i_ino;
+	inode->i_parent_ino = dir->i_ino;
 	__atomic_fetch_add(&inode->i_nlink, 1, __ATOMIC_RELAXED);
 
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME);

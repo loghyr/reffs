@@ -14,17 +14,11 @@
  * 2026-03-09), so drain_lru() followed by reffs_fs_*() calls is safe.
  * All fault-in tests run unconditionally.
  *
- * Remaining drain_lru() hazard:
- *   drain_lru() must NOT be called when reffs_ns_fini() will subsequently
- *   walk the dirent tree (e.g. files still in tree at teardown), because
- *   release_dirents_recursive() (super_block.c:159) dereferences rd_inode
- *   to walk i_children, and rd_inode is never nulled on eviction
- *   (architecture doc §3).  After drain_lru() those pointers are freed
- *   memory → UAF in teardown.
- *   Fix: add i_dirent back-pointer to struct inode; null rd_inode from
- *   inode_release() before call_rcu (architecture doc §8d).
- *   Until then, drain_lru() is only safe in tests that unlink/rmdir all
- *   affected files before returning (all fault-in tests do this).
+ * drain_lru() is now safe in all tests: i_dirent back-pointer (inode.h)
+ * causes inode_release() to null rd_inode via rcu_assign_pointer before
+ * call_rcu, so no dirent can carry a freed-inode rd_inode pointer into
+ * teardown.  The null_evicted_rd_inodes() workaround in fs_test_ns_teardown.c
+ * has been removed.
  *
  * Tests:
  *
@@ -96,13 +90,13 @@ static size_t lru_count(void)
  */
 static void drain_lru(void)
 {
-        struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
-        ck_assert_ptr_nonnull(sb);
-        if (sb->sb_inode_lru_count > 0)
-                super_block_evict_inodes(sb, sb->sb_inode_lru_count);
-        super_block_put(sb);
-        synchronize_rcu();
-        /* No rcu_barrier() here — we need inode structs to remain in memory
+	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+	ck_assert_ptr_nonnull(sb);
+	if (sb->sb_inode_lru_count > 0)
+		super_block_evict_inodes(sb, sb->sb_inode_lru_count);
+	super_block_put(sb);
+	synchronize_rcu();
+	/* No rcu_barrier() here — we need inode structs to remain in memory
          * so dirent_ensure_inode can safely read i_active and return
          * NULL on a tombstone.  inode_free_rcu runs in the background; by the
          * time it fires, any caller that got NULL has already reloaded via
@@ -113,19 +107,6 @@ static void drain_lru(void)
          * would then crash reading urcu_ref before it could check i_active.
          */
 }
-
-#ifdef NOT_NOW_BROWN_COW
-static void drain_lru(void)
-{
-	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
-	ck_assert_ptr_nonnull(sb);
-	if (sb->sb_inode_lru_count > 0)
-		super_block_evict_inodes(sb, sb->sb_inode_lru_count);
-	super_block_put(sb);
-	synchronize_rcu();
-	rcu_barrier();
-}
-#endif
 
 /* ------------------------------------------------------------------ */
 /* Fixtures                                                            */
@@ -564,6 +545,7 @@ START_TEST(test_lru_dir_evict_and_readdir)
 {
 	struct stat st;
 	int i;
+	int ret;
 
 	ck_assert_int_eq(reffs_fs_mkdir("/evdir", 0755), 0);
 	for (i = 0; i < TEST_LRU_MAX + 1; i++) {

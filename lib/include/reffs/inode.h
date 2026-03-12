@@ -68,6 +68,19 @@ struct inode {
 	 */
 	struct reffs_dirent *i_parent;
 
+	/*
+	 * Weak back-pointer to the single dirent that names this inode.
+	 * Valid for both file and directory inodes (reffs does not support
+	 * hard links — every inode has exactly one dirent).
+	 * May be NULL if the dirent has been evicted or the inode is the
+	 * superblock root (which has no parent dirent).
+	 * NULLed by inode_release() before call_rcu so that rd_inode on
+	 * the dirent is guaranteed NULL by the time inode_free_rcu runs.
+	 * Only the dirent_parent_attach / dirent_parent_release paths write
+	 * this field.
+	 */
+	struct reffs_dirent *i_dirent; /* weak, nullable */
+
 	pthread_rwlock_t i_db_rwlock;
 	pthread_mutex_t i_attr_mutex;
 

@@ -18,6 +18,8 @@
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
 #include "reffs/test.h"
+#include "fs_test_harness.h"
+#include "reffs/trace/fs.h"
 
 static uint64_t sb_id_next = 0;
 
@@ -372,6 +374,7 @@ static int find_inode_3(void)
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
 	verify(sb);
+	trace_fs_super_block(sb, __func__, __LINE__);
 
 	inode1 = inode_alloc(sb, 2);
 	verify(inode1);
@@ -393,7 +396,10 @@ static int find_inode_3(void)
 
 	super_block_put(sb);
 
-	sb = super_block_find(6);
+	rcu_barrier();
+
+	sb = super_block_find(sb_id);
+	trace_fs_super_block(sb, __func__, __LINE__);
 	verify(!sb);
 
 	return 0;
@@ -423,7 +429,7 @@ int main(void)
 {
 	int number_failed = 0;
 
-	rcu_register_thread();
+	fs_test_global_init();
 
 	add_sb_1();
 	add_inode_1();
@@ -443,7 +449,7 @@ int main(void)
 	synchronize_rcu();
 	rcu_barrier();
 
-	rcu_unregister_thread();
+	fs_test_global_fini();
 
 	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
