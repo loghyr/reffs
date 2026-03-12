@@ -57,17 +57,6 @@ struct inode {
 
 	void *i_storage_private;
 
-	/* Do this as a linked list for now */
-	struct cds_list_head i_children;
-
-	/*
-	 * Weak back-pointer to the dirent that names this directory.
-	 * May be NULL if the dirent has been evicted.  Use
-	 * inode_ensure_parent_dirent() to get a loaded, ref-held dirent.
-	 * Only valid for directories.
-	 */
-	struct reffs_dirent *i_parent;
-
 	/*
 	 * Weak back-pointer to the single dirent that names this inode.
 	 * Valid for both file and directory inodes (reffs does not support
@@ -182,7 +171,7 @@ void inode_schedule_delayed_release(struct inode *inode, int delay_seconds);
 void inode_sync_to_disk(struct inode *inode);
 
 /*
- * Ensure inode->i_parent is loaded and return a ref-held dirent.
+ * Ensure the parent dirent of this inode is available and return a ref-held dirent.
  * The dirent ref must be released with dirent_put().
  * Returns NULL only on OOM / corrupt fs.
  */

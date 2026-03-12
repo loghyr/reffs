@@ -82,11 +82,10 @@ static size_t lru_count(void)
  * *** HAZARD: do not call this if teardown will walk the dirent tree ***
  * *** while files created before the drain are still in the tree.    ***
  *
- * release_dirents_recursive() (super_block.c:159) dereferences rd_inode
- * to walk i_children, and rd_inode is never nulled on eviction
- * (architecture doc §3).  After drain_lru() those pointers are freed
- * memory → UAF in teardown.  All callers here unlink/rmdir before
- * returning, so teardown's dirent walk sees no evicted inodes.
+ * release_dirents_recursive() (super_block.c:159) previously walked
+ * i_children via rd_inode; after the rd_children refactor the child list
+ * lives on the dirent itself, so rd_inode eviction no longer affects
+ * teardown correctness.  The hazard note above is now historical.
  */
 static void drain_lru(void)
 {
@@ -545,7 +544,8 @@ START_TEST(test_lru_dir_evict_and_readdir)
 {
 	struct stat st;
 	int i;
-	int ret;
+
+	TRACE("test_lru_dir_evict_and_readdir");
 
 	ck_assert_int_eq(reffs_fs_mkdir("/evdir", 0755), 0);
 	for (i = 0; i < TEST_LRU_MAX + 1; i++) {

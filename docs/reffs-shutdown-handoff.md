@@ -142,8 +142,12 @@ The next-steps investigation below was superseded by the FD capacity discovery.
 
 ## 5. Architecture notes (accumulated)
 
-- `inode->i_parent` is NULL for root inode; use `sb->sb_dirent` as `dir_de` fallback
-- `rd_rwlock` on a dirent protects its `i_children` list; must NOT be held across blocking ops
+- `inode->i_dirent` is the weak back-pointer to the dirent naming this inode (both files and dirs); NULL for root only briefly at alloc time before `dirent_attach_inode`
+- `inode->i_parent` **no longer exists** — replaced by `inode->i_dirent->rd_parent`
+- `rd_children` lives on `struct reffs_dirent` (not on the inode); survives inode eviction and reload
+- `inode->i_children` **no longer exists** — replaced by `dirent->rd_children`
+- `dir_de` for a directory inode: `inode->i_dirent ? inode->i_dirent : sb->sb_dirent`
+- `rd_rwlock` on a dirent protects its `rd_children` list; must NOT be held across blocking ops
 - `rd_siblings` is RCU-protected only (no rwlock on writers)
 - `dirent_ensure_inode` opens its own `rcu_read_lock` internally — must NOT be called while holding `rcu_read_lock`
 - `rd_ino` is the authoritative stable ino; `rd_inode` is weak/nullable
@@ -695,7 +699,9 @@ dirent weak pointer → `inode_active_get_from_dirent`.
 
 ---
 
-### 10.5 WIP: fault-in tests still crash at `lru_max=1` — fundamental RCU limit
+### 10.5 ~~WIP: fault-in tests still crash at `lru_max=1`~~ — RESOLVED (see §10.8)
+
+**RESOLVED.** Root cause was `i_children` on the evictable inode. See §10.8.
 
 **Symptom:** `test_lru_inode_find_after_evict` still crashes after all the above
 fixes. Detailed tracing confirms:
@@ -774,29 +780,80 @@ fail at lru_max=1 (organic eviction immediately after create).
 
 ---
 
-### 10.7 Updated pending issues
+### 10.7 Updated pending issues — superseded
 
-**§8d (`i_dirent` back-pointer)** — NOW BLOCKING the fault-in LRU tests.
-Required changes:
-- Add `struct reffs_dirent *i_dirent` weak pointer to `struct inode`
-- In `super_block_evict_inodes`, before `call_rcu`:
-  `rcu_assign_pointer(inode->i_dirent->rd_inode, NULL);`
-- In `inode_active_get_from_dirent`: miss path (NULL from `rcu_dereference`)
-  can now call `dirent_ensure_inode` safely since NULL means "evicted" not
-  "freed"
-- Delete test-side workarounds: `null_evicted_rd_inodes`, `rcu_assign_pointer`
-  blocks in `test_lru_eviction_produces_tombstone`
-- LRU fault-in tests should pass once this lands
+**§8d (`i_dirent` back-pointer)** — RESOLVED as part of §10.8 (`i_dirent` landed).
+
+**`dirent_children_release()` raw `rd_inode->i_children`** — RESOLVED in §10.8
+(now walks `parent->rd_children` directly, no inode access).
+
+**`vfs_is_subdir` ancestor walk** — RESOLVED in §10.8 (now walks via
+`i_dirent->rd_parent`).
+
+---
+
+### 10.8 Bug I — `i_children` on evictable inode; `i_parent` removed (RESOLVED)
+
+**Date:** 2026-03-12
+
+**Symptom:** `test_lru_dir_evict_and_readdir` and `test_lru_nlink_survives_eviction`
+both failed with ENOENT after `drain_lru()`. All other `fs_test_lru` tests passed.
+
+**Root cause:** `inode->i_children` was the list head for a directory's children.
+When the inode was evicted and freed, the list head was freed with it. Child dirents'
+`rd_siblings` pointers still pointed into the dead list head. On reload, `inode_alloc`
+returned a fresh inode with an empty `i_children`, so `dirent_find` returned ENOENT
+for every child of the evicted directory.
+
+Also: a separate sb ref leak in `inode_release` (one extra `super_block_get` that
+had no matching put) caused `super_block_find` to return a non-NULL sb after the
+caller's `super_block_put`, breaking three `inode_hashing_no_check` tests.
+
+**Fixes applied:**
+
+*Commit 1 — sb ref leak (inode_hashing_no_check):*
+Removed the redundant `super_block_get` in `inode_release`. The ref already stored
+in `inode->i_sb` (taken in `inode_alloc`) keeps the superblock alive through the
+RCU callback. Updated `inode_free_rcu` comment to name the correct origin of the
+ref it drops.
+
+*Commit 2 — `rd_children` refactor (LRU tests):*
+- Added `struct cds_list_head rd_children` to `struct reffs_dirent`; initialised in `dirent_alloc`
+- Removed `struct cds_list_head i_children` from `struct inode`
+- Removed `struct reffs_dirent *i_parent` from `struct inode` (replaced everywhere by `inode->i_dirent->rd_parent`)
+- `dirent_parent_attach`: links into `parent->rd_children` instead of `parent->rd_inode->i_children`
+- `dirent_find`: walks `parent->rd_children` directly — no `dirent_ensure_inode`, no inode needed
+- `dirent_children_release`: both shutdown and normal paths walk `parent->rd_children` directly
+- `dirent_lru_add` leaf check: `!cds_list_empty(&rd->rd_children)`
+- `super_block_evict_dirents` leaf check: `!cds_list_empty(&rd->rd_children)`
+- `vfs_dir_dirent`: returns `inode->i_dirent` (the directory's own dirent)
+- `vfs_is_subdir`: walks via `curr->i_dirent->rd_parent`
+- `inode_name_is_child`, `inode_name_get_inode`: use `inode->i_dirent->rd_children`
+- `inode_ensure_parent_dirent`: fast path via `i_dirent->rd_parent`; miss path walks `parent_inode->i_dirent->rd_children`
+- `inode_already_anchored`: checks `i_dirent && i_dirent->rd_parent`
+- `nfs3_server.c` READDIR/READDIRPLUS: `dir_de = inode->i_dirent`; snapshot loops use `inode->i_dirent->rd_children`
+- `fuse.c` readdir: `nm->nm_dirent->rd_children`
+- `posix.c` dir_sync: `inode->i_dirent->rd_children`; `inode->i_dirent->rd_cookie_next`
+- `posix_recovery_10.c`: assertions updated from `i_parent == de_X` to `i_dirent == de_X`
+- `ns.c`: removed dead `inode->i_parent = ...` assignment
+
+**Files changed:** `dirent.h`, `inode.h`, `dirent.c`, `inode.c`, `vfs.c`,
+`super_block.c`, `nfs3_server.c`, `fuse.c`, `posix.c`, `ns.c`,
+`posix_recovery_10.c`, `fs_test_lru.c`
+
+**Test status after fix:** All `fs_test_lru` tests pass. All `inode_hashing_no_check`
+tests pass. All `fuse_*` tests pass.
+
+---
+
+### 10.9 Current pending issues
+
+**`reffs_fs_*` access `rd_inode` without `inode_active_get`** (§6c, still open):
+All `reffs_fs_*` operations access `nm_dirent->rd_inode` as a raw pointer. Under LRU
+pressure the inode can be evicted between `dirent_find` and the field access.
+Fix: `name_match_get_inode(nm)` helper returning active ref; `inode_active_put`
+before `name_match_free`. Low urgency at default `lru_max=64k`.
 
 **`release_dirents_recursive` `inode_alloc` in shutdown path:** The fallback
 to `inode_alloc` when `inode_active_get` returns NULL (tombstoned) is correct
-for the POSIX backend (can reload from disk). Verify this is safe for the
-RocksDB backend before shipping.
-
-**`dirent_children_release()` in `dirent.c:478`** — same raw `rd_inode->i_children`
-dereference as the old `release_dirents_recursive`. Same fix needed.
-
-**`vfs_is_subdir` ancestor walk (`vfs.c:141`)** — each
-`curr->i_parent->rd_parent->rd_inode` hop is a raw weak dereference. Deferred;
-low risk under `vfs_lock_dirs` (directory inodes stay hot). Requires `i_dirent`
-for a clean fix. TODO comment in place.
+for the POSIX backend. Verify this is safe for the RocksDB backend before shipping.
