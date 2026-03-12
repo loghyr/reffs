@@ -108,6 +108,10 @@ int find_matching_directory_entry(struct name_match **nm, const char *path,
 
 	if (strcmp(path, "/") == 0) {
 		new->nm_name = strdup("/");
+		if (!new->nm_name) {
+			ret = -ENOMEM;
+			goto err;
+		}
 		goto found;
 	}
 
@@ -123,6 +127,11 @@ int find_matching_directory_entry(struct name_match **nm, const char *path,
 		new->nm_name = strdup(last_slash + 1);
 	else
 		new->nm_name = strdup(path);
+
+	if (!new->nm_name) {
+		ret = -ENOMEM;
+		goto err;
+	}
 
 	/* Walk components */
 	token = strtok_r(buf, "/", &saveptr);

@@ -405,9 +405,20 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 
 	sb->sb_id = id;
 	sb->sb_path = strdup(path);
+	if (!sb->sb_path) {
+		free(sb);
+		return NULL;
+	}
+
 	sb->sb_storage_type = storage_type;
-	if (backend_path)
+	if (backend_path) {
 		sb->sb_backend_path = strdup(backend_path);
+		if (!sb->sb_backend_path) {
+			free(sb->sb_path);
+			free(sb);
+			return NULL;
+		}
+	}
 
 	sb->sb_ops = reffs_backend_get_ops(storage_type);
 	if (!sb->sb_ops) {

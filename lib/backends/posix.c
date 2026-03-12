@@ -48,6 +48,10 @@ static int posix_sb_alloc(struct super_block *sb, const char *backend_path)
 		return errno;
 	}
 	priv->sb_dir = strdup(sb_dir);
+	if (!priv->sb_dir) {
+		free(priv);
+		return ENOMEM;
+	}
 
 	struct statvfs sv;
 	if (statvfs(backend_path, &sv) == 0) {
@@ -165,6 +169,10 @@ static int posix_db_alloc(struct data_block *db, struct inode *inode,
 	snprintf(path, sizeof(path), "%s/ino_%lu.dat", sb_priv->sb_dir,
 		 inode->i_ino);
 	priv->db_path = strdup(path);
+	if (!priv->db_path) {
+		free(priv);
+		return -ENOMEM;
+	}
 
 	priv->db_fd = open(path, O_RDWR | O_CREAT, 0644);
 	if (priv->db_fd < 0) {
