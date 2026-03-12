@@ -792,11 +792,18 @@ int vfs_symlink(struct inode *dir, const char *name, const char *target,
 	ret = vfs_create_common_locked(dir, name, 0777, ap, 0, S_IFLNK, &inode);
 	if (ret == 0) {
 		inode->i_symlink = strdup(target);
-		inode->i_size = strlen(target);
-		if (new_inode) {
-			*new_inode = inode; /* transfer active ref to caller */
-		} else {
+		if (!inode->i_symlink) {
+			vfs_remove_common_locked(dir, name, ap, false);
 			inode_active_put(inode);
+			ret = -ENOMEM;
+		} else {
+			inode->i_size = strlen(target);
+			if (new_inode) {
+				*new_inode =
+					inode; /* transfer active ref to caller */
+			} else {
+				inode_active_put(inode);
+			}
 		}
 	}
 	vfs_unlock_dirs(dir, NULL);
