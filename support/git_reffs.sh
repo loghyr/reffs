@@ -11,21 +11,21 @@
 # Defaults:
 #   --server  127.0.0.1:/
 #   --mount   /mnt/reffs
-#   --repo    /home/loghyr/reffs
-#   --logdir  /home/loghyr/reffs/git_logs
+#   --repo    .
+#   --logdir  ./logs
 #   --iters   1
 #
 # Example:
 #   ./git_reffs.sh
-#   ./git_reffs.sh --server 127.0.0.1:/ --mount /mnt/reffs --repo /home/loghyr/reffs --iters 10
+#   ./git_reffs.sh --server 127.0.0.1:/ --mount /mnt/reffs --repo . --iters 10
 
 set -euo pipefail
 
 # --- Defaults ---
 NFS_TARGET="127.0.0.1:/"
 MOUNT_POINT="/mnt/reffs"
-REPO_URL="/home/loghyr/reffs"
-LOG_DIR="/home/loghyr/reffs/logs"
+REPO_URL="."
+LOG_DIR="./logs"
 ITERS=1
 RUN_BUILD=true
 RUN_UNIT_TEST=true

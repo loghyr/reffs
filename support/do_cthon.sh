@@ -11,8 +11,8 @@
 #   --server  127.0.0.1:/
 #   --mount   /mnt/cthon04
 #   --iters   1
-#   --cthon   /home/loghyr/reffs/cthon04
-#   --logdir  /home/loghyr/reffs/cthon_logs
+#   --cthon   ./cthon04
+#   --logdir  ./cthon_logs
 #
 # Example:
 #   ./do_cthon.sh
@@ -24,8 +24,8 @@ set -euo pipefail
 NFS_TARGET="127.0.0.1:/"
 MOUNT_POINT="/mnt/cthon04"
 MAX_ITERS=1
-CTHON_DIR="/home/loghyr/cthon04"
-LOG_DIR="/home/loghyr/reffs/cthon_logs"
+CTHON_DIR="./cthon04"
+LOG_DIR="./cthon_logs"
 
 # --- Argument parsing ---
 while [[ $# -gt 0 ]]; do

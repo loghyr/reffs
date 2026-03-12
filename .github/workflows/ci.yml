@@ -1,0 +1,59 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          clang \
+          pkg-config \
+          liburcu-dev \
+          libtirpc-dev \
+          check \
+          libxxhash-dev \
+          libfuse-dev \
+          rpcgen \
+          bear \
+          uuid-dev \
+          zlib1g-dev \
+          libzstd-dev \
+          liburing-dev \
+          libjemalloc-dev \
+          python3 \
+          clang-format \
+          clang-tidy \
+          autoconf \
+          automake \
+          libtool
+
+    - name: Autoreconf
+      run: autoreconf -fi
+
+    - name: Check style
+      run: make -f Makefile.reffs style
+
+    - name: Check license
+      run: make -f Makefile.reffs license
+
+    - name: Configure
+      run: ./configure --enable-asan --enable-ubsan
+
+    - name: Build
+      run: make -j$(nproc)
+
+    - name: Run tests
+      run: make check

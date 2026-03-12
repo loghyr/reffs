@@ -3,8 +3,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Running fuse test code: reffs_fuse
 
-    loghyr@mage:~/build$ mkdir /reffs
-    loghyr@mage:~/build$ /home/loghyr/build/src/reffs_fuse -f /reffs -t
+    user@host:~/build$ mkdir /reffs
+    user@host:~/build$ ./src/reffs_fuse -f /reffs -t
     ^C
-    loghyr@mage:~/build$ umount /reffs
+    user@host:~/build$ umount /reffs
 
