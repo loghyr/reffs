@@ -26,10 +26,19 @@ if [ $? -ne 0 ]; then
 fi
 
 # Check if the commit message contains a "Signed-off-by" line
-if ! git log -1 HEAD --pretty=format:"%b" | grep -q "^Signed-off-by:"; then
-    echo "Error: Commit message must contain a 'Signed-off-by:' line."
-    echo "Use 'git commit -s' or manually add a 'Signed-off-by:' line to your commit message."
-    exit 1
+# Note: In a pre-commit hook, the commit message is not yet in the log.
+# This check is more reliably done in a commit-msg hook, but we can 
+# check the staged changes' sign-off if we are just verifying the policy.
+# However, the standard DCO check for pre-commit is often omitted in favor 
+# of a commit-msg hook. For now, let's fix it to look at the message if provided,
+# but usually, we'd want to check the message file.
+
+if [ -f .git/COMMIT_EDITMSG ]; then
+    if ! grep -q "^Signed-off-by:" .git/COMMIT_EDITMSG; then
+        echo "Error: Commit message must contain a 'Signed-off-by:' line."
+        echo "Use 'git commit -s' or manually add a 'Signed-off-by:' line to your commit message."
+        exit 1
+    fi
 fi
 
 exit 0

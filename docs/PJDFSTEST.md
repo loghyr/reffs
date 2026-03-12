@@ -15,7 +15,7 @@ Use this checklist to isolate and debug the specific POSIX violations identified
     ```
 2.  **Define the test path:**
     ```bash
-    export PJDFSTEST="/home/loghyr/reffs/pjdfstest/tests"
+    export PJDFSTEST="./pjdfstest/tests"
     ```
 
 ## Priority 1: Rename & Sticky Bit Logic
