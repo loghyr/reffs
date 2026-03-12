@@ -47,18 +47,6 @@ LDADD = \
 	$(ZSTD_LIBS)					\
 	$(JEMALLOC_LIBS)
 
-recho_ev_SOURCES = recho_ev.c
-recho_ev_LDADD = $(LDADD)
-
-recho_cl_SOURCES = recho_cl.c
-recho_cl_LDADD = $(LDADD)
-
-reffs_SOURCES = reffs.c
-reffs_LDADD = $(LDADD)
-
-reffs_fuse_SOURCES = fuse.c
-reffs_fuse_LDADD = $(LDADD)
-
 reffsd_SOURCES = reffsd.c
 reffsd_LDADD = $(LDADD)
 
@@ -66,10 +54,6 @@ reffs_probe1_clnt_SOURCES = probe1_client.c
 reffs_probe1_clnt_LDADD = $(LDADD)
 
 bin_PROGRAMS = \
-	recho_cl \
-	recho_ev \
-	reffs_fuse \
-	reffs \
 	reffsd \
 	reffs_probe1_clnt
 
