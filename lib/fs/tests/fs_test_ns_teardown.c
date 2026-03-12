@@ -75,128 +75,11 @@ uid_t fs_test_uid;
 gid_t fs_test_gid;
 
 /* ------------------------------------------------------------------ */
-/* Eviction repair helper                                              */
 /* ------------------------------------------------------------------ */
-
-/*
- * null_evicted_rd_inodes_recursive -- walk the dirent subtree rooted at
- * rd_parent and null rd_inode on any dirent whose inode has been evicted
- * (i.e. freed by the LRU path).
- *
- * WHY THIS IS NEEDED
- * ------------------
- * rd_inode is a weak pointer that is never nulled when the LRU eviction
- * path frees an inode (architecture doc §3).  After inode_free_rcu runs,
- * rd_inode is a dangling pointer.  release_dirents_recursive() in
- * super_block.c dereferences rd_inode->i_children to walk the tree — a
- * UAF if any evicted inode is still reachable via rd_inode at teardown.
- *
- * Observed crash (2026-03-08):
- *   READ of size 8 at ... super_block.c:188  release_dirents_recursive
- *   via fs_test_teardown -> reffs_ns_fini -> release_all_fs_dirents
- *
- * The correct long-term fix is to add an i_dirent back-pointer to
- * struct inode and null rd_inode from inode_release() before call_rcu.
- * Until that lands, any test that forces LRU eviction and leaves evicted
- * dirents in the tree must call null_evicted_rd_inodes() before teardown
- * to restore the invariant that release_dirents_recursive() requires.
- *
- * HOW IT WORKS
- * ------------
- * For each dirent in the subtree:
- *   1. If rd_inode is already NULL: skip (already safe or never attached).
- *   2. Try inode_active_get(rd_inode).
- *      - Returns non-NULL: inode is live; drop active ref; nothing to do.
- *      - Returns NULL: inode is tombstoned (i_active == -1) or freed.
- *        We cannot safely dereference rd_inode any further (the struct
- *        may be freed memory).  Null it via rcu_assign_pointer.
- * 3. Recurse into children BEFORE nulling the parent (while rd_inode
- *    is still accessible for the i_children walk).
- *
- * ORDERING CONSTRAINT
- * -------------------
- * Must be called after synchronize_rcu() + rcu_barrier() so that all
- * inode_free_rcu callbacks have completed.  At that point, any rd_inode
- * that inode_active_get returns NULL for is genuinely freed memory.
- * Calling this before rcu_barrier() risks a TOCTOU: inode_active_get
- * might succeed (struct still in RCU queue, not yet freed) but the struct
- * could be freed before the next access.
- */
-static void null_evicted_rd_inodes_recursive(struct reffs_dirent *rd_parent)
-{
-	struct reffs_dirent *rd;
-	struct inode *inode;
-
-	if (!rd_parent || !rd_parent->rd_inode)
-		return;
-
-	/*
-	 * Try to acquire an active ref.  This is safe: the struct is not yet
-	 * freed (rcu_barrier has not run since the unhash, or we hold i_ref).
-	 * inode_active_get returns NULL if i_active == -1 (tombstone) or if
-	 * inode_get fails (i_ref already 0 — struct being freed).
-	 */
-	inode = inode_active_get(rd_parent->rd_inode);
-	if (inode) {
-		/* Live inode: recurse into children while rd_inode is valid. */
-		rcu_read_lock();
-		cds_list_for_each_entry_rcu(rd, &inode->i_children, rd_siblings)
-			null_evicted_rd_inodes_recursive(rd);
-		rcu_read_unlock();
-		inode_active_put(inode);
-	} else {
-		/*
-		 * Evicted: rd_inode points to a tombstoned or freed struct.
-		 * Null it so release_dirents_recursive's null-check fires.
-		 * This dirent has no reachable children (the eviction path
-		 * only evicts leaf inodes, or we'd need a deeper walk — but
-		 * in practice, file inodes are always leaves).
-		 */
-		rcu_assign_pointer(rd_parent->rd_inode, NULL);
-	}
-}
-
-/*
- * null_evicted_rd_inodes -- entry point for the repair walk.
- *
- * Call after synchronize_rcu() + rcu_barrier() and before any call to
- * release_all_fs_dirents() / reffs_ns_fini() when LRU eviction has been
- * forced in the test.
- */
-static void null_evicted_rd_inodes(void)
-{
-	struct super_block *sb;
-
-	/*
-	 * Wait for one RCU grace period so all call_rcu callbacks from
-	 * inode eviction are queued — but do NOT call rcu_barrier() yet.
-	 *
-	 * After rcu_barrier() completes, inode_free_rcu has run and the
-	 * inode struct memory is freed.  Any subsequent dereference of
-	 * rd_inode (even inside rcu_read_lock) is a UAF.
-	 *
-	 * After synchronize_rcu() but before rcu_barrier(), the structs
-	 * queued on the RCU callback list are logically deleted but their
-	 * memory is still valid.  inode_active_get() on a tombstoned inode
-	 * (i_active == -1) will return NULL safely via the CAS check.
-	 * That NULL return is our signal to null rd_inode.
-	 *
-	 * The subsequent rcu_barrier() at the call site waits for the
-	 * inode_free_rcu callbacks to complete after we have already
-	 * nulled the rd_inode pointers.
-	 */
-	synchronize_rcu();
-
-	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
-	if (!sb)
-		return;
-
-	null_evicted_rd_inodes_recursive(sb->sb_dirent);
-	synchronize_rcu(); /* flush the rcu_assign_pointer stores */
-	rcu_barrier(); /* now safe: rd_inode is NULL on all evicted dirents */
-
-	super_block_put(sb);
-}
+/* Eviction repair helper removed: i_dirent back-pointer now ensures   */
+/* inode_release() nulls rd_inode before call_rcu.  No workaround      */
+/* needed.  See reffs-i-dirent-handoff.md Step 3.                      */
+/* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
 /* Fixture                                                             */
@@ -453,12 +336,9 @@ START_TEST(test_teardown_after_lru_pressure)
 	}
 
 	/*
-	 * Some of the 16 inodes were evicted (LRU max was 3).  Their dirents
-	 * still have rd_inode pointing at freed memory.  Null those pointers
-	 * before teardown so release_dirents_recursive() does not UAF.
-	 * See null_evicted_rd_inodes() comment for the full explanation.
+	 * With i_dirent landing, inode_release() now nulls rd_inode via
+	 * i_dirent before call_rcu.  No workaround needed before teardown.
 	 */
-	null_evicted_rd_inodes();
 }
 END_TEST
 
@@ -518,7 +398,8 @@ START_TEST(test_teardown_with_pinned_inode)
 	 * struct hasn't been overwritten by the allocator).
 	 */
 	ck_assert_uint_eq(pinned->i_ino, st.st_ino);
-	ck_assert_uint_eq(pinned->i_nlink, 1); /* shutdown leaves nlink intact */
+	ck_assert_uint_eq(pinned->i_nlink,
+			  1); /* shutdown leaves nlink intact */
 
 	inode_active_put(pinned);
 
@@ -560,20 +441,9 @@ START_TEST(test_teardown_rcu_barrier_order)
 	}
 
 	/*
-	 * Do NOT call synchronize_rcu here — let pending callbacks queue up.
-	 * release_all_fs_dirents must handle this via its own rcu_barrier().
-	 *
-	 * However, before calling rafd we must null any evicted rd_inode
-	 * pointers or release_dirents_recursive will UAF on them.
-	 * null_evicted_rd_inodes() calls synchronize_rcu + rcu_barrier
-	 * internally, which is the minimal barrier we need anyway.
-	 *
-	 * Note: this does partially defeat the "no synchronize_rcu before
-	 * rafd" intent.  The ordering test remains meaningful because
-	 * null_evicted_rd_inodes only waits for already-queued callbacks,
-	 * not for the ones rafd itself will generate.
+	 * With i_dirent landing, rd_inode is nulled in inode_release() before
+	 * call_rcu, so no workaround needed before release_all_fs_dirents().
 	 */
-	null_evicted_rd_inodes();
 	release_all_fs_dirents();
 	synchronize_rcu();
 	rcu_barrier();

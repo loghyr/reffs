@@ -15,6 +15,7 @@
 #include <urcu/ref.h>
 
 #include "reffs/dirent.h"
+struct inode; /* forward decl for sb_root_inode */
 #include "reffs/types.h"
 #include "reffs/backend.h"
 
@@ -34,6 +35,8 @@ struct super_block {
 	struct cds_lfht *sb_inodes;
 
 	struct reffs_dirent *sb_dirent;
+	struct inode
+		*sb_root_inode; /* permanent i_active pin; dropped at unmount */
 	uint64_t sb_id;
 
 	uint64_t sb_next_ino;

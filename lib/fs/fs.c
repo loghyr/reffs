@@ -432,11 +432,10 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	struct inode *inode;
 	int ret;
 
-	TRACE("path=%s", path);
-
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
-	if (ret)
+	if (ret) {
 		goto out;
+	}
 
 	inode = dirent_ensure_inode(nm->nm_dirent);
 	if (!inode) {
@@ -932,13 +931,12 @@ static void recover_directory_recursive(struct reffs_dirent *parent)
 			parent, name, reffs_life_action_load, false);
 		if (rd) {
 			rd->rd_cookie = cookie;
-			rd->rd_inode = inode_alloc(sb, ino);
-			if (rd->rd_inode) {
-				if (S_ISDIR(rd->rd_inode->i_mode)) {
-					rd->rd_inode->i_parent = rd;
+			struct inode *recovered = inode_alloc(sb, ino);
+			if (recovered) {
+				dirent_attach_inode(rd, recovered);
+				if (S_ISDIR(recovered->i_mode))
 					recover_directory_recursive(rd);
-				}
-				inode_active_put(rd->rd_inode);
+				inode_active_put(recovered);
 			}
 			dirent_put(rd);
 		}
