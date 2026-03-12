@@ -828,7 +828,22 @@ int vfs_link(struct inode *inode, struct inode *dir, const char *name,
 	if (S_ISDIR(inode->i_mode))
 		return -EPERM;
 
-	vfs_lock_dirs(dir, inode);
+	/*
+	 * Lock ordering: attr_mutex low-ino first, then rd_rwlock.
+	 * inode is a regular file — passing it to vfs_lock_dirs would call
+	 * vfs_dir_dirent() on it, returning the file's own i_dirent and
+	 * write-locking rd_rwlock on a non-directory dirent, which is wrong
+	 * and deadlocks with concurrent readers.  Open-code the locking:
+	 * take both attr_mutexes in ino order, then the directory rd_rwlock.
+	 */
+	if (inode->i_ino < dir->i_ino) {
+		pthread_mutex_lock(&inode->i_attr_mutex);
+		pthread_mutex_lock(&dir->i_attr_mutex);
+	} else {
+		pthread_mutex_lock(&dir->i_attr_mutex);
+		pthread_mutex_lock(&inode->i_attr_mutex);
+	}
+	pthread_rwlock_wrlock(&de_dir->rd_rwlock);
 
 	ret = inode_access_check(dir, ap, W_OK);
 	if (ret)
@@ -867,7 +882,9 @@ int vfs_link(struct inode *inode, struct inode *dir, const char *name,
 	dirent_sync_to_disk(de_dir);
 
 out_unlock:
-	vfs_unlock_dirs(dir, inode);
+	pthread_rwlock_unlock(&de_dir->rd_rwlock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+	pthread_mutex_unlock(&dir->i_attr_mutex);
 	dirent_put(rd);
 	return ret;
 }
