@@ -57,10 +57,11 @@ jobs:
         sudo make install
         sudo ldconfig
 
+    - name: Create m4 directory
+      run: mkdir -p m4
+
     - name: Autoreconf
-      run: |
-        mkdir -p m4
-        autoreconf -fi
+      run: autoreconf -fi
 
     - name: Check style
       run: make -f Makefile.reffs style
