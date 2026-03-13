@@ -69,7 +69,7 @@ license:
 	@$(ROOT_DIR)/check_license.sh
 
 # Find all source files for style checking (consistent with Makefile.am)
-FIND_SOURCES = find . \( -name xdr -o -name HdrHistogram_c -o -name autom4te.cache -o -name build \) -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print
+FIND_SOURCES = find . \( -name xdr -o -name autom4te.cache -o -name build \) -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print
 
 # Check code style
 style:
