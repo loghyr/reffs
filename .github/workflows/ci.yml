@@ -80,10 +80,17 @@ jobs:
       run: SKIP_STYLE=1 make -f Makefile.reffs license
 
     - name: Configure
-      run: ./configure --enable-asan --enable-ubsan
+      run: |
+        mkdir build_ci
+        cd build_ci
+        ../configure --enable-asan --enable-ubsan
 
     - name: Build
-      run: make -j$(nproc)
+      run: |
+        cd build_ci
+        make -j$(nproc)
 
     - name: Run tests
-      run: make check
+      run: |
+        cd build_ci
+        make check

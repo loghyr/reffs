@@ -62,6 +62,8 @@ dist_data_DATA = asan-suppressions.txt
 dist_bin_SCRIPTS = asan_reffsd.sh
 
 all-local:
-	$(INSTALL_DATA) $(top_srcdir)/src/asan-suppressions.txt $(top_builddir)/src/asan-suppressions.txt
-	cp $(top_srcdir)/src/asan_reffsd.sh $(top_builddir)/src/
-	chmod +x $(top_builddir)/src/asan_reffsd.sh
+	@if [ "$(top_srcdir)" != "$(top_builddir)" ]; then \
+		$(INSTALL_DATA) $(top_srcdir)/src/asan-suppressions.txt $(top_builddir)/src/asan-suppressions.txt; \
+		cp $(top_srcdir)/src/asan_reffsd.sh $(top_builddir)/src/; \
+		chmod +x $(top_builddir)/src/asan_reffsd.sh; \
+	fi
