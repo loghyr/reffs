@@ -38,6 +38,8 @@ jobs:
           autoconf \
           automake \
           libtool \
+          libtool-bin \
+          autoconf-archive \
           libssl-dev \
           libcap-dev \
           psmisc \
