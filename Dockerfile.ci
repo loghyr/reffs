@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Use Ubuntu 22.04 to match GitHub Actions ubuntu-latest (currently moving to 24.04, but 22.04 is stable)
+FROM ubuntu:22.04
+
+# Avoid interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies matching .github/workflows/ci.yml
+RUN apt-get update && apt-get install -y \
+    clang \
+    pkg-config \
+    liburcu-dev \
+    libtirpc-dev \
+    check \
+    libxxhash-dev \
+    libfuse-dev \
+    rpcsvc-proto \
+    uuid-dev \
+    zlib1g-dev \
+    libzstd-dev \
+    liburing-dev \
+    libjemalloc-dev \
+    python3 \
+    clang-format \
+    clang-tidy \
+    autoconf \
+    automake \
+    libtool \
+    libtool-bin \
+    autoconf-archive \
+    libssl-dev \
+    libcap-dev \
+    psmisc \
+    valgrind \
+    cmake \
+    git \
+    make \
+    rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install HdrHistogram_c from source (same as CI)
+RUN git clone https://github.com/HdrHistogram/HdrHistogram_c.git /tmp/HdrHistogram_c && \
+    cd /tmp/HdrHistogram_c && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make && \
+    make install && \
+    ldconfig && \
+    rm -rf /tmp/HdrHistogram_c
+
+# Create workspace directories
+RUN mkdir -p /reffs /src /build /logs
+
+WORKDIR /build
+
+# Default command matches CI flow
+CMD ["/bin/bash"]
