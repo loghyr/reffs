@@ -23,7 +23,9 @@ GEN_SOURCES = \
 	sm_inter.h		\
 	sm_inter.c		\
 	probe1_xdr.h		\
-	probe1_xdr.c
+	probe1_xdr.c		\
+	nfs42_names.h		\
+	nfs42_names.c
 
 CLEANFILES = $(GEN_SOURCES)
 
@@ -47,3 +49,9 @@ libreffs_xdr_la_SOURCES =	\
 
 %.h: %.x
 	rpcgen -C -h $< > $@
+
+nfs42_names.c nfs42_names.h: nfsv42_xdr.x nfsv42_xdr.h
+	$(PYTHON) $(top_srcdir)/scripts/gen_nfs42_names.py \
+		--xdr $(srcdir)/nfsv42_xdr.x \
+		--hdr nfsv42_xdr.h \
+		--out $(builddir)
