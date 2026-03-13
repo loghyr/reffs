@@ -15,22 +15,10 @@
 #include <string.h>
 
 #include "nfsv42_xdr.h"
+#include "nfsv42_names.h"
 
 /* ------------------------------------------------------------------ */
-/* Attribute ceiling                                                    */
-/* ------------------------------------------------------------------ */
-
-/*
- * Highest supported attribute number, inclusive.
- * Override by defining FATTR4_ATTRIBUTE_MAX before including this header,
- * or by passing -DFATTR4_ATTRIBUTE_MAX=<n> on the compiler command line.
- */
-#ifndef FATTR4_ATTRIBUTE_MAX
-#define FATTR4_ATTRIBUTE_MAX FATTR4_UNCACHEABLE
-#endif
-
-/* ------------------------------------------------------------------ */
-/* Low-level word/bit arithmetic                                        */
+/* Low-level word/bit arithmetic                                      */
 /* ------------------------------------------------------------------ */
 
 #define BITMAP4_WORD_BITS 32U
@@ -48,7 +36,7 @@
 #define SUPPORTED_ATTR_WORDS BITMAP4_WORDS_FOR_MAX(FATTR4_ATTRIBUTE_MAX)
 
 /* ------------------------------------------------------------------ */
-/* Lifecycle                                                            */
+/* Lifecycle                                                          */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -114,7 +102,7 @@ static inline void bitmap4_zero(bitmap4 *bm)
 }
 
 /* ------------------------------------------------------------------ */
-/* Internal bounds check (not part of the public API)                  */
+/* Internal bounds check (not part of the public API)                 */
 /* ------------------------------------------------------------------ */
 
 static inline bool bitmap4_attr_fits(const bitmap4 *bm, uint32_t attr)
@@ -126,10 +114,10 @@ static inline bool bitmap4_attr_fits(const bitmap4 *bm, uint32_t attr)
 }
 
 /* ------------------------------------------------------------------ */
-/* Per-bit accessors                                                    */
-/*                                                                     */
-/* Out-of-range reads  → false (safe).                                 */
-/* Out-of-range writes → no-op, returns false (safe).                  */
+/* Per-bit accessors                                                  */
+/*                                                                    */
+/* Out-of-range reads  → false (safe).                                */
+/* Out-of-range writes → no-op, returns false (safe).                 */
 /* ------------------------------------------------------------------ */
 
 static inline bool bitmap4_attribute_is_set(const bitmap4 *bm, uint32_t attr)
@@ -168,7 +156,7 @@ static inline bool bitmap4_attribute_clear(bitmap4 *bm, uint32_t attr)
 }
 
 /* ------------------------------------------------------------------ */
-/* Composite predicates                                                 */
+/* Composite predicates                                               */
 /* ------------------------------------------------------------------ */
 
 /*
