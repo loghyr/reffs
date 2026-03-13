@@ -27,7 +27,6 @@ jobs:
           libxxhash-dev \
           libfuse-dev \
           rpcgen \
-          bear \
           uuid-dev \
           zlib1g-dev \
           libzstd-dev \
@@ -38,7 +37,20 @@ jobs:
           clang-tidy \
           autoconf \
           automake \
-          libtool
+          libtool \
+          libssl-dev \
+          libcap-dev \
+          psmisc \
+          valgrind
+
+    - name: Install HdrHistogram_c
+      run: |
+        git clone https://github.com/HdrHistogram/HdrHistogram_c.git
+        cd HdrHistogram_c
+        cmake .
+        make
+        sudo make install
+        sudo ldconfig
 
     - name: Autoreconf
       run: autoreconf -fi
