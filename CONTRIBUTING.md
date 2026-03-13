@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Contributing to Reffs
 
 We welcome contributions to Reffs! To ensure a high standard of code quality and protocol compliance, we ask that you follow these guidelines.

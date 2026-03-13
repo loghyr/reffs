@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 ---
 name: Feature request
 about: Suggest an idea for this project
