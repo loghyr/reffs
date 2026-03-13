@@ -5,7 +5,7 @@ ACLOCAL_AMFLAGS = -Im4
 
 AM_CFLAGS = \
 	-I$(top_srcdir)/lib/include	\
-	-I$(top_builddir)/lib/xdr		\
+	-I$(top_builddir)/lib/xdr	\
 	$(TIRPC_CFLAGS)			\
 	@CHECK_CFLAGS@			\
 	$(URCU_CFLAGS)			\

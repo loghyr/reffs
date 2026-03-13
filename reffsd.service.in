@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+[Unit]
+Description=Reffs NFS Daemon
+Wants=network-online.target
+After=network-online.target rpcbind.service
+
+[Service]
+Environment="LIBC_FATAL_STDERR_=1"
+Environment="MALLOC_CONF=prof:false"
+ExecStart=/usr/bin/reffsd
+LimitCORE=infinity
+SyslogIdentifier=reffsd
+
+[Install]
+WantedBy=multi-user.target
