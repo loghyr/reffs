@@ -7,7 +7,7 @@ AM_INIT_AUTOMAKE([foreign])
 
 AC_CONFIG_SRCDIR([src/reffsd.c])
 AC_CONFIG_HEADERS([config.h])
-AC_CONFIG_MACRO_DIR([m4])
+AC_CONFIG_MACRO_DIRS([m4])
 
 AM_SILENT_RULES([yes])
 
@@ -31,7 +31,7 @@ AC_MSG_RESULT([Using C compiler: $CC])
 
 AC_PROG_CC
 AC_USE_SYSTEM_EXTENSIONS
-AC_PROG_AR
+m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 
 AC_MSG_CHECKING([for C11 support])
 dnl Strip out the freaking -O2 by default!
