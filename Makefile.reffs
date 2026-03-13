@@ -11,13 +11,13 @@ DOCKER = $(SUDO) docker
 IMAGE_NAME = reffs-dev
 CI_IMAGE_NAME = reffs-ci
 
-# Default target: style and license check
-all: style license
+# Default target: license check
+all: license
 
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  all             - style and license (default)"
+	@echo "  all             - license (default)"
 	@echo "  build           - Build the project incrementally"
 	@echo "  check           - Run unit tests"
 	@echo "  style           - Check code style (clang-format)"
@@ -68,16 +68,21 @@ scanbuild: build/Makefile
 license:
 	@$(ROOT_DIR)/check_license.sh
 
+# Developer tools
+CLANG_FORMAT ?= $(shell which clang-format-21 2>/dev/null || which clang-format)
+CLANG_TIDY ?= clang-tidy
+SCAN_BUILD ?= scan-build
+
 # Find all source files for style checking (consistent with Makefile.am)
 FIND_SOURCES = find . \( -name xdr -o -name autom4te.cache -o -name build \) -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print
 
 # Check code style
 style:
-	@$(FIND_SOURCES) | tr '\n' '\0' | xargs -0 clang-format --dry-run -Werror
+	@$(FIND_SOURCES) | tr '\n' '\0' | xargs -0 $(CLANG_FORMAT) --dry-run -Werror
 
 # Fix code style (if needed)
 fix-style:
-	@$(FIND_SOURCES) | tr '\n' '\0' | xargs -0 clang-format -i
+	@$(FIND_SOURCES) | tr '\n' '\0' | xargs -0 $(CLANG_FORMAT) -i
 
 # --- Cleanup targets ---
 
