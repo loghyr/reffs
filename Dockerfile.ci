@@ -23,6 +23,8 @@ RUN apt-get update && apt-get install -y \
     liburing-dev \
     libjemalloc-dev \
     python3 \
+    python3-ply \
+    python3-xdrlib \
     clang-format \
     clang-tidy \
     clang-tools \
