@@ -26,7 +26,7 @@ jobs:
           check \
           libxxhash-dev \
           libfuse-dev \
-          rpcgen \
+          rpcsvc-proto \
           uuid-dev \
           zlib1g-dev \
           libzstd-dev \
