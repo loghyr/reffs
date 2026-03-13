@@ -41,13 +41,16 @@ jobs:
           libssl-dev \
           libcap-dev \
           psmisc \
-          valgrind
+          valgrind \
+          cmake
 
     - name: Install HdrHistogram_c
       run: |
         git clone https://github.com/HdrHistogram/HdrHistogram_c.git
         cd HdrHistogram_c
-        cmake .
+        mkdir build
+        cd build
+        cmake ..
         make
         sudo make install
         sudo ldconfig
