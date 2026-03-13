@@ -33,8 +33,11 @@ jobs:
           liburing-dev \
           libjemalloc-dev \
           python3 \
+          python3-pip \
+          python3-ply \
           clang-format \
           clang-tidy \
+          clang-tools \
           autoconf \
           automake \
           libtool \
@@ -45,6 +48,9 @@ jobs:
           psmisc \
           valgrind \
           cmake
+
+    - name: Install Python dependencies
+      run: pip3 install --no-cache-dir --break-system-packages xdrlib3
 
     - name: Install HdrHistogram_c
       run: |
