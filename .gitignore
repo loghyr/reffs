@@ -29,6 +29,16 @@ test-driver
 *.trs
 *.log
 .git/hooks/pre-commit
+ar-lib
+compile
+config.guess
+config.sub
+depcomp
+install-sh
+ltmain.sh
+missing
+py-compile
+test-driver
 cthon04
 pjdfstest
 logs/
