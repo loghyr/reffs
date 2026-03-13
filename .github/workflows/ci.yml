@@ -54,10 +54,11 @@ jobs:
 
     - name: Install HdrHistogram_c
       run: |
-        git clone https://github.com/HdrHistogram/HdrHistogram_c.git
-        cd HdrHistogram_c
-        mkdir build
-        cd build
+        mkdir -p build/deps
+        git clone https://github.com/HdrHistogram/HdrHistogram_c.git build/deps/HdrHistogram_c
+        cd build/deps/HdrHistogram_c
+        mkdir build_dir
+        cd build_dir
         cmake ..
         make
         sudo make install
