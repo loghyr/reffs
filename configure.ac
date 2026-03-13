@@ -86,17 +86,17 @@ fi
 
 AC_PATH_PROG([CLANG_FORMAT], [clang-format], [no])
 if test "x$CLANG_FORMAT" = "xno"; then
-    AC_MSG_ERROR([clang-format is required to build this project])
+    AC_MSG_WARN([clang-format not found - 'make style' will fail])
 fi
 
 AC_PATH_PROG([CLANG_TIDY], [clang-tidy], [no])
 if test "x$CLANG_TIDY" = "xno"; then
-    AC_MSG_ERROR([clang-tidy is required to build this project])
+    AC_MSG_WARN([clang-tidy not found])
 fi
 
 AC_PATH_PROG([SCAN_BUILD], [scan-build], [no])
 if test "x$SCAN_BUILD" = "xno"; then
-    AC_MSG_ERROR([scan-build is required to build this project])
+    AC_MSG_WARN([scan-build not found - 'make scanbuild' will fail])
 fi
 
 AC_PATH_PROG([RPCGEN], [rpcgen], [no])
@@ -106,7 +106,7 @@ fi
 
 AC_PATH_PROG([BEAR], [bear], [no])
 if test "x$BEAR" = "xno"; then
-    AC_MSG_ERROR([bear is required to build this project])
+    AC_MSG_WARN([bear not found - 'make tidy' may fail])
 fi
 
 # Check for libuuid
