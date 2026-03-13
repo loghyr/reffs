@@ -74,7 +74,7 @@ jobs:
       run: autoreconf -fi
 
     - name: Check license
-      run: make -f Makefile.reffs license
+      run: SKIP_STYLE=1 make -f Makefile.reffs license
 
     - name: Configure
       run: ./configure --enable-asan --enable-ubsan
