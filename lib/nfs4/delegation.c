@@ -8,6 +8,7 @@
 #endif
 
 #include "nfsv42_xdr.h"
+#include "nfsv42_names.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "compound.h"
