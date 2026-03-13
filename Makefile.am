@@ -8,10 +8,10 @@ ACLOCAL_AMFLAGS = -Im4
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = reffs.pc
 
-EXTRA_DIST = README.md COPYING CONTRIBUTING INSTALL reffs-echo.service.in
+EXTRA_DIST = README.md COPYING CONTRIBUTING INSTALL reffsd.service.in
 
 systemddir = $(prefix)/lib/systemd/system
-systemd_DATA = reffs-echo.service
+systemd_DATA = reffsd.service
 
 TARBALL = $(PACKAGE)-$(VERSION).tar.bz2
 

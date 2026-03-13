@@ -5,7 +5,7 @@ AC_INIT([reffs], [0.0.1], [loghyr@gmail.com])
 AC_CONFIG_AUX_DIR([.])
 AM_INIT_AUTOMAKE([foreign])
 
-AC_CONFIG_SRCDIR([src/reffs.c])
+AC_CONFIG_SRCDIR([src/reffsd.c])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
 
@@ -418,12 +418,11 @@ AC_CONFIG_FILES([
 	Makefile
 	reffs.pc
 	reffs.spec
-	reffs-echo.service
+	reffsd.service
 	LICENSES/Makefile
 	lib/Makefile
 	lib/backends/Makefile
 	lib/fs/Makefile
-
 	lib/fs/tests/Makefile
 	lib/nlm/Makefile
 	lib/nlm/tests/Makefile
