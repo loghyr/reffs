@@ -28,6 +28,7 @@ libreffs_nfs4_la_SOURCES = \
 
 reffsincludedir = $(includedir)/reffs
 reffsinclude_HEADERS = \
+	attr.h \
 	errors.h \
 	compound.h \
 	ops.h

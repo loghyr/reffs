@@ -30,5 +30,6 @@ LDADD = \
 check_PROGRAMS = $(TESTS)
 
 TESTS = \
-	errors
+	errors \
+	bitmap
 
