@@ -1,10 +1,10 @@
 # Reffs: Reference File System
 
-Reffs is a high-performance Reference File System project focused on providing reference implementations for NFSv3, NFSv4.1 (with Flex Files support), and FUSE. It leverages modern Linux kernel features like `io_uring` for asynchronous I/O and `liburcu` for scalable, lock-free synchronization.
+Reffs is a high-performance Reference File System project focused on providing reference implementations for NFSv3, NFSv4.2 (with Flex Files support), and FUSE. It leverages modern Linux kernel features like `io_uring` for asynchronous I/O and `liburcu` for scalable, lock-free synchronization.
 
 ## Features
 
-- **Protocol Support:** NFSv3, NFSv4.1 (Flex Files), and FUSE.
+- **Protocol Support:** NFSv3, NFSv4.2 (Flex Files), and FUSE.
 - **Asynchronous I/O:** High-performance core using `io_uring`.
 - **Lock-free Sync:** Scalable synchronization via `liburcu`.
 - **Reference Quality:** Focus on protocol compliance and architectural clarity.
