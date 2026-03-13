@@ -35,7 +35,7 @@ jobs:
           python3 \
           python3-pip \
           python3-ply \
-          clang-format \
+          clang-format-18 \
           clang-tidy \
           clang-tools \
           autoconf \
@@ -51,6 +51,9 @@ jobs:
 
     - name: Install Python dependencies
       run: pip3 install --no-cache-dir --break-system-packages xdrlib3
+
+    - name: Set environment variables
+      run: echo "CLANG_FORMAT=clang-format-18" >> $GITHUB_ENV
 
     - name: Install HdrHistogram_c
       run: |
