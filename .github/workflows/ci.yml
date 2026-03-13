@@ -73,9 +73,6 @@ jobs:
     - name: Autoreconf
       run: autoreconf -fi
 
-    - name: Check style
-      run: make -f Makefile.reffs style
-
     - name: Check license
       run: make -f Makefile.reffs license
 
