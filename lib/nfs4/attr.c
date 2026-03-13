@@ -8,6 +8,7 @@
 #endif
 
 #include "attr.h"
+#include "nfsv42_names.h"
 
 #include "reffs/log.h"
 #include "reffs/rpc.h"
