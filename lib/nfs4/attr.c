@@ -15,23 +15,6 @@
 #include "ops.h"
 #include "errors.h"
 
-void nfs4_op_getattr(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	GETATTR4args *args = NFS4_OP_ARG_SETUP(c, ph, opgetattr);
-	GETATTR4res *res = NFS4_OP_RES_SETUP(c, ph, opgetattr);
-	nfsstat4 *status = &res->status;
-	GETATTR4resok *resok = NFS4_OP_RESOK_SETUP(res, GETATTR4res_u, resok4);
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
-}
-
 bitmap4 supported_attributes_bm;
 
 int nfs4_attribute_init(void)
@@ -150,6 +133,23 @@ static void __attribute__((destructor)) nfs4_attribute_unload(void)
 	nfs4_attribute_fini();
 }
 #endif
+
+void nfs4_op_getattr(struct compound *c)
+{
+	struct protocol_handler *ph =
+		(struct protocol_handler *)c->c_rt->rt_context;
+
+	GETATTR4args *args = NFS4_OP_ARG_SETUP(c, ph, opgetattr);
+	GETATTR4res *res = NFS4_OP_RES_SETUP(c, ph, opgetattr);
+	nfsstat4 *status = &res->status;
+	GETATTR4resok *resok = NFS4_OP_RESOK_SETUP(res, GETATTR4res_u, resok4);
+
+	*status = NFS4ERR_NOTSUPP;
+
+	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
+	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
+	    (void *)resok);
+}
 
 void nfs4_op_readdir(struct compound *c)
 {
