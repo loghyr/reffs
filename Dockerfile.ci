@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# Use Ubuntu 22.04 to match GitHub Actions ubuntu-latest (currently moving to 24.04, but 22.04 is stable)
-FROM ubuntu:22.04
+# Use Ubuntu 24.04 to get modern liburing (2.5+) and other dependencies
+FROM ubuntu:24.04
 
 # Avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
