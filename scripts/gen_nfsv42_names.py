@@ -183,55 +183,70 @@ def make_func_name(prefix_or_type):
     return aliases.get(s, s) + '_name'
 
 
+MAX_NAME_OVERRIDES = {
+    'FATTR4': 'FATTR4_ATTRIBUTE_MAX',
+    'NFS4ERR': 'NFS4ERR_MAX',
+    'OP': 'OP_MAX',
+    'CB': 'CB_MAX',
+}
+
+def max_define(prefix, members):
+    """
+    Return a (define_name, symbol) pair for the highest-valued member,
+    e.g. ('FATTR4_ATTRIBUTE_MAX', 'FATTR4_UNCACHEABLE').
+    Returns None for bare enum types with no usable prefix.
+    """
+    p = prefix.rstrip('_')
+    if not p or not p[0].isupper():
+        return None
+    top_name = max(members, key=lambda x: x[1])[0]
+    define_name = MAX_NAME_OVERRIDES.get(p, f'{p}_MAX')
+    return (define_name, top_name)
+
+
 def render_dense_table(prefix, members, func_name):
-    """Flat array indexed by value; NULL slots for gaps."""
+    """Flat array indexed by value; symbolic names used throughout."""
     values = [v for _, v in members]
     lo, hi = min(values), max(values)
-    slots  = hi - lo + 1
 
     val2name = {v: n for n, v in members}
+    lo_sym = val2name[lo]
+    hi_sym = val2name[hi]
 
+    tbl = f'{prefix.lower().rstrip("_")}_names'
     lines_c = []
-    lines_c.append(f'static const char * const {prefix.lower().rstrip("_")}_names[] = {{')
-    for i in range(slots):
-        v = lo + i
+    lines_c.append(f'static const char * const {tbl}[] = {{')
+    for v in range(lo, hi + 1):
         if v in val2name:
-            lines_c.append(f'\t[{i}] = "{val2name[v]}",')
+            sym = val2name[v]
+            lines_c.append(f'\t[{sym} - {lo_sym}] = "{sym}",')
         else:
-            lines_c.append(f'\t[{i}] = NULL,')
+            lines_c.append(f'\t/* gap at {v} */')
     lines_c.append('};')
     lines_c.append('')
 
-    offset = lo
-    count  = slots
     lines_c.append(f'const char *{func_name}(uint32_t v)')
     lines_c.append('{')
-    if offset != 0:
-        lines_c.append(f'\tif (v < {offset}U || v >= {offset}U + {count}U)')
-    else:
-        lines_c.append(f'\tif (v >= {count}U)')
-    tbl = f'{prefix.lower().rstrip("_")}_names'
+    lines_c.append(f'\tif (v < (uint32_t){lo_sym} || v > (uint32_t){hi_sym})')
     lines_c.append(f'\t\treturn "{prefix}_UNKNOWN";')
-    if offset != 0:
-        lines_c.append(f'\treturn {tbl}[v - {offset}U] ? {tbl}[v - {offset}U] : "{prefix}_UNKNOWN";')
-    else:
-        lines_c.append(f'\treturn {tbl}[v] ? {tbl}[v] : "{prefix}_UNKNOWN";')
+    lines_c.append(f'\tconst char *n = {tbl}[v - {lo_sym}];')
+    lines_c.append(f'\treturn n ? n : "{prefix}_UNKNOWN";')
     lines_c.append('}')
 
     decl = f'const char *{func_name}(uint32_t v);'
-    return '\n'.join(lines_c), decl
+    mx   = max_define(prefix, members)
+    return '\n'.join(lines_c), decl, mx
 
 
 def render_sparse_table(prefix, members, func_name):
     """Linear-search table for sparse value spaces (e.g. NFS4ERR_*)."""
-    lines_c = []
-    struct_name = f'{prefix.lower().rstrip("_")}_entry'
-    tbl_name    = f'{prefix.lower().rstrip("_")}_tbl'
+    tbl_name = f'{prefix.lower().rstrip("_")}_tbl'
+    lines_c  = []
 
     lines_c.append(f'static const struct {{ uint32_t v; const char *n; }}')
     lines_c.append(f'{tbl_name}[] = {{')
     for name, val in sorted(members, key=lambda x: x[1]):
-        lines_c.append(f'\t{{ {val}U, "{name}" }},')
+        lines_c.append(f'\t{{ (uint32_t){name}, "{name}" }},')
     lines_c.append('};')
     lines_c.append('')
     lines_c.append(f'const char *{func_name}(uint32_t v)')
@@ -243,7 +258,8 @@ def render_sparse_table(prefix, members, func_name):
     lines_c.append('}')
 
     decl = f'const char *{func_name}(uint32_t v);'
-    return '\n'.join(lines_c), decl
+    mx   = max_define(prefix, members)
+    return '\n'.join(lines_c), decl, mx
 
 
 def render_group(prefix_or_type, members, func_name):
@@ -352,7 +368,7 @@ def main():
         if func in emitted_func_names:
             continue
         emitted_func_names.add(func)
-        groups.append((func, xdr_enums[etype], etype))
+        groups.append((func, xdr_enums[etype], etype, False))
 
     # 2. Const prefix groups
     all_defs_list = [(n, v) for n, v in all_defs.items()
@@ -365,27 +381,29 @@ def main():
         if func in emitted_func_names:
             continue
         emitted_func_names.add(func)
-        groups.append((func, const_by_prefix[prefix], prefix))
+        groups.append((func, const_by_prefix[prefix], prefix, True))
 
     # 3. Anything else with >= 2 members that has a recognisable NFSv4 prefix
     auto_prefixes = {k for k in const_by_prefix
-                     if re.match(r'^(NFS4ERR_?|FATTR4|OP_|CB_|ACCESS4|OPEN4|LOCK4|'
-                                 r'ACL4|MODE4|SEQ4|LAYOUT4|NFL4|FF_|EXCHGID4|'
-                                 r'CREATE_SESSION4|RCA4)', k)}
+                 if re.match(r'^(NFS4ERR_|FATTR4_|OP_|CB_|ACCESS4_|OPEN4_|LOCK4_|'
+                             r'ACL4_|MODE4_|SEQ4_STATUS_|LAYOUT4_|NFL4_|FF_FLAGS_|'
+                             r'EXCHGID4_FLAG_|CREATE_SESSION4_FLAG_|RCA4_TYPE_MASK_)', k)
+                 and k.count('_') <= 3}   # ← cap depth
     for prefix in sorted(auto_prefixes):
         func = make_func_name(prefix)
         if func in emitted_func_names:
             continue
         emitted_func_names.add(func)
-        groups.append((func, const_by_prefix[prefix], prefix))
+        groups.append((func, const_by_prefix[prefix], prefix, False))
 
     # ------------------------------------------------------------------
     # Render
     # ------------------------------------------------------------------
     c_sections = []
     h_decls    = []
+    h_maxes    = []   # list of (define_name, symbol) pairs
 
-    for func_name, members, label in groups:
+    for func_name, members, label, emit_max in groups:
         # Deduplicate members (same value, keep first name)
         seen_vals = {}
         deduped = []
@@ -394,9 +412,11 @@ def main():
                 seen_vals[val] = name
                 deduped.append((name, val))
 
-        c_body, h_decl = render_group(label, deduped, func_name)
+        c_body, h_decl, mx = render_group(label, deduped, func_name)
         c_sections.append(f'/* {label} */\n{c_body}')
         h_decls.append(h_decl)
+        if mx and emit_max:
+            h_maxes.append(mx)
 
     # ------------------------------------------------------------------
     # Write .c
@@ -408,6 +428,7 @@ def main():
         f.write('#include <stddef.h>\n')
         f.write('#include <stdint.h>\n')
         f.write('\n')
+        f.write('#include "nfsv42_xdr.h"\n')
         f.write('#include "nfsv42_names.h"\n')
         f.write('\n')
         for section in c_sections:
@@ -419,11 +440,17 @@ def main():
     # Write .h
     # ------------------------------------------------------------------
     h_path = out_dir / 'nfsv42_names.h'
-    guard  = 'NFS42_NAMES_H'
+    guard  = 'NFSV42_NAMES_H'
     with h_path.open('w') as f:
         f.write(SPDX_C)
         f.write(f'\n#ifndef {guard}\n#define {guard}\n\n')
         f.write('#include <stdint.h>\n\n')
+        # _MAX defines — e.g. #define FATTR4_ATTRIBUTE_MAX FATTR4_UNCACHEABLE
+        if h_maxes:
+            f.write('/* Maximum values for each named group */\n')
+            for define_name, symbol in h_maxes:
+                f.write(f'#define {define_name} {symbol}\n')
+            f.write('\n')
         for decl in h_decls:
             f.write(decl + '\n')
         f.write(f'\n#endif /* {guard} */\n')

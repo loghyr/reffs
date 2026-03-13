@@ -4,5 +4,5 @@
 SUBDIRS = reffs
 
 dist_bin_SCRIPTS = \
-	gen_nfs42_names.py \
+	gen_nfsv42_names.py \
 	reffs-probe.py
