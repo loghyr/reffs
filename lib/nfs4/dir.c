@@ -43,23 +43,6 @@ void nfs4_op_lookupp(struct compound *c)
 	    *status, (void *)res);
 }
 
-void nfs4_op_readdir(struct compound *c)
-{
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	READDIR4args *args = NFS4_OP_ARG_SETUP(c, ph, opreaddir);
-	READDIR4res *res = NFS4_OP_RES_SETUP(c, ph, opreaddir);
-	nfsstat4 *status = &res->status;
-	READDIR4resok *resok = NFS4_OP_RESOK_SETUP(res, READDIR4res_u, resok4);
-
-	*status = NFS4ERR_NOTSUPP;
-
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
-}
-
 void nfs4_op_create(struct compound *c)
 {
 	struct protocol_handler *ph =
