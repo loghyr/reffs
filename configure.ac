@@ -156,20 +156,27 @@ AS_IF([test "x$enable_strict_posix" = "xyes"], [
 ])
 
 AS_IF([test "x$enable_linux_io_uring" != "xno"], [
-    # Check for liburing
-    AC_CHECK_HEADERS([liburing.h], [
-        AC_CHECK_LIB([uring], [io_uring_queue_init], [
-            AC_DEFINE([HAVE_LINUX_IO_URING], [1], [Define if Linux io_uring is available])
-            URING_LIBS="-luring"
+    # Check for liburing >= 2.3 (required for IORING_ASYNC_CANCEL_ALL, etc.)
+    PKG_CHECK_MODULES([URING], [liburing >= 2.3], [
+        AC_DEFINE([HAVE_LINUX_IO_URING], [1], [Define if Linux io_uring is available])
+        URING_LIBS="$URING_LIBS"
+    ], [
+        # Fallback to manual check if pkg-config fails or version is old
+        AC_CHECK_HEADERS([liburing.h], [
+            AC_CHECK_LIB([uring], [io_uring_queue_init], [
+                AC_MSG_WARN([liburing found but version check failed - build might fail if < 2.3])
+                AC_DEFINE([HAVE_LINUX_IO_URING], [1], [Define if Linux io_uring is available])
+                URING_LIBS="-luring"
+            ], [
+                if test "x$enable_linux_io_uring" = "xyes"; then
+                    AC_MSG_ERROR([io_uring support explicitly requested but liburing not found])
+                fi
+            ])
         ], [
             if test "x$enable_linux_io_uring" = "xyes"; then
-                AC_MSG_ERROR([io_uring support explicitly requested but liburing not found])
+                AC_MSG_ERROR([io_uring support explicitly requested but liburing.h not found])
             fi
         ])
-    ], [
-        if test "x$enable_linux_io_uring" = "xyes"; then
-            AC_MSG_ERROR([io_uring support explicitly requested but liburing.h not found])
-        fi
     ])
 ])
 AC_SUBST([URING_LIBS])
