@@ -11,13 +11,15 @@ DOCKER = $(SUDO) docker
 IMAGE_NAME = reffs-dev
 CI_IMAGE_NAME = reffs-ci
 
-# Default target: license check
-all: license
+# Default target: style and license check
+all:
+	@if [ "$(SKIP_STYLE)" != "1" ]; then $(MAKE) -f Makefile.reffs style; fi
+	@$(MAKE) -f Makefile.reffs license
 
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  all             - license (default)"
+	@echo "  all             - style and license (default, use SKIP_STYLE=1 to bypass style)"
 	@echo "  build           - Build the project incrementally"
 	@echo "  check           - Run unit tests"
 	@echo "  style           - Check code style (clang-format)"
@@ -122,7 +124,7 @@ check-ci: ci-image
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && mkdir -p m4 && autoreconf -fi && \
-			cd /build && ../src/configure --enable-asan --enable-ubsan && \
+			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
 			make -j$$(nproc) && make check || (cat lib/fs/tests/test-suite.log && exit 1)"
 
 # Run the server in a docker container (sandbox)
