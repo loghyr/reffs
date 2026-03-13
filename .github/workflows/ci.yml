@@ -56,7 +56,9 @@ jobs:
         sudo ldconfig
 
     - name: Autoreconf
-      run: autoreconf -fi
+      run: |
+        mkdir -p m4
+        autoreconf -fi
 
     - name: Check style
       run: make -f Makefile.reffs style
