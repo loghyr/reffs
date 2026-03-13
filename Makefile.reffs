@@ -110,14 +110,15 @@ ci-image:
 
 # Run the full CI pipeline inside the CI container
 # This mirrors .github/workflows/ci.yml exactly
+# We use --privileged to allow tests that use namespaces and mounting (like fs_usage_posix)
 check-ci: ci-image
-	$(DOCKER) run --rm \
+	$(DOCKER) run --rm --privileged \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && mkdir -p m4 && autoreconf -fi && \
 			cd /build && ../src/configure --enable-asan --enable-ubsan && \
-			make -j$$(nproc) && make check"
+			make -j$$(nproc) && make check || (cat lib/fs/tests/test-suite.log && exit 1)"
 
 # Run the server in a docker container (sandbox)
 # This uses --privileged to allow FUSE and bypasses host RPC conflicts
