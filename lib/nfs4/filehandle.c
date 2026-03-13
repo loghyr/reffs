@@ -64,6 +64,11 @@ void nfs4_op_putfh(struct compound *c)
 		goto out;
 	}
 
+	if (nfh->nfh_sb == 0 || nfh->nfh_ino == 0) {
+		*status = NFS4ERR_BADHANDLE;
+		goto out;
+	}
+
 	if (nfh->nfh_sb != c->c_curr_nfh.nfh_sb) {
 		super_block_put(c->c_curr_sb);
 		c->c_curr_sb = super_block_find(nfh->nfh_sb);
@@ -83,11 +88,11 @@ void nfs4_op_putfh(struct compound *c)
 	c->c_curr_nfh.nfh_ino = nfh->nfh_ino;
 
 	if (!c->c_inode) {
-		/*
-		 * Inode may not be loaded in the sb,
-		 * so wait until needed to load it.
-		 */
 		c->c_inode = inode_find(c->c_curr_sb, c->c_curr_nfh.nfh_ino);
+		if (!c->c_inode) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
 	}
 
 out:
@@ -151,11 +156,11 @@ void nfs4_op_putrootfh(struct compound *c)
 	c->c_curr_nfh.nfh_ino = INODE_ROOT_ID;
 
 	if (!c->c_inode) {
-		/*
-		 * Inode may not be loaded in the sb,
-		 * so wait until needed to load it.
-		 */
 		c->c_inode = inode_find(c->c_curr_sb, c->c_curr_nfh.nfh_ino);
+		if (!c->c_inode) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
 	}
 
 out:
@@ -185,11 +190,11 @@ void nfs4_op_restorefh(struct compound *c)
 	c->c_inode = NULL;
 
 	if (!c->c_inode) {
-		/*
-		 * Inode may not be loaded in the sb,
-		 * so wait until needed to load it.
-		 */
 		c->c_inode = inode_find(c->c_curr_sb, c->c_curr_nfh.nfh_ino);
+		if (!c->c_inode) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
 	}
 
 out:
