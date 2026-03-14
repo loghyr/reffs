@@ -75,6 +75,54 @@ static inline int bitmap4_init(bitmap4 *bm, uint32_t max_attr)
 }
 
 /*
+ * bitmap4_copy - allocate and copy a bitmap4 from src to dst
+ *
+ * Returns  0       on success.
+ *         -EINVAL  if @bm is NULL.
+ *         -ENOMEM  if allocation fails.
+ */
+static inline int bitmap4_copy(bitmap4 *src, bitmap4 *dst)
+{
+	if (src == NULL)
+		return -EINVAL;
+
+	if (dst->bitmap4_len == 0)
+		return 0;
+
+	dst->bitmap4_val = calloc(src->bitmap4_len, sizeof(*dst->bitmap4_val));
+	if (dst->bitmap4_val == NULL)
+		return -ENOMEM;
+
+	dst->bitmap4_len = src->bitmap4_len;
+
+	for (u_int i = 0; i < dst->bitmap4_len; i++)
+		dst->bitmap4_val[i] = src->bitmap4_val[i];
+
+	return 0;
+}
+
+/*
+ * bitmap4_equal - determine if a and b are the same.
+ */
+static inline bool bitmap4_equal(bitmap4 *a, bitmap4 *b)
+{
+	if (!a && !b)
+		return true;
+
+	if (!a || !b)
+		return false;
+
+	if (a->bitmap4_len != b->bitmap4_len)
+		return false;
+
+	for (u_int i = 0; i < a->bitmap4_len; i++)
+		if (a->bitmap4_val[i] != b->bitmap4_val[i])
+			return false;
+
+	return true;
+}
+
+/*
  * bitmap4_destroy - free storage allocated by bitmap4_init().
  *
  * Safe to call on a NULL pointer or a zeroed struct.
