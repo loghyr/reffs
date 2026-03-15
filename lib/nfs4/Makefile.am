@@ -31,5 +31,4 @@ reffsinclude_HEADERS = \
 	attr.h \
 	compound.h \
 	errors.h \
-	ops.h \
-	time_utils.h
+	ops.h
