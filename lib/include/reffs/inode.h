@@ -88,7 +88,7 @@ struct inode {
 	int64_t i_size;
 	int64_t i_used;
 	struct timespec i_atime;
-	struct timespec i_btime;
+	struct timespec i_btime; /* Birth time */
 	struct timespec i_ctime;
 	struct timespec i_mtime;
 
@@ -111,6 +111,7 @@ struct inode_disk {
 	struct timespec id_atime;
 	struct timespec id_ctime;
 	struct timespec id_mtime;
+	struct timespec id_btime;
 	uint64_t id_attr_flags;
 	uint64_t id_parent_ino; /* 0 = root/unknown */
 };
