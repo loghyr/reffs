@@ -31,4 +31,5 @@ reffsinclude_HEADERS = \
 	test.h \
 	time.h \
 	tls.h \
-	types.h
+	types.h \
+	utf8string.h

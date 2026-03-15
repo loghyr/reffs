@@ -450,6 +450,7 @@ AC_CONFIG_FILES([
 	lib/tests/Makefile
 	lib/trace/Makefile
 	lib/utils/Makefile
+	lib/utils/tests/Makefile
 	lib/xdr/Makefile
 	scripts/Makefile
 	scripts/reffs/Makefile
