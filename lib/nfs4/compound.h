@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#ifndef _REFFS_NFS4_INTERNAL_H
-#define _REFFS_NFS4_INTERNAL_H
+#ifndef _REFFS_NFS4_COMPOUND_H
+#define _REFFS_NFS4_COMPOUND_H
 
 #include <rpc/auth_unix.h>
 #include <sys/types.h>
