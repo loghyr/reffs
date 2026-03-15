@@ -6,6 +6,8 @@
 SUBDIRS =		\
 	include		\
 	xdr		\
+	trace		\
+	utils		\
 	backends	\
 	fs		\
 	nlm		\
@@ -16,6 +18,4 @@ SUBDIRS =		\
 	rpc		\
 	io		\
 	probe1		\
-	utils		\
-	trace		\
 	tests
