@@ -18,6 +18,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <xxhash.h>
+
 #include "reffs/rcu.h"
 #include "reffs/backend.h"
 #include "reffs/cmp.h"
@@ -965,8 +966,8 @@ void inode_remove_all_stateids(struct inode *inode)
 		return;
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(inode->i_stateids, &iter, stid, s_node) {
-		if (stateid_unhash(stid)) {
+	cds_lfht_for_each_entry(inode->i_stateids, &iter, stid, s_inode_node) {
+		if (stateid_inode_unhash(stid)) {
 			stateid_put(stid);
 		}
 	}

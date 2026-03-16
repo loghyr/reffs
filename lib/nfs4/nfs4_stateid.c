@@ -18,7 +18,9 @@
 #include "reffs/log.h"
 #include "reffs/inode.h"
 #include "reffs/stateid.h"
+#include "reffs/client.h"
 #include "nfs4_stateid.h"
+#include "nfs4_client.h"
 
 /* ------------------------------------------------------------------ */
 /* Special Stateids                                                   */
@@ -79,7 +81,8 @@ static void open_stateid_release(struct stateid *stid)
 	call_rcu(&stid->s_rcu, open_stateid_free_rcu);
 }
 
-struct open_stateid *open_stateid_alloc(struct inode *inode)
+struct open_stateid *open_stateid_alloc(struct inode *inode,
+					struct client *client)
 {
 	struct open_stateid *os;
 	int ret;
@@ -90,7 +93,7 @@ struct open_stateid *open_stateid_alloc(struct inode *inode)
 		return NULL;
 	}
 
-	ret = stateid_assign(&os->os_stid, inode, Open_Stateid,
+	ret = stateid_assign(&os->os_stid, inode, client, Open_Stateid,
 			     open_stateid_free_rcu, open_stateid_release);
 	if (ret) {
 		free(os);
@@ -116,7 +119,8 @@ static void delegation_stateid_release(struct stateid *stid)
 	call_rcu(&stid->s_rcu, delegation_stateid_free_rcu);
 }
 
-struct delegation_stateid *delegation_stateid_alloc(struct inode *inode)
+struct delegation_stateid *delegation_stateid_alloc(struct inode *inode,
+						    struct client *client)
 {
 	struct delegation_stateid *ds;
 	int ret;
@@ -127,7 +131,7 @@ struct delegation_stateid *delegation_stateid_alloc(struct inode *inode)
 		return NULL;
 	}
 
-	ret = stateid_assign(&ds->ds_stid, inode, Delegation_Stateid,
+	ret = stateid_assign(&ds->ds_stid, inode, client, Delegation_Stateid,
 			     delegation_stateid_free_rcu,
 			     delegation_stateid_release);
 	if (ret) {
@@ -154,7 +158,8 @@ static void lock_stateid_release(struct stateid *stid)
 	call_rcu(&stid->s_rcu, lock_stateid_free_rcu);
 }
 
-struct lock_stateid *lock_stateid_alloc(struct inode *inode)
+struct lock_stateid *lock_stateid_alloc(struct inode *inode,
+					struct client *client)
 {
 	struct lock_stateid *ls;
 	int ret;
@@ -165,7 +170,7 @@ struct lock_stateid *lock_stateid_alloc(struct inode *inode)
 		return NULL;
 	}
 
-	ret = stateid_assign(&ls->ls_stid, inode, Lock_Stateid,
+	ret = stateid_assign(&ls->ls_stid, inode, client, Lock_Stateid,
 			     lock_stateid_free_rcu, lock_stateid_release);
 	if (ret) {
 		free(ls);
@@ -191,7 +196,8 @@ static void layout_stateid_release(struct stateid *stid)
 	call_rcu(&stid->s_rcu, layout_stateid_free_rcu);
 }
 
-struct layout_stateid *layout_stateid_alloc(struct inode *inode)
+struct layout_stateid *layout_stateid_alloc(struct inode *inode,
+					    struct client *client)
 {
 	struct layout_stateid *ls;
 	int ret;
@@ -202,7 +208,7 @@ struct layout_stateid *layout_stateid_alloc(struct inode *inode)
 		return NULL;
 	}
 
-	ret = stateid_assign(&ls->ls_stid, inode, Layout_Stateid,
+	ret = stateid_assign(&ls->ls_stid, inode, client, Layout_Stateid,
 			     layout_stateid_free_rcu, layout_stateid_release);
 	if (ret) {
 		free(ls);

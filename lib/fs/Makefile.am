@@ -16,6 +16,7 @@ AM_CFLAGS = -Im4 -I. \
 
 lib_LTLIBRARIES = libreffs_fs.la
 libreffs_fs_la_SOURCES = \
+	client.c \
 	data_block.c \
 	dirent.c \
 	filehandle.c \
