@@ -57,6 +57,9 @@ struct inode {
 
 	void *i_storage_private;
 
+	uint32_t i_stateid_next;
+	struct cds_lfht *i_stateids;
+
 	/*
 	 * Weak back-pointer to the single dirent that names this inode.
 	 * Valid for both file and directory inodes (reffs does not support

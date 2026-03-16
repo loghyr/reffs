@@ -26,6 +26,7 @@ reffsinclude_HEADERS = \
 	rpc.h \
 	server.h \
 	stack.h	\
+	stateid.h	\
 	super_block.h \
 	task.h \
 	test.h \
