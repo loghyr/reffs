@@ -50,7 +50,63 @@ struct layout_stateid {
 };
 
 /* ------------------------------------------------------------------ */
-/* Wire pack / unpack                                                  */
+/* Special stateids                                                   */
+static inline bool stateid4_other_is_zero(const stateid4 *st)
+{
+	static const char zeros[NFS4_OTHER_SIZE] = { 0 };
+	return memcmp(st->other, zeros, NFS4_OTHER_SIZE) == 0;
+}
+
+static inline bool stateid4_other_is_ones(const stateid4 *st)
+{
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-designator"
+	static const char ones[NFS4_OTHER_SIZE] = { [0 ... NFS4_OTHER_SIZE -
+						     1] = 0xff };
+#pragma clang diagnostic pop
+	return memcmp(st->other, ones, NFS4_OTHER_SIZE) == 0;
+}
+
+/* nfs4_stateid_const.h */
+
+extern const stateid4 stateid4_anonymous;
+extern const stateid4 stateid4_read_bypass;
+extern const stateid4 stateid4_current;
+extern const stateid4 stateid4_invalid;
+
+static inline bool stateid4_is_anonymous(const stateid4 *st)
+{
+	return st->seqid == 0 && stateid4_other_is_zero(st);
+}
+
+static inline bool stateid4_is_read_bypass(const stateid4 *st)
+{
+	return st->seqid == UINT32_MAX && stateid4_other_is_ones(st);
+}
+
+static inline bool stateid4_is_current(const stateid4 *st)
+{
+	return st->seqid == 1 && stateid4_other_is_zero(st);
+}
+
+static inline bool stateid4_is_invalid(const stateid4 *st)
+{
+	return st->seqid == UINT32_MAX && stateid4_other_is_zero(st);
+}
+
+static inline bool stateid4_is_special(const stateid4 *st)
+{
+	return stateid4_other_is_zero(st) || stateid4_other_is_ones(st);
+}
+
+static inline bool stateid4_equal(const stateid4 *a, const stateid4 *b)
+{
+	return a->seqid == b->seqid &&
+	       memcmp(a->other, b->other, NFS4_OTHER_SIZE) == 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Wire pack / unpack                                                 */
 /*
  * other layout (host byte order; client treats as opaque):
  *   other[0..3]  = s_id

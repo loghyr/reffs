@@ -21,6 +21,23 @@
 #include "nfs4_stateid.h"
 
 /* ------------------------------------------------------------------ */
+/* Special Stateids                                                   */
+
+const stateid4 stateid4_anonymous = { .seqid = 0, .other = { 0 } };
+
+const stateid4 stateid4_read_bypass = {
+	.seqid = UINT32_MAX,
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-designator"
+	.other = { [0 ... NFS4_OTHER_SIZE - 1] = 0xff }
+#pragma clang diagnostic pop
+};
+
+const stateid4 stateid4_current = { .seqid = 1, .other = { 0 } };
+
+const stateid4 stateid4_invalid = { .seqid = UINT32_MAX, .other = { 0 } };
+
+/* ------------------------------------------------------------------ */
 /* Wire pack / unpack                                                  */
 
 void pack_stateid4(stateid4 *st, struct stateid *stid)
