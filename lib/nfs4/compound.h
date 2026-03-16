@@ -13,6 +13,7 @@
 #include "reffs/rpc.h"
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
+#include "reffs/stateid.h"
 
 struct compound {
 	struct rpc_trans *c_rt;
@@ -22,6 +23,8 @@ struct compound {
 	struct network_file_handle c_saved_nfh;
 	struct super_block *c_curr_sb;
 	struct super_block *c_saved_sb;
+	struct stateid *c_curr_stid;
+	struct stateid *c_saved_stid;
 	struct inode *c_inode;
 };
 

@@ -31,6 +31,7 @@
 #include "reffs/test.h"
 #include "reffs/time.h"
 #include "reffs/inode.h"
+#include "reffs/stateid.h"
 #include "reffs/super_block.h"
 #include "reffs/data_block.h"
 #include "reffs/server.h"
@@ -50,6 +51,8 @@ static void compound_free(struct compound *c)
 	inode_active_put(c->c_inode);
 	super_block_put(c->c_curr_sb);
 	super_block_put(c->c_saved_sb);
+	stateid_put(c->c_curr_stid);
+	stateid_put(c->c_saved_stid);
 	free(c);
 }
 
