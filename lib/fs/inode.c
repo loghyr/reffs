@@ -175,6 +175,11 @@ static void inode_release(struct urcu_ref *ref)
 		}
 	}
 
+	int ret = cds_lfht_destroy(inode->i_stateids, NULL);
+	if (ret < 0) {
+		LOG("Could not delete a hash table: %m");
+	}
+
 	/*
 	 * Null rd_inode on our dirent BEFORE scheduling the RCU free.
 	 *
@@ -336,6 +341,17 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 
 	/* Start with one active ref for the caller. */
 	inode->i_active = 1;
+
+	/* Start at 1 for stateids */
+	inode->i_stateid_next = 1;
+
+	inode->i_stateids = cds_lfht_new(
+		8, 8, 0, CDS_LFHT_AUTO_RESIZE | CDS_LFHT_ACCOUNTING, NULL);
+	if (!inode->i_stateids) {
+		LOG("Could not create a new hash table");
+		free(inode);
+		return NULL;
+	}
 
 	if (sb) {
 		inode->i_sb = super_block_get(sb);
