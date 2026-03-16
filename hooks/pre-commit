@@ -17,6 +17,24 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Execute the style check
+make -f Makefile.reffs style
+
+# Check the exit status of the make command
+if [ $? -ne 0 ]; then
+    echo "Pre-commit Style check failed. Run 'make -f Makefile.reffs fix-style' to fix it."
+    exit 1
+fi
+
+# Execute the license check
+make -f Makefile.reffs license
+
+# Check the exit status of the make command
+if [ $? -ne 0 ]; then
+    echo "Pre-commit License check failed. Run './check_license.sh' for details."
+    exit 1
+fi
+
 # Now build out of tree
 
 ./tree-build.sh
