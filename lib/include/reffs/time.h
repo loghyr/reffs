@@ -12,9 +12,9 @@
 #include "nfsv3_xdr.h"
 #include "nfsv42_xdr.h"
 
-static inline int64_t reffs_timespec_to_ns(struct timespec *ts)
+static inline int64_t timespec_to_ns(const struct timespec *ts)
 {
-	return ts->tv_sec * 1000000000UL + ts->tv_nsec;
+	return (int64_t)ts->tv_sec * (int64_t)1000000000 + ts->tv_nsec;
 }
 
 static inline void timespec_to_nfstime3(struct timespec *ts, nfstime3 *nt)
