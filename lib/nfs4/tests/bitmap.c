@@ -13,11 +13,11 @@
 #include "attr.h"
 
 /*
- * supported_attributes_bm is defined in attr.c and populated by
+ * supported_attributes is defined in fattr4.c and populated by
  * nfs4_attribute_init().  Declare it here so the nfs4_attribute_init/fini
  * tests can inspect it directly without adding a getter function.
  */
-extern bitmap4 supported_attributes_bm;
+extern bitmap4 *supported_attributes;
 
 int nfs4_attribute_init(void);
 int nfs4_attribute_fini(void);
@@ -558,35 +558,32 @@ START_TEST(test_attr_init_supported_set)
 	nfs4_attribute_init();
 
 	/* Required/mandatory attributes. */
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
 					   FATTR4_SUPPORTED_ATTRS));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
-					   FATTR4_TYPE));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(bitmap4_attribute_is_set(supported_attributes, FATTR4_TYPE));
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
 					   FATTR4_FH_EXPIRE_TYPE));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
-					   FATTR4_CHANGE));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
-					   FATTR4_SIZE));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
-					   FATTR4_FILEID));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
-					   FATTR4_MODE));
+	ck_assert(
+		bitmap4_attribute_is_set(supported_attributes, FATTR4_CHANGE));
+	ck_assert(bitmap4_attribute_is_set(supported_attributes, FATTR4_SIZE));
+	ck_assert(
+		bitmap4_attribute_is_set(supported_attributes, FATTR4_FILEID));
+	ck_assert(bitmap4_attribute_is_set(supported_attributes, FATTR4_MODE));
 	/* Crosses into word 1. */
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
 					   FATTR4_MOUNTED_ON_FILEID));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
 					   FATTR4_DIR_NOTIF_DELAY));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
 					   FATTR4_DIRENT_NOTIF_DELAY));
 	/* Word 2 attributes. */
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
 					   FATTR4_RETENTION_GET));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
-					   FATTR4_OFFLINE));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(
+		bitmap4_attribute_is_set(supported_attributes, FATTR4_OFFLINE));
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
 					   FATTR4_OPEN_ARGUMENTS));
-	ck_assert(bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
 					   FATTR4_UNCACHEABLE));
 
 	nfs4_attribute_fini();
@@ -598,48 +595,45 @@ START_TEST(test_attr_init_unsupported_clear)
 	nfs4_attribute_init();
 
 	/* Attributes explicitly cleared in nfs4_attribute_init(). */
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
-					    FATTR4_ACL));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes, FATTR4_ACL));
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_ACLSUPPORT));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_FS_LOCATIONS));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_QUOTA_AVAIL_HARD));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_QUOTA_AVAIL_SOFT));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_QUOTA_USED));
 	/* Word 1: layout attributes are disabled (not a pNFS MDS). */
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_FS_LAYOUT_TYPES));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_LAYOUT_HINT));
 	/* Word 2. */
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_LAYOUT_TYPES));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_LAYOUT_BLKSIZE));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_LAYOUT_ALIGNMENT));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_FS_LOCATIONS_INFO));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_MDSTHRESHOLD));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_SEC_LABEL));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_MODE_UMASK));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_XATTR_SUPPORT));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_TIME_DELEG_ACCESS));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_TIME_DELEG_MODIFY));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
-					    FATTR4_DACL));
-	ck_assert(!bitmap4_attribute_is_set(&supported_attributes_bm,
-					    FATTR4_SACL));
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes, FATTR4_DACL));
+	ck_assert(!bitmap4_attribute_is_set(supported_attributes, FATTR4_SACL));
 
 	nfs4_attribute_fini();
 }
