@@ -24,6 +24,7 @@ libreffs_fs_la_SOURCES = \
 	inode.c \
 	lock.c \
 	ns.c \
+	stateid.c \
 	super_block.c \
 	vfs.c
 

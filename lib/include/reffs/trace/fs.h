@@ -8,7 +8,18 @@
 
 #include <stdint.h>
 #include "reffs/dirent.h"
+#include "reffs/super_block.h"
+#include "reffs/inode.h"
+#include "reffs/stateid.h"
 #include "reffs/trace/common.h"
+
+static inline void trace_fs_stateid(struct stateid *stid, const char *event,
+				    int line)
+{
+	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line,
+			  "stid=%u seqid=%u type=%u", stid->s_id, stid->s_seqid,
+			  stid->s_tag);
+}
 
 static inline void trace_fs_dirent(struct reffs_dirent *rd, const char *event,
 				   int line)

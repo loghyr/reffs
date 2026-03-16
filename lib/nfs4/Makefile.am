@@ -24,7 +24,7 @@ libreffs_nfs4_la_SOURCES = \
 	nfs4_server.c \
 	ops.c \
 	session.c \
-	stateid.c \
+	nfs4_stateid.c \
 	xattr.c
 
 reffsincludedir = $(includedir)/reffs
@@ -32,4 +32,5 @@ reffsinclude_HEADERS = \
 	attr.h \
 	compound.h \
 	errors.h \
+	nfs4_stateid.h \
 	ops.h

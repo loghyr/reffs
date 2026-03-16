@@ -11,19 +11,10 @@
 #include <stdio.h>
 #include "reffs/trace/common.h"
 #include "reffs/rpc.h"
-#include "reffs/stateid.h"
 #include "nfsv42_xdr.h"
 
 /* Forward declaration from ops.h */
 const char *nfs4_op_name(nfs_opnum4 op);
-
-static inline void trace_nfs4_stateid(struct stateid *stid, const char *event,
-				      int line)
-{
-	reffs_trace_event(REFFS_TRACE_CAT_NFS, event, line,
-			  "stid=%u seqid=%u type=%u", stid->s_id, stid->s_seqid,
-			  stid->s_type);
-}
 
 /* NFS4 operation trace functions */
 static inline void trace_nfs4_srv_null(struct rpc_trans *rt)
