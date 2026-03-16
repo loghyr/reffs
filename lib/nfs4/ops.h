@@ -86,6 +86,11 @@ void nfs4_op_illegal(struct compound *c);
 
 const char *nfs4_op_name(nfs_opnum4 op);
 
+#define NFS4_OP_NUM(c)                                  \
+	((COMPOUND4args *)(ph)->ph_args)                \
+		->argarray.argarray_val[(c)->c_curr_op] \
+		.argop
+
 #define NFS4_OP_ARG_SETUP(c, ph, field)                   \
 	(&((COMPOUND4args *)(ph)->ph_args)                \
 		  ->argarray.argarray_val[(c)->c_curr_op] \
