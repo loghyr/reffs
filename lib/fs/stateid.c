@@ -77,19 +77,23 @@ int stateid_assign(struct stateid *stid, struct inode *inode, uint32_t tag,
 	cds_lfht_node_init(&stid->s_node);
 	urcu_ref_init(&stid->s_ref);
 
-	rcu_read_lock();
-	stid->s_state |= STID_IS_HASHED;
-	node = cds_lfht_add_unique(inode->i_stateids, hash, stateid_match,
-				   &stid->s_id, &stid->s_node);
-	rcu_read_unlock();
+	uint64_t state = __atomic_load_n(&inode->i_state, __ATOMIC_ACQUIRE);
+	if (!(state & INODE_IS_SHUTTING_DOWN)) {
+		rcu_read_lock();
+		stid->s_state |= STID_IS_HASHED;
+		node = cds_lfht_add_unique(inode->i_stateids, hash,
+					   stateid_match, &stid->s_id,
+					   &stid->s_node);
+		rcu_read_unlock();
 
-	if (caa_unlikely(node != &stid->s_node)) {
-		/* Collision – should never happen with a 32-bit counter */
-		LOG("stateid_assign: duplicate id %u", stid->s_id);
-		stid->s_state &= ~STID_IS_HASHED;
-		inode_active_put(stid->s_inode);
-		stid->s_inode = NULL;
-		return -EEXIST;
+		if (caa_unlikely(node != &stid->s_node)) {
+			/* Collision – should never happen with a 32-bit counter */
+			LOG("stateid_assign: duplicate id %u", stid->s_id);
+			stid->s_state &= ~STID_IS_HASHED;
+			inode_active_put(stid->s_inode);
+			stid->s_inode = NULL;
+			return -EEXIST;
+		}
 	}
 
 	return 0;

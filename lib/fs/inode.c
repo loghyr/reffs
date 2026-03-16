@@ -28,6 +28,7 @@
 #include "reffs/super_block.h"
 #include "reffs/trace/fs.h"
 #include "reffs/test.h"
+#include "reffs/stateid.h"
 
 struct rcu_head;
 
@@ -953,4 +954,21 @@ void inode_schedule_delayed_release(struct inode *inode, int delay_seconds)
 	pthread_mutex_unlock(&delayed_release_lock);
 
 	ensure_reaper_thread();
+}
+
+void inode_remove_all_stateids(struct inode *inode)
+{
+	struct cds_lfht_iter iter;
+	struct stateid *stid;
+
+	if (!inode)
+		return;
+
+	rcu_read_lock();
+	cds_lfht_for_each_entry(inode->i_stateids, &iter, stid, s_node) {
+		if (stateid_unhash(stid)) {
+			stateid_put(stid);
+		}
+	}
+	rcu_read_unlock();
 }

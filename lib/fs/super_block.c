@@ -211,6 +211,11 @@ static void super_block_remove_all_inodes(struct super_block *sb)
 			sb->sb_inode_lru_count--;
 		}
 
+		__atomic_fetch_or(&inode->i_state, INODE_IS_SHUTTING_DOWN,
+				  __ATOMIC_ACQUIRE);
+
+		inode_remove_all_stateids(inode);
+
 		if (inode_unhash(inode))
 			inode_put(inode);
 	}
@@ -218,20 +223,6 @@ static void super_block_remove_all_inodes(struct super_block *sb)
 	pthread_mutex_unlock(&sb->sb_inode_lru_lock);
 
 	rcu_barrier();
-
-#ifdef NOT_NOW_BROWN_COW
-	unsigned long count = 0;
-	rcu_read_lock();
-	cds_lfht_for_each_entry(sb->sb_inodes, &iter, inode, i_node) {
-		count++;
-	}
-	rcu_read_unlock();
-
-	if (count > 0) {
-		LOG("WARNING: %lu inodes still in hash table after removal",
-		    count);
-	}
-#endif
 }
 
 static void super_block_free(struct super_block *sb)
