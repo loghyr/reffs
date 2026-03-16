@@ -97,6 +97,7 @@ struct inode {
 
 #define INODE_IS_OFFLINE (1ULL << 0)
 #define INODE_IS_HIDDEN (1ULL << 1)
+#define INODE_IS_UNCACHEABLE (1ULL << 2)
 	uint64_t i_attr_flags;
 
 	char *i_symlink;
