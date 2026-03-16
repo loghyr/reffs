@@ -46,6 +46,7 @@ struct inode {
 
 #define INODE_IS_HASHED (1ULL << 0)
 #define INODE_IS_ON_LRU (1ULL << 1)
+#define INODE_IS_SHUTTING_DOWN (1ULL << 2)
 	uint64_t i_state;
 
 	uint64_t i_ino;
@@ -198,5 +199,11 @@ struct reffs_dirent *inode_ensure_parent_dirent(struct inode *inode);
  * non-zero return as NFS4ERR_STALE / NFS3ERR_STALE.
  */
 int inode_reconstruct_path_to_root(struct inode *inode);
+
+/*
+ * reffsd is coming down - unload all of the stateids
+ * for an inode.
+ */
+void inode_remove_all_stateids(struct inode *inode);
 
 #endif /* _REFFS_INODE_H */
