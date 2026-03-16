@@ -12,6 +12,7 @@
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/memory.h"
+#include "reffs/test.h"
 #include "compound.h"
 #include "ops.h"
 #include "errors.h"
@@ -96,6 +97,9 @@ void nfs4_op_putfh(struct compound *c)
 		}
 	}
 
+	stateid_put(c->c_curr_stid);
+	c->c_curr_stid = NULL;
+
 out:
 	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
 	    *status, (void *)args, (void *)res);
@@ -126,6 +130,8 @@ void nfs4_op_putpubfh(struct compound *c)
 	c->c_curr_nfh.nfh_sb = SUPER_BLOCK_ROOT_ID;
 	c->c_curr_nfh.nfh_ino = INODE_ROOT_ID;
 
+	stateid_put(c->c_curr_stid);
+	c->c_curr_stid = NULL;
 out:
 	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
 	    *status, (void *)res);
@@ -164,6 +170,8 @@ void nfs4_op_putrootfh(struct compound *c)
 		}
 	}
 
+	stateid_put(c->c_curr_stid);
+	c->c_curr_stid = NULL;
 out:
 	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
 	    *status, (void *)res);
@@ -198,6 +206,10 @@ void nfs4_op_restorefh(struct compound *c)
 		}
 	}
 
+	stateid_put(c->c_curr_stid);
+	c->c_curr_stid = stateid_get(c->c_saved_stid);
+	verify_msg(c->c_curr_stid, "Could not get loaded stateid");
+
 out:
 	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
 	    *status, (void *)res);
@@ -224,6 +236,10 @@ void nfs4_op_savefh(struct compound *c)
 	}
 
 	c->c_saved_nfh = c->c_curr_nfh;
+
+	stateid_put(c->c_saved_stid);
+	c->c_saved_stid = stateid_get(c->c_curr_stid);
+	verify_msg(c->c_saved_stid, "Could not get loaded stateid");
 
 out:
 	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
