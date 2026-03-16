@@ -34,15 +34,15 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
-#include <sys/types.h>  /* uid_t, gid_t */
+#include <sys/types.h> /* uid_t, gid_t */
 
 #ifdef STAND_ALONE
 /* -------------------------------------------------------------------------
  * Wire type (matches XDR / kernel definition)
  * ------------------------------------------------------------------------- */
 typedef struct {
-	unsigned int  utf8string_len; /* byte count, excluding NUL pad */
-	char         *utf8string_val; /* always NUL-terminated in memory */
+	unsigned int utf8string_len; /* byte count, excluding NUL pad */
+	char *utf8string_val; /* always NUL-terminated in memory */
 } utf8string;
 #else
 #include "nfsv42_xdr.h"
@@ -308,8 +308,7 @@ int utf8string_validate_component(const utf8string *u, unsigned int name_max);
  * utf8string_validate_component_default - utf8string_validate_component
  *                                         with name_max = 255.
  */
-static inline int
-utf8string_validate_component_default(const utf8string *u)
+static inline int utf8string_validate_component_default(const utf8string *u)
 {
 	return utf8string_validate_component(u, 255);
 }
