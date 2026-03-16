@@ -56,7 +56,7 @@ static void rpc_program_handler_free_rcu(struct rcu_head *rcu)
 		caa_container_of(rcu, struct rpc_program_handler, rph_rcu);
 
 	for (size_t i = 0; i < rph->rph_ops_len; i++) {
-		free(rph->rph_ops[i].roh_stats.rs_histogram);
+		hdr_close(rph->rph_ops[i].roh_stats.rs_histogram);
 		rph->rph_ops[i].roh_stats.rs_histogram = NULL;
 	}
 
