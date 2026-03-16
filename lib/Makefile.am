@@ -4,8 +4,8 @@
 # Order is important!
 # xdr at the front and tests at the end
 SUBDIRS =		\
-	include		\
 	xdr		\
+	include		\
 	trace		\
 	utils		\
 	backends	\
