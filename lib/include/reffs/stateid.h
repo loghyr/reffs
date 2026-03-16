@@ -12,7 +12,8 @@
 #include <urcu/ref.h>
 #include <urcu/rculfhash.h>
 
-#define STID_IS_HASHED (1ULL << 0)
+#define STID_IS_INODE_HASHED (1ULL << 0)
+#define STID_IS_CLIENT_HASHED (1ULL << 1)
 
 struct inode; /* forward decl */
 
@@ -26,9 +27,11 @@ struct stateid {
 	struct urcu_ref s_ref;
 
 	struct inode *s_inode; /* active ref held while hashed */
+	struct client *s_client;
 
 	uint64_t s_state; /* atomic flag word */
-	struct cds_lfht_node s_node;
+	struct cds_lfht_node s_inode_node;
+	struct cds_lfht_node s_client_node;
 
 	/* Per-instance callbacks set at construction; no extern vtable. */
 	void (*s_free_rcu)(struct rcu_head *rcu);
@@ -47,7 +50,8 @@ struct stateid {
  *
  * Returns 0 on success, -errno on failure.
  */
-int stateid_assign(struct stateid *stid, struct inode *inode, uint32_t tag,
+int stateid_assign(struct stateid *stid, struct inode *inode,
+		   struct client *client, uint32_t tag,
 		   void (*free_rcu)(struct rcu_head *rcu),
 		   void (*release)(struct stateid *stid));
 
@@ -62,6 +66,7 @@ struct stateid *stateid_get(struct stateid *stid);
 void stateid_put(struct stateid *stid);
 
 /* Remove from hash table (idempotent).  Returns true if it was hashed. */
-bool stateid_unhash(struct stateid *stid);
+bool stateid_inode_unhash(struct stateid *stid);
+bool stateid_client_unhash(struct stateid *stid);
 
 #endif /* _REFFS_STATEID_H */

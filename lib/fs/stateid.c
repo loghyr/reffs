@@ -20,6 +20,8 @@
 #include <xxhash.h>
 
 #include "reffs/log.h"
+#include "reffs/rcu.h"
+#include "reffs/client.h"
 #include "reffs/inode.h"
 #include "reffs/stateid.h"
 #include "reffs/trace/fs.h"
@@ -30,7 +32,7 @@
 static int stateid_match(struct cds_lfht_node *ht_node, const void *vkey)
 {
 	struct stateid *stid =
-		caa_container_of(ht_node, struct stateid, s_node);
+		caa_container_of(ht_node, struct stateid, s_inode_node);
 	const uint32_t *key = vkey;
 
 	return *key == stid->s_id;
@@ -39,7 +41,8 @@ static int stateid_match(struct cds_lfht_node *ht_node, const void *vkey)
 /* ------------------------------------------------------------------ */
 /* Internal assign                                                     */
 
-int stateid_assign(struct stateid *stid, struct inode *inode, uint32_t tag,
+int stateid_assign(struct stateid *stid, struct inode *inode,
+		   struct client *client, uint32_t tag,
 		   void (*free_rcu)(struct rcu_head *rcu),
 		   void (*release)(struct stateid *stid))
 {
@@ -56,11 +59,16 @@ int stateid_assign(struct stateid *stid, struct inode *inode, uint32_t tag,
 			     1;
 	} while (stid->s_id == 0);
 
-	hash = XXH3_64bits(&stid->s_id, sizeof(stid->s_id));
-
 	stid->s_inode = inode_active_get(inode);
 	if (!stid->s_inode)
 		return -ENOMEM;
+
+	stid->s_client = client_get(client);
+	if (!stid->s_client) {
+		inode_active_put(stid->s_inode);
+		stid->s_inode = NULL;
+		return -ENOMEM;
+	}
 
 	stid->s_tag = tag;
 	stid->s_seqid = 0;
@@ -74,24 +82,47 @@ int stateid_assign(struct stateid *stid, struct inode *inode, uint32_t tag,
 	stid->s_free_rcu = free_rcu;
 	stid->s_release = release;
 
-	cds_lfht_node_init(&stid->s_node);
+	cds_lfht_node_init(&stid->s_inode_node);
+	cds_lfht_node_init(&stid->s_client_node);
 	urcu_ref_init(&stid->s_ref);
 
 	uint64_t state = __atomic_load_n(&inode->i_state, __ATOMIC_ACQUIRE);
 	if (!(state & INODE_IS_SHUTTING_DOWN)) {
+		hash = XXH3_64bits(&stid->s_id, sizeof(stid->s_id));
+
 		rcu_read_lock();
-		stid->s_state |= STID_IS_HASHED;
+		stid->s_state |= STID_IS_INODE_HASHED;
 		node = cds_lfht_add_unique(inode->i_stateids, hash,
 					   stateid_match, &stid->s_id,
-					   &stid->s_node);
+					   &stid->s_inode_node);
 		rcu_read_unlock();
 
-		if (caa_unlikely(node != &stid->s_node)) {
+		if (caa_unlikely(node != &stid->s_inode_node)) {
 			/* Collision – should never happen with a 32-bit counter */
 			LOG("stateid_assign: duplicate id %u", stid->s_id);
-			stid->s_state &= ~STID_IS_HASHED;
+			stid->s_state &= ~STID_IS_INODE_HASHED;
 			inode_active_put(stid->s_inode);
 			stid->s_inode = NULL;
+			return -EEXIST;
+		}
+
+		rcu_read_lock();
+		stid->s_state |= STID_IS_CLIENT_HASHED;
+		node = cds_lfht_add_unique(client->c_stateids, hash,
+					   stateid_match, &stid->s_id,
+					   &stid->s_client_node);
+		rcu_read_unlock();
+
+		if (caa_unlikely(node != &stid->s_inode_node)) {
+			/* Collision – should never happen with a 32-bit counter */
+			LOG("stateid_assign: duplicate id %u", stid->s_id);
+			stid->s_state &= ~STID_IS_INODE_HASHED;
+
+			/* Yes, could be from someone else */
+			if (stateid_inode_unhash(stid))
+				inode_active_put(stid->s_inode);
+			client_put(stid->s_client);
+			stid->s_client = NULL;
 			return -EEXIST;
 		}
 	}
@@ -102,17 +133,35 @@ int stateid_assign(struct stateid *stid, struct inode *inode, uint32_t tag,
 /* ------------------------------------------------------------------ */
 /* Refcount / release                                                  */
 
-bool stateid_unhash(struct stateid *stid)
+bool stateid_client_unhash(struct stateid *stid)
 {
 	uint64_t state;
 	int ret;
 
-	state = __atomic_fetch_and(&stid->s_state, ~STID_IS_HASHED,
+	state = __atomic_fetch_and(&stid->s_state, ~STID_IS_CLIENT_HASHED,
 				   __ATOMIC_ACQUIRE);
-	if (!(state & STID_IS_HASHED))
+	if (!(state & STID_IS_CLIENT_HASHED))
 		return false;
 
-	ret = cds_lfht_del(stid->s_inode->i_stateids, &stid->s_node);
+	assert(stid->s_client);
+	ret = cds_lfht_del(stid->s_client->c_stateids, &stid->s_client_node);
+	assert(!ret);
+	(void)ret;
+	return true;
+}
+
+bool stateid_inode_unhash(struct stateid *stid)
+{
+	uint64_t state;
+	int ret;
+
+	state = __atomic_fetch_and(&stid->s_state, ~STID_IS_INODE_HASHED,
+				   __ATOMIC_ACQUIRE);
+	if (!(state & STID_IS_INODE_HASHED))
+		return false;
+
+	assert(stid->s_inode);
+	ret = cds_lfht_del(stid->s_inode->i_stateids, &stid->s_inode_node);
 	assert(!ret);
 	(void)ret;
 	return true;
@@ -124,8 +173,11 @@ static void stateid_release(struct urcu_ref *ref)
 
 	trace_fs_stateid(stid, __func__, __LINE__);
 
-	stateid_unhash(stid);
+	stateid_inode_unhash(stid);
 	inode_active_put(stid->s_inode);
+
+	stateid_client_unhash(stid);
+	client_put(stid->s_client);
 
 	stid->s_release(stid);
 }
@@ -166,7 +218,7 @@ struct stateid *stateid_find(struct inode *inode, uint32_t id)
 	cds_lfht_lookup(inode->i_stateids, hash, stateid_match, &id, &iter);
 	node = cds_lfht_iter_get_node(&iter);
 	if (node) {
-		tmp = caa_container_of(node, struct stateid, s_node);
+		tmp = caa_container_of(node, struct stateid, s_inode_node);
 		stid = stateid_get(tmp);
 	}
 	rcu_read_unlock();

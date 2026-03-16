@@ -10,6 +10,7 @@
 
 #include "nfsv42_xdr.h"
 #include "reffs/stateid.h" /* struct stateid, stateid_get/put/find */
+#include "reffs/client.h"
 
 /* ------------------------------------------------------------------ */
 /* NFS4 stateid type tag — stored in s_tag                            */
@@ -121,10 +122,14 @@ void unpack_stateid4(const stateid4 *st, uint32_t *seqid, uint32_t *id,
 /* ------------------------------------------------------------------ */
 /* Per-type allocators                                                 */
 
-struct open_stateid *open_stateid_alloc(struct inode *inode);
-struct delegation_stateid *delegation_stateid_alloc(struct inode *inode);
-struct lock_stateid *lock_stateid_alloc(struct inode *inode);
-struct layout_stateid *layout_stateid_alloc(struct inode *inode);
+struct open_stateid *open_stateid_alloc(struct inode *inode,
+					struct client *client);
+struct delegation_stateid *delegation_stateid_alloc(struct inode *inode,
+						    struct client *client);
+struct lock_stateid *lock_stateid_alloc(struct inode *inode,
+					struct client *client);
+struct layout_stateid *layout_stateid_alloc(struct inode *inode,
+					    struct client *client);
 
 /* ------------------------------------------------------------------ */
 /* Subtype accessors                                                   */

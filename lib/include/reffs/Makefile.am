@@ -6,6 +6,7 @@ SUBDIRS = trace
 reffsincludedir = $(includedir)/reffs
 
 reffsinclude_HEADERS = \
+	client.h \
 	data_block.h \
 	dirent.h \
 	filehandle.h \
