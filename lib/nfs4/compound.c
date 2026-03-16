@@ -40,6 +40,7 @@
 #include "reffs/trace/nfs4_server.h"
 #include "compound.h"
 #include "errors.h"
+#include "ops.h"
 
 static void compound_free(struct compound *c)
 {
@@ -80,6 +81,8 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 
 	struct compound *c;
 
+	nfs_opnum4 op;
+
 	trace_nfs4_srv_compound(rt);
 
 	res->status = 0;
@@ -89,8 +92,20 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 		return NFS4ERR_DELAY;
 	}
 
+	op = NFS4_OP_NUM(c);
+	if (op != OP_SEQUENCE && op != OP_EXCHANGE_ID &&
+	    op != OP_CREATE_SESSION && op != OP_CREATE_SESSION &&
+	    op != OP_BIND_CONN_TO_SESSION) {
+		nfs_resop4 *resop = &res->resarray.resarray_val[0];
+		nfsstat4 *status = &resop->nfs_resop4_u.opillegal.status;
+		res->status = *status = NFS4ERR_OP_NOT_IN_SESSION;
+
+		goto out;
+	}
+
 	dispatch_compound(c);
 
+out:
 	compound_free(c);
 	return res->status;
 }

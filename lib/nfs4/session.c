@@ -26,8 +26,16 @@ void nfs4_op_exchange_id(struct compound *c)
 	EXCHANGE_ID4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, EXCHANGE_ID4res_u, eir_resok4);
 
+	u_int num_ops = ((COMPOUND4args *)(ph)->ph_args)->argarray.argarray_len;
+
+	if (c->c_curr_op == 0 && num_ops > 1) {
+		*status = NFS4ERR_NOT_ONLY_OP;
+		goto out;
+	}
+
 	*status = NFS4ERR_NOTSUPP;
 
+out:
 	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
 	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
 	    (void *)resok);
@@ -44,8 +52,16 @@ void nfs4_op_create_session(struct compound *c)
 	CREATE_SESSION4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, CREATE_SESSION4res_u, csr_resok4);
 
+	u_int num_ops = ((COMPOUND4args *)(ph)->ph_args)->argarray.argarray_len;
+
+	if (c->c_curr_op == 0 && num_ops > 1) {
+		*status = NFS4ERR_NOT_ONLY_OP;
+		goto out;
+	}
+
 	*status = NFS4ERR_NOTSUPP;
 
+out:
 	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
 	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
 	    (void *)resok);
@@ -59,8 +75,16 @@ void nfs4_op_destroy_session(struct compound *c)
 	DESTROY_SESSION4res *res = NFS4_OP_RES_SETUP(c, ph, opdestroy_session);
 	nfsstat4 *status = &res->dsr_status;
 
+	u_int num_ops = ((COMPOUND4args *)(ph)->ph_args)->argarray.argarray_len;
+
+	if (c->c_curr_op == 0 && num_ops > 1) {
+		*status = NFS4ERR_NOT_ONLY_OP;
+		goto out;
+	}
+
 	*status = NFS4ERR_NOTSUPP;
 
+out:
 	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
 	    *status, (void *)res);
 }
@@ -76,8 +100,14 @@ void nfs4_op_sequence(struct compound *c)
 	SEQUENCE4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, SEQUENCE4res_u, sr_resok4);
 
+	if (c->c_curr_op != 0) {
+		*status = NFS4ERR_SEQUENCE_POS;
+		goto out;
+	}
+
 	*status = NFS4ERR_NOTSUPP;
 
+out:
 	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
 	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
 	    (void *)resok);
