@@ -443,6 +443,9 @@ AC_CONFIG_FILES([
 	lib/nfs3/Makefile
 	lib/nfs3/tests/Makefile
 	lib/nfs4/Makefile
+	lib/nfs4/include/Makefile
+	lib/nfs4/include/nfs4/Makefile
+	lib/nfs4/include/nfs4/trace/Makefile
 	lib/nfs4/tests/Makefile
 	lib/rpc/Makefile
 	lib/rpc/tests/Makefile

@@ -36,7 +36,7 @@
 #include "reffs/vfs.h"
 #include "reffs/identity.h"
 #include "reffs/errno.h"
-#include "reffs/trace/nfs4_server.h"
+#include "nfs4/trace/nfs4.h"
 #include "nfs4/errors.h"
 #include "nfs4/ops.h"
 #include "nfs4/compound.h"

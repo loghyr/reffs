@@ -20,7 +20,7 @@
 #include "reffs/rcu.h"
 #include "reffs/client.h"
 #include "reffs/client_persist.h"
-#include "reffs/trace/nfs4_server.h"
+#include "nfs4/trace/nfs4.h"
 #include "nfs4/client.h"
 
 /* ------------------------------------------------------------------ */
