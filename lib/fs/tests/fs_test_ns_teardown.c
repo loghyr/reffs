@@ -70,6 +70,7 @@
 #endif
 
 #include "fs_test_harness.h"
+#include "reffs/server.h"
 
 uid_t fs_test_uid;
 gid_t fs_test_gid;

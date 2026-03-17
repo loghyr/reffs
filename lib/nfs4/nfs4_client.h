@@ -62,4 +62,42 @@ struct nfs4_client *nfs4_client_find(clientid4 clid);
  */
 struct nfs4_client *nfs4_client_find_by_owner(client_owner4 *owner);
 
+/*
+ * Assign the clientid
+ */
+#define CLIENTID_SLOT_BITS 32
+#define CLIENTID_INCARNATION_BITS 16
+#define CLIENTID_BOOT_BITS 16
+
+#define CLIENTID_SLOT_SHIFT 0
+#define CLIENTID_INCARNATION_SHIFT CLIENTID_SLOT_BITS
+#define CLIENTID_BOOT_SHIFT (CLIENTID_SLOT_BITS + CLIENTID_INCARNATION_BITS)
+
+#define CLIENTID_SLOT_MASK ((1ULL << CLIENTID_SLOT_BITS) - 1)
+#define CLIENTID_INCARNATION_MASK ((1ULL << CLIENTID_INCARNATION_BITS) - 1)
+#define CLIENTID_BOOT_MASK ((1ULL << CLIENTID_BOOT_BITS) - 1)
+
+static inline clientid4 clientid_make(uint32_t slot, uint16_t incarnation,
+				      uint16_t boot_seq)
+{
+	return ((uint64_t)boot_seq << CLIENTID_BOOT_SHIFT) |
+	       ((uint64_t)incarnation << CLIENTID_INCARNATION_SHIFT) |
+	       ((uint64_t)slot << CLIENTID_SLOT_SHIFT);
+}
+
+static inline uint32_t clientid_slot(clientid4 clid)
+{
+	return (clid >> CLIENTID_SLOT_SHIFT) & CLIENTID_SLOT_MASK;
+}
+
+static inline uint16_t clientid_incarnation(clientid4 clid)
+{
+	return (clid >> CLIENTID_INCARNATION_SHIFT) & CLIENTID_INCARNATION_MASK;
+}
+
+static inline uint16_t clientid_boot_seq(clientid4 clid)
+{
+	return (clid >> CLIENTID_BOOT_SHIFT) & CLIENTID_BOOT_MASK;
+}
+
 #endif /* _REFFS_NFS4_CLIENT_H */

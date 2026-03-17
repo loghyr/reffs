@@ -46,6 +46,7 @@
 #include "reffs/fs.h"
 #include "reffs/ns.h"
 #include "reffs/context.h"
+#include "reffs/server.h"
 
 /*
  * Root uid/gid captured during setup; tests that verify uid/gid inheritance

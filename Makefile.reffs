@@ -140,12 +140,12 @@ run-image: $(LOGS_DIR) stop-image
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(LOGS_DIR):/logs:Z \
 		$(IMAGE_NAME) \
-		/bin/bash -c "rm -rf /tmp/reffs_data && mkdir -p /tmp/reffs_data && \
+		/bin/bash -c "rm -rf /tmp/reffs_data /tmp/reffs.state && mkdir -p /tmp/reffs_data && touch /tmp/reffs.state && \
 			rm -rf /src/* /build/* && \
 			rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && autoreconf -fi && \
 			cd /build && ../src/configure --enable-asan && make && \
-			script -f -q -c './src/reffsd --port 2049 --file=/logs/reffs.trc --backend=posix --backend-path=/tmp/reffs_data' /logs/reffs.console"
+			script -f -q -c './src/reffsd --port 2049 --file=/logs/reffs.trc --backend=posix --backend-path=/tmp/reffs_data --state-file=/tmp/reffs.state' /logs/reffs.console"
 
 # Dump stacks of the running reffsd process in the sandbox
 # This provides both kernel-side (wchan/stack) and user-side (gdb) views

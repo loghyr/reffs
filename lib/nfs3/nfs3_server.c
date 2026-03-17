@@ -798,7 +798,17 @@ static int nfs3_op_write(struct rpc_trans *rt)
 		break;
 	};
 
-	uuid_t *uuid = server_boot_uuid_get();
+	struct server_state *ss = server_state_find();
+	if (!ss) {
+		ret = -ESHUTDOWN;
+		wcc = &res->WRITE3res_u.resfail.file_wcc;
+		pthread_rwlock_unlock(&inode->i_db_rwlock);
+		pthread_mutex_lock(&inode->i_attr_mutex);
+		goto update_wcc;
+	}
+
+	uuid_t *uuid = &ss->ss_uuid;
+	server_state_put(ss);
 	memcpy(resok->verf, (*uuid) + 8, NFS3_WRITEVERFSIZE);
 
 	inode->i_size = inode->i_db->db_size;
@@ -2782,7 +2792,13 @@ static int nfs3_op_commit(struct rpc_trans *rt)
 	if (ret)
 		goto out;
 
-	uuid = server_boot_uuid_get();
+	struct server_state *ss = server_state_find();
+	if (!ss) {
+		ret = -ESHUTDOWN;
+		goto out;
+	}
+	uuid = &ss->ss_uuid;
+	server_state_put(ss);
 	memcpy(resok->verf, (*uuid) + 8, NFS3_WRITEVERFSIZE);
 
 	pthread_mutex_lock(&inode->i_attr_mutex);

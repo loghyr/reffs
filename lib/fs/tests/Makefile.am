@@ -30,13 +30,18 @@ LDADD = \
 	@CHECK_LIBS@					\
 	$(top_builddir)/lib/fs/tests/libreffs_fs_test.la	\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\
-	$(top_builddir)/lib/trace/libreffs_trace.la	\
+	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
+	$(top_builddir)/lib/io/libreffs_io.la		\
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
+	$(top_builddir)/lib/trace/libreffs_trace.la	\
+	$(top_builddir)/lib/backends/libbackends.la	\
+	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
 	-lxxhash					\
 	-lpthread					\
 	$(URCU_LIBS) $(URCU_CDS_LIBS) $(FUSE_LIBS)	\
 	$(TIRPC_LIBS)					\
 	$(OPENSSL_LIBS)					\
+	$(URING_LIBS)					\
 	$(ZSTD_LIBS)					\
 	$(UUID_LIBS) $(JEMALLOC_LIBS)
 

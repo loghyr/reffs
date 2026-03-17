@@ -72,6 +72,7 @@ static void usage(const char *prog)
 	printf("  -f  --file=fname             Save tracing data to this file \"fname\"\n");
 	printf("  -b  --backend=type           Storage backend (ram, posix)\n");
 	printf("  -B  --backend-path=path      Path for POSIX backend\n");
+	printf("  -S  --state-file=file        File for storing state\n");
 	printf("  -c  --category=cat           Enable tracing for a category\n");
 	printf("                                     0 - General\n");
 	printf("                                     1 - IO\n");
@@ -90,6 +91,7 @@ static struct option long_opts[] = {
 	{ "port", required_argument, 0, 'p' },
 	{ "backend", required_argument, 0, 'b' },
 	{ "backend-path", required_argument, 0, 'B' },
+	{ "state-file", required_argument, 0, 'S' },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -109,6 +111,8 @@ int main(int argc, char *argv[])
 
 	char *trace_file = "./reffsd.log";
 
+	struct server_state *ss = NULL;
+
 #ifdef HAVE_JEMALLOC
 #ifdef HAVE_VM
 	/* Release virtual address space immediately on free */
@@ -120,11 +124,10 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	server_boot_uuid_generate();
-
-	char *opts = "p:hrt:c:f:b:B:";
+	char *opts = "p:hrt:c:f:b:B:S:";
 	enum reffs_storage_type storage_type = REFFS_STORAGE_RAM;
 	char *backend_path = NULL;
+	char *state_file = "/tmp/reffs.state";
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -139,6 +142,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'B':
 			backend_path = optarg;
+			break;
+		case 'S':
+			state_file = optarg;
 			break;
 		case 'c': {
 			int tracing = atoi(optarg);
@@ -183,7 +189,10 @@ int main(int argc, char *argv[])
 	// Block signals in main thread temporarily
 	pthread_sigmask(SIG_BLOCK, &mask, NULL);
 
-	server_port_set(port);
+	ss = server_state_init(state_file, port);
+	if (!ss) {
+		return 1;
+	}
 
 	// Initialize IO handler
 	if (io_handler_init(&rc) < 0) {
@@ -433,6 +442,8 @@ out:
 	mount3_protocol_deregister();
 	nfs3_protocol_deregister();
 	nfs4_protocol_deregister();
+
+	server_state_fini(ss);
 
 	LOG("Shutdown complete");
 	return exit_code;
