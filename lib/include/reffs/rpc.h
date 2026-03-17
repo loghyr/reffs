@@ -183,6 +183,8 @@ int rpc_process_task(struct task *t);
 struct rpc_trans *rpc_trans_create(void);
 int rpc_prepare_send_call(struct rpc_trans *rt);
 
+void rpc_trans_get_sockaddr_in(struct rpc_trans *rt, struct sockaddr_in *sin);
+
 void rpc_log_packet(const char *prefix, const void *data, size_t len);
 
 int rpc_parse_call_data(struct rpc_trans *rt);
