@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <check.h>
 #include <stdbool.h>
-#include "errors.h"
+#include "nfs4/errors.h"
 #include "nfs4_test_harness.h"
 
 START_TEST(test_error1)

@@ -10,7 +10,7 @@
 #include <check.h>
 #include <stdlib.h>
 
-#include "attr.h"
+#include "nfs4/attr.h"
 #include "nfs4_test_harness.h"
 
 /*

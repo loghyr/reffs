@@ -13,7 +13,7 @@
 #include "reffs/rpc.h"
 #include "nfsv42_xdr.h"
 
-/* Forward declaration from ops.h */
+/* Forward declaration from nfs4/ops.h */
 const char *nfs4_op_name(nfs_opnum4 op);
 
 /* NFS4 operation trace functions */
