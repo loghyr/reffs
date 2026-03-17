@@ -9,6 +9,7 @@ AM_CFLAGS = -Im4 -I.			\
 lib_LTLIBRARIES = libbackends.la
 
 libbackends_la_SOURCES = \
+	client_persist.c \
 	driver.c \
 	ram.c \
 	posix.c \

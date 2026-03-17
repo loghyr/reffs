@@ -22,6 +22,7 @@ libreffs_nfs4_la_SOURCES = \
 	layout.c \
 	lock.c \
 	nfs4_client.c \
+	nfs4_client_persist.c \
 	nfs4_stateid.c \
 	ops.c \
 	register.c \
@@ -34,5 +35,6 @@ reffsinclude_HEADERS = \
 	compound.h \
 	errors.h \
 	nfs4_client.h \
+	nfs4_client_persist.h \
 	nfs4_stateid.h \
 	ops.h
