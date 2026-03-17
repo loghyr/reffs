@@ -25,6 +25,10 @@ struct client {
 	struct cds_lfht_node c_node;
 
 	struct cds_lfht *c_stateids; /* per-client stateid hash table */
+
+	/* Per-instance callbacks set at construction; no extern vtable. */
+	void (*c_free_rcu)(struct rcu_head *rcu);
+	void (*c_release)(struct urcu_ref *ref);
 };
 
 /* ------------------------------------------------------------------ */
@@ -37,11 +41,15 @@ int client_fini(void);
 /* Lifetime                                                            */
 
 /*
- * client_alloc - allocate and insert a new client with the given id.
- * If a client with that id already exists, returns a ref to it.
- * Caller must client_put() the returned pointer.
+ * client_assign - initialise *client, insert into the global client_ht.
+ * The caller (NFS layer) owns the allocation; free_rcu and release are
+ * called from the fs layer's RCU / refcount paths.
+ *
+ * Returns 0 on success, -errno on failure.
  */
-struct client *client_alloc(uint64_t id);
+int client_assign(struct client *client, uint64_t id,
+		  void (*free_rcu)(struct rcu_head *rcu),
+		  void (*release)(struct urcu_ref *ref));
 
 /*
  * client_find - look up by id.

@@ -107,16 +107,6 @@ bool client_unhash(struct client *client)
 	return true;
 }
 
-static void client_free_rcu(struct rcu_head *rcu)
-{
-	struct client *client = caa_container_of(rcu, struct client, c_rcu);
-
-	if (client->c_stateids)
-		cds_lfht_destroy(client->c_stateids, NULL);
-
-	free(client);
-}
-
 static void client_release(struct urcu_ref *ref)
 {
 	struct client *client = caa_container_of(ref, struct client, c_ref);
@@ -124,7 +114,7 @@ static void client_release(struct urcu_ref *ref)
 	trace_fs_client(client, __func__, __LINE__);
 
 	client_unhash(client);
-	call_rcu(&client->c_rcu, client_free_rcu);
+	client->c_release(ref);
 }
 
 struct client *client_get(struct client *client)
@@ -149,26 +139,22 @@ void client_put(struct client *client)
 }
 
 /* ------------------------------------------------------------------ */
-/* Alloc / find                                                        */
+/* Assign / find                                                       */
 
-struct client *client_alloc(uint64_t id)
+int client_assign(struct client *client, uint64_t id,
+		  void (*free_rcu)(struct rcu_head *rcu),
+		  void (*release)(struct urcu_ref *ref))
 {
 	struct cds_lfht_node *node;
-	struct client *client;
-	struct client *tmp;
 	unsigned long hash = XXH3_64bits(&id, sizeof(id));
 
-	client = calloc(1, sizeof(*client));
-	if (!client)
-		return NULL;
-
 	client->c_id = id;
+	client->c_free_rcu = free_rcu;
+	client->c_release = release;
 
 	client->c_stateids = cds_lfht_new(8, 8, 0, CDS_LFHT_AUTO_RESIZE, NULL);
-	if (!client->c_stateids) {
-		free(client);
-		return NULL;
-	}
+	if (!client->c_stateids)
+		return -ENOMEM;
 
 	cds_lfht_node_init(&client->c_node);
 	urcu_ref_init(&client->c_ref);
@@ -181,14 +167,14 @@ struct client *client_alloc(uint64_t id)
 
 	if (caa_unlikely(node != &client->c_node)) {
 		/*
-		 * Lost the race — another thread inserted the same id first.
-		 * Drop our candidate and return a ref to the winner.
+		 * Lost the race — a client with this id already exists.
+		 * The caller owns the allocation so we just clean up
+		 * what we set up and signal the collision.
 		 */
 		client->c_state &= ~CLIENT_IS_HASHED;
 		cds_lfht_destroy(client->c_stateids, NULL);
-		free(client);
-		tmp = caa_container_of(node, struct client, c_node);
-		return client_get(tmp);
+		client->c_stateids = NULL;
+		return -EEXIST;
 	}
 
 	/*
@@ -196,7 +182,7 @@ struct client *client_alloc(uint64_t id)
 	 * Bump once more for the caller's reference.
 	 */
 	client_get(client);
-	return client;
+	return 0;
 }
 
 struct client *client_find(uint64_t id)

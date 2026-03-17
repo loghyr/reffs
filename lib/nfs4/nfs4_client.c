@@ -23,13 +23,34 @@
 #include "nfs4_client.h"
 
 /* ------------------------------------------------------------------ */
+/* RCU / release callbacks                                             */
+
+static void nfs4_client_free_rcu(struct rcu_head *rcu)
+{
+	struct client *c = caa_container_of(rcu, struct client, c_rcu);
+	struct nfs4_client *nc = client_to_nfs4(c);
+
+	if (c->c_stateids)
+		cds_lfht_destroy(c->c_stateids, NULL);
+
+	free(nc);
+}
+
+static void nfs4_client_release(struct urcu_ref *ref)
+{
+	struct client *c = caa_container_of(ref, struct client, c_ref);
+
+	call_rcu(&c->c_rcu, nfs4_client_free_rcu);
+}
+
+/* ------------------------------------------------------------------ */
 /* Alloc                                                               */
 
 struct nfs4_client *nfs4_client_alloc(client_owner4 *owner, verifier4 *verifier,
 				      clientid4 assigned_id)
 {
 	struct nfs4_client *nc;
-	struct client *c;
+	int ret;
 
 	nc = calloc(1, sizeof(*nc));
 	if (!nc)
@@ -39,33 +60,12 @@ struct nfs4_client *nfs4_client_alloc(client_owner4 *owner, verifier4 *verifier,
 	memcpy(&nc->nc_verifier, verifier, sizeof(*verifier));
 	nc->nc_confirmed = false;
 
-	/*
-	 * Hand off to the fs layer using assigned_id as the uint64_t key.
-	 * client_alloc() inserts into the global client_ht and returns
-	 * with two refs: one for the hash table, one for the caller.
-	 */
-	c = client_alloc((uint64_t)assigned_id);
-	if (!c) {
+	ret = client_assign(&nc->nc_client, (uint64_t)assigned_id,
+			    nfs4_client_free_rcu, nfs4_client_release);
+	if (ret) {
 		free(nc);
 		return NULL;
 	}
-
-	/*
-	 * Wire the fs-layer client into our embedded field.  We transfer
-	 * the caller ref from client_alloc() to the nfs4_client — the
-	 * hash-table ref stays independent.
-	 *
-	 * client_alloc() already filled c_id; copy it back so nc_client
-	 * and any direct field access agree.
-	 */
-	nc->nc_client = *c;
-
-	/*
-	 * NOT_NOW_BROWN_COW: client_alloc should return a pointer we embed,
-	 * not a copy.  For now the shallow copy is safe because urcu_ref
-	 * and cds_lfht_node are value types re-initialised by the alloc;
-	 * revisit when nfs4_client owns the allocation end-to-end.
-	 */
 
 	return nc;
 }
