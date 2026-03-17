@@ -46,7 +46,11 @@ static void nfs4_client_release(struct urcu_ref *ref)
 /* ------------------------------------------------------------------ */
 /* Alloc                                                               */
 
-struct nfs4_client *nfs4_client_alloc(client_owner4 *owner, verifier4 *verifier,
+struct nfs4_client *nfs4_client_alloc(const client_owner4 *owner,
+				      const verifier4 *verifier,
+				      const struct nfs_impl_id4 *impl_id,
+				      const struct sockaddr_in *sin,
+				      uint16_t incarnation,
 				      clientid4 assigned_id)
 {
 	struct nfs4_client *nc;
@@ -58,16 +62,36 @@ struct nfs4_client *nfs4_client_alloc(client_owner4 *owner, verifier4 *verifier,
 
 	memcpy(&nc->nc_owner, owner, sizeof(*owner));
 	memcpy(&nc->nc_verifier, verifier, sizeof(*verifier));
+	memcpy(&nc->nc_sin, sin, sizeof(*sin));
+	nc->nc_incarnation = incarnation;
 	nc->nc_confirmed = false;
+
+	if (impl_id) {
+		if (impl_id->nii_domain.utf8string_val) {
+			nc->nc_domain =
+				strdup(impl_id->nii_domain.utf8string_val);
+			if (!nc->nc_domain)
+				goto err_free;
+		}
+		if (impl_id->nii_name.utf8string_val) {
+			nc->nc_name = strdup(impl_id->nii_name.utf8string_val);
+			if (!nc->nc_name)
+				goto err_free;
+		}
+	}
 
 	ret = client_assign(&nc->nc_client, (uint64_t)assigned_id,
 			    nfs4_client_free_rcu, nfs4_client_release);
-	if (ret) {
-		free(nc);
-		return NULL;
-	}
+	if (ret)
+		goto err_free;
 
 	return nc;
+
+err_free:
+	free(nc->nc_name);
+	free(nc->nc_domain);
+	free(nc);
+	return NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -90,7 +114,7 @@ struct nfs4_client *nfs4_client_find(clientid4 clid)
  * NOT_NOW_BROWN_COW: this needs a second hash table keyed by owner
  * once client counts grow.  For the prototype a walk is fine.
  */
-struct nfs4_client *nfs4_client_find_by_owner(client_owner4 *owner)
+struct nfs4_client *nfs4_client_find_by_owner(const client_owner4 *owner)
 {
 	/* NOT_NOW_BROWN_COW: implement owner-keyed lookup */
 	(void)owner;

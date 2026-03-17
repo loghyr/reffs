@@ -22,8 +22,12 @@
  */
 struct nfs4_client {
 	client_owner4 nc_owner; /* long-hand client identity */
+	struct sockaddr_in nc_sin;
+	uint16_t nc_incarnation;
 	verifier4 nc_verifier; /* EXCHANGE_ID / SETCLIENTID verifier */
 	bool nc_confirmed;
+	char *nc_domain; /* strdup'd nii_domain */
+	char *nc_name; /* strdup'd nii_name */
 	struct client nc_client; /* fs-layer object; must be last or
 	                              * after all NFS fields to keep
 	                              * caa_container_of unambiguous */
@@ -47,7 +51,11 @@ static inline struct client *nfs4_client_to_client(struct nfs4_client *nc)
  * Derives the uint64_t id from the owner (server assigns clientid4).
  * Caller must client_put(nfs4_client_to_client(nc)) when done.
  */
-struct nfs4_client *nfs4_client_alloc(client_owner4 *owner, verifier4 *verifier,
+struct nfs4_client *nfs4_client_alloc(const client_owner4 *owner,
+				      const verifier4 *verifier,
+				      const struct nfs_impl_id4 *impl_id,
+				      const struct sockaddr_in *sin,
+				      uint16_t incarnation,
 				      clientid4 assigned_id);
 
 /*
@@ -60,7 +68,7 @@ struct nfs4_client *nfs4_client_find(clientid4 clid);
  * nfs4_client_find_by_owner - look up by client_owner4.
  * Linear scan of confirmed clients; only used on EXCHANGE_ID path.
  */
-struct nfs4_client *nfs4_client_find_by_owner(client_owner4 *owner);
+struct nfs4_client *nfs4_client_find_by_owner(const client_owner4 *owner);
 
 /*
  * Assign the clientid
