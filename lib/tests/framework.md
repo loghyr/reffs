@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Reffs Unit Test Framework
 
 The reffs test framework provides a consistent way to initialize the environment, run tests using the Check library, and ensure clean teardown (essential for ASAN/leak detection).
