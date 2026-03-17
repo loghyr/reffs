@@ -6,28 +6,8 @@
 #ifndef _REFFS_TEST_FS_HARNESS_H
 #define _REFFS_TEST_FS_HARNESS_H
 
-/*
- * Shared harness for fs.c unit tests.
- *
- * Each fs_*.c test file includes this header.  The harness wraps
- * reffs_ns_init()/reffs_ns_fini() so every test gets a pristine namespace,
- * and provides the ck_assert_timespec_* macros that replace the verbose
- * two-field comparisons seen in fuse_test.c.
- *
- * Design rules:
- *  - Tests call reffs_fs_*() directly — never through the fuse shim.
- *  - Each START_TEST creates everything it needs and removes it before
- *    returning.  The checked_fixture teardown calls reffs_ns_fini() so
- *    ASAN sees a clean shutdown even if a test assertion fires mid-way.
- *  - CK_NOFORK is used so ASAN covers the full process lifetime.
- */
-
 #ifdef HAVE_CONFIG_H
 #include "config.h"
-#endif
-
-#ifdef HAVE_JEMALLOC
-#include <jemalloc/jemalloc.h>
 #endif
 
 #include <check.h>
@@ -53,65 +33,32 @@
 #include "reffs/log.h"
 #include "reffs/server.h"
 
+#include "libreffs_test.h"
+
 /*
  * Process-wide uid/gid captured during setup; used by tests that verify
- * uid/gid inheritance from reffs_fs_mkdir / reffs_fs_create.
+ * uid/gid inheritance.
  */
 extern uid_t fs_test_uid;
 extern gid_t fs_test_gid;
+extern uid_t fuse_test_uid;
+extern gid_t fuse_test_gid;
 
+/* Standard module setup/teardown */
 static inline void fs_test_setup(void)
 {
-	struct super_block *sb;
-	struct inode *inode;
-	int ret;
-	struct reffs_context ctx;
-
-	fs_test_uid = getuid();
-	fs_test_gid = getgid();
-	ctx.uid = fs_test_uid;
-	ctx.gid = fs_test_gid;
-	reffs_set_context(&ctx);
-
-	rcu_barrier();
-	ret = reffs_ns_init();
-	ck_assert_int_eq(ret, 0);
-
-	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
-	ck_assert_ptr_nonnull(sb);
-
-	inode = inode_find(sb, INODE_ROOT_ID);
-	ck_assert_ptr_nonnull(inode);
-
-	fs_test_uid = getuid();
-	fs_test_gid = getgid();
-	inode->i_uid = fs_test_uid;
-	inode->i_gid = fs_test_gid;
-
-	inode_put(inode);
-	super_block_put(sb);
+	reffs_test_setup_fs();
 }
 
 static inline void fs_test_teardown(void)
 {
-	reffs_ns_fini();
-	rcu_barrier();
+	reffs_test_teardown_fs();
 }
 
-static inline void fs_test_global_init(void)
+/* Run an fs test suite */
+static inline int fs_test_run(Suite *s)
 {
-	rcu_register_thread();
-	reffs_trace_init(NULL);
-	reffs_trace_enable_all_categories();
-	reffs_log_file = stderr;
-}
-
-static inline void fs_test_global_fini(void)
-{
-	reffs_trace_close();
-	synchronize_rcu();
-	rcu_barrier();
-	rcu_unregister_thread();
+	return reffs_test_run_suite(s, NULL, NULL);
 }
 
 /* Assert timespec A is strictly less than timespec B */

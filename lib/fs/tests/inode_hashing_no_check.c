@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <check.h>
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
 #include "reffs/test.h"
@@ -23,7 +24,7 @@
 
 static uint64_t sb_id_next = 0;
 
-static int add_sb_1(void)
+START_TEST(test_add_sb_1)
 {
 	struct super_block *sb;
 	uint64_t sb_id;
@@ -31,15 +32,14 @@ static int add_sb_1(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	super_block_release_dirents(sb);
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int add_sb_2(void)
+START_TEST(test_add_sb_2)
 {
 	struct super_block *sb;
 	uint64_t sb_id;
@@ -47,15 +47,14 @@ static int add_sb_2(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	super_block_release_dirents(sb);
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int find_sb_inode(void)
+START_TEST(test_find_sb_inode)
 {
 	struct inode *inode1;
 	struct inode *inode2;
@@ -66,27 +65,26 @@ static int find_sb_inode(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
-	verify(ret == 0);
+	ck_assert_int_eq(ret, 0);
 
 	inode1 = inode_alloc(sb, INODE_ROOT_ID);
-	verify(inode1 == sb->sb_dirent->rd_inode);
+	ck_assert_ptr_eq(inode1, sb->sb_dirent->rd_inode);
 
 	inode2 = inode_find(sb, INODE_ROOT_ID);
-	verify(inode2 == sb->sb_dirent->rd_inode);
+	ck_assert_ptr_eq(inode2, sb->sb_dirent->rd_inode);
 
 	inode_active_put(inode1);
 	inode_active_put(inode2);
 
 	super_block_release_dirents(sb);
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int find_sb_inode_put(void)
+START_TEST(test_find_sb_inode_put)
 {
 	struct inode *inode1;
 	struct inode *inode2;
@@ -97,27 +95,26 @@ static int find_sb_inode_put(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
-	verify(ret == 0);
+	ck_assert_int_eq(ret, 0);
 
 	inode1 = inode_alloc(sb, 1);
-	verify(inode1 == sb->sb_dirent->rd_inode);
+	ck_assert_ptr_eq(inode1, sb->sb_dirent->rd_inode);
 
 	inode2 = inode_find(sb, 1);
-	verify(inode2 == sb->sb_dirent->rd_inode);
+	ck_assert_ptr_eq(inode2, sb->sb_dirent->rd_inode);
 
 	inode_active_put(inode1);
 	inode_active_put(inode2);
 
 	super_block_release_dirents(sb);
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int find_sb_inode_unhash(void)
+START_TEST(test_find_sb_inode_unhash)
 {
 	struct inode *inode1;
 	struct inode *inode2;
@@ -128,27 +125,26 @@ static int find_sb_inode_unhash(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
-	verify(ret == 0);
+	ck_assert_int_eq(ret, 0);
 
 	inode1 = inode_alloc(sb, INODE_ROOT_ID);
-	verify(inode1 == sb->sb_dirent->rd_inode);
+	ck_assert_ptr_eq(inode1, sb->sb_dirent->rd_inode);
 
 	inode2 = inode_find(sb, INODE_ROOT_ID);
-	verify(inode2 == sb->sb_dirent->rd_inode);
+	ck_assert_ptr_eq(inode2, sb->sb_dirent->rd_inode);
 
 	inode_active_put(inode1);
 	inode_active_put(inode2);
 
 	super_block_release_dirents(sb);
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int add_inode_1(void)
+START_TEST(test_add_inode_1)
 {
 	struct inode *inode;
 	struct super_block *sb;
@@ -157,22 +153,21 @@ static int add_inode_1(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	inode = inode_alloc(sb, 2);
-	verify(inode);
+	ck_assert_ptr_nonnull(inode);
 	inode_active_put(inode);
 
 	super_block_release_dirents(sb);
 	inode = inode_find(sb, 2);
-	verify(!inode);
+	ck_assert_ptr_null(inode);
 
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int add_inode_2(void)
+START_TEST(test_add_inode_2)
 {
 	struct inode *inode1, *inode2;
 	struct super_block *sb;
@@ -181,29 +176,28 @@ static int add_inode_2(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	inode1 = inode_alloc(sb, 2);
-	verify(inode1);
+	ck_assert_ptr_nonnull(inode1);
 
 	inode2 = inode_alloc(sb, 3);
-	verify(inode2);
+	ck_assert_ptr_nonnull(inode2);
 
 	inode_active_put(inode1);
 	inode_active_put(inode2);
 
 	super_block_release_dirents(sb);
 	inode1 = inode_find(sb, 2);
-	verify(!inode1);
+	ck_assert_ptr_null(inode1);
 	inode2 = inode_find(sb, 3);
-	verify(!inode2);
+	ck_assert_ptr_null(inode2);
 
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int put_inode_1(void)
+START_TEST(test_put_inode_1)
 {
 	struct inode *inode1, *inode2, *inode3;
 	struct super_block *sb;
@@ -212,19 +206,19 @@ static int put_inode_1(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	inode1 = inode_alloc(sb, 2);
-	verify(inode1);
+	ck_assert_ptr_nonnull(inode1);
 	inode2 = inode_alloc(sb, 3);
-	verify(inode2);
+	ck_assert_ptr_nonnull(inode2);
 
 	inode3 = inode_find(sb, 2);
-	verify(inode3);
+	ck_assert_ptr_nonnull(inode3);
 
 	inode_active_put(inode1);
 	inode1 = inode_find(sb, 2);
-	verify(inode1 == inode3);
+	ck_assert_ptr_eq(inode1, inode3);
 	inode_active_put(inode1);
 
 	inode_active_put(inode2);
@@ -234,11 +228,10 @@ static int put_inode_1(void)
 
 	super_block_release_dirents(sb);
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int get_inode_1(void)
+START_TEST(test_get_inode_1)
 {
 	struct inode *inode1, *inode2, *inode3;
 	struct super_block *sb;
@@ -247,23 +240,23 @@ static int get_inode_1(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	inode1 = inode_alloc(sb, 2);
-	verify(inode1);
+	ck_assert_ptr_nonnull(inode1);
 
 	inode2 = inode_alloc(sb, 3);
-	verify(inode2);
+	ck_assert_ptr_nonnull(inode2);
 
 	/* inode_get bumps only i_ref — release with inode_put */
 	inode3 = inode_get(inode1);
-	verify(inode3);
+	ck_assert_ptr_nonnull(inode3);
 
 	inode_unhash(inode1);
 	inode_active_put(inode1);
 	/* Better not be found even though inode3 has a reference. */
 	inode1 = inode_find(sb, 2);
-	verify(!inode1);
+	ck_assert_ptr_null(inode1);
 
 	inode_active_put(inode2);
 
@@ -272,11 +265,10 @@ static int get_inode_1(void)
 
 	super_block_release_dirents(sb);
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int sb_put_inode_1(void)
+START_TEST(test_sb_put_inode_1)
 {
 	struct inode *inode1, *inode2;
 	struct super_block *sb;
@@ -285,29 +277,28 @@ static int sb_put_inode_1(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	inode1 = inode_alloc(sb, 2);
-	verify(inode1);
+	ck_assert_ptr_nonnull(inode1);
 
 	inode2 = inode_alloc(sb, 3);
-	verify(inode2);
+	ck_assert_ptr_nonnull(inode2);
 
 	inode_active_put(inode2);
 	inode_active_put(inode1);
 
 	super_block_release_dirents(sb);
 	inode1 = inode_find(sb, 2);
-	verify(!inode1);
+	ck_assert_ptr_null(inode1);
 	inode2 = inode_find(sb, 3);
-	verify(!inode2);
+	ck_assert_ptr_null(inode2);
 
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int find_inode_1(void)
+START_TEST(test_find_inode_1)
 {
 	struct inode *inode1, *inode2;
 	struct super_block *sb;
@@ -316,27 +307,26 @@ static int find_inode_1(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	inode1 = inode_alloc(sb, 2);
-	verify(inode1);
+	ck_assert_ptr_nonnull(inode1);
 
 	inode2 = inode_find(sb, 2);
-	verify(inode2 == inode1);
+	ck_assert_ptr_eq(inode2, inode1);
 
 	inode_active_put(inode2);
 	inode_active_put(inode1);
 
 	super_block_release_dirents(sb);
 	inode1 = inode_find(sb, 2);
-	verify(!inode1);
+	ck_assert_ptr_null(inode1);
 
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int find_inode_1_sb_NULL(void)
+START_TEST(test_find_inode_1_sb_NULL)
 {
 	struct inode *inode1, *inode2;
 	struct super_block *sb;
@@ -345,26 +335,25 @@ static int find_inode_1_sb_NULL(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 
 	inode1 = inode_alloc(sb, 2);
-	verify(inode1);
+	ck_assert_ptr_nonnull(inode1);
 
 	inode2 = inode_find(NULL, 2);
-	verify(!inode2);
+	ck_assert_ptr_null(inode2);
 
 	inode_active_put(inode1);
 
 	super_block_release_dirents(sb);
 	inode1 = inode_find(sb, 2);
-	verify(!inode1);
+	ck_assert_ptr_null(inode1);
 
 	super_block_put(sb);
-
-	return 0;
 }
+END_TEST
 
-static int find_inode_3(void)
+START_TEST(test_find_inode_3)
 {
 	struct inode *inode1, *inode2, *inode3;
 	struct super_block *sb;
@@ -373,26 +362,26 @@ static int find_inode_3(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb);
+	ck_assert_ptr_nonnull(sb);
 	trace_fs_super_block(sb, __func__, __LINE__);
 
 	inode1 = inode_alloc(sb, 2);
-	verify(inode1);
+	ck_assert_ptr_nonnull(inode1);
 
 	inode2 = inode_alloc(sb, 3);
-	verify(inode2);
+	ck_assert_ptr_nonnull(inode2);
 
 	inode3 = inode_find(sb, 4);
-	verify(!inode3);
+	ck_assert_ptr_null(inode3);
 
 	inode_active_put(inode1);
 	inode_active_put(inode2);
 
 	super_block_release_dirents(sb);
 	inode1 = inode_find(sb, 2);
-	verify(!inode1);
+	ck_assert_ptr_null(inode1);
 	inode2 = inode_find(sb, 3);
-	verify(!inode2);
+	ck_assert_ptr_null(inode2);
 
 	super_block_put(sb);
 
@@ -400,12 +389,11 @@ static int find_inode_3(void)
 
 	sb = super_block_find(sb_id);
 	trace_fs_super_block(sb, __func__, __LINE__);
-	verify(!sb);
-
-	return 0;
+	ck_assert_ptr_null(sb);
 }
+END_TEST
 
-static int find_sb_1(void)
+START_TEST(test_find_sb_1)
 {
 	struct super_block *sb1, *sb2;
 	uint64_t sb_id;
@@ -413,43 +401,40 @@ static int find_sb_1(void)
 	sb_id = __atomic_add_fetch(&sb_id_next, 1, __ATOMIC_RELAXED);
 
 	sb1 = super_block_alloc(sb_id, "/", REFFS_STORAGE_RAM, NULL);
-	verify(sb1);
+	ck_assert_ptr_nonnull(sb1);
 
 	sb2 = super_block_find(sb_id);
-	verify(sb1 == sb2);
+	ck_assert_ptr_eq(sb1, sb2);
 
 	super_block_release_dirents(sb1);
 	super_block_put(sb1);
 	super_block_put(sb2);
+}
+END_TEST
 
-	return 0;
+Suite *inode_hashing_no_check_suite(void)
+{
+	Suite *s = suite_create("fs: inode hashing (no check)");
+	TCase *tc = tcase_create("Core");
+	tcase_add_test(tc, test_add_sb_1);
+	tcase_add_test(tc, test_add_inode_1);
+	tcase_add_test(tc, test_add_inode_2);
+	tcase_add_test(tc, test_find_inode_1);
+	tcase_add_test(tc, test_find_inode_1_sb_NULL);
+	tcase_add_test(tc, test_find_inode_3);
+	tcase_add_test(tc, test_find_sb_1);
+	tcase_add_test(tc, test_get_inode_1);
+	tcase_add_test(tc, test_put_inode_1);
+	tcase_add_test(tc, test_sb_put_inode_1);
+	tcase_add_test(tc, test_add_sb_2);
+	tcase_add_test(tc, test_find_sb_inode);
+	tcase_add_test(tc, test_find_sb_inode_put);
+	tcase_add_test(tc, test_find_sb_inode_unhash);
+	suite_add_tcase(s, tc);
+	return s;
 }
 
 int main(void)
 {
-	int number_failed = 0;
-
-	fs_test_global_init();
-
-	add_sb_1();
-	add_inode_1();
-	add_inode_2();
-	find_inode_1();
-	find_inode_1_sb_NULL();
-	find_inode_3();
-	find_sb_1();
-	get_inode_1();
-	put_inode_1();
-	sb_put_inode_1();
-	add_sb_2();
-	find_sb_inode();
-	find_sb_inode_put();
-	find_sb_inode_unhash();
-
-	synchronize_rcu();
-	rcu_barrier();
-
-	fs_test_global_fini();
-
-	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+	return fs_test_run(inode_hashing_no_check_suite());
 }

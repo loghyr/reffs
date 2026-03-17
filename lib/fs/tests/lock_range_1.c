@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <check.h>
+#include "libreffs_test.h"
+#include "fs_test_harness.h"
 #include <urcu.h>
 #include <urcu/ref.h>
 
@@ -178,16 +180,5 @@ Suite *lock_range_suite(void)
 
 int main(void)
 {
-	int number_failed;
-	SRunner *sr;
-
-	rcu_register_thread();
-	sr = srunner_create(lock_range_suite());
-	srunner_set_fork_status(sr, CK_NOFORK);
-	srunner_run_all(sr, CK_NORMAL);
-	number_failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-	rcu_unregister_thread();
-
-	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+	return fs_test_run(lock_range_suite());
 }

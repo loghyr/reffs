@@ -11,11 +11,11 @@ SUBDIRS =		\
 	utils		\
 	io		\
 	rpc		\
+	tests		\
 	fs		\
 	nlm		\
 	nsm		\
 	mount3		\
 	nfs3		\
 	nfs4		\
-	probe1		\
-	tests
+	probe1

@@ -30,9 +30,6 @@
 
 #include "fs_test_harness.h"
 
-uid_t fs_test_uid;
-gid_t fs_test_gid;
-
 /* Distinct uid/gid values that do not match the process credentials */
 #define OWNER_UID 100
 #define OWNER_GID 200
@@ -202,13 +199,5 @@ Suite *fs_access_suite(void)
 
 int main(void)
 {
-	int failed;
-	fs_test_global_init();
-	SRunner *sr = srunner_create(fs_access_suite());
-	srunner_set_fork_status(sr, CK_NOFORK);
-	srunner_run_all(sr, CK_NORMAL);
-	failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-	fs_test_global_fini();
-	return failed ? EXIT_FAILURE : EXIT_SUCCESS;
+	return fs_test_run(fs_access_suite());
 }

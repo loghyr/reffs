@@ -12,9 +12,6 @@
 #include "reffs/nlm_lock.h"
 #include "nlm4_prot.h"
 
-uid_t fs_test_uid;
-gid_t fs_test_gid;
-
 static void setup(void)
 {
 	fs_test_setup();
@@ -149,13 +146,5 @@ Suite *nlm_test_suite(void)
 
 int main(void)
 {
-	int failed;
-	fs_test_global_init();
-	SRunner *sr = srunner_create(nlm_test_suite());
-	srunner_set_fork_status(sr, CK_NOFORK);
-	srunner_run_all(sr, CK_NORMAL);
-	failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-	fs_test_global_fini();
-	return failed ? EXIT_FAILURE : EXIT_SUCCESS;
+	return fs_test_run(nlm_test_suite());
 }

@@ -22,8 +22,6 @@
 #include "fs_test_harness.h"
 
 static uint64_t sb_id_next = 0;
-uid_t fs_test_uid;
-gid_t fs_test_gid;
 
 START_TEST(add_sb_1)
 {
@@ -470,21 +468,5 @@ Suite *error_suite(void)
 
 int main(void)
 {
-	int number_failed;
-	Suite *s;
-	SRunner *sr;
-
-	fs_test_global_init();
-
-	s = error_suite();
-	sr = srunner_create(s);
-
-	srunner_set_fork_status(sr, CK_NOFORK);
-	srunner_run_all(sr, CK_NORMAL);
-	number_failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-
-	fs_test_global_fini();
-
-	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+	return fs_test_run(error_suite());
 }

@@ -54,9 +54,6 @@
 #include "posix_recovery.h"
 #include <urcu/call-rcu.h>
 
-uid_t fs_test_uid;
-gid_t fs_test_gid;
-
 #define TEST_LRU_MAX 4
 
 /* ------------------------------------------------------------------ */
@@ -657,30 +654,5 @@ Suite *fs_lru_suite(void)
 
 int main(void)
 {
-	int failed;
-
-	fs_test_global_init();
-
-	/*
-	 * Register liburcu fork handlers so the libcheck CK_FORK child has a
-	 * functioning call_rcu worker thread.  Must be called before
-	 * srunner_run_all so the handlers are in place when libcheck forks
-	 * for each test.
-	 */
-	pthread_atfork(call_rcu_before_fork, call_rcu_after_fork_parent,
-		       call_rcu_after_fork_child);
-
-	/*
-	 * CK_FORK: isolates each test's POSIX superblock and temp directory
-	 * in a child process, preventing state from leaking between tests
-	 * and giving ASAN a clean per-test lifetime.
-	 */
-	SRunner *sr = srunner_create(fs_lru_suite());
-	srunner_set_fork_status(sr, CK_FORK);
-	srunner_run_all(sr, CK_NORMAL);
-	failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-
-	fs_test_global_fini();
-	return failed ? EXIT_FAILURE : EXIT_SUCCESS;
+	return fs_test_run(fs_lru_suite());
 }

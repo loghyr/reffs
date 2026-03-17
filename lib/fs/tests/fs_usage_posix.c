@@ -33,8 +33,6 @@
 #include <urcu/call-rcu.h>
 
 /* Required by fs_test_harness.h (declared extern there) */
-uid_t fs_test_uid;
-gid_t fs_test_gid;
 
 /* --------------------------------------------------------------------------
  * User namespace helpers
@@ -353,33 +351,5 @@ Suite *fs_usage_posix_ns_suite(void)
 
 int main(void)
 {
-	int failed;
-
-	fs_test_global_init();
-
-	/* Non-namespace tests: CK_NOFORK for ASAN coverage. */
-	SRunner *sr = srunner_create(fs_usage_posix_suite());
-	srunner_set_fork_status(sr, CK_NOFORK);
-	srunner_run_all(sr, CK_NORMAL);
-	failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-
-	/*
-	 * Register liburcu fork handlers before the CK_FORK run so that
-	 * the libcheck child has a functioning call_rcu worker thread.
-	 * Safe because the mount child uses clone(), not fork(), so these
-	 * handlers do not fire in it.
-	 */
-	pthread_atfork(call_rcu_before_fork, call_rcu_after_fork_parent,
-		       call_rcu_after_fork_child);
-
-	/* Namespace test: CK_FORK to contain the mount child's namespaces. */
-	SRunner *sr_ns = srunner_create(fs_usage_posix_ns_suite());
-	srunner_set_fork_status(sr_ns, CK_FORK);
-	srunner_run_all(sr_ns, CK_NORMAL);
-	failed += srunner_ntests_failed(sr_ns);
-	srunner_free(sr_ns);
-
-	fs_test_global_fini();
-	return failed ? EXIT_FAILURE : EXIT_SUCCESS;
+	return fs_test_run(fs_usage_posix_suite());
 }

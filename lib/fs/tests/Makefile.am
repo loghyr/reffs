@@ -9,6 +9,7 @@ AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/fs @CHECK_CFLAGS@		\
 	$(ZSTD_CFLAGS)						\
 	$(JEMALLOC_FLAGS)					\
 	-I$(top_srcdir)/lib/include				\
+	-I$(top_srcdir)/lib/tests				\
 	-I$(top_builddir)/lib/xdr
 
 AM_LDFLAGS = -rdynamic					\
@@ -18,7 +19,8 @@ AM_LDFLAGS = -rdynamic					\
 lib_LTLIBRARIES = libreffs_fs_test.la
 
 libreffs_fs_test_la_SOURCES =				\
-	posix_recovery.c
+	posix_recovery.c \
+	fs_test_harness.c
 
 noinst_HEADERS = \
 	fuse_harness.h \
@@ -28,6 +30,7 @@ noinst_HEADERS = \
 
 LDADD = \
 	@CHECK_LIBS@					\
+	$(top_builddir)/lib/tests/libreffs_test.la	\
 	$(top_builddir)/lib/fs/tests/libreffs_fs_test.la	\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\
 	$(top_builddir)/lib/rpc/libreffs_rpc.la		\

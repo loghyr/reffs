@@ -28,9 +28,6 @@
 
 #include "fuse_harness.h"
 
-uid_t fuse_test_uid;
-gid_t fuse_test_gid;
-
 static void setup(void)
 {
 	fuse_test_setup();
@@ -122,13 +119,5 @@ Suite *fuse_suite(void)
 
 int main(void)
 {
-	int number_failed;
-	fuse_test_global_init();
-	SRunner *sr = srunner_create(fuse_suite());
-	srunner_set_fork_status(sr, CK_NOFORK);
-	srunner_run_all(sr, CK_NORMAL);
-	number_failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-	fuse_test_global_fini();
-	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+	return fuse_test_run(fuse_suite());
 }

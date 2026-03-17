@@ -4,6 +4,7 @@
 AM_CFLAGS = -Im4 -I. \
 	-I$(top_srcdir)/lib/include \
 	-I$(top_srcdir)/lib/fs/tests \
+	-I$(top_srcdir)/lib/tests \
 	-I$(top_builddir)/lib/xdr \
 	$(TIRPC_CFLAGS) \
 	$(URCU_CFLAGS) \
@@ -19,6 +20,8 @@ check_PROGRAMS = $(TESTS)
 
 nlm_test_SOURCES = nlm_test.c
 nlm_test_LDADD = \
+	$(top_builddir)/lib/tests/libreffs_test.la \
+	$(top_builddir)/lib/fs/tests/libreffs_fs_test.la \
 	$(top_builddir)/lib/nlm/libnlm.la \
 	$(top_builddir)/lib/fs/libreffs_fs.la \
 	$(top_builddir)/lib/trace/libreffs_trace.la \

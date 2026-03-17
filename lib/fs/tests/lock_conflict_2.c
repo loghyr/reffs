@@ -29,6 +29,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <check.h>
+#include "libreffs_test.h"
+#include "fs_test_harness.h"
 #include <stdbool.h>
 #include <errno.h>
 #include <urcu.h>
@@ -378,26 +380,5 @@ Suite *lock_conflict_suite(void)
 
 int main(void)
 {
-	int number_failed;
-	SRunner *sr;
-
-	rcu_register_thread();
-
-	g_sb = super_block_alloc(200, "/", REFFS_STORAGE_RAM, NULL);
-	if (!g_sb) {
-		fprintf(stderr, "super_block_alloc failed\n");
-		rcu_unregister_thread();
-		return EXIT_FAILURE;
-	}
-
-	sr = srunner_create(lock_conflict_suite());
-	srunner_set_fork_status(sr, CK_NOFORK);
-	srunner_run_all(sr, CK_NORMAL);
-	number_failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-
-	super_block_put(g_sb);
-	rcu_unregister_thread();
-
-	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+	return fs_test_run(lock_conflict_suite());
 }
