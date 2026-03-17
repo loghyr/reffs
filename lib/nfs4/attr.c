@@ -20,14 +20,14 @@
 #include "reffs/super_block.h"
 #include "reffs/filehandle.h"
 #include "reffs/utf8string.h"
-#include "attr.h"
+#include "nfs4/attr.h"
 #include "nfsv42_names.h"
 #include "reffs/time.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
-#include "compound.h"
-#include "ops.h"
-#include "errors.h"
+#include "nfs4/compound.h"
+#include "nfs4/ops.h"
+#include "nfs4/errors.h"
 
 struct nfsv42_attr {
 	fattr4_supported_attrs supported_attrs;

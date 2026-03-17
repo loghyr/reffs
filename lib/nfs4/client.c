@@ -21,7 +21,7 @@
 #include "reffs/client.h"
 #include "reffs/client_persist.h"
 #include "reffs/trace/nfs4_server.h"
-#include "nfs4_client.h"
+#include "nfs4/client.h"
 
 /* ------------------------------------------------------------------ */
 /* RCU / release callbacks                                             */

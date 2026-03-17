@@ -10,7 +10,7 @@
 
 #include "nfsv42_xdr.h"
 #include "reffs/server.h"
-#include "nfs4_client.h"
+#include "nfs4/client.h"
 
 /*
  * nfs4_client_alloc_or_find - the central EXCHANGE_ID allocation path.

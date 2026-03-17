@@ -13,9 +13,9 @@
 #include "reffs/rpc.h"
 #include "reffs/memory.h"
 #include "reffs/test.h"
-#include "compound.h"
-#include "ops.h"
-#include "errors.h"
+#include "nfs4/compound.h"
+#include "nfs4/ops.h"
+#include "nfs4/errors.h"
 
 void nfs4_op_getfh(struct compound *c)
 {

@@ -2,7 +2,7 @@
  * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * attr.h — NFSv4 bitmap4 macros and inline helpers.
+ * nfs4/attr.h — NFSv4 bitmap4 macros and inline helpers.
  */
 
 #ifndef ATTR_H

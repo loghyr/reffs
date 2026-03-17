@@ -5,12 +5,15 @@ SUBDIRS = tests
 
 AM_CFLAGS = -Im4 -I.			\
 	-I$(top_srcdir)/lib/include	\
+	-I$(top_srcdir)/lib/nfs4/include \
 	-I$(top_builddir)/lib/xdr	\
 	$(TIRPC_CFLAGS)
 
 lib_LTLIBRARIES = libreffs_nfs4.la
 libreffs_nfs4_la_SOURCES = \
 	attr.c \
+	client.c \
+	client_persist.c \
 	compound.c \
 	copy.c \
 	delegation.c \
@@ -21,20 +24,18 @@ libreffs_nfs4_la_SOURCES = \
 	filehandle.c \
 	layout.c \
 	lock.c \
-	nfs4_client.c \
-	nfs4_client_persist.c \
-	nfs4_stateid.c \
 	ops.c \
 	register.c \
 	session.c \
+	stateid.c \
 	xattr.c
 
-reffsincludedir = $(includedir)/reffs
+reffsincludedir = $(includedir)/reffs/nfs4
 reffsinclude_HEADERS = \
-	attr.h \
-	compound.h \
-	errors.h \
-	nfs4_client.h \
-	nfs4_client_persist.h \
-	nfs4_stateid.h \
-	ops.h
+	include/nfs4/attr.h \
+	include/nfs4/client.h \
+	include/nfs4/client_persist.h \
+	include/nfs4/compound.h \
+	include/nfs4/errors.h \
+	include/nfs4/ops.h \
+	include/nfs4/stateid.h

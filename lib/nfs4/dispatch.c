@@ -37,9 +37,9 @@
 #include "reffs/identity.h"
 #include "reffs/errno.h"
 #include "reffs/trace/nfs4_server.h"
-#include "errors.h"
-#include "ops.h"
-#include "compound.h"
+#include "nfs4/errors.h"
+#include "nfs4/ops.h"
+#include "nfs4/compound.h"
 
 struct op_dispatch {
 	nfs_opnum4 op;

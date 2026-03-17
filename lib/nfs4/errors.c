@@ -10,7 +10,7 @@
 #include <errno.h>
 #include "reffs/errno.h"
 #include "reffs/log.h"
-#include "errors.h"
+#include "nfs4/errors.h"
 
 #define NFS4_MAX_ERRORS_PER_OP (115)
 #define NFS_MAX_CB_OPS (20)

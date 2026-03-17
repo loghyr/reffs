@@ -28,8 +28,8 @@
 #include "reffs/client.h"
 #include "reffs/client_persist.h"
 #include "reffs/server.h"
-#include "nfs4_client.h"
-#include "nfs4_client_persist.h"
+#include "nfs4/client.h"
+#include "nfs4/client_persist.h"
 #include "nfs4_test_harness.h"
 
 /* ------------------------------------------------------------------ */

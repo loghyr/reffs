@@ -22,8 +22,8 @@
 #include "reffs/server.h"
 #include "reffs/trace/nfs4_server.h"
 #include "reffs/trace/fs.h"
-#include "nfs4_client.h"
-#include "nfs4_client_persist.h"
+#include "nfs4/client.h"
+#include "nfs4/client_persist.h"
 
 /* ------------------------------------------------------------------ */
 /* Internal helpers                                                    */

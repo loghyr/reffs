@@ -19,8 +19,8 @@
 #include "reffs/inode.h"
 #include "reffs/stateid.h"
 #include "reffs/client.h"
-#include "nfs4_stateid.h"
-#include "nfs4_client.h"
+#include "nfs4/stateid.h"
+#include "nfs4/client.h"
 
 /* ------------------------------------------------------------------ */
 /* Special Stateids                                                   */

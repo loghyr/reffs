@@ -39,9 +39,9 @@
 #include "reffs/identity.h"
 #include "reffs/errno.h"
 #include "reffs/trace/nfs4_server.h"
-#include "compound.h"
-#include "errors.h"
-#include "ops.h"
+#include "nfs4/compound.h"
+#include "nfs4/errors.h"
+#include "nfs4/ops.h"
 
 static void compound_free(struct compound *c)
 {
