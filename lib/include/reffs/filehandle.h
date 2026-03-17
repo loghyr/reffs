@@ -44,6 +44,4 @@ static inline bool network_file_handle_empty(struct network_file_handle *nfh)
 struct network_file_handle *network_file_handle_construct(uint64_t sbi,
 							  uint64_t ino);
 
-void network_file_handle_init(void);
-
 #endif

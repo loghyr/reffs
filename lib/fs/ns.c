@@ -80,8 +80,6 @@ int reffs_ns_init(void)
 
 	inode_active_put(inode);
 
-	network_file_handle_init();
-
 out:
 	if (ret)
 		reffs_ns_fini();
