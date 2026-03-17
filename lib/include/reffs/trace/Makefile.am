@@ -9,6 +9,5 @@ reffsinclude_HEADERS =	\
 	fs.h		\
 	io.h		\
 	nfs3_server.h	\
-	nfs4_server.h	\
 	rpc.h		\
 	types.h

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#ifndef _REFFS_TRACE_NFS4_SERVER_H
-#define _REFFS_TRACE_NFS4_SERVER_H
+#ifndef _REFFS_NFS4_TRACE_NFS4_H
+#define _REFFS_NFS4_TRACE_NFS4_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -12,6 +12,7 @@
 #include "reffs/trace/common.h"
 #include "reffs/rpc.h"
 #include "nfsv42_xdr.h"
+#include "nfs4/ops.h"
 
 /* Forward declaration from nfs4/ops.h */
 const char *nfs4_op_name(nfs_opnum4 op);
@@ -46,4 +47,4 @@ static inline void trace_nfs4_srv_compound(struct rpc_trans *rt)
 			  "xid=0x%08x ops = %s", rt->rt_info.ri_xid, ops_buf);
 }
 
-#endif /* _REFFS_TRACE_NFS4_SERVER_H */
+#endif /* _REFFS_NFS4_TRACE_NFS4_H */
