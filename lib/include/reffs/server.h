@@ -54,7 +54,7 @@ enum server_lifecycle {
 struct server_state {
 	/* Persisted fields — loaded at boot, saved on clean shutdown. */
 	struct server_persistent_state ss_persist;
-	char *ss_state_path;
+	char *ss_state_dir;
 
 	/* State machine */
 	enum server_lifecycle ss_lifecycle;

@@ -18,9 +18,11 @@
  * portable across machines, which is fine for a single-server
  * persistent state record.
  *
- * Path is chosen by the caller (e.g. /var/lib/reffs/mds/server_state
- * or /var/lib/reffs/ds0/server_state) so MDS and DS instances on the
- * same machine have independent records.
+ * The caller supplies a state directory (e.g. /var/lib/reffs/mds or
+ * /var/lib/reffs/ds0); individual state files (server_state,
+ * client_state, ...) are created beneath it.  MDS and DS instances on
+ * the same machine have independent directories and hence independent
+ * records.
  */
 
 #define REFFS_SERVER_STATE_MAGIC 0x52454646U /* "REFF" */
@@ -34,25 +36,24 @@ struct server_persistent_state {
 	uint8_t sps_pad;
 	uint32_t sps_slot_next; /* next unallocated client slot */
 	uint32_t sps_lease_time; /* in seconds */
-	uint32_t sps_reserved; /* pad to 24 bytes; must be zero */
-	uuid_t sps_uuid;
+	uuid_t sps_uuid; /* stable server identity across reboots */
 };
 
 /* ------------------------------------------------------------------ */
 /* Persistence I/O                                                     */
 
 /*
- * server_persist_load - read and validate the record at path.
+ * server_persist_load - read and validate the server_state file in dir.
  * Returns 0 on success, -ENOENT if not found (fresh start),
  * -EINVAL if corrupt, other -errno on I/O error.
  */
-int server_persist_load(const char *path, struct server_persistent_state *sps);
+int server_persist_load(const char *dir, struct server_persistent_state *sps);
 
 /*
- * server_persist_save - write and fdatasync the record to path.
+ * server_persist_save - write and fdatasync the server_state file in dir.
  * Returns 0 on success, -errno on failure.
  */
-int server_persist_save(const char *path,
+int server_persist_save(const char *dir,
 			const struct server_persistent_state *sps);
 
 #endif /* _REFFS_SERVER_PERSIST_H */

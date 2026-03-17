@@ -19,13 +19,31 @@
 #include "reffs/log.h"
 #include "reffs/server_persist.h"
 
-int server_persist_load(const char *path, struct server_persistent_state *sps)
+#define SERVER_STATE_FILE "server_state"
+
+static int make_state_path(char *buf, size_t bufsz, const char *dir,
+			   const char *file)
 {
+	if (snprintf(buf, bufsz, "%s/%s", dir, file) >= (int)bufsz) {
+		LOG("make_state_path: path too long: %s/%s", dir, file);
+		return -ENAMETOOLONG;
+	}
+	return 0;
+}
+
+int server_persist_load(const char *dir, struct server_persistent_state *sps)
+{
+	char path[PATH_MAX];
 	int fd;
 	ssize_t n;
+	int ret;
 
-	if (!path)
+	if (!dir)
 		return -ENOENT;
+
+	ret = make_state_path(path, sizeof(path), dir, SERVER_STATE_FILE);
+	if (ret)
+		return ret;
 
 	fd = open(path, O_RDONLY);
 	if (fd < 0) {
@@ -62,16 +80,21 @@ int server_persist_load(const char *path, struct server_persistent_state *sps)
 	return 0;
 }
 
-int server_persist_save(const char *path,
+int server_persist_save(const char *dir,
 			const struct server_persistent_state *sps)
 {
+	char path[PATH_MAX];
 	char tmp[PATH_MAX];
 	int fd;
 	ssize_t n;
 	int ret = 0;
 
-	if (!path)
+	if (!dir)
 		return -ENOENT;
+
+	ret = make_state_path(path, sizeof(path), dir, SERVER_STATE_FILE);
+	if (ret)
+		return ret;
 
 	/*
          * Write to a temp file alongside the target, then rename into
