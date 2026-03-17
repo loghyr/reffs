@@ -35,6 +35,7 @@ LDADD = \
 check_PROGRAMS = $(TESTS)
 
 TESTS = \
+	bitmap \
 	errors \
-	bitmap
+	nfs4_client_persist
 

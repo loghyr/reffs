@@ -140,6 +140,7 @@ int client_assign(struct client *client, uint64_t id,
 	 * Bump once more for the caller's reference.
 	 */
 	client_get(client);
+	trace_fs_client(client, __func__, __LINE__);
 	return 0;
 }
 
@@ -180,6 +181,8 @@ void client_remove_all_stateids(struct client *client)
 	if (!client || !client->c_stateids)
 		return;
 
+	trace_fs_client(client, __func__, __LINE__);
+
 	rcu_read_lock();
 	cds_lfht_for_each_entry(client->c_stateids, &iter, stid,
 				s_client_node) {
@@ -187,4 +190,29 @@ void client_remove_all_stateids(struct client *client)
 			stateid_put(stid);
 	}
 	rcu_read_unlock();
+}
+
+void client_unload_all_clients(void)
+{
+	struct cds_lfht_iter iter;
+	struct client *client;
+
+	LOG("unloading all clients");
+
+	struct server_state *ss = server_state_find();
+	if (!ss) {
+		LOG("No server state");
+		return;
+	}
+
+	rcu_read_lock();
+	cds_lfht_for_each_entry(ss->ss_client_ht, &iter, client, c_node) {
+		trace_fs_client(client, __func__, __LINE__);
+		client_remove_all_stateids(client);
+		if (client_unhash(client))
+			client_put(client);
+	}
+	rcu_read_unlock();
+
+	server_state_put(ss);
 }

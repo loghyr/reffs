@@ -6,8 +6,7 @@
 #ifndef _REFFS_NFS4_CLIENT_H
 #define _REFFS_NFS4_CLIENT_H
 
-#include <urcu/compiler.h> /* caa_container_of */
-
+#include "reffs/rcu.h"
 #include "nfsv42_xdr.h"
 #include "reffs/client.h"
 
@@ -15,22 +14,29 @@
  * nfs4_client - NFS4 identity wrapper around the fs-layer struct client.
  *
  * The fs layer owns lifetime (ref counting, hash table, RCU).
- * This layer owns the NFS wire identity (owner, verifier, confirmed state).
+ * This layer owns only what is needed on the fast (stateid) path:
+ * verifier, confirmed flag, address, and incarnation counter.
  *
- * Mirrors the stateid / nfs4_stateid split: the embedded struct client
- * is the anchor; caa_container_of recovers the nfs4_client from it.
+ * What is NOT stored here:
+ *
+ *   co_ownerid  — the ownerid→slot mapping lives in the clients file
+ *                 on disk.  EXCHANGE_ID is already doing IO; finding
+ *                 an existing client scans that file for the ownerid,
+ *                 recovers the slot, then calls nfs4_client_find() with
+ *                 the clientid4 built from (slot, incarnation,
+ *                 current boot_seq).  Fast paths (stateid operations)
+ *                 use clientid4 → client_find() and never touch ownerid.
+ *
+ *   nc_domain / nc_name — written once to client_identity_record at
+ *                 EXCHANGE_ID time; never needed in memory again.
  */
 struct nfs4_client {
-	client_owner4 nc_owner; /* long-hand client identity */
 	struct sockaddr_in nc_sin;
 	uint16_t nc_incarnation;
-	verifier4 nc_verifier; /* EXCHANGE_ID / SETCLIENTID verifier */
+	verifier4 nc_verifier; /* EXCHANGE_ID verifier */
 	bool nc_confirmed;
-	char *nc_domain; /* strdup'd nii_domain */
-	char *nc_name; /* strdup'd nii_name */
-	struct client nc_client; /* fs-layer object; must be last or
-	                              * after all NFS fields to keep
-	                              * caa_container_of unambiguous */
+
+	struct client nc_client; /* fs-layer object — keep last */
 };
 
 static inline struct nfs4_client *client_to_nfs4(struct client *client)
@@ -47,13 +53,14 @@ static inline struct client *nfs4_client_to_client(struct nfs4_client *nc)
 /* NFS4-aware alloc / find                                             */
 
 /*
- * nfs4_client_alloc - allocate an nfs4_client for the given owner.
- * Derives the uint64_t id from the owner (server assigns clientid4).
+ * nfs4_client_alloc - allocate an nfs4_client.
+ *
+ * No impl_id, no owner copy: both are persistence-only and live on
+ * disk.  The caller writes the identity record before calling us.
+ *
  * Caller must client_put(nfs4_client_to_client(nc)) when done.
  */
-struct nfs4_client *nfs4_client_alloc(const client_owner4 *owner,
-				      const verifier4 *verifier,
-				      const struct nfs_impl_id4 *impl_id,
+struct nfs4_client *nfs4_client_alloc(const verifier4 *verifier,
 				      const struct sockaddr_in *sin,
 				      uint16_t incarnation,
 				      clientid4 assigned_id);
@@ -64,15 +71,29 @@ struct nfs4_client *nfs4_client_alloc(const client_owner4 *owner,
  */
 struct nfs4_client *nfs4_client_find(clientid4 clid);
 
-/*
- * nfs4_client_find_by_owner - look up by client_owner4.
- * Linear scan of confirmed clients; only used on EXCHANGE_ID path.
- */
-struct nfs4_client *nfs4_client_find_by_owner(const client_owner4 *owner);
+struct nfs4_client *nfs4_client_get(struct nfs4_client *nc);
+void nfs4_client_put(struct nfs4_client *nc);
 
 /*
- * Assign the clientid
+ * nfs4_client_find_by_owner - find an in-memory client by ownerid.
+ *
+ * Scans the clients file for an ownerid match to recover the slot,
+ * then looks up the active incarnation for that slot, builds the
+ * clientid4 from (slot, incarnation, boot_seq), and calls
+ * nfs4_client_find().
+ *
+ * Only called on the EXCHANGE_ID path — disk IO is expected here.
+ *
+ * Returns ref-bumped nfs4_client or NULL (not found or I/O error).
+ * Caller must client_put().
  */
+struct nfs4_client *nfs4_client_find_by_owner(const char *state_dir,
+					      uint16_t boot_seq,
+					      const client_owner4 *owner);
+
+/* ------------------------------------------------------------------ */
+/* clientid4 bit-packing                                               */
+
 #define CLIENTID_SLOT_BITS 32
 #define CLIENTID_INCARNATION_BITS 16
 #define CLIENTID_BOOT_BITS 16

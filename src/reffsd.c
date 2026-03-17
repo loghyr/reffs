@@ -44,6 +44,7 @@
 #include "reffs/types.h"
 #include "sm_inter.h"
 #include "reffs/fs.h"
+#include "reffs/client.h"
 #include "reffs/trace/common.h"
 
 #define NFS_PORT 2049
@@ -442,6 +443,8 @@ out:
 	mount3_protocol_deregister();
 	nfs3_protocol_deregister();
 	nfs4_protocol_deregister();
+
+	client_unload_all_clients();
 
 	server_state_fini(ss);
 

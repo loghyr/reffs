@@ -21,6 +21,7 @@
 #include "reffs/client_persist.h"
 #include "reffs/server.h"
 #include "reffs/trace/nfs4_server.h"
+#include "reffs/trace/fs.h"
 #include "nfs4_client.h"
 #include "nfs4_client_persist.h"
 
@@ -32,17 +33,6 @@ static bool verifier_eq(const verifier4 *a, const verifier4 *b)
 	return memcmp(a, b, NFS4_VERIFIER_SIZE) == 0;
 }
 
-#ifdef NOT_NOW_BROWN_COW
-static bool ownerid_eq(const client_owner4 *a, const client_owner4 *b)
-{
-	if (a->co_ownerid.co_ownerid_len != b->co_ownerid.co_ownerid_len)
-		return false;
-	return memcmp(a->co_ownerid.co_ownerid_val,
-		      b->co_ownerid.co_ownerid_val,
-		      a->co_ownerid.co_ownerid_len) == 0;
-}
-#endif
-
 static bool addr_eq(const struct sockaddr_in *a, const struct sockaddr_in *b)
 {
 	return a->sin_addr.s_addr == b->sin_addr.s_addr &&
@@ -50,8 +40,8 @@ static bool addr_eq(const struct sockaddr_in *a, const struct sockaddr_in *b)
 }
 
 /*
- * Build a client_incarnation_record from the current server state and
- * the wire parameters.
+ * Build a client_incarnation_record from current server state and wire
+ * parameters.
  */
 static void make_incarnation_record(struct client_incarnation_record *crc,
 				    const struct server_state *ss,
@@ -69,7 +59,10 @@ static void make_incarnation_record(struct client_incarnation_record *crc,
 }
 
 /*
- * Build a client_identity_record from the wire parameters.
+ * Build a client_identity_record from wire parameters.
+ *
+ * impl_id (domain + name) is consumed here and only here — these are
+ * persistence fields that must not be stored on struct nfs4_client.
  */
 static void make_identity_record(struct client_identity_record *cir,
 				 uint32_t slot, const client_owner4 *owner,
@@ -88,15 +81,13 @@ static void make_identity_record(struct client_identity_record *cir,
 	memcpy(cir->cir_ownerid, owner->co_ownerid.co_ownerid_val, oid_len);
 
 	if (impl_id) {
-		if (impl_id->nii_domain.utf8string_val) {
+		if (impl_id->nii_domain.utf8string_val)
 			strncpy(cir->cir_domain,
 				impl_id->nii_domain.utf8string_val,
 				sizeof(cir->cir_domain) - 1);
-		}
-		if (impl_id->nii_name.utf8string_val) {
+		if (impl_id->nii_name.utf8string_val)
 			strncpy(cir->cir_name, impl_id->nii_name.utf8string_val,
 				sizeof(cir->cir_name) - 1);
-		}
 	}
 }
 
@@ -105,24 +96,24 @@ static void make_identity_record(struct client_identity_record *cir,
 
 void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 {
-	struct client *c = nfs4_client_to_client(nc);
-	uint32_t slot = (uint32_t)c->c_id; /* low 32 bits = slot */
-
-	// trace_nfs4_client(nc, __func__, __LINE__);
+	struct client *client = nfs4_client_to_client(nc);
+	uint32_t slot = (uint32_t)client->c_id;
 
 	/*
-         * Order matters:
-         *   1. Remove from incarnations file — crash after this but
-         *      before step 2 is safe; next boot won't try to recover
-         *      state for this slot.
-         *   2. Drain stateids — drops their refs and unhashes them.
-         *   3. Unhash and drop the client ref.
-         */
+	 * Order matters — see handoff invariants:
+	 *   1. Remove from incarnations file — crash after this but
+	 *      before step 2 is safe; next boot skips recovery for slot.
+	 *   2. Drain stateids.
+	 *   3. Unhash and drop the client ref.
+	 */
 	if (client_incarnation_remove(ss->ss_state_dir, slot))
 		LOG("nfs4_client_expire: slot %u not in incarnations", slot);
 
-	client_remove_all_stateids(c);
-	client_put(c);
+	trace_fs_client(client, __func__, __LINE__);
+	client_remove_all_stateids(client);
+	if (client_unhash(client))
+		client_put(client);
+	client_put(client);
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,14 +135,12 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 	char addr_new[REFFS_ADDR_LEN];
 
 	/*
-         * Look up the ownerid in the in-memory client map.
-         * NOT_NOW_BROWN_COW: the in-memory map is not yet implemented;
-         * nfs4_client_find_by_owner() currently returns NULL always.
-         * When the map is in place, this is the only code path that
-         * changes.
-         */
-	nc = nfs4_client_find_by_owner(owner);
-
+	 * Scan the clients file for this ownerid → slot, then look up
+	 * the active incarnation → clientid4 → in-memory client.
+	 * Disk IO here is expected; EXCHANGE_ID is not a fast path.
+	 */
+	nc = nfs4_client_find_by_owner(ss->ss_state_dir, server_boot_seq(ss),
+				       owner);
 	if (!nc) {
 		/* -------------------------------------------------- */
 		/* New client — never seen this ownerid before.        */
@@ -163,16 +152,17 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 		incarnation = 0;
 		clid = clientid_make(slot, incarnation, server_boot_seq(ss));
 
-		nc = nfs4_client_alloc(owner, verifier, impl_id, sin,
-				       incarnation, clid);
-		if (!nc)
+		/*
+		 * Write identity record first (ownerid + domain + name
+		 * to disk).  This is the only place impl_id is consumed.
+		 */
+		make_identity_record(&cir, slot, owner, impl_id);
+		if (client_identity_append(ss->ss_state_dir, &cir))
 			return NULL;
 
-		make_identity_record(&cir, slot, owner, impl_id);
-		if (client_identity_append(ss->ss_state_dir, &cir)) {
-			client_put(nfs4_client_to_client(nc));
+		nc = nfs4_client_alloc(verifier, sin, incarnation, clid);
+		if (!nc)
 			return NULL;
-		}
 
 		make_incarnation_record(&crc, ss, slot, incarnation, verifier,
 					sin);
@@ -197,9 +187,9 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 
 	if (same_verifier && !same_addr) {
 		/*
-                 * Same verifier, different address — multi-homed client.
-                 * The client is the same logical entity; return it as-is.
-                 */
+		 * Same verifier, different address — multi-homed client.
+		 * Return the existing client unchanged.
+		 */
 		LOG("nfs4_client_alloc_or_find: slot %u multi-homed "
 		    "(new addr differs, verifier matches)",
 		    (uint32_t)nfs4_client_to_client(nc)->c_id);
@@ -208,11 +198,10 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 
 	if (!same_verifier && !same_addr) {
 		/*
-                 * Different verifier AND different address — two distinct
-                 * clients claim the same co_ownerid.  This is a
-                 * misconfiguration; refuse and let the caller return
-                 * NFS4ERR_CLID_INUSE.
-                 */
+		 * Different verifier AND different address — two distinct
+		 * clients claim the same co_ownerid.  Refuse; caller
+		 * returns NFS4ERR_CLID_INUSE.
+		 */
 		sockaddr_in_to_full_str(&nc->nc_sin, addr_existing,
 					sizeof(addr_existing));
 		sockaddr_in_to_full_str(sin, addr_new, sizeof(addr_new));
@@ -231,18 +220,15 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 	clid = clientid_make(slot, incarnation, server_boot_seq(ss));
 
 	/*
-         * Expire the old client first — removes from incarnations file,
-         * drains stateids, drops ref.  nc is invalid after this call.
-         */
+	 * Expire the old client — removes from incarnations file,
+	 * drains stateids, drops ref.  nc is invalid after this.
+	 */
 	nfs4_client_expire(ss, nc);
 	nc = NULL;
 
-	nc = nfs4_client_alloc(owner, verifier, impl_id, sin, incarnation,
-			       clid);
+	nc = nfs4_client_alloc(verifier, sin, incarnation, clid);
 	if (!nc)
 		return NULL;
-
-	nc->nc_incarnation = incarnation;
 
 	make_incarnation_record(&crc, ss, slot, incarnation, verifier, sin);
 	if (client_incarnation_add(ss->ss_state_dir, &crc)) {
@@ -250,5 +236,9 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 		return NULL;
 	}
 
+	/*
+	 * No new identity record on restart: the ownerid→slot mapping
+	 * in the clients file is permanent for this slot.
+	 */
 	return nc;
 }

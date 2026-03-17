@@ -9,8 +9,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include <urcu/ref.h>
-#include <urcu/rculfhash.h>
+#include "reffs/rcu.h"
 
 #define CLIENT_IS_HASHED (1ULL << 0)
 #define CLIENT_IS_SHUTTING_DOWN (1ULL << 1)
@@ -69,5 +68,10 @@ bool client_unhash(struct client *client);
  * Must be called before client_put() drops the last ref during expiry.
  */
 void client_remove_all_stateids(struct client *client);
+
+/*
+ * client_unload_all_clients - drain clients, dropping each ref.
+ */
+void client_unload_all_clients(void);
 
 #endif /* _REFFS_CLIENT_H */
