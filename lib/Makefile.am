@@ -7,15 +7,15 @@ SUBDIRS =		\
 	xdr		\
 	include		\
 	trace		\
-	utils		\
 	backends	\
+	utils		\
+	io		\
+	rpc		\
 	fs		\
 	nlm		\
 	nsm		\
 	mount3		\
 	nfs3		\
 	nfs4		\
-	rpc		\
-	io		\
 	probe1		\
 	tests

@@ -11,4 +11,5 @@ lib_LTLIBRARIES = libbackends.la
 libbackends_la_SOURCES = \
 	driver.c \
 	ram.c \
-	posix.c
+	posix.c \
+	server_persist.c

@@ -20,19 +20,19 @@ AM_CFLAGS = \
 	$(JEMALLOC_FLAGS)
 
 LDADD = \
-	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
-	$(top_builddir)/lib/backends/libbackends.la	\
-	$(top_builddir)/lib/trace/libreffs_trace.la	\
-	$(top_builddir)/lib/io/libreffs_io.la		\
-	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
+	$(top_builddir)/lib/nfs4/libreffs_nfs4.la	\
+	$(top_builddir)/lib/nfs3/libreffs_nfs3.la	\
 	$(top_builddir)/lib/mount3/libreffs_mount3.la	\
 	$(top_builddir)/lib/nlm/libnlm.la		\
 	$(top_builddir)/lib/nsm/libnsm.la		\
-	$(top_builddir)/lib/nfs3/libreffs_nfs3.la	\
-	$(top_builddir)/lib/nfs4/libreffs_nfs4.la	\
 	$(top_builddir)/lib/probe1/libreffs_probe1.la	\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\
+	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
+	$(top_builddir)/lib/io/libreffs_io.la		\
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
+	$(top_builddir)/lib/trace/libreffs_trace.la	\
+	$(top_builddir)/lib/backends/libbackends.la	\
+	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
 	$(TIRPC_LIBS)					\
 	$(PTHREAD_LIBS)					\
 	$(UUID_LIBS)					\

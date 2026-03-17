@@ -51,6 +51,7 @@
 #include "reffs/ns.h"
 #include "reffs/context.h"
 #include "reffs/log.h"
+#include "reffs/server.h"
 
 /*
  * Process-wide uid/gid captured during setup; used by tests that verify

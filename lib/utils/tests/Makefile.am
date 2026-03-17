@@ -14,6 +14,10 @@ AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 LDADD = \
 	@CHECK_LIBS@					\
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
+	$(top_builddir)/lib/backends/libbackends.la	\
+	$(top_builddir)/lib/fs/libreffs_fs.la		\
+	$(top_builddir)/lib/trace/libreffs_trace.la	\
+	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
 	-lxxhash					\
 	-lpthread					\
 	$(URCU_LIBS) $(URCU_CDS_LIBS) $(FUSE_LIBS)	\
