@@ -36,6 +36,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
+#include <limits.h>
 #include "posix_recovery.h"
 #include "reffs/fs.h"
 #include "reffs/test.h"
@@ -65,7 +66,7 @@ START_TEST(test_meta_not_overwritten_during_recovery)
 	/*
 	 * Snapshot the .meta content BEFORE recovery so we can compare after.
 	 */
-	char meta_path[1024];
+	char meta_path[PATH_MAX];
 	snprintf(meta_path, sizeof(meta_path), "%s/sb_1/ino_2.meta",
 		 ctx.backend_path);
 

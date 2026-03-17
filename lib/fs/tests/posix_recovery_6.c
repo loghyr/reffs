@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <limits.h>
 #include "posix_recovery.h"
 #include "reffs/fs.h"
 #include "reffs/inode.h"
@@ -48,13 +49,13 @@ START_TEST(test_atomic_write)
 	 */
 	inode_sync_to_disk(inode);
 
-	char path[1024];
+	char path[PATH_MAX];
 	snprintf(path, sizeof(path), "%s/sb_1/ino_%lu.meta", ctx.backend_path,
 		 inode->i_ino);
 	ck_assert_int_eq(access(path, F_OK), 0);
 
 	/* Ensure no stray .tmp file is left behind */
-	char tmp_path[1024];
+	char tmp_path[PATH_MAX];
 	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
 	ck_assert_int_ne(access(tmp_path, F_OK), 0);
 

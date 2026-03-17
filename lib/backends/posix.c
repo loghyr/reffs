@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <time.h>
+#include <limits.h>
 #include <sys/syscall.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -40,7 +41,7 @@ static int posix_sb_alloc(struct super_block *sb, const char *backend_path)
 	if (!priv)
 		return ENOMEM;
 
-	char sb_dir[1024];
+	char sb_dir[PATH_MAX];
 	snprintf(sb_dir, sizeof(sb_dir), "%s/sb_%lu", backend_path, sb->sb_id);
 	if (mkdir(sb_dir, 0755) < 0 && errno != EEXIST) {
 		LOG("mkdir %s failed: %s", sb_dir, strerror(errno));
@@ -83,8 +84,8 @@ static void posix_inode_sync(struct inode *inode)
 	if (!sb_priv)
 		return;
 
-	char path[1024];
-	char tmp_path[1024];
+	char path[PATH_MAX];
+	char tmp_path[PATH_MAX];
 	snprintf(path, sizeof(path), "%s/ino_%lu.meta", sb_priv->sb_dir,
 		 inode->i_ino);
 	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
@@ -166,7 +167,7 @@ static int posix_db_alloc(struct data_block *db, struct inode *inode,
 	if (!priv)
 		return -ENOMEM;
 
-	char path[1024];
+	char path[PATH_MAX];
 	snprintf(path, sizeof(path), "%s/ino_%lu.dat", sb_priv->sb_dir,
 		 inode->i_ino);
 	priv->db_path = strdup(path);
@@ -297,8 +298,8 @@ static void posix_dir_sync(struct inode *inode)
 	trace_fs_inode(inode, __func__, __LINE__);
 	struct reffs_dirent *self = inode->i_dirent;
 
-	char path[1024];
-	char tmp_path[1024];
+	char path[PATH_MAX];
+	char tmp_path[PATH_MAX];
 	snprintf(path, sizeof(path), "%s/ino_%lu.dir", sb_priv->sb_dir,
 		 inode->i_ino);
 	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
@@ -382,7 +383,7 @@ static int inode_load_from_disk(struct inode *inode)
 
 	struct inode_disk id;
 	struct reffs_disk_header hdr;
-	char path[1024];
+	char path[PATH_MAX];
 
 	snprintf(path, sizeof(path), "%s/ino_%lu.meta", sb_priv->sb_dir,
 		 inode->i_ino);
@@ -501,7 +502,7 @@ static int posix_dir_open(struct super_block *sb, uint64_t dir_ino, int *fd_out)
 	if (!sb_priv)
 		return -EINVAL;
 
-	char path[1024];
+	char path[PATH_MAX];
 	snprintf(path, sizeof(path), "%s/ino_%lu.dir", sb_priv->sb_dir,
 		 dir_ino);
 
@@ -652,7 +653,7 @@ static void posix_inode_free(struct inode *inode)
 
 	trace_fs_inode(inode, __func__, __LINE__);
 
-	char path[1024];
+	char path[PATH_MAX];
 
 	snprintf(path, sizeof(path), "%s/ino_%lu.meta", sb_priv->sb_dir,
 		 inode->i_ino);

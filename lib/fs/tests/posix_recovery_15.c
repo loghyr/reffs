@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <limits.h>
 #include "posix_recovery.h"
 #include "reffs/fs.h"
 #include "reffs/inode.h"
@@ -24,7 +25,7 @@
 static int write_custom_meta(struct test_context *ctx, uint64_t ino,
 			     uint32_t magic, uint32_t version)
 {
-	char path[1024];
+	char path[PATH_MAX];
 	snprintf(path, sizeof(path), "%s/sb_1/ino_%lu.meta", ctx->backend_path,
 		 ino);
 	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);

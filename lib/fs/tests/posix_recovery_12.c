@@ -33,6 +33,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <limits.h>
 #include "posix_recovery.h"
 #include "reffs/fs.h"
 #include "reffs/test.h"
@@ -56,7 +57,7 @@ START_TEST(test_stray_tmp_ignored)
 	 * Simulate a stray .tmp left by a crash: write garbage (zeroed
 	 * inode_disk) to ino_2.meta.tmp.
 	 */
-	char tmp_path[1024];
+	char tmp_path[PATH_MAX];
 	snprintf(tmp_path, sizeof(tmp_path), "%s/sb_1/ino_2.meta.tmp",
 		 ctx.backend_path);
 	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);

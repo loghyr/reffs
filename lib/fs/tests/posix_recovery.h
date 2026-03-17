@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
 #include "reffs/dirent.h"
@@ -15,7 +16,7 @@
 #include "fs_test_harness.h"
 
 struct test_context {
-	char backend_path[1024];
+	char backend_path[PATH_MAX];
 	struct super_block *sb;
 };
 
