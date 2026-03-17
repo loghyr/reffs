@@ -274,6 +274,14 @@ struct server_state *server_state_init(const char *state_path, int port)
 	return ss;
 
 err_path:
+	if (ss->ss_client_ht) {
+		ret = cds_lfht_destroy(ss->ss_client_ht, NULL);
+		if (ret < 0) {
+			LOG("Could not delete a hash table: %m");
+		}
+		ss->ss_client_ht = NULL;
+	}
+
 	free(ss->ss_state_dir);
 	free(ss);
 	return NULL;
@@ -281,6 +289,8 @@ err_path:
 
 void server_state_fini(struct server_state *ss)
 {
+	int ret;
+
 	if (!ss)
 		return;
 
@@ -297,6 +307,14 @@ void server_state_fini(struct server_state *ss)
 	ss->ss_persist.sps_clean_shutdown = 1;
 	if (server_persist_save(ss->ss_state_dir, &ss->ss_persist))
 		LOG("server_state_fini: failed to save clean shutdown flag");
+
+	if (ss->ss_client_ht) {
+		ret = cds_lfht_destroy(ss->ss_client_ht, NULL);
+		if (ret < 0) {
+			LOG("Could not delete a hash table: %m");
+		}
+		ss->ss_client_ht = NULL;
+	}
 
 	/*
          * Drop the initial ref taken in server_state_init().  If protocol

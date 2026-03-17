@@ -18,6 +18,7 @@
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
 #include "reffs/server.h"
+#include "reffs/client.h"
 #include "fs_test_harness.h"
 
 uid_t fs_test_uid;
@@ -83,6 +84,7 @@ void reffs_test_setup_server(void)
 void reffs_test_teardown_server(void)
 {
 	if (fs_test_ss) {
+		client_unload_all_clients();
 		server_state_fini(fs_test_ss);
 		fs_test_ss = NULL;
 	}

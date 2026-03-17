@@ -19,6 +19,7 @@ static inline void nfs4_test_setup(void)
 
 static inline void nfs4_test_teardown(void)
 {
+	nfs4_protocol_deregister();
 	fs_test_teardown();
 	reffs_test_teardown_server();
 }
