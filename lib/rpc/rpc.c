@@ -616,6 +616,16 @@ drop_on_floor:
 	return EINVAL;
 }
 
+void rpc_trans_get_sockaddr_in(struct rpc_trans *rt, struct sockaddr_in *sin)
+{
+	struct connection_info *ci = &rt->rt_info.ri_ci;
+
+	memset(sin, 0, sizeof(*sin));
+	if (ci->ci_peer.ss_family == AF_INET) {
+		memcpy(sin, &ci->ci_peer, sizeof(struct sockaddr_in));
+	}
+}
+
 int rpc_process_task(struct task *t)
 {
 	u_long msg_len = 0;

@@ -40,3 +40,22 @@ void addr_to_string(const struct sockaddr_storage *addr, char *buf,
 			*port = 0;
 	}
 }
+
+void sockaddr_in_to_str(const struct sockaddr_in *sin, char *buf, size_t buflen)
+{
+	inet_ntop(AF_INET, &sin->sin_addr, buf, buflen);
+}
+
+void sockaddr_in_to_full_str(const struct sockaddr_in *sin, char *buf,
+			     size_t buflen)
+{
+	char ip[INET6_ADDRSTRLEN];
+	uint16_t port;
+
+	inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip));
+	port = ntohs(sin->sin_port);
+
+	snprintf(buf, buflen, "%s.%hhu.%hhu", ip,
+		 (unsigned char)((port >> 8) & 0xFF),
+		 (unsigned char)(port & 0xFF));
+}
