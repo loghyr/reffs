@@ -71,7 +71,7 @@ static void server_state_free(struct urcu_ref *ref)
 	if (ss->ss_client_ht)
 		cds_lfht_destroy(ss->ss_client_ht, NULL);
 
-	free(ss->ss_state_path);
+	free(ss->ss_state_dir);
 	free(ss);
 }
 
@@ -163,7 +163,7 @@ uint32_t server_alloc_client_slot(struct server_state *ss)
          * Persist the incremented slot_next before returning so the
          * slot survives a crash between alloc and client confirmation.
          */
-	if (server_persist_save(ss->ss_state_path, &ss->ss_persist)) {
+	if (server_persist_save(ss->ss_state_dir, &ss->ss_persist)) {
 		LOG("server_alloc_client_slot: failed to persist slot %u",
 		    slot);
 		/* Roll back and signal error. */
@@ -188,8 +188,8 @@ struct server_state *server_state_init(const char *state_path, int port)
 		return NULL;
 
 	if (state_path) {
-		ss->ss_state_path = strdup(state_path);
-		if (!ss->ss_state_path) {
+		ss->ss_state_dir = strdup(state_path);
+		if (!ss->ss_state_dir) {
 			free(ss);
 			return NULL;
 		}
@@ -207,7 +207,7 @@ struct server_state *server_state_init(const char *state_path, int port)
 		ss->ss_persist.sps_clean_shutdown = 1;
 		ss->ss_persist.sps_slot_next = 1; /* 0 is sentinel */
 		ss->ss_persist.sps_lease_time = DEFAULT_LEASE_TIME;
-		uuid_generate(ss->ss_uuid);
+		uuid_generate(ss->ss_persist.sps_uuid);
 		LOG("server_state_init: fresh start at %s", state_path);
 	} else if (ret) {
 		LOG("server_state_init: failed to load state from %s: %d",
@@ -229,6 +229,8 @@ struct server_state *server_state_init(const char *state_path, int port)
 		LOG("server_state_init: failed to save state: %d", ret);
 		goto err_path;
 	}
+
+	uuid_copy(ss->ss_uuid, ss->ss_persist.sps_uuid);
 
 	/* Determine grace period. */
 	ss->ss_grace_time = ss->ss_persist.sps_lease_time ?
@@ -272,7 +274,7 @@ struct server_state *server_state_init(const char *state_path, int port)
 	return ss;
 
 err_path:
-	free(ss->ss_state_path);
+	free(ss->ss_state_dir);
 	free(ss);
 	return NULL;
 }
@@ -293,7 +295,7 @@ void server_state_fini(struct server_state *ss)
          * intentional and conservative.
          */
 	ss->ss_persist.sps_clean_shutdown = 1;
-	if (server_persist_save(ss->ss_state_path, &ss->ss_persist))
+	if (server_persist_save(ss->ss_state_dir, &ss->ss_persist))
 		LOG("server_state_fini: failed to save clean shutdown flag");
 
 	/*
