@@ -9,10 +9,12 @@ AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 	$(URING_CFLAGS)						\
 	$(ZSTD_CFLAGS)						\
 	-I$(top_srcdir)/lib/include				\
+	-I$(top_srcdir)/lib/tests				\
 	-I$(top_builddir)/lib/xdr
 
 LDADD = \
 	@CHECK_LIBS@					\
+	$(top_builddir)/lib/tests/libreffs_test.la	\
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
 	$(top_builddir)/lib/backends/libbackends.la	\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\

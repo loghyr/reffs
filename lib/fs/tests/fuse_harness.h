@@ -8,12 +8,6 @@
 
 /*
  * Common setup/teardown for fuse-layer unit tests.
- *
- * Each fuse_N.c test calls fuse_test_setup() in its checked_setup fixture and
- * fuse_test_teardown() in its checked_teardown fixture.  Because CK_NOFORK is
- * used, the namespace is shared across all tests in a single suite run; each
- * individual test is responsible for leaving the namespace clean (i.e. it
- * must remove everything it creates).
  */
 
 #ifdef HAVE_CONFIG_H
@@ -24,56 +18,8 @@
 #include <jemalloc/jemalloc.h>
 #endif
 
-#include <errno.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <time.h>
-#include <unistd.h>
-#include <urcu.h>
-#include <urcu/rculist.h>
-#include <urcu/ref.h>
-#include <check.h>
-
-#include "reffs/super_block.h"
-#include "reffs/inode.h"
+#include "fs_test_harness.h"
 #include "reffs/fuse.h"
-#include "reffs/log.h"
-#include "reffs/fs.h"
-#include "reffs/ns.h"
-#include "reffs/context.h"
-#include "reffs/server.h"
-
-/*
- * Root uid/gid captured during setup; tests that verify uid/gid inheritance
- * compare against these.
- */
-extern uid_t fuse_test_uid;
-extern gid_t fuse_test_gid;
-
-/*
- * Call once per process before srunner_run_all().  Registers the RCU thread.
- */
-static inline void fuse_test_global_init(void)
-{
-	rcu_register_thread();
-	setenv("REFFS_FUSE_UNIT_TEST", "1", 1);
-	reffs_trace_init(NULL);
-	reffs_trace_enable_all_categories();
-	reffs_log_file = stderr;
-}
-
-static inline void fuse_test_global_fini(void)
-{
-	reffs_trace_close();
-	rcu_unregister_thread();
-	synchronize_rcu();
-	rcu_barrier();
-}
 
 /*
  * Per-suite checked setup: initialise the namespace and capture root
@@ -81,38 +27,28 @@ static inline void fuse_test_global_fini(void)
  */
 static inline void fuse_test_setup(void)
 {
-	struct super_block *sb;
-	struct inode *inode;
-	int ret;
-	struct reffs_context ctx;
-
-	fuse_test_uid = getuid();
-	fuse_test_gid = getgid();
-	ctx.uid = fuse_test_uid;
-	ctx.gid = fuse_test_gid;
-	reffs_set_context(&ctx);
-
-	ret = reffs_ns_init();
-	ck_assert_int_eq(ret, 0);
-
-	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
-	ck_assert_ptr_nonnull(sb);
-
-	inode = inode_find(sb, INODE_ROOT_ID);
-	ck_assert_ptr_nonnull(inode);
-
-	fuse_test_uid = getuid();
-	fuse_test_gid = getgid();
-	inode->i_uid = fuse_test_uid;
-	inode->i_gid = fuse_test_gid;
-
-	inode_put(inode);
-	super_block_put(sb);
+	fs_test_setup();
+	fuse_test_uid = fs_test_uid;
+	fuse_test_gid = fs_test_gid;
 }
 
 static inline void fuse_test_teardown(void)
 {
-	reffs_ns_fini();
+	fs_test_teardown();
+}
+
+/*
+ * Set environment for FUSE unit tests
+ */
+static inline void fuse_test_init(void)
+{
+	setenv("REFFS_FUSE_UNIT_TEST", "1", 1);
+}
+
+/* Run a fuse test suite */
+static inline int fuse_test_run(Suite *s)
+{
+	return reffs_test_run_suite(s, fuse_test_init, NULL);
 }
 
 /*
@@ -130,20 +66,5 @@ static inline void sleep_past(const struct timespec *ref)
 	} while (now.tv_sec == ref->tv_sec && now.tv_nsec <= ref->tv_nsec &&
 		 ++tries < 100);
 }
-
-/*
- * Convenience: assert that timespec A < timespec B.
- */
-#define ck_assert_timespec_lt(a, b)                          \
-	ck_assert_msg(((a).tv_sec < (b).tv_sec) ||           \
-			      (((a).tv_sec == (b).tv_sec) && \
-			       ((a).tv_nsec < (b).tv_nsec)), \
-		      "expected " #a " < " #b)
-
-#define ck_assert_timespec_eq(a, b)                         \
-	do {                                                \
-		ck_assert_int_eq((a).tv_sec, (b).tv_sec);   \
-		ck_assert_int_eq((a).tv_nsec, (b).tv_nsec); \
-	} while (0)
 
 #endif /* _REFFS_TEST_FUSE_HARNESS_H */

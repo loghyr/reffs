@@ -9,9 +9,6 @@
 
 #include "fs_test_harness.h"
 
-uid_t fs_test_uid;
-gid_t fs_test_gid;
-
 static void setup(void)
 {
 	fs_test_setup();
@@ -94,12 +91,5 @@ Suite *fs_usage_ram_suite(void)
 
 int main(void)
 {
-	int failed;
-	fs_test_global_init();
-	SRunner *sr = srunner_create(fs_usage_ram_suite());
-	srunner_run_all(sr, CK_NORMAL);
-	failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-	fs_test_global_fini();
-	return failed ? EXIT_FAILURE : EXIT_SUCCESS;
+	return fs_test_run(fs_usage_ram_suite());
 }

@@ -11,6 +11,7 @@
 #include <stdlib.h>
 
 #include "attr.h"
+#include "nfs4_test_harness.h"
 
 /*
  * supported_attributes is defined in fattr4.c and populated by
@@ -693,11 +694,5 @@ Suite *bitmap_suite(void)
 
 int main(void)
 {
-	int failed;
-	SRunner *sr = srunner_create(bitmap_suite());
-	srunner_set_fork_status(sr, CK_NOFORK);
-	srunner_run_all(sr, CK_NORMAL);
-	failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-	return failed ? EXIT_FAILURE : EXIT_SUCCESS;
+	return nfs4_test_run(bitmap_suite());
 }

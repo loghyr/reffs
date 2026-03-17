@@ -11,6 +11,8 @@
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
 #include "reffs/dirent.h"
+#include "libreffs_test.h"
+#include "fs_test_harness.h"
 
 struct test_context {
 	char backend_path[1024];

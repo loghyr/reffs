@@ -16,9 +16,6 @@
 #include "reffs/context.h"
 #include "fs_test_harness.h"
 
-uid_t fs_test_uid;
-gid_t fs_test_gid;
-
 START_TEST(test_rename_src_parent_no_write)
 {
 	struct reffs_context ctx = { .uid = 1000, .gid = 1000 };
@@ -167,18 +164,5 @@ Suite *fs_permission_suite(void)
 
 int main(void)
 {
-	int number_failed;
-
-	fs_test_global_init();
-
-	SRunner *sr = srunner_create(fs_permission_suite());
-
-	srunner_set_fork_status(sr, CK_NOFORK);
-	srunner_run_all(sr, CK_NORMAL);
-	number_failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-
-	fs_test_global_fini();
-
-	return (number_failed == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+	return fs_test_run(fs_permission_suite());
 }
