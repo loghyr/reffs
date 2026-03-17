@@ -36,22 +36,3 @@ struct network_file_handle *network_file_handle_construct(uint64_t sbi,
 
 	return nfh;
 }
-
-void network_file_handle_init(void)
-{
-	uuid_t *boot_uuid = server_boot_uuid_get();
-	uint64_t bits = 0;
-
-	// Use the last 6 bytes of the UUID (48 bits)
-	// UUID is 16 bytes total
-	bits |= ((uint64_t)(*boot_uuid)[10]) << 40;
-	bits |= ((uint64_t)(*boot_uuid)[11]) << 32;
-	bits |= ((uint64_t)(*boot_uuid)[12]) << 24;
-	bits |= ((uint64_t)(*boot_uuid)[13]) << 16;
-	bits |= ((uint64_t)(*boot_uuid)[14]) << 8;
-	bits |= ((uint64_t)(*boot_uuid)[15]);
-
-	nfh_reserved_1 = (bits >> 32) & 0xFFFF;
-	nfh_reserved_2 = (bits >> 16) & 0xFFFF;
-	nfh_reserved_3 = (bits >> 0) & 0xFFFF;
-}
