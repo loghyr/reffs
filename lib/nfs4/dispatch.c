@@ -151,6 +151,7 @@ void dispatch_compound(struct compound *c)
 		nfs_resop4 *resop = &res->resarray.resarray_val[c->c_curr_op];
 		bool found = false;
 
+		resop->resop = argop->argop;
 		for (int i = 0; i < OP_MAX; i++) {
 			if (op_table[i].op == argop->argop) {
 				op_table[i].cb(c);
