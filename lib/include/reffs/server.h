@@ -85,6 +85,14 @@ struct server_state {
 	/* Unique server id */
 	uuid_t ss_uuid;
 
+	/*
+	 * Human-readable server owner string used in EXCHANGE_ID responses:
+	 * "Reffs NFSv4.2 <uuid>/<hostname>"
+	 * Built once in server_state_init(), freed in server_state_free().
+	 */
+	char *ss_owner_id;
+	size_t ss_owner_id_len;
+
 	int ss_port;
 };
 
