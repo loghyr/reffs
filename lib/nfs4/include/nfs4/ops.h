@@ -82,6 +82,17 @@ void nfs4_op_setxattr(struct compound *c);
 void nfs4_op_listxattrs(struct compound *c);
 void nfs4_op_removexattr(struct compound *c);
 void nfs4_op_access_mask(struct compound *c);
+void nfs4_op_chunk_commit(struct compound *c);
+void nfs4_op_chunk_error(struct compound *c);
+void nfs4_op_chunk_finalize(struct compound *c);
+void nfs4_op_chunk_header_read(struct compound *c);
+void nfs4_op_chunk_lock(struct compound *c);
+void nfs4_op_chunk_read(struct compound *c);
+void nfs4_op_chunk_repaired(struct compound *c);
+void nfs4_op_chunk_rollback(struct compound *c);
+void nfs4_op_chunk_unlock(struct compound *c);
+void nfs4_op_chunk_write(struct compound *c);
+void nfs4_op_chunk_write_repair(struct compound *c);
 void nfs4_op_illegal(struct compound *c);
 
 const char *nfs4_op_name(nfs_opnum4 op);

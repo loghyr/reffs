@@ -246,7 +246,13 @@ enum nfsstat4 {
  /* xattr errors start here. */
 
  NFS4ERR_NOXATTR        = 10095,/* xattr does not exist    */
- NFS4ERR_XATTR2BIG      = 10096 /* xattr value is too big  */
+ NFS4ERR_XATTR2BIG      = 10096, /* xattr value is too big  */
+
+ /* Erasure Coding errors start here. */
+ NFS4ERR_CODING_NOT_SUPPORTED = 10097,/* Coding Type unsupported  */
+ NFS4ERR_PAYLOAD_NOT_CONSISTENT = 10098,/* payload inconsitent  */
+ NFS4ERR_CHUNK_LOCKED   = 10099,/* chunk is locked  */
+ NFS4ERR_CHUNK_GUARDED  = 10100 /* chunk is guarded  */
 };
 
 /*
@@ -965,6 +971,12 @@ typedef bool            fattr4_uncacheable;
 
 typedef open_arguments4 fattr4_open_arguments;
 
+/*
+ * attributes new to Erasure Coding
+ */
+
+typedef length4         fattr4_coding_block_size;
+
 %/*
 % * REQUIRED Attributes
 % */
@@ -1095,6 +1107,8 @@ const FATTR4_OPEN_ARGUMENTS     = 86;
 % * it can cache locally.
 % */
 const FATTR4_UNCACHEABLE        = 87;
+
+const FATTR4_CODING_BLOCK_SIZE  = 88;
 
 /*
  * File attribute container
@@ -1437,6 +1451,21 @@ enum nfs_opnum4 {
  OP_LISTXATTRS          = 74,
  OP_REMOVEXATTR         = 75,
  OP_ACCESS_MASK         = 76,
+%
+%/* new operations for flex files v2 */
+%
+ OP_CHUNK_COMMIT        = 77,
+ OP_CHUNK_ERROR         = 78,
+ OP_CHUNK_FINALIZE      = 79,
+ OP_CHUNK_HEADER_READ   = 80,
+ OP_CHUNK_LOCK          = 81,
+ OP_CHUNK_READ          = 82,
+ OP_CHUNK_REPAIRED      = 83,
+ OP_CHUNK_ROLLBACK      = 84,
+ OP_CHUNK_UNLOCK        = 85,
+ OP_CHUNK_WRITE         = 86,
+ OP_CHUNK_WRITE_REPAIR  = 87,
+
  OP_ILLEGAL             = 10044
 };
 
@@ -3251,6 +3280,216 @@ union ACCESS_MASK4res switch (nfsstat4 amr_status) {
 
 
 /*
+ * CHUNK op types — must precede the nfs_argop4 / nfs_resop4 unions.
+ */
+
+struct chunk_guard4 {
+        uint32_t   cg_gen_id;
+        uint32_t   cg_client_id;
+};
+
+struct chunk_owner4 {
+	chunk_guard4   co_guard;
+	uint32_t       co_id;
+};
+
+struct CHUNK_COMMIT4args {
+    /* CURRENT_FH: file */
+    offset4         cca_offset;
+    count4          cca_count;
+    chunk_owner4    cca_chunks<>;
+};
+
+struct CHUNK_COMMIT4resok {
+    verifier4       ccr_writeverf;
+    nfsstat4        ccr_status<>;
+};
+
+union CHUNK_COMMIT4res switch (nfsstat4 ccr_status) {
+    case NFS4_OK:
+        CHUNK_COMMIT4resok   ccr_resok4;
+    default:
+        void;
+};
+
+struct CHUNK_ERROR4args {
+    /* CURRENT_FH: file */
+    offset4         cea_offset;
+};
+
+struct CHUNK_ERROR4res {
+    nfsstat4        cer_status;
+};
+
+struct CHUNK_FINALIZE4args {
+    /* CURRENT_FH: file */
+    offset4         cfa_offset;
+    count4          cfa_count;
+    chunk_owner4    cfa_chunks<>;
+};
+
+struct CHUNK_FINALIZE4resok {
+    verifier4       ccr_writeverf;
+    nfsstat4        ccr_status<>;
+};
+
+union CHUNK_FINALIZE4res switch (nfsstat4 cfr_status) {
+    case NFS4_OK:
+        CHUNK_FINALIZE4resok   cfr_resok4;
+    default:
+        void;
+};
+
+struct CHUNK_HEADER_READ4args {
+    /* CURRENT_FH: file */
+    stateid4    chra_stateid;
+    offset4     chra_offset;
+    count4      chra_count;
+};
+
+struct CHUNK_HEADER_READ4resok {
+    bool            chrr_eof;
+    nfsstat4        chrr_status<>;
+    bool            chrr_locked<>;
+    chunk_owner4    chrr_chunks<>;
+};
+
+union CHUNK_HEADER_READ4res switch (nfsstat4 chrr_status) {
+    case NFS4_OK:
+        CHUNK_HEADER_READ4resok     chrr_resok4;
+    default:
+        void;
+};
+
+struct CHUNK_LOCK4args {
+    /* CURRENT_FH: file */
+    offset4         cla_offset;
+};
+
+struct CHUNK_LOCK4res {
+    nfsstat4        clr_status;
+};
+
+struct CHUNK_READ4args {
+    /* CURRENT_FH: file */
+    stateid4    cra_stateid;
+    offset4     cra_offset;
+    count4      cra_count;
+};
+
+struct read_chunk4 {
+    uint32_t        cr_crc;
+    uint32_t        cr_effective_len;
+    chunk_owner4    cr_owner;
+    uint32_t        cr_payload_id;
+    bool            cr_locked<>;
+    nfsstat4        cr_status<>;
+    opaque          cr_chunk<>;
+};
+
+struct CHUNK_READ4resok {
+    bool        crr_eof;
+    read_chunk4 crr_chunks<>;
+};
+
+union CHUNK_READ4res switch (nfsstat4 crr_status) {
+    case NFS4_OK:
+         CHUNK_READ4resok     crr_resok4;
+    default:
+         void;
+};
+
+struct CHUNK_REPAIRED4args {
+    /* CURRENT_FH: file */
+    offset4         cra_offset;
+};
+
+struct CHUNK_REPAIRED4res {
+    nfsstat4        crr_status;
+};
+
+struct CHUNK_ROLLBACK4args {
+    /* CURRENT_FH: file */
+    offset4         crba_offset;
+};
+
+struct CHUNK_ROLLBACK4res {
+    nfsstat4        crbr_status;
+};
+
+struct CHUNK_UNLOCK4args {
+    /* CURRENT_FH: file */
+    offset4         cua_offset;
+};
+
+struct CHUNK_UNLOCK4res {
+    nfsstat4        cur_status;
+};
+
+union write_chunk_guard4 switch (bool cwg_check) {
+    case TRUE:
+        chunk_guard4   cwg_guard;
+    case FALSE:
+        void;
+};
+
+struct CHUNK_WRITE4args {
+    /* CURRENT_FH: file */
+    stateid4           cwa_stateid;
+    offset4            cwa_offset;
+    stable_how4        cwa_stable;
+    chunk_owner4       cwa_owner;
+    uint32_t           cwa_payload_id;
+    write_chunk_guard4 cwa_guard;
+    uint32_t           cwa_chunk_size;
+    uint32_t           cwa_crc32s<>;
+    opaque             cwa_chunks<>;
+};
+
+struct CHUNK_WRITE4resok {
+    count4          cwr_count;
+    stable_how4     cwr_committed;
+    verifier4       cwr_writeverf;
+    nfsstat4        cwr_status<>;
+    chunk_owner4    cwr_owners<>;
+};
+
+union CHUNK_WRITE4res switch (nfsstat4 cwr_status) {
+    case NFS4_OK:
+        CHUNK_WRITE4resok    cwr_resok4;
+    default:
+        void;
+};
+
+struct CHUNK_WRITE_REPAIR4args {
+    /* CURRENT_FH: file */
+    stateid4           cwra_stateid;
+    offset4            cwra_offset;
+    stable_how4        cwra_stable;
+    chunk_owner4       cwra_owner;
+    uint32_t           cwra_payload_id;
+    write_chunk_guard4 cwra_guard;
+    uint32_t           cwra_chunk_size;
+    uint32_t           cwra_crc32s<>;
+    opaque             cwra_chunks<>;
+};
+
+struct CHUNK_WRITE_REPAIR4resok {
+    count4          cwrr_count;
+    stable_how4     cwrr_committed;
+    verifier4       cwrr_writeverf;
+    nfsstat4        cwrr_status<>;
+    chunk_owner4    cwrr_owners<>;
+};
+
+union CHUNK_WRITE_REPAIR4res switch (nfsstat4 cwrr_status) {
+    case NFS4_OK:
+        CHUNK_WRITE_REPAIR4resok    cwrr_resok4;
+    default:
+        void;
+};
+
+/*
  * Operation arrays (the rest)
  */
 
@@ -3377,6 +3616,19 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
  case OP_LISTXATTRS:    LISTXATTRS4args oplistxattrs;
  case OP_REMOVEXATTR:   REMOVEXATTR4args opremovexattr;
  case OP_ACCESS_MASK:   ACCESS_MASK4args opaccess_mask;
+
+ /* Operations for Erase Coding */
+ case OP_CHUNK_COMMIT:  CHUNK_COMMIT4args opchunk_commit;
+ case OP_CHUNK_ERROR:   CHUNK_ERROR4args opchunk_error;
+ case OP_CHUNK_FINALIZE: CHUNK_FINALIZE4args opchunk_finalize;
+ case OP_CHUNK_HEADER_READ: CHUNK_HEADER_READ4args opchunk_header_read;
+ case OP_CHUNK_LOCK: CHUNK_LOCK4args opchunk_lock;
+ case OP_CHUNK_READ: CHUNK_READ4args opchunk_read;
+ case OP_CHUNK_REPAIRED: CHUNK_REPAIRED4args opchunk_repair;
+ case OP_CHUNK_ROLLBACK: CHUNK_ROLLBACK4args opchunk_rollback;
+ case OP_CHUNK_UNLOCK: CHUNK_UNLOCK4args opchunk_unlock;
+ case OP_CHUNK_WRITE: CHUNK_WRITE4args opchunk_write;
+ case OP_CHUNK_WRITE_REPAIR: CHUNK_WRITE_REPAIR4args opchunk_write_repair;
 
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       void;
@@ -3513,6 +3765,19 @@ union nfs_resop4 switch (nfs_opnum4 resop) {
  case OP_LISTXATTRS:    LISTXATTRS4res oplistxattrs;
  case OP_REMOVEXATTR:   REMOVEXATTR4res opremovexattr;
  case OP_ACCESS_MASK:   ACCESS_MASK4res opaccess_mask;
+
+ /* Operations for Erase Coding */
+ case OP_CHUNK_COMMIT:  CHUNK_COMMIT4res opchunk_commit;
+ case OP_CHUNK_ERROR:   CHUNK_ERROR4res opchunk_error;
+ case OP_CHUNK_FINALIZE: CHUNK_FINALIZE4res opchunk_finalize;
+ case OP_CHUNK_HEADER_READ: CHUNK_HEADER_READ4res opchunk_header_read;
+ case OP_CHUNK_LOCK: CHUNK_LOCK4res opchunk_lock;
+ case OP_CHUNK_READ: CHUNK_READ4res opchunk_read;
+ case OP_CHUNK_REPAIRED: CHUNK_REPAIRED4res opchunk_repair;
+ case OP_CHUNK_ROLLBACK: CHUNK_ROLLBACK4res opchunk_rollback;
+ case OP_CHUNK_UNLOCK: CHUNK_UNLOCK4res opchunk_unlock;
+ case OP_CHUNK_WRITE: CHUNK_WRITE4res opchunk_write;
+ case OP_CHUNK_WRITE_REPAIR: CHUNK_WRITE_REPAIR4res opchunk_write_repair;
 
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       ILLEGAL4res opillegal;
@@ -4060,4 +4325,160 @@ struct ff_layouthint4 {
 enum ff_cb_recall_any_mask {
     FF_RCA4_TYPE_MASK_READ = 16,
     FF_RCA4_TYPE_MASK_RW   = 17
+};
+
+enum ffv2_protection_type {
+    FFV2_PROTECTION_TYPE_MIRRORED       = 0x1,
+    FFV2_PROTECTION_TYPE_MOJETTE        = 0x2,
+    FFV2_PROTECTION_TYPE_REED_SOLOMON   = 0x3
+};
+const FFV2_FLAGS_NO_LAYOUTCOMMIT   = FF_FLAGS_NO_LAYOUTCOMMIT;
+const FFV2_FLAGS_NO_IO_THRU_MDS    = FF_FLAGS_NO_IO_THRU_MDS;
+const FFV2_FLAGS_NO_READ_IO        = FF_FLAGS_NO_READ_IO;
+const FFV2_FLAGS_WRITE_ONE_MIRROR  = FF_FLAGS_WRITE_ONE_MIRROR;
+const FFV2_FLAGS_ONLY_ONE_WRITER   = 0x00000010;
+
+typedef uint32_t            ffv2_flags4;
+
+struct ffv2_file_info4 {
+    stateid4                fffi_stateid;
+    nfs_fh4                 fffi_fh_vers;
+};
+
+const FFV2_DS_FLAGS_ACTIVE        = 0x00000001;
+const FFV2_DS_FLAGS_SPARE         = 0x00000002;
+const FFV2_DS_FLAGS_PARITY        = 0x00000004;
+const FFV2_DS_FLAGS_REPAIR        = 0x00000008;
+
+typedef uint32_t            ffv2_ds_flags4;
+
+struct ffv2_data_server4 {
+    deviceid4               ffv2ds_deviceid;
+    uint32_t                ffv2ds_efficiency;
+    ffv2_file_info4         ffv2ds_file_info<>;
+    fattr4_owner            ffv2ds_user;
+    fattr4_owner_group      ffv2ds_group;
+    ffv2_ds_flags4          ffv2ds_flags;
+};
+
+enum ffv2_coding_type4 {
+    FFV2_CODING_MIRRORED                    = 0x1,
+    FFV2_ENCODING_MOJETTE_SYSTEMATIC        = 0x2,
+    FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC    = 0x3
+};
+
+enum ffv2_mojette_faulty_devices4 {
+    FFV2_MOJETTE_FAULTY_DEVICES_2_1         = 0x1,
+    FFV2_MOJETTE_FAULTY_DEVICES_4_1         = 0x2,
+    FFV2_MOJETTE_FAULTY_DEVICES_4_2         = 0x3,
+    FFV2_MOJETTE_FAULTY_DEVICES_8_1         = 0x4,
+    FFV2_MOJETTE_FAULTY_DEVICES_8_2         = 0x5,
+    FFV2_MOJETTE_FAULTY_DEVICES_8_3         = 0x6,
+    FFV2_MOJETTE_FAULTY_DEVICES_8_4         = 0x7
+};
+
+union ffv2_coding_type_data4 switch (ffv2_coding_type4 fctd_coding) {
+    case FFV2_CODING_MIRRORED:
+        void;
+    case FFV2_ENCODING_MOJETTE_SYSTEMATIC:
+        ffv2_mojette_faulty_devices4    fctd_systematic;
+    case FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC:
+        ffv2_mojette_faulty_devices4    fctd_non_systematic;
+    default:
+        void;
+};
+
+enum ffv2_striping {
+    FFV2_STRIPING_NONE = 0,
+    FFV2_STRIPING_SPARSE = 1,
+    FFV2_STRIPING_DENSE = 2
+};
+
+struct ffv2_stripes4 {
+        ffv2_data_server4       ffs_data_servers<>;
+};
+
+struct ffv2_mirror4 {
+        ffv2_coding_type_data4  ffm_coding_type_data;
+        /* ffv2_key4               ffm_key; */
+        ffv2_striping           ffm_striping;
+        uint32_t                ffm_striping_unit_size; /* The minimum stripe unit size is 64 bytes. */
+        uint32_t                ffm_client_id;
+        ffv2_stripes4           ffm_stripes<>; /* Length of this array is the stripe count */
+};
+
+struct ffv2_layout4 {
+    ffv2_mirror4            ffl_mirrors<>;
+    ffv2_flags4             ffl_flags;
+    uint32_t                ffl_stats_collect_hint;
+};
+
+struct ffv2_ioerr4 {
+        offset4        ffie_offset;
+        length4        ffie_length;
+        stateid4       ffie_stateid;
+        device_error4  ffie_errors<>;
+};
+
+struct ffv2_io_latency4 {
+        uint64_t       ffil_ops_requested;
+        uint64_t       ffil_bytes_requested;
+        uint64_t       ffil_ops_completed;
+        uint64_t       ffil_bytes_completed;
+        uint64_t       ffil_bytes_not_delivered;
+        nfstime4       ffil_total_busy_time;
+        nfstime4       ffil_aggregate_completion_time;
+};
+
+struct ffv2_layoutupdate4 {
+        netaddr4         ffl_addr;
+        nfs_fh4          ffl_fhandle;
+        ffv2_io_latency4 ffl_read;
+        ffv2_io_latency4 ffl_write;
+        nfstime4         ffl_duration;
+        bool             ffl_local;
+};
+
+struct ffv2_iostats4 {
+        offset4            ffis_offset;
+        length4            ffis_length;
+        stateid4           ffis_stateid;
+        io_info4           ffis_read;
+        io_info4           ffis_write;
+        deviceid4          ffis_deviceid;
+        ffv2_layoutupdate4 ffis_layoutupdate;
+};
+
+struct ffv2_layoutreturn4 {
+        ffv2_ioerr4     fflr_ioerr_report<>;
+        ffv2_iostats4   fflr_iostats_report<>;
+};
+
+union ffv2_mirrors_hint switch (ffv2_coding_type4 ffmh_coding) {
+    case FFV2_CODING_MIRRORED:
+        void;
+    case FFV2_ENCODING_MOJETTE_SYSTEMATIC:
+        ffv2_mojette_faulty_devices4    ffmh_systematic;
+    case FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC:
+        ffv2_mojette_faulty_devices4    ffmh_non_systematic;
+    default:
+        void;
+};
+
+/*
+ * We could have this be simply ffv2_protection_type
+ * for the client to state what protection algorithm
+ * it wants.
+ */
+struct ffv2_layouthint4 {
+    ffv2_protection_type fflh_supported_types<>;
+    ffv2_mirrors_hint fflh_mirrors_hint;
+};
+
+const RCA4_TYPE_MASK_FFV2_LAYOUT_MIN     = 20;
+const RCA4_TYPE_MASK_FFV2_LAYOUT_MAX     = 21;
+
+enum ffv2_cb_recall_any_mask {
+    PNFS_FFV2_RCA4_TYPE_MASK_READ = 20,
+    PNFS_FFV2_RCA4_TYPE_MASK_RW   = 21
 };

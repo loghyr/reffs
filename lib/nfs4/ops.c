@@ -231,6 +231,28 @@ const char *nfs4_op_name(nfs_opnum4 op)
 		return "REMOVEXATTR";
 	case OP_ACCESS_MASK:
 		return "ACCESS_MASK";
+	case OP_CHUNK_COMMIT:
+		return "CHUNK_COMMIT";
+	case OP_CHUNK_ERROR:
+		return "CHUNK_ERROR";
+	case OP_CHUNK_FINALIZE:
+		return "CHUNK_FINALIZE";
+	case OP_CHUNK_HEADER_READ:
+		return "CHUNK_HEADER_READ";
+	case OP_CHUNK_LOCK:
+		return "CHUNK_LOCK";
+	case OP_CHUNK_READ:
+		return "CHUNK_READ";
+	case OP_CHUNK_REPAIRED:
+		return "CHUNK_REPAIRED";
+	case OP_CHUNK_ROLLBACK:
+		return "CHUNK_ROLLBACK";
+	case OP_CHUNK_UNLOCK:
+		return "CHUNK_UNLOCK";
+	case OP_CHUNK_WRITE:
+		return "CHUNK_WRITE";
+	case OP_CHUNK_WRITE_REPAIR:
+		return "CHUNK_WRITE_REPAIR";
 	case OP_ILLEGAL:
 		return "ILLEGAL";
 	default:
