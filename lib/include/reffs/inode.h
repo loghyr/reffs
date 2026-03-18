@@ -101,7 +101,10 @@ struct inode {
 
 #define INODE_IS_OFFLINE (1ULL << 0)
 #define INODE_IS_HIDDEN (1ULL << 1)
-#define INODE_IS_UNCACHEABLE (1ULL << 2)
+#define INODE_IS_ARCHIVED (1ULL << 2)
+#define INODE_IS_SYSTEM (1ULL << 3)
+#define INODE_IS_UNCACHEABLE_FILE_DATA (1ULL << 4)
+#define INODE_IS_UNCACHEABLE_DIRENT_METADATA (1ULL << 5)
 	uint64_t i_attr_flags;
 
 	char *i_symlink;
