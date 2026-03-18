@@ -967,7 +967,8 @@ typedef nfstime4        fattr4_time_deleg_modify;
  * attributes new post NFSv4.2
  */
 typedef bool            fattr4_offline;
-typedef bool            fattr4_uncacheable;
+typedef bool            fattr4_uncacheable_file_data;
+typedef bool            fattr4_uncacheable_dirent_metadata;
 
 typedef open_arguments4 fattr4_open_arguments;
 
@@ -1106,9 +1107,10 @@ const FATTR4_OPEN_ARGUMENTS     = 86;
 % * Inform the client whether
 % * it can cache locally.
 % */
-const FATTR4_UNCACHEABLE        = 87;
+const FATTR4_UNCACHEABLE_FILE_DATA        = 87;
+const FATTR4_UNCACHEABLE_DIRENT_METADATA  = 88;
 
-const FATTR4_CODING_BLOCK_SIZE  = 88;
+const FATTR4_CODING_BLOCK_SIZE  = 89;
 
 /*
  * File attribute container

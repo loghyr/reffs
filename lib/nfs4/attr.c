@@ -117,7 +117,8 @@ struct nfsv42_attr {
 	fattr4_time_deleg_access time_deleg_access;
 	fattr4_time_deleg_modify time_deleg_modify;
 	fattr4_open_arguments open_arguments;
-	fattr4_uncacheable uncacheable;
+	fattr4_uncacheable_file_data uncacheable_file_data;
+	fattr4_uncacheable_dirent_metadata uncacheable_dirent_metadata;
 };
 
 static struct nfsv42_attr system_attrs = {
@@ -2112,22 +2113,47 @@ static bool open_arguments_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 			     &b->open_arguments.oa_createmode);
 }
 
-static count4 uncacheable_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 uncacheable_file_data_count(struct nfsv42_attr
+					  __attribute__((unused)) *
+					  nattr)
 {
-	return sizeof(fattr4_uncacheable);
+	return sizeof(fattr4_uncacheable_file_data);
 }
 
-static nfsstat4 uncacheable_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
+static nfsstat4 uncacheable_file_data_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
 {
-	if (!xdr_fattr4_uncacheable(xdrs, &nattr->uncacheable))
+	if (!xdr_fattr4_uncacheable_file_data(xdrs,
+					      &nattr->uncacheable_file_data))
 		return NFS4ERR_BADXDR;
 	return NFS4_OK;
 }
 
-static bool uncacheable_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
+static bool uncacheable_file_data_equal(struct nfsv42_attr *a,
+					struct nfsv42_attr *b)
 {
-	return a->uncacheable == b->uncacheable;
+	return a->uncacheable_file_data == b->uncacheable_file_data;
+}
+
+static count4 uncacheable_dirent_metadata_count(struct nfsv42_attr
+						__attribute__((unused)) *
+						nattr)
+{
+	return sizeof(fattr4_uncacheable_dirent_metadata);
+}
+
+static nfsstat4 uncacheable_dirent_metadata_xdr(XDR *xdrs,
+						struct nfsv42_attr *nattr)
+{
+	if (!xdr_fattr4_uncacheable_dirent_metadata(
+		    xdrs, &nattr->uncacheable_dirent_metadata))
+		return NFS4ERR_BADXDR;
+	return NFS4_OK;
+}
+
+static bool uncacheable_dirent_metadata_equal(struct nfsv42_attr *a,
+					      struct nfsv42_attr *b)
+{
+	return a->uncacheable_dirent_metadata == b->uncacheable_dirent_metadata;
 }
 
 static struct nfsv42_attr_ops nao[] = {
@@ -2281,8 +2307,10 @@ static struct nfsv42_attr_ops nao[] = {
 	  time_deleg_modify_xdr, time_deleg_modify_equal },
 	{ FATTR4_OPEN_ARGUMENTS, open_arguments_count, open_arguments_xdr,
 	  open_arguments_equal },
-	{ FATTR4_UNCACHEABLE, uncacheable_count, uncacheable_xdr,
-	  uncacheable_equal }
+	{ FATTR4_UNCACHEABLE_FILE_DATA, uncacheable_file_data_count,
+	  uncacheable_file_data_xdr, uncacheable_file_data_equal },
+	{ FATTR4_UNCACHEABLE_DIRENT_METADATA, uncacheable_dirent_metadata_count,
+	  uncacheable_dirent_metadata_xdr, uncacheable_dirent_metadata_equal }
 };
 
 int nfs4_attribute_init(void)
@@ -2377,7 +2405,8 @@ int nfs4_attribute_init(void)
 	bitmap4_attribute_clear(bm, FATTR4_TIME_DELEG_ACCESS);
 	bitmap4_attribute_clear(bm, FATTR4_TIME_DELEG_MODIFY);
 	bitmap4_attribute_set(bm, FATTR4_OPEN_ARGUMENTS);
-	bitmap4_attribute_set(bm, FATTR4_UNCACHEABLE);
+	bitmap4_attribute_set(bm, FATTR4_UNCACHEABLE_FILE_DATA);
+	bitmap4_attribute_set(bm, FATTR4_UNCACHEABLE_DIRENT_METADATA);
 
 	return 0;
 }
@@ -2527,7 +2556,10 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	// nattr->mode_umask;
 	nattr->xattr_support = system_attrs.xattr_support;
 	nattr->offline = inode->i_attr_flags & INODE_IS_UNCACHEABLE;
-	nattr->uncacheable = inode->i_attr_flags & INODE_IS_UNCACHEABLE;
+	nattr->uncacheable_file_data = inode->i_attr_flags &
+				       INODE_IS_UNCACHEABLE;
+	nattr->uncacheable_dirent_metadata = inode->i_attr_flags &
+					     INODE_IS_UNCACHEABLE;
 
 out:
 	return NFS4_OK;
