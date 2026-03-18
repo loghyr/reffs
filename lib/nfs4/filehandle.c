@@ -191,10 +191,8 @@ void nfs4_op_restorefh(struct compound *c)
 	}
 
 	super_block_put(c->c_curr_sb);
-	c->c_curr_sb = c->c_saved_sb;
-	c->c_saved_sb = NULL;
+	c->c_curr_sb = super_block_get(c->c_saved_sb);
 	c->c_curr_nfh = c->c_saved_nfh;
-	memset(&c->c_saved_nfh, '\0', sizeof(c->c_saved_nfh));
 	inode_active_put(c->c_inode);
 	c->c_inode = NULL;
 
