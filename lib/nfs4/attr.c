@@ -15,11 +15,15 @@
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include "nfsv42_xdr.h"
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/filehandle.h"
 #include "reffs/utf8string.h"
+#include "reffs/rcu.h"
+#include "reffs/dirent.h"
+#include "reffs/identity.h"
 #include "nfs4/attr.h"
 #include "nfsv42_names.h"
 #include "reffs/time.h"
@@ -2682,6 +2686,117 @@ out:
 	    (void *)resok);
 }
 
+/* ------------------------------------------------------------------ */
+/* READDIR helpers                                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Compute an 8-byte cookie verifier from the directory's mtime.
+ * Stable across calls as long as the directory is not modified.
+ * Called under inode->i_attr_mutex.
+ */
+static void dir_make_cookieverf(struct inode *inode, verifier4 cv)
+{
+	uint64_t v = (uint64_t)inode->i_mtime.tv_sec * 1000000000ULL +
+		     (uint64_t)inode->i_mtime.tv_nsec;
+	memcpy(cv, &v, sizeof(verifier4));
+}
+
+/*
+ * Encode the requested attributes for one READDIR entry into @out.
+ * Mirrors nfs4_op_getattr: nao_count sizing pass, then nao_xdr encode.
+ *
+ * On success returns NFS4_OK and @out->attrmask / @out->attr_vals are
+ * populated (caller owns both allocations).
+ * On failure both fields are left zeroed.
+ */
+static nfsstat4 entry4_encode_attrs(bitmap4 *attr_request,
+				    struct nfsv42_attr *nattr, fattr4 *out)
+{
+	u_int i;
+	u_int scan_bits = attr_request->bitmap4_len * 32U;
+	XDR sptr;
+	nfsstat4 status = NFS4_OK;
+	int ret;
+
+	ret = bitmap4_init(&out->attrmask, FATTR4_ATTRIBUTE_MAX);
+	if (ret)
+		return NFS4ERR_DELAY;
+
+	out->attr_vals.attrlist4_len = 0;
+	for (i = 0; i < scan_bits; i++) {
+		if (bitmap4_attribute_is_set(attr_request, i) &&
+		    bitmap4_attribute_is_set(supported_attributes, i)) {
+			bitmap4_attribute_set(&out->attrmask, i);
+			out->attr_vals.attrlist4_len += nao[i].nao_count(nattr);
+		}
+	}
+
+	out->attr_vals.attrlist4_val = calloc(out->attr_vals.attrlist4_len, 1);
+	if (!out->attr_vals.attrlist4_val) {
+		out->attr_vals.attrlist4_len = 0;
+		bitmap4_destroy(&out->attrmask);
+		return NFS4ERR_DELAY;
+	}
+
+	xdrmem_create(&sptr, out->attr_vals.attrlist4_val,
+		      out->attr_vals.attrlist4_len, XDR_ENCODE);
+	for (i = 0; i < scan_bits; i++) {
+		if (bitmap4_attribute_is_set(attr_request, i) &&
+		    bitmap4_attribute_is_set(supported_attributes, i)) {
+			status = nao[i].nao_xdr(&sptr, nattr);
+			if (status) {
+				free(out->attr_vals.attrlist4_val);
+				out->attr_vals.attrlist4_val = NULL;
+				out->attr_vals.attrlist4_len = 0;
+				bitmap4_destroy(&out->attrmask);
+				break;
+			}
+		}
+	}
+	xdr_destroy(&sptr);
+	return status;
+}
+
+/*
+ * Synthesize an fattr4 containing only rdattr_error for an entry whose
+ * inode could not be loaded.  Called when FATTR4_RDATTR_ERROR is in the
+ * client's attr_request.
+ */
+static nfsstat4 entry4_encode_rdattr_error(nfsstat4 error, fattr4 *out)
+{
+	struct nfsv42_attr nattr = { .rdattr_error = error };
+	count4 sz;
+	XDR sptr;
+	nfsstat4 status;
+	int ret;
+
+	ret = bitmap4_init(&out->attrmask, FATTR4_ATTRIBUTE_MAX);
+	if (ret)
+		return NFS4ERR_DELAY;
+
+	bitmap4_attribute_set(&out->attrmask, FATTR4_RDATTR_ERROR);
+	sz = nao[FATTR4_RDATTR_ERROR].nao_count(&nattr);
+	out->attr_vals.attrlist4_val = calloc(sz, 1);
+	if (!out->attr_vals.attrlist4_val) {
+		bitmap4_destroy(&out->attrmask);
+		return NFS4ERR_DELAY;
+	}
+	out->attr_vals.attrlist4_len = sz;
+
+	xdrmem_create(&sptr, out->attr_vals.attrlist4_val, sz, XDR_ENCODE);
+	status = nao[FATTR4_RDATTR_ERROR].nao_xdr(&sptr, &nattr);
+	xdr_destroy(&sptr);
+
+	if (status) {
+		free(out->attr_vals.attrlist4_val);
+		out->attr_vals.attrlist4_val = NULL;
+		out->attr_vals.attrlist4_len = 0;
+		bitmap4_destroy(&out->attrmask);
+	}
+	return status;
+}
+
 void nfs4_op_readdir(struct compound *c)
 {
 	struct protocol_handler *ph =
@@ -2692,12 +2807,245 @@ void nfs4_op_readdir(struct compound *c)
 	nfsstat4 *status = &res->status;
 	READDIR4resok *resok = NFS4_OP_RESOK_SETUP(res, READDIR4res_u, resok4);
 
+	struct inode *inode = c->c_inode;
+	struct super_block *sb = c->c_curr_sb;
+	struct reffs_dirent *dir_de = NULL;
+	bool dir_de_rdlocked = false;
+
+	/*
+	 * Phase-1 snapshot: identity fields captured under rcu_read_lock.
+	 * We must not call dirent_ensure_inode (may block on I/O) while
+	 * holding the read-side lock.
+	 */
+	struct {
+		struct reffs_dirent *rd;
+		uint64_t rd_cookie;
+		const char *rd_name;
+	} *snap = NULL;
+	size_t snap_count = 0, snap_cap = 0;
+
+	entry4 *e_prev = NULL;
+	int ret = 0;
+
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
 		goto out;
 	}
 
-	*status = NFS4ERR_NOTSUPP;
+	if (!S_ISDIR(inode->i_mode)) {
+		*status = NFS4ERR_NOTDIR;
+		goto out;
+	}
+
+	if ((count4)sizeof(READDIR4res) > args->maxcount) {
+		*status = NFS4ERR_TOOSMALL;
+		goto out;
+	}
+
+	ret = inode_access_check(inode, &c->c_ap, R_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, NFS4_OP_NUM(c));
+		goto out;
+	}
+
+	/*
+	 * After PUTFH the inode may be loaded without its dirent chain.
+	 * Reconstruct before walking rd_children.  Root (i_dirent == NULL
+	 * by design) falls back to sb->sb_dirent below.
+	 */
+	if (!inode->i_dirent && c->c_curr_nfh.nfh_ino != INODE_ROOT_ID) {
+		ret = inode_reconstruct_path_to_root(inode);
+		if (ret) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+	}
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	dir_de = inode->i_dirent ? inode->i_dirent : sb->sb_dirent;
+	pthread_rwlock_rdlock(&dir_de->rd_rwlock);
+	dir_de_rdlocked = true;
+
+	/* Compute / verify cookieverf. */
+	verifier4 cv;
+	dir_make_cookieverf(inode, cv);
+	if (args->cookie != 0 &&
+	    memcmp(args->cookieverf, cv, sizeof(verifier4)) != 0) {
+		*status = NFS4ERR_NOT_SAME;
+		goto out_unlock;
+	}
+	memcpy(resok->cookieverf, cv, sizeof(verifier4));
+
+	/*
+	 * Phase 1: snapshot dirent identity under rcu_read_lock.
+	 */
+	rcu_read_lock();
+	{
+		struct reffs_dirent *rd;
+
+		cds_list_for_each_entry_rcu(rd, &dir_de->rd_children,
+					    rd_siblings) {
+			if (rd->rd_cookie <= args->cookie)
+				continue;
+			if (snap_count == snap_cap) {
+				size_t new_cap = snap_cap ? snap_cap * 2 : 16;
+				void *tmp =
+					realloc(snap, new_cap * sizeof(*snap));
+				if (!tmp) {
+					rcu_read_unlock();
+					free(snap);
+					snap = NULL;
+					*status = NFS4ERR_DELAY;
+					goto out_unlock;
+				}
+				snap = tmp;
+				snap_cap = new_cap;
+			}
+			snap[snap_count].rd = rd;
+			snap[snap_count].rd_cookie = rd->rd_cookie;
+			snap[snap_count].rd_name = rd->rd_name;
+			snap_count++;
+		}
+	}
+	rcu_read_unlock();
+
+	/*
+	 * Phase 1 complete: release rd_rwlock before Phase 2.
+	 * dirent_ensure_inode may block on I/O; holding rd_rwlock across
+	 * that would deadlock against vfs_lock_dirs (writer) in concurrent
+	 * create threads.
+	 */
+	pthread_rwlock_unlock(&dir_de->rd_rwlock);
+	dir_de_rdlocked = false;
+
+	/*
+	 * Phase 2: fault in inodes, encode attrs, build the reply.
+	 *
+	 * Two limits (RFC 5661 §18.23):
+	 *   dircount  – non-attribute directory data (cookie + name)
+	 *   maxcount  – total wire bytes of the complete reply
+	 *
+	 * Wire cost per entry:
+	 *   dir_bytes   = 4 (bool) + 8 (cookie) + 4 (name len) + roundup4(namelen)
+	 *   entry_bytes = dir_bytes
+	 *               + 4 (bitmap4 len) + 4*attrmask_words (bitmap words)
+	 *               + 4 (attrlist len) + roundup4(attr_bytes)
+	 *
+	 * attr_request->bitmap4_len is used as an upper bound for the response
+	 * attrmask word count (the actual attrmask can only be a subset).
+	 */
+	count4 total_dir_bytes = (count4)sizeof(READDIR4res);
+	count4 total_max_bytes = (count4)sizeof(READDIR4res);
+	u_int scan_bits = args->attr_request.bitmap4_len * 32U;
+	bool rdattr_error_requested = bitmap4_attribute_is_set(
+		&args->attr_request, FATTR4_RDATTR_ERROR);
+
+	for (size_t si = 0; si < snap_count; si++) {
+		struct inode *child = dirent_ensure_inode(snap[si].rd);
+		nfsstat4 attr_status = NFS4_OK;
+		struct nfsv42_attr nattr = { 0 };
+		entry4 *e;
+
+		if (!child) {
+			if (!rdattr_error_requested)
+				goto past_eof;
+			attr_status = NFS4ERR_SERVERFAULT;
+		} else {
+			pthread_mutex_lock(&child->i_attr_mutex);
+			ret = inode_to_nattr(child, &nattr);
+			pthread_mutex_unlock(&child->i_attr_mutex);
+			inode_active_put(child);
+			if (ret)
+				attr_status =
+					errno_to_nfs4(ret, NFS4_OP_NUM(c));
+		}
+
+		/* Compute wire sizes before committing to the entry. */
+		const char *name = snap[si].rd_name;
+		size_t namelen = strlen(name);
+		count4 dir_bytes = 4 + 8 + 4 + (count4)((namelen + 3) & ~3u);
+		count4 attr_bytes = 0;
+
+		if (attr_status == NFS4_OK) {
+			for (u_int i = 0; i < scan_bits; i++) {
+				if (bitmap4_attribute_is_set(
+					    &args->attr_request, i) &&
+				    bitmap4_attribute_is_set(
+					    supported_attributes, i))
+					attr_bytes += nao[i].nao_count(&nattr);
+			}
+		}
+
+		count4 attrmask_words = args->attr_request.bitmap4_len;
+		count4 entry_bytes =
+			dir_bytes + 4 + 4 * attrmask_words /* attrmask XDR */
+			+ 4 + ((attr_bytes + 3) & ~3u); /* attrlist XDR */
+
+		if (args->dircount &&
+		    total_dir_bytes + dir_bytes > args->dircount) {
+			nattr_release(&nattr);
+			goto past_eof;
+		}
+		if (total_max_bytes + entry_bytes > args->maxcount) {
+			nattr_release(&nattr);
+			goto past_eof;
+		}
+
+		e = calloc(1, sizeof(*e));
+		if (!e) {
+			nattr_release(&nattr);
+			goto past_eof;
+		}
+
+		e->name.utf8string_val = strdup(name);
+		if (!e->name.utf8string_val) {
+			free(e);
+			nattr_release(&nattr);
+			goto past_eof;
+		}
+		e->name.utf8string_len = (u_int)namelen;
+		e->cookie = snap[si].rd_cookie;
+
+		if (attr_status == NFS4_OK)
+			attr_status = entry4_encode_attrs(&args->attr_request,
+							  &nattr, &e->attrs);
+		nattr_release(&nattr);
+
+		if (attr_status) {
+			if (rdattr_error_requested)
+				attr_status = entry4_encode_rdattr_error(
+					attr_status, &e->attrs);
+			if (attr_status) {
+				free(e->name.utf8string_val);
+				free(e);
+				goto past_eof;
+			}
+		}
+
+		total_dir_bytes += dir_bytes;
+		total_max_bytes += entry_bytes;
+
+		if (!resok->reply.entries)
+			resok->reply.entries = e;
+		else
+			e_prev->nextentry = e;
+		e_prev = e;
+	}
+
+	free(snap);
+	snap = NULL;
+	resok->reply.eof = true;
+
+past_eof:
+	free(snap);
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+	*status = NFS4_OK;
+
+out_unlock:
+	if (dir_de_rdlocked)
+		pthread_rwlock_unlock(&dir_de->rd_rwlock);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 out:
 	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
