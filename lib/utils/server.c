@@ -8,11 +8,13 @@
 #endif
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <unistd.h>
 #include <time.h>
 
@@ -71,6 +73,7 @@ static void server_state_free(struct urcu_ref *ref)
 	if (ss->ss_client_ht)
 		cds_lfht_destroy(ss->ss_client_ht, NULL);
 
+	free(ss->ss_owner_id);
 	free(ss->ss_state_dir);
 	free(ss);
 }
@@ -231,6 +234,30 @@ struct server_state *server_state_init(const char *state_path, int port)
 	}
 
 	uuid_copy(ss->ss_uuid, ss->ss_persist.sps_uuid);
+
+	/* Build the stable server owner string used in EXCHANGE_ID replies. */
+	{
+		char buf[14 + 36 + 1 + HOST_NAME_MAX + 1];
+		char uuid_str[37];
+		char hostname[HOST_NAME_MAX + 1];
+		int n;
+
+		uuid_unparse(ss->ss_persist.sps_uuid, uuid_str);
+		if (gethostname(hostname, sizeof(hostname)) != 0)
+			hostname[0] = '\0';
+		hostname[HOST_NAME_MAX] = '\0';
+
+		n = snprintf(buf, sizeof(buf), "Reffs NFSv4.2 %s/%s", uuid_str,
+			     hostname);
+		ss->ss_owner_id_len = (n > 0 && (size_t)n < sizeof(buf)) ?
+					      (size_t)n :
+					      sizeof(buf) - 1;
+		ss->ss_owner_id = strndup(buf, ss->ss_owner_id_len);
+		if (!ss->ss_owner_id) {
+			LOG("server_state_init: failed to build owner id");
+			goto err_path;
+		}
+	}
 
 	/* Determine grace period. */
 	ss->ss_grace_time = ss->ss_persist.sps_lease_time ?

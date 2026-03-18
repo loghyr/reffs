@@ -7,13 +7,21 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdint.h>
+#include <string.h>
+#include <netinet/in.h>
+
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
+#include "reffs/server.h"
+#include "reffs/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "nfs4/client.h"
+#include "nfs4/client_persist.h"
 
 void nfs4_op_exchange_id(struct compound *c)
 {
@@ -27,18 +35,86 @@ void nfs4_op_exchange_id(struct compound *c)
 		NFS4_OP_RESOK_SETUP(res, EXCHANGE_ID4res_u, eir_resok4);
 
 	u_int num_ops = ((COMPOUND4args *)(ph)->ph_args)->argarray.argarray_len;
+	struct server_state *ss = NULL;
+	struct nfs4_client *nc = NULL;
+	struct nfs_impl_id4 *impl_id = NULL;
+	struct sockaddr_in sin;
 
 	if (c->c_curr_op == 0 && num_ops > 1) {
 		*status = NFS4ERR_NOT_ONLY_OP;
 		goto out;
 	}
 
-	*status = NFS4ERR_NOTSUPP;
+	ss = server_state_find();
+	if (!ss) {
+		*status = NFS4ERR_SERVERFAULT;
+		goto out;
+	}
+
+	if (args->eia_client_impl_id.eia_client_impl_id_len > 0)
+		impl_id = args->eia_client_impl_id.eia_client_impl_id_val;
+
+	rpc_trans_get_sockaddr_in(c->c_rt, &sin);
+
+	nc = nfs4_client_alloc_or_find(ss, &args->eia_clientowner, impl_id,
+				       &args->eia_clientowner.co_verifier,
+				       &sin);
+	if (!nc) {
+		*status = NFS4ERR_SERVERFAULT;
+		goto out;
+	}
+
+	resok->eir_clientid = (clientid4)nfs4_client_to_client(nc)->c_id;
+	resok->eir_sequenceid = 1;
+	resok->eir_flags = EXCHGID4_FLAG_USE_NON_PNFS;
+	if (nc->nc_confirmed)
+		resok->eir_flags |= EXCHGID4_FLAG_CONFIRMED_R;
+
+	if (args->eia_state_protect.spa_how != SP4_NONE) {
+		*status = NFS4ERR_NOTSUPP;
+		goto out;
+	}
+	resok->eir_state_protect.spr_how = SP4_NONE;
+
+	/*
+	 * Both so_major_id_val and eir_server_scope_val must be calloc()'d:
+	 * XDR free will call free() on each pointer independently, so they
+	 * need separate heap allocations even though they hold the same string.
+	 * The source string lives in ss for the server's lifetime.
+	 */
+	{
+		char *major_id = calloc(1, ss->ss_owner_id_len + 1);
+		char *scope = calloc(1, ss->ss_owner_id_len + 1);
+
+		if (!major_id || !scope) {
+			free(major_id);
+			free(scope);
+			*status = NFS4ERR_SERVERFAULT;
+			goto out;
+		}
+		memcpy(major_id, ss->ss_owner_id, ss->ss_owner_id_len);
+		memcpy(scope, ss->ss_owner_id, ss->ss_owner_id_len);
+
+		resok->eir_server_owner.so_minor_id = 0;
+		resok->eir_server_owner.so_major_id.so_major_id_val = major_id;
+		resok->eir_server_owner.so_major_id.so_major_id_len =
+			ss->ss_owner_id_len;
+
+		resok->eir_server_scope.eir_server_scope_val = scope;
+		resok->eir_server_scope.eir_server_scope_len =
+			ss->ss_owner_id_len;
+	}
+
+	resok->eir_server_impl_id.eir_server_impl_id_val = NULL;
+	resok->eir_server_impl_id.eir_server_impl_id_len = 0;
+
+	client_put(nfs4_client_to_client(nc));
+	nc = NULL;
+	*status = NFS4_OK;
 
 out:
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	server_state_put(ss);
+	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_create_session(struct compound *c)
