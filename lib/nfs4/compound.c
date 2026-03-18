@@ -102,9 +102,13 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 	if (op != OP_SEQUENCE && op != OP_EXCHANGE_ID &&
 	    op != OP_CREATE_SESSION && op != OP_CREATE_SESSION &&
 	    op != OP_BIND_CONN_TO_SESSION) {
-		nfs_resop4 *resop = &res->resarray.resarray_val[0];
-		nfsstat4 *status = &resop->nfs_resop4_u.opillegal.status;
-		res->status = *status = NFS4ERR_OP_NOT_IN_SESSION;
+		if (res->resarray.resarray_len > 0) {
+			nfs_resop4 *resop = &res->resarray.resarray_val[0];
+			nfsstat4 *status =
+				&resop->nfs_resop4_u.opillegal.status;
+			*status = NFS4ERR_OP_NOT_IN_SESSION;
+		}
+		res->status = NFS4ERR_OP_NOT_IN_SESSION;
 
 		goto out;
 	}
