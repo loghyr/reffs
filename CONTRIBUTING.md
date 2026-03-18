@@ -59,6 +59,10 @@ By making a contribution to this project, I certify that:
 4. **Sign-off:** Use `git commit -s` for all commits.
 5. **Pull Request:** Submit a PR with a clear description of your changes.
 
+## AI-Assisted Development
+
+Portions of this codebase were drafted with the assistance of AI tools (Claude by Anthropic). All such contributions have been reviewed, tested, and signed off by a human author under the DCO above. AI tools hold no copyright interest in the code and are not project contributors. The human author's `Signed-off-by` is the sole attribution of record.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the AGPL-3.0-or-later.
