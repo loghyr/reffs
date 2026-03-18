@@ -46,7 +46,7 @@ struct op_dispatch {
 	void (*cb)(struct compound *c);
 };
 
-#define OP_MAX (OP_ACCESS_MASK + 1)
+#define OP_MAX (OP_CHUNK_WRITE_REPAIR + 1)
 
 struct op_dispatch op_table[OP_MAX] = {
 	{ OP_ACCESS, nfs4_op_access },
@@ -123,6 +123,17 @@ struct op_dispatch op_table[OP_MAX] = {
 	{ OP_LISTXATTRS, nfs4_op_listxattrs },
 	{ OP_REMOVEXATTR, nfs4_op_removexattr },
 	{ OP_ACCESS_MASK, nfs4_op_access_mask },
+	{ OP_CHUNK_COMMIT, nfs4_op_chunk_commit },
+	{ OP_CHUNK_ERROR, nfs4_op_chunk_error },
+	{ OP_CHUNK_FINALIZE, nfs4_op_chunk_finalize },
+	{ OP_CHUNK_HEADER_READ, nfs4_op_chunk_header_read },
+	{ OP_CHUNK_LOCK, nfs4_op_chunk_lock },
+	{ OP_CHUNK_READ, nfs4_op_chunk_read },
+	{ OP_CHUNK_REPAIRED, nfs4_op_chunk_repaired },
+	{ OP_CHUNK_ROLLBACK, nfs4_op_chunk_rollback },
+	{ OP_CHUNK_UNLOCK, nfs4_op_chunk_unlock },
+	{ OP_CHUNK_WRITE, nfs4_op_chunk_write },
+	{ OP_CHUNK_WRITE_REPAIR, nfs4_op_chunk_write_repair },
 };
 
 void dispatch_compound(struct compound *c)
