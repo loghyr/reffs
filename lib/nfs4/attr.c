@@ -119,6 +119,7 @@ struct nfsv42_attr {
 	fattr4_open_arguments open_arguments;
 	fattr4_uncacheable_file_data uncacheable_file_data;
 	fattr4_uncacheable_dirent_metadata uncacheable_dirent_metadata;
+	fattr4_coding_block_size coding_block_size;
 };
 
 static struct nfsv42_attr system_attrs = {
@@ -146,6 +147,7 @@ static struct nfsv42_attr system_attrs = {
 	.clone_blksize = 4096,
 	.xattr_support = false,
 	.time_delta = { .seconds = 0, .nseconds = 1 },
+	.coding_block_size = 4096,
 };
 bitmap4 *supported_attributes = &system_attrs.supported_attrs;
 
@@ -2156,6 +2158,24 @@ static bool uncacheable_dirent_metadata_equal(struct nfsv42_attr *a,
 	return a->uncacheable_dirent_metadata == b->uncacheable_dirent_metadata;
 }
 
+static count4 coding_block_size_count(struct nfsv42_attr __attribute__((unused)) *
+				nattr)
+{
+	return sizeof(fattr4_coding_block_size);
+}
+
+static nfsstat4 coding_block_size_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
+{
+	if (!xdr_fattr4_coding_block_size(xdrs, &nattr->coding_block_size))
+		return NFS4ERR_BADXDR;
+	return NFS4_OK;
+}
+
+static bool coding_block_size_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
+{
+	return a->coding_block_size == b->coding_block_size;
+}
+
 static struct nfsv42_attr_ops nao[] = {
 	{ FATTR4_SUPPORTED_ATTRS, supported_attrs_count, supported_attrs_xdr,
 	  supported_attrs_equal },
@@ -2310,7 +2330,9 @@ static struct nfsv42_attr_ops nao[] = {
 	{ FATTR4_UNCACHEABLE_FILE_DATA, uncacheable_file_data_count,
 	  uncacheable_file_data_xdr, uncacheable_file_data_equal },
 	{ FATTR4_UNCACHEABLE_DIRENT_METADATA, uncacheable_dirent_metadata_count,
-	  uncacheable_dirent_metadata_xdr, uncacheable_dirent_metadata_equal }
+	  uncacheable_dirent_metadata_xdr, uncacheable_dirent_metadata_equal },
+	{ FATTR4_CODING_BLOCK_SIZE, coding_block_size_count,
+	  coding_block_size_xdr, coding_block_size_equal }
 };
 
 int nfs4_attribute_init(void)
@@ -2407,6 +2429,7 @@ int nfs4_attribute_init(void)
 	bitmap4_attribute_set(bm, FATTR4_OPEN_ARGUMENTS);
 	bitmap4_attribute_set(bm, FATTR4_UNCACHEABLE_FILE_DATA);
 	bitmap4_attribute_set(bm, FATTR4_UNCACHEABLE_DIRENT_METADATA);
+	bitmap4_attribute_set(bm, FATTR4_CODING_BLOCK_SIZE);
 
 	return 0;
 }
@@ -2560,6 +2583,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 				       INODE_IS_UNCACHEABLE;
 	nattr->uncacheable_dirent_metadata = inode->i_attr_flags &
 					     INODE_IS_UNCACHEABLE;
+	nattr->coding_block_size = system_attrs.coding_block_size;
 
 out:
 	return NFS4_OK;
