@@ -84,6 +84,7 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
 	COMPOUND4res *res = ((COMPOUND4res *)ph->ph_res);
+	COMPOUND4args *args = (COMPOUND4args *)ph->ph_args;
 
 	struct compound *c;
 
@@ -93,32 +94,33 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 
 	res->status = 0;
 
-	{
-		COMPOUND4args *args = (COMPOUND4args *)ph->ph_args;
+	if (args->minorversion != 1 && args->minorversion != 2) {
+		res->status = NFS4ERR_MINOR_VERS_MISMATCH;
+		return res->status;
+	}
 
-		if (args->minorversion != 1 && args->minorversion != 2) {
-			res->status = NFS4ERR_MINOR_VERS_MISMATCH;
-			return res->status;
-		}
-
-		/*
-		 * RFC 5661 §16.2.3: the server MUST copy the tag from the
-		 * request into the response.  XDR free will call free() on
-		 * res->tag.utf8string_val independently of the args, so we
-		 * need a separate heap allocation.
-		 */
-		if (args->tag.utf8string_len > 0) {
-			res->tag.utf8string_val =
-				malloc(args->tag.utf8string_len);
-			if (res->tag.utf8string_val) {
-				memcpy(res->tag.utf8string_val,
-				       args->tag.utf8string_val,
-				       args->tag.utf8string_len);
-				res->tag.utf8string_len =
-					args->tag.utf8string_len;
-			}
+	/*
+	 * RFC 5661 §16.2.3: the server MUST copy the tag from the
+	 * request into the response.  XDR free will call free() on
+	 * res->tag.utf8string_val independently of the args, so we
+	 * need a separate heap allocation.
+	 */
+	if (args->tag.utf8string_len > 0) {
+		res->tag.utf8string_val = malloc(args->tag.utf8string_len);
+		if (res->tag.utf8string_val) {
+			memcpy(res->tag.utf8string_val,
+			       args->tag.utf8string_val,
+			       args->tag.utf8string_len);
+			res->tag.utf8string_len = args->tag.utf8string_len;
 		}
 	}
+
+	res->resarray.resarray_val =
+		calloc(args->argarray.argarray_len, sizeof(nfs_resop4));
+	if (!res->resarray.resarray_val) {
+		return NFS4ERR_DELAY;
+	}
+	res->resarray.resarray_len = args->argarray.argarray_len;
 
 	c = compound_alloc(rt);
 	if (!c) {
