@@ -15,6 +15,7 @@
 #include "reffs/inode.h"
 #include "reffs/stateid.h"
 #include "nfs4/client.h"
+#include "nfs4/session.h"
 
 struct compound {
 	struct rpc_trans *c_rt;
@@ -27,6 +28,14 @@ struct compound {
 	struct stateid *c_curr_stid;
 	struct stateid *c_saved_stid;
 	struct inode *c_inode;
+	/*
+	 * c_session is set by SEQUENCE; c_slot points into c_session->ns_slots.
+	 * c_nfs4_client is set directly by EXCHANGE_ID and also by SEQUENCE
+	 * (from c_session->ns_client) so all op handlers have a consistent path
+	 * to the client regardless of which op established it.
+	 */
+	struct nfs4_session *c_session;
+	struct nfs4_slot *c_slot;
 	struct nfs4_client *c_nfs4_client;
 };
 
