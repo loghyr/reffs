@@ -29,6 +29,7 @@
 #include "reffs/time.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
+#include "reffs/vfs.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -2468,13 +2469,322 @@ static void nattr_release(struct nfsv42_attr *nattr)
 	utf8string_free(&nattr->owner_group);
 }
 
-#ifdef NOT_NOW_BROWN_COW
-static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, struct inode *inode)
+/* ------------------------------------------------------------------ */
+/* SETATTR helpers                                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Return true if @attr may be set via SETATTR on this server.
+ *
+ * Unsupported write attrs (acl, dacl, sacl, layout_hint, mimetype,
+ * retention/time-deleg/sec_label) are not listed here so any request
+ * containing them yields NFS4ERR_ATTRNOTSUPP.
+ */
+static bool nattr_is_settable(uint32_t attr)
 {
-	inode->i_mode = nattr->type;
-	return NFS4_OK;
+	switch (attr) {
+	case FATTR4_SIZE:
+	case FATTR4_ARCHIVE:
+	case FATTR4_HIDDEN:
+	case FATTR4_MODE:
+	case FATTR4_MODE_SET_MASKED:
+	case FATTR4_OWNER:
+	case FATTR4_OWNER_GROUP:
+	case FATTR4_SYSTEM:
+	case FATTR4_TIME_ACCESS_SET:
+	case FATTR4_TIME_CREATE:
+	case FATTR4_TIME_MODIFY_SET:
+	case FATTR4_UNCACHEABLE_FILE_DATA:
+	case FATTR4_UNCACHEABLE_DIRENT_METADATA:
+		return true;
+	default:
+		return false;
+	}
 }
-#endif
+
+/*
+ * Decode the fattr4 from a SETATTR4args into @nattr.
+ *
+ * First validates that every attr in the attrmask is settable; returns
+ * NFS4ERR_ATTRNOTSUPP if not.  Then XDR-decodes each attr in bitmap
+ * order.  Returns NFS4ERR_BADXDR on decode failure, NFS4_OK otherwise.
+ *
+ * On success the caller must call nattr_release() to free owner /
+ * owner_group strings decoded by XDR.
+ *
+ * mode and mode_set_masked are mutually exclusive (RFC 5661 §6.2.4);
+ * returns NFS4ERR_INVAL if both are present.
+ */
+static nfsstat4 nattr_from_fattr4(fattr4 *fattr, struct nfsv42_attr *nattr)
+{
+	u_int scan_bits = fattr->attrmask.bitmap4_len * 32U;
+	XDR sptr;
+	nfsstat4 status = NFS4_OK;
+	bool have_mode = false;
+	bool have_mode_masked = false;
+
+	/* Validate: all requested attrs must be settable. */
+	for (u_int i = 0; i < scan_bits; i++) {
+		if (!bitmap4_attribute_is_set(&fattr->attrmask, i))
+			continue;
+		if (!nattr_is_settable(i))
+			return NFS4ERR_ATTRNOTSUPP;
+		if (i == FATTR4_MODE)
+			have_mode = true;
+		if (i == FATTR4_MODE_SET_MASKED)
+			have_mode_masked = true;
+	}
+	if (have_mode && have_mode_masked)
+		return NFS4ERR_INVAL;
+
+	xdrmem_create(&sptr, fattr->attr_vals.attrlist4_val,
+		      fattr->attr_vals.attrlist4_len, XDR_DECODE);
+
+	for (u_int i = 0; i < scan_bits && status == NFS4_OK; i++) {
+		if (!bitmap4_attribute_is_set(&fattr->attrmask, i))
+			continue;
+		bool ok;
+
+		switch (i) {
+		case FATTR4_SIZE:
+			ok = xdr_fattr4_size(&sptr, &nattr->size);
+			break;
+		case FATTR4_ARCHIVE:
+			ok = xdr_fattr4_archive(&sptr, &nattr->archive);
+			break;
+		case FATTR4_HIDDEN:
+			ok = xdr_fattr4_hidden(&sptr, &nattr->hidden);
+			break;
+		case FATTR4_MODE:
+			ok = xdr_fattr4_mode(&sptr, &nattr->mode);
+			break;
+		case FATTR4_MODE_SET_MASKED:
+			ok = xdr_fattr4_mode_set_masked(
+				&sptr, &nattr->mode_set_masked);
+			break;
+		case FATTR4_OWNER:
+			ok = xdr_fattr4_owner(&sptr, &nattr->owner);
+			break;
+		case FATTR4_OWNER_GROUP:
+			ok = xdr_fattr4_owner_group(&sptr, &nattr->owner_group);
+			break;
+		case FATTR4_SYSTEM:
+			ok = xdr_fattr4_system(&sptr, &nattr->system);
+			break;
+		case FATTR4_TIME_ACCESS_SET:
+			ok = xdr_fattr4_time_access_set(
+				&sptr, &nattr->time_access_set);
+			break;
+		case FATTR4_TIME_CREATE:
+			ok = xdr_fattr4_time_create(&sptr, &nattr->time_create);
+			break;
+		case FATTR4_TIME_MODIFY_SET:
+			ok = xdr_fattr4_time_modify_set(
+				&sptr, &nattr->time_modify_set);
+			break;
+		case FATTR4_UNCACHEABLE_FILE_DATA:
+			ok = xdr_fattr4_uncacheable_file_data(
+				&sptr, &nattr->uncacheable_file_data);
+			break;
+		case FATTR4_UNCACHEABLE_DIRENT_METADATA:
+			ok = xdr_fattr4_uncacheable_dirent_metadata(
+				&sptr, &nattr->uncacheable_dirent_metadata);
+			break;
+		default:
+			ok = false;
+			break;
+		}
+		if (!ok)
+			status = NFS4ERR_BADXDR;
+	}
+
+	xdr_destroy(&sptr);
+	return status;
+}
+
+/*
+ * Apply @nattr (decoded from a SETATTR request) to @inode.
+ *
+ * POSIX-compatible attrs (size, mode, uid/gid, atime, mtime) are
+ * handled by vfs_setattr, which enforces ownership/permission rules
+ * and performs the size truncation.
+ *
+ * NFSv4-specific attrs (archive, hidden, system, uncacheable flags,
+ * time_create, mode_set_masked) are applied directly under
+ * i_attr_mutex after vfs_setattr returns.
+ *
+ * @attrmask: the set of attrs that were decoded (from SETATTR4args).
+ * @attrsset: output bitmap, populated with attrs that were actually set.
+ *
+ * Returns NFS4_OK on success; the caller is responsible for calling
+ * nattr_release() on @nattr.
+ */
+static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
+			       bitmap4 *attrsset, struct inode *inode,
+			       struct authunix_parms *ap)
+{
+	u_int scan_bits = attrmask->bitmap4_len * 32U;
+	struct reffs_sattr rs;
+	nfsstat4 status = NFS4_OK;
+	int ret;
+	bool have_posix = false;
+	bool have_nfs4 = false;
+
+	memset(&rs, 0, sizeof(rs));
+
+	/* ---- POSIX attrs: hand off to vfs_setattr ---- */
+	for (u_int i = 0; i < scan_bits; i++) {
+		if (!bitmap4_attribute_is_set(attrmask, i))
+			continue;
+		switch (i) {
+		case FATTR4_SIZE:
+			rs.size = nattr->size;
+			rs.size_set = true;
+			have_posix = true;
+			break;
+		case FATTR4_MODE:
+			rs.mode = nattr->mode & 07777;
+			rs.mode_set = true;
+			have_posix = true;
+			break;
+		case FATTR4_MODE_SET_MASKED:
+			/*
+			 * Compute the final mode now, using the current
+			 * inode mode as the base.  vfs_setattr will apply
+			 * it via rs.mode.
+			 */
+			pthread_mutex_lock(&inode->i_attr_mutex);
+			rs.mode = (inode->i_mode &
+				   ~nattr->mode_set_masked.mm_mask_bits) |
+				  (nattr->mode_set_masked.mm_value_to_set &
+				   nattr->mode_set_masked.mm_mask_bits);
+			rs.mode &= 07777;
+			pthread_mutex_unlock(&inode->i_attr_mutex);
+			rs.mode_set = true;
+			have_posix = true;
+			break;
+		case FATTR4_OWNER:
+			ret = utf8string_to_uid(&nattr->owner, &rs.uid);
+			if (ret) {
+				status = NFS4ERR_BADOWNER;
+				goto out;
+			}
+			rs.uid_set = true;
+			have_posix = true;
+			break;
+		case FATTR4_OWNER_GROUP:
+			ret = utf8string_to_gid(&nattr->owner_group, &rs.gid);
+			if (ret) {
+				status = NFS4ERR_BADOWNER;
+				goto out;
+			}
+			rs.gid_set = true;
+			have_posix = true;
+			break;
+		case FATTR4_TIME_ACCESS_SET:
+			if (nattr->time_access_set.set_it ==
+			    SET_TO_CLIENT_TIME4) {
+				nfstime4_to_timespec(
+					&nattr->time_access_set.settime4_u.time,
+					&rs.atime);
+			}
+			rs.atime_set = true;
+			rs.atime_now = (nattr->time_access_set.set_it ==
+					SET_TO_SERVER_TIME4);
+			have_posix = true;
+			break;
+		case FATTR4_TIME_MODIFY_SET:
+			if (nattr->time_modify_set.set_it ==
+			    SET_TO_CLIENT_TIME4) {
+				nfstime4_to_timespec(
+					&nattr->time_modify_set.settime4_u.time,
+					&rs.mtime);
+			}
+			rs.mtime_set = true;
+			rs.mtime_now = (nattr->time_modify_set.set_it ==
+					SET_TO_SERVER_TIME4);
+			have_posix = true;
+			break;
+		default:
+			have_nfs4 = true;
+			break;
+		}
+	}
+
+	if (have_posix) {
+		ret = vfs_setattr(inode, &rs, ap);
+		if (ret) {
+			status = errno_to_nfs4(ret, OP_SETATTR);
+			goto out;
+		}
+	}
+
+	/* ---- NFSv4-specific attrs: apply under i_attr_mutex ---- */
+	if (!have_nfs4)
+		goto record_set;
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	for (u_int i = 0; i < scan_bits; i++) {
+		if (!bitmap4_attribute_is_set(attrmask, i))
+			continue;
+		switch (i) {
+		case FATTR4_ARCHIVE:
+			if (nattr->archive)
+				inode->i_attr_flags |= INODE_IS_ARCHIVED;
+			else
+				inode->i_attr_flags &= ~INODE_IS_ARCHIVED;
+			break;
+		case FATTR4_HIDDEN:
+			if (nattr->hidden)
+				inode->i_attr_flags |= INODE_IS_HIDDEN;
+			else
+				inode->i_attr_flags &= ~INODE_IS_HIDDEN;
+			break;
+		case FATTR4_SYSTEM:
+			if (nattr->system)
+				inode->i_attr_flags |= INODE_IS_SYSTEM;
+			else
+				inode->i_attr_flags &= ~INODE_IS_SYSTEM;
+			break;
+		case FATTR4_UNCACHEABLE_FILE_DATA:
+			if (nattr->uncacheable_file_data)
+				inode->i_attr_flags |=
+					INODE_IS_UNCACHEABLE_FILE_DATA;
+			else
+				inode->i_attr_flags &=
+					~INODE_IS_UNCACHEABLE_FILE_DATA;
+			break;
+		case FATTR4_UNCACHEABLE_DIRENT_METADATA:
+			if (nattr->uncacheable_dirent_metadata)
+				inode->i_attr_flags |=
+					INODE_IS_UNCACHEABLE_DIRENT_METADATA;
+			else
+				inode->i_attr_flags &=
+					~INODE_IS_UNCACHEABLE_DIRENT_METADATA;
+			break;
+		case FATTR4_TIME_CREATE:
+			nfstime4_to_timespec(&nattr->time_create,
+					     &inode->i_btime);
+			break;
+		default:
+			/* POSIX attrs handled above */
+			break;
+		}
+	}
+
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME);
+	inode_sync_to_disk(inode);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+record_set:
+	/* Record what was set: copy attrmask → attrsset on success. */
+	if (bitmap4_copy(attrmask, attrsset) != 0)
+		status = NFS4ERR_DELAY;
+
+out:
+	return status;
+}
 
 static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 {
@@ -2540,7 +2850,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->lease_time = system_attrs.lease_time;
 	nattr->rdattr_error = NFS4ERR_DELAY;
 	nattr->aclsupport = system_attrs.aclsupport;
-	nattr->archive = false;
+	nattr->archive = inode->i_attr_flags & INODE_IS_ARCHIVED;
 	nattr->cansettime = system_attrs.cansettime;
 	nattr->case_insensitive = system_attrs.case_insensitive;
 	nattr->case_preserving = system_attrs.case_preserving;
@@ -2550,7 +2860,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->files_avail = sb->sb_inodes_max - sb->sb_inodes_used;
 	nattr->files_free = sb->sb_inodes_max - sb->sb_inodes_used;
 	nattr->files_total = sb->sb_inodes_max;
-	nattr->hidden = inode->i_attr_flags & INODE_IS_UNCACHEABLE;
+	nattr->hidden = inode->i_attr_flags & INODE_IS_HIDDEN;
 	nattr->homogeneous = system_attrs.homogeneous;
 	nattr->maxfilesize = system_attrs.maxfilesize;
 	nattr->maxlink = system_attrs.maxlink;
@@ -2568,7 +2878,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->space_free = sb->sb_bytes_max - sb->sb_bytes_used;
 	nattr->space_total = sb->sb_bytes_max;
 	nattr->space_used = sb->sb_bytes_used;
-	nattr->system = false;
+	nattr->system = inode->i_attr_flags & INODE_IS_SYSTEM;
 
 	nattr->time_delta = system_attrs.time_delta;
 	timespec_to_nfstime4(&inode->i_ctime, &nattr->time_metadata);
@@ -2584,11 +2894,11 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->change_attr_type = system_attrs.change_attr_type;
 	// nattr->mode_umask;
 	nattr->xattr_support = system_attrs.xattr_support;
-	nattr->offline = inode->i_attr_flags & INODE_IS_UNCACHEABLE;
+	nattr->offline = inode->i_attr_flags & INODE_IS_OFFLINE;
 	nattr->uncacheable_file_data = inode->i_attr_flags &
-				       INODE_IS_UNCACHEABLE;
-	nattr->uncacheable_dirent_metadata = inode->i_attr_flags &
-					     INODE_IS_UNCACHEABLE;
+				       INODE_IS_UNCACHEABLE_FILE_DATA;
+	nattr->uncacheable_dirent_metadata =
+		inode->i_attr_flags & INODE_IS_UNCACHEABLE_DIRENT_METADATA;
 	nattr->coding_block_size = system_attrs.coding_block_size;
 
 out:
@@ -3062,10 +3372,101 @@ void nfs4_op_setattr(struct compound *c)
 	SETATTR4res *res = NFS4_OP_RES_SETUP(c, ph, opsetattr);
 	nfsstat4 *status = &res->status;
 
-	*status = NFS4ERR_NOTSUPP;
+	struct nfsv42_attr nattr = { 0 };
+	fattr4 *fattr = &args->obj_attributes;
+	bool nattr_valid = false;
 
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_BADHANDLE;
+		goto out;
+	}
+
+	*status = nattr_from_fattr4(fattr, &nattr);
+	if (*status)
+		goto out;
+	nattr_valid = true;
+
+	*status = nattr_to_inode(&nattr, &fattr->attrmask, &res->attrsset,
+				 c->c_inode, &c->c_ap);
+
+out:
+	if (nattr_valid)
+		nattr_release(&nattr);
 	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
 	    *status, (void *)args, (void *)res);
+}
+
+/*
+ * Shared implementation for VERIFY and NVERIFY.
+ *
+ * Encodes the current inode's attrs for the same attrmask the client
+ * sent, then compares the bytes.  If the buffers match the attrs are
+ * equal; if not they differ.
+ *
+ * VERIFY  succeeds (NFS4_OK) when attrs are equal; fails with
+ *         NFS4ERR_NOT_SAME when they differ.
+ * NVERIFY succeeds (NFS4_OK) when attrs differ; fails with
+ *         NFS4ERR_SAME when they are equal.
+ */
+static nfsstat4 verify_common(struct compound *c, fattr4 *obj_attrs,
+			      bool invert, nfs_opnum4 opnum)
+{
+	struct inode *inode = c->c_inode;
+	u_int scan_bits = obj_attrs->attrmask.bitmap4_len * 32U;
+	struct nfsv42_attr cur = { 0 };
+	char *cur_buf = NULL;
+	count4 cur_bytes = 0;
+	XDR sptr;
+	nfsstat4 status = NFS4_OK;
+	int ret;
+	bool attrs_equal;
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	ret = inode_to_nattr(inode, &cur);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+	if (ret) {
+		status = errno_to_nfs4(ret, opnum);
+		goto out;
+	}
+
+	/* Size the current-attr encode buffer. */
+	for (u_int i = 0; i < scan_bits; i++) {
+		if (bitmap4_attribute_is_set(&obj_attrs->attrmask, i) &&
+		    bitmap4_attribute_is_set(supported_attributes, i))
+			cur_bytes += nao[i].nao_count(&cur);
+	}
+
+	cur_buf = calloc(cur_bytes, 1);
+	if (!cur_buf) {
+		status = NFS4ERR_DELAY;
+		goto out;
+	}
+
+	xdrmem_create(&sptr, cur_buf, cur_bytes, XDR_ENCODE);
+	for (u_int i = 0; i < scan_bits && status == NFS4_OK; i++) {
+		if (bitmap4_attribute_is_set(&obj_attrs->attrmask, i) &&
+		    bitmap4_attribute_is_set(supported_attributes, i)) {
+			if (nao[i].nao_xdr(&sptr, &cur) != NFS4_OK)
+				status = NFS4ERR_SERVERFAULT;
+		}
+	}
+	xdr_destroy(&sptr);
+	if (status)
+		goto out;
+
+	attrs_equal = (cur_bytes == obj_attrs->attr_vals.attrlist4_len) &&
+		      (memcmp(cur_buf, obj_attrs->attr_vals.attrlist4_val,
+			      cur_bytes) == 0);
+
+	if (invert)
+		status = attrs_equal ? NFS4ERR_SAME : NFS4_OK;
+	else
+		status = attrs_equal ? NFS4_OK : NFS4ERR_NOT_SAME;
+
+out:
+	free(cur_buf);
+	nattr_release(&cur);
+	return status;
 }
 
 void nfs4_op_verify(struct compound *c)
@@ -3077,8 +3478,14 @@ void nfs4_op_verify(struct compound *c)
 	VERIFY4res *res = NFS4_OP_RES_SETUP(c, ph, opverify);
 	nfsstat4 *status = &res->status;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_BADHANDLE;
+		goto out;
+	}
 
+	*status = verify_common(c, &args->obj_attributes, false, OP_VERIFY);
+
+out:
 	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
 	    *status, (void *)args, (void *)res);
 }
@@ -3092,8 +3499,14 @@ void nfs4_op_nverify(struct compound *c)
 	NVERIFY4res *res = NFS4_OP_RES_SETUP(c, ph, opnverify);
 	nfsstat4 *status = &res->status;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_BADHANDLE;
+		goto out;
+	}
 
+	*status = verify_common(c, &args->obj_attributes, true, OP_NVERIFY);
+
+out:
 	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
 	    *status, (void *)args, (void *)res);
 }
