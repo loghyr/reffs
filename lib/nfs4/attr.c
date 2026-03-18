@@ -2158,8 +2158,9 @@ static bool uncacheable_dirent_metadata_equal(struct nfsv42_attr *a,
 	return a->uncacheable_dirent_metadata == b->uncacheable_dirent_metadata;
 }
 
-static count4 coding_block_size_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 coding_block_size_count(struct nfsv42_attr
+				      __attribute__((unused)) *
+				      nattr)
 {
 	return sizeof(fattr4_coding_block_size);
 }
@@ -2171,7 +2172,8 @@ static nfsstat4 coding_block_size_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
 	return NFS4_OK;
 }
 
-static bool coding_block_size_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
+static bool coding_block_size_equal(struct nfsv42_attr *a,
+				    struct nfsv42_attr *b)
 {
 	return a->coding_block_size == b->coding_block_size;
 }
