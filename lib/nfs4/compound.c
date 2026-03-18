@@ -93,6 +93,33 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 
 	res->status = 0;
 
+	{
+		COMPOUND4args *args = (COMPOUND4args *)ph->ph_args;
+
+		if (args->minorversion != 1 && args->minorversion != 2) {
+			res->status = NFS4ERR_MINOR_VERS_MISMATCH;
+			return res->status;
+		}
+
+		/*
+		 * RFC 5661 §16.2.3: the server MUST copy the tag from the
+		 * request into the response.  XDR free will call free() on
+		 * res->tag.utf8string_val independently of the args, so we
+		 * need a separate heap allocation.
+		 */
+		if (args->tag.utf8string_len > 0) {
+			res->tag.utf8string_val =
+				malloc(args->tag.utf8string_len);
+			if (res->tag.utf8string_val) {
+				memcpy(res->tag.utf8string_val,
+				       args->tag.utf8string_val,
+				       args->tag.utf8string_len);
+				res->tag.utf8string_len =
+					args->tag.utf8string_len;
+			}
+		}
+	}
+
 	c = compound_alloc(rt);
 	if (!c) {
 		return NFS4ERR_DELAY;
