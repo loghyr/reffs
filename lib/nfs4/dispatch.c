@@ -40,6 +40,7 @@
 #include "nfs4/errors.h"
 #include "nfs4/ops.h"
 #include "nfs4/compound.h"
+#include "nfsv42_names.h"
 
 struct op_dispatch {
 	nfs_opnum4 op;
