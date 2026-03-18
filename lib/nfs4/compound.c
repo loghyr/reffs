@@ -122,6 +122,11 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 	}
 	res->resarray.resarray_len = args->argarray.argarray_len;
 
+	if (args->argarray.argarray_len == 0) {
+		res->status = NFS4_OK;
+		return res->status;
+	}
+
 	c = compound_alloc(rt);
 	if (!c) {
 		return NFS4ERR_DELAY;
@@ -131,13 +136,20 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 	if (op != OP_SEQUENCE && op != OP_EXCHANGE_ID &&
 	    op != OP_CREATE_SESSION && op != OP_DESTROY_SESSION &&
 	    op != OP_BIND_CONN_TO_SESSION && op != OP_DESTROY_CLIENTID) {
-		if (res->resarray.resarray_len > 0) {
-			nfs_resop4 *resop = &res->resarray.resarray_val[0];
-			nfsstat4 *status =
-				&resop->nfs_resop4_u.opillegal.status;
-			*status = NFS4ERR_OP_NOT_IN_SESSION;
+		nfs_resop4 *resop = &res->resarray.resarray_val[0];
+
+		if (op < OP_ACCESS || op > OP_CHUNK_WRITE_REPAIR) {
+			resop->resop = OP_ILLEGAL;
+			resop->nfs_resop4_u.opillegal.status =
+				NFS4ERR_OP_ILLEGAL;
+			res->status = NFS4ERR_OP_ILLEGAL;
+		} else {
+			resop->resop = op;
+			resop->nfs_resop4_u.opillegal.status =
+				NFS4ERR_OP_NOT_IN_SESSION;
+			res->status = NFS4ERR_OP_NOT_IN_SESSION;
 		}
-		res->status = NFS4ERR_OP_NOT_IN_SESSION;
+		res->resarray.resarray_len = 1;
 
 		goto out;
 	}
