@@ -16,7 +16,6 @@
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/server.h"
-#include "reffs/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -108,7 +107,7 @@ void nfs4_op_exchange_id(struct compound *c)
 	resok->eir_server_impl_id.eir_server_impl_id_val = NULL;
 	resok->eir_server_impl_id.eir_server_impl_id_len = 0;
 
-	client_put(nfs4_client_to_client(nc));
+	c->c_nfs4_client = nc;
 	nc = NULL;
 	*status = NFS4_OK;
 
