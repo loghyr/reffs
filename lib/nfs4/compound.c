@@ -163,8 +163,33 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 	 */
 	if (c->c_slot) {
 		pthread_mutex_lock(&c->c_slot->sl_mutex);
-		if (c->c_slot->sl_state == NFS4_SLOT_IN_USE)
-			c->c_slot->sl_state = NFS4_SLOT_CACHED;
+		if (c->c_slot->sl_state == NFS4_SLOT_IN_USE) {
+			XDR xdrs;
+			uint32_t reply_size;
+
+			reply_size =
+				xdr_sizeof((xdrproc_t)xdr_COMPOUND4res, res);
+
+			free(c->c_slot->sl_reply);
+			c->c_slot->sl_reply = calloc(1, reply_size);
+			if (c->c_slot->sl_reply) {
+				xdrmem_create(&xdrs, c->c_slot->sl_reply,
+					      reply_size, XDR_ENCODE);
+				if (xdr_COMPOUND4res(&xdrs, res)) {
+					c->c_slot->sl_reply_len = reply_size;
+					c->c_slot->sl_state = NFS4_SLOT_CACHED;
+				} else {
+					free(c->c_slot->sl_reply);
+					c->c_slot->sl_reply = NULL;
+					c->c_slot->sl_reply_len = 0;
+					c->c_slot->sl_state = NFS4_SLOT_IDLE;
+				}
+				xdr_destroy(&xdrs);
+			} else {
+				c->c_slot->sl_reply_len = 0;
+				c->c_slot->sl_state = NFS4_SLOT_IDLE;
+			}
+		}
 		pthread_mutex_unlock(&c->c_slot->sl_mutex);
 	}
 
