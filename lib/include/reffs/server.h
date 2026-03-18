@@ -71,6 +71,8 @@ struct server_state {
 	struct cds_lfht *ss_client_ht;
 	uint64_t ss_client_mod_state;
 
+	struct cds_lfht *ss_session_ht;
+
 	/*
          * Per-boot incarnation table: slot -> uint16_t counter.
          * Looked up on EXCHANGE_ID reconnect to bump incarnation field

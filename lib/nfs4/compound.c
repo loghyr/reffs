@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,6 +49,7 @@ static void compound_free(struct compound *c)
 	if (!c)
 		return;
 
+	nfs4_session_put(c->c_session);
 	nfs4_client_put(c->c_nfs4_client);
 	inode_active_put(c->c_inode);
 	super_block_put(c->c_curr_sb);
@@ -108,6 +110,18 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 	}
 
 	dispatch_compound(c);
+
+	/*
+	 * Transition the slot from IN_USE to CACHED.  This must happen
+	 * after dispatch so that any concurrent replay of the same seqid
+	 * gets NFS4ERR_DELAY rather than a stale cached reply.
+	 */
+	if (c->c_slot) {
+		pthread_mutex_lock(&c->c_slot->sl_mutex);
+		if (c->c_slot->sl_state == NFS4_SLOT_IN_USE)
+			c->c_slot->sl_state = NFS4_SLOT_CACHED;
+		pthread_mutex_unlock(&c->c_slot->sl_mutex);
+	}
 
 out:
 	compound_free(c);

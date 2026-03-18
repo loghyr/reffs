@@ -70,6 +70,9 @@ static void server_state_free(struct urcu_ref *ref)
 	if (ss->ss_incarnations)
 		cds_lfht_destroy(ss->ss_incarnations, NULL);
 
+	if (ss->ss_session_ht)
+		cds_lfht_destroy(ss->ss_session_ht, NULL);
+
 	if (ss->ss_client_ht)
 		cds_lfht_destroy(ss->ss_client_ht, NULL);
 
@@ -271,6 +274,12 @@ struct server_state *server_state_init(const char *state_path, int port)
 		goto err_path;
 	}
 
+	ss->ss_session_ht = cds_lfht_new(8, 8, 0, CDS_LFHT_AUTO_RESIZE, NULL);
+	if (!ss->ss_session_ht) {
+		LOG("server_state_init: failed to allocate session hash table");
+		goto err_path;
+	}
+
 	/*
          * NOT_NOW_BROWN_COW: allocate ss_incarnations hash table.
          */
@@ -301,6 +310,13 @@ struct server_state *server_state_init(const char *state_path, int port)
 	return ss;
 
 err_path:
+	if (ss->ss_session_ht) {
+		ret = cds_lfht_destroy(ss->ss_session_ht, NULL);
+		if (ret < 0)
+			LOG("Could not delete session hash table: %m");
+		ss->ss_session_ht = NULL;
+	}
+
 	if (ss->ss_client_ht) {
 		ret = cds_lfht_destroy(ss->ss_client_ht, NULL);
 		if (ret < 0) {
@@ -334,6 +350,13 @@ void server_state_fini(struct server_state *ss)
 	ss->ss_persist.sps_clean_shutdown = 1;
 	if (server_persist_save(ss->ss_state_dir, &ss->ss_persist))
 		LOG("server_state_fini: failed to save clean shutdown flag");
+
+	if (ss->ss_session_ht) {
+		ret = cds_lfht_destroy(ss->ss_session_ht, NULL);
+		if (ret < 0)
+			LOG("Could not delete session hash table: %m");
+		ss->ss_session_ht = NULL;
+	}
 
 	if (ss->ss_client_ht) {
 		ret = cds_lfht_destroy(ss->ss_client_ht, NULL);
