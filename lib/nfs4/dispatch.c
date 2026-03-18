@@ -172,4 +172,5 @@ void dispatch_compound(struct compound *c)
 	}
 
 	res->status = NFS4_OK;
+	res->resarray.resarray_len = args->argarray.argarray_len;
 }
