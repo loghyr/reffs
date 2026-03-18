@@ -515,12 +515,22 @@ void nfs4_op_sequence(struct compound *c)
 			*status = NFS4ERR_DELAY;
 			goto out;
 		}
-		/*
-		 * State is CACHED or IDLE.  We do not yet store the full
-		 * compound reply, so we cannot service the replay.
-		 * NFS4ERR_SEQ_MISORDERED tells the client to retry.
-		 * TODO: store and return the cached reply.
-		 */
+
+		if (slot->sl_reply) {
+			XDR xdrs;
+			COMPOUND4res *full_res = ((COMPOUND4res *)ph->ph_res);
+
+			xdrmem_create(&xdrs, slot->sl_reply, slot->sl_reply_len,
+				      XDR_DECODE);
+			if (xdr_COMPOUND4res(&xdrs, full_res)) {
+				pthread_mutex_unlock(&slot->sl_mutex);
+				*status = full_res->status;
+				xdr_destroy(&xdrs);
+				goto out;
+			}
+			xdr_destroy(&xdrs);
+		}
+
 		pthread_mutex_unlock(&slot->sl_mutex);
 		*status = NFS4ERR_SEQ_MISORDERED;
 		goto out;
@@ -555,6 +565,7 @@ void nfs4_op_sequence(struct compound *c)
 	ns = NULL; /* ref transferred to c_session */
 
 	*status = NFS4_OK;
+	((COMPOUND4res *)ph->ph_res)->status = NFS4_OK;
 
 out:
 	nfs4_session_put(ns);
