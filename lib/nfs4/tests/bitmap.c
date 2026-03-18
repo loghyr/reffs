@@ -73,7 +73,7 @@ START_TEST(test_bitmap_zero)
 	ck_assert_int_eq(bitmap4_init(&bm, FATTR4_ATTRIBUTE_MAX), 0);
 	bitmap4_attribute_set(&bm, FATTR4_TYPE);
 	bitmap4_attribute_set(&bm, FATTR4_MODE);
-	bitmap4_attribute_set(&bm, FATTR4_UNCACHEABLE);
+	bitmap4_attribute_set(&bm, FATTR4_UNCACHEABLE_DIRENT_METADATA);
 
 	bitmap4_zero(&bm);
 	for (i = 0; i < bm.bitmap4_len; i++)
@@ -261,11 +261,15 @@ START_TEST(test_bitmap_max_attr)
 
 	ck_assert_int_eq(bitmap4_init(&bm, FATTR4_ATTRIBUTE_MAX), 0);
 
-	ck_assert(bitmap4_attribute_set(&bm, FATTR4_UNCACHEABLE));
-	ck_assert(bitmap4_attribute_is_set(&bm, FATTR4_UNCACHEABLE));
+	ck_assert(
+		bitmap4_attribute_set(&bm, FATTR4_UNCACHEABLE_DIRENT_METADATA));
+	ck_assert(bitmap4_attribute_is_set(&bm,
+					   FATTR4_UNCACHEABLE_DIRENT_METADATA));
 
-	ck_assert(bitmap4_attribute_clear(&bm, FATTR4_UNCACHEABLE));
-	ck_assert(!bitmap4_attribute_is_set(&bm, FATTR4_UNCACHEABLE));
+	ck_assert(bitmap4_attribute_clear(&bm,
+					  FATTR4_UNCACHEABLE_DIRENT_METADATA));
+	ck_assert(!bitmap4_attribute_is_set(
+		&bm, FATTR4_UNCACHEABLE_DIRENT_METADATA));
 
 	bitmap4_destroy(&bm);
 }
@@ -324,10 +328,11 @@ START_TEST(test_bitmap_out_of_range_clear)
 		BITMAP4_WORDS_FOR_MAX(FATTR4_ATTRIBUTE_MAX) * 32U;
 
 	ck_assert_int_eq(bitmap4_init(&bm, FATTR4_ATTRIBUTE_MAX), 0);
-	bitmap4_attribute_set(&bm, FATTR4_UNCACHEABLE);
+	bitmap4_attribute_set(&bm, FATTR4_UNCACHEABLE_DIRENT_METADATA);
 
 	ck_assert(!bitmap4_attribute_clear(&bm, out_of_range));
-	ck_assert(bitmap4_attribute_is_set(&bm, FATTR4_UNCACHEABLE));
+	ck_assert(bitmap4_attribute_is_set(&bm,
+					   FATTR4_UNCACHEABLE_DIRENT_METADATA));
 
 	bitmap4_destroy(&bm);
 }
@@ -391,21 +396,21 @@ START_TEST(test_bitmap_client_oversized)
 
 	ck_assert_int_eq(bitmap4_init(&supported, FATTR4_ATTRIBUTE_MAX), 0);
 	bitmap4_attribute_set(&supported, FATTR4_TYPE);
-	bitmap4_attribute_set(&supported, FATTR4_UNCACHEABLE);
+	bitmap4_attribute_set(&supported, FATTR4_UNCACHEABLE_DIRENT_METADATA);
 
 	client_storage = calloc(client_words, sizeof(*client_storage));
 	ck_assert_ptr_nonnull(client_storage);
 	bitmap4_wrap(&client_req, client_storage, client_words);
 
 	bitmap4_attribute_set(&client_req, FATTR4_TYPE);
-	bitmap4_attribute_set(&client_req, FATTR4_UNCACHEABLE);
+	bitmap4_attribute_set(&client_req, FATTR4_UNCACHEABLE_DIRENT_METADATA);
 	/* Simulate a future attribute in the extra word. */
 	client_storage[server_words] = 0xFFFFFFFFU;
 
 	ck_assert(bitmap4_attribute_is_supported_and_set(
 		&supported, &client_req, FATTR4_TYPE));
 	ck_assert(bitmap4_attribute_is_supported_and_set(
-		&supported, &client_req, FATTR4_UNCACHEABLE));
+		&supported, &client_req, FATTR4_UNCACHEABLE_DIRENT_METADATA));
 
 	/*
 	 * Bits in the extra word are beyond the server's supported range;
@@ -585,7 +590,7 @@ START_TEST(test_attr_init_supported_set)
 	ck_assert(bitmap4_attribute_is_set(supported_attributes,
 					   FATTR4_OPEN_ARGUMENTS));
 	ck_assert(bitmap4_attribute_is_set(supported_attributes,
-					   FATTR4_UNCACHEABLE));
+					   FATTR4_UNCACHEABLE_DIRENT_METADATA));
 
 	nfs4_attribute_fini();
 }
