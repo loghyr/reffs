@@ -197,10 +197,33 @@ def max_define(prefix, members):
     Returns None for bare enum types with no usable prefix.
     """
     p = prefix.rstrip('_')
-    if not p or not p[0].isupper():
+
+    # Map named enum types to their logical prefix if needed
+    enum_to_prefix = {
+        'nfs_opnum4': 'OP',
+        'nfs_cb_opnum4': 'CB',
+        'nfsstat4': 'NFS4ERR',
+    }
+    p = enum_to_prefix.get(p, p)
+
+    if not p or (not p[0].isupper() and p not in MAX_NAME_OVERRIDES):
         return None
-    top_name = max(members, key=lambda x: x[1])[0]
+
+    # Filter out ILLEGAL operations as they are usually much higher
+    # than the contiguous range and shouldn't set the table size.
+    valid_members = [m for m in members
+                     if m[0] not in ('OP_ILLEGAL', 'OP_CB_ILLEGAL')]
+    if not valid_members:
+        return None
+
+    top_name = max(valid_members, key=lambda x: x[1])[0]
     define_name = MAX_NAME_OVERRIDES.get(p, f'{p}_MAX')
+
+    # OP_MAX and CB_MAX are used as array sizes and upper bounds,
+    # so they need to be (LAST_VALID_OP + 1).
+    if p in ('OP', 'CB'):
+        return (define_name, f'({top_name} + 1)')
+
     return (define_name, top_name)
 
 
@@ -297,11 +320,13 @@ WANTED_CONST_PREFIXES = [
     ('BIND_CONN_TO_SESSION4_', None),
 ]
 
-# Enum type names we want (maps xdr type name → func name override or None).
+# Enum type names we want (maps xdr type name → func name override or emit_max).
+# If the value is a string, it's the func name override.
+# If it's a tuple (override, emit_max), use both.
 WANTED_ENUMS = {
     'nfsstat4':           'nfs4_err_name',
-    'nfs_opnum4':         'nfs4_op_name',
-    'nfs_cb_opnum4':      'nfs4_cb_op_name',
+    'nfs_opnum4':         ('nfs4_op_name', True),
+    'nfs_cb_opnum4':      ('nfs4_cb_op_name', True),
     'layouttype4':        'nfs4_layout_type_name',
     'nfs_ftype4':         'nfs4_ftype_name',
     'open_claim_type4':   None,
@@ -361,14 +386,20 @@ def main():
     groups = []   # list of (func_name, members, label_for_comment)
 
     # 1. Named enums we care about
-    for etype, override_func in WANTED_ENUMS.items():
+    for etype, val in WANTED_ENUMS.items():
         if etype not in xdr_enums:
             continue
+
+        if isinstance(val, tuple):
+            override_func, emit_max = val
+        else:
+            override_func, emit_max = val, False
+
         func = override_func or make_func_name(etype)
         if func in emitted_func_names:
             continue
         emitted_func_names.add(func)
-        groups.append((func, xdr_enums[etype], etype, False))
+        groups.append((func, xdr_enums[etype], etype, emit_max))
 
     # 2. Const prefix groups
     all_defs_list = [(n, v) for n, v in all_defs.items()
