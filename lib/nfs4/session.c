@@ -127,6 +127,12 @@ bool nfs4_session_unhash(struct nfs4_session *ns)
 	(void)ret;
 
 	server_state_put(ss);
+
+	/*
+	 * Drop the hash table's own ref.  The caller still holds theirs;
+	 * the session is freed when the last ref is released.
+	 */
+	nfs4_session_put(ns);
 	return true;
 }
 

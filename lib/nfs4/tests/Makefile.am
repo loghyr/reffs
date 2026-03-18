@@ -37,5 +37,6 @@ check_PROGRAMS = $(TESTS)
 TESTS = \
 	bitmap \
 	errors \
-	nfs4_client_persist
+	nfs4_client_persist \
+	nfs4_session
 
