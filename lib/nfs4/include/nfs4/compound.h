@@ -14,6 +14,7 @@
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
 #include "reffs/stateid.h"
+#include "nfs4/client.h"
 
 struct compound {
 	struct rpc_trans *c_rt;
@@ -26,6 +27,7 @@ struct compound {
 	struct stateid *c_curr_stid;
 	struct stateid *c_saved_stid;
 	struct inode *c_inode;
+	struct nfs4_client *c_nfs4_client;
 };
 
 int nfs4_proc_compound(struct rpc_trans *rt);

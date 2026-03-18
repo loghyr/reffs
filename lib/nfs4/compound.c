@@ -48,6 +48,7 @@ static void compound_free(struct compound *c)
 	if (!c)
 		return;
 
+	nfs4_client_put(c->c_nfs4_client);
 	inode_active_put(c->c_inode);
 	super_block_put(c->c_curr_sb);
 	super_block_put(c->c_saved_sb);
