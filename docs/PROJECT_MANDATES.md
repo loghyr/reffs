@@ -19,18 +19,27 @@ Reffs is a high-performance Reference File System project focused on providing r
 
 -   **Coding Style:** Strictly follow the project's `clang-format` configuration.
     -   Run `make style` to check compliance.
-    - Run `make fix-style` to automatically format code.
+    -   Run `make fix-style` to automatically format code (local build tree).
+    -   Run `make -f Makefile.reffs fix-style` to format via the Docker sandbox (preferred before committing).
     -   **Config Headers:** All C source files (`.c`) MUST include the standard autotools configuration header:
     ```c
     #ifdef HAVE_CONFIG_H
     #include "config.h"
     #endif
     ```
-    -   **Static Analysis:** Regularly use `clang-tidy` and `scan-build` to identify potential issues.    -   `make tidy` (requires `bear`).
+    -   **Static Analysis:** Regularly use `clang-tidy` and `scan-build` to identify potential issues.
+    -   `make tidy` (requires `bear`).
     -   `make scanbuild`.
+-   **License Compliance:** All source files MUST carry a valid SPDX header. Run the license checker before committing:
+    ```bash
+    make -f Makefile.reffs license-check
+    ```
 -   **Commit Requirements:**
     -   **DCO:** All commits MUST be signed off (`git commit -s`) to certify the Developer Certificate of Origin.
+    -   **Style first:** Run `make -f Makefile.reffs fix-style` before staging files.
+    -   **Tests pass:** Run `cd build && make check` (or `make -f Makefile.reffs build-in-docker`) and confirm all unit tests pass before committing.
     -   **Pre-commit Hooks:** Install the pre-commit hook via `./install-pre-commit.sh`. This hook runs `tree-build.sh`, which performs a clean build and runs `make check`.
+-   **Result Pointer Allocation:** Pointers returned inside NFS result structs MUST be allocated with `calloc()`. Do NOT use `malloc()` (leaves fields uninitialized) and do NOT use static buffers (not thread-safe). XDR frees these pointers via `xdr_free()`; they must be individually heap-allocated.
 -   **Memory Safety:** Always build with sanitizers during development:
     ```bash
     ./configure --enable-asan --enable-tsan --enable-lsan --enable-ubsan
