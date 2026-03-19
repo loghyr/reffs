@@ -30,6 +30,10 @@ enum stateid_type {
  * set at alloc time — no extern vtable needed.
  */
 
+/* Bits stored in open_stateid.os_state for I/O access-mode checks. */
+#define OPEN_STATEID_ACCESS_READ (1ULL << 0)
+#define OPEN_STATEID_ACCESS_WRITE (1ULL << 1)
+
 struct open_stateid {
 	uint64_t os_state;
 	struct stateid os_stid;
