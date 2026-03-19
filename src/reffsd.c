@@ -128,9 +128,16 @@ int main(int argc, char *argv[])
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
-		case 'p':
-			port = atoi(optarg);
+		case 'p': {
+			char *endptr;
+			long val = strtol(optarg, &endptr, 10);
+			if (*endptr != '\0' || val <= 0 || val > 65535) {
+				fprintf(stderr, "Invalid port: %s\n", optarg);
+				return 1;
+			}
+			port = (int)val;
 			break;
+		}
 		case 'b':
 			if (strcasecmp(optarg, "posix") == 0)
 				storage_type = REFFS_STORAGE_POSIX;
@@ -147,9 +154,16 @@ int main(int argc, char *argv[])
 			state_path = optarg;
 			break;
 		case 'c': {
-			int tracing = atoi(optarg);
-			if (tracing > 0 && tracing < REFFS_TRACE_CAT_ALL) {
-				reffs_trace_enable_category(tracing);
+			char *endptr;
+			long tracing = strtol(optarg, &endptr, 10);
+			if (*endptr == '\0' && tracing >= 0 &&
+			    tracing < REFFS_TRACE_CAT_ALL) {
+				reffs_trace_enable_category((int)tracing);
+			} else {
+				fprintf(stderr,
+					"Invalid tracing category: %s\n",
+					optarg);
+				return 1;
 			}
 			break;
 		}
