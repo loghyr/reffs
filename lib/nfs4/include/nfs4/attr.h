@@ -258,4 +258,11 @@ static inline bool bitmap4_has_unsupported_bits(const bitmap4 *supported,
 	return false;
 }
 
+/* ------------------------------------------------------------------ */
+/* Subsystem lifecycle                                                */
+/* ------------------------------------------------------------------ */
+
+int nfs4_attribute_init(void);
+int nfs4_attribute_fini(void);
+
 #endif /* ATTR_H */

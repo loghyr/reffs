@@ -38,6 +38,7 @@
 #include "reffs/identity.h"
 #include "reffs/errno.h"
 #include "nfs4/trace/nfs4.h"
+#include "nfs4/attr.h"
 #include "nfs4/compound.h"
 #include "nfs4/errors.h"
 
@@ -73,6 +74,10 @@ int nfs4_protocol_register(void)
 	if (nfsv4_registered)
 		return 0;
 
+	if (nfs4_attribute_init()) {
+		return ENOMEM;
+	}
+
 	nfsv4_registered = 1;
 
 	nfs4_handler = rpc_program_handler_alloc(
@@ -95,6 +100,8 @@ int nfs4_protocol_deregister(void)
 	rpc_program_handler_put(nfs4_handler);
 	nfs4_handler = NULL;
 	nfsv4_registered = 0;
+
+	nfs4_attribute_fini();
 
 	return 0;
 }
