@@ -391,36 +391,39 @@ int main(int argc, char *argv[])
 
 	TRACE("Main loop exited, cleaning up...");
 
-	// Cleanup listener socket
+out:
+	TRACE("Unregistering Port Mapper");
+	pmap_unset(NLM_PROG, NLM4_VERS);
+	pmap_unset(NLM_PROG, NLM_VERSX);
+	pmap_unset(NLM_PROG, NLM_VERS);
+	pmap_unset(SM_PROG, SM_VERS);
+	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
+	pmap_unset(NFS3_PROGRAM, NFS_V3);
+	pmap_unset(NFS4_PROGRAM, NFS_V4);
 
-	if (lsnr_ipv4_probe_fd > 0) {
+	// Cleanup listener sockets
+	if (lsnr_ipv4_probe_fd >= 0) {
 		close(lsnr_ipv4_probe_fd);
 		lsnr_ipv4_probe_fd = -1;
 	}
 
-	if (lsnr_ipv4_nfs_fd > 0) {
+	if (lsnr_ipv4_nfs_fd >= 0) {
 		close(lsnr_ipv4_nfs_fd);
 		lsnr_ipv4_nfs_fd = -1;
 	}
 
-	if (lsnr_ipv6_probe_fd > 0) {
+	if (lsnr_ipv6_probe_fd >= 0) {
 		close(lsnr_ipv6_probe_fd);
 		lsnr_ipv6_probe_fd = -1;
 	}
 
-	if (lsnr_ipv6_nfs_fd > 0) {
+	if (lsnr_ipv6_nfs_fd >= 0) {
 		close(lsnr_ipv6_nfs_fd);
 		lsnr_ipv6_nfs_fd = -1;
 	}
 
 	io_handler_fini(&rc);
 
-	TRACE("Unregistering Port Mapper");
-	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
-	pmap_unset(NFS3_PROGRAM, NFS_V3);
-	pmap_unset(NFS4_PROGRAM, NFS_V4);
-
-out:
 	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
 
 	TRACE("Final io_context statistics: created=%ld, freed=%ld, difference=%ld",
