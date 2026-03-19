@@ -38,6 +38,9 @@ struct nfs4_client {
 	bool nc_needs_reclaim; /* true until RECLAIM_COMPLETE received */
 	uint32_t nc_session_count; /* atomic: number of active sessions */
 
+	struct cds_list_head nc_lock_owners;
+	pthread_mutex_t nc_lock_owners_mutex;
+
 	struct client nc_client; /* fs-layer object — keep last */
 };
 

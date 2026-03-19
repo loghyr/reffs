@@ -21,6 +21,7 @@
 #include "reffs/client.h"
 #include "reffs/client_persist.h"
 #include "nfs4/trace/nfs4.h"
+#include "nfs4/stateid.h"
 #include "nfs4/client.h"
 
 /* ------------------------------------------------------------------ */
@@ -30,6 +31,16 @@ static void nfs4_client_free_rcu(struct rcu_head *rcu)
 {
 	struct client *client = caa_container_of(rcu, struct client, c_rcu);
 	struct nfs4_client *nc = client_to_nfs4(client);
+	struct nfs4_lock_owner *lo, *tmp;
+
+	cds_list_for_each_entry_safe(lo, tmp, &nc->nc_lock_owners,
+				     lo_base.lo_list) {
+		cds_list_del(&lo->lo_base.lo_list);
+		free(lo->lo_owner.n_bytes);
+		free(lo);
+	}
+
+	pthread_mutex_destroy(&nc->nc_lock_owners_mutex);
 
 	if (client->c_stateids)
 		cds_lfht_destroy(client->c_stateids, NULL);
@@ -78,9 +89,13 @@ struct nfs4_client *nfs4_client_alloc(const verifier4 *verifier,
 	nc->nc_incarnation = incarnation;
 	nc->nc_confirmed = false;
 
+	CDS_INIT_LIST_HEAD(&nc->nc_lock_owners);
+	pthread_mutex_init(&nc->nc_lock_owners_mutex, NULL);
+
 	ret = client_assign(&nc->nc_client, (uint64_t)assigned_id,
 			    nfs4_client_free_rcu, nfs4_client_release);
 	if (ret) {
+		pthread_mutex_destroy(&nc->nc_lock_owners_mutex);
 		free(nc);
 		return NULL;
 	}

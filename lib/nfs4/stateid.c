@@ -150,6 +150,11 @@ static void lock_stateid_free_rcu(struct rcu_head *rcu)
 	struct stateid *stid = caa_container_of(rcu, struct stateid, s_rcu);
 	struct lock_stateid *ls = stid_to_lock(stid);
 
+	if (ls->ls_owner)
+		urcu_ref_put(&ls->ls_owner->lo_base.lo_ref,
+			     ls->ls_owner->lo_base.lo_release);
+	if (ls->ls_open)
+		stateid_put(&ls->ls_open->os_stid);
 	free(ls);
 }
 
