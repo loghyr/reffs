@@ -2439,12 +2439,40 @@ int nfs4_attribute_init(void)
 	bitmap4_attribute_set(bm, FATTR4_UNCACHEABLE_DIRENT_METADATA);
 	bitmap4_attribute_set(bm, FATTR4_CODING_BLOCK_SIZE);
 
+	/*
+	 * suppattr_exclcreat: attributes this server will honour when set
+	 * during an EXCLUSIVE4_1 create.  Must match nattr_is_settable()
+	 * exactly — read-only required attributes must not appear here.
+	 */
+	if (bitmap4_init(&system_attrs.suppattr_exclcreat,
+			 FATTR4_ATTRIBUTE_MAX))
+		return -ENOMEM;
+
+	{
+		bitmap4 *se = &system_attrs.suppattr_exclcreat;
+
+		bitmap4_attribute_set(se, FATTR4_SIZE);
+		bitmap4_attribute_set(se, FATTR4_ARCHIVE);
+		bitmap4_attribute_set(se, FATTR4_HIDDEN);
+		bitmap4_attribute_set(se, FATTR4_MODE);
+		bitmap4_attribute_set(se, FATTR4_MODE_SET_MASKED);
+		bitmap4_attribute_set(se, FATTR4_OWNER);
+		bitmap4_attribute_set(se, FATTR4_OWNER_GROUP);
+		bitmap4_attribute_set(se, FATTR4_SYSTEM);
+		bitmap4_attribute_set(se, FATTR4_TIME_ACCESS_SET);
+		bitmap4_attribute_set(se, FATTR4_TIME_CREATE);
+		bitmap4_attribute_set(se, FATTR4_TIME_MODIFY_SET);
+		bitmap4_attribute_set(se, FATTR4_UNCACHEABLE_FILE_DATA);
+		bitmap4_attribute_set(se, FATTR4_UNCACHEABLE_DIRENT_METADATA);
+	}
+
 	return 0;
 }
 
 int nfs4_attribute_fini(void)
 {
 	bitmap4_destroy(supported_attributes);
+	bitmap4_destroy(&system_attrs.suppattr_exclcreat);
 
 	return 0;
 }
@@ -2465,6 +2493,7 @@ static void __attribute__((destructor)) nfs4_attribute_unload(void)
 static void nattr_release(struct nfsv42_attr *nattr)
 {
 	free(nattr->supported_attrs.bitmap4_val);
+	free(nattr->suppattr_exclcreat.bitmap4_val);
 	free(nattr->filehandle.nfs_fh4_val);
 	utf8string_free(&nattr->owner);
 	utf8string_free(&nattr->owner_group);
@@ -2889,7 +2918,10 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	timespec_to_nfstime4(&inode->i_btime, &nattr->time_create);
 
 	nattr->mounted_on_fileid = 0;
-	// nattr->suppattr_exclcreat;
+	ret = bitmap4_copy(&system_attrs.suppattr_exclcreat,
+			   &nattr->suppattr_exclcreat);
+	if (ret)
+		goto out;
 	nattr->fs_charset_cap = system_attrs.fs_charset_cap;
 	nattr->clone_blksize = system_attrs.clone_blksize;
 	// nattr->space_freed;
