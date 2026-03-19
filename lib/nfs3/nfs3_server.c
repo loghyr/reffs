@@ -1122,7 +1122,8 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	if (sa->mode.set_it)
 		mode = sa->mode.set_mode3_u.mode;
 
-	ret = vfs_mkdir(inode, args->where.name, mode, &ap, &new_inode);
+	ret = vfs_mkdir(inode, args->where.name, mode, &ap, &new_inode,
+			NULL, NULL);
 	if (ret) {
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
@@ -1237,7 +1238,7 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	ret = vfs_symlink(inode, args->where.name, args->symlink.symlink_data,
-			  &ap, &new_inode);
+			  &ap, &new_inode, NULL, NULL);
 	if (ret) {
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
@@ -1382,7 +1383,8 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	ret = vfs_mknod(inode, args->where.name, mode, rdev, &ap, &new_inode);
+	ret = vfs_mknod(inode, args->where.name, mode, rdev, &ap, &new_inode,
+			NULL, NULL);
 	if (ret) {
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
@@ -1490,7 +1492,7 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	ret = vfs_remove(inode, args->object.name, &ap);
+	ret = vfs_remove(inode, args->object.name, &ap, NULL, NULL);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -1568,7 +1570,7 @@ static int nfs3_op_rmdir(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	ret = vfs_rmdir(inode, args->object.name, &ap);
+	ret = vfs_rmdir(inode, args->object.name, &ap, NULL, NULL);
 
 update_wcc:
 	wcc->before.attributes_follow = true;
@@ -1676,7 +1678,7 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 	}
 
 	ret = vfs_rename(inode_src, args->from.name, inode_dst, args->to.name,
-			 &ap);
+			 &ap, NULL, NULL, NULL, NULL);
 
 update_wcc:
 	wcc_src->before.attributes_follow = true;

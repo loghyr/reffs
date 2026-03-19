@@ -433,12 +433,22 @@ out:
 
 int vfs_rename(struct inode *old_dir, const char *old_name,
 	       struct inode *new_dir, const char *new_name,
-	       struct authunix_parms *ap)
+	       struct authunix_parms *ap,
+	       struct timespec *old_before, struct timespec *old_after,
+	       struct timespec *new_before, struct timespec *new_after)
 {
 	if (old_dir->i_sb != new_dir->i_sb)
 		return -EXDEV;
 
 	if (old_dir == new_dir && !rtc_cmp(old_name, new_name)) {
+		if (old_before)
+			*old_before = old_dir->i_ctime;
+		if (old_after)
+			*old_after = old_dir->i_ctime;
+		if (new_before)
+			*new_before = new_dir->i_ctime;
+		if (new_after)
+			*new_after = new_dir->i_ctime;
 		return 0;
 	}
 
@@ -448,25 +458,43 @@ int vfs_rename(struct inode *old_dir, const char *old_name,
 
 	int ret;
 	vfs_lock_dirs(old_dir, new_dir);
+	if (old_before)
+		*old_before = old_dir->i_ctime;
+	if (new_before)
+		*new_before = new_dir->i_ctime;
 	ret = vfs_rename_locked(old_dir, old_name, new_dir, new_name, ap);
+	if (old_after)
+		*old_after = old_dir->i_ctime;
+	if (new_after)
+		*new_after = new_dir->i_ctime;
 	vfs_unlock_dirs(old_dir, new_dir);
 	return ret;
 }
 
-int vfs_remove(struct inode *dir, const char *name, struct authunix_parms *ap)
+int vfs_remove(struct inode *dir, const char *name, struct authunix_parms *ap,
+	       struct timespec *dir_before, struct timespec *dir_after)
 {
 	int ret;
 	vfs_lock_dirs(dir, NULL);
+	if (dir_before)
+		*dir_before = dir->i_ctime;
 	ret = vfs_remove_common_locked(dir, name, ap, false);
+	if (dir_after)
+		*dir_after = dir->i_ctime;
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
 
-int vfs_rmdir(struct inode *dir, const char *name, struct authunix_parms *ap)
+int vfs_rmdir(struct inode *dir, const char *name, struct authunix_parms *ap,
+	       struct timespec *dir_before, struct timespec *dir_after)
 {
 	int ret;
 	vfs_lock_dirs(dir, NULL);
+	if (dir_before)
+		*dir_before = dir->i_ctime;
 	ret = vfs_remove_common_locked(dir, name, ap, true);
+	if (dir_after)
+		*dir_after = dir->i_ctime;
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
@@ -755,12 +783,17 @@ int vfs_exclusive_create(struct inode *dir, const char *name,
 }
 
 int vfs_mkdir(struct inode *dir, const char *name, mode_t mode,
-	      struct authunix_parms *ap, struct inode **new_inode)
+	      struct authunix_parms *ap, struct inode **new_inode,
+	      struct timespec *dir_before, struct timespec *dir_after)
 {
 	int ret;
 	vfs_lock_dirs(dir, NULL);
+	if (dir_before)
+		*dir_before = dir->i_ctime;
 	ret = vfs_create_common_locked(dir, name, mode, ap, 0, S_IFDIR,
 				       new_inode);
+	if (dir_after)
+		*dir_after = dir->i_ctime;
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
@@ -779,7 +812,8 @@ int vfs_create(struct inode *dir, const char *name, mode_t mode,
 }
 
 int vfs_symlink(struct inode *dir, const char *name, const char *target,
-		struct authunix_parms *ap, struct inode **new_inode)
+		struct authunix_parms *ap, struct inode **new_inode,
+		struct timespec *dir_before, struct timespec *dir_after)
 {
 	struct inode *inode = NULL;
 	int ret;
@@ -789,6 +823,8 @@ int vfs_symlink(struct inode *dir, const char *name, const char *target,
 	}
 
 	vfs_lock_dirs(dir, NULL);
+	if (dir_before)
+		*dir_before = dir->i_ctime;
 	ret = vfs_create_common_locked(dir, name, 0777, ap, 0, S_IFLNK, &inode);
 	if (ret == 0) {
 		inode->i_symlink = strdup(target);
@@ -806,17 +842,24 @@ int vfs_symlink(struct inode *dir, const char *name, const char *target,
 			}
 		}
 	}
+	if (dir_after)
+		*dir_after = dir->i_ctime;
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
 
 int vfs_mknod(struct inode *dir, const char *name, mode_t mode, dev_t rdev,
-	      struct authunix_parms *ap, struct inode **new_inode)
+	      struct authunix_parms *ap, struct inode **new_inode,
+	      struct timespec *dir_before, struct timespec *dir_after)
 {
 	int ret;
 	vfs_lock_dirs(dir, NULL);
+	if (dir_before)
+		*dir_before = dir->i_ctime;
 	ret = vfs_create_common_locked(dir, name, mode, ap, rdev, mode & S_IFMT,
 				       new_inode);
+	if (dir_after)
+		*dir_after = dir->i_ctime;
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }

@@ -369,7 +369,7 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 		name_match_free(nm);
 		return -ENOENT;
 	}
-	ret = vfs_mkdir(dir, nm->nm_name, mode, &ap, NULL);
+	ret = vfs_mkdir(dir, nm->nm_name, mode, &ap, NULL, NULL, NULL);
 	inode_active_put(dir);
 
 	name_match_free(nm);
@@ -395,7 +395,7 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 		name_match_free(nm);
 		return -ENOENT;
 	}
-	ret = vfs_mknod(dir, nm->nm_name, mode, rdev, &ap, NULL);
+	ret = vfs_mknod(dir, nm->nm_name, mode, rdev, &ap, NULL, NULL, NULL);
 	inode_active_put(dir);
 
 	name_match_free(nm);
@@ -422,7 +422,7 @@ int reffs_fs_symlink(const char *target, const char *linkpath)
 		name_match_free(nm);
 		return -ENOENT;
 	}
-	ret = vfs_symlink(dir, nm->nm_name, target, &ap, NULL);
+	ret = vfs_symlink(dir, nm->nm_name, target, &ap, NULL, NULL, NULL);
 	inode_active_put(dir);
 
 	name_match_free(nm);
@@ -683,7 +683,7 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 
 	reffs_get_authunix_parms(&ap);
 	ret = vfs_rename(old_dir, nm_src->nm_name, new_dir, nm_dst->nm_name,
-			 &ap);
+			 &ap, NULL, NULL, NULL, NULL);
 
 	inode_active_put(old_dir);
 	inode_active_put(new_dir);
@@ -716,7 +716,7 @@ int reffs_fs_rmdir(const char *path)
 		name_match_free(nm);
 		return -ENOENT;
 	}
-	ret = vfs_rmdir(dir, nm->nm_name, &ap);
+	ret = vfs_rmdir(dir, nm->nm_name, &ap, NULL, NULL);
 	inode_active_put(dir);
 
 	name_match_free(nm);
@@ -742,7 +742,7 @@ int reffs_fs_unlink(const char *path)
 		name_match_free(nm);
 		return -ENOENT;
 	}
-	ret = vfs_remove(udir, nm->nm_name, &ap);
+	ret = vfs_remove(udir, nm->nm_name, &ap, NULL, NULL);
 	inode_active_put(udir);
 
 	name_match_free(nm);
