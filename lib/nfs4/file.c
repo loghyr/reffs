@@ -570,7 +570,7 @@ void nfs4_op_open_downgrade(struct compound *c)
 
 	uint32_t new_access = 0;
 	uint32_t new_deny = 0;
-	uint32_t cur_access =  0;
+	uint32_t cur_access = 0;
 	uint32_t cur_deny = 0;
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
