@@ -14,6 +14,7 @@
 #include <urcu/rculfhash.h>
 #include <uuid/uuid.h>
 
+#include "reffs/cmp.h"
 #include "reffs/server_persist.h"
 
 /*
@@ -96,6 +97,9 @@ struct server_state {
 	size_t ss_owner_id_len;
 
 	int ss_port;
+
+	/* Case sensitivity mode for this server instance. */
+	enum reffs_text_case ss_case;
 };
 
 /* ------------------------------------------------------------------ */
@@ -105,10 +109,14 @@ struct server_state {
  * server_state_init - load or create persistent state at path, increment
  * boot_seq, mark dirty, determine grace period, arm grace timer.
  *
+ * case_mode controls whether directory lookups are case-sensitive or
+ * case-insensitive for this server instance.
+ *
  * Returns an allocated server_state on success (caller holds the
  * initial ref), NULL on failure.
  */
-struct server_state *server_state_init(const char *state_path, int port);
+struct server_state *server_state_init(const char *state_path, int port,
+				       enum reffs_text_case case_mode);
 
 /*
  * server_state_fini - begin shutdown.  Transitions to SHUTTING_DOWN so that

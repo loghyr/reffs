@@ -77,7 +77,8 @@ void reffs_test_setup_server(void)
 	fs_test_state_dir = reffs_test_create_state_dir();
 	ck_assert_ptr_nonnull(fs_test_state_dir);
 
-	fs_test_ss = server_state_init(fs_test_state_dir, 2049);
+	fs_test_ss = server_state_init(fs_test_state_dir, 2049,
+				       reffs_text_case_sensitive);
 	ck_assert_ptr_nonnull(fs_test_ss);
 }
 
