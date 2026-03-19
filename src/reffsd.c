@@ -94,10 +94,10 @@ static struct option long_opts[] = {
 int main(int argc, char *argv[])
 
 {
-	int lsnr_ipv4_nfs_fd;
-	int lsnr_ipv6_nfs_fd;
-	int lsnr_ipv4_probe_fd;
-	int lsnr_ipv6_probe_fd;
+	int lsnr_ipv4_nfs_fd = -1;
+	int lsnr_ipv6_nfs_fd = -1;
+	int lsnr_ipv4_probe_fd = -1;
+	int lsnr_ipv6_probe_fd = -1;
 
 	int exit_code = 0;
 	int port = NFS_PORT;
