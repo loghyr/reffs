@@ -73,6 +73,7 @@ static void usage(const char *prog)
 	printf("  -f  --file=fname             Save tracing data to this file \"fname\"\n");
 	printf("  -b  --backend=type           Storage backend (ram, posix)\n");
 	printf("  -B  --backend-path=path      Path for POSIX backend\n");
+	printf("  -i  --case-insensitive       Enable case-insensitive name lookups\n");
 	printf("  -S  --state-path=path        Path for storing state\n");
 	printf("  -c  --category=cat           Enable tracing for a category\n");
 	printf("                                     0 - General\n");
@@ -88,6 +89,7 @@ static struct option long_opts[] = {
 	{ "category", required_argument, 0, 'c' },
 	{ "file", required_argument, 0, 'f' },
 	{ "help", no_argument, 0, 'h' },
+	{ "case-insensitive", no_argument, 0, 'i' },
 	{ "rpc_dump", no_argument, 0, 'r' },
 	{ "port", required_argument, 0, 'p' },
 	{ "backend", required_argument, 0, 'b' },
@@ -125,8 +127,9 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "p:hrt:c:f:b:B:S:";
+	char *opts = "p:hrit:c:f:b:B:S:";
 	enum reffs_storage_type storage_type = REFFS_STORAGE_RAM;
+	enum reffs_text_case case_mode = reffs_text_case_sensitive;
 	char *backend_path = NULL;
 	char *state_path = "/tmp/reffs.state";
 
@@ -143,6 +146,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'B':
 			backend_path = optarg;
+			break;
+		case 'i':
+			case_mode = reffs_text_case_insensitive;
 			break;
 		case 'S':
 			state_path = optarg;
@@ -190,7 +196,7 @@ int main(int argc, char *argv[])
 	// Block signals in main thread temporarily
 	pthread_sigmask(SIG_BLOCK, &mask, NULL);
 
-	ss = server_state_init(state_path, port);
+	ss = server_state_init(state_path, port, case_mode);
 	if (!ss) {
 		return 1;
 	}

@@ -33,6 +33,7 @@
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "reffs/cmp.h"
 
 struct nfsv42_attr {
 	fattr4_supported_attrs supported_attrs;
@@ -2852,7 +2853,8 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->aclsupport = system_attrs.aclsupport;
 	nattr->archive = inode->i_attr_flags & INODE_IS_ARCHIVED;
 	nattr->cansettime = system_attrs.cansettime;
-	nattr->case_insensitive = system_attrs.case_insensitive;
+	nattr->case_insensitive =
+		(reffs_case_get() == reffs_text_case_insensitive);
 	nattr->case_preserving = system_attrs.case_preserving;
 	nattr->chown_restricted = system_attrs.chown_restricted;
 

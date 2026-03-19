@@ -18,6 +18,7 @@
 #include <unistd.h>
 #include <time.h>
 
+#include "reffs/cmp.h"
 #include "reffs/rcu.h"
 #include "reffs/log.h"
 #include "reffs/server_persist.h"
@@ -184,7 +185,8 @@ uint32_t server_alloc_client_slot(struct server_state *ss)
 /* ------------------------------------------------------------------ */
 /* Init / fini                                                         */
 
-struct server_state *server_state_init(const char *state_path, int port)
+struct server_state *server_state_init(const char *state_path, int port,
+				       enum reffs_text_case case_mode)
 {
 	struct server_state *ss;
 	int ret;
@@ -202,6 +204,8 @@ struct server_state *server_state_init(const char *state_path, int port)
 	}
 
 	ss->ss_port = port;
+	ss->ss_case = case_mode;
+	reffs_case_set(case_mode);
 
 	/* Load or create persistent state. */
 	ret = server_persist_load(state_path, &ss->ss_persist);
