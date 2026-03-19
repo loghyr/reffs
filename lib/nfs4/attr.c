@@ -164,14 +164,10 @@ struct nfsv42_attr_ops {
 	bool (*nao_equal)(struct nfsv42_attr *a, struct nfsv42_attr *b);
 };
 
-static count4 supported_attrs_count(struct nfsv42_attr __attribute__((unused)) *
-				    nattr)
+static count4 supported_attrs_count(struct nfsv42_attr *nattr)
 {
-	bitmap4 bm;
-
-	u_int words = BITMAP4_WORDS_FOR_MAX(FATTR4_ATTRIBUTE_MAX);
-
-	return sizeof(bm) + (words * sizeof(bm.bitmap4_val));
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_supported_attrs,
+			  &nattr->supported_attrs);
 }
 
 static nfsstat4 supported_attrs_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -188,9 +184,9 @@ static bool supported_attrs_equal(struct nfsv42_attr __attribute__((unused)) *
 	return bitmap4_equal(supported_attributes, &b->supported_attrs);
 }
 
-static count4 type_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 type_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_type);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_type, &nattr->type);
 }
 
 static nfsstat4 type_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -205,10 +201,10 @@ static bool type_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->type == b->type;
 }
 
-static count4 fh_expire_type_count(struct nfsv42_attr __attribute__((unused)) *
-				   nattr)
+static count4 fh_expire_type_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_fh_expire_type);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_fh_expire_type,
+			  &nattr->fh_expire_type);
 }
 
 static nfsstat4 fh_expire_type_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -223,9 +219,9 @@ static bool fh_expire_type_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->fh_expire_type == b->fh_expire_type;
 }
 
-static count4 change_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 change_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_change);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_change, &nattr->change);
 }
 
 static nfsstat4 change_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -240,9 +236,9 @@ static bool change_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->change == b->change;
 }
 
-static count4 size_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 size_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_size);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_size, &nattr->size);
 }
 
 static nfsstat4 size_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -257,10 +253,10 @@ static bool size_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->size == b->size;
 }
 
-static count4 link_support_count(struct nfsv42_attr __attribute__((unused)) *
-				 nattr)
+static count4 link_support_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_link_support);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_link_support,
+			  &nattr->link_support);
 }
 
 static nfsstat4 link_support_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -275,10 +271,10 @@ static bool link_support_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->link_support == b->link_support;
 }
 
-static count4 symlink_support_count(struct nfsv42_attr __attribute__((unused)) *
-				    nattr)
+static count4 symlink_support_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_symlink_support);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_symlink_support,
+			  &nattr->symlink_support);
 }
 
 static nfsstat4 symlink_support_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -293,10 +289,9 @@ static bool symlink_support_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->symlink_support == b->symlink_support;
 }
 
-static count4 named_attr_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 named_attr_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_named_attr);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_named_attr, &nattr->named_attr);
 }
 
 static nfsstat4 named_attr_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -311,9 +306,9 @@ static bool named_attr_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->named_attr == b->named_attr;
 }
 
-static count4 fsid_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 fsid_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_fsid);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_fsid, &nattr->fsid);
 }
 
 static nfsstat4 fsid_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -328,10 +323,10 @@ static bool fsid_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->fsid.major == b->fsid.major && a->fsid.minor == b->fsid.minor;
 }
 
-static count4 unique_handles_count(struct nfsv42_attr __attribute__((unused)) *
-				   nattr)
+static count4 unique_handles_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_unique_handles);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_unique_handles,
+			  &nattr->unique_handles);
 }
 
 static nfsstat4 unique_handles_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -346,10 +341,9 @@ static bool unique_handles_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->unique_handles == b->unique_handles;
 }
 
-static count4 lease_time_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 lease_time_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_lease_time);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_lease_time, &nattr->lease_time);
 }
 
 static nfsstat4 lease_time_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -364,10 +358,10 @@ static bool lease_time_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->lease_time == b->lease_time;
 }
 
-static count4 rdattr_error_count(struct nfsv42_attr __attribute__((unused)) *
-				 nattr)
+static count4 rdattr_error_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_rdattr_error);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_rdattr_error,
+			  &nattr->rdattr_error);
 }
 
 static nfsstat4 rdattr_error_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -384,12 +378,7 @@ static bool rdattr_error_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 acl_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_acl);
-	c += nattr->acl.fattr4_acl_len * sizeof(*nattr->acl.fattr4_acl_val);
-	for (u_int i = 0; i < nattr->acl.fattr4_acl_len; i++) {
-		c += nattr->acl.fattr4_acl_val[i].who.utf8string_len;
-	}
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_acl, &nattr->acl);
 }
 
 static nfsstat4 acl_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -425,10 +414,9 @@ static bool acl_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return true;
 }
 
-static count4 aclsupport_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 aclsupport_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_aclsupport);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_aclsupport, &nattr->aclsupport);
 }
 
 static nfsstat4 aclsupport_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -443,9 +431,9 @@ static bool aclsupport_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->aclsupport == b->aclsupport;
 }
 
-static count4 archive_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 archive_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_archive);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_archive, &nattr->archive);
 }
 
 static nfsstat4 archive_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -460,10 +448,9 @@ static bool archive_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->archive == b->archive;
 }
 
-static count4 cansettime_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 cansettime_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_cansettime);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_cansettime, &nattr->cansettime);
 }
 
 static nfsstat4 cansettime_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -478,11 +465,10 @@ static bool cansettime_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->cansettime == b->cansettime;
 }
 
-static count4 case_insensitive_count(struct nfsv42_attr
-				     __attribute__((unused)) *
-				     nattr)
+static count4 case_insensitive_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_case_insensitive);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_case_insensitive,
+			  &nattr->case_insensitive);
 }
 
 static nfsstat4 case_insensitive_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -497,10 +483,10 @@ static bool case_insensitive_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->case_insensitive == b->case_insensitive;
 }
 
-static count4 case_preserving_count(struct nfsv42_attr __attribute__((unused)) *
-				    nattr)
+static count4 case_preserving_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_case_preserving);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_case_preserving,
+			  &nattr->case_preserving);
 }
 
 static nfsstat4 case_preserving_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -515,11 +501,10 @@ static bool case_preserving_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->case_preserving == b->case_preserving;
 }
 
-static count4 chown_restricted_count(struct nfsv42_attr
-				     __attribute__((unused)) *
-				     nattr)
+static count4 chown_restricted_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_chown_restricted);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_chown_restricted,
+			  &nattr->chown_restricted);
 }
 
 static nfsstat4 chown_restricted_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -534,10 +519,9 @@ static bool chown_restricted_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->chown_restricted == b->chown_restricted;
 }
 
-static count4 filehandle_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 filehandle_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_filehandle);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_filehandle, &nattr->filehandle);
 }
 
 static nfsstat4 filehandle_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -557,9 +541,9 @@ static bool filehandle_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 		(struct network_file_handle *)b->filehandle.nfs_fh4_val);
 }
 
-static count4 fileid_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 fileid_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_fileid);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_fileid, &nattr->fileid);
 }
 
 static nfsstat4 fileid_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -574,10 +558,10 @@ static bool fileid_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->fileid == b->fileid;
 }
 
-static count4 files_avail_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 files_avail_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_files_avail);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_files_avail,
+			  &nattr->files_avail);
 }
 
 static nfsstat4 files_avail_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -592,10 +576,9 @@ static bool files_avail_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->files_avail == b->files_avail;
 }
 
-static count4 files_free_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 files_free_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_files_free);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_files_free, &nattr->files_free);
 }
 
 static nfsstat4 files_free_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -610,10 +593,10 @@ static bool files_free_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->files_free == b->files_free;
 }
 
-static count4 files_total_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 files_total_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_files_total);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_files_total,
+			  &nattr->files_total);
 }
 
 static nfsstat4 files_total_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -628,38 +611,10 @@ static bool files_total_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->files_total == b->files_total;
 }
 
-static inline count4 fs_location_count(fs_location4 *loc)
-{
-	count4 c = sizeof(fs_location4);
-
-	for (u_int i = 0; i < loc->rootpath.pathname4_len; i++) {
-		c += sizeof(component4);
-		c += loc->rootpath.pathname4_val[i].utf8string_len;
-	}
-
-	for (u_int i = 0; i < loc->server.server_len; i++) {
-		c += sizeof(*loc->server.server_val);
-		c += loc->server.server_val[i].utf8string_len;
-	}
-
-	return c;
-}
-
 static count4 fs_locations_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_fs_locations);
-	fs_locations4 *locs = &nattr->fs_locations;
-
-	for (u_int i = 0; i < locs->fs_root.pathname4_len; i++) {
-		c += sizeof(component4);
-		c += locs->fs_root.pathname4_val[i].utf8string_len;
-	}
-
-	for (u_int i = 0; i < locs->locations.locations_len; i++) {
-		c += fs_location_count(&locs->locations.locations_val[i]);
-	}
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_fs_locations,
+			  &nattr->fs_locations);
 }
 
 static nfsstat4 fs_locations_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -714,9 +669,9 @@ static bool fs_locations_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return true;
 }
 
-static count4 hidden_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 hidden_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_hidden);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_hidden, &nattr->hidden);
 }
 
 static nfsstat4 hidden_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -731,10 +686,10 @@ static bool hidden_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->hidden == b->hidden;
 }
 
-static count4 homogeneous_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 homogeneous_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_homogeneous);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_homogeneous,
+			  &nattr->homogeneous);
 }
 
 static nfsstat4 homogeneous_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -749,10 +704,10 @@ static bool homogeneous_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->homogeneous == b->homogeneous;
 }
 
-static count4 maxfilesize_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 maxfilesize_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_maxfilesize);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_maxfilesize,
+			  &nattr->maxfilesize);
 }
 
 static nfsstat4 maxfilesize_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -767,9 +722,9 @@ static bool maxfilesize_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->maxfilesize == b->maxfilesize;
 }
 
-static count4 maxlink_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 maxlink_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_maxlink);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_maxlink, &nattr->maxlink);
 }
 
 static nfsstat4 maxlink_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -784,9 +739,9 @@ static bool maxlink_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->maxlink == b->maxlink;
 }
 
-static count4 maxname_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 maxname_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_maxname);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_maxname, &nattr->maxname);
 }
 
 static nfsstat4 maxname_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -801,9 +756,9 @@ static bool maxname_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->maxname == b->maxname;
 }
 
-static count4 maxread_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 maxread_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_maxread);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_maxread, &nattr->maxread);
 }
 
 static nfsstat4 maxread_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -818,9 +773,9 @@ static bool maxread_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->maxread == b->maxread;
 }
 
-static count4 maxwrite_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 maxwrite_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_maxwrite);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_maxwrite, &nattr->maxwrite);
 }
 
 static nfsstat4 maxwrite_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -837,9 +792,7 @@ static bool maxwrite_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 mimetype_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_mimetype);
-	c += nattr->mimetype.utf8string_len;
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_mimetype, &nattr->mimetype);
 }
 
 static nfsstat4 mimetype_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -857,9 +810,9 @@ static bool mimetype_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return true;
 }
 
-static count4 mode_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 mode_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_mode);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_mode, &nattr->mode);
 }
 
 static nfsstat4 mode_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -874,9 +827,9 @@ static bool mode_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->mode == b->mode;
 }
 
-static count4 no_trunc_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 no_trunc_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_no_trunc);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_no_trunc, &nattr->no_trunc);
 }
 
 static nfsstat4 no_trunc_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -891,9 +844,9 @@ static bool no_trunc_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->no_trunc == b->no_trunc;
 }
 
-static count4 numlinks_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 numlinks_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_numlinks);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_numlinks, &nattr->numlinks);
 }
 
 static nfsstat4 numlinks_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -910,9 +863,7 @@ static bool numlinks_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 owner_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_owner);
-	c += nattr->owner.utf8string_len;
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_owner, &nattr->owner);
 }
 
 static nfsstat4 owner_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -929,9 +880,8 @@ static bool owner_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 owner_group_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_owner);
-	c += nattr->owner_group.utf8string_len;
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_owner_group,
+			  &nattr->owner_group);
 }
 
 static nfsstat4 owner_group_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -946,11 +896,10 @@ static bool owner_group_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return utf8string_cmp(&a->owner_group, &b->owner_group);
 }
 
-static count4 quota_avail_hard_count(struct nfsv42_attr
-				     __attribute__((unused)) *
-				     nattr)
+static count4 quota_avail_hard_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_quota_avail_hard);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_quota_avail_hard,
+			  &nattr->quota_avail_hard);
 }
 
 static nfsstat4 quota_avail_hard_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -965,11 +914,10 @@ static bool quota_avail_hard_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->quota_avail_hard == b->quota_avail_hard;
 }
 
-static count4 quota_avail_soft_count(struct nfsv42_attr
-				     __attribute__((unused)) *
-				     nattr)
+static count4 quota_avail_soft_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_quota_avail_soft);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_quota_avail_soft,
+			  &nattr->quota_avail_soft);
 }
 
 static nfsstat4 quota_avail_soft_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -984,10 +932,9 @@ static bool quota_avail_soft_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->quota_avail_soft == b->quota_avail_soft;
 }
 
-static count4 quota_used_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 quota_used_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_quota_used);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_quota_used, &nattr->quota_used);
 }
 
 static nfsstat4 quota_used_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1002,9 +949,9 @@ static bool quota_used_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->quota_used == b->quota_used;
 }
 
-static count4 rawdev_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 rawdev_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_rawdev);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_rawdev, &nattr->rawdev);
 }
 
 static nfsstat4 rawdev_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1020,10 +967,10 @@ static bool rawdev_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	       a->rawdev.specdata2 == b->rawdev.specdata2;
 }
 
-static count4 space_avail_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 space_avail_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_space_avail);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_space_avail,
+			  &nattr->space_avail);
 }
 
 static nfsstat4 space_avail_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1038,10 +985,9 @@ static bool space_avail_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->space_avail == b->space_avail;
 }
 
-static count4 space_free_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 space_free_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_space_free);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_space_free, &nattr->space_free);
 }
 
 static nfsstat4 space_free_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1056,10 +1002,10 @@ static bool space_free_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->space_free == b->space_free;
 }
 
-static count4 space_total_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 space_total_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_space_total);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_space_total,
+			  &nattr->space_total);
 }
 
 static nfsstat4 space_total_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1074,10 +1020,9 @@ static bool space_total_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->space_total == b->space_total;
 }
 
-static count4 space_used_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 space_used_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_space_used);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_space_used, &nattr->space_used);
 }
 
 static nfsstat4 space_used_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1092,9 +1037,9 @@ static bool space_used_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->space_used == b->space_used;
 }
 
-static count4 system_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 system_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_system);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_system, &nattr->system);
 }
 
 static nfsstat4 system_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1109,10 +1054,10 @@ static bool system_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->system == b->system;
 }
 
-static count4 time_access_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 time_access_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_time_access);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_time_access,
+			  &nattr->time_access);
 }
 
 static nfsstat4 time_access_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1129,10 +1074,8 @@ static bool time_access_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 time_access_set_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(time_how4);
-	if (nattr->time_access_set.set_it == SET_TO_CLIENT_TIME4)
-		c += sizeof(nfstime4);
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_time_access_set,
+			  &nattr->time_access_set);
 }
 
 static nfsstat4 time_access_set_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1152,10 +1095,10 @@ static bool time_access_set_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return true;
 }
 
-static count4 time_backup_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 time_backup_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_time_backup);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_time_backup,
+			  &nattr->time_backup);
 }
 
 static nfsstat4 time_backup_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1170,10 +1113,10 @@ static bool time_backup_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return nfstime4_eq(&a->time_backup, &b->time_backup);
 }
 
-static count4 time_create_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 time_create_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_time_create);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_time_create,
+			  &nattr->time_create);
 }
 
 static nfsstat4 time_create_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1188,10 +1131,9 @@ static bool time_create_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return nfstime4_eq(&a->time_create, &b->time_create);
 }
 
-static count4 time_delta_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 time_delta_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_time_delta);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_time_delta, &nattr->time_delta);
 }
 
 static nfsstat4 time_delta_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1206,10 +1148,10 @@ static bool time_delta_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return nfstime4_eq(&a->time_delta, &b->time_delta);
 }
 
-static count4 time_metadata_count(struct nfsv42_attr __attribute__((unused)) *
-				  nattr)
+static count4 time_metadata_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_time_metadata);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_time_metadata,
+			  &nattr->time_metadata);
 }
 
 static nfsstat4 time_metadata_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1224,10 +1166,10 @@ static bool time_metadata_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return nfstime4_eq(&a->time_metadata, &b->time_metadata);
 }
 
-static count4 time_modify_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 time_modify_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_time_modify);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_time_modify,
+			  &nattr->time_modify);
 }
 
 static nfsstat4 time_modify_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1244,10 +1186,8 @@ static bool time_modify_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 time_modify_set_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(time_how4);
-	if (nattr->time_modify_set.set_it == SET_TO_CLIENT_TIME4)
-		c += sizeof(nfstime4);
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_time_modify_set,
+			  &nattr->time_modify_set);
 }
 
 static nfsstat4 time_modify_set_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1267,11 +1207,10 @@ static bool time_modify_set_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return true;
 }
 
-static count4 mounted_on_fileid_count(struct nfsv42_attr
-				      __attribute__((unused)) *
-				      nattr)
+static count4 mounted_on_fileid_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_mounted_on_fileid);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_mounted_on_fileid,
+			  &nattr->mounted_on_fileid);
 }
 
 static nfsstat4 mounted_on_fileid_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1287,10 +1226,10 @@ static bool mounted_on_fileid_equal(struct nfsv42_attr *a,
 	return a->mounted_on_fileid == b->mounted_on_fileid;
 }
 
-static count4 dir_notif_delay_count(struct nfsv42_attr __attribute__((unused)) *
-				    nattr)
+static count4 dir_notif_delay_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_dir_notif_delay);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_dir_notif_delay,
+			  &nattr->dir_notif_delay);
 }
 
 static nfsstat4 dir_notif_delay_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1305,11 +1244,10 @@ static bool dir_notif_delay_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return nfstime4_eq(&a->dir_notif_delay, &b->dir_notif_delay);
 }
 
-static count4 dirent_notif_delay_count(struct nfsv42_attr
-				       __attribute__((unused)) *
-				       nattr)
+static count4 dirent_notif_delay_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_dirent_notif_delay);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_dirent_notif_delay,
+			  &nattr->dirent_notif_delay);
 }
 
 static nfsstat4 dirent_notif_delay_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1327,11 +1265,7 @@ static bool dirent_notif_delay_equal(struct nfsv42_attr *a,
 
 static count4 dacl_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_dacl);
-	c += nattr->dacl.na41_aces.na41_aces_len *
-	     sizeof(*nattr->dacl.na41_aces.na41_aces_val);
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_dacl, &nattr->dacl);
 }
 
 static nfsstat4 dacl_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1377,11 +1311,7 @@ static bool dacl_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 sacl_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_sacl);
-	c += nattr->sacl.na41_aces.na41_aces_len *
-	     sizeof(*nattr->sacl.na41_aces.na41_aces_val);
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_sacl, &nattr->sacl);
 }
 
 static nfsstat4 sacl_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1408,10 +1338,10 @@ static bool sacl_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return true;
 }
 
-static count4 change_policy_count(struct nfsv42_attr __attribute__((unused)) *
-				  nattr)
+static count4 change_policy_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_change_policy);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_change_policy,
+			  &nattr->change_policy);
 }
 
 static nfsstat4 change_policy_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1429,11 +1359,7 @@ static bool change_policy_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 fs_status_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_fs_status);
-	c += nattr->fs_status.fss_source.utf8string_len;
-	c += nattr->fs_status.fss_current.utf8string_len;
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_fs_status, &nattr->fs_status);
 }
 
 static nfsstat4 fs_status_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1467,11 +1393,8 @@ static bool fs_status_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 fs_layout_types_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_fs_layout_types);
-	c += nattr->fs_layout_types.fattr4_fs_layout_types_len *
-	     sizeof(*nattr->fs_layout_types.fattr4_fs_layout_types_val);
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_fs_layout_types,
+			  &nattr->fs_layout_types);
 }
 
 static nfsstat4 fs_layout_types_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1498,10 +1421,8 @@ static bool fs_layout_types_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 layout_hint_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(layouttype4);
-	c += sizeof(u_int); /* loh_body_len */
-	c += nattr->layout_hint.loh_body.loh_body_len;
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_layout_hint,
+			  &nattr->layout_hint);
 }
 
 static nfsstat4 layout_hint_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1523,14 +1444,10 @@ static bool layout_hint_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 		      a->layout_hint.loh_body.loh_body_len) == 0;
 }
 
-static count4 layout_types_count(struct nfsv42_attr __attribute__((unused)) *
-				 nattr)
+static count4 layout_types_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_layout_types);
-	c += nattr->layout_types.fattr4_layout_types_len *
-	     sizeof(*nattr->layout_types.fattr4_layout_types_val);
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_layout_types,
+			  &nattr->layout_types);
 }
 
 static nfsstat4 layout_types_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1554,10 +1471,10 @@ static bool layout_types_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return true;
 }
 
-static count4 layout_blksize_count(struct nfsv42_attr __attribute__((unused)) *
-				   nattr)
+static count4 layout_blksize_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_layout_blksize);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_layout_blksize,
+			  &nattr->layout_blksize);
 }
 
 static nfsstat4 layout_blksize_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1572,11 +1489,10 @@ static bool layout_blksize_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->layout_blksize == b->layout_blksize;
 }
 
-static count4 layout_alignment_count(struct nfsv42_attr
-				     __attribute__((unused)) *
-				     nattr)
+static count4 layout_alignment_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_layout_alignment);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_layout_alignment,
+			  &nattr->layout_alignment);
 }
 
 static nfsstat4 layout_alignment_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1593,30 +1509,8 @@ static bool layout_alignment_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 fs_locations_info_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_fs_locations_info);
-	fs_locations_info4 *fli = &nattr->fs_locations_info;
-
-	for (u_int i = 0; i < fli->fli_fs_root.pathname4_len; i++) {
-		c += sizeof(component4);
-		c += fli->fli_fs_root.pathname4_val[i].utf8string_len;
-	}
-
-	for (u_int i = 0; i < fli->fli_items.fli_items_len; i++) {
-		fs_locations_item4 *item = &fli->fli_items.fli_items_val[i];
-		c += sizeof(fs_locations_item4);
-		for (u_int j = 0; j < item->fli_entries.fli_entries_len; j++) {
-			fs_locations_server4 *srv =
-				&item->fli_entries.fli_entries_val[j];
-			c += sizeof(fs_locations_server4);
-			c += srv->fls_server.utf8string_len;
-		}
-		c += item->fli_rootpath.pathname4_len * sizeof(component4);
-		for (u_int j = 0; j < item->fli_rootpath.pathname4_len; j++) {
-			c += item->fli_rootpath.pathname4_val[j].utf8string_len;
-		}
-	}
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_fs_locations_info,
+			  &nattr->fs_locations_info);
 }
 
 static nfsstat4 fs_locations_info_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1659,11 +1553,8 @@ static bool fs_locations_info_equal(struct nfsv42_attr *a,
 
 static count4 mdsthreshold_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_mdsthreshold);
-	c += nattr->mdsthreshold.mth_hints.mth_hints_len *
-	     sizeof(threshold_item4);
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_mdsthreshold,
+			  &nattr->mdsthreshold);
 }
 
 static nfsstat4 mdsthreshold_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1697,11 +1588,8 @@ static bool mdsthreshold_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 retention_get_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_retention_get);
-	if (nattr->retention_get.rg_begin_time.rg_begin_time_len)
-		c += sizeof(nfstime4);
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_retention_get,
+			  &nattr->retention_get);
 }
 
 static nfsstat4 retention_get_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1731,11 +1619,8 @@ static bool retention_get_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 retention_set_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(bool_t);
-	c += sizeof(u_int); /* rs_duration_len */
-	if (nattr->retention_set.rs_duration.rs_duration_len)
-		c += sizeof(uint64_t);
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_retention_set,
+			  &nattr->retention_set);
 }
 
 static nfsstat4 retention_set_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1760,11 +1645,8 @@ static bool retention_set_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 retentevt_get_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_retentevt_get);
-	if (nattr->retentevt_get.rg_begin_time.rg_begin_time_len)
-		c += sizeof(nfstime4);
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_retentevt_get,
+			  &nattr->retentevt_get);
 }
 
 static nfsstat4 retentevt_get_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1794,11 +1676,8 @@ static bool retentevt_get_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 retentevt_set_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(bool_t);
-	c += sizeof(u_int); /* rs_duration_len */
-	if (nattr->retentevt_set.rs_duration.rs_duration_len)
-		c += sizeof(uint64_t);
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_retentevt_set,
+			  &nattr->retentevt_set);
 }
 
 static nfsstat4 retentevt_set_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1821,10 +1700,10 @@ static bool retentevt_set_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return true;
 }
 
-static count4 retention_hold_count(struct nfsv42_attr __attribute__((unused)) *
-				   nattr)
+static count4 retention_hold_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_retention_hold);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_retention_hold,
+			  &nattr->retention_hold);
 }
 
 static nfsstat4 retention_hold_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1839,10 +1718,10 @@ static bool retention_hold_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->retention_hold == b->retention_hold;
 }
 
-static count4 mode_set_masked_count(struct nfsv42_attr __attribute__((unused)) *
-				    nattr)
+static count4 mode_set_masked_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(mode_masked4);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_mode_set_masked,
+			  &nattr->mode_set_masked);
 }
 
 static nfsstat4 mode_set_masked_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1862,10 +1741,8 @@ static bool mode_set_masked_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 suppattr_exclcreat_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_suppattr_exclcreat);
-	c += nattr->suppattr_exclcreat.bitmap4_len * sizeof(uint32_t);
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_suppattr_exclcreat,
+			  &nattr->suppattr_exclcreat);
 }
 
 static nfsstat4 suppattr_exclcreat_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1881,10 +1758,10 @@ static bool suppattr_exclcreat_equal(struct nfsv42_attr *a,
 	return bitmap4_equal(&a->suppattr_exclcreat, &b->suppattr_exclcreat);
 }
 
-static count4 fs_charset_cap_count(struct nfsv42_attr __attribute__((unused)) *
-				   nattr)
+static count4 fs_charset_cap_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_fs_charset_cap);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_fs_charset_cap,
+			  &nattr->fs_charset_cap);
 }
 
 static nfsstat4 fs_charset_cap_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1899,10 +1776,10 @@ static bool fs_charset_cap_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->fs_charset_cap == b->fs_charset_cap;
 }
 
-static count4 clone_blksize_count(struct nfsv42_attr __attribute__((unused)) *
-				  nattr)
+static count4 clone_blksize_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_clone_blksize);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_clone_blksize,
+			  &nattr->clone_blksize);
 }
 
 static nfsstat4 clone_blksize_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1917,10 +1794,10 @@ static bool clone_blksize_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->clone_blksize == b->clone_blksize;
 }
 
-static count4 space_freed_count(struct nfsv42_attr __attribute__((unused)) *
-				nattr)
+static count4 space_freed_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_space_freed);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_space_freed,
+			  &nattr->space_freed);
 }
 
 static nfsstat4 space_freed_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1935,11 +1812,10 @@ static bool space_freed_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->space_freed == b->space_freed;
 }
 
-static count4 change_attr_type_count(struct nfsv42_attr
-				     __attribute__((unused)) *
-				     nattr)
+static count4 change_attr_type_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_change_attr_type);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_change_attr_type,
+			  &nattr->change_attr_type);
 }
 
 static nfsstat4 change_attr_type_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1956,10 +1832,7 @@ static bool change_attr_type_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 
 static count4 sec_label_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_sec_label);
-	c += nattr->sec_label.slai_data.slai_data_len;
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_sec_label, &nattr->sec_label);
 }
 
 static nfsstat4 sec_label_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -1984,10 +1857,9 @@ static bool sec_label_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 		      a->sec_label.slai_data.slai_data_len) == 0;
 }
 
-static count4 mode_umask_count(struct nfsv42_attr __attribute__((unused)) *
-			       nattr)
+static count4 mode_umask_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_mode_umask);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_mode_umask, &nattr->mode_umask);
 }
 
 static nfsstat4 mode_umask_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -2003,10 +1875,10 @@ static bool mode_umask_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	       a->mode_umask.mu_umask == b->mode_umask.mu_umask;
 }
 
-static count4 xattr_support_count(struct nfsv42_attr __attribute__((unused)) *
-				  nattr)
+static count4 xattr_support_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_xattr_support);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_xattr_support,
+			  &nattr->xattr_support);
 }
 
 static nfsstat4 xattr_support_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -2021,9 +1893,9 @@ static bool xattr_support_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->xattr_support == b->xattr_support;
 }
 
-static count4 offline_count(struct nfsv42_attr __attribute__((unused)) * nattr)
+static count4 offline_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_offline);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_offline, &nattr->offline);
 }
 
 static nfsstat4 offline_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -2038,11 +1910,10 @@ static bool offline_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	return a->offline == b->offline;
 }
 
-static count4 time_deleg_access_count(struct nfsv42_attr
-				      __attribute__((unused)) *
-				      nattr)
+static count4 time_deleg_access_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_time_deleg_access);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_time_deleg_access,
+			  &nattr->time_deleg_access);
 }
 
 static nfsstat4 time_deleg_access_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -2058,11 +1929,10 @@ static bool time_deleg_access_equal(struct nfsv42_attr *a,
 	return nfstime4_eq(&a->time_deleg_access, &b->time_deleg_access);
 }
 
-static count4 time_deleg_modify_count(struct nfsv42_attr
-				      __attribute__((unused)) *
-				      nattr)
+static count4 time_deleg_modify_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_time_deleg_modify);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_time_deleg_modify,
+			  &nattr->time_deleg_modify);
 }
 
 static nfsstat4 time_deleg_modify_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -2080,16 +1950,8 @@ static bool time_deleg_modify_equal(struct nfsv42_attr *a,
 
 static count4 open_arguments_count(struct nfsv42_attr *nattr)
 {
-	count4 c = sizeof(fattr4_open_arguments);
-	c += nattr->open_arguments.oa_share_access.bitmap4_len *
-	     sizeof(uint32_t);
-	c += nattr->open_arguments.oa_share_deny.bitmap4_len * sizeof(uint32_t);
-	c += nattr->open_arguments.oa_share_access_want.bitmap4_len *
-	     sizeof(uint32_t);
-	c += nattr->open_arguments.oa_open_claim.bitmap4_len * sizeof(uint32_t);
-	c += nattr->open_arguments.oa_createmode.bitmap4_len * sizeof(uint32_t);
-
-	return c;
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_open_arguments,
+			  &nattr->open_arguments);
 }
 
 static nfsstat4 open_arguments_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -2121,11 +1983,10 @@ static bool open_arguments_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 			     &b->open_arguments.oa_createmode);
 }
 
-static count4 uncacheable_file_data_count(struct nfsv42_attr
-					  __attribute__((unused)) *
-					  nattr)
+static count4 uncacheable_file_data_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_uncacheable_file_data);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_uncacheable_file_data,
+			  &nattr->uncacheable_file_data);
 }
 
 static nfsstat4 uncacheable_file_data_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
@@ -2142,11 +2003,10 @@ static bool uncacheable_file_data_equal(struct nfsv42_attr *a,
 	return a->uncacheable_file_data == b->uncacheable_file_data;
 }
 
-static count4 uncacheable_dirent_metadata_count(struct nfsv42_attr
-						__attribute__((unused)) *
-						nattr)
+static count4 uncacheable_dirent_metadata_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_uncacheable_dirent_metadata);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_uncacheable_dirent_metadata,
+			  &nattr->uncacheable_dirent_metadata);
 }
 
 static nfsstat4 uncacheable_dirent_metadata_xdr(XDR *xdrs,
@@ -2164,11 +2024,10 @@ static bool uncacheable_dirent_metadata_equal(struct nfsv42_attr *a,
 	return a->uncacheable_dirent_metadata == b->uncacheable_dirent_metadata;
 }
 
-static count4 coding_block_size_count(struct nfsv42_attr
-				      __attribute__((unused)) *
-				      nattr)
+static count4 coding_block_size_count(struct nfsv42_attr *nattr)
 {
-	return sizeof(fattr4_coding_block_size);
+	return xdr_sizeof((xdrproc_t)xdr_fattr4_coding_block_size,
+			  &nattr->coding_block_size);
 }
 
 static nfsstat4 coding_block_size_xdr(XDR *xdrs, struct nfsv42_attr *nattr)
