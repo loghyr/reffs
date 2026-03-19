@@ -7,6 +7,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -141,7 +142,7 @@ static struct nfsv42_attr system_attrs = {
 	.case_insensitive = false,
 	.case_preserving = true,
 	.homogeneous = true,
-	.maxfilesize = 123456,
+	.maxfilesize = INT64_MAX,
 	.maxlink = -1,
 	.maxname = 255,
 	.maxread = 1024 * 1024,
