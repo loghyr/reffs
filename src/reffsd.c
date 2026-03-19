@@ -26,7 +26,6 @@
 #include "reffs/fs.h"
 #include "reffs/log.h"
 #include "reffs/io.h"
-#include "reffs/log.h"
 #include "reffs/mount3.h"
 #include "reffs/nfs3.h"
 #include "reffs/nfs4.h"
@@ -43,9 +42,7 @@
 #include "reffs/trace/types.h"
 #include "reffs/types.h"
 #include "sm_inter.h"
-#include "reffs/fs.h"
 #include "reffs/client.h"
-#include "reffs/trace/common.h"
 
 #define NFS_PORT 2049
 
