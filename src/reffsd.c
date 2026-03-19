@@ -52,12 +52,8 @@ volatile sig_atomic_t running = 1;
 // Signal handler
 static void signal_handler(int sig)
 {
-	TRACE("Received signal %d, initiating shutdown...", sig);
-
-	__atomic_store(&running, &(int){ 0 }, __ATOMIC_SEQ_CST);
-
-	// Wake up any waiting worker threads
-	wake_worker_threads();
+	(void)sig;
+	running = 0;
 }
 
 static void usage(const char *prog)
@@ -173,6 +169,15 @@ int main(int argc, char *argv[])
 	reffs_trace_init(trace_file);
 	reffs_fs_set_storage(storage_type, backend_path);
 
+	sigset_t mask;
+
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGINT);
+	sigaddset(&mask, SIGTERM);
+
+	// Block signals in main thread temporarily
+	pthread_sigmask(SIG_BLOCK, &mask, NULL);
+
 	// Ignore SIGPIPE
 	signal(SIGPIPE, SIG_IGN);
 
@@ -185,13 +190,6 @@ int main(int argc, char *argv[])
 	sigaddset(&sa.sa_mask, SIGTERM);
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
-
-	sigset_t mask;
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGINT);
-	sigaddset(&mask, SIGTERM);
-	// Block signals in main thread temporarily
-	pthread_sigmask(SIG_BLOCK, &mask, NULL);
 
 	ss = server_state_init(state_path, port, case_mode);
 	if (!ss) {
@@ -387,8 +385,6 @@ int main(int argc, char *argv[])
 		LOG("Failed to register NSM UDP");
 	}
 
-	__atomic_store(&running, &(int){ 1 }, __ATOMIC_SEQ_CST);
-
 	// Run the main IO processing loop
 
 	io_handler_main_loop(&running, &rc);
@@ -425,6 +421,8 @@ int main(int argc, char *argv[])
 	pmap_unset(NFS4_PROGRAM, NFS_V4);
 
 out:
+	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
+
 	TRACE("Final io_context statistics: created=%ld, freed=%ld, difference=%ld",
 	      io_context_get_created(), io_context_get_freed(),
 	      io_context_get_created() - io_context_get_freed());
