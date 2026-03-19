@@ -81,13 +81,20 @@ static void make_identity_record(struct client_identity_record *cir,
 	memcpy(cir->cir_ownerid, owner->co_ownerid.co_ownerid_val, oid_len);
 
 	if (impl_id) {
-		if (impl_id->nii_domain.utf8string_val)
-			strncpy(cir->cir_domain,
-				impl_id->nii_domain.utf8string_val,
-				sizeof(cir->cir_domain) - 1);
-		if (impl_id->nii_name.utf8string_val)
-			strncpy(cir->cir_name, impl_id->nii_name.utf8string_val,
-				sizeof(cir->cir_name) - 1);
+		if (impl_id->nii_domain.utf8string_val) {
+			uint32_t len = impl_id->nii_domain.utf8string_len;
+			if (len > sizeof(cir->cir_domain) - 1)
+				len = sizeof(cir->cir_domain) - 1;
+			memcpy(cir->cir_domain,
+			       impl_id->nii_domain.utf8string_val, len);
+		}
+		if (impl_id->nii_name.utf8string_val) {
+			uint32_t len = impl_id->nii_name.utf8string_len;
+			if (len > sizeof(cir->cir_name) - 1)
+				len = sizeof(cir->cir_name) - 1;
+			memcpy(cir->cir_name, impl_id->nii_name.utf8string_val,
+			       len);
+		}
 	}
 }
 
