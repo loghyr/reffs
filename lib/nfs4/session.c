@@ -452,8 +452,8 @@ void nfs4_op_sequence(struct compound *c)
 	SEQUENCE4args *args = NFS4_OP_ARG_SETUP(c, opsequence);
 	SEQUENCE4res *res = NFS4_OP_RES_SETUP(c, opsequence);
 	nfsstat4 *status = &res->sr_status;
-	// SEQUENCE4resok *resok =
-	//		NFS4_OP_RESOK_SETUP(res, SEQUENCE4res_u, sr_resok4);
+	SEQUENCE4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, SEQUENCE4res_u, sr_resok4);
 
 	struct nfs4_session *ns = NULL;
 	struct nfs4_slot *slot;
@@ -516,6 +516,13 @@ void nfs4_op_sequence(struct compound *c)
 	}
 
 	pthread_mutex_unlock(&slot->sl_mutex);
+
+	memcpy(resok->sr_sessionid, ns->ns_sessionid, sizeof(sessionid4));
+	resok->sr_sequenceid = slot->sl_seqid;
+	resok->sr_slotid = args->sa_slotid;
+	resok->sr_highest_slotid = ns->ns_slot_count - 1;
+	resok->sr_target_highest_slotid = ns->ns_slot_count - 1;
+	resok->sr_status_flags = 0;
 
 	c->c_session = nfs4_session_get(ns);
 	c->c_slot = slot;
