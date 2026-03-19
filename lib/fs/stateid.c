@@ -106,6 +106,33 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
 			return -EEXIST;
 		}
 
+		/*
+		 * Pre-check: refuse to insert into a client that is being
+		 * expired.  client_remove_all_stateids() sets CLIENT_IS_EXPIRING
+		 * before it begins its scan; if we see that flag here we know
+		 * the drain either already ran (leak) or is about to run
+		 * (UAF).  Roll back the inode-hash insertion and return an
+		 * error so the caller never hands back a stid whose client is
+		 * going away.
+		 *
+		 * A tiny window remains where the flag is set after this load
+		 * but before cds_lfht_add_unique below; that is handled by
+		 * client_remove_all_stateids() draining the stid, which will
+		 * call stateid_put and schedule the free via call_rcu.  The
+		 * caller must not use the stid after open_stateid_alloc
+		 * returns NULL, so there is no UAF in that path.
+		 */
+		uint64_t cstate =
+			__atomic_load_n(&client->c_state, __ATOMIC_ACQUIRE);
+		if (caa_unlikely(cstate & CLIENT_IS_EXPIRING)) {
+			if (stateid_inode_unhash(stid))
+				inode_active_put(stid->s_inode);
+			stid->s_inode = NULL;
+			client_put(stid->s_client);
+			stid->s_client = NULL;
+			return -ESHUTDOWN;
+		}
+
 		rcu_read_lock();
 		stid->s_state |= STID_IS_CLIENT_HASHED;
 		node = cds_lfht_add_unique(client->c_stateids, hash,
