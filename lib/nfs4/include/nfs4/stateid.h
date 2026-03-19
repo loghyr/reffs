@@ -37,6 +37,12 @@ enum stateid_type {
 #define OPEN_STATEID_DENY_READ (1ULL << 2)
 #define OPEN_STATEID_DENY_WRITE (1ULL << 3)
 
+struct nfs4_lock_owner {
+	struct reffs_lock_owner lo_base;
+	clientid4 lo_clientid;
+	netobj lo_owner;
+};
+
 struct open_stateid {
 	uint64_t os_state;
 	struct reffs_lock_owner os_owner; /* share reservation owner */
@@ -50,6 +56,8 @@ struct delegation_stateid {
 
 struct lock_stateid {
 	uint64_t ls_state;
+	struct nfs4_lock_owner *ls_owner;
+	struct open_stateid *ls_open;
 	struct stateid ls_stid;
 };
 

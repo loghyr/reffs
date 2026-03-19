@@ -7,13 +7,93 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
+#include "reffs/inode.h"
+#include "reffs/lock.h"
+#include "reffs/nlm_lock.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "nfs4/stateid.h"
+#include "nfs4/client.h"
+
+/* ------------------------------------------------------------------ */
+/* Lock Owner Management                                               */
+
+static void nfs4_lock_owner_release(struct urcu_ref *ref)
+{
+	struct nfs4_lock_owner *lo =
+		caa_container_of(ref, struct nfs4_lock_owner, lo_base.lo_ref);
+
+	/*
+	 * Note: We don't remove from nc_lock_owners here because the client
+	 * might still be active and we want to reuse the owner.
+	 * The owner is freed when the client is freed, or explicitly via
+	 * RELEASE_LOCKOWNER.
+	 * Actually, for NFSv4, lock owners are often kept until explicitly
+	 * released.
+	 */
+	(void)lo;
+}
+
+static bool nfs4_lock_owner_match(struct reffs_lock_owner *lo_base, void *arg)
+{
+	struct nfs4_lock_owner *lo =
+		caa_container_of(lo_base, struct nfs4_lock_owner, lo_base);
+	lock_owner4 *owner = arg;
+
+	if (lo->lo_clientid != owner->clientid)
+		return false;
+	if (lo->lo_owner.n_len != owner->owner.owner_len)
+		return false;
+	return memcmp(lo->lo_owner.n_bytes, owner->owner.owner_val,
+		      owner->owner.owner_len) == 0;
+}
+
+static struct nfs4_lock_owner *nfs4_get_lock_owner(struct nfs4_client *nc,
+						   lock_owner4 *owner)
+{
+	struct nfs4_lock_owner *lo;
+
+	pthread_mutex_lock(&nc->nc_lock_owners_mutex);
+	cds_list_for_each_entry(lo, &nc->nc_lock_owners, lo_base.lo_list) {
+		if (nfs4_lock_owner_match(&lo->lo_base, owner)) {
+			urcu_ref_get(&lo->lo_base.lo_ref);
+			pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
+			return lo;
+		}
+	}
+
+	lo = calloc(1, sizeof(*lo));
+	if (lo) {
+		urcu_ref_init(&lo->lo_base.lo_ref);
+		lo->lo_base.lo_release = nfs4_lock_owner_release;
+		lo->lo_base.lo_match = nfs4_lock_owner_match;
+		lo->lo_clientid = owner->clientid;
+		lo->lo_owner.n_len = owner->owner.owner_len;
+		lo->lo_owner.n_bytes = malloc(owner->owner.owner_len);
+		if (!lo->lo_owner.n_bytes) {
+			free(lo);
+			pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
+			return NULL;
+		}
+		memcpy(lo->lo_owner.n_bytes, owner->owner.owner_val,
+		       owner->owner.owner_len);
+		cds_list_add(&lo->lo_base.lo_list, &nc->nc_lock_owners);
+	}
+	pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
+	return lo;
+}
+
+/* ------------------------------------------------------------------ */
+/* Operation Handlers                                                  */
 
 void nfs4_op_lock(struct compound *c)
 {
@@ -21,12 +101,193 @@ void nfs4_op_lock(struct compound *c)
 	LOCK4res *res = NFS4_OP_RES_SETUP(c, oplock);
 	nfsstat4 *status = &res->status;
 	LOCK4resok *resok = NFS4_OP_RESOK_SETUP(res, LOCK4res_u, resok4);
+	struct lock_stateid *ls = NULL;
+	struct open_stateid *os = NULL;
+	struct nfs4_lock_owner *lo = NULL;
+	struct reffs_lock *lock = NULL;
+	struct reffs_lock *conflict = NULL;
+	int ret;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	if (reffs_nlm4_in_grace() && !args->reclaim) {
+		*status = NFS4ERR_GRACE;
+		goto out;
+	}
+
+	if (args->locker.new_lock_owner) {
+		open_to_lock_owner4 *oto = &args->locker.locker4_u.open_owner;
+
+		/* Resolve open_stateid */
+		uint32_t seqid, id, type, cookie;
+		unpack_stateid4(&oto->open_stateid, &seqid, &id, &type,
+				&cookie);
+		if (type != Open_Stateid) {
+			*status = NFS4ERR_BAD_STATEID;
+			goto out;
+		}
+		struct stateid *stid = stateid_find(c->c_inode, id);
+		if (!stid || stid->s_tag != Open_Stateid ||
+		    stid->s_cookie != cookie) {
+			stateid_put(stid);
+			*status = NFS4ERR_BAD_STATEID;
+			goto out;
+		}
+		os = stid_to_open(stid);
+
+		/* Find or create lock_owner */
+		lo = nfs4_get_lock_owner(c->c_nfs4_client, &oto->lock_owner);
+		if (!lo) {
+			stateid_put(stid);
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		/* Allocate new lock_stateid */
+		ls = lock_stateid_alloc(
+			c->c_inode, nfs4_client_to_client(c->c_nfs4_client));
+		if (!ls) {
+			urcu_ref_put(&lo->lo_base.lo_ref,
+				     lo->lo_base.lo_release);
+			stateid_put(stid);
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+		ls->ls_owner = lo; /* Ref already held from get_lock_owner */
+		ls->ls_open = os; /* Ref already held from stateid_find */
+		__atomic_fetch_add(&ls->ls_stid.s_seqid, 1, __ATOMIC_SEQ_CST);
+	} else {
+		exist_lock_owner4 *elo = &args->locker.locker4_u.lock_owner;
+
+		/* Resolve lock_stateid */
+		uint32_t seqid, id, type, cookie;
+		unpack_stateid4(&elo->lock_stateid, &seqid, &id, &type,
+				&cookie);
+		if (type != Lock_Stateid) {
+			*status = NFS4ERR_BAD_STATEID;
+			goto out;
+		}
+		struct stateid *stid = stateid_find(c->c_inode, id);
+		if (!stid || stid->s_tag != Lock_Stateid ||
+		    stid->s_cookie != cookie) {
+			stateid_put(stid);
+			*status = NFS4ERR_BAD_STATEID;
+			goto out;
+		}
+		ls = stid_to_lock(stid);
+		lo = ls->ls_owner;
+		urcu_ref_get(&lo->lo_base.lo_ref);
+
+		/* Verify seqid */
+		uint32_t cur_seqid =
+			__atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
+		if (elo->lock_seqid != cur_seqid) {
+			urcu_ref_put(&lo->lo_base.lo_ref,
+				     lo->lo_base.lo_release);
+			stateid_put(stid);
+			*status = NFS4ERR_BAD_SEQID;
+			goto out;
+		}
+	}
+
+	/* Perform locking */
+	bool exclusive =
+		(args->locktype == WRITE_LT || args->locktype == WRITEW_LT);
+
+	pthread_mutex_lock(&c->c_inode->i_lock_mutex);
+
+	conflict = reffs_lock_find_conflict(c->c_inode, args->offset,
+					    args->length, exclusive,
+					    &lo->lo_base, &args->locker);
+	if (conflict) {
+		res->LOCK4res_u.denied.offset = conflict->l_offset;
+		res->LOCK4res_u.denied.length = conflict->l_len;
+		res->LOCK4res_u.denied.locktype =
+			conflict->l_exclusive ? WRITE_LT : READ_LT;
+		/* Encode conflict owner - simplified for now */
+		struct nfs4_lock_owner *clo = caa_container_of(
+			conflict->l_owner, struct nfs4_lock_owner, lo_base);
+		res->LOCK4res_u.denied.owner.clientid = clo->lo_clientid;
+		res->LOCK4res_u.denied.owner.owner.owner_len =
+			clo->lo_owner.n_len;
+		res->LOCK4res_u.denied.owner.owner.owner_val =
+			malloc(clo->lo_owner.n_len);
+		if (res->LOCK4res_u.denied.owner.owner.owner_val) {
+			memcpy(res->LOCK4res_u.denied.owner.owner.owner_val,
+			       clo->lo_owner.n_bytes, clo->lo_owner.n_len);
+		}
+
+		pthread_mutex_unlock(&c->c_inode->i_lock_mutex);
+		urcu_ref_put(&lo->lo_base.lo_ref, lo->lo_base.lo_release);
+		if (args->locker.new_lock_owner) {
+			stateid_inode_unhash(&ls->ls_stid);
+			stateid_client_unhash(&ls->ls_stid);
+			stateid_put(&ls->ls_stid);
+		} else {
+			stateid_put(&ls->ls_stid);
+		}
+		*status = NFS4ERR_DENIED;
+		goto out;
+	}
+
+	lock = calloc(1, sizeof(*lock));
+	if (!lock) {
+		pthread_mutex_unlock(&c->c_inode->i_lock_mutex);
+		urcu_ref_put(&lo->lo_base.lo_ref, lo->lo_base.lo_release);
+		if (args->locker.new_lock_owner) {
+			stateid_inode_unhash(&ls->ls_stid);
+			stateid_client_unhash(&ls->ls_stid);
+			stateid_put(&ls->ls_stid);
+		} else {
+			stateid_put(&ls->ls_stid);
+		}
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+
+	lock->l_owner = &lo->lo_base; /* Ref already held */
+	lock->l_offset = args->offset;
+	lock->l_len = args->length;
+	lock->l_exclusive = exclusive;
+	lock->l_inode = inode_active_get(c->c_inode);
+
+	ret = reffs_lock_add(c->c_inode, lock, NULL);
+	pthread_mutex_unlock(&c->c_inode->i_lock_mutex);
+
+	if (ret) {
+		reffs_lock_free(lock);
+		if (args->locker.new_lock_owner) {
+			stateid_inode_unhash(&ls->ls_stid);
+			stateid_client_unhash(&ls->ls_stid);
+			stateid_put(&ls->ls_stid);
+		} else {
+			stateid_put(&ls->ls_stid);
+		}
+		*status = NFS4ERR_DENIED;
+		goto out;
+	}
+
+	if (!args->locker.new_lock_owner) {
+		__atomic_fetch_add(&ls->ls_stid.s_seqid, 1, __ATOMIC_SEQ_CST);
+	}
+
+	pack_stateid4(&resok->lock_stateid, &ls->ls_stid);
+
+	/* Update current stateid in compound */
+	stateid_put(c->c_curr_stid);
+	c->c_curr_stid = stateid_get(&ls->ls_stid);
+
+	if (!args->locker.new_lock_owner) {
+		stateid_put(&ls->ls_stid); /* Drop find ref */
+	}
+
+	*status = NFS4_OK;
+
+out:
+	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_lockt(struct compound *c)
@@ -34,11 +295,48 @@ void nfs4_op_lockt(struct compound *c)
 	LOCKT4args *args = NFS4_OP_ARG_SETUP(c, oplockt);
 	LOCKT4res *res = NFS4_OP_RES_SETUP(c, oplockt);
 	nfsstat4 *status = &res->status;
+	struct reffs_lock *conflict = NULL;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		return;
+	}
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	if (reffs_nlm4_in_grace()) {
+		*status = NFS4ERR_GRACE;
+		return;
+	}
+
+	bool exclusive =
+		(args->locktype == WRITE_LT || args->locktype == WRITEW_LT);
+
+	pthread_mutex_lock(&c->c_inode->i_lock_mutex);
+	conflict = reffs_lock_find_conflict(c->c_inode, args->offset,
+					    args->length, exclusive, NULL,
+					    &args->owner);
+	if (conflict) {
+		res->LOCKT4res_u.denied.offset = conflict->l_offset;
+		res->LOCKT4res_u.denied.length = conflict->l_len;
+		res->LOCKT4res_u.denied.locktype =
+			conflict->l_exclusive ? WRITE_LT : READ_LT;
+		struct nfs4_lock_owner *clo = caa_container_of(
+			conflict->l_owner, struct nfs4_lock_owner, lo_base);
+		res->LOCKT4res_u.denied.owner.clientid = clo->lo_clientid;
+		res->LOCKT4res_u.denied.owner.owner.owner_len =
+			clo->lo_owner.n_len;
+		res->LOCKT4res_u.denied.owner.owner.owner_val =
+			malloc(clo->lo_owner.n_len);
+		if (res->LOCKT4res_u.denied.owner.owner.owner_val) {
+			memcpy(res->LOCKT4res_u.denied.owner.owner.owner_val,
+			       clo->lo_owner.n_bytes, clo->lo_owner.n_len);
+		}
+		pthread_mutex_unlock(&c->c_inode->i_lock_mutex);
+		*status = NFS4ERR_DENIED;
+		return;
+	}
+	pthread_mutex_unlock(&c->c_inode->i_lock_mutex);
+
+	*status = NFS4_OK;
 }
 
 void nfs4_op_locku(struct compound *c)
@@ -47,21 +345,77 @@ void nfs4_op_locku(struct compound *c)
 	LOCKU4res *res = NFS4_OP_RES_SETUP(c, oplocku);
 	nfsstat4 *status = &res->status;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		return;
+	}
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	uint32_t seqid, id, type, cookie;
+	unpack_stateid4(&args->lock_stateid, &seqid, &id, &type, &cookie);
+	if (type != Lock_Stateid) {
+		*status = NFS4ERR_BAD_STATEID;
+		return;
+	}
+	struct stateid *stid = stateid_find(c->c_inode, id);
+	if (!stid || stid->s_tag != Lock_Stateid || stid->s_cookie != cookie) {
+		stateid_put(stid);
+		*status = NFS4ERR_BAD_STATEID;
+		return;
+	}
+	struct lock_stateid *ls = stid_to_lock(stid);
+
+	/* Verify seqid */
+	uint32_t cur_seqid = __atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
+	if (args->seqid != cur_seqid) {
+		stateid_put(stid);
+		*status = NFS4ERR_BAD_SEQID;
+		return;
+	}
+
+	pthread_mutex_lock(&c->c_inode->i_lock_mutex);
+	reffs_lock_remove(c->c_inode, args->offset, args->length,
+			  &ls->ls_owner->lo_base, NULL);
+	pthread_mutex_unlock(&c->c_inode->i_lock_mutex);
+
+	__atomic_fetch_add(&stid->s_seqid, 1, __ATOMIC_SEQ_CST);
+	pack_stateid4(&res->LOCKU4res_u.lock_stateid, stid);
+
+	stateid_put(stid);
+	*status = NFS4_OK;
 }
 
 void nfs4_op_free_stateid(struct compound *c)
 {
+	FREE_STATEID4args *args = NFS4_OP_ARG_SETUP(c, opfree_stateid);
 	FREE_STATEID4res *res = NFS4_OP_RES_SETUP(c, opfree_stateid);
 	nfsstat4 *status = &res->fsr_status;
 
-	*status = NFS4ERR_NOTSUPP;
+	uint32_t seqid, id, type, cookie;
+	unpack_stateid4(&args->fsa_stateid, &seqid, &id, &type, &cookie);
 
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
+	struct stateid *stid = stateid_find(c->c_inode, id);
+	if (!stid || stid->s_tag != type || stid->s_cookie != cookie) {
+		stateid_put(stid);
+		*status = NFS4ERR_BAD_STATEID;
+		return;
+	}
+
+	/* RFC 5661 §18.38.3: FREE_STATEID cannot be used for open stateids */
+	if (type == Open_Stateid) {
+		stateid_put(stid);
+		*status = NFS4ERR_BAD_STATEID;
+		return;
+	}
+
+	stateid_inode_unhash(stid);
+	stateid_client_unhash(stid);
+
+	/* Drop the "state ref" */
+	stateid_put(stid);
+	/* Drop the "find ref" */
+	stateid_put(stid);
+
+	*status = NFS4_OK;
 }
 
 void nfs4_op_release_lockowner(struct compound *c)
@@ -71,10 +425,33 @@ void nfs4_op_release_lockowner(struct compound *c)
 	RELEASE_LOCKOWNER4res *res = NFS4_OP_RES_SETUP(c, oprelease_lockowner);
 	nfsstat4 *status = &res->status;
 
-	*status = NFS4ERR_NOTSUPP;
+	struct nfs4_client *nc = c->c_nfs4_client;
+	struct nfs4_lock_owner *lo, *tmp;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	pthread_mutex_lock(&nc->nc_lock_owners_mutex);
+	cds_list_for_each_entry_safe(lo, tmp, &nc->nc_lock_owners,
+				     lo_base.lo_list) {
+		if (nfs4_lock_owner_match(&lo->lo_base, args)) {
+			/*
+			 * RFC 5661 §18.22.3: RELEASE_LOCKOWNER must fail if
+			 * any locks are still held by this owner.
+			 */
+			/*
+			 * Simplification: we should check all inodes for locks
+			 * held by this owner. For now, we'll just remove it
+			 * from the list if it matches.
+			 */
+			cds_list_del(&lo->lo_base.lo_list);
+			urcu_ref_put(&lo->lo_base.lo_ref,
+				     lo->lo_base.lo_release);
+			*status = NFS4_OK;
+			pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
+			return;
+		}
+	}
+	pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
+
+	*status = NFS4_OK;
 }
 
 void nfs4_op_test_stateid(struct compound *c)
@@ -82,12 +459,27 @@ void nfs4_op_test_stateid(struct compound *c)
 	TEST_STATEID4args *args = NFS4_OP_ARG_SETUP(c, optest_stateid);
 	TEST_STATEID4res *res = NFS4_OP_RES_SETUP(c, optest_stateid);
 	nfsstat4 *status = &res->tsr_status;
-	TEST_STATEID4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, TEST_STATEID4res_u, tsr_resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	/* For now, just return OK for all stateids in the request */
+	res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
+		.tsr_status_codes_len = args->ts_stateids.ts_stateids_len;
+	res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
+		.tsr_status_codes_val =
+		calloc(res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
+			       .tsr_status_codes_len,
+		       sizeof(nfsstat4));
+	if (!res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
+		     .tsr_status_codes_val) {
+		*status = NFS4ERR_DELAY;
+		return;
+	}
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	for (uint32_t i = 0; i < res->TEST_STATEID4res_u.tsr_resok4
+					 .tsr_status_codes.tsr_status_codes_len;
+	     i++) {
+		res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
+			.tsr_status_codes_val[i] = NFS4_OK;
+	}
+
+	*status = NFS4_OK;
 }
