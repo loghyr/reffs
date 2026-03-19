@@ -134,11 +134,8 @@ nfs4_op_cb op_table[OP_MAX] = {
 
 void dispatch_compound(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	COMPOUND4args *args = ((COMPOUND4args *)ph->ph_args);
-	COMPOUND4res *res = ((COMPOUND4res *)ph->ph_res);
+	COMPOUND4args *args = c->c_args;
+	COMPOUND4res *res = c->c_res;
 
 	for (c->c_curr_op = 0; c->c_curr_op < args->argarray.argarray_len;
 	     c->c_curr_op++) {

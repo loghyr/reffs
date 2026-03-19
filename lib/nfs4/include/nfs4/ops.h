@@ -97,20 +97,14 @@ void nfs4_op_illegal(struct compound *c);
 
 const char *nfs4_op_name(nfs_opnum4 op);
 
-#define NFS4_OP_NUM(c)                                  \
-	((COMPOUND4args *)(ph)->ph_args)                \
-		->argarray.argarray_val[(c)->c_curr_op] \
-		.argop
+#define NFS4_OP_NUM(c) \
+	((c)->c_args->argarray.argarray_val[(c)->c_curr_op].argop)
 
-#define NFS4_OP_ARG_SETUP(c, ph, field)                   \
-	(&((COMPOUND4args *)(ph)->ph_args)                \
-		  ->argarray.argarray_val[(c)->c_curr_op] \
-		  .nfs_argop4_u.field)
+#define NFS4_OP_ARG_SETUP(c, field) \
+	(&(c)->c_args->argarray.argarray_val[(c)->c_curr_op].nfs_argop4_u.field)
 
-#define NFS4_OP_RES_SETUP(c, ph, field)                   \
-	(&((COMPOUND4res *)(ph)->ph_res)                  \
-		  ->resarray.resarray_val[(c)->c_curr_op] \
-		  .nfs_resop4_u.field)
+#define NFS4_OP_RES_SETUP(c, field) \
+	(&(c)->c_res->resarray.resarray_val[(c)->c_curr_op].nfs_resop4_u.field)
 
 #define NFS4_OP_RESOK_SETUP(res, union_field, resok_field) \
 	(&(res)->union_field.resok_field)

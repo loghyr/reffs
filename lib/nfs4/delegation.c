@@ -21,11 +21,8 @@
 
 void nfs4_op_delegpurge(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	DELEGPURGE4args *args = NFS4_OP_ARG_SETUP(c, ph, opdelegpurge);
-	DELEGPURGE4res *res = NFS4_OP_RES_SETUP(c, ph, opdelegpurge);
+	DELEGPURGE4args *args = NFS4_OP_ARG_SETUP(c, opdelegpurge);
+	DELEGPURGE4res *res = NFS4_OP_RES_SETUP(c, opdelegpurge);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -36,11 +33,8 @@ void nfs4_op_delegpurge(struct compound *c)
 
 void nfs4_op_delegreturn(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	DELEGRETURN4args *args = NFS4_OP_ARG_SETUP(c, ph, opdelegreturn);
-	DELEGRETURN4res *res = NFS4_OP_RES_SETUP(c, ph, opdelegreturn);
+	DELEGRETURN4args *args = NFS4_OP_ARG_SETUP(c, opdelegreturn);
+	DELEGRETURN4res *res = NFS4_OP_RES_SETUP(c, opdelegreturn);
 	nfsstat4 *status = &res->status;
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
@@ -96,13 +90,10 @@ out:
 
 void nfs4_op_get_dir_delegation(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
 	GET_DIR_DELEGATION4args *args =
-		NFS4_OP_ARG_SETUP(c, ph, opget_dir_delegation);
+		NFS4_OP_ARG_SETUP(c, opget_dir_delegation);
 	GET_DIR_DELEGATION4res *res =
-		NFS4_OP_RES_SETUP(c, ph, opget_dir_delegation);
+		NFS4_OP_RES_SETUP(c, opget_dir_delegation);
 	nfsstat4 *status = &res->gddr_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -113,12 +104,8 @@ void nfs4_op_get_dir_delegation(struct compound *c)
 
 void nfs4_op_want_delegation(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	WANT_DELEGATION4args *args =
-		NFS4_OP_ARG_SETUP(c, ph, opwant_delegation);
-	WANT_DELEGATION4res *res = NFS4_OP_RES_SETUP(c, ph, opwant_delegation);
+	WANT_DELEGATION4args *args = NFS4_OP_ARG_SETUP(c, opwant_delegation);
+	WANT_DELEGATION4res *res = NFS4_OP_RES_SETUP(c, opwant_delegation);
 	nfsstat4 *status = &res->wdr_status;
 
 	*status = NFS4ERR_NOTSUPP;

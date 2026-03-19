@@ -62,6 +62,7 @@ static void compound_free(struct compound *c)
 static struct compound *compound_alloc(struct rpc_trans *rt)
 {
 	struct compound *c;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 	int ret = 0;
 
 	c = calloc(1, sizeof(*c));
@@ -69,6 +70,8 @@ static struct compound *compound_alloc(struct rpc_trans *rt)
 		return NULL;
 
 	c->c_rt = rt;
+	c->c_args = (COMPOUND4args *)ph->ph_args;
+	c->c_res = (COMPOUND4res *)ph->ph_res;
 
 	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &c->c_ap);
 	if (ret) {
@@ -81,14 +84,17 @@ static struct compound *compound_alloc(struct rpc_trans *rt)
 
 int nfs4_proc_compound(struct rpc_trans *rt)
 {
-	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
-
-	COMPOUND4res *res = ((COMPOUND4res *)ph->ph_res);
-	COMPOUND4args *args = (COMPOUND4args *)ph->ph_args;
-
-	struct compound *c;
-
+	struct compound *c = compound_alloc(rt);
+	COMPOUND4res *res;
+	COMPOUND4args *args;
 	nfs_opnum4 op;
+
+	if (!c) {
+		return NFS4ERR_DELAY;
+	}
+
+	res = c->c_res;
+	args = c->c_args;
 
 	trace_nfs4_srv_compound(rt);
 
@@ -96,7 +102,7 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 
 	if (args->minorversion != 1 && args->minorversion != 2) {
 		res->status = NFS4ERR_MINOR_VERS_MISMATCH;
-		return res->status;
+		goto out;
 	}
 
 	/*
@@ -118,18 +124,14 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 	res->resarray.resarray_val =
 		calloc(args->argarray.argarray_len, sizeof(nfs_resop4));
 	if (!res->resarray.resarray_val) {
-		return NFS4ERR_DELAY;
+		res->status = NFS4ERR_DELAY;
+		goto out;
 	}
 	res->resarray.resarray_len = args->argarray.argarray_len;
 
 	if (args->argarray.argarray_len == 0) {
 		res->status = NFS4_OK;
-		return res->status;
-	}
-
-	c = compound_alloc(rt);
-	if (!c) {
-		return NFS4ERR_DELAY;
+		goto out;
 	}
 
 	op = NFS4_OP_NUM(c);

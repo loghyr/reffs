@@ -170,11 +170,8 @@ static void nfs4_open_owner_release(struct urcu_ref *ref)
 
 void nfs4_op_open(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	OPEN4args *args = NFS4_OP_ARG_SETUP(c, ph, opopen);
-	OPEN4res *res = NFS4_OP_RES_SETUP(c, ph, opopen);
+	OPEN4args *args = NFS4_OP_ARG_SETUP(c, opopen);
+	OPEN4res *res = NFS4_OP_RES_SETUP(c, opopen);
 	nfsstat4 *status = &res->status;
 	OPEN4resok *resok = NFS4_OP_RESOK_SETUP(res, OPEN4res_u, resok4);
 
@@ -550,11 +547,8 @@ out:
 
 void nfs4_op_open_confirm(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	OPEN_CONFIRM4args *args = NFS4_OP_ARG_SETUP(c, ph, opopen_confirm);
-	OPEN_CONFIRM4res *res = NFS4_OP_RES_SETUP(c, ph, opopen_confirm);
+	OPEN_CONFIRM4args *args = NFS4_OP_ARG_SETUP(c, opopen_confirm);
+	OPEN_CONFIRM4res *res = NFS4_OP_RES_SETUP(c, opopen_confirm);
 	nfsstat4 *status = &res->status;
 	OPEN_CONFIRM4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, OPEN_CONFIRM4res_u, resok4);
@@ -568,11 +562,8 @@ void nfs4_op_open_confirm(struct compound *c)
 
 void nfs4_op_open_downgrade(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	OPEN_DOWNGRADE4args *args = NFS4_OP_ARG_SETUP(c, ph, opopen_downgrade);
-	OPEN_DOWNGRADE4res *res = NFS4_OP_RES_SETUP(c, ph, opopen_downgrade);
+	OPEN_DOWNGRADE4args *args = NFS4_OP_ARG_SETUP(c, opopen_downgrade);
+	OPEN_DOWNGRADE4res *res = NFS4_OP_RES_SETUP(c, opopen_downgrade);
 	nfsstat4 *status = &res->status;
 	OPEN_DOWNGRADE4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, OPEN_DOWNGRADE4res_u, resok4);
@@ -684,11 +675,8 @@ out:
 
 void nfs4_op_close(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	CLOSE4args *args = NFS4_OP_ARG_SETUP(c, ph, opclose);
-	CLOSE4res *res = NFS4_OP_RES_SETUP(c, ph, opclose);
+	CLOSE4args *args = NFS4_OP_ARG_SETUP(c, opclose);
+	CLOSE4res *res = NFS4_OP_RES_SETUP(c, opclose);
 	nfsstat4 *status = &res->status;
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
@@ -780,11 +768,8 @@ out:
 
 void nfs4_op_read(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	READ4args *args = NFS4_OP_ARG_SETUP(c, ph, opread);
-	READ4res *res = NFS4_OP_RES_SETUP(c, ph, opread);
+	READ4args *args = NFS4_OP_ARG_SETUP(c, opread);
+	READ4res *res = NFS4_OP_RES_SETUP(c, opread);
 	nfsstat4 *status = &res->status;
 	READ4resok *resok = NFS4_OP_RESOK_SETUP(res, READ4res_u, resok4);
 
@@ -876,11 +861,8 @@ out:
 
 void nfs4_op_read_plus(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	READ_PLUS4args *args = NFS4_OP_ARG_SETUP(c, ph, opread_plus);
-	READ_PLUS4res *res = NFS4_OP_RES_SETUP(c, ph, opread_plus);
+	READ_PLUS4args *args = NFS4_OP_ARG_SETUP(c, opread_plus);
+	READ_PLUS4res *res = NFS4_OP_RES_SETUP(c, opread_plus);
 	nfsstat4 *status = &res->rp_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -891,11 +873,8 @@ void nfs4_op_read_plus(struct compound *c)
 
 void nfs4_op_write(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	WRITE4args *args = NFS4_OP_ARG_SETUP(c, ph, opwrite);
-	WRITE4res *res = NFS4_OP_RES_SETUP(c, ph, opwrite);
+	WRITE4args *args = NFS4_OP_ARG_SETUP(c, opwrite);
+	WRITE4res *res = NFS4_OP_RES_SETUP(c, opwrite);
 	nfsstat4 *status = &res->status;
 	WRITE4resok *resok = NFS4_OP_RESOK_SETUP(res, WRITE4res_u, resok4);
 
@@ -1018,11 +997,8 @@ out:
 
 void nfs4_op_write_same(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	WRITE_SAME4args *args = NFS4_OP_ARG_SETUP(c, ph, opwrite_same);
-	WRITE_SAME4res *res = NFS4_OP_RES_SETUP(c, ph, opwrite_same);
+	WRITE_SAME4args *args = NFS4_OP_ARG_SETUP(c, opwrite_same);
+	WRITE_SAME4res *res = NFS4_OP_RES_SETUP(c, opwrite_same);
 	nfsstat4 *status = &res->wsr_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -1033,11 +1009,8 @@ void nfs4_op_write_same(struct compound *c)
 
 void nfs4_op_commit(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	COMMIT4args *args = NFS4_OP_ARG_SETUP(c, ph, opcommit);
-	COMMIT4res *res = NFS4_OP_RES_SETUP(c, ph, opcommit);
+	COMMIT4args *args = NFS4_OP_ARG_SETUP(c, opcommit);
+	COMMIT4res *res = NFS4_OP_RES_SETUP(c, opcommit);
 	nfsstat4 *status = &res->status;
 	COMMIT4resok *resok = NFS4_OP_RESOK_SETUP(res, COMMIT4res_u, resok4);
 
@@ -1067,11 +1040,8 @@ out:
 
 void nfs4_op_seek(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	SEEK4args *args = NFS4_OP_ARG_SETUP(c, ph, opseek);
-	SEEK4res *res = NFS4_OP_RES_SETUP(c, ph, opseek);
+	SEEK4args *args = NFS4_OP_ARG_SETUP(c, opseek);
+	SEEK4res *res = NFS4_OP_RES_SETUP(c, opseek);
 	nfsstat4 *status = &res->sa_status;
 	seek_res4 *resok = NFS4_OP_RESOK_SETUP(res, SEEK4res_u, resok4);
 
@@ -1084,11 +1054,8 @@ void nfs4_op_seek(struct compound *c)
 
 void nfs4_op_allocate(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	ALLOCATE4args *args = NFS4_OP_ARG_SETUP(c, ph, opallocate);
-	ALLOCATE4res *res = NFS4_OP_RES_SETUP(c, ph, opallocate);
+	ALLOCATE4args *args = NFS4_OP_ARG_SETUP(c, opallocate);
+	ALLOCATE4res *res = NFS4_OP_RES_SETUP(c, opallocate);
 	nfsstat4 *status = &res->ar_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -1099,11 +1066,8 @@ void nfs4_op_allocate(struct compound *c)
 
 void nfs4_op_deallocate(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	DEALLOCATE4args *args = NFS4_OP_ARG_SETUP(c, ph, opdeallocate);
-	DEALLOCATE4res *res = NFS4_OP_RES_SETUP(c, ph, opdeallocate);
+	DEALLOCATE4args *args = NFS4_OP_ARG_SETUP(c, opdeallocate);
+	DEALLOCATE4res *res = NFS4_OP_RES_SETUP(c, opdeallocate);
 	nfsstat4 *status = &res->dr_status;
 
 	*status = NFS4ERR_NOTSUPP;

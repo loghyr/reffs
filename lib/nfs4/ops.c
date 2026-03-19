@@ -21,11 +21,8 @@
 
 void nfs4_op_secinfo(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	SECINFO4args *args = NFS4_OP_ARG_SETUP(c, ph, opsecinfo);
-	SECINFO4res *res = NFS4_OP_RES_SETUP(c, ph, opsecinfo);
+	SECINFO4args *args = NFS4_OP_ARG_SETUP(c, opsecinfo);
+	SECINFO4res *res = NFS4_OP_RES_SETUP(c, opsecinfo);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -36,12 +33,8 @@ void nfs4_op_secinfo(struct compound *c)
 
 void nfs4_op_secinfo_no_name(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	SECINFO_NO_NAME4args *args =
-		NFS4_OP_ARG_SETUP(c, ph, opsecinfo_no_name);
-	SECINFO_NO_NAME4res *res = NFS4_OP_RES_SETUP(c, ph, opsecinfo_no_name);
+	SECINFO_NO_NAME4args *args = NFS4_OP_ARG_SETUP(c, opsecinfo_no_name);
+	SECINFO_NO_NAME4res *res = NFS4_OP_RES_SETUP(c, opsecinfo_no_name);
 	nfsstat4 *status = &res->status;
 	SECINFO4resok *resok = NFS4_OP_RESOK_SETUP(res, SECINFO4res_u, resok4);
 	secinfo_style4 style = *args;
@@ -82,11 +75,8 @@ out:
 
 void nfs4_op_io_advise(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	IO_ADVISE4args *args = NFS4_OP_ARG_SETUP(c, ph, opio_advise);
-	IO_ADVISE4res *res = NFS4_OP_RES_SETUP(c, ph, opio_advise);
+	IO_ADVISE4args *args = NFS4_OP_ARG_SETUP(c, opio_advise);
+	IO_ADVISE4res *res = NFS4_OP_RES_SETUP(c, opio_advise);
 	nfsstat4 *status = &res->ior_status;
 	IO_ADVISE4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, IO_ADVISE4res_u, resok4);
@@ -100,13 +90,8 @@ void nfs4_op_io_advise(struct compound *c)
 
 void nfs4_op_illegal(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	nfs_argop4 *argop = &((COMPOUND4args *)ph->ph_args)
-				     ->argarray.argarray_val[c->c_curr_op];
-	nfs_resop4 *resop = &((COMPOUND4res *)ph->ph_res)
-				     ->resarray.resarray_val[c->c_curr_op];
+	nfs_argop4 *argop = &c->c_args->argarray.argarray_val[c->c_curr_op];
+	nfs_resop4 *resop = &c->c_res->resarray.resarray_val[c->c_curr_op];
 	nfsstat4 *status = &resop->nfs_resop4_u.opillegal.status;
 
 	resop->resop = OP_ILLEGAL;

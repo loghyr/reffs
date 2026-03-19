@@ -2801,11 +2801,8 @@ out:
 
 void nfs4_op_getattr(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	GETATTR4args *args = NFS4_OP_ARG_SETUP(c, ph, opgetattr);
-	GETATTR4res *res = NFS4_OP_RES_SETUP(c, ph, opgetattr);
+	GETATTR4args *args = NFS4_OP_ARG_SETUP(c, opgetattr);
+	GETATTR4res *res = NFS4_OP_RES_SETUP(c, opgetattr);
 	nfsstat4 *status = &res->status;
 	GETATTR4resok *resok = NFS4_OP_RESOK_SETUP(res, GETATTR4res_u, resok4);
 
@@ -3004,11 +3001,8 @@ static nfsstat4 entry4_encode_rdattr_error(nfsstat4 error, fattr4 *out)
 
 void nfs4_op_readdir(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	READDIR4args *args = NFS4_OP_ARG_SETUP(c, ph, opreaddir);
-	READDIR4res *res = NFS4_OP_RES_SETUP(c, ph, opreaddir);
+	READDIR4args *args = NFS4_OP_ARG_SETUP(c, opreaddir);
+	READDIR4res *res = NFS4_OP_RES_SETUP(c, opreaddir);
 	nfsstat4 *status = &res->status;
 	READDIR4resok *resok = NFS4_OP_RESOK_SETUP(res, READDIR4res_u, resok4);
 
@@ -3260,11 +3254,8 @@ out:
 
 void nfs4_op_setattr(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	SETATTR4args *args = NFS4_OP_ARG_SETUP(c, ph, opsetattr);
-	SETATTR4res *res = NFS4_OP_RES_SETUP(c, ph, opsetattr);
+	SETATTR4args *args = NFS4_OP_ARG_SETUP(c, opsetattr);
+	SETATTR4res *res = NFS4_OP_RES_SETUP(c, opsetattr);
 	nfsstat4 *status = &res->status;
 
 	struct nfsv42_attr nattr = { 0 };
@@ -3366,11 +3357,8 @@ out:
 
 void nfs4_op_verify(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	VERIFY4args *args = NFS4_OP_ARG_SETUP(c, ph, opverify);
-	VERIFY4res *res = NFS4_OP_RES_SETUP(c, ph, opverify);
+	VERIFY4args *args = NFS4_OP_ARG_SETUP(c, opverify);
+	VERIFY4res *res = NFS4_OP_RES_SETUP(c, opverify);
 	nfsstat4 *status = &res->status;
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
@@ -3387,11 +3375,8 @@ out:
 
 void nfs4_op_nverify(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	NVERIFY4args *args = NFS4_OP_ARG_SETUP(c, ph, opnverify);
-	NVERIFY4res *res = NFS4_OP_RES_SETUP(c, ph, opnverify);
+	NVERIFY4args *args = NFS4_OP_ARG_SETUP(c, opnverify);
+	NVERIFY4res *res = NFS4_OP_RES_SETUP(c, opnverify);
 	nfsstat4 *status = &res->status;
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
@@ -3408,11 +3393,8 @@ out:
 
 void nfs4_op_access(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	ACCESS4args *args = NFS4_OP_ARG_SETUP(c, ph, opaccess);
-	ACCESS4res *res = NFS4_OP_RES_SETUP(c, ph, opaccess);
+	ACCESS4args *args = NFS4_OP_ARG_SETUP(c, opaccess);
+	ACCESS4res *res = NFS4_OP_RES_SETUP(c, opaccess);
 	nfsstat4 *status = &res->status;
 	ACCESS4resok *resok = NFS4_OP_RESOK_SETUP(res, ACCESS4res_u, resok4);
 
@@ -3464,11 +3446,8 @@ out:
 
 void nfs4_op_access_mask(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	ACCESS_MASK4args *args = NFS4_OP_ARG_SETUP(c, ph, opaccess_mask);
-	ACCESS_MASK4res *res = NFS4_OP_RES_SETUP(c, ph, opaccess_mask);
+	ACCESS_MASK4args *args = NFS4_OP_ARG_SETUP(c, opaccess_mask);
+	ACCESS_MASK4res *res = NFS4_OP_RES_SETUP(c, opaccess_mask);
 	nfsstat4 *status = &res->amr_status;
 	ACCESS_MASK4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, ACCESS_MASK4res_u, amr_resok4);
