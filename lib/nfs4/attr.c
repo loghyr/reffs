@@ -2985,6 +2985,7 @@ void nfs4_op_getattr(struct compound *c)
 					fattr->attr_vals.attrlist4_val = NULL;
 					break;
 				}
+				bitmap4_attribute_set(&fattr->attrmask, i);
 			}
 		}
 	}
