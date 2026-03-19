@@ -113,10 +113,10 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
 					   &stid->s_client_node);
 		rcu_read_unlock();
 
-		if (caa_unlikely(node != &stid->s_inode_node)) {
+		if (caa_unlikely(node != &stid->s_client_node)) {
 			/* Collision – should never happen with a 32-bit counter */
 			LOG("stateid_assign: duplicate id %u", stid->s_id);
-			stid->s_state &= ~STID_IS_INODE_HASHED;
+			stid->s_state &= ~STID_IS_CLIENT_HASHED;
 
 			/* Yes, could be from someone else */
 			if (stateid_inode_unhash(stid))
