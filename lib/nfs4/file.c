@@ -43,8 +43,9 @@
  *
  * want_write: reject read-only stateids (read-bypass, delegation-read).
  */
-static nfsstat4 nfs4_stateid_resolve(struct compound *c, const stateid4 *wire,
-				     bool want_write, struct stateid **out_stid)
+static nfsstat4 nfs4_stateid_resolve(struct compound *compound,
+				     const stateid4 *wire, bool want_write,
+				     struct stateid **out_stid)
 {
 	/* Anonymous stateid — caller falls through to POSIX permission check. */
 	if (stateid4_is_anonymous(wire)) {
@@ -62,9 +63,9 @@ static nfsstat4 nfs4_stateid_resolve(struct compound *c, const stateid4 *wire,
 
 	/* Current stateid — use whatever the compound already holds. */
 	if (stateid4_is_current(wire)) {
-		if (!c->c_curr_stid)
+		if (!compound->c_curr_stid)
 			return NFS4ERR_BAD_STATEID;
-		*out_stid = stateid_get(c->c_curr_stid);
+		*out_stid = stateid_get(compound->c_curr_stid);
 		return NFS4_OK;
 	}
 
@@ -87,7 +88,7 @@ static nfsstat4 nfs4_stateid_resolve(struct compound *c, const stateid4 *wire,
 	if (want_write && type == Delegation_Stateid)
 		return NFS4ERR_OPENMODE;
 
-	struct stateid *stid = stateid_find(c->c_inode, id);
+	struct stateid *stid = stateid_find(compound->c_inode, id);
 	if (!stid)
 		return NFS4ERR_BAD_STATEID;
 
@@ -98,8 +99,8 @@ static nfsstat4 nfs4_stateid_resolve(struct compound *c, const stateid4 *wire,
 	}
 
 	/* Verify ownership: stateid must belong to this session's client. */
-	if (c->c_nfs4_client &&
-	    stid->s_client != nfs4_client_to_client(c->c_nfs4_client)) {
+	if (compound->c_nfs4_client &&
+	    stid->s_client != nfs4_client_to_client(compound->c_nfs4_client)) {
 		stateid_put(stid);
 		return NFS4ERR_BAD_STATEID;
 	}
@@ -168,10 +169,10 @@ static void nfs4_open_owner_release(struct urcu_ref *ref)
 	(void)ref;
 }
 
-void nfs4_op_open(struct compound *c)
+void nfs4_op_open(struct compound *compound)
 {
-	OPEN4args *args = NFS4_OP_ARG_SETUP(c, opopen);
-	OPEN4res *res = NFS4_OP_RES_SETUP(c, opopen);
+	OPEN4args *args = NFS4_OP_ARG_SETUP(compound, opopen);
+	OPEN4res *res = NFS4_OP_RES_SETUP(compound, opopen);
 	nfsstat4 *status = &res->status;
 	OPEN4resok *resok = NFS4_OP_RESOK_SETUP(res, OPEN4res_u, resok4);
 
@@ -191,7 +192,7 @@ void nfs4_op_open(struct compound *c)
 	bool want_xor_deleg = !!(args->share_access &
 				 OPEN4_SHARE_ACCESS_WANT_OPEN_XOR_DELEGATION);
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
@@ -215,7 +216,7 @@ void nfs4_op_open(struct compound *c)
 		break;
 
 	case CLAIM_NULL: {
-		if (!S_ISDIR(c->c_inode->i_mode)) {
+		if (!S_ISDIR(compound->c_inode->i_mode)) {
 			*status = NFS4ERR_NOTDIR;
 			goto out;
 		}
@@ -243,14 +244,15 @@ void nfs4_op_open(struct compound *c)
 		/* Need W_OK on the directory for CREATE, X_OK for NOCREATE. */
 		int dir_amode =
 			(args->openhow.opentype == OPEN4_CREATE) ? W_OK : X_OK;
-		ret = inode_access_check(c->c_inode, &c->c_ap, dir_amode);
+		ret = inode_access_check(compound->c_inode, &compound->c_ap,
+					 dir_amode);
 		if (ret) {
 			*status = errno_to_nfs4(ret, OP_OPEN);
 			goto out;
 		}
 
-		if (!c->c_inode->i_dirent) {
-			ret = inode_reconstruct_path_to_root(c->c_inode);
+		if (!compound->c_inode->i_dirent) {
+			ret = inode_reconstruct_path_to_root(compound->c_inode);
 			if (ret) {
 				*status = NFS4ERR_STALE;
 				goto out;
@@ -262,22 +264,22 @@ void nfs4_op_open(struct compound *c)
 
 			switch (how->mode) {
 			case UNCHECKED4:
-				ret = vfs_create(c->c_inode, name, 0666,
-						 &c->c_ap, &child);
+				ret = vfs_create(compound->c_inode, name, 0666,
+						 &compound->c_ap, &child);
 				if (ret == -EEXIST) {
 					/*
 					 * File exists: open it, as if the
 					 * create had not been requested.
 					 */
-					child = inode_name_get_inode(c->c_inode,
-								     name);
+					child = inode_name_get_inode(
+						compound->c_inode, name);
 					ret = child ? 0 : -ENOENT;
 				}
 				break;
 
 			case GUARDED4:
-				ret = vfs_create(c->c_inode, name, 0666,
-						 &c->c_ap, &child);
+				ret = vfs_create(compound->c_inode, name, 0666,
+						 &compound->c_ap, &child);
 				/* -EEXIST → NFS4ERR_EXIST below */
 				break;
 
@@ -309,8 +311,8 @@ void nfs4_op_open(struct compound *c)
 				memcpy(&verf_ts.tv_sec, v, 4);
 				memcpy(&verf_ts.tv_nsec, (uint8_t *)v + 4, 4);
 
-				ret = vfs_create(c->c_inode, name, 0666,
-						 &c->c_ap, &child);
+				ret = vfs_create(compound->c_inode, name, 0666,
+						 &compound->c_ap, &child);
 				if (ret == 0) {
 					/* New file: stamp ctime with verf. */
 					pthread_mutex_lock(
@@ -329,7 +331,8 @@ void nfs4_op_open(struct compound *c)
 					 * its ctime matches the verifier.
 					 */
 					child_de = dirent_load_child_by_name(
-						c->c_inode->i_dirent, name);
+						compound->c_inode->i_dirent,
+						name);
 					if (!child_de) {
 						*status = NFS4ERR_SERVERFAULT;
 						goto out;
@@ -377,7 +380,7 @@ void nfs4_op_open(struct compound *c)
 		} else {
 			/* NOCREATE: look up an existing file. */
 			child_de = dirent_load_child_by_name(
-				c->c_inode->i_dirent, name);
+				compound->c_inode->i_dirent, name);
 			if (!child_de) {
 				*status = NFS4ERR_NOENT;
 				goto out;
@@ -396,8 +399,8 @@ void nfs4_op_open(struct compound *c)
 		goto out;
 	}
 
-	/* The target inode is child (CLAIM_NULL) or c->c_inode (CLAIM_FH). */
-	struct inode *target = child ? child : c->c_inode;
+	/* The target inode is child (CLAIM_NULL) or compound->c_inode (CLAIM_FH). */
+	struct inode *target = child ? child : compound->c_inode;
 
 	if (!S_ISREG(target->i_mode)) {
 		*status = S_ISDIR(target->i_mode) ? NFS4ERR_ISDIR :
@@ -411,7 +414,7 @@ void nfs4_op_open(struct compound *c)
 		amode |= R_OK;
 	if (share_access & OPEN4_SHARE_ACCESS_WRITE)
 		amode |= W_OK;
-	ret = inode_access_check(target, &c->c_ap, amode);
+	ret = inode_access_check(target, &compound->c_ap, amode);
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_OPEN);
 		goto out;
@@ -419,8 +422,9 @@ void nfs4_op_open(struct compound *c)
 
 	/* Allocate the open stateid. */
 	struct client *client =
-		c->c_nfs4_client ? nfs4_client_to_client(c->c_nfs4_client) :
-				   NULL;
+		compound->c_nfs4_client ?
+			nfs4_client_to_client(compound->c_nfs4_client) :
+			NULL;
 	os = open_stateid_alloc(target, client);
 	if (!os) {
 		*status = NFS4ERR_DELAY;
@@ -491,9 +495,9 @@ void nfs4_op_open(struct compound *c)
 	 * opened file, mirroring what LOOKUP does.
 	 */
 	if (child) {
-		inode_active_put(c->c_inode);
-		c->c_inode = child;
-		c->c_curr_nfh.nfh_ino = child->i_ino;
+		inode_active_put(compound->c_inode);
+		compound->c_inode = child;
+		compound->c_curr_nfh.nfh_ino = child->i_ino;
 		child = NULL; /* ownership transferred */
 	}
 
@@ -502,8 +506,8 @@ void nfs4_op_open(struct compound *c)
 	 * ref" (refcount=1 from stateid_assign) remains and keeps the
 	 * stateid alive after this compound completes.
 	 */
-	stateid_put(c->c_curr_stid);
-	c->c_curr_stid = stateid_get(&os->os_stid);
+	stateid_put(compound->c_curr_stid);
+	compound->c_curr_stid = stateid_get(&os->os_stid);
 
 	resok->cinfo.atomic = FALSE;
 	resok->cinfo.before = 0;
@@ -545,10 +549,10 @@ out:
 	      share_deny);
 }
 
-void nfs4_op_open_confirm(struct compound *c)
+void nfs4_op_open_confirm(struct compound *compound)
 {
-	OPEN_CONFIRM4args *args = NFS4_OP_ARG_SETUP(c, opopen_confirm);
-	OPEN_CONFIRM4res *res = NFS4_OP_RES_SETUP(c, opopen_confirm);
+	OPEN_CONFIRM4args *args = NFS4_OP_ARG_SETUP(compound, opopen_confirm);
+	OPEN_CONFIRM4res *res = NFS4_OP_RES_SETUP(compound, opopen_confirm);
 	nfsstat4 *status = &res->status;
 	OPEN_CONFIRM4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, OPEN_CONFIRM4res_u, resok4);
@@ -560,10 +564,11 @@ void nfs4_op_open_confirm(struct compound *c)
 	    (void *)resok);
 }
 
-void nfs4_op_open_downgrade(struct compound *c)
+void nfs4_op_open_downgrade(struct compound *compound)
 {
-	OPEN_DOWNGRADE4args *args = NFS4_OP_ARG_SETUP(c, opopen_downgrade);
-	OPEN_DOWNGRADE4res *res = NFS4_OP_RES_SETUP(c, opopen_downgrade);
+	OPEN_DOWNGRADE4args *args =
+		NFS4_OP_ARG_SETUP(compound, opopen_downgrade);
+	OPEN_DOWNGRADE4res *res = NFS4_OP_RES_SETUP(compound, opopen_downgrade);
 	nfsstat4 *status = &res->status;
 	OPEN_DOWNGRADE4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, OPEN_DOWNGRADE4res_u, resok4);
@@ -573,7 +578,7 @@ void nfs4_op_open_downgrade(struct compound *c)
 	uint32_t cur_access = 0;
 	uint32_t cur_deny = 0;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
@@ -591,15 +596,15 @@ void nfs4_op_open_downgrade(struct compound *c)
 		goto out;
 	}
 
-	struct stateid *stid = stateid_find(c->c_inode, id);
+	struct stateid *stid = stateid_find(compound->c_inode, id);
 	if (!stid || stid->s_tag != Open_Stateid || stid->s_cookie != cookie) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
 		goto out;
 	}
 
-	if (c->c_nfs4_client &&
-	    stid->s_client != nfs4_client_to_client(c->c_nfs4_client)) {
+	if (compound->c_nfs4_client &&
+	    stid->s_client != nfs4_client_to_client(compound->c_nfs4_client)) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
 		goto out;
@@ -649,14 +654,14 @@ void nfs4_op_open_downgrade(struct compound *c)
 	}
 	urcu_ref_get(&os->os_owner.lo_ref);
 	share->s_owner = &os->os_owner;
-	share->s_inode = inode_active_get(c->c_inode);
+	share->s_inode = inode_active_get(compound->c_inode);
 	share->s_access = new_access;
 	share->s_mode = new_deny;
 
-	pthread_mutex_lock(&c->c_inode->i_lock_mutex);
-	reffs_share_add(c->c_inode, share,
+	pthread_mutex_lock(&compound->c_inode->i_lock_mutex);
+	reffs_share_add(compound->c_inode, share,
 			NULL); /* always succeeds: downgrade */
-	pthread_mutex_unlock(&c->c_inode->i_lock_mutex);
+	pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
 
 	/* Update os_state to reflect the new modes. */
 	os->os_state = (uint64_t)new_access | ((uint64_t)new_deny << 2);
@@ -666,8 +671,8 @@ void nfs4_op_open_downgrade(struct compound *c)
 	pack_stateid4(&resok->open_stateid, stid);
 
 	/* Update c_curr_stid to the downgraded stateid. */
-	stateid_put(c->c_curr_stid);
-	c->c_curr_stid = stid; /* transfer the find ref */
+	stateid_put(compound->c_curr_stid);
+	compound->c_curr_stid = stid; /* transfer the find ref */
 
 	*status = NFS4_OK;
 out:
@@ -676,13 +681,13 @@ out:
 	return;
 }
 
-void nfs4_op_close(struct compound *c)
+void nfs4_op_close(struct compound *compound)
 {
-	CLOSE4args *args = NFS4_OP_ARG_SETUP(c, opclose);
-	CLOSE4res *res = NFS4_OP_RES_SETUP(c, opclose);
+	CLOSE4args *args = NFS4_OP_ARG_SETUP(compound, opclose);
+	CLOSE4res *res = NFS4_OP_RES_SETUP(compound, opclose);
 	nfsstat4 *status = &res->status;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		return;
 	}
@@ -700,15 +705,15 @@ void nfs4_op_close(struct compound *c)
 		return;
 	}
 
-	struct stateid *stid = stateid_find(c->c_inode, id);
+	struct stateid *stid = stateid_find(compound->c_inode, id);
 	if (!stid || stid->s_tag != Open_Stateid || stid->s_cookie != cookie) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
 		return;
 	}
 
-	if (c->c_nfs4_client &&
-	    stid->s_client != nfs4_client_to_client(c->c_nfs4_client)) {
+	if (compound->c_nfs4_client &&
+	    stid->s_client != nfs4_client_to_client(compound->c_nfs4_client)) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
 		return;
@@ -731,9 +736,9 @@ void nfs4_op_close(struct compound *c)
 	struct open_stateid *os = stid_to_open(stid);
 
 	/* Remove the share reservation. */
-	pthread_mutex_lock(&c->c_inode->i_lock_mutex);
-	reffs_share_remove(c->c_inode, &os->os_owner, NULL);
-	pthread_mutex_unlock(&c->c_inode->i_lock_mutex);
+	pthread_mutex_lock(&compound->c_inode->i_lock_mutex);
+	reffs_share_remove(compound->c_inode, &os->os_owner, NULL);
+	pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
 
 	/*
 	 * Unhash so that future stateid_find() calls fail.  This must
@@ -746,9 +751,9 @@ void nfs4_op_close(struct compound *c)
 	 * If this compound's c_curr_stid points here, clear it so
 	 * compound_free() does not do an extra put.
 	 */
-	if (c->c_curr_stid == stid) {
+	if (compound->c_curr_stid == stid) {
 		stateid_put(stid); /* put the c_curr_stid ref */
-		c->c_curr_stid = NULL;
+		compound->c_curr_stid = NULL;
 	}
 
 	/*
@@ -766,26 +771,26 @@ void nfs4_op_close(struct compound *c)
 	*status = NFS4_OK;
 }
 
-void nfs4_op_read(struct compound *c)
+void nfs4_op_read(struct compound *compound)
 {
-	READ4args *args = NFS4_OP_ARG_SETUP(c, opread);
-	READ4res *res = NFS4_OP_RES_SETUP(c, opread);
+	READ4args *args = NFS4_OP_ARG_SETUP(compound, opread);
+	READ4res *res = NFS4_OP_RES_SETUP(compound, opread);
 	nfsstat4 *status = &res->status;
 	READ4resok *resok = NFS4_OP_RESOK_SETUP(res, READ4res_u, resok4);
 
 	struct stateid *stid = NULL;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
 
-	if (!S_ISREG(c->c_inode->i_mode)) {
+	if (!S_ISREG(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_INVAL;
 		goto out;
 	}
 
-	*status = nfs4_stateid_resolve(c, &args->stateid, false, &stid);
+	*status = nfs4_stateid_resolve(compound, &args->stateid, false, &stid);
 	if (*status != NFS4_OK)
 		goto out;
 
@@ -794,7 +799,8 @@ void nfs4_op_read(struct compound *c)
 	 * Read-bypass skips this check (stid == NULL and seqid == UINT32_MAX).
 	 */
 	if (!stateid4_is_read_bypass(&args->stateid)) {
-		int ret = inode_access_check(c->c_inode, &c->c_ap, R_OK);
+		int ret = inode_access_check(compound->c_inode, &compound->c_ap,
+					     R_OK);
 		if (ret) {
 			*status = errno_to_nfs4(ret, OP_READ);
 			goto out;
@@ -806,7 +812,8 @@ void nfs4_op_read(struct compound *c)
 	if (req_count > NFS4_MAX_RW_SIZE)
 		req_count = NFS4_MAX_RW_SIZE;
 
-	if (!c->c_inode->i_db || args->offset >= (uint64_t)c->c_inode->i_size) {
+	if (!compound->c_inode->i_db ||
+	    args->offset >= (uint64_t)compound->c_inode->i_size) {
 		resok->eof = true;
 		resok->data.data_len = 0;
 		resok->data.data_val = NULL;
@@ -815,7 +822,8 @@ void nfs4_op_read(struct compound *c)
 	}
 
 	if (req_count == 0) {
-		resok->eof = (args->offset >= (uint64_t)c->c_inode->i_size);
+		resok->eof =
+			(args->offset >= (uint64_t)compound->c_inode->i_size);
 		resok->data.data_len = 0;
 		resok->data.data_val = NULL;
 		*status = NFS4_OK;
@@ -829,26 +837,27 @@ void nfs4_op_read(struct compound *c)
 	}
 	resok->data.data_len = req_count;
 
-	pthread_rwlock_rdlock(&c->c_inode->i_db_rwlock);
-	ssize_t nread = data_block_read(c->c_inode->i_db, resok->data.data_val,
-					req_count, args->offset);
+	pthread_rwlock_rdlock(&compound->c_inode->i_db_rwlock);
+	ssize_t nread = data_block_read(compound->c_inode->i_db,
+					resok->data.data_val, req_count,
+					args->offset);
 	if (nread < 0) {
 		free(resok->data.data_val);
 		resok->data.data_val = NULL;
 		resok->data.data_len = 0;
-		pthread_rwlock_unlock(&c->c_inode->i_db_rwlock);
+		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 		*status = NFS4ERR_IO;
 		goto out;
 	}
 
 	resok->data.data_len = (u_int)nread;
 	resok->eof = (args->offset + (uint64_t)nread >=
-		      (uint64_t)c->c_inode->i_size);
-	pthread_rwlock_unlock(&c->c_inode->i_db_rwlock);
+		      (uint64_t)compound->c_inode->i_size);
+	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 
-	pthread_mutex_lock(&c->c_inode->i_attr_mutex);
-	inode_update_times_now(c->c_inode, REFFS_INODE_UPDATE_ATIME);
-	pthread_mutex_unlock(&c->c_inode->i_attr_mutex);
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	inode_update_times_now(compound->c_inode, REFFS_INODE_UPDATE_ATIME);
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
 	*status = NFS4_OK;
 
@@ -859,10 +868,10 @@ out:
 	      args->count);
 }
 
-void nfs4_op_read_plus(struct compound *c)
+void nfs4_op_read_plus(struct compound *compound)
 {
-	READ_PLUS4args *args = NFS4_OP_ARG_SETUP(c, opread_plus);
-	READ_PLUS4res *res = NFS4_OP_RES_SETUP(c, opread_plus);
+	READ_PLUS4args *args = NFS4_OP_ARG_SETUP(compound, opread_plus);
+	READ_PLUS4res *res = NFS4_OP_RES_SETUP(compound, opread_plus);
 	nfsstat4 *status = &res->rp_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -871,31 +880,31 @@ void nfs4_op_read_plus(struct compound *c)
 	    *status, (void *)args, (void *)res);
 }
 
-void nfs4_op_write(struct compound *c)
+void nfs4_op_write(struct compound *compound)
 {
-	WRITE4args *args = NFS4_OP_ARG_SETUP(c, opwrite);
-	WRITE4res *res = NFS4_OP_RES_SETUP(c, opwrite);
+	WRITE4args *args = NFS4_OP_ARG_SETUP(compound, opwrite);
+	WRITE4res *res = NFS4_OP_RES_SETUP(compound, opwrite);
 	nfsstat4 *status = &res->status;
 	WRITE4resok *resok = NFS4_OP_RESOK_SETUP(res, WRITE4res_u, resok4);
 
 	struct stateid *stid = NULL;
-	struct super_block *sb = c->c_curr_sb;
+	struct super_block *sb = compound->c_curr_sb;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
 
-	if (!S_ISREG(c->c_inode->i_mode)) {
+	if (!S_ISREG(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_INVAL;
 		goto out;
 	}
 
-	*status = nfs4_stateid_resolve(c, &args->stateid, true, &stid);
+	*status = nfs4_stateid_resolve(compound, &args->stateid, true, &stid);
 	if (*status != NFS4_OK)
 		goto out;
 
-	int ret = inode_access_check(c->c_inode, &c->c_ap, W_OK);
+	int ret = inode_access_check(compound->c_inode, &compound->c_ap, W_OK);
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_WRITE);
 		goto out;
@@ -916,34 +925,36 @@ void nfs4_op_write(struct compound *c)
 		write_len = NFS4_MAX_RW_SIZE;
 
 	/* Clear SUID/SGID on write by an unprivileged user. */
-	if ((c->c_inode->i_mode & S_ISUID) && c->c_ap.aup_uid != 0 &&
-	    c->c_ap.aup_uid != c->c_inode->i_uid)
-		c->c_inode->i_mode &= ~S_ISUID;
-	if ((c->c_inode->i_mode & S_ISGID) && c->c_ap.aup_uid != 0 &&
-	    c->c_ap.aup_uid != c->c_inode->i_uid)
-		c->c_inode->i_mode &= ~S_ISGID;
+	if ((compound->c_inode->i_mode & S_ISUID) &&
+	    compound->c_ap.aup_uid != 0 &&
+	    compound->c_ap.aup_uid != compound->c_inode->i_uid)
+		compound->c_inode->i_mode &= ~S_ISUID;
+	if ((compound->c_inode->i_mode & S_ISGID) &&
+	    compound->c_ap.aup_uid != 0 &&
+	    compound->c_ap.aup_uid != compound->c_inode->i_uid)
+		compound->c_inode->i_mode &= ~S_ISGID;
 
 	int64_t old_size;
-	pthread_rwlock_wrlock(&c->c_inode->i_db_rwlock);
+	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
 
-	old_size = c->c_inode->i_size;
+	old_size = compound->c_inode->i_size;
 
-	if (!c->c_inode->i_db) {
-		c->c_inode->i_db = data_block_alloc(c->c_inode,
-						    args->data.data_val,
-						    write_len, args->offset);
-		if (!c->c_inode->i_db) {
-			pthread_rwlock_unlock(&c->c_inode->i_db_rwlock);
+	if (!compound->c_inode->i_db) {
+		compound->c_inode->i_db =
+			data_block_alloc(compound->c_inode, args->data.data_val,
+					 write_len, args->offset);
+		if (!compound->c_inode->i_db) {
+			pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 			*status = NFS4ERR_NOSPC;
 			goto out;
 		}
 		resok->count = write_len;
 	} else {
-		ssize_t nwritten = data_block_write(c->c_inode->i_db,
+		ssize_t nwritten = data_block_write(compound->c_inode->i_db,
 						    args->data.data_val,
 						    write_len, args->offset);
 		if (nwritten < 0) {
-			pthread_rwlock_unlock(&c->c_inode->i_db_rwlock);
+			pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 			*status = (nwritten == -ENOSPC) ? NFS4ERR_NOSPC :
 							  NFS4ERR_IO;
 			goto out;
@@ -951,12 +962,13 @@ void nfs4_op_write(struct compound *c)
 		resok->count = (count4)nwritten;
 	}
 
-	c->c_inode->i_size = (int64_t)c->c_inode->i_db->db_size;
-	c->c_inode->i_used = c->c_inode->i_size / sb->sb_block_size +
-			     (c->c_inode->i_size % sb->sb_block_size ? 1 : 0);
+	compound->c_inode->i_size = (int64_t)compound->c_inode->i_db->db_size;
+	compound->c_inode->i_used =
+		compound->c_inode->i_size / sb->sb_block_size +
+		(compound->c_inode->i_size % sb->sb_block_size ? 1 : 0);
 
 	/* Track superblock space usage. */
-	size_t new_db_size = data_block_get_size(c->c_inode->i_db);
+	size_t new_db_size = data_block_get_size(compound->c_inode->i_db);
 	size_t old_used, new_used;
 	do {
 		__atomic_load(&sb->sb_bytes_used, &old_used, __ATOMIC_RELAXED);
@@ -973,14 +985,15 @@ void nfs4_op_write(struct compound *c)
 					    &new_used, false, __ATOMIC_SEQ_CST,
 					    __ATOMIC_RELAXED));
 
-	pthread_rwlock_unlock(&c->c_inode->i_db_rwlock);
+	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 
-	pthread_mutex_lock(&c->c_inode->i_attr_mutex);
-	inode_update_times_now(c->c_inode, REFFS_INODE_UPDATE_MTIME |
-						   REFFS_INODE_UPDATE_CTIME);
-	pthread_mutex_unlock(&c->c_inode->i_attr_mutex);
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	inode_update_times_now(compound->c_inode,
+			       REFFS_INODE_UPDATE_MTIME |
+				       REFFS_INODE_UPDATE_CTIME);
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
-	inode_sync_to_disk(c->c_inode);
+	inode_sync_to_disk(compound->c_inode);
 
 	/* Always commit synchronously for now. */
 	resok->committed = FILE_SYNC4;
@@ -995,10 +1008,10 @@ out:
 	      args->data.data_len, args->stable);
 }
 
-void nfs4_op_write_same(struct compound *c)
+void nfs4_op_write_same(struct compound *compound)
 {
-	WRITE_SAME4args *args = NFS4_OP_ARG_SETUP(c, opwrite_same);
-	WRITE_SAME4res *res = NFS4_OP_RES_SETUP(c, opwrite_same);
+	WRITE_SAME4args *args = NFS4_OP_ARG_SETUP(compound, opwrite_same);
+	WRITE_SAME4res *res = NFS4_OP_RES_SETUP(compound, opwrite_same);
 	nfsstat4 *status = &res->wsr_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -1007,19 +1020,19 @@ void nfs4_op_write_same(struct compound *c)
 	    *status, (void *)args, (void *)res);
 }
 
-void nfs4_op_commit(struct compound *c)
+void nfs4_op_commit(struct compound *compound)
 {
-	COMMIT4args *args = NFS4_OP_ARG_SETUP(c, opcommit);
-	COMMIT4res *res = NFS4_OP_RES_SETUP(c, opcommit);
+	COMMIT4args *args = NFS4_OP_ARG_SETUP(compound, opcommit);
+	COMMIT4res *res = NFS4_OP_RES_SETUP(compound, opcommit);
 	nfsstat4 *status = &res->status;
 	COMMIT4resok *resok = NFS4_OP_RESOK_SETUP(res, COMMIT4res_u, resok4);
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
 
-	if (!S_ISREG(c->c_inode->i_mode)) {
+	if (!S_ISREG(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_INVAL;
 		goto out;
 	}
@@ -1038,10 +1051,10 @@ out:
 	      args->count);
 }
 
-void nfs4_op_seek(struct compound *c)
+void nfs4_op_seek(struct compound *compound)
 {
-	SEEK4args *args = NFS4_OP_ARG_SETUP(c, opseek);
-	SEEK4res *res = NFS4_OP_RES_SETUP(c, opseek);
+	SEEK4args *args = NFS4_OP_ARG_SETUP(compound, opseek);
+	SEEK4res *res = NFS4_OP_RES_SETUP(compound, opseek);
 	nfsstat4 *status = &res->sa_status;
 	seek_res4 *resok = NFS4_OP_RESOK_SETUP(res, SEEK4res_u, resok4);
 
@@ -1052,10 +1065,10 @@ void nfs4_op_seek(struct compound *c)
 	    (void *)resok);
 }
 
-void nfs4_op_allocate(struct compound *c)
+void nfs4_op_allocate(struct compound *compound)
 {
-	ALLOCATE4args *args = NFS4_OP_ARG_SETUP(c, opallocate);
-	ALLOCATE4res *res = NFS4_OP_RES_SETUP(c, opallocate);
+	ALLOCATE4args *args = NFS4_OP_ARG_SETUP(compound, opallocate);
+	ALLOCATE4res *res = NFS4_OP_RES_SETUP(compound, opallocate);
 	nfsstat4 *status = &res->ar_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -1064,10 +1077,10 @@ void nfs4_op_allocate(struct compound *c)
 	    *status, (void *)args, (void *)res);
 }
 
-void nfs4_op_deallocate(struct compound *c)
+void nfs4_op_deallocate(struct compound *compound)
 {
-	DEALLOCATE4args *args = NFS4_OP_ARG_SETUP(c, opdeallocate);
-	DEALLOCATE4res *res = NFS4_OP_RES_SETUP(c, opdeallocate);
+	DEALLOCATE4args *args = NFS4_OP_ARG_SETUP(compound, opdeallocate);
+	DEALLOCATE4res *res = NFS4_OP_RES_SETUP(compound, opdeallocate);
 	nfsstat4 *status = &res->dr_status;
 
 	*status = NFS4ERR_NOTSUPP;

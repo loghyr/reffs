@@ -19,10 +19,10 @@
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
 
-void nfs4_op_secinfo(struct compound *c)
+void nfs4_op_secinfo(struct compound *compound)
 {
-	SECINFO4args *args = NFS4_OP_ARG_SETUP(c, opsecinfo);
-	SECINFO4res *res = NFS4_OP_RES_SETUP(c, opsecinfo);
+	SECINFO4args *args = NFS4_OP_ARG_SETUP(compound, opsecinfo);
+	SECINFO4res *res = NFS4_OP_RES_SETUP(compound, opsecinfo);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -31,15 +31,17 @@ void nfs4_op_secinfo(struct compound *c)
 	    *status, (void *)args, (void *)res);
 }
 
-void nfs4_op_secinfo_no_name(struct compound *c)
+void nfs4_op_secinfo_no_name(struct compound *compound)
 {
-	SECINFO_NO_NAME4args *args = NFS4_OP_ARG_SETUP(c, opsecinfo_no_name);
-	SECINFO_NO_NAME4res *res = NFS4_OP_RES_SETUP(c, opsecinfo_no_name);
+	SECINFO_NO_NAME4args *args =
+		NFS4_OP_ARG_SETUP(compound, opsecinfo_no_name);
+	SECINFO_NO_NAME4res *res =
+		NFS4_OP_RES_SETUP(compound, opsecinfo_no_name);
 	nfsstat4 *status = &res->status;
 	SECINFO4resok *resok = NFS4_OP_RESOK_SETUP(res, SECINFO4res_u, resok4);
 	secinfo_style4 style = *args;
 
-	if (!c->c_inode) {
+	if (!compound->c_inode) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
@@ -63,8 +65,8 @@ void nfs4_op_secinfo_no_name(struct compound *c)
 	resok->SECINFO4resok_len = 1;
 	resok->SECINFO4resok_val[0].flavor = AUTH_SYS;
 
-	inode_active_put(c->c_inode);
-	c->c_inode = NULL;
+	inode_active_put(compound->c_inode);
+	compound->c_inode = NULL;
 
 	*status = NFS4_OK;
 
@@ -73,10 +75,10 @@ out:
 	    nfs4_err_name(*status), *status);
 }
 
-void nfs4_op_io_advise(struct compound *c)
+void nfs4_op_io_advise(struct compound *compound)
 {
-	IO_ADVISE4args *args = NFS4_OP_ARG_SETUP(c, opio_advise);
-	IO_ADVISE4res *res = NFS4_OP_RES_SETUP(c, opio_advise);
+	IO_ADVISE4args *args = NFS4_OP_ARG_SETUP(compound, opio_advise);
+	IO_ADVISE4res *res = NFS4_OP_RES_SETUP(compound, opio_advise);
 	nfsstat4 *status = &res->ior_status;
 	IO_ADVISE4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, IO_ADVISE4res_u, resok4);
@@ -88,10 +90,12 @@ void nfs4_op_io_advise(struct compound *c)
 	    (void *)resok);
 }
 
-void nfs4_op_illegal(struct compound *c)
+void nfs4_op_illegal(struct compound *compound)
 {
-	nfs_argop4 *argop = &c->c_args->argarray.argarray_val[c->c_curr_op];
-	nfs_resop4 *resop = &c->c_res->resarray.resarray_val[c->c_curr_op];
+	nfs_argop4 *argop =
+		&compound->c_args->argarray.argarray_val[compound->c_curr_op];
+	nfs_resop4 *resop =
+		&compound->c_res->resarray.resarray_val[compound->c_curr_op];
 	nfsstat4 *status = &resop->nfs_resop4_u.opillegal.status;
 
 	resop->resop = OP_ILLEGAL;

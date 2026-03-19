@@ -17,36 +17,36 @@
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
 
-void nfs4_op_getfh(struct compound *c)
+void nfs4_op_getfh(struct compound *compound)
 {
-	GETFH4res *res = NFS4_OP_RES_SETUP(c, opgetfh);
+	GETFH4res *res = NFS4_OP_RES_SETUP(compound, opgetfh);
 	nfsstat4 *status = &res->status;
 	GETFH4resok *resok = NFS4_OP_RESOK_SETUP(res, GETFH4res_u, resok4);
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		return;
 	}
 
 	resok->object.nfs_fh4_val =
-		memdup(&c->c_curr_nfh, sizeof(c->c_curr_nfh));
+		memdup(&compound->c_curr_nfh, sizeof(compound->c_curr_nfh));
 	if (!resok->object.nfs_fh4_val) {
 		*status = NFS4ERR_DELAY; // Yes, not valid, but a missing error!
 		return;
 	}
-	resok->object.nfs_fh4_len = sizeof(c->c_curr_nfh);
+	resok->object.nfs_fh4_len = sizeof(compound->c_curr_nfh);
 }
 
-void nfs4_op_putfh(struct compound *c)
+void nfs4_op_putfh(struct compound *compound)
 {
-	PUTFH4args *args = NFS4_OP_ARG_SETUP(c, opputfh);
-	PUTFH4res *res = NFS4_OP_RES_SETUP(c, opputfh);
+	PUTFH4args *args = NFS4_OP_ARG_SETUP(compound, opputfh);
+	PUTFH4res *res = NFS4_OP_RES_SETUP(compound, opputfh);
 	nfsstat4 *status = &res->status;
 
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->object.nfs_fh4_val;
 
-	if (args->object.nfs_fh4_len != sizeof(c->c_curr_nfh)) {
+	if (args->object.nfs_fh4_len != sizeof(compound->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
 		return;
 	}
@@ -61,145 +61,148 @@ void nfs4_op_putfh(struct compound *c)
 		return;
 	}
 
-	if (nfh->nfh_sb != c->c_curr_nfh.nfh_sb) {
-		super_block_put(c->c_curr_sb);
-		c->c_curr_sb = super_block_find(nfh->nfh_sb);
-		if (!c->c_curr_sb) {
+	if (nfh->nfh_sb != compound->c_curr_nfh.nfh_sb) {
+		super_block_put(compound->c_curr_sb);
+		compound->c_curr_sb = super_block_find(nfh->nfh_sb);
+		if (!compound->c_curr_sb) {
 			*status = NFS4ERR_STALE;
 			return;
 		}
 
-		inode_active_put(c->c_inode);
-		c->c_inode = NULL;
-	} else if (nfh->nfh_ino != c->c_curr_nfh.nfh_ino) {
-		inode_active_put(c->c_inode);
-		c->c_inode = NULL;
+		inode_active_put(compound->c_inode);
+		compound->c_inode = NULL;
+	} else if (nfh->nfh_ino != compound->c_curr_nfh.nfh_ino) {
+		inode_active_put(compound->c_inode);
+		compound->c_inode = NULL;
 	}
 
-	c->c_curr_nfh.nfh_sb = nfh->nfh_sb;
-	c->c_curr_nfh.nfh_ino = nfh->nfh_ino;
+	compound->c_curr_nfh.nfh_sb = nfh->nfh_sb;
+	compound->c_curr_nfh.nfh_ino = nfh->nfh_ino;
 
-	if (!c->c_inode) {
-		c->c_inode = inode_find(c->c_curr_sb, c->c_curr_nfh.nfh_ino);
-		if (!c->c_inode) {
+	if (!compound->c_inode) {
+		compound->c_inode = inode_find(compound->c_curr_sb,
+					       compound->c_curr_nfh.nfh_ino);
+		if (!compound->c_inode) {
 			*status = NFS4ERR_STALE;
 			return;
 		}
 	}
 
-	stateid_put(c->c_curr_stid);
-	c->c_curr_stid = NULL;
+	stateid_put(compound->c_curr_stid);
+	compound->c_curr_stid = NULL;
 }
 
-void nfs4_op_putpubfh(struct compound *c)
+void nfs4_op_putpubfh(struct compound *compound)
 {
-	PUTPUBFH4res *res = NFS4_OP_RES_SETUP(c, opputpubfh);
+	PUTPUBFH4res *res = NFS4_OP_RES_SETUP(compound, opputpubfh);
 	nfsstat4 *status = &res->status;
 
-	if (c->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
-		super_block_put(c->c_curr_sb);
-		c->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
-		if (!c->c_curr_sb) {
+	if (compound->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
+		super_block_put(compound->c_curr_sb);
+		compound->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+		if (!compound->c_curr_sb) {
 			*status = NFS4ERR_SERVERFAULT;
 			return;
 		}
-		inode_active_put(c->c_inode);
-		c->c_inode = NULL;
-	} else if (c->c_curr_nfh.nfh_ino != INODE_ROOT_ID) {
-		inode_active_put(c->c_inode);
-		c->c_inode = NULL;
+		inode_active_put(compound->c_inode);
+		compound->c_inode = NULL;
+	} else if (compound->c_curr_nfh.nfh_ino != INODE_ROOT_ID) {
+		inode_active_put(compound->c_inode);
+		compound->c_inode = NULL;
 	}
 
-	c->c_curr_nfh.nfh_sb = SUPER_BLOCK_ROOT_ID;
-	c->c_curr_nfh.nfh_ino = INODE_ROOT_ID;
+	compound->c_curr_nfh.nfh_sb = SUPER_BLOCK_ROOT_ID;
+	compound->c_curr_nfh.nfh_ino = INODE_ROOT_ID;
 
-	stateid_put(c->c_curr_stid);
-	c->c_curr_stid = NULL;
+	stateid_put(compound->c_curr_stid);
+	compound->c_curr_stid = NULL;
 }
 
-void nfs4_op_putrootfh(struct compound *c)
+void nfs4_op_putrootfh(struct compound *compound)
 {
-	PUTROOTFH4res *res = NFS4_OP_RES_SETUP(c, opputrootfh);
+	PUTROOTFH4res *res = NFS4_OP_RES_SETUP(compound, opputrootfh);
 	nfsstat4 *status = &res->status;
 
-	if (c->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
-		super_block_put(c->c_curr_sb);
-		c->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
-		if (!c->c_curr_sb) {
+	if (compound->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
+		super_block_put(compound->c_curr_sb);
+		compound->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+		if (!compound->c_curr_sb) {
 			*status = NFS4ERR_SERVERFAULT;
 			return;
 		}
-		inode_active_put(c->c_inode);
-		c->c_inode = NULL;
-	} else if (c->c_curr_nfh.nfh_ino != INODE_ROOT_ID) {
-		inode_active_put(c->c_inode);
-		c->c_inode = NULL;
+		inode_active_put(compound->c_inode);
+		compound->c_inode = NULL;
+	} else if (compound->c_curr_nfh.nfh_ino != INODE_ROOT_ID) {
+		inode_active_put(compound->c_inode);
+		compound->c_inode = NULL;
 	}
 
-	c->c_curr_nfh.nfh_sb = SUPER_BLOCK_ROOT_ID;
-	c->c_curr_nfh.nfh_ino = INODE_ROOT_ID;
+	compound->c_curr_nfh.nfh_sb = SUPER_BLOCK_ROOT_ID;
+	compound->c_curr_nfh.nfh_ino = INODE_ROOT_ID;
 
-	if (!c->c_inode) {
-		c->c_inode = inode_find(c->c_curr_sb, c->c_curr_nfh.nfh_ino);
-		if (!c->c_inode) {
+	if (!compound->c_inode) {
+		compound->c_inode = inode_find(compound->c_curr_sb,
+					       compound->c_curr_nfh.nfh_ino);
+		if (!compound->c_inode) {
 			*status = NFS4ERR_STALE;
 			return;
 		}
 	}
 
-	stateid_put(c->c_curr_stid);
-	c->c_curr_stid = NULL;
+	stateid_put(compound->c_curr_stid);
+	compound->c_curr_stid = NULL;
 }
 
-void nfs4_op_restorefh(struct compound *c)
+void nfs4_op_restorefh(struct compound *compound)
 {
-	RESTOREFH4res *res = NFS4_OP_RES_SETUP(c, oprestorefh);
+	RESTOREFH4res *res = NFS4_OP_RES_SETUP(compound, oprestorefh);
 	nfsstat4 *status = &res->status;
 
-	if (network_file_handle_empty(&c->c_saved_nfh)) {
+	if (network_file_handle_empty(&compound->c_saved_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		return;
 	}
 
-	super_block_put(c->c_curr_sb);
-	c->c_curr_sb = super_block_get(c->c_saved_sb);
-	c->c_curr_nfh = c->c_saved_nfh;
-	inode_active_put(c->c_inode);
-	c->c_inode = NULL;
+	super_block_put(compound->c_curr_sb);
+	compound->c_curr_sb = super_block_get(compound->c_saved_sb);
+	compound->c_curr_nfh = compound->c_saved_nfh;
+	inode_active_put(compound->c_inode);
+	compound->c_inode = NULL;
 
-	if (!c->c_inode) {
-		c->c_inode = inode_find(c->c_curr_sb, c->c_curr_nfh.nfh_ino);
-		if (!c->c_inode) {
+	if (!compound->c_inode) {
+		compound->c_inode = inode_find(compound->c_curr_sb,
+					       compound->c_curr_nfh.nfh_ino);
+		if (!compound->c_inode) {
 			*status = NFS4ERR_STALE;
 			return;
 		}
 	}
 
-	stateid_put(c->c_curr_stid);
-	c->c_curr_stid = stateid_get(c->c_saved_stid);
-	verify_msg(c->c_curr_stid, "Could not get loaded stateid");
+	stateid_put(compound->c_curr_stid);
+	compound->c_curr_stid = stateid_get(compound->c_saved_stid);
+	verify_msg(compound->c_curr_stid, "Could not get loaded stateid");
 }
 
-void nfs4_op_savefh(struct compound *c)
+void nfs4_op_savefh(struct compound *compound)
 {
-	SAVEFH4res *res = NFS4_OP_RES_SETUP(c, opsavefh);
+	SAVEFH4res *res = NFS4_OP_RES_SETUP(compound, opsavefh);
 	nfsstat4 *status = &res->status;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		return;
 	}
 
-	super_block_put(c->c_saved_sb);
-	c->c_saved_sb = super_block_get(c->c_curr_sb);
-	if (!c->c_saved_sb) {
+	super_block_put(compound->c_saved_sb);
+	compound->c_saved_sb = super_block_get(compound->c_curr_sb);
+	if (!compound->c_saved_sb) {
 		*status = NFS4ERR_DELAY;
 		return;
 	}
 
-	c->c_saved_nfh = c->c_curr_nfh;
+	compound->c_saved_nfh = compound->c_curr_nfh;
 
-	stateid_put(c->c_saved_stid);
-	c->c_saved_stid = stateid_get(c->c_curr_stid);
-	verify_msg(c->c_saved_stid, "Could not get loaded stateid");
+	stateid_put(compound->c_saved_stid);
+	compound->c_saved_stid = stateid_get(compound->c_curr_stid);
+	verify_msg(compound->c_saved_stid, "Could not get loaded stateid");
 }

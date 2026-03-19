@@ -2799,10 +2799,10 @@ out:
 	return NFS4_OK;
 }
 
-void nfs4_op_getattr(struct compound *c)
+void nfs4_op_getattr(struct compound *compound)
 {
-	GETATTR4args *args = NFS4_OP_ARG_SETUP(c, opgetattr);
-	GETATTR4res *res = NFS4_OP_RES_SETUP(c, opgetattr);
+	GETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opgetattr);
+	GETATTR4res *res = NFS4_OP_RES_SETUP(compound, opgetattr);
 	nfsstat4 *status = &res->status;
 	GETATTR4resok *resok = NFS4_OP_RESOK_SETUP(res, GETATTR4res_u, resok4);
 
@@ -2817,7 +2817,7 @@ void nfs4_op_getattr(struct compound *c)
 
 	int ret = 0;
 
-	struct inode *inode = c->c_inode;
+	struct inode *inode = compound->c_inode;
 	struct nfsv42_attr nattr = { 0 };
 
 	/* Nothing requested */
@@ -2826,7 +2826,7 @@ void nfs4_op_getattr(struct compound *c)
 
 	ret = bitmap4_init(&fattr->attrmask, FATTR4_ATTRIBUTE_MAX);
 	if (ret) {
-		*status = errno_to_nfs4(ret, NFS4_OP_NUM(c));
+		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
 		goto out;
 	}
 
@@ -2835,7 +2835,7 @@ void nfs4_op_getattr(struct compound *c)
 	ret = inode_to_nattr(inode, &nattr);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 	if (ret) {
-		*status = errno_to_nfs4(ret, NFS4_OP_NUM(c));
+		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
 		goto out;
 	}
 
@@ -2996,15 +2996,15 @@ static nfsstat4 entry4_encode_rdattr_error(nfsstat4 error, fattr4 *out)
 	return status;
 }
 
-void nfs4_op_readdir(struct compound *c)
+void nfs4_op_readdir(struct compound *compound)
 {
-	READDIR4args *args = NFS4_OP_ARG_SETUP(c, opreaddir);
-	READDIR4res *res = NFS4_OP_RES_SETUP(c, opreaddir);
+	READDIR4args *args = NFS4_OP_ARG_SETUP(compound, opreaddir);
+	READDIR4res *res = NFS4_OP_RES_SETUP(compound, opreaddir);
 	nfsstat4 *status = &res->status;
 	READDIR4resok *resok = NFS4_OP_RESOK_SETUP(res, READDIR4res_u, resok4);
 
-	struct inode *inode = c->c_inode;
-	struct super_block *sb = c->c_curr_sb;
+	struct inode *inode = compound->c_inode;
+	struct super_block *sb = compound->c_curr_sb;
 	struct reffs_dirent *dir_de = NULL;
 	bool dir_de_rdlocked = false;
 
@@ -3023,7 +3023,7 @@ void nfs4_op_readdir(struct compound *c)
 	entry4 *e_prev = NULL;
 	int ret = 0;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
 		return;
 	}
@@ -3038,9 +3038,9 @@ void nfs4_op_readdir(struct compound *c)
 		return;
 	}
 
-	ret = inode_access_check(inode, &c->c_ap, R_OK);
+	ret = inode_access_check(inode, &compound->c_ap, R_OK);
 	if (ret) {
-		*status = errno_to_nfs4(ret, NFS4_OP_NUM(c));
+		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
 		return;
 	}
 
@@ -3049,7 +3049,7 @@ void nfs4_op_readdir(struct compound *c)
 	 * Reconstruct before walking rd_children.  Root (i_dirent == NULL
 	 * by design) falls back to sb->sb_dirent below.
 	 */
-	if (!inode->i_dirent && c->c_curr_nfh.nfh_ino != INODE_ROOT_ID) {
+	if (!inode->i_dirent && compound->c_curr_nfh.nfh_ino != INODE_ROOT_ID) {
 		ret = inode_reconstruct_path_to_root(inode);
 		if (ret) {
 			*status = NFS4ERR_STALE;
@@ -3153,8 +3153,8 @@ void nfs4_op_readdir(struct compound *c)
 			pthread_mutex_unlock(&child->i_attr_mutex);
 			inode_active_put(child);
 			if (ret)
-				attr_status =
-					errno_to_nfs4(ret, NFS4_OP_NUM(c));
+				attr_status = errno_to_nfs4(
+					ret, NFS4_OP_NUM(compound));
 		}
 
 		/* Compute wire sizes before committing to the entry. */
@@ -3244,17 +3244,17 @@ out_unlock:
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 }
 
-void nfs4_op_setattr(struct compound *c)
+void nfs4_op_setattr(struct compound *compound)
 {
-	SETATTR4args *args = NFS4_OP_ARG_SETUP(c, opsetattr);
-	SETATTR4res *res = NFS4_OP_RES_SETUP(c, opsetattr);
+	SETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opsetattr);
+	SETATTR4res *res = NFS4_OP_RES_SETUP(compound, opsetattr);
 	nfsstat4 *status = &res->status;
 
 	struct nfsv42_attr nattr = { 0 };
 	fattr4 *fattr = &args->obj_attributes;
 	bool nattr_valid = false;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
 		goto out;
 	}
@@ -3265,7 +3265,7 @@ void nfs4_op_setattr(struct compound *c)
 	nattr_valid = true;
 
 	*status = nattr_to_inode(&nattr, &fattr->attrmask, &res->attrsset,
-				 c->c_inode, &c->c_ap);
+				 compound->c_inode, &compound->c_ap);
 
 out:
 	if (nattr_valid)
@@ -3284,10 +3284,10 @@ out:
  * NVERIFY succeeds (NFS4_OK) when attrs differ; fails with
  *         NFS4ERR_SAME when they are equal.
  */
-static nfsstat4 verify_common(struct compound *c, fattr4 *obj_attrs,
+static nfsstat4 verify_common(struct compound *compound, fattr4 *obj_attrs,
 			      bool invert, nfs_opnum4 opnum)
 {
-	struct inode *inode = c->c_inode;
+	struct inode *inode = compound->c_inode;
 	u_int scan_bits = obj_attrs->attrmask.bitmap4_len * 32U;
 	struct nfsv42_attr cur = { 0 };
 	char *cur_buf = NULL;
@@ -3345,42 +3345,44 @@ out:
 	return status;
 }
 
-void nfs4_op_verify(struct compound *c)
+void nfs4_op_verify(struct compound *compound)
 {
-	VERIFY4args *args = NFS4_OP_ARG_SETUP(c, opverify);
-	VERIFY4res *res = NFS4_OP_RES_SETUP(c, opverify);
+	VERIFY4args *args = NFS4_OP_ARG_SETUP(compound, opverify);
+	VERIFY4res *res = NFS4_OP_RES_SETUP(compound, opverify);
 	nfsstat4 *status = &res->status;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
 		return;
 	}
 
-	*status = verify_common(c, &args->obj_attributes, false, OP_VERIFY);
+	*status = verify_common(compound, &args->obj_attributes, false,
+				OP_VERIFY);
 }
 
-void nfs4_op_nverify(struct compound *c)
+void nfs4_op_nverify(struct compound *compound)
 {
-	NVERIFY4args *args = NFS4_OP_ARG_SETUP(c, opnverify);
-	NVERIFY4res *res = NFS4_OP_RES_SETUP(c, opnverify);
+	NVERIFY4args *args = NFS4_OP_ARG_SETUP(compound, opnverify);
+	NVERIFY4res *res = NFS4_OP_RES_SETUP(compound, opnverify);
 	nfsstat4 *status = &res->status;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
 		return;
 	}
 
-	*status = verify_common(c, &args->obj_attributes, true, OP_NVERIFY);
+	*status = verify_common(compound, &args->obj_attributes, true,
+				OP_NVERIFY);
 }
 
-void nfs4_op_access(struct compound *c)
+void nfs4_op_access(struct compound *compound)
 {
-	ACCESS4args *args = NFS4_OP_ARG_SETUP(c, opaccess);
-	ACCESS4res *res = NFS4_OP_RES_SETUP(c, opaccess);
+	ACCESS4args *args = NFS4_OP_ARG_SETUP(compound, opaccess);
+	ACCESS4res *res = NFS4_OP_RES_SETUP(compound, opaccess);
 	nfsstat4 *status = &res->status;
 	ACCESS4resok *resok = NFS4_OP_RESOK_SETUP(res, ACCESS4res_u, resok4);
 
-	if (!c->c_inode) {
+	if (!compound->c_inode) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
@@ -3413,8 +3415,8 @@ void nfs4_op_access(struct compound *c)
 		if (!(args->access & checks[i].bit))
 			continue;
 		resok->supported |= checks[i].bit;
-		if (inode_access_check(c->c_inode, &c->c_ap, checks[i].mode) ==
-		    0)
+		if (inode_access_check(compound->c_inode, &compound->c_ap,
+				       checks[i].mode) == 0)
 			resok->access |= checks[i].bit;
 	}
 
@@ -3426,10 +3428,10 @@ out:
 	      resok->supported, resok->access);
 }
 
-void nfs4_op_access_mask(struct compound *c)
+void nfs4_op_access_mask(struct compound *compound)
 {
-	ACCESS_MASK4args *args = NFS4_OP_ARG_SETUP(c, opaccess_mask);
-	ACCESS_MASK4res *res = NFS4_OP_RES_SETUP(c, opaccess_mask);
+	ACCESS_MASK4args *args = NFS4_OP_ARG_SETUP(compound, opaccess_mask);
+	ACCESS_MASK4res *res = NFS4_OP_RES_SETUP(compound, opaccess_mask);
 	nfsstat4 *status = &res->amr_status;
 	ACCESS_MASK4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, ACCESS_MASK4res_u, amr_resok4);
