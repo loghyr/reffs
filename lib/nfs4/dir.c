@@ -30,11 +30,8 @@ static inline changeid4 timespec_to_changeid(const struct timespec *ts)
 
 void nfs4_op_lookup(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LOOKUP4args *args = NFS4_OP_ARG_SETUP(c, ph, oplookup);
-	LOOKUP4res *res = NFS4_OP_RES_SETUP(c, ph, oplookup);
+	LOOKUP4args *args = NFS4_OP_ARG_SETUP(c, oplookup);
+	LOOKUP4res *res = NFS4_OP_RES_SETUP(c, oplookup);
 	nfsstat4 *status = &res->status;
 
 	struct reffs_dirent *child_de = NULL;
@@ -123,10 +120,7 @@ out:
 
 void nfs4_op_lookupp(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LOOKUPP4res *res = NFS4_OP_RES_SETUP(c, ph, oplookupp);
+	LOOKUPP4res *res = NFS4_OP_RES_SETUP(c, oplookupp);
 	nfsstat4 *status = &res->status;
 
 	struct reffs_dirent *parent_de = NULL;
@@ -177,11 +171,8 @@ out:
 
 void nfs4_op_create(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	CREATE4args *args = NFS4_OP_ARG_SETUP(c, ph, opcreate);
-	CREATE4res *res = NFS4_OP_RES_SETUP(c, ph, opcreate);
+	CREATE4args *args = NFS4_OP_ARG_SETUP(c, opcreate);
+	CREATE4res *res = NFS4_OP_RES_SETUP(c, opcreate);
 	nfsstat4 *status = &res->status;
 	CREATE4resok *resok = NFS4_OP_RESOK_SETUP(res, CREATE4res_u, resok4);
 
@@ -306,11 +297,8 @@ out:
 
 void nfs4_op_remove(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	REMOVE4args *args = NFS4_OP_ARG_SETUP(c, ph, opremove);
-	REMOVE4res *res = NFS4_OP_RES_SETUP(c, ph, opremove);
+	REMOVE4args *args = NFS4_OP_ARG_SETUP(c, opremove);
+	REMOVE4res *res = NFS4_OP_RES_SETUP(c, opremove);
 	nfsstat4 *status = &res->status;
 	REMOVE4resok *resok = NFS4_OP_RESOK_SETUP(res, REMOVE4res_u, resok4);
 
@@ -374,11 +362,8 @@ out:
 
 void nfs4_op_rename(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	RENAME4args *args = NFS4_OP_ARG_SETUP(c, ph, oprename);
-	RENAME4res *res = NFS4_OP_RES_SETUP(c, ph, oprename);
+	RENAME4args *args = NFS4_OP_ARG_SETUP(c, oprename);
+	RENAME4res *res = NFS4_OP_RES_SETUP(c, oprename);
 	nfsstat4 *status = &res->status;
 	RENAME4resok *resok = NFS4_OP_RESOK_SETUP(res, RENAME4res_u, resok4);
 
@@ -468,11 +453,8 @@ out:
 
 void nfs4_op_link(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LINK4args *args = NFS4_OP_ARG_SETUP(c, ph, oplink);
-	LINK4res *res = NFS4_OP_RES_SETUP(c, ph, oplink);
+	LINK4args *args = NFS4_OP_ARG_SETUP(c, oplink);
+	LINK4res *res = NFS4_OP_RES_SETUP(c, oplink);
 	nfsstat4 *status = &res->status;
 	LINK4resok *resok = NFS4_OP_RESOK_SETUP(res, LINK4res_u, resok4);
 
@@ -485,11 +467,8 @@ void nfs4_op_link(struct compound *c)
 
 void nfs4_op_openattr(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	OPENATTR4args *args = NFS4_OP_ARG_SETUP(c, ph, opopenattr);
-	OPENATTR4res *res = NFS4_OP_RES_SETUP(c, ph, opopenattr);
+	OPENATTR4args *args = NFS4_OP_ARG_SETUP(c, opopenattr);
+	OPENATTR4res *res = NFS4_OP_RES_SETUP(c, opopenattr);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -500,10 +479,7 @@ void nfs4_op_openattr(struct compound *c)
 
 void nfs4_op_readlink(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	READLINK4res *res = NFS4_OP_RES_SETUP(c, ph, opreadlink);
+	READLINK4res *res = NFS4_OP_RES_SETUP(c, opreadlink);
 	nfsstat4 *status = &res->status;
 	READLINK4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, READLINK4res_u, resok4);

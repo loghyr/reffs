@@ -19,10 +19,7 @@
 
 void nfs4_op_getfh(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	GETFH4res *res = NFS4_OP_RES_SETUP(c, ph, opgetfh);
+	GETFH4res *res = NFS4_OP_RES_SETUP(c, opgetfh);
 	nfsstat4 *status = &res->status;
 	GETFH4resok *resok = NFS4_OP_RESOK_SETUP(res, GETFH4res_u, resok4);
 
@@ -46,11 +43,8 @@ out:
 
 void nfs4_op_putfh(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	PUTFH4args *args = NFS4_OP_ARG_SETUP(c, ph, opputfh);
-	PUTFH4res *res = NFS4_OP_RES_SETUP(c, ph, opputfh);
+	PUTFH4args *args = NFS4_OP_ARG_SETUP(c, opputfh);
+	PUTFH4res *res = NFS4_OP_RES_SETUP(c, opputfh);
 	nfsstat4 *status = &res->status;
 
 	struct network_file_handle *nfh =
@@ -107,10 +101,7 @@ out:
 
 void nfs4_op_putpubfh(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	PUTPUBFH4res *res = NFS4_OP_RES_SETUP(c, ph, opputpubfh);
+	PUTPUBFH4res *res = NFS4_OP_RES_SETUP(c, opputpubfh);
 	nfsstat4 *status = &res->status;
 
 	if (c->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
@@ -139,10 +130,7 @@ out:
 
 void nfs4_op_putrootfh(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	PUTROOTFH4res *res = NFS4_OP_RES_SETUP(c, ph, opputrootfh);
+	PUTROOTFH4res *res = NFS4_OP_RES_SETUP(c, opputrootfh);
 	nfsstat4 *status = &res->status;
 
 	if (c->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
@@ -179,10 +167,7 @@ out:
 
 void nfs4_op_restorefh(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	RESTOREFH4res *res = NFS4_OP_RES_SETUP(c, ph, oprestorefh);
+	RESTOREFH4res *res = NFS4_OP_RES_SETUP(c, oprestorefh);
 	nfsstat4 *status = &res->status;
 
 	if (network_file_handle_empty(&c->c_saved_nfh)) {
@@ -215,10 +200,7 @@ out:
 
 void nfs4_op_savefh(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	SAVEFH4res *res = NFS4_OP_RES_SETUP(c, ph, opsavefh);
+	SAVEFH4res *res = NFS4_OP_RES_SETUP(c, opsavefh);
 	nfsstat4 *status = &res->status;
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {

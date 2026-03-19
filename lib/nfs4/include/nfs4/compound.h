@@ -16,6 +16,7 @@
 #include "reffs/stateid.h"
 #include "nfs4/client.h"
 #include "nfs4/session.h"
+#include "nfsv42_xdr.h"
 
 struct compound {
 	struct rpc_trans *c_rt;
@@ -37,6 +38,12 @@ struct compound {
 	struct nfs4_session *c_session;
 	struct nfs4_slot *c_slot;
 	struct nfs4_client *c_nfs4_client;
+
+	/*
+	 * For convience.
+	 */
+	COMPOUND4args *c_args;
+	COMPOUND4res *c_res;
 };
 
 int nfs4_proc_compound(struct rpc_trans *rt);

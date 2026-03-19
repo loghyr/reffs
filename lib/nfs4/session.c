@@ -281,16 +281,13 @@ struct nfs4_session *nfs4_session_find(const sessionid4 sid)
 
 void nfs4_op_exchange_id(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	EXCHANGE_ID4args *args = NFS4_OP_ARG_SETUP(c, ph, opexchange_id);
-	EXCHANGE_ID4res *res = NFS4_OP_RES_SETUP(c, ph, opexchange_id);
+	EXCHANGE_ID4args *args = NFS4_OP_ARG_SETUP(c, opexchange_id);
+	EXCHANGE_ID4res *res = NFS4_OP_RES_SETUP(c, opexchange_id);
 	nfsstat4 *status = &res->eir_status;
 	EXCHANGE_ID4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, EXCHANGE_ID4res_u, eir_resok4);
 
-	u_int num_ops = ((COMPOUND4args *)(ph)->ph_args)->argarray.argarray_len;
+	u_int num_ops = c->c_args->argarray.argarray_len;
 	struct server_state *ss = NULL;
 	struct nfs4_client *nc = NULL;
 	struct nfs_impl_id4 *impl_id = NULL;
@@ -376,16 +373,13 @@ out:
 
 void nfs4_op_create_session(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	CREATE_SESSION4args *args = NFS4_OP_ARG_SETUP(c, ph, opcreate_session);
-	CREATE_SESSION4res *res = NFS4_OP_RES_SETUP(c, ph, opcreate_session);
+	CREATE_SESSION4args *args = NFS4_OP_ARG_SETUP(c, opcreate_session);
+	CREATE_SESSION4res *res = NFS4_OP_RES_SETUP(c, opcreate_session);
 	nfsstat4 *status = &res->csr_status;
 	CREATE_SESSION4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, CREATE_SESSION4res_u, csr_resok4);
 
-	u_int num_ops = ((COMPOUND4args *)(ph)->ph_args)->argarray.argarray_len;
+	u_int num_ops = c->c_args->argarray.argarray_len;
 	struct nfs4_client *nc = NULL;
 	struct nfs4_session *ns = NULL;
 
@@ -445,15 +439,11 @@ out:
 
 void nfs4_op_destroy_session(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	DESTROY_SESSION4args *args =
-		NFS4_OP_ARG_SETUP(c, ph, opdestroy_session);
-	DESTROY_SESSION4res *res = NFS4_OP_RES_SETUP(c, ph, opdestroy_session);
+	DESTROY_SESSION4args *args = NFS4_OP_ARG_SETUP(c, opdestroy_session);
+	DESTROY_SESSION4res *res = NFS4_OP_RES_SETUP(c, opdestroy_session);
 	nfsstat4 *status = &res->dsr_status;
 
-	u_int num_ops = ((COMPOUND4args *)(ph)->ph_args)->argarray.argarray_len;
+	u_int num_ops = c->c_args->argarray.argarray_len;
 	struct nfs4_session *ns = NULL;
 
 	if (c->c_curr_op == 0 && num_ops > 1) {
@@ -478,11 +468,8 @@ out:
 
 void nfs4_op_sequence(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	SEQUENCE4args *args = NFS4_OP_ARG_SETUP(c, ph, opsequence);
-	SEQUENCE4res *res = NFS4_OP_RES_SETUP(c, ph, opsequence);
+	SEQUENCE4args *args = NFS4_OP_ARG_SETUP(c, opsequence);
+	SEQUENCE4res *res = NFS4_OP_RES_SETUP(c, opsequence);
 	nfsstat4 *status = &res->sr_status;
 	SEQUENCE4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, SEQUENCE4res_u, sr_resok4);
@@ -520,7 +507,7 @@ void nfs4_op_sequence(struct compound *c)
 
 		if (slot->sl_reply) {
 			XDR xdrs;
-			COMPOUND4res *full_res = ((COMPOUND4res *)ph->ph_res);
+			COMPOUND4res *full_res = c->c_res;
 
 			xdrmem_create(&xdrs, slot->sl_reply, slot->sl_reply_len,
 				      XDR_DECODE);
@@ -532,42 +519,31 @@ void nfs4_op_sequence(struct compound *c)
 			}
 			xdr_destroy(&xdrs);
 		}
+	}
 
+	if (args->sa_sequenceid == (slot->sl_seqid + 1)) {
+		/* Correct next request. */
+		slot->sl_seqid = args->sa_sequenceid;
+		slot->sl_state = NFS4_SLOT_IN_USE;
+		free(slot->sl_reply);
+		slot->sl_reply = NULL;
+		slot->sl_reply_len = 0;
+	} else {
 		pthread_mutex_unlock(&slot->sl_mutex);
 		*status = NFS4ERR_SEQ_MISORDERED;
 		goto out;
 	}
-
-	if (args->sa_sequenceid != slot->sl_seqid + 1) {
-		pthread_mutex_unlock(&slot->sl_mutex);
-		*status = NFS4ERR_SEQ_MISORDERED;
-		goto out;
-	}
-
-	/* New request: discard any stale cached reply and mark IN_USE. */
-	free(slot->sl_reply);
-	slot->sl_reply = NULL;
-	slot->sl_reply_len = 0;
-	slot->sl_seqid = args->sa_sequenceid;
-	slot->sl_state = NFS4_SLOT_IN_USE;
 
 	pthread_mutex_unlock(&slot->sl_mutex);
 
-	memcpy(resok->sr_sessionid, ns->ns_sessionid, sizeof(sessionid4));
-	resok->sr_sequenceid = args->sa_sequenceid;
-	resok->sr_slotid = args->sa_slotid;
-	resok->sr_highest_slotid = ns->ns_slot_count - 1;
-	resok->sr_target_highest_slotid = ns->ns_slot_count - 1;
-	resok->sr_status_flags = 0;
-
-	/* Transfer refs to compound; both live for the compound's duration. */
-	c->c_session = ns;
+	c->c_session = nfs4_session_get(ns);
 	c->c_slot = slot;
+
 	c->c_nfs4_client = nfs4_client_get(ns->ns_client);
 	ns = NULL; /* ref transferred to c_session */
 
 	*status = NFS4_OK;
-	((COMPOUND4res *)ph->ph_res)->status = NFS4_OK;
+	c->c_res->status = NFS4_OK;
 
 out:
 	nfs4_session_put(ns);
@@ -578,10 +554,7 @@ out:
 
 void nfs4_op_renew(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	RENEW4res *res = NFS4_OP_RES_SETUP(c, ph, oprenew);
+	RENEW4res *res = NFS4_OP_RES_SETUP(c, oprenew);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -592,11 +565,8 @@ void nfs4_op_renew(struct compound *c)
 
 void nfs4_op_setclientid(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	SETCLIENTID4args *args = NFS4_OP_ARG_SETUP(c, ph, opsetclientid);
-	SETCLIENTID4res *res = NFS4_OP_RES_SETUP(c, ph, opsetclientid);
+	SETCLIENTID4args *args = NFS4_OP_ARG_SETUP(c, opsetclientid);
+	SETCLIENTID4res *res = NFS4_OP_RES_SETUP(c, opsetclientid);
 	nfsstat4 *status = &res->status;
 	SETCLIENTID4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, SETCLIENTID4res_u, resok4);
@@ -610,11 +580,8 @@ void nfs4_op_setclientid(struct compound *c)
 
 void nfs4_op_setclientid_confirm(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
 	SETCLIENTID_CONFIRM4res *res =
-		NFS4_OP_RES_SETUP(c, ph, opsetclientid_confirm);
+		NFS4_OP_RES_SETUP(c, opsetclientid_confirm);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -625,16 +592,11 @@ void nfs4_op_setclientid_confirm(struct compound *c)
 
 void nfs4_op_destroy_clientid(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	DESTROY_CLIENTID4args *args =
-		NFS4_OP_ARG_SETUP(c, ph, opdestroy_clientid);
-	DESTROY_CLIENTID4res *res =
-		NFS4_OP_RES_SETUP(c, ph, opdestroy_clientid);
+	DESTROY_CLIENTID4args *args = NFS4_OP_ARG_SETUP(c, opdestroy_clientid);
+	DESTROY_CLIENTID4res *res = NFS4_OP_RES_SETUP(c, opdestroy_clientid);
 	nfsstat4 *status = &res->dcr_status;
 
-	u_int num_ops = ((COMPOUND4args *)(ph)->ph_args)->argarray.argarray_len;
+	u_int num_ops = c->c_args->argarray.argarray_len;
 	struct server_state *ss = NULL;
 	struct nfs4_client *nc = NULL;
 
@@ -672,13 +634,8 @@ out:
 
 void nfs4_op_reclaim_complete(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	RECLAIM_COMPLETE4args *args =
-		NFS4_OP_ARG_SETUP(c, ph, opreclaim_complete);
-	RECLAIM_COMPLETE4res *res =
-		NFS4_OP_RES_SETUP(c, ph, opreclaim_complete);
+	RECLAIM_COMPLETE4args *args = NFS4_OP_ARG_SETUP(c, opreclaim_complete);
+	RECLAIM_COMPLETE4res *res = NFS4_OP_RES_SETUP(c, opreclaim_complete);
 	nfsstat4 *status = &res->rcr_status;
 
 	struct server_state *ss = NULL;
@@ -715,13 +672,10 @@ out:
 
 void nfs4_op_bind_conn_to_session(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
 	BIND_CONN_TO_SESSION4args *args =
-		NFS4_OP_ARG_SETUP(c, ph, opbind_conn_to_session);
+		NFS4_OP_ARG_SETUP(c, opbind_conn_to_session);
 	BIND_CONN_TO_SESSION4res *res =
-		NFS4_OP_RES_SETUP(c, ph, opbind_conn_to_session);
+		NFS4_OP_RES_SETUP(c, opbind_conn_to_session);
 	nfsstat4 *status = &res->bctsr_status;
 	BIND_CONN_TO_SESSION4resok *resok = NFS4_OP_RESOK_SETUP(
 		res, BIND_CONN_TO_SESSION4res_u, bctsr_resok4);
@@ -735,12 +689,8 @@ void nfs4_op_bind_conn_to_session(struct compound *c)
 
 void nfs4_op_backchannel_ctl(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	BACKCHANNEL_CTL4args *args =
-		NFS4_OP_ARG_SETUP(c, ph, opbackchannel_ctl);
-	BACKCHANNEL_CTL4res *res = NFS4_OP_RES_SETUP(c, ph, opbackchannel_ctl);
+	BACKCHANNEL_CTL4args *args = NFS4_OP_ARG_SETUP(c, opbackchannel_ctl);
+	BACKCHANNEL_CTL4res *res = NFS4_OP_RES_SETUP(c, opbackchannel_ctl);
 	nfsstat4 *status = &res->bcr_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -751,11 +701,8 @@ void nfs4_op_backchannel_ctl(struct compound *c)
 
 void nfs4_op_set_ssv(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	SET_SSV4args *args = NFS4_OP_ARG_SETUP(c, ph, opset_ssv);
-	SET_SSV4res *res = NFS4_OP_RES_SETUP(c, ph, opset_ssv);
+	SET_SSV4args *args = NFS4_OP_ARG_SETUP(c, opset_ssv);
+	SET_SSV4res *res = NFS4_OP_RES_SETUP(c, opset_ssv);
 	nfsstat4 *status = &res->ssr_status;
 	SET_SSV4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, SET_SSV4res_u, ssr_resok4);

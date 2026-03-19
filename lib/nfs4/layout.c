@@ -17,11 +17,8 @@
 
 void nfs4_op_layoutget(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LAYOUTGET4args *args = NFS4_OP_ARG_SETUP(c, ph, oplayoutget);
-	LAYOUTGET4res *res = NFS4_OP_RES_SETUP(c, ph, oplayoutget);
+	LAYOUTGET4args *args = NFS4_OP_ARG_SETUP(c, oplayoutget);
+	LAYOUTGET4res *res = NFS4_OP_RES_SETUP(c, oplayoutget);
 	nfsstat4 *status = &res->logr_status;
 	LAYOUTGET4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, LAYOUTGET4res_u, logr_resok4);
@@ -35,11 +32,8 @@ void nfs4_op_layoutget(struct compound *c)
 
 void nfs4_op_layoutcommit(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LAYOUTCOMMIT4args *args = NFS4_OP_ARG_SETUP(c, ph, oplayoutcommit);
-	LAYOUTCOMMIT4res *res = NFS4_OP_RES_SETUP(c, ph, oplayoutcommit);
+	LAYOUTCOMMIT4args *args = NFS4_OP_ARG_SETUP(c, oplayoutcommit);
+	LAYOUTCOMMIT4res *res = NFS4_OP_RES_SETUP(c, oplayoutcommit);
 	nfsstat4 *status = &res->locr_status;
 	LAYOUTCOMMIT4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, LAYOUTCOMMIT4res_u, locr_resok4);
@@ -53,11 +47,8 @@ void nfs4_op_layoutcommit(struct compound *c)
 
 void nfs4_op_layoutreturn(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LAYOUTRETURN4args *args = NFS4_OP_ARG_SETUP(c, ph, oplayoutreturn);
-	LAYOUTRETURN4res *res = NFS4_OP_RES_SETUP(c, ph, oplayoutreturn);
+	LAYOUTRETURN4args *args = NFS4_OP_ARG_SETUP(c, oplayoutreturn);
+	LAYOUTRETURN4res *res = NFS4_OP_RES_SETUP(c, oplayoutreturn);
 	nfsstat4 *status = &res->lorr_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -68,11 +59,8 @@ void nfs4_op_layoutreturn(struct compound *c)
 
 void nfs4_op_getdeviceinfo(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	GETDEVICEINFO4args *args = NFS4_OP_ARG_SETUP(c, ph, opgetdeviceinfo);
-	GETDEVICEINFO4res *res = NFS4_OP_RES_SETUP(c, ph, opgetdeviceinfo);
+	GETDEVICEINFO4args *args = NFS4_OP_ARG_SETUP(c, opgetdeviceinfo);
+	GETDEVICEINFO4res *res = NFS4_OP_RES_SETUP(c, opgetdeviceinfo);
 	nfsstat4 *status = &res->gdir_status;
 	GETDEVICEINFO4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, GETDEVICEINFO4res_u, gdir_resok4);
@@ -86,11 +74,8 @@ void nfs4_op_getdeviceinfo(struct compound *c)
 
 void nfs4_op_getdevicelist(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	GETDEVICELIST4args *args = NFS4_OP_ARG_SETUP(c, ph, opgetdevicelist);
-	GETDEVICELIST4res *res = NFS4_OP_RES_SETUP(c, ph, opgetdevicelist);
+	GETDEVICELIST4args *args = NFS4_OP_ARG_SETUP(c, opgetdevicelist);
+	GETDEVICELIST4res *res = NFS4_OP_RES_SETUP(c, opgetdevicelist);
 	nfsstat4 *status = &res->gdlr_status;
 	GETDEVICELIST4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, GETDEVICELIST4res_u, gdlr_resok4);
@@ -104,11 +89,8 @@ void nfs4_op_getdevicelist(struct compound *c)
 
 void nfs4_op_layouterror(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LAYOUTERROR4args *args = NFS4_OP_ARG_SETUP(c, ph, oplayouterror);
-	LAYOUTERROR4res *res = NFS4_OP_RES_SETUP(c, ph, oplayouterror);
+	LAYOUTERROR4args *args = NFS4_OP_ARG_SETUP(c, oplayouterror);
+	LAYOUTERROR4res *res = NFS4_OP_RES_SETUP(c, oplayouterror);
 	nfsstat4 *status = &res->ler_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -119,11 +101,8 @@ void nfs4_op_layouterror(struct compound *c)
 
 void nfs4_op_layoutstats(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LAYOUTSTATS4args *args = NFS4_OP_ARG_SETUP(c, ph, oplayoutstats);
-	LAYOUTSTATS4res *res = NFS4_OP_RES_SETUP(c, ph, oplayoutstats);
+	LAYOUTSTATS4args *args = NFS4_OP_ARG_SETUP(c, oplayoutstats);
+	LAYOUTSTATS4res *res = NFS4_OP_RES_SETUP(c, oplayoutstats);
 	nfsstat4 *status = &res->lsr_status;
 
 	*status = NFS4ERR_NOTSUPP;

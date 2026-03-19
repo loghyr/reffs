@@ -17,11 +17,8 @@
 
 void nfs4_op_getxattr(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	GETXATTR4args *args = NFS4_OP_ARG_SETUP(c, ph, opgetxattr);
-	GETXATTR4res *res = NFS4_OP_RES_SETUP(c, ph, opgetxattr);
+	GETXATTR4args *args = NFS4_OP_ARG_SETUP(c, opgetxattr);
+	GETXATTR4res *res = NFS4_OP_RES_SETUP(c, opgetxattr);
 	nfsstat4 *status = &res->gxr_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -32,11 +29,8 @@ void nfs4_op_getxattr(struct compound *c)
 
 void nfs4_op_setxattr(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	SETXATTR4args *args = NFS4_OP_ARG_SETUP(c, ph, opsetxattr);
-	SETXATTR4res *res = NFS4_OP_RES_SETUP(c, ph, opsetxattr);
+	SETXATTR4args *args = NFS4_OP_ARG_SETUP(c, opsetxattr);
+	SETXATTR4res *res = NFS4_OP_RES_SETUP(c, opsetxattr);
 	nfsstat4 *status = &res->sxr_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -47,29 +41,20 @@ void nfs4_op_setxattr(struct compound *c)
 
 void nfs4_op_listxattrs(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	LISTXATTRS4args *args = NFS4_OP_ARG_SETUP(c, ph, oplistxattrs);
-	LISTXATTRS4res *res = NFS4_OP_RES_SETUP(c, ph, oplistxattrs);
+	LISTXATTRS4args *args = NFS4_OP_ARG_SETUP(c, oplistxattrs);
+	LISTXATTRS4res *res = NFS4_OP_RES_SETUP(c, oplistxattrs);
 	nfsstat4 *status = &res->lxr_status;
-	LISTXATTRS4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, LISTXATTRS4res_u, lxr_value);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
+	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_removexattr(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	REMOVEXATTR4args *args = NFS4_OP_ARG_SETUP(c, ph, opremovexattr);
-	REMOVEXATTR4res *res = NFS4_OP_RES_SETUP(c, ph, opremovexattr);
+	REMOVEXATTR4args *args = NFS4_OP_ARG_SETUP(c, opremovexattr);
+	REMOVEXATTR4res *res = NFS4_OP_RES_SETUP(c, opremovexattr);
 	nfsstat4 *status = &res->rxr_status;
 
 	*status = NFS4ERR_NOTSUPP;

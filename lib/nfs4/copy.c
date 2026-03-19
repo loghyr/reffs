@@ -17,11 +17,8 @@
 
 void nfs4_op_copy(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	COPY4args *args = NFS4_OP_ARG_SETUP(c, ph, opcopy);
-	COPY4res *res = NFS4_OP_RES_SETUP(c, ph, opcopy);
+	COPY4args *args = NFS4_OP_ARG_SETUP(c, opcopy);
+	COPY4res *res = NFS4_OP_RES_SETUP(c, opcopy);
 	nfsstat4 *status = &res->cr_status;
 	COPY4resok *resok = NFS4_OP_RESOK_SETUP(res, COPY4res_u, cr_resok4);
 
@@ -34,11 +31,8 @@ void nfs4_op_copy(struct compound *c)
 
 void nfs4_op_copy_notify(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	COPY_NOTIFY4args *args = NFS4_OP_ARG_SETUP(c, ph, opoffload_notify);
-	COPY_NOTIFY4res *res = NFS4_OP_RES_SETUP(c, ph, opcopy_notify);
+	COPY_NOTIFY4args *args = NFS4_OP_ARG_SETUP(c, opoffload_notify);
+	COPY_NOTIFY4res *res = NFS4_OP_RES_SETUP(c, opcopy_notify);
 	nfsstat4 *status = &res->cnr_status;
 	COPY_NOTIFY4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, COPY_NOTIFY4res_u, resok4);
@@ -52,11 +46,8 @@ void nfs4_op_copy_notify(struct compound *c)
 
 void nfs4_op_clone(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	CLONE4args *args = NFS4_OP_ARG_SETUP(c, ph, opclone);
-	CLONE4res *res = NFS4_OP_RES_SETUP(c, ph, opclone);
+	CLONE4args *args = NFS4_OP_ARG_SETUP(c, opclone);
+	CLONE4res *res = NFS4_OP_RES_SETUP(c, opclone);
 	nfsstat4 *status = &res->cl_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -66,10 +57,7 @@ void nfs4_op_clone(struct compound *c)
 }
 void nfs4_op_offload_cancel(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	OFFLOAD_CANCEL4res *res = NFS4_OP_RES_SETUP(c, ph, opoffload_cancel);
+	OFFLOAD_CANCEL4res *res = NFS4_OP_RES_SETUP(c, opoffload_cancel);
 	nfsstat4 *status = &res->ocr_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -80,10 +68,7 @@ void nfs4_op_offload_cancel(struct compound *c)
 
 void nfs4_op_offload_status(struct compound *c)
 {
-	struct protocol_handler *ph =
-		(struct protocol_handler *)c->c_rt->rt_context;
-
-	OFFLOAD_STATUS4res *res = NFS4_OP_RES_SETUP(c, ph, opoffload_status);
+	OFFLOAD_STATUS4res *res = NFS4_OP_RES_SETUP(c, opoffload_status);
 	nfsstat4 *status = &res->osr_status;
 	OFFLOAD_STATUS4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, OFFLOAD_STATUS4res_u, osr_resok4);
