@@ -95,9 +95,22 @@ out:
 	return mr->fhs_status;
 }
 
+static int mount3_dump(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	mountlist *ml = ph->ph_res;
+
+	TRACE("DUMP: xid=0x%08x", rt->rt_info.ri_xid);
+
+	*ml = NULL;
+
+	return 0;
+}
+
 static int mount3_exports(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	exports *res = ph->ph_res;
 
 	exportnode *en;
 	exportnode *en_head = NULL;
@@ -116,15 +129,17 @@ static int mount3_exports(struct rpc_trans *rt)
 			goto out_unwind;
 
 		en->ex_dir = strdup(sb->sb_path);
-		if (!en->ex_dir)
+		if (!en->ex_dir) {
+			free(en);
 			goto out_unwind;
+		}
 
 		en->ex_next = en_head;
 		en_head = en;
 	}
 	rcu_read_unlock();
 
-	ph->ph_res = en_head;
+	*res = en_head;
 
 	return 0;
 out_unwind:
@@ -145,7 +160,7 @@ struct rpc_operations_handler mount3_operations_handler[] = {
 	RPC_OPERATION_INIT(MOUNTPROC3, MNT, xdr_dirpath, dirpath *,
 			   xdr_mountres3, mountres3, mount3_mnt),
 	RPC_OPERATION_INIT(MOUNTPROC3, DUMP, NULL, NULL, xdr_mountlist,
-			   mountlist, NULL),
+			   mountlist, mount3_dump),
 	RPC_OPERATION_INIT(MOUNTPROC3, UMNT, xdr_dirpath, dirpath *, NULL, NULL,
 			   NULL),
 	RPC_OPERATION_INIT(MOUNTPROC3, UMNTALL, NULL, NULL, NULL, NULL, NULL),
