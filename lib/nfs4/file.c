@@ -21,6 +21,8 @@
 #include "reffs/identity.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
+#include "reffs/dirent.h"
+#include "reffs/lock.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -155,6 +157,16 @@ static void nfs4_write_verf(verifier4 out_verf)
 	server_state_put(ss);
 }
 
+/*
+ * No-op release for the lock owner embedded in open_stateid.  The owner
+ * memory is part of the open_stateid allocation and is freed by the RCU
+ * callback; we never need a separate release action.
+ */
+static void nfs4_open_owner_release(struct urcu_ref *ref)
+{
+	(void)ref;
+}
+
 void nfs4_op_open(struct compound *c)
 {
 	struct protocol_handler *ph =
@@ -165,11 +177,254 @@ void nfs4_op_open(struct compound *c)
 	nfsstat4 *status = &res->status;
 	OPEN4resok *resok = NFS4_OP_RESOK_SETUP(res, OPEN4res_u, resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	struct open_stateid *os = NULL;
+	struct reffs_share *share = NULL;
+	struct inode *child = NULL; /* active ref; owned for CLAIM_NULL */
+	struct reffs_dirent *child_de = NULL;
+	char *name = NULL;
+	int ret;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	/*
+	 * Strip the delegation-want hint bits (upper 24 bits) from
+	 * share_access before any conflict or mode checks.
+	 */
+	uint32_t share_access = args->share_access & OPEN4_SHARE_ACCESS_BOTH;
+	uint32_t share_deny = args->share_deny;
+	bool want_xor_deleg = !!(args->share_access &
+				 OPEN4_SHARE_ACCESS_WANT_OPEN_XOR_DELEGATION);
+
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	if (share_access == 0 || share_deny > OPEN4_SHARE_DENY_BOTH) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	/* Resolve target inode based on claim type. */
+	switch (args->claim.claim) {
+	case CLAIM_FH:
+		/* Current FH is the target file — no lookup needed. */
+		break;
+
+	case CLAIM_NULL: {
+		if (!S_ISDIR(c->c_inode->i_mode)) {
+			*status = NFS4ERR_NOTDIR;
+			goto out;
+		}
+
+		component4 *fname = &args->claim.open_claim4_u.file;
+
+		if (fname->utf8string_len == 0) {
+			*status = NFS4ERR_INVAL;
+			goto out;
+		}
+		if (fname->utf8string_len > REFFS_MAX_NAME) {
+			*status = NFS4ERR_NAMETOOLONG;
+			goto out;
+		}
+		name = strndup(fname->utf8string_val, fname->utf8string_len);
+		if (!name) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+		if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+			*status = NFS4ERR_BADNAME;
+			goto out;
+		}
+
+		ret = inode_access_check(c->c_inode, &c->c_ap, X_OK);
+		if (ret) {
+			*status = errno_to_nfs4(ret, OP_OPEN);
+			goto out;
+		}
+
+		if (!c->c_inode->i_dirent) {
+			ret = inode_reconstruct_path_to_root(c->c_inode);
+			if (ret) {
+				*status = NFS4ERR_STALE;
+				goto out;
+			}
+		}
+
+		child_de =
+			dirent_load_child_by_name(c->c_inode->i_dirent, name);
+		if (!child_de) {
+			*status = NFS4ERR_NOENT;
+			goto out;
+		}
+
+		child = dirent_ensure_inode(child_de);
+		if (!child) {
+			*status = NFS4ERR_SERVERFAULT;
+			goto out;
+		}
+		break;
+	}
+
+	default:
+		*status = NFS4ERR_NOTSUPP;
+		goto out;
+	}
+
+	/*
+	 * CREATE is not yet supported.  NOCREATE opens on an existing
+	 * file are handled below.
+	 */
+	if (args->openhow.opentype == OPEN4_CREATE) {
+		*status = NFS4ERR_NOTSUPP;
+		goto out;
+	}
+
+	/* The target inode is child (CLAIM_NULL) or c->c_inode (CLAIM_FH). */
+	struct inode *target = child ? child : c->c_inode;
+
+	if (!S_ISREG(target->i_mode)) {
+		*status = S_ISDIR(target->i_mode) ? NFS4ERR_ISDIR :
+						    NFS4ERR_SYMLINK;
+		goto out;
+	}
+
+	/* POSIX access check for the requested modes. */
+	int amode = 0;
+	if (share_access & OPEN4_SHARE_ACCESS_READ)
+		amode |= R_OK;
+	if (share_access & OPEN4_SHARE_ACCESS_WRITE)
+		amode |= W_OK;
+	ret = inode_access_check(target, &c->c_ap, amode);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_OPEN);
+		goto out;
+	}
+
+	/* Allocate the open stateid. */
+	struct client *client =
+		c->c_nfs4_client ? nfs4_client_to_client(c->c_nfs4_client) :
+				   NULL;
+	os = open_stateid_alloc(target, client);
+	if (!os) {
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+
+	/*
+	 * Initialise the embedded lock owner.  The initial urcu_ref count
+	 * of 1 is the "state ref" that keeps the stateid alive until CLOSE
+	 * explicitly drops it.
+	 */
+	urcu_ref_init(&os->os_owner.lo_ref);
+	os->os_owner.lo_release = nfs4_open_owner_release;
+	os->os_owner.lo_match = NULL;
+	CDS_INIT_LIST_HEAD(&os->os_owner.lo_list);
+
+	/* Build share reservation.  The share holds a ref on the owner. */
+	share = calloc(1, sizeof(*share));
+	if (!share) {
+		stateid_inode_unhash(&os->os_stid);
+		stateid_client_unhash(&os->os_stid);
+		stateid_put(&os->os_stid);
+		os = NULL;
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+	urcu_ref_get(&os->os_owner.lo_ref);
+	share->s_owner = &os->os_owner;
+	share->s_inode = inode_active_get(target);
+	share->s_access = share_access;
+	share->s_mode = share_deny;
+
+	pthread_mutex_lock(&target->i_lock_mutex);
+	ret = reffs_share_add(target, share, NULL);
+	pthread_mutex_unlock(&target->i_lock_mutex);
+	if (ret) {
+		/*
+		 * Conflict: reffs_share_add returned -EACCES without
+		 * consuming the share.  Free it and abort.
+		 */
+		reffs_share_free(share);
+		share = NULL;
+		stateid_inode_unhash(&os->os_stid);
+		stateid_client_unhash(&os->os_stid);
+		stateid_put(&os->os_stid);
+		os = NULL;
+		*status = NFS4ERR_SHARE_DENIED;
+		goto out;
+	}
+	share = NULL; /* ownership transferred to inode's share list */
+
+	/*
+	 * Encode access and deny flags into os_state:
+	 *   bits 0-1: OPEN4_SHARE_ACCESS_* (R/W)
+	 *   bits 2-3: OPEN4_SHARE_DENY_* (R/W), shifted left by 2
+	 */
+	os->os_state = (uint64_t)share_access | ((uint64_t)share_deny << 2);
+
+	/*
+	 * RFC 5661 §8.1.3: open stateid seqid starts at 1.
+	 * stateid_assign() initialises s_seqid to 0; bump it now.
+	 */
+	__atomic_fetch_add(&os->os_stid.s_seqid, 1, __ATOMIC_SEQ_CST);
+	pack_stateid4(&resok->stateid, &os->os_stid);
+
+	/*
+	 * For CLAIM_NULL: switch the current FH from directory to the
+	 * opened file, mirroring what LOOKUP does.
+	 */
+	if (child) {
+		inode_active_put(c->c_inode);
+		c->c_inode = child;
+		c->c_curr_nfh.nfh_ino = child->i_ino;
+		child = NULL; /* ownership transferred */
+	}
+
+	/*
+	 * Give the compound a ref on the open stateid.  The initial "state
+	 * ref" (refcount=1 from stateid_assign) remains and keeps the
+	 * stateid alive after this compound completes.
+	 */
+	stateid_put(c->c_curr_stid);
+	c->c_curr_stid = stateid_get(&os->os_stid);
+
+	resok->cinfo.atomic = FALSE;
+	resok->cinfo.before = 0;
+	resok->cinfo.after = 0;
+
+	/*
+	 * OPEN4_RESULT_NO_OPEN_STATEID is set only when the server grants
+	 * a delegation instead of an open stateid (RFC 9754).  We always
+	 * return an open stateid, so this flag is never set.
+	 */
+	resok->rflags = OPEN4_RESULT_LOCKTYPE_POSIX;
+
+	resok->attrset.bitmap4_len = 0;
+	resok->attrset.bitmap4_val = NULL;
+
+	/*
+	 * We never grant delegations.  Inform the client with NONE_EXT +
+	 * WND4_RESOURCE if it requested one; NONE otherwise.
+	 */
+	uint32_t want_deleg = args->share_access &
+			      OPEN4_SHARE_ACCESS_WANT_DELEG_MASK;
+	if (want_deleg && want_deleg != OPEN4_SHARE_ACCESS_WANT_NO_DELEG &&
+	    want_deleg != OPEN4_SHARE_ACCESS_WANT_CANCEL && !want_xor_deleg) {
+		resok->delegation.delegation_type = OPEN_DELEGATE_NONE_EXT;
+		resok->delegation.open_delegation4_u.od_whynone.ond_why =
+			WND4_RESOURCE;
+	} else {
+		resok->delegation.delegation_type = OPEN_DELEGATE_NONE;
+	}
+
+	*status = NFS4_OK;
+
+out:
+	inode_active_put(child); /* NULL-safe; only set if not transferred */
+	dirent_put(child_de);
+	free(name);
+	LOG("%s status=%s(%d) claim=%d access=%u deny=%u", __func__,
+	    nfs4_err_name(*status), *status, args->claim.claim, share_access,
+	    share_deny);
 }
 
 void nfs4_op_open_confirm(struct compound *c)
@@ -201,11 +456,109 @@ void nfs4_op_open_downgrade(struct compound *c)
 	OPEN_DOWNGRADE4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, OPEN_DOWNGRADE4res_u, resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	if (stateid4_is_special(&args->open_stateid)) {
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	uint32_t seqid, id, type, cookie;
+	unpack_stateid4(&args->open_stateid, &seqid, &id, &type, &cookie);
+
+	if (type != Open_Stateid) {
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	struct stateid *stid = stateid_find(c->c_inode, id);
+	if (!stid || stid->s_tag != Open_Stateid || stid->s_cookie != cookie) {
+		stateid_put(stid);
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	if (c->c_nfs4_client &&
+	    stid->s_client != nfs4_client_to_client(c->c_nfs4_client)) {
+		stateid_put(stid);
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	uint32_t cur_seqid = __atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
+	if (seqid != 0) {
+		if (seqid < cur_seqid) {
+			stateid_put(stid);
+			*status = NFS4ERR_OLD_STATEID;
+			goto out;
+		}
+		if (seqid > cur_seqid) {
+			stateid_put(stid);
+			*status = NFS4ERR_BAD_STATEID;
+			goto out;
+		}
+	}
+
+	struct open_stateid *os = stid_to_open(stid);
+
+	/*
+	 * New access/deny must be a subset of current.
+	 * os_state bits 0-1: access (R/W), bits 2-3: deny (R/W).
+	 */
+	uint32_t new_access = args->share_access & OPEN4_SHARE_ACCESS_BOTH;
+	uint32_t new_deny = args->share_deny & OPEN4_SHARE_DENY_BOTH;
+	uint32_t cur_access = (uint32_t)(os->os_state & 0x3);
+	uint32_t cur_deny = (uint32_t)((os->os_state >> 2) & 0x3);
+
+	if ((new_access & ~cur_access) || (new_deny & ~cur_deny)) {
+		stateid_put(stid);
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	/*
+	 * Build a new share with the downgraded modes.  reffs_share_add()
+	 * detects the same owner and updates the existing entry in place,
+	 * then frees the new share struct.
+	 */
+	struct reffs_share *share = calloc(1, sizeof(*share));
+	if (!share) {
+		stateid_put(stid);
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+	urcu_ref_get(&os->os_owner.lo_ref);
+	share->s_owner = &os->os_owner;
+	share->s_inode = inode_active_get(c->c_inode);
+	share->s_access = new_access;
+	share->s_mode = new_deny;
+
+	pthread_mutex_lock(&c->c_inode->i_lock_mutex);
+	reffs_share_add(c->c_inode, share,
+			NULL); /* always succeeds: downgrade */
+	pthread_mutex_unlock(&c->c_inode->i_lock_mutex);
+
+	/* Update os_state to reflect the new modes. */
+	os->os_state = (uint64_t)new_access | ((uint64_t)new_deny << 2);
+
+	/* Bump seqid (RFC 5661 §8.1.3.1). */
+	__atomic_fetch_add(&stid->s_seqid, 1, __ATOMIC_SEQ_CST);
+	pack_stateid4(&resok->open_stateid, stid);
+
+	/* Update c_curr_stid to the downgraded stateid. */
+	stateid_put(c->c_curr_stid);
+	c->c_curr_stid = stid; /* transfer the find ref */
+
+	*status = NFS4_OK;
+	LOG("%s status=%s(%d) access=%u deny=%u", __func__,
+	    nfs4_err_name(*status), *status, new_access, new_deny);
+	return;
+
+out:
+	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_close(struct compound *c)
@@ -217,10 +570,91 @@ void nfs4_op_close(struct compound *c)
 	CLOSE4res *res = NFS4_OP_RES_SETUP(c, ph, opclose);
 	nfsstat4 *status = &res->status;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	if (stateid4_is_special(&args->open_stateid)) {
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	uint32_t seqid, id, type, cookie;
+	unpack_stateid4(&args->open_stateid, &seqid, &id, &type, &cookie);
+
+	if (type != Open_Stateid) {
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	struct stateid *stid = stateid_find(c->c_inode, id);
+	if (!stid || stid->s_tag != Open_Stateid || stid->s_cookie != cookie) {
+		stateid_put(stid);
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	if (c->c_nfs4_client &&
+	    stid->s_client != nfs4_client_to_client(c->c_nfs4_client)) {
+		stateid_put(stid);
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	uint32_t cur_seqid = __atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
+	if (seqid != 0) {
+		if (seqid < cur_seqid) {
+			stateid_put(stid);
+			*status = NFS4ERR_OLD_STATEID;
+			goto out;
+		}
+		if (seqid > cur_seqid) {
+			stateid_put(stid);
+			*status = NFS4ERR_BAD_STATEID;
+			goto out;
+		}
+	}
+
+	struct open_stateid *os = stid_to_open(stid);
+
+	/* Remove the share reservation. */
+	pthread_mutex_lock(&c->c_inode->i_lock_mutex);
+	reffs_share_remove(c->c_inode, &os->os_owner, NULL);
+	pthread_mutex_unlock(&c->c_inode->i_lock_mutex);
+
+	/*
+	 * Unhash so that future stateid_find() calls fail.  This must
+	 * happen before we drop the state ref so no new caller can race.
+	 */
+	stateid_inode_unhash(stid);
+	stateid_client_unhash(stid);
+
+	/*
+	 * If this compound's c_curr_stid points here, clear it so
+	 * compound_free() does not do an extra put.
+	 */
+	if (c->c_curr_stid == stid) {
+		stateid_put(stid); /* put the c_curr_stid ref */
+		c->c_curr_stid = NULL;
+	}
+
+	/*
+	 * Drop the stateid_find() ref and the initial "state ref" from
+	 * open_stateid_alloc().  After both puts the stateid is freed
+	 * via call_rcu().
+	 */
+	stateid_put(stid); /* find ref */
+	stateid_put(stid); /* state ref → ref=0 → freed */
+
+	/*
+	 * RFC 5661 §18.2.4: return a dead stateid (seqid=0, other=zeros).
+	 */
+	res->CLOSE4res_u.open_stateid = stateid4_anonymous;
+	*status = NFS4_OK;
+
+out:
+	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_read(struct compound *c)
@@ -486,11 +920,28 @@ void nfs4_op_commit(struct compound *c)
 	nfsstat4 *status = &res->status;
 	COMMIT4resok *resok = NFS4_OP_RESOK_SETUP(res, COMMIT4res_u, resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	if (!S_ISREG(c->c_inode->i_mode)) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	/*
+	 * All writes are already FILE_SYNC4, so there is nothing to flush.
+	 * Return the stable write verifier so the client can verify
+	 * stability across server restarts.
+	 */
+	nfs4_write_verf(resok->writeverf);
+	*status = NFS4_OK;
+
+out:
+	LOG("%s status=%s(%d) offset=%llu count=%u", __func__,
+	    nfs4_err_name(*status), *status, (unsigned long long)args->offset,
+	    args->count);
 }
 
 void nfs4_op_seek(struct compound *c)

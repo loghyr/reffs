@@ -11,9 +11,13 @@
 #include "nfsv42_names.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
+#include "reffs/inode.h"
+#include "reffs/stateid.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "nfs4/stateid.h"
+#include "nfs4/client.h"
 
 void nfs4_op_delegpurge(struct compound *c)
 {
@@ -39,10 +43,55 @@ void nfs4_op_delegreturn(struct compound *c)
 	DELEGRETURN4res *res = NFS4_OP_RES_SETUP(c, ph, opdelegreturn);
 	nfsstat4 *status = &res->status;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	if (stateid4_is_special(&args->deleg_stateid)) {
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	uint32_t seqid, id, type, cookie;
+	unpack_stateid4(&args->deleg_stateid, &seqid, &id, &type, &cookie);
+
+	if (type != Delegation_Stateid) {
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	struct stateid *stid = stateid_find(c->c_inode, id);
+	if (!stid || stid->s_tag != Delegation_Stateid ||
+	    stid->s_cookie != cookie) {
+		stateid_put(stid);
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	if (c->c_nfs4_client &&
+	    stid->s_client != nfs4_client_to_client(c->c_nfs4_client)) {
+		stateid_put(stid);
+		*status = NFS4ERR_BAD_STATEID;
+		goto out;
+	}
+
+	/* Unhash and free the delegation stateid. */
+	stateid_inode_unhash(stid);
+	stateid_client_unhash(stid);
+
+	if (c->c_curr_stid == stid) {
+		stateid_put(stid); /* put c_curr_stid ref */
+		c->c_curr_stid = NULL;
+	}
+
+	stateid_put(stid); /* find ref */
+	stateid_put(stid); /* state ref → freed */
+
+	*status = NFS4_OK;
+
+out:
+	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_get_dir_delegation(struct compound *c)
