@@ -25,20 +25,16 @@ void nfs4_op_getfh(struct compound *c)
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		goto out;
+		return;
 	}
 
 	resok->object.nfs_fh4_val =
 		memdup(&c->c_curr_nfh, sizeof(c->c_curr_nfh));
 	if (!resok->object.nfs_fh4_val) {
 		*status = NFS4ERR_DELAY; // Yes, not valid, but a missing error!
-		goto out;
+		return;
 	}
 	resok->object.nfs_fh4_len = sizeof(c->c_curr_nfh);
-
-out:
-	LOG("%s status=%s(%d) res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)res, (void *)resok);
 }
 
 void nfs4_op_putfh(struct compound *c)
@@ -52,17 +48,17 @@ void nfs4_op_putfh(struct compound *c)
 
 	if (args->object.nfs_fh4_len != sizeof(c->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
-		goto out;
+		return;
 	}
 
 	if (network_file_handle_empty(nfh)) {
 		*status = NFS4ERR_BADHANDLE;
-		goto out;
+		return;
 	}
 
 	if (nfh->nfh_sb == 0 || nfh->nfh_ino == 0) {
 		*status = NFS4ERR_BADHANDLE;
-		goto out;
+		return;
 	}
 
 	if (nfh->nfh_sb != c->c_curr_nfh.nfh_sb) {
@@ -70,7 +66,7 @@ void nfs4_op_putfh(struct compound *c)
 		c->c_curr_sb = super_block_find(nfh->nfh_sb);
 		if (!c->c_curr_sb) {
 			*status = NFS4ERR_STALE;
-			goto out;
+			return;
 		}
 
 		inode_active_put(c->c_inode);
@@ -87,16 +83,12 @@ void nfs4_op_putfh(struct compound *c)
 		c->c_inode = inode_find(c->c_curr_sb, c->c_curr_nfh.nfh_ino);
 		if (!c->c_inode) {
 			*status = NFS4ERR_STALE;
-			goto out;
+			return;
 		}
 	}
 
 	stateid_put(c->c_curr_stid);
 	c->c_curr_stid = NULL;
-
-out:
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_putpubfh(struct compound *c)
@@ -109,7 +101,7 @@ void nfs4_op_putpubfh(struct compound *c)
 		c->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 		if (!c->c_curr_sb) {
 			*status = NFS4ERR_SERVERFAULT;
-			goto out;
+			return;
 		}
 		inode_active_put(c->c_inode);
 		c->c_inode = NULL;
@@ -123,9 +115,6 @@ void nfs4_op_putpubfh(struct compound *c)
 
 	stateid_put(c->c_curr_stid);
 	c->c_curr_stid = NULL;
-out:
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
 }
 
 void nfs4_op_putrootfh(struct compound *c)
@@ -138,7 +127,7 @@ void nfs4_op_putrootfh(struct compound *c)
 		c->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 		if (!c->c_curr_sb) {
 			*status = NFS4ERR_SERVERFAULT;
-			goto out;
+			return;
 		}
 		inode_active_put(c->c_inode);
 		c->c_inode = NULL;
@@ -154,15 +143,12 @@ void nfs4_op_putrootfh(struct compound *c)
 		c->c_inode = inode_find(c->c_curr_sb, c->c_curr_nfh.nfh_ino);
 		if (!c->c_inode) {
 			*status = NFS4ERR_STALE;
-			goto out;
+			return;
 		}
 	}
 
 	stateid_put(c->c_curr_stid);
 	c->c_curr_stid = NULL;
-out:
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
 }
 
 void nfs4_op_restorefh(struct compound *c)
@@ -172,7 +158,7 @@ void nfs4_op_restorefh(struct compound *c)
 
 	if (network_file_handle_empty(&c->c_saved_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		goto out;
+		return;
 	}
 
 	super_block_put(c->c_curr_sb);
@@ -185,17 +171,13 @@ void nfs4_op_restorefh(struct compound *c)
 		c->c_inode = inode_find(c->c_curr_sb, c->c_curr_nfh.nfh_ino);
 		if (!c->c_inode) {
 			*status = NFS4ERR_STALE;
-			goto out;
+			return;
 		}
 	}
 
 	stateid_put(c->c_curr_stid);
 	c->c_curr_stid = stateid_get(c->c_saved_stid);
 	verify_msg(c->c_curr_stid, "Could not get loaded stateid");
-
-out:
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
 }
 
 void nfs4_op_savefh(struct compound *c)
@@ -205,14 +187,14 @@ void nfs4_op_savefh(struct compound *c)
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		goto out;
+		return;
 	}
 
 	super_block_put(c->c_saved_sb);
 	c->c_saved_sb = super_block_get(c->c_curr_sb);
 	if (!c->c_saved_sb) {
 		*status = NFS4ERR_DELAY;
-		goto out;
+		return;
 	}
 
 	c->c_saved_nfh = c->c_curr_nfh;
@@ -220,8 +202,4 @@ void nfs4_op_savefh(struct compound *c)
 	stateid_put(c->c_saved_stid);
 	c->c_saved_stid = stateid_get(c->c_curr_stid);
 	verify_msg(c->c_saved_stid, "Could not get loaded stateid");
-
-out:
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
 }

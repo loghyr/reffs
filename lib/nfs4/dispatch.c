@@ -145,6 +145,7 @@ void dispatch_compound(struct compound *c)
 		resop->resop = argop->argop;
 		if (argop->argop < OP_MAX && op_table[argop->argop]) {
 			op_table[argop->argop](c);
+			trace_nfs4_compound_op(c, __func__, __LINE__);
 		} else {
 			nfs4_op_illegal(c);
 		}

@@ -329,46 +329,35 @@ void nfs4_op_exchange_id(struct compound *c)
 	}
 	resok->eir_state_protect.spr_how = SP4_NONE;
 
-	/*
-	 * Both so_major_id_val and eir_server_scope_val must be calloc()'d:
-	 * XDR free will call free() on each pointer independently, so they
-	 * need separate heap allocations even though they hold the same string.
-	 * The source string lives in ss for the server's lifetime.
-	 */
-	{
-		char *major_id = calloc(1, ss->ss_owner_id_len + 1);
-		char *scope = calloc(1, ss->ss_owner_id_len + 1);
+	char *major_id = calloc(1, ss->ss_owner_id_len + 1);
+	char *scope = calloc(1, ss->ss_owner_id_len + 1);
 
-		if (!major_id || !scope) {
-			free(major_id);
-			free(scope);
-			*status = NFS4ERR_SERVERFAULT;
-			goto out;
-		}
-		memcpy(major_id, ss->ss_owner_id, ss->ss_owner_id_len);
-		memcpy(scope, ss->ss_owner_id, ss->ss_owner_id_len);
-
-		resok->eir_server_owner.so_minor_id = 0;
-		resok->eir_server_owner.so_major_id.so_major_id_val = major_id;
-		resok->eir_server_owner.so_major_id.so_major_id_len =
-			ss->ss_owner_id_len;
-
-		resok->eir_server_scope.eir_server_scope_val = scope;
-		resok->eir_server_scope.eir_server_scope_len =
-			ss->ss_owner_id_len;
+	if (!major_id || !scope) {
+		free(major_id);
+		free(scope);
+		*status = NFS4ERR_SERVERFAULT;
+		goto out;
 	}
+	memcpy(major_id, ss->ss_owner_id, ss->ss_owner_id_len);
+	memcpy(scope, ss->ss_owner_id, ss->ss_owner_id_len);
+
+	resok->eir_server_owner.so_minor_id = 0;
+	resok->eir_server_owner.so_major_id.so_major_id_val = major_id;
+	resok->eir_server_owner.so_major_id.so_major_id_len =
+		ss->ss_owner_id_len;
+
+	resok->eir_server_scope.eir_server_scope_val = scope;
+	resok->eir_server_scope.eir_server_scope_len = ss->ss_owner_id_len;
 
 	resok->eir_server_impl_id.eir_server_impl_id_val = NULL;
 	resok->eir_server_impl_id.eir_server_impl_id_len = 0;
 
 	c->c_nfs4_client = nc;
 	nc = NULL;
-	*status = NFS4_OK;
 
 out:
 	server_state_put(ss);
 	nfs4_client_put(nc);
-	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_create_session(struct compound *c)
@@ -427,14 +416,9 @@ void nfs4_op_create_session(struct compound *c)
 	resok->csr_back_chan_attrs.ca_rdma_ird.ca_rdma_ird_len = 0;
 	resok->csr_back_chan_attrs.ca_rdma_ird.ca_rdma_ird_val = NULL;
 
-	*status = NFS4_OK;
-
 out:
 	nfs4_session_put(ns);
 	nfs4_client_put(nc);
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
 }
 
 void nfs4_op_destroy_session(struct compound *c)
@@ -458,12 +442,9 @@ void nfs4_op_destroy_session(struct compound *c)
 	}
 
 	nfs4_session_unhash(ns);
-	*status = NFS4_OK;
 
 out:
 	nfs4_session_put(ns);
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_sequence(struct compound *c)
@@ -471,8 +452,8 @@ void nfs4_op_sequence(struct compound *c)
 	SEQUENCE4args *args = NFS4_OP_ARG_SETUP(c, opsequence);
 	SEQUENCE4res *res = NFS4_OP_RES_SETUP(c, opsequence);
 	nfsstat4 *status = &res->sr_status;
-	SEQUENCE4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, SEQUENCE4res_u, sr_resok4);
+	// SEQUENCE4resok *resok =
+	//		NFS4_OP_RESOK_SETUP(res, SEQUENCE4res_u, sr_resok4);
 
 	struct nfs4_session *ns = NULL;
 	struct nfs4_slot *slot;
@@ -542,14 +523,8 @@ void nfs4_op_sequence(struct compound *c)
 	c->c_nfs4_client = nfs4_client_get(ns->ns_client);
 	ns = NULL; /* ref transferred to c_session */
 
-	*status = NFS4_OK;
-	c->c_res->status = NFS4_OK;
-
 out:
 	nfs4_session_put(ns);
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
 }
 
 void nfs4_op_renew(struct compound *c)
@@ -624,12 +599,10 @@ void nfs4_op_destroy_clientid(struct compound *c)
 
 	nfs4_client_expire(ss, nc);
 	nc = NULL;
-	*status = NFS4_OK;
 
 out:
 	server_state_put(ss);
 	nfs4_client_put(nc);
-	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_reclaim_complete(struct compound *c)
@@ -667,7 +640,6 @@ void nfs4_op_reclaim_complete(struct compound *c)
 
 out:
 	server_state_put(ss);
-	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_bind_conn_to_session(struct compound *c)
