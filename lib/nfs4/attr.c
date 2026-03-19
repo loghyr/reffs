@@ -3415,11 +3415,50 @@ void nfs4_op_access(struct compound *c)
 	nfsstat4 *status = &res->status;
 	ACCESS4resok *resok = NFS4_OP_RESOK_SETUP(res, ACCESS4res_u, resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	if (!c->c_inode) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	/*
+	 * Map each requested ACCESS4 bit to a POSIX mode check.
+	 * Every bit we can evaluate goes into resok->supported;
+	 * bits the caller actually holds go into resok->access.
+	 *
+	 * ACCESS4_READ    → R_OK
+	 * ACCESS4_LOOKUP  → X_OK  (directory search)
+	 * ACCESS4_MODIFY  → W_OK
+	 * ACCESS4_EXTEND  → W_OK  (append / grow)
+	 * ACCESS4_DELETE  → W_OK  (write on the object)
+	 * ACCESS4_EXECUTE → X_OK  (file execute)
+	 */
+	static const struct {
+		uint32_t bit;
+		int mode;
+	} checks[] = {
+		{ ACCESS4_READ, R_OK },	  { ACCESS4_LOOKUP, X_OK },
+		{ ACCESS4_MODIFY, W_OK }, { ACCESS4_EXTEND, W_OK },
+		{ ACCESS4_DELETE, W_OK }, { ACCESS4_EXECUTE, X_OK },
+	};
+
+	resok->supported = 0;
+	resok->access = 0;
+
+	for (size_t i = 0; i < sizeof(checks) / sizeof(checks[0]); i++) {
+		if (!(args->access & checks[i].bit))
+			continue;
+		resok->supported |= checks[i].bit;
+		if (inode_access_check(c->c_inode, &c->c_ap, checks[i].mode) ==
+		    0)
+			resok->access |= checks[i].bit;
+	}
+
+	*status = NFS4_OK;
+
+out:
+	LOG("%s status=%s(%d) access=0x%x supported=0x%x access_granted=0x%x",
+	    __func__, nfs4_err_name(*status), *status, args->access,
+	    resok->supported, resok->access);
 }
 
 void nfs4_op_access_mask(struct compound *c)
