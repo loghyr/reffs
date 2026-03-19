@@ -65,6 +65,8 @@ static void nfs4_session_free_rcu(struct rcu_head *rcu)
 		free(ns->ns_slots[i].sl_reply);
 	}
 	free(ns->ns_slots);
+	__atomic_fetch_sub(&ns->ns_client->nc_session_count, 1,
+			   __ATOMIC_RELAXED);
 	nfs4_client_put(ns->ns_client);
 	free(ns);
 }
@@ -205,6 +207,7 @@ struct nfs4_session *nfs4_session_alloc(struct nfs4_client *nc,
 	ns->ns_client = nfs4_client_get(nc);
 	if (!ns->ns_client)
 		goto err_free_slots;
+	__atomic_fetch_add(&nc->nc_session_count, 1, __ATOMIC_RELAXED);
 
 	/* Set up ref counting and callbacks. */
 	cds_lfht_node_init(&ns->ns_node);
@@ -625,14 +628,46 @@ void nfs4_op_destroy_clientid(struct compound *c)
 	struct protocol_handler *ph =
 		(struct protocol_handler *)c->c_rt->rt_context;
 
+	DESTROY_CLIENTID4args *args =
+		NFS4_OP_ARG_SETUP(c, ph, opdestroy_clientid);
 	DESTROY_CLIENTID4res *res =
 		NFS4_OP_RES_SETUP(c, ph, opdestroy_clientid);
 	nfsstat4 *status = &res->dcr_status;
 
-	*status = NFS4ERR_NOTSUPP;
+	u_int num_ops = ((COMPOUND4args *)(ph)->ph_args)->argarray.argarray_len;
+	struct server_state *ss = NULL;
+	struct nfs4_client *nc = NULL;
 
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
+	if (c->c_curr_op == 0 && num_ops > 1) {
+		*status = NFS4ERR_NOT_ONLY_OP;
+		goto out;
+	}
+
+	ss = server_state_find();
+	if (!ss) {
+		*status = NFS4ERR_SERVERFAULT;
+		goto out;
+	}
+
+	nc = nfs4_client_find(args->dca_clientid);
+	if (!nc) {
+		*status = NFS4ERR_STALE_CLIENTID;
+		goto out;
+	}
+
+	if (__atomic_load_n(&nc->nc_session_count, __ATOMIC_ACQUIRE) > 0) {
+		*status = NFS4ERR_CLIENTID_BUSY;
+		goto out;
+	}
+
+	nfs4_client_expire(ss, nc);
+	nc = NULL;
+	*status = NFS4_OK;
+
+out:
+	server_state_put(ss);
+	nfs4_client_put(nc);
+	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_reclaim_complete(struct compound *c)
@@ -646,10 +681,36 @@ void nfs4_op_reclaim_complete(struct compound *c)
 		NFS4_OP_RES_SETUP(c, ph, opreclaim_complete);
 	nfsstat4 *status = &res->rcr_status;
 
-	*status = NFS4ERR_NOTSUPP;
+	struct server_state *ss = NULL;
+	struct nfs4_client *nc = c->c_nfs4_client;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	if (!nc) {
+		*status = NFS4ERR_OP_NOT_IN_SESSION;
+		goto out;
+	}
+
+	ss = server_state_find();
+	if (!ss) {
+		*status = NFS4ERR_SERVERFAULT;
+		goto out;
+	}
+
+	/*
+	 * rca_one_fs: per-filesystem reclaim complete — not meaningful
+	 * for a DS; accept and ignore without touching the counter.
+	 */
+	if (!args->rca_one_fs) {
+		bool was_reclaiming = __atomic_exchange_n(
+			&nc->nc_needs_reclaim, false, __ATOMIC_ACQ_REL);
+		if (was_reclaiming)
+			server_reclaim_complete(ss);
+	}
+
+	*status = NFS4_OK;
+
+out:
+	server_state_put(ss);
+	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_bind_conn_to_session(struct compound *c)

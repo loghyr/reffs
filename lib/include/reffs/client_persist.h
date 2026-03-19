@@ -95,6 +95,12 @@ int client_identity_load(const char *state_dir,
 /* client_incarnations file                                            */
 
 /*
+ * Maximum number of incarnation records that can be loaded in one pass.
+ * Sized to comfortably exceed any realistic client count per server instance.
+ */
+#define CLIENT_INCARNATION_MAX 1024
+
+/*
  * client_incarnation_load - read all incarnation records into a
  * caller-supplied array.  *count is set to the number of records read.
  * Returns 0 on success, -ENOENT if no incarnations file exists yet

@@ -35,6 +35,8 @@ struct nfs4_client {
 	uint16_t nc_incarnation;
 	verifier4 nc_verifier; /* EXCHANGE_ID verifier */
 	bool nc_confirmed;
+	bool nc_needs_reclaim; /* true until RECLAIM_COMPLETE received */
+	uint32_t nc_session_count; /* atomic: number of active sessions */
 
 	struct client nc_client; /* fs-layer object — keep last */
 };
@@ -87,9 +89,16 @@ void nfs4_client_put(struct nfs4_client *nc);
  * Returns ref-bumped nfs4_client or NULL (not found or I/O error).
  * Caller must client_put().
  */
+/*
+ * out_slot: if non-NULL, set to the slot found in the identity file for this
+ * ownerid, or UINT32_MAX if the ownerid is unknown.  When the return value is
+ * NULL but *out_slot != UINT32_MAX, the ownerid is known but the client has
+ * not yet reconnected this boot (reclaiming client).
+ */
 struct nfs4_client *nfs4_client_find_by_owner(const char *state_dir,
 					      uint16_t boot_seq,
-					      const client_owner4 *owner);
+					      const client_owner4 *owner,
+					      uint32_t *out_slot);
 
 /* ------------------------------------------------------------------ */
 /* clientid4 bit-packing                                               */

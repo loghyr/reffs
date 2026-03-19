@@ -63,6 +63,7 @@ struct server_state {
 	/* Grace period */
 	struct timespec ss_grace_start;
 	uint32_t ss_grace_time; /* seconds */
+	uint32_t ss_unreclaimed; /* atomic: previous-boot clients not yet RECLAIM_COMPLETE'd */
 
 	/*
          * Per-instance subsystem state — moved here from file-scope
@@ -157,6 +158,12 @@ void server_grace_start(struct server_state *ss);
  * Called by grace timer expiry or when all clients have reclaimed.
  */
 void server_grace_end(struct server_state *ss);
+
+/*
+ * server_reclaim_complete - called when a client sends RECLAIM_COMPLETE.
+ * Decrements ss_unreclaimed; calls server_grace_end() when it reaches zero.
+ */
+void server_reclaim_complete(struct server_state *ss);
 
 /* ------------------------------------------------------------------ */
 /* Accessors for protocol layer                                        */

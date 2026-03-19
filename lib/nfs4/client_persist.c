@@ -146,30 +146,56 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 	 * the active incarnation → clientid4 → in-memory client.
 	 * Disk IO here is expected; EXCHANGE_ID is not a fast path.
 	 */
+	uint32_t prev_slot = UINT32_MAX;
 	nc = nfs4_client_find_by_owner(ss->ss_state_dir, server_boot_seq(ss),
-				       owner);
+				       owner, &prev_slot);
 	if (!nc) {
-		/* -------------------------------------------------- */
-		/* New client — never seen this ownerid before.        */
+		bool is_reclaiming = (prev_slot != UINT32_MAX);
 
-		slot = server_alloc_client_slot(ss);
-		if (slot == UINT32_MAX)
-			return NULL;
+		if (is_reclaiming) {
+			/* ------------------------------------------ */
+			/* Known ownerid — first reconnect this boot. */
+			/* Reuse the existing slot; no new identity    */
+			/* record (the ownerid→slot mapping persists). */
 
-		incarnation = 0;
-		clid = clientid_make(slot, incarnation, server_boot_seq(ss));
+			slot = prev_slot;
+			incarnation = 0;
+			clid = clientid_make(slot, incarnation,
+					     server_boot_seq(ss));
 
-		/*
-		 * Write identity record first (ownerid + domain + name
-		 * to disk).  This is the only place impl_id is consumed.
-		 */
-		make_identity_record(&cir, slot, owner, impl_id);
-		if (client_identity_append(ss->ss_state_dir, &cir))
-			return NULL;
+			/*
+			 * Remove the stale previous-boot incarnation so
+			 * nfs4_client_find_by_owner won't see two entries
+			 * for the same slot after we add the new one.
+			 */
+			client_incarnation_remove(ss->ss_state_dir, slot);
+		} else {
+			/* ------------------------------------------ */
+			/* New client — never seen this ownerid.      */
+
+			slot = server_alloc_client_slot(ss);
+			if (slot == UINT32_MAX)
+				return NULL;
+
+			incarnation = 0;
+			clid = clientid_make(slot, incarnation,
+					     server_boot_seq(ss));
+
+			/*
+			 * Write identity record first (ownerid + domain +
+			 * name to disk).  This is the only place impl_id
+			 * is consumed.
+			 */
+			make_identity_record(&cir, slot, owner, impl_id);
+			if (client_identity_append(ss->ss_state_dir, &cir))
+				return NULL;
+		}
 
 		nc = nfs4_client_alloc(verifier, sin, incarnation, clid);
 		if (!nc)
 			return NULL;
+
+		nc->nc_needs_reclaim = is_reclaiming;
 
 		make_incarnation_record(&crc, ss, slot, incarnation, verifier,
 					sin);
