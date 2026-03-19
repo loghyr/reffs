@@ -23,6 +23,7 @@
 #include "reffs/super_block.h"
 #include "reffs/dirent.h"
 #include "reffs/lock.h"
+#include "reffs/vfs.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -206,7 +207,14 @@ void nfs4_op_open(struct compound *c)
 	/* Resolve target inode based on claim type. */
 	switch (args->claim.claim) {
 	case CLAIM_FH:
-		/* Current FH is the target file — no lookup needed. */
+		/*
+		 * Current FH is the target file — no lookup needed.
+		 * CREATE is not valid with CLAIM_FH.
+		 */
+		if (args->openhow.opentype == OPEN4_CREATE) {
+			*status = NFS4ERR_INVAL;
+			goto out;
+		}
 		break;
 
 	case CLAIM_NULL: {
@@ -235,7 +243,10 @@ void nfs4_op_open(struct compound *c)
 			goto out;
 		}
 
-		ret = inode_access_check(c->c_inode, &c->c_ap, X_OK);
+		/* Need W_OK on the directory for CREATE, X_OK for NOCREATE. */
+		int dir_amode =
+			(args->openhow.opentype == OPEN4_CREATE) ? W_OK : X_OK;
+		ret = inode_access_check(c->c_inode, &c->c_ap, dir_amode);
 		if (ret) {
 			*status = errno_to_nfs4(ret, OP_OPEN);
 			goto out;
@@ -249,31 +260,125 @@ void nfs4_op_open(struct compound *c)
 			}
 		}
 
-		child_de =
-			dirent_load_child_by_name(c->c_inode->i_dirent, name);
-		if (!child_de) {
-			*status = NFS4ERR_NOENT;
-			goto out;
-		}
+		if (args->openhow.opentype == OPEN4_CREATE) {
+			createhow4 *how = &args->openhow.openflag4_u.how;
 
-		child = dirent_ensure_inode(child_de);
-		if (!child) {
-			*status = NFS4ERR_SERVERFAULT;
-			goto out;
+			switch (how->mode) {
+			case UNCHECKED4:
+				ret = vfs_create(c->c_inode, name, 0666,
+						 &c->c_ap, &child);
+				if (ret == -EEXIST) {
+					/*
+					 * File exists: open it, as if the
+					 * create had not been requested.
+					 */
+					child = inode_name_get_inode(c->c_inode,
+								     name);
+					ret = child ? 0 : -ENOENT;
+				}
+				break;
+
+			case GUARDED4:
+				ret = vfs_create(c->c_inode, name, 0666,
+						 &c->c_ap, &child);
+				/* -EEXIST → NFS4ERR_EXIST below */
+				break;
+
+			case EXCLUSIVE4: {
+				/*
+				 * EXCLUSIVE4: use the verifier4 as the
+				 * ctime cookie.  Map the 8-byte verifier
+				 * the same way NFS3 does: first 4 bytes →
+				 * tv_sec, last 4 bytes → tv_nsec.
+				 */
+				struct timespec verf_ts;
+				verifier4 *v = &how->createhow4_u.createverf;
+				memcpy(&verf_ts.tv_sec, v, 4);
+				memcpy(&verf_ts.tv_nsec, (uint8_t *)v + 4, 4);
+
+				ret = vfs_create(c->c_inode, name, 0666,
+						 &c->c_ap, &child);
+				if (ret == 0) {
+					/* New file: stamp ctime with verf. */
+					pthread_mutex_lock(
+						&child->i_attr_mutex);
+					child->i_ctime = verf_ts;
+					child->i_mtime = verf_ts;
+					child->i_atime = verf_ts;
+					child->i_btime = verf_ts;
+					pthread_mutex_unlock(
+						&child->i_attr_mutex);
+					inode_sync_to_disk(child);
+				} else if (ret == -EEXIST) {
+					/*
+					 * Possible idempotent retry.  Find
+					 * the existing inode and check that
+					 * its ctime matches the verifier.
+					 */
+					child_de = dirent_load_child_by_name(
+						c->c_inode->i_dirent, name);
+					if (!child_de) {
+						*status = NFS4ERR_SERVERFAULT;
+						goto out;
+					}
+					child = dirent_ensure_inode(child_de);
+					if (!child) {
+						*status = NFS4ERR_SERVERFAULT;
+						goto out;
+					}
+					pthread_mutex_lock(
+						&child->i_attr_mutex);
+					bool match = child->i_ctime.tv_sec ==
+							     verf_ts.tv_sec &&
+						     child->i_ctime.tv_nsec ==
+							     verf_ts.tv_nsec;
+					pthread_mutex_unlock(
+						&child->i_attr_mutex);
+					if (!match) {
+						*status = NFS4ERR_EXIST;
+						goto out;
+					}
+					ret = 0;
+				}
+				break;
+			}
+
+			default:
+				/* EXCLUSIVE4_1 and unknown modes */
+				*status = NFS4ERR_NOTSUPP;
+				goto out;
+			}
+
+			if (ret) {
+				*status = ret == -EEXIST ?
+						  NFS4ERR_EXIST :
+					  ret == -ENOSPC ?
+						  NFS4ERR_NOSPC :
+						  errno_to_nfs4(ret, OP_OPEN);
+				goto out;
+			}
+			if (!child) {
+				*status = NFS4ERR_SERVERFAULT;
+				goto out;
+			}
+		} else {
+			/* NOCREATE: look up an existing file. */
+			child_de = dirent_load_child_by_name(
+				c->c_inode->i_dirent, name);
+			if (!child_de) {
+				*status = NFS4ERR_NOENT;
+				goto out;
+			}
+			child = dirent_ensure_inode(child_de);
+			if (!child) {
+				*status = NFS4ERR_SERVERFAULT;
+				goto out;
+			}
 		}
 		break;
 	}
 
 	default:
-		*status = NFS4ERR_NOTSUPP;
-		goto out;
-	}
-
-	/*
-	 * CREATE is not yet supported.  NOCREATE opens on an existing
-	 * file are handled below.
-	 */
-	if (args->openhow.opentype == OPEN4_CREATE) {
 		*status = NFS4ERR_NOTSUPP;
 		goto out;
 	}
