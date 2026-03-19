@@ -91,7 +91,7 @@ static struct option long_opts[] = {
 	{ "port", required_argument, 0, 'p' },
 	{ "backend", required_argument, 0, 'b' },
 	{ "backend-path", required_argument, 0, 'B' },
-	{ "state-file", required_argument, 0, 'S' },
+	{ "state-path", required_argument, 0, 'S' },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -124,7 +124,7 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "p:hrit:c:f:b:B:S:";
+	char *opts = "p:hric:f:b:B:S:";
 	enum reffs_storage_type storage_type = REFFS_STORAGE_RAM;
 	enum reffs_text_case case_mode = reffs_text_case_sensitive;
 	char *backend_path = NULL;
