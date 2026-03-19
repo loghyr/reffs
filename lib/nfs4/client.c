@@ -123,17 +123,19 @@ static int find_owner_cb(const struct client_identity_record *cir, void *arg)
 	return 1; /* stop iteration */
 }
 
-#define CLIENT_INCARNATION_SCAN_MAX 1024
-
 struct nfs4_client *nfs4_client_find_by_owner(const char *state_dir,
 					      uint16_t boot_seq,
-					      const client_owner4 *owner)
+					      const client_owner4 *owner,
+					      uint32_t *out_slot)
 {
 	struct find_owner_cb_arg cb_arg;
-	struct client_incarnation_record incs[CLIENT_INCARNATION_SCAN_MAX];
+	struct client_incarnation_record incs[CLIENT_INCARNATION_MAX];
 	size_t nincs = 0;
 	int ret;
 	struct nfs4_client *nc = NULL;
+
+	if (out_slot)
+		*out_slot = UINT32_MAX;
 
 	cb_arg.owner = owner;
 	cb_arg.slot = UINT32_MAX;
@@ -144,8 +146,11 @@ struct nfs4_client *nfs4_client_find_by_owner(const char *state_dir,
 	if (cb_arg.slot == UINT32_MAX)
 		return NULL;
 
-	ret = client_incarnation_load(state_dir, incs,
-				      CLIENT_INCARNATION_SCAN_MAX, &nincs);
+	if (out_slot)
+		*out_slot = cb_arg.slot;
+
+	ret = client_incarnation_load(state_dir, incs, CLIENT_INCARNATION_MAX,
+				      &nincs);
 	if (ret < 0)
 		return NULL;
 

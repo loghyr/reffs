@@ -23,6 +23,7 @@
 #include "reffs/log.h"
 #include "reffs/server_persist.h"
 #include "reffs/server.h"
+#include "reffs/client_persist.h"
 
 #define DEFAULT_LEASE_TIME 90U /* seconds, per RFC 8881 s2.10.6 */
 #define DEFAULT_GRACE_TIME 90U
@@ -149,6 +150,14 @@ void server_grace_end(struct server_state *ss)
 	}
 
 	server_lifecycle_set(ss, SERVER_GRACE_ENDED);
+}
+
+void server_reclaim_complete(struct server_state *ss)
+{
+	uint32_t prev =
+		__atomic_fetch_sub(&ss->ss_unreclaimed, 1, __ATOMIC_ACQ_REL);
+	if (prev == 1)
+		server_grace_end(ss);
 }
 
 /* ------------------------------------------------------------------ */
@@ -300,6 +309,19 @@ struct server_state *server_state_init(const char *state_path, int port,
          */
 	if (!ss->ss_persist.sps_clean_shutdown ||
 	    ss->ss_persist.sps_slot_next > 1) {
+		/*
+		 * Count previous-boot clients that will need to reclaim.
+		 * Grace ends early when this counter reaches zero.
+		 */
+		struct client_incarnation_record incs[CLIENT_INCARNATION_MAX];
+		size_t nincs = 0;
+
+		if (client_incarnation_load(ss->ss_state_dir, incs,
+					    CLIENT_INCARNATION_MAX, &nincs) < 0)
+			nincs = 0;
+		__atomic_store_n(&ss->ss_unreclaimed, (uint32_t)nincs,
+				 __ATOMIC_RELAXED);
+
 		server_grace_start(ss);
 	} else {
 		LOG("server_state_init: skipping grace period (fresh/clean start)");
