@@ -540,9 +540,9 @@ out:
 	inode_active_put(child); /* NULL-safe; only set if not transferred */
 	dirent_put(child_de);
 	free(name);
-	LOG("%s status=%s(%d) claim=%d access=%u deny=%u", __func__,
-	    nfs4_err_name(*status), *status, args->claim.claim, share_access,
-	    share_deny);
+	TRACE("%s status=%s(%d) claim=%d access=%u deny=%u", __func__,
+	      nfs4_err_name(*status), *status, args->claim.claim, share_access,
+	      share_deny);
 }
 
 void nfs4_op_open_confirm(struct compound *c)
@@ -567,6 +567,11 @@ void nfs4_op_open_downgrade(struct compound *c)
 	nfsstat4 *status = &res->status;
 	OPEN_DOWNGRADE4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, OPEN_DOWNGRADE4res_u, resok4);
+
+	uint32_t new_access = 0;
+	uint32_t new_deny = 0;
+	uint32_t cur_access =  0;
+	uint32_t cur_deny = 0;
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
@@ -620,10 +625,10 @@ void nfs4_op_open_downgrade(struct compound *c)
 	 * New access/deny must be a subset of current.
 	 * os_state bits 0-1: access (R/W), bits 2-3: deny (R/W).
 	 */
-	uint32_t new_access = args->share_access & OPEN4_SHARE_ACCESS_BOTH;
-	uint32_t new_deny = args->share_deny & OPEN4_SHARE_DENY_BOTH;
-	uint32_t cur_access = (uint32_t)(os->os_state & 0x3);
-	uint32_t cur_deny = (uint32_t)((os->os_state >> 2) & 0x3);
+	new_access = args->share_access & OPEN4_SHARE_ACCESS_BOTH;
+	new_deny = args->share_deny & OPEN4_SHARE_DENY_BOTH;
+	cur_access = (uint32_t)(os->os_state & 0x3);
+	cur_deny = (uint32_t)((os->os_state >> 2) & 0x3);
 
 	if ((new_access & ~cur_access) || (new_deny & ~cur_deny)) {
 		stateid_put(stid);
@@ -665,12 +670,10 @@ void nfs4_op_open_downgrade(struct compound *c)
 	c->c_curr_stid = stid; /* transfer the find ref */
 
 	*status = NFS4_OK;
+out:
 	LOG("%s status=%s(%d) access=%u deny=%u", __func__,
 	    nfs4_err_name(*status), *status, new_access, new_deny);
 	return;
-
-out:
-	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_close(struct compound *c)
@@ -681,12 +684,12 @@ void nfs4_op_close(struct compound *c)
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		goto out;
+		return;
 	}
 
 	if (stateid4_is_special(&args->open_stateid)) {
 		*status = NFS4ERR_BAD_STATEID;
-		goto out;
+		return;
 	}
 
 	uint32_t seqid, id, type, cookie;
@@ -694,21 +697,21 @@ void nfs4_op_close(struct compound *c)
 
 	if (type != Open_Stateid) {
 		*status = NFS4ERR_BAD_STATEID;
-		goto out;
+		return;
 	}
 
 	struct stateid *stid = stateid_find(c->c_inode, id);
 	if (!stid || stid->s_tag != Open_Stateid || stid->s_cookie != cookie) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
-		goto out;
+		return;
 	}
 
 	if (c->c_nfs4_client &&
 	    stid->s_client != nfs4_client_to_client(c->c_nfs4_client)) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
-		goto out;
+		return;
 	}
 
 	uint32_t cur_seqid = __atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
@@ -716,12 +719,12 @@ void nfs4_op_close(struct compound *c)
 		if (seqid < cur_seqid) {
 			stateid_put(stid);
 			*status = NFS4ERR_OLD_STATEID;
-			goto out;
+			return;
 		}
 		if (seqid > cur_seqid) {
 			stateid_put(stid);
 			*status = NFS4ERR_BAD_STATEID;
-			goto out;
+			return;
 		}
 	}
 
@@ -761,9 +764,6 @@ void nfs4_op_close(struct compound *c)
 	 */
 	res->CLOSE4res_u.open_stateid = stateid4_anonymous;
 	*status = NFS4_OK;
-
-out:
-	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_read(struct compound *c)
@@ -854,9 +854,9 @@ void nfs4_op_read(struct compound *c)
 
 out:
 	stateid_put(stid);
-	LOG("%s status=%s(%d) offset=%llu count=%u", __func__,
-	    nfs4_err_name(*status), *status, (unsigned long long)args->offset,
-	    args->count);
+	TRACE("%s status=%s(%d) offset=%llu count=%u", __func__,
+	      nfs4_err_name(*status), *status, (unsigned long long)args->offset,
+	      args->count);
 }
 
 void nfs4_op_read_plus(struct compound *c)
@@ -990,9 +990,9 @@ void nfs4_op_write(struct compound *c)
 
 out:
 	stateid_put(stid);
-	LOG("%s status=%s(%d) offset=%llu count=%u stable=%d", __func__,
-	    nfs4_err_name(*status), *status, (unsigned long long)args->offset,
-	    args->data.data_len, args->stable);
+	TRACE("%s status=%s(%d) offset=%llu count=%u stable=%d", __func__,
+	      nfs4_err_name(*status), *status, (unsigned long long)args->offset,
+	      args->data.data_len, args->stable);
 }
 
 void nfs4_op_write_same(struct compound *c)
@@ -1033,9 +1033,9 @@ void nfs4_op_commit(struct compound *c)
 	*status = NFS4_OK;
 
 out:
-	LOG("%s status=%s(%d) offset=%llu count=%u", __func__,
-	    nfs4_err_name(*status), *status, (unsigned long long)args->offset,
-	    args->count);
+	TRACE("%s status=%s(%d) offset=%llu count=%u", __func__,
+	      nfs4_err_name(*status), *status, (unsigned long long)args->offset,
+	      args->count);
 }
 
 void nfs4_op_seek(struct compound *c)

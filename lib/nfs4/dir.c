@@ -114,8 +114,6 @@ void nfs4_op_lookup(struct compound *c)
 out:
 	free(name);
 	dirent_put(child_de);
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_lookupp(struct compound *c)
@@ -165,8 +163,6 @@ void nfs4_op_lookupp(struct compound *c)
 
 out:
 	dirent_put(parent_de);
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
 }
 
 void nfs4_op_create(struct compound *c)
@@ -291,8 +287,6 @@ out:
 	inode_active_put(new_inode);
 	free(linkpath);
 	free(name);
-	LOG("%s status=%s(%d) type=%d", __func__, nfs4_err_name(*status),
-	    *status, args->objtype.type);
 }
 
 void nfs4_op_remove(struct compound *c)
@@ -357,7 +351,6 @@ void nfs4_op_remove(struct compound *c)
 
 out:
 	free(name);
-	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_rename(struct compound *c)
@@ -448,7 +441,6 @@ out:
 	inode_active_put(old_dir);
 	free(oldname);
 	free(newname);
-	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_link(struct compound *c)
@@ -486,28 +478,25 @@ void nfs4_op_readlink(struct compound *c)
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		goto out;
+		return;
 	}
 
 	if (!S_ISLNK(c->c_inode->i_mode)) {
 		*status = NFS4ERR_INVAL;
-		goto out;
+		return;
 	}
 
 	if (!c->c_inode->i_symlink) {
 		*status = NFS4ERR_SERVERFAULT;
-		goto out;
+		return;
 	}
 
 	resok->link.linktext4_val = strdup(c->c_inode->i_symlink);
 	if (!resok->link.linktext4_val) {
 		*status = NFS4ERR_DELAY;
-		goto out;
+		return;
 	}
 	resok->link.linktext4_len = strlen(c->c_inode->i_symlink);
 
 	*status = NFS4_OK;
-
-out:
-	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }

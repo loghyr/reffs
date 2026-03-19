@@ -2883,9 +2883,6 @@ void nfs4_op_getattr(struct compound *c)
 
 out:
 	nattr_release(&nattr);
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
 }
 
 /* ------------------------------------------------------------------ */
@@ -3028,23 +3025,23 @@ void nfs4_op_readdir(struct compound *c)
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
-		goto out;
+		return;
 	}
 
 	if (!S_ISDIR(inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
-		goto out;
+		return;
 	}
 
 	if ((count4)sizeof(READDIR4res) > args->maxcount) {
 		*status = NFS4ERR_TOOSMALL;
-		goto out;
+		return;
 	}
 
 	ret = inode_access_check(inode, &c->c_ap, R_OK);
 	if (ret) {
 		*status = errno_to_nfs4(ret, NFS4_OP_NUM(c));
-		goto out;
+		return;
 	}
 
 	/*
@@ -3056,7 +3053,7 @@ void nfs4_op_readdir(struct compound *c)
 		ret = inode_reconstruct_path_to_root(inode);
 		if (ret) {
 			*status = NFS4ERR_STALE;
-			goto out;
+			return;
 		}
 	}
 
@@ -3245,11 +3242,6 @@ out_unlock:
 	if (dir_de_rdlocked)
 		pthread_rwlock_unlock(&dir_de->rd_rwlock);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
-
-out:
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
 }
 
 void nfs4_op_setattr(struct compound *c)
@@ -3278,8 +3270,6 @@ void nfs4_op_setattr(struct compound *c)
 out:
 	if (nattr_valid)
 		nattr_release(&nattr);
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
 }
 
 /*
@@ -3363,14 +3353,10 @@ void nfs4_op_verify(struct compound *c)
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
-		goto out;
+		return;
 	}
 
 	*status = verify_common(c, &args->obj_attributes, false, OP_VERIFY);
-
-out:
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_nverify(struct compound *c)
@@ -3381,14 +3367,10 @@ void nfs4_op_nverify(struct compound *c)
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
-		goto out;
+		return;
 	}
 
 	*status = verify_common(c, &args->obj_attributes, true, OP_NVERIFY);
-
-out:
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
 }
 
 void nfs4_op_access(struct compound *c)
@@ -3439,9 +3421,9 @@ void nfs4_op_access(struct compound *c)
 	*status = NFS4_OK;
 
 out:
-	LOG("%s status=%s(%d) access=0x%x supported=0x%x access_granted=0x%x",
-	    __func__, nfs4_err_name(*status), *status, args->access,
-	    resok->supported, resok->access);
+	TRACE("%s status=%s(%d) access=0x%x supported=0x%x access_granted=0x%x",
+	      __func__, nfs4_err_name(*status), *status, args->access,
+	      resok->supported, resok->access);
 }
 
 void nfs4_op_access_mask(struct compound *c)
@@ -3453,7 +3435,6 @@ void nfs4_op_access_mask(struct compound *c)
 		NFS4_OP_RESOK_SETUP(res, ACCESS_MASK4res_u, amr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
-
 	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
 	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
 	    (void *)resok);

@@ -39,12 +39,12 @@ void nfs4_op_delegreturn(struct compound *c)
 
 	if (network_file_handle_empty(&c->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		goto out;
+		return;
 	}
 
 	if (stateid4_is_special(&args->deleg_stateid)) {
 		*status = NFS4ERR_BAD_STATEID;
-		goto out;
+		return;
 	}
 
 	uint32_t seqid, id, type, cookie;
@@ -52,7 +52,7 @@ void nfs4_op_delegreturn(struct compound *c)
 
 	if (type != Delegation_Stateid) {
 		*status = NFS4ERR_BAD_STATEID;
-		goto out;
+		return;
 	}
 
 	struct stateid *stid = stateid_find(c->c_inode, id);
@@ -60,14 +60,14 @@ void nfs4_op_delegreturn(struct compound *c)
 	    stid->s_cookie != cookie) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
-		goto out;
+		return;
 	}
 
 	if (c->c_nfs4_client &&
 	    stid->s_client != nfs4_client_to_client(c->c_nfs4_client)) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
-		goto out;
+		return;
 	}
 
 	/* Unhash and free the delegation stateid. */
@@ -83,9 +83,6 @@ void nfs4_op_delegreturn(struct compound *c)
 	stateid_put(stid); /* state ref → freed */
 
 	*status = NFS4_OK;
-
-out:
-	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_get_dir_delegation(struct compound *c)
