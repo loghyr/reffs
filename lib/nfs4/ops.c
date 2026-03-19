@@ -7,10 +7,14 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdlib.h>
+#include <rpc/auth.h>
+
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
+#include "reffs/inode.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -35,13 +39,45 @@ void nfs4_op_secinfo_no_name(struct compound *c)
 	struct protocol_handler *ph =
 		(struct protocol_handler *)c->c_rt->rt_context;
 
+	SECINFO_NO_NAME4args *args =
+		NFS4_OP_ARG_SETUP(c, ph, opsecinfo_no_name);
 	SECINFO_NO_NAME4res *res = NFS4_OP_RES_SETUP(c, ph, opsecinfo_no_name);
 	nfsstat4 *status = &res->status;
+	SECINFO4resok *resok = NFS4_OP_RESOK_SETUP(res, SECINFO4res_u, resok4);
+	secinfo_style4 style = *args;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (!c->c_inode) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
 
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
+	/*
+	 * Both CURRENT_FH and PARENT styles: this server accepts only
+	 * AUTH_SYS.  Return a single-entry list regardless of which
+	 * object's security the client is asking about.
+	 *
+	 * Per RFC 8881 s18.45.3 the current filehandle is consumed on
+	 * success; clear it here so subsequent ops in the compound get
+	 * NFS4ERR_NOFILEHANDLE if they rely on it.
+	 */
+	(void)style;
+
+	resok->SECINFO4resok_val = calloc(1, sizeof(secinfo4));
+	if (!resok->SECINFO4resok_val) {
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+	resok->SECINFO4resok_len = 1;
+	resok->SECINFO4resok_val[0].flavor = AUTH_SYS;
+
+	inode_active_put(c->c_inode);
+	c->c_inode = NULL;
+
+	*status = NFS4_OK;
+
+out:
+	LOG("%s style=%d status=%s(%d)", __func__, (int)style,
+	    nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_io_advise(struct compound *c)
