@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
+#include <time.h>
 
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
@@ -21,6 +22,11 @@
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+
+static inline changeid4 timespec_to_changeid(const struct timespec *ts)
+{
+	return ((uint64_t)(uint32_t)ts->tv_sec << 32) | (uint32_t)ts->tv_nsec;
+}
 
 void nfs4_op_lookup(struct compound *c)
 {
@@ -180,6 +186,7 @@ void nfs4_op_create(struct compound *c)
 	CREATE4resok *resok = NFS4_OP_RESOK_SETUP(res, CREATE4res_u, resok4);
 
 	struct inode *new_inode = NULL;
+	struct timespec dir_before, dir_after;
 	char *name = NULL;
 	char *linkpath = NULL;
 	int ret;
@@ -221,7 +228,8 @@ void nfs4_op_create(struct compound *c)
 
 	switch (args->objtype.type) {
 	case NF4DIR:
-		ret = vfs_mkdir(c->c_inode, name, 0777, &c->c_ap, &new_inode);
+		ret = vfs_mkdir(c->c_inode, name, 0777, &c->c_ap, &new_inode,
+				&dir_before, &dir_after);
 		break;
 
 	case NF4LNK: {
@@ -232,7 +240,7 @@ void nfs4_op_create(struct compound *c)
 			goto out;
 		}
 		ret = vfs_symlink(c->c_inode, name, linkpath, &c->c_ap,
-				  &new_inode);
+				  &new_inode, &dir_before, &dir_after);
 		break;
 	}
 
@@ -240,7 +248,7 @@ void nfs4_op_create(struct compound *c)
 		specdata4 *sd = &args->objtype.createtype4_u.devdata;
 		ret = vfs_mknod(c->c_inode, name, S_IFBLK | 0666,
 				makedev(sd->specdata1, sd->specdata2), &c->c_ap,
-				&new_inode);
+				&new_inode, &dir_before, &dir_after);
 		break;
 	}
 
@@ -248,18 +256,18 @@ void nfs4_op_create(struct compound *c)
 		specdata4 *sd = &args->objtype.createtype4_u.devdata;
 		ret = vfs_mknod(c->c_inode, name, S_IFCHR | 0666,
 				makedev(sd->specdata1, sd->specdata2), &c->c_ap,
-				&new_inode);
+				&new_inode, &dir_before, &dir_after);
 		break;
 	}
 
 	case NF4SOCK:
 		ret = vfs_mknod(c->c_inode, name, S_IFSOCK | 0666, 0, &c->c_ap,
-				&new_inode);
+				&new_inode, &dir_before, &dir_after);
 		break;
 
 	case NF4FIFO:
 		ret = vfs_mknod(c->c_inode, name, S_IFIFO | 0666, 0, &c->c_ap,
-				&new_inode);
+				&new_inode, &dir_before, &dir_after);
 		break;
 
 	default:
@@ -280,9 +288,9 @@ void nfs4_op_create(struct compound *c)
 	new_inode = NULL;
 	c->c_curr_nfh.nfh_ino = c->c_inode->i_ino;
 
-	resok->cinfo.atomic = FALSE;
-	resok->cinfo.before = 0;
-	resok->cinfo.after = 0;
+	resok->cinfo.atomic = TRUE;
+	resok->cinfo.before = timespec_to_changeid(&dir_before);
+	resok->cinfo.after = timespec_to_changeid(&dir_after);
 	resok->attrset.bitmap4_len = 0;
 	resok->attrset.bitmap4_val = NULL;
 
@@ -306,6 +314,7 @@ void nfs4_op_remove(struct compound *c)
 	nfsstat4 *status = &res->status;
 	REMOVE4resok *resok = NFS4_OP_RESOK_SETUP(res, REMOVE4res_u, resok4);
 
+	struct timespec dir_before, dir_after;
 	char *name = NULL;
 	int ret;
 
@@ -342,18 +351,19 @@ void nfs4_op_remove(struct compound *c)
 	 * Try removing as a non-directory first.  vfs_remove() returns
 	 * -EISDIR if the target is a directory; fall back to vfs_rmdir().
 	 */
-	ret = vfs_remove(c->c_inode, name, &c->c_ap);
+	ret = vfs_remove(c->c_inode, name, &c->c_ap, &dir_before, &dir_after);
 	if (ret == -EISDIR)
-		ret = vfs_rmdir(c->c_inode, name, &c->c_ap);
+		ret = vfs_rmdir(c->c_inode, name, &c->c_ap, &dir_before,
+				&dir_after);
 
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_REMOVE);
 		goto out;
 	}
 
-	resok->cinfo.atomic = FALSE;
-	resok->cinfo.before = 0;
-	resok->cinfo.after = 0;
+	resok->cinfo.atomic = TRUE;
+	resok->cinfo.before = timespec_to_changeid(&dir_before);
+	resok->cinfo.after = timespec_to_changeid(&dir_after);
 
 	*status = NFS4_OK;
 
@@ -373,6 +383,7 @@ void nfs4_op_rename(struct compound *c)
 	RENAME4resok *resok = NFS4_OP_RESOK_SETUP(res, RENAME4res_u, resok4);
 
 	struct inode *old_dir = NULL;
+	struct timespec old_before, old_after, new_before, new_after;
 	char *oldname = NULL;
 	char *newname = NULL;
 	int ret;
@@ -432,18 +443,19 @@ void nfs4_op_rename(struct compound *c)
 		goto out;
 	}
 
-	ret = vfs_rename(old_dir, oldname, c->c_inode, newname, &c->c_ap);
+	ret = vfs_rename(old_dir, oldname, c->c_inode, newname, &c->c_ap,
+			 &old_before, &old_after, &new_before, &new_after);
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_RENAME);
 		goto out;
 	}
 
-	resok->source_cinfo.atomic = FALSE;
-	resok->source_cinfo.before = 0;
-	resok->source_cinfo.after = 0;
-	resok->target_cinfo.atomic = FALSE;
-	resok->target_cinfo.before = 0;
-	resok->target_cinfo.after = 0;
+	resok->source_cinfo.atomic = TRUE;
+	resok->source_cinfo.before = timespec_to_changeid(&old_before);
+	resok->source_cinfo.after = timespec_to_changeid(&old_after);
+	resok->target_cinfo.atomic = TRUE;
+	resok->target_cinfo.before = timespec_to_changeid(&new_before);
+	resok->target_cinfo.after = timespec_to_changeid(&new_after);
 
 	*status = NFS4_OK;
 

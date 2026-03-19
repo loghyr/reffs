@@ -1122,8 +1122,8 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 	if (sa->mode.set_it)
 		mode = sa->mode.set_mode3_u.mode;
 
-	ret = vfs_mkdir(inode, args->where.name, mode, &ap, &new_inode,
-			NULL, NULL);
+	ret = vfs_mkdir(inode, args->where.name, mode, &ap, &new_inode, NULL,
+			NULL);
 	if (ret) {
 		wcc = &resfail->dir_wcc;
 		goto update_wcc;
