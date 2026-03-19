@@ -44,57 +44,57 @@
 #include "nfs4/errors.h"
 #include "nfs4/ops.h"
 
-static void compound_free(struct compound *c)
+static void compound_free(struct compound *compound)
 {
-	if (!c)
+	if (!compound)
 		return;
 
-	nfs4_session_put(c->c_session);
-	nfs4_client_put(c->c_nfs4_client);
-	inode_active_put(c->c_inode);
-	super_block_put(c->c_curr_sb);
-	super_block_put(c->c_saved_sb);
-	stateid_put(c->c_curr_stid);
-	stateid_put(c->c_saved_stid);
-	free(c);
+	nfs4_session_put(compound->c_session);
+	nfs4_client_put(compound->c_nfs4_client);
+	inode_active_put(compound->c_inode);
+	super_block_put(compound->c_curr_sb);
+	super_block_put(compound->c_saved_sb);
+	stateid_put(compound->c_curr_stid);
+	stateid_put(compound->c_saved_stid);
+	free(compound);
 }
 
 static struct compound *compound_alloc(struct rpc_trans *rt)
 {
-	struct compound *c;
+	struct compound *compound;
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 	int ret = 0;
 
-	c = calloc(1, sizeof(*c));
-	if (!c)
+	compound = calloc(1, sizeof(*compound));
+	if (!compound)
 		return NULL;
 
-	c->c_rt = rt;
-	c->c_args = (COMPOUND4args *)ph->ph_args;
-	c->c_res = (COMPOUND4res *)ph->ph_res;
+	compound->c_rt = rt;
+	compound->c_args = (COMPOUND4args *)ph->ph_args;
+	compound->c_res = (COMPOUND4res *)ph->ph_res;
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &c->c_ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &compound->c_ap);
 	if (ret) {
-		free(c);
+		free(compound);
 		return NULL;
 	}
 
-	return c;
+	return compound;
 }
 
 int nfs4_proc_compound(struct rpc_trans *rt)
 {
-	struct compound *c = compound_alloc(rt);
+	struct compound *compound = compound_alloc(rt);
 	COMPOUND4res *res;
 	COMPOUND4args *args;
 	nfs_opnum4 op;
 
-	if (!c) {
+	if (!compound) {
 		return NFS4ERR_DELAY;
 	}
 
-	res = c->c_res;
-	args = c->c_args;
+	res = compound->c_res;
+	args = compound->c_args;
 
 	trace_nfs4_srv_compound(rt);
 
@@ -134,7 +134,7 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 		goto out;
 	}
 
-	op = NFS4_OP_NUM(c);
+	op = NFS4_OP_NUM(compound);
 	if (op != OP_SEQUENCE && op != OP_EXCHANGE_ID &&
 	    op != OP_CREATE_SESSION && op != OP_DESTROY_SESSION &&
 	    op != OP_BIND_CONN_TO_SESSION && op != OP_DESTROY_CLIENTID) {
@@ -156,46 +156,49 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 		goto out;
 	}
 
-	dispatch_compound(c);
+	dispatch_compound(compound);
 
 	/*
 	 * Transition the slot from IN_USE to CACHED.  This must happen
 	 * after dispatch so that any concurrent replay of the same seqid
 	 * gets NFS4ERR_DELAY rather than a stale cached reply.
 	 */
-	if (c->c_slot) {
-		pthread_mutex_lock(&c->c_slot->sl_mutex);
-		if (c->c_slot->sl_state == NFS4_SLOT_IN_USE) {
+	if (compound->c_slot) {
+		pthread_mutex_lock(&compound->c_slot->sl_mutex);
+		if (compound->c_slot->sl_state == NFS4_SLOT_IN_USE) {
 			XDR xdrs;
 			uint32_t reply_size;
 
 			reply_size =
 				xdr_sizeof((xdrproc_t)xdr_COMPOUND4res, res);
 
-			free(c->c_slot->sl_reply);
-			c->c_slot->sl_reply = calloc(1, reply_size);
-			if (c->c_slot->sl_reply) {
-				xdrmem_create(&xdrs, c->c_slot->sl_reply,
+			free(compound->c_slot->sl_reply);
+			compound->c_slot->sl_reply = calloc(1, reply_size);
+			if (compound->c_slot->sl_reply) {
+				xdrmem_create(&xdrs, compound->c_slot->sl_reply,
 					      reply_size, XDR_ENCODE);
 				if (xdr_COMPOUND4res(&xdrs, res)) {
-					c->c_slot->sl_reply_len = reply_size;
-					c->c_slot->sl_state = NFS4_SLOT_CACHED;
+					compound->c_slot->sl_reply_len =
+						reply_size;
+					compound->c_slot->sl_state =
+						NFS4_SLOT_CACHED;
 				} else {
-					free(c->c_slot->sl_reply);
-					c->c_slot->sl_reply = NULL;
-					c->c_slot->sl_reply_len = 0;
-					c->c_slot->sl_state = NFS4_SLOT_IDLE;
+					free(compound->c_slot->sl_reply);
+					compound->c_slot->sl_reply = NULL;
+					compound->c_slot->sl_reply_len = 0;
+					compound->c_slot->sl_state =
+						NFS4_SLOT_IDLE;
 				}
 				xdr_destroy(&xdrs);
 			} else {
-				c->c_slot->sl_reply_len = 0;
-				c->c_slot->sl_state = NFS4_SLOT_IDLE;
+				compound->c_slot->sl_reply_len = 0;
+				compound->c_slot->sl_state = NFS4_SLOT_IDLE;
 			}
 		}
-		pthread_mutex_unlock(&c->c_slot->sl_mutex);
+		pthread_mutex_unlock(&compound->c_slot->sl_mutex);
 	}
 
 out:
-	compound_free(c);
+	compound_free(compound);
 	return res->status;
 }

@@ -279,21 +279,21 @@ struct nfs4_session *nfs4_session_find(const sessionid4 sid)
 /* ------------------------------------------------------------------ */
 /* Op handlers                                                         */
 
-void nfs4_op_exchange_id(struct compound *c)
+void nfs4_op_exchange_id(struct compound *compound)
 {
-	EXCHANGE_ID4args *args = NFS4_OP_ARG_SETUP(c, opexchange_id);
-	EXCHANGE_ID4res *res = NFS4_OP_RES_SETUP(c, opexchange_id);
+	EXCHANGE_ID4args *args = NFS4_OP_ARG_SETUP(compound, opexchange_id);
+	EXCHANGE_ID4res *res = NFS4_OP_RES_SETUP(compound, opexchange_id);
 	nfsstat4 *status = &res->eir_status;
 	EXCHANGE_ID4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, EXCHANGE_ID4res_u, eir_resok4);
 
-	u_int num_ops = c->c_args->argarray.argarray_len;
+	u_int num_ops = compound->c_args->argarray.argarray_len;
 	struct server_state *ss = NULL;
 	struct nfs4_client *nc = NULL;
 	struct nfs_impl_id4 *impl_id = NULL;
 	struct sockaddr_in sin;
 
-	if (c->c_curr_op == 0 && num_ops > 1) {
+	if (compound->c_curr_op == 0 && num_ops > 1) {
 		*status = NFS4ERR_NOT_ONLY_OP;
 		goto out;
 	}
@@ -307,7 +307,7 @@ void nfs4_op_exchange_id(struct compound *c)
 	if (args->eia_client_impl_id.eia_client_impl_id_len > 0)
 		impl_id = args->eia_client_impl_id.eia_client_impl_id_val;
 
-	rpc_trans_get_sockaddr_in(c->c_rt, &sin);
+	rpc_trans_get_sockaddr_in(compound->c_rt, &sin);
 
 	nc = nfs4_client_alloc_or_find(ss, &args->eia_clientowner, impl_id,
 				       &args->eia_clientowner.co_verifier,
@@ -352,7 +352,7 @@ void nfs4_op_exchange_id(struct compound *c)
 	resok->eir_server_impl_id.eir_server_impl_id_val = NULL;
 	resok->eir_server_impl_id.eir_server_impl_id_len = 0;
 
-	c->c_nfs4_client = nc;
+	compound->c_nfs4_client = nc;
 	nc = NULL;
 
 out:
@@ -360,19 +360,20 @@ out:
 	nfs4_client_put(nc);
 }
 
-void nfs4_op_create_session(struct compound *c)
+void nfs4_op_create_session(struct compound *compound)
 {
-	CREATE_SESSION4args *args = NFS4_OP_ARG_SETUP(c, opcreate_session);
-	CREATE_SESSION4res *res = NFS4_OP_RES_SETUP(c, opcreate_session);
+	CREATE_SESSION4args *args =
+		NFS4_OP_ARG_SETUP(compound, opcreate_session);
+	CREATE_SESSION4res *res = NFS4_OP_RES_SETUP(compound, opcreate_session);
 	nfsstat4 *status = &res->csr_status;
 	CREATE_SESSION4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, CREATE_SESSION4res_u, csr_resok4);
 
-	u_int num_ops = c->c_args->argarray.argarray_len;
+	u_int num_ops = compound->c_args->argarray.argarray_len;
 	struct nfs4_client *nc = NULL;
 	struct nfs4_session *ns = NULL;
 
-	if (c->c_curr_op == 0 && num_ops > 1) {
+	if (compound->c_curr_op == 0 && num_ops > 1) {
 		*status = NFS4ERR_NOT_ONLY_OP;
 		goto out;
 	}
@@ -421,16 +422,18 @@ out:
 	nfs4_client_put(nc);
 }
 
-void nfs4_op_destroy_session(struct compound *c)
+void nfs4_op_destroy_session(struct compound *compound)
 {
-	DESTROY_SESSION4args *args = NFS4_OP_ARG_SETUP(c, opdestroy_session);
-	DESTROY_SESSION4res *res = NFS4_OP_RES_SETUP(c, opdestroy_session);
+	DESTROY_SESSION4args *args =
+		NFS4_OP_ARG_SETUP(compound, opdestroy_session);
+	DESTROY_SESSION4res *res =
+		NFS4_OP_RES_SETUP(compound, opdestroy_session);
 	nfsstat4 *status = &res->dsr_status;
 
-	u_int num_ops = c->c_args->argarray.argarray_len;
+	u_int num_ops = compound->c_args->argarray.argarray_len;
 	struct nfs4_session *ns = NULL;
 
-	if (c->c_curr_op == 0 && num_ops > 1) {
+	if (compound->c_curr_op == 0 && num_ops > 1) {
 		*status = NFS4ERR_NOT_ONLY_OP;
 		goto out;
 	}
@@ -447,10 +450,10 @@ out:
 	nfs4_session_put(ns);
 }
 
-void nfs4_op_sequence(struct compound *c)
+void nfs4_op_sequence(struct compound *compound)
 {
-	SEQUENCE4args *args = NFS4_OP_ARG_SETUP(c, opsequence);
-	SEQUENCE4res *res = NFS4_OP_RES_SETUP(c, opsequence);
+	SEQUENCE4args *args = NFS4_OP_ARG_SETUP(compound, opsequence);
+	SEQUENCE4res *res = NFS4_OP_RES_SETUP(compound, opsequence);
 	nfsstat4 *status = &res->sr_status;
 	SEQUENCE4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, SEQUENCE4res_u, sr_resok4);
@@ -458,7 +461,7 @@ void nfs4_op_sequence(struct compound *c)
 	struct nfs4_session *ns = NULL;
 	struct nfs4_slot *slot;
 
-	if (c->c_curr_op != 0) {
+	if (compound->c_curr_op != 0) {
 		*status = NFS4ERR_SEQUENCE_POS;
 		goto out;
 	}
@@ -488,7 +491,7 @@ void nfs4_op_sequence(struct compound *c)
 
 		if (slot->sl_reply) {
 			XDR xdrs;
-			COMPOUND4res *full_res = c->c_res;
+			COMPOUND4res *full_res = compound->c_res;
 
 			xdrmem_create(&xdrs, slot->sl_reply, slot->sl_reply_len,
 				      XDR_DECODE);
@@ -524,19 +527,19 @@ void nfs4_op_sequence(struct compound *c)
 	resok->sr_target_highest_slotid = ns->ns_slot_count - 1;
 	resok->sr_status_flags = 0;
 
-	c->c_session = nfs4_session_get(ns);
-	c->c_slot = slot;
+	compound->c_session = nfs4_session_get(ns);
+	compound->c_slot = slot;
 
-	c->c_nfs4_client = nfs4_client_get(ns->ns_client);
+	compound->c_nfs4_client = nfs4_client_get(ns->ns_client);
 	ns = NULL; /* ref transferred to c_session */
 
 out:
 	nfs4_session_put(ns);
 }
 
-void nfs4_op_renew(struct compound *c)
+void nfs4_op_renew(struct compound *compound)
 {
-	RENEW4res *res = NFS4_OP_RES_SETUP(c, oprenew);
+	RENEW4res *res = NFS4_OP_RES_SETUP(compound, oprenew);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -545,10 +548,10 @@ void nfs4_op_renew(struct compound *c)
 	    *status, (void *)res);
 }
 
-void nfs4_op_setclientid(struct compound *c)
+void nfs4_op_setclientid(struct compound *compound)
 {
-	SETCLIENTID4args *args = NFS4_OP_ARG_SETUP(c, opsetclientid);
-	SETCLIENTID4res *res = NFS4_OP_RES_SETUP(c, opsetclientid);
+	SETCLIENTID4args *args = NFS4_OP_ARG_SETUP(compound, opsetclientid);
+	SETCLIENTID4res *res = NFS4_OP_RES_SETUP(compound, opsetclientid);
 	nfsstat4 *status = &res->status;
 	SETCLIENTID4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, SETCLIENTID4res_u, resok4);
@@ -560,10 +563,10 @@ void nfs4_op_setclientid(struct compound *c)
 	    (void *)resok);
 }
 
-void nfs4_op_setclientid_confirm(struct compound *c)
+void nfs4_op_setclientid_confirm(struct compound *compound)
 {
 	SETCLIENTID_CONFIRM4res *res =
-		NFS4_OP_RES_SETUP(c, opsetclientid_confirm);
+		NFS4_OP_RES_SETUP(compound, opsetclientid_confirm);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -572,17 +575,19 @@ void nfs4_op_setclientid_confirm(struct compound *c)
 	    *status, (void *)res);
 }
 
-void nfs4_op_destroy_clientid(struct compound *c)
+void nfs4_op_destroy_clientid(struct compound *compound)
 {
-	DESTROY_CLIENTID4args *args = NFS4_OP_ARG_SETUP(c, opdestroy_clientid);
-	DESTROY_CLIENTID4res *res = NFS4_OP_RES_SETUP(c, opdestroy_clientid);
+	DESTROY_CLIENTID4args *args =
+		NFS4_OP_ARG_SETUP(compound, opdestroy_clientid);
+	DESTROY_CLIENTID4res *res =
+		NFS4_OP_RES_SETUP(compound, opdestroy_clientid);
 	nfsstat4 *status = &res->dcr_status;
 
-	u_int num_ops = c->c_args->argarray.argarray_len;
+	u_int num_ops = compound->c_args->argarray.argarray_len;
 	struct server_state *ss = NULL;
 	struct nfs4_client *nc = NULL;
 
-	if (c->c_curr_op == 0 && num_ops > 1) {
+	if (compound->c_curr_op == 0 && num_ops > 1) {
 		*status = NFS4ERR_NOT_ONLY_OP;
 		goto out;
 	}
@@ -612,14 +617,16 @@ out:
 	nfs4_client_put(nc);
 }
 
-void nfs4_op_reclaim_complete(struct compound *c)
+void nfs4_op_reclaim_complete(struct compound *compound)
 {
-	RECLAIM_COMPLETE4args *args = NFS4_OP_ARG_SETUP(c, opreclaim_complete);
-	RECLAIM_COMPLETE4res *res = NFS4_OP_RES_SETUP(c, opreclaim_complete);
+	RECLAIM_COMPLETE4args *args =
+		NFS4_OP_ARG_SETUP(compound, opreclaim_complete);
+	RECLAIM_COMPLETE4res *res =
+		NFS4_OP_RES_SETUP(compound, opreclaim_complete);
 	nfsstat4 *status = &res->rcr_status;
 
 	struct server_state *ss = NULL;
-	struct nfs4_client *nc = c->c_nfs4_client;
+	struct nfs4_client *nc = compound->c_nfs4_client;
 
 	if (!nc) {
 		*status = NFS4ERR_OP_NOT_IN_SESSION;
@@ -649,12 +656,12 @@ out:
 	server_state_put(ss);
 }
 
-void nfs4_op_bind_conn_to_session(struct compound *c)
+void nfs4_op_bind_conn_to_session(struct compound *compound)
 {
 	BIND_CONN_TO_SESSION4args *args =
-		NFS4_OP_ARG_SETUP(c, opbind_conn_to_session);
+		NFS4_OP_ARG_SETUP(compound, opbind_conn_to_session);
 	BIND_CONN_TO_SESSION4res *res =
-		NFS4_OP_RES_SETUP(c, opbind_conn_to_session);
+		NFS4_OP_RES_SETUP(compound, opbind_conn_to_session);
 	nfsstat4 *status = &res->bctsr_status;
 	BIND_CONN_TO_SESSION4resok *resok = NFS4_OP_RESOK_SETUP(
 		res, BIND_CONN_TO_SESSION4res_u, bctsr_resok4);
@@ -690,10 +697,12 @@ void nfs4_op_bind_conn_to_session(struct compound *c)
 	nfs4_session_put(ns);
 }
 
-void nfs4_op_backchannel_ctl(struct compound *c)
+void nfs4_op_backchannel_ctl(struct compound *compound)
 {
-	BACKCHANNEL_CTL4args *args = NFS4_OP_ARG_SETUP(c, opbackchannel_ctl);
-	BACKCHANNEL_CTL4res *res = NFS4_OP_RES_SETUP(c, opbackchannel_ctl);
+	BACKCHANNEL_CTL4args *args =
+		NFS4_OP_ARG_SETUP(compound, opbackchannel_ctl);
+	BACKCHANNEL_CTL4res *res =
+		NFS4_OP_RES_SETUP(compound, opbackchannel_ctl);
 	nfsstat4 *status = &res->bcr_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -702,10 +711,10 @@ void nfs4_op_backchannel_ctl(struct compound *c)
 	    *status, (void *)args, (void *)res);
 }
 
-void nfs4_op_set_ssv(struct compound *c)
+void nfs4_op_set_ssv(struct compound *compound)
 {
-	SET_SSV4args *args = NFS4_OP_ARG_SETUP(c, opset_ssv);
-	SET_SSV4res *res = NFS4_OP_RES_SETUP(c, opset_ssv);
+	SET_SSV4args *args = NFS4_OP_ARG_SETUP(compound, opset_ssv);
+	SET_SSV4res *res = NFS4_OP_RES_SETUP(compound, opset_ssv);
 	nfsstat4 *status = &res->ssr_status;
 	SET_SSV4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, SET_SSV4res_u, ssr_resok4);

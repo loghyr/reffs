@@ -42,7 +42,7 @@
 #include "nfs4/compound.h"
 #include "nfsv42_names.h"
 
-typedef void (*nfs4_op_cb)(struct compound *c);
+typedef void (*nfs4_op_cb)(struct compound *compound);
 
 nfs4_op_cb op_table[OP_MAX] = {
 	[OP_ACCESS] = nfs4_op_access,
@@ -132,27 +132,30 @@ nfs4_op_cb op_table[OP_MAX] = {
 	[OP_CHUNK_WRITE_REPAIR] = nfs4_op_chunk_write_repair,
 };
 
-void dispatch_compound(struct compound *c)
+void dispatch_compound(struct compound *compound)
 {
-	COMPOUND4args *args = c->c_args;
-	COMPOUND4res *res = c->c_res;
+	COMPOUND4args *args = compound->c_args;
+	COMPOUND4res *res = compound->c_res;
 
-	for (c->c_curr_op = 0; c->c_curr_op < args->argarray.argarray_len;
-	     c->c_curr_op++) {
-		nfs_argop4 *argop = &args->argarray.argarray_val[c->c_curr_op];
-		nfs_resop4 *resop = &res->resarray.resarray_val[c->c_curr_op];
+	for (compound->c_curr_op = 0;
+	     compound->c_curr_op < args->argarray.argarray_len;
+	     compound->c_curr_op++) {
+		nfs_argop4 *argop =
+			&args->argarray.argarray_val[compound->c_curr_op];
+		nfs_resop4 *resop =
+			&res->resarray.resarray_val[compound->c_curr_op];
 
 		resop->resop = argop->argop;
 		if (argop->argop < OP_MAX && op_table[argop->argop]) {
-			op_table[argop->argop](c);
-			trace_nfs4_compound_op(c, __func__, __LINE__);
+			op_table[argop->argop](compound);
+			trace_nfs4_compound_op(compound, __func__, __LINE__);
 		} else {
-			nfs4_op_illegal(c);
+			nfs4_op_illegal(compound);
 		}
 
 		if (resop->nfs_resop4_u.opillegal.status) {
 			res->status = resop->nfs_resop4_u.opillegal.status;
-			res->resarray.resarray_len = c->c_curr_op + 1;
+			res->resarray.resarray_len = compound->c_curr_op + 1;
 			return;
 		}
 	}

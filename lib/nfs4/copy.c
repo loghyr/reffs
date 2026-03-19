@@ -15,10 +15,10 @@
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
 
-void nfs4_op_copy(struct compound *c)
+void nfs4_op_copy(struct compound *compound)
 {
-	COPY4args *args = NFS4_OP_ARG_SETUP(c, opcopy);
-	COPY4res *res = NFS4_OP_RES_SETUP(c, opcopy);
+	COPY4args *args = NFS4_OP_ARG_SETUP(compound, opcopy);
+	COPY4res *res = NFS4_OP_RES_SETUP(compound, opcopy);
 	nfsstat4 *status = &res->cr_status;
 	COPY4resok *resok = NFS4_OP_RESOK_SETUP(res, COPY4res_u, cr_resok4);
 
@@ -29,10 +29,10 @@ void nfs4_op_copy(struct compound *c)
 	    (void *)resok);
 }
 
-void nfs4_op_copy_notify(struct compound *c)
+void nfs4_op_copy_notify(struct compound *compound)
 {
-	COPY_NOTIFY4args *args = NFS4_OP_ARG_SETUP(c, opoffload_notify);
-	COPY_NOTIFY4res *res = NFS4_OP_RES_SETUP(c, opcopy_notify);
+	COPY_NOTIFY4args *args = NFS4_OP_ARG_SETUP(compound, opoffload_notify);
+	COPY_NOTIFY4res *res = NFS4_OP_RES_SETUP(compound, opcopy_notify);
 	nfsstat4 *status = &res->cnr_status;
 	COPY_NOTIFY4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, COPY_NOTIFY4res_u, resok4);
@@ -44,10 +44,10 @@ void nfs4_op_copy_notify(struct compound *c)
 	    (void *)resok);
 }
 
-void nfs4_op_clone(struct compound *c)
+void nfs4_op_clone(struct compound *compound)
 {
-	CLONE4args *args = NFS4_OP_ARG_SETUP(c, opclone);
-	CLONE4res *res = NFS4_OP_RES_SETUP(c, opclone);
+	CLONE4args *args = NFS4_OP_ARG_SETUP(compound, opclone);
+	CLONE4res *res = NFS4_OP_RES_SETUP(compound, opclone);
 	nfsstat4 *status = &res->cl_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -55,9 +55,9 @@ void nfs4_op_clone(struct compound *c)
 	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
 	    *status, (void *)args, (void *)res);
 }
-void nfs4_op_offload_cancel(struct compound *c)
+void nfs4_op_offload_cancel(struct compound *compound)
 {
-	OFFLOAD_CANCEL4res *res = NFS4_OP_RES_SETUP(c, opoffload_cancel);
+	OFFLOAD_CANCEL4res *res = NFS4_OP_RES_SETUP(compound, opoffload_cancel);
 	nfsstat4 *status = &res->ocr_status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -66,9 +66,9 @@ void nfs4_op_offload_cancel(struct compound *c)
 	    *status, (void *)res);
 }
 
-void nfs4_op_offload_status(struct compound *c)
+void nfs4_op_offload_status(struct compound *compound)
 {
-	OFFLOAD_STATUS4res *res = NFS4_OP_RES_SETUP(c, opoffload_status);
+	OFFLOAD_STATUS4res *res = NFS4_OP_RES_SETUP(compound, opoffload_status);
 	nfsstat4 *status = &res->osr_status;
 	OFFLOAD_STATUS4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, OFFLOAD_STATUS4res_u, osr_resok4);

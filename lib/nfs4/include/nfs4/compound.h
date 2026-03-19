@@ -47,6 +47,6 @@ struct compound {
 };
 
 int nfs4_proc_compound(struct rpc_trans *rt);
-void dispatch_compound(struct compound *c);
+void dispatch_compound(struct compound *compound);
 
 #endif

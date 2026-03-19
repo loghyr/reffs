@@ -28,10 +28,10 @@ static inline changeid4 timespec_to_changeid(const struct timespec *ts)
 	return ((uint64_t)(uint32_t)ts->tv_sec << 32) | (uint32_t)ts->tv_nsec;
 }
 
-void nfs4_op_lookup(struct compound *c)
+void nfs4_op_lookup(struct compound *compound)
 {
-	LOOKUP4args *args = NFS4_OP_ARG_SETUP(c, oplookup);
-	LOOKUP4res *res = NFS4_OP_RES_SETUP(c, oplookup);
+	LOOKUP4args *args = NFS4_OP_ARG_SETUP(compound, oplookup);
+	LOOKUP4res *res = NFS4_OP_RES_SETUP(compound, oplookup);
 	nfsstat4 *status = &res->status;
 
 	struct reffs_dirent *child_de = NULL;
@@ -39,12 +39,12 @@ void nfs4_op_lookup(struct compound *c)
 	char *name = NULL;
 	int ret;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
 
-	if (!S_ISDIR(c->c_inode->i_mode)) {
+	if (!S_ISDIR(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
 		goto out;
 	}
@@ -72,7 +72,7 @@ void nfs4_op_lookup(struct compound *c)
 		goto out;
 	}
 
-	ret = inode_access_check(c->c_inode, &c->c_ap, X_OK);
+	ret = inode_access_check(compound->c_inode, &compound->c_ap, X_OK);
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_LOOKUP);
 		goto out;
@@ -82,15 +82,15 @@ void nfs4_op_lookup(struct compound *c)
 	 * After PUTFH the inode may be loaded without its dirent chain.
 	 * Reconstruct before calling dirent_load_child_by_name.
 	 */
-	if (!c->c_inode->i_dirent) {
-		ret = inode_reconstruct_path_to_root(c->c_inode);
+	if (!compound->c_inode->i_dirent) {
+		ret = inode_reconstruct_path_to_root(compound->c_inode);
 		if (ret) {
 			*status = NFS4ERR_STALE;
 			goto out;
 		}
 	}
 
-	child_de = dirent_load_child_by_name(c->c_inode->i_dirent, name);
+	child_de = dirent_load_child_by_name(compound->c_inode->i_dirent, name);
 	if (!child_de) {
 		*status = NFS4ERR_NOENT;
 		goto out;
@@ -102,12 +102,12 @@ void nfs4_op_lookup(struct compound *c)
 		goto out;
 	}
 
-	inode_active_put(c->c_inode);
-	c->c_inode = child;
-	c->c_curr_nfh.nfh_ino = child->i_ino;
+	inode_active_put(compound->c_inode);
+	compound->c_inode = child;
+	compound->c_curr_nfh.nfh_ino = child->i_ino;
 
-	stateid_put(c->c_curr_stid);
-	c->c_curr_stid = NULL;
+	stateid_put(compound->c_curr_stid);
+	compound->c_curr_stid = NULL;
 
 	*status = NFS4_OK;
 
@@ -116,21 +116,21 @@ out:
 	dirent_put(child_de);
 }
 
-void nfs4_op_lookupp(struct compound *c)
+void nfs4_op_lookupp(struct compound *compound)
 {
-	LOOKUPP4res *res = NFS4_OP_RES_SETUP(c, oplookupp);
+	LOOKUPP4res *res = NFS4_OP_RES_SETUP(compound, oplookupp);
 	nfsstat4 *status = &res->status;
 
 	struct reffs_dirent *parent_de = NULL;
 	struct inode *parent = NULL;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
 
 	/* At the root there is no parent */
-	if (c->c_curr_nfh.nfh_ino == INODE_ROOT_ID) {
+	if (compound->c_curr_nfh.nfh_ino == INODE_ROOT_ID) {
 		*status = NFS4ERR_NOENT;
 		goto out;
 	}
@@ -140,7 +140,7 @@ void nfs4_op_lookupp(struct compound *c)
 	 * that a subsequent LOOKUP on the returned directory works without
 	 * needing inode_reconstruct_path_to_root.
 	 */
-	parent_de = inode_ensure_parent_dirent(c->c_inode);
+	parent_de = inode_ensure_parent_dirent(compound->c_inode);
 	if (!parent_de) {
 		*status = NFS4ERR_STALE;
 		goto out;
@@ -152,12 +152,12 @@ void nfs4_op_lookupp(struct compound *c)
 		goto out;
 	}
 
-	inode_active_put(c->c_inode);
-	c->c_inode = parent;
-	c->c_curr_nfh.nfh_ino = parent->i_ino;
+	inode_active_put(compound->c_inode);
+	compound->c_inode = parent;
+	compound->c_curr_nfh.nfh_ino = parent->i_ino;
 
-	stateid_put(c->c_curr_stid);
-	c->c_curr_stid = NULL;
+	stateid_put(compound->c_curr_stid);
+	compound->c_curr_stid = NULL;
 
 	*status = NFS4_OK;
 
@@ -165,10 +165,10 @@ out:
 	dirent_put(parent_de);
 }
 
-void nfs4_op_create(struct compound *c)
+void nfs4_op_create(struct compound *compound)
 {
-	CREATE4args *args = NFS4_OP_ARG_SETUP(c, opcreate);
-	CREATE4res *res = NFS4_OP_RES_SETUP(c, opcreate);
+	CREATE4args *args = NFS4_OP_ARG_SETUP(compound, opcreate);
+	CREATE4res *res = NFS4_OP_RES_SETUP(compound, opcreate);
 	nfsstat4 *status = &res->status;
 	CREATE4resok *resok = NFS4_OP_RESOK_SETUP(res, CREATE4res_u, resok4);
 
@@ -178,12 +178,12 @@ void nfs4_op_create(struct compound *c)
 	char *linkpath = NULL;
 	int ret;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
 
-	if (!S_ISDIR(c->c_inode->i_mode)) {
+	if (!S_ISDIR(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
 		goto out;
 	}
@@ -215,8 +215,8 @@ void nfs4_op_create(struct compound *c)
 
 	switch (args->objtype.type) {
 	case NF4DIR:
-		ret = vfs_mkdir(c->c_inode, name, 0777, &c->c_ap, &new_inode,
-				&dir_before, &dir_after);
+		ret = vfs_mkdir(compound->c_inode, name, 0777, &compound->c_ap,
+				&new_inode, &dir_before, &dir_after);
 		break;
 
 	case NF4LNK: {
@@ -226,35 +226,40 @@ void nfs4_op_create(struct compound *c)
 			*status = NFS4ERR_DELAY;
 			goto out;
 		}
-		ret = vfs_symlink(c->c_inode, name, linkpath, &c->c_ap,
-				  &new_inode, &dir_before, &dir_after);
+		ret = vfs_symlink(compound->c_inode, name, linkpath,
+				  &compound->c_ap, &new_inode, &dir_before,
+				  &dir_after);
 		break;
 	}
 
 	case NF4BLK: {
 		specdata4 *sd = &args->objtype.createtype4_u.devdata;
-		ret = vfs_mknod(c->c_inode, name, S_IFBLK | 0666,
-				makedev(sd->specdata1, sd->specdata2), &c->c_ap,
-				&new_inode, &dir_before, &dir_after);
+		ret = vfs_mknod(compound->c_inode, name, S_IFBLK | 0666,
+				makedev(sd->specdata1, sd->specdata2),
+				&compound->c_ap, &new_inode, &dir_before,
+				&dir_after);
 		break;
 	}
 
 	case NF4CHR: {
 		specdata4 *sd = &args->objtype.createtype4_u.devdata;
-		ret = vfs_mknod(c->c_inode, name, S_IFCHR | 0666,
-				makedev(sd->specdata1, sd->specdata2), &c->c_ap,
-				&new_inode, &dir_before, &dir_after);
+		ret = vfs_mknod(compound->c_inode, name, S_IFCHR | 0666,
+				makedev(sd->specdata1, sd->specdata2),
+				&compound->c_ap, &new_inode, &dir_before,
+				&dir_after);
 		break;
 	}
 
 	case NF4SOCK:
-		ret = vfs_mknod(c->c_inode, name, S_IFSOCK | 0666, 0, &c->c_ap,
-				&new_inode, &dir_before, &dir_after);
+		ret = vfs_mknod(compound->c_inode, name, S_IFSOCK | 0666, 0,
+				&compound->c_ap, &new_inode, &dir_before,
+				&dir_after);
 		break;
 
 	case NF4FIFO:
-		ret = vfs_mknod(c->c_inode, name, S_IFIFO | 0666, 0, &c->c_ap,
-				&new_inode, &dir_before, &dir_after);
+		ret = vfs_mknod(compound->c_inode, name, S_IFIFO | 0666, 0,
+				&compound->c_ap, &new_inode, &dir_before,
+				&dir_after);
 		break;
 
 	default:
@@ -270,10 +275,10 @@ void nfs4_op_create(struct compound *c)
 	}
 
 	/* Switch current FH to the newly created object. */
-	inode_active_put(c->c_inode);
-	c->c_inode = new_inode;
+	inode_active_put(compound->c_inode);
+	compound->c_inode = new_inode;
 	new_inode = NULL;
-	c->c_curr_nfh.nfh_ino = c->c_inode->i_ino;
+	compound->c_curr_nfh.nfh_ino = compound->c_inode->i_ino;
 
 	resok->cinfo.atomic = TRUE;
 	resok->cinfo.before = timespec_to_changeid(&dir_before);
@@ -289,10 +294,10 @@ out:
 	free(name);
 }
 
-void nfs4_op_remove(struct compound *c)
+void nfs4_op_remove(struct compound *compound)
 {
-	REMOVE4args *args = NFS4_OP_ARG_SETUP(c, opremove);
-	REMOVE4res *res = NFS4_OP_RES_SETUP(c, opremove);
+	REMOVE4args *args = NFS4_OP_ARG_SETUP(compound, opremove);
+	REMOVE4res *res = NFS4_OP_RES_SETUP(compound, opremove);
 	nfsstat4 *status = &res->status;
 	REMOVE4resok *resok = NFS4_OP_RESOK_SETUP(res, REMOVE4res_u, resok4);
 
@@ -300,12 +305,12 @@ void nfs4_op_remove(struct compound *c)
 	char *name = NULL;
 	int ret;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
 
-	if (!S_ISDIR(c->c_inode->i_mode)) {
+	if (!S_ISDIR(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
 		goto out;
 	}
@@ -333,10 +338,11 @@ void nfs4_op_remove(struct compound *c)
 	 * Try removing as a non-directory first.  vfs_remove() returns
 	 * -EISDIR if the target is a directory; fall back to vfs_rmdir().
 	 */
-	ret = vfs_remove(c->c_inode, name, &c->c_ap, &dir_before, &dir_after);
+	ret = vfs_remove(compound->c_inode, name, &compound->c_ap, &dir_before,
+			 &dir_after);
 	if (ret == -EISDIR)
-		ret = vfs_rmdir(c->c_inode, name, &c->c_ap, &dir_before,
-				&dir_after);
+		ret = vfs_rmdir(compound->c_inode, name, &compound->c_ap,
+				&dir_before, &dir_after);
 
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_REMOVE);
@@ -353,10 +359,10 @@ out:
 	free(name);
 }
 
-void nfs4_op_rename(struct compound *c)
+void nfs4_op_rename(struct compound *compound)
 {
-	RENAME4args *args = NFS4_OP_ARG_SETUP(c, oprename);
-	RENAME4res *res = NFS4_OP_RES_SETUP(c, oprename);
+	RENAME4args *args = NFS4_OP_ARG_SETUP(compound, oprename);
+	RENAME4res *res = NFS4_OP_RES_SETUP(compound, oprename);
 	nfsstat4 *status = &res->status;
 	RENAME4resok *resok = NFS4_OP_RESOK_SETUP(res, RENAME4res_u, resok4);
 
@@ -366,17 +372,17 @@ void nfs4_op_rename(struct compound *c)
 	char *newname = NULL;
 	int ret;
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
 
-	if (network_file_handle_empty(&c->c_saved_nfh)) {
+	if (network_file_handle_empty(&compound->c_saved_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
 
-	if (!S_ISDIR(c->c_inode->i_mode)) {
+	if (!S_ISDIR(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
 		goto out;
 	}
@@ -410,7 +416,8 @@ void nfs4_op_rename(struct compound *c)
 	 * RFC 5661 §18.26: source is SAVED_FH, destination is CURRENT_FH.
 	 * Load the saved directory inode.
 	 */
-	old_dir = inode_find(c->c_saved_sb, c->c_saved_nfh.nfh_ino);
+	old_dir =
+		inode_find(compound->c_saved_sb, compound->c_saved_nfh.nfh_ino);
 	if (!old_dir) {
 		*status = NFS4ERR_STALE;
 		goto out;
@@ -421,8 +428,9 @@ void nfs4_op_rename(struct compound *c)
 		goto out;
 	}
 
-	ret = vfs_rename(old_dir, oldname, c->c_inode, newname, &c->c_ap,
-			 &old_before, &old_after, &new_before, &new_after);
+	ret = vfs_rename(old_dir, oldname, compound->c_inode, newname,
+			 &compound->c_ap, &old_before, &old_after, &new_before,
+			 &new_after);
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_RENAME);
 		goto out;
@@ -443,10 +451,10 @@ out:
 	free(newname);
 }
 
-void nfs4_op_link(struct compound *c)
+void nfs4_op_link(struct compound *compound)
 {
-	LINK4args *args = NFS4_OP_ARG_SETUP(c, oplink);
-	LINK4res *res = NFS4_OP_RES_SETUP(c, oplink);
+	LINK4args *args = NFS4_OP_ARG_SETUP(compound, oplink);
+	LINK4res *res = NFS4_OP_RES_SETUP(compound, oplink);
 	nfsstat4 *status = &res->status;
 	LINK4resok *resok = NFS4_OP_RESOK_SETUP(res, LINK4res_u, resok4);
 
@@ -459,13 +467,13 @@ void nfs4_op_link(struct compound *c)
 	 * RFC 5661 §18.9.3: CURRENT_FH is the target directory;
 	 * SAVED_FH is the file to link.
 	 */
-	if (network_file_handle_empty(&c->c_curr_nfh) ||
-	    network_file_handle_empty(&c->c_saved_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh) ||
+	    network_file_handle_empty(&compound->c_saved_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
 
-	if (!S_ISDIR(c->c_inode->i_mode)) {
+	if (!S_ISDIR(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
 		goto out;
 	}
@@ -490,7 +498,8 @@ void nfs4_op_link(struct compound *c)
 		goto out;
 	}
 
-	src_inode = inode_find(c->c_saved_sb, c->c_saved_nfh.nfh_ino);
+	src_inode =
+		inode_find(compound->c_saved_sb, compound->c_saved_nfh.nfh_ino);
 	if (!src_inode) {
 		*status = NFS4ERR_STALE;
 		goto out;
@@ -501,19 +510,19 @@ void nfs4_op_link(struct compound *c)
 		goto out;
 	}
 
-	pthread_mutex_lock(&c->c_inode->i_attr_mutex);
-	dir_before = c->c_inode->i_mtime;
-	pthread_mutex_unlock(&c->c_inode->i_attr_mutex);
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	dir_before = compound->c_inode->i_mtime;
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
-	ret = vfs_link(src_inode, c->c_inode, name, &c->c_ap);
+	ret = vfs_link(src_inode, compound->c_inode, name, &compound->c_ap);
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_LINK);
 		goto out;
 	}
 
-	pthread_mutex_lock(&c->c_inode->i_attr_mutex);
-	dir_after = c->c_inode->i_mtime;
-	pthread_mutex_unlock(&c->c_inode->i_attr_mutex);
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	dir_after = compound->c_inode->i_mtime;
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
 	resok->cinfo.atomic = TRUE;
 	resok->cinfo.before = timespec_to_changeid(&dir_before);
@@ -525,10 +534,10 @@ out:
 	free(name);
 }
 
-void nfs4_op_openattr(struct compound *c)
+void nfs4_op_openattr(struct compound *compound)
 {
-	OPENATTR4args *args = NFS4_OP_ARG_SETUP(c, opopenattr);
-	OPENATTR4res *res = NFS4_OP_RES_SETUP(c, opopenattr);
+	OPENATTR4args *args = NFS4_OP_ARG_SETUP(compound, opopenattr);
+	OPENATTR4res *res = NFS4_OP_RES_SETUP(compound, opopenattr);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
@@ -537,34 +546,34 @@ void nfs4_op_openattr(struct compound *c)
 	    *status, (void *)args, (void *)res);
 }
 
-void nfs4_op_readlink(struct compound *c)
+void nfs4_op_readlink(struct compound *compound)
 {
-	READLINK4res *res = NFS4_OP_RES_SETUP(c, opreadlink);
+	READLINK4res *res = NFS4_OP_RES_SETUP(compound, opreadlink);
 	nfsstat4 *status = &res->status;
 	READLINK4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, READLINK4res_u, resok4);
 
-	if (network_file_handle_empty(&c->c_curr_nfh)) {
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		return;
 	}
 
-	if (!S_ISLNK(c->c_inode->i_mode)) {
+	if (!S_ISLNK(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_INVAL;
 		return;
 	}
 
-	if (!c->c_inode->i_symlink) {
+	if (!compound->c_inode->i_symlink) {
 		*status = NFS4ERR_SERVERFAULT;
 		return;
 	}
 
-	resok->link.linktext4_val = strdup(c->c_inode->i_symlink);
+	resok->link.linktext4_val = strdup(compound->c_inode->i_symlink);
 	if (!resok->link.linktext4_val) {
 		*status = NFS4ERR_DELAY;
 		return;
 	}
-	resok->link.linktext4_len = strlen(c->c_inode->i_symlink);
+	resok->link.linktext4_len = strlen(compound->c_inode->i_symlink);
 
 	*status = NFS4_OK;
 }
