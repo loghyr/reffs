@@ -86,7 +86,7 @@ static inline int bitmap4_copy(bitmap4 *src, bitmap4 *dst)
 	if (src == NULL)
 		return -EINVAL;
 
-	if (dst->bitmap4_len == 0)
+	if (src->bitmap4_len == 0)
 		return 0;
 
 	dst->bitmap4_val = calloc(src->bitmap4_len, sizeof(*dst->bitmap4_val));
