@@ -284,15 +284,31 @@ void nfs4_op_open(struct compound *c)
 				/* -EEXIST → NFS4ERR_EXIST below */
 				break;
 
+			case EXCLUSIVE4_1:
+				/*
+				 * EXCLUSIVE4_1 (RFC 5661 §18.16.3): same
+				 * exclusive-create semantics as EXCLUSIVE4
+				 * but the verifier lives in
+				 * ch_createboth.cva_verf and the client
+				 * may supply optional create attributes in
+				 * cva_attrs.  We apply the verifier cookie
+				 * the same way and leave attrset empty
+				 * (cva_attrs ignored for now).
+				 */
+				/* fall through */
 			case EXCLUSIVE4: {
 				/*
-				 * EXCLUSIVE4: use the verifier4 as the
-				 * ctime cookie.  Map the 8-byte verifier
-				 * the same way NFS3 does: first 4 bytes →
-				 * tv_sec, last 4 bytes → tv_nsec.
+				 * Use the verifier4 as the ctime cookie.
+				 * Map the 8-byte verifier the same way
+				 * NFS3 does: first 4 bytes → tv_sec,
+				 * last 4 bytes → tv_nsec.
 				 */
 				struct timespec verf_ts;
-				verifier4 *v = &how->createhow4_u.createverf;
+				verifier4 *v =
+					(how->mode == EXCLUSIVE4_1) ?
+						&how->createhow4_u.ch_createboth
+							 .cva_verf :
+						&how->createhow4_u.createverf;
 				memcpy(&verf_ts.tv_sec, v, 4);
 				memcpy(&verf_ts.tv_nsec, (uint8_t *)v + 4, 4);
 
