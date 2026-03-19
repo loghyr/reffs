@@ -32,6 +32,7 @@ LDADD = \
 check_PROGRAMS = $(TESTS)
 
 TESTS = \
+	cmp \
 	utf8string_component \
 	utf8string_lifecycle \
 	utf8string_compare \
