@@ -450,11 +450,79 @@ void nfs4_op_link(struct compound *c)
 	nfsstat4 *status = &res->status;
 	LINK4resok *resok = NFS4_OP_RESOK_SETUP(res, LINK4res_u, resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	struct inode *src_inode = NULL;
+	struct timespec dir_before, dir_after;
+	char *name = NULL;
+	int ret;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	/*
+	 * RFC 5661 §18.9.3: CURRENT_FH is the target directory;
+	 * SAVED_FH is the file to link.
+	 */
+	if (network_file_handle_empty(&c->c_curr_nfh) ||
+	    network_file_handle_empty(&c->c_saved_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	if (!S_ISDIR(c->c_inode->i_mode)) {
+		*status = NFS4ERR_NOTDIR;
+		goto out;
+	}
+
+	if (args->newname.utf8string_len == 0) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+	if (args->newname.utf8string_len > REFFS_MAX_NAME) {
+		*status = NFS4ERR_NAMETOOLONG;
+		goto out;
+	}
+
+	name = strndup(args->newname.utf8string_val,
+		       args->newname.utf8string_len);
+	if (!name) {
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+		*status = NFS4ERR_BADNAME;
+		goto out;
+	}
+
+	src_inode = inode_find(c->c_saved_sb, c->c_saved_nfh.nfh_ino);
+	if (!src_inode) {
+		*status = NFS4ERR_STALE;
+		goto out;
+	}
+
+	if (S_ISDIR(src_inode->i_mode)) {
+		*status = NFS4ERR_ISDIR;
+		goto out;
+	}
+
+	pthread_mutex_lock(&c->c_inode->i_attr_mutex);
+	dir_before = c->c_inode->i_mtime;
+	pthread_mutex_unlock(&c->c_inode->i_attr_mutex);
+
+	ret = vfs_link(src_inode, c->c_inode, name, &c->c_ap);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_LINK);
+		goto out;
+	}
+
+	pthread_mutex_lock(&c->c_inode->i_attr_mutex);
+	dir_after = c->c_inode->i_mtime;
+	pthread_mutex_unlock(&c->c_inode->i_attr_mutex);
+
+	resok->cinfo.atomic = TRUE;
+	resok->cinfo.before = timespec_to_changeid(&dir_before);
+	resok->cinfo.after = timespec_to_changeid(&dir_after);
+	*status = NFS4_OK;
+
+out:
+	inode_active_put(src_inode);
+	free(name);
 }
 
 void nfs4_op_openattr(struct compound *c)

@@ -659,11 +659,35 @@ void nfs4_op_bind_conn_to_session(struct compound *c)
 	BIND_CONN_TO_SESSION4resok *resok = NFS4_OP_RESOK_SETUP(
 		res, BIND_CONN_TO_SESSION4res_u, bctsr_resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	struct nfs4_session *ns;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	/*
+	 * We do not support RDMA or the backchannel.  A request that
+	 * exclusively targets the back channel is refused; fore-or-both
+	 * is satisfied by binding the fore channel only.
+	 */
+	if (args->bctsa_use_conn_in_rdma_mode) {
+		*status = NFS4ERR_NOTSUPP;
+		return;
+	}
+
+	if (args->bctsa_dir == CDFC4_BACK) {
+		*status = NFS4ERR_NOTSUPP;
+		return;
+	}
+
+	ns = nfs4_session_find(args->bctsa_sessid);
+	if (!ns) {
+		*status = NFS4ERR_BADSESSION;
+		return;
+	}
+
+	memcpy(resok->bctsr_sessid, ns->ns_sessionid, sizeof(sessionid4));
+	resok->bctsr_dir = CDFS4_FORE;
+	resok->bctsr_use_conn_in_rdma_mode = FALSE;
+	*status = NFS4_OK;
+
+	nfs4_session_put(ns);
 }
 
 void nfs4_op_backchannel_ctl(struct compound *c)
