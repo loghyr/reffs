@@ -9,6 +9,7 @@
 
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
@@ -16,6 +17,7 @@
 #include "reffs/rpc.h"
 #include "reffs/dirent.h"
 #include "reffs/identity.h"
+#include "reffs/vfs.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -177,11 +179,121 @@ void nfs4_op_create(struct compound *c)
 	nfsstat4 *status = &res->status;
 	CREATE4resok *resok = NFS4_OP_RESOK_SETUP(res, CREATE4res_u, resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	struct inode *new_inode = NULL;
+	char *name = NULL;
+	char *linkpath = NULL;
+	int ret;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	if (!S_ISDIR(c->c_inode->i_mode)) {
+		*status = NFS4ERR_NOTDIR;
+		goto out;
+	}
+
+	/* NF4REG is not valid for CREATE — clients must use OPEN. */
+	if (args->objtype.type == NF4REG) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	if (args->objname.utf8string_len == 0) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+	if (args->objname.utf8string_len > REFFS_MAX_NAME) {
+		*status = NFS4ERR_NAMETOOLONG;
+		goto out;
+	}
+	name = strndup(args->objname.utf8string_val,
+		       args->objname.utf8string_len);
+	if (!name) {
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+		*status = NFS4ERR_BADNAME;
+		goto out;
+	}
+
+	switch (args->objtype.type) {
+	case NF4DIR:
+		ret = vfs_mkdir(c->c_inode, name, 0777, &c->c_ap, &new_inode);
+		break;
+
+	case NF4LNK: {
+		linktext4 *ld = &args->objtype.createtype4_u.linkdata;
+		linkpath = strndup(ld->linktext4_val, ld->linktext4_len);
+		if (!linkpath) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+		ret = vfs_symlink(c->c_inode, name, linkpath, &c->c_ap,
+				  &new_inode);
+		break;
+	}
+
+	case NF4BLK: {
+		specdata4 *sd = &args->objtype.createtype4_u.devdata;
+		ret = vfs_mknod(c->c_inode, name, S_IFBLK | 0666,
+				makedev(sd->specdata1, sd->specdata2), &c->c_ap,
+				&new_inode);
+		break;
+	}
+
+	case NF4CHR: {
+		specdata4 *sd = &args->objtype.createtype4_u.devdata;
+		ret = vfs_mknod(c->c_inode, name, S_IFCHR | 0666,
+				makedev(sd->specdata1, sd->specdata2), &c->c_ap,
+				&new_inode);
+		break;
+	}
+
+	case NF4SOCK:
+		ret = vfs_mknod(c->c_inode, name, S_IFSOCK | 0666, 0, &c->c_ap,
+				&new_inode);
+		break;
+
+	case NF4FIFO:
+		ret = vfs_mknod(c->c_inode, name, S_IFIFO | 0666, 0, &c->c_ap,
+				&new_inode);
+		break;
+
+	default:
+		*status = NFS4ERR_BADTYPE;
+		goto out;
+	}
+
+	if (ret) {
+		*status = ret == -EEXIST ? NFS4ERR_EXIST :
+			  ret == -ENOSPC ? NFS4ERR_NOSPC :
+					   errno_to_nfs4(ret, OP_CREATE);
+		goto out;
+	}
+
+	/* Switch current FH to the newly created object. */
+	inode_active_put(c->c_inode);
+	c->c_inode = new_inode;
+	new_inode = NULL;
+	c->c_curr_nfh.nfh_ino = c->c_inode->i_ino;
+
+	resok->cinfo.atomic = FALSE;
+	resok->cinfo.before = 0;
+	resok->cinfo.after = 0;
+	resok->attrset.bitmap4_len = 0;
+	resok->attrset.bitmap4_val = NULL;
+
+	*status = NFS4_OK;
+
+out:
+	inode_active_put(new_inode);
+	free(linkpath);
+	free(name);
+	LOG("%s status=%s(%d) type=%d", __func__, nfs4_err_name(*status),
+	    *status, args->objtype.type);
 }
 
 void nfs4_op_remove(struct compound *c)
@@ -194,11 +306,60 @@ void nfs4_op_remove(struct compound *c)
 	nfsstat4 *status = &res->status;
 	REMOVE4resok *resok = NFS4_OP_RESOK_SETUP(res, REMOVE4res_u, resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	char *name = NULL;
+	int ret;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	if (!S_ISDIR(c->c_inode->i_mode)) {
+		*status = NFS4ERR_NOTDIR;
+		goto out;
+	}
+
+	if (args->target.utf8string_len == 0) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+	if (args->target.utf8string_len > REFFS_MAX_NAME) {
+		*status = NFS4ERR_NAMETOOLONG;
+		goto out;
+	}
+	name = strndup(args->target.utf8string_val,
+		       args->target.utf8string_len);
+	if (!name) {
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+		*status = NFS4ERR_BADNAME;
+		goto out;
+	}
+
+	/*
+	 * Try removing as a non-directory first.  vfs_remove() returns
+	 * -EISDIR if the target is a directory; fall back to vfs_rmdir().
+	 */
+	ret = vfs_remove(c->c_inode, name, &c->c_ap);
+	if (ret == -EISDIR)
+		ret = vfs_rmdir(c->c_inode, name, &c->c_ap);
+
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_REMOVE);
+		goto out;
+	}
+
+	resok->cinfo.atomic = FALSE;
+	resok->cinfo.before = 0;
+	resok->cinfo.after = 0;
+
+	*status = NFS4_OK;
+
+out:
+	free(name);
+	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_rename(struct compound *c)
@@ -211,11 +372,86 @@ void nfs4_op_rename(struct compound *c)
 	nfsstat4 *status = &res->status;
 	RENAME4resok *resok = NFS4_OP_RESOK_SETUP(res, RENAME4res_u, resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	struct inode *old_dir = NULL;
+	char *oldname = NULL;
+	char *newname = NULL;
+	int ret;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	if (network_file_handle_empty(&c->c_saved_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	if (!S_ISDIR(c->c_inode->i_mode)) {
+		*status = NFS4ERR_NOTDIR;
+		goto out;
+	}
+
+	/* Validate names. */
+	if (args->oldname.utf8string_len == 0 ||
+	    args->newname.utf8string_len == 0) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+	if (args->oldname.utf8string_len > REFFS_MAX_NAME ||
+	    args->newname.utf8string_len > REFFS_MAX_NAME) {
+		*status = NFS4ERR_NAMETOOLONG;
+		goto out;
+	}
+	oldname = strndup(args->oldname.utf8string_val,
+			  args->oldname.utf8string_len);
+	newname = strndup(args->newname.utf8string_val,
+			  args->newname.utf8string_len);
+	if (!oldname || !newname) {
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+	if (strcmp(oldname, ".") == 0 || strcmp(oldname, "..") == 0 ||
+	    strcmp(newname, ".") == 0 || strcmp(newname, "..") == 0) {
+		*status = NFS4ERR_BADNAME;
+		goto out;
+	}
+
+	/*
+	 * RFC 5661 §18.26: source is SAVED_FH, destination is CURRENT_FH.
+	 * Load the saved directory inode.
+	 */
+	old_dir = inode_find(c->c_saved_sb, c->c_saved_nfh.nfh_ino);
+	if (!old_dir) {
+		*status = NFS4ERR_STALE;
+		goto out;
+	}
+
+	if (!S_ISDIR(old_dir->i_mode)) {
+		*status = NFS4ERR_NOTDIR;
+		goto out;
+	}
+
+	ret = vfs_rename(old_dir, oldname, c->c_inode, newname, &c->c_ap);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_RENAME);
+		goto out;
+	}
+
+	resok->source_cinfo.atomic = FALSE;
+	resok->source_cinfo.before = 0;
+	resok->source_cinfo.after = 0;
+	resok->target_cinfo.atomic = FALSE;
+	resok->target_cinfo.before = 0;
+	resok->target_cinfo.after = 0;
+
+	*status = NFS4_OK;
+
+out:
+	inode_active_put(old_dir);
+	free(oldname);
+	free(newname);
+	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_link(struct compound *c)
@@ -260,8 +496,30 @@ void nfs4_op_readlink(struct compound *c)
 	READLINK4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, READLINK4res_u, resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&c->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
 
-	LOG("%s status=%s(%d) res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)res, (void *)resok);
+	if (!S_ISLNK(c->c_inode->i_mode)) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	if (!c->c_inode->i_symlink) {
+		*status = NFS4ERR_SERVERFAULT;
+		goto out;
+	}
+
+	resok->link.linktext4_val = strdup(c->c_inode->i_symlink);
+	if (!resok->link.linktext4_val) {
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+	resok->link.linktext4_len = strlen(c->c_inode->i_symlink);
+
+	*status = NFS4_OK;
+
+out:
+	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
