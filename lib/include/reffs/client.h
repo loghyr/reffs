@@ -13,6 +13,7 @@
 
 #define CLIENT_IS_HASHED (1ULL << 0)
 #define CLIENT_IS_SHUTTING_DOWN (1ULL << 1)
+#define CLIENT_IS_EXPIRING (1ULL << 2)
 
 struct client {
 	uint64_t c_id; /* opaque to fs layer; NFS layer stores clientid4 */

@@ -117,6 +117,8 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 		LOG("nfs4_client_expire: slot %u not in incarnations", slot);
 
 	trace_fs_client(client, __func__, __LINE__);
+	__atomic_fetch_or(&client->c_state, CLIENT_IS_EXPIRING,
+			  __ATOMIC_RELEASE);
 	client_remove_all_stateids(client);
 	if (client_unhash(client))
 		client_put(client);
