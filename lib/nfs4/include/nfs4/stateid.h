@@ -11,6 +11,7 @@
 #include "nfsv42_xdr.h"
 #include "reffs/stateid.h" /* struct stateid, stateid_get/put/find */
 #include "reffs/client.h"
+#include "reffs/lock.h" /* struct reffs_lock_owner */
 
 /* ------------------------------------------------------------------ */
 /* NFS4 stateid type tag — stored in s_tag                            */
@@ -33,9 +34,12 @@ enum stateid_type {
 /* Bits stored in open_stateid.os_state for I/O access-mode checks. */
 #define OPEN_STATEID_ACCESS_READ (1ULL << 0)
 #define OPEN_STATEID_ACCESS_WRITE (1ULL << 1)
+#define OPEN_STATEID_DENY_READ (1ULL << 2)
+#define OPEN_STATEID_DENY_WRITE (1ULL << 3)
 
 struct open_stateid {
 	uint64_t os_state;
+	struct reffs_lock_owner os_owner; /* share reservation owner */
 	struct stateid os_stid;
 };
 
