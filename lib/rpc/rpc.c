@@ -477,6 +477,10 @@ static struct rpc_trans *rpc_trans_create_from_task(struct task *t)
 	rt->rt_offset = 0;
 	copy_connection_info(&rt->rt_info.ri_ci, &t->t_ci);
 
+	rt->rt_task = t;
+	t->t_rt = rt;
+	atomic_store_explicit(&t->t_state, TASK_RUNNING, memory_order_release);
+
 	return rt;
 }
 

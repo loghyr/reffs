@@ -56,6 +56,7 @@ struct rpc_info {
 };
 
 struct rpc_program_handler;
+struct compound;
 
 struct rpc_trans {
 	struct rpc_info rt_info; // The RPC Header
@@ -71,6 +72,11 @@ struct rpc_trans {
 	struct rpc_program_handler *rt_rph;
 	uint16_t rt_port;
 	char *rt_addr_str;
+	void (*rt_next_action)(
+		struct rpc_trans *rt); /* NULL = fresh, else resume cb */
+	struct task *rt_task; /* owning task */
+	struct compound
+		*rt_compound; /* live compound; NULL when not in dispatch */
 };
 
 struct rpc_stats {
