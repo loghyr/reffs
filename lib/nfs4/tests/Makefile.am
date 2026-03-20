@@ -38,6 +38,7 @@ check_PROGRAMS = $(TESTS)
 
 TESTS = \
 	bitmap \
+	compound_async \
 	errors \
 	nfs4_client_persist \
 	nfs4_session \
