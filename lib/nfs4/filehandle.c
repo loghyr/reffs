@@ -179,8 +179,12 @@ void nfs4_op_restorefh(struct compound *compound)
 	}
 
 	stateid_put(compound->c_curr_stid);
-	compound->c_curr_stid = stateid_get(compound->c_saved_stid);
-	verify_msg(compound->c_curr_stid, "Could not get loaded stateid");
+	compound->c_curr_stid = NULL;
+	if (compound->c_saved_stid) {
+		compound->c_curr_stid = stateid_get(compound->c_saved_stid);
+		verify_msg(compound->c_curr_stid,
+			   "Could not get loaded stateid");
+	}
 }
 
 void nfs4_op_savefh(struct compound *compound)
@@ -203,6 +207,10 @@ void nfs4_op_savefh(struct compound *compound)
 	compound->c_saved_nfh = compound->c_curr_nfh;
 
 	stateid_put(compound->c_saved_stid);
-	compound->c_saved_stid = stateid_get(compound->c_curr_stid);
-	verify_msg(compound->c_saved_stid, "Could not get loaded stateid");
+	compound->c_saved_stid = NULL;
+	if (compound->c_curr_stid) {
+		compound->c_saved_stid = stateid_get(compound->c_curr_stid);
+		verify_msg(compound->c_saved_stid,
+			   "Could not get loaded stateid");
+	}
 }

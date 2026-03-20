@@ -223,12 +223,13 @@ void nfs4_op_lock(struct compound *compound)
 		}
 
 		pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
-		urcu_ref_put(&lo->lo_base.lo_ref, lo->lo_base.lo_release);
 		if (args->locker.new_lock_owner) {
 			stateid_inode_unhash(&ls->ls_stid);
 			stateid_client_unhash(&ls->ls_stid);
 			stateid_put(&ls->ls_stid);
 		} else {
+			urcu_ref_put(&lo->lo_base.lo_ref,
+				     lo->lo_base.lo_release);
 			stateid_put(&ls->ls_stid);
 		}
 		*status = NFS4ERR_DENIED;
@@ -238,19 +239,22 @@ void nfs4_op_lock(struct compound *compound)
 	lock = calloc(1, sizeof(*lock));
 	if (!lock) {
 		pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
-		urcu_ref_put(&lo->lo_base.lo_ref, lo->lo_base.lo_release);
 		if (args->locker.new_lock_owner) {
 			stateid_inode_unhash(&ls->ls_stid);
 			stateid_client_unhash(&ls->ls_stid);
 			stateid_put(&ls->ls_stid);
 		} else {
+			urcu_ref_put(&lo->lo_base.lo_ref,
+				     lo->lo_base.lo_release);
 			stateid_put(&ls->ls_stid);
 		}
 		*status = NFS4ERR_DELAY;
 		goto out;
 	}
 
-	lock->l_owner = &lo->lo_base; /* Ref already held */
+	if (args->locker.new_lock_owner)
+		urcu_ref_get(&lo->lo_base.lo_ref);
+	lock->l_owner = &lo->lo_base;
 	lock->l_offset = args->offset;
 	lock->l_len = args->length;
 	lock->l_exclusive = exclusive;
