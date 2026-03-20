@@ -174,6 +174,7 @@ static inline uint32_t *rpc_encode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 int rpc_protocol_allocate_call(struct rpc_trans *rt);
 void rpc_protocol_free(struct rpc_trans *rt);
 int rpc_protocol_op_call(struct rpc_trans *rt);
+void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t);
 
 struct rpc_program_handler *
 rpc_program_handler_alloc(uint32_t program, uint32_t version,
