@@ -135,81 +135,110 @@ static struct compound *compound_alloc(struct rpc_trans *rt)
 
 int nfs4_proc_compound(struct rpc_trans *rt)
 {
-	struct compound *compound = compound_alloc(rt);
+	struct compound *compound;
 	COMPOUND4res *res;
-	COMPOUND4args *args;
-	nfs_opnum4 op;
 
-	if (!compound) {
-		return NFS4ERR_DELAY;
-	}
+	if (rt->rt_compound != NULL) {
+		/*
+		 * Resume path: this task was paused by an async op and has
+		 * been re-enqueued.  Skip alloc and all request validation —
+		 * those already ran on the first pass.
+		 */
+		compound = rt->rt_compound;
+		res = compound->c_res;
+	} else {
+		/*
+		 * Fresh path: allocate the compound and validate the request
+		 * before dispatching.
+		 */
+		COMPOUND4args *args;
+		nfs_opnum4 op;
 
-	res = compound->c_res;
-	args = compound->c_args;
+		compound = compound_alloc(rt);
+		if (!compound)
+			return NFS4ERR_DELAY;
+		rt->rt_compound = compound;
 
-	trace_nfs4_srv_compound(rt);
+		res = compound->c_res;
+		args = compound->c_args;
 
-	res->status = 0;
+		trace_nfs4_srv_compound(rt);
 
-	if (args->minorversion != 1 && args->minorversion != 2) {
-		res->status = NFS4ERR_MINOR_VERS_MISMATCH;
-		goto out;
-	}
+		res->status = 0;
 
-	/*
-	 * RFC 5661 §16.2.3: the server MUST copy the tag from the
-	 * request into the response.  XDR free will call free() on
-	 * res->tag.utf8string_val independently of the args, so we
-	 * need a separate heap allocation.
-	 */
-	if (args->tag.utf8string_len > 0) {
-		res->tag.utf8string_val = malloc(args->tag.utf8string_len);
-		if (res->tag.utf8string_val) {
-			memcpy(res->tag.utf8string_val,
-			       args->tag.utf8string_val,
-			       args->tag.utf8string_len);
-			res->tag.utf8string_len = args->tag.utf8string_len;
+		if (args->minorversion != 1 && args->minorversion != 2) {
+			res->status = NFS4ERR_MINOR_VERS_MISMATCH;
+			goto out;
 		}
-	}
 
-	res->resarray.resarray_val =
-		calloc(args->argarray.argarray_len, sizeof(nfs_resop4));
-	if (!res->resarray.resarray_val) {
-		res->status = NFS4ERR_DELAY;
-		goto out;
-	}
-	res->resarray.resarray_len = args->argarray.argarray_len;
-
-	if (args->argarray.argarray_len == 0) {
-		res->status = NFS4_OK;
-		goto out;
-	}
-
-	op = NFS4_OP_NUM(compound);
-	if (op != OP_SEQUENCE && op != OP_EXCHANGE_ID &&
-	    op != OP_CREATE_SESSION && op != OP_DESTROY_SESSION &&
-	    op != OP_BIND_CONN_TO_SESSION && op != OP_DESTROY_CLIENTID) {
-		nfs_resop4 *resop = &res->resarray.resarray_val[0];
-
-		if (op < OP_ACCESS || op > OP_CHUNK_WRITE_REPAIR) {
-			resop->resop = OP_ILLEGAL;
-			resop->nfs_resop4_u.opillegal.status =
-				NFS4ERR_OP_ILLEGAL;
-			res->status = NFS4ERR_OP_ILLEGAL;
-		} else {
-			resop->resop = op;
-			resop->nfs_resop4_u.opillegal.status =
-				NFS4ERR_OP_NOT_IN_SESSION;
-			res->status = NFS4ERR_OP_NOT_IN_SESSION;
+		/*
+		 * RFC 5661 §16.2.3: the server MUST copy the tag from the
+		 * request into the response.  XDR free will call free() on
+		 * res->tag.utf8string_val independently of the args, so we
+		 * need a separate heap allocation.
+		 */
+		if (args->tag.utf8string_len > 0) {
+			res->tag.utf8string_val =
+				malloc(args->tag.utf8string_len);
+			if (res->tag.utf8string_val) {
+				memcpy(res->tag.utf8string_val,
+				       args->tag.utf8string_val,
+				       args->tag.utf8string_len);
+				res->tag.utf8string_len =
+					args->tag.utf8string_len;
+			}
 		}
-		res->resarray.resarray_len = 1;
 
-		goto out;
+		res->resarray.resarray_val =
+			calloc(args->argarray.argarray_len, sizeof(nfs_resop4));
+		if (!res->resarray.resarray_val) {
+			res->status = NFS4ERR_DELAY;
+			goto out;
+		}
+		res->resarray.resarray_len = args->argarray.argarray_len;
+
+		if (args->argarray.argarray_len == 0) {
+			res->status = NFS4_OK;
+			goto out;
+		}
+
+		op = NFS4_OP_NUM(compound);
+		if (op != OP_SEQUENCE && op != OP_EXCHANGE_ID &&
+		    op != OP_CREATE_SESSION && op != OP_DESTROY_SESSION &&
+		    op != OP_BIND_CONN_TO_SESSION &&
+		    op != OP_DESTROY_CLIENTID) {
+			nfs_resop4 *resop = &res->resarray.resarray_val[0];
+
+			if (op < OP_ACCESS || op > OP_CHUNK_WRITE_REPAIR) {
+				resop->resop = OP_ILLEGAL;
+				resop->nfs_resop4_u.opillegal.status =
+					NFS4ERR_OP_ILLEGAL;
+				res->status = NFS4ERR_OP_ILLEGAL;
+			} else {
+				resop->resop = op;
+				resop->nfs_resop4_u.opillegal.status =
+					NFS4ERR_OP_NOT_IN_SESSION;
+				res->status = NFS4ERR_OP_NOT_IN_SESSION;
+			}
+			res->resarray.resarray_len = 1;
+
+			goto out;
+		}
 	}
 
 	dispatch_compound(compound);
 
+	/*
+	 * If the compound is paused (an op went async), leave everything
+	 * alive.  The task will be re-enqueued by the async completer via
+	 * task_resume(); the worker will call rpc_protocol_op_call() again,
+	 * which re-enters here with rt->rt_compound set.
+	 */
+	if (task_is_paused(rt->rt_task))
+		return EINPROGRESS;
+
 out:
+	rt->rt_compound = NULL;
 	nfs4_compound_finalize(compound);
 	return res->status;
 }
