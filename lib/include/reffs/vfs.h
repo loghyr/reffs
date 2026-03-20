@@ -58,7 +58,8 @@ int vfs_mkdir(struct inode *dir, const char *name, mode_t mode,
 	      struct authunix_parms *ap, struct inode **new_inode,
 	      struct timespec *dir_before, struct timespec *dir_after);
 int vfs_create(struct inode *dir, const char *name, mode_t mode,
-	       struct authunix_parms *ap, struct inode **new_inode);
+	       struct authunix_parms *ap, struct inode **new_inode,
+	       struct timespec *dir_before, struct timespec *dir_after);
 int vfs_exclusive_create(struct inode *dir, const char *name,
 			 struct timespec *verf, struct authunix_parms *ap,
 			 struct inode **new_inode);

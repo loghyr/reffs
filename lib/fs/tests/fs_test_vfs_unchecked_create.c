@@ -46,7 +46,7 @@ START_TEST(test_vfs_create_unchecked_truncate)
 	ap.aup_gids = NULL;
 
 	/* 1. Create file */
-	ret = vfs_create(dir, name, 0644, &ap, &file);
+	ret = vfs_create(dir, name, 0644, &ap, &file, NULL, NULL);
 	ck_assert_int_eq(ret, 0);
 	ck_assert_ptr_nonnull(file);
 
@@ -66,7 +66,7 @@ START_TEST(test_vfs_create_unchecked_truncate)
 	file = NULL;
 
 	/* vfs_create returns -EEXIST if file already exists */
-	ret = vfs_create(dir, name, 0644, &ap, &file);
+	ret = vfs_create(dir, name, 0644, &ap, &file, NULL, NULL);
 	ck_assert_int_eq(ret, -EEXIST);
 
 	/* Get existing inode */
@@ -128,7 +128,7 @@ START_TEST(test_vfs_write_gap_zero_fill)
 	ap.aup_gids = NULL;
 
 	/* 1. Create file */
-	ret = vfs_create(dir, name, 0644, &ap, &file);
+	ret = vfs_create(dir, name, 0644, &ap, &file, NULL, NULL);
 	ck_assert_int_eq(ret, 0);
 
 	/* 2. Write at offset 1024 */

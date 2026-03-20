@@ -25,6 +25,7 @@
 #include "reffs/lock.h"
 #include "reffs/vfs.h"
 #include "reffs/utf8string.h"
+#include "reffs/time.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -247,6 +248,8 @@ void nfs4_op_open(struct compound *compound)
 	char *name = NULL;
 	bool new_file = false;
 	fattr4 *createattrs = NULL;
+	struct timespec dir_before = { 0 };
+	struct timespec dir_after = { 0 };
 	int ret;
 
 	/*
@@ -331,7 +334,8 @@ void nfs4_op_open(struct compound *compound)
 			switch (how->mode) {
 			case UNCHECKED4:
 				ret = vfs_create(compound->c_inode, name, 0666,
-						 &compound->c_ap, &child);
+						 &compound->c_ap, &child,
+						 &dir_before, &dir_after);
 				if (ret == 0) {
 					new_file = true;
 					createattrs =
@@ -349,7 +353,8 @@ void nfs4_op_open(struct compound *compound)
 
 			case GUARDED4:
 				ret = vfs_create(compound->c_inode, name, 0666,
-						 &compound->c_ap, &child);
+						 &compound->c_ap, &child,
+						 &dir_before, &dir_after);
 				if (ret == 0) {
 					new_file = true;
 					createattrs =
@@ -387,7 +392,8 @@ void nfs4_op_open(struct compound *compound)
 				memcpy(&verf_ts.tv_nsec, (uint8_t *)v + 4, 4);
 
 				ret = vfs_create(compound->c_inode, name, 0666,
-						 &compound->c_ap, &child);
+						 &compound->c_ap, &child,
+						 &dir_before, &dir_after);
 				if (ret == 0) {
 					new_file = true;
 					if (how->mode == EXCLUSIVE4_1)
@@ -598,9 +604,9 @@ void nfs4_op_open(struct compound *compound)
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = stateid_get(&os->os_stid);
 
-	resok->cinfo.atomic = FALSE;
-	resok->cinfo.before = 0;
-	resok->cinfo.after = 0;
+	resok->cinfo.atomic = TRUE;
+	resok->cinfo.before = timespec_to_ns(&dir_before);
+	resok->cinfo.after = timespec_to_ns(&dir_after);
 
 	/*
 	 * OPEN4_RESULT_NO_OPEN_STATEID is set only when the server grants

@@ -343,7 +343,7 @@ int reffs_fs_create(const char *path, mode_t mode)
 	trace_fs_inode(dir, __func__, __LINE__);
 	TRACE("ino=%lu freeing struct at %p", dir->i_ino, (void *)dir);
 
-	ret = vfs_create(dir, nm->nm_name, mode, &ap, NULL);
+	ret = vfs_create(dir, nm->nm_name, mode, &ap, NULL, NULL, NULL);
 	inode_active_put(dir);
 
 	name_match_free(nm);
