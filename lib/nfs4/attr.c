@@ -2762,7 +2762,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->quota_avail_hard = system_attrs.quota_avail_hard;
 	nattr->quota_avail_soft = system_attrs.quota_avail_soft;
 	nattr->rawdev.specdata1 = inode->i_dev_major;
-	nattr->rawdev.specdata1 = inode->i_dev_minor;
+	nattr->rawdev.specdata2 = inode->i_dev_minor;
 	nattr->space_avail = sb->sb_bytes_max - sb->sb_bytes_used;
 	nattr->space_free = sb->sb_bytes_max - sb->sb_bytes_used;
 	nattr->space_total = sb->sb_bytes_max;
