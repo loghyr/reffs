@@ -88,7 +88,14 @@ static void posix_inode_sync(struct inode *inode)
 	char tmp_path[PATH_MAX];
 	snprintf(path, sizeof(path), "%s/ino_%lu.meta", sb_priv->sb_dir,
 		 inode->i_ino);
-	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+	/*
+	 * Include the thread ID in the tmp filename to avoid races when
+	 * multiple threads concurrently sync the same inode.  Each thread
+	 * gets its own tmp file; the final rename() is atomic and the last
+	 * writer wins (all contain the same inode snapshot so that is fine).
+	 */
+	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%lu", path,
+		 (unsigned long)pthread_self());
 
 	trace_fs_inode(inode, __func__, __LINE__);
 
@@ -134,7 +141,8 @@ static void posix_inode_sync(struct inode *inode)
 	if (S_ISLNK(inode->i_mode) && inode->i_symlink) {
 		snprintf(path, sizeof(path), "%s/ino_%lu.lnk", sb_priv->sb_dir,
 			 inode->i_ino);
-		snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+		snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%lu", path,
+			 (unsigned long)pthread_self());
 		fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 		if (fd >= 0) {
 			size_t len = strlen(inode->i_symlink);
