@@ -76,7 +76,7 @@ CLANG_TIDY ?= clang-tidy
 SCAN_BUILD ?= scan-build
 
 # Find all source files for style checking (consistent with Makefile.am)
-FIND_SOURCES = find . \( -name xdr -o -name autom4te.cache -o -name build \) -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print
+FIND_SOURCES = find . \( -name xdr -o -name autom4te.cache -o -name build -o -name third_party \) -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print
 
 # Check code style
 style:
@@ -140,12 +140,14 @@ run-image: $(LOGS_DIR) stop-image
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(LOGS_DIR):/logs:Z \
 		$(IMAGE_NAME) \
-		/bin/bash -c "rm -rf /tmp/reffs_data /tmp/reffs.state && mkdir -p /tmp/reffs_data && mkdir -p /tmp/reffs.state && \
+		/bin/bash -c "rm -rf /tmp/reffs_data /tmp/reffs.state && mkdir -p /tmp/reffs_data /tmp/reffs.state && \
 			rm -rf /src/* /build/* && \
 			rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && autoreconf -fi && \
 			cd /build && ../src/configure --enable-asan && make && \
-			script -f -q -c './src/reffsd --port 2049 --file=/logs/reffs.trc --backend=posix --backend-path=/tmp/reffs_data --state-file=/tmp/reffs.state' /logs/reffs.console"
+			sed 's|/var/lib/reffs/data|/tmp/reffs_data|g; s|/var/lib/reffs/reffs.state|/tmp/reffs.state/reffs.state|g' \
+				/src/examples/reffsd.toml > /tmp/reffsd.toml && \
+			script -f -q -c './src/reffsd --file=/logs/reffs.trc --config=/tmp/reffsd.toml' /logs/reffs.console"
 
 # Dump stacks of the running reffsd process in the sandbox
 # This provides both kernel-side (wchan/stack) and user-side (gdb) views

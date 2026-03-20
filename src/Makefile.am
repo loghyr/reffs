@@ -6,6 +6,7 @@ ACLOCAL_AMFLAGS = -Im4
 AM_CFLAGS = \
 	-I$(top_srcdir)/lib/include	\
 	-I$(top_builddir)/lib/xdr	\
+	-I$(top_srcdir)/third_party/tomlc99	\
 	$(TIRPC_CFLAGS)			\
 	@CHECK_CFLAGS@			\
 	$(URCU_CFLAGS)			\
@@ -29,6 +30,7 @@ LDADD = \
 	$(top_builddir)/lib/fs/libreffs_fs.la		\
 	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
 	$(top_builddir)/lib/io/libreffs_io.la		\
+	$(top_builddir)/lib/config/libreffs_config.la	\
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
 	$(top_builddir)/lib/trace/libreffs_trace.la	\
 	$(top_builddir)/lib/backends/libbackends.la	\

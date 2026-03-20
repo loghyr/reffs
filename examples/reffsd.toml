@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Example reffsd configuration file.
+#
+# All keys are optional — absent keys retain their compiled-in defaults.
+# See lib/include/reffs/settings.h for the full list of settings.
+
+[server]
+port            = 2049
+bind            = "*"           # "*" = all IPv4 and IPv6 interfaces
+role            = "standalone"  # standalone | mds | ds | combined | ds_erasure
+minor_versions  = [1, 2]        # NFSv4 minor versions to advertise
+grace_period    = 45            # seconds
+tls             = false
+#tls_cert       = "/etc/reffs/server.crt"
+#tls_key        = "/etc/reffs/server.key"
+workers         = 8             # worker threads (default: nproc, capped at 64)
+max_session_slots = 64
+#log_file       = "/var/log/reffs/reffsd.log"   # omit or "" for stderr
+log_level       = "info"        # trace | debug | info | warn | error
+
+[backend]
+type            = "posix"       # ram | posix | rocksdb
+path            = "/var/lib/reffs/data"
+state_file      = "/var/lib/reffs/reffs.state"
+
+[iouring]
+network_sq_size = 2048
+network_cq_size = 8192
+backend_sq_size = 512
+backend_cq_size = 2048
+
+[[export]]
+path        = "/"
+clients     = "*"               # "*" = all IPv4 and IPv6 connections
+access      = "rw"              # rw | ro
+root_squash = false
+flavors     = ["sys"]           # sys | krb5 | krb5i | krb5p

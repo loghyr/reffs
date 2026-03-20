@@ -427,7 +427,11 @@ AC_CONFIG_FILES([
 	reffs.spec
 	reffsd.service
 	LICENSES/Makefile
+	third_party/Makefile
+	third_party/tomlc99/Makefile
 	lib/Makefile
+	lib/config/Makefile
+	lib/config/tests/Makefile
 	lib/backends/Makefile
 	lib/fs/Makefile
 	lib/fs/tests/Makefile

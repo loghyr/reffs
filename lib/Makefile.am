@@ -9,6 +9,7 @@ SUBDIRS =		\
 	trace		\
 	backends	\
 	utils		\
+	config		\
 	io		\
 	rpc		\
 	tests		\
