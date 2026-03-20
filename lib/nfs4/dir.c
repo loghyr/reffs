@@ -111,9 +111,9 @@ void nfs4_op_lookup(struct compound *compound)
 	compound->c_curr_stid = NULL;
 
 out:
+	trace_nfs4_name(compound, name, __func__, __LINE__);
 	free(name);
 	dirent_put(child_de);
-	trace_nfs4_name(compound, name, __func__, __LINE__);
 }
 
 void nfs4_op_lookupp(struct compound *compound)
