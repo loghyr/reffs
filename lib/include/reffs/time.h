@@ -152,6 +152,21 @@ static inline struct timespec nfstime4_diff(const nfstime4 *a,
 	return delta;
 }
 
+/* ── Convenience: raw nanosecond monotonic clock ────────────────────────── */
+
+/*
+ * reffs_now_ns - return CLOCK_MONOTONIC time in nanoseconds.
+ * Returns 0 on clock_gettime failure (should never happen).
+ */
+static inline uint64_t reffs_now_ns(void)
+{
+	struct timespec ts;
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+		return 0;
+	return (uint64_t)ts.tv_sec * UINT64_C(1000000000) +
+	       (uint64_t)ts.tv_nsec;
+}
+
 /* ── Convenience: current wall-clock time ───────────────────────────────── */
 
 static inline int nfstime4_now(nfstime4 *nfs)

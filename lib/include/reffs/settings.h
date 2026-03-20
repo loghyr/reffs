@@ -15,10 +15,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define REFFS_CONFIG_MAX_PATH    4096
-#define REFFS_CONFIG_MAX_BIND      64
-#define REFFS_CONFIG_MAX_EXPORTS   64
-#define REFFS_CONFIG_MAX_FLAVORS    8
+#define REFFS_CONFIG_MAX_PATH 4096
+#define REFFS_CONFIG_MAX_BIND 64
+#define REFFS_CONFIG_MAX_EXPORTS 64
+#define REFFS_CONFIG_MAX_FLAVORS 8
 
 /*
  * Server role — maps to EXCHGID4_FLAG_USE_* bits advertised in EXCHANGE_ID.
@@ -56,8 +56,8 @@ enum reffs_backend_type {
  * "sys" is AUTH_SYS (formerly AUTH_UNIX); krb5 variants are RPCSEC_GSS.
  */
 enum reffs_auth_flavor {
-	REFFS_AUTH_SYS   = 1,
-	REFFS_AUTH_KRB5  = 390003,
+	REFFS_AUTH_SYS = 1,
+	REFFS_AUTH_KRB5 = 390003,
 	REFFS_AUTH_KRB5I = 390004,
 	REFFS_AUTH_KRB5P = 390005,
 };

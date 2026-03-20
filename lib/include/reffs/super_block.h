@@ -16,6 +16,7 @@
 
 #include "reffs/dirent.h"
 struct inode; /* forward decl for sb_root_inode */
+#include "reffs/nfs4_stats.h"
 #include "reffs/types.h"
 #include "reffs/backend.h"
 
@@ -77,6 +78,12 @@ struct super_block {
 #define SB_IS_READ_ONLY (1ULL << 1)
 #define SB_IS_MOUNTED (1ULL << 2)
 	uint64_t sb_state;
+
+	/* Per-op NFS4 statistics — superblock scope. */
+	struct reffs_op_stats sb_nfs4_op_stats[REFFS_NFS4_OP_MAX];
+
+	/* Backend I/O statistics for this superblock. */
+	struct reffs_backend_stats sb_backend_stats;
 };
 
 struct super_block *super_block_alloc(uint64_t id, char *path,

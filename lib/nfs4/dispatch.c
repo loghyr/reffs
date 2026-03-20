@@ -30,6 +30,7 @@
 #include "reffs/test.h"
 #include "reffs/time.h"
 #include "reffs/inode.h"
+#include "reffs/nfs4_stats.h"
 #include "reffs/super_block.h"
 #include "reffs/data_block.h"
 #include "reffs/server.h"
@@ -139,6 +140,30 @@ bool dispatch_compound(struct compound *compound)
 	struct task *t = compound->c_rt->rt_task;
 
 	/*
+	 * Convenience macro: record stats for the op at c_curr_op.
+	 * Uses c_op_start_ns set just before the op was called.
+	 * bytes_in / bytes_out are filled by data ops via their own calls
+	 * to nfs4_op_stats_record(); here we pass 0 for non-data ops.
+	 */
+#define RECORD_OP_STATS(resop_)                                          \
+	do {                                                             \
+		struct server_state *_ss = server_state_find();          \
+		nfs4_op_stats_record(                                    \
+			_ss ? _ss->ss_nfs4_op_stats : NULL,              \
+			compound->c_curr_sb ?                            \
+				compound->c_curr_sb->sb_nfs4_op_stats :  \
+				NULL,                                    \
+			compound->c_nfs4_client ?                        \
+				compound->c_nfs4_client->nc_op_stats :   \
+				NULL,                                    \
+			(resop_)->resop,                                 \
+			(resop_)->nfs_resop4_u.opillegal.status,         \
+			reffs_now_ns() - compound->c_op_start_ns, 0, 0); \
+		if (_ss)                                                 \
+			server_state_put(_ss);                           \
+	} while (0)
+
+	/*
 	 * Resume case: an op previously paused this compound.  Call its
 	 * registered continuation to finish the op, then advance past it.
 	 * c_curr_op is still pointing at the paused op.
@@ -162,6 +187,7 @@ bool dispatch_compound(struct compound *compound)
 			return true;
 
 		trace_nfs4_compound_op(compound, __func__, __LINE__);
+		RECORD_OP_STATS(resop);
 
 		if (resop->nfs_resop4_u.opillegal.status) {
 			res->status = resop->nfs_resop4_u.opillegal.status;
@@ -185,6 +211,7 @@ bool dispatch_compound(struct compound *compound)
 
 		resop->resop = argop->argop;
 		if (argop->argop < OP_MAX && op_table[argop->argop]) {
+			compound->c_op_start_ns = reffs_now_ns();
 			op_table[argop->argop](compound);
 
 			/*
@@ -196,8 +223,11 @@ bool dispatch_compound(struct compound *compound)
 				return true;
 
 			trace_nfs4_compound_op(compound, __func__, __LINE__);
+			RECORD_OP_STATS(resop);
 		} else {
+			compound->c_op_start_ns = reffs_now_ns();
 			nfs4_op_illegal(compound);
+			RECORD_OP_STATS(resop);
 		}
 
 		if (resop->nfs_resop4_u.opillegal.status) {
@@ -206,6 +236,8 @@ bool dispatch_compound(struct compound *compound)
 			return false;
 		}
 	}
+
+#undef RECORD_OP_STATS
 
 	res->status = NFS4_OK;
 	res->resarray.resarray_len = args->argarray.argarray_len;
