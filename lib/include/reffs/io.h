@@ -199,6 +199,9 @@ int io_request_backend_pread(int fd, void *buf, size_t len, off_t offset,
 int io_request_backend_pwrite(int fd, const void *buf, size_t len, off_t offset,
 			      struct rpc_trans *rt, struct ring_context *rc);
 
+void io_backend_set_global(struct ring_context *rc);
+struct ring_context *io_backend_get_global(void);
+
 int io_lsnr_setup_ipv4(int port);
 int io_lsnr_setup_ipv6(int port);
 int *io_lsnr_setup(int port);

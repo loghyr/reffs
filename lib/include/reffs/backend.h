@@ -51,6 +51,7 @@ struct reffs_storage_ops {
 			    size_t size, off_t offset);
 	ssize_t (*db_resize)(struct data_block *db, size_t size);
 	size_t (*db_get_size)(struct data_block *db);
+	int (*db_get_fd)(struct data_block *db); /* -1 if not fd-backed */
 
 	/* Directory operations */
 	void (*dir_sync)(struct inode *inode);

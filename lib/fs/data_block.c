@@ -132,3 +132,10 @@ size_t data_block_get_size(struct data_block *db)
 
 	return db->db_size;
 }
+
+int data_block_get_fd(struct data_block *db)
+{
+	if (db && db->db_ops && db->db_ops->db_get_fd)
+		return db->db_ops->db_get_fd(db);
+	return -1;
+}

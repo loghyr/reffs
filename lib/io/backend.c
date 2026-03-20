@@ -46,6 +46,22 @@
 #include "reffs/task.h"
 
 /* ------------------------------------------------------------------ */
+/* Global backend ring pointer (set once at startup)                  */
+/* ------------------------------------------------------------------ */
+
+static struct ring_context *g_backend_rc;
+
+void io_backend_set_global(struct ring_context *rc)
+{
+	g_backend_rc = rc;
+}
+
+struct ring_context *io_backend_get_global(void)
+{
+	return g_backend_rc;
+}
+
+/* ------------------------------------------------------------------ */
 /* Ring setup / teardown                                              */
 /* ------------------------------------------------------------------ */
 

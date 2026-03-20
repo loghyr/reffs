@@ -237,6 +237,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 	rc_backend_inited = true;
+	io_backend_set_global(&rc_backend);
 
 	// Set up protocol handlers
 	if (nfs4_protocol_register()) {
