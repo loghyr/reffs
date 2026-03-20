@@ -9,6 +9,7 @@
 #include "reffs/rcu.h"
 #include "nfsv42_xdr.h"
 #include "reffs/client.h"
+#include "reffs/nfs4_stats.h"
 
 /*
  * nfs4_client - NFS4 identity wrapper around the fs-layer struct client.
@@ -40,6 +41,12 @@ struct nfs4_client {
 
 	struct cds_list_head nc_lock_owners;
 	pthread_mutex_t nc_lock_owners_mutex;
+
+	/* Per-op NFS4 statistics — client scope (ephemeral). */
+	struct reffs_op_stats nc_op_stats[REFFS_NFS4_OP_MAX];
+
+	/* Per-CB-op statistics — indexed by CB op code. */
+	struct reffs_cb_stats nc_cb_stats[REFFS_CB_OP_MAX];
 
 	struct client nc_client; /* fs-layer object — keep last */
 };

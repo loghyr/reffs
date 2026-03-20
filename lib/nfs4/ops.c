@@ -13,11 +13,60 @@
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "reffs/log.h"
+#include "reffs/nfs4_stats.h"
 #include "reffs/rpc.h"
 #include "reffs/inode.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+
+_Static_assert(OP_MAX <= REFFS_NFS4_OP_MAX,
+	       "OP_MAX exceeds REFFS_NFS4_OP_MAX — bump REFFS_NFS4_OP_MAX");
+
+void nfs4_op_stats_record(struct reffs_op_stats global[REFFS_NFS4_OP_MAX],
+			  struct reffs_op_stats sb[REFFS_NFS4_OP_MAX],
+			  struct reffs_op_stats client[REFFS_NFS4_OP_MAX],
+			  uint32_t op, uint32_t nfs4_status,
+			  uint64_t elapsed_ns, uint64_t bytes_in,
+			  uint64_t bytes_out)
+{
+	if (op >= OP_MAX)
+		return;
+
+	struct reffs_op_stats *scopes[3] = { global, sb, client };
+
+	for (int i = 0; i < 3; i++) {
+		struct reffs_op_stats *s = scopes[i];
+		if (!s)
+			continue;
+
+		s = &s[op];
+		atomic_fetch_add_explicit(&s->os_calls, 1,
+					  memory_order_relaxed);
+		if (nfs4_status)
+			atomic_fetch_add_explicit(&s->os_errors, 1,
+						  memory_order_relaxed);
+		if (bytes_in)
+			atomic_fetch_add_explicit(&s->os_bytes_in, bytes_in,
+						  memory_order_relaxed);
+		if (bytes_out)
+			atomic_fetch_add_explicit(&s->os_bytes_out, bytes_out,
+						  memory_order_relaxed);
+
+		atomic_fetch_add_explicit(&s->os_duration_total, elapsed_ns,
+					  memory_order_relaxed);
+
+		/* Update high-water mark with a CAS loop. */
+		uint64_t cur = atomic_load_explicit(&s->os_duration_max,
+						    memory_order_relaxed);
+		while (elapsed_ns > cur) {
+			if (atomic_compare_exchange_weak_explicit(
+				    &s->os_duration_max, &cur, elapsed_ns,
+				    memory_order_relaxed, memory_order_relaxed))
+				break;
+		}
+	}
+}
 
 void nfs4_op_secinfo(struct compound *compound)
 {

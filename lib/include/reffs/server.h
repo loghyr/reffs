@@ -16,6 +16,7 @@
 #include <uuid/uuid.h>
 
 #include "reffs/cmp.h"
+#include "reffs/nfs4_stats.h"
 #include "reffs/server_persist.h"
 
 /*
@@ -103,6 +104,12 @@ struct server_state {
 
 	/* Case sensitivity mode for this server instance. */
 	enum reffs_text_case ss_case;
+
+	/* Per-op NFS4 statistics — global scope. */
+	struct reffs_op_stats ss_nfs4_op_stats[REFFS_NFS4_OP_MAX];
+
+	/* Aggregate backend I/O statistics across all superblocks. */
+	struct reffs_backend_stats ss_backend_stats;
 };
 
 /* ------------------------------------------------------------------ */
