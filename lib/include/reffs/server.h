@@ -6,6 +6,7 @@
 #ifndef _REFFS_SERVER_H
 #define _REFFS_SERVER_H
 
+#include <pthread.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
@@ -64,6 +65,7 @@ struct server_state {
 	struct timespec ss_grace_start;
 	uint32_t ss_grace_time; /* seconds */
 	uint32_t ss_unreclaimed; /* atomic: previous-boot clients not yet RECLAIM_COMPLETE'd */
+	pthread_t ss_grace_thread; /* timer thread; 0 if not running */
 
 	/*
          * Per-instance subsystem state — moved here from file-scope
