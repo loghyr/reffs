@@ -250,5 +250,7 @@ struct stateid *stateid_find(struct inode *inode, uint32_t id)
 	}
 	rcu_read_unlock();
 
+	trace_fs_stateid(stid, __func__, __LINE__);
+
 	return stid;
 }

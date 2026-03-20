@@ -17,6 +17,9 @@
 static inline void trace_fs_stateid(struct stateid *stid, const char *event,
 				    int line)
 {
+	if (!stid)
+		return;
+
 	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line,
 			  "stid=%u seqid=%u type=%u ref=%ld", stid->s_id,
 			  stid->s_seqid, stid->s_tag, stid->s_ref.refcount);
@@ -25,6 +28,9 @@ static inline void trace_fs_stateid(struct stateid *stid, const char *event,
 static inline void trace_fs_client(struct client *client, const char *event,
 				   int line)
 {
+	if (!client)
+		return;
+
 	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line, "clid=%lu ref=%ld",
 			  client->c_id, client->c_ref.refcount);
 }
@@ -32,6 +38,9 @@ static inline void trace_fs_client(struct client *client, const char *event,
 static inline void trace_fs_dirent(struct reffs_dirent *rd, const char *event,
 				   int line)
 {
+	if (!rd)
+		return;
+
 	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line, "rd=%p ref=%ld",
 			  (void *)rd, rd->rd_ref.refcount);
 }
