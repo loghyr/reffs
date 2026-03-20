@@ -40,5 +40,6 @@ TESTS = \
 	bitmap \
 	errors \
 	nfs4_client_persist \
-	nfs4_session
+	nfs4_session \
+	task_state
 
