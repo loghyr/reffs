@@ -7,10 +7,12 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
@@ -1096,6 +1098,72 @@ void nfs4_op_read_plus(struct compound *compound)
 	    *status, (void *)args, (void *)res);
 }
 
+/*
+ * nfs4_op_write_resume -- rt_next_action callback after async pwrite completes.
+ *
+ * The pre-pause code already extended db_size on disk via ftruncate but did
+ * NOT update i_size or sb_bytes_used, so compound->c_inode->i_size is still
+ * the pre-write value.  db->db_size is already the new (post-extend) value.
+ */
+static void nfs4_op_write_resume(struct rpc_trans *rt)
+{
+	struct compound *compound = rt->rt_compound;
+	WRITE4res *res = NFS4_OP_RES_SETUP(compound, opwrite);
+	nfsstat4 *status = &res->status;
+	WRITE4resok *resok = NFS4_OP_RESOK_SETUP(res, WRITE4res_u, resok4);
+	struct super_block *sb = compound->c_curr_sb;
+
+	rt->rt_next_action = NULL;
+
+	ssize_t nwritten = rt->rt_io_result;
+	if (nwritten < 0) {
+		*status = (nwritten == -ENOSPC) ? NFS4ERR_NOSPC : NFS4ERR_IO;
+		return;
+	}
+
+	resok->count = (count4)nwritten;
+
+	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
+
+	int64_t old_size = compound->c_inode->i_size;
+	size_t new_db_size = compound->c_inode->i_db->db_size;
+
+	compound->c_inode->i_size = (int64_t)new_db_size;
+	compound->c_inode->i_used =
+		compound->c_inode->i_size / sb->sb_block_size +
+		(compound->c_inode->i_size % sb->sb_block_size ? 1 : 0);
+
+	size_t old_used, new_used;
+	do {
+		__atomic_load(&sb->sb_bytes_used, &old_used, __ATOMIC_RELAXED);
+		if (new_db_size > (size_t)old_size)
+			new_used = old_used + (new_db_size - (size_t)old_size);
+		else if ((size_t)old_size > new_db_size)
+			new_used = old_used > (size_t)old_size - new_db_size ?
+					   old_used - ((size_t)old_size -
+						       new_db_size) :
+					   0;
+		else
+			new_used = old_used;
+	} while (!__atomic_compare_exchange(&sb->sb_bytes_used, &old_used,
+					    &new_used, false, __ATOMIC_SEQ_CST,
+					    __ATOMIC_RELAXED));
+
+	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	inode_update_times_now(compound->c_inode,
+			       REFFS_INODE_UPDATE_MTIME |
+				       REFFS_INODE_UPDATE_CTIME);
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+	inode_sync_to_disk(compound->c_inode);
+
+	resok->committed = FILE_SYNC4;
+	nfs4_write_verf(resok->writeverf);
+	*status = NFS4_OK;
+}
+
 void nfs4_op_write(struct compound *compound)
 {
 	WRITE4args *args = NFS4_OP_ARG_SETUP(compound, opwrite);
@@ -1156,6 +1224,10 @@ void nfs4_op_write(struct compound *compound)
 	old_size = compound->c_inode->i_size;
 
 	if (!compound->c_inode->i_db) {
+		/*
+		 * New file: posix_db_alloc writes the initial data
+		 * synchronously.  Keep this path synchronous.
+		 */
 		compound->c_inode->i_db =
 			data_block_alloc(compound->c_inode, args->data.data_val,
 					 write_len, args->offset);
@@ -1165,7 +1237,50 @@ void nfs4_op_write(struct compound *compound)
 			goto out;
 		}
 		resok->count = write_len;
+		/* Fall through to size/metadata update below. */
 	} else {
+		int db_fd = data_block_get_fd(compound->c_inode->i_db);
+		struct ring_context *rc_backend = io_backend_get_global();
+
+		if (db_fd >= 0 && rc_backend && compound->c_rt->rt_task) {
+			/*
+			 * Async POSIX path.
+			 *
+			 * Pre-extend the file so that the pwrite does not
+			 * need to grow the file itself (io_uring pwrite
+			 * behaves like pwrite(2) and will extend, but we
+			 * update db_size here so the resume callback can
+			 * compute the size delta without a second fstat).
+			 */
+			size_t new_db_size = (size_t)args->offset + write_len;
+			if (new_db_size > compound->c_inode->i_db->db_size) {
+				if (ftruncate(db_fd, (off_t)new_db_size) < 0) {
+					int saved = errno;
+					pthread_rwlock_unlock(
+						&compound->c_inode->i_db_rwlock);
+					*status = (saved == ENOSPC) ?
+							  NFS4ERR_NOSPC :
+							  NFS4ERR_IO;
+					goto out;
+				}
+				compound->c_inode->i_db->db_size = new_db_size;
+			}
+			pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+
+			struct rpc_trans *rt = compound->c_rt;
+			rt->rt_next_action = nfs4_op_write_resume;
+			task_pause(rt->rt_task);
+			if (io_request_backend_pwrite(
+				    db_fd, args->data.data_val, write_len,
+				    args->offset, rt, rc_backend) < 0) {
+				rt->rt_next_action = NULL;
+				task_resume(rt->rt_task);
+				*status = NFS4ERR_DELAY;
+			}
+			goto out;
+		}
+
+		/* Synchronous path (RAM backend or no backend ring). */
 		ssize_t nwritten = data_block_write(compound->c_inode->i_db,
 						    args->data.data_val,
 						    write_len, args->offset);
@@ -1176,14 +1291,15 @@ void nfs4_op_write(struct compound *compound)
 			goto out;
 		}
 		resok->count = (count4)nwritten;
+		/* Fall through to size/metadata update below. */
 	}
 
+	/* Size and space accounting for the synchronous paths. */
 	compound->c_inode->i_size = (int64_t)compound->c_inode->i_db->db_size;
 	compound->c_inode->i_used =
 		compound->c_inode->i_size / sb->sb_block_size +
 		(compound->c_inode->i_size % sb->sb_block_size ? 1 : 0);
 
-	/* Track superblock space usage. */
 	size_t new_db_size = data_block_get_size(compound->c_inode->i_db);
 	size_t old_used, new_used;
 	do {
@@ -1211,7 +1327,6 @@ void nfs4_op_write(struct compound *compound)
 
 	inode_sync_to_disk(compound->c_inode);
 
-	/* Always commit synchronously for now. */
 	resok->committed = FILE_SYNC4;
 	nfs4_write_verf(resok->writeverf);
 
