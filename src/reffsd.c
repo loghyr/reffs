@@ -56,6 +56,18 @@ static void signal_handler(int sig)
 	running = 0;
 }
 
+struct backend_thread_args {
+	volatile sig_atomic_t *running;
+	struct ring_context *rc;
+};
+
+static void *backend_thread_fn(void *arg)
+{
+	struct backend_thread_args *a = arg;
+	io_backend_main_loop(a->running, a->rc);
+	return NULL;
+}
+
 static void usage(const char *prog)
 {
 	printf("Usage: %s [options]\n", prog);
@@ -104,6 +116,10 @@ int main(int argc, char *argv[])
 	int opt;
 
 	struct ring_context rc;
+	struct ring_context rc_backend;
+	bool rc_backend_inited = false;
+	pthread_t backend_thread;
+	bool backend_thread_started = false;
 
 	char *trace_file = "./reffsd.log";
 
@@ -214,6 +230,13 @@ int main(int argc, char *argv[])
 	if (io_handler_init(&rc) < 0) {
 		return 1;
 	}
+
+	// Initialize backend file-I/O ring
+	if (io_backend_init(&rc_backend) < 0) {
+		io_handler_fini(&rc);
+		return 1;
+	}
+	rc_backend_inited = true;
 
 	// Set up protocol handlers
 	if (nfs4_protocol_register()) {
@@ -399,13 +422,32 @@ int main(int argc, char *argv[])
 		LOG("Failed to register NSM UDP");
 	}
 
+	// Spawn backend file-I/O ring thread
+	struct backend_thread_args bta = { .running = &running,
+					   .rc = &rc_backend };
+	if (pthread_create(&backend_thread, NULL, backend_thread_fn, &bta) !=
+	    0) {
+		LOG("Failed to create backend io_uring thread");
+		exit_code = 1;
+		goto out;
+	}
+	backend_thread_started = true;
+
 	// Run the main IO processing loop
 
 	io_handler_main_loop(&running, &rc);
 
+	pthread_join(backend_thread, NULL);
+	backend_thread_started = false;
+
 	TRACE("Main loop exited, cleaning up...");
 
 out:
+	if (backend_thread_started) {
+		pthread_join(backend_thread, NULL);
+		backend_thread_started = false;
+	}
+
 	TRACE("Unregistering Port Mapper");
 	pmap_unset(NLM_PROG, NLM4_VERS);
 	pmap_unset(NLM_PROG, NLM_VERSX);
@@ -437,6 +479,9 @@ out:
 	}
 
 	io_handler_fini(&rc);
+
+	if (rc_backend_inited)
+		io_backend_fini(&rc_backend);
 
 	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
 
