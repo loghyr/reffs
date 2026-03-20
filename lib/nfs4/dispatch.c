@@ -151,18 +151,17 @@ bool dispatch_compound(struct compound *compound)
 
 		compound->c_rt->rt_next_action = NULL;
 		action(compound->c_rt);
-		trace_nfs4_compound_op(compound, __func__, __LINE__);
 
 		/*
-		 * Callback itself went async (double-async).  Clear
-		 * t_went_async so the next resume dispatch doesn't misread
-		 * it, and stop without advancing c_curr_op.
+		 * Callback itself went async (double-async).  Check
+		 * t_went_async BEFORE touching compound again — a concurrent
+		 * worker may already own the compound if the CQE fired and
+		 * task_resume() re-enqueued it before we get here.
 		 */
-		if (t != NULL && task_is_paused(t)) {
-			if (t)
-				(void)task_check_and_clear_went_async(t);
+		if (t != NULL && task_check_and_clear_went_async(t))
 			return true;
-		}
+
+		trace_nfs4_compound_op(compound, __func__, __LINE__);
 
 		if (resop->nfs_resop4_u.opillegal.status) {
 			res->status = resop->nfs_resop4_u.opillegal.status;
@@ -187,20 +186,19 @@ bool dispatch_compound(struct compound *compound)
 		resop->resop = argop->argop;
 		if (argop->argop < OP_MAX && op_table[argop->argop]) {
 			op_table[argop->argop](compound);
+
+			/*
+			 * Op went async: check t_went_async BEFORE touching
+			 * compound again — a fast CQE + task_resume() may have
+			 * already handed the compound to another worker.
+			 */
+			if (t != NULL && task_check_and_clear_went_async(t))
+				return true;
+
 			trace_nfs4_compound_op(compound, __func__, __LINE__);
 		} else {
 			nfs4_op_illegal(compound);
 		}
-
-		/*
-		 * Op went async: the op handler called task_pause() which set
-		 * t_went_async.  Atomically read-and-clear t_went_async so
-		 * we get the answer from THIS worker's stack, not from
-		 * shared task state that a second worker might already have
-		 * modified after a fast CQE → task_resume → add_task.
-		 */
-		if (t != NULL && task_check_and_clear_went_async(t))
-			return true;
 
 		if (resop->nfs_resop4_u.opillegal.status) {
 			res->status = resop->nfs_resop4_u.opillegal.status;
