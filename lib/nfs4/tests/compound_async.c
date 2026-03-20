@@ -149,7 +149,7 @@ START_TEST(test_dispatch_empty)
 
 	struct compound *compound = make_compound(&rt, &task, 0, 0);
 
-	dispatch_compound(compound);
+	ck_assert(!dispatch_compound(compound));
 
 	ck_assert_int_eq(compound->c_res->status, NFS4_OK);
 	ck_assert_uint_eq(compound->c_res->resarray.resarray_len, 0);
@@ -174,7 +174,7 @@ START_TEST(test_dispatch_illegal_op)
 	/* OP_MAX is not in op_table — guaranteed to call nfs4_op_illegal */
 	struct compound *compound = make_compound(&rt, &task, 1, OP_MAX);
 
-	dispatch_compound(compound);
+	ck_assert(!dispatch_compound(compound));
 
 	ck_assert_int_eq(compound->c_res->status, NFS4ERR_OP_ILLEGAL);
 	ck_assert_uint_eq(compound->c_res->resarray.resarray_len, 1);
@@ -201,7 +201,7 @@ START_TEST(test_dispatch_resume_ok)
 	rt.rt_next_action = ok_action;
 	g_cb_called = false;
 
-	dispatch_compound(compound);
+	ck_assert(!dispatch_compound(compound));
 
 	ck_assert(g_cb_called);
 	ck_assert_uint_eq(g_cb_op, 0); /* called at op 0 */
@@ -230,7 +230,7 @@ START_TEST(test_dispatch_resume_error)
 	rt.rt_next_action = err_action;
 	g_cb_called = false;
 
-	dispatch_compound(compound);
+	ck_assert(!dispatch_compound(compound));
 
 	ck_assert(g_cb_called);
 	ck_assert(rt.rt_next_action == NULL);
@@ -260,7 +260,7 @@ START_TEST(test_dispatch_resume_pause)
 	rt.rt_next_action = pause_action;
 	g_cb_called = false;
 
-	dispatch_compound(compound);
+	ck_assert(dispatch_compound(compound));
 
 	ck_assert(g_cb_called);
 	/*

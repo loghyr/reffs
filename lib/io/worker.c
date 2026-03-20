@@ -90,8 +90,8 @@ void *io_worker_thread(void *vtd)
 				 */
 				struct rpc_trans *rt = t->t_rt;
 
-				rpc_protocol_op_call(rt);
-				if (task_is_paused(t))
+				int rc = rpc_protocol_op_call(rt);
+				if (rc == EINPROGRESS)
 					continue; /* went async again */
 
 				/*

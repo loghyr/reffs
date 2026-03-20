@@ -132,7 +132,7 @@ nfs4_op_cb op_table[OP_MAX] = {
 	[OP_CHUNK_WRITE_REPAIR] = nfs4_op_chunk_write_repair,
 };
 
-void dispatch_compound(struct compound *compound)
+bool dispatch_compound(struct compound *compound)
 {
 	COMPOUND4args *args = compound->c_args;
 	COMPOUND4res *res = compound->c_res;
@@ -153,14 +153,21 @@ void dispatch_compound(struct compound *compound)
 		action(compound->c_rt);
 		trace_nfs4_compound_op(compound, __func__, __LINE__);
 
-		/* Callback itself went async — stop, c_curr_op unchanged. */
-		if (t != NULL && task_is_paused(t))
-			return;
+		/*
+		 * Callback itself went async (double-async).  Clear
+		 * t_went_async so the next resume dispatch doesn't misread
+		 * it, and stop without advancing c_curr_op.
+		 */
+		if (t != NULL && task_is_paused(t)) {
+			if (t)
+				(void)task_check_and_clear_went_async(t);
+			return true;
+		}
 
 		if (resop->nfs_resop4_u.opillegal.status) {
 			res->status = resop->nfs_resop4_u.opillegal.status;
 			res->resarray.resarray_len = compound->c_curr_op + 1;
-			return;
+			return false;
 		}
 
 		compound->c_curr_op++; /* op complete; advance to next */
@@ -185,17 +192,24 @@ void dispatch_compound(struct compound *compound)
 			nfs4_op_illegal(compound);
 		}
 
-		/* Op went async — stop; c_curr_op stays at the paused op. */
-		if (t != NULL && task_is_paused(t))
-			return;
+		/*
+		 * Op went async: the op handler called task_pause() which set
+		 * t_went_async.  Atomically read-and-clear t_went_async so
+		 * we get the answer from THIS worker's stack, not from
+		 * shared task state that a second worker might already have
+		 * modified after a fast CQE → task_resume → add_task.
+		 */
+		if (t != NULL && task_check_and_clear_went_async(t))
+			return true;
 
 		if (resop->nfs_resop4_u.opillegal.status) {
 			res->status = resop->nfs_resop4_u.opillegal.status;
 			res->resarray.resarray_len = compound->c_curr_op + 1;
-			return;
+			return false;
 		}
 	}
 
 	res->status = NFS4_OK;
 	res->resarray.resarray_len = args->argarray.argarray_len;
+	return false;
 }
