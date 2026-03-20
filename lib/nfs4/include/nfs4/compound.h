@@ -7,6 +7,7 @@
 #define _REFFS_NFS4_COMPOUND_H
 
 #include <rpc/auth_unix.h>
+#include <stdbool.h>
 #include <sys/types.h>
 
 #include "reffs/filehandle.h"
@@ -47,6 +48,14 @@ struct compound {
 };
 
 int nfs4_proc_compound(struct rpc_trans *rt);
-void dispatch_compound(struct compound *compound);
+
+/*
+ * dispatch_compound -- run compound ops until all are done or one goes async.
+ *
+ * Returns true if the compound yielded (an op called task_pause); the caller
+ * must not finalize the compound.  Returns false when all ops completed
+ * (or an error stopped the loop).
+ */
+bool dispatch_compound(struct compound *compound);
 
 #endif

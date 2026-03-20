@@ -226,15 +226,13 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 		}
 	}
 
-	dispatch_compound(compound);
-
 	/*
-	 * If the compound is paused (an op went async), leave everything
-	 * alive.  The task will be re-enqueued by the async completer via
-	 * task_resume(); the worker will call rpc_protocol_op_call() again,
-	 * which re-enters here with rt->rt_compound set.
+	 * If dispatch_compound() returns true an op went async.  Leave
+	 * everything alive; the task will be re-enqueued by the async
+	 * completer via task_resume() and the worker will call
+	 * rpc_protocol_op_call() again with rt_compound already set.
 	 */
-	if (task_is_paused(rt->rt_task))
+	if (dispatch_compound(compound))
 		return EINPROGRESS;
 
 out:
