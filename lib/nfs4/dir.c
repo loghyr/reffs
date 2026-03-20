@@ -22,11 +22,12 @@
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "reffs/time.h"
 #include "nfs4/trace/nfs4.h"
 
 static inline changeid4 timespec_to_changeid(const struct timespec *ts)
 {
-	return ((uint64_t)(uint32_t)ts->tv_sec << 32) | (uint32_t)ts->tv_nsec;
+	return (changeid4)timespec_to_ns(ts);
 }
 
 void nfs4_op_lookup(struct compound *compound)
