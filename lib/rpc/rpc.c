@@ -895,6 +895,20 @@ int rpc_process_task(struct task *t)
 				   __ATOMIC_RELAXED);
 	} else {
 		ret = rpc_protocol_op_call(rt);
+		if (ret == EINPROGRESS) {
+			/*
+			 * The compound went async: an op called task_pause()
+			 * and the task has been (or will be) re-enqueued via
+			 * task_resume().  The task, rpc_trans, and compound
+			 * are now owned by the async completer.
+			 *
+			 * Release the rph ref we hold and return EINPROGRESS
+			 * to the worker loop so it does NOT free the task
+			 * buffer.  Everything else stays alive.
+			 */
+			rpc_program_handler_put(rph);
+			return EINPROGRESS;
+		}
 		if (!ret) {
 			p = (uint32_t *)(rt->rt_body + rt->rt_offset);
 		}
