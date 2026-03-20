@@ -35,12 +35,16 @@ static inline void trace_nfs4_compound_op(struct compound *compound,
 
 	reffs_trace_event(
 		REFFS_TRACE_CAT_NFS, func, line,
-		"compound=%p c_op=%u op=%s status=%s(%d)", (void *)compound,
-		compound->c_curr_op,
+		"compound=%p c_op=%u op=%s status=%s(%d) sb=%lu ino=%lu",
+		(void *)compound, compound->c_curr_op,
 		nfs4_op_name(compound->c_args->argarray
 				     .argarray_val[compound->c_curr_op]
 				     .argop),
-		nfs4_err_name(*status), *status);
+		nfs4_err_name(*status), *status,
+		compound->c_inode && compound->c_inode->i_sb ?
+			compound->c_inode->i_sb->sb_id :
+			0,
+		compound->c_inode ? compound->c_inode->i_ino : 0);
 }
 
 static inline void trace_nfs4_srv_compound(struct rpc_trans *rt)
