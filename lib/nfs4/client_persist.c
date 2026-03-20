@@ -35,8 +35,7 @@ static bool verifier_eq(const verifier4 *a, const verifier4 *b)
 
 static bool addr_eq(const struct sockaddr_in *a, const struct sockaddr_in *b)
 {
-	return a->sin_addr.s_addr == b->sin_addr.s_addr &&
-	       a->sin_port == b->sin_port;
+	return a->sin_addr.s_addr == b->sin_addr.s_addr;
 }
 
 /*
