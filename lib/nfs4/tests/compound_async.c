@@ -30,7 +30,7 @@
 #include <check.h>
 
 #include "nfsv42_xdr.h"
-#include "nfsv42_names.h"  /* OP_MAX */
+#include "nfsv42_names.h" /* OP_MAX */
 #include "reffs/rpc.h"
 #include "reffs/task.h"
 #include "nfs4/compound.h"
@@ -50,16 +50,15 @@
  * rt->rt_compound is wired to compound so resume callbacks can navigate
  * back to the compound via rt->rt_compound.
  */
-static struct compound *
-make_compound(struct rpc_trans *rt, struct task *t,
-	      unsigned int nops, nfs_opnum4 argop)
+static struct compound *make_compound(struct rpc_trans *rt, struct task *t,
+				      unsigned int nops, nfs_opnum4 argop)
 {
 	struct compound *compound = calloc(1, sizeof(*compound));
 	ck_assert_ptr_nonnull(compound);
 
 	compound->c_rt = rt;
 	compound->c_args = calloc(1, sizeof(COMPOUND4args));
-	compound->c_res  = calloc(1, sizeof(COMPOUND4res));
+	compound->c_res = calloc(1, sizeof(COMPOUND4res));
 	ck_assert_ptr_nonnull(compound->c_args);
 	ck_assert_ptr_nonnull(compound->c_res);
 
@@ -67,8 +66,7 @@ make_compound(struct rpc_trans *rt, struct task *t,
 		compound->c_args->argarray.argarray_len = nops;
 		compound->c_args->argarray.argarray_val =
 			calloc(nops, sizeof(nfs_argop4));
-		ck_assert_ptr_nonnull(
-			compound->c_args->argarray.argarray_val);
+		ck_assert_ptr_nonnull(compound->c_args->argarray.argarray_val);
 
 		for (unsigned int i = 0; i < nops; i++)
 			compound->c_args->argarray.argarray_val[i].argop =
@@ -77,11 +75,10 @@ make_compound(struct rpc_trans *rt, struct task *t,
 		compound->c_res->resarray.resarray_len = nops;
 		compound->c_res->resarray.resarray_val =
 			calloc(nops, sizeof(nfs_resop4));
-		ck_assert_ptr_nonnull(
-			compound->c_res->resarray.resarray_val);
+		ck_assert_ptr_nonnull(compound->c_res->resarray.resarray_val);
 	}
 
-	rt->rt_task     = t;
+	rt->rt_task = t;
 	rt->rt_compound = compound;
 
 	return compound;
@@ -106,7 +103,7 @@ static void free_compound(struct compound *compound)
 /* Callback helpers                                                    */
 /* ------------------------------------------------------------------ */
 
-static bool     g_cb_called;
+static bool g_cb_called;
 static unsigned g_cb_op; /* c_curr_op at time of call */
 
 static void ok_action(struct rpc_trans *rt)
@@ -114,7 +111,7 @@ static void ok_action(struct rpc_trans *rt)
 	struct compound *compound = rt->rt_compound;
 
 	g_cb_called = true;
-	g_cb_op     = compound->c_curr_op;
+	g_cb_op = compound->c_curr_op;
 	/* leave resop status = 0 (NFS4_OK) */
 }
 
@@ -122,8 +119,7 @@ static void err_action(struct rpc_trans *rt)
 {
 	struct compound *compound = rt->rt_compound;
 	nfs_resop4 *resop =
-		&compound->c_res->resarray
-			  .resarray_val[compound->c_curr_op];
+		&compound->c_res->resarray.resarray_val[compound->c_curr_op];
 
 	g_cb_called = true;
 	resop->nfs_resop4_u.opillegal.status = NFS4ERR_STALE;
@@ -145,10 +141,11 @@ static void pause_action(struct rpc_trans *rt)
  */
 START_TEST(test_dispatch_empty)
 {
-	struct task     task = {0};
-	struct rpc_trans rt  = {0};
+	struct task task = { 0 };
+	struct rpc_trans rt = { 0 };
 
-	atomic_store_explicit(&task.t_state, TASK_RUNNING, memory_order_relaxed);
+	atomic_store_explicit(&task.t_state, TASK_RUNNING,
+			      memory_order_relaxed);
 
 	struct compound *compound = make_compound(&rt, &task, 0, 0);
 
@@ -168,10 +165,11 @@ END_TEST
  */
 START_TEST(test_dispatch_illegal_op)
 {
-	struct task      task = {0};
-	struct rpc_trans rt   = {0};
+	struct task task = { 0 };
+	struct rpc_trans rt = { 0 };
 
-	atomic_store_explicit(&task.t_state, TASK_RUNNING, memory_order_relaxed);
+	atomic_store_explicit(&task.t_state, TASK_RUNNING,
+			      memory_order_relaxed);
 
 	/* OP_MAX is not in op_table — guaranteed to call nfs4_op_illegal */
 	struct compound *compound = make_compound(&rt, &task, 1, OP_MAX);
@@ -192,10 +190,11 @@ END_TEST
  */
 START_TEST(test_dispatch_resume_ok)
 {
-	struct task      task = {0};
-	struct rpc_trans rt   = {0};
+	struct task task = { 0 };
+	struct rpc_trans rt = { 0 };
 
-	atomic_store_explicit(&task.t_state, TASK_RUNNING, memory_order_relaxed);
+	atomic_store_explicit(&task.t_state, TASK_RUNNING,
+			      memory_order_relaxed);
 
 	/* One-op compound, c_curr_op starts at 0 (the paused op) */
 	struct compound *compound = make_compound(&rt, &task, 1, OP_ACCESS);
@@ -205,7 +204,7 @@ START_TEST(test_dispatch_resume_ok)
 	dispatch_compound(compound);
 
 	ck_assert(g_cb_called);
-	ck_assert_uint_eq(g_cb_op, 0);             /* called at op 0 */
+	ck_assert_uint_eq(g_cb_op, 0); /* called at op 0 */
 	ck_assert(rt.rt_next_action == NULL); /* cleared before call */
 	ck_assert_int_eq(compound->c_res->status, NFS4_OK);
 	/* c_curr_op advanced to 1 then the for-loop terminated normally */
@@ -221,10 +220,11 @@ END_TEST
  */
 START_TEST(test_dispatch_resume_error)
 {
-	struct task      task = {0};
-	struct rpc_trans rt   = {0};
+	struct task task = { 0 };
+	struct rpc_trans rt = { 0 };
 
-	atomic_store_explicit(&task.t_state, TASK_RUNNING, memory_order_relaxed);
+	atomic_store_explicit(&task.t_state, TASK_RUNNING,
+			      memory_order_relaxed);
 
 	struct compound *compound = make_compound(&rt, &task, 1, OP_ACCESS);
 	rt.rt_next_action = err_action;
@@ -250,10 +250,11 @@ END_TEST
  */
 START_TEST(test_dispatch_resume_pause)
 {
-	struct task      task = {0};
-	struct rpc_trans rt   = {0};
+	struct task task = { 0 };
+	struct rpc_trans rt = { 0 };
 
-	atomic_store_explicit(&task.t_state, TASK_RUNNING, memory_order_relaxed);
+	atomic_store_explicit(&task.t_state, TASK_RUNNING,
+			      memory_order_relaxed);
 
 	struct compound *compound = make_compound(&rt, &task, 1, OP_ACCESS);
 	rt.rt_next_action = pause_action;
@@ -276,7 +277,8 @@ START_TEST(test_dispatch_resume_pause)
 	 * until the async completer calls task_resume().  Here we force-
 	 * transition back to RUNNING so free_compound is safe.
 	 */
-	atomic_store_explicit(&task.t_state, TASK_RUNNING, memory_order_relaxed);
+	atomic_store_explicit(&task.t_state, TASK_RUNNING,
+			      memory_order_relaxed);
 	free_compound(compound);
 }
 END_TEST
