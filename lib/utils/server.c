@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <unistd.h>
 #include <time.h>
 
@@ -123,6 +124,36 @@ struct server_state *server_state_find(void)
 /* ------------------------------------------------------------------ */
 /* Grace period                                                        */
 
+/*
+ * grace_timer_thread -- fires after ss_grace_time seconds and ends grace.
+ *
+ * Sleeps in 1-second increments so it wakes promptly on shutdown.
+ * Does NOT hold an extra ref on ss; server_state_fini() joins the thread
+ * before dropping the final ref, so ss is guaranteed live for the
+ * thread's lifetime.
+ */
+static void *grace_timer_thread(void *arg)
+{
+	struct server_state *ss = arg;
+	struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
+
+	for (uint32_t elapsed = 0; elapsed < ss->ss_grace_time; elapsed++) {
+		clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, NULL);
+
+		if (server_shutting_down(ss))
+			return NULL;
+
+		/* Early exit if all clients already reclaimed. */
+		enum server_lifecycle lc =
+			__atomic_load_n(&ss->ss_lifecycle, __ATOMIC_ACQUIRE);
+		if (lc >= SERVER_GRACE_ENDED)
+			return NULL;
+	}
+
+	server_grace_end(ss);
+	return NULL;
+}
+
 void server_grace_start(struct server_state *ss)
 {
 	enum server_lifecycle lc =
@@ -136,6 +167,13 @@ void server_grace_start(struct server_state *ss)
 
 	clock_gettime(CLOCK_MONOTONIC, &ss->ss_grace_start);
 	server_lifecycle_set(ss, SERVER_GRACE_STARTED);
+
+	if (pthread_create(&ss->ss_grace_thread, NULL, grace_timer_thread,
+			   ss) != 0) {
+		LOG("server_grace_start: failed to create grace timer thread; "
+		    "grace will not expire automatically");
+		ss->ss_grace_thread = 0;
+	}
 }
 
 void server_grace_end(struct server_state *ss)
@@ -311,7 +349,9 @@ struct server_state *server_state_init(const char *state_path, int port,
 	    ss->ss_persist.sps_slot_next > 1) {
 		/*
 		 * Count previous-boot clients that will need to reclaim.
-		 * Grace ends early when this counter reaches zero.
+		 * Grace ends early when this counter reaches zero via
+		 * server_reclaim_complete(), or after ss_grace_time seconds
+		 * via the grace timer thread.
 		 */
 		struct client_incarnation_record incs[CLIENT_INCARNATION_MAX];
 		size_t nincs = 0;
@@ -319,10 +359,24 @@ struct server_state *server_state_init(const char *state_path, int port,
 		if (client_incarnation_load(ss->ss_state_dir, incs,
 					    CLIENT_INCARNATION_MAX, &nincs) < 0)
 			nincs = 0;
-		__atomic_store_n(&ss->ss_unreclaimed, (uint32_t)nincs,
-				 __ATOMIC_RELAXED);
 
-		server_grace_start(ss);
+		if (nincs == 0) {
+			/*
+			 * No incarnation records — no clients can reclaim.
+			 * Skip grace entirely; server_reclaim_complete() would
+			 * never fire, so the counter-based end trigger can't
+			 * work.  The timer-based path could work, but a 90-
+			 * second stall on every dirty-shutdown-with-no-clients
+			 * boot is surprising.  Go straight to GRACE_ENDED.
+			 */
+			LOG("server_state_init: no incarnation records, "
+			    "skipping grace");
+			server_lifecycle_set(ss, SERVER_GRACE_ENDED);
+		} else {
+			__atomic_store_n(&ss->ss_unreclaimed, (uint32_t)nincs,
+					 __ATOMIC_RELAXED);
+			server_grace_start(ss);
+		}
 	} else {
 		LOG("server_state_init: skipping grace period (fresh/clean start)");
 		server_lifecycle_set(ss, SERVER_GRACE_ENDED);
@@ -366,6 +420,16 @@ void server_state_fini(struct server_state *ss)
 	server_lifecycle_set(ss, SERVER_SHUTTING_DOWN);
 
 	__atomic_store_n(&current_server_state, NULL, __ATOMIC_RELEASE);
+
+	/*
+	 * Wake and join the grace timer thread before touching any other
+	 * state.  The SHUTTING_DOWN lifecycle causes the thread to exit
+	 * promptly on its next 1-second wakeup.
+	 */
+	if (ss->ss_grace_thread) {
+		pthread_join(ss->ss_grace_thread, NULL);
+		ss->ss_grace_thread = 0;
+	}
 
 	/*
          * Write the clean-shutdown flag now, before releasing the
