@@ -77,6 +77,7 @@ struct rpc_trans {
 	struct task *rt_task; /* owning task */
 	struct compound
 		*rt_compound; /* live compound; NULL when not in dispatch */
+	ssize_t rt_io_result; /* result of last async backend I/O op */
 };
 
 struct rpc_stats {

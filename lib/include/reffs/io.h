@@ -55,6 +55,9 @@
 #define REFFS_IO_MAX_RETRIES (3)
 #define REFFS_IO_RING_RETRIES (100) // Aggressive retries for SQE acquisition
 
+/* Queue depth for the backend file-I/O ring (separate from network ring). */
+#define BACKEND_QUEUE_DEPTH 512
+
 // Opcodes for different packet types
 enum op_type {
 	OP_TYPE_ACCEPT = 1,
@@ -63,8 +66,12 @@ enum op_type {
 	OP_TYPE_CONNECT = 4,
 	OP_TYPE_RPC_REQ = 5,
 	OP_TYPE_HEARTBEAT = 6,
-	OP_TYPE_ALL = 7
+	OP_TYPE_ALL = 7,
+	OP_TYPE_BACKEND_PREAD = 8, /* async pread via backend ring */
+	OP_TYPE_BACKEND_PWRITE = 9, /* async pwrite via backend ring */
 };
+
+struct rpc_trans;
 
 // IO operation context structure
 struct io_context {
@@ -92,6 +99,13 @@ struct io_context {
 	uint64_t ic_count;
 
 	struct connection_info ic_ci;
+
+	/*
+	 * Backend I/O ops (OP_TYPE_BACKEND_PREAD/PWRITE) store the owning
+	 * rpc_trans here so the completion handler can resume the task.
+	 * NULL for all network ops.
+	 */
+	struct rpc_trans *ic_rt;
 
 	struct io_context *ic_next;
 };
@@ -163,12 +177,27 @@ struct conn_info {
 	int ci_connect_count; // Number of pending connect operations
 };
 
-// Function declarations
+/* ------------------------------------------------------------------ */
+/* Network ring (existing)                                            */
+/* ------------------------------------------------------------------ */
 int io_handler_init(struct ring_context *rc);
 void io_handler_fini(struct ring_context *rc);
 void io_handler_main_loop(volatile sig_atomic_t *running,
 			  struct ring_context *rc);
 void io_handler_stop(void);
+
+/* ------------------------------------------------------------------ */
+/* Backend file-I/O ring                                              */
+/* ------------------------------------------------------------------ */
+int io_backend_init(struct ring_context *rc);
+void io_backend_fini(struct ring_context *rc);
+void io_backend_main_loop(volatile sig_atomic_t *running,
+			  struct ring_context *rc);
+
+int io_request_backend_pread(int fd, void *buf, size_t len, off_t offset,
+			     struct rpc_trans *rt, struct ring_context *rc);
+int io_request_backend_pwrite(int fd, const void *buf, size_t len, off_t offset,
+			      struct rpc_trans *rt, struct ring_context *rc);
 
 int io_lsnr_setup_ipv4(int port);
 int io_lsnr_setup_ipv6(int port);
@@ -250,6 +279,10 @@ static inline const char *io_op_type_to_str(enum op_type op)
 		return "HEARTBEAT";
 	case OP_TYPE_ALL:
 		return "ALL";
+	case OP_TYPE_BACKEND_PREAD:
+		return "BACKEND_PREAD";
+	case OP_TYPE_BACKEND_PWRITE:
+		return "BACKEND_PWRITE";
 	}
 
 	return "unknown";

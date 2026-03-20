@@ -30,6 +30,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -58,8 +59,8 @@ START_TEST(test_stray_tmp_ignored)
 	 * inode_disk) to ino_2.meta.tmp.
 	 */
 	char tmp_path[PATH_MAX];
-	snprintf(tmp_path, sizeof(tmp_path), "%s/sb_1/ino_2.meta.tmp",
-		 ctx.backend_path);
+	snprintf(tmp_path, sizeof(tmp_path), "%s/sb_1/ino_2.meta.tmp.%lu",
+		 ctx.backend_path, (unsigned long)pthread_self());
 	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	ck_assert(fd >= 0);
 	write(fd, &id_bad, sizeof(id_bad));
