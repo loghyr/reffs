@@ -441,6 +441,94 @@ void rpc_protocol_free(struct rpc_trans *rt)
 	free(rt);
 }
 
+/*
+ * rpc_complete_resumed_task -- encode and send the reply for an async compound
+ * that has just finished its resume callback.
+ *
+ * On the fresh path rpc_process_task() handles both the op dispatch and the
+ * reply encoding+send.  On the resume path the worker calls
+ * rpc_protocol_op_call() directly, so the reply encoding never happens.
+ * This function fills that gap: it XDR-encodes a success RPC reply from the
+ * result already sitting in ph->ph_res, queues the write via rt->rt_cb(), and
+ * then releases all resources with rpc_protocol_free().
+ *
+ * On any encoding failure the reply is silently dropped (the client will
+ * time-out and retry) and resources are still freed.
+ */
+void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t)
+{
+	u_long msg_len;
+	uint32_t *p;
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	u_long xdr_size = 0;
+
+	rt->rt_offset = 0;
+
+	if (ph && ph->ph_op_handler && ph->ph_op_handler->roh_res_f)
+		xdr_size = xdr_sizeof(ph->ph_op_handler->roh_res_f, ph->ph_res);
+
+	rt->rt_reply_len = 7 * sizeof(uint32_t) + xdr_size;
+	msg_len = rt->rt_reply_len - sizeof(uint32_t);
+	rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
+	if (!rt->rt_reply)
+		goto drop;
+
+	p = (uint32_t *)rt->rt_reply;
+
+	p = rpc_encode_uint32_t(rt, p, (uint32_t)(msg_len | 0x80000000));
+	if (!p)
+		goto enc_err;
+	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
+	if (!p)
+		goto enc_err;
+	p = rpc_encode_uint32_t(rt, p, 1); /* MSG_REPLY */
+	if (!p)
+		goto enc_err;
+	p = rpc_encode_uint32_t(rt, p, 0); /* MSG_ACCEPTED */
+	if (!p)
+		goto enc_err;
+	p = rpc_encode_uint32_t(rt, p, 0); /* AUTH_NULL flavor */
+	if (!p)
+		goto enc_err;
+	p = rpc_encode_uint32_t(rt, p, 0); /* verifier len = 0 */
+	if (!p)
+		goto enc_err;
+	p = rpc_encode_uint32_t(rt, p, 0); /* accept_stat = SUCCESS */
+	if (!p)
+		goto enc_err;
+
+	if (ph && ph->ph_op_handler && ph->ph_op_handler->roh_res_f) {
+		XDR xdrs = { 0 };
+		uint32_t start_pos, end_pos;
+
+		xdrmem_create(&xdrs, (char *)p,
+			      rt->rt_reply_len - rt->rt_offset, XDR_ENCODE);
+		start_pos = xdr_getpos(&xdrs);
+
+		if (!ph->ph_op_handler->roh_res_f(&xdrs, ph->ph_res)) {
+			xdr_destroy(&xdrs);
+			goto enc_err;
+		}
+
+		end_pos = xdr_getpos(&xdrs);
+		xdr_destroy(&xdrs);
+		rt->rt_offset += end_pos - start_pos;
+	}
+
+	rt->rt_rc = t->t_rc;
+	if (__rpc_log_packets)
+		rpc_log_packet("TX(resume): ", rt->rt_reply, rt->rt_reply_len);
+	rt->rt_cb(rt);
+	rpc_protocol_free(rt);
+	return;
+
+enc_err:
+	free(rt->rt_reply);
+	rt->rt_reply = NULL;
+drop:
+	rpc_protocol_free(rt);
+}
+
 struct rpc_trans *rpc_trans_create(void)
 {
 	struct rpc_trans *rt = calloc(1, sizeof(*rt));

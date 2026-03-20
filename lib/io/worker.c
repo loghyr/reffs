@@ -95,13 +95,11 @@ void *io_worker_thread(void *vtd)
 					continue; /* went async again */
 
 				/*
-				 * Compound fully complete.  The reply was
-				 * already encoded on the first pass; the
-				 * finalize path in nfs4_proc_compound cached
-				 * it in the slot.  Send path deferred to first
-				 * async op wiring.
+				 * Compound fully complete.  Encode the RPC
+				 * reply, send it to the client, and free all
+				 * resources.
 				 */
-				rpc_protocol_free(rt);
+				rpc_complete_resumed_task(rt, t);
 				free(t->t_buffer);
 				free(t);
 			} else if (t->t_fd > 0) {
