@@ -363,9 +363,10 @@ void nfs4_op_locku(struct compound *compound)
 	}
 	struct lock_stateid *ls = stid_to_lock(stid);
 
-	/* Verify seqid */
+	/* Verify stateid seqid (args->seqid is the lock-owner seqid, which
+	 * NFSv4.1 clients always set to zero per RFC 5661 §8.2.2) */
 	uint32_t cur_seqid = __atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
-	if (args->seqid != cur_seqid) {
+	if (seqid != 0 && seqid != cur_seqid) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_SEQID;
 		return;
