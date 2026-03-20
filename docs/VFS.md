@@ -46,6 +46,7 @@ To prevent deadlocks, the VFS enforces a strict locking order:
 ## Status (March 2026)
 - [x] Core creation and removal operations migrated to VFS.
 - [x] NFSv3 handlers for `REMOVE`, `RMDIR`, `RENAME`, and `LINK` refactored.
-- [ ] NFSv3 handlers for `CREATE`, `MKDIR`, `SYMLINK`, and `MKNOD` pending VFS conversion.
+- [x] NFSv3 handlers for `CREATE`, `MKDIR`, `SYMLINK`, and `MKNOD` converted to VFS.
 - [x] Locking deadlocks resolved (via `de1 == de2` check).
-- [ ] Remaining operations (READ, WRITE, SETATTR) pending VFS conversion.
+- [x] NFSv3 `SETATTR` converted to `vfs_setattr()`.
+- [ ] NFSv3 `READ` and `WRITE` still use `data_block_*` directly; no VFS abstraction yet.

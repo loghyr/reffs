@@ -303,5 +303,4 @@ candidates for future tests:
 
 - **NLM-layer integration**: `lock_test.h` provides a synthetic owner.  The
   `nlm4_lock_owner` struct that embeds `reffs_lock_owner` is not tested here;
-  that is covered by the NLM protocol tests in `lib/nlm/tests/` (not yet
-  written).
+  that is covered by the NLM protocol tests in `lib/nlm/tests/nlm_test.c`.
