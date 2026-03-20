@@ -7,6 +7,7 @@ reffsincludedir = $(includedir)/reffs
 
 reffsinclude_HEADERS = \
 	client.h \
+	settings.h \
 	client_persist.h \
 	data_block.h \
 	dirent.h \

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-SUBDIRS = lib scripts src tools LICENSES
+SUBDIRS = third_party lib scripts src tools LICENSES
 
 ACLOCAL_AMFLAGS = -Im4
 
@@ -21,17 +21,17 @@ mrproper:
 	git clean -f -x -d
 
 style:
-	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format --dry-run -Werror
+	find . \( -name xdr -o -name third_party \) -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format --dry-run -Werror
 
 fix-style:
-	find . -name xdr -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
+	find . \( -name xdr -o -name third_party \) -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print | tr '\n' '\0' | xargs -0 -n1 clang-format -i
 
 scanbuild:
 	scan-build make
 
 tidy:
 	bear -- make
-	find . -name "*.c" -o -name "*.cpp" | xargs clang-tidy -p . -header-filter=.* 
+	find . \( -name xdr -o -name third_party \) -prune -o \( -name "*.c" -o -name "*.cpp" \) -print | xargs clang-tidy -p . -header-filter=.*
 
 RPM_BUILD_DIR = ../rpmbuild
 

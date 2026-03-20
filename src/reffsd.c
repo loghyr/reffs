@@ -43,6 +43,7 @@
 #include "reffs/types.h"
 #include "sm_inter.h"
 #include "reffs/client.h"
+#include "reffs/settings.h"
 
 #define NFS_PORT 2049
 
@@ -74,9 +75,10 @@ static void usage(const char *prog)
 	printf("Options:\n");
 	printf("  -h  --help                   Print this usage and exit\n");
 	printf("  -r  --rpc_dump               Dump RPC msg bodies\n");
+	printf("  -C  --config=path            Load configuration from TOML file\n");
 	printf("  -p  --port=id                Serve NFS traffic from this \"port\"\n");
 	printf("  -f  --file=fname             Save tracing data to this file \"fname\"\n");
-	printf("  -b  --backend=type           Storage backend (ram, posix)\n");
+	printf("  -b  --backend=type           Storage backend (ram, posix, rocksdb)\n");
 	printf("  -B  --backend-path=path      Path for POSIX backend\n");
 	printf("  -i  --case-insensitive       Enable case-insensitive name lookups\n");
 	printf("  -S  --state-path=path        Path for storing state\n");
@@ -92,6 +94,7 @@ static void usage(const char *prog)
 
 static struct option long_opts[] = {
 	{ "category", required_argument, 0, 'c' },
+	{ "config", required_argument, 0, 'C' },
 	{ "file", required_argument, 0, 'f' },
 	{ "help", no_argument, 0, 'h' },
 	{ "case-insensitive", no_argument, 0, 'i' },
@@ -125,6 +128,19 @@ int main(int argc, char *argv[])
 
 	struct server_state *ss = NULL;
 
+	struct reffs_config cfg;
+	const char *config_file = NULL;
+
+	/* CLI overrides: -1/NULL means "not set on command line, use config" */
+	int cli_port = -1;
+	enum reffs_storage_type cli_storage_type =
+		(enum reffs_storage_type) - 1;
+	char *cli_backend_path = NULL;
+	char *cli_state_path = NULL;
+
+	char *opts = "p:hriC:c:f:b:B:S:";
+	enum reffs_text_case case_mode = reffs_text_case_sensitive;
+
 #ifdef HAVE_JEMALLOC
 #ifdef HAVE_VM
 	/* Release virtual address space immediately on free */
@@ -136,14 +152,11 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "p:hric:f:b:B:S:";
-	enum reffs_storage_type storage_type = REFFS_STORAGE_RAM;
-	enum reffs_text_case case_mode = reffs_text_case_sensitive;
-	char *backend_path = NULL;
-	char *state_path = "/tmp/reffs.state";
-
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
+		case 'C':
+			config_file = optarg;
+			break;
 		case 'p': {
 			char *endptr;
 			long val = strtol(optarg, &endptr, 10);
@@ -151,23 +164,25 @@ int main(int argc, char *argv[])
 				fprintf(stderr, "Invalid port: %s\n", optarg);
 				return 1;
 			}
-			port = (int)val;
+			cli_port = (int)val;
 			break;
 		}
 		case 'b':
 			if (strcasecmp(optarg, "posix") == 0)
-				storage_type = REFFS_STORAGE_POSIX;
-			else if (strcasecmp(optarg, "ram") == 0)
-				storage_type = REFFS_STORAGE_RAM;
+				cli_storage_type = REFFS_STORAGE_POSIX;
+			else if (strcasecmp(optarg, "rocksdb") == 0)
+				cli_storage_type = REFFS_STORAGE_ROCKSDB;
+			else
+				cli_storage_type = REFFS_STORAGE_RAM;
 			break;
 		case 'B':
-			backend_path = optarg;
+			cli_backend_path = optarg;
 			break;
 		case 'i':
 			case_mode = reffs_text_case_insensitive;
 			break;
 		case 'S':
-			state_path = optarg;
+			cli_state_path = optarg;
 			break;
 		case 'c': {
 			char *endptr;
@@ -195,9 +210,29 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	/* Load config (defaults first, then file if given) */
+	reffs_config_defaults(&cfg);
+	if (config_file && reffs_config_load(&cfg, config_file) < 0)
+		return 1;
+
+	/* CLI args override config file */
+	if (cli_port >= 0)
+		cfg.port = (uint16_t)cli_port;
+	if ((int)cli_storage_type >= 0)
+		cfg.backend_type = (enum reffs_backend_type)cli_storage_type;
+	if (cli_backend_path)
+		strncpy(cfg.backend_path, cli_backend_path,
+			sizeof(cfg.backend_path) - 1);
+	if (cli_state_path)
+		strncpy(cfg.state_file, cli_state_path,
+			sizeof(cfg.state_file) - 1);
+
+	port = cfg.port;
+
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	reffs_trace_init(trace_file);
-	reffs_fs_set_storage(storage_type, backend_path);
+	reffs_fs_set_storage((enum reffs_storage_type)cfg.backend_type,
+			     cfg.backend_path[0] ? cfg.backend_path : NULL);
 
 	sigset_t mask;
 
@@ -221,7 +256,7 @@ int main(int argc, char *argv[])
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
 
-	ss = server_state_init(state_path, port, case_mode);
+	ss = server_state_init(cfg.state_file, port, case_mode);
 	if (!ss) {
 		return 1;
 	}
