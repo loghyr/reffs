@@ -26,6 +26,27 @@ static inline void trace_nfs4_srv_null(struct rpc_trans *rt)
 			  "xid=0x%08x", rt->rt_info.ri_xid);
 }
 
+static inline void trace_nfs4_name(struct compound *compound, char *name,
+				   const char *func, int line)
+{
+	nfs_resop4 *resop =
+		&compound->c_res->resarray.resarray_val[compound->c_curr_op];
+	nfsstat4 *status = &resop->nfs_resop4_u.opillegal.status;
+
+	reffs_trace_event(
+		REFFS_TRACE_CAT_NFS, func, line,
+		"compound=%p c_op=%u op=%s status=%s(%d) name=%s sb=%lu ino=%lu",
+		(void *)compound, compound->c_curr_op,
+		nfs4_op_name(compound->c_args->argarray
+				     .argarray_val[compound->c_curr_op]
+				     .argop),
+		nfs4_err_name(*status), *status, name ? name : "<unknown>",
+		compound->c_inode && compound->c_inode->i_sb ?
+			compound->c_inode->i_sb->sb_id :
+			0,
+		compound->c_inode ? compound->c_inode->i_ino : 0);
+}
+
 static inline void trace_nfs4_compound_op(struct compound *compound,
 					  const char *func, int line)
 {
