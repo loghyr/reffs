@@ -15,6 +15,7 @@
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "reffs/log.h"
+#include "reffs/io.h"
 #include "reffs/rpc.h"
 #include "reffs/inode.h"
 #include "reffs/data_block.h"
@@ -914,6 +915,43 @@ void nfs4_op_close(struct compound *compound)
 	*status = NFS4_OK;
 }
 
+/*
+ * nfs4_op_read_resume -- rt_next_action callback after async pread completes.
+ *
+ * rt->rt_io_result holds the pread return value (bytes read, or -errno).
+ * The buffer was allocated and the resok pointer was set before the pause;
+ * we just fix up the length, eof flag, and status here.
+ */
+static void nfs4_op_read_resume(struct rpc_trans *rt)
+{
+	struct compound *compound = rt->rt_compound;
+	READ4args *args = NFS4_OP_ARG_SETUP(compound, opread);
+	READ4res *res = NFS4_OP_RES_SETUP(compound, opread);
+	nfsstat4 *status = &res->status;
+	READ4resok *resok = NFS4_OP_RESOK_SETUP(res, READ4res_u, resok4);
+
+	rt->rt_next_action = NULL;
+
+	ssize_t nread = rt->rt_io_result;
+	if (nread < 0) {
+		free(resok->data.data_val);
+		resok->data.data_val = NULL;
+		resok->data.data_len = 0;
+		*status = NFS4ERR_IO;
+		return;
+	}
+
+	resok->data.data_len = (u_int)nread;
+	resok->eof = (args->offset + (uint64_t)nread >=
+		      (uint64_t)compound->c_inode->i_size);
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	inode_update_times_now(compound->c_inode, REFFS_INODE_UPDATE_ATIME);
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+	*status = NFS4_OK;
+}
+
 void nfs4_op_read(struct compound *compound)
 {
 	READ4args *args = NFS4_OP_ARG_SETUP(compound, opread);
@@ -980,6 +1018,41 @@ void nfs4_op_read(struct compound *compound)
 	}
 	resok->data.data_len = req_count;
 
+	/*
+	 * If the backend has a real file descriptor, submit an async pread
+	 * via the backend io_uring ring and yield the task.  The resume
+	 * callback (nfs4_op_read_resume) picks up rt_io_result and fills
+	 * in resok.
+	 *
+	 * The rwlock is NOT held across the async pause: the stateid held
+	 * by the client prevents conflicting truncates for the duration.
+	 * For the RAM backend (fd == -1) the synchronous path is used.
+	 */
+	int db_fd = data_block_get_fd(compound->c_inode->i_db);
+	struct ring_context *rc_backend = io_backend_get_global();
+	if (db_fd >= 0 && rc_backend && compound->c_rt->rt_task) {
+		struct rpc_trans *rt = compound->c_rt;
+		rt->rt_next_action = nfs4_op_read_resume;
+		task_pause(rt->rt_task);
+		if (io_request_backend_pread(db_fd, resok->data.data_val,
+					     req_count, args->offset, rt,
+					     rc_backend) < 0) {
+			/*
+			 * Submission failed: undo the pause so dispatch
+			 * doesn't stall, then fall through to error.
+			 */
+			rt->rt_next_action = NULL;
+			task_resume(rt->rt_task);
+			free(resok->data.data_val);
+			resok->data.data_val = NULL;
+			resok->data.data_len = 0;
+			*status = NFS4ERR_DELAY;
+		}
+		/* Either way, return now — resume callback handles the rest. */
+		goto out;
+	}
+
+	/* Synchronous path (RAM backend or no backend ring). */
 	pthread_rwlock_rdlock(&compound->c_inode->i_db_rwlock);
 	ssize_t nread = data_block_read(compound->c_inode->i_db,
 					resok->data.data_val, req_count,

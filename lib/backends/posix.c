@@ -296,6 +296,12 @@ static size_t posix_db_get_size(struct data_block *db)
 	return db->db_size;
 }
 
+static int posix_db_get_fd(struct data_block *db)
+{
+	struct posix_db_private *priv = db->db_storage_private;
+	return (priv && priv->db_fd >= 0) ? priv->db_fd : -1;
+}
+
 static void posix_dir_sync(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
@@ -695,6 +701,7 @@ const struct reffs_storage_ops posix_storage_ops = {
 	.db_write = posix_db_write,
 	.db_resize = posix_db_resize,
 	.db_get_size = posix_db_get_size,
+	.db_get_fd = posix_db_get_fd,
 	.dir_sync = posix_dir_sync,
 	.dir_find_entry_by_ino = posix_dir_find_entry_by_ino,
 	.dir_find_entry_by_name = posix_dir_find_entry_by_name,

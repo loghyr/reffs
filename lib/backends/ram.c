@@ -140,6 +140,12 @@ static size_t ram_db_get_size(struct data_block *db)
 	return db->db_size;
 }
 
+static int ram_db_get_fd(struct data_block *db)
+{
+	(void)db;
+	return -1;
+}
+
 const struct reffs_storage_ops ram_storage_ops = {
 	.type = REFFS_STORAGE_RAM,
 	.name = "ram",
@@ -150,4 +156,5 @@ const struct reffs_storage_ops ram_storage_ops = {
 	.db_write = ram_db_write,
 	.db_resize = ram_db_resize,
 	.db_get_size = ram_db_get_size,
+	.db_get_fd = ram_db_get_fd,
 };
