@@ -181,6 +181,8 @@ void nfs4_op_open(struct compound *compound)
 	struct inode *child = NULL; /* active ref; owned for CLAIM_NULL */
 	struct reffs_dirent *child_de = NULL;
 	char *name = NULL;
+	bool new_file = false;
+	fattr4 *createattrs = NULL;
 	int ret;
 
 	/*
@@ -266,7 +268,11 @@ void nfs4_op_open(struct compound *compound)
 			case UNCHECKED4:
 				ret = vfs_create(compound->c_inode, name, 0666,
 						 &compound->c_ap, &child);
-				if (ret == -EEXIST) {
+				if (ret == 0) {
+					new_file = true;
+					createattrs =
+						&how->createhow4_u.createattrs;
+				} else if (ret == -EEXIST) {
 					/*
 					 * File exists: open it, as if the
 					 * create had not been requested.
@@ -280,6 +286,11 @@ void nfs4_op_open(struct compound *compound)
 			case GUARDED4:
 				ret = vfs_create(compound->c_inode, name, 0666,
 						 &compound->c_ap, &child);
+				if (ret == 0) {
+					new_file = true;
+					createattrs =
+						&how->createhow4_u.createattrs;
+				}
 				/* -EEXIST → NFS4ERR_EXIST below */
 				break;
 
@@ -291,8 +302,8 @@ void nfs4_op_open(struct compound *compound)
 				 * ch_createboth.cva_verf and the client
 				 * may supply optional create attributes in
 				 * cva_attrs.  We apply the verifier cookie
-				 * the same way and leave attrset empty
-				 * (cva_attrs ignored for now).
+				 * the same way, then apply cva_attrs to the
+				 * new inode if the create succeeds.
 				 */
 				/* fall through */
 			case EXCLUSIVE4: {
@@ -314,6 +325,12 @@ void nfs4_op_open(struct compound *compound)
 				ret = vfs_create(compound->c_inode, name, 0666,
 						 &compound->c_ap, &child);
 				if (ret == 0) {
+					new_file = true;
+					if (how->mode == EXCLUSIVE4_1)
+						createattrs =
+							&how->createhow4_u
+								 .ch_createboth
+								 .cva_attrs;
 					/* New file: stamp ctime with verf. */
 					pthread_mutex_lock(
 						&child->i_attr_mutex);
@@ -376,6 +393,14 @@ void nfs4_op_open(struct compound *compound)
 			if (!child) {
 				*status = NFS4ERR_SERVERFAULT;
 				goto out;
+			}
+			if (new_file && createattrs &&
+			    createattrs->attrmask.bitmap4_len > 0) {
+				*status = nfs4_apply_createattrs(
+					createattrs, child, &resok->attrset,
+					&compound->c_ap);
+				if (*status)
+					goto out;
 			}
 		} else {
 			/* NOCREATE: look up an existing file. */
@@ -537,8 +562,6 @@ void nfs4_op_open(struct compound *compound)
 	} else {
 		resok->delegation.delegation_type = OPEN_DELEGATE_NONE;
 	}
-
-	*status = NFS4_OK;
 
 out:
 	inode_active_put(child); /* NULL-safe; only set if not transferred */

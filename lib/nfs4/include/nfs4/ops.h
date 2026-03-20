@@ -97,6 +97,11 @@ void nfs4_op_illegal(struct compound *compound);
 
 const char *nfs4_op_name(nfs_opnum4 op);
 
+struct inode;
+struct authunix_parms;
+nfsstat4 nfs4_apply_createattrs(fattr4 *fattr, struct inode *inode,
+				bitmap4 *attrsset, struct authunix_parms *ap);
+
 #define NFS4_OP_NUM(compound) \
 	((compound)->c_args->argarray.argarray_val[(compound)->c_curr_op].argop)
 

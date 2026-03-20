@@ -3273,6 +3273,28 @@ out:
 }
 
 /*
+ * nfs4_apply_createattrs - apply an fattr4 to a newly created inode.
+ *
+ * Used by OPEN CREATE to honour createattrs supplied by the client.
+ * @attrsset may point to an unallocated bitmap4 (len=0, val=NULL); in
+ * that case attribute-set reporting is silently skipped.
+ */
+nfsstat4 nfs4_apply_createattrs(fattr4 *fattr, struct inode *inode,
+				bitmap4 *attrsset, struct authunix_parms *ap)
+{
+	struct nfsv42_attr nattr = { 0 };
+	nfsstat4 status;
+
+	status = nattr_from_fattr4(fattr, &nattr);
+	if (status)
+		return status;
+
+	status = nattr_to_inode(&nattr, &fattr->attrmask, attrsset, inode, ap);
+	nattr_release(&nattr);
+	return status;
+}
+
+/*
  * Shared implementation for VERIFY and NVERIFY.
  *
  * Encodes the current inode's attrs for the same attrmask the client
