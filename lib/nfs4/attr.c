@@ -2758,7 +2758,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->maxname = system_attrs.maxname;
 	nattr->maxread = system_attrs.maxread;
 	nattr->maxwrite = system_attrs.maxwrite;
-	nattr->mode = inode->i_mode;
+	nattr->mode = inode->i_mode & 07777;
 	nattr->no_trunc = system_attrs.no_trunc;
 	nattr->numlinks = inode->i_nlink;
 	nattr->quota_avail_hard = system_attrs.quota_avail_hard;
