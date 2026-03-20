@@ -24,6 +24,7 @@
 #include "reffs/dirent.h"
 #include "reffs/lock.h"
 #include "reffs/vfs.h"
+#include "reffs/utf8string.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -167,6 +168,69 @@ static void nfs4_write_verf(verifier4 out_verf)
 static void nfs4_open_owner_release(struct urcu_ref *ref)
 {
 	(void)ref;
+}
+
+static int
+fill_delegation_permissions_from_mode(nfsace4 *ace, struct compound *compound,
+				      open_delegation_type4 deleg_type)
+{
+	static char everyone_who[] = "EVERYONE@";
+	mode_t mode;
+	acemask4 mask = 0;
+	bool all_read;
+	bool all_write;
+	bool all_exec;
+
+	int ret;
+
+	assert(ace != NULL);
+	assert(compound != NULL);
+	assert(compound->c_inode != NULL);
+
+	mode = compound->c_inode->i_mode & 07777;
+
+	/*
+         * Conservative synthesis from POSIX mode bits:
+         * advertise only permissions granted to EVERYONE,
+         * i.e. the intersection of owner/group/other bits.
+         */
+	all_read = (mode & S_IRUSR) && (mode & S_IRGRP) && (mode & S_IROTH);
+	all_write = (mode & S_IWUSR) && (mode & S_IWGRP) && (mode & S_IWOTH);
+	all_exec = (mode & S_IXUSR) && (mode & S_IXGRP) && (mode & S_IXOTH);
+
+	/*
+         * A read delegation should only advertise read-side permissions.
+         * A write delegation may advertise both read and write permissions.
+         */
+	if (all_read) {
+		mask |= ACE4_READ_DATA;
+		mask |= ACE4_READ_ATTRIBUTES;
+		mask |= ACE4_READ_NAMED_ATTRS;
+		mask |= ACE4_READ_ACL;
+		mask |= ACE4_SYNCHRONIZE;
+	}
+
+	if (all_exec)
+		mask |= ACE4_EXECUTE;
+
+	if (deleg_type == OPEN_DELEGATE_WRITE && all_write) {
+		mask |= ACE4_WRITE_DATA;
+		mask |= ACE4_APPEND_DATA;
+
+		/*
+                 * Optional. Conservative servers often omit these.
+                 * Add them only if you want broader write-side hinting.
+                 */
+		/* mask |= ACE4_WRITE_ATTRIBUTES; */
+		/* mask |= ACE4_WRITE_NAMED_ATTRS; */
+	}
+
+	ace->type = ACE4_ACCESS_ALLOWED_ACE_TYPE;
+	ace->flag = 0;
+	ace->access_mask = mask;
+
+	ret = cstr_to_utf8string(&ace->who, everyone_who);
+	return ret;
 }
 
 void nfs4_op_open(struct compound *compound)
@@ -578,17 +642,11 @@ void nfs4_op_open(struct compound *compound)
 				resok->delegation.open_delegation4_u.write
 					.space_limit.nfs_space_limit4_u
 					.filesize = UINT64_MAX;
-				resok->delegation.open_delegation4_u.write
-					.permissions.type =
-					ACE4_ACCESS_ALLOWED_ACE_TYPE;
-				resok->delegation.open_delegation4_u.write
-					.permissions.flag = 0;
-				resok->delegation.open_delegation4_u.write
-					.permissions.access_mask = 0;
-				resok->delegation.open_delegation4_u.write
-					.permissions.who.utf8string_len = 0;
-				resok->delegation.open_delegation4_u.write
-					.permissions.who.utf8string_val = "";
+
+				ret = fill_delegation_permissions_from_mode(
+					&resok->delegation.open_delegation4_u
+						 .write.permissions,
+					compound, OPEN_DELEGATE_WRITE);
 			} else {
 				resok->delegation.delegation_type =
 					OPEN_DELEGATE_READ;
@@ -598,18 +656,14 @@ void nfs4_op_open(struct compound *compound)
 					&ds->ds_stid);
 				resok->delegation.open_delegation4_u.read
 					.recall = FALSE;
-				resok->delegation.open_delegation4_u.read
-					.permissions.type =
-					ACE4_ACCESS_ALLOWED_ACE_TYPE;
-				resok->delegation.open_delegation4_u.read
-					.permissions.flag = 0;
-				resok->delegation.open_delegation4_u.read
-					.permissions.access_mask = 0;
-				resok->delegation.open_delegation4_u.read
-					.permissions.who.utf8string_len = 0;
-				resok->delegation.open_delegation4_u.read
-					.permissions.who.utf8string_val = "";
+
+				ret = fill_delegation_permissions_from_mode(
+					&resok->delegation.open_delegation4_u
+						 .read.permissions,
+					compound, OPEN_DELEGATE_READ);
 			}
+
+			errno_to_nfs4(ret, NFS4_OP_NUM(compound));
 		} else {
 			if (want_deleg) {
 				resok->delegation.delegation_type =
