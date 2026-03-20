@@ -141,6 +141,7 @@ static struct nfsv42_attr system_attrs = {
 	.cansettime = true,
 	.case_insensitive = false,
 	.case_preserving = true,
+	.rdattr_error = NFS4_OK,
 	.homogeneous = true,
 	.maxfilesize = INT64_MAX,
 	.maxlink = -1,
@@ -2735,7 +2736,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->fsid.minor = 0;
 	nattr->unique_handles = system_attrs.unique_handles;
 	nattr->lease_time = system_attrs.lease_time;
-	nattr->rdattr_error = NFS4ERR_DELAY;
+	nattr->rdattr_error = system_attrs.rdattr_error;
 	nattr->aclsupport = system_attrs.aclsupport;
 	nattr->archive = inode->i_attr_flags & INODE_IS_ARCHIVED;
 	nattr->cansettime = system_attrs.cansettime;
