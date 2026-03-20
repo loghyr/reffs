@@ -22,6 +22,7 @@
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "nfs4/trace/nfs4.h"
 
 static inline changeid4 timespec_to_changeid(const struct timespec *ts)
 {
@@ -109,11 +110,10 @@ void nfs4_op_lookup(struct compound *compound)
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = NULL;
 
-	*status = NFS4_OK;
-
 out:
 	free(name);
 	dirent_put(child_de);
+	trace_nfs4_name(compound, name, __func__, __LINE__);
 }
 
 void nfs4_op_lookupp(struct compound *compound)
@@ -158,8 +158,6 @@ void nfs4_op_lookupp(struct compound *compound)
 
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = NULL;
-
-	*status = NFS4_OK;
 
 out:
 	dirent_put(parent_de);
@@ -286,9 +284,8 @@ void nfs4_op_create(struct compound *compound)
 	resok->attrset.bitmap4_len = 0;
 	resok->attrset.bitmap4_val = NULL;
 
-	*status = NFS4_OK;
-
 out:
+	trace_nfs4_name(compound, name, __func__, __LINE__);
 	inode_active_put(new_inode);
 	free(linkpath);
 	free(name);
@@ -353,9 +350,8 @@ void nfs4_op_remove(struct compound *compound)
 	resok->cinfo.before = timespec_to_changeid(&dir_before);
 	resok->cinfo.after = timespec_to_changeid(&dir_after);
 
-	*status = NFS4_OK;
-
 out:
+	trace_nfs4_name(compound, name, __func__, __LINE__);
 	free(name);
 }
 
@@ -527,10 +523,10 @@ void nfs4_op_link(struct compound *compound)
 	resok->cinfo.atomic = TRUE;
 	resok->cinfo.before = timespec_to_changeid(&dir_before);
 	resok->cinfo.after = timespec_to_changeid(&dir_after);
-	*status = NFS4_OK;
 
 out:
 	inode_active_put(src_inode);
+	trace_nfs4_name(compound, name, __func__, __LINE__);
 	free(name);
 }
 
@@ -574,6 +570,4 @@ void nfs4_op_readlink(struct compound *compound)
 		return;
 	}
 	resok->link.linktext4_len = strlen(compound->c_inode->i_symlink);
-
-	*status = NFS4_OK;
 }
