@@ -2682,9 +2682,6 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	struct super_block *sb = inode->i_sb;
 	int ret = 0;
 
-	struct timespec now;
-	clock_gettime(CLOCK_REALTIME, &now);
-
 	switch (type) {
 	case S_IFLNK:
 		nattr->type = NF4LNK;
@@ -2729,7 +2726,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 		goto out;
 
 	nattr->fh_expire_type = system_attrs.fh_expire_type;
-	nattr->change = timespec_to_ns(&now);
+	nattr->change = timespec_to_ns(&inode->i_ctime);
 	nattr->size = inode->i_size;
 	nattr->link_support = system_attrs.link_support;
 	nattr->symlink_support = system_attrs.symlink_support;
