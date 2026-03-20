@@ -59,6 +59,57 @@ static void compound_free(struct compound *compound)
 	free(compound);
 }
 
+/*
+ * nfs4_compound_finalize -- cache the reply in the session slot and free
+ * the compound.
+ *
+ * Must be called exactly once per compound, after dispatch_compound() has
+ * run to completion (i.e. the task is not paused).  For compounds that
+ * short-circuit before dispatch (minorversion mismatch, empty argarray,
+ * bad first op), c_slot is NULL and the caching block is skipped.
+ */
+static void nfs4_compound_finalize(struct compound *compound)
+{
+	if (compound->c_slot) {
+		COMPOUND4res *res = compound->c_res;
+
+		pthread_mutex_lock(&compound->c_slot->sl_mutex);
+		if (compound->c_slot->sl_state == NFS4_SLOT_IN_USE) {
+			XDR xdrs;
+			uint32_t reply_size;
+
+			reply_size =
+				xdr_sizeof((xdrproc_t)xdr_COMPOUND4res, res);
+
+			free(compound->c_slot->sl_reply);
+			compound->c_slot->sl_reply = calloc(1, reply_size);
+			if (compound->c_slot->sl_reply) {
+				xdrmem_create(&xdrs, compound->c_slot->sl_reply,
+					      reply_size, XDR_ENCODE);
+				if (xdr_COMPOUND4res(&xdrs, res)) {
+					compound->c_slot->sl_reply_len =
+						reply_size;
+					compound->c_slot->sl_state =
+						NFS4_SLOT_CACHED;
+				} else {
+					free(compound->c_slot->sl_reply);
+					compound->c_slot->sl_reply = NULL;
+					compound->c_slot->sl_reply_len = 0;
+					compound->c_slot->sl_state =
+						NFS4_SLOT_IDLE;
+				}
+				xdr_destroy(&xdrs);
+			} else {
+				compound->c_slot->sl_reply_len = 0;
+				compound->c_slot->sl_state = NFS4_SLOT_IDLE;
+			}
+		}
+		pthread_mutex_unlock(&compound->c_slot->sl_mutex);
+	}
+
+	compound_free(compound);
+}
+
 static struct compound *compound_alloc(struct rpc_trans *rt)
 {
 	struct compound *compound;
@@ -158,47 +209,7 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 
 	dispatch_compound(compound);
 
-	/*
-	 * Transition the slot from IN_USE to CACHED.  This must happen
-	 * after dispatch so that any concurrent replay of the same seqid
-	 * gets NFS4ERR_DELAY rather than a stale cached reply.
-	 */
-	if (compound->c_slot) {
-		pthread_mutex_lock(&compound->c_slot->sl_mutex);
-		if (compound->c_slot->sl_state == NFS4_SLOT_IN_USE) {
-			XDR xdrs;
-			uint32_t reply_size;
-
-			reply_size =
-				xdr_sizeof((xdrproc_t)xdr_COMPOUND4res, res);
-
-			free(compound->c_slot->sl_reply);
-			compound->c_slot->sl_reply = calloc(1, reply_size);
-			if (compound->c_slot->sl_reply) {
-				xdrmem_create(&xdrs, compound->c_slot->sl_reply,
-					      reply_size, XDR_ENCODE);
-				if (xdr_COMPOUND4res(&xdrs, res)) {
-					compound->c_slot->sl_reply_len =
-						reply_size;
-					compound->c_slot->sl_state =
-						NFS4_SLOT_CACHED;
-				} else {
-					free(compound->c_slot->sl_reply);
-					compound->c_slot->sl_reply = NULL;
-					compound->c_slot->sl_reply_len = 0;
-					compound->c_slot->sl_state =
-						NFS4_SLOT_IDLE;
-				}
-				xdr_destroy(&xdrs);
-			} else {
-				compound->c_slot->sl_reply_len = 0;
-				compound->c_slot->sl_state = NFS4_SLOT_IDLE;
-			}
-		}
-		pthread_mutex_unlock(&compound->c_slot->sl_mutex);
-	}
-
 out:
-	compound_free(compound);
+	nfs4_compound_finalize(compound);
 	return res->status;
 }
