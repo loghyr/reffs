@@ -26,8 +26,8 @@
 #include "reffs/server.h"
 #include "reffs/client_persist.h"
 
-#define DEFAULT_LEASE_TIME 90U /* seconds, per RFC 8881 s2.10.6 */
-#define DEFAULT_GRACE_TIME 90U
+#define DEFAULT_LEASE_TIME 45U /* seconds, per RFC 8881 s2.10.6 */
+#define DEFAULT_GRACE_TIME 45U
 
 static struct server_state *current_server_state;
 
@@ -125,7 +125,10 @@ struct server_state *server_state_find(void)
 /* Grace period                                                        */
 
 /*
- * grace_timer_thread -- fires after ss_grace_time seconds and ends grace.
+ * grace_timer_thread -- fires after 2 * ss_grace_time seconds and ends grace.
+ *
+ * Clients are given twice the grace period to complete reclaim.  This will
+ * eventually be driven by a config value; for now it is hard-coded as 2x.
  *
  * Sleeps in 1-second increments so it wakes promptly on shutdown.
  * Does NOT hold an extra ref on ss; server_state_fini() joins the thread
@@ -136,8 +139,9 @@ static void *grace_timer_thread(void *arg)
 {
 	struct server_state *ss = arg;
 	struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
+	uint32_t grace_deadline = 2 * ss->ss_grace_time;
 
-	for (uint32_t elapsed = 0; elapsed < ss->ss_grace_time; elapsed++) {
+	for (uint32_t elapsed = 0; elapsed < grace_deadline; elapsed++) {
 		clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, NULL);
 
 		if (server_shutting_down(ss))
