@@ -136,9 +136,41 @@ void dispatch_compound(struct compound *compound)
 {
 	COMPOUND4args *args = compound->c_args;
 	COMPOUND4res *res = compound->c_res;
+	struct task *t = compound->c_rt->rt_task;
 
-	for (compound->c_curr_op = 0;
-	     compound->c_curr_op < args->argarray.argarray_len;
+	/*
+	 * Resume case: an op previously paused this compound.  Call its
+	 * registered continuation to finish the op, then advance past it.
+	 * c_curr_op is still pointing at the paused op.
+	 */
+	if (compound->c_rt->rt_next_action != NULL) {
+		void (*action)(struct rpc_trans *rt) =
+			compound->c_rt->rt_next_action;
+		nfs_resop4 *resop =
+			&res->resarray.resarray_val[compound->c_curr_op];
+
+		compound->c_rt->rt_next_action = NULL;
+		action(compound->c_rt);
+		trace_nfs4_compound_op(compound, __func__, __LINE__);
+
+		/* Callback itself went async — stop, c_curr_op unchanged. */
+		if (t != NULL && task_is_paused(t))
+			return;
+
+		if (resop->nfs_resop4_u.opillegal.status) {
+			res->status = resop->nfs_resop4_u.opillegal.status;
+			res->resarray.resarray_len = compound->c_curr_op + 1;
+			return;
+		}
+
+		compound->c_curr_op++; /* op complete; advance to next */
+	}
+
+	/*
+	 * Forward loop.  On a fresh compound c_curr_op is 0 (calloc'd).
+	 * On a resume it starts from where the paused op left off + 1.
+	 */
+	for (; compound->c_curr_op < args->argarray.argarray_len;
 	     compound->c_curr_op++) {
 		nfs_argop4 *argop =
 			&args->argarray.argarray_val[compound->c_curr_op];
@@ -152,6 +184,10 @@ void dispatch_compound(struct compound *compound)
 		} else {
 			nfs4_op_illegal(compound);
 		}
+
+		/* Op went async — stop; c_curr_op stays at the paused op. */
+		if (t != NULL && task_is_paused(t))
+			return;
 
 		if (resop->nfs_resop4_u.opillegal.status) {
 			res->status = resop->nfs_resop4_u.opillegal.status;
