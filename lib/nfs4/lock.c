@@ -110,12 +110,12 @@ void nfs4_op_lock(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		goto out;
+		return;
 	}
 
 	if (reffs_nlm4_in_grace() && !args->reclaim) {
 		*status = NFS4ERR_GRACE;
-		goto out;
+		return;
 	}
 
 	if (args->locker.new_lock_owner) {
@@ -127,14 +127,14 @@ void nfs4_op_lock(struct compound *compound)
 				&cookie);
 		if (type != Open_Stateid) {
 			*status = NFS4ERR_BAD_STATEID;
-			goto out;
+			return;
 		}
 		struct stateid *stid = stateid_find(compound->c_inode, id);
 		if (!stid || stid->s_tag != Open_Stateid ||
 		    stid->s_cookie != cookie) {
 			stateid_put(stid);
 			*status = NFS4ERR_BAD_STATEID;
-			goto out;
+			return;
 		}
 		os = stid_to_open(stid);
 
@@ -144,7 +144,7 @@ void nfs4_op_lock(struct compound *compound)
 		if (!lo) {
 			stateid_put(stid);
 			*status = NFS4ERR_DELAY;
-			goto out;
+			return;
 		}
 
 		/* Allocate new lock_stateid */
@@ -156,7 +156,7 @@ void nfs4_op_lock(struct compound *compound)
 				     lo->lo_base.lo_release);
 			stateid_put(stid);
 			*status = NFS4ERR_DELAY;
-			goto out;
+			return;
 		}
 		ls->ls_owner = lo; /* Ref already held from get_lock_owner */
 		ls->ls_open = os; /* Ref already held from stateid_find */
@@ -170,14 +170,14 @@ void nfs4_op_lock(struct compound *compound)
 				&cookie);
 		if (type != Lock_Stateid) {
 			*status = NFS4ERR_BAD_STATEID;
-			goto out;
+			return;
 		}
 		struct stateid *stid = stateid_find(compound->c_inode, id);
 		if (!stid || stid->s_tag != Lock_Stateid ||
 		    stid->s_cookie != cookie) {
 			stateid_put(stid);
 			*status = NFS4ERR_BAD_STATEID;
-			goto out;
+			return;
 		}
 		ls = stid_to_lock(stid);
 		lo = ls->ls_owner;
@@ -191,7 +191,7 @@ void nfs4_op_lock(struct compound *compound)
 				     lo->lo_base.lo_release);
 			stateid_put(stid);
 			*status = NFS4ERR_BAD_SEQID;
-			goto out;
+			return;
 		}
 	}
 
@@ -233,7 +233,7 @@ void nfs4_op_lock(struct compound *compound)
 			stateid_put(&ls->ls_stid);
 		}
 		*status = NFS4ERR_DENIED;
-		goto out;
+		return;
 	}
 
 	lock = calloc(1, sizeof(*lock));
@@ -249,7 +249,7 @@ void nfs4_op_lock(struct compound *compound)
 			stateid_put(&ls->ls_stid);
 		}
 		*status = NFS4ERR_DELAY;
-		goto out;
+		return;
 	}
 
 	if (args->locker.new_lock_owner)
@@ -273,7 +273,7 @@ void nfs4_op_lock(struct compound *compound)
 			stateid_put(&ls->ls_stid);
 		}
 		*status = NFS4ERR_DENIED;
-		goto out;
+		return;
 	}
 
 	if (!args->locker.new_lock_owner) {
@@ -289,11 +289,6 @@ void nfs4_op_lock(struct compound *compound)
 	if (!args->locker.new_lock_owner) {
 		stateid_put(&ls->ls_stid); /* Drop find ref */
 	}
-
-	*status = NFS4_OK;
-
-out:
-	LOG("%s status=%s(%d)", __func__, nfs4_err_name(*status), *status);
 }
 
 void nfs4_op_lockt(struct compound *compound)
@@ -341,8 +336,6 @@ void nfs4_op_lockt(struct compound *compound)
 		return;
 	}
 	pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
-
-	*status = NFS4_OK;
 }
 
 void nfs4_op_locku(struct compound *compound)
@@ -387,7 +380,6 @@ void nfs4_op_locku(struct compound *compound)
 	pack_stateid4(&res->LOCKU4res_u.lock_stateid, stid);
 
 	stateid_put(stid);
-	*status = NFS4_OK;
 }
 
 void nfs4_op_free_stateid(struct compound *compound)
@@ -420,8 +412,6 @@ void nfs4_op_free_stateid(struct compound *compound)
 	stateid_put(stid);
 	/* Drop the "find ref" */
 	stateid_put(stid);
-
-	*status = NFS4_OK;
 }
 
 void nfs4_op_release_lockowner(struct compound *compound)
@@ -457,8 +447,6 @@ void nfs4_op_release_lockowner(struct compound *compound)
 		}
 	}
 	pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
-
-	*status = NFS4_OK;
 }
 
 void nfs4_op_test_stateid(struct compound *compound)
@@ -487,6 +475,4 @@ void nfs4_op_test_stateid(struct compound *compound)
 		res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
 			.tsr_status_codes_val[i] = NFS4_OK;
 	}
-
-	*status = NFS4_OK;
 }
