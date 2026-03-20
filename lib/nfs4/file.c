@@ -549,18 +549,78 @@ void nfs4_op_open(struct compound *compound)
 	resok->attrset.bitmap4_val = NULL;
 
 	/*
-	 * We never grant delegations.  Inform the client with NONE_EXT +
-	 * WND4_RESOURCE if it requested one; NONE otherwise.
+	 * Attempt to grant a delegation.
 	 */
 	uint32_t want_deleg = args->share_access &
 			      OPEN4_SHARE_ACCESS_WANT_DELEG_MASK;
-	if (want_deleg && want_deleg != OPEN4_SHARE_ACCESS_WANT_NO_DELEG &&
-	    want_deleg != OPEN4_SHARE_ACCESS_WANT_CANCEL && !want_xor_deleg) {
-		resok->delegation.delegation_type = OPEN_DELEGATE_NONE_EXT;
-		resok->delegation.open_delegation4_u.od_whynone.ond_why =
-			WND4_RESOURCE;
-	} else {
+	if (want_deleg == OPEN4_SHARE_ACCESS_WANT_NO_DELEG ||
+	    want_deleg == OPEN4_SHARE_ACCESS_WANT_CANCEL || want_xor_deleg) {
 		resok->delegation.delegation_type = OPEN_DELEGATE_NONE;
+	} else {
+		struct delegation_stateid *ds =
+			delegation_stateid_alloc(target, client);
+		if (ds) {
+			/*
+			 * RFC 5661 §8.1.3: delegation stateid seqid starts at 0.
+			 * stateid_assign() initialises s_seqid to 0.
+			 */
+			if (share_access & OPEN4_SHARE_ACCESS_WRITE) {
+				resok->delegation.delegation_type =
+					OPEN_DELEGATE_WRITE;
+				pack_stateid4(
+					&resok->delegation.open_delegation4_u
+						 .write.stateid,
+					&ds->ds_stid);
+				resok->delegation.open_delegation4_u.write
+					.recall = FALSE;
+				resok->delegation.open_delegation4_u.write
+					.space_limit.limitby = NFS_LIMIT_SIZE;
+				resok->delegation.open_delegation4_u.write
+					.space_limit.nfs_space_limit4_u
+					.filesize = UINT64_MAX;
+				resok->delegation.open_delegation4_u.write
+					.permissions.type =
+					ACE4_ACCESS_ALLOWED_ACE_TYPE;
+				resok->delegation.open_delegation4_u.write
+					.permissions.flag = 0;
+				resok->delegation.open_delegation4_u.write
+					.permissions.access_mask = 0;
+				resok->delegation.open_delegation4_u.write
+					.permissions.who.utf8string_len = 0;
+				resok->delegation.open_delegation4_u.write
+					.permissions.who.utf8string_val = "";
+			} else {
+				resok->delegation.delegation_type =
+					OPEN_DELEGATE_READ;
+				pack_stateid4(
+					&resok->delegation.open_delegation4_u
+						 .read.stateid,
+					&ds->ds_stid);
+				resok->delegation.open_delegation4_u.read
+					.recall = FALSE;
+				resok->delegation.open_delegation4_u.read
+					.permissions.type =
+					ACE4_ACCESS_ALLOWED_ACE_TYPE;
+				resok->delegation.open_delegation4_u.read
+					.permissions.flag = 0;
+				resok->delegation.open_delegation4_u.read
+					.permissions.access_mask = 0;
+				resok->delegation.open_delegation4_u.read
+					.permissions.who.utf8string_len = 0;
+				resok->delegation.open_delegation4_u.read
+					.permissions.who.utf8string_val = "";
+			}
+		} else {
+			if (want_deleg) {
+				resok->delegation.delegation_type =
+					OPEN_DELEGATE_NONE_EXT;
+				resok->delegation.open_delegation4_u.od_whynone
+					.ond_why = WND4_RESOURCE;
+			} else {
+				resok->delegation.delegation_type =
+					OPEN_DELEGATE_NONE;
+			}
+		}
 	}
 
 out:

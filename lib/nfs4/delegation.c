@@ -70,6 +70,20 @@ void nfs4_op_delegreturn(struct compound *compound)
 		return;
 	}
 
+	uint32_t cur_seqid = __atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
+	if (seqid != 0) {
+		if (seqid < cur_seqid) {
+			stateid_put(stid);
+			*status = NFS4ERR_OLD_STATEID;
+			return;
+		}
+		if (seqid > cur_seqid) {
+			stateid_put(stid);
+			*status = NFS4ERR_BAD_STATEID;
+			return;
+		}
+	}
+
 	/* Unhash and free the delegation stateid. */
 	stateid_inode_unhash(stid);
 	stateid_client_unhash(stid);
