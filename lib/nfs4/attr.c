@@ -2766,7 +2766,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->space_avail = sb->sb_bytes_max - sb->sb_bytes_used;
 	nattr->space_free = sb->sb_bytes_max - sb->sb_bytes_used;
 	nattr->space_total = sb->sb_bytes_max;
-	nattr->space_used = sb->sb_bytes_used;
+	nattr->space_used = inode->i_used;
 	nattr->system = inode->i_attr_flags & INODE_IS_SYSTEM;
 
 	nattr->time_delta = system_attrs.time_delta;
@@ -2775,7 +2775,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	timespec_to_nfstime4(&inode->i_atime, &nattr->time_access);
 	timespec_to_nfstime4(&inode->i_btime, &nattr->time_create);
 
-	nattr->mounted_on_fileid = 0;
+	nattr->mounted_on_fileid = inode->i_ino;
 	ret = bitmap4_copy(&system_attrs.suppattr_exclcreat,
 			   &nattr->suppattr_exclcreat);
 	if (ret)
