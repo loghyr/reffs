@@ -82,17 +82,47 @@ void *io_worker_thread(void *vtd)
 		}
 
 		if (t) {
-			if (t->t_fd > 0) {
+			if (t->t_rt != NULL) {
+				/*
+				 * Resume path: task was paused by an async op
+				 * and re-enqueued by the completer.  Skip RPC
+				 * decode — jump straight to the protocol op.
+				 */
+				struct rpc_trans *rt = t->t_rt;
+
+				rpc_protocol_op_call(rt);
+				if (task_is_paused(t))
+					continue; /* went async again */
+
+				/*
+				 * Compound fully complete.  The reply was
+				 * already encoded on the first pass; the
+				 * finalize path in nfs4_proc_compound cached
+				 * it in the slot.  Send path deferred to first
+				 * async op wiring.
+				 */
+				rpc_protocol_free(rt);
+				free(t->t_buffer);
+				free(t);
+			} else if (t->t_fd > 0) {
+				/*
+				 * Fresh path: full RPC decode + dispatch.
+				 */
 				t->t_cb = io_rpc_trans_cb;
 				int rc = rpc_process_task(t);
 				if (rc == ENOMEM) {
 					add_task(t);
 					continue;
 				}
-			}
+				if (rc == EINPROGRESS)
+					continue; /* owned by async path */
 
-			free(t->t_buffer);
-			free(t);
+				free(t->t_buffer);
+				free(t);
+			} else {
+				free(t->t_buffer);
+				free(t);
+			}
 		}
 	}
 
