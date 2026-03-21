@@ -117,7 +117,9 @@ static void posix_inode_sync(struct inode *inode)
 	meta.id.id_mtime = inode->i_mtime;
 	meta.id.id_btime = inode->i_btime;
 	meta.id.id_attr_flags = inode->i_attr_flags;
-	meta.id.id_parent_ino = inode->i_parent_ino; /* NEW */
+	meta.id.id_parent_ino = inode->i_parent_ino;
+	meta.id.id_dev_major = inode->i_dev_major;
+	meta.id.id_dev_minor = inode->i_dev_minor;
 
 	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd >= 0) {
@@ -443,7 +445,9 @@ static int inode_load_from_disk(struct inode *inode)
 	inode->i_mtime = id.id_mtime;
 	inode->i_btime = id.id_btime;
 	inode->i_attr_flags = id.id_attr_flags;
-	inode->i_parent_ino = id.id_parent_ino; /* NEW */
+	inode->i_parent_ino = id.id_parent_ino;
+	inode->i_dev_major = id.id_dev_major;
+	inode->i_dev_minor = id.id_dev_minor;
 
 	if (inode->i_ino >= sb->sb_next_ino)
 		sb->sb_next_ino = inode->i_ino + 1;
