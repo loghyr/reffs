@@ -130,16 +130,18 @@ static void io_context_unregister(struct io_context *ic)
 
 void io_context_destroy(struct io_context *ic)
 {
-	TRACE("DESTROY: ic=%p op=%s fd=%d id=%u", (void *)ic,
-	      io_op_type_to_str(ic->ic_op_type), ic->ic_fd, ic->ic_id);
-	trace_io_context(ic, __func__, __LINE__);
-
-	// Only continue if we can mark it
+	// Claim ownership before touching any ic fields.  A racing second
+	// caller will see MARKED_DESTROYED already set and return here,
+	// before the first caller frees ic.
 	uint64_t state = __atomic_fetch_or(
 		&ic->ic_state, IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED,
 		__ATOMIC_SEQ_CST);
 	if (state & IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED)
 		return;
+
+	TRACE("DESTROY: ic=%p op=%s fd=%d id=%u", (void *)ic,
+	      io_op_type_to_str(ic->ic_op_type), ic->ic_fd, ic->ic_id);
+	trace_io_context(ic, __func__, __LINE__);
 
 	// Clear the active state when marking as destroyed
 	__atomic_fetch_and(&ic->ic_state, ~IO_CONTEXT_ENTRY_STATE_ACTIVE,
