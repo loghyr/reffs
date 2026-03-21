@@ -36,6 +36,7 @@ help:
 	@echo "  test-image      - Stop any running containers and start a fresh one"
 	@echo "  shell           - Open a shell in the running sandbox container"
 	@echo "  reconf          - Force re-generation of build system (autoreconf)"
+	@echo "  install-hooks   - Install git pre-commit hook from hooks/pre-commit"
 
 # --- Build targets ---
 
@@ -216,4 +217,9 @@ reconf:
 		$(MAKE) -f Makefile.reffs build/Makefile; \
 	fi
 
-.PHONY: all help build check configure scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf
+install-hooks:
+	@cp hooks/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "Installed .git/hooks/pre-commit"
+
+.PHONY: all help build check configure scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks
