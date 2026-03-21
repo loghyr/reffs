@@ -1,15 +1,1 @@
-{
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "agent",
-            "prompt": "Run the review subagent defined in @.claude/agents/review.md on the current changes.",
-            "async": true
-          }
-        ]
-      }
-    ]
-  }
-}
+{}
