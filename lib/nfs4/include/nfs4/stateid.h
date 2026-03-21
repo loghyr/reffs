@@ -51,6 +51,20 @@ struct open_stateid {
 
 struct delegation_stateid {
 	uint64_t ds_state;
+	/*
+	 * RFC 9754: OPEN_DELEGATE_READ/WRITE_ATTRS_DELEG was granted;
+	 * timestamp management is delegated to the client.
+	 */
+	bool ds_timestamps;
+	/*
+	 * RFC 9754 OPEN XOR delegation: the client received only the
+	 * delegation stateid (OPEN4_RESULT_NO_OPEN_STATEID).  We
+	 * allocated an open_stateid internally for share tracking; it
+	 * is cleaned up in DELEGRETURN instead of CLOSE.
+	 * Pointer only — no extra ref held; the state ref is the one
+	 * dropped during XOR cleanup.
+	 */
+	struct open_stateid *ds_open;
 	struct stateid ds_stid;
 };
 
