@@ -630,6 +630,7 @@ static int nfs3_op_read(struct rpc_trans *rt)
 
 	struct super_block *sb = NULL;
 	struct inode *inode = NULL;
+	bool went_async = false;
 
 	READ3args *args = ph->ph_args;
 	READ3res *res = ph->ph_res;
@@ -708,27 +709,37 @@ static int nfs3_op_read(struct rpc_trans *rt)
 			ph->ph_sb = sb;
 			sb = NULL;
 			rt->rt_next_action = nfs3_op_read_resume;
-			task_pause(rt->rt_task);
-			if (io_request_backend_pread(
-				    db_fd, resok->data.data_val, args->count,
-				    args->offset, rt, rc_backend) < 0) {
-				rt->rt_next_action = NULL;
-				task_resume(rt->rt_task);
-				/* reclaim ownership so out: can clean up */
-				inode = ph->ph_inode;
-				ph->ph_inode = NULL;
-				sb = ph->ph_sb;
-				ph->ph_sb = NULL;
-				free(resok->data.data_val);
-				resok->data.data_val = NULL;
-				resok->data.data_len = 0;
-				ret = -EIO;
-				poa = &res->READ3res_u.resfail.file_attributes;
-				pthread_mutex_lock(&inode->i_attr_mutex);
-				goto update_wcc;
+			went_async = task_pause(rt->rt_task);
+			if (went_async) {
+				if (io_request_backend_pread(
+					    db_fd, resok->data.data_val,
+					    args->count, args->offset, rt,
+					    rc_backend) < 0) {
+					rt->rt_next_action = NULL;
+					task_resume(rt->rt_task);
+					went_async = false;
+					inode = ph->ph_inode;
+					ph->ph_inode = NULL;
+					sb = ph->ph_sb;
+					ph->ph_sb = NULL;
+					free(resok->data.data_val);
+					resok->data.data_val = NULL;
+					resok->data.data_len = 0;
+					ret = -EIO;
+					poa = &res->READ3res_u.resfail
+						       .file_attributes;
+					pthread_mutex_lock(
+						&inode->i_attr_mutex);
+					goto update_wcc;
+				}
+				return -EINPROGRESS;
 			}
-			/* Owned by resume callback; do not touch inode/sb. */
-			goto out;
+			/* task_pause failed (shouldn't happen): restore and fall through */
+			inode = ph->ph_inode;
+			ph->ph_inode = NULL;
+			sb = ph->ph_sb;
+			ph->ph_sb = NULL;
+			rt->rt_next_action = NULL;
 		}
 
 		pthread_rwlock_rdlock(&inode->i_db_rwlock);
@@ -773,9 +784,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	if (rt->rt_task && task_check_and_clear_went_async(rt->rt_task))
-		return EINPROGRESS;
-	return res->status;
+	return ret;
 }
 
 /*
@@ -854,6 +863,7 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 	struct super_block *sb = NULL;
 	struct inode *inode = NULL;
+	bool went_async = false;
 
 	WRITE3args *args = ph->ph_args;
 	WRITE3res *res = ph->ph_res;
@@ -968,23 +978,33 @@ static int nfs3_op_write(struct rpc_trans *rt)
 			ph->ph_sb = sb;
 			sb = NULL;
 			rt->rt_next_action = nfs3_op_write_resume;
-			task_pause(rt->rt_task);
-			if (io_request_backend_pwrite(
-				    db_fd, args->data.data_val,
-				    args->data.data_len, args->offset, rt,
-				    rc_backend) < 0) {
-				rt->rt_next_action = NULL;
-				task_resume(rt->rt_task);
-				inode = ph->ph_inode;
-				ph->ph_inode = NULL;
-				sb = ph->ph_sb;
-				ph->ph_sb = NULL;
-				ret = -EIO;
-				wcc = &res->WRITE3res_u.resfail.file_wcc;
-				pthread_mutex_lock(&inode->i_attr_mutex);
-				goto update_wcc;
+			went_async = task_pause(rt->rt_task);
+			if (went_async) {
+				if (io_request_backend_pwrite(
+					    db_fd, args->data.data_val,
+					    args->data.data_len, args->offset,
+					    rt, rc_backend) < 0) {
+					rt->rt_next_action = NULL;
+					task_resume(rt->rt_task);
+					went_async = false;
+					inode = ph->ph_inode;
+					ph->ph_inode = NULL;
+					sb = ph->ph_sb;
+					ph->ph_sb = NULL;
+					ret = -EIO;
+					wcc = &res->WRITE3res_u.resfail.file_wcc;
+					pthread_mutex_lock(
+						&inode->i_attr_mutex);
+					goto update_wcc;
+				}
+				return -EINPROGRESS;
 			}
-			goto out;
+			/* task_pause failed (shouldn't happen): restore and fall through */
+			inode = ph->ph_inode;
+			ph->ph_inode = NULL;
+			sb = ph->ph_sb;
+			ph->ph_sb = NULL;
+			rt->rt_next_action = NULL;
 		}
 
 		ssize_t dbw = data_block_write(inode->i_db, args->data.data_val,
@@ -1083,9 +1103,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	if (rt->rt_task && task_check_and_clear_went_async(rt->rt_task))
-		return EINPROGRESS;
-	return res->status;
+	return ret;
 }
 
 static void createverf3_to_timespec(createverf3 verf, struct timespec *ts)
