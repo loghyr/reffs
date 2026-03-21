@@ -804,8 +804,13 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 		}
 	}
 
-	// Check for TLS ClientHello
-	if (is_tls_client_hello(ic->ic_buffer, bytes_read)) {
+	// Check for TLS ClientHello, but only on a fresh connection that has
+	// not yet accumulated any RPC framing.  A buffer_state is created on
+	// the first plain-NFS read; if one already exists this connection is
+	// carrying RPC traffic and the probe would false-positive on payload
+	// bytes that happen to match the TLS record header pattern.
+	bs = io_buffer_state_get(client_fd);
+	if (!bs && is_tls_client_hello(ic->ic_buffer, bytes_read)) {
 		TRACE("TLS ClientHello detected on fd=%d", ic->ic_fd);
 		ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer, bytes_read,
 					   rc);
@@ -824,8 +829,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 		goto get_more;
 	}
 
-	// Get or create buffer state for this connection
-	bs = io_buffer_state_get(client_fd);
+	// Create buffer state if this is the first plain-NFS read
 	if (!bs) {
 		bs = io_buffer_state_create(client_fd);
 		if (!bs) {
