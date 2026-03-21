@@ -485,12 +485,6 @@ void io_handler_fini(struct ring_context *rc)
 			break;
 		}
 
-		if (cqe->user_data) {
-			struct io_context *ic =
-				(struct io_context *)(uintptr_t)cqe->user_data;
-			io_context_destroy(ic);
-		}
-
 		io_uring_cqe_seen(&rc->rc_ring, cqe);
 	}
 
@@ -507,13 +501,6 @@ void io_handler_fini(struct ring_context *rc)
 		} else if (ret < 0) {
 			LOG("Error draining io_uring: %s", strerror(-ret));
 			break;
-		}
-
-		// Free associated resources
-		if (cqe->user_data) {
-			struct io_context *ic =
-				(struct io_context *)(uintptr_t)cqe->user_data;
-			io_context_destroy(ic);
 		}
 
 		io_uring_cqe_seen(&rc->rc_ring, cqe);

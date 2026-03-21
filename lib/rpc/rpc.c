@@ -38,6 +38,19 @@ struct rcu_head;
 
 CDS_LIST_HEAD(rpc_program_handler_list);
 
+/*
+ * xdrproc_t is bool_t (*)(XDR *, ...) — variadic — for historical reasons.
+ * Actual XDR functions are non-variadic (e.g. bool_t xdr_FOO(XDR *, FOO *)).
+ * Calling them through xdrproc_t is ABI-safe but a strict type mismatch that
+ * UBSan's -fsanitize=function flags.  Isolate all direct calls here so the
+ * suppression is narrow.
+ */
+__attribute__((no_sanitize("function"))) static bool_t
+rpc_call_xdr(xdrproc_t fn, XDR *xdrs, void *obj)
+{
+	return fn(xdrs, obj);
+}
+
 static bool __rpc_log_packets = false;
 
 void rpc_enable_packet_logging(void)
@@ -214,8 +227,7 @@ int rpc_parse_call_data(struct rpc_trans *rt)
 
 	start_pos = xdr_getpos(&xdrs);
 
-	if (!((rpc_xdr_fn_t)ph->ph_op_handler->roh_args_f)(&xdrs,
-							   ph->ph_args)) {
+	if (!rpc_call_xdr(ph->ph_op_handler->roh_args_f, &xdrs, ph->ph_args)) {
 		xdr_destroy(&xdrs);
 		return EINVAL;
 	}
@@ -509,8 +521,8 @@ void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t)
 			      rt->rt_reply_len - rt->rt_offset, XDR_ENCODE);
 		start_pos = xdr_getpos(&xdrs);
 
-		if (!((rpc_xdr_fn_t)ph->ph_op_handler->roh_res_f)(&xdrs,
-								  ph->ph_res)) {
+		if (!rpc_call_xdr(ph->ph_op_handler->roh_res_f, &xdrs,
+				  ph->ph_res)) {
 			xdr_destroy(&xdrs);
 			goto enc_err;
 		}
@@ -685,8 +697,8 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 
 		start_pos = xdr_getpos(&xdrs);
 
-		if (!((rpc_xdr_fn_t)ph->ph_op_handler->roh_args_f)(
-			    &xdrs, ph->ph_args)) {
+		if (!rpc_call_xdr(ph->ph_op_handler->roh_args_f, &xdrs,
+				  ph->ph_args)) {
 			xdr_destroy(&xdrs);
 			goto drop_on_floor;
 		}
@@ -1315,8 +1327,8 @@ handle_rpc_error:
 
 			start_pos = xdr_getpos(&xdrs);
 
-			if (!((rpc_xdr_fn_t)ph->ph_op_handler->roh_res_f)(
-				    &xdrs, ph->ph_res)) {
+			if (!rpc_call_xdr(ph->ph_op_handler->roh_res_f, &xdrs,
+					  ph->ph_res)) {
 				xdr_destroy(&xdrs);
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				__atomic_fetch_add(&rph->rph_accepted_errors, 1,
