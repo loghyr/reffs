@@ -46,6 +46,12 @@ struct compound {
 	 */
 	COMPOUND4args *c_args;
 	COMPOUND4res *c_res;
+
+	/*
+	 * Result of the most recent CB round-trip.  Set by the CB reply
+	 * callback before task_resume(); read by the op's resume function.
+	 */
+	nfsstat4 c_cb_status;
 };
 
 int nfs4_proc_compound(struct rpc_trans *rt);

@@ -80,6 +80,12 @@ struct nfs4_session {
 	uint32_t ns_slot_count;
 	struct nfs4_slot *ns_slots; /* calloc'd [0..ns_slot_count-1] */
 
+	/* Back channel */
+	uint32_t ns_cb_program; /* csa_cb_program from CREATE_SESSION */
+	int ns_cb_fd; /* fd of the connection (fore-channel reused) */
+	sequenceid4 ns_cb_seqid; /* next CB_SEQUENCE sequenceid to send */
+	pthread_mutex_t ns_cb_mutex; /* serializes CB sends on this session */
+
 	struct rcu_head ns_rcu;
 	struct urcu_ref ns_ref;
 	uint64_t ns_state; /* atomic flag word */
