@@ -16,5 +16,6 @@ struct rpc_trans *probe1_client_op_context(void);
 struct rpc_trans *probe1_client_op_stats_gather(uint32_t program,
 						uint32_t vers);
 struct rpc_trans *probe1_client_op_fs_usage(bool human, const char *path);
+struct rpc_trans *probe1_client_op_nfs4_op_stats(void);
 
 #endif

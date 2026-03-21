@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,8 @@
 #include <netinet/in.h>
 
 #include "probe1_xdr.h"
+#include "nfsv42_xdr.h"
+#include "nfsv42_names.h"
 
 #include "reffs/test.h"
 
@@ -35,6 +38,7 @@
 #include "reffs/io.h"
 #include "reffs/fs.h"
 #include "reffs/probe1.h"
+#include "reffs/server.h"
 #include "reffs/trace/rpc.h"
 
 struct probe_time1 probe_time1_from_time_t(time_t ts)
@@ -489,6 +493,50 @@ static int probe1_op_fs_usage(struct rpc_trans *rt)
 	return 0;
 }
 
+static int probe1_op_nfs4_op_stats(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	NFS4_OP_STATS1res *res = ph->ph_res;
+	NFS4_OP_STATS1resok *resok = &res->NFS4_OP_STATS1res_u.nosr_resok;
+
+	struct server_state *ss = server_state_find();
+	if (!ss) {
+		res->nosr_status = PROBE1ERR_NOENT;
+		return res->nosr_status;
+	}
+
+	resok->nosr_ops.nosr_ops_val = calloc(OP_MAX, sizeof(probe_nfs4_op1));
+	if (!resok->nosr_ops.nosr_ops_val) {
+		res->nosr_status = PROBE1ERR_NOMEM;
+		server_state_put(ss);
+		return res->nosr_status;
+	}
+	resok->nosr_ops.nosr_ops_len = OP_MAX;
+
+	for (unsigned int i = 0; i < OP_MAX; i++) {
+		probe_nfs4_op1 *pno = &resok->nosr_ops.nosr_ops_val[i];
+		struct reffs_op_stats *s = &ss->ss_nfs4_op_stats[i];
+
+		pno->pno_op = i;
+		pno->pno_name = strdup(nfs4_op_name((nfs_opnum4)i));
+		pno->pno_calls = atomic_load_explicit(&s->os_calls,
+						      memory_order_relaxed);
+		pno->pno_errors = atomic_load_explicit(&s->os_errors,
+						       memory_order_relaxed);
+		pno->pno_bytes_in = atomic_load_explicit(&s->os_bytes_in,
+							 memory_order_relaxed);
+		pno->pno_bytes_out = atomic_load_explicit(&s->os_bytes_out,
+							  memory_order_relaxed);
+		pno->pno_duration_total = atomic_load_explicit(
+			&s->os_duration_total, memory_order_relaxed);
+		pno->pno_duration_max = atomic_load_explicit(
+			&s->os_duration_max, memory_order_relaxed);
+	}
+
+	server_state_put(ss);
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -521,6 +569,9 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   FD_INFOS_LIST1res, probe1_op_fd_infos_list),
 	RPC_OPERATION_INIT(PROBEPROC1, FS_USAGE, NULL, NULL, xdr_FS_USAGE1res,
 			   FS_USAGE1res, probe1_op_fs_usage),
+	RPC_OPERATION_INIT(PROBEPROC1, NFS4_OP_STATS, NULL, NULL,
+			   xdr_NFS4_OP_STATS1res, NFS4_OP_STATS1res,
+			   probe1_op_nfs4_op_stats),
 };
 
 static struct rpc_program_handler *probe1_handler;

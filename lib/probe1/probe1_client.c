@@ -304,6 +304,63 @@ struct rpc_trans *probe1_client_op_fs_usage(bool human, const char *path)
 	return rt;
 }
 
+static int nfs4_op_stats_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	NFS4_OP_STATS1res *res = ph->ph_res;
+	NFS4_OP_STATS1resok *resok = &res->NFS4_OP_STATS1res_u.nosr_resok;
+
+	if (res->nosr_status) {
+		LOG("error = %d", res->nosr_status);
+		goto done;
+	}
+
+	LOG("\n%3s %25s %10s %10s %12s %12s %16s %16s", "OP", "Name", "Calls",
+	    "Errors", "BytesIn", "BytesOut", "TotalDur(ns)", "MaxDur(ns)");
+
+	for (uint32_t i = 0; i < resok->nosr_ops.nosr_ops_len; i++) {
+		probe_nfs4_op1 *pno = &resok->nosr_ops.nosr_ops_val[i];
+		if (!pno->pno_calls)
+			continue;
+		LOG("%3u %25s %10lu %10lu %12lu %12lu %16lu %16lu", pno->pno_op,
+		    pno->pno_name, pno->pno_calls, pno->pno_errors,
+		    pno->pno_bytes_in, pno->pno_bytes_out,
+		    pno->pno_duration_total, pno->pno_duration_max);
+	}
+
+done:
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_nfs4_op_stats(void)
+{
+	int ret;
+
+	struct rpc_trans *rt = rpc_trans_create();
+	if (!rt)
+		return NULL;
+
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_NFS4_OP_STATS;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+
+	rt->rt_cb = nfs4_op_stats_cb;
+
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		rt = NULL;
+	}
+
+	return rt;
+}
+
 static int null_cb(struct rpc_trans __attribute__((unused)) * rt)
 {
 	LOG("NULL replied");
