@@ -65,6 +65,7 @@ static void nfs4_session_free_rcu(struct rcu_head *rcu)
 		free(ns->ns_slots[i].sl_reply);
 	}
 	free(ns->ns_slots);
+	pthread_mutex_destroy(&ns->ns_cb_mutex);
 	__atomic_fetch_sub(&ns->ns_client->nc_session_count, 1,
 			   __ATOMIC_RELAXED);
 	nfs4_client_put(ns->ns_client);
@@ -199,6 +200,9 @@ struct nfs4_session *nfs4_session_alloc(struct nfs4_client *nc,
 		ns->ns_slots[i].sl_seqid = 0;
 		ns->ns_slots[i].sl_state = NFS4_SLOT_IDLE;
 	}
+
+	pthread_mutex_init(&ns->ns_cb_mutex, NULL);
+	ns->ns_cb_fd = -1;
 
 	/* Generate session ID: clientid4 || monotonic counter. */
 	session_make_id(ns->ns_sessionid, nc);
@@ -393,6 +397,11 @@ void nfs4_op_create_session(struct compound *compound)
 
 	nc->nc_confirmed = true;
 
+	/* Save back-channel parameters. */
+	ns->ns_cb_program = args->csa_cb_program;
+	ns->ns_cb_fd = compound->c_rt->rt_fd;
+	ns->ns_cb_seqid = 0;
+
 	memcpy(resok->csr_sessionid, ns->ns_sessionid, sizeof(sessionid4));
 	resok->csr_sequence = args->csa_sequence;
 	resok->csr_flags = 0;
@@ -407,13 +416,26 @@ void nfs4_op_create_session(struct compound *compound)
 	resok->csr_fore_chan_attrs.ca_rdma_ird.ca_rdma_ird_len = 0;
 	resok->csr_fore_chan_attrs.ca_rdma_ird.ca_rdma_ird_val = NULL;
 
-	/* Back channel: not used; return minimal attrs. */
+	/*
+	 * Back channel: share the fore-channel connection; accept the
+	 * client's requested attrs (clamped to sensible limits) and echo
+	 * them back so the client knows we'll honour them.
+	 */
 	resok->csr_back_chan_attrs.ca_headerpadsize = 0;
-	resok->csr_back_chan_attrs.ca_maxrequestsize = 0;
-	resok->csr_back_chan_attrs.ca_maxresponsesize = 0;
+	resok->csr_back_chan_attrs.ca_maxrequestsize =
+		args->csa_back_chan_attrs.ca_maxrequestsize ?
+			args->csa_back_chan_attrs.ca_maxrequestsize :
+			NFS4_SESSION_MAX_REQUEST_SIZE;
+	resok->csr_back_chan_attrs.ca_maxresponsesize =
+		args->csa_back_chan_attrs.ca_maxresponsesize ?
+			args->csa_back_chan_attrs.ca_maxresponsesize :
+			NFS4_SESSION_MAX_RESPONSE_SIZE;
 	resok->csr_back_chan_attrs.ca_maxresponsesize_cached = 0;
-	resok->csr_back_chan_attrs.ca_maxoperations = 0;
-	resok->csr_back_chan_attrs.ca_maxrequests = 0;
+	resok->csr_back_chan_attrs.ca_maxoperations =
+		args->csa_back_chan_attrs.ca_maxoperations ?
+			args->csa_back_chan_attrs.ca_maxoperations :
+			NFS4_SESSION_MAX_OPS;
+	resok->csr_back_chan_attrs.ca_maxrequests = 1; /* single CB slot */
 	resok->csr_back_chan_attrs.ca_rdma_ird.ca_rdma_ird_len = 0;
 	resok->csr_back_chan_attrs.ca_rdma_ird.ca_rdma_ird_val = NULL;
 

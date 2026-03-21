@@ -12,6 +12,7 @@ AM_CFLAGS = -Im4 -I.			\
 lib_LTLIBRARIES = libreffs_nfs4.la
 libreffs_nfs4_la_SOURCES = \
 	attr.c \
+	cb.c \
 	client.c \
 	client_persist.c \
 	compound.c \

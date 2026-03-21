@@ -767,9 +767,30 @@ int rpc_process_task(struct task *t)
 		io_unregister_request(rt->rt_info.ri_xid);
 		rt->rt_rc = rt_old->rt_rc;
 		rt->rt_cb = rt_old->rt_cb;
+		rt->rt_compound = rt_old->rt_compound;
 
-		// Caller is responsible for releasing rt_old
-		// Also, should share the args and res between the two!
+		/*
+		 * Transfer the protocol-handler context (ph_args, ph_res,
+		 * etc.) from the pending outgoing request to this inbound
+		 * reply so the reply callback can access decoded results.
+		 * The fresh context allocated by rpc_trans_create() has
+		 * all-NULL fields and can be freed directly.
+		 */
+		free(rt->rt_context);
+		rt->rt_context = rt_old->rt_context;
+		rt_old->rt_context = NULL;
+
+		/* rt_old is now a shell; release it (drops rt_rph ref). */
+		rpc_protocol_free(rt_old);
+
+		/*
+		 * Invoke the reply callback immediately.  The callback is
+		 * responsible for decoding rt->rt_body if needed.
+		 */
+		if (rt->rt_cb)
+			rt->rt_cb(rt);
+		rpc_protocol_free(rt);
+		return 0;
 	}
 
 	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_rpc_version);
