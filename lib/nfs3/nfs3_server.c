@@ -33,6 +33,7 @@
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 #include "reffs/data_block.h"
+#include "reffs/io.h"
 #include "reffs/server.h"
 #include "reffs/vfs.h"
 #include "reffs/identity.h"
@@ -578,6 +579,51 @@ out:
 	return res->status;
 }
 
+/*
+ * nfs3_op_read_resume -- rt_next_action callback after async pread completes.
+ *
+ * rt->rt_io_result holds the pread return value (bytes read, or -errno).
+ * The buffer was allocated and resok was initialised before the pause.
+ */
+static void nfs3_op_read_resume(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	READ3args *args = ph->ph_args;
+	READ3res *res = ph->ph_res;
+	READ3resok *resok = &res->READ3res_u.resok;
+	struct inode *inode = ph->ph_inode;
+
+	rt->rt_next_action = NULL;
+
+	ssize_t nread = rt->rt_io_result;
+	if (nread < 0) {
+		free(resok->data.data_val);
+		resok->data.data_val = NULL;
+		resok->data.data_len = 0;
+		res->status = NFS3ERR_IO;
+		goto out;
+	}
+
+	resok->data.data_len = (u_int)nread;
+	resok->eof =
+		(args->offset + (uint64_t)nread >= (uint64_t)inode->i_size);
+	resok->count = resok->data.data_len;
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
+	resok->file_attributes.attributes_follow = true;
+	inode_attr_to_fattr(inode,
+			    &resok->file_attributes.post_op_attr_u.attributes);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	res->status = NFS3_OK;
+out:
+	inode_active_put(inode);
+	ph->ph_inode = NULL;
+	super_block_put(ph->ph_sb);
+	ph->ph_sb = NULL;
+}
+
 static int nfs3_op_read(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -594,6 +640,11 @@ static int nfs3_op_read(struct rpc_trans *rt)
 	struct network_file_handle *nfh = NULL;
 	struct authunix_parms ap;
 	int ret = 0;
+
+	if (rt->rt_next_action) {
+		rt->rt_next_action(rt);
+		return res->status;
+	}
 
 	trace_nfs3_srv_read(rt, args);
 
@@ -643,6 +694,43 @@ static int nfs3_op_read(struct rpc_trans *rt)
 
 		resok->data.data_len = args->count;
 
+		int db_fd = data_block_get_fd(inode->i_db);
+		struct ring_context *rc_backend = io_backend_get_global();
+		if (db_fd >= 0 && rc_backend && rt->rt_task) {
+			/*
+			 * Async path: transfer inode/sb ownership to ph so
+			 * the resume callback can release them.  Set both
+			 * local pointers to NULL so the out: label does not
+			 * double-free on submission failure.
+			 */
+			ph->ph_inode = inode;
+			inode = NULL;
+			ph->ph_sb = sb;
+			sb = NULL;
+			rt->rt_next_action = nfs3_op_read_resume;
+			task_pause(rt->rt_task);
+			if (io_request_backend_pread(
+				    db_fd, resok->data.data_val, args->count,
+				    args->offset, rt, rc_backend) < 0) {
+				rt->rt_next_action = NULL;
+				task_resume(rt->rt_task);
+				/* reclaim ownership so out: can clean up */
+				inode = ph->ph_inode;
+				ph->ph_inode = NULL;
+				sb = ph->ph_sb;
+				ph->ph_sb = NULL;
+				free(resok->data.data_val);
+				resok->data.data_val = NULL;
+				resok->data.data_len = 0;
+				ret = -EIO;
+				poa = &res->READ3res_u.resfail.file_attributes;
+				pthread_mutex_lock(&inode->i_attr_mutex);
+				goto update_wcc;
+			}
+			/* Owned by resume callback; do not touch inode/sb. */
+			goto out;
+		}
+
 		pthread_rwlock_rdlock(&inode->i_db_rwlock);
 		ssize_t dbr = data_block_read(inode->i_db, resok->data.data_val,
 					      args->count, args->offset);
@@ -688,6 +776,76 @@ out:
 	return res->status;
 }
 
+/*
+ * nfs3_op_write_resume -- rt_next_action callback after async pwrite completes.
+ *
+ * The pre-pause code pre-extended the file with ftruncate and updated
+ * db_size; wcc->before was filled in; inode/sb ownership is in ph.
+ */
+static void nfs3_op_write_resume(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	WRITE3res *res = ph->ph_res;
+	WRITE3resok *resok = &res->WRITE3res_u.resok;
+	wcc_data *wcc = &resok->file_wcc;
+	struct inode *inode = ph->ph_inode;
+	struct super_block *sb = ph->ph_sb;
+
+	rt->rt_next_action = NULL;
+
+	ssize_t nwritten = rt->rt_io_result;
+	if (nwritten < 0) {
+		res->status = (nwritten == -ENOSPC) ? NFS3ERR_NOSPC :
+						      NFS3ERR_IO;
+		wcc = &res->WRITE3res_u.resfail.file_wcc;
+		goto wcc_after;
+	}
+
+	resok->count = (count3)nwritten;
+
+	pthread_rwlock_wrlock(&inode->i_db_rwlock);
+
+	size_t new_db_size = inode->i_db->db_size;
+	size3 old_size = wcc->before.pre_op_attr_u.attributes.size;
+
+	inode->i_size = (int64_t)new_db_size;
+	inode->i_used = inode->i_size / sb->sb_block_size +
+			(inode->i_size % sb->sb_block_size ? 1 : 0);
+
+	size_t old_used, new_used;
+	do {
+		__atomic_load(&sb->sb_bytes_used, &old_used, __ATOMIC_RELAXED);
+		if (new_db_size > (size_t)old_size)
+			new_used = old_used + (new_db_size - (size_t)old_size);
+		else if ((size_t)old_size > new_db_size)
+			new_used = old_used > (size_t)old_size - new_db_size ?
+					   old_used - ((size_t)old_size -
+						       new_db_size) :
+					   0;
+		else
+			new_used = old_used;
+	} while (!__atomic_compare_exchange(&sb->sb_bytes_used, &old_used,
+					    &new_used, false, __ATOMIC_SEQ_CST,
+					    __ATOMIC_RELAXED));
+
+	pthread_rwlock_unlock(&inode->i_db_rwlock);
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
+					      REFFS_INODE_UPDATE_MTIME);
+	res->status = NFS3_OK;
+
+wcc_after:
+	wcc->after.attributes_follow = true;
+	inode_attr_to_fattr(inode, &wcc->after.post_op_attr_u.attributes);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	inode_active_put(inode);
+	ph->ph_inode = NULL;
+	super_block_put(sb);
+	ph->ph_sb = NULL;
+}
+
 static int nfs3_op_write(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -710,6 +868,11 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 	size_t db_size;
 	int ret = 0;
+
+	if (rt->rt_next_action) {
+		rt->rt_next_action(rt);
+		return res->status;
+	}
 
 	trace_nfs3_srv_write(rt, args);
 
@@ -765,6 +928,63 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 		resok->count = args->data.data_len;
 	} else {
+		int db_fd = data_block_get_fd(inode->i_db);
+		struct ring_context *rc_backend = io_backend_get_global();
+
+		if (db_fd >= 0 && rc_backend && rt->rt_task) {
+			/*
+			 * Async path.  Pre-extend so pwrite does not need to
+			 * grow the file; db_size is updated so the resume
+			 * callback can compute the size delta.
+			 */
+			size_t new_db_size =
+				(size_t)args->offset + args->data.data_len;
+			if (new_db_size > inode->i_db->db_size) {
+				if (ftruncate(db_fd, (off_t)new_db_size) < 0) {
+					int saved = errno;
+					pthread_rwlock_unlock(
+						&inode->i_db_rwlock);
+					ret = (saved == ENOSPC) ? -ENOSPC :
+								  -EIO;
+					wcc = &res->WRITE3res_u.resfail.file_wcc;
+					pthread_mutex_lock(
+						&inode->i_attr_mutex);
+					goto update_wcc;
+				}
+				inode->i_db->db_size = new_db_size;
+			}
+			pthread_rwlock_unlock(&inode->i_db_rwlock);
+
+			/* Populate wcc before; resume callback reads it. */
+			wcc->before.attributes_follow = true;
+			wcc->before.pre_op_attr_u.attributes.size = size;
+			wcc->before.pre_op_attr_u.attributes.mtime = mtime;
+			wcc->before.pre_op_attr_u.attributes.ctime = ctime;
+
+			ph->ph_inode = inode;
+			inode = NULL;
+			ph->ph_sb = sb;
+			sb = NULL;
+			rt->rt_next_action = nfs3_op_write_resume;
+			task_pause(rt->rt_task);
+			if (io_request_backend_pwrite(
+				    db_fd, args->data.data_val,
+				    args->data.data_len, args->offset, rt,
+				    rc_backend) < 0) {
+				rt->rt_next_action = NULL;
+				task_resume(rt->rt_task);
+				inode = ph->ph_inode;
+				ph->ph_inode = NULL;
+				sb = ph->ph_sb;
+				ph->ph_sb = NULL;
+				ret = -EIO;
+				wcc = &res->WRITE3res_u.resfail.file_wcc;
+				pthread_mutex_lock(&inode->i_attr_mutex);
+				goto update_wcc;
+			}
+			goto out;
+		}
+
 		ssize_t dbw = data_block_write(inode->i_db, args->data.data_val,
 					       args->data.data_len,
 					       args->offset);

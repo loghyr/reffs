@@ -22,14 +22,19 @@ SPDX-License-Identifier: AGPL-3.0-or-later
    c) By Client
 
 6) The NFSv4.2 callback operations
-   a) Do not want to stack many CB_GETATTR
-   b) Are we pausing the compound/request or are we waiting by burning a thread?
-   c) Need a compound state machine
+   a) CB_GETATTR: must not stack many requests for same inode — deduplicate
+   b) CB_GETATTR: pause GETATTR compound, issue on back-channel, decode reply
+      timestamps; currently GETATTR falls back to server-side values for files
+      with OPEN_DELEGATE_READ/WRITE_ATTRS_DELEG (RFC 9754 timestamp delegation)
+   c) Are we pausing the compound/request or are we waiting by burning a thread?
+   d) Need a compound state machine
 
 7) RFC 9754 support
-   a) deleg the timestamps  <-- depends on CB operatios
-   b) open XOR delegation stateid
+   a) open XOR delegation stateid  <-- done
+   b) timestamp delegation (OPEN_DELEGATE_*_ATTRS_DELEG, ds_timestamps)  <-- done
+   c) SETATTR TIME_DELEG_ACCESS / TIME_DELEG_MODIFY  <-- done
+   d) CB_GETATTR for authoritative delegated timestamps  <-- depends on item 6
 
-8) Why does the lifecyle never leave grace started?
+8) Why does the lifecyle never leave grace started?  <-- fixed (sps_clean_shutdown clobber + NLM vs NFS4 grace)
 
 9) Full client recovery

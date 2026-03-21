@@ -123,6 +123,9 @@ struct rpc_program_handler {
 	uint32_t rph_flags;
 };
 
+struct inode;
+struct super_block;
+
 /*
  * Typically stuffed into the rt_context of a struct rpc_trans.
  */
@@ -134,6 +137,13 @@ struct protocol_handler {
 	struct rpc_operations_handler *ph_op_handler;
 	bool ph_human;
 	char *ph_path;
+	/*
+	 * Async resume state: hold active refs across task_pause/task_resume
+	 * for protocols (e.g. NFSv3) that have no per-compound structure.
+	 * Both are NULL on the synchronous path.
+	 */
+	struct inode *ph_inode;
+	struct super_block *ph_sb;
 };
 
 #define RPC_OPERATION_INIT(PROTOCOL, NAME, ARGS_F, ARGS, RES_F, RES, CALL) \
