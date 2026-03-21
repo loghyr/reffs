@@ -28,7 +28,7 @@ check_spdx_headers() {
 }
 
 # Get a list of all files, excluding .gitignore, LICENSES directory, .x files, COPYING, and the entire lib/scripts/reffs/pynfs directory
-files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|COPYING$|lib/scripts/reffs/pynfs/')
+files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|COPYING$|^LICENSE$|lib/scripts/reffs/pynfs/')
 
 # Check each file
 error_count=0
