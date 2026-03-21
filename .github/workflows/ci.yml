@@ -50,7 +50,9 @@ jobs:
           libcap-dev \
           psmisc \
           valgrind \
-          cmake
+          cmake \
+          nfs-common \
+          rpcbind
 
     - name: Install Python dependencies
       run: pip3 install --no-cache-dir --break-system-packages xdrlib3
@@ -94,3 +96,9 @@ jobs:
       run: |
         cd build_ci
         sudo make check || (cat lib/fs/tests/test-suite.log && exit 1)
+
+    - name: Run integration tests
+      run: |
+        sudo bash -c "ulimit -n 65536; bash scripts/ci_integration_test.sh \
+          '$(pwd)/build_ci/src/reffsd' \
+          '$(pwd)'"

@@ -42,6 +42,8 @@ RUN apt-get update && apt-get install -y \
     git \
     make \
     rsync \
+    nfs-common \
+    rpcbind \
     && rm -rf /var/lib/apt/lists/*
 
 # Install xdrlib3 via pip (as it is removed/deprecated in modern Python)
