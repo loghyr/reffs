@@ -265,6 +265,8 @@ void nfs4_op_open(struct compound *compound)
 	uint32_t share_deny = args->share_deny;
 	bool want_xor_deleg = !!(args->share_access &
 				 OPEN4_SHARE_ACCESS_WANT_OPEN_XOR_DELEGATION);
+	bool want_timestamps = !!(args->share_access &
+				  OPEN4_SHARE_ACCESS_WANT_DELEG_TIMESTAMPS);
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
@@ -661,23 +663,59 @@ void nfs4_op_open(struct compound *compound)
 
 	/*
 	 * Attempt to grant a delegation.
+	 *
+	 * RFC 9754 OPEN XOR: want_xor_deleg means the client wants a
+	 * delegation *instead of* a separate open stateid.  We still
+	 * allocate an open_stateid internally for share tracking, but
+	 * store it in ds_open and return only the delegation stateid
+	 * to the client.  DELEGRETURN (not CLOSE) tears down the open.
+	 *
+	 * RFC 9754 WANT_DELEG_TIMESTAMPS: grant _ATTRS_DELEG variant
+	 * and set ds_timestamps so the delegation tracks this state.
+	 * CB_GETATTR for authoritative timestamps is not yet
+	 * implemented; GETATTR falls back to server-side values.
 	 */
 	uint32_t want_deleg = args->share_access &
 			      OPEN4_SHARE_ACCESS_WANT_DELEG_MASK;
 	if (want_deleg == OPEN4_SHARE_ACCESS_WANT_NO_DELEG ||
-	    want_deleg == OPEN4_SHARE_ACCESS_WANT_CANCEL || want_xor_deleg) {
+	    want_deleg == OPEN4_SHARE_ACCESS_WANT_CANCEL) {
 		resok->delegation.delegation_type = OPEN_DELEGATE_NONE;
 	} else {
 		struct delegation_stateid *ds =
 			delegation_stateid_alloc(target, client);
 		if (ds) {
+			ds->ds_timestamps = want_timestamps;
+
 			/*
-			 * RFC 5661 §8.1.3: delegation stateid seqid starts at 0.
-			 * stateid_assign() initialises s_seqid to 0.
+			 * RFC 9754 XOR: store internal open_stateid and
+			 * return the delegation stateid as resok->stateid.
+			 * The client skips CLOSE; DELEGRETURN cleans up.
 			 */
-			if (share_access & OPEN4_SHARE_ACCESS_WRITE) {
-				resok->delegation.delegation_type =
+			if (want_xor_deleg) {
+				ds->ds_open = os;
+				os = NULL; /* ownership transferred */
+				pack_stateid4(&resok->stateid, &ds->ds_stid);
+				resok->rflags |= OPEN4_RESULT_NO_OPEN_STATEID;
+				stateid_put(compound->c_curr_stid);
+				compound->c_curr_stid =
+					stateid_get(&ds->ds_stid);
+			}
+
+			/*
+			 * RFC 5661 §8.1.3: delegation stateid seqid starts
+			 * at 0.  stateid_assign() initialises s_seqid to 0.
+			 */
+			open_delegation_type4 dt_read =
+				want_timestamps ?
+					OPEN_DELEGATE_READ_ATTRS_DELEG :
+					OPEN_DELEGATE_READ;
+			open_delegation_type4 dt_write =
+				want_timestamps ?
+					OPEN_DELEGATE_WRITE_ATTRS_DELEG :
 					OPEN_DELEGATE_WRITE;
+
+			if (share_access & OPEN4_SHARE_ACCESS_WRITE) {
+				resok->delegation.delegation_type = dt_write;
 				pack_stateid4(
 					&resok->delegation.open_delegation4_u
 						 .write.stateid,
@@ -695,8 +733,7 @@ void nfs4_op_open(struct compound *compound)
 						 .write.permissions,
 					compound, OPEN_DELEGATE_WRITE);
 			} else {
-				resok->delegation.delegation_type =
-					OPEN_DELEGATE_READ;
+				resok->delegation.delegation_type = dt_read;
 				pack_stateid4(
 					&resok->delegation.open_delegation4_u
 						 .read.stateid,

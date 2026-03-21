@@ -7,11 +7,14 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <pthread.h>
+
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/inode.h"
+#include "reffs/lock.h"
 #include "reffs/stateid.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
@@ -82,6 +85,24 @@ void nfs4_op_delegreturn(struct compound *compound)
 			*status = NFS4ERR_BAD_STATEID;
 			return;
 		}
+	}
+
+	struct delegation_stateid *ds = stid_to_delegation(stid);
+
+	/*
+	 * RFC 9754 OPEN XOR: if this delegation subsumed an open, clean
+	 * up the internal open_stateid (share removal + unhash + free)
+	 * now, since the client will not send a separate CLOSE.
+	 */
+	if (ds->ds_open) {
+		struct open_stateid *os = ds->ds_open;
+		ds->ds_open = NULL;
+		pthread_mutex_lock(&compound->c_inode->i_lock_mutex);
+		reffs_share_remove(compound->c_inode, &os->os_owner, NULL);
+		pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
+		stateid_inode_unhash(&os->os_stid);
+		stateid_client_unhash(&os->os_stid);
+		stateid_put(&os->os_stid); /* state ref → freed via RCU */
 	}
 
 	/* Unhash and free the delegation stateid. */
