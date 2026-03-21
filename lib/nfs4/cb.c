@@ -21,99 +21,26 @@
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/rpc.h"
-#include "reffs/task.h"
 #include "nfs4/cb.h"
-#include "nfs4/compound.h"
 #include "nfs4/session.h"
 
 /* CB_COMPOUND procedure number (NFS4_CALLBACK/NFS_CB from nfsv42_xdr.h) */
 #define CB_COMPOUND_PROC 1u
 
 /*
- * cb_compound_reply_cb -- called when a CB_COMPOUND reply arrives on the
- * back channel.
+ * nfs4_cb_recall -- build and send a CB_COMPOUND [CB_SEQUENCE, CB_RECALL]
+ * on the back channel, fire-and-forget.
  *
- * rt->rt_body points to the raw reply body (XID already decoded; offset
- * currently sits at 8, just past XID + message_type).
- * rt->rt_compound is the paused fore-channel compound.
+ * We do not pause the compound or wait for a reply.  The CB_COMPOUND
+ * reply from the client is only an RPC acknowledgment; the actual
+ * delegation return arrives later as a separate DELEGRETURN on the
+ * fore channel.  Callers must return NFS4ERR_DELAY to the client after
+ * this call and let it retry.
+ *
+ * Returns 0 on success, errno on failure (write not sent).
  */
-static int cb_compound_reply_cb(struct rpc_trans *rt)
-{
-	struct compound *compound = rt->rt_compound;
-	nfsstat4 status = NFS4ERR_SERVERFAULT;
-	uint32_t reply_stat, verf_flavor, verf_len, accept_stat;
-	uint32_t verf_words;
-	size_t remaining;
-	uint32_t *p;
-	CB_COMPOUND4res res = { 0 };
-	XDR xdrs = { 0 };
-	size_t res_offset;
-
-	if (!compound) {
-		LOG("cb_compound_reply_cb: no compound attached");
-		return 0;
-	}
-
-	/* Decode the REPLY header from the current offset. */
-	p = (uint32_t *)(rt->rt_body + rt->rt_offset);
-	remaining = rt->rt_body_len - rt->rt_offset;
-
-	if (remaining < 3 * sizeof(uint32_t))
-		goto done;
-
-	reply_stat = ntohl(*p++);
-	if (reply_stat != 0) { /* 0 = MSG_ACCEPTED */
-		LOG("CB reply xid=0x%08x: MSG_DENIED (reply_stat=%u)",
-		    rt->rt_info.ri_xid, reply_stat);
-		goto done;
-	}
-
-	verf_flavor = ntohl(*p++);
-	verf_len = ntohl(*p++);
-	(void)verf_flavor;
-
-	/* Skip verifier data (rounded up to 4-byte words). */
-	verf_words = (verf_len + 3) / 4;
-	if ((size_t)((char *)(p + verf_words) - rt->rt_body) > rt->rt_body_len)
-		goto done;
-	p += verf_words;
-
-	if ((size_t)((char *)(p + 1) - rt->rt_body) > rt->rt_body_len)
-		goto done;
-
-	accept_stat = ntohl(*p++);
-	if (accept_stat != 0) { /* 0 = SUCCESS */
-		LOG("CB reply xid=0x%08x: accept_stat=%u", rt->rt_info.ri_xid,
-		    accept_stat);
-		goto done;
-	}
-
-	/* Decode CB_COMPOUND4res. */
-	res_offset = (size_t)((char *)p - rt->rt_body);
-	xdrmem_create(&xdrs, rt->rt_body + res_offset,
-		      rt->rt_body_len - res_offset, XDR_DECODE);
-
-	if (xdr_CB_COMPOUND4res(&xdrs, &res)) {
-		status = res.status;
-		xdr_free((xdrproc_t)xdr_CB_COMPOUND4res, &res);
-	} else {
-		LOG("CB reply xid=0x%08x: CB_COMPOUND4res decode failed",
-		    rt->rt_info.ri_xid);
-	}
-	xdr_destroy(&xdrs);
-
-done:
-	compound->c_cb_status = status;
-	task_resume(compound->c_rt->rt_task);
-	return 0;
-}
-
-/*
- * nfs4_cb_recall -- build and send a CB_COMPOUND [CB_SEQUENCE, CB_RECALL],
- * then pause the compound's task to wait for the reply.
- */
-int nfs4_cb_recall(struct compound *compound, struct nfs4_session *session,
-		   const stateid4 *stateid, const nfs_fh4 *fh, bool truncate)
+int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
+		   const nfs_fh4 *fh, bool truncate)
 {
 	CB_COMPOUND4args args = { 0 };
 	nfs_cb_argop4 ops[2] = { 0 };
@@ -130,7 +57,7 @@ int nfs4_cb_recall(struct compound *compound, struct nfs4_session *session,
 	XDR xdrs = { 0 };
 	int ret;
 
-	if (!compound || !session || !fh)
+	if (!session || !fh)
 		return EINVAL;
 	if (session->ns_cb_fd < 0)
 		return ENOTCONN;
@@ -214,31 +141,15 @@ int nfs4_cb_recall(struct compound *compound, struct nfs4_session *session,
 	cb_rt->rt_reply = buf;
 	cb_rt->rt_reply_len = buf_len;
 	cb_rt->rt_info.ri_xid = xid;
-	cb_rt->rt_cb = cb_compound_reply_cb;
-	cb_rt->rt_compound = compound;
-	cb_rt->rt_rc = compound->c_rt->rt_rc;
 
 	/*
-	 * Pause the task BEFORE registering/sending so that if the reply
-	 * arrives very quickly task_resume() sees the PAUSED state.
+	 * Fire-and-forget: submit the write, then discard cb_rt.
+	 * io_rpc_trans_cb takes ownership of buf (sets rt_reply = NULL).
+	 * We don't register for a reply; the CB_COMPOUND reply from the
+	 * client is just an RPC ack that we intentionally ignore.
 	 */
-	if (!task_pause(compound->c_rt->rt_task)) {
-		free(buf);
-		free(cb_rt);
-		return EINVAL;
-	}
+	ret = io_rpc_trans_cb(cb_rt);
+	free(cb_rt);
 
-	ret = io_register_request(cb_rt);
-	if (ret) {
-		/* Un-pause — the op handler must not proceed either. */
-		task_resume(compound->c_rt->rt_task);
-		free(buf);
-		free(cb_rt);
-		return ret;
-	}
-
-	/* Submit the write; io_rpc_trans_cb transfers ownership of buf. */
-	io_rpc_trans_cb(cb_rt);
-
-	return 0;
+	return ret;
 }

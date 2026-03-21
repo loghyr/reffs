@@ -10,20 +10,19 @@
 
 #include "nfsv42_xdr.h"
 
-struct compound;
 struct nfs4_session;
 
 /*
- * nfs4_cb_recall -- send a CB_RECALL on the back channel, then pause the
- * compound's task.  On resume, compound->c_cb_status holds the CB reply
- * status.
+ * nfs4_cb_recall -- send a CB_COMPOUND [CB_SEQUENCE, CB_RECALL] on the back
+ * channel, fire-and-forget.
  *
- * On success (return 0) the task has been paused.  The op handler MUST NOT
- * touch the compound, rpc_trans, or task after this returns 0.
+ * Does not pause the compound.  Callers must return NFS4ERR_DELAY after this
+ * call; the delegation return arrives separately as a DELEGRETURN on the
+ * fore channel.
  *
- * Returns non-zero (errno) on error; no pause occurs.
+ * Returns 0 on success, errno if the write could not be submitted.
  */
-int nfs4_cb_recall(struct compound *compound, struct nfs4_session *session,
-		   const stateid4 *stateid, const nfs_fh4 *fh, bool truncate);
+int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
+		   const nfs_fh4 *fh, bool truncate);
 
 #endif /* _REFFS_NFS4_CB_H */
