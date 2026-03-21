@@ -90,15 +90,12 @@ if ! rpcinfo -p 127.0.0.1 >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# Start reffsd with ASan heap-error detection.
-# detect_leaks=0: pmap_set() TIRPC internals and pthread stacks produce
-# process-lifetime LSan false positives that are not fixable here.
-# halt_on_error=0: accumulate a full report instead of aborting on first hit.
+# Start reffsd.  ASan/UBSan options (detect_leaks=0, halt_on_error=0) are
+# compiled in via __asan_default_options/__ubsan_default_options when the
+# binary is built with --enable-asan/--enable-ubsan.
 # ---------------------------------------------------------------------------
 echo "Starting reffsd ($REFFSD_BIN)..."
-ASAN_OPTIONS=detect_leaks=0:halt_on_error=0 \
-	UBSAN_OPTIONS=halt_on_error=0 \
-	"$REFFSD_BIN" --config="$CONFIG" >"$LOG" 2>&1 &
+"$REFFSD_BIN" --config="$CONFIG" >"$LOG" 2>&1 &
 REFFSD_PID=$!
 
 echo "Waiting for reffsd (PID $REFFSD_PID) to accept connections..."
