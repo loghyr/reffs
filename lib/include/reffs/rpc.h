@@ -89,6 +89,14 @@ struct rpc_stats {
 };
 
 /*
+ * xdrproc_t is variadic (bool_t (*)(XDR *, ...)) for historical reasons.
+ * Calling a non-variadic XDR function through that type is UB under UBSan.
+ * Use rpc_xdr_fn_t for direct call sites; keep xdrproc_t for xdr_free/
+ * xdr_sizeof which require the variadic form from the libtirpc API.
+ */
+typedef bool_t (*rpc_xdr_fn_t)(XDR *, void *);
+
+/*
  * The per protocol operation handler.
  */
 struct rpc_operations_handler {

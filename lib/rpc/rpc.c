@@ -214,7 +214,8 @@ int rpc_parse_call_data(struct rpc_trans *rt)
 
 	start_pos = xdr_getpos(&xdrs);
 
-	if (!ph->ph_op_handler->roh_args_f(&xdrs, ph->ph_args)) {
+	if (!((rpc_xdr_fn_t)ph->ph_op_handler->roh_args_f)(&xdrs,
+							   ph->ph_args)) {
 		xdr_destroy(&xdrs);
 		return EINVAL;
 	}
@@ -508,7 +509,8 @@ void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t)
 			      rt->rt_reply_len - rt->rt_offset, XDR_ENCODE);
 		start_pos = xdr_getpos(&xdrs);
 
-		if (!ph->ph_op_handler->roh_res_f(&xdrs, ph->ph_res)) {
+		if (!((rpc_xdr_fn_t)ph->ph_op_handler->roh_res_f)(&xdrs,
+								  ph->ph_res)) {
 			xdr_destroy(&xdrs);
 			goto enc_err;
 		}
@@ -683,7 +685,8 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 
 		start_pos = xdr_getpos(&xdrs);
 
-		if (!ph->ph_op_handler->roh_args_f(&xdrs, ph->ph_args)) {
+		if (!((rpc_xdr_fn_t)ph->ph_op_handler->roh_args_f)(
+			    &xdrs, ph->ph_args)) {
 			xdr_destroy(&xdrs);
 			goto drop_on_floor;
 		}
@@ -1312,7 +1315,8 @@ handle_rpc_error:
 
 			start_pos = xdr_getpos(&xdrs);
 
-			if (!ph->ph_op_handler->roh_res_f(&xdrs, ph->ph_res)) {
+			if (!((rpc_xdr_fn_t)ph->ph_op_handler->roh_res_f)(
+				    &xdrs, ph->ph_res)) {
 				xdr_destroy(&xdrs);
 				rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 				__atomic_fetch_add(&rph->rph_accepted_errors, 1,
