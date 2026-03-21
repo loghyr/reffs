@@ -47,6 +47,30 @@
 
 #define NFS_PORT 2049
 
+/*
+ * Sanitizer option callbacks: compiled in only when the sanitizer is active.
+ * These are weak symbols consulted before main() and before the ASAN_OPTIONS /
+ * UBSAN_OPTIONS environment variables, so they act as a built-in default.
+ *
+ * detect_leaks=0  – pmap_set() (TIRPC) and pthread stacks produce
+ *                   process-lifetime LSan false positives we cannot fix.
+ * halt_on_error=0 – continue after the first error so the full run is visible
+ *                   in the log rather than stopping at the first finding.
+ */
+#ifdef ASAN_ENABLED
+const char *__asan_default_options(void)
+{
+	return "detect_leaks=0:halt_on_error=0";
+}
+#endif
+
+#ifdef UBSAN_ENABLED
+const char *__ubsan_default_options(void)
+{
+	return "halt_on_error=0";
+}
+#endif
+
 // Global flag for clean shutdown
 volatile sig_atomic_t running = 1;
 

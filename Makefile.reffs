@@ -153,11 +153,10 @@ run-image: $(LOGS_DIR) stop-image
 			rm -rf /src/* /build/* && \
 			rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && autoreconf -fi && \
-			cd /build && ../src/configure --enable-asan --enable-uban && make && \
+			cd /build && ../src/configure --enable-asan --enable-ubsan && make && \
 			sed 's|/var/lib/reffs/data|/tmp/reffs_data|g; s|/var/lib/reffs/reffs.state|/tmp/reffs.state/reffs.state|g' \
 				/src/examples/reffsd.toml > /tmp/reffsd.toml && \
-			script -f -q -c 'ASAN_OPTIONS=detect_leaks=0:halt_on_error=0 UBSAN_OPTIONS=halt_on_error=0 \
-		       	./src/reffsd --file=/logs/reffs.trc --config=/tmp/reffsd.toml' /logs/reffs.console"
+			script -f -q -c './src/reffsd --file=/logs/reffs.trc --config=/tmp/reffsd.toml' /logs/reffs.console"
 
 # Dump stacks of the running reffsd process in the sandbox
 # This provides both kernel-side (wchan/stack) and user-side (gdb) views
