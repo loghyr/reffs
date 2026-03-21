@@ -161,3 +161,12 @@ class Probe1Client(ProtocolClient):
             FS_USAGE1res object containing filesystem usage information
         """
         return self.proc(PROBEPROC1_FS_USAGE, response_type='FS_USAGE1res')
+
+    def nfs4_op_stats(self):
+        """
+        Get NFS4 per-op statistics from the server.
+
+        Returns:
+            NFS4_OP_STATS1res object containing per-op statistics
+        """
+        return self.proc(PROBEPROC1_NFS4_OP_STATS, response_type='NFS4_OP_STATS1res')

@@ -249,6 +249,28 @@ union FS_USAGE1res switch (probe_stat1 fur_status) {
 		void;
 };
 
+struct probe_nfs4_op1 {
+	unsigned int	pno_op;
+	string		pno_name<>;
+	unsigned hyper	pno_calls;
+	unsigned hyper	pno_errors;
+	unsigned hyper	pno_bytes_in;
+	unsigned hyper	pno_bytes_out;
+	unsigned hyper	pno_duration_total;
+	unsigned hyper	pno_duration_max;
+};
+
+struct NFS4_OP_STATS1resok {
+	probe_nfs4_op1	nosr_ops<>;
+};
+
+union NFS4_OP_STATS1res switch (probe_stat1 nosr_status) {
+	case PROBE1_OK:
+		NFS4_OP_STATS1resok	nosr_resok;
+	default:
+		void;
+};
+
 const PROBE_PORT = 20490;
 
 /*
@@ -268,5 +290,6 @@ program PROBE_PROGRAM {
 		IO_CONTEXTS_LIST1res PROBEPROC1_IO_CONTEXTS_LIST(IO_CONTEXTS_LIST1args) = 8;
 		FD_INFOS_LIST1res PROBEPROC1_FD_INFOS_LIST(FD_INFOS_LIST1args) = 9;
 		FS_USAGE1res PROBEPROC1_FS_USAGE(void) = 10;
+		NFS4_OP_STATS1res PROBEPROC1_NFS4_OP_STATS(void) = 11;
 	} = 1;
 } = 211768;

@@ -47,10 +47,11 @@ static void usage(const char *prog)
 	printf("  -h  --help                   Print this usage and exit\n");
 	printf("  -f  --file=fname             Save tracing data to this file \"fname\"\n");
 	printf("  -o  --op=op                  Perform the \"op\":\n");
-	printf("                                     gather  - Gather program statistics (default)\n");
-	printf("                                     context - Get context statistics\n");
-	printf("                                     usage   - Get filesystem usage comparison\n");
-	printf("                                     null    - Ping the server\n");
+	printf("                                     gather   - Gather program statistics (default)\n");
+	printf("                                     context  - Get context statistics\n");
+	printf("                                     nfs4ops  - Get NFS4 per-op statistics\n");
+	printf("                                     usage    - Get filesystem usage comparison\n");
+	printf("                                     null     - Ping the server\n");
 	printf("  -g  --program=pgm            Probe this program \"pgm\"\n");
 	printf("  -v  --version=v              Probe this program version \"vers\"\n");
 	printf("  -p  --port=port              Connect to server at the \"port\"\n");
@@ -188,6 +189,8 @@ int main(int argc, char *argv[])
 		rt = probe1_client_op_stats_gather(program, version);
 	} else if (!strcmp(op, "context")) {
 		rt = probe1_client_op_context();
+	} else if (!strcmp(op, "nfs4ops")) {
+		rt = probe1_client_op_nfs4_op_stats();
 	} else if (!strcmp(op, "usage")) {
 		rt = probe1_client_op_fs_usage(human_readable, mount_path);
 	} else if (!strcmp(op, "null")) {

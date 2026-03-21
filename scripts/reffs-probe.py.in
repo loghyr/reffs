@@ -428,6 +428,30 @@ def format_size(size_bytes, human_readable=False):
         return f"{size:.1f}{units[i]}"
 
 
+def print_nfs4_op_stats(ops):
+    print(f'{"OP":<5} {"Name":<25} {"Calls":<10} {"Errors":<10} '
+          f'{"BytesIn":<12} {"BytesOut":<12} {"TotalDur(ns)":<16} {"MaxDur(ns)":<16}')
+    print("-" * 110)
+    for pno in sorted(ops, key=lambda o: o.pno_op):
+        if not pno.pno_calls:
+            continue
+        name = pno.pno_name.decode() if isinstance(pno.pno_name, bytes) else pno.pno_name
+        print(f'{pno.pno_op:<5} {name:<25} {pno.pno_calls:<10} {pno.pno_errors:<10} '
+              f'{pno.pno_bytes_in:<12} {pno.pno_bytes_out:<12} '
+              f'{pno.pno_duration_total:<16} {pno.pno_duration_max:<16}')
+
+
+def nfs4_op_stats(client, args):
+    res = client.nfs4_op_stats()
+    probe_error_handler(res.nosr_status)
+
+    if args.json:
+        json_output(res.nosr_resok.nosr_ops)
+        return
+
+    print_nfs4_op_stats(res.nosr_resok.nosr_ops)
+
+
 def fs_usage(client, args):
     res = client.fs_usage()
     probe_error_handler(res.fur_status)
@@ -660,6 +684,10 @@ def parse_args():
                             type=str,
                             help='Optional path to mount point for comparison')
     p_fs_usage.set_defaults(func=fs_usage,human_readable=True)
+
+    p_nfs4_op_stats = subparsers.add_parser('nfs4-op-stats',
+                                            help='Get NFS4 per-op statistics')
+    p_nfs4_op_stats.set_defaults(func=nfs4_op_stats)
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()
