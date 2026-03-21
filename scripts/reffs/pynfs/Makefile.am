@@ -3,9 +3,6 @@
 
 SUBDIRS = xdr rpc
 
-reffs_DATA =	\
-	COPYING
-
 reffs_PYTHON =	\
 	__init__.py
 
