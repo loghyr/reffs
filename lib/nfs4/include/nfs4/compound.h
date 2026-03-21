@@ -52,6 +52,13 @@ struct compound {
 	 * callback before task_resume(); read by the op's resume function.
 	 */
 	nfsstat4 c_cb_status;
+
+	/*
+	 * Set when nfs4_op_open issues a CB_RECALL for a conflicting
+	 * delegation.  Prevents a second recall attempt on resume; the
+	 * op retries once and returns NFS4ERR_DELAY if still blocked.
+	 */
+	bool c_open_retried;
 };
 
 int nfs4_proc_compound(struct rpc_trans *rt);

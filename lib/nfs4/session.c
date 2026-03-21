@@ -280,6 +280,33 @@ struct nfs4_session *nfs4_session_find(const sessionid4 sid)
 	return ns;
 }
 
+struct nfs4_session *nfs4_session_find_for_client(struct nfs4_client *nc)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct nfs4_session *found = NULL;
+
+	struct server_state *ss = server_state_find();
+	if (!ss)
+		return NULL;
+
+	rcu_read_lock();
+	cds_lfht_for_each(ss->ss_session_ht, &iter, node)
+	{
+		struct nfs4_session *tmp =
+			caa_container_of(node, struct nfs4_session, ns_node);
+		if (tmp->ns_client == nc && tmp->ns_cb_fd >= 0) {
+			found = nfs4_session_get(tmp);
+			if (found)
+				break;
+		}
+	}
+	rcu_read_unlock();
+
+	server_state_put(ss);
+	return found;
+}
+
 /* ------------------------------------------------------------------ */
 /* Op handlers                                                         */
 

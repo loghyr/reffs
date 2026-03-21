@@ -222,3 +222,34 @@ struct layout_stateid *layout_stateid_alloc(struct inode *inode,
 
 	return ls;
 }
+
+/* ------------------------------------------------------------------ */
+/* Delegation inode scan                                               */
+
+struct stateid *stateid_inode_find_delegation(struct inode *inode,
+					      struct client *exclude_client)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct stateid *found = NULL;
+
+	if (!inode || !inode->i_stateids)
+		return NULL;
+
+	rcu_read_lock();
+	cds_lfht_for_each(inode->i_stateids, &iter, node)
+	{
+		struct stateid *stid =
+			caa_container_of(node, struct stateid, s_inode_node);
+		if (stid->s_tag != Delegation_Stateid)
+			continue;
+		if (stid->s_client == exclude_client)
+			continue;
+		found = stateid_get(stid);
+		if (found)
+			break;
+	}
+	rcu_read_unlock();
+
+	return found;
+}
