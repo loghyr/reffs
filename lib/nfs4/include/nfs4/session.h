@@ -114,6 +114,13 @@ struct nfs4_session *nfs4_session_alloc(struct nfs4_client *nc,
  */
 struct nfs4_session *nfs4_session_find(const sessionid4 sid);
 
+/*
+ * nfs4_session_find_for_client - find any session for nc that has a
+ * valid back-channel fd (ns_cb_fd >= 0).
+ * Returns a ref-bumped session or NULL.  Caller must nfs4_session_put().
+ */
+struct nfs4_session *nfs4_session_find_for_client(struct nfs4_client *nc);
+
 struct nfs4_session *nfs4_session_get(struct nfs4_session *ns);
 void nfs4_session_put(struct nfs4_session *ns);
 

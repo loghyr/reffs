@@ -142,6 +142,15 @@ struct open_stateid *open_stateid_alloc(struct inode *inode,
 					struct client *client);
 struct delegation_stateid *delegation_stateid_alloc(struct inode *inode,
 						    struct client *client);
+
+/*
+ * stateid_inode_find_delegation - find a delegation stateid on inode held
+ * by any client other than exclude_client.
+ *
+ * Returns a ref-bumped struct stateid or NULL.  Caller must stateid_put().
+ */
+struct stateid *stateid_inode_find_delegation(struct inode *inode,
+					      struct client *exclude_client);
 struct lock_stateid *lock_stateid_alloc(struct inode *inode,
 					struct client *client);
 struct layout_stateid *layout_stateid_alloc(struct inode *inode,

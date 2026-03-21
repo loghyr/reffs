@@ -140,7 +140,7 @@ run-image: $(LOGS_DIR) stop-image
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		-v $(LOGS_DIR):/logs:Z \
 		$(IMAGE_NAME) \
-		/bin/bash -c "rm -rf /tmp/reffs_data /tmp/reffs.state && mkdir -p /tmp/reffs_data /tmp/reffs.state && \
+		/bin/bash -c "rm -rf /tmp/reffs_data /tmp/reffs.state && mkdir -p /tmp/reffs_data /tmp/reffs.state/reffs.state && \
 			rm -rf /src/* /build/* && \
 			rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && autoreconf -fi && \

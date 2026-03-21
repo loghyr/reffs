@@ -34,6 +34,8 @@
 #include "nfs4/errors.h"
 #include "nfs4/stateid.h"
 #include "nfs4/client.h"
+#include "nfs4/cb.h"
+#include "nfs4/session.h"
 
 /* Maximum bytes we'll service in a single READ or WRITE. */
 #define NFS4_MAX_RW_SIZE (1u << 20) /* 1 MiB */
@@ -235,6 +237,18 @@ fill_delegation_permissions_from_mode(nfsace4 *ace, struct compound *compound,
 
 	ret = cstr_to_utf8string(&ace->who, everyone_who);
 	return ret;
+}
+
+/*
+ * nfs4_op_open_recall_resume -- resume callback after CB_RECALL completes.
+ *
+ * The CB round-trip is done; retry the open.  c_open_retried is already
+ * set so a second delegation conflict returns NFS4ERR_DELAY rather than
+ * issuing another recall.
+ */
+static void nfs4_op_open_recall_resume(struct rpc_trans *rt)
+{
+	nfs4_op_open(rt->rt_compound);
 }
 
 void nfs4_op_open(struct compound *compound)
@@ -518,11 +532,72 @@ void nfs4_op_open(struct compound *compound)
 		goto out;
 	}
 
-	/* Allocate the open stateid. */
+	/*
+	 * Check for conflicting delegations held by other clients.
+	 * If found, issue CB_RECALL and pause this compound to wait.
+	 * On resume (c_open_retried == true) we skip the recall and
+	 * return NFS4ERR_DELAY if the delegation still hasn't been
+	 * returned.
+	 */
 	struct client *client =
 		compound->c_nfs4_client ?
 			nfs4_client_to_client(compound->c_nfs4_client) :
 			NULL;
+	{
+		struct stateid *ds =
+			stateid_inode_find_delegation(target, client);
+		if (ds) {
+			if (!compound->c_open_retried) {
+				struct nfs4_client *ds_nc =
+					ds->s_client ?
+						client_to_nfs4(ds->s_client) :
+						NULL;
+				struct nfs4_session *ds_session =
+					ds_nc ? nfs4_session_find_for_client(
+							ds_nc) :
+						NULL;
+				if (ds_session) {
+					stateid4 recall_sid;
+					struct network_file_handle cb_nfh =
+						compound->c_curr_nfh;
+					cb_nfh.nfh_ino = target->i_ino;
+					nfs_fh4 cb_fh4 = {
+						.nfs_fh4_len = sizeof(cb_nfh),
+						.nfs_fh4_val = (char *)&cb_nfh,
+					};
+					int cbret;
+
+					pack_stateid4(&recall_sid, ds);
+					stateid_put(ds);
+					ds = NULL;
+					compound->c_open_retried = true;
+					compound->c_rt->rt_next_action =
+						nfs4_op_open_recall_resume;
+					cbret = nfs4_cb_recall(compound,
+							       ds_session,
+							       &recall_sid,
+							       &cb_fh4, false);
+					nfs4_session_put(ds_session);
+					if (cbret == 0)
+						return; /* task is paused */
+					/* CB failed — undo and fall through. */
+					compound->c_rt->rt_next_action = NULL;
+					compound->c_open_retried = false;
+				} else {
+					nfs4_session_put(ds_session);
+				}
+			}
+			if (ds)
+				stateid_put(ds);
+			if (compound->c_open_retried) {
+				*status = NFS4ERR_DELAY;
+				goto out;
+			}
+			/* No session for that client — proceed anyway. */
+		}
+	}
+
+	/* Allocate the open stateid. */
 	os = open_stateid_alloc(target, client);
 	if (!os) {
 		*status = NFS4ERR_DELAY;
