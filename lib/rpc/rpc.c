@@ -388,6 +388,9 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 		clock_gettime(CLOCK_MONOTONIC, &start);
 		ret = ph->ph_op_handler->roh_action(rt);
 		clock_gettime(CLOCK_MONOTONIC, &end);
+		/* NFSv3 ops signal async with -EINPROGRESS; normalize for caller */
+		if (ret == -EINPROGRESS)
+			ret = EINPROGRESS;
 
 		duration_ns = (end.tv_sec - start.tv_sec) * 1000000000ULL +
 			      (end.tv_nsec - start.tv_nsec);
