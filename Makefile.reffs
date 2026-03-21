@@ -118,14 +118,22 @@ ci-image:
 # Run the full CI pipeline inside the CI container
 # This mirrors .github/workflows/ci.yml exactly
 # We use --privileged to allow tests that use namespaces and mounting (like fs_usage_posix)
+# Phase 1: build + unit tests (with ASan/UBSan).
+# Phase 2: integration tests -- start reffsd, clone the source onto an NFS
+#   mount via NFSv4.2 and NFSv3, build and run the unit tests from there,
+#   then gracefully shut down reffsd and check for ASan/LSan errors.
+#   SRC_DIR is /reffs (the read-only bind mount) so git clone has a .git dir.
 check-ci: ci-image
 	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && mkdir -p m4 && autoreconf -fi && \
 			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
-			make -j$$(nproc) && make check || (cat lib/fs/tests/test-suite.log && exit 1)"
+			make -j$$(nproc) && \
+			(make check || (cat lib/fs/tests/test-suite.log && exit 1)) && \
+			/src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
 
 # Run the server in a docker container (sandbox)
 # This uses --privileged to allow FUSE and bypasses host RPC conflicts
