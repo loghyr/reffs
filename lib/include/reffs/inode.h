@@ -122,6 +122,8 @@ struct inode_disk {
 	struct timespec id_btime;
 	uint64_t id_attr_flags;
 	uint64_t id_parent_ino; /* 0 = root/unknown */
+	uint32_t id_dev_major; /* for S_IFCHR / S_IFBLK; 0 otherwise */
+	uint32_t id_dev_minor;
 };
 
 /* Alloc (new) or find-and-load (existing) an inode.  Returns with
