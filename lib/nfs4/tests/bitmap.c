@@ -634,10 +634,10 @@ START_TEST(test_attr_init_unsupported_clear)
 					    FATTR4_MODE_UMASK));
 	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_XATTR_SUPPORT));
-	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
-					    FATTR4_TIME_DELEG_ACCESS));
-	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
-					    FATTR4_TIME_DELEG_MODIFY));
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
+					   FATTR4_TIME_DELEG_ACCESS));
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
+					   FATTR4_TIME_DELEG_MODIFY));
 	ck_assert(!bitmap4_attribute_is_set(supported_attributes, FATTR4_DACL));
 	ck_assert(!bitmap4_attribute_is_set(supported_attributes, FATTR4_SACL));
 

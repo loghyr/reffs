@@ -34,6 +34,7 @@
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "nfs4/stateid.h"
 #include "reffs/cmp.h"
 
 struct nfsv42_attr {
@@ -2293,8 +2294,8 @@ int nfs4_attribute_init(void)
 	bitmap4_attribute_clear(bm, FATTR4_MODE_UMASK);
 	bitmap4_attribute_clear(bm, FATTR4_XATTR_SUPPORT);
 	bitmap4_attribute_set(bm, FATTR4_OFFLINE);
-	bitmap4_attribute_clear(bm, FATTR4_TIME_DELEG_ACCESS);
-	bitmap4_attribute_clear(bm, FATTR4_TIME_DELEG_MODIFY);
+	bitmap4_attribute_set(bm, FATTR4_TIME_DELEG_ACCESS);
+	bitmap4_attribute_set(bm, FATTR4_TIME_DELEG_MODIFY);
 	bitmap4_attribute_set(bm, FATTR4_OPEN_ARGUMENTS);
 	bitmap4_attribute_set(bm, FATTR4_UNCACHEABLE_FILE_DATA);
 	bitmap4_attribute_set(bm, FATTR4_UNCACHEABLE_DIRENT_METADATA);
@@ -2384,6 +2385,8 @@ static bool nattr_is_settable(uint32_t attr)
 	case FATTR4_SYSTEM:
 	case FATTR4_TIME_ACCESS_SET:
 	case FATTR4_TIME_CREATE:
+	case FATTR4_TIME_DELEG_ACCESS:
+	case FATTR4_TIME_DELEG_MODIFY:
 	case FATTR4_TIME_MODIFY_SET:
 	case FATTR4_UNCACHEABLE_FILE_DATA:
 	case FATTR4_UNCACHEABLE_DIRENT_METADATA:
@@ -2468,6 +2471,14 @@ static nfsstat4 nattr_from_fattr4(fattr4 *fattr, struct nfsv42_attr *nattr)
 			break;
 		case FATTR4_TIME_CREATE:
 			ok = xdr_fattr4_time_create(&sptr, &nattr->time_create);
+			break;
+		case FATTR4_TIME_DELEG_ACCESS:
+			ok = xdr_fattr4_time_deleg_access(
+				&sptr, &nattr->time_deleg_access);
+			break;
+		case FATTR4_TIME_DELEG_MODIFY:
+			ok = xdr_fattr4_time_deleg_modify(
+				&sptr, &nattr->time_deleg_modify);
 			break;
 		case FATTR4_TIME_MODIFY_SET:
 			ok = xdr_fattr4_time_modify_set(
@@ -2594,6 +2605,22 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 			rs.mtime_set = true;
 			rs.mtime_now = (nattr->time_modify_set.set_it ==
 					SET_TO_SERVER_TIME4);
+			have_posix = true;
+			break;
+		case FATTR4_TIME_DELEG_ACCESS:
+			/* RFC 9754: absolute atime from delegating client. */
+			nfstime4_to_timespec(&nattr->time_deleg_access,
+					     &rs.atime);
+			rs.atime_set = true;
+			rs.atime_now = false;
+			have_posix = true;
+			break;
+		case FATTR4_TIME_DELEG_MODIFY:
+			/* RFC 9754: absolute mtime from delegating client. */
+			nfstime4_to_timespec(&nattr->time_deleg_modify,
+					     &rs.mtime);
+			rs.mtime_set = true;
+			rs.mtime_now = false;
 			have_posix = true;
 			break;
 		default:
@@ -3255,6 +3282,30 @@ void nfs4_op_setattr(struct compound *compound)
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
 		goto out;
+	}
+
+	/*
+	 * RFC 9754: TIME_DELEG_ACCESS / TIME_DELEG_MODIFY are only
+	 * valid when the client holds a timestamp delegation on this
+	 * file.  Verify the stateid is a delegation with ds_timestamps.
+	 */
+	if (bitmap4_attribute_is_set(&fattr->attrmask,
+				     FATTR4_TIME_DELEG_ACCESS) ||
+	    bitmap4_attribute_is_set(&fattr->attrmask,
+				     FATTR4_TIME_DELEG_MODIFY)) {
+		uint32_t seqid, id, type, cookie;
+		unpack_stateid4(&args->stateid, &seqid, &id, &type, &cookie);
+		struct stateid *stid = NULL;
+		if (!stateid4_is_special(&args->stateid))
+			stid = stateid_find(compound->c_inode, id);
+		if (!stid || stid->s_tag != Delegation_Stateid ||
+		    stid->s_cookie != cookie ||
+		    !stid_to_delegation(stid)->ds_timestamps) {
+			stateid_put(stid);
+			*status = NFS4ERR_BAD_STATEID;
+			goto out;
+		}
+		stateid_put(stid);
 	}
 
 	*status = nattr_from_fattr4(fattr, &nattr);
