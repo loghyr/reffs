@@ -17,7 +17,7 @@
 #include "reffs/rpc.h"
 #include "reffs/inode.h"
 #include "reffs/lock.h"
-#include "reffs/nlm_lock.h"
+#include "reffs/server.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -113,9 +113,14 @@ void nfs4_op_lock(struct compound *compound)
 		return;
 	}
 
-	if (reffs_nlm4_in_grace() && !args->reclaim) {
-		*status = NFS4ERR_GRACE;
-		return;
+	{
+		struct server_state *ss = server_state_find();
+		bool in_grace = ss && server_in_grace(ss);
+		server_state_put(ss);
+		if (in_grace && !args->reclaim) {
+			*status = NFS4ERR_GRACE;
+			return;
+		}
 	}
 
 	if (args->locker.new_lock_owner) {
@@ -303,9 +308,14 @@ void nfs4_op_lockt(struct compound *compound)
 		return;
 	}
 
-	if (reffs_nlm4_in_grace()) {
-		*status = NFS4ERR_GRACE;
-		return;
+	{
+		struct server_state *ss = server_state_find();
+		bool in_grace = ss && server_in_grace(ss);
+		server_state_put(ss);
+		if (in_grace) {
+			*status = NFS4ERR_GRACE;
+			return;
+		}
 	}
 
 	bool exclusive =
