@@ -773,6 +773,8 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
+	if (rt->rt_task && task_check_and_clear_went_async(rt->rt_task))
+		return EINPROGRESS;
 	return res->status;
 }
 
@@ -1081,6 +1083,8 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
+	if (rt->rt_task && task_check_and_clear_went_async(rt->rt_task))
+		return EINPROGRESS;
 	return res->status;
 }
 
