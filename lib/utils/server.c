@@ -240,6 +240,7 @@ struct server_state *server_state_init(const char *state_path, int port,
 				       enum reffs_text_case case_mode)
 {
 	struct server_state *ss;
+	uint8_t prev_clean_shutdown;
 	int ret;
 
 	ss = calloc(1, sizeof(*ss));
@@ -283,6 +284,7 @@ struct server_state *server_state_init(const char *state_path, int port,
 	}
 
 	/* Increment boot_seq and mark dirty before touching any state. */
+	prev_clean_shutdown = ss->ss_persist.sps_clean_shutdown;
 	ss->ss_persist.sps_boot_seq++;
 	ss->ss_persist.sps_clean_shutdown = 0;
 	ret = server_persist_save(state_path, &ss->ss_persist);
@@ -349,8 +351,7 @@ struct server_state *server_state_init(const char *state_path, int port,
          *     can reclaim state
          *   - fresh start (slot_next == 1) needs no grace
          */
-	if (!ss->ss_persist.sps_clean_shutdown ||
-	    ss->ss_persist.sps_slot_next > 1) {
+	if (!prev_clean_shutdown || ss->ss_persist.sps_slot_next > 1) {
 		/*
 		 * Count previous-boot clients that will need to reclaim.
 		 * Grace ends early when this counter reaches zero via
