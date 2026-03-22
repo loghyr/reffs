@@ -79,12 +79,11 @@ char *reffs_test_create_state_dir(void)
 	return NULL;
 }
 
-static int remove_obj(const char *fpath, const struct stat *sb, int typeflag,
-		      struct FTW *ftwbuf)
+static int remove_obj(const char *fpath,
+		      const struct stat __attribute__((unused)) *sb,
+		      int __attribute__((unused)) typeflag,
+		      struct FTW __attribute__((unused)) *ftwbuf)
 {
-	(void)sb;
-	(void)typeflag;
-	(void)ftwbuf;
 	return remove(fpath);
 }
 

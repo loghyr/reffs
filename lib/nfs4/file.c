@@ -175,9 +175,8 @@ static void nfs4_write_verf(verifier4 out_verf)
  * memory is part of the open_stateid allocation and is freed by the RCU
  * callback; we never need a separate release action.
  */
-static void nfs4_open_owner_release(struct urcu_ref *ref)
+static void nfs4_open_owner_release(struct urcu_ref __attribute__((unused)) *ref)
 {
-	(void)ref;
 }
 
 static int

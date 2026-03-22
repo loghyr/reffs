@@ -101,7 +101,7 @@ void dstore_put(struct dstore *ds)
 bool dstore_unhash(struct dstore *ds)
 {
 	uint64_t state;
-	int ret;
+	int __attribute__((unused)) ret;
 
 	state = __atomic_fetch_and(&ds->ds_state, ~DSTORE_IS_HASHED,
 				   __ATOMIC_ACQUIRE);
@@ -114,7 +114,6 @@ bool dstore_unhash(struct dstore *ds)
 	trace_dstore(ds, __func__, __LINE__);
 	ret = cds_lfht_del(g_dstore_ht, &ds->ds_node);
 	assert(!ret);
-	(void)ret;
 	return true;
 }
 

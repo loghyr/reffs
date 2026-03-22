@@ -210,10 +210,10 @@ END_TEST
  * represent the same client (e.g. an NLM owner and an NFSv4 owner
  * for the same host).
  */
-static bool match_always_true(struct reffs_lock_owner *other, void *arg)
+static bool match_always_true(struct reffs_lock_owner __attribute__((unused))
+				      *other,
+			      void __attribute__((unused)) *arg)
 {
-	(void)other;
-	(void)arg;
 	return true;
 }
 

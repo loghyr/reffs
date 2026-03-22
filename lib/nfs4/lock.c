@@ -29,7 +29,7 @@
 
 static void nfs4_lock_owner_release(struct urcu_ref *ref)
 {
-	struct nfs4_lock_owner *lo =
+	struct nfs4_lock_owner __attribute__((unused)) *lo =
 		caa_container_of(ref, struct nfs4_lock_owner, lo_base.lo_ref);
 
 	/*
@@ -40,7 +40,6 @@ static void nfs4_lock_owner_release(struct urcu_ref *ref)
 	 * Actually, for NFSv4, lock owners are often kept until explicitly
 	 * released.
 	 */
-	(void)lo;
 }
 
 static bool nfs4_lock_owner_match(struct reffs_lock_owner *lo_base, void *arg)

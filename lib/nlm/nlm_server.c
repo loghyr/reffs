@@ -61,9 +61,8 @@ static struct inode *nlm4_fh_to_inode(netobj *fh, struct super_block **sb_out)
 	return inode;
 }
 
-static int nlm4_op_null(struct rpc_trans *rt)
+static int nlm4_op_null(struct rpc_trans __attribute__((unused)) *rt)
 {
-	(void)rt;
 	TRACE("NLM4: NULL called");
 	return 0;
 }
@@ -281,9 +280,8 @@ static struct rpc_operations_handler nlm4_operations_handler[] = {
 };
 
 /* 32-bit stubs for NLM v1/v3 */
-static int nlm_op_null(struct rpc_trans *rt)
+static int nlm_op_null(struct rpc_trans __attribute__((unused)) *rt)
 {
-	(void)rt;
 	TRACE("NLM: NULL called");
 	return 0;
 }

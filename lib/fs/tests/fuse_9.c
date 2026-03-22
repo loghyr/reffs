@@ -41,7 +41,7 @@ static void teardown(void)
 
 START_TEST(test_mkdir_st_blocks)
 {
-	struct super_block *sb;
+	struct super_block __attribute__((unused)) *sb;
 	struct stat st;
 	blksize_t blksize;
 	blkcnt_t expected;
@@ -56,7 +56,6 @@ START_TEST(test_mkdir_st_blocks)
 	ck_assert_int_eq(st.st_blocks, expected);
 
 	ck_assert_int_eq(reffs_fuse_rmdir("/d"), 0);
-	(void)sb;
 }
 END_TEST
 
