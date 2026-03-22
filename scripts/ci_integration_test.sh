@@ -187,4 +187,7 @@ if grep -qE "ERROR: (AddressSanitizer|LeakSanitizer)" "$LOG"; then
 fi
 
 echo ""
+echo "=== reffsd log ==="
+cat "$LOG"
+echo ""
 echo "=== Integration tests complete. No ASan errors. ==="

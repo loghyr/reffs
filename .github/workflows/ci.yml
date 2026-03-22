@@ -86,7 +86,7 @@ jobs:
       run: |
         mkdir build_ci
         cd build_ci
-        ../configure --enable-asan --enable-ubsan --enable-verbose-debug
+        ../configure --enable-asan --enable-ubsan
 
     - name: Build
       run: |
