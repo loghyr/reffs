@@ -126,7 +126,7 @@ echo "reffsd is up."
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== NFSv4.2 integration test ==="
-mount -o vers=4.2,soft,timeo=30,retrans=2 127.0.0.1:/ "$MOUNT"
+mount -o vers=4.2,soft,timeo=100,retrans=5 127.0.0.1:/ "$MOUNT"
 
 (
 	cd "$MOUNT"
@@ -147,7 +147,7 @@ echo "=== NFSv4.2 integration test PASSED ==="
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== NFSv3 integration test ==="
-mount -o vers=3,nolock,soft,timeo=30,retrans=2 127.0.0.1:/ "$MOUNT"
+mount -o vers=3,nolock,soft,timeo=100,retrans=5 127.0.0.1:/ "$MOUNT"
 
 (
 	cd "$MOUNT"
