@@ -58,7 +58,7 @@ static uint32_t deviceid_to_dstore(const deviceid4 devid)
 /* The device address body is XDR-encoded ff_device_addr4.             */
 /* ------------------------------------------------------------------ */
 
-void nfs4_op_getdeviceinfo(struct compound *compound)
+uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 {
 	GETDEVICEINFO4args *args = NFS4_OP_ARG_SETUP(compound, opgetdeviceinfo);
 	GETDEVICEINFO4res *res = NFS4_OP_RES_SETUP(compound, opgetdeviceinfo);
@@ -68,7 +68,7 @@ void nfs4_op_getdeviceinfo(struct compound *compound)
 
 	if (args->gdia_layout_type != LAYOUT4_FLEX_FILES) {
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
-		return;
+		return 0;
 	}
 
 	uint32_t dstore_id = deviceid_to_dstore(args->gdia_device_id);
@@ -76,7 +76,7 @@ void nfs4_op_getdeviceinfo(struct compound *compound)
 
 	if (!ds) {
 		*status = NFS4ERR_NOENT;
-		return;
+		return 0;
 	}
 
 	/*
@@ -131,7 +131,7 @@ void nfs4_op_getdeviceinfo(struct compound *compound)
 	if (!resok->gdir_device_addr.da_addr_body.da_addr_body_val) {
 		dstore_put(ds);
 		*status = NFS4ERR_DELAY;
-		return;
+		return 0;
 	}
 	resok->gdir_device_addr.da_addr_body.da_addr_body_len =
 		(u_int)xdr_size;
@@ -147,12 +147,14 @@ void nfs4_op_getdeviceinfo(struct compound *compound)
 		resok->gdir_device_addr.da_addr_body.da_addr_body_val = NULL;
 		dstore_put(ds);
 		*status = NFS4ERR_SERVERFAULT;
-		return;
+		return 0;
 	}
 	xdr_destroy(&xdrs);
 
 	LOG("GETDEVICEINFO: dstore[%u] addr=%s", dstore_id, uaddr);
 	dstore_put(ds);
+
+	return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -209,7 +211,7 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 /* layout segment from the inode becomes a mirror in the ff_layout4.   */
 /* ------------------------------------------------------------------ */
 
-void nfs4_op_layoutget(struct compound *compound)
+uint32_t nfs4_op_layoutget(struct compound *compound)
 {
 	LAYOUTGET4args *args = NFS4_OP_ARG_SETUP(compound, oplayoutget);
 	LAYOUTGET4res *res = NFS4_OP_RES_SETUP(compound, oplayoutget);
@@ -219,24 +221,24 @@ void nfs4_op_layoutget(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		return;
+		return 0;
 	}
 
 	if (args->loga_layout_type != LAYOUT4_FLEX_FILES) {
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
-		return;
+		return 0;
 	}
 
 	if (!compound->c_inode) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		return;
+		return 0;
 	}
 
 	struct layout_segments *lss = compound->c_inode->i_layout_segments;
 
 	if (!lss || lss->lss_count == 0) {
 		*status = NFS4ERR_LAYOUTUNAVAILABLE;
-		return;
+		return 0;
 	}
 
 	/* Find or create a layout stateid for this client + inode. */
@@ -244,7 +246,7 @@ void nfs4_op_layoutget(struct compound *compound)
 		layout_stateid_find_or_create(compound->c_inode, compound);
 	if (!ls) {
 		*status = NFS4ERR_DELAY;
-		return;
+		return 0;
 	}
 
 	/* Track the granted iomode. */
@@ -278,7 +280,7 @@ void nfs4_op_layoutget(struct compound *compound)
 		calloc(seg->ls_nfiles, sizeof(ff_mirror4));
 	if (!ffl.ffl_mirrors.ffl_mirrors_val) {
 		*status = NFS4ERR_DELAY;
-		return;
+		return 0;
 	}
 
 	for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
@@ -386,28 +388,25 @@ out_free_ffl:
 		    seg->ls_stripe_unit, ls->ls_stid.s_seqid);
 
 	stateid_put(&ls->ls_stid); /* drop find/create ref */
+
+	return 0;
 }
 
 /* ------------------------------------------------------------------ */
 /* Stubs                                                               */
 /* ------------------------------------------------------------------ */
 
-void nfs4_op_layoutcommit(struct compound *compound)
+uint32_t nfs4_op_layoutcommit(struct compound *compound)
 {
-	LAYOUTCOMMIT4args *args = NFS4_OP_ARG_SETUP(compound, oplayoutcommit);
 	LAYOUTCOMMIT4res *res = NFS4_OP_RES_SETUP(compound, oplayoutcommit);
 	nfsstat4 *status = &res->locr_status;
-	LAYOUTCOMMIT4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, LAYOUTCOMMIT4res_u, locr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	return 0;
 }
 
-void nfs4_op_layoutreturn(struct compound *compound)
+uint32_t nfs4_op_layoutreturn(struct compound *compound)
 {
 	LAYOUTRETURN4args *args = NFS4_OP_ARG_SETUP(compound, oplayoutreturn);
 	LAYOUTRETURN4res *res = NFS4_OP_RES_SETUP(compound, oplayoutreturn);
@@ -415,7 +414,7 @@ void nfs4_op_layoutreturn(struct compound *compound)
 
 	if (args->lora_layout_type != LAYOUT4_FLEX_FILES) {
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
-		return;
+		return 0;
 	}
 
 	/*
@@ -424,7 +423,7 @@ void nfs4_op_layoutreturn(struct compound *compound)
 	 */
 	if (args->lora_layoutreturn.lr_returntype != LAYOUTRETURN4_FILE) {
 		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present = false;
-		return;
+		return 0;
 	}
 
 	layoutreturn_file4 *lrf =
@@ -433,7 +432,7 @@ void nfs4_op_layoutreturn(struct compound *compound)
 	if (network_file_handle_empty(&compound->c_curr_nfh) ||
 	    !compound->c_inode) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		return;
+		return 0;
 	}
 
 	/*
@@ -446,7 +445,7 @@ void nfs4_op_layoutreturn(struct compound *compound)
 
 	if (type != Layout_Stateid) {
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	struct stateid *stid = stateid_find(compound->c_inode, id);
@@ -455,7 +454,7 @@ void nfs4_op_layoutreturn(struct compound *compound)
 	    stid->s_cookie != cookie) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	/* Verify client ownership. */
@@ -463,7 +462,7 @@ void nfs4_op_layoutreturn(struct compound *compound)
 	    stid->s_client != nfs4_client_to_client(compound->c_nfs4_client)) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	struct layout_stateid *ls = stid_to_layout(stid);
@@ -505,43 +504,36 @@ void nfs4_op_layoutreturn(struct compound *compound)
 	    (unsigned long)remaining);
 
 	stateid_put(stid); /* find ref */
+
+	return 0;
 }
 
-void nfs4_op_getdevicelist(struct compound *compound)
+uint32_t nfs4_op_getdevicelist(struct compound *compound)
 {
-	GETDEVICELIST4args *args = NFS4_OP_ARG_SETUP(compound, opgetdevicelist);
 	GETDEVICELIST4res *res = NFS4_OP_RES_SETUP(compound, opgetdevicelist);
 	nfsstat4 *status = &res->gdlr_status;
-	GETDEVICELIST4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, GETDEVICELIST4res_u, gdlr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	return 0;
 }
 
-void nfs4_op_layouterror(struct compound *compound)
+uint32_t nfs4_op_layouterror(struct compound *compound)
 {
-	LAYOUTERROR4args *args = NFS4_OP_ARG_SETUP(compound, oplayouterror);
 	LAYOUTERROR4res *res = NFS4_OP_RES_SETUP(compound, oplayouterror);
 	nfsstat4 *status = &res->ler_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }
 
-void nfs4_op_layoutstats(struct compound *compound)
+uint32_t nfs4_op_layoutstats(struct compound *compound)
 {
-	LAYOUTSTATS4args *args = NFS4_OP_ARG_SETUP(compound, oplayoutstats);
 	LAYOUTSTATS4res *res = NFS4_OP_RES_SETUP(compound, oplayoutstats);
 	nfsstat4 *status = &res->lsr_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }

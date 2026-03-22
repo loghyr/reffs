@@ -2824,7 +2824,7 @@ out:
 	return NFS4_OK;
 }
 
-void nfs4_op_getattr(struct compound *compound)
+uint32_t nfs4_op_getattr(struct compound *compound)
 {
 	GETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opgetattr);
 	GETATTR4res *res = NFS4_OP_RES_SETUP(compound, opgetattr);
@@ -2908,6 +2908,8 @@ void nfs4_op_getattr(struct compound *compound)
 
 out:
 	nattr_release(&nattr);
+
+	return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -3021,7 +3023,7 @@ static nfsstat4 entry4_encode_rdattr_error(nfsstat4 error, fattr4 *out)
 	return status;
 }
 
-void nfs4_op_readdir(struct compound *compound)
+uint32_t nfs4_op_readdir(struct compound *compound)
 {
 	READDIR4args *args = NFS4_OP_ARG_SETUP(compound, opreaddir);
 	READDIR4res *res = NFS4_OP_RES_SETUP(compound, opreaddir);
@@ -3050,23 +3052,23 @@ void nfs4_op_readdir(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
-		return;
+		return 0;
 	}
 
 	if (!S_ISDIR(inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
-		return;
+		return 0;
 	}
 
 	if ((count4)sizeof(READDIR4res) > args->maxcount) {
 		*status = NFS4ERR_TOOSMALL;
-		return;
+		return 0;
 	}
 
 	ret = inode_access_check(inode, &compound->c_ap, R_OK);
 	if (ret) {
 		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
-		return;
+		return 0;
 	}
 
 	/*
@@ -3078,7 +3080,7 @@ void nfs4_op_readdir(struct compound *compound)
 		ret = inode_reconstruct_path_to_root(inode);
 		if (ret) {
 			*status = NFS4ERR_STALE;
-			return;
+			return 0;
 		}
 	}
 
@@ -3267,9 +3269,11 @@ out_unlock:
 	if (dir_de_rdlocked)
 		pthread_rwlock_unlock(&dir_de->rd_rwlock);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	return 0;
 }
 
-void nfs4_op_setattr(struct compound *compound)
+uint32_t nfs4_op_setattr(struct compound *compound)
 {
 	SETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opsetattr);
 	SETATTR4res *res = NFS4_OP_RES_SETUP(compound, opsetattr);
@@ -3319,6 +3323,8 @@ void nfs4_op_setattr(struct compound *compound)
 out:
 	if (nattr_valid)
 		nattr_release(&nattr);
+
+	return 0;
 }
 
 /*
@@ -3416,7 +3422,7 @@ out:
 	return status;
 }
 
-void nfs4_op_verify(struct compound *compound)
+uint32_t nfs4_op_verify(struct compound *compound)
 {
 	VERIFY4args *args = NFS4_OP_ARG_SETUP(compound, opverify);
 	VERIFY4res *res = NFS4_OP_RES_SETUP(compound, opverify);
@@ -3424,14 +3430,16 @@ void nfs4_op_verify(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
-		return;
+		return 0;
 	}
 
 	*status = verify_common(compound, &args->obj_attributes, false,
 				OP_VERIFY);
+
+	return 0;
 }
 
-void nfs4_op_nverify(struct compound *compound)
+uint32_t nfs4_op_nverify(struct compound *compound)
 {
 	NVERIFY4args *args = NFS4_OP_ARG_SETUP(compound, opnverify);
 	NVERIFY4res *res = NFS4_OP_RES_SETUP(compound, opnverify);
@@ -3439,14 +3447,16 @@ void nfs4_op_nverify(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
-		return;
+		return 0;
 	}
 
 	*status = verify_common(compound, &args->obj_attributes, true,
 				OP_NVERIFY);
+
+	return 0;
 }
 
-void nfs4_op_access(struct compound *compound)
+uint32_t nfs4_op_access(struct compound *compound)
 {
 	ACCESS4args *args = NFS4_OP_ARG_SETUP(compound, opaccess);
 	ACCESS4res *res = NFS4_OP_RES_SETUP(compound, opaccess);
@@ -3497,18 +3507,16 @@ out:
 	TRACE("%s status=%s(%d) access=0x%x supported=0x%x access_granted=0x%x",
 	      __func__, nfs4_err_name(*status), *status, args->access,
 	      resok->supported, resok->access);
+
+	return 0;
 }
 
-void nfs4_op_access_mask(struct compound *compound)
+uint32_t nfs4_op_access_mask(struct compound *compound)
 {
-	ACCESS_MASK4args *args = NFS4_OP_ARG_SETUP(compound, opaccess_mask);
 	ACCESS_MASK4res *res = NFS4_OP_RES_SETUP(compound, opaccess_mask);
 	nfsstat4 *status = &res->amr_status;
-	ACCESS_MASK4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, ACCESS_MASK4res_u, amr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+
+	return 0;
 }

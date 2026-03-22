@@ -585,7 +585,7 @@ out:
  * rt->rt_io_result holds the pread return value (bytes read, or -errno).
  * The buffer was allocated and resok was initialised before the pause.
  */
-static void nfs3_op_read_resume(struct rpc_trans *rt)
+static uint32_t nfs3_op_read_resume(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 	READ3args *args = ph->ph_args;
@@ -622,6 +622,7 @@ out:
 	ph->ph_inode = NULL;
 	super_block_put(ph->ph_sb);
 	ph->ph_sb = NULL;
+	return 0;
 }
 
 static int nfs3_op_read(struct rpc_trans *rt)
@@ -793,7 +794,7 @@ out:
  * The pre-pause code pre-extended the file with ftruncate and updated
  * db_size; wcc->before was filled in; inode/sb ownership is in ph.
  */
-static void nfs3_op_write_resume(struct rpc_trans *rt)
+static uint32_t nfs3_op_write_resume(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 	WRITE3res *res = ph->ph_res;
@@ -865,6 +866,7 @@ wcc_after:
 	ph->ph_inode = NULL;
 	super_block_put(sb);
 	ph->ph_sb = NULL;
+	return 0;
 }
 
 static int nfs3_op_write(struct rpc_trans *rt)

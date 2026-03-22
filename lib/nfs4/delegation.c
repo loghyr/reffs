@@ -22,19 +22,17 @@
 #include "nfs4/stateid.h"
 #include "nfs4/client.h"
 
-void nfs4_op_delegpurge(struct compound *compound)
+uint32_t nfs4_op_delegpurge(struct compound *compound)
 {
-	DELEGPURGE4args *args = NFS4_OP_ARG_SETUP(compound, opdelegpurge);
 	DELEGPURGE4res *res = NFS4_OP_RES_SETUP(compound, opdelegpurge);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }
 
-void nfs4_op_delegreturn(struct compound *compound)
+uint32_t nfs4_op_delegreturn(struct compound *compound)
 {
 	DELEGRETURN4args *args = NFS4_OP_ARG_SETUP(compound, opdelegreturn);
 	DELEGRETURN4res *res = NFS4_OP_RES_SETUP(compound, opdelegreturn);
@@ -42,12 +40,12 @@ void nfs4_op_delegreturn(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		return;
+		return 0;
 	}
 
 	if (stateid4_is_special(&args->deleg_stateid)) {
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	uint32_t seqid, id, type, cookie;
@@ -55,7 +53,7 @@ void nfs4_op_delegreturn(struct compound *compound)
 
 	if (type != Delegation_Stateid) {
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	struct stateid *stid = stateid_find(compound->c_inode, id);
@@ -63,14 +61,14 @@ void nfs4_op_delegreturn(struct compound *compound)
 	    stid->s_cookie != cookie) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	if (compound->c_nfs4_client &&
 	    stid->s_client != nfs4_client_to_client(compound->c_nfs4_client)) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	uint32_t cur_seqid = __atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
@@ -78,12 +76,12 @@ void nfs4_op_delegreturn(struct compound *compound)
 		if (seqid < cur_seqid) {
 			stateid_put(stid);
 			*status = NFS4ERR_OLD_STATEID;
-			return;
+			return 0;
 		}
 		if (seqid > cur_seqid) {
 			stateid_put(stid);
 			*status = NFS4ERR_BAD_STATEID;
-			return;
+			return 0;
 		}
 	}
 
@@ -118,32 +116,28 @@ void nfs4_op_delegreturn(struct compound *compound)
 	stateid_put(stid); /* state ref → freed */
 
 	*status = NFS4_OK;
+
+	return 0;
 }
 
-void nfs4_op_get_dir_delegation(struct compound *compound)
+uint32_t nfs4_op_get_dir_delegation(struct compound *compound)
 {
-	GET_DIR_DELEGATION4args *args =
-		NFS4_OP_ARG_SETUP(compound, opget_dir_delegation);
 	GET_DIR_DELEGATION4res *res =
 		NFS4_OP_RES_SETUP(compound, opget_dir_delegation);
 	nfsstat4 *status = &res->gddr_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }
 
-void nfs4_op_want_delegation(struct compound *compound)
+uint32_t nfs4_op_want_delegation(struct compound *compound)
 {
-	WANT_DELEGATION4args *args =
-		NFS4_OP_ARG_SETUP(compound, opwant_delegation);
 	WANT_DELEGATION4res *res =
 		NFS4_OP_RES_SETUP(compound, opwant_delegation);
 	nfsstat4 *status = &res->wdr_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }

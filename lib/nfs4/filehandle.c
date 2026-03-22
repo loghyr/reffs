@@ -17,7 +17,7 @@
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
 
-void nfs4_op_getfh(struct compound *compound)
+uint32_t nfs4_op_getfh(struct compound *compound)
 {
 	GETFH4res *res = NFS4_OP_RES_SETUP(compound, opgetfh);
 	nfsstat4 *status = &res->status;
@@ -25,19 +25,21 @@ void nfs4_op_getfh(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		return;
+		return 0;
 	}
 
 	resok->object.nfs_fh4_val =
 		memdup(&compound->c_curr_nfh, sizeof(compound->c_curr_nfh));
 	if (!resok->object.nfs_fh4_val) {
 		*status = NFS4ERR_DELAY; // Yes, not valid, but a missing error!
-		return;
+		return 0;
 	}
 	resok->object.nfs_fh4_len = sizeof(compound->c_curr_nfh);
+
+	return 0;
 }
 
-void nfs4_op_putfh(struct compound *compound)
+uint32_t nfs4_op_putfh(struct compound *compound)
 {
 	PUTFH4args *args = NFS4_OP_ARG_SETUP(compound, opputfh);
 	PUTFH4res *res = NFS4_OP_RES_SETUP(compound, opputfh);
@@ -48,17 +50,17 @@ void nfs4_op_putfh(struct compound *compound)
 
 	if (args->object.nfs_fh4_len != sizeof(compound->c_curr_nfh)) {
 		*status = NFS4ERR_BADHANDLE;
-		return;
+		return 0;
 	}
 
 	if (network_file_handle_empty(nfh)) {
 		*status = NFS4ERR_BADHANDLE;
-		return;
+		return 0;
 	}
 
 	if (nfh->nfh_sb == 0 || nfh->nfh_ino == 0) {
 		*status = NFS4ERR_BADHANDLE;
-		return;
+		return 0;
 	}
 
 	if (nfh->nfh_sb != compound->c_curr_nfh.nfh_sb) {
@@ -66,7 +68,7 @@ void nfs4_op_putfh(struct compound *compound)
 		compound->c_curr_sb = super_block_find(nfh->nfh_sb);
 		if (!compound->c_curr_sb) {
 			*status = NFS4ERR_STALE;
-			return;
+			return 0;
 		}
 
 		inode_active_put(compound->c_inode);
@@ -84,15 +86,17 @@ void nfs4_op_putfh(struct compound *compound)
 					       compound->c_curr_nfh.nfh_ino);
 		if (!compound->c_inode) {
 			*status = NFS4ERR_STALE;
-			return;
+			return 0;
 		}
 	}
 
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = NULL;
+
+	return 0;
 }
 
-void nfs4_op_putpubfh(struct compound *compound)
+uint32_t nfs4_op_putpubfh(struct compound *compound)
 {
 	PUTPUBFH4res *res = NFS4_OP_RES_SETUP(compound, opputpubfh);
 	nfsstat4 *status = &res->status;
@@ -102,7 +106,7 @@ void nfs4_op_putpubfh(struct compound *compound)
 		compound->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 		if (!compound->c_curr_sb) {
 			*status = NFS4ERR_SERVERFAULT;
-			return;
+			return 0;
 		}
 		inode_active_put(compound->c_inode);
 		compound->c_inode = NULL;
@@ -116,9 +120,11 @@ void nfs4_op_putpubfh(struct compound *compound)
 
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = NULL;
+
+	return 0;
 }
 
-void nfs4_op_putrootfh(struct compound *compound)
+uint32_t nfs4_op_putrootfh(struct compound *compound)
 {
 	PUTROOTFH4res *res = NFS4_OP_RES_SETUP(compound, opputrootfh);
 	nfsstat4 *status = &res->status;
@@ -128,7 +134,7 @@ void nfs4_op_putrootfh(struct compound *compound)
 		compound->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 		if (!compound->c_curr_sb) {
 			*status = NFS4ERR_SERVERFAULT;
-			return;
+			return 0;
 		}
 		inode_active_put(compound->c_inode);
 		compound->c_inode = NULL;
@@ -145,22 +151,24 @@ void nfs4_op_putrootfh(struct compound *compound)
 					       compound->c_curr_nfh.nfh_ino);
 		if (!compound->c_inode) {
 			*status = NFS4ERR_STALE;
-			return;
+			return 0;
 		}
 	}
 
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = NULL;
+
+	return 0;
 }
 
-void nfs4_op_restorefh(struct compound *compound)
+uint32_t nfs4_op_restorefh(struct compound *compound)
 {
 	RESTOREFH4res *res = NFS4_OP_RES_SETUP(compound, oprestorefh);
 	nfsstat4 *status = &res->status;
 
 	if (network_file_handle_empty(&compound->c_saved_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		return;
+		return 0;
 	}
 
 	super_block_put(compound->c_curr_sb);
@@ -174,7 +182,7 @@ void nfs4_op_restorefh(struct compound *compound)
 					       compound->c_curr_nfh.nfh_ino);
 		if (!compound->c_inode) {
 			*status = NFS4ERR_STALE;
-			return;
+			return 0;
 		}
 	}
 
@@ -185,23 +193,25 @@ void nfs4_op_restorefh(struct compound *compound)
 		verify_msg(compound->c_curr_stid,
 			   "Could not get loaded stateid");
 	}
+
+	return 0;
 }
 
-void nfs4_op_savefh(struct compound *compound)
+uint32_t nfs4_op_savefh(struct compound *compound)
 {
 	SAVEFH4res *res = NFS4_OP_RES_SETUP(compound, opsavefh);
 	nfsstat4 *status = &res->status;
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		return;
+		return 0;
 	}
 
 	super_block_put(compound->c_saved_sb);
 	compound->c_saved_sb = super_block_get(compound->c_curr_sb);
 	if (!compound->c_saved_sb) {
 		*status = NFS4ERR_DELAY;
-		return;
+		return 0;
 	}
 
 	compound->c_saved_nfh = compound->c_curr_nfh;
@@ -213,4 +223,6 @@ void nfs4_op_savefh(struct compound *compound)
 		verify_msg(compound->c_saved_stid,
 			   "Could not get loaded stateid");
 	}
+
+	return 0;
 }
