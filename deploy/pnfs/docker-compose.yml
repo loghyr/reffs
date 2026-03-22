@@ -1,0 +1,97 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# pNFS test environment: MDS + DS + client on a Docker bridge network.
+#
+# Usage:
+#   make -f Makefile.reffs run-pnfs    # start MDS + DS
+#   make -f Makefile.reffs test-pnfs   # start all, run test, tear down
+#   make -f Makefile.reffs stop-pnfs   # tear down
+
+services:
+  ds:
+    container_name: reffs-ds
+    image: reffs-ci
+    privileged: true
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    networks:
+      pnfs:
+        aliases:
+          - reffs-ds
+    volumes:
+      - ../../:/reffs:ro
+    command: >
+      /bin/bash -c "
+        rm -rf /tmp/reffs_ds_data /tmp/reffs_ds_state &&
+        mkdir -p /tmp/reffs_ds_data/sb_1 /tmp/reffs_ds_state &&
+        rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
+        cd /src && mkdir -p m4 && autoreconf -fi &&
+        cd /build && ../src/configure --enable-asan --enable-ubsan &&
+        make -j$$(nproc) &&
+        rpcbind &&
+        ./src/reffsd --config=/reffs/deploy/pnfs/ds.toml
+      "
+
+  mds:
+    container_name: reffs-mds
+    image: reffs-ci
+    privileged: true
+    depends_on:
+      - ds
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    networks:
+      pnfs:
+        aliases:
+          - reffs-mds
+    ports:
+      - "2049:2049"
+      - "2049:2049/udp"
+    volumes:
+      - ../../:/reffs:ro
+    command: >
+      /bin/bash -c "
+        rm -rf /tmp/reffs_mds_data /tmp/reffs_mds_state &&
+        mkdir -p /tmp/reffs_mds_data /tmp/reffs_mds_state &&
+        rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
+        cd /src && mkdir -p m4 && autoreconf -fi &&
+        cd /build && ../src/configure --enable-asan --enable-ubsan &&
+        make -j$$(nproc) &&
+        rpcbind &&
+        sleep 2 &&
+        ./src/reffsd --config=/reffs/deploy/pnfs/mds.toml
+      "
+
+  client:
+    container_name: reffs-client
+    image: reffs-ci
+    privileged: true
+    depends_on:
+      - mds
+    networks:
+      - pnfs
+    volumes:
+      - ../../:/reffs:ro
+    command: >
+      /bin/bash -c "
+        sleep 5 &&
+        mkdir -p /mnt/pnfs &&
+        mount -o vers=4.2 reffs-mds:/ /mnt/pnfs &&
+        echo 'Mount OK' &&
+        echo 'hello pnfs' > /mnt/pnfs/test.txt &&
+        cat /mnt/pnfs/test.txt &&
+        ls -la /mnt/pnfs/ &&
+        echo 'pNFS test PASSED' &&
+        umount /mnt/pnfs
+      "
+    profiles:
+      - test
+
+networks:
+  pnfs:
+    driver: bridge

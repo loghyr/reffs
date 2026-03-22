@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# pNFS MDS configuration for container deployment.
+# The DS address is set by docker-compose (reffs-ds container).
+
+[server]
+port            = 2049
+bind            = "*"
+role            = "mds"
+minor_versions  = [1, 2]
+grace_period    = 5
+workers         = 4
+log_level       = "info"
+
+[backend]
+type            = "posix"
+path            = "/tmp/reffs_mds_data"
+state_file      = "/tmp/reffs_mds_state"
+
+[[export]]
+path        = "/"
+clients     = "*"
+access      = "rw"
+root_squash = false
+flavors     = ["sys"]
+
+[[data_server]]
+id      = 1
+address = "reffs-ds"
+path    = "/ds1"
