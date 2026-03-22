@@ -46,6 +46,9 @@ cthon04
 pjdfstest
 logs/
 
+# compile_commands.json is a symlink to the build dir; contains absolute paths
+compile_commands.json
+
 # Claude Code local state — not project-specific
 .claude/settings.local.json
 .claude/memory/
