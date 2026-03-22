@@ -18,6 +18,19 @@ set -euo pipefail
 REFFSD_BIN=${1:-/build/src/reffsd}
 SRC_DIR=${2:-/reffs}
 
+# ---------------------------------------------------------------------------
+# Environment diagnostics — printed once so failures are self-describing.
+# ---------------------------------------------------------------------------
+echo "=== Environment ==="
+uname -r
+grep -E "^(ID|VERSION_ID|PRETTY_NAME)=" /etc/os-release 2>/dev/null || true
+echo "io_uring_disabled: $(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo '(absent)')"
+dpkg -l liburing-dev liburcu-dev libtirpc-dev nfs-common 2>/dev/null \
+	| awk '/^ii/{printf "  %-28s %s\n", $2, $3}' || true
+ldd --version 2>&1 | head -1 || true
+echo "===================
+"
+
 MOUNT=/mnt/reffs
 DATA=/tmp/reffs_ci_data
 STATE=/tmp/reffs_ci_state   # directory; server_persist appends "server_state"
