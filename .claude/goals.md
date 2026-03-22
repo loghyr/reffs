@@ -7,11 +7,27 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## End Goal
 
-A **pNFS Flex Files data server** implementing NFSv4.2 with full CHUNK op support.
+A complete **pNFS Flex Files** stack: MDS + data servers + erasure-coding client.
 
-- NFSv3 clients create and populate data instance objects
-- NFSv4.2 clients use CHUNK_* ops for high-performance I/O to those instances
-- The two protocol families operate independently — no cross-protocol state sharing
+- **reffs as data server**: NFSv3/NFSv4.2 with CHUNK ops for data instances
+- **reffs as MDS**: Flex Files v2 metadata server issuing layouts that
+  reference reffs data servers (may do v1 first as proof of concept)
+- **NFSv4.2 client**: Reed-Solomon erasure coding across data servers
+  referenced by Flex Files layouts
+
+## Near-Term Demo Target (by 2026-04-12)
+
+Demonstrate Flex Files v2 + erasure coding end-to-end:
+
+1. MDS issues Flex Files v2 layout pointing at N data servers
+2. Client writes data with Reed-Solomon encoding, distributing
+   data + parity chunks across data servers
+3. Client reads back and reconstructs from any sufficient subset
+
+Requires:
+- Flex Files v1/v2 MDS in reffs (LAYOUTGET returning ff_layout_v2)
+- NFSv4.2 client with layout awareness
+- Unencumbered Reed-Solomon implementation for encoding/decoding
 
 ## Milestones
 
@@ -19,31 +35,48 @@ A **pNFS Flex Files data server** implementing NFSv4.2 with full CHUNK op suppor
 Session, filehandle, file I/O, directory, attributes, locking, basic delegation.
 See `lib/nfs4/` for current state.
 
-### 2. Pre-CHUNK infrastructure
+### 2. Pre-CHUNK infrastructure — MOSTLY DONE
 
-Work required before CHUNK ops can be implemented, in priority order:
-
-1. **RocksDB backend** — storage backend alongside existing POSIX backend
-2. **io_uring file I/O** — replace/augment file I/O with io_uring
-   - Open question: separate submission queues?
-3. **Config file** — structured configuration (format TBD: toml/yaml/libconfig)
-   - Must express: server type, io_uring tunings, export options
-4. **Per-op NFSv4.2 stats** — per-operation statistics at global/per-sb/per-client scope
-5. **NFSv4.2 error tracking** — errors globally, per super-block, per client
-6. **Callback (CB) infrastructure** — CB channel for CB_RECALL, CB_GETATTR, etc.
-   - Do not stack many CB_GETATTR requests
-   - Need a compound state machine for pause/resume while waiting on CB
-7. **RFC 9754 support** — delegating timestamps; OPEN XOR delegation stateid
-   (depends on CB infrastructure)
+1. ~~io_uring file I/O~~ — DONE
+2. ~~Config file~~ — DONE (TOML)
+3. ~~Per-op NFSv4.2 stats~~ — DONE
+4. ~~NFSv4.2 error tracking~~ — DONE
+5. ~~CB_RECALL~~ — DONE (fire-and-forget)
+6. ~~RFC 9754 support~~ — DONE (XOR delegation, timestamps, unit tested)
+7. **RocksDB backend** — storage backend alongside existing POSIX backend
 8. **Grace lifecycle bug** *(open bug)* — server never leaves `SERVER_GRACE_STARTED`
 9. **Full client recovery** — grace period handling, client state reclaim
+10. **CB_GETATTR** — requires CB response handling (deferred)
 
-### 3. CHUNK ops — end goal
+### 3. Flex Files MDS — NEW
+
+- LAYOUTGET / LAYOUTCOMMIT / LAYOUTRETURN handlers
+- Flex Files v1 device info and layout encoding (proof of concept)
+- Flex Files v2 layout encoding
+- Data server registry and health tracking
+
+### 4. Erasure Coding Demo Client — NEW
+
+Minimal userspace tool (not a general-purpose NFS client) that:
+- Sends LAYOUTGET to the MDS, parses Flex Files layout
+- Reed-Solomon encodes writes, distributes data+parity to data servers
+- Reads back from data servers, RS-decodes / reconstructs
+
+Purpose: prove the MDS+DS architecture works with pluggable encoding.
+RS is the proof-of-concept codec.  Having a clean-room RS demonstrates the
+architecture is encoding-agnostic.
+
+- RS codec: clean-room GF(2^8) Vandermonde, no external deps,
+  no SIMD (see standards.md patent rules).  Correctness over speed.
+- Client talks NFSv4.2 just enough for LAYOUTGET + direct DS I/O
+- Codec interface should be designed for swappability from the start
+- Later: port logic into the Linux kernel NFS client for production use
+
+### 5. CHUNK ops
 All 11 CHUNK_* operations in `lib/nfs4/chunk.c`.
 
 ## Deferred / Out of Scope (initially)
 
-- Layout support (LAYOUTGET, LAYOUTCOMMIT, etc.)
 - Copy/clone ops
 - Extended attributes
 - Lease renewal / expiry enforcement

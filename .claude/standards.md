@@ -301,3 +301,33 @@ Without CB_RECALL, the server must rely on the client to DELEGRETURN in its
 own time (bounded by the lease period).  The correct long-term fix is to
 implement CB_RECALL so the server can request delegation return before the
 lease expires.
+
+---
+
+## Erasure Coding — Patent-Safe Implementation Rules
+
+### US 8,683,296 (StreamScale) — DO NOT infringe
+
+StreamScale's patent covers SIMD-accelerated Galois field arithmetic for
+erasure coding.  The settlement with James Plank (2014) pulled Jerasure 2.0
+and GF-Complete from public availability and barred Plank from further EC
+implementation work.
+
+**NEVER** reference, derive from, or cite:
+- Plank's papers or code (Jerasure, GF-Complete, any fork)
+- SIMD-optimized GF(2^8) multiplication (pshufb split-table, AVX, etc.)
+- ISA-L's GF implementation (unclear patent cross-licensing)
+
+**SAFE** to use (pre-dates StreamScale by decades):
+- Reed & Solomon 1960 original paper
+- Berlekamp 1968 "Algebraic Coding Theory" (GF arithmetic)
+- Peterson & Weldon 1972 "Error-Correcting Codes"
+- Plain log/antilog table GF(2^8) multiplication
+- Vandermonde matrix construction for systematic RS codes
+- Gaussian elimination for matrix inversion (decoding)
+
+### Implementation approach
+
+Use scalar log/antilog table GF(2^8) multiply with a standard irreducible
+polynomial.  No SIMD.  Reference only pre-2000 textbook sources.  Document
+prior art references in source file headers.
