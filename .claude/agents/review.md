@@ -92,7 +92,24 @@ When going async in an NFSv3 op:
 `inode_active_put()`, `inode_put()`, `super_block_put()` are NULL-tolerant.
 Do not add redundant NULL checks before calling them.
 
-## 5. Git commit readiness
+## 5. Test coverage
+
+For every changed or new code path, check whether an existing unit test
+covers it.  Look in `lib/*/tests/` for relevant test files.
+
+- If an existing test covers the change, name it.
+- If no test exists, **recommend a concrete test** — describe what it
+  should assert and which test file it belongs in.  Simulating a full
+  compound is hard, but many things are testable in isolation:
+  resume callbacks, state transitions, XDR encode/decode round-trips,
+  error-path cleanup, stateid lifecycle, data_block read/write, etc.
+- For async code: `lib/nfs4/tests/compound_async.c` and
+  `lib/nfs4/tests/task_state.c` already test the pause/resume state
+  machine.  Extend them when async behaviour changes.
+
+Report as `TESTS: [covered by X | SUGGEST: description | N/A]`.
+
+## 6. Git commit readiness
 
 - Confirm `git commit -s` will be used (DCO sign-off required)
 - Confirm no `Co-Authored-By:` lines are present
@@ -107,5 +124,6 @@ STYLE:   [FIXED n files | OK]
 LICENSE: [PASS | FAIL: list files]
 BUILD:   [PASS | FAIL/WARN: summary]
 REVIEW:  [list of violations, or PASS]
+TESTS:   [covered by X | SUGGEST: description | N/A]
 COMMIT:  [ready | issues]
 ```
