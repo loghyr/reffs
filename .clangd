@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# clangd configuration.
+#
+# Mirrors the -I flags from each lib/*/Makefile.am so clangd can
+# resolve generated XDR headers (nfsv42_xdr.h, etc.) without a
+# compile_commands.json.  Assumes the default out-of-tree build
+# directory is "build/".  If you build in a different directory,
+# run "bear -- make" inside it to produce a compile_commands.json
+# that clangd will prefer over these flags.
+
+CompileFlags:
+  Add:
+    # Project-wide public headers
+    - -Ilib/include
+    # NFS4 internal headers
+    - -Ilib/nfs4/include
+    # Generated XDR headers (nfsv42_xdr.h and friends)
+    - -Ibuild/lib/xdr
+    # TIRPC (clientid4, netobj, etc.)
+    - -I/usr/include/tirpc
+  # Treat all files as C11 to avoid false positives from features
+  # that require explicit -std= flags.
+  Compiler: clang
