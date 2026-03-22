@@ -111,9 +111,9 @@ static void io_handle_backend_pread(struct io_context *ic, int res)
 		return;
 	}
 
-	if (res < 0 || (size_t)res < ic->ic_expected_len)
-		LOG("backend_pread: fd=%d expected=%zu got=%d", ic->ic_fd,
-		    ic->ic_expected_len, res);
+	if (res < 0)
+		LOG("backend_pread: fd=%d expected=%zu error=%s", ic->ic_fd,
+		    ic->ic_expected_len, strerror(-res));
 
 	rt->rt_io_result = (ssize_t)res;
 	io_context_destroy(ic);

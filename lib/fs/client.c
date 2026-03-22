@@ -205,6 +205,11 @@ void client_unload_all_clients(void)
 		return;
 	}
 
+	if (!ss->ss_client_ht) {
+		server_state_put(ss);
+		return;
+	}
+
 	rcu_read_lock();
 	cds_lfht_for_each_entry(ss->ss_client_ht, &iter, client, c_node) {
 		trace_fs_client(client, __func__, __LINE__);

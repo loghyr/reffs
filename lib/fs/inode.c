@@ -962,7 +962,7 @@ void inode_remove_all_stateids(struct inode *inode)
 	struct cds_lfht_iter iter;
 	struct stateid *stid;
 
-	if (!inode)
+	if (!inode || !inode->i_stateids)
 		return;
 
 	rcu_read_lock();
