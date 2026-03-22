@@ -37,6 +37,9 @@ enum stateid_type {
 #define OPEN_STATEID_DENY_READ (1ULL << 2)
 #define OPEN_STATEID_DENY_WRITE (1ULL << 3)
 
+/* Bits stored in delegation_stateid.ds_state for I/O access-mode checks. */
+#define DELEG_STATEID_ACCESS_WRITE (1ULL << 1)
+
 struct nfs4_lock_owner {
 	struct reffs_lock_owner lo_base;
 	clientid4 lo_clientid;
