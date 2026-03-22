@@ -55,9 +55,9 @@ const char *server_lifecycle_name(enum server_lifecycle lc)
 static void server_lifecycle_set(struct server_state *ss,
 				 enum server_lifecycle next)
 {
-	LOG("server lifecycle: %s -> %s",
-	    server_lifecycle_name(ss->ss_lifecycle),
-	    server_lifecycle_name(next));
+	TRACE("server lifecycle: %s -> %s",
+	      server_lifecycle_name(ss->ss_lifecycle),
+	      server_lifecycle_name(next));
 
 	__atomic_store_n(&ss->ss_lifecycle, next, __ATOMIC_RELEASE);
 }
@@ -270,17 +270,17 @@ struct server_state *server_state_init(const char *state_path, int port,
 		ss->ss_persist.sps_slot_next = 1; /* 0 is sentinel */
 		ss->ss_persist.sps_lease_time = DEFAULT_LEASE_TIME;
 		uuid_generate(ss->ss_persist.sps_uuid);
-		LOG("server_state_init: fresh start at %s", state_path);
+		TRACE("server_state_init: fresh start at %s", state_path);
 	} else if (ret) {
 		LOG("server_state_init: failed to load state from %s: %d",
 		    state_path, ret);
 		goto err_path;
 	} else {
-		LOG("server_state_init: loaded state from %s "
-		    "(boot_seq=%u slot_next=%u clean=%u)",
-		    state_path, ss->ss_persist.sps_boot_seq,
-		    ss->ss_persist.sps_slot_next,
-		    ss->ss_persist.sps_clean_shutdown);
+		TRACE("server_state_init: loaded state from %s "
+		      "(boot_seq=%u slot_next=%u clean=%u)",
+		      state_path, ss->ss_persist.sps_boot_seq,
+		      ss->ss_persist.sps_slot_next,
+		      ss->ss_persist.sps_clean_shutdown);
 	}
 
 	/* Increment boot_seq and mark dirty before touching any state. */
@@ -374,8 +374,8 @@ struct server_state *server_state_init(const char *state_path, int port,
 			 * second stall on every dirty-shutdown-with-no-clients
 			 * boot is surprising.  Go straight to GRACE_ENDED.
 			 */
-			LOG("server_state_init: no incarnation records, "
-			    "skipping grace");
+			TRACE("server_state_init: no incarnation records, "
+			      "skipping grace");
 			server_lifecycle_set(ss, SERVER_GRACE_ENDED);
 		} else {
 			__atomic_store_n(&ss->ss_unreclaimed, (uint32_t)nincs,
@@ -383,13 +383,13 @@ struct server_state *server_state_init(const char *state_path, int port,
 			server_grace_start(ss);
 		}
 	} else {
-		LOG("server_state_init: skipping grace period (fresh/clean start)");
+		TRACE("server_state_init: skipping grace period (fresh/clean start)");
 		server_lifecycle_set(ss, SERVER_GRACE_ENDED);
 	}
 
-	LOG("server_state_init: boot_seq=%u lifecycle=%s",
-	    ss->ss_persist.sps_boot_seq,
-	    server_lifecycle_name(ss->ss_lifecycle));
+	TRACE("server_state_init: boot_seq=%u lifecycle=%s",
+	      ss->ss_persist.sps_boot_seq,
+	      server_lifecycle_name(ss->ss_lifecycle));
 
 	__atomic_store_n(&current_server_state, ss, __ATOMIC_RELEASE);
 	return ss;

@@ -475,7 +475,7 @@ int io_context_fini(void)
 	pthread_mutex_destroy(&context_mutex);
 
 	if (count > 0) {
-		LOG("Freed %d remaining contexts during shutdown", count);
+		TRACE("Freed %d remaining contexts during shutdown", count);
 	}
 
 	return 0;

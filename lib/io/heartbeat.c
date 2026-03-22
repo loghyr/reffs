@@ -164,7 +164,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 			if (ret < 0) {
 				LOG("Error getting events: %s", strerror(-ret));
 			} else {
-				LOG("Flushed %d events from overflow", ret);
+				TRACE("Flushed %d events from overflow", ret);
 			}
 		}
 	}
@@ -229,8 +229,8 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 					LOG("Watchdog failed to resubmit accept for fd=%d: %s",
 					    fd, strerror(ret));
 				} else {
-					LOG("Watchdog successfully resubmitted accept for fd=%d",
-					    fd);
+					TRACE("Watchdog successfully resubmitted accept for fd=%d",
+					      fd);
 				}
 			}
 		}

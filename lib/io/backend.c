@@ -85,8 +85,8 @@ int io_backend_init(struct ring_context *rc)
 		return -1;
 	}
 
-	LOG("io_backend_init: backend ring ready (SQ=%u CQ=%u)",
-	    params.sq_entries, params.cq_entries);
+	TRACE("io_backend_init: backend ring ready (SQ=%u CQ=%u)",
+	      params.sq_entries, params.cq_entries);
 	return 0;
 }
 
@@ -153,7 +153,7 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 {
 	struct io_uring_cqe *cqe;
 
-	LOG("io_backend_main_loop: started");
+	TRACE("io_backend_main_loop: started");
 
 	while (1) {
 		struct __kernel_timespec ts = { .tv_sec = IO_URING_WAIT_SEC,
@@ -208,7 +208,7 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 		io_uring_cqe_seen(&rc->rc_ring, cqe);
 	}
 
-	LOG("io_backend_main_loop: exiting");
+	TRACE("io_backend_main_loop: exiting");
 }
 
 /* ------------------------------------------------------------------ */

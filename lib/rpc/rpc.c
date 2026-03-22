@@ -306,8 +306,8 @@ static int send_auth_tls_response(struct rpc_trans *rt)
 	// Update the offset
 	rt->rt_offset = rt->rt_reply_len;
 
-	LOG("Sending STARTTLS response for fd=%d xid=0x%08x", rt->rt_fd,
-	    rt->rt_info.ri_xid);
+	TRACE("Sending STARTTLS response for fd=%d xid=0x%08x", rt->rt_fd,
+	      rt->rt_info.ri_xid);
 
 	// Send the response via callback
 	if (rt->rt_rc && rt->rt_cb) {
@@ -385,7 +385,7 @@ void rpc_log_packet(const char *prefix, const void *data, size_t len)
 				ptr += sprintf(ptr, "   ");
 		}
 
-		LOG("%s%s", prefix, line);
+		TRACE("%s%s", prefix, line);
 	}
 }
 
@@ -723,7 +723,7 @@ int rpc_prepare_send_call(struct rpc_trans *rt)
 
 	assert(rt->rt_offset == rt->rt_reply_len);
 
-	LOG("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
+	TRACE("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
 
 	// rpc_log_packet("  ", rt->rt_reply, rt->rt_reply_len);
 
@@ -756,7 +756,7 @@ int rpc_process_task(struct task *t)
 		return EINVAL;
 
 	if (t->t_bytes_read < (int)(2 * sizeof(uint32_t))) {
-		LOG("%p", (void *)t);
+		TRACE("%p", (void *)t);
 		return 0;
 	}
 
@@ -784,7 +784,7 @@ int rpc_process_task(struct task *t)
 	}
 
 	if (rt->rt_info.ri_type) {
-		LOG("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
+		TRACE("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
 
 		struct rpc_trans *rt_old =
 			io_find_request_by_xid(rt->rt_info.ri_xid);

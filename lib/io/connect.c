@@ -687,7 +687,7 @@ void io_conn_dump_all(void)
 {
 	pthread_mutex_lock(&conn_mutex);
 
-	LOG("=== Active Connections ===");
+	TRACE("=== Active Connections ===");
 	int active_count = 0;
 
 	time_t now = time(NULL);
@@ -721,8 +721,8 @@ void io_conn_dump_all(void)
 		}
 	}
 
-	LOG("Total active connections: %d", active_count);
-	LOG("==========================");
+	TRACE("Total active connections: %d", active_count);
+	TRACE("==========================");
 
 	pthread_mutex_unlock(&conn_mutex);
 }

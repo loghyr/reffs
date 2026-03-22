@@ -131,10 +131,10 @@ int dstore_init(void)
 
 void dstore_fini(void)
 {
-	LOG("dstore_fini: draining");
+	TRACE("dstore_fini: draining");
 	dstore_unload_all();
 	rcu_barrier();
-	LOG("dstore_fini: rcu_barrier complete");
+	TRACE("dstore_fini: rcu_barrier complete");
 	if (g_dstore_ht) {
 		cds_lfht_destroy(g_dstore_ht, NULL);
 		g_dstore_ht = NULL;
@@ -197,8 +197,8 @@ static int mount_get_root_fh(struct dstore *ds)
 	__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED,
 			  __ATOMIC_RELEASE);
 
-	LOG("dstore[%u]: mounted %s:%s (FH %u bytes)", ds->ds_id,
-	    ds->ds_address, ds->ds_path, ds->ds_root_fh_len);
+	TRACE("dstore[%u]: mounted %s:%s (FH %u bytes)", ds->ds_id,
+	      ds->ds_address, ds->ds_path, ds->ds_root_fh_len);
 
 out_free:
 	xdr_free((xdrproc_t)xdr_mountres3, (caddr_t)&res);
@@ -242,7 +242,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
 		ds->ds_ops = &dstore_ops_local;
 		__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED,
 				  __ATOMIC_RELEASE);
-		LOG("dstore[%u]: local path %s:%s", id, address, path);
+		TRACE("dstore[%u]: local path %s:%s", id, address, path);
 	} else {
 		ds->ds_ops = &dstore_ops_nfsv3;
 	}
@@ -336,8 +336,8 @@ int dstore_reconnect(struct dstore *ds)
 	}
 	ds->ds_root_fh_len = 0;
 
-	LOG("dstore[%u]: reconnecting to %s:%s", ds->ds_id, ds->ds_address,
-	    ds->ds_path);
+	TRACE("dstore[%u]: reconnecting to %s:%s", ds->ds_id, ds->ds_address,
+	      ds->ds_path);
 
 	ret = mount_get_root_fh(ds);
 	if (ret < 0)
@@ -381,7 +381,7 @@ int dstore_load_config(const struct reffs_config *cfg)
 		dstore_put(ds);
 	}
 
-	LOG("dstore: loaded %u data server(s)", n);
+	TRACE("dstore: loaded %u data server(s)", n);
 	return 0;
 }
 

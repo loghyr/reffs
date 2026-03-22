@@ -959,7 +959,7 @@ void reffs_fs_recover(struct super_block *sb)
 	    !sb->sb_backend_path)
 		return;
 
-	LOG("Starting recovery from %s", sb->sb_backend_path);
+	TRACE("Starting recovery from %s", sb->sb_backend_path);
 
 	/* Scan directory for all meta files to find the true max inode number */
 	char sb_path[PATH_MAX];
@@ -978,7 +978,7 @@ void reffs_fs_recover(struct super_block *sb)
 				char tmp_path[PATH_MAX];
 				snprintf(tmp_path, sizeof(tmp_path), "%s/%s",
 					 sb_path, de->d_name);
-				LOG("Deleting stray tmp file %s", tmp_path);
+				TRACE("Deleting stray tmp file %s", tmp_path);
 				unlink(tmp_path);
 			}
 		}
@@ -993,7 +993,7 @@ void reffs_fs_recover(struct super_block *sb)
 
 	recover_directory_recursive(sb->sb_dirent);
 
-	LOG("Recovery complete. Max inode: %lu", sb->sb_next_ino);
+	TRACE("Recovery complete. Max inode: %lu", sb->sb_next_ino);
 }
 
 int reffs_fs_usage(struct reffs_fs_usage_stats *stats)

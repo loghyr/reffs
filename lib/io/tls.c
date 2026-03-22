@@ -33,12 +33,12 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 	X509_NAME_oneline(X509_get_subject_name(cert), subject,
 			  sizeof(subject));
 
-	LOG("Certificate verification: preverify=%d depth=%d subject=%s",
-	    preverify_ok, depth, subject);
+	TRACE("Certificate verification: preverify=%d depth=%d subject=%s",
+	      preverify_ok, depth, subject);
 
 	if (!preverify_ok) {
-		LOG("Certificate verification error: %d (%s)", err,
-		    X509_verify_cert_error_string(err));
+		TRACE("Certificate verification error: %d (%s)", err,
+		      X509_verify_cert_error_string(err));
 
 		// Always return 1 to accept all certificates
 		return 1;
@@ -54,11 +54,11 @@ static int io_tls_alpn_select_cb(SSL __attribute__((unused)) * ssl,
 				 unsigned int inlen,
 				 void __attribute__((unused)) * arg)
 {
-	LOG("ALPN callback invoked with offered protocols:");
+	TRACE("ALPN callback invoked with offered protocols:");
 
 	// No ALPN offered - accept connection anyway
 	if (inlen == 0) {
-		LOG("No ALPN extension present - accepting connection regardless");
+		TRACE("No ALPN extension present - accepting connection regardless");
 		*out = (const unsigned char *)"sunrpc";
 		*outlen = 6;
 		return SSL_TLSEXT_ERR_OK;
@@ -67,7 +67,7 @@ static int io_tls_alpn_select_cb(SSL __attribute__((unused)) * ssl,
 	// Normal ALPN processing
 	for (unsigned int i = 0; i < inlen;) {
 		unsigned int len = in[i];
-		LOG("  Offered: %.*s", len, &in[i + 1]);
+		TRACE("  Offered: %.*s", len, &in[i + 1]);
 		i += len + 1;
 	}
 
@@ -76,13 +76,13 @@ static int io_tls_alpn_select_cb(SSL __attribute__((unused)) * ssl,
 				  sizeof(alpn_proto) - 1, in,
 				  inlen) != OPENSSL_NPN_NEGOTIATED) {
 		// Changed behavior - accept even if sunrpc not offered
-		LOG("ALPN sunrpc not offered, accepting anyway");
+		TRACE("ALPN sunrpc not offered, accepting anyway");
 		*out = (const unsigned char *)"sunrpc";
 		*outlen = 6;
 		return SSL_TLSEXT_ERR_OK;
 	}
 
-	LOG("ALPN sunrpc negotiated");
+	TRACE("ALPN sunrpc negotiated");
 	return SSL_TLSEXT_ERR_OK;
 }
 #endif
@@ -91,12 +91,12 @@ static void ssl_info_callback(const SSL __attribute__((unused)) * ssl, int type,
 			      int val)
 {
 	if (type & SSL_CB_ALERT) {
-		LOG("SSL ALERT: %s:%s", SSL_alert_type_string_long(val),
-		    SSL_alert_desc_string_long(val));
+		TRACE("SSL ALERT: %s:%s", SSL_alert_type_string_long(val),
+		      SSL_alert_desc_string_long(val));
 	} else if (type & SSL_CB_HANDSHAKE_START) {
-		LOG("SSL HANDSHAKE START");
+		TRACE("SSL HANDSHAKE START");
 	} else if (type & SSL_CB_HANDSHAKE_DONE) {
-		LOG("SSL HANDSHAKE DONE");
+		TRACE("SSL HANDSHAKE DONE");
 	}
 }
 
@@ -110,11 +110,11 @@ int io_tls_init_server_context(void)
 	while ((err = ERR_get_error()) != 0) {
 		char err_buf[256];
 		ERR_error_string_n(err, err_buf, sizeof(err_buf));
-		LOG("OpenSSL error at startup: %s", err_buf);
+		TRACE("OpenSSL error at startup: %s", err_buf);
 	}
 
-	LOG("OpenSSL version: %s", OpenSSL_version(OPENSSL_VERSION));
-	LOG("OpenSSL TLS method: %p", (void *)TLS_server_method());
+	TRACE("OpenSSL version: %s", OpenSSL_version(OPENSSL_VERSION));
+	TRACE("OpenSSL TLS method: %p", (void *)TLS_server_method());
 
 	SSL_load_error_strings();
 	ERR_load_crypto_strings();
@@ -127,7 +127,7 @@ int io_tls_init_server_context(void)
 	// Create a new SSL context
 	reffs_server_ssl_ctx = SSL_CTX_new(TLS_server_method());
 	if (!reffs_server_ssl_ctx) {
-		LOG("Error creating SSL context");
+		TRACE("Error creating SSL context");
 		return EINVAL;
 	}
 
@@ -156,27 +156,27 @@ int io_tls_init_server_context(void)
 
 #ifdef TLS_DEBUGGING
 	// Log the verification settings
-	LOG("TLS verify mode: %d, depth: %d",
-	    SSL_CTX_get_verify_mode(reffs_server_ssl_ctx),
-	    SSL_CTX_get_verify_depth(reffs_server_ssl_ctx));
+	TRACE("TLS verify mode: %d, depth: %d",
+	      SSL_CTX_get_verify_mode(reffs_server_ssl_ctx),
+	      SSL_CTX_get_verify_depth(reffs_server_ssl_ctx));
 #endif
 
 	const char *min_tls = getenv("REFFS_MIN_TLS_VERSION");
 	if (min_tls) {
 		if (strcmp(min_tls, "1.0") == 0) {
-			LOG("Setting minimum TLS version to 1.0");
+			TRACE("Setting minimum TLS version to 1.0");
 			SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx,
 						      TLS1_VERSION);
 		} else if (strcmp(min_tls, "1.1") == 0) {
-			LOG("Setting minimum TLS version to 1.1");
+			TRACE("Setting minimum TLS version to 1.1");
 			SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx,
 						      TLS1_1_VERSION);
 		} else if (strcmp(min_tls, "1.2") == 0) {
-			LOG("Setting minimum TLS version to 1.2");
+			TRACE("Setting minimum TLS version to 1.2");
 			SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx,
 						      TLS1_2_VERSION);
 		} else {
-			LOG("Setting minimum TLS version to 1.3");
+			TRACE("Setting minimum TLS version to 1.3");
 			SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx,
 						      TLS1_3_VERSION);
 		}
@@ -190,13 +190,13 @@ int io_tls_init_server_context(void)
 #ifdef TLS_DEBUGGING
 	const char *ciphers = "HIGH:!aNULL:!MD5:!RC4";
 	if (SSL_CTX_set_cipher_list(reffs_server_ssl_ctx, ciphers) == 0) {
-		LOG("Error setting cipher list");
+		TRACE("Error setting cipher list");
 		SSL_CTX_free(reffs_server_ssl_ctx);
 		reffs_server_ssl_ctx = NULL;
 		return EINVAL;
 	}
 
-	LOG("Selected ciphers: %s", ciphers);
+	TRACE("Selected ciphers: %s", ciphers);
 #endif
 
 	const char *cert_path = getenv("REFFS_CERT_PATH");
@@ -210,7 +210,7 @@ int io_tls_init_server_context(void)
 	// Load certificates and private key
 	if (SSL_CTX_use_certificate_file(reffs_server_ssl_ctx, cert_path,
 					 SSL_FILETYPE_PEM) <= 0) {
-		LOG("Error loading certificate file");
+		TRACE("Error loading certificate file");
 		SSL_CTX_free(reffs_server_ssl_ctx);
 		reffs_server_ssl_ctx = NULL;
 		return EINVAL;
@@ -218,7 +218,7 @@ int io_tls_init_server_context(void)
 
 	if (SSL_CTX_use_PrivateKey_file(reffs_server_ssl_ctx, key_path,
 					SSL_FILETYPE_PEM) <= 0) {
-		LOG("Error loading private key file");
+		TRACE("Error loading private key file");
 		SSL_CTX_free(reffs_server_ssl_ctx);
 		reffs_server_ssl_ctx = NULL;
 		return EINVAL;
@@ -226,7 +226,7 @@ int io_tls_init_server_context(void)
 
 	// Check key and certificate compatibility
 	if (!SSL_CTX_check_private_key(reffs_server_ssl_ctx)) {
-		LOG("Private key and certificate do not match");
+		TRACE("Private key and certificate do not match");
 		SSL_CTX_free(reffs_server_ssl_ctx);
 		reffs_server_ssl_ctx = NULL;
 		return EINVAL;
@@ -243,24 +243,24 @@ int io_tls_init_server_context(void)
 
 	if (require_alpn && strcasecmp(require_alpn, "false") == 0) {
 		strict_alpn = false;
-		LOG("ALPN requirement disabled - will accept connections without ALPN");
+		TRACE("ALPN requirement disabled - will accept connections without ALPN");
 	}
 
 	// Set ALPN only if strict mode is enabled
 	if (strict_alpn) {
-		LOG("Installing ALPN callback for sunrpc");
+		TRACE("Installing ALPN callback for sunrpc");
 		SSL_CTX_set_alpn_protos(reffs_server_ssl_ctx, alpn_protos,
 					sizeof(alpn_protos));
 		SSL_CTX_set_alpn_select_cb(reffs_server_ssl_ctx,
 					   io_tls_alpn_select_cb, NULL);
 	}
 #else
-	LOG("Installing ALPN support for sunrpc (non-strict mode)");
+	TRACE("Installing ALPN support for sunrpc (non-strict mode)");
 	SSL_CTX_set_alpn_protos(reffs_server_ssl_ctx, alpn_protos,
 				sizeof(alpn_protos));
 
 #endif
 
-	LOG("Server TLS context initialized successfully");
+	TRACE("Server TLS context initialized successfully");
 	return 0;
 }

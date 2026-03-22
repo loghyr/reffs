@@ -56,7 +56,7 @@ static void sm_load_state(void)
 			fclose(fp);
 		}
 	}
-	LOG("NSM: Local state is %d", sm_state);
+	TRACE("NSM: Local state is %d", sm_state);
 }
 
 int sm_get_state(void)
@@ -161,7 +161,7 @@ static int sm_op_unmon_all(struct rpc_trans *rt)
 
 static int sm_op_simu_crash(struct rpc_trans __attribute__((unused)) *rt)
 {
-	LOG("NSM: SM_SIMU_CRASH received. Re-initializing state.");
+	TRACE("NSM: SM_SIMU_CRASH received. Re-initializing state.");
 	sm_load_state();
 	/* A real simulation should notify all monitored hosts */
 	return 0;
@@ -173,8 +173,8 @@ static int sm_op_notify(struct rpc_trans *rt)
 	struct status *args = ph->ph_args;
 	struct nlm4_notify nlm_args;
 
-	LOG("NSM: Received NOTIFY from %s (state %d)", args->mon_name,
-	    args->state);
+	TRACE("NSM: Received NOTIFY from %s (state %d)", args->mon_name,
+	      args->state);
 
 	/* Tell NLM to free all locks for this host */
 	nlm_args.name = args->mon_name;

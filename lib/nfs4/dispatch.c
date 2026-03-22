@@ -211,11 +211,9 @@ bool dispatch_compound(struct compound *compound)
 		resop->resop = argop->argop;
 		if (argop->argop < OP_MAX && op_table[argop->argop]) {
 			compound->c_op_start_ns = reffs_now_ns();
-#ifdef VERBOSE_DEBUG
-			LOG("dispatch op=%s(%d) curr_op=%u",
-			    nfs4_op_name(argop->argop), argop->argop,
-			    compound->c_curr_op);
-#endif
+			TRACE("dispatch op=%s(%d) curr_op=%u",
+			      nfs4_op_name(argop->argop), argop->argop,
+			      compound->c_curr_op);
 			uint32_t op_flags =
 				op_table[argop->argop](compound);
 
@@ -236,12 +234,11 @@ bool dispatch_compound(struct compound *compound)
 		}
 
 		if (resop->nfs_resop4_u.opillegal.status) {
-#ifdef VERBOSE_DEBUG
-			LOG("dispatch op=%s(%d) FAILED status=%s(%d)",
-			    nfs4_op_name(argop->argop), argop->argop,
-			    nfs4_err_name(resop->nfs_resop4_u.opillegal.status),
-			    resop->nfs_resop4_u.opillegal.status);
-#endif
+			TRACE("dispatch op=%s(%d) FAILED status=%s(%d)",
+			      nfs4_op_name(argop->argop), argop->argop,
+			      nfs4_err_name(
+				      resop->nfs_resop4_u.opillegal.status),
+			      resop->nfs_resop4_u.opillegal.status);
 			res->status = resop->nfs_resop4_u.opillegal.status;
 			res->resarray.resarray_len = compound->c_curr_op + 1;
 			return false;

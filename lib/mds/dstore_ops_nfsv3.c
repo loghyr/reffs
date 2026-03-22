@@ -302,8 +302,8 @@ static int nfsv3_fence(struct dstore *ds, const uint8_t *fh,
 	ldf->ldf_uid = new_uid;
 	ldf->ldf_gid = new_gid;
 
-	LOG("dstore[%u]: fenced to uid=%u gid=%u", ds->ds_id, new_uid,
-	    new_gid);
+	TRACE("dstore[%u]: fenced to uid=%u gid=%u", ds->ds_id, new_uid,
+	      new_gid);
 
 	xdr_free((xdrproc_t)xdr_SETATTR3res, (caddr_t)&res);
 	return 0;

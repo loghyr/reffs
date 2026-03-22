@@ -171,7 +171,7 @@ int create_worker_threads(volatile sig_atomic_t *running)
 void wait_for_worker_threads(void)
 {
 	// Wait for worker threads to finish
-	LOG("Waiting for worker threads to exit...");
+	TRACE("Waiting for worker threads to exit...");
 	for (int i = 0; i < num_worker_threads; i++) {
 		pthread_join(worker_threads[i], NULL);
 	}
