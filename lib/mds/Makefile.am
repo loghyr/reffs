@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+SUBDIRS = tests
+
 AM_CFLAGS = -I$(top_srcdir)/lib/include \
 	$(TIRPC_CFLAGS) \
 	-I$(top_builddir)/lib/xdr

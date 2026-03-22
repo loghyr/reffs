@@ -339,6 +339,78 @@ START_TEST(test_load_export_multiple_flavors)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* load — [[data_server]] entries                                      */
+/* ------------------------------------------------------------------ */
+
+START_TEST(test_load_data_server_single)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[data_server]]\n"
+				"address = \"192.168.2.105\"\n"
+				"path    = \"/ds1\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.ndata_servers, 1);
+	ck_assert_str_eq(cfg.data_servers[0].address, "192.168.2.105");
+	ck_assert_str_eq(cfg.data_servers[0].path, "/ds1");
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_data_server_multiple)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[data_server]]\n"
+				"address = \"192.168.2.105\"\n"
+				"path    = \"/foo\"\n"
+				"\n"
+				"[[data_server]]\n"
+				"address = \"192.168.2.106\"\n"
+				"path    = \"/bar\"\n"
+				"\n"
+				"[[data_server]]\n"
+				"address = \"10.0.0.1\"\n"
+				"path    = \"/baz\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.ndata_servers, 3);
+	ck_assert_str_eq(cfg.data_servers[0].address, "192.168.2.105");
+	ck_assert_str_eq(cfg.data_servers[0].path, "/foo");
+	ck_assert_str_eq(cfg.data_servers[1].address, "192.168.2.106");
+	ck_assert_str_eq(cfg.data_servers[1].path, "/bar");
+	ck_assert_str_eq(cfg.data_servers[2].address, "10.0.0.1");
+	ck_assert_str_eq(cfg.data_servers[2].path, "/baz");
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_data_server_none)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[server]\nrole = \"mds\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.ndata_servers, 0);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* load — bad file path                                                */
 /* ------------------------------------------------------------------ */
 
@@ -414,6 +486,9 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_backend_posix);
 	tcase_add_test(tc_load, test_load_export_basic);
 	tcase_add_test(tc_load, test_load_export_multiple_flavors);
+	tcase_add_test(tc_load, test_load_data_server_single);
+	tcase_add_test(tc_load, test_load_data_server_multiple);
+	tcase_add_test(tc_load, test_load_data_server_none);
 	tcase_add_test(tc_load, test_load_missing_file);
 	suite_add_tcase(s, tc_load);
 

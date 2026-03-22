@@ -30,6 +30,7 @@
 #include "mntv3_xdr.h"
 #include "reffs/dstore.h"
 #include "reffs/log.h"
+#include "reffs/trace/dstore.h"
 
 /* ------------------------------------------------------------------ */
 /* Global hash table                                                   */
@@ -62,6 +63,7 @@ static void dstore_free_rcu(struct rcu_head *rcu)
 {
 	struct dstore *ds = caa_container_of(rcu, struct dstore, ds_rcu);
 
+	trace_dstore(ds, __func__, __LINE__);
 	if (ds->ds_clnt)
 		clnt_destroy(ds->ds_clnt);
 	pthread_mutex_destroy(&ds->ds_clnt_mutex);
@@ -72,6 +74,7 @@ static void dstore_release(struct urcu_ref *ref)
 {
 	struct dstore *ds = caa_container_of(ref, struct dstore, ds_ref);
 
+	trace_dstore(ds, __func__, __LINE__);
 	dstore_unhash(ds);
 	call_rcu(&ds->ds_rcu, dstore_free_rcu);
 }
@@ -82,6 +85,7 @@ struct dstore *dstore_get(struct dstore *ds)
 		return NULL;
 	if (!urcu_ref_get_unless_zero(&ds->ds_ref))
 		return NULL;
+	trace_dstore(ds, __func__, __LINE__);
 	return ds;
 }
 
@@ -89,6 +93,7 @@ void dstore_put(struct dstore *ds)
 {
 	if (!ds)
 		return;
+	trace_dstore(ds, __func__, __LINE__);
 	urcu_ref_put(&ds->ds_ref, dstore_release);
 }
 
@@ -105,6 +110,7 @@ bool dstore_unhash(struct dstore *ds)
 	if (!g_dstore_ht)
 		return false;
 
+	trace_dstore(ds, __func__, __LINE__);
 	ret = cds_lfht_del(g_dstore_ht, &ds->ds_node);
 	assert(!ret);
 	(void)ret;
@@ -125,7 +131,10 @@ int dstore_init(void)
 
 void dstore_fini(void)
 {
+	LOG("dstore_fini: draining");
 	dstore_unload_all();
+	rcu_barrier();
+	LOG("dstore_fini: rcu_barrier complete");
 	if (g_dstore_ht) {
 		cds_lfht_destroy(g_dstore_ht, NULL);
 		g_dstore_ht = NULL;
@@ -205,7 +214,8 @@ out:
 /* Alloc / find                                                        */
 /* ------------------------------------------------------------------ */
 
-struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path)
+struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
+			   bool do_mount)
 {
 	struct dstore *ds;
 	struct cds_lfht_node *node;
@@ -226,12 +236,10 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path)
 	cds_lfht_node_init(&ds->ds_node);
 	urcu_ref_init(&ds->ds_ref); /* ref 1: hash table */
 
-	/* Connect and mount. */
-	if (mount_get_root_fh(ds) < 0) {
+	/* Connect and mount (skipped for unit tests / deferred mount). */
+	if (do_mount && mount_get_root_fh(ds) < 0) {
 		LOG("dstore[%u]: mount failed for %s:%s (continuing)", id,
 		    address, path);
-		/* Keep the dstore in the table even if mount fails —
-		 * it can be retried later. */
 	}
 
 	/* Insert into hash table. */
@@ -255,6 +263,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path)
 
 	/* Ref 2: caller. */
 	dstore_get(ds);
+	trace_dstore(ds, __func__, __LINE__);
 	return ds;
 }
 
@@ -345,7 +354,8 @@ int dstore_load_config(const struct reffs_config *cfg)
 	for (unsigned int i = 0; i < n; i++) {
 		const struct reffs_data_server_config *dsc =
 			&cfg->data_servers[i];
-		struct dstore *ds = dstore_alloc(i, dsc->address, dsc->path);
+		struct dstore *ds =
+			dstore_alloc(i, dsc->address, dsc->path, true);
 
 		if (!ds) {
 			LOG("dstore[%u]: alloc failed for %s:%s", i,
@@ -363,14 +373,18 @@ int dstore_load_config(const struct reffs_config *cfg)
 void dstore_unload_all(void)
 {
 	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
 	struct dstore *ds;
 
 	if (!g_dstore_ht)
 		return;
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(g_dstore_ht, &iter, ds, ds_node)
-	{
+	cds_lfht_first(g_dstore_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		ds = caa_container_of(node, struct dstore, ds_node);
+		trace_dstore(ds, __func__, __LINE__);
+		cds_lfht_next(g_dstore_ht, &iter);
 		if (dstore_unhash(ds))
 			dstore_put(ds);
 	}

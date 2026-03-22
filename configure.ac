@@ -436,6 +436,7 @@ AC_CONFIG_FILES([
 	lib/ec/Makefile
 	lib/ec/tests/Makefile
 	lib/mds/Makefile
+	lib/mds/tests/Makefile
 	lib/fs/Makefile
 	lib/fs/tests/Makefile
 	lib/nlm/Makefile

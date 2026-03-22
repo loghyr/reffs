@@ -79,11 +79,15 @@ void dstore_fini(void);
  * dstore_alloc -- allocate a dstore, mount it, and insert into the
  * global hash table.
  *
+ * If mount is true, connect to the DS via MOUNT to obtain the root
+ * FH.  If false, the dstore is inserted unmounted (for unit tests
+ * or deferred mount).
+ *
  * Returns a ref-bumped pointer on success (caller must dstore_put),
- * or NULL on failure.
+ * or NULL on failure (duplicate ID).
  */
 struct dstore *dstore_alloc(uint32_t id, const char *address,
-			    const char *path);
+			    const char *path, bool mount);
 
 /*
  * dstore_find -- look up by id.
