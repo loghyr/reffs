@@ -52,7 +52,7 @@ static nfs_fh3 make_fh3(const uint8_t *fh, uint32_t len)
 /* CREATE                                                              */
 /* ------------------------------------------------------------------ */
 
-int dstore_data_file_create(struct dstore *ds, const uint8_t *dir_fh,
+static int nfsv3_create(struct dstore *ds, const uint8_t *dir_fh,
 			    uint32_t dir_fh_len, const char *name,
 			    uint8_t *out_fh, uint32_t *out_fh_len)
 {
@@ -122,7 +122,7 @@ int dstore_data_file_create(struct dstore *ds, const uint8_t *dir_fh,
 /* REMOVE                                                              */
 /* ------------------------------------------------------------------ */
 
-int dstore_data_file_remove(struct dstore *ds, const uint8_t *dir_fh,
+static int nfsv3_remove(struct dstore *ds, const uint8_t *dir_fh,
 			    uint32_t dir_fh_len, const char *name)
 {
 	REMOVE3args args;
@@ -162,7 +162,7 @@ int dstore_data_file_remove(struct dstore *ds, const uint8_t *dir_fh,
 /* CHMOD (SETATTR mode)                                                */
 /* ------------------------------------------------------------------ */
 
-int dstore_data_file_chmod(struct dstore *ds, const uint8_t *fh,
+static int nfsv3_chmod(struct dstore *ds, const uint8_t *fh,
 			   uint32_t fh_len)
 {
 	SETATTR3args args;
@@ -203,7 +203,7 @@ int dstore_data_file_chmod(struct dstore *ds, const uint8_t *fh,
 /* TRUNCATE (SETATTR size)                                             */
 /* ------------------------------------------------------------------ */
 
-int dstore_data_file_truncate(struct dstore *ds, const uint8_t *fh,
+static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh,
 			      uint32_t fh_len, uint64_t size)
 {
 	SETATTR3args args;
@@ -245,7 +245,7 @@ int dstore_data_file_truncate(struct dstore *ds, const uint8_t *fh,
 /* FENCE (SETATTR uid/gid rotation)                                    */
 /* ------------------------------------------------------------------ */
 
-int dstore_data_file_fence(struct dstore *ds, const uint8_t *fh,
+static int nfsv3_fence(struct dstore *ds, const uint8_t *fh,
 			   uint32_t fh_len, struct layout_data_file *ldf,
 			   uint32_t fence_min, uint32_t fence_max)
 {
@@ -313,7 +313,7 @@ int dstore_data_file_fence(struct dstore *ds, const uint8_t *fh,
 /* GETATTR                                                             */
 /* ------------------------------------------------------------------ */
 
-int dstore_data_file_getattr(struct dstore *ds, const uint8_t *fh,
+static int nfsv3_getattr(struct dstore *ds, const uint8_t *fh,
 			     uint32_t fh_len, struct layout_data_file *ldf)
 {
 	GETATTR3args args;
@@ -372,3 +372,17 @@ int dstore_data_file_getattr(struct dstore *ds, const uint8_t *fh,
 	xdr_free((xdrproc_t)xdr_GETATTR3res, (caddr_t)&res);
 	return 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* Vtable                                                              */
+/* ------------------------------------------------------------------ */
+
+const struct dstore_ops dstore_ops_nfsv3 = {
+	.name = "nfsv3",
+	.create = nfsv3_create,
+	.remove = nfsv3_remove,
+	.chmod = nfsv3_chmod,
+	.truncate = nfsv3_truncate,
+	.fence = nfsv3_fence,
+	.getattr = nfsv3_getattr,
+};
