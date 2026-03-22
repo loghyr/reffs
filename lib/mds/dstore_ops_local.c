@@ -73,11 +73,11 @@ static struct inode *local_dir_fh_to_inode(const uint8_t *dir_fh,
 /* CREATE                                                              */
 /* ------------------------------------------------------------------ */
 
-static int local_create(struct dstore *ds, const uint8_t *dir_fh,
+static int local_create(struct dstore *ds __attribute__((unused)), const uint8_t *dir_fh,
 			uint32_t dir_fh_len, const char *name,
 			uint8_t *out_fh, uint32_t *out_fh_len)
 {
-	(void)ds;
+	
 	struct inode *parent = local_dir_fh_to_inode(dir_fh, dir_fh_len);
 	struct inode *child = NULL;
 	struct authunix_parms ap = { 0 };
@@ -117,10 +117,10 @@ static int local_create(struct dstore *ds, const uint8_t *dir_fh,
 /* REMOVE                                                              */
 /* ------------------------------------------------------------------ */
 
-static int local_remove(struct dstore *ds, const uint8_t *dir_fh,
+static int local_remove(struct dstore *ds __attribute__((unused)), const uint8_t *dir_fh,
 			uint32_t dir_fh_len, const char *name)
 {
-	(void)ds;
+	
 	struct inode *parent = local_dir_fh_to_inode(dir_fh, dir_fh_len);
 	struct authunix_parms ap = { 0 };
 	int ret;
@@ -137,9 +137,9 @@ static int local_remove(struct dstore *ds, const uint8_t *dir_fh,
 /* CHMOD                                                               */
 /* ------------------------------------------------------------------ */
 
-static int local_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len)
+static int local_chmod(struct dstore *ds __attribute__((unused)), const uint8_t *fh, uint32_t fh_len)
 {
-	(void)ds;
+	
 	struct inode *inode = local_fh_to_inode(fh, fh_len);
 
 	if (!inode)
@@ -158,10 +158,10 @@ static int local_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len)
 /* TRUNCATE                                                            */
 /* ------------------------------------------------------------------ */
 
-static int local_truncate(struct dstore *ds, const uint8_t *fh,
+static int local_truncate(struct dstore *ds __attribute__((unused)), const uint8_t *fh,
 			  uint32_t fh_len, uint64_t size)
 {
-	(void)ds;
+	
 	struct inode *inode = local_fh_to_inode(fh, fh_len);
 	struct authunix_parms ap = { 0 };
 	struct reffs_sattr sattr = { 0 };
@@ -182,11 +182,11 @@ static int local_truncate(struct dstore *ds, const uint8_t *fh,
 /* FENCE                                                               */
 /* ------------------------------------------------------------------ */
 
-static int local_fence(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+static int local_fence(struct dstore *ds __attribute__((unused)), const uint8_t *fh, uint32_t fh_len,
 		       struct layout_data_file *ldf, uint32_t fence_min,
 		       uint32_t fence_max)
 {
-	(void)ds;
+	
 	struct inode *inode;
 	uint32_t new_uid, new_gid;
 
@@ -222,10 +222,10 @@ static int local_fence(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 /* GETATTR                                                             */
 /* ------------------------------------------------------------------ */
 
-static int local_getattr(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+static int local_getattr(struct dstore *ds __attribute__((unused)), const uint8_t *fh, uint32_t fh_len,
 			 struct layout_data_file *ldf)
 {
-	(void)ds;
+	
 	struct inode *inode = local_fh_to_inode(fh, fh_len);
 
 	if (!inode) {
