@@ -355,7 +355,7 @@ int dstore_load_config(const struct reffs_config *cfg)
 		const struct reffs_data_server_config *dsc =
 			&cfg->data_servers[i];
 		struct dstore *ds =
-			dstore_alloc(i, dsc->address, dsc->path, true);
+			dstore_alloc(dsc->id, dsc->address, dsc->path, true);
 
 		if (!ds) {
 			LOG("dstore[%u]: alloc failed for %s:%s", i,

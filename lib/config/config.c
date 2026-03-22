@@ -359,6 +359,10 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 				&cfg->data_servers[i];
 			toml_datum_t d;
 
+			d = toml_int_in(ds_tbl, "id");
+			if (d.ok)
+				dsc->id = (uint32_t)d.u.i;
+
 			d = toml_string_in(ds_tbl, "address");
 			if (d.ok) {
 				strncpy(dsc->address, d.u.s,
