@@ -222,6 +222,18 @@ bool dispatch_compound(struct compound *compound)
 			if (t != NULL && task_check_and_clear_went_async(t))
 				return true;
 
+			/*
+			 * Sanity check: if rt_next_action is still set but
+			 * went_async was not detected, the async flag was
+			 * lost — likely a UAF on t.
+			 */
+			if (compound->c_rt->rt_next_action != NULL) {
+				LOG("dispatch_compound: ASYNC MISSED op=%d "
+				    "curr_op=%u — possible UAF on task",
+				    argop->argop, compound->c_curr_op);
+				compound->c_rt->rt_next_action = NULL;
+			}
+
 			trace_nfs4_compound_op(compound, __func__, __LINE__);
 			RECORD_OP_STATS(resop);
 		} else {

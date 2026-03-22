@@ -111,6 +111,10 @@ static void io_handle_backend_pread(struct io_context *ic, int res)
 		return;
 	}
 
+	if (res < 0 || (size_t)res < ic->ic_expected_len)
+		LOG("backend_pread: fd=%d expected=%zu got=%d", ic->ic_fd,
+		    ic->ic_expected_len, res);
+
 	rt->rt_io_result = (ssize_t)res;
 	io_context_destroy(ic);
 
@@ -128,6 +132,10 @@ static void io_handle_backend_pwrite(struct io_context *ic, int res)
 		io_context_destroy(ic);
 		return;
 	}
+
+	if (res < 0 || (size_t)res < ic->ic_expected_len)
+		LOG("backend_pwrite: fd=%d expected=%zu got=%d", ic->ic_fd,
+		    ic->ic_expected_len, res);
 
 	rt->rt_io_result = (ssize_t)res;
 	io_context_destroy(ic);
@@ -276,6 +284,7 @@ int io_request_backend_pread(int fd, void *buf, size_t len, off_t offset,
 		return -EBUSY;
 	}
 
+	ic->ic_expected_len = len;
 	io_uring_prep_read(sqe, fd, buf, (unsigned)len, (uint64_t)offset);
 
 	return submit_backend_op(ic, sqe, rc);
@@ -308,6 +317,7 @@ int io_request_backend_pwrite(int fd, const void *buf, size_t len, off_t offset,
 		return -EBUSY;
 	}
 
+	ic->ic_expected_len = len;
 	/* Cast away const — io_uring_prep_write takes void *, not const void * */
 	io_uring_prep_write(sqe, fd, (void *)buf, (unsigned)len,
 			    (uint64_t)offset);
