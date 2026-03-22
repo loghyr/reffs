@@ -275,8 +275,8 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
 #ifdef TLS_DEBUGGING
-	LOG("ci=%p ssl=%p tls=%d", (void *)ci, ci ? (void *)ci->ci_ssl : NULL,
-	    ci ? ci->ci_tls_enabled : 0);
+	TRACE("ci=%p ssl=%p tls=%d", (void *)ci, ci ? (void *)ci->ci_ssl : NULL,
+	      ci ? ci->ci_tls_enabled : 0);
 #endif
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
 		ret = io_do_tls(ic, rc);
@@ -364,8 +364,8 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 	}
 
 #ifdef TLS_DEBUGGING
-	LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci, ci->ci_tls_handshaking,
-	    ci->ci_tls_enabled, (void *)ci->ci_ssl);
+	TRACE("ci=%p th=%d tls=%d ssl=%p", (void *)ci, ci->ci_tls_handshaking,
+	      ci->ci_tls_enabled, (void *)ci->ci_ssl);
 #endif
 
 	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,

@@ -147,13 +147,13 @@ static int setup_io_uring(struct ring_context *rc)
 
 	// Check if NODROP feature is supported
 	if (params.features & IORING_FEAT_NODROP) {
-		LOG("io_uring NODROP feature is supported - CQ entries won't be lost");
+		TRACE("io_uring NODROP feature is supported - CQ entries won't be lost");
 	} else {
-		LOG("WARNING: io_uring NODROP feature not supported - CQ overflow will drop entries");
+		TRACE("WARNING: io_uring NODROP feature not supported - CQ overflow will drop entries");
 	}
 
-	LOG("Initialized io_uring with SQ size %d, CQ size %d",
-	    params.sq_entries, params.cq_entries);
+	TRACE("Initialized io_uring with SQ size %d, CQ size %d",
+	      params.sq_entries, params.cq_entries);
 	return 0;
 }
 
@@ -313,7 +313,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		int running_local;
 		__atomic_load(running_flag, &running_local, __ATOMIC_SEQ_CST);
 		if (!running_local) {
-			LOG("Detected shutdown flag, breaking main loop");
+			TRACE("Detected shutdown flag, breaking main loop");
 			break;
 		}
 
@@ -409,11 +409,11 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 					if (ci &&
 					    (ci->ci_tls_handshaking ||
 					     ci->ci_handshake_final_pending)) {
-						LOG("Processing TLS write completion for special context state");
+						TRACE("Processing TLS write completion for special context state");
 						ret = io_handle_write(
 							ic, cqe->res, rc);
 					} else {
-						LOG("Skipping processing for non-TLS-handshake context");
+						TRACE("Skipping processing for non-TLS-handshake context");
 					}
 				}
 
@@ -507,7 +507,7 @@ void io_handler_fini(struct ring_context *rc)
 	}
 
 	// Cleanup any pending requests
-	LOG("Cleaning up pending requests...");
+	TRACE("Cleaning up pending requests...");
 	pthread_mutex_lock(&request_mutex);
 	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
 		if (pending_requests[i]) {
@@ -530,7 +530,7 @@ void io_handler_fini(struct ring_context *rc)
 		}
 	}
 
-	LOG("Cleaning up remaining active contexts...");
+	TRACE("Cleaning up remaining active contexts...");
 	io_context_release_active();
 
 	io_context_fini();

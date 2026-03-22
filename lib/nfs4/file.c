@@ -898,8 +898,8 @@ uint32_t nfs4_op_open_downgrade(struct compound *compound)
 
 	*status = NFS4_OK;
 out:
-	LOG("%s status=%s(%d) access=%u deny=%u", __func__,
-	    nfs4_err_name(*status), *status, new_access, new_deny);
+	TRACE("%s status=%s(%d) access=%u deny=%u", __func__,
+	      nfs4_err_name(*status), *status, new_access, new_deny);
 
 	return 0;
 }

@@ -196,7 +196,7 @@ void client_unload_all_clients(void)
 	struct cds_lfht_iter iter;
 	struct client *client;
 
-	LOG("unloading all clients");
+	TRACE("unloading all clients");
 
 	struct server_state *ss = server_state_find();
 	if (!ss) {

@@ -160,10 +160,10 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 #ifdef TLS_DEBUGGING
 	// Log SSL state
 	const SSL_CIPHER *cipher = SSL_get_current_cipher(ssl);
-	LOG("TLS Info: Protocol=%s Cipher=%s", SSL_get_version(ssl),
-	    cipher ? SSL_CIPHER_get_name(cipher) : "NONE");
+	TRACE("TLS Info: Protocol=%s Cipher=%s", SSL_get_version(ssl),
+	      cipher ? SSL_CIPHER_get_name(cipher) : "NONE");
 
-	LOG("TLS state: %s", SSL_state_string_long(ssl));
+	TRACE("TLS state: %s", SSL_state_string_long(ssl));
 #endif
 
 	// Check if handshake completed
@@ -217,7 +217,7 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 
 		int bytes = BIO_read(wbio, write_buffer, pending);
 #ifdef TLS_DEBUGGING
-		LOG("Reading %d bytes from wbio for fd=%d", bytes, fd);
+		TRACE("Reading %d bytes from wbio for fd=%d", bytes, fd);
 		rpc_log_packet("BIO: ", write_buffer, bytes);
 #endif
 
@@ -280,8 +280,8 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 				   "%02x ", bytes[i]);
 	}
 
-	LOG("TLS data first bytes: %s", hexdump);
-	LOG("TLS handshake: processing %zu bytes for fd=%d", len, fd);
+	TRACE("TLS data first bytes: %s", hexdump);
+	TRACE("TLS handshake: processing %zu bytes for fd=%d", len, fd);
 #endif
 
 	// Log detailed ClientHello info if this is one
@@ -318,18 +318,18 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 	}
 
 #ifdef TLS_DEBUGGING
-	LOG("SSL %p using SSL_CTX %p", (void *)ssl,
-	    (void *)SSL_get_SSL_CTX(ssl));
-	LOG("reffs_server_ssl_ctx is %p", (void *)reffs_server_ssl_ctx);
+	TRACE("SSL %p using SSL_CTX %p", (void *)ssl,
+	      (void *)SSL_get_SSL_CTX(ssl));
+	TRACE("reffs_server_ssl_ctx is %p", (void *)reffs_server_ssl_ctx);
 
 	// Log current ALPN state
 	const unsigned char *proto = NULL;
 	unsigned int proto_len = 0;
 	SSL_get0_alpn_selected(ssl, &proto, &proto_len);
 	if (proto_len == 0) {
-		LOG("ALPN not selected at this point");
+		TRACE("ALPN not selected at this point");
 	} else {
-		LOG("ALPN selected at this point: %.*s", proto_len, proto);
+		TRACE("ALPN selected at this point: %.*s", proto_len, proto);
 	}
 #endif
 
@@ -365,7 +365,7 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 #ifdef TLS_DEBUGGING
 	if (len == 6 && bytes[0] == 0x14 && bytes[1] == 0x03 &&
 	    bytes[2] == 0x03) {
-		LOG("ChangeCipherSpec received, forcing TLS compatibility mode for Fedora client");
+		TRACE("ChangeCipherSpec received, forcing TLS compatibility mode for Fedora client");
 		ci->ci_tls_enabled = true;
 		ci->ci_tls_handshaking = false;
 	}
@@ -743,9 +743,9 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
 #ifdef TLS_DEBUGGING
-		LOG("ci=%p th=%d tls=%d ssl=%p", (void *)ci,
-		    ci->ci_tls_handshaking, ci->ci_tls_enabled,
-		    (void *)ci->ci_ssl);
+		TRACE("ci=%p th=%d tls=%d ssl=%p", (void *)ci,
+		      ci->ci_tls_handshaking, ci->ci_tls_enabled,
+		      (void *)ci->ci_ssl);
 #endif
 		if (ci->ci_tls_handshaking) {
 			ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer,

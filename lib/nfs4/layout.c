@@ -151,7 +151,7 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	}
 	xdr_destroy(&xdrs);
 
-	LOG("GETDEVICEINFO: dstore[%u] addr=%s", dstore_id, uaddr);
+	TRACE("GETDEVICEINFO: dstore[%u] addr=%s", dstore_id, uaddr);
 	dstore_put(ds);
 
 	return 0;
@@ -383,9 +383,9 @@ out_free_ffl:
 	free(ffl.ffl_mirrors.ffl_mirrors_val);
 
 	if (*status == NFS4_OK)
-		LOG("LAYOUTGET: ino=%lu nfiles=%u stripe_unit=%u seqid=%u",
-		    compound->c_inode->i_ino, seg->ls_nfiles,
-		    seg->ls_stripe_unit, ls->ls_stid.s_seqid);
+		TRACE("LAYOUTGET: ino=%lu nfiles=%u stripe_unit=%u seqid=%u",
+		      compound->c_inode->i_ino, seg->ls_nfiles,
+		      seg->ls_stripe_unit, ls->ls_stid.s_seqid);
 
 	stateid_put(&ls->ls_stid); /* drop find/create ref */
 
@@ -499,9 +499,9 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 			stid);
 	}
 
-	LOG("LAYOUTRETURN: ino=%lu iomode=%d remaining=0x%lx",
-	    compound->c_inode->i_ino, args->lora_iomode,
-	    (unsigned long)remaining);
+	TRACE("LAYOUTRETURN: ino=%lu iomode=%d remaining=0x%lx",
+	      compound->c_inode->i_ino, args->lora_iomode,
+	      (unsigned long)remaining);
 
 	stateid_put(stid); /* find ref */
 

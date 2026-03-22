@@ -69,8 +69,8 @@ void reffs_nlm4_init_grace(uint32_t seconds)
 	struct timespec now;
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	grace_period_end = now.tv_sec + seconds;
-	LOG("NLM4: Grace period initialized for %u seconds (ends at %ld)",
-	    seconds, (long)grace_period_end);
+	TRACE("NLM4: Grace period initialized for %u seconds (ends at %ld)",
+	      seconds, (long)grace_period_end);
 }
 
 bool reffs_nlm4_in_grace(void)
@@ -382,7 +382,7 @@ void reffs_nlm4_free_all(struct nlm4_notify *args)
 	struct reffs_lock *le, *le_tmp;
 	struct reffs_share *se, *se_tmp;
 
-	LOG("NLM4: FREE_ALL for host %s", args->name);
+	TRACE("NLM4: FREE_ALL for host %s", args->name);
 
 	pthread_mutex_lock(&nlm4_hosts_mutex);
 	cds_list_for_each_entry(host, &nlm4_hosts, h_list) {
