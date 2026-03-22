@@ -398,8 +398,17 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 		struct timespec start, end;
 		uint64_t duration_ns;
 
+		/*
+		 * Save the op_handler pointer before the call.  If the
+		 * handler goes async (-EINPROGRESS), another thread may
+		 * resume the task, complete it, and free rt/ph before we
+		 * reach the stats recording below.  The op_handler itself
+		 * lives in a static table and is safe to dereference.
+		 */
+		struct rpc_operations_handler *op_handler = ph->ph_op_handler;
+
 		clock_gettime(CLOCK_MONOTONIC, &start);
-		ret = ph->ph_op_handler->roh_action(rt);
+		ret = op_handler->roh_action(rt);
 		clock_gettime(CLOCK_MONOTONIC, &end);
 		/* NFSv3 ops signal async with -EINPROGRESS; normalize for caller */
 		if (ret == -EINPROGRESS)
@@ -408,7 +417,7 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 		duration_ns = (end.tv_sec - start.tv_sec) * 1000000000ULL +
 			      (end.tv_nsec - start.tv_nsec);
 
-		rpc_record_operation_stats(ph->ph_op_handler, duration_ns, ret);
+		rpc_record_operation_stats(op_handler, duration_ns, ret);
 	} else {
 		rt->rt_info.ri_accept_stat = PROG_UNAVAIL;
 	}
