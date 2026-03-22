@@ -19,6 +19,7 @@
 struct super_block;
 struct data_block;
 struct reffs_dirent;
+struct layout_segments;
 
 struct reffs_file_handle {
 	uint64_t rfh_ino;
@@ -108,6 +109,9 @@ struct inode {
 	uint64_t i_attr_flags;
 
 	char *i_symlink;
+
+	/* MDS layout segments (NULL for standalone/DS roles). */
+	struct layout_segments *i_layout_segments;
 };
 
 struct inode_disk {

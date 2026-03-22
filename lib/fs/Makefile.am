@@ -23,6 +23,7 @@ libreffs_fs_la_SOURCES = \
 	fs.c \
 	fuse.c \
 	inode.c \
+	layout_segment.c \
 	lock.c \
 	ns.c \
 	stateid.c \
