@@ -85,6 +85,7 @@ struct reffs_export_config {
  * obtain root filehandles, then creates/manages data files on them.
  */
 struct reffs_data_server_config {
+	uint32_t id;			     /* unique dstore ID */
 	char address[REFFS_CONFIG_MAX_HOST]; /* IPv4 or IPv6 address */
 	char path[REFFS_CONFIG_MAX_PATH];    /* export path on the DS */
 };
