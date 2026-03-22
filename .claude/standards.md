@@ -254,12 +254,32 @@ struct rpc_operations_handler ops[] = {
 
 ## Logging
 
+`LOG()` is for **fatal or actionable errors** — conditions that cause the
+server to hang, abort, or corrupt data.  Every LOG line is an actionable item.
+
+`TRACE()` / `TRC()` is for **informative events** — normal operations, state
+transitions, request flow, diagnostic information for triaging issues.
+Written to the trace file, not stderr.
+
 ```c
-LOG("message %s %d", str, val);   // timestamped, pid:tid, function:line
+LOG("critical error: %s", msg);   // operator must act
+TRACE("request completed: %s", msg);  // diagnostic info
 ```
 
-High-volume per-request events use `TRACE()` / `TRC()` (written to trace file,
-not stderr).
+---
+
+## Unused Parameters
+
+Use `__attribute__((unused))` to annotate unused function parameters.
+**Never** use `(void)param;` casts to suppress warnings.
+
+```c
+// WRONG:
+(void)ds;
+
+// CORRECT:
+static int my_func(struct dstore *ds __attribute__((unused)), ...)
+```
 
 ---
 

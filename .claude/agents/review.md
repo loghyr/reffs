@@ -70,6 +70,43 @@ This is required for autotools feature detection (`HAVE_*` macros,
 sanitizer options, etc.).  Header files (`.h`) must NOT include
 `config.h`.  Flag any new `.c` file missing this block.
 
+### Unused parameters
+
+**Never** use `(void)param;` to suppress unused-parameter warnings.
+Use the clang attribute instead:
+
+```c
+// WRONG:
+static int local_truncate(struct dstore *ds, ...)
+{
+	(void)ds;
+	...
+}
+
+// CORRECT:
+static int local_truncate(struct dstore *ds __attribute__((unused)), ...)
+{
+	...
+}
+```
+
+Flag any `(void)variable;` cast that exists solely to suppress an
+unused warning.
+
+### LOG vs TRACE
+
+`LOG()` is for **fatal or actionable errors** — conditions that cause
+the server to hang, abort, or corrupt data.  Every LOG line should
+represent something an operator needs to act on.
+
+`TRACE()` is for **informative events** — normal operations, state
+transitions, request flow, and diagnostic information useful for
+triaging issues.
+
+Flag misuse:
+- `LOG()` used for normal operational events (should be `TRACE()`)
+- `TRACE()` used for errors that require action (should be `LOG()`)
+
 ### Error code conventions
 
 **NFSv3 ops** (`lib/nfs3/`):
