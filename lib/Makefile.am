@@ -10,6 +10,7 @@ SUBDIRS =		\
 	backends	\
 	utils		\
 	config		\
+	ec		\
 	io		\
 	rpc		\
 	tests		\
