@@ -991,6 +991,48 @@ void nfs4_op_close(struct compound *compound)
 	stateid_put(stid); /* state ref → ref=0 → freed */
 
 	/*
+	 * RFC 5661 §10.4: a file is considered open as long as either an
+	 * open stateid or a delegation stateid is outstanding.  We have no
+	 * CB_RECALL, so revoke any write delegation held by this client on
+	 * this inode.  Revocation causes NFS4ERR_DELEG_REVOKED on the
+	 * client's next use, triggering client-side error recovery (dirty
+	 * pages flushed via WRITE ops, then re-open).
+	 */
+	struct client *client =
+		compound->c_nfs4_client ?
+			nfs4_client_to_client(compound->c_nfs4_client) :
+			NULL;
+	if (client) {
+		struct cds_lfht_iter iter;
+		struct cds_lfht_node *node;
+		struct stateid *ds_stid = NULL;
+
+		rcu_read_lock();
+		cds_lfht_for_each(compound->c_inode->i_stateids, &iter, node)
+		{
+			struct stateid *s = caa_container_of(
+				node, struct stateid, s_inode_node);
+			if (s->s_tag != Delegation_Stateid)
+				continue;
+			if (s->s_client != client)
+				continue;
+			struct delegation_stateid *ds = stid_to_delegation(s);
+			if (!(ds->ds_state & DELEG_STATEID_ACCESS_WRITE))
+				continue;
+			ds_stid = stateid_get(s);
+			break;
+		}
+		rcu_read_unlock();
+
+		if (ds_stid) {
+			stateid_inode_unhash(ds_stid);
+			stateid_client_unhash(ds_stid);
+			stateid_put(ds_stid); /* scan ref */
+			stateid_put(ds_stid); /* state ref → freed */
+		}
+	}
+
+	/*
 	 * RFC 5661 §18.2.4: return a dead stateid (seqid=0, other=zeros).
 	 */
 	res->CLOSE4res_u.open_stateid = stateid4_anonymous;
