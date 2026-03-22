@@ -251,8 +251,7 @@ bool dispatch_compound(struct compound *compound)
 #ifdef VERBOSE_DEBUG
 			LOG("dispatch op=%s(%d) FAILED status=%s(%d)",
 			    nfs4_op_name(argop->argop), argop->argop,
-			    nfs4_err_name(
-				    resop->nfs_resop4_u.opillegal.status),
+			    nfs4_err_name(resop->nfs_resop4_u.opillegal.status),
 			    resop->nfs_resop4_u.opillegal.status);
 #endif
 			res->status = resop->nfs_resop4_u.opillegal.status;
