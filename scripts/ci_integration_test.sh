@@ -130,7 +130,7 @@ mount -o vers=4.2,soft,timeo=100,retrans=5 127.0.0.1:/ "$MOUNT"
 
 (
 	cd "$MOUNT"
-	git clone "$SRC_DIR" reffs_v4
+	GIT_TRACE=1 git clone --verbose "$SRC_DIR" reffs_v4
 	sum_nfs=$(md5sum reffs_v4/configure.ac | awk '{print $1}')
 	sum_src=$(md5sum "$SRC_DIR/configure.ac" | awk '{print $1}')
 	[ "$sum_nfs" = "$sum_src" ] || { echo "md5sum mismatch: $sum_nfs != $sum_src"; exit 1; }
@@ -151,7 +151,7 @@ mount -o vers=3,nolock,soft,timeo=100,retrans=5 127.0.0.1:/ "$MOUNT"
 
 (
 	cd "$MOUNT"
-	git clone "$SRC_DIR" reffs_v3
+	GIT_TRACE=1 git clone --verbose "$SRC_DIR" reffs_v3
 	sum_nfs=$(md5sum reffs_v3/configure.ac | awk '{print $1}')
 	sum_src=$(md5sum "$SRC_DIR/configure.ac" | awk '{print $1}')
 	[ "$sum_nfs" = "$sum_src" ] || { echo "md5sum mismatch: $sum_nfs != $sum_src"; exit 1; }
