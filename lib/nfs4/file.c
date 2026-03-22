@@ -87,14 +87,6 @@ static nfsstat4 nfs4_stateid_resolve(struct compound *compound,
 	if (type == Layout_Stateid)
 		return NFS4ERR_BAD_STATEID;
 
-	/*
-	 * A read-delegation stateid cannot authorise a write.
-	 * (Write-delegations are not yet issued, so any delegation stateid
-	 * here implies read-only.)
-	 */
-	if (want_write && type == Delegation_Stateid)
-		return NFS4ERR_OPENMODE;
-
 	struct stateid *stid = stateid_find(compound->c_inode, id);
 	if (!stid)
 		return NFS4ERR_BAD_STATEID;
@@ -136,6 +128,18 @@ static nfsstat4 nfs4_stateid_resolve(struct compound *compound,
 		uint64_t need = want_write ? OPEN_STATEID_ACCESS_WRITE :
 					     OPEN_STATEID_ACCESS_READ;
 		if (!(os->os_state & need)) {
+			stateid_put(stid);
+			return NFS4ERR_OPENMODE;
+		}
+	}
+
+	/*
+	 * A read-delegation stateid cannot authorise a write; a
+	 * write-delegation stateid (DELEG_STATEID_ACCESS_WRITE) can.
+	 */
+	if (type == Delegation_Stateid && want_write) {
+		struct delegation_stateid *ds = stid_to_delegation(stid);
+		if (!(ds->ds_state & DELEG_STATEID_ACCESS_WRITE)) {
 			stateid_put(stid);
 			return NFS4ERR_OPENMODE;
 		}
@@ -715,6 +719,7 @@ void nfs4_op_open(struct compound *compound)
 					OPEN_DELEGATE_WRITE;
 
 			if (share_access & OPEN4_SHARE_ACCESS_WRITE) {
+				ds->ds_state |= DELEG_STATEID_ACCESS_WRITE;
 				resok->delegation.delegation_type = dt_write;
 				pack_stateid4(
 					&resok->delegation.open_delegation4_u
