@@ -274,3 +274,30 @@ After unit tests, `ci_integration_test.sh`:
 
 `detect_leaks=0`: `pmap_set()` TIRPC internals and pthread stacks produce
 process-lifetime LSan false positives that are not addressable in reffsd.
+
+---
+
+## NFSv4 Delegation Semantics
+
+### A file is open as long as ANY stateid is held
+
+RFC 5661 §10.4: a file is considered open by a client as long as **either**
+an open stateid **or** a delegation stateid is outstanding.  CLOSE releases
+only the open stateid — the delegation remains valid and the file is still
+open from the client's perspective.
+
+RFC 9754 `OPEN_ARGS_SHARE_ACCESS_WANT_OPEN_XOR_DELEGATION` makes the
+independence explicit: a client may hold a delegation **without** any open
+stateid at all.
+
+### Never revoke delegations at CLOSE time
+
+The client holds dirty pages covered by the delegation and will flush them
+before DELEGRETURN.  Revoking inside the CLOSE handler destroys a stateid
+the client legitimately holds, causing dirty data loss (the client can no
+longer flush pages it wrote under the delegation).
+
+Without CB_RECALL, the server must rely on the client to DELEGRETURN in its
+own time (bounded by the lease period).  The correct long-term fix is to
+implement CB_RECALL so the server can request delegation return before the
+lease expires.
