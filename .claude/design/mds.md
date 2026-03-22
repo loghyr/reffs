@@ -96,6 +96,65 @@ GETATTR to all DSes, aggregate (max times, effective size), and resume.
 
 For the demo: return cached values from the last LAYOUTRETURN.
 
+## Dstore Control-Plane Operations
+
+The MDS acts as an NFSv3 client to each dstore for file lifecycle
+and attribute management.  These are **not** data-path operations
+and do **not** count as WRITE layouts.
+
+### File lifecycle
+
+- `dstore_data_file_create(ds, path)` — NFSv3 CREATE
+- `dstore_data_file_remove(ds, path)` — NFSv3 REMOVE
+- `dstore_data_file_chmod(ds, fh)` — NFSv3 SETATTR: owner rw,
+  group r, no other perms (0640)
+- `dstore_data_file_truncate(ds, fh, size)` — NFSv3 SETATTR(size).
+  Called when the MDS receives SETATTR from a client.  The MDS must
+  PAUSE the compound, fan out truncates to all DSes, wait for all
+  to complete (write-like: all must succeed), then RESUME.
+
+### Fencing
+
+- `dstore_data_file_fence(ds, fh)` — NFSv3 SETATTR(uid, gid) to
+  rotate synthetic IDs within a configured range (default 1024-2048).
+  Bumps both uid and gid atomically, wrapping within the range.
+  Called in response to client I/O errors to fence a misbehaving
+  client off the data file.
+
+### GETATTR aggregation
+
+- `dstore_data_file_getattr(ds, fh)` — NFSv3 GETATTR
+- When the MDS receives a client GETATTR and there is an active
+  WRITE layout, the MDS must:
+  1. PAUSE the compound
+  2. Fan out NFSv3 GETATTR to ALL DSes holding mirrors
+  3. Wait for responses:
+     - ALL mirrors must respond, or return NFS4ERR_DELAY
+     - If a mirror doesn't respond, mark it stale in the inode's
+       per-dstore state
+  4. Update the inode's cached data_file attrs from the responses
+  5. If atime/mtime/size changed from the DS values, set the
+     inode's atime/mtime/ctime to NOW (clocks are not in sync)
+  6. RESUME the compound with the updated attributes
+
+### Write vs read semantics for DS operations
+
+- **Write operations** (truncate, fence, create, remove, chmod):
+  ALL DSes in the mirror set must succeed, or the operation fails.
+  This matches Client Side Mirroring (CSM) semantics.
+- **Read operations** (getattr): ALL mirrors must respond for
+  the GETATTR to succeed.  If any mirror is stale (marked from a
+  previous failed getattr), don't update the inode's state if that
+  mirror advances later without the other mirrors also advancing.
+
+### Per-dstore stale tracking
+
+Each data_file in the inode's layout_segment has a stale flag.
+Example with CSM=3: if 2 of 3 mirrors respond to GETATTR, mark
+the 3rd as stale.  If the stale mirror later responds with newer
+values but the other two don't advance, don't update the inode —
+wait for all non-stale mirrors to agree.
+
 ## Design Rules
 
 - dstores are round-robin'd when fewer than k+m are available
@@ -104,3 +163,4 @@ For the demo: return cached values from the last LAYOUTRETURN.
   on the DS side (trust the MDS)
 - DSes must be available over NFSv3
 - Layouts come from the set of configured dstore pairs
+- Dstore control-plane operations do NOT count as WRITE layouts
