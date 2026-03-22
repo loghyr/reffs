@@ -19,6 +19,7 @@
 #ifndef _REFFS_LAYOUT_SEGMENT_H
 #define _REFFS_LAYOUT_SEGMENT_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
 
@@ -72,6 +73,7 @@ struct layout_data_file {
 	uint32_t ldf_uid;
 	uint32_t ldf_gid;
 	uint16_t ldf_mode;
+	bool ldf_stale; /* true if last GETATTR to this DS failed */
 };
 
 /*
