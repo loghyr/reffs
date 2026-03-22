@@ -37,16 +37,38 @@ Report any files missing SPDX headers.
 
 ## 3. Build check
 
+Build out-of-tree with sanitizers enabled:
+
 ```bash
-make -f Makefile.reffs build 2>&1 | grep -E "error:|warning:" | head -40
+mkdir -p m4 && autoreconf -fi
+mkdir -p /tmp/reffs-review-build && cd /tmp/reffs-review-build
+$PROJECT_ROOT/configure --enable-asan --enable-ubsan 2>&1 | tail -5
+make -j$(nproc) 2>&1 | grep -E "error:|warning:" | head -40
+make check 2>&1 | grep -E "^(PASS|FAIL):" | head -40
+cd $PROJECT_ROOT && rm -rf /tmp/reffs-review-build
 ```
 
-Report any new compiler errors or warnings.
+Where `$PROJECT_ROOT` is the git working directory.  Never build inside
+the source tree.  Report any compiler errors, warnings, or test failures.
 
 ## 4. Review code changes against standards
 
 Read each changed file and check for violations of the rules in
 @../standards.md. Focus on the following high-value checks:
+
+### config.h inclusion
+
+Every new `.c` source file must begin (after the SPDX header) with:
+
+```c
+#ifdef HAVE_CONFIG_H
+#include "config.h" // IWYU pragma: keep
+#endif
+```
+
+This is required for autotools feature detection (`HAVE_*` macros,
+sanitizer options, etc.).  Header files (`.h`) must NOT include
+`config.h`.  Flag any new `.c` file missing this block.
 
 ### Error code conventions
 
