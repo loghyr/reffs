@@ -109,11 +109,18 @@ covers it.  Look in `lib/*/tests/` for relevant test files.
 
 Report as `TESTS: [covered by X | SUGGEST: description | N/A]`.
 
+If the developer explicitly declines a recommended test, acknowledge the
+deferral, record it in the TESTS line as `DEFERRED`, and do not block
+the commit.
+
 ## 6. Git commit readiness
 
 - Confirm `git commit -s` will be used (DCO sign-off required)
 - Confirm no `Co-Authored-By:` lines are present
 - Confirm SPDX header present in any new files
+- Confirm each commit is **atomic**: code changes, Claude configuration /
+  agent changes, and documentation changes must be in separate commits.
+  Flag any staging area that mixes these categories.
 
 ## Output format
 
