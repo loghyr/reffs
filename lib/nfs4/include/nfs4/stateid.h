@@ -78,6 +78,10 @@ struct lock_stateid {
 	struct stateid ls_stid;
 };
 
+/* Bits stored in layout_stateid.ls_state for iomode tracking. */
+#define LAYOUT_STATEID_IOMODE_READ (1ULL << 0)
+#define LAYOUT_STATEID_IOMODE_RW   (1ULL << 1)
+
 struct layout_stateid {
 	uint64_t ls_state;
 	struct stateid ls_stid;
