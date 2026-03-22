@@ -22,6 +22,7 @@
 #include "reffs/backend.h"
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
+#include "reffs/layout_segment.h"
 #include "reffs/data_block.h"
 #include "reffs/log.h"
 #include "reffs/trace/fs.h"
@@ -159,6 +160,82 @@ static void posix_inode_sync(struct inode *inode)
 				LOG("Failed to write symlink target to %s",
 				    tmp_path);
 				close(fd);
+				unlink(tmp_path);
+			}
+		}
+	}
+
+	/* Sync layout segments if present (MDS mode). */
+	if (inode->i_layout_segments &&
+	    inode->i_layout_segments->lss_count > 0) {
+		struct layout_segments *lss = inode->i_layout_segments;
+
+		snprintf(path, sizeof(path), "%s/ino_%lu.layouts",
+			 sb_priv->sb_dir, inode->i_ino);
+		snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%lu", path,
+			 (unsigned long)pthread_self());
+		fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+		if (fd >= 0) {
+			struct reffs_disk_header hdr = {
+				.rdh_magic = REFFS_DISK_MAGIC_LAY,
+				.rdh_version = REFFS_DISK_VERSION_1,
+			};
+			bool ok = true;
+
+			ok = ok && write(fd, &hdr, sizeof(hdr)) ==
+					    sizeof(hdr);
+			ok = ok && write(fd, &lss->lss_count,
+					 sizeof(lss->lss_count)) ==
+					    sizeof(lss->lss_count);
+
+			for (uint32_t s = 0; ok && s < lss->lss_count; s++) {
+				struct layout_segment *seg = &lss->lss_segs[s];
+				struct layout_segment_disk lsd = {
+					.ls_offset = seg->ls_offset,
+					.ls_length = seg->ls_length,
+					.ls_stripe_unit = seg->ls_stripe_unit,
+					.ls_k = seg->ls_k,
+					.ls_m = seg->ls_m,
+					.ls_nfiles = seg->ls_nfiles,
+				};
+
+				ok = ok && write(fd, &lsd, sizeof(lsd)) ==
+						    sizeof(lsd);
+
+				for (uint32_t f = 0; ok && f < seg->ls_nfiles;
+				     f++) {
+					struct layout_data_file *ldf =
+						&seg->ls_files[f];
+					struct layout_data_file_disk ldfd = {
+						.ldf_dstore_id =
+							ldf->ldf_dstore_id,
+						.ldf_fh_len = ldf->ldf_fh_len,
+						.ldf_size = ldf->ldf_size,
+						.ldf_atime = ldf->ldf_atime,
+						.ldf_mtime = ldf->ldf_mtime,
+						.ldf_ctime = ldf->ldf_ctime,
+						.ldf_uid = ldf->ldf_uid,
+						.ldf_gid = ldf->ldf_gid,
+						.ldf_mode = ldf->ldf_mode,
+					};
+
+					memcpy(ldfd.ldf_fh, ldf->ldf_fh,
+					       ldf->ldf_fh_len);
+					ok = ok &&
+					     write(fd, &ldfd, sizeof(ldfd)) ==
+						     sizeof(ldfd);
+				}
+			}
+
+			close(fd);
+			if (ok) {
+				if (rename(tmp_path, path) < 0) {
+					LOG("rename %s failed: %s", tmp_path,
+					    strerror(errno));
+					unlink(tmp_path);
+				}
+			} else {
+				LOG("Failed to write layouts to %s", tmp_path);
 				unlink(tmp_path);
 			}
 		}
@@ -493,6 +570,112 @@ static int inode_load_from_disk(struct inode *inode)
 						free(inode->i_symlink);
 						inode->i_symlink = NULL;
 					}
+				}
+			}
+			close(fd);
+		}
+	}
+
+	/* Re-load layout segments if they exist (MDS mode). */
+	snprintf(path, sizeof(path), "%s/ino_%lu.layouts", sb_priv->sb_dir,
+		 inode->i_ino);
+	if (!inode->i_layout_segments && access(path, F_OK) == 0) {
+		fd = open(path, O_RDONLY);
+		if (fd >= 0) {
+			struct reffs_disk_header hdr;
+			uint32_t count;
+			bool ok = true;
+
+			ok = ok && read(fd, &hdr, sizeof(hdr)) == sizeof(hdr);
+			ok = ok && hdr.rdh_magic == REFFS_DISK_MAGIC_LAY;
+			ok = ok && hdr.rdh_version == REFFS_DISK_VERSION_1;
+			ok = ok && read(fd, &count, sizeof(count)) ==
+					    sizeof(count);
+
+			if (ok && count > 0) {
+				struct layout_segments *lss =
+					layout_segments_alloc();
+				if (lss) {
+					for (uint32_t s = 0;
+					     ok && s < count; s++) {
+						struct layout_segment_disk lsd;
+
+						ok = read(fd, &lsd,
+							  sizeof(lsd)) ==
+						     sizeof(lsd);
+						if (!ok)
+							break;
+
+						struct layout_data_file *files =
+							calloc(lsd.ls_nfiles,
+							       sizeof(*files));
+						if (!files) {
+							ok = false;
+							break;
+						}
+
+						for (uint32_t f = 0;
+						     ok && f < lsd.ls_nfiles;
+						     f++) {
+							struct layout_data_file_disk
+								ldfd;
+							ok = read(fd, &ldfd,
+								  sizeof(
+									  ldfd)) ==
+							     sizeof(ldfd);
+							if (!ok)
+								break;
+							files[f].ldf_dstore_id =
+								ldfd.ldf_dstore_id;
+							files[f].ldf_fh_len =
+								ldfd.ldf_fh_len;
+							memcpy(files[f].ldf_fh,
+							       ldfd.ldf_fh,
+							       ldfd.ldf_fh_len);
+							files[f].ldf_size =
+								ldfd.ldf_size;
+							files[f].ldf_atime =
+								ldfd.ldf_atime;
+							files[f].ldf_mtime =
+								ldfd.ldf_mtime;
+							files[f].ldf_ctime =
+								ldfd.ldf_ctime;
+							files[f].ldf_uid =
+								ldfd.ldf_uid;
+							files[f].ldf_gid =
+								ldfd.ldf_gid;
+							files[f].ldf_mode =
+								ldfd.ldf_mode;
+						}
+
+						if (ok) {
+							struct layout_segment
+								seg = {
+								.ls_offset =
+									lsd.ls_offset,
+								.ls_length =
+									lsd.ls_length,
+								.ls_stripe_unit =
+									lsd.ls_stripe_unit,
+								.ls_k = lsd.ls_k,
+								.ls_m = lsd.ls_m,
+								.ls_nfiles =
+									lsd.ls_nfiles,
+								.ls_files =
+									files,
+							};
+
+							layout_segments_add(
+								lss, &seg);
+						} else {
+							free(files);
+						}
+					}
+
+					if (ok)
+						inode->i_layout_segments = lss;
+					else
+						layout_segments_free(lss);
 				}
 			}
 			close(fd);

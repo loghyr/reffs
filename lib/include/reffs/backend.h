@@ -19,6 +19,7 @@ struct data_block;
 #define REFFS_DISK_MAGIC_DIR 0x52454644 /* 'REFD' */
 #define REFFS_DISK_MAGIC_DAT 0x52454641 /* 'REFA' (data) */
 #define REFFS_DISK_MAGIC_LNK 0x5245464c /* 'REFL' */
+#define REFFS_DISK_MAGIC_LAY 0x52454659 /* 'REFY' (layouts) */
 
 #define REFFS_DISK_VERSION_1 1
 

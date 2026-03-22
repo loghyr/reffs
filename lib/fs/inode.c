@@ -25,6 +25,7 @@
 #include "reffs/data_block.h"
 #include "reffs/dirent.h"
 #include "reffs/inode.h"
+#include "reffs/layout_segment.h"
 #include "reffs/log.h"
 #include "reffs/super_block.h"
 #include "reffs/trace/fs.h"
@@ -68,6 +69,7 @@ static void inode_free_rcu(struct rcu_head *rcu)
 	pthread_mutex_destroy(&inode->i_lock_mutex);
 
 	free(inode->i_symlink);
+	layout_segments_free(inode->i_layout_segments);
 	free(inode);
 
 	/* Drop the ref taken in inode_alloc (stored in i_sb); may free the superblock. */
