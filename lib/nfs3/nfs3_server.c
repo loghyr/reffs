@@ -813,6 +813,16 @@ static void nfs3_op_write_resume(struct rpc_trans *rt)
 	}
 
 	resok->count = (count3)nwritten;
+	resok->committed = FILE_SYNC;
+
+	struct server_state *ss = server_state_find();
+	if (!ss) {
+		res->status = NFS3ERR_IO;
+		wcc = &res->WRITE3res_u.resfail.file_wcc;
+		goto wcc_after;
+	}
+	memcpy(resok->verf, ss->ss_uuid + 8, NFS3_WRITEVERFSIZE);
+	server_state_put(ss);
 
 	pthread_rwlock_wrlock(&inode->i_db_rwlock);
 
@@ -1049,9 +1059,8 @@ static int nfs3_op_write(struct rpc_trans *rt)
 		goto update_wcc;
 	}
 
-	uuid_t *uuid = &ss->ss_uuid;
+	memcpy(resok->verf, ss->ss_uuid + 8, NFS3_WRITEVERFSIZE);
 	server_state_put(ss);
-	memcpy(resok->verf, (*uuid) + 8, NFS3_WRITEVERFSIZE);
 
 	inode->i_size = inode->i_db->db_size;
 	inode->i_used = inode->i_size / sb->sb_block_size +
@@ -3003,7 +3012,6 @@ static int nfs3_op_commit(struct rpc_trans *rt)
 	nfstime3 mtime;
 	nfstime3 ctime;
 
-	uuid_t *uuid;
 	int ret = 0;
 
 	trace_nfs3_srv_commit(rt, args);
@@ -3041,9 +3049,8 @@ static int nfs3_op_commit(struct rpc_trans *rt)
 		ret = -ESHUTDOWN;
 		goto out;
 	}
-	uuid = &ss->ss_uuid;
+	memcpy(resok->verf, ss->ss_uuid + 8, NFS3_WRITEVERFSIZE);
 	server_state_put(ss);
-	memcpy(resok->verf, (*uuid) + 8, NFS3_WRITEVERFSIZE);
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 
