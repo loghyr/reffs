@@ -38,6 +38,13 @@ help:
 	@echo "  shell           - Open a shell in the running sandbox container"
 	@echo "  reconf          - Force re-generation of build system (autoreconf)"
 	@echo "  install-hooks   - Install git pre-commit hook from hooks/pre-commit"
+	@echo ""
+	@echo "pNFS targets:"
+	@echo "  run-combined    - Combined MDS+DS on localhost (no Docker)"
+	@echo "  run-pnfs        - Start MDS + DS containers (Docker)"
+	@echo "  test-pnfs       - Start MDS + DS + client, run test, tear down"
+	@echo "  stop-pnfs       - Stop pNFS containers"
+	@echo "  logs-pnfs       - Show pNFS container logs"
 
 # --- Build targets ---
 
@@ -230,4 +237,32 @@ install-hooks:
 	@chmod +x .git/hooks/pre-commit
 	@echo "Installed .git/hooks/pre-commit"
 
-.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks
+# --- pNFS test targets ---
+
+# Combined MDS+DS on localhost (single instance, no Docker)
+run-combined: build
+	@rm -rf /tmp/reffs_combined_data /tmp/reffs_combined_state
+	@mkdir -p /tmp/reffs_combined_data /tmp/reffs_combined_state
+	build/src/reffsd --config=deploy/pnfs/combined.toml
+
+# Multi-container pNFS: MDS + DS (no client)
+run-pnfs: ci-image
+	$(DOCKER) compose -f deploy/pnfs/docker-compose.yml up -d ds mds
+	@echo "MDS: localhost:2049 (NFSv4.2)"
+	@echo "DS:  reffs-ds:2049 (NFSv3) [internal network]"
+	@echo "Use 'make -f Makefile.reffs stop-pnfs' to stop"
+
+# Multi-container pNFS with client test
+test-pnfs: ci-image
+	$(DOCKER) compose -f deploy/pnfs/docker-compose.yml --profile test up --abort-on-container-exit client
+	$(DOCKER) compose -f deploy/pnfs/docker-compose.yml --profile test down
+
+# Stop pNFS containers
+stop-pnfs:
+	$(DOCKER) compose -f deploy/pnfs/docker-compose.yml --profile test down 2>/dev/null || true
+
+# Show pNFS container logs
+logs-pnfs:
+	$(DOCKER) compose -f deploy/pnfs/docker-compose.yml logs
+
+.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined run-pnfs test-pnfs stop-pnfs logs-pnfs
