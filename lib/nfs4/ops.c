@@ -86,7 +86,7 @@ uint32_t nfs4_op_secinfo_no_name(struct compound *compound)
 		NFS4_OP_RES_SETUP(compound, opsecinfo_no_name);
 	nfsstat4 *status = &res->status;
 	SECINFO4resok *resok = NFS4_OP_RESOK_SETUP(res, SECINFO4res_u, resok4);
-	secinfo_style4 style = *args;
+	secinfo_style4 __attribute__((unused)) style = *args;
 
 	if (!compound->c_inode) {
 		*status = NFS4ERR_NOFILEHANDLE;
@@ -102,8 +102,6 @@ uint32_t nfs4_op_secinfo_no_name(struct compound *compound)
 	 * success; clear it here so subsequent ops in the compound get
 	 * NFS4ERR_NOFILEHANDLE if they rely on it.
 	 */
-	(void)style;
-
 	resok->SECINFO4resok_val = calloc(1, sizeof(secinfo4));
 	if (!resok->SECINFO4resok_val) {
 		*status = NFS4ERR_DELAY;

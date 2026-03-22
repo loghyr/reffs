@@ -40,7 +40,7 @@ static int client_match(struct cds_lfht_node *ht_node, const void *vkey)
 bool client_unhash(struct client *client)
 {
 	uint64_t state;
-	int ret;
+	int __attribute__((unused)) ret;
 
 	state = __atomic_fetch_and(&client->c_state, ~CLIENT_IS_HASHED,
 				   __ATOMIC_ACQUIRE);
@@ -53,7 +53,6 @@ bool client_unhash(struct client *client)
 
 	ret = cds_lfht_del(ss->ss_client_ht, &client->c_node);
 	assert(!ret);
-	(void)ret;
 
 	server_state_put(ss);
 	return true;

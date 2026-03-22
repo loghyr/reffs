@@ -66,7 +66,7 @@ int inode_access_check(struct inode *inode, struct authunix_parms *ap, int mode)
 }
 
 int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
-			     int mode, int flags)
+			     int mode, int __attribute__((unused)) flags)
 {
 	/* Superuser mode for now */
 	if (ap->aup_uid == 0)
@@ -87,7 +87,7 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 		    S_ISREG(inode->i_mode))
 			return 0;
 #else
-		(void)flags;
+		/* flags unused when HAVE_STRICT_POSIX is defined */
 #endif
 
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))

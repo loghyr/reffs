@@ -163,7 +163,7 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
 bool stateid_client_unhash(struct stateid *stid)
 {
 	uint64_t state;
-	int ret;
+	int __attribute__((unused)) ret;
 
 	state = __atomic_fetch_and(&stid->s_state, ~STID_IS_CLIENT_HASHED,
 				   __ATOMIC_ACQUIRE);
@@ -173,14 +173,13 @@ bool stateid_client_unhash(struct stateid *stid)
 	assert(stid->s_client);
 	ret = cds_lfht_del(stid->s_client->c_stateids, &stid->s_client_node);
 	assert(!ret);
-	(void)ret;
 	return true;
 }
 
 bool stateid_inode_unhash(struct stateid *stid)
 {
 	uint64_t state;
-	int ret;
+	int __attribute__((unused)) ret;
 
 	state = __atomic_fetch_and(&stid->s_state, ~STID_IS_INODE_HASHED,
 				   __ATOMIC_ACQUIRE);
@@ -190,7 +189,6 @@ bool stateid_inode_unhash(struct stateid *stid)
 	assert(stid->s_inode);
 	ret = cds_lfht_del(stid->s_inode->i_stateids, &stid->s_inode_node);
 	assert(!ret);
-	(void)ret;
 	return true;
 }
 

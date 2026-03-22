@@ -114,7 +114,7 @@ void nfs4_session_put(struct nfs4_session *ns)
 bool nfs4_session_unhash(struct nfs4_session *ns)
 {
 	uint64_t state;
-	int ret;
+	int __attribute__((unused)) ret;
 
 	state = __atomic_fetch_and(&ns->ns_state, ~NFS4_SESSION_IS_HASHED,
 				   __ATOMIC_ACQUIRE);
@@ -127,7 +127,6 @@ bool nfs4_session_unhash(struct nfs4_session *ns)
 
 	ret = cds_lfht_del(ss->ss_session_ht, &ns->ns_node);
 	assert(!ret);
-	(void)ret;
 
 	server_state_put(ss);
 
@@ -144,7 +143,7 @@ bool nfs4_session_unhash(struct nfs4_session *ns)
 
 struct nfs4_session *nfs4_session_alloc(struct nfs4_client *nc,
 					const channel_attrs4 *fore_req,
-					uint32_t flags)
+					uint32_t __attribute__((unused)) flags)
 {
 	struct nfs4_session *ns;
 	struct server_state *ss;
@@ -188,7 +187,6 @@ struct nfs4_session *nfs4_session_alloc(struct nfs4_client *nc,
 		ns->ns_slot_count = NFS4_SESSION_MAX_SLOTS;
 
 	ns->ns_flags = 0; /* no persistent sessions or RDMA */
-	(void)flags;
 
 	/* Allocate slot table. */
 	ns->ns_slots = calloc(ns->ns_slot_count, sizeof(*ns->ns_slots));

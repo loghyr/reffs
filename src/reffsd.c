@@ -76,9 +76,8 @@ const char *__ubsan_default_options(void)
 volatile sig_atomic_t running = 1;
 
 // Signal handler
-static void signal_handler(int sig)
+static void signal_handler(int __attribute__((unused)) sig)
 {
-	(void)sig;
 	running = 0;
 }
 
