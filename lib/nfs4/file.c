@@ -243,7 +243,7 @@ fill_delegation_permissions_from_mode(nfsace4 *ace, struct compound *compound,
 	return ret;
 }
 
-void nfs4_op_open(struct compound *compound)
+uint32_t nfs4_op_open(struct compound *compound)
 {
 	OPEN4args *args = NFS4_OP_ARG_SETUP(compound, opopen);
 	OPEN4res *res = NFS4_OP_RES_SETUP(compound, opopen);
@@ -773,24 +773,21 @@ out:
 	TRACE("%s status=%s(%d) claim=%d access=%u deny=%u", __func__,
 	      nfs4_err_name(*status), *status, args->claim.claim, share_access,
 	      share_deny);
+
+	return 0;
 }
 
-void nfs4_op_open_confirm(struct compound *compound)
+uint32_t nfs4_op_open_confirm(struct compound *compound)
 {
-	OPEN_CONFIRM4args *args = NFS4_OP_ARG_SETUP(compound, opopen_confirm);
 	OPEN_CONFIRM4res *res = NFS4_OP_RES_SETUP(compound, opopen_confirm);
 	nfsstat4 *status = &res->status;
-	OPEN_CONFIRM4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, OPEN_CONFIRM4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	return 0;
 }
 
-void nfs4_op_open_downgrade(struct compound *compound)
+uint32_t nfs4_op_open_downgrade(struct compound *compound)
 {
 	OPEN_DOWNGRADE4args *args =
 		NFS4_OP_ARG_SETUP(compound, opopen_downgrade);
@@ -904,10 +901,11 @@ void nfs4_op_open_downgrade(struct compound *compound)
 out:
 	LOG("%s status=%s(%d) access=%u deny=%u", __func__,
 	    nfs4_err_name(*status), *status, new_access, new_deny);
-	return;
+
+	return 0;
 }
 
-void nfs4_op_close(struct compound *compound)
+uint32_t nfs4_op_close(struct compound *compound)
 {
 	CLOSE4args *args = NFS4_OP_ARG_SETUP(compound, opclose);
 	CLOSE4res *res = NFS4_OP_RES_SETUP(compound, opclose);
@@ -915,12 +913,12 @@ void nfs4_op_close(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		return;
+		return 0;
 	}
 
 	if (stateid4_is_special(&args->open_stateid)) {
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	uint32_t seqid, id, type, cookie;
@@ -928,21 +926,21 @@ void nfs4_op_close(struct compound *compound)
 
 	if (type != Open_Stateid) {
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	struct stateid *stid = stateid_find(compound->c_inode, id);
 	if (!stid || stid->s_tag != Open_Stateid || stid->s_cookie != cookie) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	if (compound->c_nfs4_client &&
 	    stid->s_client != nfs4_client_to_client(compound->c_nfs4_client)) {
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
-		return;
+		return 0;
 	}
 
 	uint32_t cur_seqid = __atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
@@ -950,12 +948,12 @@ void nfs4_op_close(struct compound *compound)
 		if (seqid < cur_seqid) {
 			stateid_put(stid);
 			*status = NFS4ERR_OLD_STATEID;
-			return;
+			return 0;
 		}
 		if (seqid > cur_seqid) {
 			stateid_put(stid);
 			*status = NFS4ERR_BAD_STATEID;
-			return;
+			return 0;
 		}
 	}
 
@@ -995,6 +993,8 @@ void nfs4_op_close(struct compound *compound)
 	 */
 	res->CLOSE4res_u.open_stateid = stateid4_anonymous;
 	*status = NFS4_OK;
+
+	return 0;
 }
 
 /*
@@ -1004,7 +1004,7 @@ void nfs4_op_close(struct compound *compound)
  * The buffer was allocated and the resok pointer was set before the pause;
  * we just fix up the length, eof flag, and status here.
  */
-static void nfs4_op_read_resume(struct rpc_trans *rt)
+static uint32_t nfs4_op_read_resume(struct rpc_trans *rt)
 {
 	struct compound *compound = rt->rt_compound;
 	READ4args *args = NFS4_OP_ARG_SETUP(compound, opread);
@@ -1020,7 +1020,7 @@ static void nfs4_op_read_resume(struct rpc_trans *rt)
 		resok->data.data_val = NULL;
 		resok->data.data_len = 0;
 		*status = NFS4ERR_IO;
-		return;
+		return 0;
 	}
 
 	resok->data.data_len = (u_int)nread;
@@ -1032,9 +1032,11 @@ static void nfs4_op_read_resume(struct rpc_trans *rt)
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
 	*status = NFS4_OK;
+
+	return 0;
 }
 
-void nfs4_op_read(struct compound *compound)
+uint32_t nfs4_op_read(struct compound *compound)
 {
 	READ4args *args = NFS4_OP_ARG_SETUP(compound, opread);
 	READ4res *res = NFS4_OP_RES_SETUP(compound, opread);
@@ -1129,9 +1131,11 @@ void nfs4_op_read(struct compound *compound)
 			resok->data.data_val = NULL;
 			resok->data.data_len = 0;
 			*status = NFS4ERR_DELAY;
+			goto out;
 		}
-		/* Either way, return now — resume callback handles the rest. */
-		goto out;
+		/* Async I/O submitted — do not touch rt or compound. */
+		stateid_put(stid);
+		return NFS4_OP_FLAG_ASYNC;
 	}
 
 	/* Synchronous path (RAM backend or no backend ring). */
@@ -1164,18 +1168,18 @@ out:
 	TRACE("%s status=%s(%d) offset=%llu count=%u", __func__,
 	      nfs4_err_name(*status), *status, (unsigned long long)args->offset,
 	      args->count);
+
+	return 0;
 }
 
-void nfs4_op_read_plus(struct compound *compound)
+uint32_t nfs4_op_read_plus(struct compound *compound)
 {
-	READ_PLUS4args *args = NFS4_OP_ARG_SETUP(compound, opread_plus);
 	READ_PLUS4res *res = NFS4_OP_RES_SETUP(compound, opread_plus);
 	nfsstat4 *status = &res->rp_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }
 
 /*
@@ -1185,7 +1189,7 @@ void nfs4_op_read_plus(struct compound *compound)
  * NOT update i_size or sb_bytes_used, so compound->c_inode->i_size is still
  * the pre-write value.  db->db_size is already the new (post-extend) value.
  */
-static void nfs4_op_write_resume(struct rpc_trans *rt)
+static uint32_t nfs4_op_write_resume(struct rpc_trans *rt)
 {
 	struct compound *compound = rt->rt_compound;
 	WRITE4res *res = NFS4_OP_RES_SETUP(compound, opwrite);
@@ -1198,7 +1202,7 @@ static void nfs4_op_write_resume(struct rpc_trans *rt)
 	ssize_t nwritten = rt->rt_io_result;
 	if (nwritten < 0) {
 		*status = (nwritten == -ENOSPC) ? NFS4ERR_NOSPC : NFS4ERR_IO;
-		return;
+		return 0;
 	}
 
 	resok->count = (count4)nwritten;
@@ -1242,9 +1246,11 @@ static void nfs4_op_write_resume(struct rpc_trans *rt)
 	resok->committed = FILE_SYNC4;
 	nfs4_write_verf(resok->writeverf);
 	*status = NFS4_OK;
+
+	return 0;
 }
 
-void nfs4_op_write(struct compound *compound)
+uint32_t nfs4_op_write(struct compound *compound)
 {
 	WRITE4args *args = NFS4_OP_ARG_SETUP(compound, opwrite);
 	WRITE4res *res = NFS4_OP_RES_SETUP(compound, opwrite);
@@ -1356,8 +1362,11 @@ void nfs4_op_write(struct compound *compound)
 				rt->rt_next_action = NULL;
 				task_resume(rt->rt_task);
 				*status = NFS4ERR_DELAY;
+				goto out;
 			}
-			goto out;
+			/* Async I/O submitted — do not touch rt or compound. */
+			stateid_put(stid);
+			return NFS4_OP_FLAG_ASYNC;
 		}
 
 		/* Synchronous path (RAM backend or no backend ring). */
@@ -1417,21 +1426,21 @@ out:
 	TRACE("%s status=%s(%d) offset=%llu count=%u stable=%d", __func__,
 	      nfs4_err_name(*status), *status, (unsigned long long)args->offset,
 	      args->data.data_len, args->stable);
+
+	return 0;
 }
 
-void nfs4_op_write_same(struct compound *compound)
+uint32_t nfs4_op_write_same(struct compound *compound)
 {
-	WRITE_SAME4args *args = NFS4_OP_ARG_SETUP(compound, opwrite_same);
 	WRITE_SAME4res *res = NFS4_OP_RES_SETUP(compound, opwrite_same);
 	nfsstat4 *status = &res->wsr_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }
 
-void nfs4_op_commit(struct compound *compound)
+uint32_t nfs4_op_commit(struct compound *compound)
 {
 	COMMIT4args *args = NFS4_OP_ARG_SETUP(compound, opcommit);
 	COMMIT4res *res = NFS4_OP_RES_SETUP(compound, opcommit);
@@ -1460,42 +1469,36 @@ out:
 	TRACE("%s status=%s(%d) offset=%llu count=%u", __func__,
 	      nfs4_err_name(*status), *status, (unsigned long long)args->offset,
 	      args->count);
+
+	return 0;
 }
 
-void nfs4_op_seek(struct compound *compound)
+uint32_t nfs4_op_seek(struct compound *compound)
 {
-	SEEK4args *args = NFS4_OP_ARG_SETUP(compound, opseek);
 	SEEK4res *res = NFS4_OP_RES_SETUP(compound, opseek);
 	nfsstat4 *status = &res->sa_status;
-	seek_res4 *resok = NFS4_OP_RESOK_SETUP(res, SEEK4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	return 0;
 }
 
-void nfs4_op_allocate(struct compound *compound)
+uint32_t nfs4_op_allocate(struct compound *compound)
 {
-	ALLOCATE4args *args = NFS4_OP_ARG_SETUP(compound, opallocate);
 	ALLOCATE4res *res = NFS4_OP_RES_SETUP(compound, opallocate);
 	nfsstat4 *status = &res->ar_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }
 
-void nfs4_op_deallocate(struct compound *compound)
+uint32_t nfs4_op_deallocate(struct compound *compound)
 {
-	DEALLOCATE4args *args = NFS4_OP_ARG_SETUP(compound, opdeallocate);
 	DEALLOCATE4res *res = NFS4_OP_RES_SETUP(compound, opdeallocate);
 	nfsstat4 *status = &res->dr_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }

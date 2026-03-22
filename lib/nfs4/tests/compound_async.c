@@ -34,6 +34,7 @@
 #include "reffs/rpc.h"
 #include "reffs/task.h"
 #include "nfs4/compound.h"
+#include "nfs4/ops.h"
 #include "nfs4_test_harness.h"
 
 /* ------------------------------------------------------------------ */
@@ -106,16 +107,17 @@ static void free_compound(struct compound *compound)
 static bool g_cb_called;
 static unsigned g_cb_op; /* c_curr_op at time of call */
 
-static void ok_action(struct rpc_trans *rt)
+static uint32_t ok_action(struct rpc_trans *rt)
 {
 	struct compound *compound = rt->rt_compound;
 
 	g_cb_called = true;
 	g_cb_op = compound->c_curr_op;
 	/* leave resop status = 0 (NFS4_OK) */
+	return 0;
 }
 
-static void err_action(struct rpc_trans *rt)
+static uint32_t err_action(struct rpc_trans *rt)
 {
 	struct compound *compound = rt->rt_compound;
 	nfs_resop4 *resop =
@@ -123,12 +125,14 @@ static void err_action(struct rpc_trans *rt)
 
 	g_cb_called = true;
 	resop->nfs_resop4_u.opillegal.status = NFS4ERR_STALE;
+	return 0;
 }
 
-static void pause_action(struct rpc_trans *rt)
+static uint32_t pause_action(struct rpc_trans *rt)
 {
 	g_cb_called = true;
 	task_pause(rt->rt_task);
+	return NFS4_OP_FLAG_ASYNC;
 }
 
 /* ------------------------------------------------------------------ */

@@ -8,73 +8,55 @@
 #endif
 
 #include "nfsv42_xdr.h"
-#include "nfsv42_names.h"
-#include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
-#include "nfs4/errors.h"
 
-void nfs4_op_copy(struct compound *compound)
+uint32_t nfs4_op_copy(struct compound *compound)
 {
-	COPY4args *args = NFS4_OP_ARG_SETUP(compound, opcopy);
 	COPY4res *res = NFS4_OP_RES_SETUP(compound, opcopy);
 	nfsstat4 *status = &res->cr_status;
-	COPY4resok *resok = NFS4_OP_RESOK_SETUP(res, COPY4res_u, cr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	return 0;
 }
 
-void nfs4_op_copy_notify(struct compound *compound)
+uint32_t nfs4_op_copy_notify(struct compound *compound)
 {
-	COPY_NOTIFY4args *args = NFS4_OP_ARG_SETUP(compound, opoffload_notify);
 	COPY_NOTIFY4res *res = NFS4_OP_RES_SETUP(compound, opcopy_notify);
 	nfsstat4 *status = &res->cnr_status;
-	COPY_NOTIFY4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, COPY_NOTIFY4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	return 0;
 }
 
-void nfs4_op_clone(struct compound *compound)
+uint32_t nfs4_op_clone(struct compound *compound)
 {
-	CLONE4args *args = NFS4_OP_ARG_SETUP(compound, opclone);
 	CLONE4res *res = NFS4_OP_RES_SETUP(compound, opclone);
 	nfsstat4 *status = &res->cl_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }
-void nfs4_op_offload_cancel(struct compound *compound)
+uint32_t nfs4_op_offload_cancel(struct compound *compound)
 {
 	OFFLOAD_CANCEL4res *res = NFS4_OP_RES_SETUP(compound, opoffload_cancel);
 	nfsstat4 *status = &res->ocr_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)res);
+	return 0;
 }
 
-void nfs4_op_offload_status(struct compound *compound)
+uint32_t nfs4_op_offload_status(struct compound *compound)
 {
 	OFFLOAD_STATUS4res *res = NFS4_OP_RES_SETUP(compound, opoffload_status);
 	nfsstat4 *status = &res->osr_status;
-	OFFLOAD_STATUS4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, OFFLOAD_STATUS4res_u, osr_resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)res, (void *)resok);
+	return 0;
 }

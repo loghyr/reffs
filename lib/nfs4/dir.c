@@ -30,7 +30,7 @@ static inline changeid4 timespec_to_changeid(const struct timespec *ts)
 	return (changeid4)timespec_to_ns(ts);
 }
 
-void nfs4_op_lookup(struct compound *compound)
+uint32_t nfs4_op_lookup(struct compound *compound)
 {
 	LOOKUP4args *args = NFS4_OP_ARG_SETUP(compound, oplookup);
 	LOOKUP4res *res = NFS4_OP_RES_SETUP(compound, oplookup);
@@ -115,9 +115,11 @@ out:
 	trace_nfs4_name(compound, name, __func__, __LINE__);
 	free(name);
 	dirent_put(child_de);
+
+	return 0;
 }
 
-void nfs4_op_lookupp(struct compound *compound)
+uint32_t nfs4_op_lookupp(struct compound *compound)
 {
 	LOOKUPP4res *res = NFS4_OP_RES_SETUP(compound, oplookupp);
 	nfsstat4 *status = &res->status;
@@ -162,9 +164,11 @@ void nfs4_op_lookupp(struct compound *compound)
 
 out:
 	dirent_put(parent_de);
+
+	return 0;
 }
 
-void nfs4_op_create(struct compound *compound)
+uint32_t nfs4_op_create(struct compound *compound)
 {
 	CREATE4args *args = NFS4_OP_ARG_SETUP(compound, opcreate);
 	CREATE4res *res = NFS4_OP_RES_SETUP(compound, opcreate);
@@ -290,9 +294,11 @@ out:
 	inode_active_put(new_inode);
 	free(linkpath);
 	free(name);
+
+	return 0;
 }
 
-void nfs4_op_remove(struct compound *compound)
+uint32_t nfs4_op_remove(struct compound *compound)
 {
 	REMOVE4args *args = NFS4_OP_ARG_SETUP(compound, opremove);
 	REMOVE4res *res = NFS4_OP_RES_SETUP(compound, opremove);
@@ -354,9 +360,11 @@ void nfs4_op_remove(struct compound *compound)
 out:
 	trace_nfs4_name(compound, name, __func__, __LINE__);
 	free(name);
+
+	return 0;
 }
 
-void nfs4_op_rename(struct compound *compound)
+uint32_t nfs4_op_rename(struct compound *compound)
 {
 	RENAME4args *args = NFS4_OP_ARG_SETUP(compound, oprename);
 	RENAME4res *res = NFS4_OP_RES_SETUP(compound, oprename);
@@ -446,9 +454,11 @@ out:
 	inode_active_put(old_dir);
 	free(oldname);
 	free(newname);
+
+	return 0;
 }
 
-void nfs4_op_link(struct compound *compound)
+uint32_t nfs4_op_link(struct compound *compound)
 {
 	LINK4args *args = NFS4_OP_ARG_SETUP(compound, oplink);
 	LINK4res *res = NFS4_OP_RES_SETUP(compound, oplink);
@@ -529,21 +539,21 @@ out:
 	inode_active_put(src_inode);
 	trace_nfs4_name(compound, name, __func__, __LINE__);
 	free(name);
+
+	return 0;
 }
 
-void nfs4_op_openattr(struct compound *compound)
+uint32_t nfs4_op_openattr(struct compound *compound)
 {
-	OPENATTR4args *args = NFS4_OP_ARG_SETUP(compound, opopenattr);
 	OPENATTR4res *res = NFS4_OP_RES_SETUP(compound, opopenattr);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }
 
-void nfs4_op_readlink(struct compound *compound)
+uint32_t nfs4_op_readlink(struct compound *compound)
 {
 	READLINK4res *res = NFS4_OP_RES_SETUP(compound, opreadlink);
 	nfsstat4 *status = &res->status;
@@ -552,23 +562,25 @@ void nfs4_op_readlink(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
-		return;
+		return 0;
 	}
 
 	if (!S_ISLNK(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_INVAL;
-		return;
+		return 0;
 	}
 
 	if (!compound->c_inode->i_symlink) {
 		*status = NFS4ERR_SERVERFAULT;
-		return;
+		return 0;
 	}
 
 	resok->link.linktext4_val = strdup(compound->c_inode->i_symlink);
 	if (!resok->link.linktext4_val) {
 		*status = NFS4ERR_DELAY;
-		return;
+		return 0;
 	}
 	resok->link.linktext4_len = strlen(compound->c_inode->i_symlink);
+
+	return 0;
 }

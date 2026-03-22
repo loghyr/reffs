@@ -43,7 +43,7 @@
 #include "nfs4/compound.h"
 #include "nfsv42_names.h"
 
-typedef void (*nfs4_op_cb)(struct compound *compound);
+typedef uint32_t (*nfs4_op_cb)(struct compound *compound);
 
 nfs4_op_cb op_table[OP_MAX] = {
 	[OP_ACCESS] = nfs4_op_access,
@@ -137,7 +137,6 @@ bool dispatch_compound(struct compound *compound)
 {
 	COMPOUND4args *args = compound->c_args;
 	COMPOUND4res *res = compound->c_res;
-	struct task *t = compound->c_rt->rt_task;
 
 	/*
 	 * Convenience macro: record stats for the op at c_curr_op.
@@ -169,21 +168,21 @@ bool dispatch_compound(struct compound *compound)
 	 * c_curr_op is still pointing at the paused op.
 	 */
 	if (compound->c_rt->rt_next_action != NULL) {
-		void (*action)(struct rpc_trans *rt) =
+		uint32_t (*action)(struct rpc_trans *rt) =
 			compound->c_rt->rt_next_action;
 		nfs_resop4 *resop =
 			&res->resarray.resarray_val[compound->c_curr_op];
 
 		compound->c_rt->rt_next_action = NULL;
-		action(compound->c_rt);
+		uint32_t action_flags = action(compound->c_rt);
 
 		/*
-		 * Callback itself went async (double-async).  Check
-		 * t_went_async BEFORE touching compound again — a concurrent
-		 * worker may already own the compound if the CQE fired and
-		 * task_resume() re-enqueued it before we get here.
+		 * Callback itself went async (double-async).
+		 * The return value is on our stack — safe to check
+		 * even if the compound/task have been handed to
+		 * another worker via a fast CQE + task_resume().
 		 */
-		if (t != NULL && task_check_and_clear_went_async(t))
+		if (action_flags & NFS4_OP_FLAG_ASYNC)
 			return true;
 
 		trace_nfs4_compound_op(compound, __func__, __LINE__);
@@ -217,27 +216,16 @@ bool dispatch_compound(struct compound *compound)
 			    nfs4_op_name(argop->argop), argop->argop,
 			    compound->c_curr_op);
 #endif
-			op_table[argop->argop](compound);
+			uint32_t op_flags =
+				op_table[argop->argop](compound);
 
 			/*
-			 * Op went async: check t_went_async BEFORE touching
-			 * compound again — a fast CQE + task_resume() may have
-			 * already handed the compound to another worker.
+			 * Op went async: the return value is on our stack,
+			 * safe to check even after a fast CQE + task_resume
+			 * hands the compound to another worker.
 			 */
-			if (t != NULL && task_check_and_clear_went_async(t))
+			if (op_flags & NFS4_OP_FLAG_ASYNC)
 				return true;
-
-			/*
-			 * Sanity check: if rt_next_action is still set but
-			 * went_async was not detected, the async flag was
-			 * lost — likely a UAF on t.
-			 */
-			if (compound->c_rt->rt_next_action != NULL) {
-				LOG("dispatch_compound: ASYNC MISSED op=%d "
-				    "curr_op=%u — possible UAF on task",
-				    argop->argop, compound->c_curr_op);
-				compound->c_rt->rt_next_action = NULL;
-			}
 
 			trace_nfs4_compound_op(compound, __func__, __LINE__);
 			RECORD_OP_STATS(resop);

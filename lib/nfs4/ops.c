@@ -68,19 +68,17 @@ void nfs4_op_stats_record(struct reffs_op_stats global[REFFS_NFS4_OP_MAX],
 	}
 }
 
-void nfs4_op_secinfo(struct compound *compound)
+uint32_t nfs4_op_secinfo(struct compound *compound)
 {
-	SECINFO4args *args = NFS4_OP_ARG_SETUP(compound, opsecinfo);
 	SECINFO4res *res = NFS4_OP_RES_SETUP(compound, opsecinfo);
 	nfsstat4 *status = &res->status;
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p", __func__, nfs4_err_name(*status),
-	    *status, (void *)args, (void *)res);
+	return 0;
 }
 
-void nfs4_op_secinfo_no_name(struct compound *compound)
+uint32_t nfs4_op_secinfo_no_name(struct compound *compound)
 {
 	SECINFO_NO_NAME4args *args =
 		NFS4_OP_ARG_SETUP(compound, opsecinfo_no_name);
@@ -122,24 +120,21 @@ void nfs4_op_secinfo_no_name(struct compound *compound)
 out:
 	LOG("%s style=%d status=%s(%d)", __func__, (int)style,
 	    nfs4_err_name(*status), *status);
+
+	return 0;
 }
 
-void nfs4_op_io_advise(struct compound *compound)
+uint32_t nfs4_op_io_advise(struct compound *compound)
 {
-	IO_ADVISE4args *args = NFS4_OP_ARG_SETUP(compound, opio_advise);
 	IO_ADVISE4res *res = NFS4_OP_RES_SETUP(compound, opio_advise);
 	nfsstat4 *status = &res->ior_status;
-	IO_ADVISE4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, IO_ADVISE4res_u, resok4);
 
 	*status = NFS4ERR_NOTSUPP;
 
-	LOG("%s status=%s(%d) args=%p res=%p resok=%p", __func__,
-	    nfs4_err_name(*status), *status, (void *)args, (void *)res,
-	    (void *)resok);
+	return 0;
 }
 
-void nfs4_op_illegal(struct compound *compound)
+uint32_t nfs4_op_illegal(struct compound *compound)
 {
 	nfs_argop4 *argop =
 		&compound->c_args->argarray.argarray_val[compound->c_curr_op];
@@ -152,4 +147,6 @@ void nfs4_op_illegal(struct compound *compound)
 
 	LOG("%s op=%s(%d) status=%s(%d)", __func__, nfs4_op_name(argop->argop),
 	    argop->argop, nfs4_err_name(*status), *status);
+
+	return 0;
 }

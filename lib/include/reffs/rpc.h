@@ -72,7 +72,7 @@ struct rpc_trans {
 	struct rpc_program_handler *rt_rph;
 	uint16_t rt_port;
 	char *rt_addr_str;
-	void (*rt_next_action)(
+	uint32_t (*rt_next_action)(
 		struct rpc_trans *rt); /* NULL = fresh, else resume cb */
 	struct task *rt_task; /* owning task */
 	struct compound
