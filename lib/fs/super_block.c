@@ -201,6 +201,10 @@ static void super_block_remove_all_inodes(struct super_block *sb)
 	 * remove.
 	 */
 	pthread_mutex_lock(&sb->sb_inode_lru_lock);
+	if (!sb->sb_inodes) {
+		pthread_mutex_unlock(&sb->sb_inode_lru_lock);
+		return;
+	}
 	rcu_read_lock();
 	cds_lfht_for_each_entry(sb->sb_inodes, &iter, inode, i_node) {
 		/* Pull off LRU if present, decrement count. */
