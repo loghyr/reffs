@@ -29,6 +29,15 @@ fix-style:
 scanbuild:
 	scan-build make
 
+# Generate compile_commands.json for clangd / IDE tooling and symlink it
+# back into the source tree so editors find it at the project root.
+# Run this once after "configure && make"; re-run whenever you add or
+# remove source files or change compiler flags.
+#   cd ~/build && ../reffs/configure ... && make compile_commands
+compile_commands:
+	bear -- $(MAKE) $(AM_MAKEFLAGS)
+	$(LN_S) -f $(abs_builddir)/compile_commands.json $(abs_top_srcdir)/compile_commands.json
+
 tidy:
 	bear -- make
 	find . \( -name xdr -o -name third_party \) -prune -o \( -name "*.c" -o -name "*.cpp" \) -print | xargs clang-tidy -p . -header-filter=.*

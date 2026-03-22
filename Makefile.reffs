@@ -22,6 +22,7 @@ help:
 	@echo "  all             - style and license (default, use SKIP_STYLE=1 to bypass style)"
 	@echo "  build           - Build the project incrementally"
 	@echo "  check           - Run unit tests"
+	@echo "  compile_commands - Generate compile_commands.json for clangd/IDEs"
 	@echo "  style           - Check code style (clang-format)"
 	@echo "  fix-style       - Automatically fix code style"
 	@echo "  license         - Check for SPDX license headers"
@@ -60,6 +61,13 @@ configure: build/Makefile
 # Run tests (for build-related checks)
 check: build
 	$(MAKE) -C build check
+
+# Generate compile_commands.json for clangd / IDE tooling.
+# Wraps the build with bear(1) to record every compiler invocation,
+# then symlinks the result to the project root where clangd finds it.
+compile_commands: build/Makefile
+	cd build && bear -- $(MAKE) -j$$(nproc)
+	$(LN_S) -f $$(realpath build/compile_commands.json) compile_commands.json
 
 # Run scan-build (for static analysis)
 scanbuild: build/Makefile
@@ -222,4 +230,4 @@ install-hooks:
 	@chmod +x .git/hooks/pre-commit
 	@echo "Installed .git/hooks/pre-commit"
 
-.PHONY: all help build check configure scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks
+.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks
