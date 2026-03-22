@@ -29,6 +29,7 @@
 
 #include "mntv3_xdr.h"
 #include "reffs/dstore.h"
+#include "reffs/dstore_ops.h"
 #include "reffs/log.h"
 #include "reffs/trace/dstore.h"
 
@@ -233,11 +234,26 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
 	strncpy(ds->ds_path, path, sizeof(ds->ds_path) - 1);
 	pthread_mutex_init(&ds->ds_clnt_mutex, NULL);
 
+	/*
+	 * Select the ops vtable: local if the address is the loopback
+	 * or matches our own server, remote (NFSv3) otherwise.
+	 */
+	if (!strcmp(address, "127.0.0.1") || !strcmp(address, "::1") ||
+	    !strcmp(address, "localhost")) {
+		ds->ds_ops = &dstore_ops_local;
+		__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED,
+				  __ATOMIC_RELEASE);
+		LOG("dstore[%u]: local path %s:%s", id, address, path);
+	} else {
+		ds->ds_ops = &dstore_ops_nfsv3;
+	}
+
 	cds_lfht_node_init(&ds->ds_node);
 	urcu_ref_init(&ds->ds_ref); /* ref 1: hash table */
 
-	/* Connect and mount (skipped for unit tests / deferred mount). */
-	if (do_mount && mount_get_root_fh(ds) < 0) {
+	/* Connect and mount (skipped for local / unit tests). */
+	if (do_mount && ds->ds_ops == &dstore_ops_nfsv3 &&
+	    mount_get_root_fh(ds) < 0) {
 		LOG("dstore[%u]: mount failed for %s:%s (continuing)", id,
 		    address, path);
 	}

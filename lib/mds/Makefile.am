@@ -8,4 +8,4 @@ AM_CFLAGS = -I$(top_srcdir)/lib/include \
 	-I$(top_builddir)/lib/xdr
 
 noinst_LTLIBRARIES = libreffs_mds.la
-libreffs_mds_la_SOURCES = dstore.c dstore_ops.c
+libreffs_mds_la_SOURCES = dstore.c dstore_ops_nfsv3.c dstore_ops_local.c

@@ -31,12 +31,17 @@
 #define DSTORE_IS_MOUNTED   (1ULL << 1)
 #define DSTORE_IS_RECONNECTING (1ULL << 2)
 
+struct dstore_ops;
+
 struct dstore {
 	uint32_t ds_id;			       /* unique ID (from config) */
 
 	/* Config (immutable after alloc) */
 	char ds_address[REFFS_CONFIG_MAX_HOST];
 	char ds_path[REFFS_CONFIG_MAX_PATH];
+
+	/* Ops vtable: nfsv3 (remote) or local (same server). */
+	const struct dstore_ops *ds_ops;
 
 	/* MOUNT result (valid when DSTORE_IS_MOUNTED is set) */
 	uint8_t ds_root_fh[DSTORE_MAX_FH];    /* NFSv3 root filehandle */
