@@ -23,6 +23,7 @@ AM_CFLAGS = \
 LDADD = \
 	$(top_builddir)/lib/nfs4/libreffs_nfs4.la	\
 	$(top_builddir)/lib/nfs3/libreffs_nfs3.la	\
+	$(top_builddir)/lib/mds/libreffs_mds.la		\
 	$(top_builddir)/lib/mount3/libreffs_mount3.la	\
 	$(top_builddir)/lib/nlm/libnlm.la		\
 	$(top_builddir)/lib/nsm/libnsm.la		\

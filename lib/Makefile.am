@@ -11,6 +11,7 @@ SUBDIRS =		\
 	utils		\
 	config		\
 	ec		\
+	mds		\
 	io		\
 	rpc		\
 	tests		\

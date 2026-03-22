@@ -1,13 +1,18 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Standalone NFS server — no pNFS, no layouts.
-# See also: reffsd-mds.toml, reffsd-ds.toml
+# pNFS Flex Files data server (DS).
+#
+# The DS serves data files over NFSv3 to pNFS clients.  The MDS
+# connects to this server at startup via MOUNT to obtain root
+# filehandles, then creates data files in the export path.
+#
+# See also: reffsd.toml (standalone), reffsd-mds.toml (MDS)
 
 [server]
 port            = 2049
 bind            = "*"
-role            = "standalone"
+role            = "ds"
 minor_versions  = [1, 2]
 grace_period    = 45
 workers         = 8
@@ -16,8 +21,8 @@ log_level       = "info"
 
 [backend]
 type            = "posix"
-path            = "/var/lib/reffs/data"
-state_file      = "/var/lib/reffs/reffs.state"
+path            = "/var/lib/reffs/ds/data"
+state_file      = "/var/lib/reffs/ds/reffs.state"
 
 [iouring]
 network_sq_size = 2048
@@ -26,7 +31,7 @@ backend_sq_size = 512
 backend_cq_size = 2048
 
 [[export]]
-path        = "/"
+path        = "/ds1"
 clients     = "*"
 access      = "rw"
 root_squash = false

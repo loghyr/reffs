@@ -43,6 +43,7 @@
 #include "reffs/types.h"
 #include "sm_inter.h"
 #include "reffs/client.h"
+#include "reffs/dstore.h"
 #include "reffs/settings.h"
 
 #define NFS_PORT 2049
@@ -345,6 +346,22 @@ int main(int argc, char *argv[])
 	if (exit_code)
 		goto out;
 
+	/*
+	 * MDS mode: initialize dstore hash table, connect to each
+	 * configured data server via MOUNT, and obtain root FHs.
+	 */
+	if (cfg.role == REFFS_ROLE_MDS || cfg.role == REFFS_ROLE_COMBINED) {
+		if (dstore_init() < 0) {
+			LOG("Failed to create dstore hash table");
+			exit_code = 1;
+			goto out;
+		}
+		if (cfg.ndata_servers > 0) {
+			if (dstore_load_config(&cfg) < 0)
+				LOG("Warning: some data stores unavailable");
+		}
+	}
+
 	// Create worker threads
 	if (create_worker_threads(&running) < 0) {
 		exit_code = 1;
@@ -567,6 +584,8 @@ out:
 	nfs3_protocol_deregister();
 	nfs4_protocol_deregister();
 
+	if (cfg.role == REFFS_ROLE_MDS || cfg.role == REFFS_ROLE_COMBINED)
+		dstore_fini();
 	client_unload_all_clients();
 
 	server_state_fini(ss);

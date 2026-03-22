@@ -346,6 +346,35 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 					 toml_table_at(arr, i));
 	}
 
+	arr = toml_array_in(root, "data_server");
+	if (arr) {
+		int nds = toml_array_nelem(arr);
+
+		if (nds > REFFS_CONFIG_MAX_DATA_SERVERS)
+			nds = REFFS_CONFIG_MAX_DATA_SERVERS;
+		cfg->ndata_servers = (unsigned int)nds;
+		for (int i = 0; i < nds; i++) {
+			toml_table_t *ds_tbl = toml_table_at(arr, i);
+			struct reffs_data_server_config *dsc =
+				&cfg->data_servers[i];
+			toml_datum_t d;
+
+			d = toml_string_in(ds_tbl, "address");
+			if (d.ok) {
+				strncpy(dsc->address, d.u.s,
+					sizeof(dsc->address) - 1);
+				free(d.u.s);
+			}
+
+			d = toml_string_in(ds_tbl, "path");
+			if (d.ok) {
+				strncpy(dsc->path, d.u.s,
+					sizeof(dsc->path) - 1);
+				free(d.u.s);
+			}
+		}
+	}
+
 	toml_free(root);
 	return 0;
 }

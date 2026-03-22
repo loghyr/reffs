@@ -19,6 +19,8 @@
 #define REFFS_CONFIG_MAX_BIND 64
 #define REFFS_CONFIG_MAX_EXPORTS 64
 #define REFFS_CONFIG_MAX_FLAVORS 8
+#define REFFS_CONFIG_MAX_DATA_SERVERS 64
+#define REFFS_CONFIG_MAX_HOST 256
 
 /*
  * Server role — maps to EXCHGID4_FLAG_USE_* bits advertised in EXCHANGE_ID.
@@ -75,6 +77,18 @@ struct reffs_export_config {
 	unsigned int nflavors;
 };
 
+/*
+ * [[data_server]] — MDS-only configuration.
+ *
+ * Each entry names an NFSv3 data server and its export path.
+ * The MDS connects to these at startup via the MOUNT protocol to
+ * obtain root filehandles, then creates/manages data files on them.
+ */
+struct reffs_data_server_config {
+	char address[REFFS_CONFIG_MAX_HOST]; /* IPv4 or IPv6 address */
+	char path[REFFS_CONFIG_MAX_PATH];    /* export path on the DS */
+};
+
 struct reffs_config {
 	/* [server] */
 	uint16_t port;
@@ -105,6 +119,11 @@ struct reffs_config {
 	/* [[export]] */
 	struct reffs_export_config exports[REFFS_CONFIG_MAX_EXPORTS];
 	unsigned int nexports;
+
+	/* [[data_server]] — only used when role = mds or combined */
+	struct reffs_data_server_config
+		data_servers[REFFS_CONFIG_MAX_DATA_SERVERS];
+	unsigned int ndata_servers;
 };
 
 /*
