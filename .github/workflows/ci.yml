@@ -97,6 +97,37 @@ jobs:
         cd build_ci
         sudo make check || (cat lib/fs/tests/test-suite.log && exit 1)
 
+    - name: Gather environment diagnostics
+      run: |
+        echo "=== Kernel ==="
+        uname -a
+        echo ""
+        echo "=== OS ==="
+        cat /etc/os-release
+        echo ""
+        echo "=== CPU ==="
+        lscpu | grep -E "^(Architecture|Model name|CPU\(s\)|Thread|Core|Socket)"
+        echo ""
+        echo "=== Memory ==="
+        free -h
+        echo ""
+        echo "=== Disk (tmp) ==="
+        df -h /tmp
+        echo ""
+        echo "=== io_uring kernel config ==="
+        sysctl -n kernel.io_uring_disabled 2>/dev/null && echo "io_uring_disabled: $?" || echo "io_uring_disabled: sysctl not found (likely 0)"
+        cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo "(not present)"
+        echo ""
+        echo "=== Key library versions ==="
+        dpkg -l liburing-dev liburcu-dev libtirpc-dev nfs-common 2>/dev/null | awk '/^ii/{printf "%-30s %s\n", $2, $3}'
+        echo ""
+        echo "=== Clang ==="
+        clang --version | head -1
+        echo ""
+        echo "=== NFS client ==="
+        nfsstat --version 2>&1 | head -1 || true
+        mount.nfs -V 2>&1 | head -1 || true
+
     - name: Run integration tests
       run: |
         sudo bash -c "ulimit -n 65536; bash scripts/ci_integration_test.sh \
