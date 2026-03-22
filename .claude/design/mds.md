@@ -155,12 +155,101 @@ the 3rd as stale.  If the stale mirror later responds with newer
 values but the other two don't advance, don't update the inode —
 wait for all non-stale mirrors to agree.
 
+## WCC Data and Write Layout Checking
+
+### Use WCC data from dstore op returns
+
+All dstore ops that return WCC (weak cache consistency) data should
+compare the post-op attributes against the inode's cached values.
+If the cached values changed unexpectedly and there is **no outstanding
+write layout**, LOG the error as **WWWL** (Write Without Write Layout).
+Ignore atime-only changes (reads update atime legitimately).
+
+### Write layout window checking
+
+When checking for write layouts, consider BOTH timestamps:
+- Was there a write layout when the dstore op was **sent**?
+- Was there a write layout when the response was **received**?
+
+Both must be checked because a layout could be granted or returned
+during the round-trip.  Store the send/receive timestamps in the
+in-memory inode (not per-mirror — this is per overall dstore op).
+
+### Backwards-moving timestamps
+
+If ctime or mtime goes backwards in a dstore response:
+- Possible DS reboot (clock reset)
+- Compare the send timestamp vs receive timestamp to detect
+  whether the DS clock jumped
+- LOG the anomaly for operator investigation
+
+## LAYOUTRETURN Behaviour
+
+### Write layout return without GETATTR in compound
+
+When a client returns a WRITE layout and the COMPOUND does not
+include a GETATTR, the MDS does not know whether writes occurred.
+Must trigger a **reflected GETATTR** to all DSes to update the
+inode's cached attributes.
+
+### Read layout return
+
+On return of a READ layout, if the inode's data_file attributes
+changed (from the reflected GETATTR) but there is NO write layout
+outstanding, trigger WWWL — something wrote without a layout.
+
+## InBand I/O
+
+If a client does not request a layout and the file has layout
+segments, the MDS handles READ/WRITE directly:
+
+- **NFSv4.2 WRITE**: fan out to ALL dstores in the mirror set
+- **NFSv4.2 READ**: send to only ONE dstore (any available mirror)
+- **NFSv3 WRITE/READ**: same rules apply
+
+The MDS acts as a proxy — data flows through the MDS to the DSes.
+
+## Dstore Failure and Retries
+
+### Timeout and retry configuration
+
+Dstore RPC calls should have configurable:
+- `timeout` — per-call RPC timeout
+- `retries` — number of retransmit attempts
+
+If a dstore does not respond after all retries, return **`-ENXIO`**
+to the caller.
+
+### Error Tables
+
+Track errors at three levels:
+- **Per client**: which clients are experiencing errors
+- **Per dstore**: which dstores are failing
+- **Overall**: aggregate error counts
+
+Layout errors (LAYOUTERROR from clients) should feed into these
+tables, not just be gathered and ignored.
+
+## Dstore RPC Statistics
+
+Track RPC call statistics per dstore (call count, latency, errors)
+and overall.  The vtable design supports this — when NFSv4.2 dstores
+are added later, they get the same stats framework.
+
+## Mirror Efficiency
+
+If a DS is also the MDS (local vtable), mark that mirror as higher
+efficiency in the Flex Files layout (`ffds_efficiency`).  The client
+can prefer the more efficient mirror for reads.
+
 ## Design Rules
 
 - dstores are round-robin'd when fewer than k+m are available
   (multiple data files on the same DS is allowed)
 - No root squashing from MDS IP to DSes; no access enforcement
   on the DS side (trust the MDS)
-- DSes must be available over NFSv3
+- DSes must be available over NFSv3 (or local VFS for combined role)
 - Layouts come from the set of configured dstore pairs
 - Dstore control-plane operations do NOT count as WRITE layouts
+- Local dstores (same server) use the VFS vtable, not NFSv3 RPC
+- Eventually NFSv4.2 dstores will be supported (third vtable)
