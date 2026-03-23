@@ -328,3 +328,84 @@ int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 	/* cb_rt stays alive in pending_requests — do NOT free it here. */
 	return 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* CB_LAYOUTRECALL — send and wait for reply                           */
+/* ------------------------------------------------------------------ */
+
+int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
+			      layouttype4 layout_type, layoutiomode4 iomode,
+			      int changed, const nfs_fh4 *fh, uint64_t offset,
+			      uint64_t length, const stateid4 *lo_stateid,
+			      struct cb_pending *cp)
+{
+	CB_COMPOUND4args args = { 0 };
+	nfs_cb_argop4 ops[2] = { 0 };
+	CB_LAYOUTRECALL4args *lr;
+	struct rpc_trans *cb_rt;
+	uint32_t xid;
+	int ret;
+
+	if (!session || !cp)
+		return EINVAL;
+	if (session->ns_cb_fd < 0)
+		return ENOTCONN;
+
+	args.tag.utf8string_val = (char *)"CB_LAYOUTRECALL";
+	args.tag.utf8string_len = sizeof("CB_LAYOUTRECALL") - 1;
+	args.minorversion = 1;
+	args.callback_ident = session->ns_cb_program;
+	args.argarray.argarray_len = 2;
+	args.argarray.argarray_val = ops;
+
+	cb_fill_sequence(&ops[0], session);
+
+	ops[1].argop = OP_CB_LAYOUTRECALL;
+	lr = &ops[1].nfs_cb_argop4_u.opcblayoutrecall;
+	lr->clora_type = layout_type;
+	lr->clora_iomode = iomode;
+	lr->clora_changed = changed;
+
+	/*
+	 * File-level recall.  For FSID and ALL recalls, the caller
+	 * would set clora_recall differently; for now we only support
+	 * per-file recall.
+	 */
+	lr->clora_recall.lor_recalltype = LAYOUTRECALL4_FILE;
+	lr->clora_recall.layoutrecall4_u.lor_layout.lor_fh.nfs_fh4_len =
+		fh->nfs_fh4_len;
+	lr->clora_recall.layoutrecall4_u.lor_layout.lor_fh.nfs_fh4_val =
+		fh->nfs_fh4_val;
+	lr->clora_recall.layoutrecall4_u.lor_layout.lor_offset = offset;
+	lr->clora_recall.layoutrecall4_u.lor_layout.lor_length = length;
+	memcpy(&lr->clora_recall.layoutrecall4_u.lor_layout.lor_stateid,
+	       lo_stateid, sizeof(stateid4));
+
+	ret = cb_build_and_alloc(session, &args, &cb_rt, &xid);
+	if (ret)
+		return ret;
+
+	cp->cp_xid = xid;
+
+	cb_rt->rt_context = cp;
+	cb_rt->rt_cb = cb_reply_handler;
+
+	ret = io_register_request(cb_rt);
+	if (ret) {
+		free(cb_rt->rt_reply);
+		free(cb_rt);
+		return ret;
+	}
+
+	cb_timeout_register(cp);
+
+	ret = io_rpc_trans_cb(cb_rt);
+	if (ret) {
+		io_unregister_request(xid);
+		cb_timeout_unregister(cp);
+		free(cb_rt);
+		return ret;
+	}
+
+	return 0;
+}
