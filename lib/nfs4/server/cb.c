@@ -21,58 +21,32 @@
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/rpc.h"
+#include "reffs/task.h"
 #include "nfs4/cb.h"
 #include "nfs4/session.h"
 
 /* CB_COMPOUND procedure number (NFS4_CALLBACK/NFS_CB from nfsv42_xdr.h) */
 #define CB_COMPOUND_PROC 1u
 
+/* RPC CALL header: frag + 10 words (XID, type, rpc_ver, prog, ver, proc,
+ * cred_flavor, cred_len, verf_flavor, verf_len) */
+#define RPC_CALL_HEADER_WORDS 11
+
+static _Atomic uint32_t cb_xid = 0x10000000u;
+
+/* ------------------------------------------------------------------ */
+/* Common CB_COMPOUND builder                                          */
+/* ------------------------------------------------------------------ */
+
 /*
- * nfs4_cb_recall -- build and send a CB_COMPOUND [CB_SEQUENCE, CB_RECALL]
- * on the back channel, fire-and-forget.
- *
- * We do not pause the compound or wait for a reply.  The CB_COMPOUND
- * reply from the client is only an RPC acknowledgment; the actual
- * delegation return arrives later as a separate DELEGRETURN on the
- * fore channel.  Callers must return NFS4ERR_DELAY to the client after
- * this call and let it retry.
- *
- * Returns 0 on success, errno on failure (write not sent).
+ * Fill the CB_SEQUENCE op (always op[0] in a CB_COMPOUND).
  */
-int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
-		   const nfs_fh4 *fh, bool truncate)
+static void cb_fill_sequence(nfs_cb_argop4 *op, struct nfs4_session *session)
 {
-	CB_COMPOUND4args args = { 0 };
-	nfs_cb_argop4 ops[2] = { 0 };
 	CB_SEQUENCE4args *seq;
-	CB_RECALL4args *rec;
-	u_long xdr_size;
-	size_t buf_len;
-	char *buf;
-	uint32_t *p;
-	uint32_t body_len;
-	static _Atomic uint32_t cb_xid = 0x10000000u;
-	uint32_t xid;
-	struct rpc_trans *cb_rt;
-	XDR xdrs = { 0 };
-	int ret;
 
-	if (!session || !fh)
-		return EINVAL;
-	if (session->ns_cb_fd < 0)
-		return ENOTCONN;
-
-	/* Build CB_COMPOUND4args. */
-	args.tag.utf8string_val = (char *)"CB_RECALL";
-	args.tag.utf8string_len = sizeof("CB_RECALL") - 1;
-	args.minorversion = 1;
-	args.callback_ident = session->ns_cb_program;
-	args.argarray.argarray_len = 2;
-	args.argarray.argarray_val = ops;
-
-	/* Op 0: CB_SEQUENCE */
-	ops[0].argop = OP_CB_SEQUENCE;
-	seq = &ops[0].nfs_cb_argop4_u.opcbsequence;
+	op->argop = OP_CB_SEQUENCE;
+	seq = &op->nfs_cb_argop4_u.opcbsequence;
 	memcpy(seq->csa_sessionid, session->ns_sessionid, sizeof(sessionid4));
 	pthread_mutex_lock(&session->ns_cb_mutex);
 	seq->csa_sequenceid = ++session->ns_cb_seqid;
@@ -82,24 +56,32 @@ int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
 	seq->csa_cachethis = false;
 	seq->csa_referring_call_lists.csa_referring_call_lists_len = 0;
 	seq->csa_referring_call_lists.csa_referring_call_lists_val = NULL;
+}
 
-	/* Op 1: CB_RECALL */
-	ops[1].argop = OP_CB_RECALL;
-	rec = &ops[1].nfs_cb_argop4_u.opcbrecall;
-	memcpy(&rec->stateid, stateid, sizeof(*stateid));
-	rec->truncate = truncate;
-	rec->fh.nfs_fh4_len = fh->nfs_fh4_len;
-	rec->fh.nfs_fh4_val =
-		fh->nfs_fh4_val; /* borrowed; freed after encode */
+/*
+ * XDR-encode CB_COMPOUND4args into an RPC CALL buffer and allocate
+ * an rpc_trans for submission.
+ *
+ * On success, *out_rt holds the rpc_trans (caller must either submit
+ * via io_rpc_trans_cb or free it).  *out_xid holds the XID.
+ *
+ * Returns 0 on success, errno on failure.
+ */
+static int cb_build_and_alloc(struct nfs4_session *session,
+			      CB_COMPOUND4args *args, struct rpc_trans **out_rt,
+			      uint32_t *out_xid)
+{
+	u_long xdr_size;
+	size_t buf_len;
+	char *buf;
+	uint32_t *p;
+	uint32_t body_len;
+	uint32_t xid;
+	struct rpc_trans *cb_rt;
+	XDR xdrs = { 0 };
 
-	/*
-	 * Calculate wire size and allocate the CALL buffer.
-	 * Layout: fragment_marker(4) + RPC_CALL_header(10×4) + XDR_args
-	 * The 11-word header is: frag, XID, call=0, rpc_vers=2, prog, vers,
-	 * proc, cred_flavor, cred_len, verf_flavor, verf_len.
-	 */
-	xdr_size = xdr_sizeof((xdrproc_t)xdr_CB_COMPOUND4args, &args);
-	buf_len = 11 * sizeof(uint32_t) + xdr_size;
+	xdr_size = xdr_sizeof((xdrproc_t)xdr_CB_COMPOUND4args, args);
+	buf_len = RPC_CALL_HEADER_WORDS * sizeof(uint32_t) + xdr_size;
 
 	buf = calloc(buf_len, 1);
 	if (!buf)
@@ -109,28 +91,28 @@ int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
 
 	p = (uint32_t *)buf;
 	body_len = (uint32_t)(buf_len - sizeof(uint32_t));
-	*p++ = htonl(body_len | 0x80000000u); /* fragment marker, last frag */
+	*p++ = htonl(body_len | 0x80000000u); /* last fragment */
 	*p++ = htonl(xid);
 	*p++ = htonl(0); /* CALL */
 	*p++ = htonl(2); /* RPC version 2 */
 	*p++ = htonl(NFS4_CALLBACK);
 	*p++ = htonl(NFS_CB);
 	*p++ = htonl(CB_COMPOUND_PROC);
-	*p++ = htonl(AUTH_NONE); /* credential flavor */
-	*p++ = htonl(0); /* credential length */
-	*p++ = htonl(AUTH_NONE); /* verifier flavor */
-	*p++ = htonl(0); /* verifier length */
+	*p++ = htonl(AUTH_NONE);
+	*p++ = htonl(0); /* cred length */
+	*p++ = htonl(AUTH_NONE);
+	*p++ = htonl(0); /* verf length */
 
-	xdrmem_create(&xdrs, (char *)p, buf_len - 11 * sizeof(uint32_t),
+	xdrmem_create(&xdrs, (char *)p,
+		      buf_len - RPC_CALL_HEADER_WORDS * sizeof(uint32_t),
 		      XDR_ENCODE);
-	if (!xdr_CB_COMPOUND4args(&xdrs, &args)) {
+	if (!xdr_CB_COMPOUND4args(&xdrs, args)) {
 		xdr_destroy(&xdrs);
 		free(buf);
 		return EINVAL;
 	}
 	xdr_destroy(&xdrs);
 
-	/* Create a minimal rpc_trans for the outgoing CB call. */
 	cb_rt = calloc(1, sizeof(*cb_rt));
 	if (!cb_rt) {
 		free(buf);
@@ -142,14 +124,207 @@ int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
 	cb_rt->rt_reply_len = buf_len;
 	cb_rt->rt_info.ri_xid = xid;
 
+	*out_rt = cb_rt;
+	*out_xid = xid;
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* cb_pending lifecycle                                                 */
+/* ------------------------------------------------------------------ */
+
+struct cb_pending *cb_pending_alloc(struct task *task,
+				    struct compound *compound, nfs_cb_opnum4 op)
+{
+	struct cb_pending *cp = calloc(1, sizeof(*cp));
+
+	if (!cp)
+		return NULL;
+
+	cp->cp_task = task;
+	cp->cp_compound = compound;
+	cp->cp_op = op;
+	atomic_store_explicit(&cp->cp_status, CB_PENDING_INFLIGHT,
+			      memory_order_relaxed);
+	cp->cp_xid = 0;
+	return cp;
+}
+
+void cb_pending_free(struct cb_pending *cp)
+{
+	if (!cp)
+		return;
+
+	xdr_free((xdrproc_t)xdr_CB_COMPOUND4res, (caddr_t)&cp->cp_res);
+	free(cp);
+}
+
+/* ------------------------------------------------------------------ */
+/* CB reply handler                                                    */
+/*                                                                     */
+/* Called by the RPC REPLY dispatcher (rpc.c) when a CB_COMPOUND reply */
+/* arrives on the backchannel.  The rt_context has been transferred    */
+/* from the registered rpc_trans to this reply rt.                     */
+/* ------------------------------------------------------------------ */
+
+int cb_reply_handler(struct rpc_trans *rt)
+{
+	struct cb_pending *cp = rt->rt_context;
+
+	rt->rt_context = NULL; /* take ownership */
+
+	if (!cp) {
+		TRACE("CB reply with no cb_pending, xid=0x%08x",
+		      rt->rt_info.ri_xid);
+		return 0;
+	}
+
 	/*
-	 * Fire-and-forget: submit the write, then discard cb_rt.
-	 * io_rpc_trans_cb takes ownership of buf (sets rt_reply = NULL).
-	 * We don't register for a reply; the CB_COMPOUND reply from the
-	 * client is just an RPC ack that we intentionally ignore.
+	 * Decode CB_COMPOUND4res from the raw reply body.
+	 *
+	 * The RPC REPLY header (XID, type=1, reply_stat, verf, accept_stat)
+	 * has already been parsed by rpc_process_task.  rt->rt_body points
+	 * at the start of the record, and rt->rt_offset is past the header
+	 * fields already consumed.  The remaining bytes from rt_offset are
+	 * the XDR-encoded CB_COMPOUND4res.
 	 */
+	int status = -EIO;
+
+	if (rt->rt_offset < rt->rt_body_len) {
+		XDR xdrs;
+		size_t remaining = rt->rt_body_len - rt->rt_offset;
+
+		xdrmem_create(&xdrs, rt->rt_body + rt->rt_offset, remaining,
+			      XDR_DECODE);
+		if (xdr_CB_COMPOUND4res(&xdrs, &cp->cp_res))
+			status = 0;
+		xdr_destroy(&xdrs);
+	}
+
+	/* Remove from timeout tracking. */
+	cb_timeout_unregister(cp);
+
+	/*
+	 * CAS ensures only one of reply handler / timeout calls
+	 * task_resume.  If the timeout thread already won, we
+	 * silently drop the late reply.
+	 */
+	if (cb_pending_try_complete(cp, status))
+		task_resume(cp->cp_task);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* CB_RECALL — fire-and-forget (unchanged behavior)                    */
+/* ------------------------------------------------------------------ */
+
+int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
+		   const nfs_fh4 *fh, int truncate)
+{
+	CB_COMPOUND4args args = { 0 };
+	nfs_cb_argop4 ops[2] = { 0 };
+	CB_RECALL4args *rec;
+	struct rpc_trans *cb_rt;
+	uint32_t xid;
+	int ret;
+
+	if (!session || !fh)
+		return EINVAL;
+	if (session->ns_cb_fd < 0)
+		return ENOTCONN;
+
+	args.tag.utf8string_val = (char *)"CB_RECALL";
+	args.tag.utf8string_len = sizeof("CB_RECALL") - 1;
+	args.minorversion = 1;
+	args.callback_ident = session->ns_cb_program;
+	args.argarray.argarray_len = 2;
+	args.argarray.argarray_val = ops;
+
+	cb_fill_sequence(&ops[0], session);
+
+	ops[1].argop = OP_CB_RECALL;
+	rec = &ops[1].nfs_cb_argop4_u.opcbrecall;
+	memcpy(&rec->stateid, stateid, sizeof(*stateid));
+	rec->truncate = truncate;
+	rec->fh.nfs_fh4_len = fh->nfs_fh4_len;
+	rec->fh.nfs_fh4_val = fh->nfs_fh4_val;
+
+	ret = cb_build_and_alloc(session, &args, &cb_rt, &xid);
+	if (ret)
+		return ret;
+
+	/* Fire-and-forget: don't register, don't wait. */
 	ret = io_rpc_trans_cb(cb_rt);
 	free(cb_rt);
 
 	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* CB_GETATTR — send and wait for reply                                */
+/* ------------------------------------------------------------------ */
+
+int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
+			 const bitmap4 *attr_request, struct cb_pending *cp)
+{
+	CB_COMPOUND4args args = { 0 };
+	nfs_cb_argop4 ops[2] = { 0 };
+	CB_GETATTR4args *ga;
+	struct rpc_trans *cb_rt;
+	uint32_t xid;
+	int ret;
+
+	if (!session || !fh || !cp)
+		return EINVAL;
+	if (session->ns_cb_fd < 0)
+		return ENOTCONN;
+
+	args.tag.utf8string_val = (char *)"CB_GETATTR";
+	args.tag.utf8string_len = sizeof("CB_GETATTR") - 1;
+	args.minorversion = 1;
+	args.callback_ident = session->ns_cb_program;
+	args.argarray.argarray_len = 2;
+	args.argarray.argarray_val = ops;
+
+	cb_fill_sequence(&ops[0], session);
+
+	ops[1].argop = OP_CB_GETATTR;
+	ga = &ops[1].nfs_cb_argop4_u.opcbgetattr;
+	ga->fh.nfs_fh4_len = fh->nfs_fh4_len;
+	ga->fh.nfs_fh4_val = fh->nfs_fh4_val;
+	memcpy(&ga->attr_request, attr_request, sizeof(bitmap4));
+
+	ret = cb_build_and_alloc(session, &args, &cb_rt, &xid);
+	if (ret)
+		return ret;
+
+	cp->cp_xid = xid;
+
+	/* Set up for reply matching. */
+	cb_rt->rt_context = cp;
+	cb_rt->rt_cb = cb_reply_handler;
+
+	ret = io_register_request(cb_rt);
+	if (ret) {
+		free(cb_rt->rt_reply);
+		free(cb_rt);
+		return ret;
+	}
+
+	/* Register for timeout tracking. */
+	cb_timeout_register(cp);
+
+	/* Send — io_rpc_trans_cb takes ownership of rt_reply buffer.
+	 * The rpc_trans itself stays in the pending_requests table
+	 * until the reply arrives or timeout fires. */
+	ret = io_rpc_trans_cb(cb_rt);
+	if (ret) {
+		io_unregister_request(xid);
+		cb_timeout_unregister(cp);
+		free(cb_rt);
+		return ret;
+	}
+
+	/* cb_rt stays alive in pending_requests — do NOT free it here. */
+	return 0;
 }
