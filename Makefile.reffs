@@ -41,6 +41,8 @@ help:
 	@echo ""
 	@echo "pNFS targets:"
 	@echo "  run-combined    - Combined MDS+DS on localhost (no Docker)"
+	@echo "  stop-combined   - Stop the combined instance"
+	@echo "  clean-combined  - Stop and remove combined state"
 	@echo "  run-pnfs        - Start MDS + DS containers (Docker)"
 	@echo "  test-pnfs       - Start MDS + DS + client, run test, tear down"
 	@echo "  stop-pnfs       - Stop pNFS containers"
@@ -240,10 +242,20 @@ install-hooks:
 # --- pNFS test targets ---
 
 # Combined MDS+DS on localhost (single instance, no Docker)
+# Combined MDS+DS on localhost (single instance, no Docker)
+# Runs in foreground — Ctrl-C or 'make -f Makefile.reffs stop-combined' to stop
 run-combined: build
 	@rm -rf /tmp/reffs_combined_data /tmp/reffs_combined_state /tmp/reffs_combined_ds
 	@mkdir -p /tmp/reffs_combined_data /tmp/reffs_combined_state /tmp/reffs_combined_ds
-	build/src/reffsd --config=deploy/pnfs/combined.toml
+	bash -c "ulimit -n 65536; exec build/src/reffsd --config=deploy/pnfs/combined.toml"
+
+# Stop the combined instance
+stop-combined:
+	@pkill -f 'reffsd --config=deploy/pnfs/combined.toml' 2>/dev/null && echo "Stopped reffsd" || echo "reffsd not running"
+
+# Clean up combined state (stop first if running)
+clean-combined: stop-combined
+	@rm -rf /tmp/reffs_combined_data /tmp/reffs_combined_state /tmp/reffs_combined_ds
 
 # Multi-container pNFS: MDS + DS (no client)
 run-pnfs: ci-image
@@ -265,4 +277,4 @@ stop-pnfs:
 logs-pnfs:
 	$(DOCKER) compose -f deploy/pnfs/docker-compose.yml logs
 
-.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined run-pnfs test-pnfs stop-pnfs logs-pnfs
+.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs

@@ -348,7 +348,11 @@ uint32_t nfs4_op_exchange_id(struct compound *compound)
 
 	resok->eir_clientid = (clientid4)nfs4_client_to_client(nc)->c_id;
 	resok->eir_sequenceid = 1;
-	resok->eir_flags = EXCHGID4_FLAG_USE_NON_PNFS;
+	struct server_state *ss_eid = server_state_find();
+
+	resok->eir_flags = ss_eid ? ss_eid->ss_exchgid_flags :
+				    EXCHGID4_FLAG_USE_NON_PNFS;
+	server_state_put(ss_eid);
 	if (nc->nc_confirmed)
 		resok->eir_flags |= EXCHGID4_FLAG_CONFIRMED_R;
 

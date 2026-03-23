@@ -120,7 +120,8 @@ struct rpc_program_handler {
 	struct rcu_head rph_rcu;
 	struct urcu_ref rph_ref;
 	struct cds_list_head rph_list;
-#define RPH_IN_LIST (1 << 0)
+#define RPH_IN_LIST    (1 << 0)
+#define RPH_FIRST_LOGGED (1 << 1)
 	uint32_t rph_flags;
 };
 

@@ -325,9 +325,22 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 				continue;
 			}
 			files[nfiles].ldf_dstore_id = ds->ds_id;
-			files[nfiles].ldf_uid = 0;
-			files[nfiles].ldf_gid = 0;
+			files[nfiles].ldf_uid = REFFS_FENCE_UID_MIN_DEFAULT;
+			files[nfiles].ldf_gid = REFFS_FENCE_UID_MIN_DEFAULT;
 			files[nfiles].ldf_mode = 0640;
+
+			/*
+			 * Set the pool file's ownership to the synthetic
+			 * uid/gid so the client can access it via AUTH_SYS.
+			 */
+			dstore_data_file_fence(
+				ds, files[nfiles].ldf_fh,
+				files[nfiles].ldf_fh_len, &files[nfiles],
+				REFFS_FENCE_UID_MIN_DEFAULT,
+				REFFS_FENCE_UID_MIN_DEFAULT);
+			dstore_data_file_chmod(ds, files[nfiles].ldf_fh,
+					       files[nfiles].ldf_fh_len);
+
 			nfiles++;
 			dstore_put(ds);
 		}
@@ -375,6 +388,14 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		TRACE("LAYOUTGET: created layout for ino=%lu with %u mirrors",
 		      compound->c_inode->i_ino, nfiles);
+
+		static bool first_layout = true;
+
+		if (first_layout) {
+			first_layout = false;
+			LOG("NFSv4.2 Flex File v2 Layout Driver: "
+			    "first layout issued");
+		}
 	}
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
@@ -462,6 +483,20 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			goto out_free_ffl;
 		}
 		memcpy(fh->nfs_fh4_val, ldf->ldf_fh, ldf->ldf_fh_len);
+
+		/*
+		 * Synthetic uid/gid for AUTH_SYS on the DS.
+		 * The flexfiles client uses these as credentials when
+		 * doing NFSv3 I/O to the data server.
+		 */
+		char uid_str[16], gid_str[16];
+
+		snprintf(uid_str, sizeof(uid_str), "%u", ldf->ldf_uid);
+		snprintf(gid_str, sizeof(gid_str), "%u", ldf->ldf_gid);
+		ffds->ffds_user.utf8string_len = strlen(uid_str);
+		ffds->ffds_user.utf8string_val = strdup(uid_str);
+		ffds->ffds_group.utf8string_len = strlen(gid_str);
+		ffds->ffds_group.utf8string_val = strdup(gid_str);
 	}
 
 	/* XDR-encode ff_layout4 into the layout content body. */
@@ -520,6 +555,8 @@ out_free_ffl:
 					     .nfs_fh4_val);
 				free(ffds->ffds_fh_vers.ffds_fh_vers_val);
 			}
+			free(ffds->ffds_user.utf8string_val);
+			free(ffds->ffds_group.utf8string_val);
 			free(ffds);
 		}
 	}
@@ -804,10 +841,58 @@ uint32_t nfs4_op_getdevicelist(struct compound *compound)
 
 uint32_t nfs4_op_layouterror(struct compound *compound)
 {
+	LAYOUTERROR4args *args = NFS4_OP_ARG_SETUP(compound, oplayouterror);
 	LAYOUTERROR4res *res = NFS4_OP_RES_SETUP(compound, oplayouterror);
-	nfsstat4 *status = &res->ler_status;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh) ||
+	    !compound->c_inode) {
+		res->ler_status = NFS4ERR_NOFILEHANDLE;
+		return 0;
+	}
+
+	struct layout_segments *lss = compound->c_inode->i_layout_segments;
+
+	/*
+	 * Scan reported errors.  On access errors, fence and chmod
+	 * all mirror instances to repair credentials and permissions.
+	 */
+	for (u_int i = 0; i < args->lea_errors.lea_errors_len; i++) {
+		device_error4 *de = &args->lea_errors.lea_errors_val[i];
+
+		TRACE("LAYOUTERROR: ino=%lu dev=%u status=%d op=%d",
+		      compound->c_inode->i_ino,
+		      deviceid_to_dstore(de->de_deviceid), de->de_status,
+		      de->de_opnum);
+
+		if ((de->de_status == NFS4ERR_ACCESS ||
+		     de->de_status == NFS4ERR_PERM) &&
+		    lss &&
+		    lss->lss_count > 0) {
+			struct layout_segment *seg = &lss->lss_segs[0];
+
+			for (uint32_t f = 0; f < seg->ls_nfiles; f++) {
+				struct layout_data_file *ldf =
+					&seg->ls_files[f];
+				struct dstore *ds =
+					dstore_find(ldf->ldf_dstore_id);
+				if (!ds)
+					continue;
+
+				dstore_data_file_fence(
+					ds, ldf->ldf_fh, ldf->ldf_fh_len,
+					ldf, REFFS_FENCE_UID_MIN_DEFAULT,
+					REFFS_FENCE_UID_MAX_DEFAULT);
+				dstore_data_file_chmod(ds, ldf->ldf_fh,
+						       ldf->ldf_fh_len);
+				dstore_put(ds);
+			}
+
+			inode_sync_to_disk(compound->c_inode);
+			LOG("LAYOUTERROR: fenced + chmod all instances "
+			    "for ino=%lu (access error from DS)",
+			    compound->c_inode->i_ino);
+		}
+	}
 
 	return 0;
 }
