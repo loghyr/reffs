@@ -203,41 +203,111 @@ static int nfsv3_chmod(struct dstore *ds, const uint8_t *fh,
 /* TRUNCATE (SETATTR size)                                             */
 /* ------------------------------------------------------------------ */
 
+#define TRUNCATE_MAX_RETRIES 3
+
+/*
+ * Guarded truncate: GETATTR to fetch ctime, then SETATTR with
+ * sattrguard3.  If the guard fails (NFS3ERR_NOT_SYNC — ctime changed
+ * between our GETATTR and SETATTR), re-read ctime and retry.
+ */
 static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh,
-			      uint32_t fh_len, uint64_t size)
+			  uint32_t fh_len, uint64_t size)
 {
-	SETATTR3args args;
-	SETATTR3res res;
 	struct timeval tv = ds_timeout();
-	enum clnt_stat rpc_stat;
+	int ret = -EIO;
 
-	memset(&args, 0, sizeof(args));
-	memset(&res, 0, sizeof(res));
+	for (int attempt = 0; attempt < TRUNCATE_MAX_RETRIES; attempt++) {
+		/* Step 1: GETATTR to get current ctime. */
+		GETATTR3args ga_args;
+		GETATTR3res ga_res;
+		enum clnt_stat rpc_stat;
 
-	args.object = make_fh3(fh, fh_len);
-	args.new_attributes.size.set_it = true;
-	args.new_attributes.size.set_size3_u.size = size;
+		memset(&ga_args, 0, sizeof(ga_args));
+		memset(&ga_res, 0, sizeof(ga_res));
+		ga_args.object = make_fh3(fh, fh_len);
 
-	pthread_mutex_lock(&ds->ds_clnt_mutex);
-	if (!ds->ds_clnt) {
+		pthread_mutex_lock(&ds->ds_clnt_mutex);
+		if (!ds->ds_clnt) {
+			pthread_mutex_unlock(&ds->ds_clnt_mutex);
+			return -ENOTCONN;
+		}
+		rpc_stat = clnt_call(ds->ds_clnt, NFSPROC3_GETATTR,
+				     (xdrproc_t)xdr_GETATTR3args,
+				     (caddr_t)&ga_args,
+				     (xdrproc_t)xdr_GETATTR3res,
+				     (caddr_t)&ga_res, tv);
 		pthread_mutex_unlock(&ds->ds_clnt_mutex);
-		return -ENOTCONN;
-	}
 
-	rpc_stat = clnt_call(ds->ds_clnt, NFSPROC3_SETATTR,
-			     (xdrproc_t)xdr_SETATTR3args, (caddr_t)&args,
-			     (xdrproc_t)xdr_SETATTR3res, (caddr_t)&res, tv);
-	pthread_mutex_unlock(&ds->ds_clnt_mutex);
+		if (rpc_stat != RPC_SUCCESS || ga_res.status != NFS3_OK) {
+			LOG("dstore[%u]: GETATTR for guarded truncate failed",
+			    ds->ds_id);
+			xdr_free((xdrproc_t)xdr_GETATTR3res,
+				 (caddr_t)&ga_res);
+			return -EIO;
+		}
 
-	if (rpc_stat != RPC_SUCCESS) {
-		LOG("dstore[%u]: SETATTR(size=%lu) RPC failed", ds->ds_id,
-		    (unsigned long)size);
+		nfstime3 ctime =
+			ga_res.GETATTR3res_u.resok.obj_attributes.ctime;
+
+		xdr_free((xdrproc_t)xdr_GETATTR3res, (caddr_t)&ga_res);
+
+		/* Step 2: SETATTR with guard. */
+		SETATTR3args sa_args;
+		SETATTR3res sa_res;
+
+		memset(&sa_args, 0, sizeof(sa_args));
+		memset(&sa_res, 0, sizeof(sa_res));
+
+		sa_args.object = make_fh3(fh, fh_len);
+		sa_args.new_attributes.size.set_it = true;
+		sa_args.new_attributes.size.set_size3_u.size = size;
+		sa_args.guard.check = true;
+		sa_args.guard.sattrguard3_u.obj_ctime = ctime;
+
+		pthread_mutex_lock(&ds->ds_clnt_mutex);
+		if (!ds->ds_clnt) {
+			pthread_mutex_unlock(&ds->ds_clnt_mutex);
+			return -ENOTCONN;
+		}
+		rpc_stat = clnt_call(ds->ds_clnt, NFSPROC3_SETATTR,
+				     (xdrproc_t)xdr_SETATTR3args,
+				     (caddr_t)&sa_args,
+				     (xdrproc_t)xdr_SETATTR3res,
+				     (caddr_t)&sa_res, tv);
+		pthread_mutex_unlock(&ds->ds_clnt_mutex);
+
+		if (rpc_stat != RPC_SUCCESS) {
+			LOG("dstore[%u]: SETATTR(size=%lu) RPC failed",
+			    ds->ds_id, (unsigned long)size);
+			return -EIO;
+		}
+
+		if (sa_res.status == NFS3_OK) {
+			xdr_free((xdrproc_t)xdr_SETATTR3res,
+				 (caddr_t)&sa_res);
+			return 0;
+		}
+
+		if (sa_res.status == NFS3ERR_NOT_SYNC) {
+			/* Guard failed — ctime changed. Retry. */
+			TRACE("dstore[%u]: truncate guard failed, "
+			      "retrying (%d/%d)",
+			      ds->ds_id, attempt + 1, TRUNCATE_MAX_RETRIES);
+			xdr_free((xdrproc_t)xdr_SETATTR3res,
+				 (caddr_t)&sa_res);
+			continue;
+		}
+
+		/* Other error — give up. */
+		LOG("dstore[%u]: SETATTR(size=%lu) failed: status=%d",
+		    ds->ds_id, (unsigned long)size, sa_res.status);
+		xdr_free((xdrproc_t)xdr_SETATTR3res, (caddr_t)&sa_res);
 		return -EIO;
 	}
 
-	int ret = (res.status == NFS3_OK) ? 0 : -EIO;
-
-	xdr_free((xdrproc_t)xdr_SETATTR3res, (caddr_t)&res);
+	LOG("dstore[%u]: guarded truncate failed after %d retries", ds->ds_id,
+	    TRUNCATE_MAX_RETRIES);
+	ret = -EAGAIN;
 	return ret;
 }
 

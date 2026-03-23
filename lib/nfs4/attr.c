@@ -18,8 +18,13 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include "nfsv42_xdr.h"
+#include "reffs/dstore.h"
+#include "reffs/dstore_fanout.h"
 #include "reffs/inode.h"
+#include "reffs/layout_segment.h"
+#include "reffs/rpc.h"
 #include "reffs/super_block.h"
+#include "reffs/task.h"
 #include "reffs/filehandle.h"
 #include "reffs/utf8string.h"
 #include "reffs/rcu.h"
@@ -3273,6 +3278,45 @@ out_unlock:
 	return 0;
 }
 
+/*
+ * Resume callback for SETATTR after async dstore truncate fan-out.
+ */
+static uint32_t nfs4_op_setattr_resume(struct rpc_trans *rt)
+{
+	struct compound *compound = rt->rt_compound;
+	SETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opsetattr);
+	SETATTR4res *res = NFS4_OP_RES_SETUP(compound, opsetattr);
+	nfsstat4 *status = &res->status;
+	struct dstore_fanout *df = rt->rt_async_data;
+
+	rt->rt_async_data = NULL;
+
+	int fanout_ret = dstore_fanout_result(df);
+
+	dstore_fanout_free(df);
+
+	if (fanout_ret < 0) {
+		*status = NFS4ERR_IO;
+		return 0;
+	}
+
+	/*
+	 * DS truncates succeeded.  Now apply the full SETATTR
+	 * locally (size + any other attrs the client requested).
+	 */
+	struct nfsv42_attr nattr = { 0 };
+	fattr4 *fattr = &args->obj_attributes;
+
+	*status = nattr_from_fattr4(fattr, &nattr);
+	if (*status == NFS4_OK)
+		*status = nattr_to_inode(&nattr, &fattr->attrmask,
+					 &res->attrsset, compound->c_inode,
+					 &compound->c_ap);
+
+	nattr_release(&nattr);
+	return 0;
+}
+
 uint32_t nfs4_op_setattr(struct compound *compound)
 {
 	SETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opsetattr);
@@ -3310,6 +3354,63 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 			goto out;
 		}
 		stateid_put(stid);
+	}
+
+	/*
+	 * MDS mode: if SETATTR includes a size change and the file
+	 * has layout segments, fan out the truncate to all DSes
+	 * asynchronously, then resume to apply attrs locally.
+	 */
+	if (bitmap4_attribute_is_set(&fattr->attrmask, FATTR4_SIZE) &&
+	    compound->c_inode->i_layout_segments &&
+	    compound->c_inode->i_layout_segments->lss_count > 0) {
+
+		*status = nattr_from_fattr4(fattr, &nattr);
+		if (*status)
+			goto out;
+
+		struct layout_segments *lss =
+			compound->c_inode->i_layout_segments;
+		struct layout_segment *seg = &lss->lss_segs[0];
+
+		struct dstore_fanout *df =
+			dstore_fanout_alloc(seg->ls_nfiles);
+		if (!df) {
+			nattr_release(&nattr);
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		df->df_op = FANOUT_TRUNCATE;
+		df->df_size = nattr.size;
+		nattr_release(&nattr);
+
+		for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
+			struct layout_data_file *ldf = &seg->ls_files[i];
+			struct fanout_slot *slot = &df->df_slots[i];
+
+			slot->fs_ds = dstore_find(ldf->ldf_dstore_id);
+			if (!slot->fs_ds) {
+				LOG("SETATTR: dstore[%u] not found for "
+				    "ino=%lu — check data_server config",
+				    ldf->ldf_dstore_id,
+				    compound->c_inode->i_ino);
+				dstore_fanout_free(df);
+				*status = NFS4ERR_DELAY;
+				goto out;
+			}
+			memcpy(slot->fs_fh, ldf->ldf_fh, ldf->ldf_fh_len);
+			slot->fs_fh_len = ldf->ldf_fh_len;
+		}
+
+		struct rpc_trans *rt = compound->c_rt;
+		struct task *t = rt->rt_task;
+
+		rt->rt_next_action = nfs4_op_setattr_resume;
+		rt->rt_async_data = df;
+		task_pause(t);
+		dstore_fanout_launch(df, t);
+		return NFS4_OP_FLAG_ASYNC;
 	}
 
 	*status = nattr_from_fattr4(fattr, &nattr);
