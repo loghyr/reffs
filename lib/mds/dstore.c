@@ -175,8 +175,7 @@ static int mount_get_root_fh(struct dstore *ds)
 			     (xdrproc_t)xdr_mountres3, (caddr_t)&res, tv);
 	if (rpc_stat != RPC_SUCCESS) {
 		LOG("dstore[%u]: MOUNT %s:%s RPC failed: %s", ds->ds_id,
-		    ds->ds_address, ds->ds_path,
-		    clnt_sperror(ds->ds_clnt, ""));
+		    ds->ds_address, ds->ds_path, clnt_sperror(ds->ds_clnt, ""));
 		ret = -EIO;
 		goto out;
 	}
@@ -200,8 +199,7 @@ static int mount_get_root_fh(struct dstore *ds)
 	memcpy(ds->ds_root_fh, ok->fhandle.fhandle3_val,
 	       ok->fhandle.fhandle3_len);
 	ds->ds_root_fh_len = ok->fhandle.fhandle3_len;
-	__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED,
-			  __ATOMIC_RELEASE);
+	__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED, __ATOMIC_RELEASE);
 
 	TRACE("dstore[%u]: mounted %s:%s (FH %u bytes)", ds->ds_id,
 	      ds->ds_address, ds->ds_path, ds->ds_root_fh_len);
@@ -221,7 +219,7 @@ out:
 /* ------------------------------------------------------------------ */
 
 struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
-			   bool do_mount)
+			    bool do_mount)
 {
 	struct dstore *ds;
 	struct cds_lfht_node *node;
@@ -349,8 +347,7 @@ int dstore_reconnect(struct dstore *ds)
 			  __ATOMIC_RELEASE);
 
 	/* Tear down the old handle. */
-	__atomic_and_fetch(&ds->ds_state, ~DSTORE_IS_MOUNTED,
-			   __ATOMIC_RELEASE);
+	__atomic_and_fetch(&ds->ds_state, ~DSTORE_IS_MOUNTED, __ATOMIC_RELEASE);
 	if (ds->ds_clnt) {
 		clnt_destroy(ds->ds_clnt);
 		ds->ds_clnt = NULL;

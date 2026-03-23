@@ -62,8 +62,7 @@ static struct gf_matrix *build_encoding_matrix(int k, int m)
 		goto fail;
 	for (int r = 0; r < k; r++)
 		for (int c = 0; c < k; c++)
-			gf_matrix_set(top, r, c,
-				      gf_matrix_get(vand, r, c));
+			gf_matrix_set(top, r, c, gf_matrix_get(vand, r, c));
 
 	/* Invert it. */
 	top_inv = gf_matrix_create(k, k);
@@ -88,8 +87,8 @@ fail:
 	return enc;
 }
 
-static int rs_encode(struct ec_codec *codec, uint8_t **data,
-		     uint8_t **parity, size_t shard_len)
+static int rs_encode(struct ec_codec *codec, uint8_t **data, uint8_t **parity,
+		     size_t shard_len)
 {
 	struct rs_private *rsp = codec->ec_private;
 	int k = codec->ec_k;
@@ -102,8 +101,8 @@ static int rs_encode(struct ec_codec *codec, uint8_t **data,
 			for (int j = 0; j < k; j++)
 				sum = gf_add(
 					sum,
-					gf_mul(gf_matrix_get(rsp->rsp_parity,
-							     i, j),
+					gf_mul(gf_matrix_get(rsp->rsp_parity, i,
+							     j),
 					       data[j][p]));
 			parity[i][p] = sum;
 		}
@@ -164,7 +163,7 @@ static int rs_decode(struct ec_codec *codec, uint8_t **shards,
 		for (int c = 0; c < k; c++)
 			gf_matrix_set(sub, r, c,
 				      gf_matrix_get(rsp->rsp_encode,
-						   avail_idx[r], c));
+						    avail_idx[r], c));
 
 	ret = gf_matrix_invert(sub, sub_inv);
 	if (ret < 0)
@@ -294,8 +293,7 @@ struct ec_codec *ec_rs_create(int k, int m)
 	for (int r = 0; r < m; r++)
 		for (int c = 0; c < k; c++)
 			gf_matrix_set(rsp->rsp_parity, r, c,
-				      gf_matrix_get(rsp->rsp_encode, k + r,
-						   c));
+				      gf_matrix_get(rsp->rsp_encode, k + r, c));
 
 	codec->ec_name = "reed-solomon";
 	codec->ec_k = k;

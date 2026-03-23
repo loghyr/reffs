@@ -27,15 +27,15 @@
 
 #define DSTORE_MAX_FH 64 /* NFSv3 FHSIZE3 */
 
-#define DSTORE_IS_HASHED    (1ULL << 0)
-#define DSTORE_IS_MOUNTED   (1ULL << 1)
+#define DSTORE_IS_HASHED (1ULL << 0)
+#define DSTORE_IS_MOUNTED (1ULL << 1)
 #define DSTORE_IS_RECONNECTING (1ULL << 2)
 
 struct dstore_ops;
 struct runway;
 
 struct dstore {
-	uint32_t ds_id;			       /* unique ID (from config) */
+	uint32_t ds_id; /* unique ID (from config) */
 
 	/* Config (immutable after alloc) */
 	char ds_address[REFFS_CONFIG_MAX_HOST];
@@ -48,8 +48,8 @@ struct dstore {
 	struct runway *ds_runway;
 
 	/* MOUNT result (valid when DSTORE_IS_MOUNTED is set) */
-	uint8_t ds_root_fh[DSTORE_MAX_FH];    /* NFSv3 root filehandle */
-	uint32_t ds_root_fh_len;	       /* actual FH length */
+	uint8_t ds_root_fh[DSTORE_MAX_FH]; /* NFSv3 root filehandle */
+	uint32_t ds_root_fh_len; /* actual FH length */
 
 	/*
 	 * NFSv3 client handle for control-plane ops.
@@ -62,8 +62,8 @@ struct dstore {
 	/* RCU + refcount infrastructure */
 	struct rcu_head ds_rcu;
 	struct urcu_ref ds_ref;
-	uint64_t ds_state;		       /* atomic flag word */
-	struct cds_lfht_node ds_node;	       /* hash table node */
+	uint64_t ds_state; /* atomic flag word */
+	struct cds_lfht_node ds_node; /* hash table node */
 };
 
 /* ------------------------------------------------------------------ */
@@ -95,8 +95,8 @@ void dstore_fini(void);
  * Returns a ref-bumped pointer on success (caller must dstore_put),
  * or NULL on failure (duplicate ID).
  */
-struct dstore *dstore_alloc(uint32_t id, const char *address,
-			    const char *path, bool mount);
+struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
+			    bool mount);
 
 /*
  * dstore_find -- look up by id.

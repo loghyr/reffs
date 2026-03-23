@@ -307,6 +307,8 @@ int main(int argc, char *argv[])
 		exit_code = 1;
 		goto out;
 	}
+	if (ss->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS)
+		nfs4_attr_enable_layouts();
 
 	if (nfs3_protocol_register()) {
 		exit_code = 1;
@@ -364,15 +366,13 @@ int main(int argc, char *argv[])
 			exit_code = 1;
 			goto out;
 		}
-		super_block_dirent_create(ds_sb, NULL,
-					  reffs_life_action_birth);
+		super_block_dirent_create(ds_sb, NULL, reffs_life_action_birth);
 		reffs_fs_recover(ds_sb);
 		/* Do NOT put ds_sb here — release_all_fs_dirents()
 		 * in reffs_ns_fini() puts the alloc ref for all sbs. */
 
 		TRACE("DS super_block %lu at %s",
-		      (unsigned long)SUPER_BLOCK_DS_ID,
-		      cfg.ds_backend_path);
+		      (unsigned long)SUPER_BLOCK_DS_ID, cfg.ds_backend_path);
 	}
 
 	/*

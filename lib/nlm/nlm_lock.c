@@ -295,8 +295,8 @@ int reffs_nlm4_test(struct inode *inode, struct nlm4_testargs *args,
 	return 0;
 }
 
-int reffs_nlm4_cancel(struct inode __attribute__((unused)) *inode,
-		      struct nlm4_cancargs __attribute__((unused)) *args)
+int reffs_nlm4_cancel(struct inode __attribute__((unused)) * inode,
+		      struct nlm4_cancargs __attribute__((unused)) * args)
 {
 	/* Stub for now: we don't support blocking yet, so nothing to cancel */
 	return NLM4_GRANTED;

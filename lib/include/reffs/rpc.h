@@ -78,7 +78,7 @@ struct rpc_trans {
 	struct compound
 		*rt_compound; /* live compound; NULL when not in dispatch */
 	ssize_t rt_io_result; /* result of last async backend I/O op */
-	void *rt_async_data;  /* opaque data for fan-out / async ops */
+	void *rt_async_data; /* opaque data for fan-out / async ops */
 };
 
 struct rpc_stats {
@@ -120,7 +120,7 @@ struct rpc_program_handler {
 	struct rcu_head rph_rcu;
 	struct urcu_ref rph_ref;
 	struct cds_list_head rph_list;
-#define RPH_IN_LIST    (1 << 0)
+#define RPH_IN_LIST (1 << 0)
 #define RPH_FIRST_LOGGED (1 << 1)
 	uint32_t rph_flags;
 };
@@ -148,14 +148,13 @@ struct protocol_handler {
 	struct super_block *ph_sb;
 };
 
-#define RPC_OPERATION_INIT(PROTOCOL, NAME, ARGS_F, ARGS, RES_F, RES, CALL) \
-	{ .roh_operation = PROTOCOL##_##NAME,                              \
-	  .roh_name = #NAME,                                               \
-	  .roh_args_f = (xdrproc_t)ARGS_F,                                 \
-	  .roh_args_size = sizeof(ARGS),                                   \
-	  .roh_res_f = (xdrproc_t)RES_F,                                   \
-	  .roh_res_size = sizeof(RES),                                     \
-	  .roh_action = CALL }
+#define RPC_OPERATION_INIT(PROTOCOL, NAME, ARGS_F, ARGS, RES_F, RES, CALL)    \
+	{                                                                     \
+		.roh_operation = PROTOCOL##_##NAME, .roh_name = #NAME,        \
+		.roh_args_f = (xdrproc_t)ARGS_F,                              \
+		.roh_args_size = sizeof(ARGS), .roh_res_f = (xdrproc_t)RES_F, \
+		.roh_res_size = sizeof(RES), .roh_action = CALL               \
+	}
 
 static inline uint32_t *rpc_decode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 					    uint32_t *dst)

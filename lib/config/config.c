@@ -433,4 +433,3 @@ uint32_t reffs_role_exchgid_flags(enum reffs_role role)
 	}
 	return EXCHGID4_FLAG_USE_NON_PNFS;
 }
-

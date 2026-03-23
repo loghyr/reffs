@@ -9,4 +9,10 @@
 int nfs4_protocol_deregister(void);
 int nfs4_protocol_register(void);
 
+/*
+ * Enable pNFS layout attributes in the supported_attributes bitmap.
+ * Call AFTER nfs4_protocol_register() and server_state_init().
+ */
+void nfs4_attr_enable_layouts(void);
+
 #endif

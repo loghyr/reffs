@@ -33,7 +33,7 @@
 #include "reffs/runway.h"
 
 #define RUNWAY_LOW_WATER_PCT 25
-#define RUNWAY_SEQ_FILE	     "pool_seq.dat"
+#define RUNWAY_SEQ_FILE "pool_seq.dat"
 
 /* ------------------------------------------------------------------ */
 /* Sequence counter persistence                                        */
@@ -105,8 +105,7 @@ static uint32_t runway_batch_create(struct runway *rw, uint32_t count)
 		if (rw->rw_count >= rw->rw_capacity)
 			break; /* buffer full */
 
-		snprintf(name, sizeof(name), "pool_%06u.dat",
-			 rw->rw_next_seq);
+		snprintf(name, sizeof(name), "pool_%06u.dat", rw->rw_next_seq);
 
 		slot = (rw->rw_head + rw->rw_count) % rw->rw_capacity;
 		re = &rw->rw_entries[slot];
@@ -175,8 +174,8 @@ struct runway *runway_create(struct dstore *ds, uint32_t count)
 	/* Pre-create the initial batch. */
 	uint32_t created = runway_batch_create(rw, count);
 
-	TRACE("runway: dstore[%u] pre-created %u/%u files", ds->ds_id,
-	      created, count);
+	TRACE("runway: dstore[%u] pre-created %u/%u files", ds->ds_id, created,
+	      count);
 
 	if (created == 0)
 		LOG("runway: dstore[%u] no files created", ds->ds_id);

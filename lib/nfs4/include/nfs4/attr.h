@@ -264,5 +264,6 @@ static inline bool bitmap4_has_unsupported_bits(const bitmap4 *supported,
 
 int nfs4_attribute_init(void);
 int nfs4_attribute_fini(void);
+void nfs4_attr_enable_layouts(void);
 
 #endif /* ATTR_H */

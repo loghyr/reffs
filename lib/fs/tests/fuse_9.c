@@ -41,7 +41,7 @@ static void teardown(void)
 
 START_TEST(test_mkdir_st_blocks)
 {
-	struct super_block __attribute__((unused)) *sb;
+	struct super_block __attribute__((unused)) * sb;
 	struct stat st;
 	blksize_t blksize;
 	blkcnt_t expected;

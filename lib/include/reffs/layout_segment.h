@@ -23,8 +23,8 @@
 #include <stdint.h>
 #include <time.h>
 
-#define LAYOUT_SEG_MAX_FH    64  /* NFSv3 FHSIZE3 */
-#define LAYOUT_SEG_MAX_FILES 32  /* max data files per segment */
+#define LAYOUT_SEG_MAX_FH 64 /* NFSv3 FHSIZE3 */
+#define LAYOUT_SEG_MAX_FILES 32 /* max data files per segment */
 
 /*
  * On-disk: cached attributes for a single data file on a DS.
@@ -49,12 +49,12 @@ struct layout_data_file_disk {
  * Written as: layout_segment_disk + nfiles * layout_data_file_disk
  */
 struct layout_segment_disk {
-	uint64_t ls_offset;	/* byte range start */
-	uint64_t ls_length;	/* byte range length (0 = entire file) */
+	uint64_t ls_offset; /* byte range start */
+	uint64_t ls_length; /* byte range length (0 = entire file) */
 	uint32_t ls_stripe_unit; /* bytes per stripe (0 = whole file) */
-	uint16_t ls_k;		/* data devices */
-	uint16_t ls_m;		/* parity devices */
-	uint32_t ls_nfiles;	/* number of data file entries */
+	uint16_t ls_k; /* data devices */
+	uint16_t ls_m; /* parity devices */
+	uint32_t ls_nfiles; /* number of data file entries */
 	uint32_t ls_pad;
 };
 

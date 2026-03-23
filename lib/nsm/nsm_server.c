@@ -64,7 +64,7 @@ int sm_get_state(void)
 	return sm_state;
 }
 
-static int sm_op_null(struct rpc_trans __attribute__((unused)) *rt)
+static int sm_op_null(struct rpc_trans __attribute__((unused)) * rt)
 {
 	TRACE("NSM: NULL called");
 	return 0;
@@ -159,7 +159,7 @@ static int sm_op_unmon_all(struct rpc_trans *rt)
 	return 0;
 }
 
-static int sm_op_simu_crash(struct rpc_trans __attribute__((unused)) *rt)
+static int sm_op_simu_crash(struct rpc_trans __attribute__((unused)) * rt)
 {
 	TRACE("NSM: SM_SIMU_CRASH received. Re-initializing state.");
 	sm_load_state();
