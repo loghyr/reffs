@@ -40,6 +40,7 @@
 #include "nfs4/trace/nfs4.h"
 #include "nfs4/attr.h"
 #include "nfs4/compound.h"
+#include "nfs4/cb.h"
 #include "nfs4/errors.h"
 
 /*
@@ -89,6 +90,8 @@ int nfs4_protocol_register(void)
 		return ENOMEM;
 	}
 
+	cb_timeout_init();
+
 	return 0;
 }
 
@@ -96,6 +99,8 @@ int nfs4_protocol_deregister(void)
 {
 	if (!nfsv4_registered)
 		return 0;
+
+	cb_timeout_fini();
 
 	rpc_program_handler_put(nfs4_handler);
 	nfs4_handler = NULL;
