@@ -46,6 +46,10 @@ struct compound {
 	 */
 	COMPOUND4args *c_args;
 	COMPOUND4res *c_res;
+
+	/* Compound-level state flags. */
+#define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)
+	uint32_t c_flags;
 };
 
 int nfs4_proc_compound(struct rpc_trans *rt);
