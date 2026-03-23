@@ -28,6 +28,7 @@
 #include <check.h>
 
 #include "reffs/dstore.h"
+#include "reffs/dstore_ops.h"
 #include "nfs4_test_harness.h"
 
 #define FAKE_DS_ADDR "192.0.2.1"
@@ -184,6 +185,58 @@ START_TEST(test_unload_all)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Vtable selection tests                                              */
+/* ------------------------------------------------------------------ */
+
+START_TEST(test_local_vtable_ipv4)
+{
+	struct dstore *ds =
+		dstore_alloc(50, "127.0.0.1", FAKE_DS_PATH, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_local);
+	ck_assert(dstore_is_available(ds));
+	dstore_put(ds);
+}
+END_TEST
+
+START_TEST(test_local_vtable_ipv6)
+{
+	struct dstore *ds = dstore_alloc(51, "::1", FAKE_DS_PATH, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_local);
+	ck_assert(dstore_is_available(ds));
+	dstore_put(ds);
+}
+END_TEST
+
+START_TEST(test_local_vtable_localhost)
+{
+	struct dstore *ds =
+		dstore_alloc(52, "localhost", FAKE_DS_PATH, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_local);
+	ck_assert(dstore_is_available(ds));
+	dstore_put(ds);
+}
+END_TEST
+
+START_TEST(test_remote_vtable)
+{
+	struct dstore *ds =
+		dstore_alloc(53, "192.168.1.100", FAKE_DS_PATH, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_nfsv3);
+	/* Remote without mount is not available. */
+	ck_assert(!dstore_is_available(ds));
+	dstore_put(ds);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -201,6 +254,15 @@ Suite *dstore_suite(void)
 	tcase_add_test(tc, test_unmounted_not_available);
 	tcase_add_test(tc, test_unload_all);
 	suite_add_tcase(s, tc);
+
+	TCase *tc_vtable = tcase_create("vtable");
+
+	tcase_add_checked_fixture(tc_vtable, setup, teardown);
+	tcase_add_test(tc_vtable, test_local_vtable_ipv4);
+	tcase_add_test(tc_vtable, test_local_vtable_ipv6);
+	tcase_add_test(tc_vtable, test_local_vtable_localhost);
+	tcase_add_test(tc_vtable, test_remote_vtable);
+	suite_add_tcase(s, tc_vtable);
 
 	return s;
 }
