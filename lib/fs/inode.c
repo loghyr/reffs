@@ -968,10 +968,13 @@ void inode_remove_all_stateids(struct inode *inode)
 		return;
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(inode->i_stateids, &iter, stid, s_inode_node) {
-		if (stateid_inode_unhash(stid)) {
+	cds_lfht_first(inode->i_stateids, &iter);
+	while (cds_lfht_iter_get_node(&iter) != NULL) {
+		stid = caa_container_of(cds_lfht_iter_get_node(&iter),
+					struct stateid, s_inode_node);
+		cds_lfht_next(inode->i_stateids, &iter);
+		if (stateid_inode_unhash(stid))
 			stateid_put(stid);
-		}
 	}
 	rcu_read_unlock();
 }

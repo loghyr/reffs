@@ -206,7 +206,12 @@ static void super_block_remove_all_inodes(struct super_block *sb)
 		return;
 	}
 	rcu_read_lock();
-	cds_lfht_for_each_entry(sb->sb_inodes, &iter, inode, i_node) {
+	cds_lfht_first(sb->sb_inodes, &iter);
+	while (cds_lfht_iter_get_node(&iter) != NULL) {
+		inode = caa_container_of(cds_lfht_iter_get_node(&iter),
+					 struct inode, i_node);
+		cds_lfht_next(sb->sb_inodes, &iter);
+
 		/* Pull off LRU if present, decrement count. */
 		uint64_t old = __atomic_fetch_and(
 			&inode->i_state, ~INODE_IS_ON_LRU, __ATOMIC_ACQ_REL);

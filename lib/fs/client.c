@@ -183,8 +183,11 @@ void client_remove_all_stateids(struct client *client)
 	trace_fs_client(client, __func__, __LINE__);
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(client->c_stateids, &iter, stid,
-				s_client_node) {
+	cds_lfht_first(client->c_stateids, &iter);
+	while (cds_lfht_iter_get_node(&iter) != NULL) {
+		stid = caa_container_of(cds_lfht_iter_get_node(&iter),
+					struct stateid, s_client_node);
+		cds_lfht_next(client->c_stateids, &iter);
 		if (stateid_client_unhash(stid))
 			stateid_put(stid);
 	}
@@ -210,7 +213,11 @@ void client_unload_all_clients(void)
 	}
 
 	rcu_read_lock();
-	cds_lfht_for_each_entry(ss->ss_client_ht, &iter, client, c_node) {
+	cds_lfht_first(ss->ss_client_ht, &iter);
+	while (cds_lfht_iter_get_node(&iter) != NULL) {
+		client = caa_container_of(cds_lfht_iter_get_node(&iter),
+					  struct client, c_node);
+		cds_lfht_next(ss->ss_client_ht, &iter);
 		trace_fs_client(client, __func__, __LINE__);
 		client_remove_all_stateids(client);
 		if (client_unhash(client))
