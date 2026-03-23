@@ -70,6 +70,24 @@ This is required for autotools feature detection (`HAVE_*` macros,
 sanitizer options, etc.).  Header files (`.h`) must NOT include
 `config.h`.  Flag any new `.c` file missing this block.
 
+### No bare booleans for flags
+
+Do not use `bool` for flag fields or flag return values.  Use
+`uint32_t` with named bit constants.  Booleans in function
+signatures are also hard to read at call sites (`foo(true, false)`).
+Prefer named flags or enums.
+
+```c
+// WRONG:
+bool c_ds_attrs_refreshed;
+bool ok = true;
+
+// CORRECT:
+#define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)
+uint32_t c_flags;
+int setup_ok = 1;
+```
+
 ### Unused parameters
 
 **Never** use `(void)param;` to suppress unused-parameter warnings.
