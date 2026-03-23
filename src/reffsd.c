@@ -44,6 +44,7 @@
 #include "sm_inter.h"
 #include "reffs/client.h"
 #include "reffs/dstore.h"
+#include "reffs/runway.h"
 #include "reffs/settings.h"
 
 #define NFS_PORT 2049
@@ -358,6 +359,19 @@ int main(int argc, char *argv[])
 		if (cfg.ndata_servers > 0) {
 			if (dstore_load_config(&cfg) < 0)
 				LOG("Warning: some data stores unavailable");
+
+			/* Pre-create file runway on each dstore. */
+			for (unsigned int i = 0; i < cfg.ndata_servers; i++) {
+				struct dstore *ds =
+					dstore_find(cfg.data_servers[i].id);
+				if (!ds || !dstore_is_available(ds)) {
+					dstore_put(ds);
+					continue;
+				}
+				ds->ds_runway =
+					runway_create(ds, RUNWAY_DEFAULT_SIZE);
+				dstore_put(ds);
+			}
 		}
 	}
 
