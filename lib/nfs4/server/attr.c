@@ -3820,6 +3820,7 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 			}
 			memcpy(slot->fs_fh, ldf->ldf_fh, ldf->ldf_fh_len);
 			slot->fs_fh_len = ldf->ldf_fh_len;
+			slot->fs_ldf = ldf;
 		}
 
 		struct rpc_trans *rt = compound->c_rt;

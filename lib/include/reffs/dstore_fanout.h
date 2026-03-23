@@ -20,6 +20,7 @@
 #include <stdint.h>
 
 #include "reffs/dstore.h"
+#include "reffs/dstore_ops.h"
 #include "reffs/layout_segment.h"
 
 struct rpc_trans;
@@ -30,8 +31,9 @@ struct fanout_slot {
 	struct dstore *fs_ds;
 	uint8_t fs_fh[LAYOUT_SEG_MAX_FH];
 	uint32_t fs_fh_len;
-	struct layout_data_file *fs_ldf; /* for getattr: update in place */
+	struct layout_data_file *fs_ldf; /* back-pointer to layout data file */
 	int fs_result; /* 0 or -errno */
+	struct dstore_wcc fs_wcc; /* post-op WCC from SETATTR ops */
 };
 
 /* Operation type for the fan-out. */
