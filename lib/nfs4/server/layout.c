@@ -342,9 +342,10 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 					       files[nfiles].ldf_fh_len,
 					       &files[nfiles],
 					       REFFS_FENCE_UID_MIN_DEFAULT,
-					       REFFS_FENCE_UID_MIN_DEFAULT);
+					       REFFS_FENCE_UID_MIN_DEFAULT,
+					       NULL);
 			dstore_data_file_chmod(ds, files[nfiles].ldf_fh,
-					       files[nfiles].ldf_fh_len);
+					       files[nfiles].ldf_fh_len, NULL);
 
 			nfiles++;
 			dstore_put(ds);
@@ -885,9 +886,9 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 				dstore_data_file_fence(
 					ds, ldf->ldf_fh, ldf->ldf_fh_len, ldf,
 					REFFS_FENCE_UID_MIN_DEFAULT,
-					REFFS_FENCE_UID_MAX_DEFAULT);
+					REFFS_FENCE_UID_MAX_DEFAULT, NULL);
 				dstore_data_file_chmod(ds, ldf->ldf_fh,
-						       ldf->ldf_fh_len);
+						       ldf->ldf_fh_len, NULL);
 				dstore_put(ds);
 			}
 

@@ -47,7 +47,8 @@ static void *fanout_thread(void *arg)
 	switch (df->df_op) {
 	case FANOUT_TRUNCATE:
 		ret = dstore_data_file_truncate(slot->fs_ds, slot->fs_fh,
-						slot->fs_fh_len, df->df_size);
+						slot->fs_fh_len, df->df_size,
+						NULL);
 		break;
 
 	case FANOUT_GETATTR:
@@ -58,13 +59,13 @@ static void *fanout_thread(void *arg)
 	case FANOUT_FENCE:
 		ret = dstore_data_file_fence(slot->fs_ds, slot->fs_fh,
 					     slot->fs_fh_len, slot->fs_ldf,
-					     df->df_fence_min,
-					     df->df_fence_max);
+					     df->df_fence_min, df->df_fence_max,
+					     NULL);
 		break;
 
 	case FANOUT_CHMOD:
 		ret = dstore_data_file_chmod(slot->fs_ds, slot->fs_fh,
-					     slot->fs_fh_len);
+					     slot->fs_fh_len, NULL);
 		break;
 	}
 

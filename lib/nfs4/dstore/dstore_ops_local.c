@@ -137,7 +137,8 @@ static int local_remove(struct dstore *ds __attribute__((unused)),
 /* ------------------------------------------------------------------ */
 
 static int local_chmod(struct dstore *ds __attribute__((unused)),
-		       const uint8_t *fh, uint32_t fh_len)
+		       const uint8_t *fh, uint32_t fh_len,
+		       struct dstore_wcc *wcc __attribute__((unused)))
 {
 	struct inode *inode = local_fh_to_inode(fh, fh_len);
 
@@ -158,7 +159,8 @@ static int local_chmod(struct dstore *ds __attribute__((unused)),
 /* ------------------------------------------------------------------ */
 
 static int local_truncate(struct dstore *ds __attribute__((unused)),
-			  const uint8_t *fh, uint32_t fh_len, uint64_t size)
+			  const uint8_t *fh, uint32_t fh_len, uint64_t size,
+			  struct dstore_wcc *wcc __attribute__((unused)))
 {
 	struct inode *inode = local_fh_to_inode(fh, fh_len);
 	struct authunix_parms ap = { 0 };
@@ -183,7 +185,8 @@ static int local_truncate(struct dstore *ds __attribute__((unused)),
 static int local_fence(struct dstore *ds __attribute__((unused)),
 		       const uint8_t *fh, uint32_t fh_len,
 		       struct layout_data_file *ldf, uint32_t fence_min,
-		       uint32_t fence_max)
+		       uint32_t fence_max,
+		       struct dstore_wcc *wcc __attribute__((unused)))
 {
 	struct inode *inode;
 	uint32_t new_uid, new_gid;
