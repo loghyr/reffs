@@ -71,7 +71,21 @@ All layout operations implemented in `lib/nfs4/server/layout.c`:
 - 15 unit tests (compound builder + stripe math)
 
 **2026-03-23: plain put/get/check verified against run-combined.**
+**2026-03-23: full git CI test passed against Flex Files v1** — Linux
+kernel NFS client cloned the source repo and verified md5sum through
+the combined MDS+DS instance.
 EC commands exist but need multi-dstore testing.
+
+### 4a. CB Response Infrastructure — DONE
+
+- CB response handling: pause compound, send CB, wait for reply, resume
+- cb_pending with atomic CAS (cb_pending_try_complete) for race safety
+- cb_timeout thread with joinable shutdown
+- CB_GETATTR: integrated into GETATTR handler for delegated timestamps
+  (round-trip works; fattr4 decode/merge is TODO)
+- CB_LAYOUTRECALL: per-file layout recall with wait-for-reply
+  (fence+revoke on timeout integration is TODO)
+- 7 unit tests for cb_pending lifecycle and race safety
 
 ### 5. CHUNK ops
 All 11 CHUNK_* operations in `lib/nfs4/server/chunk.c`.
@@ -81,4 +95,3 @@ All 11 CHUNK_* operations in `lib/nfs4/server/chunk.c`.
 - Copy/clone ops
 - Extended attributes
 - Lease renewal / expiry enforcement
-- CB_GETATTR for authoritative timestamps (stub: fall back to server-side values)
