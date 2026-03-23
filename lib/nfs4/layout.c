@@ -21,6 +21,7 @@
 #include "reffs/layout_segment.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
+#include "reffs/runway.h"
 #include "reffs/settings.h"
 #include "reffs/stateid.h"
 #include "nfs4/client.h"
@@ -235,12 +236,110 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		return 0;
 	}
 
-	struct layout_segments *lss = compound->c_inode->i_layout_segments;
+	struct layout_segments *lss;
+
+	/*
+	 * On-demand layout creation: if the inode has no layout
+	 * segments, pop FHs from dstore runways and build one.
+	 * Hold i_attr_mutex to prevent concurrent LAYOUTGETs from
+	 * racing on the same inode.
+	 */
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	lss = compound->c_inode->i_layout_segments;
 
 	if (!lss || lss->lss_count == 0) {
-		*status = NFS4ERR_LAYOUTUNAVAILABLE;
-		return 0;
+		struct dstore *dstores[LAYOUT_SEG_MAX_FILES];
+		uint32_t nds;
+
+		nds = dstore_collect_available(dstores, LAYOUT_SEG_MAX_FILES);
+		if (nds == 0) {
+			pthread_mutex_unlock(
+				&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_LAYOUTUNAVAILABLE;
+			return 0;
+		}
+
+		/*
+		 * Allocate one data file per available dstore (mirrors).
+		 * Pop a FH from each dstore's runway.
+		 */
+		struct layout_data_file *files =
+			calloc(nds, sizeof(struct layout_data_file));
+		if (!files) {
+			for (uint32_t i = 0; i < nds; i++)
+				dstore_put(dstores[i]);
+			pthread_mutex_unlock(
+				&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+
+		uint32_t nfiles = 0;
+
+		for (uint32_t i = 0; i < nds; i++) {
+			struct dstore *ds = dstores[i];
+
+			if (!ds->ds_runway ||
+			    runway_pop(ds->ds_runway, files[nfiles].ldf_fh,
+				       &files[nfiles].ldf_fh_len) < 0) {
+				TRACE("LAYOUTGET: dstore[%u] runway empty",
+				      ds->ds_id);
+				dstore_put(ds);
+				continue;
+			}
+			files[nfiles].ldf_dstore_id = ds->ds_id;
+			files[nfiles].ldf_uid = 0;
+			files[nfiles].ldf_gid = 0;
+			files[nfiles].ldf_mode = 0640;
+			nfiles++;
+			dstore_put(ds);
+		}
+
+		if (nfiles == 0) {
+			free(files);
+			pthread_mutex_unlock(
+				&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_LAYOUTUNAVAILABLE;
+			return 0;
+		}
+
+		/* Build the layout segment. */
+		struct layout_segment seg = {
+			.ls_offset = 0,
+			.ls_length = 0, /* entire file */
+			.ls_stripe_unit = 0,
+			.ls_k = (uint16_t)nfiles,
+			.ls_m = 0,
+			.ls_nfiles = nfiles,
+			.ls_files = files,
+		};
+
+		if (!lss) {
+			lss = layout_segments_alloc();
+			if (!lss) {
+				free(files);
+				pthread_mutex_unlock(
+					&compound->c_inode->i_attr_mutex);
+				*status = NFS4ERR_DELAY;
+				return 0;
+			}
+			compound->c_inode->i_layout_segments = lss;
+		}
+
+		if (layout_segments_add(lss, &seg) < 0) {
+			free(files);
+			pthread_mutex_unlock(
+				&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+
+		inode_sync_to_disk(compound->c_inode);
+
+		TRACE("LAYOUTGET: created layout for ino=%lu with %u mirrors",
+		      compound->c_inode->i_ino, nfiles);
 	}
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
 	/* Find or create a layout stateid for this client + inode. */
 	struct layout_stateid *ls =

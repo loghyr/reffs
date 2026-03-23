@@ -388,6 +388,32 @@ int dstore_load_config(const struct reffs_config *cfg)
 	return 0;
 }
 
+uint32_t dstore_collect_available(struct dstore **out, uint32_t max)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	uint32_t n = 0;
+
+	if (!g_dstore_ht)
+		return 0;
+
+	rcu_read_lock();
+	cds_lfht_first(g_dstore_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL && n < max) {
+		struct dstore *ds =
+			caa_container_of(node, struct dstore, ds_node);
+		if (dstore_is_available(ds)) {
+			struct dstore *ref = dstore_get(ds);
+
+			if (ref)
+				out[n++] = ref;
+		}
+		cds_lfht_next(g_dstore_ht, &iter);
+	}
+	rcu_read_unlock();
+	return n;
+}
+
 void dstore_unload_all(void)
 {
 	struct cds_lfht_iter iter;
