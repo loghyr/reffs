@@ -16,6 +16,7 @@
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "reffs/dstore.h"
+#include "reffs/dstore_fanout.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
@@ -24,6 +25,7 @@
 #include "reffs/runway.h"
 #include "reffs/settings.h"
 #include "reffs/stateid.h"
+#include "reffs/task.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
@@ -572,6 +574,51 @@ uint32_t nfs4_op_layoutcommit(struct compound *compound)
 	return 0;
 }
 
+/*
+ * Resume callback for LAYOUTRETURN after reflected GETATTR fan-out.
+ * Updates the inode's cached attrs from the DS responses.
+ */
+static uint32_t nfs4_op_layoutreturn_resume(struct rpc_trans *rt)
+{
+	struct compound *compound = rt->rt_compound;
+	struct dstore_fanout *df = rt->rt_async_data;
+	struct inode *inode = compound->c_inode;
+
+	rt->rt_async_data = NULL;
+
+	/* Best-effort: if fan-out failed, we still completed the
+	 * LAYOUTRETURN successfully.  Just update what we can. */
+	if (dstore_fanout_result(df) == 0 && inode->i_layout_segments &&
+	    inode->i_layout_segments->lss_count > 0) {
+		struct layout_segment *seg =
+			&inode->i_layout_segments->lss_segs[0];
+		int64_t max_size = 0;
+
+		for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
+			struct layout_data_file *ldf = &seg->ls_files[i];
+
+			if (!ldf->ldf_stale && ldf->ldf_size > max_size)
+				max_size = ldf->ldf_size;
+		}
+
+		pthread_mutex_lock(&inode->i_attr_mutex);
+		if (max_size > inode->i_size) {
+			struct timespec now;
+
+			clock_gettime(CLOCK_REALTIME, &now);
+			inode->i_size = max_size;
+			inode->i_mtime = now;
+			inode->i_ctime = now;
+		}
+		pthread_mutex_unlock(&inode->i_attr_mutex);
+
+		inode_sync_to_disk(inode);
+	}
+
+	dstore_fanout_free(df);
+	return 0;
+}
+
 uint32_t nfs4_op_layoutreturn(struct compound *compound)
 {
 	LAYOUTRETURN4args *args = NFS4_OP_ARG_SETUP(compound, oplayoutreturn);
@@ -670,6 +717,77 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	      (unsigned long)remaining);
 
 	stateid_put(stid); /* find ref */
+
+	/*
+	 * If this was a write layout return, we need fresh attrs
+	 * from the DSes (the client may have written without
+	 * LAYOUTCOMMIT).  If there is a GETATTR later in this
+	 * compound, it will handle the fan-out.  Otherwise, we
+	 * trigger a reflected GETATTR now (async fan-out).
+	 */
+	if ((clear_bit & LAYOUT_STATEID_IOMODE_RW) &&
+	    compound->c_inode->i_layout_segments &&
+	    compound->c_inode->i_layout_segments->lss_count > 0) {
+		bool has_getattr = false;
+		COMPOUND4args *cargs = compound->c_args;
+
+		for (u_int op = compound->c_curr_op + 1;
+		     op < cargs->argarray.argarray_len; op++) {
+			if (cargs->argarray.argarray_val[op].argop ==
+			    OP_GETATTR) {
+				has_getattr = true;
+				break;
+			}
+		}
+
+		if (!has_getattr) {
+			struct layout_segment *seg =
+				&compound->c_inode->i_layout_segments
+					 ->lss_segs[0];
+			struct dstore_fanout *df =
+				dstore_fanout_alloc(seg->ls_nfiles);
+
+			if (df) {
+				df->df_op = FANOUT_GETATTR;
+				bool ok = true;
+
+				for (uint32_t fi = 0; fi < seg->ls_nfiles;
+				     fi++) {
+					struct layout_data_file *ldf =
+						&seg->ls_files[fi];
+					struct fanout_slot *slot =
+						&df->df_slots[fi];
+
+					slot->fs_ds = dstore_find(
+						ldf->ldf_dstore_id);
+					if (!slot->fs_ds) {
+						ok = false;
+						break;
+					}
+					memcpy(slot->fs_fh, ldf->ldf_fh,
+					       ldf->ldf_fh_len);
+					slot->fs_fh_len = ldf->ldf_fh_len;
+					slot->fs_ldf = ldf;
+				}
+
+				if (ok) {
+					struct rpc_trans *rt = compound->c_rt;
+					struct task *t = rt->rt_task;
+
+					rt->rt_next_action =
+						nfs4_op_layoutreturn_resume;
+					rt->rt_async_data = df;
+					task_pause(t);
+					dstore_fanout_launch(df, t);
+					return NFS4_OP_FLAG_ASYNC;
+				}
+
+				dstore_fanout_free(df);
+			}
+			/* Fan-out alloc/setup failed — continue without
+			 * fresh attrs.  Not fatal. */
+		}
+	}
 
 	return 0;
 }
