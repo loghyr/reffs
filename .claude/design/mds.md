@@ -219,6 +219,41 @@ include a GETATTR, the MDS does not know whether writes occurred.
 Must trigger a **reflected GETATTR** to all DSes to update the
 inode's cached attributes.
 
+### Compound-level reflected GETATTR dedup
+
+A compound must NOT send multiple reflected GETATTRs to the DSes.
+Use a compound-level flag `c_ds_attrs_refreshed` to track whether
+any op in this compound has already refreshed DS attrs (via
+reflected GETATTR or WCC data from a dstore SETATTR).  If set,
+skip subsequent fan-outs.
+
+### LAYOUTRETURN + GETATTR ordering problem
+
+When LAYOUTRETURN clears the write iomode bit, a subsequent GETATTR
+in the same compound sees `inode_has_write_layout() == false` and
+skips the DS fan-out — returning stale size/mtime.
+
+Two approaches:
+
+1. **Forward hint**: LAYOUTRETURN scans ahead for GETATTR and sets
+   `c_need_ds_getattr` on the compound.  The GETATTR handler checks
+   this hint and does the fan-out even without an active write layout.
+
+2. **LAYOUTRETURN does the fan-out**: Always do the reflected GETATTR
+   in LAYOUTRETURN when a write layout is returned, then set
+   `c_ds_attrs_refreshed` so the later GETATTR uses the fresh
+   cached values without a second fan-out.
+
+Option 2 is simpler.  It requires the dedup flag to prevent
+redundant fan-outs when multiple write layouts are returned in
+the same compound.
+
+Implementation: add `c_ds_attrs_refreshed` and `c_need_ds_getattr`
+to `struct compound`.  LAYOUTRETURN always does the reflected
+GETATTR for write returns and sets `c_ds_attrs_refreshed`.
+GETATTR checks `c_ds_attrs_refreshed || c_need_ds_getattr` in
+addition to `inode_has_write_layout()`.
+
 ### Read layout return
 
 On return of a READ layout, if the inode's data_file attributes
