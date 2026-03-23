@@ -9,10 +9,12 @@ AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 	$(OPENSSL_CFLAGS)					\
 	$(ZSTD_CFLAGS)						\
 	-I$(top_srcdir)/lib/include				\
+	-I$(top_srcdir)/lib/nfs4/client				\
 	-I$(top_builddir)/lib/xdr
 
 AM_LDFLAGS = -rdynamic
 
 lib_LTLIBRARIES = libreffs_nfs3.la
 libreffs_nfs3_la_SOURCES = \
-	server.c
+	server.c \
+	client.c
