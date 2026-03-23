@@ -41,6 +41,9 @@
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
 #include "nfs4/stateid.h"
+#include "nfs4/cb.h"
+#include "nfs4/session.h"
+#include "nfs4/client.h"
 #include "reffs/cmp.h"
 
 struct nfsv42_attr {
@@ -3012,6 +3015,122 @@ static uint32_t nfs4_op_getattr_resume(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * CB_GETATTR resume callback.
+ *
+ * Called when the client responds to CB_GETATTR (or timeout fires).
+ * If the client returned valid attrs, update the inode's cached
+ * times before encoding the GETATTR response.
+ */
+static uint32_t nfs4_op_getattr_cb_resume(struct rpc_trans *rt)
+{
+	struct compound *compound = rt->rt_compound;
+	GETATTR4res *res = NFS4_OP_RES_SETUP(compound, opgetattr);
+	nfsstat4 *status = &res->status;
+	struct cb_pending *cp = rt->rt_async_data;
+	struct inode *inode = compound->c_inode;
+	int cb_status;
+
+	rt->rt_async_data = NULL;
+	cb_status = atomic_load_explicit(&cp->cp_status, memory_order_acquire);
+
+	if (cb_status == 0 && cp->cp_res.status == NFS4_OK &&
+	    cp->cp_res.resarray.resarray_len >= 2) {
+		/*
+		 * Extract CB_GETATTR result (op index 1, after CB_SEQUENCE).
+		 * The client returns size, atime, mtime in fattr4 format.
+		 * For now, we just update the inode's mtime/atime from
+		 * whatever the client returned.  A full implementation
+		 * would decode the fattr4 bitmap and update selectively.
+		 *
+		 * TODO: decode fattr4 from CB_GETATTR4resok and merge
+		 * individual attrs (size, atime, mtime) into the inode.
+		 * For the initial implementation, having the CB round-trip
+		 * work is the important part; attr merging is next.
+		 */
+		TRACE("CB_GETATTR reply OK for ino=%lu", inode->i_ino);
+	} else if (cb_status == -ETIMEDOUT) {
+		TRACE("CB_GETATTR timeout for ino=%lu, using cached attrs",
+		      inode->i_ino);
+	} else {
+		TRACE("CB_GETATTR failed (%d) for ino=%lu, using cached attrs",
+		      cb_status, inode->i_ino);
+	}
+
+	cb_pending_free(cp);
+
+	/*
+	 * Continue with normal GETATTR encoding using (possibly updated)
+	 * inode attrs.  This duplicates the tail of nfs4_op_getattr but
+	 * is necessary because we're in the resume path.
+	 */
+	GETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opgetattr);
+	GETATTR4resok *resok = NFS4_OP_RESOK_SETUP(res, GETATTR4res_u, resok4);
+	bitmap4 *attr_request = &args->attr_request;
+	fattr4 *fattr = &resok->obj_attributes;
+	struct nfsv42_attr nattr = { 0 };
+	int ret;
+
+	if (attr_request->bitmap4_len == 0)
+		return 0;
+
+	ret = bitmap4_init(&fattr->attrmask, FATTR4_ATTRIBUTE_MAX);
+	if (ret) {
+		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
+		return 0;
+	}
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	ret = inode_to_nattr(inode, &nattr);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+	if (ret) {
+		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
+		return 0;
+	}
+
+	fattr->attr_vals.attrlist4_len = 0;
+	u_int scan_bits = attr_request->bitmap4_len * 32U;
+
+	for (u_int i = 0; i < scan_bits; i++) {
+		if (bitmap4_attribute_is_set(attr_request, i) &&
+		    bitmap4_attribute_is_set(supported_attributes, i))
+			fattr->attr_vals.attrlist4_len +=
+				nao[i].nao_count(&nattr);
+	}
+
+	fattr->attr_vals.attrlist4_val =
+		calloc(fattr->attr_vals.attrlist4_len, sizeof(char));
+	if (!fattr->attr_vals.attrlist4_val) {
+		*status = NFS4ERR_DELAY;
+		fattr->attr_vals.attrlist4_len = 0;
+		nattr_release(&nattr);
+		return 0;
+	}
+
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, fattr->attr_vals.attrlist4_val,
+		      fattr->attr_vals.attrlist4_len, XDR_ENCODE);
+
+	for (u_int i = 0; i < scan_bits; i++) {
+		if (bitmap4_attribute_is_set(attr_request, i) &&
+		    bitmap4_attribute_is_set(supported_attributes, i)) {
+			*status = nao[i].nao_xdr(&xdrs, &nattr);
+			if (*status) {
+				fattr->attr_vals.attrlist4_len = 0;
+				free(fattr->attr_vals.attrlist4_val);
+				fattr->attr_vals.attrlist4_val = NULL;
+				break;
+			}
+			bitmap4_attribute_set(&fattr->attrmask, i);
+		}
+	}
+
+	xdr_destroy(&xdrs);
+	nattr_release(&nattr);
+	return 0;
+}
+
 uint32_t nfs4_op_getattr(struct compound *compound)
 {
 	GETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opgetattr);
@@ -3085,6 +3204,75 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 		task_pause(t);
 		dstore_fanout_launch(df, t);
 		return NFS4_OP_FLAG_ASYNC;
+	}
+
+	/*
+	 * CB_GETATTR: if another client holds a delegation with
+	 * timestamp management (RFC 9754 _ATTRS_DELEG), send
+	 * CB_GETATTR to get authoritative timestamps before encoding
+	 * the GETATTR response.
+	 *
+	 * We exclude the requesting client (compound->c_nfs4_client)
+	 * from the search — if this client holds the delegation, it
+	 * already has authoritative values locally.
+	 */
+	if (inode) {
+		struct client *req_client =
+			compound->c_nfs4_client ?
+				nfs4_client_to_client(compound->c_nfs4_client) :
+				NULL;
+		struct stateid *deleg_stid =
+			stateid_inode_find_delegation(inode, req_client);
+
+		if (deleg_stid) {
+			struct delegation_stateid *ds =
+				stid_to_delegation(deleg_stid);
+
+			if (ds->ds_timestamps && deleg_stid->s_client) {
+				struct nfs4_client *nc =
+					client_to_nfs4(deleg_stid->s_client);
+				struct nfs4_session *sess =
+					nc ? nfs4_session_find_for_client(nc) :
+					     NULL;
+
+				if (sess) {
+					struct cb_pending *cp =
+						cb_pending_alloc(
+							compound->c_rt->rt_task,
+							compound,
+							OP_CB_GETATTR);
+					if (cp) {
+						struct network_file_handle cb_nfh =
+							compound->c_curr_nfh;
+						cb_nfh.nfh_ino = inode->i_ino;
+						nfs_fh4 cb_fh4 = {
+							.nfs_fh4_len =
+								sizeof(cb_nfh),
+							.nfs_fh4_val =
+								(char *)&cb_nfh,
+						};
+
+						struct rpc_trans *rt =
+							compound->c_rt;
+
+						rt->rt_next_action =
+							nfs4_op_getattr_cb_resume;
+						rt->rt_async_data = cp;
+						task_pause(rt->rt_task);
+
+						nfs4_cb_getattr_send(
+							sess, &cb_fh4,
+							attr_request, cp);
+
+						nfs4_session_put(sess);
+						stateid_put(deleg_stid);
+						return NFS4_OP_FLAG_ASYNC;
+					}
+					nfs4_session_put(sess);
+				}
+			}
+			stateid_put(deleg_stid);
+		}
 	}
 
 	ret = bitmap4_init(&fattr->attrmask, FATTR4_ATTRIBUTE_MAX);
