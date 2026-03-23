@@ -2829,6 +2829,145 @@ out:
 	return NFS4_OK;
 }
 
+/*
+ * Resume callback for GETATTR after async dstore fan-out.
+ *
+ * Updates the inode's cached attrs from the DS responses, then
+ * falls through to the normal GETATTR encoding path.
+ */
+static uint32_t nfs4_op_getattr_resume(struct rpc_trans *rt)
+{
+	struct compound *compound = rt->rt_compound;
+	GETATTR4res *res = NFS4_OP_RES_SETUP(compound, opgetattr);
+	nfsstat4 *status = &res->status;
+	struct dstore_fanout *df = rt->rt_async_data;
+	struct inode *inode = compound->c_inode;
+
+	rt->rt_async_data = NULL;
+
+	int fanout_ret = dstore_fanout_result(df);
+
+	if (fanout_ret < 0) {
+		/*
+		 * Not all DSes responded.  Per design: return DELAY
+		 * so the client retries.
+		 */
+		dstore_fanout_free(df);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+
+	/*
+	 * Update inode cached attrs from the DS responses.
+	 * Use the latest mtime/atime/size across all mirrors.
+	 * Set inode times to NOW (clocks may not be in sync).
+	 */
+	struct layout_segments *lss = inode->i_layout_segments;
+
+	if (lss && lss->lss_count > 0) {
+		struct layout_segment *seg = &lss->lss_segs[0];
+		int64_t max_size = 0;
+		bool any_changed = false;
+
+		for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
+			struct layout_data_file *ldf = &seg->ls_files[i];
+
+			if (ldf->ldf_stale)
+				continue;
+			if (ldf->ldf_size > max_size)
+				max_size = ldf->ldf_size;
+		}
+
+		pthread_mutex_lock(&inode->i_attr_mutex);
+		if (max_size > inode->i_size) {
+			inode->i_size = max_size;
+			any_changed = true;
+		}
+		if (any_changed) {
+			struct timespec now;
+
+			clock_gettime(CLOCK_REALTIME, &now);
+			inode->i_mtime = now;
+			inode->i_ctime = now;
+		}
+		pthread_mutex_unlock(&inode->i_attr_mutex);
+	}
+
+	dstore_fanout_free(df);
+
+	/*
+	 * Now encode the GETATTR response with fresh inode attrs.
+	 * We must do this here because dispatch_compound will advance
+	 * past this op after the resume callback returns.
+	 */
+	GETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opgetattr);
+	GETATTR4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, GETATTR4res_u, resok4);
+	bitmap4 *attr_request = &args->attr_request;
+	fattr4 *fattr = &resok->obj_attributes;
+	struct nfsv42_attr nattr = { 0 };
+	int ret;
+
+	if (attr_request->bitmap4_len == 0)
+		return 0;
+
+	ret = bitmap4_init(&fattr->attrmask, FATTR4_ATTRIBUTE_MAX);
+	if (ret) {
+		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
+		return 0;
+	}
+
+	pthread_mutex_lock(&inode->i_attr_mutex);
+	ret = inode_to_nattr(inode, &nattr);
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+	if (ret) {
+		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
+		return 0;
+	}
+
+	fattr->attr_vals.attrlist4_len = 0;
+	u_int scan_bits = attr_request->bitmap4_len * 32U;
+
+	for (u_int i = 0; i < scan_bits; i++) {
+		if (bitmap4_attribute_is_set(attr_request, i) &&
+		    bitmap4_attribute_is_set(supported_attributes, i))
+			fattr->attr_vals.attrlist4_len +=
+				nao[i].nao_count(&nattr);
+	}
+
+	fattr->attr_vals.attrlist4_val =
+		calloc(fattr->attr_vals.attrlist4_len, sizeof(char));
+	if (!fattr->attr_vals.attrlist4_val) {
+		*status = NFS4ERR_DELAY;
+		fattr->attr_vals.attrlist4_len = 0;
+		nattr_release(&nattr);
+		return 0;
+	}
+
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, fattr->attr_vals.attrlist4_val,
+		      fattr->attr_vals.attrlist4_len, XDR_ENCODE);
+
+	for (u_int i = 0; i < scan_bits; i++) {
+		if (bitmap4_attribute_is_set(attr_request, i) &&
+		    bitmap4_attribute_is_set(supported_attributes, i)) {
+			*status = nao[i].nao_xdr(&xdrs, &nattr);
+			if (*status) {
+				fattr->attr_vals.attrlist4_len = 0;
+				free(fattr->attr_vals.attrlist4_val);
+				fattr->attr_vals.attrlist4_val = NULL;
+				break;
+			}
+			bitmap4_attribute_set(&fattr->attrmask, i);
+		}
+	}
+
+	xdr_destroy(&xdrs);
+	nattr_release(&nattr);
+	return 0;
+}
+
 uint32_t nfs4_op_getattr(struct compound *compound)
 {
 	GETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opgetattr);
@@ -2853,6 +2992,54 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 	/* Nothing requested */
 	if (attr_request->bitmap4_len == 0)
 		goto out;
+
+	/*
+	 * MDS mode: if there is an active write layout on this inode,
+	 * fan out GETATTR to all DSes to refresh cached attrs before
+	 * responding.  Skip if no layout segments (standalone file).
+	 */
+	if (inode && inode->i_layout_segments &&
+	    inode->i_layout_segments->lss_count > 0 &&
+	    inode_has_write_layout(inode)) {
+		struct layout_segment *seg =
+			&inode->i_layout_segments->lss_segs[0];
+
+		struct dstore_fanout *df =
+			dstore_fanout_alloc(seg->ls_nfiles);
+		if (!df) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		df->df_op = FANOUT_GETATTR;
+
+		for (uint32_t fi = 0; fi < seg->ls_nfiles; fi++) {
+			struct layout_data_file *ldf = &seg->ls_files[fi];
+			struct fanout_slot *slot = &df->df_slots[fi];
+
+			slot->fs_ds = dstore_find(ldf->ldf_dstore_id);
+			if (!slot->fs_ds) {
+				LOG("GETATTR: dstore[%u] not found for "
+				    "ino=%lu — check data_server config",
+				    ldf->ldf_dstore_id, inode->i_ino);
+				dstore_fanout_free(df);
+				*status = NFS4ERR_DELAY;
+				goto out;
+			}
+			memcpy(slot->fs_fh, ldf->ldf_fh, ldf->ldf_fh_len);
+			slot->fs_fh_len = ldf->ldf_fh_len;
+			slot->fs_ldf = ldf;
+		}
+
+		struct rpc_trans *rt = compound->c_rt;
+		struct task *t = rt->rt_task;
+
+		rt->rt_next_action = nfs4_op_getattr_resume;
+		rt->rt_async_data = df;
+		task_pause(t);
+		dstore_fanout_launch(df, t);
+		return NFS4_OP_FLAG_ASYNC;
+	}
 
 	ret = bitmap4_init(&fattr->attrmask, FATTR4_ATTRIBUTE_MAX);
 	if (ret) {
