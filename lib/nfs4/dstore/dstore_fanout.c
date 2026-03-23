@@ -109,9 +109,18 @@ struct dstore_fanout *dstore_fanout_alloc(uint32_t nslots)
 
 void dstore_fanout_launch(struct dstore_fanout *df, struct task *t)
 {
+	/*
+	 * Snapshot df_total before spawning any threads.  Once the
+	 * first thread completes and is the last pending, it calls
+	 * task_resume → worker runs resume callback → dstore_fanout_free.
+	 * After that, df is freed.  With a single dstore (combined mode),
+	 * the thread can complete before pthread_create returns.
+	 */
+	uint32_t total = df->df_total;
+
 	df->df_task = t;
 
-	for (uint32_t i = 0; i < df->df_total; i++) {
+	for (uint32_t i = 0; i < total; i++) {
 		struct fanout_thread_arg *fta = malloc(sizeof(*fta));
 
 		if (!fta) {
