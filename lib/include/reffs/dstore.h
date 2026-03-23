@@ -141,6 +141,14 @@ static inline bool dstore_is_available(const struct dstore *ds)
  */
 int dstore_reconnect(struct dstore *ds);
 
+/*
+ * dstore_collect_available -- gather refs to all mounted dstores.
+ *
+ * Fills out[] with ref-bumped dstore pointers (caller must put each).
+ * max: size of out[].  Returns the number of dstores collected.
+ */
+uint32_t dstore_collect_available(struct dstore **out, uint32_t max);
+
 /* ------------------------------------------------------------------ */
 /* Bulk operations                                                     */
 
