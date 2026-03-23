@@ -16,6 +16,7 @@
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "reffs/dstore.h"
+#include "reffs/dstore_ops.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
 #include "reffs/log.h"
@@ -299,7 +300,13 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			mirror->ffm_data_servers.ffm_data_servers_val;
 
 		deviceid_from_dstore(ffds->ffds_deviceid, ldf->ldf_dstore_id);
-		ffds->ffds_efficiency = 1;
+
+		/* Local dstores are more efficient (no network hop). */
+		struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+
+		ffds->ffds_efficiency =
+			(ds && ds->ds_ops == &dstore_ops_local) ? 255 : 1;
+		dstore_put(ds);
 
 		/* NFSv3 filehandle. */
 		ffds->ffds_fh_vers.ffds_fh_vers_len = 1;
@@ -398,10 +405,35 @@ out_free_ffl:
 
 uint32_t nfs4_op_layoutcommit(struct compound *compound)
 {
+	LAYOUTCOMMIT4args *args = NFS4_OP_ARG_SETUP(compound, oplayoutcommit);
 	LAYOUTCOMMIT4res *res = NFS4_OP_RES_SETUP(compound, oplayoutcommit);
-	nfsstat4 *status = &res->locr_status;
+	LAYOUTCOMMIT4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, LAYOUTCOMMIT4res_u, locr_resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh) ||
+	    !compound->c_inode) {
+		res->locr_status = NFS4ERR_NOFILEHANDLE;
+		return 0;
+	}
+
+	/*
+	 * Update inode size if the client reports a new last write offset.
+	 */
+	if (args->loca_last_write_offset.no_newoffset) {
+		uint64_t new_end =
+			args->loca_last_write_offset.newoffset4_u.no_offset + 1;
+
+		pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+		if ((int64_t)new_end > compound->c_inode->i_size)
+			compound->c_inode->i_size = (int64_t)new_end;
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+		resok->locr_newsize.ns_sizechanged = true;
+		resok->locr_newsize.newsize4_u.ns_size =
+			(uint64_t)compound->c_inode->i_size;
+	}
+
+	inode_sync_to_disk(compound->c_inode);
 
 	return 0;
 }
