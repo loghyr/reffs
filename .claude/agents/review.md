@@ -151,13 +151,13 @@ Flag misuse:
 
 ### Error code conventions
 
-**NFSv3 ops** (`lib/nfs3/`):
+**NFSv3 ops** (`lib/nfs3/server.c`):
 - Return type must be `int`
 - Errors must be **negative errno** (`-ENOENT`, `-EIO`, etc.)
 - Async signal must be **`-EINPROGRESS`** (never positive 115)
 - `errno_to_nfs3(ret)` must be called at the `out:` label, not inline
 
-**NFSv4 ops** (`lib/nfs4/`):
+**NFSv4 ops** (`lib/nfs4/server/`):
 - Never set `*status = NFS4_OK;` — result structs are `calloc`'d, 0 is default
 - Use `NFS4_OP_ARG_SETUP`, `NFS4_OP_RES_SETUP`, `NFS4_OP_RESOK_SETUP` macros
 
