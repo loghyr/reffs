@@ -160,6 +160,41 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 }
 
 /* ------------------------------------------------------------------ */
+/* Layout queries                                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Check if any client holds a write layout on this inode.
+ */
+bool inode_has_write_layout(struct inode *inode)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	if (!inode || !inode->i_stateids)
+		return false;
+
+	rcu_read_lock();
+	cds_lfht_first(inode->i_stateids, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct stateid *stid =
+			caa_container_of(node, struct stateid, s_inode_node);
+		if (stid->s_tag == Layout_Stateid) {
+			struct layout_stateid *ls = stid_to_layout(stid);
+			uint64_t state = __atomic_load_n(&ls->ls_state,
+							 __ATOMIC_ACQUIRE);
+			if (state & LAYOUT_STATEID_IOMODE_RW) {
+				rcu_read_unlock();
+				return true;
+			}
+		}
+		cds_lfht_next(inode->i_stateids, &iter);
+	}
+	rcu_read_unlock();
+	return false;
+}
+
+/* ------------------------------------------------------------------ */
 /* Layout stateid helpers                                              */
 /* ------------------------------------------------------------------ */
 
