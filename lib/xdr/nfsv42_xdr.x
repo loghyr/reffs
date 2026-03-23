@@ -4336,7 +4336,7 @@ enum ff_cb_recall_any_mask {
 enum ffv2_protection_type {
     FFV2_PROTECTION_TYPE_MIRRORED       = 0x1,
     FFV2_PROTECTION_TYPE_MOJETTE        = 0x2,
-    FFV2_PROTECTION_TYPE_REED_SOLOMON   = 0x3
+    FFV2_PROTECTION_TYPE_RS_VANDERMONDE = 0x3
 };
 const FFV2_FLAGS_NO_LAYOUTCOMMIT   = FF_FLAGS_NO_LAYOUTCOMMIT;
 const FFV2_FLAGS_NO_IO_THRU_MDS    = FF_FLAGS_NO_IO_THRU_MDS;
@@ -4370,7 +4370,8 @@ struct ffv2_data_server4 {
 enum ffv2_coding_type4 {
     FFV2_CODING_MIRRORED                    = 0x1,
     FFV2_ENCODING_MOJETTE_SYSTEMATIC        = 0x2,
-    FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC    = 0x3
+    FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC    = 0x3,
+    FFV2_ENCODING_RS_VANDERMONDE            = 0x4
 };
 
 enum ffv2_mojette_faulty_devices4 {
