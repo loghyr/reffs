@@ -21,12 +21,6 @@
 #include <rpc/auth.h>
 
 #include "nfsv3_xdr.h"
-
-/* Forward declarations for the ec_client types we need. */
-struct ec_device;
-struct ds_conn;
-
-/* Pull in the ec_client header for the struct definitions. */
 #include "ec_client.h"
 
 #define DS_RPC_TIMEOUT_SEC 30

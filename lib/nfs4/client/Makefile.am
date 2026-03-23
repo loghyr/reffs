@@ -12,6 +12,7 @@ AM_CFLAGS = -Im4 -I.				\
 
 noinst_LTLIBRARIES = libreffs_nfs4_client.la
 libreffs_nfs4_client_la_SOURCES = \
+	ds_io.c \
 	mds_compound.c \
 	mds_session.c \
 	mds_file.c \
