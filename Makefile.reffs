@@ -242,12 +242,19 @@ install-hooks:
 # --- pNFS test targets ---
 
 # Combined MDS+DS on localhost (single instance, no Docker)
-# Combined MDS+DS on localhost (single instance, no Docker)
 # Runs in foreground — Ctrl-C or 'make -f Makefile.reffs stop-combined' to stop
+# Logs and traces go to logs/combined/
+COMBINED_LOGS = $(ROOT_DIR)/logs/combined
 run-combined: build
 	@rm -rf /tmp/reffs_combined_data /tmp/reffs_combined_state /tmp/reffs_combined_ds
 	@mkdir -p /tmp/reffs_combined_data /tmp/reffs_combined_state /tmp/reffs_combined_ds
-	bash -c "ulimit -n 65536; exec build/src/reffsd --config=deploy/pnfs/combined.toml"
+	@mkdir -p $(COMBINED_LOGS)
+	@echo "Logs:  $(COMBINED_LOGS)/reffsd.log"
+	@echo "Trace: $(COMBINED_LOGS)/reffsd.trc"
+	bash -c 'ulimit -n 65536; build/src/reffsd \
+		--config=deploy/pnfs/combined.toml \
+		--file=$(COMBINED_LOGS)/reffsd.trc \
+		2>&1 | tee $(COMBINED_LOGS)/reffsd.log'
 
 # Stop the combined instance
 stop-combined:

@@ -126,8 +126,7 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	ffda.ffda_versions.ffda_versions_val = &ver;
 
 	/* XDR-encode into an opaque buffer. */
-	u_long xdr_size =
-		xdr_sizeof((xdrproc_t)xdr_ff_device_addr4, &ffda);
+	u_long xdr_size = xdr_sizeof((xdrproc_t)xdr_ff_device_addr4, &ffda);
 
 	resok->gdir_device_addr.da_layout_type = LAYOUT4_FLEX_FILES;
 	resok->gdir_device_addr.da_addr_body.da_addr_body_val =
@@ -137,14 +136,13 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 		*status = NFS4ERR_DELAY;
 		return 0;
 	}
-	resok->gdir_device_addr.da_addr_body.da_addr_body_len =
-		(u_int)xdr_size;
+	resok->gdir_device_addr.da_addr_body.da_addr_body_len = (u_int)xdr_size;
 
 	XDR xdrs;
 
 	xdrmem_create(&xdrs,
-		       resok->gdir_device_addr.da_addr_body.da_addr_body_val,
-		       xdr_size, XDR_ENCODE);
+		      resok->gdir_device_addr.da_addr_body.da_addr_body_val,
+		      xdr_size, XDR_ENCODE);
 	if (!xdr_ff_device_addr4(&xdrs, &ffda)) {
 		xdr_destroy(&xdrs);
 		free(resok->gdir_device_addr.da_addr_body.da_addr_body_val);
@@ -209,10 +207,10 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 {
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
-	struct client *client = compound->c_nfs4_client ?
-					nfs4_client_to_client(
-						compound->c_nfs4_client) :
-					NULL;
+	struct client *client =
+		compound->c_nfs4_client ?
+			nfs4_client_to_client(compound->c_nfs4_client) :
+			NULL;
 
 	if (!client || !inode->i_stateids)
 		return NULL;
@@ -223,8 +221,7 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
 		struct stateid *stid =
 			caa_container_of(node, struct stateid, s_inode_node);
-		if (stid->s_tag == Layout_Stateid &&
-		    stid->s_client == client) {
+		if (stid->s_tag == Layout_Stateid && stid->s_client == client) {
 			struct stateid *got = stateid_get(stid);
 
 			rcu_read_unlock();
@@ -240,7 +237,18 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 	rcu_read_unlock();
 
 	/* None found — allocate a new one. */
-	return layout_stateid_alloc(inode, client);
+	struct layout_stateid *new_ls =
+		layout_stateid_alloc(inode, client);
+
+	if (new_ls) {
+		/* Bump ref for the caller (hash table holds the other). */
+		stateid_get(&new_ls->ls_stid);
+		LOG("LAYOUTGET: created layout stateid id=%u cookie=%u "
+		    "on ino=%lu",
+		    new_ls->ls_stid.s_id, new_ls->ls_stid.s_cookie,
+		    inode->i_ino);
+	}
+	return new_ls;
 }
 
 /* ------------------------------------------------------------------ */
@@ -290,8 +298,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		nds = dstore_collect_available(dstores, LAYOUT_SEG_MAX_FILES);
 		if (nds == 0) {
-			pthread_mutex_unlock(
-				&compound->c_inode->i_attr_mutex);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			*status = NFS4ERR_LAYOUTUNAVAILABLE;
 			return 0;
 		}
@@ -305,8 +312,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		if (!files) {
 			for (uint32_t i = 0; i < nds; i++)
 				dstore_put(dstores[i]);
-			pthread_mutex_unlock(
-				&compound->c_inode->i_attr_mutex);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			*status = NFS4ERR_DELAY;
 			return 0;
 		}
@@ -333,11 +339,11 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			 * Set the pool file's ownership to the synthetic
 			 * uid/gid so the client can access it via AUTH_SYS.
 			 */
-			dstore_data_file_fence(
-				ds, files[nfiles].ldf_fh,
-				files[nfiles].ldf_fh_len, &files[nfiles],
-				REFFS_FENCE_UID_MIN_DEFAULT,
-				REFFS_FENCE_UID_MIN_DEFAULT);
+			dstore_data_file_fence(ds, files[nfiles].ldf_fh,
+					       files[nfiles].ldf_fh_len,
+					       &files[nfiles],
+					       REFFS_FENCE_UID_MIN_DEFAULT,
+					       REFFS_FENCE_UID_MIN_DEFAULT);
 			dstore_data_file_chmod(ds, files[nfiles].ldf_fh,
 					       files[nfiles].ldf_fh_len);
 
@@ -347,8 +353,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		if (nfiles == 0) {
 			free(files);
-			pthread_mutex_unlock(
-				&compound->c_inode->i_attr_mutex);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			*status = NFS4ERR_LAYOUTUNAVAILABLE;
 			return 0;
 		}
@@ -378,8 +383,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		if (layout_segments_add(lss, &seg) < 0) {
 			free(files);
-			pthread_mutex_unlock(
-				&compound->c_inode->i_attr_mutex);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			*status = NFS4ERR_DELAY;
 			return 0;
 		}
@@ -663,6 +667,8 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	nfsstat4 *status = &res->lorr_status;
 
 	if (args->lora_layout_type != LAYOUT4_FLEX_FILES) {
+		LOG("LAYOUTRETURN: unknown layout type %d",
+		    args->lora_layout_type);
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
 		return 0;
 	}
@@ -672,6 +678,8 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	 * For now, just acknowledge them without stateid tracking.
 	 */
 	if (args->lora_layoutreturn.lr_returntype != LAYOUTRETURN4_FILE) {
+		LOG("LAYOUTRETURN: non-FILE return type %d",
+		    args->lora_layoutreturn.lr_returntype);
 		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present = false;
 		return 0;
 	}
@@ -681,6 +689,7 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh) ||
 	    !compound->c_inode) {
+		LOG("LAYOUTRETURN: no filehandle");
 		*status = NFS4ERR_NOFILEHANDLE;
 		return 0;
 	}
@@ -693,7 +702,13 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 
 	unpack_stateid4(&lrf->lrf_stateid, &seqid, &id, &type, &cookie);
 
+	TRACE("LAYOUTRETURN: stateid seqid=%u id=%u type=%u cookie=%u", seqid,
+	      id, type, cookie);
+
 	if (type != Layout_Stateid) {
+		LOG("LAYOUTRETURN: bad stateid type=%u (expected %u), "
+		    "seqid=%u id=%u cookie=%u",
+		    type, Layout_Stateid, seqid, id, cookie);
 		*status = NFS4ERR_BAD_STATEID;
 		return 0;
 	}
@@ -702,6 +717,12 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 
 	if (!stid || stid->s_tag != Layout_Stateid ||
 	    stid->s_cookie != cookie) {
+		LOG("LAYOUTRETURN: stateid lookup failed: stid=%p "
+		    "tag=%u cookie=%u (expected cookie=%u) "
+		    "seqid=%u id=%u ino=%lu",
+		    (void *)stid, stid ? stid->s_tag : 0,
+		    stid ? stid->s_cookie : 0, cookie,
+		    seqid, id, compound->c_inode->i_ino);
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
 		return 0;
@@ -710,6 +731,7 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	/* Verify client ownership. */
 	if (compound->c_nfs4_client &&
 	    stid->s_client != nfs4_client_to_client(compound->c_nfs4_client)) {
+		LOG("LAYOUTRETURN: client mismatch for stateid id=%u", id);
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
 		return 0;
@@ -721,15 +743,15 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	 * Clear the iomode bits for the returned mode.
 	 * If both READ and RW are cleared, free the layout stateid.
 	 */
-	uint64_t clear_bit = (args->lora_iomode == LAYOUTIOMODE4_RW) ?
-				     LAYOUT_STATEID_IOMODE_RW :
-			     (args->lora_iomode == LAYOUTIOMODE4_READ) ?
-				     LAYOUT_STATEID_IOMODE_READ :
-				     (LAYOUT_STATEID_IOMODE_READ |
-				      LAYOUT_STATEID_IOMODE_RW);
+	uint64_t clear_bit =
+		(args->lora_iomode == LAYOUTIOMODE4_RW) ?
+			LAYOUT_STATEID_IOMODE_RW :
+		(args->lora_iomode == LAYOUTIOMODE4_READ) ?
+			LAYOUT_STATEID_IOMODE_READ :
+			(LAYOUT_STATEID_IOMODE_READ | LAYOUT_STATEID_IOMODE_RW);
 
-	uint64_t remaining = __atomic_and_fetch(&ls->ls_state, ~clear_bit,
-						__ATOMIC_ACQ_REL);
+	uint64_t remaining =
+		__atomic_and_fetch(&ls->ls_state, ~clear_bit, __ATOMIC_ACQ_REL);
 
 	if (remaining == 0) {
 		/* No layouts left — free the stateid. */
@@ -743,10 +765,9 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 		/* Still have a layout — bump seqid and return it. */
 		__atomic_add_fetch(&stid->s_seqid, 1, __ATOMIC_RELAXED);
 		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present = true;
-		pack_stateid4(
-			&res->LAYOUTRETURN4res_u.lorr_stateid.layoutreturn_stateid_u
-				 .lrs_stateid,
-			stid);
+		pack_stateid4(&res->LAYOUTRETURN4res_u.lorr_stateid
+				       .layoutreturn_stateid_u.lrs_stateid,
+			      stid);
 	}
 
 	TRACE("LAYOUTRETURN: ino=%lu iomode=%d remaining=0x%lx",
@@ -795,8 +816,8 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 					struct fanout_slot *slot =
 						&df->df_slots[fi];
 
-					slot->fs_ds = dstore_find(
-						ldf->ldf_dstore_id);
+					slot->fs_ds =
+						dstore_find(ldf->ldf_dstore_id);
 					if (!slot->fs_ds) {
 						ok = false;
 						break;
@@ -866,8 +887,7 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 
 		if ((de->de_status == NFS4ERR_ACCESS ||
 		     de->de_status == NFS4ERR_PERM) &&
-		    lss &&
-		    lss->lss_count > 0) {
+		    lss && lss->lss_count > 0) {
 			struct layout_segment *seg = &lss->lss_segs[0];
 
 			for (uint32_t f = 0; f < seg->ls_nfiles; f++) {
@@ -879,8 +899,8 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 					continue;
 
 				dstore_data_file_fence(
-					ds, ldf->ldf_fh, ldf->ldf_fh_len,
-					ldf, REFFS_FENCE_UID_MIN_DEFAULT,
+					ds, ldf->ldf_fh, ldf->ldf_fh_len, ldf,
+					REFFS_FENCE_UID_MIN_DEFAULT,
 					REFFS_FENCE_UID_MAX_DEFAULT);
 				dstore_data_file_chmod(ds, ldf->ldf_fh,
 						       ldf->ldf_fh_len);
