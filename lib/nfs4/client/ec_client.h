@@ -139,6 +139,15 @@ int ds_read(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,
 	    uint64_t offset, uint8_t *data, uint32_t len, uint32_t *nread);
 
 /* ------------------------------------------------------------------ */
+/* Plain I/O — write/read through layout, no erasure coding            */
+/* ------------------------------------------------------------------ */
+
+int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
+		size_t data_len);
+int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
+	       size_t buf_len, size_t *out_len);
+
+/* ------------------------------------------------------------------ */
 /* EC I/O — high-level erasure-coded write/read                        */
 /* ------------------------------------------------------------------ */
 

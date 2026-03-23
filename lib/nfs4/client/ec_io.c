@@ -93,7 +93,138 @@ static void ec_disconnect_all(struct ec_context *ctx)
 }
 
 /* ------------------------------------------------------------------ */
-/* Write                                                               */
+/* Plain (non-EC) write                                                */
+/* ------------------------------------------------------------------ */
+
+int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
+		size_t data_len)
+{
+	struct mds_file mf;
+	struct ec_layout layout;
+	int ret;
+
+	ret = mds_file_open(ms, path, &mf);
+	if (ret)
+		return ret;
+
+	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_RW, &layout);
+	if (ret)
+		goto out_close;
+
+	if (layout.el_nmirrors < 1) {
+		ret = -EINVAL;
+		goto out_layout;
+	}
+
+	/* Resolve the first mirror. */
+	struct ec_device dev;
+
+	ret = mds_getdeviceinfo(ms, layout.el_mirrors[0].em_deviceid, &dev);
+	if (ret)
+		goto out_layout;
+
+	struct ds_conn dc;
+
+	ret = ds_connect(&dc, &dev, layout.el_mirrors[0].em_uid,
+			 layout.el_mirrors[0].em_gid);
+	if (ret)
+		goto out_layout;
+
+	/* Write in chunks up to 1 MB. */
+	size_t off = 0;
+
+	while (off < data_len) {
+		uint32_t chunk = (uint32_t)(data_len - off);
+
+		if (chunk > 1048576)
+			chunk = 1048576;
+		ret = ds_write(&dc, layout.el_mirrors[0].em_fh,
+			       layout.el_mirrors[0].em_fh_len, (uint64_t)off,
+			       data + off, chunk);
+		if (ret)
+			break;
+		off += chunk;
+	}
+
+	ds_disconnect(&dc);
+out_layout:
+	mds_layout_return(ms, &mf, &layout);
+	ec_layout_free(&layout);
+out_close:
+	mds_file_close(ms, &mf);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* Plain (non-EC) read                                                 */
+/* ------------------------------------------------------------------ */
+
+int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
+	       size_t buf_len, size_t *out_len)
+{
+	struct mds_file mf;
+	struct ec_layout layout;
+	int ret;
+
+	ret = mds_file_open(ms, path, &mf);
+	if (ret)
+		return ret;
+
+	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_READ, &layout);
+	if (ret)
+		goto out_close;
+
+	if (layout.el_nmirrors < 1) {
+		ret = -EINVAL;
+		goto out_layout;
+	}
+
+	struct ec_device dev;
+
+	ret = mds_getdeviceinfo(ms, layout.el_mirrors[0].em_deviceid, &dev);
+	if (ret)
+		goto out_layout;
+
+	struct ds_conn dc;
+
+	ret = ds_connect(&dc, &dev, layout.el_mirrors[0].em_uid,
+			 layout.el_mirrors[0].em_gid);
+	if (ret)
+		goto out_layout;
+
+	/* Read in chunks up to 1 MB. */
+	size_t total = 0;
+
+	while (total < buf_len) {
+		uint32_t want = (uint32_t)(buf_len - total);
+		uint32_t nread = 0;
+
+		if (want > 1048576)
+			want = 1048576;
+		ret = ds_read(&dc, layout.el_mirrors[0].em_fh,
+			      layout.el_mirrors[0].em_fh_len, (uint64_t)total,
+			      buf + total, want, &nread);
+		if (ret)
+			break;
+		total += nread;
+		if (nread < want)
+			break; /* EOF */
+	}
+
+	if (ret == 0 && out_len)
+		*out_len = total;
+
+	ds_disconnect(&dc);
+out_layout:
+	mds_layout_return(ms, &mf, &layout);
+	ec_layout_free(&layout);
+out_close:
+	mds_file_close(ms, &mf);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* EC Write                                                            */
 /* ------------------------------------------------------------------ */
 
 int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
