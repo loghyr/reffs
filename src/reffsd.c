@@ -8,6 +8,8 @@
 #endif
 
 #include <getopt.h>
+#include <limits.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <rpc/pmap_clnt.h>
 #include <signal.h>
@@ -345,6 +347,31 @@ int main(int argc, char *argv[])
 	}
 	if (exit_code)
 		goto out;
+
+	/*
+	 * Combined/MDS mode: create a separate DS super_block for
+	 * local data store files, isolated from the MDS namespace.
+	 */
+	if (cfg.role == REFFS_ROLE_COMBINED && cfg.ds_backend_path[0]) {
+		/* posix_sb_alloc creates sb_2/ under ds_path. */
+		struct super_block *ds_sb = super_block_alloc(
+			SUPER_BLOCK_DS_ID, "/ds",
+			(enum reffs_storage_type)cfg.backend_type,
+			cfg.ds_backend_path);
+		if (!ds_sb) {
+			LOG("Failed to create DS super_block");
+			exit_code = 1;
+			goto out;
+		}
+		super_block_dirent_create(ds_sb, NULL,
+					  reffs_life_action_birth);
+		reffs_fs_recover(ds_sb);
+		super_block_put(ds_sb);
+
+		TRACE("DS super_block %lu at %s",
+		      (unsigned long)SUPER_BLOCK_DS_ID,
+		      cfg.ds_backend_path);
+	}
 
 	/*
 	 * MDS mode: initialize dstore hash table, connect to each

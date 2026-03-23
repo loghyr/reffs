@@ -123,6 +123,9 @@ struct reffs_config {
 	struct reffs_export_config exports[REFFS_CONFIG_MAX_EXPORTS];
 	unsigned int nexports;
 
+	/* DS backend (combined role only) */
+	char ds_backend_path[REFFS_CONFIG_MAX_PATH];
+
 	/* Fencing — synthetic uid/gid range for data file fencing */
 	uint32_t fence_uid_min;
 	uint32_t fence_uid_max;

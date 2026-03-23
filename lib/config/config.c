@@ -242,6 +242,13 @@ static void parse_backend(struct reffs_config *cfg, toml_table_t *be)
 		strncpy(cfg->state_file, d.u.s, sizeof(cfg->state_file) - 1);
 		free(d.u.s);
 	}
+
+	d = toml_string_in(be, "ds_path");
+	if (d.ok) {
+		strncpy(cfg->ds_backend_path, d.u.s,
+			sizeof(cfg->ds_backend_path) - 1);
+		free(d.u.s);
+	}
 }
 
 /* Parse [iouring] table. */

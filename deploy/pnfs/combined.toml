@@ -17,6 +17,7 @@ log_level       = "info"
 type            = "posix"
 path            = "/tmp/reffs_combined_data"
 state_file      = "/tmp/reffs_combined_state"
+ds_path         = "/tmp/reffs_combined_ds"
 
 [[export]]
 path        = "/"
