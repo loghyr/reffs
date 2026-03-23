@@ -33,7 +33,7 @@ Requires:
 
 ### 1. Basic NFSv4.2 op set — DONE
 Session, filehandle, file I/O, directory, attributes, locking, basic delegation.
-See `lib/nfs4/` for current state.
+See `lib/nfs4/server/` for current state.
 
 ### 2. Pre-CHUNK infrastructure — MOSTLY DONE
 
@@ -48,32 +48,33 @@ See `lib/nfs4/` for current state.
 9. **Full client recovery** — grace period handling, client state reclaim
 10. **CB_GETATTR** — requires CB response handling (deferred)
 
-### 3. Flex Files MDS — NEW
+### 3. Flex Files MDS — DONE
 
-- LAYOUTGET / LAYOUTCOMMIT / LAYOUTRETURN handlers
-- Flex Files v1 device info and layout encoding (proof of concept)
-- Flex Files v2 layout encoding
-- Data server registry and health tracking
+All layout operations implemented in `lib/nfs4/server/layout.c`:
+- LAYOUTGET / LAYOUTCOMMIT / LAYOUTRETURN / GETDEVICEINFO / LAYOUTERROR
+- Dstore vtable (NFSv3 + local VFS) in `lib/nfs4/dstore/`
+- Runway (pre-created file pool), async fan-out, reflected GETATTR
+- Compound-level dedup (`COMPOUND_DS_ATTRS_REFRESHED`)
+- Fencing (synthetic uid/gid rotation)
 
-### 4. Erasure Coding Demo Client — NEW
+### 4. Erasure Coding Demo Client — DONE (basic)
 
-Minimal userspace tool (not a general-purpose NFS client) that:
-- Sends LAYOUTGET to the MDS, parses Flex Files layout
-- Reed-Solomon encodes writes, distributes data+parity to data servers
-- Reads back from data servers, RS-decodes / reconstructs
+`lib/nfs4/client/` + `tools/ec_demo`:
+- MDS session (EXCHANGE_ID, CREATE_SESSION, SEQUENCE)
+- COMPOUND builder (build argarray, clnt_call, parse results)
+- File ops (PUTROOTFH + OPEN + GETFH, CLOSE)
+- Layout ops (LAYOUTGET + ff_layout4 decode, GETDEVICEINFO + uaddr parse,
+  LAYOUTRETURN)
+- DS I/O (NFSv3 READ/WRITE with synthetic AUTH_SYS credentials)
+- RS codec integration (ec_write/ec_read with stripe padding)
+- Plain (non-EC) put/get/check for single-mirror testing
+- 15 unit tests (compound builder + stripe math)
 
-Purpose: prove the MDS+DS architecture works with pluggable encoding.
-RS is the proof-of-concept codec.  Having a clean-room RS demonstrates the
-architecture is encoding-agnostic.
-
-- RS codec: clean-room GF(2^8) Vandermonde, no external deps,
-  no SIMD (see standards.md patent rules).  Correctness over speed.
-- Client talks NFSv4.2 just enough for LAYOUTGET + direct DS I/O
-- Codec interface should be designed for swappability from the start
-- Later: port logic into the Linux kernel NFS client for production use
+**2026-03-23: plain put/get/check verified against run-combined.**
+EC commands exist but need multi-dstore testing.
 
 ### 5. CHUNK ops
-All 11 CHUNK_* operations in `lib/nfs4/chunk.c`.
+All 11 CHUNK_* operations in `lib/nfs4/server/chunk.c`.
 
 ## Deferred / Out of Scope (initially)
 
