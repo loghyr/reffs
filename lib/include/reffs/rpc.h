@@ -148,13 +148,14 @@ struct protocol_handler {
 	struct super_block *ph_sb;
 };
 
-#define RPC_OPERATION_INIT(PROTOCOL, NAME, ARGS_F, ARGS, RES_F, RES, CALL)    \
-	{                                                                     \
-		.roh_operation = PROTOCOL##_##NAME, .roh_name = #NAME,        \
-		.roh_args_f = (xdrproc_t)ARGS_F,                              \
-		.roh_args_size = sizeof(ARGS), .roh_res_f = (xdrproc_t)RES_F, \
-		.roh_res_size = sizeof(RES), .roh_action = CALL               \
-	}
+#define RPC_OPERATION_INIT(PROTOCOL, NAME, ARGS_F, ARGS, RES_F, RES, CALL) \
+	{ .roh_operation = PROTOCOL##_##NAME,                              \
+	  .roh_name = #NAME,                                               \
+	  .roh_args_f = (xdrproc_t)ARGS_F,                                 \
+	  .roh_args_size = sizeof(ARGS),                                   \
+	  .roh_res_f = (xdrproc_t)RES_F,                                   \
+	  .roh_res_size = sizeof(RES),                                     \
+	  .roh_action = CALL }
 
 static inline uint32_t *rpc_decode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 					    uint32_t *dst)
