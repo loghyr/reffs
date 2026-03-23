@@ -20,6 +20,7 @@
 #include "nfsv42_xdr.h"
 #include "reffs/dstore.h"
 #include "reffs/dstore_fanout.h"
+#include "reffs/dstore_wcc.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
 #include "reffs/rpc.h"
@@ -3713,6 +3714,17 @@ static uint32_t nfs4_op_setattr_resume(struct rpc_trans *rt)
 	rt->rt_async_data = NULL;
 
 	int fanout_ret = dstore_fanout_result(df);
+
+	/* Check WCC from each slot before freeing the fanout. */
+	bool has_wl = inode_has_write_layout(compound->c_inode);
+
+	for (uint32_t i = 0; i < df->df_total; i++) {
+		struct fanout_slot *slot = &df->df_slots[i];
+
+		dstore_wcc_check(&slot->fs_wcc, slot->fs_ldf, has_wl,
+				 slot->fs_ldf ? slot->fs_ldf->ldf_dstore_id : 0,
+				 compound->c_inode->i_ino);
+	}
 
 	dstore_fanout_free(df);
 
