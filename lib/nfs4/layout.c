@@ -237,16 +237,15 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 	rcu_read_unlock();
 
 	/* None found — allocate a new one. */
-	struct layout_stateid *new_ls =
-		layout_stateid_alloc(inode, client);
+	struct layout_stateid *new_ls = layout_stateid_alloc(inode, client);
 
 	if (new_ls) {
 		/* Bump ref for the caller (hash table holds the other). */
 		stateid_get(&new_ls->ls_stid);
-		LOG("LAYOUTGET: created layout stateid id=%u cookie=%u "
-		    "on ino=%lu",
-		    new_ls->ls_stid.s_id, new_ls->ls_stid.s_cookie,
-		    inode->i_ino);
+		TRACE("LAYOUTGET: created layout stateid id=%u cookie=%u "
+		      "on ino=%lu",
+		      new_ls->ls_stid.s_id, new_ls->ls_stid.s_cookie,
+		      inode->i_ino);
 	}
 	return new_ls;
 }
@@ -441,6 +440,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	ffl.ffl_mirrors.ffl_mirrors_val =
 		calloc(seg->ls_nfiles, sizeof(ff_mirror4));
 	if (!ffl.ffl_mirrors.ffl_mirrors_val) {
+		stateid_put(&ls->ls_stid);
 		*status = NFS4ERR_DELAY;
 		return 0;
 	}
@@ -667,8 +667,8 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	nfsstat4 *status = &res->lorr_status;
 
 	if (args->lora_layout_type != LAYOUT4_FLEX_FILES) {
-		LOG("LAYOUTRETURN: unknown layout type %d",
-		    args->lora_layout_type);
+		TRACE("LAYOUTRETURN: unknown layout type %d",
+		      args->lora_layout_type);
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
 		return 0;
 	}
@@ -678,8 +678,8 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	 * For now, just acknowledge them without stateid tracking.
 	 */
 	if (args->lora_layoutreturn.lr_returntype != LAYOUTRETURN4_FILE) {
-		LOG("LAYOUTRETURN: non-FILE return type %d",
-		    args->lora_layoutreturn.lr_returntype);
+		TRACE("LAYOUTRETURN: non-FILE return type %d",
+		      args->lora_layoutreturn.lr_returntype);
 		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present = false;
 		return 0;
 	}
@@ -689,7 +689,7 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 
 	if (network_file_handle_empty(&compound->c_curr_nfh) ||
 	    !compound->c_inode) {
-		LOG("LAYOUTRETURN: no filehandle");
+		TRACE("LAYOUTRETURN: no filehandle");
 		*status = NFS4ERR_NOFILEHANDLE;
 		return 0;
 	}
@@ -706,9 +706,9 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	      id, type, cookie);
 
 	if (type != Layout_Stateid) {
-		LOG("LAYOUTRETURN: bad stateid type=%u (expected %u), "
-		    "seqid=%u id=%u cookie=%u",
-		    type, Layout_Stateid, seqid, id, cookie);
+		TRACE("LAYOUTRETURN: bad stateid type=%u (expected %u), "
+		      "seqid=%u id=%u cookie=%u",
+		      type, Layout_Stateid, seqid, id, cookie);
 		*status = NFS4ERR_BAD_STATEID;
 		return 0;
 	}
@@ -717,12 +717,12 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 
 	if (!stid || stid->s_tag != Layout_Stateid ||
 	    stid->s_cookie != cookie) {
-		LOG("LAYOUTRETURN: stateid lookup failed: stid=%p "
-		    "tag=%u cookie=%u (expected cookie=%u) "
-		    "seqid=%u id=%u ino=%lu",
-		    (void *)stid, stid ? stid->s_tag : 0,
-		    stid ? stid->s_cookie : 0, cookie,
-		    seqid, id, compound->c_inode->i_ino);
+		TRACE("LAYOUTRETURN: stateid lookup failed: stid=%p "
+		      "tag=%u cookie=%u (expected cookie=%u) "
+		      "seqid=%u id=%u ino=%lu",
+		      (void *)stid, stid ? stid->s_tag : 0,
+		      stid ? stid->s_cookie : 0, cookie, seqid, id,
+		      compound->c_inode->i_ino);
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
 		return 0;
@@ -731,7 +731,7 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	/* Verify client ownership. */
 	if (compound->c_nfs4_client &&
 	    stid->s_client != nfs4_client_to_client(compound->c_nfs4_client)) {
-		LOG("LAYOUTRETURN: client mismatch for stateid id=%u", id);
+		TRACE("LAYOUTRETURN: client mismatch for stateid id=%u", id);
 		stateid_put(stid);
 		*status = NFS4ERR_BAD_STATEID;
 		return 0;
