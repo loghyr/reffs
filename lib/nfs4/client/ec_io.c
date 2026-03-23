@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
@@ -70,7 +71,7 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 			return ret;
 
 		ret = ds_connect(&ctx->ctx_conns[i], &ctx->ctx_devs[i],
-				 em->em_uid, em->em_gid);
+				 getuid(), getgid());
 		if (ret)
 			return ret;
 	}
@@ -125,8 +126,7 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 
 	struct ds_conn dc;
 
-	ret = ds_connect(&dc, &dev, layout.el_mirrors[0].em_uid,
-			 layout.el_mirrors[0].em_gid);
+	ret = ds_connect(&dc, &dev, getuid(), getgid());
 	if (ret)
 		goto out_layout;
 
@@ -187,8 +187,7 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 
 	struct ds_conn dc;
 
-	ret = ds_connect(&dc, &dev, layout.el_mirrors[0].em_uid,
-			 layout.el_mirrors[0].em_gid);
+	ret = ds_connect(&dc, &dev, getuid(), getgid());
 	if (ret)
 		goto out_layout;
 
