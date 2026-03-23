@@ -37,8 +37,31 @@ LDADD = \
 
 check_PROGRAMS = $(TESTS)
 
+# cb_pending is standalone — doesn't use the test harness.
+cb_pending_LDADD = \
+	@CHECK_LIBS@					\
+	$(top_builddir)/lib/nfs4/server/libreffs_nfs4_server.la	\
+	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la	\
+	$(top_builddir)/lib/nlm/libnlm.la		\
+	$(top_builddir)/lib/nsm/libnsm.la		\
+	$(top_builddir)/lib/fs/libreffs_fs.la		\
+	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
+	$(top_builddir)/lib/io/libreffs_io.la		\
+	$(top_builddir)/lib/utils/libreffs_utils.la	\
+	$(top_builddir)/lib/trace/libreffs_trace.la	\
+	$(top_builddir)/lib/backends/libbackends.la	\
+	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
+	-lxxhash -lpthread				\
+	$(URCU_LIBS) $(URCU_CDS_LIBS) $(FUSE_LIBS)	\
+	$(TIRPC_LIBS) $(ZLIB_LIBS) $(UUID_LIBS)		\
+	$(OPENSSL_LIBS)					\
+	$(URING_LIBS)					\
+	$(ZSTD_LIBS)					\
+	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
+
 TESTS = \
 	bitmap \
+	cb_pending \
 	compound_async \
 	delegation_lifecycle \
 	errors \
