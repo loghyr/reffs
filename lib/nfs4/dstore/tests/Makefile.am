@@ -39,4 +39,5 @@ LDADD = \
 check_PROGRAMS = $(TESTS)
 
 TESTS = \
-	dstore_test
+	dstore_test \
+	dstore_wcc_test
