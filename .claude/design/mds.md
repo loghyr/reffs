@@ -118,8 +118,24 @@ and do **not** count as WRITE layouts.
 - `dstore_data_file_fence(ds, fh)` — NFSv3 SETATTR(uid, gid) to
   rotate synthetic IDs within a configured range (default 1024-2048).
   Bumps both uid and gid atomically, wrapping within the range.
-  Called in response to client I/O errors to fence a misbehaving
-  client off the data file.
+  After fencing, always `inode_sync_to_disk` to persist the new IDs.
+
+#### Fencing triggers
+
+Fence + chmod all mirror instances when:
+
+1. **LAYOUTERROR with NFS4ERR_ACCESS or NFS4ERR_PERM** — the DS
+   rejected the client's I/O.  Fence to rotate credentials, chmod
+   to repair mode bits.  Persist updated synthetic IDs.
+
+2. **CB_RECALL timeout** — the client did not return the layout in
+   a timely fashion after CB_RECALL.  Fence to invalidate the
+   client's credentials so any continued I/O with stale credentials
+   fails at the DS.
+
+3. **Initial pool file assignment** — when LAYOUTGET pops a file
+   from the runway, fence it to set the initial synthetic uid/gid
+   and chmod to 0640.
 
 ### GETATTR aggregation
 

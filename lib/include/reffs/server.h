@@ -102,6 +102,9 @@ struct server_state {
 
 	int ss_port;
 
+	/* EXCHGID4_FLAG_USE_* — set at startup from the configured role. */
+	uint32_t ss_exchgid_flags;
+
 	/* Case sensitivity mode for this server instance. */
 	enum reffs_text_case ss_case;
 

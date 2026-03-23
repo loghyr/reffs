@@ -23,6 +23,7 @@
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
 #include "reffs/rpc.h"
+#include "reffs/server.h"
 #include "reffs/super_block.h"
 #include "reffs/task.h"
 #include "reffs/filehandle.h"
@@ -2278,9 +2279,30 @@ int nfs4_attribute_init(void)
 	bitmap4_attribute_clear(bm, FATTR4_SACL);
 	bitmap4_attribute_set(bm, FATTR4_CHANGE_POLICY);
 	bitmap4_attribute_set(bm, FATTR4_FS_STATUS);
-	bitmap4_attribute_clear(bm, FATTR4_FS_LAYOUT_TYPES);
+	/*
+	 * Layout attributes: advertise when role is MDS or combined.
+	 * The server_state may not be available during early init
+	 * (system_attrs_init runs before server_state_init), so
+	 * default to cleared.  inode_to_nattr populates the actual
+	 * values at GETATTR time.
+	 */
+	/*
+	 * Layout attributes: enabled when server role includes MDS.
+	 * server_state is available here because nfs4_protocol_register
+	 * runs after server_state_init + ss_exchgid_flags assignment.
+	 */
+	struct server_state *ss_init = server_state_find();
+
+	if (ss_init &&
+	    (ss_init->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS)) {
+		bitmap4_attribute_set(bm, FATTR4_FS_LAYOUT_TYPES);
+		bitmap4_attribute_set(bm, FATTR4_LAYOUT_TYPES);
+	} else {
+		bitmap4_attribute_clear(bm, FATTR4_FS_LAYOUT_TYPES);
+		bitmap4_attribute_clear(bm, FATTR4_LAYOUT_TYPES);
+	}
+	server_state_put(ss_init);
 	bitmap4_attribute_clear(bm, FATTR4_LAYOUT_HINT);
-	bitmap4_attribute_clear(bm, FATTR4_LAYOUT_TYPES);
 	bitmap4_attribute_clear(bm, FATTR4_LAYOUT_BLKSIZE);
 	bitmap4_attribute_clear(bm, FATTR4_LAYOUT_ALIGNMENT);
 	bitmap4_attribute_clear(bm, FATTR4_FS_LOCATIONS_INFO);
@@ -2362,6 +2384,8 @@ static void nattr_release(struct nfsv42_attr *nattr)
 	free(nattr->supported_attrs.bitmap4_val);
 	free(nattr->suppattr_exclcreat.bitmap4_val);
 	free(nattr->filehandle.nfs_fh4_val);
+	free(nattr->fs_layout_types.fattr4_fs_layout_types_val);
+	free(nattr->layout_types.fattr4_layout_types_val);
 	utf8string_free(&nattr->owner);
 	utf8string_free(&nattr->owner_group);
 }
@@ -2824,6 +2848,33 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->uncacheable_dirent_metadata =
 		inode->i_attr_flags & INODE_IS_UNCACHEABLE_DIRENT_METADATA;
 	nattr->coding_block_size = system_attrs.coding_block_size;
+
+	/*
+	 * Advertise Flex Files layout support when the server role
+	 * is MDS or combined.  The client uses this to decide whether
+	 * to request layouts via LAYOUTGET.
+	 */
+	struct server_state *ss_role = server_state_find();
+
+	if (ss_role &&
+	    (ss_role->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS)) {
+		nattr->fs_layout_types.fattr4_fs_layout_types_val =
+			calloc(1, sizeof(layouttype4));
+		if (nattr->fs_layout_types.fattr4_fs_layout_types_val) {
+			nattr->fs_layout_types.fattr4_fs_layout_types_len = 1;
+			nattr->fs_layout_types.fattr4_fs_layout_types_val[0] =
+				LAYOUT4_FLEX_FILES;
+		}
+
+		nattr->layout_types.fattr4_layout_types_val =
+			calloc(1, sizeof(layouttype4));
+		if (nattr->layout_types.fattr4_layout_types_val) {
+			nattr->layout_types.fattr4_layout_types_len = 1;
+			nattr->layout_types.fattr4_layout_types_val[0] =
+				LAYOUT4_FLEX_FILES;
+		}
+	}
+	server_state_put(ss_role);
 
 out:
 	return NFS4_OK;

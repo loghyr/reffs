@@ -157,4 +157,5 @@ const char *reffs_role_str(enum reffs_role role);
 /* EXCHGID4_FLAG_USE_* bitmask for the given role. */
 uint32_t reffs_role_exchgid_flags(enum reffs_role role);
 
+
 #endif /* _REFFS_SETTINGS_H */
