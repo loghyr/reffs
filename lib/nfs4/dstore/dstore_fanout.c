@@ -25,6 +25,7 @@
 #include "reffs/dstore_ops.h"
 #include "reffs/log.h"
 #include "reffs/task.h"
+#include "reffs/time.h"
 
 /* ------------------------------------------------------------------ */
 /* Thread entry point                                                  */
@@ -44,11 +45,14 @@ static void *fanout_thread(void *arg)
 
 	free(fta); /* arg was heap-allocated */
 
+	if (slot->fs_ldf)
+		slot->fs_ldf->ldf_last_op_sent_ns = reffs_now_ns();
+
 	switch (df->df_op) {
 	case FANOUT_TRUNCATE:
 		ret = dstore_data_file_truncate(slot->fs_ds, slot->fs_fh,
 						slot->fs_fh_len, df->df_size,
-						NULL);
+						&slot->fs_wcc);
 		break;
 
 	case FANOUT_GETATTR:
@@ -60,14 +64,17 @@ static void *fanout_thread(void *arg)
 		ret = dstore_data_file_fence(slot->fs_ds, slot->fs_fh,
 					     slot->fs_fh_len, slot->fs_ldf,
 					     df->df_fence_min, df->df_fence_max,
-					     NULL);
+					     &slot->fs_wcc);
 		break;
 
 	case FANOUT_CHMOD:
 		ret = dstore_data_file_chmod(slot->fs_ds, slot->fs_fh,
-					     slot->fs_fh_len, NULL);
+					     slot->fs_fh_len, &slot->fs_wcc);
 		break;
 	}
+
+	if (slot->fs_ldf)
+		slot->fs_ldf->ldf_last_op_recv_ns = reffs_now_ns();
 
 	slot->fs_result = ret;
 

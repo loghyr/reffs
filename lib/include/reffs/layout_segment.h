@@ -74,6 +74,14 @@ struct layout_data_file {
 	uint32_t ldf_gid;
 	uint16_t ldf_mode;
 	bool ldf_stale; /* true if last GETATTR to this DS failed */
+
+	/*
+	 * Timestamps for the last dstore op (monotonic ns, in-memory only).
+	 * Written by the per-slot fanout thread — each ldf is owned by
+	 * exactly one slot per fanout, so no synchronization needed.
+	 */
+	uint64_t ldf_last_op_sent_ns;
+	uint64_t ldf_last_op_recv_ns;
 };
 
 /*
