@@ -310,6 +310,32 @@ RFC 9754 `OPEN_ARGS_SHARE_ACCESS_WANT_OPEN_XOR_DELEGATION` makes the
 independence explicit: a client may hold a delegation **without** any open
 stateid at all.
 
+### server_state_find() triggers grace transition
+
+`server_state_find()` → `server_state_get()` transitions
+`GRACE_STARTED → IN_GRACE` on the first call.  **Never** call
+`server_state_find()` during initialization (before the server is
+ready for client connections).  Use direct atomic loads or pass
+state as parameters instead.
+
+### Attribute bitmap and supported_attributes
+
+Attributes advertised in `supported_attributes` MUST have working
+XDR encode/decode handlers AND return valid data.  An attribute
+that is "supported" but returns empty/zero data can cause the Linux
+NFS client to loop or hang during mount.
+
+Layout attributes (`FATTR4_FS_LAYOUT_TYPES`, `FATTR4_LAYOUT_TYPES`)
+must only be set in `supported_attributes` when the server role
+includes MDS.  Use `nfs4_attr_enable_layouts()` AFTER
+`nfs4_protocol_register()` — never inside `nfs4_attribute_init()`.
+
+### nattr_release must free all allocated fields
+
+When `inode_to_nattr` allocates memory (calloc, strdup, etc.) for
+any `nfsv42_attr` field, `nattr_release` MUST free it.  Missing
+frees cause leaks on every GETATTR and READDIR entry.
+
 ### Never revoke delegations at CLOSE time
 
 The client holds dirty pages covered by the delegation and will flush them

@@ -93,6 +93,30 @@ static int local_truncate(struct dstore *ds __attribute__((unused)), ...)
 Flag any `(void)variable;` cast that exists solely to suppress an
 unused warning.
 
+### nattr_release completeness
+
+When `inode_to_nattr` allocates memory for ANY `nfsv42_attr` field
+(calloc, strdup, malloc), verify that `nattr_release` frees it.
+Missing frees cause leaks on every GETATTR and READDIR entry.
+Check both the allocation site and the release function.
+
+### server_state_find in init paths
+
+`server_state_find()` must NOT be called during initialization
+(inside `nfs4_attribute_init`, `nfs4_protocol_register`, or any
+function called before the server is ready for clients).  It
+triggers `GRACE_STARTED → IN_GRACE` as a side effect.  Flag any
+`server_state_find()` call in init-time code.
+
+### supported_attributes consistency
+
+If an attribute is set in `supported_attributes`, it MUST have a
+valid XDR encoder AND `inode_to_nattr` must populate it with valid
+data.  An attribute that is "supported" but returns empty/zero data
+can cause the Linux NFS client to hang during mount.  Flag any
+`bitmap4_attribute_set` in `supported_attributes` without a
+corresponding population path in `inode_to_nattr`.
+
 ### LOG vs TRACE
 
 `LOG()` is for **fatal or actionable errors** — conditions that cause
