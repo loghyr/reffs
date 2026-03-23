@@ -76,7 +76,7 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
 			return -EACCES;
 
-		/*
+			/*
 		 * Git over NFS requires that the owner be able to write to
 		 * a regular file even if the write bit is not set (e.g. 0444).
 		 * Standard NFS servers (like Linux nfsd) allow this.
@@ -87,7 +87,7 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 		    S_ISREG(inode->i_mode))
 			return 0;
 #else
-		/* flags unused when HAVE_STRICT_POSIX is defined */
+			/* flags unused when HAVE_STRICT_POSIX is defined */
 #endif
 
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))

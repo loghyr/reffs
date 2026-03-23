@@ -81,7 +81,7 @@ START_TEST(test_alloc_find)
 	ck_assert_ptr_null(dstore_find(99));
 
 	dstore_put(found); /* find ref */
-	dstore_put(ds);	   /* alloc ref */
+	dstore_put(ds); /* alloc ref */
 }
 END_TEST
 
@@ -156,7 +156,8 @@ END_TEST
 
 START_TEST(test_unload_all)
 {
-	struct dstore *ds1 = dstore_alloc(10, FAKE_DS_ADDR, FAKE_DS_PATH, false);
+	struct dstore *ds1 =
+		dstore_alloc(10, FAKE_DS_ADDR, FAKE_DS_PATH, false);
 	struct dstore *ds2 = dstore_alloc(20, "192.0.2.2", FAKE_DS_PATH, false);
 
 	ck_assert_ptr_nonnull(ds1);
@@ -190,8 +191,7 @@ END_TEST
 
 START_TEST(test_local_vtable_ipv4)
 {
-	struct dstore *ds =
-		dstore_alloc(50, "127.0.0.1", FAKE_DS_PATH, false);
+	struct dstore *ds = dstore_alloc(50, "127.0.0.1", FAKE_DS_PATH, false);
 
 	ck_assert_ptr_nonnull(ds);
 	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_local);
@@ -213,8 +213,7 @@ END_TEST
 
 START_TEST(test_local_vtable_localhost)
 {
-	struct dstore *ds =
-		dstore_alloc(52, "localhost", FAKE_DS_PATH, false);
+	struct dstore *ds = dstore_alloc(52, "localhost", FAKE_DS_PATH, false);
 
 	ck_assert_ptr_nonnull(ds);
 	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_local);

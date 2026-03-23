@@ -85,8 +85,7 @@ START_TEST(test_mul_distributive)
 					gf_mul((uint8_t)a,
 					       gf_add((uint8_t)b, (uint8_t)c)),
 					gf_add(gf_mul((uint8_t)a, (uint8_t)b),
-					       gf_mul((uint8_t)a,
-						      (uint8_t)c)));
+					       gf_mul((uint8_t)a, (uint8_t)c)));
 }
 END_TEST
 

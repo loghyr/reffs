@@ -74,9 +74,9 @@ static void *fanout_thread(void *arg)
 	 * Atomically decrement pending.  The last thread to finish
 	 * (pending goes to 0) resumes the paused compound.
 	 */
-	uint32_t remaining =
-		atomic_fetch_sub_explicit(&df->df_pending, 1,
-					 memory_order_acq_rel) - 1;
+	uint32_t remaining = atomic_fetch_sub_explicit(&df->df_pending, 1,
+						       memory_order_acq_rel) -
+			     1;
 
 	if (remaining == 0)
 		task_resume(df->df_task);
@@ -122,10 +122,10 @@ void dstore_fanout_launch(struct dstore_fanout *df, struct task *t)
 			 * worker.
 			 */
 			df->df_slots[i].fs_result = -ENOMEM;
-			uint32_t rem =
-				atomic_fetch_sub_explicit(&df->df_pending, 1,
-							 memory_order_acq_rel) -
-				1;
+			uint32_t rem = atomic_fetch_sub_explicit(
+					       &df->df_pending, 1,
+					       memory_order_acq_rel) -
+				       1;
 			if (rem == 0) {
 				task_resume(df->df_task);
 				return;
@@ -145,10 +145,10 @@ void dstore_fanout_launch(struct dstore_fanout *df, struct task *t)
 		if (pthread_create(&tid, &attr, fanout_thread, fta) != 0) {
 			free(fta);
 			df->df_slots[i].fs_result = -ENOMEM;
-			uint32_t rem =
-				atomic_fetch_sub_explicit(&df->df_pending, 1,
-							 memory_order_acq_rel) -
-				1;
+			uint32_t rem = atomic_fetch_sub_explicit(
+					       &df->df_pending, 1,
+					       memory_order_acq_rel) -
+				       1;
 			pthread_attr_destroy(&attr);
 			if (rem == 0) {
 				task_resume(df->df_task);

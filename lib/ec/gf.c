@@ -24,8 +24,8 @@
 
 #include <stdbool.h>
 
-#define GF_POLY	 0x11d /* x^8 + x^4 + x^3 + x^2 + 1 */
-#define GF_ORDER 255   /* order of the multiplicative group */
+#define GF_POLY 0x11d /* x^8 + x^4 + x^3 + x^2 + 1 */
+#define GF_ORDER 255 /* order of the multiplicative group */
 
 static uint8_t gf_exp[512]; /* antilog table (doubled) */
 static uint8_t gf_log[256]; /* log table; gf_log[0] unused */

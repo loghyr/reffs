@@ -25,8 +25,8 @@ struct dstore_ops {
 	const char *name; /* "nfsv3" or "local" */
 
 	int (*create)(struct dstore *ds, const uint8_t *dir_fh,
-		      uint32_t dir_fh_len, const char *name,
-		      uint8_t *out_fh, uint32_t *out_fh_len);
+		      uint32_t dir_fh_len, const char *name, uint8_t *out_fh,
+		      uint32_t *out_fh_len);
 
 	int (*remove)(struct dstore *ds, const uint8_t *dir_fh,
 		      uint32_t dir_fh_len, const char *name);
@@ -56,9 +56,8 @@ extern const struct dstore_ops dstore_ops_local;
 
 static inline int dstore_data_file_create(struct dstore *ds,
 					  const uint8_t *dir_fh,
-					  uint32_t dir_fh_len,
-					  const char *name, uint8_t *out_fh,
-					  uint32_t *out_fh_len)
+					  uint32_t dir_fh_len, const char *name,
+					  uint8_t *out_fh, uint32_t *out_fh_len)
 {
 	return ds->ds_ops->create(ds, dir_fh, dir_fh_len, name, out_fh,
 				  out_fh_len);
@@ -71,30 +70,29 @@ static inline int dstore_data_file_remove(struct dstore *ds,
 	return ds->ds_ops->remove(ds, dir_fh, dir_fh_len, name);
 }
 
-static inline int dstore_data_file_chmod(struct dstore *ds,
-					 const uint8_t *fh, uint32_t fh_len)
+static inline int dstore_data_file_chmod(struct dstore *ds, const uint8_t *fh,
+					 uint32_t fh_len)
 {
 	return ds->ds_ops->chmod(ds, fh, fh_len);
 }
 
 static inline int dstore_data_file_truncate(struct dstore *ds,
-					    const uint8_t *fh,
-					    uint32_t fh_len, uint64_t size)
+					    const uint8_t *fh, uint32_t fh_len,
+					    uint64_t size)
 {
 	return ds->ds_ops->truncate(ds, fh, fh_len, size);
 }
 
-static inline int dstore_data_file_fence(struct dstore *ds,
-					 const uint8_t *fh, uint32_t fh_len,
+static inline int dstore_data_file_fence(struct dstore *ds, const uint8_t *fh,
+					 uint32_t fh_len,
 					 struct layout_data_file *ldf,
-					 uint32_t fence_min,
-					 uint32_t fence_max)
+					 uint32_t fence_min, uint32_t fence_max)
 {
 	return ds->ds_ops->fence(ds, fh, fh_len, ldf, fence_min, fence_max);
 }
 
-static inline int dstore_data_file_getattr(struct dstore *ds,
-					   const uint8_t *fh, uint32_t fh_len,
+static inline int dstore_data_file_getattr(struct dstore *ds, const uint8_t *fh,
+					   uint32_t fh_len,
 					   struct layout_data_file *ldf)
 {
 	return ds->ds_ops->getattr(ds, fh, fh_len, ldf);

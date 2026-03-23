@@ -53,8 +53,8 @@ static nfs_fh3 make_fh3(const uint8_t *fh, uint32_t len)
 /* ------------------------------------------------------------------ */
 
 static int nfsv3_create(struct dstore *ds, const uint8_t *dir_fh,
-			    uint32_t dir_fh_len, const char *name,
-			    uint8_t *out_fh, uint32_t *out_fh_len)
+			uint32_t dir_fh_len, const char *name, uint8_t *out_fh,
+			uint32_t *out_fh_len)
 {
 	CREATE3args args;
 	CREATE3res res;
@@ -88,8 +88,8 @@ static int nfsv3_create(struct dstore *ds, const uint8_t *dir_fh,
 	}
 
 	if (res.status != NFS3_OK) {
-		LOG("dstore[%u]: CREATE %s failed: status=%d", ds->ds_id,
-		    name, res.status);
+		LOG("dstore[%u]: CREATE %s failed: status=%d", ds->ds_id, name,
+		    res.status);
 		xdr_free((xdrproc_t)xdr_CREATE3res, (caddr_t)&res);
 		return -EIO;
 	}
@@ -97,8 +97,8 @@ static int nfsv3_create(struct dstore *ds, const uint8_t *dir_fh,
 	/* Extract the filehandle from the post_op_fh3. */
 	post_op_fh3 *pofh = &res.CREATE3res_u.resok.obj;
 
-	if (pofh->handle_follows && pofh->post_op_fh3_u.handle.data.data_len <=
-					    LAYOUT_SEG_MAX_FH) {
+	if (pofh->handle_follows &&
+	    pofh->post_op_fh3_u.handle.data.data_len <= LAYOUT_SEG_MAX_FH) {
 		*out_fh_len = pofh->post_op_fh3_u.handle.data.data_len;
 		memcpy(out_fh, pofh->post_op_fh3_u.handle.data.data_val,
 		       *out_fh_len);
@@ -106,9 +106,8 @@ static int nfsv3_create(struct dstore *ds, const uint8_t *dir_fh,
 		LOG("dstore[%u]: CREATE %s: server did not return FH",
 		    ds->ds_id, name);
 	} else {
-		LOG("dstore[%u]: CREATE %s: FH too large (%u > %d)",
-		    ds->ds_id, name,
-		    pofh->post_op_fh3_u.handle.data.data_len,
+		LOG("dstore[%u]: CREATE %s: FH too large (%u > %d)", ds->ds_id,
+		    name, pofh->post_op_fh3_u.handle.data.data_len,
 		    LAYOUT_SEG_MAX_FH);
 		xdr_free((xdrproc_t)xdr_CREATE3res, (caddr_t)&res);
 		return -EIO;
@@ -123,7 +122,7 @@ static int nfsv3_create(struct dstore *ds, const uint8_t *dir_fh,
 /* ------------------------------------------------------------------ */
 
 static int nfsv3_remove(struct dstore *ds, const uint8_t *dir_fh,
-			    uint32_t dir_fh_len, const char *name)
+			uint32_t dir_fh_len, const char *name)
 {
 	REMOVE3args args;
 	REMOVE3res res;
@@ -162,8 +161,7 @@ static int nfsv3_remove(struct dstore *ds, const uint8_t *dir_fh,
 /* CHMOD (SETATTR mode)                                                */
 /* ------------------------------------------------------------------ */
 
-static int nfsv3_chmod(struct dstore *ds, const uint8_t *fh,
-			   uint32_t fh_len)
+static int nfsv3_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len)
 {
 	SETATTR3args args;
 	SETATTR3res res;
@@ -210,8 +208,8 @@ static int nfsv3_chmod(struct dstore *ds, const uint8_t *fh,
  * sattrguard3.  If the guard fails (NFS3ERR_NOT_SYNC — ctime changed
  * between our GETATTR and SETATTR), re-read ctime and retry.
  */
-static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh,
-			  uint32_t fh_len, uint64_t size)
+static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+			  uint64_t size)
 {
 	struct timeval tv = ds_timeout();
 	int ret = -EIO;
@@ -241,8 +239,7 @@ static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh,
 		if (rpc_stat != RPC_SUCCESS || ga_res.status != NFS3_OK) {
 			LOG("dstore[%u]: GETATTR for guarded truncate failed",
 			    ds->ds_id);
-			xdr_free((xdrproc_t)xdr_GETATTR3res,
-				 (caddr_t)&ga_res);
+			xdr_free((xdrproc_t)xdr_GETATTR3res, (caddr_t)&ga_res);
 			return -EIO;
 		}
 
@@ -283,8 +280,7 @@ static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh,
 		}
 
 		if (sa_res.status == NFS3_OK) {
-			xdr_free((xdrproc_t)xdr_SETATTR3res,
-				 (caddr_t)&sa_res);
+			xdr_free((xdrproc_t)xdr_SETATTR3res, (caddr_t)&sa_res);
 			return 0;
 		}
 
@@ -293,8 +289,7 @@ static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh,
 			TRACE("dstore[%u]: truncate guard failed, "
 			      "retrying (%d/%d)",
 			      ds->ds_id, attempt + 1, TRUNCATE_MAX_RETRIES);
-			xdr_free((xdrproc_t)xdr_SETATTR3res,
-				 (caddr_t)&sa_res);
+			xdr_free((xdrproc_t)xdr_SETATTR3res, (caddr_t)&sa_res);
 			continue;
 		}
 
@@ -315,9 +310,9 @@ static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh,
 /* FENCE (SETATTR uid/gid rotation)                                    */
 /* ------------------------------------------------------------------ */
 
-static int nfsv3_fence(struct dstore *ds, const uint8_t *fh,
-			   uint32_t fh_len, struct layout_data_file *ldf,
-			   uint32_t fence_min, uint32_t fence_max)
+static int nfsv3_fence(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+		       struct layout_data_file *ldf, uint32_t fence_min,
+		       uint32_t fence_max)
 {
 	SETATTR3args args;
 	SETATTR3res res;
@@ -383,8 +378,8 @@ static int nfsv3_fence(struct dstore *ds, const uint8_t *fh,
 /* GETATTR                                                             */
 /* ------------------------------------------------------------------ */
 
-static int nfsv3_getattr(struct dstore *ds, const uint8_t *fh,
-			     uint32_t fh_len, struct layout_data_file *ldf)
+static int nfsv3_getattr(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+			 struct layout_data_file *ldf)
 {
 	GETATTR3args args;
 	GETATTR3res res;

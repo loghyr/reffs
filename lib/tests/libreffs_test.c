@@ -80,9 +80,9 @@ char *reffs_test_create_state_dir(void)
 }
 
 static int remove_obj(const char *fpath,
-		      const struct stat __attribute__((unused)) *sb,
+		      const struct stat __attribute__((unused)) * sb,
 		      int __attribute__((unused)) typeflag,
-		      struct FTW __attribute__((unused)) *ftwbuf)
+		      struct FTW __attribute__((unused)) * ftwbuf)
 {
 	return remove(fpath);
 }

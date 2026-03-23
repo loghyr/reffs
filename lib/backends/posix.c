@@ -182,11 +182,10 @@ static void posix_inode_sync(struct inode *inode)
 			};
 			bool ok = true;
 
-			ok = ok && write(fd, &hdr, sizeof(hdr)) ==
-					    sizeof(hdr);
+			ok = ok && write(fd, &hdr, sizeof(hdr)) == sizeof(hdr);
 			ok = ok && write(fd, &lss->lss_count,
 					 sizeof(lss->lss_count)) ==
-					    sizeof(lss->lss_count);
+					   sizeof(lss->lss_count);
 
 			for (uint32_t s = 0; ok && s < lss->lss_count; s++) {
 				struct layout_segment *seg = &lss->lss_segs[s];
@@ -200,7 +199,7 @@ static void posix_inode_sync(struct inode *inode)
 				};
 
 				ok = ok && write(fd, &lsd, sizeof(lsd)) ==
-						    sizeof(lsd);
+						   sizeof(lsd);
 
 				for (uint32_t f = 0; ok && f < seg->ls_nfiles;
 				     f++) {
@@ -589,15 +588,15 @@ static int inode_load_from_disk(struct inode *inode)
 			ok = ok && read(fd, &hdr, sizeof(hdr)) == sizeof(hdr);
 			ok = ok && hdr.rdh_magic == REFFS_DISK_MAGIC_LAY;
 			ok = ok && hdr.rdh_version == REFFS_DISK_VERSION_1;
-			ok = ok && read(fd, &count, sizeof(count)) ==
-					    sizeof(count);
+			ok = ok &&
+			     read(fd, &count, sizeof(count)) == sizeof(count);
 
 			if (ok && count > 0) {
 				struct layout_segments *lss =
 					layout_segments_alloc();
 				if (lss) {
-					for (uint32_t s = 0;
-					     ok && s < count; s++) {
+					for (uint32_t s = 0; ok && s < count;
+					     s++) {
 						struct layout_segment_disk lsd;
 
 						ok = read(fd, &lsd,
@@ -620,8 +619,7 @@ static int inode_load_from_disk(struct inode *inode)
 							struct layout_data_file_disk
 								ldfd;
 							ok = read(fd, &ldfd,
-								  sizeof(
-									  ldfd)) ==
+								  sizeof(ldfd)) ==
 							     sizeof(ldfd);
 							if (!ok)
 								break;
@@ -649,8 +647,7 @@ static int inode_load_from_disk(struct inode *inode)
 						}
 
 						if (ok) {
-							struct layout_segment
-								seg = {
+							struct layout_segment seg = {
 								.ls_offset =
 									lsd.ls_offset,
 								.ls_length =

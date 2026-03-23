@@ -214,8 +214,7 @@ bool dispatch_compound(struct compound *compound)
 			TRACE("dispatch op=%s(%d) curr_op=%u",
 			      nfs4_op_name(argop->argop), argop->argop,
 			      compound->c_curr_op);
-			uint32_t op_flags =
-				op_table[argop->argop](compound);
+			uint32_t op_flags = op_table[argop->argop](compound);
 
 			/*
 			 * Op went async: the return value is on our stack,

@@ -21,7 +21,7 @@ struct inode; /* forward decl for sb_root_inode */
 #include "reffs/backend.h"
 
 #define SUPER_BLOCK_ROOT_ID (1)
-#define SUPER_BLOCK_DS_ID   (2)
+#define SUPER_BLOCK_DS_ID (2)
 
 /*
  * LRU limits -- tunable, but these are reasonable defaults.

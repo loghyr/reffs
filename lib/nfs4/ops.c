@@ -143,8 +143,9 @@ uint32_t nfs4_op_illegal(struct compound *compound)
 	resop->resop = OP_ILLEGAL;
 	*status = NFS4ERR_OP_ILLEGAL;
 
-	TRACE("%s op=%s(%d) status=%s(%d)", __func__, nfs4_op_name(argop->argop),
-	      argop->argop, nfs4_err_name(*status), *status);
+	TRACE("%s op=%s(%d) status=%s(%d)", __func__,
+	      nfs4_op_name(argop->argop), argop->argop, nfs4_err_name(*status),
+	      *status);
 
 	return 0;
 }

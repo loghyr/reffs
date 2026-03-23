@@ -131,11 +131,9 @@ int gf_matrix_invert(const struct gf_matrix *m, struct gf_matrix *out)
 
 		for (int j = 0; j < n; j++) {
 			gf_matrix_set(work, col, j,
-				      gf_mul(gf_matrix_get(work, col, j),
-					     inv));
+				      gf_mul(gf_matrix_get(work, col, j), inv));
 			gf_matrix_set(out, col, j,
-				      gf_mul(gf_matrix_get(out, col, j),
-					     inv));
+				      gf_mul(gf_matrix_get(out, col, j), inv));
 		}
 
 		/* Eliminate column in all other rows. */

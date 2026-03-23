@@ -140,7 +140,7 @@ static size_t ram_db_get_size(struct data_block *db)
 	return db->db_size;
 }
 
-static int ram_db_get_fd(struct data_block __attribute__((unused)) *db)
+static int ram_db_get_fd(struct data_block __attribute__((unused)) * db)
 {
 	return -1;
 }

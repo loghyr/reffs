@@ -31,7 +31,7 @@ struct fanout_slot {
 	uint8_t fs_fh[LAYOUT_SEG_MAX_FH];
 	uint32_t fs_fh_len;
 	struct layout_data_file *fs_ldf; /* for getattr: update in place */
-	int fs_result;			 /* 0 or -errno */
+	int fs_result; /* 0 or -errno */
 };
 
 /* Operation type for the fan-out. */
@@ -44,14 +44,14 @@ enum fanout_op {
 
 /* Fan-out context — allocated per compound that needs DS fan-out. */
 struct dstore_fanout {
-	struct task *df_task;	  /* task to resume when all complete */
+	struct task *df_task; /* task to resume when all complete */
 	_Atomic uint32_t df_pending; /* threads still running */
-	uint32_t df_total;	  /* total DS operations */
-	enum fanout_op df_op;	  /* which operation */
+	uint32_t df_total; /* total DS operations */
+	enum fanout_op df_op; /* which operation */
 
 	/* Operation-specific parameters. */
 	union {
-		uint64_t df_size;     /* FANOUT_TRUNCATE */
+		uint64_t df_size; /* FANOUT_TRUNCATE */
 		struct {
 			uint32_t df_fence_min;
 			uint32_t df_fence_max;

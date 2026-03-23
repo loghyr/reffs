@@ -855,8 +855,8 @@ int rpc_process_task(struct task *t)
 	/* One-shot: log the first call for each protocol. */
 	if (!(rph->rph_flags & RPH_FIRST_LOGGED)) {
 		rph->rph_flags |= RPH_FIRST_LOGGED;
-		LOG("First call: program=%u version=%u",
-		    rph->rph_program, rph->rph_version);
+		LOG("First call: program=%u version=%u", rph->rph_program,
+		    rph->rph_version);
 	}
 
 	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_procedure);

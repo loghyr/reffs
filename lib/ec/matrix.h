@@ -27,8 +27,7 @@ static inline uint8_t gf_matrix_get(const struct gf_matrix *m, int r, int c)
 	return m->data[r * m->cols + c];
 }
 
-static inline void gf_matrix_set(struct gf_matrix *m, int r, int c,
-				  uint8_t val)
+static inline void gf_matrix_set(struct gf_matrix *m, int r, int c, uint8_t val)
 {
 	m->data[r * m->cols + c] = val;
 }

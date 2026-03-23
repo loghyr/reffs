@@ -20,7 +20,7 @@
 #include "reffs/dstore.h"
 
 #define RUNWAY_DEFAULT_SIZE 256
-#define RUNWAY_MAX_FH	    64
+#define RUNWAY_MAX_FH 64
 
 struct runway_entry {
 	uint8_t re_fh[RUNWAY_MAX_FH];
@@ -28,12 +28,12 @@ struct runway_entry {
 };
 
 struct runway {
-	struct dstore *rw_ds;		 /* owning dstore (ref held) */
+	struct dstore *rw_ds; /* owning dstore (ref held) */
 	struct runway_entry *rw_entries; /* circular buffer */
-	uint32_t rw_capacity;		 /* total slots */
-	uint32_t rw_head;		 /* next to pop */
-	uint32_t rw_count;		 /* entries available */
-	uint32_t rw_next_seq;		 /* next filename sequence number */
+	uint32_t rw_capacity; /* total slots */
+	uint32_t rw_head; /* next to pop */
+	uint32_t rw_count; /* entries available */
+	uint32_t rw_next_seq; /* next filename sequence number */
 	pthread_mutex_t rw_mutex;
 };
 
