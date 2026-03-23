@@ -241,8 +241,8 @@ install-hooks:
 
 # Combined MDS+DS on localhost (single instance, no Docker)
 run-combined: build
-	@rm -rf /tmp/reffs_combined_data /tmp/reffs_combined_state
-	@mkdir -p /tmp/reffs_combined_data /tmp/reffs_combined_state
+	@rm -rf /tmp/reffs_combined_data /tmp/reffs_combined_state /tmp/reffs_combined_ds
+	@mkdir -p /tmp/reffs_combined_data /tmp/reffs_combined_state /tmp/reffs_combined_ds
 	build/src/reffsd --config=deploy/pnfs/combined.toml
 
 # Multi-container pNFS: MDS + DS (no client)

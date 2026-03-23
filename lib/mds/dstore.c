@@ -30,6 +30,9 @@
 #include "mntv3_xdr.h"
 #include "reffs/dstore.h"
 #include "reffs/dstore_ops.h"
+#include "reffs/filehandle.h"
+#include "reffs/inode.h"
+#include "reffs/super_block.h"
 #include "reffs/log.h"
 #include "reffs/runway.h"
 #include "reffs/trace/dstore.h"
@@ -245,6 +248,21 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
 		ds->ds_ops = &dstore_ops_local;
 		__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED,
 				  __ATOMIC_RELEASE);
+
+		/*
+		 * Build a local root FH pointing at the DS super_block
+		 * (sb_id=2), not the MDS export (sb_id=1).  This keeps
+		 * pool files isolated from the client-visible namespace.
+		 */
+		struct network_file_handle nfh = {
+			.nfh_vers = FILEHANDLE_VERSION_CURR,
+			.nfh_sb = SUPER_BLOCK_DS_ID,
+			.nfh_ino = INODE_ROOT_ID,
+		};
+
+		memcpy(ds->ds_root_fh, &nfh, sizeof(nfh));
+		ds->ds_root_fh_len = sizeof(nfh);
+
 		TRACE("dstore[%u]: local path %s:%s", id, address, path);
 	} else {
 		ds->ds_ops = &dstore_ops_nfsv3;
