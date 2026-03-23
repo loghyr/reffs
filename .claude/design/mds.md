@@ -67,6 +67,17 @@ NFSv3 CREATE:
 File naming is deterministic from dstore + MDS UUID + sequence number,
 so only the dstore reference and FH need to be stored per-inode.
 
+### Runway restart handling
+
+On restart, pool files from the previous run still exist on disk.
+The runway must handle this:
+- `vfs_create` with UNCHECKED semantics (create-or-open), OR
+- LOOKUP first, use existing FH if found, CREATE only if not found
+- The sequence counter in `pool_seq.dat` tells the runway where
+  the previous run left off — don't re-create from 1
+- The local VFS vtable's `vfs_create` currently returns EEXIST
+  for existing files — this must be fixed
+
 ## MDS Inode On-Disk Format
 
 Designed for striping and continuations from the start, even though
