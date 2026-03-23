@@ -11,6 +11,7 @@ lib_LTLIBRARIES = libreffs_nfs4_server.la
 libreffs_nfs4_server_la_SOURCES = \
 	attr.c \
 	cb.c \
+	cb_timeout.c \
 	client.c \
 	client_persist.c \
 	compound.c \
