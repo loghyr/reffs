@@ -7,5 +7,5 @@ AM_CFLAGS = -I$(top_srcdir)/lib/include \
 	$(TIRPC_CFLAGS) \
 	-I$(top_builddir)/lib/xdr
 
-noinst_LTLIBRARIES = libreffs_mds.la
-libreffs_mds_la_SOURCES = dstore.c dstore_fanout.c dstore_ops_nfsv3.c dstore_ops_local.c runway.c
+noinst_LTLIBRARIES = libreffs_dstore.la
+libreffs_dstore_la_SOURCES = dstore.c dstore_fanout.c dstore_ops_nfsv3.c dstore_ops_local.c runway.c
