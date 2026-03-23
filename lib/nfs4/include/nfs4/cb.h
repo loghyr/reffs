@@ -103,6 +103,20 @@ int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
 int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 			 const bitmap4 *attr_request, struct cb_pending *cp);
 
+/*
+ * nfs4_cb_layoutrecall_send -- send CB_LAYOUTRECALL and register for reply.
+ *
+ * Per-file recall only (LAYOUTRECALL4_FILE).  The caller must have
+ * already called task_pause().  On timeout, the caller should fence
+ * the data server files (rotate synthetic uid/gid) and revoke the
+ * layout stateid.
+ */
+int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
+			      layouttype4 layout_type, layoutiomode4 iomode,
+			      int changed, const nfs_fh4 *fh, uint64_t offset,
+			      uint64_t length, const stateid4 *lo_stateid,
+			      struct cb_pending *cp);
+
 /* ------------------------------------------------------------------ */
 /* Timeout infrastructure                                              */
 /* ------------------------------------------------------------------ */
