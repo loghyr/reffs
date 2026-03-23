@@ -32,6 +32,7 @@
 #define DSTORE_IS_RECONNECTING (1ULL << 2)
 
 struct dstore_ops;
+struct runway;
 
 struct dstore {
 	uint32_t ds_id;			       /* unique ID (from config) */
@@ -42,6 +43,9 @@ struct dstore {
 
 	/* Ops vtable: nfsv3 (remote) or local (same server). */
 	const struct dstore_ops *ds_ops;
+
+	/* Pre-created file pool (set by runway_create at startup). */
+	struct runway *ds_runway;
 
 	/* MOUNT result (valid when DSTORE_IS_MOUNTED is set) */
 	uint8_t ds_root_fh[DSTORE_MAX_FH];    /* NFSv3 root filehandle */

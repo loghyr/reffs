@@ -31,6 +31,7 @@
 #include "reffs/dstore.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/log.h"
+#include "reffs/runway.h"
 #include "reffs/trace/dstore.h"
 
 /* ------------------------------------------------------------------ */
@@ -65,6 +66,8 @@ static void dstore_free_rcu(struct rcu_head *rcu)
 	struct dstore *ds = caa_container_of(rcu, struct dstore, ds_rcu);
 
 	trace_dstore(ds, __func__, __LINE__);
+	if (ds->ds_runway)
+		runway_destroy(ds->ds_runway);
 	if (ds->ds_clnt)
 		clnt_destroy(ds->ds_clnt);
 	pthread_mutex_destroy(&ds->ds_clnt_mutex);
