@@ -184,6 +184,15 @@ When going async in an NFSv3 op:
 - `sizeof(bitmap4)` or `sizeof(COMPOUND4res)` etc. are wrong
 - Must use `xdr_sizeof((xdrproc_t)xdr_TYPE, ptr)`
 
+### Init functions belong in protocol register/deregister
+
+New subsystem `init()`/`fini()` calls must NOT be added to `reffsd.c`
+`main()`.  They belong inside the protocol's register/deregister
+function (e.g., `nfs4_protocol_register()` in `register.c`).
+
+`src/` must NOT include headers from `lib/nfs4/include/` — that is a
+layering violation.  Public API goes in `lib/include/reffs/`.
+
 ### bitmap4 copy guard
 
 - Early-return must check `src->bitmap4_len`, not `dst->bitmap4_len`
