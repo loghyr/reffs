@@ -2286,22 +2286,8 @@ int nfs4_attribute_init(void)
 	 * default to cleared.  inode_to_nattr populates the actual
 	 * values at GETATTR time.
 	 */
-	/*
-	 * Layout attributes: enabled when server role includes MDS.
-	 * server_state is available here because nfs4_protocol_register
-	 * runs after server_state_init + ss_exchgid_flags assignment.
-	 */
-	struct server_state *ss_init = server_state_find();
-
-	if (ss_init &&
-	    (ss_init->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS)) {
-		bitmap4_attribute_set(bm, FATTR4_FS_LAYOUT_TYPES);
-		bitmap4_attribute_set(bm, FATTR4_LAYOUT_TYPES);
-	} else {
-		bitmap4_attribute_clear(bm, FATTR4_FS_LAYOUT_TYPES);
-		bitmap4_attribute_clear(bm, FATTR4_LAYOUT_TYPES);
-	}
-	server_state_put(ss_init);
+	bitmap4_attribute_clear(bm, FATTR4_FS_LAYOUT_TYPES);
+	bitmap4_attribute_clear(bm, FATTR4_LAYOUT_TYPES);
 	bitmap4_attribute_clear(bm, FATTR4_LAYOUT_HINT);
 	bitmap4_attribute_clear(bm, FATTR4_LAYOUT_BLKSIZE);
 	bitmap4_attribute_clear(bm, FATTR4_LAYOUT_ALIGNMENT);
@@ -2356,6 +2342,14 @@ int nfs4_attribute_init(void)
 	}
 
 	return 0;
+}
+
+void nfs4_attr_enable_layouts(void)
+{
+	bitmap4 *bm = supported_attributes;
+
+	bitmap4_attribute_set(bm, FATTR4_FS_LAYOUT_TYPES);
+	bitmap4_attribute_set(bm, FATTR4_LAYOUT_TYPES);
 }
 
 int nfs4_attribute_fini(void)
@@ -2952,8 +2946,7 @@ static uint32_t nfs4_op_getattr_resume(struct rpc_trans *rt)
 	 * past this op after the resume callback returns.
 	 */
 	GETATTR4args *args = NFS4_OP_ARG_SETUP(compound, opgetattr);
-	GETATTR4resok *resok =
-		NFS4_OP_RESOK_SETUP(res, GETATTR4res_u, resok4);
+	GETATTR4resok *resok = NFS4_OP_RESOK_SETUP(res, GETATTR4res_u, resok4);
 	bitmap4 *attr_request = &args->attr_request;
 	fattr4 *fattr = &resok->obj_attributes;
 	struct nfsv42_attr nattr = { 0 };
@@ -3045,18 +3038,19 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 		goto out;
 
 	/*
-	 * MDS mode: if there is an active write layout on this inode,
-	 * fan out GETATTR to all DSes to refresh cached attrs before
-	 * responding.  Skip if no layout segments (standalone file).
+	 * MDS mode: if there is an active write layout on this inode
+	 * and the DS attrs haven't already been refreshed in this
+	 * compound (e.g., by a preceding LAYOUTRETURN), fan out
+	 * GETATTR to all DSes to refresh cached attrs.
 	 */
 	if (inode && inode->i_layout_segments &&
 	    inode->i_layout_segments->lss_count > 0 &&
+	    !(compound->c_flags & COMPOUND_DS_ATTRS_REFRESHED) &&
 	    inode_has_write_layout(inode)) {
 		struct layout_segment *seg =
 			&inode->i_layout_segments->lss_segs[0];
 
-		struct dstore_fanout *df =
-			dstore_fanout_alloc(seg->ls_nfiles);
+		struct dstore_fanout *df = dstore_fanout_alloc(seg->ls_nfiles);
 		if (!df) {
 			*status = NFS4ERR_DELAY;
 			goto out;
@@ -3085,6 +3079,7 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 		struct rpc_trans *rt = compound->c_rt;
 		struct task *t = rt->rt_task;
 
+		compound->c_flags |= COMPOUND_DS_ATTRS_REFRESHED;
 		rt->rt_next_action = nfs4_op_getattr_resume;
 		rt->rt_async_data = df;
 		task_pause(t);
@@ -3602,7 +3597,6 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 	if (bitmap4_attribute_is_set(&fattr->attrmask, FATTR4_SIZE) &&
 	    compound->c_inode->i_layout_segments &&
 	    compound->c_inode->i_layout_segments->lss_count > 0) {
-
 		*status = nattr_from_fattr4(fattr, &nattr);
 		if (*status)
 			goto out;
@@ -3611,8 +3605,7 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 			compound->c_inode->i_layout_segments;
 		struct layout_segment *seg = &lss->lss_segs[0];
 
-		struct dstore_fanout *df =
-			dstore_fanout_alloc(seg->ls_nfiles);
+		struct dstore_fanout *df = dstore_fanout_alloc(seg->ls_nfiles);
 		if (!df) {
 			nattr_release(&nattr);
 			*status = NFS4ERR_DELAY;

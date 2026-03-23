@@ -784,67 +784,51 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	 * trigger a reflected GETATTR now (async fan-out).
 	 */
 	if ((clear_bit & LAYOUT_STATEID_IOMODE_RW) &&
+	    !(compound->c_flags & COMPOUND_DS_ATTRS_REFRESHED) &&
 	    compound->c_inode->i_layout_segments &&
 	    compound->c_inode->i_layout_segments->lss_count > 0) {
-		bool has_getattr = false;
-		COMPOUND4args *cargs = compound->c_args;
+		struct layout_segment *seg =
+			&compound->c_inode->i_layout_segments->lss_segs[0];
+		struct dstore_fanout *df = dstore_fanout_alloc(seg->ls_nfiles);
 
-		for (u_int op = compound->c_curr_op + 1;
-		     op < cargs->argarray.argarray_len; op++) {
-			if (cargs->argarray.argarray_val[op].argop ==
-			    OP_GETATTR) {
-				has_getattr = true;
-				break;
-			}
-		}
+		if (df) {
+			df->df_op = FANOUT_GETATTR;
+			int setup_ok = 1;
 
-		if (!has_getattr) {
-			struct layout_segment *seg =
-				&compound->c_inode->i_layout_segments
-					 ->lss_segs[0];
-			struct dstore_fanout *df =
-				dstore_fanout_alloc(seg->ls_nfiles);
+			for (uint32_t fi = 0; fi < seg->ls_nfiles; fi++) {
+				struct layout_data_file *ldf =
+					&seg->ls_files[fi];
+				struct fanout_slot *slot = &df->df_slots[fi];
 
-			if (df) {
-				df->df_op = FANOUT_GETATTR;
-				bool ok = true;
-
-				for (uint32_t fi = 0; fi < seg->ls_nfiles;
-				     fi++) {
-					struct layout_data_file *ldf =
-						&seg->ls_files[fi];
-					struct fanout_slot *slot =
-						&df->df_slots[fi];
-
-					slot->fs_ds =
-						dstore_find(ldf->ldf_dstore_id);
-					if (!slot->fs_ds) {
-						ok = false;
-						break;
-					}
-					memcpy(slot->fs_fh, ldf->ldf_fh,
-					       ldf->ldf_fh_len);
-					slot->fs_fh_len = ldf->ldf_fh_len;
-					slot->fs_ldf = ldf;
+				slot->fs_ds = dstore_find(ldf->ldf_dstore_id);
+				if (!slot->fs_ds) {
+					setup_ok = 0;
+					break;
 				}
-
-				if (ok) {
-					struct rpc_trans *rt = compound->c_rt;
-					struct task *t = rt->rt_task;
-
-					rt->rt_next_action =
-						nfs4_op_layoutreturn_resume;
-					rt->rt_async_data = df;
-					task_pause(t);
-					dstore_fanout_launch(df, t);
-					return NFS4_OP_FLAG_ASYNC;
-				}
-
-				dstore_fanout_free(df);
+				memcpy(slot->fs_fh, ldf->ldf_fh,
+				       ldf->ldf_fh_len);
+				slot->fs_fh_len = ldf->ldf_fh_len;
+				slot->fs_ldf = ldf;
 			}
-			/* Fan-out alloc/setup failed — continue without
-			 * fresh attrs.  Not fatal. */
+
+			if (setup_ok) {
+				struct rpc_trans *rt = compound->c_rt;
+				struct task *t = rt->rt_task;
+
+				compound->c_flags |=
+					COMPOUND_DS_ATTRS_REFRESHED;
+				rt->rt_next_action =
+					nfs4_op_layoutreturn_resume;
+				rt->rt_async_data = df;
+				task_pause(t);
+				dstore_fanout_launch(df, t);
+				return NFS4_OP_FLAG_ASYNC;
+			}
+
+			dstore_fanout_free(df);
 		}
+		/* Fan-out alloc/setup failed — continue without
+		 * fresh attrs.  Not fatal. */
 	}
 
 	return 0;
