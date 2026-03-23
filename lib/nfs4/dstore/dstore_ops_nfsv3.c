@@ -48,6 +48,34 @@ static nfs_fh3 make_fh3(const uint8_t *fh, uint32_t len)
 	return f;
 }
 
+/*
+ * Extract post-op attrs from SETATTR3res wcc_data into dstore_wcc.
+ * Caller passes NULL wcc if not interested.
+ */
+static void extract_setattr_wcc(const SETATTR3res *res, struct dstore_wcc *wcc)
+{
+	if (!wcc)
+		return;
+
+	memset(wcc, 0, sizeof(*wcc));
+
+	wcc_data wd = (res->status == NFS3_OK) ?
+			      res->SETATTR3res_u.resok.obj_wcc :
+			      res->SETATTR3res_u.resfail.obj_wcc;
+
+	if (!wd.after.attributes_follow)
+		return;
+
+	fattr3 *a = &wd.after.post_op_attr_u.attributes;
+
+	wcc->wcc_size = (int64_t)a->size;
+	wcc->wcc_mtime.tv_sec = a->mtime.seconds;
+	wcc->wcc_mtime.tv_nsec = a->mtime.nseconds;
+	wcc->wcc_ctime.tv_sec = a->ctime.seconds;
+	wcc->wcc_ctime.tv_nsec = a->ctime.nseconds;
+	wcc->wcc_valid = 1;
+}
+
 /* ------------------------------------------------------------------ */
 /* CREATE                                                              */
 /* ------------------------------------------------------------------ */
@@ -161,7 +189,8 @@ static int nfsv3_remove(struct dstore *ds, const uint8_t *dir_fh,
 /* CHMOD (SETATTR mode)                                                */
 /* ------------------------------------------------------------------ */
 
-static int nfsv3_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len)
+static int nfsv3_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+		       struct dstore_wcc *wcc)
 {
 	SETATTR3args args;
 	SETATTR3res res;
@@ -193,6 +222,7 @@ static int nfsv3_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len)
 
 	int ret = (res.status == NFS3_OK) ? 0 : -EIO;
 
+	extract_setattr_wcc(&res, wcc);
 	xdr_free((xdrproc_t)xdr_SETATTR3res, (caddr_t)&res);
 	return ret;
 }
@@ -209,7 +239,7 @@ static int nfsv3_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len)
  * between our GETATTR and SETATTR), re-read ctime and retry.
  */
 static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
-			  uint64_t size)
+			  uint64_t size, struct dstore_wcc *wcc)
 {
 	struct timeval tv = ds_timeout();
 	int ret = -EIO;
@@ -280,6 +310,7 @@ static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 		}
 
 		if (sa_res.status == NFS3_OK) {
+			extract_setattr_wcc(&sa_res, wcc);
 			xdr_free((xdrproc_t)xdr_SETATTR3res, (caddr_t)&sa_res);
 			return 0;
 		}
@@ -312,7 +343,7 @@ static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 
 static int nfsv3_fence(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 		       struct layout_data_file *ldf, uint32_t fence_min,
-		       uint32_t fence_max)
+		       uint32_t fence_max, struct dstore_wcc *wcc)
 {
 	SETATTR3args args;
 	SETATTR3res res;
@@ -370,6 +401,7 @@ static int nfsv3_fence(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	TRACE("dstore[%u]: fenced to uid=%u gid=%u", ds->ds_id, new_uid,
 	      new_gid);
 
+	extract_setattr_wcc(&res, wcc);
 	xdr_free((xdrproc_t)xdr_SETATTR3res, (caddr_t)&res);
 	return 0;
 }

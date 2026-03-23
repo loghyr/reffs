@@ -79,7 +79,7 @@ static int runway_save_seq(struct dstore *ds, uint32_t seq)
 	if (ret < 0)
 		return ret;
 
-	return dstore_data_file_truncate(ds, fh, fh_len, (uint64_t)seq);
+	return dstore_data_file_truncate(ds, fh, fh_len, (uint64_t)seq, NULL);
 }
 
 /* ------------------------------------------------------------------ */
