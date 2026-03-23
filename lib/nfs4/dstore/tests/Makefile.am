@@ -17,8 +17,8 @@ LDADD = \
 	@CHECK_LIBS@					\
 	$(top_builddir)/lib/tests/libreffs_test.la	\
 	$(top_builddir)/lib/fs/tests/libreffs_fs_test.la	\
-	$(top_builddir)/lib/nfs4/libreffs_nfs4.la	\
-	$(top_builddir)/lib/mds/libreffs_mds.la		\
+	$(top_builddir)/lib/nfs4/server/libreffs_nfs4_server.la	\
+	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la	\
 	$(top_builddir)/lib/nlm/libnlm.la		\
 	$(top_builddir)/lib/nsm/libnsm.la		\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\

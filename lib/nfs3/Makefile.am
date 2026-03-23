@@ -15,4 +15,4 @@ AM_LDFLAGS = -rdynamic
 
 lib_LTLIBRARIES = libreffs_nfs3.la
 libreffs_nfs3_la_SOURCES = \
-	nfs3_server.c
+	server.c

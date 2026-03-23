@@ -14,7 +14,7 @@ CompileFlags:
   Add:
     # Project-wide public headers
     - -Ilib/include
-    # NFS4 internal headers
+    # NFS4 internal headers (shared across server/client/dstore)
     - -Ilib/nfs4/include
     # Generated XDR headers (nfsv42_xdr.h and friends)
     - -Ibuild/lib/xdr

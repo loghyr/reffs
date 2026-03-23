@@ -435,8 +435,11 @@ AC_CONFIG_FILES([
 	lib/backends/Makefile
 	lib/ec/Makefile
 	lib/ec/tests/Makefile
-	lib/mds/Makefile
-	lib/mds/tests/Makefile
+	lib/nfs4/common/Makefile
+	lib/nfs4/server/Makefile
+	lib/nfs4/client/Makefile
+	lib/nfs4/dstore/Makefile
+	lib/nfs4/dstore/tests/Makefile
 	lib/fs/Makefile
 	lib/fs/tests/Makefile
 	lib/nlm/Makefile
