@@ -49,7 +49,12 @@ static inline int moj_projection_size(int p, int q, int P, int Q)
 	int abs_p = p < 0 ? -p : p;
 	int abs_q = q < 0 ? -q : q;
 
-	return abs_p * (Q - 1) + abs_q * (P - 1) + 1;
+	/*
+	 * b = col*p - row*q ranges over |p|*(P-1) + |q|*(Q-1) + 1
+	 * distinct values.  col spans P-1 steps scaled by |p|, row
+	 * spans Q-1 steps scaled by |q|, plus 1 for the zero value.
+	 */
+	return abs_p * (P - 1) + abs_q * (Q - 1) + 1;
 }
 
 /*
