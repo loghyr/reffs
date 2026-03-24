@@ -22,6 +22,7 @@
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "reffs/server.h"
 #include "reffs/time.h"
 #include "nfs4/trace/nfs4.h"
 
@@ -186,6 +187,17 @@ uint32_t nfs4_op_create(struct compound *compound)
 		goto out;
 	}
 
+	{
+		struct server_state *ss = server_state_find();
+		bool in_grace = ss && server_in_grace(ss);
+
+		server_state_put(ss);
+		if (in_grace) {
+			*status = NFS4ERR_GRACE;
+			goto out;
+		}
+	}
+
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
 		goto out;
@@ -314,6 +326,17 @@ uint32_t nfs4_op_remove(struct compound *compound)
 		goto out;
 	}
 
+	{
+		struct server_state *ss = server_state_find();
+		bool in_grace = ss && server_in_grace(ss);
+
+		server_state_put(ss);
+		if (in_grace) {
+			*status = NFS4ERR_GRACE;
+			goto out;
+		}
+	}
+
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
 		goto out;
@@ -385,6 +408,17 @@ uint32_t nfs4_op_rename(struct compound *compound)
 	if (network_file_handle_empty(&compound->c_saved_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
+	}
+
+	{
+		struct server_state *ss = server_state_find();
+		bool in_grace = ss && server_in_grace(ss);
+
+		server_state_put(ss);
+		if (in_grace) {
+			*status = NFS4ERR_GRACE;
+			goto out;
+		}
 	}
 
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
@@ -478,6 +512,17 @@ uint32_t nfs4_op_link(struct compound *compound)
 	    network_file_handle_empty(&compound->c_saved_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
+	}
+
+	{
+		struct server_state *ss = server_state_find();
+		bool in_grace = ss && server_in_grace(ss);
+
+		server_state_put(ss);
+		if (in_grace) {
+			*status = NFS4ERR_GRACE;
+			goto out;
+		}
 	}
 
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
