@@ -14,4 +14,5 @@ TESTS = \
 	gf_test \
 	matrix_test \
 	mojette_test \
+	mojette_codec_test \
 	rs_test
