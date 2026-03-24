@@ -24,6 +24,7 @@ libreffs_nfs4_server_la_SOURCES = \
 	file.c \
 	filehandle.c \
 	layout.c \
+	lease_reaper.c \
 	lock.c \
 	ops.c \
 	register.c \
