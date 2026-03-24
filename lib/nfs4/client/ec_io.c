@@ -79,6 +79,34 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 	return 0;
 }
 
+static struct ec_codec *ec_create_codec(int k, int m,
+					enum ec_codec_type codec_type)
+{
+	switch (codec_type) {
+	case EC_CODEC_RS:
+		return ec_rs_create(k, m);
+	case EC_CODEC_MOJETTE_SYS:
+		return ec_mojette_sys_create(k, m);
+	case EC_CODEC_MOJETTE_NONSYS:
+		return ec_mojette_nonsys_create(k, m);
+	default:
+		return NULL;
+	}
+}
+
+/*
+ * Return the write size for shard i.  For codecs with variable shard
+ * sizes (Mojette non-systematic), parity shards may be larger than
+ * data shards.
+ */
+static size_t shard_write_size(struct ec_codec *codec, int shard_idx,
+			       size_t data_shard_len)
+{
+	if (codec->ec_shard_size)
+		return codec->ec_shard_size(codec, shard_idx, data_shard_len);
+	return data_shard_len;
+}
+
 static void ec_disconnect_all(struct ec_context *ctx)
 {
 	if (!ctx->ctx_conns)
@@ -226,8 +254,9 @@ out_close:
 /* EC Write                                                            */
 /* ------------------------------------------------------------------ */
 
-int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
-	     size_t data_len, int k, int m)
+int ec_write_codec(struct mds_session *ms, const char *path,
+		   const uint8_t *data, size_t data_len, int k, int m,
+		   enum ec_codec_type codec_type)
 {
 	struct ec_context ctx;
 	int ret;
@@ -237,7 +266,7 @@ int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	ctx.ctx_k = k;
 	ctx.ctx_m = m;
 
-	ctx.ctx_codec = ec_rs_create(k, m);
+	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
 	if (!ctx.ctx_codec)
 		return -ENOMEM;
 
@@ -293,7 +322,9 @@ int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	}
 
 	for (int i = 0; i < m; i++) {
-		parity_shards[i] = calloc(1, shard_size);
+		size_t psz = shard_write_size(ctx.ctx_codec, k + i, shard_size);
+
+		parity_shards[i] = calloc(1, psz);
 		if (!parity_shards[i]) {
 			for (int j = 0; j < i; j++)
 				free(parity_shards[j]);
@@ -302,6 +333,34 @@ int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 			free(padded);
 			ret = -ENOMEM;
 			goto out_conns;
+		}
+	}
+
+	/*
+	 * For non-systematic codecs, encode overwrites data[].
+	 * Allocate separate buffers so we don't corrupt padded[].
+	 */
+	bool nonsys = (codec_type == EC_CODEC_MOJETTE_NONSYS);
+	uint8_t **enc_data = data_shards;
+
+	if (nonsys) {
+		enc_data = calloc(k, sizeof(uint8_t *));
+		if (!enc_data) {
+			ret = -ENOMEM;
+			goto out_parity;
+		}
+		for (int i = 0; i < k; i++) {
+			size_t dsz =
+				shard_write_size(ctx.ctx_codec, i, shard_size);
+
+			enc_data[i] = calloc(1, dsz);
+			if (!enc_data[i]) {
+				for (int j = 0; j < i; j++)
+					free(enc_data[j]);
+				free(enc_data);
+				ret = -ENOMEM;
+				goto out_parity;
+			}
 		}
 	}
 
@@ -314,7 +373,13 @@ int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 			data_shards[i] = padded + s * stripe_data +
 					 (size_t)i * shard_size;
 
-		ret = ctx.ctx_codec->ec_encode(ctx.ctx_codec, data_shards,
+		if (nonsys) {
+			for (int i = 0; i < k; i++)
+				memcpy(enc_data[i], data_shards[i], shard_size);
+		}
+
+		ret = ctx.ctx_codec->ec_encode(ctx.ctx_codec,
+					       nonsys ? enc_data : data_shards,
 					       parity_shards, shard_size);
 		if (ret)
 			break;
@@ -323,10 +388,13 @@ int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 		for (int i = 0; i < k; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 			uint64_t off = s * shard_size;
+			uint32_t wsz = (uint32_t)shard_write_size(
+				ctx.ctx_codec, i, shard_size);
 
 			ret = ds_write(&ctx.ctx_conns[i], em->em_fh,
-				       em->em_fh_len, off, data_shards[i],
-				       shard_size);
+				       em->em_fh_len, off,
+				       nonsys ? enc_data[i] : data_shards[i],
+				       wsz);
 			if (ret)
 				break;
 		}
@@ -338,10 +406,12 @@ int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 			struct ec_mirror *em =
 				&ctx.ctx_layout.el_mirrors[k + i];
 			uint64_t off = s * shard_size;
+			uint32_t wsz = (uint32_t)shard_write_size(
+				ctx.ctx_codec, k + i, shard_size);
 
 			ret = ds_write(&ctx.ctx_conns[k + i], em->em_fh,
 				       em->em_fh_len, off, parity_shards[i],
-				       shard_size);
+				       wsz);
 			if (ret)
 				break;
 		}
@@ -349,6 +419,13 @@ int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 			break;
 	}
 
+	if (nonsys) {
+		for (int i = 0; i < k; i++)
+			free(enc_data[i]);
+		free(enc_data);
+	}
+
+out_parity:
 	for (int i = 0; i < m; i++)
 		free(parity_shards[i]);
 	free(parity_shards);
@@ -371,8 +448,9 @@ out_codec:
 /* Read                                                                */
 /* ------------------------------------------------------------------ */
 
-int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
-	    size_t buf_len, size_t *out_len, int k, int m)
+int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
+		  size_t buf_len, size_t *out_len, int k, int m,
+		  enum ec_codec_type codec_type)
 {
 	struct ec_context ctx;
 	int ret;
@@ -382,7 +460,7 @@ int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	ctx.ctx_k = k;
 	ctx.ctx_m = m;
 
-	ctx.ctx_codec = ec_rs_create(k, m);
+	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
 	if (!ctx.ctx_codec)
 		return -ENOMEM;
 
@@ -426,7 +504,9 @@ int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	}
 
 	for (int i = 0; i < total; i++) {
-		shards[i] = calloc(1, shard_size);
+		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+
+		shards[i] = calloc(1, sz);
 		if (!shards[i]) {
 			for (int j = 0; j < i; j++)
 				free(shards[j]);
@@ -445,11 +525,13 @@ int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 			uint32_t nread = 0;
 			uint64_t off = s * shard_size;
+			uint32_t rsz = (uint32_t)shard_write_size(
+				ctx.ctx_codec, i, shard_size);
 
 			ret = ds_read(&ctx.ctx_conns[i], em->em_fh,
-				      em->em_fh_len, off, shards[i], shard_size,
+				      em->em_fh_len, off, shards[i], rsz,
 				      &nread);
-			present[i] = (ret == 0 && nread == shard_size);
+			present[i] = (ret == 0 && nread == rsz);
 		}
 
 		/* RS-decode to reconstruct any missing shards. */
@@ -487,4 +569,21 @@ out_close:
 out_codec:
 	ec_codec_destroy(ctx.ctx_codec);
 	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* Backward-compatible wrappers (default to Reed-Solomon)              */
+/* ------------------------------------------------------------------ */
+
+int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
+	     size_t data_len, int k, int m)
+{
+	return ec_write_codec(ms, path, data, data_len, k, m, EC_CODEC_RS);
+}
+
+int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
+	    size_t buf_len, size_t *out_len, int k, int m)
+{
+	return ec_read_codec(ms, path, buf, buf_len, out_len, k, m,
+			     EC_CODEC_RS);
 }
