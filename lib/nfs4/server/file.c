@@ -282,6 +282,22 @@ uint32_t nfs4_op_open(struct compound *compound)
 		goto out;
 	}
 
+	/*
+	 * During grace, only reclaim claims are allowed.
+	 * RFC 5661 §8.4.2.1: non-reclaim OPEN returns NFS4ERR_GRACE.
+	 */
+	if (args->claim.claim != CLAIM_PREVIOUS &&
+	    args->claim.claim != CLAIM_DELEGATE_PREV) {
+		struct server_state *ss = server_state_find();
+		bool in_grace = ss && server_in_grace(ss);
+
+		server_state_put(ss);
+		if (in_grace) {
+			*status = NFS4ERR_GRACE;
+			goto out;
+		}
+	}
+
 	/* Resolve target inode based on claim type. */
 	switch (args->claim.claim) {
 	case CLAIM_FH:

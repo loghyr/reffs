@@ -3765,6 +3765,17 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 		goto out;
 	}
 
+	{
+		struct server_state *ss = server_state_find();
+		bool in_grace = ss && server_in_grace(ss);
+
+		server_state_put(ss);
+		if (in_grace) {
+			*status = NFS4ERR_GRACE;
+			goto out;
+		}
+	}
+
 	/*
 	 * RFC 9754: TIME_DELEG_ACCESS / TIME_DELEG_MODIFY are only
 	 * valid when the client holds a timestamp delegation on this
