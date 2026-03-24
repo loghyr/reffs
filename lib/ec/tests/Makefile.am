@@ -13,4 +13,5 @@ check_PROGRAMS = $(TESTS)
 TESTS = \
 	gf_test \
 	matrix_test \
+	mojette_test \
 	rs_test

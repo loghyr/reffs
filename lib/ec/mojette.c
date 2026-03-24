@@ -80,19 +80,28 @@ int moj_directions_generate(int n, struct moj_direction **dirs)
 		return -ENOMEM;
 
 	/*
-	 * Generate n directions with q=1 and p values centered
-	 * around 0.  For n=4: p = {-1, 0, 1, 2}.
-	 * For n=6: p = {-2, -1, 0, 1, 2, 3}.
+	 * Generate n directions with q=1 and non-zero p values,
+	 * roughly symmetric around 0.
 	 *
-	 * Start at p = -(n/2 - 1) when n is even, -(n/2) when odd.
-	 * This keeps the set roughly symmetric with a slight positive
-	 * bias, keeping projection sizes small.
+	 * For n=4: p = {-2, -1, 1, 2}.
+	 * For n=6: p = {-3, -2, -1, 1, 2, 3}.
+	 *
+	 * p=0 is excluded because direction (0,1) maps all P pixels
+	 * in a row to the same bin, making individual pixel recovery
+	 * impossible with the iterative corner-peeling algorithm.
 	 */
-	int start = -(n / 2 - 1);
+	int half = n / 2;
+	int idx = 0;
 
-	for (int i = 0; i < n; i++) {
-		d[i].md_p = start + i;
-		d[i].md_q = 1;
+	for (int i = half; i >= 1; i--) {
+		d[idx].md_p = -i;
+		d[idx].md_q = 1;
+		idx++;
+	}
+	for (int i = 1; idx < n; i++) {
+		d[idx].md_p = i;
+		d[idx].md_q = 1;
+		idx++;
 	}
 
 	*dirs = d;
