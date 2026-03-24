@@ -311,6 +311,6 @@ run-benchmark: image
 	@echo "View logs: docker logs reffs-bench-mds / reffs-bench-ds0 / etc."
 
 stop-benchmark:
-	$(DOCKER) compose -f $(BENCH_COMPOSE) --profile run down 2>/dev/null || true
+	$(DOCKER) compose -f $(BENCH_COMPOSE) --profile run down -v 2>/dev/null || true
 
 .PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark
