@@ -42,6 +42,7 @@
 #include "nfs4/compound.h"
 #include "nfs4/cb.h"
 #include "nfs4/errors.h"
+#include "nfs4/lease_reaper.h"
 
 /*
  * On locking order:
@@ -91,6 +92,7 @@ int nfs4_protocol_register(void)
 	}
 
 	cb_timeout_init();
+	lease_reaper_init();
 
 	return 0;
 }
@@ -100,6 +102,7 @@ int nfs4_protocol_deregister(void)
 	if (!nfsv4_registered)
 		return 0;
 
+	lease_reaper_fini();
 	cb_timeout_fini();
 
 	rpc_program_handler_put(nfs4_handler);
