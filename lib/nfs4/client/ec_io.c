@@ -89,7 +89,7 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 						 ctx->ctx_devs[i].ed_host);
 		} else {
 			ret = ds_connect(&ctx->ctx_conns[i], &ctx->ctx_devs[i],
-					 getuid(), getgid());
+					 em->em_uid, em->em_gid);
 		}
 		if (ret)
 			return ret;
@@ -183,7 +183,9 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 
 	struct ds_conn dc;
 
-	ret = ds_connect(&dc, &dev, getuid(), getgid());
+	/* DS auth uses synthetic uid/gid from the layout (fencing creds). */
+	ret = ds_connect(&dc, &dev, layout.el_mirrors[0].em_uid,
+			 layout.el_mirrors[0].em_gid);
 	if (ret)
 		goto out_layout;
 
@@ -246,7 +248,9 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 
 	struct ds_conn dc;
 
-	ret = ds_connect(&dc, &dev, getuid(), getgid());
+	/* DS auth uses synthetic uid/gid from the layout (fencing creds). */
+	ret = ds_connect(&dc, &dev, layout.el_mirrors[0].em_uid,
+			 layout.el_mirrors[0].em_gid);
 	if (ret)
 		goto out_layout;
 
