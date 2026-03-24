@@ -36,8 +36,8 @@ x-ds-common: &ds-common
       find /src -name 'parsetab.py' -delete &&
       cd /src && mkdir -p m4 && autoreconf -fi &&
       cd /build && ../src/configure &&
-      find /src -name 'parsetab.py' -delete &&
-      make -j$$(nproc) &&
+      find /src /build -name 'parsetab.py' -delete &&
+      make -j1 &&
       exec ./src/reffsd --config=/reffs/deploy/benchmark/ds.toml
     "
 
