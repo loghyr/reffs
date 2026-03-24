@@ -151,7 +151,7 @@ check-ci: ci-image
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && mkdir -p m4 && autoreconf -fi && \
+			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
 			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
 			make -j$$(nproc) && \
 			(make check || (cat lib/fs/tests/test-suite.log && exit 1)) && \
@@ -173,7 +173,7 @@ run-image: $(LOGS_DIR) stop-image
 		/bin/bash -c "rm -rf /tmp/reffs_data /tmp/reffs.state && mkdir -p /tmp/reffs_data /tmp/reffs.state/reffs.state && \
 			rm -rf /src/* /build/* && \
 			rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && autoreconf -fi && \
+			cd /src && find . -name parsetab.py -delete && autoreconf -fi && \
 			cd /build && ../src/configure --enable-asan --enable-ubsan && make && \
 			sed 's|/var/lib/reffs/data|/tmp/reffs_data|g; s|/var/lib/reffs/reffs.state|/tmp/reffs.state/reffs.state|g' \
 				/src/examples/reffsd.toml > /tmp/reffsd.toml && \
@@ -228,7 +228,7 @@ build-in-docker:
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(IMAGE_NAME) \
 		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && autoreconf -fi && \
+			cd /src && find . -name parsetab.py -delete && autoreconf -fi && \
 			cd /build && ../src/configure && make"
 
 # Reconfigure the build system (force)

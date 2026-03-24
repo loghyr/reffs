@@ -28,7 +28,7 @@ services:
         rm -rf /tmp/reffs_ds_data /tmp/reffs_ds_state &&
         mkdir -p /tmp/reffs_ds_data/sb_1 /tmp/reffs_ds_state &&
         rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
-        cd /src && mkdir -p m4 && autoreconf -fi &&
+        cd /src && find . -name 'parsetab.py' -delete && mkdir -p m4 && autoreconf -fi &&
         cd /build && ../src/configure --enable-asan --enable-ubsan &&
         make -j$$(nproc) &&
         rpcbind &&
@@ -59,7 +59,7 @@ services:
         rm -rf /tmp/reffs_mds_data /tmp/reffs_mds_state &&
         mkdir -p /tmp/reffs_mds_data /tmp/reffs_mds_state &&
         rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
-        cd /src && mkdir -p m4 && autoreconf -fi &&
+        cd /src && find . -name 'parsetab.py' -delete && mkdir -p m4 && autoreconf -fi &&
         cd /build && ../src/configure --enable-asan --enable-ubsan &&
         make -j$$(nproc) &&
         rpcbind &&
