@@ -49,7 +49,7 @@ make check
 
 # Check the test result
 if [ $? -ne 0 ]; then
-    echo "Pre-commit tests failed. Aborting commit."
+    echo "Tests failed. Aborting."
     if [ "$cleanup_build_dir" -eq 1 ]; then
         rm -rf "$build_dir"
     fi
