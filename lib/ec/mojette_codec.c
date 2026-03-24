@@ -47,7 +47,6 @@ static int grid_P(size_t shard_len)
 	return (int)(shard_len / sizeof(uint64_t));
 }
 
-
 /* ------------------------------------------------------------------ */
 /* Systematic encode / decode                                          */
 /* ------------------------------------------------------------------ */
@@ -377,10 +376,8 @@ static int mojette_nonsys_encode(struct ec_codec *codec, uint8_t **data,
 	for (int i = 0; i < k; i++) {
 		size_t proj_bytes =
 			(size_t)projs[i]->mp_nbins * sizeof(uint64_t);
-		size_t copy = proj_bytes < shard_len ? proj_bytes : shard_len;
 
-		memset(data[i], 0, shard_len);
-		memcpy(data[i], projs[i]->mp_bins, copy);
+		memcpy(data[i], projs[i]->mp_bins, proj_bytes);
 		moj_projection_destroy(projs[i]);
 	}
 
