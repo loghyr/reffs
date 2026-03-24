@@ -29,7 +29,16 @@ struct mds_session {
 	sequenceid4 ms_create_seq;
 	sessionid4 ms_sessionid;
 	uint32_t ms_slot_seqid; /* next seqid for slot 0 */
+	char ms_owner[256]; /* client owner string for EXCHANGE_ID */
 };
+
+/*
+ * mds_session_set_owner -- set the client owner string before create.
+ *
+ * Builds "hostname:id" where id defaults to the PID if not provided.
+ * Must be called before mds_session_create().
+ */
+void mds_session_set_owner(struct mds_session *ms, const char *id);
 
 int mds_session_create(struct mds_session *ms, const char *host);
 void mds_session_destroy(struct mds_session *ms);

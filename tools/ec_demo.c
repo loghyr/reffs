@@ -87,6 +87,23 @@ static int write_local_file(const char *path, const uint8_t *data, size_t len)
 }
 
 /* ------------------------------------------------------------------ */
+/* Session helper                                                      */
+/* ------------------------------------------------------------------ */
+
+static const char *g_client_id; /* set from --id, NULL = use PID */
+
+static int session_open(struct mds_session *ms, const char *mds_host)
+{
+	memset(ms, 0, sizeof(*ms));
+	mds_session_set_owner(ms, g_client_id);
+
+	fprintf(stderr, "ec_demo: connecting to MDS %s (owner %s)\n", mds_host,
+		ms->ms_owner);
+
+	return mds_session_create(ms, mds_host);
+}
+
+/* ------------------------------------------------------------------ */
 /* Commands                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -103,8 +120,7 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 	if (!data)
 		return 1;
 
-	fprintf(stderr, "ec_demo: connecting to MDS %s\n", mds_host);
-	ret = mds_session_create(&ms, mds_host);
+	ret = session_open(&ms, mds_host);
 	if (ret) {
 		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
 		free(data);
@@ -131,8 +147,7 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 	struct mds_session ms;
 	int ret;
 
-	fprintf(stderr, "ec_demo: connecting to MDS %s\n", mds_host);
-	ret = mds_session_create(&ms, mds_host);
+	ret = session_open(&ms, mds_host);
 	if (ret) {
 		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
 		return 1;
@@ -179,8 +194,7 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 	if (!orig)
 		return 1;
 
-	fprintf(stderr, "ec_demo: connecting to MDS %s\n", mds_host);
-	ret = mds_session_create(&ms, mds_host);
+	ret = session_open(&ms, mds_host);
 	if (ret) {
 		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
 		free(orig);
@@ -247,8 +261,7 @@ static int cmd_put(const char *mds_host, const char *nfs_file,
 	if (!data)
 		return 1;
 
-	fprintf(stderr, "ec_demo: connecting to MDS %s\n", mds_host);
-	ret = mds_session_create(&ms, mds_host);
+	ret = session_open(&ms, mds_host);
 	if (ret) {
 		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
 		free(data);
@@ -273,8 +286,7 @@ static int cmd_get(const char *mds_host, const char *nfs_file,
 	struct mds_session ms;
 	int ret;
 
-	fprintf(stderr, "ec_demo: connecting to MDS %s\n", mds_host);
-	ret = mds_session_create(&ms, mds_host);
+	ret = session_open(&ms, mds_host);
 	if (ret) {
 		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
 		return 1;
@@ -319,8 +331,7 @@ static int cmd_check(const char *mds_host, const char *nfs_file,
 	if (!orig)
 		return 1;
 
-	fprintf(stderr, "ec_demo: connecting to MDS %s\n", mds_host);
-	ret = mds_session_create(&ms, mds_host);
+	ret = session_open(&ms, mds_host);
 	if (ret) {
 		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
 		free(orig);
@@ -400,7 +411,9 @@ static void usage(void)
 		"  --size N       Expected read size in bytes"
 		" (default: 16M)\n"
 		"  --codec TYPE   Codec: rs (default), mojette-sys,"
-		" mojette-nonsys\n");
+		" mojette-nonsys\n"
+		"  --id ID        Client identity (default: PID)."
+		" Unique per concurrent instance.\n");
 }
 
 static struct option long_options[] = {
@@ -412,6 +425,7 @@ static struct option long_options[] = {
 	{ "m", required_argument, NULL, 'm' },
 	{ "size", required_argument, NULL, 's' },
 	{ "codec", required_argument, NULL, 'c' },
+	{ "id", required_argument, NULL, 'd' },
 	{ "help", no_argument, NULL, '?' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -425,6 +439,7 @@ int main(int argc, char *argv[])
 	int k = 4, m = 2;
 	size_t read_size = 0;
 	enum ec_codec_type codec_type = EC_CODEC_RS;
+	const char *client_id = NULL;
 	int opt;
 
 	if (argc < 2) {
@@ -439,8 +454,8 @@ int main(int argc, char *argv[])
 	argv++;
 	optind = 1;
 
-	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:c:?", long_options,
-				  NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:c:d:?",
+				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
 			mds_host = optarg;
@@ -462,6 +477,9 @@ int main(int argc, char *argv[])
 			break;
 		case 's':
 			read_size = (size_t)atol(optarg);
+			break;
+		case 'd':
+			client_id = optarg;
 			break;
 		case 'c':
 			if (strcmp(optarg, "rs") == 0)
@@ -487,6 +505,8 @@ int main(int argc, char *argv[])
 		usage();
 		return 1;
 	}
+
+	g_client_id = client_id;
 
 	/* Plain (non-EC) commands. */
 	if (strcmp(cmd, "put") == 0) {
