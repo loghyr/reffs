@@ -278,14 +278,17 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	if (ret)
 		goto out_layout;
 
-	/* Write in chunks up to 1 MB. */
+	/*
+	 * Write in EC_SHARD_SIZE chunks.  The io_uring read pipeline
+	 * stalls on NFSv3 RPCs larger than ~32KB; cap at shard size.
+	 */
 	size_t off = 0;
 
 	while (off < data_len) {
 		uint32_t chunk = (uint32_t)(data_len - off);
 
-		if (chunk > 1048576)
-			chunk = 1048576;
+		if (chunk > EC_SHARD_SIZE)
+			chunk = EC_SHARD_SIZE;
 		ret = ds_write(&dc, layout.el_mirrors[0].em_fh,
 			       layout.el_mirrors[0].em_fh_len, (uint64_t)off,
 			       data + off, chunk);
@@ -343,15 +346,15 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	if (ret)
 		goto out_layout;
 
-	/* Read in chunks up to 1 MB. */
+	/* Read in EC_SHARD_SIZE chunks (io_uring large message workaround). */
 	size_t total = 0;
 
 	while (total < buf_len) {
 		uint32_t want = (uint32_t)(buf_len - total);
 		uint32_t nread = 0;
 
-		if (want > 1048576)
-			want = 1048576;
+		if (want > EC_SHARD_SIZE)
+			want = EC_SHARD_SIZE;
 		ret = ds_read(&dc, layout.el_mirrors[0].em_fh,
 			      layout.el_mirrors[0].em_fh_len, (uint64_t)total,
 			      buf + total, want, &nread);

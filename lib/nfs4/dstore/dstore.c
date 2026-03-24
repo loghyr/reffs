@@ -20,14 +20,17 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <netdb.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include <arpa/inet.h>
 #include <rpc/rpc.h>
 #include <xxhash.h>
 
 #include "mntv3_xdr.h"
+#include "nfsv3_xdr.h"
 #include "reffs/dstore.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/filehandle.h"
@@ -151,18 +154,38 @@ void dstore_fini(void)
 /* MOUNT client                                                        */
 /* ------------------------------------------------------------------ */
 
+static void resolve_ds_ip(struct dstore *ds)
+{
+	struct addrinfo hints, *res;
+
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+
+	if (getaddrinfo(ds->ds_address, NULL, &hints, &res) != 0) {
+		/* Fall back to using the address string as-is. */
+		strncpy(ds->ds_ip, ds->ds_address, sizeof(ds->ds_ip) - 1);
+		return;
+	}
+
+	struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
+
+	inet_ntop(AF_INET, &sin->sin_addr, ds->ds_ip, sizeof(ds->ds_ip));
+	freeaddrinfo(res);
+}
+
 static int mount_get_root_fh(struct dstore *ds)
 {
+	CLIENT *mnt_clnt;
 	mountres3 res;
 	struct timeval tv = { .tv_sec = 10, .tv_usec = 0 };
 	dirpath path;
 	enum clnt_stat rpc_stat;
 	int ret = 0;
 
-	ds->ds_clnt =
-		clnt_create(ds->ds_address, MOUNT_PROGRAM, MOUNT_V3, "tcp");
-	if (!ds->ds_clnt) {
-		LOG("dstore[%u]: clnt_create(%s) failed: %s", ds->ds_id,
+	mnt_clnt = clnt_create(ds->ds_address, MOUNT_PROGRAM, MOUNT_V3, "tcp");
+	if (!mnt_clnt) {
+		LOG("dstore[%u]: clnt_create(%s) MOUNT failed: %s", ds->ds_id,
 		    ds->ds_address, clnt_spcreateerror(""));
 		return -ECONNREFUSED;
 	}
@@ -170,12 +193,13 @@ static int mount_get_root_fh(struct dstore *ds)
 	path = ds->ds_path;
 	memset(&res, 0, sizeof(res));
 
-	rpc_stat = clnt_call(ds->ds_clnt, MOUNTPROC3_MNT,
+	rpc_stat = clnt_call(mnt_clnt, MOUNTPROC3_MNT,
 			     (xdrproc_t)xdr_dirpath, (caddr_t)&path,
 			     (xdrproc_t)xdr_mountres3, (caddr_t)&res, tv);
 	if (rpc_stat != RPC_SUCCESS) {
 		LOG("dstore[%u]: MOUNT %s:%s RPC failed: %s", ds->ds_id,
-		    ds->ds_address, ds->ds_path, clnt_sperror(ds->ds_clnt, ""));
+		    ds->ds_address, ds->ds_path,
+		    clnt_sperror(mnt_clnt, ""));
 		ret = -EIO;
 		goto out;
 	}
@@ -199,19 +223,46 @@ static int mount_get_root_fh(struct dstore *ds)
 	memcpy(ds->ds_root_fh, ok->fhandle.fhandle3_val,
 	       ok->fhandle.fhandle3_len);
 	ds->ds_root_fh_len = ok->fhandle.fhandle3_len;
+
+out_free:
+	xdr_free((xdrproc_t)xdr_mountres3, (caddr_t)&res);
+out:
+	clnt_destroy(mnt_clnt);
+
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * MOUNT gave us the root FH.  Now create the NFS program client
+	 * that will be used for all subsequent control-plane RPCs
+	 * (CREATE, GETATTR, SETATTR, REMOVE).
+	 */
+	ds->ds_clnt = clnt_create(ds->ds_address, NFS3_PROGRAM, NFS_V3, "tcp");
+	if (!ds->ds_clnt) {
+		LOG("dstore[%u]: clnt_create(%s) NFS failed: %s", ds->ds_id,
+		    ds->ds_address, clnt_spcreateerror(""));
+		ds->ds_root_fh_len = 0;
+		return -ECONNREFUSED;
+	}
+
+	/*
+	 * Control-plane ops (SETATTR uid/gid for fencing, CREATE, REMOVE)
+	 * require root privileges on the DS.  Set AUTH_SYS uid=0/gid=0.
+	 */
+	ds->ds_clnt->cl_auth = authsys_create("", 0, 0, 0, NULL);
+
+	/*
+	 * Resolve hostname to dotted-decimal IP for use in GETDEVICEINFO
+	 * uaddrs.  The uaddr format requires a numeric IPv4 address.
+	 */
+	resolve_ds_ip(ds);
+
 	__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED, __ATOMIC_RELEASE);
 
 	TRACE("dstore[%u]: mounted %s:%s (FH %u bytes)", ds->ds_id,
 	      ds->ds_address, ds->ds_path, ds->ds_root_fh_len);
 
-out_free:
-	xdr_free((xdrproc_t)xdr_mountres3, (caddr_t)&res);
-out:
-	if (ret < 0 && ds->ds_clnt) {
-		clnt_destroy(ds->ds_clnt);
-		ds->ds_clnt = NULL;
-	}
-	return ret;
+	return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -261,6 +312,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
 		memcpy(ds->ds_root_fh, &nfh, sizeof(nfh));
 		ds->ds_root_fh_len = sizeof(nfh);
 
+		strncpy(ds->ds_ip, address, sizeof(ds->ds_ip) - 1);
 		TRACE("dstore[%u]: local path %s:%s", id, address, path);
 	} else {
 		ds->ds_ops = &dstore_ops_nfsv3;
