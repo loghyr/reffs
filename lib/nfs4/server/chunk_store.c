@@ -81,7 +81,7 @@ static int chunk_store_grow(struct chunk_store *cs, uint64_t new_cap)
 	memcpy(nb, cs->cs_blocks, cs->cs_nblocks * sizeof(*nb));
 	free(cs->cs_blocks);
 	cs->cs_blocks = nb;
-	cs->cs_nblocks = (uint32_t)cap;
+	cs->cs_nblocks = cap;
 	return 0;
 }
 
