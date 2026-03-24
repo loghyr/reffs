@@ -14,6 +14,7 @@
  */
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -46,14 +47,8 @@ static int mds_exchange_id(struct mds_session *ms)
 
 	args = &slot->nfs_argop4_u.opexchange_id;
 
-	/* Client owner: use hostname as the identity string. */
-	char hostname[256];
-
-	if (gethostname(hostname, sizeof(hostname)) < 0)
-		snprintf(hostname, sizeof(hostname), "ec_demo");
-
-	args->eia_clientowner.co_ownerid.co_ownerid_val = hostname;
-	args->eia_clientowner.co_ownerid.co_ownerid_len = strlen(hostname);
+	args->eia_clientowner.co_ownerid.co_ownerid_val = ms->ms_owner;
+	args->eia_clientowner.co_ownerid.co_ownerid_len = strlen(ms->ms_owner);
 	memset(&args->eia_clientowner.co_verifier, 0,
 	       sizeof(args->eia_clientowner.co_verifier));
 
@@ -282,11 +277,37 @@ out:
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
+void mds_session_set_owner(struct mds_session *ms, const char *id)
+{
+	char hostname[128];
+
+	if (gethostname(hostname, sizeof(hostname)) < 0)
+		snprintf(hostname, sizeof(hostname), "ec_demo");
+
+	if (id && id[0] != '\0')
+		snprintf(ms->ms_owner, sizeof(ms->ms_owner), "%s:%s", hostname,
+			 id);
+	else
+		snprintf(ms->ms_owner, sizeof(ms->ms_owner), "%s:%u", hostname,
+			 (unsigned)getpid());
+}
+
 int mds_session_create(struct mds_session *ms, const char *host)
 {
 	int ret;
 
+	/*
+	 * Preserve ms_owner if the caller set it before create.
+	 * Otherwise generate a default from hostname:PID.
+	 */
+	char saved_owner[256];
+
+	memcpy(saved_owner, ms->ms_owner, sizeof(saved_owner));
 	memset(ms, 0, sizeof(*ms));
+	memcpy(ms->ms_owner, saved_owner, sizeof(ms->ms_owner));
+
+	if (ms->ms_owner[0] == '\0')
+		mds_session_set_owner(ms, NULL);
 
 	ms->ms_clnt = clnt_create(host, NFS4_PROGRAM, NFS_V4, "tcp");
 	if (!ms->ms_clnt)
