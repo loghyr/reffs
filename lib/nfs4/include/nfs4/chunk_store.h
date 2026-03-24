@@ -43,7 +43,7 @@ struct chunk_block {
  */
 struct chunk_store {
 	struct chunk_block *cs_blocks;
-	uint32_t cs_nblocks; /* allocated entries */
+	uint64_t cs_nblocks; /* allocated entries */
 };
 
 /*

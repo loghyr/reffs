@@ -314,7 +314,7 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		}
 	}
 
-	uint32_t cs_nblocks = cs->cs_nblocks;
+	uint64_t cs_nblocks = cs->cs_nblocks;
 
 	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
