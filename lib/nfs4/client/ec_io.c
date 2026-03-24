@@ -400,23 +400,23 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	/* Open file on MDS. */
 	ret = mds_file_open(ms, path, &ctx.ctx_file);
 	if (ret) {
-		fprintf(stderr, "ec_write: OPEN failed: %d\n", ret);
+		ec_log("ec_write: OPEN failed: %d\n", ret);
 		goto out_codec;
 	}
 
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
 			     &ctx.ctx_layout);
 	if (ret) {
-		fprintf(stderr, "ec_write: LAYOUTGET failed: %d\n", ret);
+		ec_log("ec_write: LAYOUTGET failed: %d\n", ret);
 		goto out_close;
 	}
 
-	fprintf(stderr, "ec_write: LAYOUTGET ok: %u mirrors, type=%u\n",
-		ctx.ctx_layout.el_nmirrors, ctx.ctx_layout.el_layout_type);
+	ec_log("ec_write: LAYOUTGET ok: %u mirrors, type=%u\n",
+	       ctx.ctx_layout.el_nmirrors, ctx.ctx_layout.el_layout_type);
 
 	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
-		fprintf(stderr, "ec_write: need %d mirrors, got %u\n", k + m,
-			ctx.ctx_layout.el_nmirrors);
+		ec_log("ec_write: need %d mirrors, got %u\n", k + m,
+		       ctx.ctx_layout.el_nmirrors);
 		ret = -EINVAL;
 		goto out_layout;
 	}
@@ -424,11 +424,11 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	/* Resolve device IDs → DS addresses, connect. */
 	ret = ec_resolve_mirrors(&ctx);
 	if (ret) {
-		fprintf(stderr, "ec_write: resolve_mirrors failed: %d\n", ret);
+		ec_log("ec_write: resolve_mirrors failed: %d\n", ret);
 		goto out_layout;
 	}
-	fprintf(stderr, "ec_write: resolved %u mirrors\n",
-		ctx.ctx_layout.el_nmirrors);
+	ec_log("ec_write: resolved %u mirrors\n",
+	       ctx.ctx_layout.el_nmirrors);
 
 	/*
 	 * Pad data to a multiple of k * shard_size.  Each stripe
@@ -538,7 +538,7 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 					       nonsys ? enc_data : data_shards,
 					       parity_shards, shard_size);
 		if (ret) {
-			fprintf(stderr, "ec_write: encode failed: %d\n", ret);
+			ec_log("ec_write: encode failed: %d\n", ret);
 			break;
 		}
 
