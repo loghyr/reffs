@@ -83,8 +83,11 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 			return ret;
 
 		if (use_v2) {
-			/* NFSv4.2 session to each DS. */
-			mds_session_set_owner(&ctx->ctx_ds_sess[i], NULL);
+			/* NFSv4.2 session to each DS — unique owner per mirror. */
+			char ds_id[32];
+
+			snprintf(ds_id, sizeof(ds_id), "ds%u-%u", i, getpid());
+			mds_session_set_owner(&ctx->ctx_ds_sess[i], ds_id);
 			ret = mds_session_create(&ctx->ctx_ds_sess[i],
 						 ctx->ctx_devs[i].ed_host);
 		} else {
