@@ -6,4 +6,4 @@ SUBDIRS = tests
 AM_CFLAGS = -I$(top_srcdir)/lib/include
 
 noinst_LTLIBRARIES = libreffs_ec.la
-libreffs_ec_la_SOURCES = gf.c matrix.c rs.c
+libreffs_ec_la_SOURCES = gf.c matrix.c mojette.c rs.c
