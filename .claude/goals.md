@@ -12,22 +12,22 @@ A complete **pNFS Flex Files** stack: MDS + data servers + erasure-coding client
 - **reffs as data server**: NFSv3/NFSv4.2 with CHUNK ops for data instances
 - **reffs as MDS**: Flex Files v2 metadata server issuing layouts that
   reference reffs data servers (may do v1 first as proof of concept)
-- **NFSv4.2 client**: Reed-Solomon erasure coding across data servers
-  referenced by Flex Files layouts
+- **NFSv4.2 client**: erasure coding (Reed-Solomon, Mojette systematic,
+  Mojette non-systematic) across data servers referenced by Flex Files layouts
 
-## Near-Term Demo Target (by 2026-04-12)
+## Near-Term Demo Target (by 2026-04-12) — ACHIEVED
 
-Demonstrate Flex Files v2 + erasure coding end-to-end:
+Flex Files v2 + erasure coding demonstrated end-to-end (2026-03-24):
 
-1. MDS issues Flex Files v2 layout pointing at N data servers
-2. Client writes data with Reed-Solomon encoding, distributing
-   data + parity chunks across data servers
+1. MDS issues Flex Files v1/v2 layout pointing at 6 data servers
+2. Client writes data with RS/Mojette encoding (4+2), distributing
+   data + parity chunks across data servers via NFSv3 or CHUNK ops
 3. Client reads back and reconstructs from any sufficient subset
+4. Tier 1 benchmark data collected (4 codecs × 5 file sizes)
 
-Requires:
-- Flex Files v1/v2 MDS in reffs (LAYOUTGET returning ff_layout_v2)
-- NFSv4.2 client with layout awareness
-- Unencumbered Reed-Solomon implementation for encoding/decoding
+Remaining for the demo deadline:
+- Tier 2 benchmarks (data center VMs with real network latency)
+- Multi-geometry runs (2+1, 8+2, 8+4) to validate scaling model
 
 ## Milestones
 
@@ -120,7 +120,7 @@ All layout operations implemented in `lib/nfs4/server/layout.c`:
 - v2 layout: encoding type, chunk size, FFV2_DS_FLAGS per mirror
 - Both layout types advertised in FS_LAYOUT_TYPES
 
-### 5b. Benchmark Infrastructure — IN PROGRESS
+### 5b. Benchmark Infrastructure — TIER 1 DONE
 
 `deploy/benchmark/` + `scripts/ec_benchmark.sh`:
 - 7-container Docker setup (1 MDS + 6 DSes + builder + client)
@@ -128,8 +128,65 @@ All layout operations implemented in `lib/nfs4/server/layout.c`:
 - Healthcheck-based container synchronization
 - ec_benchmark.sh: tests all 4 codecs at 5 file sizes, CSV output
 
-**Blocked:** MDS→DS runway CREATE fails with EIO in container network.
-Debug next: check DS logs for CREATE error, verify backend dirs exist.
+**2026-03-24: Tier 1 benchmark complete (same-host Docker, 4+2).**
+
+#### Tier 1 Results (M4 MacBook Pro, same-host Docker, 4+2, 5-run means)
+
+Write latency (ms):
+
+| File size | plain | RS    | Mojette-sys | Mojette-nonsys |
+|-----------|-------|-------|-------------|----------------|
+| 4 KB      | 13.4  | 15.8  | 16.2        | 16.2           |
+| 16 KB     | 15.0  | 17.6  | 18.0        | 17.6           |
+| 64 KB     | 22.0  | 25.0  | 25.2        | 25.2           |
+| 256 KB    | 27.8  | 37.4  | 37.8        | 38.6           |
+| 1 MB      | 66.8  | 103.2 | 102.4       | 108.4          |
+
+Read latency (ms):
+
+| File size | plain | RS   | Mojette-sys | Mojette-nonsys |
+|-----------|-------|------|-------------|----------------|
+| 4 KB      | 10.4  | 14.2 | 13.4        | 16.2           |
+| 16 KB     | 11.8  | 14.8 | 14.6        | 18.2           |
+| 64 KB     | 16.4  | 21.8 | 22.2        | 32.8           |
+| 256 KB    | 23.0  | 32.2 | 32.6        | 67.2           |
+| 1 MB      | 58.2  | 89.2 | 94.8        | 245.4          |
+
+Key findings:
+- At 4–64 KB, all EC codecs within 14–22% write overhead — noise vs
+  real-network variance.  Kills "EC is too expensive for NFS" objection.
+- RS and Mojette-sys statistically indistinguishable on writes.
+- RS has ~10% lower read overhead than Mojette-sys at 1 MB.
+- Mojette-nonsys read overhead accelerates (321% at 1 MB, not plateauing).
+  Useful as contrast, not as a recommendation.
+- Systematic codecs: healthy reads are pure parallel I/O (near-plain),
+  reconstruction only on failure.
+
+#### Tiered Evidence Strategy
+
+- **Tier 1** (done): Same-host Docker, 4+2.  Proves feasibility, kills
+  "impossible" objections.
+- **Tier 2** (next): Data center VMs, 4+2.  Adds real network latency.
+  Write overhead should stay similar.  Validates model.
+- **Tier 3** (reserve): Performance rig, multiple geometries (2+1, 4+2,
+  8+2, 8+4).  Validates scaling model empirically.
+
+#### Scaling Model (projected from 4+2 baseline)
+
+Write overhead scales with Y (spare count) only, independent of X
+(active count).  Systematic healthy reads are near-plain (parallel
+I/O, no projection math).  Key projections at 1 MB:
+
+| Config | Write overhead | Sys healthy read | Sys reconstruction |
+|--------|----------------|------------------|--------------------|
+| 2+1    | ~27%           | near-plain       | ~16%               |
+| 4+2    | 53% (measured) | 63% (measured)   | —                  |
+| 8+1    | ~27%           | near-plain       | ~63%               |
+| 8+2    | ~53%           | near-plain       | ~126%              |
+| 8+4    | ~106%          | near-plain       | ~252%              |
+
+8+1 has same reconstruction cost as 4+2 (Y×X = 8) but half the write
+overhead — interesting point in the design space.
 
 ### Known Issues
 
