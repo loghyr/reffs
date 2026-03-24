@@ -126,6 +126,15 @@ int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
 		      struct ec_layout *layout);
 void ec_layout_free(struct ec_layout *layout);
 
+/*
+ * mds_layout_error -- report a DS I/O error to the MDS.
+ * Called when a DS operation fails so the MDS can take
+ * corrective action (fence, repair, etc.).
+ */
+int mds_layout_error(struct mds_session *ms, struct mds_file *mf,
+		     struct ec_layout *layout, uint32_t mirror_idx,
+		     nfsstat4 nfs4_status, nfs_opnum4 opnum);
+
 /* Resolved data server address from GETDEVICEINFO. */
 struct ec_device {
 	char ed_host[256];

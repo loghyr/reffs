@@ -98,6 +98,17 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 	return 0;
 }
 
+/*
+ * Report a DS I/O error to the MDS.  Best-effort — failure to
+ * send the error report is not itself an error.
+ */
+static void ec_report_ds_error(struct ec_context *ctx, int mirror_idx,
+			       nfs_opnum4 opnum)
+{
+	mds_layout_error(ctx->ctx_ms, &ctx->ctx_file, &ctx->ctx_layout,
+			 (uint32_t)mirror_idx, NFS4ERR_IO, opnum);
+}
+
 static struct ec_codec *ec_create_codec(int k, int m,
 					enum ec_codec_type codec_type)
 {
@@ -441,8 +452,10 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 					       em->em_fh_len, s * shard_size,
 					       src, wsz);
 			}
-			if (ret)
+			if (ret) {
+				ec_report_ds_error(&ctx, i, OP_WRITE);
 				break;
+			}
 		}
 		if (ret)
 			break;
@@ -465,8 +478,10 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 					       em->em_fh_len, s * shard_size,
 					       parity_shards[i], wsz);
 			}
-			if (ret)
+			if (ret) {
+				ec_report_ds_error(&ctx, k + i, OP_WRITE);
 				break;
+			}
 		}
 		if (ret)
 			break;
@@ -622,6 +637,8 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 					      shards[i], rsz, &nread);
 				present[i] = (ret == 0 && nread == rsz);
 			}
+			if (!present[i])
+				ec_report_ds_error(&ctx, i, OP_READ);
 		}
 
 		/* RS-decode to reconstruct any missing shards. */
