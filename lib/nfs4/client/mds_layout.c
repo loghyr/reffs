@@ -432,6 +432,70 @@ int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
 }
 
 /* ------------------------------------------------------------------ */
+/* LAYOUTERROR                                                         */
+/* ------------------------------------------------------------------ */
+
+int mds_layout_error(struct mds_session *ms, struct mds_file *mf,
+		     struct ec_layout *layout, uint32_t mirror_idx,
+		     nfsstat4 nfs4_status, nfs_opnum4 opnum)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	if (mirror_idx >= layout->el_nmirrors)
+		return -EINVAL;
+
+	/* SEQUENCE + PUTFH + LAYOUTERROR = 3 ops */
+	ret = mds_compound_init(&mc, 3, "layouterror");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+	slot->nfs_argop4_u.opputfh.object = mf->mf_fh;
+
+	slot = mds_compound_add_op(&mc, OP_LAYOUTERROR);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	LAYOUTERROR4args *le_args = &slot->nfs_argop4_u.oplayouterror;
+
+	le_args->lea_offset = 0;
+	le_args->lea_length = 0xFFFFFFFFFFFFFFFFULL;
+	memcpy(&le_args->lea_stateid, &layout->el_stateid, sizeof(stateid4));
+
+	le_args->lea_errors.lea_errors_len = 1;
+	le_args->lea_errors.lea_errors_val = calloc(1, sizeof(device_error4));
+	if (!le_args->lea_errors.lea_errors_val) {
+		mds_compound_fini(&mc);
+		return -ENOMEM;
+	}
+
+	struct ec_mirror *em = &layout->el_mirrors[mirror_idx];
+	device_error4 *de = &le_args->lea_errors.lea_errors_val[0];
+
+	memcpy(de->de_deviceid, em->em_deviceid, sizeof(deviceid4));
+	de->de_status = nfs4_status;
+	de->de_opnum = opnum;
+
+	ret = mds_compound_send(&mc, ms);
+	mds_compound_fini(&mc);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /* Cleanup                                                             */
 /* ------------------------------------------------------------------ */
 
