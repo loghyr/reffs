@@ -36,7 +36,6 @@ x-ds-common: &ds-common
       cd /src && mkdir -p m4 && autoreconf -fi &&
       cd /build && ../src/configure &&
       make -j$$(nproc) &&
-      rpcbind &&
       exec ./src/reffsd --config=/reffs/deploy/benchmark/ds.toml
     "
 
