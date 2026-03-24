@@ -47,6 +47,10 @@ help:
 	@echo "  test-pnfs       - Start MDS + DS + client, run test, tear down"
 	@echo "  stop-pnfs       - Stop pNFS containers"
 	@echo "  logs-pnfs       - Show pNFS container logs"
+	@echo ""
+	@echo "Benchmark targets:"
+	@echo "  run-benchmark   - EC codec benchmark (1 MDS + 6 DSes in Docker)"
+	@echo "  stop-benchmark  - Stop benchmark containers"
 
 # --- Build targets ---
 
@@ -284,4 +288,25 @@ stop-pnfs:
 logs-pnfs:
 	$(DOCKER) compose -f deploy/pnfs/docker-compose.yml logs
 
-.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs
+# --- EC Benchmark (1 MDS + 6 DSes in Docker) ---
+
+BENCH_COMPOSE = deploy/benchmark/docker-compose.yml
+BENCH_LOGS    = $(ROOT_DIR)/logs/benchmark
+
+# Build Fedora image, start MDS + 6 DSes, run benchmark client, tear down.
+# Results go to stdout as CSV; container logs to logs/benchmark/.
+run-benchmark: image
+	@mkdir -p $(BENCH_LOGS)
+	$(DOCKER) compose -f $(BENCH_COMPOSE) up -d ds0 ds1 ds2 ds3 ds4 ds5 mds
+	@echo "Waiting for containers to build and start..."
+	$(DOCKER) compose -f $(BENCH_COMPOSE) --profile run run --rm bench \
+		2>$(BENCH_LOGS)/bench.log | tee $(BENCH_LOGS)/results.csv
+	@echo ""
+	@echo "Results saved to $(BENCH_LOGS)/results.csv"
+	@echo "Container logs: $(BENCH_LOGS)/bench.log"
+	$(DOCKER) compose -f $(BENCH_COMPOSE) down
+
+stop-benchmark:
+	$(DOCKER) compose -f $(BENCH_COMPOSE) --profile run down 2>/dev/null || true
+
+.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark
