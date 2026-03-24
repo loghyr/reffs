@@ -14,7 +14,7 @@
 #   make -f Makefile.reffs run-benchmark
 
 x-ds-common: &ds-common
-  image: reffs
+  image: reffs-dev
   privileged: true
   ulimits:
     nofile:
@@ -85,7 +85,7 @@ services:
 
   mds:
     container_name: reffs-bench-mds
-    image: reffs
+    image: reffs-dev
     privileged: true
     depends_on:
       ds0:
@@ -132,7 +132,7 @@ services:
 
   bench:
     container_name: reffs-bench-client
-    image: reffs
+    image: reffs-dev
     privileged: true
     depends_on:
       mds:
