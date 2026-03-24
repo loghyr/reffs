@@ -151,9 +151,22 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 /* EC I/O — high-level erasure-coded write/read                        */
 /* ------------------------------------------------------------------ */
 
+enum ec_codec_type {
+	EC_CODEC_RS = 0, /* Reed-Solomon (default) */
+	EC_CODEC_MOJETTE_SYS = 1, /* Mojette systematic */
+	EC_CODEC_MOJETTE_NONSYS = 2, /* Mojette non-systematic */
+};
+
 int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	     size_t data_len, int k, int m);
 int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	    size_t buf_len, size_t *out_len, int k, int m);
+
+int ec_write_codec(struct mds_session *ms, const char *path,
+		   const uint8_t *data, size_t data_len, int k, int m,
+		   enum ec_codec_type codec_type);
+int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
+		  size_t buf_len, size_t *out_len, int k, int m,
+		  enum ec_codec_type codec_type);
 
 #endif /* _REFFS_EC_CLIENT_H */
