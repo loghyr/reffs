@@ -305,7 +305,7 @@ out_close:
 
 int ec_write_codec(struct mds_session *ms, const char *path,
 		   const uint8_t *data, size_t data_len, int k, int m,
-		   enum ec_codec_type codec_type)
+		   enum ec_codec_type codec_type, layouttype4 layout_type)
 {
 	struct ec_context ctx;
 	int ret;
@@ -324,9 +324,8 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	if (ret)
 		goto out_codec;
 
-	/* Get layout — v2 for CHUNK ops, v1 for NFSv3. */
-	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW,
-			     LAYOUT4_FLEX_FILES_V2, &ctx.ctx_layout);
+	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
+			     &ctx.ctx_layout);
 	if (ret)
 		goto out_close;
 
@@ -542,7 +541,7 @@ out_codec:
 
 int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		  size_t buf_len, size_t *out_len, int k, int m,
-		  enum ec_codec_type codec_type)
+		  enum ec_codec_type codec_type, layouttype4 layout_type)
 {
 	struct ec_context ctx;
 	int ret;
@@ -560,8 +559,8 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	if (ret)
 		goto out_codec;
 
-	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ,
-			     LAYOUT4_FLEX_FILES_V2, &ctx.ctx_layout);
+	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ, layout_type,
+			     &ctx.ctx_layout);
 	if (ret)
 		goto out_close;
 
@@ -688,12 +687,13 @@ out_codec:
 int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	     size_t data_len, int k, int m)
 {
-	return ec_write_codec(ms, path, data, data_len, k, m, EC_CODEC_RS);
+	return ec_write_codec(ms, path, data, data_len, k, m, EC_CODEC_RS,
+			      LAYOUT4_FLEX_FILES);
 }
 
 int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	    size_t buf_len, size_t *out_len, int k, int m)
 {
-	return ec_read_codec(ms, path, buf, buf_len, out_len, k, m,
-			     EC_CODEC_RS);
+	return ec_read_codec(ms, path, buf, buf_len, out_len, k, m, EC_CODEC_RS,
+			     LAYOUT4_FLEX_FILES);
 }

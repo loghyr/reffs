@@ -109,7 +109,7 @@ static int session_open(struct mds_session *ms, const char *mds_host)
 
 static int cmd_write(const char *mds_host, const char *nfs_file,
 		     const char *local_file, int k, int m,
-		     enum ec_codec_type codec_type)
+		     enum ec_codec_type codec_type, layouttype4 layout_type)
 {
 	struct mds_session ms;
 	size_t data_len;
@@ -129,7 +129,8 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 
 	fprintf(stderr, "ec_demo: writing %zu bytes to %s (%d+%d)\n", data_len,
 		nfs_file, k, m);
-	ret = ec_write_codec(&ms, nfs_file, data, data_len, k, m, codec_type);
+	ret = ec_write_codec(&ms, nfs_file, data, data_len, k, m, codec_type,
+			     layout_type);
 	if (ret)
 		fprintf(stderr, "ec_demo: write failed: %d\n", ret);
 	else
@@ -142,7 +143,7 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 
 static int cmd_read(const char *mds_host, const char *nfs_file,
 		    const char *local_file, int k, int m, size_t expected_len,
-		    enum ec_codec_type codec_type)
+		    enum ec_codec_type codec_type, layouttype4 layout_type)
 {
 	struct mds_session ms;
 	int ret;
@@ -165,7 +166,7 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 
 	fprintf(stderr, "ec_demo: reading %s (RS %d+%d)\n", nfs_file, k, m);
 	ret = ec_read_codec(&ms, nfs_file, buf, buf_len, &out_len, k, m,
-			    codec_type);
+			    codec_type, layout_type);
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
 	} else {
@@ -183,7 +184,7 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 
 static int cmd_verify(const char *mds_host, const char *nfs_file,
 		      const char *local_file, int k, int m,
-		      enum ec_codec_type codec_type)
+		      enum ec_codec_type codec_type, layouttype4 layout_type)
 {
 	struct mds_session ms;
 	size_t orig_len;
@@ -214,7 +215,7 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 	fprintf(stderr, "ec_demo: verifying %s against %s (RS %d+%d)\n",
 		nfs_file, local_file, k, m);
 	ret = ec_read_codec(&ms, nfs_file, buf, orig_len, &out_len, k, m,
-			    codec_type);
+			    codec_type, layout_type);
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
 	} else if (out_len < orig_len) {
@@ -413,7 +414,9 @@ static void usage(void)
 		"  --codec TYPE   Codec: rs (default), mojette-sys,"
 		" mojette-nonsys\n"
 		"  --id ID        Client identity (default: PID)."
-		" Unique per concurrent instance.\n");
+		" Unique per concurrent instance.\n"
+		"  --layout TYPE  Layout: v1 (default, NFSv3 DS),"
+		" v2 (CHUNK ops)\n");
 }
 
 static struct option long_options[] = {
@@ -426,6 +429,7 @@ static struct option long_options[] = {
 	{ "size", required_argument, NULL, 's' },
 	{ "codec", required_argument, NULL, 'c' },
 	{ "id", required_argument, NULL, 'd' },
+	{ "layout", required_argument, NULL, 'l' },
 	{ "help", no_argument, NULL, '?' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -439,6 +443,7 @@ int main(int argc, char *argv[])
 	int k = 4, m = 2;
 	size_t read_size = 0;
 	enum ec_codec_type codec_type = EC_CODEC_RS;
+	layouttype4 layout_type = LAYOUT4_FLEX_FILES;
 	const char *client_id = NULL;
 	int opt;
 
@@ -454,7 +459,7 @@ int main(int argc, char *argv[])
 	argv++;
 	optind = 1;
 
-	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:c:d:?",
+	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:c:d:l:?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -480,6 +485,18 @@ int main(int argc, char *argv[])
 			break;
 		case 'd':
 			client_id = optarg;
+			break;
+		case 'l':
+			if (strcmp(optarg, "v1") == 0)
+				layout_type = LAYOUT4_FLEX_FILES;
+			else if (strcmp(optarg, "v2") == 0)
+				layout_type = LAYOUT4_FLEX_FILES_V2;
+			else {
+				fprintf(stderr,
+					"ec_demo: unknown layout '%s'\n",
+					optarg);
+				return 1;
+			}
 			break;
 		case 'c':
 			if (strcmp(optarg, "rs") == 0)
@@ -545,7 +562,7 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_write(mds_host, nfs_file, local_input, k, m,
-				 codec_type);
+				 codec_type, layout_type);
 	}
 
 	if (strcmp(cmd, "read") == 0) {
@@ -554,7 +571,7 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_read(mds_host, nfs_file, local_output, k, m,
-				read_size, codec_type);
+				read_size, codec_type, layout_type);
 	}
 
 	if (strcmp(cmd, "verify") == 0) {
@@ -563,7 +580,7 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_verify(mds_host, nfs_file, local_input, k, m,
-				  codec_type);
+				  codec_type, layout_type);
 	}
 
 	fprintf(stderr, "ec_demo: unknown command '%s'\n", cmd);
