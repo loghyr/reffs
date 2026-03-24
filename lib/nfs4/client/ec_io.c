@@ -66,6 +66,7 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 		int ret;
 
 		ret = mds_getdeviceinfo(ctx->ctx_ms, em->em_deviceid,
+					ctx->ctx_layout.el_layout_type,
 					&ctx->ctx_devs[i]);
 		if (ret)
 			return ret;
@@ -136,7 +137,8 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	if (ret)
 		return ret;
 
-	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_RW, &layout);
+	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_RW, LAYOUT4_FLEX_FILES,
+			     &layout);
 	if (ret)
 		goto out_close;
 
@@ -148,7 +150,8 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	/* Resolve the first mirror. */
 	struct ec_device dev;
 
-	ret = mds_getdeviceinfo(ms, layout.el_mirrors[0].em_deviceid, &dev);
+	ret = mds_getdeviceinfo(ms, layout.el_mirrors[0].em_deviceid,
+				layout.el_layout_type, &dev);
 	if (ret)
 		goto out_layout;
 
@@ -198,7 +201,8 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	if (ret)
 		return ret;
 
-	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_READ, &layout);
+	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_READ, LAYOUT4_FLEX_FILES,
+			     &layout);
 	if (ret)
 		goto out_close;
 
@@ -209,7 +213,8 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 
 	struct ec_device dev;
 
-	ret = mds_getdeviceinfo(ms, layout.el_mirrors[0].em_deviceid, &dev);
+	ret = mds_getdeviceinfo(ms, layout.el_mirrors[0].em_deviceid,
+				layout.el_layout_type, &dev);
 	if (ret)
 		goto out_layout;
 
@@ -275,9 +280,9 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	if (ret)
 		goto out_codec;
 
-	/* Get layout. */
+	/* Get layout — use v1 for NFSv3 DS I/O. */
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW,
-			     &ctx.ctx_layout);
+			     LAYOUT4_FLEX_FILES, &ctx.ctx_layout);
 	if (ret)
 		goto out_close;
 
@@ -469,7 +474,7 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		goto out_codec;
 
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ,
-			     &ctx.ctx_layout);
+			     LAYOUT4_FLEX_FILES, &ctx.ctx_layout);
 	if (ret)
 		goto out_close;
 
