@@ -57,24 +57,32 @@ All layout operations implemented in `lib/nfs4/server/layout.c`:
 - Compound-level dedup (`COMPOUND_DS_ATTRS_REFRESHED`)
 - Fencing (synthetic uid/gid rotation)
 
-### 4. Erasure Coding Demo Client — DONE (basic)
+### 4. Erasure Coding Demo Client — DONE
 
 `lib/nfs4/client/` + `tools/ec_demo`:
-- MDS session (EXCHANGE_ID, CREATE_SESSION, SEQUENCE)
+- MDS session (EXCHANGE_ID, CREATE_SESSION, SEQUENCE, RECLAIM_COMPLETE)
 - COMPOUND builder (build argarray, clnt_call, parse results)
 - File ops (PUTROOTFH + OPEN + GETFH, CLOSE)
-- Layout ops (LAYOUTGET + ff_layout4 decode, GETDEVICEINFO + uaddr parse,
-  LAYOUTRETURN)
-- DS I/O (NFSv3 READ/WRITE with synthetic AUTH_SYS credentials)
+- Layout ops (LAYOUTGET + ff_layout4/ffv2_layout4 decode, GETDEVICEINFO,
+  LAYOUTRETURN, LAYOUTERROR)
+- DS I/O: NFSv3 READ/WRITE with synthetic AUTH_SYS credentials
+- DS I/O: NFSv4.2 CHUNK_WRITE/READ/FINALIZE/COMMIT (v2 path)
+- Codecs: Reed-Solomon, Mojette systematic, Mojette non-systematic
 - RS codec integration (ec_write/ec_read with stripe padding)
+- Mojette clean-room from published papers (no RozoFS code — GPL-2.0 incompatible)
 - Plain (non-EC) put/get/check for single-mirror testing
-- 15 unit tests (compound builder + stripe math)
+- --codec flag: rs, mojette-sys, mojette-nonsys
+- --layout flag: v1 (NFSv3), v2 (CHUNK ops)
+- --id flag: unique client owner per concurrent instance
+- DS connection dedup: mirrors on same host share one connection
+- Variable shard stride for Mojette non-systematic projections
+- 29 unit tests (compound builder, stripe math, Mojette transform,
+  Mojette codec, RS codec)
 
 **2026-03-23: plain put/get/check verified against run-combined.**
-**2026-03-23: full git CI test passed against Flex Files v1** — Linux
-kernel NFS client cloned the source repo and verified md5sum through
-the combined MDS+DS instance.
-EC commands exist but need multi-dstore testing.
+**2026-03-23: full git CI test passed against Flex Files v1.**
+**2026-03-24: all 4 codecs verified end-to-end on combined mode:**
+  plain, RS 4+2, Mojette-sys 4+2, Mojette-nonsys 4+2.
 
 ### 4a. CB Response Infrastructure — DONE
 
@@ -87,11 +95,55 @@ EC commands exist but need multi-dstore testing.
   (fence+revoke on timeout integration is TODO)
 - 7 unit tests for cb_pending lifecycle and race safety
 
-### 5. CHUNK ops
-All 11 CHUNK_* operations in `lib/nfs4/server/chunk.c`.
+### 4b. Lease Renewal and Client Recovery — DONE
+
+- RECLAIM_COMPLETE in ec_demo client
+- SEQ4_STATUS_RESTART_RECLAIM_NEEDED during grace
+- nc_last_renew_ns lease renewal timestamp in SEQUENCE
+- NFS4ERR_GRACE enforcement on OPEN, CREATE, REMOVE, RENAME, LINK, SETATTR
+- Lease reaper thread (30s scan, 1.5x lease expiry)
+
+### 5. CHUNK ops — DONE (happy path)
+
+`lib/nfs4/server/chunk.c` + `lib/nfs4/server/chunk_store.c`:
+- CHUNK_WRITE: validate CRC32, store data + per-block metadata (PENDING)
+- CHUNK_READ: return FINALIZED/COMMITTED blocks with data + CRC
+- CHUNK_FINALIZE: PENDING → FINALIZED transition
+- CHUNK_COMMIT: FINALIZED → COMMITTED transition + disk sync
+- In-memory chunk store per inode (grows dynamically)
+- Remaining 7 CHUNK ops return NFS4ERR_NOTSUPP (stubs)
+
+### 5a. Flex Files v2 Layout — DONE
+
+- MDS supports both LAYOUT4_FLEX_FILES (v1) and LAYOUT4_FLEX_FILES_V2 (v2)
+- Client-driven selection (Linux kernel → v1, ec_demo → v1 or v2)
+- v2 layout: encoding type, chunk size, FFV2_DS_FLAGS per mirror
+- Both layout types advertised in FS_LAYOUT_TYPES
+
+### 5b. Benchmark Infrastructure — IN PROGRESS
+
+`deploy/benchmark/` + `scripts/ec_benchmark.sh`:
+- 7-container Docker setup (1 MDS + 6 DSes + builder + client)
+- Builder container compiles once, shares via Docker volume
+- Healthcheck-based container synchronization
+- ec_benchmark.sh: tests all 4 codecs at 5 file sizes, CSV output
+
+**Blocked:** MDS→DS runway CREATE fails with EIO in container network.
+Debug next: check DS logs for CREATE error, verify backend dirs exist.
+
+### Known Issues
+
+- **io_uring large message stall**: NFSv3 RPCs >~32KB stall in the
+  server's io_uring read pipeline. Workaround: EC_SHARD_SIZE = 4KB.
+- **TIRPC connection sharing**: multiple clnt_create to same host:port
+  causes hangs. Workaround: DS connection dedup in ec_resolve_mirrors.
+- **v2 CHUNK path**: DS session multiplexing needed for single-host
+  combined mode. Deferred; --layout v1 (NFSv3) is the default.
 
 ## Deferred / Out of Scope (initially)
 
 - Copy/clone ops
 - Extended attributes
-- Lease renewal / expiry enforcement
+- RocksDB backend
+- LAYOUTRETURN body parsing (ff_layoutreturn4 error reports)
+- DS session multiplexing for v2/CHUNK path
