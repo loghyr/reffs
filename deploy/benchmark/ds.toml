@@ -19,7 +19,7 @@ path            = "/tmp/reffs_ds_data"
 state_file      = "/tmp/reffs_ds_state"
 
 [[export]]
-path        = "/ds"
+path        = "/ds1"
 clients     = "*"
 access      = "rw"
 root_squash = false
