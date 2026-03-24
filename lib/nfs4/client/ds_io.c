@@ -97,11 +97,15 @@ int ds_write(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,
 			     (xdrproc_t)xdr_WRITE3res, (caddr_t)&res, tv);
 
 	if (rpc_stat != RPC_SUCCESS) {
+		fprintf(stderr, "ds_write: clnt_call failed: rpc_stat=%d\n",
+			rpc_stat);
 		xdr_free((xdrproc_t)xdr_WRITE3res, (caddr_t)&res);
 		return -EIO;
 	}
 
 	if (res.status != NFS3_OK) {
+		fprintf(stderr, "ds_write: NFS3 error: status=%d\n",
+			res.status);
 		xdr_free((xdrproc_t)xdr_WRITE3res, (caddr_t)&res);
 		return -EIO;
 	}

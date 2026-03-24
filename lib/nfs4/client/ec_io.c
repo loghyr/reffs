@@ -24,6 +24,7 @@
  */
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,8 +35,23 @@
 #include "ec_client.h"
 #include "reffs/ec.h"
 
+#include <time.h>
+
+__attribute__((format(printf, 1, 2))) static void ec_log(const char *fmt, ...)
+{
+	struct timespec ts;
+	va_list ap;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	fprintf(stderr, "[%ld.%03ld] ", (long)ts.tv_sec % 1000,
+		ts.tv_nsec / 1000000);
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+}
+
 /* Default shard size: 64 KiB. */
-#define EC_SHARD_SIZE (64 * 1024)
+#define EC_SHARD_SIZE (4 * 1024)
 
 /* ------------------------------------------------------------------ */
 /* Resolve all mirrors to DS connections                                */
@@ -380,13 +396,20 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 
 	/* Open file on MDS. */
 	ret = mds_file_open(ms, path, &ctx.ctx_file);
-	if (ret)
+	if (ret) {
+		fprintf(stderr, "ec_write: OPEN failed: %d\n", ret);
 		goto out_codec;
+	}
 
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
 			     &ctx.ctx_layout);
-	if (ret)
+	if (ret) {
+		fprintf(stderr, "ec_write: LAYOUTGET failed: %d\n", ret);
 		goto out_close;
+	}
+
+	fprintf(stderr, "ec_write: LAYOUTGET ok: %u mirrors, type=%u\n",
+		ctx.ctx_layout.el_nmirrors, ctx.ctx_layout.el_layout_type);
 
 	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
 		fprintf(stderr, "ec_write: need %d mirrors, got %u\n", k + m,
@@ -397,8 +420,12 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 
 	/* Resolve device IDs → DS addresses, connect. */
 	ret = ec_resolve_mirrors(&ctx);
-	if (ret)
+	if (ret) {
+		fprintf(stderr, "ec_write: resolve_mirrors failed: %d\n", ret);
 		goto out_layout;
+	}
+	fprintf(stderr, "ec_write: resolved %u mirrors\n",
+		ctx.ctx_layout.el_nmirrors);
 
 	/*
 	 * Pad data to a multiple of k * shard_size.  Each stripe
@@ -478,6 +505,21 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	if (chunk_sz == 0)
 		chunk_sz = (uint32_t)shard_size;
 
+	/*
+	 * DS file offset stride per stripe.  For codecs with variable
+	 * shard sizes (Mojette non-systematic), the largest projection
+	 * determines the stride so that consecutive stripes don't
+	 * overlap on disk.
+	 */
+	size_t ds_stride = shard_size;
+
+	for (int i = 0; i < k + m; i++) {
+		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+
+		if (sz > ds_stride)
+			ds_stride = sz;
+	}
+
 	for (size_t s = 0; s < nstripes; s++) {
 		/* Point data shards into the padded buffer. */
 		for (int i = 0; i < k; i++)
@@ -492,8 +534,10 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 		ret = ctx.ctx_codec->ec_encode(ctx.ctx_codec,
 					       nonsys ? enc_data : data_shards,
 					       parity_shards, shard_size);
-		if (ret)
+		if (ret) {
+			fprintf(stderr, "ec_write: encode failed: %d\n", ret);
 			break;
+		}
 
 		/* Write data shards to mirrors 0..k-1. */
 		for (int i = 0; i < k; i++) {
@@ -502,21 +546,27 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 				ctx.ctx_codec, i, shard_size);
 			uint8_t *src = nonsys ? enc_data[i] : data_shards[i];
 
+			ec_log("ec_write: stripe %zu data[%d] "
+			       "fh_len=%u wsz=%u\n",
+			       s, i, em->em_fh_len, wsz);
 			if (ctx.ctx_ds_sess) {
 				ret = ds_chunk_write(
 					&ctx.ctx_ds_sess[i], em->em_fh,
 					em->em_fh_len,
-					(uint64_t)s * (shard_size / chunk_sz),
+					(uint64_t)s * (ds_stride / chunk_sz),
 					chunk_sz, src, wsz, 1);
 			} else {
 				ret = ds_write(&ctx.ctx_conns[i], em->em_fh,
-					       em->em_fh_len, s * shard_size,
+					       em->em_fh_len, s * ds_stride,
 					       src, wsz);
 			}
 			if (ret) {
+				ec_log("ec_write: data[%d] FAILED: %d\n", i,
+				       ret);
 				ec_report_ds_error(&ctx, i, OP_WRITE);
 				break;
 			}
+			ec_log("ec_write: data[%d] ok\n", i);
 		}
 		if (ret)
 			break;
@@ -528,21 +578,27 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 			uint32_t wsz = (uint32_t)shard_write_size(
 				ctx.ctx_codec, k + i, shard_size);
 
+			ec_log("ec_write: stripe %zu parity[%d] "
+			       "fh_len=%u wsz=%u\n",
+			       s, i, em->em_fh_len, wsz);
 			if (ctx.ctx_ds_sess) {
 				ret = ds_chunk_write(
 					&ctx.ctx_ds_sess[k + i], em->em_fh,
 					em->em_fh_len,
-					(uint64_t)s * (shard_size / chunk_sz),
+					(uint64_t)s * (ds_stride / chunk_sz),
 					chunk_sz, parity_shards[i], wsz, 1);
 			} else {
 				ret = ds_write(&ctx.ctx_conns[k + i], em->em_fh,
-					       em->em_fh_len, s * shard_size,
+					       em->em_fh_len, s * ds_stride,
 					       parity_shards[i], wsz);
 			}
 			if (ret) {
+				ec_log("ec_write: parity[%d] FAILED: %d\n", i,
+				       ret);
 				ec_report_ds_error(&ctx, k + i, OP_WRITE);
 				break;
 			}
+			ec_log("ec_write: parity[%d] ok\n", i);
 		}
 		if (ret)
 			break;
@@ -551,7 +607,7 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	/* FINALIZE + COMMIT for CHUNK ops (v2). */
 	if (ret == 0 && ctx.ctx_ds_sess) {
 		uint32_t total_blocks =
-			(uint32_t)(nstripes * (shard_size / chunk_sz));
+			(uint32_t)(nstripes * (ds_stride / chunk_sz));
 
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
@@ -674,6 +730,16 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	if (rd_chunk_sz == 0)
 		rd_chunk_sz = (uint32_t)shard_size;
 
+	/* Match the write path's offset stride for variable-size shards. */
+	size_t ds_stride = shard_size;
+
+	for (int i = 0; i < total; i++) {
+		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+
+		if (sz > ds_stride)
+			ds_stride = sz;
+	}
+
 	for (size_t s = 0; s < nstripes && total_read < buf_len; s++) {
 		/* Read all k+m shards (tolerate failures up to m). */
 		for (int i = 0; i < total; i++) {
@@ -685,16 +751,15 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 			if (ctx.ctx_ds_sess) {
 				uint32_t nblk = rsz / rd_chunk_sz;
 
-				ret = ds_chunk_read(&ctx.ctx_ds_sess[i],
-						    em->em_fh, em->em_fh_len,
-						    (uint64_t)s * (shard_size /
-								   rd_chunk_sz),
-						    nblk, shards[i],
-						    rd_chunk_sz, &nread);
+				ret = ds_chunk_read(
+					&ctx.ctx_ds_sess[i], em->em_fh,
+					em->em_fh_len,
+					(uint64_t)s * (ds_stride / rd_chunk_sz),
+					nblk, shards[i], rd_chunk_sz, &nread);
 				present[i] = (ret == 0 && nread == nblk);
 			} else {
 				ret = ds_read(&ctx.ctx_conns[i], em->em_fh,
-					      em->em_fh_len, s * shard_size,
+					      em->em_fh_len, s * ds_stride,
 					      shards[i], rsz, &nread);
 				present[i] = (ret == 0 && nread == rsz);
 			}
