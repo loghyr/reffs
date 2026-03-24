@@ -40,7 +40,7 @@ struct dstore {
 
 	/* Config (immutable after alloc) */
 	char ds_address[REFFS_CONFIG_MAX_HOST]; /* hostname or IP from config */
-	char ds_ip[INET_ADDRSTRLEN];		/* resolved dotted-decimal IP */
+	char ds_ip[INET_ADDRSTRLEN]; /* resolved dotted-decimal IP */
 	char ds_path[REFFS_CONFIG_MAX_PATH];
 
 	/* Ops vtable: nfsv3 (remote) or local (same server). */

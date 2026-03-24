@@ -193,13 +193,12 @@ static int mount_get_root_fh(struct dstore *ds)
 	path = ds->ds_path;
 	memset(&res, 0, sizeof(res));
 
-	rpc_stat = clnt_call(mnt_clnt, MOUNTPROC3_MNT,
-			     (xdrproc_t)xdr_dirpath, (caddr_t)&path,
-			     (xdrproc_t)xdr_mountres3, (caddr_t)&res, tv);
+	rpc_stat = clnt_call(mnt_clnt, MOUNTPROC3_MNT, (xdrproc_t)xdr_dirpath,
+			     (caddr_t)&path, (xdrproc_t)xdr_mountres3,
+			     (caddr_t)&res, tv);
 	if (rpc_stat != RPC_SUCCESS) {
 		LOG("dstore[%u]: MOUNT %s:%s RPC failed: %s", ds->ds_id,
-		    ds->ds_address, ds->ds_path,
-		    clnt_sperror(mnt_clnt, ""));
+		    ds->ds_address, ds->ds_path, clnt_sperror(mnt_clnt, ""));
 		ret = -EIO;
 		goto out;
 	}

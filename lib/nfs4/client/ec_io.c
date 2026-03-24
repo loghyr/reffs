@@ -427,8 +427,7 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 		ec_log("ec_write: resolve_mirrors failed: %d\n", ret);
 		goto out_layout;
 	}
-	ec_log("ec_write: resolved %u mirrors\n",
-	       ctx.ctx_layout.el_nmirrors);
+	ec_log("ec_write: resolved %u mirrors\n", ctx.ctx_layout.el_nmirrors);
 
 	/*
 	 * Pad data to a multiple of k * shard_size.  Each stripe
