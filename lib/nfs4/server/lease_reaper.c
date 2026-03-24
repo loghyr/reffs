@@ -89,8 +89,8 @@ static void *lease_reaper_thread_fn(void *arg __attribute__((unused)))
 		uint64_t now = reffs_now_ns();
 		uint32_t lease_sec = server_lease_time(ss);
 		uint64_t expire_ns = (uint64_t)lease_sec *
-				     LEASE_EXPIRE_FACTOR_NUM /
-				     LEASE_EXPIRE_FACTOR_DEN * 1000000000ULL;
+				     LEASE_EXPIRE_FACTOR_NUM * 1000000000ULL /
+				     LEASE_EXPIRE_FACTOR_DEN;
 
 		struct cds_lfht_iter iter;
 		struct cds_lfht_node *node;

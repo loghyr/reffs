@@ -105,8 +105,10 @@ out_crc:
 	cwa->cwa_crc32s.cwa_crc32s_len = 0;
 out:
 	/* Don't let fini free our caller's FH. */
-	slot = &mc.mc_args.argarray.argarray_val[1]; /* PUTFH */
-	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = NULL;
+	if (mc.mc_args.argarray.argarray_len > 1) {
+		nfs_argop4 *pfh = &mc.mc_args.argarray.argarray_val[1];
+		pfh->nfs_argop4_u.opputfh.object.nfs_fh4_val = NULL;
+	}
 
 	mds_compound_fini(&mc);
 	return ret;

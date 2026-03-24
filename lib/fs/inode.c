@@ -46,6 +46,15 @@ static int inode_match(struct cds_lfht_node *ht_node, const void *vkey)
 	return *key == inode->i_ino;
 }
 
+/*
+ * Weak stub: overridden by the real chunk_store_destroy() in
+ * lib/nfs4/server/chunk_store.c when libreffs_nfs4_server is linked.
+ */
+__attribute__((weak)) void chunk_store_destroy(struct chunk_store *cs
+					       __attribute__((unused)))
+{
+}
+
 static void inode_free_rcu(struct rcu_head *rcu)
 {
 	struct inode *inode = caa_container_of(rcu, struct inode, i_rcu);

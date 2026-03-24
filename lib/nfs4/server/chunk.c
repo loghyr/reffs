@@ -303,11 +303,13 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		}
 	}
 
+	uint32_t cs_nblocks = cs->cs_nblocks;
+
 	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
-	resok->crr_eof = (args->cra_offset + avail >= cs->cs_nblocks) ? TRUE :
-									FALSE;
+	resok->crr_eof = (args->cra_offset + avail >= cs_nblocks) ? TRUE :
+								    FALSE;
 
 	return 0;
 }

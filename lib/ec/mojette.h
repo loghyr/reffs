@@ -101,8 +101,8 @@ void moj_projection_destroy(struct moj_projection *proj);
  * moj_directions_generate -- generate n directions with q=1 and
  * p values centered around 0.
  *
- * For n=4: p = {-1, 0, 1, 2}
- * For n=6: p = {-2, -1, 0, 1, 2, 3}
+ * For n=4: p = {-2, -1, 1, 2}
+ * For n=6: p = {-3, -2, -1, 1, 2, 3}
  *
  * Returns 0 on success, -ENOMEM on failure.
  * Caller must free(*dirs) when done.
