@@ -153,6 +153,45 @@ int ds_read(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,
 	    uint64_t offset, uint8_t *data, uint32_t len, uint32_t *nread);
 
 /* ------------------------------------------------------------------ */
+/* DS I/O (NFSv4.2 CHUNK ops)                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * ds_chunk_write -- CHUNK_WRITE to a data server.
+ * block_offset: block number (not byte offset).
+ * chunk_size: size of each chunk in bytes.
+ * data/data_len: chunk data (one or more chunks of chunk_size bytes).
+ * owner_id: chunk owner identifier.
+ */
+int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
+		   uint64_t block_offset, uint32_t chunk_size,
+		   const uint8_t *data, uint32_t data_len, uint32_t owner_id);
+
+/*
+ * ds_chunk_read -- CHUNK_READ from a data server.
+ * block_offset: starting block number.
+ * count: number of blocks to read.
+ * out_data/out_len: output buffer (caller-allocated, chunk_size * count).
+ * Returns 0 on success, negative errno on failure.
+ */
+int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
+		  uint64_t block_offset, uint32_t count, uint8_t *out_data,
+		  uint32_t chunk_size, uint32_t *nread);
+
+/*
+ * ds_chunk_finalize -- CHUNK_FINALIZE on a data server.
+ */
+int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
+		      uint32_t fh_len, uint64_t block_offset, uint32_t count,
+		      uint32_t owner_id);
+
+/*
+ * ds_chunk_commit -- CHUNK_COMMIT on a data server.
+ */
+int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
+		    uint64_t block_offset, uint32_t count, uint32_t owner_id);
+
+/* ------------------------------------------------------------------ */
 /* Plain I/O — write/read through layout, no erasure coding            */
 /* ------------------------------------------------------------------ */
 
