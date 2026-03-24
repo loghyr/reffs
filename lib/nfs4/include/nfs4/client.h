@@ -38,6 +38,7 @@ struct nfs4_client {
 	bool nc_confirmed;
 	bool nc_needs_reclaim; /* true until RECLAIM_COMPLETE received */
 	uint32_t nc_session_count; /* atomic: number of active sessions */
+	uint64_t nc_last_renew_ns; /* atomic: CLOCK_MONOTONIC of last SEQUENCE */
 
 	struct cds_list_head nc_lock_owners;
 	pthread_mutex_t nc_lock_owners_mutex;
