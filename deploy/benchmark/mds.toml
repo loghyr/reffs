@@ -28,29 +28,29 @@ flavors     = ["sys"]
 [[data_server]]
 id      = 1
 address = "reffs-ds0"
-path    = "/ds"
+path    = "/ds1"
 
 [[data_server]]
 id      = 2
 address = "reffs-ds1"
-path    = "/ds"
+path    = "/ds1"
 
 [[data_server]]
 id      = 3
 address = "reffs-ds2"
-path    = "/ds"
+path    = "/ds1"
 
 [[data_server]]
 id      = 4
 address = "reffs-ds3"
-path    = "/ds"
+path    = "/ds1"
 
 [[data_server]]
 id      = 5
 address = "reffs-ds4"
-path    = "/ds"
+path    = "/ds1"
 
 [[data_server]]
 id      = 6
 address = "reffs-ds5"
-path    = "/ds"
+path    = "/ds1"
