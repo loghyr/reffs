@@ -410,6 +410,16 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 		clock_gettime(CLOCK_MONOTONIC, &start);
 		ret = op_handler->roh_action(rt);
 		clock_gettime(CLOCK_MONOTONIC, &end);
+
+		/*
+		 * NFSv3 ops return negative errno on failure.
+		 * Trace non-zero results for debugging.
+		 */
+		if (ret && ret != -EINPROGRESS)
+			TRACE("op %u/%u ret=%d xid=0x%08x",
+			      rt->rt_info.ri_program, rt->rt_info.ri_procedure,
+			      ret, rt->rt_info.ri_xid);
+
 		/* NFSv3 ops signal async with -EINPROGRESS; normalize for caller */
 		if (ret == -EINPROGRESS)
 			ret = EINPROGRESS;
