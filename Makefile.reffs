@@ -304,7 +304,8 @@ run-benchmark: image
 	@echo ""
 	@echo "Results saved to $(BENCH_LOGS)/results.csv"
 	@echo "Container logs: $(BENCH_LOGS)/bench.log"
-	$(DOCKER) compose -f $(BENCH_COMPOSE) down
+	@echo "Containers still running — use 'make -f Makefile.reffs stop-benchmark' to tear down"
+	@echo "View logs: docker logs reffs-bench-mds / reffs-bench-ds0 / etc."
 
 stop-benchmark:
 	$(DOCKER) compose -f $(BENCH_COMPOSE) --profile run down 2>/dev/null || true
