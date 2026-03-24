@@ -76,7 +76,13 @@ static int mojette_sys_encode(struct ec_codec *codec, uint8_t **data,
 	 * The first k directions correspond to data rows in a
 	 * systematic code; we skip them.
 	 */
-	struct moj_projection *projs[m]; /* VLA, m is small */
+	struct moj_projection **projs =
+		calloc((size_t)m, sizeof(struct moj_projection *));
+
+	if (!projs) {
+		free(grid);
+		return -ENOMEM;
+	}
 
 	for (int i = 0; i < m; i++) {
 		int dir_idx = k + i;
@@ -88,6 +94,7 @@ static int mojette_sys_encode(struct ec_codec *codec, uint8_t **data,
 		if (!projs[i]) {
 			for (int j = 0; j < i; j++)
 				moj_projection_destroy(projs[j]);
+			free(projs);
 			free(grid);
 			return -ENOMEM;
 		}
@@ -103,6 +110,7 @@ static int mojette_sys_encode(struct ec_codec *codec, uint8_t **data,
 		moj_projection_destroy(projs[i]);
 	}
 
+	free(projs);
 	free(grid);
 	return 0;
 }
