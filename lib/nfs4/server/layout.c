@@ -570,11 +570,15 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		}
 
 		/*
-		 * Allocate one data file per available dstore (mirrors).
-		 * Pop a FH from each dstore's runway.
+		 * Target layout_width data files, round-robin across
+		 * available dstores.  When fewer dstores than the
+		 * target width are available, the same dstore gets
+		 * multiple data files (each with its own runway FH).
 		 */
+		uint32_t target = REFFS_LAYOUT_WIDTH_DEFAULT;
+
 		struct layout_data_file *files =
-			calloc(nds, sizeof(struct layout_data_file));
+			calloc(target, sizeof(struct layout_data_file));
 		if (!files) {
 			for (uint32_t i = 0; i < nds; i++)
 				dstore_put(dstores[i]);
@@ -585,15 +589,14 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		uint32_t nfiles = 0;
 
-		for (uint32_t i = 0; i < nds; i++) {
-			struct dstore *ds = dstores[i];
+		for (uint32_t i = 0; i < target; i++) {
+			struct dstore *ds = dstores[i % nds];
 
 			if (!ds->ds_runway ||
 			    runway_pop(ds->ds_runway, files[nfiles].ldf_fh,
 				       &files[nfiles].ldf_fh_len) < 0) {
 				TRACE("LAYOUTGET: dstore[%u] runway empty",
 				      ds->ds_id);
-				dstore_put(ds);
 				continue;
 			}
 			files[nfiles].ldf_dstore_id = ds->ds_id;
@@ -601,10 +604,6 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			files[nfiles].ldf_gid = REFFS_FENCE_UID_MIN_DEFAULT;
 			files[nfiles].ldf_mode = 0640;
 
-			/*
-			 * Set the pool file's ownership to the synthetic
-			 * uid/gid so the client can access it via AUTH_SYS.
-			 */
 			dstore_data_file_fence(ds, files[nfiles].ldf_fh,
 					       files[nfiles].ldf_fh_len,
 					       &files[nfiles],
@@ -615,8 +614,10 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 					       files[nfiles].ldf_fh_len, NULL);
 
 			nfiles++;
-			dstore_put(ds);
 		}
+
+		for (uint32_t i = 0; i < nds; i++)
+			dstore_put(dstores[i]);
 
 		if (nfiles == 0) {
 			free(files);

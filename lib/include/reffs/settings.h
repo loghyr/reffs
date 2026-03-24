@@ -23,6 +23,7 @@
 #define REFFS_CONFIG_MAX_HOST 256
 #define REFFS_FENCE_UID_MIN_DEFAULT 1024
 #define REFFS_FENCE_UID_MAX_DEFAULT 2048
+#define REFFS_LAYOUT_WIDTH_DEFAULT 6 /* RS(4,2): 4 data + 2 parity */
 
 /*
  * Server role — maps to EXCHGID4_FLAG_USE_* bits advertised in EXCHANGE_ID.
@@ -129,6 +130,13 @@ struct reffs_config {
 	/* Fencing — synthetic uid/gid range for data file fencing */
 	uint32_t fence_uid_min;
 	uint32_t fence_uid_max;
+
+	/*
+	 * Layout width — number of data files per layout.
+	 * When fewer dstores are available, files are round-robin'd
+	 * across the available set.  Default: 6 (RS 4+2).
+	 */
+	unsigned int layout_width;
 
 	/* [[data_server]] — only used when role = mds or combined */
 	struct reffs_data_server_config
