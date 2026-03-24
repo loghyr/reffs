@@ -1,0 +1,135 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# EC Benchmark: 1 MDS + 6 DSes + 1 client on a Docker bridge network.
+#
+# Uses the Fedora 43 image (reffs).  Builds without sanitizers
+# and without debug for production-like performance numbers.
+#
+# Usage:
+#   make -f Makefile.reffs run-benchmark
+
+x-ds-common: &ds-common
+  image: reffs
+  privileged: true
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+  volumes:
+    - ../../:/reffs:ro
+  command: &ds-cmd >
+    /bin/bash -c "
+      rm -rf /tmp/reffs_ds_data /tmp/reffs_ds_state &&
+      mkdir -p /tmp/reffs_ds_data/sb_1 /tmp/reffs_ds_state &&
+      rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
+      cd /src && mkdir -p m4 && autoreconf -fi &&
+      cd /build && ../src/configure &&
+      make -j$$(nproc) &&
+      rpcbind &&
+      exec ./src/reffsd --config=/reffs/deploy/benchmark/ds.toml
+    "
+
+services:
+  ds0:
+    <<: *ds-common
+    container_name: reffs-bench-ds0
+    networks:
+      bench:
+        aliases: [reffs-ds0]
+
+  ds1:
+    <<: *ds-common
+    container_name: reffs-bench-ds1
+    networks:
+      bench:
+        aliases: [reffs-ds1]
+
+  ds2:
+    <<: *ds-common
+    container_name: reffs-bench-ds2
+    networks:
+      bench:
+        aliases: [reffs-ds2]
+
+  ds3:
+    <<: *ds-common
+    container_name: reffs-bench-ds3
+    networks:
+      bench:
+        aliases: [reffs-ds3]
+
+  ds4:
+    <<: *ds-common
+    container_name: reffs-bench-ds4
+    networks:
+      bench:
+        aliases: [reffs-ds4]
+
+  ds5:
+    <<: *ds-common
+    container_name: reffs-bench-ds5
+    networks:
+      bench:
+        aliases: [reffs-ds5]
+
+  mds:
+    container_name: reffs-bench-mds
+    image: reffs
+    privileged: true
+    depends_on:
+      - ds0
+      - ds1
+      - ds2
+      - ds3
+      - ds4
+      - ds5
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    networks:
+      bench:
+        aliases: [reffs-mds]
+    ports:
+      - "2049:2049"
+      - "2049:2049/udp"
+    volumes:
+      - ../../:/reffs:ro
+    command: >
+      /bin/bash -c "
+        rm -rf /tmp/reffs_mds_data /tmp/reffs_mds_state &&
+        mkdir -p /tmp/reffs_mds_data /tmp/reffs_mds_state &&
+        rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
+        cd /src && mkdir -p m4 && autoreconf -fi &&
+        cd /build && ../src/configure &&
+        make -j$$(nproc) &&
+        rpcbind &&
+        sleep 5 &&
+        exec ./src/reffsd --config=/reffs/deploy/benchmark/mds.toml
+      "
+
+  bench:
+    container_name: reffs-bench-client
+    image: reffs
+    privileged: true
+    depends_on:
+      - mds
+    networks:
+      - bench
+    volumes:
+      - ../../:/reffs:ro
+    command: >
+      /bin/bash -c "
+        rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
+        cd /src && mkdir -p m4 && autoreconf -fi &&
+        cd /build && ../src/configure &&
+        make -j$$(nproc) &&
+        exec /reffs/scripts/ec_benchmark.sh /build/tools/ec_demo reffs-mds
+      "
+    profiles:
+      - run
+
+networks:
+  bench:
+    driver: bridge
