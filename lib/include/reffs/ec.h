@@ -48,6 +48,22 @@ struct ec_codec {
 	int (*ec_decode)(struct ec_codec *codec, uint8_t **shards,
 			 const bool *present, size_t shard_len);
 
+	/*
+	 * ec_shard_size -- return the byte size of shard i.
+	 *
+	 * For uniform codecs (RS), all shards are data_shard_len bytes;
+	 * set this to NULL to use the default.
+	 *
+	 * For variable-size codecs (Mojette), parity shards may be
+	 * larger than data shards.  The callback returns the actual
+	 * byte size for shard i given the data shard length.
+	 */
+	size_t (*ec_shard_size)(struct ec_codec *codec, int shard_idx,
+				size_t data_shard_len);
+
+	/* Release codec-specific private state.  Called by ec_codec_destroy. */
+	void (*ec_destroy)(struct ec_codec *codec);
+
 	void *ec_private; /* codec-specific state */
 };
 
@@ -61,6 +77,29 @@ struct ec_codec {
  * The caller must call ec_codec_destroy() when done.
  */
 struct ec_codec *ec_rs_create(int k, int m);
+
+/*
+ * ec_mojette_sys_create -- create a systematic Mojette codec.
+ *
+ * k: number of data rows (grid height Q).
+ * m: number of extra projections (parity).
+ *
+ * Data shards are grid rows.  Parity shards are projections.
+ * Returns NULL on failure.
+ */
+struct ec_codec *ec_mojette_sys_create(int k, int m);
+
+/*
+ * ec_mojette_nonsys_create -- create a non-systematic Mojette codec.
+ *
+ * k: number of data rows (grid height Q).
+ * m: number of extra projections (parity).
+ *
+ * All k+m output shards are projections.  Encode overwrites data[]
+ * with the first k projections.  Any k shards suffice for decode.
+ * Returns NULL on failure.
+ */
+struct ec_codec *ec_mojette_nonsys_create(int k, int m);
 
 /*
  * ec_codec_destroy -- release a codec and all internal state.

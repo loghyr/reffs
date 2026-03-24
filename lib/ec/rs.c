@@ -300,6 +300,8 @@ struct ec_codec *ec_rs_create(int k, int m)
 	codec->ec_m = m;
 	codec->ec_encode = rs_encode;
 	codec->ec_decode = rs_decode;
+	codec->ec_shard_size = NULL; /* uniform shards */
+	codec->ec_destroy = NULL; /* use default free */
 	codec->ec_private = rsp;
 
 	return codec;
@@ -319,6 +321,12 @@ void ec_codec_destroy(struct ec_codec *codec)
 	if (!codec)
 		return;
 
+	if (codec->ec_destroy) {
+		codec->ec_destroy(codec);
+		return;
+	}
+
+	/* Default: RS cleanup. */
 	struct rs_private *rsp = codec->ec_private;
 
 	if (rsp) {
