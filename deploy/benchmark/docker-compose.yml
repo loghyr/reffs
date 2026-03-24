@@ -33,9 +33,10 @@ x-ds-common: &ds-common
       rm -rf /tmp/reffs_ds_data /tmp/reffs_ds_state &&
       mkdir -p /tmp/reffs_ds_data/sb_1 /tmp/reffs_ds_state &&
       rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
-      cd /src && mkdir -p m4 && autoreconf -fi &&
       find /src -name 'parsetab.py' -delete &&
+      cd /src && mkdir -p m4 && autoreconf -fi &&
       cd /build && ../src/configure &&
+      find /src -name 'parsetab.py' -delete &&
       make -j$$(nproc) &&
       exec ./src/reffsd --config=/reffs/deploy/benchmark/ds.toml
     "
@@ -126,6 +127,7 @@ services:
         find /src -name 'parsetab.py' -delete &&
         cd /src && mkdir -p m4 && autoreconf -fi &&
         cd /build && ../src/configure &&
+        find /src -name 'parsetab.py' -delete &&
         make -j$$(nproc) &&
         exec ./src/reffsd --config=/reffs/deploy/benchmark/mds.toml
       "
@@ -144,8 +146,10 @@ services:
     command: >
       /bin/bash -c "
         rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
+        find /src -name 'parsetab.py' -delete &&
         cd /src && mkdir -p m4 && autoreconf -fi &&
         cd /build && ../src/configure &&
+        find /src -name 'parsetab.py' -delete &&
         make -j$$(nproc) &&
         exec /reffs/scripts/ec_benchmark.sh /build/tools/ec_demo reffs-mds
       "
