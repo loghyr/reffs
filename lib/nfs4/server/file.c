@@ -288,11 +288,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 	 */
 	if (args->claim.claim != CLAIM_PREVIOUS &&
 	    args->claim.claim != CLAIM_DELEGATE_PREV) {
-		struct server_state *ss = server_state_find();
-		bool in_grace = ss && server_in_grace(ss);
-
-		server_state_put(ss);
-		if (in_grace) {
+		if (nfs4_check_grace()) {
 			*status = NFS4ERR_GRACE;
 			goto out;
 		}

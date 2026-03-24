@@ -187,15 +187,9 @@ uint32_t nfs4_op_create(struct compound *compound)
 		goto out;
 	}
 
-	{
-		struct server_state *ss = server_state_find();
-		bool in_grace = ss && server_in_grace(ss);
-
-		server_state_put(ss);
-		if (in_grace) {
-			*status = NFS4ERR_GRACE;
-			goto out;
-		}
+	if (nfs4_check_grace()) {
+		*status = NFS4ERR_GRACE;
+		goto out;
 	}
 
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
@@ -326,15 +320,9 @@ uint32_t nfs4_op_remove(struct compound *compound)
 		goto out;
 	}
 
-	{
-		struct server_state *ss = server_state_find();
-		bool in_grace = ss && server_in_grace(ss);
-
-		server_state_put(ss);
-		if (in_grace) {
-			*status = NFS4ERR_GRACE;
-			goto out;
-		}
+	if (nfs4_check_grace()) {
+		*status = NFS4ERR_GRACE;
+		goto out;
 	}
 
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
@@ -410,15 +398,9 @@ uint32_t nfs4_op_rename(struct compound *compound)
 		goto out;
 	}
 
-	{
-		struct server_state *ss = server_state_find();
-		bool in_grace = ss && server_in_grace(ss);
-
-		server_state_put(ss);
-		if (in_grace) {
-			*status = NFS4ERR_GRACE;
-			goto out;
-		}
+	if (nfs4_check_grace()) {
+		*status = NFS4ERR_GRACE;
+		goto out;
 	}
 
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
@@ -512,15 +494,9 @@ uint32_t nfs4_op_link(struct compound *compound)
 		goto out;
 	}
 
-	{
-		struct server_state *ss = server_state_find();
-		bool in_grace = ss && server_in_grace(ss);
-
-		server_state_put(ss);
-		if (in_grace) {
-			*status = NFS4ERR_GRACE;
-			goto out;
-		}
+	if (nfs4_check_grace()) {
+		*status = NFS4ERR_GRACE;
+		goto out;
 	}
 
 	if (!S_ISDIR(compound->c_inode->i_mode)) {

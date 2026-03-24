@@ -186,6 +186,19 @@ static inline bool server_in_grace(const struct server_state *ss)
 	       ss->ss_lifecycle == SERVER_GRACE_STARTED;
 }
 
+/*
+ * nfs4_check_grace - return true if the server is currently in grace.
+ * Self-contained: acquires and releases the server_state ref internally.
+ */
+static inline bool nfs4_check_grace(void)
+{
+	struct server_state *ss = server_state_find();
+	bool in_grace = ss && server_in_grace(ss);
+
+	server_state_put(ss);
+	return in_grace;
+}
+
 static inline bool server_shutting_down(const struct server_state *ss)
 {
 	return ss->ss_lifecycle == SERVER_SHUTTING_DOWN;

@@ -3769,15 +3769,9 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 		goto out;
 	}
 
-	{
-		struct server_state *ss = server_state_find();
-		bool in_grace = ss && server_in_grace(ss);
-
-		server_state_put(ss);
-		if (in_grace) {
-			*status = NFS4ERR_GRACE;
-			goto out;
-		}
+	if (nfs4_check_grace()) {
+		*status = NFS4ERR_GRACE;
+		goto out;
 	}
 
 	/*
