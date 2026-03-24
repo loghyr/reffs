@@ -195,8 +195,12 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	chunk_write_verf(resok->cwr_writeverf);
 
 	/* Return per-chunk status (all OK for happy path). */
-	resok->cwr_status.cwr_status_len = nchunks;
 	resok->cwr_status.cwr_status_val = calloc(nchunks, sizeof(nfsstat4));
+	if (!resok->cwr_status.cwr_status_val) {
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+	resok->cwr_status.cwr_status_len = nchunks;
 	resok->cwr_owners.cwr_owners_len = 0;
 	resok->cwr_owners.cwr_owners_val = NULL;
 
@@ -290,10 +294,17 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		rc->cr_status.cr_status_val = NULL;
 
 		/* Read chunk data from data block. */
-		rc->cr_chunk.cr_chunk_len = blk->cb_chunk_size;
 		rc->cr_chunk.cr_chunk_val = calloc(1, blk->cb_chunk_size);
-		if (!rc->cr_chunk.cr_chunk_val)
-			continue;
+		if (!rc->cr_chunk.cr_chunk_val) {
+			/*
+			 * Truncate the response to the chunks we have
+			 * already populated so the client never sees a
+			 * non-zero cr_chunk_len with a NULL data pointer.
+			 */
+			resok->crr_chunks.crr_chunks_len = i;
+			break;
+		}
+		rc->cr_chunk.cr_chunk_len = blk->cb_chunk_size;
 
 		if (compound->c_inode->i_db) {
 			data_block_read(compound->c_inode->i_db,
@@ -360,17 +371,21 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 	 */
 	uint32_t nowners = args->cfa_chunks.cfa_chunks_len;
 
-	resok->ccr_status.ccr_status_len = nowners;
 	resok->ccr_status.ccr_status_val = calloc(nowners, sizeof(nfsstat4));
+	if (!resok->ccr_status.ccr_status_val) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+	resok->ccr_status.ccr_status_len = nowners;
 
 	for (uint32_t i = 0; i < nowners; i++) {
 		chunk_owner4 *co = &args->cfa_chunks.cfa_chunks_val[i];
 		int ret = chunk_store_transition(cs, args->cfa_offset, count,
 						 co->co_id, CHUNK_STATE_PENDING,
 						 CHUNK_STATE_FINALIZED);
-		if (resok->ccr_status.ccr_status_val)
-			resok->ccr_status.ccr_status_val[i] =
-				(ret == 0) ? NFS4_OK : NFS4ERR_INVAL;
+		resok->ccr_status.ccr_status_val[i] =
+			(ret == 0) ? NFS4_OK : NFS4ERR_INVAL;
 	}
 
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
@@ -421,8 +436,13 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 
 	uint32_t nowners = args->cca_chunks.cca_chunks_len;
 
-	resok->ccr_status.ccr_status_len = nowners;
 	resok->ccr_status.ccr_status_val = calloc(nowners, sizeof(nfsstat4));
+	if (!resok->ccr_status.ccr_status_val) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+	resok->ccr_status.ccr_status_len = nowners;
 
 	for (uint32_t i = 0; i < nowners; i++) {
 		chunk_owner4 *co = &args->cca_chunks.cca_chunks_val[i];
@@ -430,9 +450,8 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 						 co->co_id,
 						 CHUNK_STATE_FINALIZED,
 						 CHUNK_STATE_COMMITTED);
-		if (resok->ccr_status.ccr_status_val)
-			resok->ccr_status.ccr_status_val[i] =
-				(ret == 0) ? NFS4_OK : NFS4ERR_INVAL;
+		resok->ccr_status.ccr_status_val[i] =
+			(ret == 0) ? NFS4_OK : NFS4ERR_INVAL;
 	}
 
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
