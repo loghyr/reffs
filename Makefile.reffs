@@ -297,8 +297,11 @@ BENCH_LOGS    = $(ROOT_DIR)/logs/benchmark
 # Results go to stdout as CSV; container logs to logs/benchmark/.
 run-benchmark: image
 	@mkdir -p $(BENCH_LOGS)
+	@echo "Building reffs in builder container..."
+	$(DOCKER) compose -f $(BENCH_COMPOSE) run --rm builder
+	@echo "Starting MDS + 6 DSes..."
 	$(DOCKER) compose -f $(BENCH_COMPOSE) up -d ds0 ds1 ds2 ds3 ds4 ds5 mds
-	@echo "Waiting for containers to build and start..."
+	@echo "Waiting for services to become healthy..."
 	$(DOCKER) compose -f $(BENCH_COMPOSE) --profile run run --rm bench \
 		2>$(BENCH_LOGS)/bench.log | tee $(BENCH_LOGS)/results.csv
 	@echo ""
