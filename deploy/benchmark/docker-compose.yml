@@ -123,10 +123,10 @@ services:
         rm -rf /tmp/reffs_mds_data /tmp/reffs_mds_state &&
         mkdir -p /tmp/reffs_mds_data /tmp/reffs_mds_state &&
         rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
+        find /src -name 'parsetab.py' -delete &&
         cd /src && mkdir -p m4 && autoreconf -fi &&
         cd /build && ../src/configure &&
         make -j$$(nproc) &&
-        rpcbind &&
         exec ./src/reffsd --config=/reffs/deploy/benchmark/mds.toml
       "
 
