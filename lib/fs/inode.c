@@ -70,6 +70,7 @@ static void inode_free_rcu(struct rcu_head *rcu)
 
 	free(inode->i_symlink);
 	layout_segments_free(inode->i_layout_segments);
+	chunk_store_destroy(inode->i_chunk_store);
 	free(inode);
 
 	/* Drop the ref taken in inode_alloc (stored in i_sb); may free the superblock. */

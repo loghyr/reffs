@@ -16,6 +16,7 @@ libreffs_nfs4_server_la_SOURCES = \
 	client_persist.c \
 	compound.c \
 	chunk.c \
+	chunk_store.c \
 	copy.c \
 	delegation.c \
 	dir.c \

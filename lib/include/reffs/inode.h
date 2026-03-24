@@ -20,6 +20,10 @@ struct super_block;
 struct data_block;
 struct reffs_dirent;
 struct layout_segments;
+struct chunk_store;
+
+/* lib/nfs4/server/chunk_store.c — declared here to avoid layering violations. */
+void chunk_store_destroy(struct chunk_store *cs);
 
 struct reffs_file_handle {
 	uint64_t rfh_ino;
@@ -112,6 +116,9 @@ struct inode {
 
 	/* MDS layout segments (NULL for standalone/DS roles). */
 	struct layout_segments *i_layout_segments;
+
+	/* DS chunk metadata (NULL until first CHUNK_WRITE). */
+	struct chunk_store *i_chunk_store;
 };
 
 struct inode_disk {
