@@ -16,6 +16,7 @@
 #ifndef _REFFS_DSTORE_H
 #define _REFFS_DSTORE_H
 
+#include <netinet/in.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -38,7 +39,8 @@ struct dstore {
 	uint32_t ds_id; /* unique ID (from config) */
 
 	/* Config (immutable after alloc) */
-	char ds_address[REFFS_CONFIG_MAX_HOST];
+	char ds_address[REFFS_CONFIG_MAX_HOST]; /* hostname or IP from config */
+	char ds_ip[INET_ADDRSTRLEN];		/* resolved dotted-decimal IP */
 	char ds_path[REFFS_CONFIG_MAX_PATH];
 
 	/* Ops vtable: nfsv3 (remote) or local (same server). */

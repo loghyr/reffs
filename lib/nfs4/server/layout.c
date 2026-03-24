@@ -95,7 +95,7 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	 */
 	char uaddr[64];
 
-	snprintf(uaddr, sizeof(uaddr), "%s.8.1", ds->ds_address);
+	snprintf(uaddr, sizeof(uaddr), "%s.8.1", ds->ds_ip);
 
 	/*
 	 * XDR-encode ff_device_addr4 into the da_addr_body opaque.
