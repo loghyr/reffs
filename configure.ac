@@ -1,7 +1,7 @@
 dnl SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 dnl SPDX-License-Identifier: AGPL-3.0-or-later
 
-AC_INIT([reffs], [0.0.1], [loghyr@gmail.com])
+AC_INIT([reffs], [0.1.0], [loghyr@gmail.com])
 AC_CONFIG_AUX_DIR([.])
 AM_INIT_AUTOMAKE([foreign])
 
