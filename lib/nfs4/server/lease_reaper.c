@@ -53,6 +53,8 @@
 
 static pthread_t lease_reaper_thread;
 static _Atomic uint32_t lease_reaper_running;
+static pthread_mutex_t lease_reaper_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t lease_reaper_cv = PTHREAD_COND_INITIALIZER;
 
 /* ------------------------------------------------------------------ */
 /* Thread function                                                     */
@@ -62,9 +64,15 @@ static void *lease_reaper_thread_fn(void *arg __attribute__((unused)))
 {
 	while (atomic_load_explicit(&lease_reaper_running,
 				    memory_order_relaxed)) {
-		struct timespec ts = { .tv_sec = LEASE_SCAN_INTERVAL_SEC,
-				       .tv_nsec = 0 };
-		nanosleep(&ts, NULL);
+		struct timespec ts;
+
+		clock_gettime(CLOCK_REALTIME, &ts);
+		ts.tv_sec += LEASE_SCAN_INTERVAL_SEC;
+
+		pthread_mutex_lock(&lease_reaper_mtx);
+		pthread_cond_timedwait(&lease_reaper_cv, &lease_reaper_mtx,
+				       &ts);
+		pthread_mutex_unlock(&lease_reaper_mtx);
 
 		if (!atomic_load_explicit(&lease_reaper_running,
 					  memory_order_relaxed))
@@ -159,5 +167,6 @@ int lease_reaper_init(void)
 void lease_reaper_fini(void)
 {
 	atomic_store_explicit(&lease_reaper_running, 0, memory_order_relaxed);
+	pthread_cond_signal(&lease_reaper_cv);
 	pthread_join(lease_reaper_thread, NULL);
 }
