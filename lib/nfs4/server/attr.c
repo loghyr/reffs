@@ -2857,19 +2857,23 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	if (ss_role &&
 	    (ss_role->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS)) {
 		nattr->fs_layout_types.fattr4_fs_layout_types_val =
-			calloc(1, sizeof(layouttype4));
+			calloc(2, sizeof(layouttype4));
 		if (nattr->fs_layout_types.fattr4_fs_layout_types_val) {
-			nattr->fs_layout_types.fattr4_fs_layout_types_len = 1;
+			nattr->fs_layout_types.fattr4_fs_layout_types_len = 2;
 			nattr->fs_layout_types.fattr4_fs_layout_types_val[0] =
 				LAYOUT4_FLEX_FILES;
+			nattr->fs_layout_types.fattr4_fs_layout_types_val[1] =
+				LAYOUT4_FLEX_FILES_V2;
 		}
 
 		nattr->layout_types.fattr4_layout_types_val =
-			calloc(1, sizeof(layouttype4));
+			calloc(2, sizeof(layouttype4));
 		if (nattr->layout_types.fattr4_layout_types_val) {
-			nattr->layout_types.fattr4_layout_types_len = 1;
+			nattr->layout_types.fattr4_layout_types_len = 2;
 			nattr->layout_types.fattr4_layout_types_val[0] =
 				LAYOUT4_FLEX_FILES;
+			nattr->layout_types.fattr4_layout_types_val[1] =
+				LAYOUT4_FLEX_FILES_V2;
 		}
 	}
 	server_state_put(ss_role);

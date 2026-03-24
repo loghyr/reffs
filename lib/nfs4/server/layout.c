@@ -8,6 +8,7 @@
 #endif
 
 #include <arpa/inet.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -70,7 +71,8 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	GETDEVICEINFO4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, GETDEVICEINFO4res_u, gdir_resok4);
 
-	if (args->gdia_layout_type != LAYOUT4_FLEX_FILES) {
+	if (args->gdia_layout_type != LAYOUT4_FLEX_FILES &&
+	    args->gdia_layout_type != LAYOUT4_FLEX_FILES_V2) {
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
 		return 0;
 	}
@@ -128,7 +130,7 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	/* XDR-encode into an opaque buffer. */
 	u_long xdr_size = xdr_sizeof((xdrproc_t)xdr_ff_device_addr4, &ffda);
 
-	resok->gdir_device_addr.da_layout_type = LAYOUT4_FLEX_FILES;
+	resok->gdir_device_addr.da_layout_type = args->gdia_layout_type;
 	resok->gdir_device_addr.da_addr_body.da_addr_body_val =
 		calloc(1, xdr_size);
 	if (!resok->gdir_device_addr.da_addr_body.da_addr_body_val) {
@@ -251,10 +253,272 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 }
 
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Layout body builders — one per layout type.                         */
+/*                                                                     */
+/* Each builder XDR-encodes the layout body and returns it in *body.   */
+/* The caller owns the allocated buffer.  Returns NFS4_OK or an error. */
+/* ------------------------------------------------------------------ */
+
+static nfsstat4 layoutget_build_v1(struct layout_segment *seg, char **out_body,
+				   u_long *out_size)
+{
+	ff_layout4 ffl;
+
+	memset(&ffl, 0, sizeof(ffl));
+	ffl.ffl_stripe_unit = seg->ls_stripe_unit;
+	ffl.ffl_flags = FF_FLAGS_NO_LAYOUTCOMMIT | FF_FLAGS_NO_IO_THRU_MDS;
+	ffl.ffl_stats_collect_hint = 0;
+
+	ffl.ffl_mirrors.ffl_mirrors_len = seg->ls_nfiles;
+	ffl.ffl_mirrors.ffl_mirrors_val =
+		calloc(seg->ls_nfiles, sizeof(ff_mirror4));
+	if (!ffl.ffl_mirrors.ffl_mirrors_val)
+		return NFS4ERR_DELAY;
+
+	nfsstat4 ret = NFS4_OK; /* used only for error path */
+
+	for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
+		struct layout_data_file *ldf = &seg->ls_files[i];
+		ff_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[i];
+
+		mirror->ffm_data_servers.ffm_data_servers_len = 1;
+		mirror->ffm_data_servers.ffm_data_servers_val =
+			calloc(1, sizeof(ff_data_server4));
+		if (!mirror->ffm_data_servers.ffm_data_servers_val) {
+			ret = NFS4ERR_DELAY;
+			goto out_v1;
+		}
+
+		ff_data_server4 *ffds =
+			mirror->ffm_data_servers.ffm_data_servers_val;
+
+		deviceid_from_dstore(ffds->ffds_deviceid, ldf->ldf_dstore_id);
+
+		struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+
+		ffds->ffds_efficiency =
+			(ds && ds->ds_ops == &dstore_ops_local) ? 255 : 1;
+		dstore_put(ds);
+
+		ffds->ffds_fh_vers.ffds_fh_vers_len = 1;
+		ffds->ffds_fh_vers.ffds_fh_vers_val =
+			calloc(1, sizeof(nfs_fh4));
+		if (!ffds->ffds_fh_vers.ffds_fh_vers_val) {
+			ret = NFS4ERR_DELAY;
+			goto out_v1;
+		}
+
+		nfs_fh4 *fh = &ffds->ffds_fh_vers.ffds_fh_vers_val[0];
+
+		fh->nfs_fh4_len = ldf->ldf_fh_len;
+		fh->nfs_fh4_val = calloc(1, ldf->ldf_fh_len);
+		if (!fh->nfs_fh4_val) {
+			ret = NFS4ERR_DELAY;
+			goto out_v1;
+		}
+		memcpy(fh->nfs_fh4_val, ldf->ldf_fh, ldf->ldf_fh_len);
+
+		char uid_str[16], gid_str[16];
+
+		snprintf(uid_str, sizeof(uid_str), "%u", ldf->ldf_uid);
+		snprintf(gid_str, sizeof(gid_str), "%u", ldf->ldf_gid);
+		ffds->ffds_user.utf8string_len = strlen(uid_str);
+		ffds->ffds_user.utf8string_val = strdup(uid_str);
+		ffds->ffds_group.utf8string_len = strlen(gid_str);
+		ffds->ffds_group.utf8string_val = strdup(gid_str);
+	}
+
+	u_long xdr_size = xdr_sizeof((xdrproc_t)xdr_ff_layout4, &ffl);
+	char *body = calloc(1, xdr_size);
+
+	if (!body) {
+		ret = NFS4ERR_DELAY;
+		goto out_v1;
+	}
+
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, body, xdr_size, XDR_ENCODE);
+	if (!xdr_ff_layout4(&xdrs, &ffl)) {
+		xdr_destroy(&xdrs);
+		free(body);
+		ret = NFS4ERR_SERVERFAULT;
+		goto out_v1;
+	}
+	xdr_destroy(&xdrs);
+
+	*out_body = body;
+	*out_size = xdr_size;
+
+out_v1:
+	for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
+		ff_data_server4 *ffds =
+			ffl.ffl_mirrors.ffl_mirrors_val[i]
+				.ffm_data_servers.ffm_data_servers_val;
+		if (ffds) {
+			if (ffds->ffds_fh_vers.ffds_fh_vers_val) {
+				free(ffds->ffds_fh_vers.ffds_fh_vers_val[0]
+					     .nfs_fh4_val);
+				free(ffds->ffds_fh_vers.ffds_fh_vers_val);
+			}
+			free(ffds->ffds_user.utf8string_val);
+			free(ffds->ffds_group.utf8string_val);
+			free(ffds);
+		}
+	}
+	free(ffl.ffl_mirrors.ffl_mirrors_val);
+	return ret;
+}
+
+static nfsstat4 layoutget_build_v2(struct layout_segment *seg, char **out_body,
+				   u_long *out_size)
+{
+	ffv2_layout4 ffl;
+
+	memset(&ffl, 0, sizeof(ffl));
+	ffl.ffl_flags = FFV2_FLAGS_NO_LAYOUTCOMMIT | FFV2_FLAGS_NO_IO_THRU_MDS;
+	ffl.ffl_stats_collect_hint = 0;
+
+	ffl.ffl_mirrors.ffl_mirrors_len = 1;
+	ffl.ffl_mirrors.ffl_mirrors_val = calloc(1, sizeof(ffv2_mirror4));
+	if (!ffl.ffl_mirrors.ffl_mirrors_val)
+		return NFS4ERR_DELAY;
+
+	nfsstat4 ret = NFS4_OK;
+	ffv2_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[0];
+
+	if (seg->ls_m == 0)
+		mirror->ffm_coding_type_data.fctd_coding = FFV2_CODING_MIRRORED;
+	else
+		mirror->ffm_coding_type_data.fctd_coding =
+			FFV2_ENCODING_RS_VANDERMONDE;
+
+	mirror->ffm_striping = FFV2_STRIPING_DENSE;
+	mirror->ffm_striping_unit_size = 4096;
+	mirror->ffm_client_id = 0;
+
+	mirror->ffm_stripes.ffm_stripes_len = 1;
+	mirror->ffm_stripes.ffm_stripes_val = calloc(1, sizeof(ffv2_stripes4));
+	if (!mirror->ffm_stripes.ffm_stripes_val) {
+		ret = NFS4ERR_DELAY;
+		goto out_v2;
+	}
+
+	ffv2_stripes4 *stripe = &mirror->ffm_stripes.ffm_stripes_val[0];
+
+	stripe->ffs_data_servers.ffs_data_servers_len = seg->ls_nfiles;
+	stripe->ffs_data_servers.ffs_data_servers_val =
+		calloc(seg->ls_nfiles, sizeof(ffv2_data_server4));
+	if (!stripe->ffs_data_servers.ffs_data_servers_val) {
+		ret = NFS4ERR_DELAY;
+		goto out_v2;
+	}
+
+	for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
+		struct layout_data_file *ldf = &seg->ls_files[i];
+		ffv2_data_server4 *ffds =
+			&stripe->ffs_data_servers.ffs_data_servers_val[i];
+
+		deviceid_from_dstore(ffds->ffv2ds_deviceid, ldf->ldf_dstore_id);
+
+		struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+
+		ffds->ffv2ds_efficiency =
+			(ds && ds->ds_ops == &dstore_ops_local) ? 255 : 1;
+		dstore_put(ds);
+
+		ffds->ffv2ds_file_info.ffv2ds_file_info_len = 1;
+		ffds->ffv2ds_file_info.ffv2ds_file_info_val =
+			calloc(1, sizeof(ffv2_file_info4));
+		if (!ffds->ffv2ds_file_info.ffv2ds_file_info_val) {
+			ret = NFS4ERR_DELAY;
+			goto out_v2;
+		}
+
+		ffv2_file_info4 *fi =
+			&ffds->ffv2ds_file_info.ffv2ds_file_info_val[0];
+		memset(&fi->fffi_stateid, 0, sizeof(fi->fffi_stateid));
+		fi->fffi_fh_vers.nfs_fh4_len = ldf->ldf_fh_len;
+		fi->fffi_fh_vers.nfs_fh4_val = calloc(1, ldf->ldf_fh_len);
+		if (!fi->fffi_fh_vers.nfs_fh4_val) {
+			ret = NFS4ERR_DELAY;
+			goto out_v2;
+		}
+		memcpy(fi->fffi_fh_vers.nfs_fh4_val, ldf->ldf_fh,
+		       ldf->ldf_fh_len);
+
+		char uid_str[16], gid_str[16];
+
+		snprintf(uid_str, sizeof(uid_str), "%u", ldf->ldf_uid);
+		snprintf(gid_str, sizeof(gid_str), "%u", ldf->ldf_gid);
+		ffds->ffv2ds_user.utf8string_len = strlen(uid_str);
+		ffds->ffv2ds_user.utf8string_val = strdup(uid_str);
+		ffds->ffv2ds_group.utf8string_len = strlen(gid_str);
+		ffds->ffv2ds_group.utf8string_val = strdup(gid_str);
+		ffds->ffv2ds_flags = (i < seg->ls_k) ? FFV2_DS_FLAGS_ACTIVE :
+						       FFV2_DS_FLAGS_PARITY;
+	}
+
+	u_long xdr_size = xdr_sizeof((xdrproc_t)xdr_ffv2_layout4, &ffl);
+	char *body = calloc(1, xdr_size);
+
+	if (!body) {
+		ret = NFS4ERR_DELAY;
+		goto out_v2;
+	}
+
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, body, xdr_size, XDR_ENCODE);
+	if (!xdr_ffv2_layout4(&xdrs, &ffl)) {
+		xdr_destroy(&xdrs);
+		free(body);
+		ret = NFS4ERR_SERVERFAULT;
+		goto out_v2;
+	}
+	xdr_destroy(&xdrs);
+
+	*out_body = body;
+	*out_size = xdr_size;
+
+out_v2:
+	if (ffl.ffl_mirrors.ffl_mirrors_val) {
+		ffv2_mirror4 *m0 = &ffl.ffl_mirrors.ffl_mirrors_val[0];
+
+		if (m0->ffm_stripes.ffm_stripes_val) {
+			ffv2_stripes4 *st = &m0->ffm_stripes.ffm_stripes_val[0];
+
+			for (uint32_t i = 0;
+			     i < st->ffs_data_servers.ffs_data_servers_len;
+			     i++) {
+				ffv2_data_server4 *f2 =
+					&st->ffs_data_servers
+						 .ffs_data_servers_val[i];
+
+				if (f2->ffv2ds_file_info.ffv2ds_file_info_val) {
+					free(f2->ffv2ds_file_info
+						     .ffv2ds_file_info_val[0]
+						     .fffi_fh_vers.nfs_fh4_val);
+					free(f2->ffv2ds_file_info
+						     .ffv2ds_file_info_val);
+				}
+				free(f2->ffv2ds_user.utf8string_val);
+				free(f2->ffv2ds_group.utf8string_val);
+			}
+			free(st->ffs_data_servers.ffs_data_servers_val);
+			free(m0->ffm_stripes.ffm_stripes_val);
+		}
+		free(ffl.ffl_mirrors.ffl_mirrors_val);
+	}
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /* LAYOUTGET                                                           */
 /*                                                                     */
-/* Returns a Flex Files layout for the current filehandle.  Each       */
-/* layout segment from the inode becomes a mirror in the ff_layout4.   */
+/* Returns a Flex Files layout for the current filehandle.  Clients    */
+/* may request LAYOUT4_FLEX_FILES (v1) or LAYOUT4_FLEX_FILES_V2 (v2). */
 /* ------------------------------------------------------------------ */
 
 uint32_t nfs4_op_layoutget(struct compound *compound)
@@ -270,10 +534,13 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		return 0;
 	}
 
-	if (args->loga_layout_type != LAYOUT4_FLEX_FILES) {
+	if (args->loga_layout_type != LAYOUT4_FLEX_FILES &&
+	    args->loga_layout_type != LAYOUT4_FLEX_FILES_V2) {
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
 		return 0;
 	}
+
+	layouttype4 layout_type = args->loga_layout_type;
 
 	if (!compound->c_inode) {
 		*status = NFS4ERR_NOFILEHANDLE;
@@ -425,104 +692,19 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	struct layout_segment *seg = &lss->lss_segs[0];
 
 	/*
-	 * Build ff_layout4:
-	 *   ffl_stripe_unit: from the segment
-	 *   ffl_mirrors: one mirror per data file
-	 *   ffl_flags: NO_LAYOUTCOMMIT (data goes direct to DS)
+	 * Build the layout body.  Dispatch based on what the client
+	 * requested: ff_layout4 (v1) or ffv2_layout4 (v2).
 	 */
-	ff_layout4 ffl;
+	char *body = NULL;
+	u_long xdr_size = 0;
 
-	memset(&ffl, 0, sizeof(ffl));
-	ffl.ffl_stripe_unit = seg->ls_stripe_unit;
-	ffl.ffl_flags = FF_FLAGS_NO_LAYOUTCOMMIT | FF_FLAGS_NO_IO_THRU_MDS;
-	ffl.ffl_stats_collect_hint = 0;
+	if (layout_type == LAYOUT4_FLEX_FILES_V2)
+		*status = layoutget_build_v2(seg, &body, &xdr_size);
+	else
+		*status = layoutget_build_v1(seg, &body, &xdr_size);
 
-	ffl.ffl_mirrors.ffl_mirrors_len = seg->ls_nfiles;
-	ffl.ffl_mirrors.ffl_mirrors_val =
-		calloc(seg->ls_nfiles, sizeof(ff_mirror4));
-	if (!ffl.ffl_mirrors.ffl_mirrors_val) {
-		stateid_put(&ls->ls_stid);
-		*status = NFS4ERR_DELAY;
-		return 0;
-	}
-
-	for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
-		struct layout_data_file *ldf = &seg->ls_files[i];
-		ff_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[i];
-
-		mirror->ffm_data_servers.ffm_data_servers_len = 1;
-		mirror->ffm_data_servers.ffm_data_servers_val =
-			calloc(1, sizeof(ff_data_server4));
-		if (!mirror->ffm_data_servers.ffm_data_servers_val) {
-			*status = NFS4ERR_DELAY;
-			goto out_free_ffl;
-		}
-
-		ff_data_server4 *ffds =
-			mirror->ffm_data_servers.ffm_data_servers_val;
-
-		deviceid_from_dstore(ffds->ffds_deviceid, ldf->ldf_dstore_id);
-
-		/* Local dstores are more efficient (no network hop). */
-		struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
-
-		ffds->ffds_efficiency =
-			(ds && ds->ds_ops == &dstore_ops_local) ? 255 : 1;
-		dstore_put(ds);
-
-		/* NFSv3 filehandle. */
-		ffds->ffds_fh_vers.ffds_fh_vers_len = 1;
-		ffds->ffds_fh_vers.ffds_fh_vers_val =
-			calloc(1, sizeof(nfs_fh4));
-		if (!ffds->ffds_fh_vers.ffds_fh_vers_val) {
-			*status = NFS4ERR_DELAY;
-			goto out_free_ffl;
-		}
-
-		nfs_fh4 *fh = &ffds->ffds_fh_vers.ffds_fh_vers_val[0];
-
-		fh->nfs_fh4_len = ldf->ldf_fh_len;
-		fh->nfs_fh4_val = calloc(1, ldf->ldf_fh_len);
-		if (!fh->nfs_fh4_val) {
-			*status = NFS4ERR_DELAY;
-			goto out_free_ffl;
-		}
-		memcpy(fh->nfs_fh4_val, ldf->ldf_fh, ldf->ldf_fh_len);
-
-		/*
-		 * Synthetic uid/gid for AUTH_SYS on the DS.
-		 * The flexfiles client uses these as credentials when
-		 * doing NFSv3 I/O to the data server.
-		 */
-		char uid_str[16], gid_str[16];
-
-		snprintf(uid_str, sizeof(uid_str), "%u", ldf->ldf_uid);
-		snprintf(gid_str, sizeof(gid_str), "%u", ldf->ldf_gid);
-		ffds->ffds_user.utf8string_len = strlen(uid_str);
-		ffds->ffds_user.utf8string_val = strdup(uid_str);
-		ffds->ffds_group.utf8string_len = strlen(gid_str);
-		ffds->ffds_group.utf8string_val = strdup(gid_str);
-	}
-
-	/* XDR-encode ff_layout4 into the layout content body. */
-	u_long xdr_size = xdr_sizeof((xdrproc_t)xdr_ff_layout4, &ffl);
-	char *body = calloc(1, xdr_size);
-
-	if (!body) {
-		*status = NFS4ERR_DELAY;
-		goto out_free_ffl;
-	}
-
-	XDR xdrs;
-
-	xdrmem_create(&xdrs, body, xdr_size, XDR_ENCODE);
-	if (!xdr_ff_layout4(&xdrs, &ffl)) {
-		xdr_destroy(&xdrs);
-		free(body);
-		*status = NFS4ERR_SERVERFAULT;
-		goto out_free_ffl;
-	}
-	xdr_destroy(&xdrs);
+	if (*status != NFS4_OK)
+		goto out_stateid;
 
 	/* Build the response. */
 	resok->logr_return_on_close = true;
@@ -536,7 +718,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	if (!resok->logr_layout.logr_layout_val) {
 		free(body);
 		*status = NFS4ERR_DELAY;
-		goto out_free_ffl;
+		goto out_stateid;
 	}
 
 	layout4 *lo = &resok->logr_layout.logr_layout_val[0];
@@ -544,29 +726,11 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	lo->lo_offset = seg->ls_offset;
 	lo->lo_length = seg->ls_length ? seg->ls_length : NFS4_UINT64_MAX;
 	lo->lo_iomode = args->loga_iomode;
-	lo->lo_content.loc_type = LAYOUT4_FLEX_FILES;
+	lo->lo_content.loc_type = layout_type;
 	lo->lo_content.loc_body.loc_body_val = body;
 	lo->lo_content.loc_body.loc_body_len = (u_int)xdr_size;
 
-out_free_ffl:
-	/* Free temp ff_layout4 structs; body is owned by loc_body on success. */
-	for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
-		ff_data_server4 *ffds =
-			ffl.ffl_mirrors.ffl_mirrors_val[i]
-				.ffm_data_servers.ffm_data_servers_val;
-		if (ffds) {
-			if (ffds->ffds_fh_vers.ffds_fh_vers_val) {
-				free(ffds->ffds_fh_vers.ffds_fh_vers_val[0]
-					     .nfs_fh4_val);
-				free(ffds->ffds_fh_vers.ffds_fh_vers_val);
-			}
-			free(ffds->ffds_user.utf8string_val);
-			free(ffds->ffds_group.utf8string_val);
-			free(ffds);
-		}
-	}
-	free(ffl.ffl_mirrors.ffl_mirrors_val);
-
+out_stateid:
 	if (*status == NFS4_OK)
 		TRACE("LAYOUTGET: ino=%lu nfiles=%u stripe_unit=%u seqid=%u",
 		      compound->c_inode->i_ino, seg->ls_nfiles,
@@ -667,7 +831,8 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	LAYOUTRETURN4res *res = NFS4_OP_RES_SETUP(compound, oplayoutreturn);
 	nfsstat4 *status = &res->lorr_status;
 
-	if (args->lora_layout_type != LAYOUT4_FLEX_FILES) {
+	if (args->lora_layout_type != LAYOUT4_FLEX_FILES &&
+	    args->lora_layout_type != LAYOUT4_FLEX_FILES_V2) {
 		TRACE("LAYOUTRETURN: unknown layout type %d",
 		      args->lora_layout_type);
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
