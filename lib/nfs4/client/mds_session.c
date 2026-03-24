@@ -195,6 +195,33 @@ static int mds_create_session(struct mds_session *ms)
 }
 
 /* ------------------------------------------------------------------ */
+/* RECLAIM_COMPLETE                                                    */
+/* ------------------------------------------------------------------ */
+
+static void mds_reclaim_complete(struct mds_session *ms)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+
+	if (mds_compound_init(&mc, 2, "reclaim_complete"))
+		return;
+
+	if (mds_compound_add_sequence(&mc, ms))
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_RECLAIM_COMPLETE);
+	if (!slot)
+		goto out;
+
+	RECLAIM_COMPLETE4args *args = &slot->nfs_argop4_u.opreclaim_complete;
+	args->rca_one_fs = FALSE;
+
+	mds_compound_send(&mc, ms);
+out:
+	mds_compound_fini(&mc);
+}
+
+/* ------------------------------------------------------------------ */
 /* DESTROY_SESSION                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -272,6 +299,9 @@ int mds_session_create(struct mds_session *ms, const char *host)
 	ret = mds_create_session(ms);
 	if (ret)
 		goto err;
+
+	/* Best-effort: tell the server we have no state to reclaim. */
+	mds_reclaim_complete(ms);
 
 	return 0;
 
