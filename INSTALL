@@ -3,11 +3,11 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 A Quick Summary
 
-0. Run ./install-pre-commit.sh
-   Note, this will perform the following checks:
+0. Run ./install-hooks.sh (or: make -f Makefile.reffs install-hooks)
+   This installs a pre-push hook that performs the following checks:
      o Make sure every applicable file has licensing
-     o Make sure every commit is signed-off-by
-     o Make sure every commit passes make check
+     o Make sure every commit being pushed has Signed-off-by
+     o Make sure every push passes style, license, and build checks
 
 1. Configure and build RefFS:
    o cd where-you-want-to-build-reffs

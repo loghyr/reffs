@@ -38,7 +38,7 @@ Reffs is a high-performance Reference File System project focused on providing r
     -   **DCO:** All commits MUST be signed off (`git commit -s`) to certify the Developer Certificate of Origin.
     -   **Style first:** Run `make -f Makefile.reffs fix-style` before staging files.
     -   **Tests pass:** Run `cd build && make check` (or `make -f Makefile.reffs build-in-docker`) and confirm all unit tests pass before committing.
-    -   **Pre-commit Hooks:** Install the pre-commit hook via `./install-pre-commit.sh`. This hook runs `tree-build.sh`, which performs a clean build and runs `make check`.
+    -   **Pre-push Hook:** Install the pre-push hook via `./install-hooks.sh` (or `make -f Makefile.reffs install-hooks`). This hook runs style, license, and out-of-tree build checks before each push.
 -   **Result Pointer Allocation:** Pointers returned inside NFS result structs MUST be allocated with `calloc()`. Do NOT use `malloc()` (leaves fields uninitialized) and do NOT use static buffers (not thread-safe). XDR frees these pointers via `xdr_free()`; they must be individually heap-allocated.
 -   **Memory Safety:** Always build with sanitizers during development:
     ```bash
@@ -100,4 +100,4 @@ To avoid host-level conflicts with NFS services (`rpcbind`, `lockd`), use the is
 -   **Unit Tests:** Located in `lib/*/tests/`. Use the `check` library.
 -   **FUSE Tests:** Specific FUSE behavior tests in `lib/fs/tests/fuse_*.c`.
 -   **Trace System:** Utilize the built-in trace system for debugging (configured via `--enable-all-trace-categories`).
--   **CI/CD:** The pre-commit hook ensures that only code passing a full build and test suite is committed.
+-   **CI/CD:** The pre-push hook ensures that only code passing a full build and test suite is pushed.

@@ -1,0 +1,77 @@
+#!/bin/sh
+
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Pre-push hook: runs the full build, style, and license checks before
+# allowing a push.  This catches problems before they reach the remote
+# without slowing down every local commit.
+#
+# Install via: make -f Makefile.reffs install-hooks
+#          or: ./install-hooks.sh
+
+# Change to the root directory of the Git repository
+git rev-parse --show-toplevel > /dev/null 2>&1 || exit 1
+ROOT_DIR=$(git rev-parse --show-toplevel)
+cd "$ROOT_DIR"
+
+# Reconfigure the build system
+make -f Makefile.reffs reconf
+if [ $? -ne 0 ]; then
+    echo "Pre-push: Autoconf failed. Aborting push."
+    exit 1
+fi
+
+# Style check
+make -f Makefile.reffs style
+if [ $? -ne 0 ]; then
+    echo "Pre-push: Style check failed. Run 'make -f Makefile.reffs fix-style' to fix it."
+    exit 1
+fi
+
+# License check
+make -f Makefile.reffs license
+if [ $? -ne 0 ]; then
+    echo "Pre-push: License check failed. Run './check_license.sh' for details."
+    exit 1
+fi
+
+# Out-of-tree build + tests
+./tree-build.sh
+if [ $? -ne 0 ]; then
+    echo "Pre-push: Out-of-tree build failed. Aborting push."
+    exit 1
+fi
+
+# Verify all commits being pushed have Signed-off-by
+remote="$1"
+url="$2"
+
+while read local_ref local_sha remote_ref remote_sha; do
+    if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        # Branch deletion — nothing to check
+        continue
+    fi
+
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        # New branch — check all commits
+        range="$local_sha"
+    else
+        range="$remote_sha..$local_sha"
+    fi
+
+    missing=$(git log --format="%H %s" "$range" -- 2>/dev/null | while read sha subject; do
+        if ! git log -1 --format="%B" "$sha" | grep -q "^Signed-off-by:"; then
+            echo "  $sha $subject"
+        fi
+    done)
+
+    if [ -n "$missing" ]; then
+        echo "Pre-push: The following commits are missing Signed-off-by:"
+        echo "$missing"
+        echo "Use 'git commit -s' or 'git commit --amend -s' to add sign-off."
+        exit 1
+    fi
+done
+
+exit 0

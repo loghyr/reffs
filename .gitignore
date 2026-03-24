@@ -31,7 +31,7 @@ py-compile
 test-driver
 *.trs
 *.log
-.git/hooks/pre-commit
+.git/hooks/pre-push
 ar-lib
 compile
 config.guess
