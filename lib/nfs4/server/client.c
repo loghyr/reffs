@@ -21,6 +21,7 @@
 #include "reffs/client.h"
 #include "reffs/client_persist.h"
 #include "nfs4/trace/nfs4.h"
+#include "reffs/time.h"
 #include "nfs4/stateid.h"
 #include "nfs4/client.h"
 
@@ -88,6 +89,8 @@ struct nfs4_client *nfs4_client_alloc(const verifier4 *verifier,
 	memcpy(&nc->nc_sin, sin, sizeof(*sin));
 	nc->nc_incarnation = incarnation;
 	nc->nc_confirmed = false;
+	__atomic_store_n(&nc->nc_last_renew_ns, reffs_now_ns(),
+			 __ATOMIC_RELAXED);
 
 	CDS_INIT_LIST_HEAD(&nc->nc_lock_owners);
 	pthread_mutex_init(&nc->nc_lock_owners_mutex, NULL);

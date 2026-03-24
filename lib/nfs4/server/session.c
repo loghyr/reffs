@@ -21,6 +21,7 @@
 #include "reffs/rcu.h"
 #include "reffs/rpc.h"
 #include "reffs/server.h"
+#include "reffs/time.h"
 #include "nfs4/compound.h"
 #include "nfs4/session.h"
 #include "nfs4/ops.h"
@@ -584,10 +585,24 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 	resok->sr_target_highest_slotid = ns->ns_slot_count - 1;
 	resok->sr_status_flags = 0;
 
+	{
+		struct server_state *ss = server_state_find();
+		bool in_grace = ss && server_in_grace(ss);
+
+		server_state_put(ss);
+		if (in_grace)
+			resok->sr_status_flags |=
+				SEQ4_STATUS_RESTART_RECLAIM_NEEDED;
+	}
+
 	compound->c_session = nfs4_session_get(ns);
 	compound->c_slot = slot;
 
 	compound->c_nfs4_client = nfs4_client_get(ns->ns_client);
+
+	/* Implicit lease renewal — RFC 5661 §8.3. */
+	__atomic_store_n(&ns->ns_client->nc_last_renew_ns, reffs_now_ns(),
+			 __ATOMIC_RELEASE);
 	ns = NULL; /* ref transferred to c_session */
 
 out:
