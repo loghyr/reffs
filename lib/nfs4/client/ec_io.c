@@ -46,7 +46,8 @@ struct ec_context {
 	struct mds_file ctx_file;
 	struct ec_layout ctx_layout;
 	struct ec_device *ctx_devs;
-	struct ds_conn *ctx_conns;
+	struct ds_conn *ctx_conns; /* NFSv3 DS connections (v1) */
+	struct mds_session *ctx_ds_sess; /* NFSv4.2 DS sessions (v2) */
 	struct ec_codec *ctx_codec;
 	uint32_t ctx_k;
 	uint32_t ctx_m;
@@ -55,11 +56,21 @@ struct ec_context {
 static int ec_resolve_mirrors(struct ec_context *ctx)
 {
 	uint32_t n = ctx->ctx_layout.el_nmirrors;
+	bool use_v2 = (ctx->ctx_layout.el_layout_type == LAYOUT4_FLEX_FILES_V2);
 
 	ctx->ctx_devs = calloc(n, sizeof(struct ec_device));
-	ctx->ctx_conns = calloc(n, sizeof(struct ds_conn));
-	if (!ctx->ctx_devs || !ctx->ctx_conns)
+	if (!ctx->ctx_devs)
 		return -ENOMEM;
+
+	if (use_v2) {
+		ctx->ctx_ds_sess = calloc(n, sizeof(struct mds_session));
+		if (!ctx->ctx_ds_sess)
+			return -ENOMEM;
+	} else {
+		ctx->ctx_conns = calloc(n, sizeof(struct ds_conn));
+		if (!ctx->ctx_conns)
+			return -ENOMEM;
+	}
 
 	for (uint32_t i = 0; i < n; i++) {
 		struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[i];
@@ -71,8 +82,15 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 		if (ret)
 			return ret;
 
-		ret = ds_connect(&ctx->ctx_conns[i], &ctx->ctx_devs[i],
-				 getuid(), getgid());
+		if (use_v2) {
+			/* NFSv4.2 session to each DS. */
+			mds_session_set_owner(&ctx->ctx_ds_sess[i], NULL);
+			ret = mds_session_create(&ctx->ctx_ds_sess[i],
+						 ctx->ctx_devs[i].ed_host);
+		} else {
+			ret = ds_connect(&ctx->ctx_conns[i], &ctx->ctx_devs[i],
+					 getuid(), getgid());
+		}
 		if (ret)
 			return ret;
 	}
@@ -110,14 +128,22 @@ static size_t shard_write_size(struct ec_codec *codec, int shard_idx,
 
 static void ec_disconnect_all(struct ec_context *ctx)
 {
-	if (!ctx->ctx_conns)
-		return;
+	uint32_t n = ctx->ctx_layout.el_nmirrors;
 
-	for (uint32_t i = 0; i < ctx->ctx_layout.el_nmirrors; i++)
-		ds_disconnect(&ctx->ctx_conns[i]);
+	if (ctx->ctx_ds_sess) {
+		for (uint32_t i = 0; i < n; i++)
+			mds_session_destroy(&ctx->ctx_ds_sess[i]);
+		free(ctx->ctx_ds_sess);
+		ctx->ctx_ds_sess = NULL;
+	}
 
-	free(ctx->ctx_conns);
-	ctx->ctx_conns = NULL;
+	if (ctx->ctx_conns) {
+		for (uint32_t i = 0; i < n; i++)
+			ds_disconnect(&ctx->ctx_conns[i]);
+		free(ctx->ctx_conns);
+		ctx->ctx_conns = NULL;
+	}
+
 	free(ctx->ctx_devs);
 	ctx->ctx_devs = NULL;
 }
@@ -280,9 +306,9 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	if (ret)
 		goto out_codec;
 
-	/* Get layout — use v1 for NFSv3 DS I/O. */
+	/* Get layout — v2 for CHUNK ops, v1 for NFSv3. */
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW,
-			     LAYOUT4_FLEX_FILES, &ctx.ctx_layout);
+			     LAYOUT4_FLEX_FILES_V2, &ctx.ctx_layout);
 	if (ret)
 		goto out_close;
 
@@ -371,6 +397,10 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 
 	/* Encode and write each stripe. */
 	size_t nstripes = padded_len / stripe_data;
+	uint32_t chunk_sz = ctx.ctx_layout.el_chunk_size;
+
+	if (chunk_sz == 0)
+		chunk_sz = (uint32_t)shard_size;
 
 	for (size_t s = 0; s < nstripes; s++) {
 		/* Point data shards into the padded buffer. */
@@ -392,14 +422,21 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 		/* Write data shards to mirrors 0..k-1. */
 		for (int i = 0; i < k; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
-			uint64_t off = s * shard_size;
 			uint32_t wsz = (uint32_t)shard_write_size(
 				ctx.ctx_codec, i, shard_size);
+			uint8_t *src = nonsys ? enc_data[i] : data_shards[i];
 
-			ret = ds_write(&ctx.ctx_conns[i], em->em_fh,
-				       em->em_fh_len, off,
-				       nonsys ? enc_data[i] : data_shards[i],
-				       wsz);
+			if (ctx.ctx_ds_sess) {
+				ret = ds_chunk_write(
+					&ctx.ctx_ds_sess[i], em->em_fh,
+					em->em_fh_len,
+					(uint64_t)s * (shard_size / chunk_sz),
+					chunk_sz, src, wsz, 1);
+			} else {
+				ret = ds_write(&ctx.ctx_conns[i], em->em_fh,
+					       em->em_fh_len, s * shard_size,
+					       src, wsz);
+			}
 			if (ret)
 				break;
 		}
@@ -410,18 +447,46 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 		for (int i = 0; i < m; i++) {
 			struct ec_mirror *em =
 				&ctx.ctx_layout.el_mirrors[k + i];
-			uint64_t off = s * shard_size;
 			uint32_t wsz = (uint32_t)shard_write_size(
 				ctx.ctx_codec, k + i, shard_size);
 
-			ret = ds_write(&ctx.ctx_conns[k + i], em->em_fh,
-				       em->em_fh_len, off, parity_shards[i],
-				       wsz);
+			if (ctx.ctx_ds_sess) {
+				ret = ds_chunk_write(
+					&ctx.ctx_ds_sess[k + i], em->em_fh,
+					em->em_fh_len,
+					(uint64_t)s * (shard_size / chunk_sz),
+					chunk_sz, parity_shards[i], wsz, 1);
+			} else {
+				ret = ds_write(&ctx.ctx_conns[k + i], em->em_fh,
+					       em->em_fh_len, s * shard_size,
+					       parity_shards[i], wsz);
+			}
 			if (ret)
 				break;
 		}
 		if (ret)
 			break;
+	}
+
+	/* FINALIZE + COMMIT for CHUNK ops (v2). */
+	if (ret == 0 && ctx.ctx_ds_sess) {
+		uint32_t total_blocks =
+			(uint32_t)(nstripes * (shard_size / chunk_sz));
+
+		for (int i = 0; i < k + m && ret == 0; i++) {
+			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
+
+			ret = ds_chunk_finalize(&ctx.ctx_ds_sess[i], em->em_fh,
+						em->em_fh_len, 0, total_blocks,
+						1);
+		}
+		for (int i = 0; i < k + m && ret == 0; i++) {
+			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
+
+			ret = ds_chunk_commit(&ctx.ctx_ds_sess[i], em->em_fh,
+					      em->em_fh_len, 0, total_blocks,
+					      1);
+		}
 	}
 
 	if (nonsys) {
@@ -474,7 +539,7 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		goto out_codec;
 
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ,
-			     LAYOUT4_FLEX_FILES, &ctx.ctx_layout);
+			     LAYOUT4_FLEX_FILES_V2, &ctx.ctx_layout);
 	if (ret)
 		goto out_close;
 
@@ -524,19 +589,35 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 
 	size_t total_read = 0;
 
+	uint32_t rd_chunk_sz = ctx.ctx_layout.el_chunk_size;
+
+	if (rd_chunk_sz == 0)
+		rd_chunk_sz = (uint32_t)shard_size;
+
 	for (size_t s = 0; s < nstripes && total_read < buf_len; s++) {
 		/* Read all k+m shards (tolerate failures up to m). */
 		for (int i = 0; i < total; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 			uint32_t nread = 0;
-			uint64_t off = s * shard_size;
 			uint32_t rsz = (uint32_t)shard_write_size(
 				ctx.ctx_codec, i, shard_size);
 
-			ret = ds_read(&ctx.ctx_conns[i], em->em_fh,
-				      em->em_fh_len, off, shards[i], rsz,
-				      &nread);
-			present[i] = (ret == 0 && nread == rsz);
+			if (ctx.ctx_ds_sess) {
+				uint32_t nblk = rsz / rd_chunk_sz;
+
+				ret = ds_chunk_read(&ctx.ctx_ds_sess[i],
+						    em->em_fh, em->em_fh_len,
+						    (uint64_t)s * (shard_size /
+								   rd_chunk_sz),
+						    nblk, shards[i],
+						    rd_chunk_sz, &nread);
+				present[i] = (ret == 0 && nread == nblk);
+			} else {
+				ret = ds_read(&ctx.ctx_conns[i], em->em_fh,
+					      em->em_fh_len, s * shard_size,
+					      shards[i], rsz, &nread);
+				present[i] = (ret == 0 && nread == rsz);
+			}
 		}
 
 		/* RS-decode to reconstruct any missing shards. */
