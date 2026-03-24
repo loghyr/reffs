@@ -3,12 +3,9 @@
 #
 # EC Benchmark: 1 MDS + 6 DSes + 1 client on a Docker bridge network.
 #
-# Uses the Fedora 43 image (reffs).  Builds without sanitizers
-# and without debug for production-like performance numbers.
-#
-# Readiness: each DS has a healthcheck that probes TCP 2049.
-# The MDS depends_on DSes with condition: service_healthy.
-# The bench client depends_on MDS with condition: service_healthy.
+# A builder container compiles once into a shared volume.
+# All other containers mount that volume read-only and just run
+# the pre-built binaries.
 #
 # Usage:
 #   make -f Makefile.reffs run-benchmark
@@ -21,30 +18,47 @@ x-ds-common: &ds-common
       soft: 65536
       hard: 65536
   volumes:
-    - ../../:/reffs:ro
+    - build-vol:/shared:ro
   healthcheck:
     test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
     interval: 5s
     timeout: 3s
     retries: 120
-    start_period: 10s
+    start_period: 5s
   command: >
     /bin/bash -c "
+      while [ ! -f /shared/ready ]; do sleep 1; done &&
       rm -rf /tmp/reffs_ds_data /tmp/reffs_ds_state &&
       mkdir -p /tmp/reffs_ds_data/sb_1 /tmp/reffs_ds_state &&
-      rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
-      find /src -name 'parsetab.py' -delete &&
-      cd /src && mkdir -p m4 && autoreconf -fi &&
-      cd /build && ../src/configure &&
-      find /src /build -name 'parsetab.py' -delete &&
-      make -j1 &&
-      exec ./src/reffsd --config=/reffs/deploy/benchmark/ds.toml
+      exec /shared/build/src/reffsd --config=/shared/src/deploy/benchmark/ds.toml
     "
 
 services:
+  builder:
+    container_name: reffs-bench-builder
+    image: reffs-dev
+    volumes:
+      - ../../:/reffs:ro
+      - build-vol:/shared
+    command: >
+      /bin/bash -c "
+        rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /shared/src/ &&
+        find /shared/src -name 'parsetab.py' -delete &&
+        cd /shared/src && mkdir -p m4 && autoreconf -fi &&
+        mkdir -p /shared/build && cd /shared/build &&
+        /shared/src/configure &&
+        find /shared -name 'parsetab.py' -delete &&
+        make -j1 &&
+        touch /shared/ready &&
+        echo 'Builder done.'
+      "
+
   ds0:
     <<: *ds-common
     container_name: reffs-bench-ds0
+    depends_on:
+      builder:
+        condition: service_completed_successfully
     networks:
       bench:
         aliases: [reffs-ds0]
@@ -52,6 +66,9 @@ services:
   ds1:
     <<: *ds-common
     container_name: reffs-bench-ds1
+    depends_on:
+      builder:
+        condition: service_completed_successfully
     networks:
       bench:
         aliases: [reffs-ds1]
@@ -59,6 +76,9 @@ services:
   ds2:
     <<: *ds-common
     container_name: reffs-bench-ds2
+    depends_on:
+      builder:
+        condition: service_completed_successfully
     networks:
       bench:
         aliases: [reffs-ds2]
@@ -66,6 +86,9 @@ services:
   ds3:
     <<: *ds-common
     container_name: reffs-bench-ds3
+    depends_on:
+      builder:
+        condition: service_completed_successfully
     networks:
       bench:
         aliases: [reffs-ds3]
@@ -73,6 +96,9 @@ services:
   ds4:
     <<: *ds-common
     container_name: reffs-bench-ds4
+    depends_on:
+      builder:
+        condition: service_completed_successfully
     networks:
       bench:
         aliases: [reffs-ds4]
@@ -80,6 +106,9 @@ services:
   ds5:
     <<: *ds-common
     container_name: reffs-bench-ds5
+    depends_on:
+      builder:
+        condition: service_completed_successfully
     networks:
       bench:
         aliases: [reffs-ds5]
@@ -112,24 +141,18 @@ services:
       - "2049:2049"
       - "2049:2049/udp"
     volumes:
-      - ../../:/reffs:ro
+      - build-vol:/shared:ro
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
       interval: 5s
       timeout: 3s
       retries: 120
-      start_period: 10s
+      start_period: 5s
     command: >
       /bin/bash -c "
         rm -rf /tmp/reffs_mds_data /tmp/reffs_mds_state &&
         mkdir -p /tmp/reffs_mds_data /tmp/reffs_mds_state &&
-        rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
-        find /src -name 'parsetab.py' -delete &&
-        cd /src && mkdir -p m4 && autoreconf -fi &&
-        cd /build && ../src/configure &&
-        find /src -name 'parsetab.py' -delete &&
-        make -j$$(nproc) &&
-        exec ./src/reffsd --config=/reffs/deploy/benchmark/mds.toml
+        exec /shared/build/src/reffsd --config=/shared/src/deploy/benchmark/mds.toml
       "
 
   bench:
@@ -142,19 +165,17 @@ services:
     networks:
       - bench
     volumes:
+      - build-vol:/shared:ro
       - ../../:/reffs:ro
     command: >
       /bin/bash -c "
-        rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ &&
-        find /src -name 'parsetab.py' -delete &&
-        cd /src && mkdir -p m4 && autoreconf -fi &&
-        cd /build && ../src/configure &&
-        find /src -name 'parsetab.py' -delete &&
-        make -j$$(nproc) &&
-        exec /reffs/scripts/ec_benchmark.sh /build/tools/ec_demo reffs-mds
+        exec /reffs/scripts/ec_benchmark.sh /shared/build/tools/ec_demo reffs-mds
       "
     profiles:
       - run
+
+volumes:
+  build-vol:
 
 networks:
   bench:
