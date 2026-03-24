@@ -484,9 +484,6 @@ static size_t mojette_shard_size(struct ec_codec *codec, int shard_idx,
 	if (mcp->mcp_systematic && shard_idx < k)
 		return data_shard_len;
 
-	if (mcp->mcp_systematic)
-		dir_idx = shard_idx; /* parity starts at index k */
-
 	return (size_t)moj_projection_size(mcp->mcp_dirs[dir_idx].md_p,
 					   mcp->mcp_dirs[dir_idx].md_q, P, k) *
 	       sizeof(uint64_t);

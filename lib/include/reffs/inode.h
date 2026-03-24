@@ -22,8 +22,7 @@ struct reffs_dirent;
 struct layout_segments;
 struct chunk_store;
 
-/* lib/nfs4/server/chunk_store.c — declared here to avoid layering violations. */
-void chunk_store_destroy(struct chunk_store *cs);
+/* Forward declaration only; weak stub lives in lib/fs/inode.c. */
 
 struct reffs_file_handle {
 	uint64_t rfh_ino;
