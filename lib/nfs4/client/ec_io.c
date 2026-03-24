@@ -53,6 +53,20 @@ struct ec_context {
 	uint32_t ctx_m;
 };
 
+/*
+ * Find an existing connection to the same DS host, or return -1.
+ */
+static int find_existing_conn(struct ec_context *ctx, uint32_t idx)
+{
+	for (uint32_t j = 0; j < idx; j++) {
+		if (strcmp(ctx->ctx_devs[j].ed_host,
+			   ctx->ctx_devs[idx].ed_host) == 0 &&
+		    ctx->ctx_devs[j].ed_port == ctx->ctx_devs[idx].ed_port)
+			return (int)j;
+	}
+	return -1;
+}
+
 static int ec_resolve_mirrors(struct ec_context *ctx)
 {
 	uint32_t n = ctx->ctx_layout.el_nmirrors;
@@ -84,15 +98,37 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 
 		if (use_v2) {
 			/* NFSv4.2 session to each DS — unique owner per mirror. */
-			char ds_id[32];
+			int existing = find_existing_conn(ctx, i);
 
-			snprintf(ds_id, sizeof(ds_id), "ds%u-%u", i, getpid());
-			mds_session_set_owner(&ctx->ctx_ds_sess[i], ds_id);
-			ret = mds_session_create(&ctx->ctx_ds_sess[i],
-						 ctx->ctx_devs[i].ed_host);
+			if (existing >= 0) {
+				ctx->ctx_ds_sess[i] =
+					ctx->ctx_ds_sess[existing];
+			} else {
+				char ds_id[32];
+
+				snprintf(ds_id, sizeof(ds_id), "ds%u-%u", i,
+					 getpid());
+				mds_session_set_owner(&ctx->ctx_ds_sess[i],
+						      ds_id);
+				ret = mds_session_create(
+					&ctx->ctx_ds_sess[i],
+					ctx->ctx_devs[i].ed_host);
+			}
 		} else {
-			ret = ds_connect(&ctx->ctx_conns[i], &ctx->ctx_devs[i],
-					 em->em_uid, em->em_gid);
+			/*
+			 * NFSv3: share one connection per unique DS.
+			 * TIRPC's clnt_create may reuse/conflict when
+			 * multiple CLIENTs target the same host:port.
+			 */
+			int existing = find_existing_conn(ctx, i);
+
+			if (existing >= 0) {
+				ctx->ctx_conns[i] = ctx->ctx_conns[existing];
+			} else {
+				ret = ds_connect(&ctx->ctx_conns[i],
+						 &ctx->ctx_devs[i], em->em_uid,
+						 em->em_gid);
+			}
 		}
 		if (ret)
 			return ret;
@@ -145,15 +181,38 @@ static void ec_disconnect_all(struct ec_context *ctx)
 	uint32_t n = ctx->ctx_layout.el_nmirrors;
 
 	if (ctx->ctx_ds_sess) {
-		for (uint32_t i = 0; i < n; i++)
-			mds_session_destroy(&ctx->ctx_ds_sess[i]);
+		for (uint32_t i = 0; i < n; i++) {
+			/* Skip duplicates (shared sessions). */
+			bool dup = false;
+
+			for (uint32_t j = 0; j < i; j++) {
+				if (ctx->ctx_ds_sess[j].ms_clnt ==
+				    ctx->ctx_ds_sess[i].ms_clnt) {
+					dup = true;
+					break;
+				}
+			}
+			if (!dup)
+				mds_session_destroy(&ctx->ctx_ds_sess[i]);
+		}
 		free(ctx->ctx_ds_sess);
 		ctx->ctx_ds_sess = NULL;
 	}
 
 	if (ctx->ctx_conns) {
-		for (uint32_t i = 0; i < n; i++)
-			ds_disconnect(&ctx->ctx_conns[i]);
+		for (uint32_t i = 0; i < n; i++) {
+			bool dup = false;
+
+			for (uint32_t j = 0; j < i; j++) {
+				if (ctx->ctx_conns[j].dc_clnt ==
+				    ctx->ctx_conns[i].dc_clnt) {
+					dup = true;
+					break;
+				}
+			}
+			if (!dup)
+				ds_disconnect(&ctx->ctx_conns[i]);
+		}
 		free(ctx->ctx_conns);
 		ctx->ctx_conns = NULL;
 	}
