@@ -482,8 +482,6 @@ uint32_t nfs4_op_rename(struct compound *compound)
 	resok->target_cinfo.before = timespec_to_changeid(&new_before);
 	resok->target_cinfo.after = timespec_to_changeid(&new_after);
 
-	*status = NFS4_OK;
-
 out:
 	inode_active_put(old_dir);
 	free(oldname);
