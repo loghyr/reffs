@@ -65,7 +65,8 @@ static uint32_t parse_owner_id(const char *str, uint32_t len)
 /* ------------------------------------------------------------------ */
 
 int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
-		   layoutiomode4 iomode, struct ec_layout *layout)
+		   layoutiomode4 iomode, layouttype4 layout_type,
+		   struct ec_layout *layout)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -100,7 +101,7 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 	LAYOUTGET4args *lg_args = &slot->nfs_argop4_u.oplayoutget;
 
 	lg_args->loga_signal_layout_avail = false;
-	lg_args->loga_layout_type = LAYOUT4_FLEX_FILES;
+	lg_args->loga_layout_type = layout_type;
 	lg_args->loga_iomode = iomode;
 	lg_args->loga_offset = 0;
 	lg_args->loga_length = 0xFFFFFFFFFFFFFFFFULL; /* entire file */
@@ -127,8 +128,8 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 		&lg_res->nfs_resop4_u.oplayoutget.LAYOUTGET4res_u.logr_resok4;
 
 	memcpy(&layout->el_stateid, &resok->logr_stateid, sizeof(stateid4));
+	layout->el_layout_type = layout_type;
 
-	/* Decode the first layout4 entry's loc_body as ff_layout4. */
 	if (resok->logr_layout.logr_layout_len < 1) {
 		mds_compound_fini(&mc);
 		return -ENODATA;
@@ -136,61 +137,153 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 
 	layout4 *lo = &resok->logr_layout.logr_layout_val[0];
 	layout_content4 *loc = &lo->lo_content;
-
 	XDR xdrs;
-	ff_layout4 ffl;
 
-	memset(&ffl, 0, sizeof(ffl));
-	xdrmem_create(&xdrs, loc->loc_body.loc_body_val,
-		      loc->loc_body.loc_body_len, XDR_DECODE);
+	if (layout_type == LAYOUT4_FLEX_FILES_V2) {
+		/* ---- Flex Files v2 ---- */
+		ffv2_layout4 ffl;
 
-	if (!xdr_ff_layout4(&xdrs, &ffl)) {
+		memset(&ffl, 0, sizeof(ffl));
+		xdrmem_create(&xdrs, loc->loc_body.loc_body_val,
+			      loc->loc_body.loc_body_len, XDR_DECODE);
+		if (!xdr_ffv2_layout4(&xdrs, &ffl)) {
+			xdr_destroy(&xdrs);
+			mds_compound_fini(&mc);
+			return -EIO;
+		}
 		xdr_destroy(&xdrs);
-		mds_compound_fini(&mc);
-		return -EIO;
-	}
-	xdr_destroy(&xdrs);
 
-	layout->el_stripe_unit = ffl.ffl_stripe_unit;
-	layout->el_nmirrors = ffl.ffl_mirrors.ffl_mirrors_len;
-	layout->el_mirrors =
-		calloc(layout->el_nmirrors, sizeof(struct ec_mirror));
-	if (!layout->el_mirrors) {
-		xdr_free((xdrproc_t)xdr_ff_layout4, (caddr_t)&ffl);
-		mds_compound_fini(&mc);
-		return -ENOMEM;
-	}
-
-	for (uint32_t i = 0; i < layout->el_nmirrors; i++) {
-		ff_mirror4 *m = &ffl.ffl_mirrors.ffl_mirrors_val[i];
-
-		if (m->ffm_data_servers.ffm_data_servers_len < 1)
-			continue;
-
-		ff_data_server4 *ds =
-			&m->ffm_data_servers.ffm_data_servers_val[0];
-		struct ec_mirror *em = &layout->el_mirrors[i];
-
-		memcpy(em->em_deviceid, ds->ffds_deviceid, sizeof(deviceid4));
-		em->em_efficiency = ds->ffds_efficiency;
-
-		/* Copy the first NFSv3 filehandle. */
-		if (ds->ffds_fh_vers.ffds_fh_vers_len > 0) {
-			nfs_fh4 *fh = &ds->ffds_fh_vers.ffds_fh_vers_val[0];
-
-			em->em_fh_len = fh->nfs_fh4_len;
-			if (em->em_fh_len > sizeof(em->em_fh))
-				em->em_fh_len = sizeof(em->em_fh);
-			memcpy(em->em_fh, fh->nfs_fh4_val, em->em_fh_len);
+		if (ffl.ffl_mirrors.ffl_mirrors_len < 1) {
+			xdr_free((xdrproc_t)xdr_ffv2_layout4, (caddr_t)&ffl);
+			mds_compound_fini(&mc);
+			return -ENODATA;
 		}
 
-		em->em_uid = parse_owner_id(ds->ffds_user.utf8string_val,
-					    ds->ffds_user.utf8string_len);
-		em->em_gid = parse_owner_id(ds->ffds_group.utf8string_val,
-					    ds->ffds_group.utf8string_len);
+		ffv2_mirror4 *m0 = &ffl.ffl_mirrors.ffl_mirrors_val[0];
+
+		layout->el_coding_type = m0->ffm_coding_type_data.fctd_coding;
+		layout->el_chunk_size = m0->ffm_striping_unit_size;
+		layout->el_stripe_unit = m0->ffm_striping_unit_size;
+
+		/* Count total data servers across all stripes. */
+		uint32_t nds = 0;
+
+		for (uint32_t s = 0; s < m0->ffm_stripes.ffm_stripes_len; s++)
+			nds += m0->ffm_stripes.ffm_stripes_val[s]
+				       .ffs_data_servers.ffs_data_servers_len;
+
+		layout->el_nmirrors = nds;
+		layout->el_mirrors = calloc(nds, sizeof(struct ec_mirror));
+		if (!layout->el_mirrors) {
+			xdr_free((xdrproc_t)xdr_ffv2_layout4, (caddr_t)&ffl);
+			mds_compound_fini(&mc);
+			return -ENOMEM;
+		}
+
+		uint32_t idx = 0;
+
+		for (uint32_t s = 0; s < m0->ffm_stripes.ffm_stripes_len; s++) {
+			ffv2_stripes4 *st = &m0->ffm_stripes.ffm_stripes_val[s];
+
+			for (uint32_t d = 0;
+			     d < st->ffs_data_servers.ffs_data_servers_len;
+			     d++) {
+				ffv2_data_server4 *ds =
+					&st->ffs_data_servers
+						 .ffs_data_servers_val[d];
+				struct ec_mirror *em =
+					&layout->el_mirrors[idx++];
+
+				memcpy(em->em_deviceid, ds->ffv2ds_deviceid,
+				       sizeof(deviceid4));
+				em->em_efficiency = ds->ffv2ds_efficiency;
+				em->em_flags = ds->ffv2ds_flags;
+
+				if (ds->ffv2ds_file_info.ffv2ds_file_info_len >
+				    0) {
+					ffv2_file_info4 *fi =
+						&ds->ffv2ds_file_info
+							 .ffv2ds_file_info_val[0];
+					nfs_fh4 *fh = &fi->fffi_fh_vers;
+
+					em->em_fh_len = fh->nfs_fh4_len;
+					if (em->em_fh_len > sizeof(em->em_fh))
+						em->em_fh_len =
+							sizeof(em->em_fh);
+					memcpy(em->em_fh, fh->nfs_fh4_val,
+					       em->em_fh_len);
+				}
+
+				em->em_uid = parse_owner_id(
+					ds->ffv2ds_user.utf8string_val,
+					ds->ffv2ds_user.utf8string_len);
+				em->em_gid = parse_owner_id(
+					ds->ffv2ds_group.utf8string_val,
+					ds->ffv2ds_group.utf8string_len);
+			}
+		}
+
+		xdr_free((xdrproc_t)xdr_ffv2_layout4, (caddr_t)&ffl);
+	} else {
+		/* ---- Flex Files v1 ---- */
+		ff_layout4 ffl;
+
+		memset(&ffl, 0, sizeof(ffl));
+		xdrmem_create(&xdrs, loc->loc_body.loc_body_val,
+			      loc->loc_body.loc_body_len, XDR_DECODE);
+		if (!xdr_ff_layout4(&xdrs, &ffl)) {
+			xdr_destroy(&xdrs);
+			mds_compound_fini(&mc);
+			return -EIO;
+		}
+		xdr_destroy(&xdrs);
+
+		layout->el_stripe_unit = ffl.ffl_stripe_unit;
+		layout->el_nmirrors = ffl.ffl_mirrors.ffl_mirrors_len;
+		layout->el_mirrors =
+			calloc(layout->el_nmirrors, sizeof(struct ec_mirror));
+		if (!layout->el_mirrors) {
+			xdr_free((xdrproc_t)xdr_ff_layout4, (caddr_t)&ffl);
+			mds_compound_fini(&mc);
+			return -ENOMEM;
+		}
+
+		for (uint32_t i = 0; i < layout->el_nmirrors; i++) {
+			ff_mirror4 *m = &ffl.ffl_mirrors.ffl_mirrors_val[i];
+
+			if (m->ffm_data_servers.ffm_data_servers_len < 1)
+				continue;
+
+			ff_data_server4 *ds =
+				&m->ffm_data_servers.ffm_data_servers_val[0];
+			struct ec_mirror *em = &layout->el_mirrors[i];
+
+			memcpy(em->em_deviceid, ds->ffds_deviceid,
+			       sizeof(deviceid4));
+			em->em_efficiency = ds->ffds_efficiency;
+
+			if (ds->ffds_fh_vers.ffds_fh_vers_len > 0) {
+				nfs_fh4 *fh =
+					&ds->ffds_fh_vers.ffds_fh_vers_val[0];
+
+				em->em_fh_len = fh->nfs_fh4_len;
+				if (em->em_fh_len > sizeof(em->em_fh))
+					em->em_fh_len = sizeof(em->em_fh);
+				memcpy(em->em_fh, fh->nfs_fh4_val,
+				       em->em_fh_len);
+			}
+
+			em->em_uid =
+				parse_owner_id(ds->ffds_user.utf8string_val,
+					       ds->ffds_user.utf8string_len);
+			em->em_gid =
+				parse_owner_id(ds->ffds_group.utf8string_val,
+					       ds->ffds_group.utf8string_len);
+		}
+
+		xdr_free((xdrproc_t)xdr_ff_layout4, (caddr_t)&ffl);
 	}
 
-	xdr_free((xdrproc_t)xdr_ff_layout4, (caddr_t)&ffl);
 	mds_compound_fini(&mc);
 	return 0;
 }
@@ -200,7 +293,7 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 /* ------------------------------------------------------------------ */
 
 int mds_getdeviceinfo(struct mds_session *ms, const deviceid4 devid,
-		      struct ec_device *dev)
+		      layouttype4 layout_type, struct ec_device *dev)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -227,7 +320,7 @@ int mds_getdeviceinfo(struct mds_session *ms, const deviceid4 devid,
 
 	GETDEVICEINFO4args *gdi_args = &slot->nfs_argop4_u.opgetdeviceinfo;
 	memcpy(gdi_args->gdia_device_id, devid, sizeof(deviceid4));
-	gdi_args->gdia_layout_type = LAYOUT4_FLEX_FILES;
+	gdi_args->gdia_layout_type = layout_type;
 	gdi_args->gdia_maxcount = 65536;
 	memset(&gdi_args->gdia_notify_types, 0, sizeof(bitmap4));
 
@@ -321,7 +414,7 @@ int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
 
 	LAYOUTRETURN4args *lr_args = &slot->nfs_argop4_u.oplayoutreturn;
 	lr_args->lora_reclaim = false;
-	lr_args->lora_layout_type = LAYOUT4_FLEX_FILES;
+	lr_args->lora_layout_type = layout->el_layout_type;
 	lr_args->lora_iomode = LAYOUTIOMODE4_ANY;
 	lr_args->lora_layoutreturn.lr_returntype = LAYOUTRETURN4_FILE;
 

@@ -101,22 +101,27 @@ int mds_file_close(struct mds_session *ms, struct mds_file *mf);
 struct ec_mirror {
 	deviceid4 em_deviceid;
 	uint32_t em_efficiency;
-	uint8_t em_fh[128]; /* NFSv3 filehandle */
+	uint8_t em_fh[128]; /* NFSv3/NFSv4 filehandle */
 	uint32_t em_fh_len;
 	uint32_t em_uid;
 	uint32_t em_gid;
+	uint32_t em_flags; /* FFV2_DS_FLAGS_* (v2 only, 0 for v1) */
 };
 
 /* Parsed layout from LAYOUTGET. */
 struct ec_layout {
 	stateid4 el_stateid;
-	uint32_t el_stripe_unit;
+	layouttype4 el_layout_type; /* v1 or v2 */
+	uint32_t el_stripe_unit; /* v1: ffl_stripe_unit */
+	uint32_t el_chunk_size; /* v2: ffm_striping_unit_size */
+	uint32_t el_coding_type; /* v2: ffv2_coding_type4 */
 	uint32_t el_nmirrors;
 	struct ec_mirror *el_mirrors;
 };
 
 int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
-		   layoutiomode4 iomode, struct ec_layout *layout);
+		   layoutiomode4 iomode, layouttype4 layout_type,
+		   struct ec_layout *layout);
 int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
 		      struct ec_layout *layout);
 void ec_layout_free(struct ec_layout *layout);
@@ -128,7 +133,7 @@ struct ec_device {
 };
 
 int mds_getdeviceinfo(struct mds_session *ms, const deviceid4 devid,
-		      struct ec_device *dev);
+		      layouttype4 layout_type, struct ec_device *dev);
 
 /* ------------------------------------------------------------------ */
 /* DS I/O (NFSv3)                                                      */
