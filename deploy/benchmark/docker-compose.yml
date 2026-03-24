@@ -6,6 +6,10 @@
 # Uses the Fedora 43 image (reffs).  Builds without sanitizers
 # and without debug for production-like performance numbers.
 #
+# Readiness: each DS has a healthcheck that probes TCP 2049.
+# The MDS depends_on DSes with condition: service_healthy.
+# The bench client depends_on MDS with condition: service_healthy.
+#
 # Usage:
 #   make -f Makefile.reffs run-benchmark
 
@@ -18,7 +22,13 @@ x-ds-common: &ds-common
       hard: 65536
   volumes:
     - ../../:/reffs:ro
-  command: &ds-cmd >
+  healthcheck:
+    test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
+    interval: 5s
+    timeout: 3s
+    retries: 120
+    start_period: 10s
+  command: >
     /bin/bash -c "
       rm -rf /tmp/reffs_ds_data /tmp/reffs_ds_state &&
       mkdir -p /tmp/reffs_ds_data/sb_1 /tmp/reffs_ds_state &&
@@ -78,12 +88,18 @@ services:
     image: reffs
     privileged: true
     depends_on:
-      - ds0
-      - ds1
-      - ds2
-      - ds3
-      - ds4
-      - ds5
+      ds0:
+        condition: service_healthy
+      ds1:
+        condition: service_healthy
+      ds2:
+        condition: service_healthy
+      ds3:
+        condition: service_healthy
+      ds4:
+        condition: service_healthy
+      ds5:
+        condition: service_healthy
     ulimits:
       nofile:
         soft: 65536
@@ -96,6 +112,12 @@ services:
       - "2049:2049/udp"
     volumes:
       - ../../:/reffs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 120
+      start_period: 10s
     command: >
       /bin/bash -c "
         rm -rf /tmp/reffs_mds_data /tmp/reffs_mds_state &&
@@ -105,7 +127,6 @@ services:
         cd /build && ../src/configure &&
         make -j$$(nproc) &&
         rpcbind &&
-        sleep 5 &&
         exec ./src/reffsd --config=/reffs/deploy/benchmark/mds.toml
       "
 
@@ -114,7 +135,8 @@ services:
     image: reffs
     privileged: true
     depends_on:
-      - mds
+      mds:
+        condition: service_healthy
     networks:
       - bench
     volumes:
