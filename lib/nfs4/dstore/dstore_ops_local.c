@@ -86,7 +86,17 @@ static int local_create(struct dstore *ds __attribute__((unused)),
 		return -ESTALE;
 
 	ret = vfs_create(parent, name, 0640, &ap, &child, NULL, NULL);
-	if (ret) {
+	if (ret == -EEXIST) {
+		/*
+		 * UNCHECKED semantics: if the file already exists
+		 * (e.g., runway restart), look it up and return its FH.
+		 */
+		child = inode_name_get_inode(parent, (char *)name);
+		if (!child) {
+			inode_active_put(parent);
+			return -ENOENT;
+		}
+	} else if (ret) {
 		inode_active_put(parent);
 		return ret;
 	}
