@@ -15,4 +15,7 @@ AM_LDFLAGS = -rdynamic
 
 lib_LTLIBRARIES = libreffs_rpc.la
 libreffs_rpc_la_SOURCES = \
+	gss_context.c \
 	rpc.c
+
+libreffs_rpc_la_LIBADD = $(GSSAPI_LIBS)
