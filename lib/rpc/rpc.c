@@ -244,6 +244,103 @@ int rpc_parse_call_data(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * Compute the GSS reply verifier for RPCSEC_GSS DATA requests.
+ * RFC 2203 §5.3.3.3: the verifier is a MIC over the sequence
+ * number (4 bytes, network order).
+ *
+ * On success, sets rt->rt_info.ri_verifier_body/len and returns
+ * the padded size to add to the reply buffer.  On failure or
+ * non-GSS requests, returns 0 (use AUTH_NONE verifier).
+ */
+static uint32_t rpc_compute_gss_reply_verifier(struct rpc_trans *rt
+#ifndef HAVE_GSSAPI_KRB5
+					       __attribute__((unused))
+#endif
+)
+{
+#ifdef HAVE_GSSAPI_KRB5
+	if (rt->rt_info.ri_cred.rc_flavor != RPCSEC_GSS ||
+	    rt->rt_info.ri_cred.rc_gss.gc_proc != RPCSEC_GSS_DATA)
+		return 0;
+
+	struct gss_ctx_entry *gctx =
+		gss_ctx_find(rt->rt_info.ri_cred.rc_gss.gc_handle,
+			     rt->rt_info.ri_cred.rc_gss.gc_handle_len);
+	if (!gctx)
+		return 0;
+
+	/* MIC is over the sequence number in network byte order. */
+	uint32_t seq_net = htonl(rt->rt_info.ri_cred.rc_gss.gc_seq);
+	void *mic = NULL;
+	uint32_t mic_len = 0;
+	uint32_t major;
+
+	major = gss_ctx_get_mic(gctx, &seq_net, sizeof(seq_net), &mic,
+				&mic_len);
+	gss_ctx_put(gctx);
+
+	if (major != GSS_S_COMPLETE || !mic)
+		return 0;
+
+	/* Free inbound verifier before overwriting with reply MIC. */
+	free(rt->rt_info.ri_verifier_body);
+	rt->rt_info.ri_verifier_body = malloc(mic_len);
+	if (!rt->rt_info.ri_verifier_body) {
+		OM_uint32 minor;
+		gss_buffer_desc buf = { .length = mic_len, .value = mic };
+
+		gss_release_buffer(&minor, &buf);
+		return 0;
+	}
+	memcpy(rt->rt_info.ri_verifier_body, mic, mic_len);
+	rt->rt_info.ri_verifier_len = mic_len;
+
+	{
+		OM_uint32 minor;
+		gss_buffer_desc buf = { .length = mic_len, .value = mic };
+
+		gss_release_buffer(&minor, &buf);
+	}
+
+	return (mic_len + 3) & ~3u;
+#else
+	return 0;
+#endif
+}
+
+/*
+ * Encode the reply verifier (AUTH_NONE or RPCSEC_GSS MIC).
+ * Returns the next write pointer, or NULL on failure.
+ * Caller must have allocated space for the verifier in the reply buffer.
+ */
+static uint32_t *rpc_encode_reply_verifier(struct rpc_trans *rt, uint32_t *p)
+{
+	if (rt->rt_info.ri_verifier_body && rt->rt_info.ri_verifier_len > 0) {
+		/* RPCSEC_GSS verifier. */
+		p = rpc_encode_uint32_t(rt, p, RPCSEC_GSS);
+		if (!p)
+			return NULL;
+		p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_verifier_len);
+		if (!p)
+			return NULL;
+		memcpy(p, rt->rt_info.ri_verifier_body,
+		       rt->rt_info.ri_verifier_len);
+		uint32_t padded = (rt->rt_info.ri_verifier_len + 3) & ~3u;
+
+		p = (uint32_t *)((char *)p + padded);
+		rt->rt_offset += padded;
+		return p;
+	}
+
+	/* AUTH_NONE verifier (default). */
+	p = rpc_encode_uint32_t(rt, p, 0);
+	if (!p)
+		return NULL;
+	p = rpc_encode_uint32_t(rt, p, 0);
+	return p;
+}
+
 static int send_auth_tls_response(struct rpc_trans *rt)
 {
 	uint32_t msg_len;
@@ -506,7 +603,9 @@ void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t)
 	if (ph && ph->ph_op_handler && ph->ph_op_handler->roh_res_f)
 		xdr_size = xdr_sizeof(ph->ph_op_handler->roh_res_f, ph->ph_res);
 
-	rt->rt_reply_len = 7 * sizeof(uint32_t) + xdr_size;
+	uint32_t verf_extra = rpc_compute_gss_reply_verifier(rt);
+
+	rt->rt_reply_len = 7 * sizeof(uint32_t) + verf_extra + xdr_size;
 	msg_len = rt->rt_reply_len - sizeof(uint32_t);
 	rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
 	if (!rt->rt_reply)
@@ -526,10 +625,7 @@ void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t)
 	p = rpc_encode_uint32_t(rt, p, 0); /* MSG_ACCEPTED */
 	if (!p)
 		goto enc_err;
-	p = rpc_encode_uint32_t(rt, p, 0); /* AUTH_NULL flavor */
-	if (!p)
-		goto enc_err;
-	p = rpc_encode_uint32_t(rt, p, 0); /* verifier len = 0 */
+	p = rpc_encode_reply_verifier(rt, p);
 	if (!p)
 		goto enc_err;
 	p = rpc_encode_uint32_t(rt, p, 0); /* accept_stat = SUCCESS */
@@ -1088,6 +1184,45 @@ int rpc_process_task(struct task *t)
 		reffs_set_context(NULL);
 	}
 
+#ifdef HAVE_GSSAPI_KRB5
+	/*
+	 * For GSS DATA requests, map the principal to uid/gid and
+	 * store in rc_unix so downstream code (compound, access
+	 * checks) works unchanged.
+	 */
+	if (rt->rt_info.ri_cred.rc_flavor == RPCSEC_GSS &&
+	    rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_DATA) {
+		struct gss_ctx_entry *gctx =
+			gss_ctx_find(rt->rt_info.ri_cred.rc_gss.gc_handle,
+				     rt->rt_info.ri_cred.rc_gss.gc_handle_len);
+		if (gctx) {
+			uid_t uid;
+			gid_t gid;
+			int map_ret;
+
+			map_ret = gss_ctx_map_to_unix(gctx, &uid, &gid);
+			if (map_ret < 0)
+				TRACE("GSS principal mapping failed, "
+				      "using nobody");
+
+			rt->rt_info.ri_mapped_uid = uid;
+			rt->rt_info.ri_mapped_gid = gid;
+			rt->rt_info.ri_gss_mapped = true;
+
+			struct reffs_context ctx = { .uid = uid, .gid = gid };
+
+			reffs_set_context(&ctx);
+			gss_ctx_put(gctx);
+		} else {
+			TRACE("GSS DATA: context not found for handle");
+			rt->rt_info.ri_auth_stat = RPCSEC_GSS_CTXPROBLEM;
+			rt->rt_info.ri_reply_stat = MSG_DENIED;
+			rt->rt_info.ri_reject_stat = AUTH_ERROR;
+			goto handle_rpc_error;
+		}
+	}
+#endif
+
 	if (rt->rt_info.ri_cred.rc_flavor == AUTH_TLS &&
 	    rt->rt_info.ri_procedure == 0) {
 		LOG("AUTH_TLS probe detected on fd=%d len=%u xid=0x%08x",
@@ -1290,7 +1425,9 @@ handle_rpc_error:
 			}
 		}
 	} else if (rt->rt_info.ri_accept_stat) {
-		rt->rt_reply_len = 8 * sizeof(uint32_t);
+		uint32_t err_verf_extra = rpc_compute_gss_reply_verifier(rt);
+
+		rt->rt_reply_len = 8 * sizeof(uint32_t) + err_verf_extra;
 		msg_len = rt->rt_reply_len - sizeof(uint32_t);
 		rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
 		if (!rt->rt_reply) {
@@ -1327,14 +1464,7 @@ handle_rpc_error:
 			goto drop_on_floor;
 		}
 
-		p = rpc_encode_uint32_t(rt, p, 0);
-		if (!p) {
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto drop_on_floor;
-		}
-
-		p = rpc_encode_uint32_t(rt, p, 0);
+		p = rpc_encode_reply_verifier(rt, p);
 		if (!p) {
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
@@ -1370,7 +1500,9 @@ handle_rpc_error:
 					      ph->ph_res);
 		}
 
-		rt->rt_reply_len = 7 * sizeof(uint32_t) + xdr_size;
+		uint32_t verf_extra = rpc_compute_gss_reply_verifier(rt);
+
+		rt->rt_reply_len = 7 * sizeof(uint32_t) + verf_extra + xdr_size;
 		msg_len = rt->rt_reply_len - sizeof(uint32_t);
 		rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
 		if (!rt->rt_reply) {
@@ -1419,7 +1551,7 @@ handle_rpc_error:
 			goto handle_rpc_error;
 		}
 
-		p = rpc_encode_uint32_t(rt, p, 0);
+		p = rpc_encode_uint32_t(rt, p, 0); /* MSG_ACCEPTED */
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
@@ -1429,7 +1561,7 @@ handle_rpc_error:
 			goto handle_rpc_error;
 		}
 
-		p = rpc_encode_uint32_t(rt, p, 0);
+		p = rpc_encode_reply_verifier(rt, p);
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
@@ -1439,7 +1571,7 @@ handle_rpc_error:
 			goto handle_rpc_error;
 		}
 
-		p = rpc_encode_uint32_t(rt, p, 0);
+		p = rpc_encode_uint32_t(rt, p, 0); /* accept_stat = SUCCESS */
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
