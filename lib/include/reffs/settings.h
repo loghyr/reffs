@@ -59,12 +59,17 @@ enum reffs_backend_type {
 /*
  * RPC auth flavor values (RFC 5531 §7.2, RFC 2203 §5).
  * "sys" is AUTH_SYS (formerly AUTH_UNIX); krb5 variants are RPCSEC_GSS.
+ *
+ * REFFS_AUTH_TLS is a pseudo-flavor: AUTH_SYS over a TLS-protected
+ * transport.  Not an RPC wire value — only used in export config to
+ * require TLS.
  */
 enum reffs_auth_flavor {
 	REFFS_AUTH_SYS = 1,
 	REFFS_AUTH_KRB5 = 390003,
 	REFFS_AUTH_KRB5I = 390004,
 	REFFS_AUTH_KRB5P = 390005,
+	REFFS_AUTH_TLS = 0x40000001, /* pseudo-flavor: AUTH_SYS + TLS */
 };
 
 struct reffs_export_config {

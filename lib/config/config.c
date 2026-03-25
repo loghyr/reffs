@@ -80,6 +80,8 @@ static enum reffs_auth_flavor parse_flavor(const char *s)
 		return REFFS_AUTH_KRB5I;
 	if (!strcasecmp(s, "krb5p"))
 		return REFFS_AUTH_KRB5P;
+	if (!strcasecmp(s, "tls"))
+		return REFFS_AUTH_TLS;
 
 	LOG("config: unknown auth flavor '%s', ignoring", s);
 	return 0;

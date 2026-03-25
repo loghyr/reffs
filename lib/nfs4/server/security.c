@@ -24,8 +24,10 @@
 
 #include "nfsv42_xdr.h"
 #include "reffs/log.h"
+#include "reffs/io.h"
 #include "reffs/rpc.h"
 #include "reffs/server.h"
+#include "reffs/settings.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 
@@ -76,17 +78,30 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 	}
 
 	uint32_t client_flavor = compound->c_rt->rt_info.ri_cred.rc_flavor;
+	struct conn_info *ci = io_conn_get(compound->c_rt->rt_fd);
+	bool client_tls = ci && ci->ci_tls_enabled;
 
 	for (unsigned int i = 0; i < ss->ss_nflavors; i++) {
-		if ((uint32_t)ss->ss_flavors[i] == client_flavor) {
-			server_state_put(ss);
-			return NFS4_OK;
+		switch (ss->ss_flavors[i]) {
+		case REFFS_AUTH_TLS:
+			/* TLS pseudo-flavor: AUTH_SYS over TLS transport. */
+			if (client_tls && client_flavor == AUTH_SYS) {
+				server_state_put(ss);
+				return NFS4_OK;
+			}
+			break;
+		default:
+			if ((uint32_t)ss->ss_flavors[i] == client_flavor) {
+				server_state_put(ss);
+				return NFS4_OK;
+			}
+			break;
 		}
 	}
 
 	server_state_put(ss);
-	TRACE("WRONGSEC: client flavor %u not in export flavor list",
-	      client_flavor);
+	TRACE("WRONGSEC: client flavor %u tls=%d not in export flavor list",
+	      client_flavor, client_tls);
 	return NFS4ERR_WRONGSEC;
 }
 
@@ -111,22 +126,39 @@ nfsstat4 nfs4_build_secinfo(SECINFO4resok *resok)
 		return NFS4_OK;
 	}
 
-	unsigned int n = ss->ss_nflavors;
+	/*
+	 * Build a deduped flavor list.  TLS and SYS both map to
+	 * AUTH_SYS on the wire, so ["sys", "tls"] produces one entry.
+	 * Allocate worst-case (ss_nflavors) and trim.
+	 */
+	unsigned int max = ss->ss_nflavors;
 
-	resok->SECINFO4resok_val = calloc(n, sizeof(secinfo4));
+	resok->SECINFO4resok_val = calloc(max, sizeof(secinfo4));
 	if (!resok->SECINFO4resok_val) {
 		server_state_put(ss);
 		return NFS4ERR_DELAY;
 	}
-	resok->SECINFO4resok_len = n;
 
-	for (unsigned int i = 0; i < n; i++) {
-		secinfo4 *si = &resok->SECINFO4resok_val[i];
+	unsigned int out = 0;
+	bool have_auth_sys = false;
+
+	for (unsigned int i = 0; i < max; i++) {
+		secinfo4 *si = &resok->SECINFO4resok_val[out];
 		rpc_Gss_Svc_t svc;
 
 		switch (ss->ss_flavors[i]) {
 		case REFFS_AUTH_SYS:
+		case REFFS_AUTH_TLS:
+			/*
+			 * TLS is transport-level, not an RPC flavor.
+			 * Advertise AUTH_SYS — the client negotiates
+			 * TLS separately via AUTH_TLS NULL RPC.
+			 */
+			if (have_auth_sys)
+				continue;
+			have_auth_sys = true;
 			si->flavor = AUTH_SYS;
+			out++;
 			break;
 		case REFFS_AUTH_KRB5:
 			svc = RPC_GSS_SVC_NONE;
@@ -141,6 +173,15 @@ fill_gss:
 			si->secinfo4_u.flavor_info.oid.sec_oid4_val =
 				malloc(KRB5_OID_LEN);
 			if (!si->secinfo4_u.flavor_info.oid.sec_oid4_val) {
+				/* Free OIDs from earlier entries. */
+				for (unsigned int j = 0; j < out; j++) {
+					secinfo4 *prev =
+						&resok->SECINFO4resok_val[j];
+					free(prev->secinfo4_u.flavor_info.oid
+						     .sec_oid4_val);
+				}
+				free(resok->SECINFO4resok_val);
+				resok->SECINFO4resok_val = NULL;
 				server_state_put(ss);
 				return NFS4ERR_DELAY;
 			}
@@ -150,13 +191,16 @@ fill_gss:
 				KRB5_OID_LEN;
 			si->secinfo4_u.flavor_info.qop = 0;
 			si->secinfo4_u.flavor_info.service = svc;
+			out++;
 			break;
 		default:
 			si->flavor = AUTH_NONE;
+			out++;
 			break;
 		}
 	}
 
+	resok->SECINFO4resok_len = out;
 	server_state_put(ss);
 	return NFS4_OK;
 }

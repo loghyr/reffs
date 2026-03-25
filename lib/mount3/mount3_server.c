@@ -24,6 +24,7 @@
 #include "reffs/filehandle.h"
 #include "reffs/fs.h"
 #include "reffs/dirent.h"
+#include "reffs/server.h"
 #include "reffs/super_block.h"
 
 static int mount3_null(struct rpc_trans *rt)
@@ -65,23 +66,61 @@ static int mount3_mnt(struct rpc_trans *rt)
 		goto out;
 	}
 
-	flavors = calloc(2, sizeof(*flavors));
-	if (!flavors) {
-		mr->fhs_status = MNT3ERR_SERVERFAULT;
-		goto out;
-	}
-
 	mr->mountres3_u.mountinfo.fhandle.fhandle3_val = (char *)nfh;
 	mr->mountres3_u.mountinfo.fhandle.fhandle3_len = sizeof(*nfh);
 	nfh->nfh_vers = FILEHANDLE_VERSION_CURR;
 	nfh->nfh_sb = sb_id; // FIXME: If mounted on, change the sb
 	nfh->nfh_ino = ino;
 
-	mr->mountres3_u.mountinfo.auth_flavors.auth_flavors_len = 2;
-	mr->mountres3_u.mountinfo.auth_flavors.auth_flavors_val = flavors;
+	/*
+	 * Return the export's configured auth flavors.  The MOUNT
+	 * protocol uses RPC wire values (AUTH_SYS=1, RPCSEC_GSS=6).
+	 * TLS is transport-level; map it to AUTH_SYS.
+	 */
+	struct server_state *ss = server_state_find();
+	unsigned int nf = ss ? ss->ss_nflavors : 1;
 
-	flavors[0] = AUTH_NONE;
-	flavors[1] = AUTH_UNIX;
+	flavors = calloc(nf, sizeof(*flavors));
+	if (!flavors) {
+		server_state_put(ss);
+		mr->fhs_status = MNT3ERR_SERVERFAULT;
+		goto out;
+	}
+
+	unsigned int out = 0;
+	bool have_auth_sys = false;
+
+	if (ss && ss->ss_nflavors > 0) {
+		for (unsigned int i = 0; i < ss->ss_nflavors; i++) {
+			int wire;
+
+			switch (ss->ss_flavors[i]) {
+			case REFFS_AUTH_SYS:
+			case REFFS_AUTH_TLS:
+				if (have_auth_sys)
+					continue;
+				have_auth_sys = true;
+				wire = AUTH_SYS;
+				break;
+			case REFFS_AUTH_KRB5:
+			case REFFS_AUTH_KRB5I:
+			case REFFS_AUTH_KRB5P:
+				wire = RPCSEC_GSS;
+				break;
+			default:
+				wire = AUTH_NONE;
+				break;
+			}
+			flavors[out++] = wire;
+		}
+	} else {
+		flavors[out++] = AUTH_SYS;
+	}
+
+	server_state_put(ss);
+
+	mr->mountres3_u.mountinfo.auth_flavors.auth_flavors_len = out;
+	mr->mountres3_u.mountinfo.auth_flavors.auth_flavors_val = flavors;
 
 	nfh = NULL;
 	flavors = NULL;
