@@ -302,7 +302,7 @@ int main(int argc, char *argv[])
 	}
 
 	// Initialize IO handler
-	if (io_handler_init(&rc) < 0) {
+	if (io_handler_init(&rc, cfg.tls_cert, cfg.tls_key, NULL) < 0) {
 		return 1;
 	}
 

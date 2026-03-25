@@ -375,6 +375,15 @@ PKG_CHECK_MODULES([OPENSSL], [openssl >= 1.0.2], [],
 AC_SUBST([OPENSSL_CFLAGS])
 AC_SUBST([OPENSSL_LIBS])
 
+# Check for libgssapi_krb5 (optional — RPCSEC_GSS disabled without it)
+PKG_CHECK_MODULES([GSSAPI], [krb5-gssapi], [
+    AC_DEFINE([HAVE_GSSAPI_KRB5], [1], [Define if libgssapi_krb5 is available])
+], [
+    AC_MSG_WARN([libgssapi_krb5 not found — RPCSEC_GSS/krb5 disabled])
+])
+AC_SUBST([GSSAPI_CFLAGS])
+AC_SUBST([GSSAPI_LIBS])
+
 AC_ARG_ENABLE([debug],
     [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
     [enable_debug=$enableval], [enable_debug=no])

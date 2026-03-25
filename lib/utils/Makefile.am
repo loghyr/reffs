@@ -6,7 +6,7 @@ SUBDIRS = tests
 AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 	$(URCU_CFLAGS) $(URCU_CDS_CFLAGS) $(FUSE_CFLAGS)	\
 	$(TIRPC_CFLAGS) $(ZLIB_CFLAGS) $(HDR_HISTOGRAM_CFLAGS)	\
-	$(OPENSSL_CFLAGS) $(ZSTD_CFLAGS)			\
+	$(OPENSSL_CFLAGS) $(GSSAPI_CFLAGS) $(ZSTD_CFLAGS)	\
 	-I$(top_srcdir)/lib/include				\
 	-I$(top_builddir)/lib/xdr
 

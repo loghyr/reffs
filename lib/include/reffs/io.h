@@ -180,7 +180,12 @@ struct conn_info {
 /* ------------------------------------------------------------------ */
 /* Network ring (existing)                                            */
 /* ------------------------------------------------------------------ */
-int io_handler_init(struct ring_context *rc);
+/*
+ * tls_cert, tls_key, tls_ca may be NULL — falls back to env vars
+ * then /etc/tlshd/ defaults.
+ */
+int io_handler_init(struct ring_context *rc, const char *tls_cert,
+		    const char *tls_key, const char *tls_ca);
 void io_handler_fini(struct ring_context *rc);
 void io_handler_main_loop(volatile sig_atomic_t *running,
 			  struct ring_context *rc);

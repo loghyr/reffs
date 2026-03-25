@@ -100,7 +100,8 @@ static void ssl_info_callback(const SSL __attribute__((unused)) * ssl, int type,
 	}
 }
 
-int io_tls_init_server_context(void)
+int io_tls_init_server_context(const char *cfg_cert, const char *cfg_key,
+			       const char *cfg_ca __attribute__((unused)))
 {
 	if (reffs_server_ssl_ctx != NULL)
 		return 0; // Already initialized
@@ -199,13 +200,22 @@ int io_tls_init_server_context(void)
 	TRACE("Selected ciphers: %s", ciphers);
 #endif
 
-	const char *cert_path = getenv("REFFS_CERT_PATH");
+	/*
+	 * Certificate path priority: argument → env var → /etc/tlshd/.
+	 * The /etc/tlshd/ default shares certs with kernel tlshd so
+	 * both can use the same CA on the host.
+	 */
+	const char *cert_path = cfg_cert && cfg_cert[0] ? cfg_cert : NULL;
 	if (!cert_path)
-		cert_path = "./.rpc-tls-certs/cert.pem";
+		cert_path = getenv("REFFS_CERT_PATH");
+	if (!cert_path)
+		cert_path = "/etc/tlshd/server.pem";
 
-	const char *key_path = getenv("REFFS_KEY_PATH");
+	const char *key_path = cfg_key && cfg_key[0] ? cfg_key : NULL;
 	if (!key_path)
-		key_path = "./.rpc-tls-certs/certkey.pem";
+		key_path = getenv("REFFS_KEY_PATH");
+	if (!key_path)
+		key_path = "/etc/tlshd/server.key";
 
 	// Load certificates and private key
 	if (SSL_CTX_use_certificate_file(reffs_server_ssl_ctx, cert_path,

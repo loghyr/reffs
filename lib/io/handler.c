@@ -157,7 +157,8 @@ static int setup_io_uring(struct ring_context *rc)
 	return 0;
 }
 
-int io_handler_init(struct ring_context *rc)
+int io_handler_init(struct ring_context *rc, const char *tls_cert,
+		    const char *tls_key, const char *tls_ca)
 {
 	// Initialize pending requests array
 	memset(conn_buffers, 0, sizeof(conn_buffers));
@@ -181,6 +182,10 @@ int io_handler_init(struct ring_context *rc)
 	SSL_load_error_strings();
 
 	io_conn_init();
+
+	/* Eagerly initialize TLS context with configured paths. */
+	if (io_tls_init_server_context(tls_cert, tls_key, tls_ca) != 0)
+		TRACE("TLS context init deferred (certs not found at startup)");
 
 	return 0;
 }

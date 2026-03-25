@@ -289,8 +289,8 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		log_client_hello_details(data, len);
 	}
 
-	// Initialize TLS context if needed
-	if (io_tls_init_server_context() != 0) {
+	// Initialize TLS context if not already done at startup
+	if (io_tls_init_server_context(NULL, NULL, NULL) != 0) {
 		LOG("Failed to initialize TLS context");
 		return EINVAL;
 	}

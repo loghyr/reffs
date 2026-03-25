@@ -171,7 +171,7 @@ int main(int argc, char *argv[])
 	pthread_sigmask(SIG_BLOCK, &mask, NULL);
 
 	// Initialize IO handler
-	if (io_handler_init(&rc) < 0) {
+	if (io_handler_init(&rc, NULL, NULL, NULL) < 0) {
 		return 1;
 	}
 

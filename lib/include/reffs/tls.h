@@ -17,7 +17,13 @@
 
 extern SSL_CTX *reffs_server_ssl_ctx;
 
-int io_tls_init_server_context(void);
+/*
+ * Initialize TLS server context.  Path arguments may be NULL; the
+ * function falls back to env vars (REFFS_CERT_PATH, REFFS_KEY_PATH),
+ * then to /etc/tlshd/ defaults (shared with kernel tlshd).
+ */
+int io_tls_init_server_context(const char *cert, const char *key,
+			       const char *ca);
 
 static inline void io_ssl_err_print(int fd, const char *msg, const char *func,
 				    const int line)
