@@ -384,6 +384,15 @@ PKG_CHECK_MODULES([GSSAPI], [krb5-gssapi], [
 AC_SUBST([GSSAPI_CFLAGS])
 AC_SUBST([GSSAPI_LIBS])
 
+# Check for libnfsidmap (optional — NFSv4 principal→uid mapping)
+PKG_CHECK_MODULES([NFSIDMAP], [libnfsidmap], [
+    AC_DEFINE([HAVE_LIBNFSIDMAP], [1], [Define if libnfsidmap is available])
+], [
+    AC_MSG_WARN([libnfsidmap not found — GSS principal mapping uses getpwnam fallback])
+])
+AC_SUBST([NFSIDMAP_CFLAGS])
+AC_SUBST([NFSIDMAP_LIBS])
+
 AC_ARG_ENABLE([debug],
     [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
     [enable_debug=$enableval], [enable_debug=no])

@@ -36,8 +36,10 @@ static bool gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
 	return false;
 }
 
-int rpc_cred_to_authunix_parms(struct rpc_cred *cred, struct authunix_parms *ap)
+int rpc_cred_to_authunix_parms(struct rpc_info *info, struct authunix_parms *ap)
 {
+	struct rpc_cred *cred = &info->ri_cred;
+
 	switch (cred->rc_flavor) {
 	case AUTH_SYS:
 		ap->aup_uid = cred->rc_unix.aup_uid;
@@ -48,10 +50,26 @@ int rpc_cred_to_authunix_parms(struct rpc_cred *cred, struct authunix_parms *ap)
 	case AUTH_NONE:
 		ap->aup_uid = 65534;
 		ap->aup_gid = 65534;
-
 		ap->aup_len = 0;
 		ap->aup_gids = NULL;
-
+		break;
+	case RPCSEC_GSS:
+		/*
+		 * For RPCSEC_GSS, the RPC layer maps the GSS principal
+		 * to uid/gid and stores them in ri_mapped_uid/gid
+		 * (see rpc.c GSS DATA handling).  The rc_gss union
+		 * member is NOT clobbered — it stays valid for the
+		 * reply verifier.
+		 */
+		if (info->ri_gss_mapped) {
+			ap->aup_uid = info->ri_mapped_uid;
+			ap->aup_gid = info->ri_mapped_gid;
+		} else {
+			ap->aup_uid = 65534;
+			ap->aup_gid = 65534;
+		}
+		ap->aup_len = 0;
+		ap->aup_gids = NULL;
 		break;
 	default:
 		return -EPERM;

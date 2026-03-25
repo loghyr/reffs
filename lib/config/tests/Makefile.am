@@ -13,6 +13,8 @@ LDADD = \
 	$(top_builddir)/lib/tests/libreffs_test.la		\
 	$(top_builddir)/lib/config/libreffs_config.la		\
 	$(top_builddir)/lib/utils/libreffs_utils.la		\
+	$(top_builddir)/lib/rpc/libreffs_rpc.la			\
+	$(top_builddir)/lib/io/libreffs_io.la			\
 	$(top_builddir)/lib/trace/libreffs_trace.la		\
 	$(top_builddir)/lib/fs/libreffs_fs.la			\
 	$(top_builddir)/lib/backends/libbackends.la		\
@@ -23,7 +25,7 @@ LDADD = \
 	$(ZLIB_LIBS)						\
 	$(UUID_LIBS)						\
 	$(URING_LIBS)						\
-	$(OPENSSL_LIBS)						\
+	$(OPENSSL_LIBS) $(GSSAPI_LIBS) $(NFSIDMAP_LIBS)	\
 	$(HDR_HISTOGRAM_LIBS)					\
 	$(ZSTD_LIBS)						\
 	$(JEMALLOC_LIBS)					\

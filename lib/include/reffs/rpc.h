@@ -68,6 +68,11 @@ struct rpc_info {
 	uint8_t *ri_verifier_body; /* GSS MIC verifier (malloc'd, or NULL) */
 	uint32_t ri_verifier_len;
 
+	/* GSS-mapped identity (set for RPCSEC_GSS DATA requests). */
+	uid_t ri_mapped_uid;
+	gid_t ri_mapped_gid;
+	bool ri_gss_mapped; /* true if ri_mapped_uid/gid are valid */
+
 	enum reply_stat ri_reply_stat;
 	enum reject_stat ri_reject_stat;
 	enum accept_stat ri_accept_stat;

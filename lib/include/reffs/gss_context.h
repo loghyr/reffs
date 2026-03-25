@@ -95,6 +95,12 @@ uint32_t gss_ctx_verify_mic(struct gss_ctx_entry *entry, const void *data,
 
 /* Get the authenticated principal name as a string (caller frees). */
 char *gss_ctx_principal(struct gss_ctx_entry *entry);
+
+/*
+ * Map a GSS context's principal to uid/gid using libnfsidmap
+ * (with getpwnam fallback).
+ */
+int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid);
 #endif /* HAVE_GSSAPI_KRB5 */
 
 struct rpc_trans;

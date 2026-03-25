@@ -124,7 +124,7 @@ static struct compound *compound_alloc(struct rpc_trans *rt)
 	compound->c_args = (COMPOUND4args *)ph->ph_args;
 	compound->c_res = (COMPOUND4res *)ph->ph_res;
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &compound->c_ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &compound->c_ap);
 	if (ret) {
 		free(compound);
 		return NULL;

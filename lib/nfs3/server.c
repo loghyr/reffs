@@ -153,7 +153,7 @@ static int nfs3_op_getattr(struct rpc_trans *rt)
 
 	trace_nfs3_srv_getattr(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -245,7 +245,7 @@ static int nfs3_op_setattr(struct rpc_trans *rt)
 
 	trace_nfs3_srv_setattr(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -332,7 +332,7 @@ static int nfs3_op_lookup(struct rpc_trans *rt)
 
 	trace_nfs3_srv_lookup(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -424,7 +424,7 @@ static int nfs3_op_access(struct rpc_trans *rt)
 
 	trace_nfs3_srv_access(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -520,7 +520,7 @@ static int nfs3_op_readlink(struct rpc_trans *rt)
 
 	trace_nfs3_srv_readlink(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -650,7 +650,7 @@ static int nfs3_op_read(struct rpc_trans *rt)
 
 	trace_nfs3_srv_read(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -900,7 +900,7 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 	trace_nfs3_srv_write(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -1211,7 +1211,7 @@ static int nfs3_op_create(struct rpc_trans *rt)
 
 	trace_nfs3_srv_create(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -1343,7 +1343,7 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 
 	trace_nfs3_srv_mkdir(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -1452,7 +1452,7 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 
 	trace_nfs3_srv_symlink(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -1570,7 +1570,7 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 
 	trace_nfs3_srv_mknod(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -1712,7 +1712,7 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 
 	trace_nfs3_srv_remove(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -1790,7 +1790,7 @@ static int nfs3_op_rmdir(struct rpc_trans *rt)
 
 	trace_nfs3_srv_rmdir(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -1876,7 +1876,7 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 
 	trace_nfs3_srv_rename(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -1994,7 +1994,7 @@ static int nfs3_op_link(struct rpc_trans *rt)
 
 	trace_nfs3_srv_link(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -2098,7 +2098,7 @@ static int nfs3_op_readdir(struct rpc_trans *rt)
 
 	trace_nfs3_srv_readdir(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -2398,7 +2398,7 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 
 	trace_nfs3_srv_readdirplus(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -2794,7 +2794,7 @@ static int nfs3_op_fsstat(struct rpc_trans *rt)
 
 	trace_nfs3_srv_fsstat(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -2868,7 +2868,7 @@ static int nfs3_op_fsinfo(struct rpc_trans *rt)
 
 	trace_nfs3_srv_fsinfo(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -2943,7 +2943,7 @@ static int nfs3_op_pathconf(struct rpc_trans *rt)
 
 	trace_nfs3_srv_pathconf(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 
@@ -3018,7 +3018,7 @@ static int nfs3_op_commit(struct rpc_trans *rt)
 
 	trace_nfs3_srv_commit(rt, args);
 
-	ret = rpc_cred_to_authunix_parms(&rt->rt_info.ri_cred, &ap);
+	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &ap);
 	if (ret)
 		goto out;
 

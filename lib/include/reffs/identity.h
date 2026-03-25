@@ -19,7 +19,7 @@
 bool can_user_chgrp_to_group(uid_t uid, gid_t target_gid,
 			     struct authunix_parms *ap);
 
-int rpc_cred_to_authunix_parms(struct rpc_cred *cred,
+int rpc_cred_to_authunix_parms(struct rpc_info *info,
 			       struct authunix_parms *ap);
 
 bool is_user_in_group(uid_t uid, gid_t group_to_check,

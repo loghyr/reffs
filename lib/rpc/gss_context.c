@@ -13,6 +13,9 @@
 #endif
 
 #include <errno.h>
+#include <grp.h>
+#include <pthread.h>
+#include <pwd.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,6 +29,10 @@
 #include "reffs/gss_context.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
+
+#ifdef HAVE_LIBNFSIDMAP
+#include <nfsidmap.h>
+#endif
 
 static struct cds_lfht *gss_ctx_ht;
 
@@ -391,6 +398,83 @@ err:
 	free(rt->rt_reply);
 	rt->rt_reply = NULL;
 	return EINVAL;
+}
+
+/*
+ * Map a GSS principal to uid/gid using libnfsidmap (preferred)
+ * or getpwnam fallback.  Called from the RPC layer for DATA
+ * requests to populate rc_unix before compound dispatch.
+ */
+#ifdef HAVE_LIBNFSIDMAP
+static pthread_once_t idmap_once = PTHREAD_ONCE_INIT;
+
+static void idmap_init_once(void)
+{
+	nfs4_init_name_mapping(NULL); /* uses /etc/idmapd.conf */
+}
+#endif
+
+int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
+{
+	char *principal = gss_ctx_principal(entry);
+
+	if (!principal) {
+		*uid = 65534;
+		*gid = 65534;
+		return -EPERM;
+	}
+
+#ifdef HAVE_LIBNFSIDMAP
+	pthread_once(&idmap_once, idmap_init_once);
+
+	if (nfs4_owner_to_uid(principal, uid) < 0) {
+		TRACE("nfs4_owner_to_uid(%s) failed", principal);
+		*uid = 65534;
+		*gid = 65534;
+		free(principal);
+		return -EPERM;
+	}
+
+	if (nfs4_group_owner_to_gid(principal, gid) < 0) {
+		struct passwd pwbuf, *pw = NULL;
+		char buf[1024];
+
+		if (getpwuid_r(*uid, &pwbuf, buf, sizeof(buf), &pw) == 0 && pw)
+			*gid = pw->pw_gid;
+		else
+			*gid = 65534;
+	}
+#else
+	/* Fallback: strip @REALM, use getpwnam_r(). */
+	char local[256];
+	const char *at = strchr(principal, '@');
+	size_t len = at ? (size_t)(at - principal) : strlen(principal);
+
+	if (len >= sizeof(local))
+		len = sizeof(local) - 1;
+	memcpy(local, principal, len);
+	local[len] = '\0';
+
+	struct passwd pwbuf, *pw = NULL;
+	char buf[1024];
+
+	if (getpwnam_r(local, &pwbuf, buf, sizeof(buf), &pw) != 0 || !pw) {
+		TRACE("getpwnam_r(%s) failed for principal %s", local,
+		      principal);
+		*uid = 65534;
+		*gid = 65534;
+		free(principal);
+		return -EPERM;
+	}
+
+	*uid = pw->pw_uid;
+	*gid = pw->pw_gid;
+#endif
+
+	TRACE("GSS principal %s mapped to uid=%u gid=%u", principal, *uid,
+	      *gid);
+	free(principal);
+	return 0;
 }
 
 #endif /* HAVE_GSSAPI_KRB5 */
