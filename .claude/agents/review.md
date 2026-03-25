@@ -202,7 +202,46 @@ layering violation.  Public API goes in `lib/include/reffs/`.
 `inode_active_put()`, `inode_put()`, `super_block_put()` are NULL-tolerant.
 Do not add redundant NULL checks before calling them.
 
-## 5. Test coverage
+## 5. reffs-specific hazard checks
+
+Check changed code against the patterns in `.claude/patterns/`.
+For each issue found, state the file/line, hazard class, and a
+concrete fix.
+
+### RCU discipline (see patterns/rcu-violations.md)
+- Any blocking operation (mutex_lock, I/O, allocation) inside rcu_read_lock
+- lfht traversal without rcu_read_lock
+- rcu_read_lock nesting around a lock held across call_rcu
+- rd_inode read without rcu_read_lock protection
+- rd_inode nulled after call_rcu instead of before
+
+### Ref-counting (see patterns/ref-counting.md)
+- Every inode_ref has a matching inode_unref on all paths including error paths
+- Every dirent_ref has a matching dirent_unref on all paths including error paths
+- Superblock ref released in inode_release (not earlier, not later)
+- dirent_parent_release nlink accounting: subtract only on death, not rename
+
+### Memory ordering / UAF
+- rd_inode nulled *before* call_rcu, not after
+- No access to dirent or inode fields after call_rcu is queued
+- RCU callbacks must not hold locks or free memory reachable by live readers
+
+### Lock ordering
+- vfs_lock_dirs only called with directory inodes
+- rd_lock acquired before rcu_read_lock where both are needed
+- No lock order inversions between rd_lock and i_lock
+
+### NFSv4 protocol correctness (see patterns/nfs4-protocol.md)
+- bitmap4 operations use bitmap4.h helpers, not open-coded bit manipulation
+- utf8string inputs validated before use (not trusted off-wire)
+- nfstime4 conversions use overflow-checked helpers
+- EXCHANGE_ID paths all terminate; no partial decision tree branches
+- clientid4 encoding: boot_seq | incarnation | slot partitioning preserved
+
+### NOT_NOW_BROWN_COW
+- Flag any deferred items that the new code appears to depend on
+
+## 6. Test coverage
 
 For every changed or new code path, check whether an existing unit test
 covers it.  Look in `lib/*/tests/` for relevant test files.
@@ -223,7 +262,7 @@ If the developer explicitly declines a recommended test, acknowledge the
 deferral, record it in the TESTS line as `DEFERRED`, and do not block
 the commit.
 
-## 6. Git commit readiness
+## 7. Git commit readiness
 
 - Confirm `git commit -s` will be used (DCO sign-off required)
 - Confirm no `Co-Authored-By:` lines are present

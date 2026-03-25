@@ -1,0 +1,14 @@
+#!/bin/sh
+# reffs pre-push hook
+# Runs make -f Makefile.reffs check-ci before allowing a push.
+#
+# Install (pick one):
+#   cp .git-hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#   git config core.hooksPath .git-hooks   # versioned, applies all hooks in dir
+
+set -e
+
+echo "[pre-push] running make -f Makefile.reffs check-ci ..."
+make -f Makefile.reffs check-ci
+
+echo "[pre-push] PASS"
