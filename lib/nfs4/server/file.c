@@ -296,6 +296,20 @@ uint32_t nfs4_op_open(struct compound *compound)
 
 	/* Resolve target inode based on claim type. */
 	switch (args->claim.claim) {
+	case CLAIM_PREVIOUS:
+		/*
+		 * Grace reclaim: client held an open on this file
+		 * before the server rebooted.  Stateids are in-memory
+		 * only, so we issue a fresh stateid — same as CLAIM_FH.
+		 * Delegation is not re-granted (no persisted state).
+		 * CREATE is not valid for reclaim.
+		 */
+		if (args->openhow.opentype == OPEN4_CREATE) {
+			*status = NFS4ERR_INVAL;
+			goto out;
+		}
+		break;
+
 	case CLAIM_FH:
 		/*
 		 * Current FH is the target file — no lookup needed.
