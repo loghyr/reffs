@@ -170,3 +170,12 @@ class Probe1Client(ProtocolClient):
             NFS4_OP_STATS1res object containing per-op statistics
         """
         return self.proc(PROBEPROC1_NFS4_OP_STATS, response_type='NFS4_OP_STATS1res')
+
+    def layout_errors(self):
+        """
+        Get layout error statistics (global, per-dstore, per-client).
+
+        Returns:
+            LAYOUT_ERRORS1res object containing layout error counts
+        """
+        return self.proc(PROBEPROC1_LAYOUT_ERRORS, response_type='LAYOUT_ERRORS1res')

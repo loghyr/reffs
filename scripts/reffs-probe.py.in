@@ -452,6 +452,55 @@ def nfs4_op_stats(client, args):
     print_nfs4_op_stats(res.nosr_resok.nosr_ops)
 
 
+def print_layout_error_table(title, entries):
+    print(f'\n{title}:')
+    print(f'{"ID":<8} {"Name":<20} {"Total":<10} {"Access":<10} {"IO":<10} {"Other":<10}')
+    print("-" * 68)
+    for e in entries:
+        name = e.ple_name.decode() if isinstance(e.ple_name, bytes) else e.ple_name
+        print(f'{e.ple_id:<8} {name:<20} {e.ple_total:<10} {e.ple_access:<10} {e.ple_io:<10} {e.ple_other:<10}')
+
+
+def layout_errors(client, args):
+    res = client.layout_errors()
+    probe_error_handler(res.ler_status)
+
+    resok = res.ler_resok
+
+    if args.json:
+        out = {
+            'global': {
+                'total': resok.ler_global.ple_total,
+                'access': resok.ler_global.ple_access,
+                'io': resok.ler_global.ple_io,
+                'other': resok.ler_global.ple_other,
+            },
+            'dstores': [{
+                'id': d.ple_id,
+                'name': d.ple_name.decode() if isinstance(d.ple_name, bytes) else d.ple_name,
+                'total': d.ple_total, 'access': d.ple_access,
+                'io': d.ple_io, 'other': d.ple_other,
+            } for d in resok.ler_dstores],
+            'clients': [{
+                'id': c.ple_id,
+                'name': c.ple_name.decode() if isinstance(c.ple_name, bytes) else c.ple_name,
+                'total': c.ple_total, 'access': c.ple_access,
+                'io': c.ple_io, 'other': c.ple_other,
+            } for c in resok.ler_clients],
+        }
+        print(json.dumps(out, indent=2))
+        return
+
+    g = resok.ler_global
+    print(f'Layout Errors (global): total={g.ple_total} access={g.ple_access} io={g.ple_io} other={g.ple_other}')
+
+    if resok.ler_dstores:
+        print_layout_error_table('Per-Dstore', resok.ler_dstores)
+
+    if resok.ler_clients:
+        print_layout_error_table('Per-Client', resok.ler_clients)
+
+
 def fs_usage(client, args):
     res = client.fs_usage()
     probe_error_handler(res.fur_status)
@@ -688,6 +737,10 @@ def parse_args():
     p_nfs4_op_stats = subparsers.add_parser('nfs4-op-stats',
                                             help='Get NFS4 per-op statistics')
     p_nfs4_op_stats.set_defaults(func=nfs4_op_stats)
+
+    p_layout_errors = subparsers.add_parser('layout-errors',
+                                            help='Get layout error statistics (global, per-dstore, per-client)')
+    p_layout_errors.set_defaults(func=layout_errors)
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()
