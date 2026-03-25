@@ -28,6 +28,7 @@
 #include "reffs/super_block.h"
 #include "reffs/fs.h"
 #include "reffs/log.h"
+#include "nfsv42_xdr.h"
 #include "fs_test_harness.h"
 
 /* Persistence tests need a POSIX-backed superblock. */
@@ -137,6 +138,7 @@ START_TEST(test_add_segment)
 		.ls_k = 2,
 		.ls_m = 1,
 		.ls_nfiles = 2,
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
 		.ls_files = files,
 	};
 
@@ -145,6 +147,8 @@ START_TEST(test_add_segment)
 	ck_assert_uint_eq(lss->lss_segs[0].ls_k, 2);
 	ck_assert_uint_eq(lss->lss_segs[0].ls_m, 1);
 	ck_assert_uint_eq(lss->lss_segs[0].ls_nfiles, 2);
+	ck_assert_uint_eq(lss->lss_segs[0].ls_layout_type,
+			  LAYOUT4_FLEX_FILES_V2);
 	ck_assert_uint_eq(lss->lss_segs[0].ls_files[0].ldf_dstore_id, 10);
 	ck_assert_uint_eq(lss->lss_segs[0].ls_files[1].ldf_dstore_id, 20);
 
@@ -177,6 +181,7 @@ START_TEST(test_persist_load)
 		.ls_k = 2,
 		.ls_m = 1,
 		.ls_nfiles = 3,
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
 		.ls_files = files,
 	};
 
@@ -201,6 +206,7 @@ START_TEST(test_persist_load)
 	ck_assert_uint_eq(ls->ls_k, 2);
 	ck_assert_uint_eq(ls->ls_m, 1);
 	ck_assert_uint_eq(ls->ls_nfiles, 3);
+	ck_assert_uint_eq(ls->ls_layout_type, LAYOUT4_FLEX_FILES_V2);
 
 	/* Verify dstore IDs survived the round-trip. */
 	ck_assert_uint_eq(ls->ls_files[0].ldf_dstore_id, 100);
@@ -245,6 +251,7 @@ START_TEST(test_multiple_segments)
 		.ls_k = 1,
 		.ls_m = 1,
 		.ls_nfiles = 2,
+		.ls_layout_type = LAYOUT4_FLEX_FILES,
 		.ls_files = f1,
 	};
 
@@ -264,6 +271,7 @@ START_TEST(test_multiple_segments)
 		.ls_k = 1,
 		.ls_m = 1,
 		.ls_nfiles = 2,
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
 		.ls_files = f2,
 	};
 
@@ -284,6 +292,7 @@ START_TEST(test_multiple_segments)
 
 	ck_assert_uint_eq(s0->ls_offset, 0);
 	ck_assert_uint_eq(s0->ls_length, 1048576);
+	ck_assert_uint_eq(s0->ls_layout_type, LAYOUT4_FLEX_FILES);
 	ck_assert_uint_eq(s0->ls_files[0].ldf_dstore_id, 10);
 	ck_assert_uint_eq(s0->ls_files[1].ldf_dstore_id, 20);
 
@@ -292,6 +301,7 @@ START_TEST(test_multiple_segments)
 	ck_assert_uint_eq(s1->ls_offset, 1048576);
 	ck_assert_uint_eq(s1->ls_length, 0);
 	ck_assert_uint_eq(s1->ls_stripe_unit, 131072);
+	ck_assert_uint_eq(s1->ls_layout_type, LAYOUT4_FLEX_FILES_V2);
 	ck_assert_uint_eq(s1->ls_files[0].ldf_dstore_id, 30);
 	ck_assert_uint_eq(s1->ls_files[1].ldf_dstore_id, 40);
 

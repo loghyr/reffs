@@ -641,6 +641,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			.ls_k = (uint16_t)nfiles,
 			.ls_m = 0,
 			.ls_nfiles = nfiles,
+			.ls_layout_type = layout_type,
 			.ls_files = files,
 		};
 
@@ -706,7 +707,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	char *body = NULL;
 	u_long xdr_size = 0;
 
-	if (layout_type == LAYOUT4_FLEX_FILES_V2)
+	if (seg->ls_layout_type == LAYOUT4_FLEX_FILES_V2)
 		*status = layoutget_build_v2(seg, &body, &xdr_size);
 	else
 		*status = layoutget_build_v1(seg, &body, &xdr_size);
@@ -734,7 +735,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	lo->lo_offset = seg->ls_offset;
 	lo->lo_length = seg->ls_length ? seg->ls_length : NFS4_UINT64_MAX;
 	lo->lo_iomode = args->loga_iomode;
-	lo->lo_content.loc_type = layout_type;
+	lo->lo_content.loc_type = seg->ls_layout_type;
 	lo->lo_content.loc_body.loc_body_val = body;
 	lo->lo_content.loc_body.loc_body_len = (u_int)xdr_size;
 

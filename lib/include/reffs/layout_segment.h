@@ -55,7 +55,7 @@ struct layout_segment_disk {
 	uint16_t ls_k; /* data devices */
 	uint16_t ls_m; /* parity devices */
 	uint32_t ls_nfiles; /* number of data file entries */
-	uint32_t ls_pad;
+	uint32_t ls_layout_type; /* layouttype4: LAYOUT4_FLEX_FILES, etc. */
 };
 
 /*
@@ -94,6 +94,7 @@ struct layout_segment {
 	uint16_t ls_k;
 	uint16_t ls_m;
 	uint32_t ls_nfiles;
+	uint32_t ls_layout_type; /* layouttype4: LAYOUT4_FLEX_FILES, etc. */
 	struct layout_data_file *ls_files; /* array of ls_nfiles entries */
 };
 

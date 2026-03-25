@@ -196,6 +196,7 @@ static void posix_inode_sync(struct inode *inode)
 					.ls_k = seg->ls_k,
 					.ls_m = seg->ls_m,
 					.ls_nfiles = seg->ls_nfiles,
+					.ls_layout_type = seg->ls_layout_type,
 				};
 
 				ok = ok && write(fd, &lsd, sizeof(lsd)) ==
@@ -658,6 +659,8 @@ static int inode_load_from_disk(struct inode *inode)
 								.ls_m = lsd.ls_m,
 								.ls_nfiles =
 									lsd.ls_nfiles,
+								.ls_layout_type =
+									lsd.ls_layout_type,
 								.ls_files =
 									files,
 							};
