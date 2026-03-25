@@ -1062,10 +1062,8 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 
 		struct dstore *err_ds = dstore_find(ds_id);
 
-		if (err_ds) {
+		if (err_ds)
 			scopes[nscopes++] = &err_ds->ds_layout_errors;
-			dstore_put(err_ds);
-		}
 
 		struct nfs4_client *nc = compound->c_nfs4_client;
 
@@ -1088,6 +1086,8 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 							  1,
 							  memory_order_relaxed);
 		}
+
+		dstore_put(err_ds);
 
 		if ((de->de_status == NFS4ERR_ACCESS ||
 		     de->de_status == NFS4ERR_PERM) &&
