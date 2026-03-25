@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,6 +40,9 @@
 #include "reffs/fs.h"
 #include "reffs/probe1.h"
 #include "reffs/server.h"
+#include "reffs/dstore.h"
+#include "reffs/client.h"
+#include "nfs4/client.h"
 #include "reffs/trace/rpc.h"
 
 struct probe_time1 probe_time1_from_time_t(time_t ts)
@@ -537,6 +541,116 @@ static int probe1_op_nfs4_op_stats(struct rpc_trans *rt)
 	return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Layout error stats                                                  */
+/* ------------------------------------------------------------------ */
+
+static void fill_layout_error(probe_layout_error1 *ple, uint32_t id,
+			      const char *name,
+			      const struct reffs_layout_error_stats *les)
+{
+	ple->ple_id = id;
+	ple->ple_name = strdup(name ? name : "");
+	ple->ple_total =
+		atomic_load_explicit(&les->les_total, memory_order_relaxed);
+	ple->ple_access =
+		atomic_load_explicit(&les->les_access, memory_order_relaxed);
+	ple->ple_io = atomic_load_explicit(&les->les_io, memory_order_relaxed);
+	ple->ple_other =
+		atomic_load_explicit(&les->les_other, memory_order_relaxed);
+}
+
+static int probe1_op_layout_errors(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	LAYOUT_ERRORS1res *res = ph->ph_res;
+	LAYOUT_ERRORS1resok *resok = &res->LAYOUT_ERRORS1res_u.ler_resok;
+
+	struct server_state *ss = server_state_find();
+
+	if (!ss) {
+		res->ler_status = PROBE1ERR_NOENT;
+		return res->ler_status;
+	}
+
+	/* Global aggregate. */
+	fill_layout_error(&resok->ler_global, 0, "global",
+			  &ss->ss_layout_errors);
+
+	/* Per-dstore. */
+	struct dstore *dstores[REFFS_CONFIG_MAX_DATA_SERVERS];
+	uint32_t nds = dstore_collect_available(dstores,
+						REFFS_CONFIG_MAX_DATA_SERVERS);
+
+	if (nds > 0) {
+		resok->ler_dstores.ler_dstores_val =
+			calloc(nds, sizeof(probe_layout_error1));
+		if (resok->ler_dstores.ler_dstores_val) {
+			resok->ler_dstores.ler_dstores_len = nds;
+			for (uint32_t i = 0; i < nds; i++) {
+				fill_layout_error(
+					&resok->ler_dstores.ler_dstores_val[i],
+					dstores[i]->ds_id,
+					dstores[i]->ds_address,
+					&dstores[i]->ds_layout_errors);
+			}
+		}
+		for (uint32_t i = 0; i < nds; i++)
+			dstore_put(dstores[i]);
+	}
+
+	/* Per-client. */
+	if (ss->ss_client_ht) {
+		struct cds_lfht_iter iter;
+		struct cds_lfht_node *node;
+		uint32_t ncli = 0;
+
+		/* Count clients first. */
+		rcu_read_lock();
+		cds_lfht_first(ss->ss_client_ht, &iter);
+		while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+			ncli++;
+			cds_lfht_next(ss->ss_client_ht, &iter);
+		}
+		rcu_read_unlock();
+
+		if (ncli > 0) {
+			resok->ler_clients.ler_clients_val =
+				calloc(ncli, sizeof(probe_layout_error1));
+			if (resok->ler_clients.ler_clients_val) {
+				uint32_t idx = 0;
+
+				rcu_read_lock();
+				cds_lfht_first(ss->ss_client_ht, &iter);
+				while ((node = cds_lfht_iter_get_node(&iter)) !=
+					       NULL &&
+				       idx < ncli) {
+					struct client *c = caa_container_of(
+						node, struct client, c_node);
+					struct nfs4_client *nc =
+						client_to_nfs4(c);
+					char label[32];
+
+					snprintf(label, sizeof(label),
+						 "slot=%" PRIu64, c->c_id);
+					fill_layout_error(
+						&resok->ler_clients
+							 .ler_clients_val[idx],
+						(uint32_t)c->c_id, label,
+						&nc->nc_layout_errors);
+					idx++;
+					cds_lfht_next(ss->ss_client_ht, &iter);
+				}
+				resok->ler_clients.ler_clients_len = idx;
+				rcu_read_unlock();
+			}
+		}
+	}
+
+	server_state_put(ss);
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -572,6 +686,9 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NFS4_OP_STATS, NULL, NULL,
 			   xdr_NFS4_OP_STATS1res, NFS4_OP_STATS1res,
 			   probe1_op_nfs4_op_stats),
+	RPC_OPERATION_INIT(PROBEPROC1, LAYOUT_ERRORS, NULL, NULL,
+			   xdr_LAYOUT_ERRORS1res, LAYOUT_ERRORS1res,
+			   probe1_op_layout_errors),
 };
 
 static struct rpc_program_handler *probe1_handler;

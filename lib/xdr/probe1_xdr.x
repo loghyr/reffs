@@ -271,6 +271,28 @@ union NFS4_OP_STATS1res switch (probe_stat1 nosr_status) {
 		void;
 };
 
+struct probe_layout_error1 {
+	unsigned int	ple_id;
+	string		ple_name<>;
+	unsigned hyper	ple_total;
+	unsigned hyper	ple_access;
+	unsigned hyper	ple_io;
+	unsigned hyper	ple_other;
+};
+
+struct LAYOUT_ERRORS1resok {
+	probe_layout_error1	ler_global;
+	probe_layout_error1	ler_dstores<>;
+	probe_layout_error1	ler_clients<>;
+};
+
+union LAYOUT_ERRORS1res switch (probe_stat1 ler_status) {
+	case PROBE1_OK:
+		LAYOUT_ERRORS1resok	ler_resok;
+	default:
+		void;
+};
+
 const PROBE_PORT = 20490;
 
 /*
@@ -291,5 +313,6 @@ program PROBE_PROGRAM {
 		FD_INFOS_LIST1res PROBEPROC1_FD_INFOS_LIST(FD_INFOS_LIST1args) = 9;
 		FS_USAGE1res PROBEPROC1_FS_USAGE(void) = 10;
 		NFS4_OP_STATS1res PROBEPROC1_NFS4_OP_STATS(void) = 11;
+		LAYOUT_ERRORS1res PROBEPROC1_LAYOUT_ERRORS(void) = 12;
 	} = 1;
 } = 211768;
