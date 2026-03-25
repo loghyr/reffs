@@ -575,7 +575,15 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		 * target width are available, the same dstore gets
 		 * multiple data files (each with its own runway FH).
 		 */
-		uint32_t target = REFFS_LAYOUT_WIDTH_DEFAULT;
+		struct server_state *ss = server_state_find();
+		uint32_t target = ss ? ss->ss_layout_width :
+				       REFFS_LAYOUT_WIDTH_DEFAULT;
+		uint32_t fence_min = ss ? ss->ss_fence_uid_min :
+					  REFFS_FENCE_UID_MIN_DEFAULT;
+		uint32_t fence_max = ss ? ss->ss_fence_uid_max :
+					  REFFS_FENCE_UID_MAX_DEFAULT;
+
+		server_state_put(ss);
 
 		struct layout_data_file *files =
 			calloc(target, sizeof(struct layout_data_file));
@@ -600,16 +608,14 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 				continue;
 			}
 			files[nfiles].ldf_dstore_id = ds->ds_id;
-			files[nfiles].ldf_uid = REFFS_FENCE_UID_MIN_DEFAULT;
-			files[nfiles].ldf_gid = REFFS_FENCE_UID_MIN_DEFAULT;
+			files[nfiles].ldf_uid = fence_min;
+			files[nfiles].ldf_gid = fence_min;
 			files[nfiles].ldf_mode = 0640;
 
 			dstore_data_file_fence(ds, files[nfiles].ldf_fh,
 					       files[nfiles].ldf_fh_len,
-					       &files[nfiles],
-					       REFFS_FENCE_UID_MIN_DEFAULT,
-					       REFFS_FENCE_UID_MIN_DEFAULT,
-					       NULL);
+					       &files[nfiles], fence_min,
+					       fence_min, NULL);
 			dstore_data_file_chmod(ds, files[nfiles].ldf_fh,
 					       files[nfiles].ldf_fh_len, NULL);
 
@@ -1024,6 +1030,14 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 
 	struct layout_segments *lss = compound->c_inode->i_layout_segments;
 
+	struct server_state *ss = server_state_find();
+	uint32_t fence_min = ss ? ss->ss_fence_uid_min :
+				  REFFS_FENCE_UID_MIN_DEFAULT;
+	uint32_t fence_max = ss ? ss->ss_fence_uid_max :
+				  REFFS_FENCE_UID_MAX_DEFAULT;
+
+	server_state_put(ss);
+
 	/*
 	 * Scan reported errors.  On access errors, fence and chmod
 	 * all mirror instances to repair credentials and permissions.
@@ -1049,10 +1063,10 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 				if (!ds)
 					continue;
 
-				dstore_data_file_fence(
-					ds, ldf->ldf_fh, ldf->ldf_fh_len, ldf,
-					REFFS_FENCE_UID_MIN_DEFAULT,
-					REFFS_FENCE_UID_MAX_DEFAULT, NULL);
+				dstore_data_file_fence(ds, ldf->ldf_fh,
+						       ldf->ldf_fh_len, ldf,
+						       fence_min, fence_max,
+						       NULL);
 				dstore_data_file_chmod(ds, ldf->ldf_fh,
 						       ldf->ldf_fh_len, NULL);
 				dstore_put(ds);

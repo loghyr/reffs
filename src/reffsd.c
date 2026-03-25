@@ -288,6 +288,9 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 	ss->ss_exchgid_flags = reffs_role_exchgid_flags(cfg.role);
+	ss->ss_fence_uid_min = cfg.fence_uid_min;
+	ss->ss_fence_uid_max = cfg.fence_uid_max;
+	ss->ss_layout_width = cfg.layout_width;
 
 	// Initialize IO handler
 	if (io_handler_init(&rc) < 0) {

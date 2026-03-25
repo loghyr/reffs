@@ -108,6 +108,11 @@ struct server_state {
 	/* Case sensitivity mode for this server instance. */
 	enum reffs_text_case ss_case;
 
+	/* Config values copied at boot — not persisted. */
+	uint32_t ss_fence_uid_min;
+	uint32_t ss_fence_uid_max;
+	unsigned int ss_layout_width;
+
 	/* Per-op NFS4 statistics — global scope. */
 	struct reffs_op_stats ss_nfs4_op_stats[REFFS_NFS4_OP_MAX];
 
