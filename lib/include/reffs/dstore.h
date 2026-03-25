@@ -23,6 +23,7 @@
 
 #include <rpc/rpc.h>
 
+#include "reffs/nfs4_stats.h"
 #include "reffs/rcu.h"
 #include "reffs/settings.h"
 
@@ -66,6 +67,9 @@ struct dstore {
 	struct urcu_ref ds_ref;
 	uint64_t ds_state; /* atomic flag word */
 	struct cds_lfht_node ds_node; /* hash table node */
+
+	/* Layout error stats reported by clients for this dstore. */
+	struct reffs_layout_error_stats ds_layout_errors;
 };
 
 /* ------------------------------------------------------------------ */

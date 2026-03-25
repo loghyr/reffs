@@ -49,6 +49,9 @@ struct nfs4_client {
 	/* Per-CB-op statistics — indexed by CB op code. */
 	struct reffs_cb_stats nc_cb_stats[REFFS_CB_OP_MAX];
 
+	/* Layout error stats reported by this client. */
+	struct reffs_layout_error_stats nc_layout_errors;
+
 	struct client nc_client; /* fs-layer object — keep last */
 };
 

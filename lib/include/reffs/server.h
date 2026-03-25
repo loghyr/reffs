@@ -118,6 +118,9 @@ struct server_state {
 
 	/* Aggregate backend I/O statistics across all superblocks. */
 	struct reffs_backend_stats ss_backend_stats;
+
+	/* Aggregate layout error stats (from LAYOUTERROR reports). */
+	struct reffs_layout_error_stats ss_layout_errors;
 };
 
 /* ------------------------------------------------------------------ */

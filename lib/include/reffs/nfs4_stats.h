@@ -88,4 +88,15 @@ struct reffs_cb_stats {
 	_Atomic uint64_t cbs_duration_max; /* nanoseconds, high-water */
 };
 
+/* ------------------------------------------------------------------ */
+/* Layout error stats (global, per-dstore, per-client)                 */
+/* ------------------------------------------------------------------ */
+
+struct reffs_layout_error_stats {
+	_Atomic uint64_t les_total; /* all LAYOUTERROR reports */
+	_Atomic uint64_t les_access; /* NFS4ERR_ACCESS / NFS4ERR_PERM */
+	_Atomic uint64_t les_io; /* NFS4ERR_IO */
+	_Atomic uint64_t les_other; /* everything else */
+};
+
 #endif /* _REFFS_NFS4_STATS_H */
