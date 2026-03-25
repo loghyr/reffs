@@ -30,6 +30,7 @@
 #include "reffs/network.h"
 #include "reffs/rcu.h"
 #include "reffs/rpc.h"
+#include "reffs/gss_context.h"
 #include "reffs/task.h"
 #include "reffs/tls.h"
 #include "reffs/trace/rpc.h"
@@ -450,6 +451,9 @@ void rpc_protocol_free(struct rpc_trans *rt)
 	default:
 		break;
 	}
+
+	free(rt->rt_info.ri_verifier_body);
+	rt->rt_info.ri_verifier_body = NULL;
 
 	ph = (struct protocol_handler *)rt->rt_context;
 	if (ph) {
@@ -932,9 +936,73 @@ int rpc_process_task(struct task *t)
 		p = (uint32_t *)(p + flavor_len / sizeof(uint32_t));
 		break;
 	}
+	case RPCSEC_GSS: {
+		/*
+		 * RFC 2203 §5.2.2: RPCSEC_GSS credential body is
+		 * rpc_gss_cred_vers_1_t {version, gss_proc, seq_num,
+		 * service, handle<>}.
+		 */
+		uint32_t gss_vers;
+
+		p = rpc_decode_uint32_t(rt, p, &flavor_len);
+		if (!p) {
+			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
+			goto handle_rpc_error;
+		}
+
+		uint32_t *gss_start = p;
+
+		p = rpc_decode_uint32_t(rt, p, &gss_vers);
+		if (!p || gss_vers != 1) {
+			rt->rt_info.ri_auth_stat = AUTH_BADCRED;
+			rt->rt_info.ri_reply_stat = MSG_DENIED;
+			rt->rt_info.ri_reject_stat = AUTH_ERROR;
+			goto handle_rpc_error;
+		}
+
+		p = rpc_decode_uint32_t(rt, p,
+					&rt->rt_info.ri_cred.rc_gss.gc_proc);
+		p = rpc_decode_uint32_t(rt, p,
+					&rt->rt_info.ri_cred.rc_gss.gc_seq);
+		p = rpc_decode_uint32_t(rt, p,
+					&rt->rt_info.ri_cred.rc_gss.gc_svc);
+		if (!p) {
+			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
+			goto handle_rpc_error;
+		}
+
+		/* Decode opaque handle<> */
+		uint32_t hlen;
+
+		p = rpc_decode_uint32_t(rt, p, &hlen);
+		if (!p || hlen > 16) {
+			rt->rt_info.ri_auth_stat = AUTH_BADCRED;
+			rt->rt_info.ri_reply_stat = MSG_DENIED;
+			rt->rt_info.ri_reject_stat = AUTH_ERROR;
+			goto handle_rpc_error;
+		}
+		if (hlen > 0)
+			memcpy(rt->rt_info.ri_cred.rc_gss.gc_handle, p, hlen);
+		rt->rt_info.ri_cred.rc_gss.gc_handle_len = hlen;
+
+		/* Advance past handle (XDR 4-byte aligned). */
+		uint32_t padded = (hlen + 3) & ~3u;
+
+		rt->rt_offset += padded;
+		p = (uint32_t *)((char *)p + padded);
+
+		/* Advance past any remaining credential body. */
+		uint32_t consumed = (uint32_t)((char *)p - (char *)gss_start);
+		if (consumed < flavor_len) {
+			uint32_t skip = flavor_len - consumed;
+
+			rt->rt_offset += skip;
+			p = (uint32_t *)((char *)p + skip);
+		}
+		break;
+	}
 	case AUTH_SHORT:
 	case AUTH_DH:
-	case RPCSEC_GSS:
 	default:
 		rt->rt_info.ri_auth_stat = AUTH_BADCRED;
 		rt->rt_info.ri_reply_stat = MSG_DENIED;
@@ -968,10 +1036,39 @@ int rpc_process_task(struct task *t)
 			goto handle_rpc_error;
 		}
 		break;
+	case RPCSEC_GSS: {
+		/*
+		 * RFC 2203 §5.3.3.2: the RPCSEC_GSS verifier is a
+		 * MIC over the sequence number.  Save it for later
+		 * validation after context lookup.
+		 */
+		uint32_t gss_verf_len;
+
+		p = rpc_decode_uint32_t(rt, p, &gss_verf_len);
+		if (!p || gss_verf_len > 1024) {
+			rt->rt_info.ri_auth_stat = AUTH_BADVERF;
+			goto handle_rpc_error;
+		}
+
+		if (gss_verf_len > 0) {
+			rt->rt_info.ri_verifier_body = malloc(gss_verf_len);
+			if (!rt->rt_info.ri_verifier_body) {
+				rt->rt_info.ri_auth_stat = AUTH_BADVERF;
+				goto handle_rpc_error;
+			}
+			memcpy(rt->rt_info.ri_verifier_body, p, gss_verf_len);
+			rt->rt_info.ri_verifier_len = gss_verf_len;
+
+			uint32_t padded = (gss_verf_len + 3) & ~3u;
+
+			rt->rt_offset += padded;
+			p = (uint32_t *)((char *)p + padded);
+		}
+		break;
+	}
 	case AUTH_SYS:
 	case AUTH_SHORT:
 	case AUTH_DH:
-	case RPCSEC_GSS:
 	default:
 		rt->rt_info.ri_auth_stat = AUTH_BADVERF;
 		__atomic_fetch_add(&rph->rph_authed_errors, 1,
@@ -1027,6 +1124,22 @@ int rpc_process_task(struct task *t)
 		rpc_protocol_free(rt);
 		return ret;
 	}
+
+	/*
+	 * RPCSEC_GSS context establishment: INIT and CONTINUE_INIT
+	 * are handled here, not dispatched to protocol ops.  The
+	 * call body is a GSS token, not an NFS procedure.
+	 */
+#ifdef HAVE_GSSAPI_KRB5
+	if (rt->rt_info.ri_cred.rc_flavor == RPCSEC_GSS &&
+	    (rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_INIT ||
+	     rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_CONTINUE_INIT)) {
+		ret = rpc_gss_handle_init(rt);
+		rpc_program_handler_put(rph);
+		rpc_protocol_free(rt);
+		return ret;
+	}
+#endif
 
 	ret = rpc_protocol_allocate_call(rt);
 	if (!ret)

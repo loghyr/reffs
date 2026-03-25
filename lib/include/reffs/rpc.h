@@ -31,10 +31,27 @@
 #include "reffs/task.h"
 #include "reffs/tls.h"
 
+/*
+ * RPCSEC_GSS control procedures (RFC 2203 §5.2.2).
+ */
+#define RPCSEC_GSS_DATA 0
+#define RPCSEC_GSS_INIT 1
+#define RPCSEC_GSS_CONTINUE_INIT 2
+#define RPCSEC_GSS_DESTROY 3
+
+struct rpc_gss_cred {
+	uint32_t gc_proc; /* RPCSEC_GSS_DATA/INIT/CONTINUE_INIT/DESTROY */
+	uint32_t gc_seq; /* sequence number */
+	uint32_t gc_svc; /* rpc_gss_svc_t: 1=none, 2=integrity, 3=privacy */
+	uint8_t gc_handle[16]; /* opaque context handle */
+	uint32_t gc_handle_len;
+};
+
 struct rpc_cred {
 	uint32_t rc_flavor;
 	union {
 		struct authunix_parms rc_unix;
+		struct rpc_gss_cred rc_gss;
 	};
 };
 
@@ -48,6 +65,8 @@ struct rpc_info {
 	struct connection_info ri_ci;
 	struct rpc_cred ri_cred;
 	uint32_t ri_verifier_flavor;
+	uint8_t *ri_verifier_body; /* GSS MIC verifier (malloc'd, or NULL) */
+	uint32_t ri_verifier_len;
 
 	enum reply_stat ri_reply_stat;
 	enum reject_stat ri_reject_stat;

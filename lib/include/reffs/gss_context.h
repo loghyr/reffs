@@ -97,4 +97,13 @@ uint32_t gss_ctx_verify_mic(struct gss_ctx_entry *entry, const void *data,
 char *gss_ctx_principal(struct gss_ctx_entry *entry);
 #endif /* HAVE_GSSAPI_KRB5 */
 
+struct rpc_trans;
+
+/*
+ * Handle RPCSEC_GSS_INIT / CONTINUE_INIT in the RPC layer.
+ * Performs GSS context establishment and sends the rpc_gss_init_res
+ * reply directly (no protocol dispatch).
+ */
+int rpc_gss_handle_init(struct rpc_trans *rt);
+
 #endif /* _REFFS_GSS_CONTEXT_H */

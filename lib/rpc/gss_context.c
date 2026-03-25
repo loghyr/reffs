@@ -12,6 +12,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,6 +25,7 @@
 
 #include "reffs/gss_context.h"
 #include "reffs/log.h"
+#include "reffs/rpc.h"
 
 static struct cds_lfht *gss_ctx_ht;
 
@@ -300,4 +302,175 @@ char *gss_ctx_principal(struct gss_ctx_entry *entry)
 	return name;
 }
 
+/*
+ * Build and send an rpc_gss_init_res reply.
+ *
+ * Wire format (after standard RPC reply header):
+ *   handle<>        — opaque context handle
+ *   gss_major       — GSS major status
+ *   gss_minor       — GSS minor status
+ *   seq_window      — sequence window size
+ *   gss_token<>     — output token for client
+ */
+static int send_gss_init_reply(struct rpc_trans *rt, struct gss_ctx_entry *ctx,
+			       uint32_t gss_major, uint32_t gss_minor,
+			       const void *out_token, uint32_t out_token_len)
+{
+	uint32_t handle_padded = (ctx->gc_handle_len + 3) & ~3u;
+	uint32_t token_padded = (out_token_len + 3) & ~3u;
+
+	/*
+	 * Reply layout:
+	 *   record_mark + xid + msg_type + reply_stat +
+	 *   verf_flavor + verf_len + accept_stat +
+	 *   handle_len + handle + major + minor + window +
+	 *   token_len + token
+	 */
+	size_t reply_size = 7 * sizeof(uint32_t) + /* standard header */
+			    sizeof(uint32_t) + handle_padded + /* handle */
+			    3 * sizeof(uint32_t) + /* major, minor, window */
+			    sizeof(uint32_t) + token_padded; /* token */
+
+	rt->rt_reply_len = reply_size;
+	rt->rt_reply = calloc(reply_size, 1);
+	if (!rt->rt_reply)
+		return ENOMEM;
+
+	uint32_t msg_len = (uint32_t)(reply_size - sizeof(uint32_t));
+	uint32_t *p = (uint32_t *)rt->rt_reply;
+
+	rt->rt_offset = 0;
+
+	/* Standard RPC reply header. */
+	p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
+	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
+	p = rpc_encode_uint32_t(rt, p, 1); /* MSG_REPLY */
+	p = rpc_encode_uint32_t(rt, p, 0); /* MSG_ACCEPTED */
+	p = rpc_encode_uint32_t(rt, p, 0); /* AUTH_NONE verifier */
+	p = rpc_encode_uint32_t(rt, p, 0); /* verifier len = 0 */
+	p = rpc_encode_uint32_t(rt, p, 0); /* accept_stat = SUCCESS */
+
+	if (!p)
+		goto err;
+
+	/* rpc_gss_init_res body. */
+	p = rpc_encode_uint32_t(rt, p, ctx->gc_handle_len);
+	if (!p)
+		goto err;
+	if (ctx->gc_handle_len > 0) {
+		memcpy(p, ctx->gc_handle, ctx->gc_handle_len);
+		p = (uint32_t *)((char *)p + handle_padded);
+		rt->rt_offset += handle_padded;
+	}
+
+	p = rpc_encode_uint32_t(rt, p, gss_major);
+	p = rpc_encode_uint32_t(rt, p, gss_minor);
+	p = rpc_encode_uint32_t(rt, p, ctx->gc_seq_window);
+	if (!p)
+		goto err;
+
+	p = rpc_encode_uint32_t(rt, p, out_token_len);
+	if (!p)
+		goto err;
+	if (out_token_len > 0) {
+		memcpy(p, out_token, out_token_len);
+		rt->rt_offset += token_padded;
+	}
+
+	rt->rt_offset = rt->rt_reply_len;
+
+	TRACE("GSS INIT reply: xid=0x%08x major=%u handle_len=%u token_len=%u",
+	      rt->rt_info.ri_xid, gss_major, ctx->gc_handle_len, out_token_len);
+
+	if (rt->rt_rc && rt->rt_cb)
+		rt->rt_cb(rt);
+
+	return 0;
+
+err:
+	free(rt->rt_reply);
+	rt->rt_reply = NULL;
+	return EINVAL;
+}
+
 #endif /* HAVE_GSSAPI_KRB5 */
+
+/*
+ * Handle RPCSEC_GSS_INIT / CONTINUE_INIT.
+ *
+ * The RPC call body (after the header) is the gss_token from the
+ * client.  We pass it to gss_accept_sec_context and return the
+ * rpc_gss_init_res with the output token.
+ */
+int rpc_gss_handle_init(struct rpc_trans *rt
+#ifndef HAVE_GSSAPI_KRB5
+			__attribute__((unused))
+#endif
+)
+{
+#ifdef HAVE_GSSAPI_KRB5
+	struct rpc_gss_cred *gc = &rt->rt_info.ri_cred.rc_gss;
+	struct gss_ctx_entry *ctx;
+
+	if (gc->gc_proc == RPCSEC_GSS_INIT) {
+		/* New context: generate a random handle. */
+		uint8_t handle[GSS_HANDLE_LEN];
+
+		RAND_bytes(handle, GSS_HANDLE_LEN);
+		ctx = gss_ctx_create(handle, GSS_HANDLE_LEN);
+		if (!ctx) {
+			LOG("GSS INIT: failed to create context entry");
+			return ENOMEM;
+		}
+		ctx->gc_service = gc->gc_svc;
+	} else {
+		/* CONTINUE_INIT: look up existing partial context. */
+		ctx = gss_ctx_find(gc->gc_handle, gc->gc_handle_len);
+		if (!ctx) {
+			LOG("GSS CONTINUE_INIT: context not found");
+			return EINVAL;
+		}
+	}
+
+	/*
+	 * The remaining call body after the RPC header is the
+	 * rpc_gss_init_arg { opaque gss_token<> }.
+	 * Read the token length and pointer from the raw buffer.
+	 */
+	uint32_t *body = (uint32_t *)(rt->rt_body + rt->rt_offset);
+	uint32_t token_len = ntohl(*body);
+
+	body++;
+	void *input_token = body;
+
+	void *output_token = NULL;
+	uint32_t output_len = 0;
+	uint32_t minor_status = 0;
+
+	uint32_t major = gss_ctx_accept(ctx, input_token, token_len,
+					&output_token, &output_len,
+					&minor_status);
+
+	int ret;
+
+	if (major == GSS_S_COMPLETE || major == GSS_S_CONTINUE_NEEDED)
+		ret = send_gss_init_reply(rt, ctx, major, minor_status,
+					  output_token, output_len);
+	else
+		ret = EINVAL;
+
+	/* Free the output token from gss_accept_sec_context. */
+	if (output_token) {
+		OM_uint32 minor;
+		gss_buffer_desc buf = { .length = output_len,
+					.value = output_token };
+
+		gss_release_buffer(&minor, &buf);
+	}
+
+	gss_ctx_put(ctx);
+	return ret;
+#else
+	return ENOTSUP;
+#endif
+}
