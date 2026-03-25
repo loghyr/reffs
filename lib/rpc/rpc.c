@@ -341,6 +341,88 @@ static uint32_t *rpc_encode_reply_verifier(struct rpc_trans *rt, uint32_t *p)
 	return p;
 }
 
+/* ------------------------------------------------------------------ */
+/* Reply construction helpers                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * MSG_ACCEPTED header: 7 words base + verifier extra.
+ *   record_mark | xid | MSG_REPLY(1) | MSG_ACCEPTED(0) |
+ *   verf_flavor | verf_len | [verf_body] | accept_stat
+ */
+#define RPC_ACCEPTED_HDR_WORDS 7
+
+/*
+ * MSG_DENIED header: 4 words base (no verifier).
+ *   record_mark | xid | MSG_REPLY(1) | MSG_DENIED(1)
+ */
+#define RPC_DENIED_HDR_WORDS 4
+
+int rpc_alloc_accepted_reply(struct rpc_trans *rt, size_t body_size)
+{
+	uint32_t verf_extra = rpc_compute_gss_reply_verifier(rt);
+
+	rt->rt_reply_len = RPC_ACCEPTED_HDR_WORDS * sizeof(uint32_t) +
+			   verf_extra + body_size;
+	rt->rt_reply = calloc(rt->rt_reply_len, 1);
+	if (!rt->rt_reply)
+		return -1;
+	rt->rt_offset = 0;
+	return 0;
+}
+
+int rpc_alloc_denied_reply(struct rpc_trans *rt, size_t body_size)
+{
+	rt->rt_reply_len = RPC_DENIED_HDR_WORDS * sizeof(uint32_t) + body_size;
+	rt->rt_reply = calloc(rt->rt_reply_len, 1);
+	if (!rt->rt_reply)
+		return -1;
+	rt->rt_offset = 0;
+	return 0;
+}
+
+uint32_t *rpc_build_accepted_header(struct rpc_trans *rt, uint32_t accept_stat)
+{
+	uint32_t msg_len = (uint32_t)(rt->rt_reply_len - sizeof(uint32_t));
+	uint32_t *p = (uint32_t *)rt->rt_reply;
+
+	p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
+	if (!p)
+		return NULL;
+	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
+	if (!p)
+		return NULL;
+	p = rpc_encode_uint32_t(rt, p, 1); /* MSG_REPLY */
+	if (!p)
+		return NULL;
+	p = rpc_encode_uint32_t(rt, p, 0); /* MSG_ACCEPTED */
+	if (!p)
+		return NULL;
+	p = rpc_encode_reply_verifier(rt, p);
+	if (!p)
+		return NULL;
+	p = rpc_encode_uint32_t(rt, p, accept_stat);
+	return p;
+}
+
+uint32_t *rpc_build_denied_header(struct rpc_trans *rt)
+{
+	uint32_t msg_len = (uint32_t)(rt->rt_reply_len - sizeof(uint32_t));
+	uint32_t *p = (uint32_t *)rt->rt_reply;
+
+	p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
+	if (!p)
+		return NULL;
+	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
+	if (!p)
+		return NULL;
+	p = rpc_encode_uint32_t(rt, p, 1); /* MSG_REPLY */
+	if (!p)
+		return NULL;
+	p = rpc_encode_uint32_t(rt, p, 1); /* MSG_DENIED */
+	return p;
+}
+
 static int send_auth_tls_response(struct rpc_trans *rt)
 {
 	uint32_t msg_len;
@@ -593,7 +675,6 @@ void rpc_protocol_free(struct rpc_trans *rt)
  */
 void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t)
 {
-	u_long msg_len;
 	uint32_t *p;
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 	u_long xdr_size = 0;
@@ -603,32 +684,10 @@ void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t)
 	if (ph && ph->ph_op_handler && ph->ph_op_handler->roh_res_f)
 		xdr_size = xdr_sizeof(ph->ph_op_handler->roh_res_f, ph->ph_res);
 
-	uint32_t verf_extra = rpc_compute_gss_reply_verifier(rt);
-
-	rt->rt_reply_len = 7 * sizeof(uint32_t) + verf_extra + xdr_size;
-	msg_len = rt->rt_reply_len - sizeof(uint32_t);
-	rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
-	if (!rt->rt_reply)
+	if (rpc_alloc_accepted_reply(rt, xdr_size) < 0)
 		goto drop;
 
-	p = (uint32_t *)rt->rt_reply;
-
-	p = rpc_encode_uint32_t(rt, p, (uint32_t)(msg_len | 0x80000000));
-	if (!p)
-		goto enc_err;
-	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
-	if (!p)
-		goto enc_err;
-	p = rpc_encode_uint32_t(rt, p, 1); /* MSG_REPLY */
-	if (!p)
-		goto enc_err;
-	p = rpc_encode_uint32_t(rt, p, 0); /* MSG_ACCEPTED */
-	if (!p)
-		goto enc_err;
-	p = rpc_encode_reply_verifier(rt, p);
-	if (!p)
-		goto enc_err;
-	p = rpc_encode_uint32_t(rt, p, 0); /* accept_stat = SUCCESS */
+	p = rpc_build_accepted_header(rt, 0); /* SUCCESS */
 	if (!p)
 		goto enc_err;
 
@@ -857,9 +916,7 @@ void rpc_trans_get_sockaddr_in(struct rpc_trans *rt, struct sockaddr_in *sin)
 
 int rpc_process_task(struct task *t)
 {
-	u_long msg_len = 0;
 	int ret = 0;
-
 	uint32_t *p;
 
 	if (!t)
@@ -1364,96 +1421,58 @@ handle_rpc_error:
 
 	if (rt->rt_info.ri_reply_stat == MSG_DENIED) {
 		if (rt->rt_info.ri_reject_stat == RPC_MISMATCH) {
-			rt->rt_reply_len = 7 * sizeof(uint32_t);
-			msg_len = rt->rt_reply_len - sizeof(uint32_t);
-			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
-			if (!rt->rt_reply) {
+			/*
+			 * RFC 5531: MSG_DENIED, RPC_MISMATCH.
+			 * Body: reject_stat + low_version + high_version.
+			 */
+			if (rpc_alloc_denied_reply(rt, 3 * sizeof(uint32_t)) <
+			    0)
 				goto drop_on_floor;
-			}
 
-			p = (uint32_t *)rt->rt_reply;
-
-			p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
+			p = rpc_build_denied_header(rt);
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
 				goto drop_on_floor;
 			}
 
-			p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
+			p = rpc_encode_uint32_t(rt, p, RPC_MISMATCH);
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
 				goto drop_on_floor;
 			}
 
-			p = rpc_encode_uint32_t(rt, p, 1);
+			p = rpc_encode_uint32_t(rt, p, 2); /* low version */
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
 				goto drop_on_floor;
 			}
 
-			p = rpc_encode_uint32_t(rt, p, 0);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p,
-						rt->rt_info.ri_auth_stat);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 2);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 2);
+			p = rpc_encode_uint32_t(rt, p, 2); /* high version */
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
 				goto drop_on_floor;
 			}
 		} else {
-			rt->rt_reply_len = 6 * sizeof(uint32_t);
-			msg_len = rt->rt_reply_len - sizeof(uint32_t);
-			rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
-			if (!rt->rt_reply) {
-				rt->rt_reply = NULL;
+			/*
+			 * RFC 5531: MSG_DENIED, AUTH_ERROR.
+			 * Body: reject_stat + auth_stat.
+			 */
+			if (rpc_alloc_denied_reply(rt, 2 * sizeof(uint32_t)) <
+			    0)
 				goto drop_on_floor;
-			}
-			p = (uint32_t *)rt->rt_reply;
 
-			p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
+			p = rpc_build_denied_header(rt);
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
 				goto drop_on_floor;
 			}
 
-			p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 1);
-			if (!p) {
-				free(rt->rt_reply);
-				rt->rt_reply = NULL;
-				goto drop_on_floor;
-			}
-
-			p = rpc_encode_uint32_t(rt, p, 0);
+			p = rpc_encode_uint32_t(rt, p, AUTH_ERROR);
 			if (!p) {
 				free(rt->rt_reply);
 				rt->rt_reply = NULL;
@@ -1469,60 +1488,9 @@ handle_rpc_error:
 			}
 		}
 	} else if (rt->rt_info.ri_accept_stat) {
-		uint32_t err_verf_extra = rpc_compute_gss_reply_verifier(rt);
-
-		rt->rt_reply_len = 8 * sizeof(uint32_t) + err_verf_extra;
-		msg_len = rt->rt_reply_len - sizeof(uint32_t);
-		rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
-		if (!rt->rt_reply) {
+		if (rpc_alloc_accepted_reply(rt, 0) < 0)
 			goto drop_on_floor;
-		}
-
-		p = (uint32_t *)rt->rt_reply;
-
-		p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
-		if (!p) {
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto drop_on_floor;
-		}
-
-		p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
-		if (!p) {
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto drop_on_floor;
-		}
-
-		p = rpc_encode_uint32_t(rt, p, 1);
-		if (!p) {
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto drop_on_floor;
-		}
-
-		p = rpc_encode_uint32_t(rt, p, 1);
-		if (!p) {
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto drop_on_floor;
-		}
-
-		p = rpc_encode_reply_verifier(rt, p);
-		if (!p) {
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto drop_on_floor;
-		}
-
-		p = rpc_encode_uint32_t(rt, p, 0);
-		if (!p) {
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto drop_on_floor;
-		}
-
-		p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_accept_stat);
+		p = rpc_build_accepted_header(rt, rt->rt_info.ri_accept_stat);
 		if (!p) {
 			free(rt->rt_reply);
 			rt->rt_reply = NULL;
@@ -1544,68 +1512,10 @@ handle_rpc_error:
 					      ph->ph_res);
 		}
 
-		uint32_t verf_extra = rpc_compute_gss_reply_verifier(rt);
-
-		rt->rt_reply_len = 7 * sizeof(uint32_t) + verf_extra + xdr_size;
-		msg_len = rt->rt_reply_len - sizeof(uint32_t);
-		rt->rt_reply = calloc(rt->rt_reply_len, sizeof(char));
-		if (!rt->rt_reply) {
+		if (rpc_alloc_accepted_reply(rt, xdr_size) < 0)
 			goto drop_on_floor;
-		}
 
-		p = (uint32_t *)rt->rt_reply;
-
-		p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
-					   __ATOMIC_RELAXED);
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto handle_rpc_error;
-		}
-
-		p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
-					   __ATOMIC_RELAXED);
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto handle_rpc_error;
-		}
-
-		p = rpc_encode_uint32_t(rt, p, 1);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
-					   __ATOMIC_RELAXED);
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto handle_rpc_error;
-		}
-
-		p = rpc_encode_uint32_t(rt, p, 0); /* MSG_ACCEPTED */
-		if (!p) {
-			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
-					   __ATOMIC_RELAXED);
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto handle_rpc_error;
-		}
-
-		p = rpc_encode_reply_verifier(rt, p);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
-					   __ATOMIC_RELAXED);
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto handle_rpc_error;
-		}
-
-		p = rpc_encode_uint32_t(rt, p, 0); /* accept_stat = SUCCESS */
+		p = rpc_build_accepted_header(rt, 0); /* SUCCESS */
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
 			__atomic_fetch_add(&rph->rph_accepted_errors, 1,

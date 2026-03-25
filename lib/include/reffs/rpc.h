@@ -236,4 +236,27 @@ int rpc_parse_call_data(struct rpc_trans *rt);
 void rpc_enable_packet_logging(void);
 void rpc_disable_packet_logging(void);
 
+/*
+ * Reply construction helpers.
+ *
+ * rpc_alloc_accepted_reply: allocate reply buffer for MSG_ACCEPTED.
+ *   header (record mark + xid + msg_type + reply_stat + verifier +
+ *   accept_stat) + body_size.  Computes GSS verifier size automatically.
+ *
+ * rpc_alloc_denied_reply: allocate reply buffer for MSG_DENIED.
+ *   header (record mark + xid + msg_type + reply_stat) + body_size.
+ *   No verifier in MSG_DENIED replies.
+ *
+ * rpc_build_accepted_header: encode MSG_ACCEPTED header including verifier.
+ *   Returns pointer past accept_stat, ready for body encoding.
+ *
+ * rpc_build_denied_header: encode MSG_DENIED header (no verifier).
+ *   Returns pointer past reply_stat, ready for reject reason encoding.
+ */
+int rpc_alloc_accepted_reply(struct rpc_trans *rt, size_t body_size);
+int rpc_alloc_denied_reply(struct rpc_trans *rt, size_t body_size);
+
+uint32_t *rpc_build_accepted_header(struct rpc_trans *rt, uint32_t accept_stat);
+uint32_t *rpc_build_denied_header(struct rpc_trans *rt);
+
 #endif
