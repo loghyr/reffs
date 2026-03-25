@@ -1585,16 +1585,6 @@ handle_rpc_error:
 			goto handle_rpc_error;
 		}
 
-		p = rpc_encode_uint32_t(rt, p, 0);
-		if (!p) {
-			rt->rt_info.ri_accept_stat = SYSTEM_ERR;
-			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
-					   __ATOMIC_RELAXED);
-			free(rt->rt_reply);
-			rt->rt_reply = NULL;
-			goto handle_rpc_error;
-		}
-
 		p = rpc_encode_uint32_t(rt, p, 0); /* MSG_ACCEPTED */
 		if (!p) {
 			rt->rt_info.ri_accept_stat = SYSTEM_ERR;

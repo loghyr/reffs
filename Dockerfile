@@ -44,6 +44,8 @@ RUN dnf -y install \
     net-tools \
     ninja-build \
     nslookup \
+    krb5-devel \
+    libnfsidmap-devel \
     openssl-devel \
     perf \
     procps-ng \

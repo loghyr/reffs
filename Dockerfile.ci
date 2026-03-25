@@ -35,6 +35,8 @@ RUN apt-get update && apt-get install -y \
     libtool-bin \
     autoconf-archive \
     libssl-dev \
+    libkrb5-dev \
+    libnfsidmap-dev \
     libcap-dev \
     psmisc \
     valgrind \
