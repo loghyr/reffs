@@ -1036,19 +1036,57 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 	uint32_t fence_max = ss ? ss->ss_fence_uid_max :
 				  REFFS_FENCE_UID_MAX_DEFAULT;
 
-	server_state_put(ss);
-
 	/*
-	 * Scan reported errors.  On access errors, fence and chmod
-	 * all mirror instances to repair credentials and permissions.
+	 * Scan reported errors.  Record stats at three scopes
+	 * (global, per-dstore, per-client), then on access errors
+	 * fence and chmod all mirror instances.
 	 */
 	for (u_int i = 0; i < args->lea_errors.lea_errors_len; i++) {
 		device_error4 *de = &args->lea_errors.lea_errors_val[i];
+		uint32_t ds_id = deviceid_to_dstore(de->de_deviceid);
 
 		TRACE("LAYOUTERROR: ino=%lu dev=%u status=%d op=%d",
-		      compound->c_inode->i_ino,
-		      deviceid_to_dstore(de->de_deviceid), de->de_status,
+		      compound->c_inode->i_ino, ds_id, de->de_status,
 		      de->de_opnum);
+
+		/*
+		 * Accumulate layout error stats: global, per-dstore,
+		 * and per-client.  Categorize by error type.
+		 */
+		struct reffs_layout_error_stats *scopes[3];
+		int nscopes = 0;
+
+		if (ss)
+			scopes[nscopes++] = &ss->ss_layout_errors;
+
+		struct dstore *err_ds = dstore_find(ds_id);
+
+		if (err_ds) {
+			scopes[nscopes++] = &err_ds->ds_layout_errors;
+			dstore_put(err_ds);
+		}
+
+		struct nfs4_client *nc = compound->c_nfs4_client;
+
+		if (nc)
+			scopes[nscopes++] = &nc->nc_layout_errors;
+
+		for (int s = 0; s < nscopes; s++) {
+			atomic_fetch_add_explicit(&scopes[s]->les_total, 1,
+						  memory_order_relaxed);
+			if (de->de_status == NFS4ERR_ACCESS ||
+			    de->de_status == NFS4ERR_PERM)
+				atomic_fetch_add_explicit(
+					&scopes[s]->les_access, 1,
+					memory_order_relaxed);
+			else if (de->de_status == NFS4ERR_IO)
+				atomic_fetch_add_explicit(&scopes[s]->les_io, 1,
+							  memory_order_relaxed);
+			else
+				atomic_fetch_add_explicit(&scopes[s]->les_other,
+							  1,
+							  memory_order_relaxed);
+		}
 
 		if ((de->de_status == NFS4ERR_ACCESS ||
 		     de->de_status == NFS4ERR_PERM) &&
@@ -1078,6 +1116,8 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 			    compound->c_inode->i_ino);
 		}
 	}
+
+	server_state_put(ss);
 
 	return 0;
 }
