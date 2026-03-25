@@ -47,6 +47,10 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 		goto out;
 	}
 
+	*status = nfs4_check_wrongsec(compound);
+	if (*status)
+		goto out;
+
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
 		goto out;
@@ -132,6 +136,10 @@ uint32_t nfs4_op_lookupp(struct compound *compound)
 		*status = NFS4ERR_NOFILEHANDLE;
 		goto out;
 	}
+
+	*status = nfs4_check_wrongsec(compound);
+	if (*status)
+		goto out;
 
 	/* At the root there is no parent */
 	if (compound->c_curr_nfh.nfh_ino == INODE_ROOT_ID) {

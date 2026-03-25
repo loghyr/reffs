@@ -63,6 +63,10 @@ uint32_t nfs4_op_putfh(struct compound *compound)
 		return 0;
 	}
 
+	*status = nfs4_check_wrongsec(compound);
+	if (*status)
+		return 0;
+
 	if (nfh->nfh_sb != compound->c_curr_nfh.nfh_sb) {
 		super_block_put(compound->c_curr_sb);
 		compound->c_curr_sb = super_block_find(nfh->nfh_sb);
@@ -101,6 +105,10 @@ uint32_t nfs4_op_putpubfh(struct compound *compound)
 	PUTPUBFH4res *res = NFS4_OP_RES_SETUP(compound, opputpubfh);
 	nfsstat4 *status = &res->status;
 
+	*status = nfs4_check_wrongsec(compound);
+	if (*status)
+		return 0;
+
 	if (compound->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
 		super_block_put(compound->c_curr_sb);
 		compound->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
@@ -128,6 +136,10 @@ uint32_t nfs4_op_putrootfh(struct compound *compound)
 {
 	PUTROOTFH4res *res = NFS4_OP_RES_SETUP(compound, opputrootfh);
 	nfsstat4 *status = &res->status;
+
+	*status = nfs4_check_wrongsec(compound);
+	if (*status)
+		return 0;
 
 	if (compound->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
 		super_block_put(compound->c_curr_sb);

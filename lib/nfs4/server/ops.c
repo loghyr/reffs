@@ -8,6 +8,8 @@
 #endif
 
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 #include <rpc/auth.h>
 
 #include "nfsv42_xdr.h"
@@ -16,6 +18,7 @@
 #include "reffs/nfs4_stats.h"
 #include "reffs/rpc.h"
 #include "reffs/inode.h"
+#include "reffs/dirent.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -70,10 +73,70 @@ void nfs4_op_stats_record(struct reffs_op_stats global[REFFS_NFS4_OP_MAX],
 
 uint32_t nfs4_op_secinfo(struct compound *compound)
 {
+	SECINFO4args *args = NFS4_OP_ARG_SETUP(compound, opsecinfo);
 	SECINFO4res *res = NFS4_OP_RES_SETUP(compound, opsecinfo);
 	nfsstat4 *status = &res->status;
+	SECINFO4resok *resok = NFS4_OP_RESOK_SETUP(res, SECINFO4res_u, resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	struct reffs_dirent *child_de = NULL;
+	char *name = NULL;
+
+	if (!compound->c_inode) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	if (!S_ISDIR(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_NOTDIR;
+		goto out;
+	}
+
+	if (args->name.utf8string_len == 0 ||
+	    args->name.utf8string_len > REFFS_MAX_NAME) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	name = strndup(args->name.utf8string_val, args->name.utf8string_len);
+	if (!name) {
+		*status = NFS4ERR_DELAY;
+		goto out;
+	}
+
+	/*
+	 * Verify the component exists.  We don't need the child inode
+	 * itself — only confirmation that the name is valid.
+	 */
+	if (!compound->c_inode->i_dirent) {
+		int ret = inode_reconstruct_path_to_root(compound->c_inode);
+
+		if (ret) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+	}
+
+	child_de = dirent_load_child_by_name(compound->c_inode->i_dirent, name);
+	if (!child_de) {
+		*status = NFS4ERR_NOENT;
+		goto out;
+	}
+
+	*status = nfs4_build_secinfo(resok);
+	if (*status)
+		goto out;
+
+	/*
+	 * RFC 8881 s18.29.3: current FH is consumed on success.
+	 */
+	inode_active_put(compound->c_inode);
+	compound->c_inode = NULL;
+
+out:
+	TRACE("SECINFO name=%s status=%s(%d)", name ? name : "(null)",
+	      nfs4_err_name(*status), *status);
+	free(name);
+	dirent_put(child_de);
 
 	return 0;
 }
@@ -94,26 +157,19 @@ uint32_t nfs4_op_secinfo_no_name(struct compound *compound)
 	}
 
 	/*
-	 * Both CURRENT_FH and PARENT styles: this server accepts only
-	 * AUTH_SYS.  Return a single-entry list regardless of which
-	 * object's security the client is asking about.
+	 * Both CURRENT_FH and PARENT styles: return the export's
+	 * allowed security flavors.
 	 *
 	 * Per RFC 8881 s18.45.3 the current filehandle is consumed on
 	 * success; clear it here so subsequent ops in the compound get
 	 * NFS4ERR_NOFILEHANDLE if they rely on it.
 	 */
-	resok->SECINFO4resok_val = calloc(1, sizeof(secinfo4));
-	if (!resok->SECINFO4resok_val) {
-		*status = NFS4ERR_DELAY;
+	*status = nfs4_build_secinfo(resok);
+	if (*status)
 		goto out;
-	}
-	resok->SECINFO4resok_len = 1;
-	resok->SECINFO4resok_val[0].flavor = AUTH_SYS;
 
 	inode_active_put(compound->c_inode);
 	compound->c_inode = NULL;
-
-	*status = NFS4_OK;
 
 out:
 	TRACE("%s style=%d status=%s(%d)", __func__, (int)style,

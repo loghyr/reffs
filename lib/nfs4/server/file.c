@@ -277,6 +277,10 @@ uint32_t nfs4_op_open(struct compound *compound)
 		goto out;
 	}
 
+	*status = nfs4_check_wrongsec(compound);
+	if (*status)
+		goto out;
+
 	if (share_access == 0 || share_deny > OPEN4_SHARE_DENY_BOTH) {
 		*status = NFS4ERR_INVAL;
 		goto out;

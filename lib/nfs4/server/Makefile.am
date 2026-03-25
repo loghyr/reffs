@@ -28,6 +28,7 @@ libreffs_nfs4_server_la_SOURCES = \
 	lease_reaper.c \
 	lock.c \
 	ops.c \
+	security.c \
 	register.c \
 	session.c \
 	stateid.c \

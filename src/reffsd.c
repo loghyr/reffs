@@ -292,6 +292,15 @@ int main(int argc, char *argv[])
 	ss->ss_fence_uid_max = cfg.fence_uid_max;
 	ss->ss_layout_width = cfg.layout_width;
 
+	if (cfg.nexports > 0 && cfg.exports[0].nflavors > 0) {
+		memcpy(ss->ss_flavors, cfg.exports[0].flavors,
+		       cfg.exports[0].nflavors * sizeof(ss->ss_flavors[0]));
+		ss->ss_nflavors = cfg.exports[0].nflavors;
+	} else {
+		ss->ss_flavors[0] = REFFS_AUTH_SYS;
+		ss->ss_nflavors = 1;
+	}
+
 	// Initialize IO handler
 	if (io_handler_init(&rc) < 0) {
 		return 1;

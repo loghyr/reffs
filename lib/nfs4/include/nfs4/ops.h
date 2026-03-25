@@ -106,6 +106,10 @@ uint32_t nfs4_op_illegal(struct compound *compound);
 
 const char *nfs4_op_name(nfs_opnum4 op);
 
+/* Export security enforcement (security.c). */
+nfsstat4 nfs4_check_wrongsec(struct compound *compound);
+nfsstat4 nfs4_build_secinfo(SECINFO4resok *resok);
+
 struct inode;
 struct authunix_parms;
 nfsstat4 nfs4_apply_createattrs(fattr4 *fattr, struct inode *inode,

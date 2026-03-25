@@ -18,6 +18,7 @@
 #include "reffs/cmp.h"
 #include "reffs/nfs4_stats.h"
 #include "reffs/server_persist.h"
+#include "reffs/settings.h"
 
 /*
  * Server lifecycle state machine.
@@ -112,6 +113,10 @@ struct server_state {
 	uint32_t ss_fence_uid_min;
 	uint32_t ss_fence_uid_max;
 	unsigned int ss_layout_width;
+
+	/* Export security flavors — copied from first export at boot. */
+	enum reffs_auth_flavor ss_flavors[REFFS_CONFIG_MAX_FLAVORS];
+	unsigned int ss_nflavors;
 
 	/* Per-op NFS4 statistics — global scope. */
 	struct reffs_op_stats ss_nfs4_op_stats[REFFS_NFS4_OP_MAX];
