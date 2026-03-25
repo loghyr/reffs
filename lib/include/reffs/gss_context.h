@@ -111,5 +111,6 @@ struct rpc_trans;
  * reply directly (no protocol dispatch).
  */
 int rpc_gss_handle_init(struct rpc_trans *rt);
+int rpc_gss_handle_destroy(struct rpc_trans *rt);
 
 #endif /* _REFFS_GSS_CONTEXT_H */

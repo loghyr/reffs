@@ -558,3 +558,128 @@ int rpc_gss_handle_init(struct rpc_trans *rt
 	return ENOTSUP;
 #endif
 }
+
+/*
+ * Handle RPCSEC_GSS_DESTROY — verify credentials, compute reply
+ * verifier, tear down the context, and send success reply.
+ *
+ * The reply verifier must be computed BEFORE destroying the context
+ * since gss_get_mic needs the live GSS context.
+ */
+int rpc_gss_handle_destroy(struct rpc_trans *rt
+#ifndef HAVE_GSSAPI_KRB5
+			   __attribute__((unused))
+#endif
+)
+{
+#ifdef HAVE_GSSAPI_KRB5
+	struct rpc_gss_cred *gc = &rt->rt_info.ri_cred.rc_gss;
+
+	/* Look up context — reject if not found. */
+	struct gss_ctx_entry *gctx =
+		gss_ctx_find(gc->gc_handle, gc->gc_handle_len);
+	if (!gctx) {
+		TRACE("GSS DESTROY: context not found");
+		return EINVAL;
+	}
+
+	/*
+	 * Verify the client's MIC over the sequence number
+	 * (same check as DATA requests per RFC 2203).
+	 */
+	if (rt->rt_info.ri_verifier_body && rt->rt_info.ri_verifier_len > 0) {
+		uint32_t seq_net = htonl(gc->gc_seq);
+		uint32_t vmaj;
+
+		vmaj = gss_ctx_verify_mic(gctx, &seq_net, sizeof(seq_net),
+					  rt->rt_info.ri_verifier_body,
+					  rt->rt_info.ri_verifier_len);
+		if (vmaj != GSS_S_COMPLETE) {
+			TRACE("GSS DESTROY: verifier MIC failed major=%u",
+			      vmaj);
+			gss_ctx_put(gctx);
+			return EINVAL;
+		}
+	}
+
+	/*
+	 * Compute reply verifier (MIC over seq_window) BEFORE
+	 * destroying the context.
+	 */
+	uint32_t seq_net = htonl(gc->gc_seq);
+	void *mic = NULL;
+	uint32_t mic_len = 0;
+
+	gss_ctx_get_mic(gctx, &seq_net, sizeof(seq_net), &mic, &mic_len);
+
+	/* Now destroy the context. */
+	gss_ctx_put(gctx);
+	gss_ctx_destroy(gc->gc_handle, gc->gc_handle_len);
+
+	TRACE("GSS DESTROY: context removed xid=0x%08x", rt->rt_info.ri_xid);
+
+	/* Build reply with GSS verifier (or AUTH_NONE if MIC failed). */
+	uint32_t mic_padded = mic ? ((mic_len + 3) & ~3u) : 0;
+	uint32_t verf_extra = mic ? mic_padded : 0;
+
+	rt->rt_reply_len = 7 * sizeof(uint32_t) + verf_extra;
+	rt->rt_reply = calloc(rt->rt_reply_len, 1);
+	if (!rt->rt_reply) {
+		if (mic) {
+			OM_uint32 minor;
+			gss_buffer_desc buf = { .length = mic_len,
+						.value = mic };
+
+			gss_release_buffer(&minor, &buf);
+		}
+		return ENOMEM;
+	}
+
+	uint32_t msg_len = (uint32_t)(rt->rt_reply_len - sizeof(uint32_t));
+	uint32_t *p = (uint32_t *)rt->rt_reply;
+
+	rt->rt_offset = 0;
+	p = rpc_encode_uint32_t(rt, p, msg_len | 0x80000000);
+	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
+	p = rpc_encode_uint32_t(rt, p, 1); /* MSG_REPLY */
+	p = rpc_encode_uint32_t(rt, p, 0); /* MSG_ACCEPTED */
+
+	if (mic && p) {
+		p = rpc_encode_uint32_t(rt, p, RPCSEC_GSS);
+		p = rpc_encode_uint32_t(rt, p, mic_len);
+		if (p) {
+			memcpy(p, mic, mic_len);
+			p = (uint32_t *)((char *)p + mic_padded);
+			rt->rt_offset += mic_padded;
+		}
+	} else if (p) {
+		p = rpc_encode_uint32_t(rt, p, 0); /* AUTH_NONE */
+		p = rpc_encode_uint32_t(rt, p, 0);
+	}
+
+	if (p)
+		p = rpc_encode_uint32_t(rt, p, 0); /* accept_stat = SUCCESS */
+
+	if (mic) {
+		OM_uint32 minor;
+		gss_buffer_desc buf = { .length = mic_len, .value = mic };
+
+		gss_release_buffer(&minor, &buf);
+	}
+
+	if (!p) {
+		free(rt->rt_reply);
+		rt->rt_reply = NULL;
+		return EINVAL;
+	}
+
+	rt->rt_offset = rt->rt_reply_len;
+
+	if (rt->rt_rc && rt->rt_cb)
+		rt->rt_cb(rt);
+
+	return 0;
+#else
+	return ENOTSUP;
+#endif
+}

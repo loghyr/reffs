@@ -1196,6 +1196,42 @@ int rpc_process_task(struct task *t)
 			gss_ctx_find(rt->rt_info.ri_cred.rc_gss.gc_handle,
 				     rt->rt_info.ri_cred.rc_gss.gc_handle_len);
 		if (gctx) {
+			/*
+			 * RFC 2203 §5.3.3.2: verify the client's
+			 * MIC over the sequence number.  Reject if
+			 * the verifier is missing or invalid.
+			 */
+			if (!rt->rt_info.ri_verifier_body ||
+			    rt->rt_info.ri_verifier_len == 0) {
+				TRACE("GSS DATA: missing verifier");
+				gss_ctx_put(gctx);
+				rt->rt_info.ri_auth_stat =
+					RPCSEC_GSS_CREDPROBLEM;
+				rt->rt_info.ri_reply_stat = MSG_DENIED;
+				rt->rt_info.ri_reject_stat = AUTH_ERROR;
+				goto handle_rpc_error;
+			}
+
+			uint32_t seq_net =
+				htonl(rt->rt_info.ri_cred.rc_gss.gc_seq);
+			uint32_t vmaj;
+
+			vmaj = gss_ctx_verify_mic(gctx, &seq_net,
+						  sizeof(seq_net),
+						  rt->rt_info.ri_verifier_body,
+						  rt->rt_info.ri_verifier_len);
+			if (vmaj != GSS_S_COMPLETE) {
+				TRACE("GSS DATA: verifier MIC "
+				      "failed major=%u",
+				      vmaj);
+				gss_ctx_put(gctx);
+				rt->rt_info.ri_auth_stat =
+					RPCSEC_GSS_CREDPROBLEM;
+				rt->rt_info.ri_reply_stat = MSG_DENIED;
+				rt->rt_info.ri_reject_stat = AUTH_ERROR;
+				goto handle_rpc_error;
+			}
+
 			uid_t uid;
 			gid_t gid;
 			int map_ret;
@@ -1270,6 +1306,14 @@ int rpc_process_task(struct task *t)
 	    (rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_INIT ||
 	     rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_CONTINUE_INIT)) {
 		ret = rpc_gss_handle_init(rt);
+		rpc_program_handler_put(rph);
+		rpc_protocol_free(rt);
+		return ret;
+	}
+
+	if (rt->rt_info.ri_cred.rc_flavor == RPCSEC_GSS &&
+	    rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_DESTROY) {
+		ret = rpc_gss_handle_destroy(rt);
 		rpc_program_handler_put(rph);
 		rpc_protocol_free(rt);
 		return ret;
