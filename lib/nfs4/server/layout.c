@@ -24,6 +24,7 @@
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/runway.h"
+#include "reffs/server.h"
 #include "reffs/settings.h"
 #include "reffs/stateid.h"
 #include "reffs/task.h"
@@ -615,7 +616,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			dstore_data_file_fence(ds, files[nfiles].ldf_fh,
 					       files[nfiles].ldf_fh_len,
 					       &files[nfiles], fence_min,
-					       fence_min, NULL);
+					       fence_max, NULL);
 			dstore_data_file_chmod(ds, files[nfiles].ldf_fh,
 					       files[nfiles].ldf_fh_len, NULL);
 

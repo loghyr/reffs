@@ -42,7 +42,6 @@
 #include "reffs/server.h"
 #include "reffs/dstore.h"
 #include "reffs/client.h"
-#include "nfs4/client.h"
 #include "reffs/trace/rpc.h"
 
 struct probe_time1 probe_time1_from_time_t(time_t ts)
@@ -627,8 +626,6 @@ static int probe1_op_layout_errors(struct rpc_trans *rt)
 				       idx < ncli) {
 					struct client *c = caa_container_of(
 						node, struct client, c_node);
-					struct nfs4_client *nc =
-						client_to_nfs4(c);
 					char label[32];
 
 					snprintf(label, sizeof(label),
@@ -637,7 +634,7 @@ static int probe1_op_layout_errors(struct rpc_trans *rt)
 						&resok->ler_clients
 							 .ler_clients_val[idx],
 						(uint32_t)c->c_id, label,
-						&nc->nc_layout_errors);
+						c->c_layout_errors);
 					idx++;
 					cds_lfht_next(ss->ss_client_ht, &iter);
 				}

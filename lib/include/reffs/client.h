@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "reffs/nfs4_stats.h"
 #include "reffs/rcu.h"
 
 #define CLIENT_IS_HASHED (1ULL << 0)
@@ -29,6 +30,9 @@ struct client {
 	/* Per-instance callbacks set at construction; no extern vtable. */
 	void (*c_free_rcu)(struct rcu_head *rcu);
 	void (*c_release)(struct urcu_ref *ref);
+
+	/* Protocol-layer layout error stats; set by protocol at init. */
+	struct reffs_layout_error_stats *c_layout_errors;
 };
 
 /* ------------------------------------------------------------------ */

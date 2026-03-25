@@ -103,6 +103,8 @@ struct nfs4_client *nfs4_client_alloc(const verifier4 *verifier,
 		return NULL;
 	}
 
+	nc->nc_client.c_layout_errors = &nc->nc_layout_errors;
+
 	return nc;
 }
 

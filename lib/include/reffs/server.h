@@ -185,6 +185,14 @@ void server_grace_end(struct server_state *ss);
  */
 void server_reclaim_complete(struct server_state *ss);
 
+/*
+ * server_state_find - locate the current server instance without a
+ * pointer.  Returns a ref-bumped pointer or NULL if no server has been
+ * initialised or shutdown is in progress.  Caller must
+ * server_state_put() the result.
+ */
+struct server_state *server_state_find(void);
+
 /* ------------------------------------------------------------------ */
 /* Accessors for protocol layer                                        */
 
@@ -233,13 +241,5 @@ uint32_t server_alloc_client_slot(struct server_state *ss);
  * server_lifecycle_name - human-readable state name for logging.
  */
 const char *server_lifecycle_name(enum server_lifecycle lc);
-
-/*
- * server_state_find - locate the current server instance without a
- * pointer.  Returns a ref-bumped pointer or NULL if no server has been
- * initialised or shutdown is in progress.  Caller must
- * server_state_put() the result.
- */
-struct server_state *server_state_find(void);
 
 #endif /* _REFFS_SERVER_H */
