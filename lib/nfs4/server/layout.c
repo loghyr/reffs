@@ -8,6 +8,7 @@
 #endif
 
 #include <arpa/inet.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -669,12 +670,11 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		TRACE("LAYOUTGET: created layout for ino=%lu with %u mirrors",
 		      compound->c_inode->i_ino, nfiles);
 
-		static bool first_layout = true;
+		static _Atomic bool first_layout = true;
 
-		if (first_layout) {
-			first_layout = false;
-			LOG("NFSv4.2 Flex File v2 Layout Driver: "
-			    "first layout issued");
+		if (atomic_exchange(&first_layout, false)) {
+			TRACE("NFSv4.2 Flex File v2 Layout Driver: "
+			      "first layout issued");
 		}
 	}
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
