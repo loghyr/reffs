@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
 docker build -t reffs-dev .
 #0 building with "desktop-linux" instance using docker driver
 
