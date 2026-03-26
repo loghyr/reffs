@@ -64,18 +64,14 @@ static bool next_op_is_secinfo(struct compound *compound)
  */
 nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 {
-	struct server_state *ss = server_state_find();
+	struct server_state *ss = compound->c_server_state;
 
-	if (!ss || ss->ss_nflavors == 0) {
-		server_state_put(ss);
+	if (ss->ss_nflavors == 0)
 		return NFS4_OK;
-	}
 
 	/* SECINFO lookahead: let the client discover flavors. */
-	if (next_op_is_secinfo(compound)) {
-		server_state_put(ss);
+	if (next_op_is_secinfo(compound))
 		return NFS4_OK;
-	}
 
 	uint32_t client_flavor = compound->c_rt->rt_info.ri_cred.rc_flavor;
 	struct conn_info *ci = io_conn_get(compound->c_rt->rt_fd);
@@ -85,21 +81,16 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 		switch (ss->ss_flavors[i]) {
 		case REFFS_AUTH_TLS:
 			/* TLS pseudo-flavor: AUTH_SYS over TLS transport. */
-			if (client_tls && client_flavor == AUTH_SYS) {
-				server_state_put(ss);
+			if (client_tls && client_flavor == AUTH_SYS)
 				return NFS4_OK;
-			}
 			break;
 		default:
-			if ((uint32_t)ss->ss_flavors[i] == client_flavor) {
-				server_state_put(ss);
+			if ((uint32_t)ss->ss_flavors[i] == client_flavor)
 				return NFS4_OK;
-			}
 			break;
 		}
 	}
 
-	server_state_put(ss);
 	TRACE("WRONGSEC: client flavor %u tls=%d not in export flavor list",
 	      client_flavor, client_tls);
 	return NFS4ERR_WRONGSEC;
@@ -111,12 +102,9 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
  * Used by both SECINFO and SECINFO_NO_NAME.  Returns NFS4_OK on
  * success, NFS4ERR_DELAY on allocation failure.
  */
-nfsstat4 nfs4_build_secinfo(SECINFO4resok *resok)
+nfsstat4 nfs4_build_secinfo(struct server_state *ss, SECINFO4resok *resok)
 {
-	struct server_state *ss = server_state_find();
-
-	if (!ss || ss->ss_nflavors == 0) {
-		server_state_put(ss);
+	if (ss->ss_nflavors == 0) {
 		/* Fallback: advertise AUTH_SYS. */
 		resok->SECINFO4resok_val = calloc(1, sizeof(secinfo4));
 		if (!resok->SECINFO4resok_val)
@@ -134,10 +122,8 @@ nfsstat4 nfs4_build_secinfo(SECINFO4resok *resok)
 	unsigned int max = ss->ss_nflavors;
 
 	resok->SECINFO4resok_val = calloc(max, sizeof(secinfo4));
-	if (!resok->SECINFO4resok_val) {
-		server_state_put(ss);
+	if (!resok->SECINFO4resok_val)
 		return NFS4ERR_DELAY;
-	}
 
 	unsigned int out = 0;
 	bool have_auth_sys = false;
@@ -182,7 +168,6 @@ fill_gss:
 				}
 				free(resok->SECINFO4resok_val);
 				resok->SECINFO4resok_val = NULL;
-				server_state_put(ss);
 				return NFS4ERR_DELAY;
 			}
 			memcpy(si->secinfo4_u.flavor_info.oid.sec_oid4_val,
@@ -201,6 +186,5 @@ fill_gss:
 	}
 
 	resok->SECINFO4resok_len = out;
-	server_state_put(ss);
 	return NFS4_OK;
 }

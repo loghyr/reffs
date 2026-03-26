@@ -120,7 +120,7 @@ uint32_t nfs4_op_secinfo(struct compound *compound)
 		goto out;
 	}
 
-	*status = nfs4_build_secinfo(resok);
+	*status = nfs4_build_secinfo(compound->c_server_state, resok);
 	if (*status)
 		goto out;
 
@@ -162,7 +162,7 @@ uint32_t nfs4_op_secinfo_no_name(struct compound *compound)
 	 * success; clear it here so subsequent ops in the compound get
 	 * NFS4ERR_NOFILEHANDLE if they rely on it.
 	 */
-	*status = nfs4_build_secinfo(resok);
+	*status = nfs4_build_secinfo(compound->c_server_state, resok);
 	if (*status)
 		goto out;
 

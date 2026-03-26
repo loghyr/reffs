@@ -122,7 +122,7 @@ START_TEST(test_session_alloc_basic)
 {
 	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
 
-	struct nfs4_session *ns = nfs4_session_alloc(g_nc, &ca, 0);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
 	ck_assert_ptr_nonnull(ns);
 
 	/* sessionid must not be all zeros */
@@ -130,11 +130,11 @@ START_TEST(test_session_alloc_basic)
 	ck_assert_mem_ne(ns->ns_sessionid, zeros, sizeof(sessionid4));
 
 	/* find by sessionid returns the same session */
-	struct nfs4_session *found = nfs4_session_find(ns->ns_sessionid);
+	struct nfs4_session *found = nfs4_session_find(g_ss, ns->ns_sessionid);
 	ck_assert_ptr_eq(found, ns);
 	nfs4_session_put(found);
 
-	nfs4_session_unhash(ns);
+	nfs4_session_unhash(g_ss, ns);
 	nfs4_session_put(ns);
 }
 END_TEST
@@ -144,15 +144,15 @@ START_TEST(test_session_unhash_removes)
 	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
 	sessionid4 sid;
 
-	struct nfs4_session *ns = nfs4_session_alloc(g_nc, &ca, 0);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
 	ck_assert_ptr_nonnull(ns);
 	memcpy(sid, ns->ns_sessionid, sizeof(sessionid4));
 
-	nfs4_session_unhash(ns);
+	nfs4_session_unhash(g_ss, ns);
 	nfs4_session_put(ns);
 
 	/* After unhash, find must return NULL */
-	struct nfs4_session *gone = nfs4_session_find(sid);
+	struct nfs4_session *gone = nfs4_session_find(g_ss, sid);
 	ck_assert_ptr_null(gone);
 }
 END_TEST
@@ -161,11 +161,11 @@ START_TEST(test_session_unhash_idempotent)
 {
 	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
 
-	struct nfs4_session *ns = nfs4_session_alloc(g_nc, &ca, 0);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
 	ck_assert_ptr_nonnull(ns);
 
-	bool first = nfs4_session_unhash(ns);
-	bool second = nfs4_session_unhash(ns);
+	bool first = nfs4_session_unhash(g_ss, ns);
+	bool second = nfs4_session_unhash(g_ss, ns);
 
 	ck_assert(first);
 	ck_assert(!second);
@@ -178,7 +178,7 @@ START_TEST(test_session_extra_ref)
 {
 	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
 
-	struct nfs4_session *ns = nfs4_session_alloc(g_nc, &ca, 0);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
 	ck_assert_ptr_nonnull(ns);
 
 	/* Extra get/put pair must not affect findability */
@@ -186,11 +186,11 @@ START_TEST(test_session_extra_ref)
 	ck_assert_ptr_eq(extra, ns);
 	nfs4_session_put(extra);
 
-	struct nfs4_session *found = nfs4_session_find(ns->ns_sessionid);
+	struct nfs4_session *found = nfs4_session_find(g_ss, ns->ns_sessionid);
 	ck_assert_ptr_eq(found, ns);
 	nfs4_session_put(found);
 
-	nfs4_session_unhash(ns);
+	nfs4_session_unhash(g_ss, ns);
 	nfs4_session_put(ns);
 }
 END_TEST
@@ -204,7 +204,7 @@ START_TEST(test_session_attrs_zero_gets_server_max)
 	/* Requesting 0 for sizes/ops/slots must get server caps. */
 	channel_attrs4 ca = make_fore_chan(0, 0, 0, 0, 0);
 
-	struct nfs4_session *ns = nfs4_session_alloc(g_nc, &ca, 0);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
 	ck_assert_ptr_nonnull(ns);
 
 	ck_assert_uint_eq(ns->ns_maxrequestsize, NFS4_SESSION_MAX_REQUEST_SIZE);
@@ -212,7 +212,7 @@ START_TEST(test_session_attrs_zero_gets_server_max)
 			  NFS4_SESSION_MAX_RESPONSE_SIZE);
 	ck_assert_uint_eq(ns->ns_slot_count, NFS4_SESSION_MAX_SLOTS);
 
-	nfs4_session_unhash(ns);
+	nfs4_session_unhash(g_ss, ns);
 	nfs4_session_put(ns);
 }
 END_TEST
@@ -223,7 +223,7 @@ START_TEST(test_session_attrs_excessive_gets_clamped)
 	channel_attrs4 ca = make_fore_chan(UINT32_MAX, UINT32_MAX, UINT32_MAX,
 					   UINT32_MAX, UINT32_MAX);
 
-	struct nfs4_session *ns = nfs4_session_alloc(g_nc, &ca, 0);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
 	ck_assert_ptr_nonnull(ns);
 
 	ck_assert_uint_le(ns->ns_maxrequestsize, NFS4_SESSION_MAX_REQUEST_SIZE);
@@ -234,7 +234,7 @@ START_TEST(test_session_attrs_excessive_gets_clamped)
 	ck_assert_uint_le(ns->ns_maxoperations, NFS4_SESSION_MAX_OPS);
 	ck_assert_uint_le(ns->ns_slot_count, NFS4_SESSION_MAX_SLOTS);
 
-	nfs4_session_unhash(ns);
+	nfs4_session_unhash(g_ss, ns);
 	nfs4_session_put(ns);
 }
 END_TEST
@@ -244,7 +244,7 @@ START_TEST(test_session_attrs_reasonable_preserved)
 	/* Values within server caps must be stored as-is. */
 	channel_attrs4 ca = make_fore_chan(32768, 32768, 2048, 4, 8);
 
-	struct nfs4_session *ns = nfs4_session_alloc(g_nc, &ca, 0);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
 	ck_assert_ptr_nonnull(ns);
 
 	ck_assert_uint_eq(ns->ns_maxrequestsize, 32768);
@@ -253,7 +253,7 @@ START_TEST(test_session_attrs_reasonable_preserved)
 	ck_assert_uint_eq(ns->ns_maxoperations, 4);
 	ck_assert_uint_eq(ns->ns_slot_count, 8);
 
-	nfs4_session_unhash(ns);
+	nfs4_session_unhash(g_ss, ns);
 	nfs4_session_put(ns);
 }
 END_TEST
@@ -266,7 +266,7 @@ START_TEST(test_session_slots_initial_state)
 {
 	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
 
-	struct nfs4_session *ns = nfs4_session_alloc(g_nc, &ca, 0);
+	struct nfs4_session *ns = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
 	ck_assert_ptr_nonnull(ns);
 	ck_assert_ptr_nonnull(ns->ns_slots);
 
@@ -276,7 +276,7 @@ START_TEST(test_session_slots_initial_state)
 		ck_assert_ptr_null(ns->ns_slots[i].sl_reply);
 	}
 
-	nfs4_session_unhash(ns);
+	nfs4_session_unhash(g_ss, ns);
 	nfs4_session_put(ns);
 }
 END_TEST
@@ -289,8 +289,8 @@ START_TEST(test_session_two_per_client)
 {
 	channel_attrs4 ca = make_fore_chan(65536, 65536, 4096, 8, 4);
 
-	struct nfs4_session *ns1 = nfs4_session_alloc(g_nc, &ca, 0);
-	struct nfs4_session *ns2 = nfs4_session_alloc(g_nc, &ca, 0);
+	struct nfs4_session *ns1 = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
+	struct nfs4_session *ns2 = nfs4_session_alloc(g_ss, g_nc, &ca, 0);
 	ck_assert_ptr_nonnull(ns1);
 	ck_assert_ptr_nonnull(ns2);
 
@@ -300,16 +300,16 @@ START_TEST(test_session_two_per_client)
 			 sizeof(sessionid4));
 
 	/* Both must be independently findable */
-	struct nfs4_session *f1 = nfs4_session_find(ns1->ns_sessionid);
-	struct nfs4_session *f2 = nfs4_session_find(ns2->ns_sessionid);
+	struct nfs4_session *f1 = nfs4_session_find(g_ss, ns1->ns_sessionid);
+	struct nfs4_session *f2 = nfs4_session_find(g_ss, ns2->ns_sessionid);
 	ck_assert_ptr_eq(f1, ns1);
 	ck_assert_ptr_eq(f2, ns2);
 	nfs4_session_put(f1);
 	nfs4_session_put(f2);
 
-	nfs4_session_unhash(ns1);
+	nfs4_session_unhash(g_ss, ns1);
 	nfs4_session_put(ns1);
-	nfs4_session_unhash(ns2);
+	nfs4_session_unhash(g_ss, ns2);
 	nfs4_session_put(ns2);
 }
 END_TEST

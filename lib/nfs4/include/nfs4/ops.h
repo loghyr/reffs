@@ -7,6 +7,7 @@
 #define _REFFS_NFS4_OPS_H
 
 struct compound;
+struct server_state;
 
 /*
  * NFSv4 op return flags.
@@ -108,7 +109,7 @@ const char *nfs4_op_name(nfs_opnum4 op);
 
 /* Export security enforcement (security.c). */
 nfsstat4 nfs4_check_wrongsec(struct compound *compound);
-nfsstat4 nfs4_build_secinfo(SECINFO4resok *resok);
+nfsstat4 nfs4_build_secinfo(struct server_state *ss, SECINFO4resok *resok);
 
 struct inode;
 struct authunix_parms;

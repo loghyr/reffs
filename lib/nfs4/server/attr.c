@@ -2733,7 +2733,8 @@ out:
 	return status;
 }
 
-static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
+static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
+			       struct nfsv42_attr *nattr)
 {
 	uint16_t type = inode->i_mode & S_IFMT;
 	struct super_block *sb = inode->i_sb;
@@ -2859,10 +2860,7 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	 * is MDS or combined.  The client uses this to decide whether
 	 * to request layouts via LAYOUTGET.
 	 */
-	struct server_state *ss_role = server_state_find();
-
-	if (ss_role &&
-	    (ss_role->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS)) {
+	if (ss->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS) {
 		nattr->fs_layout_types.fattr4_fs_layout_types_val =
 			calloc(2, sizeof(layouttype4));
 		if (nattr->fs_layout_types.fattr4_fs_layout_types_val) {
@@ -2883,7 +2881,6 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 				LAYOUT4_FLEX_FILES_V2;
 		}
 	}
-	server_state_put(ss_role);
 
 out:
 	return NFS4_OK;
@@ -2977,7 +2974,7 @@ static uint32_t nfs4_op_getattr_resume(struct rpc_trans *rt)
 	}
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
-	ret = inode_to_nattr(inode, &nattr);
+	ret = inode_to_nattr(compound->c_server_state, inode, &nattr);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 	if (ret) {
 		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
@@ -3093,7 +3090,7 @@ static uint32_t nfs4_op_getattr_cb_resume(struct rpc_trans *rt)
 	}
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
-	ret = inode_to_nattr(inode, &nattr);
+	ret = inode_to_nattr(compound->c_server_state, inode, &nattr);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 	if (ret) {
 		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
@@ -3244,7 +3241,9 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 				struct nfs4_client *nc =
 					client_to_nfs4(deleg_stid->s_client);
 				struct nfs4_session *sess =
-					nc ? nfs4_session_find_for_client(nc) :
+					nc ? nfs4_session_find_for_client(
+						     compound->c_server_state,
+						     nc) :
 					     NULL;
 
 				if (sess) {
@@ -3295,7 +3294,7 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 
 	/* Note: Once we copy it, all bets are off as to the contents! */
 	pthread_mutex_lock(&inode->i_attr_mutex);
-	ret = inode_to_nattr(inode, &nattr);
+	ret = inode_to_nattr(compound->c_server_state, inode, &nattr);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 	if (ret) {
 		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));
@@ -3627,7 +3626,8 @@ restart_snap:
 			attr_status = NFS4ERR_SERVERFAULT;
 		} else {
 			pthread_mutex_lock(&child->i_attr_mutex);
-			ret = inode_to_nattr(child, &nattr);
+			ret = inode_to_nattr(compound->c_server_state, child,
+					     &nattr);
 			pthread_mutex_unlock(&child->i_attr_mutex);
 			inode_active_put(child);
 			if (ret)
@@ -3936,7 +3936,7 @@ static nfsstat4 verify_common(struct compound *compound, fattr4 *obj_attrs,
 	bool attrs_equal;
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
-	ret = inode_to_nattr(inode, &cur);
+	ret = inode_to_nattr(compound->c_server_state, inode, &cur);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 	if (ret) {
 		status = errno_to_nfs4(ret, opnum);

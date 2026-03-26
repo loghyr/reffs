@@ -155,19 +155,11 @@ static nfsstat4 nfs4_stateid_resolve(struct compound *compound,
  * six bytes of the server UUID (stable across reboots) plus the two-byte
  * boot_seq (incremented on every restart).
  */
-static void nfs4_write_verf(verifier4 out_verf)
+static void nfs4_write_verf(struct server_state *ss, verifier4 out_verf)
 {
-	struct server_state *ss = server_state_find();
-
-	if (!ss) {
-		memset(out_verf, 0, NFS4_VERIFIER_SIZE);
-		return;
-	}
-
 	memcpy(out_verf, ss->ss_uuid, NFS4_VERIFIER_SIZE - 2);
 	uint16_t boot_seq = server_boot_seq(ss);
 	memcpy(out_verf + NFS4_VERIFIER_SIZE - 2, &boot_seq, 2);
-	server_state_put(ss);
 }
 
 /*
@@ -563,7 +555,9 @@ uint32_t nfs4_op_open(struct compound *compound)
 				ds->s_client ? client_to_nfs4(ds->s_client) :
 					       NULL;
 			struct nfs4_session *ds_session =
-				ds_nc ? nfs4_session_find_for_client(ds_nc) :
+				ds_nc ? nfs4_session_find_for_client(
+						compound->c_server_state,
+						ds_nc) :
 					NULL;
 			if (ds_session) {
 				stateid4 recall_sid;
@@ -1256,7 +1250,7 @@ static uint32_t nfs4_op_write_resume(struct rpc_trans *rt)
 	inode_sync_to_disk(compound->c_inode);
 
 	resok->committed = FILE_SYNC4;
-	nfs4_write_verf(resok->writeverf);
+	nfs4_write_verf(compound->c_server_state, resok->writeverf);
 
 	return 0;
 }
@@ -1295,7 +1289,7 @@ uint32_t nfs4_op_write(struct compound *compound)
 	if (args->data.data_len == 0) {
 		resok->count = 0;
 		resok->committed = FILE_SYNC4;
-		nfs4_write_verf(resok->writeverf);
+		nfs4_write_verf(compound->c_server_state, resok->writeverf);
 		goto out;
 	}
 
@@ -1427,7 +1421,7 @@ uint32_t nfs4_op_write(struct compound *compound)
 	inode_sync_to_disk(compound->c_inode);
 
 	resok->committed = FILE_SYNC4;
-	nfs4_write_verf(resok->writeverf);
+	nfs4_write_verf(compound->c_server_state, resok->writeverf);
 
 out:
 	stateid_put(stid);
@@ -1470,7 +1464,7 @@ uint32_t nfs4_op_commit(struct compound *compound)
 	 * Return the stable write verifier so the client can verify
 	 * stability across server restarts.
 	 */
-	nfs4_write_verf(resok->writeverf);
+	nfs4_write_verf(compound->c_server_state, resok->writeverf);
 
 out:
 	TRACE("%s status=%s(%d) offset=%llu count=%u", __func__,

@@ -78,9 +78,17 @@ static void dirent_lru_del_locked(struct reffs_dirent *rd)
 	uint64_t old = __atomic_fetch_and(&rd->rd_state, ~DIRENT_IS_ON_LRU,
 					  __ATOMIC_ACQ_REL);
 	if (old & DIRENT_IS_ON_LRU) {
-		struct super_block *sb = rd->rd_inode->i_sb;
 		cds_list_del_init(&rd->rd_lru);
-		sb->sb_dirent_lru_count--;
+		/*
+		 * rd_inode is RCU-protected; brief rcu_read_lock to
+		 * safely follow the pointer.  Holding sb_dirent_lru_lock
+		 * does not substitute for RCU protection.
+		 */
+		rcu_read_lock();
+		struct inode *inode = rcu_dereference(rd->rd_inode);
+		if (inode && inode->i_sb)
+			inode->i_sb->sb_dirent_lru_count--;
+		rcu_read_unlock();
 	}
 }
 
@@ -619,10 +627,11 @@ struct reffs_dirent *dirent_load_child_by_name(struct reffs_dirent *parent_de,
 	 * populate it on first access.  We do a speculative inode_find()
 	 * here so that if the inode happens to be cached we wire it up now.
 	 */
-	rd->rd_inode = inode_find(sb, child_ino);
-	if (rd->rd_inode) {
+	struct inode *inode = inode_find(sb, child_ino);
+	rcu_assign_pointer(rd->rd_inode, inode);
+	if (inode) {
 		/* inode_find returned with active ref; we only want weak ref */
-		inode_active_put(rd->rd_inode);
+		inode_active_put(inode);
 	}
 
 	return rd;

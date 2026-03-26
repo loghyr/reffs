@@ -32,6 +32,7 @@
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h" /* OP_MAX */
 #include "reffs/rpc.h"
+#include "reffs/server.h"
 #include "reffs/task.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
@@ -82,6 +83,15 @@ static struct compound *make_compound(struct rpc_trans *rt, struct task *t,
 	rt->rt_task = t;
 	rt->rt_compound = compound;
 
+	/*
+	 * Provide a stub server_state so dispatch_compound() does not
+	 * return NFS4ERR_DELAY.  The ops exercised here do not read any
+	 * server_state fields; stats recording is safe on a zero-init'd
+	 * struct because reffs_op_stats uses stdatomic.
+	 */
+	compound->c_server_state = calloc(1, sizeof(struct server_state));
+	ck_assert_ptr_nonnull(compound->c_server_state);
+
 	return compound;
 }
 
@@ -97,6 +107,7 @@ static void free_compound(struct compound *compound)
 		free(compound->c_res->resarray.resarray_val);
 		free(compound->c_res);
 	}
+	free(compound->c_server_state);
 	free(compound);
 }
 

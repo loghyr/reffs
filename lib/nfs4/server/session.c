@@ -85,8 +85,20 @@ static void session_release(struct urcu_ref *ref)
 {
 	struct nfs4_session *ns =
 		caa_container_of(ref, struct nfs4_session, ns_ref);
+	/*
+	 * Sessions are normally unhashed explicitly via DESTROY_SESSION or
+	 * client eviction before their last put.  This server_state_find()
+	 * is a safety net for abnormal paths (e.g., shutdown ordering).  If
+	 * the server is already torn down, ss will be NULL and the lfht
+	 * delete is skipped — the hash table itself is gone at that point
+	 * so there is no dangling node to worry about.
+	 */
+	struct server_state *ss = server_state_find();
 
-	nfs4_session_unhash(ns);
+	if (ss) {
+		nfs4_session_unhash(ss, ns);
+		server_state_put(ss);
+	}
 	ns->ns_release(ref);
 }
 
@@ -112,24 +124,20 @@ void nfs4_session_put(struct nfs4_session *ns)
 /* ------------------------------------------------------------------ */
 /* Hash / unhash                                                       */
 
-bool nfs4_session_unhash(struct nfs4_session *ns)
+bool nfs4_session_unhash(struct server_state *ss, struct nfs4_session *ns)
 {
 	uint64_t state;
 	int __attribute__((unused)) ret;
+
+	assert(ss);
 
 	state = __atomic_fetch_and(&ns->ns_state, ~NFS4_SESSION_IS_HASHED,
 				   __ATOMIC_ACQUIRE);
 	if (!(state & NFS4_SESSION_IS_HASHED))
 		return false;
 
-	struct server_state *ss = server_state_find();
-	if (!ss)
-		return false;
-
 	ret = cds_lfht_del(ss->ss_session_ht, &ns->ns_node);
 	assert(!ret);
-
-	server_state_put(ss);
 
 	/*
 	 * Drop the hash table's own ref.  The caller still holds theirs;
@@ -142,12 +150,12 @@ bool nfs4_session_unhash(struct nfs4_session *ns)
 /* ------------------------------------------------------------------ */
 /* Alloc / find                                                        */
 
-struct nfs4_session *nfs4_session_alloc(struct nfs4_client *nc,
+struct nfs4_session *nfs4_session_alloc(struct server_state *ss,
+					struct nfs4_client *nc,
 					const channel_attrs4 *fore_req,
 					uint32_t __attribute__((unused)) flags)
 {
 	struct nfs4_session *ns;
-	struct server_state *ss;
 	struct cds_lfht_node *node;
 	unsigned long hash;
 	uint32_t i;
@@ -219,10 +227,6 @@ struct nfs4_session *nfs4_session_alloc(struct nfs4_client *nc,
 	ns->ns_release = nfs4_session_release_cb;
 
 	/* Insert into hash table. */
-	ss = server_state_find();
-	if (!ss)
-		goto err_put_client;
-
 	hash = XXH3_64bits(ns->ns_sessionid, sizeof(ns->ns_sessionid));
 
 	rcu_read_lock();
@@ -230,8 +234,6 @@ struct nfs4_session *nfs4_session_alloc(struct nfs4_client *nc,
 	node = cds_lfht_add_unique(ss->ss_session_ht, hash, session_match,
 				   ns->ns_sessionid, &ns->ns_node);
 	rcu_read_unlock();
-
-	server_state_put(ss);
 
 	if (caa_unlikely(node != &ns->ns_node)) {
 		/* Session ID collision — should be impossible. */
@@ -254,17 +256,14 @@ err_free_ns:
 	return NULL;
 }
 
-struct nfs4_session *nfs4_session_find(const sessionid4 sid)
+struct nfs4_session *nfs4_session_find(struct server_state *ss,
+				       const sessionid4 sid)
 {
 	struct nfs4_session *ns = NULL;
 	struct nfs4_session *tmp;
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 	unsigned long hash = XXH3_64bits(sid, sizeof(sessionid4));
-
-	struct server_state *ss = server_state_find();
-	if (!ss)
-		return NULL;
 
 	rcu_read_lock();
 	cds_lfht_lookup(ss->ss_session_ht, hash, session_match, sid, &iter);
@@ -275,19 +274,15 @@ struct nfs4_session *nfs4_session_find(const sessionid4 sid)
 	}
 	rcu_read_unlock();
 
-	server_state_put(ss);
 	return ns;
 }
 
-struct nfs4_session *nfs4_session_find_for_client(struct nfs4_client *nc)
+struct nfs4_session *nfs4_session_find_for_client(struct server_state *ss,
+						  struct nfs4_client *nc)
 {
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 	struct nfs4_session *found = NULL;
-
-	struct server_state *ss = server_state_find();
-	if (!ss)
-		return NULL;
 
 	rcu_read_lock();
 	cds_lfht_for_each(ss->ss_session_ht, &iter, node)
@@ -302,7 +297,6 @@ struct nfs4_session *nfs4_session_find_for_client(struct nfs4_client *nc)
 	}
 	rcu_read_unlock();
 
-	server_state_put(ss);
 	return found;
 }
 
@@ -318,19 +312,13 @@ uint32_t nfs4_op_exchange_id(struct compound *compound)
 		NFS4_OP_RESOK_SETUP(res, EXCHANGE_ID4res_u, eir_resok4);
 
 	u_int num_ops = compound->c_args->argarray.argarray_len;
-	struct server_state *ss = NULL;
+	struct server_state *ss = compound->c_server_state;
 	struct nfs4_client *nc = NULL;
 	struct nfs_impl_id4 *impl_id = NULL;
 	struct sockaddr_in sin;
 
 	if (compound->c_curr_op == 0 && num_ops > 1) {
 		*status = NFS4ERR_NOT_ONLY_OP;
-		goto out;
-	}
-
-	ss = server_state_find();
-	if (!ss) {
-		*status = NFS4ERR_SERVERFAULT;
 		goto out;
 	}
 
@@ -349,11 +337,8 @@ uint32_t nfs4_op_exchange_id(struct compound *compound)
 
 	resok->eir_clientid = (clientid4)nfs4_client_to_client(nc)->c_id;
 	resok->eir_sequenceid = 1;
-	struct server_state *ss_eid = server_state_find();
 
-	resok->eir_flags = ss_eid ? ss_eid->ss_exchgid_flags :
-				    EXCHGID4_FLAG_USE_NON_PNFS;
-	server_state_put(ss_eid);
+	resok->eir_flags = ss->ss_exchgid_flags;
 	if (nc->nc_confirmed)
 		resok->eir_flags |= EXCHGID4_FLAG_CONFIRMED_R;
 
@@ -390,7 +375,6 @@ uint32_t nfs4_op_exchange_id(struct compound *compound)
 	nc = NULL;
 
 out:
-	server_state_put(ss);
 	nfs4_client_put(nc);
 
 	return 0;
@@ -420,8 +404,8 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 		goto out;
 	}
 
-	ns = nfs4_session_alloc(nc, &args->csa_fore_chan_attrs,
-				args->csa_flags);
+	ns = nfs4_session_alloc(compound->c_server_state, nc,
+				&args->csa_fore_chan_attrs, args->csa_flags);
 	if (!ns) {
 		*status = NFS4ERR_DELAY;
 		goto out;
@@ -494,13 +478,13 @@ uint32_t nfs4_op_destroy_session(struct compound *compound)
 		goto out;
 	}
 
-	ns = nfs4_session_find(args->dsa_sessionid);
+	ns = nfs4_session_find(compound->c_server_state, args->dsa_sessionid);
 	if (!ns) {
 		*status = NFS4ERR_BADSESSION;
 		goto out;
 	}
 
-	nfs4_session_unhash(ns);
+	nfs4_session_unhash(compound->c_server_state, ns);
 
 out:
 	nfs4_session_put(ns);
@@ -524,7 +508,7 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 		goto out;
 	}
 
-	ns = nfs4_session_find(args->sa_sessionid);
+	ns = nfs4_session_find(compound->c_server_state, args->sa_sessionid);
 	if (!ns) {
 		*status = NFS4ERR_BADSESSION;
 		goto out;
@@ -585,15 +569,8 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 	resok->sr_target_highest_slotid = ns->ns_slot_count - 1;
 	resok->sr_status_flags = 0;
 
-	{
-		struct server_state *ss = server_state_find();
-		bool in_grace = ss && server_in_grace(ss);
-
-		server_state_put(ss);
-		if (in_grace)
-			resok->sr_status_flags |=
-				SEQ4_STATUS_RESTART_RECLAIM_NEEDED;
-	}
+	if (server_in_grace(compound->c_server_state))
+		resok->sr_status_flags |= SEQ4_STATUS_RESTART_RECLAIM_NEEDED;
 
 	compound->c_session = nfs4_session_get(ns);
 	compound->c_slot = slot;
@@ -651,17 +628,11 @@ uint32_t nfs4_op_destroy_clientid(struct compound *compound)
 	nfsstat4 *status = &res->dcr_status;
 
 	u_int num_ops = compound->c_args->argarray.argarray_len;
-	struct server_state *ss = NULL;
+	struct server_state *ss = compound->c_server_state;
 	struct nfs4_client *nc = NULL;
 
 	if (compound->c_curr_op == 0 && num_ops > 1) {
 		*status = NFS4ERR_NOT_ONLY_OP;
-		goto out;
-	}
-
-	ss = server_state_find();
-	if (!ss) {
-		*status = NFS4ERR_SERVERFAULT;
 		goto out;
 	}
 
@@ -680,7 +651,6 @@ uint32_t nfs4_op_destroy_clientid(struct compound *compound)
 	nc = NULL;
 
 out:
-	server_state_put(ss);
 	nfs4_client_put(nc);
 
 	return 0;
@@ -694,17 +664,11 @@ uint32_t nfs4_op_reclaim_complete(struct compound *compound)
 		NFS4_OP_RES_SETUP(compound, opreclaim_complete);
 	nfsstat4 *status = &res->rcr_status;
 
-	struct server_state *ss = NULL;
+	struct server_state *ss = compound->c_server_state;
 	struct nfs4_client *nc = compound->c_nfs4_client;
 
 	if (!nc) {
 		*status = NFS4ERR_OP_NOT_IN_SESSION;
-		goto out;
-	}
-
-	ss = server_state_find();
-	if (!ss) {
-		*status = NFS4ERR_SERVERFAULT;
 		goto out;
 	}
 
@@ -720,8 +684,6 @@ uint32_t nfs4_op_reclaim_complete(struct compound *compound)
 	}
 
 out:
-	server_state_put(ss);
-
 	return 0;
 }
 
@@ -752,7 +714,7 @@ uint32_t nfs4_op_bind_conn_to_session(struct compound *compound)
 		return 0;
 	}
 
-	ns = nfs4_session_find(args->bctsa_sessid);
+	ns = nfs4_session_find(compound->c_server_state, args->bctsa_sessid);
 	if (!ns) {
 		*status = NFS4ERR_BADSESSION;
 		return 0;

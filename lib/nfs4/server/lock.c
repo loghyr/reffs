@@ -112,14 +112,9 @@ uint32_t nfs4_op_lock(struct compound *compound)
 		return 0;
 	}
 
-	{
-		struct server_state *ss = server_state_find();
-		bool in_grace = ss && server_in_grace(ss);
-		server_state_put(ss);
-		if (in_grace && !args->reclaim) {
-			*status = NFS4ERR_GRACE;
-			return 0;
-		}
+	if (server_in_grace(compound->c_server_state) && !args->reclaim) {
+		*status = NFS4ERR_GRACE;
+		return 0;
 	}
 
 	if (args->locker.new_lock_owner) {
@@ -309,14 +304,9 @@ uint32_t nfs4_op_lockt(struct compound *compound)
 		return 0;
 	}
 
-	{
-		struct server_state *ss = server_state_find();
-		bool in_grace = ss && server_in_grace(ss);
-		server_state_put(ss);
-		if (in_grace) {
-			*status = NFS4ERR_GRACE;
-			return 0;
-		}
+	if (server_in_grace(compound->c_server_state)) {
+		*status = NFS4ERR_GRACE;
+		return 0;
 	}
 
 	bool exclusive =

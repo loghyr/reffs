@@ -577,15 +577,12 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		 * target width are available, the same dstore gets
 		 * multiple data files (each with its own runway FH).
 		 */
-		struct server_state *ss = server_state_find();
-		uint32_t target = ss ? ss->ss_layout_width :
-				       REFFS_LAYOUT_WIDTH_DEFAULT;
-		uint32_t fence_min = ss ? ss->ss_fence_uid_min :
-					  REFFS_FENCE_UID_MIN_DEFAULT;
-		uint32_t fence_max = ss ? ss->ss_fence_uid_max :
-					  REFFS_FENCE_UID_MAX_DEFAULT;
-
-		server_state_put(ss);
+		struct server_state *ss = compound->c_server_state;
+		uint32_t target = ss->ss_layout_width ?
+					  ss->ss_layout_width :
+					  REFFS_LAYOUT_WIDTH_DEFAULT;
+		uint32_t fence_min = ss->ss_fence_uid_min;
+		uint32_t fence_max = ss->ss_fence_uid_max;
 
 		struct layout_data_file *files =
 			calloc(target, sizeof(struct layout_data_file));
@@ -1032,11 +1029,9 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 
 	struct layout_segments *lss = compound->c_inode->i_layout_segments;
 
-	struct server_state *ss = server_state_find();
-	uint32_t fence_min = ss ? ss->ss_fence_uid_min :
-				  REFFS_FENCE_UID_MIN_DEFAULT;
-	uint32_t fence_max = ss ? ss->ss_fence_uid_max :
-				  REFFS_FENCE_UID_MAX_DEFAULT;
+	struct server_state *ss = compound->c_server_state;
+	uint32_t fence_min = ss->ss_fence_uid_min;
+	uint32_t fence_max = ss->ss_fence_uid_max;
 
 	/*
 	 * Scan reported errors.  Record stats at three scopes
@@ -1118,8 +1113,6 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 			    compound->c_inode->i_ino);
 		}
 	}
-
-	server_state_put(ss);
 
 	return 0;
 }

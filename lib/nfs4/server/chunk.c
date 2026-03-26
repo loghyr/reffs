@@ -41,20 +41,12 @@
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-static void chunk_write_verf(verifier4 out_verf)
+static void chunk_write_verf(struct server_state *ss, verifier4 out_verf)
 {
-	struct server_state *ss = server_state_find();
-
-	if (!ss) {
-		memset(out_verf, 0, NFS4_VERIFIER_SIZE);
-		return;
-	}
-
 	memcpy(out_verf, ss->ss_uuid, NFS4_VERIFIER_SIZE - 2);
 	uint16_t boot_seq = server_boot_seq(ss);
 
 	memcpy(out_verf + NFS4_VERIFIER_SIZE - 2, &boot_seq, 2);
-	server_state_put(ss);
 }
 
 /* ------------------------------------------------------------------ */
@@ -192,7 +184,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	resok->cwr_count = nchunks;
 	resok->cwr_committed = (args->cwa_stable == FILE_SYNC4) ? FILE_SYNC4 :
 								  UNSTABLE4;
-	chunk_write_verf(resok->cwr_writeverf);
+	chunk_write_verf(compound->c_server_state, resok->cwr_writeverf);
 
 	/* Return per-chunk status (all OK for happy path). */
 	resok->cwr_status.cwr_status_val = calloc(nchunks, sizeof(nfsstat4));
@@ -390,7 +382,7 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
-	chunk_write_verf(resok->ccr_writeverf);
+	chunk_write_verf(compound->c_server_state, resok->ccr_writeverf);
 
 	return 0;
 }
@@ -456,7 +448,7 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
-	chunk_write_verf(resok->ccr_writeverf);
+	chunk_write_verf(compound->c_server_state, resok->ccr_writeverf);
 
 	/* Sync to disk for FILE_SYNC4 semantics. */
 	inode_sync_to_disk(compound->c_inode);

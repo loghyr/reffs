@@ -17,6 +17,8 @@
 #include "reffs/rcu.h"
 #include "nfs4/client.h"
 
+struct server_state;
+
 #define NFS4_SESSION_IS_HASHED (1ULL << 0)
 
 #define NFS4_SESSION_MAX_SLOTS 64U
@@ -104,7 +106,8 @@ struct nfs4_session {
  *
  * Returns a ref-bumped session or NULL.  Caller must nfs4_session_put().
  */
-struct nfs4_session *nfs4_session_alloc(struct nfs4_client *nc,
+struct nfs4_session *nfs4_session_alloc(struct server_state *ss,
+					struct nfs4_client *nc,
 					const channel_attrs4 *fore_req,
 					uint32_t flags);
 
@@ -112,19 +115,21 @@ struct nfs4_session *nfs4_session_alloc(struct nfs4_client *nc,
  * nfs4_session_find - look up by sessionid4.
  * Returns a ref-bumped session or NULL.  Caller must nfs4_session_put().
  */
-struct nfs4_session *nfs4_session_find(const sessionid4 sid);
+struct nfs4_session *nfs4_session_find(struct server_state *ss,
+				       const sessionid4 sid);
 
 /*
  * nfs4_session_find_for_client - find any session for nc that has a
  * valid back-channel fd (ns_cb_fd >= 0).
  * Returns a ref-bumped session or NULL.  Caller must nfs4_session_put().
  */
-struct nfs4_session *nfs4_session_find_for_client(struct nfs4_client *nc);
+struct nfs4_session *nfs4_session_find_for_client(struct server_state *ss,
+						  struct nfs4_client *nc);
 
 struct nfs4_session *nfs4_session_get(struct nfs4_session *ns);
 void nfs4_session_put(struct nfs4_session *ns);
 
 /* Remove from ss_session_ht (idempotent).  Returns true if it was hashed. */
-bool nfs4_session_unhash(struct nfs4_session *ns);
+bool nfs4_session_unhash(struct server_state *ss, struct nfs4_session *ns);
 
 #endif /* _REFFS_NFS4_SESSION_H */
