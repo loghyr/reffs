@@ -523,10 +523,24 @@ int rpc_gss_handle_init(struct rpc_trans *rt
 	 * rpc_gss_init_arg { opaque gss_token<> }.
 	 * Read the token length and pointer from the raw buffer.
 	 */
+	uint32_t remaining = rt->rt_body_len - rt->rt_offset;
 	uint32_t *body = (uint32_t *)(rt->rt_body + rt->rt_offset);
+
+	if (remaining < sizeof(uint32_t)) {
+		gss_ctx_put(ctx);
+		return EINVAL;
+	}
+
 	uint32_t token_len = ntohl(*body);
 
 	body++;
+	remaining -= sizeof(uint32_t);
+
+	if (token_len > remaining) {
+		gss_ctx_put(ctx);
+		return EINVAL;
+	}
+
 	void *input_token = body;
 
 	void *output_token = NULL;
