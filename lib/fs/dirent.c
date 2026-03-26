@@ -299,7 +299,6 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 	if (!rd || !parent)
 		return;
 
-	rcu_read_lock();
 	rd->rd_parent = dirent_get(parent);
 	rd->rd_sb = parent->rd_sb; /* inherit sb pointer from parent */
 	verify(S_ISDIR(parent->rd_inode->i_mode));
@@ -311,18 +310,18 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 		rd->rd_cookie = __atomic_add_fetch(&parent->rd_cookie_next, 1,
 						   __ATOMIC_RELAXED);
 	}
+
+	/* List mutation needs RCU; I/O must happen outside. */
+	rcu_read_lock();
 	cds_list_add_tail_rcu(&rd->rd_siblings, &parent->rd_children);
 	dirent_get(rd); /* One for the linked list */
-
-	if (rd->rd_inode) {
-		if (rla != reffs_life_action_load &&
-		    rla != reffs_life_action_unload)
-			inode_sync_to_disk(rd->rd_inode);
-	}
-
-	if (rla != reffs_life_action_load && rla != reffs_life_action_unload)
-		dirent_sync_to_disk(parent);
 	rcu_read_unlock();
+
+	if (rla != reffs_life_action_load && rla != reffs_life_action_unload) {
+		if (rd->rd_inode)
+			inode_sync_to_disk(rd->rd_inode);
+		dirent_sync_to_disk(parent);
+	}
 }
 
 void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
@@ -352,73 +351,74 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 		return;
 	}
 
+	/* Detach from sibling list under RCU; I/O happens after. */
 	rcu_read_lock();
 	parent = rcu_xchg_pointer(&rd->rd_parent, NULL);
-	if (parent) {
-		if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode) &&
-		    (rla == reffs_life_action_death ||
-		     rla == reffs_life_action_move ||
-		     rla == reffs_life_action_delayed_death)) {
-			uint32_t old_nlink =
-				__atomic_fetch_sub(&parent->rd_inode->i_nlink,
-						   1, __ATOMIC_RELAXED);
-			if (old_nlink <= 2) {
-				LOG("WARNING: nlink for directory (ino %lu) dropped to %u! Resetting to 2 to prevent corruption.",
-				    parent->rd_inode->i_ino, old_nlink - 1);
-				__atomic_store_n(&parent->rd_inode->i_nlink, 2,
-						 __ATOMIC_RELAXED);
-			}
-		}
+	if (parent)
 		cds_list_del_rcu(&rd->rd_siblings);
+	rcu_read_unlock();
 
-		if (rd->rd_inode && (rla == reffs_life_action_death ||
-				     rla == reffs_life_action_delayed_death)) {
-			int n = S_ISDIR(rd->rd_inode->i_mode) ? 2 : 1;
-			uint32_t old_nlink = __atomic_fetch_sub(
-				&rd->rd_inode->i_nlink, n, __ATOMIC_RELAXED);
-			TRACE("ino=%lu old_nlink=%u sub=%d new_nlink=%u",
-			      rd->rd_inode->i_ino, old_nlink, n, old_nlink - n);
+	if (!parent)
+		return;
 
-			if (old_nlink - n == 0) {
-				size_t size = rd->rd_inode->i_size;
-				size_t old_used;
-				size_t new_used;
+	/* nlink accounting (atomic, no RCU needed). */
+	if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode) &&
+	    (rla == reffs_life_action_death || rla == reffs_life_action_move ||
+	     rla == reffs_life_action_delayed_death)) {
+		uint32_t old_nlink = __atomic_fetch_sub(
+			&parent->rd_inode->i_nlink, 1, __ATOMIC_RELAXED);
+		if (old_nlink <= 2) {
+			LOG("WARNING: nlink for directory (ino %lu) dropped to %u! Resetting to 2 to prevent corruption.",
+			    parent->rd_inode->i_ino, old_nlink - 1);
+			__atomic_store_n(&parent->rd_inode->i_nlink, 2,
+					 __ATOMIC_RELAXED);
+		}
+	}
 
-				__atomic_fetch_sub(
-					&rd->rd_inode->i_sb->sb_inodes_used, 1,
-					__ATOMIC_RELAXED);
+	if (rd->rd_inode && (rla == reffs_life_action_death ||
+			     rla == reffs_life_action_delayed_death)) {
+		int n = S_ISDIR(rd->rd_inode->i_mode) ? 2 : 1;
+		uint32_t old_nlink = __atomic_fetch_sub(&rd->rd_inode->i_nlink,
+							n, __ATOMIC_RELAXED);
+		TRACE("ino=%lu old_nlink=%u sub=%d new_nlink=%u",
+		      rd->rd_inode->i_ino, old_nlink, n, old_nlink - n);
 
-				do {
-					__atomic_load(&rd->rd_inode->i_sb
-							       ->sb_bytes_used,
-						      &old_used,
-						      __ATOMIC_RELAXED);
-					if (old_used >= size)
-						new_used = old_used - size;
-					else
-						new_used = 0;
-				} while (!__atomic_compare_exchange(
+		if (old_nlink - n == 0) {
+			size_t size = rd->rd_inode->i_size;
+			size_t old_used;
+			size_t new_used;
+
+			__atomic_fetch_sub(&rd->rd_inode->i_sb->sb_inodes_used,
+					   1, __ATOMIC_RELAXED);
+
+			do {
+				__atomic_load(
 					&rd->rd_inode->i_sb->sb_bytes_used,
-					&old_used, &new_used, false,
-					__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
-			}
-
-			if (rla != reffs_life_action_load &&
-			    rla != reffs_life_action_unload)
-				inode_sync_to_disk(rd->rd_inode);
-
-			if (rla == reffs_life_action_delayed_death)
-				inode_schedule_delayed_release(
-					rd->rd_inode, INODE_RELEASE_HARVEST);
+					&old_used, __ATOMIC_RELAXED);
+				if (old_used >= size)
+					new_used = old_used - size;
+				else
+					new_used = 0;
+			} while (!__atomic_compare_exchange(
+				&rd->rd_inode->i_sb->sb_bytes_used, &old_used,
+				&new_used, false, __ATOMIC_SEQ_CST,
+				__ATOMIC_RELAXED));
 		}
 
+		/* Disk I/O — outside RCU. */
 		if (rla != reffs_life_action_load &&
 		    rla != reffs_life_action_unload)
-			dirent_sync_to_disk(parent);
-		dirent_put(parent);
-		dirent_put(rd);
+			inode_sync_to_disk(rd->rd_inode);
+
+		if (rla == reffs_life_action_delayed_death)
+			inode_schedule_delayed_release(rd->rd_inode,
+						       INODE_RELEASE_HARVEST);
 	}
-	rcu_read_unlock();
+
+	if (rla != reffs_life_action_load && rla != reffs_life_action_unload)
+		dirent_sync_to_disk(parent);
+	dirent_put(parent);
+	dirent_put(rd);
 }
 
 /* ------------------------------------------------------------------ */
@@ -507,31 +507,31 @@ void dirent_children_release(struct reffs_dirent *parent,
 	 * Shutdown path: avoid disk writes; just detach in-memory state.
 	 * Non-shutdown path: full accounting (nlink, disk sync).
 	 */
-	if (rla == reffs_life_action_shutdown) {
+	/*
+	 * Iterate children: peek under RCU to grab a ref, then
+	 * release/recurse outside RCU (those functions take their
+	 * own short RCU sections as needed).
+	 */
+	for (;;) {
 		rcu_read_lock();
-		while (!cds_list_empty(&parent->rd_children)) {
-			rd = cds_list_first_entry(&parent->rd_children,
-						  struct reffs_dirent,
-						  rd_siblings);
-			dirent_get(rd);
-			dirent_children_release(rd, rla);
-			dirent_parent_release(rd, rla);
-			dirent_put(rd);
+		if (cds_list_empty(&parent->rd_children)) {
+			rcu_read_unlock();
+			break;
 		}
-		rcu_read_unlock();
-		return;
-	}
-
-	rcu_read_lock();
-	while (!cds_list_empty(&parent->rd_children)) {
 		rd = cds_list_first_entry(&parent->rd_children,
 					  struct reffs_dirent, rd_siblings);
 		dirent_get(rd);
-		dirent_parent_release(rd, rla);
-		dirent_children_release(rd, rla);
+		rcu_read_unlock();
+
+		if (rla == reffs_life_action_shutdown) {
+			dirent_children_release(rd, rla);
+			dirent_parent_release(rd, rla);
+		} else {
+			dirent_parent_release(rd, rla);
+			dirent_children_release(rd, rla);
+		}
 		dirent_put(rd);
 	}
-	rcu_read_unlock();
 }
 
 /* ------------------------------------------------------------------ */
