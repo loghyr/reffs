@@ -94,12 +94,18 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 
 	if (use_v2) {
 		ctx->ctx_ds_sess = calloc(n, sizeof(struct mds_session));
-		if (!ctx->ctx_ds_sess)
+		if (!ctx->ctx_ds_sess) {
+			free(ctx->ctx_devs);
+			ctx->ctx_devs = NULL;
 			return -ENOMEM;
+		}
 	} else {
 		ctx->ctx_conns = calloc(n, sizeof(struct ds_conn));
-		if (!ctx->ctx_conns)
+		if (!ctx->ctx_conns) {
+			free(ctx->ctx_devs);
+			ctx->ctx_devs = NULL;
 			return -ENOMEM;
+		}
 	}
 
 	for (uint32_t i = 0; i < n; i++) {
