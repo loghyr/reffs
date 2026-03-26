@@ -22,6 +22,7 @@
 
 #include "gf.h"
 
+#include <pthread.h>
 #include <stdbool.h>
 
 #define GF_POLY 0x11d /* x^8 + x^4 + x^3 + x^2 + 1 */
@@ -29,13 +30,10 @@
 
 static uint8_t gf_exp[512]; /* antilog table (doubled) */
 static uint8_t gf_log[256]; /* log table; gf_log[0] unused */
-static bool gf_initialized;
+static pthread_once_t gf_once = PTHREAD_ONCE_INIT;
 
-void gf_init(void)
+static void gf_init_tables(void)
 {
-	if (gf_initialized)
-		return;
-
 	int x = 1;
 
 	for (int i = 0; i < GF_ORDER; i++) {
@@ -51,7 +49,11 @@ void gf_init(void)
 		gf_exp[i] = gf_exp[i - GF_ORDER];
 
 	gf_log[0] = 0; /* sentinel — never used in valid mul */
-	gf_initialized = true;
+}
+
+void gf_init(void)
+{
+	pthread_once(&gf_once, gf_init_tables);
 }
 
 uint8_t gf_mul(uint8_t a, uint8_t b)
