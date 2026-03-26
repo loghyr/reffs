@@ -323,7 +323,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 	if (idmap_init(cfg.nfs4_domain))
-		LOG("idmap_init failed, using numeric owner strings");
+		TRACE("idmap_init failed, using numeric owner strings");
 	if (ss->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS)
 		nfs4_attr_enable_layouts();
 
@@ -404,7 +404,7 @@ int main(int argc, char *argv[])
 		}
 		if (cfg.ndata_servers > 0) {
 			if (dstore_load_config(&cfg) < 0)
-				LOG("Warning: some data stores unavailable");
+				TRACE("Warning: some data stores unavailable");
 
 			/* Pre-create file runway on each dstore. */
 			for (unsigned int i = 0; i < cfg.ndata_servers; i++) {

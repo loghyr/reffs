@@ -89,7 +89,7 @@ struct open_stateid *open_stateid_alloc(struct inode *inode,
 
 	os = calloc(1, sizeof(*os));
 	if (!os) {
-		LOG("open_stateid_alloc: OOM");
+		TRACE("open_stateid_alloc: OOM");
 		return NULL;
 	}
 
@@ -127,7 +127,7 @@ struct delegation_stateid *delegation_stateid_alloc(struct inode *inode,
 
 	ds = calloc(1, sizeof(*ds));
 	if (!ds) {
-		LOG("delegation_stateid_alloc: OOM");
+		TRACE("delegation_stateid_alloc: OOM");
 		return NULL;
 	}
 
@@ -171,7 +171,7 @@ struct lock_stateid *lock_stateid_alloc(struct inode *inode,
 
 	ls = calloc(1, sizeof(*ls));
 	if (!ls) {
-		LOG("lock_stateid_alloc: OOM");
+		TRACE("lock_stateid_alloc: OOM");
 		return NULL;
 	}
 
@@ -209,7 +209,7 @@ struct layout_stateid *layout_stateid_alloc(struct inode *inode,
 
 	ls = calloc(1, sizeof(*ls));
 	if (!ls) {
-		LOG("layout_stateid_alloc: OOM");
+		TRACE("layout_stateid_alloc: OOM");
 		return NULL;
 	}
 

@@ -36,7 +36,7 @@ static enum reffs_role parse_role(const char *s)
 	if (!strcasecmp(s, "ds_erasure"))
 		return REFFS_ROLE_DS_ERASURE;
 
-	LOG("config: unknown role '%s', defaulting to standalone", s);
+	TRACE("config: unknown role '%s', defaulting to standalone", s);
 	return REFFS_ROLE_STANDALONE;
 }
 
@@ -53,7 +53,7 @@ static enum reffs_log_level parse_log_level(const char *s)
 	if (!strcasecmp(s, "error"))
 		return REFFS_LOG_ERROR;
 
-	LOG("config: unknown log_level '%s', defaulting to info", s);
+	TRACE("config: unknown log_level '%s', defaulting to info", s);
 	return REFFS_LOG_INFO;
 }
 
@@ -66,7 +66,7 @@ static enum reffs_backend_type parse_backend_type(const char *s)
 	if (!strcasecmp(s, "rocksdb"))
 		return REFFS_BACKEND_ROCKSDB;
 
-	LOG("config: unknown backend type '%s', defaulting to ram", s);
+	TRACE("config: unknown backend type '%s', defaulting to ram", s);
 	return REFFS_BACKEND_RAM;
 }
 
@@ -83,7 +83,7 @@ static enum reffs_auth_flavor parse_flavor(const char *s)
 	if (!strcasecmp(s, "tls"))
 		return REFFS_AUTH_TLS;
 
-	LOG("config: unknown auth flavor '%s', ignoring", s);
+	TRACE("config: unknown auth flavor '%s', ignoring", s);
 	return 0;
 }
 
