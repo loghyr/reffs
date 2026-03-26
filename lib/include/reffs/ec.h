@@ -102,6 +102,15 @@ struct ec_codec *ec_mojette_sys_create(int k, int m);
 struct ec_codec *ec_mojette_nonsys_create(int k, int m);
 
 /*
+ * ec_stripe_create -- create a pure-striping codec (no redundancy).
+ *
+ * k: number of stripe segments (1..255).
+ * m must be 0.  Encode and decode are identity operations.
+ * Used for benchmarking parallel I/O throughput without coding overhead.
+ */
+struct ec_codec *ec_stripe_create(int k);
+
+/*
  * ec_codec_destroy -- release a codec and all internal state.
  */
 void ec_codec_destroy(struct ec_codec *codec);

@@ -217,6 +217,7 @@ enum ec_codec_type {
 	EC_CODEC_RS = 0, /* Reed-Solomon (default) */
 	EC_CODEC_MOJETTE_SYS = 1, /* Mojette systematic */
 	EC_CODEC_MOJETTE_NONSYS = 2, /* Mojette non-systematic */
+	EC_CODEC_STRIPE = 3, /* pure striping, no redundancy */
 };
 
 int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,

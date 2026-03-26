@@ -414,7 +414,7 @@ static void usage(void)
 		"  --size N       Expected read size in bytes"
 		" (default: 16M)\n"
 		"  --codec TYPE   Codec: rs (default), mojette-sys,"
-		" mojette-nonsys\n"
+		" mojette-nonsys, stripe\n"
 		"  --id ID        Client identity (default: PID)."
 		" Unique per concurrent instance.\n"
 		"  --layout TYPE  Layout: v1 (default, NFSv3 DS),"
@@ -511,6 +511,8 @@ int main(int argc, char *argv[])
 				codec_type = EC_CODEC_MOJETTE_SYS;
 			else if (strcmp(optarg, "mojette-nonsys") == 0)
 				codec_type = EC_CODEC_MOJETTE_NONSYS;
+			else if (strcmp(optarg, "stripe") == 0)
+				codec_type = EC_CODEC_STRIPE;
 			else {
 				fprintf(stderr, "ec_demo: unknown codec '%s'\n",
 					optarg);
@@ -581,8 +583,10 @@ int main(int argc, char *argv[])
 		return cmd_check(mds_host, nfs_file, local_input);
 	}
 
-	/* EC commands need valid k/m. */
-	if (k < 1 || m < 1 || k + m > 255) {
+	/* EC commands need valid k/m.  Stripe allows m=0. */
+	int m_min = (codec_type == EC_CODEC_STRIPE) ? 0 : 1;
+
+	if (k < 1 || m < m_min || k + m > 255) {
 		fprintf(stderr, "ec_demo: invalid k=%d m=%d\n", k, m);
 		return 1;
 	}

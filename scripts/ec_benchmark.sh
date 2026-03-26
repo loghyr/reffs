@@ -158,6 +158,40 @@ bench_plain() {
 }
 
 # ------------------------------------------------------------------ #
+# Pure striping (no redundancy, parallel I/O across all DSes)          #
+# ------------------------------------------------------------------ #
+
+STRIPE_K=6   # stripe across all 6 DSes
+
+bench_stripe() {
+    local sz="$1"
+    local run="$2"
+    local fname="bench_stripe_${sz}_${run}"
+    local input="/tmp/bench_${sz}"
+
+    local t0
+    t0=$(now_ms)
+    "$EC_DEMO" write --mds "$MDS" --file "$fname" --input "$input" \
+        --k $STRIPE_K --m 0 --codec stripe 2>/dev/null
+    local t1
+    t1=$(now_ms)
+    local write_ms=$(( t1 - t0 ))
+
+    t0=$(now_ms)
+    "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
+        --k $STRIPE_K --m 0 --codec stripe --size "$sz" 2>/dev/null
+    t1=$(now_ms)
+    local read_ms=$(( t1 - t0 ))
+
+    local verify="OK"
+    if ! cmp -s "$input" "/tmp/out_${sz}"; then
+        verify="FAIL"
+    fi
+
+    echo "stripe,${sz},${run},${write_ms},${read_ms},${verify},healthy"
+}
+
+# ------------------------------------------------------------------ #
 # Main                                                                 #
 # ------------------------------------------------------------------ #
 
@@ -191,12 +225,14 @@ for sz in $SIZES; do
                 > /dev/null 2>&1 || true
         done
         bench_plain "$sz" "w${w}" > /dev/null 2>&1 || true
+        bench_stripe "$sz" "w${w}" > /dev/null 2>&1 || true
     done
 
     # Measured runs
     for run in $(seq 1 $RUNS); do
         # Healthy pass (write + read, all codecs)
         bench_plain "$sz" "$run"
+        bench_stripe "$sz" "$run"
         bench_one "rs" "$sz" "$run" "healthy" ""
         bench_one "mojette-sys" "$sz" "$run" "healthy" ""
         bench_one "mojette-nonsys" "$sz" "$run" "healthy" ""

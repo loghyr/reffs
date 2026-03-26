@@ -180,6 +180,8 @@ static struct ec_codec *ec_create_codec(int k, int m,
 		return ec_mojette_sys_create(k, m);
 	case EC_CODEC_MOJETTE_NONSYS:
 		return ec_mojette_nonsys_create(k, m);
+	case EC_CODEC_STRIPE:
+		return ec_stripe_create(k);
 	default:
 		return NULL;
 	}
