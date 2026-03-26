@@ -9,10 +9,11 @@ This document covers reproducing the erasure-coding benchmarks for the
 reffs pNFS Flex Files stack.  It describes the infrastructure, the four
 benchmark suites, reference results, and how to interpret the output.
 
-The full benchmark report with charts is at `ec_benchmark_full_report.html`
-in the repository root.  It is a self-contained HTML file (base64-inlined
-images, no external references) suitable for email or browser viewing.
-Regenerate it with `python3 scripts/gen_benchmark_report.py`.
+The full benchmark report with charts is at
+`deploy/benchmark/results/ec_benchmark_full_report.html`.  It is a
+self-contained HTML file (base64-inlined images, no external references)
+suitable for email or browser viewing.  Regenerate it with
+`python3 scripts/gen_benchmark_report.py`.
 
 ## Prerequisites
 

@@ -904,7 +904,10 @@ optimization.</p>""")
 
     p("</body></html>")
 
-    out = "/Users/loghyr/reffs/ec_benchmark_full_report.html"
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = os.path.join(root, "deploy", "benchmark", "results",
+                       "ec_benchmark_full_report.html")
     with open(out, "w") as f:
         f.write("\n".join(parts))
     print(f"Wrote {out}")
