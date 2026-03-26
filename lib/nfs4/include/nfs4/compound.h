@@ -47,6 +47,9 @@ struct compound {
 	COMPOUND4args *c_args;
 	COMPOUND4res *c_res;
 
+	/* Server-wide state — grabbed once at compound entry. */
+	struct server_state *c_server_state;
+
 	/* Compound-level state flags. */
 #define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)
 	uint32_t c_flags;

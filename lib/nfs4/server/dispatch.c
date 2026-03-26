@@ -138,17 +138,23 @@ bool dispatch_compound(struct compound *compound)
 	COMPOUND4args *args = compound->c_args;
 	COMPOUND4res *res = compound->c_res;
 
+	/* Grab server_state once for the compound lifetime. */
+	if (!compound->c_server_state) {
+		compound->c_server_state = server_state_find();
+		if (!compound->c_server_state) {
+			res->status = NFS4ERR_DELAY;
+			return false;
+		}
+	}
+
 	/*
 	 * Convenience macro: record stats for the op at c_curr_op.
-	 * Uses c_op_start_ns set just before the op was called.
-	 * bytes_in / bytes_out are filled by data ops via their own calls
-	 * to nfs4_op_stats_record(); here we pass 0 for non-data ops.
+	 * Uses c_server_state grabbed once per compound, not per op.
 	 */
 #define RECORD_OP_STATS(resop_)                                          \
 	do {                                                             \
-		struct server_state *_ss = server_state_find();          \
 		nfs4_op_stats_record(                                    \
-			_ss ? _ss->ss_nfs4_op_stats : NULL,              \
+			compound->c_server_state->ss_nfs4_op_stats,      \
 			compound->c_curr_sb ?                            \
 				compound->c_curr_sb->sb_nfs4_op_stats :  \
 				NULL,                                    \
@@ -158,8 +164,6 @@ bool dispatch_compound(struct compound *compound)
 			(resop_)->resop,                                 \
 			(resop_)->nfs_resop4_u.opillegal.status,         \
 			reffs_now_ns() - compound->c_op_start_ns, 0, 0); \
-		if (_ss)                                                 \
-			server_state_put(_ss);                           \
 	} while (0)
 
 	/*

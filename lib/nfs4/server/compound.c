@@ -49,6 +49,7 @@ static void compound_free(struct compound *compound)
 	if (!compound)
 		return;
 
+	server_state_put(compound->c_server_state);
 	nfs4_session_put(compound->c_session);
 	nfs4_client_put(compound->c_nfs4_client);
 	inode_active_put(compound->c_inode);
