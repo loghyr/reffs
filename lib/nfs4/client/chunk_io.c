@@ -255,6 +255,14 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 		ret = -EIO;
 
 out:
+	if (mc.mc_args.argarray.argarray_len > 2) {
+		nfs_argop4 *op = &mc.mc_args.argarray.argarray_val[2];
+
+		free(op->nfs_argop4_u.opchunk_finalize.cfa_chunks
+			     .cfa_chunks_val);
+		op->nfs_argop4_u.opchunk_finalize.cfa_chunks.cfa_chunks_val =
+			NULL;
+	}
 	if (mc.mc_args.argarray.argarray_len > 1) {
 		nfs_argop4 *pfh = &mc.mc_args.argarray.argarray_val[1];
 
@@ -322,6 +330,13 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		ret = -EIO;
 
 out:
+	if (mc.mc_args.argarray.argarray_len > 2) {
+		nfs_argop4 *op = &mc.mc_args.argarray.argarray_val[2];
+
+		free(op->nfs_argop4_u.opchunk_commit.cca_chunks.cca_chunks_val);
+		op->nfs_argop4_u.opchunk_commit.cca_chunks.cca_chunks_val =
+			NULL;
+	}
 	if (mc.mc_args.argarray.argarray_len > 1) {
 		nfs_argop4 *pfh = &mc.mc_args.argarray.argarray_val[1];
 
