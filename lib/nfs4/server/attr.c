@@ -3535,7 +3535,19 @@ uint32_t nfs4_op_readdir(struct compound *compound)
 
 	/*
 	 * Phase 1: snapshot dirent identity under rcu_read_lock.
+	 * Pre-allocate outside RCU; restart if overflow.
 	 */
+	if (!snap) {
+		snap_cap = 64;
+		snap = calloc(snap_cap, sizeof(*snap));
+		if (!snap) {
+			*status = NFS4ERR_DELAY;
+			goto out_unlock;
+		}
+	}
+
+restart_snap:
+	snap_count = 0;
 	rcu_read_lock();
 	{
 		struct reffs_dirent *rd;
@@ -3545,11 +3557,11 @@ uint32_t nfs4_op_readdir(struct compound *compound)
 			if (rd->rd_cookie <= args->cookie)
 				continue;
 			if (snap_count == snap_cap) {
-				size_t new_cap = snap_cap ? snap_cap * 2 : 16;
+				rcu_read_unlock();
+				size_t new_cap = snap_cap * 2;
 				void *tmp =
 					realloc(snap, new_cap * sizeof(*snap));
 				if (!tmp) {
-					rcu_read_unlock();
 					free(snap);
 					snap = NULL;
 					*status = NFS4ERR_DELAY;
@@ -3557,6 +3569,7 @@ uint32_t nfs4_op_readdir(struct compound *compound)
 				}
 				snap = tmp;
 				snap_cap = new_cap;
+				goto restart_snap;
 			}
 			snap[snap_count].rd = rd;
 			snap[snap_count].rd_cookie = rd->rd_cookie;
