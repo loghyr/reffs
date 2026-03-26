@@ -413,8 +413,16 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 	if (!inode)
 		return NULL;
 
-	inode->i_ino = ino;
-	inode->i_nlink = 1;
+	/*
+	 * Only set i_ino and i_nlink on freshly-allocated inodes.
+	 * If we lost the hash race and picked up the winner, it
+	 * already has correct values — overwriting i_nlink would
+	 * corrupt directories (nlink=2) and hardlinked files.
+	 */
+	if (inode->i_ino == 0) {
+		inode->i_ino = ino;
+		inode->i_nlink = 1;
+	}
 
 	if (inode->i_sb && inode->i_sb->sb_ops &&
 	    inode->i_sb->sb_ops->inode_alloc) {
