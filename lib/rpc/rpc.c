@@ -1020,10 +1020,12 @@ int rpc_process_task(struct task *t)
 	__atomic_fetch_add(&rph->rph_calls, 1, __ATOMIC_RELAXED);
 
 	/* One-shot: log the first call for each protocol. */
-	if (!(rph->rph_flags & RPH_FIRST_LOGGED)) {
-		rph->rph_flags |= RPH_FIRST_LOGGED;
-		LOG("First call: program=%u version=%u", rph->rph_program,
-		    rph->rph_version);
+	if (!(__atomic_load_n(&rph->rph_flags, __ATOMIC_RELAXED) &
+	      RPH_FIRST_LOGGED)) {
+		__atomic_fetch_or(&rph->rph_flags, RPH_FIRST_LOGGED,
+				  __ATOMIC_RELAXED);
+		TRACE("First call: program=%u version=%u", rph->rph_program,
+		      rph->rph_version);
 	}
 
 	p = rpc_decode_uint32_t(rt, p, &rt->rt_info.ri_procedure);
