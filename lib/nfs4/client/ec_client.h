@@ -229,6 +229,7 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 		   enum ec_codec_type codec_type, layouttype4 layout_type);
 int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		  size_t buf_len, size_t *out_len, int k, int m,
-		  enum ec_codec_type codec_type, layouttype4 layout_type);
+		  enum ec_codec_type codec_type, layouttype4 layout_type,
+		  uint64_t skip_ds_mask);
 
 #endif /* _REFFS_EC_CLIENT_H */

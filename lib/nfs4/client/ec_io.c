@@ -658,10 +658,20 @@ out_codec:
 
 int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		  size_t buf_len, size_t *out_len, int k, int m,
-		  enum ec_codec_type codec_type, layouttype4 layout_type)
+		  enum ec_codec_type codec_type, layouttype4 layout_type,
+		  uint64_t skip_ds_mask)
 {
 	struct ec_context ctx;
 	int ret;
+	/* Count only bits in the valid range [0, k+m). */
+	uint64_t valid_mask = (k + m < 64) ? (1ULL << (k + m)) - 1 : ~0ULL;
+	int nskip = __builtin_popcountll(skip_ds_mask & valid_mask);
+
+	if (nskip >= m) {
+		ec_log("ec_read: skip_ds_mask has %d bits set, need < m=%d\n",
+		       nskip, m);
+		return -EINVAL;
+	}
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;
@@ -750,6 +760,11 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 			uint32_t rsz = (uint32_t)shard_write_size(
 				ctx.ctx_codec, i, shard_size);
 
+			if (skip_ds_mask & (1ULL << i)) {
+				present[i] = false;
+				continue;
+			}
+
 			if (ctx.ctx_ds_sess) {
 				uint32_t nblk = rsz / rd_chunk_sz;
 
@@ -821,5 +836,5 @@ int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	    size_t buf_len, size_t *out_len, int k, int m)
 {
 	return ec_read_codec(ms, path, buf, buf_len, out_len, k, m, EC_CODEC_RS,
-			     LAYOUT4_FLEX_FILES);
+			     LAYOUT4_FLEX_FILES, 0);
 }

@@ -143,7 +143,8 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 
 static int cmd_read(const char *mds_host, const char *nfs_file,
 		    const char *local_file, int k, int m, size_t expected_len,
-		    enum ec_codec_type codec_type, layouttype4 layout_type)
+		    enum ec_codec_type codec_type, layouttype4 layout_type,
+		    uint64_t skip_ds_mask)
 {
 	struct mds_session ms;
 	int ret;
@@ -166,7 +167,7 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 
 	fprintf(stderr, "ec_demo: reading %s (RS %d+%d)\n", nfs_file, k, m);
 	ret = ec_read_codec(&ms, nfs_file, buf, buf_len, &out_len, k, m,
-			    codec_type, layout_type);
+			    codec_type, layout_type, skip_ds_mask);
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
 	} else {
@@ -184,7 +185,8 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 
 static int cmd_verify(const char *mds_host, const char *nfs_file,
 		      const char *local_file, int k, int m,
-		      enum ec_codec_type codec_type, layouttype4 layout_type)
+		      enum ec_codec_type codec_type, layouttype4 layout_type,
+		      uint64_t skip_ds_mask)
 {
 	struct mds_session ms;
 	size_t orig_len;
@@ -215,7 +217,7 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 	fprintf(stderr, "ec_demo: verifying %s against %s (RS %d+%d)\n",
 		nfs_file, local_file, k, m);
 	ret = ec_read_codec(&ms, nfs_file, buf, orig_len, &out_len, k, m,
-			    codec_type, layout_type);
+			    codec_type, layout_type, skip_ds_mask);
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
 	} else if (out_len < orig_len) {
@@ -416,7 +418,9 @@ static void usage(void)
 		"  --id ID        Client identity (default: PID)."
 		" Unique per concurrent instance.\n"
 		"  --layout TYPE  Layout: v1 (default, NFSv3 DS),"
-		" v2 (CHUNK ops)\n");
+		" v2 (CHUNK ops)\n"
+		"  --skip-ds LIST Comma-separated DS indices to skip"
+		" on read (degraded mode)\n");
 }
 
 static struct option long_options[] = {
@@ -430,6 +434,7 @@ static struct option long_options[] = {
 	{ "codec", required_argument, NULL, 'c' },
 	{ "id", required_argument, NULL, 'd' },
 	{ "layout", required_argument, NULL, 'l' },
+	{ "skip-ds", required_argument, NULL, 'S' },
 	{ "help", no_argument, NULL, '?' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -445,6 +450,7 @@ int main(int argc, char *argv[])
 	enum ec_codec_type codec_type = EC_CODEC_RS;
 	layouttype4 layout_type = LAYOUT4_FLEX_FILES;
 	const char *client_id = NULL;
+	uint64_t skip_ds_mask = 0;
 	int opt;
 
 	if (argc < 2) {
@@ -459,7 +465,7 @@ int main(int argc, char *argv[])
 	argv++;
 	optind = 1;
 
-	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:c:d:l:?",
+	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:c:d:l:S:?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -511,6 +517,31 @@ int main(int argc, char *argv[])
 				return 1;
 			}
 			break;
+		case 'S': {
+			char *copy = strdup(optarg);
+			char *tok, *end;
+
+			if (!copy)
+				return 1;
+
+			for (tok = strtok(copy, ","); tok;
+			     tok = strtok(NULL, ",")) {
+				long idx = strtol(tok, &end, 10);
+
+				if (*end != '\0' || end == tok || idx < 0 ||
+				    idx > 63) {
+					fprintf(stderr,
+						"ec_demo: invalid DS"
+						" index %ld\n",
+						idx);
+					free(copy);
+					return 1;
+				}
+				skip_ds_mask |= (1ULL << idx);
+			}
+			free(copy);
+			break;
+		}
 		default:
 			usage();
 			return 1;
@@ -571,7 +602,8 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_read(mds_host, nfs_file, local_output, k, m,
-				read_size, codec_type, layout_type);
+				read_size, codec_type, layout_type,
+				skip_ds_mask);
 	}
 
 	if (strcmp(cmd, "verify") == 0) {
@@ -580,7 +612,7 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_verify(mds_host, nfs_file, local_input, k, m,
-				  codec_type, layout_type);
+				  codec_type, layout_type, skip_ds_mask);
 	}
 
 	fprintf(stderr, "ec_demo: unknown command '%s'\n", cmd);
