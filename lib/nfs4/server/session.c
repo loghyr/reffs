@@ -719,8 +719,6 @@ uint32_t nfs4_op_reclaim_complete(struct compound *compound)
 			server_reclaim_complete(ss);
 	}
 
-	*status = NFS4_OK;
-
 out:
 	server_state_put(ss);
 
@@ -763,7 +761,6 @@ uint32_t nfs4_op_bind_conn_to_session(struct compound *compound)
 	memcpy(resok->bctsr_sessid, ns->ns_sessionid, sizeof(sessionid4));
 	resok->bctsr_dir = CDFS4_FORE;
 	resok->bctsr_use_conn_in_rdma_mode = FALSE;
-	*status = NFS4_OK;
 
 	nfs4_session_put(ns);
 

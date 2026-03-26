@@ -115,8 +115,6 @@ uint32_t nfs4_op_delegreturn(struct compound *compound)
 	stateid_put(stid); /* find ref */
 	stateid_put(stid); /* state ref → freed */
 
-	*status = NFS4_OK;
-
 	return 0;
 }
 

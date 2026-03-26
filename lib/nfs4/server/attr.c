@@ -3696,7 +3696,6 @@ uint32_t nfs4_op_readdir(struct compound *compound)
 past_eof:
 	free(snap);
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
-	*status = NFS4_OK;
 
 out_unlock:
 	if (dir_de_rdlocked)
@@ -4044,8 +4043,6 @@ uint32_t nfs4_op_access(struct compound *compound)
 				       checks[i].mode) == 0)
 			resok->access |= checks[i].bit;
 	}
-
-	*status = NFS4_OK;
 
 out:
 	TRACE("%s status=%s(%d) access=0x%x supported=0x%x access_granted=0x%x",

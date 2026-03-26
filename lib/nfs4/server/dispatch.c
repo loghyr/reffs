@@ -246,7 +246,6 @@ bool dispatch_compound(struct compound *compound)
 
 #undef RECORD_OP_STATS
 
-	res->status = NFS4_OK;
 	res->resarray.resarray_len = args->argarray.argarray_len;
 	return false;
 }

@@ -927,7 +927,6 @@ uint32_t nfs4_op_open_downgrade(struct compound *compound)
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = stid; /* transfer the find ref */
 
-	*status = NFS4_OK;
 out:
 	TRACE("%s status=%s(%d) access=%u deny=%u", __func__,
 	      nfs4_err_name(*status), *status, new_access, new_deny);
@@ -1022,7 +1021,6 @@ uint32_t nfs4_op_close(struct compound *compound)
 	 * RFC 5661 §18.2.4: return a dead stateid (seqid=0, other=zeros).
 	 */
 	res->CLOSE4res_u.open_stateid = stateid4_anonymous;
-	*status = NFS4_OK;
 
 	return 0;
 }
@@ -1060,8 +1058,6 @@ static uint32_t nfs4_op_read_resume(struct rpc_trans *rt)
 	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
 	inode_update_times_now(compound->c_inode, REFFS_INODE_UPDATE_ATIME);
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
-
-	*status = NFS4_OK;
 
 	return 0;
 }
@@ -1112,7 +1108,6 @@ uint32_t nfs4_op_read(struct compound *compound)
 		resok->eof = true;
 		resok->data.data_len = 0;
 		resok->data.data_val = NULL;
-		*status = NFS4_OK;
 		goto out;
 	}
 
@@ -1121,7 +1116,6 @@ uint32_t nfs4_op_read(struct compound *compound)
 			(args->offset >= (uint64_t)compound->c_inode->i_size);
 		resok->data.data_len = 0;
 		resok->data.data_val = NULL;
-		*status = NFS4_OK;
 		goto out;
 	}
 
@@ -1190,8 +1184,6 @@ uint32_t nfs4_op_read(struct compound *compound)
 	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
 	inode_update_times_now(compound->c_inode, REFFS_INODE_UPDATE_ATIME);
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
-
-	*status = NFS4_OK;
 
 out:
 	stateid_put(stid);
@@ -1275,7 +1267,6 @@ static uint32_t nfs4_op_write_resume(struct rpc_trans *rt)
 
 	resok->committed = FILE_SYNC4;
 	nfs4_write_verf(resok->writeverf);
-	*status = NFS4_OK;
 
 	return 0;
 }
@@ -1315,7 +1306,6 @@ uint32_t nfs4_op_write(struct compound *compound)
 		resok->count = 0;
 		resok->committed = FILE_SYNC4;
 		nfs4_write_verf(resok->writeverf);
-		*status = NFS4_OK;
 		goto out;
 	}
 
@@ -1449,8 +1439,6 @@ uint32_t nfs4_op_write(struct compound *compound)
 	resok->committed = FILE_SYNC4;
 	nfs4_write_verf(resok->writeverf);
 
-	*status = NFS4_OK;
-
 out:
 	stateid_put(stid);
 	TRACE("%s status=%s(%d) offset=%llu count=%u stable=%d", __func__,
@@ -1493,7 +1481,6 @@ uint32_t nfs4_op_commit(struct compound *compound)
 	 * stability across server restarts.
 	 */
 	nfs4_write_verf(resok->writeverf);
-	*status = NFS4_OK;
 
 out:
 	TRACE("%s status=%s(%d) offset=%llu count=%u", __func__,

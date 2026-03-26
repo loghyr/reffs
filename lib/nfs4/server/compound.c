@@ -164,8 +164,6 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 
 		trace_nfs4_srv_compound(rt);
 
-		res->status = 0;
-
 		if (args->minorversion != 1 && args->minorversion != 2) {
 			res->status = NFS4ERR_MINOR_VERS_MISMATCH;
 			goto out;
@@ -197,10 +195,8 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 		}
 		res->resarray.resarray_len = args->argarray.argarray_len;
 
-		if (args->argarray.argarray_len == 0) {
-			res->status = NFS4_OK;
+		if (args->argarray.argarray_len == 0)
 			goto out;
-		}
 
 		op = NFS4_OP_NUM(compound);
 		if (op != OP_SEQUENCE && op != OP_EXCHANGE_ID &&

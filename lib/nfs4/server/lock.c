@@ -438,7 +438,7 @@ uint32_t nfs4_op_release_lockowner(struct compound *compound)
 		NFS4_OP_ARG_SETUP(compound, oprelease_lockowner);
 	RELEASE_LOCKOWNER4res *res =
 		NFS4_OP_RES_SETUP(compound, oprelease_lockowner);
-	nfsstat4 *status = &res->status;
+	nfsstat4 *status __attribute__((unused)) = &res->status;
 
 	struct nfs4_client *nc = compound->c_nfs4_client;
 	struct nfs4_lock_owner *lo, *tmp;
@@ -459,7 +459,6 @@ uint32_t nfs4_op_release_lockowner(struct compound *compound)
 			cds_list_del(&lo->lo_base.lo_list);
 			urcu_ref_put(&lo->lo_base.lo_ref,
 				     lo->lo_base.lo_release);
-			*status = NFS4_OK;
 			pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
 			return 0;
 		}
