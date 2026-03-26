@@ -9,6 +9,11 @@ This document covers reproducing the erasure-coding benchmarks for the
 reffs pNFS Flex Files stack.  It describes the infrastructure, the four
 benchmark suites, reference results, and how to interpret the output.
 
+The full benchmark report with charts is at `ec_benchmark_full_report.html`
+in the repository root.  It is a self-contained HTML file (base64-inlined
+images, no external references) suitable for email or browser viewing.
+Regenerate it with `python3 scripts/gen_benchmark_report.py`.
+
 ## Prerequisites
 
 ### Software
@@ -146,8 +151,10 @@ Known Limitations).
 
 ### Suite 1 — Codec comparison, 4+2, Fedora 43 aarch64 (Tier 2)
 
-Platform: Fedora 43, Linux 6.19.8-200.fc43.aarch64, Docker bridge network,
+Platform: dreamer — Fedora 43 VM (VMware Fusion on Apple M4 MacBook),
+Linux 6.19.8-200.fc43.aarch64, Docker bridge network,
 7 containers (1 builder + 1 MDS + 6 DSes + 1 client).
+SIMD path: AArch64 NEON.
 
 **Write latency (ms)**
 
@@ -224,7 +231,7 @@ reading 5 shards instead of 6.
 
 ### Suite 4 — Multi-geometry (4+2 vs 8+2), 10 DSes
 
-Platform: Fedora 43, Linux 6.19.8-200.fc43.aarch64, Docker bridge network,
+Platform: same as Suite 1 (dreamer, aarch64, NEON), Docker bridge network,
 12 containers (1 builder + 1 MDS + 10 DSes + 1 client).
 
 **Write latency (ms)**
@@ -360,16 +367,18 @@ from macOS runs are ~20% higher than Linux runs.  The overhead ratios
 
 ## Tiered Evidence Strategy
 
-| Tier | Platform | Geometry | Status |
-|------|----------|----------|--------|
-| 1 | macOS M4 (Rocky Linux Docker) | 4+2 | Done (2026-03-24) |
-| 2 | Fedora 43 aarch64 (Docker bridge) | 4+2, 4+2 degraded, 8+2 | Done (2026-03-25) |
-| 3 | Data center VMs, separate hosts | Multi-geometry | Planned |
+| Tier | Platform | ISA / SIMD | Geometry | Status |
+|------|----------|------------|----------|--------|
+| 1 | dreamer: M4 MacBook, Fedora 43 VM (VMware Fusion) | aarch64 / NEON | 4+2 | Done (2026-03-24) |
+| 2 | dreamer: same | aarch64 / NEON | 4+2 degraded, stripe, 8+2 | Done (2026-03-25) |
+| 3 | adept: Intel N100, Fedora 43 native | x86_64 / SSE2 | 4+2, 8+2 | Done (2026-03-26) |
+| 3 | garbo: AMD Ryzen 7 5700U, Fedora 43 native | x86_64 / SSE2 | 4+2, 8+2 | Done (2026-03-26) |
+| 4 | Data center VMs, separate hosts | TBD | Multi-geometry | Planned |
 
-Tier 3 will add real network latency and validate that the encoding
-bottleneck (not network) dominates at large sizes.  The Tier 2 results
-already show that at 1 MB, network fan-out accounts for ~7 ms and RS
-encoding accounts for ~32 ms, consistent with encoding being the bottleneck.
+Tier 3 validates cross-ISA portability: overhead ratios on x86_64 SSE2
+match aarch64 NEON despite 3-5x differences in absolute latency.
+Tier 4 will add real network latency and validate that the encoding
+bottleneck (not network) dominates at large sizes.
 
 ---
 

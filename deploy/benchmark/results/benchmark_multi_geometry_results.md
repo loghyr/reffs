@@ -7,7 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## Test Configuration
 
-- **Platform**: Fedora 43, Linux 6.19.8, aarch64
+- **Platform**: Fedora 43, Linux 6.19.8, aarch64 (Apple M4 via VMware Fusion)
 - **Setup**: 11 Docker containers on a bridge network (1 MDS + 10 DSes)
 - **Geometries**: 4+2, 8+2 (plus plain 1+0 and stripe 10+0 baselines)
 - **Codecs**: plain, stripe, RS, Mojette-sys, Mojette-nonsys

@@ -7,7 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## Test Configuration
 
-- **Platform**: Fedora 43, Linux 6.19.8, aarch64
+- **Platform**: Fedora 43, Linux 6.19.8, aarch64 (Apple M4 via VMware Fusion)
 - **Setup**: 7 Docker containers on a bridge network (1 MDS + 6 DSes)
 - **File sizes**: 4 KB, 16 KB, 64 KB, 256 KB, 1 MB
 - **Runs**: 5 measured runs per codec per size (2 warmup discarded)
