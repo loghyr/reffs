@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# EC Benchmark — compare encoding overhead across codecs.
+# EC Benchmark — compare encoding overhead across codecs and geometries.
 #
 # Usage: ec_benchmark.sh [--degrade N] <ec_demo_path> <mds_host>
 #
@@ -28,11 +28,15 @@ done
 
 EC_DEMO="${1:-/build/tools/ec_demo}"
 MDS="${2:-localhost}"
-K=4
-M=2
 RUNS=5
 WARMUP=2
 SIZES="4096 16384 65536 262144 1048576"
+
+# Geometries to test: "k:m" pairs
+GEOMETRIES="4:2 8:2"
+
+# Number of DSes available (for stripe width)
+NUM_DS=10
 
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
@@ -75,20 +79,20 @@ build_skip_list() {
 }
 
 # ------------------------------------------------------------------ #
-# Benchmark one codec + size combination                               #
+# Benchmark one codec + size + geometry combination                    #
 # ------------------------------------------------------------------ #
 
-# bench_one <codec> <sz> <run> <mode> [skip_ds_list]
-#
-# mode=healthy: write + read
-# mode=degraded-N: read only (reuses file from healthy pass)
+# bench_one <codec> <k> <m> <sz> <run> <mode> [skip_ds_list]
 bench_one() {
     local codec="$1"
-    local sz="$2"
-    local run="$3"
-    local mode="$4"
-    local skip_ds="$5"
-    local fname="bench_${codec}_${sz}_${run}"
+    local k="$2"
+    local m="$3"
+    local sz="$4"
+    local run="$5"
+    local mode="$6"
+    local skip_ds="$7"
+    local geom="${k}+${m}"
+    local fname="bench_${codec}_${geom}_${sz}_${run}"
     local input="/tmp/bench_${sz}"
     local skip_arg=""
     [ -n "$skip_ds" ] && skip_arg="--skip-ds $skip_ds"
@@ -100,7 +104,7 @@ bench_one() {
         local t0
         t0=$(now_ms)
         "$EC_DEMO" write --mds "$MDS" --file "$fname" --input "$input" \
-            --k $K --m $M --codec "$codec" 2>/dev/null
+            --k "$k" --m "$m" --codec "$codec" 2>/dev/null
         local t1
         t1=$(now_ms)
         write_ms=$(( t1 - t0 ))
@@ -111,7 +115,7 @@ bench_one() {
     t0=$(now_ms)
     # shellcheck disable=SC2086
     "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
-        --k $K --m $M --codec "$codec" --size "$sz" $skip_arg 2>/dev/null
+        --k "$k" --m "$m" --codec "$codec" --size "$sz" $skip_arg 2>/dev/null
     local t1
     t1=$(now_ms)
     local read_ms=$(( t1 - t0 ))
@@ -122,7 +126,7 @@ bench_one() {
         verify="FAIL"
     fi
 
-    echo "${codec},${sz},${run},${write_ms},${read_ms},${verify},${mode}"
+    echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode}"
 }
 
 # ------------------------------------------------------------------ #
@@ -154,14 +158,12 @@ bench_plain() {
         verify="FAIL"
     fi
 
-    echo "plain,${sz},${run},${write_ms},${read_ms},${verify},healthy"
+    echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy"
 }
 
 # ------------------------------------------------------------------ #
 # Pure striping (no redundancy, parallel I/O across all DSes)          #
 # ------------------------------------------------------------------ #
-
-STRIPE_K=6   # stripe across all 6 DSes
 
 bench_stripe() {
     local sz="$1"
@@ -172,14 +174,14 @@ bench_stripe() {
     local t0
     t0=$(now_ms)
     "$EC_DEMO" write --mds "$MDS" --file "$fname" --input "$input" \
-        --k $STRIPE_K --m 0 --codec stripe 2>/dev/null
+        --k $NUM_DS --m 0 --codec stripe 2>/dev/null
     local t1
     t1=$(now_ms)
     local write_ms=$(( t1 - t0 ))
 
     t0=$(now_ms)
     "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
-        --k $STRIPE_K --m 0 --codec stripe --size "$sz" 2>/dev/null
+        --k $NUM_DS --m 0 --codec stripe --size "$sz" 2>/dev/null
     t1=$(now_ms)
     local read_ms=$(( t1 - t0 ))
 
@@ -188,63 +190,68 @@ bench_stripe() {
         verify="FAIL"
     fi
 
-    echo "stripe,${sz},${run},${write_ms},${read_ms},${verify},healthy"
+    echo "stripe,${NUM_DS}+0,${sz},${run},${write_ms},${read_ms},${verify},healthy"
 }
 
 # ------------------------------------------------------------------ #
 # Main                                                                 #
 # ------------------------------------------------------------------ #
 
-if [ "$DEGRADE" -ge "$M" ]; then
-    echo "ERROR: --degrade $DEGRADE must be less than M=$M" >&2
-    exit 1
-fi
-
-SKIP_LIST=""
-[ "$DEGRADE" -gt 0 ] && SKIP_LIST=$(build_skip_list "$DEGRADE")
-
 echo "=== EC Benchmark ===" >&2
-echo "MDS: $MDS  K=$K M=$M  RUNS=$RUNS  WARMUP=$WARMUP  DEGRADE=$DEGRADE" >&2
+echo "MDS: $MDS  GEOMETRIES=$GEOMETRIES  RUNS=$RUNS  DEGRADE=$DEGRADE" >&2
 echo "Sizes: $SIZES" >&2
-[ -n "$SKIP_LIST" ] && echo "Skip DSes: $SKIP_LIST" >&2
 echo "" >&2
 
 wait_for_mds
 generate_test_files
 
 # CSV header
-echo "codec,size_bytes,run,write_ms,read_ms,verify,mode"
+echo "codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode"
 
 for sz in $SIZES; do
     echo "--- Size: $sz bytes ---" >&2
 
     # Warmup (not recorded)
     for w in $(seq 1 $WARMUP); do
-        for codec in rs mojette-sys mojette-nonsys; do
-            bench_one "$codec" "$sz" "w${w}" "healthy" "" \
-                > /dev/null 2>&1 || true
-        done
         bench_plain "$sz" "w${w}" > /dev/null 2>&1 || true
         bench_stripe "$sz" "w${w}" > /dev/null 2>&1 || true
+        for geom in $GEOMETRIES; do
+            k=${geom%%:*}
+            m=${geom##*:}
+            for codec in rs mojette-sys mojette-nonsys; do
+                bench_one "$codec" "$k" "$m" "$sz" "w${w}" "healthy" "" \
+                    > /dev/null 2>&1 || true
+            done
+        done
     done
 
     # Measured runs
     for run in $(seq 1 $RUNS); do
-        # Healthy pass (write + read, all codecs)
+        # Plain + stripe baselines
         bench_plain "$sz" "$run"
         bench_stripe "$sz" "$run"
-        bench_one "rs" "$sz" "$run" "healthy" ""
-        bench_one "mojette-sys" "$sz" "$run" "healthy" ""
-        bench_one "mojette-nonsys" "$sz" "$run" "healthy" ""
 
-        # Degraded pass (read only, skip plain)
-        if [ "$DEGRADE" -gt 0 ]; then
-            bench_one "rs" "$sz" "$run" "degraded-${DEGRADE}" "$SKIP_LIST"
-            bench_one "mojette-sys" "$sz" "$run" \
-                "degraded-${DEGRADE}" "$SKIP_LIST"
-            bench_one "mojette-nonsys" "$sz" "$run" \
-                "degraded-${DEGRADE}" "$SKIP_LIST"
-        fi
+        # Each geometry
+        for geom in $GEOMETRIES; do
+            k=${geom%%:*}
+            m=${geom##*:}
+
+            # Healthy pass
+            bench_one "rs" "$k" "$m" "$sz" "$run" "healthy" ""
+            bench_one "mojette-sys" "$k" "$m" "$sz" "$run" "healthy" ""
+            bench_one "mojette-nonsys" "$k" "$m" "$sz" "$run" "healthy" ""
+
+            # Degraded pass (skip plain and stripe — no redundancy)
+            if [ "$DEGRADE" -gt 0 ] && [ "$DEGRADE" -lt "$m" ]; then
+                skip_list=$(build_skip_list "$DEGRADE")
+                bench_one "rs" "$k" "$m" "$sz" "$run" \
+                    "degraded-${DEGRADE}" "$skip_list"
+                bench_one "mojette-sys" "$k" "$m" "$sz" "$run" \
+                    "degraded-${DEGRADE}" "$skip_list"
+                bench_one "mojette-nonsys" "$k" "$m" "$sz" "$run" \
+                    "degraded-${DEGRADE}" "$skip_list"
+            fi
+        done
     done
 done
 

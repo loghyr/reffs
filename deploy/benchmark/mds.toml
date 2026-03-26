@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# MDS config for EC benchmark — 6 data servers.
+# MDS config for EC benchmark — 10 data servers.
 
 [server]
 port            = 2049
@@ -11,7 +11,7 @@ minor_versions  = [1, 2]
 grace_period    = 5
 workers         = 4
 log_level       = "info"
-layout_width    = 6
+layout_width    = 10
 
 [backend]
 type            = "posix"
@@ -53,4 +53,24 @@ path    = "/"
 [[data_server]]
 id      = 6
 address = "reffs-ds5"
+path    = "/"
+
+[[data_server]]
+id      = 7
+address = "reffs-ds6"
+path    = "/"
+
+[[data_server]]
+id      = 8
+address = "reffs-ds7"
+path    = "/"
+
+[[data_server]]
+id      = 9
+address = "reffs-ds8"
+path    = "/"
+
+[[data_server]]
+id      = 10
+address = "reffs-ds9"
 path    = "/"

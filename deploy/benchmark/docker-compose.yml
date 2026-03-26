@@ -113,6 +113,46 @@ services:
       bench:
         aliases: [reffs-ds5]
 
+  ds6:
+    <<: *ds-common
+    container_name: reffs-bench-ds6
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds6]
+
+  ds7:
+    <<: *ds-common
+    container_name: reffs-bench-ds7
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds7]
+
+  ds8:
+    <<: *ds-common
+    container_name: reffs-bench-ds8
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds8]
+
+  ds9:
+    <<: *ds-common
+    container_name: reffs-bench-ds9
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      bench:
+        aliases: [reffs-ds9]
+
   mds:
     container_name: reffs-bench-mds
     image: reffs-dev
@@ -129,6 +169,14 @@ services:
       ds4:
         condition: service_healthy
       ds5:
+        condition: service_healthy
+      ds6:
+        condition: service_healthy
+      ds7:
+        condition: service_healthy
+      ds8:
+        condition: service_healthy
+      ds9:
         condition: service_healthy
     ulimits:
       nofile:

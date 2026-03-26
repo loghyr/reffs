@@ -300,7 +300,7 @@ run-benchmark: image
 	@echo "Building reffs in builder container..."
 	$(DOCKER) compose -f $(BENCH_COMPOSE) run --rm builder
 	@echo "Starting MDS + 6 DSes..."
-	$(DOCKER) compose -f $(BENCH_COMPOSE) up -d ds0 ds1 ds2 ds3 ds4 ds5 mds
+	$(DOCKER) compose -f $(BENCH_COMPOSE) up -d ds0 ds1 ds2 ds3 ds4 ds5 ds6 ds7 ds8 ds9 mds
 	@echo "Waiting for services to become healthy..."
 	$(DOCKER) compose -f $(BENCH_COMPOSE) --profile run run --rm bench \
 		2>$(BENCH_LOGS)/bench.log | tee $(BENCH_LOGS)/results.csv
