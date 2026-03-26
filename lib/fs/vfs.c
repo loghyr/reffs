@@ -125,21 +125,36 @@ static int rtc_cmp(const char *s1, const char *s2)
 
 int vfs_is_subdir(struct inode *child, struct inode *maybe_parent)
 {
-	/*
-	 * TODO: ancestor inodes are not held with active refs during this walk.
-	 * Under extreme LRU pressure a directory ancestor could be evicted
-	 * between hops.  For now the weak-pointer walk is sufficient.
-	 */
 	struct inode *curr = child;
+	int found = 0;
+
+	/*
+	 * Walk the parent chain via weak pointers under rcu_read_lock.
+	 * Each hop goes: inode → i_dirent → rd_parent → rd_inode.
+	 * All three pointers are RCU-protected and may be NULLed by
+	 * concurrent eviction or removal — rcu_dereference ensures
+	 * we see either a valid pointer or NULL, never a torn value.
+	 */
+	rcu_read_lock();
 	while (curr) {
-		if (curr == maybe_parent)
-			return 1;
-		if (curr->i_dirent && curr->i_dirent->rd_parent)
-			curr = curr->i_dirent->rd_parent->rd_inode;
-		else
+		if (curr == maybe_parent) {
+			found = 1;
+			break;
+		}
+		struct reffs_dirent *de = rcu_dereference(curr->i_dirent);
+
+		if (de) {
+			struct reffs_dirent *parent =
+				rcu_dereference(de->rd_parent);
+
+			curr = parent ? rcu_dereference(parent->rd_inode) :
+					NULL;
+		} else {
 			curr = NULL;
+		}
 	}
-	return 0;
+	rcu_read_unlock();
+	return found;
 }
 
 /* Internal helpers that assume locks are held */
