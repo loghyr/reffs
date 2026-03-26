@@ -1,0 +1,1151 @@
+docker build -t reffs-dev .
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.03kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/fedora:43
+#2 DONE 0.7s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/8] FROM docker.io/library/fedora:43@sha256:781b7642e8bf256e9cf75d2aa58d86f5cc695fd2df113517614e181a5eee9138
+#4 resolve docker.io/library/fedora:43@sha256:781b7642e8bf256e9cf75d2aa58d86f5cc695fd2df113517614e181a5eee9138 0.0s done
+#4 DONE 0.0s
+
+#5 [2/8] RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf &&     echo "retries=20" >> /etc/dnf/dnf.conf
+#5 CACHED
+
+#6 [5/8] RUN pip3 install --no-cache-dir     ply     xdrlib3     xml2rfc
+#6 CACHED
+
+#7 [7/8] WORKDIR /build
+#7 CACHED
+
+#8 [3/8] RUN dnf -y install     autoconf     autoconf-archive     automake     bash-completion     bear     ccache     check-devel     clang     clang-tools-extra     cmake     fuse-devel     gcc     gcc-c++     gdb     git     glibc-devel     HdrHistogram_c-devel     htop     iostat     iproute     iputils     jemalloc-devel     ktls-utils     libev-devel     libstdc++-devel     libtirpc-devel     libtool     liburing-devel     libuuid-devel     lldb     llvm-devel     make     net-tools     ninja-build     nslookup     krb5-devel     libnfsidmap-devel     openssl-devel     perf     procps-ng     python3-argcomplete     python3-devel     python3-pip     rpcbind     rpcgen     rsync     rocksdb-devel     scan-build     script     sslscan     strace     sudo     userspace-rcu-devel     vim     xxhash-devel     zlib-devel     && dnf clean all
+#8 CACHED
+
+#9 [4/8] RUN activate-global-python-argcomplete --user &&     echo 'eval "$(register-python-argcomplete reffs-probe.py)"' >> /root/.bashrc &&     echo 'source /etc/profile.d/bash_completion.sh' >> /root/.bashrc
+#9 CACHED
+
+#10 [6/8] RUN mkdir -p /reffs /backend /src /build /logs
+#10 CACHED
+
+#11 [8/8] RUN printf '#!/bin/bash\nrpcbind -w\nexec "$@"\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+#11 CACHED
+
+#12 exporting to image
+#12 exporting layers done
+#12 exporting manifest sha256:7d222816b1e6c1985614253ced0336dd1e4e1d2ea8f7cd6a4a063e7a17bd7569 done
+#12 exporting config sha256:2d6d58077d58beaec0ad34fa907d9538a70ac9ad6d4ab85143b5137777dd64c9 done
+#12 exporting attestation manifest sha256:9557e12b406fdcb9ff9be6c0506f3ee976cbc68e3e9f77ceb49c5d45e3e19929 0.0s done
+#12 exporting manifest list sha256:f51786043f5c03042a9261123173b6c19028e29dd2b87375602ba5a6adb7ea8f 0.0s done
+#12 naming to docker.io/library/reffs-dev:latest done
+#12 unpacking to docker.io/library/reffs-dev:latest
+#12 unpacking to docker.io/library/reffs-dev:latest 0.0s done
+#12 DONE 0.1s
+Building reffs in builder container...
+docker compose -f deploy/benchmark/docker-compose.yml run --rm builder
+ Network benchmark_default Creating 
+ Network benchmark_default Created 
+ Volume benchmark_build-vol Creating 
+ Volume benchmark_build-vol Created 
+ Container benchmark-builder-run-89ab1cc5390b Creating 
+ Container benchmark-builder-run-89ab1cc5390b Created 
+libtoolize: putting auxiliary files in AC_CONFIG_AUX_DIR, '.'.
+libtoolize: copying file './ltmain.sh'
+libtoolize: putting macros in AC_CONFIG_MACRO_DIRS, 'm4'.
+libtoolize: copying file 'm4/libtool.m4'
+libtoolize: copying file 'm4/ltoptions.m4'
+libtoolize: copying file 'm4/ltsugar.m4'
+libtoolize: copying file 'm4/ltversion.m4'
+libtoolize: copying file 'm4/lt~obsolete.m4'
+configure.ac:34: installing './ar-lib'
+configure.ac:32: installing './compile'
+configure.ac:45: installing './config.guess'
+configure.ac:45: installing './config.sub'
+configure.ac:6: installing './install-sh'
+configure.ac:6: installing './missing'
+lib/backends/Makefile.am: installing './depcomp'
+parallel-tests: installing './test-driver'
+scripts/reffs/Makefile.am:21: installing './py-compile'
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether sleep supports fractional seconds... yes
+checking filesystem timestamp resolution... 0.01
+checking whether build environment is sane... yes
+checking for a race-free mkdir -p... /usr/sbin/mkdir -p
+checking for gawk... gawk
+checking whether make sets $(MAKE)... yes
+checking whether make supports nested variables... yes
+checking xargs -n works... yes
+checking whether UID '0' is supported by ustar format... yes
+checking whether GID '0' is supported by ustar format... yes
+checking how to create a ustar tar archive... gnutar
+checking for clang... yes
+Using C compiler: clang
+checking for gcc... clang
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables... 
+checking whether we are cross compiling... no
+checking for suffix of object files... o
+checking whether the compiler supports GNU C... yes
+checking whether clang accepts -g... yes
+checking for clang option to enable C11 features... none needed
+checking whether clang understands -c and -o together... yes
+checking whether make supports the include directive... yes (GNU style)
+checking dependency style of clang... gcc3
+checking for stdio.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for strings.h... yes
+checking for sys/stat.h... yes
+checking for sys/types.h... yes
+checking for unistd.h... yes
+checking for wchar.h... yes
+checking for minix/config.h... no
+checking whether it is safe to define __EXTENSIONS__... yes
+checking whether _XOPEN_SOURCE should be defined... no
+checking for ar... ar
+checking the archiver (ar) interface... ar
+checking for C11 support... yes
+checking for clang option to enable large file support... none needed
+checking for off_t... yes
+checking for size_t... yes
+checking build system type... x86_64-pc-linux-gnu
+checking host system type... x86_64-pc-linux-gnu
+checking how to print strings... printf
+checking for a sed that does not truncate output... /usr/sbin/sed
+checking for grep that handles long lines and -e... /usr/sbin/grep
+checking for egrep... /usr/sbin/grep -E
+checking for fgrep... /usr/sbin/grep -F
+checking for ld used by clang... /usr/bin/ld
+checking if the linker (/usr/bin/ld) is GNU ld... yes
+checking for BSD- or MS-compatible name lister (nm)... /usr/sbin/nm -B
+checking the name lister (/usr/sbin/nm -B) interface... BSD nm
+checking whether ln -s works... yes
+checking the maximum length of command line arguments... 1572864
+checking how to convert x86_64-pc-linux-gnu file names to x86_64-pc-linux-gnu format... func_convert_file_noop
+checking how to convert x86_64-pc-linux-gnu file names to toolchain format... func_convert_file_noop
+checking for /usr/bin/ld option to reload object files... -r
+checking for file... :
+checking for objdump... objdump
+checking how to recognize dependent libraries... pass_all
+checking for dlltool... no
+checking how to associate runtime and link libraries... printf %s\n
+checking for ranlib... ranlib
+checking for archiver @FILE support... @
+checking for strip... strip
+checking command to parse /usr/sbin/nm -B output from clang object... ok
+checking for sysroot... no
+checking for a working dd... /usr/sbin/dd
+checking how to truncate binary pipes... /usr/sbin/dd bs=4096 count=1
+checking for mt... no
+checking if : is a manifest tool... no
+checking for dlfcn.h... yes
+checking for objdir... .libs
+checking if clang supports -fno-rtti -fno-exceptions... yes
+checking for clang option to produce PIC... -fPIC -DPIC
+checking if clang PIC flag -fPIC -DPIC works... yes
+checking if clang static flag -static works... no
+checking if clang supports -c -o file.o... yes
+checking if clang supports -c -o file.o... (cached) yes
+checking whether the clang linker (/usr/bin/ld) supports shared libraries... yes
+checking whether -lc should be explicitly linked in... no
+checking dynamic linker characteristics... GNU/Linux ld.so
+checking how to hardcode library paths into programs... immediate
+checking whether stripping libraries is possible... yes
+checking if libtool supports shared libraries... yes
+checking whether to build shared libraries... yes
+checking whether to build static libraries... yes
+checking for a Python interpreter with version >= 3.6... python
+checking for python... /usr/sbin/python
+checking for python version... 3.14
+checking for python platform... linux
+checking for GNU default python prefix... ${prefix}
+checking for GNU default python exec_prefix... ${exec_prefix}
+checking for python script directory (pythondir)... ${PYTHON_PREFIX}/lib/python3.14/site-packages
+checking for python extension module directory (pyexecdir)... ${PYTHON_EXEC_PREFIX}/lib64/python3.14/site-packages
+checking for _Bool... yes
+checking for stdbool.h that conforms to C99 or later... yes
+checking for inline... inline
+checking for typeof syntax and keyword spelling... __typeof__
+checking for int32_t... yes
+checking for pid_t... yes
+checking for size_t... (cached) yes
+checking for ssize_t... yes
+checking for uint16_t... yes
+checking for uint32_t... yes
+checking for uint64_t... yes
+checking for uint8_t... yes
+checking for pkg-config... /usr/sbin/pkg-config
+checking pkg-config is at least version 0.9.0... yes
+checking for liburcu... yes
+checking for liburcu-cds... yes
+checking for libtirpc... yes
+checking for check >= 0.15.2... yes
+checking how to run the C preprocessor... clang -E
+checking for egrep -e... (cached) /usr/sbin/grep -E
+checking whether clang is Clang... yes
+checking whether pthreads work with "-pthread" and "-lpthread"... yes
+checking whether Clang needs flag to prevent "argument unused" warning when linking with -pthread... no
+checking for joinable pthread attribute... PTHREAD_CREATE_JOINABLE
+checking whether more special flags are required for pthreads... no
+checking for PTHREAD_PRIO_INHERIT... yes
+checking for libxxhash... yes
+checking for fuse... yes
+checking for git... /usr/sbin/git
+checking for clang-format... /usr/sbin/clang-format
+checking for clang-tidy... /usr/sbin/clang-tidy
+checking for scan-build... /usr/sbin/scan-build
+checking for rpcgen... /usr/sbin/rpcgen
+checking for bear... /usr/sbin/bear
+checking for uuid/uuid.h... yes
+checking for uuid_generate in -luuid... yes
+checking for uuid_generate_time_safe in -luuid... yes
+checking for zlib.h... yes
+checking for crc32 in -lz... yes
+checking for pkg-config... /usr/sbin/pkg-config
+checking for libzstd >= 1.4.0... yes
+checking for liburing >= 2.3... yes
+checking for malloc in -ljemalloc... yes
+checking for hdr/hdr_histogram.h... yes
+checking for hdr_init in -lhdr_histogram... yes
+checking for openssl >= 1.0.2... yes
+checking for krb5-gssapi... yes
+checking for libnfsidmap... yes
+C flags are -std=c11 -D_FILE_OFFSET_BITS=64 -DRCU_MEMBARRIER=1 -Wall -Wextra -Wformat=2 -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables -Wall -Wextra -Wpedantic -g -O0
+checking for stdlib.h... (cached) yes
+checking for sys/socket.h... yes
+checking whether clang supports -mavx2... yes
+checking that generated files are newer than configure... done
+configure: creating ./config.status
+config.status: creating Makefile
+config.status: creating reffs.pc
+config.status: creating reffs.spec
+config.status: creating reffsd.service
+config.status: creating LICENSES/Makefile
+config.status: creating third_party/Makefile
+config.status: creating third_party/tomlc99/Makefile
+config.status: creating lib/Makefile
+config.status: creating lib/config/Makefile
+config.status: creating lib/config/tests/Makefile
+config.status: creating lib/backends/Makefile
+config.status: creating lib/ec/Makefile
+config.status: creating lib/ec/tests/Makefile
+config.status: creating lib/nfs4/common/Makefile
+config.status: creating lib/nfs4/server/Makefile
+config.status: creating lib/nfs4/client/Makefile
+config.status: creating lib/nfs4/client/tests/Makefile
+config.status: creating lib/nfs4/dstore/Makefile
+config.status: creating lib/nfs4/dstore/tests/Makefile
+config.status: creating lib/fs/Makefile
+config.status: creating lib/fs/tests/Makefile
+config.status: creating lib/nlm/Makefile
+config.status: creating lib/nlm/tests/Makefile
+config.status: creating lib/nsm/Makefile
+config.status: creating lib/include/Makefile
+config.status: creating lib/include/reffs/Makefile
+config.status: creating lib/include/reffs/trace/Makefile
+config.status: creating lib/io/Makefile
+config.status: creating lib/mount3/Makefile
+config.status: creating lib/mount3/tests/Makefile
+config.status: creating lib/nfs3/Makefile
+config.status: creating lib/nfs3/tests/Makefile
+config.status: creating lib/nfs4/Makefile
+config.status: creating lib/nfs4/include/Makefile
+config.status: creating lib/nfs4/include/nfs4/Makefile
+config.status: creating lib/nfs4/include/nfs4/trace/Makefile
+config.status: creating lib/nfs4/tests/Makefile
+config.status: creating lib/rpc/Makefile
+config.status: creating lib/rpc/tests/Makefile
+config.status: creating lib/probe1/Makefile
+config.status: creating lib/tests/Makefile
+config.status: creating lib/trace/Makefile
+config.status: creating lib/utils/Makefile
+config.status: creating lib/utils/tests/Makefile
+config.status: creating lib/xdr/Makefile
+config.status: creating scripts/Makefile
+config.status: creating scripts/reffs/Makefile
+config.status: creating scripts/reffs/pynfs/Makefile
+config.status: creating scripts/reffs/pynfs/xdr/Makefile
+config.status: creating scripts/reffs/pynfs/rpc/Makefile
+config.status: creating src/Makefile
+config.status: creating tools/Makefile
+config.status: creating lib/xdr/insert_pragmas.sh
+config.status: creating scripts/copy_and_verify.sh
+config.status: creating scripts/reffs/pynfs/xdr/xdrgen.py
+config.status: creating scripts/reffs-probe.py
+config.status: creating scripts/reffs/probe_client.py
+config.status: creating scripts/reffs/protocol_client.py
+config.status: creating scripts/reffs/pynfs/rpc/rpc.py
+config.status: creating scripts/reffs/pynfs/rpc/rpclib.py
+config.status: creating scripts/reffs/pynfs/rpc/security.py
+config.status: creating scripts/reffs/pynfs/xdr/__init__.py
+config.status: creating scripts/reffs/pynfs/rpc/__init__.py
+config.status: creating scripts/reffs/pynfs/__init__.py
+config.status: creating scripts/reffs/__init__.py
+config.status: creating scripts/__init__.py
+config.status: creating config.h
+config.status: executing depfiles commands
+config.status: executing libtool commands
+  GEN      /shared/src/config.h.in
+  GEN      stamp-h1
+config.status: creating config.h
+config.status: config.h is unchanged
+make  all-recursive
+make[1]: Entering directory '/shared/build'
+Making all in third_party
+make[2]: Entering directory '/shared/build/third_party'
+Making all in tomlc99
+make[3]: Entering directory '/shared/build/third_party/tomlc99'
+  CC       libtomlc99_la-toml.lo
+  CCLD     libtomlc99.la
+make[3]: Leaving directory '/shared/build/third_party/tomlc99'
+make[3]: Entering directory '/shared/build/third_party'
+make[3]: Nothing to be done for 'all-am'.
+make[3]: Leaving directory '/shared/build/third_party'
+make[2]: Leaving directory '/shared/build/third_party'
+Making all in lib
+make[2]: Entering directory '/shared/build/lib'
+Making all in xdr
+make[3]: Entering directory '/shared/build/lib/xdr'
+rpcgen -C -h /shared/src/lib/xdr/ref_cp_xdr.x > ref_cp_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/ref_cp_xdr.x > ref_cp_xdr.c
+../../lib/xdr/insert_pragmas.sh ref_cp_xdr.c
+  CC       ref_cp_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/reffs_echo_xdr.x > reffs_echo_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/reffs_echo_xdr.x > reffs_echo_xdr.c
+../../lib/xdr/insert_pragmas.sh reffs_echo_xdr.c
+  CC       reffs_echo_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/nfsv42_xdr.x > nfsv42_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/nfsv42_xdr.x > nfsv42_xdr.c
+../../lib/xdr/insert_pragmas.sh nfsv42_xdr.c
+  CC       nfsv42_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/mntv3_xdr.x > mntv3_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/mntv3_xdr.x > mntv3_xdr.c
+../../lib/xdr/insert_pragmas.sh mntv3_xdr.c
+  CC       mntv3_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/nfsv3_xdr.x > nfsv3_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/nfsv3_xdr.x > nfsv3_xdr.c
+../../lib/xdr/insert_pragmas.sh nfsv3_xdr.c
+  CC       nfsv3_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/nlm_prot.x > nlm_prot.h
+rpcgen -C -c /shared/src/lib/xdr/nlm_prot.x > nlm_prot.c
+../../lib/xdr/insert_pragmas.sh nlm_prot.c
+  CC       nlm_prot.lo
+rpcgen -C -h /shared/src/lib/xdr/nlm4_prot.x > nlm4_prot.h
+rpcgen -C -c /shared/src/lib/xdr/nlm4_prot.x > nlm4_prot.c
+../../lib/xdr/insert_pragmas.sh nlm4_prot.c
+  CC       nlm4_prot.lo
+rpcgen -C -h /shared/src/lib/xdr/sm_inter.x > sm_inter.h
+rpcgen -C -c /shared/src/lib/xdr/sm_inter.x > sm_inter.c
+../../lib/xdr/insert_pragmas.sh sm_inter.c
+  CC       sm_inter.lo
+rpcgen -C -h /shared/src/lib/xdr/probe1_xdr.x > probe1_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/probe1_xdr.x > probe1_xdr.c
+../../lib/xdr/insert_pragmas.sh probe1_xdr.c
+  CC       probe1_xdr.lo
+/usr/sbin/python /shared/src/scripts/gen_nfsv42_names.py \
+	--xdr /shared/src/lib/xdr/nfsv42_xdr.x \
+	--hdr nfsv42_xdr.h \
+	--out .
+Wrote nfsv42_names.c
+Wrote nfsv42_names.h
+  CC       nfsv42_names.lo
+  CCLD     libreffs_xdr.la
+make[3]: Leaving directory '/shared/build/lib/xdr'
+Making all in include
+make[3]: Entering directory '/shared/build/lib/include'
+Making all in reffs
+make[4]: Entering directory '/shared/build/lib/include/reffs'
+Making all in trace
+make[5]: Entering directory '/shared/build/lib/include/reffs/trace'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/lib/include/reffs/trace'
+make[5]: Entering directory '/shared/build/lib/include/reffs'
+make[5]: Nothing to be done for 'all-am'.
+make[5]: Leaving directory '/shared/build/lib/include/reffs'
+make[4]: Leaving directory '/shared/build/lib/include/reffs'
+make[4]: Entering directory '/shared/build/lib/include'
+make[4]: Nothing to be done for 'all-am'.
+make[4]: Leaving directory '/shared/build/lib/include'
+make[3]: Leaving directory '/shared/build/lib/include'
+Making all in trace
+make[3]: Entering directory '/shared/build/lib/trace'
+  CC       common.lo
+  CCLD     libreffs_trace.la
+make[3]: Leaving directory '/shared/build/lib/trace'
+Making all in backends
+make[3]: Entering directory '/shared/build/lib/backends'
+  CC       client_persist.lo
+  CC       driver.lo
+  CC       ram.lo
+  CC       posix.lo
+  CC       server_persist.lo
+  CCLD     libbackends.la
+make[3]: Leaving directory '/shared/build/lib/backends'
+Making all in utils
+make[3]: Entering directory '/shared/build/lib/utils'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/utils/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/utils/tests'
+make[4]: Entering directory '/shared/build/lib/utils'
+  CC       cmp.lo
+  CC       context.lo
+  CC       idmap.lo
+  CC       identity.lo
+  CC       log.lo
+  CC       network.lo
+  CC       rcu.lo
+  CC       server.lo
+  CC       stack.lo
+  CC       utf8string.lo
+  CCLD     libreffs_utils.la
+make[4]: Leaving directory '/shared/build/lib/utils'
+make[3]: Leaving directory '/shared/build/lib/utils'
+Making all in config
+make[3]: Entering directory '/shared/build/lib/config'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/config/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/config/tests'
+make[4]: Entering directory '/shared/build/lib/config'
+  CC       config.lo
+  CCLD     libreffs_config.la
+make[4]: Leaving directory '/shared/build/lib/config'
+make[3]: Leaving directory '/shared/build/lib/config'
+Making all in ec
+make[3]: Entering directory '/shared/build/lib/ec'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/ec/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/ec/tests'
+make[4]: Entering directory '/shared/build/lib/ec'
+  CC       gf.lo
+  CC       matrix.lo
+  CC       mojette.lo
+  CC       mojette_codec.lo
+  CC       rs.lo
+  CC       stripe.lo
+  CCLD     libreffs_ec.la
+make[4]: Leaving directory '/shared/build/lib/ec'
+make[3]: Leaving directory '/shared/build/lib/ec'
+Making all in io
+make[3]: Entering directory '/shared/build/lib/io'
+  CC       accept.lo
+  CC       backend.lo
+  CC       connect.lo
+  CC       context.lo
+  CC       handler.lo
+  CC       heartbeat.lo
+  CC       lsnr.lo
+  CC       read.lo
+  CC       tls.lo
+  CC       worker.lo
+  CC       write.lo
+  CCLD     libreffs_io.la
+make[3]: Leaving directory '/shared/build/lib/io'
+Making all in rpc
+make[3]: Entering directory '/shared/build/lib/rpc'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/rpc/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/rpc/tests'
+make[4]: Entering directory '/shared/build/lib/rpc'
+  CC       gss_context.lo
+  CC       rpc.lo
+  CCLD     libreffs_rpc.la
+make[4]: Leaving directory '/shared/build/lib/rpc'
+make[3]: Leaving directory '/shared/build/lib/rpc'
+Making all in tests
+make[3]: Entering directory '/shared/build/lib/tests'
+  CC       libreffs_test.lo
+  CCLD     libreffs_test.la
+make[3]: Leaving directory '/shared/build/lib/tests'
+Making all in fs
+make[3]: Entering directory '/shared/build/lib/fs'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/fs/tests'
+  CC       posix_recovery.lo
+  CC       fs_test_harness.lo
+  CCLD     libreffs_fs_test.la
+make[4]: Leaving directory '/shared/build/lib/fs/tests'
+make[4]: Entering directory '/shared/build/lib/fs'
+  CC       client.lo
+  CC       data_block.lo
+  CC       dirent.lo
+  CC       filehandle.lo
+  CC       fs.lo
+  CC       fuse.lo
+  CC       inode.lo
+  CC       layout_segment.lo
+  CC       lock.lo
+  CC       ns.lo
+  CC       stateid.lo
+  CC       super_block.lo
+  CC       vfs.lo
+  CCLD     libreffs_fs.la
+make[4]: Leaving directory '/shared/build/lib/fs'
+make[3]: Leaving directory '/shared/build/lib/fs'
+Making all in nlm
+make[3]: Entering directory '/shared/build/lib/nlm'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/nlm/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nlm/tests'
+make[4]: Entering directory '/shared/build/lib/nlm'
+  CC       nlm_server.lo
+  CC       nlm_lock.lo
+  CCLD     libnlm.la
+make[4]: Leaving directory '/shared/build/lib/nlm'
+make[3]: Leaving directory '/shared/build/lib/nlm'
+Making all in nsm
+make[3]: Entering directory '/shared/build/lib/nsm'
+  CC       nsm_server.lo
+  CCLD     libnsm.la
+make[3]: Leaving directory '/shared/build/lib/nsm'
+Making all in mount3
+make[3]: Entering directory '/shared/build/lib/mount3'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/mount3/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/mount3/tests'
+make[4]: Entering directory '/shared/build/lib/mount3'
+  CC       mount3_server.lo
+  CCLD     libreffs_mount3.la
+make[4]: Leaving directory '/shared/build/lib/mount3'
+make[3]: Leaving directory '/shared/build/lib/mount3'
+Making all in nfs3
+make[3]: Entering directory '/shared/build/lib/nfs3'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/nfs3/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nfs3/tests'
+make[4]: Entering directory '/shared/build/lib/nfs3'
+  CC       server.lo
+  CCLD     libreffs_nfs3.la
+make[4]: Leaving directory '/shared/build/lib/nfs3'
+make[3]: Leaving directory '/shared/build/lib/nfs3'
+Making all in nfs4
+make[3]: Entering directory '/shared/build/lib/nfs4'
+Making all in include
+make[4]: Entering directory '/shared/build/lib/nfs4/include'
+Making all in nfs4
+make[5]: Entering directory '/shared/build/lib/nfs4/include/nfs4'
+Making all in trace
+make[6]: Entering directory '/shared/build/lib/nfs4/include/nfs4/trace'
+make[6]: Nothing to be done for 'all'.
+make[6]: Leaving directory '/shared/build/lib/nfs4/include/nfs4/trace'
+make[6]: Entering directory '/shared/build/lib/nfs4/include/nfs4'
+make[6]: Nothing to be done for 'all-am'.
+make[6]: Leaving directory '/shared/build/lib/nfs4/include/nfs4'
+make[5]: Leaving directory '/shared/build/lib/nfs4/include/nfs4'
+make[5]: Entering directory '/shared/build/lib/nfs4/include'
+make[5]: Nothing to be done for 'all-am'.
+make[5]: Leaving directory '/shared/build/lib/nfs4/include'
+make[4]: Leaving directory '/shared/build/lib/nfs4/include'
+Making all in common
+make[4]: Entering directory '/shared/build/lib/nfs4/common'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nfs4/common'
+Making all in server
+make[4]: Entering directory '/shared/build/lib/nfs4/server'
+  CC       attr.lo
+  CC       cb.lo
+  CC       cb_timeout.lo
+  CC       client.lo
+  CC       client_persist.lo
+  CC       compound.lo
+  CC       chunk.lo
+  CC       chunk_store.lo
+  CC       copy.lo
+  CC       delegation.lo
+  CC       dir.lo
+  CC       dispatch.lo
+  CC       errors.lo
+  CC       file.lo
+  CC       filehandle.lo
+  CC       layout.lo
+  CC       lease_reaper.lo
+  CC       lock.lo
+  CC       ops.lo
+  CC       owner.lo
+  CC       security.lo
+  CC       register.lo
+  CC       session.lo
+  CC       stateid.lo
+  CC       xattr.lo
+  CCLD     libreffs_nfs4_server.la
+make[4]: Leaving directory '/shared/build/lib/nfs4/server'
+Making all in client
+make[4]: Entering directory '/shared/build/lib/nfs4/client'
+Making all in tests
+make[5]: Entering directory '/shared/build/lib/nfs4/client/tests'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/lib/nfs4/client/tests'
+make[5]: Entering directory '/shared/build/lib/nfs4/client'
+  CC       chunk_io.lo
+  CC       ds_io.lo
+  CC       mds_compound.lo
+  CC       mds_session.lo
+  CC       mds_file.lo
+  CC       mds_layout.lo
+  CC       ec_io.lo
+  CCLD     libreffs_nfs4_client.la
+make[5]: Leaving directory '/shared/build/lib/nfs4/client'
+make[4]: Leaving directory '/shared/build/lib/nfs4/client'
+Making all in dstore
+make[4]: Entering directory '/shared/build/lib/nfs4/dstore'
+Making all in tests
+make[5]: Entering directory '/shared/build/lib/nfs4/dstore/tests'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/lib/nfs4/dstore/tests'
+make[5]: Entering directory '/shared/build/lib/nfs4/dstore'
+  CC       dstore.lo
+  CC       dstore_fanout.lo
+  CC       dstore_ops_nfsv3.lo
+  CC       dstore_ops_local.lo
+  CC       dstore_wcc.lo
+  CC       runway.lo
+  CCLD     libreffs_dstore.la
+make[5]: Leaving directory '/shared/build/lib/nfs4/dstore'
+make[4]: Leaving directory '/shared/build/lib/nfs4/dstore'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/nfs4/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nfs4/tests'
+make[4]: Entering directory '/shared/build/lib/nfs4'
+make[4]: Nothing to be done for 'all-am'.
+make[4]: Leaving directory '/shared/build/lib/nfs4'
+make[3]: Leaving directory '/shared/build/lib/nfs4'
+Making all in probe1
+make[3]: Entering directory '/shared/build/lib/probe1'
+  CC       probe1_client.lo
+  CC       probe1_server.lo
+  CCLD     libreffs_probe1.la
+make[3]: Leaving directory '/shared/build/lib/probe1'
+make[3]: Entering directory '/shared/build/lib'
+make[3]: Nothing to be done for 'all-am'.
+make[3]: Leaving directory '/shared/build/lib'
+make[2]: Leaving directory '/shared/build/lib'
+Making all in scripts
+make[2]: Entering directory '/shared/build/scripts'
+Making all in reffs
+make[3]: Entering directory '/shared/build/scripts/reffs'
+Making all in pynfs
+make[4]: Entering directory '/shared/build/scripts/reffs/pynfs'
+Making all in xdr
+make[5]: Entering directory '/shared/build/scripts/reffs/pynfs/xdr'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/scripts/reffs/pynfs/xdr'
+Making all in rpc
+make[5]: Entering directory '/shared/build/scripts/reffs/pynfs/rpc'
+../../../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/scripts/reffs/pynfs/rpc/gss.x
+Generating LALR tables
+Input file is /shared/src/scripts/reffs/pynfs/rpc/gss.x
+Will use output files gss_const.py, gss_type.py, and gss_pack.py
+../../../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/scripts/reffs/pynfs/rpc/rpc.x
+Input file is /shared/src/scripts/reffs/pynfs/rpc/rpc.x
+Will use output files rpc_const.py, rpc_type.py, and rpc_pack.py
+make[5]: Leaving directory '/shared/build/scripts/reffs/pynfs/rpc'
+make[5]: Entering directory '/shared/build/scripts/reffs/pynfs'
+make[5]: Nothing to be done for 'all-am'.
+make[5]: Leaving directory '/shared/build/scripts/reffs/pynfs'
+make[4]: Leaving directory '/shared/build/scripts/reffs/pynfs'
+make[4]: Entering directory '/shared/build/scripts/reffs'
+make[4]: Nothing to be done for 'all-am'.
+make[4]: Leaving directory '/shared/build/scripts/reffs'
+../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/lib/xdr/reffs_echo_xdr.x
+Input file is /shared/src/lib/xdr/reffs_echo_xdr.x
+Will use output files reffs_echo_xdr_const.py, reffs_echo_xdr_type.py, and reffs_echo_xdr_pack.py
+Ignoring program RE_ADMIN_PROGRAM = 304097
+../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/lib/xdr/rpc_xdr.x
+Input file is /shared/src/lib/xdr/rpc_xdr.x
+Will use output files rpc_xdr_const.py, rpc_xdr_type.py, and rpc_xdr_pack.py
+../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/lib/xdr/probe1_xdr.x
+Input file is /shared/src/lib/xdr/probe1_xdr.x
+Will use output files probe1_xdr_const.py, probe1_xdr_type.py, and probe1_xdr_pack.py
+Ignoring program PROBE_PROGRAM = 211768
+make[3]: Leaving directory '/shared/build/scripts/reffs'
+make[3]: Entering directory '/shared/build/scripts'
+make[3]: Nothing to be done for 'all-am'.
+make[3]: Leaving directory '/shared/build/scripts'
+make[2]: Leaving directory '/shared/build/scripts'
+Making all in src
+make[2]: Entering directory '/shared/build/src'
+  CC       reffsd.o
+  CCLD     reffsd
+  CC       probe1_client.o
+  CCLD     reffs_probe1_clnt
+make[2]: Leaving directory '/shared/build/src'
+Making all in tools
+make[2]: Entering directory '/shared/build/tools'
+  CC       ec_demo.o
+  CCLD     ec_demo
+make[2]: Leaving directory '/shared/build/tools'
+Making all in LICENSES
+make[2]: Entering directory '/shared/build/LICENSES'
+make[2]: Nothing to be done for 'all'.
+make[2]: Leaving directory '/shared/build/LICENSES'
+make[2]: Entering directory '/shared/build'
+make[2]: Leaving directory '/shared/build'
+make[1]: Leaving directory '/shared/build'
+Builder done.
+Starting MDS + 6 DSes...
+docker compose -f deploy/benchmark/docker-compose.yml up -d ds0 ds1 ds2 ds3 ds4 ds5 ds6 ds7 ds8 ds9 mds
+ Network benchmark_bench Creating 
+ Network benchmark_bench Created 
+ Container reffs-bench-builder Creating 
+ Container reffs-bench-builder Created 
+ Container reffs-bench-ds4 Creating 
+ Container reffs-bench-ds8 Creating 
+ Container reffs-bench-ds7 Creating 
+ Container reffs-bench-ds2 Creating 
+ Container reffs-bench-ds3 Creating 
+ Container reffs-bench-ds6 Creating 
+ Container reffs-bench-ds1 Creating 
+ Container reffs-bench-ds9 Creating 
+ Container reffs-bench-ds5 Creating 
+ Container reffs-bench-ds0 Creating 
+ Container reffs-bench-ds8 Created 
+ Container reffs-bench-ds6 Created 
+ Container reffs-bench-ds7 Created 
+ Container reffs-bench-ds2 Created 
+ Container reffs-bench-ds0 Created 
+ Container reffs-bench-ds1 Created 
+ Container reffs-bench-ds5 Created 
+ Container reffs-bench-ds3 Created 
+ Container reffs-bench-ds9 Created 
+ Container reffs-bench-ds4 Created 
+ Container reffs-bench-mds Creating 
+ Container reffs-bench-mds Created 
+ Container reffs-bench-builder Starting 
+ Container reffs-bench-builder Started 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds3 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds7 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds8 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds2 Starting 
+ Container reffs-bench-ds6 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds1 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds0 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds9 Starting 
+ Container reffs-bench-ds5 Starting 
+ Container reffs-bench-ds4 Starting 
+ Container reffs-bench-ds3 Started 
+ Container reffs-bench-ds4 Started 
+ Container reffs-bench-ds7 Started 
+ Container reffs-bench-ds6 Started 
+ Container reffs-bench-ds5 Started 
+ Container reffs-bench-ds0 Started 
+ Container reffs-bench-ds1 Started 
+ Container reffs-bench-ds9 Started 
+ Container reffs-bench-ds8 Started 
+ Container reffs-bench-ds2 Started 
+ Container reffs-bench-ds9 Waiting 
+ Container reffs-bench-ds2 Waiting 
+ Container reffs-bench-ds6 Waiting 
+ Container reffs-bench-ds3 Waiting 
+ Container reffs-bench-ds1 Waiting 
+ Container reffs-bench-ds5 Waiting 
+ Container reffs-bench-ds0 Waiting 
+ Container reffs-bench-ds7 Waiting 
+ Container reffs-bench-ds8 Waiting 
+ Container reffs-bench-ds4 Waiting 
+ Container reffs-bench-ds3 Healthy 
+ Container reffs-bench-ds1 Healthy 
+ Container reffs-bench-ds7 Healthy 
+ Container reffs-bench-ds0 Healthy 
+ Container reffs-bench-ds9 Healthy 
+ Container reffs-bench-ds4 Healthy 
+ Container reffs-bench-ds5 Healthy 
+ Container reffs-bench-ds8 Healthy 
+ Container reffs-bench-ds6 Healthy 
+ Container reffs-bench-ds2 Healthy 
+ Container reffs-bench-mds Starting 
+ Container reffs-bench-mds Started 
+Waiting for services to become healthy...
+docker compose -f deploy/benchmark/docker-compose.yml --profile run run --rm bench \
+	2>/home/loghyr/reffs/logs/benchmark/bench.log | tee /home/loghyr/reffs/logs/benchmark/results.csv
+codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,arch,cpu,kernel,simd
+plain,1+0,4096,1,56,38,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,1,81,62,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,1,81,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,1,78,62,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,1,79,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,1,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,1,0,60,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,1,0,69,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,1,87,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,1,82,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,1,88,85,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,1,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,1,0,69,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,1,0,86,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,2,57,38,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,2,84,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,2,83,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,2,90,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,2,86,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,2,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,2,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,2,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,2,89,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,2,87,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,2,88,90,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,2,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,2,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,2,0,100,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,3,58,39,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,3,88,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,3,86,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,3,88,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,3,80,77,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,3,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,3,0,62,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,3,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,3,91,61,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,3,86,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,3,81,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,3,0,58,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,3,0,57,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,3,0,87,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,4,56,42,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,4,88,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,4,83,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,4,79,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,4,78,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,4,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,4,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,4,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,4,83,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,4,91,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,4,90,94,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,4,0,74,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,4,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,4,0,90,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,5,58,40,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,5,85,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,5,84,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,5,84,61,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,5,80,74,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,5,0,62,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,5,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,5,0,71,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,5,89,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,5,89,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,5,89,87,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,5,0,69,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,5,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,5,0,88,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,1,60,41,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,1,80,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,1,85,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,1,81,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,1,85,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,1,0,71,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,1,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,1,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,1,93,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,1,83,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,1,93,90,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,1,0,69,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,1,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,1,0,90,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,2,64,45,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,2,86,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,2,86,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,2,85,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,2,92,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,2,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,2,0,71,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,2,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,2,92,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,2,84,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,2,88,91,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,2,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,2,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,2,0,91,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,3,65,41,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,3,91,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,3,87,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,3,71,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,3,69,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,3,0,61,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,3,0,63,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,3,0,71,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,3,85,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,3,85,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,3,87,89,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,3,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,3,0,63,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,3,0,90,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,4,62,44,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,4,87,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,4,85,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,4,87,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,4,87,76,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,4,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,4,0,62,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,4,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,4,88,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,4,87,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,4,88,89,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,4,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,4,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,4,0,96,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,5,63,40,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,5,85,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,5,92,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,5,88,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,5,87,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,5,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,5,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,5,0,74,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,5,88,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,5,93,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,5,89,91,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,5,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,5,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,5,0,89,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,1,69,50,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,1,104,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,1,101,74,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,1,105,82,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,1,107,101,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,1,0,78,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,1,0,80,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,1,0,99,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,1,101,77,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,1,98,77,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,1,100,117,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,1,0,82,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,1,0,75,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,1,0,122,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,2,77,51,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,2,95,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,2,91,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,2,84,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,2,102,105,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,2,0,84,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,2,0,79,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,2,0,104,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,2,101,77,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,2,90,77,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,2,101,117,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,2,0,80,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,2,0,74,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,2,0,120,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,3,73,53,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,3,104,73,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,3,107,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,3,112,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,3,105,106,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,3,0,74,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,3,0,82,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,3,0,105,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,3,102,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,3,104,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,3,101,120,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,3,0,78,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,3,0,77,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,3,0,120,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,4,74,53,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,4,95,76,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,4,105,77,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,4,112,82,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,4,108,108,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,4,0,82,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,4,0,82,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,4,0,105,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,4,104,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,4,89,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,4,97,122,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,4,0,80,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,4,0,71,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,4,0,124,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,5,74,52,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,5,98,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,5,109,81,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,5,110,82,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,5,109,102,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,5,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,5,0,79,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,5,0,106,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,5,101,79,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,5,99,79,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,5,108,116,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,5,0,85,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,5,0,78,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,5,0,125,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,1,119,86,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,1,147,124,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,1,176,134,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,1,187,140,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,1,181,237,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,1,0,137,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,1,0,133,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,1,0,229,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,1,125,122,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,1,174,127,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,1,12259,297,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,1,0,140,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,1,0,129,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,1,0,312,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,2,109,82,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,2,142,129,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,2,170,141,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,2,196,139,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,2,178,216,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,2,0,144,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,2,0,130,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,2,0,232,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,2,157,105,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,2,171,126,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,2,178,293,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,2,0,143,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,2,0,130,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,2,0,301,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,3,119,89,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,3,150,120,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,3,178,150,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,3,189,138,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,3,201,233,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,3,0,139,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,3,0,119,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,3,0,218,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,3,150,132,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,3,166,98,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,3,131,274,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,3,0,131,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,3,0,110,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,3,0,290,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,4,107,85,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,4,132,106,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,4,162,136,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,4,194,139,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,4,203,234,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,4,0,141,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,4,0,142,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,4,0,228,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,4,163,116,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,4,166,127,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,4,173,287,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,4,0,131,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,4,0,117,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,4,0,298,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,5,122,92,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,5,151,101,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,5,134,141,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,5,191,137,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,5,201,229,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,5,0,137,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,5,0,133,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,5,0,230,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,5,159,131,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,5,174,127,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,5,178,293,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,5,0,141,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,5,0,123,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,5,0,307,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,1,240,247,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,1,315,274,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,1,486,381,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,1,520,292,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,1,522,741,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,1,0,370,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,1,0,343,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,1,0,732,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,1,400,343,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,1,457,354,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,1,481,997,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,1,0,398,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,1,0,347,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,1,0,1050,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,2,311,298,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,2,341,298,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,2,459,400,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,2,428,338,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,2,504,746,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,2,0,349,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,2,0,354,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,2,0,741,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,2,388,326,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,2,449,345,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,2,392,966,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,2,0,379,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,2,0,313,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,2,0,1016,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,3,307,269,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,3,326,278,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,3,449,334,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,3,412,358,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,3,499,736,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,3,0,368,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,3,0,350,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,3,0,750,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,3,406,344,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,3,454,346,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,3,392,982,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,3,0,386,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,3,0,321,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,3,0,1023,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,4,252,217,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,4,310,290,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,4,482,393,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,4,459,350,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,4,506,749,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,4,0,374,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,4,0,359,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,4,0,746,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,4,394,358,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,4,460,312,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,4,423,964,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,4,0,380,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,4,0,338,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,4,0,1008,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,5,329,282,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,5,321,249,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,5,453,304,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,5,474,373,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,5,518,726,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,5,0,369,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,5,0,342,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,5,0,739,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,5,497,352,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,5,441,225,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,5,424,966,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,5,0,380,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,5,0,318,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,5,0,1024,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+
+Results saved to /home/loghyr/reffs/logs/benchmark/results.csv
+Container logs: /home/loghyr/reffs/logs/benchmark/bench.log
+Containers still running — use 'make -f Makefile.reffs stop-benchmark' to tear down
+View logs: docker logs reffs-bench-mds / reffs-bench-ds0 / etc.

@@ -1,0 +1,1142 @@
+docker build -t reffs-dev .
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.97kB done
+#1 DONE 0.0s
+
+#2 [auth] library/fedora:pull token for registry-1.docker.io
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/fedora:43
+#3 DONE 0.6s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [1/8] FROM docker.io/library/fedora:43@sha256:781b7642e8bf256e9cf75d2aa58d86f5cc695fd2df113517614e181a5eee9138
+#5 DONE 0.0s
+
+#6 [3/8] RUN dnf -y install     autoconf     autoconf-archive     automake     bash-completion     bear     ccache     check-devel     clang     clang-tools-extra     cmake     fuse-devel     gcc     gcc-c++     gdb     git     glibc-devel     HdrHistogram_c-devel     htop     iostat     iproute     iputils     jemalloc-devel     ktls-utils     libev-devel     libstdc++-devel     libtirpc-devel     libtool     liburing-devel     libuuid-devel     lldb     llvm-devel     make     net-tools     ninja-build     nslookup     krb5-devel     libnfsidmap-devel     openssl-devel     perf     procps-ng     python3-argcomplete     python3-devel     python3-pip     rpcbind     rpcgen     rsync     rocksdb-devel     scan-build     script     sslscan     strace     sudo     userspace-rcu-devel     vim     xxhash-devel     zlib-devel     && dnf clean all
+#6 CACHED
+
+#7 [6/8] RUN mkdir -p /reffs /backend /src /build /logs
+#7 CACHED
+
+#8 [2/8] RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf &&     echo "retries=20" >> /etc/dnf/dnf.conf
+#8 CACHED
+
+#9 [4/8] RUN activate-global-python-argcomplete --user &&     echo 'eval "$(register-python-argcomplete reffs-probe.py)"' >> /root/.bashrc &&     echo 'source /etc/profile.d/bash_completion.sh' >> /root/.bashrc
+#9 CACHED
+
+#10 [5/8] RUN pip3 install --no-cache-dir     ply     xdrlib3     xml2rfc
+#10 CACHED
+
+#11 [7/8] WORKDIR /build
+#11 CACHED
+
+#12 [8/8] RUN printf '#!/bin/bash\nrpcbind -w\nexec "$@"\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+#12 CACHED
+
+#13 exporting to image
+#13 exporting layers done
+#13 writing image sha256:b6f86ab29990dc8c484974ed5168d15ed0b2d7ea387bb34305e9eee14249d296 done
+#13 naming to docker.io/library/reffs-dev done
+#13 DONE 0.0s
+Building reffs in builder container...
+docker compose -f deploy/benchmark/docker-compose.yml run --rm builder
+ Network benchmark_default  Creating
+ Network benchmark_default  Created
+ Volume "benchmark_build-vol"  Creating
+ Volume "benchmark_build-vol"  Created
+libtoolize: putting auxiliary files in AC_CONFIG_AUX_DIR, '.'.
+libtoolize: copying file './ltmain.sh'
+libtoolize: putting macros in AC_CONFIG_MACRO_DIRS, 'm4'.
+libtoolize: copying file 'm4/libtool.m4'
+libtoolize: copying file 'm4/ltoptions.m4'
+libtoolize: copying file 'm4/ltsugar.m4'
+libtoolize: copying file 'm4/ltversion.m4'
+libtoolize: copying file 'm4/lt~obsolete.m4'
+configure.ac:34: installing './ar-lib'
+configure.ac:32: installing './compile'
+configure.ac:45: installing './config.guess'
+configure.ac:45: installing './config.sub'
+configure.ac:6: installing './install-sh'
+configure.ac:6: installing './missing'
+lib/backends/Makefile.am: installing './depcomp'
+parallel-tests: installing './test-driver'
+scripts/reffs/Makefile.am:21: installing './py-compile'
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether sleep supports fractional seconds... yes
+checking filesystem timestamp resolution... 0.01
+checking whether build environment is sane... yes
+checking for a race-free mkdir -p... /usr/sbin/mkdir -p
+checking for gawk... gawk
+checking whether make sets $(MAKE)... yes
+checking whether make supports nested variables... yes
+checking xargs -n works... yes
+checking whether UID '0' is supported by ustar format... yes
+checking whether GID '0' is supported by ustar format... yes
+checking how to create a ustar tar archive... gnutar
+checking for clang... yes
+Using C compiler: clang
+checking for gcc... clang
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables... 
+checking whether we are cross compiling... no
+checking for suffix of object files... o
+checking whether the compiler supports GNU C... yes
+checking whether clang accepts -g... yes
+checking for clang option to enable C11 features... none needed
+checking whether clang understands -c and -o together... yes
+checking whether make supports the include directive... yes (GNU style)
+checking dependency style of clang... gcc3
+checking for stdio.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for strings.h... yes
+checking for sys/stat.h... yes
+checking for sys/types.h... yes
+checking for unistd.h... yes
+checking for wchar.h... yes
+checking for minix/config.h... no
+checking whether it is safe to define __EXTENSIONS__... yes
+checking whether _XOPEN_SOURCE should be defined... no
+checking for ar... ar
+checking the archiver (ar) interface... ar
+checking for C11 support... yes
+checking for clang option to enable large file support... none needed
+checking for off_t... yes
+checking for size_t... yes
+checking build system type... x86_64-pc-linux-gnu
+checking host system type... x86_64-pc-linux-gnu
+checking how to print strings... printf
+checking for a sed that does not truncate output... /usr/sbin/sed
+checking for grep that handles long lines and -e... /usr/sbin/grep
+checking for egrep... /usr/sbin/grep -E
+checking for fgrep... /usr/sbin/grep -F
+checking for ld used by clang... /usr/bin/ld
+checking if the linker (/usr/bin/ld) is GNU ld... yes
+checking for BSD- or MS-compatible name lister (nm)... /usr/sbin/nm -B
+checking the name lister (/usr/sbin/nm -B) interface... BSD nm
+checking whether ln -s works... yes
+checking the maximum length of command line arguments... 1572864
+checking how to convert x86_64-pc-linux-gnu file names to x86_64-pc-linux-gnu format... func_convert_file_noop
+checking how to convert x86_64-pc-linux-gnu file names to toolchain format... func_convert_file_noop
+checking for /usr/bin/ld option to reload object files... -r
+checking for file... :
+checking for objdump... objdump
+checking how to recognize dependent libraries... pass_all
+checking for dlltool... no
+checking how to associate runtime and link libraries... printf %s\n
+checking for ranlib... ranlib
+checking for archiver @FILE support... @
+checking for strip... strip
+checking command to parse /usr/sbin/nm -B output from clang object... ok
+checking for sysroot... no
+checking for a working dd... /usr/sbin/dd
+checking how to truncate binary pipes... /usr/sbin/dd bs=4096 count=1
+checking for mt... no
+checking if : is a manifest tool... no
+checking for dlfcn.h... yes
+checking for objdir... .libs
+checking if clang supports -fno-rtti -fno-exceptions... yes
+checking for clang option to produce PIC... -fPIC -DPIC
+checking if clang PIC flag -fPIC -DPIC works... yes
+checking if clang static flag -static works... no
+checking if clang supports -c -o file.o... yes
+checking if clang supports -c -o file.o... (cached) yes
+checking whether the clang linker (/usr/bin/ld) supports shared libraries... yes
+checking whether -lc should be explicitly linked in... no
+checking dynamic linker characteristics... GNU/Linux ld.so
+checking how to hardcode library paths into programs... immediate
+checking whether stripping libraries is possible... yes
+checking if libtool supports shared libraries... yes
+checking whether to build shared libraries... yes
+checking whether to build static libraries... yes
+checking for a Python interpreter with version >= 3.6... python
+checking for python... /usr/sbin/python
+checking for python version... 3.14
+checking for python platform... linux
+checking for GNU default python prefix... ${prefix}
+checking for GNU default python exec_prefix... ${exec_prefix}
+checking for python script directory (pythondir)... ${PYTHON_PREFIX}/lib/python3.14/site-packages
+checking for python extension module directory (pyexecdir)... ${PYTHON_EXEC_PREFIX}/lib64/python3.14/site-packages
+checking for _Bool... yes
+checking for stdbool.h that conforms to C99 or later... yes
+checking for inline... inline
+checking for typeof syntax and keyword spelling... __typeof__
+checking for int32_t... yes
+checking for pid_t... yes
+checking for size_t... (cached) yes
+checking for ssize_t... yes
+checking for uint16_t... yes
+checking for uint32_t... yes
+checking for uint64_t... yes
+checking for uint8_t... yes
+checking for pkg-config... /usr/sbin/pkg-config
+checking pkg-config is at least version 0.9.0... yes
+checking for liburcu... yes
+checking for liburcu-cds... yes
+checking for libtirpc... yes
+checking for check >= 0.15.2... yes
+checking how to run the C preprocessor... clang -E
+checking for egrep -e... (cached) /usr/sbin/grep -E
+checking whether clang is Clang... yes
+checking whether pthreads work with "-pthread" and "-lpthread"... yes
+checking whether Clang needs flag to prevent "argument unused" warning when linking with -pthread... no
+checking for joinable pthread attribute... PTHREAD_CREATE_JOINABLE
+checking whether more special flags are required for pthreads... no
+checking for PTHREAD_PRIO_INHERIT... yes
+checking for libxxhash... yes
+checking for fuse... yes
+checking for git... /usr/sbin/git
+checking for clang-format... /usr/sbin/clang-format
+checking for clang-tidy... /usr/sbin/clang-tidy
+checking for scan-build... /usr/sbin/scan-build
+checking for rpcgen... /usr/sbin/rpcgen
+checking for bear... /usr/sbin/bear
+checking for uuid/uuid.h... yes
+checking for uuid_generate in -luuid... yes
+checking for uuid_generate_time_safe in -luuid... yes
+checking for zlib.h... yes
+checking for crc32 in -lz... yes
+checking for pkg-config... /usr/sbin/pkg-config
+checking for libzstd >= 1.4.0... yes
+checking for liburing >= 2.3... yes
+checking for malloc in -ljemalloc... yes
+checking for hdr/hdr_histogram.h... yes
+checking for hdr_init in -lhdr_histogram... yes
+checking for openssl >= 1.0.2... yes
+checking for krb5-gssapi... yes
+checking for libnfsidmap... yes
+C flags are -std=c11 -D_FILE_OFFSET_BITS=64 -DRCU_MEMBARRIER=1 -Wall -Wextra -Wformat=2 -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables -Wall -Wextra -Wpedantic -g -O0
+checking for stdlib.h... (cached) yes
+checking for sys/socket.h... yes
+checking whether clang supports -mavx2... yes
+checking that generated files are newer than configure... done
+configure: creating ./config.status
+config.status: creating Makefile
+config.status: creating reffs.pc
+config.status: creating reffs.spec
+config.status: creating reffsd.service
+config.status: creating LICENSES/Makefile
+config.status: creating third_party/Makefile
+config.status: creating third_party/tomlc99/Makefile
+config.status: creating lib/Makefile
+config.status: creating lib/config/Makefile
+config.status: creating lib/config/tests/Makefile
+config.status: creating lib/backends/Makefile
+config.status: creating lib/ec/Makefile
+config.status: creating lib/ec/tests/Makefile
+config.status: creating lib/nfs4/common/Makefile
+config.status: creating lib/nfs4/server/Makefile
+config.status: creating lib/nfs4/client/Makefile
+config.status: creating lib/nfs4/client/tests/Makefile
+config.status: creating lib/nfs4/dstore/Makefile
+config.status: creating lib/nfs4/dstore/tests/Makefile
+config.status: creating lib/fs/Makefile
+config.status: creating lib/fs/tests/Makefile
+config.status: creating lib/nlm/Makefile
+config.status: creating lib/nlm/tests/Makefile
+config.status: creating lib/nsm/Makefile
+config.status: creating lib/include/Makefile
+config.status: creating lib/include/reffs/Makefile
+config.status: creating lib/include/reffs/trace/Makefile
+config.status: creating lib/io/Makefile
+config.status: creating lib/mount3/Makefile
+config.status: creating lib/mount3/tests/Makefile
+config.status: creating lib/nfs3/Makefile
+config.status: creating lib/nfs3/tests/Makefile
+config.status: creating lib/nfs4/Makefile
+config.status: creating lib/nfs4/include/Makefile
+config.status: creating lib/nfs4/include/nfs4/Makefile
+config.status: creating lib/nfs4/include/nfs4/trace/Makefile
+config.status: creating lib/nfs4/tests/Makefile
+config.status: creating lib/rpc/Makefile
+config.status: creating lib/rpc/tests/Makefile
+config.status: creating lib/probe1/Makefile
+config.status: creating lib/tests/Makefile
+config.status: creating lib/trace/Makefile
+config.status: creating lib/utils/Makefile
+config.status: creating lib/utils/tests/Makefile
+config.status: creating lib/xdr/Makefile
+config.status: creating scripts/Makefile
+config.status: creating scripts/reffs/Makefile
+config.status: creating scripts/reffs/pynfs/Makefile
+config.status: creating scripts/reffs/pynfs/xdr/Makefile
+config.status: creating scripts/reffs/pynfs/rpc/Makefile
+config.status: creating src/Makefile
+config.status: creating tools/Makefile
+config.status: creating lib/xdr/insert_pragmas.sh
+config.status: creating scripts/copy_and_verify.sh
+config.status: creating scripts/reffs/pynfs/xdr/xdrgen.py
+config.status: creating scripts/reffs-probe.py
+config.status: creating scripts/reffs/probe_client.py
+config.status: creating scripts/reffs/protocol_client.py
+config.status: creating scripts/reffs/pynfs/rpc/rpc.py
+config.status: creating scripts/reffs/pynfs/rpc/rpclib.py
+config.status: creating scripts/reffs/pynfs/rpc/security.py
+config.status: creating scripts/reffs/pynfs/xdr/__init__.py
+config.status: creating scripts/reffs/pynfs/rpc/__init__.py
+config.status: creating scripts/reffs/pynfs/__init__.py
+config.status: creating scripts/reffs/__init__.py
+config.status: creating scripts/__init__.py
+config.status: creating config.h
+config.status: executing depfiles commands
+config.status: executing libtool commands
+make  all-recursive
+make[1]: Entering directory '/shared/build'
+Making all in third_party
+make[2]: Entering directory '/shared/build/third_party'
+Making all in tomlc99
+make[3]: Entering directory '/shared/build/third_party/tomlc99'
+  CC       libtomlc99_la-toml.lo
+  CCLD     libtomlc99.la
+make[3]: Leaving directory '/shared/build/third_party/tomlc99'
+make[3]: Entering directory '/shared/build/third_party'
+make[3]: Nothing to be done for 'all-am'.
+make[3]: Leaving directory '/shared/build/third_party'
+make[2]: Leaving directory '/shared/build/third_party'
+Making all in lib
+make[2]: Entering directory '/shared/build/lib'
+Making all in xdr
+make[3]: Entering directory '/shared/build/lib/xdr'
+rpcgen -C -h /shared/src/lib/xdr/ref_cp_xdr.x > ref_cp_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/ref_cp_xdr.x > ref_cp_xdr.c
+../../lib/xdr/insert_pragmas.sh ref_cp_xdr.c
+  CC       ref_cp_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/reffs_echo_xdr.x > reffs_echo_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/reffs_echo_xdr.x > reffs_echo_xdr.c
+../../lib/xdr/insert_pragmas.sh reffs_echo_xdr.c
+  CC       reffs_echo_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/nfsv42_xdr.x > nfsv42_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/nfsv42_xdr.x > nfsv42_xdr.c
+../../lib/xdr/insert_pragmas.sh nfsv42_xdr.c
+  CC       nfsv42_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/mntv3_xdr.x > mntv3_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/mntv3_xdr.x > mntv3_xdr.c
+../../lib/xdr/insert_pragmas.sh mntv3_xdr.c
+  CC       mntv3_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/nfsv3_xdr.x > nfsv3_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/nfsv3_xdr.x > nfsv3_xdr.c
+../../lib/xdr/insert_pragmas.sh nfsv3_xdr.c
+  CC       nfsv3_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/nlm_prot.x > nlm_prot.h
+rpcgen -C -c /shared/src/lib/xdr/nlm_prot.x > nlm_prot.c
+../../lib/xdr/insert_pragmas.sh nlm_prot.c
+  CC       nlm_prot.lo
+rpcgen -C -h /shared/src/lib/xdr/nlm4_prot.x > nlm4_prot.h
+rpcgen -C -c /shared/src/lib/xdr/nlm4_prot.x > nlm4_prot.c
+../../lib/xdr/insert_pragmas.sh nlm4_prot.c
+  CC       nlm4_prot.lo
+rpcgen -C -h /shared/src/lib/xdr/sm_inter.x > sm_inter.h
+rpcgen -C -c /shared/src/lib/xdr/sm_inter.x > sm_inter.c
+../../lib/xdr/insert_pragmas.sh sm_inter.c
+  CC       sm_inter.lo
+rpcgen -C -h /shared/src/lib/xdr/probe1_xdr.x > probe1_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/probe1_xdr.x > probe1_xdr.c
+../../lib/xdr/insert_pragmas.sh probe1_xdr.c
+  CC       probe1_xdr.lo
+/usr/sbin/python /shared/src/scripts/gen_nfsv42_names.py \
+	--xdr /shared/src/lib/xdr/nfsv42_xdr.x \
+	--hdr nfsv42_xdr.h \
+	--out .
+Wrote nfsv42_names.c
+Wrote nfsv42_names.h
+  CC       nfsv42_names.lo
+  CCLD     libreffs_xdr.la
+make[3]: Leaving directory '/shared/build/lib/xdr'
+Making all in include
+make[3]: Entering directory '/shared/build/lib/include'
+Making all in reffs
+make[4]: Entering directory '/shared/build/lib/include/reffs'
+Making all in trace
+make[5]: Entering directory '/shared/build/lib/include/reffs/trace'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/lib/include/reffs/trace'
+make[5]: Entering directory '/shared/build/lib/include/reffs'
+make[5]: Nothing to be done for 'all-am'.
+make[5]: Leaving directory '/shared/build/lib/include/reffs'
+make[4]: Leaving directory '/shared/build/lib/include/reffs'
+make[4]: Entering directory '/shared/build/lib/include'
+make[4]: Nothing to be done for 'all-am'.
+make[4]: Leaving directory '/shared/build/lib/include'
+make[3]: Leaving directory '/shared/build/lib/include'
+Making all in trace
+make[3]: Entering directory '/shared/build/lib/trace'
+  CC       common.lo
+  CCLD     libreffs_trace.la
+make[3]: Leaving directory '/shared/build/lib/trace'
+Making all in backends
+make[3]: Entering directory '/shared/build/lib/backends'
+  CC       client_persist.lo
+  CC       driver.lo
+  CC       ram.lo
+  CC       posix.lo
+  CC       server_persist.lo
+  CCLD     libbackends.la
+make[3]: Leaving directory '/shared/build/lib/backends'
+Making all in utils
+make[3]: Entering directory '/shared/build/lib/utils'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/utils/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/utils/tests'
+make[4]: Entering directory '/shared/build/lib/utils'
+  CC       cmp.lo
+  CC       context.lo
+  CC       idmap.lo
+  CC       identity.lo
+  CC       log.lo
+  CC       network.lo
+  CC       rcu.lo
+  CC       server.lo
+  CC       stack.lo
+  CC       utf8string.lo
+  CCLD     libreffs_utils.la
+make[4]: Leaving directory '/shared/build/lib/utils'
+make[3]: Leaving directory '/shared/build/lib/utils'
+Making all in config
+make[3]: Entering directory '/shared/build/lib/config'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/config/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/config/tests'
+make[4]: Entering directory '/shared/build/lib/config'
+  CC       config.lo
+  CCLD     libreffs_config.la
+make[4]: Leaving directory '/shared/build/lib/config'
+make[3]: Leaving directory '/shared/build/lib/config'
+Making all in ec
+make[3]: Entering directory '/shared/build/lib/ec'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/ec/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/ec/tests'
+make[4]: Entering directory '/shared/build/lib/ec'
+  CC       gf.lo
+  CC       matrix.lo
+  CC       mojette.lo
+  CC       mojette_codec.lo
+  CC       rs.lo
+  CC       stripe.lo
+  CCLD     libreffs_ec.la
+make[4]: Leaving directory '/shared/build/lib/ec'
+make[3]: Leaving directory '/shared/build/lib/ec'
+Making all in io
+make[3]: Entering directory '/shared/build/lib/io'
+  CC       accept.lo
+  CC       backend.lo
+  CC       connect.lo
+  CC       context.lo
+  CC       handler.lo
+  CC       heartbeat.lo
+  CC       lsnr.lo
+  CC       read.lo
+  CC       tls.lo
+  CC       worker.lo
+  CC       write.lo
+  CCLD     libreffs_io.la
+make[3]: Leaving directory '/shared/build/lib/io'
+Making all in rpc
+make[3]: Entering directory '/shared/build/lib/rpc'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/rpc/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/rpc/tests'
+make[4]: Entering directory '/shared/build/lib/rpc'
+  CC       gss_context.lo
+  CC       rpc.lo
+  CCLD     libreffs_rpc.la
+make[4]: Leaving directory '/shared/build/lib/rpc'
+make[3]: Leaving directory '/shared/build/lib/rpc'
+Making all in tests
+make[3]: Entering directory '/shared/build/lib/tests'
+  CC       libreffs_test.lo
+  CCLD     libreffs_test.la
+make[3]: Leaving directory '/shared/build/lib/tests'
+Making all in fs
+make[3]: Entering directory '/shared/build/lib/fs'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/fs/tests'
+  CC       posix_recovery.lo
+  CC       fs_test_harness.lo
+  CCLD     libreffs_fs_test.la
+make[4]: Leaving directory '/shared/build/lib/fs/tests'
+make[4]: Entering directory '/shared/build/lib/fs'
+  CC       client.lo
+  CC       data_block.lo
+  CC       dirent.lo
+  CC       filehandle.lo
+  CC       fs.lo
+  CC       fuse.lo
+  CC       inode.lo
+  CC       layout_segment.lo
+  CC       lock.lo
+  CC       ns.lo
+  CC       stateid.lo
+  CC       super_block.lo
+  CC       vfs.lo
+  CCLD     libreffs_fs.la
+make[4]: Leaving directory '/shared/build/lib/fs'
+make[3]: Leaving directory '/shared/build/lib/fs'
+Making all in nlm
+make[3]: Entering directory '/shared/build/lib/nlm'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/nlm/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nlm/tests'
+make[4]: Entering directory '/shared/build/lib/nlm'
+  CC       nlm_server.lo
+  CC       nlm_lock.lo
+  CCLD     libnlm.la
+make[4]: Leaving directory '/shared/build/lib/nlm'
+make[3]: Leaving directory '/shared/build/lib/nlm'
+Making all in nsm
+make[3]: Entering directory '/shared/build/lib/nsm'
+  CC       nsm_server.lo
+  CCLD     libnsm.la
+make[3]: Leaving directory '/shared/build/lib/nsm'
+Making all in mount3
+make[3]: Entering directory '/shared/build/lib/mount3'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/mount3/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/mount3/tests'
+make[4]: Entering directory '/shared/build/lib/mount3'
+  CC       mount3_server.lo
+  CCLD     libreffs_mount3.la
+make[4]: Leaving directory '/shared/build/lib/mount3'
+make[3]: Leaving directory '/shared/build/lib/mount3'
+Making all in nfs3
+make[3]: Entering directory '/shared/build/lib/nfs3'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/nfs3/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nfs3/tests'
+make[4]: Entering directory '/shared/build/lib/nfs3'
+  CC       server.lo
+  CCLD     libreffs_nfs3.la
+make[4]: Leaving directory '/shared/build/lib/nfs3'
+make[3]: Leaving directory '/shared/build/lib/nfs3'
+Making all in nfs4
+make[3]: Entering directory '/shared/build/lib/nfs4'
+Making all in include
+make[4]: Entering directory '/shared/build/lib/nfs4/include'
+Making all in nfs4
+make[5]: Entering directory '/shared/build/lib/nfs4/include/nfs4'
+Making all in trace
+make[6]: Entering directory '/shared/build/lib/nfs4/include/nfs4/trace'
+make[6]: Nothing to be done for 'all'.
+make[6]: Leaving directory '/shared/build/lib/nfs4/include/nfs4/trace'
+make[6]: Entering directory '/shared/build/lib/nfs4/include/nfs4'
+make[6]: Nothing to be done for 'all-am'.
+make[6]: Leaving directory '/shared/build/lib/nfs4/include/nfs4'
+make[5]: Leaving directory '/shared/build/lib/nfs4/include/nfs4'
+make[5]: Entering directory '/shared/build/lib/nfs4/include'
+make[5]: Nothing to be done for 'all-am'.
+make[5]: Leaving directory '/shared/build/lib/nfs4/include'
+make[4]: Leaving directory '/shared/build/lib/nfs4/include'
+Making all in common
+make[4]: Entering directory '/shared/build/lib/nfs4/common'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nfs4/common'
+Making all in server
+make[4]: Entering directory '/shared/build/lib/nfs4/server'
+  CC       attr.lo
+  CC       cb.lo
+  CC       cb_timeout.lo
+  CC       client.lo
+  CC       client_persist.lo
+  CC       compound.lo
+  CC       chunk.lo
+  CC       chunk_store.lo
+  CC       copy.lo
+  CC       delegation.lo
+  CC       dir.lo
+  CC       dispatch.lo
+  CC       errors.lo
+  CC       file.lo
+  CC       filehandle.lo
+  CC       layout.lo
+  CC       lease_reaper.lo
+  CC       lock.lo
+  CC       ops.lo
+  CC       owner.lo
+  CC       security.lo
+  CC       register.lo
+  CC       session.lo
+  CC       stateid.lo
+  CC       xattr.lo
+  CCLD     libreffs_nfs4_server.la
+make[4]: Leaving directory '/shared/build/lib/nfs4/server'
+Making all in client
+make[4]: Entering directory '/shared/build/lib/nfs4/client'
+Making all in tests
+make[5]: Entering directory '/shared/build/lib/nfs4/client/tests'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/lib/nfs4/client/tests'
+make[5]: Entering directory '/shared/build/lib/nfs4/client'
+  CC       chunk_io.lo
+  CC       ds_io.lo
+  CC       mds_compound.lo
+  CC       mds_session.lo
+  CC       mds_file.lo
+  CC       mds_layout.lo
+  CC       ec_io.lo
+  CCLD     libreffs_nfs4_client.la
+make[5]: Leaving directory '/shared/build/lib/nfs4/client'
+make[4]: Leaving directory '/shared/build/lib/nfs4/client'
+Making all in dstore
+make[4]: Entering directory '/shared/build/lib/nfs4/dstore'
+Making all in tests
+make[5]: Entering directory '/shared/build/lib/nfs4/dstore/tests'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/lib/nfs4/dstore/tests'
+make[5]: Entering directory '/shared/build/lib/nfs4/dstore'
+  CC       dstore.lo
+  CC       dstore_fanout.lo
+  CC       dstore_ops_nfsv3.lo
+  CC       dstore_ops_local.lo
+  CC       dstore_wcc.lo
+  CC       runway.lo
+  CCLD     libreffs_dstore.la
+make[5]: Leaving directory '/shared/build/lib/nfs4/dstore'
+make[4]: Leaving directory '/shared/build/lib/nfs4/dstore'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/nfs4/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nfs4/tests'
+make[4]: Entering directory '/shared/build/lib/nfs4'
+make[4]: Nothing to be done for 'all-am'.
+make[4]: Leaving directory '/shared/build/lib/nfs4'
+make[3]: Leaving directory '/shared/build/lib/nfs4'
+Making all in probe1
+make[3]: Entering directory '/shared/build/lib/probe1'
+  CC       probe1_client.lo
+  CC       probe1_server.lo
+  CCLD     libreffs_probe1.la
+make[3]: Leaving directory '/shared/build/lib/probe1'
+make[3]: Entering directory '/shared/build/lib'
+make[3]: Nothing to be done for 'all-am'.
+make[3]: Leaving directory '/shared/build/lib'
+make[2]: Leaving directory '/shared/build/lib'
+Making all in scripts
+make[2]: Entering directory '/shared/build/scripts'
+Making all in reffs
+make[3]: Entering directory '/shared/build/scripts/reffs'
+Making all in pynfs
+make[4]: Entering directory '/shared/build/scripts/reffs/pynfs'
+Making all in xdr
+make[5]: Entering directory '/shared/build/scripts/reffs/pynfs/xdr'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/scripts/reffs/pynfs/xdr'
+Making all in rpc
+make[5]: Entering directory '/shared/build/scripts/reffs/pynfs/rpc'
+../../../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/scripts/reffs/pynfs/rpc/gss.x
+Generating LALR tables
+Input file is /shared/src/scripts/reffs/pynfs/rpc/gss.x
+Will use output files gss_const.py, gss_type.py, and gss_pack.py
+../../../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/scripts/reffs/pynfs/rpc/rpc.x
+Input file is /shared/src/scripts/reffs/pynfs/rpc/rpc.x
+Will use output files rpc_const.py, rpc_type.py, and rpc_pack.py
+make[5]: Leaving directory '/shared/build/scripts/reffs/pynfs/rpc'
+make[5]: Entering directory '/shared/build/scripts/reffs/pynfs'
+make[5]: Nothing to be done for 'all-am'.
+make[5]: Leaving directory '/shared/build/scripts/reffs/pynfs'
+make[4]: Leaving directory '/shared/build/scripts/reffs/pynfs'
+make[4]: Entering directory '/shared/build/scripts/reffs'
+make[4]: Nothing to be done for 'all-am'.
+make[4]: Leaving directory '/shared/build/scripts/reffs'
+../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/lib/xdr/reffs_echo_xdr.x
+Input file is /shared/src/lib/xdr/reffs_echo_xdr.x
+Will use output files reffs_echo_xdr_const.py, reffs_echo_xdr_type.py, and reffs_echo_xdr_pack.py
+Ignoring program RE_ADMIN_PROGRAM = 304097
+../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/lib/xdr/rpc_xdr.x
+Input file is /shared/src/lib/xdr/rpc_xdr.x
+Will use output files rpc_xdr_const.py, rpc_xdr_type.py, and rpc_xdr_pack.py
+../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/lib/xdr/probe1_xdr.x
+Input file is /shared/src/lib/xdr/probe1_xdr.x
+Will use output files probe1_xdr_const.py, probe1_xdr_type.py, and probe1_xdr_pack.py
+Ignoring program PROBE_PROGRAM = 211768
+make[3]: Leaving directory '/shared/build/scripts/reffs'
+make[3]: Entering directory '/shared/build/scripts'
+make[3]: Nothing to be done for 'all-am'.
+make[3]: Leaving directory '/shared/build/scripts'
+make[2]: Leaving directory '/shared/build/scripts'
+Making all in src
+make[2]: Entering directory '/shared/build/src'
+  CC       reffsd.o
+  CCLD     reffsd
+  CC       probe1_client.o
+  CCLD     reffs_probe1_clnt
+make[2]: Leaving directory '/shared/build/src'
+Making all in tools
+make[2]: Entering directory '/shared/build/tools'
+  CC       ec_demo.o
+  CCLD     ec_demo
+make[2]: Leaving directory '/shared/build/tools'
+Making all in LICENSES
+make[2]: Entering directory '/shared/build/LICENSES'
+make[2]: Nothing to be done for 'all'.
+make[2]: Leaving directory '/shared/build/LICENSES'
+make[2]: Entering directory '/shared/build'
+make[2]: Leaving directory '/shared/build'
+make[1]: Leaving directory '/shared/build'
+Builder done.
+Starting MDS + 6 DSes...
+docker compose -f deploy/benchmark/docker-compose.yml up -d ds0 ds1 ds2 ds3 ds4 ds5 ds6 ds7 ds8 ds9 mds
+ Network benchmark_bench  Creating
+ Network benchmark_bench  Created
+ Container reffs-bench-builder  Creating
+ Container reffs-bench-builder  Created
+ Container reffs-bench-ds4  Creating
+ Container reffs-bench-ds9  Creating
+ Container reffs-bench-ds0  Creating
+ Container reffs-bench-ds1  Creating
+ Container reffs-bench-ds2  Creating
+ Container reffs-bench-ds7  Creating
+ Container reffs-bench-ds5  Creating
+ Container reffs-bench-ds3  Creating
+ Container reffs-bench-ds8  Creating
+ Container reffs-bench-ds6  Creating
+ Container reffs-bench-ds9  Created
+ Container reffs-bench-ds7  Created
+ Container reffs-bench-ds4  Created
+ Container reffs-bench-ds0  Created
+ Container reffs-bench-ds6  Created
+ Container reffs-bench-ds3  Created
+ Container reffs-bench-ds8  Created
+ Container reffs-bench-ds2  Created
+ Container reffs-bench-ds1  Created
+ Container reffs-bench-ds5  Created
+ Container reffs-bench-mds  Creating
+ Container reffs-bench-mds  Created
+ Container reffs-bench-builder  Starting
+ Container reffs-bench-builder  Started
+ Container reffs-bench-builder  Waiting
+ Container reffs-bench-builder  Waiting
+ Container reffs-bench-builder  Waiting
+ Container reffs-bench-builder  Waiting
+ Container reffs-bench-builder  Waiting
+ Container reffs-bench-builder  Waiting
+ Container reffs-bench-builder  Waiting
+ Container reffs-bench-builder  Waiting
+ Container reffs-bench-builder  Waiting
+ Container reffs-bench-builder  Waiting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds3  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds5  Starting
+ Container reffs-bench-ds1  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds2  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds6  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds8  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds7  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds4  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds0  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds9  Starting
+ Container reffs-bench-ds3  Started
+ Container reffs-bench-ds8  Started
+ Container reffs-bench-ds6  Started
+ Container reffs-bench-ds0  Started
+ Container reffs-bench-ds1  Started
+ Container reffs-bench-ds9  Started
+ Container reffs-bench-ds5  Started
+ Container reffs-bench-ds2  Started
+ Container reffs-bench-ds7  Started
+ Container reffs-bench-ds4  Started
+ Container reffs-bench-ds4  Waiting
+ Container reffs-bench-ds2  Waiting
+ Container reffs-bench-ds5  Waiting
+ Container reffs-bench-ds8  Waiting
+ Container reffs-bench-ds1  Waiting
+ Container reffs-bench-ds0  Waiting
+ Container reffs-bench-ds7  Waiting
+ Container reffs-bench-ds9  Waiting
+ Container reffs-bench-ds3  Waiting
+ Container reffs-bench-ds6  Waiting
+ Container reffs-bench-ds0  Healthy
+ Container reffs-bench-ds3  Healthy
+ Container reffs-bench-ds8  Healthy
+ Container reffs-bench-ds6  Healthy
+ Container reffs-bench-ds1  Healthy
+ Container reffs-bench-ds2  Healthy
+ Container reffs-bench-ds9  Healthy
+ Container reffs-bench-ds4  Healthy
+ Container reffs-bench-ds5  Healthy
+ Container reffs-bench-ds7  Healthy
+ Container reffs-bench-mds  Starting
+ Container reffs-bench-mds  Started
+Waiting for services to become healthy...
+docker compose -f deploy/benchmark/docker-compose.yml --profile run run --rm bench \
+		2>/Users/loghyr/reffs/logs/benchmark/bench.log | tee /Users/loghyr/reffs/logs/benchmark/results.csv
+codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,arch,cpu,kernel,simd
+plain,1+0,4096,1,41,32,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,1,59,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,1,59,47,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,1,57,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,1,59,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,1,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,1,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,1,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,1,61,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,1,64,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,1,63,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,1,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,1,0,50,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,1,0,72,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,4096,2,42,31,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,2,62,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,2,57,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,2,58,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,2,60,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,2,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,2,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,2,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,2,59,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,2,60,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,2,69,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,2,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,2,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,2,0,74,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,4096,3,45,32,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,3,60,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,3,61,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,3,58,46,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,3,56,55,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,3,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,3,0,44,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,3,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,3,172,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,3,62,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,3,63,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,3,0,57,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,3,0,80,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,3,0,93,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,4096,4,45,66,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,4,70,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,4,59,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,4,59,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,4,59,57,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,4,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,4,0,55,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,4,0,59,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,4,62,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,4,63,55,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,4,64,73,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,4,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,4,0,58,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,4,0,85,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,4096,5,48,33,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,5,63,56,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,5,61,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,5,61,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,5,64,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,5,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,5,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,5,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,5,59,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,5,62,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,5,58,70,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,5,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,5,0,48,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,5,0,66,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,16384,1,45,34,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,16384,1,59,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,1,59,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,1,68,66,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,1,72,64,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,1,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,1,0,90,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,1,0,56,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,1,69,56,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,1,60,55,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,1,60,73,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,1,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,1,0,54,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,1,0,78,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,16384,2,46,34,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,16384,2,59,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,2,57,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,2,57,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,2,58,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,2,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,2,0,44,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,2,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,2,66,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,2,61,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,2,65,70,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,2,0,50,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,2,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,2,0,71,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,16384,3,45,34,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,16384,3,61,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,3,57,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,3,58,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,3,60,57,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,3,0,45,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,3,0,44,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,3,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,3,58,55,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,3,60,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,3,62,70,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,3,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,3,0,48,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,3,0,70,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,16384,4,46,33,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,16384,4,59,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,4,58,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,4,59,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,4,60,59,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,4,0,55,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,4,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,4,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,4,60,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,4,59,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,4,60,78,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,4,0,98,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,4,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,4,0,69,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,16384,5,43,36,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,16384,5,62,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,5,59,75,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,5,77,56,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,5,70,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,5,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,5,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,5,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,5,59,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,5,66,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,5,61,79,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,5,0,58,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,5,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,5,0,68,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,65536,1,57,43,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,65536,1,68,65,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,1,74,65,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,1,73,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,1,74,82,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,1,0,62,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,1,0,58,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,1,0,79,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,1,69,59,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,1,72,61,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,1,71,94,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,1,0,63,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,1,0,58,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,1,0,99,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,65536,2,54,42,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,65536,2,82,83,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,2,73,88,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,2,80,63,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,2,73,81,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,2,0,59,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,2,0,63,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,2,0,81,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,2,84,59,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,2,69,59,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,2,69,103,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,2,0,66,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,2,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,2,0,99,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,65536,3,54,44,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,65536,3,70,56,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,3,72,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,3,74,64,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,3,76,81,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,3,0,58,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,3,0,57,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,3,0,79,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,3,72,59,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,3,73,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,3,71,98,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,3,0,59,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,3,0,58,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,3,0,97,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,65536,4,59,42,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,65536,4,70,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,4,74,62,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,4,73,62,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,4,72,81,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,4,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,4,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,4,0,83,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,4,72,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,4,71,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,4,71,96,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,4,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,4,0,57,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,4,0,99,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,65536,5,55,43,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,65536,5,68,68,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,5,73,64,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,5,72,103,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,5,79,103,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,5,0,59,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,5,0,60,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,5,0,79,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,5,70,61,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,5,74,63,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,5,80,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,5,0,60,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,5,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,5,0,101,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,262144,1,86,74,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,262144,1,111,92,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,1,128,116,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,1,120,112,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,1,123,182,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,1,0,110,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,1,0,109,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,1,0,190,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,1,115,99,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,1,113,101,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,1,6763,311,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,1,0,122,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,1,0,97,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,1,0,280,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,262144,2,96,75,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,262144,2,139,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,2,165,115,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,2,134,116,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,2,138,210,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,2,0,110,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,2,0,106,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,2,0,195,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,2,127,105,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,2,121,102,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,2,118,275,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,2,0,122,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,2,0,99,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,2,0,277,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,262144,3,96,81,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,262144,3,109,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,3,130,112,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,3,133,114,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,3,131,196,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,3,0,115,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,3,0,113,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,3,0,215,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,3,129,104,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,3,168,104,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,3,144,287,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,3,0,122,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,3,0,97,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,3,0,284,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,262144,4,94,76,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,262144,4,111,99,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,4,135,105,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,4,133,264,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,4,187,222,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,4,0,116,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,4,0,114,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,4,0,271,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,4,130,104,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,4,125,109,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,4,124,265,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,4,0,119,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,4,0,101,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,4,0,275,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,262144,5,97,79,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,262144,5,113,96,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,5,134,115,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,5,147,133,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,5,171,194,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,5,0,108,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,5,0,106,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,5,0,221,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,5,128,105,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,5,117,100,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,5,118,267,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,5,0,119,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,5,0,101,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,5,0,289,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,1048576,1,238,205,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,1048576,1,254,224,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,1,376,373,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,1,341,314,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,1,324,614,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,1,0,273,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,1,0,267,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,1,0,624,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,1,292,294,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,1,271,258,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,1,280,951,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,1,0,332,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,1,0,251,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,1,0,911,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,1048576,2,210,192,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,1048576,2,271,221,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,2,323,307,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,2,313,305,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,2,321,611,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,2,0,547,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,2,0,495,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,2,0,619,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,2,290,258,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,2,284,265,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,2,299,873,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,2,0,303,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,2,0,244,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,2,0,957,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,1048576,3,238,208,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,1048576,3,229,225,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,3,325,296,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,3,336,306,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,3,320,610,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,3,0,290,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,3,0,277,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,3,0,612,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,3,294,313,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,3,288,278,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,3,292,888,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,3,0,311,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,3,0,252,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,3,0,917,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,1048576,4,218,204,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,1048576,4,239,238,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,4,336,306,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,4,502,461,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,4,342,636,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,4,0,292,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,4,0,281,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,4,0,621,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,4,312,306,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,4,286,256,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,4,286,949,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,4,0,308,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,4,0,250,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,4,0,894,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,1048576,5,206,195,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,1048576,5,228,223,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,5,347,303,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,5,329,302,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,5,326,676,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,5,0,369,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,5,0,291,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,5,0,616,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,5,285,256,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,5,269,261,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,5,279,897,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,5,0,325,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,5,0,238,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,5,0,906,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+
+Results saved to /Users/loghyr/reffs/logs/benchmark/results.csv
+Container logs: /Users/loghyr/reffs/logs/benchmark/bench.log
+Containers still running — use 'make -f Makefile.reffs stop-benchmark' to tear down
+View logs: docker logs reffs-bench-mds / reffs-bench-ds0 / etc.
