@@ -9,6 +9,7 @@ LDADD = @CHECK_LIBS@ \
 	$(top_builddir)/lib/ec/libreffs_ec.la
 
 check_PROGRAMS = $(TESTS)
+LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
 	gf_test \

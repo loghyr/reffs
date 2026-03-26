@@ -15,8 +15,10 @@ AM_LDFLAGS = -rdynamic \
 	$(ASAN_LDFLAGS) $(LSAN_LDFLAGS) \
 	$(UBSAN_LDFLAGS) $(TSAN_LDFLAGS)
 
-TESTS = nlm_test
 check_PROGRAMS = $(TESTS)
+LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
+
+TESTS = nlm_test
 
 nlm_test_SOURCES = nlm_test.c
 nlm_test_LDADD = \

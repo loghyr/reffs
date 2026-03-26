@@ -36,6 +36,7 @@ LDADD = \
 	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
 
 check_PROGRAMS = $(TESTS)
+LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 # cb_pending is standalone — doesn't use the test harness.
 cb_pending_LDADD = \

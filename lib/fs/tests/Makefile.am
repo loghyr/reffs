@@ -48,6 +48,9 @@ LDADD = \
 	$(ZSTD_LIBS)					\
 	$(UUID_LIBS) $(JEMALLOC_LIBS)
 
+check_PROGRAMS = $(TESTS)
+LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
+
 TESTS = \
 	fuse_1 \
 	fuse_2 \
@@ -109,5 +112,3 @@ TESTS = \
 
 posix_force_load_SOURCES = posix_force_load.c
 posix_force_load_LDADD = $(LDADD)
-
-check_PROGRAMS = $(TESTS)

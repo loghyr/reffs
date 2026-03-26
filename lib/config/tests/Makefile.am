@@ -33,5 +33,6 @@ LDADD = \
 	-lpthread
 
 check_PROGRAMS = $(TESTS)
+LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = config_test

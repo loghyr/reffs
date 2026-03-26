@@ -13,6 +13,7 @@ LDADD = @CHECK_LIBS@						\
 	$(TIRPC_LIBS)
 
 check_PROGRAMS = $(TESTS)
+LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
 	mds_compound_test \
