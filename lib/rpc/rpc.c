@@ -1067,8 +1067,7 @@ int rpc_process_task(struct task *t)
 			goto handle_rpc_error;
 		}
 
-		xdrmem_create(&xdrs, (char *)p, flavor_len,
-			      XDR_DECODE);
+		xdrmem_create(&xdrs, (char *)p, flavor_len, XDR_DECODE);
 
 		if (!xdr_authunix_parms(&xdrs, &rt->rt_info.ri_cred.rc_unix)) {
 			xdr_free((xdrproc_t)xdr_authunix_parms,
