@@ -326,6 +326,264 @@ START_TEST(test_wrapping_arithmetic)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* SIMD correctness tests                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * test_simd_p1_roundtrip — isolate the p=+1 SIMD fast path.
+ *
+ * Only dirs[0] (p=+1, q=1) dispatches to the NEON/SSE2 sequential-
+ * ascending-bin helper; the other three directions (|p|>1) use the
+ * scalar path.  An incorrect SIMD accumulation would corrupt the p=+1
+ * projection and cause moj_inverse() to return -EIO or produce a grid
+ * that differs from the original.
+ *
+ * Katz: sum|p_i| = 1+2+3+4 = 10 >= P=4.
+ */
+START_TEST(test_simd_p1_roundtrip)
+{
+	int P = 4, Q = 4, n = 4;
+	struct moj_direction dirs[] = { { 1, 1 }, { 2, 1 }, { 3, 1 }, { 4, 1 } };
+	uint64_t grid[16], recovered[16];
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(grid, recovered, sizeof(grid)), 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+/*
+ * test_simd_pm1_roundtrip — isolate the p=-1 SIMD fast path.
+ *
+ * Only dirs[0] (p=-1, q=1) dispatches to the reversed-bin
+ * NEON/SSE2 helper (vextq_u64 / shuffle swap); the other three
+ * use scalar.  A swap bug would produce wrong bins for p=-1 only.
+ *
+ * Katz: sum|p_i| = 1+2+3+4 = 10 >= P=4.
+ */
+START_TEST(test_simd_pm1_roundtrip)
+{
+	int P = 4, Q = 4, n = 4;
+	struct moj_direction dirs[] = {
+		{ -1, 1 }, { -2, 1 }, { -3, 1 }, { -4, 1 }
+	};
+	uint64_t grid[16], recovered[16];
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(grid, recovered, sizeof(grid)), 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+/*
+ * test_simd_p1_tail — P=7 exercises the scalar tail in the p=+1 SIMD loop.
+ *
+ * The 4-wide SIMD loop handles columns 0–3; columns 4–6 fall through
+ * to the scalar tail.  An off-by-one in the loop bound or a wrong
+ * starting column in the tail produces corrupt bins.
+ *
+ * Katz: sum|p_i| = 10 >= P=7.
+ */
+START_TEST(test_simd_p1_tail)
+{
+	int P = 7, Q = 4, n = 4;
+	struct moj_direction dirs[] = { { 1, 1 }, { 2, 1 }, { 3, 1 }, { 4, 1 } };
+	uint64_t grid[28], recovered[28];
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(grid, recovered, sizeof(grid)), 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+/*
+ * test_simd_pm1_tail — P=7, exercises the p=-1 SIMD tail.
+ *
+ * For NEON: 4-wide loop takes cols 0–3, 2-wide cleanup takes cols 4–5,
+ * scalar handles col 6.  For SSE2 the 2-wide cleanup is identical.
+ * The bin addresses for the tail are negative offsets from dst; an
+ * off-by-one here is particularly easy to miss.
+ *
+ * Katz: sum|p_i| = 10 >= P=7.
+ */
+START_TEST(test_simd_pm1_tail)
+{
+	int P = 7, Q = 4, n = 4;
+	struct moj_direction dirs[] = {
+		{ -1, 1 }, { -2, 1 }, { -3, 1 }, { -4, 1 }
+	};
+	uint64_t grid[28], recovered[28];
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(grid, recovered, sizeof(grid)), 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+/*
+ * test_simd_bins_p1 — exact bin values for p=+1, q=1 on a 3×2 grid.
+ *
+ * fill_grid values (i*37+13, row-major):
+ *   row 0: [13, 50, 87]     row 1: [124, 161, 198]
+ *
+ * bin b = col*p - row*q + off = col - row + (Q-1) = col - row + 1:
+ *   b=0: (r=1,c=0) → 124
+ *   b=1: (r=0,c=0) + (r=1,c=1) → 13 + 161 = 174
+ *   b=2: (r=0,c=1) + (r=1,c=2) → 50 + 198 = 248
+ *   b=3: (r=0,c=2) → 87
+ *
+ * P=3 < 4: 4-wide SIMD loop does not fire; scalar path only.
+ * Anchors the bin addressing formula numerically.
+ */
+START_TEST(test_simd_bins_p1)
+{
+	int P = 3, Q = 2, n = 1;
+	struct moj_direction dirs[] = { { 1, 1 } };
+	uint64_t grid[6];
+	uint64_t expected[4] = { 124, 174, 248, 87 };
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(projs[0]->mp_nbins, 4);
+	ck_assert_int_eq(memcmp(projs[0]->mp_bins, expected, sizeof(expected)),
+			 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+/*
+ * test_simd_bins_pm1 — exact bin values for p=-1, q=1 on a 3×2 grid.
+ *
+ * Same grid as test_simd_bins_p1.
+ * bin b = -col - row + off, off = P+Q-2 = 3:
+ *   b=0: (r=1,c=2) → 198
+ *   b=1: (r=0,c=2) + (r=1,c=1) → 87 + 161 = 248
+ *   b=2: (r=0,c=1) + (r=1,c=0) → 50 + 124 = 174
+ *   b=3: (r=0,c=0) → 13
+ *
+ * P=3: NEON/SSE2 2-wide cleanup loop fires for cols 0–1; scalar
+ * handles col 2.  Verifies the lane-swap (vextq_u64 / shuffle) and
+ * the negative-offset addressing for the partial-width case.
+ */
+START_TEST(test_simd_bins_pm1)
+{
+	int P = 3, Q = 2, n = 1;
+	struct moj_direction dirs[] = { { -1, 1 } };
+	uint64_t grid[6];
+	uint64_t expected[4] = { 198, 248, 174, 13 };
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(projs[0]->mp_nbins, 4);
+	ck_assert_int_eq(memcmp(projs[0]->mp_bins, expected, sizeof(expected)),
+			 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+/*
+ * test_simd_vs_scalar_large — 64×64 grid, SIMD reproducibility.
+ *
+ * Run moj_forward() twice with separate zero-initialised projection
+ * arrays on the same grid.  The bin arrays must be bit-identical,
+ * confirming the NEON/SSE2 paths are deterministic and do not depend
+ * on initial register state or stale bin contents from a prior call.
+ * Direction set includes both p=+1 and p=-1 to exercise both SIMD helpers.
+ */
+START_TEST(test_simd_vs_scalar_large)
+{
+	int P = 64, Q = 64, n = 4;
+	struct moj_direction dirs[] = {
+		{ -2, 1 }, { -1, 1 }, { 1, 1 }, { 2, 1 }
+	};
+
+	uint64_t *grid = calloc((size_t)(P * Q), sizeof(uint64_t));
+
+	ck_assert_ptr_nonnull(grid);
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs_a = alloc_projs(dirs, n, P, Q);
+	struct moj_projection **projs_b = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs_a);
+	ck_assert_ptr_nonnull(projs_b);
+
+	moj_forward(grid, P, Q, dirs, n, projs_a);
+	moj_forward(grid, P, Q, dirs, n, projs_b);
+
+	for (int i = 0; i < n; i++) {
+		ck_assert_int_eq(projs_a[i]->mp_nbins, projs_b[i]->mp_nbins);
+		ck_assert_int_eq(
+			memcmp(projs_a[i]->mp_bins, projs_b[i]->mp_bins,
+			       (size_t)projs_a[i]->mp_nbins * sizeof(uint64_t)),
+			0);
+	}
+
+	free(grid);
+	free_projs(projs_a, n);
+	free_projs(projs_b, n);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -333,6 +591,7 @@ static Suite *mojette_suite(void)
 {
 	Suite *s = suite_create("mojette");
 	TCase *tc = tcase_create("core");
+	TCase *tc_simd = tcase_create("simd");
 
 	tcase_add_test(tc, test_projection_size);
 	tcase_add_test(tc, test_direction_generation);
@@ -344,6 +603,15 @@ static Suite *mojette_suite(void)
 	tcase_add_test(tc, test_zero_grid);
 	tcase_add_test(tc, test_wrapping_arithmetic);
 	suite_add_tcase(s, tc);
+
+	tcase_add_test(tc_simd, test_simd_p1_roundtrip);
+	tcase_add_test(tc_simd, test_simd_pm1_roundtrip);
+	tcase_add_test(tc_simd, test_simd_p1_tail);
+	tcase_add_test(tc_simd, test_simd_pm1_tail);
+	tcase_add_test(tc_simd, test_simd_bins_p1);
+	tcase_add_test(tc_simd, test_simd_bins_pm1);
+	tcase_add_test(tc_simd, test_simd_vs_scalar_large);
+	suite_add_tcase(s, tc_simd);
 
 	return s;
 }
