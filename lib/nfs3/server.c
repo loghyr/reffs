@@ -184,7 +184,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static void nfs3_sattr3_to_reffs_sattr(sattr3 *sa, struct reffs_sattr *rs)
@@ -307,7 +307,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_lookup(struct rpc_trans *rt)
@@ -397,7 +397,7 @@ out:
 	inode_active_put(exists);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 /*
@@ -494,7 +494,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_readlink(struct rpc_trans *rt)
@@ -576,7 +576,7 @@ out:
 	free(name);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 /*
@@ -645,7 +645,7 @@ static int nfs3_op_read(struct rpc_trans *rt)
 
 	if (rt->rt_next_action) {
 		rt->rt_next_action(rt);
-		return res->status;
+		return ret;
 	}
 
 	trace_nfs3_srv_read(rt, args);
@@ -895,7 +895,7 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 	if (rt->rt_next_action) {
 		rt->rt_next_action(rt);
-		return res->status;
+		return ret;
 	}
 
 	trace_nfs3_srv_write(rt, args);
@@ -1313,7 +1313,7 @@ out:
 	inode_active_put(new_inode);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_mkdir(struct rpc_trans *rt)
@@ -1422,7 +1422,7 @@ out:
 	inode_active_put(new_inode);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_symlink(struct rpc_trans *rt)
@@ -1540,7 +1540,7 @@ out:
 	inode_active_put(new_inode);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_mknod(struct rpc_trans *rt)
@@ -1686,7 +1686,7 @@ out:
 	inode_active_put(new_inode);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_remove(struct rpc_trans *rt)
@@ -1764,7 +1764,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_rmdir(struct rpc_trans *rt)
@@ -1842,7 +1842,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_rename(struct rpc_trans *rt)
@@ -1965,7 +1965,7 @@ out:
 	inode_active_put(inode_src);
 	inode_active_put(inode_dst);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_link(struct rpc_trans *rt)
@@ -2068,7 +2068,7 @@ out:
 	inode_active_put(inode);
 	inode_active_put(inode_dir);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_readdir(struct rpc_trans *rt)
@@ -2366,7 +2366,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_readdirplus(struct rpc_trans *rt)
@@ -2772,7 +2772,7 @@ update_wcc:
 out:
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_fsstat(struct rpc_trans *rt)
@@ -2846,7 +2846,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_fsinfo(struct rpc_trans *rt)
@@ -2921,7 +2921,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_pathconf(struct rpc_trans *rt)
@@ -2991,7 +2991,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 static int nfs3_op_commit(struct rpc_trans *rt)
@@ -3076,7 +3076,7 @@ out:
 	res->status = errno_to_nfs3(ret);
 	inode_active_put(inode);
 	super_block_put(sb);
-	return res->status;
+	return ret;
 }
 
 struct rpc_operations_handler nfs3_operations_handler[] = {
