@@ -295,6 +295,19 @@ After unit tests, `ci_integration_test.sh`:
 `detect_leaks=0`: `pmap_set()` TIRPC internals and pthread stacks produce
 process-lifetime LSan false positives that are not addressable in reffsd.
 
+### Unit test time budget
+
+Individual unit tests must complete in **under 2 seconds**.  The full
+`make check` suite should run in under 30 seconds.
+
+The `scripts/timed-test.sh` LOG_COMPILER records per-test wall-clock
+time to `$REFFS_TEST_TIMING` (default `/tmp/reffs-test-timing.txt`).
+
+Common causes of slow tests:
+- Thread `fini()` joining a sleeping thread — use condvar + signal
+- Grace period timers at production timeouts — check for early exit
+- Repeated `synchronize_rcu` / `rcu_barrier` in loops
+
 ---
 
 ## NFSv4 Delegation Semantics

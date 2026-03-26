@@ -285,6 +285,16 @@ concrete fix.
 - EXCHANGE_ID paths all terminate; no partial decision tree branches
 - clientid4 encoding: boot_seq | incarnation | slot partitioning preserved
 
+### Unit test performance
+- Individual unit tests must complete in under **2 seconds**
+- If a new or modified test exceeds 2s, check for:
+  - `nanosleep` / `sleep` / `usleep` in a thread that blocks `fini()`
+  - Thread joins without condvar signal (use `pthread_cond_signal` before `pthread_join`)
+  - Grace period timers running with production timeouts in test mode
+  - Repeated `synchronize_rcu` / `rcu_barrier` in loops
+- Common fix: convert blocking `nanosleep` to `pthread_cond_timedwait`
+  so `fini()` can signal immediate wake
+
 ### NOT_NOW_BROWN_COW
 - Flag any deferred items that the new code appears to depend on
 

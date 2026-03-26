@@ -154,7 +154,15 @@ check-ci: ci-image
 			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
 			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
 			make -j$$(nproc) && \
+			rm -f /tmp/reffs-test-timing.txt && \
 			(make check || (cat lib/fs/tests/test-suite.log && exit 1)) && \
+			echo '=== Unit Test Timing ===' && \
+			sort -t'[' -k2 -rn /tmp/reffs-test-timing.txt | head -10 && \
+			if grep -q SLOW /tmp/reffs-test-timing.txt; then \
+				echo 'ERROR: slow tests detected (>2s):' && \
+				grep SLOW /tmp/reffs-test-timing.txt && \
+				exit 1; \
+			fi && \
 			/src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
 
 # Run the server in a docker container (sandbox)
