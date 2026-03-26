@@ -45,6 +45,7 @@
 #include "nfs4/cb.h"
 #include "nfs4/session.h"
 #include "nfs4/client.h"
+#include "nfs4/owner.h"
 #include "reffs/cmp.h"
 
 struct nfsv42_attr {
@@ -2593,7 +2594,7 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 			have_posix = true;
 			break;
 		case FATTR4_OWNER:
-			ret = utf8string_to_uid(&nattr->owner, &rs.uid);
+			ret = reffs_owner_to_uid(&nattr->owner, &rs.uid);
 			if (ret) {
 				status = NFS4ERR_BADOWNER;
 				goto out;
@@ -2602,7 +2603,8 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 			have_posix = true;
 			break;
 		case FATTR4_OWNER_GROUP:
-			ret = utf8string_to_gid(&nattr->owner_group, &rs.gid);
+			ret = reffs_owner_group_to_gid(&nattr->owner_group,
+						       &rs.gid);
 			if (ret) {
 				status = NFS4ERR_BADOWNER;
 				goto out;
@@ -2772,11 +2774,11 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 
 	nattr->filehandle.nfs_fh4_len = sizeof(struct network_file_handle);
 
-	ret = utf8string_from_uid(&nattr->owner, inode->i_uid);
+	ret = reffs_owner_from_uid(&nattr->owner, inode->i_uid);
 	if (ret)
 		goto out;
 
-	ret = utf8string_from_gid(&nattr->owner_group, inode->i_gid);
+	ret = reffs_owner_group_from_gid(&nattr->owner_group, inode->i_gid);
 	if (ret)
 		goto out;
 

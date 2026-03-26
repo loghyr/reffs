@@ -114,6 +114,9 @@ struct server_state {
 	uint32_t ss_fence_uid_max;
 	unsigned int ss_layout_width;
 
+	/* NFSv4 owner string domain (e.g., "EXAMPLE.COM"). */
+	char ss_nfs4_domain[256];
+
 	/* Export security flavors — copied from first export at boot. */
 	enum reffs_auth_flavor ss_flavors[REFFS_CONFIG_MAX_FLAVORS];
 	unsigned int ss_nflavors;

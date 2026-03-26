@@ -18,6 +18,8 @@ Design documents:
 @.claude/design/mds.md
 @.claude/design/erasure-coding.md
 @.claude/design/terminology.md
+@.claude/design/identity.md
+@.claude/design/multi-export.md
 
 Bug pattern encyclopedias (RCU, ref-counting, NFSv4 protocol):
 

@@ -213,6 +213,12 @@ static void parse_server(struct reffs_config *cfg, toml_table_t *srv)
 		free(d.u.s);
 	}
 
+	d = toml_string_in(srv, "nfs4_domain");
+	if (d.ok) {
+		strncpy(cfg->nfs4_domain, d.u.s, sizeof(cfg->nfs4_domain) - 1);
+		free(d.u.s);
+	}
+
 	d = toml_int_in(srv, "fence_uid_min");
 	if (d.ok && d.u.i >= 0)
 		cfg->fence_uid_min = (uint32_t)d.u.i;

@@ -27,6 +27,7 @@
 #include <xxhash.h>
 
 #include "reffs/gss_context.h"
+#include "reffs/idmap.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 
@@ -473,6 +474,7 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 
 	TRACE("GSS principal %s mapped to uid=%u gid=%u", principal, *uid,
 	      *gid);
+	idmap_cache_uid(*uid, principal);
 	free(principal);
 	return 0;
 }

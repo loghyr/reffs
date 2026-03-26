@@ -26,6 +26,7 @@
 #include "nlm_prot.h"
 #include "probe1_xdr.h"
 #include "reffs/fs.h"
+#include "reffs/idmap.h"
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/mount3.h"
@@ -291,6 +292,8 @@ int main(int argc, char *argv[])
 	ss->ss_fence_uid_min = cfg.fence_uid_min;
 	ss->ss_fence_uid_max = cfg.fence_uid_max;
 	ss->ss_layout_width = cfg.layout_width;
+	strncpy(ss->ss_nfs4_domain, cfg.nfs4_domain,
+		sizeof(ss->ss_nfs4_domain) - 1);
 
 	if (cfg.nexports > 0 && cfg.exports[0].nflavors > 0) {
 		memcpy(ss->ss_flavors, cfg.exports[0].flavors,
@@ -319,6 +322,8 @@ int main(int argc, char *argv[])
 		exit_code = 1;
 		goto out;
 	}
+	if (idmap_init(cfg.nfs4_domain))
+		LOG("idmap_init failed, using numeric owner strings");
 	if (ss->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS)
 		nfs4_attr_enable_layouts();
 
@@ -636,6 +641,7 @@ out:
 	nlm_protocol_deregister();
 	mount3_protocol_deregister();
 	nfs3_protocol_deregister();
+	idmap_fini();
 	nfs4_protocol_deregister();
 
 	if (cfg.role == REFFS_ROLE_MDS || cfg.role == REFFS_ROLE_COMBINED)
