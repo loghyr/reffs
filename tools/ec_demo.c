@@ -26,6 +26,7 @@
 
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
+#include "mojette.h"
 
 /* ------------------------------------------------------------------ */
 /* File I/O helpers                                                    */
@@ -420,7 +421,9 @@ static void usage(void)
 		"  --layout TYPE  Layout: v1 (default, NFSv3 DS),"
 		" v2 (CHUNK ops)\n"
 		"  --skip-ds LIST Comma-separated DS indices to skip"
-		" on read (degraded mode)\n");
+		" on read (degraded mode)\n"
+		"  --force-scalar Disable SIMD in Mojette forward"
+		" transform (benchmark scalar path)\n");
 }
 
 static struct option long_options[] = {
@@ -435,6 +438,7 @@ static struct option long_options[] = {
 	{ "id", required_argument, NULL, 'd' },
 	{ "layout", required_argument, NULL, 'l' },
 	{ "skip-ds", required_argument, NULL, 'S' },
+	{ "force-scalar", no_argument, NULL, 'F' },
 	{ "help", no_argument, NULL, '?' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -544,6 +548,9 @@ int main(int argc, char *argv[])
 			free(copy);
 			break;
 		}
+		case 'F':
+			moj_force_scalar(true);
+			break;
 		default:
 			usage();
 			return 1;

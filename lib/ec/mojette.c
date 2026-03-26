@@ -53,6 +53,8 @@
 
 #ifdef __aarch64__
 #include <arm_neon.h>
+#elif defined(__AVX2__)
+#include <immintrin.h> /* AVX2 — 256-bit, Haswell+ */
 #elif defined(__SSE2__)
 #include <emmintrin.h> /* SSE2 — baseline on all x86_64 */
 #endif
@@ -60,6 +62,17 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* ------------------------------------------------------------------ */
+/* Force-scalar toggle                                                 */
+/* ------------------------------------------------------------------ */
+
+static bool moj_scalar_only;
+
+void moj_force_scalar(bool force)
+{
+	moj_scalar_only = force;
+}
 
 /* ------------------------------------------------------------------ */
 /* Projection lifecycle                                                */
@@ -232,7 +245,7 @@ static void moj_fwd_row_pm1(const uint64_t *__restrict__ src, int P,
 
 #endif /* __aarch64__ */
 
-#ifdef __SSE2__
+#if defined(__SSE2__) || defined(__AVX2__)
 
 /*
  * moj_fwd_row_p1_sse2 — sequential ascending bins, SSE2 (x86_64).
@@ -298,7 +311,96 @@ static void moj_fwd_row_pm1_sse2(const uint64_t *__restrict__ src, int P,
 		dst[-col] += src[col];
 }
 
-#endif /* __SSE2__ */
+#endif /* __SSE2__ || __AVX2__ */
+
+#ifdef __AVX2__
+
+/*
+ * moj_fwd_row_p1_avx2 — sequential ascending bins, AVX2 (x86_64).
+ *
+ * 256-bit (4 x uint64_t) per iteration, double the width of SSE2.
+ * Same logic: load bins, load grid, add, store.
+ */
+static void moj_fwd_row_p1_avx2(const uint64_t *__restrict__ src, int P,
+				uint64_t *__restrict__ dst)
+{
+	int col = 0;
+
+	for (; col + 8 <= P; col += 8) {
+		__m256i d0 = _mm256_loadu_si256((const __m256i *)(dst + col));
+		__m256i d1 =
+			_mm256_loadu_si256((const __m256i *)(dst + col + 4));
+		__m256i s0 = _mm256_loadu_si256((const __m256i *)(src + col));
+		__m256i s1 =
+			_mm256_loadu_si256((const __m256i *)(src + col + 4));
+
+		_mm256_storeu_si256((__m256i *)(dst + col),
+				    _mm256_add_epi64(d0, s0));
+		_mm256_storeu_si256((__m256i *)(dst + col + 4),
+				    _mm256_add_epi64(d1, s1));
+	}
+	for (; col + 4 <= P; col += 4) {
+		__m256i dv = _mm256_loadu_si256((const __m256i *)(dst + col));
+		__m256i sv = _mm256_loadu_si256((const __m256i *)(src + col));
+
+		_mm256_storeu_si256((__m256i *)(dst + col),
+				    _mm256_add_epi64(dv, sv));
+	}
+	/* Delegate remaining columns to the SSE2 p1 handler. */
+	if (col < P)
+		moj_fwd_row_p1_sse2(src + col, P - col, dst + col);
+}
+
+/*
+ * moj_fwd_row_pm1_avx2 — sequential descending bins, AVX2 (x86_64).
+ *
+ * For p=-1 the bins descend: dst[-col] += src[col].  Within a 4-element
+ * AVX2 vector, we need to reverse the element order.  Load grid as
+ * {g[0], g[1], g[2], g[3]}, reverse to {g[3], g[2], g[1], g[0]} with
+ * _mm256_permute4x64_epi64(v, 0x1B), then add to the ascending bin
+ * vector at dst[-col-3..dst[-col].
+ *
+ * 0x1B = _MM_SHUFFLE(0,1,2,3): lane 0←3, 1←2, 2←1, 3←0.
+ */
+static void moj_fwd_row_pm1_avx2(const uint64_t *__restrict__ src, int P,
+				 uint64_t *__restrict__ dst)
+{
+	int col = 0;
+
+	for (; col + 8 <= P; col += 8) {
+		__m256i b0 =
+			_mm256_loadu_si256((const __m256i *)(dst - col - 3));
+		__m256i b1 =
+			_mm256_loadu_si256((const __m256i *)(dst - col - 7));
+		__m256i g0 = _mm256_loadu_si256((const __m256i *)(src + col));
+		__m256i g1 =
+			_mm256_loadu_si256((const __m256i *)(src + col + 4));
+
+		_mm256_storeu_si256(
+			(__m256i *)(dst - col - 3),
+			_mm256_add_epi64(b0,
+					 _mm256_permute4x64_epi64(g0, 0x1B)));
+		_mm256_storeu_si256(
+			(__m256i *)(dst - col - 7),
+			_mm256_add_epi64(b1,
+					 _mm256_permute4x64_epi64(g1, 0x1B)));
+	}
+	for (; col + 4 <= P; col += 4) {
+		__m256i bv =
+			_mm256_loadu_si256((const __m256i *)(dst - col - 3));
+		__m256i gv = _mm256_loadu_si256((const __m256i *)(src + col));
+
+		_mm256_storeu_si256(
+			(__m256i *)(dst - col - 3),
+			_mm256_add_epi64(bv,
+					 _mm256_permute4x64_epi64(gv, 0x1B)));
+	}
+	/* Delegate remaining columns to the SSE2 pm1 handler. */
+	if (col < P)
+		moj_fwd_row_pm1_sse2(src + col, P - col, dst - col);
+}
+
+#endif /* __AVX2__ */
 
 void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		 const struct moj_direction *dirs, int n,
@@ -318,10 +420,11 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		 *
 		 * Bin indices are sequential (ascending for p=+1, descending
 		 * for p=-1), so each row reduces to a plain vector add with
-		 * no scatter.  Dispatches to the NEON or SSE2 helper.
+		 * no scatter.  Dispatch order: AVX2 > SSE2 > NEON > scalar.
+		 * Bypassed entirely when moj_force_scalar(true) is set.
 		 */
-#if defined(__aarch64__) || defined(__SSE2__)
-		if (q == 1 && (p == 1 || p == -1)) {
+#if defined(__aarch64__) || defined(__SSE2__) || defined(__AVX2__)
+		if (!moj_scalar_only && q == 1 && (p == 1 || p == -1)) {
 			for (int row = 0; row < Q; row++) {
 				const uint64_t *src = grid + row * P;
 				uint64_t *dst = proj->mp_bins + (off - row);
@@ -331,6 +434,11 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 					moj_fwd_row_p1(src, P, dst);
 				else
 					moj_fwd_row_pm1(src, P, dst);
+#elif defined(__AVX2__)
+				if (p == 1)
+					moj_fwd_row_p1_avx2(src, P, dst);
+				else
+					moj_fwd_row_pm1_avx2(src, P, dst);
 #else /* __SSE2__ */
 				if (p == 1)
 					moj_fwd_row_p1_sse2(src, P, dst);
@@ -340,7 +448,7 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 			}
 			continue;
 		}
-#endif /* __aarch64__ || __SSE2__ */
+#endif /* __aarch64__ || __SSE2__ || __AVX2__ */
 		/* General scalar path — handles any (p, q). */
 		for (int row = 0; row < Q; row++) {
 			for (int col = 0; col < P; col++) {

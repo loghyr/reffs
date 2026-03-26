@@ -439,6 +439,21 @@ AC_SUBST([UBSAN_ENABLED])
 
 AC_CHECK_HEADERS([stdlib.h sys/socket.h], , [AC_MSG_ERROR([Unable to find usable header file])])
 
+dnl --- AVX2 support for Mojette SIMD fast path ---
+AVX2_CFLAGS=""
+AC_MSG_CHECKING([whether $CC supports -mavx2])
+saved_CFLAGS="$CFLAGS"
+CFLAGS="$CFLAGS -mavx2"
+AC_COMPILE_IFELSE(
+  [AC_LANG_PROGRAM(
+    [[#include <immintrin.h>]],
+    [[__m256i a = _mm256_setzero_si256(); (void)a;]])],
+  [AC_MSG_RESULT([yes])
+   AVX2_CFLAGS="-mavx2"],
+  [AC_MSG_RESULT([no])])
+CFLAGS="$saved_CFLAGS"
+AC_SUBST([AVX2_CFLAGS])
+
 AC_CONFIG_FILES([
 	Makefile
 	reffs.pc

@@ -86,6 +86,15 @@ static inline int moj_bin_offset(int p, int q, int P, int Q)
 }
 
 /*
+ * moj_force_scalar -- force the scalar (non-SIMD) forward transform path.
+ *
+ * When set to true, moj_forward() bypasses NEON/SSE2/AVX2 dispatch and
+ * uses the general scalar loop for all directions.  Useful for benchmarking
+ * SIMD vs scalar overhead.  Default is false (SIMD enabled).
+ */
+void moj_force_scalar(bool force);
+
+/*
  * moj_projection_create -- allocate a projection with nbins bins, zeroed.
  * Returns NULL on allocation failure.
  */

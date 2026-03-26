@@ -4,13 +4,14 @@
 #
 # EC Benchmark — compare encoding overhead across codecs and geometries.
 #
-# Usage: ec_benchmark.sh [--degrade N] <ec_demo_path> <mds_host>
+# Usage: ec_benchmark.sh [--degrade N] [--force-scalar] <ec_demo_path> <mds_host>
 #
 # Runs write/verify cycles for each codec at several file sizes,
 # measuring wall-clock time.  Output is CSV to stdout.
 #
-# --degrade N  After each healthy read, re-read with N data shards
-#              skipped to measure reconstruction overhead.
+# --degrade N      After each healthy read, re-read with N data shards
+#                  skipped to measure reconstruction overhead.
+# --force-scalar   Pass --force-scalar to ec_demo (disable SIMD).
 
 set -e
 
@@ -19,9 +20,11 @@ set -e
 # ------------------------------------------------------------------ #
 
 DEGRADE=0
+FORCE_SCALAR=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --degrade) DEGRADE="$2"; shift 2 ;;
+        --force-scalar) FORCE_SCALAR="--force-scalar"; shift ;;
         *) break ;;
     esac
 done
@@ -103,8 +106,9 @@ bench_one() {
     if [ "$mode" = "healthy" ]; then
         local t0
         t0=$(now_ms)
+        # shellcheck disable=SC2086
         "$EC_DEMO" write --mds "$MDS" --file "$fname" --input "$input" \
-            --k "$k" --m "$m" --codec "$codec" 2>/dev/null
+            --k "$k" --m "$m" --codec "$codec" $FORCE_SCALAR 2>/dev/null
         local t1
         t1=$(now_ms)
         write_ms=$(( t1 - t0 ))
@@ -115,7 +119,8 @@ bench_one() {
     t0=$(now_ms)
     # shellcheck disable=SC2086
     "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
-        --k "$k" --m "$m" --codec "$codec" --size "$sz" $skip_arg 2>/dev/null
+        --k "$k" --m "$m" --codec "$codec" --size "$sz" \
+        $skip_arg $FORCE_SCALAR 2>/dev/null
     local t1
     t1=$(now_ms)
     local read_ms=$(( t1 - t0 ))
@@ -126,7 +131,7 @@ bench_one() {
         verify="FAIL"
     fi
 
-    echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode}"
+    echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode},${CPU_INFO}"
 }
 
 # ------------------------------------------------------------------ #
@@ -158,7 +163,7 @@ bench_plain() {
         verify="FAIL"
     fi
 
-    echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy"
+    echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${CPU_INFO}"
 }
 
 # ------------------------------------------------------------------ #
@@ -190,15 +195,49 @@ bench_stripe() {
         verify="FAIL"
     fi
 
-    echo "stripe,${NUM_DS}+0,${sz},${run},${write_ms},${read_ms},${verify},healthy"
+    echo "stripe,${NUM_DS}+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${CPU_INFO}"
 }
 
 # ------------------------------------------------------------------ #
 # Main                                                                 #
 # ------------------------------------------------------------------ #
 
+# ------------------------------------------------------------------ #
+# Gather system info                                                   #
+# ------------------------------------------------------------------ #
+
+gather_cpu_info() {
+    local arch
+    arch=$(uname -m)
+    local model="unknown"
+    if [ -f /proc/cpuinfo ]; then
+        model=$(grep -m1 "model name" /proc/cpuinfo | sed 's/.*: //' | \
+                sed 's/  */ /g')
+    elif command -v sysctl >/dev/null 2>&1; then
+        model=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
+    fi
+    local kernel
+    kernel=$(uname -r)
+    local simd="scalar"
+    case "$arch" in
+        aarch64|arm64) simd="neon" ;;
+        x86_64)
+            if grep -q avx2 /proc/cpuinfo 2>/dev/null; then
+                simd="avx2"
+            else
+                simd="sse2"
+            fi
+            ;;
+    esac
+    [ -n "$FORCE_SCALAR" ] && simd="scalar(forced)"
+    echo "${arch},${model},${kernel},${simd}"
+}
+
+CPU_INFO=$(gather_cpu_info)
+
 echo "=== EC Benchmark ===" >&2
 echo "MDS: $MDS  GEOMETRIES=$GEOMETRIES  RUNS=$RUNS  DEGRADE=$DEGRADE" >&2
+echo "CPU: $CPU_INFO" >&2
 echo "Sizes: $SIZES" >&2
 echo "" >&2
 
@@ -206,7 +245,7 @@ wait_for_mds
 generate_test_files
 
 # CSV header
-echo "codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode"
+echo "codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,arch,cpu,kernel,simd"
 
 for sz in $SIZES; do
     echo "--- Size: $sz bytes ---" >&2
@@ -242,7 +281,7 @@ for sz in $SIZES; do
             bench_one "mojette-nonsys" "$k" "$m" "$sz" "$run" "healthy" ""
 
             # Degraded pass (skip plain and stripe — no redundancy)
-            if [ "$DEGRADE" -gt 0 ] && [ "$DEGRADE" -lt "$m" ]; then
+            if [ "$DEGRADE" -gt 0 ] && [ "$DEGRADE" -le "$m" ]; then
                 skip_list=$(build_skip_list "$DEGRADE")
                 bench_one "rs" "$k" "$m" "$sz" "$run" \
                     "degraded-${DEGRADE}" "$skip_list"

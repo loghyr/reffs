@@ -3,6 +3,7 @@
 
 AM_CFLAGS = \
 	-I$(top_srcdir)/lib/include		\
+	-I$(top_srcdir)/lib/ec			\
 	-I$(top_srcdir)/lib/nfs4/client		\
 	-I$(top_builddir)/lib/xdr		\
 	$(TIRPC_CFLAGS)

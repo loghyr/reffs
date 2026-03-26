@@ -127,10 +127,12 @@ docker compose down -v   # removes containers AND the build-vol volume
 ### CSV output format
 
 ```
-codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode
+codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,arch,cpu,kernel,simd
 ```
 
 `verify` is `OK` or `FAIL`.  `mode` is `healthy` or `degraded-N`.
+`arch` is `x86_64` or `aarch64`.  `simd` is `neon`, `sse2`, `avx2`,
+`scalar`, or `scalar(forced)` (when `--force-scalar` is used).
 
 ### Codecs tested
 
