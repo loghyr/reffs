@@ -126,6 +126,15 @@ uint32_t nfs4_op_putpubfh(struct compound *compound)
 	compound->c_curr_nfh.nfh_sb = SUPER_BLOCK_ROOT_ID;
 	compound->c_curr_nfh.nfh_ino = INODE_ROOT_ID;
 
+	if (!compound->c_inode) {
+		compound->c_inode = inode_find(compound->c_curr_sb,
+					       compound->c_curr_nfh.nfh_ino);
+		if (!compound->c_inode) {
+			*status = NFS4ERR_STALE;
+			return 0;
+		}
+	}
+
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = NULL;
 
