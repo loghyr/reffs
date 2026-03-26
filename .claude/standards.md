@@ -377,3 +377,75 @@ implementation work.
 Use scalar log/antilog table GF(2^8) multiply with a standard irreducible
 polynomial.  No SIMD.  Reference only pre-2000 textbook sources.  Document
 prior art references in source file headers.
+
+---
+
+## Clock and Time
+
+### Dual-clock strategy
+
+| Use case | Clock | Rationale |
+|----------|-------|-----------|
+| Inode timestamps (atime, mtime, ctime, btime) | `CLOCK_REALTIME` | Persistent metadata; must survive reboot |
+| Lease/grace/callback timers | `CLOCK_MONOTONIC` | Immune to ntpd/admin clock adjustments |
+| RPC/op latency measurement | `CLOCK_MONOTONIC` | Interval measurement, not wall-clock |
+| Logging and trace timestamps | `CLOCK_REALTIME` | Human-readable, correlate with external logs |
+| `pthread_cond_timedwait` | `CLOCK_REALTIME` | POSIX requirement (most implementations) |
+
+### Rules
+
+- Use `reffs_now_ns()` for all monotonic timestamps (returns `uint64_t` nanoseconds)
+- Use `clock_gettime(CLOCK_REALTIME, &ts)` for inode time updates
+- Never use `gettimeofday()` or `struct timeval`
+- Never use `time()` — always `clock_gettime`
+- `clock_nanosleep(CLOCK_MONOTONIC, ...)` for duration-based sleeps
+
+---
+
+## Atomic Operations
+
+### API: use GCC builtins (`__atomic_*`)
+
+reffs standardizes on **GCC `__atomic_*` builtins**, not C11 `stdatomic.h`.
+The GCC builtins work on plain types without requiring `_Atomic` qualification,
+which matters for structs shared with on-disk formats and RCU.
+
+Exception: `_Atomic` is acceptable for **file-scope static variables** (e.g.,
+`static _Atomic bool first_foo`) where the type is self-contained.
+
+```c
+// CORRECT — GCC builtins on plain types:
+__atomic_fetch_add(&inode->i_active, 1, __ATOMIC_ACQ_REL);
+__atomic_load_n(&sb->sb_state, __ATOMIC_ACQUIRE);
+
+// WRONG — C11 on struct fields:
+atomic_fetch_add_explicit(&inode->i_active, 1, memory_order_acq_rel);
+```
+
+### Memory ordering rules
+
+| Pattern | Ordering | Example |
+|---------|----------|---------|
+| Ref-count increment | `__ATOMIC_ACQ_REL` | `__atomic_fetch_add(&i_active, 1, __ATOMIC_ACQ_REL)` |
+| Ref-count decrement | `__ATOMIC_ACQ_REL` | `__atomic_fetch_sub(&i_active, 1, __ATOMIC_ACQ_REL)` |
+| State flag set (publish) | `__ATOMIC_RELEASE` | `__atomic_fetch_or(&i_state, FLAG, __ATOMIC_RELEASE)` |
+| State flag read (consume) | `__ATOMIC_ACQUIRE` | `__atomic_load_n(&i_state, __ATOMIC_ACQUIRE)` |
+| Statistics counters | `__ATOMIC_RELAXED` | `__atomic_fetch_add(&calls, 1, __ATOMIC_RELAXED)` |
+| Sequence numbers (seqid) | `__ATOMIC_ACQ_REL` | `__atomic_fetch_add(&s_seqid, 1, __ATOMIC_ACQ_REL)` |
+
+### Fields accessed atomically MUST be read atomically
+
+If a field is ever written with `__atomic_*`, all reads must also use
+`__atomic_load_n`.  **Never** do a plain read of an atomically-written field:
+
+```c
+// WRONG — plain read of atomically-written field:
+nattr->numlinks = inode->i_nlink;
+
+// CORRECT:
+nattr->numlinks = __atomic_load_n(&inode->i_nlink, __ATOMIC_RELAXED);
+```
+
+Exception: initialization before the object is visible to other threads
+may use plain writes (e.g., `inode->i_nlink = 1` in `inode_alloc`
+before the inode is hashed).

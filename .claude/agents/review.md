@@ -236,6 +236,18 @@ concrete fix.
 - Superblock ref released in inode_release (not earlier, not later)
 - dirent_parent_release nlink accounting: subtract only on death, not rename
 
+### Atomic operations (see standards.md → Atomic Operations)
+- Use GCC `__atomic_*` builtins, not C11 `atomic_*` (except file-scope statics)
+- If a field is ever written atomically, ALL reads must use `__atomic_load_n`
+- Ref-count increment AND decrement both use `__ATOMIC_ACQ_REL`
+- Statistics counters use `__ATOMIC_RELAXED`
+- State flag publish uses `__ATOMIC_RELEASE`; consume uses `__ATOMIC_ACQUIRE`
+
+### Clock discipline (see standards.md → Clock and Time)
+- `CLOCK_REALTIME` only for persistent metadata and logging
+- `CLOCK_MONOTONIC` (via `reffs_now_ns()`) for intervals, leases, latency
+- Never `gettimeofday()`, `time()`, or `struct timeval`
+
 ### Memory ordering / UAF
 - rd_inode nulled *before* call_rcu, not after
 - No access to dirent or inode fields after call_rcu is queued
