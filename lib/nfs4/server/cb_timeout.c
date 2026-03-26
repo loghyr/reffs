@@ -44,6 +44,7 @@
 /* ------------------------------------------------------------------ */
 
 static pthread_mutex_t cb_timeout_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cb_timeout_cv = PTHREAD_COND_INITIALIZER;
 static struct cb_pending cb_timeout_head; /* sentinel node */
 static pthread_t cb_timeout_thread;
 static _Atomic uint32_t cb_timeout_running;
@@ -98,9 +99,18 @@ static void *cb_timeout_thread_fn(void *arg __attribute__((unused)))
 {
 	while (atomic_load_explicit(&cb_timeout_running,
 				    memory_order_relaxed)) {
-		struct timespec ts = { .tv_sec = CB_SCAN_INTERVAL_SEC,
-				       .tv_nsec = 0 };
-		nanosleep(&ts, NULL);
+		struct timespec ts;
+
+		clock_gettime(CLOCK_REALTIME, &ts);
+		ts.tv_sec += CB_SCAN_INTERVAL_SEC;
+
+		pthread_mutex_lock(&cb_timeout_mutex);
+		pthread_cond_timedwait(&cb_timeout_cv, &cb_timeout_mutex, &ts);
+		pthread_mutex_unlock(&cb_timeout_mutex);
+
+		if (!atomic_load_explicit(&cb_timeout_running,
+					  memory_order_relaxed))
+			break;
 
 		uint64_t now = now_ns();
 
@@ -158,5 +168,6 @@ int cb_timeout_init(void)
 void cb_timeout_fini(void)
 {
 	atomic_store_explicit(&cb_timeout_running, 0, memory_order_relaxed);
+	pthread_cond_signal(&cb_timeout_cv);
 	pthread_join(cb_timeout_thread, NULL);
 }
