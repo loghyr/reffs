@@ -161,13 +161,23 @@ static int mount3_exports(struct rpc_trans *rt)
 
 	TRACE("EXPORTS: xid=0x%08x", rt->rt_info.ri_xid);
 
+	/* Snapshot paths under RCU, allocate exportnodes after. */
+	const char *paths[16];
+	int npaths = 0;
+
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
+		if (npaths < 16)
+			paths[npaths++] = sb->sb_path;
+	}
+	rcu_read_unlock();
+
+	for (int i = 0; i < npaths; i++) {
 		en = calloc(1, sizeof(*en));
 		if (!en)
 			goto out_unwind;
 
-		en->ex_dir = strdup(sb->sb_path);
+		en->ex_dir = strdup(paths[i]);
 		if (!en->ex_dir) {
 			free(en);
 			goto out_unwind;
@@ -176,14 +186,11 @@ static int mount3_exports(struct rpc_trans *rt)
 		en->ex_next = en_head;
 		en_head = en;
 	}
-	rcu_read_unlock();
 
 	*res = en_head;
 
 	return 0;
 out_unwind:
-
-	rcu_read_unlock();
 	for (en = en_head; en != NULL; en = next) {
 		next = en->ex_next;
 		free(en->ex_dir);
