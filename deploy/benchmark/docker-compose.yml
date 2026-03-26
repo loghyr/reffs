@@ -38,7 +38,7 @@ services:
     container_name: reffs-bench-builder
     image: reffs-dev
     volumes:
-      - ../../:/reffs:ro
+      - ../../:/reffs:ro,z
       - build-vol:/shared
     command: >
       /bin/bash -c "
@@ -166,7 +166,7 @@ services:
       - bench
     volumes:
       - build-vol:/shared:ro
-      - ../../:/reffs:ro
+      - ../../:/reffs:ro,z
     command: >
       /bin/bash -c "
         exec /reffs/scripts/ec_benchmark.sh /shared/build/tools/ec_demo reffs-mds

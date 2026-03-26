@@ -313,6 +313,18 @@ int mds_session_create(struct mds_session *ms, const char *host)
 	if (!ms->ms_clnt)
 		return -ECONNREFUSED;
 
+	/* AUTH_SYS is required by most exports; clnt_create defaults
+	 * to AUTH_NONE which the server rejects with NFS4ERR_WRONGSEC.
+	 */
+	{
+		AUTH *auth = authunix_create_default();
+
+		if (auth) {
+			auth_destroy(ms->ms_clnt->cl_auth);
+			ms->ms_clnt->cl_auth = auth;
+		}
+	}
+
 	ret = mds_exchange_id(ms);
 	if (ret)
 		goto err;
