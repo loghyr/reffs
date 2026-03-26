@@ -50,7 +50,7 @@ __attribute__((format(printf, 1, 2))) static void ec_log(const char *fmt, ...)
 	va_end(ap);
 }
 
-/* Default shard size: 64 KiB. */
+/* Shard size: 4 KiB (capped for io_uring large-message workaround). */
 #define EC_SHARD_SIZE (4 * 1024)
 
 /* ------------------------------------------------------------------ */
