@@ -53,6 +53,8 @@
 
 #ifdef __aarch64__
 #include <arm_neon.h>
+#elif defined(__SSE2__)
+#include <emmintrin.h> /* SSE2 — baseline on all x86_64 */
 #endif
 
 #include <errno.h>
@@ -230,6 +232,74 @@ static void moj_fwd_row_pm1(const uint64_t *__restrict__ src, int P,
 
 #endif /* __aarch64__ */
 
+#ifdef __SSE2__
+
+/*
+ * moj_fwd_row_p1_sse2 — sequential ascending bins, SSE2 (x86_64).
+ *
+ * Identical logic to the NEON p=+1 path but using 128-bit SSE2
+ * intrinsics: _mm_add_epi64 on pairs loaded with _mm_loadu_si128.
+ * Unrolled 4-wide (two 128-bit ops per iteration).
+ */
+static void moj_fwd_row_p1_sse2(const uint64_t *__restrict__ src, int P,
+				uint64_t *__restrict__ dst)
+{
+	int col = 0;
+
+	for (; col + 4 <= P; col += 4) {
+		__m128i d0 = _mm_loadu_si128((const __m128i *)(dst + col));
+		__m128i d1 = _mm_loadu_si128((const __m128i *)(dst + col + 2));
+		__m128i s0 = _mm_loadu_si128((const __m128i *)(src + col));
+		__m128i s1 = _mm_loadu_si128((const __m128i *)(src + col + 2));
+
+		_mm_storeu_si128((__m128i *)(dst + col), _mm_add_epi64(d0, s0));
+		_mm_storeu_si128((__m128i *)(dst + col + 2),
+				 _mm_add_epi64(d1, s1));
+	}
+	for (; col < P; col++)
+		dst[col] += src[col];
+}
+
+/*
+ * moj_fwd_row_pm1_sse2 — sequential descending bins, SSE2 (x86_64).
+ *
+ * Identical logic to the NEON p=-1 path.  Two 64-bit lanes are swapped
+ * with _mm_shuffle_epi32(v, 0x4E): the constant 0x4E = _MM_SHUFFLE(1,0,3,2)
+ * moves 32-bit dwords [2,3,0,1], which swaps the two 64-bit halves.
+ * This is the SSE2 equivalent of vextq_u64(v, v, 1).
+ */
+static void moj_fwd_row_pm1_sse2(const uint64_t *__restrict__ src, int P,
+				 uint64_t *__restrict__ dst)
+{
+	int col = 0;
+
+	for (; col + 4 <= P; col += 4) {
+		__m128i b0 = _mm_loadu_si128((const __m128i *)(dst - col - 1));
+		__m128i b1 = _mm_loadu_si128((const __m128i *)(dst - col - 3));
+		__m128i g0 = _mm_loadu_si128((const __m128i *)(src + col));
+		__m128i g1 = _mm_loadu_si128((const __m128i *)(src + col + 2));
+
+		_mm_storeu_si128((__m128i *)(dst - col - 1),
+				 _mm_add_epi64(b0,
+					       _mm_shuffle_epi32(g0, 0x4E)));
+		_mm_storeu_si128((__m128i *)(dst - col - 3),
+				 _mm_add_epi64(b1,
+					       _mm_shuffle_epi32(g1, 0x4E)));
+	}
+	for (; col + 2 <= P; col += 2) {
+		__m128i bv = _mm_loadu_si128((const __m128i *)(dst - col - 1));
+		__m128i gv = _mm_loadu_si128((const __m128i *)(src + col));
+
+		_mm_storeu_si128((__m128i *)(dst - col - 1),
+				 _mm_add_epi64(bv,
+					       _mm_shuffle_epi32(gv, 0x4E)));
+	}
+	for (; col < P; col++)
+		dst[-col] += src[col];
+}
+
+#endif /* __SSE2__ */
+
 void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		 const struct moj_direction *dirs, int n,
 		 struct moj_projection **projs)
@@ -243,25 +313,34 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		memset(proj->mp_bins, 0,
 		       (size_t)proj->mp_nbins * sizeof(uint64_t));
 
-#ifdef __aarch64__
 		/*
-		 * Fast path for |p|=1, q=1: bin accesses are sequential
-		 * (ascending for p=+1, descending for p=-1), enabling
-		 * full 4-wide NEON vectorisation.
+		 * SIMD fast path for |p|=1, q=1.
+		 *
+		 * Bin indices are sequential (ascending for p=+1, descending
+		 * for p=-1), so each row reduces to a plain vector add with
+		 * no scatter.  Dispatches to the NEON or SSE2 helper.
 		 */
+#if defined(__aarch64__) || defined(__SSE2__)
 		if (q == 1 && (p == 1 || p == -1)) {
 			for (int row = 0; row < Q; row++) {
 				const uint64_t *src = grid + row * P;
 				uint64_t *dst = proj->mp_bins + (off - row);
 
+#ifdef __aarch64__
 				if (p == 1)
 					moj_fwd_row_p1(src, P, dst);
 				else
 					moj_fwd_row_pm1(src, P, dst);
+#else /* __SSE2__ */
+				if (p == 1)
+					moj_fwd_row_p1_sse2(src, P, dst);
+				else
+					moj_fwd_row_pm1_sse2(src, P, dst);
+#endif
 			}
 			continue;
 		}
-#endif
+#endif /* __aarch64__ || __SSE2__ */
 		/* General scalar path — handles any (p, q). */
 		for (int row = 0; row < Q; row++) {
 			for (int col = 0; col < P; col++) {
