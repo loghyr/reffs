@@ -934,6 +934,8 @@ with <code>--force-scalar</code> to bypass SIMD dispatch. The table below shows 
           "109 / 113 ms", "95 / 110 ms"],
          ["<strong>kanigix</strong>", "AVX2",
           "364 / 340 ms", "338 / 303 ms"],
+         ["<strong>adept</strong>", "AVX2",
+          "373 / 368 ms", "282 / 268 ms"],
          ["<strong>garbo</strong>", "AVX2",
           "500 / 459 ms", "300 / 342 ms"]]))
 
