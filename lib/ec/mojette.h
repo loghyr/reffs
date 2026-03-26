@@ -121,7 +121,7 @@ int moj_directions_generate(int n, struct moj_direction **dirs);
  *        moj_projection_create).  Bins are zeroed on entry and
  *        filled on return.
  */
-void moj_forward(const uint64_t *grid, int P, int Q,
+void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		 const struct moj_direction *dirs, int n,
 		 struct moj_projection **projs);
 

@@ -28,10 +28,32 @@
  *   Coding Using Exact Discrete Radon Transform", IEEE DCC, 2001.
  *
  * Arithmetic is unsigned 64-bit wrapping (mod 2^64).  No Galois
- * field operations.  No SIMD.
+ * field operations.
+ *
+ * SIMD acceleration (AArch64 NEON) for directions with |p|=1, q=1:
+ *
+ *   p=+1: bin b = col + (off-row), so adjacent columns map to adjacent
+ *         bins in ascending order.  The row loop becomes a plain
+ *         sequential vector add (vaddq_u64), unrolled 4-wide.
+ *
+ *   p=-1: bin b = (off-row) - col, so adjacent columns map to
+ *         adjacent bins in descending order.  Pairs of bins are loaded
+ *         ascending, the two grid lanes are swapped (vextq_u64), and
+ *         the result is stored back — again sequential, 4-wide.
+ *
+ * The StreamScale patent (US 8,683,296) covers SIMD-accelerated
+ * Galois field arithmetic.  Mojette uses no GF operations; these
+ * NEON paths are plain integer addition and are unaffected.
+ *
+ * Directions with |p|>1 produce stride-|p| scatter into bins; no
+ * SIMD benefit is available and the scalar path is used.
  */
 
 #include "mojette.h"
+
+#ifdef __aarch64__
+#include <arm_neon.h>
+#endif
 
 #include <errno.h>
 #include <stdlib.h>
@@ -132,7 +154,83 @@ bool moj_katz_check(const struct moj_direction *dirs, int n, int P, int Q)
 /* Forward Mojette transform                                           */
 /* ------------------------------------------------------------------ */
 
-void moj_forward(const uint64_t *grid, int P, int Q,
+#ifdef __aarch64__
+
+/*
+ * moj_fwd_row_p1 — accumulate one grid row into bins for p=+1, q=1.
+ *
+ * For p=+1: b = col + (off-row), so bin indices are sequential and
+ * ascending.  dst points to bins[off-row]; we add src[0..P-1] into
+ * dst[0..P-1] using 4-wide NEON (two 128-bit vectors per iteration).
+ */
+static void moj_fwd_row_p1(const uint64_t *__restrict__ src, int P,
+			   uint64_t *__restrict__ dst)
+{
+	int col = 0;
+
+	for (; col + 4 <= P; col += 4) {
+		uint64x2_t d0 = vld1q_u64(dst + col);
+		uint64x2_t d1 = vld1q_u64(dst + col + 2);
+		uint64x2_t s0 = vld1q_u64(src + col);
+		uint64x2_t s1 = vld1q_u64(src + col + 2);
+
+		vst1q_u64(dst + col, vaddq_u64(d0, s0));
+		vst1q_u64(dst + col + 2, vaddq_u64(d1, s1));
+	}
+	for (; col < P; col++)
+		dst[col] += src[col];
+}
+
+/*
+ * moj_fwd_row_pm1 — accumulate one grid row into bins for p=-1, q=1.
+ *
+ * For p=-1: b = (off-row) - col, so bin indices are sequential and
+ * descending.  dst points to bins[off-row].
+ *
+ * For a pair at col and col+1:
+ *   dst[-col]   += src[col]
+ *   dst[-col-1] += src[col+1]
+ *
+ * Load bins as {dst[-col-1], dst[-col]} (ascending in memory), load
+ * grid as {src[col], src[col+1]}, swap grid lanes with vextq_u64,
+ * then add and store.  Unrolled 4-wide.
+ */
+static void moj_fwd_row_pm1(const uint64_t *__restrict__ src, int P,
+			    uint64_t *__restrict__ dst)
+{
+	int col = 0;
+
+	for (; col + 4 <= P; col += 4) {
+		/* Load two ascending bin pairs (each covers 2 columns). */
+		uint64x2_t b0 = vld1q_u64(dst - col - 1);
+		uint64x2_t b1 = vld1q_u64(dst - col - 3);
+
+		/* Load two sequential grid pairs. */
+		uint64x2_t g0 = vld1q_u64(src + col);
+		uint64x2_t g1 = vld1q_u64(src + col + 2);
+
+		/*
+		 * Swap lanes so {src[col], src[col+1]} becomes
+		 * {src[col+1], src[col]}, matching the reversed bin order:
+		 *   b0 = {bins[-col-1], bins[-col]}  ← add {src[col+1], src[col]}
+		 *   b1 = {bins[-col-3], bins[-col-2]} ← add {src[col+3], src[col+2]}
+		 */
+		vst1q_u64(dst - col - 1, vaddq_u64(b0, vextq_u64(g0, g0, 1)));
+		vst1q_u64(dst - col - 3, vaddq_u64(b1, vextq_u64(g1, g1, 1)));
+	}
+	for (; col + 2 <= P; col += 2) {
+		uint64x2_t bv = vld1q_u64(dst - col - 1);
+		uint64x2_t gv = vld1q_u64(src + col);
+
+		vst1q_u64(dst - col - 1, vaddq_u64(bv, vextq_u64(gv, gv, 1)));
+	}
+	for (; col < P; col++)
+		dst[-col] += src[col];
+}
+
+#endif /* __aarch64__ */
+
+void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		 const struct moj_direction *dirs, int n,
 		 struct moj_projection **projs)
 {
@@ -145,6 +243,26 @@ void moj_forward(const uint64_t *grid, int P, int Q,
 		memset(proj->mp_bins, 0,
 		       (size_t)proj->mp_nbins * sizeof(uint64_t));
 
+#ifdef __aarch64__
+		/*
+		 * Fast path for |p|=1, q=1: bin accesses are sequential
+		 * (ascending for p=+1, descending for p=-1), enabling
+		 * full 4-wide NEON vectorisation.
+		 */
+		if (q == 1 && (p == 1 || p == -1)) {
+			for (int row = 0; row < Q; row++) {
+				const uint64_t *src = grid + row * P;
+				uint64_t *dst = proj->mp_bins + (off - row);
+
+				if (p == 1)
+					moj_fwd_row_p1(src, P, dst);
+				else
+					moj_fwd_row_pm1(src, P, dst);
+			}
+			continue;
+		}
+#endif
+		/* General scalar path — handles any (p, q). */
 		for (int row = 0; row < Q; row++) {
 			for (int col = 0; col < P; col++) {
 				int b = col * p - row * q + off;
