@@ -1060,14 +1060,14 @@ int rpc_process_task(struct task *t)
 		XDR xdrs = { 0 };
 
 		p = rpc_decode_uint32_t(rt, p, &flavor_len);
-		if (!p) {
+		if (!p || flavor_len > rt->rt_body_len - rt->rt_offset) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
 			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
 					   __ATOMIC_RELAXED);
 			goto handle_rpc_error;
 		}
 
-		xdrmem_create(&xdrs, (char *)p, rt->rt_body_len - rt->rt_offset,
+		xdrmem_create(&xdrs, (char *)p, flavor_len,
 			      XDR_DECODE);
 
 		if (!xdr_authunix_parms(&xdrs, &rt->rt_info.ri_cred.rc_unix)) {
