@@ -400,7 +400,7 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 		dirent_parent_release(rd_src, S_ISDIR(inode_src_file->i_mode) ?
 						      reffs_life_action_move :
 						      reffs_life_action_update);
-		rd_src->rd_parent = de_new_dir;
+		rcu_assign_pointer(rd_src->rd_parent, de_new_dir);
 		rcu_read_lock();
 		char *old_name_ptr =
 			rcu_xchg_pointer(&rd_src->rd_name, new_name_copy);
