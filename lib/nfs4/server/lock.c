@@ -448,13 +448,11 @@ uint32_t nfs4_op_release_lockowner(struct compound *compound)
 				     lo_base.lo_list) {
 		if (nfs4_lock_owner_match(&lo->lo_base, args)) {
 			/*
-			 * RFC 5661 §18.22.3: RELEASE_LOCKOWNER must fail if
-			 * any locks are still held by this owner.
-			 */
-			/*
-			 * Simplification: we should check all inodes for locks
-			 * held by this owner. For now, we'll just remove it
-			 * from the list if it matches.
+			 * NOT_NOW_BROWN_COW: RFC 8881 §18.22.3 requires
+			 * NFS4ERR_LOCKS_HELD if any locks are still held.
+			 * Checking requires iterating all inodes for locks
+			 * owned by this owner.  For now, unconditionally
+			 * release.
 			 */
 			cds_list_del(&lo->lo_base.lo_list);
 			urcu_ref_put(&lo->lo_base.lo_ref,
@@ -474,7 +472,13 @@ uint32_t nfs4_op_test_stateid(struct compound *compound)
 	TEST_STATEID4res *res = NFS4_OP_RES_SETUP(compound, optest_stateid);
 	nfsstat4 *status = &res->tsr_status;
 
-	/* For now, just return OK for all stateids in the request */
+	/*
+	 * NOT_NOW_BROWN_COW: properly validate each stateid by looking
+	 * it up in the per-inode hash table.  Requires either a global
+	 * stateid index or iterating all inodes.  For now, return OK
+	 * for all stateids — this is incorrect per RFC 8881 §18.48
+	 * but functional for non-adversarial clients.
+	 */
 	res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
 		.tsr_status_codes_len = args->ts_stateids.ts_stateids_len;
 	res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
