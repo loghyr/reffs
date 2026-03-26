@@ -299,7 +299,7 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 	if (!rd || !parent)
 		return;
 
-	rd->rd_parent = dirent_get(parent);
+	rcu_assign_pointer(rd->rd_parent, dirent_get(parent));
 	rd->rd_sb = parent->rd_sb; /* inherit sb pointer from parent */
 	verify(S_ISDIR(parent->rd_inode->i_mode));
 	if (rla != reffs_life_action_load && is_dir) {

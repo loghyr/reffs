@@ -126,6 +126,8 @@ static int rtc_cmp(const char *s1, const char *s2)
 int vfs_is_subdir(struct inode *child, struct inode *maybe_parent)
 {
 	struct inode *curr = child;
+	struct reffs_dirent *de;
+	struct reffs_dirent *par;
 	int found = 0;
 
 	/*
@@ -141,17 +143,13 @@ int vfs_is_subdir(struct inode *child, struct inode *maybe_parent)
 			found = 1;
 			break;
 		}
-		struct reffs_dirent *de = rcu_dereference(curr->i_dirent);
-
-		if (de) {
-			struct reffs_dirent *parent =
-				rcu_dereference(de->rd_parent);
-
-			curr = parent ? rcu_dereference(parent->rd_inode) :
-					NULL;
-		} else {
+		de = rcu_dereference(curr->i_dirent);
+		if (!de) {
 			curr = NULL;
+			continue;
 		}
+		par = rcu_dereference(de->rd_parent);
+		curr = par ? rcu_dereference(par->rd_inode) : NULL;
 	}
 	rcu_read_unlock();
 	return found;
