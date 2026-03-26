@@ -78,8 +78,39 @@ make -f Makefile.reffs check-ci
 Run before push. ASAN/LSAN clean required. A pre-push hook is in
 `.git-hooks/pre-push` — install with `git config core.hooksPath .git-hooks`.
 
+## Workflow rules
+
+### Review before commit
+Always run `/review` BEFORE committing, not after.  The workflow is:
+make changes → run reviewer → fix findings → commit.
+
+### RPC wire changes need check-ci
+Changes to `lib/rpc/rpc.c` reply encoding, credential parsing, or
+verifier handling MUST be verified with `make -f Makefile.reffs check-ci`
+(real NFS mount via kernel client), not just `make check` (unit tests).
+Unit tests don't catch malformed RPC replies.
+
+### New library dependencies → update both Dockerfiles
+Every `PKG_CHECK_MODULES` addition in `configure.ac` requires the
+corresponding package in BOTH `Dockerfile` (Fedora, `-devel`) and
+`Dockerfile.ci` (Ubuntu, `-dev`).  Do this in the same commit.
+
+### License: AGPL-3.0-or-later
+reffs is AGPL-3.0-or-later.  GPL-2.0-only code is NOT compatible
+and must NOT be vendored.  `check_license.sh` enforces this.
+`make -f Makefile.reffs license` checks headers + compatibility.
+
+### Module init/fini pattern
+Subsystem init/fini belongs in the module's own init function
+(e.g., `io_handler_init`), not in `reffsd.c main()`.  The module
+owns the knowledge of what components need setup.
+
+### Build directory awareness
+The build directory is `build/`.  Always use absolute paths for
+file edits.  Never assume CWD after `cd build`.
+
 ## Slash commands
 
-- `/review` — full code review (style, build, standards, tests)
+- `/review` — full code review (style, build, standards, tests, license compat)
 - `/reffs-debug` — failure triage (UAF, deadlock, LSAN)
 - `/reffs-verify` — pre-push checklist

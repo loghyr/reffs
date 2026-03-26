@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # RCU Violation Patterns in reffs
 
 ## Pattern 1: Blocking under rcu_read_lock

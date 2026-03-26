@@ -1,6 +1,8 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
 # reffs pre-push hook
-# Runs make -f Makefile.reffs check-ci before allowing a push.
 #
 # Install (pick one):
 #   cp .git-hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
@@ -8,6 +10,22 @@
 
 set -e
 
+# Style check: only changed lines, avoids cross-version clang-format drift
+if command -v git-clang-format >/dev/null 2>&1; then
+	echo "[pre-push] checking clang-format on changed lines ..."
+	DIFF=$(git clang-format --diff HEAD~1 2>/dev/null || true)
+	if echo "$DIFF" | grep -qv "^no modified files\|^clang-format did not"; then
+		echo "[pre-push] clang-format violations found. Run: git clang-format"
+		echo "$DIFF" | head -20
+		exit 1
+	fi
+fi
+
+# License headers + compatibility check
+echo "[pre-push] checking license headers and compatibility ..."
+SKIP_STYLE=1 make -f Makefile.reffs license
+
+# Full CI gate
 echo "[pre-push] running make -f Makefile.reffs check-ci ..."
 make -f Makefile.reffs check-ci
 

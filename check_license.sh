@@ -43,11 +43,42 @@ while IFS= read -r file; do
   fi
 done <<< "$files"
 
+# ---------------------------------------------------------------
+# License compatibility check.
+#
+# reffs is AGPL-3.0-or-later.  AGPL-3.0 is compatible with:
+#   - AGPL-3.0-or-later, AGPL-3.0-only
+#   - GPL-3.0-or-later, GPL-3.0-only
+#   - LGPL-3.0-or-later, LGPL-3.0-only
+#   - LGPL-2.1-or-later (upgradeable to LGPL-3.0)
+#   - GPL-2.0-or-later (upgradeable to GPL-3.0)
+#   - MIT, BSD-2-Clause, BSD-3-Clause, ISC, Apache-2.0
+#
+# NOT compatible:
+#   - GPL-2.0-only (cannot upgrade to GPL-3.0)
+#   - Any proprietary or incompatible copyleft
+# ---------------------------------------------------------------
+
+INCOMPATIBLE_LICENSES="GPL-2.0-only"
+
+compat_errors=0
+while IFS= read -r file; do
+  license=$(grep -oP 'SPDX-License-Identifier:\s*\K\S+' "$file" 2>/dev/null || true)
+  for bad in $INCOMPATIBLE_LICENSES; do
+    if [[ "$license" == "$bad" ]]; then
+      echo "ERROR: Incompatible license $bad in: $file (reffs is AGPL-3.0-or-later)"
+      compat_errors=$((compat_errors + 1))
+    fi
+  done
+done <<< "$files"
+
 # Exit with an error code if any errors were found
-if [[ $error_count -gt 0 ]]; then
-  echo "$error_count files are missing SPDX headers."
+total_errors=$((error_count + compat_errors))
+if [[ $total_errors -gt 0 ]]; then
+  [[ $error_count -gt 0 ]] && echo "$error_count files are missing SPDX headers."
+  [[ $compat_errors -gt 0 ]] && echo "$compat_errors files have incompatible licenses."
   exit 1
 else
-  echo "All checked files have SPDX headers."
+  echo "All checked files have SPDX headers and compatible licenses."
   exit 0
 fi

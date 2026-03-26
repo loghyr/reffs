@@ -27,13 +27,28 @@ make -f Makefile.reffs fix-style
 
 Report which files were modified (if any).
 
-## 2. Check license headers
+## 2. Check license headers and compatibility
 
 ```bash
 SKIP_STYLE=1 make -f Makefile.reffs license
 ```
 
 Report any files missing SPDX headers.
+
+### License compatibility
+
+reffs is AGPL-3.0-or-later.  Any new file or dependency MUST have a
+compatible license.  `check_license.sh` enforces this automatically,
+but also manually check:
+
+- **Compatible**: AGPL-3.0, GPL-3.0-or-later, LGPL-3.0, LGPL-2.1-or-later,
+  GPL-2.0-or-later, MIT, BSD-2-Clause, BSD-3-Clause, ISC, Apache-2.0
+- **NOT compatible**: GPL-2.0-only (cannot upgrade to GPL-3.0),
+  any proprietary or incompatible copyleft
+
+Flag any new `#include`, vendored file, or dependency with a
+GPL-2.0-only or unknown license.  This includes scripts, tools,
+and test fixtures — not just compiled code.
 
 ## 3. Build check
 
@@ -276,10 +291,11 @@ the commit.
 Summarise findings as:
 
 ```
-STYLE:   [FIXED n files | OK]
-LICENSE: [PASS | FAIL: list files]
-BUILD:   [PASS | FAIL/WARN: summary]
-REVIEW:  [list of violations, or PASS]
-TESTS:   [covered by X | SUGGEST: description | N/A]
-COMMIT:  [ready | issues]
+STYLE:    [FIXED n files | OK]
+LICENSE:  [PASS | FAIL: list files]
+COMPAT:   [PASS | FAIL: incompatible licenses found]
+BUILD:    [PASS | FAIL/WARN: summary]
+REVIEW:   [list of violations, or PASS]
+TESTS:    [covered by X | SUGGEST: description | N/A]
+COMMIT:   [ready | issues]
 ```
