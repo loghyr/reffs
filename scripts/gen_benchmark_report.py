@@ -453,6 +453,10 @@ def main():
     parts = []
     p = parts.append
 
+    p("<!--")
+    p("SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>")
+    p("SPDX-License-Identifier: AGPL-3.0-or-later")
+    p("-->")
     p("<!DOCTYPE html><html><head><meta charset='utf-8'>")
     p("<title>Erasure Coding for pNFS Flex Files — Benchmark Report</title>")
     p(CSS)
