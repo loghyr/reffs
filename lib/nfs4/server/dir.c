@@ -61,21 +61,14 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 		goto out;
 	}
 
-	if (args->objname.utf8string_len > REFFS_MAX_NAME) {
-		*status = NFS4ERR_NAMETOOLONG;
+	*status = nfs4_validate_component(&args->objname);
+	if (*status)
 		goto out;
-	}
 
 	name = strndup(args->objname.utf8string_val,
 		       args->objname.utf8string_len);
 	if (!name) {
 		*status = NFS4ERR_DELAY;
-		goto out;
-	}
-
-	/* "." and ".." are not valid LOOKUP components — use LOOKUPP */
-	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-		*status = NFS4ERR_BADNAME;
 		goto out;
 	}
 
@@ -215,8 +208,8 @@ uint32_t nfs4_op_create(struct compound *compound)
 		*status = NFS4ERR_INVAL;
 		goto out;
 	}
-	if (args->objname.utf8string_len > REFFS_MAX_NAME) {
-		*status = NFS4ERR_NAMETOOLONG;
+	*status = nfs4_validate_component(&args->objname);
+	if (*status) {
 		goto out;
 	}
 	name = strndup(args->objname.utf8string_val,
@@ -342,8 +335,8 @@ uint32_t nfs4_op_remove(struct compound *compound)
 		*status = NFS4ERR_INVAL;
 		goto out;
 	}
-	if (args->target.utf8string_len > REFFS_MAX_NAME) {
-		*status = NFS4ERR_NAMETOOLONG;
+	*status = nfs4_validate_component(&args->target);
+	if (*status) {
 		goto out;
 	}
 	name = strndup(args->target.utf8string_val,
@@ -422,9 +415,10 @@ uint32_t nfs4_op_rename(struct compound *compound)
 		*status = NFS4ERR_INVAL;
 		goto out;
 	}
-	if (args->oldname.utf8string_len > REFFS_MAX_NAME ||
-	    args->newname.utf8string_len > REFFS_MAX_NAME) {
-		*status = NFS4ERR_NAMETOOLONG;
+	*status = nfs4_validate_component(&args->oldname);
+	if (!*status)
+		*status = nfs4_validate_component(&args->newname);
+	if (*status) {
 		goto out;
 	}
 	oldname = strndup(args->oldname.utf8string_val,
@@ -516,8 +510,8 @@ uint32_t nfs4_op_link(struct compound *compound)
 		*status = NFS4ERR_INVAL;
 		goto out;
 	}
-	if (args->newname.utf8string_len > REFFS_MAX_NAME) {
-		*status = NFS4ERR_NAMETOOLONG;
+	*status = nfs4_validate_component(&args->newname);
+	if (*status) {
 		goto out;
 	}
 

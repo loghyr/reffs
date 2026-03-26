@@ -91,11 +91,9 @@ uint32_t nfs4_op_secinfo(struct compound *compound)
 		goto out;
 	}
 
-	if (args->name.utf8string_len == 0 ||
-	    args->name.utf8string_len > REFFS_MAX_NAME) {
-		*status = NFS4ERR_INVAL;
+	*status = nfs4_validate_component(&args->name);
+	if (*status)
 		goto out;
-	}
 
 	name = strndup(args->name.utf8string_val, args->name.utf8string_len);
 	if (!name) {

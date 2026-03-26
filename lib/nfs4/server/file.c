@@ -333,24 +333,14 @@ uint32_t nfs4_op_open(struct compound *compound)
 
 		component4 *fname = &args->claim.open_claim4_u.file;
 
-		if (fname->utf8string_len == 0) {
-			*status = NFS4ERR_INVAL;
+		*status = nfs4_validate_component(fname);
+		if (*status)
 			goto out;
-		}
-		if (fname->utf8string_len > REFFS_MAX_NAME) {
-			*status = NFS4ERR_NAMETOOLONG;
-			goto out;
-		}
 		name = strndup(fname->utf8string_val, fname->utf8string_len);
 		if (!name) {
 			*status = NFS4ERR_DELAY;
 			goto out;
 		}
-		if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-			*status = NFS4ERR_BADNAME;
-			goto out;
-		}
-
 		/* Need W_OK on the directory for CREATE, X_OK for NOCREATE. */
 		int dir_amode =
 			(args->openhow.opentype == OPEN4_CREATE) ? W_OK : X_OK;
