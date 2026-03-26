@@ -82,7 +82,7 @@ static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 	}
 
 	fa->mode = inode->i_mode;
-	fa->nlink = inode->i_nlink;
+	fa->nlink = __atomic_load_n(&inode->i_nlink, __ATOMIC_RELAXED);
 	fa->uid = inode->i_uid;
 	fa->gid = inode->i_gid;
 	fa->size = inode->i_size;
@@ -2826,13 +2826,13 @@ static int nfs3_op_fsstat(struct rpc_trans *rt)
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_ATIME);
 
 	resok->tbytes = sb->sb_bytes_max;
-	if (sb->sb_bytes_used < sb->sb_bytes_max)
-		resok->fbytes = sb->sb_bytes_max - sb->sb_bytes_used;
-	else
-		resok->fbytes = 0;
+	size_t used;
+
+	__atomic_load(&sb->sb_bytes_used, &used, __ATOMIC_RELAXED);
+	resok->fbytes = (used < sb->sb_bytes_max) ? sb->sb_bytes_max - used : 0;
 	resok->abytes = resok->fbytes;
 	resok->tfiles = sb->sb_inodes_max;
-	resok->ffiles = sb->sb_inodes_used;
+	resok->ffiles = __atomic_load_n(&sb->sb_inodes_used, __ATOMIC_RELAXED);
 	resok->afiles = resok->tfiles - resok->ffiles;
 	resok->invarsec = 0;
 

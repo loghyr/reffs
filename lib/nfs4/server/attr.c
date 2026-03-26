@@ -2802,8 +2802,10 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->chown_restricted = system_attrs.chown_restricted;
 
 	nattr->fileid = inode->i_ino;
-	nattr->files_avail = sb->sb_inodes_max - sb->sb_inodes_used;
-	nattr->files_free = sb->sb_inodes_max - sb->sb_inodes_used;
+	size_t iu = __atomic_load_n(&sb->sb_inodes_used, __ATOMIC_RELAXED);
+
+	nattr->files_avail = sb->sb_inodes_max - iu;
+	nattr->files_free = sb->sb_inodes_max - iu;
 	nattr->files_total = sb->sb_inodes_max;
 	nattr->hidden = inode->i_attr_flags & INODE_IS_HIDDEN;
 	nattr->homogeneous = system_attrs.homogeneous;
@@ -2814,13 +2816,16 @@ static nfsstat4 inode_to_nattr(struct inode *inode, struct nfsv42_attr *nattr)
 	nattr->maxwrite = system_attrs.maxwrite;
 	nattr->mode = inode->i_mode & 07777;
 	nattr->no_trunc = system_attrs.no_trunc;
-	nattr->numlinks = inode->i_nlink;
+	nattr->numlinks = __atomic_load_n(&inode->i_nlink, __ATOMIC_RELAXED);
 	nattr->quota_avail_hard = system_attrs.quota_avail_hard;
 	nattr->quota_avail_soft = system_attrs.quota_avail_soft;
 	nattr->rawdev.specdata1 = inode->i_dev_major;
 	nattr->rawdev.specdata2 = inode->i_dev_minor;
-	nattr->space_avail = sb->sb_bytes_max - sb->sb_bytes_used;
-	nattr->space_free = sb->sb_bytes_max - sb->sb_bytes_used;
+	size_t bu;
+
+	__atomic_load(&sb->sb_bytes_used, &bu, __ATOMIC_RELAXED);
+	nattr->space_avail = sb->sb_bytes_max - bu;
+	nattr->space_free = sb->sb_bytes_max - bu;
 	nattr->space_total = sb->sb_bytes_max;
 	nattr->space_used = inode->i_used;
 	nattr->system = inode->i_attr_flags & INODE_IS_SYSTEM;

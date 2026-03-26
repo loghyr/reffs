@@ -103,6 +103,26 @@ uint32_t c_flags;
 int setup_ok = 1;
 ```
 
+### No unnecessary scope blocks
+
+Don't introduce `{ }` blocks just to scope a variable declaration.
+Declare variables at the top of the existing scope or inline where
+first used (C11 mixed declarations are fine).
+
+```c
+// WRONG — unnecessary indentation:
+{
+	size_t bu;
+	__atomic_load(&sb->sb_bytes_used, &bu, __ATOMIC_RELAXED);
+	nattr->space_avail = sb->sb_bytes_max - bu;
+}
+
+// CORRECT — declare inline:
+size_t bu;
+__atomic_load(&sb->sb_bytes_used, &bu, __ATOMIC_RELAXED);
+nattr->space_avail = sb->sb_bytes_max - bu;
+```
+
 ### Unused parameters
 
 **Never** use `(void)param;` to suppress unused-parameter warnings.

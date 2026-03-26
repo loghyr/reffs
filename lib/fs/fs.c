@@ -1004,8 +1004,12 @@ int reffs_fs_usage(struct reffs_fs_usage_stats *stats)
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(sb, super_block_list_head(), sb_link) {
-		stats->used_bytes += sb->sb_bytes_used;
-		stats->used_files += sb->sb_inodes_used;
+		size_t bu;
+
+		__atomic_load(&sb->sb_bytes_used, &bu, __ATOMIC_RELAXED);
+		stats->used_bytes += bu;
+		stats->used_files +=
+			__atomic_load_n(&sb->sb_inodes_used, __ATOMIC_RELAXED);
 		stats->total_bytes += sb->sb_bytes_max;
 		stats->total_files += sb->sb_inodes_max;
 	}
