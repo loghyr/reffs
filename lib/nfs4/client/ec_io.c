@@ -675,7 +675,7 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	uint64_t valid_mask = (k + m < 64) ? (1ULL << (k + m)) - 1 : ~0ULL;
 	int nskip = __builtin_popcountll(skip_ds_mask & valid_mask);
 
-	if (nskip >= m) {
+	if (nskip > 0 && nskip >= m) {
 		ec_log("ec_read: skip_ds_mask has %d bits set, need < m=%d\n",
 		       nskip, m);
 		return -EINVAL;
