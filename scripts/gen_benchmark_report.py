@@ -426,10 +426,10 @@ fixed chunk granularity mismatch (a design issue, not a persistence bug).</p>"""
     # v1 vs v2 chart
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
     labels = ["RS 4+2\nadept", "RS 8+2\nadept", "RS 4+2\ngarbo", "RS 8+2\ngarbo"]
-    v1_w = [308.4, 290.0, 373.8, 413.4]
-    v2_w = [371.4, 366.6, 491.0, 483.6]
-    v1_r = [268.6, 246.6, 320.2, 329.4]
-    v2_r = [295.8, 261.4, 371.4, 327.4]
+    v1_w = [335.2, 303.2, 459.6, 410.2]
+    v2_w = [379.2, 369.8, 491.0, 485.6]
+    v1_r = [284.2, 241.0, 362.2, 329.8]
+    v2_r = [299.6, 265.8, 370.4, 341.8]
     x = np.arange(4); w = 0.3
     for ax, v1, v2, title in [(ax1, v1_w, v2_w, "Write (ms)"), (ax2, v1_r, v2_r, "Read (ms)")]:
         ax.bar(x - w/2, v1, w, label="v1 (NFSv3)", color=C["rs"])
@@ -446,23 +446,24 @@ fixed chunk granularity mismatch (a design issue, not a persistence bug).</p>"""
     p(img(fig_to_b64(fig), "Figure 8 — RS v1 vs v2 write and read at 1 MB on two platforms."))
 
     p(tbl(["Platform / Geom", "v1 write", "v2 write", "Write OH", "v1 read", "v2 read", "Read OH"],
-        [["<strong>adept RS 4+2</strong>", "308", "371", "+20%", "269", "296", "+10%"],
-         ["<strong>adept RS 8+2</strong>", "290", "367", "+26%", "247", "261", "+6%"],
-         ["<strong>garbo RS 4+2</strong>", "374", "491", "+31%", "320", "371", "+16%"],
-         ["<strong>garbo RS 8+2</strong>", "413", "484", "+17%", "329", "327", "&minus;1%"]]))
+        [["<strong>adept RS 4+2</strong>", "335", "379", "+13%", "284", "300", "+5%"],
+         ["<strong>adept RS 8+2</strong>", "303", "370", "+22%", "241", "266", "+10%"],
+         ["<strong>garbo RS 4+2</strong>", "460", "491", "+7%", "362", "370", "+2%"],
+         ["<strong>garbo RS 8+2</strong>", "410", "486", "+18%", "330", "342", "+4%"]]))
 
-    p("""<p>The v2 write overhead is <strong>+17&ndash;31%</strong> over v1.  This covers CRC32
-computation, CRC validation, the CHUNK_WRITE compound overhead (SEQUENCE + PUTFH + CHUNK_WRITE
-vs bare NFSv3 WRITE), and the FINALIZE + COMMIT round-trips including metadata persistence.
-The read overhead is smaller (<strong>+6&ndash;16%</strong> at 4+2, near-zero at 8+2) because
-CHUNK_READ is structurally similar to NFSv3 READ — the CRC and metadata overhead are
-write-path costs.</p>""")
+    p("""<p>The v2 write overhead is <strong>+7&ndash;22%</strong> over v1.  This covers CRC32
+computation on the client, CRC validation on the server, the CHUNK_WRITE compound overhead
+(SEQUENCE + PUTFH + CHUNK_WRITE vs bare NFSv3 WRITE), the FINALIZE + COMMIT round-trips,
+and metadata persistence I/O.  The v2 read overhead is <strong>+2&ndash;10%</strong>,
+reflecting CRC recomputation on the server (bit rot detection) and CRC verification on the
+client (network corruption detection).</p>""")
 
     p("""<p>The metadata persistence itself (8&nbsp;KB write + fdatasync per COMMIT) is a small
-fraction of the total v2 overhead.  The dominant costs are the compound RPC structure (3-op
-NFSv4.2 compound vs single NFSv3 RPC) and the two extra round-trips (FINALIZE + COMMIT).
-At 8+2, the per-shard data is smaller, so the fixed per-RPC overhead is proportionally larger
-on writes but negligible on reads.</p>""")
+fraction of the total v2 overhead.  The dominant write-path costs are the compound RPC
+structure (3-op NFSv4.2 compound vs single NFSv3 RPC) and the two extra round-trips
+(FINALIZE + COMMIT).  The read-path CRC verification (two crc32() calls per chunk: server
+recomputes from disk, client verifies from wire) is the primary v2 read overhead — this is
+the cost of end-to-end data integrity that v1 lacks.</p>""")
 
     p('<div class="note"><strong>Mojette + v2:</strong> Mojette projections produce '
       'variable-sized outputs per direction (B&nbsp;=&nbsp;|p|(Q&minus;1)&nbsp;+&nbsp;'
@@ -497,11 +498,13 @@ on writes but negligible on reads.</p>""")
       "NEON and AVX2 fast paths are verified across all platforms (2,600 operations, zero "
       "failures).  The encoding benefit will appear at larger shard sizes.</p>")
 
-    p("<p><strong>v2 CHUNK overhead is +17&ndash;31% on writes, +6&ndash;16% on reads.</strong> "
-      "The CRC+data split, FINALIZE/COMMIT round-trips, and metadata persistence add "
-      "measurable but manageable overhead over plain NFSv3 WRITE. The dominant cost is "
-      "the compound RPC structure and extra round-trips, not the persistence I/O itself. "
-      "Chunk metadata (CRC32, owner, lock flags) is now crash-safe via "
+    p("<p><strong>v2 CHUNK overhead is +7&ndash;22% on writes, +2&ndash;10% on reads.</strong> "
+      "The CRC+data split, FINALIZE/COMMIT round-trips, metadata persistence, and "
+      "end-to-end CRC verification (server recomputes from disk, client verifies from wire) "
+      "add measurable but manageable overhead over plain NFSv3 WRITE. The write cost is "
+      "dominated by compound RPC structure and extra round-trips; the read cost is "
+      "dominated by CRC verification — the price of data integrity. "
+      "Chunk metadata (CRC32, owner, lock flags) is crash-safe via "
       "write-temp/fdatasync/rename.</p>")
 
     p('<div class="note">Test conditions: 5 measured runs per combination.  Full benchmark '
