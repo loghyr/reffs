@@ -99,7 +99,9 @@ bench_one() {
     local mode="$6"
     local skip_ds="$7"
     local geom="${k}+${m}"
-    local fname="bench_${codec}_${geom}_${sz}_${run}"
+    local stag="s"
+    [ -n "$FORCE_SCALAR" ] && stag="n"
+    local fname="bench_${LAYOUT_TAG}_${stag}_${codec}_${geom}_${sz}_${run}"
     local input="/tmp/bench_${sz}"
     local skip_arg=""
     [ -n "$skip_ds" ] && skip_arg="--skip-ds $skip_ds"
@@ -125,7 +127,7 @@ bench_one() {
     # shellcheck disable=SC2086
     "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
         --k "$k" --m "$m" --codec "$codec" --size "$sz" \
-        $skip_arg $FORCE_SCALAR $LAYOUT_ARG 2>/dev/null
+        $skip_arg $FORCE_SCALAR $LAYOUT_ARG 2>>/tmp/ec_bench_err.log
     local t1
     t1=$(now_ms)
     local read_ms=$(( t1 - t0 ))
@@ -146,7 +148,9 @@ bench_one() {
 bench_plain() {
     local sz="$1"
     local run="$2"
-    local fname="bench_plain_${sz}_${run}"
+    local stag="s"
+    [ -n "$FORCE_SCALAR" ] && stag="n"
+    local fname="bench_${LAYOUT_TAG}_${stag}_plain_${sz}_${run}"
     local input="/tmp/bench_${sz}"
 
     local t0
@@ -178,7 +182,9 @@ bench_plain() {
 bench_stripe() {
     local sz="$1"
     local run="$2"
-    local fname="bench_stripe_${sz}_${run}"
+    local stag="s"
+    [ -n "$FORCE_SCALAR" ] && stag="n"
+    local fname="bench_${LAYOUT_TAG}_${stag}_stripe_${sz}_${run}"
     local input="/tmp/bench_${sz}"
 
     local t0
