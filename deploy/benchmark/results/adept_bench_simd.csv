@@ -1,5 +1,3 @@
-# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
-# SPDX-License-Identifier: AGPL-3.0-or-later
 codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,arch,cpu,kernel,simd
 plain,1+0,4096,1,72,62,OK,healthy,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
 stripe,10+0,4096,1,108,66,OK,healthy,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2

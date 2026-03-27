@@ -1,5 +1,3 @@
-# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
-# SPDX-License-Identifier: AGPL-3.0-or-later
 codec,size_bytes,run,write_ms,read_ms,verify,mode
 plain,4096,1,12,12,OK,healthy
 rs,4096,1,15,18,OK,healthy
