@@ -171,6 +171,36 @@ All layout operations implemented in `lib/nfs4/server/layout.c`:
 latency, lowest storage overhead, near-zero reconstruction).  RS 4+2 as
 conservative fallback.  Mojette-nonsys unsuitable for reads.
 
+### 6. Flex Files v2 IETF Draft — IN PROGRESS (2026-03-27)
+
+Draft: `draft-haynes-nfsv4-flexfiles-v2` at `~/ws/flexfiles-v2/`
+
+**Review tooling**: Created `~/ws/ietf-review-prompts/` (CC0 licensed)
+with Claude Code skills for automated IETF draft review.  Covers
+RFC 2119, XDR, IANA, security, editorial, and idnits checks.  Detects
+Martin Thomson's i-d-template Makefile and runs `make idnits` locally.
+
+**Draft fixes applied (2026-03-27):**
+- 38 review findings resolved across all categories (STRUCTURE, RFC 2119,
+  XREF, XDR, IANA, Security, Editorial)
+- XREF: fixed 8 stale v1 field name references in prose
+  (ffl_stripe_unit, ffs_mirrors, ffm_data_servers, ffv2ds_fh_vers,
+  ffv2ds_stateid → correct v2 field names)
+- XDR: defined ffv2_key4; added encoding types to ffv2_coding_type4
+  enum; fixed write_chunk_guard4 missing `switch`; renamed colliding
+  field prefixes (cra_ → crb_ for ROLLBACK, ccr_ → cfr_ for FINALIZE
+  resok, cwr_status → cwr_block_status); added cwa_flags +
+  CHUNK_WRITE_FLAGS_ACTIVATE_IF_EMPTY + cwr_block_activated
+- IANA: fixed layout type value 0x6 → 0x5; corrected intro sentence
+- Security: added CRC32 scope, chunk lock/lease, error disclosure sections
+- idnits: eliminated 15 non-ASCII chars; reformatted 5 wide tables;
+  converted ops-and-errors table to ASCII art
+- Submitted as -03
+
+**XDR sync**: `lib/xdr/nfsv42_xdr.x` updated to match all draft XDR
+changes.  `lib/nfs4/server/chunk.c` and `lib/nfs4/client/chunk_io.c`
+updated for renamed fields.
+
 ### Known Issues
 
 - **io_uring large message stall**: NFSv3 RPCs >~32KB stall in the
