@@ -889,7 +889,10 @@ static pthread_mutex_t reaper_lock = PTHREAD_MUTEX_INITIALIZER;
 static void *reaper_thread_func(void *__attribute__((unused)) arg)
 {
 	while (1) {
-		time_t now = time(NULL);
+		struct timespec _ts;
+
+		clock_gettime(CLOCK_REALTIME, &_ts);
+		time_t now = _ts.tv_sec;
 		struct inode_delayed_release *idr, *tmp;
 		bool list_empty = true;
 
@@ -964,7 +967,10 @@ void inode_schedule_delayed_release(struct inode *inode, int delay_seconds)
 	}
 
 	idr->idr_inode = inode; /* takes ownership of caller's active ref */
-	idr->idr_release_time = time(NULL) + delay_seconds;
+	struct timespec _ts2;
+
+	clock_gettime(CLOCK_REALTIME, &_ts2);
+	idr->idr_release_time = _ts2.tv_sec + delay_seconds;
 
 	if (idr->idr_inode->i_sb)
 		__atomic_add_fetch(&idr->idr_inode->i_sb->sb_delayed_count, 1,

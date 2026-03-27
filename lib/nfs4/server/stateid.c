@@ -151,8 +151,7 @@ static void lock_stateid_free_rcu(struct rcu_head *rcu)
 	struct lock_stateid *ls = stid_to_lock(stid);
 
 	if (ls->ls_owner)
-		urcu_ref_put(&ls->ls_owner->lo_base.lo_ref,
-			     ls->ls_owner->lo_base.lo_release);
+		lock_owner_put(&ls->ls_owner->lo_base);
 	if (ls->ls_open)
 		stateid_put(&ls->ls_open->os_stid);
 	free(ls);

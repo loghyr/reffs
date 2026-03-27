@@ -60,6 +60,7 @@
 #endif
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -67,7 +68,7 @@
 /* Force-scalar toggle                                                 */
 /* ------------------------------------------------------------------ */
 
-static bool moj_scalar_only;
+static _Atomic bool moj_scalar_only;
 
 void moj_force_scalar(bool force)
 {

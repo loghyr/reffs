@@ -64,7 +64,7 @@ static struct nfs4_lock_owner *nfs4_get_lock_owner(struct nfs4_client *nc,
 	pthread_mutex_lock(&nc->nc_lock_owners_mutex);
 	cds_list_for_each_entry(lo, &nc->nc_lock_owners, lo_base.lo_list) {
 		if (nfs4_lock_owner_match(&lo->lo_base, owner)) {
-			urcu_ref_get(&lo->lo_base.lo_ref);
+			lock_owner_get(&lo->lo_base);
 			pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
 			return lo;
 		}
@@ -151,8 +151,7 @@ uint32_t nfs4_op_lock(struct compound *compound)
 			compound->c_inode,
 			nfs4_client_to_client(compound->c_nfs4_client));
 		if (!ls) {
-			urcu_ref_put(&lo->lo_base.lo_ref,
-				     lo->lo_base.lo_release);
+			lock_owner_put(&lo->lo_base);
 			stateid_put(stid);
 			*status = NFS4ERR_DELAY;
 			return 0;
@@ -180,14 +179,13 @@ uint32_t nfs4_op_lock(struct compound *compound)
 		}
 		ls = stid_to_lock(stid);
 		lo = ls->ls_owner;
-		urcu_ref_get(&lo->lo_base.lo_ref);
+		lock_owner_get(&lo->lo_base);
 
 		/* Verify seqid */
 		uint32_t cur_seqid =
 			__atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
 		if (elo->lock_seqid != cur_seqid) {
-			urcu_ref_put(&lo->lo_base.lo_ref,
-				     lo->lo_base.lo_release);
+			lock_owner_put(&lo->lo_base);
 			stateid_put(stid);
 			*status = NFS4ERR_BAD_SEQID;
 			return 0;
@@ -227,8 +225,7 @@ uint32_t nfs4_op_lock(struct compound *compound)
 			stateid_client_unhash(&ls->ls_stid);
 			stateid_put(&ls->ls_stid);
 		} else {
-			urcu_ref_put(&lo->lo_base.lo_ref,
-				     lo->lo_base.lo_release);
+			lock_owner_put(&lo->lo_base);
 			stateid_put(&ls->ls_stid);
 		}
 		*status = NFS4ERR_DENIED;
@@ -243,8 +240,7 @@ uint32_t nfs4_op_lock(struct compound *compound)
 			stateid_client_unhash(&ls->ls_stid);
 			stateid_put(&ls->ls_stid);
 		} else {
-			urcu_ref_put(&lo->lo_base.lo_ref,
-				     lo->lo_base.lo_release);
+			lock_owner_put(&lo->lo_base);
 			stateid_put(&ls->ls_stid);
 		}
 		*status = NFS4ERR_DELAY;
@@ -252,7 +248,7 @@ uint32_t nfs4_op_lock(struct compound *compound)
 	}
 
 	if (args->locker.new_lock_owner)
-		urcu_ref_get(&lo->lo_base.lo_ref);
+		lock_owner_get(&lo->lo_base);
 	lock->l_owner = &lo->lo_base;
 	lock->l_offset = args->offset;
 	lock->l_len = args->length;
@@ -269,6 +265,7 @@ uint32_t nfs4_op_lock(struct compound *compound)
 			stateid_client_unhash(&ls->ls_stid);
 			stateid_put(&ls->ls_stid);
 		} else {
+			lock_owner_put(&lo->lo_base);
 			stateid_put(&ls->ls_stid);
 		}
 		*status = NFS4ERR_DENIED;
@@ -286,6 +283,9 @@ uint32_t nfs4_op_lock(struct compound *compound)
 	compound->c_curr_stid = stateid_get(&ls->ls_stid);
 
 	if (!args->locker.new_lock_owner) {
+		urcu_ref_put(
+			&lo->lo_base.lo_ref,
+			lo->lo_base.lo_release); /* Drop ref from line 183 */
 		stateid_put(&ls->ls_stid); /* Drop find ref */
 	}
 
@@ -445,8 +445,7 @@ uint32_t nfs4_op_release_lockowner(struct compound *compound)
 			 * release.
 			 */
 			cds_list_del(&lo->lo_base.lo_list);
-			urcu_ref_put(&lo->lo_base.lo_ref,
-				     lo->lo_base.lo_release);
+			lock_owner_put(&lo->lo_base);
 			pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
 			return 0;
 		}

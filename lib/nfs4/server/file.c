@@ -607,7 +607,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 		*status = NFS4ERR_DELAY;
 		goto out;
 	}
-	urcu_ref_get(&os->os_owner.lo_ref);
+	lock_owner_get(&os->os_owner);
 	share->s_owner = &os->os_owner;
 	share->s_inode = inode_active_get(target);
 	share->s_access = share_access;
@@ -889,7 +889,7 @@ uint32_t nfs4_op_open_downgrade(struct compound *compound)
 		*status = NFS4ERR_DELAY;
 		goto out;
 	}
-	urcu_ref_get(&os->os_owner.lo_ref);
+	lock_owner_get(&os->os_owner);
 	share->s_owner = &os->os_owner;
 	share->s_inode = inode_active_get(compound->c_inode);
 	share->s_access = new_access;

@@ -21,6 +21,17 @@ struct reffs_lock_owner {
 	bool (*lo_match)(struct reffs_lock_owner *, void *arg);
 };
 
+static inline void lock_owner_get(struct reffs_lock_owner *lo)
+{
+	urcu_ref_get(&lo->lo_ref);
+}
+
+static inline void lock_owner_put(struct reffs_lock_owner *lo)
+{
+	if (lo)
+		urcu_ref_put(&lo->lo_ref, lo->lo_release);
+}
+
 struct reffs_lock {
 	struct cds_list_head l_list; /* link in inode->i_locks */
 	struct cds_list_head l_host_list; /* link in host list */

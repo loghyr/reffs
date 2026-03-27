@@ -493,12 +493,13 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
 			    compound->c_inode->i_ino);
 
+	/* Sync data to disk for FILE_SYNC4 semantics.  Done under the
+	 * mutex to prevent interleaving with concurrent writes. */
+	inode_sync_to_disk(compound->c_inode);
+
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
 	chunk_write_verf(compound->c_server_state, resok->ccr_writeverf);
-
-	/* Sync data to disk for FILE_SYNC4 semantics. */
-	inode_sync_to_disk(compound->c_inode);
 
 	return 0;
 }
