@@ -83,12 +83,14 @@ This invokes `docker compose --profile run up` in `deploy/benchmark/`.
 The client container runs `scripts/ec_benchmark_full.sh`, which
 executes two phases in a single invocation:
 
-1. **Phase 1**: SIMD enabled + healthy + degraded-1 reads
-2. **Phase 2**: scalar (--force-scalar) + healthy + degraded-1 reads
+1. **Phase 1**: v1 (NFSv3) + SIMD + healthy + degraded-1
+2. **Phase 2**: v1 (NFSv3) + scalar + healthy + degraded-1
+3. **Phase 3**: v2 (CHUNK ops) + SIMD + healthy + degraded-1
+4. **Phase 4**: v2 (CHUNK ops) + scalar + healthy + degraded-1
 
-Output is a single CSV stream to stdout.  The `simd` column in each
-row identifies the SIMD path used (`avx2`, `neon`, `sse2`, or
-`scalar(forced)`).  Logs from all containers go to Docker's log driver.
+Output is a single CSV stream to stdout.  The `layout` column (`v1`
+or `v2`) and `simd` column (`avx2`, `neon`, `sse2`, or
+`scalar(forced)`) identify each phase.  Logs go to Docker's log driver.
 
 ### Manual run with custom flags
 
@@ -134,10 +136,11 @@ docker compose down -v   # removes containers AND the build-vol volume
 ### CSV output format
 
 ```
-codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,arch,cpu,kernel,simd
+codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd
 ```
 
 `verify` is `OK` or `FAIL`.  `mode` is `healthy` or `degraded-N`.
+`layout` is `v1` (NFSv3 DS I/O) or `v2` (CHUNK ops with CRC + persistence).
 `arch` is `x86_64` or `aarch64`.  `simd` is `neon`, `sse2`, `avx2`,
 `scalar`, or `scalar(forced)` (when `--force-scalar` is used).
 

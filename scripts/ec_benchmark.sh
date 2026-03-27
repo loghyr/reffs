@@ -4,7 +4,7 @@
 #
 # EC Benchmark — compare encoding overhead across codecs and geometries.
 #
-# Usage: ec_benchmark.sh [--degrade N] [--force-scalar] <ec_demo_path> <mds_host>
+# Usage: ec_benchmark.sh [OPTIONS] <ec_demo_path> <mds_host>
 #
 # Runs write/verify cycles for each codec at several file sizes,
 # measuring wall-clock time.  Output is CSV to stdout.
@@ -12,6 +12,7 @@
 # --degrade N      After each healthy read, re-read with N data shards
 #                  skipped to measure reconstruction overhead.
 # --force-scalar   Pass --force-scalar to ec_demo (disable SIMD).
+# --layout TYPE    Layout type: v1 (NFSv3 DS I/O, default) or v2 (CHUNK ops).
 
 set -e
 
@@ -21,10 +22,13 @@ set -e
 
 DEGRADE=0
 FORCE_SCALAR=""
+LAYOUT_ARG=""
+LAYOUT_TAG="v1"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --degrade) DEGRADE="$2"; shift 2 ;;
         --force-scalar) FORCE_SCALAR="--force-scalar"; shift ;;
+        --layout) LAYOUT_ARG="--layout $2"; LAYOUT_TAG="$2"; shift 2 ;;
         *) break ;;
     esac
 done
@@ -108,7 +112,8 @@ bench_one() {
         t0=$(now_ms)
         # shellcheck disable=SC2086
         "$EC_DEMO" write --mds "$MDS" --file "$fname" --input "$input" \
-            --k "$k" --m "$m" --codec "$codec" $FORCE_SCALAR 2>/dev/null
+            --k "$k" --m "$m" --codec "$codec" \
+            $FORCE_SCALAR $LAYOUT_ARG 2>/dev/null
         local t1
         t1=$(now_ms)
         write_ms=$(( t1 - t0 ))
@@ -120,7 +125,7 @@ bench_one() {
     # shellcheck disable=SC2086
     "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
         --k "$k" --m "$m" --codec "$codec" --size "$sz" \
-        $skip_arg $FORCE_SCALAR 2>/dev/null
+        $skip_arg $FORCE_SCALAR $LAYOUT_ARG 2>/dev/null
     local t1
     t1=$(now_ms)
     local read_ms=$(( t1 - t0 ))
@@ -131,7 +136,7 @@ bench_one() {
         verify="FAIL"
     fi
 
-    echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode},${CPU_INFO}"
+    echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode},${LAYOUT_TAG},${CPU_INFO}"
 }
 
 # ------------------------------------------------------------------ #
@@ -163,7 +168,7 @@ bench_plain() {
         verify="FAIL"
     fi
 
-    echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${CPU_INFO}"
+    echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO}"
 }
 
 # ------------------------------------------------------------------ #
@@ -195,7 +200,7 @@ bench_stripe() {
         verify="FAIL"
     fi
 
-    echo "stripe,${NUM_DS}+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${CPU_INFO}"
+    echo "stripe,${NUM_DS}+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO}"
 }
 
 # ------------------------------------------------------------------ #
@@ -236,7 +241,7 @@ gather_cpu_info() {
 CPU_INFO=$(gather_cpu_info)
 
 echo "=== EC Benchmark ===" >&2
-echo "MDS: $MDS  GEOMETRIES=$GEOMETRIES  RUNS=$RUNS  DEGRADE=$DEGRADE" >&2
+echo "MDS: $MDS  GEOMETRIES=$GEOMETRIES  RUNS=$RUNS  DEGRADE=$DEGRADE  LAYOUT=$LAYOUT_TAG" >&2
 echo "CPU: $CPU_INFO" >&2
 echo "Sizes: $SIZES" >&2
 echo "" >&2
@@ -245,7 +250,7 @@ wait_for_mds
 generate_test_files
 
 # CSV header
-echo "codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,arch,cpu,kernel,simd"
+echo "codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd"
 
 for sz in $SIZES; do
     echo "--- Size: $sz bytes ---" >&2
