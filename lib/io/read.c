@@ -33,6 +33,9 @@
 #include "reffs/tls.h"
 #include "reffs/trace/io.h"
 
+// Maximum reassembled RPC message size (matches IO_MAX_WRITE_SIZE + headers)
+#define MAX_RPC_MESSAGE_SIZE (2 * 1024 * 1024)
+
 static bool is_tls_client_hello(const unsigned char *buf, size_t len)
 {
 	// Minimum TLS record is 5 bytes (header) + data
@@ -526,7 +529,8 @@ static int process_record_marker(struct buffer_state *bs)
 							      filled;
 
 		// Copy data to the correct position in the buffer
-		memcpy(rs->rs_data + rs->rs_position, data, to_copy);
+		memcpy(rs->rs_data + rs->rs_total_len + rs->rs_position, data,
+		       to_copy);
 		rs->rs_position += to_copy;
 
 		// Advance the input buffer
@@ -537,9 +541,11 @@ static int process_record_marker(struct buffer_state *bs)
 		if (rs->rs_position >= rs->rs_fragment_len) {
 			// If this was the last fragment, we've got a complete message
 			if (rs->rs_last_fragment) {
-				size_t message_size = rs->rs_position;
+				size_t message_size =
+					rs->rs_total_len + rs->rs_position;
 
 				// Reset state for next message
+				rs->rs_total_len = 0;
 				rs->rs_position = 0;
 				rs->rs_fragment_len = 0;
 				rs->rs_last_fragment = false;
@@ -555,7 +561,8 @@ static int process_record_marker(struct buffer_state *bs)
 				return message_size;
 			}
 
-			// Not the last fragment, reset for next fragment
+			// Not the last fragment, accumulate offset
+			rs->rs_total_len += rs->rs_fragment_len;
 			rs->rs_position = 0;
 			rs->rs_fragment_len = 0;
 
@@ -619,15 +626,31 @@ static int process_record_marker(struct buffer_state *bs)
 	rs->rs_fragment_len = fragment_len;
 	rs->rs_position = 0;
 
-	// Ensure we have enough buffer space
+	// Ensure we have enough buffer space for accumulated + new fragment
+	size_t needed = rs->rs_total_len + fragment_len;
+
+	// Cap reassembled message size to prevent DoS via unbounded fragments
+	if (needed > MAX_RPC_MESSAGE_SIZE) {
+		rs->rs_total_len = 0;
+		rs->rs_position = 0;
+		rs->rs_fragment_len = 0;
+		return -EOVERFLOW;
+	}
+
 	if (!rs->rs_data) {
-		rs->rs_capacity = fragment_len * 2;
-		rs->rs_data = malloc(rs->rs_capacity);
+		size_t capacity = needed * 2;
+
+		rs->rs_data = malloc(capacity);
 		if (!rs->rs_data) {
+			rs->rs_total_len = 0;
+			rs->rs_position = 0;
+			rs->rs_fragment_len = 0;
+			rs->rs_capacity = 0;
 			return -ENOMEM;
 		}
-	} else if (fragment_len > rs->rs_capacity) {
-		size_t new_capacity = fragment_len * 2;
+		rs->rs_capacity = capacity;
+	} else if (needed > rs->rs_capacity) {
+		size_t new_capacity = needed * 2;
 
 		char *new_data = realloc(rs->rs_data, new_capacity);
 		if (!new_data) {
@@ -650,7 +673,7 @@ static int process_record_marker(struct buffer_state *bs)
 	// Copy available data for this fragment
 	size_t to_copy = (filled > fragment_len) ? fragment_len : filled;
 
-	memcpy(rs->rs_data, data, to_copy);
+	memcpy(rs->rs_data + rs->rs_total_len, data, to_copy);
 	rs->rs_position = to_copy;
 
 	// Advance buffer pointers
@@ -663,9 +686,11 @@ static int process_record_marker(struct buffer_state *bs)
 
 		// If this was the last fragment, we have a complete message
 		if (last_fragment) {
-			size_t message_size = rs->rs_position;
+			size_t message_size =
+				rs->rs_total_len + rs->rs_position;
 
 			// Reset state for next message
+			rs->rs_total_len = 0;
 			rs->rs_position = 0;
 			rs->rs_fragment_len = 0;
 			rs->rs_last_fragment = false;
@@ -681,7 +706,8 @@ static int process_record_marker(struct buffer_state *bs)
 			return message_size;
 		}
 
-		// Not the last fragment, check if we have data for next marker
+		// Not the last fragment, accumulate offset
+		rs->rs_total_len += rs->rs_fragment_len;
 		rs->rs_position = 0;
 		rs->rs_fragment_len = 0;
 
