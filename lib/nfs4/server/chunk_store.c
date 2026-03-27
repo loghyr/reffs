@@ -6,11 +6,16 @@
 #endif
 
 /*
- * Chunk store — in-memory per-block metadata for CHUNK operations.
+ * Chunk store — per-block metadata for CHUNK operations.
  *
  * Each inode on a data server can have an associated chunk_store that
  * tracks the state of blocks written via CHUNK_WRITE.  The store is
  * a dynamically-sized array indexed by block offset.
+ *
+ * Persistence: metadata is written to <state_dir>/chunks/<ino>.meta
+ * using write-temp/fdatasync/rename.  Only non-EMPTY blocks are
+ * written (sparse on disk).  On load, the file is read and the
+ * in-memory array is populated.
  *
  * Thread safety: callers must hold the inode's i_attr_mutex.
  */
@@ -18,19 +23,98 @@
 #include "nfs4/chunk_store.h"
 
 #include <errno.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "reffs/inode.h"
+#include "reffs/log.h"
 
 /* Initial allocation: 64 blocks.  Grows by doubling. */
 #define CHUNK_STORE_INIT_BLOCKS 64
+#define CHUNK_STORE_MAX_BLOCKS (1024 * 1024)
 
-struct chunk_store *chunk_store_get(struct inode *inode)
+/* ------------------------------------------------------------------ */
+/* Path helpers                                                        */
+/* ------------------------------------------------------------------ */
+
+static int chunk_meta_path(char *buf, size_t bufsz, const char *state_dir,
+			   uint64_t inode_ino)
+{
+	int n = snprintf(buf, bufsz, "%s/chunks/%" PRIu64 ".meta", state_dir,
+			 inode_ino);
+
+	if (n < 0 || (size_t)n >= bufsz)
+		return -ENAMETOOLONG;
+	return 0;
+}
+
+static int ensure_chunks_dir(const char *state_dir)
+{
+	char dir[512];
+	int n = snprintf(dir, sizeof(dir), "%s/chunks", state_dir);
+
+	if (n < 0 || (size_t)n >= sizeof(dir))
+		return -ENAMETOOLONG;
+	if (mkdir(dir, 0700) && errno != EEXIST)
+		return -errno;
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Disk format conversion                                              */
+/* ------------------------------------------------------------------ */
+
+static void block_to_disk(const struct chunk_block *blk,
+			  struct chunk_block_disk *dsk)
+{
+	dsk->cbd_state = (uint32_t)blk->cb_state;
+	dsk->cbd_flags = blk->cb_flags;
+	dsk->cbd_gen_id = blk->cb_gen_id;
+	dsk->cbd_client_id = blk->cb_client_id;
+	dsk->cbd_owner_id = blk->cb_owner_id;
+	dsk->cbd_payload_id = blk->cb_payload_id;
+	dsk->cbd_crc32 = blk->cb_crc32;
+	dsk->cbd_chunk_size = blk->cb_chunk_size;
+}
+
+static void disk_to_block(const struct chunk_block_disk *dsk,
+			  struct chunk_block *blk)
+{
+	blk->cb_state = (enum chunk_state)dsk->cbd_state;
+	blk->cb_flags = dsk->cbd_flags;
+	blk->cb_gen_id = dsk->cbd_gen_id;
+	blk->cb_client_id = dsk->cbd_client_id;
+	blk->cb_owner_id = dsk->cbd_owner_id;
+	blk->cb_payload_id = dsk->cbd_payload_id;
+	blk->cb_crc32 = dsk->cbd_crc32;
+	blk->cb_chunk_size = dsk->cbd_chunk_size;
+}
+
+/* ------------------------------------------------------------------ */
+/* In-memory operations                                                */
+/* ------------------------------------------------------------------ */
+
+struct chunk_store *chunk_store_get(struct inode *inode, const char *state_dir)
 {
 	if (inode->i_chunk_store)
 		return inode->i_chunk_store;
 
+	/* Try loading persisted metadata from disk. */
+	if (state_dir) {
+		struct chunk_store *cs =
+			chunk_store_load(state_dir, inode->i_ino);
+		if (cs) {
+			inode->i_chunk_store = cs;
+			return cs;
+		}
+	}
+
+	/* No persisted state — create a fresh in-memory store. */
 	struct chunk_store *cs = calloc(1, sizeof(*cs));
 
 	if (!cs)
@@ -67,7 +151,7 @@ static int chunk_store_grow(struct chunk_store *cs, uint64_t new_cap)
 {
 	uint64_t cap = cs->cs_nblocks;
 
-	if (new_cap > 1024 * 1024)
+	if (new_cap > CHUNK_STORE_MAX_BLOCKS)
 		return -ENOMEM;
 
 	while (cap <= new_cap)
@@ -96,6 +180,9 @@ int chunk_store_write(struct chunk_store *cs, uint64_t offset,
 	}
 
 	cs->cs_blocks[offset] = *blk;
+	if (offset + 1 > cs->cs_high_water)
+		cs->cs_high_water = offset + 1;
+	cs->cs_dirty = true;
 	return 0;
 }
 
@@ -120,7 +207,161 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 		blk->cb_state = to_state;
 	}
 
+	cs->cs_dirty = true;
 	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Persistence                                                         */
+/* ------------------------------------------------------------------ */
+
+int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
+			uint64_t inode_ino)
+{
+	char path[512], tmp[520];
+	int ret;
+
+	if (!cs || !cs->cs_dirty)
+		return 0;
+
+	ret = ensure_chunks_dir(state_dir);
+	if (ret)
+		return ret;
+
+	ret = chunk_meta_path(path, sizeof(path), state_dir, inode_ino);
+	if (ret)
+		return ret;
+
+	if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp))
+		return -ENAMETOOLONG;
+
+	int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+
+	if (fd < 0) {
+		LOG("chunk_store_persist: open(%s): %m", tmp);
+		return -errno;
+	}
+
+	/* Write header. */
+	struct chunk_store_header hdr = {
+		.csh_magic = CHUNK_STORE_MAGIC,
+		.csh_version = CHUNK_STORE_VERSION,
+		.csh_nblocks = cs->cs_high_water,
+		.csh_inode_ino = inode_ino,
+	};
+	ssize_t n = write(fd, &hdr, sizeof(hdr));
+
+	if (n != (ssize_t)sizeof(hdr)) {
+		LOG("chunk_store_persist: header write: %m");
+		ret = n < 0 ? -errno : -EIO;
+		goto err_close;
+	}
+
+	/* Write block entries up to high_water. */
+	for (uint64_t i = 0; i < cs->cs_high_water; i++) {
+		struct chunk_block_disk dsk;
+
+		block_to_disk(&cs->cs_blocks[i], &dsk);
+		n = write(fd, &dsk, sizeof(dsk));
+		if (n != (ssize_t)sizeof(dsk)) {
+			LOG("chunk_store_persist: block %" PRIu64 " write: %m",
+			    i);
+			ret = n < 0 ? -errno : -EIO;
+			goto err_close;
+		}
+	}
+
+	if (fdatasync(fd)) {
+		LOG("chunk_store_persist: fdatasync(%s): %m", tmp);
+		ret = -errno;
+		goto err_close;
+	}
+
+	close(fd);
+	fd = -1;
+
+	if (rename(tmp, path)) {
+		LOG("chunk_store_persist: rename(%s, %s): %m", tmp, path);
+		ret = -errno;
+		goto err_unlink;
+	}
+
+	cs->cs_dirty = false;
+	return 0;
+
+err_close:
+	close(fd);
+err_unlink:
+	unlink(tmp);
+	return ret;
+}
+
+struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino)
+{
+	char path[512];
+
+	if (chunk_meta_path(path, sizeof(path), state_dir, inode_ino))
+		return NULL;
+
+	int fd = open(path, O_RDONLY);
+
+	if (fd < 0)
+		return NULL;
+
+	struct chunk_store_header hdr;
+	ssize_t n = read(fd, &hdr, sizeof(hdr));
+
+	if (n != (ssize_t)sizeof(hdr) || hdr.csh_magic != CHUNK_STORE_MAGIC ||
+	    hdr.csh_version != CHUNK_STORE_VERSION ||
+	    hdr.csh_inode_ino != inode_ino ||
+	    hdr.csh_nblocks > CHUNK_STORE_MAX_BLOCKS) {
+		TRACE("chunk_store_load: bad header for ino %" PRIu64,
+		      inode_ino);
+		close(fd);
+		return NULL;
+	}
+
+	uint64_t nblocks = hdr.csh_nblocks;
+	uint64_t alloc = nblocks;
+
+	/* Round up to INIT_BLOCKS minimum. */
+	if (alloc < CHUNK_STORE_INIT_BLOCKS)
+		alloc = CHUNK_STORE_INIT_BLOCKS;
+
+	struct chunk_store *cs = calloc(1, sizeof(*cs));
+
+	if (!cs) {
+		close(fd);
+		return NULL;
+	}
+
+	cs->cs_blocks = calloc((size_t)alloc, sizeof(*cs->cs_blocks));
+	if (!cs->cs_blocks) {
+		free(cs);
+		close(fd);
+		return NULL;
+	}
+
+	cs->cs_nblocks = alloc;
+	cs->cs_high_water = nblocks;
+
+	for (uint64_t i = 0; i < nblocks; i++) {
+		struct chunk_block_disk dsk;
+
+		n = read(fd, &dsk, sizeof(dsk));
+		if (n != (ssize_t)sizeof(dsk)) {
+			TRACE("chunk_store_load: short read at block %" PRIu64,
+			      i);
+			chunk_store_destroy(cs);
+			close(fd);
+			return NULL;
+		}
+		disk_to_block(&dsk, &cs->cs_blocks[i]);
+	}
+
+	close(fd);
+	cs->cs_dirty = false;
+	return cs;
 }
 
 void chunk_store_destroy(struct chunk_store *cs)

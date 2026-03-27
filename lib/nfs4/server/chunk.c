@@ -114,7 +114,8 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 
 	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
 
-	struct chunk_store *cs = chunk_store_get(compound->c_inode);
+	struct chunk_store *cs = chunk_store_get(
+		compound->c_inode, compound->c_server_state->ss_state_dir);
 
 	if (!cs) {
 		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
@@ -380,6 +381,10 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 			(ret == 0) ? NFS4_OK : NFS4ERR_INVAL;
 	}
 
+	/* Persist metadata — FINALIZED state must survive DS restart. */
+	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+			    compound->c_inode->i_ino);
+
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
 	chunk_write_verf(compound->c_server_state, resok->ccr_writeverf);
@@ -446,11 +451,15 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 			(ret == 0) ? NFS4_OK : NFS4ERR_INVAL;
 	}
 
+	/* Persist metadata — COMMITTED state is the durability guarantee. */
+	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+			    compound->c_inode->i_ino);
+
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
 	chunk_write_verf(compound->c_server_state, resok->ccr_writeverf);
 
-	/* Sync to disk for FILE_SYNC4 semantics. */
+	/* Sync data to disk for FILE_SYNC4 semantics. */
 	inode_sync_to_disk(compound->c_inode);
 
 	return 0;
