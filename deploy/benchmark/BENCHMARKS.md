@@ -80,8 +80,15 @@ make -f Makefile.reffs run-benchmark
 ```
 
 This invokes `docker compose --profile run up` in `deploy/benchmark/`.
-The client container runs `scripts/ec_benchmark.sh` and writes CSV to
-stdout.  Logs from all containers go to Docker's log driver.
+The client container runs `scripts/ec_benchmark_full.sh`, which
+executes two phases in a single invocation:
+
+1. **Phase 1**: SIMD enabled + healthy + degraded-1 reads
+2. **Phase 2**: scalar (--force-scalar) + healthy + degraded-1 reads
+
+Output is a single CSV stream to stdout.  The `simd` column in each
+row identifies the SIMD path used (`avx2`, `neon`, `sse2`, or
+`scalar(forced)`).  Logs from all containers go to Docker's log driver.
 
 ### Manual run with custom flags
 

@@ -217,7 +217,7 @@ services:
       - ../../:/reffs:ro,z
     command: >
       /bin/bash -c "
-        exec /reffs/scripts/ec_benchmark.sh --degrade 1 /shared/build/tools/ec_demo reffs-mds
+        exec /reffs/scripts/ec_benchmark_full.sh /shared/build/tools/ec_demo reffs-mds
       "
     profiles:
       - run
