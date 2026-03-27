@@ -417,46 +417,61 @@ prior art references in source file headers.
 
 ## Atomic Operations
 
-### API: use GCC builtins (`__atomic_*`)
+### API: C11 `<stdatomic.h>`
 
-reffs standardizes on **GCC `__atomic_*` builtins**, not C11 `stdatomic.h`.
-The GCC builtins work on plain types without requiring `_Atomic` qualification,
-which matters for structs shared with on-disk formats and RCU.
+reffs uses **C11 `<stdatomic.h>`** for all atomic operations:
+`_Atomic`-qualified types, `atomic_*_explicit()` functions, and
+`memory_order_*` constants.
 
-Exception: `_Atomic` is acceptable for **file-scope static variables** (e.g.,
-`static _Atomic bool first_foo`) where the type is self-contained.
+The project compiles with **clang**, which requires `_Atomic` on types
+passed to atomic operations.  GCC `__atomic_*` builtins on plain types
+are **not compatible with clang** and must not be used.
 
 ```c
-// CORRECT — GCC builtins on plain types:
-__atomic_fetch_add(&inode->i_active, 1, __ATOMIC_ACQ_REL);
-__atomic_load_n(&sb->sb_state, __ATOMIC_ACQUIRE);
+#include <stdatomic.h>
 
-// WRONG — C11 on struct fields:
-atomic_fetch_add_explicit(&inode->i_active, 1, memory_order_acq_rel);
+// CORRECT — C11:
+_Atomic uint64_t os_calls;
+atomic_fetch_add_explicit(&s->os_calls, 1, memory_order_relaxed);
+atomic_load_explicit(&sb->sb_state, memory_order_acquire);
+atomic_compare_exchange_strong_explicit(&x, &expected, desired,
+    memory_order_acq_rel, memory_order_relaxed);
+
+// WRONG — GCC builtins (fails on clang):
+uint64_t os_calls;
+__atomic_fetch_add(&s->os_calls, 1, __ATOMIC_RELAXED);
 ```
+
+Rules:
+- `_Atomic` on both struct fields and file-scope statics
+- Always use `_explicit` variants with explicit memory order
+- `#include <stdatomic.h>` in every file that uses atomic operations
+- For fields that are only accessed from a single thread during init
+  (e.g., `inode->i_nlink = 1` in `inode_alloc`), plain writes before
+  the object is visible to other threads are acceptable
 
 ### Memory ordering rules
 
 | Pattern | Ordering | Example |
 |---------|----------|---------|
-| Ref-count increment | `__ATOMIC_ACQ_REL` | `__atomic_fetch_add(&i_active, 1, __ATOMIC_ACQ_REL)` |
-| Ref-count decrement | `__ATOMIC_ACQ_REL` | `__atomic_fetch_sub(&i_active, 1, __ATOMIC_ACQ_REL)` |
-| State flag set (publish) | `__ATOMIC_RELEASE` | `__atomic_fetch_or(&i_state, FLAG, __ATOMIC_RELEASE)` |
-| State flag read (consume) | `__ATOMIC_ACQUIRE` | `__atomic_load_n(&i_state, __ATOMIC_ACQUIRE)` |
-| Statistics counters | `__ATOMIC_RELAXED` | `__atomic_fetch_add(&calls, 1, __ATOMIC_RELAXED)` |
-| Sequence numbers (seqid) | `__ATOMIC_ACQ_REL` | `__atomic_fetch_add(&s_seqid, 1, __ATOMIC_ACQ_REL)` |
+| Ref-count increment | `memory_order_acq_rel` | `atomic_fetch_add_explicit(&i_active, 1, memory_order_acq_rel)` |
+| Ref-count decrement | `memory_order_acq_rel` | `atomic_fetch_sub_explicit(&i_active, 1, memory_order_acq_rel)` |
+| State flag set (publish) | `memory_order_release` | `atomic_fetch_or_explicit(&i_state, FLAG, memory_order_release)` |
+| State flag read (consume) | `memory_order_acquire` | `atomic_load_explicit(&i_state, memory_order_acquire)` |
+| Statistics counters | `memory_order_relaxed` | `atomic_fetch_add_explicit(&calls, 1, memory_order_relaxed)` |
+| Sequence numbers (seqid) | `memory_order_acq_rel` | `atomic_fetch_add_explicit(&s_seqid, 1, memory_order_acq_rel)` |
 
 ### Fields accessed atomically MUST be read atomically
 
-If a field is ever written with `__atomic_*`, all reads must also use
-`__atomic_load_n`.  **Never** do a plain read of an atomically-written field:
+If a field is ever written with `atomic_*_explicit`, all reads must also
+use `atomic_load_explicit`.  **Never** do a plain read of an `_Atomic` field:
 
 ```c
-// WRONG — plain read of atomically-written field:
+// WRONG — plain read of _Atomic field:
 nattr->numlinks = inode->i_nlink;
 
 // CORRECT:
-nattr->numlinks = __atomic_load_n(&inode->i_nlink, __ATOMIC_RELAXED);
+nattr->numlinks = atomic_load_explicit(&inode->i_nlink, memory_order_relaxed);
 ```
 
 Exception: initialization before the object is visible to other threads
