@@ -12,7 +12,7 @@ docker build -t reffs-dev .
 #3 DONE 0.0s
 
 #2 [internal] load metadata for docker.io/library/fedora:43
-#2 DONE 0.6s
+#2 DONE 1.0s
 
 #4 [internal] load .dockerignore
 #4 transferring context: 2B done
@@ -21,22 +21,22 @@ docker build -t reffs-dev .
 #5 [1/8] FROM docker.io/library/fedora:43@sha256:781b7642e8bf256e9cf75d2aa58d86f5cc695fd2df113517614e181a5eee9138
 #5 DONE 0.0s
 
-#6 [4/8] RUN activate-global-python-argcomplete --user &&     echo 'eval "$(register-python-argcomplete reffs-probe.py)"' >> /root/.bashrc &&     echo 'source /etc/profile.d/bash_completion.sh' >> /root/.bashrc
+#6 [2/8] RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf &&     echo "retries=20" >> /etc/dnf/dnf.conf
 #6 CACHED
 
-#7 [6/8] RUN mkdir -p /reffs /backend /src /build /logs
+#7 [7/8] WORKDIR /build
 #7 CACHED
 
-#8 [2/8] RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf &&     echo "retries=20" >> /etc/dnf/dnf.conf
+#8 [3/8] RUN dnf -y install     autoconf     autoconf-archive     automake     bash-completion     bear     ccache     check-devel     clang     clang-tools-extra     cmake     fuse-devel     gcc     gcc-c++     gdb     git     glibc-devel     HdrHistogram_c-devel     htop     iostat     iproute     iputils     jemalloc-devel     ktls-utils     libev-devel     libstdc++-devel     libtirpc-devel     libtool     liburing-devel     libuuid-devel     lldb     llvm-devel     make     net-tools     ninja-build     nslookup     krb5-devel     libnfsidmap-devel     openssl-devel     perf     procps-ng     python3-argcomplete     python3-devel     python3-pip     rpcbind     rpcgen     rsync     rocksdb-devel     scan-build     script     sslscan     strace     sudo     userspace-rcu-devel     vim     xxhash-devel     zlib-devel     && dnf clean all
 #8 CACHED
 
-#9 [3/8] RUN dnf -y install     autoconf     autoconf-archive     automake     bash-completion     bear     ccache     check-devel     clang     clang-tools-extra     cmake     fuse-devel     gcc     gcc-c++     gdb     git     glibc-devel     HdrHistogram_c-devel     htop     iostat     iproute     iputils     jemalloc-devel     ktls-utils     libev-devel     libstdc++-devel     libtirpc-devel     libtool     liburing-devel     libuuid-devel     lldb     llvm-devel     make     net-tools     ninja-build     nslookup     krb5-devel     libnfsidmap-devel     openssl-devel     perf     procps-ng     python3-argcomplete     python3-devel     python3-pip     rpcbind     rpcgen     rsync     rocksdb-devel     scan-build     script     sslscan     strace     sudo     userspace-rcu-devel     vim     xxhash-devel     zlib-devel     && dnf clean all
+#9 [6/8] RUN mkdir -p /reffs /backend /src /build /logs
 #9 CACHED
 
 #10 [5/8] RUN pip3 install --no-cache-dir     ply     xdrlib3     xml2rfc
 #10 CACHED
 
-#11 [7/8] WORKDIR /build
+#11 [4/8] RUN activate-global-python-argcomplete --user &&     echo 'eval "$(register-python-argcomplete reffs-probe.py)"' >> /root/.bashrc &&     echo 'source /etc/profile.d/bash_completion.sh' >> /root/.bashrc
 #11 CACHED
 
 #12 [8/8] RUN printf '#!/bin/bash\nrpcbind -w\nexec "$@"\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
@@ -698,26 +698,26 @@ docker compose -f deploy/benchmark/docker-compose.yml up -d ds0 ds1 ds2 ds3 ds4 
  Network benchmark_bench  Created
  Container reffs-bench-builder  Creating
  Container reffs-bench-builder  Created
- Container reffs-bench-ds9  Creating
- Container reffs-bench-ds3  Creating
- Container reffs-bench-ds0  Creating
- Container reffs-bench-ds5  Creating
- Container reffs-bench-ds7  Creating
- Container reffs-bench-ds6  Creating
  Container reffs-bench-ds1  Creating
+ Container reffs-bench-ds7  Creating
+ Container reffs-bench-ds5  Creating
+ Container reffs-bench-ds4  Creating
  Container reffs-bench-ds8  Creating
  Container reffs-bench-ds2  Creating
- Container reffs-bench-ds4  Creating
- Container reffs-bench-ds5  Created
- Container reffs-bench-ds3  Created
- Container reffs-bench-ds8  Created
- Container reffs-bench-ds1  Created
- Container reffs-bench-ds0  Created
- Container reffs-bench-ds6  Created
- Container reffs-bench-ds7  Created
- Container reffs-bench-ds4  Created
- Container reffs-bench-ds9  Created
+ Container reffs-bench-ds0  Creating
+ Container reffs-bench-ds6  Creating
+ Container reffs-bench-ds9  Creating
+ Container reffs-bench-ds3  Creating
  Container reffs-bench-ds2  Created
+ Container reffs-bench-ds4  Created
+ Container reffs-bench-ds3  Created
+ Container reffs-bench-ds7  Created
+ Container reffs-bench-ds6  Created
+ Container reffs-bench-ds5  Created
+ Container reffs-bench-ds0  Created
+ Container reffs-bench-ds1  Created
+ Container reffs-bench-ds8  Created
+ Container reffs-bench-ds9  Created
  Container reffs-bench-mds  Creating
  Container reffs-bench-mds  Created
  Container reffs-bench-builder  Starting
@@ -733,761 +733,765 @@ docker compose -f deploy/benchmark/docker-compose.yml up -d ds0 ds1 ds2 ds3 ds4 
  Container reffs-bench-builder  Waiting
  Container reffs-bench-builder  Waiting
  Container reffs-bench-builder  Exited
- Container reffs-bench-ds2  Starting
- Container reffs-bench-builder  Exited
- Container reffs-bench-builder  Exited
- Container reffs-bench-ds3  Starting
- Container reffs-bench-ds5  Starting
+ Container reffs-bench-ds4  Starting
  Container reffs-bench-builder  Exited
  Container reffs-bench-ds1  Starting
  Container reffs-bench-builder  Exited
- Container reffs-bench-ds8  Starting
- Container reffs-bench-builder  Exited
- Container reffs-bench-ds0  Starting
- Container reffs-bench-builder  Exited
  Container reffs-bench-ds7  Starting
  Container reffs-bench-builder  Exited
- Container reffs-bench-ds4  Starting
+ Container reffs-bench-ds9  Starting
  Container reffs-bench-builder  Exited
  Container reffs-bench-ds6  Starting
  Container reffs-bench-builder  Exited
- Container reffs-bench-ds9  Starting
- Container reffs-bench-ds6  Started
- Container reffs-bench-ds5  Started
- Container reffs-bench-ds1  Started
+ Container reffs-bench-ds8  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds3  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds2  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds0  Starting
+ Container reffs-bench-builder  Exited
+ Container reffs-bench-ds5  Starting
  Container reffs-bench-ds7  Started
- Container reffs-bench-ds0  Started
- Container reffs-bench-ds8  Started
- Container reffs-bench-ds3  Started
- Container reffs-bench-ds2  Started
- Container reffs-bench-ds9  Started
+ Container reffs-bench-ds6  Started
  Container reffs-bench-ds4  Started
- Container reffs-bench-ds6  Waiting
- Container reffs-bench-ds4  Waiting
- Container reffs-bench-ds9  Waiting
+ Container reffs-bench-ds8  Started
+ Container reffs-bench-ds9  Started
+ Container reffs-bench-ds1  Started
+ Container reffs-bench-ds0  Started
+ Container reffs-bench-ds5  Started
+ Container reffs-bench-ds2  Started
+ Container reffs-bench-ds3  Started
  Container reffs-bench-ds3  Waiting
- Container reffs-bench-ds1  Waiting
- Container reffs-bench-ds5  Waiting
+ Container reffs-bench-ds4  Waiting
+ Container reffs-bench-ds2  Waiting
  Container reffs-bench-ds7  Waiting
  Container reffs-bench-ds0  Waiting
  Container reffs-bench-ds8  Waiting
- Container reffs-bench-ds2  Waiting
- Container reffs-bench-ds0  Healthy
- Container reffs-bench-ds6  Healthy
- Container reffs-bench-ds5  Healthy
+ Container reffs-bench-ds1  Waiting
+ Container reffs-bench-ds5  Waiting
+ Container reffs-bench-ds9  Waiting
+ Container reffs-bench-ds6  Waiting
  Container reffs-bench-ds1  Healthy
+ Container reffs-bench-ds6  Healthy
  Container reffs-bench-ds8  Healthy
- Container reffs-bench-ds7  Healthy
- Container reffs-bench-ds2  Healthy
- Container reffs-bench-ds9  Healthy
  Container reffs-bench-ds4  Healthy
+ Container reffs-bench-ds7  Healthy
+ Container reffs-bench-ds9  Healthy
  Container reffs-bench-ds3  Healthy
+ Container reffs-bench-ds5  Healthy
+ Container reffs-bench-ds2  Healthy
+ Container reffs-bench-ds0  Healthy
  Container reffs-bench-mds  Starting
  Container reffs-bench-mds  Started
 Waiting for services to become healthy...
 docker compose -f deploy/benchmark/docker-compose.yml --profile run run --rm bench \
 		2>/Users/loghyr/reffs/logs/benchmark/bench.log | tee /Users/loghyr/reffs/logs/benchmark/results.csv
-codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,arch,cpu,kernel,simd
-plain,1+0,4096,1,48,33,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,4096,1,58,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,4096,1,62,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,4096,1,59,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,4096,1,57,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,4096,1,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,4096,1,0,45,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,4096,1,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,4096,1,59,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,4096,1,59,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,4096,1,58,70,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,4096,1,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,4096,1,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,4096,1,0,69,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,4096,2,43,30,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,4096,2,58,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,4096,2,63,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,4096,2,63,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,4096,2,57,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,4096,2,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,4096,2,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,4096,2,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,4096,2,60,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,4096,2,59,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,4096,2,58,70,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,4096,2,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,4096,2,0,48,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,4096,2,0,70,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,4096,3,42,29,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,4096,3,60,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,4096,3,57,47,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,4096,3,56,47,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,4096,3,57,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,4096,3,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,4096,3,0,43,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,4096,3,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,4096,3,59,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,4096,3,59,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,4096,3,58,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,4096,3,0,50,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,4096,3,0,48,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,4096,3,0,69,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,4096,4,44,33,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,4096,4,62,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,4096,4,60,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,4096,4,59,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,4096,4,58,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,4096,4,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,4096,4,0,79,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,4096,4,0,88,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,4096,4,65,82,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,4096,4,61,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,4096,4,65,74,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,4096,4,0,56,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,4096,4,0,56,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,4096,4,0,76,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,4096,5,49,34,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,4096,5,57,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,4096,5,58,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,4096,5,60,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,4096,5,57,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,4096,5,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,4096,5,0,44,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,4096,5,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,4096,5,74,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,4096,5,58,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,4096,5,62,69,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,4096,5,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,4096,5,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,4096,5,0,70,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,16384,1,43,34,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,16384,1,58,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,16384,1,58,46,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,16384,1,57,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,16384,1,61,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,16384,1,0,48,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,16384,1,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,16384,1,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,16384,1,62,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,16384,1,58,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,16384,1,61,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,16384,1,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,16384,1,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,16384,1,0,71,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,16384,2,86,46,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,16384,2,69,84,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,16384,2,59,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,16384,2,58,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,16384,2,58,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,16384,2,0,45,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,16384,2,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,16384,2,0,60,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,16384,2,65,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,16384,2,61,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,16384,2,60,72,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,16384,2,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,16384,2,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,16384,2,0,69,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,16384,3,44,32,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,16384,3,59,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,16384,3,61,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,16384,3,59,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,16384,3,59,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,16384,3,0,48,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,16384,3,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,16384,3,0,54,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,16384,3,60,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,16384,3,60,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,16384,3,60,70,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,16384,3,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,16384,3,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,16384,3,0,73,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,16384,4,44,32,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,16384,4,93,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,16384,4,63,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,16384,4,61,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,16384,4,56,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,16384,4,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,16384,4,0,45,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,16384,4,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,16384,4,61,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,16384,4,60,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,16384,4,61,70,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,16384,4,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,16384,4,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,16384,4,0,133,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,16384,5,50,34,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,16384,5,65,55,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,16384,5,60,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,16384,5,59,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,16384,5,60,55,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,16384,5,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,16384,5,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,16384,5,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,16384,5,61,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,16384,5,59,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,16384,5,61,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,16384,5,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,16384,5,0,105,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,16384,5,0,86,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,65536,1,54,39,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,65536,1,70,58,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,65536,1,75,62,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,65536,1,71,63,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,65536,1,72,85,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,65536,1,0,62,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,65536,1,0,59,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,65536,1,0,83,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,65536,1,70,58,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,65536,1,70,58,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,65536,1,70,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,65536,1,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,65536,1,0,58,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,65536,1,0,96,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,65536,2,54,44,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,65536,2,69,58,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,65536,2,71,61,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,65536,2,71,64,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,65536,2,73,80,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,65536,2,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,65536,2,0,56,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,65536,2,0,80,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,65536,2,82,79,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,65536,2,106,82,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,65536,2,120,100,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,65536,2,0,62,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,65536,2,0,57,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,65536,2,0,98,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,65536,3,54,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,65536,3,76,58,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,65536,3,72,59,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,65536,3,73,63,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,65536,3,73,90,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,65536,3,0,62,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,65536,3,0,60,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,65536,3,0,79,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,65536,3,71,58,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,65536,3,69,61,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,65536,3,71,95,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,65536,3,0,60,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,65536,3,0,57,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,65536,3,0,98,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,65536,4,54,42,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,65536,4,67,58,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,65536,4,75,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,65536,4,72,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,65536,4,72,82,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,65536,4,0,62,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,65536,4,0,64,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,65536,4,0,82,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,65536,4,72,55,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,65536,4,70,61,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,65536,4,69,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,65536,4,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,65536,4,0,58,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,65536,4,0,98,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,65536,5,55,42,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,65536,5,68,57,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,65536,5,73,62,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,65536,5,73,64,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,65536,5,76,80,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,65536,5,0,60,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,65536,5,0,58,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,65536,5,0,79,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,65536,5,70,57,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,65536,5,72,61,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,65536,5,71,95,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,65536,5,0,84,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,65536,5,0,91,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,65536,5,0,133,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,262144,1,87,74,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,262144,1,100,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,262144,1,123,106,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,262144,1,128,147,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,262144,1,182,188,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,262144,1,0,103,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,262144,1,0,103,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,262144,1,0,196,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,262144,1,113,102,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,262144,1,110,100,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,262144,1,6640,278,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,262144,1,0,113,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,262144,1,0,93,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,262144,1,0,252,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,262144,2,86,73,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,262144,2,103,90,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,262144,2,126,105,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,262144,2,121,108,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,262144,2,124,182,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,262144,2,0,106,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,262144,2,0,103,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,262144,2,0,239,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,262144,2,154,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,262144,2,111,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,262144,2,127,253,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,262144,2,0,116,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,262144,2,0,94,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,262144,2,0,259,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,262144,3,95,70,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,262144,3,105,95,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,262144,3,121,111,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,262144,3,121,107,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,262144,3,120,185,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,262144,3,0,105,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,262144,3,0,101,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,262144,3,0,181,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,262144,3,111,99,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,262144,3,109,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,262144,3,114,254,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,262144,3,0,109,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,262144,3,0,93,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,262144,3,0,359,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,262144,4,93,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,262144,4,105,87,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,262144,4,124,102,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,262144,4,171,133,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,262144,4,143,192,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,262144,4,0,117,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,262144,4,0,110,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,262144,4,0,190,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,262144,4,122,98,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,262144,4,128,126,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,262144,4,135,268,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,262144,4,0,115,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,262144,4,0,105,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,262144,4,0,261,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,262144,5,86,73,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,262144,5,105,91,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,262144,5,123,107,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,262144,5,121,114,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,262144,5,126,182,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,262144,5,0,105,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,262144,5,0,102,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,262144,5,0,184,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,262144,5,128,96,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,262144,5,110,99,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,262144,5,134,252,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,262144,5,0,108,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,262144,5,0,93,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,262144,5,0,297,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,1048576,1,225,212,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,1048576,1,218,199,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,1048576,1,363,280,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,1048576,1,319,288,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,1048576,1,312,601,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,1048576,1,0,276,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,1048576,1,0,258,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,1048576,1,0,701,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,1048576,1,277,270,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,1048576,1,263,241,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,1048576,1,304,874,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,1048576,1,0,291,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,1048576,1,0,239,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,1048576,1,0,898,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,1048576,2,216,200,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,1048576,2,235,218,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,1048576,2,382,326,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,1048576,2,337,292,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,1048576,2,330,604,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,1048576,2,0,281,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,1048576,2,0,280,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,1048576,2,0,609,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,1048576,2,296,252,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,1048576,2,273,258,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,1048576,2,595,950,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,1048576,2,0,296,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,1048576,2,0,265,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,1048576,2,0,890,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,1048576,3,212,187,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,1048576,3,238,207,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,1048576,3,341,297,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,1048576,3,376,288,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,1048576,3,341,673,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,1048576,3,0,303,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,1048576,3,0,275,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,1048576,3,0,625,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,1048576,3,283,250,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,1048576,3,266,256,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,1048576,3,271,857,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,1048576,3,0,300,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,1048576,3,0,248,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,1048576,3,0,948,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,1048576,4,212,207,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,1048576,4,239,214,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,1048576,4,332,295,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,1048576,4,325,306,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,1048576,4,321,603,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,1048576,4,0,284,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,1048576,4,0,264,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,1048576,4,0,612,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,1048576,4,594,324,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,1048576,4,290,262,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,1048576,4,311,873,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,1048576,4,0,314,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,1048576,4,0,248,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,1048576,4,0,908,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,1048576,5,210,187,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-stripe,10+0,1048576,5,238,213,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,1048576,5,341,290,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,1048576,5,412,306,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,1048576,5,325,642,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,4+2,1048576,5,0,285,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,4+2,1048576,5,0,282,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,4+2,1048576,5,0,605,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,1048576,5,436,259,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,1048576,5,271,260,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,1048576,5,306,939,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-rs,8+2,1048576,5,0,307,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-sys,8+2,1048576,5,0,251,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-mojette-nonsys,8+2,1048576,5,0,888,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
-plain,1+0,4096,1,30,31,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,4096,1,48,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,4096,1,47,46,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,4096,1,49,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,4096,1,48,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,4096,1,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,4096,1,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,4096,1,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,4096,1,49,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,4096,1,56,55,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,4096,1,58,79,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,4096,1,0,54,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,4096,1,0,55,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,4096,1,0,72,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,4096,2,33,31,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,4096,2,681,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,4096,2,49,47,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,4096,2,53,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,4096,2,47,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,4096,2,0,50,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,4096,2,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,4096,2,0,57,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,4096,2,59,56,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,4096,2,57,54,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,4096,2,53,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,4096,2,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,4096,2,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,4096,2,0,72,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,4096,3,33,30,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,4096,3,50,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,4096,3,48,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,4096,3,49,47,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,4096,3,48,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,4096,3,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,4096,3,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,4096,3,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,4096,3,50,56,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,4096,3,53,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,4096,3,52,73,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,4096,3,0,54,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,4096,3,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,4096,3,0,74,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,4096,4,39,31,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,4096,4,51,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,4096,4,47,46,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,4096,4,46,46,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,4096,4,46,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,4096,4,0,48,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,4096,4,0,50,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,4096,4,0,56,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,4096,4,50,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,4096,4,53,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,4096,4,50,70,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,4096,4,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,4096,4,0,54,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,4096,4,0,85,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,4096,5,30,29,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,4096,5,49,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,4096,5,48,45,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,4096,5,47,47,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,4096,5,47,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,4096,5,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,4096,5,0,45,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,4096,5,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,4096,5,52,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,4096,5,51,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,4096,5,52,72,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,4096,5,0,54,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,4096,5,0,54,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,4096,5,0,71,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,16384,1,34,31,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,16384,1,50,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,16384,1,54,46,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,16384,1,46,47,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,16384,1,64,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,16384,1,0,49,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,16384,1,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,16384,1,0,50,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,16384,1,51,49,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,16384,1,50,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,16384,1,50,69,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,16384,1,0,54,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,16384,1,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,16384,1,0,71,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,16384,2,36,32,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,16384,2,50,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,16384,2,48,46,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,16384,2,46,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,16384,2,46,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,16384,2,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,16384,2,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,16384,2,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,16384,2,52,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,16384,2,52,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,16384,2,51,72,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,16384,2,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,16384,2,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,16384,2,0,71,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,16384,3,35,31,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,16384,3,49,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,16384,3,47,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,16384,3,48,45,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,16384,3,49,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,16384,3,0,46,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,16384,3,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,16384,3,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,16384,3,50,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,16384,3,51,51,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,16384,3,53,72,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,16384,3,0,54,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,16384,3,0,55,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,16384,3,0,75,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,16384,4,32,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,16384,4,62,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,16384,4,68,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,16384,4,48,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,16384,4,53,59,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,16384,4,0,47,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,16384,4,0,45,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,16384,4,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,16384,4,54,55,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,16384,4,51,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,16384,4,51,70,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,16384,4,0,55,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,16384,4,0,50,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,16384,4,0,72,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,16384,5,34,32,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,16384,5,54,56,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,16384,5,52,50,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,16384,5,50,48,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,16384,5,50,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,16384,5,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,16384,5,0,51,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,16384,5,0,57,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,16384,5,56,57,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,16384,5,51,52,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,16384,5,54,78,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,16384,5,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,16384,5,0,52,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,16384,5,0,73,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,65536,1,43,41,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,65536,1,56,59,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,65536,1,61,256,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,65536,1,97,61,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,65536,1,102,293,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,65536,1,0,66,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,65536,1,0,66,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,65536,1,0,82,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,65536,1,59,59,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,65536,1,58,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,65536,1,58,95,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,65536,1,0,62,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,65536,1,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,65536,1,0,92,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,65536,2,41,39,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,65536,2,54,62,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,65536,2,62,64,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,65536,2,64,63,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,65536,2,65,82,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,65536,2,0,59,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,65536,2,0,62,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,65536,2,0,81,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,65536,2,63,61,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,65536,2,58,57,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,65536,2,58,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,65536,2,0,63,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,65536,2,0,60,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,65536,2,0,103,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,65536,3,41,41,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,65536,3,57,58,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,65536,3,63,62,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,65536,3,61,62,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,65536,3,63,79,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,65536,3,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,65536,3,0,59,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,65536,3,0,80,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,65536,3,60,58,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,65536,3,60,56,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,65536,3,59,98,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,65536,3,0,64,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,65536,3,0,57,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,65536,3,0,99,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,65536,4,42,41,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,65536,4,58,64,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,65536,4,62,63,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,65536,4,65,69,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,65536,4,65,83,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,65536,4,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,65536,4,0,61,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,65536,4,0,114,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,65536,4,59,84,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,65536,4,56,53,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,65536,4,63,92,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,65536,4,0,59,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,65536,4,0,53,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,65536,4,0,93,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,65536,5,43,41,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,65536,5,52,55,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,65536,5,56,58,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,65536,5,59,62,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,65536,5,63,81,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,65536,5,0,60,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,65536,5,0,60,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,65536,5,0,79,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,65536,5,60,60,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,65536,5,60,59,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,65536,5,59,98,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,65536,5,0,62,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,65536,5,0,56,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,65536,5,0,100,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,262144,1,80,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,262144,1,90,90,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,262144,1,114,107,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,262144,1,106,112,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,262144,1,109,184,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,262144,1,0,108,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,262144,1,0,102,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,262144,1,0,189,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,262144,1,99,96,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,262144,1,96,98,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,262144,1,102,254,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,262144,1,0,110,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,262144,1,0,94,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,262144,1,0,259,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,262144,2,77,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,262144,2,93,94,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,262144,2,115,113,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,262144,2,112,111,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,262144,2,115,191,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,262144,2,0,109,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,262144,2,0,116,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,262144,2,0,412,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,262144,2,128,251,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,262144,2,100,100,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,262144,2,99,254,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,262144,2,0,112,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,262144,2,0,95,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,262144,2,0,261,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,262144,3,83,74,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,262144,3,91,90,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,262144,3,111,107,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,262144,3,110,111,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,262144,3,109,185,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,262144,3,0,106,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,262144,3,0,102,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,262144,3,0,247,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,262144,3,100,99,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,262144,3,100,97,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,262144,3,99,248,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,262144,3,0,111,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,262144,3,0,93,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,262144,3,0,257,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,262144,4,79,78,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,262144,4,87,89,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,262144,4,110,150,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,262144,4,118,132,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,262144,4,122,186,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,262144,4,0,111,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,262144,4,0,104,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,262144,4,0,186,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,262144,4,103,98,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,262144,4,106,99,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,262144,4,106,258,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,262144,4,0,114,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,262144,4,0,101,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,262144,4,0,265,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,262144,5,77,71,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,262144,5,91,89,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,262144,5,114,108,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,262144,5,115,110,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,262144,5,112,183,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,262144,5,0,104,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,262144,5,0,105,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,262144,5,0,186,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,262144,5,100,103,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,262144,5,101,99,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,262144,5,100,249,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,262144,5,0,115,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,262144,5,0,95,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,262144,5,0,257,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,1048576,1,210,201,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,1048576,1,227,222,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,1048576,1,309,287,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,1048576,1,303,303,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,1048576,1,296,604,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,1048576,1,0,323,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,1048576,1,0,273,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,1048576,1,0,610,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,1048576,1,276,348,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,1048576,1,256,256,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,1048576,1,279,864,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,1048576,1,0,303,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,1048576,1,0,255,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,1048576,1,0,904,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,1048576,2,215,200,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,1048576,2,219,221,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,1048576,2,312,312,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,1048576,2,409,416,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,1048576,2,376,621,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,1048576,2,0,311,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,1048576,2,0,292,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,1048576,2,0,631,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,1048576,2,270,258,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,1048576,2,256,247,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,1048576,2,259,930,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,1048576,2,0,334,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,1048576,2,0,243,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,1048576,2,0,904,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,1048576,3,201,199,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,1048576,3,232,222,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,1048576,3,317,300,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,1048576,3,311,297,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,1048576,3,297,614,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,1048576,3,0,281,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,1048576,3,0,309,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,1048576,3,0,637,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,1048576,3,287,264,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,1048576,3,272,259,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,1048576,3,265,870,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,1048576,3,0,304,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,1048576,3,0,246,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,1048576,3,0,901,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,1048576,4,215,211,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,1048576,4,250,264,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,1048576,4,365,319,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,1048576,4,352,297,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,1048576,4,316,600,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,1048576,4,0,282,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,1048576,4,0,270,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,1048576,4,0,606,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,1048576,4,292,273,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,1048576,4,272,262,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,1048576,4,308,898,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,1048576,4,0,310,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,1048576,4,0,244,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,1048576,4,0,885,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-plain,1+0,1048576,5,198,190,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-stripe,10+0,1048576,5,202,222,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,1048576,5,316,279,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,1048576,5,289,295,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,1048576,5,285,682,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,4+2,1048576,5,0,283,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,4+2,1048576,5,0,266,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,4+2,1048576,5,0,607,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,1048576,5,275,261,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,1048576,5,261,256,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,1048576,5,263,857,OK,healthy,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-rs,8+2,1048576,5,0,300,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-sys,8+2,1048576,5,0,237,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
-mojette-nonsys,8+2,1048576,5,0,957,OK,degraded-1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd
+plain,1+0,4096,1,45,31,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,1,61,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,1,63,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,1,58,56,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,1,58,55,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,1,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,1,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,1,0,51,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,1,64,56,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,1,61,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,1,67,72,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,1,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,1,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,1,0,73,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,4096,2,44,33,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,2,61,54,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,2,60,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,2,60,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,2,61,56,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,2,0,46,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,2,0,45,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,2,0,51,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,2,63,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,2,60,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,2,60,69,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,2,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,2,0,50,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,2,0,72,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,4096,3,43,30,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,3,59,54,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,3,61,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,3,60,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,3,64,61,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,3,0,56,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,3,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,3,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,3,63,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,3,63,55,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,3,64,73,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,3,0,58,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,3,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,3,0,72,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,4096,4,42,32,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,4,59,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,4,69,54,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,4,63,49,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,4,62,56,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,4,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,4,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,4,0,54,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,4,68,55,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,4,69,90,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,4,62,71,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,4,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,4,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,4,0,83,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,4096,5,41,32,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,5,58,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,5,62,57,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,5,59,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,5,59,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,4096,5,0,48,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,4096,5,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,4096,5,0,51,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,5,60,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,5,63,55,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,5,62,70,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,4096,5,0,56,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,4096,5,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,4096,5,0,77,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,16384,1,46,34,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,16384,1,59,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,1,60,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,1,62,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,1,61,57,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,1,0,50,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,1,0,45,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,1,0,53,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,1,62,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,1,64,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,1,69,71,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,1,0,53,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,1,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,1,0,74,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,16384,2,49,40,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,16384,2,62,71,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,2,77,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,2,57,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,2,60,55,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,2,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,2,0,46,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,2,0,53,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,2,66,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,2,69,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,2,62,71,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,2,0,54,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,2,0,50,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,2,0,73,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,16384,3,47,34,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,16384,3,59,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,3,58,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,3,59,49,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,3,60,59,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,3,0,46,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,3,0,45,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,3,0,51,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,3,65,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,3,62,54,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,3,63,71,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,3,0,53,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,3,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,3,0,71,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,16384,4,47,33,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,16384,4,60,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,4,64,49,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,4,58,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,4,59,55,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,4,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,4,0,46,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,4,0,50,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,4,71,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,4,66,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,4,65,72,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,4,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,4,0,53,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,4,0,82,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,16384,5,46,33,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,16384,5,61,55,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,5,60,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,5,60,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,5,62,74,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,16384,5,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,16384,5,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,16384,5,0,53,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,5,62,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,5,65,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,5,64,74,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,16384,5,0,51,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,16384,5,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,16384,5,0,71,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,65536,1,55,43,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,65536,1,72,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,1,74,64,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,1,74,67,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,1,73,87,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,1,0,57,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,1,0,60,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,1,0,80,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,1,74,61,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,1,68,59,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,1,73,103,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,1,0,62,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,1,0,61,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,1,0,102,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,65536,2,56,45,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,65536,2,68,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,2,74,63,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,2,72,67,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,2,76,86,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,2,0,67,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,2,0,61,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,2,0,90,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,2,78,62,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,2,70,59,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,2,112,100,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,2,0,62,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,2,0,58,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,2,0,102,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,65536,3,59,45,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,65536,3,69,61,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,3,85,61,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,3,74,61,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,3,71,83,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,3,0,61,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,3,0,57,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,3,0,81,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,3,70,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,3,70,61,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,3,71,101,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,3,0,62,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,3,0,61,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,3,0,105,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,65536,4,57,42,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,65536,4,66,63,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,4,75,62,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,4,78,63,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,4,79,84,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,4,0,65,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,4,0,59,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,4,0,82,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,4,69,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,4,70,58,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,4,73,101,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,4,0,61,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,4,0,58,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,4,0,101,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,65536,5,58,180,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,65536,5,75,59,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,5,77,65,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,5,73,64,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,5,73,81,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,65536,5,0,59,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,65536,5,0,62,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,65536,5,0,80,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,5,76,61,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,5,68,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,5,75,113,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,65536,5,0,76,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,65536,5,0,59,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,65536,5,0,99,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,262144,1,84,71,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,262144,1,104,93,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,1,126,113,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,1,177,113,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,1,128,188,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,1,0,109,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,1,0,113,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,1,0,190,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,1,119,98,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,1,113,99,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,1,6688,271,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,1,0,112,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,1,0,98,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,1,0,259,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,262144,2,94,74,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,262144,2,104,94,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,2,130,110,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,2,130,116,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,2,127,187,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,2,0,148,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,2,0,121,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,2,0,185,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,2,128,100,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,2,130,101,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,2,120,251,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,2,0,111,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,2,0,100,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,2,0,266,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,262144,3,91,74,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,262144,3,109,93,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,3,134,111,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,3,127,115,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,3,129,188,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,3,0,113,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,3,0,104,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,3,0,190,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,3,114,104,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,3,118,100,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,3,116,255,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,3,0,118,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,3,0,99,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,3,0,263,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,262144,4,90,73,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,262144,4,109,94,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,4,193,108,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,4,125,114,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,4,123,204,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,4,0,106,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,4,0,102,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,4,0,188,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,4,119,103,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,4,115,96,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,4,116,256,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,4,0,113,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,4,0,99,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,4,0,263,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,262144,5,97,79,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,262144,5,112,99,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,5,132,113,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,5,126,110,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,5,130,189,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,262144,5,0,109,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,262144,5,0,106,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,262144,5,0,190,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,5,119,111,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,5,125,103,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,5,114,255,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,262144,5,0,145,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,262144,5,0,101,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,262144,5,0,262,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,1048576,1,222,203,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,1048576,1,231,221,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,1,394,303,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,1,332,301,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,1,339,627,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,1,0,330,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,1,0,277,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,1,0,628,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,1,308,266,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,1,281,291,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,1,293,879,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,1,0,307,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,1,0,254,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,1,0,928,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,1048576,2,237,224,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,1048576,2,231,225,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,2,353,301,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,2,334,301,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,2,333,618,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,2,0,298,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,2,0,282,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,2,0,626,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,2,380,453,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,2,322,261,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,2,309,886,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,2,0,310,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,2,0,244,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,2,0,925,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,1048576,3,228,200,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,1048576,3,234,233,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,3,348,307,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,3,397,307,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,3,342,609,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,3,0,303,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,3,0,283,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,3,0,616,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,3,298,261,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,3,293,259,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,3,297,878,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,3,0,364,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,3,0,258,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,3,0,964,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,1048576,4,232,206,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,1048576,4,247,237,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,4,339,306,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,4,329,309,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,4,346,840,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,4,0,550,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,4,0,286,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,4,0,611,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,4,300,269,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,4,284,258,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,4,295,882,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,4,0,345,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,4,0,253,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,4,0,964,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,1048576,5,216,204,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,1048576,5,251,225,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,5,359,321,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,5,369,306,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,5,330,636,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,4+2,1048576,5,0,292,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,4+2,1048576,5,0,279,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,4+2,1048576,5,0,624,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,5,413,320,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,5,290,277,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,5,303,882,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+rs,8+2,1048576,5,0,313,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-sys,8+2,1048576,5,0,252,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+mojette-nonsys,8+2,1048576,5,0,910,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,4096,1,33,29,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,4096,1,57,54,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,4096,1,51,47,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,4096,1,48,45,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,4096,1,47,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,4096,1,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,4096,1,0,50,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,4096,1,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,4096,1,51,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,4096,1,53,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,4096,1,51,72,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,4096,1,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,4096,1,0,54,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,4096,1,0,77,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,4096,2,32,30,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,4096,2,51,54,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,4096,2,50,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,4096,2,48,49,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,4096,2,50,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,4096,2,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,4096,2,0,45,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,4096,2,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,4096,2,55,54,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,4096,2,54,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,4096,2,52,71,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,4096,2,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,4096,2,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,4096,2,0,74,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,4096,3,30,28,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,4096,3,49,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,4096,3,49,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,4096,3,49,49,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,4096,3,47,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,4096,3,0,50,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,4096,3,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,4096,3,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,4096,3,52,56,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,4096,3,58,56,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,4096,3,55,72,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,4096,3,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,4096,3,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,4096,3,0,74,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,4096,4,32,30,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,4096,4,49,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,4096,4,49,46,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,4096,4,53,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,4096,4,50,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,4096,4,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,4096,4,0,48,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,4096,4,0,54,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,4096,4,54,55,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,4096,4,52,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,4096,4,53,82,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,4096,4,0,90,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,4096,4,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,4096,4,0,72,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,4096,5,31,30,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,4096,5,49,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,4096,5,53,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,4096,5,46,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,4096,5,55,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,4096,5,0,51,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,4096,5,0,45,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,4096,5,0,54,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,4096,5,54,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,4096,5,50,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,4096,5,49,71,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,4096,5,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,4096,5,0,54,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,4096,5,0,75,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,16384,1,32,31,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,16384,1,49,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,16384,1,50,47,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,16384,1,47,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,16384,1,48,54,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,16384,1,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,16384,1,0,46,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,16384,1,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,16384,1,55,54,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,16384,1,54,56,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,16384,1,52,73,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,16384,1,0,56,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,16384,1,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,16384,1,0,74,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,16384,2,32,33,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,16384,2,51,57,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,16384,2,50,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,16384,2,51,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,16384,2,50,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,16384,2,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,16384,2,0,48,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,16384,2,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,16384,2,54,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,16384,2,75,73,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,16384,2,53,69,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,16384,2,0,51,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,16384,2,0,53,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,16384,2,0,71,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,16384,3,34,32,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,16384,3,49,56,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,16384,3,55,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,16384,3,50,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,16384,3,50,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,16384,3,0,48,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,16384,3,0,46,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,16384,3,0,55,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,16384,3,52,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,16384,3,58,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,16384,3,52,71,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,16384,3,0,57,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,16384,3,0,51,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,16384,3,0,77,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,16384,4,35,30,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,16384,4,57,51,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,16384,4,48,47,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,16384,4,49,52,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,16384,4,49,53,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,16384,4,0,49,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,16384,4,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,16384,4,0,56,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,16384,4,52,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,16384,4,50,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,16384,4,49,71,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,16384,4,0,57,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,16384,4,0,50,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,16384,4,0,73,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,16384,5,34,33,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,16384,5,52,49,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,16384,5,47,48,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,16384,5,46,49,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,16384,5,47,54,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,16384,5,0,47,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,16384,5,0,45,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,16384,5,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,16384,5,49,50,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,16384,5,52,49,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,16384,5,52,73,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,16384,5,0,52,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,16384,5,0,50,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,16384,5,0,71,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,65536,1,44,41,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,65536,1,59,61,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,65536,1,65,65,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,65536,1,73,88,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,65536,1,80,95,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,65536,1,0,66,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,65536,1,0,59,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,65536,1,0,83,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,65536,1,61,65,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,65536,1,65,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,65536,1,61,99,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,65536,1,0,64,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,65536,1,0,62,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,65536,1,0,108,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,65536,2,45,43,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,65536,2,60,59,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,65536,2,62,64,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,65536,2,65,67,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,65536,2,64,89,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,65536,2,0,67,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,65536,2,0,66,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,65536,2,0,83,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,65536,2,62,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,65536,2,61,57,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,65536,2,56,94,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,65536,2,0,57,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,65536,2,0,53,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,65536,2,0,96,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,65536,3,41,39,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,65536,3,53,55,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,65536,3,60,61,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,65536,3,64,63,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,65536,3,66,84,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,65536,3,0,61,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,65536,3,0,61,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,65536,3,0,127,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,65536,3,59,57,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,65536,3,59,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,65536,3,56,93,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,65536,3,0,67,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,65536,3,0,64,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,65536,3,0,101,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,65536,4,43,42,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,65536,4,58,57,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,65536,4,62,65,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,65536,4,62,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,65536,4,70,99,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,65536,4,0,61,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,65536,4,0,57,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,65536,4,0,81,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,65536,4,59,58,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,65536,4,61,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,65536,4,61,97,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,65536,4,0,60,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,65536,4,0,58,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,65536,4,0,99,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,65536,5,42,42,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,65536,5,61,61,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,65536,5,66,63,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,65536,5,64,65,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,65536,5,66,81,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,65536,5,0,62,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,65536,5,0,60,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,65536,5,0,83,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,65536,5,60,60,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,65536,5,55,59,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,65536,5,58,98,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,65536,5,0,64,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,65536,5,0,62,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,65536,5,0,102,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,262144,1,78,77,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,262144,1,103,99,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,262144,1,122,107,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,262144,1,114,113,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,262144,1,114,187,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,262144,1,0,113,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,262144,1,0,112,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,262144,1,0,191,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,262144,1,109,102,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,262144,1,104,108,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,262144,1,145,253,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,262144,1,0,186,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,262144,1,0,247,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,262144,1,0,268,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,262144,2,96,75,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,262144,2,95,93,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,262144,2,118,108,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,262144,2,123,111,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,262144,2,110,186,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,262144,2,0,110,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,262144,2,0,108,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,262144,2,0,190,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,262144,2,105,102,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,262144,2,107,105,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,262144,2,107,251,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,262144,2,0,118,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,262144,2,0,102,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,262144,2,0,285,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,262144,3,84,74,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,262144,3,93,93,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,262144,3,120,111,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,262144,3,115,114,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,262144,3,115,191,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,262144,3,0,112,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,262144,3,0,110,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,262144,3,0,188,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,262144,3,156,100,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,262144,3,104,104,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,262144,3,103,268,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,262144,3,0,112,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,262144,3,0,103,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,262144,3,0,270,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,262144,4,78,75,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,262144,4,93,96,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,262144,4,122,116,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,262144,4,113,116,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,262144,4,117,187,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,262144,4,0,114,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,262144,4,0,104,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,262144,4,0,186,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,262144,4,109,100,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,262144,4,103,105,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,262144,4,103,255,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,262144,4,0,113,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,262144,4,0,96,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,262144,4,0,260,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,262144,5,80,74,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,262144,5,93,92,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,262144,5,117,108,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,262144,5,116,107,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,262144,5,117,232,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,262144,5,0,107,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,262144,5,0,102,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,262144,5,0,199,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,262144,5,106,96,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,262144,5,99,103,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,262144,5,108,255,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,262144,5,0,111,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,262144,5,0,100,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,262144,5,0,263,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,1048576,1,198,196,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,1048576,1,235,225,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,1048576,1,343,308,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,1048576,1,314,304,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,1048576,1,369,640,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,1048576,1,0,296,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,1048576,1,0,279,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,1048576,1,0,612,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,1048576,1,299,265,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,1048576,1,275,268,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,1048576,1,275,876,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,1048576,1,0,302,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,1048576,1,0,256,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,1048576,1,0,1026,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,1048576,2,284,200,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,1048576,2,220,233,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,1048576,2,324,297,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,1048576,2,326,319,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,1048576,2,327,624,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,1048576,2,0,307,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,1048576,2,0,278,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,1048576,2,0,658,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,1048576,2,301,267,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,1048576,2,264,263,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,1048576,2,282,879,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,1048576,2,0,303,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,1048576,2,0,259,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,1048576,2,0,901,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,1048576,3,206,197,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,1048576,3,223,222,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,1048576,3,384,316,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,1048576,3,330,311,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,1048576,3,316,626,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,1048576,3,0,291,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,1048576,3,0,276,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,1048576,3,0,614,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,1048576,3,283,261,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,1048576,3,264,265,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,1048576,3,267,955,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,1048576,3,0,511,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,1048576,3,0,281,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,1048576,3,0,963,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,1048576,4,219,218,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,1048576,4,232,228,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,1048576,4,320,307,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,1048576,4,310,303,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,1048576,4,311,671,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,1048576,4,0,367,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,1048576,4,0,279,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,1048576,4,0,627,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,1048576,4,276,269,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,1048576,4,273,266,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,1048576,4,287,915,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,1048576,4,0,333,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,1048576,4,0,250,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,1048576,4,0,953,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,1048576,5,205,196,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,1048576,5,226,220,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,1048576,5,319,309,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,1048576,5,314,302,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,1048576,5,324,626,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,4+2,1048576,5,0,310,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,4+2,1048576,5,0,279,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,4+2,1048576,5,0,633,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,1048576,5,328,267,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,1048576,5,288,367,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,1048576,5,289,882,OK,healthy,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+rs,8+2,1048576,5,0,308,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-sys,8+2,1048576,5,0,266,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+mojette-nonsys,8+2,1048576,5,0,922,OK,degraded-1,v1,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+plain,1+0,4096,1,29,30,OK,healthy,v2,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+stripe,10+0,4096,1,49,54,OK,healthy,v2,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,avx2
+plain,1+0,4096,1,30,31,OK,healthy,v2,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
+stripe,10+0,4096,1,51,51,OK,healthy,v2,x86_64,Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz,6.10.14-linuxkit,scalar(forced)
 
 Results saved to /Users/loghyr/reffs/logs/benchmark/results.csv
 Container logs: /Users/loghyr/reffs/logs/benchmark/bench.log

@@ -6,7 +6,7 @@ docker build -t reffs-dev .
 #1 DONE 0.0s
 
 #2 [internal] load metadata for docker.io/library/fedora:43
-#2 DONE 0.2s
+#2 DONE 0.6s
 
 #3 [internal] load .dockerignore
 #3 transferring context: 2B done
@@ -16,22 +16,22 @@ docker build -t reffs-dev .
 #4 resolve docker.io/library/fedora:43@sha256:781b7642e8bf256e9cf75d2aa58d86f5cc695fd2df113517614e181a5eee9138 0.0s done
 #4 DONE 0.0s
 
-#5 [6/8] RUN mkdir -p /reffs /backend /src /build /logs
+#5 [3/8] RUN dnf -y install     autoconf     autoconf-archive     automake     bash-completion     bear     ccache     check-devel     clang     clang-tools-extra     cmake     fuse-devel     gcc     gcc-c++     gdb     git     glibc-devel     HdrHistogram_c-devel     htop     iostat     iproute     iputils     jemalloc-devel     ktls-utils     libev-devel     libstdc++-devel     libtirpc-devel     libtool     liburing-devel     libuuid-devel     lldb     llvm-devel     make     net-tools     ninja-build     nslookup     krb5-devel     libnfsidmap-devel     openssl-devel     perf     procps-ng     python3-argcomplete     python3-devel     python3-pip     rpcbind     rpcgen     rsync     rocksdb-devel     scan-build     script     sslscan     strace     sudo     userspace-rcu-devel     vim     xxhash-devel     zlib-devel     && dnf clean all
 #5 CACHED
 
-#6 [2/8] RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf &&     echo "retries=20" >> /etc/dnf/dnf.conf
+#6 [7/8] WORKDIR /build
 #6 CACHED
 
 #7 [4/8] RUN activate-global-python-argcomplete --user &&     echo 'eval "$(register-python-argcomplete reffs-probe.py)"' >> /root/.bashrc &&     echo 'source /etc/profile.d/bash_completion.sh' >> /root/.bashrc
 #7 CACHED
 
-#8 [5/8] RUN pip3 install --no-cache-dir     ply     xdrlib3     xml2rfc
+#8 [6/8] RUN mkdir -p /reffs /backend /src /build /logs
 #8 CACHED
 
-#9 [7/8] WORKDIR /build
+#9 [5/8] RUN pip3 install --no-cache-dir     ply     xdrlib3     xml2rfc
 #9 CACHED
 
-#10 [3/8] RUN dnf -y install     autoconf     autoconf-archive     automake     bash-completion     bear     ccache     check-devel     clang     clang-tools-extra     cmake     fuse-devel     gcc     gcc-c++     gdb     git     glibc-devel     HdrHistogram_c-devel     htop     iostat     iproute     iputils     jemalloc-devel     ktls-utils     libev-devel     libstdc++-devel     libtirpc-devel     libtool     liburing-devel     libuuid-devel     lldb     llvm-devel     make     net-tools     ninja-build     nslookup     krb5-devel     libnfsidmap-devel     openssl-devel     perf     procps-ng     python3-argcomplete     python3-devel     python3-pip     rpcbind     rpcgen     rsync     rocksdb-devel     scan-build     script     sslscan     strace     sudo     userspace-rcu-devel     vim     xxhash-devel     zlib-devel     && dnf clean all
+#10 [2/8] RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf &&     echo "retries=20" >> /etc/dnf/dnf.conf
 #10 CACHED
 
 #11 [8/8] RUN printf '#!/bin/bash\nrpcbind -w\nexec "$@"\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
@@ -41,8 +41,8 @@ docker build -t reffs-dev .
 #12 exporting layers done
 #12 exporting manifest sha256:7d222816b1e6c1985614253ced0336dd1e4e1d2ea8f7cd6a4a063e7a17bd7569 done
 #12 exporting config sha256:2d6d58077d58beaec0ad34fa907d9538a70ac9ad6d4ab85143b5137777dd64c9 done
-#12 exporting attestation manifest sha256:9f2297956d98af0e55c96324fe4a0a79fdea53e98efa1443a9cd9e64c4d67af7 0.0s done
-#12 exporting manifest list sha256:3ffe83b2b576637d456f3f2844709b1bd90026e3485b842eb1cb4b78f5db7709 0.0s done
+#12 exporting attestation manifest sha256:9bbc969329c859a1450344009389f55f0191967e4201891caa4f0d8ec2533bfa 0.0s done
+#12 exporting manifest list sha256:ef675cdc1ff12aa1ebd815864ddae68e1298c45856dc81543f954392d5baf7ac 0.0s done
 #12 naming to docker.io/library/reffs-dev:latest done
 #12 unpacking to docker.io/library/reffs-dev:latest 0.0s done
 #12 DONE 0.1s
@@ -52,8 +52,8 @@ docker compose -f deploy/benchmark/docker-compose.yml run --rm builder
  Network benchmark_default Created 
  Volume benchmark_build-vol Creating 
  Volume benchmark_build-vol Created 
- Container benchmark-builder-run-ff28bf88f7b7 Creating 
- Container benchmark-builder-run-ff28bf88f7b7 Created 
+ Container benchmark-builder-run-4225ccb45334 Creating 
+ Container benchmark-builder-run-4225ccb45334 Created 
 libtoolize: putting auxiliary files in AC_CONFIG_AUX_DIR, '.'.
 libtoolize: copying file './ltmain.sh'
 libtoolize: putting macros in AC_CONFIG_MACRO_DIRS, 'm4'.
@@ -293,10 +293,6 @@ config.status: creating scripts/__init__.py
 config.status: creating config.h
 config.status: executing depfiles commands
 config.status: executing libtool commands
-  GEN      /shared/src/config.h.in
-  GEN      stamp-h1
-config.status: creating config.h
-config.status: config.h is unchanged
 make  all-recursive
 make[1]: Entering directory '/shared/build'
 Making all in third_party
@@ -703,26 +699,26 @@ docker compose -f deploy/benchmark/docker-compose.yml up -d ds0 ds1 ds2 ds3 ds4 
  Network benchmark_bench Created 
  Container reffs-bench-builder Creating 
  Container reffs-bench-builder Created 
- Container reffs-bench-ds7 Creating 
- Container reffs-bench-ds4 Creating 
- Container reffs-bench-ds2 Creating 
- Container reffs-bench-ds5 Creating 
- Container reffs-bench-ds6 Creating 
- Container reffs-bench-ds8 Creating 
- Container reffs-bench-ds9 Creating 
  Container reffs-bench-ds0 Creating 
  Container reffs-bench-ds3 Creating 
+ Container reffs-bench-ds7 Creating 
+ Container reffs-bench-ds9 Creating 
+ Container reffs-bench-ds5 Creating 
  Container reffs-bench-ds1 Creating 
- Container reffs-bench-ds4 Created 
- Container reffs-bench-ds5 Created 
- Container reffs-bench-ds2 Created 
- Container reffs-bench-ds8 Created 
- Container reffs-bench-ds6 Created 
- Container reffs-bench-ds7 Created 
- Container reffs-bench-ds1 Created 
- Container reffs-bench-ds9 Created 
- Container reffs-bench-ds0 Created 
+ Container reffs-bench-ds2 Creating 
+ Container reffs-bench-ds6 Creating 
+ Container reffs-bench-ds8 Creating 
+ Container reffs-bench-ds4 Creating 
  Container reffs-bench-ds3 Created 
+ Container reffs-bench-ds0 Created 
+ Container reffs-bench-ds5 Created 
+ Container reffs-bench-ds9 Created 
+ Container reffs-bench-ds8 Created 
+ Container reffs-bench-ds1 Created 
+ Container reffs-bench-ds2 Created 
+ Container reffs-bench-ds7 Created 
+ Container reffs-bench-ds4 Created 
+ Container reffs-bench-ds6 Created 
  Container reffs-bench-mds Creating 
  Container reffs-bench-mds Created 
  Container reffs-bench-builder Starting 
@@ -738,761 +734,765 @@ docker compose -f deploy/benchmark/docker-compose.yml up -d ds0 ds1 ds2 ds3 ds4 
  Container reffs-bench-builder Waiting 
  Container reffs-bench-builder Waiting 
  Container reffs-bench-builder Exited 
- Container reffs-bench-ds0 Starting 
  Container reffs-bench-builder Exited 
  Container reffs-bench-builder Exited 
  Container reffs-bench-ds2 Starting 
- Container reffs-bench-ds8 Starting 
  Container reffs-bench-builder Exited 
  Container reffs-bench-ds5 Starting 
+ Container reffs-bench-ds9 Starting 
+ Container reffs-bench-ds8 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds7 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds0 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds4 Starting 
  Container reffs-bench-builder Exited 
  Container reffs-bench-ds3 Starting 
  Container reffs-bench-builder Exited 
- Container reffs-bench-ds6 Starting 
- Container reffs-bench-builder Exited 
  Container reffs-bench-ds1 Starting 
  Container reffs-bench-builder Exited 
- Container reffs-bench-builder Exited 
- Container reffs-bench-ds9 Starting 
- Container reffs-bench-ds7 Starting 
- Container reffs-bench-builder Exited 
- Container reffs-bench-ds4 Starting 
- Container reffs-bench-ds7 Started 
- Container reffs-bench-ds2 Started 
- Container reffs-bench-ds1 Started 
- Container reffs-bench-ds8 Started 
- Container reffs-bench-ds5 Started 
+ Container reffs-bench-ds6 Starting 
  Container reffs-bench-ds3 Started 
+ Container reffs-bench-ds8 Started 
  Container reffs-bench-ds9 Started 
+ Container reffs-bench-ds1 Started 
+ Container reffs-bench-ds7 Started 
  Container reffs-bench-ds0 Started 
- Container reffs-bench-ds4 Started 
  Container reffs-bench-ds6 Started 
- Container reffs-bench-ds6 Waiting 
- Container reffs-bench-ds0 Waiting 
+ Container reffs-bench-ds5 Started 
+ Container reffs-bench-ds2 Started 
+ Container reffs-bench-ds4 Started 
  Container reffs-bench-ds8 Waiting 
- Container reffs-bench-ds7 Waiting 
- Container reffs-bench-ds5 Waiting 
  Container reffs-bench-ds4 Waiting 
- Container reffs-bench-ds1 Waiting 
- Container reffs-bench-ds2 Waiting 
+ Container reffs-bench-ds0 Waiting 
  Container reffs-bench-ds3 Waiting 
+ Container reffs-bench-ds2 Waiting 
+ Container reffs-bench-ds5 Waiting 
+ Container reffs-bench-ds1 Waiting 
  Container reffs-bench-ds9 Waiting 
- Container reffs-bench-ds1 Healthy 
+ Container reffs-bench-ds7 Waiting 
+ Container reffs-bench-ds6 Waiting 
+ Container reffs-bench-ds6 Healthy 
+ Container reffs-bench-ds0 Healthy 
+ Container reffs-bench-ds9 Healthy 
  Container reffs-bench-ds3 Healthy 
  Container reffs-bench-ds8 Healthy 
- Container reffs-bench-ds9 Healthy 
- Container reffs-bench-ds0 Healthy 
- Container reffs-bench-ds2 Healthy 
- Container reffs-bench-ds5 Healthy 
  Container reffs-bench-ds7 Healthy 
- Container reffs-bench-ds6 Healthy 
+ Container reffs-bench-ds1 Healthy 
+ Container reffs-bench-ds5 Healthy 
+ Container reffs-bench-ds2 Healthy 
  Container reffs-bench-ds4 Healthy 
  Container reffs-bench-mds Starting 
  Container reffs-bench-mds Started 
 Waiting for services to become healthy...
 docker compose -f deploy/benchmark/docker-compose.yml --profile run run --rm bench \
 	2>/home/loghyr/reffs/logs/benchmark/bench.log | tee /home/loghyr/reffs/logs/benchmark/results.csv
-codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,arch,cpu,kernel,simd
-plain,1+0,4096,1,57,38,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,4096,1,78,62,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,4096,1,80,62,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,4096,1,75,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,4096,1,75,61,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,4096,1,0,59,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,4096,1,0,62,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,4096,1,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,4096,1,82,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,4096,1,82,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,4096,1,81,87,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,4096,1,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,4096,1,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,4096,1,0,88,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,4096,2,60,39,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,4096,2,84,61,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,4096,2,78,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,4096,2,77,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,4096,2,79,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,4096,2,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,4096,2,0,61,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,4096,2,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,4096,2,78,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,4096,2,92,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,4096,2,87,87,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,4096,2,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,4096,2,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,4096,2,0,88,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,4096,3,57,37,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,4096,3,85,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,4096,3,82,62,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,4096,3,82,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,4096,3,79,73,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,4096,3,0,61,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,4096,3,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,4096,3,0,71,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,4096,3,87,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,4096,3,89,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,4096,3,92,90,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,4096,3,0,60,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,4096,3,0,54,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,4096,3,0,81,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,4096,4,49,39,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,4096,4,84,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,4096,4,81,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,4096,4,85,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,4096,4,81,74,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,4096,4,0,63,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,4096,4,0,59,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,4096,4,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,4096,4,86,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,4096,4,91,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,4096,4,84,94,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,4096,4,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,4096,4,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,4096,4,0,85,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,4096,5,62,42,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,4096,5,84,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,4096,5,83,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,4096,5,80,62,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,4096,5,86,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,4096,5,0,61,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,4096,5,0,62,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,4096,5,0,71,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,4096,5,87,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,4096,5,86,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,4096,5,82,89,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,4096,5,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,4096,5,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,4096,5,0,93,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,16384,1,59,42,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,16384,1,85,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,16384,1,81,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,16384,1,83,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,16384,1,83,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,16384,1,0,61,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,16384,1,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,16384,1,0,69,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,16384,1,88,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,16384,1,82,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,16384,1,84,91,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,16384,1,0,71,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,16384,1,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,16384,1,0,95,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,16384,2,63,41,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,16384,2,83,73,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,16384,2,82,62,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,16384,2,87,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,16384,2,87,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,16384,2,0,63,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,16384,2,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,16384,2,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,16384,2,94,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,16384,2,83,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,16384,2,92,87,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,16384,2,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,16384,2,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,16384,2,0,93,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,16384,3,63,42,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,16384,3,89,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,16384,3,87,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,16384,3,87,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,16384,3,86,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,16384,3,0,56,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,16384,3,0,52,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,16384,3,0,60,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,16384,3,88,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,16384,3,87,73,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,16384,3,92,88,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,16384,3,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,16384,3,0,69,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,16384,3,0,89,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,16384,4,61,44,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,16384,4,87,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,16384,4,86,62,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,16384,4,81,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,16384,4,84,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,16384,4,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,16384,4,0,63,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,16384,4,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,16384,4,88,73,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,16384,4,88,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,16384,4,89,91,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,16384,4,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,16384,4,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,16384,4,0,91,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,16384,5,65,42,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,16384,5,89,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,16384,5,83,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,16384,5,81,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,16384,5,89,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,16384,5,0,62,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,16384,5,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,16384,5,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,16384,5,89,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,16384,5,87,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,16384,5,87,91,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,16384,5,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,16384,5,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,16384,5,0,92,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,65536,1,72,57,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,65536,1,96,74,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,65536,1,97,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,65536,1,107,83,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,65536,1,105,128,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,65536,1,0,77,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,65536,1,0,79,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,65536,1,0,105,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,65536,1,105,76,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,65536,1,103,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,65536,1,101,115,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,65536,1,0,82,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,65536,1,0,75,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,65536,1,0,125,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,65536,2,71,53,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,65536,2,97,81,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,65536,2,102,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,65536,2,103,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,65536,2,90,86,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,65536,2,0,75,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,65536,2,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,65536,2,0,101,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,65536,2,95,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,65536,2,102,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,65536,2,103,112,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,65536,2,0,78,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,65536,2,0,78,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,65536,2,0,123,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,65536,3,74,56,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,65536,3,99,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,65536,3,105,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,65536,3,103,80,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,65536,3,105,106,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,65536,3,0,82,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,65536,3,0,76,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,65536,3,0,106,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,65536,3,107,76,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,65536,3,103,79,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,65536,3,99,116,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,65536,3,0,82,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,65536,3,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,65536,3,0,122,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,65536,4,73,52,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,65536,4,100,77,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,65536,4,102,81,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,65536,4,133,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,65536,4,107,108,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,65536,4,0,78,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,65536,4,0,80,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,65536,4,0,108,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,65536,4,103,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,65536,4,104,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,65536,4,82,106,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,65536,4,0,76,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,65536,4,0,79,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,65536,4,0,120,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,65536,5,75,51,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,65536,5,102,76,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,65536,5,105,74,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,65536,5,103,83,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,65536,5,111,103,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,65536,5,0,80,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,65536,5,0,80,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,65536,5,0,102,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,65536,5,111,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,65536,5,104,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,65536,5,102,116,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,65536,5,0,82,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,65536,5,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,65536,5,0,117,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,262144,1,116,92,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,262144,1,146,116,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,262144,1,169,138,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,262144,1,189,138,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,262144,1,201,235,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,262144,1,0,140,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,262144,1,0,133,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,262144,1,0,227,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,262144,1,133,102,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,262144,1,149,124,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,262144,1,12318,295,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,262144,1,0,147,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,262144,1,0,123,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,262144,1,0,307,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,262144,2,113,93,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,262144,2,140,119,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,262144,2,173,138,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,262144,2,193,133,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,262144,2,191,211,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,262144,2,0,108,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,262144,2,0,127,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,262144,2,0,232,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,262144,2,169,137,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,262144,2,154,131,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,262144,2,183,294,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,262144,2,0,142,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,262144,2,0,128,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,262144,2,0,302,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,262144,3,111,88,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,262144,3,150,127,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,262144,3,171,136,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,262144,3,188,140,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,262144,3,195,232,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,262144,3,0,141,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,262144,3,0,140,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,262144,3,0,232,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,262144,3,170,130,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,262144,3,172,128,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,262144,3,144,280,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,262144,3,0,146,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,262144,3,0,127,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,262144,3,0,299,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,262144,4,107,92,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,262144,4,129,111,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,262144,4,159,133,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,262144,4,179,134,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,262144,4,186,228,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,262144,4,0,124,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,262144,4,0,121,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,262144,4,0,220,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,262144,4,151,117,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,262144,4,162,120,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,262144,4,170,282,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,262144,4,0,130,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,262144,4,0,115,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,262144,4,0,292,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,262144,5,108,98,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,262144,5,135,110,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,262144,5,140,104,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,262144,5,179,141,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,262144,5,193,235,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,262144,5,0,134,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,262144,5,0,142,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,262144,5,0,229,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,262144,5,163,131,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,262144,5,175,128,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,262144,5,177,296,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,262144,5,0,141,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,262144,5,0,123,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,262144,5,0,303,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,1048576,1,237,223,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,1048576,1,343,277,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,1048576,1,489,392,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,1048576,1,516,354,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,1048576,1,483,747,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,1048576,1,0,383,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,1048576,1,0,362,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,1048576,1,0,746,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,1048576,1,415,361,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,1048576,1,449,334,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,1048576,1,505,987,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,1048576,1,0,407,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,1048576,1,0,347,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,1048576,1,0,1049,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,1048576,2,321,276,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,1048576,2,333,294,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,1048576,2,460,341,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,1048576,2,450,302,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,1048576,2,526,736,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,1048576,2,0,369,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,1048576,2,0,362,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,1048576,2,0,741,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,1048576,2,417,343,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,1048576,2,453,346,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,1048576,2,408,974,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,1048576,2,0,382,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,1048576,2,0,317,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,1048576,2,0,1022,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,1048576,3,241,212,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,1048576,3,338,278,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,1048576,3,466,387,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,1048576,3,416,373,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,1048576,3,527,747,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,1048576,3,0,376,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,1048576,3,0,362,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,1048576,3,0,742,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,1048576,3,407,348,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,1048576,3,461,344,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,1048576,3,345,986,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,1048576,3,0,387,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,1048576,3,0,324,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,1048576,3,0,1021,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,1048576,4,250,214,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,1048576,4,332,290,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,1048576,4,447,403,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,1048576,4,425,355,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,1048576,4,500,747,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,1048576,4,0,365,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,1048576,4,0,351,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,1048576,4,0,744,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,1048576,4,409,338,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,1048576,4,457,334,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,1048576,4,393,977,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,1048576,4,0,383,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,1048576,4,0,324,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,1048576,4,0,1024,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,1048576,5,306,284,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-stripe,10+0,1048576,5,318,271,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,1048576,5,449,330,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,1048576,5,456,380,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,1048576,5,498,734,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,4+2,1048576,5,0,363,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,4+2,1048576,5,0,340,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,4+2,1048576,5,0,730,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,1048576,5,461,322,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,1048576,5,443,277,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,1048576,5,438,967,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-rs,8+2,1048576,5,0,365,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-sys,8+2,1048576,5,0,305,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-mojette-nonsys,8+2,1048576,5,0,1014,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
-plain,1+0,4096,1,40,37,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,4096,1,63,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,4096,1,60,59,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,4096,1,61,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,4096,1,62,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,4096,1,0,60,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,4096,1,0,55,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,4096,1,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,4096,1,73,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,4096,1,68,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,4096,1,68,85,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,4096,1,0,63,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,4096,1,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,4096,1,0,84,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,4096,2,38,41,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,4096,2,65,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,4096,2,63,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,4096,2,66,62,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,4096,2,63,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,4096,2,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,4096,2,0,63,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,4096,2,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,4096,2,70,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,4096,2,68,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,4096,2,67,89,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,4096,2,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,4096,2,0,74,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,4096,2,0,90,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,4096,3,41,40,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,4096,3,71,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,4096,3,63,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,4096,3,62,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,4096,3,67,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,4096,3,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,4096,3,0,61,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,4096,3,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,4096,3,73,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,4096,3,68,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,4096,3,66,88,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,4096,3,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,4096,3,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,4096,3,0,90,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,4096,4,41,40,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,4096,4,71,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,4096,4,55,58,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,4096,4,59,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,4096,4,67,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,4096,4,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,4096,4,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,4096,4,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,4096,4,68,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,4096,4,70,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,4096,4,71,91,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,4096,4,0,71,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,4096,4,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,4096,4,0,91,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,4096,5,38,42,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,4096,5,66,69,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,4096,5,65,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,4096,5,73,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,4096,5,66,74,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,4096,5,0,62,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,4096,5,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,4096,5,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,4096,5,72,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,4096,5,70,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,4096,5,70,86,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,4096,5,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,4096,5,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,4096,5,0,91,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,16384,1,38,37,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,16384,1,62,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,16384,1,64,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,16384,1,66,64,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,16384,1,65,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,16384,1,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,16384,1,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,16384,1,0,76,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,16384,1,67,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,16384,1,66,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,16384,1,66,87,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,16384,1,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,16384,1,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,16384,1,0,93,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,16384,2,44,44,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,16384,2,65,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,16384,2,65,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,16384,2,69,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,16384,2,63,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,16384,2,0,69,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,16384,2,0,71,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,16384,2,0,76,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,16384,2,67,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,16384,2,68,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,16384,2,67,83,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,16384,2,0,76,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,16384,2,0,67,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,16384,2,0,89,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,16384,3,44,43,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,16384,3,76,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,16384,3,67,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,16384,3,63,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,16384,3,63,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,16384,3,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,16384,3,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,16384,3,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,16384,3,69,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,16384,3,69,68,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,16384,3,71,90,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,16384,3,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,16384,3,0,69,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,16384,3,0,93,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,16384,4,44,42,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,16384,4,69,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,16384,4,64,57,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,16384,4,62,57,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,16384,4,65,67,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,16384,4,0,65,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,16384,4,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,16384,4,0,73,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,16384,4,71,66,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,16384,4,71,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,16384,4,68,92,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,16384,4,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,16384,4,0,70,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,16384,4,0,94,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,16384,5,45,44,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,16384,5,73,84,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,16384,5,63,63,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,16384,5,64,65,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,16384,5,68,71,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,16384,5,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,16384,5,0,64,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,16384,5,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,16384,5,73,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,16384,5,69,72,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,16384,5,68,92,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,16384,5,0,74,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,16384,5,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,16384,5,0,91,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,65536,1,53,57,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,65536,1,83,80,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,65536,1,82,83,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,65536,1,78,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,65536,1,82,104,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,65536,1,0,86,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,65536,1,0,81,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,65536,1,0,103,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,65536,1,81,83,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,65536,1,82,80,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,65536,1,78,123,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,65536,1,0,83,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,65536,1,0,75,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,65536,1,0,123,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,65536,2,56,52,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,65536,2,77,82,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,65536,2,83,84,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,65536,2,80,79,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,65536,2,78,110,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,65536,2,0,81,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,65536,2,0,84,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,65536,2,0,103,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,65536,2,79,80,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,65536,2,76,80,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,65536,2,88,118,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,65536,2,0,82,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,65536,2,0,78,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,65536,2,0,124,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,65536,3,52,57,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,65536,3,78,80,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,65536,3,86,82,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,65536,3,80,82,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,65536,3,80,91,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,65536,3,0,68,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,65536,3,0,72,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,65536,3,0,107,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,65536,3,78,79,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,65536,3,78,77,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,65536,3,83,119,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,65536,3,0,84,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,65536,3,0,66,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,65536,3,0,117,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,65536,4,54,51,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,65536,4,78,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,65536,4,87,81,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,65536,4,82,84,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,65536,4,80,106,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,65536,4,0,86,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,65536,4,0,79,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,65536,4,0,103,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,65536,4,80,76,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,65536,4,81,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,65536,4,79,119,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,65536,4,0,82,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,65536,4,0,78,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,65536,4,0,123,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,65536,5,58,52,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,65536,5,79,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,65536,5,87,84,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,65536,5,81,78,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,65536,5,80,106,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,65536,5,0,81,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,65536,5,0,79,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,65536,5,0,104,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,65536,5,84,75,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,65536,5,75,83,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,65536,5,78,119,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,65536,5,0,84,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,65536,5,0,76,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,65536,5,0,123,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,262144,1,90,95,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,262144,1,123,88,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,262144,1,117,138,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,262144,1,149,141,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,262144,1,153,227,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,262144,1,0,138,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,262144,1,0,129,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,262144,1,0,235,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,262144,1,133,127,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,262144,1,147,133,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,262144,1,141,291,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,262144,1,0,142,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,262144,1,0,123,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,262144,1,0,305,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,262144,2,99,89,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,262144,2,126,119,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,262144,2,151,152,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,262144,2,148,145,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,262144,2,153,237,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,262144,2,0,136,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,262144,2,0,139,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,262144,2,0,221,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,262144,2,119,109,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,262144,2,134,129,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,262144,2,137,293,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,262144,2,0,147,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,262144,2,0,125,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,262144,2,0,301,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,262144,3,105,99,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,262144,3,122,126,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,262144,3,154,141,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,262144,3,143,151,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,262144,3,159,234,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,262144,3,0,143,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,262144,3,0,134,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,262144,3,0,233,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,262144,3,134,126,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,262144,3,132,129,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,262144,3,145,291,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,262144,3,0,142,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,262144,3,0,126,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,262144,3,0,297,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,262144,4,76,70,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,262144,4,122,124,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,262144,4,152,140,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,262144,4,148,125,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,262144,4,161,232,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,262144,4,0,140,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,262144,4,0,139,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,262144,4,0,230,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,262144,4,116,131,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,262144,4,137,126,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,262144,4,142,296,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,262144,4,0,142,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,262144,4,0,123,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,262144,4,0,304,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,262144,5,99,92,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,262144,5,113,121,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,262144,5,133,146,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,262144,5,131,132,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,262144,5,150,229,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,262144,5,0,134,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,262144,5,0,116,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,262144,5,0,221,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,262144,5,137,130,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,262144,5,134,136,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,262144,5,124,294,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,262144,5,0,144,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,262144,5,0,134,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,262144,5,0,304,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,1048576,1,225,220,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,1048576,1,204,286,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,1048576,1,420,381,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,1048576,1,420,367,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,1048576,1,389,755,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,1048576,1,0,356,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,1048576,1,0,348,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,1048576,1,0,742,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,1048576,1,326,237,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,1048576,1,387,315,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,1048576,1,379,987,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,1048576,1,0,390,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,1048576,1,0,328,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,1048576,1,0,1039,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,1048576,2,222,230,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,1048576,2,301,216,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,1048576,2,397,401,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,1048576,2,401,347,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,1048576,2,411,739,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,1048576,2,0,346,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,1048576,2,0,356,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,1048576,2,0,737,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,1048576,2,368,341,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,1048576,2,259,343,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,1048576,2,387,975,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,1048576,2,0,384,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,1048576,2,0,329,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,1048576,2,0,1031,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,1048576,3,221,229,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,1048576,3,309,301,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,1048576,3,364,358,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,1048576,3,420,357,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,1048576,3,435,748,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,1048576,3,0,366,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,1048576,3,0,343,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,1048576,3,0,751,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,1048576,3,372,311,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,1048576,3,374,241,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,1048576,3,404,987,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,1048576,3,0,391,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,1048576,3,0,322,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,1048576,3,0,1024,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,1048576,4,306,265,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,1048576,4,292,300,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,1048576,4,435,262,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,1048576,4,393,377,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,1048576,4,416,756,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,1048576,4,0,370,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,1048576,4,0,347,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,1048576,4,0,741,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,1048576,4,371,325,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,1048576,4,380,318,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,1048576,4,328,984,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,1048576,4,0,385,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,1048576,4,0,334,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,1048576,4,0,1028,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-plain,1+0,1048576,5,224,292,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-stripe,10+0,1048576,5,321,287,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,1048576,5,422,369,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,1048576,5,302,397,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,1048576,5,381,757,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,4+2,1048576,5,0,370,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,4+2,1048576,5,0,362,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,4+2,1048576,5,0,750,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,1048576,5,370,293,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,1048576,5,348,345,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,1048576,5,335,985,OK,healthy,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-rs,8+2,1048576,5,0,387,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-sys,8+2,1048576,5,0,323,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
-mojette-nonsys,8+2,1048576,5,0,1029,OK,degraded-1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd
+plain,1+0,4096,1,59,39,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,1,81,62,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,1,76,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,1,82,64,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,1,83,77,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,1,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,1,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,1,0,72,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,1,88,71,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,1,83,67,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,1,88,89,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,1,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,1,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,1,0,91,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,2,61,38,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,2,79,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,2,85,66,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,2,85,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,2,82,72,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,2,0,67,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,2,0,63,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,2,0,73,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,2,83,64,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,2,88,66,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,2,90,90,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,2,0,67,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,2,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,2,0,90,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,3,58,39,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,3,84,72,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,3,83,63,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,3,82,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,3,79,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,3,0,62,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,3,0,61,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,3,0,64,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,3,68,60,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,3,79,67,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,3,85,90,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,3,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,3,0,74,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,3,0,90,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,4,60,39,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,4,90,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,4,80,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,4,84,65,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,4,83,73,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,4,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,4,0,61,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,4,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,4,89,81,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,4,90,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,4,86,95,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,4,0,72,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,4,0,68,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,4,0,96,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,5,58,39,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,5,85,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,5,85,66,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,5,82,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,5,87,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,5,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,5,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,5,0,72,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,5,91,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,5,86,74,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,5,84,87,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,5,0,73,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,5,0,69,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,5,0,91,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,1,65,42,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,1,86,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,1,83,62,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,1,85,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,1,81,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,1,0,64,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,1,0,63,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,1,0,70,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,1,89,64,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,1,90,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,1,90,88,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,1,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,1,0,72,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,1,0,88,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,2,61,43,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,2,89,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,2,85,65,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,2,86,62,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,2,87,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,2,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,2,0,68,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,2,0,68,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,2,91,71,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,2,89,65,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,2,87,89,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,2,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,2,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,2,0,94,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,3,54,33,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,3,77,64,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,3,82,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,3,89,65,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,3,83,76,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,3,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,3,0,63,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,3,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,3,84,64,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,3,92,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,3,95,93,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,3,0,74,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,3,0,70,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,3,0,95,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,4,63,43,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,4,88,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,4,86,66,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,4,83,71,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,4,85,76,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,4,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,4,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,4,0,73,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,4,89,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,4,90,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,4,93,91,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,4,0,69,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,4,0,73,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,4,0,92,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,5,65,41,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,5,92,64,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,5,82,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,5,86,64,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,5,88,72,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,5,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,5,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,5,0,72,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,5,89,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,5,91,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,5,88,94,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,5,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,5,0,62,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,5,0,76,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,1,70,54,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,1,99,77,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,1,103,79,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,1,108,75,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,1,107,105,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,1,0,79,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,1,0,84,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,1,0,103,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,1,104,77,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,1,101,80,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,1,102,117,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,1,0,79,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,1,0,67,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,1,0,107,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,2,57,45,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,2,94,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,2,107,76,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,2,111,84,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,2,108,103,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,2,0,82,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,2,0,80,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,2,0,105,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,2,100,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,2,100,73,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,2,96,120,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,2,0,81,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,2,0,76,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,2,0,123,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,3,72,55,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,3,103,74,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,3,107,83,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,3,108,76,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,3,111,106,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,3,0,80,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,3,0,82,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,3,0,102,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,3,104,77,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,3,101,76,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,3,101,115,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,3,0,77,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,3,0,76,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,3,0,130,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,4,72,49,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,4,101,82,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,4,123,75,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,4,105,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,4,96,89,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,4,0,74,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,4,0,76,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,4,0,109,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,4,95,76,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,4,105,79,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,4,104,114,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,4,0,76,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,4,0,82,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,4,0,121,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,5,77,53,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,5,101,74,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,5,107,84,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,5,106,77,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,5,106,107,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,5,0,82,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,5,0,74,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,5,0,101,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,5,100,77,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,5,103,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,5,105,118,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,5,0,81,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,5,0,78,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,5,0,120,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,1,111,90,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,1,144,119,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,1,180,139,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,1,186,149,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,1,190,227,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,1,0,106,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,1,0,106,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,1,0,228,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,1,159,120,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,1,166,117,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,1,12267,294,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,1,0,142,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,1,0,124,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,1,0,305,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,2,109,88,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,2,143,119,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,2,170,135,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,2,149,109,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,2,181,235,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,2,0,138,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,2,0,134,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,2,0,232,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,2,158,127,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,2,172,132,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,2,178,294,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,2,0,139,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,2,0,130,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,2,0,300,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,3,121,92,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,3,143,124,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,3,167,142,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,3,194,138,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,3,189,232,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,3,0,137,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,3,0,135,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,3,0,234,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,3,143,104,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,3,146,124,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,3,171,292,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,3,0,140,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,3,0,123,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,3,0,301,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,4,118,87,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,4,132,102,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,4,159,129,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,4,185,126,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,4,175,220,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,4,0,120,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,4,0,122,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,4,0,215,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,4,152,115,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,4,157,119,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,4,162,281,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,4,0,125,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,4,0,112,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,4,0,290,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,5,115,75,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,5,111,101,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,5,173,139,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,5,194,140,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,5,185,231,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,5,0,136,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,5,0,135,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,5,0,233,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,5,156,120,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,5,170,132,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,5,177,290,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,5,0,148,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,5,0,125,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,5,0,303,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,1,268,222,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,1,336,291,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,1,468,391,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,1,521,263,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,1,522,740,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,1,0,354,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,1,0,349,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,1,0,746,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,1,406,355,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,1,463,357,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,1,475,990,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,1,0,402,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,1,0,344,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,1,0,1049,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,2,317,274,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,2,338,297,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,2,435,359,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,2,409,418,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,2,506,758,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,2,0,377,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,2,0,382,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,2,0,744,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,2,398,338,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,2,452,354,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,2,410,978,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,2,0,380,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,2,0,312,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,2,0,1022,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,3,237,206,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,3,342,277,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,3,473,377,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,3,470,379,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,3,517,750,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,3,0,359,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,3,0,349,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,3,0,744,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,3,396,336,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,3,450,285,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,3,437,979,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,3,0,385,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,3,0,323,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,3,0,1025,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,4,317,282,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,4,330,292,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,4,444,264,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,4,516,371,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,4,518,744,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,4,0,372,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,4,0,370,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,4,0,746,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,4,396,327,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,4,455,228,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,4,468,979,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,4,0,378,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,4,0,321,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,4,0,1031,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,5,273,213,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,5,324,245,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,5,448,249,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,5,490,368,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,5,495,728,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,5,0,350,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,5,0,341,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,5,0,729,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,5,495,329,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,5,443,219,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,5,462,966,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,5,0,381,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,5,0,308,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,5,0,1019,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,1,43,41,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,1,60,66,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,1,61,64,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,1,59,63,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,1,61,71,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,1,0,67,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,1,0,64,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,1,0,72,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,1,70,71,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,1,74,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,1,67,87,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,1,0,73,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,1,0,70,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,1,0,87,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,2,42,38,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,2,68,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,2,69,67,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,2,65,66,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,2,70,72,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,2,0,64,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,2,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,2,0,76,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,2,68,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,2,71,71,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,2,72,91,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,2,0,68,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,2,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,2,0,93,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,3,42,44,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,3,72,72,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,3,63,61,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,3,67,66,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,3,69,74,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,3,0,69,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,3,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,3,0,73,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,3,71,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,3,73,72,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,3,68,84,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,3,0,68,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,3,0,61,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,3,0,84,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,4,36,38,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,4,68,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,4,64,66,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,4,65,66,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,4,67,73,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,4,0,67,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,4,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,4,0,76,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,4,64,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,4,72,67,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,4,70,92,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,4,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,4,0,64,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,4,0,93,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,5,44,43,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,5,68,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,5,65,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,5,66,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,5,72,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,5,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,5,0,64,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,5,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,5,68,65,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,5,72,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,5,70,90,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,5,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,5,0,75,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,5,0,95,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,1,47,45,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,1,69,71,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,1,64,64,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,1,70,63,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,1,61,75,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,1,0,63,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,1,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,1,0,72,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,1,69,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,1,79,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,1,68,88,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,1,0,69,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,1,0,70,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,1,0,88,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,2,42,45,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,2,67,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,2,67,66,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,2,69,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,2,65,76,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,2,0,69,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,2,0,65,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,2,0,69,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,2,71,71,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,2,69,67,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,2,73,85,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,2,0,74,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,2,0,72,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,2,0,90,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,3,43,42,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,3,69,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,3,72,67,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,3,67,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,3,72,75,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,3,0,64,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,3,0,67,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,3,0,75,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,3,69,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,3,70,63,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,3,71,93,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,3,0,63,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,3,0,61,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,3,0,87,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,4,42,42,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,4,67,75,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,4,66,63,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,4,67,67,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,4,66,76,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,4,0,69,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,4,0,64,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,4,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,4,70,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,4,68,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,4,67,92,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,4,0,73,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,4,0,68,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,4,0,92,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,5,44,44,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,5,67,67,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,5,93,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,5,66,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,5,66,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,5,0,68,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,5,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,5,0,70,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,5,73,69,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,5,70,68,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,5,74,90,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,5,0,66,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,5,0,68,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,5,0,89,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,1,51,45,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,1,77,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,1,84,80,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,1,80,82,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,1,81,103,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,1,0,85,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,1,0,81,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,1,0,105,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,1,85,80,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,1,79,80,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,1,79,122,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,1,0,81,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,1,0,76,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,1,0,123,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,2,55,54,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,2,76,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,2,84,81,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,2,84,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,2,83,105,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,2,0,82,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,2,0,80,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,2,0,108,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,2,80,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,2,80,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,2,79,126,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,2,0,82,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,2,0,72,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,2,0,124,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,3,55,55,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,3,79,76,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,3,71,70,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,3,69,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,3,84,107,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,3,0,81,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,3,0,84,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,3,0,99,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,3,79,75,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,3,74,76,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,3,77,120,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,3,0,80,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,3,0,71,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,3,0,123,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,4,53,52,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,4,74,81,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,4,79,83,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,4,84,77,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,4,79,99,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,4,0,80,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,4,0,83,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,4,0,103,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,4,74,77,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,4,77,75,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,4,84,118,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,4,0,84,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,4,0,79,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,4,0,123,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,5,54,53,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,5,76,79,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,5,82,83,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,5,86,80,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,5,77,104,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,5,0,76,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,5,0,81,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,5,0,106,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,5,78,75,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,5,80,77,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,5,80,109,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,5,0,77,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,5,0,69,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,5,0,112,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,1,78,78,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,1,125,119,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,1,155,136,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,1,145,117,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,1,152,235,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,1,0,134,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,1,0,131,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,1,0,241,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,1,130,126,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,1,142,130,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,1,149,292,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,1,0,143,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,1,0,124,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,1,0,303,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,2,91,92,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,2,123,117,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,2,153,143,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,2,139,142,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,2,153,235,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,2,0,123,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,2,0,112,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,2,0,227,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,2,141,130,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,2,136,127,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,2,132,291,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,2,0,143,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,2,0,130,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,2,0,299,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,3,86,83,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,3,125,119,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,3,152,140,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,3,156,137,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,3,157,226,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,3,0,145,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,3,0,131,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,3,0,232,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,3,137,130,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,3,132,132,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,3,137,296,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,3,0,143,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,3,0,100,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,3,0,297,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,4,92,91,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,4,127,126,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,4,152,139,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,4,152,141,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,4,155,232,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,4,0,138,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,4,0,133,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,4,0,232,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,4,134,126,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,4,131,136,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,4,141,294,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,4,0,143,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,4,0,130,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,4,0,303,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,5,88,77,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,5,118,109,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,5,146,133,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,5,148,133,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,5,135,210,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,5,0,133,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,5,0,138,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,5,0,226,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,5,136,126,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,5,129,130,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,5,144,287,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,5,0,144,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,5,0,133,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,5,0,308,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,1,185,216,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,1,284,283,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,1,447,396,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,1,438,388,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,1,439,740,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,1,0,371,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,1,0,365,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,1,0,724,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,1,373,319,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,1,366,341,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,1,399,981,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,1,0,378,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,1,0,319,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,1,0,1016,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,2,223,177,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,2,296,279,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,2,401,357,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,2,449,384,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,2,442,740,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,2,0,361,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,2,0,327,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,2,0,730,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,2,293,351,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,2,354,344,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,2,390,979,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,2,0,372,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,2,0,324,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,2,0,1018,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,3,215,239,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,3,202,240,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,3,378,354,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,3,422,385,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,3,430,754,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,3,0,361,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,3,0,374,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,3,0,745,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,3,372,234,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,3,367,343,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,3,360,990,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,3,0,376,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,3,0,323,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,3,0,1025,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,4,223,206,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,4,303,272,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,4,325,414,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,4,365,382,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,4,458,746,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,4,0,367,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,4,0,354,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,4,0,739,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,4,362,342,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,4,271,315,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,4,394,986,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,4,0,383,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,4,0,330,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,4,0,1022,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,5,197,207,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,5,298,291,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,5,411,252,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,5,422,362,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,5,408,751,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,5,0,367,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,5,0,358,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,5,0,745,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,5,342,338,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,5,395,287,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,5,325,975,OK,healthy,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,5,0,384,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,5,0,332,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,5,0,1026,OK,degraded-1,v1,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,1,41,41,OK,healthy,v2,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,1,62,64,OK,healthy,v2,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,1,39,40,OK,healthy,v2,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,1,71,70,OK,healthy,v2,x86_64,AMD Ryzen 7 5700U with Radeon Graphics,6.19.8-200.fc43.x86_64,scalar(forced)
 
 Results saved to /home/loghyr/reffs/logs/benchmark/results.csv
 Container logs: /home/loghyr/reffs/logs/benchmark/bench.log

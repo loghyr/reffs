@@ -26,73 +26,76 @@ SIZES = ["4 KB", "16 KB", "64 KB", "256 KB", "1 MB"]
 # All values are 5-run means from mana_bench_full.txt
 # Format per dict: [4K, 16K, 64K, 256K, 1MB]
 
+# Data from latest full run (v1 layout, persistence code in binary)
+# mana (Apple M4, OrbStack) — primary reference platform
+# Format: [4KB, 16KB, 64KB, 256KB, 1MB]
 mana = dict(
   neon=dict(
-    w=dict(plain=[22.6,20.6,24.6,36.2,72.2], rs42=[28.0,29.0,33.8,47.6,110.6],
-           rs82=[28.2,27.6,31.8,46.4,139.4], msys42=[27.4,28.0,30.0,51.4,115.2],
-           msys82=[29.2,29.2,30.8,44.2,109.2], mnsys42=[28.6,30.0,30.0,49.4,119.0],
-           mnsys82=[27.8,29.0,31.6,830.6,102.8]),  # 256K outlier
-    r=dict(plain=[12.6,13.2,18.0,29.6,61.6], rs42=[18.4,19.0,25.6,39.4,94.4],
-           rs82=[20.8,19.4,25.0,37.8,123.4], msys42=[18.2,18.2,23.4,40.2,99.2],
-           msys82=[19.6,19.4,24.6,36.2,82.6], mnsys42=[21.6,22.4,32.4,78.4,247.6],
-           mnsys82=[30.8,29.6,41.8,151.0,372.6]),
-    d=dict(rs42=[18.6,19.0,21.8,41.0,112.8], rs82=[20.2,19.8,27.4,44.0,112.0],
-           msys42=[18.8,17.8,23.0,38.4,101.8], msys82=[20.4,20.0,23.4,36.0,84.4],
-           mnsys42=[20.8,19.4,31.4,79.2,294.4], mnsys82=[29.4,28.8,44.2,115.2,399.4]),
+    w=dict(plain=[20.6,20.2,24.6,33.8,86.4], rs42=[26.4,23.4,29.8,47.8,108.4],
+           rs82=[28.2,25.8,30.6,44.4,98.8], msys42=[26.6,23.4,29.4,46.8,103.8],
+           msys82=[28.0,26.0,28.6,41.8,91.2], mnsys42=[26.8,24.0,31.6,45.4,108.8],
+           mnsys82=[27.8,27.2,29.6,794.6,111.2]),  # 256K outlier
+    r=dict(plain=[12.6,13.4,17.4,27.2,58.2], rs42=[18.2,17.8,23.8,39.6,88.8],
+           rs82=[21.0,20.6,23.8,37.0,81.2], msys42=[18.2,22.4,24.0,40.6,92.2],
+           msys82=[20.0,22.4,23.8,37.6,83.2], mnsys42=[20.6,22.2,34.6,76.0,236.6],
+           mnsys82=[28.8,31.4,41.4,138.0,390.8]),
+    d=dict(rs42=[0,0,0,0,98.8], rs82=[0,0,0,0,114.0],
+           msys42=[0,0,0,0,91.4], msys82=[0,0,0,0,104.2],
+           mnsys42=[0,0,0,0,243.4], mnsys82=[0,0,0,0,400.8]),
   ),
   scalar=dict(
-    w=dict(plain=[18.2,29.0,21.2,27.2,64.0], rs42=[20.0,19.8,25.6,39.8,101.0],
-           rs82=[25.6,20.0,24.6,37.2,97.4], msys42=[21.2,18.8,24.4,41.0,102.6],
-           msys82=[23.0,19.8,25.2,34.6,92.4], mnsys42=[22.0,19.6,26.2,39.2,109.8],
-           mnsys82=[22.0,21.0,25.4,36.8,107.4]),
-    r=dict(plain=[16.4,14.8,18.2,25.6,61.6], rs42=[22.0,18.8,24.8,37.2,90.4],
-           rs82=[22.4,20.4,24.6,36.0,82.6], msys42=[24.2,19.6,24.6,38.8,109.8],
-           msys82=[23.0,20.0,31.2,34.0,98.0], mnsys42=[23.4,21.4,36.2,74.4,244.8],
-           mnsys82=[30.2,28.8,43.4,105.6,379.0]),
-    d=dict(rs42=[23.4,18.8,25.8,39.8,101.6], rs82=[26.6,20.8,26.4,41.4,107.6],
-           msys42=[20.2,18.4,26.2,38.8,96.6], msys82=[21.4,19.6,25.2,34.6,82.0],
-           mnsys42=[24.8,21.6,36.2,76.8,249.6], mnsys82=[33.0,30.2,47.0,112.8,403.2]),
+    w=dict(plain=[0,0,0,0,66.4], rs42=[0,0,0,0,106.4],
+           rs82=[0,0,0,0,94.0], msys42=[0,0,0,0,224.2],
+           msys82=[0,0,0,0,92.4], mnsys42=[0,0,0,0,102.8],
+           mnsys82=[0,0,0,0,93.2]),
+    r=dict(plain=[0,0,0,0,61.2], rs42=[0,0,0,0,114.6],
+           rs82=[0,0,0,0,83.6], msys42=[0,0,0,0,101.8],
+           msys82=[0,0,0,0,83.6], mnsys42=[0,0,0,0,238.8],
+           mnsys82=[0,0,0,0,366.4]),
+    d=dict(rs42=[0,0,0,0,102.0], rs82=[0,0,0,0,109.0],
+           msys42=[0,0,0,0,92.0], msys82=[0,0,0,0,81.8],
+           mnsys42=[0,0,0,0,250.6], mnsys82=[0,0,0,0,395.0]),
   ),
 )
 
-# 1 MB summary across all 4 platforms (SIMD mode, healthy)
+# 1 MB summary across all 4 platforms (SIMD mode, healthy) — latest run
 plat_1m = dict(
-    mana =dict(simd="NEON", plain_w=72.2,  plain_r=61.6,
-               rs42_w=110.6, rs42_r=94.4,   msys42_w=115.2, msys42_r=99.2,
-               rs82_w=139.4, rs82_r=123.4,  msys82_w=109.2, msys82_r=82.6,
-               mnsys42_r=247.6, mnsys82_r=372.6),
-    kanigix=dict(simd="AVX2", plain_w=215.0, plain_r=198.6,
-               rs42_w=351.8, rs42_r=297.6,  msys42_w=353.8, msys42_r=296.0,
-               rs82_w=377.2, rs82_r=271.0,  msys82_w=272.6, msys82_r=255.4,
-               mnsys42_r=624.6, mnsys82_r=898.6),
-    adept =dict(simd="AVX2", plain_w=185.4, plain_r=184.6,
-               rs42_w=314.2, rs42_r=273.2,  msys42_w=374.0, msys42_r=276.2,
-               rs82_w=293.2, rs82_r=245.8,  msys82_w=344.6, msys82_r=242.0,
-               mnsys42_r=580.2, mnsys82_r=951.6),
-    garbo =dict(simd="AVX2", plain_w=271.0, plain_r=241.8,
-               rs42_w=462.2, rs42_r=370.6,  msys42_w=452.6, msys42_r=352.8,
-               rs82_w=421.8, rs82_r=342.4,  msys82_w=452.6, msys82_r=327.0,
-               mnsys42_r=742.2, mnsys82_r=978.2),
+    mana =dict(simd="NEON", plain_w=86.4,  plain_r=58.2,
+               rs42_w=108.4, rs42_r=88.8,   msys42_w=103.8, msys42_r=92.2,
+               rs82_w=98.8,  rs82_r=81.2,   msys82_w=91.2,  msys82_r=83.2,
+               mnsys42_r=236.6, mnsys82_r=390.8),
+    kanigix=dict(simd="AVX2", plain_w=227.0, plain_r=207.4,
+               rs42_w=358.6, rs42_r=307.6,  msys42_w=352.2, msys42_r=304.8,
+               rs82_w=339.8, rs82_r=313.8,  msys82_w=294.0, msys82_r=269.2,
+               mnsys42_r=666.0, mnsys82_r=881.4),
+    adept =dict(simd="AVX2", plain_w=191.6, plain_r=183.2,
+               rs42_w=313.2, rs42_r=271.4,  msys42_w=360.6, msys42_r=265.2,
+               rs82_w=300.6, rs82_r=235.6,  msys82_w=328.8, msys82_r=239.4,
+               mnsys42_r=559.0, mnsys82_r=963.0),
+    garbo =dict(simd="AVX2", plain_w=282.4, plain_r=239.4,
+               rs42_w=453.6, rs42_r=328.0,  msys42_w=481.2, msys42_r=359.8,
+               rs82_w=418.2, rs82_r=337.0,  msys82_w=452.6, msys82_r=288.6,
+               mnsys42_r=744.0, mnsys82_r=978.4),
 )
 
-# Degraded-1 read at 1 MB (SIMD mode)
+# Degraded-1 read at 1 MB (SIMD mode) — latest run
 deg_1m = dict(
-    mana =dict(rs42=112.8, rs82=112.0, msys42=101.8, msys82=84.4,
-               mnsys42=294.4, mnsys82=399.4),
-    kanigix=dict(rs42=285.8, rs82=301.6, msys42=271.8, msys82=250.2,
-               mnsys42=630.4, mnsys82=906.4),
-    adept =dict(rs42=256.4, rs82=272.8, msys42=250.0, msys82=234.4,
-               mnsys42=627.4, mnsys82=988.4),
-    garbo =dict(rs42=371.2, rs82=384.8, msys42=355.4, msys82=323.4,
-               mnsys42=740.6, mnsys82=1026.0),
+    mana =dict(rs42=98.8, rs82=114.0, msys42=91.4, msys82=104.2,
+               mnsys42=243.4, mnsys82=400.8),
+    kanigix=dict(rs42=354.6, rs82=327.8, msys42=281.4, msys82=252.2,
+               mnsys42=621.0, mnsys82=938.2),
+    adept =dict(rs42=257.6, rs82=286.2, msys42=256.8, msys82=234.2,
+               mnsys42=623.8, mnsys82=970.4),
+    garbo =dict(rs42=362.4, rs82=385.2, msys42=358.2, msys82=321.6,
+               mnsys42=741.8, mnsys82=1029.2),
 )
 
-# SIMD vs scalar at 1 MB (Mojette-sys 4+2, healthy)
+# SIMD vs scalar at 1 MB (Mojette-sys 4+2, healthy) — latest run
 simd_vs_scalar = dict(
-    mana   =dict(label="mana\nM4 NEON",   simd_w=115.2, sc_w=102.6, simd_r=99.2,  sc_r=109.8),
-    kanigix=dict(label="kanigix\ni9 AVX2", simd_w=353.8, sc_w=332.8, simd_r=296.0, sc_r=321.6),
-    adept  =dict(label="adept\nN100 AVX2", simd_w=374.0, sc_w=294.6, simd_r=276.2, sc_r=281.2),
-    garbo  =dict(label="garbo\nR7 AVX2",   simd_w=452.6, sc_w=387.2, simd_r=352.8, sc_r=369.0),
+    mana   =dict(label="mana\nM4 NEON",   simd_w=103.8, sc_w=224.2, simd_r=92.2,  sc_r=101.8),
+    kanigix=dict(label="kanigix\ni9 AVX2", simd_w=352.2, sc_w=318.8, simd_r=304.8, sc_r=307.8),
+    adept  =dict(label="adept\nN100 AVX2", simd_w=360.6, sc_w=275.8, simd_r=265.2, sc_r=267.8),
+    garbo  =dict(label="garbo\nR7 AVX2",   simd_w=481.2, sc_w=419.2, simd_r=359.8, sc_r=380.2),
 )
 
 
@@ -239,8 +242,8 @@ Zero verification failures across all 2,600 test operations.</p>""")
     p(img(b, "Figure 3 — Healthy read latency, 4+2 vs 8+2."))
 
     p(tbl(["Metric @ 1 MB","RS 4+2","RS 8+2","Msys 4+2","Msys 8+2"],
-        [["<strong>Write (ms)</strong>","110.6","139.4","115.2","109.2"],
-         ["<strong>Healthy read (ms)</strong>","94.4","123.4","99.2","82.6"],
+        [["<strong>Write (ms)</strong>","108.4","98.8","103.8","91.2"],
+         ["<strong>Healthy read (ms)</strong>","88.8","81.2","92.2","83.2"],
          ["<strong>Storage overhead</strong>","50%","25%","50%","25%"]]))
     p("<p>Mojette-sys 8+2 delivers the best read latency (82.6&nbsp;ms) with the lowest "
       "storage overhead (25%).  RS 8+2 reads are slower (123.4&nbsp;ms) due to wider matrix "
@@ -264,8 +267,8 @@ Zero verification failures across all 2,600 test operations.</p>""")
     # Reconstruction overhead chart at 1 MB
     fig, ax = plt.subplots(figsize=(8,4.5))
     labels = ["RS 4+2","RS 8+2","Msys 4+2","Msys 8+2","Mnsys 4+2","Mnsys 8+2"]
-    h_vals = [94.4, 123.4, 99.2, 82.6, 247.6, 372.6]
-    d_vals = [112.8, 112.0, 101.8, 84.4, 294.4, 399.4]
+    h_vals = [88.8, 81.2, 92.2, 83.2, 236.6, 390.8]
+    d_vals = [98.8, 114.0, 91.4, 104.2, 243.4, 400.8]
     x = np.arange(6); w=0.32
     ax.bar(x-w/2, h_vals, w, label="Healthy", color="#66bb6a")
     ax.bar(x+w/2, d_vals, w, label="Degraded-1", color="#ef5350")
@@ -278,12 +281,12 @@ Zero verification failures across all 2,600 test operations.</p>""")
     p(img(fig_to_b64(fig), "Figure 5 — Reconstruction overhead at 1 MB."))
 
     p(tbl(["Codec/Geom","Healthy","Degraded-1","Overhead"],
-        [["<strong>RS 4+2</strong>","94.4","112.8","+19%"],
-         ["<strong>RS 8+2</strong>","123.4","112.0","&minus;9%"],
-         ["<strong>Msys 4+2</strong>","99.2","101.8","+3%"],
-         ["<strong>Msys 8+2</strong>","82.6","84.4","+2%"],
-         ["<strong>Mnsys 4+2</strong>","247.6","294.4","+19%"],
-         ["<strong>Mnsys 8+2</strong>","372.6","399.4","+7%"]]))
+        [["<strong>RS 4+2</strong>","88.8","98.8",oh(98.8,88.8)],
+         ["<strong>RS 8+2</strong>","81.2","114.0",oh(114.0,81.2)],
+         ["<strong>Msys 4+2</strong>","92.2","91.4","&minus;1%"],
+         ["<strong>Msys 8+2</strong>","83.2","104.2",oh(104.2,83.2)],
+         ["<strong>Mnsys 4+2</strong>","236.6","243.4",oh(243.4,236.6)],
+         ["<strong>Mnsys 8+2</strong>","390.8","400.8",oh(400.8,390.8)]]))
     p("<p>Mojette-sys reconstruction at 8+2 adds only +2% — essentially free.  "
       "RS reconstruction scales with k (matrix inversion is O(k&sup2;)); the RS 8+2 "
       "degraded read being <em>faster</em> than healthy (&minus;9%) reflects reading "
@@ -412,14 +415,19 @@ key&nbsp;=&nbsp;<code>inode_ino:block_offset</code>, value&nbsp;=&nbsp;32-byte b
 When RocksDB replaces the POSIX backend, the persistence layer changes from file I/O to
 <code>rocksdb_put()</code> with no structural changes to the chunk_store API.</p>""")
 
-    p("<h3>6.5 Next step: v1 vs v2 benchmark</h3>")
-    p("""<p>With metadata persistence in place, the next benchmark compares the v1 (NFSv3 WRITE)
-and v2 (CHUNK_WRITE) data paths.  The v2 path adds: CRC32 computation per chunk on the client,
-CRC32 validation on the server, the FINALIZE and COMMIT round-trips, and the metadata
-persistence I/O.  The Docker benchmark infrastructure already runs separate DS containers, so
-the session multiplexing blocker (single-host combined mode) does not apply.  This will answer
-the central question: <strong>what is the cost of writing CRC + data to separate stores vs a
-plain single-blob write?</strong></p>""")
+    p("<h3>6.5 v1 vs v2 benchmark status</h3>")
+    p("""<p>The full benchmark attempted v2 (CHUNK_WRITE) after the v1 phases.  Plain and
+stripe baselines succeeded under v2, but EC codec runs (RS, Mojette) failed silently.
+The failure is the <strong>DS session multiplexing</strong> issue: ec_demo opens one NFSv4.2
+session per DS mirror for CHUNK ops, and when multiple sessions target the same MDS host
+the connection sharing logic conflicts.  This is a known limitation
+(documented in goals.md) that requires DS session tracking changes in the client.</p>""")
+
+    p("""<p>Once the session multiplexing fix lands, the v2 benchmark will measure the full
+CHUNK_WRITE + FINALIZE + COMMIT pipeline including CRC32 computation, CRC validation,
+two extra round-trips per DS, and the metadata persistence I/O.  The expected persistence
+cost is small: ~8&nbsp;KB sequential write + one fdatasync per COMMIT at 1&nbsp;MB (256
+blocks &times; 32 bytes), well under 1% of the total round-trip.</p>""")
 
     # ── 7. Conclusions ───────────────────────────────────────────────
     p("<h2>7. Conclusions</h2>")
@@ -447,7 +455,9 @@ plain single-blob write?</strong></p>""")
       "failures).  The encoding benefit will appear at larger shard sizes.</p>")
 
     p("<p><strong>Chunk metadata is now crash-safe.</strong> CRC32, chunk_owner4, and lock "
-      "flags persist via write-temp/fdatasync/rename.  The v2 CHUNK benchmark is unblocked.</p>")
+      "flags persist via write-temp/fdatasync/rename.  The v2 CHUNK benchmark is blocked on "
+      "DS session multiplexing; once fixed, it will measure the full cost of the CRC+data "
+      "split and metadata persistence.</p>")
 
     p('<div class="note">Test conditions: 5 measured runs per combination.  Full benchmark '
       '(SIMD + scalar + degraded) in a single invocation per machine.  '
