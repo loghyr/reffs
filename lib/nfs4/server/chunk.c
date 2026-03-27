@@ -130,6 +130,10 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		return 0;
 	}
 
+	/* Record the nominal chunk size (disk stride for offset calc). */
+	if (cs->cs_chunk_size == 0)
+		cs->cs_chunk_size = chunk_size;
+
 	/* Ensure the data block exists. */
 	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
 	if (!compound->c_inode->i_db) {
@@ -311,11 +315,16 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		}
 		rc->cr_chunk.cr_chunk_len = blk->cb_chunk_size;
 
+		/*
+		 * Offset uses the nominal chunk_size (disk stride), not
+		 * the per-block actual size.  The last block may be shorter
+		 * than the stride (Mojette variable projections).
+		 */
 		if (compound->c_inode->i_db) {
 			data_block_read(compound->c_inode->i_db,
 					rc->cr_chunk.cr_chunk_val,
 					blk->cb_chunk_size,
-					(off_t)(off * blk->cb_chunk_size));
+					(off_t)(off * cs->cs_chunk_size));
 		}
 
 		/*

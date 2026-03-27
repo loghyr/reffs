@@ -24,9 +24,14 @@ struct ec_codec {
 	/*
 	 * ec_encode -- produce m parity shards from k data shards.
 	 *
-	 * data[0..k-1]:   input data buffers, each shard_len bytes.
-	 * parity[0..m-1]: output parity buffers, each shard_len bytes
-	 *                 (caller-allocated).
+	 * data[0..k-1]:   input data buffers.  For uniform codecs (RS),
+	 *     each buffer is shard_len bytes.  For non-systematic codecs
+	 *     that produce variable-size projections (Mojette nonsys),
+	 *     each buffer MUST be allocated to ec_shard_size(codec, i,
+	 *     shard_len) bytes — the codec overwrites data[i] with
+	 *     projection output that may be larger than shard_len.
+	 * parity[0..m-1]: output parity buffers, each allocated to
+	 *     ec_shard_size(codec, k+i, shard_len) bytes.
 	 * Returns 0 on success, negative errno on failure.
 	 */
 	int (*ec_encode)(struct ec_codec *codec, uint8_t **data,

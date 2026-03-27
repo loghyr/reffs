@@ -64,7 +64,8 @@ struct chunk_store_header {
 	uint32_t csh_version;
 	uint64_t csh_nblocks; /* number of block entries that follow */
 	uint64_t csh_inode_ino; /* owning inode number */
-	uint32_t csh_pad[2]; /* align to 32 bytes */
+	uint32_t csh_chunk_size; /* nominal chunk size (disk stride) */
+	uint32_t csh_pad; /* align to 32 bytes */
 };
 
 struct chunk_block_disk {
@@ -86,6 +87,7 @@ struct chunk_store {
 	struct chunk_block *cs_blocks;
 	uint64_t cs_nblocks; /* allocated entries */
 	uint64_t cs_high_water; /* highest offset written + 1 */
+	uint32_t cs_chunk_size; /* nominal chunk size (disk stride) */
 	bool cs_dirty; /* needs persistence */
 };
 

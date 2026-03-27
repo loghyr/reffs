@@ -154,6 +154,9 @@ static int chunk_store_grow(struct chunk_store *cs, uint64_t new_cap)
 	if (new_cap > CHUNK_STORE_MAX_BLOCKS)
 		return -ENOMEM;
 
+	if (cap == 0)
+		cap = CHUNK_STORE_INIT_BLOCKS;
+
 	while (cap <= new_cap)
 		cap *= 2;
 
@@ -248,6 +251,7 @@ int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
 		.csh_version = CHUNK_STORE_VERSION,
 		.csh_nblocks = cs->cs_high_water,
 		.csh_inode_ino = inode_ino,
+		.csh_chunk_size = cs->cs_chunk_size,
 	};
 	ssize_t n = write(fd, &hdr, sizeof(hdr));
 
@@ -344,6 +348,7 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino)
 
 	cs->cs_nblocks = alloc;
 	cs->cs_high_water = nblocks;
+	cs->cs_chunk_size = hdr.csh_chunk_size;
 
 	for (uint64_t i = 0; i < nblocks; i++) {
 		struct chunk_block_disk dsk;
