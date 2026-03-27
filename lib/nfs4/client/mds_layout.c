@@ -161,7 +161,7 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 
 		ffv2_mirror4 *m0 = &ffl.ffl_mirrors.ffl_mirrors_val[0];
 
-		layout->el_coding_type = m0->ffm_coding_type_data.fctd_coding;
+		layout->el_coding_type = m0->ffm_coding_type;
 		layout->el_chunk_size = m0->ffm_striping_unit_size;
 		layout->el_stripe_unit = m0->ffm_striping_unit_size;
 

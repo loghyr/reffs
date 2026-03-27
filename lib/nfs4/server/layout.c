@@ -391,10 +391,11 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg, char **out_body,
 	ffv2_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[0];
 
 	if (seg->ls_m == 0)
-		mirror->ffm_coding_type_data.fctd_coding = FFV2_CODING_MIRRORED;
+		mirror->ffm_coding_type = FFV2_CODING_MIRRORED;
 	else
-		mirror->ffm_coding_type_data.fctd_coding =
-			FFV2_ENCODING_RS_VANDERMONDE;
+		mirror->ffm_coding_type = FFV2_ENCODING_RS_VANDERMONDE;
+	mirror->ffm_protection.fdp_data = seg->ls_k;
+	mirror->ffm_protection.fdp_parity = seg->ls_m;
 
 	mirror->ffm_striping = FFV2_STRIPING_DENSE;
 	mirror->ffm_striping_unit_size = 4096;

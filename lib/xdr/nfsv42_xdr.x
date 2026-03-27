@@ -4374,26 +4374,22 @@ enum ffv2_coding_type4 {
     FFV2_ENCODING_RS_VANDERMONDE            = 0x4
 };
 
-enum ffv2_mojette_faulty_devices4 {
-    FFV2_MOJETTE_FAULTY_DEVICES_2_1         = 0x1,
-    FFV2_MOJETTE_FAULTY_DEVICES_4_1         = 0x2,
-    FFV2_MOJETTE_FAULTY_DEVICES_4_2         = 0x3,
-    FFV2_MOJETTE_FAULTY_DEVICES_8_1         = 0x4,
-    FFV2_MOJETTE_FAULTY_DEVICES_8_2         = 0x5,
-    FFV2_MOJETTE_FAULTY_DEVICES_8_3         = 0x6,
-    FFV2_MOJETTE_FAULTY_DEVICES_8_4         = 0x7
+/*
+ * Generic data protection geometry — replaces per-encoding-type
+ * faulty_devices enums.  Used in both layout hints and layout
+ * responses for all coding types.
+ */
+struct ffv2_data_protection4 {
+    uint32_t fdp_data;    /* data shards (k) */
+    uint32_t fdp_parity;  /* parity/redundancy shards (m) */
 };
 
-union ffv2_coding_type_data4 switch (ffv2_coding_type4 fctd_coding) {
-    case FFV2_CODING_MIRRORED:
-        void;
-    case FFV2_ENCODING_MOJETTE_SYSTEMATIC:
-        ffv2_mojette_faulty_devices4    fctd_systematic;
-    case FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC:
-        ffv2_mojette_faulty_devices4    fctd_non_systematic;
-    default:
-        void;
-};
+/*
+ * ffv2_coding_type_data4 was a union switched on coding type, but
+ * all arms carry the same ffv2_data_protection4.  The coding type
+ * is already in ffv2_coding_type4; the geometry is just (k, m).
+ * Replaced by ffv2_data_protection4 directly.
+ */
 
 enum ffv2_striping {
     FFV2_STRIPING_NONE = 0,
@@ -4406,7 +4402,8 @@ struct ffv2_stripes4 {
 };
 
 struct ffv2_mirror4 {
-        ffv2_coding_type_data4  ffm_coding_type_data;
+        ffv2_coding_type4       ffm_coding_type;
+        ffv2_data_protection4   ffm_protection;
         /* ffv2_key4               ffm_key; */
         ffv2_striping           ffm_striping;
         uint32_t                ffm_striping_unit_size; /* The minimum stripe unit size is 64 bytes. */
@@ -4461,25 +4458,9 @@ struct ffv2_layoutreturn4 {
         ffv2_iostats4   fflr_iostats_report<>;
 };
 
-union ffv2_mirrors_hint switch (ffv2_coding_type4 ffmh_coding) {
-    case FFV2_CODING_MIRRORED:
-        void;
-    case FFV2_ENCODING_MOJETTE_SYSTEMATIC:
-        ffv2_mojette_faulty_devices4    ffmh_systematic;
-    case FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC:
-        ffv2_mojette_faulty_devices4    ffmh_non_systematic;
-    default:
-        void;
-};
-
-/*
- * We could have this be simply ffv2_protection_type
- * for the client to state what protection algorithm
- * it wants.
- */
 struct ffv2_layouthint4 {
-    ffv2_protection_type fflh_supported_types<>;
-    ffv2_mirrors_hint fflh_mirrors_hint;
+    ffv2_coding_type4       fflh_supported_types<>;
+    ffv2_data_protection4   fflh_preferred_protection;
 };
 
 const RCA4_TYPE_MASK_FFV2_LAYOUT_MIN     = 20;
