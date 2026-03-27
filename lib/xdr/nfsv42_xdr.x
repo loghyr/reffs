@@ -3425,9 +3425,14 @@ struct CHUNK_REPAIRED4args {
     chunk_owner4    cpa_owner;
 };
 
+struct CHUNK_REPAIRED4resok {
+    /* intentionally empty — status-only response */
+    uint32_t        cpr_reserved;
+};
+
 union CHUNK_REPAIRED4res switch (nfsstat4 cpr_status) {
     case NFS4_OK:
-        void;
+        CHUNK_REPAIRED4resok   cpr_resok4;
     default:
         void;
 };
@@ -3458,9 +3463,14 @@ struct CHUNK_UNLOCK4args {
     chunk_owner4    cua_owner;
 };
 
+struct CHUNK_UNLOCK4resok {
+    /* intentionally empty — status-only response */
+    uint32_t        cur_reserved;
+};
+
 union CHUNK_UNLOCK4res switch (nfsstat4 cur_status) {
     case NFS4_OK:
-        void;
+        CHUNK_UNLOCK4resok   cur_resok4;
     default:
         void;
 };

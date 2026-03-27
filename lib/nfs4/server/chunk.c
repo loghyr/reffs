@@ -403,20 +403,20 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 	 */
 	uint32_t nowners = args->cfa_chunks.cfa_chunks_len;
 
-	resok->ccr_status.ccr_status_val = calloc(nowners, sizeof(nfsstat4));
-	if (!resok->ccr_status.ccr_status_val) {
+	resok->cfr_status.cfr_status_val = calloc(nowners, sizeof(nfsstat4));
+	if (!resok->cfr_status.cfr_status_val) {
 		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 		*status = NFS4ERR_DELAY;
 		return 0;
 	}
-	resok->ccr_status.ccr_status_len = nowners;
+	resok->cfr_status.cfr_status_len = nowners;
 
 	for (uint32_t i = 0; i < nowners; i++) {
 		chunk_owner4 *co = &args->cfa_chunks.cfa_chunks_val[i];
 		int ret = chunk_store_transition(cs, args->cfa_offset, count,
 						 co->co_id, CHUNK_STATE_PENDING,
 						 CHUNK_STATE_FINALIZED);
-		resok->ccr_status.ccr_status_val[i] =
+		resok->cfr_status.cfr_status_val[i] =
 			(ret == 0) ? NFS4_OK : NFS4ERR_INVAL;
 	}
 
@@ -543,7 +543,7 @@ uint32_t nfs4_op_chunk_lock(struct compound *compound)
 uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 {
 	CHUNK_REPAIRED4res *res = NFS4_OP_RES_SETUP(compound, opchunk_repair);
-	nfsstat4 *status = &res->crr_status;
+	nfsstat4 *status = &res->cpr_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
@@ -553,7 +553,7 @@ uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 {
 	CHUNK_ROLLBACK4res *res = NFS4_OP_RES_SETUP(compound, opchunk_rollback);
-	nfsstat4 *status = &res->crbr_status;
+	nfsstat4 *status = &res->crr_status;
 
 	*status = NFS4ERR_NOTSUPP;
 
