@@ -1,0 +1,2196 @@
+docker build -t reffs-dev .
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.03kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/fedora:43
+#2 DONE 0.6s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/8] FROM docker.io/library/fedora:43@sha256:781b7642e8bf256e9cf75d2aa58d86f5cc695fd2df113517614e181a5eee9138
+#4 resolve docker.io/library/fedora:43@sha256:781b7642e8bf256e9cf75d2aa58d86f5cc695fd2df113517614e181a5eee9138 0.0s done
+#4 DONE 0.0s
+
+#5 [4/8] RUN activate-global-python-argcomplete --user &&     echo 'eval "$(register-python-argcomplete reffs-probe.py)"' >> /root/.bashrc &&     echo 'source /etc/profile.d/bash_completion.sh' >> /root/.bashrc
+#5 CACHED
+
+#6 [5/8] RUN pip3 install --no-cache-dir     ply     xdrlib3     xml2rfc
+#6 CACHED
+
+#7 [6/8] RUN mkdir -p /reffs /backend /src /build /logs
+#7 CACHED
+
+#8 [7/8] WORKDIR /build
+#8 CACHED
+
+#9 [3/8] RUN dnf -y install     autoconf     autoconf-archive     automake     bash-completion     bear     ccache     check-devel     clang     clang-tools-extra     cmake     fuse-devel     gcc     gcc-c++     gdb     git     glibc-devel     HdrHistogram_c-devel     htop     iostat     iproute     iputils     jemalloc-devel     ktls-utils     libev-devel     libstdc++-devel     libtirpc-devel     libtool     liburing-devel     libuuid-devel     lldb     llvm-devel     make     net-tools     ninja-build     nslookup     krb5-devel     libnfsidmap-devel     openssl-devel     perf     procps-ng     python3-argcomplete     python3-devel     python3-pip     rpcbind     rpcgen     rsync     rocksdb-devel     scan-build     script     sslscan     strace     sudo     userspace-rcu-devel     vim     xxhash-devel     zlib-devel     && dnf clean all
+#9 CACHED
+
+#10 [2/8] RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf &&     echo "retries=20" >> /etc/dnf/dnf.conf
+#10 CACHED
+
+#11 [8/8] RUN printf '#!/bin/bash\nrpcbind -w\nexec "$@"\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
+#11 CACHED
+
+#12 exporting to image
+#12 exporting layers done
+#12 exporting manifest sha256:7975353b90a76385957326122ede4730b86beb99acb6f8c9d7f42567effc2dd0 done
+#12 exporting config sha256:138a0c249e63dd001de5309ec1ac8b1fe4daddaacb2cc58b2f20d3c48667882f done
+#12 exporting attestation manifest sha256:693e6ed3b469888e366c543f6b3e71219ab18df5eb65100d9fb6596fd965d965 0.0s done
+#12 exporting manifest list sha256:734792d73646969b4ccdc08c8872ae61dbafc0a762bcddbb7e21bf46847dd50a done
+#12 naming to docker.io/library/reffs-dev:latest done
+#12 unpacking to docker.io/library/reffs-dev:latest 0.0s done
+#12 DONE 0.1s
+Building reffs in builder container...
+docker compose -f deploy/benchmark/docker-compose.yml run --rm builder
+ Network benchmark_default Creating 
+ Network benchmark_default Created 
+ Volume benchmark_build-vol Creating 
+ Volume benchmark_build-vol Created 
+ Container benchmark-builder-run-0b3e51a4e8c4 Creating 
+ Container benchmark-builder-run-0b3e51a4e8c4 Created 
+libtoolize: putting auxiliary files in AC_CONFIG_AUX_DIR, '.'.
+libtoolize: copying file './ltmain.sh'
+libtoolize: putting macros in AC_CONFIG_MACRO_DIRS, 'm4'.
+libtoolize: copying file 'm4/libtool.m4'
+libtoolize: copying file 'm4/ltoptions.m4'
+libtoolize: copying file 'm4/ltsugar.m4'
+libtoolize: copying file 'm4/ltversion.m4'
+libtoolize: copying file 'm4/lt~obsolete.m4'
+configure.ac:34: installing './ar-lib'
+configure.ac:32: installing './compile'
+configure.ac:45: installing './config.guess'
+configure.ac:45: installing './config.sub'
+configure.ac:6: installing './install-sh'
+configure.ac:6: installing './missing'
+lib/backends/Makefile.am: installing './depcomp'
+parallel-tests: installing './test-driver'
+scripts/reffs/Makefile.am:21: installing './py-compile'
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether sleep supports fractional seconds... yes
+checking filesystem timestamp resolution... 0.01
+checking whether build environment is sane... yes
+checking for a race-free mkdir -p... /usr/sbin/mkdir -p
+checking for gawk... gawk
+checking whether make sets $(MAKE)... yes
+checking whether make supports nested variables... yes
+checking xargs -n works... yes
+checking whether UID '0' is supported by ustar format... yes
+checking whether GID '0' is supported by ustar format... yes
+checking how to create a ustar tar archive... gnutar
+checking for clang... yes
+Using C compiler: clang
+checking for gcc... clang
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables... 
+checking whether we are cross compiling... no
+checking for suffix of object files... o
+checking whether the compiler supports GNU C... yes
+checking whether clang accepts -g... yes
+checking for clang option to enable C11 features... none needed
+checking whether clang understands -c and -o together... yes
+checking whether make supports the include directive... yes (GNU style)
+checking dependency style of clang... gcc3
+checking for stdio.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for strings.h... yes
+checking for sys/stat.h... yes
+checking for sys/types.h... yes
+checking for unistd.h... yes
+checking for wchar.h... yes
+checking for minix/config.h... no
+checking whether it is safe to define __EXTENSIONS__... yes
+checking whether _XOPEN_SOURCE should be defined... no
+checking for ar... ar
+checking the archiver (ar) interface... ar
+checking for C11 support... yes
+checking for clang option to enable large file support... none needed
+checking for off_t... yes
+checking for size_t... yes
+checking build system type... x86_64-pc-linux-gnu
+checking host system type... x86_64-pc-linux-gnu
+checking how to print strings... printf
+checking for a sed that does not truncate output... /usr/sbin/sed
+checking for grep that handles long lines and -e... /usr/sbin/grep
+checking for egrep... /usr/sbin/grep -E
+checking for fgrep... /usr/sbin/grep -F
+checking for ld used by clang... /usr/bin/ld
+checking if the linker (/usr/bin/ld) is GNU ld... yes
+checking for BSD- or MS-compatible name lister (nm)... /usr/sbin/nm -B
+checking the name lister (/usr/sbin/nm -B) interface... BSD nm
+checking whether ln -s works... yes
+checking the maximum length of command line arguments... 1572864
+checking how to convert x86_64-pc-linux-gnu file names to x86_64-pc-linux-gnu format... func_convert_file_noop
+checking how to convert x86_64-pc-linux-gnu file names to toolchain format... func_convert_file_noop
+checking for /usr/bin/ld option to reload object files... -r
+checking for file... :
+checking for objdump... objdump
+checking how to recognize dependent libraries... pass_all
+checking for dlltool... no
+checking how to associate runtime and link libraries... printf %s\n
+checking for ranlib... ranlib
+checking for archiver @FILE support... @
+checking for strip... strip
+checking command to parse /usr/sbin/nm -B output from clang object... ok
+checking for sysroot... no
+checking for a working dd... /usr/sbin/dd
+checking how to truncate binary pipes... /usr/sbin/dd bs=4096 count=1
+checking for mt... no
+checking if : is a manifest tool... no
+checking for dlfcn.h... yes
+checking for objdir... .libs
+checking if clang supports -fno-rtti -fno-exceptions... yes
+checking for clang option to produce PIC... -fPIC -DPIC
+checking if clang PIC flag -fPIC -DPIC works... yes
+checking if clang static flag -static works... no
+checking if clang supports -c -o file.o... yes
+checking if clang supports -c -o file.o... (cached) yes
+checking whether the clang linker (/usr/bin/ld) supports shared libraries... yes
+checking whether -lc should be explicitly linked in... no
+checking dynamic linker characteristics... GNU/Linux ld.so
+checking how to hardcode library paths into programs... immediate
+checking whether stripping libraries is possible... yes
+checking if libtool supports shared libraries... yes
+checking whether to build shared libraries... yes
+checking whether to build static libraries... yes
+checking for a Python interpreter with version >= 3.6... python
+checking for python... /usr/sbin/python
+checking for python version... 3.14
+checking for python platform... linux
+checking for GNU default python prefix... ${prefix}
+checking for GNU default python exec_prefix... ${exec_prefix}
+checking for python script directory (pythondir)... ${PYTHON_PREFIX}/lib/python3.14/site-packages
+checking for python extension module directory (pyexecdir)... ${PYTHON_EXEC_PREFIX}/lib64/python3.14/site-packages
+checking for _Bool... yes
+checking for stdbool.h that conforms to C99 or later... yes
+checking for inline... inline
+checking for typeof syntax and keyword spelling... __typeof__
+checking for int32_t... yes
+checking for pid_t... yes
+checking for size_t... (cached) yes
+checking for ssize_t... yes
+checking for uint16_t... yes
+checking for uint32_t... yes
+checking for uint64_t... yes
+checking for uint8_t... yes
+checking for pkg-config... /usr/sbin/pkg-config
+checking pkg-config is at least version 0.9.0... yes
+checking for liburcu... yes
+checking for liburcu-cds... yes
+checking for libtirpc... yes
+checking for check >= 0.15.2... yes
+checking how to run the C preprocessor... clang -E
+checking for egrep -e... (cached) /usr/sbin/grep -E
+checking whether clang is Clang... yes
+checking whether pthreads work with "-pthread" and "-lpthread"... yes
+checking whether Clang needs flag to prevent "argument unused" warning when linking with -pthread... no
+checking for joinable pthread attribute... PTHREAD_CREATE_JOINABLE
+checking whether more special flags are required for pthreads... no
+checking for PTHREAD_PRIO_INHERIT... yes
+checking for libxxhash... yes
+checking for fuse... yes
+checking for git... /usr/sbin/git
+checking for clang-format... /usr/sbin/clang-format
+checking for clang-tidy... /usr/sbin/clang-tidy
+checking for scan-build... /usr/sbin/scan-build
+checking for rpcgen... /usr/sbin/rpcgen
+checking for bear... /usr/sbin/bear
+checking for uuid/uuid.h... yes
+checking for uuid_generate in -luuid... yes
+checking for uuid_generate_time_safe in -luuid... yes
+checking for zlib.h... yes
+checking for crc32 in -lz... yes
+checking for pkg-config... /usr/sbin/pkg-config
+checking for libzstd >= 1.4.0... yes
+checking for liburing >= 2.3... yes
+checking for malloc in -ljemalloc... yes
+checking for hdr/hdr_histogram.h... yes
+checking for hdr_init in -lhdr_histogram... yes
+checking for openssl >= 1.0.2... yes
+checking for krb5-gssapi... yes
+checking for libnfsidmap... yes
+C flags are -std=c11 -D_FILE_OFFSET_BITS=64 -DRCU_MEMBARRIER=1 -Wall -Wextra -Wformat=2 -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables -Wall -Wextra -Wpedantic -g -O0
+checking for stdlib.h... (cached) yes
+checking for sys/socket.h... yes
+checking whether clang supports -mavx2... yes
+checking that generated files are newer than configure... done
+configure: creating ./config.status
+config.status: creating Makefile
+config.status: creating reffs.pc
+config.status: creating reffs.spec
+config.status: creating reffsd.service
+config.status: creating LICENSES/Makefile
+config.status: creating third_party/Makefile
+config.status: creating third_party/tomlc99/Makefile
+config.status: creating lib/Makefile
+config.status: creating lib/config/Makefile
+config.status: creating lib/config/tests/Makefile
+config.status: creating lib/backends/Makefile
+config.status: creating lib/ec/Makefile
+config.status: creating lib/ec/tests/Makefile
+config.status: creating lib/nfs4/common/Makefile
+config.status: creating lib/nfs4/server/Makefile
+config.status: creating lib/nfs4/client/Makefile
+config.status: creating lib/nfs4/client/tests/Makefile
+config.status: creating lib/nfs4/dstore/Makefile
+config.status: creating lib/nfs4/dstore/tests/Makefile
+config.status: creating lib/fs/Makefile
+config.status: creating lib/fs/tests/Makefile
+config.status: creating lib/nlm/Makefile
+config.status: creating lib/nlm/tests/Makefile
+config.status: creating lib/nsm/Makefile
+config.status: creating lib/include/Makefile
+config.status: creating lib/include/reffs/Makefile
+config.status: creating lib/include/reffs/trace/Makefile
+config.status: creating lib/io/Makefile
+config.status: creating lib/mount3/Makefile
+config.status: creating lib/mount3/tests/Makefile
+config.status: creating lib/nfs3/Makefile
+config.status: creating lib/nfs3/tests/Makefile
+config.status: creating lib/nfs4/Makefile
+config.status: creating lib/nfs4/include/Makefile
+config.status: creating lib/nfs4/include/nfs4/Makefile
+config.status: creating lib/nfs4/include/nfs4/trace/Makefile
+config.status: creating lib/nfs4/tests/Makefile
+config.status: creating lib/rpc/Makefile
+config.status: creating lib/rpc/tests/Makefile
+config.status: creating lib/probe1/Makefile
+config.status: creating lib/tests/Makefile
+config.status: creating lib/trace/Makefile
+config.status: creating lib/utils/Makefile
+config.status: creating lib/utils/tests/Makefile
+config.status: creating lib/xdr/Makefile
+config.status: creating scripts/Makefile
+config.status: creating scripts/reffs/Makefile
+config.status: creating scripts/reffs/pynfs/Makefile
+config.status: creating scripts/reffs/pynfs/xdr/Makefile
+config.status: creating scripts/reffs/pynfs/rpc/Makefile
+config.status: creating src/Makefile
+config.status: creating tools/Makefile
+config.status: creating lib/xdr/insert_pragmas.sh
+config.status: creating scripts/copy_and_verify.sh
+config.status: creating scripts/reffs/pynfs/xdr/xdrgen.py
+config.status: creating scripts/reffs-probe.py
+config.status: creating scripts/reffs/probe_client.py
+config.status: creating scripts/reffs/protocol_client.py
+config.status: creating scripts/reffs/pynfs/rpc/rpc.py
+config.status: creating scripts/reffs/pynfs/rpc/rpclib.py
+config.status: creating scripts/reffs/pynfs/rpc/security.py
+config.status: creating scripts/reffs/pynfs/xdr/__init__.py
+config.status: creating scripts/reffs/pynfs/rpc/__init__.py
+config.status: creating scripts/reffs/pynfs/__init__.py
+config.status: creating scripts/reffs/__init__.py
+config.status: creating scripts/__init__.py
+config.status: creating config.h
+config.status: executing depfiles commands
+config.status: executing libtool commands
+make  all-recursive
+make[1]: Entering directory '/shared/build'
+Making all in third_party
+make[2]: Entering directory '/shared/build/third_party'
+Making all in tomlc99
+make[3]: Entering directory '/shared/build/third_party/tomlc99'
+  CC       libtomlc99_la-toml.lo
+  CCLD     libtomlc99.la
+make[3]: Leaving directory '/shared/build/third_party/tomlc99'
+make[3]: Entering directory '/shared/build/third_party'
+make[3]: Nothing to be done for 'all-am'.
+make[3]: Leaving directory '/shared/build/third_party'
+make[2]: Leaving directory '/shared/build/third_party'
+Making all in lib
+make[2]: Entering directory '/shared/build/lib'
+Making all in xdr
+make[3]: Entering directory '/shared/build/lib/xdr'
+rpcgen -C -h /shared/src/lib/xdr/ref_cp_xdr.x > ref_cp_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/ref_cp_xdr.x > ref_cp_xdr.c
+../../lib/xdr/insert_pragmas.sh ref_cp_xdr.c
+  CC       ref_cp_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/reffs_echo_xdr.x > reffs_echo_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/reffs_echo_xdr.x > reffs_echo_xdr.c
+../../lib/xdr/insert_pragmas.sh reffs_echo_xdr.c
+  CC       reffs_echo_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/nfsv42_xdr.x > nfsv42_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/nfsv42_xdr.x > nfsv42_xdr.c
+../../lib/xdr/insert_pragmas.sh nfsv42_xdr.c
+  CC       nfsv42_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/mntv3_xdr.x > mntv3_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/mntv3_xdr.x > mntv3_xdr.c
+../../lib/xdr/insert_pragmas.sh mntv3_xdr.c
+  CC       mntv3_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/nfsv3_xdr.x > nfsv3_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/nfsv3_xdr.x > nfsv3_xdr.c
+../../lib/xdr/insert_pragmas.sh nfsv3_xdr.c
+  CC       nfsv3_xdr.lo
+rpcgen -C -h /shared/src/lib/xdr/nlm_prot.x > nlm_prot.h
+rpcgen -C -c /shared/src/lib/xdr/nlm_prot.x > nlm_prot.c
+../../lib/xdr/insert_pragmas.sh nlm_prot.c
+  CC       nlm_prot.lo
+rpcgen -C -h /shared/src/lib/xdr/nlm4_prot.x > nlm4_prot.h
+rpcgen -C -c /shared/src/lib/xdr/nlm4_prot.x > nlm4_prot.c
+../../lib/xdr/insert_pragmas.sh nlm4_prot.c
+  CC       nlm4_prot.lo
+rpcgen -C -h /shared/src/lib/xdr/sm_inter.x > sm_inter.h
+rpcgen -C -c /shared/src/lib/xdr/sm_inter.x > sm_inter.c
+../../lib/xdr/insert_pragmas.sh sm_inter.c
+  CC       sm_inter.lo
+rpcgen -C -h /shared/src/lib/xdr/probe1_xdr.x > probe1_xdr.h
+rpcgen -C -c /shared/src/lib/xdr/probe1_xdr.x > probe1_xdr.c
+../../lib/xdr/insert_pragmas.sh probe1_xdr.c
+  CC       probe1_xdr.lo
+/usr/sbin/python /shared/src/scripts/gen_nfsv42_names.py \
+	--xdr /shared/src/lib/xdr/nfsv42_xdr.x \
+	--hdr nfsv42_xdr.h \
+	--out .
+Wrote nfsv42_names.c
+Wrote nfsv42_names.h
+  CC       nfsv42_names.lo
+  CCLD     libreffs_xdr.la
+make[3]: Leaving directory '/shared/build/lib/xdr'
+Making all in include
+make[3]: Entering directory '/shared/build/lib/include'
+Making all in reffs
+make[4]: Entering directory '/shared/build/lib/include/reffs'
+Making all in trace
+make[5]: Entering directory '/shared/build/lib/include/reffs/trace'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/lib/include/reffs/trace'
+make[5]: Entering directory '/shared/build/lib/include/reffs'
+make[5]: Nothing to be done for 'all-am'.
+make[5]: Leaving directory '/shared/build/lib/include/reffs'
+make[4]: Leaving directory '/shared/build/lib/include/reffs'
+make[4]: Entering directory '/shared/build/lib/include'
+make[4]: Nothing to be done for 'all-am'.
+make[4]: Leaving directory '/shared/build/lib/include'
+make[3]: Leaving directory '/shared/build/lib/include'
+Making all in trace
+make[3]: Entering directory '/shared/build/lib/trace'
+  CC       common.lo
+  CCLD     libreffs_trace.la
+make[3]: Leaving directory '/shared/build/lib/trace'
+Making all in backends
+make[3]: Entering directory '/shared/build/lib/backends'
+  CC       client_persist.lo
+  CC       driver.lo
+  CC       ram.lo
+  CC       posix.lo
+  CC       server_persist.lo
+  CCLD     libbackends.la
+make[3]: Leaving directory '/shared/build/lib/backends'
+Making all in utils
+make[3]: Entering directory '/shared/build/lib/utils'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/utils/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/utils/tests'
+make[4]: Entering directory '/shared/build/lib/utils'
+  CC       cmp.lo
+  CC       context.lo
+  CC       idmap.lo
+  CC       identity.lo
+  CC       log.lo
+  CC       network.lo
+  CC       rcu.lo
+  CC       server.lo
+  CC       stack.lo
+  CC       utf8string.lo
+  CCLD     libreffs_utils.la
+make[4]: Leaving directory '/shared/build/lib/utils'
+make[3]: Leaving directory '/shared/build/lib/utils'
+Making all in config
+make[3]: Entering directory '/shared/build/lib/config'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/config/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/config/tests'
+make[4]: Entering directory '/shared/build/lib/config'
+  CC       config.lo
+  CCLD     libreffs_config.la
+make[4]: Leaving directory '/shared/build/lib/config'
+make[3]: Leaving directory '/shared/build/lib/config'
+Making all in ec
+make[3]: Entering directory '/shared/build/lib/ec'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/ec/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/ec/tests'
+make[4]: Entering directory '/shared/build/lib/ec'
+  CC       gf.lo
+  CC       matrix.lo
+  CC       mojette.lo
+  CC       mojette_codec.lo
+  CC       rs.lo
+  CC       stripe.lo
+  CCLD     libreffs_ec.la
+make[4]: Leaving directory '/shared/build/lib/ec'
+make[3]: Leaving directory '/shared/build/lib/ec'
+Making all in io
+make[3]: Entering directory '/shared/build/lib/io'
+  CC       accept.lo
+  CC       backend.lo
+  CC       connect.lo
+  CC       context.lo
+  CC       handler.lo
+  CC       heartbeat.lo
+  CC       lsnr.lo
+  CC       read.lo
+  CC       tls.lo
+  CC       worker.lo
+  CC       write.lo
+  CCLD     libreffs_io.la
+make[3]: Leaving directory '/shared/build/lib/io'
+Making all in rpc
+make[3]: Entering directory '/shared/build/lib/rpc'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/rpc/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/rpc/tests'
+make[4]: Entering directory '/shared/build/lib/rpc'
+  CC       gss_context.lo
+  CC       rpc.lo
+  CCLD     libreffs_rpc.la
+make[4]: Leaving directory '/shared/build/lib/rpc'
+make[3]: Leaving directory '/shared/build/lib/rpc'
+Making all in tests
+make[3]: Entering directory '/shared/build/lib/tests'
+  CC       libreffs_test.lo
+  CCLD     libreffs_test.la
+make[3]: Leaving directory '/shared/build/lib/tests'
+Making all in fs
+make[3]: Entering directory '/shared/build/lib/fs'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/fs/tests'
+  CC       posix_recovery.lo
+  CC       fs_test_harness.lo
+  CCLD     libreffs_fs_test.la
+make[4]: Leaving directory '/shared/build/lib/fs/tests'
+make[4]: Entering directory '/shared/build/lib/fs'
+  CC       client.lo
+  CC       data_block.lo
+  CC       dirent.lo
+  CC       filehandle.lo
+  CC       fs.lo
+  CC       fuse.lo
+  CC       inode.lo
+  CC       layout_segment.lo
+  CC       lock.lo
+  CC       ns.lo
+  CC       stateid.lo
+  CC       super_block.lo
+  CC       vfs.lo
+  CCLD     libreffs_fs.la
+make[4]: Leaving directory '/shared/build/lib/fs'
+make[3]: Leaving directory '/shared/build/lib/fs'
+Making all in nlm
+make[3]: Entering directory '/shared/build/lib/nlm'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/nlm/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nlm/tests'
+make[4]: Entering directory '/shared/build/lib/nlm'
+  CC       nlm_server.lo
+  CC       nlm_lock.lo
+  CCLD     libnlm.la
+make[4]: Leaving directory '/shared/build/lib/nlm'
+make[3]: Leaving directory '/shared/build/lib/nlm'
+Making all in nsm
+make[3]: Entering directory '/shared/build/lib/nsm'
+  CC       nsm_server.lo
+  CCLD     libnsm.la
+make[3]: Leaving directory '/shared/build/lib/nsm'
+Making all in mount3
+make[3]: Entering directory '/shared/build/lib/mount3'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/mount3/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/mount3/tests'
+make[4]: Entering directory '/shared/build/lib/mount3'
+  CC       mount3_server.lo
+  CCLD     libreffs_mount3.la
+make[4]: Leaving directory '/shared/build/lib/mount3'
+make[3]: Leaving directory '/shared/build/lib/mount3'
+Making all in nfs3
+make[3]: Entering directory '/shared/build/lib/nfs3'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/nfs3/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nfs3/tests'
+make[4]: Entering directory '/shared/build/lib/nfs3'
+  CC       server.lo
+  CCLD     libreffs_nfs3.la
+make[4]: Leaving directory '/shared/build/lib/nfs3'
+make[3]: Leaving directory '/shared/build/lib/nfs3'
+Making all in nfs4
+make[3]: Entering directory '/shared/build/lib/nfs4'
+Making all in include
+make[4]: Entering directory '/shared/build/lib/nfs4/include'
+Making all in nfs4
+make[5]: Entering directory '/shared/build/lib/nfs4/include/nfs4'
+Making all in trace
+make[6]: Entering directory '/shared/build/lib/nfs4/include/nfs4/trace'
+make[6]: Nothing to be done for 'all'.
+make[6]: Leaving directory '/shared/build/lib/nfs4/include/nfs4/trace'
+make[6]: Entering directory '/shared/build/lib/nfs4/include/nfs4'
+make[6]: Nothing to be done for 'all-am'.
+make[6]: Leaving directory '/shared/build/lib/nfs4/include/nfs4'
+make[5]: Leaving directory '/shared/build/lib/nfs4/include/nfs4'
+make[5]: Entering directory '/shared/build/lib/nfs4/include'
+make[5]: Nothing to be done for 'all-am'.
+make[5]: Leaving directory '/shared/build/lib/nfs4/include'
+make[4]: Leaving directory '/shared/build/lib/nfs4/include'
+Making all in common
+make[4]: Entering directory '/shared/build/lib/nfs4/common'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nfs4/common'
+Making all in server
+make[4]: Entering directory '/shared/build/lib/nfs4/server'
+  CC       attr.lo
+  CC       cb.lo
+  CC       cb_timeout.lo
+  CC       client.lo
+  CC       client_persist.lo
+  CC       compound.lo
+  CC       chunk.lo
+  CC       chunk_store.lo
+  CC       copy.lo
+  CC       delegation.lo
+  CC       dir.lo
+  CC       dispatch.lo
+  CC       errors.lo
+  CC       file.lo
+  CC       filehandle.lo
+  CC       layout.lo
+  CC       lease_reaper.lo
+  CC       lock.lo
+  CC       ops.lo
+  CC       owner.lo
+  CC       security.lo
+  CC       register.lo
+  CC       session.lo
+  CC       stateid.lo
+  CC       xattr.lo
+  CCLD     libreffs_nfs4_server.la
+make[4]: Leaving directory '/shared/build/lib/nfs4/server'
+Making all in client
+make[4]: Entering directory '/shared/build/lib/nfs4/client'
+Making all in tests
+make[5]: Entering directory '/shared/build/lib/nfs4/client/tests'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/lib/nfs4/client/tests'
+make[5]: Entering directory '/shared/build/lib/nfs4/client'
+  CC       chunk_io.lo
+  CC       ds_io.lo
+  CC       mds_compound.lo
+  CC       mds_session.lo
+  CC       mds_file.lo
+  CC       mds_layout.lo
+  CC       ec_io.lo
+  CCLD     libreffs_nfs4_client.la
+make[5]: Leaving directory '/shared/build/lib/nfs4/client'
+make[4]: Leaving directory '/shared/build/lib/nfs4/client'
+Making all in dstore
+make[4]: Entering directory '/shared/build/lib/nfs4/dstore'
+Making all in tests
+make[5]: Entering directory '/shared/build/lib/nfs4/dstore/tests'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/lib/nfs4/dstore/tests'
+make[5]: Entering directory '/shared/build/lib/nfs4/dstore'
+  CC       dstore.lo
+  CC       dstore_fanout.lo
+  CC       dstore_ops_nfsv3.lo
+  CC       dstore_ops_local.lo
+  CC       dstore_wcc.lo
+  CC       runway.lo
+  CCLD     libreffs_dstore.la
+make[5]: Leaving directory '/shared/build/lib/nfs4/dstore'
+make[4]: Leaving directory '/shared/build/lib/nfs4/dstore'
+Making all in tests
+make[4]: Entering directory '/shared/build/lib/nfs4/tests'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/shared/build/lib/nfs4/tests'
+make[4]: Entering directory '/shared/build/lib/nfs4'
+make[4]: Nothing to be done for 'all-am'.
+make[4]: Leaving directory '/shared/build/lib/nfs4'
+make[3]: Leaving directory '/shared/build/lib/nfs4'
+Making all in probe1
+make[3]: Entering directory '/shared/build/lib/probe1'
+  CC       probe1_client.lo
+  CC       probe1_server.lo
+  CCLD     libreffs_probe1.la
+make[3]: Leaving directory '/shared/build/lib/probe1'
+make[3]: Entering directory '/shared/build/lib'
+make[3]: Nothing to be done for 'all-am'.
+make[3]: Leaving directory '/shared/build/lib'
+make[2]: Leaving directory '/shared/build/lib'
+Making all in scripts
+make[2]: Entering directory '/shared/build/scripts'
+Making all in reffs
+make[3]: Entering directory '/shared/build/scripts/reffs'
+Making all in pynfs
+make[4]: Entering directory '/shared/build/scripts/reffs/pynfs'
+Making all in xdr
+make[5]: Entering directory '/shared/build/scripts/reffs/pynfs/xdr'
+make[5]: Nothing to be done for 'all'.
+make[5]: Leaving directory '/shared/build/scripts/reffs/pynfs/xdr'
+Making all in rpc
+make[5]: Entering directory '/shared/build/scripts/reffs/pynfs/rpc'
+../../../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/scripts/reffs/pynfs/rpc/gss.x
+Generating LALR tables
+Input file is /shared/src/scripts/reffs/pynfs/rpc/gss.x
+Will use output files gss_const.py, gss_type.py, and gss_pack.py
+../../../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/scripts/reffs/pynfs/rpc/rpc.x
+Input file is /shared/src/scripts/reffs/pynfs/rpc/rpc.x
+Will use output files rpc_const.py, rpc_type.py, and rpc_pack.py
+make[5]: Leaving directory '/shared/build/scripts/reffs/pynfs/rpc'
+make[5]: Entering directory '/shared/build/scripts/reffs/pynfs'
+make[5]: Nothing to be done for 'all-am'.
+make[5]: Leaving directory '/shared/build/scripts/reffs/pynfs'
+make[4]: Leaving directory '/shared/build/scripts/reffs/pynfs'
+make[4]: Entering directory '/shared/build/scripts/reffs'
+make[4]: Nothing to be done for 'all-am'.
+make[4]: Leaving directory '/shared/build/scripts/reffs'
+../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/lib/xdr/reffs_echo_xdr.x
+Input file is /shared/src/lib/xdr/reffs_echo_xdr.x
+Will use output files reffs_echo_xdr_const.py, reffs_echo_xdr_type.py, and reffs_echo_xdr_pack.py
+Ignoring program RE_ADMIN_PROGRAM = 304097
+../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/lib/xdr/rpc_xdr.x
+Input file is /shared/src/lib/xdr/rpc_xdr.x
+Will use output files rpc_xdr_const.py, rpc_xdr_type.py, and rpc_xdr_pack.py
+../../scripts/reffs/pynfs/xdr/xdrgen.py /shared/src/lib/xdr/probe1_xdr.x
+Input file is /shared/src/lib/xdr/probe1_xdr.x
+Will use output files probe1_xdr_const.py, probe1_xdr_type.py, and probe1_xdr_pack.py
+Ignoring program PROBE_PROGRAM = 211768
+make[3]: Leaving directory '/shared/build/scripts/reffs'
+make[3]: Entering directory '/shared/build/scripts'
+make[3]: Nothing to be done for 'all-am'.
+make[3]: Leaving directory '/shared/build/scripts'
+make[2]: Leaving directory '/shared/build/scripts'
+Making all in src
+make[2]: Entering directory '/shared/build/src'
+  CC       reffsd.o
+  CCLD     reffsd
+  CC       probe1_client.o
+  CCLD     reffs_probe1_clnt
+make[2]: Leaving directory '/shared/build/src'
+Making all in tools
+make[2]: Entering directory '/shared/build/tools'
+  CC       ec_demo.o
+  CCLD     ec_demo
+make[2]: Leaving directory '/shared/build/tools'
+Making all in LICENSES
+make[2]: Entering directory '/shared/build/LICENSES'
+make[2]: Nothing to be done for 'all'.
+make[2]: Leaving directory '/shared/build/LICENSES'
+make[2]: Entering directory '/shared/build'
+make[2]: Leaving directory '/shared/build'
+make[1]: Leaving directory '/shared/build'
+Builder done.
+Starting MDS + 6 DSes...
+docker compose -f deploy/benchmark/docker-compose.yml up -d ds0 ds1 ds2 ds3 ds4 ds5 ds6 ds7 ds8 ds9 mds
+ Network benchmark_bench Creating 
+ Network benchmark_bench Created 
+ Container reffs-bench-builder Creating 
+ Container reffs-bench-builder Created 
+ Container reffs-bench-ds8 Creating 
+ Container reffs-bench-ds5 Creating 
+ Container reffs-bench-ds1 Creating 
+ Container reffs-bench-ds0 Creating 
+ Container reffs-bench-ds6 Creating 
+ Container reffs-bench-ds3 Creating 
+ Container reffs-bench-ds4 Creating 
+ Container reffs-bench-ds2 Creating 
+ Container reffs-bench-ds9 Creating 
+ Container reffs-bench-ds7 Creating 
+ Container reffs-bench-ds3 Created 
+ Container reffs-bench-ds9 Created 
+ Container reffs-bench-ds4 Created 
+ Container reffs-bench-ds2 Created 
+ Container reffs-bench-ds5 Created 
+ Container reffs-bench-ds0 Created 
+ Container reffs-bench-ds6 Created 
+ Container reffs-bench-ds7 Created 
+ Container reffs-bench-ds8 Created 
+ Container reffs-bench-ds1 Created 
+ Container reffs-bench-mds Creating 
+ Container reffs-bench-mds Created 
+ Container reffs-bench-builder Starting 
+ Container reffs-bench-builder Started 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Waiting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds8 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds1 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds0 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds7 Starting 
+ Container reffs-bench-ds2 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds4 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds6 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds3 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds5 Starting 
+ Container reffs-bench-builder Exited 
+ Container reffs-bench-ds9 Starting 
+ Container reffs-bench-ds9 Started 
+ Container reffs-bench-ds7 Started 
+ Container reffs-bench-ds1 Started 
+ Container reffs-bench-ds0 Started 
+ Container reffs-bench-ds5 Started 
+ Container reffs-bench-ds6 Started 
+ Container reffs-bench-ds8 Started 
+ Container reffs-bench-ds3 Started 
+ Container reffs-bench-ds2 Started 
+ Container reffs-bench-ds4 Started 
+ Container reffs-bench-ds2 Waiting 
+ Container reffs-bench-ds4 Waiting 
+ Container reffs-bench-ds3 Waiting 
+ Container reffs-bench-ds8 Waiting 
+ Container reffs-bench-ds1 Waiting 
+ Container reffs-bench-ds6 Waiting 
+ Container reffs-bench-ds9 Waiting 
+ Container reffs-bench-ds0 Waiting 
+ Container reffs-bench-ds7 Waiting 
+ Container reffs-bench-ds5 Waiting 
+ Container reffs-bench-ds1 Healthy 
+ Container reffs-bench-ds2 Healthy 
+ Container reffs-bench-ds0 Healthy 
+ Container reffs-bench-ds5 Healthy 
+ Container reffs-bench-ds6 Healthy 
+ Container reffs-bench-ds9 Healthy 
+ Container reffs-bench-ds7 Healthy 
+ Container reffs-bench-ds3 Healthy 
+ Container reffs-bench-ds8 Healthy 
+ Container reffs-bench-ds4 Healthy 
+ Container reffs-bench-mds Starting 
+ Container reffs-bench-mds Started 
+Waiting for services to become healthy...
+docker compose -f deploy/benchmark/docker-compose.yml --profile run run --rm bench \
+	2>/home/loghyr/reffs/logs/benchmark/bench.log | tee /home/loghyr/reffs/logs/benchmark/results.csv
+codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd
+plain,1+0,4096,1,35,37,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,1,71,61,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,1,71,57,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,1,70,56,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,1,67,56,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,1,0,52,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,1,0,50,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,1,0,59,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,1,63,54,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,1,73,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,1,72,80,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,1,0,54,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,1,0,60,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,1,0,82,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,2,41,38,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,2,71,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,2,69,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,2,61,42,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,2,66,54,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,2,0,50,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,2,0,50,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,2,0,59,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,2,71,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,2,74,51,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,2,73,82,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,2,0,59,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,2,0,58,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,2,0,81,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,3,38,34,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,3,69,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,3,70,55,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,3,65,48,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,3,67,64,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,3,0,40,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,3,0,49,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,3,0,62,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,3,65,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,3,72,85,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,3,90,82,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,3,0,44,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,3,0,59,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,3,0,79,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,4,41,35,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,4,70,55,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,4,70,58,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,4,71,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,4,75,64,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,4,0,39,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,4,0,49,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,4,0,59,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,4,70,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,4,71,57,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,4,73,83,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,4,0,48,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,4,0,57,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,4,0,78,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,5,41,45,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,5,71,62,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,5,71,53,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,5,61,56,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,5,73,65,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,5,0,56,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,5,0,53,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,5,0,63,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,5,64,58,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,5,70,63,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,5,75,80,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,5,0,54,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,5,0,53,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,5,0,79,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,1,40,31,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,1,71,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,1,68,52,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,1,70,58,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,1,69,58,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,1,0,58,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,1,0,57,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,1,0,68,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,1,65,61,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,1,73,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,1,74,86,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,1,0,44,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,1,0,53,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,1,0,68,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,2,41,40,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,2,71,57,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,2,68,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,2,70,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,2,73,64,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,2,0,50,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,2,0,54,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,2,0,58,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,2,71,52,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,2,64,56,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,2,74,78,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,2,0,46,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,2,0,57,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,2,0,84,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,3,45,40,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,3,70,55,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,3,69,56,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,3,70,52,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,3,68,63,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,3,0,54,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,3,0,56,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,3,0,63,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,3,69,62,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,3,74,62,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,3,62,79,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,3,0,64,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,3,0,90,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,3,0,106,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,4,105,67,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,4,72,58,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,4,72,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,4,68,63,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,4,109,62,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,4,0,45,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,4,0,54,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,4,0,57,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,4,71,55,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,4,72,58,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,4,73,81,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,4,0,56,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,4,0,59,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,4,0,92,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,5,45,40,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,5,72,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,5,72,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,5,71,58,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,5,68,53,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,5,0,52,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,5,0,55,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,5,0,61,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,5,67,52,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,5,69,61,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,5,76,84,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,5,0,54,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,5,0,45,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,5,0,78,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,1,55,39,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,1,261,71,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,1,131,75,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,1,176,71,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,1,292,94,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,1,0,62,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,1,0,64,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,1,0,87,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,1,258,76,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,1,266,76,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,1,149,138,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,1,0,103,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,1,0,50,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,1,0,99,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,2,52,47,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,2,263,71,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,2,87,77,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,2,82,66,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,2,114,96,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,2,0,67,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,2,0,60,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,2,0,82,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,2,89,65,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,2,127,71,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,2,190,117,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,2,0,51,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,2,0,64,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,2,0,110,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,3,52,47,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,3,106,69,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,3,132,76,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,3,86,70,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,3,429,93,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,3,0,61,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,3,0,68,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,3,0,89,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,3,78,70,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,3,88,70,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,3,132,114,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,3,0,61,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,3,0,66,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,3,0,109,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,4,45,132,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,4,152,94,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,4,184,70,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,4,132,93,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,4,87,75,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,4,0,57,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,4,0,50,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,4,0,98,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,4,66,65,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,4,109,68,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,4,87,111,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,4,0,60,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,4,0,57,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,4,0,107,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,5,54,47,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,5,82,67,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,5,106,66,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,5,84,69,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,5,131,114,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,5,0,85,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,5,0,67,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,5,0,87,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,5,185,72,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,5,263,73,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,5,83,114,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,5,0,61,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,5,0,66,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,5,0,112,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,1,73,71,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,1,113,93,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,1,128,111,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,1,140,106,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,1,200,234,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,1,0,90,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,1,0,114,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,1,0,180,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,1,110,99,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,1,252,103,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,1,7437,291,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,1,0,104,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,1,0,97,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,1,0,277,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,2,80,94,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,2,100,96,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,2,130,133,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,2,155,140,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,2,133,196,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,2,0,106,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,2,0,104,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,2,0,201,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,2,124,101,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,2,134,102,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,2,165,275,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,2,0,89,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,2,0,89,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,2,0,277,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,3,82,72,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,3,111,96,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,3,134,111,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,3,169,108,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,3,172,179,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,3,0,92,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,3,0,96,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,3,0,193,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,3,117,100,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,3,132,104,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,3,142,278,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,3,0,117,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,3,0,111,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,3,0,315,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,4,69,82,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,4,110,79,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,4,137,116,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,4,144,109,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,4,141,184,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,4,0,103,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,4,0,99,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,4,0,191,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,4,110,100,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,4,155,102,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,4,138,278,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,4,0,93,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,4,0,93,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,4,0,284,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,5,78,78,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,5,116,97,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,5,131,112,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,5,140,106,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,5,143,177,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,5,0,97,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,5,0,103,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,5,0,213,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,5,115,162,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,5,131,102,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,5,144,428,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,5,0,130,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,5,0,122,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,5,0,309,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,1,183,167,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,1,216,190,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,1,311,254,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,1,372,264,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,1,421,581,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,1,0,259,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,1,0,242,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,1,0,623,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,1,274,249,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,1,327,235,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,1,356,954,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,1,0,280,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,1,0,245,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,1,0,1026,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,2,185,167,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,2,238,215,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,2,307,263,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,2,367,258,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,2,363,553,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,2,0,253,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,2,0,246,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,2,0,633,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,2,304,272,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,2,329,250,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,2,347,947,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,2,0,292,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,2,0,226,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,2,0,965,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,3,174,173,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,3,227,205,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,3,324,295,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,3,411,276,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,3,397,568,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,3,0,296,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,3,0,249,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,3,0,616,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,3,280,237,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,3,337,240,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,3,346,980,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,3,0,295,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,3,0,234,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,3,0,969,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,4,187,182,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,4,249,205,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,4,305,263,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,4,362,264,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,4,370,557,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,4,0,289,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,4,0,266,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,4,0,622,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,4,272,236,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,4,329,241,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,4,375,928,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,4,0,280,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,4,0,215,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,4,0,975,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,5,209,227,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,5,215,236,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,5,295,268,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,5,367,266,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,5,370,558,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,5,0,260,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,5,0,248,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,5,0,619,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,5,320,239,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,5,359,273,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,5,359,947,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,5,0,272,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,5,0,227,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,5,0,976,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,1,46,46,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,1,63,61,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,1,74,57,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,1,71,57,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,1,76,65,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,1,0,56,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,1,0,55,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,1,0,62,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,1,74,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,1,73,58,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,1,72,85,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,1,0,53,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,1,0,60,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,1,0,85,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,2,41,38,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,2,62,48,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,2,71,58,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,2,74,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,2,72,62,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,2,0,56,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,2,0,57,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,2,0,61,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,2,68,66,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,2,72,62,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,2,77,82,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,2,0,43,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,2,0,57,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,2,0,84,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,3,43,39,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,3,75,57,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,3,74,56,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,3,58,57,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,3,74,61,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,3,0,44,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,3,0,50,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,3,0,46,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,3,65,62,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,3,73,63,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,3,79,80,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,3,0,45,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,3,0,83,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,3,0,87,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,4,46,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,4,79,80,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,4,73,54,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,4,114,83,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,4,90,98,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,4,0,87,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,4,0,78,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,4,0,99,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,4,100,103,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,4,105,107,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,4,102,163,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,4,0,115,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,4,0,101,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,4,0,133,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,5,113,57,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,5,95,140,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,5,94,120,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,5,117,118,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,5,99,106,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,5,0,89,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,5,0,111,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,5,0,101,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,5,82,96,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,5,143,88,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,5,101,126,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,5,0,91,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,5,0,91,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,5,0,119,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,1,84,74,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,1,80,94,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,1,99,82,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,1,96,86,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,1,109,95,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,1,0,78,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,1,0,65,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,1,0,81,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,1,106,87,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,1,96,62,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,1,98,111,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,1,0,85,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,1,0,73,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,1,0,110,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,2,57,76,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,2,106,95,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,2,83,95,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,2,108,85,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,2,108,83,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,2,0,88,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,2,0,81,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,2,0,109,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,2,95,96,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,2,92,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,2,67,87,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,2,0,44,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,2,0,55,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,2,0,78,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,3,51,38,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,3,77,63,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,3,71,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,3,70,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,3,70,68,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,3,0,58,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,3,0,48,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,3,0,63,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,3,74,65,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,3,75,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,3,81,75,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,3,0,55,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,3,0,60,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,3,0,85,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,4,48,43,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,4,75,52,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,4,73,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,4,75,62,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,4,80,69,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,4,0,56,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,4,0,56,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,4,0,54,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,4,74,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,4,80,69,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,4,10063,107,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,4,0,56,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,4,0,50,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,4,0,84,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,5,49,39,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,5,81,60,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,5,73,54,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,5,76,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,5,66,86,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,5,0,47,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,5,0,58,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,5,0,64,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,5,69,64,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,5,81,63,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,5,88,81,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,5,0,57,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,5,0,66,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,5,0,80,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,1,58,49,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,1,88,71,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,1,92,68,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,1,90,72,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,1,84,86,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,1,0,69,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,1,0,68,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,1,0,89,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,1,79,69,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,1,86,76,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,1,89,114,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,1,0,63,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,1,0,66,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,1,0,111,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,2,57,47,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,2,100,59,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,2,89,58,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,2,103,64,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,2,84,119,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,2,0,64,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,2,0,68,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,2,0,92,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,2,81,65,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,2,72,70,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,2,90,112,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,2,0,49,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,2,0,64,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,2,0,114,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,3,48,47,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,3,81,66,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,3,97,68,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,3,91,74,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,3,87,80,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,3,0,63,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,3,0,69,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,3,0,92,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,3,76,69,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,3,90,70,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,3,95,115,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,3,0,66,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,3,0,65,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,3,0,114,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,4,48,52,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,4,87,70,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,4,96,67,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,4,91,76,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,4,133,95,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,4,0,62,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,4,0,67,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,4,0,91,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,4,81,66,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,4,81,68,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,4,93,113,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,4,0,63,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,4,0,70,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,4,0,117,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,5,59,50,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,5,94,62,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,5,81,93,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,5,84,73,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,5,93,96,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,5,0,64,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,5,0,69,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,5,0,95,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,5,66,67,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,5,88,69,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,5,81,113,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,5,0,56,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,5,0,65,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,5,0,97,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,1,82,74,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,1,109,91,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,1,134,113,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,1,146,113,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,1,143,185,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,1,0,89,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,1,0,102,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,1,0,199,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,1,118,106,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,1,128,104,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,1,144,285,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,1,0,95,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,1,0,92,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,1,0,288,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,2,78,76,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,2,118,97,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,2,140,113,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,2,172,95,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,2,173,185,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,2,0,122,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,2,0,101,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,2,0,203,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,2,119,101,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,2,140,101,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,2,142,280,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,2,0,104,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,2,0,97,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,2,0,281,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,3,88,74,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,3,112,98,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,3,137,112,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,3,149,113,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,3,151,190,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,3,0,102,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,3,0,104,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,3,0,197,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,3,124,108,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,3,174,104,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,3,145,271,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,3,0,126,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,3,0,86,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,3,0,296,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,4,81,91,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,4,119,92,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,4,135,109,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,4,145,106,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,4,151,177,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,4,0,106,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,4,0,106,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,4,0,199,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,4,110,115,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,4,144,106,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,4,145,283,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,4,0,82,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,4,0,99,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,4,0,280,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,5,83,74,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,5,117,102,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,5,152,117,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,5,146,104,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,5,152,188,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,5,0,106,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,5,0,97,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,5,0,219,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,5,134,125,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,5,133,119,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,5,139,286,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,5,0,95,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,5,0,101,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,5,0,283,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,1,178,154,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,1,217,204,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,1,309,264,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,1,371,261,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,1,376,647,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,1,0,272,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,1,0,261,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,1,0,629,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,1,270,232,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,1,314,233,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,1,361,940,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,1,0,279,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,1,0,227,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,1,0,1008,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,2,230,198,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,2,228,207,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,2,315,268,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,2,353,265,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,2,371,549,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,2,0,237,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,2,0,258,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,2,0,619,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,2,280,267,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,2,373,252,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,2,333,935,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,2,0,270,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,2,0,229,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,2,0,970,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,3,188,180,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,3,232,204,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,3,302,270,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,3,409,296,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,3,401,568,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,3,0,244,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,3,0,246,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,3,0,615,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,3,283,238,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,3,316,242,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,3,357,958,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,3,0,271,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,3,0,243,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,3,0,996,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,4,194,179,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,4,227,202,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,4,317,268,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,4,402,301,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,4,422,588,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,4,0,297,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,4,0,319,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,4,0,739,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,4,323,244,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,4,324,265,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,4,389,983,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,4,0,303,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,4,0,256,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,4,0,1011,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,5,265,200,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,5,250,218,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,5,318,267,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,5,364,266,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,5,391,554,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,5,0,259,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,5,0,258,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,5,0,625,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,5,274,246,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,5,367,277,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,5,377,948,OK,healthy,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,5,0,260,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,5,0,229,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,5,0,958,OK,degraded-1,v1,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,1,56,45,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,1,86,52,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,1,203,122,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,1,184,191,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,1,172,133,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,1,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,1,0,125,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,1,0,131,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,1,197,127,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,1,188,127,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,1,182,146,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,1,0,121,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,1,0,117,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,1,0,137,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,2,45,34,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,2,73,55,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,2,180,123,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,2,162,122,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,2,171,131,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,2,0,123,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,2,0,125,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,2,0,130,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,2,212,150,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,2,163,142,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,2,196,145,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,2,0,128,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,2,0,125,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,2,0,155,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,3,47,37,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,3,67,62,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,3,178,129,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,3,165,126,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,3,170,118,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,3,0,120,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,3,0,114,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,3,0,135,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,3,174,125,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,3,167,116,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,3,181,140,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,3,0,107,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,3,0,123,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,3,0,146,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,4,47,37,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,4,71,53,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,4,170,129,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,4,164,124,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,4,180,137,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,4,0,137,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,4,0,141,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,4,0,154,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,4,189,133,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,4,171,126,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,4,198,146,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,4,0,117,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,4,0,134,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,4,0,151,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,5,40,33,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,4096,5,72,51,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,5,167,125,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,5,164,127,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,5,178,130,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,4096,5,0,127,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,4096,5,0,127,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,4096,5,0,133,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,5,199,130,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,5,181,130,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,5,176,152,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,4096,5,0,128,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,4096,5,0,134,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,4096,5,0,156,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,1,54,42,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,1,75,48,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,1,179,129,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,1,175,135,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,1,181,145,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,1,0,121,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,1,0,143,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,1,0,127,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,1,207,129,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,1,182,150,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,1,181,148,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,1,0,128,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,1,0,134,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,1,0,154,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,2,50,42,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,2,76,63,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,2,179,131,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,2,167,130,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,2,168,147,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,2,0,134,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,2,0,134,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,2,0,141,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,2,213,134,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,2,187,138,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,2,196,153,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,2,0,141,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,2,0,146,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,2,0,149,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,3,48,54,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,3,72,57,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,3,187,125,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,3,165,132,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,3,180,140,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,3,0,131,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,3,0,131,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,3,0,142,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,3,221,137,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,3,192,124,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,3,191,156,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,3,0,126,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,3,0,136,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,3,0,156,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,4,45,39,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,4,81,61,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,4,192,130,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,4,195,135,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,4,177,138,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,4,0,131,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,4,0,136,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,4,0,135,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,4,249,137,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,4,198,168,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,4,177,163,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,4,0,119,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,4,0,132,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,4,0,156,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,16384,5,43,41,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,16384,5,131,59,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,5,184,138,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,5,205,132,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,5,182,136,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,16384,5,0,133,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,16384,5,0,126,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,16384,5,0,141,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,5,221,134,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,5,192,136,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,5,188,159,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,16384,5,0,122,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,16384,5,0,137,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,16384,5,0,161,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,1,61,47,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,1,87,52,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,1,185,140,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,1,187,136,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,1,193,160,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,1,0,155,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,1,0,133,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,1,0,147,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,1,214,139,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,1,180,152,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,1,213,163,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,1,0,139,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,1,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,1,0,163,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,2,55,48,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,2,86,66,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,2,202,143,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,2,187,138,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,2,191,148,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,2,0,137,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,2,0,140,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,2,0,149,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,2,219,144,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,2,197,149,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,2,218,166,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,2,0,154,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,2,0,129,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,2,0,167,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,3,54,46,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,3,92,67,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,3,195,141,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,3,186,142,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,3,198,152,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,3,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,3,0,140,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,3,0,149,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,3,212,142,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,3,199,143,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,3,207,164,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,3,0,140,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,3,0,145,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,3,0,163,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,4,59,47,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,4,86,66,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,4,203,144,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,4,180,145,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,4,207,147,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,4,0,143,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,4,0,130,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,4,0,153,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,4,225,142,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,4,194,143,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,4,203,172,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,4,0,134,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,4,0,143,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,4,0,167,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,65536,5,57,48,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,65536,5,86,68,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,5,206,148,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,5,192,140,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,5,195,151,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,65536,5,0,147,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,65536,5,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,65536,5,0,145,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,5,218,162,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,5,195,151,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,5,210,192,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,65536,5,0,145,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,65536,5,0,155,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,65536,5,0,159,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,1,84,73,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,1,118,95,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,1,236,258,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,1,236,170,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,1,243,146,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,1,0,174,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,1,0,140,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,1,0,146,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,1,251,167,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,1,226,143,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,1,251,162,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,1,0,165,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,1,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,1,0,183,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,2,86,116,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,2,96,119,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,2,240,177,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,2,240,139,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,2,232,145,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,2,0,179,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,2,0,149,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,2,0,150,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,2,254,181,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,2,224,151,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,2,239,158,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,2,0,177,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,2,0,135,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,2,0,156,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,3,83,72,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,3,105,88,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,3,225,169,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,3,240,151,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,3,264,165,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,3,0,185,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,3,0,137,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,3,0,154,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,3,251,172,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,3,235,148,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,3,15315,162,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,3,0,178,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,3,0,155,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,3,0,170,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,4,96,95,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,4,191,132,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,4,243,256,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,4,260,133,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,4,238,148,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,4,0,131,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,4,0,133,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,4,0,137,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,4,271,186,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,4,245,147,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,4,263,165,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,4,0,167,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,4,0,159,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,4,0,160,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,262144,5,88,73,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,262144,5,111,96,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,5,231,164,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,5,284,169,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,5,341,176,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,262144,5,0,197,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,262144,5,0,165,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,262144,5,0,162,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,5,343,191,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,5,252,160,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,5,277,218,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,262144,5,0,222,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,262144,5,0,174,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,262144,5,0,186,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,1,189,195,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,1,226,205,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,1,360,284,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,1,357,138,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,1,434,149,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,1,0,294,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,1,0,141,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,1,0,151,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,1,361,255,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,1,345,145,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,1,461,179,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,1,0,344,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,1,0,152,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,1,0,166,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,2,193,176,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,2,237,205,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,2,375,280,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,2,365,141,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,2,423,150,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,2,0,297,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,2,0,139,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,2,0,150,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,2,362,268,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,2,394,171,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,2,411,162,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,2,0,296,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,2,0,141,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,2,0,162,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,3,190,178,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,3,240,205,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,3,378,284,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,3,441,190,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,3,423,147,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,3,0,292,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,3,0,132,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,3,0,153,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,3,378,274,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,3,379,174,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,3,410,188,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,3,0,306,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,3,0,180,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,3,0,160,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,4,189,175,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,4,227,222,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,4,374,347,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,4,365,132,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,4,540,42,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,4,0,319,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,4,0,142,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,4,0,150,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,4,362,255,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,4,348,144,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,4,413,163,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,4,0,309,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,4,0,143,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,4,0,160,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,1048576,5,179,182,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+stripe,10+0,1048576,5,222,211,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,5,370,284,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,5,360,129,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,5,463,141,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,4+2,1048576,5,0,284,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,4+2,1048576,5,0,130,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,4+2,1048576,5,0,137,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,5,370,255,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,5,356,139,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,5,429,160,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+rs,8+2,1048576,5,0,305,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-sys,8+2,1048576,5,0,136,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+mojette-nonsys,8+2,1048576,5,0,178,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,avx2
+plain,1+0,4096,1,47,38,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,1,73,62,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,1,184,133,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,1,177,133,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,1,186,141,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,1,0,131,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,1,0,148,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,1,0,140,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,1,212,146,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,1,208,129,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,1,217,164,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,1,0,130,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,1,0,147,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,1,0,162,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,2,50,40,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,2,83,60,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,2,192,140,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,2,172,144,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,2,180,142,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,2,0,142,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,2,0,156,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,2,0,172,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,2,280,167,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,2,274,166,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,2,264,190,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,2,0,170,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,2,0,185,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,2,0,196,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,3,79,69,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,3,123,91,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,3,248,188,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,3,231,159,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,3,236,169,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,3,0,142,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,3,0,167,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,3,0,163,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,3,279,163,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,3,250,166,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,3,247,190,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,3,0,161,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,3,0,171,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,3,0,199,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,4,70,72,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,4,115,88,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,4,215,153,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,4,247,170,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,4,252,171,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,4,0,157,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,4,0,177,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,4,0,180,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,4,254,175,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,4,242,166,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,4,221,188,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,4,0,207,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,4,0,168,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,4,0,199,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,4096,5,85,44,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,4096,5,113,103,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,5,264,162,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,5,252,220,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,5,220,192,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,4096,5,0,149,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,4096,5,0,170,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,4096,5,0,207,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,5,268,179,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,5,244,175,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,5,274,192,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,4096,5,0,171,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,4096,5,0,166,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,4096,5,0,193,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,1,46,40,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,1,84,55,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,1,186,141,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,1,177,143,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,1,188,149,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,1,0,152,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,1,0,142,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,1,0,149,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,1,213,143,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,1,198,138,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,1,206,160,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,1,0,142,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,1,0,137,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,1,0,156,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,2,47,41,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,2,85,60,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,2,204,150,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,2,185,142,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,2,192,142,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,2,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,2,0,141,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,2,0,141,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,2,217,144,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,2,196,148,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,2,203,166,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,2,0,130,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,2,0,131,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,2,0,166,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,3,62,47,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,3,86,63,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,3,188,142,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,3,183,142,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,3,189,146,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,3,0,142,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,3,0,141,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,3,0,161,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,3,195,144,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,3,200,148,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,3,209,160,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,3,0,147,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,3,0,142,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,3,0,171,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,4,44,34,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,4,80,61,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,4,193,139,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,4,190,142,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,4,192,144,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,4,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,4,0,142,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,4,0,147,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,4,210,147,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,4,200,144,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,4,190,163,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,4,0,134,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,4,0,145,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,4,0,166,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,16384,5,46,38,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,16384,5,82,61,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,5,198,144,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,5,188,153,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,5,177,169,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,16384,5,0,149,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,16384,5,0,153,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,16384,5,0,148,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,5,209,142,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,5,201,145,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,5,205,169,FAIL,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,16384,5,0,145,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,16384,5,0,147,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,16384,5,0,178,FAIL,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,1,60,50,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,1,86,61,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,1,220,147,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,1,219,156,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,1,199,151,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,1,0,150,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,1,0,143,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,1,0,148,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,1,218,146,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,1,208,148,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,1,207,169,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,1,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,1,0,149,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,1,0,175,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,2,60,51,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,2,78,68,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,2,205,147,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,2,194,147,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,2,201,145,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,2,0,150,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,2,0,146,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,2,0,150,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,2,243,146,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,2,209,159,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,2,222,172,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,2,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,2,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,2,0,169,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,3,56,51,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,3,90,72,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,3,210,152,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,3,195,169,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,3,240,177,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,3,0,178,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,3,0,163,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,3,0,233,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,3,267,172,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,3,237,168,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,3,262,183,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,3,0,182,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,3,0,201,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,3,0,163,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,4,100,102,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,4,94,91,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,4,286,169,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,4,246,166,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,4,245,177,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,4,0,171,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,4,0,166,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,4,0,170,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,4,310,171,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,4,338,171,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,4,273,185,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,4,0,169,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,4,0,171,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,4,0,195,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,65536,5,71,81,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,65536,5,144,99,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,5,342,168,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,5,222,206,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,5,242,170,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,65536,5,0,168,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,65536,5,0,164,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,65536,5,0,168,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,5,285,151,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,5,270,158,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,5,234,194,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,65536,5,0,193,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,65536,5,0,164,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,65536,5,0,188,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,1,76,69,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,1,119,95,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,1,250,177,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,1,265,130,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,1,232,147,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,1,0,175,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,1,0,141,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,1,0,149,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,1,246,172,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,1,238,148,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,1,250,165,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,1,0,173,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,1,0,139,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,1,0,170,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,2,88,74,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,2,118,97,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,2,251,178,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,2,221,141,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,2,246,154,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,2,0,214,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,2,0,137,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,2,0,162,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,2,285,156,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,2,234,148,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,2,254,170,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,2,0,177,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,2,0,149,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,2,0,167,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,3,90,75,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,3,124,96,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,3,240,180,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,3,232,147,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,3,246,155,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,3,0,179,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,3,0,144,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,3,0,150,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,3,244,168,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,3,250,181,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,3,258,183,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,3,0,181,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,3,0,151,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,3,0,170,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,4,82,71,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,4,118,105,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,4,238,179,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,4,236,151,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,4,243,154,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,4,0,196,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,4,0,130,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,4,0,167,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,4,253,168,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,4,234,149,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,4,262,173,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,4,0,176,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,4,0,147,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,4,0,177,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,262144,5,99,106,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,262144,5,104,104,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,5,282,195,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,5,234,146,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,5,248,153,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,262144,5,0,176,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,262144,5,0,148,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,262144,5,0,151,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,5,241,175,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,5,234,153,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,5,279,173,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,262144,5,0,177,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,262144,5,0,153,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,262144,5,0,167,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,1,190,177,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,1,233,208,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,1,386,293,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,1,369,151,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,1,471,144,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,1,0,326,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,1,0,147,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,1,0,153,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,1,378,272,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,1,364,152,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,1,421,177,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,1,0,301,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,1,0,156,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,1,0,176,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,2,187,181,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,2,232,207,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,2,388,288,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,2,372,139,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,2,472,145,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,2,0,296,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,2,0,139,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,2,0,145,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,2,369,262,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,2,349,149,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,2,411,165,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,2,0,297,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,2,0,146,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,2,0,176,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,3,193,182,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,3,233,218,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,3,418,307,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,3,393,146,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,3,440,150,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,3,0,309,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,3,0,146,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,3,0,155,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,3,395,305,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,3,349,157,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,3,423,179,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,3,0,315,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,3,0,151,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,3,0,184,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,4,202,224,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,4,258,276,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,4,479,331,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,4,431,175,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,4,461,174,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,4,0,335,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,4,0,173,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,4,0,189,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,4,444,301,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,4,489,185,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,4,490,239,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,4,0,338,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,4,0,375,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,4,0,209,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+plain,1+0,1048576,5,237,202,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+stripe,10+0,1048576,5,269,231,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,5,464,338,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,5,444,186,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,5,495,188,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,4+2,1048576,5,0,347,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,4+2,1048576,5,0,200,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,4+2,1048576,5,0,171,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,5,479,308,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,5,384,175,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,5,439,178,OK,healthy,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+rs,8+2,1048576,5,0,324,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-sys,8+2,1048576,5,0,155,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+mojette-nonsys,8+2,1048576,5,0,180,OK,degraded-1,v2,x86_64,Intel(R) N100,6.19.8-200.fc43.x86_64,scalar(forced)
+
+Results saved to /home/loghyr/reffs/logs/benchmark/results.csv
+Container logs: /home/loghyr/reffs/logs/benchmark/bench.log
+Containers still running — use 'make -f Makefile.reffs stop-benchmark' to tear down
+View logs: docker logs reffs-bench-mds / reffs-bench-ds0 / etc.

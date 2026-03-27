@@ -415,19 +415,62 @@ key&nbsp;=&nbsp;<code>inode_ino:block_offset</code>, value&nbsp;=&nbsp;32-byte b
 When RocksDB replaces the POSIX backend, the persistence layer changes from file I/O to
 <code>rocksdb_put()</code> with no structural changes to the chunk_store API.</p>""")
 
-    p("<h3>6.5 v1 vs v2 benchmark status</h3>")
-    p("""<p>The full benchmark attempted v2 (CHUNK_WRITE) after the v1 phases.  Plain and
-stripe baselines succeeded under v2, but EC codec runs (RS, Mojette) failed silently.
-The failure is the <strong>DS session multiplexing</strong> issue: ec_demo opens one NFSv4.2
-session per DS mirror for CHUNK ops, and when multiple sessions target the same MDS host
-the connection sharing logic conflicts.  This is a known limitation
-(documented in goals.md) that requires DS session tracking changes in the client.</p>""")
+    p("<h3>6.5 v1 vs v2 benchmark: the cost of CRC + metadata persistence</h3>")
+    p("""<p>The v2 (CHUNK_WRITE) path adds four costs over v1 (NFSv3 WRITE): CRC32
+computation per chunk on the client, CRC32 validation on the server, two extra
+round-trips per DS (CHUNK_FINALIZE + CHUNK_COMMIT), and metadata persistence I/O
+(write-temp/fdatasync/rename per inode).  RS works correctly under v2 at all sizes;
+Mojette codecs fail under v2 at small sizes due to a variable projection size vs
+fixed chunk granularity mismatch (a design issue, not a persistence bug).</p>""")
 
-    p("""<p>Once the session multiplexing fix lands, the v2 benchmark will measure the full
-CHUNK_WRITE + FINALIZE + COMMIT pipeline including CRC32 computation, CRC validation,
-two extra round-trips per DS, and the metadata persistence I/O.  The expected persistence
-cost is small: ~8&nbsp;KB sequential write + one fdatasync per COMMIT at 1&nbsp;MB (256
-blocks &times; 32 bytes), well under 1% of the total round-trip.</p>""")
+    # v1 vs v2 chart
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    labels = ["RS 4+2\nadept", "RS 8+2\nadept", "RS 4+2\ngarbo", "RS 8+2\ngarbo"]
+    v1_w = [308.4, 290.0, 373.8, 413.4]
+    v2_w = [371.4, 366.6, 491.0, 483.6]
+    v1_r = [268.6, 246.6, 320.2, 329.4]
+    v2_r = [295.8, 261.4, 371.4, 327.4]
+    x = np.arange(4); w = 0.3
+    for ax, v1, v2, title in [(ax1, v1_w, v2_w, "Write (ms)"), (ax2, v1_r, v2_r, "Read (ms)")]:
+        ax.bar(x - w/2, v1, w, label="v1 (NFSv3)", color=C["rs"])
+        ax.bar(x + w/2, v2, w, label="v2 (CHUNK)", color="#ff9800")
+        for i in range(4):
+            pct = (v2[i]/v1[i] - 1) * 100
+            ax.text(i, max(v1[i], v2[i]) + 8, f"{pct:+.0f}%", ha="center",
+                    fontsize=8, fontweight="bold")
+        ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=8)
+        ax.set_ylabel("ms"); ax.set_title(title, fontsize=10); ax.legend(fontsize=8)
+    fig.suptitle("RS at 1 MB: v1 (NFSv3 WRITE) vs v2 (CHUNK_WRITE + CRC + persist)",
+                 fontsize=11)
+    fig.tight_layout()
+    p(img(fig_to_b64(fig), "Figure 8 — RS v1 vs v2 write and read at 1 MB on two platforms."))
+
+    p(tbl(["Platform / Geom", "v1 write", "v2 write", "Write OH", "v1 read", "v2 read", "Read OH"],
+        [["<strong>adept RS 4+2</strong>", "308", "371", "+20%", "269", "296", "+10%"],
+         ["<strong>adept RS 8+2</strong>", "290", "367", "+26%", "247", "261", "+6%"],
+         ["<strong>garbo RS 4+2</strong>", "374", "491", "+31%", "320", "371", "+16%"],
+         ["<strong>garbo RS 8+2</strong>", "413", "484", "+17%", "329", "327", "&minus;1%"]]))
+
+    p("""<p>The v2 write overhead is <strong>+17&ndash;31%</strong> over v1.  This covers CRC32
+computation, CRC validation, the CHUNK_WRITE compound overhead (SEQUENCE + PUTFH + CHUNK_WRITE
+vs bare NFSv3 WRITE), and the FINALIZE + COMMIT round-trips including metadata persistence.
+The read overhead is smaller (<strong>+6&ndash;16%</strong> at 4+2, near-zero at 8+2) because
+CHUNK_READ is structurally similar to NFSv3 READ — the CRC and metadata overhead are
+write-path costs.</p>""")
+
+    p("""<p>The metadata persistence itself (8&nbsp;KB write + fdatasync per COMMIT) is a small
+fraction of the total v2 overhead.  The dominant costs are the compound RPC structure (3-op
+NFSv4.2 compound vs single NFSv3 RPC) and the two extra round-trips (FINALIZE + COMMIT).
+At 8+2, the per-shard data is smaller, so the fixed per-RPC overhead is proportionally larger
+on writes but negligible on reads.</p>""")
+
+    p('<div class="note"><strong>Mojette + v2:</strong> Mojette projections produce '
+      'variable-sized outputs per direction (B&nbsp;=&nbsp;|p|(Q&minus;1)&nbsp;+&nbsp;'
+      '|q|(P&minus;1)&nbsp;+&nbsp;1). The current v2 path uses a fixed chunk_size for all '
+      'blocks. This mismatch causes verification failures at small file sizes where the '
+      'projection size does not divide evenly into chunks. RS works correctly because all '
+      'shards are uniform size. Fixing Mojette + v2 requires per-shard chunk_size in the '
+      'CHUNK_WRITE protocol or padding projections to a common size.</div>')
 
     # ── 7. Conclusions ───────────────────────────────────────────────
     p("<h2>7. Conclusions</h2>")
@@ -454,10 +497,12 @@ blocks &times; 32 bytes), well under 1% of the total round-trip.</p>""")
       "NEON and AVX2 fast paths are verified across all platforms (2,600 operations, zero "
       "failures).  The encoding benefit will appear at larger shard sizes.</p>")
 
-    p("<p><strong>Chunk metadata is now crash-safe.</strong> CRC32, chunk_owner4, and lock "
-      "flags persist via write-temp/fdatasync/rename.  The v2 CHUNK benchmark is blocked on "
-      "DS session multiplexing; once fixed, it will measure the full cost of the CRC+data "
-      "split and metadata persistence.</p>")
+    p("<p><strong>v2 CHUNK overhead is +17&ndash;31% on writes, +6&ndash;16% on reads.</strong> "
+      "The CRC+data split, FINALIZE/COMMIT round-trips, and metadata persistence add "
+      "measurable but manageable overhead over plain NFSv3 WRITE. The dominant cost is "
+      "the compound RPC structure and extra round-trips, not the persistence I/O itself. "
+      "Chunk metadata (CRC32, owner, lock flags) is now crash-safe via "
+      "write-temp/fdatasync/rename.</p>")
 
     p('<div class="note">Test conditions: 5 measured runs per combination.  Full benchmark '
       '(SIMD + scalar + degraded) in a single invocation per machine.  '
