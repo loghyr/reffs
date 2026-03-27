@@ -69,8 +69,12 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	cwa->cwa_guard.cwg_check = FALSE;
 	cwa->cwa_chunk_size = chunk_size;
 
-	/* Compute CRC32 per chunk. */
-	uint32_t nchunks = data_len / chunk_size;
+	/*
+	 * Compute CRC32 per chunk.  The last chunk may be shorter than
+	 * chunk_size when data_len is not a multiple (Mojette parity
+	 * projections produce variable-sized shards).
+	 */
+	uint32_t nchunks = (data_len + chunk_size - 1) / chunk_size;
 
 	cwa->cwa_crc32s.cwa_crc32s_len = nchunks;
 	cwa->cwa_crc32s.cwa_crc32s_val = calloc(nchunks, sizeof(uint32_t));
@@ -79,9 +83,14 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		goto out;
 	}
 
-	for (uint32_t i = 0; i < nchunks; i++)
+	for (uint32_t i = 0; i < nchunks; i++) {
+		uint32_t clen = chunk_size;
+
+		if (i == nchunks - 1 && data_len % chunk_size != 0)
+			clen = data_len % chunk_size;
 		cwa->cwa_crc32s.cwa_crc32s_val[i] = (uint32_t)crc32(
-			0L, data + (size_t)i * chunk_size, (uInt)chunk_size);
+			0L, data + (size_t)i * chunk_size, (uInt)clen);
+	}
 
 	cwa->cwa_chunks.cwa_chunks_len = data_len;
 	cwa->cwa_chunks.cwa_chunks_val = (char *)data;

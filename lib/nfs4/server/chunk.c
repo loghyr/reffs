@@ -80,10 +80,13 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	}
 
 	/*
-	 * The chunks opaque blob contains one or more chunks of
-	 * cwa_chunk_size bytes each.
+	 * The chunks opaque blob contains one or more chunks.  Most are
+	 * cwa_chunk_size bytes; the last may be shorter when the shard
+	 * size is not a multiple of chunk_size (Mojette parity projections
+	 * produce variable-sized shards).
 	 */
-	uint32_t nchunks = args->cwa_chunks.cwa_chunks_len / chunk_size;
+	uint32_t total_data = args->cwa_chunks.cwa_chunks_len;
+	uint32_t nchunks = (total_data + chunk_size - 1) / chunk_size;
 
 	if (nchunks == 0) {
 		*status = NFS4ERR_INVAL;
@@ -101,8 +104,11 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		const uint8_t *cdata =
 			(const uint8_t *)args->cwa_chunks.cwa_chunks_val +
 			(size_t)i * chunk_size;
-		uint32_t computed =
-			(uint32_t)crc32(0L, cdata, (uInt)chunk_size);
+		uint32_t clen = chunk_size;
+
+		if (i == nchunks - 1 && total_data % chunk_size != 0)
+			clen = total_data % chunk_size;
+		uint32_t computed = (uint32_t)crc32(0L, cdata, (uInt)clen);
 
 		if (computed != args->cwa_crc32s.cwa_crc32s_val[i]) {
 			TRACE("CHUNK_WRITE: CRC mismatch chunk %u: "
@@ -153,15 +159,20 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	}
 
 	/* Update inode size. */
-	int64_t new_end =
-		(int64_t)(args->cwa_offset + nchunks) * (int64_t)chunk_size;
+	int64_t new_end = (int64_t)args->cwa_offset * (int64_t)chunk_size +
+			  (int64_t)total_data;
 	if (new_end > compound->c_inode->i_size)
 		compound->c_inode->i_size = new_end;
 
 	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 
-	/* Record per-block metadata. */
+	/* Record per-block metadata.  Last block may be smaller. */
 	for (uint32_t i = 0; i < nchunks; i++) {
+		uint32_t blk_size = chunk_size;
+
+		if (i == nchunks - 1 && total_data % chunk_size != 0)
+			blk_size = total_data % chunk_size;
+
 		struct chunk_block blk = {
 			.cb_state = CHUNK_STATE_PENDING,
 			.cb_gen_id = args->cwa_owner.co_guard.cg_gen_id,
@@ -171,7 +182,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 			.cb_crc32 = (args->cwa_crc32s.cwa_crc32s_len > i) ?
 					    args->cwa_crc32s.cwa_crc32s_val[i] :
 					    0,
-			.cb_chunk_size = chunk_size,
+			.cb_chunk_size = blk_size,
 		};
 
 		if (chunk_store_write(cs, args->cwa_offset + i, &blk) < 0) {
