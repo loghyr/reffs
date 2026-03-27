@@ -286,20 +286,22 @@ for sz in $SIZES; do
             k=${geom%%:*}
             m=${geom##*:}
 
-            # Healthy pass
-            bench_one "rs" "$k" "$m" "$sz" "$run" "healthy" ""
-            bench_one "mojette-sys" "$k" "$m" "$sz" "$run" "healthy" ""
-            bench_one "mojette-nonsys" "$k" "$m" "$sz" "$run" "healthy" ""
+            # Healthy pass — || true prevents set -e from killing
+            # the script when a codec/layout combination fails
+            # (e.g., Mojette + v2 CHUNK variable chunk size mismatch).
+            bench_one "rs" "$k" "$m" "$sz" "$run" "healthy" "" || true
+            bench_one "mojette-sys" "$k" "$m" "$sz" "$run" "healthy" "" || true
+            bench_one "mojette-nonsys" "$k" "$m" "$sz" "$run" "healthy" "" || true
 
             # Degraded pass (skip plain and stripe — no redundancy)
             if [ "$DEGRADE" -gt 0 ] && [ "$DEGRADE" -le "$m" ]; then
                 skip_list=$(build_skip_list "$DEGRADE")
                 bench_one "rs" "$k" "$m" "$sz" "$run" \
-                    "degraded-${DEGRADE}" "$skip_list"
+                    "degraded-${DEGRADE}" "$skip_list" || true
                 bench_one "mojette-sys" "$k" "$m" "$sz" "$run" \
-                    "degraded-${DEGRADE}" "$skip_list"
+                    "degraded-${DEGRADE}" "$skip_list" || true
                 bench_one "mojette-nonsys" "$k" "$m" "$sz" "$run" \
-                    "degraded-${DEGRADE}" "$skip_list"
+                    "degraded-${DEGRADE}" "$skip_list" || true
             fi
         done
     done
