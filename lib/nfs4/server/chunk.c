@@ -22,6 +22,7 @@
  * Happy-path implementation: no guard conflicts, no locks.
  */
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -304,6 +305,23 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 					rc->cr_chunk.cr_chunk_val,
 					blk->cb_chunk_size,
 					(off_t)(off * blk->cb_chunk_size));
+		}
+
+		/*
+		 * Verify stored CRC against data read from disk.
+		 * Detects silent data corruption (bit rot).
+		 */
+		if (blk->cb_crc32 != 0) {
+			uint32_t disk_crc = (uint32_t)crc32(
+				0L, (const Bytef *)rc->cr_chunk.cr_chunk_val,
+				(uInt)blk->cb_chunk_size);
+
+			if (disk_crc != blk->cb_crc32) {
+				LOG("CHUNK_READ: CRC mismatch block %" PRIu64
+				    ": stored 0x%08x disk 0x%08x",
+				    off, blk->cb_crc32, disk_crc);
+				rc->cr_crc = disk_crc;
+			}
 		}
 	}
 

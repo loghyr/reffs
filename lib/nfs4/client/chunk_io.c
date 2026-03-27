@@ -181,6 +181,26 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 			copy = chunk_size;
 		memcpy(out_data + (size_t)i * chunk_size,
 		       rc->cr_chunk.cr_chunk_val, copy);
+
+		/*
+		 * Verify CRC from server against received data.
+		 * Detects network corruption on the read path.
+		 */
+		if (rc->cr_crc != 0) {
+			uint32_t wire_crc = (uint32_t)crc32(
+				0L, (const Bytef *)rc->cr_chunk.cr_chunk_val,
+				(uInt)copy);
+
+			if (wire_crc != rc->cr_crc) {
+				fprintf(stderr,
+					"ds_chunk_read: CRC mismatch "
+					"block %u: server 0x%08x "
+					"wire 0x%08x\n",
+					i, rc->cr_crc, wire_crc);
+				ret = -EIO;
+				goto out;
+			}
+		}
 	}
 
 	*nread = got;
