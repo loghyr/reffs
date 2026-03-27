@@ -66,6 +66,7 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	cwa->cwa_owner.co_guard.cg_client_id = 1;
 	cwa->cwa_owner.co_id = owner_id;
 	cwa->cwa_payload_id = 0;
+	cwa->cwa_flags = 0;
 	cwa->cwa_guard.cwg_check = FALSE;
 	cwa->cwa_chunk_size = chunk_size;
 

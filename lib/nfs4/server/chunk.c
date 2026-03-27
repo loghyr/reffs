@@ -204,12 +204,13 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	chunk_write_verf(compound->c_server_state, resok->cwr_writeverf);
 
 	/* Return per-chunk status (all OK for happy path). */
-	resok->cwr_status.cwr_status_val = calloc(nchunks, sizeof(nfsstat4));
-	if (!resok->cwr_status.cwr_status_val) {
+	resok->cwr_block_status.cwr_block_status_val =
+		calloc(nchunks, sizeof(nfsstat4));
+	if (!resok->cwr_block_status.cwr_block_status_val) {
 		*status = NFS4ERR_DELAY;
 		return 0;
 	}
-	resok->cwr_status.cwr_status_len = nchunks;
+	resok->cwr_block_status.cwr_block_status_len = nchunks;
 	resok->cwr_owners.cwr_owners_len = 0;
 	resok->cwr_owners.cwr_owners_val = NULL;
 
@@ -425,7 +426,7 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
-	chunk_write_verf(compound->c_server_state, resok->ccr_writeverf);
+	chunk_write_verf(compound->c_server_state, resok->cfr_writeverf);
 
 	return 0;
 }

@@ -3339,8 +3339,8 @@ struct CHUNK_FINALIZE4args {
 };
 
 struct CHUNK_FINALIZE4resok {
-    verifier4       ccr_writeverf;
-    nfsstat4        ccr_status<>;
+    verifier4       cfr_writeverf;
+    nfsstat4        cfr_status<>;
 };
 
 union CHUNK_FINALIZE4res switch (nfsstat4 cfr_status) {
@@ -3434,9 +3434,9 @@ union CHUNK_REPAIRED4res switch (nfsstat4 cpr_status) {
 
 struct CHUNK_ROLLBACK4args {
     /* CURRENT_FH: file */
-    offset4         cra_offset;
-    count4          cra_count;
-    chunk_owner4    cra_chunks<>;
+    offset4         crb_offset;
+    count4          crb_count;
+    chunk_owner4    crb_chunks<>;
 };
 
 struct CHUNK_ROLLBACK4resok {
@@ -3472,6 +3472,8 @@ union write_chunk_guard4 switch (bool cwg_check) {
         void;
 };
 
+const CHUNK_WRITE_FLAGS_ACTIVATE_IF_EMPTY = 0x00000001;
+
 struct CHUNK_WRITE4args {
     /* CURRENT_FH: file */
     stateid4           cwa_stateid;
@@ -3479,6 +3481,7 @@ struct CHUNK_WRITE4args {
     stable_how4        cwa_stable;
     chunk_owner4       cwa_owner;
     uint32_t           cwa_payload_id;
+    uint32_t           cwa_flags;
     write_chunk_guard4 cwa_guard;
     uint32_t           cwa_chunk_size;
     uint32_t           cwa_crc32s<>;
@@ -3489,7 +3492,8 @@ struct CHUNK_WRITE4resok {
     count4          cwr_count;
     stable_how4     cwr_committed;
     verifier4       cwr_writeverf;
-    nfsstat4        cwr_status<>;
+    nfsstat4        cwr_block_status<>;
+    bool            cwr_block_activated<>;
     chunk_owner4    cwr_owners<>;
 };
 
