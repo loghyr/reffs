@@ -53,6 +53,9 @@ __attribute__((format(printf, 1, 2))) static void ec_log(const char *fmt, ...)
 /* Shard size: 4 KiB (capped for io_uring large-message workaround). */
 #define EC_SHARD_SIZE (4 * 1024)
 
+/* Ceiling division — needed for chunk block counts with variable-size shards. */
+#define DIV_CEIL(a, b) (((a) + (b) - 1) / (b))
+
 /* ------------------------------------------------------------------ */
 /* Resolve all mirrors to DS connections                                */
 /* ------------------------------------------------------------------ */
@@ -560,11 +563,12 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 			       "fh_len=%u wsz=%u\n",
 			       s, i, em->em_fh_len, wsz);
 			if (ctx.ctx_ds_sess) {
-				ret = ds_chunk_write(
-					&ctx.ctx_ds_sess[i], em->em_fh,
-					em->em_fh_len,
-					(uint64_t)s * (ds_stride / chunk_sz),
-					chunk_sz, src, wsz, 1);
+				ret = ds_chunk_write(&ctx.ctx_ds_sess[i],
+						     em->em_fh, em->em_fh_len,
+						     (uint64_t)s *
+							     DIV_CEIL(ds_stride,
+								      chunk_sz),
+						     chunk_sz, src, wsz, 1);
 			} else {
 				ret = ds_write(&ctx.ctx_conns[i], em->em_fh,
 					       em->em_fh_len, s * ds_stride,
@@ -595,7 +599,8 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 				ret = ds_chunk_write(
 					&ctx.ctx_ds_sess[k + i], em->em_fh,
 					em->em_fh_len,
-					(uint64_t)s * (ds_stride / chunk_sz),
+					(uint64_t)s *
+						DIV_CEIL(ds_stride, chunk_sz),
 					chunk_sz, parity_shards[i], wsz, 1);
 			} else {
 				ret = ds_write(&ctx.ctx_conns[k + i], em->em_fh,
@@ -717,6 +722,11 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	 */
 	size_t nstripes = (buf_len + stripe_data - 1) / stripe_data;
 
+	uint32_t rd_chunk_sz = ctx.ctx_layout.el_chunk_size;
+
+	if (rd_chunk_sz == 0)
+		rd_chunk_sz = (uint32_t)shard_size;
+
 	/* Allocate shard buffers. */
 	int total = k + m;
 	uint8_t **shards = calloc(total, sizeof(uint8_t *));
@@ -732,6 +742,13 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	for (int i = 0; i < total; i++) {
 		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
 
+		/*
+		 * For v2 CHUNK reads, the server returns whole blocks,
+		 * so the buffer must be rounded up to a chunk boundary.
+		 */
+		if (ctx.ctx_ds_sess)
+			sz = DIV_CEIL(sz, rd_chunk_sz) * rd_chunk_sz;
+
 		shards[i] = calloc(1, sz);
 		if (!shards[i]) {
 			for (int j = 0; j < i; j++)
@@ -744,11 +761,6 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	}
 
 	size_t total_read = 0;
-
-	uint32_t rd_chunk_sz = ctx.ctx_layout.el_chunk_size;
-
-	if (rd_chunk_sz == 0)
-		rd_chunk_sz = (uint32_t)shard_size;
 
 	/* Match the write path's offset stride for variable-size shards. */
 	size_t ds_stride = shard_size;
@@ -774,12 +786,13 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 			}
 
 			if (ctx.ctx_ds_sess) {
-				uint32_t nblk = rsz / rd_chunk_sz;
+				uint32_t nblk = DIV_CEIL(rsz, rd_chunk_sz);
 
 				ret = ds_chunk_read(
 					&ctx.ctx_ds_sess[i], em->em_fh,
 					em->em_fh_len,
-					(uint64_t)s * (ds_stride / rd_chunk_sz),
+					(uint64_t)s * DIV_CEIL(ds_stride,
+							       rd_chunk_sz),
 					nblk, shards[i], rd_chunk_sz, &nread);
 				present[i] = (ret == 0 && nread == nblk);
 			} else {
