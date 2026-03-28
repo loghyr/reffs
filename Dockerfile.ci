@@ -47,6 +47,16 @@ RUN apt-get update && apt-get install -y \
     rsync \
     nfs-common \
     rpcbind \
+    tshark \
+    iproute2 \
+    tcpdump \
+    dnsutils \
+    strace \
+    procps \
+    net-tools \
+    krb5-user \
+    krb5-kdc \
+    krb5-admin-server \
     && rm -rf /var/lib/apt/lists/*
 
 # Install xdrlib3 via pip (as it is removed/deprecated in modern Python)
@@ -71,6 +81,39 @@ RUN groupadd -g 3300 nfsgroup && \
 # Configure the NFSv4 idmapd domain so owner strings use a known
 # domain rather than the container hostname.
 RUN mkdir -p /etc && printf '[General]\nDomain = reffs.test\n' > /etc/idmapd.conf
+
+# Kerberos realm for CI krb5 integration tests.
+# Pre-create the realm, service principal, and test user at image
+# build time so the CI script only needs to start the KDC.
+RUN printf '[libdefaults]\n\
+    default_realm = REFFS.TEST\n\
+    dns_lookup_realm = false\n\
+    dns_lookup_kdc = false\n\
+    rdns = false\n\
+[realms]\n\
+    REFFS.TEST = {\n\
+        kdc = localhost\n\
+        admin_server = localhost\n\
+    }\n\
+[domain_realm]\n\
+    .reffs.test = REFFS.TEST\n\
+    reffs.test = REFFS.TEST\n' > /etc/krb5.conf
+
+RUN mkdir -p /var/lib/krb5kdc /etc/krb5kdc && \
+    printf '[kdcdefaults]\n\
+    kdc_ports = 88\n\
+[realms]\n\
+    REFFS.TEST = {\n\
+        database_name = /var/lib/krb5kdc/principal\n\
+        key_stash_file = /var/lib/krb5kdc/.k5.REFFS.TEST\n\
+    }\n' > /etc/krb5kdc/kdc.conf
+
+RUN kdb5_util create -s -r REFFS.TEST -P masterpass && \
+    kadmin.local -r REFFS.TEST addprinc -randkey nfs/localhost@REFFS.TEST && \
+    kadmin.local -r REFFS.TEST addprinc -randkey nfs/127.0.0.1@REFFS.TEST && \
+    kadmin.local -r REFFS.TEST ktadd -k /etc/krb5.keytab nfs/localhost@REFFS.TEST && \
+    kadmin.local -r REFFS.TEST ktadd -k /etc/krb5.keytab nfs/127.0.0.1@REFFS.TEST && \
+    kadmin.local -r REFFS.TEST addprinc -pw testpass nfstest@REFFS.TEST
 
 # Create workspace directories
 RUN mkdir -p /reffs /src /build /logs

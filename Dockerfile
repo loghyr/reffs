@@ -45,10 +45,12 @@ RUN dnf -y install \
     ninja-build \
     nslookup \
     krb5-devel \
+    krb5-workstation \
     libnfsidmap-devel \
     openssl-devel \
     perf \
     procps-ng \
+    tcpdump \
     python3-argcomplete \
     python3-devel \
     python3-pip \
@@ -62,6 +64,7 @@ RUN dnf -y install \
     strace \
     sudo \
     userspace-rcu-devel \
+    wireshark-cli \
     vim \
     xxhash-devel \
     zlib-devel \

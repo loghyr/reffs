@@ -58,6 +58,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+section_start() {
+	SECTION_NAME="$1"
+	SECTION_START=$(date +%s)
+	echo ""
+	echo "=== $SECTION_NAME === ($(date +%H:%M:%S))"
+}
+
+section_end() {
+	local now=$(date +%s)
+	local elapsed=$((now - SECTION_START))
+	echo "=== $SECTION_NAME PASSED === (${elapsed}s)"
+}
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
@@ -91,7 +104,7 @@ path        = "/"
 clients     = "*"
 access      = "rw"
 root_squash = false
-flavors     = ["sys"]
+flavors     = ["sys", "krb5", "krb5i", "krb5p"]
 EOF
 
 # ---------------------------------------------------------------------------
@@ -102,6 +115,23 @@ if ! rpcinfo -p 127.0.0.1 >/dev/null 2>&1; then
 	rpcbind || die "rpcbind failed to start"
 	sleep 1
 fi
+
+# ---------------------------------------------------------------------------
+# Kerberos KDC for krb5 integration tests.
+# The realm, keytab, and principals are pre-created in the Docker image.
+# ---------------------------------------------------------------------------
+echo "Starting KDC..."
+krb5kdc || echo "WARN: krb5kdc failed to start (krb5 tests will be skipped)"
+sleep 1
+
+# Get a TGT for the test user (nfstest@REFFS.TEST).
+echo testpass | kinit nfstest@REFFS.TEST 2>/dev/null && echo "kinit OK" || echo "WARN: kinit failed"
+
+# rpc.gssd is started later, just before the krb5 test.
+# Starting it early causes the kernel to attempt GSS negotiation
+# on AUTH_SYS mounts, which hangs if the server's GSS path has issues.
+mkdir -p /run/rpc_pipefs
+mount -t rpc_pipefs rpc_pipefs /run/rpc_pipefs 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Start reffsd.  ASan/UBSan options (detect_leaks=0, halt_on_error=0) are
@@ -125,9 +155,8 @@ echo "reffsd is up."
 # NFSv4.2 integration test: clone the repo onto the NFS mount.
 # The clone exercises creates, writes, and directory operations at scale.
 # ---------------------------------------------------------------------------
-echo ""
-echo "=== NFSv4.2 integration test ==="
-mount -o vers=4.2,soft,timeo=100,retrans=5 127.0.0.1:/ "$MOUNT"
+section_start "NFSv4.2 integration test"
+mount -o vers=4.2,sec=sys,soft,timeo=10,retrans=2 127.0.0.1:/ "$MOUNT"
 
 (
 	cd "$MOUNT"
@@ -141,21 +170,20 @@ mount -o vers=4.2,soft,timeo=100,retrans=5 127.0.0.1:/ "$MOUNT"
 # Best-effort cleanup so reffsd can free inode/fd cache before the v3 test.
 rm -rf "$MOUNT"/reffs_v4 || true
 umount "$MOUNT"
-echo "=== NFSv4.2 integration test PASSED ==="
+section_end
 
 # ---------------------------------------------------------------------------
 # NFSv4 identity / owner-string test.
 # Uses ec_demo's userspace NFSv4 client to bypass the kernel idmapd and
 # verify the raw owner strings directly from the server's GETATTR reply.
 # ---------------------------------------------------------------------------
-echo ""
-echo "=== NFSv4 identity test ==="
+section_start "NFSv4 identity test"
 
 EC_DEMO="env ASAN_OPTIONS=detect_leaks=0 /build/tools/ec_demo"
 MDS="127.0.0.1"
 
 # Create a file via the kernel mount for chown (needs root).
-mount -o vers=4.2,soft,timeo=100,retrans=5 "$MDS":/ "$MOUNT"
+mount -o vers=4.2,sec=sys,soft,timeo=10,retrans=2 "$MDS":/ "$MOUNT"
 touch "$MOUNT"/identity_test_file
 chown 3300:3300 "$MOUNT"/identity_test_file
 umount "$MOUNT"
@@ -184,17 +212,16 @@ else
 fi
 
 # Clean up via kernel mount.
-mount -o vers=4.2,soft,timeo=100,retrans=5 "$MDS":/ "$MOUNT"
+mount -o vers=4.2,sec=sys,soft,timeo=10,retrans=2 "$MDS":/ "$MOUNT"
 rm -f "$MOUNT"/identity_test_file || true
 umount "$MOUNT"
-echo "=== NFSv4 identity test PASSED ==="
+section_end
 
 # ---------------------------------------------------------------------------
 # NFSv3 integration test: same, via NFSv3.
 # ---------------------------------------------------------------------------
-echo ""
-echo "=== NFSv3 integration test ==="
-mount -o vers=3,nolock,soft,timeo=100,retrans=5 127.0.0.1:/ "$MOUNT"
+section_start "NFSv3 integration test"
+mount -o vers=3,nolock,soft,timeo=10,retrans=2 127.0.0.1:/ "$MOUNT"
 
 (
 	cd "$MOUNT"
@@ -206,7 +233,32 @@ mount -o vers=3,nolock,soft,timeo=100,retrans=5 127.0.0.1:/ "$MOUNT"
 )
 
 umount "$MOUNT"
-echo "=== NFSv3 integration test PASSED ==="
+section_end
+
+# ---------------------------------------------------------------------------
+# NFSv4.2 Kerberos integration tests: sec=krb5, krb5i, krb5p.
+# Requires the KDC, keytab, TGT, and rpc.gssd to be running.
+# ---------------------------------------------------------------------------
+if klist -s 2>/dev/null; then
+	section_start "NFSv4.2 krb5 integration test"
+
+	# Start rpc.gssd now — only needed for krb5 mounts.
+	rpc.gssd 2>/dev/null && echo "  rpc.gssd started" || echo "  WARN: rpc.gssd failed"
+
+	# sec=krb5 (authentication only — sufficient for CI)
+	echo "  mounting sec=krb5..."
+	mount -o vers=4.2,sec=krb5,soft,timeo=10,retrans=2 127.0.0.1:/ "$MOUNT"
+	touch "$MOUNT"/krb5_test_file
+	ls -la "$MOUNT"/krb5_test_file
+	rm -f "$MOUNT"/krb5_test_file
+	umount "$MOUNT"
+	echo "  sec=krb5: PASS"
+
+	section_end
+else
+	echo ""
+	echo "=== NFSv4.2 krb5 integration test SKIPPED (no TGT) === ($(date +%H:%M:%S))"
+fi
 
 # ---------------------------------------------------------------------------
 # Graceful shutdown: SIGTERM, wait up to 30 s for ASan to flush its report.

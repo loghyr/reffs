@@ -29,9 +29,11 @@ help:
 	@echo "  clean           - Remove build artifacts"
 	@echo "  mrproper        - Aggressive clean (removes all untracked files)"
 	@echo "  image           - Build the developer docker image (Fedora)"
-	@echo "  ci-image        - Build the CI docker image (Ubuntu/Debian)"
+	@echo "  image-ci        - Build the CI docker image (Ubuntu/Debian)"
 	@echo "  build-in-docker - Build the project inside the developer container"
 	@echo "  check-ci        - Run the full CI pipeline inside the CI container"
+	@echo "  stop-ci         - Kill any running CI containers"
+	@echo "  shell-ci        - Shell into the running CI container"
 	@echo "  run-image       - Run the NFS server in the docker container"
 	@echo "  stop-image      - Stop and remove any running sandbox containers"
 	@echo "  test-image      - Stop any running containers and start a fresh one"
@@ -134,7 +136,7 @@ image:
 	$(DOCKER) build -t $(IMAGE_NAME) .
 
 # Build the CI docker image (Debian/Ubuntu)
-ci-image:
+image-ci:
 	$(DOCKER) build -t $(CI_IMAGE_NAME) -f Dockerfile.ci .
 
 # Run the full CI pipeline inside the CI container
@@ -145,7 +147,7 @@ ci-image:
 #   mount via NFSv4.2 and NFSv3, build and run the unit tests from there,
 #   then gracefully shut down reffsd and check for ASan/LSan errors.
 #   SRC_DIR is /reffs (the read-only bind mount) so git clone has a .git dir.
-check-ci: ci-image
+check-ci: image-ci
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
@@ -222,6 +224,24 @@ stop-image:
 		$(DOCKER) rm -f $$CONTAINERS 2>/dev/null || true; \
 	fi
 
+shell-ci:
+	@CONTAINER=$$($(DOCKER) ps -q --filter ancestor=$(CI_IMAGE_NAME) | head -1); \
+	if [ -n "$$CONTAINER" ]; then \
+		$(DOCKER) exec -it $$CONTAINER /bin/bash; \
+	else \
+		echo "No running CI container. Start one with: make -f Makefile.reffs check-ci"; \
+	fi
+
+stop-ci:
+	@CONTAINERS=$$($(DOCKER) ps -q --filter ancestor=$(CI_IMAGE_NAME)); \
+	if [ -n "$$CONTAINERS" ]; then \
+		echo "Killing CI containers: $$CONTAINERS"; \
+		$(DOCKER) kill $$CONTAINERS 2>/dev/null || true; \
+		$(DOCKER) rm -f $$CONTAINERS 2>/dev/null || true; \
+	else \
+		echo "No running CI containers."; \
+	fi
+
 # Clean stop and restart of the sandbox
 test-image: stop-image run-image
 
@@ -277,14 +297,14 @@ clean-combined: stop-combined
 	@rm -rf /tmp/reffs_combined_data /tmp/reffs_combined_state /tmp/reffs_combined_ds
 
 # Multi-container pNFS: MDS + DS (no client)
-run-pnfs: ci-image
+run-pnfs: image-ci
 	$(DOCKER) compose -f deploy/pnfs/docker-compose.yml up -d ds mds
 	@echo "MDS: localhost:2049 (NFSv4.2)"
 	@echo "DS:  reffs-ds:2049 (NFSv3) [internal network]"
 	@echo "Use 'make -f Makefile.reffs stop-pnfs' to stop"
 
 # Multi-container pNFS with client test
-test-pnfs: ci-image
+test-pnfs: image-ci
 	$(DOCKER) compose -f deploy/pnfs/docker-compose.yml --profile test up --abort-on-container-exit client
 	$(DOCKER) compose -f deploy/pnfs/docker-compose.yml --profile test down
 
