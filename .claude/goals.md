@@ -203,18 +203,16 @@ updated for renamed fields.
 
 ### Known Issues
 
-- **io_uring large message stall**: NFSv3 RPCs >~32KB stall in the
-  server's io_uring read pipeline. Workaround: EC_SHARD_SIZE = 4KB.
-  SIMD benefit will appear when shard sizes increase to 64KB+.
+- ~~**io_uring large message stall**~~: FIXED (2026-03-27).
+  Multi-fragment RPC record marking reassembly was overwriting earlier
+  fragments.  EC_SHARD_SIZE can now increase beyond 4KB.
 - **TIRPC connection sharing**: multiple clnt_create to same host:port
   causes hangs. Workaround: DS connection dedup in ec_resolve_mirrors.
 - **v2 CHUNK + combined mode**: DS session multiplexing needed for
   single-host combined mode.  Multi-container Docker works fine.
-- **Mojette + v2 CHUNK mismatch**: Mojette projections produce
-  variable-sized outputs per direction (B = |p|(Q-1) + |q|(P-1) + 1).
-  The v2 CHUNK path uses fixed chunk_size.  Fails at small file sizes
-  where projection size doesn't divide evenly.  RS works correctly.
-  Fix: per-shard chunk_size or pad projections to common size.
+- ~~**Mojette + v2 CHUNK mismatch**~~: FIXED (2026-03-27).
+  Floor division in block count/stride calculations truncated when
+  projection sizes weren't chunk-aligned.  Fixed with ceiling division.
 - **CHUNK_HEADER_READ / CHUNK_LOCK / CHUNK_UNLOCK / CHUNK_ROLLBACK**:
   stubbed as NFS4ERR_NOTSUPP.  Lock flag infrastructure (cb_flags with
   CHUNK_BLOCK_LOCKED) is in place but no handler.
@@ -226,5 +224,4 @@ updated for renamed fields.
 - RocksDB backend
 - LAYOUTRETURN body parsing (ff_layoutreturn4 error reports)
 - DS session multiplexing for v2/CHUNK combined mode
-- Mojette + v2 CHUNK variable chunk size fix
-- x86_64 AVX2 benchmarks at larger shard sizes (blocked on io_uring fix)
+- x86_64 AVX2 benchmarks at larger shard sizes
