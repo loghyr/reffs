@@ -34,7 +34,11 @@ LDADD = \
 check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
+gss_auth_test_CFLAGS = $(AM_CFLAGS) $(GSSAPI_CFLAGS)
+gss_auth_test_LDADD = $(LDADD) $(GSSAPI_LIBS)
+
 TESTS =				\
 	rpc_call		\
 	rpc_reply_test		\
-	gss_seq_test
+	gss_seq_test		\
+	gss_auth_test
