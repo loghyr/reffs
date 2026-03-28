@@ -177,6 +177,13 @@ REFFSD_DONE=true
 REFFSD_PID=
 
 # ---------------------------------------------------------------------------
+# Always print the build hash so failures are traceable.
+# ---------------------------------------------------------------------------
+if command -v git >/dev/null 2>&1 && git -C "$SRC_DIR" rev-parse HEAD >/dev/null 2>&1; then
+	echo "=== Build: $(git -C "$SRC_DIR" rev-parse --short HEAD) ==="
+fi
+
+# ---------------------------------------------------------------------------
 # Check reffsd log for ASan / LSan errors.
 # ---------------------------------------------------------------------------
 if grep -qE "ERROR: (AddressSanitizer|LeakSanitizer)" "$LOG"; then
@@ -191,3 +198,4 @@ echo "=== reffsd log ==="
 cat "$LOG"
 echo ""
 echo "=== Integration tests complete. No ASan errors. ==="
+
