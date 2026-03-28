@@ -60,6 +60,29 @@ chmod 600 /etc/tlshd/server.key
 For production: use certificates from your organization's PKI or
 a tool like `certbot`.
 
+### Production / multi-homed hosts (e.g., BAT)
+
+Production NFS-TLS deployments typically use a 2-tier CA (root +
+intermediate) with separate server and client certificates:
+
+- **serverAuth EKU**: installed on the NFS server (`/etc/tlshd/server.pem`)
+- **clientAuth EKU**: installed on NFS clients (for mutual TLS)
+- **SANs**: must include ALL hostnames and IPs the host is reachable
+  at (e.g., LAN FQDN + VPN FQDN + both IP addresses)
+- **Ed25519 keys** are preferred over RSA for performance
+
+CSR with multiple SANs:
+```bash
+openssl req -new -key key.pem -out host.csr \
+    -addext "subjectAltName = \
+        DNS.1:host.example.com, \
+        DNS.2:host.vpn.example.com, \
+        IP.1:192.168.1.100, IP.2:100.64.0.50"
+```
+
+See `bat-setup/BAT-PLAN.md` for the full BAT (NFS Bake-a-thon)
+certificate workflow, which uses this model.
+
 ### 3. Certificate path resolution
 
 reffsd looks for certificates in this order:
