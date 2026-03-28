@@ -108,7 +108,8 @@ TESTS = \
 	posix_force_load \
 	fs_usage_ram \
 	fs_usage_posix \
-	layout_segment_test
+	layout_segment_test \
+	sb_lifecycle_test
 
 posix_force_load_SOURCES = posix_force_load.c
 posix_force_load_LDADD = $(LDADD)

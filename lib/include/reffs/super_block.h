@@ -75,9 +75,16 @@ struct super_block {
 	size_t sb_dirent_lru_count;
 	size_t sb_dirent_lru_max;
 
+	/* Lifecycle state machine. */
+	enum sb_lifecycle {
+		SB_CREATED = 0,
+		SB_MOUNTED = 1,
+		SB_UNMOUNTED = 2,
+		SB_DESTROYED = 3,
+	} sb_lifecycle;
+
 #define SB_IN_LIST (1ULL << 0)
 #define SB_IS_READ_ONLY (1ULL << 1)
-#define SB_IS_MOUNTED (1ULL << 2)
 	uint64_t sb_state;
 
 	/* Per-op NFS4 statistics — superblock scope. */
@@ -107,5 +114,19 @@ void super_block_release_dirents(struct super_block *sb);
 void super_block_evict_inodes(struct super_block *sb, size_t count);
 void super_block_evict_dirents(struct super_block *sb, size_t count);
 void super_block_drain(struct super_block *sb);
+
+/*
+ * Superblock lifecycle state machine.
+ * See .claude/design/multi-superblock.md for full state diagram.
+ *
+ * Returns 0 on success, -errno on invalid transition.
+ */
+int super_block_mount(struct super_block *sb, const char *path);
+int super_block_unmount(struct super_block *sb);
+int super_block_destroy(struct super_block *sb);
+
+/* Query lifecycle state. */
+enum sb_lifecycle super_block_lifecycle(const struct super_block *sb);
+const char *super_block_lifecycle_name(enum sb_lifecycle state);
 
 #endif /* _REFFS_SB_H */

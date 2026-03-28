@@ -510,3 +510,39 @@ void super_block_put(struct super_block *sb)
 
 	urcu_ref_put(&sb->sb_ref, super_block_release);
 }
+
+/* ------------------------------------------------------------------ */
+/* Lifecycle state machine (stubs — implementation TBD)                */
+/* ------------------------------------------------------------------ */
+
+int super_block_mount(struct super_block *sb __attribute__((unused)),
+		      const char *path __attribute__((unused)))
+{
+	/* NOT_NOW_BROWN_COW: implement state machine */
+	return -ENOSYS;
+}
+
+int super_block_unmount(struct super_block *sb __attribute__((unused)))
+{
+	return -ENOSYS;
+}
+
+int super_block_destroy(struct super_block *sb __attribute__((unused)))
+{
+	return -ENOSYS;
+}
+
+enum sb_lifecycle super_block_lifecycle(const struct super_block *sb)
+{
+	return sb->sb_lifecycle;
+}
+
+static const char *lifecycle_names[] = { "CREATED", "MOUNTED", "UNMOUNTED",
+					 "DESTROYED" };
+
+const char *super_block_lifecycle_name(enum sb_lifecycle state)
+{
+	if (state <= SB_DESTROYED)
+		return lifecycle_names[state];
+	return "UNKNOWN";
+}
