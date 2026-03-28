@@ -228,7 +228,23 @@ umount "$MOUNT"
 section_end
 
 # ---------------------------------------------------------------------------
-# NFSv4.2 Kerberos integration tests: sec=krb5, krb5i, krb5p.
+# Userspace krb5 security test (no kernel mount needed).
+# Uses nfs_krb5_test: GSS session + WRITE + READ/CRC + cleanup.
+# ---------------------------------------------------------------------------
+if klist -s 2>/dev/null; then
+	section_start "NFSv4.2 krb5 userspace test"
+
+	KRB5_TEST="env ASAN_OPTIONS=detect_leaks=0 /build/tools/nfs_krb5_test"
+	$KRB5_TEST --server 127.0.0.1 --sec krb5 || die "nfs_krb5_test --sec krb5 failed"
+
+	section_end
+else
+	echo ""
+	echo "=== NFSv4.2 krb5 userspace test SKIPPED (no TGT) ==="
+fi
+
+# ---------------------------------------------------------------------------
+# NFSv4.2 Kerberos kernel mount tests: sec=krb5, krb5i, krb5p.
 # Requires the KDC, keytab, TGT, and rpc.gssd to be running.
 # ---------------------------------------------------------------------------
 if [ "${CI_SKIP_KRB5:-0}" = "1" ]; then
