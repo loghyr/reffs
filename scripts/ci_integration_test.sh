@@ -163,7 +163,7 @@ mount -o vers=4.2,sec=sys,soft,timeo=10,retrans=2 127.0.0.1:/ "$MOUNT"
 (
 	cd "$MOUNT"
 	GIT_TRACE=1 git clone --verbose "$SRC_DIR" reffs_v4
-	sum_nfs=$(md5sum identity_test_file | awk '{print $1}')
+	sum_nfs=$(md5sum reffs_v4/configure.ac | awk '{print $1}')
 	sum_src=$(md5sum "$SRC_DIR/configure.ac" | awk '{print $1}')
 	[ "$sum_nfs" = "$sum_src" ] || { echo "md5sum mismatch: $sum_nfs != $sum_src"; exit 1; }
 	echo "md5sum OK: $sum_nfs"
