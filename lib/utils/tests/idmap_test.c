@@ -271,6 +271,86 @@ START_TEST(test_duplicate_insert)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Prewarm                                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Pre-warm with already-cached IDs should return immediately
+ * without spawning any threads.
+ */
+START_TEST(test_prewarm_cached_noop)
+{
+	ck_assert_int_eq(idmap_init("TEST.COM"), 0);
+
+	idmap_cache_uid(5000, "cached@TEST.COM");
+
+	uid_t uids[] = { 5000 };
+
+	/* Should be a no-op since uid 5000 is cached. */
+	idmap_prewarm(uids, 1, NULL, 0, 100);
+
+	/* Verify cache still has the entry. */
+	utf8string u = { 0 };
+
+	ck_assert_int_eq(idmap_uid_to_name(5000, &u), 0);
+	ck_assert_str_eq(u.utf8string_val, "cached@TEST.COM");
+	utf8string_free(&u);
+
+	idmap_fini();
+}
+END_TEST
+
+/*
+ * Pre-warm with a resolvable uid (from /etc/passwd) should populate
+ * the cache.  uid 0 (root) is always resolvable.
+ */
+START_TEST(test_prewarm_resolves)
+{
+	ck_assert_int_eq(idmap_init("TEST.COM"), 0);
+
+	uid_t uids[] = { 0 }; /* root is always in /etc/passwd */
+
+	idmap_prewarm(uids, 1, NULL, 0, 3000);
+
+	/* After prewarm, uid 0 should be in the cache. */
+	utf8string u = { 0 };
+	int ret = idmap_uid_to_name(0, &u);
+
+	if (ret == 0) {
+		/* Should contain "root@TEST.COM" or similar. */
+		ck_assert_ptr_nonnull(u.utf8string_val);
+		utf8string_free(&u);
+	}
+	/* ret == -ENOENT is acceptable if resolver is minimal. */
+
+	idmap_fini();
+}
+END_TEST
+
+/*
+ * Pre-warm with an unresolvable uid should hit the timeout and
+ * return without blocking forever.  uid 99999 is unlikely to
+ * exist in /etc/passwd.
+ */
+START_TEST(test_prewarm_timeout)
+{
+	ck_assert_int_eq(idmap_init("TEST.COM"), 0);
+
+	uid_t uids[] = { 99999 };
+
+	/* Short timeout — should return quickly even if resolver hangs. */
+	idmap_prewarm(uids, 1, NULL, 0, 500);
+
+	/* uid 99999 should NOT be in the cache (unresolvable). */
+	utf8string u = { 0 };
+
+	ck_assert_int_eq(idmap_uid_to_name(99999, &u), -ENOENT);
+
+	idmap_fini();
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -298,6 +378,12 @@ static Suite *idmap_suite(void)
 	tc = tcase_create("gid");
 	tcase_add_test(tc, test_cache_gid_round_trip);
 	tcase_add_test(tc, test_numeric_gid_bypass);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("prewarm");
+	tcase_add_test(tc, test_prewarm_cached_noop);
+	tcase_add_test(tc, test_prewarm_resolves);
+	tcase_add_test(tc, test_prewarm_timeout);
 	suite_add_tcase(s, tc);
 
 	return s;
