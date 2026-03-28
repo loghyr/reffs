@@ -12,6 +12,8 @@ AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 noinst_LTLIBRARIES = libreffs_test.la
 libreffs_test_la_SOURCES = \
 	libreffs_test.c \
-	libreffs_test.h
+	libreffs_test.h \
+	mini_kdc.c \
+	mini_kdc.h
 
 libreffs_test_la_LIBADD = @CHECK_LIBS@
