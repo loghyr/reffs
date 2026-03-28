@@ -199,6 +199,13 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 		goto out;
 	}
 
+	/* Cannot remove a directory that has a sb mounted on it. */
+	if (is_dir && (__atomic_load_n(&rd->rd_state, __ATOMIC_ACQUIRE) &
+		       RD_MOUNTED_ON)) {
+		ret = -EBUSY;
+		goto out;
+	}
+
 	inode_update_times_now(rd_inode, REFFS_INODE_UPDATE_CTIME);
 	dirent_parent_release(rd, reffs_life_action_death);
 

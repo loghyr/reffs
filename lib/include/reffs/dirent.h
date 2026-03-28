@@ -37,6 +37,7 @@ struct reffs_dirent {
 	struct cds_list_head rd_lru;
 
 #define DIRENT_IS_ON_LRU (1ULL << 0)
+#define RD_MOUNTED_ON (1ULL << 1) /* sb is mounted on this dirent */
 	uint64_t rd_state;
 
 	/*

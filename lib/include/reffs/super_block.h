@@ -83,6 +83,19 @@ struct super_block {
 		SB_DESTROYED = 3,
 	} sb_lifecycle;
 
+	/*
+	 * Mount-point tracking.  When this sb is mounted:
+	 * - sb_mount_dirent: the dirent in the parent sb that has
+	 *   RD_MOUNTED_ON set (the "covered" directory)
+	 * - sb_parent_sb: the parent superblock (non-owning ref)
+	 *
+	 * Used by LOOKUPP to cross back to the parent sb, and by
+	 * READDIR to substitute attributes at mount points.
+	 * Set by super_block_mount(), cleared by super_block_unmount().
+	 */
+	struct reffs_dirent *sb_mount_dirent;
+	struct super_block *sb_parent_sb;
+
 #define SB_IN_LIST (1ULL << 0)
 #define SB_IS_READ_ONLY (1ULL << 1)
 	uint64_t sb_state;

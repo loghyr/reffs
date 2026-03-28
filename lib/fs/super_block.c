@@ -518,6 +518,9 @@ void super_block_put(struct super_block *sb)
 
 int super_block_mount(struct super_block *sb, const char *path)
 {
+	struct name_match *nm = NULL;
+	int ret;
+
 	if (!sb || !path)
 		return -EINVAL;
 
@@ -527,13 +530,6 @@ int super_block_mount(struct super_block *sb, const char *path)
 	if (sb->sb_lifecycle == SB_DESTROYED)
 		return -EINVAL;
 
-	/*
-	 * Root sb (sb_id=1) is auto-mounted by reffs_ns_init.
-	 * It cannot be re-mounted by the admin.
-	 */
-	if (sb->sb_id == SUPER_BLOCK_ROOT_ID && sb->sb_lifecycle == SB_MOUNTED)
-		return -EBUSY;
-
 	/* Validate that 'path' exists as a directory. */
 	struct stat st;
 
@@ -541,6 +537,31 @@ int super_block_mount(struct super_block *sb, const char *path)
 		return -ENOENT;
 	if (!S_ISDIR(st.st_mode))
 		return -ENOTDIR;
+
+	/*
+	 * Resolve path to a dirent and set RD_MOUNTED_ON.
+	 * This flag tells LOOKUP to cross into the child sb.
+	 */
+	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	if (ret)
+		return ret;
+
+	__atomic_fetch_or(&nm->nm_dirent->rd_state, RD_MOUNTED_ON,
+			  __ATOMIC_RELEASE);
+
+	/* Store mount-point references on the child sb. */
+	sb->sb_mount_dirent = dirent_get(nm->nm_dirent);
+	sb->sb_parent_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+	if (!sb->sb_parent_sb) {
+		__atomic_fetch_and(&nm->nm_dirent->rd_state, ~RD_MOUNTED_ON,
+				   __ATOMIC_RELEASE);
+		dirent_put(sb->sb_mount_dirent);
+		sb->sb_mount_dirent = NULL;
+		name_match_free(nm);
+		return -ENOENT;
+	}
+
+	name_match_free(nm);
 
 	sb->sb_lifecycle = SB_MOUNTED;
 	return 0;
@@ -562,6 +583,17 @@ int super_block_unmount(struct super_block *sb)
 	 * NOT_NOW_BROWN_COW: check for child sbs mounted within
 	 * this sb's namespace.  Return -EBUSY if any exist.
 	 */
+
+	/* Clear RD_MOUNTED_ON on the mounted-on dirent. */
+	if (sb->sb_mount_dirent) {
+		__atomic_fetch_and(&sb->sb_mount_dirent->rd_state,
+				   ~RD_MOUNTED_ON, __ATOMIC_RELEASE);
+		dirent_put(sb->sb_mount_dirent);
+		sb->sb_mount_dirent = NULL;
+	}
+
+	super_block_put(sb->sb_parent_sb);
+	sb->sb_parent_sb = NULL;
 
 	sb->sb_lifecycle = SB_UNMOUNTED;
 	return 0;
