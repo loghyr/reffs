@@ -397,6 +397,14 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 {
 	struct super_block *sb;
 
+	/* Reject duplicate sb_id. */
+	struct super_block *existing = super_block_find(id);
+
+	if (existing) {
+		super_block_put(existing);
+		return NULL;
+	}
+
 	sb = calloc(1, sizeof(*sb));
 	if (!sb) {
 		LOG("Could not alloc a sb");
@@ -512,24 +520,83 @@ void super_block_put(struct super_block *sb)
 }
 
 /* ------------------------------------------------------------------ */
-/* Lifecycle state machine (stubs — implementation TBD)                */
+/* Lifecycle state machine                                             */
 /* ------------------------------------------------------------------ */
 
-int super_block_mount(struct super_block *sb __attribute__((unused)),
-		      const char *path __attribute__((unused)))
+int super_block_mount(struct super_block *sb, const char *path)
 {
-	/* NOT_NOW_BROWN_COW: implement state machine */
-	return -ENOSYS;
+	if (!sb || !path)
+		return -EINVAL;
+
+	/* Only CREATED or UNMOUNTED can transition to MOUNTED. */
+	if (sb->sb_lifecycle == SB_MOUNTED)
+		return -EBUSY;
+	if (sb->sb_lifecycle == SB_DESTROYED)
+		return -EINVAL;
+
+	/*
+	 * Root sb (sb_id=1) is auto-mounted by reffs_ns_init.
+	 * It cannot be re-mounted by the admin.
+	 */
+	if (sb->sb_id == SUPER_BLOCK_ROOT_ID && sb->sb_lifecycle == SB_MOUNTED)
+		return -EBUSY;
+
+	/*
+	 * NOT_NOW_BROWN_COW: validate that 'path' exists as a
+	 * directory in the parent namespace.  For now, accept any
+	 * path — mount-crossing tests (Phase 2) will add the
+	 * path resolution logic.
+	 */
+
+	sb->sb_lifecycle = SB_MOUNTED;
+	return 0;
 }
 
-int super_block_unmount(struct super_block *sb __attribute__((unused)))
+int super_block_unmount(struct super_block *sb)
 {
-	return -ENOSYS;
+	if (!sb)
+		return -EINVAL;
+
+	/* Root sb cannot be unmounted. */
+	if (sb->sb_id == SUPER_BLOCK_ROOT_ID)
+		return -EPERM;
+
+	if (sb->sb_lifecycle != SB_MOUNTED)
+		return -EINVAL;
+
+	/*
+	 * NOT_NOW_BROWN_COW: check for child sbs mounted within
+	 * this sb's namespace.  Return -EBUSY if any exist.
+	 */
+
+	sb->sb_lifecycle = SB_UNMOUNTED;
+	return 0;
 }
 
-int super_block_destroy(struct super_block *sb __attribute__((unused)))
+int super_block_destroy(struct super_block *sb)
 {
-	return -ENOSYS;
+	if (!sb)
+		return -EINVAL;
+
+	/* Root sb cannot be destroyed. */
+	if (sb->sb_id == SUPER_BLOCK_ROOT_ID)
+		return -EPERM;
+
+	/* Must unmount before destroying. */
+	if (sb->sb_lifecycle == SB_MOUNTED)
+		return -EBUSY;
+
+	/* Already destroyed. */
+	if (sb->sb_lifecycle == SB_DESTROYED)
+		return -EINVAL;
+
+	/*
+	 * NOT_NOW_BROWN_COW: check for active open files.
+	 * Return -EBUSY if any stateid references this sb.
+	 */
+
+	sb->sb_lifecycle = SB_DESTROYED;
+	return 0;
 }
 
 enum sb_lifecycle super_block_lifecycle(const struct super_block *sb)

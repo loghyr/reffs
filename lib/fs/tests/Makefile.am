@@ -21,6 +21,8 @@ lib_LTLIBRARIES = libreffs_fs_test.la
 libreffs_fs_test_la_SOURCES =				\
 	posix_recovery.c \
 	fs_test_harness.c
+libreffs_fs_test_la_LIBADD =				\
+	$(top_builddir)/lib/tests/libreffs_test.la
 
 noinst_HEADERS = \
 	fuse_harness.h \
