@@ -9,6 +9,10 @@ Coding standards, build rules, and error-code conventions are in:
 
 @.claude/standards.md
 
+Role definitions (planner, programmer, reviewer):
+
+@.claude/roles.md
+
 Project goals and milestones:
 
 @.claude/goals.md
