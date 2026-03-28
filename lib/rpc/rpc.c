@@ -359,6 +359,65 @@ static uint32_t *rpc_encode_reply_verifier(struct rpc_trans *rt, uint32_t *p)
  */
 #define RPC_DENIED_HDR_WORDS 4
 
+/*
+ * After the reply body has been XDR-encoded, wrap it for GSS
+ * integrity or privacy.  Replaces rt->rt_reply in-place with a
+ * new buffer containing header + wrapped body.  @hdr_len is the
+ * number of bytes in the reply before the body starts.
+ */
+#ifdef HAVE_GSSAPI_KRB5
+static int rpc_gss_wrap_reply(struct rpc_trans *rt, size_t hdr_len)
+{
+	if (rt->rt_info.ri_cred.rc_flavor != RPCSEC_GSS ||
+	    rt->rt_info.ri_cred.rc_gss.gc_proc != RPCSEC_GSS_DATA ||
+	    rt->rt_info.ri_cred.rc_gss.gc_svc == RPC_GSS_SVC_NONE)
+		return 0;
+
+	struct gss_ctx_entry *gctx =
+		gss_ctx_find(rt->rt_info.ri_cred.rc_gss.gc_handle,
+			     rt->rt_info.ri_cred.rc_gss.gc_handle_len);
+	if (!gctx)
+		return -EIO;
+
+	char *plain_body = rt->rt_reply + hdr_len;
+	size_t plain_len = rt->rt_reply_len - hdr_len;
+	char *wrapped = NULL;
+	size_t wrapped_len = 0;
+
+	int ret = gss_ctx_wrap_reply(gctx, rt->rt_info.ri_cred.rc_gss.gc_svc,
+				     rt->rt_info.ri_cred.rc_gss.gc_seq,
+				     plain_body, plain_len, &wrapped,
+				     &wrapped_len);
+	gss_ctx_put(gctx);
+
+	if (ret)
+		return ret;
+
+	/* Rebuild reply: original header + wrapped body. */
+	size_t new_total = hdr_len + wrapped_len;
+	char *new_reply = malloc(new_total);
+
+	if (!new_reply) {
+		free(wrapped);
+		return -ENOMEM;
+	}
+
+	memcpy(new_reply, rt->rt_reply, hdr_len);
+	memcpy(new_reply + hdr_len, wrapped, wrapped_len);
+	free(wrapped);
+
+	/* Update record mark with new total size. */
+	uint32_t msg_len = (uint32_t)(new_total - sizeof(uint32_t));
+
+	*(uint32_t *)new_reply = htonl(msg_len | 0x80000000);
+
+	free(rt->rt_reply);
+	rt->rt_reply = new_reply;
+	rt->rt_reply_len = new_total;
+	return 0;
+}
+#endif
+
 int rpc_alloc_accepted_reply(struct rpc_trans *rt, size_t body_size)
 {
 	uint32_t verf_extra = rpc_compute_gss_reply_verifier(rt);
@@ -623,6 +682,9 @@ void rpc_protocol_free(struct rpc_trans *rt)
 	if (!rt)
 		return;
 
+	free(rt->rt_unwrapped_body);
+	rt->rt_unwrapped_body = NULL;
+
 	switch (rt->rt_info.ri_cred.rc_flavor) {
 	case AUTH_SYS:
 		xdr_free((xdrproc_t)xdr_authunix_parms,
@@ -710,6 +772,15 @@ void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t)
 		xdr_destroy(&xdrs);
 		rt->rt_offset += end_pos - start_pos;
 	}
+
+#ifdef HAVE_GSSAPI_KRB5
+	{
+		size_t hdr = rt->rt_reply_len - xdr_size;
+
+		if (rpc_gss_wrap_reply(rt, hdr) < 0)
+			goto enc_err;
+	}
+#endif
 
 	rt->rt_rc = t->t_rc;
 	if (__rpc_log_packets)
@@ -1389,6 +1460,50 @@ int rpc_process_task(struct task *t)
 	}
 #endif
 
+	/*
+	 * GSS integrity / privacy: unwrap the call body before
+	 * allocating and parsing the XDR arguments.
+	 */
+#ifdef HAVE_GSSAPI_KRB5
+	if (rt->rt_info.ri_cred.rc_flavor == RPCSEC_GSS &&
+	    rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_DATA &&
+	    rt->rt_info.ri_cred.rc_gss.gc_svc != RPC_GSS_SVC_NONE) {
+		char *unwrapped = NULL;
+		size_t unwrapped_len = 0;
+
+		struct gss_ctx_entry *gctx2 =
+			gss_ctx_find(rt->rt_info.ri_cred.rc_gss.gc_handle,
+				     rt->rt_info.ri_cred.rc_gss.gc_handle_len);
+		if (!gctx2) {
+			ret = EACCES;
+			goto handle_rpc_error;
+		}
+
+		ret = gss_ctx_unwrap_request(gctx2,
+					     rt->rt_info.ri_cred.rc_gss.gc_svc,
+					     rt->rt_info.ri_cred.rc_gss.gc_seq,
+					     rt->rt_body + rt->rt_offset,
+					     rt->rt_body_len - rt->rt_offset,
+					     &unwrapped, &unwrapped_len);
+		gss_ctx_put(gctx2);
+
+		if (ret) {
+			TRACE("GSS unwrap failed: svc=%u ret=%d",
+			      rt->rt_info.ri_cred.rc_gss.gc_svc, ret);
+			rt->rt_info.ri_auth_stat = RPCSEC_GSS_CREDPROBLEM;
+			rt->rt_info.ri_reply_stat = MSG_DENIED;
+			rt->rt_info.ri_reject_stat = AUTH_ERROR;
+			goto handle_rpc_error;
+		}
+
+		/* Replace body with unwrapped data for XDR decode. */
+		rt->rt_unwrapped_body = unwrapped;
+		rt->rt_body = unwrapped;
+		rt->rt_body_len = unwrapped_len;
+		rt->rt_offset = 0;
+	}
+#endif
+
 	ret = rpc_protocol_allocate_call(rt);
 	if (!ret)
 		ret = rpc_parse_call_data(rt);
@@ -1508,6 +1623,13 @@ handle_rpc_error:
 			rt->rt_reply = NULL;
 			goto drop_on_floor;
 		}
+#ifdef HAVE_GSSAPI_KRB5
+		if (rpc_gss_wrap_reply(rt, rt->rt_reply_len) < 0) {
+			free(rt->rt_reply);
+			rt->rt_reply = NULL;
+			goto drop_on_floor;
+		}
+#endif
 	} else {
 		XDR xdrs = { 0 };
 
@@ -1575,6 +1697,18 @@ handle_rpc_error:
 		}
 
 		assert(rt->rt_offset == rt->rt_reply_len);
+
+#ifdef HAVE_GSSAPI_KRB5
+		{
+			size_t hdr = rt->rt_reply_len - xdr_size;
+
+			if (rpc_gss_wrap_reply(rt, hdr) < 0) {
+				free(rt->rt_reply);
+				rt->rt_reply = NULL;
+				goto drop_on_floor;
+			}
+		}
+#endif
 	}
 
 	if (rt->rt_reply && rt->rt_reply_len > 0) {

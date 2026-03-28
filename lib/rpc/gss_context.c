@@ -644,6 +644,323 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 	return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* GSS integrity / privacy unwrap and wrap                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Parse an XDR opaque<> from @p with @remaining bytes available.
+ * On success, sets *data and *data_len to the opaque contents and
+ * returns a pointer past the opaque (including pad).  Returns NULL
+ * on truncation.
+ */
+static const char *parse_xdr_opaque(const char *p, size_t remaining,
+				    const char **data, uint32_t *data_len)
+{
+	if (remaining < 4)
+		return NULL;
+
+	uint32_t len_net;
+
+	memcpy(&len_net, p, 4);
+
+	uint32_t len = ntohl(len_net);
+
+	p += 4;
+	remaining -= 4;
+
+	if (len > remaining)
+		return NULL;
+
+	*data = p;
+	*data_len = len;
+
+	uint32_t padded = (len + 3) & ~3u;
+
+	if (padded > remaining)
+		return NULL;
+	return p + padded;
+}
+
+/*
+ * Encode an XDR opaque<> into @buf: [len][data][pad].
+ * Returns pointer past the encoded opaque.
+ */
+static char *encode_xdr_opaque(char *buf, const void *data, uint32_t len)
+{
+	uint32_t len_net = htonl(len);
+
+	memcpy(buf, &len_net, 4);
+	buf += 4;
+	memcpy(buf, data, len);
+	buf += len;
+
+	/* Pad to 4-byte boundary. */
+	uint32_t pad = ((len + 3) & ~3u) - len;
+
+	if (pad > 0) {
+		memset(buf, 0, pad);
+		buf += pad;
+	}
+	return buf;
+}
+
+int gss_ctx_unwrap_request(struct gss_ctx_entry *entry, uint32_t svc,
+			   uint32_t seq, const char *body, size_t body_len,
+			   char **out, size_t *out_len)
+{
+	OM_uint32 major, minor;
+
+	if (body_len > UINT32_MAX - 4)
+		return -EINVAL;
+
+	if (svc == RPC_GSS_SVC_INTEGRITY) {
+		/*
+		 * RFC 2203 §5.3.3.3 — rpc_gss_integ_data:
+		 *   opaque databody_integ<>  {seq_num, call_body}
+		 *   opaque checksum<>        MIC over databody_integ
+		 */
+		const char *integ_data;
+		uint32_t integ_len;
+		const char *after_integ;
+
+		after_integ = parse_xdr_opaque(body, body_len, &integ_data,
+					       &integ_len);
+		if (!after_integ)
+			return -EINVAL;
+
+		const char *checksum;
+		uint32_t checksum_len;
+		size_t remaining = body_len - (after_integ - body);
+
+		if (!parse_xdr_opaque(after_integ, remaining, &checksum,
+				      &checksum_len))
+			return -EINVAL;
+
+		/* Verify MIC over the raw integ_data bytes. */
+		gss_buffer_desc msg_buf = { .length = integ_len,
+					    .value = (void *)integ_data };
+		gss_buffer_desc mic_buf = { .length = checksum_len,
+					    .value = (void *)checksum };
+
+		pthread_mutex_lock(&entry->gc_seq_lock);
+		major = gss_verify_mic(&minor, entry->gc_gss_ctx, &msg_buf,
+				       &mic_buf, NULL);
+		pthread_mutex_unlock(&entry->gc_seq_lock);
+
+		if (major != GSS_S_COMPLETE) {
+			TRACE("GSS integ unwrap: verify_mic failed "
+			      "major=%u",
+			      major);
+			return -EACCES;
+		}
+
+		/* First 4 bytes of integ_data are seq_num (net order). */
+		if (integ_len <= 4)
+			return -EINVAL;
+
+		uint32_t embedded_seq;
+
+		memcpy(&embedded_seq, integ_data, 4);
+		embedded_seq = ntohl(embedded_seq);
+
+		if (embedded_seq != seq)
+			return -EACCES;
+
+		uint32_t call_len = integ_len - 4;
+		char *result = malloc(call_len);
+
+		if (!result)
+			return -ENOMEM;
+		memcpy(result, integ_data + 4, call_len);
+		*out = result;
+		*out_len = call_len;
+		return 0;
+
+	} else if (svc == RPC_GSS_SVC_PRIVACY) {
+		/*
+		 * RFC 2203 §5.3.3.4 — rpc_gss_priv_data:
+		 *   opaque databody_priv<>  gss_wrap(conf=1, {seq, body})
+		 */
+		const char *priv_data;
+		uint32_t priv_len;
+
+		if (!parse_xdr_opaque(body, body_len, &priv_data, &priv_len))
+			return -EINVAL;
+
+		gss_buffer_desc in_buf = { .length = priv_len,
+					   .value = (void *)priv_data };
+		gss_buffer_desc out_buf = GSS_C_EMPTY_BUFFER;
+		int conf_state = 0;
+
+		pthread_mutex_lock(&entry->gc_seq_lock);
+		major = gss_unwrap(&minor, entry->gc_gss_ctx, &in_buf, &out_buf,
+				   &conf_state, NULL);
+		pthread_mutex_unlock(&entry->gc_seq_lock);
+
+		if (major != GSS_S_COMPLETE) {
+			TRACE("GSS priv unwrap: gss_unwrap failed "
+			      "major=%u",
+			      major);
+			return -EACCES;
+		}
+
+		if (!conf_state) {
+			TRACE("GSS priv unwrap: no confidentiality");
+			gss_release_buffer(&minor, &out_buf);
+			return -EACCES;
+		}
+
+		if (out_buf.length <= 4) {
+			gss_release_buffer(&minor, &out_buf);
+			return -EINVAL;
+		}
+
+		uint32_t embedded_seq;
+
+		memcpy(&embedded_seq, out_buf.value, 4);
+		embedded_seq = ntohl(embedded_seq);
+
+		if (embedded_seq != seq) {
+			gss_release_buffer(&minor, &out_buf);
+			return -EACCES;
+		}
+
+		uint32_t call_len = (uint32_t)out_buf.length - 4;
+		char *result = malloc(call_len);
+
+		if (!result) {
+			gss_release_buffer(&minor, &out_buf);
+			return -ENOMEM;
+		}
+		memcpy(result, (char *)out_buf.value + 4, call_len);
+		gss_release_buffer(&minor, &out_buf);
+		*out = result;
+		*out_len = call_len;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+int gss_ctx_wrap_reply(struct gss_ctx_entry *entry, uint32_t svc, uint32_t seq,
+		       const char *body, size_t body_len, char **out,
+		       size_t *out_len)
+{
+	OM_uint32 major, minor;
+	uint32_t seq_net = htonl(seq);
+
+	if (svc == RPC_GSS_SVC_INTEGRITY) {
+		/*
+		 * Build integ_data = {seq_num_net, reply_body}.
+		 * Then compute MIC over integ_data.
+		 * Output = opaque integ_data<> + opaque checksum<>.
+		 */
+		uint32_t integ_len = 4 + (uint32_t)body_len;
+		char *integ_data = malloc(integ_len);
+
+		if (!integ_data)
+			return -ENOMEM;
+
+		memcpy(integ_data, &seq_net, 4);
+		memcpy(integ_data + 4, body, body_len);
+
+		gss_buffer_desc msg_buf = { .length = integ_len,
+					    .value = integ_data };
+		gss_buffer_desc mic_buf = GSS_C_EMPTY_BUFFER;
+
+		pthread_mutex_lock(&entry->gc_seq_lock);
+		major = gss_get_mic(&minor, entry->gc_gss_ctx,
+				    GSS_C_QOP_DEFAULT, &msg_buf, &mic_buf);
+		pthread_mutex_unlock(&entry->gc_seq_lock);
+
+		if (major != GSS_S_COMPLETE) {
+			free(integ_data);
+			return -EIO;
+		}
+
+		/* Output: opaque integ_data<> + opaque checksum<> */
+		uint32_t integ_padded = (integ_len + 3) & ~3u;
+		uint32_t mic_padded = ((uint32_t)mic_buf.length + 3) & ~3u;
+		uint32_t total = 4 + integ_padded + 4 + mic_padded;
+		char *result = malloc(total);
+
+		if (!result) {
+			free(integ_data);
+			gss_release_buffer(&minor, &mic_buf);
+			return -ENOMEM;
+		}
+
+		char *p = result;
+
+		p = encode_xdr_opaque(p, integ_data, integ_len);
+		p = encode_xdr_opaque(p, mic_buf.value,
+				      (uint32_t)mic_buf.length);
+
+		free(integ_data);
+		gss_release_buffer(&minor, &mic_buf);
+
+		*out = result;
+		*out_len = (size_t)(p - result);
+		return 0;
+
+	} else if (svc == RPC_GSS_SVC_PRIVACY) {
+		/*
+		 * Build plaintext = {seq_num_net, reply_body}.
+		 * gss_wrap with conf_req=1.
+		 * Output = opaque wrapped<>.
+		 */
+		uint32_t plain_len = 4 + (uint32_t)body_len;
+		char *plaintext = malloc(plain_len);
+
+		if (!plaintext)
+			return -ENOMEM;
+
+		memcpy(plaintext, &seq_net, 4);
+		memcpy(plaintext + 4, body, body_len);
+
+		gss_buffer_desc in_buf = { .length = plain_len,
+					   .value = plaintext };
+		gss_buffer_desc out_buf = GSS_C_EMPTY_BUFFER;
+		int conf_state = 0;
+
+		pthread_mutex_lock(&entry->gc_seq_lock);
+		major = gss_wrap(&minor, entry->gc_gss_ctx, 1,
+				 GSS_C_QOP_DEFAULT, &in_buf, &conf_state,
+				 &out_buf);
+		pthread_mutex_unlock(&entry->gc_seq_lock);
+
+		free(plaintext);
+
+		if (major != GSS_S_COMPLETE)
+			return -EIO;
+
+		if (!conf_state) {
+			gss_release_buffer(&minor, &out_buf);
+			return -EIO;
+		}
+
+		uint32_t wrap_padded = ((uint32_t)out_buf.length + 3) & ~3u;
+		uint32_t total = 4 + wrap_padded;
+		char *result = malloc(total);
+
+		if (!result) {
+			gss_release_buffer(&minor, &out_buf);
+			return -ENOMEM;
+		}
+
+		char *p = encode_xdr_opaque(result, out_buf.value,
+					    (uint32_t)out_buf.length);
+		gss_release_buffer(&minor, &out_buf);
+
+		*out = result;
+		*out_len = (size_t)(p - result);
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
 #endif /* HAVE_GSSAPI_KRB5 */
 
 /*

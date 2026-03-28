@@ -103,6 +103,7 @@ struct rpc_trans {
 		*rt_compound; /* live compound; NULL when not in dispatch */
 	ssize_t rt_io_result; /* result of last async backend I/O op */
 	void *rt_async_data; /* opaque data for fan-out / async ops */
+	char *rt_unwrapped_body; /* GSS-unwrapped request body (malloc'd) */
 };
 
 struct rpc_stats {

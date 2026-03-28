@@ -115,6 +115,25 @@ char *gss_ctx_principal(struct gss_ctx_entry *entry);
 int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid);
 #endif /* HAVE_GSSAPI_KRB5 */
 
+/*
+ * Unwrap a GSS integrity-protected or privacy-protected request body.
+ * Verifies the embedded sequence number matches @seq.
+ * On success, returns 0 and sets *out and *out_len to the unwrapped call
+ * body (malloc'd; caller must free).
+ */
+int gss_ctx_unwrap_request(struct gss_ctx_entry *entry, uint32_t svc,
+			   uint32_t seq, const char *body, size_t body_len,
+			   char **out, size_t *out_len);
+
+/*
+ * Wrap a reply body for GSS integrity or privacy protection.
+ * Prepends the sequence number and applies the appropriate GSS transform.
+ * On success, returns 0 and sets *out and *out_len (malloc'd; caller frees).
+ */
+int gss_ctx_wrap_reply(struct gss_ctx_entry *entry, uint32_t svc, uint32_t seq,
+		       const char *body, size_t body_len, char **out,
+		       size_t *out_len);
+
 struct rpc_trans;
 
 /*
