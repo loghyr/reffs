@@ -77,6 +77,11 @@ RUN pip3 install --no-cache-dir \
     xdrlib3 \
     xml2rfc
 
+# Test users for NFSv4 identity tests (matches Dockerfile.ci).
+RUN groupadd -g 3300 nfsgroup && \
+    useradd -u 3300 -g 3300 -M -s /usr/sbin/nologin nfstest
+RUN mkdir -p /etc && printf '[General]\nDomain = reffs.test\n' > /etc/idmapd.conf
+
 # Create workspace directories
 RUN mkdir -p /reffs /backend /src /build /logs
 

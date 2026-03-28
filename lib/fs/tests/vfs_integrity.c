@@ -9,6 +9,7 @@
 
 #include <rpc/rpc.h>
 #include "fs_test_harness.h"
+#include "reffs/identity.h"
 #include "reffs/vfs.h"
 #include "reffs/dirent.h"
 
