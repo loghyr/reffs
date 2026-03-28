@@ -72,6 +72,7 @@ struct rpc_info {
 	uid_t ri_mapped_uid;
 	gid_t ri_mapped_gid;
 	bool ri_gss_mapped; /* true if ri_mapped_uid/gid are valid */
+	uint32_t ri_cred_end; /* offset past end of credential (for GSS MIC) */
 
 	enum reply_stat ri_reply_stat;
 	enum reject_stat ri_reject_stat;

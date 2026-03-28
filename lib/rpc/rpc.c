@@ -1229,6 +1229,10 @@ int rpc_process_task(struct task *t)
 			rt->rt_offset += skip;
 			p = (uint32_t *)((char *)p + skip);
 		}
+
+		/* Save the credential end offset for GSS MIC verification.
+		 * The MIC covers rt->rt_body[0..ri_cred_end]. */
+		rt->rt_info.ri_cred_end = rt->rt_offset;
 		break;
 	}
 	case AUTH_SHORT:
@@ -1326,6 +1330,10 @@ int rpc_process_task(struct task *t)
 	 */
 	if (rt->rt_info.ri_cred.rc_flavor == RPCSEC_GSS &&
 	    rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_DATA) {
+		TRACE("GSS DATA: request xid=0x%08x seq=%u svc=%u handle_len=%u",
+		      rt->rt_info.ri_xid, rt->rt_info.ri_cred.rc_gss.gc_seq,
+		      rt->rt_info.ri_cred.rc_gss.gc_svc,
+		      rt->rt_info.ri_cred.rc_gss.gc_handle_len);
 		struct gss_ctx_entry *gctx =
 			gss_ctx_find(rt->rt_info.ri_cred.rc_gss.gc_handle,
 				     rt->rt_info.ri_cred.rc_gss.gc_handle_len);
@@ -1349,12 +1357,15 @@ int rpc_process_task(struct task *t)
 				goto handle_rpc_error;
 			}
 
-			uint32_t seq_net =
-				htonl(rt->rt_info.ri_cred.rc_gss.gc_seq);
+			/*
+			 * RFC 2203 §5.3.1: the client's MIC covers the
+			 * RPC header from XID through the end of the
+			 * credential (not just the sequence number).
+			 */
 			uint32_t vmaj;
 
-			vmaj = gss_ctx_verify_mic(gctx, &seq_net,
-						  sizeof(seq_net),
+			vmaj = gss_ctx_verify_mic(gctx, rt->rt_body,
+						  rt->rt_info.ri_cred_end,
 						  rt->rt_info.ri_verifier_body,
 						  rt->rt_info.ri_verifier_len);
 			if (vmaj != GSS_S_COMPLETE) {
@@ -1449,6 +1460,7 @@ int rpc_process_task(struct task *t)
 	if (rt->rt_info.ri_cred.rc_flavor == RPCSEC_GSS &&
 	    (rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_INIT ||
 	     rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_CONTINUE_INIT)) {
+		rt->rt_rc = t->t_rc;
 		ret = rpc_gss_handle_init(rt);
 		rpc_program_handler_put(rph);
 		rpc_protocol_free(rt);

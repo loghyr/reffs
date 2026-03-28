@@ -62,6 +62,8 @@ static pthread_cond_t lease_reaper_cv = PTHREAD_COND_INITIALIZER;
 
 static void *lease_reaper_thread_fn(void *arg __attribute__((unused)))
 {
+	rcu_register_thread();
+
 	while (atomic_load_explicit(&lease_reaper_running,
 				    memory_order_relaxed)) {
 		struct timespec ts;
@@ -149,6 +151,7 @@ static void *lease_reaper_thread_fn(void *arg __attribute__((unused)))
 		server_state_put(ss);
 	}
 
+	rcu_unregister_thread();
 	return NULL;
 }
 

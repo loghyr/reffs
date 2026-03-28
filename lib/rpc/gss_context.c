@@ -91,6 +91,17 @@ static void gss_ctx_release(struct urcu_ref *ref)
 	struct gss_ctx_entry *entry =
 		caa_container_of(ref, struct gss_ctx_entry, gc_ref);
 
+	/*
+	 * Remove from hash table before scheduling the RCU free.
+	 * This ensures no iterator can find the entry after the last
+	 * ref is dropped.  cds_lfht_del is idempotent if already removed.
+	 */
+	if (gss_ctx_ht) {
+		rcu_read_lock();
+		cds_lfht_del(gss_ctx_ht, &entry->gc_node);
+		rcu_read_unlock();
+	}
+
 	call_rcu(&entry->gc_rcu, gss_ctx_free_rcu);
 }
 
@@ -112,6 +123,8 @@ static pthread_cond_t gss_reaper_cv = PTHREAD_COND_INITIALIZER;
 
 static void *gss_reaper_thread_fn(void *arg __attribute__((unused)))
 {
+	rcu_register_thread();
+
 	while (atomic_load_explicit(&gss_reaper_running,
 				    memory_order_relaxed)) {
 		struct timespec ts;
@@ -133,38 +146,45 @@ static void *gss_reaper_thread_fn(void *arg __attribute__((unused)))
 		uint64_t now = reffs_now_ns();
 		struct cds_lfht_iter iter;
 		struct cds_lfht_node *node;
-		bool expired_one;
 
-		do {
-			expired_one = false;
-			rcu_read_lock();
-			cds_lfht_first(gss_ctx_ht, &iter);
-			while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
-				struct gss_ctx_entry *entry = caa_container_of(
-					node, struct gss_ctx_entry, gc_node);
-				uint64_t last = entry->gc_last_activity_ns;
+		/*
+		 * Scan under rcu_read_lock.  For each expired entry,
+		 * take a ref (skip if already dying), advance the
+		 * iterator past it, then drop the creation ref.
+		 * gss_ctx_release handles cds_lfht_del when the
+		 * refcount reaches zero.
+		 */
+		rcu_read_lock();
+		cds_lfht_first(gss_ctx_ht, &iter);
+		while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+			struct gss_ctx_entry *entry = caa_container_of(
+				node, struct gss_ctx_entry, gc_node);
 
-				if (last == 0 || now <= last ||
-				    now - last < GSS_CTX_TTL_NS) {
-					cds_lfht_next(gss_ctx_ht, &iter);
-					continue;
-				}
+			cds_lfht_next(gss_ctx_ht, &iter);
 
-				TRACE("gss_reaper: expiring context "
-				      "idle=%" PRIu64 "s",
-				      (uint64_t)((now - last) / 1000000000ULL));
+			if (!urcu_ref_get_unless_zero(&entry->gc_ref))
+				continue;
 
-				cds_lfht_del(gss_ctx_ht, node);
-				rcu_read_unlock();
-				gss_ctx_release(&entry->gc_ref);
-				expired_one = true;
-				break;
+			uint64_t last = entry->gc_last_activity_ns;
+
+			if (last == 0 || now <= last ||
+			    now - last < GSS_CTX_TTL_NS) {
+				gss_ctx_put(entry);
+				continue;
 			}
-			if (!expired_one)
-				rcu_read_unlock();
-		} while (expired_one);
+
+			TRACE("gss_reaper: expiring context "
+			      "idle=%" PRIu64 "s",
+			      (uint64_t)((now - last) / 1000000000ULL));
+
+			/* Drop our ref + the creation ref. */
+			gss_ctx_put(entry);
+			gss_ctx_put(entry);
+		}
+		rcu_read_unlock();
 	}
 
+	rcu_unregister_thread();
 	return NULL;
 }
 
@@ -203,17 +223,18 @@ void gss_ctx_cache_fini(void)
 
 	gss_ctx_reaper_fini();
 
-	/* Drain all entries. */
+	/* Drain: advance iterator before put (Rule 6). */
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 
 	rcu_read_lock();
-	cds_lfht_for_each(gss_ctx_ht, &iter, node)
-	{
+	cds_lfht_first(gss_ctx_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
 		struct gss_ctx_entry *entry =
 			caa_container_of(node, struct gss_ctx_entry, gc_node);
-		cds_lfht_del(gss_ctx_ht, node);
-		gss_ctx_release(&entry->gc_ref);
+
+		cds_lfht_next(gss_ctx_ht, &iter);
+		gss_ctx_put(entry);
 	}
 	rcu_read_unlock();
 
@@ -246,8 +267,7 @@ int gss_server_cred_init(void)
 
 bool gss_server_cred_is_available(void)
 {
-	return atomic_load_explicit(&gss_cred_available,
-				    memory_order_acquire);
+	return atomic_load_explicit(&gss_cred_available, memory_order_acquire);
 }
 
 void gss_server_cred_fini(void)
@@ -328,11 +348,8 @@ void gss_ctx_destroy(const uint8_t *handle, uint32_t handle_len)
 	if (!entry)
 		return;
 
-	rcu_read_lock();
-	cds_lfht_del(gss_ctx_ht, &entry->gc_node);
-	rcu_read_unlock();
-
-	/* Drop the find ref and the creation ref. */
+	/* Drop the find ref and the creation ref.
+	 * gss_ctx_release (refcount→0) handles cds_lfht_del. */
 	gss_ctx_put(entry);
 	gss_ctx_put(entry);
 }
@@ -502,21 +519,56 @@ static int send_gss_init_reply(struct rpc_trans *rt, struct gss_ctx_entry *ctx,
 	uint32_t token_padded = (out_token_len + 3) & ~3u;
 
 	/*
+	 * RFC 2203 §5.2.2.1: the reply verifier for INIT/CONTINUE_INIT
+	 * is RPCSEC_GSS with the MIC of the sequence window as the body.
+	 * Compute the MIC first so we know its size for the reply buffer.
+	 */
+	void *verf_mic = NULL;
+	uint32_t verf_mic_len = 0;
+
+	if (gss_major == GSS_S_COMPLETE) {
+		uint32_t window_net = htonl(ctx->gc_seq_window);
+		uint32_t mic_major;
+
+		mic_major = gss_ctx_get_mic(ctx, &window_net,
+					    sizeof(window_net), &verf_mic,
+					    &verf_mic_len);
+		if (mic_major != GSS_S_COMPLETE) {
+			LOG("GSS INIT: failed to compute verifier MIC: %u",
+			    mic_major);
+			return EINVAL;
+		}
+	}
+
+	uint32_t verf_padded = (verf_mic_len + 3) & ~3u;
+
+	/*
 	 * Reply layout:
 	 *   record_mark + xid + msg_type + reply_stat +
-	 *   verf_flavor + verf_len + accept_stat +
+	 *   verf_flavor + verf_len + verf_body(MIC) +
+	 *   accept_stat +
 	 *   handle_len + handle + major + minor + window +
 	 *   token_len + token
 	 */
-	size_t reply_size = 7 * sizeof(uint32_t) + /* standard header */
+	size_t reply_size = 4 * sizeof(uint32_t) + /* recmark+xid+type+stat */
+			    2 * sizeof(uint32_t) + verf_padded + /* verf */
+			    sizeof(uint32_t) + /* accept_stat */
 			    sizeof(uint32_t) + handle_padded + /* handle */
 			    3 * sizeof(uint32_t) + /* major, minor, window */
 			    sizeof(uint32_t) + token_padded; /* token */
 
 	rt->rt_reply_len = reply_size;
 	rt->rt_reply = calloc(reply_size, 1);
-	if (!rt->rt_reply)
+	if (!rt->rt_reply) {
+		OM_uint32 minor;
+
+		if (verf_mic)
+			gss_release_buffer(
+				&minor,
+				&(gss_buffer_desc){ .length = verf_mic_len,
+						    .value = verf_mic });
 		return ENOMEM;
+	}
 
 	uint32_t msg_len = (uint32_t)(reply_size - sizeof(uint32_t));
 	uint32_t *p = (uint32_t *)rt->rt_reply;
@@ -528,8 +580,21 @@ static int send_gss_init_reply(struct rpc_trans *rt, struct gss_ctx_entry *ctx,
 	p = rpc_encode_uint32_t(rt, p, rt->rt_info.ri_xid);
 	p = rpc_encode_uint32_t(rt, p, 1); /* MSG_REPLY */
 	p = rpc_encode_uint32_t(rt, p, 0); /* MSG_ACCEPTED */
-	p = rpc_encode_uint32_t(rt, p, 0); /* AUTH_NONE verifier */
-	p = rpc_encode_uint32_t(rt, p, 0); /* verifier len = 0 */
+
+	/* Verifier: RPCSEC_GSS + MIC of window. */
+	p = rpc_encode_uint32_t(rt, p, RPCSEC_GSS);
+	p = rpc_encode_uint32_t(rt, p, verf_mic_len);
+	if (verf_mic_len > 0) {
+		memcpy(p, verf_mic, verf_mic_len);
+		p = (uint32_t *)((char *)p + verf_padded);
+		rt->rt_offset += verf_padded;
+		OM_uint32 minor;
+
+		gss_release_buffer(&minor,
+				   &(gss_buffer_desc){ .length = verf_mic_len,
+						       .value = verf_mic });
+	}
+
 	p = rpc_encode_uint32_t(rt, p, 0); /* accept_stat = SUCCESS */
 
 	if (!p)
@@ -990,6 +1055,8 @@ int rpc_gss_handle_init(struct rpc_trans *rt
 	struct gss_ctx_entry *ctx;
 
 	if (gc->gc_proc == RPCSEC_GSS_INIT) {
+		TRACE("GSS INIT: new context request from fd=%d xid=0x%08x",
+		      rt->rt_fd, rt->rt_info.ri_xid);
 		/* New context: generate a random handle. */
 		uint8_t handle[GSS_HANDLE_LEN];
 
@@ -1042,6 +1109,9 @@ int rpc_gss_handle_init(struct rpc_trans *rt
 					&output_token, &output_len,
 					&minor_status);
 
+	TRACE("GSS INIT: accept major=%u minor=%u token_in=%u token_out=%u",
+	      major, minor_status, token_len, output_len);
+
 	int ret;
 
 	if (major == GSS_S_COMPLETE || major == GSS_S_CONTINUE_NEEDED)
@@ -1059,7 +1129,13 @@ int rpc_gss_handle_init(struct rpc_trans *rt
 		gss_release_buffer(&minor, &buf);
 	}
 
-	gss_ctx_put(ctx);
+	/*
+	 * On success the creation ref keeps the context alive in the
+	 * hash table for future DATA requests.  Only DESTROY or the
+	 * reaper drops the creation ref.  On failure, clean up now.
+	 */
+	if (ret)
+		gss_ctx_put(ctx);
 	return ret;
 #else
 	return ENOTSUP;

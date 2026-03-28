@@ -84,6 +84,22 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 			if (client_tls && client_flavor == AUTH_SYS)
 				return NFS4_OK;
 			break;
+		case REFFS_AUTH_KRB5:
+			if (client_flavor == RPCSEC_GSS)
+				return NFS4_OK;
+			break;
+		case REFFS_AUTH_KRB5I:
+			if (client_flavor == RPCSEC_GSS &&
+			    compound->c_rt->rt_info.ri_cred.rc_gss.gc_svc >=
+				    RPC_GSS_SVC_INTEGRITY)
+				return NFS4_OK;
+			break;
+		case REFFS_AUTH_KRB5P:
+			if (client_flavor == RPCSEC_GSS &&
+			    compound->c_rt->rt_info.ri_cred.rc_gss.gc_svc ==
+				    RPC_GSS_SVC_PRIVACY)
+				return NFS4_OK;
+			break;
 		default:
 			if ((uint32_t)ss->ss_flavors[i] == client_flavor)
 				return NFS4_OK;
