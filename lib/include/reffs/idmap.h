@@ -70,4 +70,19 @@ int idmap_name_to_gid(const utf8string *name, gid_t *gid);
 void idmap_cache_uid(uid_t uid, const char *name);
 void idmap_cache_gid(gid_t gid, const char *name);
 
+/*
+ * idmap_prewarm - resolve a batch of uncached uids and gids in parallel.
+ *
+ * Called before encoding a READDIR reply to avoid per-entry blocking
+ * on external resolvers.  Spawns threads for uncached IDs and waits
+ * with a bounded timeout.  IDs that don't resolve in time are silently
+ * skipped (the per-entry encode path will fall back to numeric format).
+ *
+ * @uids/@nuids: unique uid values to resolve
+ * @gids/@ngids: unique gid values to resolve
+ * @timeout_ms: maximum total wait time (0 = default 3000ms)
+ */
+void idmap_prewarm(const uid_t *uids, int nuids, const gid_t *gids, int ngids,
+		   int timeout_ms);
+
 #endif /* _REFFS_IDMAP_H */

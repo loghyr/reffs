@@ -21,6 +21,8 @@
 #include "reffs/dstore.h"
 #include "reffs/dstore_fanout.h"
 #include "reffs/dstore_wcc.h"
+#include "reffs/idmap.h"
+#include "reffs/identity.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
 #include "reffs/rpc.h"
@@ -3595,7 +3597,60 @@ restart_snap:
 	dir_de_rdlocked = false;
 
 	/*
-	 * Phase 2: fault in inodes, encode attrs, build the reply.
+	 * Phase 2a: pre-warm the idmap cache for owner strings.
+	 *
+	 * If the client requested FATTR4_OWNER or FATTR4_OWNER_GROUP,
+	 * collect unique uid/gid values from the snapshot entries and
+	 * resolve them in parallel with a bounded timeout.  This avoids
+	 * per-entry blocking on external resolvers during encoding.
+	 */
+	bool wants_owner =
+		bitmap4_attribute_is_set(&args->attr_request, FATTR4_OWNER);
+	bool wants_group = bitmap4_attribute_is_set(&args->attr_request,
+						    FATTR4_OWNER_GROUP);
+
+	if ((wants_owner || wants_group) && snap_count > 0) {
+		uid_t pw_uids[64];
+		gid_t pw_gids[64];
+		int npu = 0, npg = 0;
+
+		for (size_t si = 0; si < snap_count; si++) {
+			struct inode *child = dirent_ensure_inode(snap[si].rd);
+
+			if (!child)
+				continue;
+			if (wants_owner && npu < 64) {
+				uid_t u = reffs_id_to_uid(child->i_uid);
+				bool dup = false;
+
+				for (int j = 0; j < npu; j++)
+					if (pw_uids[j] == u) {
+						dup = true;
+						break;
+					}
+				if (!dup)
+					pw_uids[npu++] = u;
+			}
+			if (wants_group && npg < 64) {
+				gid_t g = reffs_id_to_uid(child->i_gid);
+				bool dup = false;
+
+				for (int j = 0; j < npg; j++)
+					if (pw_gids[j] == g) {
+						dup = true;
+						break;
+					}
+				if (!dup)
+					pw_gids[npg++] = g;
+			}
+			inode_active_put(child);
+		}
+		if (npu > 0 || npg > 0)
+			idmap_prewarm(pw_uids, npu, pw_gids, npg, 0);
+	}
+
+	/*
+	 * Phase 2b: fault in inodes, encode attrs, build the reply.
 	 *
 	 * Two limits (RFC 5661 §18.23):
 	 *   dircount  – non-attribute directory data (cookie + name)

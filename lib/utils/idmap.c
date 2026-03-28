@@ -23,9 +23,11 @@
 #include <pwd.h>
 #include <grp.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <urcu.h>
@@ -591,4 +593,189 @@ void idmap_cache_gid(gid_t gid, const char *name)
 
 	idmap_insert(g_gid_ht, g_gid_rev_ht, (uint32_t)gid, name);
 	TRACE("idmap: cached gid %u → %s", (unsigned)gid, name);
+}
+
+/* ------------------------------------------------------------------ */
+/* Batch pre-warm for READDIR                                          */
+/* ------------------------------------------------------------------ */
+
+#define IDMAP_PREWARM_DEFAULT_MS 3000
+#define IDMAP_PREWARM_MAX_THREADS 64
+
+struct prewarm_ctx {
+	pthread_mutex_t pw_mutex;
+	pthread_cond_t pw_cond;
+	_Atomic int pw_pending;
+};
+
+struct prewarm_uid_arg {
+	uid_t pa_uid;
+	struct prewarm_ctx *pa_ctx;
+};
+
+struct prewarm_gid_arg {
+	gid_t pa_gid;
+	struct prewarm_ctx *pa_ctx;
+};
+
+static void *prewarm_uid_thread(void *arg)
+{
+	struct prewarm_uid_arg *pa = arg;
+	utf8string dummy = { 0 };
+
+	rcu_register_thread();
+	idmap_resolve_uid(pa->pa_uid, &dummy);
+	utf8string_free(&dummy);
+	rcu_unregister_thread();
+
+	if (atomic_fetch_sub_explicit(&pa->pa_ctx->pw_pending, 1,
+				      memory_order_acq_rel) == 1) {
+		pthread_mutex_lock(&pa->pa_ctx->pw_mutex);
+		pthread_cond_signal(&pa->pa_ctx->pw_cond);
+		pthread_mutex_unlock(&pa->pa_ctx->pw_mutex);
+	}
+
+	free(pa);
+	return NULL;
+}
+
+static void *prewarm_gid_thread(void *arg)
+{
+	struct prewarm_gid_arg *pa = arg;
+	utf8string dummy = { 0 };
+
+	rcu_register_thread();
+	idmap_resolve_gid(pa->pa_gid, &dummy);
+	utf8string_free(&dummy);
+	rcu_unregister_thread();
+
+	if (atomic_fetch_sub_explicit(&pa->pa_ctx->pw_pending, 1,
+				      memory_order_acq_rel) == 1) {
+		pthread_mutex_lock(&pa->pa_ctx->pw_mutex);
+		pthread_cond_signal(&pa->pa_ctx->pw_cond);
+		pthread_mutex_unlock(&pa->pa_ctx->pw_mutex);
+	}
+
+	free(pa);
+	return NULL;
+}
+
+void idmap_prewarm(const uid_t *uids, int nuids, const gid_t *gids, int ngids,
+		   int timeout_ms)
+{
+	if (timeout_ms <= 0)
+		timeout_ms = IDMAP_PREWARM_DEFAULT_MS;
+
+	/*
+	 * Filter to only uncached IDs.  The cache lookup is O(1) per ID.
+	 */
+	uid_t uncached_uids[IDMAP_PREWARM_MAX_THREADS];
+	gid_t uncached_gids[IDMAP_PREWARM_MAX_THREADS];
+	int nu = 0, ng = 0;
+
+	for (int i = 0; i < nuids && nu < IDMAP_PREWARM_MAX_THREADS; i++) {
+		utf8string tmp = { 0 };
+
+		if (idmap_lookup_by_id(g_uid_ht, uids[i], &tmp) != 0)
+			uncached_uids[nu++] = uids[i];
+		else
+			utf8string_free(&tmp);
+	}
+
+	for (int i = 0; i < ngids && ng < IDMAP_PREWARM_MAX_THREADS; i++) {
+		utf8string tmp = { 0 };
+
+		if (idmap_lookup_by_id(g_gid_ht, gids[i], &tmp) != 0)
+			uncached_gids[ng++] = gids[i];
+		else
+			utf8string_free(&tmp);
+	}
+
+	int total = nu + ng;
+
+	if (total == 0)
+		return;
+
+	struct prewarm_ctx ctx = {
+		.pw_mutex = PTHREAD_MUTEX_INITIALIZER,
+		.pw_cond = PTHREAD_COND_INITIALIZER,
+	};
+
+	atomic_store_explicit(&ctx.pw_pending, total, memory_order_relaxed);
+
+	/* Spawn resolver threads. */
+	for (int i = 0; i < nu; i++) {
+		struct prewarm_uid_arg *pa = malloc(sizeof(*pa));
+
+		if (!pa) {
+			atomic_fetch_sub_explicit(&ctx.pw_pending, 1,
+						  memory_order_relaxed);
+			continue;
+		}
+		pa->pa_uid = uncached_uids[i];
+		pa->pa_ctx = &ctx;
+
+		pthread_t t;
+		pthread_attr_t attr;
+
+		pthread_attr_init(&attr);
+		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+		if (pthread_create(&t, &attr, prewarm_uid_thread, pa)) {
+			free(pa);
+			atomic_fetch_sub_explicit(&ctx.pw_pending, 1,
+						  memory_order_relaxed);
+		}
+		pthread_attr_destroy(&attr);
+	}
+
+	for (int i = 0; i < ng; i++) {
+		struct prewarm_gid_arg *pa = malloc(sizeof(*pa));
+
+		if (!pa) {
+			atomic_fetch_sub_explicit(&ctx.pw_pending, 1,
+						  memory_order_relaxed);
+			continue;
+		}
+		pa->pa_gid = uncached_gids[i];
+		pa->pa_ctx = &ctx;
+
+		pthread_t t;
+		pthread_attr_t attr;
+
+		pthread_attr_init(&attr);
+		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+		if (pthread_create(&t, &attr, prewarm_gid_thread, pa)) {
+			free(pa);
+			atomic_fetch_sub_explicit(&ctx.pw_pending, 1,
+						  memory_order_relaxed);
+		}
+		pthread_attr_destroy(&attr);
+	}
+
+	/* Wait for all threads to complete, with timeout. */
+	struct timespec ts;
+
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_sec += timeout_ms / 1000;
+	ts.tv_nsec += (timeout_ms % 1000) * 1000000L;
+	if (ts.tv_nsec >= 1000000000L) {
+		ts.tv_sec++;
+		ts.tv_nsec -= 1000000000L;
+	}
+
+	pthread_mutex_lock(&ctx.pw_mutex);
+	while (atomic_load_explicit(&ctx.pw_pending, memory_order_acquire) > 0)
+		if (pthread_cond_timedwait(&ctx.pw_cond, &ctx.pw_mutex, &ts))
+			break; /* timeout */
+	pthread_mutex_unlock(&ctx.pw_mutex);
+
+	int remaining =
+		atomic_load_explicit(&ctx.pw_pending, memory_order_relaxed);
+
+	if (remaining > 0)
+		TRACE("idmap_prewarm: %d/%d lookups timed out", remaining,
+		      total);
+
+	pthread_mutex_destroy(&ctx.pw_mutex);
+	pthread_cond_destroy(&ctx.pw_cond);
 }
