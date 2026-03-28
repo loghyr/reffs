@@ -92,7 +92,9 @@ role           = "standalone"
 minor_versions = [1, 2]
 grace_period   = 5
 workers        = 4
-nfs4_domain    = "reffs.test"
+nfs4_domain        = "reffs.test"
+trace_categories   = ["security"]
+trace_file         = "/dev/stderr"
 
 [backend]
 type       = "posix"

@@ -258,7 +258,19 @@ int main(int argc, char *argv[])
 	port = cfg.port;
 
 	setvbuf(stdout, NULL, _IOLBF, 0);
+
+	/* Use trace_file from config if not overridden by CLI. */
+	if (cfg.trace_file[0] && strcmp(trace_file, "./reffsd.log") == 0)
+		trace_file = cfg.trace_file;
 	reffs_trace_init(trace_file);
+
+	/* Enable trace categories from config (additive with CLI -c). */
+	if (cfg.trace_categories) {
+		for (int i = 0; i < REFFS_TRACE_CAT_ALL; i++) {
+			if (cfg.trace_categories & (1U << i))
+				reffs_trace_enable_category(i);
+		}
+	}
 	reffs_fs_set_storage((enum reffs_storage_type)cfg.backend_type,
 			     cfg.backend_path[0] ? cfg.backend_path : NULL);
 

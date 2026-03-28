@@ -114,6 +114,8 @@ struct reffs_config {
 	char log_file[REFFS_CONFIG_MAX_PATH]; /* "" = stderr */
 	enum reffs_log_level log_level;
 	char nfs4_domain[REFFS_CONFIG_MAX_HOST]; /* NFSv4 owner string domain */
+	char trace_file[REFFS_CONFIG_MAX_PATH]; /* "" = default */
+	uint32_t trace_categories; /* bitmask of REFFS_TRACE_CAT_* */
 
 	/* [backend] */
 	enum reffs_backend_type backend_type;

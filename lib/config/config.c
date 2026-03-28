@@ -13,6 +13,8 @@
 #include <strings.h>
 #include <unistd.h>
 
+#include "reffs/trace/types.h"
+
 #include "toml.h"
 
 #include "nfsv42_xdr.h"
@@ -217,6 +219,48 @@ static void parse_server(struct reffs_config *cfg, toml_table_t *srv)
 	if (d.ok) {
 		strncpy(cfg->nfs4_domain, d.u.s, sizeof(cfg->nfs4_domain) - 1);
 		free(d.u.s);
+	}
+
+	d = toml_string_in(srv, "trace_file");
+	if (d.ok) {
+		strncpy(cfg->trace_file, d.u.s, sizeof(cfg->trace_file) - 1);
+		free(d.u.s);
+	}
+
+	/* trace_categories = ["security", "rpc", "nfs", ...] */
+	toml_array_t *tca = toml_array_in(srv, "trace_categories");
+
+	if (tca) {
+		for (int i = 0;; i++) {
+			toml_datum_t tc = toml_string_at(tca, i);
+
+			if (!tc.ok)
+				break;
+			if (!strcasecmp(tc.u.s, "general"))
+				cfg->trace_categories |=
+					(1U << REFFS_TRACE_CAT_GENERAL);
+			else if (!strcasecmp(tc.u.s, "io"))
+				cfg->trace_categories |=
+					(1U << REFFS_TRACE_CAT_IO);
+			else if (!strcasecmp(tc.u.s, "rpc"))
+				cfg->trace_categories |=
+					(1U << REFFS_TRACE_CAT_RPC);
+			else if (!strcasecmp(tc.u.s, "nfs"))
+				cfg->trace_categories |=
+					(1U << REFFS_TRACE_CAT_NFS);
+			else if (!strcasecmp(tc.u.s, "nlm"))
+				cfg->trace_categories |=
+					(1U << REFFS_TRACE_CAT_NLM);
+			else if (!strcasecmp(tc.u.s, "fs"))
+				cfg->trace_categories |=
+					(1U << REFFS_TRACE_CAT_FS);
+			else if (!strcasecmp(tc.u.s, "security"))
+				cfg->trace_categories |=
+					(1U << REFFS_TRACE_CAT_SECURITY);
+			else if (!strcasecmp(tc.u.s, "all"))
+				cfg->trace_categories = ~0U;
+			free(tc.u.s);
+		}
 	}
 
 	d = toml_int_in(srv, "fence_uid_min");
