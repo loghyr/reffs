@@ -24,6 +24,7 @@
 #include <time.h>
 
 #include "reffs/dstore.h"
+#include "reffs/identity.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/filehandle.h"
 #include "reffs/inode.h"
@@ -216,8 +217,8 @@ static int local_fence(struct dstore *ds __attribute__((unused)),
 		new_gid = fence_min;
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
-	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, new_uid);
-	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, new_gid);
+	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_SYNTH, 0, new_uid);
+	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_SYNTH, 0, new_gid);
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 	inode_sync_to_disk(inode);
@@ -246,8 +247,8 @@ static int local_getattr(struct dstore *ds __attribute__((unused)),
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 	ldf->ldf_size = inode->i_size;
-	ldf->ldf_uid = REFFS_ID_LOCAL(inode->i_uid);
-	ldf->ldf_gid = REFFS_ID_LOCAL(inode->i_gid);
+	ldf->ldf_uid = reffs_id_to_uid(inode->i_uid);
+	ldf->ldf_gid = reffs_id_to_uid(inode->i_gid);
 	ldf->ldf_mode = inode->i_mode;
 	ldf->ldf_atime = inode->i_atime;
 	ldf->ldf_mtime = inode->i_mtime;

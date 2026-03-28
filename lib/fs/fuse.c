@@ -22,6 +22,7 @@
 #include "reffs/dirent.h"
 #include "reffs/fs.h"
 #include "reffs/fuse.h"
+#include "reffs/identity.h"
 #include "reffs/inode.h"
 #include "reffs/log.h"
 #include "reffs/super_block.h"
@@ -111,8 +112,8 @@ int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
 static void fill_stat(struct stat *st, struct inode *inode)
 {
 	st->st_ino = inode->i_ino;
-	st->st_uid = REFFS_ID_LOCAL(inode->i_uid);
-	st->st_gid = REFFS_ID_LOCAL(inode->i_gid);
+	st->st_uid = reffs_id_to_uid(inode->i_uid);
+	st->st_gid = reffs_id_to_uid(inode->i_gid);
 	st->st_mtim = inode->i_mtime;
 	st->st_atim = inode->i_atime;
 	st->st_ctim = inode->i_ctime;

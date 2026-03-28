@@ -26,6 +26,24 @@
 #include "reffs/test.h"
 #include "reffs/inode.h"
 #include "reffs/identity.h"
+#include "reffs/identity_map.h"
+
+/*
+ * Resolve a reffs_id to a UNIX uid/gid for permission checks and
+ * wire encoding.  For UNIX type, extracts directly.  For non-UNIX
+ * types, looks up the UNIX alias in the mapping table.
+ */
+uint32_t reffs_id_to_uid(reffs_id id)
+{
+	/*
+	 * UNIX and SYNTH types store the numeric uid/gid directly
+	 * in the local_id field — no mapping lookup needed.
+	 */
+	if (REFFS_ID_IS_UNIX(id) || REFFS_ID_TYPE(id) == REFFS_ID_SYNTH)
+		return REFFS_ID_LOCAL(id);
+
+	return REFFS_ID_LOCAL(identity_map_unix_for(id));
+}
 
 static bool gid_in_gids(gid_t gid, uint32_t len, gid_t *gids)
 {
@@ -90,7 +108,7 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 	if (ap->aup_uid == 0)
 		return 0;
 
-	if (ap->aup_uid == REFFS_ID_LOCAL(inode->i_uid)) {
+	if (ap->aup_uid == reffs_id_to_uid(inode->i_uid)) {
 		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
 			return -EACCES;
 
@@ -112,8 +130,8 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 			return -EACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
 			return -EACCES;
-	} else if (ap->aup_gid == REFFS_ID_LOCAL(inode->i_gid) ||
-		   gid_in_gids(REFFS_ID_LOCAL(inode->i_gid), ap->aup_len,
+	} else if (ap->aup_gid == reffs_id_to_uid(inode->i_gid) ||
+		   gid_in_gids(reffs_id_to_uid(inode->i_gid), ap->aup_len,
 			       ap->aup_gids)) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
 			return -EACCES;
@@ -208,18 +226,18 @@ int inode_privilege_check(struct inode *inode, struct authunix_parms *ap,
 	switch (op) {
 	case PRIV_CHANGE_OWNER:
 		/* Only owner can change ownership */
-		if (ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid))
+		if (ap->aup_uid != reffs_id_to_uid(inode->i_uid))
 			return -EPERM;
 
 		/* Prevent non-root from giving away files */
-		if (arg && *(uid_t *)arg != REFFS_ID_LOCAL(inode->i_uid) &&
+		if (arg && *(uid_t *)arg != reffs_id_to_uid(inode->i_uid) &&
 		    *(uid_t *)arg != (uid_t)-1)
 			return -EPERM;
 		break;
 
 	case PRIV_CHANGE_GROUP:
 		/* Only owner can change group */
-		if (ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid))
+		if (ap->aup_uid != reffs_id_to_uid(inode->i_uid))
 			return -EPERM;
 
 		/* User must be a member of the target group */
@@ -233,13 +251,13 @@ int inode_privilege_check(struct inode *inode, struct authunix_parms *ap,
 
 	case PRIV_SET_SPECIAL_BITS:
 		/* Only owner can set special bits */
-		if (ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid))
+		if (ap->aup_uid != reffs_id_to_uid(inode->i_uid))
 			return -EPERM;
 		break;
 
 	case PRIV_TIME_CHANGE:
 		/* Only owner or root can change times */
-		if (ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid))
+		if (ap->aup_uid != reffs_id_to_uid(inode->i_uid))
 			return -EPERM;
 		break;
 	}

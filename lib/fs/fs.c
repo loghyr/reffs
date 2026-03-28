@@ -454,8 +454,8 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	}
 
 	st->st_ino = inode->i_ino;
-	st->st_uid = REFFS_ID_LOCAL(inode->i_uid);
-	st->st_gid = REFFS_ID_LOCAL(inode->i_gid);
+	st->st_uid = reffs_id_to_uid(inode->i_uid);
+	st->st_gid = reffs_id_to_uid(inode->i_gid);
 	st->st_mtim = inode->i_mtime;
 	st->st_atim = inode->i_atime;
 	st->st_ctim = inode->i_ctime;

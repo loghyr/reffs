@@ -1301,11 +1301,11 @@ uint32_t nfs4_op_write(struct compound *compound)
 	/* Clear SUID/SGID on write by an unprivileged user. */
 	if ((compound->c_inode->i_mode & S_ISUID) &&
 	    compound->c_ap.aup_uid != 0 &&
-	    compound->c_ap.aup_uid != REFFS_ID_LOCAL(compound->c_inode->i_uid))
+	    compound->c_ap.aup_uid != reffs_id_to_uid(compound->c_inode->i_uid))
 		compound->c_inode->i_mode &= ~S_ISUID;
 	if ((compound->c_inode->i_mode & S_ISGID) &&
 	    compound->c_ap.aup_uid != 0 &&
-	    compound->c_ap.aup_uid != REFFS_ID_LOCAL(compound->c_inode->i_uid))
+	    compound->c_ap.aup_uid != reffs_id_to_uid(compound->c_inode->i_uid))
 		compound->c_inode->i_mode &= ~S_ISGID;
 
 	int64_t old_size;

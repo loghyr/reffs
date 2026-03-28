@@ -7,6 +7,7 @@
 #define _REFFS_INDENTITY_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <rpc/clnt.h>
 #include <rpc/rpc_msg.h>
 #include <rpc/xdr.h>
@@ -15,6 +16,14 @@
 
 #include "reffs/inode.h"
 #include "reffs/rpc.h"
+
+/*
+ * Resolve a reffs_id to a UNIX uid/gid.  For UNIX type, extracts
+ * REFFS_ID_LOCAL directly.  For non-UNIX types, looks up the UNIX
+ * alias in the identity mapping table; returns 65534 (nobody) if
+ * no mapping exists.
+ */
+uint32_t reffs_id_to_uid(reffs_id id);
 
 bool can_user_chgrp_to_group(uid_t uid, gid_t target_gid,
 			     struct authunix_parms *ap);

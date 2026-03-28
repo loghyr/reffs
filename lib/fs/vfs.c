@@ -45,8 +45,8 @@ static int vfs_check_sticky_bit(struct inode *dir, struct inode *file,
 	if (!(dir->i_mode & S_ISVTX))
 		return 0;
 
-	if ((uint32_t)ap->aup_uid == REFFS_ID_LOCAL(file->i_uid) ||
-	    (uint32_t)ap->aup_uid == REFFS_ID_LOCAL(dir->i_uid))
+	if ((uint32_t)ap->aup_uid == reffs_id_to_uid(file->i_uid) ||
+	    (uint32_t)ap->aup_uid == reffs_id_to_uid(dir->i_uid))
 		return 0;
 
 	return -EACCES;
@@ -518,7 +518,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 	int ret = 0;
 	uint64_t flags = 0;
 	bool user_in_current_group = is_user_in_group(
-		ap ? ap->aup_uid : 0, REFFS_ID_LOCAL(inode->i_gid), ap);
+		ap ? ap->aup_uid : 0, reffs_id_to_uid(inode->i_gid), ap);
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 
@@ -526,21 +526,21 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 	if (ap && ap->aup_uid != 0) {
 		/* Non-root user permissions checks */
 		if (sattr->uid_set &&
-		    (uint32_t)ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
+		    (uint32_t)ap->aup_uid != reffs_id_to_uid(inode->i_uid)) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
 
 		/* Changing owner to someone else requires root */
 		if (sattr->uid_set && sattr->uid != (uid_t)-1 &&
-		    sattr->uid != REFFS_ID_LOCAL(inode->i_uid)) {
+		    sattr->uid != reffs_id_to_uid(inode->i_uid)) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
 
 		/* Changing group requires being the owner (or root) */
 		if (sattr->gid_set &&
-		    (uint32_t)ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
+		    (uint32_t)ap->aup_uid != reffs_id_to_uid(inode->i_uid)) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
@@ -558,13 +558,13 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 		}
 
 		if (sattr->mode_set &&
-		    (uint32_t)ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
+		    (uint32_t)ap->aup_uid != reffs_id_to_uid(inode->i_uid)) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
 
 		if (sattr->atime_set &&
-		    (uint32_t)ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
+		    (uint32_t)ap->aup_uid != reffs_id_to_uid(inode->i_uid)) {
 			if (!sattr->atime_now) {
 				ret = -EPERM;
 				goto out_unlock;
@@ -577,7 +577,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 		}
 
 		if (sattr->mtime_set &&
-		    (uint32_t)ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
+		    (uint32_t)ap->aup_uid != reffs_id_to_uid(inode->i_uid)) {
 			if (!sattr->mtime_now) {
 				ret = -EPERM;
 				goto out_unlock;
@@ -666,9 +666,9 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 	}
 
 	bool is_uid_change = sattr->uid_set && sattr->uid != (uid_t)-1 &&
-			     sattr->uid != REFFS_ID_LOCAL(inode->i_uid);
+			     sattr->uid != reffs_id_to_uid(inode->i_uid);
 	bool is_gid_change = sattr->gid_set && sattr->gid != (gid_t)-1 &&
-			     sattr->gid != REFFS_ID_LOCAL(inode->i_gid);
+			     sattr->gid != reffs_id_to_uid(inode->i_gid);
 
 	if (sattr->uid_set && sattr->uid != (uid_t)-1) {
 		inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, sattr->uid);
