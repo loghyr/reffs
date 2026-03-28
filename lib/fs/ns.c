@@ -50,9 +50,6 @@ int reffs_ns_init(void)
 		goto out;
 	}
 
-	/* Root sb is always mounted — no admin mount step needed. */
-	reffs_root_sb->sb_lifecycle = SB_MOUNTED;
-
 	ret = super_block_dirent_create(reffs_root_sb, NULL,
 					reffs_life_action_birth);
 	if (ret)

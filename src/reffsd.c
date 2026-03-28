@@ -379,6 +379,8 @@ int main(int argc, char *argv[])
 	if (exit_code == 0) {
 		struct super_block *sb = super_block_find(1);
 		if (sb) {
+			/* Root sb is always mounted in the server. */
+			sb->sb_lifecycle = SB_MOUNTED;
 			reffs_fs_recover(sb);
 			super_block_put(sb);
 		}
