@@ -231,7 +231,10 @@ section_end
 # NFSv4.2 Kerberos integration tests: sec=krb5, krb5i, krb5p.
 # Requires the KDC, keytab, TGT, and rpc.gssd to be running.
 # ---------------------------------------------------------------------------
-if klist -s 2>/dev/null; then
+if [ "${CI_SKIP_KRB5:-0}" = "1" ]; then
+	echo ""
+	echo "=== NFSv4.2 krb5 integration test SKIPPED (CI_SKIP_KRB5=1) ==="
+elif klist -s 2>/dev/null; then
 	section_start "NFSv4.2 krb5 integration test"
 
 	# Start rpc.gssd now — only needed for krb5 mounts.
