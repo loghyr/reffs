@@ -2841,7 +2841,16 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	timespec_to_nfstime4(&inode->i_atime, &nattr->time_access);
 	timespec_to_nfstime4(&inode->i_btime, &nattr->time_create);
 
-	nattr->mounted_on_fileid = inode->i_ino;
+	/*
+	 * RFC 8881 §5.8.2.19: for the root of a mounted fs,
+	 * mounted_on_fileid is the fileid of the covered directory
+	 * in the parent fs (the "mounted-on" object).
+	 */
+	if (inode->i_ino == INODE_ROOT_ID && sb->sb_id != SUPER_BLOCK_ROOT_ID &&
+	    sb->sb_mount_dirent)
+		nattr->mounted_on_fileid = sb->sb_mount_dirent->rd_ino;
+	else
+		nattr->mounted_on_fileid = inode->i_ino;
 	ret = bitmap4_copy(&system_attrs.suppattr_exclcreat,
 			   &nattr->suppattr_exclcreat);
 	if (ret)
@@ -3690,6 +3699,22 @@ restart_snap:
 			if (ret)
 				attr_status = errno_to_nfs4(
 					ret, NFS4_OP_NUM(compound));
+		}
+
+		/*
+		 * Mount-point fsid override: if this entry has a sb
+		 * mounted on it, show the child sb's fsid so the
+		 * client detects the filesystem boundary.
+		 */
+		if (attr_status == NFS4_OK &&
+		    (__atomic_load_n(&snap[si].rd->rd_state, __ATOMIC_ACQUIRE) &
+		     RD_MOUNTED_ON)) {
+			struct super_block *msb =
+				super_block_find_mounted_on(snap[si].rd);
+			if (msb) {
+				nattr.fsid.major = msb->sb_id;
+				super_block_put(msb);
+			}
 		}
 
 		/* Compute wire sizes before committing to the entry. */
