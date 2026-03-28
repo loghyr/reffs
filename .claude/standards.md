@@ -283,6 +283,47 @@ static int my_func(struct dstore *ds __attribute__((unused)), ...)
 
 ---
 
+## Unit Test Discipline
+
+### Existing tests are sacred
+
+New code must not break existing passing tests.  If a change breaks
+tests, **stop and question the design** before modifying the test.
+The test may be correct and the design wrong.
+
+### When a test must change
+
+The only acceptable reasons:
+1. **Mechanical**: function signature changed globally, type widened
+2. **Intent changed**: the new design intentionally changes the
+   tested behavior — requires explicit rationale and approval
+
+In both cases, the reviewer must ask: what design decision caused
+this? Is the design decision correct?
+
+### Test comments
+
+Every test should explain its **intent** — what behavior it validates
+and why.  When a test uses a specific value (e.g., `SUPER_BLOCK_ROOT_ID`),
+comment whether that value is a hard requirement or convention.
+
+### Design review checklist
+
+When reviewing a new design or plan, the reviewer must ask:
+1. Where are the unit tests?
+2. Are functional tests planned?
+3. Are CI tests planned?
+4. Do any existing tests need to change? If so, why?
+
+### Test infrastructure
+
+`reffs_ns_init()` in the test harness is a convenience, not a mandate.
+Some tests need a pre-built namespace (fs tests), others need a bare
+environment (recovery tests).  The test infrastructure must support
+both modes.
+
+---
+
 ## CI Integration Tests
 
 After unit tests, `ci_integration_test.sh`:
