@@ -87,6 +87,13 @@ git config --global --add safe.directory '*'
 
 mkdir -p "$DATA" "$MOUNT" "$STATE"
 
+# Generate self-signed TLS certs for the TLS test.
+TLS_DIR="/tmp/reffs_ci_tls"
+mkdir -p "$TLS_DIR"
+openssl req -x509 -newkey rsa:2048 -keyout "$TLS_DIR/server.key" \
+	-out "$TLS_DIR/server.pem" -days 1 -nodes \
+	-subj "/CN=localhost" 2>/dev/null
+
 cat >"$CONFIG" <<EOF
 [server]
 port           = 2049
@@ -96,6 +103,8 @@ minor_versions = [1, 2]
 grace_period   = 5
 workers        = 4
 nfs4_domain        = "reffs.test"
+tls_cert           = "$TLS_DIR/server.pem"
+tls_key            = "$TLS_DIR/server.key"
 trace_categories   = ["security"]
 trace_file         = "/dev/stderr"
 
@@ -109,7 +118,7 @@ path        = "/"
 clients     = "*"
 access      = "rw"
 root_squash = false
-flavors     = ["sys", "krb5", "krb5i", "krb5p"]
+flavors     = ["sys", "tls", "krb5", "krb5i", "krb5p"]
 EOF
 
 # ---------------------------------------------------------------------------
@@ -244,6 +253,17 @@ mount -o vers=3,nolock,soft,timeo=10,retrans=2 127.0.0.1:/ "$MOUNT"
 )
 
 umount "$MOUNT"
+section_end
+
+# ---------------------------------------------------------------------------
+# Userspace TLS security test (no kernel mount needed).
+# Uses nfs_tls_test: AUTH_TLS probe + TLS handshake.
+# ---------------------------------------------------------------------------
+section_start "NFSv4.2 TLS userspace test"
+
+TLS_TEST="env ASAN_OPTIONS=detect_leaks=0 $BUILD_DIR/tools/nfs_tls_test"
+$TLS_TEST --server 127.0.0.1 --ca "$TLS_DIR/server.pem" || die "nfs_tls_test failed"
+
 section_end
 
 # ---------------------------------------------------------------------------
