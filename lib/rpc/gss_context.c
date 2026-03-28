@@ -14,8 +14,10 @@
 
 #include <errno.h>
 #include <grp.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <pwd.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,6 +32,7 @@
 #include "reffs/idmap.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
+#include "reffs/time.h"
 
 #ifdef HAVE_LIBNFSIDMAP
 #include <nfsidmap.h>
@@ -90,6 +93,94 @@ static void gss_ctx_release(struct urcu_ref *ref)
 }
 
 /* ------------------------------------------------------------------ */
+/* Context reaper thread                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Default TTL: 8 hours.  Kerberos ticket lifetimes are typically 8-24h.
+ * Contexts are renewed on each DATA request (gc_last_activity_ns).
+ */
+#define GSS_CTX_TTL_NS (8ULL * 3600 * 1000000000ULL)
+#define GSS_CTX_SCAN_SEC 60
+
+static pthread_t gss_reaper_thread;
+static _Atomic uint32_t gss_reaper_running;
+static pthread_mutex_t gss_reaper_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t gss_reaper_cv = PTHREAD_COND_INITIALIZER;
+
+static void *gss_reaper_thread_fn(void *arg __attribute__((unused)))
+{
+	while (atomic_load_explicit(&gss_reaper_running,
+				    memory_order_relaxed)) {
+		struct timespec ts;
+
+		clock_gettime(CLOCK_REALTIME, &ts);
+		ts.tv_sec += GSS_CTX_SCAN_SEC;
+
+		pthread_mutex_lock(&gss_reaper_mtx);
+		pthread_cond_timedwait(&gss_reaper_cv, &gss_reaper_mtx, &ts);
+		pthread_mutex_unlock(&gss_reaper_mtx);
+
+		if (!atomic_load_explicit(&gss_reaper_running,
+					  memory_order_relaxed))
+			break;
+
+		if (!gss_ctx_ht)
+			continue;
+
+		uint64_t now = reffs_now_ns();
+		struct cds_lfht_iter iter;
+		struct cds_lfht_node *node;
+		bool expired_one;
+
+		do {
+			expired_one = false;
+			rcu_read_lock();
+			cds_lfht_first(gss_ctx_ht, &iter);
+			while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+				struct gss_ctx_entry *entry = caa_container_of(
+					node, struct gss_ctx_entry, gc_node);
+				uint64_t last = entry->gc_last_activity_ns;
+
+				if (last == 0 || now <= last ||
+				    now - last < GSS_CTX_TTL_NS) {
+					cds_lfht_next(gss_ctx_ht, &iter);
+					continue;
+				}
+
+				TRACE("gss_reaper: expiring context "
+				      "idle=%" PRIu64 "s",
+				      (uint64_t)((now - last) / 1000000000ULL));
+
+				cds_lfht_del(gss_ctx_ht, node);
+				rcu_read_unlock();
+				gss_ctx_release(&entry->gc_ref);
+				expired_one = true;
+				break;
+			}
+			if (!expired_one)
+				rcu_read_unlock();
+		} while (expired_one);
+	}
+
+	return NULL;
+}
+
+static int gss_ctx_reaper_init(void)
+{
+	atomic_store_explicit(&gss_reaper_running, 1, memory_order_relaxed);
+	return pthread_create(&gss_reaper_thread, NULL, gss_reaper_thread_fn,
+			      NULL);
+}
+
+static void gss_ctx_reaper_fini(void)
+{
+	atomic_store_explicit(&gss_reaper_running, 0, memory_order_relaxed);
+	pthread_cond_signal(&gss_reaper_cv);
+	pthread_join(gss_reaper_thread, NULL);
+}
+
+/* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -100,13 +191,15 @@ int gss_ctx_cache_init(void)
 		LOG("gss_ctx_cache_init: cds_lfht_new failed");
 		return -1;
 	}
-	return 0;
+	return gss_ctx_reaper_init();
 }
 
 void gss_ctx_cache_fini(void)
 {
 	if (!gss_ctx_ht)
 		return;
+
+	gss_ctx_reaper_fini();
 
 	/* Drain all entries. */
 	struct cds_lfht_iter iter;
@@ -175,6 +268,7 @@ struct gss_ctx_entry *gss_ctx_create(const uint8_t *handle, uint32_t handle_len)
 	entry->gc_client_name = GSS_C_NO_NAME;
 #endif
 	entry->gc_seq_window = GSS_SEQ_WINDOW;
+	entry->gc_last_activity_ns = reffs_now_ns();
 	pthread_mutex_init(&entry->gc_seq_lock, NULL);
 	urcu_ref_init(&entry->gc_ref);
 

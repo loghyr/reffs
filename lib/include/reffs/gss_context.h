@@ -43,6 +43,7 @@ struct gss_ctx_entry {
 	uint32_t gc_seq_last;
 	uint64_t gc_seq_bitmap[2]; /* 128-bit sliding window for replay */
 	pthread_mutex_t gc_seq_lock; /* protects seq_last + bitmap */
+	uint64_t gc_last_activity_ns; /* CLOCK_MONOTONIC, renewed on DATA */
 	uint32_t gc_service; /* rpc_Gss_Svc_t wire value */
 	struct urcu_ref gc_ref;
 	struct rcu_head gc_rcu;

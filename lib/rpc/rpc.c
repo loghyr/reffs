@@ -32,6 +32,7 @@
 #include "reffs/rpc.h"
 #include "reffs/gss_context.h"
 #include "reffs/task.h"
+#include "reffs/time.h"
 #include "reffs/tls.h"
 #include "reffs/trace/rpc.h"
 
@@ -1254,6 +1255,9 @@ int rpc_process_task(struct task *t)
 			gss_ctx_find(rt->rt_info.ri_cred.rc_gss.gc_handle,
 				     rt->rt_info.ri_cred.rc_gss.gc_handle_len);
 		if (gctx) {
+			/* Renew activity timestamp for reaper. */
+			gctx->gc_last_activity_ns = reffs_now_ns();
+
 			/*
 			 * RFC 2203 §5.3.3.2: verify the client's
 			 * MIC over the sequence number.  Reject if
