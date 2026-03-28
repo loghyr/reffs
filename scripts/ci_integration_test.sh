@@ -18,6 +18,9 @@ set -euo pipefail
 REFFSD_BIN=${1:-/build/src/reffsd}
 SRC_DIR=${2:-/reffs}
 
+# Derive the build directory from the reffsd binary path.
+BUILD_DIR=$(dirname "$(dirname "$REFFSD_BIN")")
+
 # ---------------------------------------------------------------------------
 # Environment diagnostics — printed once so failures are self-describing.
 # ---------------------------------------------------------------------------
@@ -184,7 +187,7 @@ section_end
 # ---------------------------------------------------------------------------
 section_start "NFSv4 identity test"
 
-EC_DEMO="env ASAN_OPTIONS=detect_leaks=0 /build/tools/ec_demo"
+EC_DEMO="env ASAN_OPTIONS=detect_leaks=0 $BUILD_DIR/tools/ec_demo"
 MDS="127.0.0.1"
 
 # All operations via ec_demo userspace client — no kernel mount needed.
@@ -234,7 +237,7 @@ section_end
 if klist -s 2>/dev/null; then
 	section_start "NFSv4.2 krb5 userspace test"
 
-	KRB5_TEST="env ASAN_OPTIONS=detect_leaks=0 /build/tools/nfs_krb5_test"
+	KRB5_TEST="env ASAN_OPTIONS=detect_leaks=0 $BUILD_DIR/tools/nfs_krb5_test"
 	$KRB5_TEST --server 127.0.0.1 --sec krb5 || die "nfs_krb5_test --sec krb5 failed"
 
 	section_end
