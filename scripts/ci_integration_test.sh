@@ -260,6 +260,10 @@ else
 	echo "=== NFSv4.2 krb5 integration test SKIPPED (no TGT) === ($(date +%H:%M:%S))"
 fi
 
+# Stop rpc.gssd so it doesn't interfere with any subsequent operations
+# in the container (e.g., ci-shell debugging with sec=sys mounts).
+killall rpc.gssd 2>/dev/null || true
+
 # ---------------------------------------------------------------------------
 # Graceful shutdown: SIGTERM, wait up to 30 s for ASan to flush its report.
 # ---------------------------------------------------------------------------
