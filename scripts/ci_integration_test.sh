@@ -183,6 +183,7 @@ section_start "NFSv4 identity test"
 
 EC_DEMO="env ASAN_OPTIONS=detect_leaks=0 /build/tools/ec_demo"
 MDS="127.0.0.1"
+IDENTITY_SKIP=""
 
 # Create a file via the kernel mount for chown (needs root).
 echo "  step 1: mount sec=sys for file creation"
