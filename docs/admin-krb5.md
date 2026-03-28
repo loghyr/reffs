@@ -7,8 +7,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## Overview
 
-reffsd supports RPCSEC_GSS with Kerberos 5 for NFSv4 authentication.
-Three service levels are available:
+reffsd supports RPCSEC_GSS with Kerberos 5 for both NFSv3 and NFSv4
+authentication.  Three service levels are available:
 
 | Mount option | Service | Protection |
 |-------------|---------|------------|
@@ -164,7 +164,11 @@ klist   # verify: should show TGT for EXAMPLE.COM
 ### 5. Mount
 
 ```bash
+# NFSv4.2:
 mount -o vers=4.2,sec=krb5 server.example.com:/ /mnt
+
+# NFSv3:
+mount -o vers=3,sec=krb5 server.example.com:/ /mnt
 ```
 
 ## Debugging
