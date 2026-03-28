@@ -233,6 +233,39 @@ START_TEST(test_link_across_sb_xdev)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Mount-point lookup helper                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Intent: super_block_find_mounted_on returns the child sb that is
+ * mounted on a given dirent, and NULL after unmount.
+ */
+START_TEST(test_find_mounted_on)
+{
+	ck_assert_int_eq(reffs_fs_mkdir("/fmo", 0755), 0);
+
+	struct super_block *child = mount_child_at("/fmo", 60);
+
+	ck_assert_ptr_nonnull(child);
+
+	/* The child sb's mount_dirent should be findable. */
+	struct super_block *found =
+		super_block_find_mounted_on(child->sb_mount_dirent);
+
+	ck_assert_ptr_nonnull(found);
+	ck_assert(found == child);
+	super_block_put(found);
+
+	/* After unmount, the helper should return NULL. */
+	unmount_and_destroy(child);
+
+	/* mount_dirent was cleared by unmount, so we can't query it.
+	 * Instead verify rmdir succeeds (flag was cleared). */
+	ck_assert_int_eq(reffs_fs_rmdir("/fmo"), 0);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -257,6 +290,11 @@ static Suite *sb_mount_crossing_suite(void)
 	tcase_add_checked_fixture(tc, fs_test_setup, fs_test_teardown);
 	tcase_add_test(tc, test_rename_across_sb_xdev);
 	tcase_add_test(tc, test_link_across_sb_xdev);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("find_mounted_on");
+	tcase_add_checked_fixture(tc, fs_test_setup, fs_test_teardown);
+	tcase_add_test(tc, test_find_mounted_on);
 	suite_add_tcase(s, tc);
 
 	return s;

@@ -18,6 +18,7 @@
 #include "reffs/rpc.h"
 #include "reffs/dirent.h"
 #include "reffs/identity.h"
+#include "reffs/super_block.h"
 #include "reffs/vfs.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
@@ -102,6 +103,31 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 		goto out;
 	}
 
+	/*
+	 * Mount-point crossing: if the target dirent has a sb mounted
+	 * on it, cross into the child sb's root inode instead.
+	 * This implements the NFSv4 fsid-change semantics at mount points.
+	 */
+	if (__atomic_load_n(&child_de->rd_state, __ATOMIC_ACQUIRE) &
+	    RD_MOUNTED_ON) {
+		struct super_block *child_sb =
+			super_block_find_mounted_on(child_de);
+		if (child_sb) {
+			struct inode *root =
+				inode_find(child_sb, INODE_ROOT_ID);
+			if (!root) {
+				super_block_put(child_sb);
+				*status = NFS4ERR_SERVERFAULT;
+				goto out;
+			}
+			inode_active_put(child);
+			child = root;
+			super_block_put(compound->c_curr_sb);
+			compound->c_curr_sb = child_sb; /* transfer ref */
+			compound->c_curr_nfh.nfh_sb = child_sb->sb_id;
+		}
+	}
+
 	inode_active_put(compound->c_inode);
 	compound->c_inode = child;
 	compound->c_curr_nfh.nfh_ino = child->i_ino;
@@ -134,9 +160,50 @@ uint32_t nfs4_op_lookupp(struct compound *compound)
 	if (*status)
 		goto out;
 
-	/* At the root there is no parent */
+	/*
+	 * At the root of a sb: if this is the pseudo-root (root sb),
+	 * there is no parent → NFS4ERR_NOENT.  If this is a child sb,
+	 * cross back to the parent sb's mounted-on directory.
+	 */
 	if (compound->c_curr_nfh.nfh_ino == INODE_ROOT_ID) {
-		*status = NFS4ERR_NOENT;
+		if (compound->c_curr_nfh.nfh_sb == SUPER_BLOCK_ROOT_ID) {
+			*status = NFS4ERR_NOENT;
+			goto out;
+		}
+
+		/*
+		 * Cross back to parent sb at the mount point.
+		 * sb_parent_sb / sb_mount_dirent are stable while the
+		 * child sb is mounted — unmount only runs at shutdown
+		 * when no compounds are active.
+		 */
+		struct super_block *parent_sb =
+			compound->c_curr_sb->sb_parent_sb;
+		struct reffs_dirent *mount_de =
+			compound->c_curr_sb->sb_mount_dirent;
+
+		if (!parent_sb || !mount_de) {
+			*status = NFS4ERR_SERVERFAULT;
+			goto out;
+		}
+
+		parent = dirent_ensure_inode(mount_de);
+		if (!parent) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+
+		inode_active_put(compound->c_inode);
+		compound->c_inode = parent;
+		compound->c_curr_nfh.nfh_ino = parent->i_ino;
+		compound->c_curr_nfh.nfh_sb = parent_sb->sb_id;
+
+		super_block_put(compound->c_curr_sb);
+		compound->c_curr_sb = super_block_get(parent_sb);
+
+		stateid_put(compound->c_curr_stid);
+		compound->c_curr_stid = NULL;
+
 		goto out;
 	}
 

@@ -639,3 +639,24 @@ const char *super_block_lifecycle_name(enum sb_lifecycle state)
 		return lifecycle_names[state];
 	return "UNKNOWN";
 }
+
+struct super_block *super_block_find_mounted_on(struct reffs_dirent *de)
+{
+	struct super_block *sb = NULL;
+	struct super_block *tmp;
+
+	if (!de)
+		return NULL;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(tmp, &super_block_list, sb_link) {
+		if (tmp->sb_mount_dirent == de &&
+		    tmp->sb_lifecycle == SB_MOUNTED) {
+			sb = super_block_get(tmp);
+			break;
+		}
+	}
+	rcu_read_unlock();
+
+	return sb;
+}

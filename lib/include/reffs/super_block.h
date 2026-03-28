@@ -142,4 +142,11 @@ int super_block_destroy(struct super_block *sb);
 enum sb_lifecycle super_block_lifecycle(const struct super_block *sb);
 const char *super_block_lifecycle_name(enum sb_lifecycle state);
 
+/*
+ * Find the child sb mounted on the given dirent.
+ * Returns a ref-held sb, or NULL if no sb is mounted there.
+ * Caller must super_block_put() when done.
+ */
+struct super_block *super_block_find_mounted_on(struct reffs_dirent *de);
+
 #endif /* _REFFS_SB_H */
