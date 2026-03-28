@@ -60,16 +60,21 @@ END_TEST
 
 START_TEST(test_sb_create_duplicate_id)
 {
+	/*
+	 * Duplicate sb_id alloc is allowed — needed for recovery
+	 * (create a fresh sb to reload from the same backend path).
+	 * Duplicate detection happens at mount time instead.
+	 */
 	struct super_block *sb1 =
 		super_block_alloc(101, "/dup1", REFFS_STORAGE_RAM, NULL);
 	struct super_block *sb2 =
 		super_block_alloc(101, "/dup2", REFFS_STORAGE_RAM, NULL);
 
 	ck_assert_ptr_nonnull(sb1);
-	/* Duplicate id should fail. */
-	ck_assert_ptr_null(sb2);
+	ck_assert_ptr_nonnull(sb2);
 
 	super_block_put(sb1);
+	super_block_put(sb2);
 }
 END_TEST
 

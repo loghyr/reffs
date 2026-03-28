@@ -398,14 +398,6 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 {
 	struct super_block *sb;
 
-	/* Reject duplicate sb_id. */
-	struct super_block *existing = super_block_find(id);
-
-	if (existing) {
-		super_block_put(existing);
-		return NULL;
-	}
-
 	sb = calloc(1, sizeof(*sb));
 	if (!sb) {
 		LOG("Could not alloc a sb");
