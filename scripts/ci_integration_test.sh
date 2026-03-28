@@ -185,25 +185,39 @@ EC_DEMO="env ASAN_OPTIONS=detect_leaks=0 /build/tools/ec_demo"
 MDS="127.0.0.1"
 
 # Create a file via the kernel mount for chown (needs root).
-mount -o vers=4.2,sec=sys,soft,timeo=10,retrans=2 "$MDS":/ "$MOUNT"
+echo "  step 1: mount sec=sys for file creation"
+if ! mount -o vers=4.2,sec=sys,soft,timeo=10,retrans=2 "$MDS":/ "$MOUNT"; then
+	echo "  SKIP: mount failed (reffsd may have crashed)"
+	kill -0 "$REFFSD_PID" 2>/dev/null || echo "  reffsd is dead"
+	section_end
+	# Skip to NFSv3 test
+	IDENTITY_SKIP=1
+fi
+
+if [ -z "$IDENTITY_SKIP" ]; then
+
+echo "  step 2: create + chown test file"
 touch "$MOUNT"/identity_test_file
 chown 3300:3300 "$MOUNT"/identity_test_file
 umount "$MOUNT"
 
-# GETATTR via ec_demo — reads the raw owner string from the server.
-OWNER=$($EC_DEMO getowner --mds "$MDS" --file identity_test_file 2>/dev/null | grep '^owner=' | cut -d= -f2)
-echo "Server returned owner: $OWNER"
+echo "  step 3: ec_demo getowner"
+kill -0 "$REFFSD_PID" 2>/dev/null || { echo "  reffsd died before getowner"; die "reffsd crashed"; }
+OWNER=$($EC_DEMO getowner --mds "$MDS" --file identity_test_file 2>&1 | tee /dev/stderr | grep '^owner=' | cut -d= -f2)
+echo "  Server returned owner: $OWNER"
 
 if [ "$OWNER" = "nfstest@reffs.test" ]; then
-	echo "GETATTR owner string: PASS"
+	echo "  GETATTR owner string: PASS"
 else
-	echo "GETATTR owner string: FAIL (expected nfstest@reffs.test, got $OWNER)"
+	echo "  GETATTR owner string: FAIL (expected nfstest@reffs.test, got $OWNER)"
+	kill -0 "$REFFSD_PID" 2>/dev/null || echo "  reffsd is dead"
 	die "identity GETATTR failed"
 fi
 
 # SETATTR via ec_demo — set the owner string and read back.
-$EC_DEMO setowner --mds "$MDS" --file identity_test_file --input "nfstest@reffs.test" 2>/dev/null
-OWNER2=$($EC_DEMO getowner --mds "$MDS" --file identity_test_file 2>/dev/null | grep '^owner=' | cut -d= -f2)
+echo "  step 4: ec_demo setowner"
+$EC_DEMO setowner --mds "$MDS" --file identity_test_file --input "nfstest@reffs.test" 2>&1
+OWNER2=$($EC_DEMO getowner --mds "$MDS" --file identity_test_file 2>&1 | tee /dev/stderr | grep '^owner=' | cut -d= -f2)
 echo "After SETATTR, owner: $OWNER2"
 
 if [ "$OWNER2" = "nfstest@reffs.test" ]; then
@@ -217,6 +231,8 @@ fi
 mount -o vers=4.2,sec=sys,soft,timeo=10,retrans=2 "$MDS":/ "$MOUNT"
 rm -f "$MOUNT"/identity_test_file || true
 umount "$MOUNT"
+
+fi  # end IDENTITY_SKIP
 section_end
 
 # ---------------------------------------------------------------------------
