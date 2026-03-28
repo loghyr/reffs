@@ -17,6 +17,7 @@
 #include "reffs/rcu.h"
 #include "reffs/backend.h"
 #include "reffs/dirent.h"
+#include "reffs/fs.h"
 #include "reffs/inode.h"
 #include "reffs/log.h"
 #include "reffs/super_block.h"
@@ -541,12 +542,13 @@ int super_block_mount(struct super_block *sb, const char *path)
 	if (sb->sb_id == SUPER_BLOCK_ROOT_ID && sb->sb_lifecycle == SB_MOUNTED)
 		return -EBUSY;
 
-	/*
-	 * NOT_NOW_BROWN_COW: validate that 'path' exists as a
-	 * directory in the parent namespace.  For now, accept any
-	 * path — mount-crossing tests (Phase 2) will add the
-	 * path resolution logic.
-	 */
+	/* Validate that 'path' exists as a directory. */
+	struct stat st;
+
+	if (reffs_fs_getattr(path, &st))
+		return -ENOENT;
+	if (!S_ISDIR(st.st_mode))
+		return -ENOTDIR;
 
 	sb->sb_lifecycle = SB_MOUNTED;
 	return 0;
