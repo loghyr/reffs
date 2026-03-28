@@ -34,12 +34,15 @@ fi
 if [ "$elapsed_ms" -ge 1000 ]; then
     elapsed_s=$(( elapsed_ms / 1000 ))
     elapsed_frac=$(( (elapsed_ms % 1000) / 100 ))
-    printf "%s: %s [%d.%ds]%s\n" "$result" "$test_name" \
-        "$elapsed_s" "$elapsed_frac" "$slow" >> "$TIMING_FILE"
+    line=$(printf "%s: %s [%d.%ds]%s" "$result" "$test_name" \
+        "$elapsed_s" "$elapsed_frac" "$slow")
 else
-    printf "%s: %s [%dms]%s\n" "$result" "$test_name" \
-        "$elapsed_ms" "$slow" >> "$TIMING_FILE"
+    line=$(printf "%s: %s [%dms]%s" "$result" "$test_name" \
+        "$elapsed_ms" "$slow")
 fi
+
+echo "$line" >> "$TIMING_FILE"
+echo "$line"
 
 # Warn on stderr so it shows up in CI logs
 if [ -n "$slow" ]; then
