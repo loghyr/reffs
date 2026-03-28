@@ -3,6 +3,12 @@ SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
+> **DEPRECATED**: This document is superseded by
+> [multi-superblock.md](multi-superblock.md) which covers the full
+> architecture including state machine, persistence, TDD tests,
+> referral-readiness, and RFC 8881 compliance. Retained for
+> historical reference.
+
 # Multi-Export Design
 
 ## Terminology
