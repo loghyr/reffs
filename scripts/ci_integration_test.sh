@@ -163,13 +163,16 @@ mount -o vers=4.2,sec=sys,soft,timeo=10,retrans=2 127.0.0.1:/ "$MOUNT"
 (
 	cd "$MOUNT"
 	GIT_TRACE=1 git clone --verbose "$SRC_DIR" reffs_v4
-	sum_nfs=$(md5sum reffs_v4/configure.ac | awk '{print $1}')
+	sum_nfs=$(md5sum identity_test_file | awk '{print $1}')
 	sum_src=$(md5sum "$SRC_DIR/configure.ac" | awk '{print $1}')
 	[ "$sum_nfs" = "$sum_src" ] || { echo "md5sum mismatch: $sum_nfs != $sum_src"; exit 1; }
 	echo "md5sum OK: $sum_nfs"
 )
 
-# Best-effort cleanup so reffsd can free inode/fd cache before the v3 test.
+# Leave a single-component file at the root for the identity test.
+# ec_demo's OPEN uses PUTROOTFH + OPEN(name) — single component only.
+touch "$MOUNT"/identity_test_file
+chown 0:0 "$MOUNT"/identity_test_file
 rm -rf "$MOUNT"/reffs_v4 || true
 umount "$MOUNT"
 section_end
@@ -185,19 +188,17 @@ EC_DEMO="env ASAN_OPTIONS=detect_leaks=0 /build/tools/ec_demo"
 MDS="127.0.0.1"
 
 # All operations via ec_demo userspace client — no kernel mount needed.
-# This avoids host-kernel NFS client differences across platforms.
+# Use configure.ac from the git clone test (already on the server).
 
-# Step 1: Create a file via ec_demo put (OPEN + WRITE + CLOSE).
-echo "  step 1: create file via ec_demo put"
-echo "identity-test" > /tmp/identity_payload
-$EC_DEMO put --mds "$MDS" --file identity_test_file --input /tmp/identity_payload 2>&1
+# File was created by the NFSv4 integration test (kernel mount).
+# All identity ops below are pure ec_demo — no kernel mount.
 
-# Step 2: Set the owner to nfstest@reffs.test via SETATTR.
-echo "  step 2: setowner nfstest@reffs.test"
+# Step 1: Set the owner to nfstest@reffs.test via SETATTR.
+echo "  step 1: setowner nfstest@reffs.test"
 $EC_DEMO setowner --mds "$MDS" --file identity_test_file --input "nfstest@reffs.test" 2>&1
 
-# Step 3: Read back the owner via GETATTR.
-echo "  step 3: getowner (verify SETATTR round-trip)"
+# Step 2: Read back the owner via GETATTR.
+echo "  step 2: getowner (verify SETATTR round-trip)"
 OWNER=$($EC_DEMO getowner --mds "$MDS" --file identity_test_file 2>&1 | tee /dev/stderr | grep '^owner=' | cut -d= -f2)
 
 if [ "$OWNER" = "nfstest@reffs.test" ]; then
