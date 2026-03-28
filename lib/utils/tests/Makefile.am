@@ -36,6 +36,7 @@ TESTS = \
 	cmp \
 	idmap_test \
 	identity_types_test \
+	identity_map_test \
 	utf8string_component \
 	utf8string_lifecycle \
 	utf8string_compare \

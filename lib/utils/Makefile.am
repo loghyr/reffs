@@ -19,6 +19,8 @@ libreffs_utils_la_SOURCES = \
 	context.c \
 	idmap.c \
 	identity.c \
+	identity_domain.c \
+	identity_map.c \
 	log.c \
 	network.c \
 	rcu.c \
