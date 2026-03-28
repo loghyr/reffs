@@ -273,6 +273,8 @@ int main(int argc, char *argv[])
 		for (int i = 0; i < REFFS_TRACE_CAT_ALL; i++) {
 			if (cfg.trace_categories & (1U << i))
 				reffs_trace_enable_category(i);
+			else
+				reffs_trace_disable_category(i);
 		}
 	}
 	reffs_fs_set_storage((enum reffs_storage_type)cfg.backend_type,
