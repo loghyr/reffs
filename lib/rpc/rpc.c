@@ -35,6 +35,7 @@
 #include "reffs/time.h"
 #include "reffs/tls.h"
 #include "reffs/trace/rpc.h"
+#include "reffs/trace/security.h"
 
 struct rcu_head;
 
@@ -1330,10 +1331,11 @@ int rpc_process_task(struct task *t)
 	 */
 	if (rt->rt_info.ri_cred.rc_flavor == RPCSEC_GSS &&
 	    rt->rt_info.ri_cred.rc_gss.gc_proc == RPCSEC_GSS_DATA) {
-		TRACE("GSS DATA: request xid=0x%08x seq=%u svc=%u handle_len=%u",
-		      rt->rt_info.ri_xid, rt->rt_info.ri_cred.rc_gss.gc_seq,
-		      rt->rt_info.ri_cred.rc_gss.gc_svc,
-		      rt->rt_info.ri_cred.rc_gss.gc_handle_len);
+		trace_security_gss_data(
+			rt->rt_info.ri_xid, rt->rt_info.ri_cred.rc_gss.gc_seq,
+			rt->rt_info.ri_cred.rc_gss.gc_svc,
+			rt->rt_info.ri_cred.rc_gss.gc_handle_len, __func__,
+			__LINE__);
 		struct gss_ctx_entry *gctx =
 			gss_ctx_find(rt->rt_info.ri_cred.rc_gss.gc_handle,
 				     rt->rt_info.ri_cred.rc_gss.gc_handle_len);
@@ -1348,7 +1350,9 @@ int rpc_process_task(struct task *t)
 			 */
 			if (!rt->rt_info.ri_verifier_body ||
 			    rt->rt_info.ri_verifier_len == 0) {
-				TRACE("GSS DATA: missing verifier");
+				trace_security_gss_error(
+					"DATA missing verifier", 0, __func__,
+					__LINE__);
 				gss_ctx_put(gctx);
 				rt->rt_info.ri_auth_stat =
 					RPCSEC_GSS_CREDPROBLEM;
@@ -1369,9 +1373,9 @@ int rpc_process_task(struct task *t)
 						  rt->rt_info.ri_verifier_body,
 						  rt->rt_info.ri_verifier_len);
 			if (vmaj != GSS_S_COMPLETE) {
-				TRACE("GSS DATA: verifier MIC "
-				      "failed major=%u",
-				      vmaj);
+				trace_security_gss_error(
+					"DATA verifier MIC failed", vmaj,
+					__func__, __LINE__);
 				gss_ctx_put(gctx);
 				rt->rt_info.ri_auth_stat =
 					RPCSEC_GSS_CREDPROBLEM;
@@ -1383,8 +1387,10 @@ int rpc_process_task(struct task *t)
 			/* Replay detection (RFC 2203 §5.2.1). */
 			if (gss_ctx_seq_check(
 				    gctx, rt->rt_info.ri_cred.rc_gss.gc_seq)) {
-				TRACE("GSS DATA: seq %u replay/out-of-window",
-				      rt->rt_info.ri_cred.rc_gss.gc_seq);
+				trace_security_gss_error(
+					"DATA seq replay/out-of-window",
+					rt->rt_info.ri_cred.rc_gss.gc_seq,
+					__func__, __LINE__);
 				gss_ctx_put(gctx);
 				rt->rt_info.ri_auth_stat =
 					RPCSEC_GSS_CREDPROBLEM;
@@ -1399,8 +1405,9 @@ int rpc_process_task(struct task *t)
 
 			map_ret = gss_ctx_map_to_unix(gctx, &uid, &gid);
 			if (map_ret < 0)
-				TRACE("GSS principal mapping failed, "
-				      "using nobody");
+				trace_security_gss_error(
+					"principal mapping failed, using nobody",
+					0, __func__, __LINE__);
 
 			rt->rt_info.ri_mapped_uid = uid;
 			rt->rt_info.ri_mapped_gid = gid;
@@ -1411,7 +1418,9 @@ int rpc_process_task(struct task *t)
 			reffs_set_context(&ctx);
 			gss_ctx_put(gctx);
 		} else {
-			TRACE("GSS DATA: context not found for handle");
+			trace_security_gss_error(
+				"DATA context not found for handle", 0,
+				__func__, __LINE__);
 			rt->rt_info.ri_auth_stat = RPCSEC_GSS_CTXPROBLEM;
 			rt->rt_info.ri_reply_stat = MSG_DENIED;
 			rt->rt_info.ri_reject_stat = AUTH_ERROR;
@@ -1422,8 +1431,7 @@ int rpc_process_task(struct task *t)
 
 	if (rt->rt_info.ri_cred.rc_flavor == AUTH_TLS &&
 	    rt->rt_info.ri_procedure == 0) {
-		TRACE("AUTH_TLS probe on fd=%d len=%u xid=0x%08x", rt->rt_fd,
-		      verifier_len, rt->rt_info.ri_xid);
+		trace_security_tls(rt->rt_fd, "probe", __func__, __LINE__);
 
 		/* RFC 9289: verifier must be 8-byte "STARTTLS" string. */
 		if (verifier_len != 8 ||
@@ -1504,8 +1512,10 @@ int rpc_process_task(struct task *t)
 		gss_ctx_put(gctx2);
 
 		if (ret) {
-			TRACE("GSS unwrap failed: svc=%u ret=%d",
-			      rt->rt_info.ri_cred.rc_gss.gc_svc, ret);
+			trace_security_gss_error(
+				"unwrap failed",
+				rt->rt_info.ri_cred.rc_gss.gc_svc, __func__,
+				__LINE__);
 			rt->rt_info.ri_auth_stat = RPCSEC_GSS_CREDPROBLEM;
 			rt->rt_info.ri_reply_stat = MSG_DENIED;
 			rt->rt_info.ri_reject_stat = AUTH_ERROR;

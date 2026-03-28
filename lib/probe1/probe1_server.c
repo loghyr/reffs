@@ -713,6 +713,9 @@ int probe1_protocol_register(void)
 		      "REFFS_TRACE_CAT_FS out of sync");
 	static_assert((int)PROBE1_TRACE_CAT_LOG == (int)REFFS_TRACE_CAT_LOG,
 		      "REFFS_TRACE_CAT_LOG out of sync");
+	static_assert((int)PROBE1_TRACE_CAT_SECURITY ==
+			      (int)REFFS_TRACE_CAT_SECURITY,
+		      "REFFS_TRACE_CAT_SECURITY out of sync");
 	static_assert((int)PROBE1_TRACE_CAT_ALL == (int)REFFS_TRACE_CAT_ALL,
 		      "REFFS_TRACE_CAT_ALL out of sync");
 

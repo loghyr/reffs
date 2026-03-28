@@ -34,6 +34,7 @@
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/time.h"
+#include "reffs/trace/security.h"
 
 #ifdef HAVE_LIBNFSIDMAP
 #include <nfsidmap.h>
@@ -447,8 +448,8 @@ uint32_t gss_ctx_accept(struct gss_ctx_entry *entry, const void *input_token,
 	if (major == GSS_S_COMPLETE) {
 		char *name = gss_ctx_principal(entry);
 
-		TRACE("GSS context established for %s",
-		      name ? name : "(unknown)");
+		trace_security_gss_map(name ? name : "(unknown)", 0, 0,
+				       __func__, __LINE__);
 		free(name);
 	}
 
@@ -626,8 +627,8 @@ static int send_gss_init_reply(struct rpc_trans *rt, struct gss_ctx_entry *ctx,
 
 	rt->rt_offset = rt->rt_reply_len;
 
-	TRACE("GSS INIT reply: xid=0x%08x major=%u handle_len=%u token_len=%u",
-	      rt->rt_info.ri_xid, gss_major, ctx->gc_handle_len, out_token_len);
+	trace_security_gss_init(rt->rt_fd, rt->rt_info.ri_xid, __func__,
+				__LINE__);
 
 	if (rt->rt_rc && rt->rt_cb)
 		rt->rt_cb(rt);
@@ -711,8 +712,7 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 	*gid = pw->pw_gid;
 #endif
 
-	TRACE("GSS principal %s mapped to uid=%u gid=%u", principal, *uid,
-	      *gid);
+	trace_security_gss_map(principal, *uid, *gid, __func__, __LINE__);
 	idmap_cache_uid(*uid, principal);
 	free(principal);
 	return 0;
@@ -823,9 +823,9 @@ int gss_ctx_unwrap_request(struct gss_ctx_entry *entry, uint32_t svc,
 		pthread_mutex_unlock(&entry->gc_seq_lock);
 
 		if (major != GSS_S_COMPLETE) {
-			TRACE("GSS integ unwrap: verify_mic failed "
-			      "major=%u",
-			      major);
+			trace_security_gss_error(
+				"integ unwrap verify_mic failed", major,
+				__func__, __LINE__);
 			return -EACCES;
 		}
 
@@ -873,14 +873,16 @@ int gss_ctx_unwrap_request(struct gss_ctx_entry *entry, uint32_t svc,
 		pthread_mutex_unlock(&entry->gc_seq_lock);
 
 		if (major != GSS_S_COMPLETE) {
-			TRACE("GSS priv unwrap: gss_unwrap failed "
-			      "major=%u",
-			      major);
+			trace_security_gss_error(
+				"priv unwrap gss_unwrap failed", major,
+				__func__, __LINE__);
 			return -EACCES;
 		}
 
 		if (!conf_state) {
-			TRACE("GSS priv unwrap: no confidentiality");
+			trace_security_gss_error(
+				"priv unwrap no confidentiality", 0, __func__,
+				__LINE__);
 			gss_release_buffer(&minor, &out_buf);
 			return -EACCES;
 		}
@@ -1055,8 +1057,8 @@ int rpc_gss_handle_init(struct rpc_trans *rt
 	struct gss_ctx_entry *ctx;
 
 	if (gc->gc_proc == RPCSEC_GSS_INIT) {
-		TRACE("GSS INIT: new context request from fd=%d xid=0x%08x",
-		      rt->rt_fd, rt->rt_info.ri_xid);
+		trace_security_gss_init(rt->rt_fd, rt->rt_info.ri_xid, __func__,
+					__LINE__);
 		/* New context: generate a random handle. */
 		uint8_t handle[GSS_HANDLE_LEN];
 
@@ -1109,8 +1111,8 @@ int rpc_gss_handle_init(struct rpc_trans *rt
 					&output_token, &output_len,
 					&minor_status);
 
-	TRACE("GSS INIT: accept major=%u minor=%u token_in=%u token_out=%u",
-	      major, minor_status, token_len, output_len);
+	trace_security_gss_accept(major, minor_status, token_len, output_len,
+				  __func__, __LINE__);
 
 	int ret;
 
@@ -1162,7 +1164,8 @@ int rpc_gss_handle_destroy(struct rpc_trans *rt
 	struct gss_ctx_entry *gctx =
 		gss_ctx_find(gc->gc_handle, gc->gc_handle_len);
 	if (!gctx) {
-		TRACE("GSS DESTROY: context not found");
+		trace_security_gss_error("DESTROY context not found", 0,
+					 __func__, __LINE__);
 		return EINVAL;
 	}
 
@@ -1178,8 +1181,8 @@ int rpc_gss_handle_destroy(struct rpc_trans *rt
 					  rt->rt_info.ri_verifier_body,
 					  rt->rt_info.ri_verifier_len);
 		if (vmaj != GSS_S_COMPLETE) {
-			TRACE("GSS DESTROY: verifier MIC failed major=%u",
-			      vmaj);
+			trace_security_gss_error("DESTROY verifier MIC failed",
+						 vmaj, __func__, __LINE__);
 			gss_ctx_put(gctx);
 			return EINVAL;
 		}
@@ -1199,7 +1202,8 @@ int rpc_gss_handle_destroy(struct rpc_trans *rt
 	gss_ctx_put(gctx);
 	gss_ctx_destroy(gc->gc_handle, gc->gc_handle_len);
 
-	TRACE("GSS DESTROY: context removed xid=0x%08x", rt->rt_info.ri_xid);
+	trace_security_gss_data(rt->rt_info.ri_xid, gc->gc_seq, gc->gc_svc,
+				gc->gc_handle_len, __func__, __LINE__);
 
 	/* Build reply with GSS verifier (or AUTH_NONE if MIC failed). */
 	uint32_t mic_padded = mic ? ((mic_len + 3) & ~3u) : 0;
