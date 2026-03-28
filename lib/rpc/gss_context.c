@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <pwd.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -39,6 +40,7 @@
 #endif
 
 static struct cds_lfht *gss_ctx_ht;
+static _Atomic bool gss_cred_available;
 
 #ifdef HAVE_GSSAPI_KRB5
 static gss_cred_id_t gss_server_cred = GSS_C_NO_CREDENTIAL;
@@ -234,11 +236,18 @@ int gss_server_cred_init(void)
 		return -1;
 	}
 
+	atomic_store_explicit(&gss_cred_available, true, memory_order_release);
 	TRACE("RPCSEC_GSS: server credential acquired from keytab");
 	return 0;
 #else
 	return 0;
 #endif
+}
+
+bool gss_server_cred_is_available(void)
+{
+	return atomic_load_explicit(&gss_cred_available,
+				    memory_order_acquire);
 }
 
 void gss_server_cred_fini(void)

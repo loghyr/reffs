@@ -31,6 +31,13 @@
 
 struct connection_info;
 
+/* GSS context cache + server credential — declared in gss_context.h. */
+int gss_ctx_cache_init(void);
+void gss_ctx_cache_fini(void);
+int gss_server_cred_init(void);
+void gss_server_cred_fini(void);
+_Bool gss_server_cred_is_available(void);
+
 // Request tracking
 struct rpc_trans *pending_requests[MAX_PENDING_REQUESTS];
 pthread_mutex_t request_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -186,6 +193,11 @@ int io_handler_init(struct ring_context *rc, const char *tls_cert,
 	/* Eagerly initialize TLS context with configured paths. */
 	if (io_tls_init_server_context(tls_cert, tls_key, tls_ca) != 0)
 		TRACE("TLS context init deferred (certs not found at startup)");
+
+	/* GSS context cache + server credential (keytab). */
+	gss_ctx_cache_init();
+	if (gss_server_cred_init() != 0)
+		TRACE("GSS server credential not available (no keytab)");
 
 	return 0;
 }
@@ -539,6 +551,9 @@ void io_handler_fini(struct ring_context *rc)
 	io_context_release_active();
 
 	io_context_fini();
+
+	gss_server_cred_fini();
+	gss_ctx_cache_fini();
 
 	io_uring_queue_exit(&rc->rc_ring);
 	pthread_mutex_destroy(&rc->rc_mutex);

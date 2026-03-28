@@ -310,6 +310,33 @@ Common causes of slow tests:
 
 ---
 
+## Security Flavor Graceful Degradation
+
+### NFS4ERR_DELAY, not NFS4ERR_WRONGSEC, for broken backends
+
+When a security flavor is configured on an export but its backend is
+unavailable (missing keytab, KDC unreachable, TLS certs missing):
+
+- **Never** return `NFS4ERR_WRONGSEC` — that tells the client to try
+  a different flavor, potentially bypassing the security policy.  A DoS
+  on the KDC must not grant access.
+- **Return `NFS4ERR_DELAY`** — tells the client the problem is transient
+  and to retry with the same flavor.
+- **SECINFO** always advertises configured flavors (policy is unchanged).
+- **Multi-flavor export** (e.g., `["sys", "krb5"]`): SYS clients still
+  work; krb5 clients get DELAY until the KDC/keytab is restored.
+- **LOG once** when a flavor backend becomes unavailable.
+- Same rule applies to TLS: missing certs → DELAY for TLS clients.
+
+### Availability tracking
+
+Track `gss_server_cred_available()` and `tls_available()` flags.
+Check in the NFS compound path (not at the RPC GSS INIT layer).
+GSS INIT failures propagate naturally via GSS_S_FAILURE — rpc.gssd
+retries automatically.
+
+---
+
 ## NFSv4 Delegation Semantics
 
 ### A file is open as long as ANY stateid is held

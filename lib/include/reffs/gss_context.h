@@ -18,6 +18,7 @@
 #endif
 
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef HAVE_GSSAPI_KRB5
@@ -56,6 +57,13 @@ void gss_ctx_cache_fini(void);
 /* Server credential (keytab) init/fini. */
 int gss_server_cred_init(void);
 void gss_server_cred_fini(void);
+
+/*
+ * Returns true if the server has a valid GSS credential (keytab).
+ * When false, krb5 clients should receive NFS4ERR_DELAY (not
+ * WRONGSEC) — the flavor is configured but the backend is broken.
+ */
+bool gss_server_cred_is_available(void);
 
 /*
  * Create a new context entry with the given handle.
