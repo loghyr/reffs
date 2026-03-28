@@ -15,6 +15,7 @@
 #include <urcu/rculfhash.h>
 #include <urcu/ref.h>
 #include "reffs/backend.h"
+#include "reffs/identity_types.h"
 
 struct super_block;
 struct data_block;
@@ -88,8 +89,8 @@ struct inode {
 
 	/* attributes */
 	pthread_mutex_t i_attrs_lock;
-	uint32_t i_uid;
-	uint32_t i_gid;
+	reffs_id i_uid;
+	reffs_id i_gid;
 	uint32_t i_nlink;
 	uint16_t i_mode;
 	uint16_t i_unused;
@@ -121,8 +122,8 @@ struct inode {
 };
 
 struct inode_disk {
-	uint32_t id_uid;
-	uint32_t id_gid;
+	uint64_t id_uid; /* reffs_id */
+	uint64_t id_gid; /* reffs_id */
 	uint32_t id_nlink;
 	uint16_t id_mode;
 	int64_t id_size;

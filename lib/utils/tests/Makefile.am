@@ -35,6 +35,7 @@ LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 TESTS = \
 	cmp \
 	idmap_test \
+	identity_types_test \
 	utf8string_component \
 	utf8string_lifecycle \
 	utf8string_compare \
