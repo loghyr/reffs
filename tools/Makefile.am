@@ -13,6 +13,6 @@ ec_demo_LDADD = \
 	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la	\
 	$(top_builddir)/lib/ec/libreffs_ec.la			\
 	$(top_builddir)/lib/xdr/libreffs_xdr.la			\
-	$(TIRPC_LIBS)
+	$(TIRPC_LIBS) $(GSSAPI_LIBS)
 
 bin_PROGRAMS = ec_demo

@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
@@ -93,15 +94,21 @@ static int write_local_file(const char *path, const uint8_t *data, size_t len)
 
 static const char *g_client_id; /* set from --id, NULL = use PID */
 
+static enum ec_sec_flavor g_sec = EC_SEC_SYS;
+
 static int session_open(struct mds_session *ms, const char *mds_host)
 {
 	memset(ms, 0, sizeof(*ms));
 	mds_session_set_owner(ms, g_client_id);
 
-	fprintf(stderr, "ec_demo: connecting to MDS %s (owner %s)\n", mds_host,
-		ms->ms_owner);
+	const char *sec_name[] = { "sys", "krb5", "krb5i", "krb5p" };
 
-	return mds_session_create(ms, mds_host);
+	fprintf(stderr, "ec_demo: connecting to MDS %s (owner %s, sec=%s)\n",
+		mds_host, ms->ms_owner, sec_name[g_sec]);
+
+	if (g_sec == EC_SEC_SYS)
+		return mds_session_create(ms, mds_host);
+	return mds_session_create_sec(ms, mds_host, g_sec);
 }
 
 /* ------------------------------------------------------------------ */
@@ -516,6 +523,7 @@ static struct option long_options[] = {
 	{ "layout", required_argument, NULL, 'l' },
 	{ "skip-ds", required_argument, NULL, 'S' },
 	{ "force-scalar", no_argument, NULL, 'F' },
+	{ "sec", required_argument, NULL, 'x' },
 	{ "help", no_argument, NULL, '?' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -546,7 +554,7 @@ int main(int argc, char *argv[])
 	argv++;
 	optind = 1;
 
-	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:c:d:l:S:?",
+	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:c:d:l:S:x:?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -627,6 +635,21 @@ int main(int argc, char *argv[])
 		}
 		case 'F':
 			moj_force_scalar(true);
+			break;
+		case 'x':
+			if (!strcasecmp(optarg, "sys"))
+				g_sec = EC_SEC_SYS;
+			else if (!strcasecmp(optarg, "krb5"))
+				g_sec = EC_SEC_KRB5;
+			else if (!strcasecmp(optarg, "krb5i"))
+				g_sec = EC_SEC_KRB5I;
+			else if (!strcasecmp(optarg, "krb5p"))
+				g_sec = EC_SEC_KRB5P;
+			else {
+				fprintf(stderr, "ec_demo: unknown sec: %s\n",
+					optarg);
+				return 1;
+			}
 			break;
 		default:
 			usage();

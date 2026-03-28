@@ -21,6 +21,17 @@
 
 #include <rpc/rpc.h>
 
+#ifdef HAVE_GSSAPI_KRB5
+#include <rpc/auth_gss.h>
+#include <gssapi/gssapi.h>
+#include <gssapi/gssapi_krb5.h>
+
+/* krb5 OID: 1.2.840.113554.1.2.2 */
+static gss_OID_desc krb5oid_desc = {
+	9, (void *)"\x2a\x86\x48\x86\xf7\x12\x01\x02\x02"
+};
+#endif
+
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
 
@@ -343,6 +354,94 @@ err:
 		clnt_destroy(ms->ms_clnt);
 	memset(ms, 0, sizeof(*ms));
 	return ret;
+}
+
+int mds_session_create_sec(struct mds_session *ms, const char *host,
+			   enum ec_sec_flavor sec)
+{
+#ifdef HAVE_GSSAPI_KRB5
+	if (sec == EC_SEC_SYS)
+		return mds_session_create(ms, host);
+
+	int ret;
+	char saved_owner[256];
+
+	memcpy(saved_owner, ms->ms_owner, sizeof(saved_owner));
+	memset(ms, 0, sizeof(*ms));
+	memcpy(ms->ms_owner, saved_owner, sizeof(ms->ms_owner));
+
+	if (ms->ms_owner[0] == '\0')
+		mds_session_set_owner(ms, NULL);
+
+	ms->ms_clnt = clnt_create(host, NFS4_PROGRAM, NFS_V4, "tcp");
+	if (!ms->ms_clnt)
+		return -ECONNREFUSED;
+
+	/*
+	 * RPCSEC_GSS via libtirpc's authgss_create_default.
+	 * service_name is "nfs@host" — the server's service principal.
+	 */
+	char service[512];
+
+	snprintf(service, sizeof(service), "nfs@%s", host);
+
+	rpc_gss_svc_t gss_svc;
+
+	switch (sec) {
+	case EC_SEC_KRB5:
+		gss_svc = RPCSEC_GSS_SVC_NONE;
+		break;
+	case EC_SEC_KRB5I:
+		gss_svc = RPCSEC_GSS_SVC_INTEGRITY;
+		break;
+	case EC_SEC_KRB5P:
+		gss_svc = RPCSEC_GSS_SVC_PRIVACY;
+		break;
+	default:
+		clnt_destroy(ms->ms_clnt);
+		return -EINVAL;
+	}
+
+	struct rpc_gss_sec gss_sec = {
+		.mech = &krb5oid_desc,
+		.qop = GSS_C_QOP_DEFAULT,
+		.svc = gss_svc,
+		.cred = GSS_C_NO_CREDENTIAL,
+		.req_flags = GSS_C_MUTUAL_FLAG,
+	};
+
+	AUTH *auth = authgss_create_default(ms->ms_clnt, service, &gss_sec);
+
+	if (!auth) {
+		fprintf(stderr, "ec_demo: authgss_create_default failed\n");
+		clnt_destroy(ms->ms_clnt);
+		memset(ms, 0, sizeof(*ms));
+		return -EACCES;
+	}
+
+	auth_destroy(ms->ms_clnt->cl_auth);
+	ms->ms_clnt->cl_auth = auth;
+
+	ret = mds_exchange_id(ms);
+	if (ret)
+		goto err;
+
+	ret = mds_create_session(ms);
+	if (ret)
+		goto err;
+
+	mds_reclaim_complete(ms);
+	return 0;
+
+err:
+	if (ms->ms_clnt)
+		clnt_destroy(ms->ms_clnt);
+	memset(ms, 0, sizeof(*ms));
+	return ret;
+#else
+	(void)sec;
+	return mds_session_create(ms, host);
+#endif
 }
 
 void mds_session_destroy(struct mds_session *ms)

@@ -40,7 +40,16 @@ struct mds_session {
  */
 void mds_session_set_owner(struct mds_session *ms, const char *id);
 
+enum ec_sec_flavor {
+	EC_SEC_SYS = 0,
+	EC_SEC_KRB5 = 1,
+	EC_SEC_KRB5I = 2,
+	EC_SEC_KRB5P = 3,
+};
+
 int mds_session_create(struct mds_session *ms, const char *host);
+int mds_session_create_sec(struct mds_session *ms, const char *host,
+			   enum ec_sec_flavor sec);
 void mds_session_destroy(struct mds_session *ms);
 
 /* ------------------------------------------------------------------ */
