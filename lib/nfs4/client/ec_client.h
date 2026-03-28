@@ -92,6 +92,11 @@ struct mds_file {
 int mds_file_open(struct mds_session *ms, const char *path,
 		  struct mds_file *mf);
 int mds_file_close(struct mds_session *ms, struct mds_file *mf);
+int mds_file_getattr(struct mds_session *ms, struct mds_file *mf, char *owner,
+		     size_t owner_size, char *owner_group,
+		     size_t owner_group_size);
+int mds_file_setattr_owner(struct mds_session *ms, struct mds_file *mf,
+			   const char *owner, const char *owner_group);
 
 /* ------------------------------------------------------------------ */
 /* Layout operations                                                   */

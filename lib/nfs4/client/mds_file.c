@@ -12,7 +12,10 @@
  * release the open stateid.
  */
 
+#include <arpa/inet.h>
 #include <errno.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -178,4 +181,254 @@ int mds_file_close(struct mds_session *ms, struct mds_file *mf)
 	memset(mf, 0, sizeof(*mf));
 
 	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* GETATTR — retrieve owner and owner_group strings                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Parse an XDR utf8str_cs from a byte stream.
+ * Returns pointer past the string, or NULL on truncation.
+ */
+static const char *parse_utf8str(const char *p, size_t remaining, char *out,
+				 size_t out_size)
+{
+	if (remaining < 4)
+		return NULL;
+
+	uint32_t len;
+
+	memcpy(&len, p, 4);
+	len = ntohl(len);
+	p += 4;
+	remaining -= 4;
+
+	if (len > remaining || len >= out_size)
+		return NULL;
+
+	memcpy(out, p, len);
+	out[len] = '\0';
+
+	uint32_t padded = (len + 3) & ~3u;
+
+	return p + (padded <= remaining ? padded : remaining);
+}
+
+int mds_file_getattr(struct mds_session *ms, struct mds_file *mf, char *owner,
+		     size_t owner_size, char *owner_group,
+		     size_t owner_group_size)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	/* SEQUENCE + PUTFH + GETATTR = 3 ops */
+	ret = mds_compound_init(&mc, 3, "getattr");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	/* PUTFH */
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+	slot->nfs_argop4_u.opputfh.object = mf->mf_fh;
+
+	/* GETATTR requesting owner (36) and owner_group (37). */
+	slot = mds_compound_add_op(&mc, OP_GETATTR);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	/*
+	 * Bitmap: word 1, bits 4 and 5 (attrs 36 and 37 are in word 1,
+	 * at bit positions 36-32=4 and 37-32=5).
+	 */
+	static uint32_t bm_words[2] = { 0, (1U << 4) | (1U << 5) };
+
+	GETATTR4args *ga = &slot->nfs_argop4_u.opgetattr;
+
+	ga->attr_request.bitmap4_len = 2;
+	ga->attr_request.bitmap4_val = bm_words;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	nfs_resop4 *res = mds_compound_result(&mc, 2);
+
+	if (!res || res->nfs_resop4_u.opgetattr.status != NFS4_OK) {
+		mds_compound_fini(&mc);
+		return -EREMOTEIO;
+	}
+
+	GETATTR4resok *resok =
+		&res->nfs_resop4_u.opgetattr.GETATTR4res_u.resok4;
+	fattr4 *fa = &resok->obj_attributes;
+
+	/*
+	 * The attr_vals contains XDR-encoded values for the bits set
+	 * in attrmask.  We requested only owner and owner_group
+	 * (both utf8str_cs), so the payload is: [owner] [owner_group].
+	 * Check which bits are actually returned.
+	 */
+	const char *p = fa->attr_vals.attrlist4_val;
+	size_t remaining = fa->attr_vals.attrlist4_len;
+
+	bool has_owner = (fa->attrmask.bitmap4_len > 1 &&
+			  (fa->attrmask.bitmap4_val[1] & (1U << 4)));
+	bool has_owner_group = (fa->attrmask.bitmap4_len > 1 &&
+				(fa->attrmask.bitmap4_val[1] & (1U << 5)));
+
+	if (has_owner && owner && owner_size > 0) {
+		p = parse_utf8str(p, remaining, owner, owner_size);
+		if (!p) {
+			mds_compound_fini(&mc);
+			return -EINVAL;
+		}
+		remaining = fa->attr_vals.attrlist4_len -
+			    (p - fa->attr_vals.attrlist4_val);
+	} else if (owner) {
+		owner[0] = '\0';
+	}
+
+	if (has_owner_group && owner_group && owner_group_size > 0) {
+		p = parse_utf8str(p, remaining, owner_group, owner_group_size);
+		if (!p) {
+			mds_compound_fini(&mc);
+			return -EINVAL;
+		}
+	} else if (owner_group) {
+		owner_group[0] = '\0';
+	}
+
+	mds_compound_fini(&mc);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* SETATTR — set owner and/or owner_group strings                      */
+/* ------------------------------------------------------------------ */
+
+int mds_file_setattr_owner(struct mds_session *ms, struct mds_file *mf,
+			   const char *owner, const char *owner_group)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	/* SEQUENCE + PUTFH + SETATTR = 3 ops */
+	ret = mds_compound_init(&mc, 3, "setattr");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+	slot->nfs_argop4_u.opputfh.object = mf->mf_fh;
+
+	slot = mds_compound_add_op(&mc, OP_SETATTR);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	SETATTR4args *sa = &slot->nfs_argop4_u.opsetattr;
+
+	/* Zero stateid = no delegation. */
+	memset(&sa->stateid, 0, sizeof(stateid4));
+
+	/*
+	 * Build fattr4: bitmap + attr_vals for owner and/or owner_group.
+	 * XDR format: each is a utf8str_cs = opaque<> = [4-byte len][data][pad].
+	 */
+	uint32_t bm_val[2] = { 0, 0 };
+	char attr_buf[1024];
+	char *ap = attr_buf;
+
+	if (owner) {
+		uint32_t len = (uint32_t)strlen(owner);
+		uint32_t len_net = htonl(len);
+
+		memcpy(ap, &len_net, 4);
+		ap += 4;
+		memcpy(ap, owner, len);
+		ap += len;
+
+		uint32_t pad = ((len + 3) & ~3u) - len;
+
+		if (pad > 0) {
+			memset(ap, 0, pad);
+			ap += pad;
+		}
+		bm_val[1] |= (1U << 4); /* FATTR4_OWNER */
+	}
+
+	if (owner_group) {
+		uint32_t len = (uint32_t)strlen(owner_group);
+		uint32_t len_net = htonl(len);
+
+		memcpy(ap, &len_net, 4);
+		ap += 4;
+		memcpy(ap, owner_group, len);
+		ap += len;
+
+		uint32_t pad = ((len + 3) & ~3u) - len;
+
+		if (pad > 0) {
+			memset(ap, 0, pad);
+			ap += pad;
+		}
+		bm_val[1] |= (1U << 5); /* FATTR4_OWNER_GROUP */
+	}
+
+	size_t attr_len = (size_t)(ap - attr_buf);
+
+	static uint32_t bm_words_set[2];
+
+	bm_words_set[0] = bm_val[0];
+	bm_words_set[1] = bm_val[1];
+
+	sa->obj_attributes.attrmask.bitmap4_len = 2;
+	sa->obj_attributes.attrmask.bitmap4_val = bm_words_set;
+	sa->obj_attributes.attr_vals.attrlist4_len = (u_int)attr_len;
+	sa->obj_attributes.attr_vals.attrlist4_val = attr_buf;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	nfs_resop4 *res = mds_compound_result(&mc, 2);
+
+	if (!res || res->nfs_resop4_u.opsetattr.status != NFS4_OK) {
+		nfsstat4 st = res ? res->nfs_resop4_u.opsetattr.status : 0;
+
+		fprintf(stderr, "SETATTR failed: status=%u\n", st);
+		mds_compound_fini(&mc);
+		return -EREMOTEIO;
+	}
+
+	mds_compound_fini(&mc);
+	return 0;
 }

@@ -384,6 +384,83 @@ static int cmd_check(const char *mds_host, const char *nfs_file,
 }
 
 /* ------------------------------------------------------------------ */
+/* Identity commands                                                   */
+/* ------------------------------------------------------------------ */
+
+static int cmd_getowner(const char *mds_host, const char *nfs_file)
+{
+	struct mds_session ms;
+	struct mds_file mf;
+	char owner[256], owner_group[256];
+	int ret;
+
+	ret = session_open(&ms, mds_host);
+	if (ret) {
+		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
+		return 1;
+	}
+
+	ret = mds_file_open(&ms, nfs_file, &mf);
+	if (ret) {
+		fprintf(stderr, "ec_demo: open failed: %d\n", ret);
+		mds_session_destroy(&ms);
+		return 1;
+	}
+
+	ret = mds_file_getattr(&ms, &mf, owner, sizeof(owner), owner_group,
+			       sizeof(owner_group));
+	if (ret) {
+		fprintf(stderr, "ec_demo: getattr failed: %d\n", ret);
+	} else {
+		printf("owner=%s\n", owner);
+		printf("owner_group=%s\n", owner_group);
+	}
+
+	mds_file_close(&ms, &mf);
+	mds_session_destroy(&ms);
+	return ret ? 1 : 0;
+}
+
+static int cmd_setowner(const char *mds_host, const char *nfs_file,
+			const char *owner_str)
+{
+	struct mds_session ms;
+	struct mds_file mf;
+	int ret;
+
+	ret = session_open(&ms, mds_host);
+	if (ret) {
+		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
+		return 1;
+	}
+
+	ret = mds_file_open(&ms, nfs_file, &mf);
+	if (ret) {
+		fprintf(stderr, "ec_demo: open failed: %d\n", ret);
+		mds_session_destroy(&ms);
+		return 1;
+	}
+
+	fprintf(stderr, "ec_demo: setowner %s → %s\n", nfs_file, owner_str);
+	ret = mds_file_setattr_owner(&ms, &mf, owner_str, NULL);
+	if (ret) {
+		fprintf(stderr, "ec_demo: setattr failed: %d\n", ret);
+	} else {
+		/* Read back to verify. */
+		char owner[256], group[256];
+
+		ret = mds_file_getattr(&ms, &mf, owner, sizeof(owner), group,
+				       sizeof(group));
+		if (ret == 0)
+			printf("owner=%s\nowner_group=%s\n", owner, group);
+	}
+
+	mds_file_close(&ms, &mf);
+	mds_session_destroy(&ms);
+	return ret ? 1 : 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Usage and main                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -580,6 +657,20 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_get(mds_host, nfs_file, local_output, read_size);
+	}
+
+	if (strcmp(cmd, "getowner") == 0) {
+		return cmd_getowner(mds_host, nfs_file);
+	}
+
+	if (strcmp(cmd, "setowner") == 0) {
+		/* --owner <user@domain> via the --input flag (reused). */
+		if (!local_input) {
+			fprintf(stderr,
+				"ec_demo: setowner requires --input <owner>\n");
+			return 1;
+		}
+		return cmd_setowner(mds_host, nfs_file, local_input);
 	}
 
 	if (strcmp(cmd, "check") == 0) {

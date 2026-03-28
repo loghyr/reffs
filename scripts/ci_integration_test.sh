@@ -79,6 +79,7 @@ role           = "standalone"
 minor_versions = [1, 2]
 grace_period   = 5
 workers        = 4
+nfs4_domain    = "reffs.test"
 
 [backend]
 type       = "posix"
@@ -144,35 +145,46 @@ echo "=== NFSv4.2 integration test PASSED ==="
 
 # ---------------------------------------------------------------------------
 # NFSv4 identity / owner-string test.
-# Verifies that libnfsidmap resolves uid ↔ name via /etc/passwd and that
-# the server encodes owner strings correctly in GETATTR.
+# Uses ec_demo's userspace NFSv4 client to bypass the kernel idmapd and
+# verify the raw owner strings directly from the server's GETATTR reply.
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== NFSv4 identity test ==="
-mount -o vers=4.2,soft,timeo=100,retrans=5 127.0.0.1:/ "$MOUNT"
 
-# Create a file as the test user (nfstest, uid=1100, gid=1100).
-# AUTH_SYS carries the numeric uid; the server stores it on the inode.
-# When the client does GETATTR, the server should return "nfstest@reffs.test"
-# as the owner string (resolved via libnfsidmap → nsswitch → /etc/passwd).
+EC_DEMO="env ASAN_OPTIONS=detect_leaks=0 /build/tools/ec_demo"
+MDS="127.0.0.1"
+
+# Create a file via the kernel mount for chown (needs root).
+mount -o vers=4.2,soft,timeo=100,retrans=5 "$MDS":/ "$MOUNT"
 touch "$MOUNT"/identity_test_file
 chown 3300:3300 "$MOUNT"/identity_test_file
+umount "$MOUNT"
 
-# stat -c %U returns the username if resolved, numeric uid otherwise.
-OWNER=$(stat -c '%U' "$MOUNT"/identity_test_file)
-GROUP=$(stat -c '%G' "$MOUNT"/identity_test_file)
-echo "Owner: $OWNER  Group: $GROUP"
+# GETATTR via ec_demo — reads the raw owner string from the server.
+OWNER=$($EC_DEMO getowner --mds "$MDS" --file identity_test_file 2>/dev/null | grep '^owner=' | cut -d= -f2)
+echo "Server returned owner: $OWNER"
 
-if [ "$OWNER" = "nfstest" ]; then
-	echo "owner string resolved correctly"
-elif [ "$OWNER" = "3300" ]; then
-	echo "WARN: owner string is numeric (idmap not resolving)"
-	echo "      This is expected if the kernel idmapd is not configured."
-	echo "      The server-side encoding is still tested by the git clone."
+if [ "$OWNER" = "nfstest@reffs.test" ]; then
+	echo "GETATTR owner string: PASS"
 else
-	echo "WARN: unexpected owner: $OWNER"
+	echo "GETATTR owner string: FAIL (expected nfstest@reffs.test, got $OWNER)"
+	die "identity GETATTR failed"
 fi
 
+# SETATTR via ec_demo — set the owner string and read back.
+$EC_DEMO setowner --mds "$MDS" --file identity_test_file --input "nfstest@reffs.test" 2>/dev/null
+OWNER2=$($EC_DEMO getowner --mds "$MDS" --file identity_test_file 2>/dev/null | grep '^owner=' | cut -d= -f2)
+echo "After SETATTR, owner: $OWNER2"
+
+if [ "$OWNER2" = "nfstest@reffs.test" ]; then
+	echo "SETATTR owner string: PASS"
+else
+	echo "SETATTR owner string: FAIL (expected nfstest@reffs.test, got $OWNER2)"
+	die "identity SETATTR failed"
+fi
+
+# Clean up via kernel mount.
+mount -o vers=4.2,soft,timeo=100,retrans=5 "$MDS":/ "$MOUNT"
 rm -f "$MOUNT"/identity_test_file || true
 umount "$MOUNT"
 echo "=== NFSv4 identity test PASSED ==="
