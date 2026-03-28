@@ -106,6 +106,11 @@ int mds_file_getattr(struct mds_session *ms, struct mds_file *mf, char *owner,
 		     size_t owner_group_size);
 int mds_file_setattr_owner(struct mds_session *ms, struct mds_file *mf,
 			   const char *owner, const char *owner_group);
+int mds_file_write(struct mds_session *ms, struct mds_file *mf,
+		   const uint8_t *data, uint32_t len, uint64_t offset);
+int mds_file_read(struct mds_session *ms, struct mds_file *mf, uint8_t *buf,
+		  uint32_t len, uint64_t offset, uint32_t *nread);
+int mds_file_remove(struct mds_session *ms, const char *name);
 
 /* ------------------------------------------------------------------ */
 /* Layout operations                                                   */

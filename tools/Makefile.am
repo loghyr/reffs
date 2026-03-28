@@ -8,11 +8,20 @@ AM_CFLAGS = \
 	-I$(top_builddir)/lib/xdr		\
 	$(TIRPC_CFLAGS)
 
-ec_demo_SOURCES = ec_demo.c
-ec_demo_LDADD = \
+NFS4_CLIENT_LIBS = \
 	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la	\
-	$(top_builddir)/lib/ec/libreffs_ec.la			\
 	$(top_builddir)/lib/xdr/libreffs_xdr.la			\
 	$(TIRPC_LIBS) $(GSSAPI_LIBS)
 
-bin_PROGRAMS = ec_demo
+ec_demo_SOURCES = ec_demo.c
+ec_demo_LDADD = $(NFS4_CLIENT_LIBS) \
+	$(top_builddir)/lib/ec/libreffs_ec.la
+
+nfs_krb5_test_SOURCES = nfs_krb5_test.c
+nfs_krb5_test_LDADD = $(NFS4_CLIENT_LIBS)
+
+nfs_tls_test_SOURCES = nfs_tls_test.c
+nfs_tls_test_CFLAGS = $(AM_CFLAGS) $(OPENSSL_CFLAGS)
+nfs_tls_test_LDADD = $(OPENSSL_LIBS)
+
+bin_PROGRAMS = ec_demo nfs_krb5_test nfs_tls_test

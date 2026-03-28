@@ -184,6 +184,185 @@ int mds_file_close(struct mds_session *ms, struct mds_file *mf)
 }
 
 /* ------------------------------------------------------------------ */
+/* WRITE — inband MDS write (no layouts)                               */
+/* ------------------------------------------------------------------ */
+
+int mds_file_write(struct mds_session *ms, struct mds_file *mf,
+		   const uint8_t *data, uint32_t len, uint64_t offset)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	ret = mds_compound_init(&mc, 3, "write");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+	slot->nfs_argop4_u.opputfh.object = mf->mf_fh;
+
+	slot = mds_compound_add_op(&mc, OP_WRITE);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	WRITE4args *wa = &slot->nfs_argop4_u.opwrite;
+
+	memcpy(&wa->stateid, &mf->mf_stateid, sizeof(stateid4));
+	wa->offset = offset;
+	wa->stable = FILE_SYNC4;
+	wa->data.data_len = len;
+	wa->data.data_val = (char *)data;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	nfs_resop4 *res = mds_compound_result(&mc, 2);
+
+	if (!res || res->nfs_resop4_u.opwrite.status != NFS4_OK) {
+		mds_compound_fini(&mc);
+		return -EREMOTEIO;
+	}
+
+	mds_compound_fini(&mc);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* READ — inband MDS read (no layouts)                                 */
+/* ------------------------------------------------------------------ */
+
+int mds_file_read(struct mds_session *ms, struct mds_file *mf, uint8_t *buf,
+		  uint32_t len, uint64_t offset, uint32_t *nread)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	ret = mds_compound_init(&mc, 3, "read");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+	slot->nfs_argop4_u.opputfh.object = mf->mf_fh;
+
+	slot = mds_compound_add_op(&mc, OP_READ);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	READ4args *ra = &slot->nfs_argop4_u.opread;
+
+	memcpy(&ra->stateid, &mf->mf_stateid, sizeof(stateid4));
+	ra->offset = offset;
+	ra->count = len;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	nfs_resop4 *res = mds_compound_result(&mc, 2);
+
+	if (!res || res->nfs_resop4_u.opread.status != NFS4_OK) {
+		mds_compound_fini(&mc);
+		return -EREMOTEIO;
+	}
+
+	READ4resok *resok = &res->nfs_resop4_u.opread.READ4res_u.resok4;
+	uint32_t got = resok->data.data_len;
+
+	if (got > len)
+		got = len;
+	memcpy(buf, resok->data.data_val, got);
+	if (nread)
+		*nread = got;
+
+	mds_compound_fini(&mc);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* REMOVE — delete a file by name from the root directory              */
+/* ------------------------------------------------------------------ */
+
+int mds_file_remove(struct mds_session *ms, const char *name)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	ret = mds_compound_init(&mc, 3, "remove");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	slot = mds_compound_add_op(&mc, OP_PUTROOTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	slot = mds_compound_add_op(&mc, OP_REMOVE);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	REMOVE4args *rm = &slot->nfs_argop4_u.opremove;
+
+	rm->target.utf8string_len = strlen(name);
+	rm->target.utf8string_val = (char *)name;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	nfs_resop4 *res = mds_compound_result(&mc, 2);
+
+	if (!res || res->nfs_resop4_u.opremove.status != NFS4_OK) {
+		mds_compound_fini(&mc);
+		return -EREMOTEIO;
+	}
+
+	mds_compound_fini(&mc);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* GETATTR — retrieve owner and owner_group strings                    */
 /* ------------------------------------------------------------------ */
 
