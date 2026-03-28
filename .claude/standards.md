@@ -37,7 +37,7 @@ make -j$(nproc)
 | `make -f Makefile.reffs style` | Check clang-format compliance |
 | `make -f Makefile.reffs fix-style` | Auto-fix style violations |
 | `make -f Makefile.reffs license` | Check SPDX headers |
-| `make -f Makefile.reffs check-ci` | Full CI pipeline in Docker |
+| `make -f Makefile.reffs ci-check` | Full CI pipeline in Docker |
 | `make -f Makefile.reffs image` | Build dev Docker image |
 | `make -f Makefile.reffs run-image` | Run NFS server in Docker |
 | `make -f Makefile.reffs shell` | Shell into running container |

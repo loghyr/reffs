@@ -74,7 +74,7 @@ check for standards violations before committing.
 ## CI gate
 
 ```
-make -f Makefile.reffs check-ci
+make -f Makefile.reffs ci-check
 ```
 
 Run before push. ASAN/LSAN clean required. A pre-push hook is in
@@ -88,7 +88,7 @@ make changes → run reviewer → fix findings → commit.
 
 ### RPC wire changes need check-ci
 Changes to `lib/rpc/rpc.c` reply encoding, credential parsing, or
-verifier handling MUST be verified with `make -f Makefile.reffs check-ci`
+verifier handling MUST be verified with `make -f Makefile.reffs ci-check`
 (real NFS mount via kernel client), not just `make check` (unit tests).
 Unit tests don't catch malformed RPC replies.
 
