@@ -1290,6 +1290,19 @@ int rpc_process_task(struct task *t)
 				goto handle_rpc_error;
 			}
 
+			/* Replay detection (RFC 2203 §5.2.1). */
+			if (gss_ctx_seq_check(
+				    gctx, rt->rt_info.ri_cred.rc_gss.gc_seq)) {
+				TRACE("GSS DATA: seq %u replay/out-of-window",
+				      rt->rt_info.ri_cred.rc_gss.gc_seq);
+				gss_ctx_put(gctx);
+				rt->rt_info.ri_auth_stat =
+					RPCSEC_GSS_CREDPROBLEM;
+				rt->rt_info.ri_reply_stat = MSG_DENIED;
+				rt->rt_info.ri_reject_stat = AUTH_ERROR;
+				goto handle_rpc_error;
+			}
+
 			uid_t uid;
 			gid_t gid;
 			int map_ret;
@@ -1319,10 +1332,10 @@ int rpc_process_task(struct task *t)
 
 	if (rt->rt_info.ri_cred.rc_flavor == AUTH_TLS &&
 	    rt->rt_info.ri_procedure == 0) {
-		LOG("AUTH_TLS probe detected on fd=%d len=%u xid=0x%08x",
-		    rt->rt_fd, verifier_len, rt->rt_info.ri_xid);
+		TRACE("AUTH_TLS probe on fd=%d len=%u xid=0x%08x", rt->rt_fd,
+		      verifier_len, rt->rt_info.ri_xid);
 
-#ifdef LINUX_IS_NOT_RFC_9289_COMPLIANT
+		/* RFC 9289: verifier must be 8-byte "STARTTLS" string. */
 		if (verifier_len != 8 ||
 		    memcmp(p, STARTTLS_VERIFIER, strlen(STARTTLS_VERIFIER))) {
 			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
@@ -1330,7 +1343,6 @@ int rpc_process_task(struct task *t)
 					   __ATOMIC_RELAXED);
 			goto handle_rpc_error;
 		}
-#endif
 
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 		rt->rt_info.ri_accept_stat = SUCCESS;
@@ -1338,18 +1350,13 @@ int rpc_process_task(struct task *t)
 		rt->rt_rc = t->t_rc;
 		rt->rt_offset = 0;
 
-		// Send STARTTLS response
 		ret = send_auth_tls_response(rt);
 
-		// Mark connection as waiting for TLS handshake
 		struct conn_info *ci = io_conn_get(rt->rt_fd);
-		if (ci) {
+		if (ci)
 			ci->ci_tls_handshaking = true;
-		}
 
 		rpc_program_handler_put(rph);
-
-		// Don't continue with regular RPC processing
 		rpc_protocol_free(rt);
 		return ret;
 	}
