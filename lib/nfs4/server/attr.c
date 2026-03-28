@@ -2775,11 +2775,12 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 
 	nattr->filehandle.nfs_fh4_len = sizeof(struct network_file_handle);
 
-	ret = reffs_owner_from_uid(&nattr->owner, inode->i_uid);
+	ret = reffs_owner_from_uid(&nattr->owner, REFFS_ID_LOCAL(inode->i_uid));
 	if (ret)
 		goto out;
 
-	ret = reffs_owner_group_from_gid(&nattr->owner_group, inode->i_gid);
+	ret = reffs_owner_group_from_gid(&nattr->owner_group,
+					 REFFS_ID_LOCAL(inode->i_gid));
 	if (ret)
 		goto out;
 

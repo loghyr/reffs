@@ -83,8 +83,8 @@ static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 
 	fa->mode = inode->i_mode;
 	fa->nlink = __atomic_load_n(&inode->i_nlink, __ATOMIC_RELAXED);
-	fa->uid = inode->i_uid;
-	fa->gid = inode->i_gid;
+	fa->uid = REFFS_ID_LOCAL(inode->i_uid);
+	fa->gid = REFFS_ID_LOCAL(inode->i_gid);
 	fa->size = inode->i_size;
 	fa->used = inode->i_used * inode->i_sb->sb_block_size;
 	fa->rdev.specdata1 = inode->i_dev_major;
@@ -1034,12 +1034,12 @@ static int nfs3_op_write(struct rpc_trans *rt)
 	}
 
 	if ((inode->i_mode & S_ISGID) && ap.aup_uid != 0 &&
-	    ap.aup_uid != inode->i_uid) {
+	    ap.aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
 		inode->i_mode &= ~S_ISGID;
 	}
 
 	if ((inode->i_mode & S_ISUID) && ap.aup_uid != 0 &&
-	    ap.aup_uid != inode->i_uid) {
+	    ap.aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
 		inode->i_mode &= ~S_ISUID;
 	}
 

@@ -45,8 +45,8 @@ static int vfs_check_sticky_bit(struct inode *dir, struct inode *file,
 	if (!(dir->i_mode & S_ISVTX))
 		return 0;
 
-	if ((uint32_t)ap->aup_uid == file->i_uid ||
-	    (uint32_t)ap->aup_uid == dir->i_uid)
+	if ((uint32_t)ap->aup_uid == REFFS_ID_LOCAL(file->i_uid) ||
+	    (uint32_t)ap->aup_uid == REFFS_ID_LOCAL(dir->i_uid))
 		return 0;
 
 	return -EACCES;
@@ -255,8 +255,8 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 		return -ENOMEM;
 	}
 
-	inode->i_uid = ap->aup_uid;
-	inode->i_gid = ap->aup_gid;
+	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, ap->aup_uid);
+	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, ap->aup_gid);
 	inode->i_mode = type | (mode & ~S_IFMT);
 	inode->i_nlink = (type == S_IFDIR) ? 2 : 1;
 	inode->i_size = (type == S_IFDIR) ? sb->sb_block_size : 0;
@@ -517,28 +517,30 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 {
 	int ret = 0;
 	uint64_t flags = 0;
-	bool user_in_current_group =
-		is_user_in_group(ap ? ap->aup_uid : 0, inode->i_gid, ap);
+	bool user_in_current_group = is_user_in_group(
+		ap ? ap->aup_uid : 0, REFFS_ID_LOCAL(inode->i_gid), ap);
 
 	pthread_mutex_lock(&inode->i_attr_mutex);
 
 	/* If no auth params or root user, allow all changes */
 	if (ap && ap->aup_uid != 0) {
 		/* Non-root user permissions checks */
-		if (sattr->uid_set && (uint32_t)ap->aup_uid != inode->i_uid) {
+		if (sattr->uid_set &&
+		    (uint32_t)ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
 
 		/* Changing owner to someone else requires root */
 		if (sattr->uid_set && sattr->uid != (uid_t)-1 &&
-		    sattr->uid != inode->i_uid) {
+		    sattr->uid != REFFS_ID_LOCAL(inode->i_uid)) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
 
 		/* Changing group requires being the owner (or root) */
-		if (sattr->gid_set && (uint32_t)ap->aup_uid != inode->i_uid) {
+		if (sattr->gid_set &&
+		    (uint32_t)ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
@@ -555,12 +557,14 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			}
 		}
 
-		if (sattr->mode_set && (uint32_t)ap->aup_uid != inode->i_uid) {
+		if (sattr->mode_set &&
+		    (uint32_t)ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
 			ret = -EPERM;
 			goto out_unlock;
 		}
 
-		if (sattr->atime_set && (uint32_t)ap->aup_uid != inode->i_uid) {
+		if (sattr->atime_set &&
+		    (uint32_t)ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
 			if (!sattr->atime_now) {
 				ret = -EPERM;
 				goto out_unlock;
@@ -572,7 +576,8 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			}
 		}
 
-		if (sattr->mtime_set && (uint32_t)ap->aup_uid != inode->i_uid) {
+		if (sattr->mtime_set &&
+		    (uint32_t)ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid)) {
 			if (!sattr->mtime_now) {
 				ret = -EPERM;
 				goto out_unlock;
@@ -661,16 +666,16 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 	}
 
 	bool is_uid_change = sattr->uid_set && sattr->uid != (uid_t)-1 &&
-			     sattr->uid != inode->i_uid;
+			     sattr->uid != REFFS_ID_LOCAL(inode->i_uid);
 	bool is_gid_change = sattr->gid_set && sattr->gid != (gid_t)-1 &&
-			     sattr->gid != inode->i_gid;
+			     sattr->gid != REFFS_ID_LOCAL(inode->i_gid);
 
 	if (sattr->uid_set && sattr->uid != (uid_t)-1) {
-		inode->i_uid = sattr->uid;
+		inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, sattr->uid);
 		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
 	}
 	if (sattr->gid_set && sattr->gid != (gid_t)-1) {
-		inode->i_gid = sattr->gid;
+		inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, sattr->gid);
 		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
 	}
 
@@ -755,8 +760,8 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 		return -ENOMEM;
 	}
 
-	inode->i_uid = ap->aup_uid;
-	inode->i_gid = ap->aup_gid;
+	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, ap->aup_uid);
+	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, ap->aup_gid);
 	inode->i_mode = S_IFREG | (dir->i_mode & 0777);
 	inode->i_nlink = 1;
 	inode->i_size = 0;

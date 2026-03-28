@@ -38,8 +38,8 @@ START_TEST(test_atomic_write)
 	ck_assert(inode != NULL);
 
 	inode->i_mode = S_IFDIR | 0755;
-	inode->i_uid = 0;
-	inode->i_gid = 0;
+	inode->i_uid = REFFS_ID_ROOT_VAL;
+	inode->i_gid = REFFS_ID_ROOT_VAL;
 	inode->i_nlink = 2;
 	inode->i_size = 0;
 

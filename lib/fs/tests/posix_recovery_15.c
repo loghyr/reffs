@@ -59,7 +59,7 @@ START_TEST(test_magic_and_versioning)
 
 	/* 1. Test Valid Headered Format (Sync then reload) */
 	struct inode *inode = ctx.sb->sb_dirent->rd_inode; /* Root (ino 1) */
-	inode->i_uid = 1001;
+	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 1001);
 	inode->i_attr_flags = INODE_IS_OFFLINE;
 	inode_sync_to_disk(inode);
 

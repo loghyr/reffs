@@ -84,8 +84,8 @@ START_TEST(test_vfs_setattr_logic)
 			 0);
 	inode = nm->nm_dirent->rd_inode;
 
-	ap.aup_uid = inode->i_uid; /* Owner */
-	ap.aup_gid = inode->i_gid;
+	ap.aup_uid = REFFS_ID_LOCAL(inode->i_uid); /* Owner */
+	ap.aup_gid = REFFS_ID_LOCAL(inode->i_gid);
 	ap.aup_len = 0;
 
 	/* Change mode */

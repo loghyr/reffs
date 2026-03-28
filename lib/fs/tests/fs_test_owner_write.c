@@ -34,8 +34,8 @@ START_TEST(test_owner_write_no_perm_bit)
 	inode = inode_alloc(sb, 100);
 	ck_assert_ptr_nonnull(inode);
 
-	inode->i_uid = 1000;
-	inode->i_gid = 1000;
+	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 1000);
+	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 1000);
 	inode->i_mode = S_IFREG | 0444; /* Read only for owner too */
 
 	ap.aup_uid = 1000;
@@ -78,8 +78,8 @@ START_TEST(test_owner_read_no_perm_bit)
 	inode = inode_alloc(sb, 101);
 	ck_assert_ptr_nonnull(inode);
 
-	inode->i_uid = 1000;
-	inode->i_gid = 1000;
+	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 1000);
+	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 1000);
 	inode->i_mode = S_IFREG | 0222; /* Write only for owner too */
 
 	ap.aup_uid = 1000;
@@ -122,8 +122,8 @@ START_TEST(test_owner_exec_no_perm_bit)
 	inode = inode_alloc(sb, 102);
 	ck_assert_ptr_nonnull(inode);
 
-	inode->i_uid = 1000;
-	inode->i_gid = 1000;
+	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 1000);
+	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 1000);
 	inode->i_mode = S_IFREG | 0666; /* No exec bits */
 
 	ap.aup_uid = 1000;

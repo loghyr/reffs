@@ -56,8 +56,8 @@ void reffs_test_setup_fs(void)
 	inode = inode_find(sb, INODE_ROOT_ID);
 	ck_assert_ptr_nonnull(inode);
 
-	inode->i_uid = fs_test_uid;
-	inode->i_gid = fs_test_gid;
+	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, fs_test_uid);
+	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, fs_test_gid);
 
 	inode_put(inode);
 	super_block_put(sb);

@@ -111,8 +111,8 @@ int reffs_fuse_read(const char *path, char *buffer, size_t size, off_t offset,
 static void fill_stat(struct stat *st, struct inode *inode)
 {
 	st->st_ino = inode->i_ino;
-	st->st_uid = inode->i_uid;
-	st->st_gid = inode->i_gid;
+	st->st_uid = REFFS_ID_LOCAL(inode->i_uid);
+	st->st_gid = REFFS_ID_LOCAL(inode->i_gid);
 	st->st_mtim = inode->i_mtime;
 	st->st_atim = inode->i_atime;
 	st->st_ctim = inode->i_ctime;

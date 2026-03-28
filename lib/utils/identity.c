@@ -90,7 +90,7 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 	if (ap->aup_uid == 0)
 		return 0;
 
-	if (ap->aup_uid == inode->i_uid) {
+	if (ap->aup_uid == REFFS_ID_LOCAL(inode->i_uid)) {
 		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
 			return -EACCES;
 
@@ -112,8 +112,9 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 			return -EACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
 			return -EACCES;
-	} else if (ap->aup_gid == inode->i_gid ||
-		   gid_in_gids(inode->i_gid, ap->aup_len, ap->aup_gids)) {
+	} else if (ap->aup_gid == REFFS_ID_LOCAL(inode->i_gid) ||
+		   gid_in_gids(REFFS_ID_LOCAL(inode->i_gid), ap->aup_len,
+			       ap->aup_gids)) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
 			return -EACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP))
@@ -207,18 +208,18 @@ int inode_privilege_check(struct inode *inode, struct authunix_parms *ap,
 	switch (op) {
 	case PRIV_CHANGE_OWNER:
 		/* Only owner can change ownership */
-		if (ap->aup_uid != inode->i_uid)
+		if (ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid))
 			return -EPERM;
 
 		/* Prevent non-root from giving away files */
-		if (arg && *(uid_t *)arg != inode->i_uid &&
+		if (arg && *(uid_t *)arg != REFFS_ID_LOCAL(inode->i_uid) &&
 		    *(uid_t *)arg != (uid_t)-1)
 			return -EPERM;
 		break;
 
 	case PRIV_CHANGE_GROUP:
 		/* Only owner can change group */
-		if (ap->aup_uid != inode->i_uid)
+		if (ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid))
 			return -EPERM;
 
 		/* User must be a member of the target group */
@@ -232,13 +233,13 @@ int inode_privilege_check(struct inode *inode, struct authunix_parms *ap,
 
 	case PRIV_SET_SPECIAL_BITS:
 		/* Only owner can set special bits */
-		if (ap->aup_uid != inode->i_uid)
+		if (ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid))
 			return -EPERM;
 		break;
 
 	case PRIV_TIME_CHANGE:
 		/* Only owner or root can change times */
-		if (ap->aup_uid != inode->i_uid)
+		if (ap->aup_uid != REFFS_ID_LOCAL(inode->i_uid))
 			return -EPERM;
 		break;
 	}

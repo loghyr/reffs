@@ -28,8 +28,8 @@ START_TEST(test_attr_flags_persistence)
 	ck_assert(inode != NULL);
 
 	inode->i_mode = S_IFREG | 0644;
-	inode->i_uid = 1000;
-	inode->i_gid = 1000;
+	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 1000);
+	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 1000);
 	inode->i_nlink = 1;
 	inode->i_size = 0;
 	inode->i_attr_flags = INODE_IS_OFFLINE | INODE_IS_HIDDEN;

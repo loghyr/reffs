@@ -66,8 +66,8 @@ int reffs_ns_init(void)
 
 	trace_fs_inode(inode, __func__, __LINE__);
 
-	inode->i_uid = 0;
-	inode->i_gid = 0;
+	inode->i_uid = REFFS_ID_ROOT_VAL;
+	inode->i_gid = REFFS_ID_ROOT_VAL;
 	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
 	inode->i_atime = inode->i_mtime;
 	inode->i_btime = inode->i_mtime;
