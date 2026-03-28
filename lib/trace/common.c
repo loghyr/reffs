@@ -36,14 +36,15 @@ static pthread_mutex_t trace_mutex = PTHREAD_MUTEX_INITIALIZER;
 static FILE *trace_fp = NULL;
 #ifdef ENABLE_ALL_TRACE_CATEGORIES
 static bool category_enabled[REFFS_TRACE_CAT_ALL] = { true, true, true, true,
-						      true, true, true };
+						      true, true, true, true };
 #else
-static bool category_enabled[REFFS_TRACE_CAT_ALL] = { false, true,  true, true,
-						      true,  false, true };
+static bool category_enabled[REFFS_TRACE_CAT_ALL] = {
+	false, true, true, true, true, false, true, false
+};
 #endif
 
 static const char *category_names[] = { "GENERAL", "IO", "RPC", "NFS",
-					"NLM",	   "FS", "LOG" };
+					"NLM",	   "FS", "LOG", "SECURITY" };
 
 static char *trace_compress_queue[MAX_TRACE_QUEUE];
 static int trace_compress_head = 0;

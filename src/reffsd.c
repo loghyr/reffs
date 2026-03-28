@@ -264,7 +264,11 @@ int main(int argc, char *argv[])
 		trace_file = cfg.trace_file;
 	reffs_trace_init(trace_file);
 
-	/* Enable trace categories from config (additive with CLI -c). */
+	/*
+	 * If the config specifies trace_categories, it is authoritative:
+	 * disable all defaults, then enable only the listed categories.
+	 * CLI -c flags still add on top.
+	 */
 	if (cfg.trace_categories) {
 		for (int i = 0; i < REFFS_TRACE_CAT_ALL; i++) {
 			if (cfg.trace_categories & (1U << i))
