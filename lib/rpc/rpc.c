@@ -655,14 +655,18 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 		 * NFSv3 ops return negative errno on failure.
 		 * Trace non-zero results for debugging.
 		 */
-		if (ret && ret != -EINPROGRESS)
+		/*
+		 * NFSv3 ops signal async with -EINPROGRESS; NFSv4 uses
+		 * positive EINPROGRESS.  After either, rt is owned by
+		 * the resume path and must not be touched.
+		 */
+		if (ret == -EINPROGRESS)
+			ret = EINPROGRESS;
+
+		if (ret && ret != EINPROGRESS)
 			TRACE("op %u/%u ret=%d xid=0x%08x",
 			      rt->rt_info.ri_program, rt->rt_info.ri_procedure,
 			      ret, rt->rt_info.ri_xid);
-
-		/* NFSv3 ops signal async with -EINPROGRESS; normalize for caller */
-		if (ret == -EINPROGRESS)
-			ret = EINPROGRESS;
 
 		duration_ns = (end.tv_sec - start.tv_sec) * 1000000000ULL +
 			      (end.tv_nsec - start.tv_nsec);
