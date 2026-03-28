@@ -36,4 +36,5 @@ LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS =				\
 	rpc_call		\
-	rpc_reply_test
+	rpc_reply_test		\
+	gss_seq_test

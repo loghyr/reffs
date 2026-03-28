@@ -77,6 +77,7 @@ static void gss_ctx_free_rcu(struct rcu_head *head)
 	if (entry->gc_client_name != GSS_C_NO_NAME)
 		gss_release_name(&minor, &entry->gc_client_name);
 #endif
+	pthread_mutex_destroy(&entry->gc_seq_lock);
 	free(entry);
 }
 
@@ -173,7 +174,8 @@ struct gss_ctx_entry *gss_ctx_create(const uint8_t *handle, uint32_t handle_len)
 	entry->gc_gss_ctx = GSS_C_NO_CONTEXT;
 	entry->gc_client_name = GSS_C_NO_NAME;
 #endif
-	entry->gc_seq_window = 128;
+	entry->gc_seq_window = GSS_SEQ_WINDOW;
+	pthread_mutex_init(&entry->gc_seq_lock, NULL);
 	urcu_ref_init(&entry->gc_ref);
 
 	unsigned long hash = gss_ctx_hash(entry->gc_handle);
@@ -230,6 +232,75 @@ void gss_ctx_destroy(const uint8_t *handle, uint32_t handle_len)
 	/* Drop the find ref and the creation ref. */
 	gss_ctx_put(entry);
 	gss_ctx_put(entry);
+}
+
+/*
+ * Shift a 128-bit bitmap (two uint64_t) left by @n positions.
+ * Bits shifted out of bm[1] are lost; bits shifted from bm[0]
+ * into bm[1] are preserved.
+ */
+static void bitmap128_shift_left(uint64_t bm[2], uint32_t n)
+{
+	if (n >= 128) {
+		bm[0] = 0;
+		bm[1] = 0;
+	} else if (n >= 64) {
+		bm[1] = bm[0] << (n - 64);
+		bm[0] = 0;
+	} else if (n > 0) {
+		bm[1] = (bm[1] << n) | (bm[0] >> (64 - n));
+		bm[0] <<= n;
+	}
+}
+
+static bool bitmap128_test(const uint64_t bm[2], uint32_t bit)
+{
+	if (bit < 64)
+		return (bm[0] >> bit) & 1;
+	return (bm[1] >> (bit - 64)) & 1;
+}
+
+static void bitmap128_set(uint64_t bm[2], uint32_t bit)
+{
+	if (bit < 64)
+		bm[0] |= (1ULL << bit);
+	else
+		bm[1] |= (1ULL << (bit - 64));
+}
+
+int gss_ctx_seq_check(struct gss_ctx_entry *entry, uint32_t seq_num)
+{
+	int ret = 0;
+
+	/* RFC 2203: sequence numbers start at 1; 0 is never valid. */
+	if (seq_num == 0)
+		return -EACCES;
+
+	pthread_mutex_lock(&entry->gc_seq_lock);
+
+	if (seq_num > entry->gc_seq_last) {
+		/* Advance window: shift bitmap, mark new seq as seen. */
+		uint32_t advance = seq_num - entry->gc_seq_last;
+
+		bitmap128_shift_left(entry->gc_seq_bitmap, advance);
+		bitmap128_set(entry->gc_seq_bitmap, 0);
+		entry->gc_seq_last = seq_num;
+	} else if (entry->gc_seq_last - seq_num >= entry->gc_seq_window) {
+		/* Below window — too old. */
+		ret = -EACCES;
+	} else {
+		/* Within window — check for replay. */
+		uint32_t offset = entry->gc_seq_last - seq_num;
+
+		if (bitmap128_test(entry->gc_seq_bitmap, offset)) {
+			ret = -EACCES; /* replay */
+		} else {
+			bitmap128_set(entry->gc_seq_bitmap, offset);
+		}
+	}
+
+	pthread_mutex_unlock(&entry->gc_seq_lock);
+	return ret;
 }
 
 #ifdef HAVE_GSSAPI_KRB5

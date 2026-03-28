@@ -17,6 +17,7 @@
 #include "config.h"
 #endif
 
+#include <pthread.h>
 #include <stdint.h>
 
 #ifdef HAVE_GSSAPI_KRB5
@@ -28,6 +29,7 @@
 #include <urcu/rculfhash.h>
 
 #define GSS_HANDLE_LEN 16 /* server-generated opaque handle size */
+#define GSS_SEQ_WINDOW 128 /* replay window size (must match bitmap) */
 
 struct gss_ctx_entry {
 	struct cds_lfht_node gc_node;
@@ -39,6 +41,8 @@ struct gss_ctx_entry {
 #endif
 	uint32_t gc_seq_window;
 	uint32_t gc_seq_last;
+	uint64_t gc_seq_bitmap[2]; /* 128-bit sliding window for replay */
+	pthread_mutex_t gc_seq_lock; /* protects seq_last + bitmap */
 	uint32_t gc_service; /* rpc_Gss_Svc_t wire value */
 	struct urcu_ref gc_ref;
 	struct rcu_head gc_rcu;
@@ -65,6 +69,13 @@ struct gss_ctx_entry *gss_ctx_find(const uint8_t *handle, uint32_t handle_len);
 
 /* Release a reference obtained from gss_ctx_find(). */
 void gss_ctx_put(struct gss_ctx_entry *entry);
+
+/*
+ * Check and record a sequence number against the replay window.
+ * Returns 0 if the sequence number is valid and not a replay.
+ * Returns -EACCES on replay or out-of-window.
+ */
+int gss_ctx_seq_check(struct gss_ctx_entry *entry, uint32_t seq_num);
 
 /* Remove and destroy a context by handle. */
 void gss_ctx_destroy(const uint8_t *handle, uint32_t handle_len);
