@@ -59,9 +59,11 @@ static void usage(const char *prog)
 	printf("                                     sb-destroy - Destroy a superblock\n");
 	printf("                                     sb-get    - Get superblock info\n");
 	printf("                                     sb-lint-flavors - Check flavor consistency\n");
+	printf("                                     sb-set-flavors - Set sb security flavors\n");
 	printf("  -I  --sb-id=ID               Superblock ID for sb-* operations\n");
 	printf("  -P  --sb-path=PATH           Path for sb-create/sb-mount\n");
 	printf("  -T  --storage-type=TYPE      Storage type (0=ram, 1=posix)\n");
+	printf("  -F  --flavors=LIST           Comma-separated: sys,krb5,krb5i,krb5p,tls\n");
 	printf("  -g  --program=pgm            Probe this program \"pgm\"\n");
 	printf("  -v  --version=v              Probe this program version \"vers\"\n");
 	printf("  -p  --port=port              Connect to server at the \"port\"\n");
@@ -90,6 +92,7 @@ static struct option long_opts[] = {
 	{ "sb-id", required_argument, 0, 'I' },
 	{ "sb-path", required_argument, 0, 'P' },
 	{ "storage-type", required_argument, 0, 'T' },
+	{ "flavors", required_argument, 0, 'F' },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -98,6 +101,40 @@ char *mount_path = NULL;
 uint64_t sb_id = 0;
 char *sb_path = NULL;
 uint32_t storage_type = 0;
+
+#define MAX_CLI_FLAVORS 8
+uint32_t cli_flavors[MAX_CLI_FLAVORS];
+uint32_t cli_nflavors = 0;
+
+/*
+ * Parse a comma-separated flavor string: "sys,krb5,krb5i,krb5p,tls"
+ */
+static void parse_flavors(const char *arg)
+{
+	char *buf = strdup(arg);
+	char *saveptr;
+	char *tok;
+
+	if (!buf)
+		return;
+	for (tok = strtok_r(buf, ",", &saveptr);
+	     tok && cli_nflavors < MAX_CLI_FLAVORS;
+	     tok = strtok_r(NULL, ",", &saveptr)) {
+		if (!strcasecmp(tok, "sys"))
+			cli_flavors[cli_nflavors++] = 1; /* REFFS_AUTH_SYS */
+		else if (!strcasecmp(tok, "krb5"))
+			cli_flavors[cli_nflavors++] = 390003;
+		else if (!strcasecmp(tok, "krb5i"))
+			cli_flavors[cli_nflavors++] = 390004;
+		else if (!strcasecmp(tok, "krb5p"))
+			cli_flavors[cli_nflavors++] = 390005;
+		else if (!strcasecmp(tok, "tls"))
+			cli_flavors[cli_nflavors++] = 0x40000001;
+		else
+			LOG("unknown flavor: %s", tok);
+	}
+	free(buf);
+}
 
 int main(int argc, char *argv[])
 {
@@ -120,7 +157,7 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "hc:f:p:o:s:g:v:HI:P:T:";
+	char *opts = "hc:f:p:o:s:g:v:HI:P:T:F:";
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -163,6 +200,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'T':
 			storage_type = (uint32_t)atoi(optarg);
+			break;
+		case 'F':
+			parse_flavors(optarg);
 			break;
 		}
 	}
@@ -234,8 +274,12 @@ int main(int argc, char *argv[])
 	} else if (!strcmp(op, "sb-get")) {
 		rt = probe1_client_op_sb_get(sb_id);
 	} else if (!strcmp(op, "sb-set-flavors")) {
-		/* NOT_NOW_BROWN_COW: parse --flavors flag for C CLI. */
-		LOG("sb-set-flavors: use reffs-probe.py for flavor management");
+		if (cli_nflavors == 0) {
+			LOG("sb-set-flavors requires --flavors (e.g., --flavors sys,krb5)");
+		} else {
+			rt = probe1_client_op_sb_set_flavors(sb_id, cli_flavors,
+							     cli_nflavors);
+		}
 	} else if (!strcmp(op, "sb-lint-flavors")) {
 		rt = probe1_client_op_sb_lint_flavors();
 	} else {
