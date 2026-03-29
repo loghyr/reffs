@@ -136,6 +136,18 @@ planner, but the role has distinct rules.
     Every hash-table entry lifecycle must follow the documented pattern.
     The reviewer will check this.
 
+11. **UUID discipline for long-lived objects**: every object that is
+    persisted to disk or referenced by external entities (NFS clients,
+    admin tools) MUST have a stable UUID that is:
+    - Assigned once at creation time
+    - Persisted in the on-disk format
+    - Restored on load (never regenerated)
+    - Included in admin/probe responses for identification
+    If `uuid_generate()` is called in an alloc function but the UUID
+    is not persisted, it will change on restart — this is a bug.
+    Objects that currently require stable UUIDs: server_state,
+    super_block, and any future dstore or client identity.
+
 ## Reviewer
 
 The reviewer validates the work of the programmer against the plan,
@@ -184,6 +196,16 @@ the standards, and the existing codebase.
    - BLOCKER: must fix before commit
    - WARNING: should fix, not blocking
    - NOTE: suggestion or observation
+
+8. **UUID stability review**: flag as BLOCKER any long-lived object
+   that has a dynamically assigned UUID (`uuid_generate()` in alloc)
+   without corresponding persistence (save to disk) and restoration
+   (load from disk without regenerating).  A UUID that changes on
+   restart is not a UUID — it's a random number.  Check:
+   - Is the UUID in the on-disk format?
+   - Is it restored on load, not regenerated?
+   - Is it exposed in probe/admin responses?
+   - Does any external entity (NFS client, admin tool) depend on it?
 
 ## Role Interactions
 
