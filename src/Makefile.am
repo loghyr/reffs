@@ -58,9 +58,13 @@ reffsd_LDADD = $(LDADD)
 reffs_probe1_clnt_SOURCES = probe1_client.c
 reffs_probe1_clnt_LDADD = $(LDADD)
 
+reffs_registry_tool_SOURCES = reffs_registry_tool.c
+reffs_registry_tool_LDADD = $(LDADD)
+
 bin_PROGRAMS = \
 	reffsd \
-	reffs_probe1_clnt
+	reffs_probe1_clnt \
+	reffs_registry_tool
 
 EXTRA_DIST = asan_reffsd.sh asan-suppressions.txt
 dist_data_DATA = asan-suppressions.txt
