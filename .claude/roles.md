@@ -57,6 +57,24 @@ any code is written.
 8. **Deferred items**: explicitly list what is NOT being done and why.
    Use NOT_NOW_BROWN_COW markers in code for deferred work.
 
+9. **Admin interface for non-POSIX operations**: when designing a
+   feature, ask: "How does the admin perform this action?"  Normal
+   filesystem operations (touch, mkdir, cat, etc.) cannot create
+   superblocks, set security flavors, or perform other server-
+   internal mutations.  Every feature that requires admin action
+   must have a corresponding probe protocol op (C + Python,
+   shipped simultaneously).  If the plan introduces server state
+   that an admin needs to create or modify at runtime, the probe
+   ops are part of the deliverable — not a future enhancement.
+
+10. **Record plans in the project**: always write the implementation
+    plan to a file in `.claude/design/` before starting work.
+    Plans in the ephemeral plan mode file are lost on disconnect
+    or SSH timeout.  A plan recorded in the project survives
+    session loss and gives the next session (or another developer)
+    full context to continue.  Reference the design file from
+    `CLAUDE.md` if it represents a major feature.
+
 ## Programmer
 
 The programmer implements the plan. May be the same entity as the
