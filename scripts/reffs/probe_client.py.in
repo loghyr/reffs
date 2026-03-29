@@ -179,3 +179,45 @@ class Probe1Client(ProtocolClient):
             LAYOUT_ERRORS1res object containing layout error counts
         """
         return self.proc(PROBEPROC1_LAYOUT_ERRORS, response_type='LAYOUT_ERRORS1res')
+
+    # ----------------------------------------------------------------
+    # Superblock management ops (13-20)
+    # ----------------------------------------------------------------
+
+    def sb_list(self):
+        """List all superblocks with id, path, state, flavors."""
+        return self.proc(PROBEPROC1_SB_LIST, response_type='SB_LIST1res')
+
+    def sb_create(self, sb_id, path, storage_type=PROBE1_STORAGE_RAM):
+        """Create a new superblock (allocate + root dirent + mkdir_p)."""
+        args = SB_CREATE1args(sb_id, path, storage_type)
+        return self.proc(PROBEPROC1_SB_CREATE, args, response_type='SB_CREATE1res')
+
+    def sb_mount(self, sb_id, path):
+        """Mount a superblock at the given path."""
+        args = SB_MOUNT1args(sb_id, path)
+        return self.proc(PROBEPROC1_SB_MOUNT, args, response_type='probe_stat1')
+
+    def sb_unmount(self, sb_id):
+        """Unmount a superblock."""
+        args = SB_UNMOUNT1args(sb_id)
+        return self.proc(PROBEPROC1_SB_UNMOUNT, args, response_type='probe_stat1')
+
+    def sb_destroy(self, sb_id):
+        """Destroy a superblock (must be unmounted first)."""
+        args = SB_DESTROY1args(sb_id)
+        return self.proc(PROBEPROC1_SB_DESTROY, args, response_type='probe_stat1')
+
+    def sb_get(self, sb_id):
+        """Get superblock info by id."""
+        args = SB_GET1args(sb_id)
+        return self.proc(PROBEPROC1_SB_GET, args, response_type='SB_GET1res')
+
+    def sb_set_flavors(self, sb_id, flavors):
+        """Set security flavors on a superblock."""
+        args = SB_SET_FLAVORS1args(sb_id, flavors)
+        return self.proc(PROBEPROC1_SB_SET_FLAVORS, args, response_type='probe_stat1')
+
+    def sb_lint_flavors(self):
+        """Check flavor consistency across all mounted exports."""
+        return self.proc(PROBEPROC1_SB_LINT_FLAVORS, response_type='SB_LINT_FLAVORS1res')

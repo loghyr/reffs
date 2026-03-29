@@ -66,6 +66,30 @@ TRACE_CAT_MAP = {
 
 TRACE_CAT_NAME_TO_ID = {name: id for id, name in TRACE_CAT_MAP.items()}
 
+STORAGE_TYPE_MAP = {
+    PROBE1_STORAGE_RAM: 'ram',
+    PROBE1_STORAGE_POSIX: 'posix',
+    PROBE1_STORAGE_ROCKSDB: 'rocksdb',
+    PROBE1_STORAGE_FUSE: 'fuse',
+}
+STORAGE_TYPE_NAME_TO_ID = {v: k for k, v in STORAGE_TYPE_MAP.items()}
+
+AUTH_FLAVOR_MAP = {
+    PROBE1_AUTH_SYS: 'sys',
+    PROBE1_AUTH_KRB5: 'krb5',
+    PROBE1_AUTH_KRB5I: 'krb5i',
+    PROBE1_AUTH_KRB5P: 'krb5p',
+    PROBE1_AUTH_TLS: 'tls',
+}
+AUTH_FLAVOR_NAME_TO_ID = {v: k for k, v in AUTH_FLAVOR_MAP.items()}
+
+SB_LIFECYCLE_MAP = {
+    PROBE1_SB_CREATED: 'created',
+    PROBE1_SB_MOUNTED: 'mounted',
+    PROBE1_SB_UNMOUNTED: 'unmounted',
+    PROBE1_SB_DESTROYED: 'destroyed',
+}
+
 OP_TYPE_MAP = {
     PROBE1_OP_TYPE_ACCEPT : 'accept',
     PROBE1_OP_TYPE_READ : 'read',
@@ -561,6 +585,90 @@ def fs_usage(client, args):
         print(f"    Free:  {resok.fur_free_files:>15}")
 
 
+# ----------------------------------------------------------------
+# Superblock management command handlers
+# ----------------------------------------------------------------
+
+def format_sb_info(sb):
+    """Format a probe_sb_info1 for display."""
+    path = sb.psi_path if isinstance(sb.psi_path, str) else sb.psi_path.decode('utf-8', errors='replace')
+    state = SB_LIFECYCLE_MAP.get(sb.psi_state, str(sb.psi_state))
+    stype = STORAGE_TYPE_MAP.get(sb.psi_storage_type, str(sb.psi_storage_type))
+    flavors = [AUTH_FLAVOR_MAP.get(f, str(f)) for f in sb.psi_flavors]
+    return path, state, stype, flavors
+
+
+def sb_list_cmd(client, args):
+    res = client.sb_list()
+    probe_error_handler(res.slr_status)
+    sbs = res.SB_LIST1res_u.slr_resok.slr_sbs
+    print(f"{'ID':<6} {'Path':<30} {'State':<12} {'Storage':<10} {'Flavors'}")
+    print(f"{'--':<6} {'----':<30} {'-----':<12} {'-------':<10} {'-------'}")
+    for sb in sbs:
+        path, state, stype, flavors = format_sb_info(sb)
+        flav_str = ','.join(flavors) if flavors else '(none)'
+        print(f"{sb.psi_id:<6} {path:<30} {state:<12} {stype:<10} {flav_str}")
+
+
+def sb_create_cmd(client, args):
+    storage = STORAGE_TYPE_NAME_TO_ID.get(args.storage, PROBE1_STORAGE_RAM)
+    res = client.sb_create(args.id, args.path, storage)
+    probe_error_handler(res.scr_status)
+    sb = res.SB_CREATE1res_u.scr_resok
+    path, state, stype, flavors = format_sb_info(sb)
+    print(f"Created superblock {sb.psi_id}: path={path} state={state} storage={stype}")
+
+
+def sb_mount_cmd(client, args):
+    res = client.sb_mount(args.id, args.path)
+    probe_error_handler(res)
+    print(f"Superblock {args.id} mounted at {args.path}")
+
+
+def sb_unmount_cmd(client, args):
+    res = client.sb_unmount(args.id)
+    probe_error_handler(res)
+    print(f"Superblock {args.id} unmounted")
+
+
+def sb_destroy_cmd(client, args):
+    res = client.sb_destroy(args.id)
+    probe_error_handler(res)
+    print(f"Superblock {args.id} destroyed")
+
+
+def sb_get_cmd(client, args):
+    res = client.sb_get(args.id)
+    probe_error_handler(res.sgr_status)
+    sb = res.SB_GET1res_u.sgr_resok
+    path, state, stype, flavors = format_sb_info(sb)
+    flav_str = ','.join(flavors) if flavors else '(none)'
+    print(f"Superblock {sb.psi_id}:")
+    print(f"  Path:     {path}")
+    print(f"  State:    {state}")
+    print(f"  Storage:  {stype}")
+    print(f"  Flavors:  {flav_str}")
+    print(f"  Bytes:    {sb.psi_bytes_used} / {sb.psi_bytes_max}")
+    print(f"  Inodes:   {sb.psi_inodes_used} / {sb.psi_inodes_max}")
+
+
+def sb_set_flavors_cmd(client, args):
+    flavors = [AUTH_FLAVOR_NAME_TO_ID[f] for f in args.flavors]
+    res = client.sb_set_flavors(args.id, flavors)
+    probe_error_handler(res)
+    print(f"Superblock {args.id} flavors set to: {','.join(args.flavors)}")
+
+
+def sb_lint_flavors_cmd(client, args):
+    res = client.sb_lint_flavors()
+    probe_error_handler(res.lfr_status)
+    resok = res.SB_LINT_FLAVORS1res_u.lfr_resok
+    if resok.lfr_warnings == 0:
+        print("Flavor consistency check: OK (0 warnings)")
+    else:
+        print(f"Flavor consistency check: {resok.lfr_warnings} warning(s)")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Probe reffs servers')
 
@@ -741,6 +849,45 @@ def parse_args():
     p_layout_errors = subparsers.add_parser('layout-errors',
                                             help='Get layout error statistics (global, per-dstore, per-client)')
     p_layout_errors.set_defaults(func=layout_errors)
+
+    # Superblock management commands
+    p_sb_list = subparsers.add_parser('sb-list', help='List all superblocks')
+    p_sb_list.set_defaults(func=sb_list_cmd)
+
+    p_sb_create = subparsers.add_parser('sb-create', help='Create a new superblock')
+    p_sb_create.add_argument('--id', type=int, required=True, help='Superblock ID (must be > 2)')
+    p_sb_create.add_argument('--path', type=str, required=True, help='Export path (e.g., /secure)')
+    p_sb_create.add_argument('--storage', type=str, default='ram',
+                             choices=list(STORAGE_TYPE_NAME_TO_ID.keys()),
+                             help='Storage backend type (default: ram)')
+    p_sb_create.set_defaults(func=sb_create_cmd)
+
+    p_sb_mount = subparsers.add_parser('sb-mount', help='Mount a superblock at its path')
+    p_sb_mount.add_argument('--id', type=int, required=True, help='Superblock ID')
+    p_sb_mount.add_argument('--path', type=str, required=True, help='Mount path')
+    p_sb_mount.set_defaults(func=sb_mount_cmd)
+
+    p_sb_unmount = subparsers.add_parser('sb-unmount', help='Unmount a superblock')
+    p_sb_unmount.add_argument('--id', type=int, required=True, help='Superblock ID')
+    p_sb_unmount.set_defaults(func=sb_unmount_cmd)
+
+    p_sb_destroy = subparsers.add_parser('sb-destroy', help='Destroy a superblock')
+    p_sb_destroy.add_argument('--id', type=int, required=True, help='Superblock ID')
+    p_sb_destroy.set_defaults(func=sb_destroy_cmd)
+
+    p_sb_get = subparsers.add_parser('sb-get', help='Get superblock info')
+    p_sb_get.add_argument('--id', type=int, required=True, help='Superblock ID')
+    p_sb_get.set_defaults(func=sb_get_cmd)
+
+    p_sb_set_flavors = subparsers.add_parser('sb-set-flavors', help='Set security flavors on a superblock')
+    p_sb_set_flavors.add_argument('--id', type=int, required=True, help='Superblock ID')
+    p_sb_set_flavors.add_argument('--flavors', nargs='+', type=str, required=True,
+                                  choices=list(AUTH_FLAVOR_NAME_TO_ID.keys()),
+                                  help='Security flavors (e.g., sys krb5)')
+    p_sb_set_flavors.set_defaults(func=sb_set_flavors_cmd)
+
+    p_sb_lint = subparsers.add_parser('sb-lint-flavors', help='Check flavor consistency')
+    p_sb_lint.set_defaults(func=sb_lint_flavors_cmd)
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()
