@@ -52,6 +52,8 @@ static void usage(const char *prog)
 	printf("                                     nfs4ops  - Get NFS4 per-op statistics\n");
 	printf("                                     usage    - Get filesystem usage comparison\n");
 	printf("                                     null     - Ping the server\n");
+	printf("                                     sb-list  - List all superblocks\n");
+	printf("                                     sb-lint-flavors - Check flavor consistency\n");
 	printf("  -g  --program=pgm            Probe this program \"pgm\"\n");
 	printf("  -v  --version=v              Probe this program version \"vers\"\n");
 	printf("  -p  --port=port              Connect to server at the \"port\"\n");
@@ -195,6 +197,10 @@ int main(int argc, char *argv[])
 		rt = probe1_client_op_fs_usage(human_readable, mount_path);
 	} else if (!strcmp(op, "null")) {
 		rt = probe1_client_op_null();
+	} else if (!strcmp(op, "sb-list")) {
+		rt = probe1_client_op_sb_list();
+	} else if (!strcmp(op, "sb-lint-flavors")) {
+		rt = probe1_client_op_sb_lint_flavors();
 	} else {
 		LOG("op = \"%s\" is not supported", op);
 	}

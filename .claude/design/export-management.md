@@ -286,25 +286,72 @@ When a child export is mounted at a path (e.g., `/secure`):
   `NFS4ERR_XDEV`.
 - **rmdir** on a mounted directory returns `-EBUSY`.
 
-## Probe Protocol (future)
+## Probe Protocol (Runtime Admin)
 
-The `reffs_probe1_clnt` tool will be extended with SB management
-commands:
+The probe protocol (program 211768, port 20490) provides runtime
+export management without restarting the server.  Both Python and
+C clients are available.
 
+### Python CLI (`reffs-probe.py`) — Primary Admin Tool
+
+```bash
+# List all exports
+reffs-probe.py sb-list
+
+# Create a new export (mkdir -p on the path, allocate sb + root dirent)
+reffs-probe.py sb-create --id 42 --path /secure --storage ram
+
+# Configure security flavors
+reffs-probe.py sb-set-flavors --id 42 --flavors krb5 krb5p
+
+# Mount (makes export visible to NFS clients)
+reffs-probe.py sb-mount --id 42 --path /secure
+
+# Query export details
+reffs-probe.py sb-get --id 42
+
+# Check flavor consistency across all exports
+reffs-probe.py sb-lint-flavors
+
+# Unmount (stops new traversals, existing FHs still work)
+reffs-probe.py sb-unmount --id 42
+
+# Destroy (FH → NFS4ERR_STALE after this)
+reffs-probe.py sb-destroy --id 42
 ```
+
+### C CLI (`reffs_probe1_clnt`) — Lightweight Diagnostic
+
+```bash
 reffs_probe1_clnt --op sb-list
-reffs_probe1_clnt --op sb-create --sb-id 42 --path /secure --flavors krb5
-reffs_probe1_clnt --op sb-mount --sb-id 42
-reffs_probe1_clnt --op sb-unmount --sb-id 42
-reffs_probe1_clnt --op sb-destroy --sb-id 42
-reffs_probe1_clnt --op sb-get --sb-id 42
-reffs_probe1_clnt --op sb-set --sb-id 42 --flavors krb5,krb5i
-reffs_probe1_clnt --op lint-flavors
+reffs_probe1_clnt --op sb-lint-flavors
 ```
 
-These will use new probe protocol ops (SB_LIST, SB_CREATE,
-SB_MOUNT, SB_UNMOUNT, SB_DESTROY, SB_GET, SB_SET,
-SB_LINT_FLAVORS) defined in `probe1_xdr.x`.
+The C CLI supports read-only SB ops.  For create/mount/unmount/
+destroy, use the Python CLI which has full argument parsing.
+
+### Per-SB Stats in Existing Commands
+
+The existing stats commands now include per-sb breakdowns:
+
+```bash
+# FS usage with per-sb breakdown
+reffs-probe.py fs-usage
+
+# NFS4 per-op stats with per-sb breakdown
+reffs-probe.py nfs4-op-stats
+
+# Layout errors (per-sb array placeholder, to be populated)
+reffs-probe.py layout-errors
+```
+
+### Python Integration Test
+
+```bash
+# Exercises full SB lifecycle: create → set-flavors → mount →
+# list → per-sb stats → lint → unmount → destroy
+python3 scripts/test_sb_probe.py [--host HOST] [--port PORT]
+```
 
 ## Common Patterns
 

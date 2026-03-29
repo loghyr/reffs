@@ -361,6 +361,343 @@ struct rpc_trans *probe1_client_op_nfs4_op_stats(void)
 	return rt;
 }
 
+/* ------------------------------------------------------------------ */
+/* Superblock management client ops                                    */
+/* ------------------------------------------------------------------ */
+
+static const char *lifecycle_name(probe_sb_lifecycle1 s)
+{
+	switch (s) {
+	case PROBE1_SB_CREATED:
+		return "CREATED";
+	case PROBE1_SB_MOUNTED:
+		return "MOUNTED";
+	case PROBE1_SB_UNMOUNTED:
+		return "UNMOUNTED";
+	case PROBE1_SB_DESTROYED:
+		return "DESTROYED";
+	}
+	return "UNKNOWN";
+}
+
+static void print_sb_info(const probe_sb_info1 *psi)
+{
+	LOG("  id=%lu path=%s state=%s storage=%u flavors=%u "
+	    "bytes=%lu/%lu inodes=%lu/%lu",
+	    (unsigned long)psi->psi_id, psi->psi_path ? psi->psi_path : "",
+	    lifecycle_name(psi->psi_state), psi->psi_storage_type,
+	    psi->psi_flavors.psi_flavors_len,
+	    (unsigned long)psi->psi_bytes_used,
+	    (unsigned long)psi->psi_bytes_max,
+	    (unsigned long)psi->psi_inodes_used,
+	    (unsigned long)psi->psi_inodes_max);
+}
+
+static int sb_list_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_LIST1res *res = ph->ph_res;
+
+	if (res->slr_status) {
+		LOG("sb-list error = %d", res->slr_status);
+	} else {
+		SB_LIST1resok *resok = &res->SB_LIST1res_u.slr_resok;
+
+		LOG("Superblocks (%u):", resok->slr_sbs.slr_sbs_len);
+		for (uint32_t i = 0; i < resok->slr_sbs.slr_sbs_len; i++)
+			print_sb_info(&resok->slr_sbs.slr_sbs_val[i]);
+	}
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_sb_list(void)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_LIST;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	rt->rt_cb = sb_list_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int sb_create_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_CREATE1res *res = ph->ph_res;
+
+	if (res->scr_status)
+		LOG("sb-create error = %d", res->scr_status);
+	else
+		print_sb_info(&res->SB_CREATE1res_u.scr_resok);
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_sb_create(uint64_t id, const char *path,
+					     uint32_t storage_type)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_CREATE;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_CREATE1args *args = ph->ph_args;
+
+	args->sca_id = id;
+	args->sca_path = strdup(path);
+	args->sca_storage_type = (probe_storage_type1)storage_type;
+
+	rt->rt_cb = sb_create_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int sb_stat_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	probe_stat1 *res = ph->ph_res;
+
+	if (*res)
+		LOG("error = %d", *res);
+	else
+		LOG("OK");
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_sb_mount(uint64_t id, const char *path)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_MOUNT;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_MOUNT1args *args = ph->ph_args;
+
+	args->sma_id = id;
+	args->sma_path = strdup(path);
+
+	rt->rt_cb = sb_stat_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+struct rpc_trans *probe1_client_op_sb_unmount(uint64_t id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_UNMOUNT;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_UNMOUNT1args *args = ph->ph_args;
+
+	args->sua_id = id;
+
+	rt->rt_cb = sb_stat_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+struct rpc_trans *probe1_client_op_sb_destroy(uint64_t id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_DESTROY;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_DESTROY1args *args = ph->ph_args;
+
+	args->sda_id = id;
+
+	rt->rt_cb = sb_stat_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int sb_get_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_GET1res *res = ph->ph_res;
+
+	if (res->sgr_status)
+		LOG("sb-get error = %d", res->sgr_status);
+	else
+		print_sb_info(&res->SB_GET1res_u.sgr_resok);
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_sb_get(uint64_t id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_GET;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_GET1args *args = ph->ph_args;
+
+	args->sga_id = id;
+
+	rt->rt_cb = sb_get_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+struct rpc_trans *probe1_client_op_sb_set_flavors(uint64_t id,
+						  uint32_t *flavors,
+						  uint32_t nflavors)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_SET_FLAVORS;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_FLAVORS1args *args = ph->ph_args;
+
+	args->sfa_id = id;
+	args->sfa_flavors.sfa_flavors_len = nflavors;
+	args->sfa_flavors.sfa_flavors_val =
+		calloc(nflavors, sizeof(probe_auth_flavor1));
+	if (args->sfa_flavors.sfa_flavors_val)
+		memcpy(args->sfa_flavors.sfa_flavors_val, flavors,
+		       nflavors * sizeof(probe_auth_flavor1));
+
+	rt->rt_cb = sb_stat_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int sb_lint_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_LINT_FLAVORS1res *res = ph->ph_res;
+
+	if (res->lfr_status)
+		LOG("sb-lint-flavors error = %d", res->lfr_status);
+	else
+		LOG("lint-flavors: %u warnings",
+		    res->SB_LINT_FLAVORS1res_u.lfr_resok.lfr_warnings);
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_sb_lint_flavors(void)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_LINT_FLAVORS;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	rt->rt_cb = sb_lint_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
 static int null_cb(struct rpc_trans __attribute__((unused)) * rt)
 {
 	LOG("NULL replied");
