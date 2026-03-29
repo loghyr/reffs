@@ -1,0 +1,363 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+#ifdef HAVE_CONFIG_H
+#include "config.h" // IWYU pragma: keep
+#endif
+
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "reffs/rcu.h"
+#include "reffs/log.h"
+#include "reffs/sb_registry.h"
+#include "reffs/super_block.h"
+#include "reffs/dirent.h"
+
+/* ------------------------------------------------------------------ */
+/* Save                                                                */
+/* ------------------------------------------------------------------ */
+
+int sb_registry_save(const char *state_dir)
+{
+	struct cds_list_head *sb_list = super_block_list_head();
+	struct super_block *sb;
+	char path[PATH_MAX];
+	char tmp[PATH_MAX];
+	int fd = -1;
+	int ret = 0;
+	ssize_t n;
+
+	if (!state_dir)
+		return -EINVAL;
+
+	if (snprintf(path, sizeof(path), "%s/%s", state_dir,
+		     SB_REGISTRY_FILE) >= (int)sizeof(path))
+		return -ENAMETOOLONG;
+	if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp))
+		return -ENAMETOOLONG;
+
+	/*
+	 * Single-scan: count and populate in one rcu_read_lock section.
+	 * Start with a small buffer and realloc if needed.
+	 */
+	uint32_t cap = 16;
+	uint32_t count = 0;
+	struct sb_registry_entry *entries = calloc(cap, sizeof(*entries));
+
+	if (!entries)
+		return -ENOMEM;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
+		if (sb->sb_id == SUPER_BLOCK_ROOT_ID ||
+		    sb->sb_lifecycle == SB_DESTROYED)
+			continue;
+		if (count >= cap) {
+			uint32_t new_cap = cap * 2;
+			void *tmp2 =
+				realloc(entries, new_cap * sizeof(*entries));
+			if (!tmp2) {
+				rcu_read_unlock();
+				free(entries);
+				return -ENOMEM;
+			}
+			memset((char *)tmp2 + cap * sizeof(*entries), 0,
+			       (new_cap - cap) * sizeof(*entries));
+			entries = tmp2;
+			cap = new_cap;
+		}
+		entries[count].sre_id = sb->sb_id;
+		entries[count].sre_state = (uint32_t)sb->sb_lifecycle;
+		entries[count].sre_storage_type = (uint32_t)sb->sb_storage_type;
+		if (sb->sb_path)
+			strncpy(entries[count].sre_path, sb->sb_path,
+				SB_REGISTRY_MAX_PATH - 1);
+		count++;
+	}
+	rcu_read_unlock();
+
+	struct sb_registry_header hdr = {
+		.srh_magic = SB_REGISTRY_MAGIC,
+		.srh_version = SB_REGISTRY_VERSION,
+		.srh_count = count,
+	};
+	size_t entries_sz = count * sizeof(struct sb_registry_entry);
+
+	/* Write temp, fdatasync, rename. */
+	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd < 0) {
+		ret = -errno;
+		goto out;
+	}
+
+	n = write(fd, &hdr, sizeof(hdr));
+	if (n != (ssize_t)sizeof(hdr)) {
+		ret = (n < 0) ? -errno : -EIO;
+		goto err_close;
+	}
+
+	if (entries_sz > 0) {
+		n = write(fd, entries, entries_sz);
+		if (n != (ssize_t)entries_sz) {
+			ret = (n < 0) ? -errno : -EIO;
+			goto err_close;
+		}
+	}
+
+	if (fdatasync(fd)) {
+		ret = -errno;
+		goto err_close;
+	}
+	close(fd);
+	fd = -1;
+
+	if (rename(tmp, path)) {
+		ret = -errno;
+		unlink(tmp);
+	}
+	goto out;
+
+err_close:
+	close(fd);
+	unlink(tmp);
+out:
+	free(entries);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* Load                                                                */
+/* ------------------------------------------------------------------ */
+
+int sb_registry_load(const char *state_dir)
+{
+	char path[PATH_MAX];
+	int fd;
+	ssize_t n;
+	int ret = 0;
+
+	if (!state_dir)
+		return -EINVAL;
+
+	if (snprintf(path, sizeof(path), "%s/%s", state_dir,
+		     SB_REGISTRY_FILE) >= (int)sizeof(path))
+		return -ENAMETOOLONG;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		if (errno == ENOENT)
+			return -ENOENT;
+		return -errno;
+	}
+
+	struct sb_registry_header hdr;
+
+	n = read(fd, &hdr, sizeof(hdr));
+	if (n != (ssize_t)sizeof(hdr)) {
+		close(fd);
+		return (n < 0) ? -errno : -EINVAL;
+	}
+
+	if (hdr.srh_magic != SB_REGISTRY_MAGIC) {
+		LOG("sb_registry_load: bad magic 0x%08x", hdr.srh_magic);
+		close(fd);
+		return -EINVAL;
+	}
+	if (hdr.srh_version != SB_REGISTRY_VERSION) {
+		LOG("sb_registry_load: unknown version %u", hdr.srh_version);
+		close(fd);
+		return -EINVAL;
+	}
+
+	if (hdr.srh_count == 0) {
+		close(fd);
+		return 0;
+	}
+
+	/* Sanity cap — no deployment has thousands of exports. */
+	if (hdr.srh_count > 4096) {
+		LOG("sb_registry_load: unreasonable count %u", hdr.srh_count);
+		close(fd);
+		return -EINVAL;
+	}
+
+	size_t entries_sz = hdr.srh_count * sizeof(struct sb_registry_entry);
+	struct sb_registry_entry *entries =
+		calloc(hdr.srh_count, sizeof(*entries));
+
+	if (!entries) {
+		close(fd);
+		return -ENOMEM;
+	}
+
+	n = read(fd, entries, entries_sz);
+	int saved_errno = errno;
+
+	close(fd);
+
+	if (n != (ssize_t)entries_sz) {
+		free(entries);
+		return (n < 0) ? -saved_errno : -EINVAL;
+	}
+
+	/* Recreate each superblock. */
+	for (uint32_t i = 0; i < hdr.srh_count; i++) {
+		struct sb_registry_entry *e = &entries[i];
+
+		/* Skip if this sb already exists (e.g., root). */
+		struct super_block *existing = super_block_find(e->sre_id);
+
+		if (existing) {
+			super_block_put(existing);
+			continue;
+		}
+
+		struct super_block *sb = super_block_alloc(
+			e->sre_id, e->sre_path,
+			(enum reffs_storage_type)e->sre_storage_type, NULL);
+		if (!sb) {
+			LOG("sb_registry_load: failed to alloc sb %lu",
+			    (unsigned long)e->sre_id);
+			continue;
+		}
+
+		ret = super_block_dirent_create(sb, NULL,
+						reffs_life_action_birth);
+		if (ret) {
+			LOG("sb_registry_load: dirent_create failed for sb %lu",
+			    (unsigned long)e->sre_id);
+			super_block_put(sb);
+			continue;
+		}
+
+		/* Restore lifecycle state. */
+		if (e->sre_state == SB_MOUNTED) {
+			ret = super_block_mount(sb, e->sre_path);
+			if (ret)
+				LOG("sb_registry_load: mount failed for sb %lu: %d",
+				    (unsigned long)e->sre_id, ret);
+		}
+	}
+
+	free(entries);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Orphan detection                                                    */
+/* ------------------------------------------------------------------ */
+
+int sb_registry_detect_orphans(const char *state_dir)
+{
+	char path[PATH_MAX];
+	int ret;
+	int orphan_count = 0;
+
+	if (!state_dir)
+		return -EINVAL;
+
+	/* Load the registry to know what's expected. */
+	if (snprintf(path, sizeof(path), "%s/%s", state_dir,
+		     SB_REGISTRY_FILE) >= (int)sizeof(path))
+		return -ENAMETOOLONG;
+
+	/* Read the registry header + entries. */
+	int fd = open(path, O_RDONLY);
+
+	if (fd < 0)
+		return (errno == ENOENT) ? 0 : -errno;
+
+	struct sb_registry_header hdr;
+	ssize_t n = read(fd, &hdr, sizeof(hdr));
+
+	if (n != (ssize_t)sizeof(hdr) || hdr.srh_magic != SB_REGISTRY_MAGIC) {
+		close(fd);
+		return -EINVAL;
+	}
+
+	uint64_t *known_ids = NULL;
+	uint32_t known_count = 0;
+
+	if (hdr.srh_count > 0) {
+		struct sb_registry_entry *entries =
+			calloc(hdr.srh_count, sizeof(*entries));
+		if (!entries) {
+			close(fd);
+			return -ENOMEM;
+		}
+		size_t esz = hdr.srh_count * sizeof(*entries);
+
+		n = read(fd, entries, esz);
+		close(fd);
+		fd = -1;
+
+		if (n != (ssize_t)esz) {
+			free(entries);
+			return -EINVAL;
+		}
+
+		known_ids = calloc(hdr.srh_count, sizeof(*known_ids));
+		if (!known_ids) {
+			free(entries);
+			return -ENOMEM;
+		}
+		for (uint32_t i = 0; i < hdr.srh_count; i++)
+			known_ids[i] = entries[i].sre_id;
+		known_count = hdr.srh_count;
+		free(entries);
+	} else {
+		close(fd);
+	}
+
+	/* Scan state_dir for sb_<id>/ directories. */
+	DIR *dir = opendir(state_dir);
+
+	if (!dir) {
+		ret = -errno;
+		free(known_ids);
+		return ret;
+	}
+
+	struct dirent *de;
+
+	while ((de = readdir(dir)) != NULL) {
+		if (strncmp(de->d_name, "sb_", 3) != 0)
+			continue;
+
+		char *endp;
+		unsigned long id = strtoul(de->d_name + 3, &endp, 10);
+
+		if (*endp != '\0')
+			continue; /* not sb_<number> */
+
+		/* Check if this id is in the registry. */
+		int found = 0;
+
+		for (uint32_t i = 0; i < known_count; i++) {
+			if (known_ids[i] == id) {
+				found = 1;
+				break;
+			}
+		}
+
+		if (!found) {
+			LOG("sb_registry: orphan directory %s/%s "
+			    "(not in registry — may be stale or "
+			    "referral source, not deleting)",
+			    state_dir, de->d_name);
+			orphan_count++;
+		}
+	}
+
+	closedir(dir);
+	free(known_ids);
+	return orphan_count;
+}

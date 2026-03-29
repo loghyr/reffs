@@ -26,6 +26,7 @@ libreffs_fs_la_SOURCES = \
 	layout_segment.c \
 	lock.c \
 	ns.c \
+	sb_registry.c \
 	stateid.c \
 	super_block.c \
 	vfs.c
