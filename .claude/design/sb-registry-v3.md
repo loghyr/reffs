@@ -5,13 +5,17 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Superblock Registry v3: Persistent IDs, Stable UUIDs, Single Authority
 
+> **Note**: "v3" is the design iteration number, not an on-disk
+> version.  The actual on-disk `SB_REGISTRY_VERSION` is 1 (no
+> prior deployments exist).  All items in this plan are implemented.
+
 ## Context
 
-The multi-sb architecture has two sources of truth for exports:
-`[[export]]` in TOML config and the probe protocol. The sb_id is
-admin-assigned (collision-prone), and sb_uuid is regenerated on
-every restart (violates reviewer rule 8). This plan fixes all of
-these and adds path conflict detection and a registry repair tool.
+These issues existed in the initial multi-sb implementation:
+`[[export]]` in TOML config duplicated the probe protocol as a
+source of truth, sb_id was admin-assigned (collision-prone), and
+sb_uuid was regenerated on every restart (violated reviewer rule 8).
+All have been fixed.
 
 ## Design Decisions
 
@@ -33,9 +37,8 @@ these and adds path conflict detection and a registry repair tool.
    `/foo` is a prefix of `/foo/bar` but NOT of `/foobar`. Root `/`
    is exempt (it's the pseudo-root, prefix of everything by design).
 
-5. **Registry format v3** adds `sre_uuid` to entries. Migration from
-   v2: load with old struct size, assign fresh UUIDs (pre-deployment
-   data only). Version is checked on load.
+5. **Registry format v1** includes `sre_uuid` and `srh_next_id`
+   from the start.  No migration code (no prior deployments).
 
 6. **fsck tool** is standalone (works without running server). Uses
    text output for dump (no new JSON dependency). TOML import
@@ -48,13 +51,13 @@ these and adds path conflict detection and a registry repair tool.
 ```c
 struct sb_registry_header {
     uint32_t srh_magic;     /* 0x53425247 "SBRG" */
-    uint32_t srh_version;   /* 3 */
+    uint32_t srh_version;   /* 1 */
     uint32_t srh_count;
     uint32_t srh_next_id;   /* monotonic, starts at 3 */
 };
 ```
 
-### Registry entry (v3)
+### Registry entry (v1)
 
 ```c
 struct sb_registry_entry {
@@ -82,21 +85,16 @@ all-zero UUIDs. This is fine — no test asserts on UUID content. BUT:
 add a `uuid_generate()` call in the `mount_child_at()` helpers and
 `persist_setup()` helpers if any test ever checks UUID stability.
 
-### Step 2: Registry v3 format + UUID persistence
+### Step 2: Registry v1 format + UUID persistence
 
 **File**: `lib/include/reffs/sb_registry.h`
-- `SB_REGISTRY_VERSION` = 3
-- Add `uuid_t sre_uuid` to `sb_registry_entry`
-- Add `#include <uuid/uuid.h>`
+- `SB_REGISTRY_VERSION` = 1
+- `uuid_t sre_uuid` in `sb_registry_entry`
 
 **File**: `lib/fs/sb_registry.c`
 - `sb_registry_save()`: `uuid_copy(entries[i].sre_uuid, sb->sb_uuid)`
-- `sb_registry_load()`:
-  - Accept version 2 OR 3
-  - If v2: compute entry size as `sizeof(sb_registry_entry) - 16`,
-    read with old size, assign fresh UUIDs via `uuid_generate()`
-  - If v3: read with full struct, `uuid_copy(sb->sb_uuid, e->sre_uuid)`
-- Restore `srh_next_id` (already implemented)
+- `sb_registry_load()`: `uuid_copy(sb->sb_uuid, e->sre_uuid)` after alloc
+- Restore `srh_next_id` from header
 
 ### Step 3: Remove sca_id from SB_CREATE, server assigns
 

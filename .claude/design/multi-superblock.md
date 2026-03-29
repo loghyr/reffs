@@ -307,7 +307,7 @@ test_lint_flavors_clean             — consistent config, no warnings
 10. **Registry + per-sb persistence**
 11. **Phase 3 unit tests** — persistence tests
 12. **Probe protocol extensions** — SB ops
-13. **Config loader** — create sbs from `[[export]]` at startup
+13. ~~**Config loader**~~ — REMOVED: probe protocol is sole authority for export creation
 14. **Phase 4 unit tests** — security per-sb tests
 15. **Root pseudo-export** — auto-generate with all flavors
 

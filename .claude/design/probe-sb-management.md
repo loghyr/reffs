@@ -74,7 +74,7 @@ probe_auth_flavor1    { SYS=1, KRB5=390003, KRB5I=390004, KRB5P=390005,
 
 ```
 probe_sb_info1 {
-    psi_id, psi_path, psi_state, psi_storage_type,
+    psi_id, psi_uuid[16], psi_path, psi_state, psi_storage_type,
     psi_flavors<8>, psi_bytes_max, psi_bytes_used,
     psi_inodes_max, psi_inodes_used
 }
@@ -85,7 +85,7 @@ probe_sb_info1 {
 | # | Op | Args | Result |
 |---|-----|------|--------|
 | 13 | SB_LIST | void | `SB_LIST1resok { slr_sbs<> }` |
-| 14 | SB_CREATE | `sca_id, sca_path, sca_storage_type` | `probe_sb_info1` |
+| 14 | SB_CREATE | `sca_path, sca_storage_type` | `probe_sb_info1` (server assigns id + uuid) |
 | 15 | SB_MOUNT | `sma_id, sma_path` | void |
 | 16 | SB_UNMOUNT | `sua_id` | void |
 | 17 | SB_DESTROY | `sda_id` | void |
