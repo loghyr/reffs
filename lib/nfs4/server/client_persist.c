@@ -112,7 +112,8 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 	 *   2. Drain stateids.
 	 *   3. Unhash and drop the client ref.
 	 */
-	if (client_incarnation_remove(ss->ss_state_dir, slot))
+	if (ss->ss_persist_ops->client_incarnation_remove(ss->ss_persist_ctx,
+							  slot))
 		LOG("nfs4_client_expire: slot %u not in incarnations", slot);
 
 	trace_fs_client(client, __func__, __LINE__);
@@ -169,7 +170,8 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 			 * nfs4_client_find_by_owner won't see two entries
 			 * for the same slot after we add the new one.
 			 */
-			client_incarnation_remove(ss->ss_state_dir, slot);
+			ss->ss_persist_ops->client_incarnation_remove(
+				ss->ss_persist_ctx, slot);
 		} else {
 			/* ------------------------------------------ */
 			/* New client — never seen this ownerid.      */
@@ -188,7 +190,8 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 			 * is consumed.
 			 */
 			make_identity_record(&cir, slot, owner, impl_id);
-			if (client_identity_append(ss->ss_state_dir, &cir))
+			if (ss->ss_persist_ops->client_identity_append(
+				    ss->ss_persist_ctx, &cir))
 				return NULL;
 		}
 
@@ -200,7 +203,8 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 
 		make_incarnation_record(&crc, ss, slot, incarnation, verifier,
 					sin);
-		if (client_incarnation_add(ss->ss_state_dir, &crc)) {
+		if (ss->ss_persist_ops->client_incarnation_add(
+			    ss->ss_persist_ctx, &crc)) {
 			client_put(nfs4_client_to_client(nc));
 			return NULL;
 		}
@@ -265,7 +269,8 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 		return NULL;
 
 	make_incarnation_record(&crc, ss, slot, incarnation, verifier, sin);
-	if (client_incarnation_add(ss->ss_state_dir, &crc)) {
+	if (ss->ss_persist_ops->client_incarnation_add(ss->ss_persist_ctx,
+						       &crc)) {
 		client_put(nfs4_client_to_client(nc));
 		return NULL;
 	}

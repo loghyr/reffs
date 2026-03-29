@@ -17,6 +17,7 @@
 
 #include "reffs/cmp.h"
 #include "reffs/nfs4_stats.h"
+#include "reffs/persist_ops.h"
 #include "reffs/server_persist.h"
 #include "reffs/settings.h"
 
@@ -59,6 +60,14 @@ struct server_state {
 	/* Persisted fields — loaded at boot, saved on clean shutdown. */
 	struct server_persistent_state ss_persist;
 	char *ss_state_dir;
+
+	/*
+	 * Persistence dispatch — flatfile or RocksDB namespace DB.
+	 * Set in server_state_init() based on configured backend type.
+	 * ctx is owned by the persist_ops (freed in fini).
+	 */
+	const struct persist_ops *ss_persist_ops;
+	void *ss_persist_ctx;
 
 	/* State machine */
 	enum server_lifecycle ss_lifecycle;

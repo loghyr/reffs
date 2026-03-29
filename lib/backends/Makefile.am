@@ -11,6 +11,7 @@ lib_LTLIBRARIES = libbackends.la
 libbackends_la_SOURCES = \
 	client_persist.c \
 	driver.c \
+	flatfile_persist.c \
 	ram.c \
 	ram_data.c \
 	posix.c \

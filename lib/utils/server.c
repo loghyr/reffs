@@ -79,6 +79,10 @@ static void server_state_free(struct urcu_ref *ref)
 	if (ss->ss_client_ht)
 		cds_lfht_destroy(ss->ss_client_ht, NULL);
 
+	if (ss->ss_persist_ops && ss->ss_persist_ops->fini)
+		ss->ss_persist_ops->fini(ss->ss_persist_ctx);
+	ss->ss_persist_ctx = NULL;
+
 	free(ss->ss_owner_id);
 	free(ss->ss_state_dir);
 	free(ss);
@@ -221,7 +225,8 @@ uint32_t server_alloc_client_slot(struct server_state *ss)
          * Persist the incremented slot_next before returning so the
          * slot survives a crash between alloc and client confirmation.
          */
-	if (server_persist_save(ss->ss_state_dir, &ss->ss_persist)) {
+	if (ss->ss_persist_ops->server_state_save(ss->ss_persist_ctx,
+						  &ss->ss_persist)) {
 		LOG("server_alloc_client_slot: failed to persist slot %u",
 		    slot);
 		/* Roll back and signal error. */
@@ -259,8 +264,17 @@ struct server_state *server_state_init(const char *state_path, int port,
 	ss->ss_case = case_mode;
 	reffs_case_set(case_mode);
 
+	/* Set up persistence dispatch — flatfile for now. */
+	ss->ss_persist_ops = flatfile_persist_ops_get();
+	if (state_path) {
+		ss->ss_persist_ctx = strdup(state_path);
+		if (!ss->ss_persist_ctx)
+			goto err_path;
+	}
+
 	/* Load or create persistent state. */
-	ret = server_persist_load(state_path, &ss->ss_persist);
+	ret = ss->ss_persist_ops->server_state_load(ss->ss_persist_ctx,
+						    &ss->ss_persist);
 	if (ret == -ENOENT) {
 		/* Fresh start — initialise defaults. */
 		ss->ss_persist.sps_magic = REFFS_SERVER_STATE_MAGIC;
@@ -287,7 +301,8 @@ struct server_state *server_state_init(const char *state_path, int port,
 	prev_clean_shutdown = ss->ss_persist.sps_clean_shutdown;
 	ss->ss_persist.sps_boot_seq++;
 	ss->ss_persist.sps_clean_shutdown = 0;
-	ret = server_persist_save(state_path, &ss->ss_persist);
+	ret = ss->ss_persist_ops->server_state_save(ss->ss_persist_ctx,
+						    &ss->ss_persist);
 	if (ret) {
 		LOG("server_state_init: failed to save state: %d", ret);
 		goto err_path;
@@ -361,8 +376,9 @@ struct server_state *server_state_init(const char *state_path, int port,
 		struct client_incarnation_record incs[CLIENT_INCARNATION_MAX];
 		size_t nincs = 0;
 
-		if (client_incarnation_load(ss->ss_state_dir, incs,
-					    CLIENT_INCARNATION_MAX, &nincs) < 0)
+		if (ss->ss_persist_ops->client_incarnation_load(
+			    ss->ss_persist_ctx, incs, CLIENT_INCARNATION_MAX,
+			    &nincs) < 0)
 			nincs = 0;
 
 		if (nincs == 0) {
@@ -443,7 +459,8 @@ void server_state_fini(struct server_state *ss)
          * intentional and conservative.
          */
 	ss->ss_persist.sps_clean_shutdown = 1;
-	if (server_persist_save(ss->ss_state_dir, &ss->ss_persist))
+	if (ss->ss_persist_ops->server_state_save(ss->ss_persist_ctx,
+						  &ss->ss_persist))
 		LOG("server_state_fini: failed to save clean shutdown flag");
 
 	if (ss->ss_session_ht) {
