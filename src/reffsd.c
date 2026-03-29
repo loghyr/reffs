@@ -38,6 +38,7 @@
 #include "reffs/probe1.h"
 #include "reffs/rcu.h"
 #include "reffs/ring.h"
+#include "reffs/sb_registry.h"
 #include "reffs/rpc.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
@@ -377,16 +378,86 @@ int main(int argc, char *argv[])
 
 	exit_code = reffs_ns_init();
 	if (exit_code == 0) {
-		struct super_block *sb = super_block_find(1);
-		if (sb) {
+		struct super_block *root_sb = super_block_find(1);
+		if (root_sb) {
 			/* Root sb is always mounted in the server. */
-			sb->sb_lifecycle = SB_MOUNTED;
-			reffs_fs_recover(sb);
-			super_block_put(sb);
+			root_sb->sb_lifecycle = SB_MOUNTED;
+
+			/*
+			 * Set root sb's per-sb flavors from the first
+			 * export config.  This ensures WRONGSEC and
+			 * SECINFO use per-sb flavors on the root.
+			 */
+			if (cfg.nexports > 0 && cfg.exports[0].nflavors > 0)
+				super_block_set_flavors(
+					root_sb, cfg.exports[0].flavors,
+					cfg.exports[0].nflavors);
+
+			reffs_fs_recover(root_sb);
+			super_block_put(root_sb);
 		}
 	}
 	if (exit_code)
 		goto out;
+
+	/*
+	 * Create child exports from [[export]] config entries (index > 0).
+	 * Each gets its own superblock with per-sb flavors.
+	 * The first export (index 0) is the root — already handled above.
+	 */
+	for (unsigned int ei = 1; ei < cfg.nexports; ei++) {
+		struct reffs_export_config *exp = &cfg.exports[ei];
+
+		/* Ensure mount path exists. */
+		int mkret = reffs_fs_mkdir_p(exp->path, 0755);
+		if (mkret && mkret != -EEXIST) {
+			LOG("export %s: mkdir_p failed: %d", exp->path, mkret);
+			continue;
+		}
+
+		struct super_block *esb = super_block_alloc(
+			ei + 10, exp->path,
+			(enum reffs_storage_type)cfg.backend_type, NULL);
+		if (!esb) {
+			LOG("export %s: super_block_alloc failed", exp->path);
+			continue;
+		}
+
+		if (super_block_dirent_create(esb, NULL,
+					      reffs_life_action_birth)) {
+			LOG("export %s: dirent_create failed", exp->path);
+			super_block_put(esb);
+			continue;
+		}
+
+		if (exp->nflavors > 0)
+			super_block_set_flavors(esb, exp->flavors,
+						exp->nflavors);
+
+		int mret = super_block_mount(esb, exp->path);
+		if (mret) {
+			LOG("export %s: mount failed: %d", exp->path, mret);
+			super_block_release_dirents(esb);
+			super_block_put(esb);
+			continue;
+		}
+
+		TRACE("export %s: sb_id=%lu mounted with %u flavors", exp->path,
+		      (unsigned long)esb->sb_id, exp->nflavors);
+		/* Do NOT put esb — release_all_fs_dirents() handles it. */
+	}
+
+	/*
+	 * Load the sb registry for persisted exports from previous runs.
+	 * Registry entries for sbs that already exist (from config) are
+	 * silently skipped.
+	 */
+	if (ss->ss_state_dir) {
+		int rret = sb_registry_load(ss->ss_state_dir);
+		if (rret && rret != -ENOENT)
+			LOG("sb_registry_load: %d", rret);
+		sb_registry_detect_orphans(ss->ss_state_dir);
+	}
 
 	/*
 	 * Combined/MDS mode: create a separate DS super_block for
