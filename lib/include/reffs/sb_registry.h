@@ -7,6 +7,7 @@
 #define _REFFS_SB_REGISTRY_H
 
 #include <stdint.h>
+#include <uuid/uuid.h>
 
 /*
  * Superblock registry — persists the set of superblocks and their
@@ -28,17 +29,29 @@
 #define SB_REGISTRY_FILE "superblocks.registry"
 #define SB_REGISTRY_MAX_PATH 256
 
+/*
+ * Persistent sb_id counter.  IDs are assigned monotonically and
+ * never reused — a deleted export's id is gone forever.  This
+ * ensures NFS clients can distinguish a new export at the same
+ * path from the old one (different fsid → different filesystem).
+ *
+ * IDs 1 and 2 are reserved (SUPER_BLOCK_ROOT_ID, SUPER_BLOCK_DS_ID).
+ * The counter starts at 3.
+ */
+#define SB_REGISTRY_FIRST_ID 3
+
 struct sb_registry_header {
 	uint32_t srh_magic;
 	uint32_t srh_version;
 	uint32_t srh_count;
-	uint32_t srh_pad;
+	uint32_t srh_next_id; /* next sb_id to assign (monotonic) */
 };
 
 struct sb_registry_entry {
 	uint64_t sre_id;
 	uint32_t sre_state; /* enum sb_lifecycle */
 	uint32_t sre_storage_type; /* enum reffs_storage_type */
+	uuid_t sre_uuid; /* stable across restarts (v3+) */
 	char sre_path[SB_REGISTRY_MAX_PATH];
 };
 
@@ -65,5 +78,12 @@ int sb_registry_load(const char *state_dir);
  * Returns the number of orphans found (>= 0), or -errno on error.
  */
 int sb_registry_detect_orphans(const char *state_dir);
+
+/*
+ * sb_registry_alloc_id — return the next sb_id and persist the
+ * incremented counter.  Thread-safe (single writer assumed —
+ * probe ops are serialized).  Returns 0 on failure.
+ */
+uint64_t sb_registry_alloc_id(const char *state_dir);
 
 #endif /* _REFFS_SB_REGISTRY_H */

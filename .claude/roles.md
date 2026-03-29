@@ -197,7 +197,18 @@ the standards, and the existing codebase.
    - WARNING: should fix, not blocking
    - NOTE: suggestion or observation
 
-8. **UUID stability review**: flag as BLOCKER any long-lived object
+8. **On-disk format versioning**: if a change modifies an on-disk
+   format (registry, chunk store, server state, client state),
+   check whether there are existing deployments with data in the
+   old format.  If YES: the change MUST include a version bump AND
+   upgrade/migration code.  If NO (pre-deployment): the format
+   version stays at 1 and no migration code is needed — just change
+   the struct.  Flag as BLOCKER any version bump without migration
+   code when deployments exist, or unnecessary migration code when
+   no deployments exist.  The project will document in CLAUDE.md
+   when persistent storage is first deployed.
+
+9. **UUID stability review**: flag as BLOCKER any long-lived object
    that has a dynamically assigned UUID (`uuid_generate()` in alloc)
    without corresponding persistence (save to disk) and restoration
    (load from disk without regenerating).  A UUID that changes on

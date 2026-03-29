@@ -846,41 +846,45 @@ static int probe1_op_sb_create(struct rpc_trans *rt)
 	SB_CREATE1args *args = ph->ph_args;
 	SB_CREATE1res *res = ph->ph_res;
 	probe_sb_info1 *resok = &res->SB_CREATE1res_u.scr_resok;
+	int ret;
 
-	/* Check for duplicate id. */
-	struct super_block *existing = super_block_find(args->sca_id);
+	struct server_state *ss = server_state_find();
 
-	if (existing) {
-		super_block_put(existing);
-		res->scr_status = PROBE1ERR_EXIST;
+	/* Allocate a unique, monotonic sb_id. */
+	uint64_t new_id = sb_registry_alloc_id(ss ? ss->ss_state_dir : NULL);
+	if (new_id == 0) {
+		server_state_put(ss);
+		res->scr_status = PROBE1ERR_IO;
 		return res->scr_status;
 	}
 
 	/* Ensure mount path exists (mkdir -p). */
-	int ret = reffs_fs_mkdir_p(args->sca_path, 0755);
-
+	ret = reffs_fs_mkdir_p(args->sca_path, 0755);
 	if (ret && ret != -EEXIST) {
+		server_state_put(ss);
 		res->scr_status = PROBE1ERR_IO;
 		return res->scr_status;
 	}
 
 	struct super_block *sb = super_block_alloc(
-		args->sca_id, args->sca_path,
+		new_id, args->sca_path,
 		(enum reffs_storage_type)args->sca_storage_type, NULL);
 	if (!sb) {
+		server_state_put(ss);
 		res->scr_status = PROBE1ERR_NOMEM;
 		return res->scr_status;
 	}
+	uuid_generate(sb->sb_uuid);
 
 	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
 	if (ret) {
 		super_block_put(sb);
+		server_state_put(ss);
 		res->scr_status = PROBE1ERR_IO;
 		return res->scr_status;
 	}
 
 	/* Persist the registry. */
-	struct server_state *ss = server_state_find();
 
 	if (ss && ss->ss_state_dir)
 		sb_registry_save(ss->ss_state_dir);

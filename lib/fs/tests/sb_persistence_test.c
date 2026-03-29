@@ -190,6 +190,122 @@ START_TEST(test_no_orphans_when_clean)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* UUID persistence                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Intent: UUID assigned at creation is preserved across save/load.
+ */
+START_TEST(test_registry_uuid_persisted)
+{
+	ck_assert_int_eq(reffs_fs_mkdir("/uuid_a", 0755), 0);
+
+	struct super_block *child = super_block_alloc(10, (char *)"/uuid_a",
+						      REFFS_STORAGE_RAM, NULL);
+
+	ck_assert_ptr_nonnull(child);
+	uuid_generate(child->sb_uuid);
+	ck_assert_int_eq(super_block_dirent_create(child, NULL,
+						   reffs_life_action_birth),
+			 0);
+	ck_assert_int_eq(super_block_mount(child, "/uuid_a"), 0);
+
+	/* Save the original UUID. */
+	uuid_t original_uuid;
+
+	uuid_copy(original_uuid, child->sb_uuid);
+
+	/* Save, destroy, reload. */
+	ck_assert_int_eq(sb_registry_save(state_dir), 0);
+	super_block_unmount(child);
+	super_block_destroy(child);
+	super_block_release_dirents(child);
+	super_block_put(child);
+
+	ck_assert_int_eq(sb_registry_load(state_dir), 0);
+
+	struct super_block *reloaded = super_block_find(10);
+
+	ck_assert_ptr_nonnull(reloaded);
+	ck_assert_int_eq(uuid_compare(reloaded->sb_uuid, original_uuid), 0);
+
+	super_block_unmount(reloaded);
+	super_block_destroy(reloaded);
+	super_block_release_dirents(reloaded);
+	super_block_put(reloaded);
+	ck_assert_int_eq(reffs_fs_rmdir("/uuid_a"), 0);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
+/* Persistent ID counter                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Intent: alloc_id returns monotonically increasing IDs.
+ */
+START_TEST(test_alloc_id_monotonic)
+{
+	uint64_t id1 = sb_registry_alloc_id(state_dir);
+	uint64_t id2 = sb_registry_alloc_id(state_dir);
+	uint64_t id3 = sb_registry_alloc_id(state_dir);
+
+	ck_assert_uint_ge(id1, SB_REGISTRY_FIRST_ID);
+	ck_assert_uint_gt(id2, id1);
+	ck_assert_uint_gt(id3, id2);
+}
+END_TEST
+
+/*
+ * Intent: alloc_id counter survives save/load cycle.
+ */
+START_TEST(test_alloc_id_persists_across_restart)
+{
+	uint64_t id1 = sb_registry_alloc_id(state_dir);
+
+	/* sb_registry_alloc_id already calls save internally. */
+	ck_assert_int_eq(sb_registry_load(state_dir), 0);
+
+	uint64_t id2 = sb_registry_alloc_id(state_dir);
+
+	ck_assert_uint_gt(id2, id1);
+}
+END_TEST
+
+/*
+ * Intent: a destroyed sb's id is never reused.
+ */
+START_TEST(test_alloc_id_never_reuses)
+{
+	ck_assert_int_eq(reffs_fs_mkdir("/reuse", 0755), 0);
+
+	uint64_t id1 = sb_registry_alloc_id(state_dir);
+	struct super_block *child = super_block_alloc(id1, (char *)"/reuse",
+						      REFFS_STORAGE_RAM, NULL);
+
+	ck_assert_ptr_nonnull(child);
+	uuid_generate(child->sb_uuid);
+	ck_assert_int_eq(super_block_dirent_create(child, NULL,
+						   reffs_life_action_birth),
+			 0);
+	ck_assert_int_eq(super_block_mount(child, "/reuse"), 0);
+
+	/* Destroy the sb. */
+	super_block_unmount(child);
+	super_block_destroy(child);
+	super_block_release_dirents(child);
+	super_block_put(child);
+
+	/* Next alloc must return a HIGHER id. */
+	uint64_t id2 = sb_registry_alloc_id(state_dir);
+
+	ck_assert_uint_gt(id2, id1);
+
+	ck_assert_int_eq(reffs_fs_rmdir("/reuse"), 0);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -209,6 +325,18 @@ static Suite *sb_persistence_suite(void)
 	tcase_add_checked_fixture(tc, persist_setup, persist_teardown);
 	tcase_add_test(tc, test_orphan_detection);
 	tcase_add_test(tc, test_no_orphans_when_clean);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("uuid");
+	tcase_add_checked_fixture(tc, persist_setup, persist_teardown);
+	tcase_add_test(tc, test_registry_uuid_persisted);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("alloc_id");
+	tcase_add_checked_fixture(tc, persist_setup, persist_teardown);
+	tcase_add_test(tc, test_alloc_id_monotonic);
+	tcase_add_test(tc, test_alloc_id_persists_across_restart);
+	tcase_add_test(tc, test_alloc_id_never_reuses);
 	suite_add_tcase(s, tc);
 
 	return s;

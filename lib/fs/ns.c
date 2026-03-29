@@ -49,6 +49,7 @@ int reffs_ns_init(void)
 		ret = -ENOMEM;
 		goto out;
 	}
+	uuid_generate(reffs_root_sb->sb_uuid);
 
 	ret = super_block_dirent_create(reffs_root_sb, NULL,
 					reffs_life_action_birth);

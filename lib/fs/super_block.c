@@ -449,7 +449,12 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 
 	urcu_ref_init(&sb->sb_ref);
 
-	uuid_generate(sb->sb_uuid);
+	/*
+	 * sb_uuid is NOT generated here.  Callers are responsible:
+	 * - New sbs: uuid_generate(sb->sb_uuid) after alloc
+	 * - Loaded sbs: uuid_copy(sb->sb_uuid, persisted) after alloc
+	 * This ensures UUIDs are stable across restarts (reviewer rule 8).
+	 */
 
 	sb->sb_bytes_max = SIZE_MAX;
 	sb->sb_inodes_max = SIZE_MAX;

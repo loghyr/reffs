@@ -422,6 +422,7 @@ int main(int argc, char *argv[])
 			LOG("export %s: super_block_alloc failed", exp->path);
 			continue;
 		}
+		uuid_generate(esb->sb_uuid);
 
 		if (super_block_dirent_create(esb, NULL,
 					      reffs_life_action_birth)) {
@@ -474,6 +475,7 @@ int main(int argc, char *argv[])
 			exit_code = 1;
 			goto out;
 		}
+		uuid_generate(ds_sb->sb_uuid);
 		super_block_dirent_create(ds_sb, NULL, reffs_life_action_birth);
 		reffs_fs_recover(ds_sb);
 		/* Do NOT put ds_sb here — release_all_fs_dirents()

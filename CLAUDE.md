@@ -37,6 +37,14 @@ Bug pattern encyclopedias (RCU, ref-counting, NFSv4 protocol):
 Use the `review` subagent after making code changes to enforce style and
 check for standards violations before committing.
 
+## Deployment Status
+
+**No persistent storage has been deployed.**  All on-disk formats
+(registry, chunk store, server state, client state) are version 1
+with no migration code.  When the first deployment with persistent
+data ships, update this section and all format changes after that
+point require version bumps + migration code.
+
 ## Architecture
 
 - `lib/fs/` — protocol-agnostic inode/dirent/superblock layer

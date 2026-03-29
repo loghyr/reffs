@@ -14,12 +14,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <uuid/uuid.h>
 
 #include "reffs/rcu.h"
 #include "reffs/log.h"
 #include "reffs/sb_registry.h"
 #include "reffs/super_block.h"
 #include "reffs/dirent.h"
+
+/* In-memory next-id counter, loaded from registry at startup. */
+static uint32_t sb_next_id = SB_REGISTRY_FIRST_ID;
 
 /* ------------------------------------------------------------------ */
 /* Save                                                                */
@@ -77,6 +81,7 @@ int sb_registry_save(const char *state_dir)
 		entries[count].sre_id = sb->sb_id;
 		entries[count].sre_state = (uint32_t)sb->sb_lifecycle;
 		entries[count].sre_storage_type = (uint32_t)sb->sb_storage_type;
+		uuid_copy(entries[count].sre_uuid, sb->sb_uuid);
 		if (sb->sb_path)
 			strncpy(entries[count].sre_path, sb->sb_path,
 				SB_REGISTRY_MAX_PATH - 1);
@@ -88,6 +93,7 @@ int sb_registry_save(const char *state_dir)
 		.srh_magic = SB_REGISTRY_MAGIC,
 		.srh_version = SB_REGISTRY_VERSION,
 		.srh_count = count,
+		.srh_next_id = sb_next_id,
 	};
 	size_t entries_sz = count * sizeof(struct sb_registry_entry);
 
@@ -177,6 +183,10 @@ int sb_registry_load(const char *state_dir)
 		return -EINVAL;
 	}
 
+	/* Restore the persistent id counter. */
+	if (hdr.srh_next_id >= SB_REGISTRY_FIRST_ID)
+		sb_next_id = hdr.srh_next_id;
+
 	if (hdr.srh_count == 0) {
 		close(fd);
 		return 0;
@@ -228,6 +238,9 @@ int sb_registry_load(const char *state_dir)
 			    (unsigned long)e->sre_id);
 			continue;
 		}
+
+		/* Restore persisted UUID (or freshly generated for v2). */
+		uuid_copy(sb->sb_uuid, e->sre_uuid);
 
 		ret = super_block_dirent_create(sb, NULL,
 						reffs_life_action_birth);
@@ -360,4 +373,15 @@ int sb_registry_detect_orphans(const char *state_dir)
 	closedir(dir);
 	free(known_ids);
 	return orphan_count;
+}
+
+uint64_t sb_registry_alloc_id(const char *state_dir)
+{
+	uint64_t id = sb_next_id++;
+
+	/* Persist the incremented counter immediately. */
+	if (state_dir)
+		sb_registry_save(state_dir);
+
+	return id;
 }
