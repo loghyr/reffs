@@ -1049,9 +1049,9 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 
 		/*
 		 * Accumulate layout error stats: global, per-dstore,
-		 * and per-client.  Categorize by error type.
+		 * per-client, and per-sb.  Categorize by error type.
 		 */
-		struct reffs_layout_error_stats *scopes[3];
+		struct reffs_layout_error_stats *scopes[4];
 		int nscopes = 0;
 
 		if (ss)
@@ -1066,6 +1066,10 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 
 		if (nc)
 			scopes[nscopes++] = &nc->nc_layout_errors;
+
+		if (compound->c_curr_sb)
+			scopes[nscopes++] =
+				&compound->c_curr_sb->sb_layout_errors;
 
 		for (int s = 0; s < nscopes; s++) {
 			atomic_fetch_add_explicit(&scopes[s]->les_total, 1,

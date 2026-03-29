@@ -114,6 +114,9 @@ struct super_block {
 
 	/* Backend I/O statistics for this superblock. */
 	struct reffs_backend_stats sb_backend_stats;
+
+	/* Per-sb layout error statistics. */
+	struct reffs_layout_error_stats sb_layout_errors;
 };
 
 struct super_block *super_block_alloc(uint64_t id, char *path,

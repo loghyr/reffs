@@ -761,13 +761,64 @@ static int probe1_op_layout_errors(struct rpc_trans *rt)
 
 	server_state_put(ss);
 
-	/*
-	 * Per-sb layout errors — empty for now.
-	 * NOT_NOW_BROWN_COW: requires sb_layout_errors field in
-	 * struct super_block and recording in the LAYOUTERROR handler.
-	 */
-	resok->ler_sbs.ler_sbs_len = 0;
-	resok->ler_sbs.ler_sbs_val = NULL;
+	/* Per-sb layout errors. */
+	{
+		struct cds_list_head *sb_list_head = super_block_list_head();
+		struct super_block *sb_iter;
+		uint32_t nsb = 0;
+
+		rcu_read_lock();
+		cds_list_for_each_entry_rcu(sb_iter, sb_list_head, sb_link)
+			nsb++;
+		rcu_read_unlock();
+
+		if (nsb > 0) {
+			struct super_block **sbs_arr =
+				calloc(nsb, sizeof(*sbs_arr));
+			if (sbs_arr) {
+				uint32_t si = 0;
+
+				rcu_read_lock();
+				cds_list_for_each_entry_rcu(
+					sb_iter, sb_list_head, sb_link) {
+					if (si >= nsb)
+						break;
+					sbs_arr[si] = super_block_get(sb_iter);
+					if (sbs_arr[si])
+						si++;
+				}
+				rcu_read_unlock();
+				nsb = si;
+
+				resok->ler_sbs.ler_sbs_val = calloc(
+					nsb, sizeof(probe_layout_error1));
+				if (resok->ler_sbs.ler_sbs_val) {
+					for (si = 0; si < nsb; si++) {
+						char label[32];
+
+						snprintf(
+							label, sizeof(label),
+							"sb_%lu",
+							(unsigned long)
+								sbs_arr[si]
+									->sb_id);
+						fill_layout_error(
+							&resok->ler_sbs
+								 .ler_sbs_val[si],
+							(uint32_t)sbs_arr[si]
+								->sb_id,
+							label,
+							&sbs_arr[si]
+								 ->sb_layout_errors);
+					}
+					resok->ler_sbs.ler_sbs_len = nsb;
+				}
+				for (si = 0; si < nsb; si++)
+					super_block_put(sbs_arr[si]);
+				free(sbs_arr);
+			}
+		}
+	}
 
 	return 0;
 }

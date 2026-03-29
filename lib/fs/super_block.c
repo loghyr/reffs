@@ -584,10 +584,20 @@ int super_block_unmount(struct super_block *sb)
 	if (sb->sb_lifecycle != SB_MOUNTED)
 		return -EINVAL;
 
-	/*
-	 * NOT_NOW_BROWN_COW: check for child sbs mounted within
-	 * this sb's namespace.  Return -EBUSY if any exist.
-	 */
+	/* Check for child sbs mounted within this sb's namespace. */
+	{
+		struct super_block *tmp;
+
+		rcu_read_lock();
+		cds_list_for_each_entry_rcu(tmp, &super_block_list, sb_link) {
+			if (tmp->sb_parent_sb == sb &&
+			    tmp->sb_lifecycle == SB_MOUNTED) {
+				rcu_read_unlock();
+				return -EBUSY;
+			}
+		}
+		rcu_read_unlock();
+	}
 
 	/* Clear RD_MOUNTED_ON on the mounted-on dirent. */
 	if (sb->sb_mount_dirent) {

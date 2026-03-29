@@ -53,7 +53,15 @@ static void usage(const char *prog)
 	printf("                                     usage    - Get filesystem usage comparison\n");
 	printf("                                     null     - Ping the server\n");
 	printf("                                     sb-list  - List all superblocks\n");
+	printf("                                     sb-create - Create a new superblock\n");
+	printf("                                     sb-mount  - Mount a superblock\n");
+	printf("                                     sb-unmount - Unmount a superblock\n");
+	printf("                                     sb-destroy - Destroy a superblock\n");
+	printf("                                     sb-get    - Get superblock info\n");
 	printf("                                     sb-lint-flavors - Check flavor consistency\n");
+	printf("  -I  --sb-id=ID               Superblock ID for sb-* operations\n");
+	printf("  -P  --sb-path=PATH           Path for sb-create/sb-mount\n");
+	printf("  -T  --storage-type=TYPE      Storage type (0=ram, 1=posix)\n");
 	printf("  -g  --program=pgm            Probe this program \"pgm\"\n");
 	printf("  -v  --version=v              Probe this program version \"vers\"\n");
 	printf("  -p  --port=port              Connect to server at the \"port\"\n");
@@ -79,11 +87,17 @@ static struct option long_opts[] = {
 	{ "version", required_argument, 0, 'v' },
 	{ "human", no_argument, 0, 'H' },
 	{ "help", no_argument, 0, 'h' },
+	{ "sb-id", required_argument, 0, 'I' },
+	{ "sb-path", required_argument, 0, 'P' },
+	{ "storage-type", required_argument, 0, 'T' },
 	{ NULL, 0, NULL, 0 },
 };
 
 bool human_readable = false;
 char *mount_path = NULL;
+uint64_t sb_id = 0;
+char *sb_path = NULL;
+uint32_t storage_type = 0;
 
 int main(int argc, char *argv[])
 {
@@ -106,7 +120,7 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "hc:f:p:o:s:g:v:H";
+	char *opts = "hc:f:p:o:s:g:v:HI:P:T:";
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -140,6 +154,15 @@ int main(int argc, char *argv[])
 			break;
 		case 'H':
 			human_readable = true;
+			break;
+		case 'I':
+			sb_id = (uint64_t)atol(optarg);
+			break;
+		case 'P':
+			sb_path = optarg;
+			break;
+		case 'T':
+			storage_type = (uint32_t)atoi(optarg);
 			break;
 		}
 	}
@@ -199,6 +222,20 @@ int main(int argc, char *argv[])
 		rt = probe1_client_op_null();
 	} else if (!strcmp(op, "sb-list")) {
 		rt = probe1_client_op_sb_list();
+	} else if (!strcmp(op, "sb-create")) {
+		rt = probe1_client_op_sb_create(sb_path ? sb_path : "/",
+						storage_type);
+	} else if (!strcmp(op, "sb-mount")) {
+		rt = probe1_client_op_sb_mount(sb_id, sb_path ? sb_path : "/");
+	} else if (!strcmp(op, "sb-unmount")) {
+		rt = probe1_client_op_sb_unmount(sb_id);
+	} else if (!strcmp(op, "sb-destroy")) {
+		rt = probe1_client_op_sb_destroy(sb_id);
+	} else if (!strcmp(op, "sb-get")) {
+		rt = probe1_client_op_sb_get(sb_id);
+	} else if (!strcmp(op, "sb-set-flavors")) {
+		/* NOT_NOW_BROWN_COW: parse --flavors flag for C CLI. */
+		LOG("sb-set-flavors: use reffs-probe.py for flavor management");
 	} else if (!strcmp(op, "sb-lint-flavors")) {
 		rt = probe1_client_op_sb_lint_flavors();
 	} else {

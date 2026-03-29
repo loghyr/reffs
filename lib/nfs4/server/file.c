@@ -508,6 +508,35 @@ uint32_t nfs4_op_open(struct compound *compound)
 				*status = NFS4ERR_SERVERFAULT;
 				goto out;
 			}
+
+			/*
+			 * Mount-point crossing: if this name has a
+			 * filesystem mounted on it, cross into the
+			 * child sb's root.  RFC 8881 does not restrict
+			 * mount points to directories — a file can be
+			 * mounted on top of another file.
+			 */
+			if (__atomic_load_n(&child_de->rd_state,
+					    __ATOMIC_ACQUIRE) &
+			    RD_MOUNTED_ON) {
+				struct super_block *child_sb =
+					super_block_find_mounted_on(child_de);
+				if (child_sb) {
+					struct inode *root = inode_find(
+						child_sb, INODE_ROOT_ID);
+					if (!root) {
+						super_block_put(child_sb);
+						*status = NFS4ERR_SERVERFAULT;
+						goto out;
+					}
+					inode_active_put(child);
+					child = root;
+					super_block_put(compound->c_curr_sb);
+					compound->c_curr_sb = child_sb;
+					compound->c_curr_nfh.nfh_sb =
+						child_sb->sb_id;
+				}
+			}
 		}
 		break;
 	}
