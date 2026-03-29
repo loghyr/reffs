@@ -401,57 +401,10 @@ int main(int argc, char *argv[])
 		goto out;
 
 	/*
-	 * Create child exports from [[export]] config entries (index > 0).
-	 * Each gets its own superblock with per-sb flavors.
-	 * The first export (index 0) is the root — already handled above.
-	 */
-	for (unsigned int ei = 1; ei < cfg.nexports; ei++) {
-		struct reffs_export_config *exp = &cfg.exports[ei];
-
-		/* Ensure mount path exists. */
-		int mkret = reffs_fs_mkdir_p(exp->path, 0755);
-		if (mkret && mkret != -EEXIST) {
-			LOG("export %s: mkdir_p failed: %d", exp->path, mkret);
-			continue;
-		}
-
-		struct super_block *esb = super_block_alloc(
-			ei + 10, exp->path,
-			(enum reffs_storage_type)cfg.backend_type, NULL);
-		if (!esb) {
-			LOG("export %s: super_block_alloc failed", exp->path);
-			continue;
-		}
-		uuid_generate(esb->sb_uuid);
-
-		if (super_block_dirent_create(esb, NULL,
-					      reffs_life_action_birth)) {
-			LOG("export %s: dirent_create failed", exp->path);
-			super_block_put(esb);
-			continue;
-		}
-
-		if (exp->nflavors > 0)
-			super_block_set_flavors(esb, exp->flavors,
-						exp->nflavors);
-
-		int mret = super_block_mount(esb, exp->path);
-		if (mret) {
-			LOG("export %s: mount failed: %d", exp->path, mret);
-			super_block_release_dirents(esb);
-			super_block_put(esb);
-			continue;
-		}
-
-		TRACE("export %s: sb_id=%lu mounted with %u flavors", exp->path,
-		      (unsigned long)esb->sb_id, exp->nflavors);
-		/* Do NOT put esb — release_all_fs_dirents() handles it. */
-	}
-
-	/*
-	 * Load the sb registry for persisted exports from previous runs.
-	 * Registry entries for sbs that already exist (from config) are
-	 * silently skipped.
+	 * Load persisted exports from the registry.
+	 * The probe protocol is the sole authority for creating exports.
+	 * [[export]] config entries beyond index 0 are ignored — use
+	 * reffs-probe.py sb-create to manage exports at runtime.
 	 */
 	if (ss->ss_state_dir) {
 		int rret = sb_registry_load(ss->ss_state_dir);

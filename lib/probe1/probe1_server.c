@@ -779,6 +779,7 @@ static int probe1_op_layout_errors(struct rpc_trans *rt)
 static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 {
 	psi->psi_id = sb->sb_id;
+	memcpy(psi->psi_uuid, sb->sb_uuid, 16);
 	psi->psi_path = strdup(sb->sb_path ? sb->sb_path : "");
 	psi->psi_state = (probe_sb_lifecycle1)sb->sb_lifecycle;
 	psi->psi_storage_type = (probe_storage_type1)sb->sb_storage_type;

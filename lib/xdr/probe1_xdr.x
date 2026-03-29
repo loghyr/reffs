@@ -264,6 +264,7 @@ const PROBE1_MAX_FLAVORS = 8;
 
 struct probe_sb_info1 {
 	unsigned hyper		psi_id;
+	opaque			psi_uuid[16];
 	string			psi_path<>;
 	probe_sb_lifecycle1	psi_state;
 	probe_storage_type1	psi_storage_type;
@@ -285,9 +286,8 @@ union SB_LIST1res switch (probe_stat1 slr_status) {
 		void;
 };
 
-/* SB_CREATE (op 14) */
+/* SB_CREATE (op 14) — server assigns the sb_id from monotonic counter */
 struct SB_CREATE1args {
-	unsigned hyper		sca_id;
 	string			sca_path<>;
 	probe_storage_type1	sca_storage_type;
 };

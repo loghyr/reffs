@@ -448,7 +448,7 @@ static int sb_create_cb(struct rpc_trans *rt)
 	return 0;
 }
 
-struct rpc_trans *probe1_client_op_sb_create(uint64_t id, const char *path,
+struct rpc_trans *probe1_client_op_sb_create(const char *path,
 					     uint32_t storage_type)
 {
 	int ret;
@@ -468,7 +468,6 @@ struct rpc_trans *probe1_client_op_sb_create(uint64_t id, const char *path,
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 	SB_CREATE1args *args = ph->ph_args;
 
-	args->sca_id = id;
 	args->sca_path = strdup(path);
 	args->sca_storage_type = (probe_storage_type1)storage_type;
 

@@ -67,22 +67,33 @@ def test_sb_list_has_root(client):
               "root sb state is MOUNTED")
 
 
-def test_sb_create(client, sb_id, path):
-    """SB_CREATE should create a new sb in CREATED state."""
-    print(f"\n--- test_sb_create (id={sb_id}, path={path}) ---")
-    res = client.sb_create(sb_id, path, PROBE1_STORAGE_RAM)
+def test_sb_create(client, path):
+    """SB_CREATE should create a new sb with server-assigned id."""
+    print(f"\n--- test_sb_create (path={path}) ---")
+    res = client.sb_create(path, PROBE1_STORAGE_RAM)
     check_status_ok(res.scr_status, "sb_create status")
     sb = res.scr_resok
-    check(sb.psi_id == sb_id, f"created sb id={sb.psi_id}")
+    check(sb.psi_id >= 3, f"assigned id >= 3 (got {sb.psi_id})")
     check(sb.psi_state == PROBE1_SB_CREATED, "state is CREATED")
+    # Verify UUID is non-zero
+    uuid_bytes = bytes(sb.psi_uuid) if hasattr(sb, 'psi_uuid') else b''
+    check(len(uuid_bytes) == 16 and uuid_bytes != b'\x00' * 16,
+          "UUID is non-zero")
+    return sb.psi_id
 
 
-def test_sb_create_duplicate(client, sb_id):
-    """SB_CREATE with existing id should fail with EXIST."""
-    print(f"\n--- test_sb_create_duplicate (id={sb_id}) ---")
-    res = client.sb_create(sb_id, "/dup", PROBE1_STORAGE_RAM)
-    check(res.scr_status == PROBE1ERR_EXIST,
-          f"duplicate create returns EXIST (got {res.scr_status})")
+def test_sb_two_creates_different_ids(client):
+    """Two creates must get different, increasing IDs."""
+    print("\n--- test_sb_two_creates_different_ids ---")
+    res1 = client.sb_create(b"/diff_a", PROBE1_STORAGE_RAM)
+    check_status_ok(res1.scr_status, "first create")
+    res2 = client.sb_create(b"/diff_b", PROBE1_STORAGE_RAM)
+    check_status_ok(res2.scr_status, "second create")
+    id1 = res1.scr_resok.psi_id
+    id2 = res2.scr_resok.psi_id
+    check(id2 > id1, f"second id ({id2}) > first id ({id1})")
+    # Cleanup both
+    return id1, id2
 
 
 def test_sb_get(client, sb_id, expected_state):
@@ -194,51 +205,52 @@ def main():
     print(f"Connecting to {args.host}:{args.port}")
     client = Probe1Client(args.host, args.port)
 
-    TEST_SB_ID = 42
     TEST_PATH = "/test_export"
     DEEP_PATH = "/test/deep/export"
 
     # Phase 1: Verify root sb exists
     test_sb_list_has_root(client)
 
-    # Phase 2: Create lifecycle
-    test_sb_create(client, TEST_SB_ID, TEST_PATH)
-    test_sb_create_duplicate(client, TEST_SB_ID)
-    test_sb_get(client, TEST_SB_ID, PROBE1_SB_CREATED)
+    # Phase 2: Create lifecycle (server assigns ID)
+    sb_id = test_sb_create(client, TEST_PATH)
+    test_sb_get(client, sb_id, PROBE1_SB_CREATED)
+
+    # Phase 2b: Two creates get different IDs
+    diff_id1, diff_id2 = test_sb_two_creates_different_ids(client)
+    # Cleanup the two extra sbs
+    client.sb_destroy(diff_id1)
+    client.sb_destroy(diff_id2)
 
     # Phase 3: Set flavors before mount
-    test_sb_set_flavors(client, TEST_SB_ID,
+    test_sb_set_flavors(client, sb_id,
                         [PROBE1_AUTH_SYS, PROBE1_AUTH_KRB5])
 
     # Phase 4: Mount
-    test_sb_mount(client, TEST_SB_ID, TEST_PATH)
-    test_sb_get(client, TEST_SB_ID, PROBE1_SB_MOUNTED)
-    test_sb_in_list(client, TEST_SB_ID, should_exist=True)
+    test_sb_mount(client, sb_id, TEST_PATH)
+    test_sb_get(client, sb_id, PROBE1_SB_MOUNTED)
+    test_sb_in_list(client, sb_id, should_exist=True)
 
     # Phase 5: Verify per-sb stats
     test_fs_usage_per_sb(client)
     test_nfs4_op_stats_per_sb(client)
 
     # Phase 6: Set root sb flavors to match child, then lint.
-    # Root sb starts with empty sb_flavors (global ss_flavors is the
-    # fallback). Set per-sb flavors on root to cover child's needs.
     test_sb_set_flavors(client, 1,
                         [PROBE1_AUTH_SYS, PROBE1_AUTH_KRB5,
                          PROBE1_AUTH_KRB5I, PROBE1_AUTH_KRB5P])
     test_sb_lint_flavors(client, expected_warnings=0)
 
     # Phase 7: Unmount + destroy
-    test_sb_unmount(client, TEST_SB_ID)
-    test_sb_get(client, TEST_SB_ID, PROBE1_SB_UNMOUNTED)
-    test_sb_destroy(client, TEST_SB_ID)
+    test_sb_unmount(client, sb_id)
+    test_sb_get(client, sb_id, PROBE1_SB_UNMOUNTED)
+    test_sb_destroy(client, sb_id)
 
     # Phase 8: Deep path creation (mkdir -p)
-    DEEP_SB_ID = 43
-    test_sb_create(client, DEEP_SB_ID, DEEP_PATH)
-    test_sb_mount(client, DEEP_SB_ID, DEEP_PATH)
-    test_sb_get(client, DEEP_SB_ID, PROBE1_SB_MOUNTED)
-    test_sb_unmount(client, DEEP_SB_ID)
-    test_sb_destroy(client, DEEP_SB_ID)
+    deep_id = test_sb_create(client, DEEP_PATH)
+    test_sb_mount(client, deep_id, DEEP_PATH)
+    test_sb_get(client, deep_id, PROBE1_SB_MOUNTED)
+    test_sb_unmount(client, deep_id)
+    test_sb_destroy(client, deep_id)
 
     # Summary
     total = passed + failed

@@ -589,6 +589,14 @@ def fs_usage(client, args):
 # Superblock management command handlers
 # ----------------------------------------------------------------
 
+def format_uuid(raw):
+    """Format 16 raw bytes as a UUID string."""
+    import uuid as _uuid
+    if isinstance(raw, (bytes, bytearray)) and len(raw) == 16:
+        return str(_uuid.UUID(bytes=bytes(raw)))
+    return str(raw)
+
+
 def format_sb_info(sb):
     """Format a probe_sb_info1 for display."""
     path = sb.psi_path if isinstance(sb.psi_path, str) else sb.psi_path.decode('utf-8', errors='replace')
@@ -602,21 +610,23 @@ def sb_list_cmd(client, args):
     res = client.sb_list()
     probe_error_handler(res.slr_status)
     sbs = res.slr_resok.slr_sbs
-    print(f"{'ID':<6} {'Path':<30} {'State':<12} {'Storage':<10} {'Flavors'}")
-    print(f"{'--':<6} {'----':<30} {'-----':<12} {'-------':<10} {'-------'}")
+    print(f"{'ID':<6} {'UUID':<38} {'Path':<24} {'State':<12} {'Flavors'}")
+    print(f"{'--':<6} {'----':<38} {'----':<24} {'-----':<12} {'-------'}")
     for sb in sbs:
         path, state, stype, flavors = format_sb_info(sb)
         flav_str = ','.join(flavors) if flavors else '(none)'
-        print(f"{sb.psi_id:<6} {path:<30} {state:<12} {stype:<10} {flav_str}")
+        sb_uuid = format_uuid(sb.psi_uuid) if hasattr(sb, 'psi_uuid') else 'n/a'
+        print(f"{sb.psi_id:<6} {sb_uuid:<38} {path:<24} {state:<12} {flav_str}")
 
 
 def sb_create_cmd(client, args):
     storage = STORAGE_TYPE_NAME_TO_ID.get(args.storage, PROBE1_STORAGE_RAM)
-    res = client.sb_create(args.id, args.path, storage)
+    res = client.sb_create(args.path, storage)
     probe_error_handler(res.scr_status)
     sb = res.scr_resok
     path, state, stype, flavors = format_sb_info(sb)
-    print(f"Created superblock {sb.psi_id}: path={path} state={state} storage={stype}")
+    sb_uuid = format_uuid(sb.psi_uuid) if hasattr(sb, 'psi_uuid') else 'n/a'
+    print(f"Created superblock {sb.psi_id}: uuid={sb_uuid} path={path} state={state} storage={stype}")
 
 
 def sb_mount_cmd(client, args):
@@ -643,7 +653,9 @@ def sb_get_cmd(client, args):
     sb = res.sgr_resok
     path, state, stype, flavors = format_sb_info(sb)
     flav_str = ','.join(flavors) if flavors else '(none)'
+    sb_uuid = format_uuid(sb.psi_uuid) if hasattr(sb, 'psi_uuid') else 'n/a'
     print(f"Superblock {sb.psi_id}:")
+    print(f"  UUID:     {sb_uuid}")
     print(f"  Path:     {path}")
     print(f"  State:    {state}")
     print(f"  Storage:  {stype}")
@@ -854,8 +866,7 @@ def parse_args():
     p_sb_list = subparsers.add_parser('sb-list', help='List all superblocks')
     p_sb_list.set_defaults(func=sb_list_cmd)
 
-    p_sb_create = subparsers.add_parser('sb-create', help='Create a new superblock')
-    p_sb_create.add_argument('--id', type=int, required=True, help='Superblock ID (must be > 2)')
+    p_sb_create = subparsers.add_parser('sb-create', help='Create a new superblock (server assigns ID)')
     p_sb_create.add_argument('--path', type=str, required=True, help='Export path (e.g., /secure)')
     p_sb_create.add_argument('--storage', type=str, default='ram',
                              choices=list(STORAGE_TYPE_NAME_TO_ID.keys()),

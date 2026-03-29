@@ -23,7 +23,7 @@ struct rpc_trans *probe1_client_op_nfs4_op_stats(void);
 
 /* Superblock management ops. */
 struct rpc_trans *probe1_client_op_sb_list(void);
-struct rpc_trans *probe1_client_op_sb_create(uint64_t id, const char *path,
+struct rpc_trans *probe1_client_op_sb_create(const char *path,
 					     uint32_t storage_type);
 struct rpc_trans *probe1_client_op_sb_mount(uint64_t id, const char *path);
 struct rpc_trans *probe1_client_op_sb_unmount(uint64_t id);
