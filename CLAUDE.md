@@ -26,6 +26,7 @@ Design documents:
 @.claude/design/export-management.md
 @.claude/design/probe-sb-management.md
 @.claude/design/sb-registry-v3.md
+@.claude/design/rocksdb-backend.md
 
 Bug pattern encyclopedias (RCU, ref-counting, NFSv4 protocol):
 
