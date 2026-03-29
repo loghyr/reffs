@@ -26,6 +26,7 @@ Design documents:
 @.claude/design/multi-export.md
 @.claude/design/export-management.md
 @.claude/design/probe-sb-management.md
+@.claude/design/sb-registry-v3.md
 
 Bug pattern encyclopedias (RCU, ref-counting, NFSv4 protocol):
 
