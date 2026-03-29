@@ -234,13 +234,138 @@ union FD_INFOS_LIST1res switch (probe_stat1 filr_status) {
 		void;
 };
 
+/* ------------------------------------------------------------------ */
+/* Superblock management types                                         */
+/* ------------------------------------------------------------------ */
+
+enum probe_storage_type1 {
+	PROBE1_STORAGE_RAM     = 0,
+	PROBE1_STORAGE_POSIX   = 1,
+	PROBE1_STORAGE_ROCKSDB = 2,
+	PROBE1_STORAGE_FUSE    = 3
+};
+
+enum probe_sb_lifecycle1 {
+	PROBE1_SB_CREATED   = 0,
+	PROBE1_SB_MOUNTED   = 1,
+	PROBE1_SB_UNMOUNTED = 2,
+	PROBE1_SB_DESTROYED = 3
+};
+
+enum probe_auth_flavor1 {
+	PROBE1_AUTH_SYS   = 1,
+	PROBE1_AUTH_KRB5  = 390003,
+	PROBE1_AUTH_KRB5I = 390004,
+	PROBE1_AUTH_KRB5P = 390005,
+	PROBE1_AUTH_TLS   = 0x40000001
+};
+
+const PROBE1_MAX_FLAVORS = 8;
+
+struct probe_sb_info1 {
+	unsigned hyper		psi_id;
+	string			psi_path<>;
+	probe_sb_lifecycle1	psi_state;
+	probe_storage_type1	psi_storage_type;
+	probe_auth_flavor1	psi_flavors<PROBE1_MAX_FLAVORS>;
+	unsigned hyper		psi_bytes_max;
+	unsigned hyper		psi_bytes_used;
+	unsigned hyper		psi_inodes_max;
+	unsigned hyper		psi_inodes_used;
+};
+
+/* SB_LIST (op 13) */
+struct SB_LIST1resok {
+	probe_sb_info1	slr_sbs<>;
+};
+union SB_LIST1res switch (probe_stat1 slr_status) {
+	case PROBE1_OK:
+		SB_LIST1resok	slr_resok;
+	default:
+		void;
+};
+
+/* SB_CREATE (op 14) */
+struct SB_CREATE1args {
+	unsigned hyper		sca_id;
+	string			sca_path<>;
+	probe_storage_type1	sca_storage_type;
+};
+union SB_CREATE1res switch (probe_stat1 scr_status) {
+	case PROBE1_OK:
+		probe_sb_info1	scr_resok;
+	default:
+		void;
+};
+
+/* SB_MOUNT (op 15) — returns probe_stat1 directly (no resok) */
+struct SB_MOUNT1args {
+	unsigned hyper	sma_id;
+	string		sma_path<>;
+};
+
+/* SB_UNMOUNT (op 16) — returns probe_stat1 directly */
+struct SB_UNMOUNT1args {
+	unsigned hyper	sua_id;
+};
+
+/* SB_DESTROY (op 17) — returns probe_stat1 directly */
+struct SB_DESTROY1args {
+	unsigned hyper	sda_id;
+};
+
+/* SB_GET (op 18) */
+struct SB_GET1args {
+	unsigned hyper	sga_id;
+};
+union SB_GET1res switch (probe_stat1 sgr_status) {
+	case PROBE1_OK:
+		probe_sb_info1	sgr_resok;
+	default:
+		void;
+};
+
+/* SB_SET_FLAVORS (op 19) — returns probe_stat1 directly */
+struct SB_SET_FLAVORS1args {
+	unsigned hyper		sfa_id;
+	probe_auth_flavor1	sfa_flavors<PROBE1_MAX_FLAVORS>;
+};
+
+/* SB_LINT_FLAVORS (op 20) */
+struct SB_LINT_FLAVORS1resok {
+	unsigned int	lfr_warnings;
+	string		lfr_messages<>;
+};
+union SB_LINT_FLAVORS1res switch (probe_stat1 lfr_status) {
+	case PROBE1_OK:
+		SB_LINT_FLAVORS1resok	lfr_resok;
+	default:
+		void;
+};
+
+/* ------------------------------------------------------------------ */
+/* Per-sb stats types (extend existing resok structs)                  */
+/* ------------------------------------------------------------------ */
+
+struct probe_sb_fs_usage1 {
+	unsigned hyper	sfu_sb_id;
+	string		sfu_sb_path<>;
+	unsigned hyper	sfu_total_bytes;
+	unsigned hyper	sfu_free_bytes;
+	unsigned hyper	sfu_used_bytes;
+	unsigned hyper	sfu_total_files;
+	unsigned hyper	sfu_free_files;
+	unsigned hyper	sfu_used_files;
+};
+
 struct FS_USAGE1resok {
-	unsigned hyper	fur_total_bytes;
-	unsigned hyper	fur_free_bytes;
-	unsigned hyper	fur_used_bytes;
-	unsigned hyper	fur_total_files;
-	unsigned hyper	fur_free_files;
-	unsigned hyper	fur_used_files;
+	unsigned hyper		fur_total_bytes;
+	unsigned hyper		fur_free_bytes;
+	unsigned hyper		fur_used_bytes;
+	unsigned hyper		fur_total_files;
+	unsigned hyper		fur_free_files;
+	unsigned hyper		fur_used_files;
+	probe_sb_fs_usage1	fur_per_sb<>;
 };
 
 union FS_USAGE1res switch (probe_stat1 fur_status) {
@@ -261,8 +386,15 @@ struct probe_nfs4_op1 {
 	unsigned hyper	pno_duration_max;
 };
 
+struct probe_sb_nfs4_op_stats1 {
+	unsigned hyper	sns_sb_id;
+	string		sns_sb_path<>;
+	probe_nfs4_op1	sns_ops<>;
+};
+
 struct NFS4_OP_STATS1resok {
-	probe_nfs4_op1	nosr_ops<>;
+	probe_nfs4_op1			nosr_ops<>;
+	probe_sb_nfs4_op_stats1		nosr_per_sb<>;
 };
 
 union NFS4_OP_STATS1res switch (probe_stat1 nosr_status) {
@@ -285,6 +417,7 @@ struct LAYOUT_ERRORS1resok {
 	probe_layout_error1	ler_global;
 	probe_layout_error1	ler_dstores<>;
 	probe_layout_error1	ler_clients<>;
+	probe_layout_error1	ler_sbs<>;
 };
 
 union LAYOUT_ERRORS1res switch (probe_stat1 ler_status) {
@@ -315,5 +448,15 @@ program PROBE_PROGRAM {
 		FS_USAGE1res PROBEPROC1_FS_USAGE(void) = 10;
 		NFS4_OP_STATS1res PROBEPROC1_NFS4_OP_STATS(void) = 11;
 		LAYOUT_ERRORS1res PROBEPROC1_LAYOUT_ERRORS(void) = 12;
+
+		/* Superblock management ops (added for multi-export) */
+		SB_LIST1res PROBEPROC1_SB_LIST(void) = 13;
+		SB_CREATE1res PROBEPROC1_SB_CREATE(SB_CREATE1args) = 14;
+		probe_stat1 PROBEPROC1_SB_MOUNT(SB_MOUNT1args) = 15;
+		probe_stat1 PROBEPROC1_SB_UNMOUNT(SB_UNMOUNT1args) = 16;
+		probe_stat1 PROBEPROC1_SB_DESTROY(SB_DESTROY1args) = 17;
+		SB_GET1res PROBEPROC1_SB_GET(SB_GET1args) = 18;
+		probe_stat1 PROBEPROC1_SB_SET_FLAVORS(SB_SET_FLAVORS1args) = 19;
+		SB_LINT_FLAVORS1res PROBEPROC1_SB_LINT_FLAVORS(void) = 20;
 	} = 1;
 } = 211768;
