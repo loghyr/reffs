@@ -237,6 +237,60 @@ START_TEST(test_registry_uuid_persisted)
 }
 END_TEST
 
+/*
+ * Intent: UUID is stable across TWO save/load cycles (catches
+ * bugs where save re-generates instead of copying).
+ */
+START_TEST(test_registry_uuid_stable_across_restarts)
+{
+	ck_assert_int_eq(reffs_fs_mkdir("/uuid_b", 0755), 0);
+
+	struct super_block *child = super_block_alloc(11, (char *)"/uuid_b",
+						      REFFS_STORAGE_RAM, NULL);
+
+	ck_assert_ptr_nonnull(child);
+	uuid_generate(child->sb_uuid);
+	ck_assert_int_eq(super_block_dirent_create(child, NULL,
+						   reffs_life_action_birth),
+			 0);
+	ck_assert_int_eq(super_block_mount(child, "/uuid_b"), 0);
+
+	uuid_t original_uuid;
+
+	uuid_copy(original_uuid, child->sb_uuid);
+
+	/* Cycle 1: save, destroy, load. */
+	ck_assert_int_eq(sb_registry_save(state_dir), 0);
+	super_block_unmount(child);
+	super_block_destroy(child);
+	super_block_release_dirents(child);
+	super_block_put(child);
+	ck_assert_int_eq(sb_registry_load(state_dir), 0);
+
+	/* Cycle 2: save again, destroy, load again. */
+	ck_assert_int_eq(sb_registry_save(state_dir), 0);
+	child = super_block_find(11);
+	ck_assert_ptr_nonnull(child);
+	super_block_unmount(child);
+	super_block_destroy(child);
+	super_block_release_dirents(child);
+	super_block_put(child);
+	ck_assert_int_eq(sb_registry_load(state_dir), 0);
+
+	/* UUID must still match the original. */
+	struct super_block *reloaded = super_block_find(11);
+
+	ck_assert_ptr_nonnull(reloaded);
+	ck_assert_int_eq(uuid_compare(reloaded->sb_uuid, original_uuid), 0);
+
+	super_block_unmount(reloaded);
+	super_block_destroy(reloaded);
+	super_block_release_dirents(reloaded);
+	super_block_put(reloaded);
+	ck_assert_int_eq(reffs_fs_rmdir("/uuid_b"), 0);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Persistent ID counter                                               */
 /* ------------------------------------------------------------------ */
@@ -330,6 +384,7 @@ static Suite *sb_persistence_suite(void)
 	tc = tcase_create("uuid");
 	tcase_add_checked_fixture(tc, persist_setup, persist_teardown);
 	tcase_add_test(tc, test_registry_uuid_persisted);
+	tcase_add_test(tc, test_registry_uuid_stable_across_restarts);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("alloc_id");

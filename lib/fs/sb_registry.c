@@ -49,45 +49,49 @@ int sb_registry_save(const char *state_dir)
 		return -ENAMETOOLONG;
 
 	/*
-	 * Single-scan: count and populate in one rcu_read_lock section.
-	 * Start with a small buffer and realloc if needed.
+	 * Two-pass: count under rcu_read_lock (no blocking), allocate
+	 * outside, then populate under a second rcu_read_lock.
+	 * No realloc/malloc inside the critical section.
 	 */
-	uint32_t cap = 16;
 	uint32_t count = 0;
-	struct sb_registry_entry *entries = calloc(cap, sizeof(*entries));
-
-	if (!entries)
-		return -ENOMEM;
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
-		if (sb->sb_id == SUPER_BLOCK_ROOT_ID ||
-		    sb->sb_lifecycle == SB_DESTROYED)
-			continue;
-		if (count >= cap) {
-			uint32_t new_cap = cap * 2;
-			void *tmp2 =
-				realloc(entries, new_cap * sizeof(*entries));
-			if (!tmp2) {
-				rcu_read_unlock();
-				free(entries);
-				return -ENOMEM;
-			}
-			memset((char *)tmp2 + cap * sizeof(*entries), 0,
-			       (new_cap - cap) * sizeof(*entries));
-			entries = tmp2;
-			cap = new_cap;
-		}
-		entries[count].sre_id = sb->sb_id;
-		entries[count].sre_state = (uint32_t)sb->sb_lifecycle;
-		entries[count].sre_storage_type = (uint32_t)sb->sb_storage_type;
-		uuid_copy(entries[count].sre_uuid, sb->sb_uuid);
-		if (sb->sb_path)
-			strncpy(entries[count].sre_path, sb->sb_path,
-				SB_REGISTRY_MAX_PATH - 1);
-		count++;
+		if (sb->sb_id != SUPER_BLOCK_ROOT_ID &&
+		    sb->sb_lifecycle != SB_DESTROYED)
+			count++;
 	}
 	rcu_read_unlock();
+
+	struct sb_registry_entry *entries = NULL;
+
+	if (count > 0) {
+		entries = calloc(count, sizeof(*entries));
+		if (!entries)
+			return -ENOMEM;
+
+		uint32_t i = 0;
+
+		rcu_read_lock();
+		cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
+			if (sb->sb_id == SUPER_BLOCK_ROOT_ID ||
+			    sb->sb_lifecycle == SB_DESTROYED)
+				continue;
+			if (i >= count)
+				break;
+			entries[i].sre_id = sb->sb_id;
+			entries[i].sre_state = (uint32_t)sb->sb_lifecycle;
+			entries[i].sre_storage_type =
+				(uint32_t)sb->sb_storage_type;
+			uuid_copy(entries[i].sre_uuid, sb->sb_uuid);
+			if (sb->sb_path)
+				strncpy(entries[i].sre_path, sb->sb_path,
+					SB_REGISTRY_MAX_PATH - 1);
+			i++;
+		}
+		rcu_read_unlock();
+		count = i; /* actual count (may be less if sb removed) */
+	}
 
 	struct sb_registry_header hdr = {
 		.srh_magic = SB_REGISTRY_MAGIC,

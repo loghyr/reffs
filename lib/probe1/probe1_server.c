@@ -809,7 +809,11 @@ static int probe1_op_sb_list(struct rpc_trans *rt)
 	struct cds_list_head *sb_list = super_block_list_head();
 	struct super_block *sb;
 
-	/* Count sbs. */
+	/*
+	 * Two-pass: count under rcu, allocate outside, then collect
+	 * refs under rcu, fill info outside rcu.  No blocking
+	 * (strdup/calloc) inside rcu_read_lock.
+	 */
 	uint32_t count = 0;
 
 	rcu_read_lock();
@@ -820,24 +824,44 @@ static int probe1_op_sb_list(struct rpc_trans *rt)
 	if (count == 0)
 		return 0;
 
-	resok->slr_sbs.slr_sbs_val = calloc(count, sizeof(probe_sb_info1));
-	if (!resok->slr_sbs.slr_sbs_val) {
+	struct super_block **sbs = calloc(count, sizeof(*sbs));
+
+	if (!sbs) {
 		res->slr_status = PROBE1ERR_NOMEM;
 		return res->slr_status;
 	}
 
+	/* Collect refs under rcu_read_lock (no blocking). */
 	uint32_t i = 0;
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
 		if (i >= count)
 			break;
-		fill_sb_info(&resok->slr_sbs.slr_sbs_val[i], sb);
-		i++;
+		sbs[i] = super_block_get(sb);
+		if (sbs[i])
+			i++;
 	}
 	rcu_read_unlock();
+	count = i;
 
-	resok->slr_sbs.slr_sbs_len = i;
+	/* Fill info outside rcu (strdup/calloc are safe here). */
+	resok->slr_sbs.slr_sbs_val = calloc(count, sizeof(probe_sb_info1));
+	if (!resok->slr_sbs.slr_sbs_val) {
+		for (i = 0; i < count; i++)
+			super_block_put(sbs[i]);
+		free(sbs);
+		res->slr_status = PROBE1ERR_NOMEM;
+		return res->slr_status;
+	}
+
+	for (i = 0; i < count; i++) {
+		fill_sb_info(&resok->slr_sbs.slr_sbs_val[i], sbs[i]);
+		super_block_put(sbs[i]);
+	}
+	free(sbs);
+
+	resok->slr_sbs.slr_sbs_len = count;
 	return 0;
 }
 
