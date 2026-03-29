@@ -19,8 +19,11 @@
 #include <sys/syscall.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <dirent.h>
+
 #include "reffs/backend.h"
 #include "reffs/super_block.h"
+#include "reffs/dirent.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
 #include "reffs/data_block.h"
@@ -736,6 +739,121 @@ static void posix_inode_free(struct inode *inode)
 	unlink(path);
 }
 
+/* ------------------------------------------------------------------ */
+/* Recovery                                                            */
+/* ------------------------------------------------------------------ */
+
+static void posix_recover_directory_recursive(struct reffs_dirent *parent)
+{
+	struct inode *inode = parent->rd_inode;
+	struct super_block *sb = inode->i_sb;
+	struct posix_sb_private *sb_priv = sb->sb_storage_private;
+	if (!sb_priv)
+		return;
+
+	char path[PATH_MAX];
+	snprintf(path, sizeof(path), "%s/ino_%lu.dir", sb_priv->sb_dir,
+		 inode->i_ino);
+
+	int fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return;
+
+	struct reffs_disk_header hdr;
+	if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+		close(fd);
+		return;
+	}
+
+	if (hdr.rdh_magic != REFFS_DISK_MAGIC_DIR) {
+		LOG("Invalid directory magic 0x%x for %s", hdr.rdh_magic, path);
+		close(fd);
+		return;
+	}
+
+	if (hdr.rdh_version != REFFS_DISK_VERSION_1) {
+		LOG("Unsupported directory version %u for %s", hdr.rdh_version,
+		    path);
+		close(fd);
+		return;
+	}
+
+	uint64_t cookie_next;
+	if (read(fd, &cookie_next, sizeof(cookie_next)) !=
+	    sizeof(cookie_next)) {
+		close(fd);
+		return;
+	}
+	parent->rd_cookie_next = cookie_next;
+
+	uint64_t cookie;
+	uint64_t ino;
+	uint16_t name_len;
+	char name[256];
+
+	while (read(fd, &cookie, sizeof(cookie)) == sizeof(cookie)) {
+		if (read(fd, &ino, sizeof(ino)) != sizeof(ino))
+			break;
+		if (read(fd, &name_len, sizeof(name_len)) != sizeof(name_len))
+			break;
+		if (name_len >= sizeof(name))
+			break; /* corrupt entry */
+		if (read(fd, name, name_len) != (ssize_t)name_len)
+			break;
+		name[name_len] = '\0';
+
+		struct reffs_dirent *rd = dirent_alloc(
+			parent, name, reffs_life_action_load, false);
+		if (rd) {
+			rd->rd_cookie = cookie;
+			struct inode *recovered = inode_alloc(sb, ino);
+			if (recovered) {
+				dirent_attach_inode(rd, recovered);
+				if (S_ISDIR(recovered->i_mode))
+					posix_recover_directory_recursive(rd);
+				inode_active_put(recovered);
+			}
+			dirent_put(rd);
+		}
+	}
+	close(fd);
+}
+
+static void posix_recover(struct super_block *sb)
+{
+	struct posix_sb_private *sb_priv = sb->sb_storage_private;
+	if (!sb_priv || !sb->sb_backend_path)
+		return;
+
+	/* Scan directory for all .meta files to find max inode number */
+	DIR *dir = opendir(sb_priv->sb_dir);
+	if (dir) {
+		struct dirent *de;
+		while ((de = readdir(dir)) != NULL) {
+			uint64_t ino;
+			if (sscanf(de->d_name, "ino_%lu.meta", &ino) == 1) {
+				if (ino >= sb->sb_next_ino)
+					sb->sb_next_ino = ino + 1;
+			} else if (strstr(de->d_name, ".tmp")) {
+				char tmp_path[PATH_MAX];
+				snprintf(tmp_path, sizeof(tmp_path), "%s/%s",
+					 sb_priv->sb_dir, de->d_name);
+				TRACE("Deleting stray tmp file %s", tmp_path);
+				unlink(tmp_path);
+			}
+		}
+		closedir(dir);
+	}
+
+	/* Load root inode fields from disk */
+	struct inode *root_inode = sb->sb_dirent->rd_inode;
+	if (sb->sb_ops->inode_alloc)
+		sb->sb_ops->inode_alloc(root_inode);
+
+	/* Walk directory tree recursively */
+	posix_recover_directory_recursive(sb->sb_dirent);
+}
+
 /*
  * posix_storage_ops — md template for POSIX metadata backend.
  *
@@ -754,4 +872,5 @@ const struct reffs_storage_ops posix_storage_ops = {
 	.dir_sync = posix_dir_sync,
 	.dir_find_entry_by_ino = posix_dir_find_entry_by_ino,
 	.dir_find_entry_by_name = posix_dir_find_entry_by_name,
+	.recover = posix_recover,
 };

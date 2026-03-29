@@ -14,6 +14,7 @@
 struct super_block;
 struct inode;
 struct data_block;
+struct chunk_block;
 
 /*
  * Backend composition: metadata and data are independent axes.
@@ -98,6 +99,36 @@ struct reffs_storage_ops {
 	int (*dir_find_entry_by_name)(struct super_block *sb, uint64_t dir_ino,
 				      const char *name, uint64_t *child_ino_out,
 				      uint64_t *cookie_out);
+
+	/*
+	 * Recover the in-memory inode/dirent tree from persistent storage.
+	 * Called after super_block_dirent_create() has created the root
+	 * inode/dirent.  The md backend walks its storage to rebuild the
+	 * directory tree (e.g., POSIX reads .dir files, RocksDB iterates
+	 * the dirs CF).  If NULL, no recovery is performed (RAM backend).
+	 *
+	 * The root inode's fields are loaded by calling inode_alloc on
+	 * sb->sb_root_inode before walking directories.
+	 */
+	void (*recover)(struct super_block *sb);
+
+	/*
+	 * Persist chunk block metadata for an inode.  If NULL, chunk_store
+	 * falls back to its existing flat-file persistence.
+	 */
+	int (*chunk_persist)(struct super_block *sb, uint64_t ino,
+			     const struct chunk_block *blocks, uint32_t nblocks,
+			     uint32_t chunk_size);
+
+	/*
+	 * Load chunk block metadata for an inode.  Returns 0 and sets
+	 * *blocks_out and *nblocks_out on success, -ENOENT if no chunks
+	 * stored, other -errno on error.  If NULL, chunk_store falls
+	 * back to flat-file loading.
+	 */
+	int (*chunk_load)(struct super_block *sb, uint64_t ino,
+			  struct chunk_block **blocks_out,
+			  uint32_t *nblocks_out, uint32_t *chunk_size_out);
 };
 
 /*

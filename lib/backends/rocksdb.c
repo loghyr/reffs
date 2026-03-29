@@ -39,6 +39,7 @@
 
 #include "reffs/backend.h"
 #include "reffs/data_block.h"
+#include "reffs/dirent.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
 #include "reffs/log.h"
@@ -913,6 +914,123 @@ static int rocksdb_dir_find_entry_by_name(struct super_block *sb,
 }
 
 /* ------------------------------------------------------------------ */
+/* Recovery                                                            */
+/* ------------------------------------------------------------------ */
+
+static void rocksdb_recover_directory_recursive(struct rocksdb_sb_private *priv,
+						struct reffs_dirent *parent)
+{
+	struct inode *inode = parent->rd_inode;
+	struct super_block *sb = inode->i_sb;
+
+	/* Iterate dirs CF for children of this directory */
+	uint8_t prefix[12];
+	size_t plen = rocksdb_key_dir_prefix(prefix, inode->i_ino);
+	rocksdb_iterator_t *it = rocksdb_create_iterator_cf(
+		priv->rsp_db, priv->rsp_ropts, priv->rsp_cf[ROCKSDB_CF_DIRS]);
+	rocksdb_iter_seek(it, (const char *)prefix, plen);
+
+	uint64_t max_cookie = 0;
+
+	while (rocksdb_iter_valid(it)) {
+		size_t iter_klen, iter_vlen;
+		const char *iter_key = rocksdb_iter_key(it, &iter_klen);
+		if (iter_klen < plen || memcmp(iter_key, prefix, plen) != 0)
+			break;
+
+		const char *iter_val = rocksdb_iter_value(it, &iter_vlen);
+		if (iter_vlen < sizeof(uint64_t) + sizeof(uint16_t)) {
+			rocksdb_iter_next(it);
+			continue;
+		}
+
+		uint64_t child_ino;
+		uint16_t name_len;
+		memcpy(&child_ino, iter_val, sizeof(child_ino));
+		memcpy(&name_len, iter_val + sizeof(child_ino),
+		       sizeof(name_len));
+
+		if (iter_vlen <
+		    sizeof(uint64_t) + sizeof(uint16_t) + name_len) {
+			rocksdb_iter_next(it);
+			continue;
+		}
+
+		char name[256];
+		size_t copy = name_len < sizeof(name) - 1 ? name_len :
+							    sizeof(name) - 1;
+		memcpy(name, iter_val + sizeof(child_ino) + sizeof(name_len),
+		       copy);
+		name[copy] = '\0';
+
+		/* Extract cookie from key */
+		uint64_t cookie = decode_be64((const uint8_t *)iter_key + 4 +
+					      sizeof(uint64_t));
+
+		if (cookie > max_cookie)
+			max_cookie = cookie;
+
+		struct reffs_dirent *rd = dirent_alloc(
+			parent, name, reffs_life_action_load, false);
+		if (rd) {
+			rd->rd_cookie = cookie;
+			struct inode *recovered = inode_alloc(sb, child_ino);
+			if (recovered) {
+				dirent_attach_inode(rd, recovered);
+				if (S_ISDIR(recovered->i_mode))
+					rocksdb_recover_directory_recursive(
+						priv, rd);
+				inode_active_put(recovered);
+			}
+			dirent_put(rd);
+		}
+
+		rocksdb_iter_next(it);
+	}
+
+	rocksdb_iter_destroy(it);
+
+	/* Restore cookie_next so new entries don't collide */
+	if (max_cookie >= parent->rd_cookie_next)
+		parent->rd_cookie_next = max_cookie + 1;
+}
+
+static void rocksdb_recover(struct super_block *sb)
+{
+	struct rocksdb_sb_private *priv = get_priv(sb);
+	if (!priv)
+		return;
+
+	/*
+	 * Scan inodes CF to find the max inode number.
+	 * This replaces the POSIX scandir of .meta files.
+	 */
+	rocksdb_iterator_t *it = rocksdb_create_iterator_cf(
+		priv->rsp_db, priv->rsp_ropts, priv->rsp_cf[ROCKSDB_CF_INODES]);
+	rocksdb_iter_seek_to_last(it);
+	if (rocksdb_iter_valid(it)) {
+		size_t klen;
+		const char *key = rocksdb_iter_key(it, &klen);
+		if (klen == ROCKSDB_KEY_INO_SIZE &&
+		    memcmp(key, "ino:", 4) == 0) {
+			uint64_t max_ino =
+				decode_be64((const uint8_t *)key + 4);
+			if (max_ino >= sb->sb_next_ino)
+				sb->sb_next_ino = max_ino + 1;
+		}
+	}
+	rocksdb_iter_destroy(it);
+
+	/* Load root inode fields from RocksDB */
+	struct inode *root_inode = sb->sb_dirent->rd_inode;
+	if (sb->sb_ops->inode_alloc)
+		sb->sb_ops->inode_alloc(root_inode);
+
+	/* Walk directory tree recursively from dirs CF */
+	rocksdb_recover_directory_recursive(priv, sb->sb_dirent);
+}
+
+/* ------------------------------------------------------------------ */
 /* Storage ops template                                                */
 /* ------------------------------------------------------------------ */
 
@@ -933,4 +1051,5 @@ const struct reffs_storage_ops rocksdb_storage_ops = {
 	.dir_sync = rocksdb_dir_sync,
 	.dir_find_entry_by_ino = rocksdb_dir_find_entry_by_ino,
 	.dir_find_entry_by_name = rocksdb_dir_find_entry_by_name,
+	.recover = rocksdb_recover,
 };

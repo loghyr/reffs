@@ -102,6 +102,9 @@ struct reffs_storage_ops *reffs_backend_compose(enum reffs_md_type md,
 	co->co_ops.dir_sync = md_ops->dir_sync;
 	co->co_ops.dir_find_entry_by_ino = md_ops->dir_find_entry_by_ino;
 	co->co_ops.dir_find_entry_by_name = md_ops->dir_find_entry_by_name;
+	co->co_ops.recover = md_ops->recover;
+	co->co_ops.chunk_persist = md_ops->chunk_persist;
+	co->co_ops.chunk_load = md_ops->chunk_load;
 
 	/* Copy data function pointers from the data template */
 	switch (data) {

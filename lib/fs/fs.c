@@ -7,9 +7,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
-#include <dirent.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -921,116 +919,15 @@ out:
 	return ret;
 }
 
-static void recover_directory_recursive(struct reffs_dirent *parent)
-{
-	struct inode *inode = parent->rd_inode;
-	struct super_block *sb = inode->i_sb;
-	char path[PATH_MAX];
-
-	snprintf(path, sizeof(path), "%s/sb_%lu/ino_%lu.dir",
-		 sb->sb_backend_path, sb->sb_id, inode->i_ino);
-
-	int fd = open(path, O_RDONLY);
-	if (fd < 0)
-		return;
-
-	struct reffs_disk_header hdr;
-	if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
-		close(fd);
-		return;
-	}
-
-	if (hdr.rdh_magic != REFFS_DISK_MAGIC_DIR) {
-		LOG("Invalid directory magic 0x%x for %s", hdr.rdh_magic, path);
-		close(fd);
-		return;
-	}
-
-	if (hdr.rdh_version != REFFS_DISK_VERSION_1) {
-		LOG("Unsupported directory version %u for %s", hdr.rdh_version,
-		    path);
-		close(fd);
-		return;
-	}
-
-	uint64_t cookie_next;
-	if (read(fd, &cookie_next, sizeof(cookie_next)) !=
-	    sizeof(cookie_next)) {
-		close(fd);
-		return;
-	}
-	parent->rd_cookie_next = cookie_next;
-
-	uint64_t cookie;
-	uint64_t ino;
-	uint16_t name_len;
-	char name[256];
-
-	while (read(fd, &cookie, sizeof(cookie)) == sizeof(cookie)) {
-		if (read(fd, &ino, sizeof(ino)) != sizeof(ino))
-			break;
-		if (read(fd, &name_len, sizeof(name_len)) != sizeof(name_len))
-			break;
-		if (read(fd, name, name_len) != (ssize_t)name_len)
-			break;
-		name[name_len] = '\0';
-
-		struct reffs_dirent *rd = dirent_alloc(
-			parent, name, reffs_life_action_load, false);
-		if (rd) {
-			rd->rd_cookie = cookie;
-			struct inode *recovered = inode_alloc(sb, ino);
-			if (recovered) {
-				dirent_attach_inode(rd, recovered);
-				if (S_ISDIR(recovered->i_mode))
-					recover_directory_recursive(rd);
-				inode_active_put(recovered);
-			}
-			dirent_put(rd);
-		}
-	}
-	close(fd);
-}
-
 void reffs_fs_recover(struct super_block *sb)
 {
-	if (!sb || sb->sb_ops->type != REFFS_STORAGE_POSIX ||
-	    !sb->sb_backend_path)
+	if (!sb || !sb->sb_ops || !sb->sb_ops->recover)
 		return;
 
-	TRACE("Starting recovery from %s", sb->sb_backend_path);
+	TRACE("Starting recovery for sb %lu from %s", sb->sb_id,
+	      sb->sb_backend_path ? sb->sb_backend_path : "(none)");
 
-	/* Scan directory for all meta files to find the true max inode number */
-	char sb_path[PATH_MAX];
-	snprintf(sb_path, sizeof(sb_path), "%s/sb_%lu", sb->sb_backend_path,
-		 sb->sb_id);
-
-	DIR *dir = opendir(sb_path);
-	if (dir) {
-		struct dirent *de;
-		while ((de = readdir(dir)) != NULL) {
-			uint64_t ino;
-			if (sscanf(de->d_name, "ino_%lu.meta", &ino) == 1) {
-				if (ino >= sb->sb_next_ino)
-					sb->sb_next_ino = ino + 1;
-			} else if (strstr(de->d_name, ".tmp")) {
-				char tmp_path[PATH_MAX];
-				snprintf(tmp_path, sizeof(tmp_path), "%s/%s",
-					 sb_path, de->d_name);
-				TRACE("Deleting stray tmp file %s", tmp_path);
-				unlink(tmp_path);
-			}
-		}
-		closedir(dir);
-	}
-
-	// Root inode is 1
-	struct inode *root_inode = sb->sb_dirent->rd_inode;
-	if (sb->sb_ops->inode_alloc) {
-		sb->sb_ops->inode_alloc(root_inode);
-	}
-
-	recover_directory_recursive(sb->sb_dirent);
+	sb->sb_ops->recover(sb);
 
 	TRACE("Recovery complete. Max inode: %lu", sb->sb_next_ino);
 }
