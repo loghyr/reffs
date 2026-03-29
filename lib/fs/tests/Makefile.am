@@ -119,5 +119,9 @@ TESTS = \
 	sb_security_test \
 	compose_test
 
+if HAVE_ROCKSDB
+TESTS += rocksdb_test
+endif
+
 posix_force_load_SOURCES = posix_force_load.c
 posix_force_load_LDADD = $(LDADD)
