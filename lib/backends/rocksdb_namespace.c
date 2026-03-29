@@ -85,7 +85,8 @@ struct rocksdb_ns_ctx {
 	rocksdb_options_t *rn_opts;
 	rocksdb_writeoptions_t *rn_wopts;
 	rocksdb_readoptions_t *rn_ropts;
-	char *rn_path;
+	char *rn_path; /* namespace.rocksdb/ path */
+	char *rn_state_dir; /* parent state_dir for registry flatfile */
 };
 
 /* ------------------------------------------------------------------ */
@@ -157,21 +158,25 @@ out:
 /* ------------------------------------------------------------------ */
 
 /*
- * NOT_NOW_BROWN_COW: Direct RocksDB registry save/load.
+ * Registry save/load: delegate to flatfile sb_registry code.
  *
- * Full RocksDB registry persistence requires refactoring sb_registry.c
- * to accept a persist_ops, which is deferred.  For now, the namespace
- * DB handles server_state and client tables; registry returns -ENOSYS
- * so callers know persistence is not available on this path.
+ * NOT_NOW_BROWN_COW: Direct RocksDB registry persistence.
+ * Full RocksDB registry requires refactoring sb_registry.c to
+ * separate logic (walk sb list) from I/O (read/write entries).
+ * For now, the flatfile registry coexists with the namespace DB.
  */
-static int rns_registry_save(void *ctx __attribute__((unused)))
+static int rns_registry_save(void *ctx)
 {
-	return -ENOSYS;
+	struct rocksdb_ns_ctx *rn = ctx;
+
+	return sb_registry_save(rn->rn_state_dir);
 }
 
-static int rns_registry_load(void *ctx __attribute__((unused)))
+static int rns_registry_load(void *ctx)
 {
-	return -ENOENT;
+	struct rocksdb_ns_ctx *rn = ctx;
+
+	return sb_registry_load(rn->rn_state_dir);
 }
 
 static uint64_t rns_registry_alloc_id(void *ctx)
@@ -373,6 +378,7 @@ static void rns_fini(void *ctx)
 	if (rn->rn_opts)
 		rocksdb_options_destroy(rn->rn_opts);
 
+	free(rn->rn_state_dir);
 	free(rn->rn_path);
 	free(rn);
 }
@@ -419,6 +425,13 @@ int rocksdb_namespace_init(const char *state_dir,
 
 	rn->rn_path = strdup(db_path);
 	if (!rn->rn_path) {
+		free(rn);
+		return -ENOMEM;
+	}
+
+	rn->rn_state_dir = strdup(state_dir);
+	if (!rn->rn_state_dir) {
+		free(rn->rn_path);
 		free(rn);
 		return -ENOMEM;
 	}
