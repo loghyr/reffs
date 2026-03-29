@@ -40,6 +40,8 @@
 #include "reffs/fs.h"
 #include "reffs/probe1.h"
 #include "reffs/server.h"
+#include "reffs/super_block.h"
+#include "reffs/sb_registry.h"
 #include "reffs/dstore.h"
 #include "reffs/client.h"
 #include "reffs/trace/rpc.h"
@@ -648,6 +650,295 @@ static int probe1_op_layout_errors(struct rpc_trans *rt)
 	return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Superblock management ops                                           */
+/* ------------------------------------------------------------------ */
+
+static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
+{
+	psi->psi_id = sb->sb_id;
+	psi->psi_path = strdup(sb->sb_path ? sb->sb_path : "");
+	psi->psi_state = (probe_sb_lifecycle1)sb->sb_lifecycle;
+	psi->psi_storage_type = (probe_storage_type1)sb->sb_storage_type;
+	psi->psi_bytes_max = sb->sb_bytes_max;
+	psi->psi_bytes_used =
+		__atomic_load_n(&sb->sb_bytes_used, __ATOMIC_RELAXED);
+	psi->psi_inodes_max = sb->sb_inodes_max;
+	psi->psi_inodes_used =
+		__atomic_load_n(&sb->sb_inodes_used, __ATOMIC_RELAXED);
+	psi->psi_flavors.psi_flavors_len = sb->sb_nflavors;
+	if (sb->sb_nflavors > 0) {
+		psi->psi_flavors.psi_flavors_val =
+			calloc(sb->sb_nflavors, sizeof(probe_auth_flavor1));
+		if (psi->psi_flavors.psi_flavors_val) {
+			for (unsigned int i = 0; i < sb->sb_nflavors; i++)
+				psi->psi_flavors.psi_flavors_val[i] =
+					(probe_auth_flavor1)sb->sb_flavors[i];
+		}
+	}
+}
+
+static int probe1_op_sb_list(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_LIST1res *res = ph->ph_res;
+	SB_LIST1resok *resok = &res->SB_LIST1res_u.slr_resok;
+	struct cds_list_head *sb_list = super_block_list_head();
+	struct super_block *sb;
+
+	/* Count sbs. */
+	uint32_t count = 0;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(sb, sb_list, sb_link)
+		count++;
+	rcu_read_unlock();
+
+	if (count == 0)
+		return 0;
+
+	resok->slr_sbs.slr_sbs_val = calloc(count, sizeof(probe_sb_info1));
+	if (!resok->slr_sbs.slr_sbs_val) {
+		res->slr_status = PROBE1ERR_NOMEM;
+		return res->slr_status;
+	}
+
+	uint32_t i = 0;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
+		if (i >= count)
+			break;
+		fill_sb_info(&resok->slr_sbs.slr_sbs_val[i], sb);
+		i++;
+	}
+	rcu_read_unlock();
+
+	resok->slr_sbs.slr_sbs_len = i;
+	return 0;
+}
+
+static int probe1_op_sb_create(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_CREATE1args *args = ph->ph_args;
+	SB_CREATE1res *res = ph->ph_res;
+	probe_sb_info1 *resok = &res->SB_CREATE1res_u.scr_resok;
+
+	/* Check for duplicate id. */
+	struct super_block *existing = super_block_find(args->sca_id);
+
+	if (existing) {
+		super_block_put(existing);
+		res->scr_status = PROBE1ERR_EXIST;
+		return res->scr_status;
+	}
+
+	/* Ensure mount path exists (mkdir -p). */
+	int ret = reffs_fs_mkdir_p(args->sca_path, 0755);
+
+	if (ret && ret != -EEXIST) {
+		res->scr_status = PROBE1ERR_IO;
+		return res->scr_status;
+	}
+
+	struct super_block *sb = super_block_alloc(
+		args->sca_id, args->sca_path,
+		(enum reffs_storage_type)args->sca_storage_type, NULL);
+	if (!sb) {
+		res->scr_status = PROBE1ERR_NOMEM;
+		return res->scr_status;
+	}
+
+	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
+	if (ret) {
+		super_block_put(sb);
+		res->scr_status = PROBE1ERR_IO;
+		return res->scr_status;
+	}
+
+	/* Persist the registry. */
+	struct server_state *ss = server_state_find();
+
+	if (ss && ss->ss_state_dir)
+		sb_registry_save(ss->ss_state_dir);
+	server_state_put(ss);
+
+	fill_sb_info(resok, sb);
+	super_block_put(sb);
+	return 0;
+}
+
+static int probe1_op_sb_mount(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_MOUNT1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->sma_id);
+
+	if (!sb) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	int ret = super_block_mount(sb, args->sma_path);
+
+	super_block_put(sb);
+
+	if (ret) {
+		switch (ret) {
+		case -EBUSY:
+			*res = PROBE1ERR_BUSY;
+			break;
+		case -ENOENT:
+			*res = PROBE1ERR_NOENT;
+			break;
+		case -ENOTDIR:
+			*res = PROBE1ERR_NOTDIR;
+			break;
+		default:
+			*res = PROBE1ERR_INVAL;
+			break;
+		}
+		return *res;
+	}
+
+	struct server_state *ss = server_state_find();
+
+	if (ss && ss->ss_state_dir)
+		sb_registry_save(ss->ss_state_dir);
+	server_state_put(ss);
+
+	return 0;
+}
+
+static int probe1_op_sb_unmount(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_UNMOUNT1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->sua_id);
+
+	if (!sb) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	int ret = super_block_unmount(sb);
+
+	super_block_put(sb);
+
+	if (ret) {
+		*res = (ret == -EBUSY) ? PROBE1ERR_BUSY :
+		       (ret == -EPERM) ? PROBE1ERR_PERM :
+					 PROBE1ERR_INVAL;
+		return *res;
+	}
+
+	struct server_state *ss = server_state_find();
+
+	if (ss && ss->ss_state_dir)
+		sb_registry_save(ss->ss_state_dir);
+	server_state_put(ss);
+
+	return 0;
+}
+
+static int probe1_op_sb_destroy(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_DESTROY1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->sda_id);
+
+	if (!sb) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	int ret = super_block_destroy(sb);
+
+	if (ret) {
+		super_block_put(sb);
+		*res = (ret == -EBUSY) ? PROBE1ERR_BUSY :
+		       (ret == -EPERM) ? PROBE1ERR_PERM :
+					 PROBE1ERR_INVAL;
+		return *res;
+	}
+
+	super_block_release_dirents(sb);
+	super_block_put(sb);
+
+	struct server_state *ss = server_state_find();
+
+	if (ss && ss->ss_state_dir)
+		sb_registry_save(ss->ss_state_dir);
+	server_state_put(ss);
+
+	return 0;
+}
+
+static int probe1_op_sb_get(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_GET1args *args = ph->ph_args;
+	SB_GET1res *res = ph->ph_res;
+	probe_sb_info1 *resok = &res->SB_GET1res_u.sgr_resok;
+
+	struct super_block *sb = super_block_find(args->sga_id);
+
+	if (!sb) {
+		res->sgr_status = PROBE1ERR_NOENT;
+		return res->sgr_status;
+	}
+
+	fill_sb_info(resok, sb);
+	super_block_put(sb);
+	return 0;
+}
+
+static int probe1_op_sb_set_flavors(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_FLAVORS1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->sfa_id);
+
+	if (!sb) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	enum reffs_auth_flavor flavors[REFFS_CONFIG_MAX_FLAVORS];
+	unsigned int n = args->sfa_flavors.sfa_flavors_len;
+
+	if (n > REFFS_CONFIG_MAX_FLAVORS)
+		n = REFFS_CONFIG_MAX_FLAVORS;
+
+	for (unsigned int i = 0; i < n; i++)
+		flavors[i] = (enum reffs_auth_flavor)
+				     args->sfa_flavors.sfa_flavors_val[i];
+
+	super_block_set_flavors(sb, flavors, n);
+	super_block_put(sb);
+	return 0;
+}
+
+static int probe1_op_sb_lint_flavors(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_LINT_FLAVORS1res *res = ph->ph_res;
+	SB_LINT_FLAVORS1resok *resok = &res->SB_LINT_FLAVORS1res_u.lfr_resok;
+
+	resok->lfr_warnings = super_block_lint_flavors();
+	/* NOT_NOW_BROWN_COW: collect lint messages into lfr_messages. */
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -686,6 +977,28 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, LAYOUT_ERRORS, NULL, NULL,
 			   xdr_LAYOUT_ERRORS1res, LAYOUT_ERRORS1res,
 			   probe1_op_layout_errors),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_LIST, NULL, NULL, xdr_SB_LIST1res,
+			   SB_LIST1res, probe1_op_sb_list),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_CREATE, xdr_SB_CREATE1args,
+			   SB_CREATE1args, xdr_SB_CREATE1res, SB_CREATE1res,
+			   probe1_op_sb_create),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_MOUNT, xdr_SB_MOUNT1args,
+			   SB_MOUNT1args, xdr_probe_stat1, probe_stat1,
+			   probe1_op_sb_mount),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_UNMOUNT, xdr_SB_UNMOUNT1args,
+			   SB_UNMOUNT1args, xdr_probe_stat1, probe_stat1,
+			   probe1_op_sb_unmount),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_DESTROY, xdr_SB_DESTROY1args,
+			   SB_DESTROY1args, xdr_probe_stat1, probe_stat1,
+			   probe1_op_sb_destroy),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_GET, xdr_SB_GET1args, SB_GET1args,
+			   xdr_SB_GET1res, SB_GET1res, probe1_op_sb_get),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_SET_FLAVORS, xdr_SB_SET_FLAVORS1args,
+			   SB_SET_FLAVORS1args, xdr_probe_stat1, probe_stat1,
+			   probe1_op_sb_set_flavors),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_LINT_FLAVORS, NULL, NULL,
+			   xdr_SB_LINT_FLAVORS1res, SB_LINT_FLAVORS1res,
+			   probe1_op_sb_lint_flavors),
 };
 
 static struct rpc_program_handler *probe1_handler;
@@ -721,6 +1034,20 @@ int probe1_protocol_register(void)
 
 	static_assert((enum op_type)PROBE1_OP_TYPE_ALL == OP_TYPE_ALL,
 		      "Enum values are out of sync between header and XDR");
+
+	/* SB management enum sync checks. */
+	static_assert((int)PROBE1_STORAGE_RAM == (int)REFFS_STORAGE_RAM,
+		      "REFFS_STORAGE_RAM out of sync");
+	static_assert((int)PROBE1_STORAGE_POSIX == (int)REFFS_STORAGE_POSIX,
+		      "REFFS_STORAGE_POSIX out of sync");
+	static_assert((int)PROBE1_SB_CREATED == (int)SB_CREATED,
+		      "SB_CREATED out of sync");
+	static_assert((int)PROBE1_SB_DESTROYED == (int)SB_DESTROYED,
+		      "SB_DESTROYED out of sync");
+	static_assert((int)PROBE1_AUTH_SYS == (int)REFFS_AUTH_SYS,
+		      "REFFS_AUTH_SYS out of sync");
+	static_assert((int)PROBE1_AUTH_KRB5 == (int)REFFS_AUTH_KRB5,
+		      "REFFS_AUTH_KRB5 out of sync");
 
 	static_assert(PROBE1_IO_CONTEXT_ENTRY_STATE_ACTIVE ==
 			      (uint64_t)IO_CONTEXT_ENTRY_STATE_ACTIVE,
