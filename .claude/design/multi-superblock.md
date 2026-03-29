@@ -311,6 +311,78 @@ test_lint_flavors_clean             — consistent config, no warnings
 14. **Phase 4 unit tests** — security per-sb tests
 15. **Root pseudo-export** — auto-generate with all flavors
 
+## LAYOUTGET Per-Export (deferred)
+
+`nfs4_op_layoutget()` currently uses the global layout_width and
+dstore set.  Per-export layout policy would add `sb_layout_type`
+and `sb_dstore_ids` to `struct super_block`.  If
+`sb_layout_type == LAYOUT4_NONE`, return NFS4ERR_LAYOUTUNAVAILABLE.
+
+GETDEVICEINFO is already dstore-based and export-independent —
+no change needed.
+
+NOT_NOW_BROWN_COW: not blocking for the current milestone.
+Requires per-sb dstore set configuration via probe.
+
+## NFSv3 MOUNT Per-Export
+
+NFSv3 MOUNT returns the root FH of the requested export path.
+`find_matching_directory_entry()` walks the namespace to the
+correct super_block.  The MOUNT response `auth_flavors` list
+should come from the matched export's `sb_flavors` (currently
+uses global `ss_flavors`).
+
+NOT_NOW_BROWN_COW: needs `mount3_server.c` update.
+
+## Interaction with Identity
+
+Each export can have different identity requirements:
+
+- A krb5 export needs name-aware identity (owner strings with
+  `user@domain`)
+- A sys-only export works fine with numeric uid/gid
+- A TLS export is AUTH_SYS over encrypted transport — numeric
+  uid/gid
+
+The identity system (design/identity.md) handles this naturally:
+the `reffs_id` type is stored on the inode regardless of which
+export it was created through.  Owner string conversion
+(`reffs_id` ↔ `user@domain` or numeric) is a presentation-layer
+concern handled in GETATTR/SETATTR, not a storage concern.
+
+## Interaction with pNFS Flex Files + Kerberos
+
+Flex Files layouts over krb5-authenticated DSes is an unsolved
+problem in the NFS community.  The MDS issues a layout containing
+DS addresses + filehandles, but the client needs credentials to
+access the DS.  With AUTH_SYS, the layout carries synthetic
+uid/gid (fencing creds).  With krb5, the client would need a
+service ticket for each DS — but the MDS can't grant those.
+
+Options (all deferred, none implemented anywhere):
+
+1. **Proxy tickets**: MDS uses constrained delegation to obtain
+   DS service tickets on behalf of the client.  Requires AD
+   trust relationships.
+2. **Session-bound tokens**: MDS issues opaque tokens the DS
+   validates via a back-channel to the MDS.  Proprietary.
+3. **AUTH_SYS fallback for DS I/O**: client uses krb5 to MDS
+   but AUTH_SYS (with fencing creds) to DSes.  The DS trusts
+   the MDS, not the client.  This is what current implementations
+   do in practice.
+
+reffs uses option 3 today.  The krb5 export authenticates the
+client to the MDS; DS I/O uses AUTH_SYS with synthetic fencing
+credentials from the layout.  This is secure as long as the DS
+network is trusted (same DC, VLAN isolation, or TLS to DSes).
+
+## Non-Goals (for now)
+
+- Cross-export hard links (XDEV guards prevent this)
+- Export-level quotas
+- Per-export ACL policy (mode bits vs NFSv4 ACLs)
+- Dynamic export creation without restart (solved: probe protocol)
+
 ## Key Files
 
 | File | Change |

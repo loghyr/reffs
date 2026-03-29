@@ -23,7 +23,6 @@ Design documents:
 @.claude/design/erasure-coding.md
 @.claude/design/terminology.md
 @.claude/design/identity.md
-@.claude/design/multi-export.md
 @.claude/design/export-management.md
 @.claude/design/probe-sb-management.md
 @.claude/design/sb-registry-v3.md
