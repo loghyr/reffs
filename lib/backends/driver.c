@@ -34,9 +34,16 @@ extern const struct reffs_storage_ops posix_storage_ops;
  * for POSIX, delete RocksDB keys for RocksDB).  The composer wraps it
  * with data-side cleanup.
  */
+#ifdef HAVE_ROCKSDB
+extern const struct reffs_storage_ops rocksdb_storage_ops;
+#endif
+
 static const struct reffs_storage_ops *md_templates[] = {
 	[REFFS_MD_RAM] = &ram_storage_ops,
 	[REFFS_MD_POSIX] = &posix_storage_ops,
+#ifdef HAVE_ROCKSDB
+	[REFFS_MD_ROCKSDB] = &rocksdb_storage_ops,
+#endif
 };
 
 /* ------------------------------------------------------------------ */

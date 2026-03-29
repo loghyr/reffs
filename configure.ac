@@ -393,6 +393,18 @@ PKG_CHECK_MODULES([NFSIDMAP], [libnfsidmap], [
 AC_SUBST([NFSIDMAP_CFLAGS])
 AC_SUBST([NFSIDMAP_LIBS])
 
+# Check for RocksDB (optional — RocksDB metadata backend)
+PKG_CHECK_MODULES([ROCKSDB], [rocksdb], [
+    AC_DEFINE([HAVE_ROCKSDB], [1], [Define if RocksDB is available])
+    have_rocksdb=yes
+], [
+    AC_MSG_WARN([RocksDB not found — RocksDB metadata backend disabled])
+    have_rocksdb=no
+])
+AC_SUBST([ROCKSDB_CFLAGS])
+AC_SUBST([ROCKSDB_LIBS])
+AM_CONDITIONAL([HAVE_ROCKSDB], [test "x$have_rocksdb" = "xyes"])
+
 AC_ARG_ENABLE([debug],
     [AS_HELP_STRING([--enable-debug], [Enable Debugging])],
     [enable_debug=$enableval], [enable_debug=no])

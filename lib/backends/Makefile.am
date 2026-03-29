@@ -16,3 +16,9 @@ libbackends_la_SOURCES = \
 	posix.c \
 	posix_data.c \
 	server_persist.c
+
+if HAVE_ROCKSDB
+libbackends_la_SOURCES += rocksdb.c
+libbackends_la_CFLAGS = $(AM_CFLAGS) $(ROCKSDB_CFLAGS)
+libbackends_la_LIBADD = $(ROCKSDB_LIBS)
+endif
