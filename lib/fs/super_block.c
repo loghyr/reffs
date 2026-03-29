@@ -727,3 +727,56 @@ int super_block_lint_flavors(void)
 
 	return warnings;
 }
+
+/*
+ * Check whether a path/prefix is a proper parent of child.
+ * "/foo" is a prefix of "/foo/bar" (next char is '/').
+ * "/foo" is NOT a prefix of "/foobar" (next char is 'b').
+ * "/" is a prefix of everything but we exempt root from checks.
+ */
+static bool is_path_prefix(const char *parent, const char *child)
+{
+	size_t len = strlen(parent);
+
+	if (strcmp(parent, "/") == 0)
+		return true;
+	return strncmp(parent, child, len) == 0 &&
+	       (child[len] == '/' || child[len] == '\0');
+}
+
+int super_block_check_path_conflict(const char *path)
+{
+	struct super_block *sb;
+
+	if (!path)
+		return -EINVAL;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(sb, &super_block_list, sb_link) {
+		/* Root is the pseudo-root — prefix of everything by design. */
+		if (sb->sb_id == SUPER_BLOCK_ROOT_ID)
+			continue;
+		if (sb->sb_lifecycle != SB_MOUNTED)
+			continue;
+		if (!sb->sb_path)
+			continue;
+
+		/* Exact match: same path already mounted. */
+		if (strcmp(sb->sb_path, path) == 0) {
+			rcu_read_unlock();
+			return -EEXIST;
+		}
+
+		/*
+		 * New path is a parent of an existing mount.
+		 * This would change namespace traversal for the child.
+		 */
+		if (is_path_prefix(path, sb->sb_path)) {
+			rcu_read_unlock();
+			return -EBUSY;
+		}
+	}
+	rcu_read_unlock();
+
+	return 0;
+}

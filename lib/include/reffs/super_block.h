@@ -173,4 +173,11 @@ void super_block_set_flavors(struct super_block *sb,
  */
 int super_block_lint_flavors(void);
 
+/*
+ * Check for path conflicts with existing mounted superblocks.
+ * Returns 0 if no conflict, -EEXIST if the path is already mounted,
+ * -EBUSY if the path is a parent of an existing mount.
+ */
+int super_block_check_path_conflict(const char *path);
+
 #endif /* _REFFS_SB_H */

@@ -114,6 +114,7 @@ TESTS = \
 	sb_lifecycle_test \
 	sb_mount_crossing_test \
 	sb_mkdir_p_test \
+	sb_path_conflict_test \
 	sb_persistence_test \
 	sb_security_test
 

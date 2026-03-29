@@ -849,6 +849,15 @@ static int probe1_op_sb_create(struct rpc_trans *rt)
 	probe_sb_info1 *resok = &res->SB_CREATE1res_u.scr_resok;
 	int ret;
 
+	/* Check for path conflicts with existing mounts. */
+	ret = super_block_check_path_conflict(args->sca_path);
+	if (ret) {
+		res->scr_status = (ret == -EEXIST) ? PROBE1ERR_EXIST :
+				  (ret == -EBUSY)  ? PROBE1ERR_BUSY :
+						     PROBE1ERR_INVAL;
+		return res->scr_status;
+	}
+
 	struct server_state *ss = server_state_find();
 
 	/* Allocate a unique, monotonic sb_id. */
@@ -902,6 +911,16 @@ static int probe1_op_sb_mount(struct rpc_trans *rt)
 	SB_MOUNT1args *args = ph->ph_args;
 	probe_stat1 *res = ph->ph_res;
 
+	/* Check for path conflicts before mounting. */
+	int ret = super_block_check_path_conflict(args->sma_path);
+
+	if (ret) {
+		*res = (ret == -EEXIST) ? PROBE1ERR_EXIST :
+		       (ret == -EBUSY)	? PROBE1ERR_BUSY :
+					  PROBE1ERR_INVAL;
+		return *res;
+	}
+
 	struct super_block *sb = super_block_find(args->sma_id);
 
 	if (!sb) {
@@ -909,7 +928,7 @@ static int probe1_op_sb_mount(struct rpc_trans *rt)
 		return *res;
 	}
 
-	int ret = super_block_mount(sb, args->sma_path);
+	ret = super_block_mount(sb, args->sma_path);
 
 	super_block_put(sb);
 
