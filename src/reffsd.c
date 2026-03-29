@@ -406,11 +406,14 @@ int main(int argc, char *argv[])
 	 * [[export]] config entries beyond index 0 are ignored — use
 	 * reffs-probe.py sb-create to manage exports at runtime.
 	 */
-	if (ss->ss_state_dir) {
-		int rret = sb_registry_load(ss->ss_state_dir);
+	if (ss->ss_persist_ops) {
+		int rret =
+			ss->ss_persist_ops->registry_load(ss->ss_persist_ctx);
 		if (rret && rret != -ENOENT)
-			LOG("sb_registry_load: %d", rret);
-		sb_registry_detect_orphans(ss->ss_state_dir);
+			LOG("registry_load: %d", rret);
+		/* Orphan detection still uses state_dir directly */
+		if (ss->ss_state_dir)
+			sb_registry_detect_orphans(ss->ss_state_dir);
 	}
 
 	/*

@@ -20,6 +20,7 @@
 #include "reffs/rcu.h"
 #include "reffs/client.h"
 #include "reffs/client_persist.h"
+#include "reffs/server.h"
 #include "nfs4/trace/nfs4.h"
 #include "reffs/time.h"
 #include "nfs4/stateid.h"
@@ -143,7 +144,7 @@ static int find_owner_cb(const struct client_identity_record *cir, void *arg)
 	return 1; /* stop iteration */
 }
 
-struct nfs4_client *nfs4_client_find_by_owner(const char *state_dir,
+struct nfs4_client *nfs4_client_find_by_owner(struct server_state *ss,
 					      uint16_t boot_seq,
 					      const client_owner4 *owner,
 					      uint32_t *out_slot)
@@ -160,7 +161,8 @@ struct nfs4_client *nfs4_client_find_by_owner(const char *state_dir,
 	cb_arg.owner = owner;
 	cb_arg.slot = UINT32_MAX;
 
-	ret = client_identity_load(state_dir, find_owner_cb, &cb_arg);
+	ret = ss->ss_persist_ops->client_identity_load(ss->ss_persist_ctx,
+						       find_owner_cb, &cb_arg);
 	if (ret < 0)
 		return NULL;
 	if (cb_arg.slot == UINT32_MAX)
@@ -169,8 +171,8 @@ struct nfs4_client *nfs4_client_find_by_owner(const char *state_dir,
 	if (out_slot)
 		*out_slot = cb_arg.slot;
 
-	ret = client_incarnation_load(state_dir, incs, CLIENT_INCARNATION_MAX,
-				      &nincs);
+	ret = ss->ss_persist_ops->client_incarnation_load(
+		ss->ss_persist_ctx, incs, CLIENT_INCARNATION_MAX, &nincs);
 	if (ret < 0)
 		return NULL;
 

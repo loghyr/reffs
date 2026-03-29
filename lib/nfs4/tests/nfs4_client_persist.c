@@ -372,7 +372,7 @@ START_TEST(test_find_by_owner_not_found)
 	make_owner(&owner, "no-such-client", owner_buf, sizeof(owner_buf));
 
 	struct nfs4_client *nc = nfs4_client_find_by_owner(
-		g_ss->ss_state_dir, server_boot_seq(g_ss), &owner, NULL);
+		g_ss, server_boot_seq(g_ss), &owner, NULL);
 	ck_assert_ptr_null(nc);
 }
 END_TEST
@@ -394,7 +394,7 @@ START_TEST(test_find_by_owner_found)
 	ck_assert_ptr_nonnull(nc1);
 
 	struct nfs4_client *nc2 = nfs4_client_find_by_owner(
-		g_ss->ss_state_dir, server_boot_seq(g_ss), &owner, NULL);
+		g_ss, server_boot_seq(g_ss), &owner, NULL);
 	ck_assert_ptr_nonnull(nc2);
 	ck_assert_ptr_eq(nc1, nc2);
 
@@ -427,7 +427,7 @@ START_TEST(test_find_by_owner_after_expire)
 	nfs4_client_expire(g_ss, nc);
 
 	struct nfs4_client *ghost = nfs4_client_find_by_owner(
-		g_ss->ss_state_dir, server_boot_seq(g_ss), &owner, NULL);
+		g_ss, server_boot_seq(g_ss), &owner, NULL);
 	ck_assert_ptr_null(ghost);
 }
 END_TEST
@@ -618,7 +618,7 @@ START_TEST(test_alloc_clid_inuse)
 
 	/* nc1 must still be findable via disk. */
 	struct nfs4_client *found = nfs4_client_find_by_owner(
-		g_ss->ss_state_dir, server_boot_seq(g_ss), &owner, NULL);
+		g_ss, server_boot_seq(g_ss), &owner, NULL);
 	ck_assert_ptr_nonnull(found);
 	nfs4_client_put(found);
 
@@ -666,7 +666,7 @@ START_TEST(test_expire_incarnation_before_put)
 
 	/* find_by_owner returns NULL (slot absent from incarnations). */
 	struct nfs4_client *ghost = nfs4_client_find_by_owner(
-		g_ss->ss_state_dir, server_boot_seq(g_ss), &owner, NULL);
+		g_ss, server_boot_seq(g_ss), &owner, NULL);
 	ck_assert_ptr_null(ghost);
 }
 END_TEST
@@ -697,9 +697,9 @@ START_TEST(test_two_clients_coexist)
 	ck_assert_ptr_ne(nc1, nc2);
 
 	struct nfs4_client *f1 = nfs4_client_find_by_owner(
-		g_ss->ss_state_dir, server_boot_seq(g_ss), &owner1, NULL);
+		g_ss, server_boot_seq(g_ss), &owner1, NULL);
 	struct nfs4_client *f2 = nfs4_client_find_by_owner(
-		g_ss->ss_state_dir, server_boot_seq(g_ss), &owner2, NULL);
+		g_ss, server_boot_seq(g_ss), &owner2, NULL);
 
 	ck_assert_ptr_eq(f1, nc1);
 	ck_assert_ptr_eq(f2, nc2);

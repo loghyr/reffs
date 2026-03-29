@@ -11,6 +11,8 @@
 #include "reffs/client.h"
 #include "reffs/nfs4_stats.h"
 
+struct server_state;
+
 /*
  * nfs4_client - NFS4 identity wrapper around the fs-layer struct client.
  *
@@ -109,7 +111,7 @@ void nfs4_client_put(struct nfs4_client *nc);
  * NULL but *out_slot != UINT32_MAX, the ownerid is known but the client has
  * not yet reconnected this boot (reclaiming client).
  */
-struct nfs4_client *nfs4_client_find_by_owner(const char *state_dir,
+struct nfs4_client *nfs4_client_find_by_owner(struct server_state *ss,
 					      uint16_t boot_seq,
 					      const client_owner4 *owner,
 					      uint32_t *out_slot);

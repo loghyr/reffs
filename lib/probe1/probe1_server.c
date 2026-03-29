@@ -936,7 +936,9 @@ static int probe1_op_sb_create(struct rpc_trans *rt)
 	struct server_state *ss = server_state_find();
 
 	/* Allocate a unique, monotonic sb_id. */
-	uint64_t new_id = sb_registry_alloc_id(ss ? ss->ss_state_dir : NULL);
+	uint64_t new_id =
+		ss ? ss->ss_persist_ops->registry_alloc_id(ss->ss_persist_ctx) :
+		     0;
 	if (new_id == 0) {
 		server_state_put(ss);
 		res->scr_status = PROBE1ERR_IO;
@@ -971,8 +973,8 @@ static int probe1_op_sb_create(struct rpc_trans *rt)
 
 	/* Persist the registry. */
 
-	if (ss && ss->ss_state_dir)
-		sb_registry_save(ss->ss_state_dir);
+	if (ss && ss->ss_persist_ops)
+		ss->ss_persist_ops->registry_save(ss->ss_persist_ctx);
 	server_state_put(ss);
 
 	fill_sb_info(resok, sb);
@@ -1027,8 +1029,8 @@ static int probe1_op_sb_mount(struct rpc_trans *rt)
 
 	struct server_state *ss = server_state_find();
 
-	if (ss && ss->ss_state_dir)
-		sb_registry_save(ss->ss_state_dir);
+	if (ss && ss->ss_persist_ops)
+		ss->ss_persist_ops->registry_save(ss->ss_persist_ctx);
 	server_state_put(ss);
 
 	return 0;
@@ -1060,8 +1062,8 @@ static int probe1_op_sb_unmount(struct rpc_trans *rt)
 
 	struct server_state *ss = server_state_find();
 
-	if (ss && ss->ss_state_dir)
-		sb_registry_save(ss->ss_state_dir);
+	if (ss && ss->ss_persist_ops)
+		ss->ss_persist_ops->registry_save(ss->ss_persist_ctx);
 	server_state_put(ss);
 
 	return 0;
@@ -1095,8 +1097,8 @@ static int probe1_op_sb_destroy(struct rpc_trans *rt)
 
 	struct server_state *ss = server_state_find();
 
-	if (ss && ss->ss_state_dir)
-		sb_registry_save(ss->ss_state_dir);
+	if (ss && ss->ss_persist_ops)
+		ss->ss_persist_ops->registry_save(ss->ss_persist_ctx);
 	server_state_put(ss);
 
 	return 0;

@@ -149,8 +149,8 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 	 * Disk IO here is expected; EXCHANGE_ID is not a fast path.
 	 */
 	uint32_t prev_slot = UINT32_MAX;
-	nc = nfs4_client_find_by_owner(ss->ss_state_dir, server_boot_seq(ss),
-				       owner, &prev_slot);
+	nc = nfs4_client_find_by_owner(ss, server_boot_seq(ss), owner,
+				       &prev_slot);
 	if (!nc) {
 		bool is_reclaiming = (prev_slot != UINT32_MAX);
 
