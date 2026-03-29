@@ -660,3 +660,65 @@ struct super_block *super_block_find_mounted_on(struct reffs_dirent *de)
 
 	return sb;
 }
+
+void super_block_set_flavors(struct super_block *sb,
+			     const enum reffs_auth_flavor *flavors,
+			     unsigned int nflavors)
+{
+	if (!sb)
+		return;
+
+	unsigned int n = nflavors;
+
+	if (n > REFFS_CONFIG_MAX_FLAVORS)
+		n = REFFS_CONFIG_MAX_FLAVORS;
+
+	if (n > 0 && flavors)
+		memcpy(sb->sb_flavors, flavors, n * sizeof(sb->sb_flavors[0]));
+	sb->sb_nflavors = n;
+}
+
+int super_block_lint_flavors(void)
+{
+	struct super_block *sb;
+	int warnings = 0;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(sb, &super_block_list, sb_link) {
+		if (sb->sb_id == SUPER_BLOCK_ROOT_ID)
+			continue;
+		if (sb->sb_lifecycle != SB_MOUNTED)
+			continue;
+		if (!sb->sb_parent_sb)
+			continue;
+
+		/*
+		 * Check that every flavor in this child sb is also
+		 * present in the parent sb's flavor list.
+		 */
+		struct super_block *parent = sb->sb_parent_sb;
+
+		for (unsigned int i = 0; i < sb->sb_nflavors; i++) {
+			int found = 0;
+
+			for (unsigned int j = 0; j < parent->sb_nflavors; j++) {
+				if (sb->sb_flavors[i] ==
+				    parent->sb_flavors[j]) {
+					found = 1;
+					break;
+				}
+			}
+			if (!found) {
+				LOG("lint-flavors: sb %lu requires flavor %u "
+				    "not in parent sb %lu",
+				    (unsigned long)sb->sb_id,
+				    (unsigned)sb->sb_flavors[i],
+				    (unsigned long)parent->sb_id);
+				warnings++;
+			}
+		}
+	}
+	rcu_read_unlock();
+
+	return warnings;
+}

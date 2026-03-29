@@ -17,6 +17,7 @@
 #include "reffs/dirent.h"
 struct inode; /* forward decl for sb_root_inode */
 #include "reffs/nfs4_stats.h"
+#include "reffs/settings.h"
 #include "reffs/types.h"
 #include "reffs/backend.h"
 
@@ -96,6 +97,14 @@ struct super_block {
 	struct reffs_dirent *sb_mount_dirent;
 	struct super_block *sb_parent_sb;
 
+	/*
+	 * Per-sb security flavors.  Each export has its own list;
+	 * nfs4_check_wrongsec uses c_curr_sb->sb_flavors.
+	 * Root sb (sb_id=1) starts with ALL flavors.
+	 */
+	enum reffs_auth_flavor sb_flavors[REFFS_CONFIG_MAX_FLAVORS];
+	unsigned int sb_nflavors;
+
 #define SB_IN_LIST (1ULL << 0)
 #define SB_IS_READ_ONLY (1ULL << 1)
 	uint64_t sb_state;
@@ -148,5 +157,20 @@ const char *super_block_lifecycle_name(enum sb_lifecycle state);
  * Caller must super_block_put() when done.
  */
 struct super_block *super_block_find_mounted_on(struct reffs_dirent *de);
+
+/*
+ * Set per-sb security flavors.
+ * Copies the flavor array into sb->sb_flavors.
+ */
+void super_block_set_flavors(struct super_block *sb,
+			     const enum reffs_auth_flavor *flavors,
+			     unsigned int nflavors);
+
+/*
+ * Lint flavor consistency across the sb tree.
+ * Warns when a child sb requires a flavor that no ancestor supports.
+ * Returns the number of warnings (>= 0).
+ */
+int super_block_lint_flavors(void);
 
 #endif /* _REFFS_SB_H */

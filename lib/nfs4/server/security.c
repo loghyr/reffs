@@ -64,9 +64,24 @@ static bool next_op_is_secinfo(struct compound *compound)
  */
 nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 {
-	struct server_state *ss = compound->c_server_state;
+	/*
+	 * Use per-sb flavors if the current sb has them configured;
+	 * otherwise fall back to the global server_state flavors.
+	 */
+	const enum reffs_auth_flavor *flavors;
+	unsigned int nflavors;
 
-	if (ss->ss_nflavors == 0)
+	if (compound->c_curr_sb && compound->c_curr_sb->sb_nflavors > 0) {
+		flavors = compound->c_curr_sb->sb_flavors;
+		nflavors = compound->c_curr_sb->sb_nflavors;
+	} else {
+		struct server_state *ss = compound->c_server_state;
+
+		flavors = ss->ss_flavors;
+		nflavors = ss->ss_nflavors;
+	}
+
+	if (nflavors == 0)
 		return NFS4_OK;
 
 	/* SECINFO lookahead: let the client discover flavors. */
@@ -77,8 +92,8 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 	struct conn_info *ci = io_conn_get(compound->c_rt->rt_fd);
 	bool client_tls = ci && ci->ci_tls_enabled;
 
-	for (unsigned int i = 0; i < ss->ss_nflavors; i++) {
-		switch (ss->ss_flavors[i]) {
+	for (unsigned int i = 0; i < nflavors; i++) {
+		switch (flavors[i]) {
 		case REFFS_AUTH_TLS:
 			/* TLS pseudo-flavor: AUTH_SYS over TLS transport. */
 			if (client_tls && client_flavor == AUTH_SYS)
@@ -101,7 +116,7 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 				return NFS4_OK;
 			break;
 		default:
-			if ((uint32_t)ss->ss_flavors[i] == client_flavor)
+			if ((uint32_t)flavors[i] == client_flavor)
 				return NFS4_OK;
 			break;
 		}
@@ -118,9 +133,22 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
  * Used by both SECINFO and SECINFO_NO_NAME.  Returns NFS4_OK on
  * success, NFS4ERR_DELAY on allocation failure.
  */
-nfsstat4 nfs4_build_secinfo(struct server_state *ss, SECINFO4resok *resok)
+nfsstat4 nfs4_build_secinfo(struct compound *compound, SECINFO4resok *resok)
 {
-	if (ss->ss_nflavors == 0) {
+	const enum reffs_auth_flavor *flavors;
+	unsigned int nflavors;
+
+	if (compound->c_curr_sb && compound->c_curr_sb->sb_nflavors > 0) {
+		flavors = compound->c_curr_sb->sb_flavors;
+		nflavors = compound->c_curr_sb->sb_nflavors;
+	} else {
+		struct server_state *ss = compound->c_server_state;
+
+		flavors = ss->ss_flavors;
+		nflavors = ss->ss_nflavors;
+	}
+
+	if (nflavors == 0) {
 		/* Fallback: advertise AUTH_SYS. */
 		resok->SECINFO4resok_val = calloc(1, sizeof(secinfo4));
 		if (!resok->SECINFO4resok_val)
@@ -133,9 +161,9 @@ nfsstat4 nfs4_build_secinfo(struct server_state *ss, SECINFO4resok *resok)
 	/*
 	 * Build a deduped flavor list.  TLS and SYS both map to
 	 * AUTH_SYS on the wire, so ["sys", "tls"] produces one entry.
-	 * Allocate worst-case (ss_nflavors) and trim.
+	 * Allocate worst-case (nflavors) and trim.
 	 */
-	unsigned int max = ss->ss_nflavors;
+	unsigned int max = nflavors;
 
 	resok->SECINFO4resok_val = calloc(max, sizeof(secinfo4));
 	if (!resok->SECINFO4resok_val)
@@ -148,7 +176,7 @@ nfsstat4 nfs4_build_secinfo(struct server_state *ss, SECINFO4resok *resok)
 		secinfo4 *si = &resok->SECINFO4resok_val[out];
 		rpc_Gss_Svc_t svc;
 
-		switch (ss->ss_flavors[i]) {
+		switch (flavors[i]) {
 		case REFFS_AUTH_SYS:
 		case REFFS_AUTH_TLS:
 			/*
