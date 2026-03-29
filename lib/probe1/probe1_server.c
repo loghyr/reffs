@@ -1057,7 +1057,9 @@ static int probe1_op_sb_lint_flavors(struct rpc_trans *rt)
 	SB_LINT_FLAVORS1resok *resok = &res->SB_LINT_FLAVORS1res_u.lfr_resok;
 
 	resok->lfr_warnings = super_block_lint_flavors();
-	/* NOT_NOW_BROWN_COW: collect lint messages into lfr_messages. */
+	/* NOT_NOW_BROWN_COW: collect lint messages into lfr_messages.
+	 * Must not be NULL — xdr_string calls strlen on it. */
+	resok->lfr_messages = strdup("");
 	return 0;
 }
 

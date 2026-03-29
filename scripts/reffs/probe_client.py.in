@@ -190,11 +190,15 @@ class Probe1Client(ProtocolClient):
 
     def sb_create(self, sb_id, path, storage_type=PROBE1_STORAGE_RAM):
         """Create a new superblock (allocate + root dirent + mkdir_p)."""
+        if isinstance(path, str):
+            path = path.encode('utf-8')
         args = SB_CREATE1args(sb_id, path, storage_type)
         return self.proc(PROBEPROC1_SB_CREATE, args, response_type='SB_CREATE1res')
 
     def sb_mount(self, sb_id, path):
         """Mount a superblock at the given path."""
+        if isinstance(path, str):
+            path = path.encode('utf-8')
         args = SB_MOUNT1args(sb_id, path)
         return self.proc(PROBEPROC1_SB_MOUNT, args, response_type='probe_stat1')
 

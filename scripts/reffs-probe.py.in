@@ -601,7 +601,7 @@ def format_sb_info(sb):
 def sb_list_cmd(client, args):
     res = client.sb_list()
     probe_error_handler(res.slr_status)
-    sbs = res.SB_LIST1res_u.slr_resok.slr_sbs
+    sbs = res.slr_resok.slr_sbs
     print(f"{'ID':<6} {'Path':<30} {'State':<12} {'Storage':<10} {'Flavors'}")
     print(f"{'--':<6} {'----':<30} {'-----':<12} {'-------':<10} {'-------'}")
     for sb in sbs:
@@ -614,7 +614,7 @@ def sb_create_cmd(client, args):
     storage = STORAGE_TYPE_NAME_TO_ID.get(args.storage, PROBE1_STORAGE_RAM)
     res = client.sb_create(args.id, args.path, storage)
     probe_error_handler(res.scr_status)
-    sb = res.SB_CREATE1res_u.scr_resok
+    sb = res.scr_resok
     path, state, stype, flavors = format_sb_info(sb)
     print(f"Created superblock {sb.psi_id}: path={path} state={state} storage={stype}")
 
@@ -640,7 +640,7 @@ def sb_destroy_cmd(client, args):
 def sb_get_cmd(client, args):
     res = client.sb_get(args.id)
     probe_error_handler(res.sgr_status)
-    sb = res.SB_GET1res_u.sgr_resok
+    sb = res.sgr_resok
     path, state, stype, flavors = format_sb_info(sb)
     flav_str = ','.join(flavors) if flavors else '(none)'
     print(f"Superblock {sb.psi_id}:")
@@ -662,7 +662,7 @@ def sb_set_flavors_cmd(client, args):
 def sb_lint_flavors_cmd(client, args):
     res = client.sb_lint_flavors()
     probe_error_handler(res.lfr_status)
-    resok = res.SB_LINT_FLAVORS1res_u.lfr_resok
+    resok = res.lfr_resok
     if resok.lfr_warnings == 0:
         print("Flavor consistency check: OK (0 warnings)")
     else:
