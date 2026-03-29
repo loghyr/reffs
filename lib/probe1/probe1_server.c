@@ -495,6 +495,48 @@ static int probe1_op_fs_usage(struct rpc_trans *rt)
 	resok->fur_used_files = stats.used_files;
 	resok->fur_free_files = stats.free_files;
 
+	/* Per-sb usage breakdown. */
+	struct cds_list_head *sb_list = super_block_list_head();
+	struct super_block *sb;
+	uint32_t sb_count = 0;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(sb, sb_list, sb_link)
+		sb_count++;
+	rcu_read_unlock();
+
+	if (sb_count > 0) {
+		resok->fur_per_sb.fur_per_sb_val =
+			calloc(sb_count, sizeof(probe_sb_fs_usage1));
+		if (resok->fur_per_sb.fur_per_sb_val) {
+			uint32_t i = 0;
+
+			rcu_read_lock();
+			cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
+				if (i >= sb_count)
+					break;
+				probe_sb_fs_usage1 *sfu =
+					&resok->fur_per_sb.fur_per_sb_val[i];
+				sfu->sfu_sb_id = sb->sb_id;
+				sfu->sfu_sb_path =
+					strdup(sb->sb_path ? sb->sb_path : "");
+				sfu->sfu_total_bytes = sb->sb_bytes_max;
+				sfu->sfu_used_bytes = __atomic_load_n(
+					&sb->sb_bytes_used, __ATOMIC_RELAXED);
+				sfu->sfu_free_bytes =
+					sb->sb_bytes_max - sfu->sfu_used_bytes;
+				sfu->sfu_total_files = sb->sb_inodes_max;
+				sfu->sfu_used_files = __atomic_load_n(
+					&sb->sb_inodes_used, __ATOMIC_RELAXED);
+				sfu->sfu_free_files =
+					sb->sb_inodes_max - sfu->sfu_used_files;
+				i++;
+			}
+			rcu_read_unlock();
+			resok->fur_per_sb.fur_per_sb_len = i;
+		}
+	}
+
 	return 0;
 }
 
@@ -539,6 +581,77 @@ static int probe1_op_nfs4_op_stats(struct rpc_trans *rt)
 	}
 
 	server_state_put(ss);
+
+	/* Per-sb NFS4 op stats breakdown. */
+	struct cds_list_head *sb_list = super_block_list_head();
+	struct super_block *sb;
+	uint32_t sb_count = 0;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(sb, sb_list, sb_link)
+		sb_count++;
+	rcu_read_unlock();
+
+	if (sb_count > 0) {
+		resok->nosr_per_sb.nosr_per_sb_val =
+			calloc(sb_count, sizeof(probe_sb_nfs4_op_stats1));
+		if (resok->nosr_per_sb.nosr_per_sb_val) {
+			uint32_t si = 0;
+
+			rcu_read_lock();
+			cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
+				if (si >= sb_count)
+					break;
+				probe_sb_nfs4_op_stats1 *sns =
+					&resok->nosr_per_sb.nosr_per_sb_val[si];
+				sns->sns_sb_id = sb->sb_id;
+				sns->sns_sb_path =
+					strdup(sb->sb_path ? sb->sb_path : "");
+				sns->sns_ops.sns_ops_val =
+					calloc(OP_MAX, sizeof(probe_nfs4_op1));
+				if (!sns->sns_ops.sns_ops_val) {
+					si++;
+					continue;
+				}
+				sns->sns_ops.sns_ops_len = OP_MAX;
+				for (unsigned int j = 0; j < OP_MAX; j++) {
+					probe_nfs4_op1 *pno =
+						&sns->sns_ops.sns_ops_val[j];
+					struct reffs_op_stats *s =
+						&sb->sb_nfs4_op_stats[j];
+					pno->pno_op = j;
+					pno->pno_name = strdup(
+						nfs4_op_name((nfs_opnum4)j));
+					pno->pno_calls = atomic_load_explicit(
+						&s->os_calls,
+						memory_order_relaxed);
+					pno->pno_errors = atomic_load_explicit(
+						&s->os_errors,
+						memory_order_relaxed);
+					pno->pno_bytes_in =
+						atomic_load_explicit(
+							&s->os_bytes_in,
+							memory_order_relaxed);
+					pno->pno_bytes_out =
+						atomic_load_explicit(
+							&s->os_bytes_out,
+							memory_order_relaxed);
+					pno->pno_duration_total =
+						atomic_load_explicit(
+							&s->os_duration_total,
+							memory_order_relaxed);
+					pno->pno_duration_max =
+						atomic_load_explicit(
+							&s->os_duration_max,
+							memory_order_relaxed);
+				}
+				si++;
+			}
+			rcu_read_unlock();
+			resok->nosr_per_sb.nosr_per_sb_len = si;
+		}
+	}
+
 	return 0;
 }
 
@@ -647,6 +760,15 @@ static int probe1_op_layout_errors(struct rpc_trans *rt)
 	}
 
 	server_state_put(ss);
+
+	/*
+	 * Per-sb layout errors — empty for now.
+	 * NOT_NOW_BROWN_COW: requires sb_layout_errors field in
+	 * struct super_block and recording in the LAYOUTERROR handler.
+	 */
+	resok->ler_sbs.ler_sbs_len = 0;
+	resok->ler_sbs.ler_sbs_val = NULL;
+
 	return 0;
 }
 
