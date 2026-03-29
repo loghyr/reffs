@@ -78,7 +78,8 @@ void reffs_test_setup_server(void)
 	ck_assert_ptr_nonnull(fs_test_state_dir);
 
 	fs_test_ss = server_state_init(fs_test_state_dir, 2049,
-				       reffs_text_case_sensitive);
+				       reffs_text_case_sensitive,
+				       REFFS_STORAGE_RAM);
 	ck_assert_ptr_nonnull(fs_test_ss);
 }
 

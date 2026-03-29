@@ -303,7 +303,8 @@ int main(int argc, char *argv[])
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
 
-	ss = server_state_init(cfg.state_file, port, case_mode);
+	ss = server_state_init(cfg.state_file, port, case_mode,
+			       (enum reffs_storage_type)cfg.backend_type);
 	if (!ss) {
 		return 1;
 	}

@@ -23,6 +23,6 @@ libbackends_la_SOURCES = \
 	server_persist.c
 
 if HAVE_ROCKSDB
-libbackends_la_SOURCES += rocksdb.c
+libbackends_la_SOURCES += rocksdb.c rocksdb_namespace.c
 libbackends_la_LIBADD = $(ROCKSDB_LIBS)
 endif

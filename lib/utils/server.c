@@ -242,7 +242,9 @@ uint32_t server_alloc_client_slot(struct server_state *ss)
 /* Init / fini                                                         */
 
 struct server_state *server_state_init(const char *state_path, int port,
-				       enum reffs_text_case case_mode)
+				       enum reffs_text_case case_mode,
+				       enum reffs_storage_type storage_type
+				       __attribute__((unused)))
 {
 	struct server_state *ss;
 	uint8_t prev_clean_shutdown;
@@ -264,12 +266,28 @@ struct server_state *server_state_init(const char *state_path, int port,
 	ss->ss_case = case_mode;
 	reffs_case_set(case_mode);
 
-	/* Set up persistence dispatch — flatfile for now. */
-	ss->ss_persist_ops = flatfile_persist_ops_get();
-	if (state_path) {
-		ss->ss_persist_ctx = strdup(state_path);
-		if (!ss->ss_persist_ctx)
+	/*
+	 * Set up persistence dispatch based on configured backend type.
+	 * RocksDB → namespace DB; everything else → flatfile.
+	 */
+#ifdef HAVE_ROCKSDB
+	if (storage_type == REFFS_STORAGE_ROCKSDB && state_path) {
+		ret = rocksdb_namespace_init(state_path, &ss->ss_persist_ops,
+					     &ss->ss_persist_ctx);
+		if (ret) {
+			LOG("server_state_init: rocksdb namespace init failed: %d",
+			    ret);
 			goto err_path;
+		}
+	} else
+#endif
+	{
+		ss->ss_persist_ops = flatfile_persist_ops_get();
+		if (state_path) {
+			ss->ss_persist_ctx = strdup(state_path);
+			if (!ss->ss_persist_ctx)
+				goto err_path;
+		}
 	}
 
 	/* Load or create persistent state. */
@@ -425,6 +443,10 @@ err_path:
 		}
 		ss->ss_client_ht = NULL;
 	}
+
+	if (ss->ss_persist_ops && ss->ss_persist_ops->fini)
+		ss->ss_persist_ops->fini(ss->ss_persist_ctx);
+	ss->ss_persist_ctx = NULL;
 
 	free(ss->ss_state_dir);
 	free(ss);

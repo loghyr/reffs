@@ -20,6 +20,7 @@
 #include "reffs/persist_ops.h"
 #include "reffs/server_persist.h"
 #include "reffs/settings.h"
+#include "reffs/types.h"
 
 /*
  * Server lifecycle state machine.
@@ -154,7 +155,8 @@ struct server_state {
  * initial ref), NULL on failure.
  */
 struct server_state *server_state_init(const char *state_path, int port,
-				       enum reffs_text_case case_mode);
+				       enum reffs_text_case case_mode,
+				       enum reffs_storage_type storage_type);
 
 /*
  * server_state_fini - begin shutdown.  Transitions to SHUTTING_DOWN so that
