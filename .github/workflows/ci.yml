@@ -38,7 +38,6 @@ jobs:
           libjemalloc-dev \
           python3 \
           python3-pip \
-          python3-ply \
           clang-format-18 \
           clang-tidy \
           clang-tools \
@@ -56,7 +55,10 @@ jobs:
           rpcbind
 
     - name: Install Python dependencies
-      run: pip3 install --no-cache-dir --break-system-packages xdrlib3
+      run: |
+        pip3 install --no-cache-dir --break-system-packages \
+          xdrlib3 \
+          reply-xdr@git+https://github.com/loghyr/reply.git
 
     - name: Set environment variables
       run: echo "CLANG_FORMAT=clang-format-18" >> $GITHUB_ENV
