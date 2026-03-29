@@ -376,6 +376,45 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	return ret;
 }
 
+/*
+ * Recursive mkdir — create all intermediate directories as needed.
+ * Equivalent to `mkdir -p`.  Returns 0 on success, -errno on failure.
+ * Existing directories along the path are silently skipped.
+ */
+int reffs_fs_mkdir_p(const char *path, mode_t mode)
+{
+	char buf[REFFS_MAX_PATH + 1];
+	int ret;
+
+	if (!path || path[0] != '/')
+		return -EINVAL;
+	if (strlen(path) > REFFS_MAX_PATH)
+		return -ENAMETOOLONG;
+	if (strcmp(path, "/") == 0)
+		return 0;
+
+	strncpy(buf, path, sizeof(buf) - 1);
+	buf[sizeof(buf) - 1] = '\0';
+
+	/* Walk each component and mkdir, ignoring EEXIST. */
+	for (char *p = buf + 1; *p; p++) {
+		if (*p != '/')
+			continue;
+		*p = '\0';
+		ret = reffs_fs_mkdir(buf, mode);
+		if (ret && ret != -EEXIST) {
+			return ret;
+		}
+		*p = '/';
+	}
+
+	/* Final component. */
+	ret = reffs_fs_mkdir(buf, mode);
+	if (ret == -EEXIST)
+		ret = 0;
+	return ret;
+}
+
 int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 {
 	struct name_match *nm = NULL;

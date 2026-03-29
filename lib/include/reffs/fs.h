@@ -49,6 +49,7 @@ int reffs_fs_getattr(const char *path, struct stat *st);
 int reffs_fs_getattr(const char *path, struct stat *st);
 int reffs_fs_link(const char *old_path, const char *new_path);
 int reffs_fs_mkdir(const char *path, mode_t mode);
+int reffs_fs_mkdir_p(const char *path, mode_t mode);
 int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev);
 int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset);
 int reffs_fs_readdir(const char *path, void *buffer, char *filler,
