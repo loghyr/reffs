@@ -24,6 +24,12 @@ make -j$(nproc)
 | `--enable-verbose-debug` | High-volume debug output |
 | `--enable-strict-posix` | Strict POSIX permissions (breaks git-over-NFS) |
 
+### Python prerequisites
+```bash
+pip install reply-xdr@git+https://github.com/loghyr/reply.git xdrlib3
+```
+`configure` will fail with a clear error if `xdr-parser` is not in `$PATH`.
+
 ### Standard development build
 ```bash
 ../configure --enable-asan --enable-ubsan

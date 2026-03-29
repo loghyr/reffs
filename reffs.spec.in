@@ -30,6 +30,7 @@ BuildRequires: make
 BuildRequires: gcc
 BuildRequires: clang-format
 BuildRequires: rpcgen
+BuildRequires: python3-pip
 BuildRequires: bear
 BuildRequires: clang-tidy
 BuildRequires: scan-build

@@ -22,8 +22,18 @@ You will need the following dependencies installed (Ubuntu/Debian example):
 
 ```bash
 sudo apt-get install clang pkg-config liburcu-dev libtirpc-dev check \
-    libxxhash-dev libfuse-dev rpcgen uuid-dev zlib1g-dev libzstd-dev \
-    liburing-dev libjemalloc-dev autoconf automake libtool
+    libxxhash-dev libfuse-dev rpcsvc-proto uuid-dev zlib1g-dev libzstd-dev \
+    liburing-dev libjemalloc-dev autoconf automake libtool \
+    python3 python3-pip
+pip install reply-xdr xdrlib3
+```
+
+The `reply-xdr` package provides the `xdr-parser` tool and the Python
+RPC client library used by reffs-probe. Install from GitHub for the
+latest version:
+
+```bash
+pip install reply-xdr@git+https://github.com/loghyr/reply.git
 ```
 
 ### Build & Test

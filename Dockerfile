@@ -76,7 +76,7 @@ RUN activate-global-python-argcomplete --user && \
     echo 'source /etc/profile.d/bash_completion.sh' >> /root/.bashrc
 
 RUN pip3 install --no-cache-dir \
-    ply \
+    reply-xdr@git+https://github.com/loghyr/reply.git \
     xdrlib3 \
     xml2rfc
 

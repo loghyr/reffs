@@ -27,6 +27,7 @@ Design documents:
 @.claude/design/probe-sb-management.md
 @.claude/design/sb-registry-v3.md
 @.claude/design/rocksdb-backend.md
+@.claude/design/remove-pynfs.md
 
 Bug pattern encyclopedias (RCU, ref-counting, NFSv4 protocol):
 
@@ -36,6 +37,20 @@ Bug pattern encyclopedias (RCU, ref-counting, NFSv4 protocol):
 
 Use the `review` subagent after making code changes to enforce style and
 check for standards violations before committing.
+
+## Python / XDR tooling
+
+Python XDR code generation and the RPC client library come from the
+**reply** package (`pip install reply-xdr`, source at
+https://github.com/loghyr/reply).
+
+- `xdr-parser --lang python foo.x` generates `*_const.py`, `*_type.py`, `*_pack.py`
+- `xdr-parser --lang c foo.x` generates `*_xdr.h`, `*_xdr.c`
+- `from rpc import rpc` provides the RPC Client/Server
+- C XDR generation still uses system `rpcgen`
+
+pynfs has been removed. Do not add imports from pynfs or dependencies
+on ply (GPL).
 
 ## Deployment Status
 

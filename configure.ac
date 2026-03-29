@@ -104,6 +104,11 @@ if test "x$RPCGEN" = "xno"; then
     AC_MSG_ERROR([rpcgen is required to build this project])
 fi
 
+AC_PATH_PROG([XDR_PARSER], [xdr-parser], [no])
+if test "x$XDR_PARSER" = "xno"; then
+    AC_MSG_ERROR([xdr-parser is required (pip install reply-xdr)])
+fi
+
 AC_PATH_PROG([BEAR], [bear], [no])
 if test "x$BEAR" = "xno"; then
     AC_MSG_WARN([bear not found - 'make tidy' may fail])
@@ -514,24 +519,14 @@ AC_CONFIG_FILES([
 	lib/xdr/Makefile
 	scripts/Makefile
 	scripts/reffs/Makefile
-	scripts/reffs/pynfs/Makefile
-	scripts/reffs/pynfs/xdr/Makefile
-	scripts/reffs/pynfs/rpc/Makefile
 	src/Makefile
 	tools/Makefile])
 
 AC_CONFIG_FILES([lib/xdr/insert_pragmas.sh],[chmod +x lib/xdr/insert_pragmas.sh])
 AC_CONFIG_FILES([scripts/copy_and_verify.sh],[chmod +x scripts/copy_and_verify.sh])
-AC_CONFIG_FILES([scripts/reffs/pynfs/xdr/xdrgen.py],[chmod +x scripts/reffs/pynfs/xdr/xdrgen.py])
 AC_CONFIG_FILES([scripts/reffs-probe.py],[chmod +x scripts/reffs-probe.py])
 AC_CONFIG_FILES([scripts/reffs/probe_client.py],[chmod +x scripts/reffs/probe_client.py])
 AC_CONFIG_FILES([scripts/reffs/protocol_client.py],[chmod +x scripts/reffs/protocol_client.py])
-AC_CONFIG_FILES([scripts/reffs/pynfs/rpc/rpc.py],[chmod +x scripts/reffs/pynfs/rpc/rpc.py])
-AC_CONFIG_FILES([scripts/reffs/pynfs/rpc/rpclib.py],[chmod +x scripts/reffs/pynfs/rpc/rpclib.py])
-AC_CONFIG_FILES([scripts/reffs/pynfs/rpc/security.py],[chmod +x scripts/reffs/pynfs/rpc/security.py])
-AC_CONFIG_FILES([scripts/reffs/pynfs/xdr/__init__.py])
-AC_CONFIG_FILES([scripts/reffs/pynfs/rpc/__init__.py])
-AC_CONFIG_FILES([scripts/reffs/pynfs/__init__.py])
 AC_CONFIG_FILES([scripts/reffs/__init__.py])
 AC_CONFIG_FILES([scripts/__init__.py])
 

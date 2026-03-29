@@ -298,6 +298,17 @@ concrete fix.
 ### NOT_NOW_BROWN_COW
 - Flag any deferred items that the new code appears to depend on
 
+### Python code (scripts/reffs/, *.py.in)
+- PEP 8 style: 4-space indentation, 79-char line length
+- SPDX headers on all `.py.in` files
+- Imports: `from rpc import rpc` (NOT `from .pynfs.rpc import rpc`)
+- No imports from pynfs — all RPC code comes from the `reply` package
+- XDR code generation uses `xdr-parser` (from reply-xdr), not `xdrgen.py`
+- Generated Python files have "DO NOT EDIT" marker, not SPDX headers
+- No GPL-2.0-only dependencies (ply, pynfs, etc.)
+- Use `logging` module, not `print()` for diagnostics
+- Use `xdrlib3` (or fallback `xdrlib`) for XDR serialization
+
 ## 6. Test coverage
 
 For every changed or new code path, check whether an existing unit test

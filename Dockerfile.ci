@@ -26,7 +26,6 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
-    python3-ply \
     clang-format-18 \
     clang-tidy \
     clang-tools \
@@ -59,8 +58,10 @@ RUN apt-get update && apt-get install -y \
     krb5-admin-server \
     && rm -rf /var/lib/apt/lists/*
 
-# Install xdrlib3 via pip (as it is removed/deprecated in modern Python)
-RUN pip3 install --no-cache-dir --break-system-packages xdrlib3
+# Install xdrlib3 and reply-xdr (XDR parser + RPC library)
+RUN pip3 install --no-cache-dir --break-system-packages \
+    xdrlib3 \
+    reply-xdr@git+https://github.com/loghyr/reply.git
 
 # Install HdrHistogram_c from source (same as CI)
 RUN git clone https://github.com/HdrHistogram/HdrHistogram_c.git /tmp/HdrHistogram_c && \
