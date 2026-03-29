@@ -6,6 +6,10 @@ AM_CFLAGS = -Im4 -I.			\
 	-I$(top_builddir)/lib/xdr	\
 	$(TIRPC_CFLAGS)
 
+if HAVE_ROCKSDB
+AM_CFLAGS += $(ROCKSDB_CFLAGS)
+endif
+
 lib_LTLIBRARIES = libbackends.la
 
 libbackends_la_SOURCES = \
@@ -20,6 +24,5 @@ libbackends_la_SOURCES = \
 
 if HAVE_ROCKSDB
 libbackends_la_SOURCES += rocksdb.c
-libbackends_la_CFLAGS = $(AM_CFLAGS) $(ROCKSDB_CFLAGS)
 libbackends_la_LIBADD = $(ROCKSDB_LIBS)
 endif
