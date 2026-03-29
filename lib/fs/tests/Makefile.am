@@ -116,7 +116,8 @@ TESTS = \
 	sb_mkdir_p_test \
 	sb_path_conflict_test \
 	sb_persistence_test \
-	sb_security_test
+	sb_security_test \
+	compose_test
 
 posix_force_load_SOURCES = posix_force_load.c
 posix_force_load_LDADD = $(LDADD)

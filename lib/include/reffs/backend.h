@@ -15,6 +15,22 @@ struct super_block;
 struct inode;
 struct data_block;
 
+/*
+ * Backend composition: metadata and data are independent axes.
+ * reffs_backend_compose() builds a single reffs_storage_ops from
+ * one md template and one data template.
+ */
+enum reffs_md_type {
+	REFFS_MD_RAM = 0,
+	REFFS_MD_POSIX = 1,
+	REFFS_MD_ROCKSDB = 2,
+};
+
+enum reffs_data_type {
+	REFFS_DATA_RAM = 0,
+	REFFS_DATA_POSIX = 1,
+};
+
 #define REFFS_DISK_MAGIC_META 0x5245464d /* 'REFM' */
 #define REFFS_DISK_MAGIC_DIR 0x52454644 /* 'REFD' */
 #define REFFS_DISK_MAGIC_DAT 0x52454641 /* 'REFA' (data) */
@@ -84,8 +100,64 @@ struct reffs_storage_ops {
 				      uint64_t *cookie_out);
 };
 
+/*
+ * Composed ops — heap-allocated by reffs_backend_compose().
+ * Contains the public vtable plus internal function pointers
+ * for the inode_free composition (md cleanup + data cleanup).
+ */
+struct composed_ops {
+	struct reffs_storage_ops co_ops;
+	void (*co_md_inode_free)(struct inode *);
+	void (*co_data_inode_cleanup)(struct inode *);
+};
+
 void reffs_backend_init(void);
-const struct reffs_storage_ops *
-reffs_backend_get_ops(enum reffs_storage_type type);
+
+/*
+ * Compose a reffs_storage_ops from independent md + data backends.
+ * Returns a heap-allocated ops struct (caller frees with
+ * reffs_backend_free_ops).  Returns NULL on invalid combination.
+ *
+ * Constraints:
+ *   md=RAM   -> data=RAM    (all-volatile)
+ *   md!=RAM  -> data!=RAM   (no partial persistence)
+ */
+struct reffs_storage_ops *reffs_backend_compose(enum reffs_md_type md,
+						enum reffs_data_type data);
+
+void reffs_backend_free_ops(const struct reffs_storage_ops *ops);
+
+/* ------------------------------------------------------------------ */
+/* POSIX data backend — declarations for composition                  */
+/* ------------------------------------------------------------------ */
+
+int posix_data_db_alloc(struct data_block *db, struct inode *inode,
+			const char *buffer, size_t size, off_t offset);
+void posix_data_db_free(struct data_block *db);
+void posix_data_db_release_resources(struct data_block *db);
+ssize_t posix_data_db_read(struct data_block *db, char *buffer, size_t size,
+			   off_t offset);
+ssize_t posix_data_db_write(struct data_block *db, const char *buffer,
+			    size_t size, off_t offset);
+ssize_t posix_data_db_resize(struct data_block *db, size_t size);
+size_t posix_data_db_get_size(struct data_block *db);
+int posix_data_db_get_fd(struct data_block *db);
+void posix_data_inode_cleanup(struct inode *inode);
+
+/* ------------------------------------------------------------------ */
+/* RAM data backend — declarations for composition                    */
+/* ------------------------------------------------------------------ */
+
+int ram_data_db_alloc(struct data_block *db, struct inode *inode,
+		      const char *buffer, size_t size, off_t offset);
+void ram_data_db_free(struct data_block *db);
+ssize_t ram_data_db_read(struct data_block *db, char *buffer, size_t size,
+			 off_t offset);
+ssize_t ram_data_db_write(struct data_block *db, const char *buffer,
+			  size_t size, off_t offset);
+ssize_t ram_data_db_resize(struct data_block *db, size_t size);
+size_t ram_data_db_get_size(struct data_block *db);
+int ram_data_db_get_fd(struct data_block *db);
+void ram_data_inode_cleanup(struct inode *inode);
 
 #endif /* _REFFS_BACKEND_H */

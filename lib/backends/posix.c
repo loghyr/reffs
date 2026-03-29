@@ -31,11 +31,6 @@ struct posix_sb_private {
 	char *sb_dir;
 };
 
-struct posix_db_private {
-	int db_fd;
-	char *db_path;
-};
-
 static int posix_sb_alloc(struct super_block *sb, const char *backend_path)
 {
 	struct posix_sb_private *priv = calloc(1, sizeof(*priv));
@@ -240,145 +235,6 @@ static void posix_inode_sync(struct inode *inode)
 			}
 		}
 	}
-}
-
-static int posix_db_alloc(struct data_block *db, struct inode *inode,
-			  const char *buffer, size_t size, off_t offset)
-{
-	struct super_block *sb = inode->i_sb;
-	struct posix_sb_private *sb_priv = sb->sb_storage_private;
-	if (!sb_priv)
-		return -EINVAL;
-
-	struct posix_db_private *priv = calloc(1, sizeof(*priv));
-	if (!priv)
-		return -ENOMEM;
-
-	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/ino_%lu.dat", sb_priv->sb_dir,
-		 inode->i_ino);
-	priv->db_path = strdup(path);
-	if (!priv->db_path) {
-		free(priv);
-		return -ENOMEM;
-	}
-
-	priv->db_fd = open(path, O_RDWR | O_CREAT, 0644);
-	if (priv->db_fd < 0) {
-		LOG("Failed to open %s: %s", path, strerror(errno));
-		free(priv->db_path);
-		free(priv);
-		return -errno;
-	}
-
-	if (size == 0) {
-		struct stat st;
-		if (fstat(priv->db_fd, &st) == 0) {
-			db->db_size = st.st_size;
-		}
-	}
-
-	if (buffer && size > 0) {
-		if (pwrite(priv->db_fd, buffer, size, offset) !=
-		    (ssize_t)size) {
-			LOG("Initial write to %s failed", path);
-		}
-	}
-
-	db->db_storage_private = priv;
-	return 0;
-}
-
-static void posix_db_free(struct data_block *db)
-{
-	struct posix_db_private *priv = db->db_storage_private;
-	if (priv) {
-		if (priv->db_fd >= 0)
-			close(priv->db_fd);
-		free(priv->db_path);
-		free(priv);
-		db->db_storage_private = NULL;
-	}
-}
-
-static void posix_db_release_resources(struct data_block *db)
-{
-	struct posix_db_private *priv = db->db_storage_private;
-	if (priv && priv->db_fd >= 0) {
-		close(priv->db_fd);
-		priv->db_fd = -1;
-	}
-}
-
-static ssize_t posix_db_read(struct data_block *db, char *buffer, size_t size,
-			     off_t offset)
-{
-	struct posix_db_private *priv = db->db_storage_private;
-	if (!priv || priv->db_fd < 0)
-		return -EBADF;
-
-	ssize_t ret = pread(priv->db_fd, buffer, size, offset);
-	if (ret < 0) {
-		LOG("pread from %s failed: %s", priv->db_path, strerror(errno));
-		return -errno;
-	}
-	return ret;
-}
-
-static ssize_t posix_db_write(struct data_block *db, const char *buffer,
-			      size_t size, off_t offset)
-{
-	struct posix_db_private *priv = db->db_storage_private;
-	if (!priv || priv->db_fd < 0)
-		return -EBADF;
-
-	size_t new_total = (size_t)offset + size;
-	if (new_total > db->db_size) {
-		if (ftruncate(priv->db_fd, new_total) < 0) {
-			LOG("ftruncate of %s failed: %s", priv->db_path,
-			    strerror(errno));
-			return -errno;
-		}
-		db->db_size = new_total;
-	}
-
-	ssize_t ret = pwrite(priv->db_fd, buffer, size, offset);
-	if (ret < 0) {
-		LOG("pwrite to %s failed: %s", priv->db_path, strerror(errno));
-		return -errno;
-	}
-	return ret;
-}
-
-static ssize_t posix_db_resize(struct data_block *db, size_t size)
-{
-	struct posix_db_private *priv = db->db_storage_private;
-	if (!priv || priv->db_fd < 0)
-		return -EBADF;
-
-	if (ftruncate(priv->db_fd, size) < 0) {
-		LOG("ftruncate of %s failed: %s", priv->db_path,
-		    strerror(errno));
-		return -errno;
-	}
-	db->db_size = size;
-	return (ssize_t)size;
-}
-
-static size_t posix_db_get_size(struct data_block *db)
-{
-	struct posix_db_private *priv = db->db_storage_private;
-	struct stat st;
-	if (priv && priv->db_fd >= 0 && fstat(priv->db_fd, &st) == 0) {
-		return st.st_size;
-	}
-	return db->db_size;
-}
-
-static int posix_db_get_fd(struct data_block *db)
-{
-	struct posix_db_private *priv = db->db_storage_private;
-	return (priv && priv->db_fd >= 0) ? priv->db_fd : -1;
 }
 
 static void posix_dir_sync(struct inode *inode)
@@ -845,6 +701,13 @@ static int posix_dir_find_entry_by_name(struct super_block *sb,
 	return err;
 }
 
+/*
+ * posix_inode_free — md-side cleanup only.
+ *
+ * Unlinks metadata files (.meta, .dir, .lnk, .layouts).  The .dat file
+ * is handled by the data backend's inode_cleanup function, wired in
+ * by the composer.
+ */
 static void posix_inode_free(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
@@ -860,10 +723,6 @@ static void posix_inode_free(struct inode *inode)
 		 inode->i_ino);
 	unlink(path);
 
-	snprintf(path, sizeof(path), "%s/ino_%lu.dat", sb_priv->sb_dir,
-		 inode->i_ino);
-	unlink(path);
-
 	snprintf(path, sizeof(path), "%s/ino_%lu.dir", sb_priv->sb_dir,
 		 inode->i_ino);
 	unlink(path);
@@ -871,24 +730,27 @@ static void posix_inode_free(struct inode *inode)
 	snprintf(path, sizeof(path), "%s/ino_%lu.lnk", sb_priv->sb_dir,
 		 inode->i_ino);
 	unlink(path);
+
+	snprintf(path, sizeof(path), "%s/ino_%lu.layouts", sb_priv->sb_dir,
+		 inode->i_ino);
+	unlink(path);
 }
 
+/*
+ * posix_storage_ops — md template for POSIX metadata backend.
+ *
+ * Data function pointers (db_*) are intentionally NULL here.
+ * They are populated by reffs_backend_compose() from the data
+ * backend template.
+ */
 const struct reffs_storage_ops posix_storage_ops = {
 	.type = REFFS_STORAGE_POSIX,
 	.name = "posix",
 	.sb_alloc = posix_sb_alloc,
 	.sb_free = posix_sb_free,
-	.inode_alloc = inode_load_from_disk, /* renamed */
+	.inode_alloc = inode_load_from_disk,
 	.inode_free = posix_inode_free,
 	.inode_sync = posix_inode_sync,
-	.db_alloc = posix_db_alloc,
-	.db_free = posix_db_free,
-	.db_release_resources = posix_db_release_resources,
-	.db_read = posix_db_read,
-	.db_write = posix_db_write,
-	.db_resize = posix_db_resize,
-	.db_get_size = posix_db_get_size,
-	.db_get_fd = posix_db_get_fd,
 	.dir_sync = posix_dir_sync,
 	.dir_find_entry_by_ino = posix_dir_find_entry_by_ino,
 	.dir_find_entry_by_name = posix_dir_find_entry_by_name,

@@ -245,6 +245,9 @@ static void super_block_free(struct super_block *sb)
 	if (sb->sb_ops && sb->sb_ops->sb_free)
 		sb->sb_ops->sb_free(sb);
 
+	reffs_backend_free_ops(sb->sb_ops);
+	sb->sb_ops = NULL;
+
 	int ret = cds_lfht_destroy(sb->sb_inodes, NULL);
 	if (ret < 0) {
 		LOG("Could not delete a hash table: %m");
@@ -421,7 +424,31 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 		}
 	}
 
-	sb->sb_ops = reffs_backend_get_ops(storage_type);
+	/* Map storage_type to (md, data) pair and compose */
+	enum reffs_md_type md;
+	enum reffs_data_type data;
+
+	switch (storage_type) {
+	case REFFS_STORAGE_RAM:
+		md = REFFS_MD_RAM;
+		data = REFFS_DATA_RAM;
+		break;
+	case REFFS_STORAGE_POSIX:
+		md = REFFS_MD_POSIX;
+		data = REFFS_DATA_POSIX;
+		break;
+	case REFFS_STORAGE_ROCKSDB:
+		md = REFFS_MD_ROCKSDB;
+		data = REFFS_DATA_POSIX;
+		break;
+	default:
+		free(sb->sb_path);
+		free(sb->sb_backend_path);
+		free(sb);
+		return NULL;
+	}
+
+	sb->sb_ops = reffs_backend_compose(md, data);
 	if (!sb->sb_ops) {
 		free(sb->sb_path);
 		free(sb->sb_backend_path);

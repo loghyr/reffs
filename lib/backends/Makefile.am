@@ -12,5 +12,7 @@ libbackends_la_SOURCES = \
 	client_persist.c \
 	driver.c \
 	ram.c \
+	ram_data.c \
 	posix.c \
+	posix_data.c \
 	server_persist.c

@@ -1,0 +1,200 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+/*
+ * POSIX data backend — bulk file I/O using POSIX files.
+ *
+ * Data files live at <backend_path>/sb_<id>/ino_<ino>.dat.
+ * Paths are computed from public super_block fields (sb_backend_path,
+ * sb_id), NOT from sb_storage_private — this allows composition with
+ * any metadata backend.
+ */
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "reffs/backend.h"
+#include "reffs/data_block.h"
+#include "reffs/inode.h"
+#include "reffs/log.h"
+#include "reffs/super_block.h"
+#include "reffs/trace/fs.h"
+
+struct posix_data_private {
+	int pd_fd;
+	char *pd_path;
+};
+
+/*
+ * Build the data file path from public sb fields.
+ * Returns 0 on success, -ENAMETOOLONG on overflow.
+ */
+static int posix_data_path(char *buf, size_t bufsz, struct super_block *sb,
+			   uint64_t ino)
+{
+	int n = snprintf(buf, bufsz, "%s/sb_%lu/ino_%lu.dat",
+			 sb->sb_backend_path, (unsigned long)sb->sb_id,
+			 (unsigned long)ino);
+	if (n < 0 || (size_t)n >= bufsz)
+		return -ENAMETOOLONG;
+	return 0;
+}
+
+int posix_data_db_alloc(struct data_block *db, struct inode *inode,
+			const char *buffer, size_t size, off_t offset)
+{
+	struct super_block *sb = inode->i_sb;
+
+	struct posix_data_private *priv = calloc(1, sizeof(*priv));
+	if (!priv)
+		return -ENOMEM;
+
+	char path[PATH_MAX];
+	int ret = posix_data_path(path, sizeof(path), sb, inode->i_ino);
+	if (ret) {
+		free(priv);
+		return ret;
+	}
+
+	priv->pd_path = strdup(path);
+	if (!priv->pd_path) {
+		free(priv);
+		return -ENOMEM;
+	}
+
+	priv->pd_fd = open(path, O_RDWR | O_CREAT, 0644);
+	if (priv->pd_fd < 0) {
+		LOG("Failed to open %s: %s", path, strerror(errno));
+		free(priv->pd_path);
+		free(priv);
+		return -errno;
+	}
+
+	if (size == 0) {
+		struct stat st;
+		if (fstat(priv->pd_fd, &st) == 0)
+			db->db_size = st.st_size;
+	}
+
+	if (buffer && size > 0) {
+		if (pwrite(priv->pd_fd, buffer, size, offset) != (ssize_t)size)
+			LOG("Initial write to %s failed", path);
+	}
+
+	db->db_storage_private = priv;
+	return 0;
+}
+
+void posix_data_db_free(struct data_block *db)
+{
+	struct posix_data_private *priv = db->db_storage_private;
+	if (priv) {
+		if (priv->pd_fd >= 0)
+			close(priv->pd_fd);
+		free(priv->pd_path);
+		free(priv);
+		db->db_storage_private = NULL;
+	}
+}
+
+void posix_data_db_release_resources(struct data_block *db)
+{
+	struct posix_data_private *priv = db->db_storage_private;
+	if (priv && priv->pd_fd >= 0) {
+		close(priv->pd_fd);
+		priv->pd_fd = -1;
+	}
+}
+
+ssize_t posix_data_db_read(struct data_block *db, char *buffer, size_t size,
+			   off_t offset)
+{
+	struct posix_data_private *priv = db->db_storage_private;
+	if (!priv || priv->pd_fd < 0)
+		return -EBADF;
+
+	ssize_t ret = pread(priv->pd_fd, buffer, size, offset);
+	if (ret < 0) {
+		LOG("pread from %s failed: %s", priv->pd_path, strerror(errno));
+		return -errno;
+	}
+	return ret;
+}
+
+ssize_t posix_data_db_write(struct data_block *db, const char *buffer,
+			    size_t size, off_t offset)
+{
+	struct posix_data_private *priv = db->db_storage_private;
+	if (!priv || priv->pd_fd < 0)
+		return -EBADF;
+
+	size_t new_total = (size_t)offset + size;
+	if (new_total > db->db_size) {
+		if (ftruncate(priv->pd_fd, new_total) < 0) {
+			LOG("ftruncate of %s failed: %s", priv->pd_path,
+			    strerror(errno));
+			return -errno;
+		}
+		db->db_size = new_total;
+	}
+
+	ssize_t ret = pwrite(priv->pd_fd, buffer, size, offset);
+	if (ret < 0) {
+		LOG("pwrite to %s failed: %s", priv->pd_path, strerror(errno));
+		return -errno;
+	}
+	return ret;
+}
+
+ssize_t posix_data_db_resize(struct data_block *db, size_t size)
+{
+	struct posix_data_private *priv = db->db_storage_private;
+	if (!priv || priv->pd_fd < 0)
+		return -EBADF;
+
+	if (ftruncate(priv->pd_fd, size) < 0) {
+		LOG("ftruncate of %s failed: %s", priv->pd_path,
+		    strerror(errno));
+		return -errno;
+	}
+	db->db_size = size;
+	return (ssize_t)size;
+}
+
+size_t posix_data_db_get_size(struct data_block *db)
+{
+	struct posix_data_private *priv = db->db_storage_private;
+	struct stat st;
+	if (priv && priv->pd_fd >= 0 && fstat(priv->pd_fd, &st) == 0)
+		return st.st_size;
+	return db->db_size;
+}
+
+int posix_data_db_get_fd(struct data_block *db)
+{
+	struct posix_data_private *priv = db->db_storage_private;
+	return (priv && priv->pd_fd >= 0) ? priv->pd_fd : -1;
+}
+
+void posix_data_inode_cleanup(struct inode *inode)
+{
+	struct super_block *sb = inode->i_sb;
+	if (!sb || !sb->sb_backend_path)
+		return;
+
+	char path[PATH_MAX];
+	if (posix_data_path(path, sizeof(path), sb, inode->i_ino) == 0)
+		unlink(path);
+}
