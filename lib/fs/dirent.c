@@ -45,16 +45,14 @@ CDS_LIST_HEAD(dirent_list);
  */
 static void dirent_lru_add(struct reffs_dirent *rd)
 {
-	struct super_block *sb;
+	struct super_block *sb = rd->rd_sb;
 
-	if (!rd->rd_inode || !rd->rd_inode->i_sb)
+	if (!sb)
 		return;
 
 	/* Only leaf dirents can be evicted; skip directories with children. */
 	if (!cds_list_empty(&rd->rd_children))
 		return;
-
-	sb = rd->rd_inode->i_sb;
 
 	pthread_mutex_lock(&sb->sb_dirent_lru_lock);
 	if (!(__atomic_fetch_or(&rd->rd_state, DIRENT_IS_ON_LRU,
@@ -188,11 +186,10 @@ struct reffs_dirent *dirent_active_get(struct reffs_dirent *rd)
 	}
 
 	/* Pull off the LRU if sitting there. */
-	if (rd->rd_inode && rd->rd_inode->i_sb) {
-		struct super_block *sb = rd->rd_inode->i_sb;
-		pthread_mutex_lock(&sb->sb_dirent_lru_lock);
+	if (rd->rd_sb) {
+		pthread_mutex_lock(&rd->rd_sb->sb_dirent_lru_lock);
 		dirent_lru_del_locked(rd);
-		pthread_mutex_unlock(&sb->sb_dirent_lru_lock);
+		pthread_mutex_unlock(&rd->rd_sb->sb_dirent_lru_lock);
 	}
 
 	return rd;
