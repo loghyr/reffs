@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -1253,8 +1254,9 @@ static uint32_t nfs4_op_write_resume(struct rpc_trans *rt)
 		(compound->c_inode->i_size % sb->sb_block_size ? 1 : 0);
 
 	size_t old_used, new_used;
+	old_used =
+		atomic_load_explicit(&sb->sb_bytes_used, memory_order_relaxed);
 	do {
-		__atomic_load(&sb->sb_bytes_used, &old_used, __ATOMIC_RELAXED);
 		if (new_db_size > (size_t)old_size)
 			new_used = old_used + (new_db_size - (size_t)old_size);
 		else if ((size_t)old_size > new_db_size)
@@ -1264,9 +1266,9 @@ static uint32_t nfs4_op_write_resume(struct rpc_trans *rt)
 					   0;
 		else
 			new_used = old_used;
-	} while (!__atomic_compare_exchange(&sb->sb_bytes_used, &old_used,
-					    &new_used, false, __ATOMIC_SEQ_CST,
-					    __ATOMIC_RELAXED));
+	} while (!atomic_compare_exchange_strong_explicit(
+		&sb->sb_bytes_used, &old_used, new_used, memory_order_seq_cst,
+		memory_order_relaxed));
 
 	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 
@@ -1424,8 +1426,9 @@ uint32_t nfs4_op_write(struct compound *compound)
 
 	size_t new_db_size = data_block_get_size(compound->c_inode->i_db);
 	size_t old_used, new_used;
+	old_used =
+		atomic_load_explicit(&sb->sb_bytes_used, memory_order_relaxed);
 	do {
-		__atomic_load(&sb->sb_bytes_used, &old_used, __ATOMIC_RELAXED);
 		if (new_db_size > (size_t)old_size)
 			new_used = old_used + (new_db_size - (size_t)old_size);
 		else if ((size_t)old_size > new_db_size)
@@ -1435,9 +1438,9 @@ uint32_t nfs4_op_write(struct compound *compound)
 					   0;
 		else
 			new_used = old_used;
-	} while (!__atomic_compare_exchange(&sb->sb_bytes_used, &old_used,
-					    &new_used, false, __ATOMIC_SEQ_CST,
-					    __ATOMIC_RELAXED));
+	} while (!atomic_compare_exchange_strong_explicit(
+		&sb->sb_bytes_used, &old_used, new_used, memory_order_seq_cst,
+		memory_order_relaxed));
 
 	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 

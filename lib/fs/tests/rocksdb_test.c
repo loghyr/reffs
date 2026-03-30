@@ -22,6 +22,23 @@
 
 #include <check.h>
 
+/*
+ * RocksDB's Arena calls malloc_usable_size() on pointers from its
+ * own internal allocator.  When our binary has ASAN but the system
+ * librocksdb.so does not, ASAN aborts because it doesn't own the
+ * pointer.
+ *
+ * check_malloc_usable_size=0 disables only the malloc_usable_size
+ * ownership check — all other ASAN detection remains active.
+ * ci-sec builds RocksDB from source with ASAN for full coverage.
+ */
+#ifdef ASAN_ENABLED
+const char *__asan_default_options(void)
+{
+	return "check_malloc_usable_size=0";
+}
+#endif
+
 #include "reffs/backend.h"
 #include "reffs/data_block.h"
 #include "reffs/dirent.h"

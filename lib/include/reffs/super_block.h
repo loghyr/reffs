@@ -6,6 +6,7 @@
 #ifndef _REFFS_SB_H
 #define _REFFS_SB_H
 
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <urcu.h>
@@ -55,10 +56,10 @@ struct super_block {
 	uuid_t sb_uuid;
 
 	size_t sb_bytes_max;
-	size_t sb_bytes_used;
+	_Atomic size_t sb_bytes_used;
 
 	size_t sb_inodes_max;
-	size_t sb_inodes_used;
+	_Atomic size_t sb_inodes_used;
 
 	uint64_t sb_delayed_count;
 

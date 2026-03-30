@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -284,8 +285,8 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 		dir->i_ino; /* needed by inode_reconstruct_path_to_root on reload */
 
 	if (type == S_IFDIR) {
-		__atomic_add_fetch(&sb->sb_bytes_used, sb->sb_block_size,
-				   __ATOMIC_RELAXED);
+		atomic_fetch_add_explicit(&sb->sb_bytes_used, sb->sb_block_size,
+					  memory_order_relaxed);
 	}
 
 	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
@@ -636,9 +637,9 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 
 		size_t old_used;
 		size_t new_used;
+		old_used = atomic_load_explicit(&inode->i_sb->sb_bytes_used,
+						memory_order_relaxed);
 		do {
-			__atomic_load(&inode->i_sb->sb_bytes_used, &old_used,
-				      __ATOMIC_RELAXED);
 			if ((size_t)inode->i_size > old_size) {
 				new_used = old_used +
 					   ((size_t)inode->i_size - old_size);
@@ -651,9 +652,9 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			} else {
 				new_used = old_used;
 			}
-		} while (!__atomic_compare_exchange(
-			&inode->i_sb->sb_bytes_used, &old_used, &new_used,
-			false, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+		} while (!atomic_compare_exchange_strong_explicit(
+			&inode->i_sb->sb_bytes_used, &old_used, new_used,
+			memory_order_seq_cst, memory_order_relaxed));
 
 		pthread_rwlock_unlock(&inode->i_db_rwlock);
 		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;

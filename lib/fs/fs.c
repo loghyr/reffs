@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -886,9 +887,9 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 
 	size_t old_used;
 	size_t new_used;
+	old_used = atomic_load_explicit(&inode->i_sb->sb_bytes_used,
+					memory_order_relaxed);
 	do {
-		__atomic_load(&inode->i_sb->sb_bytes_used, &old_used,
-			      __ATOMIC_RELAXED);
 		if (new_size > old_size) {
 			new_used = old_used + (new_size - old_size);
 		} else if (old_size > new_size) {
@@ -900,9 +901,9 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 		} else {
 			new_used = old_used;
 		}
-	} while (!__atomic_compare_exchange(
-		&inode->i_sb->sb_bytes_used, &old_used, &new_used, false,
-		__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+	} while (!atomic_compare_exchange_strong_explicit(
+		&inode->i_sb->sb_bytes_used, &old_used, new_used,
+		memory_order_seq_cst, memory_order_relaxed));
 
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME |
 					      REFFS_INODE_UPDATE_MTIME);
@@ -942,10 +943,11 @@ int reffs_fs_usage(struct reffs_fs_usage_stats *stats)
 	cds_list_for_each_entry_rcu(sb, super_block_list_head(), sb_link) {
 		size_t bu;
 
-		__atomic_load(&sb->sb_bytes_used, &bu, __ATOMIC_RELAXED);
+		bu = atomic_load_explicit(&sb->sb_bytes_used,
+					  memory_order_relaxed);
 		stats->used_bytes += bu;
-		stats->used_files +=
-			__atomic_load_n(&sb->sb_inodes_used, __ATOMIC_RELAXED);
+		stats->used_files += atomic_load_explicit(&sb->sb_inodes_used,
+							  memory_order_relaxed);
 		stats->total_bytes += sb->sb_bytes_max;
 		stats->total_files += sb->sb_inodes_max;
 	}

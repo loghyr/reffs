@@ -9,6 +9,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -162,25 +163,26 @@ static void inode_release(struct urcu_ref *ref)
 
 	inode_unhash(inode);
 	if (inode->i_sb) {
-		__atomic_fetch_sub(&inode->i_sb->sb_inodes_used, 1,
-				   __ATOMIC_RELAXED);
+		atomic_fetch_sub_explicit(&inode->i_sb->sb_inodes_used, 1,
+					  memory_order_relaxed);
 
 		if (__atomic_load_n(&inode->i_nlink, __ATOMIC_RELAXED) == 0) {
 			size_t size = inode->i_size;
 			size_t old_used;
 			size_t new_used;
 
+			old_used = atomic_load_explicit(
+				&inode->i_sb->sb_bytes_used,
+				memory_order_relaxed);
 			do {
-				__atomic_load(&inode->i_sb->sb_bytes_used,
-					      &old_used, __ATOMIC_RELAXED);
 				if (old_used >= size)
 					new_used = old_used - size;
 				else
 					new_used = 0;
-			} while (!__atomic_compare_exchange(
+			} while (!atomic_compare_exchange_strong_explicit(
 				&inode->i_sb->sb_bytes_used, &old_used,
-				&new_used, false, __ATOMIC_SEQ_CST,
-				__ATOMIC_RELAXED));
+				new_used, memory_order_seq_cst,
+				memory_order_relaxed));
 
 			if (inode->i_sb->sb_ops &&
 			    inode->i_sb->sb_ops->inode_free) {
@@ -372,8 +374,8 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 		assert(inode->i_sb);
 
 		if (inode->i_sb) {
-			__atomic_fetch_add(&inode->i_sb->sb_inodes_used, 1,
-					   __ATOMIC_RELAXED);
+			atomic_fetch_add_explicit(&inode->i_sb->sb_inodes_used,
+						  1, memory_order_relaxed);
 
 			/* Make sure no one else beat us to it */
 			rcu_read_lock();

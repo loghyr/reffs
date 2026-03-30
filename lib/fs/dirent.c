@@ -9,6 +9,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -396,21 +397,22 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 			size_t old_used;
 			size_t new_used;
 
-			__atomic_fetch_sub(&rd->rd_inode->i_sb->sb_inodes_used,
-					   1, __ATOMIC_RELAXED);
+			atomic_fetch_sub_explicit(
+				&rd->rd_inode->i_sb->sb_inodes_used, 1,
+				memory_order_relaxed);
 
+			old_used = atomic_load_explicit(
+				&rd->rd_inode->i_sb->sb_bytes_used,
+				memory_order_relaxed);
 			do {
-				__atomic_load(
-					&rd->rd_inode->i_sb->sb_bytes_used,
-					&old_used, __ATOMIC_RELAXED);
 				if (old_used >= size)
 					new_used = old_used - size;
 				else
 					new_used = 0;
-			} while (!__atomic_compare_exchange(
+			} while (!atomic_compare_exchange_strong_explicit(
 				&rd->rd_inode->i_sb->sb_bytes_used, &old_used,
-				&new_used, false, __ATOMIC_SEQ_CST,
-				__ATOMIC_RELAXED));
+				new_used, memory_order_seq_cst,
+				memory_order_relaxed));
 		}
 
 		/* Disk I/O — outside RCU. */

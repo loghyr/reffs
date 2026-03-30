@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -835,8 +836,9 @@ static uint32_t nfs3_op_write_resume(struct rpc_trans *rt)
 			(inode->i_size % sb->sb_block_size ? 1 : 0);
 
 	size_t old_used, new_used;
+	old_used =
+		atomic_load_explicit(&sb->sb_bytes_used, memory_order_relaxed);
 	do {
-		__atomic_load(&sb->sb_bytes_used, &old_used, __ATOMIC_RELAXED);
 		if (new_db_size > (size_t)old_size)
 			new_used = old_used + (new_db_size - (size_t)old_size);
 		else if ((size_t)old_size > new_db_size)
@@ -846,9 +848,9 @@ static uint32_t nfs3_op_write_resume(struct rpc_trans *rt)
 					   0;
 		else
 			new_used = old_used;
-	} while (!__atomic_compare_exchange(&sb->sb_bytes_used, &old_used,
-					    &new_used, false, __ATOMIC_SEQ_CST,
-					    __ATOMIC_RELAXED));
+	} while (!atomic_compare_exchange_strong_explicit(
+		&sb->sb_bytes_used, &old_used, new_used, memory_order_seq_cst,
+		memory_order_relaxed));
 
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 
@@ -1072,9 +1074,9 @@ static int nfs3_op_write(struct rpc_trans *rt)
 
 	size_t old_used;
 	size_t new_used;
+	old_used = atomic_load_explicit(&inode->i_sb->sb_bytes_used,
+					memory_order_relaxed);
 	do {
-		__atomic_load(&inode->i_sb->sb_bytes_used, &old_used,
-			      __ATOMIC_RELAXED);
 		if (db_size > (size_t)size) {
 			new_used = old_used + (db_size - (size_t)size);
 		} else if ((size_t)size > db_size) {
@@ -1086,9 +1088,9 @@ static int nfs3_op_write(struct rpc_trans *rt)
 		} else {
 			new_used = old_used;
 		}
-	} while (!__atomic_compare_exchange(
-		&inode->i_sb->sb_bytes_used, &old_used, &new_used, false,
-		__ATOMIC_SEQ_CST, __ATOMIC_RELAXED));
+	} while (!atomic_compare_exchange_strong_explicit(
+		&inode->i_sb->sb_bytes_used, &old_used, new_used,
+		memory_order_seq_cst, memory_order_relaxed));
 
 	pthread_rwlock_unlock(&inode->i_db_rwlock);
 
@@ -2828,11 +2830,12 @@ static int nfs3_op_fsstat(struct rpc_trans *rt)
 	resok->tbytes = sb->sb_bytes_max;
 	size_t used;
 
-	__atomic_load(&sb->sb_bytes_used, &used, __ATOMIC_RELAXED);
+	used = atomic_load_explicit(&sb->sb_bytes_used, memory_order_relaxed);
 	resok->fbytes = (used < sb->sb_bytes_max) ? sb->sb_bytes_max - used : 0;
 	resok->abytes = resok->fbytes;
 	resok->tfiles = sb->sb_inodes_max;
-	resok->ffiles = __atomic_load_n(&sb->sb_inodes_used, __ATOMIC_RELAXED);
+	resok->ffiles =
+		atomic_load_explicit(&sb->sb_inodes_used, memory_order_relaxed);
 	resok->afiles = resok->tfiles - resok->ffiles;
 	resok->invarsec = 0;
 

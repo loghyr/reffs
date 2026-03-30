@@ -27,6 +27,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <stdatomic.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -463,22 +464,9 @@ static int rocksdb_inode_alloc(struct inode *inode)
 			inode->i_db = data_block_alloc(inode, NULL, 0, 0);
 			if (inode->i_db) {
 				size_t db_size = inode->i_db->db_size;
-				/*
-				 * Match the POSIX backend's pattern for
-				 * sb_bytes_used (not _Atomic — uses GCC
-				 * builtins, pre-existing convention).
-				 */
-				size_t old_used;
-				size_t new_used;
-				do {
-					__atomic_load(&sb->sb_bytes_used,
-						      &old_used,
-						      __ATOMIC_RELAXED);
-					new_used = old_used + db_size;
-				} while (!__atomic_compare_exchange(
-					&sb->sb_bytes_used, &old_used,
-					&new_used, false, __ATOMIC_SEQ_CST,
-					__ATOMIC_RELAXED));
+				atomic_fetch_add_explicit(&sb->sb_bytes_used,
+							  db_size,
+							  memory_order_relaxed);
 				inode->i_used =
 					db_size / sb->sb_block_size +
 					(db_size % sb->sb_block_size ? 1 : 0);

@@ -241,10 +241,12 @@ uint32_t server_alloc_client_slot(struct server_state *ss)
 /* ------------------------------------------------------------------ */
 /* Init / fini                                                         */
 
-struct server_state *server_state_init(const char *state_path, int port,
-				       enum reffs_text_case case_mode,
-				       enum reffs_storage_type storage_type
-				       __attribute__((unused)))
+struct server_state *
+server_state_init(const char *state_path, int port,
+		  enum reffs_text_case case_mode,
+		  enum reffs_storage_type storage_type
+		  __attribute__((unused)) /* used only with HAVE_ROCKSDB */
+)
 {
 	struct server_state *ss;
 	uint8_t prev_clean_shutdown;

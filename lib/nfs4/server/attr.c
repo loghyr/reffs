@@ -7,6 +7,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -2807,7 +2808,8 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	nattr->chown_restricted = system_attrs.chown_restricted;
 
 	nattr->fileid = inode->i_ino;
-	size_t iu = __atomic_load_n(&sb->sb_inodes_used, __ATOMIC_RELAXED);
+	size_t iu =
+		atomic_load_explicit(&sb->sb_inodes_used, memory_order_relaxed);
 
 	nattr->files_avail = sb->sb_inodes_max - iu;
 	nattr->files_free = sb->sb_inodes_max - iu;
@@ -2828,7 +2830,7 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	nattr->rawdev.specdata2 = inode->i_dev_minor;
 	size_t bu;
 
-	__atomic_load(&sb->sb_bytes_used, &bu, __ATOMIC_RELAXED);
+	bu = atomic_load_explicit(&sb->sb_bytes_used, memory_order_relaxed);
 	nattr->space_avail = sb->sb_bytes_max - bu;
 	nattr->space_free = sb->sb_bytes_max - bu;
 	nattr->space_total = sb->sb_bytes_max;

@@ -521,13 +521,15 @@ static int probe1_op_fs_usage(struct rpc_trans *rt)
 				sfu->sfu_sb_path =
 					strdup(sb->sb_path ? sb->sb_path : "");
 				sfu->sfu_total_bytes = sb->sb_bytes_max;
-				sfu->sfu_used_bytes = __atomic_load_n(
-					&sb->sb_bytes_used, __ATOMIC_RELAXED);
+				sfu->sfu_used_bytes = atomic_load_explicit(
+					&sb->sb_bytes_used,
+					memory_order_relaxed);
 				sfu->sfu_free_bytes =
 					sb->sb_bytes_max - sfu->sfu_used_bytes;
 				sfu->sfu_total_files = sb->sb_inodes_max;
-				sfu->sfu_used_files = __atomic_load_n(
-					&sb->sb_inodes_used, __ATOMIC_RELAXED);
+				sfu->sfu_used_files = atomic_load_explicit(
+					&sb->sb_inodes_used,
+					memory_order_relaxed);
 				sfu->sfu_free_files =
 					sb->sb_inodes_max - sfu->sfu_used_files;
 				i++;
@@ -836,10 +838,10 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 	psi->psi_storage_type = (probe_storage_type1)sb->sb_storage_type;
 	psi->psi_bytes_max = sb->sb_bytes_max;
 	psi->psi_bytes_used =
-		__atomic_load_n(&sb->sb_bytes_used, __ATOMIC_RELAXED);
+		atomic_load_explicit(&sb->sb_bytes_used, memory_order_relaxed);
 	psi->psi_inodes_max = sb->sb_inodes_max;
 	psi->psi_inodes_used =
-		__atomic_load_n(&sb->sb_inodes_used, __ATOMIC_RELAXED);
+		atomic_load_explicit(&sb->sb_inodes_used, memory_order_relaxed);
 	psi->psi_flavors.psi_flavors_len = sb->sb_nflavors;
 	if (sb->sb_nflavors > 0) {
 		psi->psi_flavors.psi_flavors_val =
