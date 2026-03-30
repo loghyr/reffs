@@ -84,6 +84,10 @@ type       = "posix"
 path       = "$DATA"
 state_file = "$STATE"
 
+[cache]
+inode_cache_max  = 4096
+dirent_cache_max = 16384
+
 [[export]]
 path        = "/"
 clients     = "*"

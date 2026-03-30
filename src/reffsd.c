@@ -384,6 +384,10 @@ int main(int argc, char *argv[])
 			/* Root sb is always mounted in the server. */
 			root_sb->sb_lifecycle = SB_MOUNTED;
 
+			/* Apply cache tuning from [cache] config. */
+			root_sb->sb_inode_lru_max = cfg.inode_cache_max;
+			root_sb->sb_dirent_lru_max = cfg.dirent_cache_max;
+
 			/*
 			 * Set root sb's per-sb flavors from the first
 			 * export config.  This ensures WRONGSEC and

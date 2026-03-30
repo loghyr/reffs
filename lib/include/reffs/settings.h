@@ -122,6 +122,10 @@ struct reffs_config {
 	char backend_path[REFFS_CONFIG_MAX_PATH];
 	char state_file[REFFS_CONFIG_MAX_PATH];
 
+	/* [cache] */
+	unsigned int inode_cache_max; /* inode LRU eviction threshold */
+	unsigned int dirent_cache_max; /* dirent LRU eviction threshold */
+
 	/* [iouring] */
 	unsigned int network_sq_size;
 	unsigned int network_cq_size;

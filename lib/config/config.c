@@ -124,6 +124,10 @@ void reffs_config_defaults(struct reffs_config *cfg)
 	strncpy(cfg->state_file, "/var/lib/reffs/reffs.state",
 		sizeof(cfg->state_file) - 1);
 
+	/* [cache] — match SB_INODE_LRU_MAX_DEFAULT / SB_DIRENT_LRU_MAX_DEFAULT */
+	cfg->inode_cache_max = 1024 * 64;
+	cfg->dirent_cache_max = 1024 * 256;
+
 	/* [iouring] */
 	cfg->network_sq_size = 2048;
 	cfg->network_cq_size = 8192;
@@ -404,6 +408,19 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 	tbl = toml_table_in(root, "backend");
 	if (tbl)
 		parse_backend(cfg, tbl);
+
+	tbl = toml_table_in(root, "cache");
+	if (tbl) {
+		toml_datum_t d;
+
+		d = toml_int_in(tbl, "inode_cache_max");
+		if (d.ok && d.u.i > 0)
+			cfg->inode_cache_max = (unsigned int)d.u.i;
+
+		d = toml_int_in(tbl, "dirent_cache_max");
+		if (d.ok && d.u.i > 0)
+			cfg->dirent_cache_max = (unsigned int)d.u.i;
+	}
 
 	tbl = toml_table_in(root, "iouring");
 	if (tbl)
