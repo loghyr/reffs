@@ -10,11 +10,14 @@ AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 	$(ZSTD_CFLAGS)						\
 	-I$(top_srcdir)/lib/include				\
 	-I$(top_srcdir)/lib/tests				\
+	-I$(top_srcdir)/lib/nfs4/include			\
 	-I$(top_builddir)/lib/xdr
 
 LDADD = \
 	@CHECK_LIBS@					\
 	$(top_builddir)/lib/tests/libreffs_test.la	\
+	$(top_builddir)/lib/io/libreffs_io.la		\
+	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
 	$(top_builddir)/lib/utils/libreffs_utils.la	\
 	$(top_builddir)/lib/backends/libbackends.la	\
 	$(top_builddir)/lib/fs/libreffs_fs.la		\
@@ -34,6 +37,7 @@ LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
 	cmp \
+	grace_test \
 	idmap_test \
 	identity_types_test \
 	identity_map_test \
