@@ -87,8 +87,8 @@ path       = "$DATA"
 state_file = "$STATE"
 
 [cache]
-inode_cache_max  = 4096
-dirent_cache_max = 16384
+inode_cache_max  = 16384
+dirent_cache_max = 65536
 
 [[export]]
 path        = "/"
