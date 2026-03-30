@@ -150,20 +150,31 @@ bool dispatch_compound(struct compound *compound)
 	/*
 	 * Convenience macro: record stats for the op at c_curr_op.
 	 * Uses c_server_state grabbed once per compound, not per op.
+	 *
+	 * c_server_state is ref-counted and should never be NULL after
+	 * the check above succeeds.  If it IS NULL, something freed the
+	 * compound or corrupted memory — LOG and skip stats rather than
+	 * crashing.  This is a symptom, not the root cause.
 	 */
-#define RECORD_OP_STATS(resop_)                                          \
-	do {                                                             \
-		nfs4_op_stats_record(                                    \
-			compound->c_server_state->ss_nfs4_op_stats,      \
-			compound->c_curr_sb ?                            \
-				compound->c_curr_sb->sb_nfs4_op_stats :  \
-				NULL,                                    \
-			compound->c_nfs4_client ?                        \
-				compound->c_nfs4_client->nc_op_stats :   \
-				NULL,                                    \
-			(resop_)->resop,                                 \
-			(resop_)->nfs_resop4_u.opillegal.status,         \
-			reffs_now_ns() - compound->c_op_start_ns, 0, 0); \
+#define RECORD_OP_STATS(resop_)                                            \
+	do {                                                               \
+		if (__builtin_expect(!compound->c_server_state, 0)) {      \
+			LOG("BUG: c_server_state NULL at op %u — skipping" \
+			    " stats (compound %p)",                        \
+			    compound->c_curr_op, (void *)compound);        \
+			break;                                             \
+		}                                                          \
+		nfs4_op_stats_record(                                      \
+			compound->c_server_state->ss_nfs4_op_stats,        \
+			compound->c_curr_sb ?                              \
+				compound->c_curr_sb->sb_nfs4_op_stats :    \
+				NULL,                                      \
+			compound->c_nfs4_client ?                          \
+				compound->c_nfs4_client->nc_op_stats :     \
+				NULL,                                      \
+			(resop_)->resop,                                   \
+			(resop_)->nfs_resop4_u.opillegal.status,           \
+			reffs_now_ns() - compound->c_op_start_ns, 0, 0);   \
 	} while (0)
 
 	/*
@@ -177,6 +188,10 @@ bool dispatch_compound(struct compound *compound)
 		nfs_resop4 *resop =
 			&res->resarray.resarray_val[compound->c_curr_op];
 
+		TRACE("resume: op=%u c_server_state=%p compound=%p",
+		      compound->c_curr_op, (void *)compound->c_server_state,
+		      (void *)compound);
+
 		compound->c_rt->rt_next_action = NULL;
 		uint32_t action_flags = action(compound->c_rt);
 
@@ -186,8 +201,11 @@ bool dispatch_compound(struct compound *compound)
 		 * even if the compound/task have been handed to
 		 * another worker via a fast CQE + task_resume().
 		 */
-		if (action_flags & NFS4_OP_FLAG_ASYNC)
+		if (action_flags & NFS4_OP_FLAG_ASYNC) {
+			TRACE("resume: double-async compound=%p",
+			      (void *)compound);
 			return true;
+		}
 
 		trace_nfs4_compound_op(compound, __func__, __LINE__);
 		RECORD_OP_STATS(resop);
@@ -223,10 +241,13 @@ bool dispatch_compound(struct compound *compound)
 			/*
 			 * Op went async: the return value is on our stack,
 			 * safe to check even after a fast CQE + task_resume
-			 * hands the compound to another worker.
+			 * hands the compound to another worker.  Do not
+			 * dereference compound after this point.
 			 */
-			if (op_flags & NFS4_OP_FLAG_ASYNC)
+			if (op_flags & NFS4_OP_FLAG_ASYNC) {
+				TRACE("async: compound=%p", (void *)compound);
 				return true;
+			}
 
 			trace_nfs4_compound_op(compound, __func__, __LINE__);
 			RECORD_OP_STATS(resop);

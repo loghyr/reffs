@@ -200,16 +200,20 @@ ci-sec: ci-full
 
 # Soak test: 30-minute stability run with restart cycles.
 # Use 'ci-soak BAT=1' for 8-hour BAT soak.
-ci-soak: ci-image
+ci-soak: ci-image $(LOGS_DIR)
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
 			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
 			make -j$$(nproc) && \
-			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,)"
+			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,) && \
+			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			true"
 
 # Build + integration tests only (skip unit tests and krb5).
 # Faster iteration when debugging integration test failures.

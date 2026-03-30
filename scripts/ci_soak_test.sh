@@ -39,7 +39,8 @@ MOUNT=/mnt/reffs_soak
 DATA=/tmp/reffs_soak_data
 STATE=/tmp/reffs_soak_state
 CONFIG=/tmp/reffs_soak.toml
-LOG=/tmp/reffs_soak.log
+LOG=/tmp/reffsd-soak.log
+TRACE_FILE=/tmp/reffs-soak-trace.log
 
 REFFSD_PID=
 WORKLOAD_PIDS=()
@@ -78,6 +79,7 @@ role           = "standalone"
 minor_versions = [1, 2]
 grace_period   = 5
 workers        = 4
+trace_file     = "$TRACE_FILE"
 
 [backend]
 type       = "posix"
