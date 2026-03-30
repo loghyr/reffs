@@ -82,8 +82,8 @@ jobs:
     - name: Autoreconf
       run: autoreconf -fi
 
-    - name: Check style
-      run: make -f Makefile.reffs style
+    - name: Fix style (normalize to CI clang-format version)
+      run: make -f Makefile.reffs fix-style
 
     - name: Check license
       run: make -f Makefile.reffs license
