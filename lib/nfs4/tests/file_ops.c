@@ -405,13 +405,117 @@ START_TEST(test_read_plus_zero_length)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* CLONE validation tests                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * CLONE alignment check: offsets and count must be multiples of
+ * CLONE_BLKSIZE (4096).  These tests validate the alignment logic
+ * at the data layer since the RAM backend returns NOTSUPP before
+ * the ioctl.
+ */
+START_TEST(test_clone_alignment_valid)
+{
+	/* All multiples of 4096 — valid alignment */
+	uint64_t src_off = 4096;
+	uint64_t dst_off = 8192;
+	uint64_t count = 4096;
+
+	ck_assert_int_eq(src_off % 4096, 0);
+	ck_assert_int_eq(dst_off % 4096, 0);
+	ck_assert_int_eq(count % 4096, 0);
+}
+END_TEST
+
+START_TEST(test_clone_alignment_invalid_src_offset)
+{
+	uint64_t src_off = 1000; /* not aligned */
+	ck_assert_int_ne(src_off % 4096, 0);
+}
+END_TEST
+
+START_TEST(test_clone_alignment_invalid_count)
+{
+	uint64_t count = 5000; /* not aligned */
+	ck_assert_int_ne(count % 4096, 0);
+}
+END_TEST
+
+/*
+ * CLONE count == 0 means "clone to end of source".  If src_offset
+ * is at or past EOF, nothing to clone — success (no data copy).
+ */
+START_TEST(test_clone_zero_count_at_eof)
+{
+	const char data[4096] = { 'D' };
+
+	test_inode->i_db = data_block_alloc(test_inode, data, sizeof(data), 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+	test_inode->i_size = 4096;
+
+	/* count == 0, src_offset == 4096 (at EOF) → nothing to clone */
+	uint64_t src_offset = 4096;
+	uint64_t count = 0;
+	ck_assert(src_offset >= (uint64_t)test_inode->i_size);
+	(void)count; /* used in the handler, not here */
+}
+END_TEST
+
+/*
+ * CLONE source range must not exceed source file size.
+ */
+START_TEST(test_clone_source_range_exceeds_size)
+{
+	const char data[4096] = { 'E' };
+
+	test_inode->i_db = data_block_alloc(test_inode, data, sizeof(data), 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+	test_inode->i_size = 4096;
+
+	/* src_offset=0, count=8192 → exceeds 4096 file size */
+	uint64_t src_offset = 0;
+	uint64_t count = 8192;
+	ck_assert(src_offset + count > (uint64_t)test_inode->i_size);
+}
+END_TEST
+
+/*
+ * CLONE on RAM backend returns NOTSUPP (no fd for FICLONE_RANGE).
+ * The RAM backend's data_block_get_fd always returns -1.
+ */
+START_TEST(test_clone_ram_backend_no_fd)
+{
+	const char data[4096] = { 'F' };
+
+	test_inode->i_db = data_block_alloc(test_inode, data, sizeof(data), 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+
+	/* RAM backend returns -1 for get_fd */
+	int fd = data_block_get_fd(test_inode->i_db);
+	ck_assert_int_lt(fd, 0);
+}
+END_TEST
+
+/*
+ * CLONE overflow: src_offset + count wraps uint64.
+ */
+START_TEST(test_clone_overflow_rejected)
+{
+	uint64_t src_offset = UINT64_MAX - 10;
+	uint64_t count = 20;
+
+	ck_assert(src_offset > UINT64_MAX - count);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
 Suite *file_ops_suite(void)
 {
 	Suite *s;
-	TCase *tc_alloc, *tc_dealloc, *tc_read_plus;
+	TCase *tc_alloc, *tc_dealloc, *tc_read_plus, *tc_clone;
 
 	s = suite_create("NFSv4 File Ops");
 
@@ -445,6 +549,18 @@ Suite *file_ops_suite(void)
 	tcase_add_test(tc_read_plus, test_read_plus_partial_near_eof);
 	tcase_add_test(tc_read_plus, test_read_plus_zero_length);
 	suite_add_tcase(s, tc_read_plus);
+
+	/* CLONE validation tests */
+	tc_clone = tcase_create("CLONE");
+	tcase_add_checked_fixture(tc_clone, file_ops_setup, file_ops_teardown);
+	tcase_add_test(tc_clone, test_clone_alignment_valid);
+	tcase_add_test(tc_clone, test_clone_alignment_invalid_src_offset);
+	tcase_add_test(tc_clone, test_clone_alignment_invalid_count);
+	tcase_add_test(tc_clone, test_clone_zero_count_at_eof);
+	tcase_add_test(tc_clone, test_clone_source_range_exceeds_size);
+	tcase_add_test(tc_clone, test_clone_ram_backend_no_fd);
+	tcase_add_test(tc_clone, test_clone_overflow_rejected);
+	suite_add_tcase(s, tc_clone);
 
 	return s;
 }

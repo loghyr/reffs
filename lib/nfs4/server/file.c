@@ -52,9 +52,9 @@
  *
  * want_write: reject read-only stateids (read-bypass, delegation-read).
  */
-static nfsstat4 nfs4_stateid_resolve(struct compound *compound,
-				     const stateid4 *wire, bool want_write,
-				     struct stateid **out_stid)
+nfsstat4 nfs4_stateid_resolve(struct compound *compound, struct inode *inode,
+			      const stateid4 *wire, bool want_write,
+			      struct stateid **out_stid)
 {
 	/* Anonymous stateid — caller falls through to POSIX permission check. */
 	if (stateid4_is_anonymous(wire)) {
@@ -89,7 +89,7 @@ static nfsstat4 nfs4_stateid_resolve(struct compound *compound,
 	if (type == Layout_Stateid)
 		return NFS4ERR_BAD_STATEID;
 
-	struct stateid *stid = stateid_find(compound->c_inode, id);
+	struct stateid *stid = stateid_find(inode, id);
 	if (!stid)
 		return NFS4ERR_BAD_STATEID;
 
@@ -1096,7 +1096,8 @@ uint32_t nfs4_op_read(struct compound *compound)
 		goto out;
 	}
 
-	*status = nfs4_stateid_resolve(compound, &args->stateid, false, &stid);
+	*status = nfs4_stateid_resolve(compound, compound->c_inode,
+				       &args->stateid, false, &stid);
 	if (*status != NFS4_OK)
 		goto out;
 
@@ -1238,8 +1239,8 @@ uint32_t nfs4_op_read_plus(struct compound *compound)
 		goto out;
 	}
 
-	*status = nfs4_stateid_resolve(compound, &args->rpa_stateid, false,
-				       &stid);
+	*status = nfs4_stateid_resolve(compound, compound->c_inode,
+				       &args->rpa_stateid, false, &stid);
 	if (*status != NFS4_OK)
 		goto out;
 
@@ -1449,7 +1450,8 @@ uint32_t nfs4_op_write(struct compound *compound)
 		goto out;
 	}
 
-	*status = nfs4_stateid_resolve(compound, &args->stateid, true, &stid);
+	*status = nfs4_stateid_resolve(compound, compound->c_inode,
+				       &args->stateid, true, &stid);
 	if (*status != NFS4_OK)
 		goto out;
 
@@ -1687,8 +1689,8 @@ uint32_t nfs4_op_allocate(struct compound *compound)
 		goto out;
 	}
 
-	*status =
-		nfs4_stateid_resolve(compound, &args->aa_stateid, true, &stid);
+	*status = nfs4_stateid_resolve(compound, compound->c_inode,
+				       &args->aa_stateid, true, &stid);
 	if (*status != NFS4_OK)
 		goto out;
 
@@ -1800,8 +1802,8 @@ uint32_t nfs4_op_deallocate(struct compound *compound)
 		goto out;
 	}
 
-	*status =
-		nfs4_stateid_resolve(compound, &args->da_stateid, true, &stid);
+	*status = nfs4_stateid_resolve(compound, compound->c_inode,
+				       &args->da_stateid, true, &stid);
 	if (*status != NFS4_OK)
 		goto out;
 
