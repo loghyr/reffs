@@ -122,6 +122,22 @@ static void inode_lru_add(struct inode *inode)
 	if (!sb)
 		return;
 
+	/*
+	 * Release the data block FD when the inode goes idle.
+	 * The FD will be re-opened on demand if the inode is
+	 * reactivated.  Without this, every cached inode holds
+	 * an open FD until eviction — with a 64K LRU limit, that
+	 * means up to 64K open FDs for idle inodes.
+	 *
+	 * Safety: i_active == 0 guarantees no NFS operation is
+	 * in-flight on this inode, so no thread holds i_db_rwlock
+	 * or has a live pread/pwrite on the FD.  The reopen path
+	 * in posix_data_db_reopen() uses pd_reopen_mutex to
+	 * serialize concurrent reactivations.
+	 */
+	if (inode->i_db && sb->sb_ops && sb->sb_ops->db_release_resources)
+		sb->sb_ops->db_release_resources(inode->i_db);
+
 	pthread_mutex_lock(&sb->sb_inode_lru_lock);
 	if (!(__atomic_fetch_or(&inode->i_state, INODE_IS_ON_LRU,
 				__ATOMIC_ACQ_REL) &

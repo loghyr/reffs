@@ -19,6 +19,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +36,7 @@
 struct posix_data_private {
 	int pd_fd;
 	char *pd_path;
+	pthread_mutex_t pd_reopen_mutex;
 };
 
 /*
@@ -74,9 +76,12 @@ int posix_data_db_alloc(struct data_block *db, struct inode *inode,
 		return -ENOMEM;
 	}
 
+	pthread_mutex_init(&priv->pd_reopen_mutex, NULL);
+
 	priv->pd_fd = open(path, O_RDWR | O_CREAT, 0644);
 	if (priv->pd_fd < 0) {
 		LOG("Failed to open %s: %s", path, strerror(errno));
+		pthread_mutex_destroy(&priv->pd_reopen_mutex);
 		free(priv->pd_path);
 		free(priv);
 		return -errno;
@@ -103,6 +108,7 @@ void posix_data_db_free(struct data_block *db)
 	if (priv) {
 		if (priv->pd_fd >= 0)
 			close(priv->pd_fd);
+		pthread_mutex_destroy(&priv->pd_reopen_mutex);
 		free(priv->pd_path);
 		free(priv);
 		db->db_storage_private = NULL;
@@ -118,12 +124,50 @@ void posix_data_db_release_resources(struct data_block *db)
 	}
 }
 
+/*
+ * Re-open the data file if the FD was released by db_release_resources.
+ * Called lazily when a read/write/resize needs the FD.
+ *
+ * Thread-safe: uses pd_reopen_mutex to prevent concurrent readers from
+ * both calling open() and leaking an FD.
+ */
+static int posix_data_db_reopen(struct posix_data_private *priv)
+{
+	if (priv->pd_fd >= 0)
+		return 0;
+	if (!priv->pd_path)
+		return -EBADF;
+
+	pthread_mutex_lock(&priv->pd_reopen_mutex);
+	/* Re-check under lock — another thread may have reopened. */
+	if (priv->pd_fd >= 0) {
+		pthread_mutex_unlock(&priv->pd_reopen_mutex);
+		return 0;
+	}
+
+	int fd = open(priv->pd_path, O_RDWR, 0644);
+	if (fd < 0) {
+		int err = errno;
+		pthread_mutex_unlock(&priv->pd_reopen_mutex);
+		LOG("Failed to reopen %s: %s", priv->pd_path, strerror(err));
+		return -err;
+	}
+	priv->pd_fd = fd;
+	pthread_mutex_unlock(&priv->pd_reopen_mutex);
+	return 0;
+}
+
 ssize_t posix_data_db_read(struct data_block *db, char *buffer, size_t size,
 			   off_t offset)
 {
 	struct posix_data_private *priv = db->db_storage_private;
-	if (!priv || priv->pd_fd < 0)
+	if (!priv)
 		return -EBADF;
+	if (priv->pd_fd < 0) {
+		int ret = posix_data_db_reopen(priv);
+		if (ret)
+			return ret;
+	}
 
 	ssize_t ret = pread(priv->pd_fd, buffer, size, offset);
 	if (ret < 0) {
@@ -137,8 +181,13 @@ ssize_t posix_data_db_write(struct data_block *db, const char *buffer,
 			    size_t size, off_t offset)
 {
 	struct posix_data_private *priv = db->db_storage_private;
-	if (!priv || priv->pd_fd < 0)
+	if (!priv)
 		return -EBADF;
+	if (priv->pd_fd < 0) {
+		int ret = posix_data_db_reopen(priv);
+		if (ret)
+			return ret;
+	}
 
 	size_t new_total = (size_t)offset + size;
 	if (new_total > db->db_size) {
@@ -161,8 +210,13 @@ ssize_t posix_data_db_write(struct data_block *db, const char *buffer,
 ssize_t posix_data_db_resize(struct data_block *db, size_t size)
 {
 	struct posix_data_private *priv = db->db_storage_private;
-	if (!priv || priv->pd_fd < 0)
+	if (!priv)
 		return -EBADF;
+	if (priv->pd_fd < 0) {
+		int ret = posix_data_db_reopen(priv);
+		if (ret)
+			return (ssize_t)ret;
+	}
 
 	if (ftruncate(priv->pd_fd, size) < 0) {
 		LOG("ftruncate of %s failed: %s", priv->pd_path,
@@ -177,14 +231,20 @@ size_t posix_data_db_get_size(struct data_block *db)
 {
 	struct posix_data_private *priv = db->db_storage_private;
 	struct stat st;
-	if (priv && priv->pd_fd >= 0 && fstat(priv->pd_fd, &st) == 0)
-		return st.st_size;
+	if (priv) {
+		if (priv->pd_fd < 0)
+			posix_data_db_reopen(priv);
+		if (priv->pd_fd >= 0 && fstat(priv->pd_fd, &st) == 0)
+			return st.st_size;
+	}
 	return db->db_size;
 }
 
 int posix_data_db_get_fd(struct data_block *db)
 {
 	struct posix_data_private *priv = db->db_storage_private;
+	if (priv && priv->pd_fd < 0)
+		posix_data_db_reopen(priv);
 	return (priv && priv->pd_fd >= 0) ? priv->pd_fd : -1;
 }
 
