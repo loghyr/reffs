@@ -44,6 +44,7 @@ TESTS = \
 	cmp \
 	grace_test \
 	idmap_test \
+	server_persist_test \
 	identity_types_test \
 	identity_map_test \
 	utf8string_component \
