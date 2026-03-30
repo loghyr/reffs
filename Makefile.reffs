@@ -211,7 +211,51 @@ ci-soak: ci-image $(LOGS_DIR)
 			rm -rf /build/* && \
 			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
 			make -j$$(nproc) && \
-			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,) && \
+			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
+			rc=$$?; \
+			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			exit $$rc"
+
+# Soak test with TSAN — catches data races (concurrent read/write
+# to the same address from different threads).  TSAN cannot be
+# combined with ASAN.  ~5-10x slower than normal.
+ci-soak-tsan: ci-image $(LOGS_DIR)
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
+			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
+			rm -rf /build/* && \
+			cd /build && SKIP_STYLE=1 ../src/configure --enable-tsan --enable-ubsan && \
+			make -j$$(nproc) && \
+			TSAN_OPTIONS='halt_on_error=0:second_deadlock_stack=1:history_size=7' \
+			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
+			rc=\$$?; \
+			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			exit \$$rc"
+
+# Soak test without ASAN — generates core dump on c_server_state BUG.
+# Use when ASAN overhead masks timing or quarantine is not helpful.
+ci-soak-core: ci-image $(LOGS_DIR)
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		--ulimit core=-1:-1 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
+			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
+			rm -rf /build/* && \
+			cd /build && SKIP_STYLE=1 ../src/configure --enable-ubsan --enable-debug && \
+			make -j$$(nproc) && \
+			cp -f /build/src/reffsd /logs/reffsd.debug 2>/dev/null; \
+			ulimit -c unlimited && \
+			echo '/logs/core.%p' > /proc/sys/kernel/core_pattern 2>/dev/null || true && \
+			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
 			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
 			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
 			true"
