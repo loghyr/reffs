@@ -500,6 +500,7 @@ AC_CONFIG_FILES([
 	lib/include/reffs/Makefile
 	lib/include/reffs/trace/Makefile
 	lib/io/Makefile
+	lib/io/tests/Makefile
 	lib/mount3/Makefile
 	lib/mount3/tests/Makefile
 	lib/nfs3/Makefile
