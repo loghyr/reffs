@@ -137,6 +137,6 @@ jobs:
 
     - name: Run integration tests
       run: |
-        sudo bash -c "ulimit -n 65536; bash scripts/ci_integration_test.sh \
+        sudo -E env "PATH=$PATH" bash -c "ulimit -n 65536; bash scripts/ci_integration_test.sh \
           '$(pwd)/build_ci/src/reffsd' \
           '$(pwd)'"

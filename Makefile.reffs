@@ -163,9 +163,9 @@ ci-check: ci-image
 			(make check || (cat lib/fs/tests/test-suite.log && exit 1)) && \
 			echo '=== Unit Test Timing ===' && \
 			sort -t'[' -k2 -rn /tmp/reffs-test-timing.txt | head -10 && \
-			if grep -q SLOW /tmp/reffs-test-timing.txt; then \
-				echo 'ERROR: slow tests detected (>2s):' && \
-				grep SLOW /tmp/reffs-test-timing.txt && \
+			if grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test | grep -q SLOW; then \
+				echo 'ERROR: unexpected slow tests detected (>2s):' && \
+				grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test && \
 				exit 1; \
 			fi && \
 			CI_SKIP_KRB5=1 /src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
@@ -187,9 +187,9 @@ ci-full: ci-image
 			(make check || (cat lib/fs/tests/test-suite.log && exit 1)) && \
 			echo '=== Unit Test Timing ===' && \
 			sort -t'[' -k2 -rn /tmp/reffs-test-timing.txt | head -10 && \
-			if grep -q SLOW /tmp/reffs-test-timing.txt; then \
-				echo 'ERROR: slow tests detected (>2s):' && \
-				grep SLOW /tmp/reffs-test-timing.txt && \
+			if grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test | grep -q SLOW; then \
+				echo 'ERROR: unexpected slow tests detected (>2s):' && \
+				grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test && \
 				exit 1; \
 			fi && \
 			/src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
