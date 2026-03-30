@@ -44,7 +44,7 @@ distribution:
 
 ```bash
 sudo dnf install clang pkg-config userspace-rcu-devel libtirpc-devel \
-    check-devel xxhash-devel fuse-devel rpcsvc-proto-devel \
+    check-devel xxhash-devel fuse-devel rpcsvc-proto-devel rpcgen \
     libuuid-devel zlib-devel libzstd-devel liburing-devel \
     jemalloc-devel autoconf automake libtool \
     python3 python3-pip openssl-devel libhdr_histogram-devel
@@ -57,7 +57,7 @@ pip install reply-xdr xdrlib3
 sudo apt-get install clang pkg-config liburcu-dev libtirpc-dev check \
     libxxhash-dev libfuse-dev rpcsvc-proto uuid-dev zlib1g-dev \
     libzstd-dev liburing-dev libjemalloc-dev autoconf automake libtool \
-    python3 python3-pip libssl-dev libhdr-histogram-c-dev
+    python3 python3-pip libssl-dev libhdr-histogram-c-dev rpcgen
 pip install reply-xdr xdrlib3
 ```
 
