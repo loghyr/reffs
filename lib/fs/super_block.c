@@ -53,7 +53,13 @@ void super_block_evict_inodes(struct super_block *sb, size_t count)
 {
 	struct inode *inode, *tmp;
 	size_t evicted = 0;
+	CDS_LIST_HEAD(evictees);
 
+	/*
+	 * Phase 1: collect eviction candidates under the LRU lock.
+	 * Tombstone i_active = -1 prevents inode_active_get from
+	 * racing.  Remove from LRU and transfer to the local list.
+	 */
 	pthread_mutex_lock(&sb->sb_inode_lru_lock);
 	cds_list_for_each_entry_safe(inode, tmp, &sb->sb_inode_lru, i_lru) {
 		if (evicted >= count)
@@ -74,19 +80,26 @@ void super_block_evict_inodes(struct super_block *sb, size_t count)
 		sb->sb_inode_lru_count--;
 		evicted++;
 
-		/*
-		 * Sync to disk before eviction so data is durable.
-		 * This is done under the LRU lock to prevent a concurrent
-		 * inode_active_get from seeing a partially-written state.
-		 */
+		/* Move to local list for phase 2 processing. */
+		cds_list_add_tail(&inode->i_lru, &evictees);
+	}
+	pthread_mutex_unlock(&sb->sb_inode_lru_lock);
+
+	/*
+	 * Phase 2: sync and release WITHOUT holding the LRU lock.
+	 * i_active = -1 (tombstone) prevents concurrent reactivation.
+	 * This avoids blocking inode_lru_add on other worker threads
+	 * while we do disk I/O.
+	 */
+	cds_list_for_each_entry_safe(inode, tmp, &evictees, i_lru) {
+		cds_list_del_init(&inode->i_lru);
+
 		if (sb->sb_ops && sb->sb_ops->inode_sync)
 			sb->sb_ops->inode_sync(inode);
 
-		/* Drop the hash-table ref.  This may call inode_release. */
 		inode_unhash(inode);
 		inode_put(inode);
 	}
-	pthread_mutex_unlock(&sb->sb_inode_lru_lock);
 }
 
 /*
@@ -105,7 +118,13 @@ void super_block_evict_dirents(struct super_block *sb, size_t count)
 {
 	struct reffs_dirent *rd, *tmp;
 	size_t evicted = 0;
+	CDS_LIST_HEAD(evictees);
 
+	/*
+	 * Phase 1: collect eviction candidates under the LRU lock.
+	 * Transfer to local list; the rd_active == 0 + leaf checks
+	 * prevent concurrent use.
+	 */
 	pthread_mutex_lock(&sb->sb_dirent_lru_lock);
 	cds_list_for_each_entry_safe(rd, tmp, &sb->sb_dirent_lru, rd_lru) {
 		if (evicted >= count)
@@ -120,15 +139,24 @@ void super_block_evict_dirents(struct super_block *sb, size_t count)
 		if (!cds_list_empty(&rd->rd_children))
 			continue;
 
-		/* Sync directory state before eviction. */
-		if (rd->rd_parent)
-			dirent_sync_to_disk(rd->rd_parent);
-
 		cds_list_del_init(&rd->rd_lru);
 		__atomic_fetch_and(&rd->rd_state, ~DIRENT_IS_ON_LRU,
 				   __ATOMIC_RELAXED);
 		sb->sb_dirent_lru_count--;
 		evicted++;
+
+		cds_list_add_tail(&rd->rd_lru, &evictees);
+	}
+	pthread_mutex_unlock(&sb->sb_dirent_lru_lock);
+
+	/*
+	 * Phase 2: sync and release WITHOUT holding the LRU lock.
+	 */
+	cds_list_for_each_entry_safe(rd, tmp, &evictees, rd_lru) {
+		cds_list_del_init(&rd->rd_lru);
+
+		if (rd->rd_parent)
+			dirent_sync_to_disk(rd->rd_parent);
 
 		/*
 		 * Release from parent.  reffs_life_action_unload means:
@@ -139,7 +167,6 @@ void super_block_evict_dirents(struct super_block *sb, size_t count)
 		/* Drop our LRU-held ref. */
 		dirent_put(rd);
 	}
-	pthread_mutex_unlock(&sb->sb_dirent_lru_lock);
 }
 
 /* ------------------------------------------------------------------ */
