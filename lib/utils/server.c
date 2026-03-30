@@ -7,6 +7,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -29,7 +30,7 @@
 #define DEFAULT_LEASE_TIME 45U /* seconds, per RFC 8881 s2.10.6 */
 #define DEFAULT_GRACE_TIME 45U
 
-static struct server_state *current_server_state;
+static _Atomic(struct server_state *) current_server_state;
 
 /* ------------------------------------------------------------------ */
 /* State machine                                                       */
@@ -56,10 +57,11 @@ static void server_lifecycle_set(struct server_state *ss,
 				 enum server_lifecycle next)
 {
 	TRACE("server lifecycle: %s -> %s",
-	      server_lifecycle_name(ss->ss_lifecycle),
+	      server_lifecycle_name(atomic_load_explicit(&ss->ss_lifecycle,
+							 memory_order_relaxed)),
 	      server_lifecycle_name(next));
 
-	__atomic_store_n(&ss->ss_lifecycle, next, __ATOMIC_RELEASE);
+	atomic_store_explicit(&ss->ss_lifecycle, next, memory_order_release);
 }
 
 /* ------------------------------------------------------------------ */
@@ -103,7 +105,7 @@ struct server_state *server_state_get(struct server_state *ss)
          * Transition GRACE_STARTED -> IN_GRACE on first successful
          * get from the protocol layer — grace period is now open.
          */
-	if (__atomic_load_n(&ss->ss_lifecycle, __ATOMIC_ACQUIRE) ==
+	if (atomic_load_explicit(&ss->ss_lifecycle, memory_order_acquire) ==
 	    SERVER_GRACE_STARTED)
 		server_lifecycle_set(ss, SERVER_IN_GRACE);
 
@@ -120,8 +122,8 @@ void server_state_put(struct server_state *ss)
 
 struct server_state *server_state_find(void)
 {
-	struct server_state *ss =
-		__atomic_load_n(&current_server_state, __ATOMIC_ACQUIRE);
+	struct server_state *ss = atomic_load_explicit(&current_server_state,
+						       memory_order_acquire);
 	return server_state_get(ss);
 }
 
@@ -152,8 +154,8 @@ static void *grace_timer_thread(void *arg)
 			return NULL;
 
 		/* Early exit if all clients already reclaimed. */
-		enum server_lifecycle lc =
-			__atomic_load_n(&ss->ss_lifecycle, __ATOMIC_ACQUIRE);
+		enum server_lifecycle lc = atomic_load_explicit(
+			&ss->ss_lifecycle, memory_order_acquire);
 		if (lc >= SERVER_GRACE_ENDED)
 			return NULL;
 	}
@@ -165,7 +167,7 @@ static void *grace_timer_thread(void *arg)
 void server_grace_start(struct server_state *ss)
 {
 	enum server_lifecycle lc =
-		__atomic_load_n(&ss->ss_lifecycle, __ATOMIC_ACQUIRE);
+		atomic_load_explicit(&ss->ss_lifecycle, memory_order_acquire);
 
 	if (lc != SERVER_BOOTING) {
 		LOG("server_grace_start: unexpected state %s",
@@ -187,7 +189,7 @@ void server_grace_start(struct server_state *ss)
 void server_grace_end(struct server_state *ss)
 {
 	enum server_lifecycle lc =
-		__atomic_load_n(&ss->ss_lifecycle, __ATOMIC_ACQUIRE);
+		atomic_load_explicit(&ss->ss_lifecycle, memory_order_acquire);
 
 	if (lc != SERVER_IN_GRACE && lc != SERVER_GRACE_STARTED) {
 		LOG("server_grace_end: unexpected state %s",
@@ -425,9 +427,10 @@ server_state_init(const char *state_path, int port,
 
 	TRACE("server_state_init: boot_seq=%u lifecycle=%s",
 	      ss->ss_persist.sps_boot_seq,
-	      server_lifecycle_name(ss->ss_lifecycle));
+	      server_lifecycle_name(atomic_load_explicit(
+		      &ss->ss_lifecycle, memory_order_relaxed)));
 
-	__atomic_store_n(&current_server_state, ss, __ATOMIC_RELEASE);
+	atomic_store_explicit(&current_server_state, ss, memory_order_release);
 	return ss;
 
 err_path:
@@ -464,7 +467,8 @@ void server_state_fini(struct server_state *ss)
 
 	server_lifecycle_set(ss, SERVER_SHUTTING_DOWN);
 
-	__atomic_store_n(&current_server_state, NULL, __ATOMIC_RELEASE);
+	atomic_store_explicit(&current_server_state, NULL,
+			      memory_order_release);
 
 	/*
 	 * Wake and join the grace timer thread before touching any other

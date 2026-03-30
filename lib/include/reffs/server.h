@@ -7,6 +7,7 @@
 #define _REFFS_SERVER_H
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
@@ -70,8 +71,8 @@ struct server_state {
 	const struct persist_ops *ss_persist_ops;
 	void *ss_persist_ctx;
 
-	/* State machine */
-	enum server_lifecycle ss_lifecycle;
+	/* State machine — accessed atomically from protocol + timer threads */
+	_Atomic enum server_lifecycle ss_lifecycle;
 
 	/* Grace period */
 	struct timespec ss_grace_start;
@@ -217,8 +218,10 @@ struct server_state *server_state_find(void);
 
 static inline bool server_in_grace(const struct server_state *ss)
 {
-	return ss->ss_lifecycle == SERVER_IN_GRACE ||
-	       ss->ss_lifecycle == SERVER_GRACE_STARTED;
+	enum server_lifecycle lc =
+		atomic_load_explicit(&((struct server_state *)ss)->ss_lifecycle,
+				     memory_order_acquire);
+	return lc == SERVER_IN_GRACE || lc == SERVER_GRACE_STARTED;
 }
 
 /*
@@ -236,7 +239,10 @@ static inline bool nfs4_check_grace(void)
 
 static inline bool server_shutting_down(const struct server_state *ss)
 {
-	return ss->ss_lifecycle == SERVER_SHUTTING_DOWN;
+	enum server_lifecycle lc =
+		atomic_load_explicit(&((struct server_state *)ss)->ss_lifecycle,
+				     memory_order_acquire);
+	return lc == SERVER_SHUTTING_DOWN;
 }
 
 static inline uint16_t server_boot_seq(const struct server_state *ss)
