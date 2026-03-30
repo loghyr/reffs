@@ -283,8 +283,9 @@ void reffs_trace_event(enum reffs_trace_category category, const char *name,
 	va_list args;
 
 	clock_gettime(CLOCK_REALTIME, &ts);
-	struct tm *tm_info = localtime(&ts.tv_sec);
-	strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
+	struct tm tm_buf;
+	localtime_r(&ts.tv_sec, &tm_buf);
+	strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &tm_buf);
 
 	uint64_t epoch_ns = (uint64_t)ts.tv_sec * 1000000000ULL + ts.tv_nsec;
 
