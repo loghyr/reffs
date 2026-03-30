@@ -72,6 +72,7 @@ TESTS = \
 	fs_test_access \
 	fs_test_chmod_chown \
 	fs_test_create \
+	fs_test_evictor \
 	fs_test_create_length \
 	fs_test_vfs_unchecked_create \
 	fs_test_vfs_ctime_capture \

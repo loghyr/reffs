@@ -52,6 +52,14 @@ static void evict_all_sbs(void)
 	struct cds_list_head *sb_list = super_block_list_head();
 	struct super_block *sb;
 
+	/*
+	 * Drop-and-retake RCU pattern: we hold a ref on the current sb
+	 * (via super_block_get), which keeps its sb_link valid.  Advancing
+	 * the iterator reads sb->sb_link.next.  This is safe because:
+	 *   - cds_list_del_rcu preserves the next pointer
+	 *   - Our ref prevents the current node's call_rcu from firing
+	 * So sb_link.next is either a valid live sb or the list head.
+	 */
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
 		if (!super_block_get(sb))

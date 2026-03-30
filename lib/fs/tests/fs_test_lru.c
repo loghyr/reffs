@@ -54,6 +54,8 @@
 #include "posix_recovery.h"
 #include <urcu/call-rcu.h>
 
+#include "reffs/evictor.h"
+
 #define TEST_LRU_MAX 4
 
 /* ------------------------------------------------------------------ */
@@ -122,6 +124,14 @@ static struct test_context lru_ctx;
 static void setup(void)
 {
 	ck_assert_int_eq(test_setup(&lru_ctx), 0);
+
+	/*
+	 * Force synchronous eviction so tests can assert LRU count
+	 * immediately after creates without timing dependency on the
+	 * background evictor thread.
+	 */
+	evictor_set_mode(EVICTOR_SYNC);
+
 	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(sb);
 	sb->sb_inode_lru_max = TEST_LRU_MAX;

@@ -122,8 +122,8 @@ void super_block_evict_dirents(struct super_block *sb, size_t count)
 
 	/*
 	 * Phase 1: collect eviction candidates under the LRU lock.
-	 * Transfer to local list; the rd_active == 0 + leaf checks
-	 * prevent concurrent use.
+	 * Tombstone rd_active = -1 prevents dirent_active_get from
+	 * racing (it checks prev < 0 and backs off).
 	 */
 	pthread_mutex_lock(&sb->sb_dirent_lru_lock);
 	cds_list_for_each_entry_safe(rd, tmp, &sb->sb_dirent_lru, rd_lru) {
@@ -138,6 +138,9 @@ void super_block_evict_dirents(struct super_block *sb, size_t count)
 		/* Must still be a leaf. */
 		if (!cds_list_empty(&rd->rd_children))
 			continue;
+
+		/* Tombstone: prevents concurrent reactivation. */
+		__atomic_store_n(&rd->rd_active, -1, __ATOMIC_RELEASE);
 
 		cds_list_del_init(&rd->rd_lru);
 		__atomic_fetch_and(&rd->rd_state, ~DIRENT_IS_ON_LRU,
