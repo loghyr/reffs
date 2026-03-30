@@ -307,11 +307,22 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 
 	rcu_assign_pointer(rd->rd_parent, dirent_get(parent));
 	rd->rd_sb = parent->rd_sb; /* inherit sb pointer from parent */
-	verify(S_ISDIR(parent->rd_inode->i_mode));
-	if (rla != reffs_life_action_load && is_dir) {
-		atomic_fetch_add_explicit(&parent->rd_inode->i_nlink, 1,
-					  memory_order_relaxed);
+
+	/*
+	 * Read parent->rd_inode under RCU — weak pointer that can be
+	 * NULLed by inode eviction.  If NULL, skip nlink increment;
+	 * the parent inode will pick up the correct nlink on reload.
+	 */
+	rcu_read_lock();
+	struct inode *parent_inode = rcu_dereference(parent->rd_inode);
+	if (parent_inode) {
+		verify(S_ISDIR(parent_inode->i_mode));
+		if (rla != reffs_life_action_load && is_dir) {
+			atomic_fetch_add_explicit(&parent_inode->i_nlink, 1,
+						  memory_order_relaxed);
+		}
 	}
+	rcu_read_unlock();
 	if (rla != reffs_life_action_load) {
 		rd->rd_cookie = __atomic_add_fetch(&parent->rd_cookie_next, 1,
 						   __ATOMIC_RELAXED);
