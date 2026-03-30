@@ -208,6 +208,7 @@ ci-soak: ci-image $(LOGS_DIR)
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
+			rm -rf /build/* && \
 			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
 			make -j$$(nproc) && \
 			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,) && \
