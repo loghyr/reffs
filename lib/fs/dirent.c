@@ -370,19 +370,25 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 	if (!parent)
 		return;
 
-	/* nlink accounting (atomic, no RCU needed). */
-	if (rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode) &&
+	/*
+	 * nlink accounting.  Use dirent_ensure_inode to fault-in the
+	 * parent inode if it was evicted — the weak rd_inode pointer
+	 * can be NULL after LRU eviction + reload via inode_find.
+	 */
+	struct inode *parent_inode = dirent_ensure_inode(parent);
+	if (rd->rd_inode && parent_inode && S_ISDIR(rd->rd_inode->i_mode) &&
 	    (rla == reffs_life_action_death || rla == reffs_life_action_move ||
 	     rla == reffs_life_action_delayed_death)) {
-		uint32_t old_nlink = __atomic_fetch_sub(
-			&parent->rd_inode->i_nlink, 1, __ATOMIC_RELAXED);
+		uint32_t old_nlink = __atomic_fetch_sub(&parent_inode->i_nlink,
+							1, __ATOMIC_RELAXED);
 		if (old_nlink <= 2) {
 			LOG("WARNING: nlink for directory (ino %lu) dropped to %u! Resetting to 2 to prevent corruption.",
-			    parent->rd_inode->i_ino, old_nlink - 1);
-			__atomic_store_n(&parent->rd_inode->i_nlink, 2,
+			    parent_inode->i_ino, old_nlink - 1);
+			__atomic_store_n(&parent_inode->i_nlink, 2,
 					 __ATOMIC_RELAXED);
 		}
 	}
+	inode_active_put(parent_inode);
 
 	if (rd->rd_inode && (rla == reffs_life_action_death ||
 			     rla == reffs_life_action_delayed_death)) {

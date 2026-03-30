@@ -476,20 +476,6 @@ struct inode *inode_find(struct super_block *sb, uint64_t ino)
 	}
 	rcu_read_unlock();
 
-	/*
-	 * Restore the dirent's weak rd_inode pointer if it was NULLed
-	 * by a previous eviction.  inode_release NULLs rd_inode before
-	 * call_rcu, but inode_find can reload the inode into the hash
-	 * table while the dirent still exists with rd_inode == NULL.
-	 *
-	 * Without this, any code that reads rd_inode from the dirent
-	 * (e.g., dirent_parent_release for nlink accounting) will see
-	 * NULL even though the inode is alive.
-	 */
-	if (inode && inode->i_dirent &&
-	    !rcu_dereference(inode->i_dirent->rd_inode))
-		rcu_assign_pointer(inode->i_dirent->rd_inode, inode);
-
 	return inode;
 }
 
