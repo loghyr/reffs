@@ -233,9 +233,10 @@ bool dispatch_compound(struct compound *compound)
 		resop->resop = argop->argop;
 		if (argop->argop < OP_MAX && op_table[argop->argop]) {
 			compound->c_op_start_ns = reffs_now_ns();
-			TRACE("dispatch op=%s(%d) curr_op=%u",
+			TRACE("dispatch op=%s(%d) curr_op=%u ss=%p",
 			      nfs4_op_name(argop->argop), argop->argop,
-			      compound->c_curr_op);
+			      compound->c_curr_op,
+			      (void *)compound->c_server_state);
 			uint32_t op_flags = op_table[argop->argop](compound);
 
 			/*
@@ -249,6 +250,10 @@ bool dispatch_compound(struct compound *compound)
 				return true;
 			}
 
+			TRACE("dispatch done op=%s(%d) curr_op=%u ss=%p",
+			      nfs4_op_name(argop->argop), argop->argop,
+			      compound->c_curr_op,
+			      (void *)compound->c_server_state);
 			trace_nfs4_compound_op(compound, __func__, __LINE__);
 			RECORD_OP_STATS(resop);
 		} else {
