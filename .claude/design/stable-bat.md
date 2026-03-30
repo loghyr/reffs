@@ -25,6 +25,20 @@ things are too hosed; migration/upgrade is not required.
 7. **LOWER**: CHUNK demo at BAT
 8. **LOWER**: External test suites (CTHON04, pynfs, pjdfstest)
 
+## Progress (updated 2026-03-30)
+
+| Phase | Status | Key deliverables |
+|-------|--------|-----------------|
+| 0: TLS + CI | **COMPLETE** | 7 TLS tests, ci-full, GitHub parity, build-on-NFS |
+| 1: Stability | **COMPLETE** | Grace fix (_Atomic), 15 new tests, soak script |
+| 2: Multi-export | **COMPLETE** | bat_export_setup.sh, bat_krb5_setup.sh |
+| 3: NFSv4.2 ops | **IN PROGRESS** | ALLOCATE/DEALLOCATE next |
+| 4: Dir delegations | Pending | Needs knfsd research first |
+| 5: External tests | Pending | After Phase 1 stability |
+| 6: BAT demo | Pending | After Phase 1+2 |
+
+Total unit tests: 120.
+
 ## Outstanding Work Inventory
 
 ### From design docs and NOT_NOW_BROWN_COW markers
@@ -398,25 +412,50 @@ sb-registry-v3.
 
 ## Phase 3: NFSv4.2 Operations (MEDIUM)
 
+### DS vs MDS Operation Classification (RFC 7862 S3.3.1)
+
+Operations that MAY be sent to NFSv4.2 data servers:
+- **IO_ADVISE, READ_PLUS, WRITE_SAME, SEEK** — valid DS ops
+
+Operations that are MDS-only (NOT listed in S3.3.1):
+- **ALLOCATE, DEALLOCATE, COPY, CLONE, EXCHANGE_RANGE** — MDS must
+  fan out to DSes (like SETATTR truncate).  For standalone/DS mode,
+  operate directly on local data block.
+
+Implementation approach: **standalone mode first** for all ops.
+MDS fan-out via dstore vtable deferred to follow-up.
+
+### EXCHANGE_RANGE Op Number
+
+EXCHANGE_RANGE is NOT op 81.  It will be assigned after the CHUNK
+ops in the XDR.  Same DS semantics as CLONE (MDS-only, fan-out).
+
 ### WI-3.1: ALLOCATE [S]
 
 - RFC 7862 S15.1
-- Validate stateid, `posix_fallocate()` or extend data_block
+- **Standalone mode**: validate stateid, `posix_fallocate()` or
+  extend data_block.  MDS fan-out deferred.
 - Tests: allocate on regular file, verify size
+- Errors: NFS4ERR_WRONG_TYPE for non-regular, NFS4ERR_GRACE during
+  grace, NFS4ERR_BAD_STATEID for invalid stateid
 
 ### WI-3.2: DEALLOCATE [S]
 
 - Prereqs: WI-3.1
 - RFC 7862 S15.4
-- `fallocate(FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE)` or
-  zero-fill for RAM backend
+- **Standalone mode**: `fallocate(FALLOC_FL_PUNCH_HOLE |
+  FALLOC_FL_KEEP_SIZE)` or zero-fill for RAM backend.
+  MDS fan-out deferred.
 - Tests: allocate then deallocate, verify zeros
+- Errors: same as ALLOCATE
 
 ### WI-3.3: READ_PLUS [M]
 
 - RFC 7862 S15.10
+- **Valid DS operation** (RFC 7862 S3.3.1)
 - Return `read_plus_content4` with data/hole segments
 - POSIX: `SEEK_HOLE`/`SEEK_DATA` for hole detection
+- RAM: always return all-data content (no holes)
 - Tests: file with holes, verify hole+data segments
 
 ### WI-3.4: COPY (synchronous) [L]
