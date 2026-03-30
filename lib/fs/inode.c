@@ -182,7 +182,8 @@ static void inode_release(struct urcu_ref *ref)
 		atomic_fetch_sub_explicit(&inode->i_sb->sb_inodes_used, 1,
 					  memory_order_relaxed);
 
-		if (__atomic_load_n(&inode->i_nlink, __ATOMIC_RELAXED) == 0) {
+		if (atomic_load_explicit(&inode->i_nlink,
+					 memory_order_relaxed) == 0) {
 			size_t size = inode->i_size;
 			size_t old_used;
 			size_t new_used;

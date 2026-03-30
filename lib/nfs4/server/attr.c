@@ -2823,7 +2823,8 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	nattr->maxwrite = system_attrs.maxwrite;
 	nattr->mode = inode->i_mode & 07777;
 	nattr->no_trunc = system_attrs.no_trunc;
-	nattr->numlinks = __atomic_load_n(&inode->i_nlink, __ATOMIC_RELAXED);
+	nattr->numlinks =
+		atomic_load_explicit(&inode->i_nlink, memory_order_relaxed);
 	nattr->quota_avail_hard = system_attrs.quota_avail_hard;
 	nattr->quota_avail_soft = system_attrs.quota_avail_soft;
 	nattr->rawdev.specdata1 = inode->i_dev_major;

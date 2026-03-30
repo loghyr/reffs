@@ -312,8 +312,8 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 	rd->rd_sb = parent->rd_sb; /* inherit sb pointer from parent */
 	verify(S_ISDIR(parent->rd_inode->i_mode));
 	if (rla != reffs_life_action_load && is_dir) {
-		__atomic_fetch_add(&parent->rd_inode->i_nlink, 1,
-				   __ATOMIC_RELAXED);
+		atomic_fetch_add_explicit(&parent->rd_inode->i_nlink, 1,
+					  memory_order_relaxed);
 	}
 	if (rla != reffs_life_action_load) {
 		rd->rd_cookie = __atomic_add_fetch(&parent->rd_cookie_next, 1,
@@ -385,13 +385,13 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 	if (parent_inode && rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode) &&
 	    (rla == reffs_life_action_death || rla == reffs_life_action_move ||
 	     rla == reffs_life_action_delayed_death)) {
-		uint32_t old_nlink = __atomic_fetch_sub(&parent_inode->i_nlink,
-							1, __ATOMIC_RELAXED);
+		uint32_t old_nlink = atomic_fetch_sub_explicit(
+			&parent_inode->i_nlink, 1, memory_order_relaxed);
 		if (old_nlink <= 2) {
 			LOG("WARNING: nlink for directory (ino %lu) dropped to %u! Resetting to 2 to prevent corruption.",
 			    parent_inode->i_ino, old_nlink - 1);
-			__atomic_store_n(&parent_inode->i_nlink, 2,
-					 __ATOMIC_RELAXED);
+			atomic_store_explicit(&parent_inode->i_nlink, 2,
+					      memory_order_relaxed);
 		}
 	}
 	rcu_read_unlock();
@@ -399,8 +399,8 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 	if (rd->rd_inode && (rla == reffs_life_action_death ||
 			     rla == reffs_life_action_delayed_death)) {
 		int n = S_ISDIR(rd->rd_inode->i_mode) ? 2 : 1;
-		uint32_t old_nlink = __atomic_fetch_sub(&rd->rd_inode->i_nlink,
-							n, __ATOMIC_RELAXED);
+		uint32_t old_nlink = atomic_fetch_sub_explicit(
+			&rd->rd_inode->i_nlink, n, memory_order_relaxed);
 		TRACE("ino=%lu old_nlink=%u sub=%d new_nlink=%u",
 		      rd->rd_inode->i_ino, old_nlink, n, old_nlink - n);
 

@@ -91,7 +91,7 @@ struct inode {
 	pthread_mutex_t i_attrs_lock;
 	reffs_id i_uid;
 	reffs_id i_gid;
-	uint32_t i_nlink;
+	_Atomic uint32_t i_nlink;
 	uint16_t i_mode;
 	uint16_t i_unused;
 	int64_t i_size;

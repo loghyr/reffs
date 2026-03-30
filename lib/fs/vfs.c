@@ -953,7 +953,7 @@ int vfs_link(struct inode *inode, struct inode *dir, const char *name,
 	dirent_attach_inode(rd, inode);
 	rd->rd_ino = inode->i_ino;
 	inode->i_parent_ino = dir->i_ino;
-	__atomic_fetch_add(&inode->i_nlink, 1, __ATOMIC_RELAXED);
+	atomic_fetch_add_explicit(&inode->i_nlink, 1, memory_order_relaxed);
 
 	inode_update_times_now(inode, REFFS_INODE_UPDATE_CTIME);
 	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |

@@ -83,7 +83,7 @@ static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 	}
 
 	fa->mode = inode->i_mode;
-	fa->nlink = __atomic_load_n(&inode->i_nlink, __ATOMIC_RELAXED);
+	fa->nlink = atomic_load_explicit(&inode->i_nlink, memory_order_relaxed);
 	fa->uid = reffs_id_to_uid(inode->i_uid);
 	fa->gid = reffs_id_to_uid(inode->i_gid);
 	fa->size = inode->i_size;
