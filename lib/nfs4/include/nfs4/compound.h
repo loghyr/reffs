@@ -50,6 +50,12 @@ struct compound {
 	/* Server-wide state — grabbed once at compound entry. */
 	struct server_state *c_server_state;
 
+	/*
+	 * Monotonic allocation sequence number — detects freed+recycled
+	 * compounds (a different compound calloc'd at the same address).
+	 */
+	uint64_t c_alloc_seq;
+
 	/* Compound-level state flags. */
 #define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)
 	uint32_t c_flags;

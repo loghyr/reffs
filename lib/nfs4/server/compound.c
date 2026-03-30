@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include <errno.h>
@@ -111,6 +112,8 @@ static void nfs4_compound_finalize(struct compound *compound)
 	compound_free(compound);
 }
 
+static _Atomic uint64_t compound_alloc_counter;
+
 static struct compound *compound_alloc(struct rpc_trans *rt)
 {
 	struct compound *compound;
@@ -124,6 +127,8 @@ static struct compound *compound_alloc(struct rpc_trans *rt)
 	compound->c_rt = rt;
 	compound->c_args = (COMPOUND4args *)ph->ph_args;
 	compound->c_res = (COMPOUND4res *)ph->ph_res;
+	compound->c_alloc_seq = atomic_fetch_add_explicit(
+		&compound_alloc_counter, 1, memory_order_relaxed);
 
 	ret = rpc_cred_to_authunix_parms(&rt->rt_info, &compound->c_ap);
 	if (ret) {

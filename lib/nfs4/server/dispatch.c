@@ -156,25 +156,26 @@ bool dispatch_compound(struct compound *compound)
 	 * compound or corrupted memory — LOG and skip stats rather than
 	 * crashing.  This is a symptom, not the root cause.
 	 */
-#define RECORD_OP_STATS(resop_)                                            \
-	do {                                                               \
-		if (__builtin_expect(!compound->c_server_state, 0)) {      \
-			LOG("BUG: c_server_state NULL at op %u — skipping" \
-			    " stats (compound %p)",                        \
-			    compound->c_curr_op, (void *)compound);        \
-			break;                                             \
-		}                                                          \
-		nfs4_op_stats_record(                                      \
-			compound->c_server_state->ss_nfs4_op_stats,        \
-			compound->c_curr_sb ?                              \
-				compound->c_curr_sb->sb_nfs4_op_stats :    \
-				NULL,                                      \
-			compound->c_nfs4_client ?                          \
-				compound->c_nfs4_client->nc_op_stats :     \
-				NULL,                                      \
-			(resop_)->resop,                                   \
-			(resop_)->nfs_resop4_u.opillegal.status,           \
-			reffs_now_ns() - compound->c_op_start_ns, 0, 0);   \
+#define RECORD_OP_STATS(resop_)                                          \
+	do {                                                             \
+		if (__builtin_expect(!compound->c_server_state, 0)) {    \
+			LOG("BUG: c_server_state NULL at op %u"          \
+			    " compound=%p seq=%lu",                      \
+			    compound->c_curr_op, (void *)compound,       \
+			    (unsigned long)compound->c_alloc_seq);       \
+			break;                                           \
+		}                                                        \
+		nfs4_op_stats_record(                                    \
+			compound->c_server_state->ss_nfs4_op_stats,      \
+			compound->c_curr_sb ?                            \
+				compound->c_curr_sb->sb_nfs4_op_stats :  \
+				NULL,                                    \
+			compound->c_nfs4_client ?                        \
+				compound->c_nfs4_client->nc_op_stats :   \
+				NULL,                                    \
+			(resop_)->resop,                                 \
+			(resop_)->nfs_resop4_u.opillegal.status,         \
+			reffs_now_ns() - compound->c_op_start_ns, 0, 0); \
 	} while (0)
 
 	/*
@@ -233,10 +234,11 @@ bool dispatch_compound(struct compound *compound)
 		resop->resop = argop->argop;
 		if (argop->argop < OP_MAX && op_table[argop->argop]) {
 			compound->c_op_start_ns = reffs_now_ns();
-			TRACE("dispatch op=%s(%d) curr_op=%u ss=%p",
+			TRACE("dispatch op=%s(%d) curr_op=%u ss=%p seq=%lu",
 			      nfs4_op_name(argop->argop), argop->argop,
 			      compound->c_curr_op,
-			      (void *)compound->c_server_state);
+			      (void *)compound->c_server_state,
+			      (unsigned long)compound->c_alloc_seq);
 			uint32_t op_flags = op_table[argop->argop](compound);
 
 			/*
@@ -250,10 +252,11 @@ bool dispatch_compound(struct compound *compound)
 				return true;
 			}
 
-			TRACE("dispatch done op=%s(%d) curr_op=%u ss=%p",
+			TRACE("dispatch done op=%s(%d) curr_op=%u ss=%p seq=%lu",
 			      nfs4_op_name(argop->argop), argop->argop,
 			      compound->c_curr_op,
-			      (void *)compound->c_server_state);
+			      (void *)compound->c_server_state,
+			      (unsigned long)compound->c_alloc_seq);
 			trace_nfs4_compound_op(compound, __func__, __LINE__);
 			RECORD_OP_STATS(resop);
 		} else {
