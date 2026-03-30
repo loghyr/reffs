@@ -32,7 +32,8 @@ help:
 	@echo "  ci-image        - Build the CI docker image (Ubuntu/Debian)"
 	@echo "  build-in-docker - Build the project inside the developer container"
 	@echo "  ci-check        - CI pipeline (build + unit + integration, no krb5)"
-	@echo "  ci-sec          - CI pipeline with krb5 security tests (Fedora only)"
+	@echo "  ci-full         - Full CI pipeline with krb5 + TLS + style (Fedora)"
+	@echo "  ci-sec          - Alias for ci-full"
 	@echo "  ci-test         - Build + integration only (skip unit tests, no krb5)"
 	@echo "  ci-stop         - Kill any running CI containers"
 	@echo "  ci-shell        - Shell into the running CI container"
@@ -169,20 +170,32 @@ ci-check: ci-image
 			fi && \
 			CI_SKIP_KRB5=1 /src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
 
-# Full CI with security tests (krb5 kernel mount).
+# Full CI: style + license + build + unit tests + integration (with krb5 + TLS).
 # Requires a host kernel that supports RPCSEC_GSS (Fedora).
-ci-sec: ci-image
+ci-full: ci-image
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
-			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
+			make -f Makefile.reffs style && \
+			make -f Makefile.reffs license && \
+			cd /build && ../src/configure --enable-asan --enable-ubsan && \
 			make -j$$(nproc) && \
 			rm -f /tmp/reffs-test-timing.txt && \
 			(make check || (cat lib/fs/tests/test-suite.log && exit 1)) && \
+			echo '=== Unit Test Timing ===' && \
+			sort -t'[' -k2 -rn /tmp/reffs-test-timing.txt | head -10 && \
+			if grep -q SLOW /tmp/reffs-test-timing.txt; then \
+				echo 'ERROR: slow tests detected (>2s):' && \
+				grep SLOW /tmp/reffs-test-timing.txt && \
+				exit 1; \
+			fi && \
 			/src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
+
+# Backward-compat alias.
+ci-sec: ci-full
 
 # Build + integration tests only (skip unit tests and krb5).
 # Faster iteration when debugging integration test failures.

@@ -51,6 +51,7 @@ jobs:
           psmisc \
           valgrind \
           cmake \
+          librocksdb-dev \
           nfs-common \
           rpcbind
 
@@ -81,8 +82,11 @@ jobs:
     - name: Autoreconf
       run: autoreconf -fi
 
+    - name: Check style
+      run: make -f Makefile.reffs style
+
     - name: Check license
-      run: SKIP_STYLE=1 make -f Makefile.reffs license
+      run: make -f Makefile.reffs license
 
     - name: Configure
       run: |
