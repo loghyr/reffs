@@ -1,0 +1,98 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# bat_export_setup.sh -- Create per-flavor exports via probe protocol.
+#
+# The root export (sb_id=1) gets all flavors via TOML config.
+# Non-root exports are created via reffs-probe.py (probe is the
+# sole authority for export creation per sb-registry-v3).
+#
+# Usage: bat_export_setup.sh [HOST] [PORT]
+#   HOST  Probe server host (default: localhost)
+#   PORT  Probe server port (default: 20490)
+#
+# Prerequisites: reffsd running with root export configured,
+#                reffs-probe.py in $PATH.
+
+set -euo pipefail
+
+HOST=${1:-localhost}
+PORT=${2:-20490}
+PROBE="reffs-probe.py --host $HOST --port $PORT"
+
+die() { echo "FATAL: $*" >&2; exit 1; }
+info() { echo "[export] $*"; }
+
+# -----------------------------------------------------------------------
+# Verify server is reachable
+# -----------------------------------------------------------------------
+info "Checking server at $HOST:$PORT..."
+$PROBE sb-list >/dev/null || die "Cannot reach probe server"
+
+# -----------------------------------------------------------------------
+# Create per-flavor exports
+# -----------------------------------------------------------------------
+
+create_export() {
+	local path=$1
+	shift
+	local flavors="$*"
+
+	info "Creating export $path (flavors: $flavors)..."
+
+	# Create the export
+	local output
+	output=$($PROBE sb-create --path "$path" --storage ram 2>&1)
+	local id
+	id=$(echo "$output" | grep -o 'id=[0-9]*' | cut -d= -f2)
+
+	if [ -z "$id" ]; then
+		info "  sb-create failed or already exists: $output"
+		# Try to find existing
+		id=$($PROBE sb-list 2>&1 | grep "$path" | awk '{print $1}' | head -1)
+		if [ -z "$id" ]; then
+			die "Cannot create or find export at $path"
+		fi
+		info "  Found existing export id=$id"
+	fi
+
+	# Set flavors
+	$PROBE sb-set-flavors --id "$id" --flavors $flavors || \
+		info "  WARN: set-flavors failed for $path (id=$id)"
+
+	# Mount
+	$PROBE sb-mount --id "$id" --path "$path" 2>/dev/null || \
+		info "  (already mounted or mount deferred)"
+
+	info "  Export $path (id=$id) ready"
+}
+
+# Per-flavor exports
+create_export /sys sys
+create_export /krb5 krb5
+create_export /krb5i krb5i
+create_export /krb5p krb5p
+create_export /tls tls
+
+# pNFS exports
+create_export /ffv1 sys
+create_export /ffv2 sys
+
+# -----------------------------------------------------------------------
+# Verify
+# -----------------------------------------------------------------------
+info ""
+info "=== Export listing ==="
+$PROBE sb-list
+
+info ""
+info "=== Flavor lint ==="
+$PROBE sb-lint-flavors
+
+info ""
+info "=== Setup complete ==="
+info "Mount examples:"
+info "  mount -o vers=4.2,sec=sys  $HOST:/sys  /mnt/sys"
+info "  mount -o vers=4.2,sec=krb5 $HOST:/krb5 /mnt/krb5"
+info "  mount -o vers=3            $HOST:/ffv1 /mnt/ffv1"
