@@ -680,12 +680,10 @@ int rpc_protocol_op_call(struct rpc_trans *rt)
 	return ret;
 }
 
-void rpc_protocol_free(struct rpc_trans *rt)
+static void rpc_trans_release(struct urcu_ref *ref)
 {
+	struct rpc_trans *rt = caa_container_of(ref, struct rpc_trans, rt_ref);
 	struct protocol_handler *ph;
-
-	if (!rt)
-		return;
 
 	free(rt->rt_unwrapped_body);
 	rt->rt_unwrapped_body = NULL;
@@ -725,6 +723,23 @@ void rpc_protocol_free(struct rpc_trans *rt)
 
 	free(rt->rt_reply);
 	free(rt);
+}
+
+void rpc_protocol_free(struct rpc_trans *rt)
+{
+	if (!rt)
+		return;
+
+	urcu_ref_put(&rt->rt_ref, rpc_trans_release);
+}
+
+struct rpc_trans *rpc_trans_get(struct rpc_trans *rt)
+{
+	if (!rt)
+		return NULL;
+
+	urcu_ref_get(&rt->rt_ref);
+	return rt;
 }
 
 /*
@@ -806,6 +821,8 @@ struct rpc_trans *rpc_trans_create(void)
 	struct rpc_trans *rt = calloc(1, sizeof(*rt));
 	if (!rt)
 		return NULL;
+
+	urcu_ref_init(&rt->rt_ref);
 
 	rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 	rt->rt_info.ri_reject_stat = RPC_MISMATCH;

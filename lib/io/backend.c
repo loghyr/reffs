@@ -122,6 +122,8 @@ static void io_handle_backend_pread(struct io_context *ic, int res)
 
 	if (rt->rt_task)
 		task_resume(rt->rt_task);
+
+	rpc_protocol_free(rt);
 }
 
 static void io_handle_backend_pwrite(struct io_context *ic, int res)
@@ -144,6 +146,8 @@ static void io_handle_backend_pwrite(struct io_context *ic, int res)
 
 	if (rt->rt_task)
 		task_resume(rt->rt_task);
+
+	rpc_protocol_free(rt);
 }
 
 /* ------------------------------------------------------------------ */
@@ -270,7 +274,7 @@ int io_request_backend_pread(int fd, void *buf, size_t len, off_t offset,
 	if (!ic)
 		return -ENOMEM;
 
-	ic->ic_rt = rt;
+	ic->ic_rt = rpc_trans_get(rt);
 
 	struct io_uring_sqe *sqe = NULL;
 	for (int i = 0; i < REFFS_IO_RING_RETRIES; i++) {
@@ -303,7 +307,7 @@ int io_request_backend_pwrite(int fd, const void *buf, size_t len, off_t offset,
 	if (!ic)
 		return -ENOMEM;
 
-	ic->ic_rt = rt;
+	ic->ic_rt = rpc_trans_get(rt);
 
 	struct io_uring_sqe *sqe = NULL;
 	for (int i = 0; i < REFFS_IO_RING_RETRIES; i++) {

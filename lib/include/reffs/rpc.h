@@ -105,6 +105,7 @@ struct rpc_trans {
 	ssize_t rt_io_result; /* result of last async backend I/O op */
 	void *rt_async_data; /* opaque data for fan-out / async ops */
 	char *rt_unwrapped_body; /* GSS-unwrapped request body (malloc'd) */
+	struct urcu_ref rt_ref;
 };
 
 struct rpc_stats {
@@ -211,6 +212,7 @@ static inline uint32_t *rpc_encode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 
 int rpc_protocol_allocate_call(struct rpc_trans *rt);
 void rpc_protocol_free(struct rpc_trans *rt);
+struct rpc_trans *rpc_trans_get(struct rpc_trans *rt);
 int rpc_protocol_op_call(struct rpc_trans *rt);
 void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t);
 
