@@ -28,6 +28,20 @@
 
 #include <errno.h>
 #include <liburing.h>
+
+/*
+ * io_uring submission acts as a kernel-mediated memory barrier between
+ * the SQE producer and the CQE consumer.  TSAN cannot model this, so
+ * we annotate it explicitly.  No-ops when not building with TSAN.
+ */
+#if defined(__SANITIZE_THREAD__)
+#include <sanitizer/tsan_interface.h>
+#define TSAN_RELEASE(addr) __tsan_release(addr)
+#define TSAN_ACQUIRE(addr) __tsan_acquire(addr)
+#else
+#define TSAN_RELEASE(addr) ((void)(addr))
+#define TSAN_ACQUIRE(addr) ((void)(addr))
+#endif
 #include <liburing/io_uring.h>
 #include <linux/time_types.h>
 #include <pthread.h>
@@ -185,6 +199,8 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 			continue;
 		}
 
+		TSAN_ACQUIRE(ic);
+
 		if (cqe->res < 0) {
 			LOG("io_backend_main_loop: op=%s fd=%d error: %s",
 			    io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
@@ -230,6 +246,7 @@ static int submit_backend_op(struct io_context *ic, struct io_uring_sqe *sqe,
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		int ret = io_uring_submit(&rc->rc_ring);
 		if (ret >= 0) {
+			TSAN_RELEASE(ic);
 			submitted = true;
 			break;
 		}
