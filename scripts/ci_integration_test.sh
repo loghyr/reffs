@@ -190,6 +190,31 @@ umount "$MOUNT"
 section_end
 
 # ---------------------------------------------------------------------------
+# NFSv4.2 build-on-NFS test: clone + autoreconf + configure + make.
+# Exercises hardlinks (autotools), large writes (object files), readdir
+# at scale, renames, and timestamps — the full POSIX compat surface.
+# ---------------------------------------------------------------------------
+section_start "NFSv4.2 build-on-NFS test"
+mount -o vers=4.2,sec=sys,soft,timeo=30,retrans=3 127.0.0.1:/ "$MOUNT"
+
+(
+	cd "$MOUNT"
+	git clone --verbose "$SRC_DIR" build_v4
+	cd build_v4
+	mkdir -p m4
+	autoreconf -fi
+	mkdir build_nfs
+	cd build_nfs
+	../configure --disable-asan --disable-ubsan 2>&1 | tail -5
+	make -j$(nproc) 2>&1 | tail -5
+	echo "NFSv4.2 build-on-NFS: make succeeded"
+)
+
+rm -rf "$MOUNT"/build_v4 || true
+umount "$MOUNT"
+section_end
+
+# ---------------------------------------------------------------------------
 # NFSv4 identity / owner-string test.
 # Uses ec_demo's userspace NFSv4 client to bypass the kernel idmapd and
 # verify the raw owner strings directly from the server's GETATTR reply.
@@ -252,6 +277,32 @@ mount -o vers=3,nolock,soft,timeo=10,retrans=2 127.0.0.1:/ "$MOUNT"
 	echo "md5sum OK: $sum_nfs"
 )
 
+rm -rf "$MOUNT"/reffs_v3 || true
+umount "$MOUNT"
+section_end
+
+# ---------------------------------------------------------------------------
+# NFSv3 build-on-NFS test: clone + autoreconf + configure + make.
+# Same as the v4 test but over NFSv3 — exercises v3 WRITE, CREATE,
+# MKDIR, RENAME, LINK, READDIR at build scale.
+# ---------------------------------------------------------------------------
+section_start "NFSv3 build-on-NFS test"
+mount -o vers=3,nolock,soft,timeo=30,retrans=3 127.0.0.1:/ "$MOUNT"
+
+(
+	cd "$MOUNT"
+	git clone --verbose "$SRC_DIR" build_v3
+	cd build_v3
+	mkdir -p m4
+	autoreconf -fi
+	mkdir build_nfs
+	cd build_nfs
+	../configure --disable-asan --disable-ubsan 2>&1 | tail -5
+	make -j$(nproc) 2>&1 | tail -5
+	echo "NFSv3 build-on-NFS: make succeeded"
+)
+
+rm -rf "$MOUNT"/build_v3 || true
 umount "$MOUNT"
 section_end
 
