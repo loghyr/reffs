@@ -103,8 +103,15 @@ uint32_t nfs4_op_delegreturn(struct compound *compound)
 		stateid_put(&os->os_stid); /* state ref → freed via RCU */
 	}
 
-	/* Unhash and free the delegation stateid. */
-	stateid_inode_unhash(stid);
+	/*
+	 * Unhash atomically — if another DELEGRETURN already unhashed
+	 * this stateid, bail out to prevent refcount underflow.
+	 */
+	if (!stateid_inode_unhash(stid)) {
+		stateid_put(stid); /* drop the find ref */
+		*status = NFS4ERR_BAD_STATEID;
+		return 0;
+	}
 	stateid_client_unhash(stid);
 
 	if (compound->c_curr_stid == stid) {

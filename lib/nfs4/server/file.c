@@ -1009,10 +1009,16 @@ uint32_t nfs4_op_close(struct compound *compound)
 	pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
 
 	/*
-	 * Unhash so that future stateid_find() calls fail.  This must
-	 * happen before we drop the state ref so no new caller can race.
+	 * Unhash atomically — if another CLOSE already unhashed this
+	 * stateid, bail out.  Without this check, two concurrent CLOSEs
+	 * on the same stateid both proceed to the triple put below,
+	 * causing a refcount underflow.
 	 */
-	stateid_inode_unhash(stid);
+	if (!stateid_inode_unhash(stid)) {
+		stateid_put(stid); /* drop the find ref */
+		*status = NFS4ERR_BAD_STATEID;
+		return 0;
+	}
 	stateid_client_unhash(stid);
 
 	/*

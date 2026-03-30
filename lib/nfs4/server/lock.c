@@ -411,7 +411,15 @@ uint32_t nfs4_op_free_stateid(struct compound *compound)
 		return 0;
 	}
 
-	stateid_inode_unhash(stid);
+	/*
+	 * Unhash atomically — if another FREE_STATEID already unhashed
+	 * this stateid, bail out to prevent refcount underflow.
+	 */
+	if (!stateid_inode_unhash(stid)) {
+		stateid_put(stid); /* drop the find ref */
+		*status = NFS4ERR_BAD_STATEID;
+		return 0;
+	}
 	stateid_client_unhash(stid);
 
 	/* Drop the "state ref" */
