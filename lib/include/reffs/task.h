@@ -82,6 +82,29 @@ static inline bool task_check_and_clear_went_async(struct task *t)
 }
 
 /*
+ * task_unpause -- undo task_pause() WITHOUT re-enqueuing.
+ *
+ * Used when async I/O submission fails AFTER task_pause().  The task
+ * stays on the current worker thread — the caller can safely continue
+ * accessing rt, compound, and all associated data.
+ *
+ * Contrast with task_resume() which re-enqueues the task and makes it
+ * visible to other workers — after task_resume() the caller MUST NOT
+ * touch rt or compound.
+ */
+static inline bool task_unpause(struct task *t)
+{
+	enum task_state expected = TASK_PAUSED;
+	bool ok = atomic_compare_exchange_strong_explicit(
+		&t->t_state, &expected, TASK_RUNNING, memory_order_acq_rel,
+		memory_order_relaxed);
+	if (ok)
+		atomic_store_explicit(&t->t_went_async, false,
+				      memory_order_release);
+	return ok;
+}
+
+/*
  * task_resume -- transition PAUSED -> RUNNING and re-enqueue the task.
  *
  * Called by the async completer (io_uring CQE handler, DS response handler,

@@ -1162,11 +1162,17 @@ uint32_t nfs4_op_read(struct compound *compound)
 					     req_count, args->offset, rt,
 					     rc_backend) < 0) {
 			/*
-			 * Submission failed: undo the pause so dispatch
-			 * doesn't stall, then fall through to error.
+			 * Submission failed: undo the pause in place
+			 * WITHOUT re-enqueuing.  task_unpause keeps the
+			 * task on this worker so we can safely touch rt,
+			 * compound, resok, and status below.
+			 *
+			 * Using task_resume here would re-enqueue the
+			 * task — another worker could dequeue, process,
+			 * and free the compound while we still access it.
 			 */
 			rt->rt_next_action = NULL;
-			task_resume(rt->rt_task);
+			task_unpause(rt->rt_task);
 			free(resok->data.data_val);
 			resok->data.data_val = NULL;
 			resok->data.data_len = 0;
@@ -1539,8 +1545,14 @@ uint32_t nfs4_op_write(struct compound *compound)
 			if (io_request_backend_pwrite(
 				    db_fd, args->data.data_val, write_len,
 				    args->offset, rt, rc_backend) < 0) {
+				/*
+				 * Submission failed: undo pause in place.
+				 * Do NOT call task_resume — that re-enqueues
+				 * and another worker could free the compound
+				 * while we still access it.
+				 */
 				rt->rt_next_action = NULL;
-				task_resume(rt->rt_task);
+				task_unpause(rt->rt_task);
 				*status = NFS4ERR_DELAY;
 				goto out;
 			}
