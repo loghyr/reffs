@@ -29,6 +29,7 @@
 #include "reffs/layout_segment.h"
 #include "reffs/log.h"
 #include "reffs/super_block.h"
+#include "reffs/evictor.h"
 #include "reffs/trace/fs.h"
 #include "reffs/test.h"
 #include "reffs/stateid.h"
@@ -148,9 +149,23 @@ static void inode_lru_add(struct inode *inode)
 	pthread_mutex_unlock(&sb->sb_inode_lru_lock);
 
 	/* Pressure-evict if over the limit */
-	if (sb->sb_inode_lru_count > sb->sb_inode_lru_max)
-		super_block_evict_inodes(sb, sb->sb_inode_lru_count -
-						     sb->sb_inode_lru_max);
+	if (sb->sb_inode_lru_count > sb->sb_inode_lru_max) {
+		if (evictor_get_mode() == EVICTOR_ASYNC) {
+			evictor_signal();
+			/*
+			 * Backpressure: if way over the limit, fall back
+			 * to synchronous eviction on this worker thread.
+			 */
+			if (sb->sb_inode_lru_count > 2 * sb->sb_inode_lru_max)
+				super_block_evict_inodes(
+					sb, sb->sb_inode_lru_count -
+						    sb->sb_inode_lru_max);
+		} else {
+			super_block_evict_inodes(sb,
+						 sb->sb_inode_lru_count -
+							 sb->sb_inode_lru_max);
+		}
+	}
 }
 
 /*

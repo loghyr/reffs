@@ -23,6 +23,7 @@
 #include "reffs/inode.h"
 #include "reffs/log.h"
 #include "reffs/ns.h"
+#include "reffs/evictor.h"
 #include "reffs/super_block.h"
 #include "reffs/types.h"
 #include "reffs/trace/fs.h"
@@ -81,6 +82,8 @@ int reffs_ns_init(void)
 
 	inode_active_put(inode);
 
+	evictor_init();
+
 out:
 	if (ret)
 		reffs_ns_fini();
@@ -115,6 +118,9 @@ int reffs_ns_fini(void)
 {
 	if (!reffs_namespace_initialized)
 		return -EALREADY;
+
+	/* Stop evictor BEFORE draining superblocks. */
+	evictor_fini();
 
 	reffs_namespace_initialized = 0;
 

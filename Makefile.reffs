@@ -217,6 +217,27 @@ ci-soak: ci-image $(LOGS_DIR)
 			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
 			exit $$rc"
 
+# Soak test with async evictor and small LRU.  Eviction runs on
+# a background thread, not the NFS worker.  Tests whether the
+# c_server_state corruption is caused by synchronous eviction
+# on the worker thread's call stack.
+ci-soak-async: ci-image $(LOGS_DIR)
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
+			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
+			rm -rf /build/* && \
+			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
+			make -j$$(nproc) && \
+			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
+			rc=\$$?; \
+			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			exit \$$rc"
+
 # Soak test with ASAN + no optimization (-O0).  Tests whether the
 # c_server_state corruption is caused by compiler optimization
 # (reordering, CSE, speculative loads).  If the bug disappears

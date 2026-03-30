@@ -23,6 +23,7 @@
 #include "reffs/inode.h"
 #include "reffs/log.h"
 #include "reffs/super_block.h"
+#include "reffs/evictor.h"
 #include "reffs/test.h"
 #include "reffs/trace/fs.h"
 #include "reffs/types.h"
@@ -63,9 +64,19 @@ static void dirent_lru_add(struct reffs_dirent *rd)
 	}
 	pthread_mutex_unlock(&sb->sb_dirent_lru_lock);
 
-	if (sb->sb_dirent_lru_count > sb->sb_dirent_lru_max)
-		super_block_evict_dirents(sb, sb->sb_dirent_lru_count -
-						      sb->sb_dirent_lru_max);
+	if (sb->sb_dirent_lru_count > sb->sb_dirent_lru_max) {
+		if (evictor_get_mode() == EVICTOR_ASYNC) {
+			evictor_signal();
+			if (sb->sb_dirent_lru_count > 2 * sb->sb_dirent_lru_max)
+				super_block_evict_dirents(
+					sb, sb->sb_dirent_lru_count -
+						    sb->sb_dirent_lru_max);
+		} else {
+			super_block_evict_dirents(
+				sb, sb->sb_dirent_lru_count -
+					    sb->sb_dirent_lru_max);
+		}
+	}
 }
 
 /*

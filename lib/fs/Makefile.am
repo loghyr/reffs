@@ -19,6 +19,7 @@ libreffs_fs_la_SOURCES = \
 	client.c \
 	data_block.c \
 	dirent.c \
+	evictor.c \
 	filehandle.c \
 	fs.c \
 	fuse.c \
