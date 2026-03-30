@@ -10,3 +10,23 @@ race:liburcu-cds.so
 race:liburcu.so
 race:liburcu-mb.so
 race:liburcu-memb.so
+
+# urcu ref operations are inlined from headers into our code.
+# TSAN sees the reads/writes but not the memory barriers.
+race:urcu_ref_get_unless_zero
+race:urcu_ref_put
+race:_uatomic_cmpxchg
+race:_uatomic_add_return
+
+# GCC __atomic_* builtins on i_state (pre-existing, tracked for
+# C11 conversion).  TSAN doesn't recognize them as atomic.
+race:inode_lru_add
+race:inode_lru_del_locked
+
+# Trace functions read object fields without locks (diagnostic
+# only — the values may be stale but reads are non-destructive).
+race:trace_fs_inode
+race:trace_fs_dirent
+race:trace_fs_super_block
+race:trace_fs_client
+race:trace_io_write_complete
