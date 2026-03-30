@@ -371,12 +371,18 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 		return;
 
 	/*
-	 * nlink accounting.  Use dirent_ensure_inode to fault-in the
-	 * parent inode if it was evicted — the weak rd_inode pointer
-	 * can be NULL after LRU eviction + reload via inode_find.
+	 * nlink accounting.  Read parent->rd_inode under RCU — it is a
+	 * weak pointer that can be NULLed by inode eviction at any time.
+	 * If NULL, skip nlink; the parent is being evicted and nlink
+	 * will be reconstructed on recovery/reload.
+	 *
+	 * We cannot call dirent_ensure_inode(parent) here because we
+	 * do not hold a ref on the parent dirent (it was detached by
+	 * rcu_xchg_pointer above), so the parent could be freed.
 	 */
-	struct inode *parent_inode = dirent_ensure_inode(parent);
-	if (rd->rd_inode && parent_inode && S_ISDIR(rd->rd_inode->i_mode) &&
+	rcu_read_lock();
+	struct inode *parent_inode = rcu_dereference(parent->rd_inode);
+	if (parent_inode && rd->rd_inode && S_ISDIR(rd->rd_inode->i_mode) &&
 	    (rla == reffs_life_action_death || rla == reffs_life_action_move ||
 	     rla == reffs_life_action_delayed_death)) {
 		uint32_t old_nlink = __atomic_fetch_sub(&parent_inode->i_nlink,
@@ -388,7 +394,7 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 					 __ATOMIC_RELAXED);
 		}
 	}
-	inode_active_put(parent_inode);
+	rcu_read_unlock();
 
 	if (rd->rd_inode && (rla == reffs_life_action_death ||
 			     rla == reffs_life_action_delayed_death)) {
