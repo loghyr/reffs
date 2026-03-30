@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -1242,16 +1243,46 @@ uint32_t nfs4_op_read_plus(struct compound *compound)
 	if (*status != NFS4_OK)
 		goto out;
 
-	int ret = inode_access_check(compound->c_inode, &compound->c_ap, R_OK);
-	if (ret) {
-		*status = errno_to_nfs4(ret, OP_READ_PLUS);
-		goto out;
+	/*
+	 * For anonymous and regular stateids, verify POSIX read permission.
+	 * Read-bypass skips this check (same as READ).
+	 */
+	if (!stateid4_is_read_bypass(&args->rpa_stateid)) {
+		int ret = inode_access_check(compound->c_inode, &compound->c_ap,
+					     R_OK);
+		if (ret) {
+			*status = errno_to_nfs4(ret, OP_READ_PLUS);
+			goto out;
+		}
 	}
 
 	/* Clamp requested count */
 	uint32_t req_count = args->rpa_count;
 	if (req_count > NFS4_MAX_RW_SIZE)
 		req_count = NFS4_MAX_RW_SIZE;
+
+	/* Zero-length read — return empty data segment */
+	if (req_count == 0) {
+		resok->rpr_eof = (args->rpa_offset >=
+				  (uint64_t)compound->c_inode->i_size);
+		resok->rpr_contents.rpr_contents_len = 1;
+		resok->rpr_contents.rpr_contents_val =
+			calloc(1, sizeof(read_plus_content));
+		if (!resok->rpr_contents.rpr_contents_val) {
+			*status = NFS4ERR_SERVERFAULT;
+			goto out;
+		}
+		resok->rpr_contents.rpr_contents_val[0].rpc_content =
+			NFS4_CONTENT_DATA;
+		resok->rpr_contents.rpr_contents_val[0]
+			.read_plus_content_u.rpc_data.d_offset =
+			args->rpa_offset;
+		resok->rpr_contents.rpr_contents_val[0]
+			.read_plus_content_u.rpc_data.d_data.d_data_len = 0;
+		resok->rpr_contents.rpr_contents_val[0]
+			.read_plus_content_u.rpc_data.d_data.d_data_val = NULL;
+		goto out;
+	}
 
 	/* Handle read past EOF or empty file */
 	if (!compound->c_inode->i_db ||
@@ -1671,9 +1702,14 @@ uint32_t nfs4_op_allocate(struct compound *compound)
 	 * Extend the file if the requested range exceeds current size.
 	 * ALLOCATE guarantees space at [offset, offset+length).
 	 */
+	if (args->aa_offset > UINT64_MAX - args->aa_length) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
 	uint64_t end = args->aa_offset + args->aa_length;
 
-	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	struct super_block *sb = compound->c_curr_sb;
+
 	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
 
 	if (!compound->c_inode->i_db) {
@@ -1682,29 +1718,45 @@ uint32_t nfs4_op_allocate(struct compound *compound)
 			data_block_alloc(compound->c_inode, NULL, 0, 0);
 		if (!compound->c_inode->i_db) {
 			pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
-			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			*status = NFS4ERR_NOSPC;
 			goto out;
 		}
 	}
 
 	if (end > (uint64_t)compound->c_inode->i_size) {
+		int64_t old_size = compound->c_inode->i_size;
 		ssize_t rret =
 			data_block_resize(compound->c_inode->i_db, (size_t)end);
 		if (rret < 0) {
 			pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
-			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			*status = NFS4ERR_NOSPC;
 			goto out;
 		}
-		compound->c_inode->i_size = end;
-		inode_update_times_now(compound->c_inode,
-				       REFFS_INODE_UPDATE_CTIME |
-					       REFFS_INODE_UPDATE_MTIME);
+		compound->c_inode->i_size = (int64_t)end;
+		compound->c_inode->i_used =
+			compound->c_inode->i_size / sb->sb_block_size +
+			(compound->c_inode->i_size % sb->sb_block_size ? 1 : 0);
+
+		/* Update superblock space accounting */
+		size_t old_used, new_used;
+		old_used = atomic_load_explicit(&sb->sb_bytes_used,
+						memory_order_relaxed);
+		do {
+			new_used = old_used + ((size_t)end - (size_t)old_size);
+		} while (!atomic_compare_exchange_strong_explicit(
+			&sb->sb_bytes_used, &old_used, new_used,
+			memory_order_acq_rel, memory_order_relaxed));
 	}
 
 	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	inode_update_times_now(compound->c_inode,
+			       REFFS_INODE_UPDATE_CTIME |
+				       REFFS_INODE_UPDATE_MTIME);
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+	inode_sync_to_disk(compound->c_inode);
 
 out:
 	stateid_put(stid);
@@ -1759,13 +1811,16 @@ uint32_t nfs4_op_deallocate(struct compound *compound)
 		goto out;
 	}
 
-	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	if (args->da_offset > UINT64_MAX - args->da_length) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
 	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
 
 	if (!compound->c_inode->i_db) {
 		/* No data — nothing to deallocate */
 		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
-		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 		goto out;
 	}
 
@@ -1780,39 +1835,48 @@ uint32_t nfs4_op_deallocate(struct compound *compound)
 	if (start >= file_size) {
 		/* Entirely past EOF — no-op */
 		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
-		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 		goto out;
 	}
 
 	if (end > file_size)
 		end = file_size;
 
-	size_t zero_len = (size_t)(end - start);
-	char *zeros = calloc(1, zero_len);
-	if (!zeros) {
-		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
-		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
-		*status = NFS4ERR_SERVERFAULT;
-		goto out;
+	/*
+	 * Zero-fill in fixed-size chunks to bound memory usage.
+	 * A malicious client could request a multi-GB range;
+	 * allocating the full range would be a DoS vector.
+	 */
+	{
+#define DEALLOC_ZERO_CHUNK 4096
+		char zeros[DEALLOC_ZERO_CHUNK];
+		memset(zeros, 0, sizeof(zeros));
+
+		uint64_t pos = start;
+		while (pos < end) {
+			size_t chunk = (size_t)(end - pos);
+			if (chunk > DEALLOC_ZERO_CHUNK)
+				chunk = DEALLOC_ZERO_CHUNK;
+			ssize_t nw = data_block_write(compound->c_inode->i_db,
+						      zeros, chunk, (off_t)pos);
+			if (nw < 0) {
+				pthread_rwlock_unlock(
+					&compound->c_inode->i_db_rwlock);
+				*status = NFS4ERR_IO;
+				goto out;
+			}
+			pos += (uint64_t)nw;
+		}
 	}
 
-	ssize_t nwritten = data_block_write(compound->c_inode->i_db, zeros,
-					    zero_len, (off_t)start);
-	free(zeros);
+	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 
-	if (nwritten < 0) {
-		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
-		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
-		*status = NFS4ERR_IO;
-		goto out;
-	}
-
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
 	inode_update_times_now(compound->c_inode,
 			       REFFS_INODE_UPDATE_CTIME |
 				       REFFS_INODE_UPDATE_MTIME);
-
-	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+	inode_sync_to_disk(compound->c_inode);
 
 out:
 	stateid_put(stid);

@@ -66,6 +66,7 @@ TESTS = \
 	compound_async \
 	delegation_lifecycle \
 	errors \
+	file_ops \
 	nfs4_client_persist \
 	nfs4_session \
 	task_state
