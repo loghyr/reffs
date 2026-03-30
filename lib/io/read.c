@@ -28,6 +28,7 @@
 #include "reffs/log.h"
 #include "reffs/network.h"
 #include "reffs/ring.h"
+#include "tsan_uring.h"
 #include "reffs/rpc.h"
 #include "reffs/task.h"
 #include "reffs/tls.h"
@@ -410,6 +411,7 @@ static int request_more_read_data(int fd, struct ring_context *rc,
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(&rc->rc_ring);
 		if (ret >= 0) {
+			TSAN_RELEASE(ic);
 			submitted = true;
 			break;
 		} else if (ret == -EAGAIN) {
@@ -485,6 +487,7 @@ int io_request_read_op(int fd, struct connection_info *ci,
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(&rc->rc_ring);
 		if (ret >= 0) {
+			TSAN_RELEASE(ic);
 			submitted = true;
 			break;
 		} else if (ret == -EAGAIN) {

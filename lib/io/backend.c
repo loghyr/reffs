@@ -29,19 +29,7 @@
 #include <errno.h>
 #include <liburing.h>
 
-/*
- * io_uring submission acts as a kernel-mediated memory barrier between
- * the SQE producer and the CQE consumer.  TSAN cannot model this, so
- * we annotate it explicitly.  No-ops when not building with TSAN.
- */
-#if defined(__SANITIZE_THREAD__)
-#include <sanitizer/tsan_interface.h>
-#define TSAN_RELEASE(addr) __tsan_release(addr)
-#define TSAN_ACQUIRE(addr) __tsan_acquire(addr)
-#else
-#define TSAN_RELEASE(addr) ((void)(addr))
-#define TSAN_ACQUIRE(addr) ((void)(addr))
-#endif
+#include "tsan_uring.h"
 #include <liburing/io_uring.h>
 #include <linux/time_types.h>
 #include <pthread.h>

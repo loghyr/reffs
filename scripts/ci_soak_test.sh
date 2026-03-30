@@ -49,6 +49,9 @@ FAILED=false
 die() { echo "SOAK FAIL: $*" >&2; FAILED=true; }
 info() { echo "[$(date +%H:%M:%S)] $*"; }
 
+# Clear stale logs from previous runs
+rm -f "$LOG" "$TRACE_FILE" /logs/soak.log /logs/soak-trace.log 2>/dev/null
+
 cleanup() {
 	set +e
 	for pid in "${WORKLOAD_PIDS[@]}"; do

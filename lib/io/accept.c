@@ -26,6 +26,7 @@
 #include "reffs/log.h"
 #include "reffs/network.h"
 #include "reffs/ring.h"
+#include "tsan_uring.h"
 #include "reffs/trace/io.h"
 
 struct accept_context {
@@ -115,6 +116,7 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 		for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 			ret = io_uring_submit(&rc->rc_ring);
 			if (ret >= 0) {
+				TSAN_RELEASE(ic);
 				submitted = true;
 				break;
 			} else if (ret == -EAGAIN) {

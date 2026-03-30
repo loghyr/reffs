@@ -24,8 +24,8 @@
 
 #include "reffs/log.h"
 #include "reffs/io.h"
-#include "reffs/log.h"
 #include "reffs/ring.h"
+#include "tsan_uring.h"
 #include "reffs/rpc.h"
 #include "reffs/trace/io.h"
 
@@ -363,6 +363,8 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			io_uring_cqe_seen(&rc->rc_ring, cqe);
 			continue;
 		}
+
+		TSAN_ACQUIRE(ic);
 
 #ifdef HAVE_IO_URING_STRESS
 		// Fake a slow event loop to cause CQ ring backpressure

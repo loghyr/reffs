@@ -29,6 +29,7 @@
 #include "reffs/log.h"
 #include "reffs/network.h"
 #include "reffs/ring.h"
+#include "tsan_uring.h"
 #include "reffs/rpc.h"
 #include "reffs/tls.h"
 #include "reffs/trace/io.h"
@@ -194,6 +195,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(&rc->rc_ring);
 		if (ret >= 0) {
+			TSAN_RELEASE(ic);
 			submitted = true;
 			break;
 		} else if (ret == -EAGAIN) {
@@ -329,6 +331,7 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
 		ret = io_uring_submit(&rc->rc_ring);
 		if (ret >= 0) {
+			TSAN_RELEASE(ic);
 			submitted = true;
 			break;
 		} else if (ret == -EAGAIN) {
