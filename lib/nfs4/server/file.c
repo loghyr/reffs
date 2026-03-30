@@ -1516,22 +1516,197 @@ uint32_t nfs4_op_seek(struct compound *compound)
 	return 0;
 }
 
+/*
+ * ALLOCATE — RFC 7862 S15.1.
+ *
+ * Preallocate space in a file.  Standalone mode only; MDS fan-out
+ * deferred (NOT_NOW_BROWN_COW).
+ */
 uint32_t nfs4_op_allocate(struct compound *compound)
 {
+	ALLOCATE4args *args = NFS4_OP_ARG_SETUP(compound, opallocate);
 	ALLOCATE4res *res = NFS4_OP_RES_SETUP(compound, opallocate);
 	nfsstat4 *status = &res->ar_status;
+	struct stateid *stid = NULL;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
 
+	if (nfs4_check_grace()) {
+		*status = NFS4ERR_GRACE;
+		goto out;
+	}
+
+	if (!S_ISREG(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_WRONG_TYPE;
+		goto out;
+	}
+
+	*status =
+		nfs4_stateid_resolve(compound, &args->aa_stateid, true, &stid);
+	if (*status != NFS4_OK)
+		goto out;
+
+	int ret = inode_access_check(compound->c_inode, &compound->c_ap, W_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_ALLOCATE);
+		goto out;
+	}
+
+	/*
+	 * Extend the file if the requested range exceeds current size.
+	 * ALLOCATE guarantees space at [offset, offset+length).
+	 */
+	uint64_t end = args->aa_offset + args->aa_length;
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
+
+	if (!compound->c_inode->i_db) {
+		/* No data block yet — create one at the required size */
+		compound->c_inode->i_db =
+			data_block_alloc(compound->c_inode, NULL, 0, 0);
+		if (!compound->c_inode->i_db) {
+			pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_NOSPC;
+			goto out;
+		}
+	}
+
+	if (end > (uint64_t)compound->c_inode->i_size) {
+		ssize_t rret =
+			data_block_resize(compound->c_inode->i_db, (size_t)end);
+		if (rret < 0) {
+			pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_NOSPC;
+			goto out;
+		}
+		compound->c_inode->i_size = end;
+		inode_update_times_now(compound->c_inode,
+				       REFFS_INODE_UPDATE_CTIME |
+					       REFFS_INODE_UPDATE_MTIME);
+	}
+
+	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+out:
+	stateid_put(stid);
+	TRACE("%s status=%s(%d) offset=%llu length=%llu", __func__,
+	      nfs4_err_name(*status), *status,
+	      (unsigned long long)args->aa_offset,
+	      (unsigned long long)args->aa_length);
 	return 0;
 }
 
+/*
+ * DEALLOCATE — RFC 7862 S15.4.
+ *
+ * Deallocate space in a file.  The file size is not changed
+ * (FALLOC_FL_KEEP_SIZE semantics).  Standalone mode only; MDS
+ * fan-out deferred (NOT_NOW_BROWN_COW).
+ *
+ * For the RAM and POSIX backends without FALLOC_FL_PUNCH_HOLE
+ * support, we zero-fill the range instead.  This satisfies the
+ * RFC requirement that subsequent reads return zeros.
+ */
 uint32_t nfs4_op_deallocate(struct compound *compound)
 {
+	DEALLOCATE4args *args = NFS4_OP_ARG_SETUP(compound, opdeallocate);
 	DEALLOCATE4res *res = NFS4_OP_RES_SETUP(compound, opdeallocate);
 	nfsstat4 *status = &res->dr_status;
+	struct stateid *stid = NULL;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
 
+	if (nfs4_check_grace()) {
+		*status = NFS4ERR_GRACE;
+		goto out;
+	}
+
+	if (!S_ISREG(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_WRONG_TYPE;
+		goto out;
+	}
+
+	*status =
+		nfs4_stateid_resolve(compound, &args->da_stateid, true, &stid);
+	if (*status != NFS4_OK)
+		goto out;
+
+	int ret = inode_access_check(compound->c_inode, &compound->c_ap, W_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_DEALLOCATE);
+		goto out;
+	}
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
+
+	if (!compound->c_inode->i_db) {
+		/* No data — nothing to deallocate */
+		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		goto out;
+	}
+
+	/*
+	 * Zero-fill the deallocated range.  Clamp to file size
+	 * (deallocating past EOF is a no-op).
+	 */
+	uint64_t file_size = compound->c_inode->i_size;
+	uint64_t start = args->da_offset;
+	uint64_t end = start + args->da_length;
+
+	if (start >= file_size) {
+		/* Entirely past EOF — no-op */
+		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		goto out;
+	}
+
+	if (end > file_size)
+		end = file_size;
+
+	size_t zero_len = (size_t)(end - start);
+	char *zeros = calloc(1, zero_len);
+	if (!zeros) {
+		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_SERVERFAULT;
+		goto out;
+	}
+
+	ssize_t nwritten = data_block_write(compound->c_inode->i_db, zeros,
+					    zero_len, (off_t)start);
+	free(zeros);
+
+	if (nwritten < 0) {
+		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_IO;
+		goto out;
+	}
+
+	inode_update_times_now(compound->c_inode,
+			       REFFS_INODE_UPDATE_CTIME |
+				       REFFS_INODE_UPDATE_MTIME);
+
+	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+out:
+	stateid_put(stid);
+	TRACE("%s status=%s(%d) offset=%llu length=%llu", __func__,
+	      nfs4_err_name(*status), *status,
+	      (unsigned long long)args->da_offset,
+	      (unsigned long long)args->da_length);
 	return 0;
 }
