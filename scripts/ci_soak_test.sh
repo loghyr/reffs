@@ -117,11 +117,14 @@ start_server() {
 stop_server() {
 	info "Stopping reffsd (PID $REFFSD_PID)..."
 	kill -TERM "$REFFSD_PID" 2>/dev/null
-	for i in $(seq 1 30); do
+	for i in $(seq 1 60); do
 		kill -0 "$REFFSD_PID" 2>/dev/null || break
 		sleep 1
 	done
-	kill -KILL "$REFFSD_PID" 2>/dev/null || true
+	if kill -0 "$REFFSD_PID" 2>/dev/null; then
+		info "reffsd still running after 60s, sending SIGKILL"
+		kill -KILL "$REFFSD_PID" 2>/dev/null || true
+	fi
 	wait "$REFFSD_PID" 2>/dev/null || true
 	REFFSD_PID=
 }

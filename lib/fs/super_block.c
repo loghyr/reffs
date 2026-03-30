@@ -169,7 +169,7 @@ void super_block_release_dirents(struct super_block *sb)
 	}
 
 	super_block_drain(sb);
-	rcu_barrier();
+	/* rcu_barrier is called inside super_block_drain; no second one needed */
 }
 
 static void super_block_remove_all_inodes(struct super_block *sb)
@@ -177,13 +177,14 @@ static void super_block_remove_all_inodes(struct super_block *sb)
 	struct cds_lfht_iter iter;
 	struct inode *inode;
 
-	while (__atomic_load_n(&sb->sb_delayed_count, __ATOMIC_RELAXED) > 0) {
-		LOG("Waiting for delayed releases to drain (%lu remaining)",
-		    sb->sb_delayed_count);
-		sleep(1);
+	for (int i = 0;
+	     __atomic_load_n(&sb->sb_delayed_count, __ATOMIC_RELAXED) > 0;
+	     i++) {
+		if (i % 20 == 0)
+			LOG("Waiting for delayed releases to drain (%lu remaining)",
+			    sb->sb_delayed_count);
+		usleep(50000); /* 50ms */
 	}
-
-	rcu_barrier();
 
 	/*
 	 * Unhash each inode and pull it off the LRU atomically under the

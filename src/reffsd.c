@@ -675,14 +675,12 @@ out:
 	      io_context_get_created(), io_context_get_freed(),
 	      io_context_get_created() - io_context_get_freed());
 
-	// Wait for RCU grace period
-	TRACE("Calling rcu_barrier()...");
-	rcu_barrier();
-
+	/*
+	 * reffs_ns_fini calls super_block_drain which does its own
+	 * rcu_barrier after unhashing all inodes.  One final barrier
+	 * after ns_fini ensures all inode_free_rcu callbacks complete.
+	 */
 	reffs_ns_fini();
-
-	// Let inodes clear out of memory
-	TRACE("Calling rcu_barrier()...");
 	rcu_barrier();
 
 	probe1_protocol_deregister();
