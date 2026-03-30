@@ -1208,12 +1208,124 @@ out:
 	return 0;
 }
 
+/*
+ * READ_PLUS — RFC 7862 S15.10.
+ *
+ * Returns read_plus_content with data and/or hole segments.
+ * Initial implementation: always returns a single NFS4_CONTENT_DATA
+ * segment (no SEEK_HOLE detection).  Valid DS operation per S3.3.1.
+ *
+ * NOT_NOW_BROWN_COW: hole detection via SEEK_HOLE/SEEK_DATA on
+ * POSIX backends, async io_uring path.
+ */
 uint32_t nfs4_op_read_plus(struct compound *compound)
 {
+	READ_PLUS4args *args = NFS4_OP_ARG_SETUP(compound, opread_plus);
 	READ_PLUS4res *res = NFS4_OP_RES_SETUP(compound, opread_plus);
 	nfsstat4 *status = &res->rp_status;
+	read_plus_res4 *resok =
+		NFS4_OP_RESOK_SETUP(res, READ_PLUS4res_u, rp_resok4);
+	struct stateid *stid = NULL;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	if (!S_ISREG(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	*status = nfs4_stateid_resolve(compound, &args->rpa_stateid, false,
+				       &stid);
+	if (*status != NFS4_OK)
+		goto out;
+
+	int ret = inode_access_check(compound->c_inode, &compound->c_ap, R_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_READ_PLUS);
+		goto out;
+	}
+
+	/* Clamp requested count */
+	uint32_t req_count = args->rpa_count;
+	if (req_count > NFS4_MAX_RW_SIZE)
+		req_count = NFS4_MAX_RW_SIZE;
+
+	/* Handle read past EOF or empty file */
+	if (!compound->c_inode->i_db ||
+	    args->rpa_offset >= (uint64_t)compound->c_inode->i_size) {
+		/* Return empty data segment at the requested offset */
+		resok->rpr_eof = TRUE;
+		resok->rpr_contents.rpr_contents_len = 1;
+		resok->rpr_contents.rpr_contents_val =
+			calloc(1, sizeof(read_plus_content));
+		if (!resok->rpr_contents.rpr_contents_val) {
+			*status = NFS4ERR_SERVERFAULT;
+			goto out;
+		}
+		resok->rpr_contents.rpr_contents_val[0].rpc_content =
+			NFS4_CONTENT_DATA;
+		resok->rpr_contents.rpr_contents_val[0]
+			.read_plus_content_u.rpc_data.d_offset =
+			args->rpa_offset;
+		resok->rpr_contents.rpr_contents_val[0]
+			.read_plus_content_u.rpc_data.d_data.d_data_len = 0;
+		resok->rpr_contents.rpr_contents_val[0]
+			.read_plus_content_u.rpc_data.d_data.d_data_val = NULL;
+		goto out;
+	}
+
+	/* Allocate data buffer */
+	char *buf = malloc(req_count);
+	if (!buf) {
+		*status = NFS4ERR_SERVERFAULT;
+		goto out;
+	}
+
+	/* Synchronous read */
+	pthread_rwlock_rdlock(&compound->c_inode->i_db_rwlock);
+	ssize_t nread = data_block_read(compound->c_inode->i_db, buf, req_count,
+					args->rpa_offset);
+	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+
+	if (nread < 0) {
+		free(buf);
+		*status = NFS4ERR_IO;
+		goto out;
+	}
+
+	/* Build single NFS4_CONTENT_DATA segment */
+	resok->rpr_contents.rpr_contents_len = 1;
+	resok->rpr_contents.rpr_contents_val =
+		calloc(1, sizeof(read_plus_content));
+	if (!resok->rpr_contents.rpr_contents_val) {
+		free(buf);
+		*status = NFS4ERR_SERVERFAULT;
+		goto out;
+	}
+
+	resok->rpr_contents.rpr_contents_val[0].rpc_content = NFS4_CONTENT_DATA;
+	resok->rpr_contents.rpr_contents_val[0]
+		.read_plus_content_u.rpc_data.d_offset = args->rpa_offset;
+	resok->rpr_contents.rpr_contents_val[0]
+		.read_plus_content_u.rpc_data.d_data.d_data_val = buf;
+	resok->rpr_contents.rpr_contents_val[0]
+		.read_plus_content_u.rpc_data.d_data.d_data_len = (u_int)nread;
+
+	resok->rpr_eof = (args->rpa_offset + (uint64_t)nread >=
+			  (uint64_t)compound->c_inode->i_size);
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+	inode_update_times_now(compound->c_inode, REFFS_INODE_UPDATE_ATIME);
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+out:
+	stateid_put(stid);
+	TRACE("%s status=%s(%d) offset=%llu count=%u", __func__,
+	      nfs4_err_name(*status), *status,
+	      (unsigned long long)args->rpa_offset, args->rpa_count);
 
 	return 0;
 }
