@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# TSAN suppressions for known false positives.
+#
+# liburcu uses custom lock-free synchronization that TSAN cannot
+# analyze.  These races are in liburcu internals, not reffs code.
+
+race:liburcu-cds.so
+race:liburcu.so
+race:liburcu-mb.so
+race:liburcu-memb.so
