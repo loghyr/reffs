@@ -1,6 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+AM_LDFLAGS = -rdynamic					\
+	$(ASAN_LDFLAGS) $(LSAN_LDFLAGS)			\
+	$(UBSAN_LDFLAGS) $(TSAN_LDFLAGS)
+
 AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 	$(URCU_CFLAGS) $(URCU_CDS_CFLAGS) $(FUSE_CFLAGS)	\
 	$(TIRPC_CFLAGS) $(ZLIB_CFLAGS) $(UUID_CFLAGS)		\
@@ -36,6 +40,7 @@ check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
+	client_recovery_test \
 	cmp \
 	grace_test \
 	idmap_test \
