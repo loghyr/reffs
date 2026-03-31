@@ -18,6 +18,42 @@
 
 set -euo pipefail
 
+# -----------------------------------------------------------------------
+# Post-mortem: if the script exits unexpectedly, dump diagnostics.
+# This catches OOM kills, Docker container eviction, and crashes.
+# -----------------------------------------------------------------------
+SOAK_POSTMORTEM_DONE=false
+postmortem() {
+	if [ "$SOAK_POSTMORTEM_DONE" = "true" ]; then
+		return
+	fi
+	SOAK_POSTMORTEM_DONE=true
+	local rc=$?
+	if [ "$rc" -ne 0 ]; then
+		echo "" >&2
+		echo "=== SOAK POST-MORTEM (exit code $rc) ===" >&2
+		echo "  Timestamp: $(date)" >&2
+		echo "  Last restart count: ${RESTART_COUNT:-unknown}" >&2
+		echo "  Elapsed: $(($(date +%s) - ${SOAK_START:-0}))s" >&2
+		if [ -n "${REFFSD_PID:-}" ] && kill -0 "$REFFSD_PID" 2>/dev/null; then
+			echo "  reffsd PID $REFFSD_PID is still running" >&2
+			echo "  RSS: $(cat /proc/$REFFSD_PID/status 2>/dev/null | awk '/VmRSS/{print $2 $3}' || echo unknown)" >&2
+			echo "  FDs: $(ls /proc/$REFFSD_PID/fd 2>/dev/null | wc -l || echo unknown)" >&2
+		else
+			echo "  reffsd is NOT running" >&2
+		fi
+		if [ -f "${LOG:-/dev/null}" ]; then
+			echo "  reffsd log (last 20 lines):" >&2
+			tail -20 "$LOG" 2>/dev/null >&2 || true
+		fi
+		echo "  System memory:" >&2
+		free -h 2>/dev/null >&2 || cat /proc/meminfo 2>/dev/null | head -5 >&2 || true
+		echo "  Possible causes: OOM kill, Docker memory limit, ASAN abort" >&2
+		echo "=== END POST-MORTEM ===" >&2
+	fi
+}
+trap postmortem EXIT
+
 REFFSD_BIN=${1:?Usage: ci_soak_test.sh REFFSD_BIN SRC_DIR [--bat]}
 SRC_DIR=${2:?Usage: ci_soak_test.sh REFFSD_BIN SRC_DIR [--bat]}
 MODE=${3:-ci}
@@ -65,8 +101,49 @@ cleanup() {
 		kill -KILL "$REFFSD_PID" 2>/dev/null
 		wait "$REFFSD_PID" 2>/dev/null
 	fi
+	postmortem
 }
 trap cleanup EXIT
+
+# -----------------------------------------------------------------------
+# Docker / system resource check
+# -----------------------------------------------------------------------
+
+check_resources() {
+	local mem_kb=0
+	if [ -f /sys/fs/cgroup/memory.max ]; then
+		# cgroup v2
+		local mem_max
+		mem_max=$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "max")
+		if [ "$mem_max" != "max" ]; then
+			mem_kb=$((mem_max / 1024))
+		fi
+	elif [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+		# cgroup v1
+		local mem_max
+		mem_max=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || echo 0)
+		if [ "$mem_max" -gt 0 ] && [ "$mem_max" -lt 9223372036854771712 ]; then
+			mem_kb=$((mem_max / 1024))
+		fi
+	fi
+
+	if [ "$mem_kb" -gt 0 ]; then
+		local mem_gb=$(( mem_kb / 1048576 ))
+		info "Container memory limit: ${mem_kb}KB (~${mem_gb}GB)"
+		if [ "$mem_kb" -lt 3145728 ]; then  # 3GB
+			info "WARNING: Container memory < 3GB — soak may be OOM-killed"
+			info "  Increase Docker Desktop memory or reduce soak load"
+		fi
+	else
+		info "Container memory limit: unlimited"
+	fi
+
+	local total_mem_kb
+	total_mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+	if [ "$total_mem_kb" -gt 0 ]; then
+		info "System total memory: $((total_mem_kb / 1024))MB"
+	fi
+}
 
 # -----------------------------------------------------------------------
 # Config
@@ -250,6 +327,8 @@ workload_fileops() {
 
 info "=== Soak test: ${DURATION_MIN}m duration, restart every ${RESTART_MIN}m, ${CLIENTS} clients ==="
 
+check_resources
+
 if ! rpcinfo -p 127.0.0.1 >/dev/null 2>&1; then
 	rpcbind || die "rpcbind failed"
 	sleep 1
@@ -400,9 +479,11 @@ if [ "$BASELINE_FD" -gt 0 ]; then
 fi
 
 if [ "$FAILED" = "true" ]; then
+	SOAK_POSTMORTEM_DONE=true  # we already printed diagnostics
 	info "=== SOAK TEST FAILED ==="
 	cat "$LOG"
 	exit 1
 fi
 
+SOAK_POSTMORTEM_DONE=true  # clean exit — suppress post-mortem
 info "=== SOAK TEST PASSED (${DURATION_MIN}m, ${RESTART_COUNT} restarts) ==="
