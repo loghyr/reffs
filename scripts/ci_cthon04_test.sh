@@ -73,7 +73,7 @@ fetch_cthon04() {
 		git clone --depth 1 "$CTHON_URL" "$CTHON_DIR"
 	fi
 
-	if [ ! -f "$CTHON_DIR/basic/runtests" ]; then
+	if [ ! -f "$CTHON_DIR/basic/test1" ]; then
 		info "cthon04: building"
 		make -C "$CTHON_DIR" -j"$(nproc)" 2>&1 | tail -5
 	fi
@@ -173,21 +173,32 @@ run_cthon04() {
 	info "--- $label ---"
 
 	umount -f "$MOUNT" 2>/dev/null || true
+	mkdir -p "$MOUNT"
 	mount -o "$mount_opts" 127.0.0.1:/ "$MOUNT" || {
 		die "$label: mount failed"
 		return 1
 	}
 
-	info "Running cthon04 ($test_flags) on $MOUNT"
+	# cthon04 runtests tries to rm/mkdir its test directory.
+	# Give it a subdirectory of the mount, not the mount point itself.
+	local TESTDIR="$MOUNT/cthon_test"
+	rm -rf "$TESTDIR" 2>/dev/null || true
+	mkdir -p "$TESTDIR"
+
+	info "Running cthon04 ($test_flags) on $TESTDIR"
 
 	local pass=0
 	local fail=0
 
-	# Run each test set separately for better reporting
+	# Run each test set separately for better reporting.
+	# runtests usage: ./runtests <tests> <testargs> <testpath>
+	#   tests: -b=basic, -g=general, -s=special, -l=lock, -a=all
+	#   testargs: -f=functional, -t=timing
 	for test_set in basic general special lock; do
+		local flag="-${test_set:0:1}" # -b, -g, -s, -l
 		if [ -d "$CTHON_DIR/$test_set" ]; then
 			info "  $test_set..."
-			if (cd "$CTHON_DIR" && ./runtests -t "$MOUNT" -"${test_set:0:1}" 2>&1); then
+			if (cd "$CTHON_DIR" && ./runtests "$flag" -f "$TESTDIR" 2>&1); then
 				info "  $test_set: PASS"
 				pass=$((pass + 1))
 			else
@@ -197,6 +208,7 @@ run_cthon04() {
 		fi
 	done
 
+	rm -rf "$TESTDIR" 2>/dev/null || true
 	umount -f "$MOUNT" 2>/dev/null || true
 
 	check_asan
@@ -236,7 +248,9 @@ info ""
 info "========== NFSv3 Standalone =========="
 write_config "standalone"
 start_server "standalone" || exit 1
-run_cthon04 "NFSv3" "vers=3,sec=sys"
+# nolock: NLM sideband protocol clashes with the host's rpcbind
+# inside Docker.  Lock tests use NFSv4.2 (above) instead.
+run_cthon04 "NFSv3" "vers=3,sec=sys,nolock,tcp,mountproto=tcp"
 stop_server
 
 # ---------- Test 3: Combined pNFS (MDS+DS) ----------

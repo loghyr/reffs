@@ -170,13 +170,15 @@ test: image
 # -----------------------------------------------------------------------
 
 cthon04: image $(LOGS_DIR)
+	@mkdir -p $(ROOT_DIR)/external
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
 		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(ROOT_DIR)/external:/external:Z \
 		-v $(LOGS_DIR):/logs:Z \
 		$(CI_IMAGE_NAME) \
 		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
-			EXTERNAL_DIR=/tmp/external \
+			EXTERNAL_DIR=/external \
 			/src/scripts/ci_cthon04_test.sh /build/src/reffsd; \
 			rc=\$$?; \
 			cp -f /reffs_data/reffsd_cthon.log /logs/cthon04.log 2>/dev/null; \
