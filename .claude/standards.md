@@ -71,11 +71,92 @@ make -f Makefile.reffs style
 
 ---
 
-## Git Commits
+## Branch and Commit Methodology
 
+### Core Rule
+
+**Never commit directly to `main` for feature work.** All development
+happens on a named branch.  `main` receives only clean, reviewed,
+squashed changesets.
+
+### Workflow
+
+1. **Start a branch**
+   ```
+   git checkout -b <topic>    # e.g., tls-stress-tool, fix-idirent-uaf
+   ```
+   Use short, descriptive names.  `wip-` prefix for exploratory work.
+
+2. **Commit freely on the branch**
+   "WIP", "fix typo", "debug" are fine on topic branches.  Push to
+   origin for cross-machine sync: `git push origin <topic>`
+
+3. **Clean up before merging**
+   ```
+   git rebase -i main
+   ```
+   Each commit on `main` should be a coherent unit of work.  Single
+   squash for small features; a few well-named commits for larger work.
+
+4. **Run the reviewer before merging**
+   Invoke `/review` on the cleaned branch.  Address BLOCKERs.
+
+5. **Merge to main (fast-forward only)**
+   ```
+   git checkout main
+   git merge --ff-only <topic>
+   ```
+   If `--ff-only` fails, rebase topic onto main first.  No merge
+   commits on `main`.
+
+6. **Push `main` only when clean**
+   `main` at origin must always build, pass tests, pass license.
+
+### Prohibited on `main`
+
+- Direct `git commit` for active development
+- `git push --force` (sole-developer exception only)
+- Merge commits (use `--ff-only`)
+- "WIP" or "debug" commit messages
+
+### Syncing dev work across machines
+
+```
+git fetch origin
+git checkout -b <topic> origin/<topic>
+```
+Topic branches at origin are scratch space.  Only `main` is canonical.
+
+### Commit Message Format
+
+```
+<subsystem>: <imperative summary under 72 chars>
+
+Optional body explaining *why*, not *what*.  Reference
+NOT_NOW_BROWN_COW items for partial fixes.  Cite RFC sections
+for protocol-relevant changes.
+```
+
+Rules:
 - Always sign off: `git commit -s`
 - **Never** add `Co-Authored-By:` lines
 - Run `fix-style` and `license` checks before committing
+- One concern per commit (don't mix refactoring with features)
+
+### RFC References
+
+Always cite the most recent RFC that supersedes earlier versions:
+
+| Topic | Use | Not |
+|-------|-----|-----|
+| NFSv4.1/4.2 | RFC 8881 | ~~RFC 5661~~ |
+| pNFS Flex Files | RFC 8435 | ~~RFC 7862~~ (ops are in 7862) |
+| RPC-over-TLS | RFC 9289 | |
+| NFSv4.2 ops | RFC 7862 | |
+| pNFS FF v2 | draft-haynes-nfsv4-flexfiles-v2 | |
+
+When a section reference appears in code comments or commit messages,
+use the format `RFC 8881 §18.36.3` or `RFC 8881 S18.36.3`.
 
 ---
 
@@ -388,7 +469,7 @@ retries automatically.
 
 ### A file is open as long as ANY stateid is held
 
-RFC 5661 §10.4: a file is considered open by a client as long as **either**
+RFC 8881 §10.4: a file is considered open by a client as long as **either**
 an open stateid **or** a delegation stateid is outstanding.  CLOSE releases
 only the open stateid — the delegation remains valid and the file is still
 open from the client's perspective.

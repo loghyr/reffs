@@ -101,42 +101,47 @@ planner, but the role has distinct rules.
    - If the test is hard to write, the interface may be wrong.
    - If the test seems trivial, it still documents the behavior.
 
-4. **One concern per commit**: each commit should do one thing.
-   Don't mix refactoring with new features. Don't mix bug fixes
-   with style changes.
+4. **Branch workflow**: never commit directly to `main` for feature
+   work.  Work on a topic branch, commit freely, then clean up with
+   `git rebase -i main` before merging.  See `.claude/standards.md`
+   "Branch and Commit Methodology" for the full workflow.
 
-5. **Style before commit**: always run `make -f Makefile.reffs fix-style`
+5. **One concern per commit** (on `main`): each commit should do one
+   thing.  Don't mix refactoring with new features.  On the topic
+   branch, "WIP" and "debug" commits are fine — they get squashed.
+
+6. **Style before commit**: always run `make -f Makefile.reffs fix-style`
    before committing. Style violations should never reach review.
 
-6. **Build verification**: verify the build is clean before committing.
+7. **Build verification**: verify the build is clean before committing.
    - `make -j$(nproc)` — zero errors, zero warnings
    - `make check` — zero test failures
    - For RPC/wire changes: `ci-check` or `ci-test`
 
-7. **Comment intent, not mechanism**: when adding code, explain
+8. **Comment intent, not mechanism**: when adding code, explain
    WHY the code exists, not WHAT it does. The code shows WHAT;
    the comment explains WHY.
    - Bad: `/* increment the counter */`
    - Good: `/* Track active sessions for the reaper thread */`
 
-8. **Logging discipline**:
+9. **Logging discipline**:
    - LOG: fatal or actionable errors (operator must act)
    - TRACE: diagnostic events (developer debugging)
    - Use typed trace functions (trace_security_*, trace_fs_*, etc.)
    - Never commit temporary LOG→TRACE toggles; use the category system
 
-9. **Error handling**: every function that can fail must have its
-   error paths tested. Don't add error handling for scenarios that
-   can't happen (see coding standards), but DO handle:
-   - malloc failures
-   - Invalid state transitions
-   - Wire data from untrusted clients
+10. **Error handling**: every function that can fail must have its
+    error paths tested. Don't add error handling for scenarios that
+    can't happen (see coding standards), but DO handle:
+    - malloc failures
+    - Invalid state transitions
+    - Wire data from untrusted clients
 
-10. **RCU and refcounting**: follow Rule 6 in patterns/ref-counting.md.
+11. **RCU and refcounting**: follow Rule 6 in patterns/ref-counting.md.
     Every hash-table entry lifecycle must follow the documented pattern.
     The reviewer will check this.
 
-11. **UUID discipline for long-lived objects**: every object that is
+12. **UUID discipline for long-lived objects**: every object that is
     persisted to disk or referenced by external entities (NFS clients,
     admin tools) MUST have a stable UUID that is:
     - Assigned once at creation time
