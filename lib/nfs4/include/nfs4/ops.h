@@ -107,12 +107,14 @@ uint32_t nfs4_op_illegal(struct compound *compound);
 
 const char *nfs4_op_name(nfs_opnum4 op);
 
-/* Stateid validation (file.c). */
+/* Stateid validation and write verifier (file.c). */
 struct inode;
 struct stateid;
+struct server_state;
 nfsstat4 nfs4_stateid_resolve(struct compound *compound, struct inode *inode,
 			      const stateid4 *wire, bool want_write,
 			      struct stateid **out_stid);
+void nfs4_write_verf(struct server_state *ss, verifier4 out_verf);
 
 /* Export security enforcement (security.c). */
 nfsstat4 nfs4_check_wrongsec(struct compound *compound);

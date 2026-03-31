@@ -157,7 +157,7 @@ nfsstat4 nfs4_stateid_resolve(struct compound *compound, struct inode *inode,
  * six bytes of the server UUID (stable across reboots) plus the two-byte
  * boot_seq (incremented on every restart).
  */
-static void nfs4_write_verf(struct server_state *ss, verifier4 out_verf)
+void nfs4_write_verf(struct server_state *ss, verifier4 out_verf)
 {
 	memcpy(out_verf, ss->ss_uuid, NFS4_VERIFIER_SIZE - 2);
 	uint16_t boot_seq = server_boot_seq(ss);

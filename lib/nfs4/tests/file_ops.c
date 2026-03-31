@@ -509,13 +509,169 @@ START_TEST(test_clone_overflow_rejected)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* COPY tests (RAM backend: data_block_read + data_block_write)        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Helper: create a second inode with data for COPY source.
+ * Returns the source inode (caller must inode_active_put).
+ */
+static struct inode *copy_create_source(const char *data, size_t len)
+{
+	struct inode *src = inode_alloc(test_sb, 0);
+	ck_assert_ptr_nonnull(src);
+	src->i_mode = S_IFREG | 0644;
+
+	src->i_db = data_block_alloc(src, NULL, 0, 0);
+	ck_assert_ptr_nonnull(src->i_db);
+
+	ssize_t nw = data_block_write(src->i_db, data, len, 0);
+	ck_assert_int_eq((int)nw, (int)len);
+	src->i_size = (int64_t)len;
+
+	return src;
+}
+
+/*
+ * Basic COPY: write data to source, copy to destination, verify content.
+ */
+START_TEST(test_copy_basic)
+{
+	const char *payload = "Hello, COPY!";
+	size_t plen = strlen(payload);
+
+	struct inode *src = copy_create_source(payload, plen);
+
+	/* Ensure destination has a data block. */
+	test_inode->i_db = data_block_alloc(test_inode, NULL, 0, 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+
+	/* Copy via data_block_read + data_block_write (RAM backend path). */
+	char buf[256];
+	ssize_t nr = data_block_read(src->i_db, buf, plen, 0);
+	ck_assert_int_eq((int)nr, (int)plen);
+
+	ssize_t nw = data_block_write(test_inode->i_db, buf, (size_t)nr, 0);
+	ck_assert_int_eq((int)nw, (int)plen);
+	test_inode->i_size = (int64_t)plen;
+
+	/* Verify destination content. */
+	char verify[256] = { 0 };
+	nr = data_block_read(test_inode->i_db, verify, plen, 0);
+	ck_assert_int_eq((int)nr, (int)plen);
+	ck_assert_mem_eq(verify, payload, plen);
+
+	data_block_put(src->i_db);
+	src->i_db = NULL;
+	inode_active_put(src);
+}
+END_TEST
+
+/*
+ * COPY at offset: write to source, copy from offset 6 to destination.
+ */
+START_TEST(test_copy_with_offset)
+{
+	const char *payload = "ABCDEF123456";
+	size_t plen = strlen(payload);
+
+	struct inode *src = copy_create_source(payload, plen);
+
+	test_inode->i_db = data_block_alloc(test_inode, NULL, 0, 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+
+	/* Copy from offset 6 (should get "123456"). */
+	uint64_t src_offset = 6;
+	size_t copy_len = plen - (size_t)src_offset;
+
+	char buf[256];
+	ssize_t nr = data_block_read(src->i_db, buf, copy_len, src_offset);
+	ck_assert_int_eq((int)nr, (int)copy_len);
+
+	ssize_t nw = data_block_write(test_inode->i_db, buf, (size_t)nr, 0);
+	ck_assert_int_eq((int)nw, (int)copy_len);
+	test_inode->i_size = (int64_t)copy_len;
+
+	char verify[256] = { 0 };
+	nr = data_block_read(test_inode->i_db, verify, copy_len, 0);
+	ck_assert_int_eq((int)nr, (int)copy_len);
+	ck_assert_mem_eq(verify, "123456", 6);
+
+	data_block_put(src->i_db);
+	src->i_db = NULL;
+	inode_active_put(src);
+}
+END_TEST
+
+/*
+ * COPY to non-zero destination offset: append after existing data.
+ */
+START_TEST(test_copy_dst_offset)
+{
+	const char *existing = "AAAA";
+	const char *payload = "BBBB";
+	size_t elen = strlen(existing);
+	size_t plen = strlen(payload);
+
+	struct inode *src = copy_create_source(payload, plen);
+
+	test_inode->i_db = data_block_alloc(test_inode, NULL, 0, 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+
+	/* Write existing data at offset 0. */
+	ssize_t nw = data_block_write(test_inode->i_db, existing, elen, 0);
+	ck_assert_int_eq((int)nw, (int)elen);
+	test_inode->i_size = (int64_t)elen;
+
+	/* Copy source to destination offset 4. */
+	char buf[256];
+	ssize_t nr = data_block_read(src->i_db, buf, plen, 0);
+	ck_assert_int_eq((int)nr, (int)plen);
+
+	nw = data_block_write(test_inode->i_db, buf, (size_t)nr, elen);
+	ck_assert_int_eq((int)nw, (int)plen);
+	test_inode->i_size = (int64_t)(elen + plen);
+
+	/* Verify combined content "AAAABBBB". */
+	char verify[256] = { 0 };
+	nr = data_block_read(test_inode->i_db, verify, elen + plen, 0);
+	ck_assert_int_eq((int)nr, (int)(elen + plen));
+	ck_assert_mem_eq(verify, "AAAABBBB", 8);
+
+	data_block_put(src->i_db);
+	src->i_db = NULL;
+	inode_active_put(src);
+}
+END_TEST
+
+/*
+ * COPY zero bytes (source offset at EOF): should succeed with 0 copied.
+ */
+START_TEST(test_copy_zero_at_eof)
+{
+	const char *payload = "data";
+	struct inode *src = copy_create_source(payload, strlen(payload));
+
+	/* Source offset at EOF — nothing to copy. */
+	char buf[256];
+	ssize_t nr =
+		data_block_read(src->i_db, buf, 100, (uint64_t)src->i_size);
+	ck_assert_int_le((int)nr, 0);
+
+	data_block_put(src->i_db);
+	src->i_db = NULL;
+	inode_active_put(src);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
 Suite *file_ops_suite(void)
 {
 	Suite *s;
-	TCase *tc_alloc, *tc_dealloc, *tc_read_plus, *tc_clone;
+	TCase *tc_alloc, *tc_dealloc, *tc_read_plus, *tc_clone, *tc_copy;
 
 	s = suite_create("NFSv4 File Ops");
 
@@ -561,6 +717,15 @@ Suite *file_ops_suite(void)
 	tcase_add_test(tc_clone, test_clone_ram_backend_no_fd);
 	tcase_add_test(tc_clone, test_clone_overflow_rejected);
 	suite_add_tcase(s, tc_clone);
+
+	/* COPY tests (RAM backend) */
+	tc_copy = tcase_create("COPY");
+	tcase_add_checked_fixture(tc_copy, file_ops_setup, file_ops_teardown);
+	tcase_add_test(tc_copy, test_copy_basic);
+	tcase_add_test(tc_copy, test_copy_with_offset);
+	tcase_add_test(tc_copy, test_copy_dst_offset);
+	tcase_add_test(tc_copy, test_copy_zero_at_eof);
+	suite_add_tcase(s, tc_copy);
 
 	return s;
 }
