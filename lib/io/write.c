@@ -54,10 +54,26 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 		return 0;
 	}
 
+	/*
+	 * Guard: the connection may have been torn down (TCP RST from
+	 * client) between when the write was queued and when the worker
+	 * picked it up.  ci or ci_ssl can be NULL/freed.
+	 *
+	 * Save ci_ssl to a local — the event loop thread can set
+	 * ci->ci_ssl = NULL at any time after an SSL error.  If we
+	 * see NULL, the connection is dead and there's nothing to write.
+	 */
+	SSL *ssl = ci ? ci->ci_ssl : NULL;
+	if (!ssl) {
+		TRACE("fd=%d: connection gone, dropping TLS write", ic->ic_fd);
+		io_context_destroy(ic);
+		return -ECONNRESET;
+	}
+
 	// Write directly using TLS if not using kTLS
 	int ktls_enabled = 0;
 #ifdef BIO_get_ktls_send
-	ktls_enabled = BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
+	ktls_enabled = BIO_get_ktls_send(SSL_get_wbio(ssl));
 #endif
 
 	TRACE("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
@@ -73,12 +89,12 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 
 		// Handle in userspace
 		rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
-		int ret = SSL_write(ci->ci_ssl,
+		int ret = SSL_write(ssl,
 				    (char *)ic->ic_buffer + ic->ic_position,
 				    remaining);
 
 		if (ret <= 0) {
-			int err = SSL_get_error(ci->ci_ssl, ret);
+			int err = SSL_get_error(ssl, ret);
 			if (err == SSL_ERROR_WANT_WRITE ||
 			    err == SSL_ERROR_WANT_READ) {
 				// Would block, try again later
@@ -93,7 +109,7 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 			return -EINVAL;
 		} else {
 			// Get data that was encrypted and is ready to be sent
-			BIO *wbio = SSL_get_wbio(ci->ci_ssl);
+			BIO *wbio = SSL_get_wbio(ssl);
 			int pending = BIO_pending(wbio);
 
 			TRACE("SSL_write processed %d bytes, resulting in %d bytes of TLS data",
