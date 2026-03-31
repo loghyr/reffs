@@ -436,7 +436,11 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 					}
 				}
 
-				trace_io_context(ic, __func__, __LINE__);
+				/*
+				 * Do NOT trace ic here — io_handle_write
+				 * may have destroyed it (ic_state had
+				 * IO_CONTEXT_DIRECT_TLS_DATA).
+				 */
 				io_uring_cqe_seen(&rc->rc_ring, cqe);
 				continue;
 			}
