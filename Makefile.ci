@@ -204,6 +204,26 @@ tls-stress: image $(LOGS_DIR)
 			exit \$$rc"
 
 # -----------------------------------------------------------------------
+# pynfs: NFSv4.1 protocol test suite (GPL — external process only)
+# -----------------------------------------------------------------------
+
+pynfs: image $(LOGS_DIR)
+	@mkdir -p $(ROOT_DIR)/external
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(ROOT_DIR)/external:/external:Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			EXTERNAL_DIR=/external \
+			/src/scripts/ci_pynfs.sh /build/src/reffsd; \
+			rc=\$$?; \
+			cp -f /reffs_data/reffsd_pynfs.log /logs/pynfs.log 2>/dev/null; \
+			cp -f /reffs_data/pynfs_results.txt /logs/pynfs_results.txt 2>/dev/null; \
+			exit \$$rc"
+
+# -----------------------------------------------------------------------
 # pjdfstest: POSIX compliance suite (strict-posix mode)
 # -----------------------------------------------------------------------
 
@@ -246,4 +266,4 @@ stop:
 		echo "No running CI containers."; \
 	fi
 
-.PHONY: image check full sec soak soak-noopt soak-tsan soak-core test cthon04 pjdfstest tls-stress shell stop
+.PHONY: image check full sec soak soak-noopt soak-tsan soak-core test cthon04 pynfs pjdfstest tls-stress shell stop
