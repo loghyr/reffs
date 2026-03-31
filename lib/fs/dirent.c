@@ -127,6 +127,18 @@ static void dirent_release(struct urcu_ref *ref)
 
 	trace_fs_dirent(rd, __func__, __LINE__);
 
+	/*
+	 * Null the inode's back-pointer to this dirent BEFORE the RCU free.
+	 * Without this, inode_release (which runs via call_rcu on the inode)
+	 * would follow i_dirent to this freed dirent and write
+	 * rd_inode = NULL to whatever now occupies this memory — stomping
+	 * 8 bytes at offset 192 (the rd_inode field offset) of the reused
+	 * allocation.  When a compound is allocated at the same address,
+	 * this zeros compound->c_server_state (also at offset 192).
+	 */
+	if (rd->rd_inode && rd->rd_inode->i_dirent == rd)
+		rcu_assign_pointer(rd->rd_inode->i_dirent, NULL);
+
 	rd->rd_inode = NULL; /* prevent stale access after RCU free */
 
 	/*
