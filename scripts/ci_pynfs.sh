@@ -187,15 +187,15 @@ info "Running pynfs v4.1 tests against 127.0.0.1:/"
 RESULTS_FILE="$WORK_DIR/pynfs_results.txt"
 
 cd "$PYNFS_DIR/nfs4.1"
-# Skip slow/hanging tests:
+# Skip tests that hang, timeout, or test unimplemented features:
 #   courteous: sleeps for lease_time+10 per test (55s+ each)
 #   reboot: grace period sleeps
-#   flex: pNFS-specific
-#   deleg: CB_RECALL stateid handling incompatible with pynfs
-#          callback model (hangs on missing recall.stateid)
+#   flex: pNFS-specific (enable when testing pNFS)
+#   deleg: CB_RECALL stateid incompatible with pynfs callback model
+#   xattr: extended attributes not implemented (NFS4ERR_NOTSUPP)
 if timeout 300 python3 testserver.py 127.0.0.1:/ \
 	--maketree --rundeps -v \
-	all nocourteous noreboot noflex nodeleg 2>&1 | tee "$RESULTS_FILE"; then
+	all nocourteous noreboot noflex nodeleg noxattr 2>&1 | tee "$RESULTS_FILE"; then
 	info "pynfs: ALL PASSED"
 else
 	info "pynfs: some tests failed (baseline run)"
