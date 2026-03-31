@@ -37,6 +37,7 @@ help:
 	@echo "  full        - full CI with krb5 + TLS + style"
 	@echo "  soak        - 30-min stability soak (BAT=1 for 8-hour)"
 	@echo "  cthon04     - Connectathon NFS test suite"
+	@echo "  pjdfstest   - POSIX compliance (strict-posix mode)"
 	@echo "  tls-stress  - TLS connection stress test"
 	@echo "  shell       - Shell into running CI container"
 	@echo "  stop        - Kill any running CI containers"

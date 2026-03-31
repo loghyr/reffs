@@ -204,6 +204,27 @@ tls-stress: image $(LOGS_DIR)
 			exit \$$rc"
 
 # -----------------------------------------------------------------------
+# pjdfstest: POSIX compliance suite (strict-posix mode)
+# -----------------------------------------------------------------------
+
+pjdfstest: image $(LOGS_DIR)
+	@mkdir -p $(ROOT_DIR)/external
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(ROOT_DIR)/external:/external:Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan --enable-strict-posix) && \
+			EXTERNAL_DIR=/external \
+			/src/scripts/ci_pjdfstest.sh /build/src/reffsd; \
+			rc=\$$?; \
+			cp -f /reffs_data/reffsd_pjd.log /logs/pjdfstest.log 2>/dev/null; \
+			cp -f /reffs_data/pjdfstest_NFSv4.2.txt /logs/pjdfstest_v4.txt 2>/dev/null; \
+			cp -f /reffs_data/pjdfstest_NFSv3.txt /logs/pjdfstest_v3.txt 2>/dev/null; \
+			exit \$$rc"
+
+# -----------------------------------------------------------------------
 # shell / ci-stop: interactive debugging
 # -----------------------------------------------------------------------
 
@@ -225,4 +246,4 @@ stop:
 		echo "No running CI containers."; \
 	fi
 
-.PHONY: image check full sec soak soak-noopt soak-tsan soak-core test cthon04 tls-stress shell stop
+.PHONY: image check full sec soak soak-noopt soak-tsan soak-core test cthon04 pjdfstest tls-stress shell stop
