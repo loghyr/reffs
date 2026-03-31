@@ -232,6 +232,22 @@ bool dispatch_compound(struct compound *compound)
 			&res->resarray.resarray_val[compound->c_curr_op];
 
 		resop->resop = argop->argop;
+
+		/*
+		 * RFC 8881 §2.10.6.4: if the compound has more ops
+		 * than ca_maxoperations, return NFS4ERR_TOO_MANY_OPS
+		 * on the op that exceeds the limit.
+		 */
+		if (compound->c_session &&
+		    compound->c_curr_op >=
+			    compound->c_session->ns_maxoperations) {
+			resop->nfs_resop4_u.opillegal.status =
+				NFS4ERR_TOO_MANY_OPS;
+			res->status = NFS4ERR_TOO_MANY_OPS;
+			res->resarray.resarray_len = compound->c_curr_op + 1;
+			return false;
+		}
+
 		if (argop->argop < OP_MAX && op_table[argop->argop]) {
 			compound->c_op_start_ns = reffs_now_ns();
 			TRACE("dispatch op=%s(%d) curr_op=%u ss=%p seq=%lu",

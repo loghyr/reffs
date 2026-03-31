@@ -156,6 +156,12 @@ uint32_t nfs4_op_lookupp(struct compound *compound)
 		goto out;
 	}
 
+	/* RFC 8881 §18.13: current FH must be a directory. */
+	if (!S_ISDIR(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_NOTDIR;
+		goto out;
+	}
+
 	*status = nfs4_check_wrongsec(compound);
 	if (*status)
 		goto out;
