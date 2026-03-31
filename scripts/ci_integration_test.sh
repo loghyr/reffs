@@ -34,11 +34,23 @@ ldd --version 2>&1 | head -1 || true
 echo "===================
 "
 
+# Work directory — prefer a real filesystem over tmpfs.
+if [ -n "${REFFS_WORK_DIR:-}" ] && [ -d "$REFFS_WORK_DIR" ]; then
+	WORK_DIR="$REFFS_WORK_DIR"
+elif [ -d /reffs_data ]; then
+	WORK_DIR=/reffs_data
+elif [ -d /Volumes/reffs_data ]; then
+	WORK_DIR=/Volumes/reffs_data/ci
+	mkdir -p "$WORK_DIR"
+else
+	WORK_DIR=/tmp
+fi
+
 MOUNT=/mnt/reffs
-DATA=/tmp/reffs_ci_data
-STATE=/tmp/reffs_ci_state   # directory; server_persist appends "server_state"
-CONFIG=/tmp/reffsd_ci.toml
-LOG=/tmp/reffsd_ci.log
+DATA=$WORK_DIR/reffs_ci_data
+STATE=$WORK_DIR/reffs_ci_state   # directory; server_persist appends "server_state"
+CONFIG=$WORK_DIR/reffsd_ci.toml
+LOG=$WORK_DIR/reffsd_ci.log
 
 REFFSD_PID=
 REFFSD_DONE=false

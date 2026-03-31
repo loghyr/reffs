@@ -31,8 +31,11 @@ image:
 # -----------------------------------------------------------------------
 
 # Rsync source into container, autoreconf, configure, make.
+# Creates /reffs_data for scripts that need a non-tmpfs work dir.
 # Parameterized by CONFIGURE_FLAGS.
 define CI_BUILD
+mkdir -p /reffs_data && \
+export REFFS_WORK_DIR=/reffs_data && \
 rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
 rm -rf /build/* && \
@@ -99,8 +102,8 @@ soak: image $(LOGS_DIR)
 		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
 			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
 			rc=\$$?; \
-			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
-			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			cp -f /reffs_data/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /reffs_data/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
 			exit \$$rc"
 
 # -----------------------------------------------------------------------
@@ -116,8 +119,8 @@ soak-noopt: image $(LOGS_DIR)
 		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan --enable-noopt) && \
 			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
 			rc=\$$?; \
-			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
-			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			cp -f /reffs_data/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /reffs_data/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
 			exit \$$rc"
 
 soak-tsan: image $(LOGS_DIR)
@@ -130,8 +133,8 @@ soak-tsan: image $(LOGS_DIR)
 			TSAN_OPTIONS='halt_on_error=0:second_deadlock_stack=1:history_size=7:suppressions=/src/scripts/tsan.supp' \
 			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
 			rc=\$$?; \
-			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
-			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			cp -f /reffs_data/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /reffs_data/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
 			exit \$$rc"
 
 soak-core: image $(LOGS_DIR)
@@ -146,8 +149,8 @@ soak-core: image $(LOGS_DIR)
 			ulimit -c unlimited && \
 			echo '/logs/core.%p' > /proc/sys/kernel/core_pattern 2>/dev/null || true && \
 			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
-			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
-			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			cp -f /reffs_data/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /reffs_data/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
 			true"
 
 # -----------------------------------------------------------------------
@@ -176,7 +179,7 @@ cthon04: image $(LOGS_DIR)
 			EXTERNAL_DIR=/tmp/external \
 			/src/scripts/ci_cthon04_test.sh /build/src/reffsd; \
 			rc=\$$?; \
-			cp -f /tmp/reffsd_cthon.log /logs/cthon04.log 2>/dev/null; \
+			cp -f /reffs_data/reffsd_cthon.log /logs/cthon04.log 2>/dev/null; \
 			exit \$$rc"
 
 # -----------------------------------------------------------------------
@@ -195,7 +198,7 @@ tls-stress: image $(LOGS_DIR)
 				-lssl -lcrypto && \
 			/src/tools/tls_stress_test.sh 60; \
 			rc=\$$?; \
-			cp -f /tmp/reffsd_tls.log /logs/tls.log 2>/dev/null; \
+			cp -f /reffs_data/reffsd_tls.log /logs/tls.log 2>/dev/null; \
 			exit \$$rc"
 
 # -----------------------------------------------------------------------

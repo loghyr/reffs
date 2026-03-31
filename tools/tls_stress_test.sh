@@ -52,8 +52,20 @@ cc -Wall -Wextra -Wno-unused-function \
     -lssl -lcrypto
 echo "Build complete."
 
+# ---- Work directory ----
+if [ -n "${REFFS_WORK_DIR:-}" ] && [ -d "$REFFS_WORK_DIR" ]; then
+    WORK_DIR="$REFFS_WORK_DIR"
+elif [ -d /reffs_data ]; then
+    WORK_DIR=/reffs_data
+elif [ -d /Volumes/reffs_data ]; then
+    WORK_DIR=/Volumes/reffs_data/tls
+    mkdir -p "$WORK_DIR"
+else
+    WORK_DIR=/tmp
+fi
+
 # ---- Generate TLS certs ----
-TLS_DIR="/tmp/tls_certs"
+TLS_DIR="$WORK_DIR/tls_certs"
 mkdir -p "$TLS_DIR"
 openssl req -x509 -newkey rsa:2048 \
     -keyout "$TLS_DIR/server.key" \
@@ -62,10 +74,10 @@ openssl req -x509 -newkey rsa:2048 \
     -subj "/CN=localhost" 2>/dev/null
 
 # ---- Config ----
-DATA="/tmp/tls_stress_data"
-STATE="/tmp/tls_stress_state"
-LOG="/tmp/reffsd_tls.log"
-CONFIG="/tmp/reffsd_tls.toml"
+DATA="$WORK_DIR/tls_stress_data"
+STATE="$WORK_DIR/tls_stress_state"
+LOG="$WORK_DIR/reffsd_tls.log"
+CONFIG="$WORK_DIR/reffsd_tls.toml"
 
 mkdir -p "$DATA" "$STATE"
 
@@ -80,7 +92,7 @@ workers        = 8
 nfs4_domain    = "reffs.test"
 tls_cert       = "$TLS_DIR/server.pem"
 tls_key        = "$TLS_DIR/server.key"
-trace_file     = "/tmp/reffsd_tls_trace.log"
+trace_file     = "$WORK_DIR/reffsd_tls_trace.log"
 
 [backend]
 type       = "posix"

@@ -23,12 +23,24 @@ EXTERNAL_DIR=${EXTERNAL_DIR:-$(cd "$(dirname "$0")/.." && pwd)/external}
 CTHON_DIR="$EXTERNAL_DIR/cthon04"
 CTHON_URL="git://git.linux-nfs.org/projects/steved/cthon04.git"
 
+# Work directory — see ci_soak_test.sh for rationale.
+if [ -n "${REFFS_WORK_DIR:-}" ] && [ -d "$REFFS_WORK_DIR" ]; then
+	WORK_DIR="$REFFS_WORK_DIR"
+elif [ -d /reffs_data ]; then
+	WORK_DIR=/reffs_data
+elif [ -d /Volumes/reffs_data ]; then
+	WORK_DIR=/Volumes/reffs_data/cthon
+	mkdir -p "$WORK_DIR"
+else
+	WORK_DIR=/tmp
+fi
+
 MOUNT=/mnt/reffs_cthon
-DATA_DIR=/tmp/reffs_cthon_data
-STATE_DIR=/tmp/reffs_cthon_state
-DS_DIR=/tmp/reffs_cthon_ds
-CONFIG=/tmp/reffs_cthon.toml
-LOG=/tmp/reffsd_cthon.log
+DATA_DIR=$WORK_DIR/reffs_cthon_data
+STATE_DIR=$WORK_DIR/reffs_cthon_state
+DS_DIR=$WORK_DIR/reffs_cthon_ds
+CONFIG=$WORK_DIR/reffs_cthon.toml
+LOG=$WORK_DIR/reffsd_cthon.log
 
 REFFSD_PID=
 FAILED=0

@@ -71,19 +71,36 @@ fi
 DURATION_SEC=$((DURATION_MIN * 60))
 RESTART_SEC=$((RESTART_MIN * 60))
 
-MOUNT=/mnt/reffs_soak
-DATA=/tmp/reffs_soak_data
-STATE=/tmp/reffs_soak_state
-CONFIG=/tmp/reffs_soak.toml
-LOG=/tmp/reffsd-soak.log
-TRACE_FILE=/tmp/reffs-soak-trace.log
-
 REFFSD_PID=
 WORKLOAD_PIDS=()
 FAILED=false
 
 die() { echo "SOAK FAIL: $*" >&2; FAILED=true; }
 info() { echo "[$(date +%H:%M:%S)] $*"; }
+
+# Work directory for data/state/logs.  /tmp is often tmpfs (RAM-backed)
+# which causes OOM under soak load.  Use a real filesystem instead.
+# Override with REFFS_WORK_DIR env var.
+if [ -n "${REFFS_WORK_DIR:-}" ] && [ -d "$REFFS_WORK_DIR" ]; then
+	WORK_DIR="$REFFS_WORK_DIR"
+elif [ -d /reffs_data ]; then
+	WORK_DIR=/reffs_data
+elif [ -d /Volumes/reffs_data ]; then
+	WORK_DIR=/Volumes/reffs_data/soak
+	mkdir -p "$WORK_DIR"
+else
+	WORK_DIR=/tmp
+	info "WARNING: no dedicated work dir found — using /tmp (may OOM on tmpfs)"
+	info "  Set REFFS_WORK_DIR or create /reffs_data to use a real filesystem"
+fi
+info "Work directory: $WORK_DIR"
+
+MOUNT=/mnt/reffs_soak
+DATA=$WORK_DIR/reffs_soak_data
+STATE=$WORK_DIR/reffs_soak_state
+CONFIG=$WORK_DIR/reffs_soak.toml
+LOG=$WORK_DIR/reffsd-soak.log
+TRACE_FILE=$WORK_DIR/reffs-soak-trace.log
 
 # Clear stale logs from previous runs
 rm -f "$LOG" "$TRACE_FILE" /logs/soak.log /logs/soak-trace.log 2>/dev/null
