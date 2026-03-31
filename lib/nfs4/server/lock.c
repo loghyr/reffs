@@ -120,10 +120,21 @@ uint32_t nfs4_op_lock(struct compound *compound)
 	if (args->locker.new_lock_owner) {
 		open_to_lock_owner4 *oto = &args->locker.locker4_u.open_owner;
 
-		/* Resolve open_stateid */
+		/* Resolve open_stateid — may be current stateid. */
+		const stateid4 *lock_wire = &oto->open_stateid;
+		stateid4 lock_resolved;
+
+		if (stateid4_is_current(lock_wire)) {
+			if (!compound->c_curr_stid) {
+				*status = NFS4ERR_BAD_STATEID;
+				return 0;
+			}
+			pack_stateid4(&lock_resolved, compound->c_curr_stid);
+			lock_wire = &lock_resolved;
+		}
+
 		uint32_t seqid, id, type, cookie;
-		unpack_stateid4(&oto->open_stateid, &seqid, &id, &type,
-				&cookie);
+		unpack_stateid4(lock_wire, &seqid, &id, &type, &cookie);
 		if (type != Open_Stateid) {
 			*status = NFS4ERR_BAD_STATEID;
 			return 0;
@@ -352,8 +363,21 @@ uint32_t nfs4_op_locku(struct compound *compound)
 		return 0;
 	}
 
+	/* Resolve current stateid if used. */
+	const stateid4 *wire_stid = &args->lock_stateid;
+	stateid4 resolved_stid;
+
+	if (stateid4_is_current(wire_stid)) {
+		if (!compound->c_curr_stid) {
+			*status = NFS4ERR_BAD_STATEID;
+			return 0;
+		}
+		pack_stateid4(&resolved_stid, compound->c_curr_stid);
+		wire_stid = &resolved_stid;
+	}
+
 	uint32_t seqid, id, type, cookie;
-	unpack_stateid4(&args->lock_stateid, &seqid, &id, &type, &cookie);
+	unpack_stateid4(wire_stid, &seqid, &id, &type, &cookie);
 	if (type != Lock_Stateid) {
 		*status = NFS4ERR_BAD_STATEID;
 		return 0;

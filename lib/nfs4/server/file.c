@@ -960,13 +960,29 @@ uint32_t nfs4_op_close(struct compound *compound)
 		return 0;
 	}
 
-	if (stateid4_is_special(&args->open_stateid)) {
+	/*
+	 * RFC 8881 §16.2.3.1.2: current stateid — substitute the
+	 * stateid set by a previous op in this compound (e.g., OPEN).
+	 */
+	const stateid4 *wire_stid = &args->open_stateid;
+	stateid4 resolved_stid;
+
+	if (stateid4_is_current(wire_stid)) {
+		if (!compound->c_curr_stid) {
+			*status = NFS4ERR_BAD_STATEID;
+			return 0;
+		}
+		pack_stateid4(&resolved_stid, compound->c_curr_stid);
+		wire_stid = &resolved_stid;
+	}
+
+	if (stateid4_is_special(wire_stid)) {
 		*status = NFS4ERR_BAD_STATEID;
 		return 0;
 	}
 
 	uint32_t seqid, id, type, cookie;
-	unpack_stateid4(&args->open_stateid, &seqid, &id, &type, &cookie);
+	unpack_stateid4(wire_stid, &seqid, &id, &type, &cookie);
 
 	if (type != Open_Stateid) {
 		*status = NFS4ERR_BAD_STATEID;
