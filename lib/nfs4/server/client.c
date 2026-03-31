@@ -44,6 +44,8 @@ static void nfs4_client_free_rcu(struct rcu_head *rcu)
 
 	pthread_mutex_destroy(&nc->nc_lock_owners_mutex);
 
+	free(nc->nc_create_reply);
+
 	if (client->c_stateids)
 		cds_lfht_destroy(client->c_stateids, NULL);
 

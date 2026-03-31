@@ -452,27 +452,54 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	}
 
 	/*
-	 * NOT_NOW_BROWN_COW: RFC 8881 §18.36.4 sequence ID validation.
-	 * csa_sequence must match nc_create_seq.  Needs replay cache
-	 * (same seqid → return cached result) to work correctly.
-	 * Without replay cache, rejecting replays breaks pynfs tests.
-	 * nc_create_seq field added but validation deferred.
+	 * RFC 8881 §18.36.4: sequence ID validation.
+	 *   csa_sequence == nc_create_seq → replay, return cached result
+	 *   csa_sequence == nc_create_seq + 1 → new request (but we
+	 *     don't require +1, just != cached seqid, for flexibility)
+	 *   anything else → NFS4ERR_SEQ_MISORDERED
 	 */
+	if (nc->nc_create_reply && args->csa_sequence == nc->nc_create_seq) {
+		/* Replay: return the cached CREATE_SESSION result. */
+		XDR xdrs;
+		xdrmem_create(&xdrs, nc->nc_create_reply,
+			      nc->nc_create_reply_len, XDR_DECODE);
+		if (xdr_CREATE_SESSION4resok(&xdrs, resok)) {
+			xdr_destroy(&xdrs);
+			nfs4_client_put(nc);
+			nc = NULL;
+			goto out; /* status is NFS4_OK (calloc'd) */
+		}
+		xdr_destroy(&xdrs);
+		/* Decode failed — fall through to create new session. */
+	}
 
 	/*
-	 * RFC 8881 §18.36.3: channel attrs must meet minimum sizes.
-	 * A session with maxrequestsize or maxresponsesize too small
-	 * to carry a single compound → NFS4ERR_TOOSMALL.
+	 * Seqid validation: the first CREATE_SESSION uses
+	 * csa_sequence == nc_create_seq (set by EXCHANGE_ID).
+	 * After a successful CREATE_SESSION, nc_create_seq is
+	 * bumped, so subsequent requests must use the new value.
+	 * Only enforce when a prior reply was cached (not first time).
 	 */
-#define CSESS_MIN_SIZE 1024
-	if (args->csa_fore_chan_attrs.ca_maxrequestsize < CSESS_MIN_SIZE ||
-	    args->csa_fore_chan_attrs.ca_maxresponsesize < CSESS_MIN_SIZE) {
+	if (nc->nc_create_reply &&
+	    args->csa_sequence != nc->nc_create_seq + 1) {
+		nfs4_client_put(nc);
+		nc = NULL;
+		*status = NFS4ERR_SEQ_MISORDERED;
+		goto out;
+	}
+
+	/*
+	 * RFC 8881 §18.36.3: channel attrs — accept the client's
+	 * requested sizes.  nfs4_session_alloc clamps to the server's
+	 * limits.  Only reject if truly unusable (zero).
+	 */
+	if (args->csa_fore_chan_attrs.ca_maxrequestsize == 0 ||
+	    args->csa_fore_chan_attrs.ca_maxresponsesize == 0) {
 		nfs4_client_put(nc);
 		nc = NULL;
 		*status = NFS4ERR_TOOSMALL;
 		goto out;
 	}
-#undef CSESS_MIN_SIZE
 
 	/*
 	 * RFC 8881 §18.36.3: RDMA not supported.
@@ -534,6 +561,32 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	resok->csr_back_chan_attrs.ca_maxrequests = 1; /* single CB slot */
 	resok->csr_back_chan_attrs.ca_rdma_ird.ca_rdma_ird_len = 0;
 	resok->csr_back_chan_attrs.ca_rdma_ird.ca_rdma_ird_val = NULL;
+
+	/*
+	 * Cache the result for replay detection.  Record the seqid
+	 * so we can detect replays vs new requests.
+	 */
+	nc->nc_create_seq = args->csa_sequence;
+	free(nc->nc_create_reply);
+	nc->nc_create_reply = NULL;
+	nc->nc_create_reply_len = 0;
+	{
+		uint32_t sz =
+			xdr_sizeof((xdrproc_t)xdr_CREATE_SESSION4resok, resok);
+		nc->nc_create_reply = calloc(1, sz);
+		if (nc->nc_create_reply) {
+			XDR xdrs;
+			xdrmem_create(&xdrs, nc->nc_create_reply, sz,
+				      XDR_ENCODE);
+			if (xdr_CREATE_SESSION4resok(&xdrs, resok)) {
+				nc->nc_create_reply_len = sz;
+			} else {
+				free(nc->nc_create_reply);
+				nc->nc_create_reply = NULL;
+			}
+			xdr_destroy(&xdrs);
+		}
+	}
 
 out:
 	nfs4_session_put(ns);
@@ -615,16 +668,43 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 			XDR xdrs;
 			COMPOUND4res *full_res = compound->c_res;
 
+			/*
+			 * Free the pre-allocated resarray before the
+			 * decode overwrites the pointer — prevents leak.
+			 */
+			free(full_res->resarray.resarray_val);
+			full_res->resarray.resarray_val = NULL;
+			full_res->resarray.resarray_len = 0;
+
+			/* Also free any tag that was already copied. */
+			free(full_res->tag.utf8string_val);
+			full_res->tag.utf8string_val = NULL;
+			full_res->tag.utf8string_len = 0;
+
 			xdrmem_create(&xdrs, slot->sl_reply, slot->sl_reply_len,
 				      XDR_DECODE);
 			if (xdr_COMPOUND4res(&xdrs, full_res)) {
 				pthread_mutex_unlock(&slot->sl_mutex);
-				*status = full_res->status;
 				xdr_destroy(&xdrs);
-				goto out;
+				/*
+				 * The full compound result is now in
+				 * c_res.  Return NFS4_OP_FLAG_REPLAY
+				 * so dispatch_compound stops the loop
+				 * without accessing resarray past the
+				 * end.
+				 */
+				return NFS4_OP_FLAG_REPLAY;
 			}
 			xdr_destroy(&xdrs);
 		}
+
+		/*
+		 * Replay but no cached reply (sa_cachethis was false).
+		 * RFC 8881 §2.10.6.1.3.
+		 */
+		pthread_mutex_unlock(&slot->sl_mutex);
+		*status = NFS4ERR_RETRY_UNCACHED_REP;
+		goto out;
 	}
 
 	if (args->sa_sequenceid == (slot->sl_seqid + 1)) {

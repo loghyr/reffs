@@ -268,6 +268,14 @@ bool dispatch_compound(struct compound *compound)
 				return true;
 			}
 
+			/*
+			 * Slot replay: SEQUENCE decoded the cached
+			 * compound result into c_res.  Stop the loop
+			 * — the result is ready to send as-is.
+			 */
+			if (op_flags & NFS4_OP_FLAG_REPLAY)
+				return false;
+
 			TRACE("dispatch done op=%s(%d) curr_op=%u ss=%p seq=%lu",
 			      nfs4_op_name(argop->argop), argop->argop,
 			      compound->c_curr_op,
