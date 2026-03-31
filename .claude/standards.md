@@ -491,38 +491,58 @@ prior art references in source file headers.
 
 ## Atomic Operations
 
-### API: C11 `<stdatomic.h>`
+### Two atomic APIs in use
 
-reffs uses **C11 `<stdatomic.h>`** for all atomic operations:
+reffs uses two atomic APIs.  **New code** must use C11.  Existing
+GCC-builtin code is grandfathered and must not be mixed with C11
+on the same field.
+
+#### C11 `<stdatomic.h>` — required for new code
+
 `_Atomic`-qualified types, `atomic_*_explicit()` functions, and
 `memory_order_*` constants.
-
-The project compiles with **clang**, which requires `_Atomic` on types
-passed to atomic operations.  GCC `__atomic_*` builtins on plain types
-are **not compatible with clang** and must not be used.
 
 ```c
 #include <stdatomic.h>
 
-// CORRECT — C11:
 _Atomic uint64_t os_calls;
 atomic_fetch_add_explicit(&s->os_calls, 1, memory_order_relaxed);
 atomic_load_explicit(&sb->sb_state, memory_order_acquire);
-atomic_compare_exchange_strong_explicit(&x, &expected, desired,
-    memory_order_acq_rel, memory_order_relaxed);
-
-// WRONG — GCC builtins (fails on clang):
-uint64_t os_calls;
-__atomic_fetch_add(&s->os_calls, 1, __ATOMIC_RELAXED);
 ```
 
-Rules:
+Rules for C11 fields:
 - `_Atomic` on both struct fields and file-scope statics
 - Always use `_explicit` variants with explicit memory order
 - `#include <stdatomic.h>` in every file that uses atomic operations
 - For fields that are only accessed from a single thread during init
   (e.g., `inode->i_nlink = 1` in `inode_alloc`), plain writes before
   the object is visible to other threads are acceptable
+
+#### GCC `__atomic_*` builtins — grandfathered fields only
+
+The following fields use GCC `__atomic_*` builtins on plain (non-`_Atomic`)
+types.  Converting them to C11 `_Atomic` was attempted and failed (ABI
+incompatibility with liburcu's `urcu_ref` on the same structs).  These
+fields are **grandfathered**: existing code using `__atomic_*` on them
+is correct and must not be flagged by the reviewer.
+
+| Struct | Field | Builtin pattern | Files |
+|--------|-------|----------------|-------|
+| `struct inode` | `i_active` (`int64_t`) | `__atomic_fetch_add`, `__atomic_load_n`, `__atomic_store_n` | inode.c, super_block.c, fs_test_lru.c |
+| `struct inode` | `i_state` (`uint64_t`) | `__atomic_fetch_or`, `__atomic_fetch_and`, `__atomic_load_n` | inode.c, super_block.c, stateid.c |
+| `struct inode` | `i_stateid_next` (`uint64_t`) | `__atomic_fetch_add` | stateid.c |
+| `struct reffs_dirent` | `rd_active` (`int64_t`) | `__atomic_fetch_add`, `__atomic_sub_fetch`, `__atomic_load_n`, `__atomic_store_n` | dirent.c, super_block.c |
+| `struct reffs_dirent` | `rd_state` (`uint64_t`) | `__atomic_fetch_or`, `__atomic_fetch_and`, `__atomic_load_n` | dirent.c, vfs.c, attr.c, dir.c, file.c |
+| `struct nfs4_session` | `ns_state` (`uint64_t`) | `__atomic_fetch_or`, `__atomic_fetch_and` | session.c |
+| `struct nfs4_client` | `nc_session_count` | `__atomic_fetch_add`, `__atomic_fetch_sub` | session.c |
+| `struct nfs4_client` | `nc_last_renew_ns` | `__atomic_store_n`, `__atomic_load_n` | session.c, lease_reaper.c |
+| `struct super_block` | `sb_inode_lru_count`, `sb_dirent_lru_count` (`size_t`) | plain reads outside lock (data-race tolerated for heuristic LRU pressure check) | inode.c, dirent.c, evictor.c |
+| `struct rpc_program_handler` | `rph_calls`, `rph_flags`, etc. | `__atomic_fetch_add`, `__atomic_fetch_or`, `__atomic_load_n` | rpc.c |
+
+**Do not** add new GCC-builtin atomic fields.  **Do not** convert
+grandfathered fields to C11 without explicit approval — the previous
+attempt caused build failures.  **Do not** flag existing usage of
+these fields as a standards violation in reviews.
 
 ### Memory ordering rules
 
