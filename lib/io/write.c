@@ -216,9 +216,13 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 		io_context_destroy(ic);
 	} else {
 		ret = 0;
-		TRACE("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
-		      io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len,
-		      ic->ic_id);
+		/*
+		 * Do NOT access ic after submit — the CQE can fire
+		 * immediately on the event loop thread, destroying ic
+		 * before we reach this line.  Use the fd parameter
+		 * (stack-local) for the trace instead.
+		 */
+		TRACE("write submitted fd=%d len=%d", fd, len);
 	}
 
 	return ret;
