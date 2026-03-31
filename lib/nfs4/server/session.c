@@ -490,11 +490,14 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 
 	/*
 	 * RFC 8881 §18.36.3: channel attrs — accept the client's
-	 * requested sizes.  nfs4_session_alloc clamps to the server's
-	 * limits.  Only reject if truly unusable (zero).
+	 * requested sizes.  nfs4_session_alloc clamps to server limits.
+	 * Reject values too small for a minimal SEQUENCE compound
+	 * (~100 bytes for record mark + RPC header + SEQUENCE args).
 	 */
-	if (args->csa_fore_chan_attrs.ca_maxrequestsize == 0 ||
-	    args->csa_fore_chan_attrs.ca_maxresponsesize == 0) {
+#define CSESS_MIN_USABLE 100
+	if (args->csa_fore_chan_attrs.ca_maxrequestsize < CSESS_MIN_USABLE ||
+	    args->csa_fore_chan_attrs.ca_maxresponsesize < CSESS_MIN_USABLE) {
+#undef CSESS_MIN_USABLE
 		nfs4_client_put(nc);
 		nc = NULL;
 		*status = NFS4ERR_TOOSMALL;
@@ -502,9 +505,12 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §18.36.3: RDMA not supported.
+	 * RFC 8881 §18.36.3: RDMA — we don't support RDMA but the
+	 * client may request it.  Ignore the request and return an
+	 * empty RDMA array in the response (done in the resok fill
+	 * below).  Only reject if the array is absurdly large.
 	 */
-	if (args->csa_fore_chan_attrs.ca_rdma_ird.ca_rdma_ird_len > 0) {
+	if (args->csa_fore_chan_attrs.ca_rdma_ird.ca_rdma_ird_len > 64) {
 		nfs4_client_put(nc);
 		nc = NULL;
 		*status = NFS4ERR_INVAL;
@@ -839,8 +845,13 @@ uint32_t nfs4_op_reclaim_complete(struct compound *compound)
 	if (!args->rca_one_fs) {
 		bool was_reclaiming = __atomic_exchange_n(
 			&nc->nc_needs_reclaim, false, __ATOMIC_ACQ_REL);
-		if (was_reclaiming)
+		if (was_reclaiming) {
 			server_reclaim_complete(ss);
+		} else if (nc->nc_reclaim_done) {
+			/* RFC 8881 §18.51.4: already completed. */
+			*status = NFS4ERR_COMPLETE_ALREADY;
+		}
+		nc->nc_reclaim_done = true;
 	}
 
 out:
