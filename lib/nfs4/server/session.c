@@ -322,6 +322,25 @@ uint32_t nfs4_op_exchange_id(struct compound *compound)
 		goto out;
 	}
 
+	/*
+	 * RFC 8881 §18.35.3: validate eia_flags.
+	 * Only the USE_* bits and UPD_CONFIRMED_REC_A are valid.
+	 * Undefined bits → NFS4ERR_INVAL.
+	 */
+#define EID_VALID_FLAGS                                                   \
+	(EXCHGID4_FLAG_SUPP_MOVED_REFER | EXCHGID4_FLAG_SUPP_MOVED_MIGR | \
+	 EXCHGID4_FLAG_BIND_PRINC_STATEID | EXCHGID4_FLAG_USE_NON_PNFS |  \
+	 EXCHGID4_FLAG_USE_PNFS_MDS | EXCHGID4_FLAG_USE_PNFS_DS |         \
+	 EXCHGID4_FLAG_UPD_CONFIRMED_REC_A)
+	if (args->eia_flags & ~EID_VALID_FLAGS) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+#undef EID_VALID_FLAGS
+
+	bool update_requested =
+		!!(args->eia_flags & EXCHGID4_FLAG_UPD_CONFIRMED_REC_A);
+
 	if (args->eia_client_impl_id.eia_client_impl_id_len > 0)
 		impl_id = args->eia_client_impl_id.eia_client_impl_id_val;
 
@@ -335,8 +354,20 @@ uint32_t nfs4_op_exchange_id(struct compound *compound)
 		goto out;
 	}
 
+	/*
+	 * If the client requested an update but the record is not
+	 * confirmed, there is nothing to update.
+	 */
+	if (update_requested && !nc->nc_confirmed) {
+		nfs4_client_put(nc);
+		nc = NULL;
+		*status = NFS4ERR_NOENT;
+		goto out;
+	}
+
 	resok->eir_clientid = (clientid4)nfs4_client_to_client(nc)->c_id;
 	resok->eir_sequenceid = 1;
+	nc->nc_create_seq = resok->eir_sequenceid;
 
 	resok->eir_flags = ss->ss_exchgid_flags;
 	if (nc->nc_confirmed)
@@ -398,9 +429,58 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 		goto out;
 	}
 
+	/*
+	 * RFC 8881 §18.36.3: validate flags.  Only defined flags are
+	 * CREATE_SESSION4_FLAG_PERSIST and
+	 * CREATE_SESSION4_FLAG_CONN_BACK_CHAN and
+	 * CREATE_SESSION4_FLAG_CONN_RDMA.
+	 * Undefined flags → NFS4ERR_INVAL.
+	 */
+#define CSESS_VALID_FLAGS                                                     \
+	(CREATE_SESSION4_FLAG_PERSIST | CREATE_SESSION4_FLAG_CONN_BACK_CHAN | \
+	 CREATE_SESSION4_FLAG_CONN_RDMA)
+	if (args->csa_flags & ~CSESS_VALID_FLAGS) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+#undef CSESS_VALID_FLAGS
+
 	nc = nfs4_client_find(args->csa_clientid);
 	if (!nc) {
 		*status = NFS4ERR_STALE_CLIENTID;
+		goto out;
+	}
+
+	/*
+	 * NOT_NOW_BROWN_COW: RFC 8881 §18.36.4 sequence ID validation.
+	 * csa_sequence must match nc_create_seq.  Needs replay cache
+	 * (same seqid → return cached result) to work correctly.
+	 * Without replay cache, rejecting replays breaks pynfs tests.
+	 * nc_create_seq field added but validation deferred.
+	 */
+
+	/*
+	 * RFC 8881 §18.36.3: channel attrs must meet minimum sizes.
+	 * A session with maxrequestsize or maxresponsesize too small
+	 * to carry a single compound → NFS4ERR_TOOSMALL.
+	 */
+#define CSESS_MIN_SIZE 1024
+	if (args->csa_fore_chan_attrs.ca_maxrequestsize < CSESS_MIN_SIZE ||
+	    args->csa_fore_chan_attrs.ca_maxresponsesize < CSESS_MIN_SIZE) {
+		nfs4_client_put(nc);
+		nc = NULL;
+		*status = NFS4ERR_TOOSMALL;
+		goto out;
+	}
+#undef CSESS_MIN_SIZE
+
+	/*
+	 * RFC 8881 §18.36.3: RDMA not supported.
+	 */
+	if (args->csa_fore_chan_attrs.ca_rdma_ird.ca_rdma_ird_len > 0) {
+		nfs4_client_put(nc);
+		nc = NULL;
+		*status = NFS4ERR_INVAL;
 		goto out;
 	}
 

@@ -39,6 +39,7 @@ struct nfs4_client {
 	verifier4 nc_verifier; /* EXCHANGE_ID verifier */
 	bool nc_confirmed;
 	bool nc_needs_reclaim; /* true until RECLAIM_COMPLETE received */
+	uint32_t nc_create_seq; /* expected csa_sequence for CREATE_SESSION */
 	uint32_t nc_session_count; /* atomic: number of active sessions */
 	uint64_t nc_last_renew_ns; /* atomic: CLOCK_MONOTONIC of last SEQUENCE */
 
