@@ -167,6 +167,13 @@ struct server_state *server_state_init(const char *state_path, int port,
  */
 void server_state_fini(struct server_state *ss);
 
+/*
+ * server_state_persist_quick - quick shutdown: persist server state
+ * (boot_seq, clean_shutdown flag) without full teardown.  Used for
+ * production shutdown where recovery on restart handles everything.
+ */
+void server_state_persist_quick(struct server_state *ss);
+
 /* ------------------------------------------------------------------ */
 /* Ref counting                                                        */
 

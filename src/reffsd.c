@@ -40,6 +40,7 @@
 #include "reffs/ring.h"
 #include "reffs/sb_registry.h"
 #include "reffs/rpc.h"
+#include "reffs/evictor.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
 #include "reffs/trace/common.h"
@@ -680,27 +681,63 @@ out:
 	      io_context_get_created() - io_context_get_freed());
 
 	/*
-	 * reffs_ns_fini calls super_block_drain which does its own
-	 * rcu_barrier after unhashing all inodes.  One final barrier
-	 * after ns_fini ensures all inode_free_rcu callbacks complete.
+	 * Two shutdown modes:
+	 *
+	 * Quick (default): persist state, skip full inode/dirent teardown,
+	 * exit immediately.  Treats shutdown like a power cut — recovery
+	 * on restart handles the rest.  This is production behavior.
+	 *
+	 * Graceful (REFFS_GRACEFUL_SHUTDOWN=1): full teardown of all inodes,
+	 * dirents, RCU callbacks.  Maximizes ASAN/LSAN coverage.  Used for
+	 * CI unit tests and development.  Can take 60+ seconds under load.
 	 */
-	reffs_ns_fini();
-	rcu_barrier();
+	const char *graceful_env = getenv("REFFS_GRACEFUL_SHUTDOWN");
+	bool graceful = graceful_env && graceful_env[0] == '1';
 
-	probe1_protocol_deregister();
-	sm_protocol_deregister();
-	nlm4_protocol_deregister();
-	nlm_protocol_deregister();
-	mount3_protocol_deregister();
-	nfs3_protocol_deregister();
-	idmap_fini();
-	nfs4_protocol_deregister();
+	if (graceful) {
+		TRACE("Graceful shutdown: full teardown");
 
-	if (cfg.role == REFFS_ROLE_MDS || cfg.role == REFFS_ROLE_COMBINED)
-		dstore_fini();
-	client_unload_all_clients();
+		/*
+		 * reffs_ns_fini calls super_block_drain which does its own
+		 * rcu_barrier after unhashing all inodes.  One final barrier
+		 * after ns_fini ensures all inode_free_rcu callbacks complete.
+		 */
+		reffs_ns_fini();
+		rcu_barrier();
 
-	server_state_fini(ss);
+		probe1_protocol_deregister();
+		sm_protocol_deregister();
+		nlm4_protocol_deregister();
+		nlm_protocol_deregister();
+		mount3_protocol_deregister();
+		nfs3_protocol_deregister();
+		idmap_fini();
+		nfs4_protocol_deregister();
+
+		if (cfg.role == REFFS_ROLE_MDS ||
+		    cfg.role == REFFS_ROLE_COMBINED)
+			dstore_fini();
+		client_unload_all_clients();
+
+		server_state_fini(ss);
+	} else {
+		TRACE("Quick shutdown: persist state and exit");
+
+		/*
+		 * Persist critical state so restart recovery works:
+		 * - server_state (boot_seq, slot_next, UUID)
+		 * - sb registry (export table)
+		 * Skip inode/dirent teardown — recovery rebuilds from disk.
+		 */
+		if (ss)
+			server_state_persist_quick(ss);
+
+		/*
+		 * Stop the evictor before exit so it doesn't race with
+		 * process teardown.
+		 */
+		evictor_fini();
+	}
 
 	TRACE("Shutdown complete");
 	return exit_code;

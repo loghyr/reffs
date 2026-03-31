@@ -514,3 +514,29 @@ void server_state_fini(struct server_state *ss)
          */
 	server_state_put(ss);
 }
+
+void server_state_persist_quick(struct server_state *ss)
+{
+	if (!ss)
+		return;
+
+	/*
+	 * Mark SHUTTING_DOWN so server_state_get() returns NULL and
+	 * no new compounds start.
+	 */
+	server_lifecycle_set(ss, SERVER_SHUTTING_DOWN);
+	atomic_store_explicit(&current_server_state, NULL,
+			      memory_order_release);
+
+	/*
+	 * Persist the clean-shutdown flag.  On restart, recovery will
+	 * see this and skip the grace period if no client state was
+	 * dirty.
+	 */
+	ss->ss_persist.sps_clean_shutdown = 1;
+	if (ss->ss_persist_ops->server_state_save(ss->ss_persist_ctx,
+						  &ss->ss_persist))
+		LOG("persist_quick: failed to save server state");
+
+	TRACE("Quick shutdown: server state persisted");
+}
