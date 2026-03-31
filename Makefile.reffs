@@ -31,13 +31,15 @@ help:
 	@echo "  image           - Build the developer docker image (Fedora)"
 	@echo "  ci-image        - Build the CI docker image (Ubuntu/Debian)"
 	@echo "  build-in-docker - Build the project inside the developer container"
-	@echo "  ci-check        - CI pipeline (build + unit + integration, no krb5)"
-	@echo "  ci-full         - Full CI pipeline with krb5 + TLS + style (Fedora)"
-	@echo "  ci-sec          - Alias for ci-full"
-	@echo "  ci-soak         - 30-min stability soak test (BAT=1 for 8-hour)"
-	@echo "  ci-test         - Build + integration only (skip unit tests, no krb5)"
-	@echo "  ci-stop         - Kill any running CI containers"
-	@echo "  ci-shell        - Shell into the running CI container"
+	@echo ""
+	@echo "CI targets (via: make -f Makefile.ci <target>):"
+	@echo "  check       - build + unit + integration (no krb5)"
+	@echo "  full        - full CI with krb5 + TLS + style"
+	@echo "  soak        - 30-min stability soak (BAT=1 for 8-hour)"
+	@echo "  cthon04     - Connectathon NFS test suite"
+	@echo "  tls-stress  - TLS connection stress test"
+	@echo "  shell       - Shell into running CI container"
+	@echo "  stop        - Kill any running CI containers"
 	@echo "  run-image       - Run the NFS server in the docker container"
 	@echo "  stop-image      - Stop and remove any running sandbox containers"
 	@echo "  test-image      - Stop any running containers and start a fresh one"
@@ -142,178 +144,6 @@ image:
 # Build the CI docker image (Debian/Ubuntu)
 ci-image:
 	$(DOCKER) build -t $(CI_IMAGE_NAME) -f Dockerfile.ci .
-
-# Run the full CI pipeline inside the CI container
-# This mirrors .github/workflows/ci.yml exactly
-# We use --privileged to allow tests that use namespaces and mounting (like fs_usage_posix)
-# Phase 1: build + unit tests (with ASan/UBSan).
-# Phase 2: integration tests -- start reffsd, clone the source onto an NFS
-#   mount via NFSv4.2 and NFSv3, build and run the unit tests from there,
-#   then gracefully shut down reffsd and check for ASan/LSan errors.
-#   SRC_DIR is /reffs (the read-only bind mount) so git clone has a .git dir.
-ci-check: ci-image
-	$(DOCKER) run --rm --privileged \
-		--ulimit nofile=65536:65536 \
-		-v $(ROOT_DIR):/reffs:ro,Z \
-		$(CI_IMAGE_NAME) \
-		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
-			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
-			make -j$$(nproc) && \
-			rm -f /tmp/reffs-test-timing.txt && \
-			(make check || (cat lib/fs/tests/test-suite.log && exit 1)) && \
-			echo '=== Unit Test Timing ===' && \
-			sort -t'[' -k2 -rn /tmp/reffs-test-timing.txt | head -10 && \
-			if grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test | grep -q SLOW; then \
-				echo 'ERROR: unexpected slow tests detected (>2s):' && \
-				grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test && \
-				exit 1; \
-			fi && \
-			CI_SKIP_KRB5=1 /src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
-
-# Full CI: style + license + build + unit tests + integration (with krb5 + TLS).
-# Requires a host kernel that supports RPCSEC_GSS (Fedora).
-ci-full: ci-image
-	$(DOCKER) run --rm --privileged \
-		--ulimit nofile=65536:65536 \
-		-v $(ROOT_DIR):/reffs:ro,Z \
-		$(CI_IMAGE_NAME) \
-		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
-			make -f Makefile.reffs fix-style && \
-			make -f Makefile.reffs license && \
-			cd /build && ../src/configure --enable-asan --enable-ubsan && \
-			make -j$$(nproc) && \
-			rm -f /tmp/reffs-test-timing.txt && \
-			(make check || (cat lib/fs/tests/test-suite.log && exit 1)) && \
-			echo '=== Unit Test Timing ===' && \
-			sort -t'[' -k2 -rn /tmp/reffs-test-timing.txt | head -10 && \
-			if grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test | grep -q SLOW; then \
-				echo 'ERROR: unexpected slow tests detected (>2s):' && \
-				grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test && \
-				exit 1; \
-			fi && \
-			/src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
-
-# Backward-compat alias.
-ci-sec: ci-full
-
-# Soak test: 30-minute stability run with restart cycles.
-# Use 'ci-soak BAT=1' for 8-hour BAT soak.
-ci-soak: ci-image $(LOGS_DIR)
-	$(DOCKER) run --rm --privileged \
-		--ulimit nofile=65536:65536 \
-		-v $(ROOT_DIR):/reffs:ro,Z \
-		-v $(LOGS_DIR):/logs:Z \
-		$(CI_IMAGE_NAME) \
-		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
-			rm -rf /build/* && \
-			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
-			make -j$$(nproc) && \
-			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
-			rc=$$?; \
-			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
-			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
-			exit $$rc"
-
-# Soak test with async evictor and small LRU.  Eviction runs on
-# a background thread, not the NFS worker.  Tests whether the
-# c_server_state corruption is caused by synchronous eviction
-# on the worker thread's call stack.
-ci-soak-async: ci-image $(LOGS_DIR)
-	$(DOCKER) run --rm --privileged \
-		--ulimit nofile=65536:65536 \
-		-v $(ROOT_DIR):/reffs:ro,Z \
-		-v $(LOGS_DIR):/logs:Z \
-		$(CI_IMAGE_NAME) \
-		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
-			rm -rf /build/* && \
-			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
-			make -j$$(nproc) && \
-			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
-			rc=\$$?; \
-			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
-			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
-			exit \$$rc"
-
-# Soak test with ASAN + no optimization (-O0).  Tests whether the
-# c_server_state corruption is caused by compiler optimization
-# (reordering, CSE, speculative loads).  If the bug disappears
-# at -O0, it's optimization-related.
-ci-soak-noopt: ci-image $(LOGS_DIR)
-	$(DOCKER) run --rm --privileged \
-		--ulimit nofile=65536:65536 \
-		-v $(ROOT_DIR):/reffs:ro,Z \
-		-v $(LOGS_DIR):/logs:Z \
-		$(CI_IMAGE_NAME) \
-		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
-			rm -rf /build/* && \
-			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan --enable-noopt && \
-			make -j$$(nproc) && \
-			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
-			rc=\$$?; \
-			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
-			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
-			exit \$$rc"
-
-# Soak test with TSAN — catches data races (concurrent read/write
-# to the same address from different threads).  TSAN cannot be
-# combined with ASAN.  ~5-10x slower than normal.
-ci-soak-tsan: ci-image $(LOGS_DIR)
-	$(DOCKER) run --rm --privileged \
-		--ulimit nofile=65536:65536 \
-		-v $(ROOT_DIR):/reffs:ro,Z \
-		-v $(LOGS_DIR):/logs:Z \
-		$(CI_IMAGE_NAME) \
-		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
-			rm -rf /build/* && \
-			cd /build && SKIP_STYLE=1 ../src/configure --enable-tsan --enable-ubsan && \
-			make -j$$(nproc) && \
-			TSAN_OPTIONS='halt_on_error=0:second_deadlock_stack=1:history_size=7:suppressions=/src/scripts/tsan.supp' \
-			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
-			rc=\$$?; \
-			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
-			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
-			exit \$$rc"
-
-# Soak test without ASAN — generates core dump on c_server_state BUG.
-# Use when ASAN overhead masks timing or quarantine is not helpful.
-ci-soak-core: ci-image $(LOGS_DIR)
-	$(DOCKER) run --rm --privileged \
-		--ulimit nofile=65536:65536 \
-		--ulimit core=-1:-1 \
-		-v $(ROOT_DIR):/reffs:ro,Z \
-		-v $(LOGS_DIR):/logs:Z \
-		$(CI_IMAGE_NAME) \
-		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
-			rm -rf /build/* && \
-			cd /build && SKIP_STYLE=1 ../src/configure --enable-ubsan --enable-debug && \
-			make -j$$(nproc) && \
-			cp -f /build/src/reffsd /logs/reffsd.debug 2>/dev/null; \
-			ulimit -c unlimited && \
-			echo '/logs/core.%p' > /proc/sys/kernel/core_pattern 2>/dev/null || true && \
-			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
-			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
-			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
-			true"
-
-# Build + integration tests only (skip unit tests and krb5).
-# Faster iteration when debugging integration test failures.
-ci-test: ci-image
-	$(DOCKER) run --rm --privileged \
-		--ulimit nofile=65536:65536 \
-		-v $(ROOT_DIR):/reffs:ro,Z \
-		$(CI_IMAGE_NAME) \
-		/bin/bash -c "rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
-			cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
-			cd /build && SKIP_STYLE=1 ../src/configure --enable-asan --enable-ubsan && \
-			make -j$$(nproc) && \
-			CI_SKIP_KRB5=1 /src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
 
 # Run the server in a docker container (sandbox)
 # This uses --privileged to allow FUSE and bypasses host RPC conflicts

@@ -1,0 +1,223 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# CI test targets — split from Makefile.reffs to keep build targets
+# separate from test orchestration.
+#
+# Usage:
+#   make -f Makefile.ci check        # build + unit + integration
+#   make -f Makefile.ci soak          # 30-minute stability soak
+#   make -f Makefile.ci cthon04       # Connectathon test suite
+#   make -f Makefile.ci tls-stress    # TLS connection stress test
+
+ROOT_DIR := $(shell git rev-parse --show-toplevel 2>/dev/null || pwd)
+SUDO ?= $(shell docker ps >/dev/null 2>&1 || echo sudo)
+DOCKER = $(SUDO) docker
+CI_IMAGE_NAME = reffs-ci
+LOGS_DIR = $(abspath $(ROOT_DIR)/logs)
+
+$(LOGS_DIR):
+	@mkdir -p $@
+
+# -----------------------------------------------------------------------
+# Docker image
+# -----------------------------------------------------------------------
+
+image:
+	$(DOCKER) build -t $(CI_IMAGE_NAME) -f Dockerfile.ci .
+
+# -----------------------------------------------------------------------
+# Common build preamble (used by most targets)
+# -----------------------------------------------------------------------
+
+# Rsync source into container, autoreconf, configure, make.
+# Parameterized by CONFIGURE_FLAGS.
+define CI_BUILD
+rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
+cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
+rm -rf /build/* && \
+cd /build && SKIP_STYLE=1 ../src/configure $(1) && \
+make -j$$(nproc)
+endef
+
+# -----------------------------------------------------------------------
+# check: build + unit tests + integration (no krb5)
+# -----------------------------------------------------------------------
+
+check: image
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			rm -f /tmp/reffs-test-timing.txt && \
+			(make check || (cat lib/fs/tests/test-suite.log && exit 1)) && \
+			echo '=== Unit Test Timing ===' && \
+			sort -t'[' -k2 -rn /tmp/reffs-test-timing.txt | head -10 && \
+			if grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test | grep -q SLOW; then \
+				echo 'ERROR: unexpected slow tests detected (>2s):' && \
+				grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test && \
+				exit 1; \
+			fi && \
+			CI_SKIP_KRB5=1 /src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
+
+# -----------------------------------------------------------------------
+# full: style + license + build + unit + integration (with krb5 + TLS)
+# -----------------------------------------------------------------------
+
+full: image
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			cd /src && make -f Makefile.reffs fix-style && make -f Makefile.reffs license && \
+			cd /build && \
+			rm -f /tmp/reffs-test-timing.txt && \
+			(make check || (cat lib/fs/tests/test-suite.log && exit 1)) && \
+			echo '=== Unit Test Timing ===' && \
+			sort -t'[' -k2 -rn /tmp/reffs-test-timing.txt | head -10 && \
+			if grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test | grep -q SLOW; then \
+				echo 'ERROR: unexpected slow tests detected (>2s):' && \
+				grep SLOW /tmp/reffs-test-timing.txt | grep -v grace_test | grep -v client_recovery_test && \
+				exit 1; \
+			fi && \
+			/src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
+
+sec: full
+
+# -----------------------------------------------------------------------
+# soak: 30-minute stability soak (BAT=1 for 8 hours)
+# -----------------------------------------------------------------------
+
+soak: image $(LOGS_DIR)
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
+			rc=\$$?; \
+			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			exit \$$rc"
+
+# -----------------------------------------------------------------------
+# soak variants
+# -----------------------------------------------------------------------
+
+soak-noopt: image $(LOGS_DIR)
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan --enable-noopt) && \
+			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
+			rc=\$$?; \
+			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			exit \$$rc"
+
+soak-tsan: image $(LOGS_DIR)
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-tsan --enable-ubsan) && \
+			TSAN_OPTIONS='halt_on_error=0:second_deadlock_stack=1:history_size=7:suppressions=/src/scripts/tsan.supp' \
+			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
+			rc=\$$?; \
+			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			exit \$$rc"
+
+soak-core: image $(LOGS_DIR)
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		--ulimit core=-1:-1 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-ubsan --enable-debug) && \
+			cp -f /build/src/reffsd /logs/reffsd.debug 2>/dev/null; \
+			ulimit -c unlimited && \
+			echo '/logs/core.%p' > /proc/sys/kernel/core_pattern 2>/dev/null || true && \
+			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs $(if $(BAT),--bat,); \
+			cp -f /tmp/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /tmp/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			true"
+
+# -----------------------------------------------------------------------
+# test: build + integration only (skip unit tests, no krb5)
+# -----------------------------------------------------------------------
+
+test: image
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			CI_SKIP_KRB5=1 /src/scripts/ci_integration_test.sh /build/src/reffsd /reffs"
+
+# -----------------------------------------------------------------------
+# cthon04: Connectathon NFS test suite (NFSv4.2, NFSv3, pNFS)
+# -----------------------------------------------------------------------
+
+cthon04: image $(LOGS_DIR)
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			EXTERNAL_DIR=/tmp/external \
+			/src/scripts/ci_cthon04_test.sh /build/src/reffsd; \
+			rc=\$$?; \
+			cp -f /tmp/reffsd_cthon.log /logs/cthon04.log 2>/dev/null; \
+			exit \$$rc"
+
+# -----------------------------------------------------------------------
+# tls-stress: TLS connection stress test
+# -----------------------------------------------------------------------
+
+tls-stress: image $(LOGS_DIR)
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			cc -O2 -I/src/lib/include -o /build/nfs_tls_stress \
+				/src/tools/nfs_tls_stress.c /src/lib/tls/tls_client.c \
+				-lssl -lcrypto && \
+			/src/tools/tls_stress_test.sh 60; \
+			rc=\$$?; \
+			cp -f /tmp/reffsd_tls.log /logs/tls.log 2>/dev/null; \
+			exit \$$rc"
+
+# -----------------------------------------------------------------------
+# shell / ci-stop: interactive debugging
+# -----------------------------------------------------------------------
+
+shell:
+	@CONTAINER=$$($(DOCKER) ps -q --filter ancestor=$(CI_IMAGE_NAME) | head -1); \
+	if [ -n "$$CONTAINER" ]; then \
+		$(DOCKER) exec -it $$CONTAINER /bin/bash; \
+	else \
+		echo "No running CI container. Start one with: make -f Makefile.ci check"; \
+	fi
+
+stop:
+	@CONTAINERS=$$($(DOCKER) ps -q --filter ancestor=$(CI_IMAGE_NAME)); \
+	if [ -n "$$CONTAINERS" ]; then \
+		echo "Killing CI containers: $$CONTAINERS"; \
+		$(DOCKER) kill $$CONTAINERS 2>/dev/null || true; \
+		$(DOCKER) rm -f $$CONTAINERS 2>/dev/null || true; \
+	else \
+		echo "No running CI containers."; \
+	fi
+
+.PHONY: image check full sec soak soak-noopt soak-tsan soak-core test cthon04 tls-stress shell stop
