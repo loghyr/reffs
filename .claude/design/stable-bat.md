@@ -804,4 +804,18 @@ Phase 6 (BAT demo):
    but not blocking.
 
 9. **BAT timeline**: Need date to determine critical path.
+
+10. **CB_RECALL + pynfs delegation tests**: pynfs delegation tests
+    hang because our CB_RECALL doesn't populate the stateid in the
+    format pynfs's callback Event expects.  The test receives the
+    recall but `recall.stateid` is unset → AttributeError → fd
+    close → select(-1) → hang.  Skipped in ci_pynfs.sh with
+    `nodeleg`.  BAT demo will hit this if delegation recall is
+    exercised by userspace clients.
+
+11. **NFSv4.2 directory change_info**: CTHON04 basic/test7 fails
+    because the Linux NFSv4 client doesn't invalidate its dcache
+    after rename.  The changeid same-tick nsec bump helps but is
+    not sufficient.  Needs a proper monotonic change counter on
+    directory inodes instead of ctime-derived changeid.
    Phase 0 + Phase 1 are prerequisites for stable demo.
