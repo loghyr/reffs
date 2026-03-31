@@ -106,7 +106,7 @@ CLANG_TIDY ?= clang-tidy
 SCAN_BUILD ?= scan-build
 
 # Find all source files for style checking (consistent with Makefile.am)
-FIND_SOURCES = find . \( -name xdr -o -name autom4te.cache -o -name build -o -name third_party \) -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print
+FIND_SOURCES = find . \( -name xdr -o -name autom4te.cache -o -name build -o -name third_party -o -name external \) -prune -o \( ! -name 'config.h' -name '*.[ch]' \) -print
 
 # Check code style
 style:

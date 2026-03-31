@@ -450,6 +450,28 @@ out:
 	return ret;
 }
 
+/*
+ * Capture the "after" changeid for NFS change_info.
+ *
+ * The NFS client uses before != after to decide whether to invalidate
+ * its directory cache.  If the operation completes within the same
+ * clock tick as the "before" capture, before == after and the client
+ * keeps stale cache entries (e.g., a renamed file appears to still
+ * exist under its old name).
+ *
+ * Fix: if after == before and the operation succeeded, bump the
+ * nanosecond so the client always sees a change.
+ */
+static void vfs_capture_after(struct inode *dir, const struct timespec *before,
+			      struct timespec *after, int ret)
+{
+	*after = dir->i_ctime;
+	if (before && !ret && after->tv_sec == before->tv_sec &&
+	    after->tv_nsec == before->tv_nsec) {
+		after->tv_nsec++;
+	}
+}
+
 /* Public API */
 
 int vfs_rename(struct inode *old_dir, const char *old_name,
@@ -485,9 +507,9 @@ int vfs_rename(struct inode *old_dir, const char *old_name,
 		*new_before = new_dir->i_ctime;
 	ret = vfs_rename_locked(old_dir, old_name, new_dir, new_name, ap);
 	if (old_after)
-		*old_after = old_dir->i_ctime;
+		vfs_capture_after(old_dir, old_before, old_after, ret);
 	if (new_after)
-		*new_after = new_dir->i_ctime;
+		vfs_capture_after(new_dir, new_before, new_after, ret);
 	vfs_unlock_dirs(old_dir, new_dir);
 	return ret;
 }
@@ -501,7 +523,7 @@ int vfs_remove(struct inode *dir, const char *name, struct authunix_parms *ap,
 		*dir_before = dir->i_ctime;
 	ret = vfs_remove_common_locked(dir, name, ap, false);
 	if (dir_after)
-		*dir_after = dir->i_ctime;
+		vfs_capture_after(dir, dir_before, dir_after, ret);
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
@@ -515,7 +537,7 @@ int vfs_rmdir(struct inode *dir, const char *name, struct authunix_parms *ap,
 		*dir_before = dir->i_ctime;
 	ret = vfs_remove_common_locked(dir, name, ap, true);
 	if (dir_after)
-		*dir_after = dir->i_ctime;
+		vfs_capture_after(dir, dir_before, dir_after, ret);
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
@@ -819,7 +841,7 @@ int vfs_mkdir(struct inode *dir, const char *name, mode_t mode,
 	ret = vfs_create_common_locked(dir, name, mode, ap, 0, S_IFDIR,
 				       new_inode);
 	if (dir_after)
-		*dir_after = dir->i_ctime;
+		vfs_capture_after(dir, dir_before, dir_after, ret);
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
@@ -837,7 +859,7 @@ int vfs_create(struct inode *dir, const char *name, mode_t mode,
 	ret = vfs_create_common_locked(dir, name, mode, ap, 0, S_IFREG,
 				       new_inode);
 	if (dir_after)
-		*dir_after = dir->i_ctime;
+		vfs_capture_after(dir, dir_before, dir_after, ret);
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
@@ -874,7 +896,7 @@ int vfs_symlink(struct inode *dir, const char *name, const char *target,
 		}
 	}
 	if (dir_after)
-		*dir_after = dir->i_ctime;
+		vfs_capture_after(dir, dir_before, dir_after, ret);
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
@@ -890,7 +912,7 @@ int vfs_mknod(struct inode *dir, const char *name, mode_t mode, dev_t rdev,
 	ret = vfs_create_common_locked(dir, name, mode, ap, rdev, mode & S_IFMT,
 				       new_inode);
 	if (dir_after)
-		*dir_after = dir->i_ctime;
+		vfs_capture_after(dir, dir_before, dir_after, ret);
 	vfs_unlock_dirs(dir, NULL);
 	return ret;
 }
