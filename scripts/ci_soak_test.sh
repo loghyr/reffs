@@ -337,13 +337,10 @@ fi
 start_server || exit 1
 mount_nfs || { cat "$LOG"; die "initial mount failed"; exit 1; }
 
-# Capture baseline after 10 seconds of warm-up
-sleep 10
-BASELINE_RSS=$(get_rss_kb "$REFFSD_PID")
-BASELINE_FD=$(get_fd_count "$REFFSD_PID")
-info "Baseline: RSS=${BASELINE_RSS}KB FD=${BASELINE_FD}"
-
-# Start workloads
+# Start workloads BEFORE capturing baseline — the baseline should
+# reflect the server under load, not the cold-start empty state.
+# A cold-start baseline (52MB) vs under-load final (1.2GB) always
+# fails the 2x check.
 for i in $(seq 1 "$CLIENTS"); do
 	if [ $((i % 2)) -eq 0 ]; then
 		workload_fileops "$i" "$MOUNT" &
@@ -353,6 +350,13 @@ for i in $(seq 1 "$CLIENTS"); do
 	WORKLOAD_PIDS+=($!)
 done
 info "Started $CLIENTS workload processes"
+
+# Let workloads warm up, then capture the baseline under load.
+info "Warming up (60s)..."
+sleep 60
+BASELINE_RSS=$(get_rss_kb "$REFFSD_PID")
+BASELINE_FD=$(get_fd_count "$REFFSD_PID")
+info "Baseline (under load): RSS=${BASELINE_RSS}KB FD=${BASELINE_FD}"
 
 SOAK_START=$(date +%s)
 RESTART_COUNT=0
