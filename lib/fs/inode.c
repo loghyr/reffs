@@ -467,6 +467,25 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 		}
 	}
 
+	/*
+	 * Seed i_changeid from ctime if it's still zero (new inode or
+	 * loaded from old disk format without id_changeid).  Production
+	 * NFS servers return nanosecond-scale changeids; starting from
+	 * zero causes the Linux NFS client to mishandle dcache
+	 * invalidation via change_info.
+	 */
+	if (atomic_load_explicit(&inode->i_changeid, memory_order_relaxed) ==
+	    0) {
+		struct timespec now;
+		clock_gettime(CLOCK_REALTIME, &now);
+		uint64_t seed = (uint64_t)now.tv_sec * 1000000000ULL +
+				(uint64_t)now.tv_nsec;
+		if (seed == 0)
+			seed = 1;
+		atomic_store_explicit(&inode->i_changeid, seed,
+				      memory_order_relaxed);
+	}
+
 	trace_fs_inode(inode, __func__, __LINE__);
 
 	return inode;
