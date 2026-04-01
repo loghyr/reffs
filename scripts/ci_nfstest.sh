@@ -179,7 +179,10 @@ for test_module in nfstest_posix nfstest_alloc nfstest_cache; do
 	if [ -f "$test_path" ]; then
 		info ""
 		info "--- $test_module ---"
-		if timeout 300 "$test_path" \
+		# timeout --kill-after sends SIGKILL after the grace period.
+		# Force-unmount first to break any D-state NFS operations,
+		# then kill the test process.
+		if timeout --kill-after=30 300 "$test_path" \
 			--server 127.0.0.1 \
 			--export / \
 			--mtpoint "$MOUNT" \
@@ -187,7 +190,12 @@ for test_module in nfstest_posix nfstest_alloc nfstest_cache; do
 			2>&1 | tee -a "$RESULTS"; then
 			info "$test_module: completed"
 		else
-			info "$test_module: some failures (baseline)"
+			rc=$?
+			info "$test_module: exit $rc (baseline)"
+			# Break D-state processes stuck in kernel NFS calls.
+			umount -f -l "$MOUNT" 2>/dev/null || true
+			sleep 2
+			mkdir -p "$MOUNT"
 		fi
 	else
 		info "Skipping $test_module (not found at $test_path)"
