@@ -34,11 +34,10 @@ image:
 # Creates /reffs_data for scripts that need a non-tmpfs work dir.
 # Parameterized by CONFIGURE_FLAGS.
 define CI_BUILD
-mkdir -p /reffs_data && \
+cd / && rm -rf /src /build && mkdir -p /src /build /reffs_data && \
 export REFFS_WORK_DIR=/reffs_data && \
 rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
-rm -rf /build/* && \
 cd /build && SKIP_STYLE=1 ../src/configure $(1) && \
 make -j$$(nproc)
 endef
