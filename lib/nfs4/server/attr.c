@@ -166,7 +166,7 @@ static struct nfsv42_attr system_attrs = {
 	.no_trunc = true,
 	.numlinks = 255,
 	.fs_charset_cap = FSCHARSET_CAP4_ALLOWS_ONLY_UTF8,
-	.change_attr_type = NFS4_CHANGE_TYPE_IS_TIME_METADATA,
+	.change_attr_type = NFS4_CHANGE_TYPE_IS_VERSION_COUNTER,
 	.clone_blksize = 4096,
 	.xattr_support = false,
 	.time_delta = { .seconds = 0, .nseconds = 1 },
