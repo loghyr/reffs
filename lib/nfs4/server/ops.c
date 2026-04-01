@@ -126,9 +126,12 @@ uint32_t nfs4_op_secinfo(struct compound *compound)
 
 	/*
 	 * RFC 8881 s18.29.3: current FH is consumed on success.
+	 * Clear both c_inode and c_curr_nfh so subsequent ops
+	 * (e.g., GETFH) see NFS4ERR_NOFILEHANDLE.
 	 */
 	inode_active_put(compound->c_inode);
 	compound->c_inode = NULL;
+	memset(&compound->c_curr_nfh, 0, sizeof(compound->c_curr_nfh));
 
 out:
 	TRACE("SECINFO name=%s status=%s(%d)", name ? name : "(null)",
@@ -147,10 +150,22 @@ uint32_t nfs4_op_secinfo_no_name(struct compound *compound)
 		NFS4_OP_RES_SETUP(compound, opsecinfo_no_name);
 	nfsstat4 *status = &res->status;
 	SECINFO4resok *resok = NFS4_OP_RESOK_SETUP(res, SECINFO4res_u, resok4);
-	secinfo_style4 __attribute__((unused)) style = *args;
+	secinfo_style4 style = *args;
 
 	if (!compound->c_inode) {
 		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	/*
+	 * RFC 8881 s18.45.3: SECINFO_STYLE4_PARENT on the root of
+	 * the pseudo-filesystem has no parent — return NFS4ERR_NOENT,
+	 * same as LOOKUPP at the root.
+	 */
+	if (style == SECINFO_STYLE4_PARENT &&
+	    compound->c_curr_nfh.nfh_sb == SUPER_BLOCK_ROOT_ID &&
+	    compound->c_curr_nfh.nfh_ino == INODE_ROOT_ID) {
+		*status = NFS4ERR_NOENT;
 		goto out;
 	}
 
@@ -159,8 +174,8 @@ uint32_t nfs4_op_secinfo_no_name(struct compound *compound)
 	 * allowed security flavors.
 	 *
 	 * Per RFC 8881 s18.45.3 the current filehandle is consumed on
-	 * success; clear it here so subsequent ops in the compound get
-	 * NFS4ERR_NOFILEHANDLE if they rely on it.
+	 * success; clear both c_inode and c_curr_nfh so subsequent ops
+	 * (e.g., GETFH) see NFS4ERR_NOFILEHANDLE.
 	 */
 	*status = nfs4_build_secinfo(compound, resok);
 	if (*status)
@@ -168,6 +183,7 @@ uint32_t nfs4_op_secinfo_no_name(struct compound *compound)
 
 	inode_active_put(compound->c_inode);
 	compound->c_inode = NULL;
+	memset(&compound->c_curr_nfh, 0, sizeof(compound->c_curr_nfh));
 
 out:
 	TRACE("%s style=%d status=%s(%d)", __func__, (int)style,
