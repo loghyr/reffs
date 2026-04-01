@@ -192,15 +192,10 @@ uint32_t nfs4_op_lock(struct compound *compound)
 		lo = ls->ls_owner;
 		lock_owner_get(&lo->lo_base);
 
-		/* Verify seqid */
-		uint32_t cur_seqid =
-			__atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
-		if (elo->lock_seqid != cur_seqid) {
-			lock_owner_put(&lo->lo_base);
-			stateid_put(stid);
-			*status = NFS4ERR_BAD_SEQID;
-			return 0;
-		}
+		/*
+		 * RFC 8881 §8.2.2: in NFSv4.1+, lock_seqid is always 0
+		 * and MUST be ignored by the server.  Do not validate it.
+		 */
 	}
 
 	/* Perform locking */
