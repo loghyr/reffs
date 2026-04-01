@@ -245,6 +245,66 @@ pjdfstest: image $(LOGS_DIR)
 			exit \$$rc"
 
 # -----------------------------------------------------------------------
+# nfstest: NFStest protocol test suite (GPL — external process only)
+# -----------------------------------------------------------------------
+
+nfstest: image $(LOGS_DIR)
+	@mkdir -p $(ROOT_DIR)/external
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(ROOT_DIR)/external:/external:Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			EXTERNAL_DIR=/external \
+			/src/scripts/ci_nfstest.sh /build/src/reffsd; \
+			rc=\$$?; \
+			cp -f /reffs_data/nfstest_results.txt /logs/nfstest_results.txt 2>/dev/null; \
+			cp -f /reffs_data/reffsd_nfstest.log /logs/nfstest.log 2>/dev/null; \
+			exit \$$rc"
+
+# -----------------------------------------------------------------------
+# sigmund: Sigmund NFS test framework
+# -----------------------------------------------------------------------
+
+sigmund: image $(LOGS_DIR)
+	@mkdir -p $(ROOT_DIR)/external
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(ROOT_DIR)/external:/external:Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			EXTERNAL_DIR=/external \
+			/src/scripts/ci_sigmund.sh /build/src/reffsd; \
+			rc=\$$?; \
+			cp -f /reffs_data/sigmund_results.txt /logs/sigmund_results.txt 2>/dev/null; \
+			cp -f /reffs_data/reffsd_sigmund.log /logs/sigmund.log 2>/dev/null; \
+			exit \$$rc"
+
+# -----------------------------------------------------------------------
+# libnfs: userspace NFS client tests (bypasses kernel cache)
+# -----------------------------------------------------------------------
+
+libnfs: image $(LOGS_DIR)
+	@mkdir -p $(ROOT_DIR)/external
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(ROOT_DIR)/external:/external:Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			EXTERNAL_DIR=/external \
+			/src/scripts/ci_libnfs.sh /build/src/reffsd; \
+			rc=\$$?; \
+			cp -f /reffs_data/libnfs_results.txt /logs/libnfs_results.txt 2>/dev/null; \
+			cp -f /reffs_data/reffsd_libnfs.log /logs/libnfs.log 2>/dev/null; \
+			exit \$$rc"
+
+# -----------------------------------------------------------------------
 # shell / ci-stop: interactive debugging
 # -----------------------------------------------------------------------
 
@@ -266,4 +326,4 @@ stop:
 		echo "No running CI containers."; \
 	fi
 
-.PHONY: image check full sec soak soak-noopt soak-tsan soak-core test cthon04 pynfs pjdfstest tls-stress shell stop
+.PHONY: image check full sec soak soak-noopt soak-tsan soak-core test cthon04 pynfs pjdfstest nfstest sigmund libnfs tls-stress shell stop
