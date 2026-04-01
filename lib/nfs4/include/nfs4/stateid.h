@@ -165,6 +165,15 @@ struct delegation_stateid *delegation_stateid_alloc(struct inode *inode,
 						    struct client *client);
 
 /*
+ * stateid_inode_find_open - find an open stateid on inode owned by client.
+ *
+ * Returns a ref-bumped struct open_stateid or NULL.  Caller must
+ * stateid_put() the embedded os_stid when done.
+ */
+struct open_stateid *stateid_inode_find_open(struct inode *inode,
+					     struct client *client);
+
+/*
  * stateid_inode_find_delegation - find a delegation stateid on inode held
  * by any client other than exclude_client.
  *

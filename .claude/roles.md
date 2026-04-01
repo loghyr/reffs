@@ -213,7 +213,18 @@ the standards, and the existing codebase.
    no deployments exist.  The project will document in CLAUDE.md
    when persistent storage is first deployed.
 
-9. **UUID stability review**: flag as BLOCKER any long-lived object
+9. **XDR file review**: flag as BLOCKER any modification to
+   `lib/xdr/nfsv42_xdr.x` or other protocol `.x` files (except
+   `lib/xdr/probe1_xdr.x` which is internal).  Protocol XDR files
+   are canonical representations of the wire format from RFCs and
+   IETF drafts.  Changes to them must be:
+   - Discussed and approved explicitly
+   - Tracked for upstream resolution (errata or draft update)
+   - Documented in memory with the rationale and upstream plan
+   Probe XDR (`probe1_xdr.x`) is internal-only and can be changed
+   freely since client and server ship together.
+
+10. **UUID stability review**: flag as BLOCKER any long-lived object
    that has a dynamically assigned UUID (`uuid_generate()` in alloc)
    without corresponding persistence (save to disk) and restoration
    (load from disk without regenerating).  A UUID that changes on

@@ -615,71 +615,109 @@ uint32_t nfs4_op_open(struct compound *compound)
 		}
 	}
 
-	/* Allocate the open stateid. */
-	os = open_stateid_alloc(target, client);
-	if (!os) {
-		*status = NFS4ERR_DELAY;
-		goto out;
-	}
-
 	/*
-	 * Initialise the embedded lock owner.  The initial urcu_ref count
-	 * of 1 is the "state ref" that keeps the stateid alive until CLOSE
-	 * explicitly drops it.
+	 * RFC 8881 §18.16.3: if the client already holds an open stateid
+	 * on this inode, re-open upgrades the share modes and bumps seqid
+	 * rather than allocating a fresh stateid.
 	 */
-	urcu_ref_init(&os->os_owner.lo_ref);
-	os->os_owner.lo_release = nfs4_open_owner_release;
-	os->os_owner.lo_match = NULL;
-	CDS_INIT_LIST_HEAD(&os->os_owner.lo_list);
+	os = stateid_inode_find_open(target, client);
+	if (os) {
+		/* Upgrade share reservation with the new access/deny. */
+		share = calloc(1, sizeof(*share));
+		if (!share) {
+			stateid_put(&os->os_stid); /* drop find ref */
+			os = NULL;
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+		lock_owner_get(&os->os_owner);
+		share->s_owner = &os->os_owner;
+		share->s_inode = inode_active_get(target);
+		share->s_access = share_access;
+		share->s_mode = share_deny;
 
-	/* Build share reservation.  The share holds a ref on the owner. */
-	share = calloc(1, sizeof(*share));
-	if (!share) {
-		stateid_inode_unhash(&os->os_stid);
-		stateid_client_unhash(&os->os_stid);
-		stateid_put(&os->os_stid);
-		os = NULL;
-		*status = NFS4ERR_DELAY;
-		goto out;
-	}
-	lock_owner_get(&os->os_owner);
-	share->s_owner = &os->os_owner;
-	share->s_inode = inode_active_get(target);
-	share->s_access = share_access;
-	share->s_mode = share_deny;
-
-	pthread_mutex_lock(&target->i_lock_mutex);
-	ret = reffs_share_add(target, share, NULL);
-	pthread_mutex_unlock(&target->i_lock_mutex);
-	if (ret) {
-		/*
-		 * Conflict: reffs_share_add returned -EACCES without
-		 * consuming the share.  Free it and abort.
-		 */
-		reffs_share_free(share);
+		pthread_mutex_lock(&target->i_lock_mutex);
+		ret = reffs_share_add(target, share, NULL);
+		pthread_mutex_unlock(&target->i_lock_mutex);
+		if (ret) {
+			reffs_share_free(share);
+			share = NULL;
+			stateid_put(&os->os_stid); /* drop find ref */
+			os = NULL;
+			*status = NFS4ERR_SHARE_DENIED;
+			goto out;
+		}
 		share = NULL;
-		stateid_inode_unhash(&os->os_stid);
-		stateid_client_unhash(&os->os_stid);
-		stateid_put(&os->os_stid);
-		os = NULL;
-		*status = NFS4ERR_SHARE_DENIED;
-		goto out;
+
+		os->os_state = (uint64_t)share_access |
+			       ((uint64_t)share_deny << 2);
+
+		__atomic_fetch_add(&os->os_stid.s_seqid, 1, __ATOMIC_SEQ_CST);
+		pack_stateid4(&resok->stateid, &os->os_stid);
+		stateid_put(&os->os_stid); /* drop find ref */
+	} else {
+		/* First open: allocate a new stateid. */
+		os = open_stateid_alloc(target, client);
+		if (!os) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		/*
+		 * Initialise the embedded lock owner.  The initial
+		 * urcu_ref count of 1 is the "state ref" that keeps the
+		 * stateid alive until CLOSE explicitly drops it.
+		 */
+		urcu_ref_init(&os->os_owner.lo_ref);
+		os->os_owner.lo_release = nfs4_open_owner_release;
+		os->os_owner.lo_match = NULL;
+		CDS_INIT_LIST_HEAD(&os->os_owner.lo_list);
+
+		share = calloc(1, sizeof(*share));
+		if (!share) {
+			stateid_inode_unhash(&os->os_stid);
+			stateid_client_unhash(&os->os_stid);
+			stateid_put(&os->os_stid);
+			os = NULL;
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+		lock_owner_get(&os->os_owner);
+		share->s_owner = &os->os_owner;
+		share->s_inode = inode_active_get(target);
+		share->s_access = share_access;
+		share->s_mode = share_deny;
+
+		pthread_mutex_lock(&target->i_lock_mutex);
+		ret = reffs_share_add(target, share, NULL);
+		pthread_mutex_unlock(&target->i_lock_mutex);
+		if (ret) {
+			reffs_share_free(share);
+			share = NULL;
+			stateid_inode_unhash(&os->os_stid);
+			stateid_client_unhash(&os->os_stid);
+			stateid_put(&os->os_stid);
+			os = NULL;
+			*status = NFS4ERR_SHARE_DENIED;
+			goto out;
+		}
+		share = NULL;
+
+		/*
+		 * Encode access and deny flags into os_state:
+		 *   bits 0-1: OPEN4_SHARE_ACCESS_* (R/W)
+		 *   bits 2-3: OPEN4_SHARE_DENY_* (R/W), shifted left by 2
+		 */
+		os->os_state = (uint64_t)share_access |
+			       ((uint64_t)share_deny << 2);
+
+		/*
+		 * RFC 8881 §8.1.3: open stateid seqid starts at 1.
+		 * stateid_assign() initialises s_seqid to 0; bump now.
+		 */
+		__atomic_fetch_add(&os->os_stid.s_seqid, 1, __ATOMIC_SEQ_CST);
+		pack_stateid4(&resok->stateid, &os->os_stid);
 	}
-	share = NULL; /* ownership transferred to inode's share list */
-
-	/*
-	 * Encode access and deny flags into os_state:
-	 *   bits 0-1: OPEN4_SHARE_ACCESS_* (R/W)
-	 *   bits 2-3: OPEN4_SHARE_DENY_* (R/W), shifted left by 2
-	 */
-	os->os_state = (uint64_t)share_access | ((uint64_t)share_deny << 2);
-
-	/*
-	 * RFC 5661 §8.1.3: open stateid seqid starts at 1.
-	 * stateid_assign() initialises s_seqid to 0; bump it now.
-	 */
-	__atomic_fetch_add(&os->os_stid.s_seqid, 1, __ATOMIC_SEQ_CST);
-	pack_stateid4(&resok->stateid, &os->os_stid);
 
 	/*
 	 * For CLAIM_NULL: switch the current FH from directory to the

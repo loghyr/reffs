@@ -223,6 +223,37 @@ struct layout_stateid *layout_stateid_alloc(struct inode *inode,
 }
 
 /* ------------------------------------------------------------------ */
+/* Open stateid inode scan                                             */
+
+struct open_stateid *stateid_inode_find_open(struct inode *inode,
+					     struct client *client)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	if (!inode || !inode->i_stateids || !client)
+		return NULL;
+
+	rcu_read_lock();
+	cds_lfht_for_each(inode->i_stateids, &iter, node)
+	{
+		struct stateid *stid =
+			caa_container_of(node, struct stateid, s_inode_node);
+		if (stid->s_tag != Open_Stateid)
+			continue;
+		if (stid->s_client != client)
+			continue;
+		if (stateid_get(stid)) {
+			rcu_read_unlock();
+			return stid_to_open(stid);
+		}
+	}
+	rcu_read_unlock();
+
+	return NULL;
+}
+
+/* ------------------------------------------------------------------ */
 /* Delegation inode scan                                               */
 
 struct stateid *stateid_inode_find_delegation(struct inode *inode,
