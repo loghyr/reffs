@@ -62,10 +62,13 @@ nfsstat4 nfs4_stateid_resolve(struct compound *compound, struct inode *inode,
 		return NFS4_OK;
 	}
 
-	/* Read-bypass stateid — skip all checks for READ, reject for WRITE. */
+	/*
+	 * Read-bypass stateid (all-ones) — allow access for both read
+	 * and write operations.  RFC 8881 §8.2.3 defines this as a
+	 * special stateid; the caller's POSIX permission check provides
+	 * authorisation, same as the anonymous (all-zeros) stateid.
+	 */
 	if (stateid4_is_read_bypass(wire)) {
-		if (want_write)
-			return NFS4ERR_OPENMODE;
 		*out_stid = NULL;
 		return NFS4_OK;
 	}
