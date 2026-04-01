@@ -45,6 +45,10 @@ LOG=$WORK_DIR/reffsd_cthon.log
 REFFSD_PID=
 FAILED=0
 
+# Per-mode result tracking for final summary.
+# Each entry: "mode:basic:general:special:lock"
+RESULTS=()
+
 die() { echo "FAIL: $*" >&2; FAILED=1; }
 info() { echo "[$(date +%H:%M:%S)] $*"; }
 
@@ -201,6 +205,7 @@ run_cthon04() {
 
 	local pass=0
 	local fail=0
+	local r_basic="-" r_general="-" r_special="-" r_lock="-"
 
 	# Run each test set separately for better reporting.
 	# runtests usage: ./runtests <tests> <testargs> <testpath>
@@ -213,12 +218,16 @@ run_cthon04() {
 			if (cd "$CTHON_DIR" && bash ./runtests "$flag" -f "$TESTDIR" 2>&1); then
 				info "  $test_set: PASS"
 				pass=$((pass + 1))
+				eval "r_${test_set}=PASS"
 			else
 				info "  $test_set: FAIL"
 				fail=$((fail + 1))
+				eval "r_${test_set}=FAIL"
 			fi
 		fi
 	done
+
+	RESULTS+=("${label}:${r_basic}:${r_general}:${r_special}:${r_lock}")
 
 	rm -rf "$TESTDIR" 2>/dev/null || true
 	umount -f "$MOUNT" 2>/dev/null || true
@@ -286,6 +295,16 @@ stop_server
 # ---------- Summary ----------
 
 info ""
+info "=== CTHON04 Summary ==="
+info ""
+printf "  %-12s  %-6s  %-8s  %-8s  %-6s\n" "Mode" "basic" "general" "special" "lock"
+printf "  %-12s  %-6s  %-8s  %-8s  %-6s\n" "----" "-----" "-------" "-------" "----"
+for entry in "${RESULTS[@]}"; do
+	IFS=: read -r mode basic general special lock <<< "$entry"
+	printf "  %-12s  %-6s  %-8s  %-8s  %-6s\n" "$mode" "$basic" "$general" "$special" "$lock"
+done
+info ""
+
 if [ "$FAILED" -eq 0 ]; then
 	info "=== CTHON04 ALL PASSED ==="
 else
