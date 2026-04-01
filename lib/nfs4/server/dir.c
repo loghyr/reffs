@@ -158,9 +158,10 @@ uint32_t nfs4_op_lookupp(struct compound *compound)
 		goto out;
 	}
 
-	/* RFC 8881 §18.13: current FH must be a directory. */
+	/* RFC 8881 §18.14.4: symlink → NFS4ERR_SYMLINK, else NOTDIR. */
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
-		*status = NFS4ERR_NOTDIR;
+		*status = S_ISLNK(compound->c_inode->i_mode) ? NFS4ERR_SYMLINK :
+							       NFS4ERR_NOTDIR;
 		goto out;
 	}
 
@@ -540,7 +541,15 @@ uint32_t nfs4_op_rename(struct compound *compound)
 			 &compound->c_ap, &old_before, &old_after, &new_before,
 			 &new_after);
 	if (ret) {
-		*status = errno_to_nfs4(ret, OP_RENAME);
+		/*
+		 * RFC 8881 §18.26.3: renaming a non-directory over a
+		 * directory returns NFS4ERR_EXIST, not NFS4ERR_ISDIR
+		 * (which is not a valid RENAME error).
+		 */
+		if (ret == -EISDIR)
+			*status = NFS4ERR_EXIST;
+		else
+			*status = errno_to_nfs4(ret, OP_RENAME);
 		goto out;
 	}
 	src_cinfo_after = inode_changeid(old_dir);

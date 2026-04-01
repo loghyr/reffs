@@ -357,6 +357,15 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 		goto out;
 	}
 
+	/*
+	 * Hard link case: different dirents pointing to the same inode.
+	 * POSIX says this is a no-op — the directory must not be modified.
+	 */
+	if (rd_dst && inode_src_file == inode_dst_file) {
+		ret = 0;
+		goto out;
+	}
+
 	if (S_ISDIR(inode_src_file->i_mode)) {
 		if (vfs_is_subdir(new_dir, inode_src_file)) {
 			ret = -EINVAL;
