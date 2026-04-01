@@ -3683,6 +3683,13 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
 
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       void;
+
+ /*
+  * RFC 8881 §18.46: unknown opcodes must decode (as void)
+  * so the server can return NFS4ERR_OP_ILLEGAL instead of
+  * failing at the XDR layer.
+  */
+ default:               void;
 };
 
 union nfs_resop4 switch (nfs_opnum4 resop) {
@@ -3832,6 +3839,9 @@ union nfs_resop4 switch (nfs_opnum4 resop) {
 
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       ILLEGAL4res opillegal;
+
+ /* Match unknown opcodes for OP_ILLEGAL response encoding. */
+ default:               ILLEGAL4res opunknown;
 };
 
 struct COMPOUND4args {
