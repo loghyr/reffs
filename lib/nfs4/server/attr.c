@@ -2311,7 +2311,7 @@ int nfs4_attribute_init(void)
 	bitmap4_attribute_set(bm, FATTR4_CLONE_BLKSIZE);
 	bitmap4_attribute_set(bm, FATTR4_SPACE_FREED);
 	bitmap4_attribute_set(bm, FATTR4_CHANGE_ATTR_TYPE);
-	bitmap4_attribute_clear(bm, FATTR4_SEC_LABEL);
+	bitmap4_attribute_set(bm, FATTR4_SEC_LABEL);
 	bitmap4_attribute_clear(bm, FATTR4_MODE_UMASK);
 	bitmap4_attribute_clear(bm, FATTR4_XATTR_SUPPORT);
 	bitmap4_attribute_set(bm, FATTR4_OFFLINE);
@@ -2347,6 +2347,7 @@ int nfs4_attribute_init(void)
 		bitmap4_attribute_set(se, FATTR4_TIME_MODIFY_SET);
 		bitmap4_attribute_set(se, FATTR4_UNCACHEABLE_FILE_DATA);
 		bitmap4_attribute_set(se, FATTR4_UNCACHEABLE_DIRENT_METADATA);
+		bitmap4_attribute_set(se, FATTR4_SEC_LABEL);
 	}
 
 	return 0;
@@ -2390,6 +2391,7 @@ static void nattr_release(struct nfsv42_attr *nattr)
 	free(nattr->layout_types.fattr4_layout_types_val);
 	utf8string_free(&nattr->owner);
 	utf8string_free(&nattr->owner_group);
+	free(nattr->sec_label.slai_data.slai_data_val);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2400,8 +2402,8 @@ static void nattr_release(struct nfsv42_attr *nattr)
  * Return true if @attr may be set via SETATTR on this server.
  *
  * Unsupported write attrs (acl, dacl, sacl, layout_hint, mimetype,
- * retention/time-deleg/sec_label) are not listed here so any request
- * containing them yields NFS4ERR_ATTRNOTSUPP.
+ * retention/time-deleg) are not listed here so any request containing
+ * them yields NFS4ERR_ATTRNOTSUPP.
  */
 static bool nattr_is_settable(uint32_t attr)
 {
@@ -2421,6 +2423,7 @@ static bool nattr_is_settable(uint32_t attr)
 	case FATTR4_TIME_MODIFY_SET:
 	case FATTR4_UNCACHEABLE_FILE_DATA:
 	case FATTR4_UNCACHEABLE_DIRENT_METADATA:
+	case FATTR4_SEC_LABEL:
 		return true;
 	default:
 		return false;
@@ -2717,6 +2720,24 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 			nfstime4_to_timespec(&nattr->time_create,
 					     &inode->i_btime);
 			break;
+		case FATTR4_SEC_LABEL:
+			if (nattr->sec_label.slai_data.slai_data_len >
+			    REFFS_SEC_LABEL_MAX) {
+				pthread_mutex_unlock(&inode->i_attr_mutex);
+				status = NFS4ERR_NAMETOOLONG;
+				goto out;
+			}
+			inode->i_sec_label_lfs =
+				nattr->sec_label.slai_lfs.lfs_lfs;
+			inode->i_sec_label_pi =
+				nattr->sec_label.slai_lfs.lfs_pi;
+			inode->i_sec_label_len =
+				nattr->sec_label.slai_data.slai_data_len;
+			if (inode->i_sec_label_len > 0)
+				memcpy(inode->i_sec_label,
+				       nattr->sec_label.slai_data.slai_data_val,
+				       inode->i_sec_label_len);
+			break;
 		default:
 			/* POSIX attrs handled above */
 			break;
@@ -2863,6 +2884,21 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	nattr->clone_blksize = system_attrs.clone_blksize;
 	// nattr->space_freed;
 	nattr->change_attr_type = system_attrs.change_attr_type;
+
+	/* RFC 7861: security label from inode */
+	nattr->sec_label.slai_lfs.lfs_lfs = inode->i_sec_label_lfs;
+	nattr->sec_label.slai_lfs.lfs_pi = inode->i_sec_label_pi;
+	if (inode->i_sec_label_len > 0) {
+		nattr->sec_label.slai_data.slai_data_val =
+			malloc(inode->i_sec_label_len);
+		if (nattr->sec_label.slai_data.slai_data_val) {
+			nattr->sec_label.slai_data.slai_data_len =
+				inode->i_sec_label_len;
+			memcpy(nattr->sec_label.slai_data.slai_data_val,
+			       inode->i_sec_label, inode->i_sec_label_len);
+		}
+	}
+
 	// nattr->mode_umask;
 	nattr->xattr_support = system_attrs.xattr_support;
 	nattr->offline = inode->i_attr_flags & INODE_IS_OFFLINE;

@@ -30,6 +30,9 @@ struct reffs_file_handle {
 	uint64_t rfh_sb;
 };
 
+/* Maximum inline security label length (RFC 7861 Labeled NFS). */
+#define REFFS_SEC_LABEL_MAX 256
+
 #define INODE_ROOT_ID (1)
 
 struct inode {
@@ -113,6 +116,12 @@ struct inode {
 #define INODE_IS_UNCACHEABLE_DIRENT_METADATA (1ULL << 5)
 	uint64_t i_attr_flags;
 
+	/* Security label (RFC 7861 Labeled NFS) */
+	uint32_t i_sec_label_lfs;
+	uint32_t i_sec_label_pi;
+	uint16_t i_sec_label_len;
+	char i_sec_label[REFFS_SEC_LABEL_MAX];
+
 	char *i_symlink;
 
 	/* MDS layout segments (NULL for standalone/DS roles). */
@@ -137,6 +146,15 @@ struct inode_disk {
 	uint64_t id_parent_ino; /* 0 = root/unknown */
 	uint32_t id_dev_major; /* for S_IFCHR / S_IFBLK; 0 otherwise */
 	uint32_t id_dev_minor;
+	/* Security label (RFC 7861 Labeled NFS) */
+	uint32_t id_sec_label_lfs; /* labelformat_spec4.lfs_lfs */
+	uint32_t id_sec_label_pi; /* labelformat_spec4.lfs_pi */
+	uint16_t id_sec_label_len; /* 0 = no label; max REFFS_SEC_LABEL_MAX */
+	/* Reserved for future ACL/xattr sidecar support */
+	uint16_t id_dacl_count; /* 0 = use POSIX mode only */
+	uint16_t id_sacl_count; /* 0 = none */
+	uint16_t id_xattr_count; /* 0 = none */
+	char id_sec_label[REFFS_SEC_LABEL_MAX];
 };
 
 /* Alloc (new) or find-and-load (existing) an inode.  Returns with

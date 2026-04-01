@@ -122,6 +122,16 @@ static void posix_inode_sync(struct inode *inode)
 	meta.id.id_parent_ino = inode->i_parent_ino;
 	meta.id.id_dev_major = inode->i_dev_major;
 	meta.id.id_dev_minor = inode->i_dev_minor;
+	meta.id.id_sec_label_lfs = inode->i_sec_label_lfs;
+	meta.id.id_sec_label_pi = inode->i_sec_label_pi;
+	uint16_t sync_label_len =
+		(inode->i_sec_label_len > REFFS_SEC_LABEL_MAX) ?
+			REFFS_SEC_LABEL_MAX :
+			inode->i_sec_label_len;
+	meta.id.id_sec_label_len = sync_label_len;
+	if (sync_label_len > 0)
+		memcpy(meta.id.id_sec_label, inode->i_sec_label,
+		       sync_label_len);
 
 	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd >= 0) {
@@ -389,6 +399,13 @@ static int inode_load_from_disk(struct inode *inode)
 	inode->i_parent_ino = id.id_parent_ino;
 	inode->i_dev_major = id.id_dev_major;
 	inode->i_dev_minor = id.id_dev_minor;
+	inode->i_sec_label_lfs = id.id_sec_label_lfs;
+	inode->i_sec_label_pi = id.id_sec_label_pi;
+	inode->i_sec_label_len = id.id_sec_label_len;
+	if (id.id_sec_label_len > 0 &&
+	    id.id_sec_label_len <= REFFS_SEC_LABEL_MAX)
+		memcpy(inode->i_sec_label, id.id_sec_label,
+		       id.id_sec_label_len);
 
 	if (inode->i_ino >= sb->sb_next_ino)
 		sb->sb_next_ino = inode->i_ino + 1;

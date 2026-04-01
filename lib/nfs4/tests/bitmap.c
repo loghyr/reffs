@@ -628,8 +628,9 @@ START_TEST(test_attr_init_unsupported_clear)
 					    FATTR4_FS_LOCATIONS_INFO));
 	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_MDSTHRESHOLD));
-	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
-					    FATTR4_SEC_LABEL));
+	/* RFC 7861: sec_label is now supported */
+	ck_assert(bitmap4_attribute_is_set(supported_attributes,
+					   FATTR4_SEC_LABEL));
 	ck_assert(!bitmap4_attribute_is_set(supported_attributes,
 					    FATTR4_MODE_UMASK));
 	ck_assert(!bitmap4_attribute_is_set(supported_attributes,

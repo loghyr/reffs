@@ -291,7 +291,17 @@ static void rocksdb_inode_sync(struct inode *inode)
 		.id_parent_ino = inode->i_parent_ino,
 		.id_dev_major = inode->i_dev_major,
 		.id_dev_minor = inode->i_dev_minor,
+		.id_sec_label_lfs = inode->i_sec_label_lfs,
+		.id_sec_label_pi = inode->i_sec_label_pi,
+		.id_sec_label_len =
+			(inode->i_sec_label_len > REFFS_SEC_LABEL_MAX) ?
+				REFFS_SEC_LABEL_MAX :
+				inode->i_sec_label_len,
 	};
+
+	if (id.id_sec_label_len > 0)
+		memcpy(id.id_sec_label, inode->i_sec_label,
+		       id.id_sec_label_len);
 
 	uint8_t key[ROCKSDB_KEY_MAX_SIZE];
 	size_t klen = rocksdb_key_ino(key, inode->i_ino);
@@ -449,6 +459,13 @@ static int rocksdb_inode_alloc(struct inode *inode)
 	inode->i_parent_ino = id.id_parent_ino;
 	inode->i_dev_major = id.id_dev_major;
 	inode->i_dev_minor = id.id_dev_minor;
+	inode->i_sec_label_lfs = id.id_sec_label_lfs;
+	inode->i_sec_label_pi = id.id_sec_label_pi;
+	inode->i_sec_label_len = id.id_sec_label_len;
+	if (id.id_sec_label_len > 0 &&
+	    id.id_sec_label_len <= REFFS_SEC_LABEL_MAX)
+		memcpy(inode->i_sec_label, id.id_sec_label,
+		       id.id_sec_label_len);
 
 	if (inode->i_ino >= sb->sb_next_ino)
 		sb->sb_next_ino = inode->i_ino + 1;
