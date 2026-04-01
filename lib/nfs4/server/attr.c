@@ -2311,7 +2311,7 @@ int nfs4_attribute_init(void)
 	bitmap4_attribute_set(bm, FATTR4_CLONE_BLKSIZE);
 	bitmap4_attribute_set(bm, FATTR4_SPACE_FREED);
 	bitmap4_attribute_set(bm, FATTR4_CHANGE_ATTR_TYPE);
-	bitmap4_attribute_set(bm, FATTR4_SEC_LABEL);
+	bitmap4_attribute_clear(bm, FATTR4_SEC_LABEL);
 	bitmap4_attribute_clear(bm, FATTR4_MODE_UMASK);
 	bitmap4_attribute_clear(bm, FATTR4_XATTR_SUPPORT);
 	bitmap4_attribute_set(bm, FATTR4_OFFLINE);
