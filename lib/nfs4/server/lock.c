@@ -413,8 +413,21 @@ uint32_t nfs4_op_free_stateid(struct compound *compound)
 	FREE_STATEID4res *res = NFS4_OP_RES_SETUP(compound, opfree_stateid);
 	nfsstat4 *status = &res->fsr_status;
 
+	/* Resolve current stateid if used. */
+	const stateid4 *wire = &args->fsa_stateid;
+	stateid4 resolved;
+
+	if (stateid4_is_current(wire)) {
+		if (!compound->c_curr_stid) {
+			*status = NFS4ERR_BAD_STATEID;
+			return 0;
+		}
+		pack_stateid4(&resolved, compound->c_curr_stid);
+		wire = &resolved;
+	}
+
 	uint32_t seqid, id, type, cookie;
-	unpack_stateid4(&args->fsa_stateid, &seqid, &id, &type, &cookie);
+	unpack_stateid4(wire, &seqid, &id, &type, &cookie);
 
 	struct stateid *stid = stateid_find(compound->c_inode, id);
 	if (!stid || stid->s_tag != type || stid->s_cookie != cookie) {
