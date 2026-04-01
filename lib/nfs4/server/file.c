@@ -303,15 +303,25 @@ uint32_t nfs4_op_open(struct compound *compound)
 			*status = NFS4ERR_GRACE;
 			goto out;
 		}
-		/* Per-client: must RECLAIM_COMPLETE before normal ops. */
-		if (compound->c_nfs4_client &&
+		/*
+		 * Per-client grace: during server-wide grace, each client
+		 * must RECLAIM_COMPLETE before non-reclaim ops.  Outside
+		 * of server grace, new clients can operate immediately —
+		 * they have nothing to reclaim.
+		 */
+		if (nfs4_check_grace() && compound->c_nfs4_client &&
 		    !compound->c_nfs4_client->nc_reclaim_done) {
 			*status = NFS4ERR_GRACE;
 			goto out;
 		}
 	} else {
-		/* Reclaim after RECLAIM_COMPLETE is too late. */
-		if (compound->c_nfs4_client &&
+		/*
+		 * Reclaim after RECLAIM_COMPLETE is too late.  Only
+		 * meaningful during server-wide grace — outside grace,
+		 * CLAIM_PREVIOUS is handled by the switch below (which
+		 * returns NFS4ERR_NO_GRACE for non-existent state).
+		 */
+		if (nfs4_check_grace() && compound->c_nfs4_client &&
 		    compound->c_nfs4_client->nc_reclaim_done) {
 			*status = NFS4ERR_NO_GRACE;
 			goto out;
