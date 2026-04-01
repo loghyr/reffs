@@ -6,6 +6,7 @@
 #ifndef _REFFS_NFS4_OPS_H
 #define _REFFS_NFS4_OPS_H
 
+struct client;
 struct compound;
 struct server_state;
 
@@ -128,6 +129,17 @@ nfsstat4 nfs4_apply_createattrs(fattr4 *fattr, struct inode *inode,
 
 /* Returns true if any client holds a write layout on this inode. */
 bool inode_has_write_layout(struct inode *inode);
+
+/*
+ * nfs4_recall_dir_delegations - recall all directory delegations on dir
+ * except those held by exclude.
+ *
+ * Fire-and-forget: sends CB_RECALL for each delegation stateid held by
+ * other clients, does not wait for DELEGRETURN.  Called after a
+ * directory-modifying VFS op succeeds (CREATE, REMOVE, RENAME, LINK).
+ */
+void nfs4_recall_dir_delegations(struct server_state *ss, struct inode *dir,
+				 struct client *exclude);
 
 #define NFS4_OP_NUM(compound) \
 	((compound)->c_args->argarray.argarray_val[(compound)->c_curr_op].argop)

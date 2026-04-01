@@ -24,6 +24,7 @@
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "nfs4/client.h"
 #include "reffs/server.h"
 #include "reffs/time.h"
 #include "nfs4/trace/nfs4.h"
@@ -362,6 +363,13 @@ uint32_t nfs4_op_create(struct compound *compound)
 		goto out;
 	}
 
+	/* Recall directory delegations held by other clients. */
+	nfs4_recall_dir_delegations(
+		compound->c_server_state, compound->c_inode,
+		compound->c_nfs4_client ?
+			nfs4_client_to_client(compound->c_nfs4_client) :
+			NULL);
+
 	/* Switch current FH to the newly created object. */
 	inode_active_put(compound->c_inode);
 	compound->c_inode = new_inode;
@@ -445,6 +453,13 @@ uint32_t nfs4_op_remove(struct compound *compound)
 		*status = errno_to_nfs4(ret, OP_REMOVE);
 		goto out;
 	}
+
+	/* Recall directory delegations held by other clients. */
+	nfs4_recall_dir_delegations(
+		compound->c_server_state, compound->c_inode,
+		compound->c_nfs4_client ?
+			nfs4_client_to_client(compound->c_nfs4_client) :
+			NULL);
 
 	cinfo_after = inode_changeid(compound->c_inode);
 	resok->cinfo.atomic = TRUE;
@@ -552,6 +567,19 @@ uint32_t nfs4_op_rename(struct compound *compound)
 			*status = errno_to_nfs4(ret, OP_RENAME);
 		goto out;
 	}
+
+	/* Recall directory delegations on both source and target dirs. */
+	{
+		struct client *exclude =
+			compound->c_nfs4_client ?
+				nfs4_client_to_client(compound->c_nfs4_client) :
+				NULL;
+		nfs4_recall_dir_delegations(compound->c_server_state, old_dir,
+					    exclude);
+		nfs4_recall_dir_delegations(compound->c_server_state,
+					    compound->c_inode, exclude);
+	}
+
 	src_cinfo_after = inode_changeid(old_dir);
 	dst_cinfo_after = inode_changeid(compound->c_inode);
 
@@ -640,6 +668,14 @@ uint32_t nfs4_op_link(struct compound *compound)
 		*status = errno_to_nfs4(ret, OP_LINK);
 		goto out;
 	}
+
+	/* Recall directory delegations held by other clients. */
+	nfs4_recall_dir_delegations(
+		compound->c_server_state, compound->c_inode,
+		compound->c_nfs4_client ?
+			nfs4_client_to_client(compound->c_nfs4_client) :
+			NULL);
+
 	cinfo_after = inode_changeid(compound->c_inode);
 
 	resok->cinfo.atomic = TRUE;

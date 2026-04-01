@@ -29,6 +29,7 @@ Design documents:
 @.claude/design/rocksdb-backend.md
 @.claude/design/stable-bat.md
 @.claude/design/remove-pynfs.md
+@.claude/design/dir-delegations.md
 
 Bug pattern encyclopedias (RCU, ref-counting, NFSv4 protocol):
 

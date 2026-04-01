@@ -8,6 +8,8 @@
 #endif
 
 #include <pthread.h>
+#include <stdatomic.h>
+#include <string.h>
 
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
@@ -16,11 +18,15 @@
 #include "reffs/inode.h"
 #include "reffs/lock.h"
 #include "reffs/stateid.h"
+#include "reffs/filehandle.h"
+#include "reffs/server.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
 #include "nfs4/stateid.h"
 #include "nfs4/client.h"
+#include "nfs4/session.h"
+#include "nfs4/cb.h"
 
 uint32_t nfs4_op_delegpurge(struct compound *compound)
 {
@@ -131,9 +137,122 @@ uint32_t nfs4_op_get_dir_delegation(struct compound *compound)
 		NFS4_OP_RES_SETUP(compound, opget_dir_delegation);
 	nfsstat4 *status = &res->gddr_status;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		return 0;
+	}
+
+	if (!S_ISDIR(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_NOTDIR;
+		return 0;
+	}
+
+	struct client *client =
+		compound->c_nfs4_client ?
+			nfs4_client_to_client(compound->c_nfs4_client) :
+			NULL;
+	if (!client) {
+		*status = NFS4ERR_SERVERFAULT;
+		return 0;
+	}
+
+	struct delegation_stateid *ds =
+		delegation_stateid_alloc(compound->c_inode, client);
+	if (!ds) {
+		/*
+		 * Can't grant — tell the client the delegation is
+		 * unavailable rather than failing the whole compound.
+		 */
+		GET_DIR_DELEGATION4res_non_fatal *nf =
+			&res->GET_DIR_DELEGATION4res_u.gddr_res_non_fatal4;
+		nf->gddrnf_status = GDD4_UNAVAIL;
+		nf->GET_DIR_DELEGATION4res_non_fatal_u
+			.gddrnf_will_signal_deleg_avail = FALSE;
+		return 0;
+	}
+
+	/*
+	 * Bump seqid so the client sees a fresh stateid.
+	 * Grandfathered GCC builtin — s_seqid is not _Atomic.
+	 */
+	__atomic_fetch_add(&ds->ds_stid.s_seqid, 1, __ATOMIC_ACQ_REL);
+
+	GET_DIR_DELEGATION4res_non_fatal *nf =
+		&res->GET_DIR_DELEGATION4res_u.gddr_res_non_fatal4;
+	nf->gddrnf_status = GDD4_OK;
+
+	GET_DIR_DELEGATION4resok *resok =
+		&nf->GET_DIR_DELEGATION4res_non_fatal_u.gddrnf_resok4;
+
+	/* Use directory's monotonic changeid as the cookie verifier. */
+	uint64_t changeid = atomic_load_explicit(&compound->c_inode->i_changeid,
+						 memory_order_relaxed);
+	memcpy(resok->gddr_cookieverf, &changeid,
+	       sizeof(resok->gddr_cookieverf));
+
+	pack_stateid4(&resok->gddr_stateid, &ds->ds_stid);
+
+	/* No notification capabilities — recall-on-mutate model. */
+	resok->gddr_notification.bitmap4_len = 0;
+	resok->gddr_notification.bitmap4_val = NULL;
+	resok->gddr_child_attributes.bitmap4_len = 0;
+	resok->gddr_child_attributes.bitmap4_val = NULL;
+	resok->gddr_dir_attributes.bitmap4_len = 0;
+	resok->gddr_dir_attributes.bitmap4_val = NULL;
 
 	return 0;
+}
+
+/*
+ * Recall all directory delegations on dir except those held by exclude.
+ * Fire-and-forget — mirrors the file delegation recall pattern in OPEN.
+ */
+void nfs4_recall_dir_delegations(struct server_state *ss, struct inode *dir,
+				 struct client *exclude)
+{
+	struct stateid *stid;
+
+	if (!dir || !dir->i_stateids)
+		return;
+
+	/*
+	 * Iterate delegation stateids.  stateid_inode_find_delegation
+	 * returns one at a time (the first non-excluded delegation it
+	 * finds), so loop until none remain.
+	 */
+	while ((stid = stateid_inode_find_delegation(dir, exclude)) != NULL) {
+		struct nfs4_client *ds_nc =
+			stid->s_client ? client_to_nfs4(stid->s_client) : NULL;
+		struct nfs4_session *ds_session =
+			ds_nc ? nfs4_session_find_for_client(ss, ds_nc) : NULL;
+
+		if (ds_session) {
+			stateid4 recall_sid;
+			struct network_file_handle cb_nfh = { 0 };
+
+			cb_nfh.nfh_ino = dir->i_ino;
+			cb_nfh.nfh_sb = dir->i_sb->sb_id;
+
+			nfs_fh4 cb_fh4 = {
+				.nfs_fh4_len = sizeof(cb_nfh),
+				.nfs_fh4_val = (char *)&cb_nfh,
+			};
+
+			pack_stateid4(&recall_sid, stid);
+			nfs4_cb_recall(ds_session, &recall_sid, &cb_fh4, false);
+			nfs4_session_put(ds_session);
+		}
+
+		/*
+		 * Unhash from the inode so the next iteration doesn't
+		 * find this delegation again.  The stateid remains alive
+		 * (client ref) until DELEGRETURN or lease expiry.
+		 */
+		if (stateid_inode_unhash(stid))
+			stateid_put(stid); /* drop the hash-table ref */
+
+		stateid_put(stid); /* drop the find ref */
+	}
 }
 
 uint32_t nfs4_op_want_delegation(struct compound *compound)
