@@ -698,6 +698,17 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 		goto out;
 	}
 
+	/*
+	 * RFC 8881 §2.10.6.2: if the request exceeds the negotiated
+	 * ca_maxrequestsize for the fore channel, reject before any
+	 * other processing.  rt_body_len is the full RPC message
+	 * (header + payload) which is what the channel limit covers.
+	 */
+	if (compound->c_rt->rt_body_len > ns->ns_maxrequestsize) {
+		*status = NFS4ERR_REQ_TOO_BIG;
+		goto out;
+	}
+
 	if (args->sa_slotid >= ns->ns_slot_count) {
 		*status = NFS4ERR_BADSLOT;
 		goto out;
@@ -772,6 +783,22 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 	}
 
 	pthread_mutex_unlock(&slot->sl_mutex);
+
+	/*
+	 * RFC 8881 §2.10.6.2: when the client sets sa_cachethis,
+	 * estimate if the reply can fit in the DRC.  A SEQUENCE
+	 * response alone is ~100+ bytes; if the negotiated
+	 * ca_maxresponsesize_cached is absurdly small, reject
+	 * early rather than silently dropping the cache.
+	 */
+	if (args->sa_cachethis) {
+		uint32_t min_reply = xdr_sizeof((xdrproc_t)xdr_COMPOUND4res,
+						compound->c_res);
+		if (min_reply > ns->ns_maxresponsesize_cached) {
+			*status = NFS4ERR_REP_TOO_BIG_TO_CACHE;
+			goto out;
+		}
+	}
 
 	memcpy(resok->sr_sessionid, ns->ns_sessionid, sizeof(sessionid4));
 	resok->sr_sequenceid = slot->sl_seqid;

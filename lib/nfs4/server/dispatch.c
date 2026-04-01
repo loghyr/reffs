@@ -289,6 +289,32 @@ bool dispatch_compound(struct compound *compound)
 			RECORD_OP_STATS(resop);
 		}
 
+		/*
+		 * RFC 8881 §2.10.6.4: after each successful op, check
+		 * whether the accumulated response exceeds the session's
+		 * negotiated ca_maxresponsesize.  Measure via xdr_sizeof
+		 * on the partial result built so far.  Only checked once
+		 * a session is established (SEQUENCE sets c_session).
+		 */
+		if (!resop->nfs_resop4_u.opillegal.status &&
+		    compound->c_session) {
+			uint32_t cur_len = compound->c_curr_op + 1;
+			uint32_t saved_len = res->resarray.resarray_len;
+
+			res->resarray.resarray_len = cur_len;
+			uint32_t resp_sz =
+				xdr_sizeof((xdrproc_t)xdr_COMPOUND4res, res);
+			res->resarray.resarray_len = saved_len;
+
+			if (resp_sz > compound->c_session->ns_maxresponsesize) {
+				resop->nfs_resop4_u.opillegal.status =
+					NFS4ERR_REP_TOO_BIG;
+				res->status = NFS4ERR_REP_TOO_BIG;
+				res->resarray.resarray_len = cur_len;
+				return false;
+			}
+		}
+
 		if (resop->nfs_resop4_u.opillegal.status) {
 			TRACE("dispatch op=%s(%d) FAILED status=%s(%d)",
 			      nfs4_op_name(argop->argop), argop->argop,
