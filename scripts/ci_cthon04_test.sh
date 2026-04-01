@@ -77,6 +77,18 @@ fetch_cthon04() {
 		info "cthon04: building"
 		make -C "$CTHON_DIR" -j"$(nproc)" 2>&1 | tail -5
 	fi
+
+	# Fix tests.init for dash compatibility:
+	# - CFLAGS+= is bash-only; use CFLAGS="$CFLAGS ..."
+	if grep -q 'CFLAGS+=' "$CTHON_DIR/tests.init" 2>/dev/null; then
+		sed -i 's/CFLAGS+=\(.*\)/CFLAGS="$CFLAGS \1"/' "$CTHON_DIR/tests.init"
+	fi
+
+	# cthon04 general/special tests use 'time' command which isn't
+	# available in minimal containers.  Install if missing.
+	if ! command -v time >/dev/null 2>&1; then
+		apt-get update -qq && apt-get install -y -qq time 2>/dev/null || true
+	fi
 }
 
 # -----------------------------------------------------------------------
@@ -198,7 +210,7 @@ run_cthon04() {
 		local flag="-${test_set:0:1}" # -b, -g, -s, -l
 		if [ -d "$CTHON_DIR/$test_set" ]; then
 			info "  $test_set..."
-			if (cd "$CTHON_DIR" && ./runtests "$flag" -f "$TESTDIR" 2>&1); then
+			if (cd "$CTHON_DIR" && bash ./runtests "$flag" -f "$TESTDIR" 2>&1); then
 				info "  $test_set: PASS"
 				pass=$((pass + 1))
 			else
@@ -239,7 +251,10 @@ info ""
 info "========== NFSv4.2 Standalone =========="
 write_config "standalone"
 start_server "standalone" || exit 1
-run_cthon04 "NFSv4.2" "vers=4.2,sec=sys"
+# actimeo=0: disable attribute caching so stat() after rename
+# goes to the server immediately.  Without this, the Linux NFS v4
+# client may return a cached positive lookup for the old name.
+run_cthon04 "NFSv4.2" "vers=4.2,sec=sys,actimeo=0"
 stop_server
 
 # ---------- Test 2: NFSv3 standalone ----------
@@ -265,7 +280,7 @@ path    = "/"
 '
 write_config "combined" "$DS_EXTRA"
 start_server "combined" || exit 1
-run_cthon04 "pNFS" "vers=4.2,sec=sys"
+run_cthon04 "pNFS" "vers=4.2,sec=sys,actimeo=0"
 stop_server
 
 # ---------- Summary ----------

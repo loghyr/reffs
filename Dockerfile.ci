@@ -51,6 +51,7 @@ RUN apt-get update && apt-get install -y \
     tcpdump \
     dnsutils \
     strace \
+    time \
     procps \
     net-tools \
     krb5-user \

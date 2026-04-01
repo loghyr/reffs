@@ -514,6 +514,10 @@ void inode_update_times_now(struct inode *inode, uint64_t flags)
 	if (flags & REFFS_INODE_UPDATE_MTIME)
 		inode->i_mtime = now;
 
+	/* Bump the monotonic change counter so NFSv4 clients see a
+	 * change even if ctime doesn't advance (same nanosecond). */
+	atomic_fetch_add_explicit(&inode->i_changeid, 1, memory_order_relaxed);
+
 	inode_sync_to_disk(inode);
 }
 

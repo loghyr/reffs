@@ -451,25 +451,18 @@ out:
 }
 
 /*
- * Capture the "after" changeid for NFS change_info.
- *
- * The NFS client uses before != after to decide whether to invalidate
- * its directory cache.  If the operation completes within the same
- * clock tick as the "before" capture, before == after and the client
- * keeps stale cache entries (e.g., a renamed file appears to still
- * exist under its old name).
- *
- * Fix: if after == before and the operation succeeded, bump the
- * nanosecond so the client always sees a change.
+ * Capture the directory ctime after a mutation.  The nsec bump hack
+ * is removed — NFSv4 change_info now uses the monotonic i_changeid
+ * counter (dir.c) instead of ctime.  NFSv3 WCC data uses ctime
+ * directly and doesn't need the bump.
  */
-static void vfs_capture_after(struct inode *dir, const struct timespec *before,
-			      struct timespec *after, int ret)
+static void vfs_capture_after(struct inode *dir,
+			      const struct timespec *before
+			      __attribute__((unused)),
+			      struct timespec *after,
+			      int ret __attribute__((unused)))
 {
 	*after = dir->i_ctime;
-	if (before && !ret && after->tv_sec == before->tv_sec &&
-	    after->tv_nsec == before->tv_nsec) {
-		after->tv_nsec++;
-	}
 }
 
 /* Public API */

@@ -2789,7 +2789,8 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 		goto out;
 
 	nattr->fh_expire_type = system_attrs.fh_expire_type;
-	nattr->change = timespec_to_ns(&inode->i_ctime);
+	nattr->change =
+		atomic_load_explicit(&inode->i_changeid, memory_order_relaxed);
 	nattr->size = inode->i_size;
 	nattr->link_support = system_attrs.link_support;
 	nattr->symlink_support = system_attrs.symlink_support;

@@ -285,6 +285,8 @@ static void rocksdb_inode_sync(struct inode *inode)
 		.id_ctime = inode->i_ctime,
 		.id_mtime = inode->i_mtime,
 		.id_btime = inode->i_btime,
+		.id_changeid = atomic_load_explicit(&inode->i_changeid,
+						    memory_order_relaxed),
 		.id_attr_flags = inode->i_attr_flags,
 		.id_parent_ino = inode->i_parent_ino,
 		.id_dev_major = inode->i_dev_major,
@@ -441,6 +443,8 @@ static int rocksdb_inode_alloc(struct inode *inode)
 	inode->i_ctime = id.id_ctime;
 	inode->i_mtime = id.id_mtime;
 	inode->i_btime = id.id_btime;
+	atomic_store_explicit(&inode->i_changeid, id.id_changeid,
+			      memory_order_relaxed);
 	inode->i_attr_flags = id.id_attr_flags;
 	inode->i_parent_ino = id.id_parent_ino;
 	inode->i_dev_major = id.id_dev_major;

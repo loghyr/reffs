@@ -92,6 +92,7 @@ struct inode {
 	reffs_id i_uid;
 	reffs_id i_gid;
 	_Atomic uint32_t i_nlink;
+	_Atomic uint64_t i_changeid; /* monotonic change counter for NFSv4 */
 	uint16_t i_mode;
 	uint16_t i_unused;
 	int64_t i_size;
@@ -131,6 +132,7 @@ struct inode_disk {
 	struct timespec id_ctime;
 	struct timespec id_mtime;
 	struct timespec id_btime;
+	uint64_t id_changeid; /* monotonic change counter */
 	uint64_t id_attr_flags;
 	uint64_t id_parent_ino; /* 0 = root/unknown */
 	uint32_t id_dev_major; /* for S_IFCHR / S_IFBLK; 0 otherwise */

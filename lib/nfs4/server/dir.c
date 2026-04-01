@@ -7,6 +7,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdatomic.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
@@ -27,9 +28,10 @@
 #include "reffs/time.h"
 #include "nfs4/trace/nfs4.h"
 
-static inline changeid4 timespec_to_changeid(const struct timespec *ts)
+static inline changeid4 inode_changeid(struct inode *inode)
 {
-	return (changeid4)timespec_to_ns(ts);
+	return (changeid4)atomic_load_explicit(&inode->i_changeid,
+					       memory_order_relaxed);
 }
 
 uint32_t nfs4_op_lookup(struct compound *compound)
@@ -252,6 +254,7 @@ uint32_t nfs4_op_create(struct compound *compound)
 
 	struct inode *new_inode = NULL;
 	struct timespec dir_before, dir_after;
+	changeid4 cinfo_before = 0, cinfo_after = 0;
 	char *name = NULL;
 	char *linkpath = NULL;
 	int ret;
@@ -296,6 +299,7 @@ uint32_t nfs4_op_create(struct compound *compound)
 		goto out;
 	}
 
+	cinfo_before = inode_changeid(compound->c_inode);
 	switch (args->objtype.type) {
 	case NF4DIR:
 		ret = vfs_mkdir(compound->c_inode, name, 0777, &compound->c_ap,
@@ -363,9 +367,10 @@ uint32_t nfs4_op_create(struct compound *compound)
 	new_inode = NULL;
 	compound->c_curr_nfh.nfh_ino = compound->c_inode->i_ino;
 
+	cinfo_after = inode_changeid(compound->c_inode);
 	resok->cinfo.atomic = TRUE;
-	resok->cinfo.before = timespec_to_changeid(&dir_before);
-	resok->cinfo.after = timespec_to_changeid(&dir_after);
+	resok->cinfo.before = cinfo_before;
+	resok->cinfo.after = cinfo_after;
 	resok->attrset.bitmap4_len = 0;
 	resok->attrset.bitmap4_val = NULL;
 
@@ -386,6 +391,7 @@ uint32_t nfs4_op_remove(struct compound *compound)
 	REMOVE4resok *resok = NFS4_OP_RESOK_SETUP(res, REMOVE4res_u, resok4);
 
 	struct timespec dir_before, dir_after;
+	changeid4 cinfo_before = 0, cinfo_after = 0;
 	char *name = NULL;
 	int ret;
 
@@ -427,6 +433,7 @@ uint32_t nfs4_op_remove(struct compound *compound)
 	 * Try removing as a non-directory first.  vfs_remove() returns
 	 * -EISDIR if the target is a directory; fall back to vfs_rmdir().
 	 */
+	cinfo_before = inode_changeid(compound->c_inode);
 	ret = vfs_remove(compound->c_inode, name, &compound->c_ap, &dir_before,
 			 &dir_after);
 	if (ret == -EISDIR)
@@ -438,9 +445,10 @@ uint32_t nfs4_op_remove(struct compound *compound)
 		goto out;
 	}
 
+	cinfo_after = inode_changeid(compound->c_inode);
 	resok->cinfo.atomic = TRUE;
-	resok->cinfo.before = timespec_to_changeid(&dir_before);
-	resok->cinfo.after = timespec_to_changeid(&dir_after);
+	resok->cinfo.before = cinfo_before;
+	resok->cinfo.after = cinfo_after;
 
 out:
 	trace_nfs4_name(compound, name, __func__, __LINE__);
@@ -458,6 +466,8 @@ uint32_t nfs4_op_rename(struct compound *compound)
 
 	struct inode *old_dir = NULL;
 	struct timespec old_before, old_after, new_before, new_after;
+	changeid4 src_cinfo_before = 0, src_cinfo_after = 0;
+	changeid4 dst_cinfo_before = 0, dst_cinfo_after = 0;
 	char *oldname = NULL;
 	char *newname = NULL;
 	int ret;
@@ -524,6 +534,8 @@ uint32_t nfs4_op_rename(struct compound *compound)
 		goto out;
 	}
 
+	src_cinfo_before = inode_changeid(old_dir);
+	dst_cinfo_before = inode_changeid(compound->c_inode);
 	ret = vfs_rename(old_dir, oldname, compound->c_inode, newname,
 			 &compound->c_ap, &old_before, &old_after, &new_before,
 			 &new_after);
@@ -531,13 +543,15 @@ uint32_t nfs4_op_rename(struct compound *compound)
 		*status = errno_to_nfs4(ret, OP_RENAME);
 		goto out;
 	}
+	src_cinfo_after = inode_changeid(old_dir);
+	dst_cinfo_after = inode_changeid(compound->c_inode);
 
 	resok->source_cinfo.atomic = TRUE;
-	resok->source_cinfo.before = timespec_to_changeid(&old_before);
-	resok->source_cinfo.after = timespec_to_changeid(&old_after);
+	resok->source_cinfo.before = src_cinfo_before;
+	resok->source_cinfo.after = src_cinfo_after;
 	resok->target_cinfo.atomic = TRUE;
-	resok->target_cinfo.before = timespec_to_changeid(&new_before);
-	resok->target_cinfo.after = timespec_to_changeid(&new_after);
+	resok->target_cinfo.before = dst_cinfo_before;
+	resok->target_cinfo.after = dst_cinfo_after;
 
 out:
 	inode_active_put(old_dir);
@@ -555,12 +569,12 @@ uint32_t nfs4_op_link(struct compound *compound)
 	LINK4resok *resok = NFS4_OP_RESOK_SETUP(res, LINK4res_u, resok4);
 
 	struct inode *src_inode = NULL;
-	struct timespec dir_before, dir_after;
+	changeid4 cinfo_before = 0, cinfo_after = 0;
 	char *name = NULL;
 	int ret;
 
 	/*
-	 * RFC 5661 §18.9.3: CURRENT_FH is the target directory;
+	 * RFC 8881 §18.9.3: CURRENT_FH is the target directory;
 	 * SAVED_FH is the file to link.
 	 */
 	if (network_file_handle_empty(&compound->c_curr_nfh) ||
@@ -611,23 +625,17 @@ uint32_t nfs4_op_link(struct compound *compound)
 		goto out;
 	}
 
-	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
-	dir_before = compound->c_inode->i_mtime;
-	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
-
+	cinfo_before = inode_changeid(compound->c_inode);
 	ret = vfs_link(src_inode, compound->c_inode, name, &compound->c_ap);
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_LINK);
 		goto out;
 	}
-
-	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
-	dir_after = compound->c_inode->i_mtime;
-	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+	cinfo_after = inode_changeid(compound->c_inode);
 
 	resok->cinfo.atomic = TRUE;
-	resok->cinfo.before = timespec_to_changeid(&dir_before);
-	resok->cinfo.after = timespec_to_changeid(&dir_after);
+	resok->cinfo.before = cinfo_before;
+	resok->cinfo.after = cinfo_after;
 
 out:
 	inode_active_put(src_inode);

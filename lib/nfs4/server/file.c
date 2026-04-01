@@ -253,6 +253,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 	fattr4 *createattrs = NULL;
 	struct timespec dir_before = { 0 };
 	struct timespec dir_after = { 0 };
+	uint64_t cinfo_before = 0, cinfo_after = 0;
 	int ret;
 
 	/*
@@ -356,6 +357,9 @@ uint32_t nfs4_op_open(struct compound *compound)
 		if (args->openhow.opentype == OPEN4_CREATE) {
 			createhow4 *how = &args->openhow.openflag4_u.how;
 
+			cinfo_before = atomic_load_explicit(
+				&compound->c_inode->i_changeid,
+				memory_order_relaxed);
 			switch (how->mode) {
 			case UNCHECKED4:
 				ret = vfs_create(compound->c_inode, name, 0666,
@@ -696,9 +700,11 @@ uint32_t nfs4_op_open(struct compound *compound)
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = stateid_get(&os->os_stid);
 
+	cinfo_after = atomic_load_explicit(&compound->c_inode->i_changeid,
+					   memory_order_relaxed);
 	resok->cinfo.atomic = TRUE;
-	resok->cinfo.before = timespec_to_ns(&dir_before);
-	resok->cinfo.after = timespec_to_ns(&dir_after);
+	resok->cinfo.before = cinfo_before;
+	resok->cinfo.after = cinfo_after;
 
 	/*
 	 * OPEN4_RESULT_NO_OPEN_STATEID is set only when the server grants
