@@ -79,7 +79,8 @@ void nfs4_client_put(struct nfs4_client *nc)
 struct nfs4_client *nfs4_client_alloc(const verifier4 *verifier,
 				      const struct sockaddr_in *sin,
 				      uint16_t incarnation,
-				      clientid4 assigned_id)
+				      clientid4 assigned_id,
+				      uid_t principal_uid)
 {
 	struct nfs4_client *nc;
 	int ret;
@@ -92,6 +93,7 @@ struct nfs4_client *nfs4_client_alloc(const verifier4 *verifier,
 	memcpy(&nc->nc_sin, sin, sizeof(*sin));
 	nc->nc_incarnation = incarnation;
 	nc->nc_confirmed = false;
+	nc->nc_principal_uid = principal_uid;
 	__atomic_store_n(&nc->nc_last_renew_ns, reffs_now_ns(),
 			 __ATOMIC_RELAXED);
 

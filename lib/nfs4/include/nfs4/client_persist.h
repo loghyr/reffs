@@ -7,6 +7,7 @@
 #define _REFFS_NFS4_CLIENT_PERSIST_H
 
 #include <netinet/in.h>
+#include <sys/types.h>
 
 #include "nfsv42_xdr.h"
 #include "reffs/server.h"
@@ -19,33 +20,24 @@
  * nfs4_client with a ref held by the caller (release with
  * client_put(nfs4_client_to_client(nc))).
  *
- * Decision tree:
+ * Implements RFC 8881 §18.35.4 Table 11 decision tree based on
+ * (same_verifier, same_principal, confirmed).  When update is false
+ * (non-update case), cases where principal or verifier differ cause
+ * the old client to be expired and a new one allocated.  When update
+ * is true (UPD_CONFIRMED_REC_A), additional validation produces
+ * NFS4ERR_PERM or NFS4ERR_NOT_SAME via *out_status.
  *
- *   ownerid not seen before:
- *     → append to clients file, add to client_incarnations,
- *       return new nfs4_client (incarnation 0)
- *
- *   ownerid known, same verifier, same addr:
- *     → idempotent retry, return existing client
- *
- *   ownerid known, same verifier, diff addr:
- *     → multi-homed client, return existing client
- *
- *   ownerid known, diff verifier, same addr:
- *     → client restarted: expire old client, remove from
- *       incarnations, allocate new with bumped incarnation
- *
- *   ownerid known, diff verifier, diff addr:
- *     → misconfiguration: LOG both addresses, return NULL
- *       (caller should return NFS4ERR_CLID_INUSE)
- *
- * Returns NULL on allocation failure or misconfiguration.
+ * Returns NULL on allocation failure, misconfiguration, or update
+ * error.  When NULL is returned and *out_status != 0, the caller
+ * should return that nfsstat4.  When *out_status == 0 and the return
+ * is NULL, the caller should return NFS4ERR_SERVERFAULT.
  */
 struct nfs4_client *
 nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 			  const struct nfs_impl_id4 *impl_id,
 			  const verifier4 *verifier,
-			  const struct sockaddr_in *sin);
+			  const struct sockaddr_in *sin, uid_t principal_uid,
+			  bool update, nfsstat4 *out_status);
 
 /*
  * nfs4_client_expire - expunge all state for nc and remove it from

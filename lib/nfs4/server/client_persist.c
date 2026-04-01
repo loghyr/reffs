@@ -33,11 +33,6 @@ static bool verifier_eq(const verifier4 *a, const verifier4 *b)
 	return memcmp(a, b, NFS4_VERIFIER_SIZE) == 0;
 }
 
-static bool addr_eq(const struct sockaddr_in *a, const struct sockaddr_in *b)
-{
-	return a->sin_addr.s_addr == b->sin_addr.s_addr;
-}
-
 /*
  * Build a client_incarnation_record from current server state and wire
  * parameters.
@@ -119,6 +114,15 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 	trace_fs_client(client, __func__, __LINE__);
 	__atomic_fetch_or(&client->c_state, CLIENT_IS_EXPIRING,
 			  __ATOMIC_RELEASE);
+	/*
+	 * NOT_NOW_BROWN_COW: sessions should survive until the
+	 * replacement client is confirmed (CREATE_SESSION).
+	 * RFC 8881 §18.35.4 case 7: old state is discarded only
+	 * after the new client is confirmed.  For now, sessions
+	 * are destroyed here; the correct fix is deferred
+	 * confirmation-triggered teardown.
+	 */
+	nfs4_session_destroy_for_client(ss, nc);
 	client_remove_all_stateids(client);
 	if (client_unhash(client))
 		client_put(client);
@@ -128,11 +132,53 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 /* ------------------------------------------------------------------ */
 /* Alloc or find                                                       */
 
+/*
+ * Replace an existing client: expire the old one, allocate a new one
+ * with bumped incarnation.  Used by RFC 8881 Table 11 cases where
+ * the verifier or principal changed.
+ */
+static struct nfs4_client *replace_client(struct server_state *ss,
+					  struct nfs4_client *old_nc,
+					  const verifier4 *verifier,
+					  const struct sockaddr_in *sin,
+					  uid_t principal_uid)
+{
+	struct client_incarnation_record crc;
+	uint32_t slot;
+	uint16_t incarnation;
+	clientid4 clid;
+	struct nfs4_client *nc;
+
+	slot = clientid_slot((clientid4)nfs4_client_to_client(old_nc)->c_id);
+	incarnation = old_nc->nc_incarnation + 1;
+	clid = clientid_make(slot, incarnation, server_boot_seq(ss));
+
+	/*
+	 * Expire the old client — removes from incarnations file,
+	 * drains stateids, drops ref.  old_nc is invalid after this.
+	 */
+	nfs4_client_expire(ss, old_nc);
+
+	nc = nfs4_client_alloc(verifier, sin, incarnation, clid, principal_uid);
+	if (!nc)
+		return NULL;
+
+	make_incarnation_record(&crc, ss, slot, incarnation, verifier, sin);
+	if (ss->ss_persist_ops->client_incarnation_add(ss->ss_persist_ctx,
+						       &crc)) {
+		client_put(nfs4_client_to_client(nc));
+		return NULL;
+	}
+
+	return nc;
+}
+
 struct nfs4_client *
 nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 			  const struct nfs_impl_id4 *impl_id,
 			  const verifier4 *verifier,
-			  const struct sockaddr_in *sin)
+			  const struct sockaddr_in *sin, uid_t principal_uid,
+			  bool update, nfsstat4 *out_status)
 {
 	struct nfs4_client *nc;
 	struct client_identity_record cir;
@@ -140,8 +186,8 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 	uint32_t slot;
 	uint16_t incarnation;
 	clientid4 clid;
-	char addr_existing[REFFS_ADDR_LEN];
-	char addr_new[REFFS_ADDR_LEN];
+
+	*out_status = 0;
 
 	/*
 	 * Scan the clients file for this ownerid → slot, then look up
@@ -152,6 +198,15 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 	nc = nfs4_client_find_by_owner(ss, server_boot_seq(ss), owner,
 				       &prev_slot);
 	if (!nc) {
+		/*
+		 * RFC 8881 §18.35.4: update on a non-existent record
+		 * is NFS4ERR_NOENT.
+		 */
+		if (update) {
+			*out_status = NFS4ERR_NOENT;
+			return NULL;
+		}
+
 		bool is_reclaiming = (prev_slot != UINT32_MAX);
 
 		if (is_reclaiming) {
@@ -195,7 +250,8 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 				return NULL;
 		}
 
-		nc = nfs4_client_alloc(verifier, sin, incarnation, clid);
+		nc = nfs4_client_alloc(verifier, sin, incarnation, clid,
+				       principal_uid);
 		if (!nc)
 			return NULL;
 
@@ -213,71 +269,62 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 	}
 
 	/* ---------------------------------------------------------- */
-	/* Known ownerid — walk the decision tree.                    */
+	/* Known ownerid — RFC 8881 §18.35.4 Table 11 decision tree.  */
+	/*                                                             */
+	/* The 3-bit key is (same_verifier, same_principal, confirmed).*/
+	/* Only case 5 (confirmed + same verifier + same principal)    */
+	/* returns the existing client.  All other non-update cases    */
+	/* replace the old client with a new one (including case 1:    */
+	/* unconfirmed + same verifier + same principal).              */
 
 	bool same_verifier = verifier_eq(&nc->nc_verifier, verifier);
-	bool same_addr = addr_eq(&nc->nc_sin, sin);
+	bool same_principal = (nc->nc_principal_uid == principal_uid);
+	bool confirmed = nc->nc_confirmed;
 
-	if (same_verifier && same_addr) {
-		/* Idempotent retry — return existing client. */
+	if (update) {
+		/*
+		 * RFC 8881 §18.35.4 update path (UPD_CONFIRMED_REC_A).
+		 * Only valid against a confirmed record with matching
+		 * verifier and principal.
+		 */
+		if (!confirmed) {
+			/* U1: unconfirmed + update → NFS4ERR_NOENT */
+			*out_status = NFS4ERR_NOENT;
+			client_put(nfs4_client_to_client(nc));
+			return NULL;
+		}
+		if (!same_principal) {
+			/* U6/U8: different principal → NFS4ERR_PERM */
+			*out_status = NFS4ERR_PERM;
+			client_put(nfs4_client_to_client(nc));
+			return NULL;
+		}
+		if (!same_verifier) {
+			/* U7: same principal, different verifier */
+			*out_status = NFS4ERR_NOT_SAME;
+			client_put(nfs4_client_to_client(nc));
+			return NULL;
+		}
+		/* U5: confirmed, same verifier, same principal → update */
 		return nc;
 	}
 
-	if (same_verifier && !same_addr) {
+	/* Non-update path. */
+	if (same_verifier && same_principal && confirmed) {
 		/*
-		 * Same verifier, different address — multi-homed client.
-		 * Return the existing client unchanged.
+		 * Case 5 (confirmed, same verifier + principal): idempotent
+		 * retry — return the existing client record.
 		 */
-		LOG("nfs4_client_alloc_or_find: slot %u multi-homed "
-		    "(new addr differs, verifier matches)",
-		    (uint32_t)nfs4_client_to_client(nc)->c_id);
 		return nc;
 	}
 
-	if (!same_verifier && !same_addr) {
-		/*
-		 * Different verifier AND different address — two distinct
-		 * clients claim the same co_ownerid.  Refuse; caller
-		 * returns NFS4ERR_CLID_INUSE.
-		 */
-		sockaddr_in_to_full_str(&nc->nc_sin, addr_existing,
-					sizeof(addr_existing));
-		sockaddr_in_to_full_str(sin, addr_new, sizeof(addr_new));
-		LOG("nfs4_client_alloc_or_find: co_ownerid collision "
-		    "— existing client at %s, new request from %s "
-		    "— possible misconfiguration",
-		    addr_existing, addr_new);
-		client_put(nfs4_client_to_client(nc));
-		return NULL;
-	}
-
-	/* !same_verifier && same_addr — client restarted. */
-
-	slot = (uint32_t)nfs4_client_to_client(nc)->c_id;
-	incarnation = nc->nc_incarnation + 1;
-	clid = clientid_make(slot, incarnation, server_boot_seq(ss));
-
 	/*
-	 * Expire the old client — removes from incarnations file,
-	 * drains stateids, drops ref.  nc is invalid after this.
+	 * Cases 2,3,4 (unconfirmed) and 6,7,8 (confirmed): verifier
+	 * or principal changed.  Expire the old client and allocate a
+	 * new one.  This covers:
+	 *   - same_verifier + diff principal (cases 2, 6)
+	 *   - diff verifier + same principal (cases 3, 7)
+	 *   - diff verifier + diff principal (cases 4, 8)
 	 */
-	nfs4_client_expire(ss, nc);
-	nc = NULL;
-
-	nc = nfs4_client_alloc(verifier, sin, incarnation, clid);
-	if (!nc)
-		return NULL;
-
-	make_incarnation_record(&crc, ss, slot, incarnation, verifier, sin);
-	if (ss->ss_persist_ops->client_incarnation_add(ss->ss_persist_ctx,
-						       &crc)) {
-		client_put(nfs4_client_to_client(nc));
-		return NULL;
-	}
-
-	/*
-	 * No new identity record on restart: the ownerid→slot mapping
-	 * in the clients file is permanent for this slot.
-	 */
-	return nc;
+	return replace_client(ss, nc, verifier, sin, principal_uid);
 }

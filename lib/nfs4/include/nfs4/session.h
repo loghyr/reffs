@@ -132,4 +132,8 @@ void nfs4_session_put(struct nfs4_session *ns);
 /* Remove from ss_session_ht (idempotent).  Returns true if it was hashed. */
 bool nfs4_session_unhash(struct server_state *ss, struct nfs4_session *ns);
 
+/* Destroy all sessions belonging to nc.  Used by nfs4_client_expire. */
+void nfs4_session_destroy_for_client(struct server_state *ss,
+				     struct nfs4_client *nc);
+
 #endif /* _REFFS_NFS4_SESSION_H */

@@ -36,6 +36,8 @@
 /* Test fixture                                                        */
 /* ------------------------------------------------------------------ */
 
+#define TEST_UID 1000
+
 static struct server_state *g_ss;
 
 static void setup(void)
@@ -237,13 +239,14 @@ START_TEST(test_identity_domain_name_on_disk_not_in_memory)
 	verifier4 v;
 	struct sockaddr_in sin;
 	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
 
 	make_owner(&owner, "domain-name-test", owner_buf, sizeof(owner_buf));
 	make_verifier(&v, 0x42);
 	make_sin(&sin, 0x7f000001, 2049);
 
-	struct nfs4_client *nc =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin);
+	struct nfs4_client *nc = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc);
 
 	struct client_identity_record *ids;
@@ -384,13 +387,14 @@ START_TEST(test_find_by_owner_found)
 	verifier4 v;
 	struct sockaddr_in sin;
 	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
 
 	make_owner(&owner, "find-by-owner-test", owner_buf, sizeof(owner_buf));
 	make_verifier(&v, 0xF0);
 	make_sin(&sin, 0x7f000001, 2049);
 
-	struct nfs4_client *nc1 =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin);
+	struct nfs4_client *nc1 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc1);
 
 	struct nfs4_client *nc2 = nfs4_client_find_by_owner(
@@ -415,13 +419,14 @@ START_TEST(test_find_by_owner_after_expire)
 	verifier4 v;
 	struct sockaddr_in sin;
 	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
 
 	make_owner(&owner, "expired-client", owner_buf, sizeof(owner_buf));
 	make_verifier(&v, 0xD0);
 	make_sin(&sin, 0x7f000001, 2049);
 
-	struct nfs4_client *nc =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin);
+	struct nfs4_client *nc = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc);
 
 	nfs4_client_expire(g_ss, nc);
@@ -444,13 +449,14 @@ START_TEST(test_alloc_new_client)
 	verifier4 v;
 	struct sockaddr_in sin;
 	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
 
 	make_owner(&owner, "new-client-owner", owner_buf, sizeof(owner_buf));
 	make_verifier(&v, 0x11);
 	make_sin(&sin, 0x7f000001, 2049);
 
-	struct nfs4_client *nc =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin);
+	struct nfs4_client *nc = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc);
 	ck_assert_uint_eq(clientid_incarnation(
 				  (clientid4)nfs4_client_to_client(nc)->c_id),
@@ -483,17 +489,25 @@ START_TEST(test_alloc_idempotent_retry)
 	verifier4 v;
 	struct sockaddr_in sin;
 	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
 
 	make_owner(&owner, "idempotent-owner", owner_buf, sizeof(owner_buf));
 	make_verifier(&v, 0x22);
 	make_sin(&sin, 0x7f000001, 2049);
 
-	struct nfs4_client *nc1 =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin);
+	struct nfs4_client *nc1 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc1);
 
-	struct nfs4_client *nc2 =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin);
+	/*
+	 * Confirm the client — only confirmed clients get idempotent
+	 * retry (RFC 8881 Table 11 case 5).  Unconfirmed clients with
+	 * same verifier+principal are replaced (case 1).
+	 */
+	nc1->nc_confirmed = true;
+
+	struct nfs4_client *nc2 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc2);
 	ck_assert_ptr_eq(nc1, nc2);
 
@@ -517,18 +531,22 @@ START_TEST(test_alloc_multihomed)
 	verifier4 v;
 	struct sockaddr_in sin1, sin2;
 	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
 
 	make_owner(&owner, "multihomed-owner", owner_buf, sizeof(owner_buf));
 	make_verifier(&v, 0x33);
 	make_sin(&sin1, 0xc0a80001, 2049);
 	make_sin(&sin2, 0xc0a80002, 2049);
 
-	struct nfs4_client *nc1 =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin1);
+	struct nfs4_client *nc1 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin1, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc1);
 
-	struct nfs4_client *nc2 =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin2);
+	/* Confirm so that the second call is case 5 (idempotent). */
+	nc1->nc_confirmed = true;
+
+	struct nfs4_client *nc2 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin2, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc2);
 	ck_assert_ptr_eq(nc1, nc2);
 
@@ -548,14 +566,15 @@ START_TEST(test_alloc_client_restart)
 	verifier4 v1, v2;
 	struct sockaddr_in sin;
 	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
 
 	make_owner(&owner, "restart-owner", owner_buf, sizeof(owner_buf));
 	make_verifier(&v1, 0xAA);
 	make_verifier(&v2, 0xBB);
 	make_sin(&sin, 0x7f000001, 2049);
 
-	struct nfs4_client *nc1 =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v1, &sin);
+	struct nfs4_client *nc1 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v1, &sin, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc1);
 
 	clientid4 clid1 = (clientid4)nfs4_client_to_client(nc1)->c_id;
@@ -563,8 +582,8 @@ START_TEST(test_alloc_client_restart)
 
 	nfs4_client_put(nc1);
 
-	struct nfs4_client *nc2 =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v2, &sin);
+	struct nfs4_client *nc2 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v2, &sin, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc2);
 
 	clientid4 clid2 = (clientid4)nfs4_client_to_client(nc2)->c_id;
@@ -586,16 +605,19 @@ START_TEST(test_alloc_client_restart)
 END_TEST
 
 /*
- * Case 5: Same ownerid, different verifier, different addr →
- * misconfiguration; alloc_or_find returns NULL (NFS4ERR_CLID_INUSE path).
+ * Case 5: Same ownerid, different verifier, different addr, same principal →
+ * RFC 8881 §18.35.4 Table 11 case 4/8: replace old client with new one.
+ * (NFSv4.0's CLID_INUSE is gone in v4.1; the decision tree is now based on
+ * principal, not address.)
  */
-START_TEST(test_alloc_clid_inuse)
+START_TEST(test_alloc_diff_verifier_diff_addr_replaces)
 {
 	char owner_buf[32];
 	client_owner4 owner;
 	verifier4 v1, v2;
 	struct sockaddr_in sin1, sin2;
 	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
 
 	make_owner(&owner, "collision-owner", owner_buf, sizeof(owner_buf));
 	make_verifier(&v1, 0xAA);
@@ -603,26 +625,63 @@ START_TEST(test_alloc_clid_inuse)
 	make_sin(&sin1, 0x0a000001, 2049);
 	make_sin(&sin2, 0x0a000002, 2049);
 
-	struct nfs4_client *nc1 =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v1, &sin1);
+	struct nfs4_client *nc1 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v1, &sin1, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc1);
 
+	clientid4 clid1 = (clientid4)nfs4_client_to_client(nc1)->c_id;
+
 	/*
-	 * The collision path drops the ref returned by
-	 * nfs4_client_find_by_owner() and returns NULL.  nc1's own
-	 * ref (held since the first alloc_or_find) is unaffected.
+	 * Same ownerid + same principal + different verifier → replace.
+	 * The old client is expired; a new one is allocated with a
+	 * different clientid (bumped incarnation).
 	 */
-	struct nfs4_client *nc2 =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v2, &sin2);
-	ck_assert_ptr_null(nc2);
+	nfs4_client_put(nc1);
+	struct nfs4_client *nc2 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v2, &sin2, TEST_UID, false, &eid_status);
+	ck_assert_ptr_nonnull(nc2);
 
-	/* nc1 must still be findable via disk. */
-	struct nfs4_client *found = nfs4_client_find_by_owner(
-		g_ss, server_boot_seq(g_ss), &owner, NULL);
-	ck_assert_ptr_nonnull(found);
-	nfs4_client_put(found);
+	clientid4 clid2 = (clientid4)nfs4_client_to_client(nc2)->c_id;
+	ck_assert(clid1 != clid2);
+	ck_assert_uint_eq(clientid_incarnation(clid2), 1);
 
-	nfs4_client_expire(g_ss, nc1);
+	nfs4_client_expire(g_ss, nc2);
+}
+END_TEST
+
+/*
+ * Case 6: Same ownerid, same verifier, different principal →
+ * RFC 8881 §18.35.4 Table 11 case 2/6: replace with new client.
+ */
+START_TEST(test_alloc_diff_principal_replaces)
+{
+	char owner_buf[32];
+	client_owner4 owner;
+	verifier4 v;
+	struct sockaddr_in sin;
+	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
+
+	make_owner(&owner, "principal-test", owner_buf, sizeof(owner_buf));
+	make_verifier(&v, 0xDD);
+	make_sin(&sin, 0x7f000001, 2049);
+
+	struct nfs4_client *nc1 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin, TEST_UID, false, &eid_status);
+	ck_assert_ptr_nonnull(nc1);
+
+	clientid4 clid1 = (clientid4)nfs4_client_to_client(nc1)->c_id;
+	nfs4_client_put(nc1);
+
+	/* Different principal (uid 2000) → must replace. */
+	struct nfs4_client *nc2 = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin, 2000, false, &eid_status);
+	ck_assert_ptr_nonnull(nc2);
+
+	clientid4 clid2 = (clientid4)nfs4_client_to_client(nc2)->c_id;
+	ck_assert(clid1 != clid2);
+
+	nfs4_client_expire(g_ss, nc2);
 }
 END_TEST
 
@@ -637,13 +696,14 @@ START_TEST(test_expire_incarnation_before_put)
 	verifier4 v;
 	struct sockaddr_in sin;
 	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
 
 	make_owner(&owner, "expire-order-owner", owner_buf, sizeof(owner_buf));
 	make_verifier(&v, 0xEE);
 	make_sin(&sin, 0x7f000001, 2049);
 
-	struct nfs4_client *nc =
-		nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin);
+	struct nfs4_client *nc = nfs4_client_alloc_or_find(
+		g_ss, &owner, &impl, &v, &sin, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc);
 
 	uint32_t slot =
@@ -682,16 +742,17 @@ START_TEST(test_two_clients_coexist)
 	verifier4 v;
 	struct sockaddr_in sin;
 	struct nfs_impl_id4 impl = make_impl_id();
+	nfsstat4 eid_status;
 
 	make_owner(&owner1, "client-alpha", buf1, sizeof(buf1));
 	make_owner(&owner2, "client-beta", buf2, sizeof(buf2));
 	make_verifier(&v, 0x55);
 	make_sin(&sin, 0x7f000001, 2049);
 
-	struct nfs4_client *nc1 =
-		nfs4_client_alloc_or_find(g_ss, &owner1, &impl, &v, &sin);
-	struct nfs4_client *nc2 =
-		nfs4_client_alloc_or_find(g_ss, &owner2, &impl, &v, &sin);
+	struct nfs4_client *nc1 = nfs4_client_alloc_or_find(
+		g_ss, &owner1, &impl, &v, &sin, TEST_UID, false, &eid_status);
+	struct nfs4_client *nc2 = nfs4_client_alloc_or_find(
+		g_ss, &owner2, &impl, &v, &sin, TEST_UID, false, &eid_status);
 	ck_assert_ptr_nonnull(nc1);
 	ck_assert_ptr_nonnull(nc2);
 	ck_assert_ptr_ne(nc1, nc2);
@@ -746,7 +807,8 @@ Suite *nfs4_client_persist_suite(void)
 	tcase_add_test(tc, test_alloc_idempotent_retry);
 	tcase_add_test(tc, test_alloc_multihomed);
 	tcase_add_test(tc, test_alloc_client_restart);
-	tcase_add_test(tc, test_alloc_clid_inuse);
+	tcase_add_test(tc, test_alloc_diff_verifier_diff_addr_replaces);
+	tcase_add_test(tc, test_alloc_diff_principal_replaces);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("correctness");

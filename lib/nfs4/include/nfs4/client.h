@@ -40,6 +40,7 @@ struct nfs4_client {
 	bool nc_confirmed;
 	bool nc_needs_reclaim; /* true until RECLAIM_COMPLETE received */
 	bool nc_reclaim_done; /* true after first RECLAIM_COMPLETE */
+	uid_t nc_principal_uid; /* AUTH_SYS uid at EXCHANGE_ID time */
 	uint32_t nc_create_seq; /* expected csa_sequence for CREATE_SESSION */
 	void *nc_create_reply; /* cached CREATE_SESSION XDR reply */
 	uint32_t nc_create_reply_len;
@@ -85,7 +86,8 @@ static inline struct client *nfs4_client_to_client(struct nfs4_client *nc)
 struct nfs4_client *nfs4_client_alloc(const verifier4 *verifier,
 				      const struct sockaddr_in *sin,
 				      uint16_t incarnation,
-				      clientid4 assigned_id);
+				      clientid4 assigned_id,
+				      uid_t principal_uid);
 
 /*
  * nfs4_client_find - look up by clientid4.

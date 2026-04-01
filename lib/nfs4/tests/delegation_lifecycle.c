@@ -80,7 +80,9 @@ static void setup(void)
 	sin.sin_addr.s_addr = htonl(0x7f000001);
 	sin.sin_port = htons(2049);
 
-	g_nc = nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin);
+	nfsstat4 eid_status;
+	g_nc = nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin, 1000,
+					 false, &eid_status);
 	ck_assert_ptr_nonnull(g_nc);
 
 	g_sb = super_block_find(SUPER_BLOCK_ROOT_ID);

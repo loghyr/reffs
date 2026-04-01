@@ -147,6 +147,27 @@ bool nfs4_session_unhash(struct server_state *ss, struct nfs4_session *ns)
 	return true;
 }
 
+void nfs4_session_destroy_for_client(struct server_state *ss,
+				     struct nfs4_client *nc)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	if (!ss || !ss->ss_session_ht || !nc)
+		return;
+
+	rcu_read_lock();
+	cds_lfht_first(ss->ss_session_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct nfs4_session *ns =
+			caa_container_of(node, struct nfs4_session, ns_node);
+		cds_lfht_next(ss->ss_session_ht, &iter);
+		if (ns->ns_client == nc)
+			nfs4_session_unhash(ss, ns);
+	}
+	rcu_read_unlock();
+}
+
 /* ------------------------------------------------------------------ */
 /* Alloc / find                                                        */
 
@@ -341,27 +362,28 @@ uint32_t nfs4_op_exchange_id(struct compound *compound)
 	bool update_requested =
 		!!(args->eia_flags & EXCHGID4_FLAG_UPD_CONFIRMED_REC_A);
 
+	/*
+	 * RFC 8881 §18.35.3: eia_client_impl_id is declared as <1>,
+	 * so more than one element is a protocol violation.
+	 */
+	if (args->eia_client_impl_id.eia_client_impl_id_len > 1) {
+		*status = NFS4ERR_BADXDR;
+		goto out;
+	}
+
 	if (args->eia_client_impl_id.eia_client_impl_id_len > 0)
 		impl_id = args->eia_client_impl_id.eia_client_impl_id_val;
 
 	rpc_trans_get_sockaddr_in(compound->c_rt, &sin);
 
-	nc = nfs4_client_alloc_or_find(ss, &args->eia_clientowner, impl_id,
-				       &args->eia_clientowner.co_verifier,
-				       &sin);
-	if (!nc) {
-		*status = NFS4ERR_SERVERFAULT;
-		goto out;
-	}
+	nfsstat4 eid_status = 0;
 
-	/*
-	 * If the client requested an update but the record is not
-	 * confirmed, there is nothing to update.
-	 */
-	if (update_requested && !nc->nc_confirmed) {
-		nfs4_client_put(nc);
-		nc = NULL;
-		*status = NFS4ERR_NOENT;
+	nc = nfs4_client_alloc_or_find(ss, &args->eia_clientowner, impl_id,
+				       &args->eia_clientowner.co_verifier, &sin,
+				       compound->c_ap.aup_uid, update_requested,
+				       &eid_status);
+	if (!nc) {
+		*status = eid_status ? eid_status : NFS4ERR_SERVERFAULT;
 		goto out;
 	}
 
