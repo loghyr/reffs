@@ -423,10 +423,14 @@ uint32_t nfs4_op_free_stateid(struct compound *compound)
 		return 0;
 	}
 
-	/* RFC 5661 §18.38.3: FREE_STATEID cannot be used for open stateids */
+	/*
+	 * RFC 8881 §18.38.3: FREE_STATEID on an open stateid while
+	 * the share reservation is still active returns LOCKS_HELD.
+	 * The client must CLOSE the file before freeing the stateid.
+	 */
 	if (type == Open_Stateid) {
 		stateid_put(stid);
-		*status = NFS4ERR_BAD_STATEID;
+		*status = NFS4ERR_LOCKS_HELD;
 		return 0;
 	}
 
