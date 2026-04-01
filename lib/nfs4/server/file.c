@@ -732,7 +732,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 	 */
 	uint32_t want_deleg = args->share_access &
 			      OPEN4_SHARE_ACCESS_WANT_DELEG_MASK;
-	if (want_deleg == OPEN4_SHARE_ACCESS_WANT_NO_DELEG ||
+	if (want_deleg == 0 || want_deleg == OPEN4_SHARE_ACCESS_WANT_NO_DELEG ||
 	    want_deleg == OPEN4_SHARE_ACCESS_WANT_CANCEL) {
 		resok->delegation.delegation_type = OPEN_DELEGATE_NONE;
 	} else {
