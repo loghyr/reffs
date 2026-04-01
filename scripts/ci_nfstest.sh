@@ -153,6 +153,16 @@ check_asan() {
 
 info "=== NFStest Suite ==="
 
+#
+# Clean stale NFS mounts left by previously killed containers.
+# Docker containers share the host kernel; stale NFS superblocks
+# cause libc.sync() to block in wait_sb_inodes (D state).
+#
+for stale in $(mount -t nfs,nfs4 2>/dev/null | awk '{print $3}'); do
+	info "Cleaning stale NFS mount: $stale"
+	umount -f -l "$stale" 2>/dev/null || true
+done
+
 if ! rpcinfo -p 127.0.0.1 >/dev/null 2>&1; then
 	rpcbind || die "rpcbind failed"
 	sleep 1
@@ -174,19 +184,32 @@ RESULTS="$WORK_DIR/nfstest_results.txt"
 # Skip nfstest_pnfs (needs layout infrastructure),
 # nfstest_interop (needs multiple clients/servers).
 
+	#
+# Pre-mount before invoking nfstest.  nfstest's setup() calls
+# libc.sync() before its umount/mount cycle, which blocks in
+# wait_sb_inodes if any stale NFS superblock exists in the
+# kernel (Docker containers share the host kernel).  By mounting
+# ourselves and passing --nomount, we skip that path entirely.
+#
+umount -f -l "$MOUNT" 2>/dev/null || true
+mkdir -p "$MOUNT"
+mount -o vers=4.2,sec=sys 127.0.0.1:/ "$MOUNT" || {
+	info "Pre-mount failed"
+	stop_server
+	exit 1
+}
+
 for test_module in nfstest_posix nfstest_alloc nfstest_cache; do
 	test_path="$NFSTEST_DIR/test/$test_module"
 	if [ -f "$test_path" ]; then
 		info ""
 		info "--- $test_module ---"
-		# timeout --kill-after sends SIGKILL after the grace period.
-		# Force-unmount first to break any D-state NFS operations,
-		# then kill the test process.
 		if timeout --kill-after=30 300 "$test_path" \
 			--server 127.0.0.1 \
 			--export / \
 			--mtpoint "$MOUNT" \
 			--nfsversion 4.2 \
+			--nomount \
 			2>&1 | tee -a "$RESULTS"; then
 			info "$test_module: completed"
 		else
@@ -196,11 +219,14 @@ for test_module in nfstest_posix nfstest_alloc nfstest_cache; do
 			umount -f -l "$MOUNT" 2>/dev/null || true
 			sleep 2
 			mkdir -p "$MOUNT"
+			mount -o vers=4.2,sec=sys 127.0.0.1:/ "$MOUNT" 2>/dev/null || true
 		fi
 	else
 		info "Skipping $test_module (not found at $test_path)"
 	fi
 done
+
+umount -f -l "$MOUNT" 2>/dev/null || true
 
 check_asan
 stop_server
