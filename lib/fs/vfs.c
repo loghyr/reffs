@@ -213,6 +213,13 @@ static int vfs_remove_common_locked(struct inode *dir, const char *name,
 	inode_update_times_now(dir, REFFS_INODE_UPDATE_CTIME |
 					    REFFS_INODE_UPDATE_MTIME);
 
+	/*
+	 * Sync directory to disk after remove so the on-disk .dir file
+	 * no longer contains the removed entry.  Without this, a
+	 * subsequent LOOKUP slow path finds the stale entry on disk.
+	 */
+	dirent_sync_to_disk(de_dir);
+
 out:
 	inode_active_put(rd_inode);
 	dirent_put(rd);
@@ -441,6 +448,16 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 				       REFFS_INODE_UPDATE_CTIME |
 					       REFFS_INODE_UPDATE_MTIME);
 	}
+
+	/*
+	 * Sync directory entries to disk so that the on-disk .dir file
+	 * reflects the rename.  Without this, a subsequent LOOKUP through
+	 * the slow path (dirent_load_child_by_name → dir_find_entry_by_name)
+	 * reads stale on-disk entries and finds the old name.
+	 */
+	dirent_sync_to_disk(de_old_dir);
+	if (old_dir != new_dir)
+		dirent_sync_to_disk(de_new_dir);
 
 out:
 	inode_active_put(inode_src_file);
