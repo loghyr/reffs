@@ -474,6 +474,19 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	}
 
 	/*
+	 * RFC 8881 §18.36.3: the principal that sends CREATE_SESSION
+	 * must match the principal that did EXCHANGE_ID.  A mismatch
+	 * before confirmation means a different user is trying to
+	 * hijack the unconfirmed client record.
+	 */
+	if (compound->c_ap.aup_uid != nc->nc_principal_uid) {
+		nfs4_client_put(nc);
+		nc = NULL;
+		*status = NFS4ERR_CLID_INUSE;
+		goto out;
+	}
+
+	/*
 	 * RFC 8881 §18.36.4: sequence ID validation.
 	 *   csa_sequence == nc_create_seq → replay, return cached result
 	 *   csa_sequence == nc_create_seq + 1 → new request (but we
@@ -496,14 +509,21 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	}
 
 	/*
-	 * Seqid validation: the first CREATE_SESSION uses
-	 * csa_sequence == nc_create_seq (set by EXCHANGE_ID).
-	 * After a successful CREATE_SESSION, nc_create_seq is
-	 * bumped, so subsequent requests must use the new value.
-	 * Only enforce when a prior reply was cached (not first time).
+	 * Seqid validation (RFC 8881 §18.36.4):
+	 *   First CREATE_SESSION (no cached reply): csa_sequence must
+	 *     equal nc_create_seq (set by EXCHANGE_ID).
+	 *   Subsequent CREATE_SESSION (cached reply exists): csa_sequence
+	 *     must equal nc_create_seq + 1 (the next expected value).
+	 *   Anything else → NFS4ERR_SEQ_MISORDERED.
 	 */
-	if (nc->nc_create_reply &&
-	    args->csa_sequence != nc->nc_create_seq + 1) {
+	if (!nc->nc_create_reply) {
+		if (args->csa_sequence != nc->nc_create_seq) {
+			nfs4_client_put(nc);
+			nc = NULL;
+			*status = NFS4ERR_SEQ_MISORDERED;
+			goto out;
+		}
+	} else if (args->csa_sequence != nc->nc_create_seq + 1) {
 		nfs4_client_put(nc);
 		nc = NULL;
 		*status = NFS4ERR_SEQ_MISORDERED;
@@ -518,7 +538,9 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	 */
 #define CSESS_MIN_USABLE 100
 	if (args->csa_fore_chan_attrs.ca_maxrequestsize < CSESS_MIN_USABLE ||
-	    args->csa_fore_chan_attrs.ca_maxresponsesize < CSESS_MIN_USABLE) {
+	    args->csa_fore_chan_attrs.ca_maxresponsesize < CSESS_MIN_USABLE ||
+	    args->csa_back_chan_attrs.ca_maxrequestsize < CSESS_MIN_USABLE ||
+	    args->csa_back_chan_attrs.ca_maxresponsesize < CSESS_MIN_USABLE) {
 #undef CSESS_MIN_USABLE
 		nfs4_client_put(nc);
 		nc = NULL;
