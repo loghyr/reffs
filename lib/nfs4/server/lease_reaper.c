@@ -123,8 +123,19 @@ static void *lease_reaper_thread_fn(void *arg __attribute__((unused)))
 					__atomic_load_n(&nc->nc_last_renew_ns,
 							__ATOMIC_ACQUIRE);
 
+				/*
+				 * Unconfirmed clients expire after 1x lease
+				 * (RFC 8881 §18.35.4); confirmed clients
+				 * get 1.5x lease as breathing room.
+				 */
+				uint64_t client_expire =
+					nc->nc_confirmed ?
+						expire_ns :
+						(uint64_t)lease_sec *
+							1000000000ULL;
+
 				if (last == 0 || now <= last ||
-				    now - last < expire_ns) {
+				    now - last < client_expire) {
 					cds_lfht_next(ss->ss_client_ht, &iter);
 					continue;
 				}
