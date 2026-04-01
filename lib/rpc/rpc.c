@@ -1541,6 +1541,17 @@ int rpc_process_task(struct task *t)
 				   __ATOMIC_RELAXED);
 		__atomic_fetch_add(&rph->rph_accepted_errors, 1,
 				   __ATOMIC_RELAXED);
+	} else if (ret == EINVAL) {
+		/*
+		 * XDR decode failure — RFC 5531 §9: GARBAGE_ARGS,
+		 * not SYSTEM_ERR (which is for internal server errors).
+		 */
+		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
+		rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
+		__atomic_fetch_add(&rph->rph_replied_errors, 1,
+				   __ATOMIC_RELAXED);
+		__atomic_fetch_add(&rph->rph_accepted_errors, 1,
+				   __ATOMIC_RELAXED);
 	} else if (ret) {
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 		rt->rt_info.ri_accept_stat = SYSTEM_ERR;
