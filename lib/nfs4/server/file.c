@@ -285,13 +285,35 @@ uint32_t nfs4_op_open(struct compound *compound)
 	}
 
 	/*
-	 * During grace, only reclaim claims are allowed.
-	 * RFC 5661 §8.4.2.1: non-reclaim OPEN returns NFS4ERR_GRACE.
+	 * Grace enforcement — two levels:
+	 *
+	 * 1. Server-wide grace (after restart): non-reclaim OPEN
+	 *    returns NFS4ERR_GRACE per RFC 8881 §8.4.2.1.
+	 *
+	 * 2. Per-client grace: each client must send RECLAIM_COMPLETE
+	 *    before non-reclaim operations (RFC 8881 §18.51.3).
+	 *    After RECLAIM_COMPLETE, CLAIM_PREVIOUS returns
+	 *    NFS4ERR_NO_GRACE.
 	 */
-	if (args->claim.claim != CLAIM_PREVIOUS &&
-	    args->claim.claim != CLAIM_DELEGATE_PREV) {
+	bool is_reclaim = (args->claim.claim == CLAIM_PREVIOUS ||
+			   args->claim.claim == CLAIM_DELEGATE_PREV);
+
+	if (!is_reclaim) {
 		if (nfs4_check_grace()) {
 			*status = NFS4ERR_GRACE;
+			goto out;
+		}
+		/* Per-client: must RECLAIM_COMPLETE before normal ops. */
+		if (compound->c_nfs4_client &&
+		    !compound->c_nfs4_client->nc_reclaim_done) {
+			*status = NFS4ERR_GRACE;
+			goto out;
+		}
+	} else {
+		/* Reclaim after RECLAIM_COMPLETE is too late. */
+		if (compound->c_nfs4_client &&
+		    compound->c_nfs4_client->nc_reclaim_done) {
+			*status = NFS4ERR_NO_GRACE;
 			goto out;
 		}
 	}
