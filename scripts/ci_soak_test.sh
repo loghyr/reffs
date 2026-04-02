@@ -444,16 +444,32 @@ while true; do
 		MOUNT="${MOUNT_BASE}_${RESTART_COUNT}"
 		mkdir -p "$MOUNT"
 
+		# Diagnostics: show mount state and network before attempting
+		info "Mount diagnostics before re-mount:"
+		info "  Stale mounts: $(mount -t nfs,nfs4 2>/dev/null | grep reffs_soak || echo none)"
+		info "  Port 2049: $(ss -tln sport = :2049 2>/dev/null | tail -1 || echo unknown)"
+		info "  rpcinfo: $(rpcinfo -p 127.0.0.1 2>/dev/null | grep nfs | head -2 || echo unavailable)"
+		info "  Mount point: $MOUNT"
+
 		# Re-mount — must succeed within 30s (recovery check)
 		mount_ok=false
 		for try in $(seq 1 6); do
-			if mount_nfs 2>/dev/null; then
+			info "  Mount attempt $try/6..."
+			if mount_nfs; then
 				mount_ok=true
 				break
 			fi
+			info "  Mount attempt $try failed (exit $?)"
+			# Show what went wrong
+			dmesg | tail -5 2>/dev/null | grep -i nfs || true
 			sleep 5
 		done
 		if [ "$mount_ok" != "true" ]; then
+			info "All mount attempts failed. Final state:"
+			info "  Mounts: $(mount -t nfs,nfs4 2>/dev/null || echo none)"
+			info "  rpcinfo: $(rpcinfo -p 127.0.0.1 2>/dev/null | grep -E 'nfs|mount' || echo unavailable)"
+			info "  Server log tail:"
+			tail -20 "$LOG" 2>/dev/null || true
 			die "mount failed after restart #$RESTART_COUNT"
 			exit 1
 		fi

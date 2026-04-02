@@ -341,7 +341,6 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			// Timeout - check running flag and continue
 			continue;
 		} else if (ret == -EINTR) {
-			// Interrupted system call - this is normal when using pstack or other debugging
 			LOG("io_uring_wait_cqe_timeout interrupted, continuing");
 			continue;
 		} else if (ret < 0) {
