@@ -646,11 +646,17 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 		}
 	}
 
-	/* Handle file size changes */
+	/* Handle file size changes — requires write permission. */
 	if (sattr->size_set) {
 		if (S_ISDIR(inode->i_mode)) {
 			ret = -EISDIR;
 			goto out_unlock;
+		}
+
+		if (ap && ap->aup_uid != 0) {
+			ret = inode_access_check(inode, ap, W_OK);
+			if (ret)
+				goto out_unlock;
 		}
 
 		pthread_rwlock_wrlock(&inode->i_db_rwlock);
