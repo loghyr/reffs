@@ -427,8 +427,8 @@ while true; do
 			exit 1
 		fi
 
-		# Clear log for next run
-		: > "$LOG"
+		# Rotate log — keep previous run's output for diagnostics
+		echo "=== Restart #$RESTART_COUNT at $(date) ===" >> "$LOG"
 
 		start_server || exit 1
 

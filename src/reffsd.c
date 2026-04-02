@@ -307,8 +307,13 @@ int main(int argc, char *argv[])
 	ss = server_state_init(cfg.state_file, port, case_mode,
 			       (enum reffs_storage_type)cfg.backend_type);
 	if (!ss) {
+		LOG("server_state_init failed for backend=%d",
+		    cfg.backend_type);
 		return 1;
 	}
+	LOG("server_state_init: backend=%d boot_seq=%u clean_shutdown=%u",
+	    cfg.backend_type, ss->ss_persist.sps_boot_seq,
+	    ss->ss_persist.sps_clean_shutdown);
 	ss->ss_exchgid_flags = reffs_role_exchgid_flags(cfg.role);
 	ss->ss_fence_uid_min = cfg.fence_uid_min;
 	ss->ss_fence_uid_max = cfg.fence_uid_max;
@@ -400,8 +405,14 @@ int main(int argc, char *argv[])
 					cfg.exports[0].nflavors);
 
 			reffs_fs_recover(root_sb);
+			LOG("root sb recovered: next_ino=%lu",
+			    (unsigned long)root_sb->sb_next_ino);
 			super_block_put(root_sb);
+		} else {
+			LOG("root sb not found after ns_init");
 		}
+	} else {
+		LOG("reffs_ns_init failed: %d", exit_code);
 	}
 	if (exit_code)
 		goto out;
