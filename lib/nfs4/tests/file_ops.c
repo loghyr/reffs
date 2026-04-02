@@ -599,22 +599,20 @@ END_TEST
  * handler works on real NFS mounts (ci-check passes); the
  * issue is specific to the unit test harness.
  */
-#if 0
 /*
  * Helper: create a second inode with data for COPY source.
  * Returns the source inode (caller must inode_active_put).
  */
 static struct inode *copy_create_source(const char *data, size_t len)
 {
-	struct inode *src = inode_alloc(test_sb, 0);
+	uint64_t ino =
+		__atomic_add_fetch(&test_sb->sb_next_ino, 1, __ATOMIC_RELAXED);
+	struct inode *src = inode_alloc(test_sb, ino);
 	ck_assert_ptr_nonnull(src);
 	src->i_mode = S_IFREG | 0644;
 
-	src->i_db = data_block_alloc(src, NULL, 0, 0);
+	src->i_db = data_block_alloc(src, data, len, 0);
 	ck_assert_ptr_nonnull(src->i_db);
-
-	ssize_t nw = data_block_write(src->i_db, data, len, 0);
-	ck_assert_int_eq((int)nw, (int)len);
 	src->i_size = (int64_t)len;
 
 	return src;
@@ -751,7 +749,6 @@ START_TEST(test_copy_zero_at_eof)
 	inode_active_put(src);
 }
 END_TEST
-#endif /* COPY tests disabled */
 
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
@@ -816,13 +813,6 @@ Suite *file_ops_suite(void)
 	tcase_add_test(tc_seek, test_seek_empty_file);
 	suite_add_tcase(s, tc_seek);
 
-	/*
-	 * NOT_NOW_BROWN_COW: COPY tests disabled — data_block_read
-	 * returns 0 after data_block_write on RAM backend.  The COPY
-	 * handler works on real NFS mounts (ci-check passes); the
-	 * issue is specific to the unit test harness.
-	 */
-#if 0
 	TCase *tc_copy;
 	tc_copy = tcase_create("COPY");
 	tcase_add_checked_fixture(tc_copy, file_ops_setup, file_ops_teardown);
@@ -831,7 +821,6 @@ Suite *file_ops_suite(void)
 	tcase_add_test(tc_copy, test_copy_dst_offset);
 	tcase_add_test(tc_copy, test_copy_zero_at_eof);
 	suite_add_tcase(s, tc_copy);
-#endif
 
 	return s;
 }

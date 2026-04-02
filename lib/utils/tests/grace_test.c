@@ -32,6 +32,16 @@ const char *__asan_default_options(void)
 {
 	return "detect_leaks=0";
 }
+
+/*
+ * Belt-and-suspenders: __lsan_is_turned_off is checked by LSAN at
+ * exit time, after __asan_default_options.  Some check(3) fork
+ * configurations re-enable leak detection in children.
+ */
+int __lsan_is_turned_off(void)
+{
+	return 1;
+}
 #endif
 
 #include "reffs/client_persist.h"
