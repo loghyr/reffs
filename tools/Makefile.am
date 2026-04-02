@@ -20,10 +20,10 @@ ec_demo_LDADD = $(NFS4_CLIENT_LIBS) \
 nfs_krb5_test_SOURCES = nfs_krb5_test.c
 nfs_krb5_test_LDADD = $(NFS4_CLIENT_LIBS)
 
-TLS_CLIENT_SRC = $(top_srcdir)/lib/tls/tls_client.c
-
-nfs_tls_test_SOURCES = nfs_tls_test.c $(TLS_CLIENT_SRC)
+nfs_tls_test_SOURCES = nfs_tls_test.c
 nfs_tls_test_CFLAGS = $(AM_CFLAGS) $(OPENSSL_CFLAGS)
-nfs_tls_test_LDADD = $(OPENSSL_LIBS)
+nfs_tls_test_LDADD = \
+	$(top_builddir)/lib/tls/libreffs_tls.la \
+	$(OPENSSL_LIBS)
 
 bin_PROGRAMS = ec_demo nfs_krb5_test nfs_tls_test

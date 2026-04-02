@@ -13,6 +13,7 @@ SUBDIRS =		\
 	ec		\
 	io		\
 	rpc		\
+	tls		\
 	tests		\
 	fs		\
 	nlm		\

@@ -39,7 +39,7 @@ export REFFS_WORK_DIR=/reffs_data && \
 rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /src/ && \
 cd /src && find . -name parsetab.py -delete && mkdir -p m4 && autoreconf -fi && \
 cd /build && SKIP_STYLE=1 ../src/configure $(1) && \
-make -j$$(nproc)
+make -j
 endef
 
 # -----------------------------------------------------------------------
