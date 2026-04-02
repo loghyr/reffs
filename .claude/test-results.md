@@ -1,6 +1,6 @@
 # External Test Suite Results
 
-Last updated: 2026-04-02 (post-reboot, sec_label re-enabled + SEEK)
+Last updated: 2026-04-02 (post createattrs + W_OK fix)
 
 ## Summary
 
@@ -11,7 +11,7 @@ Last updated: 2026-04-02 (post-reboot, sec_label re-enabled + SEEK)
 | CTHON04 | pNFS | **4/4 (100%)** | basic, general, special, lock |
 | pynfs | NFSv4.1 | **166/169 (98.2%)** | 3 known failures |
 | pjdfstest | NFSv3 | **8787/8789 (99.98%)** | 2 failures |
-| pjdfstest | NFSv4.2 | **8665/8789 (98.6%)** | 124 failures (ctime/nlink) |
+| pjdfstest | NFSv4.2 | **8757/8789 (99.6%)** | 32 failures (ctime + perm) |
 | nfstest | NFSv4.2 | **98/98 (100%)** | nfstest_posix |
 | Unit tests | — | **ALL PASS** | COPY tests disabled (RAM backend) |
 
@@ -23,45 +23,59 @@ Last updated: 2026-04-02 (post-reboot, sec_label re-enabled + SEEK)
 | RECC2 | testReclaimAfterRECC | Per-client grace scoped to server-wide; test expects per-client grace after server restart | Needs server restart test harness |
 | RECC3 | testOpenBeforeRECC | Same as RECC2 — per-client grace vs server-wide | Needs server restart test harness |
 
-## pjdfstest NFSv4.2 Failures (124) by Category
+## pjdfstest NFSv4.2 Failures (32) by Category
+
+After commit 7f7135f2 (enforce W_OK + apply createattrs), down from 124.
+
+### Described failures (7 unique patterns)
+
+| Pattern | Count | Category |
+|---------|-------|----------|
+| O_RDONLY\|O_TRUNC expected EACCES, got 0 | 3 | Truncate permission not enforced |
+| open O_CREAT ftruncate expected 0, got EACCES | 1 | ftruncate after create by nobody |
+| fstat nlink expected 0, got 1 | 1 | nlink not 0 after unlink of open file |
+| lstat nlink expected 2, got 3 | 1 | nlink off by one |
+| fstat size expected 1, got 0 | 1 | Read size wrong after open |
+
+### Bare failures — ctime not visible after mutation (26)
+
+| Test file | Failed | Total | Tests checking |
+|-----------|--------|-------|----------------|
+| link/00.t | 10 | 202 | file ctime + dir ctime/mtime after link |
+| unlink/00.t | 12 | 112 | file ctime + dir ctime/mtime after unlink |
+| rmdir/00.t | 2 | 10 | dir ctime/mtime after rmdir |
+| rename/24.t | 1 | 13 | ctime after rename |
+| ftruncate/00.t | 1 | 26 | ctime after truncate |
+
+**Investigation (2026-04-02)**: The VFS layer (vfs_link, vfs_remove,
+vfs_rmdir) correctly updates ctime on both the target inode and
+parent directory via `inode_update_times_now()`.  The tests use
+`sleep 1` to guarantee a time gap, then stat the file/dir.
+
+NFSv3 passes these same tests (link/00.t, unlink/00.t) — only NFSv4
+fails.  This could be:
+- NFSv4 client attr cache behavior (v4 caches more aggressively than v3)
+- Server not conveying the change correctly in the NFSv4 response
+- Missing post-op attr update that the v3 wcc_data provides
+
+**TODO**: Run pjdfstest NFSv4.2 against Linux knfsd to determine
+whether this is client behavior or a server bug.  Do not assume
+client cache until confirmed.
+
+### Other remaining failures
 
 | Test file | Failed | Total | Category |
 |-----------|--------|-------|----------|
-| unlink/00.t | 27 | 112 | nlink/ctime on unlink parent |
-| rename/09.t | 24 | 2353 | ctime update on rename |
-| rename/00.t | 22 | 122 | ctime not updated on rename source/target parent |
-| link/00.t | 17 | 202 | ctime on link target parent |
-| mkdir/00.t | 5 | 36 | ctime on mkdir parent |
-| mkfifo/00.t | 5 | 36 | ctime on mkfifo parent |
-| mknod/00.t | 5 | 36 | ctime on mknod parent |
-| open/07.t | 4 | 25 | ctime on open-create parent |
-| mknod/02.t | 3 | 12 | mknod dev permissions |
-| open/08.t | 2 | 3 | O_CREAT|O_EXCL ctime |
-| mknod/11.t | 2 | 28 | mknod nlink |
-| rmdir/00.t | 2 | 10 | nlink/ctime on rmdir |
-| ftruncate/00.t | 1 | 26 | ctime on truncate |
-| mkfifo/02.t | 1 | 4 | mkfifo permissions |
-| rename/24.t | 1 | 13 | rename ctime |
-| rmdir/03.t | 1 | 5 | nlink on rmdir |
+| open/07.t | 4 | 25 | O_TRUNC permission |
 | unlink/14.t | 1 | 7 | nlink on unlink |
-| utimensat/01.t | 1 | 7 | ctime overflow (2^32 nsec) |
-
-**Root cause**: Most failures are ctime-not-updated-on-parent-directory
-after child mutations (rename, unlink, link, mkdir, mknod, mkfifo, open).
-The NFS client caches attributes and doesn't see sub-second ctime changes.
-The NFSv3 run (2 failures) doesn't have this issue because the v3 client
-is less aggressive about attribute caching.
-
-**Note**: Count fluctuates between runs (101 → 124) due to timing
-sensitivity in the NFS client attr cache. Not a regression — same
-categories, just more cache hits/misses on a given run.
+| utimensat/01.t | 1 | 7 | nsec overflow at 2^32 boundary |
 
 ## pjdfstest NFSv3 Failures (2)
 
 | Test file | Failed | Total | Category |
 |-----------|--------|-------|----------|
-| unlink/00.t | 1 | 112 | nlink after unlink |
-| utimensat/01.t | 1 | 7 | ctime overflow (2^32 nsec) |
+| unlink/14.t | 1 | 7 | nlink after unlink |
+| utimensat/09.t | 1 | 7 | mtime overflow at 2^32 nsec boundary |
 
 ## nfstest Details
 
