@@ -282,17 +282,11 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 	inode->i_btime = inode->i_mtime;
 
 	/*
-	 * Default security label: SELinux nfs_t context.
-	 *
-	 * RFC 7569 assigns LFS 258 for FLASK/SELinux, but the Linux
-	 * NFS client and server both hardcode lfs=0, pi=0 (reserved).
-	 * Use 0 for interop with deployed Linux implementations.
+	 * Security label starts empty.  The Linux NFS client assigns
+	 * labels from its local SELinux policy during CREATE/OPEN and
+	 * sends them via SETATTR.  The default label (e.g., nfs_t) is
+	 * policy-dependent, not something the server should hardcode.
 	 */
-	static const char default_label[] = "system_u:object_r:nfs_t:s0";
-	inode->i_sec_label_lfs = 0;
-	inode->i_sec_label_pi = 0;
-	inode->i_sec_label_len = sizeof(default_label) - 1;
-	memcpy(inode->i_sec_label, default_label, inode->i_sec_label_len);
 
 	if (type == S_IFCHR || type == S_IFBLK) {
 		inode->i_dev_major = major(rdev);
