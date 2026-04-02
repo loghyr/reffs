@@ -1764,12 +1764,118 @@ out:
 	return 0;
 }
 
+/*
+ * SEEK — RFC 7862 S15.11.
+ *
+ * Find the next data or hole boundary in a file.  Valid DS operation
+ * per S3.3.1.  POSIX backend uses lseek(SEEK_HOLE/SEEK_DATA); RAM
+ * backend (no fd) treats the entire file as data.
+ */
 uint32_t nfs4_op_seek(struct compound *compound)
 {
+	SEEK4args *args = NFS4_OP_ARG_SETUP(compound, opseek);
 	SEEK4res *res = NFS4_OP_RES_SETUP(compound, opseek);
 	nfsstat4 *status = &res->sa_status;
+	seek_res4 *resok = NFS4_OP_RESOK_SETUP(res, SEEK4res_u, resok4);
+	struct stateid *stid = NULL;
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	if (!S_ISREG(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_WRONG_TYPE;
+		goto out;
+	}
+
+	if (args->sa_what != NFS4_CONTENT_DATA &&
+	    args->sa_what != NFS4_CONTENT_HOLE) {
+		*status = NFS4ERR_UNION_NOTSUPP;
+		goto out;
+	}
+
+	*status = nfs4_stateid_resolve(compound, compound->c_inode,
+				       &args->sa_stateid, false, &stid);
+	if (*status != NFS4_OK)
+		goto out;
+
+	if (!stateid4_is_read_bypass(&args->sa_stateid)) {
+		int ret = inode_access_check(compound->c_inode, &compound->c_ap,
+					     R_OK);
+		if (ret) {
+			*status = errno_to_nfs4(ret, OP_SEEK);
+			goto out;
+		}
+	}
+
+	int64_t file_size = compound->c_inode->i_size;
+	offset4 offset = args->sa_offset;
+
+	/*
+	 * At or beyond EOF: RFC 7862 says return NFS4_OK with sr_eof=true
+	 * regardless of sa_what.
+	 */
+	if ((int64_t)offset >= file_size) {
+		resok->sr_eof = true;
+		resok->sr_offset = offset;
+		goto out;
+	}
+
+	/*
+	 * Try POSIX lseek if the backend provides a real fd.
+	 * RAM backend returns -1 (no fd) — fall through to
+	 * the all-data fallback.
+	 */
+	int fd = -1;
+
+	pthread_rwlock_rdlock(&compound->c_inode->i_db_rwlock);
+	if (compound->c_inode->i_db)
+		fd = data_block_get_fd(compound->c_inode->i_db);
+	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+
+	if (fd >= 0) {
+		int whence = (args->sa_what == NFS4_CONTENT_HOLE) ? SEEK_HOLE :
+								    SEEK_DATA;
+		off_t result = lseek(fd, (off_t)offset, whence);
+
+		if (result >= 0) {
+			resok->sr_eof = (result >= (off_t)file_size);
+			resok->sr_offset = (offset4)result;
+			goto out;
+		}
+
+		/*
+		 * ENXIO: no more data/holes after offset (RFC 7862:
+		 * return sr_eof=true).  Other errors: fall through to
+		 * the all-data fallback.
+		 */
+		if (errno == ENXIO) {
+			resok->sr_eof = true;
+			resok->sr_offset = (offset4)file_size;
+			goto out;
+		}
+	}
+
+	/*
+	 * Fallback: no fd or lseek failed.  Treat the file as one
+	 * contiguous data region [0, file_size) — no holes.
+	 */
+	if (args->sa_what == NFS4_CONTENT_DATA) {
+		/* Already in data at offset. */
+		resok->sr_eof = false;
+		resok->sr_offset = offset;
+	} else {
+		/* SEEK_HOLE: next hole is at EOF. */
+		resok->sr_eof = true;
+		resok->sr_offset = (offset4)file_size;
+	}
+
+out:
+	stateid_put(stid);
+	TRACE("%s status=%s(%d) what=%d offset=%llu", __func__,
+	      nfs4_err_name(*status), *status, args->sa_what,
+	      (unsigned long long)args->sa_offset);
 
 	return 0;
 }

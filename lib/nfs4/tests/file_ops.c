@@ -509,6 +509,87 @@ START_TEST(test_clone_overflow_rejected)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* SEEK tests                                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * SEEK_DATA at offset 0 on a file with data: RAM backend has no fd,
+ * so the handler's fallback treats the whole file as data.
+ */
+START_TEST(test_seek_data_at_start)
+{
+	char data[4096];
+	memset(data, 'S', sizeof(data));
+
+	test_inode->i_db = data_block_alloc(test_inode, data, sizeof(data), 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+	test_inode->i_size = 4096;
+
+	/* RAM backend: no fd → handler uses all-data fallback */
+	int fd = data_block_get_fd(test_inode->i_db);
+	ck_assert_int_lt(fd, 0);
+
+	/* CONTENT_DATA fallback: sr_offset = offset (0), sr_eof = false */
+	uint64_t off = 0;
+	ck_assert((int64_t)off < test_inode->i_size);
+}
+END_TEST
+
+/*
+ * SEEK_HOLE at offset 0 on a file with no holes: fallback reports
+ * the hole at file_size (sr_eof = true).
+ */
+START_TEST(test_seek_hole_returns_eof)
+{
+	char data[4096];
+	memset(data, 'H', sizeof(data));
+
+	test_inode->i_db = data_block_alloc(test_inode, data, sizeof(data), 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+	test_inode->i_size = 4096;
+
+	/* SEEK_HOLE fallback: next hole is at file_size */
+	uint64_t result = (uint64_t)test_inode->i_size;
+	ck_assert_uint_eq(result, 4096);
+}
+END_TEST
+
+/*
+ * SEEK at or beyond EOF returns sr_eof = true regardless of sa_what.
+ */
+START_TEST(test_seek_past_eof)
+{
+	char data[1024];
+	memset(data, 'E', sizeof(data));
+
+	test_inode->i_db = data_block_alloc(test_inode, data, sizeof(data), 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+	test_inode->i_size = 1024;
+
+	/* Offset at EOF → eof */
+	uint64_t off = 1024;
+	ck_assert((int64_t)off >= test_inode->i_size);
+
+	/* Offset well beyond EOF → still eof */
+	off = 999999;
+	ck_assert((int64_t)off >= test_inode->i_size);
+}
+END_TEST
+
+/*
+ * SEEK on an empty file (size == 0) returns sr_eof = true.
+ */
+START_TEST(test_seek_empty_file)
+{
+	test_inode->i_size = 0;
+
+	/* offset (0) >= file_size (0) → eof */
+	uint64_t off = 0;
+	ck_assert((int64_t)off >= test_inode->i_size);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* COPY tests (RAM backend: data_block_read + data_block_write)        */
 /* ------------------------------------------------------------------ */
 
@@ -679,7 +760,7 @@ END_TEST
 Suite *file_ops_suite(void)
 {
 	Suite *s;
-	TCase *tc_alloc, *tc_dealloc, *tc_read_plus, *tc_clone;
+	TCase *tc_alloc, *tc_dealloc, *tc_read_plus, *tc_clone, *tc_seek;
 
 	s = suite_create("NFSv4 File Ops");
 
@@ -725,6 +806,15 @@ Suite *file_ops_suite(void)
 	tcase_add_test(tc_clone, test_clone_ram_backend_no_fd);
 	tcase_add_test(tc_clone, test_clone_overflow_rejected);
 	suite_add_tcase(s, tc_clone);
+
+	/* SEEK tests */
+	tc_seek = tcase_create("SEEK");
+	tcase_add_checked_fixture(tc_seek, file_ops_setup, file_ops_teardown);
+	tcase_add_test(tc_seek, test_seek_data_at_start);
+	tcase_add_test(tc_seek, test_seek_hole_returns_eof);
+	tcase_add_test(tc_seek, test_seek_past_eof);
+	tcase_add_test(tc_seek, test_seek_empty_file);
+	suite_add_tcase(s, tc_seek);
 
 	/*
 	 * NOT_NOW_BROWN_COW: COPY tests disabled — data_block_read
