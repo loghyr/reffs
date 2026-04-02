@@ -255,7 +255,7 @@ mount_nfs() {
 }
 
 unmount_nfs() {
-	umount -f "$MOUNT" 2>/dev/null || true
+	umount -f -l "$MOUNT" 2>/dev/null || true
 }
 
 check_asan() {
@@ -431,6 +431,12 @@ while true; do
 		echo "=== Restart #$RESTART_COUNT at $(date) ===" >> "$LOG"
 
 		start_server || exit 1
+
+		# Force-unmount any stale NFS mount left by SIGKILL.
+		# The previous umount may have failed (busy from workloads)
+		# and SIGKILL leaves the kernel NFS superblock stale.
+		umount -f -l "$MOUNT" 2>/dev/null || true
+		sleep 1
 
 		# Re-mount — must succeed within 30s (recovery check)
 		mount_ok=false
