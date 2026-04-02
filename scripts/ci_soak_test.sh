@@ -219,7 +219,7 @@ start_server() {
 	fi
 	ASAN_OPTIONS="$asan_opts" \
 	UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1" \
-	"$REFFSD_BIN" --config="$CONFIG" -c 8 >"$LOG" 2>&1 &
+	"$REFFSD_BIN" --config="$CONFIG" -c 8 >>"$LOG" 2>&1 &
 	REFFSD_PID=$!
 
 	for i in $(seq 1 30); do
@@ -251,7 +251,7 @@ stop_server() {
 }
 
 mount_nfs() {
-	mount -o vers=4.2,sec=sys 127.0.0.1:/ "$MOUNT"
+	timeout 30 mount -o vers=4.2,sec=sys 127.0.0.1:/ "$MOUNT"
 }
 
 unmount_nfs() {
