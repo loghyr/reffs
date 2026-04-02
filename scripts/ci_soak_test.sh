@@ -104,7 +104,8 @@ else
 fi
 info "Work directory: $WORK_DIR"
 
-MOUNT=/mnt/reffs_soak
+MOUNT_BASE=/mnt/reffs_soak
+MOUNT="${MOUNT_BASE}_0"
 DATA=$WORK_DIR/reffs_soak_data
 STATE=$WORK_DIR/reffs_soak_state
 CONFIG=$WORK_DIR/reffs_soak.toml
@@ -120,7 +121,9 @@ cleanup() {
 		kill "$pid" 2>/dev/null
 		wait "$pid" 2>/dev/null
 	done
-	umount -f "$MOUNT" 2>/dev/null
+	for mp in ${MOUNT_BASE}_*; do
+		umount -f -l "$mp" 2>/dev/null
+	done
 	if [ -n "$REFFSD_PID" ]; then
 		kill -TERM "$REFFSD_PID" 2>/dev/null
 		sleep 2
@@ -432,11 +435,14 @@ while true; do
 
 		start_server || exit 1
 
-		# Force-unmount any stale NFS mount left by SIGKILL.
-		# The previous umount may have failed (busy from workloads)
-		# and SIGKILL leaves the kernel NFS superblock stale.
+		# After SIGKILL, the kernel NFS superblock from the dead
+		# server lingers even after umount -f -l.  Mounting on the
+		# same mount point can hang because the kernel tries to
+		# reuse the stale superblock.  Use a fresh mount point for
+		# each restart cycle to avoid the collision.
 		umount -f -l "$MOUNT" 2>/dev/null || true
-		sleep 1
+		MOUNT="${MOUNT_BASE}_${RESTART_COUNT}"
+		mkdir -p "$MOUNT"
 
 		# Re-mount — must succeed within 30s (recovery check)
 		mount_ok=false
