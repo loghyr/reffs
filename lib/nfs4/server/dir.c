@@ -301,6 +301,12 @@ uint32_t nfs4_op_create(struct compound *compound)
 		goto out;
 	}
 
+	ret = inode_access_check(compound->c_inode, &compound->c_ap, W_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_CREATE);
+		goto out;
+	}
+
 	cinfo_before = inode_changeid(compound->c_inode);
 	switch (args->objtype.type) {
 	case NF4DIR:
@@ -376,12 +382,24 @@ uint32_t nfs4_op_create(struct compound *compound)
 	new_inode = NULL;
 	compound->c_curr_nfh.nfh_ino = compound->c_inode->i_ino;
 
+	/*
+	 * RFC 8881 S18.1: apply createattrs (mode, owner, etc.) to the
+	 * newly created object.  The initial mode is a permissive default;
+	 * the client's requested mode overrides it here.
+	 */
+	if (args->createattrs.attrmask.bitmap4_len > 0) {
+		*status = nfs4_apply_createattrs(&args->createattrs,
+						 compound->c_inode,
+						 &resok->attrset,
+						 &compound->c_ap);
+		if (*status)
+			goto out;
+	}
+
 	cinfo_after = inode_changeid(compound->c_inode);
 	resok->cinfo.atomic = TRUE;
 	resok->cinfo.before = cinfo_before;
 	resok->cinfo.after = cinfo_after;
-	resok->attrset.bitmap4_len = 0;
-	resok->attrset.bitmap4_val = NULL;
 
 out:
 	trace_nfs4_name(compound, name, __func__, __LINE__);
@@ -435,6 +453,12 @@ uint32_t nfs4_op_remove(struct compound *compound)
 	}
 	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
 		*status = NFS4ERR_BADNAME;
+		goto out;
+	}
+
+	ret = inode_access_check(compound->c_inode, &compound->c_ap, W_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_REMOVE);
 		goto out;
 	}
 
@@ -550,6 +574,18 @@ uint32_t nfs4_op_rename(struct compound *compound)
 		goto out;
 	}
 
+	ret = inode_access_check(old_dir, &compound->c_ap, W_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_RENAME);
+		goto out;
+	}
+
+	ret = inode_access_check(compound->c_inode, &compound->c_ap, W_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_RENAME);
+		goto out;
+	}
+
 	src_cinfo_before = inode_changeid(old_dir);
 	dst_cinfo_before = inode_changeid(compound->c_inode);
 	ret = vfs_rename(old_dir, oldname, compound->c_inode, newname,
@@ -659,6 +695,12 @@ uint32_t nfs4_op_link(struct compound *compound)
 
 	if (S_ISDIR(src_inode->i_mode)) {
 		*status = NFS4ERR_ISDIR;
+		goto out;
+	}
+
+	ret = inode_access_check(compound->c_inode, &compound->c_ap, W_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_LINK);
 		goto out;
 	}
 
