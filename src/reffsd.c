@@ -628,6 +628,40 @@ int main(int argc, char *argv[])
 
 	io_handler_main_loop(&running, &rc);
 
+	/*
+	 * Shutdown ordering:
+	 *
+	 * 1. Close listener sockets FIRST — stop accepting new connections.
+	 *    The kernel TCP backlog drains (RST to pending clients).
+	 * 2. Join worker threads — drain in-flight requests.
+	 * 3. Join backend thread — flush backend I/O.
+	 * 4. Unregister from portmapper (informational).
+	 * 5. Persist state / close databases.
+	 *
+	 * Closing listeners before joining workers prevents new work from
+	 * arriving while we wait for workers to finish.
+	 */
+	TRACE("Shutdown: closing listener sockets");
+	if (lsnr_ipv4_probe_fd >= 0) {
+		close(lsnr_ipv4_probe_fd);
+		lsnr_ipv4_probe_fd = -1;
+	}
+	if (lsnr_ipv4_nfs_fd >= 0) {
+		close(lsnr_ipv4_nfs_fd);
+		lsnr_ipv4_nfs_fd = -1;
+	}
+	if (lsnr_ipv6_probe_fd >= 0) {
+		close(lsnr_ipv6_probe_fd);
+		lsnr_ipv6_probe_fd = -1;
+	}
+	if (lsnr_ipv6_nfs_fd >= 0) {
+		close(lsnr_ipv6_nfs_fd);
+		lsnr_ipv6_nfs_fd = -1;
+	}
+
+	TRACE("Shutdown: draining worker and backend threads");
+	io_handler_fini(&rc);
+
 	pthread_join(backend_thread, NULL);
 	backend_thread_started = false;
 
@@ -639,7 +673,6 @@ out:
 		backend_thread_started = false;
 	}
 
-	TRACE("Unregistering Port Mapper");
 	pmap_unset(NLM_PROG, NLM4_VERS);
 	pmap_unset(NLM_PROG, NLM_VERSX);
 	pmap_unset(NLM_PROG, NLM_VERS);
@@ -647,29 +680,6 @@ out:
 	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
 	pmap_unset(NFS3_PROGRAM, NFS_V3);
 	pmap_unset(NFS4_PROGRAM, NFS_V4);
-
-	// Cleanup listener sockets
-	if (lsnr_ipv4_probe_fd >= 0) {
-		close(lsnr_ipv4_probe_fd);
-		lsnr_ipv4_probe_fd = -1;
-	}
-
-	if (lsnr_ipv4_nfs_fd >= 0) {
-		close(lsnr_ipv4_nfs_fd);
-		lsnr_ipv4_nfs_fd = -1;
-	}
-
-	if (lsnr_ipv6_probe_fd >= 0) {
-		close(lsnr_ipv6_probe_fd);
-		lsnr_ipv6_probe_fd = -1;
-	}
-
-	if (lsnr_ipv6_nfs_fd >= 0) {
-		close(lsnr_ipv6_nfs_fd);
-		lsnr_ipv6_nfs_fd = -1;
-	}
-
-	io_handler_fini(&rc);
 
 	if (rc_backend_inited)
 		io_backend_fini(&rc_backend);
