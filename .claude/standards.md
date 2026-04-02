@@ -71,6 +71,29 @@ make -f Makefile.reffs style
 
 ---
 
+## Git Safety
+
+### Never change branches in the main workspace
+
+**Never use `git checkout` or `git switch`** to change branches.
+Always use `git worktree` for new branches or context switches:
+
+```bash
+git worktree add ../topic-branch topic-branch
+```
+
+Changing the active branch in the main workspace disconnects the
+AI session from its active instructions and context (CLAUDE.md,
+.claude/ directory, open file state).
+
+### Build before handoff
+
+For any workflow that modifies code, run the build and tests before
+committing or pushing, unless explicitly told not to.  Unit tests
+must be at 100% pass rate — CI gates on `make check`.
+
+---
+
 ## Branch and Commit Methodology
 
 ### Core Rule
