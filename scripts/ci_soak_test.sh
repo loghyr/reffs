@@ -254,7 +254,7 @@ stop_server() {
 }
 
 mount_nfs() {
-	timeout 30 mount -o vers=4.2,sec=sys 127.0.0.1:/ "$MOUNT"
+	timeout 30 mount -v -o vers=4.2,sec=sys 127.0.0.1:/ "$MOUNT" 2>&1
 }
 
 unmount_nfs() {
