@@ -82,6 +82,18 @@ void *io_worker_thread(void *vtd)
 		}
 
 		if (t) {
+			/*
+			 * If shutting down, discard queued tasks instead
+			 * of processing them.  This prevents a long drain
+			 * when the queue is full of RocksDB sync writes.
+			 * In-flight async tasks complete naturally.
+			 */
+			if (!*running) {
+				free(t->t_buffer);
+				free(t);
+				continue;
+			}
+
 			if (t->t_rt != NULL) {
 				/*
 				 * Resume path: task was paused by an async op

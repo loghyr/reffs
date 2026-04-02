@@ -251,7 +251,7 @@ stop_server() {
 }
 
 mount_nfs() {
-	mount -o vers=4.2,sec=sys,soft,timeo=30,retrans=3 127.0.0.1:/ "$MOUNT"
+	mount -o vers=4.2,sec=sys 127.0.0.1:/ "$MOUNT"
 }
 
 unmount_nfs() {
