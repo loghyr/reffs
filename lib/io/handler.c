@@ -384,7 +384,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		int running_local;
 		__atomic_load(running_flag, &running_local, __ATOMIC_SEQ_CST);
 		if (!running_local) {
-			TRACE("Detected shutdown flag, breaking main loop");
+			LOG("Detected shutdown flag, breaking main loop");
 			break;
 		}
 
@@ -395,7 +395,10 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			// Timeout - check running flag and continue
 			continue;
 		} else if (ret == -EINTR) {
-			LOG("io_uring_wait_cqe_timeout interrupted, continuing");
+			int rl;
+			__atomic_load(running_flag, &rl, __ATOMIC_SEQ_CST);
+			LOG("io_uring_wait_cqe_timeout interrupted, "
+			    "running=%d", rl);
 			continue;
 		} else if (ret < 0) {
 			LOG("io_uring_wait_cqe_timeout error: %s",

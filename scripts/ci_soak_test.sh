@@ -455,11 +455,13 @@ while true; do
 		mount_ok=false
 		for try in $(seq 1 6); do
 			info "  Mount attempt $try/6..."
-			if mount_nfs; then
+			mount_nfs
+			mount_rc=$?
+			if [ "$mount_rc" -eq 0 ]; then
 				mount_ok=true
 				break
 			fi
-			info "  Mount attempt $try failed (exit $?)"
+			info "  Mount attempt $try failed (exit $mount_rc)"
 			# Show what went wrong
 			dmesg | tail -5 2>/dev/null | grep -i nfs || true
 			sleep 5
