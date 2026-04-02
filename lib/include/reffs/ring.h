@@ -13,6 +13,7 @@
 struct ring_context {
 	struct io_uring rc_ring;
 	pthread_mutex_t rc_mutex;
+	int rc_shutdown_efd; /* eventfd for signal-safe shutdown wakeup */
 };
 
 #endif /* _REFFS_RING_H */

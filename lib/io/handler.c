@@ -13,12 +13,14 @@
 #include <linux/time_types.h>
 #include <openssl/evp.h>
 #include <openssl/ssl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/eventfd.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -137,6 +139,14 @@ void io_client_fd_unregister(int fd)
 	}
 }
 
+/*
+ * Shutdown eventfd: the signal handler writes to this to produce a
+ * CQE that wakes io_uring_wait_cqe_timeout immediately.  Without it,
+ * the wait may not return on SIGTERM when the ring has pending
+ * multishot accepts or in-flight I/O.
+ */
+static int shutdown_efd = -1;
+
 // Initialize io_uring with larger CQ ring
 static int setup_io_uring(struct ring_context *rc)
 {
@@ -178,6 +188,19 @@ int io_handler_init(struct ring_context *rc, const char *tls_cert,
 	// Setup io_uring
 	if (setup_io_uring(rc) < 0)
 		return -1;
+
+	/*
+	 * Create a shutdown eventfd.  The signal handler writes to it
+	 * to produce a CQE that wakes io_uring_wait_cqe_timeout when
+	 * SIGTERM doesn't interrupt the kernel-level wait (known issue
+	 * with pending multishot accepts and in-flight I/O).
+	 */
+	shutdown_efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+	if (shutdown_efd < 0) {
+		LOG("eventfd: %s", strerror(errno));
+		return -1;
+	}
+	rc->rc_shutdown_efd = shutdown_efd;
 
 	last_accept_check = time(NULL);
 
@@ -284,6 +307,18 @@ void io_handler_stop(void)
 		*running_context = 0;
 }
 
+/*
+ * Signal-safe shutdown wakeup.  Called from the SIGTERM signal handler.
+ * write() to an eventfd is async-signal-safe.
+ */
+void io_handler_signal_shutdown(void)
+{
+	if (shutdown_efd >= 0) {
+		uint64_t val = 1;
+		(void)write(shutdown_efd, &val, sizeof(val));
+	}
+}
+
 void io_add_listener(int fd)
 {
 	if (fd > 0)
@@ -319,6 +354,25 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 	if (io_heartbeat_init(rc) < 0) {
 		LOG("Failed to initialize heartbeat system");
 		return;
+	}
+
+	/*
+	 * Submit a poll on the shutdown eventfd.  When the signal handler
+	 * writes to it, this produces a CQE that wakes the main loop
+	 * immediately — even when io_uring_wait_cqe_timeout wouldn't
+	 * return on SIGTERM due to pending operations.
+	 */
+	if (shutdown_efd >= 0) {
+		struct io_uring_sqe *sqe;
+
+		pthread_mutex_lock(&rc->rc_mutex);
+		sqe = io_uring_get_sqe(&rc->rc_ring);
+		if (sqe) {
+			io_uring_prep_poll_add(sqe, shutdown_efd, POLLIN);
+			io_uring_sqe_set_data(sqe, NULL);
+			io_uring_submit(&rc->rc_ring);
+		}
+		pthread_mutex_unlock(&rc->rc_mutex);
 	}
 
 	while (1) {
@@ -358,7 +412,12 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		struct io_context *ic =
 			(struct io_context *)(uintptr_t)cqe->user_data;
 		if (!ic) {
-			LOG("Error: NULL io context");
+			/*
+			 * NULL user_data: the shutdown eventfd poll
+			 * completed — the signal handler wrote to it.
+			 * Consume the CQE and let the running_flag check
+			 * at the top of the loop handle the break.
+			 */
 			io_uring_cqe_seen(&rc->rc_ring, cqe);
 			continue;
 		}
@@ -562,4 +621,9 @@ void io_handler_fini(struct ring_context *rc)
 
 	io_uring_queue_exit(&rc->rc_ring);
 	pthread_mutex_destroy(&rc->rc_mutex);
+
+	if (shutdown_efd >= 0) {
+		close(shutdown_efd);
+		shutdown_efd = -1;
+	}
 }

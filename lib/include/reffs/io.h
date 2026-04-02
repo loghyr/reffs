@@ -190,6 +190,7 @@ void io_handler_fini(struct ring_context *rc);
 void io_handler_main_loop(volatile sig_atomic_t *running,
 			  struct ring_context *rc);
 void io_handler_stop(void);
+void io_handler_signal_shutdown(void);
 
 /* ------------------------------------------------------------------ */
 /* Backend file-I/O ring                                              */

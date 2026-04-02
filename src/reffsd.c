@@ -82,10 +82,11 @@ const char *__ubsan_default_options(void)
 // Global flag for clean shutdown
 volatile sig_atomic_t running = 1;
 
-// Signal handler
+// Signal handler — async-signal-safe: sets flag + writes eventfd
 static void signal_handler(int __attribute__((unused)) sig)
 {
 	running = 0;
+	io_handler_signal_shutdown();
 }
 
 struct backend_thread_args {
