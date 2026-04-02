@@ -653,7 +653,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 			goto out_unlock;
 		}
 
-		if (ap && ap->aup_uid != 0) {
+		if (ap && ap->aup_uid != 0 && !sattr->size_access_ok) {
 			ret = inode_access_check(inode, ap, W_OK);
 			if (ret)
 				goto out_unlock;

@@ -43,6 +43,7 @@ struct reffs_sattr {
 	bool gid_set;
 	uint64_t size;
 	bool size_set;
+	bool size_access_ok; /* caller verified write access (e.g., stateid) */
 	struct timespec atime;
 	bool atime_set;
 	bool atime_now;

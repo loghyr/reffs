@@ -2560,7 +2560,7 @@ static nfsstat4 nattr_from_fattr4(fattr4 *fattr, struct nfsv42_attr *nattr)
  */
 static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 			       bitmap4 *attrsset, struct inode *inode,
-			       struct authunix_parms *ap)
+			       struct authunix_parms *ap, bool size_access_ok)
 {
 	u_int scan_bits = attrmask->bitmap4_len * 32U;
 	struct reffs_sattr rs;
@@ -2579,6 +2579,7 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 		case FATTR4_SIZE:
 			rs.size = nattr->size;
 			rs.size_set = true;
+			rs.size_access_ok = size_access_ok;
 			have_posix = true;
 			break;
 		case FATTR4_MODE:
@@ -3892,7 +3893,7 @@ static uint32_t nfs4_op_setattr_resume(struct rpc_trans *rt)
 	if (*status == NFS4_OK)
 		*status = nattr_to_inode(&nattr, &fattr->attrmask,
 					 &res->attrsset, compound->c_inode,
-					 &compound->c_ap);
+					 &compound->c_ap, false);
 
 	nattr_release(&nattr);
 	return 0;
@@ -3998,13 +3999,40 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 		return NFS4_OP_FLAG_ASYNC;
 	}
 
+	/*
+	 * If the SETATTR includes a size change, check whether the
+	 * stateid grants write access.  If so, skip the file-mode W_OK
+	 * check in vfs_setattr — this matches POSIX ftruncate semantics
+	 * where the fd's access mode governs, not the file permissions.
+	 */
+	bool has_write_stateid = false;
+
+	if (bitmap4_attribute_is_set(&fattr->attrmask, FATTR4_SIZE) &&
+	    !stateid4_is_special(&args->stateid)) {
+		struct stateid *stid = NULL;
+
+		*status = nfs4_stateid_resolve(compound, compound->c_inode,
+					       &args->stateid, true, &stid);
+		if (*status) {
+			/*
+			 * Bad stateid for a size change — reject.
+			 * Non-size SETATTRs with bad stateids are
+			 * tolerated (the stateid is advisory).
+			 */
+			goto out;
+		}
+		has_write_stateid = true;
+		stateid_put(stid);
+	}
+
 	*status = nattr_from_fattr4(fattr, &nattr);
 	if (*status)
 		goto out;
 	nattr_valid = true;
 
 	*status = nattr_to_inode(&nattr, &fattr->attrmask, &res->attrsset,
-				 compound->c_inode, &compound->c_ap);
+				 compound->c_inode, &compound->c_ap,
+				 has_write_stateid);
 
 out:
 	if (nattr_valid)
@@ -4030,7 +4058,8 @@ nfsstat4 nfs4_apply_createattrs(fattr4 *fattr, struct inode *inode,
 	if (status)
 		return status;
 
-	status = nattr_to_inode(&nattr, &fattr->attrmask, attrsset, inode, ap);
+	status = nattr_to_inode(&nattr, &fattr->attrmask, attrsset, inode, ap,
+				true);
 	nattr_release(&nattr);
 	return status;
 }
