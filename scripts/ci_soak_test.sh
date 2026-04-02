@@ -9,10 +9,11 @@
 # leaks, and successful recovery after each restart.
 #
 # Usage:
-#   ci_soak_test.sh REFFSD_BIN SRC_DIR [--bat]
+#   ci_soak_test.sh REFFSD_BIN SRC_DIR [--bat] [--rocksdb]
 #
-# Default: 30-minute CI soak, restart every 5 minutes.
-# --bat:   8-hour BAT soak, restart every 15 minutes.
+# Default: 30-minute CI soak, restart every 5 minutes, POSIX backend.
+# --bat:     8-hour BAT soak, restart every 15 minutes.
+# --rocksdb: use RocksDB metadata backend instead of POSIX.
 #
 # Prerequisites: rpcbind running, NFS client tools installed.
 
@@ -54,19 +55,27 @@ postmortem() {
 }
 trap postmortem EXIT
 
-REFFSD_BIN=${1:?Usage: ci_soak_test.sh REFFSD_BIN SRC_DIR [--bat]}
-SRC_DIR=${2:?Usage: ci_soak_test.sh REFFSD_BIN SRC_DIR [--bat]}
-MODE=${3:-ci}
+REFFSD_BIN=${1:?Usage: ci_soak_test.sh REFFSD_BIN SRC_DIR [--bat] [--rocksdb]}
+SRC_DIR=${2:?Usage: ci_soak_test.sh REFFSD_BIN SRC_DIR [--bat] [--rocksdb]}
+shift 2
 
-if [ "$MODE" = "--bat" ]; then
-	DURATION_MIN=480  # 8 hours
-	RESTART_MIN=15
-	CLIENTS=4
-else
-	DURATION_MIN=30
-	RESTART_MIN=5
-	CLIENTS=2
-fi
+DURATION_MIN=30
+RESTART_MIN=5
+CLIENTS=2
+BACKEND_TYPE="posix"
+
+for arg in "$@"; do
+	case "$arg" in
+	--bat)
+		DURATION_MIN=480  # 8 hours
+		RESTART_MIN=15
+		CLIENTS=4
+		;;
+	--rocksdb)
+		BACKEND_TYPE="rocksdb"
+		;;
+	esac
+done
 
 DURATION_SEC=$((DURATION_MIN * 60))
 RESTART_SEC=$((RESTART_MIN * 60))
@@ -179,7 +188,7 @@ workers        = 4
 trace_file     = "$TRACE_FILE"
 
 [backend]
-type       = "posix"
+type       = "$BACKEND_TYPE"
 path       = "$DATA"
 state_file = "$STATE"
 
@@ -342,7 +351,7 @@ workload_fileops() {
 # Main soak loop
 # -----------------------------------------------------------------------
 
-info "=== Soak test: ${DURATION_MIN}m duration, restart every ${RESTART_MIN}m, ${CLIENTS} clients ==="
+info "=== Soak test: ${DURATION_MIN}m, restart every ${RESTART_MIN}m, ${CLIENTS} clients, backend=${BACKEND_TYPE} ==="
 
 check_resources
 
@@ -507,4 +516,4 @@ if [ "$FAILED" = "true" ]; then
 fi
 
 SOAK_POSTMORTEM_DONE=true  # clean exit — suppress post-mortem
-info "=== SOAK TEST PASSED (${DURATION_MIN}m, ${RESTART_COUNT} restarts) ==="
+info "=== SOAK TEST PASSED (${DURATION_MIN}m, ${RESTART_COUNT} restarts, ${BACKEND_TYPE}) ==="

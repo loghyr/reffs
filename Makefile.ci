@@ -136,6 +136,19 @@ soak-tsan: image $(LOGS_DIR)
 			cp -f /reffs_data/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
 			exit \$$rc"
 
+soak-rocksdb: image $(LOGS_DIR)
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			/src/scripts/ci_soak_test.sh /build/src/reffsd /reffs --rocksdb $(if $(BAT),--bat,); \
+			rc=\$$?; \
+			cp -f /reffs_data/reffsd-soak.log /logs/soak.log 2>/dev/null; \
+			cp -f /reffs_data/reffs-soak-trace.log /logs/soak-trace.log 2>/dev/null; \
+			exit \$$rc"
+
 soak-core: image $(LOGS_DIR)
 	$(DOCKER) run --rm --privileged \
 		--ulimit nofile=65536:65536 \
@@ -325,4 +338,4 @@ stop:
 		echo "No running CI containers."; \
 	fi
 
-.PHONY: image check full sec soak soak-noopt soak-tsan soak-core test cthon04 pynfs pjdfstest nfstest sigmund libnfs tls-stress shell stop
+.PHONY: image check full sec soak soak-noopt soak-tsan soak-rocksdb soak-core test cthon04 pynfs pjdfstest nfstest sigmund libnfs tls-stress shell stop
