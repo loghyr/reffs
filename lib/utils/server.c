@@ -538,5 +538,14 @@ void server_state_persist_quick(struct server_state *ss)
 						  &ss->ss_persist))
 		LOG("persist_quick: failed to save server state");
 
+	/*
+	 * Close the namespace database so RocksDB flushes its WAL and
+	 * releases the LOCK file.  Without this, SIGKILL after quick
+	 * shutdown leaves stale LOCK files that slow the next startup.
+	 */
+	if (ss->ss_persist_ops->fini)
+		ss->ss_persist_ops->fini(ss->ss_persist_ctx);
+	ss->ss_persist_ctx = NULL;
+
 	TRACE("Quick shutdown: server state persisted");
 }
