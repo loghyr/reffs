@@ -398,7 +398,8 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			int rl;
 			__atomic_load(running_flag, &rl, __ATOMIC_SEQ_CST);
 			LOG("io_uring_wait_cqe_timeout interrupted, "
-			    "running=%d", rl);
+			    "running=%d",
+			    rl);
 			continue;
 		} else if (ret < 0) {
 			LOG("io_uring_wait_cqe_timeout error: %s",

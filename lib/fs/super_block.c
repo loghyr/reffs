@@ -373,11 +373,18 @@ int super_block_dirent_create(struct super_block *sb, struct reffs_dirent *rd,
 	sb->sb_dirent->rd_sb =
 		sb; /* root dirent has no parent to inherit from */
 
-	if (rla == reffs_life_action_birth) {
+	/*
+	 * Set defaults only if the inode was NOT loaded from persistence.
+	 * The inode_alloc hook (posix/rocksdb) loads persisted fields;
+	 * if i_mode is non-zero, the inode was loaded and we must not
+	 * overwrite its persisted attributes.
+	 */
+	if (rla == reffs_life_action_birth && root_inode->i_mode == 0) {
 		root_inode->i_nlink = 2;
 		root_inode->i_mode = S_IFDIR | 0777;
 	}
-	root_inode->i_parent_ino = new_ino; /* root: self */
+	if (root_inode->i_parent_ino == 0)
+		root_inode->i_parent_ino = new_ino; /* root: self */
 
 	/*
 	 * Wire up rd_inode / i_dirent via the helper so

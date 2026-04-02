@@ -189,22 +189,14 @@ static int rocksdb_sb_alloc(struct super_block *sb, const char *backend_path)
 	ret = -EIO;
 	ROCKSDB_CHECK_ERR(err, -EIO, err_opts);
 
-	/* Load sb_next_ino if persisted */
-	size_t vlen = 0;
-	char *val = rocksdb_get_cf(priv->rsp_db, priv->rsp_ropts,
-				   priv->rsp_cf[ROCKSDB_CF_DEFAULT],
-				   sb_meta_next_ino, SB_META_NEXT_INO_LEN,
-				   &vlen, &err);
-	if (err) {
-		rocksdb_free(err);
-		err = NULL;
-		/* Non-fatal: fresh database */
-	} else if (val && vlen == sizeof(uint64_t)) {
-		memcpy(&sb->sb_next_ino, val, sizeof(uint64_t));
-		rocksdb_free(val);
-	} else if (val) {
-		rocksdb_free(val);
-	}
+	/*
+	 * Do NOT load sb_next_ino here.  super_block_dirent_create runs
+	 * after sb_alloc and allocates the root inode from sb_next_ino.
+	 * If we restore a high value here, the root inode gets the wrong
+	 * ino (e.g., 28259 instead of 1) and PUTROOTFH returns ESTALE.
+	 * sb_next_ino is restored in rocksdb_recover() after the root
+	 * dirent is created.
+	 */
 
 	/* Filesystem stats from statvfs of the backend path */
 	struct statvfs sv;
@@ -1029,6 +1021,32 @@ static void rocksdb_recover(struct super_block *sb)
 		}
 	}
 	rocksdb_iter_destroy(it);
+
+	/*
+	 * Also check the persisted sb_next_ino counter.  The inodes CF
+	 * scan finds the max allocated ino, but the persisted counter
+	 * may be higher if inodes were allocated then freed.
+	 */
+	{
+		char *err2 = NULL;
+		size_t vlen2 = 0;
+		char *val2 = rocksdb_get_cf(priv->rsp_db, priv->rsp_ropts,
+					    priv->rsp_cf[ROCKSDB_CF_DEFAULT],
+					    sb_meta_next_ino,
+					    SB_META_NEXT_INO_LEN, &vlen2,
+					    &err2);
+		if (err2) {
+			rocksdb_free(err2);
+		} else if (val2 && vlen2 == sizeof(uint64_t)) {
+			uint64_t persisted_next;
+			memcpy(&persisted_next, val2, sizeof(uint64_t));
+			if (persisted_next > sb->sb_next_ino)
+				sb->sb_next_ino = persisted_next;
+			rocksdb_free(val2);
+		} else if (val2) {
+			rocksdb_free(val2);
+		}
+	}
 
 	/* Load root inode fields from RocksDB */
 	struct inode *root_inode = sb->sb_dirent->rd_inode;
