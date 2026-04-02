@@ -1869,6 +1869,9 @@ static bool sec_label_equal(struct nfsv42_attr *a, struct nfsv42_attr *b)
 	    b->sec_label.slai_data.slai_data_len)
 		return false;
 
+	if (a->sec_label.slai_data.slai_data_len == 0)
+		return true;
+
 	return memcmp(a->sec_label.slai_data.slai_data_val,
 		      b->sec_label.slai_data.slai_data_val,
 		      a->sec_label.slai_data.slai_data_len) == 0;

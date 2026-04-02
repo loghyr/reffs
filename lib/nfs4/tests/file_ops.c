@@ -455,9 +455,8 @@ START_TEST(test_clone_zero_count_at_eof)
 
 	/* count == 0, src_offset == 4096 (at EOF) → nothing to clone */
 	uint64_t src_offset = 4096;
-	uint64_t count = 0;
+	uint64_t count __attribute__((unused)) = 0;
 	ck_assert(src_offset >= (uint64_t)test_inode->i_size);
-	(void)count; /* used in the handler, not here */
 }
 END_TEST
 

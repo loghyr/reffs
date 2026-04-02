@@ -314,9 +314,6 @@ int main(int argc, char *argv[])
 		    cfg.backend_type);
 		return 1;
 	}
-	LOG("server_state_init: backend=%d boot_seq=%u clean_shutdown=%u",
-	    cfg.backend_type, ss->ss_persist.sps_boot_seq,
-	    ss->ss_persist.sps_clean_shutdown);
 	trace_lifecycle_startup(__func__, __LINE__, cfg.backend_type,
 				ss->ss_persist.sps_boot_seq,
 				ss->ss_persist.sps_clean_shutdown);
@@ -411,8 +408,6 @@ int main(int argc, char *argv[])
 					cfg.exports[0].nflavors);
 
 			reffs_fs_recover(root_sb);
-			LOG("root sb recovered: next_ino=%lu",
-			    (unsigned long)root_sb->sb_next_ino);
 			trace_lifecycle_recovery(
 				__func__, __LINE__,
 				(unsigned long)root_sb->sb_id,
