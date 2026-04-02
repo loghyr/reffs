@@ -69,6 +69,7 @@ TESTS = \
 	file_ops \
 	nfs4_client_persist \
 	nfs4_session \
+	sec_label \
 	stateid_unhash \
 	task_state
 

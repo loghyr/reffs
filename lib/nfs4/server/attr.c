@@ -2311,7 +2311,7 @@ int nfs4_attribute_init(void)
 	bitmap4_attribute_set(bm, FATTR4_CLONE_BLKSIZE);
 	bitmap4_attribute_set(bm, FATTR4_SPACE_FREED);
 	bitmap4_attribute_set(bm, FATTR4_CHANGE_ATTR_TYPE);
-	bitmap4_attribute_clear(bm, FATTR4_SEC_LABEL);
+	bitmap4_attribute_set(bm, FATTR4_SEC_LABEL);
 	bitmap4_attribute_clear(bm, FATTR4_MODE_UMASK);
 	bitmap4_attribute_clear(bm, FATTR4_XATTR_SUPPORT);
 	bitmap4_attribute_set(bm, FATTR4_OFFLINE);
@@ -2525,6 +2525,9 @@ static nfsstat4 nattr_from_fattr4(fattr4 *fattr, struct nfsv42_attr *nattr)
 		case FATTR4_UNCACHEABLE_DIRENT_METADATA:
 			ok = xdr_fattr4_uncacheable_dirent_metadata(
 				&sptr, &nattr->uncacheable_dirent_metadata);
+			break;
+		case FATTR4_SEC_LABEL:
+			ok = xdr_fattr4_sec_label(&sptr, &nattr->sec_label);
 			break;
 		default:
 			ok = false;
