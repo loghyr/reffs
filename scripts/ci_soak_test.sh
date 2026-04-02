@@ -211,7 +211,13 @@ EOF
 start_server() {
 	info "Starting reffsd..."
 	ulimit -c unlimited 2>/dev/null || true
-	ASAN_OPTIONS="quarantine_size_mb=256:detect_leaks=0:halt_on_error=1:handle_abort=1:print_stats=1" \
+	local asan_opts="quarantine_size_mb=256:detect_leaks=0:halt_on_error=1:handle_abort=1:print_stats=1"
+	# RocksDB's Arena calls malloc_usable_size() on its own allocator
+	# pointers, which ASAN rejects.  Disable that specific check.
+	if [ "$BACKEND_TYPE" = "rocksdb" ]; then
+		asan_opts="${asan_opts}:check_malloc_usable_size=0"
+	fi
+	ASAN_OPTIONS="$asan_opts" \
 	UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1" \
 	"$REFFSD_BIN" --config="$CONFIG" >"$LOG" 2>&1 &
 	REFFSD_PID=$!
