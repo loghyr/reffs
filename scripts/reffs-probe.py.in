@@ -61,6 +61,8 @@ TRACE_CAT_MAP = {
     PROBE1_TRACE_CAT_NLM: 'nlm',
     PROBE1_TRACE_CAT_FS: 'fs',
     PROBE1_TRACE_CAT_LOG: 'log',
+    PROBE1_TRACE_CAT_SECURITY: 'security',
+    PROBE1_TRACE_CAT_LIFECYCLE: 'lifecycle',
     PROBE1_TRACE_CAT_ALL: 'all'
 }
 

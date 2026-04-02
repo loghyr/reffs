@@ -44,6 +44,7 @@
 #include "reffs/server.h"
 #include "reffs/super_block.h"
 #include "reffs/trace/common.h"
+#include "reffs/trace/lifecycle.h"
 #include "reffs/trace/types.h"
 #include "reffs/types.h"
 #include "sm_inter.h"
@@ -120,6 +121,8 @@ static void usage(const char *prog)
 	printf("                                     4 - NLM\n");
 	printf("                                     5 - FS\n");
 	printf("                                     6 - LOG\n");
+	printf("                                     7 - Security\n");
+	printf("                                     8 - Lifecycle\n");
 }
 
 static struct option long_opts[] = {
@@ -314,6 +317,9 @@ int main(int argc, char *argv[])
 	LOG("server_state_init: backend=%d boot_seq=%u clean_shutdown=%u",
 	    cfg.backend_type, ss->ss_persist.sps_boot_seq,
 	    ss->ss_persist.sps_clean_shutdown);
+	trace_lifecycle_startup(__func__, __LINE__, cfg.backend_type,
+				ss->ss_persist.sps_boot_seq,
+				ss->ss_persist.sps_clean_shutdown);
 	ss->ss_exchgid_flags = reffs_role_exchgid_flags(cfg.role);
 	ss->ss_fence_uid_min = cfg.fence_uid_min;
 	ss->ss_fence_uid_max = cfg.fence_uid_max;
@@ -407,6 +413,10 @@ int main(int argc, char *argv[])
 			reffs_fs_recover(root_sb);
 			LOG("root sb recovered: next_ino=%lu",
 			    (unsigned long)root_sb->sb_next_ino);
+			trace_lifecycle_recovery(
+				__func__, __LINE__,
+				(unsigned long)root_sb->sb_id,
+				(unsigned long)root_sb->sb_next_ino);
 			super_block_put(root_sb);
 		} else {
 			LOG("root sb not found after ns_init");
@@ -652,7 +662,8 @@ int main(int argc, char *argv[])
 	 * Closing listeners before joining workers prevents new work from
 	 * arriving while we wait for workers to finish.
 	 */
-	TRACE("Shutdown: closing listener sockets");
+	trace_lifecycle_shutdown(__func__, __LINE__,
+				 "closing listener sockets");
 	if (lsnr_ipv4_probe_fd >= 0) {
 		close(lsnr_ipv4_probe_fd);
 		lsnr_ipv4_probe_fd = -1;
@@ -670,13 +681,14 @@ int main(int argc, char *argv[])
 		lsnr_ipv6_nfs_fd = -1;
 	}
 
-	TRACE("Shutdown: draining worker and backend threads");
+	trace_lifecycle_shutdown(__func__, __LINE__,
+				 "draining worker and backend threads");
 	io_handler_fini(&rc);
 
 	pthread_join(backend_thread, NULL);
 	backend_thread_started = false;
 
-	TRACE("Main loop exited, cleaning up...");
+	trace_lifecycle_shutdown(__func__, __LINE__, "main loop exited");
 
 out:
 	if (backend_thread_started) {
@@ -716,7 +728,8 @@ out:
 	bool graceful = graceful_env && graceful_env[0] == '1';
 
 	if (graceful) {
-		TRACE("Graceful shutdown: full teardown");
+		trace_lifecycle_shutdown(__func__, __LINE__,
+					 "graceful shutdown: full teardown");
 
 		/*
 		 * reffs_ns_fini calls super_block_drain which does its own
@@ -742,7 +755,9 @@ out:
 
 		server_state_fini(ss);
 	} else {
-		TRACE("Quick shutdown: persist state and exit");
+		trace_lifecycle_shutdown(
+			__func__, __LINE__,
+			"quick shutdown: persist state and exit");
 
 		/*
 		 * Persist critical state so restart recovery works:
@@ -760,6 +775,6 @@ out:
 		evictor_fini();
 	}
 
-	TRACE("Shutdown complete");
+	trace_lifecycle_shutdown(__func__, __LINE__, "shutdown complete");
 	return exit_code;
 }
