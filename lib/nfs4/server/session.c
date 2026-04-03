@@ -168,6 +168,67 @@ void nfs4_session_destroy_for_client(struct server_state *ss,
 	rcu_read_unlock();
 }
 
+void nfs4_session_reparent_for_replace(struct server_state *ss,
+				       struct nfs4_client *old_nc,
+				       struct nfs4_client *new_nc)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	if (!ss || !ss->ss_session_ht || !old_nc || !new_nc)
+		return;
+
+	rcu_read_lock();
+	cds_lfht_first(ss->ss_session_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct nfs4_session *ns =
+			caa_container_of(node, struct nfs4_session, ns_node);
+		cds_lfht_next(ss->ss_session_ht, &iter);
+		if (ns->ns_client != old_nc)
+			continue;
+
+		/*
+		 * Re-parent: take ref on new client, swap, drop old ref.
+		 * Pointer assignment is atomic on all supported archs.
+		 */
+		nfs4_client_get(new_nc);
+		ns->ns_client = new_nc;
+		nfs4_client_put(old_nc);
+
+		__atomic_fetch_add(&new_nc->nc_session_count, 1,
+				   __ATOMIC_RELAXED);
+		__atomic_fetch_sub(&old_nc->nc_session_count, 1,
+				   __ATOMIC_RELAXED);
+
+		__atomic_fetch_or(&ns->ns_state, NFS4_SESSION_IS_ZOMBIE,
+				  __ATOMIC_RELEASE);
+	}
+	rcu_read_unlock();
+}
+
+void nfs4_session_destroy_zombies(struct server_state *ss,
+				  struct nfs4_client *nc)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	if (!ss || !ss->ss_session_ht || !nc)
+		return;
+
+	rcu_read_lock();
+	cds_lfht_first(ss->ss_session_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct nfs4_session *ns =
+			caa_container_of(node, struct nfs4_session, ns_node);
+		cds_lfht_next(ss->ss_session_ht, &iter);
+		if (ns->ns_client == nc &&
+		    (__atomic_load_n(&ns->ns_state, __ATOMIC_ACQUIRE) &
+		     NFS4_SESSION_IS_ZOMBIE))
+			nfs4_session_unhash(ss, ns);
+	}
+	rcu_read_unlock();
+}
+
 /* ------------------------------------------------------------------ */
 /* Alloc / find                                                        */
 
@@ -570,6 +631,12 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	}
 
 	nc->nc_confirmed = true;
+
+	/*
+	 * RFC 8881 §18.36.3: confirming the client destroys zombie
+	 * sessions inherited from the replaced predecessor.
+	 */
+	nfs4_session_destroy_zombies(compound->c_server_state, nc);
 
 	/* Save back-channel parameters. */
 	ns->ns_cb_program = args->csa_cb_program;

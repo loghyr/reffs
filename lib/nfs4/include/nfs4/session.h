@@ -20,6 +20,7 @@
 struct server_state;
 
 #define NFS4_SESSION_IS_HASHED (1ULL << 0)
+#define NFS4_SESSION_IS_ZOMBIE (1ULL << 1)
 
 #define NFS4_SESSION_MAX_SLOTS 64U
 #define NFS4_SESSION_MAX_REQUEST_SIZE (1024U * 1024U)
@@ -135,5 +136,18 @@ bool nfs4_session_unhash(struct server_state *ss, struct nfs4_session *ns);
 /* Destroy all sessions belonging to nc.  Used by nfs4_client_expire. */
 void nfs4_session_destroy_for_client(struct server_state *ss,
 				     struct nfs4_client *nc);
+
+/*
+ * Re-parent old_nc's sessions to new_nc as zombies.  After this,
+ * old_nc has no sessions and can be expired without session loss.
+ * Used by replace_client for RFC 8881 Table 11 case 7.
+ */
+void nfs4_session_reparent_for_replace(struct server_state *ss,
+				       struct nfs4_client *old_nc,
+				       struct nfs4_client *new_nc);
+
+/* Destroy all zombie sessions on nc.  Called on CREATE_SESSION confirm. */
+void nfs4_session_destroy_zombies(struct server_state *ss,
+				  struct nfs4_client *nc);
 
 #endif /* _REFFS_NFS4_SESSION_H */

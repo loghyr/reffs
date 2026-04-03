@@ -153,15 +153,21 @@ static struct nfs4_client *replace_client(struct server_state *ss,
 	incarnation = old_nc->nc_incarnation + 1;
 	clid = clientid_make(slot, incarnation, server_boot_seq(ss));
 
-	/*
-	 * Expire the old client — removes from incarnations file,
-	 * drains stateids, drops ref.  old_nc is invalid after this.
-	 */
-	nfs4_client_expire(ss, old_nc);
-
 	nc = nfs4_client_alloc(verifier, sin, incarnation, clid, principal_uid);
-	if (!nc)
+	if (!nc) {
+		client_put(nfs4_client_to_client(old_nc));
 		return NULL;
+	}
+
+	/*
+	 * RFC 8881 §18.35.4 case 7: re-parent the old client's sessions
+	 * to the new client as zombies.  The sessions remain valid for
+	 * SEQUENCE until CREATE_SESSION confirms the new client and
+	 * destroys the zombies.  After re-parenting, the old client has
+	 * no sessions and can be safely expired.
+	 */
+	nfs4_session_reparent_for_replace(ss, old_nc, nc);
+	nfs4_client_expire(ss, old_nc);
 
 	make_incarnation_record(&crc, ss, slot, incarnation, verifier, sin);
 	if (ss->ss_persist_ops->client_incarnation_add(ss->ss_persist_ctx,
