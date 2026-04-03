@@ -200,6 +200,58 @@ reffs_id identity_map_lookup(reffs_id id)
 	return id;
 }
 
+int identity_map_remove(reffs_id key)
+{
+	struct map_entry *e = map_find(key);
+
+	if (!e)
+		return -ENOENT;
+
+	reffs_id reverse_key = e->me_value;
+
+	/* Remove forward mapping. */
+	rcu_read_lock();
+	cds_lfht_del(map_ht, &e->me_node);
+	rcu_read_unlock();
+	call_rcu(&e->me_rcu, map_entry_free_rcu);
+
+	/* Remove reverse mapping. */
+	struct map_entry *rev = map_find(reverse_key);
+
+	if (rev) {
+		rcu_read_lock();
+		cds_lfht_del(map_ht, &rev->me_node);
+		rcu_read_unlock();
+		call_rcu(&rev->me_rcu, map_entry_free_rcu);
+	}
+
+	return 0;
+}
+
+int identity_map_iterate(int (*cb)(reffs_id key, reffs_id value, void *arg),
+			 void *arg)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	int ret = 0;
+
+	if (!map_ht || !cb)
+		return 0;
+
+	rcu_read_lock();
+	cds_lfht_for_each(map_ht, &iter, node)
+	{
+		struct map_entry *e =
+			caa_container_of(node, struct map_entry, me_node);
+
+		ret = cb(e->me_key, e->me_value, arg);
+		if (ret)
+			break;
+	}
+	rcu_read_unlock();
+	return ret;
+}
+
 /* ------------------------------------------------------------------ */
 /* Persistence                                                         */
 /* ------------------------------------------------------------------ */

@@ -1212,6 +1212,26 @@ static int probe1_op_identity_domain_list(struct rpc_trans *rt)
 	return 0;
 }
 
+struct map_list_ctx {
+	probe_id_mapping1 *entries;
+	uint32_t count;
+	uint32_t max;
+};
+
+static int map_list_cb(reffs_id key, reffs_id value, void *arg)
+{
+	struct map_list_ctx *ctx = arg;
+
+	if (ctx->count >= ctx->max)
+		return 0; /* silently cap */
+
+	ctx->entries[ctx->count].pim_from = key;
+	ctx->entries[ctx->count].pim_to = value;
+	ctx->entries[ctx->count].pim_name = NULL;
+	ctx->count++;
+	return 0;
+}
+
 static int probe1_op_identity_map_list(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -1219,16 +1239,21 @@ static int probe1_op_identity_map_list(struct rpc_trans *rt)
 	IDENTITY_MAP_LIST1resok *resok =
 		&res->IDENTITY_MAP_LIST1res_u.iml_resok;
 
-	/*
-	 * Iterate the mapping table.  identity_map exposes a simple
-	 * iteration callback for this purpose.
-	 */
-	resok->iml_mappings.iml_mappings_val = NULL;
-	resok->iml_mappings.iml_mappings_len = 0;
+	struct map_list_ctx ctx = {
+		.entries = calloc(1024, sizeof(probe_id_mapping1)),
+		.count = 0,
+		.max = 1024,
+	};
 
-	/* NOT_NOW_BROWN_COW: implement identity_map_iterate for full
-	 * listing.  For now, return empty — the mappings are visible
-	 * in the flatfile on disk. */
+	if (!ctx.entries) {
+		res->iml_status = PROBE1ERR_NOMEM;
+		return 0;
+	}
+
+	identity_map_iterate(map_list_cb, &ctx);
+
+	resok->iml_mappings.iml_mappings_val = ctx.entries;
+	resok->iml_mappings.iml_mappings_len = ctx.count;
 	return 0;
 }
 
@@ -1238,9 +1263,13 @@ static int probe1_op_identity_map_remove(struct rpc_trans *rt)
 	IDENTITY_MAP_REMOVE1args *args = ph->ph_args;
 	probe_stat1 *res = ph->ph_res;
 
-	(void)args;
-	/* NOT_NOW_BROWN_COW: implement identity_map_remove. */
-	*res = PROBE1ERR_INVAL;
+	int ret = identity_map_remove((reffs_id)args->imr_from);
+
+	if (ret == -ENOENT)
+		*res = PROBE1ERR_NOENT;
+	else if (ret)
+		*res = PROBE1ERR_INVAL;
+
 	return 0;
 }
 

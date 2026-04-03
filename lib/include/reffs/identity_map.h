@@ -79,6 +79,19 @@ reffs_id identity_map_unix_for(reffs_id id);
  */
 reffs_id identity_map_lookup(reffs_id id);
 
+/*
+ * Remove a mapping by key.  Removes both directions (A→B and B→A).
+ * Returns 0 on success, -ENOENT if not found.
+ */
+int identity_map_remove(reffs_id key);
+
+/*
+ * Iterate all mappings.  Calls cb(key, value, arg) for each entry.
+ * Returns 0 on success, or the first non-zero return from cb.
+ */
+int identity_map_iterate(int (*cb)(reffs_id key, reffs_id value, void *arg),
+			 void *arg);
+
 /* Persist / load the mapping table. */
 int identity_map_persist(const char *state_dir);
 int identity_map_load(const char *state_dir);
