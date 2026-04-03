@@ -9,156 +9,165 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 pynfs test EID5f (st_exchange_id.testNoUpdate101) fails because
 our EXCHANGE_ID immediately expires the old confirmed client when
-a new verifier arrives from the same principal.
+a new verifier arrives from the same principal.  The old client's
+sessions are destroyed, so SEQUENCE on the old session returns
+NFS4ERR_BADSESSION instead of NFS4_OK.
 
-RFC 8881 §18.35.4 Table 11 case 7 (confirmed + different verifier +
-same principal): the server MUST return a new clientid but MUST NOT
-destroy the old confirmed client's state until the new client is
-confirmed via CREATE_SESSION.
+RFC 8881 §18.35.4 Table 11 case 7 requires old sessions to remain
+valid until CREATE_SESSION confirms the new client.
 
-### Test sequence
+## Previous Attempt (reverted)
+
+The predecessor approach (nc_predecessor link) was reverted because:
+- Two incarnation records per slot broke incarnation_remove
+  (removed both records instead of just the old one)
+- Something in the interaction caused pynfs to crash at test 106
+  with fd=-1 in select() — root cause not fully identified
+- Added complexity: ref-counting, persistence API changes
+
+## New Approach: Zombie Sessions
+
+Instead of keeping the old client alive, expire the client but
+preserve its sessions as **zombies** in the session hash table.
+
+### Concept
 
 ```
-1. c1 = EXCHANGE_ID(owner, verf1) → clientid1, confirmed
-2. sess1 = CREATE_SESSION(clientid1) → confirmed
-3. c2 = EXCHANGE_ID(owner, verf2) → clientid2, unconfirmed
-4. COMPOUND(sess1, []) → should succeed (old client still alive)
-5. sess2 = CREATE_SESSION(clientid2) → confirms c2, expires c1
-6. COMPOUND(sess1, []) → NFS4ERR_BADSESSION
+EXCHANGE_ID(new verifier) → replace_client:
+  1. Move old client's sessions to new client (re-parent)
+  2. Mark moved sessions as ZOMBIE
+  3. Expire old client (no sessions left on it)
+  4. Allocate and return new unconfirmed client
+
+SEQUENCE(old session) → session lookup succeeds (zombie):
+  - Process normally
+  - Renew the new client's lease
+
+CREATE_SESSION(new client) → confirm:
+  - Destroy all zombie sessions on this client
+  - Mark client as confirmed
+
+Lease expiry (unconfirmed client never confirmed):
+  - nfs4_client_expire destroys all sessions including zombies
+  - Natural cleanup, no special handling
 ```
 
-Step 4 fails because `replace_client()` in step 3 calls
-`nfs4_client_expire()` immediately, destroying sess1.
+### Why This Works
 
-## Current Flow
+- **Single incarnation record per slot**: no persistence changes
+- **No predecessor ref-counting**: old client is fully expired
+- **Sessions stay in hash table**: SEQUENCE lookup works
+- **No new client fields**: zombie state is on the session
+- **Simple cleanup**: CREATE_SESSION destroys zombies, or
+  lease expiry destroys them with the unconfirmed client
 
+### Implementation
+
+#### Step 1: Add NFS4_SESSION_IS_ZOMBIE flag
+
+**File**: `lib/nfs4/include/nfs4/session.h`
+
+```c
+#define NFS4_SESSION_IS_ZOMBIE (1ULL << 2)
 ```
-nfs4_client_alloc_or_find()
-  → case 7: replace_client(old_nc, ...)
-    → nfs4_client_expire(old_nc)  ← WRONG: destroys immediately
-    → nfs4_client_alloc(new)
-    → return new (unconfirmed)
+
+#### Step 2: Session re-parent helper
+
+**File**: `lib/nfs4/server/session.c`
+
+```c
+void nfs4_session_reparent_for_replace(struct server_state *ss,
+                                       struct nfs4_client *old_nc,
+                                       struct nfs4_client *new_nc)
 ```
 
-## Proposed Fix
+Iterates session hash table.  For each session belonging to
+`old_nc`:
+1. Take ref on `new_nc`, swap `ns_client`, drop ref on `old_nc`
+2. Transfer session counts between clients
+3. Set `NFS4_SESSION_IS_ZOMBIE` on the session
 
-### 1. replace_client: keep old alive
+After this, `old_nc->nc_session_count == 0` and the old client
+can be expired without destroying any sessions.
 
-Don't call `nfs4_client_expire` in `replace_client`.  Instead,
-link the old client as the new client's **predecessor**:
+#### Step 3: replace_client uses re-parent
+
+**File**: `lib/nfs4/server/client_persist.c`
 
 ```c
 static struct nfs4_client *replace_client(...)
 {
-    /* ... allocate new client ... */
+    nc = nfs4_client_alloc(...);
 
-    /* Link old as predecessor — will be expired on confirm. */
-    nc->nc_predecessor = old_nc;  /* takes the find ref */
+    /* Re-parent old sessions to new client as zombies. */
+    nfs4_session_reparent_for_replace(ss, old_nc, nc);
 
-    return nc;
+    /* Old client has no sessions left — safe to expire. */
+    nfs4_client_expire(ss, old_nc);
+
+    /* Add incarnation record for new client. */
+    ...
 }
 ```
 
-The old client stays in the incarnation table and its sessions
-remain valid.  The caller (`nfs4_op_exchange_id`) returns the
-new client's clientid.
+#### Step 4: CREATE_SESSION destroys zombies
 
-### 2. CREATE_SESSION: expire predecessor on confirm
+**File**: `lib/nfs4/server/session.c`
 
-When CREATE_SESSION confirms a client that has a predecessor,
-expire the predecessor:
+After `nc->nc_confirmed = true`:
 
 ```c
-/* In nfs4_op_create_session, after successful session creation: */
-if (!nc->nc_confirmed) {
-    nc->nc_confirmed = true;
-
-    if (nc->nc_predecessor) {
-        nfs4_client_expire(ss, nc->nc_predecessor);
-        nfs4_client_put(nc->nc_predecessor);
-        nc->nc_predecessor = NULL;
-    }
-}
+nfs4_session_destroy_zombies(ss, nc);
 ```
 
-### 3. Lease expiry: clean up unconfirmed clients
+Iterates sessions for `nc`, destroys any with zombie flag.
 
-An unconfirmed client that is never confirmed (no CREATE_SESSION
-within 1 lease period) must be cleaned up by the lease reaper.
-The unconfirmed client holds a ref on the predecessor — if the
-unconfirmed client expires, release the predecessor ref WITHOUT
-expiring it (the predecessor is still a valid confirmed client).
+#### Step 5: No lease reaper changes
 
-### 4. nc_predecessor field
+When unconfirmed client expires, `nfs4_session_destroy_for_client`
+destroys all sessions including zombies.  Natural cleanup.
 
-Add to `struct nfs4_client`:
+### Test Impact
 
-```c
-struct nfs4_client *nc_predecessor;  /* confirmed client to expire on confirm */
-```
+| Existing test | Impact |
+|---------------|--------|
+| `nfs4_session.c` | PASS — no structural changes |
+| `nfs4_client_persist.c` | PASS — no persistence changes |
+| All other tests | PASS — zombie flag is additive |
 
-### 5. Second EXCHANGE_ID with yet another verifier
-
-If a third EXCHANGE_ID arrives with verf3 while c2 (verf2) is
-still unconfirmed:
-- Expire c2 (unconfirmed)
-- c2's predecessor (c1) is released (not expired — c1 is still confirmed)
-- Create c3 with c1 as predecessor
-- c1 stays alive until c3 is confirmed
-
-This matches RFC 8881: an unconfirmed client can be replaced
-freely; only confirmed clients are protected.
-
-## Test Impact
-
-### Existing tests affected
-
-| Test | Impact |
-|------|--------|
-| `nfs4_session.c` | PASS — tests don't exercise the replace path |
-| `nfs4_client_persist.c` | PASS — persistence tests create fresh clients |
-| `delegation_lifecycle.c` | PASS — uses a single client |
-
-### New tests needed
+### New Tests
 
 | Test | Intent |
 |------|--------|
-| `test_eid_replace_keeps_old_session` | EXCHANGE_ID(new verf) → old session still works → CREATE_SESSION → old session returns BADSESSION |
-| `test_eid_replace_unconfirmed_expires_predecessor_ref` | EXCHANGE_ID(verf2) → EXCHANGE_ID(verf3) → c1 still alive, c2 expired |
-| `test_eid_unconfirmed_lease_expiry` | Unconfirmed client expires by lease reaper → predecessor not expired |
+| `test_zombie_session_survives_replace` | Old session works after EXCHANGE_ID with new verifier |
+| `test_zombie_destroyed_on_confirm` | CREATE_SESSION destroys zombie sessions |
 
-These can go in `lib/nfs4/tests/nfs4_session.c` or a new
-`eid_lifecycle.c`.
-
-## Files to Change
+### Files to Change
 
 | File | Change |
 |------|--------|
-| `lib/nfs4/include/nfs4/client.h` | Add `nc_predecessor` field |
-| `lib/nfs4/server/client_persist.c` | `replace_client`: don't expire, link predecessor |
-| `lib/nfs4/server/client.c` | `nfs4_client_find_by_owner`: find highest incarnation, not first |
-| `lib/nfs4/server/session.c` | `nfs4_op_create_session`: expire predecessor on confirm |
-| `lib/nfs4/server/lease_reaper.c` | Clean up unconfirmed client → release predecessor ref |
+| `lib/nfs4/include/nfs4/session.h` | Add `NFS4_SESSION_IS_ZOMBIE` |
+| `lib/nfs4/server/session.c` | `reparent_for_replace`, `destroy_zombies` |
+| `lib/nfs4/server/client_persist.c` | `replace_client`: reparent before expire |
 
-## RFC References
+### What This Doesn't Change
 
-- RFC 8881 §18.35.4 Table 11: EXCHANGE_ID decision tree
+- No persistence API changes
+- No new client struct fields
+- No incarnation_remove signature change
+- No RocksDB changes
+- Single incarnation record per slot (always)
+
+### Why This Won't Crash pynfs
+
+The previous approach left two clients alive simultaneously,
+which corrupted the incarnation table when both were removed.
+This approach expires the old client immediately (single
+incarnation record), just moves its sessions first.  The session
+hash table operations are the same ones used by DESTROY_SESSION
+and client expiry — no new patterns.
+
+### RFC References
+
+- RFC 8881 §18.35.4 Table 11 case 7
 - RFC 8881 §18.36.3: CREATE_SESSION confirms the client
-- RFC 8881 §18.35.4 case 7: "The server ... MUST NOT destroy
-  the confirmed client's state"
-
-## Risks
-
-- **Ref-counting**: nc_predecessor holds a ref on the old client.
-  Must be released on: confirm (expire old), unconfirmed expiry
-  (release without expire), and shutdown drain.
-- **Incarnation table ordering**: Both old and new clients are in
-  the incarnation table simultaneously with the same slot but
-  different incarnation numbers.  `nfs4_client_find_by_owner`
-  currently takes the **first** match — it must find the
-  **highest incarnation** instead.  Otherwise a second
-  EXCHANGE_ID finds the old confirmed client and loops.
-  Fix: scan all incarnations for the slot, take max.
-- **Persistence**: The predecessor link is transient (not persisted).
-  On restart, all clients are unconfirmed and go through the
-  reclaim path — no predecessor linkage needed.
