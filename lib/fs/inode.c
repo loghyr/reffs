@@ -540,6 +540,19 @@ void inode_update_times_now(struct inode *inode, uint64_t flags)
 	inode_sync_to_disk(inode);
 }
 
+static const char default_sec_label[] = "unconfined_u:object_r:unlabeled_t:s0";
+
+void inode_set_default_sec_label(struct inode *inode)
+{
+	if (!inode || inode->i_sec_label_len > 0)
+		return;
+
+	inode->i_sec_label_lfs = 0;
+	inode->i_sec_label_pi = 0;
+	inode->i_sec_label_len = sizeof(default_sec_label) - 1;
+	memcpy(inode->i_sec_label, default_sec_label, inode->i_sec_label_len);
+}
+
 void inode_sync_to_disk(struct inode *inode)
 {
 	trace_fs_inode(inode, __func__, __LINE__);

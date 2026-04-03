@@ -382,6 +382,7 @@ int super_block_dirent_create(struct super_block *sb, struct reffs_dirent *rd,
 	if (rla == reffs_life_action_birth && root_inode->i_mode == 0) {
 		root_inode->i_nlink = 2;
 		root_inode->i_mode = S_IFDIR | 0777;
+		inode_set_default_sec_label(root_inode);
 	}
 	if (root_inode->i_parent_ino == 0)
 		root_inode->i_parent_ino = new_ino; /* root: self */

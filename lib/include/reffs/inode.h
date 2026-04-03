@@ -157,6 +157,13 @@ struct inode_disk {
 	char id_sec_label[REFFS_SEC_LABEL_MAX];
 };
 
+/*
+ * Set the default SELinux security label on a new inode.
+ * lfs=0, pi=0, label="unconfined_u:object_r:unlabeled_t:s0".
+ * The Linux NFS client overrides this via SETATTR at CREATE/OPEN.
+ */
+void inode_set_default_sec_label(struct inode *inode);
+
 /* Alloc (new) or find-and-load (existing) an inode.  Returns with
  * i_active already incremented -- caller must call inode_active_put(). */
 struct inode *inode_alloc(struct super_block *sb, uint64_t ino);

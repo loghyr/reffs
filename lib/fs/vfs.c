@@ -282,11 +282,13 @@ static int vfs_create_common_locked(struct inode *dir, const char *name,
 	inode->i_btime = inode->i_mtime;
 
 	/*
-	 * Security label starts empty.  The Linux NFS client assigns
-	 * labels from its local SELinux policy during CREATE/OPEN and
-	 * sends them via SETATTR.  The default label (e.g., nfs_t) is
-	 * policy-dependent, not something the server should hardcode.
+	 * Default security label.  The Linux NFS client overrides this
+	 * during CREATE/OPEN via SETATTR with its local SELinux policy.
+	 * But the root dir and any inode created before the client sets
+	 * a label need a valid default, otherwise mount warns:
+	 * "does not contain SELinux labels".
 	 */
+	inode_set_default_sec_label(inode);
 
 	if (type == S_IFCHR || type == S_IFBLK) {
 		inode->i_dev_major = major(rdev);
