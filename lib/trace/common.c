@@ -195,7 +195,7 @@ static void rotate_trace_if_needed_locked(void)
 	}
 
 reopen:
-	trace_fp = fopen(reffs_trace_name, "w");
+	trace_fp = fopen(reffs_trace_name, "a");
 	if (!trace_fp) {
 		fprintf(stderr, "Failed to reopen trace.log: %s\n",
 			strerror(errno));
@@ -210,7 +210,7 @@ void reffs_trace_init(const char *filename)
 	reffs_trace_name = filename;
 	pthread_create(&trace_compress_tid, NULL, trace_compress_thread, NULL);
 	if (reffs_trace_name)
-		trace_fp = fopen(reffs_trace_name, "w");
+		trace_fp = fopen(reffs_trace_name, "a");
 	if (!trace_fp)
 		trace_fp = stderr;
 	trace_bytes_written = 0;
