@@ -115,12 +115,10 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 	__atomic_fetch_or(&client->c_state, CLIENT_IS_EXPIRING,
 			  __ATOMIC_RELEASE);
 	/*
-	 * NOT_NOW_BROWN_COW: sessions should survive until the
-	 * replacement client is confirmed (CREATE_SESSION).
-	 * RFC 8881 §18.35.4 case 7: old state is discarded only
-	 * after the new client is confirmed.  For now, sessions
-	 * are destroyed here; the correct fix is deferred
-	 * confirmation-triggered teardown.
+	 * Destroy remaining sessions on this client.  For RFC 8881
+	 * §18.35.4 case 7 (replace_client), sessions are re-parented
+	 * to the new client as zombies BEFORE expire is called, so
+	 * nc_session_count is already 0 and this is a no-op.
 	 */
 	nfs4_session_destroy_for_client(ss, nc);
 	client_remove_all_stateids(client);
