@@ -38,8 +38,7 @@ REFFSD="$BUILD_DIR/src/reffsd"
 
 DATA_DIR="/reffs/soak_data"
 STATE_DIR="/reffs/soak_state"
-MOUNT_BASE="/mnt/reffs_local_soak"
-MOUNT="${MOUNT_BASE}_0"
+MOUNT="/mnt/reffs_local_soak"
 CONFIG="/reffs/soak.toml"
 LOG="/reffs/soak.log"
 TRACE="/reffs/soak-trace.log"
@@ -92,9 +91,7 @@ info "Backend: $BACKEND_TYPE"
 # Cleanup from previous runs
 # -----------------------------------------------------------------------
 
-for mp in ${MOUNT_BASE}_*; do
-    sudo umount -f -l "$mp" 2>/dev/null || true
-done
+sudo umount -f "$MOUNT" 2>/dev/null || true
 rm -rf "$DATA_DIR" "$STATE_DIR"
 rm -f "$LOG" "$TRACE" /reffs/soak-trace-*.log /reffs/soak-trace-*.log.zst
 mkdir -p "$DATA_DIR" "$STATE_DIR"
@@ -218,9 +215,7 @@ cleanup() {
         kill "$pid" 2>/dev/null
         wait "$pid" 2>/dev/null
     done
-    for mp in ${MOUNT_BASE}_*; do
-        sudo umount -f -l "$mp" 2>/dev/null || true
-    done
+    sudo umount -f "$MOUNT" 2>/dev/null || true
     if [ -n "$REFFSD_PID" ]; then
         kill -TERM "$REFFSD_PID" 2>/dev/null
         sleep 2
@@ -352,11 +347,10 @@ while true; do
 
         start_server || exit 1
 
-        # Fresh mount point
-        sudo umount -f -l "$MOUNT" 2>/dev/null || true
-        MOUNT="${MOUNT_BASE}_${RESTART_COUNT}"
-        sudo mkdir -p "$MOUNT"
-        sudo chmod 777 "$MOUNT"
+        # Reuse the same mount point — on bare metal (no Docker),
+        # umount -f should cleanly release the kernel NFS superblock.
+        sudo umount -f "$MOUNT" 2>/dev/null || true
+        sleep 1
         mount_ok=false
         for try in $(seq 1 6); do
             info "  Mount attempt $try/6..."
