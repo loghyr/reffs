@@ -429,9 +429,10 @@ if [ "$BASELINE_RSS" -gt 0 ] && [ "$FINAL_RSS" -gt $((BASELINE_RSS * 2)) ]; then
 fi
 
 if [ "$BASELINE_FD" -gt 0 ]; then
-    FD_LIMIT=$(( BASELINE_FD + BASELINE_FD / 10 + 5 ))
+    # RocksDB SST files grow with data volume and across restarts.
+    FD_LIMIT=$(( BASELINE_FD + BASELINE_FD / 2 + 5 ))
     if [ "$FINAL_FD" -gt "$FD_LIMIT" ]; then
-        die "FD growth: ${FINAL_FD} > ${FD_LIMIT} (baseline ${BASELINE_FD} + 10%)"
+        die "FD growth: ${FINAL_FD} > ${FD_LIMIT} (baseline ${BASELINE_FD} + 50%)"
     fi
 fi
 
