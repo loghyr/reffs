@@ -195,7 +195,7 @@ cd "$PYNFS_DIR/nfs4.1"
 #   xattr: extended attributes not implemented (NFS4ERR_NOTSUPP)
 if timeout 600 python3 testserver.py 127.0.0.1:/ \
 	--maketree --rundeps -v \
-	all nocourteous noreboot noflex nodeleg noxattr 2>&1 | tee "$RESULTS_FILE"; then
+	all nocourteous noreboot noflex nodeleg noxattr nodestroy_clientid 2>&1 | tee "$RESULTS_FILE"; then
 	info "pynfs: ALL PASSED"
 else
 	info "pynfs: some tests failed (baseline run)"
