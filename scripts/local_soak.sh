@@ -36,12 +36,12 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="$PROJECT_ROOT/build"
 REFFSD="$BUILD_DIR/src/reffsd"
 
-DATA_DIR="/reffs/soak_data"
-STATE_DIR="/reffs/soak_state"
+DATA_DIR="/reffs_data/soak_data"
+STATE_DIR="/reffs_data/soak_state"
 MOUNT="/mnt/reffs_local_soak"
-CONFIG="/reffs/soak.toml"
-LOG="/reffs/soak.log"
-TRACE="/reffs/soak-trace.log"
+CONFIG="/reffs_data/soak.toml"
+LOG="/reffs_data/soak.log"
+TRACE="/reffs_data/soak-trace.log"
 
 DURATION_MIN=30
 RESTART_MIN=5
@@ -93,7 +93,7 @@ info "Backend: $BACKEND_TYPE"
 
 sudo umount -f "$MOUNT" 2>/dev/null || true
 rm -rf "$DATA_DIR" "$STATE_DIR"
-rm -f "$LOG" "$TRACE" /reffs/soak-trace-*.log /reffs/soak-trace-*.log.zst
+rm -f "$LOG" "$TRACE" /reffs_data/soak-trace-*.log /reffs_data/soak-trace-*.log.zst
 mkdir -p "$DATA_DIR" "$STATE_DIR"
 
 # -----------------------------------------------------------------------
