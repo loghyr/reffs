@@ -539,11 +539,13 @@ if [ "$BASELINE_RSS" -gt 0 ] && [ "$FINAL_RSS" -gt $((BASELINE_RSS * 2)) ]; then
 	die "Memory growth: ${FINAL_RSS}KB > 2x baseline ${BASELINE_RSS}KB"
 fi
 
-# FD check: final within 10% of baseline
+# FD check: RocksDB SST files grow with data volume and across
+# restarts (compaction creates new SST files).  Allow baseline + 50%
+# to accommodate SST accumulation over 5 restart cycles.
 if [ "$BASELINE_FD" -gt 0 ]; then
-	FD_LIMIT=$(( BASELINE_FD + BASELINE_FD / 10 + 5 ))
+	FD_LIMIT=$(( BASELINE_FD + BASELINE_FD / 2 + 5 ))
 	if [ "$FINAL_FD" -gt "$FD_LIMIT" ]; then
-		die "FD growth: ${FINAL_FD} > ${FD_LIMIT} (baseline ${BASELINE_FD} + 10%)"
+		die "FD growth: ${FINAL_FD} > ${FD_LIMIT} (baseline ${BASELINE_FD} + 50%)"
 	fi
 fi
 
