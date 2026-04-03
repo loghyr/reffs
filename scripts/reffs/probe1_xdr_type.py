@@ -1234,3 +1234,146 @@ class LAYOUT_ERRORS1res:
         return 'LAYOUT_ERRORS1res(%s)' % ', '.join(out)
     __str__ = __repr__
 
+class probe_id_domain1:
+    # XDR definition:
+    # struct probe_id_domain1 {
+    #     uint32_t pid_index;
+    #     string pid_name<256>;
+    #     uint32_t pid_type;
+    # };
+    def __init__(self, pid_index=None, pid_name=None, pid_type=None):
+        self.pid_index = pid_index
+        self.pid_name = pid_name
+        self.pid_type = pid_type
+
+    def __repr__(self):
+        out = []
+        if self.pid_index is not None:
+            out += ['pid_index=%s' % repr(self.pid_index)]
+        if self.pid_name is not None:
+            out += ['pid_name=%s' % repr(self.pid_name)]
+        if self.pid_type is not None:
+            out += ['pid_type=%s' % repr(self.pid_type)]
+        return 'probe_id_domain1(%s)' % ', '.join(out)
+    __str__ = __repr__
+
+class IDENTITY_DOMAIN_LIST1resok:
+    # XDR definition:
+    # struct IDENTITY_DOMAIN_LIST1resok {
+    #     probe_id_domain1 idl_domains<64>;
+    # };
+    def __init__(self, idl_domains=None):
+        self.idl_domains = idl_domains
+
+    def __repr__(self):
+        out = []
+        if self.idl_domains is not None:
+            out += ['idl_domains=%s' % repr(self.idl_domains)]
+        return 'IDENTITY_DOMAIN_LIST1resok(%s)' % ', '.join(out)
+    __str__ = __repr__
+
+class IDENTITY_DOMAIN_LIST1res:
+    # XDR definition:
+    # union IDENTITY_DOMAIN_LIST1res switch(probe_stat1 idl_status) {
+    #     case PROBE1_OK:
+    #         IDENTITY_DOMAIN_LIST1resok idl_resok;
+    #     default:
+    #         void;
+    # };
+    def __init__(self, idl_status=None, idl_resok=None):
+        self.idl_status = idl_status
+        self.idl_resok = idl_resok
+
+    switch = property(lambda s: {const.PROBE1_OK:s.idl_resok,}.get(s.idl_status, None))
+
+    def __getattr__(self, attr):
+        return getattr(self.switch, attr)
+
+    def __repr__(self):
+        out = []
+        if self.idl_status is not None:
+            out += ['idl_status=%s' % const.probe_stat1.get(self.idl_status, self.idl_status)]
+        if self.idl_resok is not None:
+            out += ['idl_resok=%s' % repr(self.idl_resok)]
+        return 'IDENTITY_DOMAIN_LIST1res(%s)' % ', '.join(out)
+    __str__ = __repr__
+
+class probe_id_mapping1:
+    # XDR definition:
+    # struct probe_id_mapping1 {
+    #     uint64_t pim_from;
+    #     uint64_t pim_to;
+    #     string pim_name<256>;
+    # };
+    def __init__(self, pim_from=None, pim_to=None, pim_name=None):
+        self.pim_from = pim_from
+        self.pim_to = pim_to
+        self.pim_name = pim_name
+
+    def __repr__(self):
+        out = []
+        if self.pim_from is not None:
+            out += ['pim_from=%s' % repr(self.pim_from)]
+        if self.pim_to is not None:
+            out += ['pim_to=%s' % repr(self.pim_to)]
+        if self.pim_name is not None:
+            out += ['pim_name=%s' % repr(self.pim_name)]
+        return 'probe_id_mapping1(%s)' % ', '.join(out)
+    __str__ = __repr__
+
+class IDENTITY_MAP_LIST1resok:
+    # XDR definition:
+    # struct IDENTITY_MAP_LIST1resok {
+    #     probe_id_mapping1 iml_mappings<1024>;
+    # };
+    def __init__(self, iml_mappings=None):
+        self.iml_mappings = iml_mappings
+
+    def __repr__(self):
+        out = []
+        if self.iml_mappings is not None:
+            out += ['iml_mappings=%s' % repr(self.iml_mappings)]
+        return 'IDENTITY_MAP_LIST1resok(%s)' % ', '.join(out)
+    __str__ = __repr__
+
+class IDENTITY_MAP_LIST1res:
+    # XDR definition:
+    # union IDENTITY_MAP_LIST1res switch(probe_stat1 iml_status) {
+    #     case PROBE1_OK:
+    #         IDENTITY_MAP_LIST1resok iml_resok;
+    #     default:
+    #         void;
+    # };
+    def __init__(self, iml_status=None, iml_resok=None):
+        self.iml_status = iml_status
+        self.iml_resok = iml_resok
+
+    switch = property(lambda s: {const.PROBE1_OK:s.iml_resok,}.get(s.iml_status, None))
+
+    def __getattr__(self, attr):
+        return getattr(self.switch, attr)
+
+    def __repr__(self):
+        out = []
+        if self.iml_status is not None:
+            out += ['iml_status=%s' % const.probe_stat1.get(self.iml_status, self.iml_status)]
+        if self.iml_resok is not None:
+            out += ['iml_resok=%s' % repr(self.iml_resok)]
+        return 'IDENTITY_MAP_LIST1res(%s)' % ', '.join(out)
+    __str__ = __repr__
+
+class IDENTITY_MAP_REMOVE1args:
+    # XDR definition:
+    # struct IDENTITY_MAP_REMOVE1args {
+    #     uint64_t imr_from;
+    # };
+    def __init__(self, imr_from=None):
+        self.imr_from = imr_from
+
+    def __repr__(self):
+        out = []
+        if self.imr_from is not None:
+            out += ['imr_from=%s' % repr(self.imr_from)]
+        return 'IDENTITY_MAP_REMOVE1args(%s)' % ', '.join(out)
+    __str__ = __repr__
+

@@ -771,6 +771,87 @@ class PROBE1_XDRPacker(xdrlib.Packer):
         else:
             pass
 
+    def pack_probe_id_domain1(self, data):
+        if hasattr(self, 'filter_probe_id_domain1'):
+            data = getattr(self, 'filter_probe_id_domain1')(data)
+        if data.pid_index is None:
+            raise TypeError('data.pid_index == None')
+        self.pack_uint32_t(data.pid_index)
+        if data.pid_name is None:
+            raise TypeError('data.pid_name == None')
+        if len(data.pid_name) > 256 and self.check_array:
+            raise XDRError('array length too long for data.pid_name')
+        self.pack_string(data.pid_name)
+        if data.pid_type is None:
+            raise TypeError('data.pid_type == None')
+        self.pack_uint32_t(data.pid_type)
+
+    def pack_IDENTITY_DOMAIN_LIST1resok(self, data):
+        if hasattr(self, 'filter_IDENTITY_DOMAIN_LIST1resok'):
+            data = getattr(self, 'filter_IDENTITY_DOMAIN_LIST1resok')(data)
+        if data.idl_domains is None:
+            raise TypeError('data.idl_domains == None')
+        if len(data.idl_domains) > 64 and self.check_array:
+            raise XDRError('array length too long for data.idl_domains')
+        self.pack_array(data.idl_domains, self.pack_probe_id_domain1)
+
+    def pack_IDENTITY_DOMAIN_LIST1res(self, data):
+        if hasattr(self, 'filter_IDENTITY_DOMAIN_LIST1res'):
+            data = getattr(self, 'filter_IDENTITY_DOMAIN_LIST1res')(data)
+        if data.idl_status is None:
+            raise TypeError('data.idl_status == None')
+        self.pack_probe_stat1(data.idl_status)
+        if data.idl_status == const.PROBE1_OK:
+            if data.idl_resok is None:
+                raise TypeError('data.idl_resok == None')
+            self.pack_IDENTITY_DOMAIN_LIST1resok(data.idl_resok)
+        else:
+            pass
+
+    def pack_probe_id_mapping1(self, data):
+        if hasattr(self, 'filter_probe_id_mapping1'):
+            data = getattr(self, 'filter_probe_id_mapping1')(data)
+        if data.pim_from is None:
+            raise TypeError('data.pim_from == None')
+        self.pack_uint64_t(data.pim_from)
+        if data.pim_to is None:
+            raise TypeError('data.pim_to == None')
+        self.pack_uint64_t(data.pim_to)
+        if data.pim_name is None:
+            raise TypeError('data.pim_name == None')
+        if len(data.pim_name) > 256 and self.check_array:
+            raise XDRError('array length too long for data.pim_name')
+        self.pack_string(data.pim_name)
+
+    def pack_IDENTITY_MAP_LIST1resok(self, data):
+        if hasattr(self, 'filter_IDENTITY_MAP_LIST1resok'):
+            data = getattr(self, 'filter_IDENTITY_MAP_LIST1resok')(data)
+        if data.iml_mappings is None:
+            raise TypeError('data.iml_mappings == None')
+        if len(data.iml_mappings) > 1024 and self.check_array:
+            raise XDRError('array length too long for data.iml_mappings')
+        self.pack_array(data.iml_mappings, self.pack_probe_id_mapping1)
+
+    def pack_IDENTITY_MAP_LIST1res(self, data):
+        if hasattr(self, 'filter_IDENTITY_MAP_LIST1res'):
+            data = getattr(self, 'filter_IDENTITY_MAP_LIST1res')(data)
+        if data.iml_status is None:
+            raise TypeError('data.iml_status == None')
+        self.pack_probe_stat1(data.iml_status)
+        if data.iml_status == const.PROBE1_OK:
+            if data.iml_resok is None:
+                raise TypeError('data.iml_resok == None')
+            self.pack_IDENTITY_MAP_LIST1resok(data.iml_resok)
+        else:
+            pass
+
+    def pack_IDENTITY_MAP_REMOVE1args(self, data):
+        if hasattr(self, 'filter_IDENTITY_MAP_REMOVE1args'):
+            data = getattr(self, 'filter_IDENTITY_MAP_REMOVE1args')(data)
+        if data.imr_from is None:
+            raise TypeError('data.imr_from == None')
+        self.pack_uint64_t(data.imr_from)
+
 
 class PROBE1_XDRUnpacker(xdrlib.Unpacker):
     def __init__(self, data, check_enum=True, check_array=True):
@@ -1321,5 +1402,74 @@ class PROBE1_XDRUnpacker(xdrlib.Unpacker):
             pass
         if hasattr(self, 'filter_LAYOUT_ERRORS1res'):
             data = getattr(self, 'filter_LAYOUT_ERRORS1res')(data)
+        return data
+
+    def unpack_probe_id_domain1(self):
+        data = types.probe_id_domain1()
+        data.pid_index = self.unpack_uint32_t()
+        data.pid_name = self.unpack_string()
+        if len(data.pid_name) > 256 and self.check_array:
+            raise XDRError('array length too long for data.pid_name')
+        data.pid_type = self.unpack_uint32_t()
+        if hasattr(self, 'filter_probe_id_domain1'):
+            data = getattr(self, 'filter_probe_id_domain1')(data)
+        return data
+
+    def unpack_IDENTITY_DOMAIN_LIST1resok(self):
+        data = types.IDENTITY_DOMAIN_LIST1resok()
+        data.idl_domains = self.unpack_array(self.unpack_probe_id_domain1)
+        if len(data.idl_domains) > 64 and self.check_array:
+            raise XDRError('array length too long for data.idl_domains')
+        if hasattr(self, 'filter_IDENTITY_DOMAIN_LIST1resok'):
+            data = getattr(self, 'filter_IDENTITY_DOMAIN_LIST1resok')(data)
+        return data
+
+    def unpack_IDENTITY_DOMAIN_LIST1res(self):
+        data = types.IDENTITY_DOMAIN_LIST1res()
+        data.idl_status = self.unpack_probe_stat1()
+        if data.idl_status == const.PROBE1_OK:
+            data.idl_resok = self.unpack_IDENTITY_DOMAIN_LIST1resok()
+        else:
+            pass
+        if hasattr(self, 'filter_IDENTITY_DOMAIN_LIST1res'):
+            data = getattr(self, 'filter_IDENTITY_DOMAIN_LIST1res')(data)
+        return data
+
+    def unpack_probe_id_mapping1(self):
+        data = types.probe_id_mapping1()
+        data.pim_from = self.unpack_uint64_t()
+        data.pim_to = self.unpack_uint64_t()
+        data.pim_name = self.unpack_string()
+        if len(data.pim_name) > 256 and self.check_array:
+            raise XDRError('array length too long for data.pim_name')
+        if hasattr(self, 'filter_probe_id_mapping1'):
+            data = getattr(self, 'filter_probe_id_mapping1')(data)
+        return data
+
+    def unpack_IDENTITY_MAP_LIST1resok(self):
+        data = types.IDENTITY_MAP_LIST1resok()
+        data.iml_mappings = self.unpack_array(self.unpack_probe_id_mapping1)
+        if len(data.iml_mappings) > 1024 and self.check_array:
+            raise XDRError('array length too long for data.iml_mappings')
+        if hasattr(self, 'filter_IDENTITY_MAP_LIST1resok'):
+            data = getattr(self, 'filter_IDENTITY_MAP_LIST1resok')(data)
+        return data
+
+    def unpack_IDENTITY_MAP_LIST1res(self):
+        data = types.IDENTITY_MAP_LIST1res()
+        data.iml_status = self.unpack_probe_stat1()
+        if data.iml_status == const.PROBE1_OK:
+            data.iml_resok = self.unpack_IDENTITY_MAP_LIST1resok()
+        else:
+            pass
+        if hasattr(self, 'filter_IDENTITY_MAP_LIST1res'):
+            data = getattr(self, 'filter_IDENTITY_MAP_LIST1res')(data)
+        return data
+
+    def unpack_IDENTITY_MAP_REMOVE1args(self):
+        data = types.IDENTITY_MAP_REMOVE1args()
+        data.imr_from = self.unpack_uint64_t()
+        if hasattr(self, 'filter_IDENTITY_MAP_REMOVE1args'):
+            data = getattr(self, 'filter_IDENTITY_MAP_REMOVE1args')(data)
         return data
 

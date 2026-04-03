@@ -683,6 +683,54 @@ def sb_lint_flavors_cmd(client, args):
         print(f"Flavor consistency check: {resok.lfr_warnings} warning(s)")
 
 
+ID_TYPE_MAP = {
+    0: 'unix',
+    1: 'sid',
+    2: 'krb5',
+    3: 'name',
+    4: 'synth',
+    15: 'nobody',
+}
+
+
+def identity_domain_list_cmd(client, args):
+    res = client.identity_domain_list()
+    probe_error_handler(res.idl_status)
+    resok = res.idl_resok
+    domains = resok.idl_domains
+    if not domains:
+        print('No identity domains')
+        return
+    print(f'{"Index":>5}  {"Type":>8}  Name')
+    print(f'{"-----":>5}  {"--------":>8}  ----')
+    for d in domains:
+        type_name = ID_TYPE_MAP.get(d.pid_type, f'unknown({d.pid_type})')
+        name = d.pid_name.decode('utf-8', errors='replace') if isinstance(d.pid_name, bytes) else d.pid_name
+        print(f'{d.pid_index:>5}  {type_name:>8}  {name}')
+
+
+def identity_map_list_cmd(client, args):
+    res = client.identity_map_list()
+    probe_error_handler(res.iml_status)
+    resok = res.iml_resok
+    mappings = resok.iml_mappings
+    if not mappings:
+        print('No identity mappings')
+        return
+    print(f'{"From":>20}  {"To":>20}  Name')
+    print(f'{"----":>20}  {"--":>20}  ----')
+    for m in mappings:
+        name = m.pim_name.decode('utf-8', errors='replace') if isinstance(m.pim_name, bytes) else m.pim_name
+        print(f'0x{m.pim_from:016x}  0x{m.pim_to:016x}  {name}')
+
+
+def identity_map_remove_cmd(client, args):
+    from_id = int(args.from_id, 0)
+    res = client.identity_map_remove(from_id)
+    probe_error_handler(res)
+    print(f'Mapping 0x{from_id:016x} removed')
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Probe reffs servers')
 
@@ -901,6 +949,17 @@ def parse_args():
 
     p_sb_lint = subparsers.add_parser('sb-lint-flavors', help='Check flavor consistency')
     p_sb_lint.set_defaults(func=sb_lint_flavors_cmd)
+
+    # Identity management
+    p_id_domains = subparsers.add_parser('identity-domain-list', help='List identity domains')
+    p_id_domains.set_defaults(func=identity_domain_list_cmd)
+
+    p_id_maps = subparsers.add_parser('identity-map-list', help='List identity mappings')
+    p_id_maps.set_defaults(func=identity_map_list_cmd)
+
+    p_id_remove = subparsers.add_parser('identity-map-remove', help='Remove an identity mapping')
+    p_id_remove.add_argument('--from-id', required=True, help='reffs_id to remove (hex: 0x...)')
+    p_id_remove.set_defaults(func=identity_map_remove_cmd)
 
     argcomplete.autocomplete(parser)
     return parser.parse_args()

@@ -225,3 +225,23 @@ class Probe1Client(ProtocolClient):
     def sb_lint_flavors(self):
         """Check flavor consistency across all mounted exports."""
         return self.proc(PROBEPROC1_SB_LINT_FLAVORS, response_type='SB_LINT_FLAVORS1res')
+
+    # ----------------------------------------------------------------
+    # Identity management ops
+    # ----------------------------------------------------------------
+
+    def identity_domain_list(self):
+        """List all identity domains."""
+        return self.proc(PROBEPROC1_IDENTITY_DOMAIN_LIST,
+                         response_type='IDENTITY_DOMAIN_LIST1res')
+
+    def identity_map_list(self):
+        """List all identity mappings."""
+        return self.proc(PROBEPROC1_IDENTITY_MAP_LIST,
+                         response_type='IDENTITY_MAP_LIST1res')
+
+    def identity_map_remove(self, from_id):
+        """Remove an identity mapping by reffs_id."""
+        args = IDENTITY_MAP_REMOVE1args(from_id)
+        return self.proc(PROBEPROC1_IDENTITY_MAP_REMOVE, args,
+                         response_type='probe_stat1')

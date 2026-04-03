@@ -428,6 +428,48 @@ union LAYOUT_ERRORS1res switch (probe_stat1 ler_status) {
 		void;
 };
 
+/* ------------------------------------------------------------------ */
+/* Identity management ops                                            */
+/* ------------------------------------------------------------------ */
+
+struct probe_id_domain1 {
+        uint32_t        pid_index;
+        string          pid_name<256>;
+        uint32_t        pid_type;
+};
+
+struct IDENTITY_DOMAIN_LIST1resok {
+        probe_id_domain1 idl_domains<64>;
+};
+
+union IDENTITY_DOMAIN_LIST1res switch (probe_stat1 idl_status) {
+        case PROBE1_OK:
+                IDENTITY_DOMAIN_LIST1resok idl_resok;
+        default:
+                void;
+};
+
+struct probe_id_mapping1 {
+        uint64_t        pim_from;
+        uint64_t        pim_to;
+        string          pim_name<256>;
+};
+
+struct IDENTITY_MAP_LIST1resok {
+        probe_id_mapping1 iml_mappings<1024>;
+};
+
+union IDENTITY_MAP_LIST1res switch (probe_stat1 iml_status) {
+        case PROBE1_OK:
+                IDENTITY_MAP_LIST1resok iml_resok;
+        default:
+                void;
+};
+
+struct IDENTITY_MAP_REMOVE1args {
+        uint64_t        imr_from;
+};
+
 const PROBE_PORT = 20490;
 
 /*
@@ -459,5 +501,10 @@ program PROBE_PROGRAM {
 		SB_GET1res PROBEPROC1_SB_GET(SB_GET1args) = 18;
 		probe_stat1 PROBEPROC1_SB_SET_FLAVORS(SB_SET_FLAVORS1args) = 19;
 		SB_LINT_FLAVORS1res PROBEPROC1_SB_LINT_FLAVORS(void) = 20;
+
+		/* Identity management ops */
+		IDENTITY_DOMAIN_LIST1res PROBEPROC1_IDENTITY_DOMAIN_LIST(void) = 21;
+		IDENTITY_MAP_LIST1res PROBEPROC1_IDENTITY_MAP_LIST(void) = 22;
+		probe_stat1 PROBEPROC1_IDENTITY_MAP_REMOVE(IDENTITY_MAP_REMOVE1args) = 23;
 	} = 1;
 } = 211768;

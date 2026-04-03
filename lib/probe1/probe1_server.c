@@ -38,6 +38,7 @@
 #include "reffs/task.h"
 #include "reffs/io.h"
 #include "reffs/fs.h"
+#include "reffs/identity_map.h"
 #include "reffs/probe1.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
@@ -1166,6 +1167,83 @@ static int probe1_op_sb_lint_flavors(struct rpc_trans *rt)
 	return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Identity management ops                                            */
+/* ------------------------------------------------------------------ */
+
+static int probe1_op_identity_domain_list(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	IDENTITY_DOMAIN_LIST1res *res = ph->ph_res;
+	IDENTITY_DOMAIN_LIST1resok *resok =
+		&res->IDENTITY_DOMAIN_LIST1res_u.idl_resok;
+	uint32_t count = 0;
+
+	/* Count active domains. */
+	for (uint32_t i = 0; i < IDENTITY_DOMAIN_MAX; i++) {
+		const struct identity_domain *d = identity_domain_get(i);
+		if (d)
+			count++;
+	}
+
+	if (count == 0)
+		return 0;
+
+	resok->idl_domains.idl_domains_val =
+		calloc(count, sizeof(*resok->idl_domains.idl_domains_val));
+	if (!resok->idl_domains.idl_domains_val) {
+		res->idl_status = PROBE1ERR_NOMEM;
+		return 0;
+	}
+
+	uint32_t n = 0;
+	for (uint32_t i = 0; i < IDENTITY_DOMAIN_MAX && n < count; i++) {
+		const struct identity_domain *d = identity_domain_get(i);
+		if (!d)
+			continue;
+		resok->idl_domains.idl_domains_val[n].pid_index = d->id_index;
+		resok->idl_domains.idl_domains_val[n].pid_name =
+			strdup(d->id_name);
+		resok->idl_domains.idl_domains_val[n].pid_type =
+			(uint32_t)d->id_type;
+		n++;
+	}
+	resok->idl_domains.idl_domains_len = n;
+	return 0;
+}
+
+static int probe1_op_identity_map_list(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	IDENTITY_MAP_LIST1res *res = ph->ph_res;
+	IDENTITY_MAP_LIST1resok *resok =
+		&res->IDENTITY_MAP_LIST1res_u.iml_resok;
+
+	/*
+	 * Iterate the mapping table.  identity_map exposes a simple
+	 * iteration callback for this purpose.
+	 */
+	resok->iml_mappings.iml_mappings_val = NULL;
+	resok->iml_mappings.iml_mappings_len = 0;
+
+	/* NOT_NOW_BROWN_COW: implement identity_map_iterate for full
+	 * listing.  For now, return empty — the mappings are visible
+	 * in the flatfile on disk. */
+	return 0;
+}
+
+static int probe1_op_identity_map_remove(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	IDENTITY_MAP_REMOVE1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	(void)args;
+	/* NOT_NOW_BROWN_COW: implement identity_map_remove. */
+	*res = PROBE1ERR_INVAL;
+	return 0;
+}
+
 struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, NULL, NULL, NULL, NULL, NULL,
 			   probe1_op_null),
@@ -1226,6 +1304,17 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, SB_LINT_FLAVORS, NULL, NULL,
 			   xdr_SB_LINT_FLAVORS1res, SB_LINT_FLAVORS1res,
 			   probe1_op_sb_lint_flavors),
+	RPC_OPERATION_INIT(PROBEPROC1, IDENTITY_DOMAIN_LIST, NULL, NULL,
+			   xdr_IDENTITY_DOMAIN_LIST1res,
+			   IDENTITY_DOMAIN_LIST1res,
+			   probe1_op_identity_domain_list),
+	RPC_OPERATION_INIT(PROBEPROC1, IDENTITY_MAP_LIST, NULL, NULL,
+			   xdr_IDENTITY_MAP_LIST1res, IDENTITY_MAP_LIST1res,
+			   probe1_op_identity_map_list),
+	RPC_OPERATION_INIT(PROBEPROC1, IDENTITY_MAP_REMOVE,
+			   xdr_IDENTITY_MAP_REMOVE1args,
+			   IDENTITY_MAP_REMOVE1args, xdr_probe_stat1,
+			   probe_stat1, probe1_op_identity_map_remove),
 };
 
 static struct rpc_program_handler *probe1_handler;
