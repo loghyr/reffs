@@ -27,6 +27,7 @@
 #include "probe1_xdr.h"
 #include "reffs/fs.h"
 #include "reffs/idmap.h"
+#include "reffs/identity_map.h"
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/mount3.h"
@@ -354,6 +355,14 @@ int main(int argc, char *argv[])
 	}
 	if (idmap_init(cfg.nfs4_domain))
 		TRACE("idmap_init failed, using numeric owner strings");
+
+	/* Identity domain + mapping tables (persistent krb5→unix). */
+	identity_domain_init();
+	identity_map_init();
+	if (ss->ss_state_dir) {
+		identity_domain_load(ss->ss_state_dir);
+		identity_map_load(ss->ss_state_dir);
+	}
 	if (ss->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS)
 		nfs4_attr_enable_layouts();
 
@@ -761,8 +770,15 @@ out:
 		 * - sb registry (export table)
 		 * Skip inode/dirent teardown — recovery rebuilds from disk.
 		 */
-		if (ss)
+		if (ss) {
 			server_state_persist_quick(ss);
+
+			/* Persist identity tables (krb5→unix mappings). */
+			if (ss->ss_state_dir) {
+				identity_domain_persist(ss->ss_state_dir);
+				identity_map_persist(ss->ss_state_dir);
+			}
+		}
 
 		/*
 		 * Stop the evictor before exit so it doesn't race with

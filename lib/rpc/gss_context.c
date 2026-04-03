@@ -31,6 +31,7 @@
 
 #include "reffs/gss_context.h"
 #include "reffs/idmap.h"
+#include "reffs/identity_map.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/time.h"
@@ -665,6 +666,53 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 		return -EPERM;
 	}
 
+	/*
+	 * Identity mapping: check the persistent mapping table first.
+	 * Parse "user@REALM", find/create the domain for REALM, hash
+	 * the username, and look up the UNIX mapping.
+	 */
+	const char *at = strchr(principal, '@');
+
+	if (at && at > principal) {
+		char user[256];
+		size_t ulen = (size_t)(at - principal);
+
+		if (ulen >= sizeof(user))
+			ulen = sizeof(user) - 1;
+		memcpy(user, principal, ulen);
+		user[ulen] = '\0';
+
+		const char *realm = at + 1;
+		int domain_idx =
+			identity_domain_find_or_create(realm, REFFS_ID_KRB5);
+
+		if (domain_idx > 0) {
+			uint32_t local_id = XXH32(user, ulen, 0);
+			reffs_id krb5_id = REFFS_ID_MAKE(
+				REFFS_ID_KRB5, (uint32_t)domain_idx, local_id);
+			reffs_id unix_id = identity_map_unix_for(krb5_id);
+
+			if (!REFFS_ID_IS_NOBODY(unix_id)) {
+				*uid = (uid_t)REFFS_ID_LOCAL(unix_id);
+				struct passwd pwbuf, *pw = NULL;
+				char buf[1024];
+
+				if (getpwuid_r(*uid, &pwbuf, buf, sizeof(buf),
+					       &pw) == 0 &&
+				    pw)
+					*gid = pw->pw_gid;
+				else
+					*gid = *uid;
+				free(principal);
+				return 0;
+			}
+		}
+	}
+
+	/*
+	 * No persistent mapping found — fall back to libnfsidmap or
+	 * getpwnam_r.  If successful, persist the mapping for next time.
+	 */
 #ifdef HAVE_LIBNFSIDMAP
 	pthread_once(&idmap_once, idmap_init_once);
 
@@ -714,6 +762,31 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 
 	trace_security_gss_map(principal, *uid, *gid, __func__, __LINE__);
 	idmap_cache_uid(*uid, principal);
+
+	/*
+	 * Persist the mapping so it survives restart.  Parse the
+	 * principal again (at may point into the fallback's local buf).
+	 */
+	{
+		const char *p_at = strchr(principal, '@');
+
+		if (p_at && p_at > principal) {
+			size_t p_ulen = (size_t)(p_at - principal);
+			int dom = identity_domain_find_or_create(p_at + 1,
+								 REFFS_ID_KRB5);
+
+			if (dom > 0) {
+				uint32_t lid = XXH32(principal, p_ulen, 0);
+				reffs_id krb = REFFS_ID_MAKE(
+					REFFS_ID_KRB5, (uint32_t)dom, lid);
+				reffs_id unix_id = REFFS_ID_MAKE(
+					REFFS_ID_UNIX, 0, (uint32_t)*uid);
+
+				identity_map_add(krb, unix_id);
+			}
+		}
+	}
+
 	free(principal);
 	return 0;
 }
