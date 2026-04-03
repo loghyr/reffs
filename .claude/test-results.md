@@ -14,21 +14,20 @@ Last updated: 2026-04-02 (post createattrs + W_OK fix)
 | CTHON04 | NFSv4.2 | **4/4 (100%)** | basic, general, special, lock |
 | CTHON04 | NFSv3 | **4/4 (100%)** | basic, general, special, lock |
 | CTHON04 | pNFS | **4/4 (100%)** | basic, general, special, lock |
-| pynfs | NFSv4.1 | **166/169 (98.2%)** | 3 known failures |
+| pynfs | NFSv4.1 | **169/169 (100%)** | all pass |
 | pjdfstest | NFSv3 | **8787/8789 (99.98%)** | 2 failures |
 | pjdfstest | NFSv4.2 | **8757/8789 (99.6%)** | 32 failures (ctime + perm) |
 | nfstest | NFSv4.2 | **98/98 (100%)** | nfstest_posix |
-| Unit tests | — | **ALL PASS** | COPY tests disabled (RAM backend) |
+| Unit tests | — | **ALL PASS** | COPY tests enabled |
 
-## pynfs Failures (3)
+## pynfs — 100% (2026-04-03)
 
-| Test | Name | Root Cause | Fix |
-|------|------|------------|-----|
-| EID5f | testNoUpdate101 | Session destroy timing — server doesn't clean up unconfirmed client on lease expiry fast enough | NOT_NOW_BROWN_COW: deferred teardown |
-| RECC2 | testReclaimAfterRECC | Per-client grace scoped to server-wide; test expects per-client grace after server restart | Needs server restart test harness |
-| RECC3 | testOpenBeforeRECC | Same as RECC2 — per-client grace vs server-wide | Needs server restart test harness |
+All 169 tests pass. Fixed in this session:
+- **EID5f**: zombie session re-parenting for EXCHANGE_ID case 7
+- **RECC2/RECC3**: per-client RECLAIM_COMPLETE enforcement
+  (removed server-wide grace guard)
 
-## pjdfstest NFSv4.2 Failures (32) by Category
+## pjdfstest NFSv4.2 Failures (28) by Category
 
 After commit 7f7135f2 (enforce W_OK + apply createattrs), down from 124.
 
