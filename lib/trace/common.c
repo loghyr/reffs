@@ -57,12 +57,35 @@ static pthread_t trace_compress_tid;
 
 static void compress_trace_file_inline(char *input_path);
 
+/*
+ * Build a timestamped filename from the base trace path.
+ * "/var/log/reffs-trace.log" → "/var/log/reffs-trace-20260402-153000.log"
+ * If no base name is set, fall back to "trace-TIMESTAMP.log".
+ */
 static void format_timestamped_name(char *buf, size_t len)
 {
 	time_t now = time(NULL);
 	struct tm tm;
+	char ts[32];
+
 	localtime_r(&now, &tm);
-	strftime(buf, len, "trace-%Y%m%d-%H%M%S.log", &tm);
+	strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", &tm);
+
+	if (reffs_trace_name) {
+		/* Strip .log suffix if present, insert timestamp */
+		const char *base = reffs_trace_name;
+		size_t blen = strlen(base);
+		const char *ext = "";
+
+		if (blen > 4 && strcmp(base + blen - 4, ".log") == 0) {
+			snprintf(buf, len, "%.*s-%s.log", (int)(blen - 4), base,
+				 ts);
+		} else {
+			snprintf(buf, len, "%s-%s%s", base, ts, ext);
+		}
+	} else {
+		snprintf(buf, len, "trace-%s.log", ts);
+	}
 }
 
 static void *trace_compress_thread(void __attribute__((unused)) * arg)

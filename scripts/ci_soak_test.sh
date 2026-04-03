@@ -112,8 +112,11 @@ CONFIG=$WORK_DIR/reffs_soak.toml
 LOG=$WORK_DIR/reffsd-soak.log
 TRACE_FILE=$WORK_DIR/reffs-soak-trace.log
 
-# Clear stale logs from previous runs
+# Clear stale logs from previous runs (including timestamped rotations)
 rm -f "$LOG" "$TRACE_FILE" /logs/soak.log /logs/soak-trace.log 2>/dev/null
+# Clean up rotated trace files: reffs-soak-trace-YYYYMMDD-HHMMSS.log{,.zst}
+rm -f "${TRACE_FILE%.log}"-*.log "${TRACE_FILE%.log}"-*.log.zst 2>/dev/null
+rm -f /logs/soak-trace-*.log /logs/soak-trace-*.log.zst 2>/dev/null
 
 cleanup() {
 	set +e
