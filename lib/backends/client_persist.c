@@ -393,7 +393,8 @@ out:
 	return ret;
 }
 
-int client_incarnation_remove(const char *state_dir, uint32_t slot)
+int client_incarnation_remove(const char *state_dir, uint32_t slot,
+			      uint16_t incarnation)
 {
 	struct client_incarnation_record *recs;
 	size_t count = 0;
@@ -414,10 +415,17 @@ int client_incarnation_remove(const char *state_dir, uint32_t slot)
 	if (ret)
 		goto out;
 
-	/* Compact in-place, removing the matching slot. */
+	/*
+	 * Compact in-place.  If incarnation == UINT16_MAX, remove ALL
+	 * records for the slot (used during reclaim to clear stale
+	 * previous-boot entries).  Otherwise remove only the specific
+	 * slot+incarnation pair.
+	 */
 	new_count = 0;
 	for (i = 0; i < count; i++) {
-		if (recs[i].crc_slot == slot) {
+		if (recs[i].crc_slot == slot &&
+		    (incarnation == UINT16_MAX ||
+		     recs[i].crc_incarnation == incarnation)) {
 			found = true;
 			continue;
 		}

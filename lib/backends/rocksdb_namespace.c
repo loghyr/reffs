@@ -297,8 +297,10 @@ rns_client_incarnation_add(void *ctx,
 	char *err = NULL;
 	int ret = 0;
 
-	uint8_t key[4];
+	uint8_t key[6];
 	encode_be32(key, crc->crc_slot);
+	key[4] = (uint8_t)(crc->crc_incarnation >> 8);
+	key[5] = (uint8_t)(crc->crc_incarnation & 0xFF);
 
 	rocksdb_put_cf(rn->rn_db, rn->rn_wopts, rn->rn_cf[NS_CF_INCARNATIONS],
 		       (const char *)key, sizeof(key), (const char *)crc,
@@ -308,19 +310,49 @@ out:
 	return ret;
 }
 
-static int rns_client_incarnation_remove(void *ctx, uint32_t slot)
+static int rns_client_incarnation_remove(void *ctx, uint32_t slot,
+					 uint16_t incarnation)
 {
 	struct rocksdb_ns_ctx *rn = ctx;
 	char *err = NULL;
 	int ret = 0;
 
-	uint8_t key[4];
-	encode_be32(key, slot);
+	if (incarnation == UINT16_MAX) {
+		/*
+		 * Remove ALL incarnations for this slot (reclaim path).
+		 * Prefix-scan by slot and delete each matching key.
+		 */
+		uint8_t prefix[4];
+		encode_be32(prefix, slot);
+		rocksdb_iterator_t *it = rocksdb_create_iterator_cf(
+			rn->rn_db, rn->rn_ropts, rn->rn_cf[NS_CF_INCARNATIONS]);
+		rocksdb_iter_seek(it, (const char *)prefix, sizeof(prefix));
+		while (rocksdb_iter_valid(it)) {
+			size_t klen;
+			const char *k = rocksdb_iter_key(it, &klen);
+			if (klen < 4 || memcmp(k, prefix, 4) != 0)
+				break;
+			rocksdb_delete_cf(rn->rn_db, rn->rn_wopts,
+					  rn->rn_cf[NS_CF_INCARNATIONS], k,
+					  klen, &err);
+			if (err) {
+				rocksdb_free(err);
+				err = NULL;
+			}
+			rocksdb_iter_next(it);
+		}
+		rocksdb_iter_destroy(it);
+	} else {
+		uint8_t key[6];
+		encode_be32(key, slot);
+		key[4] = (uint8_t)(incarnation >> 8);
+		key[5] = (uint8_t)(incarnation & 0xFF);
 
-	rocksdb_delete_cf(rn->rn_db, rn->rn_wopts,
-			  rn->rn_cf[NS_CF_INCARNATIONS], (const char *)key,
-			  sizeof(key), &err);
-	ROCKSDB_CHECK_ERR(err, -EIO, out);
+		rocksdb_delete_cf(rn->rn_db, rn->rn_wopts,
+				  rn->rn_cf[NS_CF_INCARNATIONS],
+				  (const char *)key, sizeof(key), &err);
+		ROCKSDB_CHECK_ERR(err, -EIO, out);
+	}
 out:
 	return ret;
 }

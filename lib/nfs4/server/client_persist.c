@@ -107,9 +107,10 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 	 *   2. Drain stateids.
 	 *   3. Unhash and drop the client ref.
 	 */
-	if (ss->ss_persist_ops->client_incarnation_remove(ss->ss_persist_ctx,
-							  slot))
-		LOG("nfs4_client_expire: slot %u not in incarnations", slot);
+	if (ss->ss_persist_ops->client_incarnation_remove(
+		    ss->ss_persist_ctx, slot, nc->nc_incarnation))
+		LOG("nfs4_client_expire: slot %u inc %u not in incarnations",
+		    slot, nc->nc_incarnation);
 
 	trace_fs_client(client, __func__, __LINE__);
 	__atomic_fetch_or(&client->c_state, CLIENT_IS_EXPIRING,
@@ -249,7 +250,7 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 			 * for the same slot after we add the new one.
 			 */
 			ss->ss_persist_ops->client_incarnation_remove(
-				ss->ss_persist_ctx, slot);
+				ss->ss_persist_ctx, slot, UINT16_MAX);
 		} else {
 			/* ------------------------------------------ */
 			/* New client — never seen this ownerid.      */

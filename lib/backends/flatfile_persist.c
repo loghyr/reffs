@@ -67,9 +67,10 @@ ff_client_incarnation_add(void *ctx,
 	return client_incarnation_add((const char *)ctx, crc);
 }
 
-static int ff_client_incarnation_remove(void *ctx, uint32_t slot)
+static int ff_client_incarnation_remove(void *ctx, uint32_t slot,
+					uint16_t incarnation)
 {
-	return client_incarnation_remove((const char *)ctx, slot);
+	return client_incarnation_remove((const char *)ctx, slot, incarnation);
 }
 
 static int ff_client_incarnation_load(void *ctx,

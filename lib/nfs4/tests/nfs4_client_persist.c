@@ -305,7 +305,9 @@ START_TEST(test_incarnation_add_remove)
 	}
 	ck_assert(found);
 
-	ck_assert_int_eq(client_incarnation_remove(g_ss->ss_state_dir, 3), 0);
+	ck_assert_int_eq(client_incarnation_remove(g_ss->ss_state_dir, 3,
+						   UINT16_MAX),
+			 0);
 
 	nactive = 0;
 	ck_assert_int_eq(client_incarnation_load(g_ss->ss_state_dir, active,
@@ -344,7 +346,9 @@ START_TEST(test_incarnation_symlink_swap_atomicity)
 			client_incarnation_add(g_ss->ss_state_dir, &crc), 0);
 	}
 
-	ck_assert_int_eq(client_incarnation_remove(g_ss->ss_state_dir, 10), 0);
+	ck_assert_int_eq(client_incarnation_remove(g_ss->ss_state_dir, 10,
+						   UINT16_MAX),
+			 0);
 
 	nactive = 0;
 	ck_assert_int_eq(client_incarnation_load(g_ss->ss_state_dir, active,
