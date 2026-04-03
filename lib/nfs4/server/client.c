@@ -180,14 +180,26 @@ struct nfs4_client *nfs4_client_find_by_owner(struct server_state *ss,
 	if (ret < 0)
 		return NULL;
 
+	/*
+	 * Find the highest incarnation for this slot.  When both a
+	 * confirmed and an unconfirmed client exist (EXCHANGE_ID case 7),
+	 * the unconfirmed one has the higher incarnation number.
+	 */
+	uint16_t best_inc = 0;
+	bool found = false;
+
 	for (size_t i = 0; i < nincs; i++) {
 		if (incs[i].crc_slot != cb_arg.slot)
 			continue;
+		if (!found || incs[i].crc_incarnation > best_inc) {
+			best_inc = incs[i].crc_incarnation;
+			found = true;
+		}
+	}
 
-		clientid4 clid = clientid_make(
-			cb_arg.slot, incs[i].crc_incarnation, boot_seq);
+	if (found) {
+		clientid4 clid = clientid_make(cb_arg.slot, best_inc, boot_seq);
 		nc = nfs4_client_find(clid);
-		break;
 	}
 
 	return nc;
