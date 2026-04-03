@@ -540,7 +540,7 @@ void inode_update_times_now(struct inode *inode, uint64_t flags)
 	inode_sync_to_disk(inode);
 }
 
-static const char default_sec_label[] = "unconfined_u:object_r:unlabeled_t:s0";
+static const char default_sec_label[] = "system_u:object_r:nfs_t:s0";
 
 void inode_set_default_sec_label(struct inode *inode)
 {
