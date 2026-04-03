@@ -120,12 +120,12 @@ int client_incarnation_add(const char *state_dir,
 			   const struct client_incarnation_record *crc);
 
 /*
- * client_incarnation_remove - remove the record for slot+incarnation
- * from the active set.  Reads current file, writes new file without
- * the matching record, symlink-swaps atomically.
- * Returns 0 on success, -ENOENT if not present, -errno on I/O failure.
+ * client_incarnation_remove - remove the record for slot from the
+ * active set.  Reads current file, writes new file without the slot,
+ * symlink-swaps atomically.
+ * Returns 0 on success, -ENOENT if slot was not present, -errno on
+ * I/O failure.
  */
-int client_incarnation_remove(const char *state_dir, uint32_t slot,
-			      uint16_t incarnation);
+int client_incarnation_remove(const char *state_dir, uint32_t slot);
 
 #endif /* _REFFS_CLIENT_PERSIST_H */

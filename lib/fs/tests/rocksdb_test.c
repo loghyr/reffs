@@ -404,7 +404,7 @@ START_TEST(test_rocksdb_ns_incarnation_roundtrip)
 	ck_assert_uint_eq(count, 2);
 
 	/* Remove one */
-	ret = ops->client_incarnation_remove(ctx, 1, UINT16_MAX);
+	ret = ops->client_incarnation_remove(ctx, 1);
 	ck_assert_int_eq(ret, 0);
 
 	/* Load again — should be 1 */

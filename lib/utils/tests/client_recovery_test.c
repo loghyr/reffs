@@ -169,7 +169,7 @@ START_TEST(test_incarnation_roundtrip)
 
 	/* Remove one */
 	ret = ss->ss_persist_ops->client_incarnation_remove(ss->ss_persist_ctx,
-							    1, UINT16_MAX);
+							    1);
 	ck_assert_int_eq(ret, 0);
 
 	/* Verify only one remains */

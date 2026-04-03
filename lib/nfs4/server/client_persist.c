@@ -107,26 +107,21 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 	 *   2. Drain stateids.
 	 *   3. Unhash and drop the client ref.
 	 */
-	if (ss->ss_persist_ops->client_incarnation_remove(
-		    ss->ss_persist_ctx, slot, nc->nc_incarnation))
-		LOG("nfs4_client_expire: slot %u inc %u not in incarnations",
-		    slot, nc->nc_incarnation);
+	if (ss->ss_persist_ops->client_incarnation_remove(ss->ss_persist_ctx,
+							  slot))
+		LOG("nfs4_client_expire: slot %u not in incarnations", slot);
 
 	trace_fs_client(client, __func__, __LINE__);
 	__atomic_fetch_or(&client->c_state, CLIENT_IS_EXPIRING,
 			  __ATOMIC_RELEASE);
-
 	/*
-	 * Release predecessor ref if this client held one (e.g., an
-	 * unconfirmed client being expired by the lease reaper before
-	 * CREATE_SESSION confirmed it).  The predecessor is a confirmed
-	 * client that should NOT be expired — it's still valid.
+	 * NOT_NOW_BROWN_COW: sessions should survive until the
+	 * replacement client is confirmed (CREATE_SESSION).
+	 * RFC 8881 §18.35.4 case 7: old state is discarded only
+	 * after the new client is confirmed.  For now, sessions
+	 * are destroyed here; the correct fix is deferred
+	 * confirmation-triggered teardown.
 	 */
-	if (nc->nc_predecessor) {
-		nfs4_client_put(nc->nc_predecessor);
-		nc->nc_predecessor = NULL;
-	}
-
 	nfs4_session_destroy_for_client(ss, nc);
 	client_remove_all_stateids(client);
 	if (client_unhash(client))
@@ -158,34 +153,15 @@ static struct nfs4_client *replace_client(struct server_state *ss,
 	incarnation = old_nc->nc_incarnation + 1;
 	clid = clientid_make(slot, incarnation, server_boot_seq(ss));
 
-	nc = nfs4_client_alloc(verifier, sin, incarnation, clid, principal_uid);
-	if (!nc) {
-		client_put(nfs4_client_to_client(old_nc));
-		return NULL;
-	}
-
 	/*
-	 * RFC 8881 §18.35.4 case 7: do NOT expire the old confirmed
-	 * client here.  Link it as the predecessor — it will be expired
-	 * when CREATE_SESSION confirms the new client.  The old client's
-	 * sessions remain valid until then.
-	 *
-	 * For unconfirmed old clients: expire immediately (an unconfirmed
-	 * client can be freely replaced).
+	 * Expire the old client — removes from incarnations file,
+	 * drains stateids, drops ref.  old_nc is invalid after this.
 	 */
-	if (old_nc->nc_confirmed) {
-		nc->nc_predecessor = old_nc; /* takes the find ref */
-	} else {
-		/*
-		 * Unconfirmed predecessor: if it holds a predecessor ref
-		 * itself, release it (the confirmed grandparent stays).
-		 */
-		if (old_nc->nc_predecessor) {
-			nfs4_client_put(old_nc->nc_predecessor);
-			old_nc->nc_predecessor = NULL;
-		}
-		nfs4_client_expire(ss, old_nc);
-	}
+	nfs4_client_expire(ss, old_nc);
+
+	nc = nfs4_client_alloc(verifier, sin, incarnation, clid, principal_uid);
+	if (!nc)
+		return NULL;
 
 	make_incarnation_record(&crc, ss, slot, incarnation, verifier, sin);
 	if (ss->ss_persist_ops->client_incarnation_add(ss->ss_persist_ctx,
@@ -250,7 +226,7 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 			 * for the same slot after we add the new one.
 			 */
 			ss->ss_persist_ops->client_incarnation_remove(
-				ss->ss_persist_ctx, slot, UINT16_MAX);
+				ss->ss_persist_ctx, slot);
 		} else {
 			/* ------------------------------------------ */
 			/* New client — never seen this ownerid.      */

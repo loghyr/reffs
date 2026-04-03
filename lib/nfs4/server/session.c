@@ -571,18 +571,6 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 
 	nc->nc_confirmed = true;
 
-	/*
-	 * RFC 8881 §18.36.3: confirming the client expires the
-	 * predecessor (the old confirmed client that was kept alive
-	 * during the EXCHANGE_ID → CREATE_SESSION window).
-	 */
-	if (nc->nc_predecessor) {
-		nfs4_client_expire(compound->c_server_state,
-				   nc->nc_predecessor);
-		nfs4_client_put(nc->nc_predecessor);
-		nc->nc_predecessor = NULL;
-	}
-
 	/* Save back-channel parameters. */
 	ns->ns_cb_program = args->csa_cb_program;
 	ns->ns_cb_fd = compound->c_rt->rt_fd;

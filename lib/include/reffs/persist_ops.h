@@ -47,8 +47,7 @@ struct persist_ops {
 	/* Client incarnations (current active clients) */
 	int (*client_incarnation_add)(
 		void *ctx, const struct client_incarnation_record *crc);
-	int (*client_incarnation_remove)(void *ctx, uint32_t slot,
-					 uint16_t incarnation);
+	int (*client_incarnation_remove)(void *ctx, uint32_t slot);
 	int (*client_incarnation_load)(void *ctx,
 				       struct client_incarnation_record *recs,
 				       size_t max_recs, size_t *count);
