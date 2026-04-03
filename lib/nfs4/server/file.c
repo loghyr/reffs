@@ -1098,31 +1098,14 @@ uint32_t nfs4_op_close(struct compound *compound)
 
 	/*
 	 * RFC 8881 §18.2.4: CLOSE MUST return NFS4ERR_LOCKS_HELD if
-	 * any lock stateids are associated with this open stateid.
+	 * any byte-range locks are held on this file.  Check i_locks
+	 * (the actual lock list), not lock stateids — a lock stateid
+	 * persists after LOCKU even when no locks are held.
 	 */
-	{
-		struct cds_lfht_iter liter;
-		struct cds_lfht_node *lnode;
-		bool has_locks = false;
-
-		rcu_read_lock();
-		cds_lfht_for_each(compound->c_inode->i_stateids, &liter, lnode)
-		{
-			struct stateid *ls = caa_container_of(
-				lnode, struct stateid, s_inode_node);
-			if (ls->s_tag == Lock_Stateid &&
-			    stid_to_lock(ls)->ls_open == os) {
-				has_locks = true;
-				break;
-			}
-		}
-		rcu_read_unlock();
-
-		if (has_locks) {
-			stateid_put(stid);
-			*status = NFS4ERR_LOCKS_HELD;
-			return 0;
-		}
+	if (!cds_list_empty(&compound->c_inode->i_locks)) {
+		stateid_put(stid);
+		*status = NFS4ERR_LOCKS_HELD;
+		return 0;
 	}
 
 	/* Remove the share reservation. */
