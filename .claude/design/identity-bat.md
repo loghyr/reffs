@@ -243,7 +243,67 @@ point is where this function is called — replace with
 - In `server_state_init`: load domains, load mappings
 - Wire into the persist_ops dispatch (flatfile or RocksDB)
 
-### Step 5: RocksDB backend (if time)
+### Step 5: Probe ops for admin visibility
+
+**Files**: `lib/xdr/probe1_xdr.x`, `lib/probe1/probe1_server.c`,
+`lib/probe1/probe1_client.c`, `scripts/reffs/probe_client.py.in`,
+`scripts/reffs-probe.py.in`
+
+Admin must be able to inspect and fix identity state.  Three ops,
+shipped in C + Python simultaneously (per planner rule 9):
+
+#### IDENTITY_DOMAIN_LIST (op 21)
+
+Returns all domains.  No arguments.
+
+```
+struct probe_id_domain1 {
+    uint32_t pid_index;
+    string   pid_name<256>;
+    uint32_t pid_type;     /* REFFS_ID_KRB5, etc. */
+};
+
+struct IDENTITY_DOMAIN_LIST1res {
+    probe_status1 status;
+    probe_id_domain1 idl_domains<32>;
+};
+```
+
+CLI: `reffs-probe.py identity-domain-list`
+
+#### IDENTITY_MAP_LIST (op 22)
+
+Returns all mappings.  No arguments (BAT scale is small).
+
+```
+struct probe_id_mapping1 {
+    uint64_t pim_from;     /* reffs_id */
+    uint64_t pim_to;       /* reffs_id */
+    string   pim_name<256>;
+};
+
+struct IDENTITY_MAP_LIST1res {
+    probe_status1 status;
+    probe_id_mapping1 iml_mappings<1024>;
+};
+```
+
+CLI: `reffs-probe.py identity-map-list`
+
+#### IDENTITY_MAP_REMOVE (op 23)
+
+Remove a specific mapping by reffs_id (the `from` key).  For
+fixing bad mappings from libnfsidmap misconfiguration.
+
+```
+struct IDENTITY_MAP_REMOVE1args {
+    uint64_t imr_from;
+};
+```
+
+CLI: `reffs-probe.py identity-map-remove --from <reffs_id>`
+
+### Step 6: RocksDB backend (if time)
 
 **Files**: `lib/backends/rocksdb_namespace.c`
 
@@ -263,21 +323,37 @@ point is where this function is called — replace with
 | `lib/utils/idmap.c` | Auth-time lookup-or-create |
 | `lib/utils/server.c` | Load domains + mappings at init |
 | `lib/utils/tests/identity_map_test.c` | Extend with persistence tests |
+| `lib/xdr/probe1_xdr.x` | Add ops 21-23 + types |
+| `lib/probe1/probe1_server.c` | 3 new handlers |
+| `lib/probe1/probe1_client.c` | 3 new client wrappers |
+| `scripts/reffs/probe_client.py.in` | 3 new Python methods |
+| `scripts/reffs-probe.py.in` | 3 new subparsers |
 
 ## Risks
+
+- **Hash stability**: XXH32 with seed 0 is the canonical hash for
+  principal local_id.  This value is stored on every inode the
+  principal owns (via reffs_id).  Document in the code: never
+  change the hash function or seed.
 
 - **Hash collisions**: XXH32 has ~1 in 4 billion collision rate per
   domain.  For BAT scale (< 100 users) this is negligible.  The
   full name is stored in the mapping record for collision detection.
+  On collision (same hash, different name), allocate a synthetic
+  local_id from a per-domain counter.
 
 - **libnfsidmap fallback**: if libnfsidmap is unavailable at auth time
   (no nsswitch, no LDAP), the mapping creation fails.  Return
   `REFFS_ID_NOBODY` and log a warning.  The circuit breaker (step 10,
   deferred) handles repeated failures gracefully.
 
-- **Concurrent auth**: two threads authenticating the same principal
-  simultaneously could create duplicate mappings.  The lfht add is
-  atomic — second add detects the existing entry and uses it.
+- **Concurrent domain creation**: `find_or_create_domain` holds the
+  domain mutex for the entire find-then-create sequence.  No TOCTOU.
+
+- **Concurrent auth for same principal**: two threads authenticating
+  the same principal race on `identity_map_add`.  The lfht
+  `cds_lfht_add_unique` detects the collision — second thread finds
+  the first thread's entry and uses it.  No duplicate mappings.
 
 ## NOT in scope for BAT
 
