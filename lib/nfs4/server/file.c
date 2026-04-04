@@ -304,11 +304,14 @@ uint32_t nfs4_op_open(struct compound *compound)
 			goto out;
 		}
 		/*
-		 * RFC 8881 §18.51.3: every client must send
-		 * RECLAIM_COMPLETE before doing non-reclaim ops,
-		 * regardless of server-wide grace state.
+		 * RFC 8881 §18.51.3: during grace, a client that
+		 * needs to reclaim must send RECLAIM_COMPLETE
+		 * before doing non-reclaim ops.  Clients that
+		 * don't need to reclaim (fresh connections on a
+		 * clean start) can operate immediately.
 		 */
 		if (compound->c_nfs4_client &&
+		    compound->c_nfs4_client->nc_needs_reclaim &&
 		    !compound->c_nfs4_client->nc_reclaim_done) {
 			*status = NFS4ERR_GRACE;
 			goto out;
