@@ -52,7 +52,28 @@ logs/
 # compile_commands.json is a symlink to the build dir; contains absolute paths
 compile_commands.json
 
-# Claude Code local state — not project-specific
+# Credentials and secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+id_rsa
+id_ed25519
+*.secret
+credentials.json
+secrets.yaml
+secrets.yml
+*.keytab
+
+# PII and database dumps
+*.sql
+*.dump
+
+# Claude Code local state -- not project-specific
 .claude/settings.local.json
 .claude/memory/
 .claude/projects/
