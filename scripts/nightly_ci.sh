@@ -259,7 +259,7 @@ fi
 if [ -z "${goto_email:-}" ]; then
 echo ""
 echo "=== pynfs ==="
-"$REPO/scripts/ci_pynfs.sh" 2>&1 | tee "$LOGDIR/pynfs.log" | \
+"$REPO/scripts/ci_pynfs.sh" "$BUILD/src/reffsd" 2>&1 | tee "$LOGDIR/pynfs.log" | \
     grep -E '(=== |PASS|FAIL|running|tests passed)' | tail -20
 PYNFS_RC=${PIPESTATUS[0]}
 record "pynfs" $PYNFS_RC
@@ -272,7 +272,7 @@ fi
 if [ -z "${goto_email:-}" ]; then
 echo ""
 echo "=== CTHON04 ==="
-"$REPO/scripts/ci_cthon04_test.sh" 2>&1 | tee "$LOGDIR/cthon04.log" | \
+"$REPO/scripts/ci_cthon04_test.sh" "$BUILD/src/reffsd" 2>&1 | tee "$LOGDIR/cthon04.log" | \
     grep -E '(=== |PASS|FAIL|All tests|Congratulations)' | tail -20
 CTHON04_RC=${PIPESTATUS[0]}
 record "cthon04" $CTHON04_RC
@@ -285,7 +285,7 @@ fi
 if [ -z "${goto_email:-}" ]; then
 echo ""
 echo "=== pjdfstest ==="
-"$REPO/scripts/ci_pjdfstest.sh" 2>&1 | tee "$LOGDIR/pjdfstest.log" | \
+"$REPO/scripts/ci_pjdfstest.sh" "$BUILD/src/reffsd" 2>&1 | tee "$LOGDIR/pjdfstest.log" | \
     grep -E '(=== |PASS|FAIL|tests|Failed)' | tail -20
 PJDFSTEST_RC=${PIPESTATUS[0]}
 record "pjdfstest" $PJDFSTEST_RC
