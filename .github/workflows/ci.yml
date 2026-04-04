@@ -10,8 +10,10 @@ on:
     branches: [ "main", "master" ]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  # Self-hosted runner on Hetzner VM — Fedora, real NFS mounts, RocksDB.
+  # All deps pre-installed, no Docker.
+  build-self-hosted:
+    runs-on: self-hosted
 
     steps:
     - uses: actions/checkout@v4
@@ -19,78 +21,21 @@ jobs:
         submodules: recursive
         fetch-depth: 0
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          clang \
-          pkg-config \
-          liburcu-dev \
-          libtirpc-dev \
-          check \
-          libxxhash-dev \
-          libfuse-dev \
-          rpcsvc-proto \
-          uuid-dev \
-          zlib1g-dev \
-          libzstd-dev \
-          liburing-dev \
-          libjemalloc-dev \
-          python3 \
-          python3-pip \
-          clang-format-18 \
-          clang-tidy \
-          clang-tools \
-          autoconf \
-          automake \
-          libtool \
-          libtool-bin \
-          autoconf-archive \
-          libssl-dev \
-          libcap-dev \
-          psmisc \
-          valgrind \
-          cmake \
-          librocksdb-dev \
-          nfs-common \
-          rpcbind
-
-    - name: Install Python dependencies
-      run: |
-        pip3 install --no-cache-dir --break-system-packages \
-          xdrlib3 \
-          reply-xdr@git+https://github.com/loghyr/reply.git
-
-    - name: Set environment variables
-      run: echo "CLANG_FORMAT=clang-format-18" >> $GITHUB_ENV
-
-    - name: Install HdrHistogram_c
-      run: |
-        mkdir -p build/deps
-        git clone https://github.com/HdrHistogram/HdrHistogram_c.git build/deps/HdrHistogram_c
-        cd build/deps/HdrHistogram_c
-        mkdir build_dir
-        cd build_dir
-        cmake ..
-        make
-        sudo make install
-        sudo ldconfig
-
     - name: Create m4 directory
       run: mkdir -p m4
 
     - name: Autoreconf
       run: autoreconf -fi
 
-    - name: Fix style (normalize to CI clang-format version)
-      run: make -f Makefile.reffs fix-style
+    - name: Check style
+      run: make -f Makefile.reffs style
 
     - name: Check license
-      run: make -f Makefile.reffs license
+      run: SKIP_STYLE=1 make -f Makefile.reffs license
 
     - name: Configure
       run: |
-        mkdir build_ci
+        mkdir -p build_ci
         cd build_ci
         ../configure --enable-asan --enable-ubsan
 
@@ -99,44 +44,18 @@ jobs:
         cd build_ci
         make -j$(nproc)
 
-    - name: Run tests
+    - name: Run unit tests
       run: |
         cd build_ci
-        sudo make check || (cat lib/fs/tests/test-suite.log && exit 1)
-
-    - name: Gather environment diagnostics
-      run: |
-        echo "=== Kernel ==="
-        uname -a
-        echo ""
-        echo "=== OS ==="
-        cat /etc/os-release
-        echo ""
-        echo "=== CPU ==="
-        lscpu | grep -E "^(Architecture|Model name|CPU\(s\)|Thread|Core|Socket)"
-        echo ""
-        echo "=== Memory ==="
-        free -h
-        echo ""
-        echo "=== Disk (tmp) ==="
-        df -h /tmp
-        echo ""
-        echo "=== io_uring kernel config ==="
-        sysctl -n kernel.io_uring_disabled 2>/dev/null && echo "io_uring_disabled: $?" || echo "io_uring_disabled: sysctl not found (likely 0)"
-        cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo "(not present)"
-        echo ""
-        echo "=== Key library versions ==="
-        dpkg -l liburing-dev liburcu-dev libtirpc-dev nfs-common 2>/dev/null | awk '/^ii/{printf "%-30s %s\n", $2, $3}'
-        echo ""
-        echo "=== Clang ==="
-        clang --version | head -1
-        echo ""
-        echo "=== NFS client ==="
-        nfsstat --version 2>&1 | head -1 || true
-        mount.nfs -V 2>&1 | head -1 || true
+        make check || (cat lib/fs/tests/test-suite.log && exit 1)
 
     - name: Run integration tests
       run: |
+        sudo rpcbind 2>/dev/null || true
         sudo -E env "PATH=$PATH" bash -c "ulimit -n 65536; bash scripts/ci_integration_test.sh \
           '$(pwd)/build_ci/src/reffsd' \
           '$(pwd)'"
+
+    - name: Clean build directory
+      if: always()
+      run: rm -rf build_ci
