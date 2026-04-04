@@ -47,6 +47,12 @@ else
 fi
 
 MOUNT=/mnt/reffs
+
+# Clean up from any previous failed run.
+umount -f "$MOUNT" 2>/dev/null || true
+rm -rf "$MOUNT" 2>/dev/null || true
+mkdir -p "$MOUNT"
+
 DATA=$WORK_DIR/reffs_ci_data
 STATE=$WORK_DIR/reffs_ci_state   # directory; server_persist appends "server_state"
 CONFIG=$WORK_DIR/reffsd_ci.toml
