@@ -253,6 +253,66 @@ record "integration" $INT_RC
 fi
 
 # -----------------------------------------------------------------------
+# pynfs (NFSv4.1 protocol conformance)
+# -----------------------------------------------------------------------
+
+if [ -z "${goto_email:-}" ]; then
+echo ""
+echo "=== pynfs ==="
+"$REPO/scripts/ci_pynfs.sh" 2>&1 | tee "$LOGDIR/pynfs.log" | \
+    grep -E '(=== |PASS|FAIL|running|tests passed)' | tail -20
+PYNFS_RC=${PIPESTATUS[0]}
+record "pynfs" $PYNFS_RC
+fi
+
+# -----------------------------------------------------------------------
+# CTHON04 (Connectathon NFS tests)
+# -----------------------------------------------------------------------
+
+if [ -z "${goto_email:-}" ]; then
+echo ""
+echo "=== CTHON04 ==="
+"$REPO/scripts/ci_cthon04_test.sh" 2>&1 | tee "$LOGDIR/cthon04.log" | \
+    grep -E '(=== |PASS|FAIL|All tests|Congratulations)' | tail -20
+CTHON04_RC=${PIPESTATUS[0]}
+record "cthon04" $CTHON04_RC
+fi
+
+# -----------------------------------------------------------------------
+# pjdfstest (POSIX filesystem compliance)
+# -----------------------------------------------------------------------
+
+if [ -z "${goto_email:-}" ]; then
+echo ""
+echo "=== pjdfstest ==="
+"$REPO/scripts/ci_pjdfstest.sh" 2>&1 | tee "$LOGDIR/pjdfstest.log" | \
+    grep -E '(=== |PASS|FAIL|tests|Failed)' | tail -20
+PJDFSTEST_RC=${PIPESTATUS[0]}
+record "pjdfstest" $PJDFSTEST_RC
+fi
+
+# -----------------------------------------------------------------------
+# wardtest (EC data integrity over NFSv4.2)
+# -----------------------------------------------------------------------
+
+if [ -z "${goto_email:-}" ]; then
+echo ""
+echo "=== wardtest ==="
+WARDTEST_DIR="$HOME/wardtest"
+if [ ! -d "$WARDTEST_DIR" ]; then
+    echo "Cloning wardtest..."
+    git clone git@github.com:loghyr/wardtest.git "$WARDTEST_DIR" 2>&1 | tail -3
+fi
+(cd "$WARDTEST_DIR" && git pull --ff-only 2>&1 | tail -3)
+
+"$REPO/scripts/ci_wardtest.sh" --duration 60 --wardtest-dir "$WARDTEST_DIR" \
+    2>&1 | tee "$LOGDIR/wardtest.log" | \
+    grep -E '(=== |PASS|FAIL|iterations|verify)' | tail -20
+WARDTEST_RC=${PIPESTATUS[0]}
+record "wardtest" $WARDTEST_RC
+fi
+
+# -----------------------------------------------------------------------
 # Soak test (30 min)
 # -----------------------------------------------------------------------
 
