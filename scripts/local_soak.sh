@@ -181,11 +181,23 @@ stop_server() {
 }
 
 mount_nfs() {
+    info "  mount: vers=4.2,sec=sys,port=$NFS_PORT -> $MOUNT"
     sudo timeout 30 mount -v -o vers=4.2,sec=sys,port=$NFS_PORT 127.0.0.1:/ "$MOUNT" 2>&1
+    local rc=$?
+    if [ "$rc" -eq 0 ]; then
+        info "  mount: success"
+    else
+        info "  mount: failed (exit $rc)"
+    fi
+    return $rc
 }
 
 unmount_nfs() {
-    sudo umount -f -l "$MOUNT" 2>/dev/null || true
+    info "  umount -f -l $MOUNT"
+    sudo umount -f -l "$MOUNT" 2>/dev/null
+    local rc=$?
+    info "  umount: exit $rc"
+    return 0  # best-effort
 }
 
 get_rss_kb() {
@@ -211,17 +223,27 @@ check_asan() {
 
 cleanup() {
     set +e
+    info "=== Cleanup ==="
+    info "  Killing ${#WORKLOAD_PIDS[@]} workload processes"
     for pid in "${WORKLOAD_PIDS[@]}"; do
-        kill "$pid" 2>/dev/null
+        info "    kill -9 $pid"
+        kill -9 "$pid" 2>/dev/null
         wait "$pid" 2>/dev/null
     done
-    sudo umount -f "$MOUNT" 2>/dev/null || true
+    info "  Unmounting $MOUNT"
+    sudo umount -f -l "$MOUNT" 2>/dev/null || true
     if [ -n "$REFFSD_PID" ]; then
+        info "  Stopping reffsd (PID $REFFSD_PID): SIGTERM"
         kill -TERM "$REFFSD_PID" 2>/dev/null
         sleep 2
-        kill -KILL "$REFFSD_PID" 2>/dev/null
+        if kill -0 "$REFFSD_PID" 2>/dev/null; then
+            info "  reffsd still alive, SIGKILL"
+            kill -KILL "$REFFSD_PID" 2>/dev/null
+        fi
         wait "$REFFSD_PID" 2>/dev/null
+        info "  reffsd exited"
     fi
+    info "  Cleanup complete"
 }
 trap cleanup EXIT
 
@@ -325,62 +347,68 @@ while true; do
         RESTART_COUNT=$((RESTART_COUNT + 1))
         info "=== Restart #$RESTART_COUNT ==="
 
-        # Kill server immediately (SIGKILL, not SIGTERM) so it doesn't
-        # block trying to drain active client connections.  This is a
-        # crash-restart test -- graceful shutdown is tested elsewhere.
-        info "Killing reffsd (PID $REFFSD_PID)..."
-        info "  FDs before kill: $(ls /proc/$REFFSD_PID/fd 2>/dev/null | wc -l)"
+        # Step 1: SIGKILL server (crash-restart, not graceful)
+        info "  [1/6] SIGKILL reffsd (PID $REFFSD_PID)"
+        info "    FDs before kill: $(ls /proc/$REFFSD_PID/fd 2>/dev/null | wc -l)"
         kill -9 "$REFFSD_PID" 2>/dev/null || true
         wait "$REFFSD_PID" 2>/dev/null || true
+        info "    reffsd exited"
         REFFSD_PID=
 
-        # Force-unmount to unblock any D-state workload processes
+        # Step 2: force-unmount to unblock D-state workloads
+        info "  [2/6] Force-unmount $MOUNT"
         sudo umount -f -l "$MOUNT" 2>/dev/null || true
         sleep 1
 
-        # Kill workloads -- SIGKILL because SIGTERM can't interrupt
-        # uninterruptible sleep (D state)
+        # Step 3: SIGKILL workloads (SIGTERM can't interrupt D-state)
+        info "  [3/6] SIGKILL ${#WORKLOAD_PIDS[@]} workload processes"
         for pid in "${WORKLOAD_PIDS[@]}"; do
-            kill -9 "$pid" 2>/dev/null
+            if kill -0 "$pid" 2>/dev/null; then
+                info "    kill -9 $pid"
+                kill -9 "$pid" 2>/dev/null
+            else
+                info "    $pid already exited"
+            fi
         done
         for pid in "${WORKLOAD_PIDS[@]}"; do
             wait "$pid" 2>/dev/null || true
         done
+        info "    all workloads reaped"
         WORKLOAD_PIDS=()
 
+        # Step 4: check for ASAN/UBSAN errors in server log
+        info "  [4/6] Checking ASAN/UBSAN"
         check_asan
         if [ "$FAILED" = "true" ]; then
-            info "Aborting soak due to errors"
+            info "Aborting soak due to ASAN/UBSAN errors"
             exit 1
         fi
+        info "    clean"
 
+        # Step 5: restart server + remount
+        info "  [5/6] Restarting server"
         echo "=== Restart #$RESTART_COUNT at $(date) ===" >> "$LOG"
-
         start_server || exit 1
 
-        # Reuse the same mount point — on bare metal (no Docker),
-        # umount -f should cleanly release the kernel NFS superblock.
         sudo umount -f "$MOUNT" 2>/dev/null || true
         sleep 1
         mount_ok=false
         for try in $(seq 1 6); do
-            info "  Mount attempt $try/6..."
             mount_nfs
             mount_rc=$?
             if [ "$mount_rc" -eq 0 ]; then
                 mount_ok=true
                 break
             fi
-            info "  Mount attempt $try failed (exit $mount_rc)"
             sleep 5
         done
         if [ "$mount_ok" != "true" ]; then
-            die "mount failed after restart #$RESTART_COUNT"
+            die "mount failed after restart #$RESTART_COUNT (6 attempts)"
             exit 1
         fi
-        info "Mount succeeded after restart"
 
-        # Restart workloads
+        # Step 6: relaunch workloads
+        info "  [6/6] Relaunching $CLIENTS workloads"
         for i in $(seq 1 "$CLIENTS"); do
             if [ $((i % 2)) -eq 0 ]; then
                 workload_fileops "$i" "$MOUNT" &
@@ -388,9 +416,11 @@ while true; do
                 workload_build "$i" "$MOUNT" &
             fi
             WORKLOAD_PIDS+=($!)
+            info "    workload $i: PID ${WORKLOAD_PIDS[-1]}"
         done
 
         NEXT_RESTART=$((NOW + RESTART_SEC))
+        info "  Restart #$RESTART_COUNT complete, next in ${RESTART_SEC}s"
     fi
 
     sleep 10
