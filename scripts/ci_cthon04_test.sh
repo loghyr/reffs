@@ -54,7 +54,7 @@ info() { echo "[$(date +%H:%M:%S)] $*"; }
 
 cleanup() {
 	set +e
-	umount -f "$MOUNT" 2>/dev/null
+	sudo umount -f "$MOUNT" 2>/dev/null
 	if [ -n "$REFFSD_PID" ]; then
 		kill -TERM "$REFFSD_PID" 2>/dev/null
 		sleep 2
@@ -104,7 +104,8 @@ write_config() {
 	local extra=${2:-}
 
 	rm -rf "$DATA_DIR" "$STATE_DIR" "$DS_DIR"
-	mkdir -p "$DATA_DIR" "$STATE_DIR" "$DS_DIR" "$MOUNT"
+	mkdir -p "$DATA_DIR" "$STATE_DIR" "$DS_DIR"
+	sudo mkdir -p "$MOUNT"
 
 	cat >"$CONFIG" <<EOF
 [server]
@@ -188,9 +189,9 @@ run_cthon04() {
 
 	info "--- $label ---"
 
-	umount -f "$MOUNT" 2>/dev/null || true
-	mkdir -p "$MOUNT"
-	mount -o "$mount_opts" 127.0.0.1:/ "$MOUNT" || {
+	sudo umount -f "$MOUNT" 2>/dev/null || true
+	sudo mkdir -p "$MOUNT"
+	sudo mount -o "$mount_opts" 127.0.0.1:/ "$MOUNT" || {
 		die "$label: mount failed"
 		return 1
 	}
@@ -198,8 +199,9 @@ run_cthon04() {
 	# cthon04 runtests tries to rm/mkdir its test directory.
 	# Give it a subdirectory of the mount, not the mount point itself.
 	local TESTDIR="$MOUNT/cthon_test"
-	rm -rf "$TESTDIR" 2>/dev/null || true
-	mkdir -p "$TESTDIR"
+	sudo rm -rf "$TESTDIR" 2>/dev/null || true
+	sudo mkdir -p "$TESTDIR"
+	sudo chmod 777 "$TESTDIR"
 
 	info "Running cthon04 ($test_flags) on $TESTDIR"
 
@@ -230,7 +232,7 @@ run_cthon04() {
 	RESULTS+=("${label}:${r_basic}:${r_general}:${r_special}:${r_lock}")
 
 	rm -rf "$TESTDIR" 2>/dev/null || true
-	umount -f "$MOUNT" 2>/dev/null || true
+	sudo umount -f "$MOUNT" 2>/dev/null || true
 
 	check_asan
 

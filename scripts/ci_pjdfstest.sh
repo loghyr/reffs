@@ -50,7 +50,7 @@ FAILED=0
 
 cleanup() {
 	set +e
-	umount -f "$MOUNT" 2>/dev/null
+	sudo umount -f "$MOUNT" 2>/dev/null
 	if [ -n "$REFFSD_PID" ]; then
 		kill -TERM "$REFFSD_PID" 2>/dev/null
 		sleep 2
@@ -85,7 +85,8 @@ fetch_pjdfstest() {
 
 start_server() {
 	rm -rf "$DATA_DIR" "$STATE_DIR"
-	mkdir -p "$DATA_DIR" "$STATE_DIR" "$MOUNT"
+	mkdir -p "$DATA_DIR" "$STATE_DIR"
+	sudo mkdir -p "$MOUNT"
 
 	cat >"$CONFIG" <<EOF
 [server]
@@ -181,17 +182,18 @@ run_pjdfstest() {
 	info ""
 	info "========== pjdfstest: $label =========="
 
-	umount -f "$MOUNT" 2>/dev/null || true
-	mkdir -p "$MOUNT"
-	mount -o "$mount_opts" 127.0.0.1:/ "$MOUNT" || {
+	sudo umount -f "$MOUNT" 2>/dev/null || true
+	sudo mkdir -p "$MOUNT"
+	sudo mount -o "$mount_opts" 127.0.0.1:/ "$MOUNT" || {
 		info "$label: mount failed"
 		die "$label mount failed"
 		return 1
 	}
 
 	local TESTDIR="$MOUNT/pjd_test"
-	rm -rf "$TESTDIR" 2>/dev/null || true
-	mkdir -p "$TESTDIR"
+	sudo rm -rf "$TESTDIR" 2>/dev/null || true
+	sudo mkdir -p "$TESTDIR"
+	sudo chmod 777 "$TESTDIR"
 
 	info "Running pjdfstest ($label) on $TESTDIR"
 
@@ -204,7 +206,7 @@ run_pjdfstest() {
 
 	cd /
 	rm -rf "$TESTDIR" 2>/dev/null || true
-	umount -f "$MOUNT" 2>/dev/null || true
+	sudo umount -f "$MOUNT" 2>/dev/null || true
 
 	check_asan
 }
