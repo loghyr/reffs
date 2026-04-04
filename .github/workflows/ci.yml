@@ -62,6 +62,9 @@ jobs:
             '$(pwd)/build_ci/src/reffsd' \
             '$(pwd)'"
 
-    - name: Clean build directory
+    - name: Clean up
       if: always()
-      run: rm -rf build_ci
+      run: |
+        rm -rf build_ci
+        sudo umount -f /mnt/reffs 2>/dev/null || true
+        sudo rm -rf /mnt/reffs 2>/dev/null || true
