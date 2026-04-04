@@ -103,6 +103,7 @@ section_end() {
 # runs as root, so mark all directories safe for this container session.
 git config --global --add safe.directory '*'
 
+rm -rf "$DATA" "$STATE"
 mkdir -p "$DATA" "$MOUNT" "$STATE"
 
 # Generate self-signed TLS certs for the TLS test.
@@ -192,6 +193,7 @@ mount -o vers=4.2,sec=sys,soft,timeo=10,retrans=2 127.0.0.1:/ "$MOUNT"
 
 (
 	cd "$MOUNT"
+	rm -rf reffs_v4 build_v4 2>/dev/null || true
 	GIT_TRACE=1 git clone --verbose "$SRC_DIR" reffs_v4
 	sum_nfs=$(md5sum reffs_v4/configure.ac | awk '{print $1}')
 	sum_src=$(md5sum "$SRC_DIR/configure.ac" | awk '{print $1}')
