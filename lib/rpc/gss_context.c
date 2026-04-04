@@ -736,8 +736,8 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 #else
 	/* Fallback: strip @REALM, use getpwnam_r(). */
 	char local[256];
-	const char *at = strchr(principal, '@');
-	size_t len = at ? (size_t)(at - principal) : strlen(principal);
+	const char *fb_at = strchr(principal, '@');
+	size_t len = fb_at ? (size_t)(fb_at - principal) : strlen(principal);
 
 	if (len >= sizeof(local))
 		len = sizeof(local) - 1;
