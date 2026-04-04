@@ -325,17 +325,25 @@ while true; do
         RESTART_COUNT=$((RESTART_COUNT + 1))
         info "=== Restart #$RESTART_COUNT ==="
 
-        # Stop workloads
+        # Stop server first -- workloads in D-state on the NFS mount
+        # can't be interrupted by SIGTERM while the server is alive
+        # (they're blocked in the kernel NFS client).  Stopping the
+        # server makes the mount go stale, then force-unmount releases
+        # the blocked processes, then SIGKILL reaps them.
+        stop_server
+
+        # Force-unmount to unblock any D-state processes
+        sudo umount -f -l "$MOUNT" 2>/dev/null || true
+
+        # Now kill workloads -- SIGKILL because SIGTERM can't
+        # interrupt uninterruptible sleep (D state)
         for pid in "${WORKLOAD_PIDS[@]}"; do
-            kill "$pid" 2>/dev/null
+            kill -9 "$pid" 2>/dev/null
         done
         for pid in "${WORKLOAD_PIDS[@]}"; do
             wait "$pid" 2>/dev/null || true
         done
         WORKLOAD_PIDS=()
-
-        unmount_nfs
-        stop_server
 
         check_asan
         if [ "$FAILED" = "true" ]; then
