@@ -87,14 +87,26 @@ echo "Results: $LOGDIR"
 PASSED=0
 FAILED=0
 SKIPPED=0
+CI_START=$(date +%s)
+
+section_start() {
+    eval "_section_${1}_start=$(date +%s)"
+    echo ""
+    echo "=== $2 [$(date +%H:%M:%S)] ==="
+}
 
 record() {
     local name=$1 result=$2
+    local elapsed=""
+    local start_var="_section_${name}_start"
+    if [ -n "${!start_var:-}" ]; then
+        elapsed=" ($(( $(date +%s) - ${!start_var} ))s)"
+    fi
     if [ "$result" -eq 0 ]; then
-        echo "  PASS: $name"
+        echo "  PASS: $name${elapsed}"
         PASSED=$((PASSED + 1))
     else
-        echo "  FAIL: $name (exit $result)"
+        echo "  FAIL: $name (exit $result)${elapsed}"
         FAILED=$((FAILED + 1))
     fi
 }
@@ -108,8 +120,7 @@ skip() {
 # Git pull
 # -----------------------------------------------------------------------
 
-echo ""
-echo "=== Git pull ==="
+section_start git_pull "Git pull"
 cd "$REPO"
 git fetch origin 2>&1
 git log --oneline HEAD..origin/main | head -5
@@ -122,8 +133,7 @@ echo "HEAD: $(git log --oneline -1)"
 # Build
 # -----------------------------------------------------------------------
 
-echo ""
-echo "=== Build ==="
+section_start build "Build"
 cd "$REPO"
 if [ ! -f configure ]; then
     mkdir -p m4 && autoreconf -fi 2>&1 | tail -3
@@ -152,8 +162,7 @@ fi
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-echo ""
-echo "=== Unit tests ==="
+section_start unit_tests "Unit tests"
 make check 2>&1 | tee "$LOGDIR/unit_tests.log" | tail -20
 UNIT_RC=${PIPESTATUS[0]}
 record "unit_tests" $UNIT_RC
@@ -164,14 +173,12 @@ fi
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-echo ""
-echo "=== Style ==="
+section_start style "Style"
 cd "$REPO"
 make -f Makefile.reffs style 2>&1 | tail -5
 record "style" ${PIPESTATUS[0]}
 
-echo ""
-echo "=== License ==="
+section_start license "License"
 SKIP_STYLE=1 make -f Makefile.reffs license 2>&1 | tail -5
 record "license" ${PIPESTATUS[0]}
 fi
@@ -181,8 +188,7 @@ fi
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-echo ""
-echo "=== Integration test ==="
+section_start integration "Integration test"
 REFFSD="$BUILD/src/reffsd"
 INT_DATA=/reffs_data/nightly_int_data
 INT_STATE=/reffs_data/nightly_int_state
@@ -257,8 +263,7 @@ fi
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-echo ""
-echo "=== pynfs ==="
+section_start pynfs "pynfs"
 "$REPO/scripts/ci_pynfs.sh" "$BUILD/src/reffsd" 2>&1 | tee "$LOGDIR/pynfs.log" | \
     grep -E '(=== |PASS|FAIL|running|tests passed)' | tail -20
 PYNFS_RC=${PIPESTATUS[0]}
@@ -270,8 +275,7 @@ fi
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-echo ""
-echo "=== CTHON04 ==="
+section_start cthon04 "CTHON04"
 "$REPO/scripts/ci_cthon04_test.sh" "$BUILD/src/reffsd" 2>&1 | tee "$LOGDIR/cthon04.log" | \
     grep -E '(=== |PASS|FAIL|All tests|Congratulations)' | tail -20
 CTHON04_RC=${PIPESTATUS[0]}
@@ -283,8 +287,7 @@ fi
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-echo ""
-echo "=== pjdfstest ==="
+section_start pjdfstest "pjdfstest"
 "$REPO/scripts/ci_pjdfstest.sh" "$BUILD/src/reffsd" 2>&1 | tee "$LOGDIR/pjdfstest.log" | \
     grep -E '(=== |PASS|FAIL|tests|Failed)' | tail -20
 PJDFSTEST_RC=${PIPESTATUS[0]}
@@ -296,8 +299,7 @@ fi
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-echo ""
-echo "=== wardtest ==="
+section_start wardtest "wardtest"
 WARDTEST_DIR="$HOME/wardtest"
 if [ ! -d "$WARDTEST_DIR" ]; then
     echo "Cloning wardtest..."
@@ -317,15 +319,13 @@ fi
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-echo ""
-echo "=== Soak test (POSIX, 30 min) ==="
+section_start soak_posix "Soak test (POSIX, 30 min)"
 "$REPO/scripts/local_soak.sh" --posix 2>&1 | tee "$LOGDIR/soak_posix.log" | \
     grep -E '(=== |Health:.*restarts=[0-9]|PASS|FAIL)' | tail -20
 SOAK_POSIX_RC=${PIPESTATUS[0]}
 record "soak_posix" $SOAK_POSIX_RC
 
-echo ""
-echo "=== Soak test (RocksDB, 30 min) ==="
+section_start soak_rocksdb "Soak test (RocksDB, 30 min)"
 "$REPO/scripts/local_soak.sh" --rocksdb 2>&1 | tee "$LOGDIR/soak_rocksdb.log" | \
     grep -E '(=== |Health:.*restarts=[0-9]|PASS|FAIL)' | tail -20
 SOAK_ROCKSDB_RC=${PIPESTATUS[0]}
@@ -336,9 +336,16 @@ fi
 # Summary + email
 # -----------------------------------------------------------------------
 
+CI_END=$(date +%s)
+CI_ELAPSED=$(( CI_END - CI_START ))
+CI_MIN=$(( CI_ELAPSED / 60 ))
+CI_SEC=$(( CI_ELAPSED % 60 ))
+
 echo ""
 echo "========================================"
-echo "=== Nightly CI Summary: $HOSTNAME $DATE"
+echo "=== Nightly CI Summary: $HOSTNAME"
+echo "=== Started: $DATE  Finished: $(date +%Y%m%d-%H%M%S)"
+echo "=== Duration: ${CI_MIN}m ${CI_SEC}s"
 echo "========================================"
 echo "  PASSED:  $PASSED"
 echo "  FAILED:  $FAILED"
