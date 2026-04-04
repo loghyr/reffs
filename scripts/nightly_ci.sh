@@ -29,7 +29,7 @@ set -uo pipefail
 REPO=/home/loghyr/reffs
 BUILD=$REPO/build
 RESULTS=/reffs_data/nightly
-LOCKFILE=/reffs_data/nightly_ci.lock
+LOCKFILE=/reffs_data/reffs_ci.lock
 MAX_RUNTIME=$((3 * 3600))  # 3 hours max
 EMAIL="loghyr@gmail.com"
 HOSTNAME=$(hostname -s)

@@ -16,6 +16,19 @@ jobs:
     runs-on: self-hosted
 
     steps:
+    - name: Acquire CI lock
+      run: |
+        LOCKFILE=/reffs_data/reffs_ci.lock
+        for i in $(seq 1 60); do
+          if (set -C; echo $$ > "$LOCKFILE") 2>/dev/null; then
+            echo "Lock acquired"
+            break
+          fi
+          echo "Waiting for lock (attempt $i/60)..."
+          sleep 10
+        done
+        [ -f "$LOCKFILE" ] && [ "$(cat "$LOCKFILE")" = "$$" ] || exit 1
+
     - uses: actions/checkout@v4
       with:
         submodules: recursive
@@ -68,3 +81,4 @@ jobs:
         rm -rf build_ci
         sudo umount -f /mnt/reffs 2>/dev/null || true
         sudo rm -rf /mnt/reffs 2>/dev/null || true
+        rm -f /reffs_data/reffs_ci.lock
