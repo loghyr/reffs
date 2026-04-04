@@ -1216,12 +1216,13 @@ uint32_t nfs4_op_read(struct compound *compound)
 		goto out;
 
 	/*
-	 * For anonymous and regular stateids, verify POSIX read permission.
-	 * Read-bypass skips this check (stid == NULL and seqid == UINT32_MAX).
+	 * POSIX permission check only for anonymous/bypass stateids.
+	 * When a valid open stateid was resolved, the access mode was
+	 * already verified at OPEN time (RFC 8881 S18.25.3).
 	 */
-	if (!stateid4_is_read_bypass(&args->stateid)) {
-		int ret = inode_access_check(compound->c_inode, &compound->c_ap,
-					     R_OK);
+	if (!stid && !stateid4_is_read_bypass(&args->stateid)) {
+		int ret = inode_access_check(compound->c_inode,
+					     &compound->c_ap, R_OK);
 		if (ret) {
 			*status = errno_to_nfs4(ret, OP_READ);
 			goto out;
@@ -1575,10 +1576,20 @@ uint32_t nfs4_op_write(struct compound *compound)
 	if (*status != NFS4_OK)
 		goto out;
 
-	int ret = inode_access_check(compound->c_inode, &compound->c_ap, W_OK);
-	if (ret) {
-		*status = errno_to_nfs4(ret, OP_WRITE);
-		goto out;
+	/*
+	 * POSIX permission check only for anonymous/bypass stateids.
+	 * When a valid open stateid was resolved, the access mode was
+	 * already verified at OPEN time -- don't re-check against
+	 * current mode bits.  A chmod(000) after OPEN must not
+	 * invalidate the stateid's granted access (RFC 8881 S18.32.3).
+	 */
+	if (!stid) {
+		int ret = inode_access_check(compound->c_inode,
+					     &compound->c_ap, W_OK);
+		if (ret) {
+			*status = errno_to_nfs4(ret, OP_WRITE);
+			goto out;
+		}
 	}
 
 	/* Zero-length write is a no-op (RFC 5661 §18.32.3). */
