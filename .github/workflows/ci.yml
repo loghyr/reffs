@@ -52,12 +52,15 @@ jobs:
     - name: Run integration tests
       run: |
         sudo rpcbind 2>/dev/null || true
-        sudo mkdir -p /mnt/reffs_ci
-        sudo chmod 777 /mnt/reffs_ci
-        sudo -E env "PATH=$PATH" "LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64" \
+        # Integration test needs root for mount + port 2049.
+        # Pass user's PATH so build-on-NFS finds xdr-parser.
+        sudo -E env \
+          "PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin" \
+          "LD_LIBRARY_PATH=/usr/local/lib:/usr/local/lib64" \
+          "HOME=$HOME" \
           bash -c "ulimit -n 65536; bash scripts/ci_integration_test.sh \
-          '$(pwd)/build_ci/src/reffsd' \
-          '$(pwd)'" || echo "Integration tests failed (non-blocking for now)"
+            '$(pwd)/build_ci/src/reffsd' \
+            '$(pwd)'"
 
     - name: Clean build directory
       if: always()
