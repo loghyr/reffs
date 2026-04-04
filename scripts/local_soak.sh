@@ -325,18 +325,21 @@ while true; do
         RESTART_COUNT=$((RESTART_COUNT + 1))
         info "=== Restart #$RESTART_COUNT ==="
 
-        # Stop server first -- workloads in D-state on the NFS mount
-        # can't be interrupted by SIGTERM while the server is alive
-        # (they're blocked in the kernel NFS client).  Stopping the
-        # server makes the mount go stale, then force-unmount releases
-        # the blocked processes, then SIGKILL reaps them.
-        stop_server
+        # Kill server immediately (SIGKILL, not SIGTERM) so it doesn't
+        # block trying to drain active client connections.  This is a
+        # crash-restart test -- graceful shutdown is tested elsewhere.
+        info "Killing reffsd (PID $REFFSD_PID)..."
+        info "  FDs before kill: $(ls /proc/$REFFSD_PID/fd 2>/dev/null | wc -l)"
+        kill -9 "$REFFSD_PID" 2>/dev/null || true
+        wait "$REFFSD_PID" 2>/dev/null || true
+        REFFSD_PID=
 
-        # Force-unmount to unblock any D-state processes
+        # Force-unmount to unblock any D-state workload processes
         sudo umount -f -l "$MOUNT" 2>/dev/null || true
+        sleep 1
 
-        # Now kill workloads -- SIGKILL because SIGTERM can't
-        # interrupt uninterruptible sleep (D state)
+        # Kill workloads -- SIGKILL because SIGTERM can't interrupt
+        # uninterruptible sleep (D state)
         for pid in "${WORKLOAD_PIDS[@]}"; do
             kill -9 "$pid" 2>/dev/null
         done
