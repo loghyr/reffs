@@ -53,6 +53,7 @@ struct sb_registry_entry {
 	uint32_t sre_storage_type; /* enum reffs_storage_type */
 	uuid_t sre_uuid; /* stable across restarts */
 	char sre_path[SB_REGISTRY_MAX_PATH];
+	char sre_backend_path[SB_REGISTRY_MAX_PATH];
 };
 
 /*

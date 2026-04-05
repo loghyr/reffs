@@ -87,6 +87,10 @@ int sb_registry_save(const char *state_dir)
 			if (sb->sb_path)
 				strncpy(entries[i].sre_path, sb->sb_path,
 					SB_REGISTRY_MAX_PATH - 1);
+			if (sb->sb_backend_path)
+				strncpy(entries[i].sre_backend_path,
+					sb->sb_backend_path,
+					SB_REGISTRY_MAX_PATH - 1);
 			i++;
 		}
 		rcu_read_unlock();
@@ -234,9 +238,11 @@ int sb_registry_load(const char *state_dir)
 			continue;
 		}
 
+		const char *backend =
+			e->sre_backend_path[0] ? e->sre_backend_path : NULL;
 		struct super_block *sb = super_block_alloc(
 			e->sre_id, e->sre_path,
-			(enum reffs_storage_type)e->sre_storage_type, NULL);
+			(enum reffs_storage_type)e->sre_storage_type, backend);
 		if (!sb) {
 			LOG("sb_registry_load: failed to alloc sb %lu",
 			    (unsigned long)e->sre_id);
