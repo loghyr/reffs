@@ -45,7 +45,12 @@ root_squash = false
 flavors     = ["sys", "krb5", "krb5i", "krb5p", "tls"]
 
 # Loopback data server for combined pNFS mode.
+# Data server for combined pNFS mode.
+# bat_setup.sh replaces REPLACE_WITH_SERVER_IP with the server's
+# real IP/hostname.  Remote clients receive this address in
+# LAYOUTGET and connect to it for DS I/O.  Using 127.0.0.1 would
+# cause remote clients to connect to themselves.
 [[data_server]]
 id      = 1
-address = "127.0.0.1"
+address = "REPLACE_WITH_SERVER_IP"
 path    = "/"

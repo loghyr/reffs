@@ -110,6 +110,16 @@ struct super_block {
 #define SB_IS_READ_ONLY (1ULL << 1)
 	uint64_t sb_state;
 
+	/*
+	 * Per-export pNFS layout policy.  Bitmask of layout types
+	 * this export serves.  0 = no layouts (standalone).
+	 * LAYOUTGET returns NFS4ERR_LAYOUTUNAVAILABLE for exports
+	 * without the requested layout type.
+	 */
+#define SB_LAYOUT_FLEX_FILES (1U << 0) /* LAYOUT4_FLEX_FILES (v1) */
+#define SB_LAYOUT_FLEX_FILES_V2 (1U << 1) /* LAYOUT4_FLEX_FILES_V2 */
+	uint32_t sb_layout_types;
+
 	/* Per-op NFS4 statistics — superblock scope. */
 	struct reffs_op_stats sb_nfs4_op_stats[REFFS_NFS4_OP_MAX];
 

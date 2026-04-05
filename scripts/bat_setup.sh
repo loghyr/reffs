@@ -49,7 +49,10 @@ if [ ! -f "$CONFIG" ]; then
 	info "Config not found at $CONFIG, installing from examples..."
 	mkdir -p /etc/reffs
 	if [ -f "$SCRIPT_DIR/../examples/reffsd-bat.toml" ]; then
-		cp "$SCRIPT_DIR/../examples/reffsd-bat.toml" "$CONFIG"
+		# Substitute the real server address for the DS config.
+		# The template has REPLACE_WITH_SERVER_IP as a placeholder.
+		sed "s/REPLACE_WITH_SERVER_IP/$HOSTNAME/" \
+			"$SCRIPT_DIR/../examples/reffsd-bat.toml" > "$CONFIG"
 	else
 		die "No config file found"
 	fi

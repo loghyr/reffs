@@ -2920,25 +2920,51 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	 * is MDS or combined.  The client uses this to decide whether
 	 * to request layouts via LAYOUTGET.
 	 */
-	if (ss->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS) {
+	if ((ss->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS) &&
+	    sb->sb_layout_types != 0) {
+		/*
+		 * Per-export layout policy: only advertise layout types
+		 * that this export supports.  The client uses
+		 * FS_LAYOUT_TYPES to decide whether to request layouts.
+		 */
+		uint32_t lt = sb->sb_layout_types;
+		uint32_t n = 0;
+
+		if (lt & SB_LAYOUT_FLEX_FILES)
+			n++;
+		if (lt & SB_LAYOUT_FLEX_FILES_V2)
+			n++;
+
 		nattr->fs_layout_types.fattr4_fs_layout_types_val =
-			calloc(2, sizeof(layouttype4));
+			calloc(n, sizeof(layouttype4));
 		if (nattr->fs_layout_types.fattr4_fs_layout_types_val) {
-			nattr->fs_layout_types.fattr4_fs_layout_types_len = 2;
-			nattr->fs_layout_types.fattr4_fs_layout_types_val[0] =
-				LAYOUT4_FLEX_FILES;
-			nattr->fs_layout_types.fattr4_fs_layout_types_val[1] =
-				LAYOUT4_FLEX_FILES_V2;
+			uint32_t idx = 0;
+
+			if (lt & SB_LAYOUT_FLEX_FILES)
+				nattr->fs_layout_types
+					.fattr4_fs_layout_types_val[idx++] =
+					LAYOUT4_FLEX_FILES;
+			if (lt & SB_LAYOUT_FLEX_FILES_V2)
+				nattr->fs_layout_types
+					.fattr4_fs_layout_types_val[idx++] =
+					LAYOUT4_FLEX_FILES_V2;
+			nattr->fs_layout_types.fattr4_fs_layout_types_len = idx;
 		}
 
 		nattr->layout_types.fattr4_layout_types_val =
-			calloc(2, sizeof(layouttype4));
+			calloc(n, sizeof(layouttype4));
 		if (nattr->layout_types.fattr4_layout_types_val) {
-			nattr->layout_types.fattr4_layout_types_len = 2;
-			nattr->layout_types.fattr4_layout_types_val[0] =
-				LAYOUT4_FLEX_FILES;
-			nattr->layout_types.fattr4_layout_types_val[1] =
-				LAYOUT4_FLEX_FILES_V2;
+			uint32_t idx = 0;
+
+			if (lt & SB_LAYOUT_FLEX_FILES)
+				nattr->layout_types
+					.fattr4_layout_types_val[idx++] =
+					LAYOUT4_FLEX_FILES;
+			if (lt & SB_LAYOUT_FLEX_FILES_V2)
+				nattr->layout_types
+					.fattr4_layout_types_val[idx++] =
+					LAYOUT4_FLEX_FILES_V2;
+			nattr->layout_types.fattr4_layout_types_len = idx;
 		}
 	}
 

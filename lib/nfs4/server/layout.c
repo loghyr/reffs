@@ -550,6 +550,28 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		return 0;
 	}
 
+	/*
+	 * Per-export layout policy: only grant layouts for exports
+	 * that have the requested layout type enabled.  The root
+	 * export (/) and per-flavor exports (/krb5, /sys, etc.)
+	 * default to sb_layout_types=0 (no layouts).  Only /ffv1
+	 * and /ffv2 get layouts via explicit configuration.
+	 */
+	{
+		struct super_block *sb = compound->c_inode->i_sb;
+		uint32_t want = 0;
+
+		if (layout_type == LAYOUT4_FLEX_FILES)
+			want = SB_LAYOUT_FLEX_FILES;
+		else if (layout_type == LAYOUT4_FLEX_FILES_V2)
+			want = SB_LAYOUT_FLEX_FILES_V2;
+
+		if (!(sb->sb_layout_types & want)) {
+			*status = NFS4ERR_LAYOUTUNAVAILABLE;
+			return 0;
+		}
+	}
+
 	struct layout_segments *lss;
 
 	/*
