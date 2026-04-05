@@ -822,6 +822,26 @@ static uint32_t nfs4_op_layoutreturn_resume(struct rpc_trans *rt)
 			inode->i_size = max_size;
 			inode->i_mtime = now;
 			inode->i_ctime = now;
+
+			/* Update space accounting — MDS inode has no
+			 * local data block, data lives on the DS. */
+			struct super_block *sb = inode->i_sb;
+			int64_t old_used = inode->i_used;
+
+			inode->i_used =
+				inode->i_size / sb->sb_block_size +
+				(inode->i_size % sb->sb_block_size ? 1 : 0);
+
+			int64_t delta =
+				(inode->i_used - old_used) * sb->sb_block_size;
+			if (delta > 0)
+				atomic_fetch_add_explicit(&sb->sb_bytes_used,
+							  (size_t)delta,
+							  memory_order_relaxed);
+			else if (delta < 0)
+				atomic_fetch_sub_explicit(&sb->sb_bytes_used,
+							  (size_t)(-delta),
+							  memory_order_relaxed);
 		}
 		pthread_mutex_unlock(&inode->i_attr_mutex);
 
