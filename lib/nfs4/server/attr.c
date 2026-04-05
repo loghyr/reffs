@@ -2999,6 +2999,29 @@ static uint32_t nfs4_op_getattr_resume(struct rpc_trans *rt)
 		if (max_size > inode->i_size) {
 			inode->i_size = max_size;
 			any_changed = true;
+
+			/* Update space accounting for MDS inodes with
+			 * pNFS layouts — data lives on the DS, so the
+			 * MDS has no local data block.  Compute i_used
+			 * from i_size.
+			 */
+			struct super_block *sb = inode->i_sb;
+			int64_t old_used = inode->i_used;
+
+			inode->i_used =
+				inode->i_size / sb->sb_block_size +
+				(inode->i_size % sb->sb_block_size ? 1 : 0);
+
+			int64_t used_delta =
+				(inode->i_used - old_used) * sb->sb_block_size;
+			if (used_delta > 0)
+				atomic_fetch_add_explicit(&sb->sb_bytes_used,
+							  (size_t)used_delta,
+							  memory_order_relaxed);
+			else if (used_delta < 0)
+				atomic_fetch_sub_explicit(&sb->sb_bytes_used,
+							  (size_t)(-used_delta),
+							  memory_order_relaxed);
 		}
 		if (any_changed) {
 			struct timespec now;
