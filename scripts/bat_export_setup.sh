@@ -53,15 +53,16 @@ create_export() {
 	info "Creating export $path (flavors: $flavors)..."
 
 	# Create the export
+	# Output format: "Created superblock 10: uuid=... path=... ..."
 	local output
 	output=$($PROBE sb-create --path "$path" --storage ram 2>&1)
 	local id
-	id=$(echo "$output" | grep -o 'id=[0-9]*' | cut -d= -f2)
+	id=$(echo "$output" | grep -o 'superblock [0-9]*' | awk '{print $2}')
 
 	if [ -z "$id" ]; then
 		info "  sb-create failed or already exists: $output"
-		# Try to find existing
-		id=$($PROBE sb-list 2>&1 | grep "$path" | awk '{print $1}' | head -1)
+		# Try to find existing (exact path match with word boundary)
+		id=$($PROBE sb-list 2>&1 | awk -v p="$path" '$3 == p {print $1; exit}')
 		if [ -z "$id" ]; then
 			die "Cannot create or find export at $path"
 		fi
