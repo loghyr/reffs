@@ -12,4 +12,5 @@ dist_bin_SCRIPTS = \
 	bat_krb5_setup.sh \
 	bat_tls_setup.sh \
 	ci_remote.sh \
+	ci_space_test.sh \
 	dstate_monitor.sh
