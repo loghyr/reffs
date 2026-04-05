@@ -27,8 +27,19 @@ info() { echo "[export] $*"; }
 # -----------------------------------------------------------------------
 # Verify server is reachable
 # -----------------------------------------------------------------------
-info "Checking server at $HOST:$PORT..."
-$PROBE sb-list >/dev/null || die "Cannot reach probe server"
+info "Waiting for probe server at $HOST:$PORT..."
+probe_ok=false
+for i in $(seq 1 15); do
+	if $PROBE sb-list >/dev/null 2>&1; then
+		probe_ok=true
+		break
+	fi
+	sleep 2
+done
+if [ "$probe_ok" != "true" ]; then
+	die "Cannot reach probe server after 30s"
+fi
+info "Probe server ready"
 
 # -----------------------------------------------------------------------
 # Create per-flavor exports

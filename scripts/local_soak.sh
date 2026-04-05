@@ -67,6 +67,8 @@ TRACE="/reffs_data/soak-trace.log"
 
 REFFSD_PID=
 WORKLOAD_PIDS=()
+DSTATE_MON_PID=
+DSTATE_LOG="/reffs_data/soak-dstate.log"
 FAILED=false
 
 die() { echo "SOAK FAIL: $*" >&2; FAILED=true; }
@@ -243,6 +245,11 @@ check_asan() {
 cleanup() {
     set +e
     info "=== Cleanup ==="
+    # Stop D-state monitor first
+    if [ -n "$DSTATE_MON_PID" ] && kill -0 "$DSTATE_MON_PID" 2>/dev/null; then
+        kill -TERM "$DSTATE_MON_PID" 2>/dev/null
+        wait "$DSTATE_MON_PID" 2>/dev/null
+    fi
     # Order matters: stop server first, then force-unmount to
     # release D-state processes, then kill workloads.
     if [ -n "$REFFSD_PID" ]; then
@@ -332,6 +339,11 @@ sudo chmod 777 "$MOUNT"
 start_server || exit 1
 mount_nfs || { tail -20 "$LOG"; die "initial mount failed"; exit 1; }
 
+# Start D-state monitor
+"$SCRIPT_DIR/dstate_monitor.sh" "$MOUNT" "$DSTATE_LOG" &
+DSTATE_MON_PID=$!
+info "D-state monitor running (PID $DSTATE_MON_PID)"
+
 # Start workloads
 for i in $(seq 1 "$CLIENTS"); do
     if [ $((i % 2)) -eq 0 ]; then
@@ -374,6 +386,11 @@ while true; do
     if [ "$NOW" -ge "$NEXT_RESTART" ] && [ "$REMAINING" -gt 120 ]; then
         RESTART_COUNT=$((RESTART_COUNT + 1))
         info "=== Restart #$RESTART_COUNT ==="
+
+        # Signal D-state monitor: begin grace period
+        if [ -n "$DSTATE_MON_PID" ] && kill -0 "$DSTATE_MON_PID" 2>/dev/null; then
+            kill -USR1 "$DSTATE_MON_PID" 2>/dev/null || true
+        fi
 
         # Step 1: SIGKILL server (crash-restart, not graceful)
         info "  [1/6] SIGKILL reffsd (PID $REFFSD_PID)"
@@ -516,6 +533,19 @@ if [ "$BASELINE_FD" -gt 0 ]; then
     if [ "$FINAL_FD" -gt "$FD_LIMIT" ]; then
         die "FD growth: ${FINAL_FD} > ${FD_LIMIT} (baseline ${BASELINE_FD} + 50%)"
     fi
+fi
+
+# Check D-state monitor results
+if [ -n "$DSTATE_MON_PID" ] && kill -0 "$DSTATE_MON_PID" 2>/dev/null; then
+    kill -TERM "$DSTATE_MON_PID" 2>/dev/null || true
+    wait "$DSTATE_MON_PID" 2>/dev/null || true
+    DSTATE_MON_PID=
+fi
+
+if [ -f "$DSTATE_LOG" ] && grep -q "^.*FAILURE:" "$DSTATE_LOG" 2>/dev/null; then
+    info "D-state failures detected:"
+    grep "FAILURE:" "$DSTATE_LOG"
+    die "D-state processes persisted after server recovery"
 fi
 
 if [ "$FAILED" = "true" ]; then

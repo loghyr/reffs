@@ -5,4 +5,10 @@ SUBDIRS = reffs
 
 dist_bin_SCRIPTS = \
 	gen_nfsv42_names.py \
-	reffs-probe.py
+	reffs-probe.py \
+	bat_setup.sh \
+	bat_export_setup.sh \
+	bat_krb5_setup.sh \
+	bat_tls_setup.sh \
+	ci_remote.sh \
+	dstate_monitor.sh

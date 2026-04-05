@@ -7,10 +7,19 @@ Wants=network-online.target
 After=network-online.target rpcbind.service
 
 [Service]
+Type=simple
 Environment="LIBC_FATAL_STDERR_=1"
 Environment="MALLOC_CONF=prof:false"
-ExecStart=/usr/bin/reffsd
+Environment="ASAN_OPTIONS=quarantine_size_mb=256:detect_leaks=0:halt_on_error=1:handle_abort=1"
+Environment="UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
+ExecStart=/usr/bin/reffsd --config=/etc/reffs/reffsd.toml
+ExecStartPost=-/usr/bin/bat_export_setup.sh
+Restart=on-failure
+RestartSec=5
 LimitCORE=infinity
+LimitNOFILE=65536
+StateDirectory=reffs
+LogsDirectory=reffs
 SyslogIdentifier=reffsd
 
 [Install]

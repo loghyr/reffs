@@ -86,6 +86,7 @@ The Reference File System (reffs) is:
 
 %post
 /sbin/ldconfig
+mkdir -p /var/lib/reffs/data /var/lib/reffs/state /var/log/reffs
 
 %systemd_post reffsd.service
 
@@ -124,10 +125,13 @@ make %{?_smp_mflags}
 %install
 %make_install
 rm -f %{buildroot}/%{_libdir}/*.la
+mkdir -p %{buildroot}/etc/reffs
+install -m 644 examples/reffsd-bat.toml %{buildroot}/etc/reffs/reffsd.toml
 
 %files
 %defattr(-,root,root)
 %doc README.md COPYING CONTRIBUTING INSTALL LICENSES/*
+%config(noreplace) /etc/reffs/reffsd.toml
 %{_bindir}/*
 %{_includedir}/reffs/*
 %{_libdir}/*.so*
