@@ -425,6 +425,20 @@ static int inode_load_from_disk(struct inode *inode)
 		}
 	}
 
+	/*
+	 * MDS inodes with pNFS layouts have i_size set (from
+	 * LAYOUTCOMMIT) but no local .dat file — data lives on the DS.
+	 * Compute i_used from i_size so GETATTR returns correct
+	 * space_used and the client sees correct st_blocks.
+	 */
+	if (!inode->i_db && inode->i_size > 0) {
+		inode->i_used = inode->i_size / sb->sb_block_size +
+				(inode->i_size % sb->sb_block_size ? 1 : 0);
+		atomic_fetch_add_explicit(&sb->sb_bytes_used,
+					  (size_t)inode->i_size,
+					  memory_order_relaxed);
+	}
+
 	/* Re-load symlink target if it exists. */
 	snprintf(path, sizeof(path), "%s/ino_%lu.lnk", sb_priv->sb_dir,
 		 inode->i_ino);
