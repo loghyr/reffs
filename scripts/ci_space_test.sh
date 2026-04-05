@@ -346,8 +346,12 @@ if [ -n "$V3_MOUNT" ] && mountpoint -q "$V3_MOUNT" 2>/dev/null; then
     V3_TESTDIR="$V3_MOUNT/ci_space_v3_$$"
     mkdir -p "$V3_TESTDIR"
 
-    # Create a 512KB file via v4, check via v3.
-    dd if=/dev/urandom of="$TESTDIR/xcheck" bs=1024 count=512 2>/dev/null
+    # Create a 2MB file via v4, check via v3.
+    # Must be a multiple of the v3 block size (1MB) to avoid
+    # rounding in the kernel's statfs — sub-1MB fractions are
+    # truncated, making df show 0 used.  This is a known Linux
+    # NFS v3 client quirk (wtpref=1MB → f_bsize=1MB).
+    dd if=/dev/urandom of="$TESTDIR/xcheck" bs=1M count=2 2>/dev/null
     sync
     sleep 1
 
