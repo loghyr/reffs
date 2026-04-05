@@ -175,13 +175,13 @@ if mountpoint -q "$V3_MOUNT" 2>/dev/null; then
 	info "$V3_MOUNT already mounted"
 else
 	info "Mounting NFSv3 at $V3_MOUNT..."
-	mount -o vers=3,sec=sys,nolock,tcp,mountproto=tcp 127.0.0.1:/ "$V3_MOUNT"
+	mount -o vers=3,sec=sys,nolock,tcp,mountproto=tcp,acregmin=0,acregmax=0,acdirmin=0,acdirmax=0 127.0.0.1:/ "$V3_MOUNT"
 fi
 
 # Add to fstab if not already present
 for entry in \
 	"127.0.0.1:/ $V4_MOUNT nfs4 vers=4.2,sec=sys,hard,_netdev 0 0" \
-	"127.0.0.1:/ $V3_MOUNT nfs vers=3,sec=sys,nolock,tcp,mountproto=tcp,hard,_netdev 0 0"
+	"127.0.0.1:/ $V3_MOUNT nfs vers=3,sec=sys,nolock,tcp,mountproto=tcp,hard,acregmin=0,acregmax=0,acdirmin=0,acdirmax=0,_netdev 0 0"
 do
 	mount_point=$(echo "$entry" | awk '{print $2}')
 	if ! grep -q "$mount_point" /etc/fstab 2>/dev/null; then

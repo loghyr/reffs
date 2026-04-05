@@ -64,7 +64,7 @@ if mountpoint -q "$V3_MOUNT" 2>/dev/null; then
 	info "$V3_MOUNT already mounted"
 else
 	info "Mounting NFSv3 at $V3_MOUNT..."
-	mount -o vers=3,sec=sys,nolock,tcp,mountproto=tcp "$SERVER":/ "$V3_MOUNT" || \
+	mount -o vers=3,sec=sys,nolock,tcp,mountproto=tcp,acregmin=0,acregmax=0,acdirmin=0,acdirmax=0 "$SERVER":/ "$V3_MOUNT" || \
 		die "NFSv3 mount failed"
 fi
 
@@ -131,7 +131,7 @@ info "=== Step 5/5: fstab ==="
 
 for entry in \
 	"$SERVER:/ $V4_MOUNT nfs4 vers=4.2,sec=sys,hard,_netdev 0 0" \
-	"$SERVER:/ $V3_MOUNT nfs vers=3,sec=sys,nolock,tcp,mountproto=tcp,hard,_netdev 0 0"
+	"$SERVER:/ $V3_MOUNT nfs vers=3,sec=sys,nolock,tcp,mountproto=tcp,hard,acregmin=0,acregmax=0,acdirmin=0,acdirmax=0,_netdev 0 0"
 do
 	mp=$(echo "$entry" | awk '{print $2}')
 	if ! grep -q "$mp" /etc/fstab 2>/dev/null; then

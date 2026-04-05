@@ -346,8 +346,8 @@ if [ -n "$V3_MOUNT" ] && mountpoint -q "$V3_MOUNT" 2>/dev/null; then
     V3_TESTDIR="$V3_MOUNT/ci_space_v3_$$"
     mkdir -p "$V3_TESTDIR"
 
-    # Create a 1MB file via v4, check via v3.
-    dd if=/dev/urandom of="$TESTDIR/xcheck" bs=1024 count=1024 2>/dev/null
+    # Create a 512KB file via v4, check via v3.
+    dd if=/dev/urandom of="$TESTDIR/xcheck" bs=1024 count=512 2>/dev/null
     sync
     sleep 1
 
@@ -376,11 +376,8 @@ if [ -n "$V3_MOUNT" ] && mountpoint -q "$V3_MOUNT" 2>/dev/null; then
     fi
 
     # df should report the same used/avail from both protocols.
-    # Touch a file on v3 first to wake the mount's RPC connection
-    # and invalidate any cached FSSTAT from the idle period.
-    touch "$V3_MOUNT/ci_space_$$/v3_wake" 2>/dev/null || true
-    rm -f "$V3_MOUNT/ci_space_$$/v3_wake" 2>/dev/null || true
-
+    # Requires acregmin=0,acregmax=0 on the v3 mount to prevent
+    # the kernel from caching stale FSSTAT results.
     V4_FS_USED=$(fs_used_bytes)
     V3_FS_USED=$(df -B1 "$V3_MOUNT" | tail -1 | awk '{print $3}')
 
