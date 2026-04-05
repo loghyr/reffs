@@ -52,10 +52,10 @@ create_export() {
 
 	info "Creating export $path (flavors: $flavors)..."
 
-	# Create the export
+	# Create the export (may fail with EEXIST if already created)
 	# Output format: "Created superblock 10: uuid=... path=... ..."
 	local output
-	output=$($PROBE sb-create --path "$path" --storage ram 2>&1)
+	output=$($PROBE sb-create --path "$path" --storage ram 2>&1) || true
 	local id
 	id=$(echo "$output" | grep -o 'superblock [0-9]*' | awk '{print $2}')
 
