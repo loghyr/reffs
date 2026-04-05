@@ -1221,8 +1221,8 @@ uint32_t nfs4_op_read(struct compound *compound)
 	 * already verified at OPEN time (RFC 8881 S18.25.3).
 	 */
 	if (!stid && !stateid4_is_read_bypass(&args->stateid)) {
-		int ret = inode_access_check(compound->c_inode,
-					     &compound->c_ap, R_OK);
+		int ret = inode_access_check(compound->c_inode, &compound->c_ap,
+					     R_OK);
 		if (ret) {
 			*status = errno_to_nfs4(ret, OP_READ);
 			goto out;
@@ -1584,8 +1584,8 @@ uint32_t nfs4_op_write(struct compound *compound)
 	 * invalidate the stateid's granted access (RFC 8881 S18.32.3).
 	 */
 	if (!stid) {
-		int ret = inode_access_check(compound->c_inode,
-					     &compound->c_ap, W_OK);
+		int ret = inode_access_check(compound->c_inode, &compound->c_ap,
+					     W_OK);
 		if (ret) {
 			*status = errno_to_nfs4(ret, OP_WRITE);
 			goto out;
