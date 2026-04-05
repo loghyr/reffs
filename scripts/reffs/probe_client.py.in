@@ -222,6 +222,12 @@ class Probe1Client(ProtocolClient):
         args = SB_SET_FLAVORS1args(sb_id, flavors)
         return self.proc(PROBEPROC1_SB_SET_FLAVORS, args, response_type='probe_stat1')
 
+    def sb_set_layout_types(self, sb_id, layout_types):
+        """Set pNFS layout types on a superblock (bitmask: 1=FFv1, 2=FFv2)."""
+        args = SB_SET_LAYOUT_TYPES1args(sb_id, layout_types)
+        return self.proc(PROBEPROC1_SB_SET_LAYOUT_TYPES, args,
+                         response_type='probe_stat1')
+
     def sb_lint_flavors(self):
         """Check flavor consistency across all mounted exports."""
         return self.proc(PROBEPROC1_SB_LINT_FLAVORS, response_type='SB_LINT_FLAVORS1res')

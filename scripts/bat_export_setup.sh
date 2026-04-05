@@ -90,6 +90,21 @@ create_export /tls tls
 create_export /ffv1 sys tls
 create_export /ffv2 sys tls
 
+# Enable layout types on pNFS exports
+info ""
+info "Enabling layout types on pNFS exports..."
+FFV1_ID=$($PROBE sb-list 2>&1 | awk '$3 == "/ffv1" && $4 != "destroyed" {print $1; exit}') || true
+FFV2_ID=$($PROBE sb-list 2>&1 | awk '$3 == "/ffv2" && $4 != "destroyed" {print $1; exit}') || true
+
+if [ -n "$FFV1_ID" ]; then
+	$PROBE sb-set-layout-types --id "$FFV1_ID" --layout-types ffv1 || \
+		info "  WARN: set-layout-types failed for /ffv1"
+fi
+if [ -n "$FFV2_ID" ]; then
+	$PROBE sb-set-layout-types --id "$FFV2_ID" --layout-types ffv2 || \
+		info "  WARN: set-layout-types failed for /ffv2"
+fi
+
 # -----------------------------------------------------------------------
 # Verify
 # -----------------------------------------------------------------------

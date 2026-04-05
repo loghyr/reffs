@@ -673,6 +673,27 @@ def sb_set_flavors_cmd(client, args):
     print(f"Superblock {args.id} flavors set to: {','.join(args.flavors)}")
 
 
+LAYOUT_TYPE_MAP = {
+    'ffv1': 1,     # SB_LAYOUT_FLEX_FILES
+    'ffv2': 2,     # SB_LAYOUT_FLEX_FILES_V2
+    'both': 3,     # v1 + v2
+    'none': 0,
+}
+
+def sb_set_layout_types_cmd(client, args):
+    lt = 0
+    for name in args.layout_types:
+        if name in LAYOUT_TYPE_MAP:
+            lt |= LAYOUT_TYPE_MAP[name]
+        else:
+            print(f"Unknown layout type: {name} (use: ffv1, ffv2, both, none)")
+            sys.exit(1)
+    res = client.sb_set_layout_types(args.id, lt)
+    probe_error_handler(res)
+    names = [k for k, v in LAYOUT_TYPE_MAP.items() if v != 0 and (lt & v)]
+    print(f"Superblock {args.id} layout types set to: {','.join(names) or 'none'}")
+
+
 def sb_lint_flavors_cmd(client, args):
     res = client.sb_lint_flavors()
     probe_error_handler(res.lfr_status)
@@ -946,6 +967,14 @@ def parse_args():
                                   choices=list(AUTH_FLAVOR_NAME_TO_ID.keys()),
                                   help='Security flavors (e.g., sys krb5)')
     p_sb_set_flavors.set_defaults(func=sb_set_flavors_cmd)
+
+    p_sb_layout = subparsers.add_parser('sb-set-layout-types',
+                                        help='Set pNFS layout types on a superblock')
+    p_sb_layout.add_argument('--id', type=int, required=True, help='Superblock ID')
+    p_sb_layout.add_argument('--layout-types', nargs='+', type=str, required=True,
+                             choices=list(LAYOUT_TYPE_MAP.keys()),
+                             help='Layout types (ffv1, ffv2, both, none)')
+    p_sb_layout.set_defaults(func=sb_set_layout_types_cmd)
 
     p_sb_lint = subparsers.add_parser('sb-lint-flavors', help='Check flavor consistency')
     p_sb_lint.set_defaults(func=sb_lint_flavors_cmd)

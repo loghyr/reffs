@@ -1154,6 +1154,24 @@ static int probe1_op_sb_set_flavors(struct rpc_trans *rt)
 	return 0;
 }
 
+static int probe1_op_sb_set_layout_types(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_LAYOUT_TYPES1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->sla_id);
+
+	if (!sb) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	sb->sb_layout_types = args->sla_layout_types;
+	super_block_put(sb);
+	return 0;
+}
+
 static int probe1_op_sb_lint_flavors(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -1344,6 +1362,10 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_IDENTITY_MAP_REMOVE1args,
 			   IDENTITY_MAP_REMOVE1args, xdr_probe_stat1,
 			   probe_stat1, probe1_op_identity_map_remove),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_SET_LAYOUT_TYPES,
+			   xdr_SB_SET_LAYOUT_TYPES1args,
+			   SB_SET_LAYOUT_TYPES1args, xdr_probe_stat1,
+			   probe_stat1, probe1_op_sb_set_layout_types),
 };
 
 static struct rpc_program_handler *probe1_handler;

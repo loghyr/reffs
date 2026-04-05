@@ -332,6 +332,12 @@ struct SB_SET_FLAVORS1args {
 	probe_auth_flavor1	sfa_flavors<PROBE1_MAX_FLAVORS>;
 };
 
+/* SB_SET_LAYOUT_TYPES (op 24) — returns probe_stat1 directly */
+struct SB_SET_LAYOUT_TYPES1args {
+	unsigned hyper		sla_id;
+	unsigned int		sla_layout_types;  /* bitmask: 1=FFv1, 2=FFv2 */
+};
+
 /* SB_LINT_FLAVORS (op 20) */
 struct SB_LINT_FLAVORS1resok {
 	unsigned int	lfr_warnings;
@@ -506,5 +512,6 @@ program PROBE_PROGRAM {
 		IDENTITY_DOMAIN_LIST1res PROBEPROC1_IDENTITY_DOMAIN_LIST(void) = 21;
 		IDENTITY_MAP_LIST1res PROBEPROC1_IDENTITY_MAP_LIST(void) = 22;
 		probe_stat1 PROBEPROC1_IDENTITY_MAP_REMOVE(IDENTITY_MAP_REMOVE1args) = 23;
+		probe_stat1 PROBEPROC1_SB_SET_LAYOUT_TYPES(SB_SET_LAYOUT_TYPES1args) = 24;
 	} = 1;
 } = 211768;
