@@ -101,6 +101,18 @@ if ! rpcinfo -p 127.0.0.1 >/dev/null 2>&1; then
 fi
 info "rpcbind OK"
 
+# Open firewall for NFS, rpcbind, and probe protocol
+if command -v firewall-cmd >/dev/null 2>&1; then
+	info "Configuring firewall..."
+	firewall-cmd --permanent --add-service=nfs 2>/dev/null || true
+	firewall-cmd --permanent --add-service=rpc-bind 2>/dev/null || true
+	firewall-cmd --permanent --add-port=20490/tcp 2>/dev/null || true
+	firewall-cmd --reload 2>/dev/null || true
+	info "Firewall: nfs, rpc-bind, probe(20490/tcp) opened"
+else
+	info "No firewall-cmd found, skipping firewall configuration"
+fi
+
 # -----------------------------------------------------------------------
 # Step 4: Start reffsd
 # -----------------------------------------------------------------------
