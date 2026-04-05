@@ -224,25 +224,28 @@ check_asan() {
 cleanup() {
     set +e
     info "=== Cleanup ==="
-    info "  Killing ${#WORKLOAD_PIDS[@]} workload processes"
+    # Order matters: stop server first, then force-unmount to
+    # release D-state processes, then kill workloads.
+    if [ -n "$REFFSD_PID" ]; then
+        info "  [1/3] Stopping reffsd (PID $REFFSD_PID): SIGKILL"
+        kill -9 "$REFFSD_PID" 2>/dev/null
+        wait "$REFFSD_PID" 2>/dev/null
+        info "    reffsd exited"
+        REFFSD_PID=
+    fi
+    info "  [2/3] Force-unmount $MOUNT"
+    sudo umount -f -l "$MOUNT" 2>/dev/null || true
+    sleep 1
+    info "  [3/3] Killing ${#WORKLOAD_PIDS[@]} workload processes"
     for pid in "${WORKLOAD_PIDS[@]}"; do
-        info "    kill -9 $pid"
-        kill -9 "$pid" 2>/dev/null
+        if kill -0 "$pid" 2>/dev/null; then
+            info "    kill -9 $pid"
+            kill -9 "$pid" 2>/dev/null
+        else
+            info "    $pid already exited"
+        fi
         wait "$pid" 2>/dev/null
     done
-    info "  Unmounting $MOUNT"
-    sudo umount -f -l "$MOUNT" 2>/dev/null || true
-    if [ -n "$REFFSD_PID" ]; then
-        info "  Stopping reffsd (PID $REFFSD_PID): SIGTERM"
-        kill -TERM "$REFFSD_PID" 2>/dev/null
-        sleep 2
-        if kill -0 "$REFFSD_PID" 2>/dev/null; then
-            info "  reffsd still alive, SIGKILL"
-            kill -KILL "$REFFSD_PID" 2>/dev/null
-        fi
-        wait "$REFFSD_PID" 2>/dev/null
-        info "  reffsd exited"
-    fi
     info "  Cleanup complete"
 }
 trap cleanup EXIT
