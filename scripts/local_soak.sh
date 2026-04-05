@@ -57,6 +57,10 @@ FAILED=false
 die() { echo "SOAK FAIL: $*" >&2; FAILED=true; }
 info() { echo "[$(date +%H:%M:%S)] $*"; }
 
+# ERR trap: log the failing command for post-mortem diagnosis.
+# Disabled inside cleanup() which sets +e.
+trap 'echo "[$(date +%H:%M:%S)] ERR at line $LINENO: $BASH_COMMAND (exit $?)" >&2' ERR
+
 # -----------------------------------------------------------------------
 # Build
 # -----------------------------------------------------------------------
@@ -157,17 +161,17 @@ start_server() {
     info "reffsd up (PID $REFFSD_PID)"
 
     # Show FDs at startup
-    info "  FDs at start: $(ls /proc/$REFFSD_PID/fd 2>/dev/null | wc -l)"
-    ls -la /proc/$REFFSD_PID/fd/ 2>/dev/null | head -20
+    info "  FDs at start: $(get_fd_count $REFFSD_PID)"
+    ls -la /proc/$REFFSD_PID/fd/ 2>/dev/null | head -20 || true
 }
 
 stop_server() {
     info "Stopping reffsd (PID $REFFSD_PID)..."
 
     # Show FDs before stop
-    info "  FDs before stop: $(ls /proc/$REFFSD_PID/fd 2>/dev/null | wc -l)"
+    info "  FDs before stop: $(get_fd_count $REFFSD_PID)"
 
-    kill -TERM "$REFFSD_PID" 2>/dev/null
+    kill -TERM "$REFFSD_PID" 2>/dev/null || true
     for i in $(seq 1 60); do
         kill -0 "$REFFSD_PID" 2>/dev/null || break
         sleep 1
@@ -205,7 +209,7 @@ get_rss_kb() {
 }
 
 get_fd_count() {
-    ls "/proc/$1/fd" 2>/dev/null | wc -l
+    ls "/proc/$1/fd" 2>/dev/null | wc -l || echo 0
 }
 
 check_asan() {
@@ -331,11 +335,13 @@ BASELINE_RSS=$(get_rss_kb "$REFFSD_PID")
 BASELINE_FD=$(get_fd_count "$REFFSD_PID")
 info "Baseline (under load): RSS=${BASELINE_RSS}KB FD=${BASELINE_FD}"
 info "Baseline FD list:"
-ls -la /proc/$REFFSD_PID/fd/ 2>/dev/null | head -40
+ls -la /proc/$REFFSD_PID/fd/ 2>/dev/null | head -40 || true
 
 SOAK_START=$(date +%s)
 RESTART_COUNT=0
 NEXT_RESTART=$((SOAK_START + RESTART_SEC))
+
+info "Main loop starting (duration=${DURATION_MIN}m, restart=${RESTART_MIN}m)"
 
 while true; do
     NOW=$(date +%s)
@@ -356,7 +362,7 @@ while true; do
 
         # Step 1: SIGKILL server (crash-restart, not graceful)
         info "  [1/6] SIGKILL reffsd (PID $REFFSD_PID)"
-        info "    FDs before kill: $(ls /proc/$REFFSD_PID/fd 2>/dev/null | wc -l)"
+        info "    FDs before kill: $(get_fd_count $REFFSD_PID)"
         kill -9 "$REFFSD_PID" 2>/dev/null || true
         wait "$REFFSD_PID" 2>/dev/null || true
         info "    reffsd exited"
@@ -372,7 +378,7 @@ while true; do
         for pid in "${WORKLOAD_PIDS[@]}"; do
             if kill -0 "$pid" 2>/dev/null; then
                 info "    kill -9 $pid"
-                kill -9 "$pid" 2>/dev/null
+                kill -9 "$pid" 2>/dev/null || true
             else
                 info "    $pid already exited"
             fi
@@ -433,8 +439,15 @@ while true; do
     sleep 10
 
     if kill -0 "$REFFSD_PID" 2>/dev/null; then
+        # get_rss_kb and get_fd_count tolerate proc disappearance
+        # (process could exit between kill -0 and the /proc read)
         RSS=$(get_rss_kb "$REFFSD_PID")
         FD=$(get_fd_count "$REFFSD_PID")
+        if [ "$RSS" -eq 0 ] && ! kill -0 "$REFFSD_PID" 2>/dev/null; then
+            die "reffsd crashed during soak (detected at health check)"
+            tail -20 "$LOG"
+            exit 1
+        fi
         info "Health: RSS=${RSS}KB FD=${FD} elapsed=${ELAPSED}s restarts=${RESTART_COUNT}"
     else
         die "reffsd crashed during soak"
@@ -449,7 +462,7 @@ done
 
 info "Stopping workloads..."
 for pid in "${WORKLOAD_PIDS[@]}"; do
-    kill "$pid" 2>/dev/null
+    kill "$pid" 2>/dev/null || true
 done
 for pid in "${WORKLOAD_PIDS[@]}"; do
     wait "$pid" 2>/dev/null || true
@@ -462,7 +475,7 @@ FINAL_RSS=$(get_rss_kb "$REFFSD_PID")
 FINAL_FD=$(get_fd_count "$REFFSD_PID")
 
 info "Final FD list:"
-ls -la /proc/$REFFSD_PID/fd/ 2>/dev/null | head -40
+ls -la /proc/$REFFSD_PID/fd/ 2>/dev/null | head -40 || true
 
 stop_server
 check_asan

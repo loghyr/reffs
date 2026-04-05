@@ -388,7 +388,21 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			break;
 		}
 
-		// Wait for completion events
+		/*
+		 * Wait for completion events.
+		 *
+		 * Thread safety: on kernel 5.11+ (IORING_FEAT_EXT_ARG),
+		 * io_uring_wait_cqe_timeout uses IORING_ENTER_EXT_ARG
+		 * to pass the timeout as a syscall argument — it does NOT
+		 * touch the SQ ring.  Worker threads submit write SQEs
+		 * under rc_mutex; since this call doesn't access the SQ
+		 * ring, no mutex is needed here.
+		 *
+		 * Audited 2026-04-05: all io_uring_get_sqe + submit call
+		 * sites hold rc_mutex.  This is the only wait_cqe_timeout
+		 * in the hot path; shutdown drains (below) run after
+		 * workers are stopped.
+		 */
 		int ret = io_uring_wait_cqe_timeout(&rc->rc_ring, &cqe, &ts);
 
 		if (ret == -ETIME) {
