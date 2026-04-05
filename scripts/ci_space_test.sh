@@ -9,14 +9,16 @@
 # writer (no concurrent modifications).
 #
 # Usage:
-#   scripts/ci_space_test.sh MOUNT_PATH
+#   scripts/ci_space_test.sh MOUNT_PATH [V3_MOUNT_PATH]
 #
 # Example:
 #   scripts/ci_space_test.sh /mnt/reffs_v4
+#   scripts/ci_space_test.sh /mnt/reffs_v4 /mnt/reffs_v3
 
 set -euo pipefail
 
-MOUNT=${1:?Usage: ci_space_test.sh MOUNT_PATH}
+MOUNT=${1:?Usage: ci_space_test.sh MOUNT_PATH [V3_MOUNT]}
+V3_MOUNT=${2:-}
 TESTDIR="$MOUNT/ci_space_$$"
 PASS=0
 FAIL=0
@@ -90,7 +92,7 @@ dd if=/dev/urandom of="$TESTDIR/file1" bs=1024 count=1024 2>/dev/null
 # update i_used from the DS reflected GETATTR.  The kernel NFS
 # client caches attrs, so we stat twice with a gap.
 sync
-sleep 2
+sleep 1
 
 SIZE=$(file_size "$TESTDIR/file1")
 BLOCKS=$(file_blocks_bytes "$TESTDIR/file1")
@@ -184,7 +186,7 @@ for i in $(seq 2 6); do
     dd if=/dev/urandom of="$TESTDIR/file$i" bs=1024 count=512 2>/dev/null
 done
 sync
-sleep 2
+sleep 1
 
 AFTER_MULTI_USED=$(fs_used_bytes)
 MULTI_DELTA=$((AFTER_MULTI_USED - AFTER_CREATE_USED))
@@ -220,7 +222,7 @@ BEFORE_REMOVE_USED=$(fs_used_bytes)
 rm -f "$TESTDIR"/file*
 sync
 # Server may batch space reclamation; allow settle time.
-sleep 2
+sleep 1
 
 AFTER_REMOVE_USED=$(fs_used_bytes)
 REMOVE_DELTA=$((BEFORE_REMOVE_USED - AFTER_REMOVE_USED))
@@ -332,6 +334,63 @@ else
 fi
 
 rm -f "$TESTDIR/trunc"
+
+# -----------------------------------------------------------------------
+# Test 10: NFSv3 cross-check (if v3 mount provided)
+# -----------------------------------------------------------------------
+
+if [ -n "$V3_MOUNT" ] && mountpoint -q "$V3_MOUNT" 2>/dev/null; then
+    info ""
+    info "--- Test 10: NFSv3 cross-check ---"
+
+    V3_TESTDIR="$V3_MOUNT/ci_space_v3_$$"
+    mkdir -p "$V3_TESTDIR"
+
+    # Create a file via v4, check via v3
+    dd if=/dev/urandom of="$TESTDIR/xcheck" bs=1024 count=512 2>/dev/null
+    sync
+    sleep 1
+
+    V4_SIZE=$(file_size "$TESTDIR/xcheck")
+    V4_BLOCKS=$(file_blocks_bytes "$TESTDIR/xcheck")
+    V3_SIZE=$(file_size "$V3_MOUNT/ci_space_$$/xcheck")
+    V3_BLOCKS=$(file_blocks_bytes "$V3_MOUNT/ci_space_$$/xcheck")
+
+    info "v4: size=$V4_SIZE blocks=$V4_BLOCKS"
+    info "v3: size=$V3_SIZE blocks=$V3_BLOCKS"
+
+    if [ "$V4_SIZE" -eq "$V3_SIZE" ]; then
+        ok "v3/v4 size match ($V4_SIZE)"
+    else
+        die "v3/v4 size mismatch: v4=$V4_SIZE v3=$V3_SIZE"
+    fi
+
+    if [ "$V4_BLOCKS" -eq "$V3_BLOCKS" ]; then
+        ok "v3/v4 blocks match ($V4_BLOCKS)"
+    else
+        die "v3/v4 blocks mismatch: v4=$V4_BLOCKS v3=$V3_BLOCKS"
+    fi
+
+    # df should report the same used/avail from both protocols
+    V4_FS_USED=$(fs_used_bytes)
+    V3_FS_USED=$(df -B1 "$V3_MOUNT" | tail -1 | awk '{print $3}')
+
+    info "df used: v4=$V4_FS_USED v3=$V3_FS_USED"
+
+    if [ "$V4_FS_USED" -eq "$V3_FS_USED" ]; then
+        ok "v3/v4 df used match ($V4_FS_USED)"
+    else
+        die "v3/v4 df used mismatch: v4=$V4_FS_USED v3=$V3_FS_USED"
+    fi
+
+    rm -f "$TESTDIR/xcheck"
+    rmdir "$V3_TESTDIR" 2>/dev/null || true
+else
+    if [ -n "$V3_MOUNT" ]; then
+        info ""
+        info "--- Test 10: SKIP (v3 mount $V3_MOUNT not mounted) ---"
+    fi
+fi
 
 # -----------------------------------------------------------------------
 # Summary

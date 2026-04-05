@@ -247,7 +247,7 @@ record "seek_test" $SEEK_RC
 
 if [ -x "$REPO/scripts/ci_space_test.sh" ]; then
     section_start space_test "Space accounting (du/df/stat)"
-    "$REPO/scripts/ci_space_test.sh" "$V4_MOUNT" \
+    "$REPO/scripts/ci_space_test.sh" "$V4_MOUNT" "$V3_MOUNT" \
         2>&1 | tee "$LOGDIR/space_test.log" | tail -20
     record "space_test" ${PIPESTATUS[0]}
 fi
