@@ -27,6 +27,7 @@ tls_key         = "/etc/reffs/tls/server-key.pem"
 type            = "posix"
 path            = "/var/lib/reffs/data"
 state_file      = "/var/lib/reffs/state"
+ds_path         = "/var/lib/reffs/ds"
 
 [iouring]
 network_sq_size = 2048

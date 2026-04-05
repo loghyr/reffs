@@ -86,7 +86,7 @@ The Reference File System (reffs) is:
 
 %post
 /sbin/ldconfig
-mkdir -p /var/lib/reffs/data /var/lib/reffs/state /var/log/reffs
+mkdir -p /var/lib/reffs/data /var/lib/reffs/state /var/lib/reffs/ds /var/log/reffs
 
 %systemd_post reffsd.service
 

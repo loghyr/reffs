@@ -92,7 +92,7 @@ fi
 info ""
 info "=== Step 3/6: Prerequisites ==="
 
-mkdir -p /var/lib/reffs/data /var/lib/reffs/state /var/log/reffs
+mkdir -p /var/lib/reffs/data /var/lib/reffs/state /var/lib/reffs/ds /var/log/reffs
 
 if ! rpcinfo -p 127.0.0.1 >/dev/null 2>&1; then
 	info "Starting rpcbind..."
