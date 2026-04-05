@@ -2864,7 +2864,7 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	nattr->space_avail = sb->sb_bytes_max - bu;
 	nattr->space_free = sb->sb_bytes_max - bu;
 	nattr->space_total = sb->sb_bytes_max;
-	nattr->space_used = inode->i_used;
+	nattr->space_used = inode->i_used * sb->sb_block_size;
 	nattr->system = inode->i_attr_flags & INODE_IS_SYSTEM;
 
 	nattr->time_delta = system_attrs.time_delta;
