@@ -346,13 +346,17 @@ if [ -n "$V3_MOUNT" ] && mountpoint -q "$V3_MOUNT" 2>/dev/null; then
     V3_TESTDIR="$V3_MOUNT/ci_space_v3_$$"
     mkdir -p "$V3_TESTDIR"
 
-    # Create a file via v4, check via v3
-    dd if=/dev/urandom of="$TESTDIR/xcheck" bs=1024 count=512 2>/dev/null
+    # Create a 1MB file via v4, check via v3.
+    dd if=/dev/urandom of="$TESTDIR/xcheck" bs=1024 count=1024 2>/dev/null
     sync
     sleep 1
 
     V4_SIZE=$(file_size "$TESTDIR/xcheck")
     V4_BLOCKS=$(file_blocks_bytes "$TESTDIR/xcheck")
+    # Force v3 mount to refresh its attr/stat cache by doing an
+    # operation on it before reading df.  The v3 mount has been
+    # idle during tests 1-9 and its FSSTAT cache may be stale.
+    ls "$V3_MOUNT/ci_space_$$/" > /dev/null 2>&1 || true
     V3_SIZE=$(file_size "$V3_MOUNT/ci_space_$$/xcheck")
     V3_BLOCKS=$(file_blocks_bytes "$V3_MOUNT/ci_space_$$/xcheck")
 
@@ -371,7 +375,12 @@ if [ -n "$V3_MOUNT" ] && mountpoint -q "$V3_MOUNT" 2>/dev/null; then
         die "v3/v4 blocks mismatch: v4=$V4_BLOCKS v3=$V3_BLOCKS"
     fi
 
-    # df should report the same used/avail from both protocols
+    # df should report the same used/avail from both protocols.
+    # Touch a file on v3 first to wake the mount's RPC connection
+    # and invalidate any cached FSSTAT from the idle period.
+    touch "$V3_MOUNT/ci_space_$$/v3_wake" 2>/dev/null || true
+    rm -f "$V3_MOUNT/ci_space_$$/v3_wake" 2>/dev/null || true
+
     V4_FS_USED=$(fs_used_bytes)
     V3_FS_USED=$(df -B1 "$V3_MOUNT" | tail -1 | awk '{print $3}')
 
