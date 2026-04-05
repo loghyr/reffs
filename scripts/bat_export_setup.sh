@@ -86,9 +86,9 @@ create_export /krb5i krb5i
 create_export /krb5p krb5p
 create_export /tls tls
 
-# pNFS exports
-create_export /ffv1 sys
-create_export /ffv2 sys
+# pNFS exports (need sys + tls for layout I/O)
+create_export /ffv1 sys tls
+create_export /ffv2 sys tls
 
 # -----------------------------------------------------------------------
 # Verify
