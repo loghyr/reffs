@@ -5,22 +5,22 @@
 # bat_client_setup.sh -- Set up a BAT CI client to test against a
 # remote reffsd server.
 #
-# Creates directories, mounts NFSv4.2 + NFSv3, copies Kerberos
-# config and TLS CA cert from the server, gets a test TGT.
+# Mounts NFSv4.2 + NFSv3 from the server, then reads Kerberos
+# config and TLS CA cert from the server's /config export —
+# no SSH or scp to the server needed.
 #
-# Usage: sudo bat_client_setup.sh SERVER [HOSTNAME]
+# Usage: sudo bat_client_setup.sh SERVER
 #   SERVER    IP or hostname of the reffsd server (required)
-#   HOSTNAME  This client's FQDN (default: $(hostname -f))
 #
 # Prerequisites:
-#   - SSH access to SERVER as loghyr (for copying krb5.conf and CA cert)
 #   - NFS client packages (nfs-utils)
+#   - krb5-workstation (for kinit, installed automatically)
 #   - sudo / root access
+#   - Server has /config populated by bat_setup.sh
 
 set -euo pipefail
 
-SERVER=${1:?Usage: bat_client_setup.sh SERVER [HOSTNAME]}
-HOSTNAME=${2:-$(hostname -f)}
+SERVER=${1:?Usage: bat_client_setup.sh SERVER}
 V4_MOUNT="/mnt/reffs_v4"
 V3_MOUNT="/mnt/reffs_v3"
 
@@ -33,7 +33,6 @@ fi
 
 info "=== BAT Client Setup ==="
 info "Server: $SERVER"
-info "Client: $HOSTNAME"
 
 # -----------------------------------------------------------------------
 # Step 1: Create directories
@@ -43,86 +42,22 @@ info ""
 info "=== Step 1/5: Directories ==="
 
 mkdir -p /reffs_data/ci_remote "$V4_MOUNT" "$V3_MOUNT"
+chown loghyr:wheel /reffs_data /reffs_data/ci_remote 2>/dev/null || true
 info "Created /reffs_data, $V4_MOUNT, $V3_MOUNT"
 
 # -----------------------------------------------------------------------
-# Step 2: Kerberos client config
+# Step 2: Mount NFS
 # -----------------------------------------------------------------------
 
 info ""
-info "=== Step 2/5: Kerberos ==="
-
-# Install krb5-workstation if needed
-if ! command -v kinit >/dev/null 2>&1; then
-	if command -v dnf >/dev/null 2>&1; then
-		info "Installing krb5-workstation..."
-		dnf install -y krb5-workstation
-	elif command -v apt-get >/dev/null 2>&1; then
-		info "Installing krb5-user..."
-		apt-get install -y krb5-user
-	else
-		info "WARN: kinit not found, install Kerberos client manually"
-	fi
-fi
-
-# Copy krb5.conf from server
-info "Copying /etc/krb5.conf from $SERVER..."
-if scp "loghyr@$SERVER:/etc/krb5.conf" /etc/krb5.conf 2>/dev/null; then
-	info "krb5.conf installed"
-
-	# Add this client's principals to the server's KDC
-	info "Creating client principals on server KDC..."
-	ssh "loghyr@$SERVER" "sudo kadmin.local -r REFFS.BAT -q 'addprinc -randkey host/$HOSTNAME@REFFS.BAT' 2>/dev/null; \
-		sudo kadmin.local -r REFFS.BAT -q 'addprinc -randkey nfs/$HOSTNAME@REFFS.BAT' 2>/dev/null; \
-		true" || info "WARN: could not create client principals on server"
-
-	# Extract keytab for this client
-	info "Extracting client keytab..."
-	ssh "loghyr@$SERVER" "sudo kadmin.local -r REFFS.BAT -q 'ktadd -k /tmp/client_$HOSTNAME.keytab host/$HOSTNAME@REFFS.BAT' 2>/dev/null; \
-		sudo kadmin.local -r REFFS.BAT -q 'ktadd -k /tmp/client_$HOSTNAME.keytab nfs/$HOSTNAME@REFFS.BAT' 2>/dev/null; \
-		sudo chmod 644 /tmp/client_$HOSTNAME.keytab; \
-		true"
-	scp "loghyr@$SERVER:/tmp/client_$HOSTNAME.keytab" /etc/krb5.keytab 2>/dev/null && \
-		info "Keytab installed at /etc/krb5.keytab" || \
-		info "WARN: could not copy keytab"
-	ssh "loghyr@$SERVER" "sudo rm -f /tmp/client_$HOSTNAME.keytab" 2>/dev/null || true
-
-	# Get test TGT
-	info "Getting test TGT..."
-	echo "testpass" | kinit nfstest@REFFS.BAT 2>/dev/null && \
-		info "TGT obtained for nfstest@REFFS.BAT" || \
-		info "WARN: kinit failed (KDC may not be reachable)"
-else
-	info "SKIP: could not copy krb5.conf from $SERVER"
-fi
-
-# -----------------------------------------------------------------------
-# Step 3: TLS CA cert
-# -----------------------------------------------------------------------
-
-info ""
-info "=== Step 3/5: TLS ==="
-
-mkdir -p /etc/reffs/tls
-if scp "loghyr@$SERVER:/etc/reffs/tls/ca.pem" /etc/reffs/tls/ca.pem 2>/dev/null; then
-	info "CA cert installed at /etc/reffs/tls/ca.pem"
-else
-	info "SKIP: could not copy CA cert from $SERVER"
-fi
-
-# -----------------------------------------------------------------------
-# Step 4: Mount NFS
-# -----------------------------------------------------------------------
-
-info ""
-info "=== Step 4/5: NFS mounts ==="
+info "=== Step 2/5: NFS mounts ==="
 
 if mountpoint -q "$V4_MOUNT" 2>/dev/null; then
 	info "$V4_MOUNT already mounted"
 else
 	info "Mounting NFSv4.2 at $V4_MOUNT..."
 	mount -o vers=4.2,sec=sys "$SERVER":/ "$V4_MOUNT" || \
-		die "NFSv4.2 mount failed"
+		die "NFSv4.2 mount failed (check server firewall: nfs, rpc-bind)"
 fi
 
 if mountpoint -q "$V3_MOUNT" 2>/dev/null; then
@@ -133,10 +68,59 @@ else
 		die "NFSv3 mount failed"
 fi
 
-# Smoke test
-ls "$V4_MOUNT" >/dev/null || die "$V4_MOUNT not accessible"
-ls "$V3_MOUNT" >/dev/null || die "$V3_MOUNT not accessible"
-info "Mounts OK"
+ls "$V4_MOUNT/config" >/dev/null 2>&1 || \
+	die "$V4_MOUNT/config not found — run bat_setup.sh on the server first"
+info "Mounts OK, /config visible"
+
+# -----------------------------------------------------------------------
+# Step 3: Kerberos from /config
+# -----------------------------------------------------------------------
+
+info ""
+info "=== Step 3/5: Kerberos ==="
+
+if ! command -v kinit >/dev/null 2>&1; then
+	if command -v dnf >/dev/null 2>&1; then
+		info "Installing krb5-workstation..."
+		dnf install -y krb5-workstation
+	elif command -v apt-get >/dev/null 2>&1; then
+		info "Installing krb5-user..."
+		apt-get install -y krb5-user
+	fi
+fi
+
+if [ -f "$V4_MOUNT/config/krb5.conf" ]; then
+	cp "$V4_MOUNT/config/krb5.conf" /etc/krb5.conf
+	info "Installed /etc/krb5.conf from server"
+
+	# Get test TGT
+	echo "testpass" | kinit nfstest@REFFS.BAT 2>/dev/null && \
+		info "TGT obtained for nfstest@REFFS.BAT" || \
+		info "WARN: kinit failed (check server firewall: kerberos)"
+else
+	info "SKIP: no krb5.conf on server /config"
+fi
+
+# -----------------------------------------------------------------------
+# Step 4: TLS CA cert from /config
+# -----------------------------------------------------------------------
+
+info ""
+info "=== Step 4/5: TLS ==="
+
+mkdir -p /etc/reffs/tls
+if [ -f "$V4_MOUNT/config/ca.pem" ]; then
+	cp "$V4_MOUNT/config/ca.pem" /etc/reffs/tls/ca.pem
+	info "Installed /etc/reffs/tls/ca.pem from server"
+fi
+if [ -f "$V4_MOUNT/config/client.pem" ]; then
+	cp "$V4_MOUNT/config/client.pem" /etc/reffs/tls/client.pem
+	cp "$V4_MOUNT/config/client-key.pem" /etc/reffs/tls/client-key.pem
+	chmod 600 /etc/reffs/tls/client-key.pem
+	info "Installed client cert + key from server"
+else
+	info "SKIP: no client certs on server /config"
+fi
 
 # -----------------------------------------------------------------------
 # Step 5: fstab
@@ -168,16 +152,9 @@ info "=== BAT Client Setup Complete ==="
 info "========================================"
 info ""
 info "Server:  $SERVER"
-info "Client:  $HOSTNAME"
 info "Mounts:"
 info "  NFSv4.2: $V4_MOUNT"
 info "  NFSv3:   $V3_MOUNT"
 info ""
 info "Run CI:"
 info "  scripts/ci_remote.sh --server $SERVER"
-info ""
-info "Kerberos:"
-klist 2>/dev/null | head -5 || info "  (no TGT)"
-info ""
-info "TLS CA:"
-ls -la /etc/reffs/tls/ca.pem 2>/dev/null || info "  (no CA cert)"

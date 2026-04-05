@@ -51,7 +51,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 DATE=$(date +%Y%m%d-%H%M%S)
 LOGDIR="$RESULTS_BASE/$DATE"
+mkdir -p "$LOGDIR" 2>/dev/null || LOGDIR="/tmp/ci_remote_$DATE"
 mkdir -p "$LOGDIR"
+
+# Also write results to the server's /results if available
+SERVER_RESULTS="$V4_MOUNT/results"
+if [ -d "$SERVER_RESULTS" ]; then
+    SERVER_LOGDIR="$SERVER_RESULTS/$(hostname -s)_$DATE"
+    mkdir -p "$SERVER_LOGDIR" 2>/dev/null || SERVER_LOGDIR=""
+else
+    SERVER_LOGDIR=""
+fi
 
 LOG="$LOGDIR/ci_remote.log"
 exec > >(tee "$LOG") 2>&1
@@ -163,6 +173,15 @@ echo "  PASSED:  $PASSED"
 echo "  FAILED:  $FAILED"
 echo "  Log dir: $LOGDIR"
 echo "========================================"
+
+# -----------------------------------------------------------------------
+# Copy results to server
+# -----------------------------------------------------------------------
+
+if [ -n "$SERVER_LOGDIR" ]; then
+    cp "$LOGDIR"/*.log "$SERVER_LOGDIR/" 2>/dev/null || true
+    info "Results copied to $SERVER_LOGDIR"
+fi
 
 # -----------------------------------------------------------------------
 # Email (optional)

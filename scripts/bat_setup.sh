@@ -106,6 +106,7 @@ if command -v firewall-cmd >/dev/null 2>&1; then
 	info "Configuring firewall..."
 	firewall-cmd --permanent --add-service=nfs 2>/dev/null || true
 	firewall-cmd --permanent --add-service=rpc-bind 2>/dev/null || true
+	firewall-cmd --permanent --add-service=kerberos 2>/dev/null || true
 	firewall-cmd --permanent --add-port=20490/tcp 2>/dev/null || true
 	firewall-cmd --reload 2>/dev/null || true
 	info "Firewall: nfs, rpc-bind, probe(20490/tcp) opened"
@@ -188,6 +189,22 @@ do
 		info "Added $mount_point to /etc/fstab"
 	fi
 done
+
+# -----------------------------------------------------------------------
+# Populate /config and /results on the export for remote clients
+# -----------------------------------------------------------------------
+
+info ""
+info "Populating $V4_MOUNT/config for remote clients..."
+mkdir -p "$V4_MOUNT/config" "$V4_MOUNT/results"
+chmod 777 "$V4_MOUNT/results"
+
+[ -f /etc/krb5.conf ] && cp /etc/krb5.conf "$V4_MOUNT/config/"
+[ -f /etc/reffs/tls/ca.pem ] && cp /etc/reffs/tls/ca.pem "$V4_MOUNT/config/"
+[ -f /etc/reffs/tls/client.pem ] && cp /etc/reffs/tls/client.pem "$V4_MOUNT/config/"
+[ -f /etc/reffs/tls/client-key.pem ] && cp /etc/reffs/tls/client-key.pem "$V4_MOUNT/config/"
+chmod 644 "$V4_MOUNT/config"/* 2>/dev/null || true
+info "Config files available at $V4_MOUNT/config/"
 
 # -----------------------------------------------------------------------
 # Summary
