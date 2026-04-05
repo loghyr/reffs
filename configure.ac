@@ -471,6 +471,16 @@ AC_COMPILE_IFELSE(
 CFLAGS="$saved_CFLAGS"
 AC_SUBST([AVX2_CFLAGS])
 
+dnl Fully expand prefix-relative paths for the systemd unit file.
+dnl AC_CONFIG_FILES only does one level of @var@ substitution, so
+dnl @bindir@ expands to '${exec_prefix}/bin' which systemd rejects.
+AS_IF([test "x$prefix" = xNONE], [prefix=$ac_default_prefix])
+AS_IF([test "x$exec_prefix" = xNONE], [exec_prefix=$prefix])
+eval "FULL_BINDIR=$bindir"
+eval "FULL_SYSCONFDIR=$sysconfdir"
+AC_SUBST([FULL_BINDIR])
+AC_SUBST([FULL_SYSCONFDIR])
+
 AC_CONFIG_FILES([
 	Makefile
 	reffs.pc
