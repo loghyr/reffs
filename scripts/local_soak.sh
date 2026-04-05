@@ -346,7 +346,11 @@ while true; do
         break
     fi
 
-    if [ "$NOW" -ge "$NEXT_RESTART" ]; then
+    # Don't start a restart if we're within 2 minutes of the end --
+    # the restart sequence (kill + unmount + remount) takes time and
+    # would run past the duration boundary.
+    REMAINING=$((DURATION_SEC - ELAPSED))
+    if [ "$NOW" -ge "$NEXT_RESTART" ] && [ "$REMAINING" -gt 120 ]; then
         RESTART_COUNT=$((RESTART_COUNT + 1))
         info "=== Restart #$RESTART_COUNT ==="
 
