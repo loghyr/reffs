@@ -91,6 +91,7 @@ int sb_registry_save(const char *state_dir)
 				strncpy(entries[i].sre_backend_path,
 					sb->sb_backend_path,
 					SB_REGISTRY_MAX_PATH - 1);
+			entries[i].sre_layout_types = sb->sb_layout_types;
 			i++;
 		}
 		rcu_read_unlock();
@@ -249,8 +250,9 @@ int sb_registry_load(const char *state_dir)
 			continue;
 		}
 
-		/* Restore persisted UUID (or freshly generated for v2). */
+		/* Restore persisted UUID and layout types. */
 		uuid_copy(sb->sb_uuid, e->sre_uuid);
+		sb->sb_layout_types = e->sre_layout_types;
 
 		ret = super_block_dirent_create(sb, NULL,
 						reffs_life_action_birth);
