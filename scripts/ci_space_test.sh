@@ -86,7 +86,11 @@ info ""
 info "--- Test 1: Create 1MB file, verify stat ---"
 
 dd if=/dev/urandom of="$TESTDIR/file1" bs=1024 count=1024 2>/dev/null
+# Close ensures LAYOUTRETURN fires; sleep gives the server time to
+# update i_used from the DS reflected GETATTR.  The kernel NFS
+# client caches attrs, so we stat twice with a gap.
 sync
+sleep 2
 
 SIZE=$(file_size "$TESTDIR/file1")
 BLOCKS=$(file_blocks_bytes "$TESTDIR/file1")
@@ -180,6 +184,7 @@ for i in $(seq 2 6); do
     dd if=/dev/urandom of="$TESTDIR/file$i" bs=1024 count=512 2>/dev/null
 done
 sync
+sleep 2
 
 AFTER_MULTI_USED=$(fs_used_bytes)
 MULTI_DELTA=$((AFTER_MULTI_USED - AFTER_CREATE_USED))
@@ -214,6 +219,8 @@ BEFORE_REMOVE_USED=$(fs_used_bytes)
 
 rm -f "$TESTDIR"/file*
 sync
+# Server may batch space reclamation; allow settle time.
+sleep 2
 
 AFTER_REMOVE_USED=$(fs_used_bytes)
 REMOVE_DELTA=$((BEFORE_REMOVE_USED - AFTER_REMOVE_USED))
