@@ -199,7 +199,12 @@ info "Populating $V4_MOUNT/config for remote clients..."
 mkdir -p "$V4_MOUNT/config" "$V4_MOUNT/results"
 chmod 777 "$V4_MOUNT/results"
 
-[ -f /etc/krb5.conf ] && cp /etc/krb5.conf "$V4_MOUNT/config/"
+# Write a client-facing krb5.conf that points KDC at this server's
+# address (not localhost, which would resolve to the client itself).
+if [ -f /etc/krb5.conf ]; then
+	sed "s/kdc = localhost/kdc = $HOSTNAME/;s/admin_server = localhost/admin_server = $HOSTNAME/" \
+		/etc/krb5.conf > "$V4_MOUNT/config/krb5.conf"
+fi
 [ -f /etc/reffs/tls/ca.pem ] && cp /etc/reffs/tls/ca.pem "$V4_MOUNT/config/"
 [ -f /etc/reffs/tls/client.pem ] && cp /etc/reffs/tls/client.pem "$V4_MOUNT/config/"
 [ -f /etc/reffs/tls/client-key.pem ] && cp /etc/reffs/tls/client-key.pem "$V4_MOUNT/config/"

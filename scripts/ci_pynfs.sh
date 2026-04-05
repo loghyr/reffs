@@ -216,7 +216,7 @@ cd "$PYNFS_DIR/nfs4.1"
 #   flex: pNFS-specific (enable when testing pNFS)
 #   deleg: CB_RECALL stateid incompatible with pynfs callback model
 #   xattr: extended attributes not implemented (NFS4ERR_NOTSUPP)
-PYNFS_URL="${PYNFS_SERVER}:${PYNFS_PORT}:/"
+PYNFS_URL="${PYNFS_SERVER}:${PYNFS_PORT}/"
 if timeout 600 python3 testserver.py "$PYNFS_URL" \
 	--maketree --rundeps -v \
 	all nocourteous noreboot noflex nodeleg noxattr 2>&1 | tee "$RESULTS_FILE"; then
