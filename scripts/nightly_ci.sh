@@ -398,14 +398,21 @@ fi
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
+# 40-minute timeout per soak: 30 min duration + 10 min margin for
+# restarts, mount retries, and build time.  Prevents hung D-state
+# processes from blocking the nightly email indefinitely.
+SOAK_TIMEOUT=2400
+
 section_start soak_posix "Soak test (POSIX, 30 min)"
-"$REPO/scripts/local_soak.sh" --posix 2>&1 | tee "$LOGDIR/soak_posix.log" | \
+timeout $SOAK_TIMEOUT "$REPO/scripts/local_soak.sh" --posix 2>&1 | \
+    tee "$LOGDIR/soak_posix.log" | \
     grep -E '(=== |Health:.*restarts=[0-9]|PASS|FAIL)' | tail -20
 SOAK_POSIX_RC=${PIPESTATUS[0]}
 record "soak_posix" $SOAK_POSIX_RC
 
 section_start soak_rocksdb "Soak test (RocksDB, 30 min)"
-"$REPO/scripts/local_soak.sh" --rocksdb 2>&1 | tee "$LOGDIR/soak_rocksdb.log" | \
+timeout $SOAK_TIMEOUT "$REPO/scripts/local_soak.sh" --rocksdb 2>&1 | \
+    tee "$LOGDIR/soak_rocksdb.log" | \
     grep -E '(=== |Health:.*restarts=[0-9]|PASS|FAIL)' | tail -20
 SOAK_ROCKSDB_RC=${PIPESTATUS[0]}
 record "soak_rocksdb" $SOAK_ROCKSDB_RC

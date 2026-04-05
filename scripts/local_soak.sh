@@ -383,10 +383,15 @@ while true; do
                 info "    $pid already exited"
             fi
         done
+        # Wait briefly for workloads to exit.  D-state processes on a
+        # dead NFS mount may never exit; don't block the restart.
         for pid in "${WORKLOAD_PIDS[@]}"; do
-            wait "$pid" 2>/dev/null || true
+            for w in $(seq 1 5); do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 1
+            done
         done
-        info "    all workloads reaped"
+        info "    workloads reaped (some may linger in D-state)"
         WORKLOAD_PIDS=()
 
         # Step 4: check for ASAN/UBSAN errors in server log
@@ -407,12 +412,13 @@ while true; do
         sleep 1
         mount_ok=false
         for try in $(seq 1 6); do
-            mount_nfs
-            mount_rc=$?
-            if [ "$mount_rc" -eq 0 ]; then
+            # mount_nfs returns non-zero on timeout/failure;
+            # must suppress set -e to allow retry loop to continue
+            if mount_nfs; then
                 mount_ok=true
                 break
             fi
+            info "    mount attempt $try/6 failed, retrying in 5s"
             sleep 5
         done
         if [ "$mount_ok" != "true" ]; then
