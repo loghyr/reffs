@@ -15,6 +15,13 @@
 # Crontab entry (e.g., 2am nightly):
 #   0 2 * * * /home/loghyr/reffs/scripts/nightly_ci.sh 2>&1
 #
+# Quick soak-only triage (skip build/tests, 5 min soaks):
+#   scripts/nightly_ci.sh --soak-only --soak-duration 5 2>&1 | tee /tmp/soak.log
+#
+# Options:
+#   --soak-only          Skip build, unit tests, and external test suites
+#   --soak-duration MIN  Soak duration in minutes (default: 30)
+#
 # Prerequisites:
 #   - /reffs_data writable
 #   - sudo NOPASSWD for mount/umount/rpcbind/mkdir/chmod/mountpoint
@@ -35,6 +42,18 @@ MAX_RUNTIME=$((3 * 3600))  # 3 hours max
 EMAIL="loghyr@gmail.com"
 HOSTNAME=$(hostname -s)
 NFS_PORT=12049
+
+# -- CLI flags --
+SOAK_ONLY=false
+SOAK_DURATION=30        # minutes per soak (default: 30)
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --soak-only)       SOAK_ONLY=true; shift ;;
+    --soak-duration)   SOAK_DURATION="$2"; shift 2 ;;
+    *)                 echo "Unknown: $1"; exit 1 ;;
+    esac
+done
 
 V4_MOUNT=/mnt/reffs_v4
 V3_MOUNT=/mnt/reffs_v3
@@ -134,6 +153,14 @@ echo "HEAD: $(git log --oneline -1)"
 # -----------------------------------------------------------------------
 # Build
 # -----------------------------------------------------------------------
+
+if [ "$SOAK_ONLY" = true ]; then
+    echo ""
+    echo "=== --soak-only: skipping build, tests, and external suites ==="
+    echo ""
+    # Jump past all pre-soak sections.  goto_email is unset so soak
+    # sections will run.  The soak script does its own build.
+else
 
 section_start build "Build"
 cd "$REPO"
@@ -393,25 +420,29 @@ nfs_cleanup
 record "nfs_teardown" 0
 fi
 
+fi  # end --soak-only skip block (opened before Build section)
+
 # -----------------------------------------------------------------------
 # Soak tests (own server lifecycle -- crash recovery testing)
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-# 40-minute timeout per soak: 30 min duration + 10 min margin for
-# restarts, mount retries, and build time.  Prevents hung D-state
-# processes from blocking the nightly email indefinitely.
-SOAK_TIMEOUT=2400
+# Timeout = soak duration + 10 min margin for restarts, mount
+# retries, and build time.  Prevents hung D-state processes from
+# blocking the nightly email indefinitely.
+SOAK_TIMEOUT=$(( (SOAK_DURATION + 10) * 60 ))
 
-section_start soak_posix "Soak test (POSIX, 30 min)"
-timeout $SOAK_TIMEOUT "$REPO/scripts/local_soak.sh" --posix 2>&1 | \
+section_start soak_posix "Soak test (POSIX, ${SOAK_DURATION} min)"
+timeout $SOAK_TIMEOUT "$REPO/scripts/local_soak.sh" --posix \
+    --duration "$SOAK_DURATION" 2>&1 | \
     tee "$LOGDIR/soak_posix.log" | \
     grep -E '(=== |Health:.*restarts=[0-9]|PASS|FAIL)' | tail -20
 SOAK_POSIX_RC=${PIPESTATUS[0]}
 record "soak_posix" $SOAK_POSIX_RC
 
-section_start soak_rocksdb "Soak test (RocksDB, 30 min)"
-timeout $SOAK_TIMEOUT "$REPO/scripts/local_soak.sh" --rocksdb 2>&1 | \
+section_start soak_rocksdb "Soak test (RocksDB, ${SOAK_DURATION} min)"
+timeout $SOAK_TIMEOUT "$REPO/scripts/local_soak.sh" --rocksdb \
+    --duration "$SOAK_DURATION" 2>&1 | \
     tee "$LOGDIR/soak_rocksdb.log" | \
     grep -E '(=== |Health:.*restarts=[0-9]|PASS|FAIL)' | tail -20
 SOAK_ROCKSDB_RC=${PIPESTATUS[0]}

@@ -5,7 +5,17 @@
 # local_soak.sh — Run soak test directly on the dev box, no Docker.
 #
 # Usage:
-#   scripts/local_soak.sh [--rocksdb] [--posix]
+#   scripts/local_soak.sh [OPTIONS]
+#
+# Options:
+#   --posix           POSIX backend (default)
+#   --rocksdb         RocksDB metadata backend
+#   --duration MIN    Soak duration in minutes (default: 30)
+#   --restart MIN     Restart interval in minutes (default: 5)
+#   --clients N       Number of workload processes (default: 2)
+#
+# Quick triage (2 min, 1 restart):
+#   scripts/local_soak.sh --duration 2 --restart 1
 #
 # Builds reffsd in build/, runs it against /reffs as backing store.
 # Default: POSIX backend.  --rocksdb uses RocksDB metadata backend.
@@ -23,13 +33,25 @@
 
 set -euo pipefail
 
+# -- Defaults (overridable via command line) --
 BACKEND_TYPE="posix"
-for arg in "$@"; do
-    case "$arg" in
-    --rocksdb) BACKEND_TYPE="rocksdb" ;;
-    --posix)   BACKEND_TYPE="posix" ;;
+DURATION_MIN=30
+RESTART_MIN=5
+CLIENTS=2
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --rocksdb)    BACKEND_TYPE="rocksdb"; shift ;;
+    --posix)      BACKEND_TYPE="posix"; shift ;;
+    --duration)   DURATION_MIN="$2"; shift 2 ;;
+    --restart)    RESTART_MIN="$2"; shift 2 ;;
+    --clients)    CLIENTS="$2"; shift 2 ;;
+    *)            echo "Unknown: $1"; exit 1 ;;
     esac
 done
+
+DURATION_SEC=$((DURATION_MIN * 60))
+RESTART_SEC=$((RESTART_MIN * 60))
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -42,13 +64,6 @@ MOUNT="/mnt/reffs_local_soak"
 CONFIG="/reffs_data/soak.toml"
 LOG="/reffs_data/soak.log"
 TRACE="/reffs_data/soak-trace.log"
-
-DURATION_MIN=30
-RESTART_MIN=5
-CLIENTS=2
-
-DURATION_SEC=$((DURATION_MIN * 60))
-RESTART_SEC=$((RESTART_MIN * 60))
 
 REFFSD_PID=
 WORKLOAD_PIDS=()
