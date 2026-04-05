@@ -33,6 +33,14 @@
 
 struct connection_info;
 
+/* Global network ring pointer (set once in io_handler_init). */
+static struct ring_context *g_network_rc;
+
+struct ring_context *io_network_get_global(void)
+{
+	return g_network_rc;
+}
+
 /* GSS context cache + server credential — declared in gss_context.h. */
 int gss_ctx_cache_init(void);
 void gss_ctx_cache_fini(void);
@@ -177,6 +185,9 @@ static int setup_io_uring(struct ring_context *rc)
 int io_handler_init(struct ring_context *rc, const char *tls_cert,
 		    const char *tls_key, const char *tls_ca)
 {
+	// Store global reference for callback paths (CB_RECALL etc.)
+	g_network_rc = rc;
+
 	// Initialize pending requests array
 	memset(conn_buffers, 0, sizeof(conn_buffers));
 

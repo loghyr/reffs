@@ -123,6 +123,7 @@ static int cb_build_and_alloc(struct nfs4_session *session,
 	cb_rt->rt_reply = buf;
 	cb_rt->rt_reply_len = buf_len;
 	cb_rt->rt_info.ri_xid = xid;
+	cb_rt->rt_rc = io_network_get_global();
 
 	*out_rt = cb_rt;
 	*out_xid = xid;
