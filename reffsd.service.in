@@ -10,8 +10,8 @@ After=network-online.target rpcbind.service
 Type=simple
 Environment="LIBC_FATAL_STDERR_=1"
 Environment="MALLOC_CONF=prof:false"
-Environment="ASAN_OPTIONS=quarantine_size_mb=256:detect_leaks=0:halt_on_error=1:handle_abort=1"
-Environment="UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
+Environment="ASAN_OPTIONS=quarantine_size_mb=256:detect_leaks=0:halt_on_error=0:handle_abort=1"
+Environment="UBSAN_OPTIONS=halt_on_error=0:print_stacktrace=1"
 ExecStart=@FULL_BINDIR@/reffsd --config=@FULL_SYSCONFDIR@/reffs/reffsd.toml
 ExecStartPost=-@FULL_BINDIR@/bat_export_setup.sh
 Restart=on-failure
