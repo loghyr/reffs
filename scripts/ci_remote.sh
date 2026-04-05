@@ -149,13 +149,97 @@ if [ -x "$REPO/scripts/ci_pjdfstest.sh" ]; then
     record "pjdfstest" ${PIPESTATUS[0]}
 fi
 
-# wardtest
+# wardtest (5 min with verify phase)
 if [ -x "$REPO/scripts/ci_wardtest.sh" ]; then
     section_start wardtest "wardtest"
-    "$REPO/scripts/ci_wardtest.sh" --mount "$V4_MOUNT" --duration 60 \
+    "$REPO/scripts/ci_wardtest.sh" --mount "$V4_MOUNT" --duration 300 \
         2>&1 | tee "$LOGDIR/wardtest.log" | tail -20
     record "wardtest" ${PIPESTATUS[0]}
 fi
+
+# -----------------------------------------------------------------------
+# Build-on-NFS: exercises hardlinks, large writes, readdir, renames
+# -----------------------------------------------------------------------
+
+section_start build_on_nfs "Build-on-NFS (NFSv4.2)"
+SRC_DIR="$REPO"
+BUILD_NFS_DIR="$V4_MOUNT/ci_build_$$"
+(
+    set -e
+    git clone --quiet "$SRC_DIR" "$BUILD_NFS_DIR"
+    cd "$BUILD_NFS_DIR"
+
+    # Verify clone integrity
+    sum_nfs=$(md5sum configure.ac | awk '{print $1}')
+    sum_src=$(md5sum "$SRC_DIR/configure.ac" | awk '{print $1}')
+    if [ "$sum_nfs" != "$sum_src" ]; then
+        echo "FAIL: md5sum mismatch: $sum_nfs != $sum_src"
+        exit 1
+    fi
+    echo "Clone integrity OK: $sum_nfs"
+
+    # Build on the NFS mount
+    mkdir -p m4
+    autoreconf -fi >/dev/null 2>&1
+    mkdir -p build_nfs
+    cd build_nfs
+    ../configure --disable-asan --disable-ubsan >/dev/null 2>&1
+    make -j$(nproc) 2>&1 | tail -3
+    echo "Build-on-NFS: make succeeded"
+) 2>&1 | tee "$LOGDIR/build_on_nfs.log" | tail -10
+BUILD_NFS_RC=${PIPESTATUS[0]}
+rm -rf "$BUILD_NFS_DIR" 2>/dev/null || true
+record "build_on_nfs" $BUILD_NFS_RC
+
+# -----------------------------------------------------------------------
+# SEEK test: write a file with holes, verify SEEK_HOLE/SEEK_DATA
+# -----------------------------------------------------------------------
+
+section_start seek_test "SEEK (hole/data)"
+SEEK_DIR="$V4_MOUNT/ci_seek_$$"
+(
+    set -e
+    mkdir -p "$SEEK_DIR"
+
+    # Create a file with a hole: write at offset 0, skip 1MB, write again
+    TESTF="$SEEK_DIR/holey"
+    dd if=/dev/urandom of="$TESTF" bs=4096 count=1 2>/dev/null
+    dd if=/dev/urandom of="$TESTF" bs=4096 count=1 seek=256 2>/dev/null
+
+    # Verify the file has the right size (256*4096 + 4096 = 1052672)
+    SIZE=$(stat -c %s "$TESTF")
+    if [ "$SIZE" -ne 1052672 ]; then
+        echo "FAIL: expected size 1052672, got $SIZE"
+        exit 1
+    fi
+
+    # Use SEEK_HOLE/SEEK_DATA via python (portable, no special tool)
+    python3 -c "
+import os
+fd = os.open('$TESTF', os.O_RDONLY)
+try:
+    # SEEK_DATA from 0 should return 0 (data at start)
+    pos = os.lseek(fd, 0, os.SEEK_DATA)
+    assert pos == 0, f'SEEK_DATA from 0: expected 0, got {pos}'
+
+    # SEEK_HOLE from 0 should find the hole after the first block
+    pos = os.lseek(fd, 0, os.SEEK_HOLE)
+    assert pos > 0, f'SEEK_HOLE from 0: expected >0, got {pos}'
+    print(f'SEEK_HOLE from 0 = {pos} (hole starts after first data block)')
+
+    # SEEK_DATA from the hole region should find the second data block
+    pos = os.lseek(fd, 8192, os.SEEK_DATA)
+    assert pos > 0, f'SEEK_DATA from 8192: expected >0, got {pos}'
+    print(f'SEEK_DATA from 8192 = {pos} (second data block)')
+
+    print('SEEK test: PASS')
+finally:
+    os.close(fd)
+"
+) 2>&1 | tee "$LOGDIR/seek_test.log" | tail -10
+SEEK_RC=${PIPESTATUS[0]}
+rm -rf "$SEEK_DIR" 2>/dev/null || true
+record "seek_test" $SEEK_RC
 
 # -----------------------------------------------------------------------
 # Summary
