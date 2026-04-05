@@ -2,23 +2,24 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# nightly_ci.sh — Full CI run on bare metal, no Docker.
+# nightly_ci.sh -- Full CI run on bare metal, no Docker.
+#
+# Architecture:
+#   1. Build + unit tests + style + license (no server needed)
+#   2. Start reffsd once, mount NFSv3 + NFSv4.2 (persistent)
+#   3. Run all external test suites against those mounts
+#   4. Unmount, stop server
+#   5. Soak tests (own server lifecycle -- crash recovery)
+#   6. Email summary
 #
 # Crontab entry (e.g., 2am nightly):
 #   0 2 * * * /home/loghyr/reffs/scripts/nightly_ci.sh 2>&1
 #
 # Prerequisites:
 #   - /reffs_data writable
-#   - sudo NOPASSWD for mount/umount/rpcbind/mkdir/chmod
+#   - sudo NOPASSWD for mount/umount/rpcbind/mkdir/chmod/mountpoint
 #   - msmtp or mailx configured for email
 #   - Build dependencies installed
-#
-# Features:
-#   - Lock file prevents concurrent runs
-#   - Stuck detection (kill after MAX_RUNTIME)
-#   - Git pull + clean build
-#   - Unit tests, pjdfstest (if available), soak (30 min)
-#   - Email summary on completion
 
 set -uo pipefail
 
@@ -35,6 +36,9 @@ EMAIL="loghyr@gmail.com"
 HOSTNAME=$(hostname -s)
 NFS_PORT=12049
 
+V4_MOUNT=/mnt/reffs_v4
+V3_MOUNT=/mnt/reffs_v3
+
 # -----------------------------------------------------------------------
 # Lock / stuck detection
 # -----------------------------------------------------------------------
@@ -46,7 +50,6 @@ cleanup_lock() {
 if [ -f "$LOCKFILE" ]; then
     PID=$(cat "$LOCKFILE" 2>/dev/null)
     if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-        # Check if stuck (running longer than MAX_RUNTIME)
         START_TIME=$(stat -c %Y "$LOCKFILE" 2>/dev/null || echo 0)
         NOW=$(date +%s)
         ELAPSED=$((NOW - START_TIME))
@@ -61,7 +64,6 @@ if [ -f "$LOCKFILE" ]; then
             exit 0
         fi
     else
-        # Stale lock
         rm -f "$LOCKFILE"
     fi
 fi
@@ -150,12 +152,12 @@ BUILD_RC=$?
 record "build" $BUILD_RC
 
 if [ $BUILD_RC -ne 0 ]; then
-    echo "Build failed — aborting"
+    echo "Build failed -- aborting"
     FAILED=$((FAILED + 1))
-    # Skip to email
-    exec 3>&1 4>&2
     goto_email=true
 fi
+
+REFFSD="$BUILD/src/reffsd"
 
 # -----------------------------------------------------------------------
 # Unit tests
@@ -183,24 +185,66 @@ SKIP_STYLE=1 make -f Makefile.reffs license 2>&1 | tail -5
 record "license" ${PIPESTATUS[0]}
 fi
 
-# -----------------------------------------------------------------------
-# Integration test (NFS mount + git clone)
-# -----------------------------------------------------------------------
+# =======================================================================
+# Start server + persistent mounts (NFSv3 + NFSv4.2)
+# =======================================================================
+
+REFFSD_PID=
+INT_DATA=/reffs_data/nightly_data
+INT_STATE=/reffs_data/nightly_state
+INT_CONFIG=/tmp/reffs_nightly.toml
+INT_LOG="$LOGDIR/reffsd.log"
+
+stop_nfs_server() {
+    echo "  Stopping reffsd (PID ${REFFSD_PID:-none})"
+    if [ -n "${REFFSD_PID:-}" ]; then
+        kill -TERM "$REFFSD_PID" 2>/dev/null
+        for i in $(seq 1 10); do
+            kill -0 "$REFFSD_PID" 2>/dev/null || break
+            sleep 1
+        done
+        if kill -0 "$REFFSD_PID" 2>/dev/null; then
+            echo "  reffsd still alive after 10s, SIGKILL"
+            kill -KILL "$REFFSD_PID" 2>/dev/null
+        fi
+        wait "$REFFSD_PID" 2>/dev/null || true
+        echo "  reffsd exited"
+        REFFSD_PID=
+    fi
+}
+
+unmount_all() {
+    echo "  Unmounting $V4_MOUNT"
+    sudo umount -f "$V4_MOUNT" 2>/dev/null || true
+    echo "  Unmounting $V3_MOUNT"
+    sudo umount -f "$V3_MOUNT" 2>/dev/null || true
+}
+
+nfs_cleanup() {
+    echo "=== NFS cleanup ==="
+    unmount_all
+    stop_nfs_server
+    # Check for ASAN/UBSAN in server log
+    if [ -f "$INT_LOG" ]; then
+        if grep -qE "ERROR: (AddressSanitizer|LeakSanitizer)" "$INT_LOG" 2>/dev/null; then
+            echo "  ASAN/LSAN error in server log!"
+            grep -A5 "ERROR:" "$INT_LOG" | head -20
+        fi
+        if grep -q "runtime error:" "$INT_LOG" 2>/dev/null; then
+            echo "  UBSAN error in server log!"
+            grep "runtime error:" "$INT_LOG" | head -10
+        fi
+    fi
+}
 
 if [ -z "${goto_email:-}" ]; then
-section_start integration "Integration test"
-REFFSD="$BUILD/src/reffsd"
-INT_DATA=/reffs_data/nightly_int_data
-INT_STATE=/reffs_data/nightly_int_state
-INT_MOUNT=/mnt/reffs_nightly_int
-INT_LOG="$LOGDIR/integration.log"
+section_start nfs_setup "Start NFS server + mounts"
 
 rm -rf "$INT_DATA" "$INT_STATE"
 mkdir -p "$INT_DATA" "$INT_STATE"
-sudo mkdir -p "$INT_MOUNT"
-sudo chmod 777 "$INT_MOUNT"
+sudo mkdir -p "$V4_MOUNT" "$V3_MOUNT"
 
-cat > /tmp/reffs_nightly.toml <<EOF
+cat > "$INT_CONFIG" <<EOF
 [server]
 port           = $NFS_PORT
 bind           = "*"
@@ -227,75 +271,99 @@ if ! rpcinfo -p 127.0.0.1 >/dev/null 2>&1; then
     sleep 1
 fi
 
+: > "$INT_LOG"
 ASAN_OPTIONS="detect_leaks=0:halt_on_error=1" \
-UBSAN_OPTIONS="halt_on_error=1" \
-"$REFFSD" --config=/tmp/reffs_nightly.toml > "$INT_LOG" 2>&1 &
-INT_PID=$!
-sleep 3
+UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1" \
+"$REFFSD" --config="$INT_CONFIG" >"$INT_LOG" 2>&1 &
+REFFSD_PID=$!
 
-if kill -0 $INT_PID 2>/dev/null; then
-    sudo timeout 30 mount -o vers=4.2,sec=sys,port=$NFS_PORT \
-        127.0.0.1:/ "$INT_MOUNT" 2>&1
+# Wait for server
+SERVER_OK=false
+for i in $(seq 1 30); do
+    (echo >/dev/tcp/127.0.0.1/$NFS_PORT) 2>/dev/null && { SERVER_OK=true; break; }
+    kill -0 "$REFFSD_PID" 2>/dev/null || { echo "reffsd died during startup"; break; }
+    sleep 1
+done
 
-    if mountpoint -q "$INT_MOUNT" 2>/dev/null; then
-        # Quick smoke test: create, write, read, delete
-        echo "test data" > "$INT_MOUNT/nightly_test" 2>&1
-        cat "$INT_MOUNT/nightly_test" > /dev/null 2>&1
-        rm -f "$INT_MOUNT/nightly_test" 2>&1
-        INT_RC=0
+if [ "$SERVER_OK" = true ]; then
+    echo "  reffsd up (PID $REFFSD_PID, port $NFS_PORT)"
+
+    echo "  Mounting NFSv4.2 at $V4_MOUNT"
+    sudo mount -o vers=4.2,sec=sys,hard,timeo=600,port=$NFS_PORT \
+        127.0.0.1:/ "$V4_MOUNT" 2>&1
+
+    echo "  Mounting NFSv3 at $V3_MOUNT"
+    sudo mount -o vers=3,sec=sys,hard,nolock,tcp,mountproto=tcp,timeo=600,port=$NFS_PORT \
+        127.0.0.1:/ "$V3_MOUNT" 2>&1
+
+    V4_OK=false; V3_OK=false
+    sudo mountpoint -q "$V4_MOUNT" 2>/dev/null && V4_OK=true
+    sudo mountpoint -q "$V3_MOUNT" 2>/dev/null && V3_OK=true
+    echo "  NFSv4.2: $V4_OK  NFSv3: $V3_OK"
+
+    if [ "$V4_OK" = true ] && [ "$V3_OK" = true ]; then
+        # Quick smoke test
+        echo "smoke" > "$V4_MOUNT/nightly_smoke" 2>/dev/null
+        cat "$V4_MOUNT/nightly_smoke" > /dev/null 2>/dev/null
+        rm -f "$V4_MOUNT/nightly_smoke" 2>/dev/null
+        echo "smoke" > "$V3_MOUNT/nightly_smoke" 2>/dev/null
+        cat "$V3_MOUNT/nightly_smoke" > /dev/null 2>/dev/null
+        rm -f "$V3_MOUNT/nightly_smoke" 2>/dev/null
+        record "nfs_setup" 0
     else
-        INT_RC=1
-        echo "Mount failed"
+        record "nfs_setup" 1
+        nfs_cleanup
+        goto_email=true
     fi
-
-    sudo umount -f "$INT_MOUNT" 2>/dev/null
-    kill -TERM $INT_PID 2>/dev/null
-    wait $INT_PID 2>/dev/null
 else
-    INT_RC=1
-    echo "reffsd failed to start"
+    echo "  reffsd failed to start"
+    tail -20 "$INT_LOG"
+    record "nfs_setup" 1
+    goto_email=true
 fi
-record "integration" $INT_RC
 fi
 
 # -----------------------------------------------------------------------
-# pynfs (NFSv4.1 protocol conformance)
+# pynfs (userspace RPC client -- uses server address, not mount)
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
 section_start pynfs "pynfs"
-"$REPO/scripts/ci_pynfs.sh" "$BUILD/src/reffsd" 2>&1 | tee "$LOGDIR/pynfs.log" | \
+"$REPO/scripts/ci_pynfs.sh" --server 127.0.0.1 --port "$NFS_PORT" \
+    2>&1 | tee "$LOGDIR/pynfs.log" | \
     grep -E '(=== |PASS|FAIL|running|tests passed)' | tail -20
 PYNFS_RC=${PIPESTATUS[0]}
 record "pynfs" $PYNFS_RC
 fi
 
 # -----------------------------------------------------------------------
-# CTHON04 (Connectathon NFS tests)
+# CTHON04 (uses persistent mounts)
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
 section_start cthon04 "CTHON04"
-"$REPO/scripts/ci_cthon04_test.sh" "$BUILD/src/reffsd" 2>&1 | tee "$LOGDIR/cthon04.log" | \
+"$REPO/scripts/ci_cthon04_test.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
+    2>&1 | tee "$LOGDIR/cthon04.log" | \
     grep -E '(=== |PASS|FAIL|All tests|Congratulations)' | tail -20
 CTHON04_RC=${PIPESTATUS[0]}
 record "cthon04" $CTHON04_RC
 fi
 
 # -----------------------------------------------------------------------
-# pjdfstest (POSIX filesystem compliance)
+# pjdfstest (uses persistent mounts)
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
 section_start pjdfstest "pjdfstest"
-"$REPO/scripts/ci_pjdfstest.sh" "$BUILD/src/reffsd" 2>&1 | tee "$LOGDIR/pjdfstest.log" | \
+"$REPO/scripts/ci_pjdfstest.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
+    2>&1 | tee "$LOGDIR/pjdfstest.log" | \
     grep -E '(=== |PASS|FAIL|tests|Failed)' | tail -20
 PJDFSTEST_RC=${PIPESTATUS[0]}
 record "pjdfstest" $PJDFSTEST_RC
 fi
 
 # -----------------------------------------------------------------------
-# wardtest (EC data integrity over NFSv4.2)
+# wardtest (uses NFSv4.2 persistent mount)
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
@@ -307,7 +375,8 @@ if [ ! -d "$WARDTEST_DIR" ]; then
 fi
 (cd "$WARDTEST_DIR" && git pull --ff-only 2>&1 | tail -3)
 
-"$REPO/scripts/ci_wardtest.sh" --duration 60 --wardtest-dir "$WARDTEST_DIR" \
+"$REPO/scripts/ci_wardtest.sh" --mount "$V4_MOUNT" --duration 60 \
+    --wardtest-dir "$WARDTEST_DIR" \
     2>&1 | tee "$LOGDIR/wardtest.log" | \
     grep -E '(=== |PASS|FAIL|iterations|verify)' | tail -20
 WARDTEST_RC=${PIPESTATUS[0]}
@@ -315,7 +384,17 @@ record "wardtest" $WARDTEST_RC
 fi
 
 # -----------------------------------------------------------------------
-# Soak test (30 min)
+# Tear down persistent mounts + server
+# -----------------------------------------------------------------------
+
+if [ -z "${goto_email:-}" ]; then
+section_start nfs_teardown "NFS teardown"
+nfs_cleanup
+record "nfs_teardown" 0
+fi
+
+# -----------------------------------------------------------------------
+# Soak tests (own server lifecycle -- crash recovery testing)
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
@@ -360,7 +439,6 @@ else
     SUBJECT="[PASS] $SUBJECT"
 fi
 
-# Send email — try msmtp, then mailx, then just log
 {
     echo "Subject: $SUBJECT"
     echo "From: reffs-ci@$HOSTNAME"
@@ -380,7 +458,7 @@ fi
     tail -50 "$LOG"
 } | msmtp "$EMAIL" 2>/dev/null || \
   mail -s "$SUBJECT" "$EMAIL" < "$LOG" 2>/dev/null || \
-  echo "(email not configured — results in $LOG)"
+  echo "(email not configured -- results in $LOG)"
 
 # -----------------------------------------------------------------------
 # Cleanup old results (keep 7 days)

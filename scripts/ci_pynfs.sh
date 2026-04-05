@@ -18,7 +18,29 @@
 
 set -euo pipefail
 
-REFFSD_BIN=${1:-/build/src/reffsd}
+# Dual mode:
+#   Standalone:  scripts/ci_pynfs.sh [REFFSD_BIN]
+#   External:    scripts/ci_pynfs.sh --server HOST --port PORT
+
+REFFSD_BIN=""
+PYNFS_SERVER=""
+PYNFS_PORT=""
+EXTERNAL_MODE=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --server) PYNFS_SERVER="$2"; EXTERNAL_MODE=true; shift 2 ;;
+        --port)   PYNFS_PORT="$2"; shift 2 ;;
+        *)        REFFSD_BIN="$1"; shift ;;
+    esac
+done
+
+if [ "$EXTERNAL_MODE" = false ]; then
+    REFFSD_BIN=${REFFSD_BIN:-/build/src/reffsd}
+    PYNFS_SERVER="127.0.0.1"
+    PYNFS_PORT="2049"
+fi
+
 EXTERNAL_DIR=${EXTERNAL_DIR:-$(cd "$(dirname "$0")/.." && pwd)/external}
 PYNFS_DIR="$EXTERNAL_DIR/pynfs"
 PYNFS_URL="git://git.linux-nfs.org/projects/cdmackay/pynfs.git"
@@ -178,11 +200,12 @@ fi
 
 fetch_pynfs
 
-start_server || exit 1
+if [ "$EXTERNAL_MODE" = false ]; then
+	start_server || exit 1
+fi
 
-# pynfs connects directly to the server — no kernel mount needed.
-# testserver.py takes server:path as the first argument.
-info "Running pynfs v4.1 tests against 127.0.0.1:/"
+# pynfs connects directly to the server -- no kernel mount needed.
+info "Running pynfs v4.1 tests against $PYNFS_SERVER:/ (port $PYNFS_PORT)"
 
 RESULTS_FILE="$WORK_DIR/pynfs_results.txt"
 
@@ -193,7 +216,8 @@ cd "$PYNFS_DIR/nfs4.1"
 #   flex: pNFS-specific (enable when testing pNFS)
 #   deleg: CB_RECALL stateid incompatible with pynfs callback model
 #   xattr: extended attributes not implemented (NFS4ERR_NOTSUPP)
-if timeout 600 python3 testserver.py 127.0.0.1:/ \
+PYNFS_URL="${PYNFS_SERVER}:${PYNFS_PORT}:/"
+if timeout 600 python3 testserver.py "$PYNFS_URL" \
 	--maketree --rundeps -v \
 	all nocourteous noreboot noflex nodeleg noxattr 2>&1 | tee "$RESULTS_FILE"; then
 	info "pynfs: ALL PASSED"
@@ -202,8 +226,10 @@ else
 fi
 
 cd /
-check_asan
-stop_server
+if [ "$EXTERNAL_MODE" = false ]; then
+	check_asan
+	stop_server
+fi
 
 # Summary: count pass/fail from output
 PASS_COUNT=$(grep -c '^\*\*\*\? PASS' "$RESULTS_FILE" 2>/dev/null || echo 0)

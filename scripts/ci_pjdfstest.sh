@@ -18,8 +18,28 @@
 
 set -euo pipefail
 
-REFFSD_BIN=${1:-/build/src/reffsd}
-BUILD_DIR=$(dirname "$(dirname "$REFFSD_BIN")")
+# Dual mode:
+#   Standalone:  scripts/ci_pjdfstest.sh [REFFSD_BIN]
+#   External:    scripts/ci_pjdfstest.sh --v3-mount PATH --v4-mount PATH
+
+REFFSD_BIN=""
+EXT_V3_MOUNT=""
+EXT_V4_MOUNT=""
+EXTERNAL_MODE=false
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--v3-mount) EXT_V3_MOUNT="$2"; EXTERNAL_MODE=true; shift 2 ;;
+		--v4-mount) EXT_V4_MOUNT="$2"; EXTERNAL_MODE=true; shift 2 ;;
+		*)          REFFSD_BIN="$1"; shift ;;
+	esac
+done
+
+if [ "$EXTERNAL_MODE" = false ]; then
+	REFFSD_BIN=${REFFSD_BIN:-/build/src/reffsd}
+fi
+
+BUILD_DIR=$(dirname "$(dirname "${REFFSD_BIN:-/build/src/reffsd}")")
 EXTERNAL_DIR=${EXTERNAL_DIR:-$(cd "$(dirname "$0")/.." && pwd)/external}
 PJDFS_DIR="$EXTERNAL_DIR/pjdfstest"
 PJDFS_URL="https://github.com/pjd/pjdfstest.git"
@@ -176,21 +196,13 @@ fetch_pjdfstest
 
 run_pjdfstest() {
 	local label=$1
-	local mount_opts=$2
+	local mount_path=$2
 	local results_file="$WORK_DIR/pjdfstest_${label}.txt"
 
 	info ""
 	info "========== pjdfstest: $label =========="
 
-	sudo umount -f "$MOUNT" 2>/dev/null || true
-	sudo mkdir -p "$MOUNT"
-	sudo mount -o "$mount_opts" 127.0.0.1:/ "$MOUNT" || {
-		info "$label: mount failed"
-		die "$label mount failed"
-		return 1
-	}
-
-	local TESTDIR="$MOUNT/pjd_test"
+	local TESTDIR="$mount_path/pjd_test"
 	sudo rm -rf "$TESTDIR" 2>/dev/null || true
 	sudo mkdir -p "$TESTDIR"
 	sudo chmod 777 "$TESTDIR"
@@ -205,22 +217,40 @@ run_pjdfstest() {
 	fi
 
 	cd /
-	rm -rf "$TESTDIR" 2>/dev/null || true
-	sudo umount -f "$MOUNT" 2>/dev/null || true
+	sudo rm -rf "$TESTDIR" 2>/dev/null || true
 
-	check_asan
+	if [ "$EXTERNAL_MODE" = false ]; then
+		check_asan
+	fi
 }
 
 # ---------- Run against both protocols ----------
 
-start_server || exit 1
+if [ "$EXTERNAL_MODE" = true ]; then
+	if [ -n "$EXT_V4_MOUNT" ]; then
+		run_pjdfstest "NFSv4.2" "$EXT_V4_MOUNT"
+	fi
+	if [ -n "$EXT_V3_MOUNT" ]; then
+		run_pjdfstest "NFSv3" "$EXT_V3_MOUNT"
+	fi
+else
+	start_server || exit 1
 
-run_pjdfstest "NFSv4.2" "vers=4.2,sec=sys"
+	sudo mkdir -p "$MOUNT"
+	sudo mount -o "vers=4.2,sec=sys" 127.0.0.1:/ "$MOUNT" || {
+		die "NFSv4.2 mount failed"; stop_server; exit 1
+	}
+	run_pjdfstest "NFSv4.2" "$MOUNT"
+	sudo umount -f "$MOUNT" 2>/dev/null || true
 
-# nolock: NLM sideband protocol clashes with host rpcbind in Docker
-run_pjdfstest "NFSv3" "vers=3,sec=sys,nolock,tcp,mountproto=tcp"
+	sudo mount -o "vers=3,sec=sys,nolock,tcp,mountproto=tcp" 127.0.0.1:/ "$MOUNT" || {
+		die "NFSv3 mount failed"; stop_server; exit 1
+	}
+	run_pjdfstest "NFSv3" "$MOUNT"
+	sudo umount -f "$MOUNT" 2>/dev/null || true
 
-stop_server
+	stop_server
+fi
 
 info ""
 if [ "$FAILED" -eq 0 ]; then

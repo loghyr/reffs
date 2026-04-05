@@ -17,13 +17,33 @@
 
 set -euo pipefail
 
-REFFSD_BIN=${1:-/build/src/reffsd}
-BUILD_DIR=$(dirname "$(dirname "$REFFSD_BIN")")
+# Dual mode:
+#   Standalone:  scripts/ci_cthon04_test.sh [REFFSD_BIN]
+#   External:    scripts/ci_cthon04_test.sh --v3-mount PATH --v4-mount PATH
+
+REFFSD_BIN=""
+EXT_V3_MOUNT=""
+EXT_V4_MOUNT=""
+EXTERNAL_MODE=false
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--v3-mount) EXT_V3_MOUNT="$2"; EXTERNAL_MODE=true; shift 2 ;;
+		--v4-mount) EXT_V4_MOUNT="$2"; EXTERNAL_MODE=true; shift 2 ;;
+		*)          REFFSD_BIN="$1"; shift ;;
+	esac
+done
+
+if [ "$EXTERNAL_MODE" = false ]; then
+	REFFSD_BIN=${REFFSD_BIN:-/build/src/reffsd}
+fi
+
+BUILD_DIR=$(dirname "$(dirname "${REFFSD_BIN:-/build/src/reffsd}")")
 EXTERNAL_DIR=${EXTERNAL_DIR:-$(cd "$(dirname "$0")/.." && pwd)/external}
 CTHON_DIR="$EXTERNAL_DIR/cthon04"
 CTHON_URL="git://git.linux-nfs.org/projects/steved/cthon04.git"
 
-# Work directory — see ci_soak_test.sh for rationale.
+# Work directory
 if [ -n "${REFFS_WORK_DIR:-}" ] && [ -d "$REFFS_WORK_DIR" ]; then
 	WORK_DIR="$REFFS_WORK_DIR"
 elif [ -d /reffs_data ]; then
@@ -184,21 +204,13 @@ check_asan() {
 
 run_cthon04() {
 	local label=$1
-	local mount_opts=$2
-	local test_flags=${3:--a} # default: all tests (basic, general, special, lock)
+	local mount_path=$2
+	local test_flags=${3:--a}
 
 	info "--- $label ---"
 
-	sudo umount -f "$MOUNT" 2>/dev/null || true
-	sudo mkdir -p "$MOUNT"
-	sudo mount -o "$mount_opts" 127.0.0.1:/ "$MOUNT" || {
-		die "$label: mount failed"
-		return 1
-	}
-
-	# cthon04 runtests tries to rm/mkdir its test directory.
-	# Give it a subdirectory of the mount, not the mount point itself.
-	local TESTDIR="$MOUNT/cthon_test"
+	# Create test subdirectory on the mount
+	local TESTDIR="$mount_path/cthon_test"
 	sudo rm -rf "$TESTDIR" 2>/dev/null || true
 	sudo mkdir -p "$TESTDIR"
 	sudo chmod 777 "$TESTDIR"
@@ -209,12 +221,8 @@ run_cthon04() {
 	local fail=0
 	local r_basic="-" r_general="-" r_special="-" r_lock="-"
 
-	# Run each test set separately for better reporting.
-	# runtests usage: ./runtests <tests> <testargs> <testpath>
-	#   tests: -b=basic, -g=general, -s=special, -l=lock, -a=all
-	#   testargs: -f=functional, -t=timing
 	for test_set in basic general special lock; do
-		local flag="-${test_set:0:1}" # -b, -g, -s, -l
+		local flag="-${test_set:0:1}"
 		if [ -d "$CTHON_DIR/$test_set" ]; then
 			info "  $test_set..."
 			if (cd "$CTHON_DIR" && bash ./runtests "$flag" -f "$TESTDIR" 2>&1); then
@@ -231,10 +239,11 @@ run_cthon04() {
 
 	RESULTS+=("${label}:${r_basic}:${r_general}:${r_special}:${r_lock}")
 
-	rm -rf "$TESTDIR" 2>/dev/null || true
-	sudo umount -f "$MOUNT" 2>/dev/null || true
+	sudo rm -rf "$TESTDIR" 2>/dev/null || true
 
-	check_asan
+	if [ "$EXTERNAL_MODE" = false ]; then
+		check_asan
+	fi
 
 	info "$label: $pass passed, $fail failed"
 	if [ "$fail" -gt 0 ]; then
@@ -256,43 +265,64 @@ fi
 
 fetch_cthon04
 
-# ---------- Test 1: NFSv4.2 standalone ----------
+if [ "$EXTERNAL_MODE" = true ]; then
+	# ---------- External mode: use pre-existing mounts ----------
+	if [ -n "$EXT_V4_MOUNT" ]; then
+		info ""
+		info "========== NFSv4.2 (external mount: $EXT_V4_MOUNT) =========="
+		run_cthon04 "NFSv4.2" "$EXT_V4_MOUNT"
+	fi
 
-info ""
-info "========== NFSv4.2 Standalone =========="
-write_config "standalone"
-start_server "standalone" || exit 1
-# actimeo=0: disable attribute caching so stat() after rename
-# goes to the server immediately.  Without this, the Linux NFS v4
-# client may return a cached positive lookup for the old name.
-run_cthon04 "NFSv4.2" "vers=4.2,sec=sys,actimeo=0"
-stop_server
+	if [ -n "$EXT_V3_MOUNT" ]; then
+		info ""
+		info "========== NFSv3 (external mount: $EXT_V3_MOUNT) =========="
+		run_cthon04 "NFSv3" "$EXT_V3_MOUNT"
+	fi
+else
+	# ---------- Standalone mode: start own server ----------
 
-# ---------- Test 2: NFSv3 standalone ----------
+	info ""
+	info "========== NFSv4.2 Standalone =========="
+	write_config "standalone"
+	start_server "standalone" || exit 1
+	sudo mkdir -p "$MOUNT"
+	sudo mount -o "vers=4.2,sec=sys,actimeo=0" 127.0.0.1:/ "$MOUNT" || {
+		die "NFSv4.2 mount failed"; stop_server; exit 1
+	}
+	run_cthon04 "NFSv4.2" "$MOUNT"
+	sudo umount -f "$MOUNT" 2>/dev/null || true
+	stop_server
 
-info ""
-info "========== NFSv3 Standalone =========="
-write_config "standalone"
-start_server "standalone" || exit 1
-# nolock: NLM sideband protocol clashes with the host's rpcbind
-# inside Docker.  Lock tests use NFSv4.2 (above) instead.
-run_cthon04 "NFSv3" "vers=3,sec=sys,nolock,tcp,mountproto=tcp"
-stop_server
+	info ""
+	info "========== NFSv3 Standalone =========="
+	write_config "standalone"
+	start_server "standalone" || exit 1
+	sudo mkdir -p "$MOUNT"
+	sudo mount -o "vers=3,sec=sys,nolock,tcp,mountproto=tcp" 127.0.0.1:/ "$MOUNT" || {
+		die "NFSv3 mount failed"; stop_server; exit 1
+	}
+	run_cthon04 "NFSv3" "$MOUNT"
+	sudo umount -f "$MOUNT" 2>/dev/null || true
+	stop_server
 
-# ---------- Test 3: Combined pNFS (MDS+DS) ----------
-
-info ""
-info "========== Combined pNFS (MDS+DS) =========="
-DS_EXTRA='
+	info ""
+	info "========== Combined pNFS (MDS+DS) =========="
+	DS_EXTRA='
 [[data_server]]
 id      = 1
 address = "127.0.0.1"
 path    = "/"
 '
-write_config "combined" "$DS_EXTRA"
-start_server "combined" || exit 1
-run_cthon04 "pNFS" "vers=4.2,sec=sys,actimeo=0"
-stop_server
+	write_config "combined" "$DS_EXTRA"
+	start_server "combined" || exit 1
+	sudo mkdir -p "$MOUNT"
+	sudo mount -o "vers=4.2,sec=sys,actimeo=0" 127.0.0.1:/ "$MOUNT" || {
+		die "pNFS mount failed"; stop_server; exit 1
+	}
+	run_cthon04 "pNFS" "$MOUNT"
+	sudo umount -f "$MOUNT" 2>/dev/null || true
+	stop_server
+fi
 
 # ---------- Summary ----------
 

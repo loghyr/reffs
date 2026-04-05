@@ -39,6 +39,8 @@ CRASH_INTERVAL=30
 WARDTEST_DIR="${HOME}/wardtest"
 PORT=12049
 NUM_WRITERS=4
+EXT_MOUNT=""
+EXTERNAL_MODE=false
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -48,6 +50,7 @@ REFFSD="$BUILD_DIR/src/reffsd"
 # -- Parse args --
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --mount)          EXT_MOUNT="$2"; EXTERNAL_MODE=true; shift 2 ;;
         --duration)       DURATION="$2"; shift 2 ;;
         --iterations)     ITERATIONS="$2"; shift 2 ;;
         --clients)        NCLIENTS="$2"; shift 2 ;;
@@ -62,7 +65,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # -- Validate --
-if [[ ! -x "${REFFSD}" ]]; then
+if [[ "$EXTERNAL_MODE" = false ]] && [[ ! -x "${REFFSD}" ]]; then
     echo "Error: reffsd not found at ${REFFSD}"
     echo "Build first: cd ${BUILD_DIR} && make -j\$(nproc)"
     exit 1
@@ -125,12 +128,14 @@ cleanup() {
         kill "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
     done
-    if [[ -n "${REFFSD_PID}" ]]; then
-        kill "${REFFSD_PID}" 2>/dev/null || true
-        wait "${REFFSD_PID}" 2>/dev/null || true
+    if [[ "$EXTERNAL_MODE" = false ]]; then
+        if [[ -n "${REFFSD_PID}" ]]; then
+            kill "${REFFSD_PID}" 2>/dev/null || true
+            wait "${REFFSD_PID}" 2>/dev/null || true
+        fi
+        sudo umount "${MOUNT_DIR}" 2>/dev/null || true
+        rmdir "${MOUNT_DIR}" 2>/dev/null || true
     fi
-    sudo umount "${MOUNT_DIR}" 2>/dev/null || true
-    rmdir "${MOUNT_DIR}" 2>/dev/null || true
     rm -rf "${WORKDIR}"
 }
 trap cleanup EXIT
@@ -162,15 +167,18 @@ if [[ ${CRASH} -eq 1 ]]; then
 fi
 echo ""
 
-# -- Start server --
-info "Starting reffsd on port ${PORT}"
-start_server
-info "reffsd running (PID ${REFFSD_PID})"
+if [[ "$EXTERNAL_MODE" = true ]]; then
+    MOUNT_DIR="$EXT_MOUNT"
+    info "Using external mount: ${MOUNT_DIR}"
+else
+    info "Starting reffsd on port ${PORT}"
+    start_server
+    info "reffsd running (PID ${REFFSD_PID})"
 
-# -- Mount --
-info "Mounting NFSv4.2 at ${MOUNT_DIR}"
-sudo mount -o vers=4.2,sec=sys,hard,timeo=600,port="${PORT}" \
-    127.0.0.1:/ "${MOUNT_DIR}"
+    info "Mounting NFSv4.2 at ${MOUNT_DIR}"
+    sudo mount -o vers=4.2,sec=sys,hard,timeo=600,port="${PORT}" \
+        127.0.0.1:/ "${MOUNT_DIR}"
+fi
 sudo mkdir -p "${MOUNT_DIR}/wardtest"/{data,meta,history}
 sudo chmod 777 "${MOUNT_DIR}/wardtest"/{data,meta,history}
 
