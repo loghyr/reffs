@@ -29,6 +29,7 @@
 #define SB_REGISTRY_FILE "superblocks.registry"
 #define SB_REGISTRY_MAX_PATH 256
 #define SB_REGISTRY_MAX_FLAVORS 8
+#define SB_REGISTRY_MAX_DSTORES 16
 
 /*
  * Persistent sb_id counter.  IDs are assigned monotonically and
@@ -56,6 +57,8 @@ struct sb_registry_entry {
 	uint32_t sre_layout_types; /* SB_LAYOUT_FLEX_FILES etc. */
 	uint32_t sre_nflavors;
 	uint32_t sre_flavors[SB_REGISTRY_MAX_FLAVORS];
+	uint32_t sre_ndstores;
+	uint32_t sre_dstore_ids[SB_REGISTRY_MAX_DSTORES];
 	char sre_path[SB_REGISTRY_MAX_PATH];
 	char sre_backend_path[SB_REGISTRY_MAX_PATH];
 };

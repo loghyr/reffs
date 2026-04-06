@@ -228,6 +228,12 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_SB_SET_LAYOUT_TYPES, args,
                          response_type='probe_stat1')
 
+    def sb_set_dstores(self, sb_id, dstore_ids):
+        """Set per-export dstore binding (list of dstore IDs)."""
+        args = SB_SET_DSTORES1args(sb_id, dstore_ids)
+        return self.proc(PROBEPROC1_SB_SET_DSTORES, args,
+                         response_type='probe_stat1')
+
     def sb_lint_flavors(self):
         """Check flavor consistency across all mounted exports."""
         return self.proc(PROBEPROC1_SB_LINT_FLAVORS, response_type='SB_LINT_FLAVORS1res')

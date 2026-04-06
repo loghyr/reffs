@@ -695,6 +695,13 @@ def sb_set_layout_types_cmd(client, args):
     print(f"Superblock {args.id} layout types set to: {','.join(names) or 'none'}")
 
 
+def sb_set_dstores_cmd(client, args):
+    dstore_ids = [int(d) for d in args.dstores]
+    res = client.sb_set_dstores(args.id, dstore_ids)
+    probe_error_handler(res)
+    print(f"Superblock {args.id} dstores set to: {','.join(str(d) for d in dstore_ids)}")
+
+
 def sb_lint_flavors_cmd(client, args):
     res = client.sb_lint_flavors()
     probe_error_handler(res.lfr_status)
@@ -976,6 +983,13 @@ def parse_args():
                              choices=list(LAYOUT_TYPE_MAP.keys()),
                              help='Layout types (ffv1, ffv2, both, none)')
     p_sb_layout.set_defaults(func=sb_set_layout_types_cmd)
+
+    p_sb_dstores = subparsers.add_parser('sb-set-dstores',
+                                         help='Set per-export dstore binding')
+    p_sb_dstores.add_argument('--id', type=int, required=True, help='Superblock ID')
+    p_sb_dstores.add_argument('--dstores', nargs='+', type=int, required=True,
+                              help='Dstore IDs (e.g., 1 2 3)')
+    p_sb_dstores.set_defaults(func=sb_set_dstores_cmd)
 
     p_sb_lint = subparsers.add_parser('sb-lint-flavors', help='Check flavor consistency')
     p_sb_lint.set_defaults(func=sb_lint_flavors_cmd)

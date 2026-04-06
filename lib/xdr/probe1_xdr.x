@@ -338,6 +338,12 @@ struct SB_SET_LAYOUT_TYPES1args {
 	unsigned int		sla_layout_types;  /* bitmask: 1=FFv1, 2=FFv2 */
 };
 
+/* SB_SET_DSTORES (op 25) — returns probe_stat1 directly */
+struct SB_SET_DSTORES1args {
+	unsigned hyper		sda_id;
+	unsigned int		sda_dstore_ids<16>;
+};
+
 /* SB_LINT_FLAVORS (op 20) */
 struct SB_LINT_FLAVORS1resok {
 	unsigned int	lfr_warnings;
@@ -513,5 +519,6 @@ program PROBE_PROGRAM {
 		IDENTITY_MAP_LIST1res PROBEPROC1_IDENTITY_MAP_LIST(void) = 22;
 		probe_stat1 PROBEPROC1_IDENTITY_MAP_REMOVE(IDENTITY_MAP_REMOVE1args) = 23;
 		probe_stat1 PROBEPROC1_SB_SET_LAYOUT_TYPES(SB_SET_LAYOUT_TYPES1args) = 24;
+		probe_stat1 PROBEPROC1_SB_SET_DSTORES(SB_SET_DSTORES1args) = 25;
 	} = 1;
 } = 211768;

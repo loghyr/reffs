@@ -54,3 +54,11 @@ flavors     = ["sys", "krb5", "krb5i", "krb5p", "tls"]
 id      = 1
 address = "REPLACE_WITH_SERVER_IP"
 path    = "/"
+
+# Remote DS for file layouts (separate machine, role = "ds").
+# bat_setup.sh replaces REPLACE_WITH_DS_IP.  Comment out if no
+# file layout DS is configured.
+# [[data_server]]
+# id      = 2
+# address = "REPLACE_WITH_DS_IP"
+# path    = "/"

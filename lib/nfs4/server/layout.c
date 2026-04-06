@@ -704,8 +704,27 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	if (!lss || lss->lss_count == 0) {
 		struct dstore *dstores[LAYOUT_SEG_MAX_FILES];
 		uint32_t nds;
+		struct super_block *isb = compound->c_inode->i_sb;
 
-		nds = dstore_collect_available(dstores, LAYOUT_SEG_MAX_FILES);
+		/*
+		 * Per-export dstore binding: use the export's
+		 * configured dstores if set, else fall back to the
+		 * global pool for backward compatibility.
+		 */
+		if (isb->sb_ndstores > 0) {
+			nds = 0;
+			for (uint32_t d = 0;
+			     d < isb->sb_ndstores && d < LAYOUT_SEG_MAX_FILES;
+			     d++) {
+				struct dstore *ds =
+					dstore_find(isb->sb_dstore_ids[d]);
+				if (ds)
+					dstores[nds++] = ds;
+			}
+		} else {
+			nds = dstore_collect_available(dstores,
+						       LAYOUT_SEG_MAX_FILES);
+		}
 		if (nds == 0) {
 			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			*status = NFS4ERR_LAYOUTUNAVAILABLE;

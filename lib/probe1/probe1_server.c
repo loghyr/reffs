@@ -1172,6 +1172,55 @@ static int probe1_op_sb_set_layout_types(struct rpc_trans *rt)
 	return 0;
 }
 
+static int probe1_op_sb_set_dstores(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_DSTORES1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->sda_id);
+
+	if (!sb) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	uint32_t n = args->sda_dstore_ids.sda_dstore_ids_len;
+
+	if (n > SB_MAX_DSTORES)
+		n = SB_MAX_DSTORES;
+
+	/* Validate all dstore IDs exist. */
+	for (uint32_t i = 0; i < n; i++) {
+		struct dstore *ds =
+			dstore_find(args->sda_dstore_ids.sda_dstore_ids_val[i]);
+		if (!ds) {
+			LOG("sb-set-dstores: dstore %u not found",
+			    args->sda_dstore_ids.sda_dstore_ids_val[i]);
+			super_block_put(sb);
+			*res = PROBE1ERR_NOENT;
+			return *res;
+		}
+		dstore_put(ds);
+	}
+
+	/* File layout constraint: single DS per export. */
+	if ((sb->sb_layout_types & SB_LAYOUT_FILE) && n > 1) {
+		LOG("sb-set-dstores: file layout export requires exactly 1 dstore");
+		super_block_put(sb);
+		*res = PROBE1ERR_INVAL;
+		return *res;
+	}
+
+	sb->sb_ndstores = n;
+	for (uint32_t i = 0; i < n; i++)
+		sb->sb_dstore_ids[i] =
+			args->sda_dstore_ids.sda_dstore_ids_val[i];
+
+	super_block_put(sb);
+	return 0;
+}
+
 static int probe1_op_sb_lint_flavors(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -1366,6 +1415,9 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_SB_SET_LAYOUT_TYPES1args,
 			   SB_SET_LAYOUT_TYPES1args, xdr_probe_stat1,
 			   probe_stat1, probe1_op_sb_set_layout_types),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_SET_DSTORES, xdr_SB_SET_DSTORES1args,
+			   SB_SET_DSTORES1args, xdr_probe_stat1, probe_stat1,
+			   probe1_op_sb_set_dstores),
 };
 
 static struct rpc_program_handler *probe1_handler;

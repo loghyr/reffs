@@ -121,6 +121,15 @@ struct super_block {
 #define SB_LAYOUT_FLEX_FILES_V2 (1U << 2) /* LAYOUT4_FLEX_FILES_V2 */
 	uint32_t sb_layout_types;
 
+	/*
+	 * Per-export dstore binding.  LAYOUTGET uses these dstore IDs
+	 * instead of the global pool when sb_ndstores > 0.
+	 * Set via probe sb-set-dstores, persisted in the registry.
+	 */
+#define SB_MAX_DSTORES 16
+	uint32_t sb_dstore_ids[SB_MAX_DSTORES];
+	uint32_t sb_ndstores;
+
 	/* Per-op NFS4 statistics — superblock scope. */
 	struct reffs_op_stats sb_nfs4_op_stats[REFFS_NFS4_OP_MAX];
 

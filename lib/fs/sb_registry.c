@@ -98,6 +98,12 @@ int sb_registry_save(const char *state_dir)
 			     f++)
 				entries[i].sre_flavors[f] =
 					(uint32_t)sb->sb_flavors[f];
+			entries[i].sre_ndstores = sb->sb_ndstores;
+			for (uint32_t d = 0;
+			     d < sb->sb_ndstores && d < SB_REGISTRY_MAX_DSTORES;
+			     d++)
+				entries[i].sre_dstore_ids[d] =
+					sb->sb_dstore_ids[d];
 			i++;
 		}
 		rcu_read_unlock();
@@ -256,7 +262,7 @@ int sb_registry_load(const char *state_dir)
 			continue;
 		}
 
-		/* Restore persisted UUID, layout types, and flavors. */
+		/* Restore persisted UUID, layout types, flavors, dstores. */
 		uuid_copy(sb->sb_uuid, e->sre_uuid);
 		sb->sb_layout_types = e->sre_layout_types;
 
@@ -268,6 +274,13 @@ int sb_registry_load(const char *state_dir)
 				flavors[f] = (enum reffs_auth_flavor)
 						     e->sre_flavors[f];
 			super_block_set_flavors(sb, flavors, e->sre_nflavors);
+		}
+
+		if (e->sre_ndstores > 0 &&
+		    e->sre_ndstores <= SB_REGISTRY_MAX_DSTORES) {
+			sb->sb_ndstores = e->sre_ndstores;
+			for (uint32_t d = 0; d < e->sre_ndstores; d++)
+				sb->sb_dstore_ids[d] = e->sre_dstore_ids[d];
 		}
 
 		ret = super_block_dirent_create(sb, NULL,

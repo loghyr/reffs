@@ -111,6 +111,21 @@ if [ -n "$FILES_ID" ]; then
 		info "  WARN: set-layout-types failed for /files"
 fi
 
+# Bind dstores to pNFS exports
+info "Binding dstores to pNFS exports..."
+if [ -n "$FFV1_ID" ]; then
+	$PROBE sb-set-dstores --id "$FFV1_ID" --dstores 1 || \
+		info "  WARN: set-dstores failed for /ffv1"
+fi
+if [ -n "$FFV2_ID" ]; then
+	$PROBE sb-set-dstores --id "$FFV2_ID" --dstores 1 || \
+		info "  WARN: set-dstores failed for /ffv2"
+fi
+if [ -n "$FILES_ID" ]; then
+	$PROBE sb-set-dstores --id "$FILES_ID" --dstores 2 || \
+		info "  WARN: set-dstores failed for /files (dstore 2 may not be configured)"
+fi
+
 # -----------------------------------------------------------------------
 # Verify
 # -----------------------------------------------------------------------
