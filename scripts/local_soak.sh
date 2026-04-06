@@ -473,6 +473,16 @@ while true; do
             info "    workload $i: PID ${WORKLOAD_PIDS[-1]}"
         done
 
+        # Reset the D-state grace timer now that the server is back and
+        # workloads have restarted.  The first USR1 (sent before the kill)
+        # is consumed mostly by the restart sequence itself; D-state
+        # processes from the old mount need a full grace window AFTER
+        # server recovery to drain and exit.
+        if [ -n "$DSTATE_MON_PID" ] && kill -0 "$DSTATE_MON_PID" 2>/dev/null; then
+            kill -USR1 "$DSTATE_MON_PID" 2>/dev/null || true
+            info "  D-state grace timer reset (server recovered)"
+        fi
+
         NEXT_RESTART=$((NOW + RESTART_SEC))
         info "  Restart #$RESTART_COUNT complete, next in ${RESTART_SEC}s"
     fi
