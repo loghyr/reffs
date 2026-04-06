@@ -63,10 +63,6 @@ uint32_t nfs4_op_putfh(struct compound *compound)
 		return 0;
 	}
 
-	*status = nfs4_check_wrongsec(compound);
-	if (*status)
-		return 0;
-
 	if (nfh->nfh_sb != compound->c_curr_nfh.nfh_sb) {
 		super_block_put(compound->c_curr_sb);
 		compound->c_curr_sb = super_block_find(nfh->nfh_sb);
@@ -94,6 +90,17 @@ uint32_t nfs4_op_putfh(struct compound *compound)
 		}
 	}
 
+	/*
+	 * RFC 8881 S2.6.3.1: WRONGSEC enforcement depends on what
+	 * follows this put-FH op.  Check AFTER resolving the target
+	 * sb so we test against the correct export's flavor list.
+	 */
+	if (nfs4_putfh_should_check_wrongsec(compound)) {
+		*status = nfs4_check_wrongsec(compound);
+		if (*status)
+			return 0;
+	}
+
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = NULL;
 
@@ -104,10 +111,6 @@ uint32_t nfs4_op_putpubfh(struct compound *compound)
 {
 	PUTPUBFH4res *res = NFS4_OP_RES_SETUP(compound, opputpubfh);
 	nfsstat4 *status = &res->status;
-
-	*status = nfs4_check_wrongsec(compound);
-	if (*status)
-		return 0;
 
 	if (compound->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
 		super_block_put(compound->c_curr_sb);
@@ -133,6 +136,12 @@ uint32_t nfs4_op_putpubfh(struct compound *compound)
 			*status = NFS4ERR_STALE;
 			return 0;
 		}
+	}
+
+	if (nfs4_putfh_should_check_wrongsec(compound)) {
+		*status = nfs4_check_wrongsec(compound);
+		if (*status)
+			return 0;
 	}
 
 	stateid_put(compound->c_curr_stid);
@@ -146,10 +155,6 @@ uint32_t nfs4_op_putrootfh(struct compound *compound)
 	PUTROOTFH4res *res = NFS4_OP_RES_SETUP(compound, opputrootfh);
 	nfsstat4 *status = &res->status;
 
-	*status = nfs4_check_wrongsec(compound);
-	if (*status)
-		return 0;
-
 	if (compound->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
 		super_block_put(compound->c_curr_sb);
 		compound->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
@@ -174,6 +179,12 @@ uint32_t nfs4_op_putrootfh(struct compound *compound)
 			*status = NFS4ERR_STALE;
 			return 0;
 		}
+	}
+
+	if (nfs4_putfh_should_check_wrongsec(compound)) {
+		*status = nfs4_check_wrongsec(compound);
+		if (*status)
+			return 0;
 	}
 
 	stateid_put(compound->c_curr_stid);
@@ -208,13 +219,15 @@ uint32_t nfs4_op_restorefh(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 S2.6.3.1: RESTOREFH changes the current FH to a
-	 * potentially different export.  Check WRONGSEC against the
-	 * restored export's flavor list.
+	 * RFC 8881 S2.6.3.1: RESTOREFH is a put-FH op and follows
+	 * the same WRONGSEC rules as PUTFH/PUTROOTFH/PUTPUBFH.
+	 * Check after resolving the target sb.
 	 */
-	*status = nfs4_check_wrongsec(compound);
-	if (*status)
-		return 0;
+	if (nfs4_putfh_should_check_wrongsec(compound)) {
+		*status = nfs4_check_wrongsec(compound);
+		if (*status)
+			return 0;
+	}
 
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = NULL;

@@ -51,9 +51,12 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 		goto out;
 	}
 
-	*status = nfs4_check_wrongsec(compound);
-	if (*status)
-		goto out;
+	/*
+	 * RFC 8881 S2.6.3.1.1.3: the put-FH + LOOKUP rule means
+	 * the put-FH before us must NOT check WRONGSEC; LOOKUP
+	 * itself checks WRONGSEC only after mount-point crossing
+	 * (below).  No pre-lookup check against the parent export.
+	 */
 
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_NOTDIR;
@@ -175,9 +178,12 @@ uint32_t nfs4_op_lookupp(struct compound *compound)
 		goto out;
 	}
 
-	*status = nfs4_check_wrongsec(compound);
-	if (*status)
-		goto out;
+	/*
+	 * RFC 8881 S2.6.3.1.1.4: a put-FH before LOOKUPP must NOT
+	 * return WRONGSEC.  LOOKUPP itself may return WRONGSEC after
+	 * crossing to the parent export (checked below).  No pre-
+	 * crossing check against the current (child) export.
+	 */
 
 	/*
 	 * At the root of a sb: if this is the pseudo-root (root sb),
@@ -219,6 +225,14 @@ uint32_t nfs4_op_lookupp(struct compound *compound)
 
 		super_block_put(compound->c_curr_sb);
 		compound->c_curr_sb = super_block_get(parent_sb);
+
+		/*
+		 * After crossing to the parent export, check WRONGSEC
+		 * against the parent's flavor list.
+		 */
+		*status = nfs4_check_wrongsec(compound);
+		if (*status)
+			goto out;
 
 		stateid_put(compound->c_curr_stid);
 		compound->c_curr_stid = NULL;

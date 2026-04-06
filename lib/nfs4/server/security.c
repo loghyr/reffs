@@ -39,16 +39,16 @@ static const char krb5_oid_der[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7,
 #define KRB5_OID_LEN ((uint32_t)sizeof(krb5_oid_der))
 
 /*
- * Check whether the next operation in the compound is SECINFO or
- * SECINFO_NO_NAME.  If so, the client is negotiating security and
- * the current FH-changing op must not return WRONGSEC.
- */
-/*
+ * Find the "next real op" after the current op, skipping SAVEFH.
+ *
  * RFC 8881 S2.6.3.1.1.1: when determining whether WRONGSEC applies,
  * the server "pretends SAVEFH is not in the series of operations"
  * and looks past it to the real next operation.
+ *
+ * Returns the opnum of the next real op, or -1 if the current op
+ * is effectively the last one (S2.6.3.1.1.6: put-FH + nothing).
  */
-static bool next_op_is_secinfo(struct compound *compound)
+static int next_real_op(struct compound *compound)
 {
 	u_int next = compound->c_curr_op + 1;
 	u_int len = compound->c_args->argarray.argarray_len;
@@ -59,11 +59,72 @@ static bool next_op_is_secinfo(struct compound *compound)
 		next++;
 
 	if (next >= len)
+		return -1;
+
+	return (int)compound->c_args->argarray.argarray_val[next].argop;
+}
+
+static bool op_is_putfh(nfs_opnum4 op)
+{
+	return op == OP_PUTFH || op == OP_PUTROOTFH || op == OP_PUTPUBFH ||
+	       op == OP_RESTOREFH;
+}
+
+/*
+ * nfs4_putfh_should_check_wrongsec -- determine whether a put-FH op
+ * should enforce WRONGSEC against the target export's flavor list.
+ *
+ * RFC 8881 S2.6.3.1 rules (in priority order, after skipping SAVEFH):
+ *  1. Next real op is SECINFO/SECINFO_NO_NAME: false  (S2.6.3.1.1.5)
+ *  2. Next real op is LOOKUP or LOOKUPP: false         (S2.6.3.1.1.3/4)
+ *  3. Next real op is OPEN with CLAIM_NULL or
+ *     CLAIM_DELEGATE_CUR: false                        (S2.6.3.1.1.3)
+ *  4. Next real op is another put-FH: false            (S2.6.3.1.1.2)
+ *  5. No next op (end of compound): false              (S2.6.3.1.1.6)
+ *  6. Otherwise (including OPEN by FH): true           (S2.6.3.1.1.7)
+ */
+bool nfs4_putfh_should_check_wrongsec(struct compound *compound)
+{
+	int op = next_real_op(compound);
+
+	/* S2.6.3.1.1.6: put-FH + nothing */
+	if (op < 0)
 		return false;
 
-	nfs_opnum4 op = compound->c_args->argarray.argarray_val[next].argop;
+	/* S2.6.3.1.1.5: put-FH + SECINFO/SECINFO_NO_NAME */
+	if (op == OP_SECINFO || op == OP_SECINFO_NO_NAME)
+		return false;
 
-	return op == OP_SECINFO || op == OP_SECINFO_NO_NAME;
+	/* S2.6.3.1.1.3: put-FH + LOOKUP */
+	/* S2.6.3.1.1.4: put-FH + LOOKUPP */
+	if (op == OP_LOOKUP || op == OP_LOOKUPP)
+		return false;
+
+	/* S2.6.3.1.1.3: put-FH + OPEN by component name */
+	if (op == OP_OPEN) {
+		u_int next = compound->c_curr_op + 1;
+		u_int len = compound->c_args->argarray.argarray_len;
+
+		while (next < len &&
+		       compound->c_args->argarray.argarray_val[next].argop ==
+			       OP_SAVEFH)
+			next++;
+		if (next < len) {
+			nfs_argop4 *argop =
+				&compound->c_args->argarray.argarray_val[next];
+			open_claim_type4 claim =
+				argop->nfs_argop4_u.opopen.claim.claim;
+			if (claim == CLAIM_NULL || claim == CLAIM_DELEGATE_CUR)
+				return false;
+		}
+	}
+
+	/* S2.6.3.1.1.2: put-FH + another put-FH */
+	if (op_is_putfh((nfs_opnum4)op))
+		return false;
+
+	/* S2.6.3.1.1.7: put-FH + anything else */
+	return true;
 }
 
 /*
@@ -95,12 +156,16 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 	if (nflavors == 0)
 		return NFS4_OK;
 
-	/* SECINFO lookahead: let the client discover flavors. */
-	if (next_op_is_secinfo(compound))
-		return NFS4_OK;
+	/*
+	 * SECINFO lookahead is now handled by
+	 * nfs4_putfh_should_check_wrongsec() in the put-FH
+	 * handlers.  This function is a pure flavor-vs-export check.
+	 */
 
 	uint32_t client_flavor = compound->c_rt->rt_info.ri_cred.rc_flavor;
-	struct conn_info *ci = io_conn_get(compound->c_rt->rt_fd);
+	struct conn_info *ci = compound->c_rt->rt_fd >= 0 ?
+				       io_conn_get(compound->c_rt->rt_fd) :
+				       NULL;
 	bool client_tls = ci && ci->ci_tls_enabled;
 
 	for (unsigned int i = 0; i < nflavors; i++) {

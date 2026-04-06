@@ -121,6 +121,7 @@ void nfs4_write_verf(struct server_state *ss, verifier4 out_verf);
 
 /* Export security enforcement (security.c). */
 nfsstat4 nfs4_check_wrongsec(struct compound *compound);
+bool nfs4_putfh_should_check_wrongsec(struct compound *compound);
 nfsstat4 nfs4_build_secinfo(struct compound *compound, SECINFO4resok *resok);
 
 struct authunix_parms;
