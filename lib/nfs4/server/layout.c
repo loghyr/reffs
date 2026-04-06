@@ -102,9 +102,6 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	na.na_r_netid = netid;
 	na.na_r_addr = uaddr;
 
-	void *encode_obj = NULL;
-	xdrproc_t encode_proc = NULL;
-
 	/* File layouts: nfsv4_1_file_layout_ds_addr4 */
 	nfsv4_1_file_layout_ds_addr4 flda;
 	uint32_t stripe_idx = 0;
@@ -131,8 +128,6 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 		flda.nflda_multipath_ds_list.nflda_multipath_ds_list_len = 1;
 		flda.nflda_multipath_ds_list.nflda_multipath_ds_list_val = &mpl;
 
-		encode_obj = &flda;
-		encode_proc = (xdrproc_t)xdr_nfsv4_1_file_layout_ds_addr4;
 	} else {
 		/*
 		 * Flex files device address: multipath netaddrs + version.
@@ -151,13 +146,17 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 
 		ffda.ffda_versions.ffda_versions_len = 1;
 		ffda.ffda_versions.ffda_versions_val = &ver;
-
-		encode_obj = &ffda;
-		encode_proc = (xdrproc_t)xdr_ff_device_addr4;
 	}
 
 	/* XDR-encode into an opaque buffer. */
-	u_long xdr_size = xdr_sizeof(encode_proc, encode_obj);
+	u_long xdr_size;
+	bool encode_ok;
+
+	if (args->gdia_layout_type == LAYOUT4_NFSV4_1_FILES)
+		xdr_size = xdr_sizeof(
+			(xdrproc_t)xdr_nfsv4_1_file_layout_ds_addr4, &flda);
+	else
+		xdr_size = xdr_sizeof((xdrproc_t)xdr_ff_device_addr4, &ffda);
 
 	resok->gdir_device_addr.da_layout_type = args->gdia_layout_type;
 	resok->gdir_device_addr.da_addr_body.da_addr_body_val =
@@ -174,7 +173,11 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	xdrmem_create(&xdrs,
 		      resok->gdir_device_addr.da_addr_body.da_addr_body_val,
 		      xdr_size, XDR_ENCODE);
-	if (!encode_proc(&xdrs, encode_obj)) {
+	if (args->gdia_layout_type == LAYOUT4_NFSV4_1_FILES)
+		encode_ok = xdr_nfsv4_1_file_layout_ds_addr4(&xdrs, &flda);
+	else
+		encode_ok = xdr_ff_device_addr4(&xdrs, &ffda);
+	if (!encode_ok) {
 		xdr_destroy(&xdrs);
 		free(resok->gdir_device_addr.da_addr_body.da_addr_body_val);
 		resok->gdir_device_addr.da_addr_body.da_addr_body_val = NULL;
