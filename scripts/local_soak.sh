@@ -344,12 +344,15 @@ mount_nfs || { tail -20 "$LOG"; die "initial mount failed"; exit 1; }
 DSTATE_MON_PID=$!
 info "D-state monitor running (PID $DSTATE_MON_PID)"
 
-# Start workloads
+# Start workloads.  Redirect stdout/stderr to /dev/null so that
+# D-state grandchildren (e.g. rm -rf waiting on a dead NFS mount)
+# do not hold the write end of the parent pipeline open and block
+# the nightly tee from seeing EOF after the soak exits.
 for i in $(seq 1 "$CLIENTS"); do
     if [ $((i % 2)) -eq 0 ]; then
-        workload_fileops "$i" "$MOUNT" &
+        workload_fileops "$i" "$MOUNT" >/dev/null 2>&1 &
     else
-        workload_build "$i" "$MOUNT" &
+        workload_build "$i" "$MOUNT" >/dev/null 2>&1 &
     fi
     WORKLOAD_PIDS+=($!)
 done
@@ -462,9 +465,9 @@ while true; do
         info "  [6/6] Relaunching $CLIENTS workloads"
         for i in $(seq 1 "$CLIENTS"); do
             if [ $((i % 2)) -eq 0 ]; then
-                workload_fileops "$i" "$MOUNT" &
+                workload_fileops "$i" "$MOUNT" >/dev/null 2>&1 &
             else
-                workload_build "$i" "$MOUNT" &
+                workload_build "$i" "$MOUNT" >/dev/null 2>&1 &
             fi
             WORKLOAD_PIDS+=($!)
             info "    workload $i: PID ${WORKLOAD_PIDS[-1]}"
