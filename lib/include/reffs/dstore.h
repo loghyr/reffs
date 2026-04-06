@@ -135,6 +135,17 @@ void dstore_put(struct dstore *ds);
 /* Remove from hash table (idempotent). */
 bool dstore_unhash(struct dstore *ds);
 
+/*
+ * dstore_probe_root_access -- verify MDS can CREATE with uid=0 on a DS.
+ * Removes any stale .root_probe breadcrumb before the new probe.
+ * Returns 0 (root confirmed), -EACCES (root squashed, LOG emitted),
+ * or another negative errno for unexpected failures.
+ *
+ * Called from dstore_alloc() after a successful NFSv3 MOUNT.  Exposed
+ * for unit testing -- production callers use dstore_alloc().
+ */
+int dstore_probe_root_access(struct dstore *ds);
+
 /* ------------------------------------------------------------------ */
 /* Connection management                                               */
 

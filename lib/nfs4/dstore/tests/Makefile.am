@@ -42,4 +42,5 @@ LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
 	dstore_test \
-	dstore_wcc_test
+	dstore_wcc_test \
+	dstore_root_probe_test

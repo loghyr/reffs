@@ -307,6 +307,57 @@ static bool dstore_address_is_local(const char *address)
 }
 
 /* ------------------------------------------------------------------ */
+/* Root access probe                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * dstore_probe_root_access -- verify that the MDS can create files on
+ * the DS export with uid=0.  If the DS has root_squash enabled for the
+ * MDS address, NFSv3 CREATE will return NFS3ERR_ACCES or NFS3ERR_PERM.
+ *
+ * Breadcrumb cleanup: remove any stale .root_probe file left by a prior
+ * crash or unclean shutdown before creating the new one.
+ *
+ * Returns 0 if root access is confirmed, -EACCES if root is squashed
+ * (LOG emitted), or another negative errno for unexpected failures.
+ */
+int dstore_probe_root_access(struct dstore *ds)
+{
+	uint8_t probe_fh[RUNWAY_MAX_FH];
+	uint32_t probe_fh_len = 0;
+	int ret;
+
+	/*
+	 * Breadcrumb cleanup: silently remove any .root_probe left from a
+	 * prior run that did not complete cleanly.  ENOENT is expected and
+	 * ignored; other errors are also ignored -- the CREATE below will
+	 * surface any real problem.
+	 */
+	dstore_data_file_remove(ds, ds->ds_root_fh, ds->ds_root_fh_len,
+				".root_probe");
+
+	ret = dstore_data_file_create(ds, ds->ds_root_fh, ds->ds_root_fh_len,
+				      ".root_probe", probe_fh, &probe_fh_len);
+	if (ret == -EACCES || ret == -EPERM) {
+		LOG("DS %s:%s denies root access (root_squash likely set) -- "
+		    "MDS control-plane will fail; set root_squash=false "
+		    "for the MDS address on the DS export",
+		    ds->ds_address, ds->ds_path);
+		return -EACCES;
+	}
+	if (ret < 0) {
+		TRACE("dstore[%u]: root access probe failed for %s:%s: %s",
+		      ds->ds_id, ds->ds_address, ds->ds_path, strerror(-ret));
+		return ret;
+	}
+
+	/* Probe confirmed -- clean up the file immediately. */
+	dstore_data_file_remove(ds, ds->ds_root_fh, ds->ds_root_fh_len,
+				".root_probe");
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Alloc / find                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -373,10 +424,19 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
 			LOG("dstore[%u]: NFSv4 session to %s failed "
 			    "(continuing)",
 			    id, address);
-	} else if (do_mount && ds->ds_ops == &dstore_ops_nfsv3 &&
-		   mount_get_root_fh(ds) < 0) {
-		LOG("dstore[%u]: mount failed for %s:%s (continuing)", id,
-		    address, path);
+	} else if (do_mount && ds->ds_ops == &dstore_ops_nfsv3) {
+		if (mount_get_root_fh(ds) < 0) {
+			LOG("dstore[%u]: mount failed for %s:%s (continuing)",
+			    id, address, path);
+		} else if (dstore_probe_root_access(ds) < 0) {
+			/*
+			 * Root access denied -- the DS export has root_squash
+			 * enabled.  Clear MOUNTED so LAYOUTGET skips this
+			 * dstore.  The LOG was already emitted by the probe.
+			 */
+			__atomic_and_fetch(&ds->ds_state, ~DSTORE_IS_MOUNTED,
+					   __ATOMIC_RELEASE);
+		}
 	}
 
 	/* Insert into hash table. */
