@@ -27,6 +27,11 @@ Design documents:
 @.claude/design/probe-sb-management.md
 @.claude/design/sb-registry-v3.md
 @.claude/design/rocksdb-backend.md
+@.claude/design/rocksdb-database.md
+@.claude/design/rocksdb-composition.md
+@.claude/design/rocksdb-persistence.md
+@.claude/design/rocksdb-implementation.md
+@.claude/design/rocksdb-config-and-notes.md
 @.claude/design/stable-bat.md
 @.claude/design/remove-pynfs.md
 @.claude/design/dir-delegations.md

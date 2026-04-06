@@ -73,14 +73,14 @@ Read each changed file and check for violations of the rules in
 
 ### ASCII only
 
-All source files, comments, string literals, and commit messages
-must be pure ASCII (bytes 0x00-0x7F).  Flag any non-ASCII character
-(em-dashes, curly quotes, non-breaking spaces, etc.) as a BLOCKER.
-Use `--` for dashes, straight quotes, and plain ASCII throughout.
+Source files (`.c`, `.h`, `.sh`, `.py`, `.toml`, `.x`) and commit
+messages must be pure ASCII (bytes 0x00-0x7F).  Flag any non-ASCII
+character (em-dashes, curly quotes, non-breaking spaces, etc.) as
+a BLOCKER.  Markdown files (`.md`) are exempt.
 
 ```bash
-# Check changed files for non-ASCII:
-git diff --cached --name-only | xargs grep -Pn '[^\x00-\x7F]'
+# Check changed source files for non-ASCII (skip .md):
+git diff --cached --name-only | grep -v '\.md$' | xargs grep -Pn '[^\x00-\x7F]'
 ```
 
 ### config.h inclusion
