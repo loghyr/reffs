@@ -91,8 +91,8 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 	if (!ms)
 		return -ENOTCONN;
 
-	/* SEQUENCE + PUTFH(dir) + OPEN(CREATE) + GETFH */
-	ret = mds_compound_init(&mc, 4, "ds_create");
+	/* SEQUENCE + PUTFH(dir) + OPEN(CREATE) + GETFH + CLOSE */
+	ret = mds_compound_init(&mc, 5, "ds_create");
 	if (ret)
 		return ret;
 
@@ -107,13 +107,13 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 
 	oa->seqid = 0;
 	oa->share_access = OPEN4_SHARE_ACCESS_BOTH;
-	oa->share_deny = OPEN_DELEGATE_NONE;
+	oa->share_deny = OPEN4_SHARE_DENY_NONE;
 	oa->owner.clientid = ms->ms_clientid;
 	oa->owner.owner.owner_val = ms->ms_owner;
 	oa->owner.owner.owner_len = strlen(ms->ms_owner);
 	oa->openhow.opentype = OPEN4_CREATE;
 	oa->openhow.openflag4_u.how.mode = UNCHECKED4;
-	/* createattrs: mode 0640 */
+	/* No createattrs -- file gets DS default mode. */
 	oa->openhow.openflag4_u.how.createhow4_u.createattrs.attrmask
 		.bitmap4_len = 0;
 	oa->openhow.openflag4_u.how.createhow4_u.createattrs.attrmask
@@ -129,13 +129,30 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 	if (!mds_compound_add_op(&mc, OP_GETFH))
 		goto err;
 
+	/*
+	 * CLOSE the file immediately -- we only need the FH for the
+	 * runway pool.  Without CLOSE, every CREATE leaks an open
+	 * stateid on the DS.
+	 */
+	slot = mds_compound_add_op(&mc, OP_CLOSE);
+	if (!slot)
+		goto err;
+	CLOSE4args *ca = &slot->nfs_argop4_u.opclose;
+	ca->seqid = 0;
+	/* Stateid filled by server from the preceding OPEN -- use
+	 * the special current stateid {1, ""} which the server
+	 * resolves to the most recent OPEN's stateid in this compound.
+	 */
+	ca->open_stateid.seqid = NFS4_UINT32_MAX;
+	memset(ca->open_stateid.other, 0xFF, sizeof(ca->open_stateid.other));
+
 	ret = send_and_check(&mc, ms, ds->ds_id);
 	if (ret) {
 		mds_compound_fini(&mc);
 		return ret;
 	}
 
-	/* Extract the FH from GETFH result. */
+	/* Extract the FH from GETFH result (op index 3). */
 	if (mc.mc_res.resarray.resarray_len >= 4) {
 		nfs_resop4 *getfh_slot = &mc.mc_res.resarray.resarray_val[3];
 		GETFH4resok *gfr =
@@ -230,16 +247,11 @@ static int nfsv4_getattr(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 		goto err;
 
 	/*
-	 * Request size, mode, owner, owner_group, time_modify, time_access.
-	 * Bitmap word 0: size(4), bitmap word 1: mode(33), numlinks(34),
-	 * owner(36), owner_group(37), space_used(45),
-	 * time_access(47), time_modify(53).
-	 *
-	 * For simplicity, request a minimal set: just size.
-	 * The reflected GETATTR only needs size to update i_used.
+	 * Request size (bit 4) and time_modify (bit 53 = word 1 bit 21).
+	 * The reflected GETATTR needs size to update i_used/sb_bytes_used
+	 * and mtime to detect DS-side writes.
 	 */
 	static uint32_t attr_bits[] = { 0x00000010, 0x00200000 };
-	/* word 0: bit 4 = size; word 1: bit 21 = time_modify (bit 53-32) */
 
 	GETATTR4args *ga = &slot->nfs_argop4_u.opgetattr;
 
@@ -260,20 +272,27 @@ static int nfsv4_getattr(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 			&ga_slot->nfs_resop4_u.opgetattr.GETATTR4res_u.resok4;
 
 		/*
-		 * Decode the fattr4 opaque.  The bitmap tells us which
-		 * attrs are present.  For our minimal request (size only),
-		 * the body is just a uint64 (8 bytes) for size.
+		 * Decode the fattr4 opaque.  Attrs are encoded in
+		 * bitmap order: size (uint64), then time_modify
+		 * (nfstime4: seconds uint64 + nseconds uint32).
 		 */
 		fattr4 *fa = &gaok->obj_attributes;
 
 		if (fa->attr_vals.attrlist4_len >= 8) {
-			uint64_t size;
 			XDR xdrs;
+			uint64_t size;
 
 			xdrmem_create(&xdrs, fa->attr_vals.attrlist4_val,
 				      fa->attr_vals.attrlist4_len, XDR_DECODE);
 			if (xdr_uint64_t(&xdrs, &size))
 				ldf->ldf_size = (int64_t)size;
+
+			/* time_modify: nfstime4 = {seconds, nseconds} */
+			nfstime4 mtime = { 0 };
+			if (xdr_nfstime4(&xdrs, &mtime)) {
+				ldf->ldf_mtime.tv_sec = mtime.seconds;
+				ldf->ldf_mtime.tv_nsec = mtime.nseconds;
+			}
 			xdr_destroy(&xdrs);
 		}
 		ldf->ldf_stale = false;

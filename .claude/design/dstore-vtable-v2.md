@@ -1,10 +1,15 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Dstore Vtable v2: Protocol-Agnostic DS Operations
 
 ## Problem
 
 The dstore vtable has two implementations:
-- `dstore_ops_local` — local VFS (combined mode)
-- `dstore_ops_nfsv3` — remote NFSv3 RPC
+- `dstore_ops_local` -- local VFS (combined mode)
+- `dstore_ops_nfsv3` -- remote NFSv3 RPC
 
 There is no NFSv4.2 vtable.  File layout DSes speak NFSv4.2 but
 the MDS control plane (runway, fence, GETATTR) uses the NFSv3
@@ -48,7 +53,7 @@ the client doesn't support pNFS), the MDS must proxy:
 
 These are NOT in the current `dstore_ops`.  Today, the MDS
 only does proxy I/O for the local VFS vtable (combined mode).
-Remote DSes don't have proxy support — if a client does MDS
+Remote DSes don't have proxy support -- if a client does MDS
 I/O on a file with a remote layout, the MDS returns EIO.
 
 ### 3. Protocol Combinations
@@ -56,8 +61,8 @@ I/O on a file with a remote layout, the MDS returns EIO.
 | DS Protocol | Control Plane | InBand I/O | Layout Data Path |
 |------------|---------------|------------|------------------|
 | Local VFS | `dstore_ops_local` | direct VFS read/write | N/A (combined) |
-| NFSv3 | `dstore_ops_nfsv3` | NFSv3 READ/WRITE to DS | Client→DS NFSv3 (flex files) |
-| NFSv4.2 | `dstore_ops_nfsv4` (NEW) | NFSv4.2 READ/WRITE to DS | Client→DS NFSv4.1 session (file layout) |
+| NFSv3 | `dstore_ops_nfsv3` | NFSv3 READ/WRITE to DS | Client-->DS NFSv3 (flex files) |
+| NFSv4.2 | `dstore_ops_nfsv4` (NEW) | NFSv4.2 READ/WRITE to DS | Client-->DS NFSv4.1 session (file layout) |
 
 ## Design
 
@@ -74,10 +79,10 @@ The MDS establishes its own NFSv4.1 session to the DS at
 startup (during `dstore_alloc` for remote NFSv4.2 DSes).  This
 session is used for both control plane and InBand I/O.
 
-#### MDS→DS Session: EXCHANGE_ID Flags
+#### MDS-->DS Session: EXCHANGE_ID Flags
 
 The MDS acts as an NFSv4.2 **client** to the DS.  Per RFC 8881
-§18.35, the MDS uses `EXCHGID4_FLAG_USE_NON_PNFS` — it is a
+§18.35, the MDS uses `EXCHGID4_FLAG_USE_NON_PNFS` -- it is a
 plain NFSv4 client doing control-plane operations and proxy I/O.
 It does NOT set `USE_PNFS_MDS` (that would mean "I want you to
 be my metadata server", which is the opposite of the intent).
@@ -85,14 +90,14 @@ be my metadata server", which is the opposite of the intent).
 ```c
 struct dstore {
     ...
-    /* NFSv4.2 DS session (MDS→DS control + proxy I/O) */
+    /* NFSv4.2 DS session (MDS-->DS control + proxy I/O) */
     struct nfs4_mds_ds_session *ds_v4_session;
 };
 ```
 
 Session setup at `dstore_alloc` time:
 - EXCHANGE_ID with `EXCHGID4_FLAG_USE_NON_PNFS`
-- CREATE_SESSION (single slot — serializes ops per DS,
+- CREATE_SESSION (single slot -- serializes ops per DS,
   see limitations)
 - PUTROOTFH + GETFH to get the DS root FH
 
@@ -117,7 +122,7 @@ The MDS must OPEN the DS file before doing I/O.  Two approaches:
    current stateid ... if there is no current stateid, [it]
    is treated as a special anonymous stateid."  This works for
    READ on files with no mandatory locking.  For WRITE, the DS
-   must allow writes with the anonymous stateid — which our DS
+   must allow writes with the anonymous stateid -- which our DS
    does (no lock enforcement for BAT).
 
 For BAT: **use the anonymous stateid** (option 2).  No OPEN
@@ -185,7 +190,7 @@ inode->i_layout_segments != NULL &&
 inode->i_layout_segments->lss_count > 0
 ```
 
-This is true even after the client returns the layout — the
+This is true even after the client returns the layout -- the
 layout segments persist on the MDS inode because they describe
 WHERE the data is, not whether a client currently holds a
 layout grant.
@@ -224,7 +229,7 @@ if (lss && lss->lss_count > 0) {
 
 **DS unavailable during InBand I/O**: Return -EIO to the client.
 The client sees `NFS4ERR_IO` (NFSv4) or `NFS3ERR_IO` (NFSv3).
-This is correct — the data is unreachable.
+This is correct -- the data is unreachable.
 
 ### Vtable Selection
 
@@ -256,7 +261,7 @@ protocol = "nfsv4"          # file layout DS
 ```
 
 The `protocol` field is NEW.  Default: `"nfsv3"` (backward
-compatible — existing configs without this field work unchanged).
+compatible -- existing configs without this field work unchanged).
 
 ### Async InBand I/O
 
@@ -311,9 +316,9 @@ NOT_NOW_BROWN_COW: DENSE mode offset translation
   vtable indirectly (via runway, layout, etc.) must still pass.
 - `nfs4_op_read/write` in `file.c` and `nfs3_op_read/write` in
   `server.c` gain InBand detection.  Existing CI integration
-  tests (git clone over NFS) exercise these handlers — any
+  tests (git clone over NFS) exercise these handlers -- any
   regression is caught.
-- `layout_data_file.ldf_fh` size change from 64→128 bytes
+- `layout_data_file.ldf_fh` size change from 64-->128 bytes
   affects the on-disk `.layouts` format.  No deployed storage,
   so no migration.  Persistence tests round-trip within the
   same format.
@@ -321,10 +326,10 @@ NOT_NOW_BROWN_COW: DENSE mode offset translation
 ### Unit tests
 
 **Session lifecycle** (`lib/nfs4/dstore/tests/`):
-- `test_nfsv4_session_create`: MDS→DS session succeeds
-- `test_nfsv4_session_create_ds_down`: DS unreachable → dstore
+- `test_nfsv4_session_create`: MDS-->DS session succeeds
+- `test_nfsv4_session_create_ds_down`: DS unreachable --> dstore
   state is DISCONNECTED, not crash
-- `test_nfsv4_session_reconnect`: DS comes back → session
+- `test_nfsv4_session_reconnect`: DS comes back --> session
   re-establishes on next operation
 
 **Control plane** (`lib/nfs4/dstore/tests/`):
@@ -338,14 +343,14 @@ NOT_NOW_BROWN_COW: DENSE mode offset translation
 - `test_inband_read_nfsv3_ds`: InBand READ from NFSv3 DS
 - `test_inband_read_nfsv4_ds`: InBand READ from NFSv4.2 DS
 - `test_inband_write_nfsv4_ds`: InBand WRITE to NFSv4.2 DS
-- `test_inband_ds_down`: DS unreachable → EIO to client
-- `test_inband_detection`: Inode with layout_segments →
-  uses InBand path; inode without → uses data_block
+- `test_inband_ds_down`: DS unreachable --> EIO to client
+- `test_inband_detection`: Inode with layout_segments -->
+  uses InBand path; inode without --> uses data_block
 
 **Config** (`lib/config/tests/`):
-- `test_config_ds_protocol_default`: missing protocol → nfsv3
+- `test_config_ds_protocol_default`: missing protocol --> nfsv3
 - `test_config_ds_protocol_nfsv4`: protocol = "nfsv4"
-- `test_config_ds_protocol_invalid`: protocol = "foo" → error
+- `test_config_ds_protocol_invalid`: protocol = "foo" --> error
 
 **Credentials** (`lib/nfs4/dstore/tests/`):
 - `test_inband_uses_fenced_creds`: InBand WRITE uses
@@ -363,13 +368,13 @@ NOT_NOW_BROWN_COW: DENSE mode offset translation
 
 1. **FH size**: increase `RUNWAY_MAX_FH` to 128
 2. **Config**: add `protocol` field to `[[data_server]]`
-3. **NFSv4.2 MDS→DS session** using ec_demo client library
+3. **NFSv4.2 MDS-->DS session** using ec_demo client library
    (EXCHANGE_ID `USE_NON_PNFS` + CREATE_SESSION, single slot)
-4. **`dstore_ops_nfsv4`** — control plane ops
+4. **`dstore_ops_nfsv4`** -- control plane ops
 5. **InBand vtable extension** (read/write/commit with creds)
-6. **Local VFS InBand** — already works via data_block
-7. **NFSv3 InBand** — NFSv3 READ/WRITE/COMMIT RPCs
-8. **NFSv4 InBand** — SEQ+PUTFH+READ/WRITE/COMMIT
+6. **Local VFS InBand** -- already works via data_block
+7. **NFSv3 InBand** -- NFSv3 READ/WRITE/COMMIT RPCs
+8. **NFSv4 InBand** -- SEQ+PUTFH+READ/WRITE/COMMIT
 9. **InBand detection** in nfs3_op_read/write, nfs4_op_read/write
 10. **Test: NFSv3 client reads file on NFSv4.2 DS**
 
@@ -379,7 +384,7 @@ NOT_NOW_BROWN_COW: DENSE mode offset translation
   thread pool to avoid worker starvation)
 - DENSE mode offset translation
 - DS session failover / reconnection (session expiry during
-  long idle causes all ops to fail — the session has no renewal
+  long idle causes all ops to fail -- the session has no renewal
   thread; consider adding one if idle DSes are common)
 - DS session renewal thread
 - Full stateid management (OPEN/CLOSE DS files for InBand I/O
@@ -387,7 +392,7 @@ NOT_NOW_BROWN_COW: DENSE mode offset translation
 - CHUNK ops vtable (FFv2 DS protocol)
 - Multi-DS striping for InBand I/O (parallel fan-out)
 - Write-behind / read-ahead caching on the MDS proxy path
-- AUTH_SYS → RPCSEC_GSS credential mapping for DS RPCs
+- AUTH_SYS --> RPCSEC_GSS credential mapping for DS RPCs
 - Multi-slot DS session (concurrent InBand I/O to same DS;
   current single-slot serializes all operations)
 - Probe visibility for DS protocol and session state
@@ -396,7 +401,7 @@ NOT_NOW_BROWN_COW: DENSE mode offset translation
 
 | File | Change |
 |------|--------|
-| `lib/nfs4/dstore/dstore_ops_nfsv4.c` | NEW — NFSv4.2 vtable |
+| `lib/nfs4/dstore/dstore_ops_nfsv4.c` | NEW -- NFSv4.2 vtable |
 | `lib/include/reffs/dstore_ops.h` | Add read/write/commit with creds |
 | `lib/include/reffs/runway.h` | Increase RUNWAY_MAX_FH to 128 |
 | `lib/nfs4/dstore/dstore.c` | Protocol-based vtable selection |

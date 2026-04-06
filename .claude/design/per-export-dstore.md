@@ -1,8 +1,13 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Per-Export Dstore Binding
 
 ## Problem
 
-The dstore table is global — LAYOUTGET picks dstores from
+The dstore table is global -- LAYOUTGET picks dstores from
 `dstore_collect_available()` which returns all connected dstores
 regardless of which export the inode belongs to.  This means:
 
@@ -45,7 +50,7 @@ LAYOUTGET returns NFS4ERR_LAYOUTUNAVAILABLE.
 
 ### Constraint: file layouts = single DS per export
 
-`nfsv4_1_file_layout4` has one `nfl_deviceid` — all FHs in the
+`nfsv4_1_file_layout4` has one `nfl_deviceid` -- all FHs in the
 layout must be on the same DS.  Enforce: when `sb_layout_types`
 includes `SB_LAYOUT_FILE`, `sb_ndstores` must be exactly 1.
 The `SB_SET_DSTORES` probe handler rejects configurations that
@@ -95,7 +100,7 @@ $PROBE sb-set-dstores --id "$FFV1_ID" --dstores 1
 # /ffv2 uses dstore 1 (loopback, CHUNK)
 $PROBE sb-set-dstores --id "$FFV2_ID" --dstores 1
 
-# /files uses dstore 2 (adept, file layouts — single DS)
+# /files uses dstore 2 (adept, file layouts -- single DS)
 $PROBE sb-set-dstores --id "$FILES_ID" --dstores 2
 ```
 
@@ -141,7 +146,7 @@ if (sb->sb_ndstores > 0) {
 
 ### GETDEVICEINFO changes
 
-No changes needed — the device ID encodes the dstore ID, and
+No changes needed -- the device ID encodes the dstore ID, and
 the dstore has the address regardless of which export uses it.
 GETDEVICEINFO already handles all three layout types.
 
@@ -155,13 +160,13 @@ The DS must:
 reffsd already supports all NFSv4.2 session operations.  The DS
 flag is set via `role = "ds"` in the config, which maps to
 `EXCHGID4_FLAG_USE_PNFS_DS` via `reffs_role_exchgid_flags()`.
-No new config option needed — `role = "ds"` is the existing
+No new config option needed -- `role = "ds"` is the existing
 mechanism.
 
 **Layout stateid validation on the DS**: RFC 5661 §13.1 requires
 the DS to validate the layout stateid.  For BAT, the DS accepts
 any stateid (the stateid was issued by the MDS, not the DS).
-Full validation requires MDS→DS stateid propagation which is
+Full validation requires MDS-->DS stateid propagation which is
 NOT_NOW_BROWN_COW.
 
 **RFC note**: File layout format is specified in RFC 5661 §13
@@ -174,7 +179,7 @@ If a dstore is removed from TOML config but still referenced
 in `sb_dstore_ids[]` (from the persisted registry), LAYOUTGET
 calls `dstore_find()` which returns NULL, skips it, and returns
 NFS4ERR_LAYOUTUNAVAILABLE if all dstores are missing.  This is
-safe but silent — the admin gets no warning at startup.
+safe but silent -- the admin gets no warning at startup.
 NOT_NOW_BROWN_COW: startup validation that cross-references
 registry dstore IDs against configured dstores.
 
@@ -204,9 +209,9 @@ In `lib/nfs4/tests/` (new or extend existing):
 
 ### Functional tests
 
-1. `/ffv1` mount → LAYOUTGET → flex files with dstore 1 (loopback)
-2. `/files` mount → LAYOUTGET → file layout with dstore 2 (adept)
-3. `/` mount → LAYOUTGET → NFS4ERR_LAYOUTUNAVAILABLE
+1. `/ffv1` mount --> LAYOUTGET --> flex files with dstore 1 (loopback)
+2. `/files` mount --> LAYOUTGET --> file layout with dstore 2 (adept)
+3. `/` mount --> LAYOUTGET --> NFS4ERR_LAYOUTUNAVAILABLE
 
 ## Implementation order
 
@@ -222,7 +227,7 @@ In `lib/nfs4/tests/` (new or extend existing):
 ## Deferred / NOT_NOW_BROWN_COW
 
 - Multiple dstores per file layout export (striping across DSes)
-- DS layout stateid validation (MDS→DS propagation)
+- DS layout stateid validation (MDS-->DS propagation)
 - DS health monitoring and failover
 - Dynamic dstore add/remove via probe
 - Per-dstore-per-export runway pools
