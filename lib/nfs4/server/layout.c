@@ -1022,7 +1022,8 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	LAYOUTRETURN4res *res = NFS4_OP_RES_SETUP(compound, oplayoutreturn);
 	nfsstat4 *status = &res->lorr_status;
 
-	if (args->lora_layout_type != LAYOUT4_FLEX_FILES &&
+	if (args->lora_layout_type != LAYOUT4_NFSV4_1_FILES &&
+	    args->lora_layout_type != LAYOUT4_FLEX_FILES &&
 	    args->lora_layout_type != LAYOUT4_FLEX_FILES_V2) {
 		TRACE("LAYOUTRETURN: unknown layout type %d",
 		      args->lora_layout_type);
