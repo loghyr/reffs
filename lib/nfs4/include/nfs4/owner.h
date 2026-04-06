@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * NFSv4 owner/owner_group string ↔ uid/gid conversion.
+ * NFSv4 owner/owner_group string <--> uid/gid conversion.
  *
  * Wraps the idmap cache with fallback to numeric format.
  * Used by attr.c for GETATTR and SETATTR.

@@ -27,7 +27,7 @@
 
 /*
  * Crash simulation leaks server_state intentionally.
- * Suppress leak detection unconditionally — this test is designed
+ * Suppress leak detection unconditionally -- this test is designed
  * to leak as part of crash simulation.
  */
 const char *__lsan_default_options(void)

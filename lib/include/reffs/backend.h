@@ -132,7 +132,7 @@ struct reffs_storage_ops {
 };
 
 /*
- * Composed ops — heap-allocated by reffs_backend_compose().
+ * Composed ops -- heap-allocated by reffs_backend_compose().
  * Contains the public vtable plus internal function pointers
  * for the inode_free composition (md cleanup + data cleanup).
  */
@@ -159,7 +159,7 @@ struct reffs_storage_ops *reffs_backend_compose(enum reffs_md_type md,
 void reffs_backend_free_ops(const struct reffs_storage_ops *ops);
 
 /* ------------------------------------------------------------------ */
-/* POSIX data backend — declarations for composition                  */
+/* POSIX data backend -- declarations for composition                  */
 /* ------------------------------------------------------------------ */
 
 int posix_data_db_alloc(struct data_block *db, struct inode *inode,
@@ -176,7 +176,7 @@ int posix_data_db_get_fd(struct data_block *db);
 void posix_data_inode_cleanup(struct inode *inode);
 
 /* ------------------------------------------------------------------ */
-/* RAM data backend — declarations for composition                    */
+/* RAM data backend -- declarations for composition                    */
 /* ------------------------------------------------------------------ */
 
 int ram_data_db_alloc(struct data_block *db, struct inode *inode,

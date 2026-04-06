@@ -112,7 +112,7 @@ START_TEST(test_lint_flavors_warns)
 	super_block_set_flavors(root, root_f, 1);
 	super_block_put(root);
 
-	/* Child requires krb5 — not in root's list. */
+	/* Child requires krb5 -- not in root's list. */
 	struct super_block *child = super_block_alloc(30, (char *)"/lint_a",
 						      REFFS_STORAGE_RAM, NULL);
 
@@ -156,7 +156,7 @@ START_TEST(test_lint_flavors_clean)
 	super_block_set_flavors(root, root_f, 2);
 	super_block_put(root);
 
-	/* Child only needs krb5 — subset of root. */
+	/* Child only needs krb5 -- subset of root. */
 	struct super_block *child = super_block_alloc(31, (char *)"/lint_b",
 						      REFFS_STORAGE_RAM, NULL);
 

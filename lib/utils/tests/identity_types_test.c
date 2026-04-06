@@ -125,7 +125,7 @@ START_TEST(test_inode_disk_roundtrip)
 {
 	struct inode_disk id;
 
-	/* KRB5 type with domain 1, local 42 — high bits are non-zero. */
+	/* KRB5 type with domain 1, local 42 -- high bits are non-zero. */
 	reffs_id uid = REFFS_ID_MAKE(REFFS_ID_KRB5, 1, 42);
 	reffs_id gid = REFFS_ID_MAKE(REFFS_ID_SID, 2, 501);
 

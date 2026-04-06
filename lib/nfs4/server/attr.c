@@ -2328,7 +2328,7 @@ int nfs4_attribute_init(void)
 	/*
 	 * suppattr_exclcreat: attributes this server will honour when set
 	 * during an EXCLUSIVE4_1 create.  Must match nattr_is_settable()
-	 * exactly — read-only required attributes must not appear here.
+	 * exactly -- read-only required attributes must not appear here.
 	 */
 	if (bitmap4_init(&system_attrs.suppattr_exclcreat,
 			 FATTR4_ATTRIBUTE_MAX))
@@ -2443,7 +2443,7 @@ static bool nattr_is_settable(uint32_t attr)
  * On success the caller must call nattr_release() to free owner /
  * owner_group strings decoded by XDR.
  *
- * mode and mode_set_masked are mutually exclusive (RFC 5661 §6.2.4);
+ * mode and mode_set_masked are mutually exclusive (RFC 5661 S6.2.4);
  * returns NFS4ERR_INVAL if both are present.
  */
 static nfsstat4 nattr_from_fattr4(fattr4 *fattr, struct nfsv42_attr *nattr)
@@ -2756,7 +2756,7 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
 record_set:
-	/* Record what was set: copy attrmask → attrsset on success. */
+	/* Record what was set: copy attrmask --> attrsset on success. */
 	if (bitmap4_copy(attrmask, attrsset) != 0)
 		status = NFS4ERR_DELAY;
 
@@ -2874,7 +2874,7 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	timespec_to_nfstime4(&inode->i_btime, &nattr->time_create);
 
 	/*
-	 * RFC 8881 §5.8.2.19: for the root of a mounted fs,
+	 * RFC 8881 S5.8.2.19: for the root of a mounted fs,
 	 * mounted_on_fileid is the fileid of the covered directory
 	 * in the parent fs (the "mounted-on" object).
 	 */
@@ -3037,7 +3037,7 @@ static uint32_t nfs4_op_getattr_resume(struct rpc_trans *rt)
 			any_changed = true;
 
 			/* Update space accounting for MDS inodes with
-			 * pNFS layouts — data lives on the DS, so the
+			 * pNFS layouts -- data lives on the DS, so the
 			 * MDS has no local data block.  Compute i_used
 			 * from i_size.
 			 */
@@ -3312,7 +3312,7 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 			slot->fs_ds = dstore_find(ldf->ldf_dstore_id);
 			if (!slot->fs_ds) {
 				LOG("GETATTR: dstore[%u] not found for "
-				    "ino=%lu — check data_server config",
+				    "ino=%lu -- check data_server config",
 				    ldf->ldf_dstore_id, inode->i_ino);
 				dstore_fanout_free(df);
 				*status = NFS4ERR_DELAY;
@@ -3341,7 +3341,7 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 	 * the GETATTR response.
 	 *
 	 * We exclude the requesting client (compound->c_nfs4_client)
-	 * from the search — if this client holds the delegation, it
+	 * from the search -- if this client holds the delegation, it
 	 * already has authoritative values locally.
 	 */
 	if (inode) {
@@ -3767,9 +3767,9 @@ restart_snap:
 	/*
 	 * Phase 2b: fault in inodes, encode attrs, build the reply.
 	 *
-	 * Two limits (RFC 5661 §18.23):
-	 *   dircount  – non-attribute directory data (cookie + name)
-	 *   maxcount  – total wire bytes of the complete reply
+	 * Two limits (RFC 5661 S18.23):
+	 *   dircount  -- non-attribute directory data (cookie + name)
+	 *   maxcount  -- total wire bytes of the complete reply
 	 *
 	 * Wire cost per entry:
 	 *   dir_bytes   = 4 (bool) + 8 (cookie) + 4 (name len) + roundup4(namelen)
@@ -4039,7 +4039,7 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 			slot->fs_ds = dstore_find(ldf->ldf_dstore_id);
 			if (!slot->fs_ds) {
 				LOG("SETATTR: dstore[%u] not found for "
-				    "ino=%lu — check data_server config",
+				    "ino=%lu -- check data_server config",
 				    ldf->ldf_dstore_id,
 				    compound->c_inode->i_ino);
 				dstore_fanout_free(df);
@@ -4064,7 +4064,7 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 	/*
 	 * If the SETATTR includes a size change, check whether the
 	 * stateid grants write access.  If so, skip the file-mode W_OK
-	 * check in vfs_setattr — this matches POSIX ftruncate semantics
+	 * check in vfs_setattr -- this matches POSIX ftruncate semantics
 	 * where the fd's access mode governs, not the file permissions.
 	 */
 	bool has_write_stateid = false;
@@ -4077,7 +4077,7 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 					       &args->stateid, true, &stid);
 		if (*status) {
 			/*
-			 * Bad stateid for a size change — reject.
+			 * Bad stateid for a size change -- reject.
 			 * Non-size SETATTRs with bad stateids are
 			 * tolerated (the stateid is advisory).
 			 */
@@ -4250,12 +4250,12 @@ uint32_t nfs4_op_access(struct compound *compound)
 	 * Every bit we can evaluate goes into resok->supported;
 	 * bits the caller actually holds go into resok->access.
 	 *
-	 * ACCESS4_READ    → R_OK
-	 * ACCESS4_LOOKUP  → X_OK  (directory search)
-	 * ACCESS4_MODIFY  → W_OK
-	 * ACCESS4_EXTEND  → W_OK  (append / grow)
-	 * ACCESS4_DELETE  → W_OK  (write on the object)
-	 * ACCESS4_EXECUTE → X_OK  (file execute)
+	 * ACCESS4_READ    --> R_OK
+	 * ACCESS4_LOOKUP  --> X_OK  (directory search)
+	 * ACCESS4_MODIFY  --> W_OK
+	 * ACCESS4_EXTEND  --> W_OK  (append / grow)
+	 * ACCESS4_DELETE  --> W_OK  (write on the object)
+	 * ACCESS4_EXECUTE --> X_OK  (file execute)
 	 */
 	static const struct {
 		uint32_t bit;

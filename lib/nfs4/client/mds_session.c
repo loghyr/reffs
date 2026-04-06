@@ -63,7 +63,7 @@ static int mds_exchange_id(struct mds_session *ms)
 	memset(&args->eia_clientowner.co_verifier, 0,
 	       sizeof(args->eia_clientowner.co_verifier));
 
-	/* Random verifier — new incarnation each time. */
+	/* Random verifier -- new incarnation each time. */
 	uint32_t pid = (uint32_t)getpid();
 
 	memcpy(&args->eia_clientowner.co_verifier, &pid, sizeof(pid));
@@ -379,7 +379,7 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 
 	/*
 	 * RPCSEC_GSS via libtirpc's authgss_create_default.
-	 * service_name is "nfs@host" — the server's service principal.
+	 * service_name is "nfs@host" -- the server's service principal.
 	 */
 	char service[512];
 

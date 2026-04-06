@@ -8,12 +8,12 @@
 #endif
 
 /*
- * fs_test_unlink.c — reffs_fs_unlink() correctness
+ * fs_test_unlink.c -- reffs_fs_unlink() correctness
  *
  * Unlink removes a regular file from the namespace.  fs.c currently
  * decrements the parent's nlink through dirent_parent_release(); these
  * tests verify that effect and its inverse.  Note that unlink does NOT
- * update the parent's mtime/ctime in the current implementation — only
+ * update the parent's mtime/ctime in the current implementation -- only
  * the timestamps of the file's own inode are affected (via the
  * dirent_parent_release path).  Tests here track what the code actually
  * guarantees; add mtime/ctime assertions if that changes.

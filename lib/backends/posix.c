@@ -427,7 +427,7 @@ static int inode_load_from_disk(struct inode *inode)
 
 	/*
 	 * MDS inodes with pNFS layouts have i_size set (from
-	 * LAYOUTCOMMIT) but no local .dat file — data lives on the DS.
+	 * LAYOUTCOMMIT) but no local .dat file -- data lives on the DS.
 	 * Compute i_used from i_size so GETATTR returns correct
 	 * space_used and the client sees correct st_blocks.
 	 */
@@ -734,7 +734,7 @@ static int posix_dir_find_entry_by_name(struct super_block *sb,
 }
 
 /*
- * posix_inode_free — md-side cleanup only.
+ * posix_inode_free -- md-side cleanup only.
  *
  * Unlinks metadata files (.meta, .dir, .lnk, .layouts).  The .dat file
  * is handled by the data backend's inode_cleanup function, wired in
@@ -884,7 +884,7 @@ static void posix_recover(struct super_block *sb)
 }
 
 /*
- * posix_storage_ops — md template for POSIX metadata backend.
+ * posix_storage_ops -- md template for POSIX metadata backend.
  *
  * Data function pointers (db_*) are intentionally NULL here.
  * They are populated by reffs_backend_compose() from the data

@@ -233,7 +233,7 @@ START_TEST(test_compose_inode_free_cleans_both)
 	inode->i_db = NULL;
 
 	/*
-	 * Call inode_free directly — the composed wrapper should
+	 * Call inode_free directly -- the composed wrapper should
 	 * clean up both .meta (md) and .dat (data).
 	 */
 	sb->sb_ops->inode_free(inode);

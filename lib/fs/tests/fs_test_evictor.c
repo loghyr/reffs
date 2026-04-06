@@ -4,7 +4,7 @@
  */
 
 /*
- * fs_test_evictor.c — background evictor thread unit tests
+ * fs_test_evictor.c -- background evictor thread unit tests
  *
  * Tests:
  *   evictor_init_fini           init/fini lifecycle round-trip
@@ -79,7 +79,7 @@ START_TEST(test_evictor_signal_wakes)
 	sb->sb_inode_lru_max = 4;
 	super_block_put(sb);
 
-	/* Ensure ASYNC mode — the evictor handles eviction. */
+	/* Ensure ASYNC mode -- the evictor handles eviction. */
 	evictor_set_mode(EVICTOR_ASYNC);
 
 	/* Create files to build LRU pressure. */
@@ -88,7 +88,7 @@ START_TEST(test_evictor_signal_wakes)
 		ck_assert_int_eq(reffs_fs_create(path, S_IFREG | 0644), 0);
 	}
 
-	/* Signal and drain — after this, eviction has run. */
+	/* Signal and drain -- after this, eviction has run. */
 	evictor_signal();
 	evictor_drain();
 
@@ -127,7 +127,7 @@ START_TEST(test_evictor_drain)
 		ck_assert_int_eq(reffs_fs_create(path, S_IFREG | 0644), 0);
 	}
 
-	/* Drain is synchronous — when it returns, eviction is done. */
+	/* Drain is synchronous -- when it returns, eviction is done. */
 	evictor_drain();
 
 	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
@@ -154,11 +154,11 @@ START_TEST(test_evictor_signal_after_fini)
 	/* The evictor is running from setup. Shut it down. */
 	evictor_fini();
 
-	/* Signal after fini — must not crash or hang. */
+	/* Signal after fini -- must not crash or hang. */
 	evictor_signal();
 	evictor_signal();
 
-	/* Drain after fini — must return immediately (running == 0). */
+	/* Drain after fini -- must return immediately (running == 0). */
 	evictor_drain();
 
 	/* Restart the evictor so teardown (reffs_ns_fini) can shut it

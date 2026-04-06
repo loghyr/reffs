@@ -10,7 +10,7 @@
  *
  * Implementation: a lock-free hash table (cds_lfht) keyed by reffs_id.
  * Each entry stores (key, mapped_to).  A bidirectional mapping inserts
- * two entries: A→B and B→A.
+ * two entries: A-->B and B-->A.
  *
  * Persisted to <state_dir>/identity_map via write-temp/fsync/rename.
  */
@@ -130,7 +130,7 @@ static int map_insert(reffs_id key, reffs_id value)
 		cds_lfht_add_unique(map_ht, hash, map_match, &key, &e->me_node);
 
 	if (existing != &e->me_node) {
-		/* Already exists — update the value. */
+		/* Already exists -- update the value. */
 		struct map_entry *old =
 			caa_container_of(existing, struct map_entry, me_node);
 
@@ -178,7 +178,7 @@ static struct map_entry *map_find(reffs_id key)
 
 reffs_id identity_map_unix_for(reffs_id id)
 {
-	/* Already UNIX — return directly. */
+	/* Already UNIX -- return directly. */
 	if (REFFS_ID_IS_UNIX(id))
 		return id;
 

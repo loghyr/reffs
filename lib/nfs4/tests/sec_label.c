@@ -4,7 +4,7 @@
  */
 
 /*
- * sec_label.c — security label (RFC 7861) round-trip tests.
+ * sec_label.c -- security label (RFC 7861) round-trip tests.
  *
  * Verifies:
  *  - New inodes have no security label (no server-generated default)
@@ -63,7 +63,7 @@ static void sec_label_teardown(void)
 
 /*
  * A newly created inode must have no security label.  The server must
- * not generate a default — the label is policy-dependent and only the
+ * not generate a default -- the label is policy-dependent and only the
  * client (with its local SELinux policy) knows what it should be.
  */
 START_TEST(test_new_inode_has_no_label)

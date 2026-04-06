@@ -4,7 +4,7 @@
  */
 
 /*
- * reffs_registry_tool — standalone tool for inspecting and repairing
+ * reffs_registry_tool -- standalone tool for inspecting and repairing
  * the superblock registry.  Works without a running server.
  *
  * Subcommands:
@@ -247,7 +247,7 @@ static int cmd_repair_counter(const char *state_dir)
 		return 0;
 	}
 
-	printf("Repairing counter: %u → %u (max id seen: %lu)\n",
+	printf("Repairing counter: %u --> %u (max id seen: %lu)\n",
 	       hdr.srh_next_id, new_next, (unsigned long)max_id);
 
 	/* Rewrite the registry with the fixed counter. */

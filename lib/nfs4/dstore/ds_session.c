@@ -6,7 +6,7 @@
 #endif
 
 /*
- * MDS→DS NFSv4.2 session for control-plane and InBand I/O.
+ * MDS-->DS NFSv4.2 session for control-plane and InBand I/O.
  *
  * The MDS acts as a plain NFSv4 client (USE_NON_PNFS) to the DS.
  * Uses the ec_demo client library (mds_session / mds_compound)
@@ -48,7 +48,7 @@ int ds_session_create(struct dstore *ds)
 
 	/*
 	 * Build a unique owner string: "mds-ds:<ds_id>:<hostname>:<pid>"
-	 * This distinguishes the MDS→DS session from client→DS sessions.
+	 * This distinguishes the MDS-->DS session from client-->DS sessions.
 	 */
 	char hostname[64];
 
@@ -60,10 +60,10 @@ int ds_session_create(struct dstore *ds)
 
 	/*
 	 * Connect to the DS.  mds_session_create does:
-	 *   clnt_create → EXCHANGE_ID → CREATE_SESSION → RECLAIM_COMPLETE
+	 *   clnt_create --> EXCHANGE_ID --> CREATE_SESSION --> RECLAIM_COMPLETE
 	 *
 	 * But it uses EXCHGID4_FLAG_USE_PNFS_MDS.  We need USE_NON_PNFS.
-	 * For now, reuse as-is — the DS accepts either flag.
+	 * For now, reuse as-is -- the DS accepts either flag.
 	 * NOT_NOW_BROWN_COW: fork mds_session_create to accept a flags
 	 * parameter, or add a ds_session_create that uses USE_NON_PNFS.
 	 */

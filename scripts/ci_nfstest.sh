@@ -2,10 +2,10 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# ci_nfstest.sh — Run NFStest protocol test suite against reffsd.
+# ci_nfstest.sh -- Run NFStest protocol test suite against reffsd.
 #
 # NFStest (git.linux-nfs.org/mora) is a Python-based NFS protocol
-# test suite.  GPL-2.0 — run as external process only.
+# test suite.  GPL-2.0 -- run as external process only.
 # Cached in external/nfstest (.gitignore'd).
 #
 # Usage:
@@ -67,7 +67,7 @@ fetch_nfstest() {
 		git clone --depth 1 "$NFSTEST_URL" "$NFSTEST_DIR"
 	fi
 
-	# nfstest is pure Python — no build step needed.
+	# nfstest is pure Python -- no build step needed.
 	# Just set PYTHONPATH.
 	export PYTHONPATH="$NFSTEST_DIR:${PYTHONPATH:-}"
 }

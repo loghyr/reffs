@@ -201,7 +201,7 @@ int io_tls_init_server_context(const char *cfg_cert, const char *cfg_key,
 #endif
 
 	/*
-	 * Certificate path priority: argument → env var → /etc/tlshd/.
+	 * Certificate path priority: argument --> env var --> /etc/tlshd/.
 	 * The /etc/tlshd/ default shares certs with kernel tlshd so
 	 * both can use the same CA on the host.
 	 */

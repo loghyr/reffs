@@ -4,7 +4,7 @@
  */
 
 /*
- * utf8string_lifecycle.c — tests for utf8string lifecycle, predicate,
+ * utf8string_lifecycle.c -- tests for utf8string lifecycle, predicate,
  * copy/move, wire copy, standalone validation, and cstr conversion.
  *
  * Tests:
@@ -75,7 +75,7 @@ END_TEST
 START_TEST(test_free_already_free)
 {
 	utf8string u = { 0 };
-	utf8string_free(&u); /* val is NULL — must not crash */
+	utf8string_free(&u); /* val is NULL -- must not crash */
 }
 END_TEST
 
@@ -337,7 +337,7 @@ END_TEST
 START_TEST(test_validate_multibyte)
 {
 	utf8string u = { 0 };
-	/* é (U+00E9) = 0xC3 0xA9, 世 (U+4E16) = 0xE4 0xB8 0x96 */
+	/* e (U+00E9) = 0xC3 0xA9, 世 (U+4E16) = 0xE4 0xB8 0x96 */
 	u.utf8string_len = 5;
 	u.utf8string_val = "\xC3\xA9\xE4\xB8\x96";
 	ck_assert_int_eq(utf8string_validate(&u), 0);

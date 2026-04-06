@@ -6,7 +6,7 @@
 #endif
 
 /*
- * Pure-striping codec — identity encode/decode, no redundancy.
+ * Pure-striping codec -- identity encode/decode, no redundancy.
  *
  * Used for benchmarking parallel I/O throughput without any coding
  * overhead.  Data is split into k equal stripes across k DSes.

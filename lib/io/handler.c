@@ -41,7 +41,7 @@ struct ring_context *io_network_get_global(void)
 	return g_network_rc;
 }
 
-/* GSS context cache + server credential — declared in gss_context.h. */
+/* GSS context cache + server credential -- declared in gss_context.h. */
 int gss_ctx_cache_init(void);
 void gss_ctx_cache_fini(void);
 int gss_server_cred_init(void);
@@ -370,7 +370,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 	/*
 	 * Submit a poll on the shutdown eventfd.  When the signal handler
 	 * writes to it, this produces a CQE that wakes the main loop
-	 * immediately — even when io_uring_wait_cqe_timeout wouldn't
+	 * immediately -- even when io_uring_wait_cqe_timeout wouldn't
 	 * return on SIGTERM due to pending operations.
 	 */
 	if (shutdown_efd >= 0) {
@@ -404,7 +404,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		 *
 		 * Thread safety: on kernel 5.11+ (IORING_FEAT_EXT_ARG),
 		 * io_uring_wait_cqe_timeout uses IORING_ENTER_EXT_ARG
-		 * to pass the timeout as a syscall argument — it does NOT
+		 * to pass the timeout as a syscall argument -- it does NOT
 		 * touch the SQ ring.  Worker threads submit write SQEs
 		 * under rc_mutex; since this call doesn't access the SQ
 		 * ring, no mutex is needed here.
@@ -443,7 +443,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		if (!ic) {
 			/*
 			 * NULL user_data: the shutdown eventfd poll
-			 * completed — the signal handler wrote to it.
+			 * completed -- the signal handler wrote to it.
 			 * Consume the CQE and let the running_flag check
 			 * at the top of the loop handle the break.
 			 */
@@ -524,7 +524,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				}
 
 				/*
-				 * Do NOT trace ic here — io_handle_write
+				 * Do NOT trace ic here -- io_handle_write
 				 * may have destroyed it (ic_state had
 				 * IO_CONTEXT_DIRECT_TLS_DATA).
 				 */

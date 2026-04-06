@@ -113,7 +113,7 @@ END_TEST
 /* Mapping table tests                                                 */
 /* ------------------------------------------------------------------ */
 
-/* Bidirectional mapping: A→B and B→A. */
+/* Bidirectional mapping: A-->B and B-->A. */
 START_TEST(test_map_bidirectional)
 {
 	reffs_id krb5 = REFFS_ID_MAKE(REFFS_ID_KRB5, 1, 42);
@@ -121,12 +121,12 @@ START_TEST(test_map_bidirectional)
 
 	ck_assert_int_eq(identity_map_add(krb5, unix_id), 0);
 
-	/* Forward: KRB5 → UNIX. */
+	/* Forward: KRB5 --> UNIX. */
 	reffs_id result = identity_map_lookup(krb5);
 
 	ck_assert_uint_eq(result, unix_id);
 
-	/* Reverse: UNIX → KRB5. */
+	/* Reverse: UNIX --> KRB5. */
 	result = identity_map_lookup(unix_id);
 	ck_assert_uint_eq(result, krb5);
 }
@@ -140,12 +140,12 @@ START_TEST(test_map_unix_for)
 
 	ck_assert_int_eq(identity_map_add(sid, unix_id), 0);
 
-	/* SID → UNIX alias. */
+	/* SID --> UNIX alias. */
 	reffs_id result = identity_map_unix_for(sid);
 
 	ck_assert_uint_eq(result, unix_id);
 
-	/* Already UNIX → returns directly. */
+	/* Already UNIX --> returns directly. */
 	result = identity_map_unix_for(unix_id);
 	ck_assert_uint_eq(result, unix_id);
 }

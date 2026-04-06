@@ -159,7 +159,7 @@ uint32_t nfs4_op_lookupp(struct compound *compound)
 		goto out;
 	}
 
-	/* RFC 8881 §18.14.4: symlink → NFS4ERR_SYMLINK, else NOTDIR. */
+	/* RFC 8881 S18.14.4: symlink --> NFS4ERR_SYMLINK, else NOTDIR. */
 	if (!S_ISDIR(compound->c_inode->i_mode)) {
 		*status = S_ISLNK(compound->c_inode->i_mode) ? NFS4ERR_SYMLINK :
 							       NFS4ERR_NOTDIR;
@@ -172,7 +172,7 @@ uint32_t nfs4_op_lookupp(struct compound *compound)
 
 	/*
 	 * At the root of a sb: if this is the pseudo-root (root sb),
-	 * there is no parent → NFS4ERR_NOENT.  If this is a child sb,
+	 * there is no parent --> NFS4ERR_NOENT.  If this is a child sb,
 	 * cross back to the parent sb's mounted-on directory.
 	 */
 	if (compound->c_curr_nfh.nfh_ino == INODE_ROOT_ID) {
@@ -184,7 +184,7 @@ uint32_t nfs4_op_lookupp(struct compound *compound)
 		/*
 		 * Cross back to parent sb at the mount point.
 		 * sb_parent_sb / sb_mount_dirent are stable while the
-		 * child sb is mounted — unmount only runs at shutdown
+		 * child sb is mounted -- unmount only runs at shutdown
 		 * when no compounds are active.
 		 */
 		struct super_block *parent_sb =
@@ -276,7 +276,7 @@ uint32_t nfs4_op_create(struct compound *compound)
 		goto out;
 	}
 
-	/* NF4REG is not valid for CREATE — clients must use OPEN. */
+	/* NF4REG is not valid for CREATE -- clients must use OPEN. */
 	if (args->objtype.type == NF4REG) {
 		*status = NFS4ERR_INVAL;
 		goto out;
@@ -559,7 +559,7 @@ uint32_t nfs4_op_rename(struct compound *compound)
 	}
 
 	/*
-	 * RFC 5661 §18.26: source is SAVED_FH, destination is CURRENT_FH.
+	 * RFC 5661 S18.26: source is SAVED_FH, destination is CURRENT_FH.
 	 * Load the saved directory inode.
 	 */
 	old_dir =
@@ -593,7 +593,7 @@ uint32_t nfs4_op_rename(struct compound *compound)
 			 &new_after);
 	if (ret) {
 		/*
-		 * RFC 8881 §18.26.3: renaming a non-directory over a
+		 * RFC 8881 S18.26.3: renaming a non-directory over a
 		 * directory returns NFS4ERR_EXIST, not NFS4ERR_ISDIR
 		 * (which is not a valid RENAME error).
 		 */
@@ -647,7 +647,7 @@ uint32_t nfs4_op_link(struct compound *compound)
 	int ret;
 
 	/*
-	 * RFC 8881 §18.9.3: CURRENT_FH is the target directory;
+	 * RFC 8881 S18.9.3: CURRENT_FH is the target directory;
 	 * SAVED_FH is the file to link.
 	 */
 	if (network_file_handle_empty(&compound->c_curr_nfh) ||

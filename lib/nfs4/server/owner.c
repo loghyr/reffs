@@ -6,11 +6,11 @@
 #endif
 
 /*
- * NFSv4 owner string conversion — wraps idmap with numeric fallback.
+ * NFSv4 owner string conversion -- wraps idmap with numeric fallback.
  *
- * GETATTR: uid → "user@domain" (from cache/libnfsidmap/nsswitch),
+ * GETATTR: uid --> "user@domain" (from cache/libnfsidmap/nsswitch),
  *          falling back to decimal "1000" if no mapping exists.
- * SETATTR: "user@domain" or "1000" → uid.
+ * SETATTR: "user@domain" or "1000" --> uid.
  */
 
 #include <errno.h>
@@ -25,7 +25,7 @@ int reffs_owner_from_uid(utf8string *dst, uid_t uid)
 	if (idmap_uid_to_name(uid, dst) == 0)
 		return 0;
 
-	/* No name mapping — fall back to decimal. */
+	/* No name mapping -- fall back to decimal. */
 	return utf8string_from_uid(dst, uid);
 }
 

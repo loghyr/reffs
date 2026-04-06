@@ -10,7 +10,7 @@
 #include <uuid/uuid.h>
 
 /*
- * Superblock registry — persists the set of superblocks and their
+ * Superblock registry -- persists the set of superblocks and their
  * lifecycle state across server restarts.
  *
  * On-disk format:
@@ -33,9 +33,9 @@
 
 /*
  * Persistent sb_id counter.  IDs are assigned monotonically and
- * never reused — a deleted export's id is gone forever.  This
+ * never reused -- a deleted export's id is gone forever.  This
  * ensures NFS clients can distinguish a new export at the same
- * path from the old one (different fsid → different filesystem).
+ * path from the old one (different fsid --> different filesystem).
  *
  * IDs 1 and 2 are reserved (SUPER_BLOCK_ROOT_ID, SUPER_BLOCK_DS_ID).
  * The counter starts at 3.
@@ -64,14 +64,14 @@ struct sb_registry_entry {
 };
 
 /*
- * sb_registry_save — persist all mounted/unmounted superblocks.
+ * sb_registry_save -- persist all mounted/unmounted superblocks.
  * Scans the sb list and writes a snapshot of each non-root sb.
  * Returns 0 on success, -errno on failure.
  */
 int sb_registry_save(const char *state_dir);
 
 /*
- * sb_registry_load — load the registry and recreate superblocks.
+ * sb_registry_load -- load the registry and recreate superblocks.
  * For each entry, allocates a super_block via super_block_alloc(),
  * creates its root dirent, and transitions to the saved state.
  * Returns 0 on success (or -ENOENT if no registry file exists),
@@ -80,7 +80,7 @@ int sb_registry_save(const char *state_dir);
 int sb_registry_load(const char *state_dir);
 
 /*
- * sb_registry_detect_orphans — scan state_dir for sb_<id>/
+ * sb_registry_detect_orphans -- scan state_dir for sb_<id>/
  * directories that are not in the registry.  Logs a warning
  * for each orphan.  Does not delete them (may be referral source).
  * Returns the number of orphans found (>= 0), or -errno on error.
@@ -88,8 +88,8 @@ int sb_registry_load(const char *state_dir);
 int sb_registry_detect_orphans(const char *state_dir);
 
 /*
- * sb_registry_alloc_id — return the next sb_id and persist the
- * incremented counter.  Thread-safe (single writer assumed —
+ * sb_registry_alloc_id -- return the next sb_id and persist the
+ * incremented counter.  Thread-safe (single writer assumed --
  * probe ops are serialized).  Returns 0 on failure.
  */
 uint64_t sb_registry_alloc_id(const char *state_dir);

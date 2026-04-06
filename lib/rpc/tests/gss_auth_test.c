@@ -8,9 +8,9 @@
  * verifies that the GSS context is established.  Skips gracefully
  * if krb5 tools are not installed.
  *
- * This tests the real GSS stack end-to-end: kinit → TGT →
- * gss_init_sec_context → authgss_create → server contact.
- * It does NOT start a server — it only tests the client-side
+ * This tests the real GSS stack end-to-end: kinit --> TGT -->
+ * gss_init_sec_context --> authgss_create --> server contact.
+ * It does NOT start a server -- it only tests the client-side
  * context establishment against the KDC.
  */
 

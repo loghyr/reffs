@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Dstore fan-out — parallel async operations across mirror DSes.
+ * Dstore fan-out -- parallel async operations across mirror DSes.
  *
  * Used when the MDS needs to send the same operation to all DSes
  * in a layout segment and wait for all to complete before resuming
@@ -44,7 +44,7 @@ enum fanout_op {
 	FANOUT_CHMOD,
 };
 
-/* Fan-out context — allocated per compound that needs DS fan-out. */
+/* Fan-out context -- allocated per compound that needs DS fan-out. */
 struct dstore_fanout {
 	struct task *df_task; /* task to resume when all complete */
 	_Atomic uint32_t df_pending; /* threads still running */
@@ -81,7 +81,7 @@ struct dstore_fanout *dstore_fanout_alloc(uint32_t nslots);
  * df->df_task is set to the task to resume.
  *
  * After this returns, the caller must NOT touch the fan-out context
- * or the task — ownership transfers to the spawned threads.
+ * or the task -- ownership transfers to the spawned threads.
  */
 void dstore_fanout_launch(struct dstore_fanout *df, struct task *t);
 

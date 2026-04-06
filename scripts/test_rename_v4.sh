@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# test_rename_v4.sh — Reproduce CTHON04 test7 rename bug.
+# test_rename_v4.sh -- Reproduce CTHON04 test7 rename bug.
 #
 # Mounts NFSv4.2 with actimeo=0, creates a file, renames it,
 # then stats the old name.  If stat succeeds, the client cache
@@ -34,7 +34,7 @@ touch "$TESTDIR/file.0"
 # Rename
 mv "$TESTDIR/file.0" "$TESTDIR/newfile.0"
 
-# Check old name — should NOT exist
+# Check old name -- should NOT exist
 if stat "$TESTDIR/file.0" >/dev/null 2>&1; then
     echo "FAIL: file.0 exists after rename (NFSv4.2)"
     V4_RESULT="FAIL"

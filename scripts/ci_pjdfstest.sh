@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# ci_pjdfstest.sh — Run pjdfstest POSIX compliance suite against reffsd.
+# ci_pjdfstest.sh -- Run pjdfstest POSIX compliance suite against reffsd.
 #
 # Clones and caches pjdfstest in external/ (out-of-tree, .gitignore'd).
 # Runs with --enable-strict-posix so the server enforces full POSIX

@@ -90,7 +90,7 @@ static void session_release(struct urcu_ref *ref)
 	 * client eviction before their last put.  This server_state_find()
 	 * is a safety net for abnormal paths (e.g., shutdown ordering).  If
 	 * the server is already torn down, ss will be NULL and the lfht
-	 * delete is skipped — the hash table itself is gone at that point
+	 * delete is skipped -- the hash table itself is gone at that point
 	 * so there is no dangling node to worry about.
 	 */
 	struct server_state *ss = server_state_find();
@@ -318,7 +318,7 @@ struct nfs4_session *nfs4_session_alloc(struct server_state *ss,
 	rcu_read_unlock();
 
 	if (caa_unlikely(node != &ns->ns_node)) {
-		/* Session ID collision — should be impossible. */
+		/* Session ID collision -- should be impossible. */
 		ns->ns_state &= ~NFS4_SESSION_IS_HASHED;
 		goto err_put_client;
 	}
@@ -405,9 +405,9 @@ uint32_t nfs4_op_exchange_id(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §18.35.3: validate eia_flags.
+	 * RFC 8881 S18.35.3: validate eia_flags.
 	 * Only the USE_* bits and UPD_CONFIRMED_REC_A are valid.
-	 * Undefined bits → NFS4ERR_INVAL.
+	 * Undefined bits --> NFS4ERR_INVAL.
 	 */
 #define EID_VALID_FLAGS                                                   \
 	(EXCHGID4_FLAG_SUPP_MOVED_REFER | EXCHGID4_FLAG_SUPP_MOVED_MIGR | \
@@ -424,7 +424,7 @@ uint32_t nfs4_op_exchange_id(struct compound *compound)
 		!!(args->eia_flags & EXCHGID4_FLAG_UPD_CONFIRMED_REC_A);
 
 	/*
-	 * RFC 8881 §18.35.3: eia_client_impl_id is declared as <1>,
+	 * RFC 8881 S18.35.3: eia_client_impl_id is declared as <1>,
 	 * so more than one element is a protocol violation.
 	 */
 	if (args->eia_client_impl_id.eia_client_impl_id_len > 1) {
@@ -513,11 +513,11 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §18.36.3: validate flags.  Only defined flags are
+	 * RFC 8881 S18.36.3: validate flags.  Only defined flags are
 	 * CREATE_SESSION4_FLAG_PERSIST and
 	 * CREATE_SESSION4_FLAG_CONN_BACK_CHAN and
 	 * CREATE_SESSION4_FLAG_CONN_RDMA.
-	 * Undefined flags → NFS4ERR_INVAL.
+	 * Undefined flags --> NFS4ERR_INVAL.
 	 */
 #define CSESS_VALID_FLAGS                                                     \
 	(CREATE_SESSION4_FLAG_PERSIST | CREATE_SESSION4_FLAG_CONN_BACK_CHAN | \
@@ -535,8 +535,8 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §18.36.3: before confirmation, the principal must
-	 * match the one from EXCHANGE_ID — a mismatch means a different
+	 * RFC 8881 S18.36.3: before confirmation, the principal must
+	 * match the one from EXCHANGE_ID -- a mismatch means a different
 	 * user is trying to hijack the unconfirmed client record.
 	 * After confirmation, any principal may create additional sessions.
 	 */
@@ -549,11 +549,11 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §18.36.4: sequence ID validation.
-	 *   csa_sequence == nc_create_seq → replay, return cached result
-	 *   csa_sequence == nc_create_seq + 1 → new request (but we
+	 * RFC 8881 S18.36.4: sequence ID validation.
+	 *   csa_sequence == nc_create_seq --> replay, return cached result
+	 *   csa_sequence == nc_create_seq + 1 --> new request (but we
 	 *     don't require +1, just != cached seqid, for flexibility)
-	 *   anything else → NFS4ERR_SEQ_MISORDERED
+	 *   anything else --> NFS4ERR_SEQ_MISORDERED
 	 */
 	if (nc->nc_create_reply && args->csa_sequence == nc->nc_create_seq) {
 		/* Replay: return the cached CREATE_SESSION result. */
@@ -567,16 +567,16 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 			goto out; /* status is NFS4_OK (calloc'd) */
 		}
 		xdr_destroy(&xdrs);
-		/* Decode failed — fall through to create new session. */
+		/* Decode failed -- fall through to create new session. */
 	}
 
 	/*
-	 * Seqid validation (RFC 8881 §18.36.4):
+	 * Seqid validation (RFC 8881 S18.36.4):
 	 *   First CREATE_SESSION (no cached reply): csa_sequence must
 	 *     equal nc_create_seq (set by EXCHANGE_ID).
 	 *   Subsequent CREATE_SESSION (cached reply exists): csa_sequence
 	 *     must equal nc_create_seq + 1 (the next expected value).
-	 *   Anything else → NFS4ERR_SEQ_MISORDERED.
+	 *   Anything else --> NFS4ERR_SEQ_MISORDERED.
 	 */
 	if (!nc->nc_create_reply) {
 		if (args->csa_sequence != nc->nc_create_seq) {
@@ -593,7 +593,7 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §18.36.3: channel attrs — accept the client's
+	 * RFC 8881 S18.36.3: channel attrs -- accept the client's
 	 * requested sizes.  nfs4_session_alloc clamps to server limits.
 	 * Reject values too small for a minimal SEQUENCE compound
 	 * (~100 bytes for record mark + RPC header + SEQUENCE args).
@@ -611,7 +611,7 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §18.36.3: RDMA — we don't support RDMA but the
+	 * RFC 8881 S18.36.3: RDMA -- we don't support RDMA but the
 	 * client may request it.  Ignore the request and return an
 	 * empty RDMA array in the response (done in the resok fill
 	 * below).  Only reject if the array is absurdly large.
@@ -633,7 +633,7 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	nc->nc_confirmed = true;
 
 	/*
-	 * RFC 8881 §18.36.3: confirming the client destroys zombie
+	 * RFC 8881 S18.36.3: confirming the client destroys zombie
 	 * sessions inherited from the replaced predecessor.
 	 */
 	nfs4_session_destroy_zombies(compound->c_server_state, nc);
@@ -766,7 +766,7 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §2.10.6.2: if the request exceeds the negotiated
+	 * RFC 8881 S2.10.6.2: if the request exceeds the negotiated
 	 * ca_maxrequestsize for the fore channel, reject before any
 	 * other processing.  rt_body_len is the full RPC message
 	 * (header + payload) which is what the channel limit covers.
@@ -799,7 +799,7 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 
 			/*
 			 * Free the pre-allocated resarray before the
-			 * decode overwrites the pointer — prevents leak.
+			 * decode overwrites the pointer -- prevents leak.
 			 */
 			free(full_res->resarray.resarray_val);
 			full_res->resarray.resarray_val = NULL;
@@ -829,7 +829,7 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 
 		/*
 		 * Replay but no cached reply (sa_cachethis was false).
-		 * RFC 8881 §2.10.6.1.3.
+		 * RFC 8881 S2.10.6.1.3.
 		 */
 		pthread_mutex_unlock(&slot->sl_mutex);
 		*status = NFS4ERR_RETRY_UNCACHED_REP;
@@ -852,7 +852,7 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 	pthread_mutex_unlock(&slot->sl_mutex);
 
 	/*
-	 * RFC 8881 §2.10.6.2: when the client sets sa_cachethis,
+	 * RFC 8881 S2.10.6.2: when the client sets sa_cachethis,
 	 * estimate if the reply can fit in the DRC.  A SEQUENCE
 	 * response alone is ~100+ bytes; if the negotiated
 	 * ca_maxresponsesize_cached is absurdly small, reject
@@ -882,7 +882,7 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 
 	compound->c_nfs4_client = nfs4_client_get(ns->ns_client);
 
-	/* Implicit lease renewal — RFC 5661 §8.3. */
+	/* Implicit lease renewal -- RFC 5661 S8.3. */
 	__atomic_store_n(&ns->ns_client->nc_last_renew_ns, reffs_now_ns(),
 			 __ATOMIC_RELEASE);
 	ns = NULL; /* ref transferred to c_session */
@@ -978,7 +978,7 @@ uint32_t nfs4_op_reclaim_complete(struct compound *compound)
 	}
 
 	/*
-	 * rca_one_fs: per-filesystem reclaim complete — not meaningful
+	 * rca_one_fs: per-filesystem reclaim complete -- not meaningful
 	 * for a DS; accept and ignore without touching the counter.
 	 */
 	if (!args->rca_one_fs) {
@@ -987,7 +987,7 @@ uint32_t nfs4_op_reclaim_complete(struct compound *compound)
 		if (was_reclaiming) {
 			server_reclaim_complete(ss);
 		} else if (nc->nc_reclaim_done) {
-			/* RFC 8881 §18.51.4: already completed. */
+			/* RFC 8881 S18.51.4: already completed. */
 			*status = NFS4ERR_COMPLETE_ALREADY;
 		}
 		nc->nc_reclaim_done = true;

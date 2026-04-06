@@ -22,7 +22,7 @@ static int ram_sb_alloc(struct super_block *sb,
 }
 
 /*
- * ram_storage_ops — md template for RAM metadata backend.
+ * ram_storage_ops -- md template for RAM metadata backend.
  *
  * Data function pointers (db_*) are intentionally NULL here.
  * They are populated by the composer from the data backend template.

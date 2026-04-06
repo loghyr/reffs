@@ -30,7 +30,7 @@ START_TEST(test_atomic_write)
 	 * owned by the root dirent created in test_setup().  Calling
 	 * inode_alloc() with a hardcoded ino 2 would bypass sb_next_ino
 	 * accounting and leave an orphan inode in the hash table that is not
-	 * reachable via any dirent — risking an assert in
+	 * reachable via any dirent -- risking an assert in
 	 * super_block_remove_all_inodes() during teardown if the refcount
 	 * bookkeeping goes wrong.
 	 */
@@ -75,7 +75,7 @@ START_TEST(test_atomic_write)
 	ck_assert_uint_eq(meta.id.id_mode, inode->i_mode);
 	ck_assert_uint_eq(meta.id.id_nlink, inode->i_nlink);
 
-	/* Do NOT call inode_put() here — the root inode is owned by the
+	/* Do NOT call inode_put() here -- the root inode is owned by the
 	 * root dirent and will be released by test_teardown(). */
 	test_teardown(&ctx);
 }

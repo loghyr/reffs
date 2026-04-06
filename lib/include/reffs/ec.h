@@ -28,7 +28,7 @@ struct ec_codec {
 	 *     each buffer is shard_len bytes.  For non-systematic codecs
 	 *     that produce variable-size projections (Mojette nonsys),
 	 *     each buffer MUST be allocated to ec_shard_size(codec, i,
-	 *     shard_len) bytes — the codec overwrites data[i] with
+	 *     shard_len) bytes -- the codec overwrites data[i] with
 	 *     projection output that may be larger than shard_len.
 	 * parity[0..m-1]: output parity buffers, each allocated to
 	 *     ec_shard_size(codec, k+i, shard_len) bytes.

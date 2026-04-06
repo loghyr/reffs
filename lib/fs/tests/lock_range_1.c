@@ -6,13 +6,13 @@
 /*
  * Unit tests for reffs_lock_range_overlap().
  *
- * This function is the foundation of the entire locking system — every
+ * This function is the foundation of the entire locking system -- every
  * conflict check ultimately calls it.  It is a pure function (no inode,
  * no owner, no side effects) so these tests require no setup or teardown.
  *
  * Semantics (from lock.c):
  *   len == 0  means "from offset to end of file" (UINT64_MAX).
- *   Two ranges overlap iff [off1, end1] ∩ [off2, end2] is non-empty.
+ *   Two ranges overlap iff [off1, end1] intersection [off2, end2] is non-empty.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -30,13 +30,13 @@
 #include "reffs/lock.h"
 #include "reffs/test.h"
 
-/* ── non-overlapping ──────────────────────────────────────────────────────── */
+/* -- non-overlapping -------------------------------------------------------- */
 
 START_TEST(test_overlap_no_before)
 {
 	/*
 	 * [0, 9] vs [10, 19]: strictly before, no touch.
-	 * off1=0 len1=10 → end1=9; off2=10 len2=10 → end2=19.
+	 * off1=0 len1=10 --> end1=9; off2=10 len2=10 --> end2=19.
 	 */
 	ck_assert(!reffs_lock_range_overlap(0, 10, 10, 10));
 	ck_assert(!reffs_lock_range_overlap(10, 10, 0, 10)); /* symmetric */
@@ -51,20 +51,20 @@ START_TEST(test_overlap_no_after)
 }
 END_TEST
 
-/* ── adjacent (touching at one byte boundary, must NOT overlap) ───────────── */
+/* -- adjacent (touching at one byte boundary, must NOT overlap) ------------- */
 
 START_TEST(test_overlap_adjacent)
 {
 	/*
 	 * [0, 4] (off=0, len=5, end=4) vs [5, 9] (off=5, len=5, end=9).
-	 * Adjacent ranges share no byte — must not overlap.
+	 * Adjacent ranges share no byte -- must not overlap.
 	 */
 	ck_assert(!reffs_lock_range_overlap(0, 5, 5, 5));
 	ck_assert(!reffs_lock_range_overlap(5, 5, 0, 5));
 }
 END_TEST
 
-/* ── overlapping ─────────────────────────────────────────────────────────── */
+/* -- overlapping ----------------------------------------------------------- */
 
 START_TEST(test_overlap_partial)
 {
@@ -98,7 +98,7 @@ START_TEST(test_overlap_single_byte)
 }
 END_TEST
 
-/* ── len=0 (to end-of-file) semantics ───────────────────────────────────── */
+/* -- len=0 (to end-of-file) semantics ------------------------------------- */
 
 START_TEST(test_overlap_len0_vs_finite_overlapping)
 {
@@ -124,7 +124,7 @@ START_TEST(test_overlap_len0_vs_finite_before)
 	 *
 	 * off1=1000, len1=0, end1=UINT64_MAX
 	 * off2=0,    len2=1000, end2=999
-	 * Condition: off1(1000) <= end2(999) is FALSE → no overlap. ✓
+	 * Condition: off1(1000) <= end2(999) is FALSE --> no overlap. OK
 	 */
 	ck_assert(!reffs_lock_range_overlap(1000, 0, 0, 1000));
 	ck_assert(!reffs_lock_range_overlap(0, 1000, 1000, 0));
@@ -155,7 +155,7 @@ START_TEST(test_overlap_len0_adjacent_boundary)
 }
 END_TEST
 
-/* ── suite ───────────────────────────────────────────────────────────────── */
+/* -- suite ----------------------------------------------------------------- */
 
 Suite *lock_range_suite(void)
 {

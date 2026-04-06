@@ -82,7 +82,7 @@ START_TEST(test_registry_persist_load)
 	super_block_release_dirents(child);
 	super_block_put(child);
 
-	/* Load the registry — should recreate the sb. */
+	/* Load the registry -- should recreate the sb. */
 	ck_assert_int_eq(sb_registry_load(state_dir), 0);
 
 	/* Verify the child sb was recreated. */

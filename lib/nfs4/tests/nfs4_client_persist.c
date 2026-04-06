@@ -2,7 +2,7 @@
  * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * nfs4_client_persist_1.c — unit tests for:
+ * nfs4_client_persist_1.c -- unit tests for:
  *
  *   - client_identity_append / client_identity_load round-trip
  *   - client_incarnation_add / client_incarnation_remove / symlink-swap
@@ -441,7 +441,7 @@ END_TEST
 /* nfs4_client_alloc_or_find: all five decision-tree cases            */
 /* ------------------------------------------------------------------ */
 
-/* Case 1: New ownerid → new client, incarnation 0. */
+/* Case 1: New ownerid --> new client, incarnation 0. */
 START_TEST(test_alloc_new_client)
 {
 	char owner_buf[32];
@@ -481,7 +481,7 @@ START_TEST(test_alloc_new_client)
 }
 END_TEST
 
-/* Case 2: Same ownerid, same verifier, same addr → idempotent retry. */
+/* Case 2: Same ownerid, same verifier, same addr --> idempotent retry. */
 START_TEST(test_alloc_idempotent_retry)
 {
 	char owner_buf[32];
@@ -500,7 +500,7 @@ START_TEST(test_alloc_idempotent_retry)
 	ck_assert_ptr_nonnull(nc1);
 
 	/*
-	 * Confirm the client — only confirmed clients get idempotent
+	 * Confirm the client -- only confirmed clients get idempotent
 	 * retry (RFC 8881 Table 11 case 5).  Unconfirmed clients with
 	 * same verifier+principal are replaced (case 1).
 	 */
@@ -523,7 +523,7 @@ START_TEST(test_alloc_idempotent_retry)
 }
 END_TEST
 
-/* Case 3: Same ownerid, same verifier, different addr → multi-homed. */
+/* Case 3: Same ownerid, same verifier, different addr --> multi-homed. */
 START_TEST(test_alloc_multihomed)
 {
 	char owner_buf[32];
@@ -556,7 +556,7 @@ START_TEST(test_alloc_multihomed)
 END_TEST
 
 /*
- * Case 4: Same ownerid, different verifier, same addr → client restarted.
+ * Case 4: Same ownerid, different verifier, same addr --> client restarted.
  * Incarnation must increment; slot is stable; only one slot in incarnations.
  */
 START_TEST(test_alloc_client_restart)
@@ -605,8 +605,8 @@ START_TEST(test_alloc_client_restart)
 END_TEST
 
 /*
- * Case 5: Same ownerid, different verifier, different addr, same principal →
- * RFC 8881 §18.35.4 Table 11 case 4/8: replace old client with new one.
+ * Case 5: Same ownerid, different verifier, different addr, same principal -->
+ * RFC 8881 S18.35.4 Table 11 case 4/8: replace old client with new one.
  * (NFSv4.0's CLID_INUSE is gone in v4.1; the decision tree is now based on
  * principal, not address.)
  */
@@ -632,7 +632,7 @@ START_TEST(test_alloc_diff_verifier_diff_addr_replaces)
 	clientid4 clid1 = (clientid4)nfs4_client_to_client(nc1)->c_id;
 
 	/*
-	 * Same ownerid + same principal + different verifier → replace.
+	 * Same ownerid + same principal + different verifier --> replace.
 	 * The old client is expired; a new one is allocated with a
 	 * different clientid (bumped incarnation).
 	 */
@@ -650,8 +650,8 @@ START_TEST(test_alloc_diff_verifier_diff_addr_replaces)
 END_TEST
 
 /*
- * Case 6: Same ownerid, same verifier, different principal →
- * RFC 8881 §18.35.4 Table 11 case 2/6: replace with new client.
+ * Case 6: Same ownerid, same verifier, different principal -->
+ * RFC 8881 S18.35.4 Table 11 case 2/6: replace with new client.
  */
 START_TEST(test_alloc_diff_principal_replaces)
 {
@@ -673,7 +673,7 @@ START_TEST(test_alloc_diff_principal_replaces)
 	clientid4 clid1 = (clientid4)nfs4_client_to_client(nc1)->c_id;
 	nfs4_client_put(nc1);
 
-	/* Different principal (uid 2000) → must replace. */
+	/* Different principal (uid 2000) --> must replace. */
 	struct nfs4_client *nc2 = nfs4_client_alloc_or_find(
 		g_ss, &owner, &impl, &v, &sin, 2000, false, &eid_status);
 	ck_assert_ptr_nonnull(nc2);

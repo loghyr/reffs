@@ -30,7 +30,7 @@
  *      |
  *      | server_state_init() completes, clients had state or dirty shutdown
  *      v
- *   GRACE_STARTED  (transient — grace period timer armed)
+ *   GRACE_STARTED  (transient -- grace period timer armed)
  *      |
  *      | first server_state_get() by protocol layer
  *      v
@@ -59,19 +59,19 @@ enum server_lifecycle {
 };
 
 struct server_state {
-	/* Persisted fields — loaded at boot, saved on clean shutdown. */
+	/* Persisted fields -- loaded at boot, saved on clean shutdown. */
 	struct server_persistent_state ss_persist;
 	char *ss_state_dir;
 
 	/*
-	 * Persistence dispatch — flatfile or RocksDB namespace DB.
+	 * Persistence dispatch -- flatfile or RocksDB namespace DB.
 	 * Set in server_state_init() based on configured backend type.
 	 * ctx is owned by the persist_ops (freed in fini).
 	 */
 	const struct persist_ops *ss_persist_ops;
 	void *ss_persist_ctx;
 
-	/* State machine — accessed atomically from protocol + timer threads */
+	/* State machine -- accessed atomically from protocol + timer threads */
 	_Atomic enum server_lifecycle ss_lifecycle;
 
 	/* Grace period */
@@ -81,7 +81,7 @@ struct server_state {
 	pthread_t ss_grace_thread; /* timer thread; 0 if not running */
 
 	/*
-         * Per-instance subsystem state — moved here from file-scope
+         * Per-instance subsystem state -- moved here from file-scope
          * statics in client.c so MDS and DS instances on the same
          * machine remain independent.
          */
@@ -98,7 +98,7 @@ struct server_state {
          */
 	struct cds_lfht *ss_incarnations;
 
-	/* Ref count — protocol layer holds a ref while serving RPCs. */
+	/* Ref count -- protocol layer holds a ref while serving RPCs. */
 	struct urcu_ref ss_ref;
 
 	/* Unique server id */
@@ -114,13 +114,13 @@ struct server_state {
 
 	int ss_port;
 
-	/* EXCHGID4_FLAG_USE_* — set at startup from the configured role. */
+	/* EXCHGID4_FLAG_USE_* -- set at startup from the configured role. */
 	uint32_t ss_exchgid_flags;
 
 	/* Case sensitivity mode for this server instance. */
 	enum reffs_text_case ss_case;
 
-	/* Config values copied at boot — not persisted. */
+	/* Config values copied at boot -- not persisted. */
 	uint32_t ss_fence_uid_min;
 	uint32_t ss_fence_uid_max;
 	unsigned int ss_layout_width;
@@ -128,11 +128,11 @@ struct server_state {
 	/* NFSv4 owner string domain (e.g., "EXAMPLE.COM"). */
 	char ss_nfs4_domain[256];
 
-	/* Export security flavors — copied from first export at boot. */
+	/* Export security flavors -- copied from first export at boot. */
 	enum reffs_auth_flavor ss_flavors[REFFS_CONFIG_MAX_FLAVORS];
 	unsigned int ss_nflavors;
 
-	/* Per-op NFS4 statistics — global scope. */
+	/* Per-op NFS4 statistics -- global scope. */
 	struct reffs_op_stats ss_nfs4_op_stats[REFFS_NFS4_OP_MAX];
 
 	/* Aggregate backend I/O statistics across all superblocks. */

@@ -89,7 +89,7 @@ void calculate_bucket_counts(struct hdr_histogram *hh, int64_t *counts)
 
 		// Determine which bucket this value belongs to
 		int bucket_index =
-			BUCKET_COUNT; // Default to the last bucket (≥10s)
+			BUCKET_COUNT; // Default to the last bucket (>=10s)
 
 		for (int i = 0; i < BUCKET_COUNT; i++) {
 			if (value < rpc_bucket_boundaries[i]) {
@@ -1240,7 +1240,7 @@ static int probe1_op_sb_lint_flavors(struct rpc_trans *rt)
 
 	resok->lfr_warnings = super_block_lint_flavors();
 	/* NOT_NOW_BROWN_COW: collect lint messages into lfr_messages.
-	 * Must not be NULL — xdr_string calls strlen on it. */
+	 * Must not be NULL -- xdr_string calls strlen on it. */
 	resok->lfr_messages = strdup("");
 	return 0;
 }

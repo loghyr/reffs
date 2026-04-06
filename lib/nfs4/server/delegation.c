@@ -106,11 +106,11 @@ uint32_t nfs4_op_delegreturn(struct compound *compound)
 		pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
 		stateid_inode_unhash(&os->os_stid);
 		stateid_client_unhash(&os->os_stid);
-		stateid_put(&os->os_stid); /* state ref → freed via RCU */
+		stateid_put(&os->os_stid); /* state ref --> freed via RCU */
 	}
 
 	/*
-	 * Unhash atomically — if another DELEGRETURN already unhashed
+	 * Unhash atomically -- if another DELEGRETURN already unhashed
 	 * this stateid, bail out to prevent refcount underflow.
 	 */
 	if (!stateid_inode_unhash(stid)) {
@@ -126,7 +126,7 @@ uint32_t nfs4_op_delegreturn(struct compound *compound)
 	}
 
 	stateid_put(stid); /* find ref */
-	stateid_put(stid); /* state ref → freed */
+	stateid_put(stid); /* state ref --> freed */
 
 	return 0;
 }
@@ -160,7 +160,7 @@ uint32_t nfs4_op_get_dir_delegation(struct compound *compound)
 		delegation_stateid_alloc(compound->c_inode, client);
 	if (!ds) {
 		/*
-		 * Can't grant — tell the client the delegation is
+		 * Can't grant -- tell the client the delegation is
 		 * unavailable rather than failing the whole compound.
 		 */
 		GET_DIR_DELEGATION4res_non_fatal *nf =
@@ -173,7 +173,7 @@ uint32_t nfs4_op_get_dir_delegation(struct compound *compound)
 
 	/*
 	 * Bump seqid so the client sees a fresh stateid.
-	 * Grandfathered GCC builtin — s_seqid is not _Atomic.
+	 * Grandfathered GCC builtin -- s_seqid is not _Atomic.
 	 */
 	__atomic_fetch_add(&ds->ds_stid.s_seqid, 1, __ATOMIC_ACQ_REL);
 
@@ -192,7 +192,7 @@ uint32_t nfs4_op_get_dir_delegation(struct compound *compound)
 
 	pack_stateid4(&resok->gddr_stateid, &ds->ds_stid);
 
-	/* No notification capabilities — recall-on-mutate model. */
+	/* No notification capabilities -- recall-on-mutate model. */
 	resok->gddr_notification.bitmap4_len = 0;
 	resok->gddr_notification.bitmap4_val = NULL;
 	resok->gddr_child_attributes.bitmap4_len = 0;
@@ -205,7 +205,7 @@ uint32_t nfs4_op_get_dir_delegation(struct compound *compound)
 
 /*
  * Recall all directory delegations on dir except those held by exclude.
- * Fire-and-forget — mirrors the file delegation recall pattern in OPEN.
+ * Fire-and-forget -- mirrors the file delegation recall pattern in OPEN.
  */
 void nfs4_recall_dir_delegations(struct server_state *ss, struct inode *dir,
 				 struct client *exclude)

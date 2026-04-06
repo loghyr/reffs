@@ -6,7 +6,7 @@
 #endif
 
 /*
- * Chunk store — per-block metadata for CHUNK operations.
+ * Chunk store -- per-block metadata for CHUNK operations.
  *
  * Each inode on a data server can have an associated chunk_store that
  * tracks the state of blocks written via CHUNK_WRITE.  The store is
@@ -114,7 +114,7 @@ struct chunk_store *chunk_store_get(struct inode *inode, const char *state_dir)
 		}
 	}
 
-	/* No persisted state — create a fresh in-memory store. */
+	/* No persisted state -- create a fresh in-memory store. */
 	struct chunk_store *cs = calloc(1, sizeof(*cs));
 
 	if (!cs)

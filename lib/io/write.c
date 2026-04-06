@@ -59,7 +59,7 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 	 * client) between when the write was queued and when the worker
 	 * picked it up.  ci or ci_ssl can be NULL/freed.
 	 *
-	 * Save ci_ssl to a local — the event loop thread can set
+	 * Save ci_ssl to a local -- the event loop thread can set
 	 * ci->ci_ssl = NULL at any time after an SSL error.  If we
 	 * see NULL, the connection is dead and there's nothing to write.
 	 */
@@ -233,7 +233,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 	} else {
 		ret = 0;
 		/*
-		 * Do NOT access ic after submit — the CQE can fire
+		 * Do NOT access ic after submit -- the CQE can fire
 		 * immediately on the event loop thread, destroying ic
 		 * before we reach this line.  Use the fd parameter
 		 * (stack-local) for the trace instead.

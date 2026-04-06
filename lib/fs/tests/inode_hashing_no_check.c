@@ -248,7 +248,7 @@ START_TEST(test_get_inode_1)
 	inode2 = inode_alloc(sb, 3);
 	ck_assert_ptr_nonnull(inode2);
 
-	/* inode_get bumps only i_ref — release with inode_put */
+	/* inode_get bumps only i_ref -- release with inode_put */
 	inode3 = inode_get(inode1);
 	ck_assert_ptr_nonnull(inode3);
 

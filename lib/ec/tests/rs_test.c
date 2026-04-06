@@ -64,7 +64,7 @@ START_TEST(test_encode_decode_no_loss)
 
 	ck_assert_int_eq(c->ec_encode(c, data, parity, SHARD_LEN), 0);
 
-	/* All present — decode should be a no-op. */
+	/* All present -- decode should be a no-op. */
 	uint8_t *shards[6];
 
 	for (int i = 0; i < k; i++)

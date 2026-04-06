@@ -11,14 +11,14 @@
  *
  * Protocol:
  *   1. The NFSv4 op handler sets rt->rt_next_action = <resume_cb>.
- *   2. It calls task_pause(rt->rt_task)  ← point of no return.
+ *   2. It calls task_pause(rt->rt_task)  <-- point of no return.
  *   3. It calls io_request_backend_pread/pwrite() to submit the SQE.
  *   4. When the CQE fires here, io_handle_backend_p{read,write}() stores
  *      cqe->res in rt->rt_io_result and calls task_resume(rt->rt_task).
  *   5. A worker dequeues the task; dispatch_compound() calls rt_next_action
  *      which reads rt->rt_io_result to build the response.
  *
- * The buffer pointer is owned by the compound/caller throughout — we do NOT
+ * The buffer pointer is owned by the compound/caller throughout -- we do NOT
  * store it in ic_buffer and do NOT free it on context destruction.
  */
 
@@ -262,7 +262,7 @@ int io_request_backend_pread(int fd, void *buf, size_t len, off_t offset,
 			     struct rpc_trans *rt, struct ring_context *rc)
 {
 	/*
-	 * ic_buffer is NULL — the buffer is owned by the compound and must
+	 * ic_buffer is NULL -- the buffer is owned by the compound and must
 	 * not be freed when the context is destroyed.
 	 */
 	struct io_context *ic =
@@ -323,7 +323,7 @@ int io_request_backend_pwrite(int fd, const void *buf, size_t len, off_t offset,
 	}
 
 	ic->ic_expected_len = len;
-	/* Cast away const — io_uring_prep_write takes void *, not const void * */
+	/* Cast away const -- io_uring_prep_write takes void *, not const void * */
 	io_uring_prep_write(sqe, fd, (void *)buf, (unsigned)len,
 			    (uint64_t)offset);
 

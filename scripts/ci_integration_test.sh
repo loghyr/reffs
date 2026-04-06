@@ -22,7 +22,7 @@ SRC_DIR=${2:-/reffs}
 BUILD_DIR=$(dirname "$(dirname "$REFFSD_BIN")")
 
 # ---------------------------------------------------------------------------
-# Environment diagnostics — printed once so failures are self-describing.
+# Environment diagnostics -- printed once so failures are self-describing.
 # ---------------------------------------------------------------------------
 echo "=== Environment ==="
 uname -r
@@ -34,7 +34,7 @@ ldd --version 2>&1 | head -1 || true
 echo "===================
 "
 
-# Work directory — prefer a real filesystem over tmpfs.
+# Work directory -- prefer a real filesystem over tmpfs.
 if [ -n "${REFFS_WORK_DIR:-}" ] && [ -d "$REFFS_WORK_DIR" ]; then
 	WORK_DIR="$REFFS_WORK_DIR"
 elif [ -d /reffs_data ]; then
@@ -202,7 +202,7 @@ mount -o vers=4.2,sec=sys,soft,timeo=10,retrans=2 127.0.0.1:/ "$MOUNT"
 )
 
 # Leave a single-component file at the root for the identity test.
-# ec_demo's OPEN uses PUTROOTFH + OPEN(name) — single component only.
+# ec_demo's OPEN uses PUTROOTFH + OPEN(name) -- single component only.
 touch "$MOUNT"/identity_test_file
 chown 0:0 "$MOUNT"/identity_test_file
 rm -rf "$MOUNT"/reffs_v4 || true
@@ -212,7 +212,7 @@ section_end
 # ---------------------------------------------------------------------------
 # NFSv4.2 build-on-NFS test: clone + autoreconf + configure + make.
 # Exercises hardlinks (autotools), large writes (object files), readdir
-# at scale, renames, and timestamps — the full POSIX compat surface.
+# at scale, renames, and timestamps -- the full POSIX compat surface.
 # ---------------------------------------------------------------------------
 section_start "NFSv4.2 build-on-NFS test"
 mount -o vers=4.2,sec=sys,soft,timeo=30,retrans=3 127.0.0.1:/ "$MOUNT"
@@ -244,15 +244,15 @@ section_start "NFSv4 identity test"
 EC_DEMO="env ASAN_OPTIONS=detect_leaks=0 $BUILD_DIR/tools/ec_demo"
 MDS="127.0.0.1"
 
-# All operations via ec_demo userspace client — no kernel mount needed.
+# All operations via ec_demo userspace client -- no kernel mount needed.
 # Use configure.ac from the git clone test (already on the server).
 
 # File was created by the NFSv4 integration test (kernel mount).
-# All identity ops below are pure ec_demo — no kernel mount.
+# All identity ops below are pure ec_demo -- no kernel mount.
 #
 # Determine the test owner string.  In Docker (CI container), nfstest
-# user exists → "nfstest@reffs.test".  On native runners (GitHub),
-# only root is guaranteed → use "root@<domain>" or just verify that
+# user exists --> "nfstest@reffs.test".  On native runners (GitHub),
+# only root is guaranteed --> use "root@<domain>" or just verify that
 # GETATTR returns a non-empty owner string.
 
 # Step 1: Read the current owner (file was created as root).
@@ -303,7 +303,7 @@ section_end
 
 # ---------------------------------------------------------------------------
 # NFSv3 build-on-NFS test: clone + autoreconf + configure + make.
-# Same as the v4 test but over NFSv3 — exercises v3 WRITE, CREATE,
+# Same as the v4 test but over NFSv3 -- exercises v3 WRITE, CREATE,
 # MKDIR, RENAME, LINK, READDIR at build scale.
 # ---------------------------------------------------------------------------
 section_start "NFSv3 build-on-NFS test"
@@ -363,10 +363,10 @@ if [ "${CI_SKIP_KRB5:-0}" = "1" ]; then
 elif klist -s 2>/dev/null; then
 	section_start "NFSv4.2 krb5 integration test"
 
-	# Start rpc.gssd now — only needed for krb5 mounts.
+	# Start rpc.gssd now -- only needed for krb5 mounts.
 	rpc.gssd 2>/dev/null && echo "  rpc.gssd started" || echo "  WARN: rpc.gssd failed"
 
-	# sec=krb5 (authentication only — sufficient for CI).
+	# sec=krb5 (authentication only -- sufficient for CI).
 	# The kernel mount may fail on some platforms (macOS Docker,
 	# GitHub runners) due to host-kernel NFS client differences.
 	# Skip gracefully instead of failing CI.
@@ -378,7 +378,7 @@ elif klist -s 2>/dev/null; then
 		umount "$MOUNT"
 		echo "  sec=krb5: PASS"
 	else
-		echo "  sec=krb5: SKIP (kernel mount failed — host NFS client may not support krb5 in this environment)"
+		echo "  sec=krb5: SKIP (kernel mount failed -- host NFS client may not support krb5 in this environment)"
 	fi
 
 	section_end

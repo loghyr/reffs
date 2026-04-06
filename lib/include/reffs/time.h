@@ -39,10 +39,10 @@ static inline bool nfstime3_is_timespec(nfstime3 *nt, struct timespec *ts)
 	       ts->tv_nsec == (long)nt->nseconds;
 }
 
-/* ── Validation ─────────────────────────────────────────────────────────── */
+/* -- Validation ----------------------------------------------------------- */
 
 /*
- * RFC 5661 §2.2: nseconds must be in [0, 999999999].
+ * RFC 5661 S2.2: nseconds must be in [0, 999999999].
  * nfstime4 seconds is int64_t, so negative epochs are legal (pre-1970).
  */
 static inline bool nfstime4_valid(const nfstime4 *t)
@@ -50,7 +50,7 @@ static inline bool nfstime4_valid(const nfstime4 *t)
 	return t->nseconds <= 999999999U;
 }
 
-/* ── Conversion ─────────────────────────────────────────────────────────── */
+/* -- Conversion ----------------------------------------------------------- */
 
 static inline void nfstime4_to_timespec(const nfstime4 *nfs,
 					struct timespec *ts)
@@ -83,7 +83,7 @@ static inline void timespec_to_nfstime4(const struct timespec *ts,
 	nfs->nseconds = (uint32_t)nsec;
 }
 
-/* ── Comparison ─────────────────────────────────────────────────────────── */
+/* -- Comparison ----------------------------------------------------------- */
 
 /*
  * Returns:  -1  if a < b
@@ -129,7 +129,7 @@ static inline int nfstime4_cmp_timespec(const nfstime4 *a,
 	return nfstime4_cmp(a, &tmp);
 }
 
-/* ── Arithmetic ─────────────────────────────────────────────────────────── */
+/* -- Arithmetic ----------------------------------------------------------- */
 
 /*
  * Compute delta = a - b as a struct timespec (signed, normalised).
@@ -152,7 +152,7 @@ static inline struct timespec nfstime4_diff(const nfstime4 *a,
 	return delta;
 }
 
-/* ── Convenience: raw nanosecond monotonic clock ────────────────────────── */
+/* -- Convenience: raw nanosecond monotonic clock -------------------------- */
 
 /*
  * reffs_now_ns - return CLOCK_MONOTONIC time in nanoseconds.
@@ -167,7 +167,7 @@ static inline uint64_t reffs_now_ns(void)
 	       (uint64_t)ts.tv_nsec;
 }
 
-/* ── Convenience: current wall-clock time ───────────────────────────────── */
+/* -- Convenience: current wall-clock time --------------------------------- */
 
 static inline int nfstime4_now(nfstime4 *nfs)
 {
@@ -178,7 +178,7 @@ static inline int nfstime4_now(nfstime4 *nfs)
 	return 0;
 }
 
-/* ── Zero / epoch helpers ───────────────────────────────────────────────── */
+/* -- Zero / epoch helpers ------------------------------------------------- */
 
 static inline void nfstime4_zero(nfstime4 *t)
 {
@@ -191,7 +191,7 @@ static inline bool nfstime4_is_zero(const nfstime4 *t)
 	return t->seconds == 0 && t->nseconds == 0;
 }
 
-/* ── Arithmetic: add/subtract nanoseconds ───────────────────────────────── */
+/* -- Arithmetic: add/subtract nanoseconds --------------------------------- */
 
 /*
  * Add a nanosecond delta (positive or negative) to an nfstime4.
@@ -246,7 +246,7 @@ static inline bool nfstime4_sub_nsec(nfstime4 *t, int64_t delta_nsec)
 	return nfstime4_add_nsec(t, -delta_nsec);
 }
 
-/* ── Arithmetic: add/subtract struct timespec ───────────────────────────── */
+/* -- Arithmetic: add/subtract struct timespec ----------------------------- */
 
 /*
  * Add a (possibly negative, possibly non-normalised) timespec to an nfstime4.

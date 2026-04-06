@@ -56,15 +56,15 @@ nfsstat4 nfs4_stateid_resolve(struct compound *compound, struct inode *inode,
 			      const stateid4 *wire, bool want_write,
 			      struct stateid **out_stid)
 {
-	/* Anonymous stateid — caller falls through to POSIX permission check. */
+	/* Anonymous stateid -- caller falls through to POSIX permission check. */
 	if (stateid4_is_anonymous(wire)) {
 		*out_stid = NULL;
 		return NFS4_OK;
 	}
 
 	/*
-	 * Read-bypass stateid (all-ones) — allow access for both read
-	 * and write operations.  RFC 8881 §8.2.3 defines this as a
+	 * Read-bypass stateid (all-ones) -- allow access for both read
+	 * and write operations.  RFC 8881 S8.2.3 defines this as a
 	 * special stateid; the caller's POSIX permission check provides
 	 * authorisation, same as the anonymous (all-zeros) stateid.
 	 */
@@ -73,7 +73,7 @@ nfsstat4 nfs4_stateid_resolve(struct compound *compound, struct inode *inode,
 		return NFS4_OK;
 	}
 
-	/* Current stateid — use whatever the compound already holds. */
+	/* Current stateid -- use whatever the compound already holds. */
 	if (stateid4_is_current(wire)) {
 		if (!compound->c_curr_stid)
 			return NFS4ERR_BAD_STATEID;
@@ -81,7 +81,7 @@ nfsstat4 nfs4_stateid_resolve(struct compound *compound, struct inode *inode,
 		return NFS4_OK;
 	}
 
-	/* Regular stateid — unpack and validate fully. */
+	/* Regular stateid -- unpack and validate fully. */
 	uint32_t seqid, id, type, cookie;
 	unpack_stateid4(wire, &seqid, &id, &type, &cookie);
 
@@ -110,10 +110,10 @@ nfsstat4 nfs4_stateid_resolve(struct compound *compound, struct inode *inode,
 	}
 
 	/*
-	 * Verify seqid (RFC 5661 §8.1.3.1):
-	 *   seqid == 0 in the request is a wildcard — match any current seqid.
-	 *   seqid < current_seqid → NFS4ERR_OLD_STATEID
-	 *   seqid > current_seqid → NFS4ERR_BAD_STATEID
+	 * Verify seqid (RFC 5661 S8.1.3.1):
+	 *   seqid == 0 in the request is a wildcard -- match any current seqid.
+	 *   seqid < current_seqid --> NFS4ERR_OLD_STATEID
+	 *   seqid > current_seqid --> NFS4ERR_BAD_STATEID
 	 */
 	uint32_t cur_seqid = __atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
 	if (seqid != 0) {
@@ -285,13 +285,13 @@ uint32_t nfs4_op_open(struct compound *compound)
 	}
 
 	/*
-	 * Grace enforcement — two levels:
+	 * Grace enforcement -- two levels:
 	 *
 	 * 1. Server-wide grace (after restart): non-reclaim OPEN
-	 *    returns NFS4ERR_GRACE per RFC 8881 §8.4.2.1.
+	 *    returns NFS4ERR_GRACE per RFC 8881 S8.4.2.1.
 	 *
 	 * 2. Per-client grace: each client must send RECLAIM_COMPLETE
-	 *    before non-reclaim operations (RFC 8881 §18.51.3).
+	 *    before non-reclaim operations (RFC 8881 S18.51.3).
 	 *    After RECLAIM_COMPLETE, CLAIM_PREVIOUS returns
 	 *    NFS4ERR_NO_GRACE.
 	 */
@@ -304,7 +304,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 			goto out;
 		}
 		/*
-		 * RFC 8881 §18.51.3: during grace, a client that
+		 * RFC 8881 S18.51.3: during grace, a client that
 		 * needs to reclaim must send RECLAIM_COMPLETE
 		 * before doing non-reclaim ops.  Clients that
 		 * don't need to reclaim (fresh connections on a
@@ -318,8 +318,8 @@ uint32_t nfs4_op_open(struct compound *compound)
 		}
 	} else {
 		/*
-		 * RFC 8881 §18.51.3: CLAIM_PREVIOUS after
-		 * RECLAIM_COMPLETE returns NFS4ERR_NO_GRACE —
+		 * RFC 8881 S18.51.3: CLAIM_PREVIOUS after
+		 * RECLAIM_COMPLETE returns NFS4ERR_NO_GRACE --
 		 * the reclaim window is closed for this client.
 		 */
 		if (compound->c_nfs4_client &&
@@ -335,7 +335,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 		/*
 		 * Grace reclaim: client held an open on this file
 		 * before the server rebooted.  Stateids are in-memory
-		 * only, so we issue a fresh stateid — same as CLAIM_FH.
+		 * only, so we issue a fresh stateid -- same as CLAIM_FH.
 		 * Delegation is not re-granted (no persisted state).
 		 * CREATE is not valid for reclaim.
 		 */
@@ -347,7 +347,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 
 	case CLAIM_FH:
 		/*
-		 * Current FH is the target file — no lookup needed.
+		 * Current FH is the target file -- no lookup needed.
 		 * CREATE is not valid with CLAIM_FH.
 		 */
 		if (args->openhow.opentype == OPEN4_CREATE) {
@@ -425,12 +425,12 @@ uint32_t nfs4_op_open(struct compound *compound)
 					createattrs =
 						&how->createhow4_u.createattrs;
 				}
-				/* -EEXIST → NFS4ERR_EXIST below */
+				/* -EEXIST --> NFS4ERR_EXIST below */
 				break;
 
 			case EXCLUSIVE4_1:
 				/*
-				 * EXCLUSIVE4_1 (RFC 5661 §18.16.3): same
+				 * EXCLUSIVE4_1 (RFC 5661 S18.16.3): same
 				 * exclusive-create semantics as EXCLUSIVE4
 				 * but the verifier lives in
 				 * ch_createboth.cva_verf and the client
@@ -444,8 +444,8 @@ uint32_t nfs4_op_open(struct compound *compound)
 				/*
 				 * Use the verifier4 as the ctime cookie.
 				 * Map the 8-byte verifier the same way
-				 * NFS3 does: first 4 bytes → tv_sec,
-				 * last 4 bytes → tv_nsec.
+				 * NFS3 does: first 4 bytes --> tv_sec,
+				 * last 4 bytes --> tv_nsec.
 				 */
 				struct timespec verf_ts;
 				verifier4 *v =
@@ -555,7 +555,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 			 * Mount-point crossing: if this name has a
 			 * filesystem mounted on it, cross into the
 			 * child sb's root.  RFC 8881 does not restrict
-			 * mount points to directories — a file can be
+			 * mount points to directories -- a file can be
 			 * mounted on top of another file.
 			 */
 			if (__atomic_load_n(&child_de->rd_state,
@@ -652,7 +652,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §18.16.3: if the client already holds an open stateid
+	 * RFC 8881 S18.16.3: if the client already holds an open stateid
 	 * on this inode, re-open upgrades the share modes and bumps seqid
 	 * rather than allocating a fresh stateid.
 	 */
@@ -748,7 +748,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 			       ((uint64_t)share_deny << 2);
 
 		/*
-		 * RFC 8881 §8.1.3: open stateid seqid starts at 1.
+		 * RFC 8881 S8.1.3: open stateid seqid starts at 1.
 		 * stateid_assign() initialises s_seqid to 0; bump now.
 		 */
 		__atomic_fetch_add(&os->os_stid.s_seqid, 1, __ATOMIC_SEQ_CST);
@@ -831,7 +831,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 			}
 
 			/*
-			 * RFC 5661 §8.1.3: delegation stateid seqid starts
+			 * RFC 5661 S8.1.3: delegation stateid seqid starts
 			 * at 0.  stateid_assign() initialises s_seqid to 0.
 			 */
 			open_delegation_type4 dt_read =
@@ -1014,7 +1014,7 @@ uint32_t nfs4_op_open_downgrade(struct compound *compound)
 	/* Update os_state to reflect the new modes. */
 	os->os_state = (uint64_t)new_access | ((uint64_t)new_deny << 2);
 
-	/* Bump seqid (RFC 5661 §8.1.3.1). */
+	/* Bump seqid (RFC 5661 S8.1.3.1). */
 	__atomic_fetch_add(&stid->s_seqid, 1, __ATOMIC_SEQ_CST);
 	pack_stateid4(&resok->open_stateid, stid);
 
@@ -1041,7 +1041,7 @@ uint32_t nfs4_op_close(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §16.2.3.1.2: current stateid — substitute the
+	 * RFC 8881 S16.2.3.1.2: current stateid -- substitute the
 	 * stateid set by a previous op in this compound (e.g., OPEN).
 	 */
 	const stateid4 *wire_stid = &args->open_stateid;
@@ -1100,9 +1100,9 @@ uint32_t nfs4_op_close(struct compound *compound)
 	struct open_stateid *os = stid_to_open(stid);
 
 	/*
-	 * RFC 8881 §18.2.4: CLOSE MUST return NFS4ERR_LOCKS_HELD if
+	 * RFC 8881 S18.2.4: CLOSE MUST return NFS4ERR_LOCKS_HELD if
 	 * any byte-range locks are held on this file.  Check i_locks
-	 * (the actual lock list), not lock stateids — a lock stateid
+	 * (the actual lock list), not lock stateids -- a lock stateid
 	 * persists after LOCKU even when no locks are held.
 	 */
 	if (!cds_list_empty(&compound->c_inode->i_locks)) {
@@ -1117,7 +1117,7 @@ uint32_t nfs4_op_close(struct compound *compound)
 	pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
 
 	/*
-	 * Unhash atomically — if another CLOSE already unhashed this
+	 * Unhash atomically -- if another CLOSE already unhashed this
 	 * stateid, bail out.  Without this check, two concurrent CLOSEs
 	 * on the same stateid both proceed to the triple put below,
 	 * causing a refcount underflow.
@@ -1144,10 +1144,10 @@ uint32_t nfs4_op_close(struct compound *compound)
 	 * via call_rcu().
 	 */
 	stateid_put(stid); /* find ref */
-	stateid_put(stid); /* state ref → ref=0 → freed */
+	stateid_put(stid); /* state ref --> ref=0 --> freed */
 
 	/*
-	 * RFC 5661 §18.2.4: return a dead stateid (seqid=0, other=zeros).
+	 * RFC 5661 S18.2.4: return a dead stateid (seqid=0, other=zeros).
 	 */
 	res->CLOSE4res_u.open_stateid = stateid4_anonymous;
 
@@ -1283,7 +1283,7 @@ uint32_t nfs4_op_read(struct compound *compound)
 			 * compound, resok, and status below.
 			 *
 			 * Using task_resume here would re-enqueue the
-			 * task — another worker could dequeue, process,
+			 * task -- another worker could dequeue, process,
 			 * and free the compound while we still access it.
 			 */
 			rt->rt_next_action = NULL;
@@ -1294,7 +1294,7 @@ uint32_t nfs4_op_read(struct compound *compound)
 			*status = NFS4ERR_DELAY;
 			goto out;
 		}
-		/* Async I/O submitted — do not touch rt or compound. */
+		/* Async I/O submitted -- do not touch rt or compound. */
 		stateid_put(stid);
 		return NFS4_OP_FLAG_ASYNC;
 	}
@@ -1332,7 +1332,7 @@ out:
 }
 
 /*
- * READ_PLUS — RFC 7862 S15.10.
+ * READ_PLUS -- RFC 7862 S15.10.
  *
  * Returns read_plus_content with data and/or hole segments.
  * Initial implementation: always returns a single NFS4_CONTENT_DATA
@@ -1383,7 +1383,7 @@ uint32_t nfs4_op_read_plus(struct compound *compound)
 	if (req_count > NFS4_MAX_RW_SIZE)
 		req_count = NFS4_MAX_RW_SIZE;
 
-	/* Zero-length read — return empty data segment */
+	/* Zero-length read -- return empty data segment */
 	if (req_count == 0) {
 		resok->rpr_eof = (args->rpa_offset >=
 				  (uint64_t)compound->c_inode->i_size);
@@ -1592,7 +1592,7 @@ uint32_t nfs4_op_write(struct compound *compound)
 		}
 	}
 
-	/* Zero-length write is a no-op (RFC 5661 §18.32.3). */
+	/* Zero-length write is a no-op (RFC 5661 S18.32.3). */
 	if (args->data.data_len == 0) {
 		resok->count = 0;
 		resok->committed = FILE_SYNC4;
@@ -1672,7 +1672,7 @@ uint32_t nfs4_op_write(struct compound *compound)
 				    args->offset, rt, rc_backend) < 0) {
 				/*
 				 * Submission failed: undo pause in place.
-				 * Do NOT call task_resume — that re-enqueues
+				 * Do NOT call task_resume -- that re-enqueues
 				 * and another worker could free the compound
 				 * while we still access it.
 				 */
@@ -1681,7 +1681,7 @@ uint32_t nfs4_op_write(struct compound *compound)
 				*status = NFS4ERR_DELAY;
 				goto out;
 			}
-			/* Async I/O submitted — do not touch rt or compound. */
+			/* Async I/O submitted -- do not touch rt or compound. */
 			stateid_put(stid);
 			return NFS4_OP_FLAG_ASYNC;
 		}
@@ -1789,7 +1789,7 @@ out:
 }
 
 /*
- * SEEK — RFC 7862 S15.11.
+ * SEEK -- RFC 7862 S15.11.
  *
  * Find the next data or hole boundary in a file.  Valid DS operation
  * per S3.3.1.  POSIX backend uses lseek(SEEK_HOLE/SEEK_DATA); RAM
@@ -1848,7 +1848,7 @@ uint32_t nfs4_op_seek(struct compound *compound)
 
 	/*
 	 * Try POSIX lseek if the backend provides a real fd.
-	 * RAM backend returns -1 (no fd) — fall through to
+	 * RAM backend returns -1 (no fd) -- fall through to
 	 * the all-data fallback.
 	 */
 	int fd = -1;
@@ -1883,7 +1883,7 @@ uint32_t nfs4_op_seek(struct compound *compound)
 
 	/*
 	 * Fallback: no fd or lseek failed.  Treat the file as one
-	 * contiguous data region [0, file_size) — no holes.
+	 * contiguous data region [0, file_size) -- no holes.
 	 */
 	if (args->sa_what == NFS4_CONTENT_DATA) {
 		/* Already in data at offset. */
@@ -1905,7 +1905,7 @@ out:
 }
 
 /*
- * ALLOCATE — RFC 7862 S15.1.
+ * ALLOCATE -- RFC 7862 S15.1.
  *
  * Preallocate space in a file.  Standalone mode only; MDS fan-out
  * deferred (NOT_NOW_BROWN_COW).
@@ -1958,7 +1958,7 @@ uint32_t nfs4_op_allocate(struct compound *compound)
 	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
 
 	if (!compound->c_inode->i_db) {
-		/* No data block yet — create one at the required size */
+		/* No data block yet -- create one at the required size */
 		compound->c_inode->i_db =
 			data_block_alloc(compound->c_inode, NULL, 0, 0);
 		if (!compound->c_inode->i_db) {
@@ -2013,7 +2013,7 @@ out:
 }
 
 /*
- * DEALLOCATE — RFC 7862 S15.4.
+ * DEALLOCATE -- RFC 7862 S15.4.
  *
  * Deallocate space in a file.  The file size is not changed
  * (FALLOC_FL_KEEP_SIZE semantics).  Standalone mode only; MDS
@@ -2064,7 +2064,7 @@ uint32_t nfs4_op_deallocate(struct compound *compound)
 	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
 
 	if (!compound->c_inode->i_db) {
-		/* No data — nothing to deallocate */
+		/* No data -- nothing to deallocate */
 		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 		goto out;
 	}
@@ -2078,7 +2078,7 @@ uint32_t nfs4_op_deallocate(struct compound *compound)
 	uint64_t end = start + args->da_length;
 
 	if (start >= file_size) {
-		/* Entirely past EOF — no-op */
+		/* Entirely past EOF -- no-op */
 		pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 		goto out;
 	}

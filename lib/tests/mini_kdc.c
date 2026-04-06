@@ -41,7 +41,7 @@ int mini_kdc_start(struct mini_kdc *kdc, const char *service,
 	/* Check prerequisites. */
 	if (have_cmd("krb5kdc") != 0 || have_cmd("kdb5_util") != 0 ||
 	    have_cmd("kadmin.local") != 0 || have_cmd("kinit") != 0) {
-		fprintf(stderr, "mini_kdc: krb5 tools not found — skipping\n");
+		fprintf(stderr, "mini_kdc: krb5 tools not found -- skipping\n");
 		return -1;
 	}
 

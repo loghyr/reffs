@@ -4,7 +4,7 @@
  */
 
 /*
- * RAM data backend — in-memory bulk file I/O.
+ * RAM data backend -- in-memory bulk file I/O.
  *
  * All data lives in heap buffers.  No disk persistence.
  */

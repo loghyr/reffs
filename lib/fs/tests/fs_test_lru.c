@@ -4,7 +4,7 @@
  */
 
 /*
- * fs_test_lru.c — inode LRU eviction unit tests
+ * fs_test_lru.c -- inode LRU eviction unit tests
  *
  * Each test sets sb->sb_inode_lru_max to TEST_LRU_MAX=4 after setup so
  * that eviction pressure is triggered with a handful of creates.
@@ -23,13 +23,13 @@
  * Tests:
  *
  *  Eviction accounting and pressure
- *   lru_count_at_idle                  lru_count ≤ lru_max after idle creates
- *   lru_eviction_fires                 lru_count ≤ lru_max after lru_max+1 creates
- *   lru_count_never_exceeds_max        invariant holds across 3×lru_max creates
+ *   lru_count_at_idle                  lru_count <= lru_max after idle creates
+ *   lru_eviction_fires                 lru_count <= lru_max after lru_max+1 creates
+ *   lru_count_never_exceeds_max        invariant holds across 3xlru_max creates
  *   lru_active_ref_pins_inode          held active ref survives eviction flood
  *   lru_no_leak_on_rmdir               lru_count stable after mkdir+rmdir
  *   lru_no_leak_on_unlink              lru_count stable after create+unlink
- *   lru_burst_creates                  4×lru_max creates+stats+removes
+ *   lru_burst_creates                  4xlru_max creates+stats+removes
  *   lru_lru_max_1                      lru_max=1, every put evicts
  *   lru_create_write_survives_eviction Bug G regression (organic pressure)
  *
@@ -72,7 +72,7 @@ static size_t lru_count(void)
 }
 
 /*
- * drain_lru — evict every idle inode and wait for RCU callbacks.
+ * drain_lru -- evict every idle inode and wait for RCU callbacks.
  *
  * After this returns:
  *  - Every inode that was on the LRU has i_active == -1 (tombstone).
@@ -94,14 +94,14 @@ static void drain_lru(void)
 		super_block_evict_inodes(sb, sb->sb_inode_lru_count);
 	super_block_put(sb);
 	synchronize_rcu();
-	/* No rcu_barrier() here — we need inode structs to remain in memory
+	/* No rcu_barrier() here -- we need inode structs to remain in memory
          * so dirent_ensure_inode can safely read i_active and return
          * NULL on a tombstone.  inode_free_rcu runs in the background; by the
          * time it fires, any caller that got NULL has already reloaded via
          * inode_alloc and replaced rd_inode with a fresh pointer.
          *
          * rcu_barrier() would complete inode_free_rcu synchronously, leaving
-         * rd_inode as a non-NULL pointer to freed memory — inode_active_get
+         * rd_inode as a non-NULL pointer to freed memory -- inode_active_get
          * would then crash reading urcu_ref before it could check i_active.
          */
 }
@@ -116,8 +116,8 @@ static void drain_lru(void)
  * rather than the RAM backend's in-memory short-circuit.
  *
  * test_context owns the temp dir and the POSIX superblock (id=1, "/").
- * We stash it in a static so setup/teardown — which receive no args from
- * libcheck — can share it.
+ * We stash it in a static so setup/teardown -- which receive no args from
+ * libcheck -- can share it.
  */
 static struct test_context lru_ctx;
 
@@ -244,7 +244,7 @@ START_TEST(test_lru_active_ref_pins_inode)
 
 	inode_active_put(pinned_inode);
 
-	/* Organic pressure only — getattr is safe here. */
+	/* Organic pressure only -- getattr is safe here. */
 	ck_assert_int_eq(reffs_fs_getattr("/pinned", &st), 0);
 	ck_assert_uint_eq(st.st_ino, pinned_ino);
 
@@ -392,7 +392,7 @@ END_TEST
  *   (c) i_ino is preserved in the struct until inode_free_rcu fires.
  *   (d) inode_find() for the evicted ino returns either NULL (fully
  *       unhashed) or a fresh struct with a different address (backend
- *       reload) — never the tombstoned original.
+ *       reload) -- never the tombstoned original.
  *
  * Uses organic eviction (one extra create at lru_max=1) rather than
  * drain_lru() so that teardown's dirent walk only encounters live inodes.
@@ -427,13 +427,13 @@ START_TEST(test_lru_eviction_produces_tombstone)
 
 	/*
 	 * Take an extra i_ref BEFORE releasing active, so the struct stays
-	 * in memory after eviction fires inode_release → call_rcu.
+	 * in memory after eviction fires inode_release --> call_rcu.
 	 * Paired with inode_put() below.
 	 */
 	inode_get(inode);
 
 	/*
-	 * Release active ref: i_active → 0, inode queued on LRU.
+	 * Release active ref: i_active --> 0, inode queued on LRU.
 	 * lru_count is now 1 == lru_max; no eviction yet.
 	 */
 	inode_active_put(inode);

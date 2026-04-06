@@ -103,7 +103,7 @@ void release_all_fs_dirents(void)
          * inode_free_rcu callbacks queued; completing them before the
          * dirent walk would free inode structs while rd_inode still points
          * at them.  release_dirents_recursive uses inode_active_get which
-         * reads the urcu_ref inside the struct — UAF if already freed.
+         * reads the urcu_ref inside the struct -- UAF if already freed.
          * Each super_block_release_dirents call ends with super_block_drain
          * + rcu_barrier(), which cleans up after the walk completes.
          */
@@ -130,7 +130,7 @@ int reffs_ns_fini(void)
 		 * dirent_parent_release + dirent_put on sb->sb_dirent (the
 		 * root dirent), then super_block_put() for the sb's initial
 		 * urcu_ref.  Do NOT call super_block_dirent_release() after
-		 * this — it would double-release the root dirent.
+		 * this -- it would double-release the root dirent.
 		 */
 		release_all_fs_dirents();
 		reffs_root_sb = NULL;

@@ -60,21 +60,21 @@ void dstore_wcc_check(const struct dstore_wcc *wcc,
 	 */
 	if (timespec_lt(&wcc->wcc_mtime, &ldf->ldf_mtime))
 		LOG("WWWL: dstore[%u] ino=%lu mtime went backwards "
-		    "(%ld.%09ld -> %ld.%09ld) — possible DS reboot",
+		    "(%ld.%09ld -> %ld.%09ld) -- possible DS reboot",
 		    dstore_id, ino, (long)ldf->ldf_mtime.tv_sec,
 		    ldf->ldf_mtime.tv_nsec, (long)wcc->wcc_mtime.tv_sec,
 		    wcc->wcc_mtime.tv_nsec);
 
 	if (timespec_lt(&wcc->wcc_ctime, &ldf->ldf_ctime))
 		LOG("WWWL: dstore[%u] ino=%lu ctime went backwards "
-		    "(%ld.%09ld -> %ld.%09ld) — possible DS reboot",
+		    "(%ld.%09ld -> %ld.%09ld) -- possible DS reboot",
 		    dstore_id, ino, (long)ldf->ldf_ctime.tv_sec,
 		    ldf->ldf_ctime.tv_nsec, (long)wcc->wcc_ctime.tv_sec,
 		    wcc->wcc_ctime.tv_nsec);
 
 	/*
 	 * Check for WWWL: mtime or ctime changed without a write layout.
-	 * Ignore atime-only changes — reads update atime legitimately.
+	 * Ignore atime-only changes -- reads update atime legitimately.
 	 */
 	if (!has_write_layout) {
 		bool mtime_changed =

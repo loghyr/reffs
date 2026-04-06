@@ -6,10 +6,10 @@
 #endif
 
 /*
- * Dstore fan-out — parallel async DS operations.
+ * Dstore fan-out -- parallel async DS operations.
  *
  * Each fan-out spawns one detached pthread per DS.  The thread runs
- * the blocking dstore op (via the vtable — NFSv3 RPC or local VFS),
+ * the blocking dstore op (via the vtable -- NFSv3 RPC or local VFS),
  * stores the result in its slot, and atomically decrements df_pending.
  * The last thread to complete calls task_resume() to re-enqueue the
  * paused compound.
@@ -120,7 +120,7 @@ void dstore_fanout_launch(struct dstore_fanout *df, struct task *t)
 	/*
 	 * Snapshot df_total before spawning any threads.  Once the
 	 * first thread completes and is the last pending, it calls
-	 * task_resume → worker runs resume callback → dstore_fanout_free.
+	 * task_resume --> worker runs resume callback --> dstore_fanout_free.
 	 * After that, df is freed.  With a single dstore (combined mode),
 	 * the thread can complete before pthread_create returns.
 	 */
@@ -133,9 +133,9 @@ void dstore_fanout_launch(struct dstore_fanout *df, struct task *t)
 
 		if (!fta) {
 			/*
-			 * OOM — mark this slot as failed and decrement
+			 * OOM -- mark this slot as failed and decrement
 			 * pending.  If this was the last slot, resume
-			 * and stop — df may be freed by the resumed
+			 * and stop -- df may be freed by the resumed
 			 * worker.
 			 */
 			df->df_slots[i].fs_result = -ENOMEM;

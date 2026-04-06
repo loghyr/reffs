@@ -105,7 +105,7 @@ START_TEST(test_bitmap_wrap)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Tests: set / clear / is_set — basic round-trip                      */
+/* Tests: set / clear / is_set -- basic round-trip                      */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_bitmap_set_clear_isset)
@@ -151,10 +151,10 @@ END_TEST
 /* Tests: word-boundary attributes                                     */
 /*                                                                     */
 /* Word boundaries (all attribute numbers are in word N = attr / 32): */
-/*   bit 31  — last bit of word 0                                      */
-/*   bit 32  — first bit of word 1                                     */
-/*   bit 63  — last bit of word 1  (FATTR4_LAYOUT_HINT)               */
-/*   bit 64  — first bit of word 2 (FATTR4_LAYOUT_TYPES)              */
+/*   bit 31  -- last bit of word 0                                      */
+/*   bit 32  -- first bit of word 1                                     */
+/*   bit 63  -- last bit of word 1  (FATTR4_LAYOUT_HINT)               */
+/*   bit 64  -- first bit of word 2 (FATTR4_LAYOUT_TYPES)              */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_bitmap_word0_last_bit)
@@ -365,7 +365,7 @@ START_TEST(test_bitmap_client_one_word)
 	bitmap4_attribute_set(&client_req, FATTR4_TYPE);
 	bitmap4_attribute_set(&client_req, FATTR4_FILEID);
 
-	/* Both in word 0 and supported — must be true. */
+	/* Both in word 0 and supported -- must be true. */
 	ck_assert(bitmap4_attribute_is_supported_and_set(
 		&supported, &client_req, FATTR4_TYPE));
 	ck_assert(bitmap4_attribute_is_supported_and_set(
@@ -373,7 +373,7 @@ START_TEST(test_bitmap_client_one_word)
 
 	/*
 	 * FATTR4_MOUNTED_ON_FILEID (55, word 1) is supported but the client
-	 * did not send word 1 — must be false.
+	 * did not send word 1 -- must be false.
 	 */
 	ck_assert(!bitmap4_attribute_is_supported_and_set(
 		&supported, &client_req, FATTR4_MOUNTED_ON_FILEID));

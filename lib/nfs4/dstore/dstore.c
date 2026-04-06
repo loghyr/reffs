@@ -360,7 +360,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
 	} else if (protocol == REFFS_DS_PROTO_NFSV4) {
 		/*
 		 * NFSv4 DS: use NFSv3 vtable as placeholder for control
-		 * plane ops (runway, fence).  The MDS→DS NFSv4.2 session
+		 * plane ops (runway, fence).  The MDS-->DS NFSv4.2 session
 		 * handles GETATTR and will handle InBand I/O.
 		 * NOT_NOW_BROWN_COW: full dstore_ops_nfsv4 vtable.
 		 */
@@ -504,7 +504,7 @@ int dstore_load_config(const struct reffs_config *cfg)
 			    dsc->address, dsc->path);
 			continue;
 		}
-		/* Drop the caller ref — hash table holds the dstore alive. */
+		/* Drop the caller ref -- hash table holds the dstore alive. */
 		dstore_put(ds);
 	}
 

@@ -6,12 +6,12 @@
 #endif
 
 /*
- * Dstore control-plane operations — NFSv3 RPCs to data servers.
+ * Dstore control-plane operations -- NFSv3 RPCs to data servers.
  *
  * All operations are synchronous (blocking).  They use the dstore's
  * CLIENT handle and are serialised by ds_clnt_mutex when needed.
  *
- * Reference: Peterson & Weldon for nothing here — this is plain
+ * Reference: Peterson & Weldon for nothing here -- this is plain
  * NFSv3 (RFC 1813).
  */
 
@@ -235,7 +235,7 @@ static int nfsv3_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 
 /*
  * Guarded truncate: GETATTR to fetch ctime, then SETATTR with
- * sattrguard3.  If the guard fails (NFS3ERR_NOT_SYNC — ctime changed
+ * sattrguard3.  If the guard fails (NFS3ERR_NOT_SYNC -- ctime changed
  * between our GETATTR and SETATTR), re-read ctime and retry.
  */
 static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
@@ -316,7 +316,7 @@ static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 		}
 
 		if (sa_res.status == NFS3ERR_NOT_SYNC) {
-			/* Guard failed — ctime changed. Retry. */
+			/* Guard failed -- ctime changed. Retry. */
 			TRACE("dstore[%u]: truncate guard failed, "
 			      "retrying (%d/%d)",
 			      ds->ds_id, attempt + 1, TRUNCATE_MAX_RETRIES);
@@ -324,7 +324,7 @@ static int nfsv3_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 			continue;
 		}
 
-		/* Other error — give up. */
+		/* Other error -- give up. */
 		LOG("dstore[%u]: SETATTR(size=%lu) failed: status=%d",
 		    ds->ds_id, (unsigned long)size, sa_res.status);
 		xdr_free((xdrproc_t)xdr_SETATTR3res, (caddr_t)&sa_res);

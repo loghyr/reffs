@@ -153,7 +153,7 @@ bool dispatch_compound(struct compound *compound)
 	 *
 	 * c_server_state is ref-counted and should never be NULL after
 	 * the check above succeeds.  If it IS NULL, something freed the
-	 * compound or corrupted memory — LOG and skip stats rather than
+	 * compound or corrupted memory -- LOG and skip stats rather than
 	 * crashing.  This is a symptom, not the root cause.
 	 */
 #define RECORD_OP_STATS(resop_)                                          \
@@ -198,7 +198,7 @@ bool dispatch_compound(struct compound *compound)
 
 		/*
 		 * Callback itself went async (double-async).
-		 * The return value is on our stack — safe to check
+		 * The return value is on our stack -- safe to check
 		 * even if the compound/task have been handed to
 		 * another worker via a fast CQE + task_resume().
 		 */
@@ -234,7 +234,7 @@ bool dispatch_compound(struct compound *compound)
 		resop->resop = argop->argop;
 
 		/*
-		 * RFC 8881 §2.10.6.4: if the compound has more ops
+		 * RFC 8881 S2.10.6.4: if the compound has more ops
 		 * than ca_maxoperations, return NFS4ERR_TOO_MANY_OPS
 		 * on the op that exceeds the limit.
 		 */
@@ -271,7 +271,7 @@ bool dispatch_compound(struct compound *compound)
 			/*
 			 * Slot replay: SEQUENCE decoded the cached
 			 * compound result into c_res.  Stop the loop
-			 * — the result is ready to send as-is.
+			 * -- the result is ready to send as-is.
 			 */
 			if (op_flags & NFS4_OP_FLAG_REPLAY)
 				return false;
@@ -290,7 +290,7 @@ bool dispatch_compound(struct compound *compound)
 		}
 
 		/*
-		 * RFC 8881 §2.10.6.4: after each successful op, check
+		 * RFC 8881 S2.10.6.4: after each successful op, check
 		 * whether the accumulated response exceeds the session's
 		 * negotiated ca_maxresponsesize.  Measure via xdr_sizeof
 		 * on the partial result built so far.  Only checked once

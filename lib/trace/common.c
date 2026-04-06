@@ -59,7 +59,7 @@ static void compress_trace_file_inline(char *input_path);
 
 /*
  * Build a timestamped filename from the base trace path.
- * "/var/log/reffs-trace.log" → "/var/log/reffs-trace-20260402-153000.log"
+ * "/var/log/reffs-trace.log" --> "/var/log/reffs-trace-20260402-153000.log"
  * If no base name is set, fall back to "trace-TIMESTAMP.log".
  */
 static void format_timestamped_name(char *buf, size_t len)

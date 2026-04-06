@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * File runway — pre-created pool of data file FHs per dstore.
+ * File runway -- pre-created pool of data file FHs per dstore.
  *
  * The MDS pre-populates each dstore with empty data files at startup
  * so that LAYOUTGET never blocks on NFSv3 CREATE.  FHs are popped
@@ -44,7 +44,7 @@ struct runway {
  * as the parent directory.  Files are named pool_NNNNNN.dat.
  *
  * Returns the runway on success (caller must runway_destroy), or
- * NULL on failure.  Partial success is OK — the runway may have
+ * NULL on failure.  Partial success is OK -- the runway may have
  * fewer entries than requested if some creates fail.
  */
 struct runway *runway_create(struct dstore *ds, uint32_t count);

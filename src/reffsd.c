@@ -61,9 +61,9 @@
  * These are weak symbols consulted before main() and before the ASAN_OPTIONS /
  * UBSAN_OPTIONS environment variables, so they act as a built-in default.
  *
- * detect_leaks=0  – pmap_set() (TIRPC) and pthread stacks produce
+ * detect_leaks=0  -- pmap_set() (TIRPC) and pthread stacks produce
  *                   process-lifetime LSan false positives we cannot fix.
- * halt_on_error=0 – continue after the first error so the full run is visible
+ * halt_on_error=0 -- continue after the first error so the full run is visible
  *                   in the log rather than stopping at the first finding.
  */
 #ifdef ASAN_ENABLED
@@ -83,7 +83,7 @@ const char *__ubsan_default_options(void)
 // Global flag for clean shutdown
 volatile sig_atomic_t running = 1;
 
-// Signal handler — async-signal-safe: sets flag + writes eventfd
+// Signal handler -- async-signal-safe: sets flag + writes eventfd
 static void signal_handler(int __attribute__((unused)) sig)
 {
 	running = 0;
@@ -274,7 +274,7 @@ int main(int argc, char *argv[])
 	{
 		const char *roles[] = { "standalone", "mds", "ds", "combined" };
 		const char *role = cfg.role < 4 ? roles[cfg.role] : "unknown";
-		LOG("reffsd %s (git %s) starting — role=%s port=%d",
+		LOG("reffsd %s (git %s) starting -- role=%s port=%d",
 		    PACKAGE_VERSION, REFFS_GIT_VERSION, role, cfg.port);
 	}
 
@@ -363,7 +363,7 @@ int main(int argc, char *argv[])
 	if (idmap_init(cfg.nfs4_domain))
 		TRACE("idmap_init failed, using numeric owner strings");
 
-	/* Identity domain + mapping tables (persistent krb5→unix). */
+	/* Identity domain + mapping tables (persistent krb5-->unix). */
 	identity_domain_init();
 	identity_map_init();
 	if (ss->ss_state_dir) {
@@ -442,7 +442,7 @@ int main(int argc, char *argv[])
 	/*
 	 * Load persisted exports from the registry.
 	 * The probe protocol is the sole authority for creating exports.
-	 * [[export]] config entries beyond index 0 are ignored — use
+	 * [[export]] config entries beyond index 0 are ignored -- use
 	 * reffs-probe.py sb-create to manage exports at runtime.
 	 */
 	if (ss->ss_persist_ops) {
@@ -473,7 +473,7 @@ int main(int argc, char *argv[])
 		uuid_generate(ds_sb->sb_uuid);
 		super_block_dirent_create(ds_sb, NULL, reffs_life_action_birth);
 		reffs_fs_recover(ds_sb);
-		/* Do NOT put ds_sb here — release_all_fs_dirents()
+		/* Do NOT put ds_sb here -- release_all_fs_dirents()
 		 * in reffs_ns_fini() puts the alloc ref for all sbs. */
 
 		TRACE("DS super_block %lu at %s",
@@ -664,10 +664,10 @@ int main(int argc, char *argv[])
 	/*
 	 * Shutdown ordering:
 	 *
-	 * 1. Close listener sockets FIRST — stop accepting new connections.
+	 * 1. Close listener sockets FIRST -- stop accepting new connections.
 	 *    The kernel TCP backlog drains (RST to pending clients).
-	 * 2. Join worker threads — drain in-flight requests.
-	 * 3. Join backend thread — flush backend I/O.
+	 * 2. Join worker threads -- drain in-flight requests.
+	 * 3. Join backend thread -- flush backend I/O.
 	 * 4. Unregister from portmapper (informational).
 	 * 5. Persist state / close databases.
 	 *
@@ -729,7 +729,7 @@ out:
 	 * Two shutdown modes:
 	 *
 	 * Quick (default): persist state, skip full inode/dirent teardown,
-	 * exit immediately.  Treats shutdown like a power cut — recovery
+	 * exit immediately.  Treats shutdown like a power cut -- recovery
 	 * on restart handles the rest.  This is production behavior.
 	 *
 	 * Graceful (REFFS_GRACEFUL_SHUTDOWN=1): full teardown of all inodes,
@@ -775,12 +775,12 @@ out:
 		 * Persist critical state so restart recovery works:
 		 * - server_state (boot_seq, slot_next, UUID)
 		 * - sb registry (export table)
-		 * Skip inode/dirent teardown — recovery rebuilds from disk.
+		 * Skip inode/dirent teardown -- recovery rebuilds from disk.
 		 */
 		if (ss) {
 			server_state_persist_quick(ss);
 
-			/* Persist identity tables (krb5→unix mappings). */
+			/* Persist identity tables (krb5-->unix mappings). */
 			if (ss->ss_state_dir) {
 				identity_domain_persist(ss->ss_state_dir);
 				identity_map_persist(ss->ss_state_dir);

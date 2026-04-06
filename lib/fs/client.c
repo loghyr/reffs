@@ -124,7 +124,7 @@ int client_assign(struct client *client, uint64_t id,
 
 	if (caa_unlikely(node != &client->c_node)) {
 		/*
-		 * Lost the race — a client with this id already exists.
+		 * Lost the race -- a client with this id already exists.
 		 * The caller owns the allocation so we just clean up
 		 * what we set up and signal the collision.
 		 */

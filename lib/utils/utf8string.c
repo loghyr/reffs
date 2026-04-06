@@ -95,22 +95,22 @@ int utf8string_from_wire(utf8string *dst, const utf8string *wire)
  * _utf8_sequence_len - return the expected total byte count for a sequence
  * starting with leading byte 'b', or 0 if 'b' is not a valid leader.
  *
- * Does NOT check for the overlong/surrogate/range problems — those are
+ * Does NOT check for the overlong/surrogate/range problems -- those are
  * handled in utf8string_validate after the continuation bytes are collected.
  */
 static inline int _utf8_sequence_len(unsigned char b)
 {
 	if (b < 0x80)
-		return 1; /* 0xxxxxxx — ASCII */
+		return 1; /* 0xxxxxxx -- ASCII */
 	if (b < 0xC0)
-		return 0; /* 10xxxxxx — continuation byte, not a leader */
+		return 0; /* 10xxxxxx -- continuation byte, not a leader */
 	if (b < 0xE0)
 		return 2; /* 110xxxxx */
 	if (b < 0xF0)
 		return 3; /* 1110xxxx */
 	if (b < 0xF8)
 		return 4; /* 11110xxx */
-	return 0; /* 0xF8-0xFF — never valid */
+	return 0; /* 0xF8-0xFF -- never valid */
 }
 
 int utf8string_validate(const utf8string *u)
@@ -396,7 +396,7 @@ bool utf8string_caseeq_cstr(const utf8string *u, const char *cstr)
 static int _id_to_utf8string(utf8string *dst, uintmax_t id)
 {
 	/*
-	 * uintmax_t is at most 64 bits → 20 decimal digits.
+	 * uintmax_t is at most 64 bits --> 20 decimal digits.
 	 * A 21-byte stack buffer is always sufficient.
 	 */
 	char buf[21];
@@ -535,9 +535,9 @@ void utf8string_print_repr(FILE *f, const utf8string *u)
  * _is_forbidden_codepoint - true for code points that are never legal in an
  * NFSv4 path component regardless of filesystem:
  *
- *   U+0000           NUL  — C string terminator
+ *   U+0000           NUL  -- C string terminator
  *   U+0001-U+001F    C0 controls
- *   U+002F           '/'  — path separator
+ *   U+002F           '/'  -- path separator
  *   U+007F           DEL
  *   U+0080-U+009F    C1 controls
  */

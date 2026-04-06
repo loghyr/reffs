@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# ci_pynfs.sh — Run pynfs NFSv4.1 test suite against reffsd.
+# ci_pynfs.sh -- Run pynfs NFSv4.1 test suite against reffsd.
 #
-# pynfs is GPL-2.0 — run as an external process only, never vendor
+# pynfs is GPL-2.0 -- run as an external process only, never vendor
 # or link.  Cached in external/ (.gitignore'd).
 #
 # Runs the NFSv4.1 test suite (nfs4.1/testserver.py) which exercises
@@ -93,7 +93,7 @@ fetch_pynfs() {
 	fi
 
 	# Set up a virtual environment for pynfs dependencies.
-	# ply is GPL — installed as a runtime tool dependency in the
+	# ply is GPL -- installed as a runtime tool dependency in the
 	# venv, not linked into reffs.
 	PYNFS_VENV="$PYNFS_DIR/.venv"
 	if [ ! -d "$PYNFS_VENV" ]; then
@@ -105,7 +105,7 @@ fetch_pynfs() {
 	pip install -q setuptools ply xdrlib3 2>&1 | tail -3 || true
 
 	# Build pynfs v4.1 only (generates XDR code from .x files).
-	# Skip 4.0 — we only test NFSv4.1/4.2.
+	# Skip 4.0 -- we only test NFSv4.1/4.2.
 	if [ ! -d "$PYNFS_DIR/nfs4.1/nfs4" ]; then
 		info "pynfs: building (setup.py build)"
 		(cd "$PYNFS_DIR" && python3 setup.py build) 2>&1 | tail -5

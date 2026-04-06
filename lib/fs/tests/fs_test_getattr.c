@@ -8,7 +8,7 @@
 #endif
 
 /*
- * fs_test_getattr.c — reffs_fs_getattr() correctness
+ * fs_test_getattr.c -- reffs_fs_getattr() correctness
  *
  * This is the first-line canary test.  The regression fixed in commit 37f4a90
  * (S_IFLNK typo, i_nlink=1 for directories) would have been caught

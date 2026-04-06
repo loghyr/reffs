@@ -8,7 +8,7 @@
 #endif
 
 /*
- * fs_test_create.c — reffs_fs_create() initial attribute correctness
+ * fs_test_create.c -- reffs_fs_create() initial attribute correctness
  *
  * create() is the "touch" operation.  Tests focus on the state of the
  * newly created inode, not the write/read path (that lives in

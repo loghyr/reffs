@@ -2,10 +2,10 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# ci_libnfs.sh — Run libnfs test suite and examples against reffsd.
+# ci_libnfs.sh -- Run libnfs test suite and examples against reffsd.
 #
 # libnfs is a userspace NFS client library (BSD/LGPL/GPL multi-licensed).
-# Bypasses the kernel NFS client entirely — no dcache, no attribute
+# Bypasses the kernel NFS client entirely -- no dcache, no attribute
 # cache, no delegations.  Pure protocol testing.
 #
 # Cached in external/libnfs (.gitignore'd).
@@ -71,7 +71,7 @@ fetch_libnfs() {
 	   [ ! -f "$LIBNFS_DIR/build/lib/libnfs.so" ]; then
 		info "libnfs: building"
 		if [ -f "$LIBNFS_DIR/CMakeLists.txt" ]; then
-			# CMake build — enable tests and examples
+			# CMake build -- enable tests and examples
 			mkdir -p "$LIBNFS_DIR/build"
 			(cd "$LIBNFS_DIR/build" && \
 			 cmake .. -DENABLE_TESTS=ON -DENABLE_EXAMPLES=ON && \

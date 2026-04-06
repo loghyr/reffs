@@ -20,7 +20,7 @@
  * nfs4_client with a ref held by the caller (release with
  * client_put(nfs4_client_to_client(nc))).
  *
- * Implements RFC 8881 §18.35.4 Table 11 decision tree based on
+ * Implements RFC 8881 S18.35.4 Table 11 decision tree based on
  * (same_verifier, same_principal, confirmed).  When update is false
  * (non-update case), cases where principal or verifier differ cause
  * the old client to be expired and a new one allocated.  When update

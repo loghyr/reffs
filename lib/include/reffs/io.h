@@ -181,7 +181,7 @@ struct conn_info {
 /* Network ring (existing)                                            */
 /* ------------------------------------------------------------------ */
 /*
- * tls_cert, tls_key, tls_ca may be NULL — falls back to env vars
+ * tls_cert, tls_key, tls_ca may be NULL -- falls back to env vars
  * then /etc/tlshd/ defaults.
  */
 int io_handler_init(struct ring_context *rc, const char *tls_cert,

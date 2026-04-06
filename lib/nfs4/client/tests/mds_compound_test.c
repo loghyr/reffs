@@ -9,7 +9,7 @@
  * Unit tests for the MDS COMPOUND builder.
  *
  * These tests exercise the compound init/fini, op addition, overflow,
- * sequence insertion, and result accessor — all without a live server.
+ * sequence insertion, and result accessor -- all without a live server.
  */
 
 #include <check.h>
@@ -97,7 +97,7 @@ START_TEST(test_add_op_overflow)
 	ck_assert_ptr_nonnull(mds_compound_add_op(&mc, OP_PUTROOTFH));
 	ck_assert_ptr_nonnull(mds_compound_add_op(&mc, OP_OPEN));
 
-	/* Third op should fail — max is 2. */
+	/* Third op should fail -- max is 2. */
 	nfs_argop4 *overflow = mds_compound_add_op(&mc, OP_GETFH);
 
 	ck_assert_ptr_null(overflow);
@@ -179,7 +179,7 @@ START_TEST(test_result_accessor_null)
 
 	mds_compound_init(&mc, 2, "t");
 
-	/* No response yet — resarray_len is 0. */
+	/* No response yet -- resarray_len is 0. */
 	ck_assert_ptr_null(mds_compound_result(&mc, 0));
 	ck_assert_ptr_null(mds_compound_result(&mc, 5));
 

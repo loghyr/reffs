@@ -4,12 +4,12 @@
  */
 
 /*
- * config_test.c — unit tests for lib/config/config.c
+ * config_test.c -- unit tests for lib/config/config.c
  *
  * Tests:
- *   defaults  — reffs_config_defaults() fills expected values
- *   load      — reffs_config_load() parses TOML and overrides defaults
- *   helpers   — reffs_role_str() and reffs_role_exchgid_flags()
+ *   defaults  -- reffs_config_defaults() fills expected values
+ *   load      -- reffs_config_load() parses TOML and overrides defaults
+ *   helpers   -- reffs_role_str() and reffs_role_exchgid_flags()
  */
 
 #ifdef HAVE_CONFIG_H
@@ -141,7 +141,7 @@ START_TEST(test_defaults_iouring_sizes)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* load — empty file leaves defaults intact                            */
+/* load -- empty file leaves defaults intact                            */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_load_empty_file)
@@ -162,7 +162,7 @@ START_TEST(test_load_empty_file)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* load — [server] overrides                                           */
+/* load -- [server] overrides                                           */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_load_server_port)
@@ -263,7 +263,7 @@ START_TEST(test_load_server_minor_versions)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* load — [backend] overrides                                          */
+/* load -- [backend] overrides                                          */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_load_backend_posix)
@@ -285,7 +285,7 @@ START_TEST(test_load_backend_posix)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* load — [[export]] overrides                                         */
+/* load -- [[export]] overrides                                         */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_load_export_basic)
@@ -339,7 +339,7 @@ START_TEST(test_load_export_multiple_flavors)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* load — [[data_server]] entries                                      */
+/* load -- [[data_server]] entries                                      */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_load_data_server_single)
@@ -419,7 +419,7 @@ START_TEST(test_load_data_server_none)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* load — bad file path                                                */
+/* load -- bad file path                                                */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_load_missing_file)
@@ -432,7 +432,7 @@ START_TEST(test_load_missing_file)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* helpers — reffs_role_str                                            */
+/* helpers -- reffs_role_str                                            */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_role_str)
@@ -446,7 +446,7 @@ START_TEST(test_role_str)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* helpers — reffs_role_exchgid_flags                                  */
+/* helpers -- reffs_role_exchgid_flags                                  */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_role_exchgid_flags)

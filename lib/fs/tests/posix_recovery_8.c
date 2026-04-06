@@ -6,7 +6,7 @@
 /*
  * Test 8: Recovery from a truncated .dir file (simulated crash during write).
  *
- * The .dir format is: [cookie_next u64][entry…][entry…]
+ * The .dir format is: [cookie_next u64][entry...][entry...]
  * Each entry is:      [cookie u64][ino u64][name_len u16][name bytes]
  *
  * If the server crashed mid-write, the file may contain a complete header
@@ -17,7 +17,7 @@
  *   3. Not expose the partial entry in the in-memory tree.
  *
  * Related issue (reffs_issues.md):
- *   POSIX Backend — ".dir and .meta writes are not atomic": a crash mid-write
+ *   POSIX Backend -- ".dir and .meta writes are not atomic": a crash mid-write
  *   leaves a truncated file; recovery silently loses entries on short reads.
  */
 

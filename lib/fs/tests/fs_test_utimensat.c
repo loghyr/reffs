@@ -8,7 +8,7 @@
 #endif
 
 /*
- * fs_test_utimensat.c — reffs_fs_utimensat() correctness
+ * fs_test_utimensat.c -- reffs_fs_utimensat() correctness
  *
  * utimensat sets both atime (times[0]) and mtime (times[1]) to the exact
  * caller-supplied values, bypassing clock_gettime().  This is used by NFS

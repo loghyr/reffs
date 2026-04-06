@@ -165,7 +165,7 @@ START_TEST(add_inode_1)
 	inode_active_put(inode);
 
 	/*
-	 * Inode stays in hash until drained — drain first, then verify gone.
+	 * Inode stays in hash until drained -- drain first, then verify gone.
 	 */
 	super_block_release_dirents(sb);
 	inode = inode_find(sb, 2);
@@ -261,7 +261,7 @@ START_TEST(get_inode_1)
 	inode2 = inode_alloc(sb, 3);
 	ck_assert(inode2);
 
-	/* inode_get bumps only i_ref, not i_active — use inode_put to release */
+	/* inode_get bumps only i_ref, not i_active -- use inode_put to release */
 	inode3 = inode_get(inode1);
 	ck_assert(inode3);
 
@@ -276,7 +276,7 @@ START_TEST(get_inode_1)
 	/*
 	 * inode3 holds a plain i_ref (from inode_get). Must be released before
 	 * super_block_release_dirents. inode2's hash ref will be dropped by drain;
-	 * inode1 was manually unhasked so drain won't find it — its i_ref drops
+	 * inode1 was manually unhasked so drain won't find it -- its i_ref drops
 	 * to 0 when inode_put(inode3) fires inode_release.
 	 */
 	inode_put(inode3);

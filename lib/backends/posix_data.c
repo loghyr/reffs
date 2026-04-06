@@ -4,11 +4,11 @@
  */
 
 /*
- * POSIX data backend — bulk file I/O using POSIX files.
+ * POSIX data backend -- bulk file I/O using POSIX files.
  *
  * Data files live at <backend_path>/sb_<id>/ino_<ino>.dat.
  * Paths are computed from public super_block fields (sb_backend_path,
- * sb_id), NOT from sb_storage_private — this allows composition with
+ * sb_id), NOT from sb_storage_private -- this allows composition with
  * any metadata backend.
  */
 
@@ -139,7 +139,7 @@ static int posix_data_db_reopen(struct posix_data_private *priv)
 		return -EBADF;
 
 	pthread_mutex_lock(&priv->pd_reopen_mutex);
-	/* Re-check under lock — another thread may have reopened. */
+	/* Re-check under lock -- another thread may have reopened. */
 	if (priv->pd_fd >= 0) {
 		pthread_mutex_unlock(&priv->pd_reopen_mutex);
 		return 0;

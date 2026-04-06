@@ -42,7 +42,7 @@ struct rcu_head;
 CDS_LIST_HEAD(rpc_program_handler_list);
 
 /*
- * xdrproc_t is bool_t (*)(XDR *, ...) — variadic — for historical reasons.
+ * xdrproc_t is bool_t (*)(XDR *, ...) -- variadic -- for historical reasons.
  * Actual XDR functions are non-variadic (e.g. bool_t xdr_FOO(XDR *, FOO *)).
  * Calling them through xdrproc_t is ABI-safe but a strict type mismatch that
  * UBSan's -fsanitize=function flags.  Isolate all direct calls here so the
@@ -248,7 +248,7 @@ int rpc_parse_call_data(struct rpc_trans *rt)
 
 /*
  * Compute the GSS reply verifier for RPCSEC_GSS DATA requests.
- * RFC 2203 §5.3.3.3: the verifier is a MIC over the sequence
+ * RFC 2203 S5.3.3.3: the verifier is a MIC over the sequence
  * number (4 bytes, network order).
  *
  * On success, sets rt->rt_info.ri_verifier_body/len and returns
@@ -1169,7 +1169,7 @@ int rpc_process_task(struct task *t)
 	}
 	case RPCSEC_GSS: {
 		/*
-		 * RFC 2203 §5.2.2: RPCSEC_GSS credential body is
+		 * RFC 2203 S5.2.2: RPCSEC_GSS credential body is
 		 * rpc_gss_cred_vers_1_t {version, gss_proc, seq_num,
 		 * service, handle<>}.
 		 */
@@ -1273,7 +1273,7 @@ int rpc_process_task(struct task *t)
 		break;
 	case RPCSEC_GSS: {
 		/*
-		 * RFC 2203 §5.3.3.2: the RPCSEC_GSS verifier is a
+		 * RFC 2203 S5.3.3.2: the RPCSEC_GSS verifier is a
 		 * MIC over the sequence number.  Save it for later
 		 * validation after context lookup.
 		 */
@@ -1344,7 +1344,7 @@ int rpc_process_task(struct task *t)
 			gctx->gc_last_activity_ns = reffs_now_ns();
 
 			/*
-			 * RFC 2203 §5.3.3.2: verify the client's
+			 * RFC 2203 S5.3.3.2: verify the client's
 			 * MIC over the sequence number.  Reject if
 			 * the verifier is missing or invalid.
 			 */
@@ -1362,7 +1362,7 @@ int rpc_process_task(struct task *t)
 			}
 
 			/*
-			 * RFC 2203 §5.3.1: the client's MIC covers the
+			 * RFC 2203 S5.3.1: the client's MIC covers the
 			 * RPC header from XID through the end of the
 			 * credential (not just the sequence number).
 			 */
@@ -1384,7 +1384,7 @@ int rpc_process_task(struct task *t)
 				goto handle_rpc_error;
 			}
 
-			/* Replay detection (RFC 2203 §5.2.1). */
+			/* Replay detection (RFC 2203 S5.2.1). */
 			if (gss_ctx_seq_check(
 				    gctx, rt->rt_info.ri_cred.rc_gss.gc_seq)) {
 				trace_security_gss_error(
@@ -1543,7 +1543,7 @@ int rpc_process_task(struct task *t)
 				   __ATOMIC_RELAXED);
 	} else if (ret == EINVAL) {
 		/*
-		 * XDR decode failure — RFC 5531 §9: GARBAGE_ARGS,
+		 * XDR decode failure -- RFC 5531 S9: GARBAGE_ARGS,
 		 * not SYSTEM_ERR (which is for internal server errors).
 		 */
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;

@@ -8,12 +8,12 @@
 #endif
 
 /*
- * fs_test_chmod_chown.c — reffs_fs_chmod() and reffs_fs_chown() correctness
+ * fs_test_chmod_chown.c -- reffs_fs_chmod() and reffs_fs_chown() correctness
  *
  * Both operations are absent from fuse_test.c entirely.  Key observations
  * from reading fs.c:
  *
- *   chmod stores (mode & 07777) — the file-type bits are cleared from what
+ *   chmod stores (mode & 07777) -- the file-type bits are cleared from what
  *   is stored by chmod, so the upper bits of i_mode come only from the
  *   original create/mkdir.  After a chmod the full i_mode seen via getattr
  *   will therefore be (original_type | new_perms).
@@ -56,7 +56,7 @@ START_TEST(test_chmod_file_permission_bits)
 	/*
 	 * fs.c stores (mode & 07777), so after chmod(0600) the full mode
 	 * is just 0600 without S_IFREG.  If the implementation changes to
-	 * preserve the type bits this assertion will need updating — that
+	 * preserve the type bits this assertion will need updating -- that
 	 * would be the correct POSIX behaviour.  For now we pin what the
 	 * code actually does.
 	 */

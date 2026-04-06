@@ -9,16 +9,16 @@
  * Unit tests for dstore_wcc_check().
  *
  * Tests:
- *   1. null_wcc:           NULL wcc pointer — no crash, no update
- *   2. invalid_wcc:        wcc_valid=0 — no update
- *   3. null_ldf:           NULL ldf pointer — no crash
+ *   1. null_wcc:           NULL wcc pointer -- no crash, no update
+ *   2. invalid_wcc:        wcc_valid=0 -- no update
+ *   3. null_ldf:           NULL ldf pointer -- no crash
  *   4. update_attrs:       valid WCC updates ldf cached attrs
  *   5. no_update_on_fail:  invalid WCC leaves ldf unchanged
- *   6. backwards_mtime:    mtime goes backwards — ldf still updated
- *   7. backwards_ctime:    ctime goes backwards — ldf still updated
- *   8. wwwl_no_layout:     changed attrs without write layout — ldf updated
- *   9. no_wwwl_with_layout: changed attrs with write layout — ldf updated
- *  10. atime_only_change:  only atime differs — no WWWL (ldf updated)
+ *   6. backwards_mtime:    mtime goes backwards -- ldf still updated
+ *   7. backwards_ctime:    ctime goes backwards -- ldf still updated
+ *   8. wwwl_no_layout:     changed attrs without write layout -- ldf updated
+ *   9. no_wwwl_with_layout: changed attrs with write layout -- ldf updated
+ *  10. atime_only_change:  only atime differs -- no WWWL (ldf updated)
  */
 
 #include <string.h>
@@ -161,7 +161,7 @@ END_TEST
 
 START_TEST(test_wwwl_no_layout)
 {
-	/* mtime changed, no write layout — WWWL logged. */
+	/* mtime changed, no write layout -- WWWL logged. */
 	wcc.wcc_valid = 1;
 	wcc.wcc_size = 2000;
 	wcc.wcc_mtime.tv_sec = 200;
@@ -179,7 +179,7 @@ END_TEST
 
 START_TEST(test_no_wwwl_with_layout)
 {
-	/* Same changed attrs but with write layout — no WWWL. */
+	/* Same changed attrs but with write layout -- no WWWL. */
 	wcc.wcc_valid = 1;
 	wcc.wcc_size = 2000;
 	wcc.wcc_mtime.tv_sec = 200;
@@ -198,7 +198,7 @@ START_TEST(test_atime_only_change)
 {
 	/*
 	 * mtime and ctime unchanged, only atime differs.
-	 * This is NOT a WWWL — reads legitimately update atime.
+	 * This is NOT a WWWL -- reads legitimately update atime.
 	 */
 	wcc.wcc_valid = 1;
 	wcc.wcc_size = 1000;
@@ -209,7 +209,7 @@ START_TEST(test_atime_only_change)
 
 	dstore_wcc_check(&wcc, &ldf, false, 1, 42);
 
-	/* ldf attrs match — no change visible. */
+	/* ldf attrs match -- no change visible. */
 	ck_assert_int_eq(ldf.ldf_size, 1000);
 	ck_assert_int_eq(ldf.ldf_mtime.tv_sec, 100);
 	ck_assert_int_eq(ldf.ldf_ctime.tv_sec, 100);

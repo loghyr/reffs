@@ -127,7 +127,7 @@ static void inode_lru_add(struct inode *inode)
 	 * Release the data block FD when the inode goes idle.
 	 * The FD will be re-opened on demand if the inode is
 	 * reactivated.  Without this, every cached inode holds
-	 * an open FD until eviction — with a 64K LRU limit, that
+	 * an open FD until eviction -- with a 64K LRU limit, that
 	 * means up to 64K open FDs for idle inodes.
 	 *
 	 * Safety: i_active == 0 guarantees no NFS operation is
@@ -450,7 +450,7 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 	/*
 	 * Only set i_ino and i_nlink on freshly-allocated inodes.
 	 * If we lost the hash race and picked up the winner, it
-	 * already has correct values — overwriting i_nlink would
+	 * already has correct values -- overwriting i_nlink would
 	 * corrupt directories (nlink=2) and hardlinked files.
 	 */
 	if (inode->i_ino == 0) {

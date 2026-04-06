@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Identity mapping cache — bidirectional name ↔ uid/gid lookup.
+ * Identity mapping cache -- bidirectional name <--> uid/gid lookup.
  *
  * The cache sits between NFSv4 owner string handling and the inode
  * layer.  It maps between wire-format "user@domain" strings and
@@ -61,9 +61,9 @@ int idmap_name_to_uid(const utf8string *name, uid_t *uid);
 int idmap_name_to_gid(const utf8string *name, gid_t *gid);
 
 /*
- * idmap_cache_uid - inject a known uid ↔ name mapping.
+ * idmap_cache_uid - inject a known uid <--> name mapping.
  *
- * Called from the GSS authentication path after principal→uid
+ * Called from the GSS authentication path after principal-->uid
  * mapping succeeds.  The name should include the domain suffix
  * (e.g., "alice@EXAMPLE.COM").
  */

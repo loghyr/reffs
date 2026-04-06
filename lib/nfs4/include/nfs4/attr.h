@@ -2,7 +2,7 @@
  * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * nfs4/attr.h — NFSv4 bitmap4 macros and inline helpers.
+ * nfs4/attr.h -- NFSv4 bitmap4 macros and inline helpers.
  */
 
 #ifndef ATTR_H
@@ -164,8 +164,8 @@ static inline bool bitmap4_attr_fits(const bitmap4 *bm, uint32_t attr)
 /* ------------------------------------------------------------------ */
 /* Per-bit accessors                                                  */
 /*                                                                    */
-/* Out-of-range reads  → false (safe).                                */
-/* Out-of-range writes → no-op, returns false (safe).                 */
+/* Out-of-range reads  --> false (safe).                                */
+/* Out-of-range writes --> no-op, returns false (safe).                 */
 /* ------------------------------------------------------------------ */
 
 static inline bool bitmap4_attribute_is_set(const bitmap4 *bm, uint32_t attr)

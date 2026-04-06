@@ -14,7 +14,7 @@
  * Write path:
  *   1. Open file on MDS, get layout (LAYOUTGET + GETDEVICEINFO)
  *   2. Pad input to multiple of k * shard_len
- *   3. For each stripe: RS-encode k data → m parity, write k+m to DSes
+ *   3. For each stripe: RS-encode k data --> m parity, write k+m to DSes
  *   4. LAYOUTRETURN, CLOSE
  *
  * Read path:
@@ -53,7 +53,7 @@ __attribute__((format(printf, 1, 2))) static void ec_log(const char *fmt, ...)
 /* Shard size: 4 KiB (capped for io_uring large-message workaround). */
 #define EC_SHARD_SIZE (4 * 1024)
 
-/* Ceiling division — needed for chunk block counts with variable-size shards. */
+/* Ceiling division -- needed for chunk block counts with variable-size shards. */
 #define DIV_CEIL(a, b) (((a) + (b) - 1) / (b))
 
 /* ------------------------------------------------------------------ */
@@ -122,7 +122,7 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 			return ret;
 
 		if (use_v2) {
-			/* NFSv4.2 session to each DS — unique owner per mirror. */
+			/* NFSv4.2 session to each DS -- unique owner per mirror. */
 			int existing = find_existing_conn(ctx, i);
 
 			if (existing >= 0) {
@@ -163,7 +163,7 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 }
 
 /*
- * Report a DS I/O error to the MDS.  Best-effort — failure to
+ * Report a DS I/O error to the MDS.  Best-effort -- failure to
  * send the error report is not itself an error.
  */
 static void ec_report_ds_error(struct ec_context *ctx, int mirror_idx,
@@ -432,7 +432,7 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 		goto out_layout;
 	}
 
-	/* Resolve device IDs → DS addresses, connect. */
+	/* Resolve device IDs --> DS addresses, connect. */
 	ret = ec_resolve_mirrors(&ctx);
 	if (ret) {
 		ec_log("ec_write: resolve_mirrors failed: %d\n", ret);

@@ -217,7 +217,7 @@ START_TEST(test_inverse_subset)
 	moj_forward(grid, P, Q, dirs_full, n_full, projs_full);
 
 	/*
-	 * Use projections 0, 2, 3, 5 (skip 1 and 4) — an arbitrary
+	 * Use projections 0, 2, 3, 5 (skip 1 and 4) -- an arbitrary
 	 * subset of 4 out of 6.
 	 */
 	int subset[] = { 0, 2, 3, 5 };
@@ -238,7 +238,7 @@ START_TEST(test_inverse_subset)
 			 0);
 
 	/*
-	 * Don't free projs_sub entries — they alias projs_full.
+	 * Don't free projs_sub entries -- they alias projs_full.
 	 * Only free the full set.
 	 */
 	free(grid);
@@ -330,7 +330,7 @@ END_TEST
 /* ------------------------------------------------------------------ */
 
 /*
- * test_simd_p1_roundtrip — isolate the p=+1 SIMD fast path.
+ * test_simd_p1_roundtrip -- isolate the p=+1 SIMD fast path.
  *
  * Only dirs[0] (p=+1, q=1) dispatches to the NEON/SSE2 sequential-
  * ascending-bin helper; the other three directions (|p|>1) use the
@@ -364,7 +364,7 @@ START_TEST(test_simd_p1_roundtrip)
 END_TEST
 
 /*
- * test_simd_pm1_roundtrip — isolate the p=-1 SIMD fast path.
+ * test_simd_pm1_roundtrip -- isolate the p=-1 SIMD fast path.
  *
  * Only dirs[0] (p=-1, q=1) dispatches to the reversed-bin
  * NEON/SSE2 helper (vextq_u64 / shuffle swap); the other three
@@ -398,9 +398,9 @@ START_TEST(test_simd_pm1_roundtrip)
 END_TEST
 
 /*
- * test_simd_p1_tail — P=7 exercises the scalar tail in the p=+1 SIMD loop.
+ * test_simd_p1_tail -- P=7 exercises the scalar tail in the p=+1 SIMD loop.
  *
- * The 4-wide SIMD loop handles columns 0–3; columns 4–6 fall through
+ * The 4-wide SIMD loop handles columns 0--3; columns 4--6 fall through
  * to the scalar tail.  An off-by-one in the loop bound or a wrong
  * starting column in the tail produces corrupt bins.
  *
@@ -430,9 +430,9 @@ START_TEST(test_simd_p1_tail)
 END_TEST
 
 /*
- * test_simd_pm1_tail — P=7, exercises the p=-1 SIMD tail.
+ * test_simd_pm1_tail -- P=7, exercises the p=-1 SIMD tail.
  *
- * For NEON: 4-wide loop takes cols 0–3, 2-wide cleanup takes cols 4–5,
+ * For NEON: 4-wide loop takes cols 0--3, 2-wide cleanup takes cols 4--5,
  * scalar handles col 6.  For SSE2 the 2-wide cleanup is identical.
  * The bin addresses for the tail are negative offsets from dst; an
  * off-by-one here is particularly easy to miss.
@@ -465,16 +465,16 @@ START_TEST(test_simd_pm1_tail)
 END_TEST
 
 /*
- * test_simd_bins_p1 — exact bin values for p=+1, q=1 on a 3×2 grid.
+ * test_simd_bins_p1 -- exact bin values for p=+1, q=1 on a 3x2 grid.
  *
  * fill_grid values (i*37+13, row-major):
  *   row 0: [13, 50, 87]     row 1: [124, 161, 198]
  *
  * bin b = col*p - row*q + off = col - row + (Q-1) = col - row + 1:
- *   b=0: (r=1,c=0) → 124
- *   b=1: (r=0,c=0) + (r=1,c=1) → 13 + 161 = 174
- *   b=2: (r=0,c=1) + (r=1,c=2) → 50 + 198 = 248
- *   b=3: (r=0,c=2) → 87
+ *   b=0: (r=1,c=0) --> 124
+ *   b=1: (r=0,c=0) + (r=1,c=1) --> 13 + 161 = 174
+ *   b=2: (r=0,c=1) + (r=1,c=2) --> 50 + 198 = 248
+ *   b=3: (r=0,c=2) --> 87
  *
  * P=3 < 4: 4-wide SIMD loop does not fire; scalar path only.
  * Anchors the bin addressing formula numerically.
@@ -503,16 +503,16 @@ START_TEST(test_simd_bins_p1)
 END_TEST
 
 /*
- * test_simd_bins_pm1 — exact bin values for p=-1, q=1 on a 3×2 grid.
+ * test_simd_bins_pm1 -- exact bin values for p=-1, q=1 on a 3x2 grid.
  *
  * Same grid as test_simd_bins_p1.
  * bin b = -col - row + off, off = P+Q-2 = 3:
- *   b=0: (r=1,c=2) → 198
- *   b=1: (r=0,c=2) + (r=1,c=1) → 87 + 161 = 248
- *   b=2: (r=0,c=1) + (r=1,c=0) → 50 + 124 = 174
- *   b=3: (r=0,c=0) → 13
+ *   b=0: (r=1,c=2) --> 198
+ *   b=1: (r=0,c=2) + (r=1,c=1) --> 87 + 161 = 248
+ *   b=2: (r=0,c=1) + (r=1,c=0) --> 50 + 124 = 174
+ *   b=3: (r=0,c=0) --> 13
  *
- * P=3: NEON/SSE2 2-wide cleanup loop fires for cols 0–1; scalar
+ * P=3: NEON/SSE2 2-wide cleanup loop fires for cols 0--1; scalar
  * handles col 2.  Verifies the lane-swap (vextq_u64 / shuffle) and
  * the negative-offset addressing for the partial-width case.
  */
@@ -540,7 +540,7 @@ START_TEST(test_simd_bins_pm1)
 END_TEST
 
 /*
- * test_simd_vs_scalar_large — 64×64 grid, SIMD reproducibility.
+ * test_simd_vs_scalar_large -- 64x64 grid, SIMD reproducibility.
  *
  * Run moj_forward() twice with separate zero-initialised projection
  * arrays on the same grid.  The bin arrays must be bit-identical,

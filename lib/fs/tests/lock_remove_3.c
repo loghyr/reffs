@@ -10,13 +10,13 @@
  * unlock request [u_off, u_end], for each overlapping lock owned by the
  * same owner it takes one of four actions:
  *
- *   Full removal:    unlock covers the entire lock → delete + free
- *   Split:           unlock punches a hole in the middle of a lock →
+ *   Full removal:    unlock covers the entire lock --> delete + free
+ *   Split:           unlock punches a hole in the middle of a lock -->
  *                    shorten existing entry (left fragment) + allocate new
  *                    entry for right fragment
- *   Truncate start:  unlock covers the beginning of the lock →
+ *   Truncate start:  unlock covers the beginning of the lock -->
  *                    advance l_offset to u_end+1
- *   Truncate end:    unlock covers the tail of the lock →
+ *   Truncate end:    unlock covers the tail of the lock -->
  *                    reduce l_len to (u_off - l_off)
  *
  * Additionally:
@@ -70,7 +70,7 @@ static struct reffs_lock *first_lock_for(struct inode *inode,
 	return NULL;
 }
 
-/* ── full removal ─────────────────────────────────────────────────────────── */
+/* -- full removal ----------------------------------------------------------- */
 
 START_TEST(test_remove_full_exact)
 {
@@ -111,7 +111,7 @@ START_TEST(test_remove_full_superset)
 }
 END_TEST
 
-/* ── truncate end ─────────────────────────────────────────────────────────── */
+/* -- truncate end ----------------------------------------------------------- */
 
 START_TEST(test_remove_truncate_end)
 {
@@ -141,7 +141,7 @@ START_TEST(test_remove_truncate_end)
 }
 END_TEST
 
-/* ── truncate start ───────────────────────────────────────────────────────── */
+/* -- truncate start --------------------------------------------------------- */
 
 START_TEST(test_remove_truncate_start)
 {
@@ -171,7 +171,7 @@ START_TEST(test_remove_truncate_start)
 }
 END_TEST
 
-/* ── split ────────────────────────────────────────────────────────────────── */
+/* -- split ------------------------------------------------------------------ */
 
 START_TEST(test_remove_split_middle)
 {
@@ -247,7 +247,7 @@ START_TEST(test_remove_split_inherits_exclusivity)
 }
 END_TEST
 
-/* ── wrong owner / no overlap ─────────────────────────────────────────────── */
+/* -- wrong owner / no overlap ----------------------------------------------- */
 
 START_TEST(test_remove_wrong_owner_no_effect)
 {
@@ -288,7 +288,7 @@ START_TEST(test_remove_no_overlap_no_effect)
 }
 END_TEST
 
-/* ── len=0 (to-EOF) unlock semantics ─────────────────────────────────────── */
+/* -- len=0 (to-EOF) unlock semantics --------------------------------------- */
 
 START_TEST(test_remove_len0_unlock_removes_finite_lock)
 {
@@ -319,7 +319,7 @@ START_TEST(test_remove_len0_unlock_truncates_start_of_eof_lock)
 	 * Lock [0, EOF) (len=0), unlock [0, 99] (len=100).
 	 * Unlock covers the start of the to-EOF lock:
 	 *   u_off(0) <= l_off(0), u_end(99) < l_end(UINT64_MAX)
-	 *   → truncate start: new l_offset = 100, new l_len = 0 (still to-EOF).
+	 *   --> truncate start: new l_offset = 100, new l_len = 0 (still to-EOF).
 	 */
 	struct inode *inode = alloc_test_inode();
 	struct test_lock_owner *o = test_owner_alloc(1);
@@ -374,7 +374,7 @@ START_TEST(test_remove_multiple_locks_only_matching_owner)
 }
 END_TEST
 
-/* ── suite ───────────────────────────────────────────────────────────────── */
+/* -- suite ----------------------------------------------------------------- */
 
 Suite *lock_remove_suite(void)
 {

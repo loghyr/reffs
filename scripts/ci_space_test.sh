@@ -348,9 +348,9 @@ if [ -n "$V3_MOUNT" ] && mountpoint -q "$V3_MOUNT" 2>/dev/null; then
 
     # Create a 2MB file via v4, check via v3.
     # Must be a multiple of the v3 block size (1MB) to avoid
-    # rounding in the kernel's statfs — sub-1MB fractions are
+    # rounding in the kernel's statfs -- sub-1MB fractions are
     # truncated, making df show 0 used.  This is a known Linux
-    # NFS v3 client quirk (wtpref=1MB → f_bsize=1MB).
+    # NFS v3 client quirk (wtpref=1MB --> f_bsize=1MB).
     dd if=/dev/urandom of="$TESTDIR/xcheck" bs=1M count=2 2>/dev/null
     sync
     sleep 1

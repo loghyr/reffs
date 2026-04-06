@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * RPCSEC_GSS context cache — per-server table of established GSS
+ * RPCSEC_GSS context cache -- per-server table of established GSS
  * security contexts, keyed by opaque handle.
  *
  * Contexts are created during the RPCSEC_GSS_INIT exchange and
@@ -50,7 +50,7 @@ struct gss_ctx_entry {
 	struct rcu_head gc_rcu;
 };
 
-/* Module init/fini — called from rpc layer init. */
+/* Module init/fini -- called from rpc layer init. */
 int gss_ctx_cache_init(void);
 void gss_ctx_cache_fini(void);
 
@@ -61,7 +61,7 @@ void gss_server_cred_fini(void);
 /*
  * Returns true if the server has a valid GSS credential (keytab).
  * When false, krb5 clients should receive NFS4ERR_DELAY (not
- * WRONGSEC) — the flavor is configured but the backend is broken.
+ * WRONGSEC) -- the flavor is configured but the backend is broken.
  */
 bool gss_server_cred_is_available(void);
 

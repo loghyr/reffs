@@ -4,7 +4,7 @@
  */
 
 /*
- * utf8string_compare.c — tests for all utf8string comparison functions.
+ * utf8string_compare.c -- tests for all utf8string comparison functions.
  *
  * Tests:
  *   utf8string_cmp / utf8string_casecmp
@@ -228,7 +228,7 @@ END_TEST
 START_TEST(test_cmp_cstr_null_cstr_treated_as_empty)
 {
 	utf8string empty = { 0 };
-	/* Both sides effectively empty → equal */
+	/* Both sides effectively empty --> equal */
 	ck_assert_int_eq(utf8string_cmp_cstr(&empty, NULL), 0);
 }
 END_TEST

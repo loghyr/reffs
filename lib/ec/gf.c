@@ -13,7 +13,7 @@
  *
  * The antilog (exp) table is doubled to 512 entries so that
  * multiplication can use gf_exp[gf_log[a] + gf_log[b]] without
- * modular reduction — the sum of two log values is at most 508,
+ * modular reduction -- the sum of two log values is at most 508,
  * and gf_exp[i] == gf_exp[i - 255] for i >= 255.
  *
  * Reference: Berlekamp, "Algebraic Coding Theory" (1968), Ch. 6.
@@ -48,7 +48,7 @@ static void gf_init_tables(void)
 	for (int i = GF_ORDER; i < 512; i++)
 		gf_exp[i] = gf_exp[i - GF_ORDER];
 
-	gf_log[0] = 0; /* sentinel — never used in valid mul */
+	gf_log[0] = 0; /* sentinel -- never used in valid mul */
 }
 
 void gf_init(void)

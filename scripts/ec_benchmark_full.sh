@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Full EC benchmark — runs all combinations in a single invocation.
+# Full EC benchmark -- runs all combinations in a single invocation.
 #
 # Phase 1: v1 (NFSv3), SIMD enabled, healthy + degraded-1
 # Phase 2: v1 (NFSv3), scalar (forced), healthy + degraded-1

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# ci_sigmund.sh — Run sigmund NFS test framework against reffsd.
+# ci_sigmund.sh -- Run sigmund NFS test framework against reffsd.
 #
 # Sigmund is a bash-based NFS test wrapper that exercises POSIX
 # operations over an NFS mount.  Cached in external/sigmund.
@@ -182,7 +182,7 @@ TEST_DIR=$TESTDIR
 BUILD_TEST_DIR=$SIGMUND_DIR
 EOF
 
-# Run sigmund in quiet mode — rcfile is positional, not -f
+# Run sigmund in quiet mode -- rcfile is positional, not -f
 if (cd "$SIGMUND_DIR" && bash sigmund.sh nfs -q 2>&1) | tee "$RESULTS"; then
 	info "sigmund: completed"
 else

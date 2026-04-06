@@ -55,7 +55,7 @@ static void make_incarnation_record(struct client_incarnation_record *crc,
 /*
  * Build a client_identity_record from wire parameters.
  *
- * impl_id (domain + name) is consumed here and only here — these are
+ * impl_id (domain + name) is consumed here and only here -- these are
  * persistence fields that must not be stored on struct nfs4_client.
  */
 static void make_identity_record(struct client_identity_record *cir,
@@ -101,8 +101,8 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 	uint32_t slot = (uint32_t)client->c_id;
 
 	/*
-	 * Order matters — see handoff invariants:
-	 *   1. Remove from incarnations file — crash after this but
+	 * Order matters -- see handoff invariants:
+	 *   1. Remove from incarnations file -- crash after this but
 	 *      before step 2 is safe; next boot skips recovery for slot.
 	 *   2. Drain stateids.
 	 *   3. Unhash and drop the client ref.
@@ -116,7 +116,7 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 			  __ATOMIC_RELEASE);
 	/*
 	 * Destroy remaining sessions on this client.  For RFC 8881
-	 * §18.35.4 case 7 (replace_client), sessions are re-parented
+	 * S18.35.4 case 7 (replace_client), sessions are re-parented
 	 * to the new client as zombies BEFORE expire is called, so
 	 * nc_session_count is already 0 and this is a no-op.
 	 */
@@ -158,7 +158,7 @@ static struct nfs4_client *replace_client(struct server_state *ss,
 	}
 
 	/*
-	 * RFC 8881 §18.35.4 case 7: re-parent the old client's sessions
+	 * RFC 8881 S18.35.4 case 7: re-parent the old client's sessions
 	 * to the new client as zombies.  The sessions remain valid for
 	 * SEQUENCE until CREATE_SESSION confirms the new client and
 	 * destroys the zombies.  After re-parenting, the old client has
@@ -194,8 +194,8 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 	*out_status = 0;
 
 	/*
-	 * Scan the clients file for this ownerid → slot, then look up
-	 * the active incarnation → clientid4 → in-memory client.
+	 * Scan the clients file for this ownerid --> slot, then look up
+	 * the active incarnation --> clientid4 --> in-memory client.
 	 * Disk IO here is expected; EXCHANGE_ID is not a fast path.
 	 */
 	uint32_t prev_slot = UINT32_MAX;
@@ -203,7 +203,7 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 				       &prev_slot);
 	if (!nc) {
 		/*
-		 * RFC 8881 §18.35.4: update on a non-existent record
+		 * RFC 8881 S18.35.4: update on a non-existent record
 		 * is NFS4ERR_NOENT.
 		 */
 		if (update) {
@@ -215,9 +215,9 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 
 		if (is_reclaiming) {
 			/* ------------------------------------------ */
-			/* Known ownerid — first reconnect this boot. */
+			/* Known ownerid -- first reconnect this boot. */
 			/* Reuse the existing slot; no new identity    */
-			/* record (the ownerid→slot mapping persists). */
+			/* record (the ownerid-->slot mapping persists). */
 
 			slot = prev_slot;
 			incarnation = 0;
@@ -233,7 +233,7 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 				ss->ss_persist_ctx, slot);
 		} else {
 			/* ------------------------------------------ */
-			/* New client — never seen this ownerid.      */
+			/* New client -- never seen this ownerid.      */
 
 			slot = server_alloc_client_slot(ss);
 			if (slot == UINT32_MAX)
@@ -273,7 +273,7 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 	}
 
 	/* ---------------------------------------------------------- */
-	/* Known ownerid — RFC 8881 §18.35.4 Table 11 decision tree.  */
+	/* Known ownerid -- RFC 8881 S18.35.4 Table 11 decision tree.  */
 	/*                                                             */
 	/* The 3-bit key is (same_verifier, same_principal, confirmed).*/
 	/* Only case 5 (confirmed + same verifier + same principal)    */
@@ -287,18 +287,18 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 
 	if (update) {
 		/*
-		 * RFC 8881 §18.35.4 update path (UPD_CONFIRMED_REC_A).
+		 * RFC 8881 S18.35.4 update path (UPD_CONFIRMED_REC_A).
 		 * Only valid against a confirmed record with matching
 		 * verifier and principal.
 		 */
 		if (!confirmed) {
-			/* U1: unconfirmed + update → NFS4ERR_NOENT */
+			/* U1: unconfirmed + update --> NFS4ERR_NOENT */
 			*out_status = NFS4ERR_NOENT;
 			client_put(nfs4_client_to_client(nc));
 			return NULL;
 		}
 		if (!same_principal) {
-			/* U6/U8: different principal → NFS4ERR_PERM */
+			/* U6/U8: different principal --> NFS4ERR_PERM */
 			*out_status = NFS4ERR_PERM;
 			client_put(nfs4_client_to_client(nc));
 			return NULL;
@@ -309,7 +309,7 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 			client_put(nfs4_client_to_client(nc));
 			return NULL;
 		}
-		/* U5: confirmed, same verifier, same principal → update */
+		/* U5: confirmed, same verifier, same principal --> update */
 		return nc;
 	}
 
@@ -317,7 +317,7 @@ nfs4_client_alloc_or_find(struct server_state *ss, const client_owner4 *owner,
 	if (same_verifier && same_principal && confirmed) {
 		/*
 		 * Case 5 (confirmed, same verifier + principal): idempotent
-		 * retry — return the existing client record.
+		 * retry -- return the existing client record.
 		 */
 		return nc;
 	}

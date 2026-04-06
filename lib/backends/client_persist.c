@@ -37,7 +37,7 @@ static int make_path(char *buf, size_t bufsz, const char *dir, const char *file)
 }
 
 /* ------------------------------------------------------------------ */
-/* clients file — append-only identity log                            */
+/* clients file -- append-only identity log                            */
 
 int client_identity_append(const char *state_dir,
 			   const struct client_identity_record *cir)
@@ -112,7 +112,7 @@ int client_identity_load(const char *state_dir,
 		}
 		if ((size_t)n != sizeof(cir)) {
 			LOG("client_identity_load: short record (%zd/%zu) "
-			    "in %s — truncated?",
+			    "in %s -- truncated?",
 			    n, sizeof(cir), path);
 			ret = -EINVAL;
 			break;
@@ -134,7 +134,7 @@ int client_identity_load(const char *state_dir,
 }
 
 /* ------------------------------------------------------------------ */
-/* client_incarnations — symlink-swapped active set                   */
+/* client_incarnations -- symlink-swapped active set                   */
 
 /*
  * Determine which of .A or .B the symlink currently points to, so we
@@ -152,7 +152,7 @@ static char incarnations_current_side(const char *state_dir)
 	len = readlink(link, target, sizeof(target) - 1);
 	if (len < 0) {
 		if (errno == ENOENT)
-			return 'A'; /* no symlink yet — start with A */
+			return 'A'; /* no symlink yet -- start with A */
 		LOG("incarnations_current_side: readlink(%s): %m", link);
 		return 0;
 	}
@@ -273,7 +273,7 @@ incarnations_write_and_swap(const char *state_dir,
 		goto err_unlink_new;
 	}
 
-	/* Unlink the old side — best effort. */
+	/* Unlink the old side -- best effort. */
 	unlink(current_path);
 	return 0;
 

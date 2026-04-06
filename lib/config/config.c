@@ -111,7 +111,7 @@ void reffs_config_defaults(struct reffs_config *cfg)
 	ncpus = sysconf(_SC_NPROCESSORS_ONLN);
 	cfg->workers = (ncpus > 0 && ncpus <= 64) ? (unsigned int)ncpus : 8;
 	cfg->max_session_slots = 64;
-	/* log_file = "" → stderr */
+	/* log_file = "" --> stderr */
 	cfg->log_level = REFFS_LOG_INFO;
 	cfg->fence_uid_min = REFFS_FENCE_UID_MIN_DEFAULT;
 	cfg->fence_uid_max = REFFS_FENCE_UID_MAX_DEFAULT;
@@ -124,7 +124,7 @@ void reffs_config_defaults(struct reffs_config *cfg)
 	strncpy(cfg->state_file, "/var/lib/reffs/reffs.state",
 		sizeof(cfg->state_file) - 1);
 
-	/* [cache] — match SB_INODE_LRU_MAX_DEFAULT / SB_DIRENT_LRU_MAX_DEFAULT */
+	/* [cache] -- match SB_INODE_LRU_MAX_DEFAULT / SB_DIRENT_LRU_MAX_DEFAULT */
 	cfg->inode_cache_max = 1024 * 64;
 	cfg->dirent_cache_max = 1024 * 256;
 
@@ -134,7 +134,7 @@ void reffs_config_defaults(struct reffs_config *cfg)
 	cfg->backend_sq_size = 512;
 	cfg->backend_cq_size = 2048;
 
-	/* [[export]] — one permissive default */
+	/* [[export]] -- one permissive default */
 	cfg->nexports = 1;
 	strncpy(cfg->exports[0].path, "/", sizeof(cfg->exports[0].path) - 1);
 	strncpy(cfg->exports[0].clients, "*",

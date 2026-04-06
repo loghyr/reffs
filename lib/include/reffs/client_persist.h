@@ -30,7 +30,7 @@
  *     symlink-swap on every add or remove.
  *
  * All records are fixed-size so files are seekable by index.
- * All fields are host byte order — not portable across machines.
+ * All fields are host byte order -- not portable across machines.
  */
 
 #define CLIENT_IDENTITY_MAGIC 0x434C4944U /* "CLID" */
@@ -42,7 +42,7 @@
 
 /*
  * One record in the `clients` file.
- * Stable identity — written once, never modified.
+ * Stable identity -- written once, never modified.
  */
 struct client_identity_record {
 	uint32_t cir_magic; /* CLIENT_IDENTITY_MAGIC */
@@ -56,7 +56,7 @@ struct client_identity_record {
 
 /*
  * One record in the `client_incarnations` file.
- * Volatile — the whole file is rewritten atomically on each add/remove.
+ * Volatile -- the whole file is rewritten atomically on each add/remove.
  */
 struct client_incarnation_record {
 	uint32_t crc_magic; /* CLIENT_INCARNATION_MAGIC */
@@ -104,7 +104,7 @@ int client_identity_load(const char *state_dir,
  * client_incarnation_load - read all incarnation records into a
  * caller-supplied array.  *count is set to the number of records read.
  * Returns 0 on success, -ENOENT if no incarnations file exists yet
- * (fresh start — not an error).
+ * (fresh start -- not an error).
  */
 int client_incarnation_load(const char *state_dir,
 			    struct client_incarnation_record *recs,

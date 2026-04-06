@@ -42,7 +42,7 @@
 #include "reffs/inode.h"
 #include "reffs/test.h"
 
-/* Shared superblock for all tests in this file — RAM-backed, no teardown
+/* Shared superblock for all tests in this file -- RAM-backed, no teardown
  * sleep needed.  Created once in main(). */
 static struct super_block *g_sb;
 
@@ -57,7 +57,7 @@ static struct inode *alloc_test_inode(void)
 	return inode;
 }
 
-/* ── reffs_lock_find_conflict ────────────────────────────────────────────── */
+/* -- reffs_lock_find_conflict ---------------------------------------------- */
 
 START_TEST(test_conflict_no_locks)
 {
@@ -168,7 +168,7 @@ START_TEST(test_conflict_same_owner_no_conflict)
 	struct test_lock_owner *o = test_owner_alloc(1);
 	ck_assert(o != NULL);
 
-	/* Same owner holds exclusive — should never block itself */
+	/* Same owner holds exclusive -- should never block itself */
 	struct reffs_lock *rl = test_lock_alloc(inode, o, 0, 100, true);
 	ck_assert(rl != NULL);
 	ck_assert_int_eq(reffs_lock_add(inode, rl, NULL), 0);
@@ -245,7 +245,7 @@ START_TEST(test_conflict_lo_match_no_conflict)
 }
 END_TEST
 
-/* ── reffs_lock_add ──────────────────────────────────────────────────────── */
+/* -- reffs_lock_add -------------------------------------------------------- */
 
 START_TEST(test_lock_add_new)
 {
@@ -300,7 +300,7 @@ START_TEST(test_lock_add_relock_upgrades)
 
 	/*
 	 * reffs_lock_add() updates the existing entry in place and returns 0,
-	 * but does NOT free rl2 — the caller retains ownership of the passed
+	 * but does NOT free rl2 -- the caller retains ownership of the passed
 	 * struct on the relock path.  Free it explicitly.
 	 */
 	reffs_lock_free(rl2);
@@ -351,7 +351,7 @@ START_TEST(test_lock_add_host_list)
 }
 END_TEST
 
-/* ── suite ───────────────────────────────────────────────────────────────── */
+/* -- suite ----------------------------------------------------------------- */
 
 Suite *lock_conflict_suite(void)
 {

@@ -38,7 +38,7 @@ START_TEST(test_valid_components)
 	ck_assert_int_eq(utf8string_validate_component(&u, 0), 0);
 	utf8string_free(&u);
 
-	/* valid 2-byte UTF-8: é */
+	/* valid 2-byte UTF-8: e */
 	u = make("\xC3\xA9", 2);
 	ck_assert_int_eq(utf8string_validate_component(&u, 0), 0);
 	utf8string_free(&u);
@@ -143,7 +143,7 @@ START_TEST(test_ebadname_reserved)
 	ck_assert_int_eq(utf8string_validate_component(&u, 0), -EBADNAME);
 	utf8string_free(&u);
 
-	/* "..." is NOT reserved — three dots is a legal filename */
+	/* "..." is NOT reserved -- three dots is a legal filename */
 	cstr_to_utf8string(&u, "...");
 	ck_assert_int_eq(utf8string_validate_component(&u, 0), 0);
 	utf8string_free(&u);

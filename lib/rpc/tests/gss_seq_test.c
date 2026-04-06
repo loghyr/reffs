@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Unit tests for GSS sequence replay detection (RFC 2203 §5.2.1).
+ * Unit tests for GSS sequence replay detection (RFC 2203 S5.2.1).
  *
  * Tests the 128-bit sliding window bitmap in gss_ctx_seq_check()
  * without requiring a Kerberos environment.
@@ -85,7 +85,7 @@ START_TEST(test_below_window_rejected)
 {
 	struct gss_ctx_entry *e = make_test_ctx();
 
-	/* Advance to seq 200 — window covers [73..200]. */
+	/* Advance to seq 200 -- window covers [73..200]. */
 	for (uint32_t i = 1; i <= 200; i++)
 		ck_assert_int_eq(gss_ctx_seq_check(e, i), 0);
 
@@ -109,7 +109,7 @@ START_TEST(test_out_of_order_accepted)
 	ck_assert_int_eq(gss_ctx_seq_check(e, 2), 0); /* within window */
 	ck_assert_int_eq(gss_ctx_seq_check(e, 4), 0); /* within window */
 
-	/* Now they're all seen — replays must fail. */
+	/* Now they're all seen -- replays must fail. */
 	ck_assert_int_ne(gss_ctx_seq_check(e, 3), 0);
 	ck_assert_int_ne(gss_ctx_seq_check(e, 5), 0);
 
@@ -125,7 +125,7 @@ START_TEST(test_large_jump)
 	ck_assert_int_eq(gss_ctx_seq_check(e, 1), 0);
 	ck_assert_int_eq(gss_ctx_seq_check(e, 2), 0);
 
-	/* Jump by 500 — well beyond the 128-bit window. */
+	/* Jump by 500 -- well beyond the 128-bit window. */
 	ck_assert_int_eq(gss_ctx_seq_check(e, 502), 0);
 
 	/* Old seqs are below window. */

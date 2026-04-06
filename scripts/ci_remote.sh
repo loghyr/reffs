@@ -98,7 +98,7 @@ section_start() {
 # Preflight
 # -----------------------------------------------------------------------
 
-echo "=== Remote CI: $HOSTNAME → $SERVER $DATE ==="
+echo "=== Remote CI: $HOSTNAME --> $SERVER $DATE ==="
 echo "  NFSv4.2 mount: $V4_MOUNT"
 echo "  NFSv3 mount:   $V3_MOUNT"
 echo ""
@@ -261,7 +261,7 @@ CI_ELAPSED=$(( CI_END - CI_START ))
 
 echo ""
 echo "========================================"
-echo "=== Remote CI Summary: $HOSTNAME → $SERVER"
+echo "=== Remote CI Summary: $HOSTNAME --> $SERVER"
 echo "=== Started: $DATE  Duration: $((CI_ELAPSED / 60))m $((CI_ELAPSED % 60))s"
 echo "========================================"
 echo "  PASSED:  $PASSED"
@@ -283,7 +283,7 @@ fi
 # -----------------------------------------------------------------------
 
 if [ -n "$EMAIL" ] && command -v msmtp >/dev/null 2>&1; then
-    SUBJECT="CI Remote: $HOSTNAME → $SERVER — $PASSED pass, $FAILED fail"
+    SUBJECT="CI Remote: $HOSTNAME --> $SERVER -- $PASSED pass, $FAILED fail"
     {
         echo "Subject: $SUBJECT"
         echo "From: reffs-ci@$HOSTNAME"

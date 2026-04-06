@@ -14,7 +14,7 @@
  *
  * Written to stable storage (fdatasync) before boot_seq or slot_next
  * are used.  On read, validate magic and version before trusting
- * contents.  All fields are host byte order — this file is not
+ * contents.  All fields are host byte order -- this file is not
  * portable across machines, which is fine for a single-server
  * persistent state record.
  *

@@ -4,7 +4,7 @@
  */
 
 /*
- * fs_test_vfs_ctime_capture.c — before/after ctime capture in VFS ops
+ * fs_test_vfs_ctime_capture.c -- before/after ctime capture in VFS ops
  *
  * Verifies that vfs_mkdir, vfs_symlink, vfs_mknod, vfs_remove, vfs_rmdir,
  * and vfs_rename correctly capture the parent directory's ctime before and

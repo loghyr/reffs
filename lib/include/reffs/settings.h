@@ -26,7 +26,7 @@
 #define REFFS_LAYOUT_WIDTH_DEFAULT 6 /* RS(4,2): 4 data + 2 parity */
 
 /*
- * Server role — maps to EXCHGID4_FLAG_USE_* bits advertised in EXCHANGE_ID.
+ * Server role -- maps to EXCHGID4_FLAG_USE_* bits advertised in EXCHANGE_ID.
  *
  *   standalone  EXCHGID4_FLAG_USE_NON_PNFS
  *   mds         EXCHGID4_FLAG_USE_PNFS_MDS
@@ -57,11 +57,11 @@ enum reffs_backend_type {
 };
 
 /*
- * RPC auth flavor values (RFC 5531 §7.2, RFC 2203 §5).
+ * RPC auth flavor values (RFC 5531 S7.2, RFC 2203 S5).
  * "sys" is AUTH_SYS (formerly AUTH_UNIX); krb5 variants are RPCSEC_GSS.
  *
  * REFFS_AUTH_TLS is a pseudo-flavor: AUTH_SYS over a TLS-protected
- * transport.  Not an RPC wire value — only used in export config to
+ * transport.  Not an RPC wire value -- only used in export config to
  * require TLS.
  */
 enum reffs_auth_flavor {
@@ -86,13 +86,13 @@ struct reffs_export_config {
 };
 
 /*
- * [[data_server]] — MDS-only configuration.
+ * [[data_server]] -- MDS-only configuration.
  *
  * Each entry names a data server, its export path, and the
  * protocol the MDS uses for the control plane and InBand I/O.
  */
 enum reffs_ds_protocol {
-	REFFS_DS_PROTO_NFSV3 = 0, /* default — flex files */
+	REFFS_DS_PROTO_NFSV3 = 0, /* default -- flex files */
 	REFFS_DS_PROTO_NFSV4 = 1, /* file layouts */
 };
 
@@ -144,18 +144,18 @@ struct reffs_config {
 	/* DS backend (combined role only) */
 	char ds_backend_path[REFFS_CONFIG_MAX_PATH];
 
-	/* Fencing — synthetic uid/gid range for data file fencing */
+	/* Fencing -- synthetic uid/gid range for data file fencing */
 	uint32_t fence_uid_min;
 	uint32_t fence_uid_max;
 
 	/*
-	 * Layout width — number of data files per layout.
+	 * Layout width -- number of data files per layout.
 	 * When fewer dstores are available, files are round-robin'd
 	 * across the available set.  Default: 6 (RS 4+2).
 	 */
 	unsigned int layout_width;
 
-	/* [[data_server]] — only used when role = mds or combined */
+	/* [[data_server]] -- only used when role = mds or combined */
 	struct reffs_data_server_config
 		data_servers[REFFS_CONFIG_MAX_DATA_SERVERS];
 	unsigned int ndata_servers;

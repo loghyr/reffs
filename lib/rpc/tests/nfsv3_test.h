@@ -61,7 +61,7 @@ Transmission Control Protocol, Src Port: 54088, Dst Port: 2049, Seq: 1, Ack: 1, 
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ···ASS]
+        [Completeness Flags: ASS]
     [TCP Segment Len: 44]
     Sequence Number: 1    (relative sequence number)
     Sequence Number (raw): 2808140083
@@ -80,7 +80,7 @@ Transmission Control Protocol, Src Port: 54088, Dst Port: 2049, Seq: 1, Ack: 1, 
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 502
     [Calculated window size: 64256]
     [Window size scaling factor: 128]
@@ -197,7 +197,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 54088, Seq: 1, Ack: 45,
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 28]
     Sequence Number: 1    (relative sequence number)
     Sequence Number (raw): 3410093902
@@ -216,7 +216,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 54088, Seq: 1, Ack: 45,
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 509
     [Calculated window size: 65152]
     [Window size scaling factor: 128]
@@ -331,7 +331,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 181, Ack: 85,
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 88]
     Sequence Number: 181    (relative sequence number)
     Sequence Number (raw): 1593290146
@@ -350,7 +350,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 181, Ack: 85,
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 502
     [Calculated window size: 64256]
     [Window size scaling factor: 128]
@@ -485,7 +485,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 85, Ack: 269,
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 84]
     Sequence Number: 85    (relative sequence number)
     Sequence Number (raw): 3027815794
@@ -504,7 +504,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 85, Ack: 269,
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 509
     [Calculated window size: 65152]
     [Window size scaling factor: 128]
@@ -645,7 +645,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 357, Ack: 229
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 88]
     Sequence Number: 357    (relative sequence number)
     Sequence Number (raw): 1593290322
@@ -664,7 +664,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 357, Ack: 229
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 502
     [Calculated window size: 64256]
     [Window size scaling factor: 128]
@@ -799,7 +799,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 229, Ack: 445
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 116]
     Sequence Number: 229    (relative sequence number)
     Sequence Number (raw): 3027815938
@@ -818,7 +818,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 229, Ack: 445
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 509
     [Calculated window size: 65152]
     [Window size scaling factor: 128]
@@ -978,7 +978,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 845, Ack: 877
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 92]
     Sequence Number: 845    (relative sequence number)
     Sequence Number (raw): 1593290810
@@ -997,7 +997,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 845, Ack: 877
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 501
     [Calculated window size: 64128]
     [Window size scaling factor: 128]
@@ -1139,7 +1139,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 877, Ack: 937
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 124]
     Sequence Number: 877    (relative sequence number)
     Sequence Number (raw): 3027816586
@@ -1158,7 +1158,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 877, Ack: 937
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 509
     [Calculated window size: 65152]
     [Window size scaling factor: 128]
@@ -1326,7 +1326,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 937, Ack: 100
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 112]
     Sequence Number: 937    (relative sequence number)
     Sequence Number (raw): 1593290902
@@ -1345,7 +1345,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 937, Ack: 100
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 501
     [Calculated window size: 64128]
     [Window size scaling factor: 128]
@@ -1486,7 +1486,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 1001, Ack: 10
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 304]
     Sequence Number: 1001    (relative sequence number)
     Sequence Number (raw): 3027816710
@@ -1505,7 +1505,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 1001, Ack: 10
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 509
     [Calculated window size: 65152]
     [Window size scaling factor: 128]
@@ -1747,7 +1747,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 5337, Ack: 25
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 92]
     Sequence Number: 5337    (relative sequence number)
     Sequence Number (raw): 1593295302
@@ -1766,7 +1766,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 5337, Ack: 25
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 501
     [Calculated window size: 64128]
     [Window size scaling factor: 128]
@@ -1906,7 +1906,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 2593, Ack: 54
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 124]
     Sequence Number: 2593    (relative sequence number)
     Sequence Number (raw): 3027818302
@@ -1925,7 +1925,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 2593, Ack: 54
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 576
     [Calculated window size: 73728]
     [Window size scaling factor: 128]
@@ -2093,7 +2093,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 5429, Ack: 27
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 100]
     Sequence Number: 5429    (relative sequence number)
     Sequence Number (raw): 1593295394
@@ -2112,7 +2112,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 5429, Ack: 27
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 501
     [Calculated window size: 64128]
     [Window size scaling factor: 128]
@@ -2246,7 +2246,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 2717, Ack: 55
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 116]
     Sequence Number: 2717    (relative sequence number)
     Sequence Number (raw): 3027818426
@@ -2265,7 +2265,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 2717, Ack: 55
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 576
     [Calculated window size: 73728]
     [Window size scaling factor: 128]
@@ -2425,7 +2425,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 5529, Ack: 28
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 88]
     Sequence Number: 5529    (relative sequence number)
     Sequence Number (raw): 1593295494
@@ -2444,7 +2444,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 5529, Ack: 28
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 501
     [Calculated window size: 64128]
     [Window size scaling factor: 128]
@@ -2577,7 +2577,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 2833, Ack: 56
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 116]
     Sequence Number: 2833    (relative sequence number)
     Sequence Number (raw): 3027818542
@@ -2596,7 +2596,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 2833, Ack: 56
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 576
     [Calculated window size: 73728]
     [Window size scaling factor: 128]
@@ -2756,7 +2756,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 5617, Ack: 29
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 112]
     Sequence Number: 5617    (relative sequence number)
     Sequence Number (raw): 1593295582
@@ -2775,7 +2775,7 @@ Transmission Control Protocol, Src Port: 998, Dst Port: 2049, Seq: 5617, Ack: 29
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 501
     [Calculated window size: 64128]
     [Window size scaling factor: 128]
@@ -2914,7 +2914,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 2949, Ack: 57
         .... .1.. = ACK: Present
         .... ..1. = SYN-ACK: Present
         .... ...1 = SYN: Present
-        [Completeness Flags: ··DASS]
+        [Completeness Flags: DASS]
     [TCP Segment Len: 452]
     Sequence Number: 2949    (relative sequence number)
     Sequence Number (raw): 3027818658
@@ -2933,7 +2933,7 @@ Transmission Control Protocol, Src Port: 2049, Dst Port: 998, Seq: 2949, Ack: 57
         .... .... .0.. = Reset: Not set
         .... .... ..0. = Syn: Not set
         .... .... ...0 = Fin: Not set
-        [TCP Flags: ·······AP···]
+        [TCP Flags: AP]
     Window: 576
     [Calculated window size: 73728]
     [Window size scaling factor: 128]

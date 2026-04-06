@@ -376,7 +376,7 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 }
 
 /*
- * Recursive mkdir — create all intermediate directories as needed.
+ * Recursive mkdir -- create all intermediate directories as needed.
  * Equivalent to `mkdir -p`.  Returns 0 on success, -errno on failure.
  * Existing directories along the path are silently skipped.
  */

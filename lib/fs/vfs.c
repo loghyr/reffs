@@ -133,9 +133,9 @@ int vfs_is_subdir(struct inode *child, struct inode *maybe_parent)
 
 	/*
 	 * Walk the parent chain via weak pointers under rcu_read_lock.
-	 * Each hop goes: inode → i_dirent → rd_parent → rd_inode.
+	 * Each hop goes: inode --> i_dirent --> rd_parent --> rd_inode.
 	 * All three pointers are RCU-protected and may be NULLed by
-	 * concurrent eviction or removal — rcu_dereference ensures
+	 * concurrent eviction or removal -- rcu_dereference ensures
 	 * we see either a valid pointer or NULL, never a torn value.
 	 */
 	rcu_read_lock();
@@ -355,7 +355,7 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 	if (rd_dst) {
 		inode_dst_file = dirent_ensure_inode(rd_dst);
 		if (!inode_dst_file) {
-			/* dst dirent exists but inode evicted — treat as gone */
+			/* dst dirent exists but inode evicted -- treat as gone */
 			dirent_put(rd_dst);
 			rd_dst = NULL;
 		}
@@ -368,7 +368,7 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 
 	/*
 	 * Hard link case: different dirents pointing to the same inode.
-	 * POSIX says this is a no-op — the directory must not be modified.
+	 * POSIX says this is a no-op -- the directory must not be modified.
 	 */
 	if (rd_dst && inode_src_file == inode_dst_file) {
 		ret = 0;
@@ -470,7 +470,7 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 	/*
 	 * Sync directory entries to disk so that the on-disk .dir file
 	 * reflects the rename.  Without this, a subsequent LOOKUP through
-	 * the slow path (dirent_load_child_by_name → dir_find_entry_by_name)
+	 * the slow path (dirent_load_child_by_name --> dir_find_entry_by_name)
 	 * reads stale on-disk entries and finds the old name.
 	 */
 	dirent_sync_to_disk(de_old_dir);
@@ -487,7 +487,7 @@ out:
 
 /*
  * Capture the directory ctime after a mutation.  The nsec bump hack
- * is removed — NFSv4 change_info now uses the monotonic i_changeid
+ * is removed -- NFSv4 change_info now uses the monotonic i_changeid
  * counter (dir.c) instead of ctime.  NFSv3 WCC data uses ctime
  * directly and doesn't need the bump.
  */
@@ -648,7 +648,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 		}
 	}
 
-	/* Handle file size changes — requires write permission. */
+	/* Handle file size changes -- requires write permission. */
 	if (sattr->size_set) {
 		if (S_ISDIR(inode->i_mode)) {
 			ret = -EISDIR;
@@ -806,7 +806,7 @@ static int vfs_exclusive_create_locked(struct inode *dir, const char *name,
 			dirent_put(rd);
 			return match ? 0 : -EEXIST;
 		}
-		/* inode evicted — treat as no verifier match */
+		/* inode evicted -- treat as no verifier match */
 		dirent_put(rd);
 		return -EEXIST;
 	}
@@ -967,7 +967,7 @@ int vfs_link(struct inode *inode, struct inode *dir, const char *name,
 
 	/*
 	 * Lock ordering: attr_mutex low-ino first, then rd_rwlock.
-	 * inode is a regular file — passing it to vfs_lock_dirs would call
+	 * inode is a regular file -- passing it to vfs_lock_dirs would call
 	 * vfs_dir_dirent() on it, returning the file's own i_dirent and
 	 * write-locking rd_rwlock on a non-directory dirent, which is wrong
 	 * and deadlocks with concurrent readers.  Open-code the locking:

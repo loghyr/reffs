@@ -5,11 +5,11 @@
  * Per-op NFS4 statistics, backend I/O statistics, and callback statistics.
  *
  * Three scopes are tracked for NFS4 ops:
- *   - Global  (server_state.ss_nfs4_op_stats[])  — probe1 source
+ *   - Global  (server_state.ss_nfs4_op_stats[])  -- probe1 source
  *   - Per-superblock (super_block.sb_nfs4_op_stats[])
- *   - Per-client (nfs4_client.n4c_op_stats[])    — ephemeral, lost on disconnect
+ *   - Per-client (nfs4_client.n4c_op_stats[])    -- ephemeral, lost on disconnect
  *
- * No per-scope HDR histograms — too costly at per-client/per-sb granularity.
+ * No per-scope HDR histograms -- too costly at per-client/per-sb granularity.
  * The existing COMPOUND-level rpc_stats histogram covers latency distribution.
  */
 
@@ -20,7 +20,7 @@
 #include <stdint.h>
 
 /*
- * REFFS_NFS4_OP_MAX — upper bound on NFS4 op codes, kept as a plain
+ * REFFS_NFS4_OP_MAX -- upper bound on NFS4 op codes, kept as a plain
  * constant so this header is usable by files that cannot include the
  * generated nfsv42_xdr.h (e.g. backends, utils).
  *
@@ -37,8 +37,8 @@
 struct reffs_op_stats {
 	_Atomic uint64_t os_calls;
 	_Atomic uint64_t os_errors; /* results != NFS4_OK */
-	_Atomic uint64_t os_bytes_in; /* payload in  (WRITE, SETXATTR, …) */
-	_Atomic uint64_t os_bytes_out; /* payload out (READ, GETATTR, …) */
+	_Atomic uint64_t os_bytes_in; /* payload in  (WRITE, SETXATTR, ...) */
+	_Atomic uint64_t os_bytes_out; /* payload out (READ, GETATTR, ...) */
 	_Atomic uint64_t os_duration_total; /* nanoseconds, cumulative */
 	_Atomic uint64_t os_duration_max; /* nanoseconds, high-water */
 };

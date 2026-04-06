@@ -5,7 +5,7 @@
  * TLS client library for NFS tools.
  *
  * Provides STARTTLS (RFC 9289), direct TLS, RPC framing over TLS,
- * and TLS handshake tracing.  No TIRPC dependency — hand-rolled
+ * and TLS handshake tracing.  No TIRPC dependency -- hand-rolled
  * RPC record marking for standalone tools.
  */
 
@@ -54,7 +54,7 @@ SSL_CTX *tls_client_ctx_create(const struct tls_client_config *cfg);
 SSL *tls_starttls(int fd, SSL_CTX *ctx, int verbose);
 
 /*
- * Direct TLS connection — SSL_connect immediately on the TCP socket.
+ * Direct TLS connection -- SSL_connect immediately on the TCP socket.
  * No STARTTLS negotiation.  Used when the server expects TLS from
  * the start (like HTTPS), or for "hot reconnect" testing.
  *

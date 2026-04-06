@@ -131,7 +131,7 @@ static void dirent_release(struct urcu_ref *ref)
 	 * Null the inode's back-pointer to this dirent BEFORE the RCU free.
 	 * Without this, inode_release (which runs via call_rcu on the inode)
 	 * would follow i_dirent to this freed dirent and write
-	 * rd_inode = NULL to whatever now occupies this memory — stomping
+	 * rd_inode = NULL to whatever now occupies this memory -- stomping
 	 * 8 bytes at offset 192 (the rd_inode field offset) of the reused
 	 * allocation.  When a compound is allocated at the same address,
 	 * this zeros compound->c_server_state (also at offset 192).
@@ -149,7 +149,7 @@ static void dirent_release(struct urcu_ref *ref)
 	 *
 	 * We must NOT call dirent_parent_release() here because that function
 	 * ends with dirent_put(rd), which would decrement rd_ref from 0 to -1
-	 * and re-enter dirent_release — a double-free.
+	 * and re-enter dirent_release -- a double-free.
 	 *
 	 * Instead we do the minimal inline cleanup: remove from the siblings
 	 * list and drop the parent ref.  We do NOT call dirent_put(rd) because
@@ -160,7 +160,7 @@ static void dirent_release(struct urcu_ref *ref)
 	if (parent) {
 		cds_list_del_rcu(&rd->rd_siblings);
 		dirent_put(parent);
-		/* NOTE: dirent_put(rd) is deliberately omitted — rd_ref is already 0. */
+		/* NOTE: dirent_put(rd) is deliberately omitted -- rd_ref is already 0. */
 	}
 	rcu_read_unlock();
 
@@ -332,7 +332,7 @@ void dirent_parent_attach(struct reffs_dirent *rd, struct reffs_dirent *parent,
 	rd->rd_sb = parent->rd_sb; /* inherit sb pointer from parent */
 
 	/*
-	 * Read parent->rd_inode under RCU — weak pointer that can be
+	 * Read parent->rd_inode under RCU -- weak pointer that can be
 	 * NULLed by inode eviction.  If NULL, skip nlink increment;
 	 * the parent inode will pick up the correct nlink on reload.
 	 */
@@ -402,7 +402,7 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 		return;
 
 	/*
-	 * nlink accounting.  Read parent->rd_inode under RCU — it is a
+	 * nlink accounting.  Read parent->rd_inode under RCU -- it is a
 	 * weak pointer that can be NULLed by inode eviction at any time.
 	 * If NULL, skip nlink; the parent is being evicted and nlink
 	 * will be reconstructed on recovery/reload.
@@ -458,7 +458,7 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 				memory_order_relaxed));
 		}
 
-		/* Disk I/O — outside RCU. */
+		/* Disk I/O -- outside RCU. */
 		if (rla != reffs_life_action_load &&
 		    rla != reffs_life_action_unload)
 			inode_sync_to_disk(rd->rd_inode);

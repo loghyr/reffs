@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Dstore control-plane operations — vtable interface.
+ * Dstore control-plane operations -- vtable interface.
  *
  * Each dstore carries a pointer to a dstore_ops vtable.  Remote
  * dstores use the NFSv3 RPC implementation; local dstores (same
@@ -59,14 +59,14 @@ struct dstore_ops {
 		       struct layout_data_file *ldf);
 };
 
-/* Remote (NFSv3 RPC) vtable — defined in lib/nfs4/dstore/dstore_ops_nfsv3.c */
+/* Remote (NFSv3 RPC) vtable -- defined in lib/nfs4/dstore/dstore_ops_nfsv3.c */
 extern const struct dstore_ops dstore_ops_nfsv3;
 
-/* Local (VFS direct) vtable — defined in lib/nfs4/dstore/dstore_ops_local.c */
+/* Local (VFS direct) vtable -- defined in lib/nfs4/dstore/dstore_ops_local.c */
 extern const struct dstore_ops dstore_ops_local;
 
 /* ------------------------------------------------------------------ */
-/* Dispatch — callers use these                                        */
+/* Dispatch -- callers use these                                        */
 /* ------------------------------------------------------------------ */
 
 static inline int dstore_data_file_create(struct dstore *ds,

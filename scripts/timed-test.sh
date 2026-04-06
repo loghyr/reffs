@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Wrapper for Automake LOG_COMPILER — runs a test and appends its
+# Wrapper for Automake LOG_COMPILER -- runs a test and appends its
 # wall-clock duration to a timing summary file.  Tests exceeding
 # REFFS_TEST_MAX_MS (default 2000ms) are flagged as SLOW.
 #

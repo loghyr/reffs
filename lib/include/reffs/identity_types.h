@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * reffs_id — structured 64-bit identity type.
+ * reffs_id -- structured 64-bit identity type.
  *
  * Encodes identity type, domain index, and local ID in a single
  * uint64_t.  Stored on inodes, in ACLs, and in delegation/layout

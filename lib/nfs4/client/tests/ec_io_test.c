@@ -74,7 +74,7 @@ END_TEST
 
 START_TEST(test_pad_one_byte_over)
 {
-	/* One byte over a stripe boundary → two stripes. */
+	/* One byte over a stripe boundary --> two stripes. */
 	size_t one_stripe = 4 * EC_SHARD_SIZE;
 	size_t expected = 2 * one_stripe;
 
@@ -85,13 +85,13 @@ END_TEST
 
 START_TEST(test_pad_various_k)
 {
-	/* k=2: stripe_data = 2*64K = 128K. 100K → 128K. */
+	/* k=2: stripe_data = 2*64K = 128K. 100K --> 128K. */
 	ck_assert_uint_eq(stripe_padded_len(100 * 1024, 2), 2 * EC_SHARD_SIZE);
 
-	/* k=8: stripe_data = 8*64K = 512K. 1 byte → 512K. */
+	/* k=8: stripe_data = 8*64K = 512K. 1 byte --> 512K. */
 	ck_assert_uint_eq(stripe_padded_len(1, 8), 8 * EC_SHARD_SIZE);
 
-	/* k=1: stripe_data = 64K. 64K+1 → 128K. */
+	/* k=1: stripe_data = 64K. 64K+1 --> 128K. */
 	ck_assert_uint_eq(stripe_padded_len(EC_SHARD_SIZE + 1, 1),
 			  2 * EC_SHARD_SIZE);
 }
@@ -105,7 +105,7 @@ START_TEST(test_pad_multiple_stripes)
 	ck_assert_uint_eq(stripe_padded_len(three_stripes, 4), three_stripes);
 	ck_assert_uint_eq(stripe_count(three_stripes, 4), 3);
 
-	/* 2 stripes + 1 byte → 3 stripes. */
+	/* 2 stripes + 1 byte --> 3 stripes. */
 	size_t two_plus_one = 2 * 4 * EC_SHARD_SIZE + 1;
 
 	ck_assert_uint_eq(stripe_padded_len(two_plus_one, 4), three_stripes);

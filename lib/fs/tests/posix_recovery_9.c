@@ -17,7 +17,7 @@
  * inode is not linked into any directory, so traversal alone would miss it.
  *
  * Related issue (reffs_issues.md):
- *   POSIX Backend — "sb_next_ino recovery depends on complete traversal":
+ *   POSIX Backend -- "sb_next_ino recovery depends on complete traversal":
  *   fix is to independently scan all ino_*.meta files in sb_N/ at startup.
  */
 

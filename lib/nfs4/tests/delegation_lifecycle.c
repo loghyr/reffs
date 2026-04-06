@@ -11,7 +11,7 @@
  *   5. XOR cleanup: DELEGRETURN frees the internal open_stateid
  *      when ds_open is set (RFC 9754 XOR mode).
  *   6. Delegation survives CLOSE: closing the open stateid must NOT
- *      affect the delegation (RFC 5661 §10.4).
+ *      affect the delegation (RFC 5661 S10.4).
  */
 
 #ifdef HAVE_CONFIG_H
@@ -129,7 +129,7 @@ START_TEST(test_deleg_alloc_free)
 	/* Clean up: unhash and drop refs */
 	stateid_inode_unhash(stid);
 	stateid_client_unhash(stid);
-	stateid_put(stid); /* state ref → freed via RCU */
+	stateid_put(stid); /* state ref --> freed via RCU */
 }
 END_TEST
 
@@ -215,7 +215,7 @@ START_TEST(test_deleg_find)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* 5. Delegation survives open stateid removal (RFC 5661 §10.4)        */
+/* 5. Delegation survives open stateid removal (RFC 5661 S10.4)        */
 /*                                                                     */
 /* A file is open as long as either an open stateid or a delegation    */
 /* stateid is held.  Removing the open stateid must leave the          */
@@ -241,7 +241,7 @@ START_TEST(test_deleg_survives_open_close)
 	/* Simulate CLOSE: remove the open stateid */
 	stateid_inode_unhash(&os->os_stid);
 	stateid_client_unhash(&os->os_stid);
-	stateid_put(&os->os_stid); /* state ref → freed */
+	stateid_put(&os->os_stid); /* state ref --> freed */
 
 	/* The delegation must still be findable */
 	struct stateid *found = stateid_find(g_inode, deleg_id);
@@ -288,7 +288,7 @@ START_TEST(test_deleg_xor_open_linked)
 	ds->ds_open = NULL;
 	stateid_inode_unhash(&xor_os->os_stid);
 	stateid_client_unhash(&xor_os->os_stid);
-	stateid_put(&xor_os->os_stid); /* state ref → freed */
+	stateid_put(&xor_os->os_stid); /* state ref --> freed */
 
 	/* ds_open is now NULL */
 	ck_assert_ptr_null(ds->ds_open);

@@ -4,7 +4,7 @@
  */
 
 /*
- * utf8string_id.c — tests for utf8string uid/gid conversion.
+ * utf8string_id.c -- tests for utf8string uid/gid conversion.
  *
  * Tests:
  *   utf8string_from_uid / utf8string_from_gid
@@ -15,7 +15,7 @@
  *   - leading zero on multi-digit string
  *   - non-digit character
  *   - numeric overflow
- *   - round-trip: from_uid(n) → to_uid == n
+ *   - round-trip: from_uid(n) --> to_uid == n
  */
 
 #ifdef HAVE_CONFIG_H
@@ -90,7 +90,7 @@ START_TEST(test_from_gid_nonzero)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* utf8string_to_uid — success cases                                  */
+/* utf8string_to_uid -- success cases                                  */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_to_uid_zero)
@@ -127,7 +127,7 @@ START_TEST(test_to_uid_single_digit)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* utf8string_to_uid — error cases                                    */
+/* utf8string_to_uid -- error cases                                    */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_to_uid_null_string)
@@ -187,7 +187,7 @@ START_TEST(test_to_uid_overflow)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* utf8string_to_gid — error cases (same implementation, spot-check)  */
+/* utf8string_to_gid -- error cases (same implementation, spot-check)  */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_to_gid_leading_zero)
@@ -211,7 +211,7 @@ START_TEST(test_to_gid_overflow)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Round-trip: from_uid(n) → to_uid == n                              */
+/* Round-trip: from_uid(n) --> to_uid == n                              */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_roundtrip_uid_zero)

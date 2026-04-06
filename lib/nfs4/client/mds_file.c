@@ -55,7 +55,7 @@ int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf)
 		return -ENOSPC;
 	}
 
-	/* Op 2: OPEN (CLAIM_NULL — open by name relative to current FH) */
+	/* Op 2: OPEN (CLAIM_NULL -- open by name relative to current FH) */
 	slot = mds_compound_add_op(&mc, OP_OPEN);
 	if (!slot) {
 		mds_compound_fini(&mc);
@@ -77,7 +77,7 @@ int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf)
 	/* Create if not exists, open if exists. */
 	open_args->openhow.opentype = OPEN4_CREATE;
 	open_args->openhow.openflag4_u.how.mode = UNCHECKED4;
-	/* No initial attributes — let the server use defaults. */
+	/* No initial attributes -- let the server use defaults. */
 	memset(&open_args->openhow.openflag4_u.how.createhow4_u.createattrs, 0,
 	       sizeof(fattr4));
 
@@ -85,7 +85,7 @@ int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf)
 	open_args->claim.open_claim4_u.file.utf8string_val = (char *)path;
 	open_args->claim.open_claim4_u.file.utf8string_len = strlen(path);
 
-	/* Op 3: GETFH — get the filehandle for the opened file. */
+	/* Op 3: GETFH -- get the filehandle for the opened file. */
 	slot = mds_compound_add_op(&mc, OP_GETFH);
 	if (!slot) {
 		mds_compound_fini(&mc);
@@ -154,7 +154,7 @@ int mds_file_close(struct mds_session *ms, struct mds_file *mf)
 		return ret;
 	}
 
-	/* PUTFH — set current FH to the file. */
+	/* PUTFH -- set current FH to the file. */
 	slot = mds_compound_add_op(&mc, OP_PUTFH);
 	if (!slot) {
 		mds_compound_fini(&mc);
@@ -184,7 +184,7 @@ int mds_file_close(struct mds_session *ms, struct mds_file *mf)
 }
 
 /* ------------------------------------------------------------------ */
-/* WRITE — inband MDS write (no layouts)                               */
+/* WRITE -- inband MDS write (no layouts)                               */
 /* ------------------------------------------------------------------ */
 
 int mds_file_write(struct mds_session *ms, struct mds_file *mf,
@@ -243,7 +243,7 @@ int mds_file_write(struct mds_session *ms, struct mds_file *mf,
 }
 
 /* ------------------------------------------------------------------ */
-/* READ — inband MDS read (no layouts)                                 */
+/* READ -- inband MDS read (no layouts)                                 */
 /* ------------------------------------------------------------------ */
 
 int mds_file_read(struct mds_session *ms, struct mds_file *mf, uint8_t *buf,
@@ -309,7 +309,7 @@ int mds_file_read(struct mds_session *ms, struct mds_file *mf, uint8_t *buf,
 }
 
 /* ------------------------------------------------------------------ */
-/* REMOVE — delete a file by name from the root directory              */
+/* REMOVE -- delete a file by name from the root directory              */
 /* ------------------------------------------------------------------ */
 
 int mds_file_remove(struct mds_session *ms, const char *name)
@@ -363,7 +363,7 @@ int mds_file_remove(struct mds_session *ms, const char *name)
 }
 
 /* ------------------------------------------------------------------ */
-/* GETATTR — retrieve owner and owner_group strings                    */
+/* GETATTR -- retrieve owner and owner_group strings                    */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -497,7 +497,7 @@ int mds_file_getattr(struct mds_session *ms, struct mds_file *mf, char *owner,
 }
 
 /* ------------------------------------------------------------------ */
-/* SETATTR — set owner and/or owner_group strings                      */
+/* SETATTR -- set owner and/or owner_group strings                      */
 /* ------------------------------------------------------------------ */
 
 int mds_file_setattr_owner(struct mds_session *ms, struct mds_file *mf,

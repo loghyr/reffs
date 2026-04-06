@@ -52,6 +52,22 @@ pip install reply-xdr@git+https://github.com/loghyr/reply.git xdrlib3
 
 ## Style
 
+### ASCII only — no Unicode in source or commits
+
+All source files (`.c`, `.h`, `.sh`, `.py`, `.toml`, `.x`),
+comments, string literals, and **commit messages** must be
+pure ASCII (bytes 0x00–0x7F).  No em-dashes (—), curly quotes,
+non-breaking spaces, or other Unicode characters.
+
+Kernel developers will dismiss code with Unicode violations.
+Use `--` for dashes, straight quotes, and `>=`/`<=` for
+comparison operators in prose.
+
+```bash
+# Check for non-ASCII in staged files:
+git diff --cached --name-only | xargs grep -Pn '[^\x00-\x7F]'
+```
+
 ### Always run fix-style before committing
 ```bash
 make -f Makefile.reffs fix-style

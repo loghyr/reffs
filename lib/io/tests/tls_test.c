@@ -128,7 +128,7 @@ static void tls_setup(void)
 
 	/*
 	 * Reset the global SSL context so each test starts clean.
-	 * io_tls_init_server_context is idempotent — it checks if
+	 * io_tls_init_server_context is idempotent -- it checks if
 	 * reffs_server_ssl_ctx is already set.  We need to force
 	 * re-initialization by clearing it.
 	 */
@@ -245,7 +245,7 @@ START_TEST(test_tls_handshake_loopback)
 	BIO *s_wbio = BIO_new(BIO_s_mem());
 	SSL_set_bio(server_ssl, s_rbio, s_wbio);
 
-	/* Client side — create a separate client context */
+	/* Client side -- create a separate client context */
 	SSL_CTX *client_ctx = SSL_CTX_new(TLS_client_method());
 	ck_assert_ptr_nonnull(client_ctx);
 	/* Don't verify server cert (self-signed) */
@@ -270,7 +270,7 @@ START_TEST(test_tls_handshake_loopback)
 
 		/* Client step */
 		int cr = SSL_do_handshake(client_ssl);
-		/* Shuttle client output → server input */
+		/* Shuttle client output --> server input */
 		char buf[16384];
 		int pending = BIO_pending(c_wbio);
 		if (pending > 0) {
@@ -281,7 +281,7 @@ START_TEST(test_tls_handshake_loopback)
 
 		/* Server step */
 		int sr = SSL_do_handshake(server_ssl);
-		/* Shuttle server output → client input */
+		/* Shuttle server output --> client input */
 		pending = BIO_pending(s_wbio);
 		if (pending > 0) {
 			int n = BIO_read(s_wbio, buf, sizeof(buf));
@@ -307,7 +307,7 @@ END_TEST
 START_TEST(test_tls_data_roundtrip)
 {
 	/*
-	 * After handshake, send data from client → server and back.
+	 * After handshake, send data from client --> server and back.
 	 */
 	int ret = io_tls_init_server_context(cert_path, key_path, NULL);
 	ck_assert_int_eq(ret, 0);

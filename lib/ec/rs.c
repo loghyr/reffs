@@ -71,7 +71,7 @@ static struct gf_matrix *build_encoding_matrix(int k, int m)
 	if (gf_matrix_invert(top, top_inv) < 0)
 		goto fail;
 
-	/* Multiply: enc = vand * top_inv → identity on top. */
+	/* Multiply: enc = vand * top_inv --> identity on top. */
 	enc = gf_matrix_create(k + m, k);
 	if (!enc)
 		goto fail;

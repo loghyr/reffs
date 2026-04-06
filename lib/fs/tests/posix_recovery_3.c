@@ -48,7 +48,7 @@ START_TEST(test_nlink_restoration)
 	ck_assert(inode);
 
 	/*
-	 * Verification: nlink must be exactly 2 — the value from the .meta
+	 * Verification: nlink must be exactly 2 -- the value from the .meta
 	 * file.  Two failure modes are possible:
 	 *
 	 * (a) If the dirent_parent_attach() load-path guard is absent,
@@ -68,7 +68,7 @@ START_TEST(test_nlink_restoration)
 	/*
 	 * Additionally verify that the second call to load_inode_attributes
 	 * (for the "name2" dirent pointing at the same ino 2) did not
-	 * allocate a second data_block — there is no .dat file, so i_db
+	 * allocate a second data_block -- there is no .dat file, so i_db
 	 * must be NULL.
 	 */
 	ck_assert(inode->i_db == NULL);

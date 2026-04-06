@@ -120,7 +120,7 @@ uint32_t nfs4_op_lock(struct compound *compound)
 	if (args->locker.new_lock_owner) {
 		open_to_lock_owner4 *oto = &args->locker.locker4_u.open_owner;
 
-		/* Resolve open_stateid — may be current stateid. */
+		/* Resolve open_stateid -- may be current stateid. */
 		const stateid4 *lock_wire = &oto->open_stateid;
 		stateid4 lock_resolved;
 
@@ -193,7 +193,7 @@ uint32_t nfs4_op_lock(struct compound *compound)
 		lock_owner_get(&lo->lo_base);
 
 		/*
-		 * RFC 8881 §8.2.2: in NFSv4.1+, lock_seqid is always 0
+		 * RFC 8881 S8.2.2: in NFSv4.1+, lock_seqid is always 0
 		 * and MUST be ignored by the server.  Do not validate it.
 		 */
 	}
@@ -386,7 +386,7 @@ uint32_t nfs4_op_locku(struct compound *compound)
 	struct lock_stateid *ls = stid_to_lock(stid);
 
 	/* Verify stateid seqid (args->seqid is the lock-owner seqid, which
-	 * NFSv4.1 clients always set to zero per RFC 5661 §8.2.2) */
+	 * NFSv4.1 clients always set to zero per RFC 5661 S8.2.2) */
 	uint32_t cur_seqid = __atomic_load_n(&stid->s_seqid, __ATOMIC_RELAXED);
 	if (seqid != 0 && seqid != cur_seqid) {
 		stateid_put(stid);
@@ -437,7 +437,7 @@ uint32_t nfs4_op_free_stateid(struct compound *compound)
 	}
 
 	/*
-	 * RFC 8881 §18.38.3: FREE_STATEID on an open stateid while
+	 * RFC 8881 S18.38.3: FREE_STATEID on an open stateid while
 	 * the share reservation is still active returns LOCKS_HELD.
 	 * The client must CLOSE the file before freeing the stateid.
 	 */
@@ -448,7 +448,7 @@ uint32_t nfs4_op_free_stateid(struct compound *compound)
 	}
 
 	/*
-	 * Unhash atomically — if another FREE_STATEID already unhashed
+	 * Unhash atomically -- if another FREE_STATEID already unhashed
 	 * this stateid, bail out to prevent refcount underflow.
 	 */
 	if (!stateid_inode_unhash(stid)) {
@@ -482,9 +482,9 @@ uint32_t nfs4_op_release_lockowner(struct compound *compound)
 				     lo_base.lo_list) {
 		if (nfs4_lock_owner_match(&lo->lo_base, args)) {
 			/*
-			 * RFC 8881 §18.22.3: LOCKS_HELD if this
+			 * RFC 8881 S18.22.3: LOCKS_HELD if this
 			 * owner has any locks on any inode.  Check
-			 * by looking for the owner's refcount — if
+			 * by looking for the owner's refcount -- if
 			 * it's > 1 (the list ref), locks exist.
 			 */
 			if (lo->lo_base.lo_ref.refcount > 1) {
@@ -510,7 +510,7 @@ uint32_t nfs4_op_test_stateid(struct compound *compound)
 	nfsstat4 *status = &res->tsr_status;
 
 	/*
-	 * RFC 8881 §18.48: validate each stateid.  Look up by
+	 * RFC 8881 S18.48: validate each stateid.  Look up by
 	 * stateid id in the current filehandle's inode.  Return
 	 * NFS4ERR_BAD_STATEID for unknown stateids.
 	 */
@@ -542,7 +542,7 @@ uint32_t nfs4_op_test_stateid(struct compound *compound)
 		}
 
 		/*
-		 * Look up by clientid — check if the client that owns
+		 * Look up by clientid -- check if the client that owns
 		 * this stateid is still active.  A full per-inode lookup
 		 * would require a global stateid index; checking the
 		 * client is sufficient for TEST_STATEID's purpose of
@@ -563,7 +563,7 @@ uint32_t nfs4_op_test_stateid(struct compound *compound)
 			}
 		}
 
-		/* Stateid looks plausible — report OK. */
+		/* Stateid looks plausible -- report OK. */
 		res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
 			.tsr_status_codes_val[i] = NFS4_OK;
 	}

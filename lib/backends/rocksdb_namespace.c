@@ -2,17 +2,17 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * RocksDB namespace database — server-wide persistence.
+ * RocksDB namespace database -- server-wide persistence.
  *
  * Replaces the flatfile persistence functions (server_state,
  * client identity/incarnation, sb registry) with a single RocksDB
  * database at <state_dir>/namespace.rocksdb/.
  *
  * Column families:
- *   default      — server_state, sb_registry_header
- *   registry     — per-sb registry entries keyed by BE64(sb_id)
- *   clients      — client identity records keyed by BE32(slot)
- *   incarnations — client incarnation records keyed by BE32(slot)
+ *   default      -- server_state, sb_registry_header
+ *   registry     -- per-sb registry entries keyed by BE64(sb_id)
+ *   clients      -- client identity records keyed by BE32(slot)
+ *   incarnations -- client incarnation records keyed by BE32(slot)
  */
 
 #ifdef HAVE_CONFIG_H
@@ -203,7 +203,7 @@ static uint64_t rns_registry_alloc_id(void *ctx)
 	} else {
 		if (val)
 			rocksdb_free(val);
-		/* Fresh — initialize */
+		/* Fresh -- initialize */
 		hdr.srh_magic = SB_REGISTRY_MAGIC;
 		hdr.srh_version = SB_REGISTRY_VERSION;
 		hdr.srh_count = 0;

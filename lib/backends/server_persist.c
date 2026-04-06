@@ -99,7 +99,7 @@ int server_persist_save(const char *dir,
 	/*
          * Write to a temp file alongside the target, then rename into
          * place.  This avoids leaving a half-written record if we crash
-         * mid-write — rename is atomic on POSIX for same-filesystem ops.
+         * mid-write -- rename is atomic on POSIX for same-filesystem ops.
          */
 	if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) {
 		LOG("server_persist_save: path too long: %s", path);

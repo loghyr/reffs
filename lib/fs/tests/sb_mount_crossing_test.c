@@ -7,7 +7,7 @@
  * Tests for LOOKUP/LOOKUPP crossing sb boundaries, READDIR at
  * mount points, path protection, and cross-export XDEV guards.
  *
- * These tests use the VFS/dirent layer directly — they don't
+ * These tests use the VFS/dirent layer directly -- they don't
  * require NFSv4 compound processing.
  *
  * Intent: each test creates a root sb (from fs_test_setup) and
@@ -200,7 +200,7 @@ START_TEST(test_rename_across_sb_xdev)
 
 	/* NOT_NOW_BROWN_COW: need to create files in both sbs and
 	 * attempt a rename across them.  The VFS vfs_rename already
-	 * checks old_dir->i_sb != new_dir->i_sb → -EXDEV.  This test
+	 * checks old_dir->i_sb != new_dir->i_sb --> -EXDEV.  This test
 	 * validates that mounted sbs have different i_sb pointers. */
 	ck_assert(root != child);
 
@@ -211,7 +211,7 @@ START_TEST(test_rename_across_sb_xdev)
 END_TEST
 
 /*
- * Intent: same as rename — link across sbs returns EXDEV.
+ * Intent: same as rename -- link across sbs returns EXDEV.
  */
 START_TEST(test_link_across_sb_xdev)
 {

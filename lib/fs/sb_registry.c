@@ -214,7 +214,7 @@ int sb_registry_load(const char *state_dir)
 		return 0;
 	}
 
-	/* Sanity cap — no deployment has thousands of exports. */
+	/* Sanity cap -- no deployment has thousands of exports. */
 	if (hdr.srh_count > 4096) {
 		LOG("sb_registry_load: unreasonable count %u", hdr.srh_count);
 		close(fd);
@@ -408,7 +408,7 @@ int sb_registry_detect_orphans(const char *state_dir)
 
 		if (!found) {
 			LOG("sb_registry: orphan directory %s/%s "
-			    "(not in registry — may be stale or "
+			    "(not in registry -- may be stale or "
 			    "referral source, not deleting)",
 			    state_dir, de->d_name);
 			orphan_count++;

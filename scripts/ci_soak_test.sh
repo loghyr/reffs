@@ -99,7 +99,7 @@ elif [ -d /Volumes/reffs_data ]; then
 	mkdir -p "$WORK_DIR"
 else
 	WORK_DIR=/tmp
-	info "WARNING: no dedicated work dir found — using /tmp (may OOM on tmpfs)"
+	info "WARNING: no dedicated work dir found -- using /tmp (may OOM on tmpfs)"
 	info "  Set REFFS_WORK_DIR or create /reffs_data to use a real filesystem"
 fi
 info "Work directory: $WORK_DIR"
@@ -163,7 +163,7 @@ check_resources() {
 		local mem_gb=$(( mem_kb / 1048576 ))
 		info "Container memory limit: ${mem_kb}KB (~${mem_gb}GB)"
 		if [ "$mem_kb" -lt 3145728 ]; then  # 3GB
-			info "WARNING: Container memory < 3GB — soak may be OOM-killed"
+			info "WARNING: Container memory < 3GB -- soak may be OOM-killed"
 			info "  Increase Docker Desktop memory or reduce soak load"
 		fi
 	else
@@ -375,7 +375,7 @@ fi
 start_server || exit 1
 mount_nfs || { cat "$LOG"; die "initial mount failed"; exit 1; }
 
-# Start workloads BEFORE capturing baseline — the baseline should
+# Start workloads BEFORE capturing baseline -- the baseline should
 # reflect the server under load, not the cold-start empty state.
 # A cold-start baseline (52MB) vs under-load final (1.2GB) always
 # fails the 2x check.
@@ -433,7 +433,7 @@ while true; do
 			exit 1
 		fi
 
-		# Rotate log — keep previous run's output for diagnostics
+		# Rotate log -- keep previous run's output for diagnostics
 		echo "=== Restart #$RESTART_COUNT at $(date) ===" >> "$LOG"
 
 		start_server || exit 1
@@ -454,7 +454,7 @@ while true; do
 		info "  rpcinfo: $(rpcinfo -p 127.0.0.1 2>/dev/null | grep nfs | head -2 || echo unavailable)"
 		info "  Mount point: $MOUNT"
 
-		# Re-mount — must succeed within 30s (recovery check)
+		# Re-mount -- must succeed within 30s (recovery check)
 		mount_ok=false
 		for try in $(seq 1 6); do
 			info "  Mount attempt $try/6..."
@@ -556,5 +556,5 @@ if [ "$FAILED" = "true" ]; then
 	exit 1
 fi
 
-SOAK_POSTMORTEM_DONE=true  # clean exit — suppress post-mortem
+SOAK_POSTMORTEM_DONE=true  # clean exit -- suppress post-mortem
 info "=== SOAK TEST PASSED (${DURATION_MIN}m, ${RESTART_COUNT} restarts, ${BACKEND_TYPE}) ==="

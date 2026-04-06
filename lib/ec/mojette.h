@@ -2,10 +2,10 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Mojette transform — internal header.
+ * Mojette transform -- internal header.
  *
  * Clean-room implementation from published academic sources:
- *   - Guédon (2005), "The Mojette Transform: Theory and Applications"
+ *   - Guedon (2005), "The Mojette Transform: Theory and Applications"
  *   - Normand et al. (2006), "How and Why the Mojette Transform Works"
  *   - Katz (1978), reconstruction criterion
  *   - Parrein et al. (2001), q_i=1 direction selection

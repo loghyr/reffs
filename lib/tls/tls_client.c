@@ -8,7 +8,7 @@
  * and connection management.  Used by nfs_tls_stress, nfs_tls_test,
  * and future TLS verification tools.
  *
- * No TIRPC dependency — hand-rolled RPC record marking.
+ * No TIRPC dependency -- hand-rolled RPC record marking.
  */
 
 #ifndef _GNU_SOURCE

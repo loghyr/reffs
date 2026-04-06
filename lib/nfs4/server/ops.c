@@ -24,7 +24,7 @@
 #include "nfs4/errors.h"
 
 _Static_assert(OP_MAX <= REFFS_NFS4_OP_MAX,
-	       "OP_MAX exceeds REFFS_NFS4_OP_MAX — bump REFFS_NFS4_OP_MAX");
+	       "OP_MAX exceeds REFFS_NFS4_OP_MAX -- bump REFFS_NFS4_OP_MAX");
 
 void nfs4_op_stats_record(struct reffs_op_stats global[REFFS_NFS4_OP_MAX],
 			  struct reffs_op_stats sb[REFFS_NFS4_OP_MAX],
@@ -103,7 +103,7 @@ uint32_t nfs4_op_secinfo(struct compound *compound)
 
 	/*
 	 * Verify the component exists.  We don't need the child inode
-	 * itself — only confirmation that the name is valid.
+	 * itself -- only confirmation that the name is valid.
 	 */
 	if (!compound->c_inode->i_dirent) {
 		int ret = inode_reconstruct_path_to_root(compound->c_inode);
@@ -159,7 +159,7 @@ uint32_t nfs4_op_secinfo_no_name(struct compound *compound)
 
 	/*
 	 * RFC 8881 s18.45.3: SECINFO_STYLE4_PARENT on the root of
-	 * the pseudo-filesystem has no parent — return NFS4ERR_NOENT,
+	 * the pseudo-filesystem has no parent -- return NFS4ERR_NOENT,
 	 * same as LOOKUPP at the root.
 	 */
 	if (style == SECINFO_STYLE4_PARENT &&

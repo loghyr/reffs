@@ -277,7 +277,7 @@ void utf8string_print_repr(FILE *f, const utf8string *u);
  * A valid NFSv4 path component must satisfy all of:
  *
  *   1. Non-empty                              (-EINVAL)
- *   2. Valid UTF-8 byte sequences             (-EILSEQ,  RFC 8881 §14.5)
+ *   2. Valid UTF-8 byte sequences             (-EILSEQ,  RFC 8881 S14.5)
  *   3. Does not exceed name_max bytes         (-ENAMETOOLONG)
  *   4. Contains no forbidden characters:
  *        NUL (U+0000), C0 controls (U+0001-U+001F),

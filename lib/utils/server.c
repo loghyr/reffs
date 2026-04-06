@@ -103,7 +103,7 @@ struct server_state *server_state_get(struct server_state *ss)
 
 	/*
          * Transition GRACE_STARTED -> IN_GRACE on first successful
-         * get from the protocol layer — grace period is now open.
+         * get from the protocol layer -- grace period is now open.
          */
 	if (atomic_load_explicit(&ss->ss_lifecycle, memory_order_acquire) ==
 	    SERVER_GRACE_STARTED)
@@ -218,7 +218,7 @@ uint32_t server_alloc_client_slot(struct server_state *ss)
 	slot = __atomic_fetch_add(&ss->ss_persist.sps_slot_next, 1,
 				  __ATOMIC_RELAXED);
 	if (slot == UINT32_MAX) {
-		/* Wrap — 4 billion clients is unreachable but handle it. */
+		/* Wrap -- 4 billion clients is unreachable but handle it. */
 		LOG("server_alloc_client_slot: slot overflow");
 		return UINT32_MAX;
 	}
@@ -272,7 +272,7 @@ server_state_init(const char *state_path, int port,
 
 	/*
 	 * Set up persistence dispatch based on configured backend type.
-	 * RocksDB → namespace DB; everything else → flatfile.
+	 * RocksDB --> namespace DB; everything else --> flatfile.
 	 */
 #ifdef HAVE_ROCKSDB
 	if (storage_type == REFFS_STORAGE_ROCKSDB && state_path) {
@@ -298,7 +298,7 @@ server_state_init(const char *state_path, int port,
 	ret = ss->ss_persist_ops->server_state_load(ss->ss_persist_ctx,
 						    &ss->ss_persist);
 	if (ret == -ENOENT) {
-		/* Fresh start — initialise defaults. */
+		/* Fresh start -- initialise defaults. */
 		ss->ss_persist.sps_magic = REFFS_SERVER_STATE_MAGIC;
 		ss->ss_persist.sps_version = REFFS_SERVER_STATE_VERSION;
 		ss->ss_persist.sps_boot_seq = 0;
@@ -405,7 +405,7 @@ server_state_init(const char *state_path, int port,
 
 		if (nincs == 0) {
 			/*
-			 * No incarnation records — no clients can reclaim.
+			 * No incarnation records -- no clients can reclaim.
 			 * Skip grace entirely; server_reclaim_complete() would
 			 * never fire, so the counter-based end trigger can't
 			 * work.  The timer-based path could work, but a 90-
@@ -483,7 +483,7 @@ void server_state_fini(struct server_state *ss)
 	/*
          * Write the clean-shutdown flag now, before releasing the
          * final ref.  If we crash between here and server_state_free(),
-         * the next boot will still see a dirty shutdown — that is
+         * the next boot will still see a dirty shutdown -- that is
          * intentional and conservative.
          */
 	ss->ss_persist.sps_clean_shutdown = 1;

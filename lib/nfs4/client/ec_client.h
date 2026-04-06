@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * EC demo client — minimal NFSv4.2 client for erasure-coding demonstration.
+ * EC demo client -- minimal NFSv4.2 client for erasure-coding demonstration.
  *
  * Talks NFSv4.2 to the MDS (EXCHANGE_ID, CREATE_SESSION, SEQUENCE,
  * OPEN, LAYOUTGET, GETDEVICEINFO, LAYOUTRETURN, CLOSE) and NFSv3 to
@@ -220,7 +220,7 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		    uint64_t block_offset, uint32_t count, uint32_t owner_id);
 
 /* ------------------------------------------------------------------ */
-/* Plain I/O — write/read through layout, no erasure coding            */
+/* Plain I/O -- write/read through layout, no erasure coding            */
 /* ------------------------------------------------------------------ */
 
 int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
@@ -229,7 +229,7 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	       size_t buf_len, size_t *out_len);
 
 /* ------------------------------------------------------------------ */
-/* EC I/O — high-level erasure-coded write/read                        */
+/* EC I/O -- high-level erasure-coded write/read                        */
 /* ------------------------------------------------------------------ */
 
 enum ec_codec_type {

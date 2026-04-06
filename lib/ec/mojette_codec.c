@@ -6,7 +6,7 @@
 #endif
 
 /*
- * Mojette erasure codec — systematic and non-systematic wrappers.
+ * Mojette erasure codec -- systematic and non-systematic wrappers.
  *
  * Wraps the core Mojette transform (mojette.c) into the ec_codec
  * interface for use by the EC demo client.
@@ -140,7 +140,7 @@ static int mojette_sys_decode(struct ec_codec *codec, uint8_t **shards,
 	if (total_missing == 0)
 		return 0;
 	if (missing_data == 0) {
-		/* Only parity missing — re-encode to regenerate. */
+		/* Only parity missing -- re-encode to regenerate. */
 		uint8_t **parity = shards + k;
 
 		return mojette_sys_encode(codec, shards, parity, shard_len);

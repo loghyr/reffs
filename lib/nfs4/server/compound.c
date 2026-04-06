@@ -147,7 +147,7 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 	if (rt->rt_compound != NULL) {
 		/*
 		 * Resume path: this task was paused by an async op and has
-		 * been re-enqueued.  Skip alloc and all request validation —
+		 * been re-enqueued.  Skip alloc and all request validation --
 		 * those already ran on the first pass.
 		 */
 		compound = rt->rt_compound;
@@ -176,7 +176,7 @@ int nfs4_proc_compound(struct rpc_trans *rt)
 		}
 
 		/*
-		 * RFC 5661 §16.2.3: the server MUST copy the tag from the
+		 * RFC 5661 S16.2.3: the server MUST copy the tag from the
 		 * request into the response.  XDR free will call free() on
 		 * res->tag.utf8string_val independently of the args, so we
 		 * need a separate heap allocation.

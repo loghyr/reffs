@@ -8,11 +8,11 @@
 #endif
 
 /*
- * fs_test_access.c — reffs_fs_access() permission logic
+ * fs_test_access.c -- reffs_fs_access() permission logic
  *
  * reffs_fs_access() takes explicit uid/gid arguments (unlike the FUSE shim
  * which pulls them from fuse_get_context).  This makes it straightforward
- * to test all three permission tiers — owner, group, other — without
+ * to test all three permission tiers -- owner, group, other -- without
  * changing the process's effective credentials.
  *
  * The logic in fs.c is: check owner first; if uid matches, only owner
@@ -118,7 +118,7 @@ END_TEST
 
 START_TEST(test_group_read_granted)
 {
-	/* uid doesn't match owner, gid matches → group bits apply */
+	/* uid doesn't match owner, gid matches --> group bits apply */
 	ck_assert_int_eq(reffs_fs_create("/f", S_IFREG | 0040), 0);
 	ck_assert_int_eq(reffs_fs_chown("/f", OWNER_UID, GROUP_GID), 0);
 	ck_assert_int_eq(reffs_fs_access("/f", R_OK, OTHER_UID, GROUP_GID), 0);
@@ -140,7 +140,7 @@ END_TEST
 
 START_TEST(test_other_read_granted)
 {
-	/* Neither uid nor gid matches → other bits apply */
+	/* Neither uid nor gid matches --> other bits apply */
 	ck_assert_int_eq(reffs_fs_create("/f", S_IFREG | 0004), 0);
 	ck_assert_int_eq(reffs_fs_chown("/f", OWNER_UID, OWNER_GID), 0);
 	ck_assert_int_eq(reffs_fs_access("/f", R_OK, OTHER_UID, OTHER_GID), 0);
@@ -167,7 +167,7 @@ START_TEST(test_owner_uid_match_shortcircuits_group)
 	/* mode 0040: group can read, owner cannot */
 	ck_assert_int_eq(reffs_fs_create("/f", S_IFREG | 0040), 0);
 	ck_assert_int_eq(reffs_fs_chown("/f", OWNER_UID, OWNER_GID), 0);
-	/* request with owner uid — must use owner bits, not group bits */
+	/* request with owner uid -- must use owner bits, not group bits */
 	ck_assert_int_eq(reffs_fs_access("/f", R_OK, OWNER_UID, OWNER_GID),
 			 -EACCES);
 	ck_assert_int_eq(reffs_fs_unlink("/f"), 0);

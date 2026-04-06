@@ -61,7 +61,7 @@ END_TEST
 START_TEST(test_sb_create_duplicate_id)
 {
 	/*
-	 * Duplicate sb_id alloc is allowed — needed for recovery
+	 * Duplicate sb_id alloc is allowed -- needed for recovery
 	 * (create a fresh sb to reload from the same backend path).
 	 * Duplicate detection happens at mount time instead.
 	 */
@@ -129,7 +129,7 @@ START_TEST(test_sb_mount_already_mounted)
 
 	ck_assert_int_eq(super_block_mount(sb, "/mnt_double"), 0);
 
-	/* Second mount while already mounted → EBUSY. */
+	/* Second mount while already mounted --> EBUSY. */
 	int ret = super_block_mount(sb, "/mnt_double");
 
 	ck_assert_int_eq(ret, -EBUSY);
@@ -176,11 +176,11 @@ START_TEST(test_sb_unmount_with_child)
 	struct super_block *child = super_block_alloc(107, "/mnt_parent/child",
 						      REFFS_STORAGE_RAM, NULL);
 
-	/* The child needs a directory to mount on — this would be
+	/* The child needs a directory to mount on -- this would be
 	 * inside parent's namespace. For the test stub, just mount. */
 	/* super_block_mount(child, "/mnt_parent/child"); */
 
-	/* Unmounting parent while child is mounted → EBUSY. */
+	/* Unmounting parent while child is mounted --> EBUSY. */
 	/* NOTE: this test will evolve as mount-crossing is implemented.
 	 * For Phase 1, we test the state machine transition rule. */
 	/* int ret = super_block_unmount(parent);
@@ -222,7 +222,7 @@ START_TEST(test_sb_destroy_mounted)
 
 	ck_assert_int_eq(super_block_mount(sb, "/mnt_destr"), 0);
 
-	/* Destroy while mounted → EBUSY. */
+	/* Destroy while mounted --> EBUSY. */
 	int ret = super_block_destroy(sb);
 
 	ck_assert_int_eq(ret, -EBUSY);
@@ -239,7 +239,7 @@ START_TEST(test_sb_destroy_created)
 	struct super_block *sb =
 		super_block_alloc(110, "/cr_destr", REFFS_STORAGE_RAM, NULL);
 
-	/* Destroy from CREATED (never mounted) → always OK. */
+	/* Destroy from CREATED (never mounted) --> always OK. */
 	int ret = super_block_destroy(sb);
 
 	ck_assert_int_eq(ret, 0);

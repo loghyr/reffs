@@ -14,7 +14,7 @@
 #include "reffs/lock.h" /* struct reffs_lock_owner */
 
 /* ------------------------------------------------------------------ */
-/* NFS4 stateid type tag — stored in s_tag                            */
+/* NFS4 stateid type tag -- stored in s_tag                            */
 
 enum stateid_type {
 	Open_Stateid = 0,
@@ -28,7 +28,7 @@ enum stateid_type {
 /* Concrete stateid subtypes                                           */
 /*
  * The embedded struct stateid carries s_free_rcu and s_release,
- * set at alloc time — no extern vtable needed.
+ * set at alloc time -- no extern vtable needed.
  */
 
 /* Bits stored in open_stateid.os_state for I/O access-mode checks. */
@@ -64,7 +64,7 @@ struct delegation_stateid {
 	 * delegation stateid (OPEN4_RESULT_NO_OPEN_STATEID).  We
 	 * allocated an open_stateid internally for share tracking; it
 	 * is cleaned up in DELEGRETURN instead of CLOSE.
-	 * Pointer only — no extra ref held; the state ref is the one
+	 * Pointer only -- no extra ref held; the state ref is the one
 	 * dropped during XOR cleanup.
 	 */
 	struct open_stateid *ds_open;

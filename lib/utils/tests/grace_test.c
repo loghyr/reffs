@@ -5,8 +5,8 @@
  * Grace lifecycle state machine unit tests (WI-1.1).
  *
  * Tests the server_state grace period transitions:
- *   BOOTING → GRACE_STARTED → IN_GRACE → GRACE_ENDED
- *   BOOTING → GRACE_ENDED (fresh start, no clients)
+ *   BOOTING --> GRACE_STARTED --> IN_GRACE --> GRACE_ENDED
+ *   BOOTING --> GRACE_ENDED (fresh start, no clients)
  *   SHUTTING_DOWN from any state
  */
 
@@ -65,14 +65,14 @@ static void grace_teardown(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Fresh start: no prior clients → skip grace                          */
+/* Fresh start: no prior clients --> skip grace                          */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_fresh_start_skips_grace)
 {
 	/*
 	 * A fresh start (no server_state file, no incarnation records)
-	 * should go directly to GRACE_ENDED — no grace period.
+	 * should go directly to GRACE_ENDED -- no grace period.
 	 */
 	struct server_state *ss = server_state_init(
 		state_dir, 2049, reffs_text_case_sensitive, REFFS_STORAGE_RAM);
@@ -87,7 +87,7 @@ START_TEST(test_fresh_start_skips_grace)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Dirty start: prior clients → enter grace                            */
+/* Dirty start: prior clients --> enter grace                            */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_dirty_start_enters_grace)
@@ -128,9 +128,9 @@ START_TEST(test_dirty_start_enters_grace)
 		pthread_join(ss1->ss_grace_thread, NULL);
 		ss1->ss_grace_thread = 0;
 	}
-	/* Leak ss1 — acceptable in test (tmpdir cleaned in teardown) */
+	/* Leak ss1 -- acceptable in test (tmpdir cleaned in teardown) */
 
-	/* Restart — should enter grace */
+	/* Restart -- should enter grace */
 	struct server_state *ss2 = server_state_init(
 		state_dir, 2049, reffs_text_case_sensitive, REFFS_STORAGE_RAM);
 	ck_assert_ptr_nonnull(ss2);
@@ -145,7 +145,7 @@ START_TEST(test_dirty_start_enters_grace)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* GRACE_STARTED → IN_GRACE on first server_state_get                  */
+/* GRACE_STARTED --> IN_GRACE on first server_state_get                  */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_started_to_in_grace_on_get)
@@ -229,7 +229,7 @@ START_TEST(test_timer_ends_grace)
 	ck_assert_ptr_nonnull(ss2);
 	ss2->ss_grace_time = 1; /* override to 1 second */
 
-	/* Trigger GRACE_STARTED → IN_GRACE */
+	/* Trigger GRACE_STARTED --> IN_GRACE */
 	struct server_state *got = server_state_get(ss2);
 	ck_assert_ptr_nonnull(got);
 	server_state_put(got);
@@ -286,7 +286,7 @@ START_TEST(test_shutdown_during_grace)
 
 	ck_assert(server_in_grace(ss2));
 
-	/* Shut down while in grace — should not hang */
+	/* Shut down while in grace -- should not hang */
 	server_state_fini(ss2);
 	/* If we get here, shutdown didn't hang */
 }
@@ -307,7 +307,7 @@ START_TEST(test_nfs4_check_grace_helper)
 		state_dir, 2049, reffs_text_case_sensitive, REFFS_STORAGE_RAM);
 	ck_assert_ptr_nonnull(ss);
 
-	/* Fresh start → not in grace */
+	/* Fresh start --> not in grace */
 	ck_assert(!nfs4_check_grace());
 
 	server_state_fini(ss);

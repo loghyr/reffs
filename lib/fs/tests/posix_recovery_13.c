@@ -7,7 +7,7 @@
  * Test 13: inode_sync_to_disk must not be called before load_inode_attributes
  *          during recovery (metadata preservation check).
  *
- * The bug: dirent_parent_attach() → inode_sync_to_disk() is called on a
+ * The bug: dirent_parent_attach() --> inode_sync_to_disk() is called on a
  * freshly-zeroed inode *before* load_inode_attributes() restores the
  * attributes from disk.  This overwrites the .meta file with zeroes.
  *
@@ -20,7 +20,7 @@
  * written before it.  If the file has been zeroed, the bug is present.
  *
  * Related issue (reffs_issues.md):
- *   POSIX Backend — "inode_sync_to_disk called before load_inode_attributes
+ *   POSIX Backend -- "inode_sync_to_disk called before load_inode_attributes
  *   during recovery": fix is to gate on rla != reffs_life_action_load.
  */
 

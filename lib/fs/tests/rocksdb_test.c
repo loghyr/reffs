@@ -29,7 +29,7 @@
  * pointer.
  *
  * check_malloc_usable_size=0 disables only the malloc_usable_size
- * ownership check — all other ASAN detection remains active.
+ * ownership check -- all other ASAN detection remains active.
  * ci-sec builds RocksDB from source with ASAN for full coverage.
  */
 #ifdef ASAN_ENABLED
@@ -300,7 +300,7 @@ START_TEST(test_rocksdb_key_ordering)
 		inode_active_put(inode);
 	}
 
-	/* Load back — each should have the correct uid */
+	/* Load back -- each should have the correct uid */
 	for (int i = 0; i < 4; i++) {
 		struct inode *loaded = inode_alloc(sb, inos[i]);
 		ck_assert_ptr_nonnull(loaded);
@@ -360,7 +360,7 @@ START_TEST(test_rocksdb_ns_server_state_fresh)
 	int ret = rocksdb_namespace_init(state_dir, &ops, &ctx);
 	ck_assert_int_eq(ret, 0);
 
-	/* Load from fresh DB — should return -ENOENT */
+	/* Load from fresh DB -- should return -ENOENT */
 	struct server_persistent_state sps = { 0 };
 	ret = ops->server_state_load(ctx, &sps);
 	ck_assert_int_eq(ret, -ENOENT);
@@ -407,7 +407,7 @@ START_TEST(test_rocksdb_ns_incarnation_roundtrip)
 	ret = ops->client_incarnation_remove(ctx, 1);
 	ck_assert_int_eq(ret, 0);
 
-	/* Load again — should be 1 */
+	/* Load again -- should be 1 */
 	count = 0;
 	ret = ops->client_incarnation_load(ctx, loaded, 8, &count);
 	ck_assert_int_eq(ret, 0);

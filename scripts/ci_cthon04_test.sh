@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# ci_cthon04_test.sh — Run Connectathon (CTHON04) test suite against reffsd.
+# ci_cthon04_test.sh -- Run Connectathon (CTHON04) test suite against reffsd.
 #
 # Clones and caches cthon04 in external/ (out-of-tree, .gitignore'd).
 # Runs basic, general, special, and lock tests against three configurations:

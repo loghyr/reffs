@@ -57,13 +57,13 @@ struct persist_ops {
 };
 
 /*
- * Flatfile implementation — wraps existing persistence functions.
+ * Flatfile implementation -- wraps existing persistence functions.
  * ctx is a strdup'd state_dir path.
  */
 const struct persist_ops *flatfile_persist_ops_get(void);
 
 /*
- * RocksDB namespace implementation — opens <state_dir>/namespace.rocksdb/.
+ * RocksDB namespace implementation -- opens <state_dir>/namespace.rocksdb/.
  * On success, sets *ops_out and *ctx_out.  Returns 0 or -errno.
  * Only available when HAVE_ROCKSDB is defined.
  */

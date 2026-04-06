@@ -48,7 +48,7 @@ START_TEST(test_free_null)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* try_complete — single winner                                        */
+/* try_complete -- single winner                                        */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_try_complete_success)
@@ -79,7 +79,7 @@ START_TEST(test_try_complete_timeout)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* try_complete — race: only one winner                                */
+/* try_complete -- race: only one winner                                */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_try_complete_double_race)
@@ -125,7 +125,7 @@ START_TEST(test_try_complete_timeout_wins_reply_loses)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* try_complete — cannot complete if already completed                  */
+/* try_complete -- cannot complete if already completed                  */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_try_complete_eio)

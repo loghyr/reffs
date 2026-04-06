@@ -103,7 +103,7 @@ START_TEST(test_allocate_extends_file)
 	ck_assert_ptr_nonnull(test_inode->i_db);
 	test_inode->i_size = 1024;
 
-	/* ALLOCATE at offset=512, length=1024 → end=1536, extends past 1024 */
+	/* ALLOCATE at offset=512, length=1024 --> end=1536, extends past 1024 */
 	uint64_t offset = 512;
 	uint64_t length = 1024;
 	uint64_t end = offset + length;
@@ -130,7 +130,7 @@ START_TEST(test_allocate_within_size_noop)
 	ck_assert_ptr_nonnull(test_inode->i_db);
 	test_inode->i_size = 4096;
 
-	/* ALLOCATE at offset=0, length=2048 → end=2048 < 4096 */
+	/* ALLOCATE at offset=0, length=2048 --> end=2048 < 4096 */
 	uint64_t end = 2048;
 	ck_assert(end <= (uint64_t)test_inode->i_size);
 
@@ -238,7 +238,7 @@ START_TEST(test_deallocate_past_eof_noop)
 	ck_assert_ptr_nonnull(test_inode->i_db);
 	test_inode->i_size = 1024;
 
-	/* DEALLOCATE at offset=2048 — past EOF, should be no-op */
+	/* DEALLOCATE at offset=2048 -- past EOF, should be no-op */
 	uint64_t start = 2048;
 	ck_assert(start >= (uint64_t)test_inode->i_size);
 
@@ -262,7 +262,7 @@ START_TEST(test_deallocate_clamps_to_eof)
 	ck_assert_ptr_nonnull(test_inode->i_db);
 	test_inode->i_size = 2048;
 
-	/* DEALLOCATE offset=1024, length=4096 → end=5120, clamped to 2048 */
+	/* DEALLOCATE offset=1024, length=4096 --> end=5120, clamped to 2048 */
 	uint64_t start = 1024;
 	uint64_t end = start + 4096;
 	uint64_t file_size = 2048;
@@ -360,7 +360,7 @@ START_TEST(test_read_plus_at_eof)
 	ck_assert_ptr_nonnull(test_inode->i_db);
 	test_inode->i_size = 128;
 
-	/* Read at offset == file size → should return 0 or short read */
+	/* Read at offset == file size --> should return 0 or short read */
 	char buf[64];
 	ssize_t nr = data_block_read(test_inode->i_db, buf, 64, 128);
 	ck_assert_int_eq(nr, 0);
@@ -379,7 +379,7 @@ START_TEST(test_read_plus_partial_near_eof)
 	ck_assert_ptr_nonnull(test_inode->i_db);
 	test_inode->i_size = 256;
 
-	/* Read 128 bytes starting at offset 200 → only 56 available */
+	/* Read 128 bytes starting at offset 200 --> only 56 available */
 	char buf[128] = { 0 };
 	ssize_t nr = data_block_read(test_inode->i_db, buf, 128, 200);
 	ck_assert_int_ge(nr, 0);
@@ -416,7 +416,7 @@ END_TEST
  */
 START_TEST(test_clone_alignment_valid)
 {
-	/* All multiples of 4096 — valid alignment */
+	/* All multiples of 4096 -- valid alignment */
 	uint64_t src_off = 4096;
 	uint64_t dst_off = 8192;
 	uint64_t count = 4096;
@@ -443,7 +443,7 @@ END_TEST
 
 /*
  * CLONE count == 0 means "clone to end of source".  If src_offset
- * is at or past EOF, nothing to clone — success (no data copy).
+ * is at or past EOF, nothing to clone -- success (no data copy).
  */
 START_TEST(test_clone_zero_count_at_eof)
 {
@@ -453,7 +453,7 @@ START_TEST(test_clone_zero_count_at_eof)
 	ck_assert_ptr_nonnull(test_inode->i_db);
 	test_inode->i_size = 4096;
 
-	/* count == 0, src_offset == 4096 (at EOF) → nothing to clone */
+	/* count == 0, src_offset == 4096 (at EOF) --> nothing to clone */
 	uint64_t src_offset = 4096;
 	uint64_t count __attribute__((unused)) = 0;
 	ck_assert(src_offset >= (uint64_t)test_inode->i_size);
@@ -471,7 +471,7 @@ START_TEST(test_clone_source_range_exceeds_size)
 	ck_assert_ptr_nonnull(test_inode->i_db);
 	test_inode->i_size = 4096;
 
-	/* src_offset=0, count=8192 → exceeds 4096 file size */
+	/* src_offset=0, count=8192 --> exceeds 4096 file size */
 	uint64_t src_offset = 0;
 	uint64_t count = 8192;
 	ck_assert(src_offset + count > (uint64_t)test_inode->i_size);
@@ -524,7 +524,7 @@ START_TEST(test_seek_data_at_start)
 	ck_assert_ptr_nonnull(test_inode->i_db);
 	test_inode->i_size = 4096;
 
-	/* RAM backend: no fd → handler uses all-data fallback */
+	/* RAM backend: no fd --> handler uses all-data fallback */
 	int fd = data_block_get_fd(test_inode->i_db);
 	ck_assert_int_lt(fd, 0);
 
@@ -565,11 +565,11 @@ START_TEST(test_seek_past_eof)
 	ck_assert_ptr_nonnull(test_inode->i_db);
 	test_inode->i_size = 1024;
 
-	/* Offset at EOF → eof */
+	/* Offset at EOF --> eof */
 	uint64_t off = 1024;
 	ck_assert((int64_t)off >= test_inode->i_size);
 
-	/* Offset well beyond EOF → still eof */
+	/* Offset well beyond EOF --> still eof */
 	off = 999999;
 	ck_assert((int64_t)off >= test_inode->i_size);
 }
@@ -582,7 +582,7 @@ START_TEST(test_seek_empty_file)
 {
 	test_inode->i_size = 0;
 
-	/* offset (0) >= file_size (0) → eof */
+	/* offset (0) >= file_size (0) --> eof */
 	uint64_t off = 0;
 	ck_assert((int64_t)off >= test_inode->i_size);
 }
@@ -593,7 +593,7 @@ END_TEST
 /* ------------------------------------------------------------------ */
 
 /*
- * NOT_NOW_BROWN_COW: COPY tests disabled — data_block_read
+ * NOT_NOW_BROWN_COW: COPY tests disabled -- data_block_read
  * returns 0 after data_block_write on RAM backend.  The COPY
  * handler works on real NFS mounts (ci-check passes); the
  * issue is specific to the unit test harness.
@@ -737,7 +737,7 @@ START_TEST(test_copy_zero_at_eof)
 	const char *payload = "data";
 	struct inode *src = copy_create_source(payload, strlen(payload));
 
-	/* Source offset at EOF — nothing to copy. */
+	/* Source offset at EOF -- nothing to copy. */
 	char buf[256];
 	ssize_t nr =
 		data_block_read(src->i_db, buf, 100, (uint64_t)src->i_size);

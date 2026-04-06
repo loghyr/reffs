@@ -19,7 +19,7 @@ struct server_state;
  */
 #define NFS4_OP_FLAG_ASYNC (1u << 0)
 #define NFS4_OP_FLAG_REPLAY \
-	(1u << 1) /* slot replay — result already in c_res */
+	(1u << 1) /* slot replay -- result already in c_res */
 
 uint32_t nfs4_op_access(struct compound *compound);
 uint32_t nfs4_op_close(struct compound *compound);

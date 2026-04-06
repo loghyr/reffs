@@ -13,10 +13,10 @@ enum evictor_mode {
 int evictor_init(void);
 void evictor_fini(void);
 
-/* Signal that eviction pressure exists — wakes the evictor. */
+/* Signal that eviction pressure exists -- wakes the evictor. */
 void evictor_signal(void);
 
-/* Synchronous drain — blocks until one full eviction pass completes. */
+/* Synchronous drain -- blocks until one full eviction pass completes. */
 void evictor_drain(void);
 
 /* Runtime mode switch (for tests). */

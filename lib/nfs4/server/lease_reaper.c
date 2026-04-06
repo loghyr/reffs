@@ -9,7 +9,7 @@
  * Lease reaper thread.
  *
  * Periodically scans the client hash table and expires clients whose
- * last SEQUENCE timestamp exceeds the lease timeout.  RFC 5661 §8.3
+ * last SEQUENCE timestamp exceeds the lease timeout.  RFC 5661 S8.3
  * requires that the server expire client state when the client has not
  * renewed its lease within the lease period.
  *
@@ -125,7 +125,7 @@ static void *lease_reaper_thread_fn(void *arg __attribute__((unused)))
 
 				/*
 				 * Unconfirmed clients expire after 1x lease
-				 * (RFC 8881 §18.35.4); confirmed clients
+				 * (RFC 8881 S18.35.4); confirmed clients
 				 * get 1.5x lease as breathing room.
 				 */
 				uint64_t client_expire =

@@ -6,11 +6,11 @@
 #endif
 
 /*
- * Identity mapping cache — bidirectional name ↔ uid/gid.
+ * Identity mapping cache -- bidirectional name <--> uid/gid.
  *
  * Two pairs of lock-free hash tables:
- *   g_uid_ht / g_uid_rev_ht   (uid→name and name→uid)
- *   g_gid_ht / g_gid_rev_ht   (gid→name and name→gid)
+ *   g_uid_ht / g_uid_rev_ht   (uid-->name and name-->uid)
+ *   g_gid_ht / g_gid_rev_ht   (gid-->name and name-->gid)
  *
  * Entries are inserted via idmap_cache_uid/gid (from GSS auth)
  * or lazily on cache miss via libnfsidmap / nsswitch fallback.
@@ -48,10 +48,10 @@
 /* ------------------------------------------------------------------ */
 
 static char g_domain[256];
-static struct cds_lfht *g_uid_ht; /* uid → name */
-static struct cds_lfht *g_uid_rev_ht; /* name → uid */
-static struct cds_lfht *g_gid_ht; /* gid → name */
-static struct cds_lfht *g_gid_rev_ht; /* name → gid */
+static struct cds_lfht *g_uid_ht; /* uid --> name */
+static struct cds_lfht *g_uid_rev_ht; /* name --> uid */
+static struct cds_lfht *g_gid_ht; /* gid --> name */
+static struct cds_lfht *g_gid_rev_ht; /* name --> gid */
 
 #ifdef HAVE_LIBNFSIDMAP
 /*
@@ -147,7 +147,7 @@ static void idmap_entry_free_rcu(struct rcu_head *rcu)
 }
 
 /* ------------------------------------------------------------------ */
-/* Internal insert (idempotent — duplicate is a no-op)                 */
+/* Internal insert (idempotent -- duplicate is a no-op)                 */
 /* ------------------------------------------------------------------ */
 
 static void idmap_insert(struct cds_lfht *id_ht, struct cds_lfht *name_ht,
@@ -165,21 +165,21 @@ static void idmap_insert(struct cds_lfht *id_ht, struct cds_lfht *name_ht,
 		return;
 	}
 
-	/* Forward: id → name */
+	/* Forward: id --> name */
 	h = hash_id(id);
 	rcu_read_lock();
 	node = cds_lfht_add_unique(id_ht, h, match_id, &id, &fwd->ie_node);
 	rcu_read_unlock();
 	if (node != &fwd->ie_node)
-		free(fwd); /* duplicate — discard */
+		free(fwd); /* duplicate -- discard */
 
-	/* Reverse: name → id */
+	/* Reverse: name --> id */
 	h = hash_name(name, strlen(name));
 	rcu_read_lock();
 	node = cds_lfht_add_unique(name_ht, h, match_name, name, &rev->ie_node);
 	rcu_read_unlock();
 	if (node != &rev->ie_node)
-		free(rev); /* duplicate — discard */
+		free(rev); /* duplicate -- discard */
 }
 
 /* ------------------------------------------------------------------ */
@@ -246,7 +246,7 @@ static int idmap_lookup_by_name(struct cds_lfht *ht, const char *name,
 /* ------------------------------------------------------------------ */
 
 /*
- * Try libnfsidmap, then getpwuid_r / getgrgid_r to resolve uid→name.
+ * Try libnfsidmap, then getpwuid_r / getgrgid_r to resolve uid-->name.
  * On success, inserts into cache and fills dst.
  */
 static int idmap_resolve_uid(uint32_t uid, utf8string *dst)
@@ -301,7 +301,7 @@ static int idmap_resolve_gid(uint32_t gid, utf8string *dst)
 }
 
 /*
- * Try libnfsidmap, then getpwnam_r to resolve name→uid.
+ * Try libnfsidmap, then getpwnam_r to resolve name-->uid.
  * On success, inserts into cache and fills *uid.
  */
 static int idmap_resolve_name_to_uid(const char *name, uint32_t *uid)
@@ -422,7 +422,7 @@ int idmap_init(const char *domain)
 	} else {
 		/*
 		 * Auto-detect: try system hostname domain part.
-		 * E.g., "host.example.com" → "example.com"
+		 * E.g., "host.example.com" --> "example.com"
 		 */
 		char hostname[256];
 
@@ -583,7 +583,7 @@ void idmap_cache_uid(uid_t uid, const char *name)
 		return;
 
 	idmap_insert(g_uid_ht, g_uid_rev_ht, (uint32_t)uid, name);
-	TRACE("idmap: cached uid %u → %s", (unsigned)uid, name);
+	TRACE("idmap: cached uid %u --> %s", (unsigned)uid, name);
 }
 
 void idmap_cache_gid(gid_t gid, const char *name)
@@ -592,7 +592,7 @@ void idmap_cache_gid(gid_t gid, const char *name)
 		return;
 
 	idmap_insert(g_gid_ht, g_gid_rev_ht, (uint32_t)gid, name);
-	TRACE("idmap: cached gid %u → %s", (unsigned)gid, name);
+	TRACE("idmap: cached gid %u --> %s", (unsigned)gid, name);
 }
 
 /* ------------------------------------------------------------------ */

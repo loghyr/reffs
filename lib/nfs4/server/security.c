@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Export security enforcement — NFS4ERR_WRONGSEC and SECINFO helpers.
+ * Export security enforcement -- NFS4ERR_WRONGSEC and SECINFO helpers.
  *
  * RFC 8881 section 2.6.3.1: filehandle-changing operations (PUTFH,
  * PUTROOTFH, PUTPUBFH, LOOKUP, LOOKUPP, OPEN) must return
@@ -181,7 +181,7 @@ nfsstat4 nfs4_build_secinfo(struct compound *compound, SECINFO4resok *resok)
 		case REFFS_AUTH_TLS:
 			/*
 			 * TLS is transport-level, not an RPC flavor.
-			 * Advertise AUTH_SYS — the client negotiates
+			 * Advertise AUTH_SYS -- the client negotiates
 			 * TLS separately via AUTH_TLS NULL RPC.
 			 */
 			if (have_auth_sys)

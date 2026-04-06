@@ -50,7 +50,7 @@ static inline uint64_t decode_be64(const uint8_t *buf)
 	       ((uint64_t)buf[6] << 8) | ((uint64_t)buf[7]);
 }
 
-/* Build key: "ino:" + BE64(ino) → 12 bytes */
+/* Build key: "ino:" + BE64(ino) --> 12 bytes */
 static inline size_t rocksdb_key_ino(uint8_t *buf, uint64_t ino)
 {
 	memcpy(buf, "ino:", 4);
@@ -58,7 +58,7 @@ static inline size_t rocksdb_key_ino(uint8_t *buf, uint64_t ino)
 	return ROCKSDB_KEY_INO_SIZE;
 }
 
-/* Build key: "dir:" + BE64(parent_ino) + BE64(cookie) → 20 bytes */
+/* Build key: "dir:" + BE64(parent_ino) + BE64(cookie) --> 20 bytes */
 static inline size_t rocksdb_key_dir(uint8_t *buf, uint64_t parent_ino,
 				     uint64_t cookie)
 {
@@ -68,7 +68,7 @@ static inline size_t rocksdb_key_dir(uint8_t *buf, uint64_t parent_ino,
 	return ROCKSDB_KEY_DIR_SIZE;
 }
 
-/* Build prefix: "dir:" + BE64(parent_ino) → 12 bytes (for iteration) */
+/* Build prefix: "dir:" + BE64(parent_ino) --> 12 bytes (for iteration) */
 static inline size_t rocksdb_key_dir_prefix(uint8_t *buf, uint64_t parent_ino)
 {
 	memcpy(buf, "dir:", 4);
@@ -76,7 +76,7 @@ static inline size_t rocksdb_key_dir_prefix(uint8_t *buf, uint64_t parent_ino)
 	return 12;
 }
 
-/* Build key: "lnk:" + BE64(ino) → 12 bytes */
+/* Build key: "lnk:" + BE64(ino) --> 12 bytes */
 static inline size_t rocksdb_key_lnk(uint8_t *buf, uint64_t ino)
 {
 	memcpy(buf, "lnk:", 4);
@@ -84,7 +84,7 @@ static inline size_t rocksdb_key_lnk(uint8_t *buf, uint64_t ino)
 	return ROCKSDB_KEY_LNK_SIZE;
 }
 
-/* Build key: "lay:" + BE64(ino) → 12 bytes */
+/* Build key: "lay:" + BE64(ino) --> 12 bytes */
 static inline size_t rocksdb_key_lay(uint8_t *buf, uint64_t ino)
 {
 	memcpy(buf, "lay:", 4);
@@ -92,7 +92,7 @@ static inline size_t rocksdb_key_lay(uint8_t *buf, uint64_t ino)
 	return ROCKSDB_KEY_LAY_SIZE;
 }
 
-/* Build key: "chk:" + BE64(ino) + BE64(block_offset) → 20 bytes */
+/* Build key: "chk:" + BE64(ino) + BE64(block_offset) --> 20 bytes */
 static inline size_t rocksdb_key_chk(uint8_t *buf, uint64_t ino,
 				     uint64_t block_offset)
 {
@@ -102,7 +102,7 @@ static inline size_t rocksdb_key_chk(uint8_t *buf, uint64_t ino,
 	return ROCKSDB_KEY_CHK_SIZE;
 }
 
-/* Build prefix: "chk:" + BE64(ino) → 12 bytes (for iteration) */
+/* Build prefix: "chk:" + BE64(ino) --> 12 bytes (for iteration) */
 static inline size_t rocksdb_key_chk_prefix(uint8_t *buf, uint64_t ino)
 {
 	memcpy(buf, "chk:", 4);

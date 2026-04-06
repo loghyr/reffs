@@ -12,12 +12,12 @@
  * POSIX files via the data backend (composed by driver.c).
  *
  * Column families:
- *   default  — sb metadata (next_ino)
- *   inodes   — inode_disk keyed by ino
- *   dirs     — directory entries keyed by parent_ino + cookie
- *   symlinks — symlink targets keyed by ino
- *   layouts  — layout segments keyed by ino
- *   chunks   — chunk block metadata keyed by ino + offset
+ *   default  -- sb metadata (next_ino)
+ *   inodes   -- inode_disk keyed by ino
+ *   dirs     -- directory entries keyed by parent_ino + cookie
+ *   symlinks -- symlink targets keyed by ino
+ *   layouts  -- layout segments keyed by ino
+ *   chunks   -- chunk block metadata keyed by ino + offset
  */
 
 #ifdef HAVE_CONFIG_H
@@ -250,7 +250,7 @@ static void rocksdb_sb_free(struct super_block *sb)
 }
 
 /* ------------------------------------------------------------------ */
-/* inode_sync — persist inode metadata to RocksDB                      */
+/* inode_sync -- persist inode metadata to RocksDB                      */
 /* ------------------------------------------------------------------ */
 
 static void rocksdb_inode_sync(struct inode *inode)
@@ -397,7 +397,7 @@ static void rocksdb_inode_sync(struct inode *inode)
 }
 
 /* ------------------------------------------------------------------ */
-/* inode_alloc — load inode metadata from RocksDB                      */
+/* inode_alloc -- load inode metadata from RocksDB                      */
 /* ------------------------------------------------------------------ */
 
 static int rocksdb_inode_alloc(struct inode *inode)
@@ -464,7 +464,7 @@ static int rocksdb_inode_alloc(struct inode *inode)
 
 	/*
 	 * Data file loading (.dat) is handled by the composed data
-	 * backend via data_block_alloc() — same as POSIX md backend.
+	 * backend via data_block_alloc() -- same as POSIX md backend.
 	 */
 	if (!inode->i_db && S_ISREG(inode->i_mode)) {
 		char dat_path[PATH_MAX];
@@ -635,7 +635,7 @@ out:
 }
 
 /* ------------------------------------------------------------------ */
-/* inode_free — delete metadata keys from RocksDB                      */
+/* inode_free -- delete metadata keys from RocksDB                      */
 /* ------------------------------------------------------------------ */
 
 static void rocksdb_inode_free(struct inode *inode)
@@ -720,7 +720,7 @@ static void rocksdb_inode_free(struct inode *inode)
 }
 
 /* ------------------------------------------------------------------ */
-/* dir_sync — persist directory entries to RocksDB                     */
+/* dir_sync -- persist directory entries to RocksDB                     */
 /* ------------------------------------------------------------------ */
 
 static void rocksdb_dir_sync(struct inode *inode)
@@ -737,7 +737,7 @@ static void rocksdb_dir_sync(struct inode *inode)
 
 	/*
 	 * Delete all existing entries for this directory.
-	 * RocksDB has no prefix-delete — iterate and collect.
+	 * RocksDB has no prefix-delete -- iterate and collect.
 	 */
 	uint8_t prefix[12];
 	size_t plen = rocksdb_key_dir_prefix(prefix, inode->i_ino);
@@ -797,7 +797,7 @@ static void rocksdb_dir_sync(struct inode *inode)
 }
 
 /* ------------------------------------------------------------------ */
-/* dir_find_entry_by_ino — scan directory for child inode number       */
+/* dir_find_entry_by_ino -- scan directory for child inode number       */
 /* ------------------------------------------------------------------ */
 
 static int rocksdb_dir_find_entry_by_ino(struct super_block *sb,
@@ -857,7 +857,7 @@ static int rocksdb_dir_find_entry_by_ino(struct super_block *sb,
 }
 
 /* ------------------------------------------------------------------ */
-/* dir_find_entry_by_name — scan directory for child name              */
+/* dir_find_entry_by_name -- scan directory for child name              */
 /* ------------------------------------------------------------------ */
 
 static int rocksdb_dir_find_entry_by_name(struct super_block *sb,
@@ -1062,9 +1062,9 @@ static void rocksdb_recover(struct super_block *sb)
 /* ------------------------------------------------------------------ */
 
 /*
- * rocksdb_storage_ops — md template for RocksDB metadata backend.
+ * rocksdb_storage_ops -- md template for RocksDB metadata backend.
  *
- * Data ops (db_*) are intentionally NULL — they are populated by
+ * Data ops (db_*) are intentionally NULL -- they are populated by
  * reffs_backend_compose() from the POSIX data template.
  */
 const struct reffs_storage_ops rocksdb_storage_ops = {

@@ -130,7 +130,7 @@ struct super_block {
 	uint32_t sb_dstore_ids[SB_MAX_DSTORES];
 	uint32_t sb_ndstores;
 
-	/* Per-op NFS4 statistics — superblock scope. */
+	/* Per-op NFS4 statistics -- superblock scope. */
 	struct reffs_op_stats sb_nfs4_op_stats[REFFS_NFS4_OP_MAX];
 
 	/* Backend I/O statistics for this superblock. */

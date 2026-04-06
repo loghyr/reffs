@@ -15,7 +15,7 @@
  * equal the sum of their sizes rounded up to block boundaries.
  *
  * Related issue (reffs_issues.md):
- *   POSIX Backend — "data_block_alloc with size=0 leaves db_size=0": during
+ *   POSIX Backend -- "data_block_alloc with size=0 leaves db_size=0": during
  *   recovery, data files are opened with size=0; db_size remains 0 until the
  *   first write, causing sb_bytes_used accounting to be incorrect until then.
  */
@@ -89,7 +89,7 @@ START_TEST(test_sb_bytes_used_accounting)
 	inode_active_put(i3);
 
 	/*
-	 * sb_bytes_used is in raw bytes (not block-rounded) — it tracks the
+	 * sb_bytes_used is in raw bytes (not block-rounded) -- it tracks the
 	 * sum of i_size values, mirroring what nfs3_server.c does on the write
 	 * path.  i_used is the block count (block-rounded), which is a
 	 * separate field.

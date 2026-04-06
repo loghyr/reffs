@@ -32,7 +32,7 @@
 #include "reffs/tls.h"
 
 /*
- * RPCSEC_GSS control procedures (RFC 2203 §5.2.2).
+ * RPCSEC_GSS control procedures (RFC 2203 S5.2.2).
  */
 #define RPCSEC_GSS_DATA 0
 #define RPCSEC_GSS_INIT 1

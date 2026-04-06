@@ -72,7 +72,7 @@ struct inode {
 	/*
 	 * Weak back-pointer to the single dirent that names this inode.
 	 * Valid for both file and directory inodes (reffs does not support
-	 * hard links — every inode has exactly one dirent).
+	 * hard links -- every inode has exactly one dirent).
 	 * May be NULL if the dirent has been evicted or the inode is the
 	 * superblock root (which has no parent dirent).
 	 * NULLed by inode_release() before call_rcu so that rd_inode on

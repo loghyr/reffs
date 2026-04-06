@@ -47,11 +47,11 @@ struct compound {
 	COMPOUND4args *c_args;
 	COMPOUND4res *c_res;
 
-	/* Server-wide state — grabbed once at compound entry. */
+	/* Server-wide state -- grabbed once at compound entry. */
 	struct server_state *c_server_state;
 
 	/*
-	 * Monotonic allocation sequence number — detects freed+recycled
+	 * Monotonic allocation sequence number -- detects freed+recycled
 	 * compounds (a different compound calloc'd at the same address).
 	 */
 	uint64_t c_alloc_seq;

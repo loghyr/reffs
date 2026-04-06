@@ -12,7 +12,7 @@
  * returns an error rather than dereferencing a garbage pointer.
  *
  * Related issue (reffs_issues.md):
- *   POSIX Backend Persistence & Recovery — "Symlink target (i_symlink) not
+ *   POSIX Backend Persistence & Recovery -- "Symlink target (i_symlink) not
  *   persisted": after a restart, all symlinks have i_symlink == NULL.
  */
 
@@ -59,7 +59,7 @@ START_TEST(test_symlink_missing_lnk_file)
 	ck_assert(inode != NULL);
 
 	/*
-	 * i_symlink must be NULL — callers must check before dereferencing.
+	 * i_symlink must be NULL -- callers must check before dereferencing.
 	 * A non-NULL garbage pointer here would indicate the bug is present.
 	 */
 	ck_assert(inode->i_symlink == NULL);

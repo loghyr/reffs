@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * MDS layout segments — per-inode data placement metadata.
+ * MDS layout segments -- per-inode data placement metadata.
  *
  * Each layout segment describes how a byte range of an MDS file is
  * distributed across data servers.  The segment records the dstore
@@ -77,7 +77,7 @@ struct layout_data_file {
 
 	/*
 	 * Timestamps for the last dstore op (monotonic ns, in-memory only).
-	 * Written by the per-slot fanout thread — each ldf is owned by
+	 * Written by the per-slot fanout thread -- each ldf is owned by
 	 * exactly one slot per fanout, so no synchronization needed.
 	 */
 	uint64_t ldf_last_op_sent_ns;

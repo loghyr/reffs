@@ -8,7 +8,7 @@
 #endif
 
 /*
- * fs_test_mkdir_timestamps.c — mkdir/rmdir mtime/ctime semantics
+ * fs_test_mkdir_timestamps.c -- mkdir/rmdir mtime/ctime semantics
  *
  * Separated from the nlink tests because timestamp assertions require
  * usleep() to guarantee clock advancement, which would slow the nlink

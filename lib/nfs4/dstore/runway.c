@@ -6,7 +6,7 @@
 #endif
 
 /*
- * File runway — pre-created data file pool.
+ * File runway -- pre-created data file pool.
  *
  * At MDS startup, each dstore gets a runway of empty data files
  * created via the dstore ops vtable (NFSv3 CREATE or local VFS).
@@ -14,7 +14,7 @@
  *
  * Restart recovery: the sequence counter is persisted to pool_seq.dat
  * on the dstore.  On restart, the counter is read back and creation
- * resumes from where it left off — no orphaned files.
+ * resumes from where it left off -- no orphaned files.
  *
  * Replenishment: when runway_pop drops below 25% capacity, a batch
  * of new files is created synchronously before returning.  For
@@ -47,7 +47,7 @@ static int runway_load_seq(struct dstore *ds, uint32_t *seq_out)
 	int ret;
 
 	/*
-	 * Try to CREATE the seq file (UNCHECKED — succeeds if exists).
+	 * Try to CREATE the seq file (UNCHECKED -- succeeds if exists).
 	 * Then GETATTR to read the size.  If size > 0, the file
 	 * contains a 4-byte sequence counter.
 	 *
@@ -201,7 +201,7 @@ int runway_pop(struct runway *rw, uint8_t *out_fh, uint32_t *out_fh_len)
 	pthread_mutex_lock(&rw->rw_mutex);
 
 	/*
-	 * Replenish if below low-water mark.  This is synchronous —
+	 * Replenish if below low-water mark.  This is synchronous --
 	 * the caller blocks while files are created.  For production,
 	 * this should be a background thread triggered by a signal.
 	 */

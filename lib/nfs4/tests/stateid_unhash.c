@@ -77,10 +77,10 @@ START_TEST(test_unhash_first_succeeds)
 	/* First unhash succeeds. */
 	ck_assert(stateid_inode_unhash(&stid));
 
-	/* Second unhash fails — already unhashed. */
+	/* Second unhash fails -- already unhashed. */
 	ck_assert(!stateid_inode_unhash(&stid));
 
-	/* Third call also fails — idempotent. */
+	/* Third call also fails -- idempotent. */
 	ck_assert(!stateid_inode_unhash(&stid));
 }
 END_TEST
@@ -92,7 +92,7 @@ START_TEST(test_unhash_never_hashed)
 {
 	struct stateid stid = { 0 };
 
-	/* s_state is 0 — STID_IS_INODE_HASHED not set. */
+	/* s_state is 0 -- STID_IS_INODE_HASHED not set. */
 	ck_assert(!stateid_inode_unhash(&stid));
 }
 END_TEST

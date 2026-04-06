@@ -127,7 +127,7 @@ struct nfs4_client *nfs4_client_find(clientid4 clid)
 }
 
 /* ------------------------------------------------------------------ */
-/* Find by owner (EXCHANGE_ID path — disk IO acceptable)              */
+/* Find by owner (EXCHANGE_ID path -- disk IO acceptable)              */
 
 struct find_owner_cb_arg {
 	const client_owner4 *owner;

@@ -8,14 +8,14 @@
 #endif
 
 /*
- * CHUNK operations — data server block-level I/O.
+ * CHUNK operations -- data server block-level I/O.
  *
  * CHUNK_WRITE: store encoded chunks at a block offset, record
  * per-block metadata in the chunk store (PENDING state).
  *
- * CHUNK_FINALIZE: transition PENDING → FINALIZED (visible to owner).
+ * CHUNK_FINALIZE: transition PENDING --> FINALIZED (visible to owner).
  *
- * CHUNK_COMMIT: transition FINALIZED → COMMITTED (visible to all).
+ * CHUNK_COMMIT: transition FINALIZED --> COMMITTED (visible to all).
  *
  * CHUNK_READ: read committed (or owner's finalized) chunks.
  *
@@ -398,7 +398,7 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 	}
 
 	/*
-	 * Transition each owner's blocks from PENDING → FINALIZED.
+	 * Transition each owner's blocks from PENDING --> FINALIZED.
 	 * The cfa_chunks array lists the chunk_owner4 entries to finalize.
 	 */
 	uint32_t nowners = args->cfa_chunks.cfa_chunks_len;
@@ -420,7 +420,7 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 			(ret == 0) ? NFS4_OK : NFS4ERR_INVAL;
 	}
 
-	/* Persist metadata — FINALIZED state must survive DS restart. */
+	/* Persist metadata -- FINALIZED state must survive DS restart. */
 	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
 			    compound->c_inode->i_ino);
 
@@ -490,7 +490,7 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 			(ret == 0) ? NFS4_OK : NFS4ERR_INVAL;
 	}
 
-	/* Persist metadata — COMMITTED state is the durability guarantee. */
+	/* Persist metadata -- COMMITTED state is the durability guarantee. */
 	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
 			    compound->c_inode->i_ino);
 
@@ -506,7 +506,7 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 }
 
 /* ------------------------------------------------------------------ */
-/* Stub ops — not needed for happy-path demo                           */
+/* Stub ops -- not needed for happy-path demo                           */
 /* ------------------------------------------------------------------ */
 
 uint32_t nfs4_op_chunk_error(struct compound *compound)

@@ -8,14 +8,14 @@
 #endif
 
 /*
- * fs_test_mkdir.c — reffs_fs_mkdir() and reffs_fs_rmdir() nlink accounting
+ * fs_test_mkdir.c -- reffs_fs_mkdir() and reffs_fs_rmdir() nlink accounting
  *
  * POSIX: creating a subdirectory increments the parent's st_nlink by 1
  * (the new entry's ".." hard-link back to the parent).  The new directory
  * itself starts at st_nlink == 2.  rmdir reverses all of this.
  *
  * These are the tests most directly targeted at the S_IFLNK/nlink=1
- * regression — any change that touches how mkdir initialises i_nlink or
+ * regression -- any change that touches how mkdir initialises i_nlink or
  * i_mode must pass this file cleanly.
  *
  * Tests:

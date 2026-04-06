@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# EC Benchmark — compare encoding overhead across codecs and geometries.
+# EC Benchmark -- compare encoding overhead across codecs and geometries.
 #
 # Usage: ec_benchmark.sh [OPTIONS] <ec_demo_path> <mds_host>
 #
@@ -286,14 +286,14 @@ for sz in $SIZES; do
             k=${geom%%:*}
             m=${geom##*:}
 
-            # Healthy pass — || true prevents set -e from killing
+            # Healthy pass -- || true prevents set -e from killing
             # the script when a codec/layout combination fails
             # (e.g., Mojette + v2 CHUNK variable chunk size mismatch).
             bench_one "rs" "$k" "$m" "$sz" "$run" "healthy" "" || true
             bench_one "mojette-sys" "$k" "$m" "$sz" "$run" "healthy" "" || true
             bench_one "mojette-nonsys" "$k" "$m" "$sz" "$run" "healthy" "" || true
 
-            # Degraded pass (skip plain and stripe — no redundancy)
+            # Degraded pass (skip plain and stripe -- no redundancy)
             if [ "$DEGRADE" -gt 0 ] && [ "$DEGRADE" -le "$m" ]; then
                 skip_list=$(build_skip_list "$DEGRADE")
                 bench_one "rs" "$k" "$m" "$sz" "$run" \

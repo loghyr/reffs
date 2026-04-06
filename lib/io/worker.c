@@ -98,7 +98,7 @@ void *io_worker_thread(void *vtd)
 				/*
 				 * Resume path: task was paused by an async op
 				 * and re-enqueued by the completer.  Skip RPC
-				 * decode — jump straight to the protocol op.
+				 * decode -- jump straight to the protocol op.
 				 */
 				struct rpc_trans *rt = t->t_rt;
 

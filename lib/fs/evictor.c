@@ -9,7 +9,7 @@
  * inode_sync disk I/O.  This thread handles eviction in the
  * background so worker threads return immediately.
  *
- * Pattern: follows lease_reaper.c — single global thread, condvar
+ * Pattern: follows lease_reaper.c -- single global thread, condvar
  * sleep, atomic running flag, clean shutdown via join.
  */
 
@@ -37,7 +37,7 @@ static _Atomic uint32_t evictor_needed;
 static pthread_mutex_t evictor_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t evictor_cv = PTHREAD_COND_INITIALIZER;
 
-/* Drain synchronization — evictor_drain() waits on this. */
+/* Drain synchronization -- evictor_drain() waits on this. */
 static _Atomic uint32_t evictor_drain_requested;
 static pthread_cond_t evictor_drain_cv = PTHREAD_COND_INITIALIZER;
 
@@ -101,7 +101,7 @@ static void *evictor_thread_fn(void *arg __attribute__((unused)))
 					    memory_order_relaxed)) {
 			if (pthread_cond_timedwait(&evictor_cv, &evictor_mtx,
 						   &ts) != 0)
-				break; /* timeout — check again */
+				break; /* timeout -- check again */
 		}
 		atomic_store_explicit(&evictor_needed, 0, memory_order_relaxed);
 		pthread_mutex_unlock(&evictor_mtx);

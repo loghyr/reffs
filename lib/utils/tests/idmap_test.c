@@ -2,15 +2,15 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * idmap_test.c — unit tests for the identity mapping cache.
+ * idmap_test.c -- unit tests for the identity mapping cache.
  *
  * Tests:
  *   - init/fini lifecycle
- *   - cache injection and lookup (uid→name, name→uid)
+ *   - cache injection and lookup (uid-->name, name-->uid)
  *   - numeric string bypass
  *   - unknown lookups return -ENOENT
  *   - domain case-insensitivity
- *   - round-trip cache→lookup→verify
+ *   - round-trip cache-->lookup-->verify
  *   - gid equivalents
  */
 
@@ -117,13 +117,13 @@ START_TEST(test_unknown_uid)
 	/*
 	 * uid 99999 is unlikely to exist in nsswitch during testing.
 	 * The lookup should fail with -ENOENT (or succeed if the system
-	 * happens to have it — either is acceptable).
+	 * happens to have it -- either is acceptable).
 	 */
 	int ret = idmap_uid_to_name(99999, &u);
 
 	if (ret == 0)
 		utf8string_free(&u);
-	/* No assertion on ret — system-dependent. */
+	/* No assertion on ret -- system-dependent. */
 
 	idmap_fini();
 }
@@ -183,7 +183,7 @@ START_TEST(test_domain_case_insensitive)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Round-trip: cache → uid_to_name → name_to_uid                       */
+/* Round-trip: cache --> uid_to_name --> name_to_uid                       */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_round_trip)
@@ -195,11 +195,11 @@ START_TEST(test_round_trip)
 
 	idmap_cache_uid(3000, "charlie@EXAMPLE.COM");
 
-	/* uid → name */
+	/* uid --> name */
 	ck_assert_int_eq(idmap_uid_to_name(3000, &u), 0);
 	ck_assert_str_eq(u.utf8string_val, "charlie@EXAMPLE.COM");
 
-	/* name → uid (using the string we just got back) */
+	/* name --> uid (using the string we just got back) */
 	ck_assert_int_eq(idmap_name_to_uid(&u, &uid), 0);
 	ck_assert_uint_eq(uid, 3000);
 
@@ -338,7 +338,7 @@ START_TEST(test_prewarm_timeout)
 
 	uid_t uids[] = { 99999 };
 
-	/* Short timeout — should return quickly even if resolver hangs. */
+	/* Short timeout -- should return quickly even if resolver hangs. */
 	idmap_prewarm(uids, 1, NULL, 0, 500);
 
 	/* uid 99999 should NOT be in the cache (unresolvable). */

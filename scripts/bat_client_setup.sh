@@ -6,7 +6,7 @@
 # remote reffsd server.
 #
 # Mounts NFSv4.2 + NFSv3 from the server, then reads Kerberos
-# config and TLS CA cert from the server's /config export —
+# config and TLS CA cert from the server's /config export --
 # no SSH or scp to the server needed.
 #
 # Usage: sudo bat_client_setup.sh SERVER
@@ -69,7 +69,7 @@ else
 fi
 
 ls "$V4_MOUNT/config" >/dev/null 2>&1 || \
-	die "$V4_MOUNT/config not found — run bat_setup.sh on the server first"
+	die "$V4_MOUNT/config not found -- run bat_setup.sh on the server first"
 info "Mounts OK, /config visible"
 
 # -----------------------------------------------------------------------

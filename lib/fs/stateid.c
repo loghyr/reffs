@@ -74,7 +74,7 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
 	stid->s_seqid = 0;
 
 	/*
-	 * s_cookie: hash of the stid pointer — cheap, non-cryptographic,
+	 * s_cookie: hash of the stid pointer -- cheap, non-cryptographic,
 	 * distinct across recycled addresses.
 	 */
 	stid->s_cookie = (uint32_t)XXH3_64bits(&stid, sizeof(stid));
@@ -98,7 +98,7 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
 		rcu_read_unlock();
 
 		if (caa_unlikely(node != &stid->s_inode_node)) {
-			/* Collision – should never happen with a 32-bit counter */
+			/* Collision -- should never happen with a 32-bit counter */
 			LOG("stateid_assign: duplicate id %u", stid->s_id);
 			stid->s_state &= ~STID_IS_INODE_HASHED;
 			inode_active_put(stid->s_inode);
@@ -141,7 +141,7 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
 		rcu_read_unlock();
 
 		if (caa_unlikely(node != &stid->s_client_node)) {
-			/* Collision – should never happen with a 32-bit counter */
+			/* Collision -- should never happen with a 32-bit counter */
 			LOG("stateid_assign: duplicate id %u", stid->s_id);
 			stid->s_state &= ~STID_IS_CLIENT_HASHED;
 

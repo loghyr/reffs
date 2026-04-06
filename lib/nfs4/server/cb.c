@@ -216,7 +216,7 @@ int cb_reply_handler(struct rpc_trans *rt)
 }
 
 /* ------------------------------------------------------------------ */
-/* CB_RECALL — fire-and-forget (unchanged behavior)                    */
+/* CB_RECALL -- fire-and-forget (unchanged behavior)                    */
 /* ------------------------------------------------------------------ */
 
 int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
@@ -262,7 +262,7 @@ int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
 }
 
 /* ------------------------------------------------------------------ */
-/* CB_GETATTR — send and wait for reply                                */
+/* CB_GETATTR -- send and wait for reply                                */
 /* ------------------------------------------------------------------ */
 
 int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
@@ -315,7 +315,7 @@ int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 	/* Register for timeout tracking. */
 	cb_timeout_register(cp);
 
-	/* Send — io_rpc_trans_cb takes ownership of rt_reply buffer.
+	/* Send -- io_rpc_trans_cb takes ownership of rt_reply buffer.
 	 * The rpc_trans itself stays in the pending_requests table
 	 * until the reply arrives or timeout fires. */
 	ret = io_rpc_trans_cb(cb_rt);
@@ -326,12 +326,12 @@ int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 		return ret;
 	}
 
-	/* cb_rt stays alive in pending_requests — do NOT free it here. */
+	/* cb_rt stays alive in pending_requests -- do NOT free it here. */
 	return 0;
 }
 
 /* ------------------------------------------------------------------ */
-/* CB_LAYOUTRECALL — send and wait for reply                           */
+/* CB_LAYOUTRECALL -- send and wait for reply                           */
 /* ------------------------------------------------------------------ */
 
 int nfs4_cb_layoutrecall_send(struct nfs4_session *session,

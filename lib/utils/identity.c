@@ -37,7 +37,7 @@ uint32_t reffs_id_to_uid(reffs_id id)
 {
 	/*
 	 * UNIX and SYNTH types store the numeric uid/gid directly
-	 * in the local_id field — no mapping lookup needed.
+	 * in the local_id field -- no mapping lookup needed.
 	 */
 	if (REFFS_ID_IS_UNIX(id) || REFFS_ID_TYPE(id) == REFFS_ID_SYNTH)
 		return REFFS_ID_LOCAL(id);
@@ -76,7 +76,7 @@ int rpc_cred_to_authunix_parms(struct rpc_info *info, struct authunix_parms *ap)
 		 * For RPCSEC_GSS, the RPC layer maps the GSS principal
 		 * to uid/gid and stores them in ri_mapped_uid/gid
 		 * (see rpc.c GSS DATA handling).  The rc_gss union
-		 * member is NOT clobbered — it stays valid for the
+		 * member is NOT clobbered -- it stays valid for the
 		 * reply verifier.
 		 */
 		if (info->ri_gss_mapped) {

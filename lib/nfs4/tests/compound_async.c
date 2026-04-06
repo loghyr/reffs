@@ -10,11 +10,11 @@
  * access global server state such as sessions, inodes, or super-blocks.
  *
  * Test cases:
- *   1. Empty argarray    — loop is never entered; res->status = NFS4_OK.
- *   2. Illegal opcode    — nfs4_op_illegal fires; loop stops at op 0.
- *   3. Resume: ok        — rt_next_action callback runs, c_curr_op advances.
- *   4. Resume: error     — callback sets an error; res->status propagates.
- *   5. Resume: pause     — callback calls task_pause(); dispatch yields;
+ *   1. Empty argarray    -- loop is never entered; res->status = NFS4_OK.
+ *   2. Illegal opcode    -- nfs4_op_illegal fires; loop stops at op 0.
+ *   3. Resume: ok        -- rt_next_action callback runs, c_curr_op advances.
+ *   4. Resume: error     -- callback sets an error; res->status propagates.
+ *   5. Resume: pause     -- callback calls task_pause(); dispatch yields;
  *                          c_curr_op stays at 0 for the next re-entry.
  */
 
@@ -186,7 +186,7 @@ START_TEST(test_dispatch_illegal_op)
 	atomic_store_explicit(&task.t_state, TASK_RUNNING,
 			      memory_order_relaxed);
 
-	/* OP_MAX is not in op_table — guaranteed to call nfs4_op_illegal */
+	/* OP_MAX is not in op_table -- guaranteed to call nfs4_op_illegal */
 	struct compound *compound = make_compound(&rt, &task, 1, OP_MAX);
 
 	ck_assert(!dispatch_compound(compound));
@@ -280,15 +280,15 @@ START_TEST(test_dispatch_resume_pause)
 	ck_assert(g_cb_called);
 	/*
 	 * rt_next_action is cleared before the callback is invoked; that is
-	 * the protocol — the callback owns rt from that point.
+	 * the protocol -- the callback owns rt from that point.
 	 */
 	ck_assert(rt.rt_next_action == NULL);
-	/* c_curr_op must NOT advance — the op needs to resume again */
+	/* c_curr_op must NOT advance -- the op needs to resume again */
 	ck_assert_uint_eq(compound->c_curr_op, 0);
 	ck_assert(task_is_paused(&task));
 
 	/*
-	 * Do not free the compound — in the real server it stays alive
+	 * Do not free the compound -- in the real server it stays alive
 	 * until the async completer calls task_resume().  Here we force-
 	 * transition back to RUNNING so free_compound is safe.
 	 */

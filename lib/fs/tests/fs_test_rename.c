@@ -8,7 +8,7 @@
 #endif
 
 /*
- * fs_test_rename.c — reffs_fs_rename() correctness
+ * fs_test_rename.c -- reffs_fs_rename() correctness
  *
  * rename() changes a file's name and/or parent directory.  The critical
  * invariants (POSIX) are:
@@ -30,12 +30,12 @@
  *    - identity (ino/uid/gid/size) and all timestamps are preserved
  *    - parent nlink is unchanged (files carry no ".." link)
  *
- *  File rename across directories — into a subdirectory
+ *  File rename across directories -- into a subdirectory
  *    - old path gone, new path has same identity and timestamps
  *    - source parent: nlink decrements; mtime/ctime advance; atime unchanged
  *    - dest   parent: nlink increments; mtime/ctime advance; atime unchanged
  *
- *  File rename across directories — out of a subdirectory (reverse)
+ *  File rename across directories -- out of a subdirectory (reverse)
  *    - same invariants in the opposite direction
  *
  *  File rename clobbers an existing file at the destination
@@ -59,7 +59,7 @@
  *  Destination already exists as a directory
  *    - implementation reparents src *into* that directory and renames it
  *      to nm_dst->nm_name (the dst basename), not the src basename
- *    - e.g. rename("/f", "/dstdir") → /dstdir/dstdir  (not /dstdir/f)
+ *    - e.g. rename("/f", "/dstdir") --> /dstdir/dstdir  (not /dstdir/f)
  *
  *  Known limitation (documented in test, not a failing assertion)
  *    - find_matching_directory_entry(LAST_COMPONENT_IS_NEW) silently
@@ -67,18 +67,18 @@
  *      rename(x, "/missing/f") a no-op instead of returning -ENOENT
  *
  *  Error cases
- *    - rename("/", anything)            → -EFAULT
- *    - rename(anything, "/")            → -EFAULT
- *    - rename(nonexistent, anything)    → -ENOENT
- *    - rename(x, path/missing_parent)  → -ENOENT
- *    - rename(x, "<dir>/..")           → -ENOTEMPTY
+ *    - rename("/", anything)            --> -EFAULT
+ *    - rename(anything, "/")            --> -EFAULT
+ *    - rename(nonexistent, anything)    --> -ENOENT
+ *    - rename(x, path/missing_parent)  --> -ENOENT
+ *    - rename(x, "<dir>/..")           --> -ENOTEMPTY
  *
  * Deliberately NOT tested:
- *  - Moving a directory into its own subtree — the implementation has a
+ *  - Moving a directory into its own subtree -- the implementation has a
  *    "TODO: make sure the paths are not overlapped if dirs" comment and does
  *    not yet detect this; testing it would document a known defect, not a
  *    contract.
- *  - Cross-superblock rename — not supported.
+ *  - Cross-superblock rename -- not supported.
  */
 
 #include "fs_test_harness.h"
@@ -184,7 +184,7 @@ START_TEST(test_rename_file_same_dir)
 	ck_assert_timespec_eq(st_pre.st_mtim, st_post.st_mtim);
 	ck_assert_timespec_eq(st_pre.st_ctim, st_post.st_ctim);
 
-	/* Parent nlink unchanged — files carry no ".." link */
+	/* Parent nlink unchanged -- files carry no ".." link */
 	ck_assert_int_eq(reffs_fs_getattr("/", &st_parent_after), 0);
 	ck_assert_uint_eq(st_parent_before.st_nlink, st_parent_after.st_nlink);
 
@@ -255,7 +255,7 @@ START_TEST(test_rename_file_into_subdir)
 }
 END_TEST
 
-/* Move a file back out of a subdirectory to the root — reverse direction. */
+/* Move a file back out of a subdirectory to the root -- reverse direction. */
 START_TEST(test_rename_file_out_of_subdir)
 {
 	struct stat st_file_pre, st_file_post;
@@ -374,7 +374,7 @@ START_TEST(test_rename_dir_same_dir)
 	assert_not_exists("/srcd");
 	ck_assert_uint_eq(get_ino("/dstd"), dir_ino);
 
-	/* One ".." link moved — parent nlink must be unchanged */
+	/* One ".." link moved -- parent nlink must be unchanged */
 	root_nlink_after = get_nlink("/");
 	ck_assert_uint_eq(root_nlink_before, root_nlink_after);
 
@@ -386,13 +386,13 @@ START_TEST(test_rename_dir_same_dir)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Directory rename across directories — nlink accounting              */
+/* Directory rename across directories -- nlink accounting              */
 /* ------------------------------------------------------------------ */
 
 /*
- * Moving /srcdir/child → /dstdir/child:
- *   /srcdir loses the ".." back-link → nlink from N to N-1
- *   /dstdir gains the ".." back-link → nlink from M to M+1
+ * Moving /srcdir/child --> /dstdir/child:
+ *   /srcdir loses the ".." back-link --> nlink from N to N-1
+ *   /dstdir gains the ".." back-link --> nlink from M to M+1
  *   child itself retains nlink == 2
  */
 START_TEST(test_rename_dir_cross_dir_nlink)
@@ -554,7 +554,7 @@ START_TEST(test_rename_dst_parent_missing_enoent)
 END_TEST
 
 /*
- * rename(x, "<dir>/..") — the implementation explicitly returns
+ * rename(x, "<dir>/..") -- the implementation explicitly returns
  * -ENOTEMPTY when nm_dst->nm_name is "..".
  */
 START_TEST(test_rename_dst_dotdot_enotempty)

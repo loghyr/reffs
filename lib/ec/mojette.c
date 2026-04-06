@@ -6,25 +6,25 @@
 #endif
 
 /*
- * Mojette transform — core forward and inverse algorithms.
+ * Mojette transform -- core forward and inverse algorithms.
  *
  * Clean-room implementation from published academic sources only:
  *
- *   Guédon J.-P. (ed.), "The Mojette Transform: Theory and
+ *   Guedon J.-P. (ed.), "The Mojette Transform: Theory and
  *   Applications", ISTE/Wiley, 2009.
  *
- *   Normand N., Guédon J.-P., Philippe O., Barba D., "Controlled
+ *   Normand N., Guedon J.-P., Philippe O., Barba D., "Controlled
  *   Redundancy for Image Coding and High-Speed Transmission",
  *   Proc. SPIE Visual Communications and Image Processing, 1996.
  *
- *   Normand N., Kingston A., Évenou P., "A Geometry Driven
+ *   Normand N., Kingston A., Evenou P., "A Geometry Driven
  *   Reconstruction Algorithm for the Mojette Transform", DGCI 2006,
  *   LNCS 4245, pp. 122-133.
  *
  *   Katz M., "Questions of Uniqueness and Resolution in
  *   Reconstruction from Projections", Springer, 1978.
  *
- *   Parrein B., Normand N., Guédon J.-P., "Multiple Description
+ *   Parrein B., Normand N., Guedon J.-P., "Multiple Description
  *   Coding Using Exact Discrete Radon Transform", IEEE DCC, 2001.
  *
  * Arithmetic is unsigned 64-bit wrapping (mod 2^64).  No Galois
@@ -39,7 +39,7 @@
  *   p=-1: bin b = (off-row) - col, so adjacent columns map to
  *         adjacent bins in descending order.  Pairs of bins are loaded
  *         ascending, the two grid lanes are swapped (vextq_u64), and
- *         the result is stored back — again sequential, 4-wide.
+ *         the result is stored back -- again sequential, 4-wide.
  *
  * The StreamScale patent (US 8,683,296) covers SIMD-accelerated
  * Galois field arithmetic.  Mojette uses no GF operations; these
@@ -54,9 +54,9 @@
 #ifdef __aarch64__
 #include <arm_neon.h>
 #elif defined(__AVX2__)
-#include <immintrin.h> /* AVX2 — 256-bit, Haswell+ */
+#include <immintrin.h> /* AVX2 -- 256-bit, Haswell+ */
 #elif defined(__SSE2__)
-#include <emmintrin.h> /* SSE2 — baseline on all x86_64 */
+#include <emmintrin.h> /* SSE2 -- baseline on all x86_64 */
 #endif
 
 #include <errno.h>
@@ -173,7 +173,7 @@ bool moj_katz_check(const struct moj_direction *dirs, int n, int P, int Q)
 #ifdef __aarch64__
 
 /*
- * moj_fwd_row_p1 — accumulate one grid row into bins for p=+1, q=1.
+ * moj_fwd_row_p1 -- accumulate one grid row into bins for p=+1, q=1.
  *
  * For p=+1: b = col + (off-row), so bin indices are sequential and
  * ascending.  dst points to bins[off-row]; we add src[0..P-1] into
@@ -198,7 +198,7 @@ static void moj_fwd_row_p1(const uint64_t *__restrict__ src, int P,
 }
 
 /*
- * moj_fwd_row_pm1 — accumulate one grid row into bins for p=-1, q=1.
+ * moj_fwd_row_pm1 -- accumulate one grid row into bins for p=-1, q=1.
  *
  * For p=-1: b = (off-row) - col, so bin indices are sequential and
  * descending.  dst points to bins[off-row].
@@ -228,8 +228,8 @@ static void moj_fwd_row_pm1(const uint64_t *__restrict__ src, int P,
 		/*
 		 * Swap lanes so {src[col], src[col+1]} becomes
 		 * {src[col+1], src[col]}, matching the reversed bin order:
-		 *   b0 = {bins[-col-1], bins[-col]}  ← add {src[col+1], src[col]}
-		 *   b1 = {bins[-col-3], bins[-col-2]} ← add {src[col+3], src[col+2]}
+		 *   b0 = {bins[-col-1], bins[-col]}  <-- add {src[col+1], src[col]}
+		 *   b1 = {bins[-col-3], bins[-col-2]} <-- add {src[col+3], src[col+2]}
 		 */
 		vst1q_u64(dst - col - 1, vaddq_u64(b0, vextq_u64(g0, g0, 1)));
 		vst1q_u64(dst - col - 3, vaddq_u64(b1, vextq_u64(g1, g1, 1)));
@@ -249,7 +249,7 @@ static void moj_fwd_row_pm1(const uint64_t *__restrict__ src, int P,
 #if defined(__SSE2__) || defined(__AVX2__)
 
 /*
- * moj_fwd_row_p1_sse2 — sequential ascending bins, SSE2 (x86_64).
+ * moj_fwd_row_p1_sse2 -- sequential ascending bins, SSE2 (x86_64).
  *
  * Identical logic to the NEON p=+1 path but using 128-bit SSE2
  * intrinsics: _mm_add_epi64 on pairs loaded with _mm_loadu_si128.
@@ -275,7 +275,7 @@ static void moj_fwd_row_p1_sse2(const uint64_t *__restrict__ src, int P,
 }
 
 /*
- * moj_fwd_row_pm1_sse2 — sequential descending bins, SSE2 (x86_64).
+ * moj_fwd_row_pm1_sse2 -- sequential descending bins, SSE2 (x86_64).
  *
  * Identical logic to the NEON p=-1 path.  Two 64-bit lanes are swapped
  * with _mm_shuffle_epi32(v, 0x4E): the constant 0x4E = _MM_SHUFFLE(1,0,3,2)
@@ -317,7 +317,7 @@ static void moj_fwd_row_pm1_sse2(const uint64_t *__restrict__ src, int P,
 #ifdef __AVX2__
 
 /*
- * moj_fwd_row_p1_avx2 — sequential ascending bins, AVX2 (x86_64).
+ * moj_fwd_row_p1_avx2 -- sequential ascending bins, AVX2 (x86_64).
  *
  * 256-bit (4 x uint64_t) per iteration, double the width of SSE2.
  * Same logic: load bins, load grid, add, store.
@@ -353,7 +353,7 @@ static void moj_fwd_row_p1_avx2(const uint64_t *__restrict__ src, int P,
 }
 
 /*
- * moj_fwd_row_pm1_avx2 — sequential descending bins, AVX2 (x86_64).
+ * moj_fwd_row_pm1_avx2 -- sequential descending bins, AVX2 (x86_64).
  *
  * For p=-1 the bins descend: dst[-col] += src[col].  Within a 4-element
  * AVX2 vector, we need to reverse the element order.  Load grid as
@@ -361,7 +361,7 @@ static void moj_fwd_row_p1_avx2(const uint64_t *__restrict__ src, int P,
  * _mm256_permute4x64_epi64(v, 0x1B), then add to the ascending bin
  * vector at dst[-col-3..dst[-col].
  *
- * 0x1B = _MM_SHUFFLE(0,1,2,3): lane 0←3, 1←2, 2←1, 3←0.
+ * 0x1B = _MM_SHUFFLE(0,1,2,3): lane 0<--3, 1<--2, 2<--1, 3<--0.
  */
 static void moj_fwd_row_pm1_avx2(const uint64_t *__restrict__ src, int P,
 				 uint64_t *__restrict__ dst)
@@ -450,7 +450,7 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 			continue;
 		}
 #endif /* __aarch64__ || __SSE2__ || __AVX2__ */
-		/* General scalar path — handles any (p, q). */
+		/* General scalar path -- handles any (p, q). */
 		for (int row = 0; row < Q; row++) {
 			for (int col = 0; col < P; col++) {
 				int b = col * p - row * q + off;

@@ -21,7 +21,7 @@ START_TEST(test_inode_gaps)
 	struct test_context ctx;
 
 	/*
-	 * The root inode (ino 1) must be a directory — load_inode_attributes()
+	 * The root inode (ino 1) must be a directory -- load_inode_attributes()
 	 * overwrites the in-memory mode with whatever is in the .meta file, so
 	 * using S_IFREG here would leave the root with the wrong type after
 	 * recovery, putting the filesystem in an inconsistent state even though

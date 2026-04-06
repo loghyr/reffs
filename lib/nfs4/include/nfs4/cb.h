@@ -17,7 +17,7 @@ struct compound;
 struct rpc_trans;
 
 /* ------------------------------------------------------------------ */
-/* cb_pending — tracks a CB that is waiting for a client reply         */
+/* cb_pending -- tracks a CB that is waiting for a client reply         */
 /*                                                                     */
 /* Ownership: allocated by the op that initiates the CB (via           */
 /* cb_pending_alloc), freed by the op's resume callback (via           */
@@ -27,10 +27,10 @@ struct rpc_trans;
 
 /*
  * cp_status values:
- *   CB_PENDING_INFLIGHT  — CB sent, waiting for reply or timeout
- *   0                    — reply received successfully
- *   -ETIMEDOUT           — timeout fired before reply arrived
- *   -EIO                 — reply arrived but XDR decode failed
+ *   CB_PENDING_INFLIGHT  -- CB sent, waiting for reply or timeout
+ *   0                    -- reply received successfully
+ *   -ETIMEDOUT           -- timeout fired before reply arrived
+ *   -EIO                 -- reply arrived but XDR decode failed
  */
 #define CB_PENDING_INFLIGHT (-EINPROGRESS)
 
@@ -54,7 +54,7 @@ struct cb_pending *cb_pending_alloc(struct task *task,
 void cb_pending_free(struct cb_pending *cp);
 
 /*
- * cb_pending_try_complete — atomically transition cp_status from
+ * cb_pending_try_complete -- atomically transition cp_status from
  * CB_PENDING_INFLIGHT to @status.  Returns true if this caller won
  * the race and should call task_resume; false if the other path
  * (reply handler or timeout) already completed this cb_pending.
@@ -70,7 +70,7 @@ static inline int cb_pending_try_complete(struct cb_pending *cp, int status)
 }
 
 /* ------------------------------------------------------------------ */
-/* CB reply handler — called by the RPC REPLY dispatcher               */
+/* CB reply handler -- called by the RPC REPLY dispatcher               */
 /* ------------------------------------------------------------------ */
 
 int cb_reply_handler(struct rpc_trans *rt);

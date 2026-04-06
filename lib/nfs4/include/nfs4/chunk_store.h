@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Chunk store — per-block metadata for CHUNK operations.
+ * Chunk store -- per-block metadata for CHUNK operations.
  *
  * Tracks the lifecycle state of each block in a data file managed
  * by CHUNK_WRITE / CHUNK_FINALIZE / CHUNK_COMMIT.  Block data is
@@ -51,7 +51,7 @@ struct chunk_block {
 };
 
 /*
- * On-disk format — fixed-size records for crash-safe persistence.
+ * On-disk format -- fixed-size records for crash-safe persistence.
  * Same field layout as chunk_block but with explicit uint32_t types
  * (no enum) for binary stability.
  */

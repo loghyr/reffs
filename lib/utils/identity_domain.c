@@ -8,7 +8,7 @@
  * Domain 0 is always the local UNIX namespace.  New domains are
  * auto-created when authentication arrives from an unknown realm.
  *
- * The table is a simple array (domains are few — dozens at most).
+ * The table is a simple array (domains are few -- dozens at most).
  * Persisted to <state_dir>/identity_domains via write-temp/fsync/rename.
  */
 

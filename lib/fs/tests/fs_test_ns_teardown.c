@@ -4,7 +4,7 @@
  */
 
 /*
- * fs_test_ns_teardown.c — unit tests for reffs_ns_fini() / release_all_fs_dirents()
+ * fs_test_ns_teardown.c -- unit tests for reffs_ns_fini() / release_all_fs_dirents()
  *
  * These tests exist because the teardown path has historically been the source
  * of subtle ordering bugs (double-free via dirent_parent_release, RCU
@@ -16,7 +16,7 @@
  *   Each test calls reffs_ns_init() in setup() (via fs_test_setup()) and
  *   drives the namespace into a specific state before teardown.  Teardown
  *   then calls reffs_ns_fini() (via fs_test_teardown()).  ASAN with
- *   CK_NOFORK is the primary correctness signal — a double-free or
+ *   CK_NOFORK is the primary correctness signal -- a double-free or
  *   use-after-free will abort the process inside the test that caused it.
  *
  *   Tests that specifically exercise release_all_fs_dirents() call it
@@ -28,40 +28,40 @@
  * Tests:
  *
  *  Basic teardown correctness
- *   teardown_empty_ns           — ns_init + immediate ns_fini, nothing created
- *   teardown_single_file        — one regular file; tests that the file inode
+ *   teardown_empty_ns           -- ns_init + immediate ns_fini, nothing created
+ *   teardown_single_file        -- one regular file; tests that the file inode
  *                                 is released without UAF or double-free
- *   teardown_single_dir         — one empty directory
- *   teardown_deep_tree          — three levels of nesting; verifies that the
+ *   teardown_single_dir         -- one empty directory
+ *   teardown_deep_tree          -- three levels of nesting; verifies that the
  *                                 recursive dirent walk doesn't miss any node
- *   teardown_wide_tree          — many siblings at the root level; verifies
+ *   teardown_wide_tree          -- many siblings at the root level; verifies
  *                                 cds_list_for_each_entry_safe correctness
- *   teardown_mixed_tree         — mix of files, dirs, and empty dirs at
+ *   teardown_mixed_tree         -- mix of files, dirs, and empty dirs at
  *                                 multiple depths
  *
  *  release_all_fs_dirents() called directly
- *   rafd_clears_sb_dirent       — after rafd(), sb->sb_dirent is NULL (the
+ *   rafd_clears_sb_dirent       -- after rafd(), sb->sb_dirent is NULL (the
  *                                 root dirent ref was dropped)
- *   rafd_idem_after_fini        — calling rafd() and then ns_fini() does not
+ *   rafd_idem_after_fini        -- calling rafd() and then ns_fini() does not
  *                                 double-free (ns_fini is idempotent)
- *   rafd_lru_drained            — after rafd(), sb_inode_lru_count == 0 and
+ *   rafd_lru_drained            -- after rafd(), sb_inode_lru_count == 0 and
  *                                 sb_dirent_lru_count == 0
  *
  *  Ordering / RCU safety
- *   teardown_after_lru_pressure — create enough files to trigger LRU eviction,
+ *   teardown_after_lru_pressure -- create enough files to trigger LRU eviction,
  *                                 then tear down; evicted inodes must not be
  *                                 accessed after the RCU grace period
- *   teardown_with_pinned_inode  — hold an active ref on one inode across
+ *   teardown_with_pinned_inode  -- hold an active ref on one inode across
  *                                 teardown; the ref must be droppable after
  *                                 ns_fini() completes without UAF
- *   teardown_rcu_barrier_order  — verifies rcu_barrier() is called before the
+ *   teardown_rcu_barrier_order  -- verifies rcu_barrier() is called before the
  *                                 dirent walk by checking rd_inode is still
  *                                 valid at the start of release_all_fs_dirents
  *                                 (indirect: no crash == pass)
  *
  *  Double-fini / idempotency
- *   fini_twice_returns_ealready — second reffs_ns_fini() returns -EALREADY
- *   init_after_fini_works       — ns_init after a clean ns_fini succeeds and
+ *   fini_twice_returns_ealready -- second reffs_ns_fini() returns -EALREADY
+ *   init_after_fini_works       -- ns_init after a clean ns_fini succeeds and
  *                                 the new namespace is usable
  */
 
@@ -105,7 +105,7 @@ static void teardown(void)
  */
 START_TEST(test_teardown_empty_ns)
 {
-	/* Nothing to do — setup/teardown fixture is the entire test. */
+	/* Nothing to do -- setup/teardown fixture is the entire test. */
 	(void)0;
 }
 END_TEST
@@ -113,7 +113,7 @@ END_TEST
 /*
  * teardown_single_file
  *
- * One regular file.  Verifies that a file inode (nlink→0 on unlink, or
+ * One regular file.  Verifies that a file inode (nlink-->0 on unlink, or
  * nlink still 1 at teardown if we don't unlink) is correctly released.
  *
  * We intentionally do NOT unlink so that teardown must cope with a
@@ -160,7 +160,7 @@ END_TEST
  * teardown_wide_tree
  *
  * 32 siblings directly under root.  Exercises the
- * cds_list_for_each_entry_safe() macro in the dirent walk — if it is
+ * cds_list_for_each_entry_safe() macro in the dirent walk -- if it is
  * accidentally replaced with a non-safe variant, the iterator will
  * corrupt when a put triggers a removal.
  */
@@ -180,7 +180,7 @@ END_TEST
  * teardown_mixed_tree
  *
  * Files and directories at multiple depths, including empty directories.
- * Nothing is cleaned up before teardown — the entire tree is left for
+ * Nothing is cleaned up before teardown -- the entire tree is left for
  * reffs_ns_fini() to destroy.
  */
 START_TEST(test_teardown_mixed_tree)
@@ -207,7 +207,7 @@ END_TEST
  *
  * reffs_ns_fini() is then called by teardown().  Because
  * reffs_namespace_initialized is still 1, fini() will call
- * release_all_fs_dirents() again — which must be a safe no-op when
+ * release_all_fs_dirents() again -- which must be a safe no-op when
  * sb_dirent is already NULL.
  */
 START_TEST(test_rafd_clears_sb_dirent)
@@ -226,7 +226,7 @@ START_TEST(test_rafd_clears_sb_dirent)
 	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	/*
 	 * After release_all_fs_dirents() the sb itself may have been put;
-	 * super_block_find may return NULL.  Either outcome is valid — the
+	 * super_block_find may return NULL.  Either outcome is valid -- the
 	 * point is it must not crash.
 	 */
 	if (sb) {
@@ -259,7 +259,7 @@ START_TEST(test_rafd_idem_after_fini)
 	ck_assert_int_eq(ret, 0);
 
 	/*
-	 * teardown() calls reffs_ns_fini() again → -EALREADY (fine).
+	 * teardown() calls reffs_ns_fini() again --> -EALREADY (fine).
 	 */
 }
 END_TEST
@@ -375,7 +375,7 @@ START_TEST(test_teardown_with_pinned_inode)
 
 	/*
 	 * Manually drive teardown while holding the active ref.
-	 * teardown() → reffs_ns_fini() runs; ns_fini calls
+	 * teardown() --> reffs_ns_fini() runs; ns_fini calls
 	 * release_all_fs_dirents() which drops the sb ref chain.
 	 * Our pinned active ref must keep the inode struct live.
 	 */
@@ -384,7 +384,7 @@ START_TEST(test_teardown_with_pinned_inode)
 	rcu_barrier();
 
 	/*
-	 * Verify the inode struct is still addressable — i_ref > 0 because
+	 * Verify the inode struct is still addressable -- i_ref > 0 because
 	 * our active ref holds one inode_get inside it.
 	 *
 	 * With reffs_life_action_shutdown, teardown skips all nlink accounting;
@@ -414,8 +414,8 @@ END_TEST
  * the dirent tree (comment in ns.c: "drain all pending RCU callbacks
  * before touching rd_inode").  This test verifies the ordering contract
  * indirectly: it creates inodes, schedules enough concurrent work to
- * produce pending RCU callbacks (via inode_active_put → inode_lru_add →
- * super_block_evict_inodes → call_rcu), and then calls
+ * produce pending RCU callbacks (via inode_active_put --> inode_lru_add -->
+ * super_block_evict_inodes --> call_rcu), and then calls
  * release_all_fs_dirents().  If rcu_barrier() were absent or called
  * after the walk, ASAN would catch a UAF.
  *
@@ -461,7 +461,7 @@ END_TEST
 START_TEST(test_fini_twice_returns_ealready)
 {
 	/*
-	 * teardown() will call fs_test_teardown() → reffs_ns_fini() first.
+	 * teardown() will call fs_test_teardown() --> reffs_ns_fini() first.
 	 * We call it here explicitly so teardown gets -EALREADY.
 	 */
 	int ret = reffs_ns_fini();
@@ -514,7 +514,7 @@ Suite *fs_ns_teardown_suite(void)
 {
 	Suite *s = suite_create("fs: ns teardown / release_all_fs_dirents");
 
-	/* Basic teardown — fixture alone exercises the path */
+	/* Basic teardown -- fixture alone exercises the path */
 	TCase *tc_basic = tcase_create("Basic teardown");
 	tcase_add_checked_fixture(tc_basic, setup, teardown);
 	tcase_add_test(tc_basic, test_teardown_empty_ns);

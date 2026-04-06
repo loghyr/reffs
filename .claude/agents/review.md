@@ -71,6 +71,18 @@ the source tree.  Report any compiler errors, warnings, or test failures.
 Read each changed file and check for violations of the rules in
 @../standards.md. Focus on the following high-value checks:
 
+### ASCII only
+
+All source files, comments, string literals, and commit messages
+must be pure ASCII (bytes 0x00-0x7F).  Flag any non-ASCII character
+(em-dashes, curly quotes, non-breaking spaces, etc.) as a BLOCKER.
+Use `--` for dashes, straight quotes, and plain ASCII throughout.
+
+```bash
+# Check changed files for non-ASCII:
+git diff --cached --name-only | xargs grep -Pn '[^\x00-\x7F]'
+```
+
 ### config.h inclusion
 
 Every new `.c` source file must begin (after the SPDX header) with:

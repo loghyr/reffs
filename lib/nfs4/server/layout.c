@@ -262,7 +262,7 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 			rcu_read_unlock();
 			if (got)
 				return stid_to_layout(got);
-			/* Lost race — retry. */
+			/* Lost race -- retry. */
 			rcu_read_lock();
 			cds_lfht_first(inode->i_stateids, &iter);
 			continue;
@@ -271,7 +271,7 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 	}
 	rcu_read_unlock();
 
-	/* None found — allocate a new one. */
+	/* None found -- allocate a new one. */
 	struct layout_stateid *new_ls = layout_stateid_alloc(inode, client);
 
 	if (new_ls) {
@@ -287,16 +287,16 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 
 /* ------------------------------------------------------------------ */
 /* ------------------------------------------------------------------ */
-/* Layout body builders — one per layout type.                         */
+/* Layout body builders -- one per layout type.                         */
 /*                                                                     */
 /* Each builder XDR-encodes the layout body and returns it in *body.   */
 /* The caller owns the allocated buffer.  Returns NFS4_OK or an error. */
 /* ------------------------------------------------------------------ */
 
 /*
- * File layout (RFC 5661 §13): single device, stripe across DSes.
+ * File layout (RFC 5661 S13): single device, stripe across DSes.
  * nfl_util encodes the stripe size and DENSE/SPARSE commit model.
- * nfl_fh_list has one FH per DS in the stripe — the client uses
+ * nfl_fh_list has one FH per DS in the stripe -- the client uses
  * (offset / stripe_unit) % nfl_fh_list_len to pick the DS.
  */
 static nfsstat4 layoutget_build_file(struct layout_segment *seg,
@@ -311,7 +311,7 @@ static nfsstat4 layoutget_build_file(struct layout_segment *seg,
 
 	/*
 	 * nfl_util: stripe size in low 31 bits.  Bit 31 = DENSE mode.
-	 * Use SPARSE (bit 31 clear) — each DS FH maps to a separate
+	 * Use SPARSE (bit 31 clear) -- each DS FH maps to a separate
 	 * file, offsets on the DS match the MDS file offsets within
 	 * the stripe.
 	 *
@@ -996,7 +996,7 @@ static uint32_t nfs4_op_layoutreturn_resume(struct rpc_trans *rt)
 			inode->i_mtime = now;
 			inode->i_ctime = now;
 
-			/* Update space accounting — MDS inode has no
+			/* Update space accounting -- MDS inode has no
 			 * local data block, data lives on the DS. */
 			struct super_block *sb = inode->i_sb;
 			int64_t old_used = inode->i_used;
@@ -1121,15 +1121,15 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 		__atomic_and_fetch(&ls->ls_state, ~clear_bit, __ATOMIC_ACQ_REL);
 
 	if (remaining == 0) {
-		/* No layouts left — free the stateid. */
+		/* No layouts left -- free the stateid. */
 		stateid_inode_unhash(stid);
 		stateid_client_unhash(stid);
-		stateid_put(stid); /* state ref → freed */
+		stateid_put(stid); /* state ref --> freed */
 
 		/* Return no stateid (layout fully returned). */
 		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present = false;
 	} else {
-		/* Still have a layout — bump seqid and return it. */
+		/* Still have a layout -- bump seqid and return it. */
 		__atomic_add_fetch(&stid->s_seqid, 1, __ATOMIC_RELAXED);
 		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present = true;
 		pack_stateid4(&res->LAYOUTRETURN4res_u.lorr_stateid
@@ -1194,7 +1194,7 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 
 			dstore_fanout_free(df);
 		}
-		/* Fan-out alloc/setup failed — continue without
+		/* Fan-out alloc/setup failed -- continue without
 		 * fresh attrs.  Not fatal. */
 	}
 

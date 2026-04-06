@@ -80,7 +80,7 @@ reffs_id identity_map_unix_for(reffs_id id);
 reffs_id identity_map_lookup(reffs_id id);
 
 /*
- * Remove a mapping by key.  Removes both directions (A→B and B→A).
+ * Remove a mapping by key.  Removes both directions (A-->B and B-->A).
  * Returns 0 on success, -ENOENT if not found.
  */
 int identity_map_remove(reffs_id key);

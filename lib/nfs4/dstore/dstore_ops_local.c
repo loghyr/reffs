@@ -6,7 +6,7 @@
 #endif
 
 /*
- * Local dstore operations — VFS direct path.
+ * Local dstore operations -- VFS direct path.
  *
  * When the dstore address resolves to the same server (127.0.0.1,
  * ::1, or the configured bind address), operations bypass NFSv3 RPC

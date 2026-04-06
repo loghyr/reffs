@@ -81,7 +81,7 @@ static int deny_setgroups(void)
  * blocks until the parent signals done.
  *
  * We use clone(CLONE_NEWUSER|CLONE_NEWNS) rather than fork() because fork()
- * triggers pthread_atfork() handlers — specifically call_rcu_after_fork_child,
+ * triggers pthread_atfork() handlers -- specifically call_rcu_after_fork_child,
  * which creates a worker thread.  A process with >1 threads cannot call
  * unshare(CLONE_NEWUSER) (EINVAL).  clone() does not fire atfork handlers,
  * so the child is always single-threaded when it sets up its namespaces.
@@ -105,7 +105,7 @@ static int mount_child_fn(void *arg)
 	/*
 	 * Close the write end of done_pipe in the child.  The child inherited
 	 * it from the parent via clone(), so without this close() the child
-	 * holds done_pipe[1] open itself — its own read(done_fd) would never
+	 * holds done_pipe[1] open itself -- its own read(done_fd) would never
 	 * get EOF even after the parent closes its copy.
 	 */
 	close(a->done_pipe_write_fd);
@@ -248,7 +248,7 @@ START_TEST(test_fs_usage_posix_tmpfs)
 
 	/*
 	 * The tmpfs is in the child's private mount namespace.
-	 * Access via /proc/<pid>/root/<path> — Linux exposes each process's
+	 * Access via /proc/<pid>/root/<path> -- Linux exposes each process's
 	 * mount namespace root through procfs, readable without joining it.
 	 */
 	snprintf(proc_mount, sizeof(proc_mount), "/proc/%d/root%s", mount_pid,
@@ -257,7 +257,7 @@ START_TEST(test_fs_usage_posix_tmpfs)
 	/*
 	 * Explicitly restart the call_rcu worker thread.  pthread_atfork
 	 * should have done this already when libcheck forked the test child,
-	 * but call it again to be certain — it is idempotent if the worker
+	 * but call it again to be certain -- it is idempotent if the worker
 	 * is already running.
 	 */
 	call_rcu_after_fork_child();

@@ -9,7 +9,7 @@
  * Unit tests for dstore lifecycle.
  *
  * These tests exercise the hash table, refcount, and state transitions.
- * No real NFS server is contacted — dstore_alloc with unreachable
+ * No real NFS server is contacted -- dstore_alloc with unreachable
  * addresses creates dstores in the unmounted state, which is a valid
  * and supported configuration (the MDS logs the error and continues).
  *
@@ -98,7 +98,7 @@ START_TEST(test_refcount)
 
 	ck_assert_ptr_eq(ref2, ds);
 
-	/* Drop extra ref — dstore should still be alive. */
+	/* Drop extra ref -- dstore should still be alive. */
 	dstore_put(ref2);
 
 	/* Still findable. */
@@ -107,7 +107,7 @@ START_TEST(test_refcount)
 	ck_assert_ptr_nonnull(found);
 	dstore_put(found);
 
-	/* Drop alloc ref — hash table still holds one. */
+	/* Drop alloc ref -- hash table still holds one. */
 	dstore_put(ds);
 
 	/* Still findable via hash table ref. */
@@ -147,7 +147,7 @@ START_TEST(test_unmounted_not_available)
 
 	ck_assert_ptr_nonnull(ds);
 
-	/* Mount to a fake address fails — dstore is not available. */
+	/* Mount to a fake address fails -- dstore is not available. */
 	ck_assert(!dstore_is_available(ds));
 
 	/* But it IS in the hash table. */
@@ -169,7 +169,7 @@ START_TEST(test_unload_all)
 	ck_assert_ptr_nonnull(ds1);
 	ck_assert_ptr_nonnull(ds2);
 
-	/* Drop caller refs — hash table still owns them. */
+	/* Drop caller refs -- hash table still owns them. */
 	dstore_put(ds1);
 	dstore_put(ds2);
 

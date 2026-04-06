@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * RPCSEC_GSS context cache — hash table of established GSS contexts.
+ * RPCSEC_GSS context cache -- hash table of established GSS contexts.
  *
  * Prior art: Peterson & Weldon 1972 for hash table design principles.
  * GSS-API usage follows RFC 2743 and RFC 2203 (RPCSEC_GSS).
@@ -351,7 +351,7 @@ void gss_ctx_destroy(const uint8_t *handle, uint32_t handle_len)
 		return;
 
 	/* Drop the find ref and the creation ref.
-	 * gss_ctx_release (refcount→0) handles cds_lfht_del. */
+	 * gss_ctx_release (refcount-->0) handles cds_lfht_del. */
 	gss_ctx_put(entry);
 	gss_ctx_put(entry);
 }
@@ -408,10 +408,10 @@ int gss_ctx_seq_check(struct gss_ctx_entry *entry, uint32_t seq_num)
 		bitmap128_set(entry->gc_seq_bitmap, 0);
 		entry->gc_seq_last = seq_num;
 	} else if (entry->gc_seq_last - seq_num >= entry->gc_seq_window) {
-		/* Below window — too old. */
+		/* Below window -- too old. */
 		ret = -EACCES;
 	} else {
-		/* Within window — check for replay. */
+		/* Within window -- check for replay. */
 		uint32_t offset = entry->gc_seq_last - seq_num;
 
 		if (bitmap128_test(entry->gc_seq_bitmap, offset)) {
@@ -507,11 +507,11 @@ char *gss_ctx_principal(struct gss_ctx_entry *entry)
  * Build and send an rpc_gss_init_res reply.
  *
  * Wire format (after standard RPC reply header):
- *   handle<>        — opaque context handle
- *   gss_major       — GSS major status
- *   gss_minor       — GSS minor status
- *   seq_window      — sequence window size
- *   gss_token<>     — output token for client
+ *   handle<>        -- opaque context handle
+ *   gss_major       -- GSS major status
+ *   gss_minor       -- GSS minor status
+ *   seq_window      -- sequence window size
+ *   gss_token<>     -- output token for client
  */
 static int send_gss_init_reply(struct rpc_trans *rt, struct gss_ctx_entry *ctx,
 			       uint32_t gss_major, uint32_t gss_minor,
@@ -521,7 +521,7 @@ static int send_gss_init_reply(struct rpc_trans *rt, struct gss_ctx_entry *ctx,
 	uint32_t token_padded = (out_token_len + 3) & ~3u;
 
 	/*
-	 * RFC 2203 §5.2.2.1: the reply verifier for INIT/CONTINUE_INIT
+	 * RFC 2203 S5.2.2.1: the reply verifier for INIT/CONTINUE_INIT
 	 * is RPCSEC_GSS with the MIC of the sequence window as the body.
 	 * Compute the MIC first so we know its size for the reply buffer.
 	 */
@@ -710,7 +710,7 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 	}
 
 	/*
-	 * No persistent mapping found — fall back to libnfsidmap or
+	 * No persistent mapping found -- fall back to libnfsidmap or
 	 * getpwnam_r.  If successful, persist the mapping for next time.
 	 */
 #ifdef HAVE_LIBNFSIDMAP
@@ -863,7 +863,7 @@ int gss_ctx_unwrap_request(struct gss_ctx_entry *entry, uint32_t svc,
 
 	if (svc == RPC_GSS_SVC_INTEGRITY) {
 		/*
-		 * RFC 2203 §5.3.3.3 — rpc_gss_integ_data:
+		 * RFC 2203 S5.3.3.3 -- rpc_gss_integ_data:
 		 *   opaque databody_integ<>  {seq_num, call_body}
 		 *   opaque checksum<>        MIC over databody_integ
 		 */
@@ -926,7 +926,7 @@ int gss_ctx_unwrap_request(struct gss_ctx_entry *entry, uint32_t svc,
 
 	} else if (svc == RPC_GSS_SVC_PRIVACY) {
 		/*
-		 * RFC 2203 §5.3.3.4 — rpc_gss_priv_data:
+		 * RFC 2203 S5.3.3.4 -- rpc_gss_priv_data:
 		 *   opaque databody_priv<>  gss_wrap(conf=1, {seq, body})
 		 */
 		const char *priv_data;
@@ -1218,7 +1218,7 @@ int rpc_gss_handle_init(struct rpc_trans *rt
 }
 
 /*
- * Handle RPCSEC_GSS_DESTROY — verify credentials, compute reply
+ * Handle RPCSEC_GSS_DESTROY -- verify credentials, compute reply
  * verifier, tear down the context, and send success reply.
  *
  * The reply verifier must be computed BEFORE destroying the context
@@ -1233,7 +1233,7 @@ int rpc_gss_handle_destroy(struct rpc_trans *rt
 #ifdef HAVE_GSSAPI_KRB5
 	struct rpc_gss_cred *gc = &rt->rt_info.ri_cred.rc_gss;
 
-	/* Look up context — reject if not found. */
+	/* Look up context -- reject if not found. */
 	struct gss_ctx_entry *gctx =
 		gss_ctx_find(gc->gc_handle, gc->gc_handle_len);
 	if (!gctx) {

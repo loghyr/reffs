@@ -22,15 +22,15 @@ struct server_state;
  *
  * What is NOT stored here:
  *
- *   co_ownerid  — the ownerid→slot mapping lives in the clients file
+ *   co_ownerid  -- the ownerid-->slot mapping lives in the clients file
  *                 on disk.  EXCHANGE_ID is already doing IO; finding
  *                 an existing client scans that file for the ownerid,
  *                 recovers the slot, then calls nfs4_client_find() with
  *                 the clientid4 built from (slot, incarnation,
  *                 current boot_seq).  Fast paths (stateid operations)
- *                 use clientid4 → client_find() and never touch ownerid.
+ *                 use clientid4 --> client_find() and never touch ownerid.
  *
- *   nc_domain / nc_name — written once to client_identity_record at
+ *   nc_domain / nc_name -- written once to client_identity_record at
  *                 EXCHANGE_ID time; never needed in memory again.
  */
 struct nfs4_client {
@@ -50,16 +50,16 @@ struct nfs4_client {
 	struct cds_list_head nc_lock_owners;
 	pthread_mutex_t nc_lock_owners_mutex;
 
-	/* Per-op NFS4 statistics — client scope (ephemeral). */
+	/* Per-op NFS4 statistics -- client scope (ephemeral). */
 	struct reffs_op_stats nc_op_stats[REFFS_NFS4_OP_MAX];
 
-	/* Per-CB-op statistics — indexed by CB op code. */
+	/* Per-CB-op statistics -- indexed by CB op code. */
 	struct reffs_cb_stats nc_cb_stats[REFFS_CB_OP_MAX];
 
 	/* Layout error stats reported by this client. */
 	struct reffs_layout_error_stats nc_layout_errors;
 
-	struct client nc_client; /* fs-layer object — keep last */
+	struct client nc_client; /* fs-layer object -- keep last */
 };
 
 static inline struct nfs4_client *client_to_nfs4(struct client *client)
@@ -106,7 +106,7 @@ void nfs4_client_put(struct nfs4_client *nc);
  * clientid4 from (slot, incarnation, boot_seq), and calls
  * nfs4_client_find().
  *
- * Only called on the EXCHANGE_ID path — disk IO is expected here.
+ * Only called on the EXCHANGE_ID path -- disk IO is expected here.
  *
  * Returns ref-bumped nfs4_client or NULL (not found or I/O error).
  * Caller must client_put().

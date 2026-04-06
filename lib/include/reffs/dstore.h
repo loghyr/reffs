@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * Data store (dstore) — an NFSv3 data server export used by the MDS.
+ * Data store (dstore) -- an NFSv3 data server export used by the MDS.
  *
  * Each dstore represents an address:path pair from the [[data_server]]
  * config.  At startup the MDS uses the MOUNT protocol to obtain the
@@ -59,7 +59,7 @@ struct dstore {
 
 	/*
 	 * NFSv3 client handle for control-plane ops (nfsv3 vtable).
-	 * Protected by ds_clnt_mutex — readers must hold the mutex
+	 * Protected by ds_clnt_mutex -- readers must hold the mutex
 	 * while using the handle, reconnect holds it exclusively.
 	 */
 	CLIENT *ds_clnt;
@@ -155,7 +155,7 @@ static inline bool dstore_is_available(const struct dstore *ds)
  * re-MOUNT the data server.  Called when an NFSv3 RPC to this
  * dstore fails.
  *
- * Serialised by ds_clnt_mutex — concurrent callers block until
+ * Serialised by ds_clnt_mutex -- concurrent callers block until
  * the first one finishes.  Callers should retry their operation
  * after this returns.
  *

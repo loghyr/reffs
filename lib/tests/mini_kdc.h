@@ -2,7 +2,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * mini_kdc — embedded Kerberos KDC for unit testing.
+ * mini_kdc -- embedded Kerberos KDC for unit testing.
  *
  * Creates a temporary realm with a service principal and test user,
  * starts krb5kdc, and obtains a TGT.  Teardown kills the KDC and

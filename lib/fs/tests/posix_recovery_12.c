@@ -16,7 +16,7 @@
  *   3. After a subsequent inode_sync_to_disk(), no .tmp file remains.
  *
  * Related issue (reffs_issues.md):
- *   POSIX Backend — ".dir and .meta writes are not atomic": write to temp
+ *   POSIX Backend -- ".dir and .meta writes are not atomic": write to temp
  *   file and rename() atomically over the destination.
  */
 
@@ -49,7 +49,7 @@ START_TEST(test_stray_tmp_ignored)
 				      .id_nlink = 1,
 				      .id_uid = 42,
 				      .id_gid = 42 };
-	struct inode_disk id_bad = { 0 }; /* zeroed — simulates partial write */
+	struct inode_disk id_bad = { 0 }; /* zeroed -- simulates partial write */
 
 	test_write_meta(&ctx, 1, &id_dir);
 	test_write_meta(&ctx, 2, &id_good);

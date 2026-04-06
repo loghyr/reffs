@@ -8,7 +8,7 @@
 #endif
 
 /*
- * fs_test_write_read.c — reffs_fs_write() and reffs_fs_read() semantics
+ * fs_test_write_read.c -- reffs_fs_write() and reffs_fs_read() semantics
  *
  * Tests the data path and the timestamp contract:
  *   write: updates i_size, i_used, mtime, ctime; atime unchanged
@@ -183,7 +183,7 @@ START_TEST(test_write_sets_i_used)
 	ck_assert_int_eq(reffs_fs_getattr("/f", &st), 0);
 
 	ck_assert_int_gt(st.st_blksize, 0);
-	/* i_used == 1 → st_blocks == st_blksize / 512 */
+	/* i_used == 1 --> st_blocks == st_blksize / 512 */
 	ck_assert_int_eq(st.st_blocks, st.st_blksize / 512);
 
 	ck_assert_int_eq(reffs_fs_unlink("/f"), 0);

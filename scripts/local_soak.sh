@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# local_soak.sh — Run soak test directly on the dev box, no Docker.
+# local_soak.sh -- Run soak test directly on the dev box, no Docker.
 #
 # Usage:
 #   scripts/local_soak.sh [OPTIONS]

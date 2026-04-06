@@ -5,12 +5,12 @@
  * Unit tests for super_block_check_path_conflict().
  *
  * Validates that:
- * - Exact match with an existing mount → -EEXIST
- * - New path is parent of existing mount → -EBUSY
- * - New path is child of existing mount → allowed (0)
- * - Unrelated paths → no conflict (0)
- * - Unmounted sb → no conflict
- * - /foo vs /foobar → not a false prefix match
+ * - Exact match with an existing mount --> -EEXIST
+ * - New path is parent of existing mount --> -EBUSY
+ * - New path is child of existing mount --> allowed (0)
+ * - Unrelated paths --> no conflict (0)
+ * - Unmounted sb --> no conflict
+ * - /foo vs /foobar --> not a false prefix match
  */
 
 #ifdef HAVE_CONFIG_H
@@ -58,7 +58,7 @@ static void unmount_and_destroy(struct super_block *child)
 }
 
 /*
- * Intent: mounting at a path that already has a mount → -EEXIST.
+ * Intent: mounting at a path that already has a mount --> -EEXIST.
  */
 START_TEST(test_path_conflict_exact_match)
 {
@@ -78,7 +78,7 @@ START_TEST(test_path_conflict_exact_match)
 END_TEST
 
 /*
- * Intent: creating a parent of an existing mount → -EBUSY.
+ * Intent: creating a parent of an existing mount --> -EBUSY.
  * If /foo/bar/garbo is mounted, creating /foo/bar would change
  * the namespace traversal for the existing child.
  */
@@ -123,7 +123,7 @@ START_TEST(test_path_conflict_child_of_mounted)
 END_TEST
 
 /*
- * Intent: unrelated paths → no conflict.
+ * Intent: unrelated paths --> no conflict.
  */
 START_TEST(test_path_conflict_no_conflict)
 {
@@ -143,7 +143,7 @@ START_TEST(test_path_conflict_no_conflict)
 END_TEST
 
 /*
- * Intent: unmounted sb → no conflict at the same path.
+ * Intent: unmounted sb --> no conflict at the same path.
  */
 START_TEST(test_path_conflict_unmounted_no_conflict)
 {

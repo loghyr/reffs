@@ -7,7 +7,7 @@
  * Test 10: Deep nested directory tree recovery.
  *
  * recover_directory_recursive() recurses for every directory.  This test
- * builds a four-level tree (root → A → B → C → leaf file) and verifies:
+ * builds a four-level tree (root --> A --> B --> C --> leaf file) and verifies:
  *   1. All directories and the leaf are present after recovery.
  *   2. i_dirent pointers are set correctly at each level.
  *   3. sb_next_ino is the maximum inode + 1 across the entire tree.

@@ -35,7 +35,7 @@
 #include "nfs4/ops.h"
 
 /*
- * COPY — RFC 7862 S15.2 (synchronous only).
+ * COPY -- RFC 7862 S15.2 (synchronous only).
  *
  * Copies data from SAVED_FH (source) to CURRENT_FH (destination).
  * Both must be regular files.  The compound sets up the FHs via
@@ -146,7 +146,7 @@ uint32_t nfs4_op_copy(struct compound *compound)
 
 	if (count == 0) {
 		if (src_offset >= (uint64_t)src_inode->i_size) {
-			/* Nothing to copy — success with 0 bytes. */
+			/* Nothing to copy -- success with 0 bytes. */
 			resok->cr_response.wr_count = 0;
 			resok->cr_response.wr_committed = FILE_SYNC4;
 			nfs4_write_verf(compound->c_server_state,
@@ -194,7 +194,7 @@ uint32_t nfs4_op_copy(struct compound *compound)
 	 *
 	 * We hold the destination rwlock for size updates but NOT the
 	 * source rwlock.  The source is protected by the client's read
-	 * stateid — no truncation can occur while the open is held.
+	 * stateid -- no truncation can occur while the open is held.
 	 */
 	int src_fd = data_block_get_fd(src_inode->i_db);
 	int dst_fd = data_block_get_fd(compound->c_inode->i_db);
@@ -338,7 +338,7 @@ uint32_t nfs4_op_copy_notify(struct compound *compound)
 }
 
 /*
- * CLONE — RFC 7862 S15.13.
+ * CLONE -- RFC 7862 S15.13.
  *
  * Reflink (shared blocks, copy-on-write) from SAVED_FH (source) to
  * CURRENT_FH (destination).  Both must be regular files in the same
@@ -456,7 +456,7 @@ uint32_t nfs4_op_clone(struct compound *compound)
 	 */
 	int src_fd = data_block_get_fd(src_inode->i_db);
 	if (src_fd < 0) {
-		/* RAM backend or released FD — reflink not possible. */
+		/* RAM backend or released FD -- reflink not possible. */
 		*status = NFS4ERR_NOTSUPP;
 		goto out;
 	}
@@ -487,7 +487,7 @@ uint32_t nfs4_op_clone(struct compound *compound)
 
 	if (count == 0) {
 		if (src_offset >= (uint64_t)src_inode->i_size) {
-			/* Nothing to clone — success. */
+			/* Nothing to clone -- success. */
 			goto out;
 		}
 		count = (uint64_t)src_inode->i_size - src_offset;

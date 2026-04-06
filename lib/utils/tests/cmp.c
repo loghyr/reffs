@@ -4,7 +4,7 @@
  */
 
 /*
- * cmp.c — tests for reffs_case_set/get and reffs_text_case_cmp/_of.
+ * cmp.c -- tests for reffs_case_set/get and reffs_text_case_cmp/_of.
  *
  * Tests:
  *   reffs_case_get / reffs_case_set
@@ -56,7 +56,7 @@ START_TEST(test_set_sensitive_after_insensitive)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* reffs_text_case_cmp — returns function that honours the global      */
+/* reffs_text_case_cmp -- returns function that honours the global      */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_cmp_sensitive_equal)
@@ -121,7 +121,7 @@ START_TEST(test_cmp_switch_updates_function)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* reffs_text_case_cmp_of — ignores global, uses explicit argument     */
+/* reffs_text_case_cmp_of -- ignores global, uses explicit argument     */
 /* ------------------------------------------------------------------ */
 
 START_TEST(test_cmp_of_sensitive_equal)
@@ -158,7 +158,7 @@ END_TEST
 
 START_TEST(test_cmp_of_sensitive_ignores_global_insensitive)
 {
-	/* Global is insensitive — cmp_of(sensitive) must still be strict. */
+	/* Global is insensitive -- cmp_of(sensitive) must still be strict. */
 	reffs_case_set(reffs_text_case_insensitive);
 	reffs_strng_compare cmp =
 		reffs_text_case_cmp_of(reffs_text_case_sensitive);
@@ -168,7 +168,7 @@ END_TEST
 
 START_TEST(test_cmp_of_insensitive_ignores_global_sensitive)
 {
-	/* Global is sensitive (default) — cmp_of(insensitive) folds case. */
+	/* Global is sensitive (default) -- cmp_of(insensitive) folds case. */
 	reffs_strng_compare cmp =
 		reffs_text_case_cmp_of(reffs_text_case_insensitive);
 	ck_assert_int_eq(cmp("ABC", "abc"), 0);

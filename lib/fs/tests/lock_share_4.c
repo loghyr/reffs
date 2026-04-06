@@ -53,7 +53,7 @@ static struct inode *alloc_test_inode(void)
 	return inode;
 }
 
-/* ── no conflict ──────────────────────────────────────────────────────────── */
+/* -- no conflict ------------------------------------------------------------ */
 
 START_TEST(test_share_deny_none_vs_deny_none)
 {
@@ -83,8 +83,8 @@ START_TEST(test_share_deny_read_vs_write_only_access)
 	 * S2: deny-none  (FSM_DN=0), access-write (FSA_W=2)
 	 *
 	 * Conflict check for S2 adding after S1:
-	 *   S2.access(2) & S1.mode(1) = 0  → ok
-	 *   S1.access(2) & S2.mode(0) = 0  → ok
+	 *   S2.access(2) & S1.mode(1) = 0  --> ok
+	 *   S1.access(2) & S2.mode(0) = 0  --> ok
 	 * No conflict: S1 denies read, S2 only wants write.
 	 */
 	struct inode *inode = alloc_test_inode();
@@ -105,7 +105,7 @@ START_TEST(test_share_deny_read_vs_write_only_access)
 }
 END_TEST
 
-/* ── conflict ─────────────────────────────────────────────────────────────── */
+/* -- conflict --------------------------------------------------------------- */
 
 START_TEST(test_share_conflict_deny_read_vs_read_access)
 {
@@ -113,7 +113,7 @@ START_TEST(test_share_conflict_deny_read_vs_read_access)
 	 * S1: deny-read (FSM_DR=1), access-write (FSA_W=2)
 	 * S2: deny-none (FSM_DN=0), access-read  (FSA_R=1)
 	 *
-	 * S2.access(1) & S1.mode(1) = 1 ≠ 0 → CONFLICT
+	 * S2.access(1) & S1.mode(1) = 1 != 0 --> CONFLICT
 	 * reffs_share_add must return -EACCES.
 	 */
 	struct inode *inode = alloc_test_inode();
@@ -146,7 +146,7 @@ START_TEST(test_share_conflict_deny_write_vs_write_access)
 	 * S1: deny-write (FSM_DW=2), access-read (FSA_R=1)
 	 * S2: deny-none  (FSM_DN=0), access-write (FSA_W=2)
 	 *
-	 * S2.access(2) & S1.mode(2) = 2 ≠ 0 → CONFLICT
+	 * S2.access(2) & S1.mode(2) = 2 != 0 --> CONFLICT
 	 */
 	struct inode *inode = alloc_test_inode();
 	struct test_lock_owner *o1 = test_owner_alloc(1);
@@ -175,7 +175,7 @@ START_TEST(test_share_conflict_reverse_direction)
 	 * S1: deny-none  (FSM_DN=0), access-read  (FSA_R=1)
 	 * S2: deny-read  (FSM_DR=1), access-write (FSA_W=2)
 	 *
-	 * S1.access(1) & S2.mode(1) = 1 ≠ 0 → CONFLICT (S2 denies what S1 has)
+	 * S1.access(1) & S2.mode(1) = 1 != 0 --> CONFLICT (S2 denies what S1 has)
 	 */
 	struct inode *inode = alloc_test_inode();
 	struct test_lock_owner *o1 = test_owner_alloc(1);
@@ -204,7 +204,7 @@ START_TEST(test_share_conflict_deny_rw_vs_any_access)
 	 * S1: deny-both (FSM_DRW=3), access-none (FSA_NONE=0)
 	 * S2: deny-none (FSM_DN=0),  access-read (FSA_R=1)
 	 *
-	 * S2.access(1) & S1.mode(3) = 1 ≠ 0 → CONFLICT
+	 * S2.access(1) & S1.mode(3) = 1 != 0 --> CONFLICT
 	 */
 	struct inode *inode = alloc_test_inode();
 	struct test_lock_owner *o1 = test_owner_alloc(1);
@@ -227,7 +227,7 @@ START_TEST(test_share_conflict_deny_rw_vs_any_access)
 }
 END_TEST
 
-/* ── same-owner upgrade ───────────────────────────────────────────────────── */
+/* -- same-owner upgrade ----------------------------------------------------- */
 
 START_TEST(test_share_upgrade_same_owner)
 {
@@ -268,7 +268,7 @@ START_TEST(test_share_upgrade_same_owner)
 }
 END_TEST
 
-/* ── remove ───────────────────────────────────────────────────────────────── */
+/* -- remove ----------------------------------------------------------------- */
 
 START_TEST(test_share_remove_existing)
 {
@@ -353,7 +353,7 @@ START_TEST(test_share_remove_nonexistent_no_error)
 }
 END_TEST
 
-/* ── host_list linkage ────────────────────────────────────────────────────── */
+/* -- host_list linkage ------------------------------------------------------ */
 
 START_TEST(test_share_host_list_populated)
 {
@@ -395,7 +395,7 @@ START_TEST(test_share_remove_cleans_host_list)
 }
 END_TEST
 
-/* ── suite ───────────────────────────────────────────────────────────────── */
+/* -- suite ----------------------------------------------------------------- */
 
 Suite *lock_share_suite(void)
 {

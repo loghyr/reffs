@@ -316,7 +316,7 @@ static void super_block_release(struct urcu_ref *ref)
 	 * Each inode holds a super_block_get() ref.  inode_release() calls
 	 * super_block_put(), which would re-enter super_block_release() and
 	 * call super_block_remove_all_inodes() again while we are still
-	 * iterating the hash table — causing double inode_put() and a
+	 * iterating the hash table -- causing double inode_put() and a
 	 * urcu_ref underflow.
 	 *
 	 * Callers must drain inodes explicitly (via super_block_put_all())
@@ -836,7 +836,7 @@ int super_block_check_path_conflict(const char *path)
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(sb, &super_block_list, sb_link) {
-		/* Root is the pseudo-root — prefix of everything by design. */
+		/* Root is the pseudo-root -- prefix of everything by design. */
 		if (sb->sb_id == SUPER_BLOCK_ROOT_ID)
 			continue;
 		if (sb->sb_lifecycle != SB_MOUNTED)
