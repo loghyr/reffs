@@ -32,6 +32,26 @@
 #define SB_REGISTRY_MAX_DSTORES 16
 
 /*
+ * Per-sb client rule file: <state_dir>/sb_<id>.clients
+ *
+ * Format: 4-byte rule count followed by N fixed-size records.
+ * Written with write-temp/fdatasync/rename.  Absent file means
+ * no client rules are configured for that export.
+ */
+#define SB_REGISTRY_CLIENT_MATCH_MAX 128
+
+struct sb_registry_client_rule {
+	char srcr_match[SB_REGISTRY_CLIENT_MATCH_MAX];
+	uint32_t srcr_flags; /* SRCR_RW, SRCR_ROOT_SQUASH, SRCR_ALL_SQUASH */
+	uint32_t srcr_nflavors;
+	uint32_t srcr_flavors[SB_REGISTRY_MAX_FLAVORS];
+};
+
+#define SRCR_RW (1u << 0)
+#define SRCR_ROOT_SQUASH (1u << 1)
+#define SRCR_ALL_SQUASH (1u << 2)
+
+/*
  * Persistent sb_id counter.  IDs are assigned monotonically and
  * never reused -- a deleted export's id is gone forever.  This
  * ensures NFS clients can distinguish a new export at the same
@@ -93,5 +113,24 @@ int sb_registry_detect_orphans(const char *state_dir);
  * probe ops are serialized).  Returns 0 on failure.
  */
 uint64_t sb_registry_alloc_id(const char *state_dir);
+
+/*
+ * sb_client_rules_save -- persist a super_block's client rule list
+ * to <state_dir>/sb_<sb_id>.clients.  Writes a 4-byte count followed
+ * by nrules fixed-size sb_registry_client_rule records.
+ * Returns 0 on success, -errno on failure.
+ */
+struct super_block;
+int sb_client_rules_save(const char *state_dir, uint64_t sb_id,
+			 const struct super_block *sb);
+
+/*
+ * sb_client_rules_load -- load the per-sb client rules file into sb.
+ * Calls super_block_set_client_rules() on success.
+ * Returns 0 on success, -ENOENT if no .clients file exists (no rules),
+ * -errno on I/O or format error.
+ */
+int sb_client_rules_load(const char *state_dir, uint64_t sb_id,
+			 struct super_block *sb);
 
 #endif /* _REFFS_SB_REGISTRY_H */

@@ -22,11 +22,13 @@
 
 #include <check.h>
 
+#include "reffs/client_match.h"
 #include "reffs/dirent.h"
 #include "reffs/fs.h"
 #include "reffs/inode.h"
 #include "reffs/sb_registry.h"
 #include "reffs/super_block.h"
+#include "reffs/settings.h"
 #include "fs_test_harness.h"
 
 static char state_dir[] = "/tmp/reffs-sb-persist-XXXXXX";
@@ -360,6 +362,152 @@ START_TEST(test_alloc_id_never_reuses)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Client rules persistence                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Intent: set 3 client rules on a superblock, save, destroy, reload,
+ * and verify all rule fields match (match string, rw, squash, flavors).
+ */
+START_TEST(test_client_rules_persisted)
+{
+	ck_assert_int_eq(reffs_fs_mkdir("/clirules", 0755), 0);
+
+	struct super_block *child = super_block_alloc(20, (char *)"/clirules",
+						      REFFS_STORAGE_RAM, NULL);
+
+	ck_assert_ptr_nonnull(child);
+	uuid_generate(child->sb_uuid);
+	ck_assert_int_eq(super_block_dirent_create(child, NULL,
+						   reffs_life_action_birth),
+			 0);
+	ck_assert_int_eq(super_block_mount(child, "/clirules"), 0);
+
+	/* Build 3 test rules. */
+	struct sb_client_rule rules[3];
+
+	memset(rules, 0, sizeof(rules));
+
+	strncpy(rules[0].scr_match, "10.0.0.1", SB_CLIENT_MATCH_MAX - 1);
+	rules[0].scr_rw = true;
+	rules[0].scr_root_squash = true;
+	rules[0].scr_all_squash = false;
+	rules[0].scr_flavors[0] = REFFS_AUTH_KRB5;
+	rules[0].scr_nflavors = 1;
+
+	strncpy(rules[1].scr_match, "192.168.0.0/16", SB_CLIENT_MATCH_MAX - 1);
+	rules[1].scr_rw = false;
+	rules[1].scr_root_squash = true;
+	rules[1].scr_all_squash = false;
+	rules[1].scr_flavors[0] = REFFS_AUTH_SYS;
+	rules[1].scr_nflavors = 1;
+
+	strncpy(rules[2].scr_match, "*", SB_CLIENT_MATCH_MAX - 1);
+	rules[2].scr_rw = true;
+	rules[2].scr_root_squash = false;
+	rules[2].scr_all_squash = true;
+	rules[2].scr_flavors[0] = REFFS_AUTH_SYS;
+	rules[2].scr_flavors[1] = REFFS_AUTH_KRB5P;
+	rules[2].scr_nflavors = 2;
+
+	super_block_set_client_rules(child, rules, 3);
+	ck_assert_uint_eq(child->sb_nclient_rules, 3);
+
+	/* Save registry + client rules. */
+	ck_assert_int_eq(sb_registry_save(state_dir), 0);
+
+	super_block_unmount(child);
+	super_block_destroy(child);
+	super_block_release_dirents(child);
+	super_block_put(child);
+
+	/* Load and verify. */
+	ck_assert_int_eq(sb_registry_load(state_dir), 0);
+
+	struct super_block *reloaded = super_block_find(20);
+
+	ck_assert_ptr_nonnull(reloaded);
+	ck_assert_uint_eq(reloaded->sb_nclient_rules, 3);
+
+	/* Rule 0: exact host */
+	ck_assert_str_eq(reloaded->sb_client_rules[0].scr_match, "10.0.0.1");
+	ck_assert(reloaded->sb_client_rules[0].scr_rw);
+	ck_assert(reloaded->sb_client_rules[0].scr_root_squash);
+	ck_assert(!reloaded->sb_client_rules[0].scr_all_squash);
+	ck_assert_uint_eq(reloaded->sb_client_rules[0].scr_nflavors, 1);
+	ck_assert_int_eq((int)reloaded->sb_client_rules[0].scr_flavors[0],
+			 (int)REFFS_AUTH_KRB5);
+
+	/* Rule 1: CIDR, read-only */
+	ck_assert_str_eq(reloaded->sb_client_rules[1].scr_match,
+			 "192.168.0.0/16");
+	ck_assert(!reloaded->sb_client_rules[1].scr_rw);
+	ck_assert(reloaded->sb_client_rules[1].scr_root_squash);
+
+	/* Rule 2: wildcard, all_squash, two flavors */
+	ck_assert_str_eq(reloaded->sb_client_rules[2].scr_match, "*");
+	ck_assert(!reloaded->sb_client_rules[2].scr_root_squash);
+	ck_assert(reloaded->sb_client_rules[2].scr_all_squash);
+	ck_assert_uint_eq(reloaded->sb_client_rules[2].scr_nflavors, 2);
+
+	super_block_unmount(reloaded);
+	super_block_destroy(reloaded);
+	super_block_release_dirents(reloaded);
+	super_block_put(reloaded);
+	ck_assert_int_eq(reffs_fs_rmdir("/clirules"), 0);
+}
+END_TEST
+
+/*
+ * Intent: loading an sb with no .clients file leaves nclient_rules == 0
+ * (absent file = no rules configured).
+ */
+START_TEST(test_client_rules_absent_no_access)
+{
+	ck_assert_int_eq(reffs_fs_mkdir("/norules", 0755), 0);
+
+	struct super_block *child = super_block_alloc(21, (char *)"/norules",
+						      REFFS_STORAGE_RAM, NULL);
+
+	ck_assert_ptr_nonnull(child);
+	uuid_generate(child->sb_uuid);
+	ck_assert_int_eq(super_block_dirent_create(child, NULL,
+						   reffs_life_action_birth),
+			 0);
+	ck_assert_int_eq(super_block_mount(child, "/norules"), 0);
+
+	/* Save with no rules set (no .clients file written). */
+	ck_assert_int_eq(sb_registry_save(state_dir), 0);
+
+	super_block_unmount(child);
+	super_block_destroy(child);
+	super_block_release_dirents(child);
+	super_block_put(child);
+
+	/* Verify no .clients file was written. */
+	char clients_path[256];
+
+	snprintf(clients_path, sizeof(clients_path), "%s/sb_21.clients",
+		 state_dir);
+	ck_assert_int_ne(access(clients_path, F_OK), 0);
+
+	/* Load and verify nclient_rules == 0 (absent file = no rules). */
+	ck_assert_int_eq(sb_registry_load(state_dir), 0);
+
+	struct super_block *reloaded = super_block_find(21);
+
+	ck_assert_ptr_nonnull(reloaded);
+	ck_assert_uint_eq(reloaded->sb_nclient_rules, 0);
+
+	super_block_unmount(reloaded);
+	super_block_destroy(reloaded);
+	super_block_release_dirents(reloaded);
+	super_block_put(reloaded);
+	ck_assert_int_eq(reffs_fs_rmdir("/norules"), 0);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -392,6 +540,12 @@ static Suite *sb_persistence_suite(void)
 	tcase_add_test(tc, test_alloc_id_monotonic);
 	tcase_add_test(tc, test_alloc_id_persists_across_restart);
 	tcase_add_test(tc, test_alloc_id_never_reuses);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("client_rules");
+	tcase_add_checked_fixture(tc, persist_setup, persist_teardown);
+	tcase_add_test(tc, test_client_rules_persisted);
+	tcase_add_test(tc, test_client_rules_absent_no_access);
 	suite_add_tcase(s, tc);
 
 	return s;

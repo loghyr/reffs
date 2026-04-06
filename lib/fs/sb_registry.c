@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <uuid/uuid.h>
 
+#include "reffs/client_match.h"
 #include "reffs/fs.h"
 #include "reffs/rcu.h"
 #include "reffs/log.h"
@@ -170,6 +171,29 @@ err_close:
 	unlink(tmp);
 out:
 	free(entries);
+
+	/*
+	 * Save per-sb client rules after the main registry file.
+	 * Failures are logged but do not fail the overall save --
+	 * the registry entry itself is already persisted.
+	 */
+	if (ret == 0) {
+		rcu_read_lock();
+		cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
+			if (sb->sb_id == SUPER_BLOCK_ROOT_ID ||
+			    sb->sb_lifecycle == SB_DESTROYED)
+				continue;
+			if (sb->sb_nclient_rules > 0) {
+				int cr = sb_client_rules_save(state_dir,
+							      sb->sb_id, sb);
+				if (cr)
+					TRACE("sb_registry_save: client rules save failed for sb %lu: %d",
+					      (unsigned long)sb->sb_id, cr);
+			}
+		}
+		rcu_read_unlock();
+	}
+
 	return ret;
 }
 
@@ -305,6 +329,15 @@ int sb_registry_load(const char *state_dir)
 			continue;
 		}
 
+		/* Restore per-sb client rules (absent file = no rules). */
+		{
+			int cr = sb_client_rules_load(state_dir, e->sre_id, sb);
+
+			if (cr && cr != -ENOENT)
+				TRACE("sb_registry_load: client rules load failed for sb %lu: %d",
+				      (unsigned long)e->sre_id, cr);
+		}
+
 		/* Restore lifecycle state. */
 		if (e->sre_state == SB_MOUNTED) {
 			/* Ensure mount path exists (may have been lost
@@ -318,6 +351,159 @@ int sb_registry_load(const char *state_dir)
 	}
 
 	free(entries);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Per-sb client rules persistence                                     */
+/* ------------------------------------------------------------------ */
+
+int sb_client_rules_save(const char *state_dir, uint64_t sb_id,
+			 const struct super_block *sb)
+{
+	char path[PATH_MAX];
+	char tmp[PATH_MAX];
+	int fd = -1;
+	int ret = 0;
+	ssize_t n;
+	unsigned int nrules = sb->sb_nclient_rules;
+
+	if (!state_dir)
+		return -EINVAL;
+
+	if (snprintf(path, sizeof(path), "%s/sb_%lu.clients", state_dir,
+		     (unsigned long)sb_id) >= (int)sizeof(path))
+		return -ENAMETOOLONG;
+	if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp))
+		return -ENAMETOOLONG;
+
+	fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd < 0)
+		return -errno;
+
+	/* Write rule count. */
+	n = write(fd, &nrules, sizeof(nrules));
+	if (n != (ssize_t)sizeof(nrules)) {
+		ret = (n < 0) ? -errno : -EIO;
+		goto err_close;
+	}
+
+	/* Write each rule in the on-disk format. */
+	for (unsigned int i = 0; i < nrules; i++) {
+		const struct sb_client_rule *r = &sb->sb_client_rules[i];
+		struct sb_registry_client_rule rec;
+
+		memset(&rec, 0, sizeof(rec));
+		strncpy(rec.srcr_match, r->scr_match,
+			SB_REGISTRY_CLIENT_MATCH_MAX - 1);
+		if (r->scr_rw)
+			rec.srcr_flags |= SRCR_RW;
+		if (r->scr_root_squash)
+			rec.srcr_flags |= SRCR_ROOT_SQUASH;
+		if (r->scr_all_squash)
+			rec.srcr_flags |= SRCR_ALL_SQUASH;
+		rec.srcr_nflavors = r->scr_nflavors;
+		for (unsigned int f = 0;
+		     f < r->scr_nflavors && f < SB_REGISTRY_MAX_FLAVORS; f++)
+			rec.srcr_flavors[f] = (uint32_t)r->scr_flavors[f];
+
+		n = write(fd, &rec, sizeof(rec));
+		if (n != (ssize_t)sizeof(rec)) {
+			ret = (n < 0) ? -errno : -EIO;
+			goto err_close;
+		}
+	}
+
+	if (fdatasync(fd)) {
+		ret = -errno;
+		goto err_close;
+	}
+	close(fd);
+	fd = -1;
+
+	if (rename(tmp, path)) {
+		ret = -errno;
+		unlink(tmp);
+	}
+	return ret;
+
+err_close:
+	close(fd);
+	unlink(tmp);
+	return ret;
+}
+
+int sb_client_rules_load(const char *state_dir, uint64_t sb_id,
+			 struct super_block *sb)
+{
+	char path[PATH_MAX];
+	int fd;
+	ssize_t n;
+	uint32_t nrules;
+
+	if (!state_dir)
+		return -EINVAL;
+
+	if (snprintf(path, sizeof(path), "%s/sb_%lu.clients", state_dir,
+		     (unsigned long)sb_id) >= (int)sizeof(path))
+		return -ENAMETOOLONG;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return (errno == ENOENT) ? -ENOENT : -errno;
+
+	n = read(fd, &nrules, sizeof(nrules));
+	if (n != (ssize_t)sizeof(nrules)) {
+		close(fd);
+		return (n < 0) ? -errno : -EINVAL;
+	}
+
+	if (nrules == 0) {
+		close(fd);
+		return 0;
+	}
+
+	/* Cap to prevent absurd allocations from corrupt files. */
+	if (nrules > SB_MAX_CLIENT_RULES) {
+		LOG("sb_client_rules_load: sb %lu: rule count %u > max %u",
+		    (unsigned long)sb_id, nrules, SB_MAX_CLIENT_RULES);
+		close(fd);
+		return -EINVAL;
+	}
+
+	struct sb_client_rule rules[SB_MAX_CLIENT_RULES];
+
+	memset(rules, 0, sizeof(rules));
+
+	for (uint32_t i = 0; i < nrules; i++) {
+		struct sb_registry_client_rule rec;
+
+		n = read(fd, &rec, sizeof(rec));
+		if (n != (ssize_t)sizeof(rec)) {
+			close(fd);
+			return (n < 0) ? -errno : -EINVAL;
+		}
+
+		strncpy(rules[i].scr_match, rec.srcr_match,
+			SB_CLIENT_MATCH_MAX - 1);
+		rules[i].scr_rw = !!(rec.srcr_flags & SRCR_RW);
+		rules[i].scr_root_squash =
+			!!(rec.srcr_flags & SRCR_ROOT_SQUASH);
+		rules[i].scr_all_squash = !!(rec.srcr_flags & SRCR_ALL_SQUASH);
+
+		uint32_t nf = rec.srcr_nflavors;
+
+		if (nf > REFFS_CONFIG_MAX_FLAVORS)
+			nf = REFFS_CONFIG_MAX_FLAVORS;
+		rules[i].scr_nflavors = nf;
+		for (uint32_t f = 0; f < nf; f++)
+			rules[i].scr_flavors[f] =
+				(enum reffs_auth_flavor)rec.srcr_flavors[f];
+	}
+
+	close(fd);
+
+	super_block_set_client_rules(sb, rules, nrules);
 	return 0;
 }
 
