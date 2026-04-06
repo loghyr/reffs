@@ -44,7 +44,10 @@ struct dstore {
 	char ds_ip[INET_ADDRSTRLEN]; /* resolved dotted-decimal IP */
 	char ds_path[REFFS_CONFIG_MAX_PATH];
 
-	/* Ops vtable: nfsv3 (remote) or local (same server). */
+	/* DS protocol: nfsv3 (flex files) or nfsv4 (file layouts). */
+	enum reffs_ds_protocol ds_protocol;
+
+	/* Ops vtable: local (VFS), nfsv3, or nfsv4. */
 	const struct dstore_ops *ds_ops;
 
 	/* Pre-created file pool (set by runway_create at startup). */
@@ -102,7 +105,7 @@ void dstore_fini(void);
  * or NULL on failure (duplicate ID).
  */
 struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
-			    bool mount);
+			    enum reffs_ds_protocol protocol, bool mount);
 
 /*
  * dstore_find -- look up by id.

@@ -23,7 +23,7 @@
 #include <stdint.h>
 #include <time.h>
 
-#define LAYOUT_SEG_MAX_FH 64 /* NFSv3 FHSIZE3 */
+#define LAYOUT_SEG_MAX_FH 128 /* NFSv4 NFS4_FHSIZE; was 64 (NFSv3 FHSIZE3) */
 #define LAYOUT_SEG_MAX_FILES 32 /* max data files per segment */
 
 /*

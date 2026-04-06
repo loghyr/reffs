@@ -20,7 +20,7 @@
 #include "reffs/dstore.h"
 
 #define RUNWAY_DEFAULT_SIZE 256
-#define RUNWAY_MAX_FH 64
+#define RUNWAY_MAX_FH 128 /* NFSv4 NFS4_FHSIZE; was 64 (NFSv3 FHSIZE3) */
 
 struct runway_entry {
 	uint8_t re_fh[RUNWAY_MAX_FH];

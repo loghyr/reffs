@@ -88,14 +88,19 @@ struct reffs_export_config {
 /*
  * [[data_server]] — MDS-only configuration.
  *
- * Each entry names an NFSv3 data server and its export path.
- * The MDS connects to these at startup via the MOUNT protocol to
- * obtain root filehandles, then creates/manages data files on them.
+ * Each entry names a data server, its export path, and the
+ * protocol the MDS uses for the control plane and InBand I/O.
  */
+enum reffs_ds_protocol {
+	REFFS_DS_PROTO_NFSV3 = 0, /* default — flex files */
+	REFFS_DS_PROTO_NFSV4 = 1, /* file layouts */
+};
+
 struct reffs_data_server_config {
 	uint32_t id; /* unique dstore ID */
 	char address[REFFS_CONFIG_MAX_HOST]; /* IPv4 or IPv6 address */
 	char path[REFFS_CONFIG_MAX_PATH]; /* export path on the DS */
+	enum reffs_ds_protocol protocol; /* default: nfsv3 */
 };
 
 struct reffs_config {

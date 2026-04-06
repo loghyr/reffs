@@ -467,6 +467,15 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 					sizeof(dsc->path) - 1);
 				free(d.u.s);
 			}
+
+			d = toml_string_in(ds_tbl, "protocol");
+			if (d.ok) {
+				if (!strcmp(d.u.s, "nfsv4"))
+					dsc->protocol = REFFS_DS_PROTO_NFSV4;
+				else
+					dsc->protocol = REFFS_DS_PROTO_NFSV3;
+				free(d.u.s);
+			}
 		}
 	}
 

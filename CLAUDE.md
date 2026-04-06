@@ -30,6 +30,8 @@ Design documents:
 @.claude/design/stable-bat.md
 @.claude/design/remove-pynfs.md
 @.claude/design/dir-delegations.md
+@.claude/design/per-export-dstore.md
+@.claude/design/dstore-vtable-v2.md
 
 Bug pattern encyclopedias (RCU, ref-counting, NFSv4 protocol):
 
