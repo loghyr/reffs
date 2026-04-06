@@ -263,6 +263,18 @@ enum probe_auth_flavor1 {
 
 const PROBE1_MAX_FLAVORS = 8;
 
+/* Per-client export rule -- mirrors struct sb_client_rule */
+const PROBE1_MAX_CLIENT_RULES = 32;
+const PROBE1_MAX_MATCH = 128;
+
+struct probe_client_rule1 {
+	string			pcr_match<PROBE1_MAX_MATCH>;
+	bool			pcr_rw;
+	bool			pcr_root_squash;
+	bool			pcr_all_squash;
+	probe_auth_flavor1	pcr_flavors<PROBE1_MAX_FLAVORS>;
+};
+
 struct probe_sb_info1 {
 	unsigned hyper		psi_id;
 	opaque			psi_uuid[16];
@@ -274,6 +286,8 @@ struct probe_sb_info1 {
 	unsigned hyper		psi_bytes_used;
 	unsigned hyper		psi_inodes_max;
 	unsigned hyper		psi_inodes_used;
+	/* Per-client export rules (appended for wire compat). */
+	probe_client_rule1	psi_client_rules<PROBE1_MAX_CLIENT_RULES>;
 };
 
 /* SB_LIST (op 13) */
@@ -342,6 +356,12 @@ struct SB_SET_LAYOUT_TYPES1args {
 struct SB_SET_DSTORES1args {
 	unsigned hyper		sda_id;
 	unsigned int		sda_dstore_ids<16>;
+};
+
+/* SB_SET_CLIENT_RULES (op 26) — returns probe_stat1 directly */
+struct SB_SET_CLIENT_RULES1args {
+	unsigned hyper		scra_id;
+	probe_client_rule1	scra_rules<PROBE1_MAX_CLIENT_RULES>;
 };
 
 /* SB_LINT_FLAVORS (op 20) */
@@ -520,5 +540,6 @@ program PROBE_PROGRAM {
 		probe_stat1 PROBEPROC1_IDENTITY_MAP_REMOVE(IDENTITY_MAP_REMOVE1args) = 23;
 		probe_stat1 PROBEPROC1_SB_SET_LAYOUT_TYPES(SB_SET_LAYOUT_TYPES1args) = 24;
 		probe_stat1 PROBEPROC1_SB_SET_DSTORES(SB_SET_DSTORES1args) = 25;
+		probe_stat1 PROBEPROC1_SB_SET_CLIENT_RULES(SB_SET_CLIENT_RULES1args) = 26;
 	} = 1;
 } = 211768;

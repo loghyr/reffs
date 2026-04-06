@@ -702,6 +702,39 @@ def sb_set_dstores_cmd(client, args):
     print(f"Superblock {args.id} dstores set to: {','.join(str(d) for d in dstore_ids)}")
 
 
+def sb_set_client_rules_cmd(client, args):
+    """Parse --rule strings and call sb_set_client_rules.
+
+    Each --rule value is a comma-separated list of fields:
+      match=<spec>,access=rw|ro,root_squash=true|false,all_squash=true|false,flavors=f1:f2
+    """
+    from .probe1_xdr_type import probe_client_rule1
+
+    rules = []
+    for rule_str in args.rule:
+        fields = {}
+        for token in rule_str.split(','):
+            if '=' in token:
+                k, v = token.split('=', 1)
+                fields[k.strip()] = v.strip()
+        match = fields.get('match', '*')
+        rw = fields.get('access', 'rw').lower() == 'rw'
+        root_squash = fields.get('root_squash', 'true').lower() in ('true', '1', 'yes')
+        all_squash = fields.get('all_squash', 'false').lower() in ('true', '1', 'yes')
+        flavor_strs = fields.get('flavors', 'sys').split(':')
+        flavors = []
+        for f in flavor_strs:
+            fid = AUTH_FLAVOR_NAME_TO_ID.get(f.lower())
+            if fid is None:
+                print(f"Unknown flavor: {f}")
+                return
+            flavors.append(fid)
+        rules.append(probe_client_rule1(match, rw, root_squash, all_squash, flavors))
+    res = client.sb_set_client_rules(args.id, rules)
+    probe_error_handler(res)
+    print(f"Superblock {args.id} client rules set ({len(rules)} rule(s))")
+
+
 def sb_lint_flavors_cmd(client, args):
     res = client.sb_lint_flavors()
     probe_error_handler(res.lfr_status)
@@ -990,6 +1023,18 @@ def parse_args():
     p_sb_dstores.add_argument('--dstores', nargs='+', type=int, required=True,
                               help='Dstore IDs (e.g., 1 2 3)')
     p_sb_dstores.set_defaults(func=sb_set_dstores_cmd)
+
+    p_sb_client_rules = subparsers.add_parser(
+        'sb-set-client-rules',
+        help='Set per-client export policy rules on a superblock')
+    p_sb_client_rules.add_argument('--id', type=int, required=True,
+                                   help='Superblock ID')
+    p_sb_client_rules.add_argument(
+        '--rule', action='append', default=[],
+        metavar='RULE',
+        help='Rule: match=<spec>,access=rw|ro,root_squash=true|false,'
+             'all_squash=true|false,flavors=f1:f2 (repeatable)')
+    p_sb_client_rules.set_defaults(func=sb_set_client_rules_cmd)
 
     p_sb_lint = subparsers.add_parser('sb-lint-flavors', help='Check flavor consistency')
     p_sb_lint.set_defaults(func=sb_lint_flavors_cmd)

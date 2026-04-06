@@ -32,6 +32,7 @@
 #include "reffs/task.h"
 #include "reffs/io.h"
 #include "reffs/probe1.h"
+#include "reffs/super_block.h"
 #include "reffs/trace/rpc.h"
 
 static int stats_gather_cb(struct rpc_trans *rt)
@@ -690,6 +691,69 @@ struct rpc_trans *probe1_client_op_sb_lint_flavors(void)
 		return NULL;
 	}
 	rt->rt_cb = sb_lint_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+struct rpc_trans *probe1_client_op_sb_set_client_rules(
+	uint64_t id, const struct sb_client_rule *rules, unsigned int nrules)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_SET_CLIENT_RULES;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_CLIENT_RULES1args *args = ph->ph_args;
+
+	args->scra_id = id;
+	if (nrules > 0) {
+		args->scra_rules.scra_rules_val =
+			calloc(nrules, sizeof(probe_client_rule1));
+		if (!args->scra_rules.scra_rules_val) {
+			rpc_protocol_free(rt);
+			return NULL;
+		}
+		args->scra_rules.scra_rules_len = nrules;
+		for (unsigned int i = 0; i < nrules; i++) {
+			const struct sb_client_rule *r = &rules[i];
+			probe_client_rule1 *pr =
+				&args->scra_rules.scra_rules_val[i];
+			pr->pcr_match = strdup(r->scr_match);
+			pr->pcr_rw = r->scr_rw;
+			pr->pcr_root_squash = r->scr_root_squash;
+			pr->pcr_all_squash = r->scr_all_squash;
+			if (r->scr_nflavors > 0) {
+				pr->pcr_flavors.pcr_flavors_val =
+					calloc(r->scr_nflavors,
+					       sizeof(probe_auth_flavor1));
+				if (pr->pcr_flavors.pcr_flavors_val) {
+					pr->pcr_flavors.pcr_flavors_len =
+						r->scr_nflavors;
+					for (unsigned int j = 0;
+					     j < r->scr_nflavors; j++)
+						pr->pcr_flavors
+							.pcr_flavors_val[j] =
+							(probe_auth_flavor1)r
+								->scr_flavors[j];
+				}
+			}
+		}
+	}
+
+	rt->rt_cb = sb_stat_cb;
 	if (rpc_prepare_send_call(rt)) {
 		rpc_protocol_free(rt);
 		return NULL;

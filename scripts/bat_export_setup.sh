@@ -77,19 +77,66 @@ create_export() {
 		info "  (already mounted or mount deferred)"
 
 	info "  Export $path (id=$id) ready"
+	echo "$id"
+}
+
+set_client_rules() {
+	local id=$1
+	shift
+	# Each remaining argument is a --rule token
+	$PROBE sb-set-client-rules --id "$id" "$@" || \
+		info "  WARN: set-client-rules failed for id=$id"
 }
 
 # Per-flavor exports
-create_export /sys sys
-create_export /krb5 krb5
-create_export /krb5i krb5i
-create_export /krb5p krb5p
-create_export /tls tls
+SYS_ID=$(create_export /sys sys)
+KRB5_ID=$(create_export /krb5 krb5)
+KRB5I_ID=$(create_export /krb5i krb5i)
+KRB5P_ID=$(create_export /krb5p krb5p)
+TLS_ID=$(create_export /tls tls)
 
 # pNFS exports (need sys + tls for layout I/O)
-create_export /ffv1 sys tls
-create_export /ffv2 sys tls
-create_export /files sys tls
+FFV1_ID_NEW=$(create_export /ffv1 sys tls)
+FFV2_ID_NEW=$(create_export /ffv2 sys tls)
+FILES_ID_NEW=$(create_export /files sys tls)
+
+# Set per-client rules: single wildcard rule matching all clients.
+# root_squash=false so MDS control-plane (uid=0) can operate.
+info ""
+info "Setting per-client export rules..."
+if [ -n "$SYS_ID" ]; then
+	set_client_rules "$SYS_ID" \
+		--rule "match=*,access=rw,root_squash=false,flavors=sys"
+fi
+if [ -n "$KRB5_ID" ]; then
+	set_client_rules "$KRB5_ID" \
+		--rule "match=*,access=rw,root_squash=false,flavors=krb5"
+fi
+if [ -n "$KRB5I_ID" ]; then
+	set_client_rules "$KRB5I_ID" \
+		--rule "match=*,access=rw,root_squash=false,flavors=krb5i"
+fi
+if [ -n "$KRB5P_ID" ]; then
+	set_client_rules "$KRB5P_ID" \
+		--rule "match=*,access=rw,root_squash=false,flavors=krb5p"
+fi
+if [ -n "$TLS_ID" ]; then
+	set_client_rules "$TLS_ID" \
+		--rule "match=*,access=rw,root_squash=false,flavors=tls"
+fi
+# pNFS exports: MDS needs root access (root_squash=false)
+if [ -n "$FFV1_ID_NEW" ]; then
+	set_client_rules "$FFV1_ID_NEW" \
+		--rule "match=*,access=rw,root_squash=false,flavors=sys:tls"
+fi
+if [ -n "$FFV2_ID_NEW" ]; then
+	set_client_rules "$FFV2_ID_NEW" \
+		--rule "match=*,access=rw,root_squash=false,flavors=sys:tls"
+fi
+if [ -n "$FILES_ID_NEW" ]; then
+	set_client_rules "$FILES_ID_NEW" \
+		--rule "match=*,access=rw,root_squash=false,flavors=sys:tls"
+fi
 
 # Enable layout types on pNFS exports
 info ""

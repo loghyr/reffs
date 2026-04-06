@@ -38,11 +38,13 @@ backend_cq_size = 2048
 # Root export: all flavors so clients can traverse to per-flavor
 # sub-exports without WRONGSEC at the root.
 [[export]]
-path        = "/"
-clients     = "*"
-access      = "rw"
-root_squash = false
-flavors     = ["sys", "krb5", "krb5i", "krb5p", "tls"]
+path = "/"
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys", "krb5", "krb5i", "krb5p", "tls"]
 
 # Loopback data server for combined pNFS mode.
 # Data server for combined pNFS mode.

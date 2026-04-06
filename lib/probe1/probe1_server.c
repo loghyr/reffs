@@ -855,6 +855,47 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 						sb->sb_all_flavors[i];
 		}
 	}
+
+	/* Per-client export rules. */
+	unsigned int nr = sb->sb_nclient_rules;
+
+	psi->psi_client_rules.psi_client_rules_len = 0;
+	if (nr > 0) {
+		psi->psi_client_rules.psi_client_rules_val =
+			calloc(nr, sizeof(probe_client_rule1));
+		if (psi->psi_client_rules.psi_client_rules_val) {
+			psi->psi_client_rules.psi_client_rules_len = nr;
+			for (unsigned int i = 0; i < nr; i++) {
+				const struct sb_client_rule *r =
+					&sb->sb_client_rules[i];
+				probe_client_rule1 *pr =
+					&psi->psi_client_rules
+						 .psi_client_rules_val[i];
+
+				pr->pcr_match = strdup(r->scr_match);
+				pr->pcr_rw = r->scr_rw;
+				pr->pcr_root_squash = r->scr_root_squash;
+				pr->pcr_all_squash = r->scr_all_squash;
+				pr->pcr_flavors.pcr_flavors_len =
+					r->scr_nflavors;
+				if (r->scr_nflavors > 0) {
+					pr->pcr_flavors.pcr_flavors_val = calloc(
+						r->scr_nflavors,
+						sizeof(probe_auth_flavor1));
+					if (pr->pcr_flavors.pcr_flavors_val) {
+						for (unsigned int j = 0;
+						     j < r->scr_nflavors; j++)
+							pr->pcr_flavors
+								.pcr_flavors_val
+									[j] =
+								(probe_auth_flavor1)
+									r->scr_flavors
+										[j];
+					}
+				}
+			}
+		}
+	}
 }
 
 static int probe1_op_sb_list(struct rpc_trans *rt)
@@ -1247,6 +1288,56 @@ static int probe1_op_sb_lint_flavors(struct rpc_trans *rt)
 	return 0;
 }
 
+static int probe1_op_sb_set_client_rules(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_CLIENT_RULES1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->scra_id);
+
+	if (!sb) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	unsigned int n = args->scra_rules.scra_rules_len;
+
+	if (n > SB_MAX_CLIENT_RULES)
+		n = SB_MAX_CLIENT_RULES;
+
+	struct sb_client_rule rules[SB_MAX_CLIENT_RULES];
+
+	memset(rules, 0, sizeof(rules));
+
+	for (unsigned int i = 0; i < n; i++) {
+		const probe_client_rule1 *pr =
+			&args->scra_rules.scra_rules_val[i];
+		struct sb_client_rule *r = &rules[i];
+
+		if (pr->pcr_match)
+			strncpy(r->scr_match, pr->pcr_match,
+				sizeof(r->scr_match) - 1);
+		r->scr_rw = pr->pcr_rw;
+		r->scr_root_squash = pr->pcr_root_squash;
+		r->scr_all_squash = pr->pcr_all_squash;
+
+		unsigned int nf = pr->pcr_flavors.pcr_flavors_len;
+
+		if (nf > REFFS_CONFIG_MAX_FLAVORS)
+			nf = REFFS_CONFIG_MAX_FLAVORS;
+		r->scr_nflavors = nf;
+		for (unsigned int j = 0; j < nf; j++)
+			r->scr_flavors[j] =
+				(enum reffs_auth_flavor)
+					pr->pcr_flavors.pcr_flavors_val[j];
+	}
+
+	super_block_set_client_rules(sb, rules, n);
+	super_block_put(sb);
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Identity management ops                                            */
 /* ------------------------------------------------------------------ */
@@ -1431,6 +1522,10 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, SB_SET_DSTORES, xdr_SB_SET_DSTORES1args,
 			   SB_SET_DSTORES1args, xdr_probe_stat1, probe_stat1,
 			   probe1_op_sb_set_dstores),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_SET_CLIENT_RULES,
+			   xdr_SB_SET_CLIENT_RULES1args,
+			   SB_SET_CLIENT_RULES1args, xdr_probe_stat1,
+			   probe_stat1, probe1_op_sb_set_client_rules),
 };
 
 static struct rpc_program_handler *probe1_handler;

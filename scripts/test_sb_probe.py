@@ -181,6 +181,63 @@ def test_nfs4_op_stats_per_sb(client):
               f"at least 1 sb in per-sb stats (got {len(resok.nosr_per_sb)})")
 
 
+def test_sb_set_client_rules(client, sb_id):
+    """SB_SET_CLIENT_RULES should set per-client export policy rules."""
+    from reffs.probe1_xdr_type import probe_client_rule1
+    print(f"\n--- test_sb_set_client_rules (id={sb_id}) ---")
+
+    # Single wildcard rule: rw, no root_squash, sys flavor
+    rule = probe_client_rule1(
+        b'*',                  # pcr_match
+        True,                  # pcr_rw
+        False,                 # pcr_root_squash
+        False,                 # pcr_all_squash
+        [PROBE1_AUTH_SYS],     # pcr_flavors
+    )
+    res = client.sb_set_client_rules(sb_id, [rule])
+    check_status_ok(res, "sb_set_client_rules status")
+
+    # Verify via sb_get: psi_client_rules should have 1 entry
+    get_res = client.sb_get(sb_id)
+    check_status_ok(get_res.sgr_status, "sb_get after set_client_rules")
+    sb = get_res.sgr_resok
+    rules = sb.psi_client_rules if hasattr(sb, 'psi_client_rules') else []
+    check(len(rules) == 1, f"1 client rule in sb_get result (got {len(rules)})")
+    if rules:
+        r = rules[0]
+        check(r.pcr_rw is True, "rule pcr_rw=True")
+        check(r.pcr_root_squash is False, "rule pcr_root_squash=False")
+        check(len(r.pcr_flavors) == 1, "rule has 1 flavor")
+
+    # Replace with two rules: one specific, one wildcard
+    rule_specific = probe_client_rule1(
+        b'192.168.0.0/16',     # pcr_match
+        True,                  # pcr_rw
+        False,                 # pcr_root_squash
+        False,                 # pcr_all_squash
+        [PROBE1_AUTH_SYS, PROBE1_AUTH_KRB5],
+    )
+    rule_wildcard = probe_client_rule1(
+        b'*',                  # pcr_match
+        False,                 # pcr_rw (read-only for others)
+        True,                  # pcr_root_squash
+        False,                 # pcr_all_squash
+        [PROBE1_AUTH_SYS],
+    )
+    res2 = client.sb_set_client_rules(sb_id, [rule_specific, rule_wildcard])
+    check_status_ok(res2, "sb_set_client_rules (2-rule replace) status")
+
+    get_res2 = client.sb_get(sb_id)
+    check_status_ok(get_res2.sgr_status, "sb_get after 2-rule replace")
+    sb2 = get_res2.sgr_resok
+    rules2 = sb2.psi_client_rules if hasattr(sb2, 'psi_client_rules') else []
+    check(len(rules2) == 2, f"2 client rules after replace (got {len(rules2)})")
+
+    # Clear rules (empty list)
+    res3 = client.sb_set_client_rules(sb_id, [])
+    check_status_ok(res3, "sb_set_client_rules (clear) status")
+
+
 def test_sb_unmount(client, sb_id):
     """SB_UNMOUNT should transition to UNMOUNTED."""
     print(f"\n--- test_sb_unmount (id={sb_id}) ---")
@@ -224,6 +281,9 @@ def main():
     # Phase 3: Set flavors before mount
     test_sb_set_flavors(client, sb_id,
                         [PROBE1_AUTH_SYS, PROBE1_AUTH_KRB5])
+
+    # Phase 3b: Set per-client rules before mount
+    test_sb_set_client_rules(client, sb_id)
 
     # Phase 4: Mount
     test_sb_mount(client, sb_id, TEST_PATH)

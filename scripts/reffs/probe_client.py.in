@@ -234,6 +234,17 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_SB_SET_DSTORES, args,
                          response_type='probe_stat1')
 
+    def sb_set_client_rules(self, sb_id, rules):
+        """Set per-client export policy rules on a superblock.
+
+        rules is a list of probe_client_rule1 objects.  The caller is
+        responsible for converting flavor name strings to PROBE1_AUTH_*
+        integer values before calling this method.
+        """
+        args = SB_SET_CLIENT_RULES1args(sb_id, rules)
+        return self.proc(PROBEPROC1_SB_SET_CLIENT_RULES, args,
+                         response_type='probe_stat1')
+
     def sb_lint_flavors(self):
         """Check flavor consistency across all mounted exports."""
         return self.proc(PROBEPROC1_SB_LINT_FLAVORS, response_type='SB_LINT_FLAVORS1res')

@@ -34,4 +34,8 @@ struct rpc_trans *probe1_client_op_sb_set_flavors(uint64_t id,
 						  uint32_t nflavors);
 struct rpc_trans *probe1_client_op_sb_lint_flavors(void);
 
+struct sb_client_rule;
+struct rpc_trans *probe1_client_op_sb_set_client_rules(
+	uint64_t id, const struct sb_client_rule *rules, unsigned int nrules);
+
 #endif
