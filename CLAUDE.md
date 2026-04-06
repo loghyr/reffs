@@ -24,6 +24,7 @@ Design documents:
 @.claude/design/terminology.md
 @.claude/design/identity.md
 @.claude/design/export-management.md
+@.claude/design/export-policy.md
 @.claude/design/probe-sb-management.md
 @.claude/design/sb-registry-v3.md
 @.claude/design/rocksdb-backend.md

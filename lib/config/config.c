@@ -134,15 +134,16 @@ void reffs_config_defaults(struct reffs_config *cfg)
 	cfg->backend_sq_size = 512;
 	cfg->backend_cq_size = 2048;
 
-	/* [[export]] -- one permissive default */
+	/* [[export]] -- one permissive default with a single "*" rule */
 	cfg->nexports = 1;
 	strncpy(cfg->exports[0].path, "/", sizeof(cfg->exports[0].path) - 1);
-	strncpy(cfg->exports[0].clients, "*",
-		sizeof(cfg->exports[0].clients) - 1);
-	cfg->exports[0].read_only = false;
-	cfg->exports[0].root_squash = false;
-	cfg->exports[0].flavors[0] = REFFS_AUTH_SYS;
-	cfg->exports[0].nflavors = 1;
+	strncpy(cfg->exports[0].rules[0].match, "*", SB_CLIENT_MATCH_MAX - 1);
+	cfg->exports[0].rules[0].rw = true;
+	cfg->exports[0].rules[0].root_squash = false;
+	cfg->exports[0].rules[0].all_squash = false;
+	cfg->exports[0].rules[0].flavors[0] = REFFS_AUTH_SYS;
+	cfg->exports[0].rules[0].nflavors = 1;
+	cfg->exports[0].nrules = 1;
 }
 
 /* Parse [server] table. */
@@ -334,6 +335,59 @@ static void parse_iouring(struct reffs_config *cfg, toml_table_t *io)
 		cfg->backend_cq_size = (unsigned int)d.u.i;
 }
 
+/* Parse one [[export.clients]] entry into a reffs_client_rule_config. */
+static void parse_one_client_rule(struct reffs_client_rule_config *rule,
+				  toml_table_t *tbl)
+{
+	toml_datum_t d;
+	toml_array_t *arr;
+
+	/* Default: permissive */
+	strncpy(rule->match, "*", SB_CLIENT_MATCH_MAX - 1);
+	rule->rw = true;
+	rule->root_squash = true;
+	rule->all_squash = false;
+	rule->flavors[0] = REFFS_AUTH_SYS;
+	rule->nflavors = 1;
+
+	d = toml_string_in(tbl, "match");
+	if (d.ok) {
+		strncpy(rule->match, d.u.s, SB_CLIENT_MATCH_MAX - 1);
+		free(d.u.s);
+	}
+
+	d = toml_string_in(tbl, "access");
+	if (d.ok) {
+		rule->rw = strcasecmp(d.u.s, "ro") != 0;
+		free(d.u.s);
+	}
+
+	d = toml_bool_in(tbl, "root_squash");
+	if (d.ok)
+		rule->root_squash = (bool)d.u.b;
+
+	d = toml_bool_in(tbl, "all_squash");
+	if (d.ok)
+		rule->all_squash = (bool)d.u.b;
+
+	arr = toml_array_in(tbl, "flavors");
+	if (arr) {
+		int n = toml_array_nelem(arr);
+
+		rule->nflavors = 0;
+		for (int i = 0; i < n && i < REFFS_CONFIG_MAX_FLAVORS; i++) {
+			d = toml_string_at(arr, i);
+			if (d.ok) {
+				enum reffs_auth_flavor f = parse_flavor(d.u.s);
+
+				free(d.u.s);
+				if (f)
+					rule->flavors[rule->nflavors++] = f;
+			}
+		}
+	}
+}
+
 /* Parse one [[export]] table entry. */
 static void parse_one_export(struct reffs_export_config *exp, toml_table_t *tbl)
 {
@@ -346,34 +400,19 @@ static void parse_one_export(struct reffs_export_config *exp, toml_table_t *tbl)
 		free(d.u.s);
 	}
 
-	d = toml_string_in(tbl, "clients");
-	if (d.ok) {
-		strncpy(exp->clients, d.u.s, sizeof(exp->clients) - 1);
-		free(d.u.s);
-	}
-
-	d = toml_string_in(tbl, "access");
-	if (d.ok) {
-		exp->read_only = !strcasecmp(d.u.s, "ro");
-		free(d.u.s);
-	}
-
-	d = toml_bool_in(tbl, "root_squash");
-	if (d.ok)
-		exp->root_squash = (bool)d.u.b;
-
-	arr = toml_array_in(tbl, "flavors");
+	arr = toml_array_in(tbl, "clients");
 	if (arr) {
 		int n = toml_array_nelem(arr);
-		exp->nflavors = 0;
-		for (int i = 0; i < n && i < REFFS_CONFIG_MAX_FLAVORS; i++) {
-			d = toml_string_at(arr, i);
-			if (d.ok) {
-				enum reffs_auth_flavor f = parse_flavor(d.u.s);
-				free(d.u.s);
-				if (f)
-					exp->flavors[exp->nflavors++] = f;
-			}
+
+		if (n > SB_MAX_CLIENT_RULES)
+			n = SB_MAX_CLIENT_RULES;
+		exp->nrules = (unsigned int)n;
+		for (int i = 0; i < n; i++) {
+			toml_table_t *client_tbl = toml_table_at(arr, i);
+
+			if (client_tbl)
+				parse_one_client_rule(&exp->rules[i],
+						      client_tbl);
 		}
 	}
 }

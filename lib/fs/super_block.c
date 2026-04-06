@@ -749,6 +749,55 @@ struct super_block *super_block_find_mounted_on(struct reffs_dirent *de)
 	return sb;
 }
 
+void super_block_set_client_rules(struct super_block *sb,
+				  const struct sb_client_rule *rules,
+				  unsigned int nrules)
+{
+	if (!sb)
+		return;
+
+	unsigned int n = nrules;
+
+	if (n > SB_MAX_CLIENT_RULES)
+		n = SB_MAX_CLIENT_RULES;
+
+	memset(sb->sb_client_rules, 0, sizeof(sb->sb_client_rules));
+	if (n > 0 && rules)
+		memcpy(sb->sb_client_rules, rules,
+		       n * sizeof(sb->sb_client_rules[0]));
+	sb->sb_nclient_rules = n;
+
+	/* Recompute sb_all_flavors: union of all rules' flavor lists. */
+	bool seen[REFFS_CONFIG_MAX_FLAVORS];
+	unsigned int nall = 0;
+
+	memset(seen, 0, sizeof(seen));
+	for (unsigned int i = 0; i < n; i++) {
+		for (unsigned int f = 0; f < rules[i].scr_nflavors; f++) {
+			enum reffs_auth_flavor fl = rules[i].scr_flavors[f];
+			bool dup = false;
+
+			/* Skip already-recorded flavors. */
+			for (unsigned int k = 0; k < nall; k++) {
+				if (sb->sb_all_flavors[k] == fl) {
+					dup = true;
+					break;
+				}
+			}
+			if (!dup && nall < REFFS_CONFIG_MAX_FLAVORS) {
+				sb->sb_all_flavors[nall++] = fl;
+			}
+		}
+	}
+	(void)seen;
+	sb->sb_nall_flavors = nall;
+}
+
+/*
+ * Shim kept for SB_SET_FLAVORS probe op compatibility.
+ * Synthesizes a single catch-all "*" rule.
+ * NOT_NOW_BROWN_COW: remove after SB_SET_CLIENT_RULES is the only path.
+ */
 void super_block_set_flavors(struct super_block *sb,
 			     const enum reffs_auth_flavor *flavors,
 			     unsigned int nflavors)
@@ -756,14 +805,23 @@ void super_block_set_flavors(struct super_block *sb,
 	if (!sb)
 		return;
 
+	struct sb_client_rule rule;
+
+	memset(&rule, 0, sizeof(rule));
+	strncpy(rule.scr_match, "*", SB_CLIENT_MATCH_MAX - 1);
+	rule.scr_rw = true;
+	rule.scr_root_squash = true;
+
 	unsigned int n = nflavors;
 
 	if (n > REFFS_CONFIG_MAX_FLAVORS)
 		n = REFFS_CONFIG_MAX_FLAVORS;
-
 	if (n > 0 && flavors)
-		memcpy(sb->sb_flavors, flavors, n * sizeof(sb->sb_flavors[0]));
-	sb->sb_nflavors = n;
+		memcpy(rule.scr_flavors, flavors,
+		       n * sizeof(rule.scr_flavors[0]));
+	rule.scr_nflavors = n;
+
+	super_block_set_client_rules(sb, &rule, n > 0 ? 1 : 0);
 }
 
 int super_block_lint_flavors(void)
@@ -781,17 +839,18 @@ int super_block_lint_flavors(void)
 			continue;
 
 		/*
-		 * Check that every flavor in this child sb is also
-		 * present in the parent sb's flavor list.
+		 * Check that every flavor in this child sb's all-flavors
+		 * union is also present in the parent sb's all-flavors.
 		 */
 		struct super_block *parent = sb->sb_parent_sb;
 
-		for (unsigned int i = 0; i < sb->sb_nflavors; i++) {
+		for (unsigned int i = 0; i < sb->sb_nall_flavors; i++) {
 			int found = 0;
 
-			for (unsigned int j = 0; j < parent->sb_nflavors; j++) {
-				if (sb->sb_flavors[i] ==
-				    parent->sb_flavors[j]) {
+			for (unsigned int j = 0; j < parent->sb_nall_flavors;
+			     j++) {
+				if (sb->sb_all_flavors[i] ==
+				    parent->sb_all_flavors[j]) {
 					found = 1;
 					break;
 				}
@@ -800,7 +859,7 @@ int super_block_lint_flavors(void)
 				LOG("lint-flavors: sb %lu requires flavor %u "
 				    "not in parent sb %lu",
 				    (unsigned long)sb->sb_id,
-				    (unsigned)sb->sb_flavors[i],
+				    (unsigned)sb->sb_all_flavors[i],
 				    (unsigned long)parent->sb_id);
 				warnings++;
 			}

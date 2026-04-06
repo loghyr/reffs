@@ -843,14 +843,16 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 	psi->psi_inodes_max = sb->sb_inodes_max;
 	psi->psi_inodes_used =
 		atomic_load_explicit(&sb->sb_inodes_used, memory_order_relaxed);
-	psi->psi_flavors.psi_flavors_len = sb->sb_nflavors;
-	if (sb->sb_nflavors > 0) {
+	/* Report the union of all per-client-rule flavors for display. */
+	psi->psi_flavors.psi_flavors_len = sb->sb_nall_flavors;
+	if (sb->sb_nall_flavors > 0) {
 		psi->psi_flavors.psi_flavors_val =
-			calloc(sb->sb_nflavors, sizeof(probe_auth_flavor1));
+			calloc(sb->sb_nall_flavors, sizeof(probe_auth_flavor1));
 		if (psi->psi_flavors.psi_flavors_val) {
-			for (unsigned int i = 0; i < sb->sb_nflavors; i++)
+			for (unsigned int i = 0; i < sb->sb_nall_flavors; i++)
 				psi->psi_flavors.psi_flavors_val[i] =
-					(probe_auth_flavor1)sb->sb_flavors[i];
+					(probe_auth_flavor1)
+						sb->sb_all_flavors[i];
 		}
 	}
 }

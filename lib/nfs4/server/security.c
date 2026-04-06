@@ -143,9 +143,14 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 	const enum reffs_auth_flavor *flavors;
 	unsigned int nflavors;
 
-	if (compound->c_curr_sb && compound->c_curr_sb->sb_nflavors > 0) {
-		flavors = compound->c_curr_sb->sb_flavors;
-		nflavors = compound->c_curr_sb->sb_nflavors;
+	/*
+	 * Use the per-sb all-flavors union (derived from all client rules)
+	 * if the current sb has any rules configured; otherwise fall back to
+	 * the global server_state flavors.
+	 */
+	if (compound->c_curr_sb && compound->c_curr_sb->sb_nall_flavors > 0) {
+		flavors = compound->c_curr_sb->sb_all_flavors;
+		nflavors = compound->c_curr_sb->sb_nall_flavors;
 	} else {
 		struct server_state *ss = compound->c_server_state;
 
@@ -214,9 +219,9 @@ nfsstat4 nfs4_build_secinfo(struct compound *compound, SECINFO4resok *resok)
 	const enum reffs_auth_flavor *flavors;
 	unsigned int nflavors;
 
-	if (compound->c_curr_sb && compound->c_curr_sb->sb_nflavors > 0) {
-		flavors = compound->c_curr_sb->sb_flavors;
-		nflavors = compound->c_curr_sb->sb_nflavors;
+	if (compound->c_curr_sb && compound->c_curr_sb->sb_nall_flavors > 0) {
+		flavors = compound->c_curr_sb->sb_all_flavors;
+		nflavors = compound->c_curr_sb->sb_nall_flavors;
 	} else {
 		struct server_state *ss = compound->c_server_state;
 

@@ -72,17 +72,27 @@ enum reffs_auth_flavor {
 	REFFS_AUTH_TLS = 0x40000001, /* pseudo-flavor: AUTH_SYS + TLS */
 };
 
-struct reffs_export_config {
-	char path[REFFS_CONFIG_MAX_PATH];
-	/*
-	 * clients: "*" means all IPv4 and IPv6 connections.
-	 * Otherwise an IP address, CIDR block, or hostname.
-	 */
-	char clients[REFFS_CONFIG_MAX_BIND];
-	bool read_only;
+/*
+ * Per-client rule in [[export.clients]].
+ * SB_CLIENT_MATCH_MAX / SB_MAX_CLIENT_RULES are also used by
+ * struct sb_client_rule in super_block.h (which includes this header).
+ */
+#define SB_CLIENT_MATCH_MAX 128
+#define SB_MAX_CLIENT_RULES 32
+
+struct reffs_client_rule_config {
+	char match[SB_CLIENT_MATCH_MAX];
+	bool rw; /* false = read-only */
 	bool root_squash;
+	bool all_squash;
 	enum reffs_auth_flavor flavors[REFFS_CONFIG_MAX_FLAVORS];
 	unsigned int nflavors;
+};
+
+struct reffs_export_config {
+	char path[REFFS_CONFIG_MAX_PATH];
+	struct reffs_client_rule_config rules[SB_MAX_CLIENT_RULES];
+	unsigned int nrules;
 };
 
 /*

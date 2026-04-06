@@ -1,0 +1,251 @@
+/* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+
+/*
+ * Per-client export policy matching.
+ *
+ * Implements exports(5)-style client matching:
+ *   single host  -- priority 1
+ *   CIDR         -- priority 2
+ *   hostname wildcard -- priority 3
+ *   anonymous *  -- priority 4
+ *
+ * client_rule_match() does a two-pass scan: first pass records the
+ * best match (lowest priority number) seen so far; second pass is not
+ * needed because the match is found inline.  Within the same priority
+ * the first listed rule wins, so the array is scanned in order and
+ * we replace the best match only when a strictly better priority is
+ * found.
+ */
+
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include <arpa/inet.h>
+#include <fnmatch.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <string.h>
+#include <sys/socket.h>
+
+#include "reffs/client_match.h"
+
+/* Priority constants -- lower number = higher priority. */
+#define PRIO_HOST 1
+#define PRIO_CIDR 2
+#define PRIO_WILD 3
+#define PRIO_STAR 4
+#define PRIO_NONE 5 /* sentinel: no match */
+
+/*
+ * Determine whether `spec` is an anonymous wildcard, i.e. exactly "*".
+ */
+static bool is_star(const char *spec)
+{
+	return spec[0] == '*' && spec[1] == '\0';
+}
+
+/*
+ * Determine whether `spec` contains a '/' (CIDR notation).
+ */
+static bool is_cidr(const char *spec)
+{
+	return strchr(spec, '/') != NULL;
+}
+
+/*
+ * Determine whether `spec` is a hostname wildcard.
+ * Hostname wildcards start with '*' but are not the bare "*".
+ */
+static bool is_hostname_wildcard(const char *spec)
+{
+	return spec[0] == '*' && spec[1] != '\0';
+}
+
+/*
+ * Return the priority class for spec.
+ */
+static int spec_priority(const char *spec)
+{
+	if (is_star(spec))
+		return PRIO_STAR;
+	if (is_hostname_wildcard(spec))
+		return PRIO_WILD;
+	if (is_cidr(spec))
+		return PRIO_CIDR;
+	/* Anything else: attempt single-host parse */
+	return PRIO_HOST;
+}
+
+/*
+ * Match peer against an exact host spec (IPv4 or IPv6 address string).
+ * Returns true on match.
+ */
+static bool match_host(const char *spec, const struct sockaddr_storage *peer)
+{
+	struct in_addr a4;
+	struct in6_addr a6;
+
+	if (peer->ss_family == AF_INET) {
+		const struct sockaddr_in *sin =
+			(const struct sockaddr_in *)peer;
+
+		if (inet_pton(AF_INET, spec, &a4) == 1)
+			return memcmp(&sin->sin_addr, &a4, sizeof(a4)) == 0;
+	} else if (peer->ss_family == AF_INET6) {
+		const struct sockaddr_in6 *sin6 =
+			(const struct sockaddr_in6 *)peer;
+
+		if (inet_pton(AF_INET6, spec, &a6) == 1)
+			return memcmp(&sin6->sin6_addr, &a6, sizeof(a6)) == 0;
+	}
+	return false;
+}
+
+/*
+ * Match peer against a CIDR spec "addr/prefix".
+ * Returns true on match.
+ */
+static bool match_cidr(const char *spec, const struct sockaddr_storage *peer)
+{
+	char addr_buf[INET6_ADDRSTRLEN + 4]; /* enough for addr + "/" + prefix */
+	char *slash;
+	int prefix_len;
+
+	strncpy(addr_buf, spec, sizeof(addr_buf) - 1);
+	addr_buf[sizeof(addr_buf) - 1] = '\0';
+
+	slash = strchr(addr_buf, '/');
+	if (!slash)
+		return false;
+	*slash = '\0';
+	prefix_len = atoi(slash + 1);
+
+	if (peer->ss_family == AF_INET) {
+		struct in_addr net_addr;
+
+		if (inet_pton(AF_INET, addr_buf, &net_addr) != 1)
+			return false;
+		if (prefix_len < 0 || prefix_len > 32)
+			return false;
+
+		const struct sockaddr_in *sin =
+			(const struct sockaddr_in *)peer;
+		uint32_t mask = prefix_len == 0 ?
+					0 :
+					htonl(~((1u << (32 - prefix_len)) - 1));
+		return (sin->sin_addr.s_addr & mask) ==
+		       (net_addr.s_addr & mask);
+
+	} else if (peer->ss_family == AF_INET6) {
+		struct in6_addr net_addr;
+
+		if (inet_pton(AF_INET6, addr_buf, &net_addr) != 1)
+			return false;
+		if (prefix_len < 0 || prefix_len > 128)
+			return false;
+
+		const struct sockaddr_in6 *sin6 =
+			(const struct sockaddr_in6 *)peer;
+
+		/*
+		 * Compare byte-by-byte; the prefix_len determines how many
+		 * full bytes and what mask to apply to the boundary byte.
+		 */
+		int full_bytes = prefix_len / 8;
+		int rem_bits = prefix_len % 8;
+
+		if (memcmp(sin6->sin6_addr.s6_addr, net_addr.s6_addr,
+			   (size_t)full_bytes) != 0)
+			return false;
+		if (rem_bits > 0) {
+			unsigned char mask =
+				(unsigned char)(0xff << (8 - rem_bits));
+			if ((sin6->sin6_addr.s6_addr[full_bytes] & mask) !=
+			    (net_addr.s6_addr[full_bytes] & mask))
+				return false;
+		}
+		return true;
+	}
+	return false;
+}
+
+/*
+ * Match peer against a hostname wildcard spec (e.g. "*.lab.example.com").
+ * Performs a reverse DNS lookup on peer; on failure, skips (never fail open).
+ * Returns true on match.
+ */
+static bool match_hostname_wildcard(const char *spec,
+				    const struct sockaddr_storage *peer)
+{
+	char host[NI_MAXHOST];
+	int rc;
+	socklen_t addrlen;
+
+	if (peer->ss_family == AF_INET)
+		addrlen = sizeof(struct sockaddr_in);
+	else if (peer->ss_family == AF_INET6)
+		addrlen = sizeof(struct sockaddr_in6);
+	else
+		return false;
+
+	rc = getnameinfo((const struct sockaddr *)peer, addrlen, host,
+			 sizeof(host), NULL, 0, NI_NAMEREQD);
+	if (rc != 0)
+		return false; /* DNS failure: skip, never fail open */
+
+	return fnmatch(spec, host, FNM_CASEFOLD) == 0;
+}
+
+/*
+ * client_rule_match -- see client_match.h for API contract.
+ */
+const struct sb_client_rule *
+client_rule_match(const struct sb_client_rule *rules, unsigned int nrules,
+		  const struct sockaddr_storage *peer)
+{
+	if (!rules || nrules == 0 || !peer)
+		return NULL;
+
+	const struct sb_client_rule *best = NULL;
+	int best_prio = PRIO_NONE;
+
+	for (unsigned int i = 0; i < nrules; i++) {
+		const struct sb_client_rule *r = &rules[i];
+		const char *spec = r->scr_match;
+		int prio = spec_priority(spec);
+
+		/* Skip if this class can't beat the current best. */
+		if (prio >= best_prio)
+			continue;
+
+		bool matched = false;
+
+		switch (prio) {
+		case PRIO_HOST:
+			matched = match_host(spec, peer);
+			break;
+		case PRIO_CIDR:
+			matched = match_cidr(spec, peer);
+			break;
+		case PRIO_WILD:
+			matched = match_hostname_wildcard(spec, peer);
+			break;
+		case PRIO_STAR:
+			matched = true;
+			break;
+		default:
+			break;
+		}
+
+		if (matched) {
+			best = r;
+			best_prio = prio;
+			if (best_prio == PRIO_HOST)
+				break; /* can't do better */
+		}
+	}
+
+	return best;
+}

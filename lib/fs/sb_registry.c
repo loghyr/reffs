@@ -104,12 +104,13 @@ int sb_registry_save(const char *state_dir)
 					sb->sb_backend_path,
 					SB_REGISTRY_MAX_PATH - 1);
 			entries[i].sre_layout_types = sb->sb_layout_types;
-			entries[i].sre_nflavors = sb->sb_nflavors;
-			for (unsigned int f = 0;
-			     f < sb->sb_nflavors && f < SB_REGISTRY_MAX_FLAVORS;
+			/* Persist the all-flavors union for human-readable display. */
+			entries[i].sre_nflavors = sb->sb_nall_flavors;
+			for (unsigned int f = 0; f < sb->sb_nall_flavors &&
+						 f < SB_REGISTRY_MAX_FLAVORS;
 			     f++)
 				entries[i].sre_flavors[f] =
-					(uint32_t)sb->sb_flavors[f];
+					(uint32_t)sb->sb_all_flavors[f];
 			entries[i].sre_ndstores = sb->sb_ndstores;
 			for (uint32_t d = 0;
 			     d < sb->sb_ndstores && d < SB_REGISTRY_MAX_DSTORES;

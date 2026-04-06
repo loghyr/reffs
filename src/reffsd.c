@@ -333,10 +333,16 @@ int main(int argc, char *argv[])
 	strncpy(ss->ss_nfs4_domain, cfg.nfs4_domain,
 		sizeof(ss->ss_nfs4_domain) - 1);
 
-	if (cfg.nexports > 0 && cfg.exports[0].nflavors > 0) {
-		memcpy(ss->ss_flavors, cfg.exports[0].flavors,
-		       cfg.exports[0].nflavors * sizeof(ss->ss_flavors[0]));
-		ss->ss_nflavors = cfg.exports[0].nflavors;
+	/*
+	 * Populate the global server_state flavor list from the first export's
+	 * first client rule (used as fallback when no per-sb rules are set).
+	 */
+	if (cfg.nexports > 0 && cfg.exports[0].nrules > 0 &&
+	    cfg.exports[0].rules[0].nflavors > 0) {
+		memcpy(ss->ss_flavors, cfg.exports[0].rules[0].flavors,
+		       cfg.exports[0].rules[0].nflavors *
+			       sizeof(ss->ss_flavors[0]));
+		ss->ss_nflavors = cfg.exports[0].rules[0].nflavors;
 	} else {
 		ss->ss_flavors[0] = REFFS_AUTH_SYS;
 		ss->ss_nflavors = 1;
@@ -415,14 +421,37 @@ int main(int argc, char *argv[])
 			root_sb->sb_dirent_lru_max = cfg.dirent_cache_max;
 
 			/*
-			 * Set root sb's per-sb flavors from the first
-			 * export config.  This ensures WRONGSEC and
-			 * SECINFO use per-sb flavors on the root.
+			 * Apply the first export's client rules to the root sb.
+			 * Converts reffs_client_rule_config -> sb_client_rule
+			 * and calls super_block_set_client_rules(), which also
+			 * recomputes sb_all_flavors for WRONGSEC/SECINFO.
 			 */
-			if (cfg.nexports > 0 && cfg.exports[0].nflavors > 0)
-				super_block_set_flavors(
-					root_sb, cfg.exports[0].flavors,
-					cfg.exports[0].nflavors);
+			if (cfg.nexports > 0 && cfg.exports[0].nrules > 0) {
+				struct sb_client_rule rules[SB_MAX_CLIENT_RULES];
+				unsigned int nr = cfg.exports[0].nrules;
+
+				if (nr > SB_MAX_CLIENT_RULES)
+					nr = SB_MAX_CLIENT_RULES;
+				for (unsigned int ri = 0; ri < nr; ri++) {
+					const struct reffs_client_rule_config
+						*rc = &cfg.exports[0].rules[ri];
+					struct sb_client_rule *sr = &rules[ri];
+
+					memset(sr, 0, sizeof(*sr));
+					strncpy(sr->scr_match, rc->match,
+						SB_CLIENT_MATCH_MAX - 1);
+					sr->scr_rw = rc->rw;
+					sr->scr_root_squash = rc->root_squash;
+					sr->scr_all_squash = rc->all_squash;
+					memcpy(sr->scr_flavors, rc->flavors,
+					       rc->nflavors *
+						       sizeof(sr->scr_flavors
+								      [0]));
+					sr->scr_nflavors = rc->nflavors;
+				}
+				super_block_set_client_rules(root_sb, rules,
+							     nr);
+			}
 
 			reffs_fs_recover(root_sb);
 			trace_lifecycle_recovery(

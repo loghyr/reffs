@@ -121,11 +121,13 @@ START_TEST(test_defaults_one_export)
 	reffs_config_defaults(&cfg);
 	ck_assert_uint_eq(cfg.nexports, 1);
 	ck_assert_str_eq(cfg.exports[0].path, "/");
-	ck_assert_str_eq(cfg.exports[0].clients, "*");
-	ck_assert(!cfg.exports[0].read_only);
-	ck_assert(!cfg.exports[0].root_squash);
-	ck_assert_uint_eq(cfg.exports[0].nflavors, 1);
-	ck_assert_int_eq(cfg.exports[0].flavors[0], REFFS_AUTH_SYS);
+	/* Default: one "*" catch-all rule, rw, sys */
+	ck_assert_uint_eq(cfg.exports[0].nrules, 1);
+	ck_assert_str_eq(cfg.exports[0].rules[0].match, "*");
+	ck_assert(cfg.exports[0].rules[0].rw);
+	ck_assert(!cfg.exports[0].rules[0].root_squash);
+	ck_assert_uint_eq(cfg.exports[0].rules[0].nflavors, 1);
+	ck_assert_int_eq(cfg.exports[0].rules[0].flavors[0], REFFS_AUTH_SYS);
 }
 END_TEST
 
@@ -295,20 +297,23 @@ START_TEST(test_load_export_basic)
 
 	char *path = write_toml("[[export]]\n"
 				"path = \"/exports/data\"\n"
-				"clients = \"192.168.1.0/24\"\n"
-				"access = \"ro\"\n"
-				"root_squash = true\n"
-				"flavors = [\"krb5\"]\n");
+				"\n"
+				"    [[export.clients]]\n"
+				"    match       = \"192.168.1.0/24\"\n"
+				"    access      = \"ro\"\n"
+				"    root_squash = true\n"
+				"    flavors     = [\"krb5\"]\n");
 	ck_assert_ptr_nonnull(path);
 
 	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
 	ck_assert_uint_eq(cfg.nexports, 1);
 	ck_assert_str_eq(cfg.exports[0].path, "/exports/data");
-	ck_assert_str_eq(cfg.exports[0].clients, "192.168.1.0/24");
-	ck_assert(cfg.exports[0].read_only);
-	ck_assert(cfg.exports[0].root_squash);
-	ck_assert_uint_eq(cfg.exports[0].nflavors, 1);
-	ck_assert_int_eq(cfg.exports[0].flavors[0], REFFS_AUTH_KRB5);
+	ck_assert_uint_eq(cfg.exports[0].nrules, 1);
+	ck_assert_str_eq(cfg.exports[0].rules[0].match, "192.168.1.0/24");
+	ck_assert(!cfg.exports[0].rules[0].rw); /* access=ro */
+	ck_assert(cfg.exports[0].rules[0].root_squash);
+	ck_assert_uint_eq(cfg.exports[0].rules[0].nflavors, 1);
+	ck_assert_int_eq(cfg.exports[0].rules[0].flavors[0], REFFS_AUTH_KRB5);
 
 	unlink(path);
 	free(path);
@@ -323,15 +328,63 @@ START_TEST(test_load_export_multiple_flavors)
 	char *path = write_toml(
 		"[[export]]\n"
 		"path = \"/\"\n"
-		"flavors = [\"sys\", \"krb5\", \"krb5i\", \"krb5p\"]\n");
+		"\n"
+		"    [[export.clients]]\n"
+		"    match   = \"*\"\n"
+		"    flavors = [\"sys\", \"krb5\", \"krb5i\", \"krb5p\"]\n");
 	ck_assert_ptr_nonnull(path);
 
 	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
-	ck_assert_uint_eq(cfg.exports[0].nflavors, 4);
-	ck_assert_int_eq(cfg.exports[0].flavors[0], REFFS_AUTH_SYS);
-	ck_assert_int_eq(cfg.exports[0].flavors[1], REFFS_AUTH_KRB5);
-	ck_assert_int_eq(cfg.exports[0].flavors[2], REFFS_AUTH_KRB5I);
-	ck_assert_int_eq(cfg.exports[0].flavors[3], REFFS_AUTH_KRB5P);
+	ck_assert_uint_eq(cfg.exports[0].nrules, 1);
+	ck_assert_uint_eq(cfg.exports[0].rules[0].nflavors, 4);
+	ck_assert_int_eq(cfg.exports[0].rules[0].flavors[0], REFFS_AUTH_SYS);
+	ck_assert_int_eq(cfg.exports[0].rules[0].flavors[1], REFFS_AUTH_KRB5);
+	ck_assert_int_eq(cfg.exports[0].rules[0].flavors[2], REFFS_AUTH_KRB5I);
+	ck_assert_int_eq(cfg.exports[0].rules[0].flavors[3], REFFS_AUTH_KRB5P);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/*
+ * Intent: an export with multiple [[export.clients]] rules is parsed
+ * in order with the correct per-rule options.
+ */
+START_TEST(test_load_export_multi_rule)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[export]]\n"
+				"path = \"/multi\"\n"
+				"\n"
+				"    [[export.clients]]\n"
+				"    match       = \"10.0.0.0/8\"\n"
+				"    access      = \"rw\"\n"
+				"    root_squash = false\n"
+				"    flavors     = [\"sys\"]\n"
+				"\n"
+				"    [[export.clients]]\n"
+				"    match       = \"*\"\n"
+				"    access      = \"ro\"\n"
+				"    root_squash = true\n"
+				"    flavors     = [\"krb5\"]\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nexports, 1);
+	ck_assert_uint_eq(cfg.exports[0].nrules, 2);
+	/* First rule */
+	ck_assert_str_eq(cfg.exports[0].rules[0].match, "10.0.0.0/8");
+	ck_assert(cfg.exports[0].rules[0].rw);
+	ck_assert(!cfg.exports[0].rules[0].root_squash);
+	ck_assert_int_eq(cfg.exports[0].rules[0].flavors[0], REFFS_AUTH_SYS);
+	/* Second rule */
+	ck_assert_str_eq(cfg.exports[0].rules[1].match, "*");
+	ck_assert(!cfg.exports[0].rules[1].rw);
+	ck_assert(cfg.exports[0].rules[1].root_squash);
+	ck_assert_int_eq(cfg.exports[0].rules[1].flavors[0], REFFS_AUTH_KRB5);
 
 	unlink(path);
 	free(path);
@@ -494,6 +547,7 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_backend_posix);
 	tcase_add_test(tc_load, test_load_export_basic);
 	tcase_add_test(tc_load, test_load_export_multiple_flavors);
+	tcase_add_test(tc_load, test_load_export_multi_rule);
 	tcase_add_test(tc_load, test_load_data_server_single);
 	tcase_add_test(tc_load, test_load_data_server_multiple);
 	tcase_add_test(tc_load, test_load_data_server_none);

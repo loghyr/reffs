@@ -22,6 +22,31 @@ struct inode; /* forward decl for sb_root_inode */
 #include "reffs/types.h"
 #include "reffs/backend.h"
 
+/*
+ * Per-client export policy rule.  A superblock holds an ordered list
+ * of these; client_rule_match() returns the first matching rule.
+ *
+ * scr_match format (subset of exports(5)):
+ *   single IPv4 host  192.168.1.5
+ *   single IPv6 host  2001:db8::1
+ *   IPv4 CIDR         192.168.0.0/24
+ *   IPv6 CIDR         2001:db8::/48
+ *   hostname wildcard *.lab.example.com
+ *   anonymous         *
+ *
+ * SB_MAX_CLIENT_RULES and SB_CLIENT_MATCH_MAX are defined in settings.h
+ * (included above).
+ */
+
+struct sb_client_rule {
+	char scr_match[SB_CLIENT_MATCH_MAX];
+	bool scr_rw; /* false = read-only */
+	bool scr_root_squash;
+	bool scr_all_squash;
+	enum reffs_auth_flavor scr_flavors[REFFS_CONFIG_MAX_FLAVORS];
+	unsigned int scr_nflavors;
+};
+
 #define SUPER_BLOCK_ROOT_ID (1)
 #define SUPER_BLOCK_DS_ID (2)
 
@@ -99,12 +124,17 @@ struct super_block {
 	struct super_block *sb_parent_sb;
 
 	/*
-	 * Per-sb security flavors.  Each export has its own list;
-	 * nfs4_check_wrongsec uses c_curr_sb->sb_flavors.
-	 * Root sb (sb_id=1) starts with ALL flavors.
+	 * Per-client export policy.  Ordered list of rules; the first
+	 * matching rule wins.  sb_all_flavors is the union of all
+	 * scr_flavors across all rules, used for SECINFO responses.
+	 * Updated by super_block_set_client_rules() whenever rules change.
+	 *
+	 * If sb_nclient_rules == 0 the export denies all connections.
 	 */
-	enum reffs_auth_flavor sb_flavors[REFFS_CONFIG_MAX_FLAVORS];
-	unsigned int sb_nflavors;
+	struct sb_client_rule sb_client_rules[SB_MAX_CLIENT_RULES];
+	unsigned int sb_nclient_rules;
+	enum reffs_auth_flavor sb_all_flavors[REFFS_CONFIG_MAX_FLAVORS];
+	unsigned int sb_nall_flavors;
 
 #define SB_IN_LIST (1ULL << 0)
 #define SB_IS_READ_ONLY (1ULL << 1)
@@ -183,8 +213,19 @@ const char *super_block_lifecycle_name(enum sb_lifecycle state);
 struct super_block *super_block_find_mounted_on(struct reffs_dirent *de);
 
 /*
- * Set per-sb security flavors.
- * Copies the flavor array into sb->sb_flavors.
+ * Set per-client export policy rules.  Copies the rule array into
+ * sb->sb_client_rules and recomputes sb->sb_all_flavors.
+ * Replaces any existing rules.
+ */
+void super_block_set_client_rules(struct super_block *sb,
+				  const struct sb_client_rule *rules,
+				  unsigned int nrules);
+
+/*
+ * Compatibility shim: synthesize a single "*" catch-all rule with the
+ * given flavor list, root_squash=true, rw=true.  No new call sites --
+ * kept only for the SB_SET_FLAVORS probe op.
+ * NOT_NOW_BROWN_COW: remove after probe op SB_SET_CLIENT_RULES is wired in.
  */
 void super_block_set_flavors(struct super_block *sb,
 			     const enum reffs_auth_flavor *flavors,

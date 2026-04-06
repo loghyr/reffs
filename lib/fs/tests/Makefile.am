@@ -118,6 +118,7 @@ TESTS = \
 	sb_path_conflict_test \
 	sb_persistence_test \
 	sb_security_test \
+	client_match_test \
 	compose_test
 
 if HAVE_ROCKSDB
