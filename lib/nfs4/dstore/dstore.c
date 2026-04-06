@@ -26,6 +26,8 @@
 #include <string.h>
 
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <rpc/rpc.h>
 #include <xxhash.h>
 
@@ -264,6 +266,46 @@ out:
 	return 0;
 }
 
+/*
+ * Check if an address matches any local network interface.
+ * Used by combined mode to detect that a DS address is the
+ * local machine (use VFS vtable instead of NFSv3 RPC).
+ */
+static bool dstore_address_is_local(const char *address)
+{
+	struct ifaddrs *ifa_list, *ifa;
+	bool local = false;
+
+	if (getifaddrs(&ifa_list) < 0)
+		return false;
+
+	for (ifa = ifa_list; ifa; ifa = ifa->ifa_next) {
+		if (!ifa->ifa_addr)
+			continue;
+		char buf[INET6_ADDRSTRLEN];
+
+		if (ifa->ifa_addr->sa_family == AF_INET) {
+			struct sockaddr_in *sin =
+				(struct sockaddr_in *)ifa->ifa_addr;
+			inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf));
+		} else if (ifa->ifa_addr->sa_family == AF_INET6) {
+			struct sockaddr_in6 *sin6 =
+				(struct sockaddr_in6 *)ifa->ifa_addr;
+			inet_ntop(AF_INET6, &sin6->sin6_addr, buf, sizeof(buf));
+		} else {
+			continue;
+		}
+
+		if (!strcmp(address, buf)) {
+			local = true;
+			break;
+		}
+	}
+
+	freeifaddrs(ifa_list);
+	return local;
+}
+
 /* ------------------------------------------------------------------ */
 /* Alloc / find                                                        */
 /* ------------------------------------------------------------------ */
@@ -292,7 +334,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
 	 * or matches our own server, remote (NFSv3) otherwise.
 	 */
 	if (!strcmp(address, "127.0.0.1") || !strcmp(address, "::1") ||
-	    !strcmp(address, "localhost")) {
+	    !strcmp(address, "localhost") || dstore_address_is_local(address)) {
 		ds->ds_ops = &dstore_ops_local;
 		__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED,
 				  __ATOMIC_RELEASE);
