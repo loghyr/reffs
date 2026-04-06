@@ -135,6 +135,15 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 	compound->c_inode = child;
 	compound->c_curr_nfh.nfh_ino = child->i_ino;
 
+	/*
+	 * RFC 8881 S2.6.3.1: after crossing a mount point, the
+	 * current filehandle is in a new export.  Re-check WRONGSEC
+	 * against the child export's flavor list.
+	 */
+	*status = nfs4_check_wrongsec(compound);
+	if (*status)
+		goto out;
+
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = NULL;
 

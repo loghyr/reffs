@@ -43,11 +43,22 @@ static const char krb5_oid_der[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7,
  * SECINFO_NO_NAME.  If so, the client is negotiating security and
  * the current FH-changing op must not return WRONGSEC.
  */
+/*
+ * RFC 8881 S2.6.3.1.1.1: when determining whether WRONGSEC applies,
+ * the server "pretends SAVEFH is not in the series of operations"
+ * and looks past it to the real next operation.
+ */
 static bool next_op_is_secinfo(struct compound *compound)
 {
 	u_int next = compound->c_curr_op + 1;
+	u_int len = compound->c_args->argarray.argarray_len;
 
-	if (next >= compound->c_args->argarray.argarray_len)
+	/* Skip over any intervening SAVEFH ops. */
+	while (next < len &&
+	       compound->c_args->argarray.argarray_val[next].argop == OP_SAVEFH)
+		next++;
+
+	if (next >= len)
 		return false;
 
 	nfs_opnum4 op = compound->c_args->argarray.argarray_val[next].argop;

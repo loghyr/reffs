@@ -207,6 +207,15 @@ uint32_t nfs4_op_restorefh(struct compound *compound)
 		}
 	}
 
+	/*
+	 * RFC 8881 S2.6.3.1: RESTOREFH changes the current FH to a
+	 * potentially different export.  Check WRONGSEC against the
+	 * restored export's flavor list.
+	 */
+	*status = nfs4_check_wrongsec(compound);
+	if (*status)
+		return 0;
+
 	stateid_put(compound->c_curr_stid);
 	compound->c_curr_stid = NULL;
 	if (compound->c_saved_stid) {
