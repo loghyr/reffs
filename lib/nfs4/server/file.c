@@ -600,16 +600,25 @@ uint32_t nfs4_op_open(struct compound *compound)
 		goto out;
 	}
 
-	/* POSIX access check for the requested modes. */
-	int amode = 0;
-	if (share_access & OPEN4_SHARE_ACCESS_READ)
-		amode |= R_OK;
-	if (share_access & OPEN4_SHARE_ACCESS_WRITE)
-		amode |= W_OK;
-	ret = inode_access_check(target, &compound->c_ap, amode);
-	if (ret) {
-		*status = errno_to_nfs4(ret, OP_OPEN);
-		goto out;
+	/*
+	 * POSIX access check for the requested modes.
+	 * RFC 8881 S18.16.3: SHOULD NOT check file access permissions
+	 * for a newly created file -- the creator always gets the access
+	 * they requested regardless of the createattrs mode.  This matches
+	 * POSIX open(O_CREAT|O_WRONLY, 0444) semantics (e.g. tar extracting
+	 * read-only files).
+	 */
+	if (!new_file) {
+		int amode = 0;
+		if (share_access & OPEN4_SHARE_ACCESS_READ)
+			amode |= R_OK;
+		if (share_access & OPEN4_SHARE_ACCESS_WRITE)
+			amode |= W_OK;
+		ret = inode_access_check(target, &compound->c_ap, amode);
+		if (ret) {
+			*status = errno_to_nfs4(ret, OP_OPEN);
+			goto out;
+		}
 	}
 
 	/*
