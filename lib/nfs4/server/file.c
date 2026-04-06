@@ -28,6 +28,9 @@
 #include "reffs/super_block.h"
 #include "reffs/dirent.h"
 #include "reffs/lock.h"
+#include "reffs/dstore.h"
+#include "reffs/dstore_ops.h"
+#include "reffs/layout_segment.h"
 #include "reffs/vfs.h"
 #include "reffs/utf8string.h"
 #include "reffs/time.h"
@@ -1234,6 +1237,53 @@ uint32_t nfs4_op_read(struct compound *compound)
 	if (req_count > NFS4_MAX_RW_SIZE)
 		req_count = NFS4_MAX_RW_SIZE;
 
+	/*
+	 * InBand I/O: if the inode's data lives on a remote DS
+	 * (layout_segments present), proxy the READ through the
+	 * dstore vtable instead of reading from the local data_block.
+	 */
+	{
+		struct layout_segments *lss =
+			compound->c_inode->i_layout_segments;
+		if (lss && lss->lss_count > 0) {
+			struct layout_data_file *ldf =
+				&lss->lss_segs[0].ls_files[0];
+			struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+
+			if (ds && ds->ds_ops->read) {
+				resok->data.data_val = calloc(req_count, 1);
+				if (!resok->data.data_val) {
+					dstore_put(ds);
+					*status = NFS4ERR_DELAY;
+					goto out;
+				}
+
+				ssize_t nr = dstore_data_file_read(
+					ds, ldf->ldf_fh, ldf->ldf_fh_len,
+					resok->data.data_val, req_count,
+					args->offset, ldf->ldf_uid,
+					ldf->ldf_gid);
+				dstore_put(ds);
+
+				if (nr < 0) {
+					free(resok->data.data_val);
+					resok->data.data_val = NULL;
+					*status = NFS4ERR_IO;
+					goto out;
+				}
+
+				resok->data.data_len = (uint32_t)nr;
+				resok->eof =
+					(args->offset + nr >=
+					 (uint64_t)compound->c_inode->i_size);
+				goto out;
+			}
+			if (ds)
+				dstore_put(ds);
+			/* Fall through to local data_block path. */
+		}
+	}
+
 	if (!compound->c_inode->i_db ||
 	    args->offset >= (uint64_t)compound->c_inode->i_size) {
 		resok->eof = true;
@@ -1614,6 +1664,58 @@ uint32_t nfs4_op_write(struct compound *compound)
 	    compound->c_ap.aup_uid != 0 &&
 	    compound->c_ap.aup_uid != reffs_id_to_uid(compound->c_inode->i_uid))
 		compound->c_inode->i_mode &= ~S_ISGID;
+
+	/*
+	 * InBand I/O: if the inode's data lives on a remote DS,
+	 * proxy the WRITE through the dstore vtable.
+	 */
+	{
+		struct layout_segments *lss =
+			compound->c_inode->i_layout_segments;
+		if (lss && lss->lss_count > 0) {
+			struct layout_data_file *ldf =
+				&lss->lss_segs[0].ls_files[0];
+			struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+
+			if (ds && ds->ds_ops->write) {
+				ssize_t nw = dstore_data_file_write(
+					ds, ldf->ldf_fh, ldf->ldf_fh_len,
+					args->data.data_val, write_len,
+					args->offset, ldf->ldf_uid,
+					ldf->ldf_gid);
+				dstore_put(ds);
+
+				if (nw < 0) {
+					*status = NFS4ERR_IO;
+					goto out;
+				}
+
+				/* Update MDS inode size. */
+				int64_t end = (int64_t)(args->offset + nw);
+
+				pthread_mutex_lock(
+					&compound->c_inode->i_attr_mutex);
+				if (end > compound->c_inode->i_size) {
+					compound->c_inode->i_size = end;
+					compound->c_inode->i_used =
+						end / sb->sb_block_size +
+						(end % sb->sb_block_size ? 1 :
+									   0);
+				}
+				pthread_mutex_unlock(
+					&compound->c_inode->i_attr_mutex);
+
+				resok->count = (uint32_t)nw;
+				resok->committed = FILE_SYNC4;
+				nfs4_write_verf(compound->c_server_state,
+						resok->writeverf);
+				inode_sync_to_disk(compound->c_inode);
+				goto out;
+			}
+			if (ds)
+				dstore_put(ds);
+		}
+	}
 
 	int64_t old_size;
 	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);

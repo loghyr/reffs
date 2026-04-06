@@ -28,6 +28,9 @@
 #include "reffs/rpc.h"
 #include "reffs/cmp.h"
 #include "reffs/log.h"
+#include "reffs/dstore.h"
+#include "reffs/dstore_ops.h"
+#include "reffs/layout_segment.h"
 #include "reffs/filehandle.h"
 #include "reffs/test.h"
 #include "reffs/time.h"
@@ -683,6 +686,52 @@ static int nfs3_op_read(struct rpc_trans *rt)
 		goto out;
 	}
 
+	/* InBand I/O: proxy READ from remote DS if data is not local. */
+	{
+		struct layout_segments *lss = inode->i_layout_segments;
+
+		if (lss && lss->lss_count > 0) {
+			struct layout_data_file *ldf =
+				&lss->lss_segs[0].ls_files[0];
+			struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+
+			if (ds && ds->ds_ops->read) {
+				uint32_t req = args->count;
+				char *buf = calloc(req, 1);
+
+				if (!buf) {
+					dstore_put(ds);
+					ret = -ENOMEM;
+					goto out;
+				}
+
+				ssize_t nr = dstore_data_file_read(
+					ds, ldf->ldf_fh, ldf->ldf_fh_len, buf,
+					req, args->offset, ldf->ldf_uid,
+					ldf->ldf_gid);
+				dstore_put(ds);
+
+				if (nr < 0) {
+					free(buf);
+					ret = -EIO;
+					goto out;
+				}
+
+				resok->count = (uint32_t)nr;
+				resok->data.data_val = buf;
+				resok->data.data_len = (uint32_t)nr;
+				resok->eof = (args->offset + nr >=
+					      (uint64_t)inode->i_size);
+				poa->attributes_follow = true;
+				inode_attr_to_fattr(
+					inode, &poa->post_op_attr_u.attributes);
+				goto out;
+			}
+			if (ds)
+				dstore_put(ds);
+		}
+	}
+
 	if (!inode->i_db) {
 		resok->count = 0;
 		resok->eof = true;
@@ -938,6 +987,59 @@ static int nfs3_op_write(struct rpc_trans *rt)
 	size = inode->i_size;
 	timespec_to_nfstime3(&inode->i_ctime, &ctime);
 	timespec_to_nfstime3(&inode->i_mtime, &mtime);
+
+	/* InBand I/O: proxy WRITE to remote DS if data is not local. */
+	{
+		struct layout_segments *lss = inode->i_layout_segments;
+
+		if (lss && lss->lss_count > 0) {
+			struct layout_data_file *ldf =
+				&lss->lss_segs[0].ls_files[0];
+			struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+
+			if (ds && ds->ds_ops->write) {
+				ssize_t nw = dstore_data_file_write(
+					ds, ldf->ldf_fh, ldf->ldf_fh_len,
+					args->data.data_val,
+					args->data.data_len, args->offset,
+					ldf->ldf_uid, ldf->ldf_gid);
+				dstore_put(ds);
+
+				if (nw < 0) {
+					ret = -EIO;
+					goto out;
+				}
+
+				/* Update MDS inode size. */
+				int64_t end = (int64_t)(args->offset + nw);
+
+				pthread_mutex_lock(&inode->i_attr_mutex);
+				if (end > inode->i_size) {
+					inode->i_size = end;
+					inode->i_used =
+						end / sb->sb_block_size +
+						(end % sb->sb_block_size ? 1 :
+									   0);
+				}
+				inode_update_times_now(
+					inode,
+					REFFS_INODE_UPDATE_CTIME |
+						REFFS_INODE_UPDATE_MTIME);
+				resok->count = (uint32_t)nw;
+				resok->committed = FILE_SYNC;
+				wcc->after.attributes_follow = true;
+				inode_attr_to_fattr(
+					inode,
+					&wcc->after.post_op_attr_u.attributes);
+				pthread_mutex_unlock(&inode->i_attr_mutex);
+				inode_sync_to_disk(inode);
+				ret = 0;
+				goto out;
+			}
+			if (ds)
+				dstore_put(ds);
+		}
+	}
 
 	pthread_rwlock_wrlock(&inode->i_db_rwlock);
 	if (!inode->i_db) {
