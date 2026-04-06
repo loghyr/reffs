@@ -62,6 +62,9 @@ struct dstore_ops {
 /* Remote (NFSv3 RPC) vtable -- defined in lib/nfs4/dstore/dstore_ops_nfsv3.c */
 extern const struct dstore_ops dstore_ops_nfsv3;
 
+/* Remote (NFSv4.2 compound) vtable -- lib/nfs4/dstore/dstore_ops_nfsv4.c */
+extern const struct dstore_ops dstore_ops_nfsv4;
+
 /* Local (VFS direct) vtable -- defined in lib/nfs4/dstore/dstore_ops_local.c */
 extern const struct dstore_ops dstore_ops_local;
 

@@ -358,13 +358,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
 		strncpy(ds->ds_ip, address, sizeof(ds->ds_ip) - 1);
 		TRACE("dstore[%u]: local path %s:%s", id, address, path);
 	} else if (protocol == REFFS_DS_PROTO_NFSV4) {
-		/*
-		 * NFSv4 DS: use NFSv3 vtable as placeholder for control
-		 * plane ops (runway, fence).  The MDS-->DS NFSv4.2 session
-		 * handles GETATTR and will handle InBand I/O.
-		 * NOT_NOW_BROWN_COW: full dstore_ops_nfsv4 vtable.
-		 */
-		ds->ds_ops = &dstore_ops_nfsv3;
+		ds->ds_ops = &dstore_ops_nfsv4;
 	} else {
 		ds->ds_ops = &dstore_ops_nfsv3;
 	}
