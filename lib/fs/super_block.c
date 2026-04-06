@@ -380,8 +380,15 @@ int super_block_dirent_create(struct super_block *sb, struct reffs_dirent *rd,
 	 * overwrite its persisted attributes.
 	 */
 	if (rla == reffs_life_action_birth && root_inode->i_mode == 0) {
+		struct timespec now;
+
+		clock_gettime(CLOCK_REALTIME, &now);
 		root_inode->i_nlink = 2;
 		root_inode->i_mode = S_IFDIR | 0777;
+		root_inode->i_atime = now;
+		root_inode->i_mtime = now;
+		root_inode->i_ctime = now;
+		root_inode->i_btime = now;
 		inode_set_default_sec_label(root_inode);
 	}
 	if (root_inode->i_parent_ino == 0)
