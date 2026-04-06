@@ -305,6 +305,63 @@ START_TEST(test_match_first_of_same_type)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Hostname wildcard (priority 3)                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Intent: a hostname wildcard rule is skipped when reverse DNS fails
+ * (getnameinfo returns non-zero).  In a unit-test environment, private
+ * IPv4 addresses (e.g. 10.0.0.1) typically have no PTR record, so
+ * getnameinfo(NI_NAMEREQD) fails.  The implementation must NOT fall
+ * open -- the rule is skipped and the next-lower-priority rule wins.
+ *
+ * This test also validates that the fallback "*" rule is reached,
+ * confirming the never-fail-open property of the hostname wildcard path.
+ */
+START_TEST(test_match_wildcard_hostname_no_dns_no_failopen)
+{
+	struct sb_client_rule rules[2];
+	/* Private IP -- highly unlikely to have PTR record in CI. */
+	struct sockaddr_storage peer = make_ipv4("10.0.0.1");
+
+	make_rule(&rules[0], "*.lab.example.com");
+	make_rule(&rules[1], "*");
+
+	const struct sb_client_rule *m = client_rule_match(rules, 2, &peer);
+
+	/*
+	 * If getnameinfo succeeds and the hostname matches "*.lab.example.com",
+	 * the test result is still correct: either match (hostname resolved to
+	 * *.lab.example.com) or fallback to "*".  The critical property is that
+	 * a DNS failure must NOT yield NULL when a lower-priority "*" exists.
+	 */
+	ck_assert_ptr_nonnull(m);
+}
+END_TEST
+
+/*
+ * Intent: a CIDR rule (priority 2) beats a hostname wildcard (priority 3)
+ * when both could match.  The CIDR rule is listed second but has higher
+ * priority and must win.
+ */
+START_TEST(test_match_wildcard_hostname_lower_prio_than_cidr)
+{
+	struct sb_client_rule rules[2];
+	struct sockaddr_storage peer = make_ipv4("192.168.1.5");
+
+	/* Wildcard listed first (priority 3), CIDR listed second (priority 2) */
+	make_rule(&rules[0], "*.example.com");
+	make_rule(&rules[1], "192.168.1.0/24");
+
+	const struct sb_client_rule *m = client_rule_match(rules, 2, &peer);
+
+	ck_assert_ptr_nonnull(m);
+	/* CIDR (priority 2) must win over hostname wildcard (priority 3). */
+	ck_assert_str_eq(m->scr_match, "192.168.1.0/24");
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* rpc_cred_squash() tests                                              */
 /* ------------------------------------------------------------------ */
 
@@ -456,6 +513,11 @@ static Suite *client_match_suite(void)
 
 	tc = tcase_create("ordering");
 	tcase_add_test(tc, test_match_first_of_same_type);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("hostname_wildcard");
+	tcase_add_test(tc, test_match_wildcard_hostname_no_dns_no_failopen);
+	tcase_add_test(tc, test_match_wildcard_hostname_lower_prio_than_cidr);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("squash");

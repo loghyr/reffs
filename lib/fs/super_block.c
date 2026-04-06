@@ -768,10 +768,8 @@ void super_block_set_client_rules(struct super_block *sb,
 	sb->sb_nclient_rules = n;
 
 	/* Recompute sb_all_flavors: union of all rules' flavor lists. */
-	bool seen[REFFS_CONFIG_MAX_FLAVORS];
 	unsigned int nall = 0;
 
-	memset(seen, 0, sizeof(seen));
 	for (unsigned int i = 0; i < n; i++) {
 		for (unsigned int f = 0; f < rules[i].scr_nflavors; f++) {
 			enum reffs_auth_flavor fl = rules[i].scr_flavors[f];
@@ -784,12 +782,10 @@ void super_block_set_client_rules(struct super_block *sb,
 					break;
 				}
 			}
-			if (!dup && nall < REFFS_CONFIG_MAX_FLAVORS) {
+			if (!dup && nall < REFFS_CONFIG_MAX_FLAVORS)
 				sb->sb_all_flavors[nall++] = fl;
-			}
 		}
 	}
-	(void)seen;
 	sb->sb_nall_flavors = nall;
 }
 

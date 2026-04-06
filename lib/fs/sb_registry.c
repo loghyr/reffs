@@ -174,24 +174,38 @@ out:
 
 	/*
 	 * Save per-sb client rules after the main registry file.
-	 * Failures are logged but do not fail the overall save --
-	 * the registry entry itself is already persisted.
+	 * Snapshot sb_ids under rcu_read_lock (no blocking inside),
+	 * then do file I/O outside the lock via super_block_find().
+	 * Failures are logged but do not fail the overall save.
 	 */
 	if (ret == 0) {
+		/* Snapshot ids under rcu_read_lock; no I/O inside the lock. */
+		enum { MAX_SNAPSHOT = 256 };
+		uint64_t ids[MAX_SNAPSHOT];
+		unsigned int nids = 0;
+
 		rcu_read_lock();
 		cds_list_for_each_entry_rcu(sb, sb_list, sb_link) {
 			if (sb->sb_id == SUPER_BLOCK_ROOT_ID ||
 			    sb->sb_lifecycle == SB_DESTROYED)
 				continue;
-			if (sb->sb_nclient_rules > 0) {
-				int cr = sb_client_rules_save(state_dir,
-							      sb->sb_id, sb);
-				if (cr)
-					TRACE("sb_registry_save: client rules save failed for sb %lu: %d",
-					      (unsigned long)sb->sb_id, cr);
-			}
+			if (sb->sb_nclient_rules > 0 && nids < MAX_SNAPSHOT)
+				ids[nids++] = sb->sb_id;
 		}
 		rcu_read_unlock();
+
+		for (unsigned int i = 0; i < nids; i++) {
+			struct super_block *found = super_block_find(ids[i]);
+
+			if (!found)
+				continue;
+			int cr = sb_client_rules_save(state_dir, found->sb_id,
+						      found);
+			if (cr)
+				TRACE("sb_registry_save: client rules save failed for sb %lu: %d",
+				      (unsigned long)found->sb_id, cr);
+			super_block_put(found);
+		}
 	}
 
 	return ret;

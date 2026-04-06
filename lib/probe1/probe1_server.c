@@ -1334,6 +1334,23 @@ static int probe1_op_sb_set_client_rules(struct rpc_trans *rt)
 	}
 
 	super_block_set_client_rules(sb, rules, n);
+
+	/*
+	 * Persist immediately: the client rules file is separate from
+	 * the main registry, so registry_save alone does not capture it
+	 * unless triggered by a lifecycle op.
+	 */
+	struct server_state *ss = server_state_find();
+
+	if (ss) {
+		int cr = sb_client_rules_save(ss->ss_state_dir, sb->sb_id, sb);
+
+		if (cr)
+			TRACE("probe: client rules save failed for sb %lu: %d",
+			      (unsigned long)sb->sb_id, cr);
+		server_state_put(ss);
+	}
+
 	super_block_put(sb);
 	return 0;
 }
