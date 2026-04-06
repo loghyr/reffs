@@ -80,6 +80,17 @@ int sb_registry_save(const char *state_dir)
 				continue;
 			if (i >= count)
 				break;
+			/* Dedup: skip if a prior entry has the same id. */
+			bool dup_id = false;
+
+			for (uint32_t j = 0; j < i; j++) {
+				if (entries[j].sre_id == sb->sb_id) {
+					dup_id = true;
+					break;
+				}
+			}
+			if (dup_id)
+				continue;
 			entries[i].sre_id = sb->sb_id;
 			entries[i].sre_state = (uint32_t)sb->sb_lifecycle;
 			entries[i].sre_storage_type =

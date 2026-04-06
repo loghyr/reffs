@@ -458,23 +458,40 @@ int main(int argc, char *argv[])
 	/*
 	 * Combined/MDS mode: create a separate DS super_block for
 	 * local data store files, isolated from the MDS namespace.
+	 *
+	 * On restart, registry_load() already restored this sb from disk.
+	 * Detect that case with super_block_find() to avoid a duplicate.
+	 * Ref-count discipline:
+	 *   - new sb (first boot): alloc ref = 1; do NOT put here;
+	 *     release_all_fs_dirents() drops it at shutdown.
+	 *   - existing sb (restart): find ref bumps to 2; put once here
+	 *     to return to 1 (the alloc ref held by the registry load).
 	 */
 	if (cfg.role == REFFS_ROLE_COMBINED && cfg.ds_backend_path[0]) {
-		/* posix_sb_alloc creates sb_2/ under ds_path. */
-		struct super_block *ds_sb = super_block_alloc(
-			SUPER_BLOCK_DS_ID, "/ds",
-			(enum reffs_storage_type)cfg.backend_type,
-			cfg.ds_backend_path);
+		bool ds_sb_new = false;
+		struct super_block *ds_sb = super_block_find(SUPER_BLOCK_DS_ID);
+
 		if (!ds_sb) {
-			LOG("Failed to create DS super_block");
-			exit_code = 1;
-			goto out;
+			/* posix_sb_alloc creates sb_2/ under ds_path. */
+			ds_sb = super_block_alloc(
+				SUPER_BLOCK_DS_ID, "/ds",
+				(enum reffs_storage_type)cfg.backend_type,
+				cfg.ds_backend_path);
+			if (!ds_sb) {
+				LOG("Failed to create DS super_block");
+				exit_code = 1;
+				goto out;
+			}
+			uuid_generate(ds_sb->sb_uuid);
+			super_block_dirent_create(ds_sb, NULL,
+						  reffs_life_action_birth);
+			ds_sb_new = true;
 		}
-		uuid_generate(ds_sb->sb_uuid);
-		super_block_dirent_create(ds_sb, NULL, reffs_life_action_birth);
+
 		reffs_fs_recover(ds_sb);
-		/* Do NOT put ds_sb here -- release_all_fs_dirents()
-		 * in reffs_ns_fini() puts the alloc ref for all sbs. */
+
+		if (!ds_sb_new)
+			super_block_put(ds_sb); /* drop find ref */
 
 		TRACE("DS super_block %lu at %s",
 		      (unsigned long)SUPER_BLOCK_DS_ID, cfg.ds_backend_path);

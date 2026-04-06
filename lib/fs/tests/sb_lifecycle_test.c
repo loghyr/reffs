@@ -61,9 +61,11 @@ END_TEST
 START_TEST(test_sb_create_duplicate_id)
 {
 	/*
-	 * Duplicate sb_id alloc is allowed -- needed for recovery
-	 * (create a fresh sb to reload from the same backend path).
-	 * Duplicate detection happens at mount time instead.
+	 * Duplicate sb_id alloc is allowed -- needed for recovery testing
+	 * (simulate restart by creating a second sb over the same backend
+	 * path to reload persisted state).  The runtime guard against
+	 * accidental duplicates lives in reffsd.c (super_block_find before
+	 * super_block_alloc) and in sb_registry_save (dedup by id).
 	 */
 	struct super_block *sb1 =
 		super_block_alloc(101, "/dup1", REFFS_STORAGE_RAM, NULL);
