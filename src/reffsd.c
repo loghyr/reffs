@@ -271,6 +271,13 @@ int main(int argc, char *argv[])
 		trace_file = cfg.trace_file;
 	reffs_trace_init(trace_file);
 
+	{
+		const char *roles[] = { "standalone", "mds", "ds", "combined" };
+		const char *role = cfg.role < 4 ? roles[cfg.role] : "unknown";
+		LOG("reffsd %s (git %s) starting — role=%s port=%d",
+		    PACKAGE_VERSION, REFFS_GIT_VERSION, role, cfg.port);
+	}
+
 	/*
 	 * If the config specifies trace_categories, it is authoritative:
 	 * disable all defaults, then enable only the listed categories.
