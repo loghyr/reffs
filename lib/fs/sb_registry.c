@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <uuid/uuid.h>
 
+#include "reffs/fs.h"
 #include "reffs/rcu.h"
 #include "reffs/log.h"
 #include "reffs/sb_registry.h"
@@ -294,6 +295,9 @@ int sb_registry_load(const char *state_dir)
 
 		/* Restore lifecycle state. */
 		if (e->sre_state == SB_MOUNTED) {
+			/* Ensure mount path exists (may have been lost
+			 * if the data directory was wiped). */
+			reffs_fs_mkdir_p(e->sre_path, 0755);
 			ret = super_block_mount(sb, e->sre_path);
 			if (ret)
 				LOG("sb_registry_load: mount failed for sb %lu: %d",
