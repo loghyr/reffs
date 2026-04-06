@@ -956,9 +956,20 @@ static int probe1_op_sb_create(struct rpc_trans *rt)
 		return res->scr_status;
 	}
 
-	struct super_block *sb = super_block_alloc(
-		new_id, args->sca_path,
-		(enum reffs_storage_type)args->sca_storage_type, NULL);
+	/*
+	 * For POSIX/RocksDB storage, use the server's configured
+	 * backend path so posix_sb_alloc can create the sb_<id>/
+	 * directory.  RAM storage doesn't need a path.
+	 */
+	const char *backend = NULL;
+	enum reffs_storage_type stype =
+		(enum reffs_storage_type)args->sca_storage_type;
+
+	if (stype == REFFS_STORAGE_POSIX || stype == REFFS_STORAGE_ROCKSDB)
+		backend = reffs_fs_get_backend_path();
+
+	struct super_block *sb =
+		super_block_alloc(new_id, args->sca_path, stype, backend);
 	if (!sb) {
 		server_state_put(ss);
 		res->scr_status = PROBE1ERR_NOMEM;
