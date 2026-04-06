@@ -123,6 +123,7 @@ void nfs4_write_verf(struct server_state *ss, verifier4 out_verf);
 nfsstat4 nfs4_check_wrongsec(struct compound *compound);
 bool nfs4_putfh_should_check_wrongsec(struct compound *compound);
 nfsstat4 nfs4_build_secinfo(struct compound *compound, SECINFO4resok *resok);
+nfsstat4 nfs4_check_rofs(struct compound *compound);
 
 struct authunix_parms;
 nfsstat4 nfs4_apply_createattrs(fattr4 *fattr, struct inode *inode,

@@ -23,6 +23,7 @@
 #include <rpc/auth.h>
 
 #include "nfsv42_xdr.h"
+#include "reffs/client_match.h"
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/rpc.h"
@@ -128,30 +129,80 @@ bool nfs4_putfh_should_check_wrongsec(struct compound *compound)
 }
 
 /*
- * nfs4_check_wrongsec - enforce export flavor restrictions.
+ * flavor_matches - check whether a single export flavor entry matches
+ * the client's RPC auth flavor (and, for GSS, service level).
+ */
+static bool flavor_matches(enum reffs_auth_flavor f, uint32_t client_flavor,
+			   bool client_tls, const struct rpc_cred *cred)
+{
+	switch (f) {
+	case REFFS_AUTH_TLS:
+		/* TLS pseudo-flavor: AUTH_SYS over TLS transport. */
+		return client_tls && client_flavor == AUTH_SYS;
+	case REFFS_AUTH_KRB5:
+		return client_flavor == RPCSEC_GSS;
+	case REFFS_AUTH_KRB5I:
+		return client_flavor == RPCSEC_GSS &&
+		       cred->rc_gss.gc_svc >= RPC_GSS_SVC_INTEGRITY;
+	case REFFS_AUTH_KRB5P:
+		return client_flavor == RPCSEC_GSS &&
+		       cred->rc_gss.gc_svc == RPC_GSS_SVC_PRIVACY;
+	default:
+		return (uint32_t)f == client_flavor;
+	}
+}
+
+/*
+ * nfs4_check_wrongsec - enforce per-client export flavor restrictions.
  *
  * Called from FH-changing ops (PUTFH, PUTROOTFH, LOOKUP, etc.).
- * Returns NFS4_OK if the client's auth flavor is allowed, or
- * NFS4ERR_WRONGSEC if not.
+ *
+ * Algorithm:
+ *  1. If the sb has client rules, look up the matched rule for this
+ *     connection's peer address via client_rule_match().
+ *     - No matching rule: return NFS4ERR_ACCESS (client not allowed).
+ *     - Matching rule found: apply root_squash / all_squash to c_ap,
+ *       then check the rule's scr_flavors[].
+ *  2. If the sb has no client rules, fall back to the global
+ *     server_state flavor list (legacy path).
+ *
+ * SECINFO uses sb_all_flavors (union of all rule flavors) via
+ * nfs4_build_secinfo(); this function is a pure flavor-vs-rule check.
  */
 nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 {
-	/*
-	 * Use per-sb flavors if the current sb has them configured;
-	 * otherwise fall back to the global server_state flavors.
-	 */
+	uint32_t client_flavor = compound->c_rt->rt_info.ri_cred.rc_flavor;
+	const struct rpc_cred *cred = &compound->c_rt->rt_info.ri_cred;
+	struct conn_info *ci = compound->c_rt->rt_fd >= 0 ?
+				       io_conn_get(compound->c_rt->rt_fd) :
+				       NULL;
+	bool client_tls = ci && ci->ci_tls_enabled;
 	const enum reffs_auth_flavor *flavors;
 	unsigned int nflavors;
 
 	/*
-	 * Use the per-sb all-flavors union (derived from all client rules)
-	 * if the current sb has any rules configured; otherwise fall back to
-	 * the global server_state flavors.
+	 * Per-export client rule path: match this connection's peer
+	 * against the sb's ordered rule list.
 	 */
-	if (compound->c_curr_sb && compound->c_curr_sb->sb_nall_flavors > 0) {
-		flavors = compound->c_curr_sb->sb_all_flavors;
-		nflavors = compound->c_curr_sb->sb_nall_flavors;
+	if (compound->c_curr_sb && compound->c_curr_sb->sb_nclient_rules > 0) {
+		const struct sockaddr_storage *peer =
+			&compound->c_rt->rt_info.ri_ci.ci_peer;
+		const struct sb_client_rule *rule = client_rule_match(
+			compound->c_curr_sb->sb_client_rules,
+			compound->c_curr_sb->sb_nclient_rules, peer);
+
+		if (!rule) {
+			TRACE("ACCESS denied: no matching client rule for peer");
+			return NFS4ERR_ACCESS;
+		}
+
+		/* Apply squash to the compound's working credential. */
+		rpc_cred_squash(&compound->c_ap, rule);
+
+		flavors = rule->scr_flavors;
+		nflavors = rule->scr_nflavors;
 	} else {
+		/* Legacy path: no per-client rules -- use global flavors. */
 		struct server_state *ss = compound->c_server_state;
 
 		flavors = ss->ss_flavors;
@@ -161,49 +212,12 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 	if (nflavors == 0)
 		return NFS4_OK;
 
-	/*
-	 * SECINFO lookahead is now handled by
-	 * nfs4_putfh_should_check_wrongsec() in the put-FH
-	 * handlers.  This function is a pure flavor-vs-export check.
-	 */
-
-	uint32_t client_flavor = compound->c_rt->rt_info.ri_cred.rc_flavor;
-	struct conn_info *ci = compound->c_rt->rt_fd >= 0 ?
-				       io_conn_get(compound->c_rt->rt_fd) :
-				       NULL;
-	bool client_tls = ci && ci->ci_tls_enabled;
-
 	for (unsigned int i = 0; i < nflavors; i++) {
-		switch (flavors[i]) {
-		case REFFS_AUTH_TLS:
-			/* TLS pseudo-flavor: AUTH_SYS over TLS transport. */
-			if (client_tls && client_flavor == AUTH_SYS)
-				return NFS4_OK;
-			break;
-		case REFFS_AUTH_KRB5:
-			if (client_flavor == RPCSEC_GSS)
-				return NFS4_OK;
-			break;
-		case REFFS_AUTH_KRB5I:
-			if (client_flavor == RPCSEC_GSS &&
-			    compound->c_rt->rt_info.ri_cred.rc_gss.gc_svc >=
-				    RPC_GSS_SVC_INTEGRITY)
-				return NFS4_OK;
-			break;
-		case REFFS_AUTH_KRB5P:
-			if (client_flavor == RPCSEC_GSS &&
-			    compound->c_rt->rt_info.ri_cred.rc_gss.gc_svc ==
-				    RPC_GSS_SVC_PRIVACY)
-				return NFS4_OK;
-			break;
-		default:
-			if ((uint32_t)flavors[i] == client_flavor)
-				return NFS4_OK;
-			break;
-		}
+		if (flavor_matches(flavors[i], client_flavor, client_tls, cred))
+			return NFS4_OK;
 	}
 
-	TRACE("WRONGSEC: client flavor %u tls=%d not in export flavor list",
+	TRACE("WRONGSEC: client flavor %u tls=%d not in export rule flavors",
 	      client_flavor, client_tls);
 	return NFS4ERR_WRONGSEC;
 }
@@ -311,5 +325,43 @@ fill_gss:
 	}
 
 	resok->SECINFO4resok_len = out;
+	return NFS4_OK;
+}
+
+/*
+ * nfs4_check_rofs - enforce per-client read-only export restriction.
+ *
+ * Returns NFS4ERR_ROFS when the matched client rule has scr_rw=false.
+ * Returns NFS4_OK when the export allows writes from this client.
+ *
+ * Called from mutating ops (WRITE, CREATE, REMOVE, RENAME, SETATTR,
+ * LINK, etc.) when the current filehandle belongs to a per-rule sb.
+ *
+ * NOT_NOW_BROWN_COW: wire into every write op handler.  The function
+ * and matching logic are ready; the call sites are deferred to keep
+ * this step focused on the security enforcement framework.
+ */
+nfsstat4 nfs4_check_rofs(struct compound *compound)
+{
+	if (!compound->c_curr_sb || compound->c_curr_sb->sb_nclient_rules == 0)
+		return NFS4_OK;
+
+	const struct sockaddr_storage *peer =
+		&compound->c_rt->rt_info.ri_ci.ci_peer;
+	const struct sb_client_rule *rule =
+		client_rule_match(compound->c_curr_sb->sb_client_rules,
+				  compound->c_curr_sb->sb_nclient_rules, peer);
+
+	if (!rule)
+		return NFS4ERR_ACCESS;
+
+	if (!rule->scr_rw) {
+		TRACE("ROFS: client %s attempted write on read-only export",
+		      compound->c_rt->rt_addr_str ?
+			      compound->c_rt->rt_addr_str :
+			      "(unknown)");
+		return NFS4ERR_ROFS;
+	}
+
 	return NFS4_OK;
 }

@@ -269,7 +269,8 @@ void rpc_cred_squash(struct authunix_parms *ap,
 	if (!rule)
 		return;
 
-	if (rule->scr_all_squash || (rule->scr_root_squash && ap->aup_uid == 0)) {
+	if (rule->scr_all_squash ||
+	    (rule->scr_root_squash && ap->aup_uid == 0)) {
 		ap->aup_uid = 65534;
 		ap->aup_gid = 65534;
 		ap->aup_len = 0;
