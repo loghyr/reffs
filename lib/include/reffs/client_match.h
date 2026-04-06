@@ -4,6 +4,9 @@
 #ifndef _REFFS_CLIENT_MATCH_H
 #define _REFFS_CLIENT_MATCH_H
 
+#include <rpc/xdr.h>
+#include <rpc/auth.h>
+#include <rpc/auth_unix.h>
 #include <sys/socket.h>
 
 #include "reffs/super_block.h"
@@ -27,5 +30,15 @@
 const struct sb_client_rule *
 client_rule_match(const struct sb_client_rule *rules, unsigned int nrules,
 		  const struct sockaddr_storage *peer);
+
+/*
+ * Apply root_squash / all_squash from the matched export rule to an
+ * AUTH_SYS credential.  No-op when rule is NULL.
+ *
+ * Callers must hold the matched rule from client_rule_match() before
+ * calling this -- squashing must happen before any inode_access_check().
+ */
+void rpc_cred_squash(struct authunix_parms *ap,
+		     const struct sb_client_rule *rule);
 
 #endif /* _REFFS_CLIENT_MATCH_H */

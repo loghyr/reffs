@@ -249,3 +249,30 @@ client_rule_match(const struct sb_client_rule *rules, unsigned int nrules,
 
 	return best;
 }
+
+/*
+ * Apply root_squash / all_squash from the matched export rule to the
+ * AUTH_SYS credential.
+ *
+ *   all_squash  -- always map to nobody (uid=65534, gid=65534)
+ *   root_squash -- map uid/gid 0 to nobody
+ *
+ * Squashing also zeroes the supplementary group list so that no
+ * group membership from the wire credential survives.
+ *
+ * No-op when rule is NULL (no matching rule found -- caller should
+ * have already returned an access error in that case).
+ */
+void rpc_cred_squash(struct authunix_parms *ap,
+		     const struct sb_client_rule *rule)
+{
+	if (!rule)
+		return;
+
+	if (rule->scr_all_squash || (rule->scr_root_squash && ap->aup_uid == 0)) {
+		ap->aup_uid = 65534;
+		ap->aup_gid = 65534;
+		ap->aup_len = 0;
+		ap->aup_gids = NULL;
+	}
+}

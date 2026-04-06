@@ -25,6 +25,7 @@
 
 #include <check.h>
 
+/* client_match.h includes the rpc/auth_unix.h chain */
 #include "reffs/client_match.h"
 #include "reffs/settings.h"
 #include "reffs/super_block.h"
@@ -304,6 +305,121 @@ START_TEST(test_match_first_of_same_type)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* rpc_cred_squash() tests                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Helper: make an authunix_parms with specified uid and gid.
+ * aup_gids and aup_len are left zero (no supplementary groups).
+ */
+static struct authunix_parms make_ap(uid_t uid, gid_t gid)
+{
+	struct authunix_parms ap;
+
+	memset(&ap, 0, sizeof(ap));
+	ap.aup_uid = uid;
+	ap.aup_gid = gid;
+	ap.aup_len = 0;
+	ap.aup_gids = NULL;
+	return ap;
+}
+
+/*
+ * all_squash=true must squash any uid/gid to nobody (65534).
+ */
+START_TEST(test_squash_all_squash)
+{
+	struct sb_client_rule rule;
+	struct authunix_parms ap = make_ap(1000, 1000);
+
+	memset(&rule, 0, sizeof(rule));
+	rule.scr_all_squash = true;
+	rule.scr_root_squash = false;
+
+	rpc_cred_squash(&ap, &rule);
+
+	ck_assert_uint_eq(ap.aup_uid, 65534);
+	ck_assert_uint_eq(ap.aup_gid, 65534);
+	ck_assert_uint_eq(ap.aup_len, 0);
+	ck_assert_ptr_null(ap.aup_gids);
+}
+END_TEST
+
+/*
+ * root_squash=true must squash uid 0 to nobody (65534).
+ */
+START_TEST(test_squash_root_squash_uid0)
+{
+	struct sb_client_rule rule;
+	struct authunix_parms ap = make_ap(0, 0);
+
+	memset(&rule, 0, sizeof(rule));
+	rule.scr_root_squash = true;
+	rule.scr_all_squash = false;
+
+	rpc_cred_squash(&ap, &rule);
+
+	ck_assert_uint_eq(ap.aup_uid, 65534);
+	ck_assert_uint_eq(ap.aup_gid, 65534);
+}
+END_TEST
+
+/*
+ * root_squash=true must NOT squash non-root users.
+ */
+START_TEST(test_squash_root_squash_nonroot)
+{
+	struct sb_client_rule rule;
+	struct authunix_parms ap = make_ap(1000, 1000);
+
+	memset(&rule, 0, sizeof(rule));
+	rule.scr_root_squash = true;
+	rule.scr_all_squash = false;
+
+	rpc_cred_squash(&ap, &rule);
+
+	/* uid 1000 must not be squashed */
+	ck_assert_uint_eq(ap.aup_uid, 1000);
+	ck_assert_uint_eq(ap.aup_gid, 1000);
+}
+END_TEST
+
+/*
+ * root_squash=false, all_squash=false: credentials unchanged.
+ */
+START_TEST(test_squash_no_squash)
+{
+	struct sb_client_rule rule;
+	struct authunix_parms ap = make_ap(0, 0);
+
+	memset(&rule, 0, sizeof(rule));
+	rule.scr_root_squash = false;
+	rule.scr_all_squash = false;
+
+	rpc_cred_squash(&ap, &rule);
+
+	/* root remains root when neither squash is set */
+	ck_assert_uint_eq(ap.aup_uid, 0);
+	ck_assert_uint_eq(ap.aup_gid, 0);
+}
+END_TEST
+
+/*
+ * NULL rule is a no-op -- caller should already have rejected the request,
+ * but rpc_cred_squash() must not crash.
+ */
+START_TEST(test_squash_null_rule_noop)
+{
+	struct authunix_parms ap = make_ap(1000, 1000);
+
+	rpc_cred_squash(&ap, NULL);
+
+	ck_assert_uint_eq(ap.aup_uid, 1000);
+	ck_assert_uint_eq(ap.aup_gid, 1000);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -340,6 +456,14 @@ static Suite *client_match_suite(void)
 
 	tc = tcase_create("ordering");
 	tcase_add_test(tc, test_match_first_of_same_type);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("squash");
+	tcase_add_test(tc, test_squash_all_squash);
+	tcase_add_test(tc, test_squash_root_squash_uid0);
+	tcase_add_test(tc, test_squash_root_squash_nonroot);
+	tcase_add_test(tc, test_squash_no_squash);
+	tcase_add_test(tc, test_squash_null_rule_noop);
 	suite_add_tcase(s, tc);
 
 	return s;
