@@ -494,9 +494,12 @@ fi
     echo "Log dir: $LOGDIR"
     echo ""
     tail -50 "$LOG"
-} | msmtp "$EMAIL" 2>/dev/null || \
-  mail -s "$SUBJECT" "$EMAIL" < "$LOG" 2>/dev/null || \
-  echo "(email not configured -- results in $LOG)"
+} | msmtp "$EMAIL" 2>&1 || {
+    MSMTP_RC=$?
+    echo "msmtp failed (exit $MSMTP_RC), trying mail..."
+    mail -s "$SUBJECT" "$EMAIL" < "$LOG" 2>&1 || \
+      echo "(email failed -- results in $LOG)"
+}
 
 # -----------------------------------------------------------------------
 # Cleanup old results (keep 7 days)
