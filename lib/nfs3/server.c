@@ -42,6 +42,7 @@
 #include "reffs/vfs.h"
 #include "reffs/identity.h"
 #include "reffs/errno.h"
+#include "reffs/client_match.h"
 #include "reffs/trace/nfs3_server.h"
 
 /*
@@ -56,6 +57,44 @@
 
 static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa);
 static nfsstat3 errno_to_nfs3(int err);
+
+/*
+ * nfs3_export_check_rw -- enforce per-client export policy for write ops.
+ *
+ * Called after super_block_find() in every mutating NFSv3 op.
+ * Matches the connecting client against the export's ordered rule list,
+ * applies root_squash/all_squash to *ap in-place, and checks that the
+ * matched rule permits writes.
+ *
+ * Returns:
+ *   0        -- client is allowed (squashing applied if configured)
+ *   -EACCES  -- no matching client rule, or export is read-only
+ */
+static int nfs3_export_check_rw(struct super_block *sb,
+				const struct rpc_trans *rt,
+				struct authunix_parms *ap)
+{
+	if (sb->sb_nclient_rules == 0)
+		return 0;
+
+	const struct sockaddr_storage *peer = &rt->rt_info.ri_ci.ci_peer;
+	const struct sb_client_rule *rule = client_rule_match(
+		sb->sb_client_rules, sb->sb_nclient_rules, peer);
+
+	if (!rule) {
+		TRACE("NFSv3: access denied -- no matching client rule");
+		return -EACCES;
+	}
+
+	rpc_cred_squash(ap, rule);
+
+	if (!rule->scr_rw) {
+		TRACE("NFSv3: write denied -- export is read-only for client");
+		return -EACCES;
+	}
+
+	return 0;
+}
 
 static void inode_attr_to_fattr(struct inode *inode, fattr3 *fa)
 {
@@ -265,6 +304,10 @@ static int nfs3_op_setattr(struct rpc_trans *rt)
 		ret = -ESTALE;
 		goto out;
 	}
+
+	ret = nfs3_export_check_rw(sb, rt, &ap);
+	if (ret)
+		goto out;
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
@@ -968,6 +1011,10 @@ static int nfs3_op_write(struct rpc_trans *rt)
 		goto out;
 	}
 
+	ret = nfs3_export_check_rw(sb, rt, &ap);
+	if (ret)
+		goto out;
+
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
 		ret = -ENOENT;
@@ -1332,6 +1379,10 @@ static int nfs3_op_create(struct rpc_trans *rt)
 		goto out;
 	}
 
+	ret = nfs3_export_check_rw(sb, rt, &ap);
+	if (ret)
+		goto out;
+
 	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
 	if (ret)
 		goto out;
@@ -1464,6 +1515,10 @@ static int nfs3_op_mkdir(struct rpc_trans *rt)
 		goto out;
 	}
 
+	ret = nfs3_export_check_rw(sb, rt, &ap);
+	if (ret)
+		goto out;
+
 	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
 	if (ret)
 		goto out;
@@ -1572,6 +1627,10 @@ static int nfs3_op_symlink(struct rpc_trans *rt)
 		ret = -ESTALE;
 		goto out;
 	}
+
+	ret = nfs3_export_check_rw(sb, rt, &ap);
+	if (ret)
+		goto out;
 
 	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
 	if (ret)
@@ -1690,6 +1749,10 @@ static int nfs3_op_mknod(struct rpc_trans *rt)
 		ret = -ESTALE;
 		goto out;
 	}
+
+	ret = nfs3_export_check_rw(sb, rt, &ap);
+	if (ret)
+		goto out;
 
 	if (strlen(args->where.name) > REFFS_MAX_NAME) {
 		ret = -ENAMETOOLONG;
@@ -1833,6 +1896,10 @@ static int nfs3_op_remove(struct rpc_trans *rt)
 		goto out;
 	}
 
+	ret = nfs3_export_check_rw(sb, rt, &ap);
+	if (ret)
+		goto out;
+
 	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
 	if (ret)
 		goto out;
@@ -1910,6 +1977,10 @@ static int nfs3_op_rmdir(struct rpc_trans *rt)
 		ret = -ESTALE;
 		goto out;
 	}
+
+	ret = nfs3_export_check_rw(sb, rt, &ap);
+	if (ret)
+		goto out;
 
 	ret = directory_inode_find(sb, nfh->nfh_ino, &ap, W_OK, &inode);
 	if (ret)
@@ -2006,6 +2077,10 @@ static int nfs3_op_rename(struct rpc_trans *rt)
 		ret = -ESTALE;
 		goto out;
 	}
+
+	ret = nfs3_export_check_rw(sb, rt, &ap);
+	if (ret)
+		goto out;
 
 	ret = directory_inode_find(sb, nfh_src->nfh_ino, &ap, W_OK, &inode_src);
 	if (ret)
@@ -2124,6 +2199,10 @@ static int nfs3_op_link(struct rpc_trans *rt)
 		ret = -ESTALE;
 		goto out;
 	}
+
+	ret = nfs3_export_check_rw(sb, rt, &ap);
+	if (ret)
+		goto out;
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {

@@ -19,6 +19,7 @@
 #include <rpc/auth_unix.h>
 #include <zlib.h>
 #include "mntv3_xdr.h"
+#include "reffs/client_match.h"
 #include "reffs/rpc.h"
 #include "reffs/log.h"
 #include "reffs/filehandle.h"
@@ -60,6 +61,26 @@ static int mount3_mnt(struct rpc_trans *rt)
 	ino = inode->i_ino;
 	sb_id = inode->i_sb->sb_id;
 
+	/*
+	 * Per-client access check: if the export has client rules,
+	 * the connecting client must match at least one rule.
+	 * Flavor enforcement happens on individual NFS operations;
+	 * here we only gate whether this client has any access at all.
+	 */
+	if (inode->i_sb->sb_nclient_rules > 0) {
+		const struct sockaddr_storage *peer =
+			&rt->rt_info.ri_ci.ci_peer;
+		const struct sb_client_rule *rule =
+			client_rule_match(inode->i_sb->sb_client_rules,
+					  inode->i_sb->sb_nclient_rules, peer);
+
+		if (!rule) {
+			TRACE("MNT: access denied -- no matching client rule");
+			mr->fhs_status = MNT3ERR_ACCES;
+			goto out;
+		}
+	}
+
 	nfh = calloc(1, sizeof(*nfh));
 	if (!nfh) {
 		mr->fhs_status = MNT3ERR_SERVERFAULT;
@@ -76,9 +97,28 @@ static int mount3_mnt(struct rpc_trans *rt)
 	 * Return the export's configured auth flavors.  The MOUNT
 	 * protocol uses RPC wire values (AUTH_SYS=1, RPCSEC_GSS=6).
 	 * TLS is transport-level; map it to AUTH_SYS.
+	 *
+	 * Prefer the export's own sb_all_flavors (union of all client
+	 * rule flavors) when present; fall back to global server_state.
 	 */
-	struct server_state *ss = server_state_find();
-	unsigned int nf = ss ? ss->ss_nflavors : 1;
+	struct super_block *mnt_sb = inode->i_sb;
+	struct server_state *ss = NULL;
+	const enum reffs_auth_flavor *src_flavors;
+	unsigned int nf;
+
+	if (mnt_sb->sb_nall_flavors > 0) {
+		src_flavors = mnt_sb->sb_all_flavors;
+		nf = mnt_sb->sb_nall_flavors;
+	} else {
+		ss = server_state_find();
+		src_flavors = ss ? ss->ss_flavors : NULL;
+		nf = ss ? ss->ss_nflavors : 0;
+	}
+
+	if (nf == 0) {
+		nf = 1;
+		src_flavors = NULL;
+	}
 
 	flavors = calloc(nf, sizeof(*flavors));
 	if (!flavors) {
@@ -90,11 +130,11 @@ static int mount3_mnt(struct rpc_trans *rt)
 	unsigned int out = 0;
 	bool have_auth_sys = false;
 
-	if (ss && ss->ss_nflavors > 0) {
-		for (unsigned int i = 0; i < ss->ss_nflavors; i++) {
+	if (src_flavors && nf > 0) {
+		for (unsigned int i = 0; i < nf; i++) {
 			int wire;
 
-			switch (ss->ss_flavors[i]) {
+			switch (src_flavors[i]) {
 			case REFFS_AUTH_SYS:
 			case REFFS_AUTH_TLS:
 				if (have_auth_sys)
