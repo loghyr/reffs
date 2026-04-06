@@ -450,6 +450,170 @@ err:
 }
 
 /* ------------------------------------------------------------------ */
+/* InBand READ                                                         */
+/* ------------------------------------------------------------------ */
+
+static ssize_t nfsv4_read(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+			  void *buf, size_t len, uint64_t offset,
+			  uint32_t uid __attribute__((unused)),
+			  uint32_t gid __attribute__((unused)))
+{
+	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	if (!ms)
+		return -ENOTCONN;
+
+	ret = mds_compound_init(&mc, 3, "ds_read");
+	if (ret)
+		return ret;
+
+	if (add_seq_putfh(&mc, ms, fh, fh_len))
+		goto err;
+
+	slot = mds_compound_add_op(&mc, OP_READ);
+	if (!slot)
+		goto err;
+
+	READ4args *ra = &slot->nfs_argop4_u.opread;
+
+	memset(&ra->stateid, 0, sizeof(ra->stateid)); /* anonymous */
+	ra->offset = offset;
+	ra->count = (uint32_t)(len > UINT32_MAX ? UINT32_MAX : len);
+
+	ret = send_and_check(&mc, ms, ds->ds_id);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	ssize_t bytes_read = 0;
+
+	if (mc.mc_res.resarray.resarray_len >= 3) {
+		nfs_resop4 *r_slot = &mc.mc_res.resarray.resarray_val[2];
+		READ4resok *rok =
+			&r_slot->nfs_resop4_u.opread.READ4res_u.resok4;
+
+		size_t copy = rok->data.data_len;
+
+		if (copy > len)
+			copy = len;
+		memcpy(buf, rok->data.data_val, copy);
+		bytes_read = (ssize_t)copy;
+	}
+
+	mds_compound_fini(&mc);
+	return bytes_read;
+
+err:
+	mds_compound_fini(&mc);
+	return -ENOSPC;
+}
+
+/* ------------------------------------------------------------------ */
+/* InBand WRITE                                                        */
+/* ------------------------------------------------------------------ */
+
+static ssize_t nfsv4_write(struct dstore *ds, const uint8_t *fh,
+			   uint32_t fh_len, const void *buf, size_t len,
+			   uint64_t offset,
+			   uint32_t uid __attribute__((unused)),
+			   uint32_t gid __attribute__((unused)))
+{
+	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	if (!ms)
+		return -ENOTCONN;
+
+	ret = mds_compound_init(&mc, 3, "ds_write");
+	if (ret)
+		return ret;
+
+	if (add_seq_putfh(&mc, ms, fh, fh_len))
+		goto err;
+
+	slot = mds_compound_add_op(&mc, OP_WRITE);
+	if (!slot)
+		goto err;
+
+	WRITE4args *wa = &slot->nfs_argop4_u.opwrite;
+
+	memset(&wa->stateid, 0, sizeof(wa->stateid)); /* anonymous */
+	wa->offset = offset;
+	wa->stable = FILE_SYNC4;
+	wa->data.data_val = (char *)buf;
+	wa->data.data_len = (uint32_t)(len > UINT32_MAX ? UINT32_MAX : len);
+
+	ret = send_and_check(&mc, ms, ds->ds_id);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	ssize_t bytes_written = 0;
+
+	if (mc.mc_res.resarray.resarray_len >= 3) {
+		nfs_resop4 *w_slot = &mc.mc_res.resarray.resarray_val[2];
+		WRITE4resok *wok =
+			&w_slot->nfs_resop4_u.opwrite.WRITE4res_u.resok4;
+
+		bytes_written = (ssize_t)wok->count;
+	}
+
+	mds_compound_fini(&mc);
+	return bytes_written;
+
+err:
+	mds_compound_fini(&mc);
+	return -ENOSPC;
+}
+
+/* ------------------------------------------------------------------ */
+/* InBand COMMIT                                                       */
+/* ------------------------------------------------------------------ */
+
+static int nfsv4_commit(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+			uint64_t offset, uint32_t count)
+{
+	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	if (!ms)
+		return -ENOTCONN;
+
+	ret = mds_compound_init(&mc, 3, "ds_commit");
+	if (ret)
+		return ret;
+
+	if (add_seq_putfh(&mc, ms, fh, fh_len))
+		goto err;
+
+	slot = mds_compound_add_op(&mc, OP_COMMIT);
+	if (!slot)
+		goto err;
+
+	COMMIT4args *ca = &slot->nfs_argop4_u.opcommit;
+
+	ca->offset = offset;
+	ca->count = count;
+
+	ret = send_and_check(&mc, ms, ds->ds_id);
+	mds_compound_fini(&mc);
+	return ret;
+
+err:
+	mds_compound_fini(&mc);
+	return -ENOSPC;
+}
+
+/* ------------------------------------------------------------------ */
 /* Vtable                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -461,4 +625,7 @@ const struct dstore_ops dstore_ops_nfsv4 = {
 	.truncate = nfsv4_truncate,
 	.fence = nfsv4_fence,
 	.getattr = nfsv4_getattr,
+	.read = nfsv4_read,
+	.write = nfsv4_write,
+	.commit = nfsv4_commit,
 };

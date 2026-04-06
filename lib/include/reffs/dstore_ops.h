@@ -15,7 +15,9 @@
 #ifndef _REFFS_DSTORE_OPS_H
 #define _REFFS_DSTORE_OPS_H
 
+#include <errno.h>
 #include <stdint.h>
+#include <sys/types.h>
 #include <time.h>
 
 struct dstore;
@@ -57,6 +59,20 @@ struct dstore_ops {
 
 	int (*getattr)(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 		       struct layout_data_file *ldf);
+
+	/*
+	 * InBand I/O -- MDS proxies data for non-pNFS clients.
+	 * NULL = not supported (returns -ENOSYS from dispatcher).
+	 * uid/gid: synthetic fenced credentials for DS auth.
+	 */
+	ssize_t (*read)(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+			void *buf, size_t len, uint64_t offset, uint32_t uid,
+			uint32_t gid);
+	ssize_t (*write)(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+			 const void *buf, size_t len, uint64_t offset,
+			 uint32_t uid, uint32_t gid);
+	int (*commit)(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
+		      uint64_t offset, uint32_t count);
 };
 
 /* Remote (NFSv3 RPC) vtable -- defined in lib/nfs4/dstore/dstore_ops_nfsv3.c */
@@ -118,6 +134,39 @@ static inline int dstore_data_file_getattr(struct dstore *ds, const uint8_t *fh,
 					   struct layout_data_file *ldf)
 {
 	return ds->ds_ops->getattr(ds, fh, fh_len, ldf);
+}
+
+/* InBand I/O dispatch */
+
+static inline ssize_t dstore_data_file_read(struct dstore *ds,
+					    const uint8_t *fh, uint32_t fh_len,
+					    void *buf, size_t len,
+					    uint64_t offset, uint32_t uid,
+					    uint32_t gid)
+{
+	if (!ds->ds_ops->read)
+		return -ENOSYS;
+	return ds->ds_ops->read(ds, fh, fh_len, buf, len, offset, uid, gid);
+}
+
+static inline ssize_t dstore_data_file_write(struct dstore *ds,
+					     const uint8_t *fh, uint32_t fh_len,
+					     const void *buf, size_t len,
+					     uint64_t offset, uint32_t uid,
+					     uint32_t gid)
+{
+	if (!ds->ds_ops->write)
+		return -ENOSYS;
+	return ds->ds_ops->write(ds, fh, fh_len, buf, len, offset, uid, gid);
+}
+
+static inline int dstore_data_file_commit(struct dstore *ds, const uint8_t *fh,
+					  uint32_t fh_len, uint64_t offset,
+					  uint32_t count)
+{
+	if (!ds->ds_ops->commit)
+		return -ENOSYS;
+	return ds->ds_ops->commit(ds, fh, fh_len, offset, count);
 }
 
 #endif /* _REFFS_DSTORE_OPS_H */
