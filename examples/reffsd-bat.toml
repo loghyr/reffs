@@ -59,6 +59,7 @@ path    = "/"
 # bat_setup.sh replaces REPLACE_WITH_DS_IP.  Comment out if no
 # file layout DS is configured.
 # [[data_server]]
-# id      = 2
-# address = "REPLACE_WITH_DS_IP"
-# path    = "/"
+# id       = 2
+# address  = "REPLACE_WITH_DS_IP"
+# path     = "/"
+# protocol = "nfsv4"
