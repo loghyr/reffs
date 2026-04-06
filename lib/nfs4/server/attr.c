@@ -2930,6 +2930,8 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 		uint32_t lt = sb->sb_layout_types;
 		uint32_t n = 0;
 
+		if (lt & SB_LAYOUT_FILE)
+			n++;
 		if (lt & SB_LAYOUT_FLEX_FILES)
 			n++;
 		if (lt & SB_LAYOUT_FLEX_FILES_V2)
@@ -2940,6 +2942,10 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 		if (nattr->fs_layout_types.fattr4_fs_layout_types_val) {
 			uint32_t idx = 0;
 
+			if (lt & SB_LAYOUT_FILE)
+				nattr->fs_layout_types
+					.fattr4_fs_layout_types_val[idx++] =
+					LAYOUT4_NFSV4_1_FILES;
 			if (lt & SB_LAYOUT_FLEX_FILES)
 				nattr->fs_layout_types
 					.fattr4_fs_layout_types_val[idx++] =
@@ -2956,6 +2962,10 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 		if (nattr->layout_types.fattr4_layout_types_val) {
 			uint32_t idx = 0;
 
+			if (lt & SB_LAYOUT_FILE)
+				nattr->layout_types
+					.fattr4_layout_types_val[idx++] =
+					LAYOUT4_NFSV4_1_FILES;
 			if (lt & SB_LAYOUT_FLEX_FILES)
 				nattr->layout_types
 					.fattr4_layout_types_val[idx++] =

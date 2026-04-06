@@ -116,8 +116,9 @@ struct super_block {
 	 * LAYOUTGET returns NFS4ERR_LAYOUTUNAVAILABLE for exports
 	 * without the requested layout type.
 	 */
-#define SB_LAYOUT_FLEX_FILES (1U << 0) /* LAYOUT4_FLEX_FILES (v1) */
-#define SB_LAYOUT_FLEX_FILES_V2 (1U << 1) /* LAYOUT4_FLEX_FILES_V2 */
+#define SB_LAYOUT_FILE (1U << 0) /* LAYOUT4_NFSV4_1_FILES */
+#define SB_LAYOUT_FLEX_FILES (1U << 1) /* LAYOUT4_FLEX_FILES */
+#define SB_LAYOUT_FLEX_FILES_V2 (1U << 2) /* LAYOUT4_FLEX_FILES_V2 */
 	uint32_t sb_layout_types;
 
 	/* Per-op NFS4 statistics — superblock scope. */

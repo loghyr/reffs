@@ -674,9 +674,10 @@ def sb_set_flavors_cmd(client, args):
 
 
 LAYOUT_TYPE_MAP = {
-    'ffv1': 1,     # SB_LAYOUT_FLEX_FILES
-    'ffv2': 2,     # SB_LAYOUT_FLEX_FILES_V2
-    'both': 3,     # v1 + v2
+    'file': 1,     # SB_LAYOUT_FILE (LAYOUT4_NFSV4_1_FILES)
+    'ffv1': 2,     # SB_LAYOUT_FLEX_FILES
+    'ffv2': 4,     # SB_LAYOUT_FLEX_FILES_V2
+    'all': 7,      # file + ffv1 + ffv2
     'none': 0,
 }
 

@@ -73,7 +73,8 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	GETDEVICEINFO4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, GETDEVICEINFO4res_u, gdir_resok4);
 
-	if (args->gdia_layout_type != LAYOUT4_FLEX_FILES &&
+	if (args->gdia_layout_type != LAYOUT4_NFSV4_1_FILES &&
+	    args->gdia_layout_type != LAYOUT4_FLEX_FILES &&
 	    args->gdia_layout_type != LAYOUT4_FLEX_FILES_V2) {
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
 		return 0;
@@ -88,10 +89,6 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	}
 
 	/*
-	 * Build the ff_device_addr4 structure:
-	 *   ffda_netaddrs: one netaddr4 with the DS address
-	 *   ffda_versions: one entry for NFSv3
-	 *
 	 * The universal address format for TCP/IPv4 is:
 	 *   "h1.h2.h3.h4.p1.p2" where p1.p2 is port 2049 = 8.1
 	 */
@@ -99,38 +96,68 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 
 	snprintf(uaddr, sizeof(uaddr), "%s.8.1", ds->ds_ip);
 
-	/*
-	 * XDR-encode ff_device_addr4 into the da_addr_body opaque.
-	 */
-	ff_device_addr4 ffda;
-
-	memset(&ffda, 0, sizeof(ffda));
-
-	/* One netaddr4 in the multipath list. */
 	netaddr4 na;
 	char *netid = "tcp";
 
 	na.na_r_netid = netid;
 	na.na_r_addr = uaddr;
 
-	ffda.ffda_netaddrs.multipath_list4_len = 1;
-	ffda.ffda_netaddrs.multipath_list4_val = &na;
+	void *encode_obj = NULL;
+	xdrproc_t encode_proc = NULL;
 
-	/* One version entry: NFSv3. */
+	/* File layouts: nfsv4_1_file_layout_ds_addr4 */
+	nfsv4_1_file_layout_ds_addr4 flda;
+	uint32_t stripe_idx = 0;
+	multipath_list4 mpl;
+
+	/* Flex files: ff_device_addr4 */
+	ff_device_addr4 ffda;
 	ff_device_versions4 ver;
 
-	memset(&ver, 0, sizeof(ver));
-	ver.ffdv_version = 3;
-	ver.ffdv_minorversion = 0;
-	ver.ffdv_rsize = 1048576;
-	ver.ffdv_wsize = 1048576;
-	ver.ffdv_tightly_coupled = false;
+	if (args->gdia_layout_type == LAYOUT4_NFSV4_1_FILES) {
+		/*
+		 * File layout device address: stripe indices map 1:1
+		 * to the multipath DS list (one DS per stripe index).
+		 */
+		memset(&flda, 0, sizeof(flda));
 
-	ffda.ffda_versions.ffda_versions_len = 1;
-	ffda.ffda_versions.ffda_versions_val = &ver;
+		mpl.multipath_list4_len = 1;
+		mpl.multipath_list4_val = &na;
+
+		flda.nflda_stripe_indices.nflda_stripe_indices_len = 1;
+		flda.nflda_stripe_indices.nflda_stripe_indices_val =
+			&stripe_idx;
+
+		flda.nflda_multipath_ds_list.nflda_multipath_ds_list_len = 1;
+		flda.nflda_multipath_ds_list.nflda_multipath_ds_list_val = &mpl;
+
+		encode_obj = &flda;
+		encode_proc = (xdrproc_t)xdr_nfsv4_1_file_layout_ds_addr4;
+	} else {
+		/*
+		 * Flex files device address: multipath netaddrs + version.
+		 */
+		memset(&ffda, 0, sizeof(ffda));
+
+		ffda.ffda_netaddrs.multipath_list4_len = 1;
+		ffda.ffda_netaddrs.multipath_list4_val = &na;
+
+		memset(&ver, 0, sizeof(ver));
+		ver.ffdv_version = 3;
+		ver.ffdv_minorversion = 0;
+		ver.ffdv_rsize = 1048576;
+		ver.ffdv_wsize = 1048576;
+		ver.ffdv_tightly_coupled = false;
+
+		ffda.ffda_versions.ffda_versions_len = 1;
+		ffda.ffda_versions.ffda_versions_val = &ver;
+
+		encode_obj = &ffda;
+		encode_proc = (xdrproc_t)xdr_ff_device_addr4;
+	}
 
 	/* XDR-encode into an opaque buffer. */
-	u_long xdr_size = xdr_sizeof((xdrproc_t)xdr_ff_device_addr4, &ffda);
+	u_long xdr_size = xdr_sizeof(encode_proc, encode_obj);
 
 	resok->gdir_device_addr.da_layout_type = args->gdia_layout_type;
 	resok->gdir_device_addr.da_addr_body.da_addr_body_val =
@@ -147,7 +174,7 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	xdrmem_create(&xdrs,
 		      resok->gdir_device_addr.da_addr_body.da_addr_body_val,
 		      xdr_size, XDR_ENCODE);
-	if (!xdr_ff_device_addr4(&xdrs, &ffda)) {
+	if (!encode_proc(&xdrs, encode_obj)) {
 		xdr_destroy(&xdrs);
 		free(resok->gdir_device_addr.da_addr_body.da_addr_body_val);
 		resok->gdir_device_addr.da_addr_body.da_addr_body_val = NULL;
@@ -157,7 +184,8 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	}
 	xdr_destroy(&xdrs);
 
-	TRACE("GETDEVICEINFO: dstore[%u] addr=%s", dstore_id, uaddr);
+	TRACE("GETDEVICEINFO: dstore[%u] addr=%s type=%u", dstore_id, uaddr,
+	      args->gdia_layout_type);
 	dstore_put(ds);
 
 	return 0;
@@ -261,6 +289,93 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 /* Each builder XDR-encodes the layout body and returns it in *body.   */
 /* The caller owns the allocated buffer.  Returns NFS4_OK or an error. */
 /* ------------------------------------------------------------------ */
+
+/*
+ * File layout (RFC 5661 §13): single device, stripe across DSes.
+ * nfl_util encodes the stripe size and DENSE/SPARSE commit model.
+ * nfl_fh_list has one FH per DS in the stripe — the client uses
+ * (offset / stripe_unit) % nfl_fh_list_len to pick the DS.
+ */
+static nfsstat4 layoutget_build_file(struct layout_segment *seg,
+				     char **out_body, u_long *out_size)
+{
+	nfsv4_1_file_layout4 nfl;
+
+	memset(&nfl, 0, sizeof(nfl));
+
+	/* All data files share a single device (one DS). */
+	deviceid_from_dstore(nfl.nfl_deviceid, seg->ls_files[0].ldf_dstore_id);
+
+	/*
+	 * nfl_util: stripe size in low 31 bits.  Bit 31 = DENSE mode.
+	 * Use SPARSE (bit 31 clear) — each DS FH maps to a separate
+	 * file, offsets on the DS match the MDS file offsets within
+	 * the stripe.
+	 *
+	 * Stripe size 0 means entire file on one DS (no striping).
+	 */
+	uint32_t stripe_size = seg->ls_stripe_unit;
+
+	if (stripe_size == 0)
+		stripe_size = 1048576; /* 1MB default stripe */
+	nfl.nfl_util = stripe_size; /* SPARSE mode (bit 31 clear) */
+	nfl.nfl_first_stripe_index = 0;
+	nfl.nfl_pattern_offset = 0;
+
+	/* One FH per data file in the stripe. */
+	nfl.nfl_fh_list.nfl_fh_list_len = seg->ls_nfiles;
+	nfl.nfl_fh_list.nfl_fh_list_val =
+		calloc(seg->ls_nfiles, sizeof(nfs_fh4));
+	if (!nfl.nfl_fh_list.nfl_fh_list_val)
+		return NFS4ERR_DELAY;
+
+	for (uint32_t i = 0; i < seg->ls_nfiles; i++) {
+		struct layout_data_file *ldf = &seg->ls_files[i];
+		nfs_fh4 *fh = &nfl.nfl_fh_list.nfl_fh_list_val[i];
+
+		fh->nfs_fh4_len = ldf->ldf_fh_len;
+		fh->nfs_fh4_val = calloc(1, ldf->ldf_fh_len);
+		if (!fh->nfs_fh4_val) {
+			for (uint32_t j = 0; j < i; j++)
+				free(nfl.nfl_fh_list.nfl_fh_list_val[j]
+					     .nfs_fh4_val);
+			free(nfl.nfl_fh_list.nfl_fh_list_val);
+			return NFS4ERR_DELAY;
+		}
+		memcpy(fh->nfs_fh4_val, ldf->ldf_fh, ldf->ldf_fh_len);
+	}
+
+	u_long xdr_size = xdr_sizeof((xdrproc_t)xdr_nfsv4_1_file_layout4, &nfl);
+	char *body = calloc(1, xdr_size);
+
+	if (!body) {
+		for (uint32_t i = 0; i < seg->ls_nfiles; i++)
+			free(nfl.nfl_fh_list.nfl_fh_list_val[i].nfs_fh4_val);
+		free(nfl.nfl_fh_list.nfl_fh_list_val);
+		return NFS4ERR_DELAY;
+	}
+
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, body, xdr_size, XDR_ENCODE);
+	if (!xdr_nfsv4_1_file_layout4(&xdrs, &nfl)) {
+		xdr_destroy(&xdrs);
+		free(body);
+		for (uint32_t i = 0; i < seg->ls_nfiles; i++)
+			free(nfl.nfl_fh_list.nfl_fh_list_val[i].nfs_fh4_val);
+		free(nfl.nfl_fh_list.nfl_fh_list_val);
+		return NFS4ERR_SERVERFAULT;
+	}
+	xdr_destroy(&xdrs);
+
+	*out_body = body;
+	*out_size = xdr_size;
+
+	for (uint32_t i = 0; i < seg->ls_nfiles; i++)
+		free(nfl.nfl_fh_list.nfl_fh_list_val[i].nfs_fh4_val);
+	free(nfl.nfl_fh_list.nfl_fh_list_val);
+	return NFS4_OK;
+}
 
 static nfsstat4 layoutget_build_v1(struct layout_segment *seg, char **out_body,
 				   u_long *out_size)
@@ -537,7 +652,8 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		return 0;
 	}
 
-	if (args->loga_layout_type != LAYOUT4_FLEX_FILES &&
+	if (args->loga_layout_type != LAYOUT4_NFSV4_1_FILES &&
+	    args->loga_layout_type != LAYOUT4_FLEX_FILES &&
 	    args->loga_layout_type != LAYOUT4_FLEX_FILES_V2) {
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
 		return 0;
@@ -561,7 +677,9 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		struct super_block *sb = compound->c_inode->i_sb;
 		uint32_t want = 0;
 
-		if (layout_type == LAYOUT4_FLEX_FILES)
+		if (layout_type == LAYOUT4_NFSV4_1_FILES)
+			want = SB_LAYOUT_FILE;
+		else if (layout_type == LAYOUT4_FLEX_FILES)
 			want = SB_LAYOUT_FLEX_FILES;
 		else if (layout_type == LAYOUT4_FLEX_FILES_V2)
 			want = SB_LAYOUT_FLEX_FILES_V2;
@@ -727,7 +845,9 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	char *body = NULL;
 	u_long xdr_size = 0;
 
-	if (seg->ls_layout_type == LAYOUT4_FLEX_FILES_V2)
+	if (seg->ls_layout_type == LAYOUT4_NFSV4_1_FILES)
+		*status = layoutget_build_file(seg, &body, &xdr_size);
+	else if (seg->ls_layout_type == LAYOUT4_FLEX_FILES_V2)
 		*status = layoutget_build_v2(seg, &body, &xdr_size);
 	else
 		*status = layoutget_build_v1(seg, &body, &xdr_size);
