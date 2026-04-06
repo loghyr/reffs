@@ -23,8 +23,13 @@ struct server_state;
 #define NFS4_SESSION_IS_ZOMBIE (1ULL << 1)
 
 #define NFS4_SESSION_MAX_SLOTS 64U
-#define NFS4_SESSION_MAX_REQUEST_SIZE (1024U * 1024U)
-#define NFS4_SESSION_MAX_RESPONSE_SIZE (1024U * 1024U)
+/*
+ * Must exceed the max WRITE/READ data size plus RPC/XDR overhead
+ * (~4KB for SEQUENCE+PUTFH+WRITE headers).  If too small, the
+ * server returns NFS4ERR_REQ_TOO_BIG and the client gets EIO.
+ */
+#define NFS4_SESSION_MAX_REQUEST_SIZE (1024U * 1024U + 64U * 1024U)
+#define NFS4_SESSION_MAX_RESPONSE_SIZE (1024U * 1024U + 64U * 1024U)
 #define NFS4_SESSION_MAX_RESPONSE_CACHED 4096U
 #define NFS4_SESSION_MAX_OPS 16U
 
