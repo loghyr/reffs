@@ -741,9 +741,18 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		 * multiple data files (each with its own runway FH).
 		 */
 		struct server_state *ss = compound->c_server_state;
-		uint32_t target = ss->ss_layout_width ?
-					  ss->ss_layout_width :
-					  REFFS_LAYOUT_WIDTH_DEFAULT;
+		uint32_t target;
+
+		/*
+		 * File layouts: one FH per DS (no mirroring).
+		 * Flex files: mirror across multiple FHs per layout_width.
+		 */
+		if (layout_type == LAYOUT4_NFSV4_1_FILES)
+			target = nds;
+		else
+			target = ss->ss_layout_width ?
+					 ss->ss_layout_width :
+					 REFFS_LAYOUT_WIDTH_DEFAULT;
 		uint32_t fence_min = ss->ss_fence_uid_min;
 		uint32_t fence_max = ss->ss_fence_uid_max;
 
