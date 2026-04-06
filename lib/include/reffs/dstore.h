@@ -58,12 +58,19 @@ struct dstore {
 	uint32_t ds_root_fh_len; /* actual FH length */
 
 	/*
-	 * NFSv3 client handle for control-plane ops.
+	 * NFSv3 client handle for control-plane ops (nfsv3 vtable).
 	 * Protected by ds_clnt_mutex — readers must hold the mutex
 	 * while using the handle, reconnect holds it exclusively.
 	 */
 	CLIENT *ds_clnt;
 	pthread_mutex_t ds_clnt_mutex;
+
+	/*
+	 * NFSv4.2 session for control-plane + InBand I/O (nfsv4 vtable).
+	 * The MDS acts as a plain NFSv4 client (USE_NON_PNFS) to the DS.
+	 * NULL when the dstore uses NFSv3 or local VFS.
+	 */
+	struct mds_session *ds_v4_session;
 
 	/* RCU + refcount infrastructure */
 	struct rcu_head ds_rcu;
@@ -112,6 +119,14 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
  * Returns a ref-bumped pointer or NULL.  Caller must dstore_put().
  */
 struct dstore *dstore_find(uint32_t id);
+
+/*
+ * ds_session_create -- establish an NFSv4.2 session to a DS.
+ * Used for NFSv4 dstores (control plane + InBand I/O).
+ * Sets ds->ds_v4_session and ds->ds_root_fh on success.
+ */
+int ds_session_create(struct dstore *ds);
+void ds_session_destroy(struct dstore *ds);
 
 /* Bump / drop ref.  NULL-safe. */
 struct dstore *dstore_get(struct dstore *ds);
