@@ -121,6 +121,13 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 		if (ret)
 			return ret;
 
+		/*
+		 * Propagate the tight-coupling flag from the device to the
+		 * mirror.  When set, ds_chunk_write/read use the real layout
+		 * stateid (TRUST_STATEID path) instead of the anonymous stateid.
+		 */
+		em->em_tight_coupled = ctx->ctx_devs[i].ed_tight_coupled;
+
 		if (use_v2) {
 			/* NFSv4.2 session to each DS -- unique owner per mirror. */
 			int existing = find_existing_conn(ctx, i);
@@ -171,6 +178,77 @@ static void ec_report_ds_error(struct ec_context *ctx, int mirror_idx,
 {
 	mds_layout_error(ctx->ctx_ms, &ctx->ctx_file, &ctx->ctx_layout,
 			 (uint32_t)mirror_idx, NFS4ERR_IO, opnum);
+}
+
+/*
+ * ec_chunk_write -- CHUNK_WRITE with BAD_STATEID retry for tight coupling.
+ *
+ * When the DS returns NFS4ERR_BAD_STATEID (trust entry expired or revoked),
+ * report LAYOUTERROR to the MDS and retry with exponential backoff.
+ * After 3 failed attempts, return -ESTALE so the caller can LAYOUTRETURN.
+ */
+static int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
+			  uint64_t block_offset, uint32_t chunk_sz,
+			  const uint8_t *src, uint32_t wsz, uint32_t owner_id)
+{
+	struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[mirror_idx];
+	const stateid4 *stid =
+		em->em_tight_coupled ? &ctx->ctx_layout.el_stateid : NULL;
+
+	for (int attempt = 0; attempt < 3; attempt++) {
+		int ret;
+
+		ret = ds_chunk_write(&ctx->ctx_ds_sess[mirror_idx], em->em_fh,
+				     em->em_fh_len, block_offset, chunk_sz, src,
+				     wsz, owner_id, stid);
+		if (ret != -ESTALE)
+			return ret;
+
+		/*
+		 * DS rejected our layout stateid (trust entry expired or
+		 * revoked).  Report the error to the MDS and retry after
+		 * a brief delay.  50ms, 100ms, 200ms backoff.
+		 */
+		mds_layout_error(ctx->ctx_ms, &ctx->ctx_file, &ctx->ctx_layout,
+				 (uint32_t)mirror_idx, NFS4ERR_BAD_STATEID,
+				 OP_CHUNK_WRITE);
+		struct timespec delay = { 0, (long)(50 * 1000000) << attempt };
+
+		clock_nanosleep(CLOCK_MONOTONIC, 0, &delay, NULL);
+	}
+
+	return -ESTALE;
+}
+
+/*
+ * ec_chunk_read -- CHUNK_READ with BAD_STATEID retry for tight coupling.
+ */
+static int ec_chunk_read(struct ec_context *ctx, int mirror_idx,
+			 uint64_t block_offset, uint32_t nblk, uint8_t *shard,
+			 uint32_t rd_chunk_sz, uint32_t *nread)
+{
+	struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[mirror_idx];
+	const stateid4 *stid =
+		em->em_tight_coupled ? &ctx->ctx_layout.el_stateid : NULL;
+
+	for (int attempt = 0; attempt < 3; attempt++) {
+		int ret;
+
+		ret = ds_chunk_read(&ctx->ctx_ds_sess[mirror_idx], em->em_fh,
+				    em->em_fh_len, block_offset, nblk, shard,
+				    rd_chunk_sz, nread, stid);
+		if (ret != -ESTALE)
+			return ret;
+
+		mds_layout_error(ctx->ctx_ms, &ctx->ctx_file, &ctx->ctx_layout,
+				 (uint32_t)mirror_idx, NFS4ERR_BAD_STATEID,
+				 OP_CHUNK_READ);
+		struct timespec delay = { 0, (long)(50 * 1000000) << attempt };
+
+		clock_nanosleep(CLOCK_MONOTONIC, 0, &delay, NULL);
+	}
+
+	return -ESTALE;
 }
 
 static struct ec_codec *ec_create_codec(int k, int m,
@@ -563,8 +641,7 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 			       "fh_len=%u wsz=%u\n",
 			       s, i, em->em_fh_len, wsz);
 			if (ctx.ctx_ds_sess) {
-				ret = ds_chunk_write(&ctx.ctx_ds_sess[i],
-						     em->em_fh, em->em_fh_len,
+				ret = ec_chunk_write(&ctx, i,
 						     (uint64_t)s *
 							     DIV_CEIL(ds_stride,
 								      chunk_sz),
@@ -596,9 +673,8 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 			       "fh_len=%u wsz=%u\n",
 			       s, i, em->em_fh_len, wsz);
 			if (ctx.ctx_ds_sess) {
-				ret = ds_chunk_write(
-					&ctx.ctx_ds_sess[k + i], em->em_fh,
-					em->em_fh_len,
+				ret = ec_chunk_write(
+					&ctx, k + i,
 					(uint64_t)s *
 						DIV_CEIL(ds_stride, chunk_sz),
 					chunk_sz, parity_shards[i], wsz, 1);
@@ -788,9 +864,8 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 			if (ctx.ctx_ds_sess) {
 				uint32_t nblk = DIV_CEIL(rsz, rd_chunk_sz);
 
-				ret = ds_chunk_read(
-					&ctx.ctx_ds_sess[i], em->em_fh,
-					em->em_fh_len,
+				ret = ec_chunk_read(
+					&ctx, i,
 					(uint64_t)s * DIV_CEIL(ds_stride,
 							       rd_chunk_sz),
 					nblk, shards[i], rd_chunk_sz, &nread);

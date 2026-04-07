@@ -28,7 +28,8 @@
 
 int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		   uint64_t block_offset, uint32_t chunk_size,
-		   const uint8_t *data, uint32_t data_len, uint32_t owner_id)
+		   const uint8_t *data, uint32_t data_len, uint32_t owner_id,
+		   const stateid4 *stateid)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -59,7 +60,14 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 
 	CHUNK_WRITE4args *cwa = &slot->nfs_argop4_u.opchunk_write;
 
-	memset(&cwa->cwa_stateid, 0, sizeof(cwa->cwa_stateid));
+	/*
+	 * Use the real layout stateid for tight coupling (TRUST_STATEID),
+	 * or the anonymous stateid for the traditional unauthenticated path.
+	 */
+	if (stateid)
+		memcpy(&cwa->cwa_stateid, stateid, sizeof(stateid4));
+	else
+		memset(&cwa->cwa_stateid, 0, sizeof(cwa->cwa_stateid));
 	cwa->cwa_offset = block_offset;
 	cwa->cwa_stable = FILE_SYNC4;
 	cwa->cwa_owner.co_guard.cg_gen_id = 1;
@@ -102,9 +110,14 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 
 	nfs_resop4 *res_slot = mds_compound_result(&mc, 2);
 
-	if (!res_slot ||
-	    res_slot->nfs_resop4_u.opchunk_write.cwr_status != NFS4_OK)
+	if (!res_slot) {
 		ret = -EIO;
+	} else {
+		nfsstat4 st = res_slot->nfs_resop4_u.opchunk_write.cwr_status;
+
+		if (st != NFS4_OK)
+			ret = (st == NFS4ERR_BAD_STATEID) ? -ESTALE : -EIO;
+	}
 
 out_crc:
 	/* Don't let mds_compound_fini free our caller's data buffer. */
@@ -130,7 +143,7 @@ out:
 
 int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		  uint64_t block_offset, uint32_t count, uint8_t *out_data,
-		  uint32_t chunk_size, uint32_t *nread)
+		  uint32_t chunk_size, uint32_t *nread, const stateid4 *stateid)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -162,7 +175,13 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 
 	CHUNK_READ4args *cra = &slot->nfs_argop4_u.opchunk_read;
 
-	memset(&cra->cra_stateid, 0, sizeof(cra->cra_stateid));
+	/*
+	 * Use the real layout stateid for tight coupling, anonymous otherwise.
+	 */
+	if (stateid)
+		memcpy(&cra->cra_stateid, stateid, sizeof(stateid4));
+	else
+		memset(&cra->cra_stateid, 0, sizeof(cra->cra_stateid));
 	cra->cra_offset = block_offset;
 	cra->cra_count = count;
 
@@ -172,9 +191,15 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 
 	nfs_resop4 *res_slot = mds_compound_result(&mc, 2);
 
-	if (!res_slot ||
-	    res_slot->nfs_resop4_u.opchunk_read.crr_status != NFS4_OK) {
+	if (!res_slot) {
 		ret = -EIO;
+		goto out;
+	}
+
+	if (res_slot->nfs_resop4_u.opchunk_read.crr_status != NFS4_OK) {
+		nfsstat4 st = res_slot->nfs_resop4_u.opchunk_read.crr_status;
+
+		ret = (st == NFS4ERR_BAD_STATEID) ? -ESTALE : -EIO;
 		goto out;
 	}
 

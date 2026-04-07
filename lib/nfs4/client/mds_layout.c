@@ -372,6 +372,29 @@ int mds_getdeviceinfo(struct mds_session *ms, const deviceid4 devid,
 		ret = -ENODATA;
 	}
 
+	/*
+	 * Check whether the DS advertises tight coupling for NFSv4.2.
+	 * The MDS sets ffdv_tightly_coupled when TRUST_STATEID is
+	 * supported.  Only consider entries for NFSv4 minor version 2,
+	 * since CHUNK ops are a v2-only path.  When set, the client
+	 * must use the real layout stateid (not the anonymous stateid)
+	 * for CHUNK I/O.
+	 */
+	if (ret == 0) {
+		for (u_int v = 0; v < ffda.ffda_versions.ffda_versions_len;
+		     v++) {
+			ff_device_versions4 *ver =
+				&ffda.ffda_versions.ffda_versions_val[v];
+
+			if (ver->ffdv_version == 4 &&
+			    ver->ffdv_minorversion == 2 &&
+			    ver->ffdv_tightly_coupled) {
+				dev->ed_tight_coupled = true;
+				break;
+			}
+		}
+	}
+
 	xdr_free((xdrproc_t)xdr_ff_device_addr4, (caddr_t)&ffda);
 	mds_compound_fini(&mc);
 	return ret;
