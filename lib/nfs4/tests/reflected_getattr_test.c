@@ -14,15 +14,26 @@
  * Group B: PUTFH must clear COMPOUND_DS_ATTRS_REFRESHED when switching
  *   inodes (gap G1).  Calls nfs4_op_putfh() directly with two inodes.
  *
+ * Group C: SETATTR(size) fan-out (gap G2).  Calls nfs4_op_setattr()
+ *   with FATTR4_SIZE, a dstore mock, and layout segments attached to
+ *   the inode.  Verifies async fan-out fires and sets the flag.
+ *
  * Group D: nfs4_layout_implicit_return_rw() -- implicit layout return
  *   (G3/G4 logic).  Calls the helper directly with a real test client
  *   and layout_stateid_alloc'd stateids.  Tests that the RW bit is
  *   cleared and no async fan-out fires when there are no layout segs.
- *   Tests requiring actual DS fan-outs (lss_count > 0) stay #if 0.
+ *
+ * Group E: DELEGRETURN implicit layout return (G4).  Calls
+ *   nfs4_op_delegreturn() with a real delegation stateid.  Tests that
+ *   an async reflected GETATTR fan-out fires when a write layout is
+ *   outstanding at DELEGRETURN time.
  *
  * Group F: LAYOUTERROR and LAYOUTSTATS -- no fencing path.
  *   Tests that verify these ops return the expected status and that
  *   LAYOUTSTATS always returns NFS4ERR_NOTSUPP.
+ *
+ * Group G: LAYOUTGET standalone.  Tests early-exit paths: missing
+ *   filehandle, disabled layout type, and no dstores registered.
  *
  * Group H: LAYOUTCOMMIT (Option B).
  *   Tests that verify LAYOUTCOMMIT updates i_size but NOT i_mtime,
@@ -54,10 +65,15 @@
 #include "reffs/stateid.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
+#include "nfs4/attr.h"
 #include "nfs4/stateid.h"
 #include "nfs4/client.h"
 #include "nfs4/client_persist.h"
 #include "nfs4_test_harness.h"
+
+#include "reffs/dstore.h"
+#include "reffs/layout_segment.h"
+#include "dstore_mock.h"
 
 /* ------------------------------------------------------------------ */
 /* Shared test fixture                                                 */
@@ -953,14 +969,465 @@ START_TEST(test_layoutcommit_mtime_stale)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Groups C, E, G: require dstore mock infrastructure; deferred.     */
+/* Fixtures: dstore mock variants of the base and client fixtures     */
 /* ------------------------------------------------------------------ */
 
-#if 0
-/* Group C: SETATTR(size) WCC sets COMPOUND_DS_ATTRS_REFRESHED (G2). */
-/* Group E: DELEGRETURN implicit layout return with deleg stateid (G4). */
-/* Group G: LAYOUTGET standalone. */
-#endif
+/*
+ * Like rg_setup/rg_teardown, but also initialises the global dstore
+ * hash table.  Required for any test that allocates a dstore_mock or
+ * calls code that walks the dstore table (SETATTR fan-out, LAYOUTGET).
+ */
+static void rg_dstore_setup(void)
+{
+	rg_setup();
+	ck_assert_int_eq(dstore_init(), 0);
+}
+
+static void rg_dstore_teardown(void)
+{
+	/*
+	 * Tear down NFS4 / inode state before destroying the dstore table.
+	 * rg_teardown -> nfs4_test_teardown may expire stateids; the dstore
+	 * table must remain valid until that completes.
+	 */
+	rg_teardown();
+	dstore_fini();
+}
+
+/*
+ * Like rg_client_setup/rg_client_teardown, but also initialises the
+ * dstore table.  Required for Group E (DELEGRETURN fan-out).
+ */
+static void rg_client_dstore_setup(void)
+{
+	rg_client_setup();
+	ck_assert_int_eq(dstore_init(), 0);
+}
+
+static void rg_client_dstore_teardown(void)
+{
+	/*
+	 * Expire the client (releases stateids) before the dstore table
+	 * is destroyed.  nfs4_client_expire may walk layout stateids.
+	 */
+	rg_client_teardown();
+	dstore_fini();
+}
+
+/* ------------------------------------------------------------------ */
+/* Group C: SETATTR(size) fan-out sets COMPOUND_DS_ATTRS_REFRESHED    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Encode FATTR4_SIZE into a stack-allocated fattr4.
+ * bm_word and attr_words are caller-provided arrays; the fattr4 holds
+ * pointers into them.  Both must remain live until the op under test
+ * completes.  Safe for single-call-at-a-time tests (all ours are).
+ *
+ * XDR uint64 = two network-order uint32_t words (high then low).
+ * FATTR4_SIZE is attribute bit 4, so it lives in bitmap word 0.
+ */
+static void fill_fattr4_size(fattr4 *fa, uint64_t size, uint32_t *bm_word,
+			     uint32_t *attr_words)
+{
+	bm_word[0] = 1U << FATTR4_SIZE; /* bit 4 in word 0 */
+
+	fa->attrmask.bitmap4_len = 1;
+	fa->attrmask.bitmap4_val = bm_word;
+
+	attr_words[0] = htonl((uint32_t)(size >> 32));
+	attr_words[1] = htonl((uint32_t)(size & 0xFFFFFFFF));
+	fa->attr_vals.attrlist4_len = sizeof(uint32_t) * 2;
+	fa->attr_vals.attrlist4_val = (char *)attr_words;
+}
+
+/*
+ * SETATTR(size) with an active write layout triggers an async truncate
+ * fan-out to all DSes.  After the fan-out completes, the compound must
+ * have COMPOUND_DS_ATTRS_REFRESHED set and the mock DS must have seen
+ * exactly one truncate call.
+ */
+START_TEST(test_setattr_size_fanout_sets_flag)
+{
+	struct dstore_mock *dm = dstore_mock_alloc(20);
+
+	ck_assert_ptr_nonnull(dm);
+
+	/*
+	 * Attach a layout segment pointing at dstore 20 so the fan-out
+	 * path in nfs4_op_setattr sees lss_count > 0.
+	 */
+	inode_a->i_layout_segments = mock_layout_segments_alloc(20, 0, NULL);
+	ck_assert_ptr_nonnull(inode_a->i_layout_segments);
+
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	set_compound_current_inode(ctx, inode_a);
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_SETATTR;
+
+	SETATTR4args *sa =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.opsetattr;
+	memset(&sa->stateid, 0, sizeof(sa->stateid)); /* anonymous stateid */
+
+	uint32_t bm_word[1], attr_words[2];
+
+	fill_fattr4_size(&sa->obj_attributes, 4096, bm_word, attr_words);
+
+	uint32_t ret = nfs4_op_setattr(c);
+
+	ck_assert_uint_eq(ret, NFS4_OP_FLAG_ASYNC);
+
+	/*
+	 * Drive the fan-out: spin until the truncate pthread finishes,
+	 * then invoke nfs4_op_setattr_resume inline.
+	 */
+	mock_drive_fanout(&ctx->rt);
+
+	ck_assert(c->c_flags & COMPOUND_DS_ATTRS_REFRESHED);
+	ck_assert_uint_eq(dstore_mock_truncate_calls(dm), 1);
+
+	layout_segments_free(inode_a->i_layout_segments);
+	inode_a->i_layout_segments = NULL;
+
+	free_rg_ctx(ctx);
+	dstore_mock_free(dm);
+}
+END_TEST
+
+/*
+ * SETATTR(size) with NO layout segments must NOT go async.  The flag
+ * must remain clear (synchronous path, no DS fan-out).
+ */
+START_TEST(test_setattr_size_no_segs_no_fanout)
+{
+	/*
+	 * No i_layout_segments -- the fan-out condition at line 4022 of
+	 * attr.c requires lss_count > 0.  Without segments the synchronous
+	 * path applies.
+	 */
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	set_compound_current_inode(ctx, inode_a);
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_SETATTR;
+
+	SETATTR4args *sa =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.opsetattr;
+	memset(&sa->stateid, 0, sizeof(sa->stateid));
+
+	uint32_t bm_word[1], attr_words[2];
+
+	fill_fattr4_size(&sa->obj_attributes, 4096, bm_word, attr_words);
+
+	uint32_t ret = nfs4_op_setattr(c);
+
+	/* Synchronous -- must NOT return ASYNC. */
+	ck_assert_uint_eq(ret, 0);
+	ck_assert(!(c->c_flags & COMPOUND_DS_ATTRS_REFRESHED));
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
+/* Group E: DELEGRETURN implicit layout return with deleg stateid     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * DELEGRETURN with an empty filehandle must fail with NFS4ERR_NOFILEHANDLE.
+ */
+START_TEST(test_delegreturn_no_fh)
+{
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	/* Leave c_curr_nfh zero -- network_file_handle_empty() returns true. */
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_DELEGRETURN;
+
+	uint32_t ret = nfs4_op_delegreturn(c);
+
+	ck_assert_uint_eq(ret, 0);
+
+	DELEGRETURN4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.opdelegreturn;
+	ck_assert_int_eq(res->status, NFS4ERR_NOFILEHANDLE);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * DELEGRETURN with an all-zeros (special) stateid must fail with
+ * NFS4ERR_BAD_STATEID.
+ */
+START_TEST(test_delegreturn_special_stateid)
+{
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	set_compound_current_inode(ctx, inode_a);
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_DELEGRETURN;
+
+	DELEGRETURN4args *da =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.opdelegreturn;
+	memset(&da->deleg_stateid, 0, sizeof(da->deleg_stateid)); /* special */
+
+	uint32_t ret = nfs4_op_delegreturn(c);
+
+	ck_assert_uint_eq(ret, 0);
+
+	DELEGRETURN4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.opdelegreturn;
+	ck_assert_int_eq(res->status, NFS4ERR_BAD_STATEID);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * DELEGRETURN with a valid delegation stateid and no layout segments
+ * must succeed synchronously (no DS fan-out).
+ */
+START_TEST(test_delegreturn_valid_no_layout)
+{
+	struct client *client = nfs4_client_to_client(g_nc);
+	struct delegation_stateid *ds =
+		delegation_stateid_alloc(inode_a, client);
+
+	ck_assert_ptr_nonnull(ds);
+
+	stateid4 wire_sid;
+
+	pack_stateid4(&wire_sid, &ds->ds_stid);
+
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	set_compound_current_inode(ctx, inode_a);
+	c->c_nfs4_client = g_nc;
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_DELEGRETURN;
+
+	DELEGRETURN4args *da =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.opdelegreturn;
+	da->deleg_stateid = wire_sid;
+
+	/*
+	 * After DELEGRETURN returns, ds and stid have been freed via RCU.
+	 * No access to ds after this point.
+	 */
+	uint32_t ret = nfs4_op_delegreturn(c);
+
+	/*
+	 * No write layout on inode_a so nfs4_layout_implicit_return_rw
+	 * returns 0 -- synchronous, no fan-out.
+	 */
+	ck_assert_uint_eq(ret, 0);
+
+	DELEGRETURN4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.opdelegreturn;
+	ck_assert_int_eq(res->status, NFS4_OK);
+
+	free_rg_ctx(ctx);
+	/*
+	 * nfs4_op_delegreturn freed ds via call_rcu.  synchronize_rcu()
+	 * ensures the RCU callback completes before teardown drops the
+	 * inode ref (consistent with Group D test discipline).
+	 */
+	synchronize_rcu();
+}
+END_TEST
+
+/*
+ * DELEGRETURN when the client holds a write layout on the file must
+ * trigger an async reflected GETATTR fan-out and set
+ * COMPOUND_DS_ATTRS_REFRESHED.
+ */
+START_TEST(test_delegreturn_write_layout_fires_fanout)
+{
+	struct dstore_mock *dm = dstore_mock_alloc(21);
+
+	ck_assert_ptr_nonnull(dm);
+
+	/*
+	 * Attach a layout segment and a write layout stateid so that
+	 * nfs4_layout_implicit_return_rw finds work to do.
+	 */
+	inode_a->i_layout_segments = mock_layout_segments_alloc(21, 0, NULL);
+	ck_assert_ptr_nonnull(inode_a->i_layout_segments);
+
+	struct client *client = nfs4_client_to_client(g_nc);
+
+	/*
+	 * ls is consumed (RW bit cleared, stateid freed via call_rcu) by
+	 * nfs4_layout_implicit_return_rw inside nfs4_op_delegreturn.
+	 * Do not access ls after nfs4_op_delegreturn returns.
+	 */
+	struct layout_stateid *ls = layout_stateid_alloc(inode_a, client);
+
+	ck_assert_ptr_nonnull(ls);
+	__atomic_or_fetch(&ls->ls_state, LAYOUT_STATEID_IOMODE_RW,
+			  __ATOMIC_RELEASE);
+
+	/* Allocate the delegation the client is about to return. */
+	struct delegation_stateid *ds =
+		delegation_stateid_alloc(inode_a, client);
+
+	ck_assert_ptr_nonnull(ds);
+
+	stateid4 wire_sid;
+
+	pack_stateid4(&wire_sid, &ds->ds_stid);
+
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	set_compound_current_inode(ctx, inode_a);
+	c->c_nfs4_client = g_nc;
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_DELEGRETURN;
+
+	DELEGRETURN4args *da =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.opdelegreturn;
+	da->deleg_stateid = wire_sid;
+
+	uint32_t ret = nfs4_op_delegreturn(c);
+
+	ck_assert_uint_eq(ret, NFS4_OP_FLAG_ASYNC);
+
+	mock_drive_fanout(&ctx->rt);
+
+	ck_assert(c->c_flags & COMPOUND_DS_ATTRS_REFRESHED);
+	ck_assert_uint_eq(dstore_mock_getattr_calls(dm), 1);
+
+	/*
+	 * Both ls (layout stateid) and ds (delegation stateid) were freed
+	 * via call_rcu by nfs4_op_delegreturn/nfs4_layout_implicit_return_rw.
+	 * synchronize_rcu() ensures those callbacks complete before the
+	 * fixture teardown drops the inode ref -- consistent with Group D.
+	 */
+	synchronize_rcu();
+
+	layout_segments_free(inode_a->i_layout_segments);
+	inode_a->i_layout_segments = NULL;
+
+	free_rg_ctx(ctx);
+	dstore_mock_free(dm);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
+/* Group G: LAYOUTGET standalone tests                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * LAYOUTGET with an empty filehandle must fail with NFS4ERR_NOFILEHANDLE.
+ */
+START_TEST(test_layoutget_no_fh)
+{
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	/* Leave c_curr_nfh zero -- no filehandle. */
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTGET;
+
+	LAYOUTGET4args *la =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayoutget;
+	la->loga_layout_type = LAYOUT4_FLEX_FILES;
+
+	uint32_t ret = nfs4_op_layoutget(c);
+
+	ck_assert_uint_eq(ret, 0);
+
+	LAYOUTGET4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(res->logr_status, NFS4ERR_NOFILEHANDLE);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * LAYOUTGET on an export with sb_layout_types=0 (the default for all
+ * test exports) must fail with NFS4ERR_LAYOUTUNAVAILABLE.
+ */
+START_TEST(test_layoutget_layout_unavailable)
+{
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	/*
+	 * test_sb->sb_layout_types is 0 by default -- no layout type is
+	 * configured for this export.  The layout-type check fires before
+	 * any client validation, so c_nfs4_client is not needed here.
+	 */
+	set_compound_current_inode(ctx, inode_a);
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTGET;
+
+	LAYOUTGET4args *la =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayoutget;
+	la->loga_layout_type = LAYOUT4_FLEX_FILES;
+
+	uint32_t ret = nfs4_op_layoutget(c);
+
+	ck_assert_uint_eq(ret, 0);
+
+	LAYOUTGET4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(res->logr_status, NFS4ERR_LAYOUTUNAVAILABLE);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * LAYOUTGET on a flex-files-enabled export with no dstores registered
+ * must fail with NFS4ERR_LAYOUTUNAVAILABLE (nds == 0 path in layout.c).
+ */
+START_TEST(test_layoutget_no_dstores)
+{
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	/*
+	 * Temporarily enable flex files on the test export so the handler
+	 * passes the layout-type check and reaches the dstore collection.
+	 * No dstores are registered so nds == 0 -> LAYOUTUNAVAILABLE.
+	 */
+	test_sb->sb_layout_types |= SB_LAYOUT_FLEX_FILES;
+
+	set_compound_current_inode(ctx, inode_a);
+	c->c_nfs4_client = g_nc;
+	c->c_curr_op = 0;
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTGET;
+
+	LAYOUTGET4args *la =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayoutget;
+	la->loga_layout_type = LAYOUT4_FLEX_FILES;
+	la->loga_minlength = 0;
+	la->loga_length = UINT64_MAX; /* NFS4_ALL_FILE equivalent */
+	la->loga_iomode = LAYOUTIOMODE4_RW;
+
+	uint32_t ret = nfs4_op_layoutget(c);
+
+	test_sb->sb_layout_types &= ~SB_LAYOUT_FLEX_FILES;
+
+	ck_assert_uint_eq(ret, 0);
+
+	LAYOUTGET4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutget;
+	ck_assert_int_eq(res->logr_status, NFS4ERR_LAYOUTUNAVAILABLE);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
 
 /* ------------------------------------------------------------------ */
 /* Suite assembly                                                      */
@@ -1012,6 +1479,35 @@ Suite *reflected_getattr_suite(void)
 	tcase_add_test(tc_f, test_layouterror_no_filehandle);
 	tcase_add_test(tc_f, test_layouterror_empty_errors);
 	suite_add_tcase(s, tc_f);
+
+	/* Group C: SETATTR(size) fan-out sets COMPOUND_DS_ATTRS_REFRESHED. */
+	TCase *tc_c = tcase_create("C: SETATTR size fan-out");
+
+	tcase_add_checked_fixture(tc_c, rg_dstore_setup, rg_dstore_teardown);
+	tcase_add_test(tc_c, test_setattr_size_fanout_sets_flag);
+	tcase_add_test(tc_c, test_setattr_size_no_segs_no_fanout);
+	suite_add_tcase(s, tc_c);
+
+	/* Group E: DELEGRETURN implicit layout return with deleg stateid. */
+	TCase *tc_e = tcase_create("E: DELEGRETURN implicit layout return");
+
+	tcase_add_checked_fixture(tc_e, rg_client_dstore_setup,
+				  rg_client_dstore_teardown);
+	tcase_add_test(tc_e, test_delegreturn_no_fh);
+	tcase_add_test(tc_e, test_delegreturn_special_stateid);
+	tcase_add_test(tc_e, test_delegreturn_valid_no_layout);
+	tcase_add_test(tc_e, test_delegreturn_write_layout_fires_fanout);
+	suite_add_tcase(s, tc_e);
+
+	/* Group G: LAYOUTGET standalone. */
+	TCase *tc_g = tcase_create("G: LAYOUTGET standalone");
+
+	tcase_add_checked_fixture(tc_g, rg_client_dstore_setup,
+				  rg_client_dstore_teardown);
+	tcase_add_test(tc_g, test_layoutget_no_fh);
+	tcase_add_test(tc_g, test_layoutget_layout_unavailable);
+	tcase_add_test(tc_g, test_layoutget_no_dstores);
+	suite_add_tcase(s, tc_g);
 
 	/* Group H: LAYOUTCOMMIT (Option B). */
 	TCase *tc_h = tcase_create("H: LAYOUTCOMMIT Option B");
