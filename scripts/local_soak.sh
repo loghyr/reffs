@@ -339,10 +339,17 @@ sudo chmod 777 "$MOUNT"
 start_server || exit 1
 mount_nfs || { tail -20 "$LOG"; die "initial mount failed"; exit 1; }
 
-# Start D-state monitor
+# Start D-state monitor.  Send an immediate USR1 so that any D-state
+# processes left over from a previous soak run (which reference the
+# same mount path) are treated as transient and suppressed for 60s.
+# If they clear within the grace window, the soak is not penalised.
+# If they persist beyond 60s, the monitor will flag them as FAILURE.
 "$SCRIPT_DIR/dstate_monitor.sh" "$MOUNT" "$DSTATE_LOG" &
 DSTATE_MON_PID=$!
 info "D-state monitor running (PID $DSTATE_MON_PID)"
+sleep 0.1  # let the monitor install its signal handler before USR1
+kill -USR1 "$DSTATE_MON_PID" 2>/dev/null || true
+info "D-state startup grace period started (60s)"
 
 # Start workloads.  Redirect stdout/stderr to /dev/null so that
 # D-state grandchildren (e.g. rm -rf waiting on a dead NFS mount)
