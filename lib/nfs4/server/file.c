@@ -1160,10 +1160,19 @@ uint32_t nfs4_op_close(struct compound *compound)
 
 	/*
 	 * RFC 5661 S18.2.4: return a dead stateid (seqid=0, other=zeros).
+	 * Set this before the implicit layout return which may go async;
+	 * the resume callback does not touch the CLOSE response.
 	 */
 	res->CLOSE4res_u.open_stateid = stateid4_anonymous;
 
-	return 0;
+	/*
+	 * RFC 8881 S12.5.5.1 SHOULD: on the last CLOSE, implicitly return
+	 * any write layout the client still holds.  This fires the T2
+	 * reflected GETATTR so that subsequent size/mtime queries return
+	 * fresh DS values even when the client omitted LAYOUTRETURN.
+	 */
+	return nfs4_layout_implicit_return_rw(compound,
+					      nfs4_op_layoutreturn_resume);
 }
 
 /*

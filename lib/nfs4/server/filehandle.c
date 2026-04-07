@@ -73,9 +73,15 @@ uint32_t nfs4_op_putfh(struct compound *compound)
 
 		inode_active_put(compound->c_inode);
 		compound->c_inode = NULL;
+		/*
+		 * Switching inodes: a DS attr refresh done for inode A must
+		 * not suppress the fan-out needed for inode B.
+		 */
+		compound->c_flags &= ~COMPOUND_DS_ATTRS_REFRESHED;
 	} else if (nfh->nfh_ino != compound->c_curr_nfh.nfh_ino) {
 		inode_active_put(compound->c_inode);
 		compound->c_inode = NULL;
+		compound->c_flags &= ~COMPOUND_DS_ATTRS_REFRESHED;
 	}
 
 	compound->c_curr_nfh.nfh_sb = nfh->nfh_sb;

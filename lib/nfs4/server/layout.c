@@ -961,10 +961,145 @@ uint32_t nfs4_op_layoutcommit(struct compound *compound)
 }
 
 /*
- * Resume callback for LAYOUTRETURN after reflected GETATTR fan-out.
- * Updates the inode's cached attrs from the DS responses.
+ * nfs4_layout_implicit_return_rw -- implicitly return the write layout
+ * for this client on compound->c_inode.
+ *
+ * Called from CLOSE (RFC 8881 S12.5.5.1 SHOULD) and DELEGRETURN when
+ * the client did not send an explicit LAYOUTRETURN.  Finds the layout
+ * stateid owned by this client, clears LAYOUT_STATEID_IOMODE_RW, frees
+ * the stateid if no iomode bits remain, then launches a T2 reflected
+ * GETATTR to refresh cached size and mtime.
+ *
+ * Returns NFS4_OP_FLAG_ASYNC if a fan-out was launched and resume_fn
+ * has been set as rt_next_action.  Returns 0 if there was no write
+ * layout or the fan-out could not be set up (non-fatal).
  */
-static uint32_t nfs4_op_layoutreturn_resume(struct rpc_trans *rt)
+uint32_t
+nfs4_layout_implicit_return_rw(struct compound *compound,
+			       uint32_t (*resume_fn)(struct rpc_trans *))
+{
+	struct inode *inode = compound->c_inode;
+	struct client *client =
+		compound->c_nfs4_client ?
+			nfs4_client_to_client(compound->c_nfs4_client) :
+			NULL;
+
+	if (!inode || !inode->i_stateids || !client)
+		return 0;
+
+	/*
+	 * Find the layout stateid for this client.  Use stateid_get()
+	 * inside rcu_read_lock to take a ref before we drop the lock.
+	 */
+	struct stateid *ls_stid = NULL;
+	struct layout_stateid *ls = NULL;
+
+	rcu_read_lock();
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	cds_lfht_first(inode->i_stateids, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct stateid *stid =
+			caa_container_of(node, struct stateid, s_inode_node);
+		if (stid->s_tag == Layout_Stateid && stid->s_client == client) {
+			struct layout_stateid *candidate = stid_to_layout(stid);
+			uint64_t state = __atomic_load_n(&candidate->ls_state,
+							 __ATOMIC_ACQUIRE);
+
+			if (state & LAYOUT_STATEID_IOMODE_RW) {
+				struct stateid *got = stateid_get(stid);
+
+				if (got) {
+					ls_stid = got;
+					ls = candidate;
+				}
+				/* If got is NULL the stateid is dying --
+				 * concurrent explicit LAYOUTRETURN beat us. */
+			}
+			break; /* at most one layout stateid per client/inode */
+		}
+		cds_lfht_next(inode->i_stateids, &iter);
+	}
+	rcu_read_unlock();
+
+	if (!ls)
+		return 0; /* no write layout to implicitly return */
+
+	uint64_t remaining = __atomic_and_fetch(
+		&ls->ls_state, ~LAYOUT_STATEID_IOMODE_RW, __ATOMIC_ACQ_REL);
+
+	TRACE("implicit LAYOUTRETURN(RW): ino=%lu remaining=0x%lx",
+	      inode->i_ino, (unsigned long)remaining);
+
+	if (remaining == 0) {
+		stateid_inode_unhash(ls_stid);
+		stateid_client_unhash(ls_stid);
+		stateid_put(ls_stid); /* state ref --> freed via RCU */
+	}
+
+	stateid_put(ls_stid); /* find ref from stateid_get() */
+
+	/*
+	 * T2 trigger: launch a reflected GETATTR to refresh cached
+	 * size/mtime from the DSes.
+	 */
+	if (!(compound->c_flags & COMPOUND_DS_ATTRS_REFRESHED) &&
+	    inode->i_layout_segments &&
+	    inode->i_layout_segments->lss_count > 0) {
+		struct layout_segment *seg =
+			&inode->i_layout_segments->lss_segs[0];
+		struct dstore_fanout *df = dstore_fanout_alloc(seg->ls_nfiles);
+
+		if (df) {
+			df->df_op = FANOUT_GETATTR;
+			int setup_ok = 1;
+
+			for (uint32_t fi = 0; fi < seg->ls_nfiles; fi++) {
+				struct layout_data_file *ldf =
+					&seg->ls_files[fi];
+				struct fanout_slot *slot = &df->df_slots[fi];
+
+				slot->fs_ds = dstore_find(ldf->ldf_dstore_id);
+				if (!slot->fs_ds) {
+					setup_ok = 0;
+					break;
+				}
+				memcpy(slot->fs_fh, ldf->ldf_fh,
+				       ldf->ldf_fh_len);
+				slot->fs_fh_len = ldf->ldf_fh_len;
+				slot->fs_ldf = ldf;
+			}
+
+			if (setup_ok) {
+				struct rpc_trans *rt = compound->c_rt;
+				struct task *t = rt->rt_task;
+
+				compound->c_flags |=
+					COMPOUND_DS_ATTRS_REFRESHED;
+				rt->rt_next_action = resume_fn;
+				rt->rt_async_data = df;
+				task_pause(t);
+				dstore_fanout_launch(df, t);
+				return NFS4_OP_FLAG_ASYNC;
+			}
+
+			dstore_fanout_free(df);
+		}
+		/* Fan-out alloc/setup failed -- non-fatal, continue. */
+	}
+
+	return 0;
+}
+
+/*
+ * nfs4_op_layoutreturn_resume - resume callback after reflected GETATTR fan-out.
+ *
+ * Updates the inode's cached size/mtime from the DS responses and frees
+ * the fanout.  Shared by LAYOUTRETURN, CLOSE (G3 implicit LR), and
+ * DELEGRETURN (G4 implicit LR).
+ */
+uint32_t nfs4_op_layoutreturn_resume(struct rpc_trans *rt)
 {
 	struct compound *compound = rt->rt_compound;
 	struct dstore_fanout *df = rt->rt_async_data;

@@ -3937,6 +3937,13 @@ static uint32_t nfs4_op_setattr_resume(struct rpc_trans *rt)
 				 compound->c_inode->i_ino);
 	}
 
+	/*
+	 * WCC data from each DS truncate gives us fresh size/mtime.
+	 * Mark the compound so a subsequent GETATTR skips a second
+	 * fan-out (same guarantee as a reflected GETATTR).
+	 */
+	compound->c_flags |= COMPOUND_DS_ATTRS_REFRESHED;
+
 	dstore_fanout_free(df);
 
 	if (fanout_ret < 0) {

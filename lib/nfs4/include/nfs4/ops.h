@@ -133,6 +133,21 @@ nfsstat4 nfs4_apply_createattrs(fattr4 *fattr, struct inode *inode,
 bool inode_has_write_layout(struct inode *inode);
 
 /*
+ * nfs4_layout_implicit_return_rw - implicitly return the write layout for
+ * this client on compound->c_inode (called from CLOSE and DELEGRETURN).
+ * Returns NFS4_OP_FLAG_ASYNC if a reflected GETATTR fan-out was launched.
+ */
+uint32_t
+nfs4_layout_implicit_return_rw(struct compound *compound,
+			       uint32_t (*resume_fn)(struct rpc_trans *));
+
+/*
+ * nfs4_op_layoutreturn_resume - fan-out resume for LAYOUTRETURN, CLOSE,
+ * and DELEGRETURN implicit write-layout returns.
+ */
+uint32_t nfs4_op_layoutreturn_resume(struct rpc_trans *rt);
+
+/*
  * nfs4_recall_dir_delegations - recall all directory delegations on dir
  * except those held by exclude.
  *

@@ -128,7 +128,13 @@ uint32_t nfs4_op_delegreturn(struct compound *compound)
 	stateid_put(stid); /* find ref */
 	stateid_put(stid); /* state ref --> freed */
 
-	return 0;
+	/*
+	 * RFC 8881 S12.5.5.1: DELEGRETURN should implicitly return any
+	 * write layout the client still holds on this file.
+	 * The response has no data, so we can go async immediately.
+	 */
+	return nfs4_layout_implicit_return_rw(compound,
+					      nfs4_op_layoutreturn_resume);
 }
 
 uint32_t nfs4_op_get_dir_delegation(struct compound *compound)
