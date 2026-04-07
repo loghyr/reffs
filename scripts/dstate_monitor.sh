@@ -5,6 +5,7 @@
 # dstate_monitor.sh -- Watch for D-state processes on an NFS mount.
 #
 # Runs in background during soak tests.  Classifies D-state as:
+#   - Baseline (pre-existing at monitor startup): filtered out entirely
 #   - Transient (during restart grace period): logged, not a failure
 #   - Persistent (after server is back): logged as FAILURE
 #
@@ -47,6 +48,31 @@ trap handle_term TERM
 : > "$LOGFILE"
 log "START: monitoring $MOUNT (grace=${GRACE_SEC}s, poll=${POLL_SEC}s)"
 
+# Capture pre-existing D-state PIDs before the first poll.
+# D-state processes from previous soak runs may never exit without a
+# reboot -- they hold the write end of a dead NFS mount that the kernel
+# cannot unblock.  Recording them at startup lets us filter them out so
+# they do not cause false failures for the current run.
+BASELINE_PIDS=()
+while IFS= read -r line; do
+	pid=$(echo "$line" | awk '{print $1}')
+	if ls -l /proc/$pid/cwd 2>/dev/null | grep -q "$MOUNT" || \
+	   ls -l /proc/$pid/fd/ 2>/dev/null | grep -q "$MOUNT"; then
+		BASELINE_PIDS+=("$pid")
+	fi
+done < <(ps -eo pid,stat,wchan:32,comm 2>/dev/null | grep ' D ')
+if [ ${#BASELINE_PIDS[@]} -gt 0 ]; then
+	log "BASELINE: ${#BASELINE_PIDS[@]} pre-existing D-state PIDs (filtered): ${BASELINE_PIDS[*]}"
+fi
+
+is_baseline_pid() {
+	local p=$1
+	for b in "${BASELINE_PIDS[@]}"; do
+		[ "$b" = "$p" ] && return 0
+	done
+	return 1
+}
+
 while true; do
 	sleep "$POLL_SEC" &
 	wait $! 2>/dev/null || true  # interruptible sleep for signal handling
@@ -57,13 +83,13 @@ while true; do
 		IN_GRACE=true
 	fi
 
-	# Find D-state processes
+	# Find D-state processes on our mount, excluding pre-existing baseline PIDs
 	DSTATE_PIDS=()
 	while IFS= read -r line; do
 		pid=$(echo "$line" | awk '{print $1}')
-		# Filter: only processes whose cwd or fds reference our mount
 		if ls -l /proc/$pid/cwd 2>/dev/null | grep -q "$MOUNT" || \
 		   ls -l /proc/$pid/fd/ 2>/dev/null | grep -q "$MOUNT"; then
+			is_baseline_pid "$pid" && continue
 			DSTATE_PIDS+=("$pid")
 		fi
 	done < <(ps -eo pid,stat,wchan:32,comm 2>/dev/null | grep ' D ')
