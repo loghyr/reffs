@@ -34,9 +34,12 @@
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/server.h"
+#include "reffs/time.h"
 #include "nfs4/chunk_store.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
+#include "nfs4/stateid.h"
+#include "nfs4/trust_stateid.h"
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -117,6 +120,48 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 			*status = NFS4ERR_INVAL;
 			return 0;
 		}
+	}
+
+	/*
+	 * Trust table validation -- tightly-coupled DS.
+	 *
+	 * If the trust table is non-empty, validate that the stateid
+	 * was registered by the MDS.  Special stateids (anonymous,
+	 * read-bypass) bypass the check -- they are handled separately
+	 * by the DS's own permission model.
+	 */
+	if (!stateid4_is_special(&args->cwa_stateid)) {
+		struct trust_entry *te =
+			trust_stateid_find(&args->cwa_stateid);
+
+		if (!te) {
+			*status = NFS4ERR_BAD_STATEID;
+			return 0;
+		}
+
+		uint64_t now = reffs_now_ns();
+		uint64_t exp = atomic_load_explicit(&te->te_expire_ns,
+						    memory_order_relaxed);
+		uint32_t flags = atomic_load_explicit(&te->te_flags,
+						      memory_order_acquire);
+
+		if (flags & TRUST_PENDING) {
+			trust_entry_put(te);
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+		if (exp != 0 && now > exp) {
+			trust_entry_put(te);
+			*status = NFS4ERR_BAD_STATEID;
+			return 0;
+		}
+		if (!(flags & TRUST_ACTIVE)) {
+			trust_entry_put(te);
+			*status = NFS4ERR_BAD_STATEID;
+			return 0;
+		}
+
+		trust_entry_put(te);
 	}
 
 	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
@@ -246,6 +291,44 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		resok->crr_chunks.crr_chunks_len = 0;
 		resok->crr_chunks.crr_chunks_val = NULL;
 		return 0;
+	}
+
+	/*
+	 * Trust table validation -- tightly-coupled DS.
+	 * Same logic as CHUNK_WRITE: special stateids bypass the check.
+	 */
+	if (!stateid4_is_special(&args->cra_stateid)) {
+		struct trust_entry *te =
+			trust_stateid_find(&args->cra_stateid);
+
+		if (!te) {
+			*status = NFS4ERR_BAD_STATEID;
+			return 0;
+		}
+
+		uint64_t now = reffs_now_ns();
+		uint64_t exp = atomic_load_explicit(&te->te_expire_ns,
+						    memory_order_relaxed);
+		uint32_t flags = atomic_load_explicit(&te->te_flags,
+						      memory_order_acquire);
+
+		if (flags & TRUST_PENDING) {
+			trust_entry_put(te);
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+		if (exp != 0 && now > exp) {
+			trust_entry_put(te);
+			*status = NFS4ERR_BAD_STATEID;
+			return 0;
+		}
+		if (!(flags & TRUST_ACTIVE)) {
+			trust_entry_put(te);
+			*status = NFS4ERR_BAD_STATEID;
+			return 0;
+		}
+
+		trust_entry_put(te);
 	}
 
 	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);

@@ -33,4 +33,6 @@ libreffs_nfs4_server_la_SOURCES = \
 	register.c \
 	session.c \
 	stateid.c \
+	trust_stateid.c \
+	trust_stateid_ops.c \
 	xattr.c

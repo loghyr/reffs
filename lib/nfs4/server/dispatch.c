@@ -131,6 +131,9 @@ nfs4_op_cb op_table[OP_MAX] = {
 	[OP_CHUNK_UNLOCK] = nfs4_op_chunk_unlock,
 	[OP_CHUNK_WRITE] = nfs4_op_chunk_write,
 	[OP_CHUNK_WRITE_REPAIR] = nfs4_op_chunk_write_repair,
+	[OP_TRUST_STATEID] = nfs4_op_trust_stateid,
+	[OP_REVOKE_STATEID] = nfs4_op_revoke_stateid,
+	[OP_BULK_REVOKE_STATEID] = nfs4_op_bulk_revoke_stateid,
 };
 
 bool dispatch_compound(struct compound *compound)

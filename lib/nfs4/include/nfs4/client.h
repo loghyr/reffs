@@ -40,6 +40,7 @@ struct nfs4_client {
 	bool nc_confirmed;
 	bool nc_needs_reclaim; /* true until RECLAIM_COMPLETE received */
 	bool nc_reclaim_done; /* true after first RECLAIM_COMPLETE */
+	uint32_t nc_exchgid_flags; /* eia_flags from client's EXCHANGE_ID */
 	uid_t nc_principal_uid; /* AUTH_SYS uid at EXCHANGE_ID time */
 	uint32_t nc_create_seq; /* expected csa_sequence for CREATE_SESSION */
 	void *nc_create_reply; /* cached CREATE_SESSION XDR reply */

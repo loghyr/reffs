@@ -56,6 +56,24 @@ struct compound {
 	 */
 	uint64_t c_alloc_seq;
 
+	/*
+	 * GSS principal for this compound (non-NULL only when the RPC
+	 * credential is RPCSEC_GSS -- currently always NULL on the DS
+	 * path since the DS accepts AUTH_SYS from the MDS).
+	 *
+	 * TRUST_STATEID checks tsa_principal against this field.  When
+	 * tsa_principal is non-empty but c_gss_principal is NULL (AUTH_SYS
+	 * caller), the op returns NFS4ERR_ACCESS -- a trusted MDS never
+	 * sends a non-empty principal over AUTH_SYS.
+	 */
+	const char *c_gss_principal; /* NULL for AUTH_SYS */
+	/*
+	 * NOT_NOW_BROWN_COW: populate c_gss_principal from the GSS
+	 * context once RPCSEC_GSS is supported on the DS path.  Until
+	 * then CHUNK_WRITE/READ principal validation (te_principal) is
+	 * skipped because c_gss_principal is always NULL.
+	 */
+
 	/* Compound-level state flags. */
 #define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)
 	uint32_t c_flags;

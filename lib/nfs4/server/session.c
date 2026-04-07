@@ -451,6 +451,7 @@ uint32_t nfs4_op_exchange_id(struct compound *compound)
 	resok->eir_clientid = (clientid4)nfs4_client_to_client(nc)->c_id;
 	resok->eir_sequenceid = 1;
 	nc->nc_create_seq = resok->eir_sequenceid;
+	nc->nc_exchgid_flags = args->eia_flags;
 
 	resok->eir_flags = ss->ss_exchgid_flags;
 	if (nc->nc_confirmed)

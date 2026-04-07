@@ -1470,6 +1470,11 @@ enum nfs_opnum4 {
  OP_CHUNK_WRITE         = 86,
  OP_CHUNK_WRITE_REPAIR  = 87,
 
+%/* DS trust table operations for pNFS tight coupling (flexfiles v2) */
+ OP_TRUST_STATEID       = 89,
+ OP_REVOKE_STATEID      = 90,
+ OP_BULK_REVOKE_STATEID = 91,
+
  OP_ILLEGAL             = 10044
 };
 
@@ -3541,6 +3546,46 @@ union CHUNK_WRITE_REPAIR4res switch (nfsstat4 cwrr_status) {
 };
 
 /*
+ * DS trust table operations -- flexfiles v2 tight coupling.
+ *
+ * TRUST_STATEID: MDS registers a layout stateid in the DS trust table.
+ *   Sent as: SEQUENCE + PUTFH(ds_fh) + TRUST_STATEID(...)
+ *   Restricted to sessions with EXCHGID4_FLAG_USE_PNFS_MDS.
+ *
+ * REVOKE_STATEID: MDS removes a single stateid from the DS trust table.
+ *   Sent as: SEQUENCE + PUTFH(ds_fh) + REVOKE_STATEID(...)
+ *
+ * BULK_REVOKE_STATEID: MDS removes all stateids for a clientid.
+ *   brsa_clientid all-zeros means clear the entire trust table.
+ *   No PUTFH required.
+ */
+const TRUST_PRINCIPAL_MAX = 256;
+
+struct TRUST_STATEID4args {
+    stateid4      tsa_layout_stateid;
+    layoutiomode4 tsa_iomode;
+    nfstime4      tsa_expire;
+    utf8str_cs    tsa_principal;
+};
+struct TRUST_STATEID4res {
+    nfsstat4  tsr_status;
+};
+
+struct REVOKE_STATEID4args {
+    stateid4  rsa_layout_stateid;
+};
+struct REVOKE_STATEID4res {
+    nfsstat4  rsr_status;
+};
+
+struct BULK_REVOKE_STATEID4args {
+    clientid4  brsa_clientid;
+};
+struct BULK_REVOKE_STATEID4res {
+    nfsstat4  brsr_status;
+};
+
+/*
  * Operation arrays (the rest)
  */
 
@@ -3680,6 +3725,9 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
  case OP_CHUNK_UNLOCK: CHUNK_UNLOCK4args opchunk_unlock;
  case OP_CHUNK_WRITE: CHUNK_WRITE4args opchunk_write;
  case OP_CHUNK_WRITE_REPAIR: CHUNK_WRITE_REPAIR4args opchunk_write_repair;
+ case OP_TRUST_STATEID: TRUST_STATEID4args optrust_stateid;
+ case OP_REVOKE_STATEID: REVOKE_STATEID4args oprevoke_stateid;
+ case OP_BULK_REVOKE_STATEID: BULK_REVOKE_STATEID4args opbulk_revoke_stateid;
 
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       void;
@@ -3829,6 +3877,9 @@ union nfs_resop4 switch (nfs_opnum4 resop) {
  case OP_CHUNK_UNLOCK: CHUNK_UNLOCK4res opchunk_unlock;
  case OP_CHUNK_WRITE: CHUNK_WRITE4res opchunk_write;
  case OP_CHUNK_WRITE_REPAIR: CHUNK_WRITE_REPAIR4res opchunk_write_repair;
+ case OP_TRUST_STATEID: TRUST_STATEID4res optrust_stateid;
+ case OP_REVOKE_STATEID: REVOKE_STATEID4res oprevoke_stateid;
+ case OP_BULK_REVOKE_STATEID: BULK_REVOKE_STATEID4res opbulk_revoke_stateid;
 
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       ILLEGAL4res opillegal;

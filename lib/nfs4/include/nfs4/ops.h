@@ -106,6 +106,9 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound);
 uint32_t nfs4_op_chunk_unlock(struct compound *compound);
 uint32_t nfs4_op_chunk_write(struct compound *compound);
 uint32_t nfs4_op_chunk_write_repair(struct compound *compound);
+uint32_t nfs4_op_trust_stateid(struct compound *compound);
+uint32_t nfs4_op_revoke_stateid(struct compound *compound);
+uint32_t nfs4_op_bulk_revoke_stateid(struct compound *compound);
 uint32_t nfs4_op_illegal(struct compound *compound);
 
 const char *nfs4_op_name(nfs_opnum4 op);
