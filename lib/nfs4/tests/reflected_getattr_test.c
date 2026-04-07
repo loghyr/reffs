@@ -14,8 +14,19 @@
  * Group B: PUTFH must clear COMPOUND_DS_ATTRS_REFRESHED when switching
  *   inodes (gap G1).  Calls nfs4_op_putfh() directly with two inodes.
  *
- * Groups C-H: require dstore mock infrastructure or full layout
- *   machinery and are stubbed with #if 0 pending that work.
+ * Group D: nfs4_layout_implicit_return_rw() -- implicit layout return
+ *   (G3/G4 logic).  Calls the helper directly with a real test client
+ *   and layout_stateid_alloc'd stateids.  Tests that the RW bit is
+ *   cleared and no async fan-out fires when there are no layout segs.
+ *   Tests requiring actual DS fan-outs (lss_count > 0) stay #if 0.
+ *
+ * Group F: LAYOUTERROR and LAYOUTSTATS -- no fencing path.
+ *   Tests that verify these ops return the expected status and that
+ *   LAYOUTSTATS always returns NFS4ERR_NOTSUPP.
+ *
+ * Group H: LAYOUTCOMMIT (Option B).
+ *   Tests that verify LAYOUTCOMMIT updates i_size but NOT i_mtime,
+ *   and that it returns 0 (sync) in all cases.
  *
  * Design document: .claude/design/reflected-getattr-tests.md
  */
@@ -44,6 +55,8 @@
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/stateid.h"
+#include "nfs4/client.h"
+#include "nfs4/client_persist.h"
 #include "nfs4_test_harness.h"
 
 /* ------------------------------------------------------------------ */
@@ -478,17 +491,465 @@ START_TEST(test_putfh_clears_flag_on_each_switch)
 END_TEST
 
 /* ------------------------------------------------------------------ */
-/* Groups C-H: require dstore mock infrastructure; stubbed for now.  */
-/* These will be enabled once mock dstores are available.            */
+/* Group D fixture: real nfs4_client for implicit-LR tests           */
+/* ------------------------------------------------------------------ */
+
+static struct server_state *g_ss;
+static struct nfs4_client *g_nc;
+
+static struct nfs_impl_id4 rg_make_impl_id(void)
+{
+	static char domain[] = "rg-test.example.com";
+	static char name[] = "rg-test";
+	struct nfs_impl_id4 id = {
+		.nii_domain = { .utf8string_val = domain,
+				.utf8string_len = sizeof(domain) - 1 },
+		.nii_name = { .utf8string_val = name,
+			      .utf8string_len = sizeof(name) - 1 },
+	};
+	return id;
+}
+
+static void rg_client_setup(void)
+{
+	rg_setup();
+
+	g_ss = server_state_find();
+	ck_assert_ptr_nonnull(g_ss);
+
+	static char owner_buf[] = "rg-implicit-lr-client";
+	client_owner4 owner = {
+		.co_ownerid = { .co_ownerid_val = owner_buf,
+				.co_ownerid_len = sizeof(owner_buf) - 1 },
+	};
+	verifier4 v;
+	struct sockaddr_in sin;
+	struct nfs_impl_id4 impl = rg_make_impl_id();
+
+	memset(&v, 0xBC, sizeof(v));
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_addr.s_addr = htonl(0x7f000001);
+	sin.sin_port = htons(2049);
+
+	nfsstat4 eid_status;
+	g_nc = nfs4_client_alloc_or_find(g_ss, &owner, &impl, &v, &sin, 1001,
+					 false, &eid_status);
+	ck_assert_ptr_nonnull(g_nc);
+}
+
+static void rg_client_teardown(void)
+{
+	if (g_nc) {
+		nfs4_client_expire(g_ss, g_nc);
+		g_nc = NULL;
+	}
+	if (g_ss) {
+		server_state_put(g_ss);
+		g_ss = NULL;
+	}
+	rg_teardown();
+}
+
+/*
+ * Build a minimal compound for nfs4_layout_implicit_return_rw() calls.
+ * Sets c_inode (active_get ref) and c_nfs4_client.
+ * free_rg_ctx() handles cleanup.
+ */
+static struct rg_ctx *make_implicit_lr_ctx(struct inode *inode,
+					   struct nfs4_client *nc)
+{
+	struct rg_ctx *ctx = make_rg_ctx(0);
+	struct compound *c = ctx->compound;
+
+	c->c_inode = inode;
+	inode_active_get(inode);
+	c->c_nfs4_client = nc;
+
+	return ctx;
+}
+
+/* ------------------------------------------------------------------ */
+/* Group D: nfs4_layout_implicit_return_rw() direct tests (G3/G4)    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * No client on the compound -> the helper returns 0 immediately.
+ * This is the guard at the top of nfs4_layout_implicit_return_rw().
+ */
+START_TEST(test_implicit_lr_null_client)
+{
+	struct rg_ctx *ctx = make_implicit_lr_ctx(inode_a, NULL);
+	struct compound *c = ctx->compound;
+
+	uint32_t ret =
+		nfs4_layout_implicit_return_rw(c, nfs4_op_layoutreturn_resume);
+
+	ck_assert_int_eq(ret, 0);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * Client is present but the inode has no layout stateids -> returns 0.
+ */
+START_TEST(test_implicit_lr_no_layout_stateids)
+{
+	struct rg_ctx *ctx = make_implicit_lr_ctx(inode_a, g_nc);
+	struct compound *c = ctx->compound;
+
+	uint32_t ret =
+		nfs4_layout_implicit_return_rw(c, nfs4_op_layoutreturn_resume);
+
+	ck_assert_int_eq(ret, 0);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * Layout stateid with IOMODE_READ only -- no RW bit set.
+ * nfs4_layout_implicit_return_rw() skips stateids without the RW bit,
+ * so it returns 0 and the stateid is undisturbed.
+ */
+START_TEST(test_implicit_lr_read_only)
+{
+	struct client *client = nfs4_client_to_client(g_nc);
+	struct layout_stateid *ls = layout_stateid_alloc(inode_a, client);
+
+	ck_assert_ptr_nonnull(ls);
+	__atomic_or_fetch(&ls->ls_state, LAYOUT_STATEID_IOMODE_READ,
+			  __ATOMIC_RELEASE);
+
+	struct rg_ctx *ctx = make_implicit_lr_ctx(inode_a, g_nc);
+	struct compound *c = ctx->compound;
+
+	uint32_t ret =
+		nfs4_layout_implicit_return_rw(c, nfs4_op_layoutreturn_resume);
+
+	ck_assert_int_eq(ret, 0);
+	/* RD bit must still be set -- the stateid was not touched. */
+	ck_assert(__atomic_load_n(&ls->ls_state, __ATOMIC_ACQUIRE) &
+		  LAYOUT_STATEID_IOMODE_READ);
+
+	free_rg_ctx(ctx);
+
+	/* Manually release the undisturbed stateid. */
+	stateid_inode_unhash(&ls->ls_stid);
+	stateid_client_unhash(&ls->ls_stid);
+	stateid_put(&ls->ls_stid);
+	synchronize_rcu();
+}
+END_TEST
+
+/*
+ * Layout stateid with IOMODE_RW set, but no layout segments on the inode
+ * (lss_count == 0).  The helper must:
+ *   - clear the RW bit on the stateid
+ *   - unhash and free the stateid (no other bits remain)
+ *   - return 0 (no fan-out launched -- lss_count guard)
+ *
+ * After the call the stateid is freed via RCU; do not touch ls.
+ */
+START_TEST(test_implicit_lr_rw_no_segments)
+{
+	struct client *client = nfs4_client_to_client(g_nc);
+	struct layout_stateid *ls = layout_stateid_alloc(inode_a, client);
+
+	ck_assert_ptr_nonnull(ls);
+	__atomic_or_fetch(&ls->ls_state, LAYOUT_STATEID_IOMODE_RW,
+			  __ATOMIC_RELEASE);
+
+	struct rg_ctx *ctx = make_implicit_lr_ctx(inode_a, g_nc);
+	struct compound *c = ctx->compound;
+
+	uint32_t ret =
+		nfs4_layout_implicit_return_rw(c, nfs4_op_layoutreturn_resume);
+
+	/*
+	 * No layout segments: the T2 fan-out guard prevents async launch.
+	 * The stateid was cleared and freed (RCU-deferred), so we can
+	 * verify nothing went async.
+	 */
+	ck_assert_int_eq(ret, 0);
+
+	/* No write layout should remain on the inode. */
+	ck_assert(!inode_has_write_layout(inode_a));
+
+	free_rg_ctx(ctx);
+	synchronize_rcu();
+}
+END_TEST
+
+/*
+ * COMPOUND_DS_ATTRS_REFRESHED already set.  Even though there is no
+ * write layout here, verify the flag does not cause incorrect behavior
+ * when combined with the "no layout stateid" path.
+ */
+START_TEST(test_implicit_lr_flag_already_set_no_layout)
+{
+	struct rg_ctx *ctx = make_implicit_lr_ctx(inode_a, g_nc);
+	struct compound *c = ctx->compound;
+
+	c->c_flags |= COMPOUND_DS_ATTRS_REFRESHED;
+
+	uint32_t ret =
+		nfs4_layout_implicit_return_rw(c, nfs4_op_layoutreturn_resume);
+
+	ck_assert_int_eq(ret, 0);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
+/* Group F: LAYOUTERROR and LAYOUTSTATS (no-fencing path)            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Build a compound pre-loaded with the current FH pointing at inode
+ * and all op slots available.  Used by Group F and Group H.
+ */
+static struct rg_ctx *make_op_ctx(struct inode *inode, unsigned int nops)
+{
+	struct rg_ctx *ctx = make_rg_ctx(nops);
+	struct compound *c = ctx->compound;
+
+	c->c_inode = inode;
+	inode_active_get(inode);
+	c->c_curr_nfh.nfh_sb = inode->i_sb->sb_id;
+	c->c_curr_nfh.nfh_ino = inode->i_ino;
+	c->c_curr_op = 0;
+
+	return ctx;
+}
+
+/*
+ * LAYOUTSTATS is stubbed as NFS4ERR_NOTSUPP (the op is parsed by the
+ * server but statistics tracking is deferred).
+ */
+START_TEST(test_layoutstats_notsupp)
+{
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	struct compound *c = ctx->compound;
+
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTSTATS;
+
+	uint32_t ret = nfs4_op_layoutstats(c);
+
+	LAYOUTSTATS4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutstats;
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(res->lsr_status, NFS4ERR_NOTSUPP);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * LAYOUTERROR with an empty current filehandle returns NFS4ERR_NOFILEHANDLE.
+ */
+START_TEST(test_layouterror_no_filehandle)
+{
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	/* Leave c_curr_nfh zeroed (empty) and c_inode NULL. */
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTERROR;
+	LAYOUTERROR4args *lea =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayouterror;
+	lea->lea_errors.lea_errors_len = 0;
+	lea->lea_errors.lea_errors_val = NULL;
+
+	uint32_t ret = nfs4_op_layouterror(c);
+
+	LAYOUTERROR4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayouterror;
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(res->ler_status, NFS4ERR_NOFILEHANDLE);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * LAYOUTERROR with a valid FH but an empty error list (no errors to
+ * report).  The function iterates zero times and returns NFS4_OK (0).
+ */
+START_TEST(test_layouterror_empty_errors)
+{
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	struct compound *c = ctx->compound;
+
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTERROR;
+	LAYOUTERROR4args *lea =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayouterror;
+	lea->lea_errors.lea_errors_len = 0;
+	lea->lea_errors.lea_errors_val = NULL;
+
+	uint32_t ret = nfs4_op_layouterror(c);
+
+	LAYOUTERROR4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayouterror;
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(res->ler_status, NFS4_OK);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
+/* Group H: LAYOUTCOMMIT (Option B)                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * LAYOUTCOMMIT without a new-offset report (no_newoffset = false).
+ * The inode size must remain unchanged and the op returns 0 (sync).
+ */
+START_TEST(test_layoutcommit_no_newoffset)
+{
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	struct compound *c = ctx->compound;
+	int64_t size_before = inode_a->i_size;
+
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTCOMMIT;
+	LAYOUTCOMMIT4args *lca =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayoutcommit;
+	lca->loca_last_write_offset.no_newoffset = false;
+
+	uint32_t ret = nfs4_op_layoutcommit(c);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(inode_a->i_size, size_before);
+
+	LAYOUTCOMMIT4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutcommit;
+	ck_assert_int_eq(res->locr_status, NFS4_OK);
+	ck_assert(!res->LAYOUTCOMMIT4res_u.locr_resok4.locr_newsize
+			   .ns_sizechanged);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * LAYOUTCOMMIT with a new-offset larger than the current size.
+ * i_size must grow to offset+1; locr_newsize reflects the new size.
+ */
+START_TEST(test_layoutcommit_updates_size)
+{
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	struct compound *c = ctx->compound;
+
+	inode_a->i_size = 0;
+
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTCOMMIT;
+	LAYOUTCOMMIT4args *lca =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayoutcommit;
+	lca->loca_last_write_offset.no_newoffset = true;
+	lca->loca_last_write_offset.newoffset4_u.no_offset = 4095;
+
+	uint32_t ret = nfs4_op_layoutcommit(c);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(inode_a->i_size, 4096); /* offset + 1 */
+
+	LAYOUTCOMMIT4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutcommit;
+	ck_assert_int_eq(res->locr_status, NFS4_OK);
+	ck_assert(
+		res->LAYOUTCOMMIT4res_u.locr_resok4.locr_newsize.ns_sizechanged);
+	ck_assert_int_eq(res->LAYOUTCOMMIT4res_u.locr_resok4.locr_newsize
+				 .newsize4_u.ns_size,
+			 4096);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * LAYOUTCOMMIT with a new-offset SMALLER than the current size must NOT
+ * shrink the file (one-direction update per Option B decision).
+ */
+START_TEST(test_layoutcommit_no_shrink)
+{
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	struct compound *c = ctx->compound;
+
+	inode_a->i_size = 8192;
+
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTCOMMIT;
+	LAYOUTCOMMIT4args *lca =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayoutcommit;
+	lca->loca_last_write_offset.no_newoffset = true;
+	lca->loca_last_write_offset.newoffset4_u.no_offset = 999;
+
+	uint32_t ret = nfs4_op_layoutcommit(c);
+
+	ck_assert_int_eq(ret, 0);
+	/* Size must not shrink below the current 8192. */
+	ck_assert_int_eq(inode_a->i_size, 8192);
+
+	LAYOUTCOMMIT4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayoutcommit;
+	ck_assert_int_eq(res->locr_status, NFS4_OK);
+	/*
+	 * ns_sizechanged is false because the size did not actually change
+	 * (new_end = 1000 < current 8192, so the if-branch was not taken).
+	 */
+	ck_assert(!res->LAYOUTCOMMIT4res_u.locr_resok4.locr_newsize
+			   .ns_sizechanged);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * Option B design decision: LAYOUTCOMMIT updates i_size but NOT i_mtime.
+ * Fresh mtime is only available after a reflected GETATTR (T1 or T2).
+ * The test documents this by recording mtime before/after and asserting
+ * they are identical.
+ */
+START_TEST(test_layoutcommit_mtime_stale)
+{
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	struct compound *c = ctx->compound;
+
+	inode_a->i_size = 0;
+	struct timespec mtime_before = inode_a->i_mtime;
+
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUTCOMMIT;
+	LAYOUTCOMMIT4args *lca =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayoutcommit;
+	lca->loca_last_write_offset.no_newoffset = true;
+	lca->loca_last_write_offset.newoffset4_u.no_offset = 1023;
+
+	uint32_t ret = nfs4_op_layoutcommit(c);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(inode_a->i_size, 1024);
+
+	/*
+	 * i_mtime must be unchanged -- Option B: only i_size is updated
+	 * from lca_last_write_offset.  i_mtime is refreshed only when
+	 * T1 or T2 fires a reflected GETATTR to the DSes.
+	 */
+	ck_assert_int_eq(inode_a->i_mtime.tv_sec, mtime_before.tv_sec);
+	ck_assert_int_eq(inode_a->i_mtime.tv_nsec, mtime_before.tv_nsec);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
+/* Groups C, E, G: require dstore mock infrastructure; deferred.     */
 /* ------------------------------------------------------------------ */
 
 #if 0
 /* Group C: SETATTR(size) WCC sets COMPOUND_DS_ATTRS_REFRESHED (G2). */
-/* Group D: CLOSE implicit layout return (G3). */
-/* Group E: DELEGRETURN implicit layout return (G4). */
-/* Group F: LAYOUTERROR / LAYOUTSTATS (no-fencing path). */
+/* Group E: DELEGRETURN implicit layout return with deleg stateid (G4). */
 /* Group G: LAYOUTGET standalone. */
-/* Group H: LAYOUTCOMMIT (Option B). */
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -521,6 +982,36 @@ Suite *reflected_getattr_suite(void)
 	tcase_add_test(tc_b, test_putfh_clears_flag_no_layout);
 	tcase_add_test(tc_b, test_putfh_clears_flag_on_each_switch);
 	suite_add_tcase(s, tc_b);
+
+	/* Group D: nfs4_layout_implicit_return_rw() direct tests (G3/G4). */
+	TCase *tc_d = tcase_create("D: implicit layout return");
+
+	tcase_add_checked_fixture(tc_d, rg_client_setup, rg_client_teardown);
+	tcase_add_test(tc_d, test_implicit_lr_null_client);
+	tcase_add_test(tc_d, test_implicit_lr_no_layout_stateids);
+	tcase_add_test(tc_d, test_implicit_lr_read_only);
+	tcase_add_test(tc_d, test_implicit_lr_rw_no_segments);
+	tcase_add_test(tc_d, test_implicit_lr_flag_already_set_no_layout);
+	suite_add_tcase(s, tc_d);
+
+	/* Group F: LAYOUTERROR and LAYOUTSTATS (no-fencing path). */
+	TCase *tc_f = tcase_create("F: LAYOUTERROR and LAYOUTSTATS");
+
+	tcase_add_checked_fixture(tc_f, rg_setup, rg_teardown);
+	tcase_add_test(tc_f, test_layoutstats_notsupp);
+	tcase_add_test(tc_f, test_layouterror_no_filehandle);
+	tcase_add_test(tc_f, test_layouterror_empty_errors);
+	suite_add_tcase(s, tc_f);
+
+	/* Group H: LAYOUTCOMMIT (Option B). */
+	TCase *tc_h = tcase_create("H: LAYOUTCOMMIT Option B");
+
+	tcase_add_checked_fixture(tc_h, rg_setup, rg_teardown);
+	tcase_add_test(tc_h, test_layoutcommit_no_newoffset);
+	tcase_add_test(tc_h, test_layoutcommit_updates_size);
+	tcase_add_test(tc_h, test_layoutcommit_no_shrink);
+	tcase_add_test(tc_h, test_layoutcommit_mtime_stale);
+	suite_add_tcase(s, tc_h);
 
 	return s;
 }
