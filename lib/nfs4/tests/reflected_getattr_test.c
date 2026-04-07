@@ -73,11 +73,21 @@ static void rg_setup(void)
 	test_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
 	ck_assert_ptr_nonnull(test_sb);
 
-	/* Allocate two fresh inodes for multi-FH tests. */
-	inode_a = inode_alloc(test_sb, 0);
+	/*
+	 * Allocate two fresh inodes with distinct ino numbers.
+	 * inode_alloc(sb, 0) uses ino=0 as a literal hash key, so two
+	 * calls with ino=0 return the same inode.  Use sb_next_ino to
+	 * assign unique numbers, matching the pattern in
+	 * super_block_dirent_create().
+	 */
+	uint64_t ino_a =
+		__atomic_add_fetch(&test_sb->sb_next_ino, 1, __ATOMIC_RELAXED);
+	inode_a = inode_alloc(test_sb, ino_a);
 	ck_assert_ptr_nonnull(inode_a);
 
-	inode_b = inode_alloc(test_sb, 0);
+	uint64_t ino_b =
+		__atomic_add_fetch(&test_sb->sb_next_ino, 1, __ATOMIC_RELAXED);
+	inode_b = inode_alloc(test_sb, ino_b);
 	ck_assert_ptr_nonnull(inode_b);
 }
 

@@ -946,13 +946,12 @@ uint32_t nfs4_op_layoutcommit(struct compound *compound)
 			args->loca_last_write_offset.newoffset4_u.no_offset + 1;
 
 		pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
-		if ((int64_t)new_end > compound->c_inode->i_size)
+		if ((int64_t)new_end > compound->c_inode->i_size) {
 			compound->c_inode->i_size = (int64_t)new_end;
+			resok->locr_newsize.ns_sizechanged = true;
+			resok->locr_newsize.newsize4_u.ns_size = new_end;
+		}
 		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
-
-		resok->locr_newsize.ns_sizechanged = true;
-		resok->locr_newsize.newsize4_u.ns_size =
-			(uint64_t)compound->c_inode->i_size;
 	}
 
 	inode_sync_to_disk(compound->c_inode);

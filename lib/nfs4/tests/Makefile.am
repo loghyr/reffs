@@ -12,6 +12,10 @@ AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/nfs4/include @CHECK_CFLAGS@	\
 	-I$(top_srcdir)/lib/fs/tests				\
 	-I$(top_builddir)/lib/xdr
 
+reflected_getattr_test_LDADD = \
+	$(builddir)/libdstore_mock.la			\
+	$(LDADD)
+
 LDADD = \
 	@CHECK_LIBS@					\
 	$(top_builddir)/lib/tests/libreffs_test.la	\
@@ -35,6 +39,10 @@ LDADD = \
 	$(URING_LIBS)					\
 	$(ZSTD_LIBS)					\
 	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
+
+noinst_LTLIBRARIES = libdstore_mock.la
+libdstore_mock_la_SOURCES = dstore_mock.c dstore_mock.h
+libdstore_mock_la_CFLAGS = $(AM_CFLAGS)
 
 check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
