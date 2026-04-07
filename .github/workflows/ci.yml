@@ -79,6 +79,8 @@ jobs:
       if: always()
       run: |
         rm -rf build_ci
-        sudo umount -f /mnt/reffs 2>/dev/null || true
+        sudo fuser -k -m /mnt/reffs 2>/dev/null || true
+        sleep 1
+        sudo umount -f -l /mnt/reffs 2>/dev/null || true
         sudo rm -rf /mnt/reffs 2>/dev/null || true
         rm -f /reffs_data/reffs_ci.lock
