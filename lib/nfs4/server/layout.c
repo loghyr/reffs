@@ -1484,6 +1484,92 @@ uint32_t nfs4_op_getdevicelist(struct compound *compound)
 	return 0;
 }
 
+/*
+ * find_layout_stateid_for_client -- walk inode's stateid table and
+ * return a ref-bumped Layout_Stateid for the given client, or NULL.
+ *
+ * Caller must stateid_put() the returned stateid when done.
+ */
+static struct stateid *find_layout_stateid_for_client(struct inode *inode,
+						      struct nfs4_client *nc)
+{
+	if (!inode->i_stateids || !nc)
+		return NULL;
+
+	struct client *cl = nfs4_client_to_client(nc);
+	struct stateid *ls_stid = NULL;
+	struct cds_lfht_iter it;
+	struct cds_lfht_node *n;
+
+	rcu_read_lock();
+	cds_lfht_first(inode->i_stateids, &it);
+	while ((n = cds_lfht_iter_get_node(&it)) != NULL) {
+		struct stateid *st =
+			caa_container_of(n, struct stateid, s_inode_node);
+		if (st->s_tag == Layout_Stateid && st->s_client == cl) {
+			ls_stid = stateid_get(st);
+			break;
+		}
+		cds_lfht_next(inode->i_stateids, &it);
+	}
+	rcu_read_unlock();
+
+	return ls_stid;
+}
+
+/*
+ * layouterror_fence_and_revoke -- revoke the layout stateid on all
+ * tight-coupled DSes, then fence + chmod all mirror instances.
+ *
+ * Called for NFS4ERR_ACCESS / NFS4ERR_PERM from LAYOUTERROR, and as
+ * a fallback when BAD_STATEID trust-gap recovery fails.
+ */
+static void layouterror_fence_and_revoke(struct compound *compound,
+					 struct server_state *ss,
+					 struct layout_segments *lss)
+{
+	struct layout_segment *seg = &lss->lss_segs[0];
+	uint32_t fence_min = ss->ss_fence_uid_min;
+	uint32_t fence_max = ss->ss_fence_uid_max;
+
+	for (uint32_t f = 0; f < seg->ls_nfiles; f++) {
+		struct layout_data_file *ldf = &seg->ls_files[f];
+		struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+
+		if (!ds)
+			continue;
+
+		/*
+		 * Tight-coupling: revoke the layout stateid on the DS
+		 * before fencing so the DS stops accepting I/O on the
+		 * old credential.  Best-effort -- fencing proceeds even
+		 * if the revoke fails.
+		 */
+		if (ds->ds_tight_coupled) {
+			struct stateid *ls_stid = find_layout_stateid_for_client(
+				compound->c_inode, compound->c_nfs4_client);
+			if (ls_stid) {
+				stateid4 w;
+
+				pack_stateid4(&w, ls_stid);
+				dstore_revoke_stateid(ds, ldf->ldf_fh,
+						      ldf->ldf_fh_len, w.seqid,
+						      (const uint8_t *)w.other);
+				stateid_put(ls_stid);
+			}
+		}
+
+		dstore_data_file_fence(ds, ldf->ldf_fh, ldf->ldf_fh_len, ldf,
+				       fence_min, fence_max, NULL);
+		dstore_data_file_chmod(ds, ldf->ldf_fh, ldf->ldf_fh_len, NULL);
+		dstore_put(ds);
+	}
+
+	inode_sync_to_disk(compound->c_inode);
+	LOG("LAYOUTERROR: fenced + chmod all instances for ino=%lu",
+	    compound->c_inode->i_ino);
+}
+
 uint32_t nfs4_op_layouterror(struct compound *compound)
 {
 	LAYOUTERROR4args *args = NFS4_OP_ARG_SETUP(compound, oplayouterror);
@@ -1496,10 +1582,7 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 	}
 
 	struct layout_segments *lss = compound->c_inode->i_layout_segments;
-
 	struct server_state *ss = compound->c_server_state;
-	uint32_t fence_min = ss->ss_fence_uid_min;
-	uint32_t fence_max = ss->ss_fence_uid_max;
 
 	/*
 	 * Scan reported errors.  Record stats at three scopes
@@ -1557,96 +1640,115 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 
 		dstore_put(err_ds);
 
-		if ((de->de_status == NFS4ERR_ACCESS ||
-		     de->de_status == NFS4ERR_PERM) &&
-		    lss && lss->lss_count > 0) {
+		if (de->de_status == NFS4ERR_BAD_STATEID && lss &&
+		    lss->lss_count > 0) {
+			/*
+			 * Trust-gap recovery: the DS rejected a CHUNK op
+			 * because the layout stateid is not in its trust
+			 * table (e.g., DS was restarted).  Re-issue
+			 * TRUST_STATEID to all tight-coupled DSes.
+			 *
+			 * If ALL tight-coupled DSes accept, the gap is
+			 * healed and LAYOUTERROR returns NFS4_OK.
+			 * If ANY fail, fall through to fence+revoke.
+			 * If there are no tight-coupled DSes, skip.
+			 */
 			struct layout_segment *seg = &lss->lss_segs[0];
+			struct stateid *ls_stid =
+				find_layout_stateid_for_client(
+					compound->c_inode, nc);
+
+			if (!ls_stid) {
+				/*
+				 * No layout stateid on this inode for this
+				 * client; nothing to re-register.  Skip.
+				 */
+				continue;
+			}
+
+			stateid4 w;
+
+			pack_stateid4(&w, ls_stid);
+			stateid_put(ls_stid);
+
+			uint64_t clientid =
+				nc ? (uint64_t)nfs4_client_to_client(nc)->c_id :
+				     0;
+
+			/*
+			 * Compute a fresh expiry: wall-clock now +
+			 * one lease period.  The DS stores it as a
+			 * CLOCK_MONOTONIC deadline internally.
+			 */
+			struct timespec wall_now;
+
+			clock_gettime(CLOCK_REALTIME, &wall_now);
+			int64_t expire_sec = (int64_t)wall_now.tv_sec +
+					     (int64_t)server_lease_time(ss);
+			uint32_t expire_nsec = (uint32_t)wall_now.tv_nsec;
+
+			int ntight = 0;
+			int nfailed = 0;
 
 			for (uint32_t f = 0; f < seg->ls_nfiles; f++) {
 				struct layout_data_file *ldf =
 					&seg->ls_files[f];
 				struct dstore *ds =
 					dstore_find(ldf->ldf_dstore_id);
+
 				if (!ds)
 					continue;
 
-				/*
-				 * Tight-coupling: revoke the layout stateid on
-				 * the DS before fencing so the DS stops
-				 * accepting I/O on the old credential.
-				 *
-				 * Find the layout stateid for this inode/client
-				 * and issue REVOKE_STATEID.  Best-effort --
-				 * fencing still proceeds on failure.
-				 */
-				if (ds->ds_tight_coupled &&
-				    compound->c_inode->i_stateids) {
-					struct stateid *ls_stid = NULL;
-					struct client *cl =
-						compound->c_nfs4_client ?
-							nfs4_client_to_client(
-								compound->c_nfs4_client) :
-							NULL;
-
-					if (cl) {
-						struct cds_lfht_iter lsit;
-						struct cds_lfht_node *lsn;
-
-						rcu_read_lock();
-						cds_lfht_first(
-							compound->c_inode
-								->i_stateids,
-							&lsit);
-						while ((lsn = cds_lfht_iter_get_node(
-								&lsit)) !=
-						       NULL) {
-							struct stateid *st = caa_container_of(
-								lsn,
-								struct stateid,
-								s_inode_node);
-							if (st->s_tag ==
-								    Layout_Stateid &&
-							    st->s_client ==
-								    cl) {
-								ls_stid = stateid_get(
-									st);
-								break;
-							}
-							cds_lfht_next(
-								compound->c_inode
-									->i_stateids,
-								&lsit);
-						}
-						rcu_read_unlock();
-					}
-
-					if (ls_stid) {
-						stateid4 w;
-
-						pack_stateid4(&w, ls_stid);
-						dstore_revoke_stateid(
-							ds, ldf->ldf_fh,
-							ldf->ldf_fh_len,
-							w.seqid,
-							(const uint8_t *)
-								w.other);
-						stateid_put(ls_stid);
-					}
+				if (!ds->ds_tight_coupled) {
+					dstore_put(ds);
+					continue;
 				}
 
-				dstore_data_file_fence(ds, ldf->ldf_fh,
-						       ldf->ldf_fh_len, ldf,
-						       fence_min, fence_max,
-						       NULL);
-				dstore_data_file_chmod(ds, ldf->ldf_fh,
-						       ldf->ldf_fh_len, NULL);
+				ntight++;
+				int ret = dstore_trust_stateid(
+					ds, ldf->ldf_fh, ldf->ldf_fh_len,
+					w.seqid, (const uint8_t *)w.other,
+					LAYOUTIOMODE4_RW, clientid, expire_sec,
+					expire_nsec,
+					"" /* NOT_NOW_BROWN_COW: GSS */);
+				if (ret != 0)
+					nfailed++;
+
 				dstore_put(ds);
 			}
 
-			inode_sync_to_disk(compound->c_inode);
-			LOG("LAYOUTERROR: fenced + chmod all instances "
-			    "for ino=%lu (access error from DS)",
-			    compound->c_inode->i_ino);
+			if (ntight == 0) {
+				/* No tight-coupled DSes; nothing to do. */
+				continue;
+			}
+
+			if (nfailed == 0) {
+				TRACE("LAYOUTERROR: trust gap healed for "
+				      "ino=%lu (BAD_STATEID re-registered "
+				      "on %d DS(es))",
+				      compound->c_inode->i_ino, ntight);
+				continue; /* NFS4_OK; gap healed */
+			}
+
+			/*
+			 * At least one tight-coupled DS rejected
+			 * TRUST_STATEID.  Fall through to fence+revoke
+			 * to invalidate the client's access entirely.
+			 */
+			LOG("LAYOUTERROR: trust-gap recovery failed "
+			    "(%d/%d DS(es)) for ino=%lu; "
+			    "fencing",
+			    nfailed, ntight, compound->c_inode->i_ino);
+			layouterror_fence_and_revoke(compound, ss, lss);
+
+		} else if ((de->de_status == NFS4ERR_ACCESS ||
+			    de->de_status == NFS4ERR_PERM) &&
+			   lss && lss->lss_count > 0) {
+			/*
+			 * DS rejected the client's I/O.
+			 * layouterror_fence_and_revoke logs the fence action.
+			 */
+			layouterror_fence_and_revoke(compound, ss, lss);
 		}
 	}
 

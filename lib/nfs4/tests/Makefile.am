@@ -72,6 +72,8 @@ cb_pending_LDADD = \
 
 trust_stateid_test_LDADD = \
 	@CHECK_LIBS@					\
+	$(top_builddir)/lib/tests/libreffs_test.la	\
+	$(top_builddir)/lib/fs/tests/libreffs_fs_test.la	\
 	$(top_builddir)/lib/nfs4/server/libreffs_nfs4_server.la	\
 	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la	\
 	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la	\
