@@ -112,7 +112,15 @@ info "Backend: $BACKEND_TYPE"
 # Cleanup from previous runs
 # -----------------------------------------------------------------------
 
-sudo umount -f "$MOUNT" 2>/dev/null || true
+# Kill any process still using the mount from a previous run.
+# fuser -k sends SIGKILL to killable (non-D-state) processes.
+# The subsequent umount -f -l detaches the mount so any surviving
+# D-state processes wake with EIO and exit on their own.
+if mountpoint -q "$MOUNT" 2>/dev/null; then
+    sudo fuser -k -m "$MOUNT" 2>/dev/null || true
+    sleep 1
+fi
+sudo umount -f -l "$MOUNT" 2>/dev/null || true
 rm -rf "$DATA_DIR" "$STATE_DIR"
 rm -f "$LOG" "$TRACE" /reffs_data/soak-trace-*.log /reffs_data/soak-trace-*.log.zst
 mkdir -p "$DATA_DIR" "$STATE_DIR"
@@ -260,6 +268,8 @@ cleanup() {
         REFFSD_PID=
     fi
     info "  [2/3] Force-unmount $MOUNT"
+    sudo fuser -k -m "$MOUNT" 2>/dev/null || true
+    sleep 1
     sudo umount -f -l "$MOUNT" 2>/dev/null || true
     sleep 1
     info "  [3/3] Killing ${#WORKLOAD_PIDS[@]} workload processes"
