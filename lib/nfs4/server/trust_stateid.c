@@ -34,6 +34,7 @@
 #include "nfsv42_xdr.h"
 #include "reffs/log.h"
 #include "reffs/rcu.h"
+#include "reffs/server.h"
 #include "reffs/time.h"
 #include "nfs4/trust_stateid.h"
 
@@ -95,6 +96,73 @@ void trust_entry_put(struct trust_entry *te)
 {
 	if (te)
 		urcu_ref_put(&te->te_ref, trust_entry_release);
+}
+
+void trust_stateid_renewal_scan(uint32_t lease_sec)
+{
+	if (!trust_ht)
+		return;
+
+	uint64_t now = reffs_now_ns();
+
+	/*
+	 * Renewal threshold: renew when remaining lifetime < lease_sec / 2.
+	 * With lease_sec=0 the threshold is 0, so no entry qualifies.
+	 */
+	uint64_t threshold_ns = (uint64_t)lease_sec * 1000000000ULL / 2;
+	uint64_t new_lifetime_ns = (uint64_t)lease_sec * 1000000000ULL;
+
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	rcu_read_lock();
+	cds_lfht_first(trust_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct trust_entry *te =
+			caa_container_of(node, struct trust_entry, te_ht_node);
+
+		/* Advance before any put -- Rule 6 reaper pattern. */
+		cds_lfht_next(trust_ht, &iter);
+
+		if (!urcu_ref_get_unless_zero(&te->te_ref))
+			continue;
+
+		uint64_t exp = atomic_load_explicit(&te->te_expire_ns,
+						    memory_order_acquire);
+
+		/*
+		 * Skip entries that are not set, already expired (the expiry
+		 * pass handles those), or still far enough away.
+		 */
+		if (exp == 0 || exp <= now || exp - now >= threshold_ns) {
+			trust_entry_put(te);
+			continue;
+		}
+
+		/*
+		 * Entry is nearing expiry: extend.  We do not check client
+		 * liveness here; the lease reaper calls bulk_revoke when a
+		 * client expires, which removes all of that client's entries.
+		 * The window between client expiry and bulk_revoke is at most
+		 * one scan interval -- a briefly stale entry that gets one
+		 * extra renewal is harmless.
+		 *
+		 * NOT_NOW_BROWN_COW: in the multi-machine (MDS != DS) case,
+		 * renewal should be driven by the MDS re-issuing TRUST_STATEID
+		 * before expiry (design/trust-stateid.md Step 2.8).  This
+		 * DS-side extension is correct only for combined mode where
+		 * the MDS and DS share a process.
+		 */
+		uint64_t new_exp = now + new_lifetime_ns;
+		atomic_store_explicit(&te->te_expire_ns, new_exp,
+				      memory_order_release);
+
+		TRACE("trust_renewal: extended stateid other=%02x%02x... +%us",
+		      te->te_other[0], te->te_other[1], lease_sec);
+
+		trust_entry_put(te);
+	}
+	rcu_read_unlock();
 }
 
 /* ------------------------------------------------------------------ */
@@ -159,6 +227,19 @@ static void *trust_reaper_thread_fn(void *arg __attribute__((unused)))
 			trust_entry_put(te);
 		}
 		rcu_read_unlock();
+
+		/*
+		 * Renewal pass: extend entries nearing expiry.  Uses the
+		 * server's configured lease time; if server_state is not
+		 * available (startup or shutdown race), skip this cycle.
+		 */
+		struct server_state *ss = server_state_find();
+		if (ss) {
+			uint32_t lease_sec = server_lease_time(ss);
+
+			server_state_put(ss);
+			trust_stateid_renewal_scan(lease_sec);
+		}
 	}
 
 	rcu_unregister_thread();

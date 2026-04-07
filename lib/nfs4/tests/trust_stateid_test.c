@@ -49,6 +49,7 @@
 #include "reffs/inode.h"
 #include "reffs/rcu.h"
 #include "reffs/server.h"
+#include "reffs/time.h"
 #include "reffs/super_block.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
@@ -1282,6 +1283,181 @@ START_TEST(test_chunk_pending_stateid_delay)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Group J: trust_stateid_renewal_scan                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * test_trust_renewal_extends_expire:
+ * An entry expiring in 1 second (well below lease_sec/2 = 45s) should
+ * have its te_expire_ns extended to approximately now + lease_sec.
+ */
+START_TEST(test_trust_renewal_extends_expire)
+{
+	stateid4 stid = make_stateid(0x61);
+	uint64_t before = reffs_now_ns();
+	/* Expires in 1 second -- below the half-lease threshold of 45s */
+	uint64_t soon = before + 1000000000ULL;
+
+	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1, LAYOUTIOMODE4_RW,
+						soon, ""),
+			 0);
+
+	trust_stateid_renewal_scan(90);
+
+	struct trust_entry *te = trust_stateid_find(&stid);
+	ck_assert_ptr_nonnull(te);
+
+	uint64_t exp =
+		atomic_load_explicit(&te->te_expire_ns, memory_order_acquire);
+	trust_entry_put(te);
+
+	/* Extended: should be roughly before + 90s (allow +/-2s clock jitter) */
+	ck_assert_uint_ge(exp, before + 88ULL * 1000000000ULL);
+
+	trust_stateid_revoke(&stid);
+}
+END_TEST
+
+/*
+ * test_trust_renewal_skips_far_future:
+ * An entry expiring in 100s is well beyond the 45s renewal threshold
+ * (lease_sec=90, threshold=45s).  The expiry must not be changed.
+ */
+START_TEST(test_trust_renewal_skips_far_future)
+{
+	stateid4 stid = make_stateid(0x62);
+	uint64_t far = reffs_now_ns() + 100ULL * 1000000000ULL;
+
+	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1, LAYOUTIOMODE4_RW,
+						far, ""),
+			 0);
+
+	trust_stateid_renewal_scan(90); /* threshold = 45s; 100s > 45s */
+
+	struct trust_entry *te = trust_stateid_find(&stid);
+	ck_assert_ptr_nonnull(te);
+
+	uint64_t exp =
+		atomic_load_explicit(&te->te_expire_ns, memory_order_acquire);
+	trust_entry_put(te);
+
+	/*
+	 * Expiry must not have been shortened.  Allow 2s of clock drift
+	 * between registration and the scan.
+	 */
+	ck_assert_uint_ge(exp, far - 2ULL * 1000000000ULL);
+
+	trust_stateid_revoke(&stid);
+}
+END_TEST
+
+/*
+ * test_trust_renewal_skips_expired:
+ * An entry whose te_expire_ns is in the past (exp <= now) is left for
+ * the expiry pass.  The renewal scan must not touch it.
+ */
+START_TEST(test_trust_renewal_skips_expired)
+{
+	stateid4 stid = make_stateid(0x63);
+	uint64_t past = 1000000000ULL; /* epoch + 1s -- safely in the past */
+
+	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1, LAYOUTIOMODE4_RW,
+						past, ""),
+			 0);
+
+	trust_stateid_renewal_scan(90);
+
+	struct trust_entry *te = trust_stateid_find(&stid);
+	ck_assert_ptr_nonnull(te);
+
+	uint64_t exp =
+		atomic_load_explicit(&te->te_expire_ns, memory_order_acquire);
+	trust_entry_put(te);
+
+	/* Still the original past value -- renewal does not touch expired entries */
+	ck_assert_uint_eq(exp, past);
+
+	trust_stateid_revoke(&stid);
+}
+END_TEST
+
+/*
+ * test_trust_renewal_multiple:
+ * Two entries: one near-expiry, one far-future.  Only the near one renews.
+ */
+START_TEST(test_trust_renewal_multiple)
+{
+	stateid4 near_stid = make_stateid(0x64);
+	stateid4 far_stid = make_stateid(0x65);
+	uint64_t now = reffs_now_ns();
+	uint64_t soon = now + 1000000000ULL; /* 1s */
+	uint64_t far = now + 100ULL * 1000000000ULL; /* 100s */
+
+	ck_assert_int_eq(trust_stateid_register(&near_stid, 100, 1,
+						LAYOUTIOMODE4_RW, soon, ""),
+			 0);
+	ck_assert_int_eq(trust_stateid_register(&far_stid, 101, 2,
+						LAYOUTIOMODE4_RW, far, ""),
+			 0);
+
+	trust_stateid_renewal_scan(90);
+
+	struct trust_entry *te_near = trust_stateid_find(&near_stid);
+	struct trust_entry *te_far = trust_stateid_find(&far_stid);
+	ck_assert_ptr_nonnull(te_near);
+	ck_assert_ptr_nonnull(te_far);
+
+	uint64_t exp_near = atomic_load_explicit(&te_near->te_expire_ns,
+						 memory_order_acquire);
+	uint64_t exp_far = atomic_load_explicit(&te_far->te_expire_ns,
+						memory_order_acquire);
+
+	trust_entry_put(te_near);
+	trust_entry_put(te_far);
+
+	/* Near entry was extended */
+	ck_assert_uint_ge(exp_near, now + 88ULL * 1000000000ULL);
+	/* Far entry was not changed */
+	ck_assert_uint_ge(exp_far, far - 2ULL * 1000000000ULL);
+
+	trust_stateid_revoke(&near_stid);
+	trust_stateid_revoke(&far_stid);
+}
+END_TEST
+
+/*
+ * test_trust_renewal_zero_lease:
+ * With lease_sec=0 the threshold is 0 and no entry qualifies for
+ * renewal (nothing has a positive remaining lifetime that is < 0).
+ * Verify the function does not crash.
+ */
+START_TEST(test_trust_renewal_zero_lease)
+{
+	stateid4 stid = make_stateid(0x66);
+	uint64_t soon = reffs_now_ns() + 1000000000ULL;
+
+	ck_assert_int_eq(trust_stateid_register(&stid, 100, 1, LAYOUTIOMODE4_RW,
+						soon, ""),
+			 0);
+
+	/* lease_sec=0: threshold=0, new_lifetime=0 -- no renewal */
+	trust_stateid_renewal_scan(0);
+
+	struct trust_entry *te = trust_stateid_find(&stid);
+	ck_assert_ptr_nonnull(te);
+
+	uint64_t exp =
+		atomic_load_explicit(&te->te_expire_ns, memory_order_acquire);
+	trust_entry_put(te);
+
+	/* Entry should still expire in ~1s, not be zeroed out */
+	ck_assert_uint_gt(exp, reffs_now_ns());
+
+	trust_stateid_revoke(&stid);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -1360,6 +1536,15 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_i, test_chunk_expired_stateid_rejected);
 	tcase_add_test(tc_i, test_chunk_pending_stateid_delay);
 	suite_add_tcase(s, tc_i);
+
+	TCase *tc_j = tcase_create("renewal");
+	tcase_add_checked_fixture(tc_j, setup, teardown);
+	tcase_add_test(tc_j, test_trust_renewal_extends_expire);
+	tcase_add_test(tc_j, test_trust_renewal_skips_far_future);
+	tcase_add_test(tc_j, test_trust_renewal_skips_expired);
+	tcase_add_test(tc_j, test_trust_renewal_multiple);
+	tcase_add_test(tc_j, test_trust_renewal_zero_lease);
+	suite_add_tcase(s, tc_j);
 
 	return s;
 }

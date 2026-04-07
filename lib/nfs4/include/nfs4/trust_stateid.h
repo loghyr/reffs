@@ -135,6 +135,23 @@ void trust_entry_put(struct trust_entry *te);
 /* Helpers                                                             */
 
 /*
+ * trust_stateid_renewal_scan -- extend entries nearing expiry.
+ *
+ * Called from the trust reaper thread and from unit tests.  Iterates
+ * over all entries in the table; any entry whose remaining lifetime is
+ * less than lease_sec / 2 gets its te_expire_ns extended by lease_sec.
+ * Entries that are already expired (exp <= now) are left for the
+ * expiry pass -- this function only extends still-valid entries.
+ *
+ * No client-liveness check is performed: the lease reaper handles
+ * bulk_revoke when a client expires, which removes the entries.  The
+ * window between client expiry and bulk_revoke is at most one scan
+ * interval; a briefly stale entry that gets one extra renewal is
+ * harmless.
+ */
+void trust_stateid_renewal_scan(uint32_t lease_sec);
+
+/*
  * trust_stateid_convert_expire -- convert a wire nfstime4 expiry
  * (wall clock) to an absolute CLOCK_MONOTONIC nanosecond value.
  *
