@@ -27,6 +27,7 @@
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
 #include "reffs/dstore.h"
+#include "reffs/dstore_ops.h"
 #include "reffs/filehandle.h"
 #include "reffs/log.h"
 
@@ -125,6 +126,21 @@ int ds_session_create(struct dstore *ds)
 
 	mds_compound_fini(&mc);
 	ds->ds_v4_session = ms;
+
+	/*
+	 * Capability probe: send TRUST_STATEID with anonymous stateid.
+	 * NFS4ERR_INVAL response means the DS supports tight coupling
+	 * (pNFS Flex Files v2 TRUST_STATEID / REVOKE_STATEID).
+	 * ds_tight_coupled is read-only after this point.
+	 */
+	if (ds->ds_ops->probe_tight_coupling) {
+		int r = ds->ds_ops->probe_tight_coupling(ds);
+
+		ds->ds_tight_coupled = (r == 0);
+		TRACE("ds_session: DS %s (dstore %u) tight coupling %s",
+		      ds->ds_address, ds->ds_id,
+		      ds->ds_tight_coupled ? "enabled" : "disabled");
+	}
 
 	TRACE("ds_session: connected to DS %s (dstore %u), root FH %u bytes",
 	      ds->ds_address, ds->ds_id, ds->ds_root_fh_len);

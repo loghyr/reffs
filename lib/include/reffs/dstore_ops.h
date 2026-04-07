@@ -73,6 +73,40 @@ struct dstore_ops {
 			 uint32_t uid, uint32_t gid);
 	int (*commit)(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 		      uint64_t offset, uint32_t count);
+
+	/*
+	 * Tight-coupling control plane (pNFS Flex Files v2).
+	 * NULL = not supported (DS does not implement TRUST_STATEID).
+	 *
+	 * probe_tight_coupling -- send a capability probe (TRUST_STATEID with
+	 * anonymous stateid).  NFS4ERR_INVAL from the DS means tight coupling
+	 * is supported.  Returns 0 on success (tight coupling available),
+	 * -ENOTSUP if not available, or -errno on transport error.
+	 *
+	 * trust_stateid -- register a layout stateid on the DS.
+	 * stid_seqid / stid_other: the layout stateid's seqid and other[12].
+	 * iomode: LAYOUTIOMODE4_READ (1) or LAYOUTIOMODE4_RW (2).
+	 * expire_sec / expire_nsec: wall-clock expiry (nfstime4).
+	 * principal: GSS principal, or "" for AUTH_SYS sessions.
+	 *
+	 * revoke_stateid -- revoke a previously-registered stateid.
+	 *
+	 * bulk_revoke_stateid -- revoke all stateids for a client.
+	 * clientid 0 means "revoke all" (MDS restart cleanup).
+	 */
+	int (*probe_tight_coupling)(struct dstore *ds);
+
+	int (*trust_stateid)(struct dstore *ds, const uint8_t *fh,
+			     uint32_t fh_len, uint32_t stid_seqid,
+			     const uint8_t *stid_other, uint32_t iomode,
+			     uint64_t clientid, int64_t expire_sec,
+			     uint32_t expire_nsec, const char *principal);
+
+	int (*revoke_stateid)(struct dstore *ds, const uint8_t *fh,
+			      uint32_t fh_len, uint32_t stid_seqid,
+			      const uint8_t *stid_other);
+
+	int (*bulk_revoke_stateid)(struct dstore *ds, uint64_t clientid);
 };
 
 /* Remote (NFSv3 RPC) vtable -- defined in lib/nfs4/dstore/dstore_ops_nfsv3.c */
@@ -167,6 +201,47 @@ static inline int dstore_data_file_commit(struct dstore *ds, const uint8_t *fh,
 	if (!ds->ds_ops->commit)
 		return -ENOSYS;
 	return ds->ds_ops->commit(ds, fh, fh_len, offset, count);
+}
+
+/* Tight-coupling dispatch */
+
+static inline int dstore_probe_tight_coupling(struct dstore *ds)
+{
+	if (!ds->ds_ops->probe_tight_coupling)
+		return -ENOTSUP;
+	return ds->ds_ops->probe_tight_coupling(ds);
+}
+
+static inline int dstore_trust_stateid(struct dstore *ds, const uint8_t *fh,
+				       uint32_t fh_len, uint32_t stid_seqid,
+				       const uint8_t *stid_other,
+				       uint32_t iomode, uint64_t clientid,
+				       int64_t expire_sec, uint32_t expire_nsec,
+				       const char *principal)
+{
+	if (!ds->ds_ops->trust_stateid)
+		return -ENOTSUP;
+	return ds->ds_ops->trust_stateid(ds, fh, fh_len, stid_seqid, stid_other,
+					 iomode, clientid, expire_sec,
+					 expire_nsec, principal);
+}
+
+static inline int dstore_revoke_stateid(struct dstore *ds, const uint8_t *fh,
+					uint32_t fh_len, uint32_t stid_seqid,
+					const uint8_t *stid_other)
+{
+	if (!ds->ds_ops->revoke_stateid)
+		return -ENOTSUP;
+	return ds->ds_ops->revoke_stateid(ds, fh, fh_len, stid_seqid,
+					  stid_other);
+}
+
+static inline int dstore_bulk_revoke_stateid(struct dstore *ds,
+					     uint64_t clientid)
+{
+	if (!ds->ds_ops->bulk_revoke_stateid)
+		return -ENOTSUP;
+	return ds->ds_ops->bulk_revoke_stateid(ds, clientid);
 }
 
 #endif /* _REFFS_DSTORE_OPS_H */

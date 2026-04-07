@@ -27,6 +27,20 @@
 #include "reffs/task.h"
 #include "reffs/time.h"
 
+#include "nfs4/trust_stateid.h"
+
+/*
+ * Verify that the hardcoded sizes in dstore_fanout.h match the
+ * constants defined in trust_stateid.h.  A mismatch would silently
+ * truncate stateid other-field or principal copies.
+ */
+_Static_assert(sizeof(((struct dstore_fanout *)0)->df_ts_other) ==
+		       NFS4_OTHER_SIZE,
+	       "df_ts_other size mismatch with NFS4_OTHER_SIZE");
+_Static_assert(sizeof(((struct dstore_fanout *)0)->df_ts_principal) ==
+		       TRUST_PRINCIPAL_MAX,
+	       "df_ts_principal size mismatch with TRUST_PRINCIPAL_MAX");
+
 /* ------------------------------------------------------------------ */
 /* Thread entry point                                                  */
 /* ------------------------------------------------------------------ */
@@ -70,6 +84,14 @@ static void *fanout_thread(void *arg)
 	case FANOUT_CHMOD:
 		ret = dstore_data_file_chmod(slot->fs_ds, slot->fs_fh,
 					     slot->fs_fh_len, &slot->fs_wcc);
+		break;
+
+	case FANOUT_TRUST_STATEID:
+		ret = dstore_trust_stateid(
+			slot->fs_ds, slot->fs_fh, slot->fs_fh_len,
+			df->df_ts_seqid, df->df_ts_other, df->df_ts_iomode,
+			df->df_ts_clientid, df->df_ts_expire_sec,
+			df->df_ts_expire_nsec, df->df_ts_principal);
 		break;
 	}
 

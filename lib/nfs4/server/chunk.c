@@ -131,8 +131,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	 * by the DS's own permission model.
 	 */
 	if (!stateid4_is_special(&args->cwa_stateid)) {
-		struct trust_entry *te =
-			trust_stateid_find(&args->cwa_stateid);
+		struct trust_entry *te = trust_stateid_find(&args->cwa_stateid);
 
 		if (!te) {
 			*status = NFS4ERR_BAD_STATEID;
@@ -298,8 +297,7 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 	 * Same logic as CHUNK_WRITE: special stateids bypass the check.
 	 */
 	if (!stateid4_is_special(&args->cra_stateid)) {
-		struct trust_entry *te =
-			trust_stateid_find(&args->cra_stateid);
+		struct trust_entry *te = trust_stateid_find(&args->cra_stateid);
 
 		if (!te) {
 			*status = NFS4ERR_BAD_STATEID;

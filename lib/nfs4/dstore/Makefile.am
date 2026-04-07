@@ -4,6 +4,7 @@
 SUBDIRS = tests
 
 AM_CFLAGS = -I$(top_srcdir)/lib/include \
+	-I$(top_srcdir)/lib/nfs4/include \
 	-I$(top_srcdir)/lib/nfs4/client \
 	$(TIRPC_CFLAGS) \
 	-I$(top_builddir)/lib/xdr

@@ -338,6 +338,19 @@ static void free_rg_ctx(struct rg_ctx *ctx)
 				if (a->argop == OP_PUTFH)
 					free(a->nfs_argop4_u.opputfh.object
 						     .nfs_fh4_val);
+				/*
+				 * Free bitmap4_val allocated by bitmap4_copy()
+				 * in nattr_to_inode -> SETATTR attrsset.
+				 * Must be done before freeing c_args (resop is
+				 * not set in unit tests; match via argop).
+				 */
+				if (a->argop == OP_SETATTR && c->c_res &&
+				    i < c->c_res->resarray.resarray_len)
+					bitmap4_destroy(
+						&c->c_res->resarray
+							 .resarray_val[i]
+							 .nfs_resop4_u.opsetattr
+							 .attrsset);
 			}
 			free(c->c_args->argarray.argarray_val);
 			free(c->c_args);

@@ -176,12 +176,18 @@ void dstore_mock_free(struct dstore_mock *dm)
 		return;
 
 	/*
-	 * Remove from hash table and drop the creation ref.
-	 * dstore_unhash is safe to call even if not hashed.
+	 * Remove from hash table, then drop both refs:
+	 *   - the alloc ref (ref 2 -> 1)
+	 *   - the creation ref (ref 1 -> 0) -> triggers dstore_release -> call_rcu
+	 * dstore_fini() -> rcu_barrier() drains the call_rcu before LSAN runs.
 	 */
 	if (dm->dm_ds) {
-		dstore_unhash(dm->dm_ds);
-		dstore_put(dm->dm_ds);
+		struct dstore *ds = dm->dm_ds;
+
+		dm->dm_ds = NULL;
+		dstore_unhash(ds);
+		dstore_put(ds); /* alloc ref */
+		dstore_put(ds); /* creation ref */
 	}
 
 	free(dm);

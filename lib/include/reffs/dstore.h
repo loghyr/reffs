@@ -28,6 +28,7 @@
 #include "reffs/settings.h"
 
 #define DSTORE_MAX_FH 64 /* NFSv3 FHSIZE3 */
+#define DSTORE_REVOKE_MAX 64 /* max DSes to scan for bulk revoke */
 
 #define DSTORE_IS_HASHED (1ULL << 0)
 #define DSTORE_IS_MOUNTED (1ULL << 1)
@@ -77,6 +78,15 @@ struct dstore {
 	struct urcu_ref ds_ref;
 	uint64_t ds_state; /* atomic flag word */
 	struct cds_lfht_node ds_node; /* hash table node */
+
+	/*
+	 * Tight coupling (pNFS Flex Files v2): true if the DS responded to
+	 * the capability probe (TRUST_STATEID with anonymous stateid) with
+	 * NFS4ERR_INVAL, indicating it supports TRUST_STATEID / REVOKE_STATEID.
+	 * Set once in dstore_alloc after the NFSv4 session is established.
+	 * Read-only after that; no synchronization needed.
+	 */
+	bool ds_tight_coupled;
 
 	/* Layout error stats reported by clients for this dstore. */
 	struct reffs_layout_error_stats ds_layout_errors;

@@ -42,6 +42,7 @@ enum fanout_op {
 	FANOUT_GETATTR,
 	FANOUT_FENCE,
 	FANOUT_CHMOD,
+	FANOUT_TRUST_STATEID,
 };
 
 /* Fan-out context -- allocated per compound that needs DS fan-out. */
@@ -57,6 +58,15 @@ struct dstore_fanout {
 		struct {
 			uint32_t df_fence_min;
 			uint32_t df_fence_max;
+		};
+		struct { /* FANOUT_TRUST_STATEID */
+			uint32_t df_ts_seqid;
+			uint8_t df_ts_other[12]; /* NFS4_OTHER_SIZE */
+			uint32_t df_ts_iomode; /* LAYOUTIOMODE4_READ / _RW */
+			int64_t df_ts_expire_sec; /* wall-clock expiry */
+			uint32_t df_ts_expire_nsec;
+			uint64_t df_ts_clientid; /* layout client's clientid4 */
+			char df_ts_principal[256]; /* TRUST_PRINCIPAL_MAX */
 		};
 	};
 

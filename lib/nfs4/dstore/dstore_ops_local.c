@@ -23,6 +23,7 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#include "nfsv42_xdr.h"
 #include "reffs/dstore.h"
 #include "reffs/identity.h"
 #include "reffs/dstore_ops.h"
@@ -31,7 +32,9 @@
 #include "reffs/layout_segment.h"
 #include "reffs/log.h"
 #include "reffs/super_block.h"
+#include "reffs/time.h"
 #include "reffs/vfs.h"
+#include "nfs4/trust_stateid.h"
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -262,6 +265,96 @@ static int local_getattr(struct dstore *ds __attribute__((unused)),
 }
 
 /* ------------------------------------------------------------------ */
+/* Tight-coupling control plane (direct trust table calls)            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * local_probe_tight_coupling -- always returns 0 (supported).
+ *
+ * The local dstore IS the DS; the trust table lives in the same
+ * process.  No RPC probe needed.
+ */
+static int local_probe_tight_coupling(struct dstore *ds __attribute__((unused)))
+{
+	return 0;
+}
+
+/*
+ * local_trust_stateid -- register a layout stateid in the local trust
+ * table.
+ *
+ * Converts the wall-clock expiry to CLOCK_MONOTONIC and calls
+ * trust_stateid_register() directly.
+ */
+static int local_trust_stateid(struct dstore *ds __attribute__((unused)),
+			       const uint8_t *fh __attribute__((unused)),
+			       uint32_t fh_len __attribute__((unused)),
+			       uint32_t stid_seqid, const uint8_t *stid_other,
+			       uint32_t iomode, uint64_t clientid,
+			       int64_t expire_sec, uint32_t expire_nsec,
+			       const char *principal)
+{
+	stateid4 stid;
+	nfstime4 expire;
+	struct timespec wall, mono;
+	uint64_t wall_ns, mono_ns, expire_mono_ns;
+
+	stid.seqid = stid_seqid;
+	memcpy(stid.other, stid_other, NFS4_OTHER_SIZE);
+
+	/*
+	 * Convert wall-clock expiry to CLOCK_MONOTONIC using the same
+	 * dual-clock snapshot technique as the DS-side op handler.
+	 */
+	clock_gettime(CLOCK_REALTIME, &wall);
+	clock_gettime(CLOCK_MONOTONIC, &mono);
+	wall_ns =
+		(uint64_t)wall.tv_sec * 1000000000ULL + (uint64_t)wall.tv_nsec;
+	mono_ns =
+		(uint64_t)mono.tv_sec * 1000000000ULL + (uint64_t)mono.tv_nsec;
+
+	expire.seconds = expire_sec;
+	expire.nseconds = expire_nsec;
+
+	expire_mono_ns =
+		trust_stateid_convert_expire(&expire, wall_ns, mono_ns);
+	if (expire_mono_ns == 0)
+		return -EINVAL;
+
+	return trust_stateid_register(&stid, 0, (clientid4)clientid,
+				      (layoutiomode4)iomode, expire_mono_ns,
+				      principal);
+}
+
+/*
+ * local_revoke_stateid -- remove a single stateid from the local trust
+ * table.
+ */
+static int local_revoke_stateid(struct dstore *ds __attribute__((unused)),
+				const uint8_t *fh __attribute__((unused)),
+				uint32_t fh_len __attribute__((unused)),
+				uint32_t stid_seqid, const uint8_t *stid_other)
+{
+	stateid4 stid;
+
+	stid.seqid = stid_seqid;
+	memcpy(stid.other, stid_other, NFS4_OTHER_SIZE);
+
+	trust_stateid_revoke(&stid);
+	return 0;
+}
+
+/*
+ * local_bulk_revoke_stateid -- revoke all stateids for a client.
+ */
+static int local_bulk_revoke_stateid(struct dstore *ds __attribute__((unused)),
+				     uint64_t clientid)
+{
+	trust_stateid_bulk_revoke((clientid4)clientid);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Vtable                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -273,4 +366,8 @@ const struct dstore_ops dstore_ops_local = {
 	.truncate = local_truncate,
 	.fence = local_fence,
 	.getattr = local_getattr,
+	.probe_tight_coupling = local_probe_tight_coupling,
+	.trust_stateid = local_trust_stateid,
+	.revoke_stateid = local_revoke_stateid,
+	.bulk_revoke_stateid = local_bulk_revoke_stateid,
 };

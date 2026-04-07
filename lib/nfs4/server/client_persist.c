@@ -14,6 +14,8 @@
 #include <netinet/in.h>
 
 #include "nfsv42_xdr.h"
+#include "reffs/dstore.h"
+#include "reffs/dstore_ops.h"
 #include "reffs/log.h"
 #include "reffs/rcu.h"
 #include "reffs/network.h"
@@ -99,6 +101,27 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 {
 	struct client *client = nfs4_client_to_client(nc);
 	uint32_t slot = (uint32_t)client->c_id;
+
+	/*
+	 * Tight-coupling: revoke all layout stateids for this client on
+	 * every DS that supports TRUST_STATEID.  Best-effort -- expiry
+	 * proceeds regardless of whether revocation succeeds.
+	 *
+	 * clientid4 == client->c_id (nfs4 layer stores clientid4 in c_id).
+	 */
+	{
+		struct dstore *revoke_dstores[DSTORE_REVOKE_MAX];
+		uint32_t nrevoke = dstore_collect_available(revoke_dstores,
+							    DSTORE_REVOKE_MAX);
+		uint64_t clientid = client->c_id;
+
+		for (uint32_t ri = 0; ri < nrevoke; ri++) {
+			if (revoke_dstores[ri]->ds_tight_coupled)
+				dstore_bulk_revoke_stateid(revoke_dstores[ri],
+							   clientid);
+			dstore_put(revoke_dstores[ri]);
+		}
+	}
 
 	/*
 	 * Order matters -- see handoff invariants:

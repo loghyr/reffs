@@ -37,18 +37,18 @@
 #define TRUST_PRINCIPAL_MAX 256
 
 /* te_flags bits */
-#define TRUST_ACTIVE  (1u << 0) /* stateid accepted for I/O */
+#define TRUST_ACTIVE (1u << 0) /* stateid accepted for I/O */
 #define TRUST_PENDING (1u << 1) /* pending revalidation (MDS reboot) */
 
 struct trust_entry {
-	struct cds_lfht_node te_ht_node;               /* MUST be first */
-	struct rcu_head      te_rcu;                   /* for call_rcu */
-	struct urcu_ref      te_ref;
+	struct cds_lfht_node te_ht_node; /* MUST be first */
+	struct rcu_head te_rcu; /* for call_rcu */
+	struct urcu_ref te_ref;
 
-	uint8_t   te_other[NFS4_OTHER_SIZE];   /* stateid.other -- hash key */
-	uint64_t  te_ino;                       /* inode (from current FH) */
-	clientid4 te_clientid;                  /* client that holds layout */
-	layoutiomode4 te_iomode;               /* LAYOUTIOMODE4_READ or _RW */
+	uint8_t te_other[NFS4_OTHER_SIZE]; /* stateid.other -- hash key */
+	uint64_t te_ino; /* inode (from current FH) */
+	clientid4 te_clientid; /* client that holds layout */
+	layoutiomode4 te_iomode; /* LAYOUTIOMODE4_READ or _RW */
 
 	/*
 	 * Expiry in CLOCK_MONOTONIC nanoseconds.
@@ -99,8 +99,7 @@ void trust_stateid_fini(void);
  */
 int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 			   clientid4 clientid, layoutiomode4 iomode,
-			   uint64_t expire_mono_ns,
-			   const char *principal);
+			   uint64_t expire_mono_ns, const char *principal);
 
 /*
  * trust_stateid_revoke -- remove the entry for this stateid.other.

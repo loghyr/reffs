@@ -633,6 +633,230 @@ err:
 }
 
 /* ------------------------------------------------------------------ */
+/* Tight-coupling control plane                                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * nfsv4_probe_tight_coupling -- capability probe.
+ *
+ * Sends SEQUENCE + PUTROOTFH + TRUST_STATEID(anonymous stateid).
+ * The DS handler returns NFS4ERR_INVAL for any special stateid,
+ * which is the correct signal that tight coupling is supported.
+ *
+ * Returns 0 if tight coupling is available,
+ *        -ENOTSUP if the DS does not support TRUST_STATEID,
+ *        -EIO on transport error.
+ */
+static int nfsv4_probe_tight_coupling(struct dstore *ds)
+{
+	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	if (!ms)
+		return -EIO;
+
+	/*
+	 * SEQUENCE + PUTROOTFH + TRUST_STATEID(anon)
+	 *
+	 * We send an anonymous stateid (all-zero) which the DS handler
+	 * recognises as a special stateid and rejects with NFS4ERR_INVAL.
+	 * That error code is the capability probe signal.
+	 */
+	ret = mds_compound_init(&mc, 3, "ds_probe_tight_coupling");
+	if (ret)
+		return ret;
+
+	if (!mds_compound_add_sequence(&mc, ms))
+		goto err;
+
+	if (!mds_compound_add_op(&mc, OP_PUTROOTFH))
+		goto err;
+
+	slot = mds_compound_add_op(&mc, OP_TRUST_STATEID);
+	if (!slot)
+		goto err;
+
+	TRUST_STATEID4args *ta = &slot->nfs_argop4_u.optrust_stateid;
+
+	/* Anonymous stateid: seqid=0, other=all-zeros. */
+	memset(&ta->tsa_layout_stateid, 0, sizeof(ta->tsa_layout_stateid));
+	ta->tsa_iomode = LAYOUTIOMODE4_READ;
+	ta->tsa_expire.seconds = 0;
+	ta->tsa_expire.nseconds = 0;
+	ta->tsa_principal.utf8string_len = 0;
+	ta->tsa_principal.utf8string_val = NULL;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret == 0) {
+		/* NFS4_OK: DS bug, but treat as supported per design. */
+		TRACE("dstore[%u]: TRUST_STATEID probe returned NFS4_OK "
+		      "(unexpected -- treating as tight coupling available)",
+		      ds->ds_id);
+	} else if (ret == -EREMOTEIO) {
+		if (mc.mc_res.status == NFS4ERR_INVAL) {
+			/* Expected: DS rejected anonymous stateid. */
+			ret = 0;
+		} else if (mc.mc_res.status == NFS4ERR_NOTSUPP) {
+			ret = -ENOTSUP;
+		} else {
+			TRACE("dstore[%u]: TRUST_STATEID probe: status=%d",
+			      ds->ds_id, mc.mc_res.status);
+			ret = -EIO;
+		}
+	}
+	/* else ret == -EIO: RPC transport failure */
+
+	mds_compound_fini(&mc);
+	return ret;
+
+err:
+	mds_compound_fini(&mc);
+	return -ENOSPC;
+}
+
+/*
+ * nfsv4_trust_stateid -- register a layout stateid on the DS.
+ */
+static int nfsv4_trust_stateid(struct dstore *ds, const uint8_t *fh,
+			       uint32_t fh_len, uint32_t stid_seqid,
+			       const uint8_t *stid_other, uint32_t iomode,
+			       uint64_t clientid __attribute__((unused)),
+			       int64_t expire_sec, uint32_t expire_nsec,
+			       const char *principal)
+{
+	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	if (!ms)
+		return -ENOTCONN;
+
+	/* SEQUENCE + PUTFH + TRUST_STATEID */
+	ret = mds_compound_init(&mc, 3, "ds_trust_stateid");
+	if (ret)
+		return ret;
+
+	if (add_seq_putfh(&mc, ms, fh, fh_len))
+		goto err;
+
+	slot = mds_compound_add_op(&mc, OP_TRUST_STATEID);
+	if (!slot)
+		goto err;
+
+	TRUST_STATEID4args *ta = &slot->nfs_argop4_u.optrust_stateid;
+
+	ta->tsa_layout_stateid.seqid = stid_seqid;
+	memcpy(ta->tsa_layout_stateid.other, stid_other, NFS4_OTHER_SIZE);
+	ta->tsa_iomode = (layoutiomode4)iomode;
+	ta->tsa_expire.seconds = expire_sec;
+	ta->tsa_expire.nseconds = expire_nsec;
+
+	if (principal && *principal) {
+		ta->tsa_principal.utf8string_val = (char *)principal;
+		ta->tsa_principal.utf8string_len = strlen(principal);
+	} else {
+		ta->tsa_principal.utf8string_val = NULL;
+		ta->tsa_principal.utf8string_len = 0;
+	}
+
+	ret = send_and_check(&mc, ms, ds->ds_id);
+	mds_compound_fini(&mc);
+	return ret;
+
+err:
+	mds_compound_fini(&mc);
+	return -ENOSPC;
+}
+
+/*
+ * nfsv4_revoke_stateid -- remove a single stateid from the DS trust table.
+ */
+static int nfsv4_revoke_stateid(struct dstore *ds, const uint8_t *fh,
+				uint32_t fh_len, uint32_t stid_seqid,
+				const uint8_t *stid_other)
+{
+	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	if (!ms)
+		return -ENOTCONN;
+
+	/* SEQUENCE + PUTFH + REVOKE_STATEID */
+	ret = mds_compound_init(&mc, 3, "ds_revoke_stateid");
+	if (ret)
+		return ret;
+
+	if (add_seq_putfh(&mc, ms, fh, fh_len))
+		goto err;
+
+	slot = mds_compound_add_op(&mc, OP_REVOKE_STATEID);
+	if (!slot)
+		goto err;
+
+	REVOKE_STATEID4args *ra = &slot->nfs_argop4_u.oprevoke_stateid;
+
+	ra->rsa_layout_stateid.seqid = stid_seqid;
+	memcpy(ra->rsa_layout_stateid.other, stid_other, NFS4_OTHER_SIZE);
+
+	ret = send_and_check(&mc, ms, ds->ds_id);
+	mds_compound_fini(&mc);
+	return ret;
+
+err:
+	mds_compound_fini(&mc);
+	return -ENOSPC;
+}
+
+/*
+ * nfsv4_bulk_revoke_stateid -- revoke all stateids for a client.
+ *
+ * Per the design, no PUTFH is needed: BULK_REVOKE_STATEID operates on the
+ * entire trust table, not on a specific file.
+ *
+ * clientid == 0 means "revoke all" (MDS restart cleanup).
+ */
+static int nfsv4_bulk_revoke_stateid(struct dstore *ds, uint64_t clientid)
+{
+	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	if (!ms)
+		return -ENOTCONN;
+
+	/* SEQUENCE + BULK_REVOKE_STATEID (no PUTFH) */
+	ret = mds_compound_init(&mc, 2, "ds_bulk_revoke_stateid");
+	if (ret)
+		return ret;
+
+	if (!mds_compound_add_sequence(&mc, ms))
+		goto err;
+
+	slot = mds_compound_add_op(&mc, OP_BULK_REVOKE_STATEID);
+	if (!slot)
+		goto err;
+
+	BULK_REVOKE_STATEID4args *ba =
+		&slot->nfs_argop4_u.opbulk_revoke_stateid;
+
+	ba->brsa_clientid = clientid;
+
+	ret = send_and_check(&mc, ms, ds->ds_id);
+	mds_compound_fini(&mc);
+	return ret;
+
+err:
+	mds_compound_fini(&mc);
+	return -ENOSPC;
+}
+
+/* ------------------------------------------------------------------ */
 /* Vtable                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -647,4 +871,8 @@ const struct dstore_ops dstore_ops_nfsv4 = {
 	.read = nfsv4_read,
 	.write = nfsv4_write,
 	.commit = nfsv4_commit,
+	.probe_tight_coupling = nfsv4_probe_tight_coupling,
+	.trust_stateid = nfsv4_trust_stateid,
+	.revoke_stateid = nfsv4_revoke_stateid,
+	.bulk_revoke_stateid = nfsv4_bulk_revoke_stateid,
 };

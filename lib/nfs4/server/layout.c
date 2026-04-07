@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <rpc/xdr.h>
 
@@ -142,7 +143,7 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 		ver.ffdv_minorversion = 0;
 		ver.ffdv_rsize = 1048576;
 		ver.ffdv_wsize = 1048576;
-		ver.ffdv_tightly_coupled = false;
+		ver.ffdv_tightly_coupled = ds->ds_tight_coupled;
 
 		ffda.ffda_versions.ffda_versions_len = 1;
 		ffda.ffda_versions.ffda_versions_val = &ver;
@@ -636,6 +637,35 @@ out_v2:
 }
 
 /* ------------------------------------------------------------------ */
+/* LAYOUTGET trust resume                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * nfs4_op_layoutget_trust_resume - resume after TRUST_STATEID fan-out.
+ *
+ * Best-effort: if the fan-out failed (DS unreachable or returned an
+ * error), log and proceed -- the layout response has already been built
+ * and the client will use anonymous stateids as a fallback.  Clearing
+ * ds_tight_coupled on NFS4ERR_NOTSUPP is NOT_NOW_BROWN_COW.
+ */
+uint32_t nfs4_op_layoutget_trust_resume(struct rpc_trans *rt)
+{
+	struct dstore_fanout *df = rt->rt_async_data;
+
+	rt->rt_async_data = NULL;
+
+	int result = dstore_fanout_result(df);
+
+	if (result != 0)
+		TRACE("LAYOUTGET: TRUST_STATEID fan-out failed (%d) -- "
+		      "client falls back to anonymous stateid",
+		      result);
+
+	dstore_fanout_free(df);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* LAYOUTGET                                                           */
 /*                                                                     */
 /* Returns a Flex Files layout for the current filehandle.  Clients    */
@@ -909,6 +939,115 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	lo->lo_content.loc_type = seg->ls_layout_type;
 	lo->lo_content.loc_body.loc_body_val = body;
 	lo->lo_content.loc_body.loc_body_len = (u_int)xdr_size;
+
+	/*
+	 * Tight-coupling: propagate the layout stateid to each DS that
+	 * supports TRUST_STATEID (ds_tight_coupled).  This is best-effort
+	 * -- the layout is granted regardless of whether propagation
+	 * succeeds.  If the fan-out fails, the client falls back to using
+	 * the anonymous stateid for CHUNK I/O.
+	 *
+	 * Expire time: wall-clock "now + lease_time" so the DS trust entry
+	 * expires with the lease.
+	 */
+	uint32_t ntight = 0;
+
+	for (uint32_t f = 0; f < seg->ls_nfiles; f++) {
+		struct dstore *tds =
+			dstore_find(seg->ls_files[f].ldf_dstore_id);
+		if (tds) {
+			if (tds->ds_tight_coupled)
+				ntight++;
+			dstore_put(tds);
+		}
+	}
+
+	if (ntight > 0) {
+		struct dstore_fanout *df = dstore_fanout_alloc(ntight);
+
+		if (df) {
+			struct server_state *tss = compound->c_server_state;
+			uint32_t lease_sec = tss ? server_lease_time(tss) : 90;
+			struct timespec wall_now;
+
+			clock_gettime(CLOCK_REALTIME, &wall_now);
+
+			df->df_op = FANOUT_TRUST_STATEID;
+			df->df_ts_seqid = resok->logr_stateid.seqid;
+			memcpy(df->df_ts_other, resok->logr_stateid.other,
+			       sizeof(df->df_ts_other));
+			df->df_ts_iomode = (uint32_t)args->loga_iomode;
+			df->df_ts_expire_sec =
+				(int64_t)wall_now.tv_sec + (int64_t)lease_sec;
+			df->df_ts_expire_nsec = (uint32_t)wall_now.tv_nsec;
+			/*
+			 * Record the layout client's clientid4 so the local
+			 * dstore vtable can associate trust entries correctly.
+			 * client->c_id == clientid4 in the NFSv4 layer.
+			 */
+			df->df_ts_clientid =
+				compound->c_nfs4_client ?
+					(uint64_t)nfs4_client_to_client(
+						compound->c_nfs4_client)
+						->c_id :
+					0;
+			df->df_ts_principal[0] =
+				'\0'; /* NOT_NOW_BROWN_COW: GSS */
+
+			uint32_t fi = 0;
+			int setup_ok = 1;
+
+			for (uint32_t f = 0; f < seg->ls_nfiles && fi < ntight;
+			     f++) {
+				struct layout_data_file *ldf =
+					&seg->ls_files[f];
+				struct dstore *tds =
+					dstore_find(ldf->ldf_dstore_id);
+
+				if (!tds)
+					continue;
+				if (!tds->ds_tight_coupled) {
+					dstore_put(tds);
+					continue;
+				}
+
+				struct fanout_slot *slot = &df->df_slots[fi++];
+
+				slot->fs_ds =
+					tds; /* fanout_free will dstore_put */
+				memcpy(slot->fs_fh, ldf->ldf_fh,
+				       ldf->ldf_fh_len);
+				slot->fs_fh_len = ldf->ldf_fh_len;
+				slot->fs_ldf = ldf;
+			}
+
+			/*
+			 * If any tight-coupled dstore disappeared between the
+			 * count loop and the setup loop, some slots are NULL.
+			 * Abort the fan-out -- better to skip trust propagation
+			 * than to crash in a fanout thread on a NULL dstore.
+			 */
+			if (fi != ntight)
+				setup_ok = 0;
+
+			if (setup_ok) {
+				struct rpc_trans *rt = compound->c_rt;
+				struct task *t = rt->rt_task;
+
+				rt->rt_next_action =
+					nfs4_op_layoutget_trust_resume;
+				rt->rt_async_data = df;
+				task_pause(t);
+				dstore_fanout_launch(df, t);
+
+				stateid_put(&ls->ls_stid);
+				return NFS4_OP_FLAG_ASYNC;
+			}
+
+			dstore_fanout_free(df);
+		}
+		/* Fan-out alloc/setup failed -- proceed without trust. */
+	}
 
 out_stateid:
 	if (*status == NFS4_OK)
@@ -1430,6 +1569,70 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 					dstore_find(ldf->ldf_dstore_id);
 				if (!ds)
 					continue;
+
+				/*
+				 * Tight-coupling: revoke the layout stateid on
+				 * the DS before fencing so the DS stops
+				 * accepting I/O on the old credential.
+				 *
+				 * Find the layout stateid for this inode/client
+				 * and issue REVOKE_STATEID.  Best-effort --
+				 * fencing still proceeds on failure.
+				 */
+				if (ds->ds_tight_coupled &&
+				    compound->c_inode->i_stateids) {
+					struct stateid *ls_stid = NULL;
+					struct client *cl =
+						compound->c_nfs4_client ?
+							nfs4_client_to_client(
+								compound->c_nfs4_client) :
+							NULL;
+
+					if (cl) {
+						struct cds_lfht_iter lsit;
+						struct cds_lfht_node *lsn;
+
+						rcu_read_lock();
+						cds_lfht_first(
+							compound->c_inode
+								->i_stateids,
+							&lsit);
+						while ((lsn = cds_lfht_iter_get_node(
+								&lsit)) !=
+						       NULL) {
+							struct stateid *st = caa_container_of(
+								lsn,
+								struct stateid,
+								s_inode_node);
+							if (st->s_tag ==
+								    Layout_Stateid &&
+							    st->s_client ==
+								    cl) {
+								ls_stid = stateid_get(
+									st);
+								break;
+							}
+							cds_lfht_next(
+								compound->c_inode
+									->i_stateids,
+								&lsit);
+						}
+						rcu_read_unlock();
+					}
+
+					if (ls_stid) {
+						stateid4 w;
+
+						pack_stateid4(&w, ls_stid);
+						dstore_revoke_stateid(
+							ds, ldf->ldf_fh,
+							ldf->ldf_fh_len,
+							w.seqid,
+							(const uint8_t *)
+								w.other);
+						stateid_put(ls_stid);
+					}
+				}
 
 				dstore_data_file_fence(ds, ldf->ldf_fh,
 						       ldf->ldf_fh_len, ldf,

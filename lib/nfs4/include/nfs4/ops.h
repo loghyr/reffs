@@ -151,6 +151,12 @@ nfs4_layout_implicit_return_rw(struct compound *compound,
 uint32_t nfs4_op_layoutreturn_resume(struct rpc_trans *rt);
 
 /*
+ * nfs4_op_layoutget_trust_resume - fan-out resume for TRUST_STATEID
+ * propagation at LAYOUTGET.  Best-effort: logs failures and proceeds.
+ */
+uint32_t nfs4_op_layoutget_trust_resume(struct rpc_trans *rt);
+
+/*
  * nfs4_recall_dir_delegations - recall all directory delegations on dir
  * except those held by exclude.
  *
