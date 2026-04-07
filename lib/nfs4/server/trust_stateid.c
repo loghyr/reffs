@@ -305,6 +305,9 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 			   clientid4 clientid, layoutiomode4 iomode,
 			   uint64_t expire_mono_ns, const char *principal)
 {
+	if (!trust_ht)
+		return -EINVAL;
+
 	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
 
 	/*
@@ -374,6 +377,9 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 
 void trust_stateid_revoke(const stateid4 *stateid)
 {
+	if (!trust_ht)
+		return;
+
 	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
@@ -403,6 +409,9 @@ void trust_stateid_revoke(const stateid4 *stateid)
 
 void trust_stateid_bulk_revoke(clientid4 clientid)
 {
+	if (!trust_ht)
+		return;
+
 	bool clear_all = (clientid == 0);
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
