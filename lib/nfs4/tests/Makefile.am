@@ -103,6 +103,7 @@ TESTS = \
 	file_ops \
 	nfs4_client_persist \
 	nfs4_session \
+	open_trunc_test \
 	reflected_getattr_test \
 	sec_label \
 	stateid_unhash \

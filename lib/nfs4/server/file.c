@@ -34,6 +34,7 @@
 #include "reffs/vfs.h"
 #include "reffs/utf8string.h"
 #include "reffs/time.h"
+#include "nfs4/attr.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -410,12 +411,18 @@ uint32_t nfs4_op_open(struct compound *compound)
 						&how->createhow4_u.createattrs;
 				} else if (ret == -EEXIST) {
 					/*
-					 * File exists: open it, as if the
-					 * create had not been requested.
+					 * File exists: open it.  Preserve
+					 * createattrs so that FATTR4_SIZE=0
+					 * (O_RDONLY|O_TRUNC) is applied after
+					 * the permission check.
 					 */
 					child = inode_name_get_inode(
 						compound->c_inode, name);
 					ret = child ? 0 : -ENOENT;
+					if (ret == 0)
+						createattrs =
+							&how->createhow4_u
+								 .createattrs;
 				}
 				break;
 
@@ -614,11 +621,32 @@ uint32_t nfs4_op_open(struct compound *compound)
 			amode |= R_OK;
 		if (share_access & OPEN4_SHARE_ACCESS_WRITE)
 			amode |= W_OK;
+		/*
+		 * O_RDONLY|O_TRUNC maps to share_access=READ with
+		 * UNCHECKED4 createattrs{FATTR4_SIZE=0}.  Truncation
+		 * requires write permission even if the open is for
+		 * reading only.  RFC 8881 S18.16.3; POSIX open(2).
+		 */
+		if (createattrs && bitmap4_attribute_is_set(
+					   &createattrs->attrmask, FATTR4_SIZE))
+			amode |= W_OK;
 		ret = inode_access_check(target, &compound->c_ap, amode);
 		if (ret) {
 			*status = errno_to_nfs4(ret, OP_OPEN);
 			goto out;
 		}
+	}
+
+	/*
+	 * Apply UNCHECKED4 createattrs (e.g. FATTR4_SIZE=0) to an existing
+	 * file.  We already verified write permission above.  New files had
+	 * their createattrs applied immediately after vfs_create.
+	 */
+	if (!new_file && createattrs && createattrs->attrmask.bitmap4_len > 0) {
+		*status = nfs4_apply_createattrs(
+			createattrs, target, &resok->attrset, &compound->c_ap);
+		if (*status)
+			goto out;
 	}
 
 	/*
@@ -799,8 +827,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 	 */
 	resok->rflags = OPEN4_RESULT_LOCKTYPE_POSIX;
 
-	resok->attrset.bitmap4_len = 0;
-	resok->attrset.bitmap4_val = NULL;
+	bitmap4_destroy(&resok->attrset);
 
 	/*
 	 * Attempt to grant a delegation.
@@ -904,6 +931,14 @@ uint32_t nfs4_op_open(struct compound *compound)
 	}
 
 out:
+	/*
+	 * Free any attrset bitmap allocated during the operation.  On
+	 * the success path bitmap4_destroy was already called at the end
+	 * of processing (leaving val=NULL); calling it again here is
+	 * safe because free(NULL) is a no-op.  On error paths this is
+	 * the only cleanup for any partially-populated attrset.
+	 */
+	bitmap4_destroy(&resok->attrset);
 	inode_active_put(child); /* NULL-safe; only set if not transferred */
 	dirent_put(child_de);
 	free(name);
