@@ -476,13 +476,20 @@ uint32_t nfs4_op_open(struct compound *compound)
 							&how->createhow4_u
 								 .ch_createboth
 								 .cva_attrs;
-					/* New file: stamp ctime with verf. */
+					/*
+					 * Stamp ONLY ctime with the verifier
+					 * for idempotent-retry detection.
+					 * RFC 8881 S18.16.3: the server uses
+					 * ctime as the verifier cookie; the
+					 * retry check at -EEXIST compares
+					 * i_ctime against verf_ts.
+					 * Do NOT corrupt atime/mtime/btime --
+					 * they were set to "now" by vfs_create
+					 * and should remain valid timestamps.
+					 */
 					pthread_mutex_lock(
 						&child->i_attr_mutex);
 					child->i_ctime = verf_ts;
-					child->i_mtime = verf_ts;
-					child->i_atime = verf_ts;
-					child->i_btime = verf_ts;
 					pthread_mutex_unlock(
 						&child->i_attr_mutex);
 					inode_sync_to_disk(child);
