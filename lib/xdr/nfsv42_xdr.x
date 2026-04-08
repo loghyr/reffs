@@ -1469,6 +1469,7 @@ enum nfs_opnum4 {
  OP_CHUNK_UNLOCK        = 85,
  OP_CHUNK_WRITE         = 86,
  OP_CHUNK_WRITE_REPAIR  = 87,
+ OP_EXCHANGE_RANGE      = 88,
 
 %/* DS trust table operations for pNFS tight coupling (flexfiles v2) */
  OP_TRUST_STATEID       = 89,
@@ -2566,6 +2567,28 @@ case NFS4_OK:
 
 default:
  void;
+};
+
+struct EXCHANGE_RANGE4args {
+        /* SAVED_FH: source file */
+        /* CURRENT_FH: destination file */
+        stateid4        era_src_stateid;
+        stateid4        era_dst_stateid;
+        offset4         era_src_offset;
+        offset4         era_dst_offset;
+        length4         era_count;
+};
+
+struct EXCHANGE_RANGE4resok {
+        change_info4    err_src_cinfo;
+        change_info4    err_dst_cinfo;
+};
+
+union EXCHANGE_RANGE4res switch (nfsstat4 err_status) {
+ case NFS4_OK:
+         EXCHANGE_RANGE4resok err_resok4;
+ default:
+         void;
 };
 
 struct channel_attrs4 {
@@ -3725,6 +3748,7 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
  case OP_CHUNK_UNLOCK: CHUNK_UNLOCK4args opchunk_unlock;
  case OP_CHUNK_WRITE: CHUNK_WRITE4args opchunk_write;
  case OP_CHUNK_WRITE_REPAIR: CHUNK_WRITE_REPAIR4args opchunk_write_repair;
+ case OP_EXCHANGE_RANGE: EXCHANGE_RANGE4args opexchange_range;
  case OP_TRUST_STATEID: TRUST_STATEID4args optrust_stateid;
  case OP_REVOKE_STATEID: REVOKE_STATEID4args oprevoke_stateid;
  case OP_BULK_REVOKE_STATEID: BULK_REVOKE_STATEID4args opbulk_revoke_stateid;
@@ -3877,6 +3901,7 @@ union nfs_resop4 switch (nfs_opnum4 resop) {
  case OP_CHUNK_UNLOCK: CHUNK_UNLOCK4res opchunk_unlock;
  case OP_CHUNK_WRITE: CHUNK_WRITE4res opchunk_write;
  case OP_CHUNK_WRITE_REPAIR: CHUNK_WRITE_REPAIR4res opchunk_write_repair;
+ case OP_EXCHANGE_RANGE: EXCHANGE_RANGE4res opexchange_range;
  case OP_TRUST_STATEID: TRUST_STATEID4res optrust_stateid;
  case OP_REVOKE_STATEID: REVOKE_STATEID4res oprevoke_stateid;
  case OP_BULK_REVOKE_STATEID: BULK_REVOKE_STATEID4res opbulk_revoke_stateid;

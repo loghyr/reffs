@@ -28,12 +28,7 @@
 #include "reffs/server.h"
 #include "reffs/time.h"
 #include "nfs4/trace/nfs4.h"
-
-static inline changeid4 inode_changeid(struct inode *inode)
-{
-	return (changeid4)atomic_load_explicit(&inode->i_changeid,
-					       memory_order_relaxed);
-}
+#include "nfs4/changeid.h"
 
 uint32_t nfs4_op_lookup(struct compound *compound)
 {

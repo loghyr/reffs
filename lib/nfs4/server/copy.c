@@ -30,9 +30,13 @@
 #include "reffs/identity.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
+#include "nfs4/changeid.h"
 #include "nfs4/compound.h"
 #include "nfs4/errors.h"
 #include "nfs4/ops.h"
+
+/* Block alignment for CLONE and EXCHANGE_RANGE (FATTR4_CLONE_BLKSIZE). */
+#define NFS4_CLONE_BLKSIZE 4096
 
 /*
  * COPY -- RFC 7862 S15.2 (synchronous only).
@@ -436,10 +440,9 @@ uint32_t nfs4_op_clone(struct compound *compound)
 	 * FATTR4_CLONE_BLKSIZE.  cl_count == 0 (clone-to-EOF) is
 	 * exempt since the kernel handles that alignment internally.
 	 */
-#define CLONE_BLKSIZE 4096
-	if ((args->cl_src_offset % CLONE_BLKSIZE) ||
-	    (args->cl_dst_offset % CLONE_BLKSIZE) ||
-	    (args->cl_count != 0 && (args->cl_count % CLONE_BLKSIZE))) {
+	if ((args->cl_src_offset % NFS4_CLONE_BLKSIZE) ||
+	    (args->cl_dst_offset % NFS4_CLONE_BLKSIZE) ||
+	    (args->cl_count != 0 && (args->cl_count % NFS4_CLONE_BLKSIZE))) {
 		*status = NFS4ERR_INVAL;
 		goto out;
 	}
@@ -571,6 +574,381 @@ out:
 	      (unsigned long long)args->cl_src_offset,
 	      (unsigned long long)args->cl_dst_offset,
 	      (unsigned long long)args->cl_count);
+	return 0;
+}
+
+/*
+ * EXCHANGE_RANGE -- draft-haynes-nfsv4-swap S3.
+ *
+ * Atomically exchanges a byte range between SAVED_FH (source) and
+ * CURRENT_FH (destination).  Both must be regular files in the same
+ * filesystem.  The operation is its own inverse: applying it twice
+ * returns both files to their original state.
+ *
+ * The draft assigns op 81 to EXCHANGE_RANGE but that conflicts with
+ * OP_CHUNK_LOCK in reffs.  We use op 88 (next available after the
+ * CHUNK op block), which will be updated when the draft finalizes
+ * its op number.
+ *
+ * Lock ordering to avoid deadlock: acquire i_db_rwlock on the inode
+ * with the lower inode number first.  If both FHs reference the same
+ * inode, acquire only once (non-overlapping ranges are enforced
+ * before we reach the lock).
+ *
+ * change_info4 note (RFC 8881 S5.11.1): because EXCHANGE_RANGE is
+ * self-inverse, a client can confirm single execution by checking
+ * that cinfo.before from the current reply equals cinfo.after from
+ * a previous reply (meaning the op ran an odd number of times rather
+ * than being replayed an even number of times).  Both cinfo_before
+ * and cinfo_after are sampled inside i_db_rwlock, so atomic=TRUE
+ * is valid.
+ */
+uint32_t nfs4_op_exchange_range(struct compound *compound)
+{
+	EXCHANGE_RANGE4args *args =
+		NFS4_OP_ARG_SETUP(compound, opexchange_range);
+	EXCHANGE_RANGE4res *res = NFS4_OP_RES_SETUP(compound, opexchange_range);
+	nfsstat4 *status = &res->err_status;
+	struct stateid *src_stid = NULL;
+	struct stateid *dst_stid = NULL;
+	struct inode *src_inode = NULL;
+	struct inode *first_lock = NULL;
+	struct inode *second_lock = NULL;
+	char *buf_src = NULL;
+	char *buf_dst = NULL;
+	bool locked_first = false;
+	bool locked_second = false;
+	bool same_inode = false;
+	changeid4 src_cinfo_before = 0, src_cinfo_after = 0;
+	changeid4 dst_cinfo_before = 0, dst_cinfo_after = 0;
+	int ret;
+
+	/* Both SAVED_FH and CURRENT_FH must be set. */
+	if (network_file_handle_empty(&compound->c_curr_nfh) ||
+	    network_file_handle_empty(&compound->c_saved_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		goto out;
+	}
+
+	if (nfs4_check_grace()) {
+		*status = NFS4ERR_GRACE;
+		goto out;
+	}
+
+	/* Both files must be in the same filesystem. */
+	if (compound->c_curr_sb != compound->c_saved_sb) {
+		*status = NFS4ERR_XDEV;
+		goto out;
+	}
+
+	src_inode =
+		inode_find(compound->c_saved_sb, compound->c_saved_nfh.nfh_ino);
+	if (!src_inode) {
+		*status = NFS4ERR_STALE;
+		goto out;
+	}
+
+	/* Both must be regular files. */
+	if (!S_ISREG(src_inode->i_mode) ||
+	    !S_ISREG(compound->c_inode->i_mode)) {
+		*status = NFS4ERR_WRONG_TYPE;
+		goto out;
+	}
+
+	/*
+	 * Validate stateids: source requires read access,
+	 * destination requires write access.
+	 */
+	*status = nfs4_stateid_resolve(
+		compound, src_inode, &args->era_src_stateid, false, &src_stid);
+	if (*status != NFS4_OK)
+		goto out;
+
+	*status = nfs4_stateid_resolve(compound, compound->c_inode,
+				       &args->era_dst_stateid, true, &dst_stid);
+	if (*status != NFS4_OK)
+		goto out;
+
+	/* Permission checks. */
+	ret = inode_access_check(src_inode, &compound->c_ap, R_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_EXCHANGE_RANGE);
+		goto out;
+	}
+
+	ret = inode_access_check(compound->c_inode, &compound->c_ap, W_OK);
+	if (ret) {
+		*status = errno_to_nfs4(ret, OP_EXCHANGE_RANGE);
+		goto out;
+	}
+
+	/* Overflow check on offsets. */
+	if (args->era_count != 0) {
+		if (args->era_src_offset > UINT64_MAX - args->era_count ||
+		    args->era_dst_offset > UINT64_MAX - args->era_count) {
+			*status = NFS4ERR_INVAL;
+			goto out;
+		}
+	}
+
+	/* Alignment: both offsets must be clone-block aligned. */
+	if ((args->era_src_offset % NFS4_CLONE_BLKSIZE) ||
+	    (args->era_dst_offset % NFS4_CLONE_BLKSIZE)) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	/* Source must have a data block. */
+	if (!src_inode->i_db) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	/*
+	 * Compute the derived count when era_count == 0: exchange
+	 * from era_src_offset to source EOF.
+	 */
+	uint64_t src_offset = args->era_src_offset;
+	uint64_t dst_offset = args->era_dst_offset;
+	uint64_t count = args->era_count;
+
+	if (count == 0) {
+		if (src_offset >= (uint64_t)src_inode->i_size) {
+			/* Nothing to exchange -- success with no change. */
+			goto out;
+		}
+		count = (uint64_t)src_inode->i_size - src_offset;
+	}
+
+	/* Source range must lie entirely within the source file. */
+	if (src_offset + count > (uint64_t)src_inode->i_size) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	/*
+	 * Count alignment: must be a multiple of the clone block size,
+	 * UNLESS the range ends exactly at the source file EOF (partial
+	 * last block at EOF is permitted per the draft).
+	 */
+	if ((count % NFS4_CLONE_BLKSIZE) &&
+	    (src_offset + count != (uint64_t)src_inode->i_size)) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	/*
+	 * If count is not a multiple of the clone block size and the
+	 * destination range ends before the current destination EOF,
+	 * that would leave a partial clone block -- reject.
+	 */
+	uint64_t dst_inode_size = (uint64_t)compound->c_inode->i_size;
+
+	if ((count % NFS4_CLONE_BLKSIZE) &&
+	    (dst_offset + count < dst_inode_size)) {
+		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	/*
+	 * Same-file overlap check: if both FHs refer to the same inode,
+	 * the source and destination ranges must not overlap.
+	 */
+	if (src_inode->i_ino == compound->c_inode->i_ino) {
+		uint64_t src_end = src_offset + count;
+		uint64_t dst_end = dst_offset + count;
+
+		if (src_offset < dst_end && dst_offset < src_end) {
+			*status = NFS4ERR_INVAL;
+			goto out;
+		}
+	}
+
+	/* Allocate swap buffers. */
+	buf_src = malloc(count);
+	buf_dst = malloc(count);
+	if (!buf_src || !buf_dst) {
+		*status = NFS4ERR_NOSPC;
+		goto out;
+	}
+	memset(buf_dst, 0, count);
+
+	/*
+	 * Lock both inodes for write.  Acquire in inode-number order
+	 * to prevent deadlock.  If same inode, lock once.
+	 */
+	same_inode = (src_inode->i_ino == compound->c_inode->i_ino);
+
+	if (same_inode) {
+		first_lock = src_inode;
+		second_lock = NULL;
+	} else if (src_inode->i_ino < compound->c_inode->i_ino) {
+		first_lock = src_inode;
+		second_lock = compound->c_inode;
+	} else {
+		first_lock = compound->c_inode;
+		second_lock = src_inode;
+	}
+
+	pthread_rwlock_wrlock(&first_lock->i_db_rwlock);
+	locked_first = true;
+	if (second_lock) {
+		pthread_rwlock_wrlock(&second_lock->i_db_rwlock);
+		locked_second = true;
+	}
+
+	/* Sample change IDs before the operation. */
+	src_cinfo_before = inode_changeid(src_inode);
+	dst_cinfo_before = inode_changeid(compound->c_inode);
+
+	/* Read the source range. */
+	ssize_t n = data_block_read(src_inode->i_db, buf_src, (size_t)count,
+				    (off_t)src_offset);
+	if (n < 0 || (size_t)n != count) {
+		*status = NFS4ERR_IO;
+		goto out_unlock;
+	}
+
+	/* Read the destination range (zero-fills if dst is smaller). */
+	if (compound->c_inode->i_db &&
+	    dst_offset < (uint64_t)compound->c_inode->i_size) {
+		size_t dst_avail =
+			(size_t)(compound->c_inode->i_size - dst_offset);
+
+		if (dst_avail > count)
+			dst_avail = count;
+		n = data_block_read(compound->c_inode->i_db, buf_dst, dst_avail,
+				    (off_t)dst_offset);
+		if (n < 0) {
+			*status = NFS4ERR_IO;
+			goto out_unlock;
+		}
+	}
+
+	/*
+	 * Ensure destination has a data block and is large enough.
+	 */
+	if (!compound->c_inode->i_db) {
+		compound->c_inode->i_db =
+			data_block_alloc(compound->c_inode, NULL, 0, 0);
+		if (!compound->c_inode->i_db) {
+			*status = NFS4ERR_NOSPC;
+			goto out_unlock;
+		}
+	}
+
+	if (dst_offset + count > dst_inode_size) {
+		ssize_t r = data_block_resize(compound->c_inode->i_db,
+					      (size_t)(dst_offset + count));
+		if (r < 0) {
+			*status = NFS4ERR_NOSPC;
+			goto out_unlock;
+		}
+		/*
+		 * Update i_size immediately after resize so that i_size is
+		 * always >= i_db->db_size.  If the write below fails we still
+		 * have a consistent (though zero-filled) file rather than
+		 * i_db->db_size > i_size.
+		 */
+		compound->c_inode->i_db->db_size = (size_t)(dst_offset + count);
+		compound->c_inode->i_size = (int64_t)(dst_offset + count);
+	}
+
+	/* Write source's data into the destination range. */
+	n = data_block_write(compound->c_inode->i_db, buf_src, (size_t)count,
+			     (off_t)dst_offset);
+	if (n < 0 || (size_t)n != count) {
+		*status = NFS4ERR_IO;
+		goto out_unlock;
+	}
+
+	/* Write destination's original data into the source range. */
+	n = data_block_write(src_inode->i_db, buf_dst, (size_t)count,
+			     (off_t)src_offset);
+	if (n < 0 || (size_t)n != count) {
+		*status = NFS4ERR_IO;
+		goto out_unlock;
+	}
+
+	/* Update superblock accounting if destination grew. */
+	if (dst_offset + count > dst_inode_size) {
+		struct super_block *sb = compound->c_curr_sb;
+
+		compound->c_inode->i_used =
+			compound->c_inode->i_size / sb->sb_block_size +
+			(compound->c_inode->i_size % sb->sb_block_size ? 1 : 0);
+
+		size_t old_used, new_used;
+		old_used = atomic_load_explicit(&sb->sb_bytes_used,
+						memory_order_relaxed);
+		do {
+			new_used = old_used + ((size_t)(dst_offset + count) -
+					       (size_t)dst_inode_size);
+		} while (!atomic_compare_exchange_strong_explicit(
+			&sb->sb_bytes_used, &old_used, new_used,
+			memory_order_acq_rel, memory_order_relaxed));
+	}
+
+out_unlock:
+	if (second_lock && locked_second)
+		pthread_rwlock_unlock(&second_lock->i_db_rwlock);
+	if (locked_first)
+		pthread_rwlock_unlock(&first_lock->i_db_rwlock);
+	locked_first = false;
+	locked_second = false;
+
+	if (*status != NFS4_OK)
+		goto out;
+
+	/* Update mtime and ctime on both files. */
+	pthread_mutex_lock(&src_inode->i_attr_mutex);
+	inode_update_times_now(src_inode, REFFS_INODE_UPDATE_CTIME |
+						  REFFS_INODE_UPDATE_MTIME);
+	pthread_mutex_unlock(&src_inode->i_attr_mutex);
+
+	if (!same_inode) {
+		pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+		inode_update_times_now(compound->c_inode,
+				       REFFS_INODE_UPDATE_CTIME |
+					       REFFS_INODE_UPDATE_MTIME);
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+	}
+
+	inode_sync_to_disk(src_inode);
+	if (!same_inode)
+		inode_sync_to_disk(compound->c_inode);
+
+	/* Sample change IDs after the operation. */
+	src_cinfo_after = inode_changeid(src_inode);
+	dst_cinfo_after = same_inode ? src_cinfo_after :
+				       inode_changeid(compound->c_inode);
+
+	/* Populate the change_info4 response for both files. */
+	EXCHANGE_RANGE4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, EXCHANGE_RANGE4res_u, err_resok4);
+
+	resok->err_src_cinfo.atomic = TRUE;
+	resok->err_src_cinfo.before = src_cinfo_before;
+	resok->err_src_cinfo.after = src_cinfo_after;
+	resok->err_dst_cinfo.atomic = TRUE;
+	resok->err_dst_cinfo.before = dst_cinfo_before;
+	resok->err_dst_cinfo.after = dst_cinfo_after;
+
+out:
+	if (second_lock && locked_second)
+		pthread_rwlock_unlock(&second_lock->i_db_rwlock);
+	if (locked_first)
+		pthread_rwlock_unlock(&first_lock->i_db_rwlock);
+	free(buf_src);
+	free(buf_dst);
+	inode_active_put(src_inode);
+	stateid_put(src_stid);
+	stateid_put(dst_stid);
+	TRACE("%s status=%s(%d) src_offset=%llu dst_offset=%llu count=%llu",
+	      __func__, nfs4_err_name(*status), *status,
+	      (unsigned long long)args->era_src_offset,
+	      (unsigned long long)args->era_dst_offset,
+	      (unsigned long long)args->era_count);
 	return 0;
 }
 

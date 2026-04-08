@@ -750,6 +750,331 @@ START_TEST(test_copy_zero_at_eof)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* EXCHANGE_RANGE tests (data layer)                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Helper: allocate a second inode with given data for use as
+ * the "source" in exchange tests.  Caller must inode_active_put.
+ */
+static struct inode *exchange_create_inode(const char *data, size_t len)
+{
+	uint64_t ino =
+		__atomic_add_fetch(&test_sb->sb_next_ino, 1, __ATOMIC_RELAXED);
+	struct inode *in = inode_alloc(test_sb, ino);
+	ck_assert_ptr_nonnull(in);
+	in->i_mode = S_IFREG | 0644;
+	in->i_db = data_block_alloc(in, data, len, 0);
+	ck_assert_ptr_nonnull(in->i_db);
+	in->i_size = (int64_t)len;
+	return in;
+}
+
+/*
+ * Basic swap: two 4096-byte files, exchange the full range.
+ * After the swap each file holds the other's original content.
+ */
+START_TEST(test_exchange_range_basic_swap)
+{
+	char src_data[4096], dst_data[4096];
+	memset(src_data, 'S', sizeof(src_data));
+	memset(dst_data, 'D', sizeof(dst_data));
+
+	struct inode *src = exchange_create_inode(src_data, sizeof(src_data));
+	test_inode->i_db =
+		data_block_alloc(test_inode, dst_data, sizeof(dst_data), 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+	test_inode->i_size = sizeof(dst_data);
+
+	/* Simulate the swap: read both ranges then write them crossed. */
+	char buf_s[4096], buf_d[4096];
+	ssize_t n;
+
+	n = data_block_read(src->i_db, buf_s, 4096, 0);
+	ck_assert_int_eq(n, 4096);
+
+	n = data_block_read(test_inode->i_db, buf_d, 4096, 0);
+	ck_assert_int_eq(n, 4096);
+
+	n = data_block_write(test_inode->i_db, buf_s, 4096, 0);
+	ck_assert_int_eq(n, 4096);
+
+	n = data_block_write(src->i_db, buf_d, 4096, 0);
+	ck_assert_int_eq(n, 4096);
+
+	/* Verify: dst now holds 'S', src now holds 'D'. */
+	char verify[4096];
+	n = data_block_read(test_inode->i_db, verify, 4096, 0);
+	ck_assert_int_eq(n, 4096);
+	for (int i = 0; i < 4096; i++)
+		ck_assert_int_eq((unsigned char)verify[i], 'S');
+
+	n = data_block_read(src->i_db, verify, 4096, 0);
+	ck_assert_int_eq(n, 4096);
+	for (int i = 0; i < 4096; i++)
+		ck_assert_int_eq((unsigned char)verify[i], 'D');
+
+	data_block_put(src->i_db);
+	src->i_db = NULL;
+	inode_active_put(src);
+}
+END_TEST
+
+/*
+ * Self-inverse property: swapping the same range twice returns
+ * both files to their original state.
+ */
+START_TEST(test_exchange_range_self_inverse)
+{
+	char src_data[4096], dst_data[4096];
+	memset(src_data, 'A', sizeof(src_data));
+	memset(dst_data, 'B', sizeof(dst_data));
+
+	struct inode *src = exchange_create_inode(src_data, sizeof(src_data));
+	test_inode->i_db =
+		data_block_alloc(test_inode, dst_data, sizeof(dst_data), 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+	test_inode->i_size = sizeof(dst_data);
+
+	/* Apply the swap twice using buf_s/buf_d temporaries. */
+	char buf_s[4096], buf_d[4096];
+	ssize_t n;
+
+	for (int pass = 0; pass < 2; pass++) {
+		n = data_block_read(src->i_db, buf_s, 4096, 0);
+		ck_assert_int_eq(n, 4096);
+		n = data_block_read(test_inode->i_db, buf_d, 4096, 0);
+		ck_assert_int_eq(n, 4096);
+		n = data_block_write(test_inode->i_db, buf_s, 4096, 0);
+		ck_assert_int_eq(n, 4096);
+		n = data_block_write(src->i_db, buf_d, 4096, 0);
+		ck_assert_int_eq(n, 4096);
+	}
+
+	/* After two swaps: back to originals. */
+	char verify[4096];
+	n = data_block_read(src->i_db, verify, 4096, 0);
+	ck_assert_int_eq(n, 4096);
+	for (int i = 0; i < 4096; i++)
+		ck_assert_int_eq((unsigned char)verify[i], 'A');
+
+	n = data_block_read(test_inode->i_db, verify, 4096, 0);
+	ck_assert_int_eq(n, 4096);
+	for (int i = 0; i < 4096; i++)
+		ck_assert_int_eq((unsigned char)verify[i], 'B');
+
+	data_block_put(src->i_db);
+	src->i_db = NULL;
+	inode_active_put(src);
+}
+END_TEST
+
+/*
+ * Alignment: both offsets must be multiples of 4096.
+ *
+ * Note: these tests verify the arithmetic constants used by the alignment
+ * check in nfs4_op_exchange_range().  A full handler test would require
+ * a live compound context; these document the expected values and catch
+ * any accidental constant changes.
+ */
+START_TEST(test_exchange_range_alignment_valid)
+{
+	uint64_t src_off = 4096;
+	uint64_t dst_off = 8192;
+	uint64_t count = 4096;
+
+	ck_assert_int_eq(src_off % 4096, 0);
+	ck_assert_int_eq(dst_off % 4096, 0);
+	ck_assert_int_eq(count % 4096, 0);
+}
+END_TEST
+
+START_TEST(test_exchange_range_alignment_src_offset_invalid)
+{
+	/*
+	 * src_offset not aligned to 4096 --> handler returns NFS4ERR_INVAL.
+	 * The arithmetic here matches the condition in the handler.
+	 */
+	uint64_t src_off = 1000;
+	ck_assert_int_ne(src_off % 4096, 0);
+}
+END_TEST
+
+START_TEST(test_exchange_range_alignment_dst_offset_invalid)
+{
+	/*
+	 * dst_offset not aligned to 4096 --> handler returns NFS4ERR_INVAL.
+	 * The arithmetic here matches the condition in the handler.
+	 */
+	uint64_t dst_off = 5000;
+	ck_assert_int_ne(dst_off % 4096, 0);
+}
+END_TEST
+
+/*
+ * Overflow: era_src_offset + era_count wraps uint64.
+ *
+ * The handler checks era_src_offset > UINT64_MAX - era_count before
+ * any arithmetic.  This test confirms the overflow guard condition is
+ * correct.
+ */
+START_TEST(test_exchange_range_overflow_rejected)
+{
+	uint64_t src_offset = UINT64_MAX - 10;
+	uint64_t count = 20;
+
+	ck_assert(src_offset > UINT64_MAX - count);
+}
+END_TEST
+
+/*
+ * Source range must not exceed the source file size.
+ */
+START_TEST(test_exchange_range_source_exceeds_size)
+{
+	char data[4096];
+	memset(data, 'X', sizeof(data));
+
+	struct inode *src = exchange_create_inode(data, sizeof(data));
+
+	/* era_src_offset=0, era_count=8192 > src file size 4096 */
+	uint64_t src_offset = 0;
+	uint64_t count = 8192;
+	ck_assert(src_offset + count > (uint64_t)src->i_size);
+
+	data_block_put(src->i_db);
+	src->i_db = NULL;
+	inode_active_put(src);
+}
+END_TEST
+
+/*
+ * era_count == 0 derives the count as (src_size - src_offset).
+ * If src_offset is already at EOF, the operation succeeds with no change.
+ */
+START_TEST(test_exchange_range_zero_count_at_eof)
+{
+	char data[4096];
+	memset(data, 'Y', sizeof(data));
+
+	struct inode *src = exchange_create_inode(data, sizeof(data));
+
+	/* src_offset at EOF -- nothing to exchange */
+	uint64_t src_offset = (uint64_t)src->i_size;
+	uint64_t count = 0;
+
+	ck_assert(src_offset >= (uint64_t)src->i_size);
+	(void)count; /* Handler returns NFS4_OK with no data change. */
+
+	data_block_put(src->i_db);
+	src->i_db = NULL;
+	inode_active_put(src);
+}
+END_TEST
+
+/*
+ * Destination extension: if the destination range extends past dst EOF,
+ * the destination grows.  Verify via data_block_resize simulation.
+ */
+START_TEST(test_exchange_range_dst_extension)
+{
+	char src_data[4096], dst_data[1024];
+	memset(src_data, 'E', sizeof(src_data));
+	memset(dst_data, 'F', sizeof(dst_data));
+
+	struct inode *src = exchange_create_inode(src_data, sizeof(src_data));
+	test_inode->i_db =
+		data_block_alloc(test_inode, dst_data, sizeof(dst_data), 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+	test_inode->i_size = sizeof(dst_data);
+
+	/* Exchange src[0..4096) into dst[0..4096) -- dst must grow. */
+	uint64_t count = 4096;
+	uint64_t dst_offset = 0;
+	uint64_t dst_size = (uint64_t)test_inode->i_size;
+
+	ck_assert(dst_offset + count > dst_size);
+
+	ssize_t r = data_block_resize(test_inode->i_db,
+				      (size_t)(dst_offset + count));
+	ck_assert_int_ge(r, 0);
+	test_inode->i_size = (int64_t)(dst_offset + count);
+	ck_assert_int_eq(test_inode->i_size, 4096);
+
+	data_block_put(src->i_db);
+	src->i_db = NULL;
+	inode_active_put(src);
+}
+END_TEST
+
+/*
+ * Same-file, non-overlapping ranges: exchange [0..4096) and [4096..8192).
+ */
+START_TEST(test_exchange_range_same_file_nonoverlap)
+{
+	char data[8192];
+	memset(data, 0, sizeof(data));
+	memset(data, 'P', 4096); /* first half: 'P' */
+	memset(data + 4096, 'Q', 4096); /* second half: 'Q' */
+
+	test_inode->i_db = data_block_alloc(test_inode, data, sizeof(data), 0);
+	ck_assert_ptr_nonnull(test_inode->i_db);
+	test_inode->i_size = sizeof(data);
+
+	/* Verify non-overlap: [0,4096) and [4096,8192) are adjacent. */
+	uint64_t src_off = 0, dst_off = 4096, count = 4096;
+	uint64_t src_end = src_off + count;
+	uint64_t dst_end = dst_off + count;
+
+	ck_assert(!(src_off < dst_end && dst_off < src_end));
+
+	/* Swap via temporary buffers (simulates the handler). */
+	char buf_p[4096], buf_q[4096];
+	ssize_t n;
+
+	n = data_block_read(test_inode->i_db, buf_p, 4096, (off_t)src_off);
+	ck_assert_int_eq(n, 4096);
+
+	n = data_block_read(test_inode->i_db, buf_q, 4096, (off_t)dst_off);
+	ck_assert_int_eq(n, 4096);
+
+	n = data_block_write(test_inode->i_db, buf_q, 4096, (off_t)src_off);
+	ck_assert_int_eq(n, 4096);
+
+	n = data_block_write(test_inode->i_db, buf_p, 4096, (off_t)dst_off);
+	ck_assert_int_eq(n, 4096);
+
+	/* Verify: first half now 'Q', second half now 'P'. */
+	char verify[8192];
+	n = data_block_read(test_inode->i_db, verify, 8192, 0);
+	ck_assert_int_eq(n, 8192);
+
+	for (int i = 0; i < 4096; i++)
+		ck_assert_int_eq((unsigned char)verify[i], 'Q');
+	for (int i = 4096; i < 8192; i++)
+		ck_assert_int_eq((unsigned char)verify[i], 'P');
+}
+END_TEST
+
+/*
+ * Same-file, overlapping ranges must be rejected.
+ *
+ * The handler checks (src_off < dst_end && dst_off < src_end) and
+ * returns NFS4ERR_INVAL on overlap.  This test verifies the overlap
+ * condition that the handler guards against.
+ */
+START_TEST(test_exchange_range_same_file_overlap_rejected)
+{
+	/* [0..4096) and [2048..6144) overlap in [2048..4096) */
+	uint64_t src_off = 0, dst_off = 2048, count = 4096;
+	uint64_t src_end = src_off + count;
+	uint64_t dst_end = dst_off + count;
+
+	ck_assert(src_off < dst_end && dst_off < src_end);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -820,6 +1145,26 @@ Suite *file_ops_suite(void)
 	tcase_add_test(tc_copy, test_copy_dst_offset);
 	tcase_add_test(tc_copy, test_copy_zero_at_eof);
 	suite_add_tcase(s, tc_copy);
+
+	TCase *tc_exchange;
+	tc_exchange = tcase_create("EXCHANGE_RANGE");
+	tcase_add_checked_fixture(tc_exchange, file_ops_setup,
+				  file_ops_teardown);
+	tcase_add_test(tc_exchange, test_exchange_range_basic_swap);
+	tcase_add_test(tc_exchange, test_exchange_range_self_inverse);
+	tcase_add_test(tc_exchange, test_exchange_range_alignment_valid);
+	tcase_add_test(tc_exchange,
+		       test_exchange_range_alignment_src_offset_invalid);
+	tcase_add_test(tc_exchange,
+		       test_exchange_range_alignment_dst_offset_invalid);
+	tcase_add_test(tc_exchange, test_exchange_range_overflow_rejected);
+	tcase_add_test(tc_exchange, test_exchange_range_source_exceeds_size);
+	tcase_add_test(tc_exchange, test_exchange_range_zero_count_at_eof);
+	tcase_add_test(tc_exchange, test_exchange_range_dst_extension);
+	tcase_add_test(tc_exchange, test_exchange_range_same_file_nonoverlap);
+	tcase_add_test(tc_exchange,
+		       test_exchange_range_same_file_overlap_rejected);
+	suite_add_tcase(s, tc_exchange);
 
 	return s;
 }

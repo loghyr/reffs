@@ -90,6 +90,7 @@ uint32_t nfs4_op_read_plus(struct compound *compound);
 uint32_t nfs4_op_seek(struct compound *compound);
 uint32_t nfs4_op_write_same(struct compound *compound);
 uint32_t nfs4_op_clone(struct compound *compound);
+uint32_t nfs4_op_exchange_range(struct compound *compound);
 uint32_t nfs4_op_getxattr(struct compound *compound);
 uint32_t nfs4_op_setxattr(struct compound *compound);
 uint32_t nfs4_op_listxattrs(struct compound *compound);

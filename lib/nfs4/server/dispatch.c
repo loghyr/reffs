@@ -115,6 +115,7 @@ nfs4_op_cb op_table[OP_MAX] = {
 	[OP_SEEK] = nfs4_op_seek,
 	[OP_WRITE_SAME] = nfs4_op_write_same,
 	[OP_CLONE] = nfs4_op_clone,
+	[OP_EXCHANGE_RANGE] = nfs4_op_exchange_range,
 	[OP_GETXATTR] = nfs4_op_getxattr,
 	[OP_SETXATTR] = nfs4_op_setxattr,
 	[OP_LISTXATTRS] = nfs4_op_listxattrs,
