@@ -12,10 +12,10 @@
  *
  * rename(src, dst) on a regular file must:
  *   - make the file visible at dst and invisible at src
- *   - preserve the file's ino, uid, gid, size, mtime, ctime, and atime
- *     (the file itself is not modified)
- *   - decrement src directory's st_nlink and update its mtime/ctime
- *   - increment dst directory's st_nlink and update its mtime/ctime
+ *   - preserve the file's ino, uid, gid, size, mtime, and atime
+ *   - advance the file's ctime (POSIX: rename updates ctime on renamed inode)
+ *   - leave src directory's nlink unchanged and update its mtime/ctime
+ *   - leave dst directory's nlink unchanged and update its mtime/ctime
  *   - leave both directories' atimes unchanged
  *
  * Tested in both directions: root -> subdir and subdir -> root.
@@ -57,9 +57,10 @@ START_TEST(test_rename_file_to_subdir)
 	ck_assert_uint_eq(st_file_before.st_uid, st_file_after.st_uid);
 	ck_assert_uint_eq(st_file_before.st_gid, st_file_after.st_gid);
 	ck_assert_int_eq(st_file_after.st_size, 5);
+	/* atime/mtime preserved; ctime advances on renamed inode (POSIX) */
 	ck_assert_timespec_eq(st_file_before.st_atim, st_file_after.st_atim);
 	ck_assert_timespec_eq(st_file_before.st_mtim, st_file_after.st_mtim);
-	ck_assert_timespec_eq(st_file_before.st_ctim, st_file_after.st_ctim);
+	ck_assert_timespec_lt(st_file_before.st_ctim, st_file_after.st_ctim);
 
 	/* src directory: nlink unchanged, mtime/ctime advanced */
 	ck_assert_int_eq(reffs_fuse_getattr("/", &st_src_after), 0);
@@ -101,8 +102,9 @@ START_TEST(test_rename_file_back_to_root)
 	ck_assert_int_eq(reffs_fuse_getattr("/f", &st_file_after), 0);
 	ck_assert_uint_eq(st_file_before.st_ino, st_file_after.st_ino);
 	ck_assert_int_eq(st_file_after.st_size, 5);
+	/* atime/mtime preserved; ctime advances on renamed inode (POSIX) */
 	ck_assert_timespec_eq(st_file_before.st_mtim, st_file_after.st_mtim);
-	ck_assert_timespec_eq(st_file_before.st_ctim, st_file_after.st_ctim);
+	ck_assert_timespec_lt(st_file_before.st_ctim, st_file_after.st_ctim);
 
 	ck_assert_int_eq(reffs_fuse_getattr("/d", &st_src_after), 0);
 	ck_assert_uint_eq(st_src_before.st_nlink, st_src_after.st_nlink);

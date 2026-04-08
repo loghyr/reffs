@@ -459,6 +459,9 @@ static int vfs_rename_locked(struct inode *old_dir, const char *old_name,
 				     S_ISDIR(inode_src_file->i_mode));
 	}
 
+	/* RFC 8881 S18.26.3: rename updates ctime on the renamed inode. */
+	inode_update_times_now(inode_src_file, REFFS_INODE_UPDATE_CTIME);
+
 	inode_update_times_now(old_dir, REFFS_INODE_UPDATE_CTIME |
 						REFFS_INODE_UPDATE_MTIME);
 	if (old_dir != new_dir) {

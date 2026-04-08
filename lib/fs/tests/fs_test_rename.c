@@ -14,7 +14,7 @@
  * invariants (POSIX) are:
  *
  *   File identity: ino, uid, gid, size are unchanged.
- *   File timestamps: atime, mtime, ctime are unchanged on the moved entry.
+ *   File timestamps: atime and mtime unchanged; ctime advances (POSIX).
  *   Source parent:   mtime/ctime advance; atime unchanged.
  *   Dest parent:     mtime/ctime advance; atime unchanged.
  *   Old path:        getattr returns -ENOENT.
@@ -27,13 +27,15 @@
  *
  *  File rename within one directory
  *    - file appears under new name, disappears under old name
- *    - identity (ino/uid/gid/size) and all timestamps are preserved
+ *    - identity (ino/uid/gid/size), atime, and mtime are preserved;
+ *      ctime advances
  *    - parent nlink is unchanged (files carry no ".." link)
  *
  *  File rename across directories -- into a subdirectory
- *    - old path gone, new path has same identity and timestamps
- *    - source parent: nlink decrements; mtime/ctime advance; atime unchanged
- *    - dest   parent: nlink increments; mtime/ctime advance; atime unchanged
+ *    - old path gone, new path has same identity; atime/mtime preserved,
+ *      ctime advances
+ *    - source parent: nlink unchanged; mtime/ctime advance; atime unchanged
+ *    - dest   parent: nlink unchanged; mtime/ctime advance; atime unchanged
  *
  *  File rename across directories -- out of a subdirectory (reverse)
  *    - same invariants in the opposite direction
@@ -163,8 +165,8 @@ END_TEST
 
 /*
  * Rename within the same directory: the file's name changes but its
- * parent does not change, nlink is unaffected, and all timestamps on
- * the file itself are preserved.
+ * parent does not change, nlink is unaffected, atime/mtime are
+ * preserved, and ctime advances (POSIX: rename updates ctime).
  */
 START_TEST(test_rename_file_same_dir)
 {
@@ -175,6 +177,7 @@ START_TEST(test_rename_file_same_dir)
 	ck_assert_int_eq(reffs_fs_getattr("/f", &st_pre), 0);
 	ck_assert_int_eq(reffs_fs_getattr("/", &st_parent_before), 0);
 
+	usleep(1000); /* ensure ctime can advance */
 	ck_assert_int_eq(reffs_fs_rename("/f", "/g"), 0);
 
 	assert_not_exists("/f");
@@ -182,7 +185,8 @@ START_TEST(test_rename_file_same_dir)
 	assert_identity_preserved(&st_pre, &st_post);
 	ck_assert_timespec_eq(st_pre.st_atim, st_post.st_atim);
 	ck_assert_timespec_eq(st_pre.st_mtim, st_post.st_mtim);
-	ck_assert_timespec_eq(st_pre.st_ctim, st_post.st_ctim);
+	/* POSIX: rename updates ctime on the renamed inode */
+	ck_assert_timespec_lt(st_pre.st_ctim, st_post.st_ctim);
 
 	/* Parent nlink unchanged -- files carry no ".." link */
 	ck_assert_int_eq(reffs_fs_getattr("/", &st_parent_after), 0);
@@ -199,10 +203,10 @@ END_TEST
 /*
  * Move a file from the root into a subdirectory.
  *
- * File identity and all three timestamps must be unchanged.
- * Source parent (root): nlink decrements, mtime/ctime advance,
+ * File identity preserved; atime/mtime unchanged, ctime advances (POSIX).
+ * Source parent (root): nlink unchanged, mtime/ctime advance,
  *                       atime is untouched.
- * Dest   parent (/d):   nlink increments, mtime/ctime advance,
+ * Dest   parent (/d):   nlink unchanged, mtime/ctime advance,
  *                       atime is untouched.
  *
  * Note: because files carry no ".." link the nlink change here is due
@@ -229,12 +233,12 @@ START_TEST(test_rename_file_into_subdir)
 	/* old path gone */
 	ck_assert_int_eq(reffs_fs_getattr("/f", &st_file_post), -ENOENT);
 
-	/* new path: file identity and timestamps preserved */
+	/* new path: file identity, atime/mtime preserved; ctime advances (POSIX) */
 	ck_assert_int_eq(reffs_fs_getattr("/d/f", &st_file_post), 0);
 	assert_identity_preserved(&st_file_pre, &st_file_post);
 	ck_assert_timespec_eq(st_file_pre.st_atim, st_file_post.st_atim);
 	ck_assert_timespec_eq(st_file_pre.st_mtim, st_file_post.st_mtim);
-	ck_assert_timespec_eq(st_file_pre.st_ctim, st_file_post.st_ctim);
+	ck_assert_timespec_lt(st_file_pre.st_ctim, st_file_post.st_ctim);
 
 	/* source parent: nlink unchanged, mtime/ctime advanced, atime unchanged */
 	ck_assert_int_eq(reffs_fs_getattr("/", &st_src_post), 0);
@@ -279,7 +283,7 @@ START_TEST(test_rename_file_out_of_subdir)
 	assert_identity_preserved(&st_file_pre, &st_file_post);
 	ck_assert_timespec_eq(st_file_pre.st_atim, st_file_post.st_atim);
 	ck_assert_timespec_eq(st_file_pre.st_mtim, st_file_post.st_mtim);
-	ck_assert_timespec_eq(st_file_pre.st_ctim, st_file_post.st_ctim);
+	ck_assert_timespec_lt(st_file_pre.st_ctim, st_file_post.st_ctim);
 
 	ck_assert_int_eq(reffs_fs_getattr("/d", &st_src_post), 0);
 	ck_assert_uint_eq(st_src_pre.st_nlink, st_src_post.st_nlink);
