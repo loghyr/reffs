@@ -298,6 +298,7 @@ int main(void)
 
 	rt = calloc(1, sizeof(*rt));
 	verify(rt);
+	urcu_ref_init(&rt->rt_ref);
 
 	ph = calloc(1, sizeof(*ph));
 	verify(ph);
