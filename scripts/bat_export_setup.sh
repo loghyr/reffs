@@ -99,6 +99,10 @@ TLS_ID=$(create_export /tls tls)
 FFV1_ID_NEW=$(create_export /ffv1 sys tls)
 FFV2_ID_NEW=$(create_export /ffv2 sys tls)
 FILES_ID_NEW=$(create_export /files sys tls)
+# /striped: FFv1 striped layout bound to DSes 1 and 2 (128 KB stripe unit).
+# To add more DSes, append them to the sb-set-dstores call below and
+# rerun this script.
+STRIPED_ID_NEW=$(create_export /striped sys tls)
 
 # Set per-client rules: single wildcard rule matching all clients.
 # root_squash=false so MDS control-plane (uid=0) can operate.
@@ -137,6 +141,10 @@ if [ -n "$FILES_ID_NEW" ]; then
 	set_client_rules "$FILES_ID_NEW" \
 		--rule "match=*,access=rw,root_squash=false,flavors=sys:tls"
 fi
+if [ -n "$STRIPED_ID_NEW" ]; then
+	set_client_rules "$STRIPED_ID_NEW" \
+		--rule "match=*,access=rw,root_squash=false,flavors=sys:tls"
+fi
 
 # Enable layout types on pNFS exports
 info ""
@@ -144,6 +152,7 @@ info "Enabling layout types on pNFS exports..."
 FFV1_ID=$($PROBE sb-list 2>&1 | awk '$3 == "/ffv1" && $4 != "destroyed" {print $1; exit}') || true
 FFV2_ID=$($PROBE sb-list 2>&1 | awk '$3 == "/ffv2" && $4 != "destroyed" {print $1; exit}') || true
 FILES_ID=$($PROBE sb-list 2>&1 | awk '$3 == "/files" && $4 != "destroyed" {print $1; exit}') || true
+STRIPED_ID=$($PROBE sb-list 2>&1 | awk '$3 == "/striped" && $4 != "destroyed" {print $1; exit}') || true
 
 if [ -n "$FFV1_ID" ]; then
 	$PROBE sb-set-layout-types --id "$FFV1_ID" --layout-types ffv1 || \
@@ -156,6 +165,10 @@ fi
 if [ -n "$FILES_ID" ]; then
 	$PROBE sb-set-layout-types --id "$FILES_ID" --layout-types file || \
 		info "  WARN: set-layout-types failed for /files"
+fi
+if [ -n "$STRIPED_ID" ]; then
+	$PROBE sb-set-layout-types --id "$STRIPED_ID" --layout-types ffv1 || \
+		info "  WARN: set-layout-types failed for /striped"
 fi
 
 # Bind dstores to pNFS exports
@@ -171,6 +184,19 @@ fi
 if [ -n "$FILES_ID" ]; then
 	$PROBE sb-set-dstores --id "$FILES_ID" --dstores 2 || \
 		info "  WARN: set-dstores failed for /files (dstore 2 may not be configured)"
+fi
+# Striped export: bind all available DSes (dstores 1 and 2).
+# Add more dstore IDs here as DSes are configured.
+if [ -n "$STRIPED_ID" ]; then
+	$PROBE sb-set-dstores --id "$STRIPED_ID" --dstores 1 2 || \
+		info "  WARN: set-dstores failed for /striped (dstores 1 and 2 must be configured)"
+fi
+
+# Set stripe unit on the striped export (128 KB per stripe)
+info "Configuring stripe unit on /striped..."
+if [ -n "$STRIPED_ID" ]; then
+	$PROBE sb-set-stripe-unit --id "$STRIPED_ID" --stripe-unit 131072 || \
+		info "  WARN: set-stripe-unit failed for /striped"
 fi
 
 # -----------------------------------------------------------------------
@@ -190,3 +216,4 @@ info "Mount examples:"
 info "  mount -o vers=4.2,sec=sys  $HOST:/sys  /mnt/sys"
 info "  mount -o vers=4.2,sec=krb5 $HOST:/krb5 /mnt/krb5"
 info "  mount -o vers=3            $HOST:/ffv1 /mnt/ffv1"
+info "  mount -o vers=3            $HOST:/striped /mnt/striped"

@@ -38,4 +38,10 @@ struct sb_client_rule;
 struct rpc_trans *probe1_client_op_sb_set_client_rules(
 	uint64_t id, const struct sb_client_rule *rules, unsigned int nrules);
 
+struct rpc_trans *probe1_client_op_sb_set_dstores(uint64_t id,
+						  const uint32_t *dstore_ids,
+						  uint32_t ndstores);
+struct rpc_trans *probe1_client_op_sb_set_stripe_unit(uint64_t id,
+						      uint32_t stripe_unit);
+
 #endif

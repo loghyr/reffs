@@ -301,7 +301,7 @@ union SB_LIST1res switch (probe_stat1 slr_status) {
 		void;
 };
 
-/* SB_CREATE (op 14) — server assigns the sb_id from monotonic counter */
+/* SB_CREATE (op 14) -- server assigns the sb_id from monotonic counter */
 struct SB_CREATE1args {
 	string			sca_path<>;
 	probe_storage_type1	sca_storage_type;
@@ -313,18 +313,18 @@ union SB_CREATE1res switch (probe_stat1 scr_status) {
 		void;
 };
 
-/* SB_MOUNT (op 15) — returns probe_stat1 directly (no resok) */
+/* SB_MOUNT (op 15) -- returns probe_stat1 directly (no resok) */
 struct SB_MOUNT1args {
 	unsigned hyper	sma_id;
 	string		sma_path<>;
 };
 
-/* SB_UNMOUNT (op 16) — returns probe_stat1 directly */
+/* SB_UNMOUNT (op 16) -- returns probe_stat1 directly */
 struct SB_UNMOUNT1args {
 	unsigned hyper	sua_id;
 };
 
-/* SB_DESTROY (op 17) — returns probe_stat1 directly */
+/* SB_DESTROY (op 17) -- returns probe_stat1 directly */
 struct SB_DESTROY1args {
 	unsigned hyper	sda_id;
 };
@@ -340,28 +340,34 @@ union SB_GET1res switch (probe_stat1 sgr_status) {
 		void;
 };
 
-/* SB_SET_FLAVORS (op 19) — returns probe_stat1 directly */
+/* SB_SET_FLAVORS (op 19) -- returns probe_stat1 directly */
 struct SB_SET_FLAVORS1args {
 	unsigned hyper		sfa_id;
 	probe_auth_flavor1	sfa_flavors<PROBE1_MAX_FLAVORS>;
 };
 
-/* SB_SET_LAYOUT_TYPES (op 24) — returns probe_stat1 directly */
+/* SB_SET_LAYOUT_TYPES (op 24) -- returns probe_stat1 directly */
 struct SB_SET_LAYOUT_TYPES1args {
 	unsigned hyper		sla_id;
 	unsigned int		sla_layout_types;  /* bitmask: 1=FFv1, 2=FFv2 */
 };
 
-/* SB_SET_DSTORES (op 25) — returns probe_stat1 directly */
+/* SB_SET_DSTORES (op 25) -- returns probe_stat1 directly */
 struct SB_SET_DSTORES1args {
 	unsigned hyper		sda_id;
 	unsigned int		sda_dstore_ids<16>;
 };
 
-/* SB_SET_CLIENT_RULES (op 26) — returns probe_stat1 directly */
+/* SB_SET_CLIENT_RULES (op 26) -- returns probe_stat1 directly */
 struct SB_SET_CLIENT_RULES1args {
 	unsigned hyper		scra_id;
 	probe_client_rule1	scra_rules<PROBE1_MAX_CLIENT_RULES>;
+};
+
+/* SB_SET_STRIPE_UNIT (op 27) -- returns probe_stat1 directly */
+struct SB_SET_STRIPE_UNIT1args {
+	unsigned hyper		ssu_id;
+	unsigned int		ssu_stripe_unit;
 };
 
 /* SB_LINT_FLAVORS (op 20) */
@@ -541,5 +547,6 @@ program PROBE_PROGRAM {
 		probe_stat1 PROBEPROC1_SB_SET_LAYOUT_TYPES(SB_SET_LAYOUT_TYPES1args) = 24;
 		probe_stat1 PROBEPROC1_SB_SET_DSTORES(SB_SET_DSTORES1args) = 25;
 		probe_stat1 PROBEPROC1_SB_SET_CLIENT_RULES(SB_SET_CLIENT_RULES1args) = 26;
+		probe_stat1 PROBEPROC1_SB_SET_STRIPE_UNIT(SB_SET_STRIPE_UNIT1args) = 27;
 	} = 1;
 } = 211768;

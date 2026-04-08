@@ -60,10 +60,14 @@ static void usage(const char *prog)
 	printf("                                     sb-get    - Get superblock info\n");
 	printf("                                     sb-lint-flavors - Check flavor consistency\n");
 	printf("                                     sb-set-flavors - Set sb security flavors\n");
+	printf("                                     sb-set-dstores - Bind DSes to superblock\n");
+	printf("                                     sb-set-stripe-unit - Set FFv1 stripe unit\n");
 	printf("  -I  --sb-id=ID               Superblock ID for sb-* operations\n");
 	printf("  -P  --sb-path=PATH           Path for sb-create/sb-mount\n");
 	printf("  -T  --storage-type=TYPE      Storage type (0=ram, 1=posix)\n");
 	printf("  -F  --flavors=LIST           Comma-separated: sys,krb5,krb5i,krb5p,tls\n");
+	printf("  -D  --dstores=LIST           Comma-separated dstore IDs (sb-set-dstores)\n");
+	printf("  -U  --stripe-unit=N          Stripe unit in bytes, power of 2 (sb-set-stripe-unit)\n");
 	printf("  -g  --program=pgm            Probe this program \"pgm\"\n");
 	printf("  -v  --version=v              Probe this program version \"vers\"\n");
 	printf("  -p  --port=port              Connect to server at the \"port\"\n");
@@ -93,6 +97,8 @@ static struct option long_opts[] = {
 	{ "sb-path", required_argument, 0, 'P' },
 	{ "storage-type", required_argument, 0, 'T' },
 	{ "flavors", required_argument, 0, 'F' },
+	{ "dstores", required_argument, 0, 'D' },
+	{ "stripe-unit", required_argument, 0, 'U' },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -105,6 +111,29 @@ uint32_t storage_type = 0;
 #define MAX_CLI_FLAVORS 8
 uint32_t cli_flavors[MAX_CLI_FLAVORS];
 uint32_t cli_nflavors = 0;
+
+#define MAX_CLI_DSTORES 16
+uint32_t cli_dstores[MAX_CLI_DSTORES];
+uint32_t cli_ndstores = 0;
+uint32_t cli_stripe_unit = 0;
+
+/*
+ * Parse a comma-separated dstore ID list: "1,2,3"
+ */
+static void parse_dstores(const char *arg)
+{
+	char *buf = strdup(arg);
+	char *saveptr;
+	char *tok;
+
+	if (!buf)
+		return;
+	for (tok = strtok_r(buf, ",", &saveptr);
+	     tok && cli_ndstores < MAX_CLI_DSTORES;
+	     tok = strtok_r(NULL, ",", &saveptr))
+		cli_dstores[cli_ndstores++] = (uint32_t)strtoul(tok, NULL, 10);
+	free(buf);
+}
 
 /*
  * Parse a comma-separated flavor string: "sys,krb5,krb5i,krb5p,tls"
@@ -157,7 +186,7 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "hc:f:p:o:s:g:v:HI:P:T:F:";
+	char *opts = "hc:f:p:o:s:g:v:HI:P:T:F:D:U:";
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -203,6 +232,12 @@ int main(int argc, char *argv[])
 			break;
 		case 'F':
 			parse_flavors(optarg);
+			break;
+		case 'D':
+			parse_dstores(optarg);
+			break;
+		case 'U':
+			cli_stripe_unit = (uint32_t)strtoul(optarg, NULL, 0);
 			break;
 		}
 	}
@@ -282,6 +317,12 @@ int main(int argc, char *argv[])
 		}
 	} else if (!strcmp(op, "sb-lint-flavors")) {
 		rt = probe1_client_op_sb_lint_flavors();
+	} else if (!strcmp(op, "sb-set-dstores")) {
+		rt = probe1_client_op_sb_set_dstores(sb_id, cli_dstores,
+						     cli_ndstores);
+	} else if (!strcmp(op, "sb-set-stripe-unit")) {
+		rt = probe1_client_op_sb_set_stripe_unit(sb_id,
+							 cli_stripe_unit);
 	} else {
 		LOG("op = \"%s\" is not supported", op);
 	}

@@ -159,6 +159,12 @@ struct super_block {
 #define SB_MAX_DSTORES 16
 	uint32_t sb_dstore_ids[SB_MAX_DSTORES];
 	uint32_t sb_ndstores;
+	/*
+	 * FFv1 stripe unit in bytes.  0 = whole-file CSM (all mirrors
+	 * hold the same data).  Non-zero = RAID-0: client writes stripe i
+	 * to mirror i % ffl_mirrors_len.  Set via probe sb-set-stripe-unit.
+	 */
+	uint32_t sb_stripe_unit;
 
 	/* Per-op NFS4 statistics -- superblock scope. */
 	struct reffs_op_stats sb_nfs4_op_stats[REFFS_NFS4_OP_MAX];

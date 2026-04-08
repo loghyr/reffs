@@ -140,7 +140,7 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 
 		uint64_t now = reffs_now_ns();
 		uint64_t exp = atomic_load_explicit(&te->te_expire_ns,
-						    memory_order_relaxed);
+						    memory_order_acquire);
 		uint32_t flags = atomic_load_explicit(&te->te_flags,
 						      memory_order_acquire);
 
@@ -306,7 +306,7 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 
 		uint64_t now = reffs_now_ns();
 		uint64_t exp = atomic_load_explicit(&te->te_expire_ns,
-						    memory_order_relaxed);
+						    memory_order_acquire);
 		uint32_t flags = atomic_load_explicit(&te->te_flags,
 						      memory_order_acquire);
 

@@ -837,7 +837,8 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		struct layout_segment seg = {
 			.ls_offset = 0,
 			.ls_length = 0, /* entire file */
-			.ls_stripe_unit = 0,
+			.ls_stripe_unit =
+				compound->c_inode->i_sb->sb_stripe_unit,
 			.ls_k = (uint16_t)nfiles,
 			.ls_m = 0,
 			.ls_nfiles = nfiles,

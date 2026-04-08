@@ -118,6 +118,7 @@ int sb_registry_save(const char *state_dir)
 			     d++)
 				entries[i].sre_dstore_ids[d] =
 					sb->sb_dstore_ids[d];
+			entries[i].sre_stripe_unit = sb->sb_stripe_unit;
 			i++;
 		}
 		rcu_read_unlock();
@@ -333,6 +334,7 @@ int sb_registry_load(const char *state_dir)
 			for (uint32_t d = 0; d < e->sre_ndstores; d++)
 				sb->sb_dstore_ids[d] = e->sre_dstore_ids[d];
 		}
+		sb->sb_stripe_unit = e->sre_stripe_unit;
 
 		ret = super_block_dirent_create(sb, NULL,
 						reffs_life_action_birth);

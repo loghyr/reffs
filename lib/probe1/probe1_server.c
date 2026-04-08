@@ -1355,6 +1355,36 @@ static int probe1_op_sb_set_client_rules(struct rpc_trans *rt)
 	return 0;
 }
 
+static int probe1_op_sb_set_stripe_unit(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_STRIPE_UNIT1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->ssu_id);
+
+	if (!sb) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	/* Stripe unit must be a power of two (or zero to disable). */
+	uint32_t su = args->ssu_stripe_unit;
+
+	if (su != 0 && (su & (su - 1)) != 0) {
+		TRACE("sb-set-stripe-unit: stripe unit %u is not a power of two",
+		      su);
+		super_block_put(sb);
+		*res = PROBE1ERR_INVAL;
+		return *res;
+	}
+
+	sb->sb_stripe_unit = su;
+
+	super_block_put(sb);
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Identity management ops                                            */
 /* ------------------------------------------------------------------ */
@@ -1543,6 +1573,10 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_SB_SET_CLIENT_RULES1args,
 			   SB_SET_CLIENT_RULES1args, xdr_probe_stat1,
 			   probe_stat1, probe1_op_sb_set_client_rules),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_SET_STRIPE_UNIT,
+			   xdr_SB_SET_STRIPE_UNIT1args, SB_SET_STRIPE_UNIT1args,
+			   xdr_probe_stat1, probe_stat1,
+			   probe1_op_sb_set_stripe_unit),
 };
 
 static struct rpc_program_handler *probe1_handler;

@@ -234,6 +234,12 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_SB_SET_DSTORES, args,
                          response_type='probe_stat1')
 
+    def sb_set_stripe_unit(self, sb_id, stripe_unit):
+        """Set FFv1 stripe unit in bytes on a superblock (0 = whole-file CSM)."""
+        args = SB_SET_STRIPE_UNIT1args(sb_id, stripe_unit)
+        return self.proc(PROBEPROC1_SB_SET_STRIPE_UNIT, args,
+                         response_type='probe_stat1')
+
     def sb_set_client_rules(self, sb_id, rules):
         """Set per-client export policy rules on a superblock.
 

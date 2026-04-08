@@ -702,6 +702,15 @@ def sb_set_dstores_cmd(client, args):
     print(f"Superblock {args.id} dstores set to: {','.join(str(d) for d in dstore_ids)}")
 
 
+def sb_set_stripe_unit_cmd(client, args):
+    res = client.sb_set_stripe_unit(args.id, args.stripe_unit)
+    probe_error_handler(res)
+    if args.stripe_unit == 0:
+        print(f"Superblock {args.id} stripe unit cleared (whole-file CSM)")
+    else:
+        print(f"Superblock {args.id} stripe unit set to {args.stripe_unit} bytes")
+
+
 def sb_set_client_rules_cmd(client, args):
     """Parse --rule strings and call sb_set_client_rules.
 
@@ -1023,6 +1032,14 @@ def parse_args():
     p_sb_dstores.add_argument('--dstores', nargs='+', type=int, required=True,
                               help='Dstore IDs (e.g., 1 2 3)')
     p_sb_dstores.set_defaults(func=sb_set_dstores_cmd)
+
+    p_sb_stripe = subparsers.add_parser('sb-set-stripe-unit',
+                                        help='Set FFv1 stripe unit for a superblock')
+    p_sb_stripe.add_argument('--id', type=int, required=True, help='Superblock ID')
+    p_sb_stripe.add_argument('--stripe-unit', type=int, required=True,
+                             dest='stripe_unit',
+                             help='Stripe unit in bytes (power of 2; 0 = whole-file CSM)')
+    p_sb_stripe.set_defaults(func=sb_set_stripe_unit_cmd)
 
     p_sb_client_rules = subparsers.add_parser(
         'sb-set-client-rules',

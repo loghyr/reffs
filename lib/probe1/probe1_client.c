@@ -761,6 +761,79 @@ struct rpc_trans *probe1_client_op_sb_set_client_rules(
 	return rt;
 }
 
+struct rpc_trans *probe1_client_op_sb_set_dstores(uint64_t id,
+						  const uint32_t *dstore_ids,
+						  uint32_t ndstores)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_SET_DSTORES;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_DSTORES1args *args = ph->ph_args;
+
+	args->sda_id = id;
+	if (ndstores > 16)
+		ndstores = 16;
+	args->sda_dstore_ids.sda_dstore_ids_val =
+		calloc(ndstores, sizeof(uint32_t));
+	if (!args->sda_dstore_ids.sda_dstore_ids_val) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	args->sda_dstore_ids.sda_dstore_ids_len = ndstores;
+	for (uint32_t i = 0; i < ndstores; i++)
+		args->sda_dstore_ids.sda_dstore_ids_val[i] = dstore_ids[i];
+
+	rt->rt_cb = sb_stat_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+struct rpc_trans *probe1_client_op_sb_set_stripe_unit(uint64_t id,
+						      uint32_t stripe_unit)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_SET_STRIPE_UNIT;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_STRIPE_UNIT1args *args = ph->ph_args;
+
+	args->ssu_id = id;
+	args->ssu_stripe_unit = stripe_unit;
+
+	rt->rt_cb = sb_stat_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
 static int null_cb(struct rpc_trans __attribute__((unused)) * rt)
 {
 	LOG("NULL replied");
