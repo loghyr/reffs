@@ -112,6 +112,12 @@ int mds_file_write(struct mds_session *ms, struct mds_file *mf,
 int mds_file_read(struct mds_session *ms, struct mds_file *mf, uint8_t *buf,
 		  uint32_t len, uint64_t offset, uint32_t *nread);
 int mds_file_remove(struct mds_session *ms, const char *name);
+int mds_file_clone(struct mds_session *ms, struct mds_file *src,
+		   struct mds_file *dst, uint64_t src_offset,
+		   uint64_t dst_offset, uint64_t count);
+int mds_file_exchange_range(struct mds_session *ms, struct mds_file *src,
+			    struct mds_file *dst, uint64_t src_offset,
+			    uint64_t dst_offset, uint64_t count);
 
 /* ------------------------------------------------------------------ */
 /* Layout operations                                                   */

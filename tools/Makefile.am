@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 AM_CFLAGS = \
@@ -26,4 +26,7 @@ nfs_tls_test_LDADD = \
 	$(top_builddir)/lib/tls/libreffs_tls.la \
 	$(OPENSSL_LIBS)
 
-bin_PROGRAMS = ec_demo nfs_krb5_test nfs_tls_test
+er_demo_SOURCES = er_demo.c
+er_demo_LDADD = $(NFS4_CLIENT_LIBS)
+
+bin_PROGRAMS = ec_demo er_demo nfs_krb5_test nfs_tls_test

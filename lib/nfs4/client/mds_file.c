@@ -497,6 +497,179 @@ int mds_file_getattr(struct mds_session *ms, struct mds_file *mf, char *owner,
 }
 
 /* ------------------------------------------------------------------ */
+/* CLONE -- server-side reflink from SAVED_FH (source) to CURRENT_FH   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * mds_file_clone - copy src into dst using the server's CLONE op.
+ *
+ * The compound is: SEQUENCE + PUTFH(src) + SAVEFH + PUTFH(dst) + CLONE.
+ * src becomes SAVED_FH (the source of the copy); dst becomes CURRENT_FH
+ * (the destination).
+ *
+ * count=0 means "to end of file" per RFC 7862 S15.13.
+ */
+int mds_file_clone(struct mds_session *ms, struct mds_file *src,
+		   struct mds_file *dst, uint64_t src_offset,
+		   uint64_t dst_offset, uint64_t count)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	/* SEQUENCE + PUTFH(src) + SAVEFH + PUTFH(dst) + CLONE = 5 ops */
+	ret = mds_compound_init(&mc, 5, "clone");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	/* PUTFH(src): make src the current FH so SAVEFH captures it. */
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+	slot->nfs_argop4_u.opputfh.object = src->mf_fh;
+
+	/* SAVEFH: copy current FH (src) into the saved FH slot. */
+	slot = mds_compound_add_op(&mc, OP_SAVEFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	/* PUTFH(dst): make dst the current FH (CLONE destination). */
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+	slot->nfs_argop4_u.opputfh.object = dst->mf_fh;
+
+	/* CLONE: reflink from SAVED_FH (src) into CURRENT_FH (dst). */
+	slot = mds_compound_add_op(&mc, OP_CLONE);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	CLONE4args *ca = &slot->nfs_argop4_u.opclone;
+	memcpy(&ca->cl_src_stateid, &src->mf_stateid, sizeof(stateid4));
+	memcpy(&ca->cl_dst_stateid, &dst->mf_stateid, sizeof(stateid4));
+	ca->cl_src_offset = src_offset;
+	ca->cl_dst_offset = dst_offset;
+	ca->cl_count = count;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	nfs_resop4 *res = mds_compound_result(&mc, 4);
+
+	if (!res || res->nfs_resop4_u.opclone.cl_status != NFS4_OK) {
+		mds_compound_fini(&mc);
+		return -EREMOTEIO;
+	}
+
+	mds_compound_fini(&mc);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* EXCHANGE_RANGE -- atomically swap byte ranges between two files      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * mds_file_exchange_range - atomically swap byte ranges between src and dst.
+ *
+ * The compound is: SEQUENCE + PUTFH(src) + SAVEFH + PUTFH(dst) +
+ * EXCHANGE_RANGE.  src becomes SAVED_FH; dst becomes CURRENT_FH.
+ *
+ * The swap is self-inverse: calling this twice with the same arguments
+ * returns both files to their original state.  count=0 means "to end of
+ * the larger of the two files" per draft-haynes-nfsv4-swap.
+ */
+int mds_file_exchange_range(struct mds_session *ms, struct mds_file *src,
+			    struct mds_file *dst, uint64_t src_offset,
+			    uint64_t dst_offset, uint64_t count)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret;
+
+	/* SEQUENCE + PUTFH(src) + SAVEFH + PUTFH(dst) + EXCHANGE_RANGE = 5 ops */
+	ret = mds_compound_init(&mc, 5, "exchange_range");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	/* PUTFH(src): make src the current FH so SAVEFH captures it. */
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+	slot->nfs_argop4_u.opputfh.object = src->mf_fh;
+
+	/* SAVEFH: copy current FH (src) into the saved FH slot. */
+	slot = mds_compound_add_op(&mc, OP_SAVEFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	/* PUTFH(dst): make dst the current FH (EXCHANGE_RANGE destination). */
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+	slot->nfs_argop4_u.opputfh.object = dst->mf_fh;
+
+	/* EXCHANGE_RANGE: atomically swap ranges between SAVED_FH and CURRENT_FH. */
+	slot = mds_compound_add_op(&mc, OP_EXCHANGE_RANGE);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	EXCHANGE_RANGE4args *era = &slot->nfs_argop4_u.opexchange_range;
+	memcpy(&era->era_src_stateid, &src->mf_stateid, sizeof(stateid4));
+	memcpy(&era->era_dst_stateid, &dst->mf_stateid, sizeof(stateid4));
+	era->era_src_offset = src_offset;
+	era->era_dst_offset = dst_offset;
+	era->era_count = count;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret) {
+		mds_compound_fini(&mc);
+		return ret;
+	}
+
+	nfs_resop4 *res = mds_compound_result(&mc, 4);
+
+	if (!res || res->nfs_resop4_u.opexchange_range.err_status != NFS4_OK) {
+		mds_compound_fini(&mc);
+		return -EREMOTEIO;
+	}
+
+	mds_compound_fini(&mc);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* SETATTR -- set owner and/or owner_group strings                      */
 /* ------------------------------------------------------------------ */
 
