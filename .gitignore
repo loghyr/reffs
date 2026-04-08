@@ -42,6 +42,9 @@ ltmain.sh
 missing
 py-compile
 test-driver
+# Runtime server state files
+statd.state
+
 # External test suites — cloned on first CI run, kept out of tree
 # to avoid license contamination (different licenses from AGPL-3.0).
 external/

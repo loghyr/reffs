@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # External Test Suite Results
 
-Last updated: 2026-04-02 (post createattrs + W_OK fix)
+Last updated: 2026-04-08 (fix exclusive-create atime corruption)
 
 ## Summary
 
@@ -16,7 +16,7 @@ Last updated: 2026-04-02 (post createattrs + W_OK fix)
 | CTHON04 | pNFS | **4/4 (100%)** | basic, general, special, lock |
 | pynfs | NFSv4.1 | **169/169 (100%)** | all pass |
 | pjdfstest | NFSv3 | **8787/8789 (99.98%)** | 2 failures |
-| pjdfstest | NFSv4.2 | **8757/8789 (99.6%)** | 32 failures (ctime + perm) |
+| pjdfstest | NFSv4.2 | **8762/8789 (99.7%)** | 27 failures: all client behavior (match knfsd) |
 | nfstest | NFSv4.2 | **98/98 (100%)** | nfstest_posix |
 | Unit tests | — | **ALL PASS** | COPY tests enabled |
 
@@ -27,9 +27,11 @@ All 169 tests pass. Fixed in this session:
 - **RECC2/RECC3**: per-client RECLAIM_COMPLETE enforcement
   (removed server-wide grace guard)
 
-## pjdfstest NFSv4.2 Failures (28) by Category
+## pjdfstest NFSv4.2 Failures (27) by Category — all client behavior
 
-After commit 7f7135f2 (enforce W_OK + apply createattrs), down from 124.
+After commit 9308d69a (enforce W_OK for O_RDONLY|O_TRUNC), down from 31.
+Previously down from 32 at commit 6fc7b239 (fix exclusive-create atime).
+Previously down from 124 at commit 7f7135f2 (enforce W_OK + apply createattrs).
 
 ### Described failures (7 unique patterns)
 
@@ -43,6 +45,8 @@ After commit 7f7135f2 (enforce W_OK + apply createattrs), down from 124.
 
 ### Bare failures — ctime not visible after mutation (26)
 
+All confirmed present in `logs/pjdfstest_knfsd_v4.txt` (2026-04-07).
+
 | Test file | Failed | Total | Tests checking |
 |-----------|--------|-------|----------------|
 | link/00.t | 10 | 202 | file ctime + dir ctime/mtime after link |
@@ -51,28 +55,24 @@ After commit 7f7135f2 (enforce W_OK + apply createattrs), down from 124.
 | rename/24.t | 1 | 13 | ctime after rename |
 | ftruncate/00.t | 1 | 26 | ctime after truncate |
 
-**Investigation (2026-04-02)**: The VFS layer (vfs_link, vfs_remove,
-vfs_rmdir) correctly updates ctime on both the target inode and
-parent directory via `inode_update_times_now()`.  The tests use
-`sleep 1` to guarantee a time gap, then stat the file/dir.
-
-NFSv3 passes these same tests (link/00.t, unlink/00.t) — only NFSv4
-fails.  This could be:
-- NFSv4 client attr cache behavior (v4 caches more aggressively than v3)
-- Server not conveying the change correctly in the NFSv4 response
-- Missing post-op attr update that the v3 wcc_data provides
-
-**TODO**: Run pjdfstest NFSv4.2 against Linux knfsd to determine
-whether this is client behavior or a server bug.  Do not assume
-client cache until confirmed.
+**Confirmed client behavior (2026-04-07)**: knfsd shows identical
+failures on these same tests (see `logs/pjdfstest_knfsd_v4.txt`).
+The Linux NFSv4 client caches attributes more aggressively than
+NFSv3; the `sleep 1` in these tests is insufficient to force a
+cache revalidation.  Not a server bug.
 
 ### Other remaining failures
 
-| Test file | Failed | Total | Category |
-|-----------|--------|-------|----------|
-| open/07.t | 4 | 25 | O_TRUNC permission |
-| unlink/14.t | 1 | 7 | nlink on unlink |
-| utimensat/01.t | 1 | 7 | nsec overflow at 2^32 boundary |
+| Test file | Failed | Total | Category | knfsd |
+|-----------|--------|-------|----------|-------|
+| unlink/14.t | 1 | 7 | nlink=1 after unlink of open file (silly-rename) | same |
+
+### Fixed (2026-04-08)
+
+| Test file | Root cause | Commit |
+|-----------|-----------|--------|
+| utimensat/01.t | EXCLUSIVE4_1 create stamped atime with verifier bytes; only ctime should be stamped (RFC 8881 S18.16.3) | 6fc7b239 |
+| open/07.t | O_RDONLY\|O_TRUNC returned 0 instead of EACCES when caller lacks W_OK | 9308d69a |
 
 ## pjdfstest NFSv3 Failures (2)
 
