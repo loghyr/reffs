@@ -1,0 +1,440 @@
+.\" SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+.\" SPDX-License-Identifier: AGPL-3.0-or-later
+.TH REFFSD 8 "2026-04-08" "reffs" "System Administration"
+.SH NAME
+reffsd \- reffs NFSv4.2 / NFSv3 file server
+.SH SYNOPSIS
+.B reffsd
+.RB [ \-C
+.IR config ]
+.RB [ \-p
+.IR port ]
+.RB [ \-b
+.IR backend ]
+.RB [ \-B
+.IR path ]
+.RB [ \-S
+.IR path ]
+.RB [ \-f
+.IR tracefile ]
+.RB [ \-c
+.IR category ]
+.RB [ \-i ]
+.RB [ \-r ]
+.SH DESCRIPTION
+.B reffsd
+is an NFSv4.2 / NFSv3 file server that also implements pNFS Flex Files
+(v1 and v2).
+It supports multiple storage backends (in-memory, POSIX, RocksDB),
+per-export security policies, Kerberos, and RPC-over-TLS (RFC 9289).
+.PP
+Configuration comes from a TOML file (see
+.BR "CONFIGURATION FILE"
+below).
+Command-line options override the corresponding TOML settings.
+.PP
+Exports are managed at runtime via the probe protocol (port 20490)
+using
+.BR reffs-probe.py (1)
+or
+.BR reffs_probe1_clnt (1).
+The
+.B [[export]]
+section of the TOML file configures only the root export and its
+security flavors; all other exports must be created via the probe
+protocol after the server starts.
+.SH OPTIONS
+.TP
+.BI \-C " config"
+.TQ
+.BI \-\-config= config
+Load configuration from the TOML file
+.IR config .
+If not given,
+.B reffsd
+uses built-in defaults (in-memory storage, port 2049, AUTH_SYS only).
+.TP
+.BI \-p " port"
+.TQ
+.BI \-\-port= port
+Listen for NFS traffic on
+.I port
+(default: 2049).
+Overrides the
+.B port
+key in
+.BR [server] .
+.TP
+.BI \-b " type"
+.TQ
+.BI \-\-backend= type
+Storage backend:
+.BR ram ,
+.BR posix ,
+or
+.BR rocksdb
+(default: \fBram\fR unless specified in the config file).
+Overrides the
+.B type
+key in
+.BR [backend] .
+.TP
+.BI \-B " path"
+.TQ
+.BI \-\-backend-path= path
+Root directory for POSIX or RocksDB backend data.
+Overrides the
+.B path
+key in
+.BR [backend] .
+.TP
+.BI \-S " path"
+.TQ
+.BI \-\-state-path= path
+Directory (or file prefix) used for persistent server state: boot
+sequence number, client identity records, lease state, and the export
+registry.
+Overrides the
+.B state_file
+key in
+.BR [backend] .
+Default:
+.IR /var/lib/reffs/reffs.state .
+.TP
+.BI \-f " tracefile"
+.TQ
+.BI \-\-file= tracefile
+Write trace output to
+.I tracefile
+instead of the default
+.IR ./reffsd.log .
+Overrides the
+.B trace_file
+key in
+.BR [server] .
+.TP
+.BI \-c " category"
+.TQ
+.BI \-\-category= category
+Enable a tracing category (may be repeated).
+Categories:
+.RS
+.TS
+l l.
+0	General
+1	I/O
+2	RPC
+3	NFS
+4	NLM
+5	FS
+6	LOG
+7	Security
+8	Lifecycle
+.TE
+.RE
+.TP
+.B \-i
+.TQ
+.B \-\-case-insensitive
+Enable case-insensitive name lookups (default: case-sensitive).
+.TP
+.B \-r
+.TQ
+.B \-\-rpc_dump
+Log raw RPC message bodies for debugging.
+.TP
+.B \-h
+.TQ
+.B \-\-help
+Print usage and exit.
+.SH CONFIGURATION FILE
+The TOML configuration file is divided into tables.
+Example files are installed in
+.I /usr/share/doc/reffs/examples/
+and also available in the source tree under
+.IR examples/ .
+.SS [server]
+.TP
+.B port
+NFS listen port.
+Default: 2049.
+.TP
+.B bind
+IP address to bind.
+.B "*"
+binds all interfaces.
+Default:
+.BR "*" .
+.TP
+.B role
+Server role:
+.BR standalone ,
+.BR mds ,
+.BR ds ,
+or
+.BR combined .
+Default:
+.BR standalone .
+In
+.B mds
+mode the server issues pNFS Flex Files layouts.
+In
+.B ds
+mode the server accepts DS I/O.
+In
+.B combined
+mode both roles are active using separate superblocks.
+.TP
+.B minor_versions
+Array of NFSv4 minor versions to advertise.
+Default:
+.BR [1,\ 2] .
+.TP
+.B grace_period
+Grace period in seconds after restart during which clients may
+reclaim state.
+Default: 45.
+.TP
+.B workers
+Number of io_uring worker threads.
+Default: CPU count, capped at 64.
+.TP
+.B max_session_slots
+Maximum number of slots per NFSv4.1 session.
+Default: 64.
+.TP
+.B log_level
+Verbosity:
+.BR debug ,
+.BR info ,
+.BR warn ,
+.BR error .
+Default:
+.BR info .
+.TP
+.B tls
+Enable RPC-over-TLS (RFC 9289).
+Default:
+.BR false .
+.TP
+.B tls_cert
+Path to the PEM-encoded server certificate.
+.TP
+.B tls_key
+Path to the PEM-encoded private key.
+.SS [backend]
+.TP
+.B type
+Storage backend:
+.BR ram ,
+.BR posix ,
+.BR rocksdb .
+Default:
+.BR ram .
+.TP
+.B path
+Root directory for POSIX or RocksDB superblock data.
+Default:
+.IR /var/lib/reffs/data .
+.TP
+.B state_file
+Path prefix for server state files (boot sequence, client records,
+export registry).
+Default:
+.IR /var/lib/reffs/reffs.state .
+.TP
+.B ds_path
+Root directory for data server storage in combined mode.
+.SS [iouring]
+.TP
+.B network_sq_size
+.TQ
+.B network_cq_size
+io_uring submission and completion queue sizes for the network ring.
+Defaults: 2048 / 8192.
+.TP
+.B backend_sq_size
+.TQ
+.B backend_cq_size
+io_uring queue sizes for the backend I/O ring.
+Defaults: 512 / 2048.
+.SS [[export]]
+Configures the root export (\fB/\fR) and its security policy.
+Exports for other paths must be created at runtime via the probe
+protocol.
+.TP
+.B path
+Mount path for this export.
+Use
+.B /
+for the root pseudo-export.
+.TP
+.B [[export.clients]]
+Per-client rule (may be repeated; first match wins).
+.RS
+.TP
+.B match
+Client specifier:
+a single IPv4 or IPv6 address,
+a CIDR prefix (\fI192.168.1.0/24\fR),
+a hostname wildcard (\fI*.lab.example.com\fR),
+or
+.B *
+(any client).
+.TP
+.B access
+.B rw
+(read-write) or
+.B ro
+(read-only).
+Default:
+.BR rw .
+.TP
+.B root_squash
+Map UID 0 to 65534 (nobody).
+Default:
+.BR true .
+.TP
+.B all_squash
+Map all UIDs to 65534.
+Default:
+.BR false .
+.TP
+.B flavors
+Array of accepted RPC security flavors:
+.BR sys ,
+.BR krb5 ,
+.BR krb5i ,
+.BR krb5p ,
+.BR tls .
+.RE
+.SS [[data_server]]
+Configures a pNFS data server (MDS and combined roles only; may be
+repeated).
+.TP
+.B id
+Numeric data server ID (referenced by
+.B sb-set-dstores
+in the probe protocol).
+.TP
+.B address
+Hostname or IP address of the data server.
+.TP
+.B path
+Export path on the data server.
+.TP
+.B protocol
+.B nfsv3
+(default) or
+.BR nfsv4 .
+.SH PORTS
+.TS
+l l.
+2049	NFS (TCP, IPv4 and IPv6)
+20490	Probe protocol (TCP, IPv4 and IPv6)
+.TE
+.PP
+The probe port is not configurable.
+.SH RUNTIME MANAGEMENT
+Exports, security flavors, and data server bindings are managed
+via the probe protocol while the server is running:
+.PP
+.RS
+.nf
+reffs-probe.py sb-list
+reffs-probe.py sb-create --path /data --storage posix
+reffs-probe.py sb-set-flavors --id 2 --flavors krb5 krb5p
+reffs-probe.py sb-mount --id 2 --path /data
+.fi
+.RE
+.PP
+See
+.BR reffs-probe.py (1)
+for the complete command reference.
+.SH SIGNALS
+.TP
+.B SIGTERM
+Initiate shutdown.
+By default (quick shutdown) reffsd persists critical state and exits
+immediately, relying on crash recovery at the next start to rebuild
+in-memory structures.
+.IP
+Set
+.B REFFS_GRACEFUL_SHUTDOWN=1
+in the environment for a full graceful shutdown that drains all RCU
+callbacks, joins all threads, and releases all memory.
+Graceful shutdown may take 60 seconds or more under load;
+it is intended for CI and development use, not production.
+.SH STATE FILES
+.TP
+.I <state_file>
+Server state: boot sequence number, server UUID, slot counter,
+and the clean-shutdown flag.
+.TP
+.I <state_file>/superblocks.registry
+Export (superblock) registry: persistent IDs, UUIDs, mount paths,
+storage type, and per-export data server bindings.
+.TP
+.I <state_file>/clients
+Append-only log of client identity records (owner string, verifier,
+clientid4) for lease recovery across restarts.
+.TP
+.I <state_file>/client_incarnations
+Active client incarnation table.
+Uses an atomic rename-swap for crash-safe updates.
+.SH ENVIRONMENT
+.TP
+.B REFFS_GRACEFUL_SHUTDOWN
+Set to
+.B 1
+to enable full graceful shutdown on SIGTERM.
+See
+.BR SIGNALS .
+.SH EXAMPLES
+.SS Standalone server (in-memory, AUTH_SYS)
+.nf
+reffsd \-p 2049
+.fi
+.SS Standalone server from a TOML config file
+.nf
+reffsd \-C /etc/reffs/reffsd.toml
+.fi
+.SS pNFS MDS + DS in combined mode
+.nf
+reffsd \-C /etc/reffs/reffsd-bat.toml
+.fi
+.SS Start with all tracing enabled
+.nf
+reffsd \-C /etc/reffs/reffsd.toml \-c 0 \-c 1 \-c 2 \-c 3
+.fi
+.SS systemd unit
+.B reffsd
+ships a systemd service unit,
+.IR reffsd.service .
+Enable and start it with:
+.PP
+.nf
+systemctl enable --now reffsd
+.fi
+.SH SEE ALSO
+.BR reffs-probe.py (1),
+.BR reffs_probe1_clnt (1),
+.BR ec_demo (1),
+.BR er_demo (1),
+.BR exports (5),
+.BR nfs (5),
+.BR mount.nfs (8)
+.PP
+Configuration examples:
+.IR examples/reffsd.toml ,
+.IR examples/reffsd-mds.toml ,
+.IR examples/reffsd-ds.toml ,
+.IR examples/reffsd-bat.toml .
+.PP
+RFC 8881 \(em Network File System (NFS) Version 4 Minor Version 1 Protocol.
+.br
+RFC 7862 \(em Network File System (NFS) Version 4 Minor Version 2 Protocol.
+.br
+RFC 9289 \(em Towards Remote Procedure Call Encryption By Default.
+.SH AUTHOR
+Tom Haynes <loghyr@gmail.com>
