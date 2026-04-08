@@ -268,8 +268,14 @@ cleanup() {
         REFFSD_PID=
     fi
     info "  [2/3] Force-unmount $MOUNT"
-    sudo fuser -k -m "$MOUNT" 2>/dev/null || true
-    sleep 1
+    # Guard fuser with mountpoint check: if the mount was already
+    # detached (e.g. by unmount_nfs in the normal stopping path),
+    # fuser -m resolves to the underlying host filesystem and
+    # sends SIGKILL to every process on the machine.
+    if mountpoint -q "$MOUNT" 2>/dev/null; then
+        sudo fuser -k -m "$MOUNT" 2>/dev/null || true
+        sleep 1
+    fi
     sudo umount -f -l "$MOUNT" 2>/dev/null || true
     sleep 1
     info "  [3/3] Killing ${#WORKLOAD_PIDS[@]} workload processes"
