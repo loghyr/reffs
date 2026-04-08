@@ -56,8 +56,12 @@ log "START: monitoring $MOUNT (grace=${GRACE_SEC}s, poll=${POLL_SEC}s)"
 BASELINE_PIDS=()
 while IFS= read -r line; do
 	pid=$(echo "$line" | awk '{print $1}')
-	if ls -l /proc/$pid/cwd 2>/dev/null | grep -q "$MOUNT" || \
-	   ls -l /proc/$pid/fd/ 2>/dev/null | grep -q "$MOUNT"; then
+	# Use readlink (not ls -l) to read the symlink target string from the
+	# kernel without statting the target.  ls -l stats each fd symlink,
+	# which blocks in D-state if the fd points to a dead NFS mount --
+	# the monitor then gets stuck in D-state itself.
+	if readlink /proc/$pid/cwd 2>/dev/null | grep -q "$MOUNT" || \
+	   readlink /proc/$pid/fd/* 2>/dev/null | grep -q "$MOUNT"; then
 		BASELINE_PIDS+=("$pid")
 	fi
 done < <(ps -eo pid,stat,wchan:32,comm 2>/dev/null | grep ' D ')
@@ -87,8 +91,8 @@ while true; do
 	DSTATE_PIDS=()
 	while IFS= read -r line; do
 		pid=$(echo "$line" | awk '{print $1}')
-		if ls -l /proc/$pid/cwd 2>/dev/null | grep -q "$MOUNT" || \
-		   ls -l /proc/$pid/fd/ 2>/dev/null | grep -q "$MOUNT"; then
+		if readlink /proc/$pid/cwd 2>/dev/null | grep -q "$MOUNT" || \
+		   readlink /proc/$pid/fd/* 2>/dev/null | grep -q "$MOUNT"; then
 			is_baseline_pid "$pid" && continue
 			DSTATE_PIDS+=("$pid")
 		fi
