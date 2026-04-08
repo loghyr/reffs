@@ -30,6 +30,10 @@
 
 set -uo pipefail
 
+# Cron runs with a minimal PATH that omits ~/.local/bin where pip
+# installs user-level tools (xdr-parser from reply-xdr).
+export PATH="$HOME/.local/bin:$PATH"
+
 # -----------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------
