@@ -28,7 +28,7 @@ set -uo pipefail
 
 MOUNT=${1:?Usage: dstate_monitor.sh MOUNT_PATH [LOGFILE]}
 LOGFILE=${2:-/tmp/dstate_monitor.log}
-GRACE_SEC=60
+GRACE_SEC=120
 POLL_SEC=5
 
 # Grace period state

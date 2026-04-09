@@ -319,7 +319,12 @@ cleanup() {
         else
             info "    $pid already exited"
         fi
-        wait "$pid" 2>/dev/null
+        # D-state processes may not exit after SIGKILL; don't wait
+        # indefinitely -- the kernel reaps them when the script exits.
+        for w in $(seq 1 5); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+        done
     done
     info "  Cleanup complete"
 }
