@@ -79,8 +79,22 @@ jobs:
       if: always()
       run: |
         rm -rf build_ci
+        # Integration test mount (Docker, port 2049).
         sudo fuser -k -m /mnt/reffs 2>/dev/null || true
         sleep 1
         sudo umount -f -l /mnt/reffs 2>/dev/null || true
         sudo rm -rf /mnt/reffs 2>/dev/null || true
+        # Soak test mounts left by nightly_ci.sh or local_soak.sh when
+        # SIGKILL bypasses EXIT traps.  Kill the stale reffsd on port
+        # 12049 first so pending RPCs get ECONNREFUSED and D-state
+        # processes can wake before we force-unmount.
+        sudo fuser -k 12049/tcp 2>/dev/null || true
+        sleep 1
+        for mp in /mnt/reffs_local_soak /mnt/reffs_soak*; do
+          [ -d "$mp" ] || continue
+          mountpoint -q "$mp" 2>/dev/null || continue
+          sudo fuser -k -m "$mp" 2>/dev/null || true
+          sleep 1
+          sudo umount -f -l "$mp" 2>/dev/null || true
+        done
         rm -f /reffs_data/reffs_ci.lock
