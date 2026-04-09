@@ -1458,23 +1458,35 @@ enum nfs_opnum4 {
 %
 %/* new operations for flex files v2 */
 %
- OP_CHUNK_COMMIT        = 77,
- OP_CHUNK_ERROR         = 78,
- OP_CHUNK_FINALIZE      = 79,
- OP_CHUNK_HEADER_READ   = 80,
- OP_CHUNK_LOCK          = 81,
- OP_CHUNK_READ          = 82,
- OP_CHUNK_REPAIRED      = 83,
- OP_CHUNK_ROLLBACK      = 84,
- OP_CHUNK_UNLOCK        = 85,
- OP_CHUNK_WRITE         = 86,
- OP_CHUNK_WRITE_REPAIR  = 87,
- OP_EXCHANGE_RANGE      = 88,
+%/* RFC 9766 S3.3: client-reported DS WCC; op 77 is IANA-assigned. */
+ OP_LAYOUT_WCC          = 77,
 
-%/* DS trust table operations for pNFS tight coupling (flexfiles v2) */
- OP_TRUST_STATEID       = 89,
- OP_REVOKE_STATEID      = 90,
- OP_BULK_REVOKE_STATEID = 91,
+%/*
+% * CHUNK ops: draft-haynes-nfsv4-flexfiles-v2.  Op numbers 78-89 are
+% * TBD pending IANA assignment; values here match the internal reffs
+% * implementation and will be updated when the draft is finalised.
+% * Upstream tracking: stateids.md in ~/ws/flexfiles-v2/.
+% */
+ OP_CHUNK_COMMIT        = 78,
+ OP_CHUNK_ERROR         = 79,
+ OP_CHUNK_FINALIZE      = 80,
+ OP_CHUNK_HEADER_READ   = 81,
+ OP_CHUNK_LOCK          = 82,
+ OP_CHUNK_READ          = 83,
+ OP_CHUNK_REPAIRED      = 84,
+ OP_CHUNK_ROLLBACK      = 85,
+ OP_CHUNK_UNLOCK        = 86,
+ OP_CHUNK_WRITE         = 87,
+ OP_CHUNK_WRITE_REPAIR  = 88,
+ OP_EXCHANGE_RANGE      = 89,
+
+%/*
+% * Trust-stateid ops: draft-haynes-nfsv4-flexfiles-v2.  Op numbers 90-92
+% * are TBD pending IANA assignment; same caveat as CHUNK ops above.
+% */
+ OP_TRUST_STATEID       = 90,
+ OP_REVOKE_STATEID      = 91,
+ OP_BULK_REVOKE_STATEID = 92,
 
  OP_ILLEGAL             = 10044
 };
@@ -3609,6 +3621,23 @@ struct BULK_REVOKE_STATEID4res {
 };
 
 /*
+ * RFC 9766 S3.3 -- LAYOUT_WCC: client reports DS WCC data to the MDS.
+ * The MDS uses this to update cached DS attributes and suppress the
+ * reflected GETATTR fan-out on a subsequent GETATTR in the same compound.
+ *
+ * lowa_body is opaque; for LAYOUT4_FLEX_FILES it encodes ff_layout_wcc4.
+ */
+struct LAYOUT_WCC4args {
+    /* CURRENT_FH: file */
+    stateid4    lowa_stateid;
+    layouttype4 lowa_type;
+    opaque      lowa_body<>;
+};
+struct LAYOUT_WCC4res {
+    nfsstat4    lowr_status;
+};
+
+/*
  * Operation arrays (the rest)
  */
 
@@ -3735,6 +3764,7 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
  case OP_LISTXATTRS:    LISTXATTRS4args oplistxattrs;
  case OP_REMOVEXATTR:   REMOVEXATTR4args opremovexattr;
  case OP_ACCESS_MASK:   ACCESS_MASK4args opaccess_mask;
+ case OP_LAYOUT_WCC:   LAYOUT_WCC4args oplayout_wcc;
 
  /* Operations for Erase Coding */
  case OP_CHUNK_COMMIT:  CHUNK_COMMIT4args opchunk_commit;
@@ -3888,6 +3918,7 @@ union nfs_resop4 switch (nfs_opnum4 resop) {
  case OP_LISTXATTRS:    LISTXATTRS4res oplistxattrs;
  case OP_REMOVEXATTR:   REMOVEXATTR4res opremovexattr;
  case OP_ACCESS_MASK:   ACCESS_MASK4res opaccess_mask;
+ case OP_LAYOUT_WCC:   LAYOUT_WCC4res oplayout_wcc;
 
  /* Operations for Erase Coding */
  case OP_CHUNK_COMMIT:  CHUNK_COMMIT4res opchunk_commit;
@@ -4436,6 +4467,31 @@ struct ff_iostats4 {
 struct ff_layoutreturn4 {
         ff_ioerr4     fflr_ioerr_report<>;
         ff_iostats4   fflr_iostats_report<>;
+};
+
+/*
+ * RFC 9766 S3.7 -- Flexible File layout type payload for LAYOUT_WCC.
+ *
+ * lowa_body (opaque in LAYOUT_WCC4args) encodes ff_layout_wcc4 when
+ * lowa_type == LAYOUT4_FLEX_FILES.
+ *
+ * One ff_data_server_wcc4 per ff_data_server4 in the layout.
+ * ffdsw_deviceid + ffdsw_stateid + ffdsw_fh_vers uniquely identify
+ * the data file; ffdsw_attributes carry the fattr4 subset.
+ */
+struct ff_data_server_wcc4 {
+        deviceid4   ffdsw_deviceid;
+        stateid4    ffdsw_stateid;
+        nfs_fh4     ffdsw_fh_vers<>;
+        fattr4      ffdsw_attributes;
+};
+
+struct ff_mirror_wcc4 {
+        ff_data_server_wcc4 ffmw_data_servers<>;
+};
+
+struct ff_layout_wcc4 {
+        ff_mirror_wcc4 fflw_mirrors<>;
 };
 
 union ff_mirrors_hint switch (bool ffmc_valid) {

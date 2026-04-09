@@ -83,6 +83,7 @@ uint32_t nfs4_op_copy_notify(struct compound *compound);
 uint32_t nfs4_op_deallocate(struct compound *compound);
 uint32_t nfs4_op_io_advise(struct compound *compound);
 uint32_t nfs4_op_layouterror(struct compound *compound);
+uint32_t nfs4_op_layout_wcc(struct compound *compound);
 uint32_t nfs4_op_layoutstats(struct compound *compound);
 uint32_t nfs4_op_offload_cancel(struct compound *compound);
 uint32_t nfs4_op_offload_status(struct compound *compound);

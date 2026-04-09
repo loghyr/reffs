@@ -266,4 +266,16 @@ int nfs4_attribute_init(void);
 int nfs4_attribute_fini(void);
 void nfs4_attr_enable_layouts(void);
 
+/*
+ * nfs4_wcc_fattr4_extract -- decode SIZE and TIME_MODIFY from an fattr4
+ * blob received in LAYOUT_WCC ffdsw_attributes (RFC 9766 S3.7).
+ *
+ * Properly walks the bitmap in ascending attribute-number order,
+ * advancing the XDR position through preceding attributes before
+ * extracting the target values.
+ */
+nfsstat4 nfs4_wcc_fattr4_extract(const fattr4 *fa, uint64_t *size_out,
+				 bool *has_size, nfstime4 *mtime_out,
+				 bool *has_mtime);
+
 #endif /* ATTR_H */

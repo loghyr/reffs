@@ -108,6 +108,7 @@ nfs4_op_cb op_table[OP_MAX] = {
 	[OP_DEALLOCATE] = nfs4_op_deallocate,
 	[OP_IO_ADVISE] = nfs4_op_io_advise,
 	[OP_LAYOUTERROR] = nfs4_op_layouterror,
+	[OP_LAYOUT_WCC] = nfs4_op_layout_wcc,
 	[OP_LAYOUTSTATS] = nfs4_op_layoutstats,
 	[OP_OFFLOAD_CANCEL] = nfs4_op_offload_cancel,
 	[OP_OFFLOAD_STATUS] = nfs4_op_offload_status,

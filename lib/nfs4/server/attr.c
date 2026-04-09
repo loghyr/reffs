@@ -4111,6 +4111,69 @@ out:
 }
 
 /*
+ * nfs4_wcc_fattr4_extract -- decode SIZE and TIME_MODIFY from an fattr4
+ * blob such as ffdsw_attributes in LAYOUT_WCC (RFC 9766 S3.7).
+ *
+ * The attr_vals blob is positional XDR: attribute values appear in
+ * ascending bit-number order (RFC 8881 S3.3.7).  Preceding attributes
+ * (e.g. FATTR4_CHANGE = 3 before FATTR4_SIZE = 4) must be consumed
+ * before the target value can be read.  We iterate all set bits using
+ * nao[i].nao_xdr to advance the XDR position, same as inode_to_fattr4.
+ *
+ * Sets size_out/has_size  if FATTR4_SIZE is present.
+ * Sets mtime_out/has_mtime if FATTR4_TIME_MODIFY is present.
+ * Returns NFS4_OK on success, NFS4ERR_INVAL on malformed input.
+ * Unknown attributes (nao_xdr == NULL or index out of range) stop the
+ * scan; values decoded so far are returned.
+ */
+nfsstat4 nfs4_wcc_fattr4_extract(const fattr4 *fa, uint64_t *size_out,
+				 bool *has_size, nfstime4 *mtime_out,
+				 bool *has_mtime)
+{
+	static const u_int nao_len = sizeof(nao) / sizeof(nao[0]);
+	u_int scan_bits;
+	struct nfsv42_attr tmp = { 0 };
+	XDR sptr;
+
+	*has_size = false;
+	*has_mtime = false;
+
+	if (!fa || fa->attrmask.bitmap4_len == 0 ||
+	    fa->attr_vals.attrlist4_len == 0)
+		return NFS4_OK;
+
+	scan_bits = fa->attrmask.bitmap4_len * 32U;
+
+	xdrmem_create(&sptr, fa->attr_vals.attrlist4_val,
+		      fa->attr_vals.attrlist4_len, XDR_DECODE);
+
+	for (u_int i = 0; i < scan_bits; i++) {
+		nfsstat4 st;
+
+		if (!bitmap4_attribute_is_set(&fa->attrmask, i))
+			continue;
+		if (i >= nao_len || !nao[i].nao_xdr)
+			break; /* cannot advance past unknown attr */
+
+		st = nao[i].nao_xdr(&sptr, &tmp);
+		if (st != NFS4_OK) {
+			xdr_destroy(&sptr);
+			return NFS4ERR_INVAL;
+		}
+		if (i == FATTR4_SIZE) {
+			*size_out = tmp.size;
+			*has_size = true;
+		} else if (i == FATTR4_TIME_MODIFY) {
+			*mtime_out = tmp.time_modify;
+			*has_mtime = true;
+		}
+	}
+
+	xdr_destroy(&sptr);
+	return NFS4_OK;
+}
+
+/*
  * nfs4_apply_createattrs - apply an fattr4 to a newly created inode.
  *
  * Used by OPEN CREATE to honour createattrs supplied by the client.

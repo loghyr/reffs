@@ -24,7 +24,7 @@
  * constant so this header is usable by files that cannot include the
  * generated nfsv42_xdr.h (e.g. backends, utils).
  *
- * OP_MAX is defined in nfsv42_names.h as (OP_BULK_REVOKE_STATEID + 1) = 92.
+ * OP_MAX is defined in nfsv42_names.h as (OP_BULK_REVOKE_STATEID + 1) = 93.
  * We use 96 for a small margin and cache-line alignment.  A _Static_assert
  * in ops.c enforces that OP_MAX never exceeds this value.
  */

@@ -1443,6 +1443,277 @@ START_TEST(test_layoutget_no_dstores)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Group I: LAYOUT_WCC (RFC 9766)                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Build a deviceid4 matching dstore_id (last 4 bytes big-endian, same
+ * encoding as deviceid_to_dstore() in layout.c).
+ */
+static void make_deviceid(deviceid4 devid, uint32_t dstore_id)
+{
+	memset(devid, 0, sizeof(deviceid4));
+	uint32_t net_id = htonl(dstore_id);
+	memcpy(devid + 12, &net_id, sizeof(net_id));
+}
+
+/*
+ * Build an XDR-encoded ff_layout_wcc4 body with one mirror, one DS,
+ * deviceid matching dstore_id, and FATTR4_SIZE == reported_size.
+ *
+ * Caller owns the returned buffer (free() it).  *len_out is set to the
+ * buffer length.
+ */
+static char *build_ff_wcc_body(uint32_t dstore_id, uint64_t reported_size,
+			       u_int *len_out)
+{
+	/* Allocate a generous fixed-size buffer for the XDR encoding. */
+	u_int bufsz = 512;
+	char *buf = calloc(1, bufsz);
+
+	if (!buf)
+		return NULL;
+
+	/* Build the fattr4 containing FATTR4_SIZE.
+	 * bm_word is a native uint32 passed to the XDR encoder; do NOT
+	 * apply htonl here -- the encoder handles byte order. */
+	uint32_t bm_word = 1u << FATTR4_SIZE;
+	uint32_t size_words[2] = { htonl((uint32_t)(reported_size >> 32)),
+				   htonl((uint32_t)(reported_size &
+						    0xFFFFFFFFu)) };
+
+	fattr4 fa = {
+		.attrmask = {
+			.bitmap4_len = 1,
+			.bitmap4_val = &bm_word,
+		},
+		.attr_vals = {
+			.attrlist4_len = (u_int)(2 * sizeof(uint32_t)),
+			.attrlist4_val = (char *)size_words,
+		},
+	};
+
+	/* Build the ff_data_server_wcc4. */
+	deviceid4 devid;
+	make_deviceid(devid, dstore_id);
+
+	nfs_fh4 empty_fh = { .nfs_fh4_len = 0, .nfs_fh4_val = NULL };
+
+	ff_data_server_wcc4 ds_wcc = {
+		.ffdsw_stateid = { 0 },
+		.ffdsw_fh_vers = {
+			.ffdsw_fh_vers_len = 1,
+			.ffdsw_fh_vers_val = &empty_fh,
+		},
+		.ffdsw_attributes = fa,
+	};
+	memcpy(ds_wcc.ffdsw_deviceid, devid, sizeof(deviceid4));
+
+	/* Build ff_mirror_wcc4. */
+	ff_mirror_wcc4 mirror_wcc = {
+		.ffmw_data_servers = {
+			.ffmw_data_servers_len = 1,
+			.ffmw_data_servers_val = &ds_wcc,
+		},
+	};
+
+	/* Build ff_layout_wcc4. */
+	ff_layout_wcc4 wcc = {
+		.fflw_mirrors = {
+			.fflw_mirrors_len = 1,
+			.fflw_mirrors_val = &mirror_wcc,
+		},
+	};
+
+	XDR xdrs;
+	xdrmem_create(&xdrs, buf, bufsz, XDR_ENCODE);
+	bool_t ok = xdr_ff_layout_wcc4(&xdrs, &wcc);
+	u_int used = (u_int)xdr_getpos(&xdrs);
+	xdr_destroy(&xdrs);
+
+	if (!ok) {
+		free(buf);
+		return NULL;
+	}
+
+	*len_out = used;
+	return buf;
+}
+
+/*
+ * LAYOUT_WCC with an empty current filehandle must return
+ * NFS4ERR_NOFILEHANDLE.
+ */
+START_TEST(test_layout_wcc_no_fh)
+{
+	struct rg_ctx *ctx = make_rg_ctx(1);
+	struct compound *c = ctx->compound;
+
+	/* Leave c_curr_nfh zeroed (empty) and c_inode NULL. */
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUT_WCC;
+	LAYOUT_WCC4args *args =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayout_wcc;
+	args->lowa_type = LAYOUT4_FLEX_FILES;
+	args->lowa_body.lowa_body_len = 0;
+	args->lowa_body.lowa_body_val = NULL;
+
+	uint32_t ret = nfs4_op_layout_wcc(c);
+
+	LAYOUT_WCC4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayout_wcc;
+	ck_assert_uint_eq(ret, 0);
+	ck_assert_int_eq(res->lowr_status, NFS4ERR_NOFILEHANDLE);
+	/* Flag must NOT be set (we returned before setting it). */
+	ck_assert(!(c->c_flags & COMPOUND_DS_ATTRS_REFRESHED));
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * LAYOUT_WCC with a valid FH and empty body still sets the
+ * COMPOUND_DS_ATTRS_REFRESHED flag (client has "spoken for" DS state
+ * even without attr payload).
+ */
+START_TEST(test_layout_wcc_empty_body_sets_flag)
+{
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	struct compound *c = ctx->compound;
+
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUT_WCC;
+	LAYOUT_WCC4args *args =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayout_wcc;
+	args->lowa_type = LAYOUT4_FLEX_FILES;
+	args->lowa_body.lowa_body_len = 0;
+	args->lowa_body.lowa_body_val = NULL;
+
+	uint32_t ret = nfs4_op_layout_wcc(c);
+
+	LAYOUT_WCC4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayout_wcc;
+	ck_assert_uint_eq(ret, 0);
+	ck_assert_int_eq(res->lowr_status, NFS4_OK);
+	ck_assert(c->c_flags & COMPOUND_DS_ATTRS_REFRESHED);
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * LAYOUT_WCC with a valid ff_layout_wcc4 body reports size 8192 for
+ * dstore 20.  The cached ldf_size on the matching ldf must be updated
+ * to 8192 and the flag must be set.
+ */
+START_TEST(test_layout_wcc_updates_cached_attrs)
+{
+	inode_a->i_layout_segments = mock_layout_segments_alloc(20, 0, NULL);
+	ck_assert_ptr_nonnull(inode_a->i_layout_segments);
+
+	u_int body_len = 0;
+	char *body = build_ff_wcc_body(20, 8192, &body_len);
+
+	ck_assert_ptr_nonnull(body);
+
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	struct compound *c = ctx->compound;
+
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUT_WCC;
+	LAYOUT_WCC4args *args =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayout_wcc;
+	args->lowa_type = LAYOUT4_FLEX_FILES;
+	args->lowa_body.lowa_body_len = body_len;
+	args->lowa_body.lowa_body_val = body;
+
+	uint32_t ret = nfs4_op_layout_wcc(c);
+
+	LAYOUT_WCC4res *res =
+		&c->c_res->resarray.resarray_val[0].nfs_resop4_u.oplayout_wcc;
+	ck_assert_uint_eq(ret, 0);
+	ck_assert_int_eq(res->lowr_status, NFS4_OK);
+	ck_assert(c->c_flags & COMPOUND_DS_ATTRS_REFRESHED);
+
+	/* The ldf_size for dstore 20 must be updated to the reported value. */
+	struct layout_segment *seg = &inode_a->i_layout_segments->lss_segs[0];
+	ck_assert_int_eq(seg->ls_files[0].ldf_size, 8192);
+
+	/* Inode size must reflect the DS report. */
+	pthread_mutex_lock(&inode_a->i_attr_mutex);
+	ck_assert_int_eq(inode_a->i_size, 8192);
+	pthread_mutex_unlock(&inode_a->i_attr_mutex);
+
+	free(body);
+	layout_segments_free(inode_a->i_layout_segments);
+	inode_a->i_layout_segments = NULL;
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/*
+ * SEQUENCE PUTFH LAYOUT_WCC GETATTR: the GETATTR must NOT initiate a
+ * reflected GETATTR fan-out.  COMPOUND_DS_ATTRS_REFRESHED is set by
+ * LAYOUT_WCC so the fan-out condition in nfs4_op_getattr is suppressed.
+ *
+ * This test calls nfs4_op_layout_wcc directly (simulating the LAYOUT_WCC
+ * op) then verifies the flag is set so a subsequent T1 GETATTR is a no-op
+ * (same check the GETATTR handler uses).
+ */
+START_TEST(test_layout_wcc_getattr_no_fanout)
+{
+	/*
+	 * Attach a write layout stateid so inode_has_write_layout() returns
+	 * true.  Without LAYOUT_WCC the GETATTR T1 path would fan out.
+	 */
+	struct layout_stateid ls;
+
+	insert_layout_stateid(inode_a, &ls, LAYOUT_STATEID_IOMODE_RW);
+	ck_assert(inode_has_write_layout(inode_a));
+
+	inode_a->i_layout_segments = mock_layout_segments_alloc(20, 0, NULL);
+	ck_assert_ptr_nonnull(inode_a->i_layout_segments);
+
+	u_int body_len = 0;
+	char *body = build_ff_wcc_body(20, 4096, &body_len);
+
+	ck_assert_ptr_nonnull(body);
+
+	struct rg_ctx *ctx = make_op_ctx(inode_a, 1);
+	struct compound *c = ctx->compound;
+
+	c->c_args->argarray.argarray_val[0].argop = OP_LAYOUT_WCC;
+	LAYOUT_WCC4args *args =
+		&c->c_args->argarray.argarray_val[0].nfs_argop4_u.oplayout_wcc;
+	args->lowa_type = LAYOUT4_FLEX_FILES;
+	args->lowa_body.lowa_body_len = body_len;
+	args->lowa_body.lowa_body_val = body;
+
+	uint32_t ret = nfs4_op_layout_wcc(c);
+
+	ck_assert_uint_eq(ret, 0);
+
+	/*
+	 * After LAYOUT_WCC, the refreshed flag is set.  The GETATTR handler
+	 * gates its reflected fan-out on:
+	 *
+	 *   !(c_flags & COMPOUND_DS_ATTRS_REFRESHED) && inode_has_write_layout()
+	 *
+	 * With the flag set, the fan-out condition evaluates to false regardless
+	 * of the write-layout state.  Verify directly.
+	 */
+	ck_assert(c->c_flags & COMPOUND_DS_ATTRS_REFRESHED);
+	ck_assert(!(!(c->c_flags & COMPOUND_DS_ATTRS_REFRESHED) &&
+		    inode_has_write_layout(inode_a)));
+
+	remove_layout_stateid(&ls);
+	free(body);
+	layout_segments_free(inode_a->i_layout_segments);
+	inode_a->i_layout_segments = NULL;
+
+	free_rg_ctx(ctx);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite assembly                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -1531,6 +1802,30 @@ Suite *reflected_getattr_suite(void)
 	tcase_add_test(tc_h, test_layoutcommit_no_shrink);
 	tcase_add_test(tc_h, test_layoutcommit_mtime_stale);
 	suite_add_tcase(s, tc_h);
+
+	/*
+	 * Group I: LAYOUT_WCC (RFC 9766).
+	 *
+	 * Tests that LAYOUT_WCC sets COMPOUND_DS_ATTRS_REFRESHED, updates
+	 * cached DS attributes from the WCC body, and suppresses the
+	 * reflected GETATTR fan-out on a subsequent GETATTR.
+	 *
+	 * test_layout_wcc_updates_cached_attrs requires a dstore mock for
+	 * dstore 20 (deviceid_to_dstore decodes the wcc body's deviceid).
+	 */
+	TCase *tc_i_no_ds = tcase_create("I: LAYOUT_WCC basic");
+
+	tcase_add_checked_fixture(tc_i_no_ds, rg_setup, rg_teardown);
+	tcase_add_test(tc_i_no_ds, test_layout_wcc_no_fh);
+	tcase_add_test(tc_i_no_ds, test_layout_wcc_empty_body_sets_flag);
+	tcase_add_test(tc_i_no_ds, test_layout_wcc_getattr_no_fanout);
+	suite_add_tcase(s, tc_i_no_ds);
+
+	TCase *tc_i_ds = tcase_create("I: LAYOUT_WCC with dstore");
+
+	tcase_add_checked_fixture(tc_i_ds, rg_dstore_setup, rg_dstore_teardown);
+	tcase_add_test(tc_i_ds, test_layout_wcc_updates_cached_attrs);
+	suite_add_tcase(s, tc_i_ds);
 
 	return s;
 }

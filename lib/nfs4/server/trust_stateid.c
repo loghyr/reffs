@@ -84,9 +84,15 @@ static void trust_entry_release(struct urcu_ref *ref)
 	/*
 	 * Rule 6: remove from hash table (idempotent if already removed)
 	 * before scheduling the RCU-deferred free.
+	 *
+	 * trust_ht may be NULL if trust_table_fini() ran and a caller
+	 * held a find ref across the drain.  Guard to avoid the NULL
+	 * dereference; cds_lfht_del is idempotent for already-removed
+	 * nodes, so fini's drain already removed the entry.
 	 */
 	rcu_read_lock();
-	cds_lfht_del(trust_ht, &te->te_ht_node);
+	if (trust_ht)
+		cds_lfht_del(trust_ht, &te->te_ht_node);
 	rcu_read_unlock();
 
 	call_rcu(&te->te_rcu, trust_entry_rcu_free);
@@ -281,7 +287,18 @@ void trust_stateid_fini(void)
 	pthread_cond_signal(&trust_reaper_cv);
 	pthread_join(trust_reaper_thread, NULL);
 
-	/* Drain: advance iterator before put (Rule 6). */
+	/*
+	 * Drain: drop the creation ref of each entry (Rule 6).
+	 * The reaper has been joined so no new find refs are being taken.
+	 * RPC processing must have stopped (rpc_program_handler_put) before
+	 * this point, so the only outstanding refs are creation refs -- one
+	 * put per entry is sufficient.  Any find ref taken before the RPC
+	 * handler was torn down and still outstanding will call
+	 * trust_entry_release, which now guards on trust_ht != NULL.
+	 *
+	 * Advance the iterator before put because put may trigger
+	 * trust_entry_release, which calls cds_lfht_del + call_rcu.
+	 */
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 
@@ -516,9 +533,10 @@ uint64_t trust_stateid_convert_expire(const nfstime4 *expire,
 		return 0;
 
 	/*
-	 * Reject negative seconds: a hostile or buggy MDS could send
-	 * seconds = -1, which cast to uint64_t wraps to a ~292-year
-	 * deadline that bypasses the past-expiry guard and the reaper.
+	 * Reject negative seconds (seconds = -1 would wrap to a ~292-year
+	 * deadline when cast to uint64_t, bypassing the reaper).  Also
+	 * reject seconds = 0 (the Unix epoch) as degenerate -- any real
+	 * lease expiry is well above the epoch.
 	 */
 	if (expire->seconds <= 0)
 		return 0;

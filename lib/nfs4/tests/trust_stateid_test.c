@@ -898,7 +898,7 @@ END_TEST
  * A non-empty tsa_principal from an AUTH_SYS compound (c_gss_principal
  * == NULL) must return NFS4ERR_ACCESS.
  */
-START_TEST(test_op_trust_stateid_principal_mismatch)
+START_TEST(test_op_trust_stateid_principal_on_auth_sys)
 {
 	struct cm_ctx *cm = cm_alloc(1, EXCHGID4_FLAG_USE_PNFS_MDS);
 
@@ -1512,7 +1512,7 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_f, test_op_trust_stateid_anon_rejected);
 	tcase_add_test(tc_f, test_op_trust_stateid_no_fh);
 	tcase_add_test(tc_f, test_op_trust_stateid_past_expire);
-	tcase_add_test(tc_f, test_op_trust_stateid_principal_mismatch);
+	tcase_add_test(tc_f, test_op_trust_stateid_principal_on_auth_sys);
 	suite_add_tcase(s, tc_f);
 
 	TCase *tc_g = tcase_create("op_revoke_stateid");

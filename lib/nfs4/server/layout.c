@@ -30,6 +30,7 @@
 #include "reffs/settings.h"
 #include "reffs/stateid.h"
 #include "reffs/task.h"
+#include "nfs4/attr.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
@@ -1752,6 +1753,167 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 			layouterror_fence_and_revoke(compound, ss, lss);
 		}
 	}
+
+	return 0;
+}
+
+/*
+ * LAYOUT_WCC (RFC 9766 op 77): client reports WCC data from DSes back to
+ * the MDS.  The MDS updates cached DS attributes and sets
+ * COMPOUND_DS_ATTRS_REFRESHED so a subsequent GETATTR in the same compound
+ * skips the reflected GETATTR fan-out.
+ *
+ * Only LAYOUT4_FLEX_FILES bodies are decoded; other layout types receive
+ * NFS4_OK without updating cached attrs (flag still set).
+ */
+uint32_t nfs4_op_layout_wcc(struct compound *compound)
+{
+	LAYOUT_WCC4args *args = NFS4_OP_ARG_SETUP(compound, oplayout_wcc);
+	LAYOUT_WCC4res *res = NFS4_OP_RES_SETUP(compound, oplayout_wcc);
+
+	if (network_file_handle_empty(&compound->c_curr_nfh) ||
+	    !compound->c_inode) {
+		res->lowr_status = NFS4ERR_NOFILEHANDLE;
+		return 0;
+	}
+
+	struct inode *inode = compound->c_inode;
+	struct layout_segments *lss = inode->i_layout_segments;
+
+	/*
+	 * Always set the dedup flag: the client has provided current DS
+	 * state.  A subsequent GETATTR must not re-fan-out, regardless of
+	 * whether we decoded any attrs below.
+	 */
+	compound->c_flags |= COMPOUND_DS_ATTRS_REFRESHED;
+
+	if (args->lowa_type != LAYOUT4_FLEX_FILES ||
+	    args->lowa_body.lowa_body_len == 0 || !lss || lss->lss_count == 0)
+		return 0;
+
+	ff_layout_wcc4 wcc;
+	memset(&wcc, 0, sizeof(wcc));
+
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, args->lowa_body.lowa_body_val,
+		      args->lowa_body.lowa_body_len, XDR_DECODE);
+	bool_t ok = xdr_ff_layout_wcc4(&xdrs, &wcc);
+	xdr_destroy(&xdrs);
+
+	if (!ok) {
+		xdr_free((xdrproc_t)xdr_ff_layout_wcc4, &wcc);
+		return 0;
+	}
+
+	struct layout_segment *seg = &lss->lss_segs[0];
+	int64_t max_size = 0;
+
+	/*
+	 * Walk the per-mirror, per-DS WCC entries.  Match each by deviceid
+	 * to the corresponding ldf in the layout segment, then update the
+	 * cached size and mtime.
+	 */
+	/*
+	 * First pass: decode WCC attrs from each mirror's DS entries and
+	 * update the corresponding ldf cached fields.
+	 *
+	 * All ldf field writes are under i_attr_mutex because GETATTR
+	 * fan-out resumes and LAYOUTRETURN both read ldf_size/ldf_mtime
+	 * concurrently.
+	 *
+	 * The XDR decode (nfs4_wcc_fattr4_extract) is done outside the
+	 * lock -- it only reads the fattr4 blob, which is owned by the
+	 * WCC args for the duration of this compound.
+	 *
+	 * Outer bound: fflw_mirrors_len from the WCC body.  ls_nfiles
+	 * counts total shard slots across all mirrors and is unrelated.
+	 */
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	for (u_int m = 0; m < wcc.fflw_mirrors.fflw_mirrors_len; m++) {
+		ff_mirror_wcc4 *mwcc = &wcc.fflw_mirrors.fflw_mirrors_val[m];
+
+		for (u_int d = 0;
+		     d < mwcc->ffmw_data_servers.ffmw_data_servers_len; d++) {
+			ff_data_server_wcc4 *dswcc =
+				&mwcc->ffmw_data_servers
+					 .ffmw_data_servers_val[d];
+			uint32_t ds_id =
+				deviceid_to_dstore(dswcc->ffdsw_deviceid);
+
+			for (uint32_t f = 0; f < seg->ls_nfiles; f++) {
+				struct layout_data_file *ldf =
+					&seg->ls_files[f];
+
+				if (ldf->ldf_dstore_id != ds_id)
+					continue;
+
+				/*
+				 * Extract SIZE and TIME_MODIFY from the
+				 * fattr4 blob using the same attribute-table
+				 * walk as SETATTR, so preceding attributes
+				 * (e.g. FATTR4_CHANGE = 3) are consumed
+				 * before reading SIZE (= 4).
+				 */
+				uint64_t reported_size = 0;
+				nfstime4 reported_mtime = { 0 };
+				bool has_size = false, has_mtime = false;
+
+				nfs4_wcc_fattr4_extract(
+					&dswcc->ffdsw_attributes,
+					&reported_size, &has_size,
+					&reported_mtime, &has_mtime);
+
+				if (has_size)
+					ldf->ldf_size = (int64_t)reported_size;
+				if (has_mtime) {
+					ldf->ldf_mtime.tv_sec =
+						reported_mtime.seconds;
+					ldf->ldf_mtime.tv_nsec =
+						reported_mtime.nseconds;
+				}
+
+				if (!ldf->ldf_stale && ldf->ldf_size > max_size)
+					max_size = ldf->ldf_size;
+
+				break; /* matched; next dswcc entry */
+			}
+		}
+	}
+
+	/*
+	 * Propagate the largest reported DS size to the inode.
+	 * Mirror the same logic as nfs4_op_layoutreturn_resume.
+	 */
+	if (max_size > 0 && max_size > inode->i_size) {
+		struct timespec now;
+
+		clock_gettime(CLOCK_REALTIME, &now);
+		inode->i_size = max_size;
+		inode->i_mtime = now;
+		inode->i_ctime = now;
+
+		struct super_block *sb = inode->i_sb;
+		int64_t old_used = inode->i_used;
+
+		inode->i_used = inode->i_size / sb->sb_block_size +
+				(inode->i_size % sb->sb_block_size ? 1 : 0);
+
+		int64_t delta = (inode->i_used - old_used) * sb->sb_block_size;
+		if (delta > 0)
+			atomic_fetch_add_explicit(&sb->sb_bytes_used,
+						  (size_t)delta,
+						  memory_order_relaxed);
+		else if (delta < 0)
+			atomic_fetch_sub_explicit(&sb->sb_bytes_used,
+						  (size_t)(-delta),
+						  memory_order_relaxed);
+	}
+
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	xdr_free((xdrproc_t)xdr_ff_layout_wcc4, &wcc);
 
 	return 0;
 }
