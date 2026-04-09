@@ -97,6 +97,7 @@ trust_stateid_test_LDADD = \
 TESTS = \
 	bitmap \
 	cb_pending \
+	chunk_test \
 	compound_async \
 	delegation_lifecycle \
 	errors \
