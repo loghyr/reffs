@@ -450,10 +450,11 @@ fi  # end --soak-only skip block (opened before Build section)
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-# Timeout = soak duration + 10 min margin for restarts, mount
+# Timeout = soak duration + 15 min margin for restarts, mount
 # retries, and build time.  Prevents hung D-state processes from
 # blocking the nightly email indefinitely.
-SOAK_TIMEOUT=$(( (SOAK_DURATION + 10) * 60 ))
+# (+15 instead of +10: garbo hit the 40-min timeout by 1s)
+SOAK_TIMEOUT=$(( (SOAK_DURATION + 15) * 60 ))
 
 section_start soak_posix "Soak test (POSIX, ${SOAK_DURATION} min)"
 timeout $SOAK_TIMEOUT "$REPO/scripts/local_soak.sh" --posix \

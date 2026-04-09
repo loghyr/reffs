@@ -210,8 +210,11 @@ stop_server() {
 }
 
 mount_nfs() {
-    info "  mount: vers=4.2,sec=sys,port=$NFS_PORT -> $MOUNT"
-    sudo timeout 30 mount -v -o vers=4.2,sec=sys,port=$NFS_PORT 127.0.0.1:/ "$MOUNT" 2>&1
+    # timeo=100 (10s): loopback server; default timeo=600 (60s) makes
+    # the kernel NFS client wait 60s after a TCP break before retrying,
+    # which races with the D-state grace window and causes false failures.
+    info "  mount: vers=4.2,sec=sys,port=$NFS_PORT,timeo=100 -> $MOUNT"
+    sudo timeout 30 mount -v -o vers=4.2,sec=sys,port=$NFS_PORT,timeo=100 127.0.0.1:/ "$MOUNT" 2>&1
     local rc=$?
     if [ "$rc" -eq 0 ]; then
         info "  mount: success"
