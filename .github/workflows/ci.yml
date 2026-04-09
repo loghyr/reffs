@@ -79,8 +79,12 @@ jobs:
       if: always()
       run: |
         rm -rf build_ci
-        # Integration test mount (Docker, port 2049).
-        sudo fuser -k -m /mnt/reffs 2>/dev/null || true
+        # Integration test mount (port 2049).  Kill reffsd first so
+        # pending RPCs get ECONNREFUSED and D-state processes can wake
+        # before the unmount.  Do NOT use fuser -k -m here -- that sends
+        # SIGKILL to every process using the NFS filesystem, including
+        # the runner itself.
+        sudo fuser -k 2049/tcp 2>/dev/null || true
         sleep 1
         sudo umount -f -l /mnt/reffs 2>/dev/null || true
         sudo rm -rf /mnt/reffs 2>/dev/null || true
