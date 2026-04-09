@@ -1450,15 +1450,12 @@ int rpc_process_task(struct task *t)
 	    rt->rt_info.ri_procedure == 0) {
 		trace_security_tls(rt->rt_fd, "probe", __func__, __LINE__);
 
-		/* RFC 9289: verifier must be 8-byte "STARTTLS" string. */
-		if (verifier_len != 8 ||
-		    memcmp(p, STARTTLS_VERIFIER, strlen(STARTTLS_VERIFIER))) {
-			rt->rt_info.ri_accept_stat = GARBAGE_ARGS;
-			__atomic_fetch_add(&rph->rph_accepted_errors, 1,
-					   __ATOMIC_RELAXED);
-			goto handle_rpc_error;
-		}
-
+		/*
+		 * RFC 9289 S4.1: the "STARTTLS" string belongs in the
+		 * server's reply verifier, not the client's call verifier.
+		 * The client uses AUTH_NONE with an empty body.  Accept
+		 * the probe regardless of verifier content.
+		 */
 		rt->rt_info.ri_reply_stat = MSG_ACCEPTED;
 		rt->rt_info.ri_accept_stat = SUCCESS;
 

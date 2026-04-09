@@ -46,8 +46,8 @@ static int verify_callback(int preverify_ok, X509_STORE_CTX *ctx)
 
 	return 1; // Always accept
 }
+#endif /* NOT_NOW */
 
-// In tls.c - io_tls_alpn_select_cb
 static int io_tls_alpn_select_cb(SSL __attribute__((unused)) * ssl,
 				 const unsigned char **out,
 				 unsigned char *outlen, const unsigned char *in,
@@ -71,7 +71,7 @@ static int io_tls_alpn_select_cb(SSL __attribute__((unused)) * ssl,
 		i += len + 1;
 	}
 
-	const unsigned char alpn_proto[] = "\x06sunrpc";
+	static const unsigned char alpn_proto[] = "\x06sunrpc";
 	if (SSL_select_next_proto((unsigned char **)out, outlen, alpn_proto,
 				  sizeof(alpn_proto) - 1, in,
 				  inlen) != OPENSSL_NPN_NEGOTIATED) {
@@ -85,7 +85,6 @@ static int io_tls_alpn_select_cb(SSL __attribute__((unused)) * ssl,
 	TRACE("ALPN sunrpc negotiated");
 	return SSL_TLSEXT_ERR_OK;
 }
-#endif
 
 static void ssl_info_callback(const SSL __attribute__((unused)) * ssl, int type,
 			      int val)
@@ -247,29 +246,12 @@ int io_tls_init_server_context(const char *cfg_cert, const char *cfg_key,
 		6, 's', 'u', 'n', 'r', 'p', 'c' // 6 is the length of "sunrpc"
 	};
 
-#ifdef NOT_NOW
-	const char *require_alpn = getenv("REFFS_REQUIRE_ALPN");
-	bool strict_alpn = true;
-
-	if (require_alpn && strcasecmp(require_alpn, "false") == 0) {
-		strict_alpn = false;
-		TRACE("ALPN requirement disabled - will accept connections without ALPN");
-	}
-
-	// Set ALPN only if strict mode is enabled
-	if (strict_alpn) {
-		TRACE("Installing ALPN callback for sunrpc");
-		SSL_CTX_set_alpn_protos(reffs_server_ssl_ctx, alpn_protos,
-					sizeof(alpn_protos));
-		SSL_CTX_set_alpn_select_cb(reffs_server_ssl_ctx,
-					   io_tls_alpn_select_cb, NULL);
-	}
-#else
-	TRACE("Installing ALPN support for sunrpc (non-strict mode)");
+	/* RFC 9289 S3: server MUST select "sunrpc" via ALPN. */
+	TRACE("Installing ALPN select callback for sunrpc (RFC 9289)");
 	SSL_CTX_set_alpn_protos(reffs_server_ssl_ctx, alpn_protos,
 				sizeof(alpn_protos));
-
-#endif
+	SSL_CTX_set_alpn_select_cb(reffs_server_ssl_ctx, io_tls_alpn_select_cb,
+				   NULL);
 
 	TRACE("Server TLS context initialized successfully");
 	return 0;

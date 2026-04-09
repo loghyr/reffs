@@ -17,6 +17,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -223,6 +224,123 @@ START_TEST(test_tls_alpn_sunrpc)
 }
 END_TEST
 
+/*
+ * Helper: drive a BIO-based TLS handshake to completion.
+ * Returns true if the handshake completed within 20 rounds.
+ */
+static bool do_loopback_handshake(SSL *server_ssl, SSL *client_ssl)
+{
+	char buf[16384];
+	BIO *s_wbio = SSL_get_wbio(server_ssl);
+	BIO *s_rbio = SSL_get_rbio(server_ssl);
+	BIO *c_wbio = SSL_get_wbio(client_ssl);
+	BIO *c_rbio = SSL_get_rbio(client_ssl);
+
+	for (int rounds = 0; rounds < 20; rounds++) {
+		SSL_do_handshake(client_ssl);
+		int n = BIO_read(c_wbio, buf, sizeof(buf));
+		if (n > 0)
+			BIO_write(s_rbio, buf, n);
+
+		SSL_do_handshake(server_ssl);
+		n = BIO_read(s_wbio, buf, sizeof(buf));
+		if (n > 0)
+			BIO_write(c_rbio, buf, n);
+
+		if (SSL_is_init_finished(server_ssl) &&
+		    SSL_is_init_finished(client_ssl))
+			return true;
+	}
+	return false;
+}
+
+START_TEST(test_tls_alpn_negotiated)
+{
+	/*
+	 * Client offers "sunrpc"; server callback must select it.
+	 * RFC 9289 S3: both ends should negotiate "sunrpc".
+	 */
+	int ret = io_tls_init_server_context(cert_path, key_path, NULL);
+	ck_assert_int_eq(ret, 0);
+
+	SSL *server_ssl = SSL_new(reffs_server_ssl_ctx);
+	ck_assert_ptr_nonnull(server_ssl);
+	SSL_set_accept_state(server_ssl);
+	BIO *s_rbio = BIO_new(BIO_s_mem());
+	BIO *s_wbio = BIO_new(BIO_s_mem());
+	SSL_set_bio(server_ssl, s_rbio, s_wbio);
+
+	SSL_CTX *client_ctx = SSL_CTX_new(TLS_client_method());
+	ck_assert_ptr_nonnull(client_ctx);
+	SSL_CTX_set_verify(client_ctx, SSL_VERIFY_NONE, NULL);
+	/* Offer "sunrpc" as the only ALPN protocol. */
+	const unsigned char sunrpc_alpn[] = { 6, 's', 'u', 'n', 'r', 'p', 'c' };
+	SSL_CTX_set_alpn_protos(client_ctx, sunrpc_alpn, sizeof(sunrpc_alpn));
+
+	SSL *client_ssl = SSL_new(client_ctx);
+	ck_assert_ptr_nonnull(client_ssl);
+	SSL_set_connect_state(client_ssl);
+	BIO *c_rbio = BIO_new(BIO_s_mem());
+	BIO *c_wbio = BIO_new(BIO_s_mem());
+	SSL_set_bio(client_ssl, c_rbio, c_wbio);
+
+	ck_assert_msg(do_loopback_handshake(server_ssl, client_ssl),
+		      "handshake did not complete");
+
+	const unsigned char *alpn_data;
+	unsigned int alpn_len;
+	SSL_get0_alpn_selected(server_ssl, &alpn_data, &alpn_len);
+	ck_assert_uint_eq(alpn_len, 6);
+	ck_assert_mem_eq(alpn_data, "sunrpc", 6);
+
+	SSL_get0_alpn_selected(client_ssl, &alpn_data, &alpn_len);
+	ck_assert_uint_eq(alpn_len, 6);
+	ck_assert_mem_eq(alpn_data, "sunrpc", 6);
+
+	SSL_free(server_ssl);
+	SSL_free(client_ssl);
+	SSL_CTX_free(client_ctx);
+}
+END_TEST
+
+START_TEST(test_tls_alpn_not_offered)
+{
+	/*
+	 * Client offers no ALPN at all; server callback must still
+	 * accept the connection (RFC 9289 S4.1.1 permits this for
+	 * compatibility with clients that do not support ALPN).
+	 */
+	int ret = io_tls_init_server_context(cert_path, key_path, NULL);
+	ck_assert_int_eq(ret, 0);
+
+	SSL *server_ssl = SSL_new(reffs_server_ssl_ctx);
+	ck_assert_ptr_nonnull(server_ssl);
+	SSL_set_accept_state(server_ssl);
+	BIO *s_rbio = BIO_new(BIO_s_mem());
+	BIO *s_wbio = BIO_new(BIO_s_mem());
+	SSL_set_bio(server_ssl, s_rbio, s_wbio);
+
+	SSL_CTX *client_ctx = SSL_CTX_new(TLS_client_method());
+	ck_assert_ptr_nonnull(client_ctx);
+	SSL_CTX_set_verify(client_ctx, SSL_VERIFY_NONE, NULL);
+	/* Deliberately offer no ALPN. */
+
+	SSL *client_ssl = SSL_new(client_ctx);
+	ck_assert_ptr_nonnull(client_ssl);
+	SSL_set_connect_state(client_ssl);
+	BIO *c_rbio = BIO_new(BIO_s_mem());
+	BIO *c_wbio = BIO_new(BIO_s_mem());
+	SSL_set_bio(client_ssl, c_rbio, c_wbio);
+
+	ck_assert_msg(do_loopback_handshake(server_ssl, client_ssl),
+		      "handshake should complete even without client ALPN");
+
+	SSL_free(server_ssl);
+	SSL_free(client_ssl);
+	SSL_CTX_free(client_ctx);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Handshake tests (loopback with memory BIOs)                        */
 /* ------------------------------------------------------------------ */
@@ -388,6 +506,8 @@ static Suite *tls_suite(void)
 	tc = tcase_create("alpn");
 	tcase_add_checked_fixture(tc, tls_setup, tls_teardown);
 	tcase_add_test(tc, test_tls_alpn_sunrpc);
+	tcase_add_test(tc, test_tls_alpn_negotiated);
+	tcase_add_test(tc, test_tls_alpn_not_offered);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("handshake");
