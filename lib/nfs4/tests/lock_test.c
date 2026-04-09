@@ -478,6 +478,25 @@ START_TEST(test_lock_new_owner_success)
 	unpack_stateid4(lock_stid, &sid, &id, &type, &cookie);
 	struct stateid *ls_stid = stateid_find(g_inode, id);
 	if (ls_stid) {
+		/*
+		 * nfs4_op_lock placed a reffs_lock on the inode (holding an
+		 * inode_active_get ref).  Remove it before freeing the stateid
+		 * so the inode's active ref count returns to the value expected
+		 * by lock_teardown -> inode_active_put.  Without this, LSAN
+		 * reports the inode and its stateid hash table as leaked.
+		 */
+		struct lock_stateid *ls = stid_to_lock(ls_stid);
+		/*
+		 * &ls->ls_owner->lo_base is pointer-identical to
+		 * lock->l_owner in the reffs_lock (nfs4_op_lock stores
+		 * &lo->lo_base there and ls->ls_owner == lo), so the
+		 * pointer-equality filter in reffs_lock_remove matches.
+		 */
+		pthread_mutex_lock(&g_inode->i_lock_mutex);
+		reffs_lock_remove(g_inode, 0, 512, &ls->ls_owner->lo_base,
+				  NULL);
+		pthread_mutex_unlock(&g_inode->i_lock_mutex);
+
 		stateid_inode_unhash(ls_stid);
 		stateid_client_unhash(ls_stid);
 		stateid_put(ls_stid); /* state ref */
