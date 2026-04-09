@@ -95,13 +95,22 @@ echo $$ > "$LOCKFILE"
 trap cleanup_lock EXIT
 
 # Evict any reffsd orphaned by a previous soak or aborted nightly run.
-# The nightly owns the port for its full duration; stale processes from
-# prior runs must not be allowed to block startup.
+# Verify the holder is reffsd before killing -- a blind port-based kill
+# has killed unrelated services (e.g. NetworkManager) in the past.
 if sudo fuser "$NFS_PORT/tcp" >/dev/null 2>&1; then
-    stale_pid=$(sudo fuser "$NFS_PORT/tcp" 2>/dev/null)
-    echo "Evicting stale reffsd on port $NFS_PORT (PID $stale_pid)"
-    sudo fuser -k -KILL "$NFS_PORT/tcp" 2>/dev/null || true
-    sleep 1
+    _killed=false
+    for _pid in $(sudo fuser "$NFS_PORT/tcp" 2>/dev/null); do
+        [[ "$_pid" =~ ^[0-9]+$ ]] || continue
+        _comm=$(cat "/proc/$_pid/comm" 2>/dev/null || echo "unknown")
+        if [[ "$_comm" == reffsd* ]]; then
+            echo "Evicting stale reffsd on port $NFS_PORT (PID $_pid)"
+            sudo kill -KILL "$_pid" 2>/dev/null || true
+            _killed=true
+        else
+            echo "WARNING: port $NFS_PORT held by '$_comm' (PID $_pid) -- not reffsd, skipping kill"
+        fi
+    done
+    $_killed && sleep 1 || true
 fi
 
 # -----------------------------------------------------------------------
