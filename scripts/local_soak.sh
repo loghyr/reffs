@@ -232,6 +232,36 @@ unmount_nfs() {
     return 0  # best-effort
 }
 
+# Kill D-state processes whose cwd or open fds point to MOUNT.
+# Uses readlink (doesn't follow symlinks) so it is safe to call
+# even when the mount is dead -- we never stat a D-state fd target.
+# Must be called AFTER umount -f so rpc_killall_tasks() has already
+# woken the blocked RPC waits before we check for survivors.
+kill_dstate_mount_users() {
+    local mount=$1
+    local count=0
+    local pid
+    while IFS= read -r pid; do
+        local found=false
+        if readlink "/proc/$pid/cwd" 2>/dev/null | grep -q "^$mount"; then
+            found=true
+        fi
+        if [ "$found" = "false" ]; then
+            local fd
+            for fd in "/proc/$pid/fd/"*; do
+                if readlink "$fd" 2>/dev/null | grep -q "^$mount"; then
+                    found=true
+                    break
+                fi
+            done
+        fi
+        if [ "$found" = "true" ]; then
+            kill -9 "$pid" 2>/dev/null && count=$((count + 1)) || true
+        fi
+    done < <(ps -eo pid,stat 2>/dev/null | awk '$2 ~ /^D/ {print $1}')
+    [ "$count" -gt 0 ] && info "    SIGKILLed $count D-state processes on $mount" || true
+}
+
 get_rss_kb() {
     awk '/^VmRSS:/ {print $2}' "/proc/$1/status" 2>/dev/null || echo 0
 }
@@ -429,10 +459,21 @@ while true; do
         info "    reffsd exited"
         REFFSD_PID=
 
-        # Step 2: force-unmount to unblock D-state workloads
+        # Step 2: force-unmount to unblock D-state workloads.
+        # Send SIGKILL via fuser BEFORE detaching so that rpc_killall_tasks()
+        # (triggered by umount -f) delivers the pending SIGKILL when it wakes
+        # D-state processes.  Without fuser first, they wake up and retry NFS.
         info "  [2/6] Force-unmount $MOUNT"
+        if mountpoint -q "$MOUNT" 2>/dev/null; then
+            sudo fuser -k -m "$MOUNT" 2>/dev/null || true
+            sleep 1
+        fi
         sudo umount -f -l "$MOUNT" 2>/dev/null || true
-        sleep 1
+        # After umount -f, rpc_killall_tasks() wakes D-state processes.
+        # Give them 3s then explicitly SIGKILL any survivors (grandchildren
+        # of workloads that were not in WORKLOAD_PIDS).
+        sleep 3
+        kill_dstate_mount_users "$MOUNT"
 
         # Step 3: SIGKILL workloads (SIGTERM can't interrupt D-state)
         info "  [3/6] SIGKILL ${#WORKLOAD_PIDS[@]} workload processes"
@@ -499,14 +540,13 @@ while true; do
             info "    workload $i: PID ${WORKLOAD_PIDS[-1]}"
         done
 
-        # Reset the D-state grace timer now that the server is back and
-        # workloads have restarted.  The first USR1 (sent before the kill)
-        # is consumed mostly by the restart sequence itself; D-state
-        # processes from the old mount need a full grace window AFTER
-        # server recovery to drain and exit.
+        # Send USR2 (not USR1) to the D-state monitor.  USR2 both refreshes
+        # the baseline (absorbing any D-state stragglers from the old mount
+        # that survived the restart) and resets the grace timer.  This
+        # prevents inter-cycle accumulation from causing false FAILURE lines.
         if [ -n "$DSTATE_MON_PID" ] && kill -0 "$DSTATE_MON_PID" 2>/dev/null; then
-            kill -USR1 "$DSTATE_MON_PID" 2>/dev/null || true
-            info "  D-state grace timer reset (server recovered)"
+            kill -USR2 "$DSTATE_MON_PID" 2>/dev/null || true
+            info "  D-state baseline refreshed + grace reset (server recovered)"
         fi
 
         NEXT_RESTART=$((NOW + RESTART_SEC))

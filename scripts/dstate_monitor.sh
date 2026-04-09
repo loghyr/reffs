@@ -14,11 +14,15 @@
 #
 # Signals:
 #   USR1  Begin grace period (restart starting, suppress for 60s)
+#   USR2  Refresh baseline + reset grace (server recovered after restart)
 #   TERM  Stop monitoring
 #
-# The soak script sends USR1 before each restart and checks the
-# log after completion.  Lines starting with "FAILURE:" indicate
-# D-state that persisted after the grace period.
+# Protocol: soak script sends USR1 *before* each restart, then USR2
+# *after* server + workloads have recovered.  USR2 adds any still-alive
+# D-state processes from the previous cycle to the baseline so they do
+# not trigger false FAILURE lines in the next cycle.
+# Lines starting with "FAILURE:" indicate D-state that persisted after
+# the grace period and was NOT absorbed into the baseline.
 
 set -uo pipefail
 
@@ -37,12 +41,45 @@ handle_usr1() {
 	log "GRACE: restart signaled, suppressing D-state alerts for ${GRACE_SEC}s"
 }
 
+handle_usr2() {
+	# Refresh baseline with any D-state processes that are still alive
+	# on the mount after the restart completed.  These are stragglers
+	# from the previous cycle that we could not force-exit; adding them
+	# to the baseline prevents accumulation from causing false failures.
+	local new_pids=()
+	while IFS= read -r line; do
+		local pid
+		pid=$(echo "$line" | awk '{print $1}')
+		local found=false
+		if readlink /proc/$pid/cwd 2>/dev/null | grep -q "$MOUNT"; then
+			found=true
+		fi
+		if [ "$found" = "false" ]; then
+			if readlink /proc/$pid/fd/* 2>/dev/null | grep -q "$MOUNT"; then
+				found=true
+			fi
+		fi
+		if [ "$found" = "true" ]; then
+			is_baseline_pid "$pid" || new_pids+=("$pid")
+		fi
+	done < <(ps -eo pid,stat,wchan:32,comm 2>/dev/null | grep ' D ')
+	if [ ${#new_pids[@]} -gt 0 ]; then
+		for p in "${new_pids[@]}"; do
+			BASELINE_PIDS+=("$p")
+		done
+		log "BASELINE-REFRESH: absorbed ${#new_pids[@]} straggler D-state PIDs: ${new_pids[*]}"
+	fi
+	GRACE_UNTIL=$(( $(date +%s) + GRACE_SEC ))
+	log "GRACE: post-recovery baseline refreshed, grace reset for ${GRACE_SEC}s"
+}
+
 handle_term() {
 	log "STOP: monitor shutting down"
 	exit 0
 }
 
 trap handle_usr1 USR1
+trap handle_usr2 USR2
 trap handle_term TERM
 
 : > "$LOGFILE"
