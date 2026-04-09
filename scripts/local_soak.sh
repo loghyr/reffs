@@ -117,7 +117,7 @@ info "Backend: $BACKEND_TYPE"
 # The subsequent umount -f -l detaches the mount so any surviving
 # D-state processes wake with EIO and exit on their own.
 if mountpoint -q "$MOUNT" 2>/dev/null; then
-    sudo fuser -k -m "$MOUNT" 2>/dev/null || true
+    sudo timeout 10 fuser -k -m "$MOUNT" 2>/dev/null || true
     sleep 1
 fi
 sudo umount -f -l "$MOUNT" 2>/dev/null || true
@@ -306,7 +306,7 @@ cleanup() {
     # fuser -m resolves to the underlying host filesystem and
     # sends SIGKILL to every process on the machine.
     if mountpoint -q "$MOUNT" 2>/dev/null; then
-        sudo fuser -k -m "$MOUNT" 2>/dev/null || true
+        sudo timeout 10 fuser -k -m "$MOUNT" 2>/dev/null || true
         sleep 1
     fi
     sudo umount -f -l "$MOUNT" 2>/dev/null || true
@@ -470,7 +470,7 @@ while true; do
         # D-state processes.  Without fuser first, they wake up and retry NFS.
         info "  [2/6] Force-unmount $MOUNT"
         if mountpoint -q "$MOUNT" 2>/dev/null; then
-            sudo fuser -k -m "$MOUNT" 2>/dev/null || true
+            sudo timeout 10 fuser -k -m "$MOUNT" 2>/dev/null || true
             sleep 1
         fi
         sudo umount -f -l "$MOUNT" 2>/dev/null || true
