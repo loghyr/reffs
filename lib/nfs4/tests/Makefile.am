@@ -102,6 +102,7 @@ TESTS = \
 	delegation_lifecycle \
 	errors \
 	file_ops \
+	lock_test \
 	nfs4_client_persist \
 	nfs4_session \
 	open_trunc_test \

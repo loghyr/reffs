@@ -542,28 +542,20 @@ uint32_t nfs4_op_test_stateid(struct compound *compound)
 		}
 
 		/*
-		 * Look up by clientid -- check if the client that owns
-		 * this stateid is still active.  A full per-inode lookup
-		 * would require a global stateid index; checking the
-		 * client is sufficient for TEST_STATEID's purpose of
-		 * detecting expired/revoked stateids.
+		 * Look up the stateid in the inode's per-inode hash table.
+		 * A stateid present in the table is valid; one absent has
+		 * been freed, was never issued, or belongs to a different
+		 * inode (RFC 8881 S18.47.3).
 		 */
-		if (compound->c_nfs4_client) {
-			clientid4 clid = (clientid4)nfs4_client_to_client(
-						 compound->c_nfs4_client)
-						 ->c_id;
-			uint32_t expected_slot = clientid_slot(clid);
+		struct stateid *found = stateid_find(compound->c_inode, id);
 
-			if (id != 0 && clientid_slot(id) != expected_slot) {
-				res->TEST_STATEID4res_u.tsr_resok4
-					.tsr_status_codes
-					.tsr_status_codes_val[i] =
-					NFS4ERR_BAD_STATEID;
-				continue;
-			}
+		if (!found) {
+			res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
+				.tsr_status_codes_val[i] = NFS4ERR_BAD_STATEID;
+			continue;
 		}
+		stateid_put(found);
 
-		/* Stateid looks plausible -- report OK. */
 		res->TEST_STATEID4res_u.tsr_resok4.tsr_status_codes
 			.tsr_status_codes_val[i] = NFS4_OK;
 	}
