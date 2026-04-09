@@ -282,9 +282,20 @@ void trust_stateid_fini(void)
 	if (!trust_ht)
 		return;
 
+	/*
+	 * Hold the mutex while clearing the flag and signalling so the
+	 * wakeup is never lost: if the thread is between its running-flag
+	 * check and pthread_cond_timedwait, it still holds the mutex, so
+	 * our lock blocks until the thread has entered the wait -- and our
+	 * signal is then guaranteed to reach it.  Without the lock the
+	 * signal fires into the void and the thread sleeps for the full
+	 * TRUST_REAPER_SCAN_SEC (60 s), causing intermittent test timeouts.
+	 */
+	pthread_mutex_lock(&trust_reaper_mtx);
 	atomic_store_explicit(&trust_reaper_running, false,
 			      memory_order_relaxed);
 	pthread_cond_signal(&trust_reaper_cv);
+	pthread_mutex_unlock(&trust_reaper_mtx);
 	pthread_join(trust_reaper_thread, NULL);
 
 	/*

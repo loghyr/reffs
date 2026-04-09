@@ -180,7 +180,18 @@ int lease_reaper_init(void)
 
 void lease_reaper_fini(void)
 {
+	/*
+	 * Hold the mutex while clearing the flag and signalling so the
+	 * wakeup is never lost: if the thread is between its running-flag
+	 * check and pthread_cond_timedwait, it still holds the mutex, so
+	 * our lock blocks until the thread has entered the wait -- and our
+	 * signal is then guaranteed to reach it.  Without the lock the
+	 * signal fires into the void and the thread sleeps for the full
+	 * LEASE_SCAN_INTERVAL_SEC (30 s), causing intermittent test timeouts.
+	 */
+	pthread_mutex_lock(&lease_reaper_mtx);
 	atomic_store_explicit(&lease_reaper_running, 0, memory_order_relaxed);
 	pthread_cond_signal(&lease_reaper_cv);
+	pthread_mutex_unlock(&lease_reaper_mtx);
 	pthread_join(lease_reaper_thread, NULL);
 }
