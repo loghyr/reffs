@@ -13,16 +13,17 @@
 #   scripts/dstate_monitor.sh MOUNT_PATH [LOGFILE]
 #
 # Signals:
-#   USR1  Begin grace period (restart starting, suppress for 60s)
-#   USR2  Refresh baseline + reset grace (server recovered after restart)
+#   USR1  Begin grace period (restart starting, suppress for 120s)
 #   TERM  Stop monitoring
 #
-# Protocol: soak script sends USR1 *before* each restart, then USR2
-# *after* server + workloads have recovered.  USR2 adds any still-alive
-# D-state processes from the previous cycle to the baseline so they do
-# not trigger false FAILURE lines in the next cycle.
+# Protocol: for each restart cycle, the soak script kills this monitor
+# (TERM), allocates a fresh mount path (e.g. /mnt/reffs_local_soak_N),
+# mounts the server there, starts a new monitor instance on the fresh
+# path, then sends USR1 to begin the startup grace period.  Using a
+# fresh path per cycle prevents stale-superblock false positives from
+# D-state processes that held the previous mount point.
 # Lines starting with "FAILURE:" indicate D-state that persisted after
-# the grace period and was NOT absorbed into the baseline.
+# the grace period.
 
 set -uo pipefail
 

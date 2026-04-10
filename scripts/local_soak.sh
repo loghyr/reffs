@@ -60,7 +60,14 @@ REFFSD="$BUILD_DIR/src/reffsd"
 
 DATA_DIR="/reffs_data/soak_data"
 STATE_DIR="/reffs_data/soak_state"
-MOUNT="/mnt/reffs_local_soak"
+# Fresh mount path per restart cycle avoids stale-superblock hangs.
+# After SIGKILL + umount -f -l, the kernel NFS superblock from the
+# dead server lingers while D-state processes hold references to it.
+# Mounting on the SAME path triggers stale-superblock reuse and hangs.
+# Use _0, _1, _2, ... per restart cycle, matching ci_soak_test.sh.
+MOUNT_BASE="/mnt/reffs_local_soak"
+MOUNT="${MOUNT_BASE}_0"
+ACTIVE_MOUNTS=("$MOUNT")
 CONFIG="/reffs_data/soak.toml"
 LOG="/reffs_data/soak.log"
 TRACE="/reffs_data/soak-trace.log"
@@ -116,11 +123,16 @@ info "Backend: $BACKEND_TYPE"
 # fuser -k sends SIGKILL to killable (non-D-state) processes.
 # The subsequent umount -f -l detaches the mount so any surviving
 # D-state processes wake with EIO and exit on their own.
-if mountpoint -q "$MOUNT" 2>/dev/null; then
-    sudo timeout 10 fuser -k -m "$MOUNT" 2>/dev/null || true
-    sleep 1
-fi
-sudo umount -f -l "$MOUNT" 2>/dev/null || true
+# Clean up all numbered mount paths (_0, _1, ...) left by prior runs.
+for _stale_n in $(seq 0 30); do
+    _stale="${MOUNT_BASE}_${_stale_n}"
+    [ -d "$_stale" ] || continue
+    if mountpoint -q "$_stale" 2>/dev/null; then
+        sudo timeout 10 fuser -k -m "$_stale" 2>/dev/null || true
+        sleep 1
+        sudo umount -f -l "$_stale" 2>/dev/null || true
+    fi
+done
 rm -rf "$DATA_DIR" "$STATE_DIR"
 rm -f "$LOG" "$TRACE" /reffs_data/soak-trace-*.log /reffs_data/soak-trace-*.log.zst
 mkdir -p "$DATA_DIR" "$STATE_DIR"
@@ -300,16 +312,18 @@ cleanup() {
         info "    reffsd exited"
         REFFSD_PID=
     fi
-    info "  [2/3] Force-unmount $MOUNT"
+    info "  [2/3] Force-unmount all active mounts"
     # Guard fuser with mountpoint check: if the mount was already
     # detached (e.g. by unmount_nfs in the normal stopping path),
     # fuser -m resolves to the underlying host filesystem and
     # sends SIGKILL to every process on the machine.
-    if mountpoint -q "$MOUNT" 2>/dev/null; then
-        sudo timeout 10 fuser -k -m "$MOUNT" 2>/dev/null || true
-        sleep 1
-    fi
-    sudo umount -f -l "$MOUNT" 2>/dev/null || true
+    for _mnt in "${ACTIVE_MOUNTS[@]}"; do
+        if mountpoint -q "$_mnt" 2>/dev/null; then
+            sudo timeout 10 fuser -k -m "$_mnt" 2>/dev/null || true
+            sleep 1
+        fi
+        sudo umount -f -l "$_mnt" 2>/dev/null || true
+    done
     sleep 1
     info "  [3/3] Killing ${#WORKLOAD_PIDS[@]} workload processes"
     for pid in "${WORKLOAD_PIDS[@]}"; do
@@ -468,17 +482,33 @@ while true; do
         # Send SIGKILL via fuser BEFORE detaching so that rpc_killall_tasks()
         # (triggered by umount -f) delivers the pending SIGKILL when it wakes
         # D-state processes.  Without fuser first, they wake up and retry NFS.
-        info "  [2/6] Force-unmount $MOUNT"
-        if mountpoint -q "$MOUNT" 2>/dev/null; then
-            sudo timeout 10 fuser -k -m "$MOUNT" 2>/dev/null || true
+        OLD_MOUNT="$MOUNT"
+        info "  [2/6] Force-unmount $OLD_MOUNT"
+        if mountpoint -q "$OLD_MOUNT" 2>/dev/null; then
+            sudo timeout 10 fuser -k -m "$OLD_MOUNT" 2>/dev/null || true
             sleep 1
         fi
-        sudo umount -f -l "$MOUNT" 2>/dev/null || true
+        sudo umount -f -l "$OLD_MOUNT" 2>/dev/null || true
         # After umount -f, rpc_killall_tasks() wakes D-state processes.
         # Give them 3s then explicitly SIGKILL any survivors (grandchildren
         # of workloads that were not in WORKLOAD_PIDS).
         sleep 3
-        kill_dstate_mount_users "$MOUNT"
+        kill_dstate_mount_users "$OLD_MOUNT"
+
+        # Advance to a fresh mount path for this restart cycle.  The kernel
+        # NFS superblock from the killed server lingers while D-state processes
+        # hold references to it.  Mounting on the SAME path triggers stale-
+        # superblock reuse and hangs.  Kill the old dstate_monitor (which was
+        # watching OLD_MOUNT) and start a fresh one on the new path after remount.
+        MOUNT="${MOUNT_BASE}_${RESTART_COUNT}"
+        ACTIVE_MOUNTS+=("$MOUNT")
+        sudo mkdir -p "$MOUNT"
+        sudo chmod 777 "$MOUNT"
+        if [ -n "$DSTATE_MON_PID" ] && kill -0 "$DSTATE_MON_PID" 2>/dev/null; then
+            kill -TERM "$DSTATE_MON_PID" 2>/dev/null || true
+            wait "$DSTATE_MON_PID" 2>/dev/null || true
+            DSTATE_MON_PID=
+        fi
 
         # Step 3: SIGKILL workloads (SIGTERM can't interrupt D-state)
         info "  [3/6] SIGKILL ${#WORKLOAD_PIDS[@]} workload processes"
@@ -515,8 +545,6 @@ while true; do
         echo "=== Restart #$RESTART_COUNT at $(date) ===" >> "$LOG"
         start_server || exit 1
 
-        sudo umount -f "$MOUNT" 2>/dev/null || true
-        sleep 1
         mount_ok=false
         for try in $(seq 1 6); do
             # mount_nfs returns non-zero on timeout/failure;
@@ -533,6 +561,16 @@ while true; do
             exit 1
         fi
 
+        # Start a fresh D-state monitor on the new mount path.  The old
+        # monitor (which watched OLD_MOUNT) was stopped in step 2.  Send
+        # immediate USR1 to suppress startup noise during the grace window.
+        "$SCRIPT_DIR/dstate_monitor.sh" "$MOUNT" "$DSTATE_LOG" &
+        DSTATE_MON_PID=$!
+        info "  D-state monitor restarted (PID $DSTATE_MON_PID) on $MOUNT"
+        sleep 0.1
+        kill -USR1 "$DSTATE_MON_PID" 2>/dev/null || true
+        info "  D-state startup grace period started"
+
         # Step 6: relaunch workloads
         info "  [6/6] Relaunching $CLIENTS workloads"
         for i in $(seq 1 "$CLIENTS"); do
@@ -544,15 +582,6 @@ while true; do
             WORKLOAD_PIDS+=($!)
             info "    workload $i: PID ${WORKLOAD_PIDS[-1]}"
         done
-
-        # Send USR2 (not USR1) to the D-state monitor.  USR2 both refreshes
-        # the baseline (absorbing any D-state stragglers from the old mount
-        # that survived the restart) and resets the grace timer.  This
-        # prevents inter-cycle accumulation from causing false FAILURE lines.
-        if [ -n "$DSTATE_MON_PID" ] && kill -0 "$DSTATE_MON_PID" 2>/dev/null; then
-            kill -USR2 "$DSTATE_MON_PID" 2>/dev/null || true
-            info "  D-state baseline refreshed + grace reset (server recovered)"
-        fi
 
         NEXT_RESTART=$((NOW + RESTART_SEC))
         info "  Restart #$RESTART_COUNT complete, next in ${RESTART_SEC}s"
@@ -584,10 +613,15 @@ done
 
 info "Stopping workloads..."
 for pid in "${WORKLOAD_PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
+    kill -9 "$pid" 2>/dev/null || true
 done
+# D-state processes on a dying NFS mount may not exit after SIGKILL;
+# poll briefly rather than waiting indefinitely (prevents exit 124).
 for pid in "${WORKLOAD_PIDS[@]}"; do
-    wait "$pid" 2>/dev/null || true
+    for _w in $(seq 1 10); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+    done
 done
 WORKLOAD_PIDS=()
 
