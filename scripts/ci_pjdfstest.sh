@@ -210,7 +210,7 @@ run_pjdfstest() {
 	info "Running pjdfstest ($label) on $TESTDIR"
 
 	cd "$TESTDIR"
-	if prove -rv "$PJDFS_DIR/tests" 2>&1 | tee "$results_file"; then
+	if sudo prove -rv "$PJDFS_DIR/tests" 2>&1 | tee "$results_file"; then
 		info "$label: ALL PASSED"
 	else
 		info "$label: some tests failed (baseline run)"
