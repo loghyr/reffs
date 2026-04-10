@@ -280,7 +280,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
-	if (create_worker_threads(&running) < 0) {
+	if (create_worker_threads(&running, 2) < 0) {
 		exit_code = 1;
 		goto out;
 	}

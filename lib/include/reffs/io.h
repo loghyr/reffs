@@ -39,6 +39,7 @@
 #endif
 
 #define NUM_LISTENERS 1
+/* Keep in sync with REFFS_MAX_WORKER_THREADS in settings.h */
 #define MAX_WORKER_THREADS 64
 #define MAX_PENDING_REQUESTS 256
 #define MAX_CONNECTIONS 65536 // Maximum number of concurrent client connections
@@ -221,9 +222,11 @@ int io_request_read_op(int fd, struct connection_info *ci,
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 			struct connection_info *ci, struct ring_context *rc);
 
-int create_worker_threads(volatile sig_atomic_t *running);
+int create_worker_threads(volatile sig_atomic_t *running,
+			  unsigned int nworkers);
 void wait_for_worker_threads(void);
 
+void io_mark_main_thread(void);
 void add_task(struct task *task);
 
 void io_client_fd_register(int fd);

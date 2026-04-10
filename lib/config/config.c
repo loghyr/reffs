@@ -201,8 +201,15 @@ static void parse_server(struct reffs_config *cfg, toml_table_t *srv)
 	}
 
 	d = toml_int_in(srv, "workers");
-	if (d.ok && d.u.i > 0)
+	if (d.ok && d.u.i > 0) {
 		cfg->workers = (unsigned int)d.u.i;
+		if (cfg->workers > REFFS_MAX_WORKER_THREADS) {
+			TRACE("workers = %u exceeds REFFS_MAX_WORKER_THREADS "
+			      "(%u), clamping",
+			      cfg->workers, REFFS_MAX_WORKER_THREADS);
+			cfg->workers = REFFS_MAX_WORKER_THREADS;
+		}
+	}
 
 	d = toml_int_in(srv, "max_session_slots");
 	if (d.ok && d.u.i > 0)

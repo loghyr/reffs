@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <time.h>
 
@@ -30,6 +31,20 @@ int task_queue_tail = 0;
 // Thread management
 pthread_t worker_threads[MAX_WORKER_THREADS];
 int num_worker_threads = 0;
+
+/*
+ * Set by io_mark_main_thread() so add_task() knows it must not block.
+ * The io_uring main thread is the only one that processes CQEs; if it
+ * blocks here waiting for queue space, no BACKEND_PWRITE completions
+ * arrive, workers waiting for those completions never resume, and the
+ * queue never drains -- a self-sustaining deadlock.
+ */
+static __thread bool is_io_main_thread = false;
+
+void io_mark_main_thread(void)
+{
+	is_io_main_thread = true;
+}
 
 struct thread_data {
 	int thread_id;
@@ -144,8 +159,51 @@ void *io_worker_thread(void *vtd)
 
 void add_task(struct task *t)
 {
+	if (is_io_main_thread) {
+		/*
+		 * The io_uring main thread must never block here.  Spin
+		 * briefly to give workers a chance to drain one slot, then
+		 * drop the task so the main loop can continue processing
+		 * CQEs (including the BACKEND_PWRITE completions that
+		 * unblock paused workers).  The NFS client will retransmit
+		 * after its RPC timeout.
+		 */
+		for (int i = 0; i < 16; i++) {
+			pthread_mutex_lock(&task_queue_mutex);
+			if (((task_queue_tail + 1) % QUEUE_DEPTH) !=
+			    task_queue_head) {
+				task_queue[task_queue_tail] = t;
+				task_queue_tail =
+					(task_queue_tail + 1) % QUEUE_DEPTH;
+				pthread_cond_signal(&task_queue_cond);
+				pthread_mutex_unlock(&task_queue_mutex);
+				return;
+			}
+			pthread_mutex_unlock(&task_queue_mutex);
+			sched_yield();
+		}
+		if (t->t_rt != NULL) {
+			/*
+			 * Resume task: the rpc_trans and compound are still
+			 * live -- freeing t->t_buffer would corrupt them.
+			 * Log the anomaly; the async completion path will
+			 * eventually time out or the client will close.
+			 */
+			LOG("task queue full, dropping resume task fd=%d -- "
+			    "in-flight RPC will stall",
+			    t->t_fd);
+		} else {
+			LOG("task queue full, dropping RPC xid=0x%08x fd=%d -- "
+			    "client will retransmit",
+			    t->t_xid, t->t_fd);
+			free(t->t_buffer);
+		}
+		free(t);
+		return;
+	}
+
+	/* Worker threads can block -- they have nothing else to do. */
 	pthread_mutex_lock(&task_queue_mutex);
-	// Wait while the queue is full
 	while (((task_queue_tail + 1) % QUEUE_DEPTH) == task_queue_head) {
 		pthread_cond_wait(&task_queue_full_cond, &task_queue_mutex);
 	}
@@ -155,17 +213,21 @@ void add_task(struct task *t)
 	pthread_mutex_unlock(&task_queue_mutex);
 }
 
-int create_worker_threads(volatile sig_atomic_t *running)
+int create_worker_threads(volatile sig_atomic_t *running, unsigned int nworkers)
 {
-	// Create worker threads
-	for (int i = 0; i < MAX_WORKER_THREADS; i++) {
+	if (nworkers == 0 || nworkers > MAX_WORKER_THREADS)
+		nworkers = MAX_WORKER_THREADS;
+
+	TRACE("Creating %u worker threads", nworkers);
+
+	for (unsigned int i = 0; i < nworkers; i++) {
 		struct thread_data *td = malloc(sizeof(*td));
 		if (!td) {
-			LOG("Failed to create worker thread %d", i);
+			LOG("Failed to create worker thread %u", i);
 			continue;
 		}
 
-		td->thread_id = i;
+		td->thread_id = (int)i;
 		td->running = running;
 
 		if (pthread_create(&worker_threads[i], NULL, io_worker_thread,
@@ -173,7 +235,7 @@ int create_worker_threads(volatile sig_atomic_t *running)
 			num_worker_threads++;
 		} else {
 			free(td);
-			LOG("Failed to create worker thread %d", i);
+			LOG("Failed to create worker thread %u", i);
 		}
 	}
 

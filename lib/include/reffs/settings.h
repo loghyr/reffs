@@ -25,6 +25,9 @@
 #define REFFS_FENCE_UID_MAX_DEFAULT 2048
 #define REFFS_LAYOUT_WIDTH_DEFAULT 6 /* RS(4,2): 4 data + 2 parity */
 
+/* Maximum number of IO worker threads (also in io.h MAX_WORKER_THREADS). */
+#define REFFS_MAX_WORKER_THREADS 64
+
 /*
  * Server role -- maps to EXCHGID4_FLAG_USE_* bits advertised in EXCHANGE_ID.
  *

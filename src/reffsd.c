@@ -555,8 +555,9 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	// Create worker threads
-	if (create_worker_threads(&running) < 0) {
+	// Create worker threads (cfg.workers honours the TOML "workers" setting;
+	// defaults to nproc, clamped to MAX_WORKER_THREADS in the config parser)
+	if (create_worker_threads(&running, cfg.workers) < 0) {
 		exit_code = 1;
 		goto out;
 	}

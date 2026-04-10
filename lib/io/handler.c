@@ -361,6 +361,14 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 
 	running_context = running_flag;
 
+	/*
+	 * Mark this thread as the io_uring event loop so add_task()
+	 * will not block when the task queue is full.  Blocking here
+	 * prevents CQE processing and can deadlock against workers
+	 * waiting for BACKEND_PWRITE completions.
+	 */
+	io_mark_main_thread();
+
 	// Initialize heartbeat system
 	if (io_heartbeat_init(rc) < 0) {
 		LOG("Failed to initialize heartbeat system");
