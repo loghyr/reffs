@@ -27,6 +27,12 @@ GEN_SOURCES = \
 	nfsv42_names.h		\
 	nfsv42_names.c
 
+# BUILT_SOURCES ensures all generated headers are created before any
+# compilation begins.  Without this, a parallel make -jN from scratch
+# can start compiling a .c file before the xdr-parser run that produces
+# the included .h has finished.
+BUILT_SOURCES = $(GEN_SOURCES)
+
 CLEANFILES = $(GEN_SOURCES)
 
 lib_LTLIBRARIES = libreffs_xdr.la
@@ -60,7 +66,18 @@ libreffs_xdr_la_SOURCES =	\
 CLEANFILES += $(GEN_SOURCES:.h=.stamp) $(GEN_SOURCES:.c=.stamp)
 
 # Names table: generated from nfsv42_xdr.x, output prefix is "nfsv42"
-# so the files are nfsv42_names.h and nfsv42_names.c.
-nfsv42_names.h nfsv42_names.c: nfsv42_xdr.x
+# so the files are nfsv42_names.h and nfsv42_names.c.  Use a stamp
+# (same as the other XDR files) to prevent parallel make -jN from
+# invoking the generator twice when both .h and .c are needed at once.
+nfsv42_names.stamp: nfsv42_xdr.x
 	$(XDR_PARSER) --names --lang c --prefix nfsv42 \
 		--output-dir $(builddir) $(srcdir)/nfsv42_xdr.x
+	touch $@
+
+nfsv42_names.h: nfsv42_names.stamp
+	@test -f $@ || ($(MAKE) $(AM_MAKEFLAGS) nfsv42_names.stamp && test -f $@)
+
+nfsv42_names.c: nfsv42_names.stamp
+	@test -f $@ || ($(MAKE) $(AM_MAKEFLAGS) nfsv42_names.stamp && test -f $@)
+
+CLEANFILES += nfsv42_names.stamp
