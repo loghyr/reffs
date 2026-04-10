@@ -75,7 +75,10 @@ int stateid_assign(struct stateid *stid, struct inode *inode,
 
 	/*
 	 * s_cookie: hash of the stid pointer -- cheap, non-cryptographic,
-	 * distinct across recycled addresses.
+	 * distinct across recycled addresses.  &stid is the address of the
+	 * local pointer variable (8 bytes on LP64), so sizeof(stid) ==
+	 * sizeof(struct stateid *) is intentional here: we are hashing the
+	 * pointer value itself, not the struct it points to.
 	 */
 	stid->s_cookie = (uint32_t)XXH3_64bits(&stid, sizeof(stid));
 

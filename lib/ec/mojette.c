@@ -427,7 +427,7 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 #if defined(__aarch64__) || defined(__SSE2__) || defined(__AVX2__)
 		if (!moj_scalar_only && q == 1 && (p == 1 || p == -1)) {
 			for (int row = 0; row < Q; row++) {
-				const uint64_t *src = grid + row * P;
+				const uint64_t *src = grid + (size_t)row * P;
 				uint64_t *dst = proj->mp_bins + (off - row);
 
 #ifdef __aarch64__

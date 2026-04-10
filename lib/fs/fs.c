@@ -153,7 +153,6 @@ int find_matching_directory_entry(struct name_match **nm, const char *path,
 					goto err;
 				}
 				dirent_put(current_de);
-				current_de = next_de;
 				new->nm_dirent = next_de;
 			} else {
 				if (next_de) {

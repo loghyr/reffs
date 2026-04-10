@@ -63,13 +63,13 @@ static int mojette_sys_encode(struct ec_codec *codec, uint8_t **data,
 	 * data[0..k-1] are grid rows.  Assemble them into a contiguous
 	 * grid for the forward transform.
 	 */
-	uint64_t *grid = calloc((size_t)(P * k), sizeof(uint64_t));
+	uint64_t *grid = calloc((size_t)P * k, sizeof(uint64_t));
 
 	if (!grid)
 		return -ENOMEM;
 
 	for (int i = 0; i < k; i++)
-		memcpy(grid + i * P, data[i], shard_len);
+		memcpy(grid + (size_t)i * P, data[i], shard_len);
 
 	/*
 	 * We only need the last m projections (the parity directions).
@@ -245,7 +245,7 @@ static int mojette_sys_decode(struct ec_codec *codec, uint8_t **shards,
 	 * Use at most missing_data projections for the inverse.
 	 */
 	int n_inv = missing_data;
-	uint64_t *reduced_grid = calloc((size_t)(P * n_inv), sizeof(uint64_t));
+	uint64_t *reduced_grid = calloc((size_t)P * n_inv, sizeof(uint64_t));
 
 	if (!reduced_grid) {
 		free(missing_rows);
@@ -311,8 +311,8 @@ static int mojette_sys_decode(struct ec_codec *codec, uint8_t **shards,
 	if (ret == 0) {
 		/* Copy recovered rows back into shards. */
 		for (int i = 0; i < n_inv; i++)
-			memcpy(shards[missing_rows[i]], reduced_grid + i * P,
-			       shard_len);
+			memcpy(shards[missing_rows[i]],
+			       reduced_grid + (size_t)i * P, shard_len);
 	}
 
 	for (int i = 0; i < n_inv; i++)
@@ -343,13 +343,13 @@ static int mojette_nonsys_encode(struct ec_codec *codec, uint8_t **data,
 	int P = grid_P(shard_len);
 
 	/* Assemble grid from data rows. */
-	uint64_t *grid = calloc((size_t)(P * k), sizeof(uint64_t));
+	uint64_t *grid = calloc((size_t)P * k, sizeof(uint64_t));
 
 	if (!grid)
 		return -ENOMEM;
 
 	for (int i = 0; i < k; i++)
-		memcpy(grid + i * P, data[i], shard_len);
+		memcpy(grid + (size_t)i * P, data[i], shard_len);
 
 	/* Compute all n projections. */
 	struct moj_projection **projs =
@@ -454,7 +454,7 @@ static int mojette_nonsys_decode(struct ec_codec *codec, uint8_t **shards,
 	}
 
 	/* Full inverse to recover original grid. */
-	uint64_t *grid = calloc((size_t)(P * k), sizeof(uint64_t));
+	uint64_t *grid = calloc((size_t)P * k, sizeof(uint64_t));
 
 	if (!grid)
 		goto out;
@@ -464,7 +464,7 @@ static int mojette_nonsys_decode(struct ec_codec *codec, uint8_t **shards,
 	if (ret == 0) {
 		/* Place original data rows into shards[0..k-1]. */
 		for (int i = 0; i < k; i++)
-			memcpy(shards[i], grid + i * P, shard_len);
+			memcpy(shards[i], grid + (size_t)i * P, shard_len);
 	}
 
 	free(grid);
