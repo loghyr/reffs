@@ -99,11 +99,6 @@ if test "x$SCAN_BUILD" = "xno"; then
     AC_MSG_WARN([scan-build not found - 'make scanbuild' will fail])
 fi
 
-AC_PATH_PROG([RPCGEN], [rpcgen], [no])
-if test "x$RPCGEN" = "xno"; then
-    AC_MSG_ERROR([rpcgen is required to build this project])
-fi
-
 AC_PATH_PROG([XDR_PARSER], [xdr-parser], [no])
 if test "x$XDR_PARSER" = "xno"; then
     AC_MSG_ERROR([xdr-parser is required (pip install reply-xdr)])
@@ -534,7 +529,6 @@ AC_CONFIG_FILES([
 	src/Makefile
 	tools/Makefile])
 
-AC_CONFIG_FILES([lib/xdr/insert_pragmas.sh],[chmod +x lib/xdr/insert_pragmas.sh])
 AC_CONFIG_FILES([scripts/copy_and_verify.sh],[chmod +x scripts/copy_and_verify.sh])
 AC_CONFIG_FILES([scripts/reffs-probe.py],[chmod +x scripts/reffs-probe.py])
 AC_CONFIG_FILES([scripts/reffs/probe_client.py],[chmod +x scripts/reffs/probe_client.py])

@@ -42,16 +42,25 @@ libreffs_xdr_la_SOURCES =	\
 	sm_inter.x		\
 	rpc_xdr.x
 
+# xdr-parser generates both .h and .c in a single invocation.
+# The sentinel .stamp file records the last successful run so make
+# rebuilds both outputs when the .x source changes.
+%.stamp: %.x
+	$(XDR_PARSER) --lang c --output-dir $(builddir) $<
+	touch $@
 
-%.c: %.x %.h
-	rpcgen -C -c $< > $@
-	$(top_builddir)/lib/xdr/insert_pragmas.sh $@
+# Individual .h / .c targets depend on the .stamp so parallel make
+# (-jN) does not run the generator twice for the same source.
+%.h: %.stamp
+	@test -f $@ || ($(MAKE) $(AM_MAKEFLAGS) $*.stamp && test -f $@)
 
-%.h: %.x
-	rpcgen -C -h $< > $@
+%.c: %.stamp
+	@test -f $@ || ($(MAKE) $(AM_MAKEFLAGS) $*.stamp && test -f $@)
 
-nfsv42_names.c nfsv42_names.h: nfsv42_xdr.x nfsv42_xdr.h
-	$(PYTHON) $(top_srcdir)/scripts/gen_nfsv42_names.py \
-		--xdr $(srcdir)/nfsv42_xdr.x \
-		--hdr nfsv42_xdr.h \
-		--out $(builddir)
+CLEANFILES += $(GEN_SOURCES:.h=.stamp) $(GEN_SOURCES:.c=.stamp)
+
+# Names table: generated from nfsv42_xdr.x, output prefix is "nfsv42"
+# so the files are nfsv42_names.h and nfsv42_names.c.
+nfsv42_names.h nfsv42_names.c: nfsv42_xdr.x
+	$(XDR_PARSER) --names --lang c --prefix nfsv42 \
+		--output-dir $(builddir) $(srcdir)/nfsv42_xdr.x

@@ -55,7 +55,6 @@ RUN dnf -y install \
     python3-devel \
     python3-pip \
     rpcbind \
-    rpcgen \
     rsync \
     rocksdb-devel \
     scan-build \

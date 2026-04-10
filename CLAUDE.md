@@ -57,8 +57,8 @@ https://github.com/loghyr/reply).
 
 - `xdr-parser --lang python foo.x` generates `*_const.py`, `*_type.py`, `*_pack.py`
 - `xdr-parser --lang c foo.x` generates `*_xdr.h`, `*_xdr.c`
+- `xdr-parser --names --lang c --prefix P foo.x` generates `P_names.h`, `P_names.c`
 - `from rpc import rpc` provides the RPC Client/Server
-- C XDR generation still uses system `rpcgen`
 
 pynfs has been removed. Do not add imports from pynfs or dependencies
 on ply (GPL).

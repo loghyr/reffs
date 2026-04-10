@@ -4,7 +4,6 @@
 SUBDIRS = reffs
 
 dist_bin_SCRIPTS = \
-	gen_nfsv42_names.py \
 	reffs-probe.py \
 	bat_setup.sh \
 	bat_client_setup.sh \
