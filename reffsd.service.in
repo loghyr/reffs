@@ -4,7 +4,8 @@
 [Unit]
 Description=Reffs NFS Daemon
 Wants=network-online.target
-After=network-online.target rpcbind.service
+Requires=rpcbind.socket
+After=network-online.target rpcbind.socket
 
 [Service]
 Type=simple
