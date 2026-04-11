@@ -39,6 +39,8 @@ DURATION_MIN=30
 RESTART_MIN=5
 CLIENTS=2
 
+DSTATE_LOG_OVERRIDE=""
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --rocksdb)    BACKEND_TYPE="rocksdb"; shift ;;
@@ -46,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     --duration)   DURATION_MIN="$2"; shift 2 ;;
     --restart)    RESTART_MIN="$2"; shift 2 ;;
     --clients)    CLIENTS="$2"; shift 2 ;;
+    --dstate-log) DSTATE_LOG_OVERRIDE="$2"; shift 2 ;;
     *)            echo "Unknown: $1"; exit 1 ;;
     esac
 done
@@ -75,7 +78,7 @@ TRACE="/reffs_data/soak-trace.log"
 REFFSD_PID=
 WORKLOAD_PIDS=()
 DSTATE_MON_PID=
-DSTATE_LOG="/reffs_data/soak-dstate.log"
+DSTATE_LOG="${DSTATE_LOG_OVERRIDE:-/reffs_data/soak-dstate.log}"
 FAILED=false
 
 die() { echo "SOAK FAIL: $*" >&2; FAILED=true; }
@@ -244,29 +247,45 @@ unmount_nfs() {
     return 0  # best-effort
 }
 
-# Kill D-state processes whose cwd or open fds point to MOUNT.
-# Uses readlink (doesn't follow symlinks) so it is safe to call
-# even when the mount is dead -- we never stat a D-state fd target.
-# Must be called AFTER umount -f so rpc_killall_tasks() has already
-# woken the blocked RPC waits before we check for survivors.
+# Kill D-state processes that have open fds on the filesystem identified
+# by MNT_ID (the kernel mount ID from /proc/self/mountinfo).
+#
+# WHY NOT readlink: readlink /proc/$pid/fd/N calls d_path() in the kernel,
+# which acquires rename_lock/mount_lock.  For fds on a lazy-unmounted NFS
+# filesystem, d_path() blocks for ~80s waiting for umount cleanup to release
+# those locks.  This caused the 94-second restart delays in the soak test.
+#
+# WHY fdinfo: /proc/$pid/fdinfo/N contains "mnt_id: <N>" which is just an
+# integer field read directly from the vfsmount struct -- no path resolution,
+# no locking.  Reading it is non-blocking even for D-state NFS fds.
+#
+# MNT_ID must be captured from /proc/self/mountinfo BEFORE the lazy umount
+# because the mount entry disappears from our namespace immediately after
+# umount -f -l, even though the vfsmount struct persists in memory (held by
+# D-state processes' fds) and its mnt_id remains valid in fdinfo.
 kill_dstate_mount_users() {
     local mount=$1
+    local mnt_id=${2:-}
     local count=0
     local pid
+
+    if [ -z "$mnt_id" ]; then
+        info "    kill_dstate_mount_users: mnt_id unavailable, skipping"
+        return 0
+    fi
+
     while IFS= read -r pid; do
         local found=false
-        if readlink "/proc/$pid/cwd" 2>/dev/null | grep -q "^$mount"; then
-            found=true
-        fi
-        if [ "$found" = "false" ]; then
-            local fd
-            for fd in "/proc/$pid/fd/"*; do
-                if readlink "$fd" 2>/dev/null | grep -q "^$mount"; then
-                    found=true
-                    break
-                fi
-            done
-        fi
+        local fdinfo
+        for fdinfo in "/proc/$pid/fdinfo/"*; do
+            [ -e "$fdinfo" ] || continue
+            local this_id
+            this_id=$(awk '/^mnt_id:/ {print $2; exit}' "$fdinfo" 2>/dev/null) || continue
+            if [ "$this_id" = "$mnt_id" ]; then
+                found=true
+                break
+            fi
+        done
         if [ "$found" = "true" ]; then
             kill -9 "$pid" 2>/dev/null && count=$((count + 1)) || true
         fi
@@ -484,6 +503,11 @@ while true; do
         # D-state processes.  Without fuser first, they wake up and retry NFS.
         OLD_MOUNT="$MOUNT"
         info "  [2/6] Force-unmount $OLD_MOUNT"
+        # Capture the kernel mount ID NOW, before lazy umount removes the entry
+        # from /proc/self/mountinfo.  The mnt_id persists in D-state processes'
+        # /proc/$pid/fdinfo/ even after the mount is detached from the namespace.
+        OLD_MNT_ID=$(awk -v mp="$OLD_MOUNT" '$5 == mp {print $1; exit}' \
+            /proc/self/mountinfo 2>/dev/null || true)
         if mountpoint -q "$OLD_MOUNT" 2>/dev/null; then
             sudo timeout 10 fuser -k -m "$OLD_MOUNT" 2>/dev/null || true
             sleep 1
@@ -493,7 +517,7 @@ while true; do
         # Give them 3s then explicitly SIGKILL any survivors (grandchildren
         # of workloads that were not in WORKLOAD_PIDS).
         sleep 3
-        kill_dstate_mount_users "$OLD_MOUNT"
+        kill_dstate_mount_users "$OLD_MOUNT" "$OLD_MNT_ID"
 
         # Advance to a fresh mount path for this restart cycle.  The kernel
         # NFS superblock from the killed server lingers while D-state processes

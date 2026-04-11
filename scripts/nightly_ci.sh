@@ -458,7 +458,8 @@ SOAK_TIMEOUT=$(( (SOAK_DURATION + 15) * 60 ))
 
 section_start soak_posix "Soak test (POSIX, ${SOAK_DURATION} min)"
 timeout $SOAK_TIMEOUT "$REPO/scripts/local_soak.sh" --posix \
-    --duration "$SOAK_DURATION" 2>&1 | \
+    --duration "$SOAK_DURATION" \
+    --dstate-log "$LOGDIR/soak_posix_dstate.log" 2>&1 | \
     tee "$LOGDIR/soak_posix.log" | \
     grep -E '(=== |Health:.*restarts=[0-9]|PASS|FAIL)' | tail -20
 SOAK_POSIX_RC=${PIPESTATUS[0]}
@@ -466,7 +467,8 @@ record "soak_posix" $SOAK_POSIX_RC
 
 section_start soak_rocksdb "Soak test (RocksDB, ${SOAK_DURATION} min)"
 timeout $SOAK_TIMEOUT "$REPO/scripts/local_soak.sh" --rocksdb \
-    --duration "$SOAK_DURATION" 2>&1 | \
+    --duration "$SOAK_DURATION" \
+    --dstate-log "$LOGDIR/soak_rocksdb_dstate.log" 2>&1 | \
     tee "$LOGDIR/soak_rocksdb.log" | \
     grep -E '(=== |Health:.*restarts=[0-9]|PASS|FAIL)' | tail -20
 SOAK_ROCKSDB_RC=${PIPESTATUS[0]}
