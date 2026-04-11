@@ -422,6 +422,51 @@ static void parse_one_export(struct reffs_export_config *exp, toml_table_t *tbl)
 						      client_tbl);
 		}
 	}
+
+	/*
+	 * layout_types = ["ffv1", "ffv2", "file"]
+	 * Builds a SB_LAYOUT_* bitmask for this export.
+	 */
+	arr = toml_array_in(tbl, "layout_types");
+	if (arr) {
+		int n = toml_array_nelem(arr);
+
+		for (int i = 0; i < n; i++) {
+			d = toml_string_at(arr, i);
+			if (!d.ok)
+				continue;
+			if (!strcasecmp(d.u.s, "file"))
+				exp->layout_types |= 1U; /* SB_LAYOUT_FILE */
+			else if (!strcasecmp(d.u.s, "ffv1"))
+				exp->layout_types |=
+					2U; /* SB_LAYOUT_FLEX_FILES */
+			else if (!strcasecmp(d.u.s, "ffv2"))
+				exp->layout_types |=
+					4U; /* SB_LAYOUT_FLEX_FILES_V2 */
+			else
+				TRACE("config: unknown layout_type '%s'",
+				      d.u.s);
+			free(d.u.s);
+		}
+	}
+
+	/*
+	 * dstores = [1, 2]
+	 * Dstore IDs to bind to this export (0 = use global pool).
+	 */
+	arr = toml_array_in(tbl, "dstores");
+	if (arr) {
+		int n = toml_array_nelem(arr);
+
+		if (n > REFFS_CONFIG_MAX_DSTORES)
+			n = REFFS_CONFIG_MAX_DSTORES;
+		exp->ndstores = (unsigned int)n;
+		for (int i = 0; i < n; i++) {
+			d = toml_int_at(arr, i);
+			if (d.ok)
+				exp->dstores[i] = (uint32_t)d.u.i;
+		}
+	}
 }
 
 int reffs_config_load(struct reffs_config *cfg, const char *path)

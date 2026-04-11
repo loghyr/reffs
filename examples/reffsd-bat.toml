@@ -36,9 +36,15 @@ backend_sq_size = 512
 backend_cq_size = 2048
 
 # Root export: all flavors so clients can traverse to per-flavor
-# sub-exports without WRONGSEC at the root.
+# sub-exports without WRONGSEC at the root.  layout_types enables
+# pNFS on the root namespace (ec_demo targets root via PUTROOTFH).
+# dstores binds the loopback data server (id=1) to the root export.
+# These are applied at startup because the root export is not saved
+# in the sb registry (it is always recreated by ns_init).
 [[export]]
-path = "/"
+path         = "/"
+layout_types = ["ffv1"]
+dstores      = [1]
 
     [[export.clients]]
     match       = "*"

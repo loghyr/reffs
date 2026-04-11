@@ -553,6 +553,40 @@ int main(int argc, char *argv[])
 				dstore_put(ds);
 			}
 		}
+
+		/*
+		 * Apply pNFS layout config from [[export]] to the root sb.
+		 * The root export is always sb_id=1 and is excluded from the
+		 * registry save, so layout_types and dstores must be applied
+		 * from the TOML config on every startup.
+		 *
+		 * layout_types = ["ffv1"]  -- enables flex files on root "/"
+		 * dstores      = [1]       -- binds dstore 1 (loopback DS)
+		 */
+		if (cfg.nexports > 0 && cfg.exports[0].layout_types != 0) {
+			struct super_block *rs = super_block_find(1);
+
+			if (rs) {
+				rs->sb_layout_types =
+					cfg.exports[0].layout_types;
+				if (cfg.exports[0].ndstores > 0) {
+					unsigned int nd =
+						cfg.exports[0].ndstores;
+
+					if (nd > SB_MAX_DSTORES)
+						nd = SB_MAX_DSTORES;
+					rs->sb_ndstores = nd;
+					memcpy(rs->sb_dstore_ids,
+					       cfg.exports[0].dstores,
+					       nd * sizeof(rs->sb_dstore_ids[0]));
+				}
+				TRACE("root export: layout_types=0x%x ndstores=%u",
+				      rs->sb_layout_types, rs->sb_ndstores);
+				super_block_put(rs);
+			} else {
+				LOG("root sb not found after ns_init: pNFS layout config not applied");
+			}
+		}
 	}
 
 	// Create worker threads (cfg.workers honours the TOML "workers" setting;

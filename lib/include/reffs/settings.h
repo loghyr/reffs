@@ -20,6 +20,7 @@
 #define REFFS_CONFIG_MAX_EXPORTS 64
 #define REFFS_CONFIG_MAX_FLAVORS 8
 #define REFFS_CONFIG_MAX_DATA_SERVERS 64
+#define REFFS_CONFIG_MAX_DSTORES 16
 #define REFFS_CONFIG_MAX_HOST 256
 #define REFFS_FENCE_UID_MIN_DEFAULT 1024
 #define REFFS_FENCE_UID_MAX_DEFAULT 2048
@@ -96,6 +97,11 @@ struct reffs_export_config {
 	char path[REFFS_CONFIG_MAX_PATH];
 	struct reffs_client_rule_config rules[SB_MAX_CLIENT_RULES];
 	unsigned int nrules;
+	/* pNFS layout types to enable on this export (SB_LAYOUT_* bitmask). */
+	uint32_t layout_types;
+	/* Dstore IDs to bind to this export (0 = use global pool). */
+	uint32_t dstores[REFFS_CONFIG_MAX_DSTORES];
+	unsigned int ndstores;
 };
 
 /*
