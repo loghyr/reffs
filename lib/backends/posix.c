@@ -831,10 +831,24 @@ static void posix_recover_directory_recursive(struct reffs_dirent *parent)
 			break;
 		name[name_len] = '\0';
 
+		/* ino=0 is never valid (root is ino=1).  Skip entries
+		 * that were corrupted when a directory sync ran after
+		 * a recovery that failed to set rd_ino. */
+		if (ino == 0) {
+			TRACE("skipping corrupt dir entry '%s' ino=0 in %s",
+			      name, path);
+			continue;
+		}
+
 		struct reffs_dirent *rd = dirent_alloc(
 			parent, name, reffs_life_action_load, false);
 		if (rd) {
 			rd->rd_cookie = cookie;
+			/* Set rd_ino from the on-disk value before attaching
+			 * the inode so that posix_dir_sync writes the correct
+			 * ino back to disk; without this, the next dir sync
+			 * would persist ino=0 for all recovered entries. */
+			rd->rd_ino = ino;
 			struct inode *recovered = inode_alloc(sb, ino);
 			if (recovered) {
 				dirent_attach_inode(rd, recovered);

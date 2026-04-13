@@ -3793,9 +3793,25 @@ restart_snap:
 		entry4 *e;
 
 		if (!child) {
+			/* Skip this entry; the client may request rdattr_error
+			 * in a subsequent READDIR if it needs per-entry status.
+			 * goto past_eof here would cause a storm: the client
+			 * retries from the last good cookie, hits the same bad
+			 * entry, and loops indefinitely. */
 			if (!rdattr_error_requested)
-				goto past_eof;
+				continue;
 			attr_status = NFS4ERR_SERVERFAULT;
+		} else if (child->i_ino == 0) {
+			/* Zero-ino inode: the on-disk dir entry was corrupted
+			 * (ino=0 is never valid; root is ino=1).  Returning
+			 * attrs for this inode would produce ftype4=NF4BAD and
+			 * fileid=0, which causes the Linux client to treat the
+			 * entire READDIR response as garbage and retry from
+			 * cookie=0, producing an infinite storm. */
+			inode_active_put(child);
+			if (!rdattr_error_requested)
+				continue;
+			attr_status = NFS4ERR_STALE;
 		} else {
 			pthread_mutex_lock(&child->i_attr_mutex);
 			ret = inode_to_nattr(compound->c_server_state, child,
