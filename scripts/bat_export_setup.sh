@@ -22,7 +22,7 @@ PORT=${2:-20490}
 PROBE="reffs-probe.py --host $HOST --port $PORT"
 
 die() { echo "FATAL: $*" >&2; exit 1; }
-info() { echo "[export] $*"; }
+info() { echo "[export] $*" >&2; }
 
 # -----------------------------------------------------------------------
 # Verify server is reachable
@@ -40,20 +40,6 @@ if [ "$probe_ok" != "true" ]; then
 	die "Cannot reach probe server after 90s"
 fi
 info "Probe server ready"
-
-# -----------------------------------------------------------------------
-# Configure root export (sb_id=1) for pNFS
-#
-# The root export is auto-created by reffsd and always has id=1.
-# ec_demo targets the root (PUTROOTFH + OPEN), so the root export
-# must have sb_layout_types set and a dstore bound.  These calls
-# are idempotent -- safe to re-run on every restart.
-# -----------------------------------------------------------------------
-info "Configuring root export (id=1) for pNFS..."
-$PROBE sb-set-layout-types --id 1 --layout-types ffv1 || \
-	info "  WARN: set-layout-types failed for root (id=1)"
-$PROBE sb-set-dstores --id 1 --dstores 1 || \
-	info "  WARN: set-dstores failed for root (id=1)"
 
 # -----------------------------------------------------------------------
 # Create per-flavor exports

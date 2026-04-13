@@ -717,7 +717,7 @@ def sb_set_client_rules_cmd(client, args):
     Each --rule value is a comma-separated list of fields:
       match=<spec>,access=rw|ro,root_squash=true|false,all_squash=true|false,flavors=f1:f2
     """
-    from .probe1_xdr_type import probe_client_rule1
+    from reffs.probe1_xdr_type import probe_client_rule1
 
     rules = []
     for rule_str in args.rule:
@@ -726,7 +726,7 @@ def sb_set_client_rules_cmd(client, args):
             if '=' in token:
                 k, v = token.split('=', 1)
                 fields[k.strip()] = v.strip()
-        match = fields.get('match', '*')
+        match = fields.get('match', '*').encode('ascii')
         rw = fields.get('access', 'rw').lower() == 'rw'
         root_squash = fields.get('root_squash', 'true').lower() in ('true', '1', 'yes')
         all_squash = fields.get('all_squash', 'false').lower() in ('true', '1', 'yes')
