@@ -108,6 +108,7 @@ TESTS = \
 	posix_recovery_13 \
 	posix_recovery_14 \
 	posix_recovery_15 \
+	posix_recovery_16 \
 	posix_force_load \
 	fs_usage_ram \
 	fs_usage_posix \
