@@ -962,7 +962,10 @@ int gss_ctx_unwrap_request(struct gss_ctx_entry *entry, uint32_t svc,
 			return -EACCES;
 		}
 
-		if (out_buf.length <= 4) {
+		/* Same structure as SVC_INTEGRITY: seq_num (4 bytes) followed
+		 * by proc args.  NULL procedures have zero-length args so
+		 * out_buf.length==4 is valid.  Reject only if too short. */
+		if (out_buf.length < 4) {
 			gss_release_buffer(&minor, &out_buf);
 			return -EINVAL;
 		}
