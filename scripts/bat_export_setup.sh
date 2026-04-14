@@ -68,12 +68,12 @@ create_export() {
 		info "  Found existing export id=$id"
 	fi
 
-	# Set flavors
-	$PROBE sb-set-flavors --id "$id" --flavors $flavors || \
+	# Set flavors (redirect stdout to stderr -- create_export returns $id via stdout)
+	$PROBE sb-set-flavors --id "$id" --flavors $flavors >&2 || \
 		info "  WARN: set-flavors failed for $path (id=$id)"
 
-	# Mount
-	$PROBE sb-mount --id "$id" --path "$path" 2>/dev/null || \
+	# Mount (suppress all output -- already-mounted is expected)
+	$PROBE sb-mount --id "$id" --path "$path" >/dev/null 2>/dev/null || \
 		info "  (already mounted or mount deferred)"
 
 	info "  Export $path (id=$id) ready"
