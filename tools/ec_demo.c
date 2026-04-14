@@ -20,6 +20,7 @@
 
 #include <errno.h>
 #include <getopt.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -468,6 +469,198 @@ static int cmd_setowner(const char *mds_host, const char *nfs_file,
 }
 
 /* ------------------------------------------------------------------ */
+/* bigfile: emulate CTHON04 bigfile test via inband MDS I/O           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * CTHON04 bigfile pattern: 8 KB blocks, each block filled with a
+ * letter cycling a-z.  The letter for block N is 'a' + (N % 26).
+ * N = absolute_offset / 8192.
+ *
+ * Fill buf[0..len-1] starting at file offset off.
+ */
+static void bigfile_fill(uint8_t *buf, size_t len, uint64_t off)
+{
+	for (size_t i = 0; i < len; i++)
+		buf[i] = (uint8_t)('a' + (((off + i) / 8192) % 26));
+}
+
+static int cmd_bigfile(const char *mds_host, const char *nfs_file,
+		       size_t file_size, size_t chunk_size, bool delete_first)
+{
+	struct mds_session ms;
+	struct mds_file mf;
+	uint8_t *buf;
+	int ret;
+
+	buf = malloc(chunk_size);
+	if (!buf) {
+		fprintf(stderr, "ec_demo: malloc failed\n");
+		return 1;
+	}
+
+	ret = session_open(&ms, mds_host);
+	if (ret) {
+		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
+		free(buf);
+		return 1;
+	}
+
+	/*
+	 * If --delete-first: remove the existing file so it is re-created
+	 * fresh.  This exercises the O_TRUNC path that clears stale data
+	 * from a prior inode occupying the same ino_N.dat file.
+	 * Ignore NOENT (file may not exist yet).
+	 */
+	if (delete_first) {
+		ret = mds_file_remove(&ms, nfs_file);
+		if (ret && ret != -ENOENT) {
+			fprintf(stderr, "ec_demo: remove %s failed: %d\n",
+				nfs_file, ret);
+			mds_session_destroy(&ms);
+			free(buf);
+			return 1;
+		}
+		fprintf(stderr, "ec_demo: removed %s (--delete-first)\n",
+			nfs_file);
+	}
+
+	/* Open (create if needed) the file for writing. */
+	ret = mds_file_open(&ms, nfs_file, &mf);
+	if (ret) {
+		fprintf(stderr, "ec_demo: open %s failed: %d\n", nfs_file, ret);
+		mds_session_destroy(&ms);
+		free(buf);
+		return 1;
+	}
+
+	/* Write file_size bytes in chunk_size pieces. */
+	fprintf(stderr, "ec_demo: writing %zu bytes to %s (%zu-byte chunks)\n",
+		file_size, nfs_file, chunk_size);
+
+	size_t written = 0;
+
+	while (written < file_size) {
+		size_t n = chunk_size;
+
+		if (n > file_size - written)
+			n = file_size - written;
+
+		bigfile_fill(buf, n, (uint64_t)written);
+
+		ret = mds_file_write(&ms, &mf, buf, (uint32_t)n,
+				     (uint64_t)written);
+		if (ret) {
+			fprintf(stderr,
+				"ec_demo: write at offset %zu failed: %d\n",
+				written, ret);
+			mds_file_close(&ms, &mf);
+			mds_session_destroy(&ms);
+			free(buf);
+			return 1;
+		}
+		written += n;
+	}
+
+	mds_file_close(&ms, &mf);
+	fprintf(stderr, "ec_demo: write done, %zu bytes\n", written);
+
+	/*
+	 * Re-open for reading and verify the cycling pattern byte by byte.
+	 * Use a fresh session to ensure no cached state.
+	 */
+	mds_session_destroy(&ms);
+	ret = session_open(&ms, mds_host);
+	if (ret) {
+		fprintf(stderr, "ec_demo: session reopen failed: %d\n", ret);
+		free(buf);
+		return 1;
+	}
+
+	ret = mds_file_open(&ms, nfs_file, &mf);
+	if (ret) {
+		fprintf(stderr, "ec_demo: reopen %s failed: %d\n", nfs_file,
+			ret);
+		mds_session_destroy(&ms);
+		free(buf);
+		return 1;
+	}
+
+	fprintf(stderr, "ec_demo: verifying %zu bytes from %s\n", file_size,
+		nfs_file);
+
+	size_t verified = 0;
+	int mismatches = 0;
+
+	while (verified < file_size) {
+		size_t n = chunk_size;
+
+		if (n > file_size - verified)
+			n = file_size - verified;
+
+		uint32_t nread = 0;
+
+		ret = mds_file_read(&ms, &mf, buf, (uint32_t)n,
+				    (uint64_t)verified, &nread);
+		if (ret) {
+			fprintf(stderr,
+				"ec_demo: read at offset %zu failed: %d\n",
+				verified, ret);
+			mds_file_close(&ms, &mf);
+			mds_session_destroy(&ms);
+			free(buf);
+			return 1;
+		}
+		if (nread == 0) {
+			fprintf(stderr,
+				"ec_demo: short read at offset %zu"
+				" (got 0 bytes)\n",
+				verified);
+			break;
+		}
+
+		for (uint32_t i = 0; i < nread; i++) {
+			uint64_t off = (uint64_t)(verified + i);
+			uint8_t expected = (uint8_t)('a' + ((off / 8192) % 26));
+
+			if (buf[i] != expected) {
+				fprintf(stderr,
+					"ec_demo: MISMATCH at offset %llu:"
+					" expected '%c' (0x%02x),"
+					" got '%c' (0x%02x)\n",
+					(unsigned long long)off, (char)expected,
+					expected, (char)buf[i], buf[i]);
+				mismatches++;
+				if (mismatches >= 10) {
+					fprintf(stderr,
+						"ec_demo: too many mismatches,"
+						" stopping\n");
+					mds_file_close(&ms, &mf);
+					mds_session_destroy(&ms);
+					free(buf);
+					return 1;
+				}
+			}
+		}
+		verified += nread;
+	}
+
+	mds_file_close(&ms, &mf);
+	mds_session_destroy(&ms);
+	free(buf);
+
+	if (mismatches > 0) {
+		fprintf(stderr, "ec_demo: FAILED -- %d mismatch(es)\n",
+			mismatches);
+		return 1;
+	}
+
+	fprintf(stderr, "ec_demo: bigfile PASSED -- %zu bytes verified\n",
+		verified);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* Usage and main                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -481,6 +674,10 @@ static void usage(void)
 		" [--size N]\n"
 		"  ec_demo check  --mds HOST --file NAME --input FILE\n"
 		"\n"
+		"  Inband MDS test:\n"
+		"  ec_demo bigfile --mds HOST --file NAME"
+		" [--size N] [--chunk N] [--delete-first]\n"
+		"\n"
 		"  Erasure-coded:\n"
 		"  ec_demo write  --mds HOST --file NAME --input FILE"
 		" [--k K] [--m M]\n"
@@ -490,23 +687,27 @@ static void usage(void)
 		" [--k K] [--m M]\n"
 		"\n"
 		"Options:\n"
-		"  --mds HOST     MDS hostname or IP\n"
-		"  --file NAME    NFS filename (in root of MDS export)\n"
-		"  --input FILE   Local file to write/verify\n"
-		"  --output FILE  Local file to write read data to\n"
-		"  --k K          Data shards for EC (default: 4)\n"
-		"  --m M          Parity shards for EC (default: 2)\n"
-		"  --size N       Expected read size in bytes"
-		" (default: 16M)\n"
-		"  --codec TYPE   Codec: rs (default), mojette-sys,"
+		"  --mds HOST       MDS hostname or IP\n"
+		"  --file NAME      NFS filename (in root of MDS export)\n"
+		"  --input FILE     Local file to write/verify\n"
+		"  --output FILE    Local file to write read data to\n"
+		"  --k K            Data shards for EC (default: 4)\n"
+		"  --m M            Parity shards for EC (default: 2)\n"
+		"  --size N         File/read size in bytes"
+		" (bigfile default: 30M)\n"
+		"  --chunk N        Chunk size for bigfile I/O"
+		" (default: 1M)\n"
+		"  --delete-first   Remove file before bigfile write"
+		" (forces fresh inode)\n"
+		"  --codec TYPE     Codec: rs (default), mojette-sys,"
 		" mojette-nonsys, stripe\n"
-		"  --id ID        Client identity (default: PID)."
+		"  --id ID          Client identity (default: PID)."
 		" Unique per concurrent instance.\n"
-		"  --layout TYPE  Layout: v1 (default, NFSv3 DS),"
+		"  --layout TYPE    Layout: v1 (default, NFSv3 DS),"
 		" v2 (CHUNK ops)\n"
-		"  --skip-ds LIST Comma-separated DS indices to skip"
+		"  --skip-ds LIST   Comma-separated DS indices to skip"
 		" on read (degraded mode)\n"
-		"  --force-scalar Disable SIMD in Mojette forward"
+		"  --force-scalar   Disable SIMD in Mojette forward"
 		" transform (benchmark scalar path)\n");
 }
 
@@ -518,6 +719,8 @@ static struct option long_options[] = {
 	{ "k", required_argument, NULL, 'k' },
 	{ "m", required_argument, NULL, 'm' },
 	{ "size", required_argument, NULL, 's' },
+	{ "chunk", required_argument, NULL, 'C' },
+	{ "delete-first", no_argument, NULL, 'D' },
 	{ "codec", required_argument, NULL, 'c' },
 	{ "id", required_argument, NULL, 'd' },
 	{ "layout", required_argument, NULL, 'l' },
@@ -536,6 +739,8 @@ int main(int argc, char *argv[])
 	const char *local_output = NULL;
 	int k = 4, m = 2;
 	size_t read_size = 0;
+	size_t chunk_size = 1024 * 1024; /* 1 MB default for bigfile */
+	bool delete_first = false;
 	enum ec_codec_type codec_type = EC_CODEC_RS;
 	layouttype4 layout_type = LAYOUT4_FLEX_FILES;
 	const char *client_id = NULL;
@@ -554,7 +759,7 @@ int main(int argc, char *argv[])
 	argv++;
 	optind = 1;
 
-	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:c:d:l:S:x:?",
+	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:C:c:d:l:S:x:D?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -577,6 +782,17 @@ int main(int argc, char *argv[])
 			break;
 		case 's':
 			read_size = (size_t)atol(optarg);
+			break;
+		case 'C':
+			chunk_size = (size_t)atol(optarg);
+			if (chunk_size == 0) {
+				fprintf(stderr,
+					"ec_demo: --chunk must be > 0\n");
+				return 1;
+			}
+			break;
+		case 'D':
+			delete_first = true;
 			break;
 		case 'd':
 			client_id = optarg;
@@ -680,6 +896,15 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_get(mds_host, nfs_file, local_output, read_size);
+	}
+
+	if (strcmp(cmd, "bigfile") == 0) {
+		/* Default to 30 MB if --size not given (CTHON04 default). */
+		size_t file_size = (read_size > 0) ? read_size :
+						     30 * 1024 * 1024;
+
+		return cmd_bigfile(mds_host, nfs_file, file_size, chunk_size,
+				   delete_first);
 	}
 
 	if (strcmp(cmd, "getowner") == 0) {
