@@ -493,16 +493,35 @@ static int cmd_bigfile(const char *mds_host, const char *nfs_file,
 	uint8_t *buf;
 	int ret;
 
-	buf = malloc(chunk_size);
-	if (!buf) {
-		fprintf(stderr, "ec_demo: malloc failed\n");
-		return 1;
-	}
-
 	ret = session_open(&ms, mds_host);
 	if (ret) {
 		fprintf(stderr, "ec_demo: session create failed: %d\n", ret);
-		free(buf);
+		return 1;
+	}
+
+	/*
+	 * Cap chunk_size to the server's negotiated fore-channel
+	 * ca_maxrequestsize.  Each WRITE compound is SEQUENCE + PUTFH +
+	 * WRITE; allow ~256 bytes of fixed XDR + RPC overhead so the
+	 * data payload fits within the negotiated limit.
+	 */
+#define WRITE_HDR_OVERHEAD 256u
+	if (ms.ms_maxrequestsize > WRITE_HDR_OVERHEAD) {
+		uint32_t max_data = ms.ms_maxrequestsize - WRITE_HDR_OVERHEAD;
+
+		if (chunk_size > max_data) {
+			fprintf(stderr,
+				"ec_demo: capping chunk size %zu -> %u"
+				" (server maxrequestsize=%u)\n",
+				chunk_size, max_data, ms.ms_maxrequestsize);
+			chunk_size = max_data;
+		}
+	}
+
+	buf = malloc(chunk_size);
+	if (!buf) {
+		fprintf(stderr, "ec_demo: malloc failed\n");
+		mds_session_destroy(&ms);
 		return 1;
 	}
 
@@ -565,18 +584,7 @@ static int cmd_bigfile(const char *mds_host, const char *nfs_file,
 	mds_file_close(&ms, &mf);
 	fprintf(stderr, "ec_demo: write done, %zu bytes\n", written);
 
-	/*
-	 * Re-open for reading and verify the cycling pattern byte by byte.
-	 * Use a fresh session to ensure no cached state.
-	 */
-	mds_session_destroy(&ms);
-	ret = session_open(&ms, mds_host);
-	if (ret) {
-		fprintf(stderr, "ec_demo: session reopen failed: %d\n", ret);
-		free(buf);
-		return 1;
-	}
-
+	/* Re-open for reading and verify the cycling pattern byte by byte. */
 	ret = mds_file_open(&ms, nfs_file, &mf);
 	if (ret) {
 		fprintf(stderr, "ec_demo: reopen %s failed: %d\n", nfs_file,

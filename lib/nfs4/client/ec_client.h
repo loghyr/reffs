@@ -30,6 +30,7 @@ struct mds_session {
 	sequenceid4 ms_create_seq;
 	sessionid4 ms_sessionid;
 	uint32_t ms_slot_seqid; /* next seqid for slot 0 */
+	uint32_t ms_maxrequestsize; /* negotiated fore-channel ca_maxrequestsize */
 	char ms_owner[256]; /* client owner string for EXCHANGE_ID */
 };
 

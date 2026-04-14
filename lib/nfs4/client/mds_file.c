@@ -234,6 +234,13 @@ int mds_file_write(struct mds_session *ms, struct mds_file *mf,
 	nfs_resop4 *res = mds_compound_result(&mc, 2);
 
 	if (!res || res->nfs_resop4_u.opwrite.status != NFS4_OK) {
+		nfsstat4 st = res ? res->nfs_resop4_u.opwrite.status :
+				    (nfsstat4)-1;
+
+		fprintf(stderr,
+			"mds_file_write: WRITE failed"
+			" off=%llu len=%u status=%d\n",
+			(unsigned long long)offset, len, (int)st);
 		mds_compound_fini(&mc);
 		return -EREMOTEIO;
 	}

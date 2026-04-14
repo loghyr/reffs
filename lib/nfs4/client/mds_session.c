@@ -195,6 +195,7 @@ static int mds_create_session(struct mds_session *ms)
 
 	memcpy(ms->ms_sessionid, resok->csr_sessionid, sizeof(sessionid4));
 	ms->ms_slot_seqid = 1; /* first request on slot 0 */
+	ms->ms_maxrequestsize = resok->csr_fore_chan_attrs.ca_maxrequestsize;
 
 	mds_compound_fini(&mc);
 	return 0;
