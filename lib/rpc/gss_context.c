@@ -179,9 +179,16 @@ static void *gss_reaper_thread_fn(void *arg __attribute__((unused)))
 			      "idle=%" PRIu64 "s",
 			      (uint64_t)((now - last) / 1000000000ULL));
 
-			/* Drop our ref + the creation ref. */
-			gss_ctx_put(entry);
-			gss_ctx_put(entry);
+			/*
+			 * Remove from table; whoever wins cds_lfht_del owns
+			 * the creation ref drop.  gss_ctx_destroy may race
+			 * here if a DESTROY request arrives concurrently for
+			 * the same entry.
+			 */
+			int del_ret = cds_lfht_del(gss_ctx_ht, &entry->gc_node);
+			gss_ctx_put(entry); /* find ref */
+			if (del_ret == 0)
+				gss_ctx_put(entry); /* creation ref */
 		}
 		rcu_read_unlock();
 	}
@@ -350,10 +357,22 @@ void gss_ctx_destroy(const uint8_t *handle, uint32_t handle_len)
 	if (!entry)
 		return;
 
-	/* Drop the find ref and the creation ref.
-	 * gss_ctx_release (refcount-->0) handles cds_lfht_del. */
-	gss_ctx_put(entry);
-	gss_ctx_put(entry);
+	/*
+	 * Remove from the hash table before dropping the creation ref.
+	 * The reaper also calls gss_ctx_put twice on expired entries; if
+	 * both race here the second caller sees a negative return from
+	 * cds_lfht_del and skips the creation-ref drop, preventing the
+	 * refcount from going below zero.  cds_lfht_del is idempotent:
+	 * returns 0 if this caller removed the node, negative otherwise.
+	 */
+	int del_ret;
+
+	rcu_read_lock();
+	del_ret = cds_lfht_del(gss_ctx_ht, &entry->gc_node);
+	rcu_read_unlock();
+	if (del_ret == 0)
+		gss_ctx_put(entry); /* creation ref -- we won the remove race */
+	gss_ctx_put(entry); /* find ref from gss_ctx_find */
 }
 
 /*
@@ -1210,12 +1229,19 @@ int rpc_gss_handle_init(struct rpc_trans *rt
 	}
 
 	/*
-	 * On success the creation ref keeps the context alive in the
-	 * hash table for future DATA requests.  Only DESTROY or the
-	 * reaper drops the creation ref.  On failure, clean up now.
+	 * RPCSEC_GSS_INIT: ctx came from gss_ctx_create (count=1, creation
+	 * ref only).  On success, the creation ref keeps the entry alive for
+	 * future DATA requests.  On failure, drop the creation ref now.
+	 *
+	 * RPCSEC_GSS_CONTINUE_INIT: ctx came from gss_ctx_find (count=2,
+	 * find ref added on top of the creation ref).  Always drop the find
+	 * ref.  On failure, also drop the creation ref (corrupted partial
+	 * context; client must restart with a fresh RPCSEC_GSS_INIT).
 	 */
 	if (ret)
-		gss_ctx_put(ctx);
+		gss_ctx_put(ctx); /* failure cleanup */
+	if (gc->gc_proc == RPCSEC_GSS_CONTINUE_INIT)
+		gss_ctx_put(ctx); /* drop find ref from gss_ctx_find */
 	return ret;
 #else
 	return ENOTSUP;
