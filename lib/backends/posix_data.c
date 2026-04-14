@@ -78,7 +78,19 @@ int posix_data_db_alloc(struct data_block *db, struct inode *inode,
 
 	pthread_mutex_init(&priv->pd_reopen_mutex, NULL);
 
-	priv->pd_fd = open(path, O_RDWR | O_CREAT, 0644);
+	/*
+	 * size == 0: recovery path -- open existing file and read its size.
+	 *            Do NOT truncate: the file already contains data to restore.
+	 * size > 0:  new file creation (buffer != NULL) or SETATTR truncate-up
+	 *            (buffer == NULL) -- truncate to clear stale data from any
+	 *            prior inode that occupied the same ino_N.dat file.  Without
+	 *            O_TRUNC, a reused file retains old data beyond the new write
+	 *            range, which is returned verbatim on READ (data corruption).
+	 */
+	int oflags = O_RDWR | O_CREAT;
+	if (size > 0)
+		oflags |= O_TRUNC;
+	priv->pd_fd = open(path, oflags, 0644);
 	if (priv->pd_fd < 0) {
 		LOG("Failed to open %s: %s", path, strerror(errno));
 		pthread_mutex_destroy(&priv->pd_reopen_mutex);
@@ -94,8 +106,18 @@ int posix_data_db_alloc(struct data_block *db, struct inode *inode,
 	}
 
 	if (buffer && size > 0) {
-		if (pwrite(priv->pd_fd, buffer, size, offset) != (ssize_t)size)
-			LOG("Initial write to %s failed", path);
+		if (pwrite(priv->pd_fd, buffer, size, offset) !=
+		    (ssize_t)size) {
+			int saved_errno = errno;
+
+			LOG("Initial write to %s failed: %s", path,
+			    strerror(saved_errno));
+			close(priv->pd_fd);
+			pthread_mutex_destroy(&priv->pd_reopen_mutex);
+			free(priv->pd_path);
+			free(priv);
+			return -saved_errno;
+		}
 	}
 
 	db->db_storage_private = priv;
