@@ -902,8 +902,10 @@ int gss_ctx_unwrap_request(struct gss_ctx_entry *entry, uint32_t svc,
 			return -EACCES;
 		}
 
-		/* First 4 bytes of integ_data are seq_num (net order). */
-		if (integ_len <= 4)
+		/* First 4 bytes of integ_data are seq_num (net order).
+		 * NULL procedures have zero-length args, so integ_len==4
+		 * is valid (seq_num only).  Reject only if too short. */
+		if (integ_len < 4)
 			return -EINVAL;
 
 		uint32_t embedded_seq;
