@@ -2628,6 +2628,11 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 		case FATTR4_TIME_ACCESS_SET:
 			if (nattr->time_access_set.set_it ==
 			    SET_TO_CLIENT_TIME4) {
+				if (nattr->time_access_set.settime4_u.time
+					    .nseconds >= 1000000000U) {
+					status = NFS4ERR_INVAL;
+					goto out;
+				}
 				nfstime4_to_timespec(
 					&nattr->time_access_set.settime4_u.time,
 					&rs.atime);
@@ -2640,6 +2645,11 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 		case FATTR4_TIME_MODIFY_SET:
 			if (nattr->time_modify_set.set_it ==
 			    SET_TO_CLIENT_TIME4) {
+				if (nattr->time_modify_set.settime4_u.time
+					    .nseconds >= 1000000000U) {
+					status = NFS4ERR_INVAL;
+					goto out;
+				}
 				nfstime4_to_timespec(
 					&nattr->time_modify_set.settime4_u.time,
 					&rs.mtime);
@@ -2651,6 +2661,10 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 			break;
 		case FATTR4_TIME_DELEG_ACCESS:
 			/* RFC 9754: absolute atime from delegating client. */
+			if (nattr->time_deleg_access.nseconds >= 1000000000U) {
+				status = NFS4ERR_INVAL;
+				goto out;
+			}
 			nfstime4_to_timespec(&nattr->time_deleg_access,
 					     &rs.atime);
 			rs.atime_set = true;
@@ -2659,6 +2673,10 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 			break;
 		case FATTR4_TIME_DELEG_MODIFY:
 			/* RFC 9754: absolute mtime from delegating client. */
+			if (nattr->time_deleg_modify.nseconds >= 1000000000U) {
+				status = NFS4ERR_INVAL;
+				goto out;
+			}
 			nfstime4_to_timespec(&nattr->time_deleg_modify,
 					     &rs.mtime);
 			rs.mtime_set = true;
@@ -2724,6 +2742,11 @@ static nfsstat4 nattr_to_inode(struct nfsv42_attr *nattr, bitmap4 *attrmask,
 					~INODE_IS_UNCACHEABLE_DIRENT_METADATA;
 			break;
 		case FATTR4_TIME_CREATE:
+			if (nattr->time_create.nseconds >= 1000000000U) {
+				pthread_mutex_unlock(&inode->i_attr_mutex);
+				status = NFS4ERR_INVAL;
+				goto out;
+			}
 			nfstime4_to_timespec(&nattr->time_create,
 					     &inode->i_btime);
 			break;

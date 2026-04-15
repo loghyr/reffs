@@ -1867,7 +1867,8 @@ uint32_t nfs4_op_layout_wcc(struct compound *compound)
 
 				if (has_size)
 					ldf->ldf_size = (int64_t)reported_size;
-				if (has_mtime) {
+				if (has_mtime &&
+				    reported_mtime.nseconds < 1000000000U) {
 					ldf->ldf_mtime.tv_sec =
 						reported_mtime.seconds;
 					ldf->ldf_mtime.tv_nsec =
