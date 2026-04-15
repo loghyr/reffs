@@ -39,19 +39,20 @@ static int posix_sb_alloc(struct super_block *sb, const char *backend_path)
 {
 	struct posix_sb_private *priv = calloc(1, sizeof(*priv));
 	if (!priv)
-		return ENOMEM;
+		return -ENOMEM;
 
 	char sb_dir[PATH_MAX];
 	snprintf(sb_dir, sizeof(sb_dir), "%s/sb_%lu", backend_path, sb->sb_id);
 	if (mkdir(sb_dir, 0755) < 0 && errno != EEXIST) {
-		LOG("mkdir %s failed: %s", sb_dir, strerror(errno));
+		int err = errno;
+		LOG("mkdir %s failed: %s", sb_dir, strerror(err));
 		free(priv);
-		return errno;
+		return -err;
 	}
 	priv->sb_dir = strdup(sb_dir);
 	if (!priv->sb_dir) {
 		free(priv);
-		return ENOMEM;
+		return -ENOMEM;
 	}
 
 	struct statvfs sv;
