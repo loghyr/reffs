@@ -523,21 +523,22 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				      io_op_type_to_str(ic->ic_op_type),
 				      ic->ic_fd, ic->ic_id, state, cqe->res);
 
-				// For TLS handshake, we need to process even non-active contexts
+				/*
+				 * TLS data write contexts are created by
+				 * io_do_tls() via io_request_write_op() with
+				 * state=IO_CONTEXT_DIRECT_TLS_DATA, which
+				 * overwrites the ACTIVE bit set by
+				 * io_context_create().  The write count was
+				 * already incremented at creation time, so we
+				 * must call io_handle_write() here to drive
+				 * io_context_destroy() and decrement the count.
+				 * Skipping this causes ci_write_count to grow
+				 * without bound, stalling all further I/O on
+				 * the connection.
+				 */
 				if (ic->ic_op_type == OP_TYPE_WRITE &&
-				    (ic->ic_state &
-				     IO_CONTEXT_DIRECT_TLS_DATA)) {
-					struct conn_info *ci =
-						io_conn_get(ic->ic_fd);
-					if (ci &&
-					    (ci->ci_tls_handshaking ||
-					     ci->ci_handshake_final_pending)) {
-						TRACE("Processing TLS write completion for special context state");
-						ret = io_handle_write(
-							ic, cqe->res, rc);
-					} else {
-						TRACE("Skipping processing for non-TLS-handshake context");
-					}
+				    (state & IO_CONTEXT_DIRECT_TLS_DATA)) {
+					io_handle_write(ic, cqe->res, rc);
 				}
 
 				/*

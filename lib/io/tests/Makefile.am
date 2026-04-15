@@ -36,4 +36,5 @@ check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
-	tls_test
+	tls_test \
+	tls_write_count_test
