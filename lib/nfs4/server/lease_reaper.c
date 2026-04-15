@@ -17,6 +17,7 @@
  * checked each iteration, with pthread_join for clean shutdown.
  */
 
+#include <errno.h>
 #include <inttypes.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -72,8 +73,19 @@ static void *lease_reaper_thread_fn(void *arg __attribute__((unused)))
 		ts.tv_sec += LEASE_SCAN_INTERVAL_SEC;
 
 		pthread_mutex_lock(&lease_reaper_mtx);
-		pthread_cond_timedwait(&lease_reaper_cv, &lease_reaper_mtx,
-				       &ts);
+		/* Loop to handle spurious wakeups: recompute the deadline and
+		 * retry the wait until the full interval has elapsed. */
+		while (atomic_load_explicit(&lease_reaper_running,
+					    memory_order_relaxed)) {
+			struct timespec now;
+			int rc = pthread_cond_timedwait(&lease_reaper_cv,
+							&lease_reaper_mtx, &ts);
+			if (rc == ETIMEDOUT)
+				break;
+			clock_gettime(CLOCK_REALTIME, &now);
+			if (now.tv_sec >= ts.tv_sec)
+				break;
+		}
 		pthread_mutex_unlock(&lease_reaper_mtx);
 
 		if (!atomic_load_explicit(&lease_reaper_running,
