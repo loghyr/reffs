@@ -137,11 +137,19 @@ static void posix_inode_sync(struct inode *inode)
 	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd >= 0) {
 		if (write(fd, &meta, sizeof(meta)) == sizeof(meta)) {
-			close(fd);
-			if (rename(tmp_path, path) < 0) {
-				LOG("rename %s to %s failed: %s", tmp_path,
-				    path, strerror(errno));
+			if (fdatasync(fd) < 0) {
+				int err = errno;
+				LOG("fdatasync %s failed: %s", tmp_path,
+				    strerror(err));
+				close(fd);
 				unlink(tmp_path);
+			} else {
+				close(fd);
+				if (rename(tmp_path, path) < 0) {
+					LOG("rename %s to %s failed: %s",
+					    tmp_path, path, strerror(errno));
+					unlink(tmp_path);
+				}
 			}
 		} else {
 			LOG("Failed to write inode meta to %s", tmp_path);
@@ -162,11 +170,20 @@ static void posix_inode_sync(struct inode *inode)
 		if (fd >= 0) {
 			size_t len = strlen(inode->i_symlink);
 			if (write(fd, inode->i_symlink, len) == (ssize_t)len) {
-				close(fd);
-				if (rename(tmp_path, path) < 0) {
-					LOG("rename %s to %s failed: %s",
-					    tmp_path, path, strerror(errno));
+				if (fdatasync(fd) < 0) {
+					int err = errno;
+					LOG("fdatasync %s failed: %s", tmp_path,
+					    strerror(err));
+					close(fd);
 					unlink(tmp_path);
+				} else {
+					close(fd);
+					if (rename(tmp_path, path) < 0) {
+						LOG("rename %s to %s failed: %s",
+						    tmp_path, path,
+						    strerror(errno));
+						unlink(tmp_path);
+					}
 				}
 			} else {
 				LOG("Failed to write symlink target to %s",
@@ -239,6 +256,12 @@ static void posix_inode_sync(struct inode *inode)
 				}
 			}
 
+			if (ok && fdatasync(fd) < 0) {
+				int err = errno;
+				LOG("fdatasync %s failed: %s", tmp_path,
+				    strerror(err));
+				ok = false;
+			}
 			close(fd);
 			if (ok) {
 				if (rename(tmp_path, path) < 0) {
