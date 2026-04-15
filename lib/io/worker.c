@@ -68,11 +68,6 @@ void *io_worker_thread(void *vtd)
 	while (*running) {
 		struct task *t = NULL;
 
-		// Use a timeout when checking for tasks during shutdown
-		if (!running) {
-			break;
-		}
-
 		pthread_mutex_lock(&task_queue_mutex);
 		if (task_queue_head != task_queue_tail) {
 			t = task_queue[task_queue_head];
@@ -80,18 +75,23 @@ void *io_worker_thread(void *vtd)
 			pthread_cond_signal(&task_queue_full_cond);
 			pthread_mutex_unlock(&task_queue_mutex);
 		} else {
-			// Wait with timeout during normal operation
-			struct timespec ts;
-			clock_gettime(CLOCK_REALTIME, &ts);
-			ts.tv_sec += 1; // 1 second timeout
+			/* Wait for work, re-checking the queue condition after
+			 * each wakeup to handle spurious wakeups correctly. */
+			while (task_queue_head == task_queue_tail && *running) {
+				struct timespec ts;
+				clock_gettime(CLOCK_REALTIME, &ts);
+				ts.tv_sec += 1; // 1 second timeout
 
-			int rc = pthread_cond_timedwait(&task_queue_cond,
-							&task_queue_mutex, &ts);
+				int rc = pthread_cond_timedwait(
+					&task_queue_cond, &task_queue_mutex,
+					&ts);
+				if (rc == ETIMEDOUT)
+					break;
+			}
 			pthread_mutex_unlock(&task_queue_mutex);
 
-			if (rc == ETIMEDOUT && !running) {
+			if (!*running)
 				break;
-			}
 
 			continue;
 		}
