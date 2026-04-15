@@ -416,7 +416,88 @@ allocation.
 
 ---
 
-## 10. Callback and function-pointer safety
+## 10. Error handling and return value checking
+
+### Unchecked system call / POSIX call returns -- BLOCKER [UNCHECKED-RETURN]
+
+Every call to `open`, `read`, `write`, `close`, `fsync`, `fdatasync`,
+`rename`, `unlink`, `mkdir`, `ftruncate`, `stat`, `mmap`, `ioctl`,
+`pthread_create`, `pthread_mutex_init`, and similar must have its
+return value tested before use.  A call used as a bare statement
+(not assigned) is always wrong if the function can fail.
+
+Flag calls where the return is assigned but not tested before the
+next use of dependent state.  BLOCKER [UNCHECKED-RETURN].
+
+### Partial I/O -- BLOCKER [PARTIAL-IO]
+
+`read()` and `write()` on sockets, pipes, and character devices may
+transfer fewer bytes than requested.  Code that does not loop until
+the full count is transferred silently processes incomplete data.
+
+Regular files on Linux rarely short-read/short-write in practice,
+but the defensive loop is still correct and required for any fd that
+could be a socket or pipe.
+
+**Exception:** io_uring async paths do not use blocking `read()`/
+`write()` directly -- the CQE result field carries the byte count
+and errors.  Flag unchecked `cqe->res < 0` (error) or
+`cqe->res < expected` (short transfer) instead.
+
+### EINTR retry -- WARNING [EINTR-UNHANDLED]
+
+Blocking system calls (not on io_uring paths) interrupted by a
+signal return -1 / `errno == EINTR`.  Without `SA_RESTART` or an
+explicit retry loop, the operation is silently abandoned.
+
+Flag blocking syscalls in non-io_uring paths that propagate `EINTR`
+as a fatal error rather than retrying.  WARNING because reffs uses
+io_uring for most I/O and `SA_RESTART` for most signals.
+
+### close() errors -- WARNING [CLOSE-ERROR-IGNORED]
+
+`close()` can fail with `EIO` on NFS or when write-back fails.
+Ignoring `close()` silently discards I/O errors that the caller
+could have reported.  Flag `close()` calls whose return value is
+explicitly discarded (cast to void, or not assigned) on paths where
+the fd may have had a failed `write()` or `fsync()` before it.
+WARNING [CLOSE-ERROR-IGNORED].
+
+### errno clobbered before use -- BLOCKER [ERRNO-CLOBBERED]
+
+`errno` is overwritten by any subsequent system call, even successful
+ones.  If any call (including `LOG()`, `TRACE()`, or `free()`) occurs
+between a failing syscall and the read of `errno`, the captured error
+may be wrong.
+
+```c
+/* WRONG */
+if (write(fd, buf, n) < 0) {
+    TRACE("write failed");   /* may reset errno */
+    return -errno;           /* WRONG: may not reflect write failure */
+}
+
+/* CORRECT */
+if (write(fd, buf, n) < 0) {
+    int err = errno;
+    TRACE("write failed");
+    return -err;
+}
+```
+
+Flag any code path where `errno` is read after an intervening call
+that is not explicitly `errno`-preserving.  BLOCKER [ERRNO-CLOBBERED].
+
+### EOF vs. error -- NOTE [EOF-NOT-DISTINGUISHED]
+
+`read()` returning 0 means end-of-file, not success.  Code that
+tests only `< 0` and treats 0 as a valid byte count silently
+processes an empty buffer.  NOTE [EOF-NOT-DISTINGUISHED] when the
+zero case is not handled distinctly from the positive case.
+
+---
+
+## 11. Callback and function-pointer safety
 
 1. **Stale closure context:** callback registered with a pointer to a
    local variable or an object whose lifetime ends before the callback
@@ -430,7 +511,7 @@ allocation.
 
 ---
 
-## 11. NFSv4 protocol correctness
+## 12. NFSv4 protocol correctness
 
 Cross-reference `.claude/patterns/nfs4-protocol.md`.
 
@@ -455,7 +536,7 @@ Flag any premature version bumps as WARNING [PREMATURE-VERSION-BUMP].
 
 ---
 
-## 12. Behavior delta analysis
+## 13. Behavior delta analysis
 
 For each function in `CHANGED_FUNCS`:
 
@@ -472,7 +553,7 @@ handles the new behavior.  Record as BEHAVIOR DELTA in the report.
 
 ---
 
-## 13. Test coverage
+## 14. Test coverage
 
 For every changed or new code path, check whether an existing unit test
 covers it.  Look in `lib/*/tests/` for relevant test files.
@@ -489,7 +570,7 @@ deferral, record it as `DEFERRED`, and do not block the commit.
 
 ---
 
-## 14. Python code (scripts/reffs/, *.py.in)
+## 15. Python code (scripts/reffs/, *.py.in)
 
 - PEP 8 style: 4-space indentation, 79-char line length
 - SPDX headers on all `.py.in` files
@@ -502,7 +583,7 @@ deferral, record it as `DEFERRED`, and do not block the commit.
 
 ---
 
-## 15. Git commit readiness
+## 16. Git commit readiness
 
 - Confirm `git commit -s` will be used (DCO sign-off required)
 - Confirm no `Co-Authored-By:` lines are present
@@ -612,6 +693,9 @@ is safe to commit as-is>
 | `SIGNED-TO-UNSIGNED` | Memory | ssize_t/int error return assigned to size_t/unsigned |
 | `ALLOCATOR-MISMATCH` | Memory | calloc/malloc freed with wrong function |
 | `MEMORY-LEAK` | Memory | Allocation with no free on some exit path |
+| `UNCHECKED-RETURN` | Error handling | System call or function return value not tested before use |
+| `PARTIAL-IO` | Error handling | read/write result not checked for short transfer; no retry loop |
+| `ERRNO-CLOBBERED` | Error handling | errno read after an intervening call that may have reset it |
 | `CALLBACK-STALE-CONTEXT` | Callbacks | Callback registered with context that outlives its lifetime |
 | `CALLBACK-LOCK-INVERSION` | Callbacks | Callback invoked while holding a lock it also acquires |
 
@@ -632,6 +716,7 @@ is safe to commit as-is>
 | `SNPRINTF-TRUNCATION` | Memory | snprintf truncation not checked before using result |
 | `STRNCPY-NO-NULLTERM` | Memory | strncpy result used as C-string without explicit null terminator |
 | `CALLBACK-NOT-DEREGISTERED` | Callbacks | Callback registered but no matching deregister in cleanup path |
+| `CLOSE-ERROR-IGNORED` | Error handling | close() return not checked after a write or fsync on the same fd |
 | `CLIENTID-RAW-CMP` | NFSv4 | clientid4 compared as raw integer instead of via accessor macros |
 | `BEHAVIOR-DELTA` | Callers | Caller-visible behavior changed; some callers may be affected |
 
@@ -640,6 +725,8 @@ is safe to commit as-is>
 | Tag | Category | Description |
 |-----|----------|-------------|
 | `REDUNDANT-NULL-CHECK` | Standards | Unnecessary null check before NULL-tolerant put function |
+| `EINTR-UNHANDLED` | Error handling | Blocking syscall propagates EINTR as fatal instead of retrying |
+| `EOF-NOT-DISTINGUISHED` | Error handling | read() return 0 (EOF) not handled separately from positive count |
 | `SCOPE-BLOCK` | Standards | Unnecessary scope block to limit variable lifetime |
 | `NOT-NOW-BROWN-COW` | Design | New code depends on a deferred item |
 | `TEST-SUGGEST` | Tests | No existing test covers this path; suggest adding one |
