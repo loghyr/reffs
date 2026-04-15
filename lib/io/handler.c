@@ -261,7 +261,16 @@ struct buffer_state *io_buffer_state_create(int fd)
 		return NULL;
 	}
 
-	conn_buffers[fd % MAX_CONNECTIONS] = bs;
+	int slot = fd % MAX_CONNECTIONS;
+	if (conn_buffers[slot] != NULL) {
+		LOG("io: conn_buffers alias: fd=%d slot=%d already occupied -- "
+		    "increase MAX_CONNECTIONS or use a hash map",
+		    fd, slot);
+		free(bs->bs_data);
+		free(bs);
+		return NULL;
+	}
+	conn_buffers[slot] = bs;
 	return bs;
 }
 
