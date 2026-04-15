@@ -329,14 +329,13 @@ static void posix_dir_sync(struct inode *inode)
 	struct reffs_dirent *snap[POSIX_DIR_SNAPSHOT_MAX];
 	int snap_n = 0;
 
+	bool snap_truncated = false;
 	rcu_read_lock();
 	struct reffs_dirent *rd;
 	cds_list_for_each_entry_rcu(rd, &inode->i_dirent->rd_children,
 				    rd_siblings) {
 		if (snap_n >= POSIX_DIR_SNAPSHOT_MAX) {
-			LOG("posix_dir_sync: ino %lu has >%d children, "
-			    "truncating .dir snapshot",
-			    inode->i_ino, POSIX_DIR_SNAPSHOT_MAX);
+			snap_truncated = true;
 			break;
 		}
 		struct reffs_dirent *held = dirent_get(rd);
@@ -344,6 +343,11 @@ static void posix_dir_sync(struct inode *inode)
 			snap[snap_n++] = held;
 	}
 	rcu_read_unlock();
+	/* LOG after the read-side critical section: fprintf can block. */
+	if (snap_truncated)
+		LOG("posix_dir_sync: ino %lu has >%d children, "
+		    "truncating .dir snapshot",
+		    inode->i_ino, POSIX_DIR_SNAPSHOT_MAX);
 
 	/* Write outside the RCU read-side critical section. */
 	bool ok = true;

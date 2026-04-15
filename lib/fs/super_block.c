@@ -279,9 +279,10 @@ static void super_block_free(struct super_block *sb)
 	reffs_backend_free_ops(sb->sb_ops);
 	sb->sb_ops = NULL;
 
-	int ret = cds_lfht_destroy(sb->sb_inodes, NULL);
-	if (ret < 0) {
-		LOG("Could not delete a hash table: %m");
+	if (sb->sb_inodes) {
+		int ret = cds_lfht_destroy(sb->sb_inodes, NULL);
+		if (ret < 0)
+			LOG("Could not delete a hash table: %m");
 	}
 
 	pthread_mutex_destroy(&sb->sb_inode_lru_lock);
