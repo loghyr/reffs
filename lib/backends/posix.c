@@ -296,33 +296,73 @@ static void posix_dir_sync(struct inode *inode)
 		return;
 	}
 
-	struct reffs_dirent *rd;
+	/*
+	 * Snapshot children under rcu_read_lock without doing any I/O.
+	 * Blocking inside rcu_read_lock (e.g. write()) is a RCU violation.
+	 * Take a dirent_get ref on each child so they remain valid after the
+	 * read-side critical section ends.
+	 */
+#define POSIX_DIR_SNAPSHOT_MAX 4096
+	struct reffs_dirent *snap[POSIX_DIR_SNAPSHOT_MAX];
+	int snap_n = 0;
+
 	rcu_read_lock();
+	struct reffs_dirent *rd;
 	cds_list_for_each_entry_rcu(rd, &inode->i_dirent->rd_children,
 				    rd_siblings) {
-		uint64_t cookie = rd->rd_cookie;
+		if (snap_n >= POSIX_DIR_SNAPSHOT_MAX) {
+			LOG("posix_dir_sync: ino %lu has >%d children, "
+			    "truncating .dir snapshot",
+			    inode->i_ino, POSIX_DIR_SNAPSHOT_MAX);
+			break;
+		}
+		struct reffs_dirent *held = dirent_get(rd);
+		if (held)
+			snap[snap_n++] = held;
+	}
+	rcu_read_unlock();
+
+	/* Write outside the RCU read-side critical section. */
+	bool ok = true;
+	for (int i = 0; i < snap_n && ok; i++) {
+		uint64_t cookie = snap[i]->rd_cookie;
 		/*
 		 * Use rd_ino (authoritative) rather than rd_inode->i_ino
 		 * so we can write even if rd_inode was evicted.
 		 */
-		uint64_t ino = rd->rd_ino;
-		uint16_t name_len = strlen(rd->rd_name);
+		uint64_t ino = snap[i]->rd_ino;
+		uint16_t name_len = strlen(snap[i]->rd_name);
 
-		if (write(fd, &cookie, sizeof(cookie)) != sizeof(cookie))
-			LOG("write cookie failed");
-		if (write(fd, &ino, sizeof(ino)) != sizeof(ino))
-			LOG("write ino failed");
-		if (write(fd, &name_len, sizeof(name_len)) != sizeof(name_len))
-			LOG("write name_len failed");
-		if (write(fd, rd->rd_name, name_len) != (ssize_t)name_len)
-			LOG("write name failed");
+		ok = write(fd, &cookie, sizeof(cookie)) == sizeof(cookie) &&
+		     write(fd, &ino, sizeof(ino)) == sizeof(ino) &&
+		     write(fd, &name_len, sizeof(name_len)) ==
+			     sizeof(name_len) &&
+		     write(fd, snap[i]->rd_name, name_len) == (ssize_t)name_len;
 	}
-	rcu_read_unlock();
+	for (int i = 0; i < snap_n; i++)
+		dirent_put(snap[i]);
 
+	if (!ok) {
+		LOG("posix_dir_sync: write failed for ino %lu, leaving existing .dir intact",
+		    inode->i_ino);
+		close(fd);
+		unlink(tmp_path);
+		return;
+	}
+
+	if (fdatasync(fd) < 0) {
+		int err = errno;
+		LOG("posix_dir_sync: fdatasync %s failed: %s", tmp_path,
+		    strerror(err));
+		close(fd);
+		unlink(tmp_path);
+		return;
+	}
 	close(fd);
 	if (rename(tmp_path, path) < 0) {
+		int err = errno;
 		LOG("rename %s to %s failed: %s", tmp_path, path,
-		    strerror(errno));
+		    strerror(err));
 		unlink(tmp_path);
 	}
 }
