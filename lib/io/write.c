@@ -70,7 +70,7 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 		return -ECONNRESET;
 	}
 
-	// Write directly using TLS if not using kTLS
+	/* Write directly using TLS if not using kTLS */
 	int ktls_enabled = 0;
 #ifdef BIO_get_ktls_send
 	ktls_enabled = BIO_get_ktls_send(SSL_get_wbio(ssl));
@@ -79,7 +79,7 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 	TRACE("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
 	      io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
 	if (!ktls_enabled) {
-		// Check if we've already processed this context for TLS
+		/* Check if we've already processed this context for TLS */
 		if (ic->ic_state & IO_CONTEXT_TLS_BIO_PROCESSED) {
 			TRACE("ic=%p id=%u already processed for TLS, destroying",
 			      (void *)ic, ic->ic_id);
@@ -87,7 +87,7 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 			return 0;
 		}
 
-		// Handle in userspace
+		/* Handle in userspace */
 		rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
 		int ret = SSL_write(ssl,
 				    (char *)ic->ic_buffer + ic->ic_position,
@@ -95,30 +95,58 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 
 		if (ret <= 0) {
 			int err = SSL_get_error(ssl, ret);
-			if (err == SSL_ERROR_WANT_WRITE ||
-			    err == SSL_ERROR_WANT_READ) {
-				// Would block, try again later
-				return 0;
+			if (err == SSL_ERROR_WANT_WRITE) {
+				/*
+				 * Memory BIOs always have space in wbio;
+				 * WANT_WRITE is an unrecoverable anomaly.
+				 */
+				io_ssl_err_print(
+					ic->ic_fd,
+					"unexpected WANT_WRITE on write",
+					__func__, __LINE__);
+				io_socket_close(ic->ic_fd, EINVAL);
+				io_context_destroy(ic);
+				return -EINVAL;
+			}
+			if (err == SSL_ERROR_WANT_READ) {
+				/*
+				 * TLS 1.3 key-update: the peer sent a
+				 * KeyUpdate record and SSL_write needs a
+				 * round-trip to process it before completing
+				 * the application write.  With memory BIOs
+				 * the retry requires feeding new network data
+				 * into rbio -- complex async machinery we do
+				 * not have here.  Close cleanly rather than
+				 * leaking the context or silently dropping
+				 * the reply.
+				 */
+				io_ssl_err_print(
+					ic->ic_fd,
+					"WANT_READ during write (key-update?)",
+					__func__, __LINE__);
+				io_socket_close(ic->ic_fd, EINVAL);
+				io_context_destroy(ic);
+				return -EINVAL;
 			}
 
-			// Real error
+			/* Real error */
 			io_ssl_err_print(ic->ic_fd, "write error", __func__,
 					 __LINE__);
 			io_socket_close(ic->ic_fd, EINVAL);
 			io_context_destroy(ic);
 			return -EINVAL;
 		} else {
-			// Get data that was encrypted and is ready to be sent
+			/* Get data that was encrypted and is ready to be sent */
 			BIO *wbio = SSL_get_wbio(ssl);
 			int pending = BIO_pending(wbio);
 
 			TRACE("SSL_write processed %d bytes, resulting in %d bytes of TLS data",
 			      ret, pending);
 
-			// Mark that we've processed this context for TLS to avoid duplicates
+			/* Mark that we've processed this context for TLS to avoid duplicates */
 			ic->ic_state |= IO_CONTEXT_TLS_BIO_PROCESSED;
 
-			// Read the encrypted data from the BIO and send it
+			/* Read the encrypted data from the BIO and send it */
 			if (pending > 0) {
 				unsigned char *write_buffer = malloc(pending);
 				if (!write_buffer) {
@@ -394,10 +422,8 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
 			       rt->rt_reply_len);
 	if (!ic) {
-		ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
-				       rt->rt_reply_len);
-		LOG("Failed to create write context");
-		return 0;
+		LOG("Failed to create write context for fd=%d", rt->rt_fd);
+		return ENOMEM;
 	}
 
 	ic->ic_xid = rt->rt_info.ri_xid;
@@ -407,8 +433,10 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 		uint32_t *marker_ptr = (uint32_t *)rt->rt_reply;
 		uint32_t data_len = rt->rt_reply_len - 4;
 
-		// Always set the last fragment bit for the complete message
-		// The message is already properly formed - don't try to fragment it
+		/*
+		 * Always set the last fragment bit.  The message is fully
+		 * formed -- do not try to re-fragment it.
+		 */
 		*marker_ptr = htonl(0x80000000 | data_len);
 #ifdef PARTIAL_WRITE_DEBUG
 		TRACE("RPC message: setting marker for %u bytes", data_len);
