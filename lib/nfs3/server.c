@@ -2805,7 +2805,7 @@ static int nfs3_op_readdirplus(struct rpc_trans *rt)
 		struct reffs_dirent *rd;
 		cds_list_for_each_entry_rcu(rd, &inode->i_dirent->rd_children,
 					    rd_siblings) {
-			if (rd->rd_cookie < cookie)
+			if (rd->rd_cookie <= cookie)
 				continue;
 			if (snap_count == snap_cap) {
 				size_t new_cap = snap_cap ? snap_cap * 2 : 16;
