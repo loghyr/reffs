@@ -56,6 +56,28 @@ static bool nfs4_lock_owner_match(struct reffs_lock_owner *lo_base, void *arg)
 		      owner->owner.owner_len) == 0;
 }
 
+/*
+ * Find an existing lock owner for this client without creating one.
+ * Returns a ref-bumped pointer, or NULL if not found.
+ * Used by LOCKT so we can skip self-conflicts without creating state.
+ */
+static struct nfs4_lock_owner *nfs4_find_lock_owner(struct nfs4_client *nc,
+						    lock_owner4 *owner)
+{
+	struct nfs4_lock_owner *lo;
+
+	pthread_mutex_lock(&nc->nc_lock_owners_mutex);
+	cds_list_for_each_entry(lo, &nc->nc_lock_owners, lo_base.lo_list) {
+		if (nfs4_lock_owner_match(&lo->lo_base, owner)) {
+			lock_owner_get(&lo->lo_base);
+			pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
+			return lo;
+		}
+	}
+	pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
+	return NULL;
+}
+
 static struct nfs4_lock_owner *nfs4_get_lock_owner(struct nfs4_client *nc,
 						   lock_owner4 *owner)
 {
@@ -318,9 +340,18 @@ uint32_t nfs4_op_lockt(struct compound *compound)
 	bool exclusive =
 		(args->locktype == WRITE_LT || args->locktype == WRITEW_LT);
 
+	/*
+	 * RFC 8881 S18.11: a lock held by the requester's own owner is not
+	 * a conflict.  Look up the owner without creating state (LOCKT is
+	 * read-only) so that self-owned locks are skipped by find_conflict.
+	 */
+	struct nfs4_lock_owner *lo =
+		nfs4_find_lock_owner(compound->c_nfs4_client, &args->owner);
+
 	pthread_mutex_lock(&compound->c_inode->i_lock_mutex);
 	conflict = reffs_lock_find_conflict(compound->c_inode, args->offset,
-					    args->length, exclusive, NULL,
+					    args->length, exclusive,
+					    lo ? &lo->lo_base : NULL,
 					    &args->owner);
 	if (conflict) {
 		res->LOCKT4res_u.denied.offset = conflict->l_offset;
@@ -339,10 +370,14 @@ uint32_t nfs4_op_lockt(struct compound *compound)
 			       clo->lo_owner.n_bytes, clo->lo_owner.n_len);
 		}
 		pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
+		if (lo)
+			lock_owner_put(&lo->lo_base);
 		*status = NFS4ERR_DENIED;
 		return 0;
 	}
 	pthread_mutex_unlock(&compound->c_inode->i_lock_mutex);
+	if (lo)
+		lock_owner_put(&lo->lo_base);
 
 	return 0;
 }
