@@ -820,17 +820,22 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 			if (decrypted <= 0) {
 				int ssl_err =
 					SSL_get_error(ci->ci_ssl, decrypted);
+
+				/* WANT_READ/WANT_WRITE are not errors: the
+				 * TLS state machine needs more data or buffer
+				 * space.  ERR_get_error() returns 0 in this
+				 * case so logging would only produce noise. */
+				if (ssl_err == SSL_ERROR_WANT_READ ||
+				    ssl_err == SSL_ERROR_WANT_WRITE) {
+					goto cleanup;
+				}
+
 				long alert = ERR_get_error();
 				char alert_str[256];
 				ERR_error_string_n(alert, alert_str,
 						   sizeof(alert_str));
 				LOG("SSL error %d, alert: %s", ssl_err,
 				    alert_str);
-
-				if (ssl_err == SSL_ERROR_WANT_READ ||
-				    ssl_err == SSL_ERROR_WANT_WRITE) {
-					goto cleanup;
-				}
 
 				// SSL error
 				io_ssl_err_print(ic->ic_fd, "read error",
