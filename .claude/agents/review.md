@@ -733,6 +733,39 @@ is safe to commit as-is>
 
 ---
 
+## Step 17: False-positive verification
+
+Before moving any finding into the final report, verify each one passes
+all four gates:
+
+**1. Reachability** -- Can you show a concrete call path that reaches
+the problematic code?  Quote the chain (`caller@file:line ->
+target@file:line`).  Dead code, compile-time guards (`#ifdef`), and
+paths blocked by invariants are not bugs.
+
+**2. Concrete failure mode** -- Is the failure a crash, deadlock, UAF,
+data corruption, or protocol violation?  "Could be improved", "add a
+NULL check for safety", or "this might be slow" are not BLOCKERs.
+`NOT_NOW_BROWN_COW` markers document intentionally deferred work and
+must not be reported as bugs.
+
+**3. Comment-based dismissals require verification** -- If you are
+dismissing a finding because a comment says the code is safe, read the
+actual implementation.  A comment is not evidence.  Quote the code that
+proves the claimed guarantee.
+
+**4. Debate yourself** -- Argue as the author against your own finding.
+For locking: did you check what locks callers hold?  For ref-count: did
+you trace ownership transfer?  For NULL: did you check all callers?
+Then rebut with code evidence.  If you cannot rebut, downgrade to
+WARNING or discard.
+
+A finding that fails any gate must be dropped or downgraded.  Missed
+bugs are costly; false positives erode trust in the reviewer.  When
+in doubt, use NOTE rather than BLOCKER.
+
+---
+
 ## Rules
 
 - **Never modify code.** This is a report-only agent.  Fixes are proposed
