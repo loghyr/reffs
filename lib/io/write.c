@@ -1,5 +1,3 @@
-/* Also update rpc_trans_writer to handle multi-fragment messages correctly */
-
 /*
  * SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
@@ -307,7 +305,7 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	size_t remaining;
 	int ret = 0;
 
-	// Check if we're done first
+	/* Check if we're done first */
 	if (ic->ic_position >= ic->ic_buffer_len) {
 #ifdef PARTIAL_WRITE_DEBUG
 		TRACE("Buffer complete: ic=%p id=%u position=%zu, buffer_len=%zu",
@@ -315,7 +313,17 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 		      ic->ic_buffer_len);
 #endif
 		trace_io_write_complete(ic->ic_fd, 0, ic);
+		/*
+		 * Release the write gate and immediately start the next queued
+		 * writer (if any) before destroying this context.  The next_ic
+		 * already has WRITE_OWNED set by io_conn_write_done().
+		 */
+		struct io_context *next_ic = NULL;
+		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED)
+			next_ic = io_conn_write_done(ic->ic_fd);
 		io_context_destroy(ic);
+		if (next_ic)
+			return rpc_trans_writer(next_ic, rc);
 		return 0;
 	}
 
@@ -323,15 +331,46 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 
 	trace_io_writer(ic, __func__, __LINE__);
 
+	/*
+	 * Claim the per-fd write gate before submitting any SQE.  Only one
+	 * io_context may have a write SQE in flight for a given fd at a time;
+	 * concurrent writers queue here and are released by io_conn_write_done()
+	 * after each write completes.
+	 *
+	 * Skip the check on re-entry (partial writes, multi-fragment) -- the
+	 * WRITE_OWNED flag means we already hold the gate.
+	 */
+	if (!(ic->ic_state & IO_CONTEXT_WRITE_OWNED)) {
+		if (!io_conn_write_try_start(ic->ic_fd, ic))
+			return 0; /* queued; io_conn_write_done() will restart us */
+		ic->ic_state |= IO_CONTEXT_WRITE_OWNED;
+	}
+
 	struct conn_info *ci = io_conn_get(ic->ic_fd);
 #ifdef TLS_DEBUGGING
 	TRACE("ci=%p ssl=%p tls=%d", (void *)ci, ci ? (void *)ci->ci_ssl : NULL,
 	      ci ? ci->ci_tls_enabled : 0);
 #endif
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
+		int fd_saved = ic->ic_fd;
+		bool owned = (ic->ic_state & IO_CONTEXT_WRITE_OWNED) != 0;
 		ret = io_do_tls(ic, rc);
-		if (ret <= 0)
+		if (ret <= 0) {
+			/*
+			 * Non-kTLS success (ret==0): io_do_tls destroyed ic.
+			 * Release the write gate and start the next queued
+			 * writer, if any.  Error paths (ret<0) do not hold
+			 * the gate because io_do_tls calls io_socket_close,
+			 * which drains ci_write_pending via io_conn_unregister.
+			 */
+			if (ret == 0 && owned) {
+				struct io_context *next_ic =
+					io_conn_write_done(fd_saved);
+				if (next_ic)
+					return rpc_trans_writer(next_ic, rc);
+			}
 			return ret;
+		}
 	}
 
 	// Always continue from current position without modifying the buffer
@@ -365,6 +404,13 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	}
 
 	if (!sqe) {
+		/*
+		 * Cannot get an SQE -- close the socket so the pending write
+		 * queue is drained (io_conn_unregister drains ci_write_pending).
+		 * The client will reconnect.
+		 */
+		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED)
+			io_socket_close(ic->ic_fd, ENOMEM);
 		io_context_destroy(ic);
 		return ENOMEM;
 	}
@@ -542,11 +588,25 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 		return 0;
 	}
 
-	// For TLS connections, handle encryption before further processing
+	/* For TLS connections, handle encryption before further processing */
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
+		int fd_saved = ic->ic_fd;
+		bool owned = (ic->ic_state & IO_CONTEXT_WRITE_OWNED) != 0;
 		int ret = io_do_tls(ic, rc);
-		if (ret <= 0)
+		if (ret <= 0) {
+			/*
+			 * Non-kTLS success (ret==0): io_do_tls destroyed ic.
+			 * Release the write gate and start the next queued
+			 * writer, if any.
+			 */
+			if (ret == 0 && owned) {
+				struct io_context *next_ic =
+					io_conn_write_done(fd_saved);
+				if (next_ic)
+					return rpc_trans_writer(next_ic, rc);
+			}
 			return ret;
+		}
 	}
 
 	if ((size_t)bytes_written < ic->ic_expected_len) {
@@ -567,17 +627,24 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 			return ENOMEM;
 		}
 
-		// Copy state to new context
+		/* Copy state to new context */
 		new_ic->ic_position = ic->ic_position;
 		new_ic->ic_xid = ic->ic_xid;
 		new_ic->ic_count = ic->ic_count;
 		copy_connection_info(&new_ic->ic_ci, &ic->ic_ci);
+		/*
+		 * Propagate the write gate ownership.  The new context is a
+		 * continuation of the same write; it holds the gate for this fd
+		 * and must not try to re-acquire it in rpc_trans_writer().
+		 */
+		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED)
+			new_ic->ic_state |= IO_CONTEXT_WRITE_OWNED;
 
-		// Clear buffer ownership in old context to prevent double-free
+		/* Clear buffer ownership in old context to prevent double-free */
 		ic->ic_buffer = NULL;
 		ic->ic_buffer_len = 0;
 
-		// Destroy old context without freeing the buffer
+		/* Destroy old context without freeing the buffer */
 		io_context_destroy(ic);
 
 		// Continue with the new context

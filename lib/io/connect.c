@@ -79,11 +79,16 @@ struct conn_info *io_conn_register(int fd, enum conn_state initial_state,
 		ci->ci_role = role;
 		ci->ci_last_activity = time(NULL);
 
-		// Initialize operation counters
+		/* Initialize operation counters */
 		ci->ci_read_count = 0;
 		ci->ci_write_count = 0;
 		ci->ci_accept_count = 0;
 		ci->ci_connect_count = 0;
+
+		/* Initialize per-fd write serialization gate */
+		ci->ci_write_active = false;
+		ci->ci_write_pending_head = NULL;
+		ci->ci_write_pending_tail = NULL;
 	}
 
 	pthread_mutex_unlock(&conn_mutex);
@@ -498,10 +503,12 @@ void io_conn_destroy(struct conn_info *ci)
 	free(ci);
 }
 
-// Unregister a connection
+/* Unregister a connection */
 int io_conn_unregister(int fd)
 {
 	int ret = -1;
+	struct io_context *drain_head = NULL;
+
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
@@ -518,7 +525,18 @@ int io_conn_unregister(int fd)
 			connections[idx]->ci_tls_handshaking = false;
 		}
 
-		// Mark as unused, but keep the structure for reuse
+		/*
+		 * Drain the pending write queue before clearing ci_fd.
+		 * We must extract the list under conn_mutex but call
+		 * io_context_destroy() outside it, because destroy takes
+		 * conn_mutex internally (sequential, not nested -- safe).
+		 */
+		drain_head = connections[idx]->ci_write_pending_head;
+		connections[idx]->ci_write_pending_head = NULL;
+		connections[idx]->ci_write_pending_tail = NULL;
+		connections[idx]->ci_write_active = false;
+
+		/* Mark as unused, but keep the structure for reuse */
 		connections[idx]->ci_state = CONN_UNUSED;
 		connections[idx]->ci_fd = -1;
 		connections[idx]->ci_read_count = 0;
@@ -532,6 +550,15 @@ int io_conn_unregister(int fd)
 	}
 
 	pthread_mutex_unlock(&conn_mutex);
+
+	/* Destroy drained contexts outside conn_mutex to avoid deadlock */
+	while (drain_head) {
+		struct io_context *next = drain_head->ic_write_next;
+		drain_head->ic_write_next = NULL;
+		io_context_destroy(drain_head);
+		drain_head = next;
+	}
+
 	return ret;
 }
 
@@ -954,4 +981,82 @@ int io_handle_connect(struct io_context *ic, int result,
 
 	// Now that we're connected, prepare the RPC write request
 	return io_rpc_trans_cb(rt);
+}
+
+/*
+ * io_conn_write_try_start -- atomically claim the per-fd write gate.
+ *
+ * If the gate is free (ci_write_active == false), set it true and return
+ * true so the caller can submit a write SQE immediately.
+ *
+ * If the gate is held, append ic to ci_write_pending and return false.
+ * The caller must return without touching ic further; io_conn_write_done()
+ * will hand off the gate and call rpc_trans_writer() for the next ic.
+ *
+ * If fd is no longer registered we return true anyway -- the caller will
+ * fail naturally on SQE submission.
+ */
+bool io_conn_write_try_start(int fd, struct io_context *ic)
+{
+	bool can_start = true;
+
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		struct conn_info *ci = connections[idx];
+		if (!ci->ci_write_active) {
+			ci->ci_write_active = true;
+		} else {
+			/* Gate is held: enqueue ic for later */
+			ic->ic_write_next = NULL;
+			if (!ci->ci_write_pending_head) {
+				ci->ci_write_pending_head = ic;
+				ci->ci_write_pending_tail = ic;
+			} else {
+				ci->ci_write_pending_tail->ic_write_next = ic;
+				ci->ci_write_pending_tail = ic;
+			}
+			can_start = false;
+		}
+	}
+	/* fd gone: let caller attempt SQE and fail naturally */
+
+	pthread_mutex_unlock(&conn_mutex);
+	return can_start;
+}
+
+/*
+ * io_conn_write_done -- release the per-fd write gate after a write completes.
+ *
+ * If there are queued writers, dequeue the head, mark it WRITE_OWNED, and
+ * return it.  ci_write_active remains true so the returned ic can proceed
+ * without re-claiming the gate.
+ *
+ * If the queue is empty, clear ci_write_active and return NULL.
+ */
+struct io_context *io_conn_write_done(int fd)
+{
+	struct io_context *next_ic = NULL;
+
+	pthread_mutex_lock(&conn_mutex);
+
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		struct conn_info *ci = connections[idx];
+		if (ci->ci_write_pending_head) {
+			next_ic = ci->ci_write_pending_head;
+			ci->ci_write_pending_head = next_ic->ic_write_next;
+			next_ic->ic_write_next = NULL;
+			if (!ci->ci_write_pending_head)
+				ci->ci_write_pending_tail = NULL;
+			/* Gate stays active; transfer ownership to next_ic */
+			next_ic->ic_state |= IO_CONTEXT_WRITE_OWNED;
+		} else {
+			ci->ci_write_active = false;
+		}
+	}
+
+	pthread_mutex_unlock(&conn_mutex);
+	return next_ic;
 }

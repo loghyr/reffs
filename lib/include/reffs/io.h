@@ -93,6 +93,13 @@ struct io_context {
 #define IO_CONTEXT_DIRECT_TLS_DATA (1ULL << 3)
 #define IO_CONTEXT_TLS_BIO_PROCESSED (1ULL << 4)
 #define IO_CONTEXT_SUBMITTED_EAGAIN (1ULL << 5)
+/*
+ * Set when io_conn_write_try_start() grants this context the write gate for
+ * its fd.  Cleared only when io_conn_write_done() passes the gate to the
+ * next queued context.  Prevents concurrent 1MB write SQEs on the same
+ * socket fd from interleaving TCP segments and corrupting large reads.
+ */
+#define IO_CONTEXT_WRITE_OWNED (1ULL << 6)
 	uint64_t ic_state;
 
 	time_t ic_action_time;
@@ -109,6 +116,14 @@ struct io_context {
 	struct rpc_trans *ic_rt;
 
 	struct io_context *ic_next;
+
+	/*
+	 * Per-fd write serialization queue.  Used only while this context is
+	 * waiting for the write gate on ic_fd.  NULL when not queued.
+	 * Distinct from ic_next (which links contexts in the active-context
+	 * hash) so both lists can be maintained simultaneously.
+	 */
+	struct io_context *ic_write_next;
 };
 
 // Record state for reassembling fragmented RPC messages
@@ -176,6 +191,16 @@ struct conn_info {
 	int ci_write_count; // Number of pending write operations
 	int ci_accept_count; // Number of pending accept operations
 	int ci_connect_count; // Number of pending connect operations
+
+	/*
+	 * Per-fd write serialization gate.  Only one io_context may have a
+	 * write SQE in flight for this fd at a time; concurrent writers queue
+	 * here and are drained by io_conn_write_done() as each write finishes.
+	 * Protected by conn_mutex in connect.c.
+	 */
+	bool ci_write_active;
+	struct io_context *ci_write_pending_head;
+	struct io_context *ci_write_pending_tail;
 };
 
 /* ------------------------------------------------------------------ */
@@ -346,6 +371,23 @@ int io_conn_set_error(int fd, int error_code);
 // Helper functions for operation tracking
 bool io_conn_has_read_ops(int fd);
 bool io_conn_has_write_ops(int fd);
+
+/*
+ * Per-fd write serialization gate.
+ *
+ * io_conn_write_try_start() -- atomically claim the write gate for fd.
+ *   Returns true  if the gate was free (caller may submit a write SQE).
+ *   Returns false if the gate was held (ic is queued; caller must return).
+ *   If the fd is gone the gate is considered free so the caller will fail
+ *   naturally on SQE submission.
+ *
+ * io_conn_write_done() -- release the gate and return the next queued
+ *   io_context (with WRITE_OWNED set), or NULL if the queue is empty.
+ *   The gate remains active (ci_write_active == true) when a next ic is
+ *   returned, so the caller simply calls rpc_trans_writer(next_ic, rc).
+ */
+bool io_conn_write_try_start(int fd, struct io_context *ic);
+struct io_context *io_conn_write_done(int fd);
 
 void io_check_for_listener_restart(int fd, struct connection_info *ci,
 				   struct ring_context *rc);
