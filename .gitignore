@@ -80,3 +80,6 @@ secrets.yml
 .claude/settings.local.json
 .claude/memory/
 .claude/projects/
+
+# clang files
+.cache
