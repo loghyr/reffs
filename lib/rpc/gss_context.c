@@ -495,8 +495,17 @@ uint32_t gss_ctx_get_mic(struct gss_ctx_entry *entry, const void *data,
 	gss_buffer_desc token = GSS_C_EMPTY_BUFFER;
 	OM_uint32 major, minor;
 
+	/*
+	 * libkrb5 gss_get_mic is not thread-safe on the same gss_ctx_t.
+	 * Concurrent calls on the same context race inside
+	 * krb5_k_make_checksum_iov, causing double-free of derived keys.
+	 * Serialize with gc_seq_lock, consistent with get_mic/verify_mic
+	 * calls in the DATA wrap/unwrap path (lines ~924, ~1057).
+	 */
+	pthread_mutex_lock(&entry->gc_seq_lock);
 	major = gss_get_mic(&minor, entry->gc_gss_ctx, GSS_C_QOP_DEFAULT, &msg,
 			    &token);
+	pthread_mutex_unlock(&entry->gc_seq_lock);
 
 	*mic = token.value;
 	*mic_len = (uint32_t)token.length;
@@ -511,7 +520,15 @@ uint32_t gss_ctx_verify_mic(struct gss_ctx_entry *entry, const void *data,
 	gss_buffer_desc token = { .length = mic_len, .value = (void *)mic };
 	OM_uint32 major, minor;
 
+	/*
+	 * Same race: serialize gss_verify_mic calls on the same context.
+	 * Two concurrent DATA requests both look up the same gss_ctx_entry
+	 * and reach here simultaneously, causing double-free inside libkrb5.
+	 */
+	pthread_mutex_lock(&entry->gc_seq_lock);
 	major = gss_verify_mic(&minor, entry->gc_gss_ctx, &msg, &token, NULL);
+	pthread_mutex_unlock(&entry->gc_seq_lock);
+
 	return major;
 }
 
