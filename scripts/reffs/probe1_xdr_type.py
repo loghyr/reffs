@@ -678,8 +678,12 @@ class probe_sb_info1:
     #     uhyper psi_inodes_max;
     #     uhyper psi_inodes_used;
     #     probe_client_rule1 psi_client_rules<PROBE1_MAX_CLIENT_RULES>;
+    #     uint psi_layout_types;
+    #     uint psi_ndstores;
+    #     uint psi_dstore_ids<PROBE1_MAX_DSTORES>;
+    #     uint psi_stripe_unit;
     # };
-    def __init__(self, psi_id=None, psi_uuid=None, psi_path=None, psi_state=None, psi_storage_type=None, psi_flavors=None, psi_bytes_max=None, psi_bytes_used=None, psi_inodes_max=None, psi_inodes_used=None, psi_client_rules=None):
+    def __init__(self, psi_id=None, psi_uuid=None, psi_path=None, psi_state=None, psi_storage_type=None, psi_flavors=None, psi_bytes_max=None, psi_bytes_used=None, psi_inodes_max=None, psi_inodes_used=None, psi_client_rules=None, psi_layout_types=None, psi_ndstores=None, psi_dstore_ids=None, psi_stripe_unit=None):
         self.psi_id = psi_id
         self.psi_uuid = psi_uuid
         self.psi_path = psi_path
@@ -691,6 +695,10 @@ class probe_sb_info1:
         self.psi_inodes_max = psi_inodes_max
         self.psi_inodes_used = psi_inodes_used
         self.psi_client_rules = psi_client_rules
+        self.psi_layout_types = psi_layout_types
+        self.psi_ndstores = psi_ndstores
+        self.psi_dstore_ids = psi_dstore_ids
+        self.psi_stripe_unit = psi_stripe_unit
 
     def __repr__(self):
         out = []
@@ -716,6 +724,14 @@ class probe_sb_info1:
             out += ['psi_inodes_used=%s' % repr(self.psi_inodes_used)]
         if self.psi_client_rules is not None:
             out += ['psi_client_rules=%s' % repr(self.psi_client_rules)]
+        if self.psi_layout_types is not None:
+            out += ['psi_layout_types=%s' % repr(self.psi_layout_types)]
+        if self.psi_ndstores is not None:
+            out += ['psi_ndstores=%s' % repr(self.psi_ndstores)]
+        if self.psi_dstore_ids is not None:
+            out += ['psi_dstore_ids=%s' % repr(self.psi_dstore_ids)]
+        if self.psi_stripe_unit is not None:
+            out += ['psi_stripe_unit=%s' % repr(self.psi_stripe_unit)]
         return 'probe_sb_info1(%s)' % ', '.join(out)
     __str__ = __repr__
 

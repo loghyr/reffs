@@ -262,6 +262,7 @@ enum probe_auth_flavor1 {
 };
 
 const PROBE1_MAX_FLAVORS = 8;
+const PROBE1_MAX_DSTORES = 16;
 
 /* Per-client export rule -- mirrors struct sb_client_rule */
 const PROBE1_MAX_CLIENT_RULES = 32;
@@ -288,6 +289,11 @@ struct probe_sb_info1 {
 	unsigned hyper		psi_inodes_used;
 	/* Per-client export rules (appended for wire compat). */
 	probe_client_rule1	psi_client_rules<PROBE1_MAX_CLIENT_RULES>;
+	/* pNFS configuration (appended for wire compat). */
+	unsigned int		psi_layout_types;
+	unsigned int		psi_ndstores;
+	unsigned int		psi_dstore_ids<PROBE1_MAX_DSTORES>;
+	unsigned int		psi_stripe_unit;
 };
 
 /* SB_LIST (op 13) */

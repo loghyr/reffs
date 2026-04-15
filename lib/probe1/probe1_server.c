@@ -856,6 +856,21 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 		}
 	}
 
+	/* pNFS configuration. */
+	psi->psi_layout_types = sb->sb_layout_types;
+	psi->psi_ndstores = sb->sb_ndstores;
+	psi->psi_dstore_ids.psi_dstore_ids_len = sb->sb_ndstores;
+	if (sb->sb_ndstores > 0) {
+		psi->psi_dstore_ids.psi_dstore_ids_val =
+			calloc(sb->sb_ndstores, sizeof(unsigned int));
+		if (psi->psi_dstore_ids.psi_dstore_ids_val) {
+			for (uint32_t d = 0; d < sb->sb_ndstores; d++)
+				psi->psi_dstore_ids.psi_dstore_ids_val[d] =
+					sb->sb_dstore_ids[d];
+		}
+	}
+	psi->psi_stripe_unit = sb->sb_stripe_unit;
+
 	/* Per-client export rules. */
 	unsigned int nr = sb->sb_nclient_rules;
 
@@ -1204,6 +1219,13 @@ static int probe1_op_sb_set_flavors(struct rpc_trans *rt)
 				     args->sfa_flavors.sfa_flavors_val[i];
 
 	super_block_set_flavors(sb, flavors, n);
+
+	struct server_state *ss = server_state_find();
+
+	if (ss && ss->ss_persist_ops)
+		ss->ss_persist_ops->registry_save(ss->ss_persist_ctx);
+	server_state_put(ss);
+
 	super_block_put(sb);
 	return 0;
 }
@@ -1222,6 +1244,13 @@ static int probe1_op_sb_set_layout_types(struct rpc_trans *rt)
 	}
 
 	sb->sb_layout_types = args->sla_layout_types;
+
+	struct server_state *ss = server_state_find();
+
+	if (ss && ss->ss_persist_ops)
+		ss->ss_persist_ops->registry_save(ss->ss_persist_ctx);
+	server_state_put(ss);
+
 	super_block_put(sb);
 	return 0;
 }
@@ -1270,6 +1299,12 @@ static int probe1_op_sb_set_dstores(struct rpc_trans *rt)
 	for (uint32_t i = 0; i < n; i++)
 		sb->sb_dstore_ids[i] =
 			args->sda_dstore_ids.sda_dstore_ids_val[i];
+
+	struct server_state *ss = server_state_find();
+
+	if (ss && ss->ss_persist_ops)
+		ss->ss_persist_ops->registry_save(ss->ss_persist_ctx);
+	server_state_put(ss);
 
 	super_block_put(sb);
 	return 0;
@@ -1380,6 +1415,12 @@ static int probe1_op_sb_set_stripe_unit(struct rpc_trans *rt)
 	}
 
 	sb->sb_stripe_unit = su;
+
+	struct server_state *ss = server_state_find();
+
+	if (ss && ss->ss_persist_ops)
+		ss->ss_persist_ops->registry_save(ss->ss_persist_ctx);
+	server_state_put(ss);
 
 	super_block_put(sb);
 	return 0;

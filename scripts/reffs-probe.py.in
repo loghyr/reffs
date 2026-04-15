@@ -664,6 +664,21 @@ def sb_get_cmd(client, args):
     print(f"  Flavors:  {flav_str}")
     print(f"  Bytes:    {sb.psi_bytes_used} / {sb.psi_bytes_max}")
     print(f"  Inodes:   {sb.psi_inodes_used} / {sb.psi_inodes_max}")
+    if hasattr(sb, 'psi_layout_types') and sb.psi_layout_types:
+        lt = sb.psi_layout_types
+        lt_names = []
+        if lt & 1:
+            lt_names.append('file')
+        if lt & 2:
+            lt_names.append('ffv1')
+        if lt & 4:
+            lt_names.append('ffv2')
+        print(f"  Layouts:  {','.join(lt_names)} (0x{lt:x})")
+    if hasattr(sb, 'psi_ndstores') and sb.psi_ndstores:
+        dstore_ids = list(sb.psi_dstore_ids) if sb.psi_dstore_ids else []
+        print(f"  Dstores:  {dstore_ids}")
+    if hasattr(sb, 'psi_stripe_unit') and sb.psi_stripe_unit:
+        print(f"  Stripe:   {sb.psi_stripe_unit}")
 
 
 def sb_set_flavors_cmd(client, args):

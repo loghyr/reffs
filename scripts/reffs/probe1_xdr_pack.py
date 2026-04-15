@@ -495,6 +495,20 @@ class PROBE1_XDRPacker(xdrlib.Packer):
         if len(data.psi_client_rules) > const.PROBE1_MAX_CLIENT_RULES and self.check_array:
             raise XDRError('array length too long for data.psi_client_rules')
         self.pack_array(data.psi_client_rules, self.pack_probe_client_rule1)
+        if data.psi_layout_types is None:
+            raise TypeError('data.psi_layout_types == None')
+        self.pack_uint(data.psi_layout_types)
+        if data.psi_ndstores is None:
+            raise TypeError('data.psi_ndstores == None')
+        self.pack_uint(data.psi_ndstores)
+        if data.psi_dstore_ids is None:
+            raise TypeError('data.psi_dstore_ids == None')
+        if len(data.psi_dstore_ids) > const.PROBE1_MAX_DSTORES and self.check_array:
+            raise XDRError('array length too long for data.psi_dstore_ids')
+        self.pack_array(data.psi_dstore_ids, self.pack_uint)
+        if data.psi_stripe_unit is None:
+            raise TypeError('data.psi_stripe_unit == None')
+        self.pack_uint(data.psi_stripe_unit)
 
     def pack_SB_LIST1resok(self, data):
         if hasattr(self, 'filter_SB_LIST1resok'):
@@ -1271,6 +1285,12 @@ class PROBE1_XDRUnpacker(xdrlib.Unpacker):
         data.psi_client_rules = self.unpack_array(self.unpack_probe_client_rule1)
         if len(data.psi_client_rules) > const.PROBE1_MAX_CLIENT_RULES and self.check_array:
             raise XDRError('array length too long for data.psi_client_rules')
+        data.psi_layout_types = self.unpack_uint()
+        data.psi_ndstores = self.unpack_uint()
+        data.psi_dstore_ids = self.unpack_array(self.unpack_uint)
+        if len(data.psi_dstore_ids) > const.PROBE1_MAX_DSTORES and self.check_array:
+            raise XDRError('array length too long for data.psi_dstore_ids')
+        data.psi_stripe_unit = self.unpack_uint()
         if hasattr(self, 'filter_probe_sb_info1'):
             data = getattr(self, 'filter_probe_sb_info1')(data)
         return data
