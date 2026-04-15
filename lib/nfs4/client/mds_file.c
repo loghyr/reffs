@@ -227,6 +227,10 @@ int mds_file_write(struct mds_session *ms, struct mds_file *mf,
 
 	ret = mds_compound_send(&mc, ms);
 	if (ret) {
+		fprintf(stderr,
+			"mds_file_write: compound failed"
+			" off=%llu len=%u ret=%d\n",
+			(unsigned long long)offset, len, ret);
 		mds_compound_fini(&mc);
 		return ret;
 	}

@@ -113,19 +113,8 @@ int mds_compound_send(struct mds_compound *mc, struct mds_session *ms)
 	/* Bump slot seqid on success. */
 	ms->ms_slot_seqid++;
 
-	if (mc->mc_res.status != NFS4_OK) {
-		fprintf(stderr,
-			"mds_compound_send: %s failed,"
-			" compound status=%d (tag=%s)\n",
-			mc->mc_args.tag.utf8string_val ?
-				mc->mc_args.tag.utf8string_val :
-				"?",
-			(int)mc->mc_res.status,
-			mc->mc_res.tag.utf8string_val ?
-				mc->mc_res.tag.utf8string_val :
-				"?");
+	if (mc->mc_res.status != NFS4_OK)
 		return -EREMOTEIO;
-	}
 
 	return 0;
 }

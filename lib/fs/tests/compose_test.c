@@ -14,6 +14,8 @@
 #endif
 
 #include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -248,6 +250,71 @@ START_TEST(test_compose_inode_free_cleans_both)
 }
 END_TEST
 
+START_TEST(test_posix_data_no_stale_on_reuse)
+{
+	/*
+	 * Regression test for the O_TRUNC fix in posix_data_db_alloc.
+	 *
+	 * When an inode number is reused (e.g., after a crash), the .dat
+	 * file from the previous inode may still exist with larger content.
+	 * posix_data_db_alloc must open with O_TRUNC when size > 0 so the
+	 * new inode starts with a clean file.
+	 */
+	struct super_block *sb = super_block_alloc(
+		203, "/compose_stale", REFFS_STORAGE_POSIX, state_dir);
+	ck_assert_ptr_nonnull(sb);
+
+	int ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
+	ck_assert_int_eq(ret, 0);
+
+	/* Alloc a file inode; record the ino for path construction */
+	struct inode *inode = inode_alloc(sb, 0);
+	ck_assert_ptr_nonnull(inode);
+	inode->i_mode = S_IFREG | 0644;
+
+	uint64_t ino = inode->i_ino;
+
+	/* Create a data block so the sb_203/ directory is created */
+	const char *seed = "x";
+	struct data_block *db = data_block_alloc(inode, seed, 1, 0);
+	ck_assert_ptr_nonnull(db);
+	data_block_put(db);
+	inode->i_db = NULL;
+
+	/* Overwrite the .dat file with 8 KB of stale bytes */
+	char dat_path[512];
+	snprintf(dat_path, sizeof(dat_path), "%s/sb_203/ino_%lu.dat", state_dir,
+		 (unsigned long)ino);
+
+	{
+		uint8_t stale[8192];
+		memset(stale, 0xAB, sizeof(stale));
+		FILE *f = fopen(dat_path, "wb");
+		ck_assert_ptr_nonnull(f);
+		ck_assert_int_eq((int)fwrite(stale, 1, sizeof(stale), f),
+				 (int)sizeof(stale));
+		fclose(f);
+	}
+
+	/* Re-allocate with 4 bytes -- O_TRUNC must truncate the stale file */
+	db = data_block_alloc(inode, "abcd", 4, 0);
+	ck_assert_ptr_nonnull(db);
+
+	int fd = data_block_get_fd(db);
+	ck_assert_int_ge(fd, 0);
+
+	struct stat st;
+	ck_assert_int_eq(fstat(fd, &st), 0);
+	ck_assert_int_eq((int)st.st_size, 4);
+
+	data_block_put(db);
+	inode->i_db = NULL;
+	inode_active_put(inode);
+	super_block_release_dirents(sb);
+	super_block_put(sb);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -270,6 +337,7 @@ static Suite *compose_suite(void)
 	tcase_add_test(tc, test_compose_posix_inode_roundtrip);
 	tcase_add_test(tc, test_compose_posix_data_roundtrip);
 	tcase_add_test(tc, test_compose_inode_free_cleans_both);
+	tcase_add_test(tc, test_posix_data_no_stale_on_reuse);
 	suite_add_tcase(s, tc);
 
 	return s;
