@@ -505,11 +505,17 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 	CDS_INIT_LIST_HEAD(&sb->sb_link);
 
 	CDS_INIT_LIST_HEAD(&sb->sb_inode_lru);
-	pthread_mutex_init(&sb->sb_inode_lru_lock, NULL);
+	if (pthread_mutex_init(&sb->sb_inode_lru_lock, NULL) != 0) {
+		super_block_free(sb);
+		return NULL;
+	}
 	sb->sb_inode_lru_max = SB_INODE_LRU_MAX_DEFAULT;
 
 	CDS_INIT_LIST_HEAD(&sb->sb_dirent_lru);
-	pthread_mutex_init(&sb->sb_dirent_lru_lock, NULL);
+	if (pthread_mutex_init(&sb->sb_dirent_lru_lock, NULL) != 0) {
+		super_block_free(sb);
+		return NULL;
+	}
 	sb->sb_dirent_lru_max = SB_DIRENT_LRU_MAX_DEFAULT;
 
 	sb->sb_inodes = cds_lfht_new(

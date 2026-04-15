@@ -503,7 +503,11 @@ struct reffs_dirent *dirent_alloc(struct reffs_dirent *parent, char *name,
 
 	trace_fs_dirent(rd, __func__, __LINE__);
 
-	pthread_rwlock_init(&rd->rd_rwlock, NULL);
+	if (pthread_rwlock_init(&rd->rd_rwlock, NULL) != 0) {
+		free(rd->rd_name);
+		free(rd);
+		return NULL;
+	}
 
 	CDS_INIT_LIST_HEAD(&rd->rd_siblings);
 	CDS_INIT_LIST_HEAD(&rd->rd_children);

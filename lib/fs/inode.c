@@ -380,9 +380,21 @@ struct inode *inode_alloc(struct super_block *sb, uint64_t ino)
 	urcu_ref_init(&inode->i_ref);
 	CDS_INIT_LIST_HEAD(&inode->i_lru);
 
-	pthread_rwlock_init(&inode->i_db_rwlock, NULL);
-	pthread_mutex_init(&inode->i_attr_mutex, NULL);
-	pthread_mutex_init(&inode->i_lock_mutex, NULL);
+	if (pthread_rwlock_init(&inode->i_db_rwlock, NULL) != 0) {
+		free(inode);
+		return NULL;
+	}
+	if (pthread_mutex_init(&inode->i_attr_mutex, NULL) != 0) {
+		pthread_rwlock_destroy(&inode->i_db_rwlock);
+		free(inode);
+		return NULL;
+	}
+	if (pthread_mutex_init(&inode->i_lock_mutex, NULL) != 0) {
+		pthread_mutex_destroy(&inode->i_attr_mutex);
+		pthread_rwlock_destroy(&inode->i_db_rwlock);
+		free(inode);
+		return NULL;
+	}
 
 	CDS_INIT_LIST_HEAD(&inode->i_locks);
 	CDS_INIT_LIST_HEAD(&inode->i_shares);
