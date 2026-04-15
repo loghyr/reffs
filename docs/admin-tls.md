@@ -266,9 +266,13 @@ tshark -i eth0 -f "port 2049" -Y "tls.handshake"
 To inspect NFS-over-TLS traffic in Wireshark or tshark, capture the
 TLS session keys from `tlshd` using the NSS keylog format:
 
+```bash
+KEYLOG=/root/sslkeylog
+```
+
 **Step 1 -- enable key logging in tlshd:**
 ```bash
-systemctl set-environment SSLKEYLOGFILE=/root/sslkeylog
+systemctl set-environment SSLKEYLOGFILE=$KEYLOG
 systemctl restart tlshd.service
 ```
 
@@ -285,14 +289,14 @@ systemctl restart tlshd.service
 
 **Step 4 -- inject keys into the pcap for decryption:**
 ```bash
-editcap --inject-secrets tls,/root/sslkeylog encrypted.pcap clear.pcap
+editcap --inject-secrets tls,$KEYLOG encrypted.pcap clear.pcap
 ```
 
 Open `clear.pcap` in Wireshark and the TLS sessions will be
 decrypted.  `editcap` is part of the `wireshark` package.
 
 > **Note:** The keylog file accumulates session keys.  Remove it
-> after use: `rm /root/sslkeylog`.
+> after use: `rm $KEYLOG`.
 
 **Mount hangs with flavors=["tls"]:**
 1. Is tlshd running? (`systemctl status tlshd`)
