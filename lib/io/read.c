@@ -151,7 +151,11 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 	int pending;
 	int ret;
 
-	BIO_write(rbio, data, len);
+	int bw = BIO_write(rbio, data, len);
+	if (bw <= 0) {
+		LOG("BIO_write failed during TLS accept: returned %d", bw);
+		return -EIO;
+	}
 
 	SSL_set_mode(ssl,
 		     SSL_MODE_AUTO_RETRY | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
@@ -657,6 +661,10 @@ static int process_record_marker(struct buffer_state *bs)
 
 		char *new_data = realloc(rs->rs_data, new_capacity);
 		if (!new_data) {
+			/* Reset so the next fragment does not use stale lengths */
+			rs->rs_fragment_len = 0;
+			rs->rs_total_len = 0;
+			rs->rs_position = 0;
 			return -ENOMEM;
 		}
 		rs->rs_data = new_data;
@@ -794,7 +802,14 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 		if (ci->ci_tls_enabled && ci->ci_ssl) {
 			// Feed data to SSL
 			BIO *rbio = SSL_get_rbio(ci->ci_ssl);
-			BIO_write(rbio, ic->ic_buffer, bytes_read);
+			int bw = BIO_write(rbio, ic->ic_buffer, bytes_read);
+			if (bw != bytes_read) {
+				LOG("BIO_write short: expected %d got %d",
+				    bytes_read, bw);
+				io_socket_close(ic->ic_fd, EIO);
+				io_context_destroy(ic);
+				return 0;
+			}
 
 			// Read decrypted data
 			int decrypted = SSL_read(ci->ci_ssl, ic->ic_buffer,
@@ -940,7 +955,7 @@ get_more:
 		// Successfully submitted new read operation
 		needs_new_read = false;
 	} else {
-		LOG("Failed to request more read data: %s", strerror(ret));
+		LOG("Failed to request more read data: %s", strerror(-ret));
 	}
 
 cleanup:
