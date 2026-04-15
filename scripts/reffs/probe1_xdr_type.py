@@ -633,6 +633,37 @@ class FD_INFOS_LIST1res:
         return 'FD_INFOS_LIST1res(%s)' % ', '.join(out)
     __str__ = __repr__
 
+class probe_client_rule1:
+    # XDR definition:
+    # struct probe_client_rule1 {
+    #     string pcr_match<PROBE1_MAX_MATCH>;
+    #     bool pcr_rw;
+    #     bool pcr_root_squash;
+    #     bool pcr_all_squash;
+    #     probe_auth_flavor1 pcr_flavors<PROBE1_MAX_FLAVORS>;
+    # };
+    def __init__(self, pcr_match=None, pcr_rw=None, pcr_root_squash=None, pcr_all_squash=None, pcr_flavors=None):
+        self.pcr_match = pcr_match
+        self.pcr_rw = pcr_rw
+        self.pcr_root_squash = pcr_root_squash
+        self.pcr_all_squash = pcr_all_squash
+        self.pcr_flavors = pcr_flavors
+
+    def __repr__(self):
+        out = []
+        if self.pcr_match is not None:
+            out += ['pcr_match=%s' % repr(self.pcr_match)]
+        if self.pcr_rw is not None:
+            out += ['pcr_rw=%s' % repr(self.pcr_rw)]
+        if self.pcr_root_squash is not None:
+            out += ['pcr_root_squash=%s' % repr(self.pcr_root_squash)]
+        if self.pcr_all_squash is not None:
+            out += ['pcr_all_squash=%s' % repr(self.pcr_all_squash)]
+        if self.pcr_flavors is not None:
+            out += ['pcr_flavors=%s' % ','.join([const.probe_auth_flavor1.get(x, x) for x in self.pcr_flavors])]
+        return 'probe_client_rule1(%s)' % ', '.join(out)
+    __str__ = __repr__
+
 class probe_sb_info1:
     # XDR definition:
     # struct probe_sb_info1 {
@@ -646,8 +677,9 @@ class probe_sb_info1:
     #     uhyper psi_bytes_used;
     #     uhyper psi_inodes_max;
     #     uhyper psi_inodes_used;
+    #     probe_client_rule1 psi_client_rules<PROBE1_MAX_CLIENT_RULES>;
     # };
-    def __init__(self, psi_id=None, psi_uuid=None, psi_path=None, psi_state=None, psi_storage_type=None, psi_flavors=None, psi_bytes_max=None, psi_bytes_used=None, psi_inodes_max=None, psi_inodes_used=None):
+    def __init__(self, psi_id=None, psi_uuid=None, psi_path=None, psi_state=None, psi_storage_type=None, psi_flavors=None, psi_bytes_max=None, psi_bytes_used=None, psi_inodes_max=None, psi_inodes_used=None, psi_client_rules=None):
         self.psi_id = psi_id
         self.psi_uuid = psi_uuid
         self.psi_path = psi_path
@@ -658,6 +690,7 @@ class probe_sb_info1:
         self.psi_bytes_used = psi_bytes_used
         self.psi_inodes_max = psi_inodes_max
         self.psi_inodes_used = psi_inodes_used
+        self.psi_client_rules = psi_client_rules
 
     def __repr__(self):
         out = []
@@ -681,6 +714,8 @@ class probe_sb_info1:
             out += ['psi_inodes_max=%s' % repr(self.psi_inodes_max)]
         if self.psi_inodes_used is not None:
             out += ['psi_inodes_used=%s' % repr(self.psi_inodes_used)]
+        if self.psi_client_rules is not None:
+            out += ['psi_client_rules=%s' % repr(self.psi_client_rules)]
         return 'probe_sb_info1(%s)' % ', '.join(out)
     __str__ = __repr__
 
@@ -877,6 +912,82 @@ class SB_SET_FLAVORS1args:
         if self.sfa_flavors is not None:
             out += ['sfa_flavors=%s' % ','.join([const.probe_auth_flavor1.get(x, x) for x in self.sfa_flavors])]
         return 'SB_SET_FLAVORS1args(%s)' % ', '.join(out)
+    __str__ = __repr__
+
+class SB_SET_LAYOUT_TYPES1args:
+    # XDR definition:
+    # struct SB_SET_LAYOUT_TYPES1args {
+    #     uhyper sla_id;
+    #     uint sla_layout_types;
+    # };
+    def __init__(self, sla_id=None, sla_layout_types=None):
+        self.sla_id = sla_id
+        self.sla_layout_types = sla_layout_types
+
+    def __repr__(self):
+        out = []
+        if self.sla_id is not None:
+            out += ['sla_id=%s' % repr(self.sla_id)]
+        if self.sla_layout_types is not None:
+            out += ['sla_layout_types=%s' % repr(self.sla_layout_types)]
+        return 'SB_SET_LAYOUT_TYPES1args(%s)' % ', '.join(out)
+    __str__ = __repr__
+
+class SB_SET_DSTORES1args:
+    # XDR definition:
+    # struct SB_SET_DSTORES1args {
+    #     uhyper sda_id;
+    #     uint sda_dstore_ids<16>;
+    # };
+    def __init__(self, sda_id=None, sda_dstore_ids=None):
+        self.sda_id = sda_id
+        self.sda_dstore_ids = sda_dstore_ids
+
+    def __repr__(self):
+        out = []
+        if self.sda_id is not None:
+            out += ['sda_id=%s' % repr(self.sda_id)]
+        if self.sda_dstore_ids is not None:
+            out += ['sda_dstore_ids=%s' % repr(self.sda_dstore_ids)]
+        return 'SB_SET_DSTORES1args(%s)' % ', '.join(out)
+    __str__ = __repr__
+
+class SB_SET_CLIENT_RULES1args:
+    # XDR definition:
+    # struct SB_SET_CLIENT_RULES1args {
+    #     uhyper scra_id;
+    #     probe_client_rule1 scra_rules<PROBE1_MAX_CLIENT_RULES>;
+    # };
+    def __init__(self, scra_id=None, scra_rules=None):
+        self.scra_id = scra_id
+        self.scra_rules = scra_rules
+
+    def __repr__(self):
+        out = []
+        if self.scra_id is not None:
+            out += ['scra_id=%s' % repr(self.scra_id)]
+        if self.scra_rules is not None:
+            out += ['scra_rules=%s' % repr(self.scra_rules)]
+        return 'SB_SET_CLIENT_RULES1args(%s)' % ', '.join(out)
+    __str__ = __repr__
+
+class SB_SET_STRIPE_UNIT1args:
+    # XDR definition:
+    # struct SB_SET_STRIPE_UNIT1args {
+    #     uhyper ssu_id;
+    #     uint ssu_stripe_unit;
+    # };
+    def __init__(self, ssu_id=None, ssu_stripe_unit=None):
+        self.ssu_id = ssu_id
+        self.ssu_stripe_unit = ssu_stripe_unit
+
+    def __repr__(self):
+        out = []
+        if self.ssu_id is not None:
+            out += ['ssu_id=%s' % repr(self.ssu_id)]
+        if self.ssu_stripe_unit is not None:
+            out += ['ssu_stripe_unit=%s' % repr(self.ssu_stripe_unit)]
+        return 'SB_SET_STRIPE_UNIT1args(%s)' % ', '.join(out)
     __str__ = __repr__
 
 class SB_LINT_FLAVORS1resok:

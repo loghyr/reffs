@@ -432,6 +432,29 @@ class PROBE1_XDRPacker(xdrlib.Packer):
             raise XDRError('value=%s not in enum probe_auth_flavor1' % data)
         self.pack_int(data)
 
+    def pack_probe_client_rule1(self, data):
+        if hasattr(self, 'filter_probe_client_rule1'):
+            data = getattr(self, 'filter_probe_client_rule1')(data)
+        if data.pcr_match is None:
+            raise TypeError('data.pcr_match == None')
+        if len(data.pcr_match) > const.PROBE1_MAX_MATCH and self.check_array:
+            raise XDRError('array length too long for data.pcr_match')
+        self.pack_string(data.pcr_match)
+        if data.pcr_rw is None:
+            raise TypeError('data.pcr_rw == None')
+        self.pack_bool(data.pcr_rw)
+        if data.pcr_root_squash is None:
+            raise TypeError('data.pcr_root_squash == None')
+        self.pack_bool(data.pcr_root_squash)
+        if data.pcr_all_squash is None:
+            raise TypeError('data.pcr_all_squash == None')
+        self.pack_bool(data.pcr_all_squash)
+        if data.pcr_flavors is None:
+            raise TypeError('data.pcr_flavors == None')
+        if len(data.pcr_flavors) > const.PROBE1_MAX_FLAVORS and self.check_array:
+            raise XDRError('array length too long for data.pcr_flavors')
+        self.pack_array(data.pcr_flavors, self.pack_probe_auth_flavor1)
+
     def pack_probe_sb_info1(self, data):
         if hasattr(self, 'filter_probe_sb_info1'):
             data = getattr(self, 'filter_probe_sb_info1')(data)
@@ -467,6 +490,11 @@ class PROBE1_XDRPacker(xdrlib.Packer):
         if data.psi_inodes_used is None:
             raise TypeError('data.psi_inodes_used == None')
         self.pack_uhyper(data.psi_inodes_used)
+        if data.psi_client_rules is None:
+            raise TypeError('data.psi_client_rules == None')
+        if len(data.psi_client_rules) > const.PROBE1_MAX_CLIENT_RULES and self.check_array:
+            raise XDRError('array length too long for data.psi_client_rules')
+        self.pack_array(data.psi_client_rules, self.pack_probe_client_rule1)
 
     def pack_SB_LIST1resok(self, data):
         if hasattr(self, 'filter_SB_LIST1resok'):
@@ -566,6 +594,50 @@ class PROBE1_XDRPacker(xdrlib.Packer):
         if len(data.sfa_flavors) > const.PROBE1_MAX_FLAVORS and self.check_array:
             raise XDRError('array length too long for data.sfa_flavors')
         self.pack_array(data.sfa_flavors, self.pack_probe_auth_flavor1)
+
+    def pack_SB_SET_LAYOUT_TYPES1args(self, data):
+        if hasattr(self, 'filter_SB_SET_LAYOUT_TYPES1args'):
+            data = getattr(self, 'filter_SB_SET_LAYOUT_TYPES1args')(data)
+        if data.sla_id is None:
+            raise TypeError('data.sla_id == None')
+        self.pack_uhyper(data.sla_id)
+        if data.sla_layout_types is None:
+            raise TypeError('data.sla_layout_types == None')
+        self.pack_uint(data.sla_layout_types)
+
+    def pack_SB_SET_DSTORES1args(self, data):
+        if hasattr(self, 'filter_SB_SET_DSTORES1args'):
+            data = getattr(self, 'filter_SB_SET_DSTORES1args')(data)
+        if data.sda_id is None:
+            raise TypeError('data.sda_id == None')
+        self.pack_uhyper(data.sda_id)
+        if data.sda_dstore_ids is None:
+            raise TypeError('data.sda_dstore_ids == None')
+        if len(data.sda_dstore_ids) > 16 and self.check_array:
+            raise XDRError('array length too long for data.sda_dstore_ids')
+        self.pack_array(data.sda_dstore_ids, self.pack_uint)
+
+    def pack_SB_SET_CLIENT_RULES1args(self, data):
+        if hasattr(self, 'filter_SB_SET_CLIENT_RULES1args'):
+            data = getattr(self, 'filter_SB_SET_CLIENT_RULES1args')(data)
+        if data.scra_id is None:
+            raise TypeError('data.scra_id == None')
+        self.pack_uhyper(data.scra_id)
+        if data.scra_rules is None:
+            raise TypeError('data.scra_rules == None')
+        if len(data.scra_rules) > const.PROBE1_MAX_CLIENT_RULES and self.check_array:
+            raise XDRError('array length too long for data.scra_rules')
+        self.pack_array(data.scra_rules, self.pack_probe_client_rule1)
+
+    def pack_SB_SET_STRIPE_UNIT1args(self, data):
+        if hasattr(self, 'filter_SB_SET_STRIPE_UNIT1args'):
+            data = getattr(self, 'filter_SB_SET_STRIPE_UNIT1args')(data)
+        if data.ssu_id is None:
+            raise TypeError('data.ssu_id == None')
+        self.pack_uhyper(data.ssu_id)
+        if data.ssu_stripe_unit is None:
+            raise TypeError('data.ssu_stripe_unit == None')
+        self.pack_uint(data.ssu_stripe_unit)
 
     def pack_SB_LINT_FLAVORS1resok(self, data):
         if hasattr(self, 'filter_SB_LINT_FLAVORS1resok'):
@@ -1167,6 +1239,21 @@ class PROBE1_XDRUnpacker(xdrlib.Unpacker):
             data = getattr(self, 'filter_probe_auth_flavor1')(data)
         return data
 
+    def unpack_probe_client_rule1(self):
+        data = types.probe_client_rule1()
+        data.pcr_match = self.unpack_string()
+        if len(data.pcr_match) > const.PROBE1_MAX_MATCH and self.check_array:
+            raise XDRError('array length too long for data.pcr_match')
+        data.pcr_rw = self.unpack_bool()
+        data.pcr_root_squash = self.unpack_bool()
+        data.pcr_all_squash = self.unpack_bool()
+        data.pcr_flavors = self.unpack_array(self.unpack_probe_auth_flavor1)
+        if len(data.pcr_flavors) > const.PROBE1_MAX_FLAVORS and self.check_array:
+            raise XDRError('array length too long for data.pcr_flavors')
+        if hasattr(self, 'filter_probe_client_rule1'):
+            data = getattr(self, 'filter_probe_client_rule1')(data)
+        return data
+
     def unpack_probe_sb_info1(self):
         data = types.probe_sb_info1()
         data.psi_id = self.unpack_uhyper()
@@ -1181,6 +1268,9 @@ class PROBE1_XDRUnpacker(xdrlib.Unpacker):
         data.psi_bytes_used = self.unpack_uhyper()
         data.psi_inodes_max = self.unpack_uhyper()
         data.psi_inodes_used = self.unpack_uhyper()
+        data.psi_client_rules = self.unpack_array(self.unpack_probe_client_rule1)
+        if len(data.psi_client_rules) > const.PROBE1_MAX_CLIENT_RULES and self.check_array:
+            raise XDRError('array length too long for data.psi_client_rules')
         if hasattr(self, 'filter_probe_sb_info1'):
             data = getattr(self, 'filter_probe_sb_info1')(data)
         return data
@@ -1270,6 +1360,42 @@ class PROBE1_XDRUnpacker(xdrlib.Unpacker):
             raise XDRError('array length too long for data.sfa_flavors')
         if hasattr(self, 'filter_SB_SET_FLAVORS1args'):
             data = getattr(self, 'filter_SB_SET_FLAVORS1args')(data)
+        return data
+
+    def unpack_SB_SET_LAYOUT_TYPES1args(self):
+        data = types.SB_SET_LAYOUT_TYPES1args()
+        data.sla_id = self.unpack_uhyper()
+        data.sla_layout_types = self.unpack_uint()
+        if hasattr(self, 'filter_SB_SET_LAYOUT_TYPES1args'):
+            data = getattr(self, 'filter_SB_SET_LAYOUT_TYPES1args')(data)
+        return data
+
+    def unpack_SB_SET_DSTORES1args(self):
+        data = types.SB_SET_DSTORES1args()
+        data.sda_id = self.unpack_uhyper()
+        data.sda_dstore_ids = self.unpack_array(self.unpack_uint)
+        if len(data.sda_dstore_ids) > 16 and self.check_array:
+            raise XDRError('array length too long for data.sda_dstore_ids')
+        if hasattr(self, 'filter_SB_SET_DSTORES1args'):
+            data = getattr(self, 'filter_SB_SET_DSTORES1args')(data)
+        return data
+
+    def unpack_SB_SET_CLIENT_RULES1args(self):
+        data = types.SB_SET_CLIENT_RULES1args()
+        data.scra_id = self.unpack_uhyper()
+        data.scra_rules = self.unpack_array(self.unpack_probe_client_rule1)
+        if len(data.scra_rules) > const.PROBE1_MAX_CLIENT_RULES and self.check_array:
+            raise XDRError('array length too long for data.scra_rules')
+        if hasattr(self, 'filter_SB_SET_CLIENT_RULES1args'):
+            data = getattr(self, 'filter_SB_SET_CLIENT_RULES1args')(data)
+        return data
+
+    def unpack_SB_SET_STRIPE_UNIT1args(self):
+        data = types.SB_SET_STRIPE_UNIT1args()
+        data.ssu_id = self.unpack_uhyper()
+        data.ssu_stripe_unit = self.unpack_uint()
+        if hasattr(self, 'filter_SB_SET_STRIPE_UNIT1args'):
+            data = getattr(self, 'filter_SB_SET_STRIPE_UNIT1args')(data)
         return data
 
     def unpack_SB_LINT_FLAVORS1resok(self):
