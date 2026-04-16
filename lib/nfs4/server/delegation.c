@@ -165,8 +165,8 @@ uint32_t nfs4_op_get_dir_delegation(struct compound *compound)
 	GET_DIR_DELEGATION4res_non_fatal *nf =
 		&res->GET_DIR_DELEGATION4res_u.gddr_res_non_fatal4;
 	nf->gddrnf_status = GDD4_UNAVAIL;
-	nf->GET_DIR_DELEGATION4res_non_fatal_u
-		.gddrnf_will_signal_deleg_avail = FALSE;
+	nf->GET_DIR_DELEGATION4res_non_fatal_u.gddrnf_will_signal_deleg_avail =
+		FALSE;
 	return 0;
 }
 
