@@ -153,59 +153,20 @@ uint32_t nfs4_op_get_dir_delegation(struct compound *compound)
 		return 0;
 	}
 
-	struct client *client =
-		compound->c_nfs4_client ?
-			nfs4_client_to_client(compound->c_nfs4_client) :
-			NULL;
-	if (!client) {
-		*status = NFS4ERR_SERVERFAULT;
-		return 0;
-	}
-
-	struct delegation_stateid *ds =
-		delegation_stateid_alloc(compound->c_inode, client);
-	if (!ds) {
-		/*
-		 * Can't grant -- tell the client the delegation is
-		 * unavailable rather than failing the whole compound.
-		 */
-		GET_DIR_DELEGATION4res_non_fatal *nf =
-			&res->GET_DIR_DELEGATION4res_u.gddr_res_non_fatal4;
-		nf->gddrnf_status = GDD4_UNAVAIL;
-		nf->GET_DIR_DELEGATION4res_non_fatal_u
-			.gddrnf_will_signal_deleg_avail = FALSE;
-		return 0;
-	}
-
 	/*
-	 * Bump seqid so the client sees a fresh stateid.
-	 * Grandfathered GCC builtin -- s_seqid is not _Atomic.
+	 * Refuse directory delegations for now.  When the client holds a
+	 * dir delegation it suppresses GETATTR revalidation of nlink/mtime
+	 * even when the server sends cinfo indicating a change (RENAME,
+	 * REMOVE).  Returning GDD4_UNAVAIL causes the client to rely solely
+	 * on the cinfo mechanism, which works correctly.
+	 * NOT_NOW_BROWN_COW: grant dir delegations once CB_NOTIFY is in
+	 * place and client revalidation is confirmed.
 	 */
-	__atomic_fetch_add(&ds->ds_stid.s_seqid, 1, __ATOMIC_ACQ_REL);
-
 	GET_DIR_DELEGATION4res_non_fatal *nf =
 		&res->GET_DIR_DELEGATION4res_u.gddr_res_non_fatal4;
-	nf->gddrnf_status = GDD4_OK;
-
-	GET_DIR_DELEGATION4resok *resok =
-		&nf->GET_DIR_DELEGATION4res_non_fatal_u.gddrnf_resok4;
-
-	/* Use directory's monotonic changeid as the cookie verifier. */
-	uint64_t changeid = atomic_load_explicit(&compound->c_inode->i_changeid,
-						 memory_order_relaxed);
-	memcpy(resok->gddr_cookieverf, &changeid,
-	       sizeof(resok->gddr_cookieverf));
-
-	pack_stateid4(&resok->gddr_stateid, &ds->ds_stid);
-
-	/* No notification capabilities -- recall-on-mutate model. */
-	resok->gddr_notification.bitmap4_len = 0;
-	resok->gddr_notification.bitmap4_val = NULL;
-	resok->gddr_child_attributes.bitmap4_len = 0;
-	resok->gddr_child_attributes.bitmap4_val = NULL;
-	resok->gddr_dir_attributes.bitmap4_len = 0;
-	resok->gddr_dir_attributes.bitmap4_val = NULL;
-
+	nf->gddrnf_status = GDD4_UNAVAIL;
+	nf->GET_DIR_DELEGATION4res_non_fatal_u
+		.gddrnf_will_signal_deleg_avail = FALSE;
 	return 0;
 }
 
