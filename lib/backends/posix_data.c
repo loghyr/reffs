@@ -81,11 +81,12 @@ int posix_data_db_alloc(struct data_block *db, struct inode *inode,
 	/*
 	 * size == 0: recovery path -- open existing file and read its size.
 	 *            Do NOT truncate: the file already contains data to restore.
-	 * size > 0:  new file creation (buffer != NULL) or SETATTR truncate-up
-	 *            (buffer == NULL) -- truncate to clear stale data from any
-	 *            prior inode that occupied the same ino_N.dat file.  Without
-	 *            O_TRUNC, a reused file retains old data beyond the new write
-	 *            range, which is returned verbatim on READ (data corruption).
+	 * size > 0, buffer != NULL: new file creation -- open with O_TRUNC to
+	 *            clear stale data from any prior inode that occupied the
+	 *            same ino_N.dat file, then write the initial buffer.
+	 * size > 0, buffer == NULL: SETATTR truncate-up -- open with O_TRUNC
+	 *            to clear stale data, then ftruncate to the target size so
+	 *            sparse reads within [0, offset+size) return zeros.
 	 */
 	int oflags = O_RDWR | O_CREAT;
 	if (size > 0)
@@ -112,6 +113,27 @@ int posix_data_db_alloc(struct data_block *db, struct inode *inode,
 
 			LOG("Initial write to %s failed: %s", path,
 			    strerror(saved_errno));
+			close(priv->pd_fd);
+			pthread_mutex_destroy(&priv->pd_reopen_mutex);
+			free(priv->pd_path);
+			free(priv);
+			return -saved_errno;
+		}
+	} else if (!buffer && size > 0) {
+		/*
+		 * SETATTR truncate-up with no initial data: extend the POSIX
+		 * file to the target size so reads within the grown region
+		 * return zeros rather than a short read (or eof=false with
+		 * data_len=0) when the file is still 0 bytes after O_TRUNC.
+		 * Without this, pread on a 0-byte file returns 0 even though
+		 * i_size > 0, causing the client to see EIO.
+		 */
+		off_t file_size = (off_t)offset + (off_t)size;
+		if (ftruncate(priv->pd_fd, file_size) < 0) {
+			int saved_errno = errno;
+
+			LOG("ftruncate of %s to %lld failed: %s", path,
+			    (long long)file_size, strerror(saved_errno));
 			close(priv->pd_fd);
 			pthread_mutex_destroy(&priv->pd_reopen_mutex);
 			free(priv->pd_path);
