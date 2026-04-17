@@ -729,7 +729,7 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 		}
 
 		inode->i_mode = new_mode | file_type;
-		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
+		flags |= REFFS_INODE_UPDATE_CTIME;
 	}
 
 	bool is_uid_change = sattr->uid_set && sattr->uid != (uid_t)-1 &&
@@ -739,11 +739,11 @@ int vfs_setattr(struct inode *inode, struct reffs_sattr *sattr,
 
 	if (sattr->uid_set && sattr->uid != (uid_t)-1) {
 		inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, sattr->uid);
-		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
+		flags |= REFFS_INODE_UPDATE_CTIME;
 	}
 	if (sattr->gid_set && sattr->gid != (gid_t)-1) {
 		inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, sattr->gid);
-		flags |= REFFS_INODE_UPDATE_CTIME | REFFS_INODE_UPDATE_MTIME;
+		flags |= REFFS_INODE_UPDATE_CTIME;
 	}
 
 	if (is_uid_change || is_gid_change) {
