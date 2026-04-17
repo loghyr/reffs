@@ -41,11 +41,13 @@ if [ ! -d "$NFS_CONFORMANCE_DIR" ]; then
 	exit 1
 fi
 
-# Build if op_access binary is missing.
-if [ ! -x "$NFS_CONFORMANCE_DIR/op_access" ]; then
-	echo "Building nfs-conformance in $NFS_CONFORMANCE_DIR ..."
-	make -C "$NFS_CONFORMANCE_DIR" 2>&1 | tail -5
-fi
+# Update from upstream before each run.
+echo "Updating nfs-conformance in $NFS_CONFORMANCE_DIR ..."
+git -C "$NFS_CONFORMANCE_DIR" pull --ff-only 2>&1 | tail -5
+
+# Always rebuild after pulling.
+echo "Building nfs-conformance in $NFS_CONFORMANCE_DIR ..."
+make -C "$NFS_CONFORMANCE_DIR" 2>&1 | tail -5
 
 if [ ! -x "$NFS_CONFORMANCE_DIR/op_access" ]; then
 	echo "ci_nfs_conformance_test.sh: build failed -- op_access not found" >&2
