@@ -54,7 +54,7 @@ START_TEST(test_chmod_file)
 	ck_assert_uint_eq(st_pre.st_gid, st_post.st_gid);
 	ck_assert_uint_eq(st_pre.st_nlink, st_post.st_nlink);
 	ck_assert_timespec_eq(st_pre.st_atim, st_post.st_atim);
-	ck_assert_timespec_lt(st_pre.st_mtim, st_post.st_mtim);
+	ck_assert_timespec_eq(st_pre.st_mtim, st_post.st_mtim);
 	ck_assert_timespec_lt(st_pre.st_ctim, st_post.st_ctim);
 
 	ck_assert_int_eq(reffs_fuse_unlink("/f"), 0);
@@ -91,7 +91,7 @@ START_TEST(test_chown_file)
 	ck_assert_uint_eq(st_pre.st_ino, st_post.st_ino);
 	ck_assert_uint_eq(st_pre.st_mode, st_post.st_mode);
 	ck_assert_timespec_eq(st_pre.st_atim, st_post.st_atim);
-	ck_assert_timespec_lt(st_pre.st_mtim, st_post.st_mtim);
+	ck_assert_timespec_eq(st_pre.st_mtim, st_post.st_mtim);
 	ck_assert_timespec_lt(st_pre.st_ctim, st_post.st_ctim);
 
 	ck_assert_int_eq(reffs_fuse_unlink("/f"), 0);
