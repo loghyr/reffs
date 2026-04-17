@@ -3496,14 +3496,16 @@ out:
 /* ------------------------------------------------------------------ */
 
 /*
- * Compute an 8-byte cookie verifier from the directory's mtime.
- * Stable across calls as long as the directory is not modified.
+ * Compute an 8-byte cookie verifier from the directory's inode number.
+ * Cookies in reffs are monotonically assigned and never reused, so the
+ * verifier must not change when the directory is modified (e.g. entries
+ * are added or removed).  Using mtime caused NFS4ERR_NOT_SAME mid-iteration
+ * when the client deleted entries between READDIR RPCs.
  * Called under inode->i_attr_mutex.
  */
 static void dir_make_cookieverf(struct inode *inode, verifier4 cv)
 {
-	uint64_t v = (uint64_t)inode->i_mtime.tv_sec * 1000000000ULL +
-		     (uint64_t)inode->i_mtime.tv_nsec;
+	uint64_t v = inode->i_ino;
 	memcpy(cv, &v, sizeof(verifier4));
 }
 
