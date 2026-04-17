@@ -387,16 +387,29 @@ record "pynfs" $PYNFS_RC
 fi
 
 # -----------------------------------------------------------------------
-# cthon26 / nfsv42-tests (uses persistent mounts)
+# cthon04 (uses persistent mounts)
 # -----------------------------------------------------------------------
 
 if [ -z "${goto_email:-}" ]; then
-section_start cthon26 "cthon26 / nfsv42-tests"
-"$REPO/scripts/ci_cthon26_test.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
-    2>&1 | tee "$LOGDIR/cthon26.log" | \
-    grep -E '(=== |summary:|FAIL)' | tail -20
-CTHON26_RC=${PIPESTATUS[0]}
-record "cthon26" $CTHON26_RC
+section_start cthon04 "cthon04"
+"$REPO/scripts/ci_cthon04_test.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
+    2>&1 | tee "$LOGDIR/cthon04.log" | \
+    grep -E '(=== |PASS|FAIL|basic|general)' | tail -20
+CTHON04_RC=${PIPESTATUS[0]}
+record "cthon04" $CTHON04_RC
+fi
+
+# -----------------------------------------------------------------------
+# nfs-conformance (uses persistent mounts)
+# -----------------------------------------------------------------------
+
+if [ -z "${goto_email:-}" ]; then
+section_start nfs_conformance "nfs-conformance"
+"$REPO/scripts/ci_nfs_conformance_test.sh" --v3-mount "$V3_MOUNT" --v4-mount "$V4_MOUNT" \
+    2>&1 | tee "$LOGDIR/nfs_conformance.log" | \
+    grep -E '(=== |PASS|FAIL|Files=)' | tail -20
+NFS_CONFORMANCE_RC=${PIPESTATUS[0]}
+record "nfs_conformance" $NFS_CONFORMANCE_RC
 fi
 
 # -----------------------------------------------------------------------
