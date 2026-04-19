@@ -418,9 +418,20 @@ int io_request_backend_pwrite(int fd, const void *buf, size_t len,
 }
 
 /* ------------------------------------------------------------------ */
-/* Network-side stubs (filled in by later commits)                    */
+/* Network-side: handler ring (init/fini/main_loop)                    */
 /* ------------------------------------------------------------------ */
 
+/*
+ * The handler ring and the backend ring share the same ring_context
+ * layout.  io_handler_init wires up the shutdown user-event filter
+ * the same way io_backend_init does (see above); the only difference
+ * is that the handler ring also stores the ring_context as
+ * g_network_rc so outside code can find it.
+ *
+ * TLS args are accepted but not yet used by this backend -- TLS
+ * plumbing mirrors the liburing path and will be wired in a
+ * subsequent commit together with the rest of lib/io/tls.c.
+ */
 int io_handler_init(struct ring_context *rc,
 		    const char *tls_cert,
 		    const char *tls_key,
@@ -429,22 +440,44 @@ int io_handler_init(struct ring_context *rc,
 	(void)tls_cert;
 	(void)tls_key;
 	(void)extra_check;
+
+	if (pthread_mutex_init(&rc->rc_mutex, NULL) != 0) {
+		LOG("io_handler_init: mutex init failed");
+		return -1;
+	}
+
+	rc->rc_kq_fd = kqueue();
+	if (rc->rc_kq_fd < 0) {
+		LOG("io_handler_init: kqueue: %s", strerror(errno));
+		pthread_mutex_destroy(&rc->rc_mutex);
+		return -1;
+	}
+
+	rc->rc_shutdown_user_ident = (uintptr_t)rc;
+	struct kevent ke;
+
+	EV_SET(&ke, rc->rc_shutdown_user_ident, EVFILT_USER,
+	       EV_ADD | EV_CLEAR, 0, 0, NULL);
+	if (kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL) < 0) {
+		LOG("io_handler_init: EVFILT_USER add: %s", strerror(errno));
+		close(rc->rc_kq_fd);
+		rc->rc_kq_fd = -1;
+		pthread_mutex_destroy(&rc->rc_mutex);
+		return -1;
+	}
+
 	g_network_rc = rc;
-	LOG("io_handler_init: network-side kqueue backend not yet implemented");
-	return -ENOSYS;
+	TRACE("io_handler_init: kqueue ready (fd=%d)", rc->rc_kq_fd);
+	return 0;
 }
 
 void io_handler_fini(struct ring_context *rc)
 {
-	(void)rc;
-}
-
-void io_handler_main_loop(volatile sig_atomic_t *running_flag,
-			  struct ring_context *rc)
-{
-	(void)running_flag;
-	(void)rc;
-	LOG("io_handler_main_loop: not yet implemented on kqueue backend");
+	if (rc->rc_kq_fd >= 0) {
+		close(rc->rc_kq_fd);
+		rc->rc_kq_fd = -1;
+	}
+	pthread_mutex_destroy(&rc->rc_mutex);
 }
 
 void io_handler_stop(void) {}
@@ -453,12 +486,16 @@ void io_handler_signal_shutdown(void)
 {
 	/*
 	 * Trigger EVFILT_USER on both rings to wake their main loops.
-	 * The handler ring is touched here; the backend ring is woken
-	 * in io_backend_fini path via close() of the kqueue fd.
+	 * kevent() with NOTE_TRIGGER on an already-registered EVFILT_USER
+	 * is async-signal-safe because the kernel path does not allocate.
 	 */
-	struct ring_context *rc = g_backend_rc;
+	struct ring_context *rings[] = { g_network_rc, g_backend_rc };
 
-	if (rc && rc->rc_kq_fd >= 0) {
+	for (unsigned i = 0; i < sizeof(rings) / sizeof(rings[0]); i++) {
+		struct ring_context *rc = rings[i];
+
+		if (!rc || rc->rc_kq_fd < 0)
+			continue;
 		struct kevent ke;
 
 		EV_SET(&ke, rc->rc_shutdown_user_ident, EVFILT_USER, 0,
@@ -467,14 +504,235 @@ void io_handler_signal_shutdown(void)
 	}
 }
 
+/* ------------------------------------------------------------------ */
+/* accept(2) via EVFILT_READ                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * On kqueue, accept is an EVFILT_READ readiness notification on the
+ * listen fd.  When the event fires, the main loop calls accept4(2)
+ * synchronously and dispatches to io_handle_accept.  We use
+ * EV_ONESHOT so the filter auto-unregisters after firing; the next
+ * io_request_accept_op re-arms it.
+ */
 int io_request_accept_op(int fd, struct connection_info *ci,
 			 struct ring_context *rc)
 {
-	(void)fd;
-	(void)ci;
-	(void)rc;
-	return -ENOSYS;
+	struct io_context *ic =
+		io_context_create(OP_TYPE_ACCEPT, fd, NULL, 0);
+
+	if (!ic)
+		return -ENOMEM;
+
+	ic->ic_ci = ci;
+
+	struct kevent ke;
+
+	EV_SET(&ke, fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, ic);
+
+	TSAN_RELEASE(ic);
+
+	pthread_mutex_lock(&rc->rc_mutex);
+	int ret = kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL);
+	pthread_mutex_unlock(&rc->rc_mutex);
+
+	if (ret < 0) {
+		int saved_errno = errno;
+
+		LOG("io_request_accept_op: kevent: %s", strerror(saved_errno));
+		io_context_destroy(ic);
+		return -saved_errno;
+	}
+
+	return 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* connect(2) via nonblocking connect + EVFILT_WRITE                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * connect(2) is issued synchronously in nonblocking mode.  If it
+ * returns 0 immediately, we dispatch io_handle_connect straight
+ * away.  If it returns EINPROGRESS, we register EVFILT_WRITE on the
+ * socket; completion is signalled when it becomes writable, at
+ * which point SO_ERROR tells us whether the connect succeeded.
+ *
+ * This helper is called from the same internal code path that
+ * io_uring's connect.c uses; it is not a public io_request_*
+ * function.  The static name keeps it file-scoped.
+ */
+static int kqueue_request_connect(struct ring_context *rc,
+				  struct io_context *ic, int sockfd,
+				  const struct sockaddr *addr,
+				  socklen_t addrlen) __attribute__((unused));
+static int kqueue_request_connect(struct ring_context *rc,
+				  struct io_context *ic, int sockfd,
+				  const struct sockaddr *addr,
+				  socklen_t addrlen)
+{
+	/* Enforce nonblocking so connect() either succeeds or returns
+	 * EINPROGRESS.  Many callers set this already; be defensive. */
+	int flags = fcntl(sockfd, F_GETFL, 0);
+
+	if (flags >= 0 && !(flags & O_NONBLOCK))
+		(void)fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+
+	int ret = connect(sockfd, addr, addrlen);
+
+	if (ret == 0) {
+		/* Connected immediately -- dispatch completion inline. */
+		TSAN_RELEASE(ic);
+		io_handle_connect(ic, 0, rc);
+		return 0;
+	}
+	if (errno != EINPROGRESS) {
+		int saved_errno = errno;
+
+		LOG("kqueue_request_connect: connect: %s",
+		    strerror(saved_errno));
+		return -saved_errno;
+	}
+
+	/* Pending: wait on writability. */
+	struct kevent ke;
+
+	EV_SET(&ke, sockfd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, ic);
+
+	TSAN_RELEASE(ic);
+
+	pthread_mutex_lock(&rc->rc_mutex);
+	ret = kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL);
+	pthread_mutex_unlock(&rc->rc_mutex);
+
+	if (ret < 0) {
+		int saved_errno = errno;
+
+		LOG("kqueue_request_connect: kevent EVFILT_WRITE: %s",
+		    strerror(saved_errno));
+		return -saved_errno;
+	}
+
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Network main loop                                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Drain kqueue events for the network ring.  Dispatch is by
+ * ic->ic_op_type, mirroring handler.c's CQE dispatch.
+ *
+ * EVFILT_READ on a listen socket -> accept_and_dispatch
+ * EVFILT_READ on a connected socket -> read_and_dispatch
+ * EVFILT_WRITE on a connecting socket -> connect_and_dispatch
+ * EVFILT_WRITE on a connected socket -> write_and_dispatch
+ * EVFILT_USER -> shutdown wakeup (handled in main loop)
+ *
+ * Read/write are filled in by a later commit; stubbed here.
+ */
+static void accept_and_dispatch(struct io_context *ic,
+				struct ring_context *rc)
+{
+	int client_fd = accept4(ic->ic_fd, NULL, NULL,
+				SOCK_NONBLOCK | SOCK_CLOEXEC);
+	int err = (client_fd < 0) ? -errno : 0;
+
+	if (err)
+		LOG("accept4 fd=%d: %s", ic->ic_fd, strerror(-err));
+
+	io_handle_accept(ic, client_fd, rc);
+}
+
+static void connect_and_dispatch(struct io_context *ic,
+				 struct ring_context *rc)
+{
+	int so_err = 0;
+	socklen_t so_errlen = sizeof(so_err);
+
+	if (getsockopt(ic->ic_fd, SOL_SOCKET, SO_ERROR, &so_err,
+		       &so_errlen) < 0)
+		so_err = errno;
+
+	io_handle_connect(ic, -so_err, rc);
+}
+
+void io_handler_main_loop(volatile sig_atomic_t *running_flag,
+			  struct ring_context *rc)
+{
+	struct kevent events[KQUEUE_BATCH_SIZE];
+
+	TRACE("io_handler_main_loop: started (kqueue fd=%d)", rc->rc_kq_fd);
+
+	while (1) {
+		struct timespec ts = { .tv_sec = IO_URING_WAIT_SEC,
+				       .tv_nsec = IO_URING_WAIT_NSEC };
+
+		int running_local;
+
+		__atomic_load(running_flag, &running_local, __ATOMIC_SEQ_CST);
+		if (!running_local)
+			break;
+
+		int n = kevent(rc->rc_kq_fd, NULL, 0, events,
+			       KQUEUE_BATCH_SIZE, &ts);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			LOG("io_handler_main_loop: kevent: %s",
+			    strerror(errno));
+			usleep(10000);
+			continue;
+		}
+
+		for (int i = 0; i < n; i++) {
+			struct kevent *ke = &events[i];
+
+			if (ke->filter == EVFILT_USER) {
+				/* Shutdown wakeup; next iter picks up
+				 * running_flag. */
+				continue;
+			}
+
+			struct io_context *ic = (struct io_context *)ke->udata;
+
+			if (!ic) {
+				LOG("io_handler_main_loop: NULL io_context");
+				continue;
+			}
+
+			TSAN_ACQUIRE(ic);
+
+			switch (ic->ic_op_type) {
+			case OP_TYPE_ACCEPT:
+				accept_and_dispatch(ic, rc);
+				break;
+			case OP_TYPE_CONNECT:
+				connect_and_dispatch(ic, rc);
+				break;
+			case OP_TYPE_READ:
+			case OP_TYPE_WRITE:
+				/* Filled in by the read/write commit. */
+				LOG("io_handler_main_loop: read/write dispatch not yet implemented (op_type=%d)",
+				    ic->ic_op_type);
+				io_context_destroy(ic);
+				break;
+			default:
+				LOG("io_handler_main_loop: unexpected op_type=%d",
+				    ic->ic_op_type);
+				io_context_destroy(ic);
+				break;
+			}
+		}
+	}
+
+	TRACE("io_handler_main_loop: exiting");
+}
+
+/* ------------------------------------------------------------------ */
+/* read/write stubs -- filled in by the next commit                   */
+/* ------------------------------------------------------------------ */
 
 int io_request_read_op(int fd, struct connection_info *ci,
 		       struct ring_context *rc)
