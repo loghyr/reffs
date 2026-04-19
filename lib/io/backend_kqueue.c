@@ -803,13 +803,31 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 int io_request_read_op(int fd, struct connection_info *ci,
 		       struct ring_context *rc)
 {
-	struct io_context *ic =
-		io_context_create(OP_TYPE_READ, fd, NULL, BUFFER_SIZE);
+	if (fd <= 0)
+		return -EBADF;
 
-	if (!ic)
+	/*
+	 * Allocate a BUFFER_SIZE read buffer up front and hand it to
+	 * io_context_create.  read_and_dispatch calls read(2) into this
+	 * buffer when EVFILT_READ fires; without a real buffer, read(2)
+	 * would EFAULT on every connection's first read.  On kevent
+	 * failure io_context_destroy frees the buffer (unconditional
+	 * free(ic->ic_buffer)).
+	 */
+	char *buffer = malloc(BUFFER_SIZE);
+	if (!buffer)
 		return -ENOMEM;
 
-	ic->ic_ci = *ci;
+	struct io_context *ic =
+		io_context_create(OP_TYPE_READ, fd, buffer, BUFFER_SIZE);
+
+	if (!ic) {
+		free(buffer);
+		return -ENOMEM;
+	}
+
+	if (ci)
+		ic->ic_ci = *ci;
 	io_context_update_time(ic);
 
 	struct kevent ke;
@@ -902,7 +920,8 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 	if (!ic)
 		return -ENOMEM;
 
-	ic->ic_ci = *ci;
+	if (ci)
+		ic->ic_ci = *ci;
 	ic->ic_state |= state;
 	ic->ic_expected_len = (size_t)len;
 
@@ -1030,16 +1049,19 @@ static void read_and_dispatch(struct io_context *ic,
 	int result;
 
 	if (nread < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+		int saved_errno = errno;
+		if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK) {
 			/* Spurious wakeup -- re-arm and wait again.
-			 * io_resubmit_read does not modify ic state apart
-			 * from the filter registration. */
-			if (io_resubmit_read(ic, rc) != 0) {
-				io_handle_read(ic, -errno, rc);
-			}
+			 * io_resubmit_read keeps ic alive on failure
+			 * (returns the -errno to the caller without
+			 * destroying), so if it fails we must clean up
+			 * here via io_handle_read's error branch. */
+			int rerr = io_resubmit_read(ic, rc);
+			if (rerr != 0)
+				io_handle_read(ic, rerr, rc);
 			return;
 		}
-		result = -errno;
+		result = -saved_errno;
 	} else if (nread == 0 && (ke->flags & EV_EOF)) {
 		result = 0; /* clean close */
 	} else {
@@ -1079,19 +1101,33 @@ static void write_and_dispatch(struct io_context *ic,
 		return;
 	}
 
-	ssize_t nwritten = write(ic->ic_fd, ic->ic_buffer,
-				 ic->ic_expected_len);
+	/*
+	 * Write from ic_position, not from the start of the buffer.
+	 * On partial-write continuation, io_handle_write advances
+	 * ic_position and transfers buffer ownership to a new ic;
+	 * io_resubmit_write re-arms EVFILT_WRITE on the new ic (whose
+	 * position is non-zero).  Writing from offset 0 every time
+	 * would corrupt every chunk after the first.
+	 */
+	char *src = (char *)ic->ic_buffer + ic->ic_position;
+	ssize_t nwritten = write(ic->ic_fd, src, ic->ic_expected_len);
 
 	if (nwritten < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			/* Kernel buffer full -- re-arm EVFILT_WRITE with the
-			 * same ic and wait for the next readiness. */
-			if (io_resubmit_write(ic, rc) != 0) {
-				io_handle_write(ic, -errno, rc);
-			}
+		int saved_errno = errno;
+		if (saved_errno == EAGAIN || saved_errno == EWOULDBLOCK) {
+			/*
+			 * Kernel buffer full -- re-arm EVFILT_WRITE on the
+			 * same ic.  io_resubmit_write destroys ic and closes
+			 * the socket on kevent failure, so we must NOT touch
+			 * ic after a non-zero return.  The destroy already
+			 * drove io_handle_write through the close path via
+			 * io_socket_close -> io_conn_unregister's pending-
+			 * queue drain.
+			 */
+			(void)io_resubmit_write(ic, rc);
 			return;
 		}
-		io_handle_write(ic, -errno, rc);
+		io_handle_write(ic, -saved_errno, rc);
 		return;
 	}
 
