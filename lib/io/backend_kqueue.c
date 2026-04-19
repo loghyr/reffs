@@ -42,8 +42,10 @@
 #endif
 
 #include <aio.h>
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -52,6 +54,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/event.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -61,6 +64,7 @@
 #include "reffs/ring.h"
 #include "reffs/rpc.h"
 #include "reffs/task.h"
+#include "reffs/trace/io.h"
 #include "tsan_io.h"
 
 /* ------------------------------------------------------------------ */
@@ -600,10 +604,6 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 static int kqueue_request_connect(struct ring_context *rc,
 				  struct io_context *ic, int sockfd,
 				  const struct sockaddr *addr,
-				  socklen_t addrlen) __attribute__((unused));
-static int kqueue_request_connect(struct ring_context *rc,
-				  struct io_context *ic, int sockfd,
-				  const struct sockaddr *addr,
 				  socklen_t addrlen)
 {
 	/* Enforce nonblocking so connect() either succeeds or returns
@@ -923,8 +923,135 @@ void io_heartbeat_update_completions(uint64_t count)
 	kqueue_heartbeat_completions += count;
 }
 
+/*
+ * io_send_request -- outbound RPC: establish a TCP connection if
+ * needed, then dispatch the send via io_rpc_trans_cb.
+ *
+ * Mirrors the liburing implementation in lib/io/connect.c
+ * (io_send_request), using kqueue_request_connect instead of the
+ * io_uring_prep_connect path.  Two reachable cases:
+ *
+ *   1. rt->rt_fd <= 0 (fresh client): socket(AF_INET, SOCK_STREAM),
+ *      conn_info register CONNECTING, nonblocking, kqueue_request_connect.
+ *      On EINPROGRESS, EVFILT_WRITE fires when connected and the main
+ *      loop dispatches io_handle_connect which calls io_rpc_trans_cb.
+ *
+ *   2. rt->rt_fd > 0 (existing connection): verify it's in a sendable
+ *      state, then dispatch io_rpc_trans_cb directly.
+ *
+ * Callers: NFSv4 backchannel (CB_RECALL, CB_GETATTR, CB_LAYOUTRECALL)
+ * from lib/nfs4/server/cb.c; probe1_client outbound.
+ */
 int io_send_request(struct rpc_trans *rt)
-{ (void)rt; return -ENOSYS; }
+{
+	int ret;
+
+	TRACE("fd=%d xid=0x%08x", rt->rt_fd, rt->rt_info.ri_xid);
+
+	ret = io_register_request(rt);
+	if (ret)
+		return ret;
+
+	if (rt->rt_fd <= 0) {
+		struct sockaddr_in *addr = malloc(sizeof(*addr));
+		if (!addr) {
+			io_unregister_request(rt->rt_info.ri_xid);
+			return ENOMEM;
+		}
+
+		int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+		if (sockfd < 0) {
+			int err = errno;
+			LOG("Failed to create socket: %s", strerror(err));
+			free(addr);
+			io_unregister_request(rt->rt_info.ri_xid);
+			return err;
+		}
+
+		struct conn_info *ci = io_conn_register(
+			sockfd, CONN_CONNECTING, CONN_ROLE_CLIENT);
+		if (!ci) {
+			LOG("Failed to register connection");
+			io_socket_close(sockfd, ENOMEM);
+			free(addr);
+			io_unregister_request(rt->rt_info.ri_xid);
+			return ENOMEM;
+		}
+
+		int flags = fcntl(sockfd, F_GETFL, 0);
+		if (flags >= 0)
+			(void)fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+
+		memset(addr, 0, sizeof(*addr));
+		addr->sin_family = AF_INET;
+		addr->sin_port = htons(rt->rt_port);
+		if (inet_pton(AF_INET, rt->rt_addr_str, &addr->sin_addr) <= 0) {
+			LOG("Invalid address: %s", rt->rt_addr_str);
+			io_socket_close(sockfd, EINVAL);
+			free(addr);
+			io_unregister_request(rt->rt_info.ri_xid);
+			return EINVAL;
+		}
+
+		rt->rt_fd = sockfd;
+
+		struct io_context *ic = io_context_create(
+			OP_TYPE_CONNECT, sockfd, addr, sizeof(*addr));
+		if (!ic) {
+			free(addr);
+			io_socket_close(sockfd, ENOMEM);
+			io_unregister_request(rt->rt_info.ri_xid);
+			return ENOMEM;
+		}
+		/*
+		 * ic owns the addr buffer from here on.
+		 * io_context_destroy will free ic->ic_buffer; do NOT
+		 * free(addr) on any post-ic-create error path or it is
+		 * a double-free.
+		 */
+
+		ic->ic_xid = rt->rt_info.ri_xid;
+
+		ci = io_conn_get(sockfd);
+		if (ci)
+			ci->ci_xid = rt->rt_info.ri_xid;
+
+		trace_io_connect_submit(ic);
+
+		/*
+		 * kqueue_request_connect owns ic from here -- either
+		 * dispatches io_handle_connect inline (on immediate success)
+		 * or registers EVFILT_WRITE for the pending case.  On
+		 * failure it returns -errno and the caller cleans up.
+		 */
+		ret = kqueue_request_connect(rt->rt_rc, ic, sockfd,
+					     (struct sockaddr *)addr,
+					     sizeof(*addr));
+		if (ret < 0) {
+			io_socket_close(sockfd, -ret);
+			io_context_destroy(ic); /* frees addr via ic_buffer */
+			io_unregister_request(rt->rt_info.ri_xid);
+			return -ret;
+		}
+
+		/*
+		 * addr is owned by ic (via io_context_create); not
+		 * freeing here.  On connect completion io_handle_connect
+		 * destroys ic, which frees ic->ic_buffer (== addr).
+		 */
+		return 0;
+	}
+
+	struct conn_info *ci = io_conn_get(rt->rt_fd);
+	if (!ci ||
+	    (ci->ci_state != CONN_CONNECTED && ci->ci_state != CONN_READING &&
+	     ci->ci_state != CONN_WRITING && ci->ci_state != CONN_READWRITE)) {
+		LOG("Connection is not ready for fd=%d", rt->rt_fd);
+		return ENOTCONN;
+	}
+
+	return io_rpc_trans_cb(rt);
+}
 
 int io_schedule_heartbeat(struct ring_context *rc)
 {
