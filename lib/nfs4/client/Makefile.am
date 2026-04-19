@@ -13,9 +13,15 @@ libreffs_nfs4_client_la_SOURCES = \
 	chunk_io.c \
 	ds_io.c \
 	mds_compound.c \
-	mds_session.c \
 	mds_file.c \
 	mds_layout.c \
 	ec_io.c
+
+# mds_session.c uses <rpc/auth_gss.h> which only exists on libtirpc.
+# FreeBSD's GSS-RPC lives in the gssrpc/ namespace (MIT Kerberos
+# port) with a different API.  Gate on Linux until a proper port.
+if !HOST_FREEBSD
+libreffs_nfs4_client_la_SOURCES += mds_session.c
+endif
 
 SUBDIRS = tests
