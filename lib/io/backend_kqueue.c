@@ -674,7 +674,13 @@ static void accept_and_dispatch(struct io_context *ic,
 	if (err)
 		LOG("accept4 fd=%d: %s", ic->ic_fd, strerror(-err));
 
-	io_handle_accept(ic, client_fd, rc);
+	/*
+	 * io_handle_accept expects the io_uring cqe->res convention:
+	 * a nonnegative fd on success, a negative errno on failure.
+	 * accept4 returns -1 on failure; translate to -errno so the
+	 * shared handler reports the real error.
+	 */
+	io_handle_accept(ic, err ? err : client_fd, rc);
 }
 
 static void connect_and_dispatch(struct io_context *ic,
