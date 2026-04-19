@@ -44,6 +44,11 @@ AS_CASE([$host_os],
     [freebsd*|dragonfly*], [
         CPPFLAGS="-I/usr/local/include $CPPFLAGS"
         LDFLAGS="-L/usr/local/lib $LDFLAGS"
+        # Force-include <rpc/types.h> on every compilation unit so
+        # generated XDR headers (which #include <rpc/xdr.h> directly)
+        # get bool_t in scope.  Linux's libtirpc pulls types.h in from
+        # xdr.h itself; FreeBSD's base libc xdr.h does not.
+        CPPFLAGS="-include rpc/types.h $CPPFLAGS"
         host_is_freebsd=yes
     ])
 AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])

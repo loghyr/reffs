@@ -10,7 +10,6 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdarg.h>
-#include <sys/syscall.h>
 #include <inttypes.h>
 #include <unistd.h>
 #include <time.h>
@@ -21,6 +20,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <zstd.h>
+#include "reffs/log.h" /* reffs_gettid() */
 #include "reffs/trace/common.h"
 #include "reffs/trace/types.h"
 
@@ -325,7 +325,7 @@ void reffs_trace_event(enum reffs_trace_category category, const char *name,
 	}
 	last_event_ts = ts;
 
-	pid_t tid = syscall(SYS_gettid);
+	pid_t tid = reffs_gettid();
 
 	pthread_mutex_lock(&trace_mutex);
 	if (trace_fp != NULL) {
