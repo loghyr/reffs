@@ -712,11 +712,13 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				connect_and_dispatch(ic, rc);
 				break;
 			case OP_TYPE_READ:
+				read_and_dispatch(ic, rc);
+				break;
 			case OP_TYPE_WRITE:
-				/* Filled in by the read/write commit. */
-				LOG("io_handler_main_loop: read/write dispatch not yet implemented (op_type=%d)",
-				    ic->ic_op_type);
-				io_context_destroy(ic);
+				write_and_dispatch(ic, rc);
+				break;
+			case OP_TYPE_HEARTBEAT:
+				heartbeat_and_dispatch(ic, rc);
 				break;
 			default:
 				LOG("io_handler_main_loop: unexpected op_type=%d",
@@ -731,26 +733,149 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 }
 
 /* ------------------------------------------------------------------ */
-/* read/write stubs -- filled in by the next commit                   */
+/* Network read/write via EVFILT_READ / EVFILT_WRITE                  */
 /* ------------------------------------------------------------------ */
+
+/*
+ * Socket reads and writes are much cheaper to model as readiness
+ * events than as aio: kqueue tells us "this fd has data / can
+ * accept more", we call read(2) / write(2) synchronously.  This
+ * mirrors the standard BSD event-loop pattern.
+ *
+ * The submission functions register EVFILT_READ or EVFILT_WRITE
+ * with EV_ONESHOT so the filter auto-unregisters after firing;
+ * each caller re-arms on the next op.  The io_context pointer is
+ * carried in the udata so the main loop can dispatch back to the
+ * right io_handle_* handler.
+ */
 
 int io_request_read_op(int fd, struct connection_info *ci,
 		       struct ring_context *rc)
 {
-	(void)fd;
-	(void)ci;
-	(void)rc;
-	return -ENOSYS;
+	struct io_context *ic =
+		io_context_create(OP_TYPE_READ, fd, NULL, BUFFER_SIZE);
+
+	if (!ic)
+		return -ENOMEM;
+
+	ic->ic_ci = ci;
+	io_context_update_time(ic);
+
+	struct kevent ke;
+
+	EV_SET(&ke, fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, ic);
+
+	TSAN_RELEASE(ic);
+
+	pthread_mutex_lock(&rc->rc_mutex);
+	int ret = kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL);
+	pthread_mutex_unlock(&rc->rc_mutex);
+
+	if (ret < 0) {
+		int saved_errno = errno;
+
+		LOG("io_request_read_op: kevent: %s", strerror(saved_errno));
+		io_context_destroy(ic);
+		return -saved_errno;
+	}
+
+	return 0;
 }
 
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 			struct connection_info *ci, struct ring_context *rc)
 {
-	(void)fd;
-	(void)buf;
-	(void)len;
-	(void)state;
-	(void)ci;
-	(void)rc;
-	return -ENOSYS;
+	struct io_context *ic =
+		io_context_create(OP_TYPE_WRITE, fd, buf, (size_t)len);
+
+	if (!ic)
+		return -ENOMEM;
+
+	ic->ic_ci = ci;
+	ic->ic_state |= state;
+	ic->ic_expected_len = (size_t)len;
+
+	struct kevent ke;
+
+	EV_SET(&ke, fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, ic);
+
+	TSAN_RELEASE(ic);
+
+	pthread_mutex_lock(&rc->rc_mutex);
+	int ret = kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL);
+	pthread_mutex_unlock(&rc->rc_mutex);
+
+	if (ret < 0) {
+		int saved_errno = errno;
+
+		LOG("io_request_write_op: kevent: %s", strerror(saved_errno));
+		io_context_destroy(ic);
+		return -saved_errno;
+	}
+
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Read/write completion handlers (called from main loop dispatch)    */
+/* ------------------------------------------------------------------ */
+
+static void read_and_dispatch(struct io_context *ic, struct ring_context *rc)
+{
+	ssize_t nread = read(ic->ic_fd, ic->ic_buffer, BUFFER_SIZE);
+	int result = (nread < 0) ? -errno : (int)nread;
+
+	io_handle_read(ic, result, rc);
+}
+
+static void write_and_dispatch(struct io_context *ic, struct ring_context *rc)
+{
+	ssize_t nwritten = write(ic->ic_fd, ic->ic_buffer,
+				 ic->ic_expected_len);
+	int result = (nwritten < 0) ? -errno : (int)nwritten;
+
+	io_handle_write(ic, result, rc);
+}
+
+static void heartbeat_and_dispatch(struct io_context *ic,
+				   struct ring_context *rc)
+{
+	io_handle_heartbeat(ic, 0, rc);
+}
+
+/*
+ * Arm a one-shot timer on the network ring.  Called from the internal
+ * heartbeat state machine (lib/io/heartbeat.c, currently still
+ * liburing-specific) when it wires up to this backend.  The ident is
+ * chosen by the caller; using the io_context pointer keeps it unique
+ * without a separate registry.
+ */
+static int kqueue_arm_heartbeat_timer(struct ring_context *rc,
+				      struct io_context *ic,
+				      uint64_t timeout_ns) __attribute__((unused));
+static int kqueue_arm_heartbeat_timer(struct ring_context *rc,
+				      struct io_context *ic,
+				      uint64_t timeout_ns)
+{
+	struct kevent ke;
+	uintptr_t ident = (uintptr_t)ic;
+	int64_t data_ms = (int64_t)(timeout_ns / 1000000ULL);
+
+	EV_SET(&ke, ident, EVFILT_TIMER, EV_ADD | EV_ONESHOT, 0, data_ms, ic);
+
+	TSAN_RELEASE(ic);
+
+	pthread_mutex_lock(&rc->rc_mutex);
+	int ret = kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL);
+	pthread_mutex_unlock(&rc->rc_mutex);
+
+	if (ret < 0) {
+		int saved_errno = errno;
+
+		LOG("kqueue_arm_heartbeat_timer: kevent: %s",
+		    strerror(saved_errno));
+		return -saved_errno;
+	}
+
+	return 0;
 }
