@@ -557,7 +557,8 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 	if (!ic)
 		return -ENOMEM;
 
-	ic->ic_ci = *ci;
+	if (ci)
+		ic->ic_ci = *ci;
 
 	struct kevent ke;
 
