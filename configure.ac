@@ -238,6 +238,39 @@ AS_IF([test "x$enable_linux_io_uring" != "xno"], [
 ])
 AC_SUBST([URING_LIBS])
 
+# Check for FreeBSD aio + kqueue support
+#
+# This backend provides the same async I/O semantics as io_uring on
+# Linux, using POSIX aio for file operations and kqueue for socket
+# readiness, timers, and completion notification.  See
+# docs/io-backend-port-plan.md.
+AC_ARG_ENABLE([freebsd-kqueue],
+    [AS_HELP_STRING([--enable-freebsd-kqueue],
+        [enable FreeBSD aio+kqueue I/O backend @<:@default=auto@:>@])],
+    [],
+    [enable_freebsd_kqueue=auto])
+
+have_freebsd_kqueue=no
+AS_IF([test "x$enable_freebsd_kqueue" != "xno"], [
+    AC_CHECK_HEADERS([sys/event.h sys/aio.h])
+    AC_CHECK_FUNCS([kqueue kevent aio_read aio_write aio_cancel aio_error aio_return accept4])
+    AS_IF([test "x$ac_cv_header_sys_event_h" = "xyes" && \
+           test "x$ac_cv_header_sys_aio_h" = "xyes" && \
+           test "x$ac_cv_func_kqueue" = "xyes" && \
+           test "x$ac_cv_func_kevent" = "xyes" && \
+           test "x$ac_cv_func_aio_read" = "xyes" && \
+           test "x$ac_cv_func_aio_write" = "xyes" && \
+           test "x$ac_cv_func_aio_cancel" = "xyes"], [
+        AC_DEFINE([HAVE_FREEBSD_KQUEUE], [1],
+                  [Define if the FreeBSD aio+kqueue backend is available])
+        have_freebsd_kqueue=yes
+    ], [
+        AS_IF([test "x$enable_freebsd_kqueue" = "xyes"], [
+            AC_MSG_ERROR([FreeBSD kqueue backend explicitly requested but required headers/functions are missing])
+        ])
+    ])
+])
+
 # Check for jemalloc
 AC_ARG_WITH([jemalloc],
   [AS_HELP_STRING([--with-jemalloc], [use jemalloc for memory allocation])],
