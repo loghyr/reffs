@@ -866,50 +866,124 @@ int io_request_read_op(int fd, struct connection_info *ci,
 /* ------------------------------------------------------------------ */
 
 /*
- * Heartbeat accounting stubs.  On the FreeBSD kqueue backend the
- * actual timer ticks are delivered via EVFILT_TIMER (already wired),
- * so these counters are not yet consumed by anything.  Left as no-ops
- * until the port gets real read/write completion handlers.
+ * Heartbeat: EVFILT_TIMER ticks drive a periodic watchdog that
+ * re-arms stuck listeners and sweeps idle connections.  Mirrors the
+ * liburing heartbeat.c but uses kqueue primitives (kqueue_arm_heartbeat_timer
+ * below) and skips the io_uring-specific CQ-overflow check.
  */
+
+/* Forward declaration -- definition follows the main loop. */
+static int kqueue_arm_heartbeat_timer(struct ring_context *rc,
+				      struct io_context *ic,
+				      uint64_t timeout_ns);
+
+#define KQUEUE_HEARTBEAT_INTERVAL_SEC 1
+#define KQUEUE_LISTENER_CHECK_INTERVAL 5
+#define KQUEUE_CONN_CHECK_INTERVAL 10
+#define KQUEUE_CONN_TIMEOUT 60
+
+static uint32_t kqueue_heartbeat_period = KQUEUE_HEARTBEAT_INTERVAL_SEC;
+static uint64_t kqueue_heartbeat_completions = 0;
+static time_t kqueue_last_listener_check = 0;
+static time_t kqueue_last_conn_check = 0;
+
 int io_heartbeat_init(struct ring_context *rc)
 {
-	(void)rc;
-	return 0;
+	time_t now = time(NULL);
+
+	kqueue_last_listener_check = now;
+	kqueue_last_conn_check = now;
+	return io_schedule_heartbeat(rc);
 }
 
 uint32_t io_heartbeat_period_get(void)
 {
-	return 0;
+	return kqueue_heartbeat_period;
 }
 
 uint32_t io_heartbeat_period_set(uint32_t seconds)
 {
-	(void)seconds;
-	return 0;
+	uint32_t old = kqueue_heartbeat_period;
+
+	kqueue_heartbeat_period = seconds;
+	return old;
 }
 
 void io_heartbeat_update_completions(uint64_t count)
 {
-	(void)count;
+	kqueue_heartbeat_completions += count;
 }
 
 int io_send_request(struct rpc_trans *rt)
 { (void)rt; return -ENOSYS; }
-int io_schedule_heartbeat(struct ring_context *rc)
-{ (void)rc; return 0; }
 
-/*
- * Completion handlers for accept, connect, read, write, and TLS all
- * live in lib/io/handlers.c (shared).  io_handle_heartbeat below
- * is still a stub until PR #10 wires EVFILT_TIMER-driven heartbeat.
- */
+int io_schedule_heartbeat(struct ring_context *rc)
+{
+	struct io_context *ic =
+		io_context_create(OP_TYPE_HEARTBEAT, -1, NULL, 0);
+
+	if (!ic) {
+		LOG("io_schedule_heartbeat: failed to create ic");
+		return -ENOMEM;
+	}
+
+	return kqueue_arm_heartbeat_timer(
+		rc, ic, (uint64_t)kqueue_heartbeat_period * 1000000000ULL);
+}
+
 int io_handle_heartbeat(struct io_context *ic, int result,
 			struct ring_context *rc)
 {
+	time_t now = time(NULL);
+
 	(void)result;
-	(void)rc;
+
+	/*
+	 * Listener watchdog: if any registered listener dropped out of
+	 * the LISTENING state with no pending accept op, resubmit.  This
+	 * is the single concrete availability gap in the PR #7 port --
+	 * without it a transient accept failure is terminal.
+	 */
+	if (now - kqueue_last_listener_check >=
+	    KQUEUE_LISTENER_CHECK_INTERVAL) {
+		int num_listeners;
+		int *listener_fds =
+			io_heartbeat_get_listeners(&num_listeners);
+
+		for (int i = 0; i < num_listeners; i++) {
+			int fd = listener_fds[i];
+			if (fd <= 0)
+				continue;
+			struct conn_info *ci = io_conn_get(fd);
+			if (ci && ci->ci_state != CONN_LISTENING &&
+			    ci->ci_accept_count == 0) {
+				LOG("Listener fd=%d not in LISTENING -- resubmitting accept",
+				    fd);
+				int ret = io_request_accept_op(fd, NULL, rc);
+				if (ret != 0)
+					LOG("Watchdog failed to resubmit accept for fd=%d: %s",
+					    fd, strerror(-ret));
+			}
+		}
+
+		kqueue_last_listener_check = now;
+	}
+
+	/*
+	 * Connection idle-timeout sweep: close connections that have
+	 * been inactive longer than KQUEUE_CONN_TIMEOUT.  Delegates to
+	 * the shared conn_info module which holds the activity timestamps.
+	 */
+	if (now - kqueue_last_conn_check >= KQUEUE_CONN_CHECK_INTERVAL) {
+		int closed = io_conn_check_timeouts(KQUEUE_CONN_TIMEOUT);
+		if (closed > 0)
+			TRACE("Heartbeat: closed %d inactive connections",
+			      closed);
+		kqueue_last_conn_check = now;
+	}
+
 	io_context_destroy(ic);
-	return 0;
+	return io_schedule_heartbeat(rc);
 }
 
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
@@ -1142,15 +1216,12 @@ static void heartbeat_and_dispatch(struct io_context *ic,
 }
 
 /*
- * Arm a one-shot timer on the network ring.  Called from the internal
- * heartbeat state machine (lib/io/heartbeat.c, currently still
- * liburing-specific) when it wires up to this backend.  The ident is
- * chosen by the caller; using the io_context pointer keeps it unique
- * without a separate registry.
+ * Arm a one-shot EVFILT_TIMER on the network ring.  Called by
+ * io_schedule_heartbeat above.  The ident is the io_context pointer
+ * (ensures uniqueness across concurrent heartbeats without a
+ * separate registry); when the timer fires the main loop pulls the
+ * ic back out of ke->udata and dispatches to io_handle_heartbeat.
  */
-static int kqueue_arm_heartbeat_timer(struct ring_context *rc,
-				      struct io_context *ic,
-				      uint64_t timeout_ns) __attribute__((unused));
 static int kqueue_arm_heartbeat_timer(struct ring_context *rc,
 				      struct io_context *ic,
 				      uint64_t timeout_ns)
