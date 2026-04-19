@@ -56,6 +56,10 @@ AS_CASE([$host_os],
         # ENODATA is also glibc-only ("no data available"); FreeBSD
         # has ENOATTR in the same role (especially for xattrs).
         CPPFLAGS="-DENODATA=ENOATTR $CPPFLAGS"
+        # backtrace(3) / backtrace_symbols(3) are in glibc on Linux
+        # but in a separate libexecinfo on FreeBSD.  Link it
+        # globally so every binary gets the symbols.
+        LIBS="-lexecinfo $LIBS"
         host_is_freebsd=yes
     ])
 AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])
