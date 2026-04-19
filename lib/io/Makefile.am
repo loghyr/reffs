@@ -20,6 +20,7 @@ libreffs_io_la_SOURCES =	\
 	context.c		\
 	handlers.c		\
 	lsnr.c			\
+	net_state.c		\
 	tls.c			\
 	worker.c
 

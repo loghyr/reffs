@@ -510,6 +510,7 @@ int io_handler_init(struct ring_context *rc,
 void io_handler_fini(struct ring_context *rc)
 {
 	kq_teardown(rc);
+	io_net_state_fini();
 }
 
 void io_handler_stop(void) {}
@@ -841,24 +842,6 @@ int io_request_read_op(int fd, struct connection_info *ci,
 /* return errors at runtime until the real implementations land.       */
 /* ------------------------------------------------------------------ */
 
-int io_register_request(struct rpc_trans *rt)
-{
-	(void)rt;
-	return ENOSYS;
-}
-
-int io_unregister_request(uint32_t xid)
-{
-	(void)xid;
-	return ENOSYS;
-}
-
-struct rpc_trans *io_find_request_by_xid(uint32_t xid)
-{
-	(void)xid;
-	return NULL;
-}
-
 int io_rpc_trans_cb(struct rpc_trans *rt)
 {
 	(void)rt;
@@ -894,18 +877,6 @@ void io_heartbeat_update_completions(uint64_t count)
 	(void)count;
 }
 
-void io_add_listener(int fd) { (void)fd; }
-void io_client_fd_register(int fd) { (void)fd; }
-void io_client_fd_unregister(int fd) { (void)fd; }
-void io_check_for_listener_restart(int fd, struct connection_info *ci,
-				   struct ring_context *rc)
-{ (void)fd; (void)ci; (void)rc; }
-bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len)
-{ (void)bs; (void)data; (void)len; return false; }
-struct buffer_state *io_buffer_state_create(int fd)
-{ (void)fd; return NULL; }
-struct buffer_state *io_buffer_state_get(int fd)
-{ (void)fd; return NULL; }
 int io_send_request(struct rpc_trans *rt)
 { (void)rt; return -ENOSYS; }
 int io_schedule_heartbeat(struct ring_context *rc)

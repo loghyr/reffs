@@ -49,104 +49,7 @@ int gss_server_cred_init(void);
 void gss_server_cred_fini(void);
 _Bool gss_server_cred_is_available(void);
 
-// Request tracking
-struct rpc_trans *pending_requests[MAX_PENDING_REQUESTS];
-pthread_mutex_t request_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 static time_t last_accept_check;
-
-// Set of listener sockets to monitor
-int listener_fds[MAX_LISTENERS];
-int num_listeners = 0;
-
-//
-// Need to prune out connections that get timed out
-//
-
-// Store buffer states by fd
-struct buffer_state *conn_buffers[MAX_CONNECTIONS];
-
-// Register a new request for tracking
-int io_register_request(struct rpc_trans *rt)
-{
-	pthread_mutex_lock(&request_mutex);
-
-	TRACE("rt=%p xid=0x%08x", (void *)rt, rt->rt_info.ri_xid);
-	// Find an empty slot
-	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
-		if (pending_requests[i] == NULL) {
-			TRACE("rt=%p xid=0x%08x", (void *)rt,
-			      rt->rt_info.ri_xid);
-			pending_requests[i] = rt;
-			pthread_mutex_unlock(&request_mutex);
-			return 0;
-		}
-	}
-
-	pthread_mutex_unlock(&request_mutex);
-	return ENOENT;
-}
-
-// Find a request by XID
-struct rpc_trans *io_find_request_by_xid(uint32_t xid)
-{
-	struct rpc_trans *rt = NULL;
-
-	TRACE("xid=0x%08x", xid);
-	pthread_mutex_lock(&request_mutex);
-	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
-		if (pending_requests[i] &&
-		    pending_requests[i]->rt_info.ri_xid == xid) {
-			TRACE("rt=%p xid=0x%08x", (void *)pending_requests[i],
-			      xid);
-			rt = pending_requests[i];
-			break;
-		}
-	}
-	pthread_mutex_unlock(&request_mutex);
-
-	return rt;
-}
-
-int io_unregister_request(uint32_t xid)
-{
-	TRACE("xid=0x%08x", xid);
-	pthread_mutex_lock(&request_mutex);
-	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
-		if (pending_requests[i] &&
-		    pending_requests[i]->rt_info.ri_xid == xid) {
-			TRACE("rt=%p xid=0x%08x", (void *)pending_requests[i],
-			      xid);
-			pending_requests[i] = NULL;
-			pthread_mutex_unlock(&request_mutex);
-			return 0;
-		}
-	}
-	pthread_mutex_unlock(&request_mutex);
-
-	return ENOENT;
-}
-
-// Register client fd
-void io_client_fd_register(int fd)
-{
-	// In this simplified version, we just track buffer state
-	io_buffer_state_create(fd);
-}
-
-// Unregister client fd
-void io_client_fd_unregister(int fd)
-{
-	struct buffer_state *bs = io_buffer_state_get(fd);
-	if (bs) {
-		free(bs->bs_data);
-		if (bs->bs_record.rs_data) {
-			free(bs->bs_record.rs_data);
-		}
-		free(bs);
-		conn_buffers[fd % MAX_CONNECTIONS] = NULL;
-	}
-}
 
 /*
  * Shutdown eventfd: the signal handler writes to this to produce a
@@ -188,9 +91,6 @@ int io_handler_init(struct ring_context *rc, const char *tls_cert,
 {
 	// Store global reference for callback paths (CB_RECALL etc.)
 	g_network_rc = rc;
-
-	// Initialize pending requests array
-	memset(conn_buffers, 0, sizeof(conn_buffers));
 
 	if (pthread_mutex_init(&rc->rc_mutex, NULL) != 0) {
 		LOG("Failed to initialize ring mutex");
@@ -237,89 +137,6 @@ int io_handler_init(struct ring_context *rc, const char *tls_cert,
 	return 0;
 }
 
-// Create buffer state for a connection
-struct buffer_state *io_buffer_state_create(int fd)
-{
-	struct buffer_state *bs = malloc(sizeof(struct buffer_state));
-	if (!bs)
-		return NULL;
-
-	bs->bs_fd = fd;
-	bs->bs_capacity = BUFFER_SIZE * 2;
-	bs->bs_data = malloc(bs->bs_capacity);
-	bs->bs_filled = 0;
-
-	// Initialize record state
-	bs->bs_record.rs_last_fragment = false;
-	bs->bs_record.rs_fragment_len = 0;
-	bs->bs_record.rs_data = NULL;
-	bs->bs_record.rs_total_len = 0;
-	bs->bs_record.rs_capacity = 0;
-	bs->bs_record.rs_position = 0;
-
-	if (!bs->bs_data) {
-		free(bs);
-		return NULL;
-	}
-
-	int slot = fd % MAX_CONNECTIONS;
-	if (conn_buffers[slot] != NULL) {
-		LOG("io: conn_buffers alias: fd=%d slot=%d already occupied -- "
-		    "increase MAX_CONNECTIONS or use a hash map",
-		    fd, slot);
-		free(bs->bs_data);
-		free(bs);
-		return NULL;
-	}
-	conn_buffers[slot] = bs;
-	return bs;
-}
-
-// Get buffer state for a connection
-struct buffer_state *io_buffer_state_get(int fd)
-{
-	return conn_buffers[fd % MAX_CONNECTIONS];
-}
-
-// Append data to a buffer, resizing if necessary
-bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len)
-{
-	// Avoid integer overflow in capacity calculation
-	if (len > SIZE_MAX / 2 || bs->bs_filled > SIZE_MAX - len) {
-		return false; // Prevent integer overflow
-	}
-
-	// Check if we need to resize
-	if (bs->bs_filled + len > bs->bs_capacity) {
-		// Calculate new capacity, ensuring we allocate enough space
-		size_t min_needed = bs->bs_filled + len;
-		size_t new_capacity = bs->bs_capacity;
-
-		// Double capacity until it's enough
-		while (new_capacity < min_needed) {
-			if (new_capacity > SIZE_MAX / 2) {
-				// Would overflow
-				return false;
-			}
-			new_capacity *= 2;
-		}
-
-		// Perform reallocation
-		char *new_data = realloc(bs->bs_data, new_capacity);
-		if (!new_data)
-			return false;
-
-		bs->bs_data = new_data;
-		bs->bs_capacity = new_capacity;
-	}
-
-	// Append the data after successful reallocation
-	memcpy(bs->bs_data + bs->bs_filled, data, len);
-	bs->bs_filled += len;
-
-	return true;
-}
-
 volatile sig_atomic_t *running_context;
 
 void io_handler_stop(void)
@@ -338,30 +155,6 @@ void io_handler_signal_shutdown(void)
 		uint64_t val = 1;
 		(void)write(shutdown_efd, &val, sizeof(val));
 	}
-}
-
-void io_add_listener(int fd)
-{
-	if (fd > 0)
-		listener_fds[num_listeners++] = fd;
-}
-
-void io_check_for_listener_restart(int fd, struct connection_info *ci,
-				   struct ring_context *rc)
-{
-	for (int i = 0; i < num_listeners; i++) {
-		if (fd == listener_fds[i]) {
-			LOG("Listener socket closed, immediately resubmitting accept");
-			io_request_accept_op(fd, ci, rc);
-			break;
-		}
-	}
-}
-
-int *io_heartbeat_get_listeners(int *num)
-{
-	*num = num_listeners;
-	return listener_fds;
 }
 
 void io_handler_main_loop(volatile sig_atomic_t *running_flag,
@@ -635,29 +428,9 @@ void io_handler_fini(struct ring_context *rc)
 		io_uring_cqe_seen(&rc->rc_ring, cqe);
 	}
 
-	// Cleanup any pending requests
-	TRACE("Cleaning up pending requests...");
-	pthread_mutex_lock(&request_mutex);
-	for (int i = 0; i < MAX_PENDING_REQUESTS; i++) {
-		if (pending_requests[i]) {
-			rpc_protocol_free(pending_requests[i]);
-			pending_requests[i] = NULL;
-		}
-	}
-	pthread_mutex_unlock(&request_mutex);
-
-	// Cleanup connection buffers
-	for (int i = 0; i < MAX_CONNECTIONS; i++) {
-		if (conn_buffers[i]) {
-			if (conn_buffers[i]->bs_data) {
-				free(conn_buffers[i]->bs_data);
-			}
-			if (conn_buffers[i]->bs_record.rs_data) {
-				free(conn_buffers[i]->bs_record.rs_data);
-			}
-			free(conn_buffers[i]);
-		}
-	}
+	// Cleanup shared net_state (pending requests + buffer states)
+	TRACE("Cleaning up net_state...");
+	io_net_state_fini();
 
 	TRACE("Cleaning up remaining active contexts...");
 	io_context_release_active();

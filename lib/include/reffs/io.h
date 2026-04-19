@@ -218,6 +218,13 @@ void io_handler_main_loop(volatile sig_atomic_t *running,
 void io_handler_stop(void);
 void io_handler_signal_shutdown(void);
 
+/*
+ * Backend-agnostic shutdown of lib/io/net_state.c state (request
+ * table, pending buffers).  Backends must call this from their
+ * io_handler_fini after draining in-flight operations.
+ */
+void io_net_state_fini(void);
+
 /* ------------------------------------------------------------------ */
 /* Backend file-I/O ring                                              */
 /* ------------------------------------------------------------------ */
