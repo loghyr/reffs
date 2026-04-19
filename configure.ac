@@ -39,11 +39,14 @@ m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 # probes can find ports-installed dependencies (libuuid,
 # HdrHistogram_c, etc.).
 AC_CANONICAL_HOST
+host_is_freebsd=no
 AS_CASE([$host_os],
     [freebsd*|dragonfly*], [
         CPPFLAGS="-I/usr/local/include $CPPFLAGS"
         LDFLAGS="-L/usr/local/lib $LDFLAGS"
+        host_is_freebsd=yes
     ])
+AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])
 
 AC_MSG_CHECKING([for C11 support])
 dnl Strip out the freaking -O2 by default!
