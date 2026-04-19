@@ -18,6 +18,7 @@ lib_LTLIBRARIES = libreffs_io.la
 libreffs_io_la_SOURCES =	\
 	conn_info.c		\
 	context.c		\
+	handlers.c		\
 	lsnr.c			\
 	tls.c			\
 	worker.c
