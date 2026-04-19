@@ -34,6 +34,10 @@ set -uo pipefail
 # installs user-level tools (xdr-parser from reply-xdr).
 export PATH="$HOME/.local/bin:$PATH"
 
+# On Rocky/RHEL, HdrHistogram_c is built from source into /usr/local.
+# Extend PKG_CONFIG_PATH so configure finds it.
+export PKG_CONFIG_PATH="/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
 # -----------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------
