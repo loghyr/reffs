@@ -398,3 +398,94 @@ Proves the boundary is right without shipping working backends.
 4. PR 2 (FreeBSD) and PR 3 (thread-pool) are independent of each
    other after PR 1 lands. Whichever is easier to write first is fine.
 5. PR 4 (smoke test) can land anytime after PR 1.
+
+---
+
+## Status Update — 2026-04-19
+
+**What's landed on branch**
+
+- `feature/io-backend-port` (PR 1, 4 commits): public headers no longer
+  pull `<liburing.h>`; `struct ring_context` is opaque with
+  `ring_context_alloc()` / `_free()` helpers; `tsan_uring.h` → `tsan_io.h`.
+  Tests 114/114 pass on Linux.
+
+- `feature/freebsd-substrate` (17 commits): `./configure && make`
+  completes on FreeBSD 15.  Covers libtirpc optional, fuse3 path,
+  `-include rpc/rpc.h` for XDR, `-DEREMOTEIO=EIO` / `-DENODATA=ENOATTR`
+  shims, `-Wno-gnu` for liburcu, rocksdb pkg-config rpath strip,
+  portable `reffs_gettid()`, HdrHistogram_c gating, `<sys/sysmacros.h>`
+  gate, Linux FICLONERANGE gate, `loff_t` typedef, GSS-RPC gated on
+  `HAVE_RPC_AUTH_GSS_H`, `-lexecinfo` for backtrace(3), `fuse.c` /
+  `mds_session.c` compat handling.
+
+- `feature/io-backend-kqueue` (PR 2, 8 commits): complete kqueue
+  backend in `lib/io/backend_kqueue.c` (994 lines).  Implements:
+  file I/O via aio_read/write + EVFILT_AIO; accept via EVFILT_READ +
+  accept4; nonblocking connect + EVFILT_WRITE; read/write via
+  synchronous on EVFILT_READ/WRITE readiness; heartbeat via
+  EVFILT_TIMER.  Shutdown uses a pipe + EVFILT_READ (async-signal-safe,
+  unlike kevent from a signal handler).  ~30 stubs for
+  backend-bookkeeping functions (io_conn_*, io_handle_*,
+  io_register_request, io_rpc_trans_cb) that live in
+  liburing-specific files on Linux -- these are TODOs, not
+  permanent.
+
+**Runtime proof**
+
+On witchie (FreeBSD 15, clang 19, base libc RPC): after merging
+PR 1 + substrate + PR 2 into a test branch, `./src/reffsd` compiles,
+links, and enters `main()`.  Startup banner prints:
+
+    reffsd 0.1.0 (git 36ca014d396c-dirty) starting -- role=standalone port=2049
+
+Fails next because `/var/lib/reffs/` doesn't exist -- a config-dir
+issue, not a port issue.  Creating the state dir would let reffsd
+proceed into the server-state initialization phase.
+
+**What doesn't work yet**
+
+On FreeBSD, `io_handle_{accept,connect,read,write}` stubs return
+`-ENOSYS`.  A real NFS request from a client will be accepted at the
+listen socket, but the completion path fails before the RPC is
+parsed.  The port is therefore **compile-and-link complete, not
+runtime complete**.
+
+**Next PR: kqueue runtime**
+
+The stub set in `backend_kqueue.c` is deliberately bounded -- one
+contiguous section near the bottom of the file, each stub
+commented with the Linux source location.  Porting them is:
+
+ 1. `io_handle_{accept,connect,read,write}` -- process completion
+    of the I/O the main loop dispatched.  Logic is socket buffer
+    management, TLS handshake driving, connection-state transitions.
+    Complexity: medium; mostly network bookkeeping.  Linux source:
+    `lib/io/accept.c`, `connect.c`, `read.c`, `write.c`.
+
+ 2. `io_conn_*` bookkeeping -- per-fd op counters and state.  Can
+    be moved to a shared (backend-agnostic) compilation unit; the
+    existing `lib/io/connect.c` state has nothing io_uring-specific
+    in it.
+
+ 3. `io_register_request` / `io_unregister_request` /
+    `io_find_request_by_xid` -- pending-RPC-by-XID table.  Same
+    story: move to shared.
+
+ 4. `io_rpc_trans_cb` -- submits an RPC reply write.  The Linux
+    version in `write.c` calls a static `rpc_trans_writer`.
+    FreeBSD needs an equivalent that uses the kqueue write path
+    via `io_request_write_op`.
+
+Estimate: 2-3 days for a reviewable PR that gets reffsd serving
+basic NFSv4.2 requests on FreeBSD.
+
+**Merge order**
+
+PR 1 → substrate → PR 2.  Substrate has textual conflicts with
+PR 1 on `src/reffsd.c` and `src/probe1_client.c`: substrate's
+`(sig_atomic_t){0}` compound-literal fix touches the same lines PR 1
+restructured from stack-allocated `rc` to heap.  Resolution: keep
+both -- PR 1's `ring_context_alloc()` lifecycle wins for `rc`;
+substrate's `sig_atomic_t` compound-literal wins for the
+`__atomic_store` compound argument.
