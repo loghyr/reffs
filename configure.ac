@@ -33,13 +33,13 @@ AC_PROG_CC
 AC_USE_SYSTEM_EXTENSIONS
 m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 
-# FreeBSD installs headers and libraries under /usr/local by default
-# and the base toolchain does not search there unless told to.  Add
-# the standard pkg path so subsequent AC_CHECK_HEADER / AC_CHECK_LIB
-# probes can find ports-installed dependencies (libuuid,
-# HdrHistogram_c, etc.).
+# Per-host adjustments for BSDs and Darwin (macOS).  FreeBSD installs
+# ports under /usr/local; Darwin installs Homebrew under
+# /opt/homebrew (Apple Silicon) or /usr/local (Intel).  Neither is on
+# the base compiler's default search path.
 AC_CANONICAL_HOST
 host_is_freebsd=no
+host_is_darwin=no
 AS_CASE([$host_os],
     [freebsd*|dragonfly*], [
         CPPFLAGS="-I/usr/local/include $CPPFLAGS"
@@ -64,8 +64,40 @@ AS_CASE([$host_os],
         # globally so every binary gets the symbols.
         LIBS="-lexecinfo $LIBS"
         host_is_freebsd=yes
+    ],
+    [darwin*], [
+        # Homebrew paths.  Apple Silicon defaults to /opt/homebrew;
+        # Intel to /usr/local.  Probe at configure time so a user on
+        # an Intel Mac without /opt/homebrew does not get a broken
+        # -I/opt/homebrew flag (and vice versa).
+        AS_IF([test -d /opt/homebrew/include],
+              [CPPFLAGS="-I/opt/homebrew/include $CPPFLAGS"])
+        AS_IF([test -d /opt/homebrew/lib],
+              [LDFLAGS="-L/opt/homebrew/lib $LDFLAGS"])
+        AS_IF([test -d /usr/local/include],
+              [CPPFLAGS="-I/usr/local/include $CPPFLAGS"])
+        AS_IF([test -d /usr/local/lib],
+              [LDFLAGS="-L/usr/local/lib $LDFLAGS"])
+        # Same EREMOTEIO/ENODATA story as FreeBSD: Darwin errno.h
+        # has neither.  Pick reffs-internal sentinel values distinct
+        # from every POSIX/Darwin errno.  Darwin ELAST is 106
+        # (EQFULL), so 198/199 are safely above.  Must match the
+        # fallback in lib/include/reffs/log.h.
+        CPPFLAGS="-DEREMOTEIO=198 $CPPFLAGS"
+        CPPFLAGS="-DENODATA=199   $CPPFLAGS"
+        host_is_darwin=yes
     ])
 AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])
+AM_CONDITIONAL([HOST_DARWIN],  [test "x$host_is_darwin"  = "xyes"])
+
+# NOTE to macOS users building reffs at this commit: the
+# IO_BACKEND_KQUEUE AM_CONDITIONAL further down this file does NOT
+# yet gate on host_is_freebsd, so it will misdetect macOS as FreeBSD
+# (kqueue + aio probes all succeed on Darwin).  The resulting build
+# compiles and links but hits Darwin's POSIX aio pathology at
+# runtime.  Commit 3 of the macOS-backend series fixes this gate and
+# introduces IO_BACKEND_DARWIN.  Do not attempt to run reffsd on
+# macOS until commit 3 lands.
 
 AC_MSG_CHECKING([for C11 support])
 dnl Strip out the freaking -O2 by default!
