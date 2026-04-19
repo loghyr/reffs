@@ -346,7 +346,10 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 
 			ssize_t res = aio_return(&op->ao_cb);
 
-			if (aio_err != 0 && res < 0)
+			/* On error, aio_return returns -1 and we want the
+			 * errno-coded value the caller expects.  On success
+			 * aio_err == 0 and we keep res (byte count). */
+			if (aio_err != 0)
 				res = -aio_err;
 
 			switch (op->ao_ic->ic_op_type) {
