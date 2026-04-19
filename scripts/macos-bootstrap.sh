@@ -3,20 +3,33 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # One-time bootstrap of reffs's non-Homebrew dependencies on macOS.
-# Builds liburcu and HdrHistogram_c from source, installs pip
-# packages needed by configure.  Run once per machine.
+# Builds liburcu and HdrHistogram_c from source, installs the
+# xdr-parser Python CLI via pipx.  Run once per machine.
 #
 # Prerequisites (run separately, this script does NOT install them
 # because the user may want to pick specific versions):
 #
-#   brew install autoconf automake libtool pkg-config \
+#   brew install autoconf automake libtool pkg-config cmake pipx \
 #       openssl@3 xxhash zstd rocksdb python@3.12
 #
-# Then run this script.  Then cd into the reffs source tree and:
+# Why pipx rather than pip?  macOS Python is PEP-668 externally-
+# managed, so `pip install --user reply-xdr` errors out.  pipx
+# installs the CLI into its own managed venv and symlinks the
+# binary into ~/.local/bin.
 #
+# Why clone reply locally rather than `pipx install reply-xdr`?
+# The PyPI index entry is stale / mirror-dependent and often fails
+# dependency resolution on macOS.  Cloning the upstream repo and
+# running `pipx install .` is reliable.
+#
+# After this script succeeds, cd into the reffs source tree and:
+#
+#   mkdir -p m4                  # avoids the aclocal-m4-missing trap
 #   export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$PKG_CONFIG_PATH"
 #   export PATH="$HOME/.local/bin:$PATH"
-#   autoreconf -i && ./configure && make -j4
+#   autoreconf -fvi              # -f force, -v verbose, -i install aux
+#   ./configure
+#   make -j4
 #
 # Tested on macOS 14 Sonoma arm64.
 
@@ -73,16 +86,27 @@ else
 fi
 
 # ---------------------------------------------------------------------
-# reply-xdr (Python) for the XDR parser invoked by Makefile.
+# xdr-parser (from the reply-xdr package).  Clone upstream reply
+# repo and pipx-install it; the PyPI distribution is unreliable on
+# macOS due to the pip version shipped with Xcode CLT.
 # ---------------------------------------------------------------------
 if command -v xdr-parser >/dev/null 2>&1; then
     echo "==> xdr-parser already on PATH"
 else
-    echo "==> Installing reply-xdr via pip"
-    pip3 install --user reply-xdr
+    if ! command -v pipx >/dev/null 2>&1; then
+        echo "ERROR: pipx not found.  brew install pipx" >&2
+        exit 1
+    fi
+    echo "==> Cloning reply repo and installing xdr-parser via pipx"
+    cd "$BUILD_DIR"
+    if [ ! -d reply ]; then
+        git clone --depth 1 https://github.com/loghyr/reply.git
+    fi
+    cd reply
+    pipx install .
     echo "==> xdr-parser installed to \$HOME/.local/bin"
-    echo "    Add that directory to PATH before running ./configure:"
-    echo "      export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo "    Add that directory to PATH if not already:"
+    echo "      pipx ensurepath"
 fi
 
 echo
@@ -90,8 +114,9 @@ echo "==> Bootstrap complete."
 echo
 echo "Next steps:"
 echo "  cd /path/to/reffs"
+echo "  mkdir -p m4                   # avoid aclocal-m4-missing on first run"
 echo "  export PKG_CONFIG_PATH=\"\$(brew --prefix openssl@3)/lib/pkgconfig:\$PKG_CONFIG_PATH\""
 echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-echo "  autoreconf -i"
+echo "  autoreconf -fvi               # -f force, -v verbose, -i install aux files"
 echo "  ./configure"
 echo "  make -j4"

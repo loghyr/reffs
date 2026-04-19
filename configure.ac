@@ -20,11 +20,13 @@ AC_ARG_WITH([cc],
     [CC="$withval"],
     [])
 
-# Check if the specified compiler exists
-AC_CHECK_PROG(CC_CHECK, $CC, yes, no)
-if test "$CC_CHECK" = "no"; then
-    AC_MSG_ERROR([Compiler '$CC' not found.])
-fi
+# Check if the specified compiler exists.  Use AS_IF (not raw
+# `if test ... then`) so the AC_MSG_ERROR expansion runs in m4
+# macro context.  autoconf 2.73 enforces this strictly; older
+# autoconf (2.71) on Linux / FreeBSD was lenient.
+AC_CHECK_PROG([CC_CHECK], [$CC], [yes], [no])
+AS_IF([test "x$CC_CHECK" = "xno"],
+      [AC_MSG_ERROR([Compiler $CC not found.])])
 
 # Display the compiler that will be used
 AC_MSG_RESULT([Using C compiler: $CC])
