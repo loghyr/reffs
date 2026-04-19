@@ -384,15 +384,18 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 }
 
 /*
- * Let the caller shut things down if there is an error
+ * io_resubmit_read -- submit another read on ic's fd, reusing ic's
+ * buffer.  Extracted from the old request_more_read_data static helper
+ * so the submission primitive is a per-backend concern; callers in the
+ * shared handlers just invoke io_resubmit_read and don't know about
+ * io_uring or kqueue specifics.
+ *
+ * Returns 0 on successful submission, -errno on permanent failure.
  */
-static int request_more_read_data(int fd, struct ring_context *rc,
-				  struct io_context *ic)
+int io_resubmit_read(struct io_context *ic, struct ring_context *rc)
 {
 	struct io_uring_sqe *sqe = NULL;
 	int ret = 0;
-
-	ic->ic_fd = fd;
 
 	for (int i = 0; i < REFFS_IO_RING_RETRIES; i++) {
 		pthread_mutex_lock(&rc->rc_mutex);
@@ -407,9 +410,8 @@ static int request_more_read_data(int fd, struct ring_context *rc,
 		return -ENOMEM;
 	}
 
-	io_uring_prep_read(sqe, fd, ic->ic_buffer, BUFFER_SIZE, 0);
+	io_uring_prep_read(sqe, ic->ic_fd, ic->ic_buffer, BUFFER_SIZE, 0);
 	sqe->user_data = (uint64_t)(uintptr_t)ic;
-	//trace_io_read_submit(ic);
 	io_context_update_time(ic);
 
 	bool submitted = false;
@@ -420,8 +422,8 @@ static int request_more_read_data(int fd, struct ring_context *rc,
 			submitted = true;
 			break;
 		} else if (ret == -EAGAIN) {
-			LOG("-EAGAIN in request_more_read_data (retry %d/%d)",
-			    i + 1, REFFS_IO_MAX_RETRIES);
+			LOG("-EAGAIN in io_resubmit_read (retry %d/%d)", i + 1,
+			    REFFS_IO_MAX_RETRIES);
 			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
 			trace_io_eagain(ic, __func__, __LINE__);
 			pthread_mutex_unlock(&rc->rc_mutex);
@@ -955,8 +957,9 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 	}
 
 get_more:
-	// Try to use request_more_read_data first (which reuses the current context)
-	ret = request_more_read_data(client_fd, rc, ic);
+	// Reuse the current ic's buffer for the next read.
+	ic->ic_fd = client_fd;
+	ret = io_resubmit_read(ic, rc);
 	if (ret == 0) {
 		// Successfully submitted new read operation
 		needs_new_read = false;

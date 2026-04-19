@@ -269,6 +269,17 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
  */
 int io_resubmit_write(struct io_context *ic, struct ring_context *rc);
 
+/*
+ * Re-submit a read on an existing io_context.  Symmetric to
+ * io_resubmit_write: reuses ic->ic_buffer (size BUFFER_SIZE) to
+ * submit the next read on ic->ic_fd without reallocating.  Called
+ * by io_handle_read's "get_more" path; preserves the ic-reuse
+ * perf optimization on the hot read path across both backends.
+ *
+ * Returns 0 on successful submission, -errno on permanent failure.
+ */
+int io_resubmit_read(struct io_context *ic, struct ring_context *rc);
+
 int create_worker_threads(volatile sig_atomic_t *running,
 			  unsigned int nworkers);
 void wait_for_worker_threads(void);
