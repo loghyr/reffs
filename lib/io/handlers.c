@@ -13,6 +13,19 @@
  * accept -- is identical.  The backend-specific submission sites
  * (io_request_accept_op, io_request_read_op, the connect helper) are
  * still backend-local.
+ *
+ * Calling convention for the int result argument follows io_uring's
+ * cqe->res semantics:
+ *   io_handle_accept(ic, client_fd_or_neg_errno, rc)
+ *     - nonnegative: the accepted client fd
+ *     - negative:    a negative errno describing the failure
+ *   io_handle_connect(ic, result_or_neg_errno, rc)
+ *     - zero:     connect succeeded
+ *     - negative: a negative errno describing the failure
+ *
+ * kqueue callers must translate -1 / errno into -errno before invoking
+ * these handlers; see accept_and_dispatch / connect_and_dispatch in
+ * backend_kqueue.c.
  */
 
 #ifdef HAVE_CONFIG_H
