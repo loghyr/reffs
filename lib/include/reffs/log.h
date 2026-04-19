@@ -13,12 +13,34 @@
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <time.h>
+
+#if defined(__linux__)
 #include <sys/syscall.h>
+#elif defined(__FreeBSD__)
+#include <pthread_np.h>
+#endif
 
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
 #endif
+
+/*
+ * Portable kernel thread id accessor.  Linux: syscall(SYS_gettid).
+ * FreeBSD: pthread_getthreadid_np(), a non-portable extension.  Both
+ * return a small integer that uniquely identifies the kernel thread
+ * within the process; suitable for log/trace prefixes.
+ */
+static inline pid_t reffs_gettid(void)
+{
+#if defined(__linux__)
+	return (pid_t)syscall(SYS_gettid);
+#elif defined(__FreeBSD__)
+	return (pid_t)pthread_getthreadid_np();
+#else
+	return (pid_t)getpid();
+#endif
+}
 
 extern FILE *reffs_log_file;
 
@@ -28,7 +50,7 @@ extern FILE *reffs_log_file;
 		clock_gettime(CLOCK_REALTIME, &ts);                      \
 		struct tm *tm_info = localtime(&ts.tv_sec);              \
 		char time_str[32];                                       \
-		pid_t tid = syscall(SYS_gettid);                         \
+		pid_t tid = reffs_gettid();                         \
 		strftime(time_str, 20, "%Y-%m-%d %H:%M:%S", tm_info);    \
 		fprintf(stderr, "[%s.%09ld] [%d:%d] (%s:%d): " fmt "\n", \
 			time_str, ts.tv_nsec, getpid(), tid, __func__,   \
@@ -42,7 +64,7 @@ extern FILE *reffs_log_file;
 		clock_gettime(CLOCK_REALTIME, &ts);                        \
 		struct tm *tm_info = localtime(&ts.tv_sec);                \
 		char time_str[32];                                         \
-		pid_t tid = syscall(SYS_gettid);                           \
+		pid_t tid = reffs_gettid();                           \
 		strftime(time_str, 20, "%Y-%m-%d %H:%M:%S", tm_info);      \
 		fprintf(reffs_log_file ? reffs_log_file : stdout,          \
 			"[%s.%09ld] [%d:%d] (%s:%d): " fmt "\n", time_str, \
