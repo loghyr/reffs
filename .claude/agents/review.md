@@ -593,6 +593,197 @@ deferral, record it as `DEFERRED`, and do not block the commit.
 
 ---
 
+## 17. Backend port / reachability-change review
+
+reffs maintains two I/O backends (liburing on Linux, kqueue+aio on
+FreeBSD) and a shared-handlers layer (`lib/io/handlers.c`,
+`lib/io/conn_info.c`, `lib/io/net_state.c`).  Commits that change
+reachability across this boundary -- extraction refactors, stub
+removals, new backend primitives, platform probes -- have
+bug-hazard profiles that standard review misses.  This section
+applies when the CHANGE touches:
+
+- `lib/io/backend_kqueue.c` or `lib/io/backend.c`
+- `lib/io/handlers.c`, `lib/io/conn_info.c`, `lib/io/net_state.c`
+- Any `Makefile.am` that changes which `.c` is compiled per backend
+- `io_request_{read,write,accept,connect}_op` signatures
+- `io_handle_{read,write,accept,connect}` signatures
+- `io_resubmit_{read,write}` signatures
+- Removal of `__attribute__((unused))` or `static` that was hiding code
+
+Load the external pattern `patterns/reachability-change.md` from
+`c-protocol-review-prompts` if available; fall back to the checks
+below.
+
+### 17a. Bidirectional reachability gate -- BLOCKER [LATENT-BUG-REACHED]
+
+Every commit has a forward reachability question: is the new code
+reachable?  Backend ports have an equally important backward one:
+does the new code make old code reachable for the first time?
+
+**Concrete reffs example.** The kqueue backend skeleton
+(`backend_kqueue.c`, merged at PR #3) contained:
+
+```c
+int io_request_accept_op(int fd, struct connection_info *ci,
+                         struct ring_context *rc)
+{
+    struct io_context *ic = io_context_create(OP_TYPE_ACCEPT, fd, NULL, 0);
+    if (!ic) return -ENOMEM;
+
+    ic->ic_ci = *ci;      /* <-- unconditional deref */
+```
+
+The liburing sibling at `lib/io/accept.c:86` guards the copy with
+`if (ci) copy_connection_info(...)`.  The kqueue version did not.
+The bug sat latent for weeks because earlier layers stubbed out the
+accept path entirely.  PR #7 finished wiring network handlers; PR
+#7's own code was clean, but `main()` calls `io_request_accept_op`
+with `ci=NULL` for the initial listener arming -- a crash at
+memcpy on first run on FreeBSD.
+
+If PR #7's reviewer had asked "what code does this newly reach?"
+and re-checked `io_request_accept_op` against its callers, the bug
+would have been caught pre-merge.  Instead it surfaced only during
+smoke testing (commit `6b1734f47be3`).
+
+**Review technique.** For any extraction or port commit, list the
+newly-reachable functions explicitly at the top of the review:
+
+```
+NEWLY-REACHABLE CODE (in scope for this review):
+  - lib/io/backend_kqueue.c:io_request_accept_op(fd, ci, rc) -- called from main()
+  - lib/io/backend_kqueue.c:kqueue_arm_heartbeat_timer(rc, ic, ns)
+```
+
+Then audit each as if it were new code: NULL guards, error paths,
+edge inputs.
+
+### 17b. Cross-backend invariant audit -- BLOCKER [INVARIANT-BACKEND-MISMATCH]
+
+Shared code assumes invariants that are trivially true on one backend
+and load-bearing on another.  The per-fd write-serialization gate
+in `lib/io/conn_info.c:io_conn_write_try_start` is the canonical
+example:
+
+| Invariant | io_uring | kqueue |
+|---|---|---|
+| Only one write in flight per fd | Kernel linearizes concurrent SQEs | `EV_ADD\|EV_ONESHOT` *replaces* existing knote's udata |
+| Error delivered as -errno | `cqe->res` | `write(2)` ret + errno, needs translation |
+| ic ownership transits kernel boundary | SQE submit | kevent ADD |
+
+A gate that works by convention on io_uring is **correctness-critical
+and silent-failure-prone on kqueue**.  When `io_do_tls` submits an
+encrypted-data ic via `io_request_write_op` *outside* the gate (see
+`lib/io/handlers.c:io_do_tls`), the sibling normal writer can
+overwrite its knote on kqueue, orphaning the TLS ic.  This must be
+called out as a BLOCKER for any PR that enables TLS on FreeBSD.
+
+**Review technique.** For each invariant the shared code assumes,
+open both backend files side by side and verify the primitive
+semantics match.  Record in the review output:
+
+```
+CROSS-BACKEND INVARIANT CHECK:
+  Invariant: at most one in-flight write per fd
+  io_uring primitive: io_uring_prep_write + io_uring_submit (kernel-linearized)
+  kqueue primitive: EV_ADD|EV_ONESHOT EVFILT_WRITE (REPLACES on duplicate)
+  Verdict: gate required on kqueue; documented as such; TLS path exempt (deferred).
+```
+
+### 17c. Calling convention at backend/shared boundary -- BLOCKER [CONVENTION-MISMATCH]
+
+Shared handlers (`io_handle_{read,write,accept,connect}`) expect
+**cqe->res semantics**: non-negative byte count or fd, or negative
+errno.  Backend-specific dispatchers must translate to this
+convention before calling the handler.
+
+**Concrete reffs example.** The kqueue `accept_and_dispatch` originally
+passed `accept4(2)`'s raw -1 to `io_handle_accept`, which reported
+`strerror(1)` ("Operation not permitted") regardless of the real
+errno.  Fix: translate `-1` to `-errno` before dispatch.
+
+Review every `*_and_dispatch` function in `backend_kqueue.c`:
+
+- Does `accept_and_dispatch` pass `-errno` (not raw -1)?
+- Does `connect_and_dispatch` pass `-SO_ERROR` (not raw connect result)?
+- Does `read_and_dispatch` pass `nread` (byte count) or `-errno` (not raw -1)?
+- Does `write_and_dispatch` pass `nwritten` (byte count) or `-errno`?
+
+### 17d. Stub-removal atomicity -- BLOCKER [SPLIT-STUB-REMOVAL]
+
+When a `-ENOSYS` stub is replaced by a real implementation, every
+caller that was masking the absence must be updated in the same
+commit.  Splitting produces bisect traps where commit N builds with
+a dead stub, commit N+1 builds with an active caller, and commit N+1
+regresses by activating broken code.
+
+Review: grep for every callsite of the stub before approving the
+stub-removal commit.  If any callers are not updated in the same
+commit, ask the author to either fold them in or extend the stub
+removal to the commit that activates the callers.
+
+### 17e. Shared-file extraction must be byte-identical -- BEHAVIOR DELTA
+
+A commit that moves a function from `lib/io/write.c` to
+`lib/io/handlers.c` claiming "pure code move" is a BEHAVIOR DELTA if
+anything else changed.  Drive-by changes hidden in extraction
+commits:
+
+- NULL-guards added or removed
+- Lock scope altered
+- Free / destroy added on an error path
+- Trace or log statement added
+
+These may be improvements, but they are **not** pure moves and must
+be called out.  Either split into a follow-up commit or call them
+out in the commit message body.
+
+**Review technique.** `git show <commit> -- <moved-file>` and
+`git show <commit> -- <new-file>` should produce one-for-one
+deletions and additions.  If any added line lacks a matching
+deletion (or vice versa), that's a BEHAVIOR DELTA.
+
+### 17f. Smoke-run evidence for reachability changes -- BLOCKER [NO-SMOKE]
+
+Static review does not catch runtime-only bugs in newly-reachable
+code (NULL at rarely-reached callsite, calling-convention
+mismatches, buffer-offset-ignored).  For backend ports, platform
+probes, and extractions that activate stubbed code, a smoke run is a
+review step, not a handoff step.
+
+Minimum smoke for a reffs backend port (see `docs/freebsd-smoke.md`):
+
+1. `reffsd` starts, binds listeners, enters main loop on the new
+   target.
+2. NFSv4 mount from a Linux (or localhost) client succeeds.
+3. `dd if=/dev/urandom of=/mnt/nfs/x bs=1M count=16 conv=fsync` +
+   `sha256sum` round-trip matches.
+4. Two concurrent mounts writing to separate files produce distinct,
+   correct sha256 hashes (exercises the per-fd write gate).
+5. Client disconnect mid-write does not leak io_contexts; `pkill
+   reffsd` shuts down cleanly.
+
+A reviewer who signs off a backend-port commit without smoke evidence
+is signing off the design, not the implementation.  Require a log
+excerpt, sha256 comparison, and clean-shutdown observation in the
+review output.
+
+### 17g. Sibling patterns to verify
+
+- `conn_info.c` write gate is held on all normal-write paths; any
+  direct caller of `io_request_write_op` outside `rpc_trans_writer`
+  must be audited (TLS-data submission in `io_do_tls` is the known
+  gate-bypassing caller; others should not exist).
+- `io_context_destroy` takes `context_mutex` and `conn_mutex` but
+  NOT `rc_mutex`.  Any new caller that holds `rc_mutex` while
+  calling destroy is a lock-order BLOCKER.
+- `io_conn_unregister` drops `conn_mutex` before draining
+  `ci_write_pending_head` for exactly this reason -- do not "fix"
+  this apparent lock-scope narrowing.
+
+---
+
 ## Output format
 
 ```
