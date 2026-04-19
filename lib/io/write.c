@@ -300,10 +300,101 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
  * record marker for the current fragment.
  *
  */
+/*
+ * io_resubmit_write -- submit the next chunk of ic's write to io_uring.
+ *
+ * Extracted from rpc_trans_writer so the submission primitive is a
+ * per-backend concern; rpc_trans_writer itself (in handlers.c after
+ * PR #7's move) is backend-agnostic.
+ *
+ * Returns 0 on successful submission, -errno on permanent failure.
+ * On failure ic is destroyed and the socket is closed (matches the
+ * original inline semantics).
+ */
+int io_resubmit_write(struct io_context *ic, struct ring_context *rc)
+{
+	struct io_uring_sqe *sqe = NULL;
+	size_t remaining = ic->ic_buffer_len - ic->ic_position;
+	uint32_t chunk_size = (remaining > IO_MAX_WRITE_SIZE) ?
+				      IO_MAX_WRITE_SIZE :
+				      (uint32_t)remaining;
+	char *buffer = (char *)ic->ic_buffer + ic->ic_position;
+	int ret = 0;
+
+	ic->ic_expected_len = chunk_size;
+
+#ifdef PARTIAL_WRITE_DEBUG
+	if (ic->ic_position == 0) {
+		uint32_t *p = (uint32_t *)buffer;
+		uint32_t marker = ntohl(*p);
+		TRACE("First fragment: ic=%p id=%u pos=%zu, remaining=%zu, chunk_size=%u, marker=0x%08x",
+		      (void *)ic, ic->ic_id, ic->ic_position, remaining,
+		      chunk_size, marker);
+	} else {
+		TRACE("Continuing fragment: ic=%p id=%u pos=%zu, remaining=%zu, chunk_size=%u",
+		      (void *)ic, ic->ic_id, ic->ic_position, remaining,
+		      chunk_size);
+	}
+#endif
+
+	for (int i = 0; i < REFFS_IO_RING_RETRIES; i++) {
+		pthread_mutex_lock(&rc->rc_mutex);
+		sqe = io_uring_get_sqe(&rc->rc_ring);
+		if (sqe)
+			break;
+		pthread_mutex_unlock(&rc->rc_mutex);
+		sched_yield();
+	}
+
+	if (!sqe) {
+		/*
+		 * Cannot get an SQE -- close the socket so the pending write
+		 * queue is drained (io_conn_unregister drains ci_write_pending).
+		 * The client will reconnect.
+		 */
+		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED)
+			io_socket_close(ic->ic_fd, ENOMEM);
+		io_context_destroy(ic);
+		return -ENOMEM;
+	}
+
+	io_uring_prep_write(sqe, ic->ic_fd, buffer, chunk_size, 0);
+	sqe->user_data = (uint64_t)(uintptr_t)ic;
+
+	trace_io_submit_write(ic->ic_fd, ic, chunk_size);
+
+	bool submitted = false;
+	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
+		ret = io_uring_submit(&rc->rc_ring);
+		if (ret >= 0) {
+			TSAN_RELEASE(ic);
+			submitted = true;
+			break;
+		} else if (ret == -EAGAIN) {
+			LOG("-EAGAIN on io_resubmit_write (retry %d/%d)", i + 1,
+			    REFFS_IO_MAX_RETRIES);
+			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
+			trace_io_eagain(ic, __func__, __LINE__);
+			pthread_mutex_unlock(&rc->rc_mutex);
+			sched_yield();
+			pthread_mutex_lock(&rc->rc_mutex);
+		} else {
+			break;
+		}
+	}
+	pthread_mutex_unlock(&rc->rc_mutex);
+
+	if (!submitted && ret < 0) {
+		io_socket_close(ic->ic_fd, -ret);
+		io_context_destroy(ic);
+		return ret;
+	}
+
+	return 0;
+}
+
 static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 {
-	struct io_uring_sqe *sqe;
-	size_t remaining;
 	int ret = 0;
 
 	/* Check if we're done first */
@@ -328,13 +419,11 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 		return 0;
 	}
 
-	remaining = ic->ic_buffer_len - ic->ic_position;
-
 	trace_io_writer(ic, __func__, __LINE__);
 
 	/*
-	 * Claim the per-fd write gate before submitting any SQE.  Only one
-	 * io_context may have a write SQE in flight for a given fd at a time;
+	 * Claim the per-fd write gate before submitting.  Only one
+	 * io_context may have a write in flight for a given fd at a time;
 	 * concurrent writers queue here and are released by io_conn_write_done()
 	 * after each write completes.
 	 *
@@ -374,81 +463,7 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 		}
 	}
 
-	// Always continue from current position without modifying the buffer
-	uint32_t chunk_size =
-		(remaining > IO_MAX_WRITE_SIZE) ? IO_MAX_WRITE_SIZE : remaining;
-	char *buffer = (char *)ic->ic_buffer + ic->ic_position;
-
-	// Log what we're doing
-#ifdef PARTIAL_WRITE_DEBUG
-	if (ic->ic_position == 0) {
-		uint32_t *p = (uint32_t *)buffer;
-		uint32_t marker = ntohl(*p);
-		TRACE("First fragment: ic=%p id=%u pos=%zu, remaining=%zu, chunk_size=%u, marker=0x%08x",
-		      (void *)ic, ic->ic_id, ic->ic_position, remaining,
-		      chunk_size, marker);
-	} else {
-		TRACE("Continuing fragment: ic=%p id=%u pos=%zu, remaining=%zu, chunk_size=%u",
-		      (void *)ic, ic->ic_id, ic->ic_position, remaining,
-		      chunk_size);
-	}
-#endif
-
-	// Get SQE and submit
-	for (int i = 0; i < REFFS_IO_RING_RETRIES; i++) {
-		pthread_mutex_lock(&rc->rc_mutex);
-		sqe = io_uring_get_sqe(&rc->rc_ring);
-		if (sqe)
-			break;
-		pthread_mutex_unlock(&rc->rc_mutex);
-		sched_yield();
-	}
-
-	if (!sqe) {
-		/*
-		 * Cannot get an SQE -- close the socket so the pending write
-		 * queue is drained (io_conn_unregister drains ci_write_pending).
-		 * The client will reconnect.
-		 */
-		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED)
-			io_socket_close(ic->ic_fd, ENOMEM);
-		io_context_destroy(ic);
-		return ENOMEM;
-	}
-
-	ic->ic_expected_len = chunk_size;
-	io_uring_prep_write(sqe, ic->ic_fd, buffer, chunk_size, 0);
-	sqe->user_data = (uint64_t)(uintptr_t)ic;
-
-	trace_io_submit_write(ic->ic_fd, ic, chunk_size);
-
-	bool submitted = false;
-	for (int i = 0; i < REFFS_IO_MAX_RETRIES; i++) {
-		ret = io_uring_submit(&rc->rc_ring);
-		if (ret >= 0) {
-			TSAN_RELEASE(ic);
-			submitted = true;
-			break;
-		} else if (ret == -EAGAIN) {
-			LOG("-EAGAIN on rpc_trans_writer (retry %d/%d)", i + 1,
-			    REFFS_IO_MAX_RETRIES);
-			ic->ic_state |= IO_CONTEXT_SUBMITTED_EAGAIN;
-			trace_io_eagain(ic, __func__, __LINE__);
-			pthread_mutex_unlock(&rc->rc_mutex);
-			sched_yield();
-			pthread_mutex_lock(&rc->rc_mutex);
-		}
-	}
-	pthread_mutex_unlock(&rc->rc_mutex);
-
-	if (!submitted && ret < 0) {
-		io_socket_close(ic->ic_fd, -ret);
-		io_context_destroy(ic);
-	} else {
-		ret = 0;
-	}
-
-	return ret;
+	return io_resubmit_write(ic, rc);
 }
 
 int io_rpc_trans_cb(struct rpc_trans *rt)

@@ -951,6 +951,20 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 	return 0;
 }
 
+/*
+ * io_resubmit_write -- stub.  PR #7 commit 6 implements this via
+ * kevent(EV_ADD|EV_ONESHOT, EVFILT_WRITE) using the existing ic as
+ * udata (no allocation).  Until then, callers hit -ENOSYS; none are
+ * reachable on FreeBSD at this commit because io_handle_write is
+ * still the log-and-drop stub below.
+ */
+int io_resubmit_write(struct io_context *ic, struct ring_context *rc)
+{
+	(void)ic;
+	(void)rc;
+	return -ENOSYS;
+}
+
 /* ------------------------------------------------------------------ */
 /* Read/write completion handlers (called from main loop dispatch)    */
 /* ------------------------------------------------------------------ */
