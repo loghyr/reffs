@@ -461,6 +461,12 @@ PKG_CHECK_MODULES([ROCKSDB], [rocksdb], [
     AC_MSG_WARN([RocksDB not found — RocksDB metadata backend disabled])
     have_rocksdb=no
 ])
+# FreeBSD's rocksdb.pc ships a broken LDFLAGS fragment
+# ("-Wl,-rpath -Wl,") which the linker cannot parse -- it reads
+# the empty argument as a library name and fails with "cannot
+# open libbackends.so.0".  Strip the fragment; the -L/usr/local/lib
+# that pkg-config emits alongside makes the library findable.
+ROCKSDB_LIBS=`echo "$ROCKSDB_LIBS" | sed -e 's/-Wl,-rpath[[ 	]]*-Wl,[[ 	]]*//g'`
 AC_SUBST([ROCKSDB_CFLAGS])
 AC_SUBST([ROCKSDB_LIBS])
 AM_CONDITIONAL([HAVE_ROCKSDB], [test "x$have_rocksdb" = "xyes"])
