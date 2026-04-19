@@ -477,7 +477,7 @@ AC_CHECK_HEADERS([hdr/hdr_histogram.h], [
     AC_DEFINE([HAVE_HDR_HISTOGRAM], [1],
               [Define if HdrHistogram_c is available])
 ], [
-    AC_MSG_WARN([hdr_histogram.h not found; histogram telemetry will be disabled.  On Linux, install HdrHistogram_c-devel.])
+    AC_MSG_WARN([hdr_histogram.h not found; histogram telemetry will be disabled.  On Linux, install HdrHistogram_c-devel.  On FreeBSD, no port exists -- build from source: see docs/freebsd-install.md.])
 ])
 AS_IF([test "x$ac_cv_header_hdr_hdr_histogram_h" = "xyes"], [
     AC_CHECK_LIB([hdr_histogram], [hdr_init], [
