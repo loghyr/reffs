@@ -96,15 +96,6 @@ AM_CONDITIONAL([HOST_DARWIN],  [test "x$host_is_darwin"  = "xyes"])
 # HAVE_PIPE2 to pick the native syscall or a fcntl-based fallback.
 AC_CHECK_FUNCS([accept4 pipe2])
 
-# NOTE to macOS users building reffs at this commit: the
-# IO_BACKEND_KQUEUE AM_CONDITIONAL further down this file does NOT
-# yet gate on host_is_freebsd, so it will misdetect macOS as FreeBSD
-# (kqueue + aio probes all succeed on Darwin).  The resulting build
-# compiles and links but hits Darwin's POSIX aio pathology at
-# runtime.  Commit 3 of the macOS-backend series fixes this gate and
-# introduces IO_BACKEND_DARWIN.  Do not attempt to run reffsd on
-# macOS until commit 3 lands.
-
 AC_MSG_CHECKING([for C11 support])
 dnl Strip out the freaking -O2 by default!
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([],[])],
@@ -320,9 +311,27 @@ AS_IF([test "x$ac_cv_header_liburing_h" = "xyes" || \
 
 AM_CONDITIONAL([IO_BACKEND_LIBURING],
     [test "x$have_linux_io_uring" = "xyes"])
+# IO_BACKEND_KQUEUE is the FreeBSD aio+kqueue backend.  The probes
+# (kqueue, kevent, aio_read, aio_write) all succeed on Darwin too, so
+# a naive "if kqueue probes then enable" condition misdetects macOS.
+# Positive host_is_freebsd=yes fence required to route Darwin to the
+# thread-pool backend below.
 AM_CONDITIONAL([IO_BACKEND_KQUEUE],
     [test "x$have_freebsd_kqueue" = "xyes" && \
-     test "x$have_linux_io_uring" != "xyes"])
+     test "x$have_linux_io_uring" != "xyes" && \
+     test "x$host_is_freebsd" = "xyes"])
+# IO_BACKEND_DARWIN is the macOS thread-pool file-I/O backend (shares
+# the kqueue socket code with IO_BACKEND_KQUEUE).
+AM_CONDITIONAL([IO_BACKEND_DARWIN],
+    [test "x$host_is_darwin" = "xyes"])
+
+# Defensive check: if we routed to no backend at all, fail configure
+# explicitly rather than producing a link-time mystery later.
+AS_IF([test "x$have_linux_io_uring" != "xyes" && \
+       test "x$have_freebsd_kqueue" != "xyes" && \
+       test "x$host_is_darwin" != "xyes"], [
+    AC_MSG_ERROR([no I/O backend selected: need liburing (Linux), kqueue+aio (FreeBSD), or Darwin (macOS).])
+])
 
 # Check for jemalloc
 AC_ARG_WITH([jemalloc],
