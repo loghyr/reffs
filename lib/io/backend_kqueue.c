@@ -863,6 +863,53 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 	return -ENOSYS;
 }
 
+/*
+ * Heartbeat + connection-op accounting stubs.
+ * Real implementations in heartbeat.c and connect.c on Linux.
+ * On the FreeBSD kqueue backend, heartbeat is handled via
+ * EVFILT_TIMER (already wired) and connection bookkeeping is
+ * a separate refactor.
+ */
+int io_heartbeat_init(struct ring_context *rc)
+{
+	(void)rc;
+	return 0;
+}
+
+uint32_t io_heartbeat_period_get(void)
+{
+	return 0;
+}
+
+uint32_t io_heartbeat_period_set(uint32_t seconds)
+{
+	(void)seconds;
+	return 0;
+}
+
+void io_heartbeat_update_completions(uint64_t count)
+{
+	(void)count;
+}
+
+int io_conn_remove_read_op(int fd)
+{
+	(void)fd;
+	return 0;
+}
+
+int io_conn_remove_write_op(int fd)
+{
+	(void)fd;
+	return 0;
+}
+
+int io_conn_remove_accept_op(int fd)
+{
+	(void)fd;
+	return 0;
+}
+
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 			struct connection_info *ci, struct ring_context *rc)
 {
