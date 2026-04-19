@@ -70,6 +70,7 @@ static const int64_t rpc_bucket_boundaries[BUCKET_COUNT] = {
 	// Last bucket is >=10s
 };
 
+#ifdef HAVE_HDR_HISTOGRAM
 void calculate_bucket_counts(struct hdr_histogram *hh, int64_t *counts)
 {
 	struct hdr_iter iter;
@@ -102,6 +103,7 @@ void calculate_bucket_counts(struct hdr_histogram *hh, int64_t *counts)
 		counts[bucket_index] += count;
 	}
 }
+#endif /* HAVE_HDR_HISTOGRAM */
 
 void probe_fd1_get_addr(struct probe_fd1 *pf, struct connection_info *ci)
 {
@@ -200,6 +202,7 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 			      &pp->pp_ops.pp_ops_val[i].po_total_duration,
 			      __ATOMIC_RELAXED);
 
+#ifdef HAVE_HDR_HISTOGRAM
 		struct hdr_histogram *hh =
 			rph->rph_ops[i].roh_stats.rs_histogram;
 		calculate_bucket_counts(hh, counts);
@@ -223,6 +226,25 @@ static int probe1_op_stats_gather(struct rpc_trans *rt)
 		pp->pp_ops.pp_ops_val[i].po_min_ns = hdr_min(hh);
 		pp->pp_ops.pp_ops_val[i].po_max_ns = hdr_max(hh);
 		pp->pp_ops.pp_ops_val[i].po_mean_ns = hdr_mean(hh);
+#else
+		/* No histogram library -- return zeros.  Build is still
+		 * possible on platforms without HdrHistogram_c (e.g.,
+		 * FreeBSD ports does not package it as of 2026-04). */
+		(void)counts;
+		pp->pp_ops.pp_ops_val[i].po_bucket_1ms = 0;
+		pp->pp_ops.pp_ops_val[i].po_bucket_10ms = 0;
+		pp->pp_ops.pp_ops_val[i].po_bucket_100ms = 0;
+		pp->pp_ops.pp_ops_val[i].po_bucket_1s = 0;
+		pp->pp_ops.pp_ops_val[i].po_bucket_10s = 0;
+		pp->pp_ops.pp_ops_val[i].po_bucket_rest = 0;
+		pp->pp_ops.pp_ops_val[i].po_median_ns = 0;
+		pp->pp_ops.pp_ops_val[i].po_p90_ns = 0;
+		pp->pp_ops.pp_ops_val[i].po_p99_ns = 0;
+		pp->pp_ops.pp_ops_val[i].po_p999_ns = 0;
+		pp->pp_ops.pp_ops_val[i].po_min_ns = 0;
+		pp->pp_ops.pp_ops_val[i].po_max_ns = 0;
+		pp->pp_ops.pp_ops_val[i].po_mean_ns = 0;
+#endif
 	}
 
 out:

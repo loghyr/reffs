@@ -9,7 +9,9 @@
 
 #include <assert.h>
 #include <errno.h>
+#ifdef HAVE_HDR_HISTOGRAM
 #include <hdr/hdr_histogram.h>
+#endif
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
 #include <rpc/clnt.h>
@@ -71,10 +73,12 @@ static void rpc_program_handler_free_rcu(struct rcu_head *rcu)
 	struct rpc_program_handler *rph =
 		caa_container_of(rcu, struct rpc_program_handler, rph_rcu);
 
+#ifdef HAVE_HDR_HISTOGRAM
 	for (size_t i = 0; i < rph->rph_ops_len; i++) {
 		hdr_close(rph->rph_ops[i].roh_stats.rs_histogram);
 		rph->rph_ops[i].roh_stats.rs_histogram = NULL;
 	}
+#endif
 
 	free(rph);
 }
@@ -119,10 +123,12 @@ rpc_program_handler_alloc(uint32_t program, uint32_t version,
 	__atomic_fetch_or(&rph->rph_flags, RPH_IN_LIST, __ATOMIC_RELEASE);
 	cds_list_add_rcu(&rph->rph_list, &rpc_program_handler_list);
 
+#ifdef HAVE_HDR_HISTOGRAM
 	for (size_t i = 0; i < roh_len; i++) {
 		hdr_init(1, INT64_C(3600000000000), 3,
 			 &roh[i].roh_stats.rs_histogram);
 	}
+#endif
 
 	return rph;
 }
@@ -207,7 +213,11 @@ static void rpc_record_operation_stats(struct rpc_operations_handler *roh,
 		__atomic_fetch_add(&roh->roh_stats.rs_fails, 1,
 				   __ATOMIC_RELAXED);
 
+#ifdef HAVE_HDR_HISTOGRAM
 	hdr_record_value(roh->roh_stats.rs_histogram, duration_ns);
+#else
+	(void)duration_ns;
+#endif
 }
 
 int rpc_parse_call_data(struct rpc_trans *rt)

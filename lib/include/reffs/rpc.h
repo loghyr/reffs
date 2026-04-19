@@ -21,7 +21,14 @@
 
 #include <time.h>
 
+#ifdef HAVE_HDR_HISTOGRAM
 #include <hdr/hdr_histogram.h>
+#else
+/* Forward declaration so struct fields of type hdr_histogram *
+ * compile without the library.  Call sites that manipulate the
+ * histogram must be #ifdef HAVE_HDR_HISTOGRAM themselves. */
+struct hdr_histogram;
+#endif
 
 #include "reffs/ring.h"
 #include "reffs/network.h"
