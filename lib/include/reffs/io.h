@@ -254,6 +254,21 @@ int io_request_read_op(int fd, struct connection_info *ci,
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 			struct connection_info *ci, struct ring_context *rc);
 
+/*
+ * Re-submit a write on an existing io_context.  Used by rpc_trans_writer
+ * to submit the next chunk of an ongoing reply without reallocating the
+ * ic.  Each backend issues the appropriate primitive (io_uring_prep_write
+ * on liburing, kevent(EV_ADD|EV_ONESHOT, EVFILT_WRITE) on kqueue).
+ *
+ * Caller must have ic->ic_buffer valid and ic->ic_position pointing at
+ * the next byte to send.  The primitive computes chunk_size (clamped
+ * to IO_MAX_WRITE_SIZE) and sets ic->ic_expected_len before submitting.
+ *
+ * Returns 0 on successful submission, -errno on permanent failure
+ * (ic is destroyed and the socket is closed in the failure path).
+ */
+int io_resubmit_write(struct io_context *ic, struct ring_context *rc);
+
 int create_worker_threads(volatile sig_atomic_t *running,
 			  unsigned int nworkers);
 void wait_for_worker_threads(void);
