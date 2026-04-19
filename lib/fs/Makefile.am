@@ -23,7 +23,6 @@ libreffs_fs_la_SOURCES = \
 	evictor.c \
 	filehandle.c \
 	fs.c \
-	fuse.c \
 	inode.c \
 	layout_segment.c \
 	lock.c \
@@ -32,5 +31,13 @@ libreffs_fs_la_SOURCES = \
 	stateid.c \
 	super_block.c \
 	vfs.c
+
+# fuse.c wraps libfuse callbacks for a userspace mount utility and
+# is only needed on Linux at the moment.  Its callback signatures
+# target libfuse2-era APIs (4-arg readdir) while FreeBSD ships only
+# libfuse3 (5-arg).  Port separately; for now, skip on FreeBSD.
+if !HOST_FREEBSD
+libreffs_fs_la_SOURCES += fuse.c
+endif
 
 libreffs_fs_la_LIBADD = $(top_builddir)/lib/backends/libbackends.la
