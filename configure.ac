@@ -443,6 +443,15 @@ AC_SUBST([OPENSSL_CFLAGS])
 AC_SUBST([OPENSSL_LIBS])
 
 # Check for libgssapi_krb5 (optional — RPCSEC_GSS disabled without it)
+# <rpc/auth_gss.h> is part of libtirpc on Linux (the SunRPC/GSS
+# integration header).  FreeBSD has its own GSS-RPC in the
+# gssrpc/ namespace with a different API and does not provide
+# <rpc/auth_gss.h>.  Check separately so mds_session.c can gate
+# its libtirpc-specific block on this, not on HAVE_GSSAPI_KRB5
+# (which only says GSSAPI is available, not that the SunRPC
+# integration glue exists).
+AC_CHECK_HEADERS([rpc/auth_gss.h])
+
 PKG_CHECK_MODULES([GSSAPI], [krb5-gssapi], [
     AC_DEFINE([HAVE_GSSAPI_KRB5], [1], [Define if libgssapi_krb5 is available])
 ], [
