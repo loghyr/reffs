@@ -21,8 +21,6 @@
 
 #include <time.h>
 
-#include <liburing.h>
-
 #include <hdr/hdr_histogram.h>
 
 #include "reffs/ring.h"

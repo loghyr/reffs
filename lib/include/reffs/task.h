@@ -9,7 +9,6 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <unistd.h>
-#include <liburing.h>
 #include "reffs/ring.h"
 #include "reffs/network.h"
 
