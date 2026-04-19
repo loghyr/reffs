@@ -5,6 +5,14 @@ ACLOCAL_AMFLAGS = -Im4 -I.
 
 AM_CFLAGS = $(TIRPC_CFLAGS)
 
+# FreeBSD's <rpc/xdr.h> references bool_t but does not pull in
+# <rpc/types.h> itself (libtirpc on Linux does).  The generated
+# XDR headers include <rpc/xdr.h> directly; force-include
+# <rpc/types.h> for every .c in this subdir so bool_t is in scope.
+if HOST_FREEBSD
+AM_CFLAGS += -include rpc/types.h
+endif
+
 GEN_SOURCES = \
 	ref_cp_xdr.h		\
 	ref_cp_xdr.c		\
