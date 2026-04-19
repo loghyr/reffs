@@ -21,7 +21,20 @@
 
 #include <rpc/rpc.h>
 
-#ifdef HAVE_GSSAPI_KRB5
+/*
+ * GSS-RPC support requires BOTH:
+ *   - libgssapi_krb5 (HAVE_GSSAPI_KRB5) for the GSSAPI itself, and
+ *   - <rpc/auth_gss.h> (HAVE_RPC_AUTH_GSS_H) for the SunRPC/GSS
+ *     integration layer (shipped with libtirpc on Linux; absent on
+ *     FreeBSD base, whose gssrpc equivalent uses a different API).
+ * Both must be present, or the gated mds_session_create_sec block
+ * below returns -ENOSYS.
+ */
+#if defined(HAVE_GSSAPI_KRB5) && defined(HAVE_RPC_AUTH_GSS_H)
+#define REFFS_HAVE_GSS_RPC 1
+#endif
+
+#ifdef REFFS_HAVE_GSS_RPC
 #include <rpc/auth_gss.h>
 #include <gssapi/gssapi.h>
 #include <gssapi/gssapi_krb5.h>
@@ -360,7 +373,7 @@ err:
 int mds_session_create_sec(struct mds_session *ms, const char *host,
 			   enum ec_sec_flavor sec)
 {
-#ifdef HAVE_GSSAPI_KRB5
+#ifdef REFFS_HAVE_GSS_RPC
 	if (sec == EC_SEC_SYS)
 		return mds_session_create(ms, host);
 
