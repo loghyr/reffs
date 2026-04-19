@@ -7,6 +7,8 @@
 #define _REFFS_NETWORK_H
 
 #include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <arpa/inet.h>
 #include <string.h>
 #include <stdbool.h>
