@@ -16,6 +16,16 @@
 /* FICLONERANGE and related Linux-specific clone ioctls. */
 #include <linux/fs.h>
 #endif
+
+/*
+ * copy_file_range(2) takes 'loff_t *' on Linux and 'off_t *' on
+ * FreeBSD; both are signed 64-bit.  Alias to loff_t on FreeBSD so
+ * the call-site code below is identical.
+ */
+#if !defined(__linux__)
+typedef off_t loff_t;
+#endif
+
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
