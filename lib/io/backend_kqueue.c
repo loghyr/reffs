@@ -906,33 +906,11 @@ int io_schedule_heartbeat(struct ring_context *rc)
 { (void)rc; return 0; }
 
 /*
- * Completion handlers.  Linux defines these in accept.c, connect.c,
- * read.c, write.c -- all skipped on FreeBSD.  These process network
- * I/O results: writing responses back, handling TLS handshakes,
- * closing stale connections.  Porting them to kqueue-style
- * synchronous read/write on readiness is the next substantial piece
- * of the FreeBSD port.  Until then, log and drop.
+ * Completion handlers for read and write -- still stubs.  The accept
+ * and connect completion handlers now live in lib/io/handlers.c and
+ * are compiled on both backends.  Porting read/write to kqueue-style
+ * synchronous read/write on readiness is the next piece of the port.
  */
-int io_handle_accept(struct io_context *ic, int client_fd,
-		     struct ring_context *rc)
-{
-	(void)client_fd;
-	(void)rc;
-	LOG("io_handle_accept: not yet implemented on kqueue backend");
-	io_context_destroy(ic);
-	return -ENOSYS;
-}
-
-int io_handle_connect(struct io_context *ic, int result,
-		      struct ring_context *rc)
-{
-	(void)result;
-	(void)rc;
-	LOG("io_handle_connect: not yet implemented on kqueue backend");
-	io_context_destroy(ic);
-	return -ENOSYS;
-}
-
 int io_handle_read(struct io_context *ic, int bytes_read,
 		   struct ring_context *rc)
 {
