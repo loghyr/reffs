@@ -29,7 +29,7 @@
 #include <errno.h>
 #include <liburing.h>
 
-#include "tsan_uring.h"
+#include "tsan_io.h"
 #include <liburing/io_uring.h>
 #include <linux/time_types.h>
 #include <pthread.h>

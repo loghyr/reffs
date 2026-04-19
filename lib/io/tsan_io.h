@@ -13,8 +13,8 @@
  *   TSAN_ACQUIRE(ic) in CQE handler after loading ic from user_data
  */
 
-#ifndef _REFFS_TSAN_URING_H
-#define _REFFS_TSAN_URING_H
+#ifndef _REFFS_TSAN_IO_H
+#define _REFFS_TSAN_IO_H
 
 #if defined(__SANITIZE_THREAD__) || defined(__has_feature)
 #if defined(__SANITIZE_THREAD__) || __has_feature(thread_sanitizer)
@@ -29,4 +29,4 @@
 #define TSAN_ACQUIRE(addr) ((void)(addr))
 #endif
 
-#endif /* _REFFS_TSAN_URING_H */
+#endif /* _REFFS_TSAN_IO_H */
