@@ -114,7 +114,12 @@ int mds_compound_send(struct mds_compound *mc, struct mds_session *ms)
 	ms->ms_slot_seqid++;
 
 	if (mc->mc_res.status != NFS4_OK)
+#if defined(EREMOTEIO)
 		return -EREMOTEIO;
+#else
+		/* FreeBSD has no EREMOTEIO.  Use the closest POSIX cousin. */
+		return -EIO;
+#endif
 
 	return 0;
 }
