@@ -842,13 +842,6 @@ int io_request_read_op(int fd, struct connection_info *ci,
 /* return errors at runtime until the real implementations land.       */
 /* ------------------------------------------------------------------ */
 
-int io_rpc_trans_cb(struct rpc_trans *rt)
-{
-	(void)rt;
-	LOG("io_rpc_trans_cb: not yet implemented on kqueue backend");
-	return -ENOSYS;
-}
-
 /*
  * Heartbeat accounting stubs.  On the FreeBSD kqueue backend the
  * actual timer ticks are delivered via EVFILT_TIMER (already wired),
@@ -894,16 +887,6 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 	(void)bytes_read;
 	(void)rc;
 	LOG("io_handle_read: not yet implemented on kqueue backend");
-	io_context_destroy(ic);
-	return -ENOSYS;
-}
-
-int io_handle_write(struct io_context *ic, int bytes_written,
-		    struct ring_context *rc)
-{
-	(void)bytes_written;
-	(void)rc;
-	LOG("io_handle_write: not yet implemented on kqueue backend");
 	io_context_destroy(ic);
 	return -ENOSYS;
 }

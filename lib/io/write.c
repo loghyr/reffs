@@ -1,6 +1,13 @@
 /*
  * SPDX-FileCopyrightText: 2025 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * io_uring write-submission path.  The completion handler
+ * (io_handle_write), reply orchestration (rpc_trans_writer), TLS
+ * write glue (io_do_tls), and the io_rpc_trans_cb entry point all
+ * live in lib/io/handlers.c -- they are backend-agnostic now that
+ * submissions go through the io_resubmit_write primitive defined
+ * here.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -11,9 +18,6 @@
 #include <errno.h>
 #include <liburing.h>
 #include <liburing/io_uring.h>
-#include <openssl/bio.h>
-#include <openssl/ssl.h>
-#include <openssl/types.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdbool.h>
@@ -24,173 +28,12 @@
 
 #include "reffs/log.h"
 #include "reffs/io.h"
-#include "reffs/log.h"
 #include "reffs/network.h"
 #include "reffs/ring.h"
 #include "ring_internal.h"
 #include "tsan_io.h"
 #include "reffs/rpc.h"
-#include "reffs/tls.h"
 #include "reffs/trace/io.h"
-
-static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc);
-
-/*
- * Returns < 1 for error
- * 0 for no need for further processing
- * 1 for using kTLS and fall through.
- */
-static int io_do_tls(struct io_context *ic, struct ring_context *rc)
-{
-	struct conn_info *ci = io_conn_get(ic->ic_fd);
-	size_t remaining = ic->ic_buffer_len - ic->ic_position;
-
-	TRACE("ic=%p fd=%d type=%s bl=%zu id=%u", (void *)ic, ic->ic_fd,
-	      io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
-
-	if (remaining == 0) {
-		io_context_destroy(ic);
-		return 0;
-	}
-
-	/*
-	 * Guard: the connection may have been torn down (TCP RST from
-	 * client) between when the write was queued and when the worker
-	 * picked it up.  ci or ci_ssl can be NULL/freed.
-	 *
-	 * Save ci_ssl to a local -- the event loop thread can set
-	 * ci->ci_ssl = NULL at any time after an SSL error.  If we
-	 * see NULL, the connection is dead and there's nothing to write.
-	 */
-	SSL *ssl = ci ? ci->ci_ssl : NULL;
-	if (!ssl) {
-		TRACE("fd=%d: connection gone, dropping TLS write", ic->ic_fd);
-		io_context_destroy(ic);
-		return -ECONNRESET;
-	}
-
-	/* Write directly using TLS if not using kTLS */
-	int ktls_enabled = 0;
-#ifdef BIO_get_ktls_send
-	ktls_enabled = BIO_get_ktls_send(SSL_get_wbio(ssl));
-#endif
-
-	TRACE("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
-	      io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
-	if (!ktls_enabled) {
-		/* Check if we've already processed this context for TLS */
-		if (ic->ic_state & IO_CONTEXT_TLS_BIO_PROCESSED) {
-			TRACE("ic=%p id=%u already processed for TLS, destroying",
-			      (void *)ic, ic->ic_id);
-			io_context_destroy(ic);
-			return 0;
-		}
-
-		/* Handle in userspace */
-		rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
-		int ret = SSL_write(ssl,
-				    (char *)ic->ic_buffer + ic->ic_position,
-				    remaining);
-
-		if (ret <= 0) {
-			int err = SSL_get_error(ssl, ret);
-			if (err == SSL_ERROR_WANT_WRITE) {
-				/*
-				 * Memory BIOs always have space in wbio;
-				 * WANT_WRITE is an unrecoverable anomaly.
-				 */
-				io_ssl_err_print(
-					ic->ic_fd,
-					"unexpected WANT_WRITE on write",
-					__func__, __LINE__);
-				io_socket_close(ic->ic_fd, EINVAL);
-				io_context_destroy(ic);
-				return -EINVAL;
-			}
-			if (err == SSL_ERROR_WANT_READ) {
-				/*
-				 * TLS 1.3 key-update: the peer sent a
-				 * KeyUpdate record and SSL_write needs a
-				 * round-trip to process it before completing
-				 * the application write.  With memory BIOs
-				 * the retry requires feeding new network data
-				 * into rbio -- complex async machinery we do
-				 * not have here.  Close cleanly rather than
-				 * leaking the context or silently dropping
-				 * the reply.
-				 */
-				io_ssl_err_print(
-					ic->ic_fd,
-					"WANT_READ during write (key-update?)",
-					__func__, __LINE__);
-				io_socket_close(ic->ic_fd, EINVAL);
-				io_context_destroy(ic);
-				return -EINVAL;
-			}
-
-			/* Real error */
-			io_ssl_err_print(ic->ic_fd, "write error", __func__,
-					 __LINE__);
-			io_socket_close(ic->ic_fd, EINVAL);
-			io_context_destroy(ic);
-			return -EINVAL;
-		} else {
-			/* Get data that was encrypted and is ready to be sent */
-			BIO *wbio = SSL_get_wbio(ssl);
-			int pending = BIO_pending(wbio);
-
-			TRACE("SSL_write processed %d bytes, resulting in %d bytes of TLS data",
-			      ret, pending);
-
-			/* Mark that we've processed this context for TLS to avoid duplicates */
-			ic->ic_state |= IO_CONTEXT_TLS_BIO_PROCESSED;
-
-			/* Read the encrypted data from the BIO and send it */
-			if (pending > 0) {
-				unsigned char *write_buffer = malloc(pending);
-				if (!write_buffer) {
-					LOG("Failed to allocate memory for TLS data");
-					io_socket_close(ic->ic_fd, ENOMEM);
-					io_context_destroy(ic);
-					return -ENOMEM;
-				}
-
-				int bytes =
-					BIO_read(wbio, write_buffer, pending);
-				TRACE("Read %d bytes of encrypted data from BIO",
-				      bytes);
-
-				if (bytes > 0) {
-					ret = io_request_write_op(
-						ic->ic_fd, (char *)write_buffer,
-						bytes,
-						IO_CONTEXT_DIRECT_TLS_DATA,
-						&ic->ic_ci, rc);
-
-					if (ret != 0) {
-						LOG("Failed to submit TLS data write: %d",
-						    ret);
-						free(write_buffer);
-						io_socket_close(ic->ic_fd,
-								-ret);
-						io_context_destroy(ic);
-						return ret;
-					}
-
-					TRACE("Submitted %d bytes of TLS data via io_request_write_op",
-					      bytes);
-				} else {
-					free(write_buffer);
-				}
-			}
-		}
-
-		io_context_destroy(ic);
-		return 0;
-	}
-
-	return 1;
-}
 
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 			struct connection_info *ci, struct ring_context *rc)
@@ -272,44 +115,14 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 }
 
 /*
- * Creating responses:
- *
- * rpc_process_task() calls io_rpc_trans_cb() which creates an io_context.
- *
- * io_rpc_trans_cb() calls rpc_trans_writer() which in turn submits
- * the context to io_uring_submit().
- *
- * When op_type_write() is called after io_uring_wait_cqe_timeout()
- * wakes up with the CQE, it also invokes rpc_trans_writer().
- *
- * At this point, rpc_trans_writer() needs to either end the
- * recursion because of either it is done or because of an
- * error.
- *
- * If it does not end the recursion, then it advances to the
- * next fragment and submits it back to io_uring_submit().
- *
- * At no point are there multiple instances of this io_context
- * submitted to io_uring. The sequential nature of rpc_trans_writer()
- * ensures that we avoid memory allocations and we avoid parallel
- * access to the io_context.
- *
- * Note: the first 4 bytes of the orginal buffer are for the
- * record marker. After the first fragment is sent, we use
- * the last 4 bytes of the previous fragment to store the
- * record marker for the current fragment.
- *
- */
-/*
  * io_resubmit_write -- submit the next chunk of ic's write to io_uring.
  *
- * Extracted from rpc_trans_writer so the submission primitive is a
- * per-backend concern; rpc_trans_writer itself (in handlers.c after
- * PR #7's move) is backend-agnostic.
+ * Called by rpc_trans_writer (in handlers.c) so the submission
+ * primitive is a per-backend concern while the orchestration stays
+ * shared.
  *
  * Returns 0 on successful submission, -errno on permanent failure.
- * On failure ic is destroyed and the socket is closed (matches the
- * original inline semantics).
+ * On failure ic is destroyed and the socket is closed.
  */
 int io_resubmit_write(struct io_context *ic, struct ring_context *rc)
 {
@@ -391,291 +204,4 @@ int io_resubmit_write(struct io_context *ic, struct ring_context *rc)
 	}
 
 	return 0;
-}
-
-static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
-{
-	int ret = 0;
-
-	/* Check if we're done first */
-	if (ic->ic_position >= ic->ic_buffer_len) {
-#ifdef PARTIAL_WRITE_DEBUG
-		TRACE("Buffer complete: ic=%p id=%u position=%zu, buffer_len=%zu",
-		      (void *)ic, ic->ic_id, ic->ic_position,
-		      ic->ic_buffer_len);
-#endif
-		trace_io_write_complete(ic->ic_fd, 0, ic);
-		/*
-		 * Release the write gate and immediately start the next queued
-		 * writer (if any) before destroying this context.  The next_ic
-		 * already has WRITE_OWNED set by io_conn_write_done().
-		 */
-		struct io_context *next_ic = NULL;
-		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED)
-			next_ic = io_conn_write_done(ic->ic_fd);
-		io_context_destroy(ic);
-		if (next_ic)
-			return rpc_trans_writer(next_ic, rc);
-		return 0;
-	}
-
-	trace_io_writer(ic, __func__, __LINE__);
-
-	/*
-	 * Claim the per-fd write gate before submitting.  Only one
-	 * io_context may have a write in flight for a given fd at a time;
-	 * concurrent writers queue here and are released by io_conn_write_done()
-	 * after each write completes.
-	 *
-	 * Skip the check on re-entry (partial writes, multi-fragment) -- the
-	 * WRITE_OWNED flag means we already hold the gate.
-	 */
-	if (!(ic->ic_state & IO_CONTEXT_WRITE_OWNED)) {
-		if (!io_conn_write_try_start(ic->ic_fd, ic))
-			return 0; /* queued; io_conn_write_done() will restart us */
-		ic->ic_state |= IO_CONTEXT_WRITE_OWNED;
-	}
-
-	struct conn_info *ci = io_conn_get(ic->ic_fd);
-#ifdef TLS_DEBUGGING
-	TRACE("ci=%p ssl=%p tls=%d", (void *)ci, ci ? (void *)ci->ci_ssl : NULL,
-	      ci ? ci->ci_tls_enabled : 0);
-#endif
-	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
-		int fd_saved = ic->ic_fd;
-		bool owned = (ic->ic_state & IO_CONTEXT_WRITE_OWNED) != 0;
-		ret = io_do_tls(ic, rc);
-		if (ret <= 0) {
-			/*
-			 * Non-kTLS success (ret==0): io_do_tls destroyed ic.
-			 * Release the write gate and start the next queued
-			 * writer, if any.  Error paths (ret<0) do not hold
-			 * the gate because io_do_tls calls io_socket_close,
-			 * which drains ci_write_pending via io_conn_unregister.
-			 */
-			if (ret == 0 && owned) {
-				struct io_context *next_ic =
-					io_conn_write_done(fd_saved);
-				if (next_ic)
-					return rpc_trans_writer(next_ic, rc);
-			}
-			return ret;
-		}
-	}
-
-	return io_resubmit_write(ic, rc);
-}
-
-int io_rpc_trans_cb(struct rpc_trans *rt)
-{
-	struct io_context *ic;
-
-	struct conn_info *ci = io_conn_get(rt->rt_fd);
-	if (!ci) {
-		LOG("Connection not tracked for fd=%d", rt->rt_fd);
-		return ENOTCONN;
-	}
-
-#ifdef TLS_DEBUGGING
-	TRACE("ci=%p th=%d tls=%d ssl=%p", (void *)ci, ci->ci_tls_handshaking,
-	      ci->ci_tls_enabled, (void *)ci->ci_ssl);
-#endif
-
-	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
-			       rt->rt_reply_len);
-	if (!ic) {
-		LOG("Failed to create write context for fd=%d", rt->rt_fd);
-		return ENOMEM;
-	}
-
-	ic->ic_xid = rt->rt_info.ri_xid;
-	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);
-
-	if (rt->rt_reply_len >= 4) {
-		uint32_t *marker_ptr = (uint32_t *)rt->rt_reply;
-		uint32_t data_len = rt->rt_reply_len - 4;
-
-		/*
-		 * Always set the last fragment bit.  The message is fully
-		 * formed -- do not try to re-fragment it.
-		 */
-		*marker_ptr = htonl(0x80000000 | data_len);
-#ifdef PARTIAL_WRITE_DEBUG
-		TRACE("RPC message: setting marker for %u bytes", data_len);
-#endif
-	}
-
-	rt->rt_reply = NULL;
-
-	return rpc_trans_writer(ic, rt->rt_rc);
-}
-
-int io_handle_write(struct io_context *ic, int bytes_written,
-		    struct ring_context *rc)
-{
-	trace_io_write_complete(ic->ic_fd, bytes_written, ic);
-
-	// Check connection state
-	struct conn_info *ci = io_conn_get(ic->ic_fd);
-
-	if (bytes_written > 0 && ic->ic_position == 0) {
-		TRACE("WRITE START: ic=%p id=%u fd=%d starting fresh write.",
-		      (void *)ic, ic->ic_id, ic->ic_fd);
-	}
-
-	// Verify we wrote the expected amount
-	if (bytes_written <= 0) {
-		LOG("Write operation failed for %p fd=%d: %s", (void *)ic,
-		    ic->ic_fd,
-		    bytes_written < 0 ? strerror(-bytes_written) :
-					"connection closed");
-
-		io_socket_close(ic->ic_fd, bytes_written < 0 ? -bytes_written :
-							       ECONNRESET);
-		io_context_destroy(ic);
-		return bytes_written < 0 ? -bytes_written : ECONNRESET;
-	}
-
-	// Update connection activity
-	if (ci) {
-		ci->ci_last_activity = time(NULL);
-
-		// Check if this was the final handshake message
-		if (ci->ci_handshake_final_pending) {
-			TRACE("Final TLS handshake message sent for fd=%d",
-			      ic->ic_fd);
-
-			// Clear the pending flag
-			ci->ci_handshake_final_pending = false;
-
-			// NOW we can enable TLS mode
-			ci->ci_tls_enabled = true;
-
-			// Make sure any buffered BIO data is flushed
-			BIO_flush(SSL_get_wbio(ci->ci_ssl));
-
-			TRACE("TLS mode now active for fd=%d", ic->ic_fd);
-
-// Log kTLS status
-#ifdef BIO_get_ktls_send
-			int ktls_send =
-				BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
-			int ktls_recv =
-				BIO_get_ktls_recv(SSL_get_rbio(ci->ci_ssl));
-			TRACE("kTLS status for fd=%d: send=%d, recv=%d",
-			      ic->ic_fd, ktls_send, ktls_recv);
-#endif
-		}
-	}
-
-	// If this was direct TLS data, we're done - no need to continue with normal write processing
-	if (ic->ic_state & IO_CONTEXT_DIRECT_TLS_DATA) {
-		TRACE("Direct TLS data sent for fd=%d", ic->ic_fd);
-
-		// Check if this was part of a TLS handshake
-		struct conn_info *ci = io_conn_get(ic->ic_fd);
-		if (ci && ci->ci_handshake_final_pending) {
-			TRACE("Final TLS handshake message sent for fd=%d",
-			      ic->ic_fd);
-
-			// Clear the pending flag
-			ci->ci_handshake_final_pending = false;
-
-			// NOW we can enable TLS mode
-			// ci->ci_tls_enabled = true;
-
-			// Make sure any buffered BIO data is flushed
-			BIO_flush(SSL_get_wbio(ci->ci_ssl));
-
-			TRACE("TLS mode now active for fd=%d", ic->ic_fd);
-
-			// Log kTLS status if available
-#ifdef BIO_get_ktls_send
-			int ktls_send =
-				BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
-			int ktls_recv =
-				BIO_get_ktls_recv(SSL_get_rbio(ci->ci_ssl));
-			TRACE("kTLS status for fd=%d: send=%d, recv=%d",
-			      ic->ic_fd, ktls_send, ktls_recv);
-#endif
-		}
-
-		io_context_destroy(ic);
-		return 0;
-	}
-
-	/* For TLS connections, handle encryption before further processing */
-	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
-		int fd_saved = ic->ic_fd;
-		bool owned = (ic->ic_state & IO_CONTEXT_WRITE_OWNED) != 0;
-		int ret = io_do_tls(ic, rc);
-		if (ret <= 0) {
-			/*
-			 * Non-kTLS success (ret==0): io_do_tls destroyed ic.
-			 * Release the write gate and start the next queued
-			 * writer, if any.
-			 */
-			if (ret == 0 && owned) {
-				struct io_context *next_ic =
-					io_conn_write_done(fd_saved);
-				if (next_ic)
-					return rpc_trans_writer(next_ic, rc);
-			}
-			return ret;
-		}
-	}
-
-	if ((size_t)bytes_written < ic->ic_expected_len) {
-		TRACE("Partial write: ic=%p id=%u fd=%d expected=%zu wrote=%d position=%zu buffer_len=%zu",
-		      (void *)ic, ic->ic_id, ic->ic_fd, ic->ic_expected_len,
-		      bytes_written, ic->ic_position, ic->ic_buffer_len);
-
-		// Update position by actual bytes written
-		ic->ic_position += bytes_written;
-
-		// Create a new context that owns the buffer
-		struct io_context *new_ic =
-			io_context_create(OP_TYPE_WRITE, ic->ic_fd,
-					  ic->ic_buffer, ic->ic_buffer_len);
-		if (!new_ic) {
-			io_socket_close(ic->ic_fd, ENOMEM);
-			io_context_destroy(ic);
-			return ENOMEM;
-		}
-
-		/* Copy state to new context */
-		new_ic->ic_position = ic->ic_position;
-		new_ic->ic_xid = ic->ic_xid;
-		new_ic->ic_count = ic->ic_count;
-		copy_connection_info(&new_ic->ic_ci, &ic->ic_ci);
-		/*
-		 * Propagate the write gate ownership.  The new context is a
-		 * continuation of the same write; it holds the gate for this fd
-		 * and must not try to re-acquire it in rpc_trans_writer().
-		 */
-		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED)
-			new_ic->ic_state |= IO_CONTEXT_WRITE_OWNED;
-
-		/* Clear buffer ownership in old context to prevent double-free */
-		ic->ic_buffer = NULL;
-		ic->ic_buffer_len = 0;
-
-		/* Destroy old context without freeing the buffer */
-		io_context_destroy(ic);
-
-		// Continue with the new context
-		return rpc_trans_writer(new_ic, rc);
-	}
-
-	// Full chunk written - simply advance position
-	ic->ic_position += ic->ic_expected_len;
-
-#ifdef PARTIAL_WRITE_DEBUG
-	TRACE("After write: ic=%p id=%u old_pos=%zu new_pos=%zu buffer_len=%zu",
-	      (void *)ic, ic->ic_id, ic->ic_position - ic->ic_expected_len,
-	      ic->ic_position, ic->ic_buffer_len);
-#endif
-
-	// Continue with next fragment
-	return rpc_trans_writer(ic, rc);
 }
