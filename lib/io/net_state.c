@@ -42,8 +42,8 @@
 /* Request tracking                                                    */
 /* ------------------------------------------------------------------ */
 
-struct rpc_trans *pending_requests[MAX_PENDING_REQUESTS];
-pthread_mutex_t request_mutex = PTHREAD_MUTEX_INITIALIZER;
+static struct rpc_trans *pending_requests[MAX_PENDING_REQUESTS];
+static pthread_mutex_t request_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int io_register_request(struct rpc_trans *rt)
 {
@@ -107,8 +107,8 @@ int io_unregister_request(uint32_t xid)
 /* Listener registry                                                   */
 /* ------------------------------------------------------------------ */
 
-int listener_fds[MAX_LISTENERS];
-int num_listeners = 0;
+static int listener_fds[MAX_LISTENERS];
+static int num_listeners = 0;
 
 void io_add_listener(int fd)
 {
@@ -138,7 +138,7 @@ int *io_heartbeat_get_listeners(int *num)
 /* Per-fd buffer state                                                 */
 /* ------------------------------------------------------------------ */
 
-struct buffer_state *conn_buffers[MAX_CONNECTIONS];
+static struct buffer_state *conn_buffers[MAX_CONNECTIONS];
 
 void io_client_fd_register(int fd)
 {
