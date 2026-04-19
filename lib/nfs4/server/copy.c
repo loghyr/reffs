@@ -12,7 +12,10 @@
 #endif
 
 #include <errno.h>
+#if defined(__linux__)
+/* FICLONERANGE and related Linux-specific clone ioctls. */
 #include <linux/fs.h>
+#endif
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -502,6 +505,7 @@ uint32_t nfs4_op_clone(struct compound *compound)
 		goto out;
 	}
 
+#if defined(__linux__)
 	struct file_clone_range fcr = {
 		.src_fd = src_fd,
 		.src_offset = src_offset,
@@ -524,6 +528,15 @@ uint32_t nfs4_op_clone(struct compound *compound)
 		}
 		goto out;
 	}
+#else
+	/* FreeBSD has no FICLONERANGE.  ZFS supports block cloning via
+	 * a different interface (copy_file_range(2) uses it on recent
+	 * releases); wiring that is out of scope for the substrate PR. */
+	(void)src_fd;
+	(void)dst_fd;
+	*status = NFS4ERR_NOTSUPP;
+	goto out;
+#endif
 
 	/*
 	 * Update destination size if the clone extended it.
