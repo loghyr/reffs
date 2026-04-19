@@ -34,7 +34,7 @@ static void signal_handler(int sig)
 {
 	TRACE("Received signal %d, initiating shutdown...", sig);
 
-	__atomic_store(&running, &(int){ 0 }, __ATOMIC_SEQ_CST);
+	__atomic_store(&running, &(sig_atomic_t){ 0 }, __ATOMIC_SEQ_CST);
 
 	// Wake up any waiting worker threads
 	wake_worker_threads();
@@ -348,7 +348,7 @@ int main(int argc, char *argv[])
 
 	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
 
-	__atomic_store(&running, &(int){ 1 }, __ATOMIC_SEQ_CST);
+	__atomic_store(&running, &(sig_atomic_t){ 1 }, __ATOMIC_SEQ_CST);
 
 	// Run the main IO processing loop
 	io_handler_main_loop(&running, rc);
