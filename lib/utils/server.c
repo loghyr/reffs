@@ -20,6 +20,17 @@
 #include <unistd.h>
 #include <time.h>
 
+/* FreeBSD declares MAXHOSTNAMELEN (in <sys/param.h>) but not
+ * HOST_NAME_MAX (POSIX, not in the base headers by default). */
+#ifndef HOST_NAME_MAX
+#include <sys/param.h>
+#ifdef MAXHOSTNAMELEN
+#define HOST_NAME_MAX MAXHOSTNAMELEN
+#else
+#define HOST_NAME_MAX 256
+#endif
+#endif
+
 #include "reffs/cmp.h"
 #include "reffs/rcu.h"
 #include "reffs/log.h"

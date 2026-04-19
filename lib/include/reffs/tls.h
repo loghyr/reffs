@@ -9,6 +9,8 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+#include "reffs/log.h" /* LOG() used in the inline helper below */
+
 #define AUTH_TLS 7
 #define STARTTLS_VERIFIER "STARTTLS"
 #define REFFS_TLS_HANDSHAKE 22 // Content type for TLS handshake
