@@ -876,21 +876,10 @@ int io_schedule_heartbeat(struct ring_context *rc)
 { (void)rc; return 0; }
 
 /*
- * Completion handlers for read and write -- still stubs.  The accept
- * and connect completion handlers now live in lib/io/handlers.c and
- * are compiled on both backends.  Porting read/write to kqueue-style
- * synchronous read/write on readiness is the next piece of the port.
+ * Completion handlers for accept, connect, read, write, and TLS all
+ * live in lib/io/handlers.c (shared).  io_handle_heartbeat below
+ * is still a stub until PR #10 wires EVFILT_TIMER-driven heartbeat.
  */
-int io_handle_read(struct io_context *ic, int bytes_read,
-		   struct ring_context *rc)
-{
-	(void)bytes_read;
-	(void)rc;
-	LOG("io_handle_read: not yet implemented on kqueue backend");
-	io_context_destroy(ic);
-	return -ENOSYS;
-}
-
 int io_handle_heartbeat(struct io_context *ic, int result,
 			struct ring_context *rc)
 {
