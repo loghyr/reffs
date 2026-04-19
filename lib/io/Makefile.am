@@ -13,15 +13,30 @@ AM_CFLAGS = -Im4 @CHECK_CFLAGS@					\
 AM_LDFLAGS = -rdynamic
 
 lib_LTLIBRARIES = libreffs_io.la
+
+# Backend-agnostic sources, always compiled.
 libreffs_io_la_SOURCES =	\
+	context.c		\
+	lsnr.c			\
+	tls.c			\
+	worker.c
+
+# Exactly one I/O backend is compiled.  See configure.ac: on Linux
+# with liburing installed, IO_BACKEND_LIBURING is set and the seven
+# io_uring-specific files below are compiled.  On FreeBSD with aio +
+# kqueue available, IO_BACKEND_KQUEUE is set and backend_kqueue.c
+# is compiled instead.
+if IO_BACKEND_LIBURING
+libreffs_io_la_SOURCES +=	\
 	accept.c		\
 	backend.c		\
 	connect.c		\
-	context.c		\
 	handler.c		\
 	heartbeat.c		\
-	lsnr.c			\
 	read.c			\
-	tls.c			\
-	worker.c		\
 	write.c
+endif
+
+if IO_BACKEND_KQUEUE
+libreffs_io_la_SOURCES += backend_kqueue.c
+endif

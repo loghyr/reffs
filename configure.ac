@@ -271,6 +271,21 @@ AS_IF([test "x$enable_freebsd_kqueue" != "xno"], [
     ])
 ])
 
+# Exactly one I/O backend is compiled; liburing is preferred on Linux,
+# kqueue is used on FreeBSD.  If neither is available, configure
+# continues (the build will fail with a clear error in lib/io/
+# Makefile.am -- configure-time isn't the right place to diagnose
+# platform-specific build infrastructure gaps).
+have_linux_io_uring=no
+AS_IF([test "x$ac_cv_header_liburing_h" = "xyes" || \
+       test -n "$URING_LIBS"], [have_linux_io_uring=yes])
+
+AM_CONDITIONAL([IO_BACKEND_LIBURING],
+    [test "x$have_linux_io_uring" = "xyes"])
+AM_CONDITIONAL([IO_BACKEND_KQUEUE],
+    [test "x$have_freebsd_kqueue" = "xyes" && \
+     test "x$have_linux_io_uring" != "xyes"])
+
 # Check for jemalloc
 AC_ARG_WITH([jemalloc],
   [AS_HELP_STRING([--with-jemalloc], [use jemalloc for memory allocation])],
