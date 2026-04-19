@@ -35,9 +35,13 @@ libreffs_fs_la_SOURCES = \
 # fuse.c wraps libfuse callbacks for a userspace mount utility and
 # is only needed on Linux at the moment.  Its callback signatures
 # target libfuse2-era APIs (4-arg readdir) while FreeBSD ships only
-# libfuse3 (5-arg).  Port separately; for now, skip on FreeBSD.
+# libfuse3 (5-arg).  macOS's macFUSE has its own Apple-specific
+# extensions and a separate porting story.  Port separately; for
+# now, skip on FreeBSD and Darwin.
 if !HOST_FREEBSD
+if !HOST_DARWIN
 libreffs_fs_la_SOURCES += fuse.c
+endif
 endif
 
 libreffs_fs_la_LIBADD = $(top_builddir)/lib/backends/libbackends.la

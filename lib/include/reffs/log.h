@@ -39,6 +39,8 @@
 #include <sys/syscall.h>
 #elif defined(__FreeBSD__)
 #include <pthread_np.h>
+#elif defined(__APPLE__)
+#include <pthread.h>
 #endif
 
 #ifdef __clang__
@@ -48,9 +50,11 @@
 
 /*
  * Portable kernel thread id accessor.  Linux: syscall(SYS_gettid).
- * FreeBSD: pthread_getthreadid_np(), a non-portable extension.  Both
- * return a small integer that uniquely identifies the kernel thread
- * within the process; suitable for log/trace prefixes.
+ * FreeBSD: pthread_getthreadid_np(), a non-portable extension.
+ * macOS: pthread_threadid_np() returns a 64-bit thread id (since
+ * 10.6); truncate to pid_t for consistency with the other paths.
+ * All three return a small integer unique within the process;
+ * suitable for log/trace prefixes.
  */
 static inline pid_t reffs_gettid(void)
 {
@@ -58,6 +62,10 @@ static inline pid_t reffs_gettid(void)
 	return (pid_t)syscall(SYS_gettid);
 #elif defined(__FreeBSD__)
 	return (pid_t)pthread_getthreadid_np();
+#elif defined(__APPLE__)
+	uint64_t tid = 0;
+	pthread_threadid_np(NULL, &tid);
+	return (pid_t)tid;
 #else
 	return (pid_t)getpid();
 #endif
