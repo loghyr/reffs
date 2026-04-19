@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"

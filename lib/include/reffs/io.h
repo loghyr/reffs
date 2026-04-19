@@ -6,8 +6,8 @@
 #ifndef _REFFS_IO_H
 #define _REFFS_IO_H
 
+#include <signal.h>
 #include <stdint.h>
-#include <liburing.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <sys/socket.h>
