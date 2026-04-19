@@ -10,7 +10,9 @@
 #include <stdatomic.h>
 #include <string.h>
 #include <sys/stat.h>
+#if defined(__linux__)
 #include <sys/sysmacros.h>
+#endif
 #include <time.h>
 
 #include "nfsv42_xdr.h"

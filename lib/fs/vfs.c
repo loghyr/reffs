@@ -14,7 +14,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
+#if defined(__linux__)
 #include <sys/sysmacros.h>
+#endif
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
