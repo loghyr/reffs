@@ -23,6 +23,9 @@
 
 struct ring_context;
 
+/* Batch size for kevent() event drain in either main loop. */
+#define KQUEUE_BATCH_SIZE 64
+
 /*
  * On Linux, struct ring_context wraps a struct io_uring.  On
  * FreeBSD/Darwin it wraps a kqueue fd.  Callers outside lib/io/
