@@ -65,6 +65,7 @@
 #include "reffs/rpc.h"
 #include "reffs/task.h"
 #include "reffs/trace/io.h"
+#include "posix_shims.h"
 #include "tsan_io.h"
 
 /* ------------------------------------------------------------------ */
@@ -160,9 +161,11 @@ static int kq_setup(struct ring_context *rc, const char *tag)
 		goto err_mutex;
 	}
 
-	/* Pipe with O_NONBLOCK + O_CLOEXEC on both ends. */
-	if (pipe2(rc->rc_shutdown_pipe, O_NONBLOCK | O_CLOEXEC) < 0) {
-		LOG("%s: pipe2: %s", tag, strerror(errno));
+	/* Pipe with O_NONBLOCK + O_CLOEXEC on both ends.  The
+	 * reffs_pipe_nb_cloexec shim uses pipe2 on platforms that have it
+	 * (Linux, FreeBSD) and pipe+fcntl on Darwin. */
+	if (reffs_pipe_nb_cloexec(rc->rc_shutdown_pipe) < 0) {
+		LOG("%s: pipe: %s", tag, strerror(errno));
 		goto err_kq;
 	}
 
@@ -670,12 +673,13 @@ static int kqueue_request_connect(struct ring_context *rc,
 static void accept_and_dispatch(struct io_context *ic,
 				struct ring_context *rc)
 {
-	int client_fd = accept4(ic->ic_fd, NULL, NULL,
-				SOCK_NONBLOCK | SOCK_CLOEXEC);
+	/* reffs_accept4_nb_cloexec uses accept4 on Linux/FreeBSD,
+	 * accept+fcntl on Darwin. */
+	int client_fd = reffs_accept4_nb_cloexec(ic->ic_fd, NULL, NULL);
 	int err = (client_fd < 0) ? -errno : 0;
 
 	if (err)
-		LOG("accept4 fd=%d: %s", ic->ic_fd, strerror(-err));
+		LOG("accept fd=%d: %s", ic->ic_fd, strerror(-err));
 
 	/*
 	 * io_handle_accept expects the io_uring cqe->res convention:

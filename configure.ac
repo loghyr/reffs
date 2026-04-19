@@ -90,6 +90,12 @@ AS_CASE([$host_os],
 AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])
 AM_CONDITIONAL([HOST_DARWIN],  [test "x$host_is_darwin"  = "xyes"])
 
+# POSIX extensions accept4(2) and pipe2(2) are Linux and FreeBSD
+# extensions; Darwin has only accept(2) / pipe(2).  Probe
+# unconditionally -- lib/io/posix_shims.h uses HAVE_ACCEPT4 and
+# HAVE_PIPE2 to pick the native syscall or a fcntl-based fallback.
+AC_CHECK_FUNCS([accept4 pipe2])
+
 # NOTE to macOS users building reffs at this commit: the
 # IO_BACKEND_KQUEUE AM_CONDITIONAL further down this file does NOT
 # yet gate on host_is_freebsd, so it will misdetect macOS as FreeBSD
