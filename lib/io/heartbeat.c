@@ -11,6 +11,7 @@
 #include <liburing.h>
 #include <linux/time_types.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +38,16 @@
 #define CONNECTION_CHECK_INTERVAL 10
 #define STATS_LOG_INTERVAL 10
 
-static uint32_t io_heartbeat_period = HEARTBEAT_INTERVAL;
+/*
+ * io_heartbeat_period is read on the main loop thread
+ * (io_schedule_heartbeat at line 122) and written by the probe1 RPC
+ * worker thread (probe1_op_heartbeat via io_heartbeat_period_set).
+ * Plain uint32_t load/store tears on architectures where the value
+ * straddles a cache line; use _Atomic with RELAXED ordering (no
+ * happens-before requirements -- the value is advisory, next timer
+ * arm picks it up).
+ */
+static _Atomic uint32_t io_heartbeat_period = HEARTBEAT_INTERVAL;
 
 // Structure to track when different checks were last performed
 struct heartbeat_state {
@@ -76,14 +86,14 @@ int io_heartbeat_init(struct ring_context *rc)
 
 uint32_t io_heartbeat_period_get(void)
 {
-	return io_heartbeat_period;
+	return atomic_load_explicit(&io_heartbeat_period,
+				    memory_order_relaxed);
 }
 
 uint32_t io_heartbeat_period_set(uint32_t seconds)
 {
-	uint32_t hb = io_heartbeat_period;
-	io_heartbeat_period = seconds;
-	return hb;
+	return atomic_exchange_explicit(&io_heartbeat_period, seconds,
+					memory_order_relaxed);
 }
 
 // Schedule a heartbeat operation using io_uring timeout
@@ -119,8 +129,10 @@ int io_schedule_heartbeat(struct ring_context *rc)
 		return -ENOSPC;
 	}
 
-	// Set up the timeout
-	ts->tv_sec = io_heartbeat_period;
+	// Set up the timeout (snapshot period once to avoid dual load)
+	uint32_t period = atomic_load_explicit(&io_heartbeat_period,
+					       memory_order_relaxed);
+	ts->tv_sec = period;
 	ts->tv_nsec = 0;
 
 	// Prepare the timeout operation
@@ -128,7 +140,7 @@ int io_schedule_heartbeat(struct ring_context *rc)
 			      0);
 	io_uring_sqe_set_data(sqe, ic);
 
-	TRACE("Scheduled next heartbeat in %u seconds", io_heartbeat_period);
+	TRACE("Scheduled next heartbeat in %u seconds", period);
 
 	// Submit the operation
 	ret = io_uring_submit(&rc->rc_ring);

@@ -46,6 +46,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -884,7 +885,14 @@ static int kqueue_arm_heartbeat_timer(struct ring_context *rc,
 #define KQUEUE_CONN_CHECK_INTERVAL 10
 #define KQUEUE_CONN_TIMEOUT 60
 
-static uint32_t kqueue_heartbeat_period = KQUEUE_HEARTBEAT_INTERVAL_SEC;
+/*
+ * kqueue_heartbeat_period is read on the main loop thread
+ * (io_schedule_heartbeat below) and written by the probe1 RPC worker
+ * thread via io_heartbeat_period_set.  _Atomic with RELAXED ordering:
+ * the value is advisory (next timer arm picks it up), no
+ * happens-before needed.
+ */
+static _Atomic uint32_t kqueue_heartbeat_period = KQUEUE_HEARTBEAT_INTERVAL_SEC;
 static uint64_t kqueue_heartbeat_completions = 0;
 static time_t kqueue_last_listener_check = 0;
 static time_t kqueue_last_conn_check = 0;
@@ -900,15 +908,14 @@ int io_heartbeat_init(struct ring_context *rc)
 
 uint32_t io_heartbeat_period_get(void)
 {
-	return kqueue_heartbeat_period;
+	return atomic_load_explicit(&kqueue_heartbeat_period,
+				    memory_order_relaxed);
 }
 
 uint32_t io_heartbeat_period_set(uint32_t seconds)
 {
-	uint32_t old = kqueue_heartbeat_period;
-
-	kqueue_heartbeat_period = seconds;
-	return old;
+	return atomic_exchange_explicit(&kqueue_heartbeat_period, seconds,
+					memory_order_relaxed);
 }
 
 void io_heartbeat_update_completions(uint64_t count)
@@ -929,8 +936,10 @@ int io_schedule_heartbeat(struct ring_context *rc)
 		return -ENOMEM;
 	}
 
+	uint32_t period = atomic_load_explicit(&kqueue_heartbeat_period,
+					       memory_order_relaxed);
 	return kqueue_arm_heartbeat_timer(
-		rc, ic, (uint64_t)kqueue_heartbeat_period * 1000000000ULL);
+		rc, ic, (uint64_t)period * 1000000000ULL);
 }
 
 int io_handle_heartbeat(struct io_context *ic, int result,
