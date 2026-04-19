@@ -9,7 +9,11 @@
 
 #define FUSE_USE_VERSION 31
 
-#include <fuse/fuse.h>
+/* pkg-config's -I for libfuse3 points at the dir containing fuse.h
+ * (Linux: /usr/include/fuse3; FreeBSD: /usr/local/include/fuse3), so
+ * the bare form works on both.  The older <fuse/fuse.h> path works
+ * only with Linux's libfuse2. */
+#include <fuse.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
