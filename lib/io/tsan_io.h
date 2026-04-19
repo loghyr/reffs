@@ -2,15 +2,17 @@
  * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * TSAN annotations for io_uring synchronization.
+ * TSAN annotations for I/O backend submission/completion synchronization.
  *
- * io_uring submission acts as a kernel-mediated memory barrier between
- * the SQE producer and the CQE consumer.  TSAN cannot model this, so
- * we annotate it explicitly.
+ * Backend submission (io_uring submit, aio_*, thread-pool enqueue) acts
+ * as a memory barrier between the submitter and the completion handler.
+ * TSAN cannot model the kernel- or thread-pool-mediated handoff, so we
+ * annotate it explicitly.
  *
  * Usage:
- *   TSAN_RELEASE(ic) after io_uring_submit succeeds
- *   TSAN_ACQUIRE(ic) in CQE handler after loading ic from user_data
+ *   TSAN_RELEASE(ic) after submission succeeds
+ *   TSAN_ACQUIRE(ic) in the completion handler after retrieving ic from
+ *                    the completion record's user_data
  */
 
 #ifndef _REFFS_TSAN_IO_H
