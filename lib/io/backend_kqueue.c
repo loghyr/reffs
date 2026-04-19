@@ -756,6 +756,8 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 
 			TSAN_ACQUIRE(ic);
 
+			io_heartbeat_update_completions(1);
+
 			switch (ic->ic_op_type) {
 			case OP_TYPE_ACCEPT:
 				accept_and_dispatch(ic, rc);
@@ -1243,6 +1245,14 @@ static int kqueue_arm_heartbeat_timer(struct ring_context *rc,
 
 		LOG("kqueue_arm_heartbeat_timer: kevent: %s",
 		    strerror(saved_errno));
+		/*
+		 * Destroy ic here rather than leaking it.  The caller
+		 * (io_schedule_heartbeat) doesn't have a handle to ic
+		 * after this returns, so if we don't clean up we leak
+		 * on every arm failure -- and repeated arm failures
+		 * silently kill the watchdog.
+		 */
+		io_context_destroy(ic);
 		return -saved_errno;
 	}
 
