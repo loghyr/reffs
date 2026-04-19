@@ -10,13 +10,21 @@
 
 /*
  * Portability shim: Linux-only errno codes used throughout reffs.
- * EREMOTEIO is glibc-specific; FreeBSD has no distinct code for
- * "remote I/O error".  Fall back to EIO so code that returns
- * -EREMOTEIO stays compilable.  Callers that need to distinguish
- * remote vs local I/O errors should not rely on this.
+ *
+ * EREMOTEIO and ENODATA are glibc-specific.  FreeBSD's ELAST is 97
+ * (EINTEGRITY), so we assign reffs-internal values well above that
+ * range — distinct from every POSIX/FreeBSD errno — so internal
+ * comparisons like `if (ret == -EREMOTEIO)` continue to work.
+ *
+ * These values are reffs-internal only: if an error ever needs to
+ * cross a boundary (syscall return, NFS wire, kernel), coerce it to
+ * a POSIX errno (EIO for EREMOTEIO, ENOATTR for ENODATA).
  */
 #ifndef EREMOTEIO
-#define EREMOTEIO EIO
+#define EREMOTEIO 198
+#endif
+#ifndef ENODATA
+#define ENODATA   199
 #endif
 
 #include <stdio.h>
