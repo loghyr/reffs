@@ -16,6 +16,7 @@ lib_LTLIBRARIES = libreffs_io.la
 
 # Backend-agnostic sources, always compiled.
 libreffs_io_la_SOURCES =	\
+	conn_info.c		\
 	context.c		\
 	lsnr.c			\
 	tls.c			\

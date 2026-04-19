@@ -853,12 +853,6 @@ struct rpc_trans *io_find_request_by_xid(uint32_t xid)
 	return NULL;
 }
 
-struct conn_info *io_conn_get(int fd)
-{
-	(void)fd;
-	return NULL;
-}
-
 int io_rpc_trans_cb(struct rpc_trans *rt)
 {
 	(void)rt;
@@ -867,11 +861,10 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 }
 
 /*
- * Heartbeat + connection-op accounting stubs.
- * Real implementations in heartbeat.c and connect.c on Linux.
- * On the FreeBSD kqueue backend, heartbeat is handled via
- * EVFILT_TIMER (already wired) and connection bookkeeping is
- * a separate refactor.
+ * Heartbeat accounting stubs.  On the FreeBSD kqueue backend the
+ * actual timer ticks are delivered via EVFILT_TIMER (already wired),
+ * so these counters are not yet consumed by anything.  Left as no-ops
+ * until the port gets real read/write completion handlers.
  */
 int io_heartbeat_init(struct ring_context *rc)
 {
@@ -895,44 +888,6 @@ void io_heartbeat_update_completions(uint64_t count)
 	(void)count;
 }
 
-int io_conn_remove_read_op(int fd)
-{
-	(void)fd;
-	return 0;
-}
-
-int io_conn_remove_write_op(int fd)
-{
-	(void)fd;
-	return 0;
-}
-
-int io_conn_remove_accept_op(int fd)
-{
-	(void)fd;
-	return 0;
-}
-
-int io_conn_add_read_op(int fd) { (void)fd; return 0; }
-int io_conn_add_write_op(int fd) { (void)fd; return 0; }
-int io_conn_add_accept_op(int fd) { (void)fd; return 0; }
-int io_conn_add_connect_op(int fd) { (void)fd; return 0; }
-int io_conn_remove_connect_op(int fd) { (void)fd; return 0; }
-int io_conn_set_error(int fd, int err) { (void)fd; (void)err; return 0; }
-bool io_conn_has_read_ops(int fd) { (void)fd; return false; }
-bool io_conn_has_write_ops(int fd) { (void)fd; return false; }
-bool io_conn_write_try_start(int fd, struct io_context *ic)
-{ (void)fd; (void)ic; return false; }
-void io_conn_update_state(int fd) { (void)fd; }
-bool io_conn_is_state(int fd, enum conn_state state)
-{ (void)fd; (void)state; return false; }
-int io_conn_unregister(int fd) { (void)fd; return 0; }
-void io_conn_cleanup(void) {}
-int io_conn_check_timeouts(time_t t) { (void)t; return 0; }
-int io_conn_init(void) { return 0; }
-void io_conn_dump(int fd) { (void)fd; }
-void io_conn_dump_all(void) {}
-int io_socket_close(int fd, int err) { (void)err; return close(fd); }
 void io_add_listener(int fd) { (void)fd; }
 void io_client_fd_register(int fd) { (void)fd; }
 void io_client_fd_unregister(int fd) { (void)fd; }
