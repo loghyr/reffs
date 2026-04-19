@@ -65,152 +65,28 @@
 #include "reffs/rpc.h"
 #include "reffs/task.h"
 #include "reffs/trace/io.h"
+#include "kqueue_common.h"
 #include "posix_shims.h"
 #include "tsan_io.h"
 
 /* ------------------------------------------------------------------ */
-/* struct ring_context -- kqueue variant                              */
+/* Per-op bookkeeping for aio                                          */
 /* ------------------------------------------------------------------ */
 
 /*
- * On Linux, struct ring_context wraps a struct io_uring.  On FreeBSD,
- * it wraps a kqueue fd.  Callers outside lib/io/ treat it as opaque
- * (ring.h forward-declares it), so the two backends can have entirely
- * different struct layouts.
+ * aio_read/aio_write need a struct aiocb that stays valid until
+ * completion; we pair it with a back-pointer to the io_context so
+ * the completion handler can dispatch correctly.
  *
- * rc_shutdown_pipe is the async-signal-safe wake-up channel: the
- * signal handler writes one byte to rc_shutdown_pipe[1] (write(2)
- * is in the POSIX async-signal-safe list); the main loop watches
- * rc_shutdown_pipe[0] via EVFILT_READ and drains on wake-up.  This
- * replaces EVFILT_USER + NOTE_TRIGGER (the kqueue-native approach)
- * because kevent(2) is NOT async-signal-safe on FreeBSD -- calling
- * it from a signal handler is undefined behavior.
- */
-struct ring_context {
-	int rc_kq_fd;
-	pthread_mutex_t rc_mutex;
-	int rc_shutdown_pipe[2]; /* [0] read end, [1] write end */
-};
-
-/*
- * Per-op bookkeeping.  aio_read/aio_write need a struct aiocb that
- * stays valid until completion; we pair it with a back-pointer to the
- * io_context so the completion handler can dispatch correctly.
+ * struct ring_context, the kqueue substrate (kq_setup / kq_teardown /
+ * globals), and io_handler_signal_shutdown live in lib/io/kqueue_common.{c,h}
+ * and are shared with the Darwin thread-pool backend.
  */
 struct aio_op {
 	struct aiocb ao_cb;
 	struct io_context *ao_ic;
 	struct ring_context *ao_rc; /* which backend this submitted to */
 };
-
-static struct ring_context *g_backend_rc;
-static struct ring_context *g_network_rc;
-
-void io_backend_set_global(struct ring_context *rc)
-{
-	g_backend_rc = rc;
-}
-
-struct ring_context *io_backend_get_global(void)
-{
-	return g_backend_rc;
-}
-
-struct ring_context *io_network_get_global(void)
-{
-	return g_network_rc;
-}
-
-/* ------------------------------------------------------------------ */
-/* ring_context lifecycle                                             */
-/* ------------------------------------------------------------------ */
-
-struct ring_context *ring_context_alloc(void)
-{
-	struct ring_context *rc = calloc(1, sizeof(*rc));
-
-	if (!rc)
-		return NULL;
-	rc->rc_kq_fd = -1;
-	rc->rc_shutdown_pipe[0] = -1;
-	rc->rc_shutdown_pipe[1] = -1;
-	return rc;
-}
-
-void ring_context_free(struct ring_context *rc)
-{
-	free(rc);
-}
-
-/* ------------------------------------------------------------------ */
-/* Shared kqueue setup: allocate kqueue fd + shutdown pipe, register   */
-/* the pipe read end with EVFILT_READ so the main loop wakes when the  */
-/* signal handler writes one byte.                                     */
-/* ------------------------------------------------------------------ */
-
-static int kq_setup(struct ring_context *rc, const char *tag)
-{
-	if (pthread_mutex_init(&rc->rc_mutex, NULL) != 0) {
-		LOG("%s: mutex init failed", tag);
-		return -1;
-	}
-
-	rc->rc_kq_fd = kqueue();
-	if (rc->rc_kq_fd < 0) {
-		LOG("%s: kqueue: %s", tag, strerror(errno));
-		goto err_mutex;
-	}
-
-	/* Pipe with O_NONBLOCK + O_CLOEXEC on both ends.  The
-	 * reffs_pipe_nb_cloexec shim uses pipe2 on platforms that have it
-	 * (Linux, FreeBSD) and pipe+fcntl on Darwin. */
-	if (reffs_pipe_nb_cloexec(rc->rc_shutdown_pipe) < 0) {
-		LOG("%s: pipe: %s", tag, strerror(errno));
-		goto err_kq;
-	}
-
-	struct kevent ke;
-
-	EV_SET(&ke, rc->rc_shutdown_pipe[0], EVFILT_READ,
-	       EV_ADD | EV_CLEAR, 0, 0, NULL);
-	if (kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL) < 0) {
-		LOG("%s: EVFILT_READ add (shutdown pipe): %s", tag,
-		    strerror(errno));
-		goto err_pipe;
-	}
-
-	TRACE("%s: kqueue=%d shutdown_pipe=(%d,%d)", tag, rc->rc_kq_fd,
-	      rc->rc_shutdown_pipe[0], rc->rc_shutdown_pipe[1]);
-	return 0;
-
-err_pipe:
-	close(rc->rc_shutdown_pipe[0]);
-	close(rc->rc_shutdown_pipe[1]);
-	rc->rc_shutdown_pipe[0] = rc->rc_shutdown_pipe[1] = -1;
-err_kq:
-	close(rc->rc_kq_fd);
-	rc->rc_kq_fd = -1;
-err_mutex:
-	pthread_mutex_destroy(&rc->rc_mutex);
-	return -1;
-}
-
-static void kq_teardown(struct ring_context *rc)
-{
-	if (rc->rc_shutdown_pipe[0] >= 0) {
-		close(rc->rc_shutdown_pipe[0]);
-		rc->rc_shutdown_pipe[0] = -1;
-	}
-	if (rc->rc_shutdown_pipe[1] >= 0) {
-		close(rc->rc_shutdown_pipe[1]);
-		rc->rc_shutdown_pipe[1] = -1;
-	}
-	if (rc->rc_kq_fd >= 0) {
-		close(rc->rc_kq_fd);
-		rc->rc_kq_fd = -1;
-	}
-	pthread_mutex_destroy(&rc->rc_mutex);
-}
 
 /* ------------------------------------------------------------------ */
 /* Backend ring setup / teardown                                      */
@@ -511,7 +387,7 @@ int io_handler_init(struct ring_context *rc,
 	int ret = kq_setup(rc, "io_handler_init");
 
 	if (ret == 0)
-		g_network_rc = rc;
+		io_network_set_global(rc);
 	return ret;
 }
 
@@ -521,29 +397,8 @@ void io_handler_fini(struct ring_context *rc)
 	io_net_state_fini();
 }
 
-void io_handler_stop(void) {}
-
-/*
- * Async-signal-safe shutdown wakeup.  write(2) is on the POSIX list
- * of async-signal-safe functions; kevent(2) is not.  Write a single
- * byte to each ring's shutdown pipe -- the main loop's EVFILT_READ
- * on the pipe fires, the loop observes the updated running flag,
- * and breaks out.  EAGAIN on a full pipe buffer is OK: the first
- * byte already pending delivers the wake-up.
- */
-void io_handler_signal_shutdown(void)
-{
-	struct ring_context *rings[] = { g_network_rc, g_backend_rc };
-	static const char wake = 'x';
-
-	for (unsigned i = 0; i < sizeof(rings) / sizeof(rings[0]); i++) {
-		struct ring_context *rc = rings[i];
-
-		if (!rc || rc->rc_shutdown_pipe[1] < 0)
-			continue;
-		(void)write(rc->rc_shutdown_pipe[1], &wake, 1);
-	}
-}
+/* io_handler_stop and io_handler_signal_shutdown live in
+ * lib/io/kqueue_common.c (shared with the Darwin backend). */
 
 /* ------------------------------------------------------------------ */
 /* accept(2) via EVFILT_READ                                          */

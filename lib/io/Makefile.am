@@ -42,4 +42,11 @@ endif
 
 if IO_BACKEND_KQUEUE
 libreffs_io_la_SOURCES += backend_kqueue.c
+libreffs_io_la_SOURCES += kqueue_common.c
+endif
+
+if IO_BACKEND_DARWIN
+libreffs_io_la_SOURCES += kqueue_common.c
+# backend_darwin.c and kqueue_socket.c wired in by later commits
+# (commits 5-7) of the macOS backend series.
 endif
