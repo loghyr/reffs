@@ -28,6 +28,7 @@
 #include "reffs/log.h"
 #include "reffs/network.h"
 #include "reffs/ring.h"
+#include "ring_internal.h"
 #include "tsan_uring.h"
 #include "reffs/rpc.h"
 #include "reffs/task.h"

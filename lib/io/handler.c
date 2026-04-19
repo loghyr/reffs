@@ -27,6 +27,7 @@
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/ring.h"
+#include "ring_internal.h"
 #include "tsan_uring.h"
 #include "reffs/rpc.h"
 #include "reffs/trace/io.h"

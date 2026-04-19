@@ -153,8 +153,8 @@ int main(int argc, char *argv[])
 	int port = NFS_PORT;
 	int opt;
 
-	struct ring_context rc;
-	struct ring_context rc_backend;
+	struct ring_context *rc = NULL;
+	struct ring_context *rc_backend = NULL;
 	bool rc_backend_inited = false;
 	pthread_t backend_thread;
 	bool backend_thread_started = false;
@@ -348,18 +348,28 @@ int main(int argc, char *argv[])
 		ss->ss_nflavors = 1;
 	}
 
+	rc = ring_context_alloc();
+	rc_backend = ring_context_alloc();
+	if (!rc || !rc_backend) {
+		LOG("ring_context_alloc failed");
+		exit_code = 1;
+		goto out;
+	}
+
 	// Initialize IO handler
-	if (io_handler_init(&rc, cfg.tls_cert, cfg.tls_key, NULL) < 0) {
-		return 1;
+	if (io_handler_init(rc, cfg.tls_cert, cfg.tls_key, NULL) < 0) {
+		exit_code = 1;
+		goto out;
 	}
 
 	// Initialize backend file-I/O ring
-	if (io_backend_init(&rc_backend) < 0) {
-		io_handler_fini(&rc);
-		return 1;
+	if (io_backend_init(rc_backend) < 0) {
+		io_handler_fini(rc);
+		exit_code = 1;
+		goto out;
 	}
 	rc_backend_inited = true;
-	io_backend_set_global(&rc_backend);
+	io_backend_set_global(rc_backend);
 
 	// Set up protocol handlers
 	if (nfs4_protocol_register()) {
@@ -607,7 +617,7 @@ int main(int argc, char *argv[])
 	}
 
 	io_add_listener(lsnr_ipv4_nfs_fd);
-	io_request_accept_op(lsnr_ipv4_nfs_fd, NULL, &rc);
+	io_request_accept_op(lsnr_ipv4_nfs_fd, NULL, rc);
 
 	lsnr_ipv6_nfs_fd = io_lsnr_setup_ipv6(port);
 	if (lsnr_ipv6_nfs_fd < 0) {
@@ -617,7 +627,7 @@ int main(int argc, char *argv[])
 	}
 
 	io_add_listener(lsnr_ipv6_nfs_fd);
-	io_request_accept_op(lsnr_ipv6_nfs_fd, NULL, &rc);
+	io_request_accept_op(lsnr_ipv6_nfs_fd, NULL, rc);
 
 	lsnr_ipv4_probe_fd = io_lsnr_setup_ipv4(PROBE_PORT);
 	if (lsnr_ipv4_probe_fd < 0) {
@@ -627,7 +637,7 @@ int main(int argc, char *argv[])
 	}
 
 	io_add_listener(lsnr_ipv4_probe_fd);
-	io_request_accept_op(lsnr_ipv4_probe_fd, NULL, &rc);
+	io_request_accept_op(lsnr_ipv4_probe_fd, NULL, rc);
 
 	lsnr_ipv6_probe_fd = io_lsnr_setup_ipv6(PROBE_PORT);
 	if (lsnr_ipv6_probe_fd < 0) {
@@ -637,7 +647,7 @@ int main(int argc, char *argv[])
 	}
 
 	io_add_listener(lsnr_ipv6_probe_fd);
-	io_request_accept_op(lsnr_ipv6_probe_fd, NULL, &rc);
+	io_request_accept_op(lsnr_ipv6_probe_fd, NULL, rc);
 
 	/* aggressive cleanup of old registrations */
 	for (int v = 1; v <= 4; v++) {
@@ -729,7 +739,7 @@ int main(int argc, char *argv[])
 
 	// Spawn backend file-I/O ring thread
 	struct backend_thread_args bta = { .running = &running,
-					   .rc = &rc_backend };
+					   .rc = rc_backend };
 	if (pthread_create(&backend_thread, NULL, backend_thread_fn, &bta) !=
 	    0) {
 		LOG("Failed to create backend io_uring thread");
@@ -740,7 +750,7 @@ int main(int argc, char *argv[])
 
 	// Run the main IO processing loop
 
-	io_handler_main_loop(&running, &rc);
+	io_handler_main_loop(&running, rc);
 
 	/*
 	 * Shutdown ordering:
@@ -776,7 +786,7 @@ int main(int argc, char *argv[])
 
 	trace_lifecycle_shutdown(__func__, __LINE__,
 				 "draining worker and backend threads");
-	io_handler_fini(&rc);
+	io_handler_fini(rc);
 
 	pthread_join(backend_thread, NULL);
 	backend_thread_started = false;
@@ -798,7 +808,10 @@ out:
 	pmap_unset(NFS4_PROGRAM, NFS_V4);
 
 	if (rc_backend_inited)
-		io_backend_fini(&rc_backend);
+		io_backend_fini(rc_backend);
+
+	ring_context_free(rc);
+	ring_context_free(rc_backend);
 
 	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
 
