@@ -716,7 +716,35 @@ void io_conn_dump_all(void)
 int io_conn_check_timeouts(time_t timeout_seconds)
 {
 	time_t now = time(NULL);
-	int closed = 0;
+	/*
+	 * Collect timed-out fds under conn_mutex, then release and close
+	 * each via io_socket_close() outside the mutex.  Two reasons:
+	 *
+	 *  1. close(2) under conn_mutex can block indefinitely under
+	 *     memory pressure or in the middle of kernel socket teardown;
+	 *     every other conn_info lookup in the process stalls while we
+	 *     wait.  Release the mutex first.
+	 *
+	 *  2. The original code used raw close(fd) + manual ci_state flip,
+	 *     which left conn_buffers[fd % MAX_CONNECTIONS] populated --
+	 *     a buffer_state leak.  io_socket_close() calls
+	 *     io_client_fd_unregister() which frees the buffer_state
+	 *     properly.
+	 *
+	 * Race note: between the scan and the close, another thread
+	 * could accept a new connection whose fd hashes to the same
+	 * conn_info slot.  For timed-out-idle connections this is
+	 * vanishingly unlikely (no completions fire on a truly idle fd),
+	 * and the worst case is closing a newly-accepted client which
+	 * will reconnect.  If this race ever materializes under real
+	 * load, the fix is a per-slot CLOSING state to block reuse; for
+	 * now the simplicity is worth it.
+	 *
+	 * Stack array sized at MAX_CONNECTIONS is fine: ~4 KB on the
+	 * heartbeat thread, which does not recurse.
+	 */
+	int to_close[MAX_CONNECTIONS];
+	int n_to_close = 0;
 
 	pthread_mutex_lock(&conn_mutex);
 
@@ -728,23 +756,17 @@ int io_conn_check_timeouts(time_t timeout_seconds)
 				LOG("Connection fd=%d timed out (%ld seconds inactive)",
 				    connections[i]->ci_fd,
 				    now - connections[i]->ci_last_activity);
-
-				close(connections[i]->ci_fd);
-
-				connections[i]->ci_state = CONN_UNUSED;
-				connections[i]->ci_fd = -1;
-				connections[i]->ci_read_count = 0;
-				connections[i]->ci_write_count = 0;
-				connections[i]->ci_accept_count = 0;
-				connections[i]->ci_connect_count = 0;
-
-				closed++;
+				to_close[n_to_close++] = connections[i]->ci_fd;
 			}
 		}
 	}
 
 	pthread_mutex_unlock(&conn_mutex);
-	return closed;
+
+	for (int i = 0; i < n_to_close; i++)
+		io_socket_close(to_close[i], ETIMEDOUT);
+
+	return n_to_close;
 }
 
 /*
