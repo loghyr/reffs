@@ -819,6 +819,50 @@ int io_request_read_op(int fd, struct connection_info *ci,
 	return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Bookkeeping stubs                                                   */
+/*                                                                     */
+/* On Linux these functions live in handler.c/connect.c/write.c and    */
+/* implement shared state (pending RPC request table, conn_info        */
+/* registry, RPC reply writer).  The implementations are mostly        */
+/* backend-agnostic but are currently compiled only when the liburing  */
+/* backend is active; splitting them into a shared compilation unit    */
+/* is a separate refactor.  For the FreeBSD build, provide stubs so    */
+/* the binary links.  NFSv4 callback paths that call these will        */
+/* return errors at runtime until the real implementations land.       */
+/* ------------------------------------------------------------------ */
+
+int io_register_request(struct rpc_trans *rt)
+{
+	(void)rt;
+	return ENOSYS;
+}
+
+int io_unregister_request(uint32_t xid)
+{
+	(void)xid;
+	return ENOSYS;
+}
+
+struct rpc_trans *io_find_request_by_xid(uint32_t xid)
+{
+	(void)xid;
+	return NULL;
+}
+
+struct conn_info *io_conn_get(int fd)
+{
+	(void)fd;
+	return NULL;
+}
+
+int io_rpc_trans_cb(struct rpc_trans *rt)
+{
+	(void)rt;
+	LOG("io_rpc_trans_cb: not yet implemented on kqueue backend");
+	return -ENOSYS;
+}
+
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 			struct connection_info *ci, struct ring_context *rc)
 {
