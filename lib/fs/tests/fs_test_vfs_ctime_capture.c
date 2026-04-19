@@ -29,7 +29,9 @@
 #endif
 
 #include <sys/stat.h>
+#if defined(__linux__)
 #include <sys/sysmacros.h>
+#endif
 #include <rpc/rpc.h>
 
 #include "fs_test_harness.h"

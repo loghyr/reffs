@@ -17,7 +17,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#if defined(__linux__)
 #include <sys/sysmacros.h>
+#endif
 #include <rpc/xdr.h>
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
