@@ -33,6 +33,18 @@ AC_PROG_CC
 AC_USE_SYSTEM_EXTENSIONS
 m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 
+# FreeBSD installs headers and libraries under /usr/local by default
+# and the base toolchain does not search there unless told to.  Add
+# the standard pkg path so subsequent AC_CHECK_HEADER / AC_CHECK_LIB
+# probes can find ports-installed dependencies (libuuid,
+# HdrHistogram_c, etc.).
+AC_CANONICAL_HOST
+AS_CASE([$host_os],
+    [freebsd*|dragonfly*], [
+        CPPFLAGS="-I/usr/local/include $CPPFLAGS"
+        LDFLAGS="-L/usr/local/lib $LDFLAGS"
+    ])
+
 AC_MSG_CHECKING([for C11 support])
 dnl Strip out the freaking -O2 by default!
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([],[])],
@@ -66,8 +78,24 @@ PKG_CHECK_MODULES(URCU, liburcu, ,
 PKG_CHECK_MODULES(URCU_CDS, liburcu-cds, ,
     [AC_MSG_ERROR([Could not configure liburcu-cds support.])])
 
-PKG_CHECK_MODULES(TIRPC, libtirpc, ,
-    [AC_MSG_ERROR([Could not configure libtirpc support.])])
+# SunRPC lives in glibc's legacy tree on Linux (deprecated since
+# glibc 2.26) and is typically replaced by libtirpc.  FreeBSD ships
+# SunRPC in base libc, with identical <rpc/*.h> include paths and no
+# separate library.  Try libtirpc first; on failure, fall back to
+# empty CFLAGS/LIBS which makes the RPC calls resolve against base
+# libc.  Explicit detection of FreeBSD via host_os lets us skip the
+# misleading "Could not configure libtirpc" error there.
+AS_CASE([$host_os],
+    [freebsd*|dragonfly*], [
+        TIRPC_CFLAGS=""
+        TIRPC_LIBS=""
+        AC_SUBST([TIRPC_CFLAGS])
+        AC_SUBST([TIRPC_LIBS])
+    ],
+    [
+        PKG_CHECK_MODULES(TIRPC, libtirpc, ,
+            [AC_MSG_ERROR([Could not configure libtirpc support.])])
+    ])
 
 PKG_CHECK_MODULES([CHECK], [check >= 0.15.2])
 
@@ -76,7 +104,14 @@ AC_SUBST(PTHREAD_CFLAGS)
 
 PKG_CHECK_MODULES(XXHASH, libxxhash, , [AC_MSG_ERROR([Could not configure xxhash support.])])
 
-PKG_CHECK_MODULES(FUSE, fuse, , [AC_MSG_ERROR([Could not configure fuse support.])])
+# libfuse pkg-config module name differs by platform: "fuse" on
+# Linux (libfuse2/libfuse3 via the fuse or fuse3 module) and "fuse3"
+# on FreeBSD (fusefs-libs3).  Try both.
+PKG_CHECK_MODULES(FUSE, fuse3, , [
+    PKG_CHECK_MODULES(FUSE, fuse, , [
+        AC_MSG_ERROR([Could not configure fuse support (tried fuse3, fuse).])
+    ])
+])
 
 # Check for programs
 AC_PATH_PROG([GIT], [git], [no])
@@ -141,9 +176,9 @@ AC_SUBST([ZSTD_LIBS])
 
 # Check for io_uring support
 AC_ARG_ENABLE([linux-io_uring],
-    [AS_HELP_STRING([--enable-linux-io_uring], [enable Linux io_uring support @<:@default=yes@:>@])],
+    [AS_HELP_STRING([--enable-linux-io_uring], [enable Linux io_uring support @<:@default=auto@:>@])],
     [],
-    [enable_linux_io_uring=yes])
+    [enable_linux_io_uring=auto])
 
 # Check for strict POSIX support
 AC_ARG_ENABLE([strict-posix],
@@ -364,8 +399,25 @@ else
 fi
 
 # Check for HdrHistogram_c
-AC_CHECK_HEADERS([hdr/hdr_histogram.h], [], [AC_MSG_ERROR([hdr_histogram.h not found. Please install HdrHistogram_c-devel])])
-AC_CHECK_LIB([hdr_histogram], [hdr_init], [], [AC_MSG_ERROR([libhdr_histogram not found. Please install HdrHistogram_c])])
+# HdrHistogram_c is packaged on most Linux distros (HdrHistogram_c-devel)
+# but not in FreeBSD ports.  Treat as optional: define HAVE_HDR_HISTOGRAM
+# when present; source files gate histogram code with #ifdef.  If
+# missing on Linux, emit a warning -- histograms are soft telemetry.
+AC_CHECK_HEADERS([hdr/hdr_histogram.h], [
+    AC_DEFINE([HAVE_HDR_HISTOGRAM], [1],
+              [Define if HdrHistogram_c is available])
+], [
+    AC_MSG_WARN([hdr_histogram.h not found; histogram telemetry will be disabled.  On Linux, install HdrHistogram_c-devel.])
+])
+AS_IF([test "x$ac_cv_header_hdr_hdr_histogram_h" = "xyes"], [
+    AC_CHECK_LIB([hdr_histogram], [hdr_init], [
+        HDR_HISTOGRAM_LIBS="-lhdr_histogram"
+    ], [
+        AC_MSG_WARN([libhdr_histogram library not found; histogram telemetry will be disabled.])
+        ac_cv_header_hdr_hdr_histogram_h=no
+    ])
+])
+AC_SUBST([HDR_HISTOGRAM_LIBS])
 
 # Check for OpenSSL
 PKG_CHECK_MODULES([OPENSSL], [openssl >= 1.0.2], [],
