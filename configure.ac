@@ -49,13 +49,16 @@ AS_CASE([$host_os],
         # get bool_t in scope.  Linux's libtirpc pulls types.h in from
         # xdr.h itself; FreeBSD's base libc xdr.h does not.
         CPPFLAGS="-include rpc/rpc.h $CPPFLAGS"
-        # EREMOTEIO is a glibc-specific errno.  FreeBSD has no
-        # distinct "remote I/O error" code; alias to EIO so all
-        # -EREMOTEIO return statements compile.
-        CPPFLAGS="-DEREMOTEIO=EIO $CPPFLAGS"
-        # ENODATA is also glibc-only ("no data available"); FreeBSD
-        # has ENOATTR in the same role (especially for xattrs).
-        CPPFLAGS="-DENODATA=ENOATTR $CPPFLAGS"
+        # EREMOTEIO and ENODATA are glibc-specific.  FreeBSD's
+        # ELAST is 97 (EINTEGRITY), so we assign reffs-internal
+        # values safely above that range — distinct from every
+        # POSIX/FreeBSD errno — so internal comparisons like
+        # `if (ret == -EREMOTEIO)` continue to work.  These values
+        # must never leave reffs: coerce to EIO / ENOATTR at any
+        # boundary (syscall return, NFS wire).  Must match the
+        # fallback in lib/include/reffs/log.h.
+        CPPFLAGS="-DEREMOTEIO=198 $CPPFLAGS"
+        CPPFLAGS="-DENODATA=199   $CPPFLAGS"
         # backtrace(3) / backtrace_symbols(3) are in glibc on Linux
         # but in a separate libexecinfo on FreeBSD.  Link it
         # globally so every binary gets the symbols.
