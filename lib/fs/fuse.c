@@ -146,14 +146,29 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	if (ret)
 		return ret;
 
+	/*
+	 * libfuse2 fuse_fill_dir_t takes (buf, name, stat, off);
+	 * libfuse3 added a fifth enum fuse_fill_dir_flags argument.
+	 * configure.ac probes fuse3 before fuse, so either is possible
+	 * depending on what's installed; gate on FUSE_MAJOR_VERSION
+	 * (defined in fuse_common.h since both 2.x and 3.x).
+	 */
+#if FUSE_MAJOR_VERSION >= 3
+#define REFFS_FUSE_FILL(buf, name, stbuf, off) \
+	filler((buf), (name), (stbuf), (off), 0)
+#else
+#define REFFS_FUSE_FILL(buf, name, stbuf, off) \
+	filler((buf), (name), (stbuf), (off))
+#endif
+
 	if (offset == 0) {
 		fill_stat(&st, nm->nm_dirent->rd_inode);
-		filler(buffer, ".", &st, ++offset);
+		REFFS_FUSE_FILL(buffer, ".", &st, ++offset);
 		if (nm->nm_dirent->rd_parent)
 			fill_stat(&st, nm->nm_dirent->rd_parent->rd_inode);
 		else
 			fill_stat(&st, nm->nm_dirent->rd_inode);
-		filler(buffer, "..", &st, ++offset);
+		REFFS_FUSE_FILL(buffer, "..", &st, ++offset);
 	}
 
 	rcu_read_lock();
@@ -162,10 +177,12 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 		if (cur++ < offset)
 			continue;
 		fill_stat(&st, rd->rd_inode);
-		ret = filler(buffer, rd->rd_name, &st, cur);
+		ret = REFFS_FUSE_FILL(buffer, rd->rd_name, &st, cur);
 		if (ret)
 			break;
 	}
+
+#undef REFFS_FUSE_FILL
 	rcu_read_unlock();
 
 	name_match_free(nm);
