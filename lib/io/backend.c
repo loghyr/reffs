@@ -44,6 +44,7 @@
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/ring.h"
+#include "ring_internal.h"
 #include "reffs/rpc.h"
 #include "reffs/task.h"
 
@@ -332,4 +333,26 @@ int io_request_backend_pwrite(int fd, const void *buf, size_t len, off_t offset,
 			    (uint64_t)offset);
 
 	return submit_backend_op(ic, sqe, rc);
+}
+
+/* ------------------------------------------------------------------ */
+/* ring_context lifecycle                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Allocator for the opaque ring_context.  Callers outside lib/io/
+ * cannot stack-allocate because the struct is incomplete in the
+ * public header (see lib/include/reffs/ring.h).  The caller follows
+ * with io_handler_init() or io_backend_init() to populate the struct;
+ * ring_context_free() expects the caller to have already torn down
+ * the struct via the matching fini.
+ */
+struct ring_context *ring_context_alloc(void)
+{
+	return calloc(1, sizeof(struct ring_context));
+}
+
+void ring_context_free(struct ring_context *rc)
+{
+	free(rc);
 }

@@ -20,6 +20,7 @@
 #include "reffs/io.h"
 #include "reffs/log.h"
 #include "reffs/ring.h"
+#include "ring_internal.h"
 
 // Heartbeat interval in seconds
 #define HEARTBEAT_INTERVAL 1
