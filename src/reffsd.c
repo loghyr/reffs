@@ -10,8 +10,12 @@
 #include <getopt.h>
 #include <limits.h>
 #include <sys/stat.h>
+#ifdef __FreeBSD__
+#include <sys/sysctl.h>
+#endif
 #include <netinet/in.h>
 #include <rpc/pmap_clnt.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -277,6 +281,58 @@ int main(int argc, char *argv[])
 		LOG("reffsd %s (git %s) starting -- role=%s port=%d",
 		    PACKAGE_VERSION, REFFS_GIT_VERSION, role, cfg.port);
 	}
+
+#ifdef __FreeBSD__
+	/*
+	 * FreeBSD POSIX AIO limits are configurable via sysctl.  The
+	 * kqueue backend uses aio_read / aio_write for file I/O; under
+	 * concurrent NFS load with many inflight ops the defaults can
+	 * be hit silently, with aio_* returning EAGAIN until in-flight
+	 * ops complete.
+	 *
+	 * FreeBSD 15 ships two relevant limits:
+	 *
+	 *   vfs.aio.max_aio_per_proc    per-process concurrent AIO ops
+	 *   vfs.aio.max_aio_queue       system-wide queued AIO ops
+	 *
+	 * Defaults on FreeBSD 15 RELEASE are 32 and 1024 respectively --
+	 * far below what a concurrent NFS workload wants.  Warn at
+	 * startup so operators can raise before hitting the ceiling.
+	 *
+	 * Older sysctl names (kern.maxaio, kern.maxaiopp) are not
+	 * present on FreeBSD 15 and are not probed.
+	 */
+	{
+		const struct {
+			const char *name;
+			unsigned int recommended;
+		} probes[] = {
+			{ "vfs.aio.max_aio_per_proc", 256 },
+			{ "vfs.aio.max_aio_queue", 4096 },
+		};
+		for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+			unsigned int value = 0;
+			size_t len = sizeof(value);
+			if (sysctlbyname(probes[i].name, &value, &len, NULL, 0) !=
+			    0) {
+				TRACE("FreeBSD %s not probeable: %s",
+				      probes[i].name, strerror(errno));
+				continue;
+			}
+			if (value < probes[i].recommended) {
+				LOG("FreeBSD %s=%u is below recommended %u for "
+				    "high-load NFS; raise via `sysctl -w %s=%u` "
+				    "(or add to /etc/sysctl.conf for persistence) if you "
+				    "see EAGAIN storms under concurrent file I/O",
+				    probes[i].name, value, probes[i].recommended,
+				    probes[i].name, probes[i].recommended);
+			} else {
+				TRACE("FreeBSD %s=%u (>= %u)", probes[i].name, value,
+				      probes[i].recommended);
+			}
+		}
+	}
+#endif
 
 	/*
 	 * If the config specifies trace_categories, it is authoritative:
