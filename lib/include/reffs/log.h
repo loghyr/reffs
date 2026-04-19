@@ -6,6 +6,19 @@
 #ifndef _REFFS_LOG_H
 #define _REFFS_LOG_H
 
+#include <errno.h>
+
+/*
+ * Portability shim: Linux-only errno codes used throughout reffs.
+ * EREMOTEIO is glibc-specific; FreeBSD has no distinct code for
+ * "remote I/O error".  Fall back to EIO so code that returns
+ * -EREMOTEIO stays compilable.  Callers that need to distinguish
+ * remote vs local I/O errors should not rely on this.
+ */
+#ifndef EREMOTEIO
+#define EREMOTEIO EIO
+#endif
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>

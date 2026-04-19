@@ -61,6 +61,7 @@ time_t probe_time1_to_time_t(struct probe_time1 pt)
 }
 
 #define BUCKET_COUNT 5
+#ifdef HAVE_HDR_HISTOGRAM
 static const int64_t rpc_bucket_boundaries[BUCKET_COUNT] = {
 	1000000, // 1ms
 	10000000, // 10ms
@@ -70,7 +71,6 @@ static const int64_t rpc_bucket_boundaries[BUCKET_COUNT] = {
 	// Last bucket is >=10s
 };
 
-#ifdef HAVE_HDR_HISTOGRAM
 void calculate_bucket_counts(struct hdr_histogram *hh, int64_t *counts)
 {
 	struct hdr_iter iter;
