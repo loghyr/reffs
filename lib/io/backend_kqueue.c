@@ -698,8 +698,12 @@ static void connect_and_dispatch(struct io_context *ic,
 }
 
 /* Forward declarations; definitions follow the main loop. */
-static void read_and_dispatch(struct io_context *ic, struct ring_context *rc);
-static void write_and_dispatch(struct io_context *ic, struct ring_context *rc);
+static void read_and_dispatch(struct io_context *ic,
+			      const struct kevent *ke,
+			      struct ring_context *rc);
+static void write_and_dispatch(struct io_context *ic,
+			       const struct kevent *ke,
+			       struct ring_context *rc);
 static void heartbeat_and_dispatch(struct io_context *ic,
 				   struct ring_context *rc);
 
@@ -759,10 +763,10 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 				connect_and_dispatch(ic, rc);
 				break;
 			case OP_TYPE_READ:
-				read_and_dispatch(ic, rc);
+				read_and_dispatch(ic, ke, rc);
 				break;
 			case OP_TYPE_WRITE:
-				write_and_dispatch(ic, rc);
+				write_and_dispatch(ic, ke, rc);
 				break;
 			case OP_TYPE_HEARTBEAT:
 				heartbeat_and_dispatch(ic, rc);
@@ -1001,21 +1005,97 @@ int io_resubmit_read(struct io_context *ic, struct ring_context *rc)
 /* Read/write completion handlers (called from main loop dispatch)    */
 /* ------------------------------------------------------------------ */
 
-static void read_and_dispatch(struct io_context *ic, struct ring_context *rc)
+/*
+ * read_and_dispatch -- EVFILT_READ fired on this connection.  Call
+ * read(2) synchronously and dispatch to the shared io_handle_read.
+ *
+ * EAGAIN: re-arm EVFILT_READ with the same ic and return.  The kernel
+ * spuriously fires EVFILT_READ under load; re-arming rather than
+ * dropping the read gives us correctness at a small perf cost.
+ *
+ * EV_EOF with no data: the peer closed cleanly.  Pass 0 so
+ * io_handle_read takes the "connection closed" branch (it treats any
+ * non-positive result as close).
+ *
+ * EV_EOF with data still buffered: kqueue guarantees ke->data bytes
+ * are readable before EOF; a single read(2) returns them and we
+ * dispatch normally.  The next iteration gets ke->data == 0 + EV_EOF
+ * and the close-path runs then.
+ */
+static void read_and_dispatch(struct io_context *ic,
+			      const struct kevent *ke,
+			      struct ring_context *rc)
 {
 	ssize_t nread = read(ic->ic_fd, ic->ic_buffer, BUFFER_SIZE);
-	int result = (nread < 0) ? -errno : (int)nread;
+	int result;
+
+	if (nread < 0) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			/* Spurious wakeup -- re-arm and wait again.
+			 * io_resubmit_read does not modify ic state apart
+			 * from the filter registration. */
+			if (io_resubmit_read(ic, rc) != 0) {
+				io_handle_read(ic, -errno, rc);
+			}
+			return;
+		}
+		result = -errno;
+	} else if (nread == 0 && (ke->flags & EV_EOF)) {
+		result = 0; /* clean close */
+	} else {
+		result = (int)nread;
+	}
 
 	io_handle_read(ic, result, rc);
 }
 
-static void write_and_dispatch(struct io_context *ic, struct ring_context *rc)
+/*
+ * write_and_dispatch -- EVFILT_WRITE fired on this connection.  Call
+ * write(2) synchronously and dispatch to the shared io_handle_write.
+ *
+ * EAGAIN: re-arm EVFILT_WRITE with the same ic (no allocation, no
+ * state change) and return.  The kernel buffer filled between the
+ * readiness notification and our write(2); the next EVFILT_WRITE
+ * will let us retry.
+ *
+ * EV_EOF: peer closed; treat as -ECONNRESET so io_handle_write goes
+ * through io_socket_close.  (write(2) may also succeed with zero
+ * bytes, handled via the "bytes_written <= 0" branch in io_handle_write.)
+ *
+ * ke->fflags carries the socket-level errno when kqueue has one
+ * (e.g. ECONNREFUSED on a connect + EVFILT_WRITE path).  We prefer it
+ * when set.
+ */
+static void write_and_dispatch(struct io_context *ic,
+			       const struct kevent *ke,
+			       struct ring_context *rc)
 {
+	if (ke->fflags != 0) {
+		io_handle_write(ic, -(int)ke->fflags, rc);
+		return;
+	}
+	if (ke->flags & EV_EOF) {
+		io_handle_write(ic, -ECONNRESET, rc);
+		return;
+	}
+
 	ssize_t nwritten = write(ic->ic_fd, ic->ic_buffer,
 				 ic->ic_expected_len);
-	int result = (nwritten < 0) ? -errno : (int)nwritten;
 
-	io_handle_write(ic, result, rc);
+	if (nwritten < 0) {
+		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			/* Kernel buffer full -- re-arm EVFILT_WRITE with the
+			 * same ic and wait for the next readiness. */
+			if (io_resubmit_write(ic, rc) != 0) {
+				io_handle_write(ic, -errno, rc);
+			}
+			return;
+		}
+		io_handle_write(ic, -errno, rc);
+		return;
+	}
+
+	io_handle_write(ic, (int)nwritten, rc);
 }
 
 static void heartbeat_and_dispatch(struct io_context *ic,
