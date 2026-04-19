@@ -507,6 +507,18 @@ else
 	CFLAGS="${COMMON_FLAGS} -Wall -Wextra -Wpedantic -g -O0"
 fi
 
+AS_CASE([$host_os],
+    [freebsd*|dragonfly*], [
+        # FreeBSD's liburcu headers use two C extensions that
+        # -Wpedantic flags under -std=c11:
+        #   - named variadic macros (GCC extension)
+        #   - zero-argument variadic macro invocations (C23, used
+        #     by liburcu's _uatomic_default_mo pattern)
+        # Suppress both warning classes rather than drop -Wpedantic
+        # entirely.
+        CFLAGS="${CFLAGS} -Wno-variadic-macros -Wno-c23-extensions"
+    ])
+
 AC_MSG_RESULT([C flags are ${CFLAGS}])
 
 AC_SUBST([DEBUG_ENABLED])
