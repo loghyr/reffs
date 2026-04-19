@@ -924,24 +924,77 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 }
 
 /*
- * io_resubmit_{write,read} -- stubs.  PR #7 commit 6 implements these
- * via kevent(EV_ADD|EV_ONESHOT, EVFILT_WRITE/EVFILT_READ) using the
- * existing ic as udata (no allocation).  Until then, callers hit
- * -ENOSYS; none are reachable on FreeBSD at this commit because
- * io_handle_read/write are still the log-and-drop stubs below.
+ * io_resubmit_write -- re-arm EVFILT_WRITE on ic->ic_fd with ic as
+ * udata (no allocation).  The main loop's write_and_dispatch will
+ * call write(2) when the socket is writable and then invoke
+ * io_handle_write with the byte count or -errno.
+ *
+ * The per-fd write gate (conn_info's ci_write_active + WRITE_OWNED)
+ * ensures at most one EVFILT_WRITE knote is registered per fd at
+ * any time, so this EV_ADD|EV_ONESHOT registration will not collide
+ * with another in-flight writer's knote.  (PR #7 addendum B2 has
+ * the proof; TLS-data submissions via io_do_tls are deferred to
+ * PR #8, which must extend the gate to cover them.)
  */
 int io_resubmit_write(struct io_context *ic, struct ring_context *rc)
 {
-	(void)ic;
-	(void)rc;
-	return -ENOSYS;
+	size_t remaining = ic->ic_buffer_len - ic->ic_position;
+	uint32_t chunk_size = (remaining > IO_MAX_WRITE_SIZE) ?
+				      IO_MAX_WRITE_SIZE :
+				      (uint32_t)remaining;
+
+	ic->ic_expected_len = chunk_size;
+
+	struct kevent ke;
+
+	EV_SET(&ke, ic->ic_fd, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, ic);
+
+	TSAN_RELEASE(ic);
+
+	pthread_mutex_lock(&rc->rc_mutex);
+	int ret = kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL);
+	pthread_mutex_unlock(&rc->rc_mutex);
+
+	if (ret < 0) {
+		int saved_errno = errno;
+
+		LOG("io_resubmit_write: kevent: %s", strerror(saved_errno));
+		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED)
+			io_socket_close(ic->ic_fd, saved_errno);
+		io_context_destroy(ic);
+		return -saved_errno;
+	}
+
+	return 0;
 }
 
+/*
+ * io_resubmit_read -- re-arm EVFILT_READ on ic->ic_fd with ic as
+ * udata.  The main loop's read_and_dispatch will call read(2) when
+ * the socket has data and invoke io_handle_read with bytes_read
+ * (or -errno / 0 for EOF).
+ */
 int io_resubmit_read(struct io_context *ic, struct ring_context *rc)
 {
-	(void)ic;
-	(void)rc;
-	return -ENOSYS;
+	struct kevent ke;
+
+	EV_SET(&ke, ic->ic_fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, ic);
+
+	TSAN_RELEASE(ic);
+
+	pthread_mutex_lock(&rc->rc_mutex);
+	int ret = kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL);
+	pthread_mutex_unlock(&rc->rc_mutex);
+
+	if (ret < 0) {
+		int saved_errno = errno;
+
+		LOG("io_resubmit_read: kevent: %s", strerror(saved_errno));
+		return -saved_errno;
+	}
+
+	io_context_update_time(ic);
+	return 0;
 }
 
 /* ------------------------------------------------------------------ */
