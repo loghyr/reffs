@@ -910,6 +910,100 @@ int io_conn_remove_accept_op(int fd)
 	return 0;
 }
 
+int io_conn_add_read_op(int fd) { (void)fd; return 0; }
+int io_conn_add_write_op(int fd) { (void)fd; return 0; }
+int io_conn_add_accept_op(int fd) { (void)fd; return 0; }
+int io_conn_add_connect_op(int fd) { (void)fd; return 0; }
+int io_conn_remove_connect_op(int fd) { (void)fd; return 0; }
+int io_conn_set_error(int fd, int err) { (void)fd; (void)err; return 0; }
+bool io_conn_has_read_ops(int fd) { (void)fd; return false; }
+bool io_conn_has_write_ops(int fd) { (void)fd; return false; }
+bool io_conn_write_try_start(int fd, struct io_context *ic)
+{ (void)fd; (void)ic; return false; }
+void io_conn_update_state(int fd) { (void)fd; }
+bool io_conn_is_state(int fd, enum conn_state state)
+{ (void)fd; (void)state; return false; }
+int io_conn_unregister(int fd) { (void)fd; return 0; }
+void io_conn_cleanup(void) {}
+int io_conn_check_timeouts(time_t t) { (void)t; return 0; }
+int io_conn_init(void) { return 0; }
+void io_conn_dump(int fd) { (void)fd; }
+void io_conn_dump_all(void) {}
+int io_socket_close(int fd, int err) { (void)err; return close(fd); }
+void io_add_listener(int fd) { (void)fd; }
+void io_client_fd_register(int fd) { (void)fd; }
+void io_client_fd_unregister(int fd) { (void)fd; }
+void io_check_for_listener_restart(int fd, struct connection_info *ci,
+				   struct ring_context *rc)
+{ (void)fd; (void)ci; (void)rc; }
+bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len)
+{ (void)bs; (void)data; (void)len; return false; }
+struct buffer_state *io_buffer_state_create(int fd)
+{ (void)fd; return NULL; }
+struct buffer_state *io_buffer_state_get(int fd)
+{ (void)fd; return NULL; }
+int io_send_request(struct rpc_trans *rt)
+{ (void)rt; return -ENOSYS; }
+int io_schedule_heartbeat(struct ring_context *rc)
+{ (void)rc; return 0; }
+
+/*
+ * Completion handlers.  Linux defines these in accept.c, connect.c,
+ * read.c, write.c -- all skipped on FreeBSD.  These process network
+ * I/O results: writing responses back, handling TLS handshakes,
+ * closing stale connections.  Porting them to kqueue-style
+ * synchronous read/write on readiness is the next substantial piece
+ * of the FreeBSD port.  Until then, log and drop.
+ */
+int io_handle_accept(struct io_context *ic, int client_fd,
+		     struct ring_context *rc)
+{
+	(void)client_fd;
+	(void)rc;
+	LOG("io_handle_accept: not yet implemented on kqueue backend");
+	io_context_destroy(ic);
+	return -ENOSYS;
+}
+
+int io_handle_connect(struct io_context *ic, int result,
+		      struct ring_context *rc)
+{
+	(void)result;
+	(void)rc;
+	LOG("io_handle_connect: not yet implemented on kqueue backend");
+	io_context_destroy(ic);
+	return -ENOSYS;
+}
+
+int io_handle_read(struct io_context *ic, int bytes_read,
+		   struct ring_context *rc)
+{
+	(void)bytes_read;
+	(void)rc;
+	LOG("io_handle_read: not yet implemented on kqueue backend");
+	io_context_destroy(ic);
+	return -ENOSYS;
+}
+
+int io_handle_write(struct io_context *ic, int bytes_written,
+		    struct ring_context *rc)
+{
+	(void)bytes_written;
+	(void)rc;
+	LOG("io_handle_write: not yet implemented on kqueue backend");
+	io_context_destroy(ic);
+	return -ENOSYS;
+}
+
+int io_handle_heartbeat(struct io_context *ic, int result,
+			struct ring_context *rc)
+{
+	(void)result;
+	(void)rc;
+	io_context_destroy(ic);
+	return 0;
+}
+
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 			struct connection_info *ci, struct ring_context *rc)
 {
