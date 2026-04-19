@@ -18,8 +18,11 @@
  *     EVFILT_READ / EVFILT_WRITE readiness notification from kqueue,
  *     at which point the backend calls accept(4)/connects-result and
  *     dispatches to io_handle_{accept,connect}.
- *   - poll/timeout/cancel use EVFILT_USER, EVFILT_TIMER, and
- *     aio_cancel+EV_DELETE respectively (see stubs below).
+ *   - timeout uses EVFILT_TIMER; cancel uses aio_cancel + EV_DELETE.
+ *     Shutdown is an async-signal-safe write to a pipe fd whose
+ *     read end is registered with EVFILT_READ.  kevent(2) is NOT
+ *     async-signal-safe on FreeBSD, so the idiomatic EVFILT_USER
+ *     NOTE_TRIGGER approach cannot be used from a signal handler.
  *
  * This commit implements the file-I/O subset (io_backend_init/fini,
  * io_request_backend_pread/pwrite, io_backend_main_loop).  Network
@@ -69,14 +72,18 @@
  * (ring.h forward-declares it), so the two backends can have entirely
  * different struct layouts.
  *
- * rc_shutdown_user_ident is the ident for an EVFILT_USER event that
- * wakes the main loop from kevent() on shutdown.  Linux uses an
- * eventfd for the same purpose; FreeBSD has kqueue-native user events.
+ * rc_shutdown_pipe is the async-signal-safe wake-up channel: the
+ * signal handler writes one byte to rc_shutdown_pipe[1] (write(2)
+ * is in the POSIX async-signal-safe list); the main loop watches
+ * rc_shutdown_pipe[0] via EVFILT_READ and drains on wake-up.  This
+ * replaces EVFILT_USER + NOTE_TRIGGER (the kqueue-native approach)
+ * because kevent(2) is NOT async-signal-safe on FreeBSD -- calling
+ * it from a signal handler is undefined behavior.
  */
 struct ring_context {
 	int rc_kq_fd;
 	pthread_mutex_t rc_mutex;
-	uintptr_t rc_shutdown_user_ident;
+	int rc_shutdown_pipe[2]; /* [0] read end, [1] write end */
 };
 
 /*
@@ -119,6 +126,8 @@ struct ring_context *ring_context_alloc(void)
 	if (!rc)
 		return NULL;
 	rc->rc_kq_fd = -1;
+	rc->rc_shutdown_pipe[0] = -1;
+	rc->rc_shutdown_pipe[1] = -1;
 	return rc;
 }
 
@@ -128,52 +137,85 @@ void ring_context_free(struct ring_context *rc)
 }
 
 /* ------------------------------------------------------------------ */
-/* Backend ring setup / teardown                                      */
+/* Shared kqueue setup: allocate kqueue fd + shutdown pipe, register   */
+/* the pipe read end with EVFILT_READ so the main loop wakes when the  */
+/* signal handler writes one byte.                                     */
 /* ------------------------------------------------------------------ */
 
-int io_backend_init(struct ring_context *rc)
+static int kq_setup(struct ring_context *rc, const char *tag)
 {
 	if (pthread_mutex_init(&rc->rc_mutex, NULL) != 0) {
-		LOG("io_backend_init: mutex init failed");
+		LOG("%s: mutex init failed", tag);
 		return -1;
 	}
 
 	rc->rc_kq_fd = kqueue();
 	if (rc->rc_kq_fd < 0) {
-		LOG("io_backend_init: kqueue: %s", strerror(errno));
-		pthread_mutex_destroy(&rc->rc_mutex);
-		return -1;
+		LOG("%s: kqueue: %s", tag, strerror(errno));
+		goto err_mutex;
 	}
 
-	/*
-	 * Register an EVFILT_USER event with the ident set to this
-	 * ring_context pointer; io_handler_signal_shutdown triggers it
-	 * via kevent() to wake the main loop.
-	 */
-	rc->rc_shutdown_user_ident = (uintptr_t)rc;
+	/* Pipe with O_NONBLOCK + O_CLOEXEC on both ends. */
+	if (pipe2(rc->rc_shutdown_pipe, O_NONBLOCK | O_CLOEXEC) < 0) {
+		LOG("%s: pipe2: %s", tag, strerror(errno));
+		goto err_kq;
+	}
+
 	struct kevent ke;
 
-	EV_SET(&ke, rc->rc_shutdown_user_ident, EVFILT_USER,
+	EV_SET(&ke, rc->rc_shutdown_pipe[0], EVFILT_READ,
 	       EV_ADD | EV_CLEAR, 0, 0, NULL);
 	if (kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL) < 0) {
-		LOG("io_backend_init: EVFILT_USER add: %s", strerror(errno));
-		close(rc->rc_kq_fd);
-		rc->rc_kq_fd = -1;
-		pthread_mutex_destroy(&rc->rc_mutex);
-		return -1;
+		LOG("%s: EVFILT_READ add (shutdown pipe): %s", tag,
+		    strerror(errno));
+		goto err_pipe;
 	}
 
-	TRACE("io_backend_init: kqueue ready (fd=%d)", rc->rc_kq_fd);
+	TRACE("%s: kqueue=%d shutdown_pipe=(%d,%d)", tag, rc->rc_kq_fd,
+	      rc->rc_shutdown_pipe[0], rc->rc_shutdown_pipe[1]);
 	return 0;
+
+err_pipe:
+	close(rc->rc_shutdown_pipe[0]);
+	close(rc->rc_shutdown_pipe[1]);
+	rc->rc_shutdown_pipe[0] = rc->rc_shutdown_pipe[1] = -1;
+err_kq:
+	close(rc->rc_kq_fd);
+	rc->rc_kq_fd = -1;
+err_mutex:
+	pthread_mutex_destroy(&rc->rc_mutex);
+	return -1;
 }
 
-void io_backend_fini(struct ring_context *rc)
+static void kq_teardown(struct ring_context *rc)
 {
+	if (rc->rc_shutdown_pipe[0] >= 0) {
+		close(rc->rc_shutdown_pipe[0]);
+		rc->rc_shutdown_pipe[0] = -1;
+	}
+	if (rc->rc_shutdown_pipe[1] >= 0) {
+		close(rc->rc_shutdown_pipe[1]);
+		rc->rc_shutdown_pipe[1] = -1;
+	}
 	if (rc->rc_kq_fd >= 0) {
 		close(rc->rc_kq_fd);
 		rc->rc_kq_fd = -1;
 	}
 	pthread_mutex_destroy(&rc->rc_mutex);
+}
+
+/* ------------------------------------------------------------------ */
+/* Backend ring setup / teardown                                      */
+/* ------------------------------------------------------------------ */
+
+int io_backend_init(struct ring_context *rc)
+{
+	return kq_setup(rc, "io_backend_init");
+}
+
+void io_backend_fini(struct ring_context *rc)
+{
+	kq_teardown(rc);
 }
 
 /* ------------------------------------------------------------------ */
@@ -247,7 +289,7 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 		struct timespec ts = { .tv_sec = IO_URING_WAIT_SEC,
 				       .tv_nsec = IO_URING_WAIT_NSEC };
 
-		int running_local;
+		sig_atomic_t running_local;
 
 		__atomic_load(running_flag, &running_local, __ATOMIC_SEQ_CST);
 		if (!running_local)
@@ -267,7 +309,9 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 		for (int i = 0; i < n; i++) {
 			struct kevent *ke = &events[i];
 
-			if (ke->filter == EVFILT_USER) {
+			if (ke->filter == EVFILT_READ && (int)ke->ident == rc->rc_shutdown_pipe[0]) {
+				char drain[64];
+				while (read(rc->rc_shutdown_pipe[0], drain, sizeof(drain)) > 0) { /* drain */ }
 				/* Shutdown wake-up; next loop iteration
 				 * will observe running_flag and break. */
 				continue;
@@ -287,10 +331,22 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 
 			TSAN_ACQUIRE(op->ao_ic);
 
-			ssize_t res = aio_return(&op->ao_cb);
+			/*
+			 * Check aio_error first.  aio_read/aio_write can
+			 * fire EVFILT_AIO spuriously on some FreeBSD
+			 * versions while still returning EINPROGRESS; if
+			 * we call aio_return() in that state it returns
+			 * a bogus value and we'd free the op prematurely.
+			 * Skip this completion and wait for the real one.
+			 */
 			int aio_err = aio_error(&op->ao_cb);
 
-			if (res < 0)
+			if (aio_err == EINPROGRESS)
+				continue;
+
+			ssize_t res = aio_return(&op->ao_cb);
+
+			if (aio_err != 0 && res < 0)
 				res = -aio_err;
 
 			switch (op->ao_ic->ic_op_type) {
@@ -435,72 +491,45 @@ int io_request_backend_pwrite(int fd, const void *buf, size_t len,
 int io_handler_init(struct ring_context *rc,
 		    const char *tls_cert,
 		    const char *tls_key,
-		    void *extra_check)
+		    const char *tls_ca)
 {
 	(void)tls_cert;
 	(void)tls_key;
-	(void)extra_check;
+	(void)tls_ca;
 
-	if (pthread_mutex_init(&rc->rc_mutex, NULL) != 0) {
-		LOG("io_handler_init: mutex init failed");
-		return -1;
-	}
+	int ret = kq_setup(rc, "io_handler_init");
 
-	rc->rc_kq_fd = kqueue();
-	if (rc->rc_kq_fd < 0) {
-		LOG("io_handler_init: kqueue: %s", strerror(errno));
-		pthread_mutex_destroy(&rc->rc_mutex);
-		return -1;
-	}
-
-	rc->rc_shutdown_user_ident = (uintptr_t)rc;
-	struct kevent ke;
-
-	EV_SET(&ke, rc->rc_shutdown_user_ident, EVFILT_USER,
-	       EV_ADD | EV_CLEAR, 0, 0, NULL);
-	if (kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL) < 0) {
-		LOG("io_handler_init: EVFILT_USER add: %s", strerror(errno));
-		close(rc->rc_kq_fd);
-		rc->rc_kq_fd = -1;
-		pthread_mutex_destroy(&rc->rc_mutex);
-		return -1;
-	}
-
-	g_network_rc = rc;
-	TRACE("io_handler_init: kqueue ready (fd=%d)", rc->rc_kq_fd);
-	return 0;
+	if (ret == 0)
+		g_network_rc = rc;
+	return ret;
 }
 
 void io_handler_fini(struct ring_context *rc)
 {
-	if (rc->rc_kq_fd >= 0) {
-		close(rc->rc_kq_fd);
-		rc->rc_kq_fd = -1;
-	}
-	pthread_mutex_destroy(&rc->rc_mutex);
+	kq_teardown(rc);
 }
 
 void io_handler_stop(void) {}
 
+/*
+ * Async-signal-safe shutdown wakeup.  write(2) is on the POSIX list
+ * of async-signal-safe functions; kevent(2) is not.  Write a single
+ * byte to each ring's shutdown pipe -- the main loop's EVFILT_READ
+ * on the pipe fires, the loop observes the updated running flag,
+ * and breaks out.  EAGAIN on a full pipe buffer is OK: the first
+ * byte already pending delivers the wake-up.
+ */
 void io_handler_signal_shutdown(void)
 {
-	/*
-	 * Trigger EVFILT_USER on both rings to wake their main loops.
-	 * kevent() with NOTE_TRIGGER on an already-registered EVFILT_USER
-	 * is async-signal-safe because the kernel path does not allocate.
-	 */
 	struct ring_context *rings[] = { g_network_rc, g_backend_rc };
+	static const char wake = 'x';
 
 	for (unsigned i = 0; i < sizeof(rings) / sizeof(rings[0]); i++) {
 		struct ring_context *rc = rings[i];
 
-		if (!rc || rc->rc_kq_fd < 0)
+		if (!rc || rc->rc_shutdown_pipe[1] < 0)
 			continue;
-		struct kevent ke;
-
-		EV_SET(&ke, rc->rc_shutdown_user_ident, EVFILT_USER, 0,
-		       NOTE_TRIGGER, 0, NULL);
-		(void)kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL);
+		(void)write(rc->rc_shutdown_pipe[1], &wake, 1);
 	}
 }
 
@@ -524,7 +553,7 @@ int io_request_accept_op(int fd, struct connection_info *ci,
 	if (!ic)
 		return -ENOMEM;
 
-	ic->ic_ci = ci;
+	ic->ic_ci = *ci;
 
 	struct kevent ke;
 
@@ -658,6 +687,12 @@ static void connect_and_dispatch(struct io_context *ic,
 	io_handle_connect(ic, -so_err, rc);
 }
 
+/* Forward declarations; definitions follow the main loop. */
+static void read_and_dispatch(struct io_context *ic, struct ring_context *rc);
+static void write_and_dispatch(struct io_context *ic, struct ring_context *rc);
+static void heartbeat_and_dispatch(struct io_context *ic,
+				   struct ring_context *rc);
+
 void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 			  struct ring_context *rc)
 {
@@ -669,7 +704,7 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		struct timespec ts = { .tv_sec = IO_URING_WAIT_SEC,
 				       .tv_nsec = IO_URING_WAIT_NSEC };
 
-		int running_local;
+		sig_atomic_t running_local;
 
 		__atomic_load(running_flag, &running_local, __ATOMIC_SEQ_CST);
 		if (!running_local)
@@ -689,7 +724,9 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		for (int i = 0; i < n; i++) {
 			struct kevent *ke = &events[i];
 
-			if (ke->filter == EVFILT_USER) {
+			if (ke->filter == EVFILT_READ && (int)ke->ident == rc->rc_shutdown_pipe[0]) {
+				char drain[64];
+				while (read(rc->rc_shutdown_pipe[0], drain, sizeof(drain)) > 0) { /* drain */ }
 				/* Shutdown wakeup; next iter picks up
 				 * running_flag. */
 				continue;
@@ -758,7 +795,7 @@ int io_request_read_op(int fd, struct connection_info *ci,
 	if (!ic)
 		return -ENOMEM;
 
-	ic->ic_ci = ci;
+	ic->ic_ci = *ci;
 	io_context_update_time(ic);
 
 	struct kevent ke;
@@ -791,7 +828,7 @@ int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 	if (!ic)
 		return -ENOMEM;
 
-	ic->ic_ci = ci;
+	ic->ic_ci = *ci;
 	ic->ic_state |= state;
 	ic->ic_expected_len = (size_t)len;
 
