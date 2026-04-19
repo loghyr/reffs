@@ -48,7 +48,7 @@ AS_CASE([$host_os],
         # generated XDR headers (which #include <rpc/xdr.h> directly)
         # get bool_t in scope.  Linux's libtirpc pulls types.h in from
         # xdr.h itself; FreeBSD's base libc xdr.h does not.
-        CPPFLAGS="-include rpc/types.h $CPPFLAGS"
+        CPPFLAGS="-include rpc/rpc.h $CPPFLAGS"
         host_is_freebsd=yes
     ])
 AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])
@@ -516,7 +516,7 @@ AS_CASE([$host_os],
         #     by liburcu's _uatomic_default_mo pattern)
         # Suppress both warning classes rather than drop -Wpedantic
         # entirely.
-        CFLAGS="${CFLAGS} -Wno-variadic-macros -Wno-c23-extensions"
+        CFLAGS="${CFLAGS} -Wno-variadic-macros -Wno-c23-extensions -Wno-gnu"
     ])
 
 AC_MSG_RESULT([C flags are ${CFLAGS}])
