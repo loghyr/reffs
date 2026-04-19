@@ -49,6 +49,13 @@ AS_CASE([$host_os],
         # get bool_t in scope.  Linux's libtirpc pulls types.h in from
         # xdr.h itself; FreeBSD's base libc xdr.h does not.
         CPPFLAGS="-include rpc/rpc.h $CPPFLAGS"
+        # EREMOTEIO is a glibc-specific errno.  FreeBSD has no
+        # distinct "remote I/O error" code; alias to EIO so all
+        # -EREMOTEIO return statements compile.
+        CPPFLAGS="-DEREMOTEIO=EIO $CPPFLAGS"
+        # ENODATA is also glibc-only ("no data available"); FreeBSD
+        # has ENOATTR in the same role (especially for xattrs).
+        CPPFLAGS="-DENODATA=ENOATTR $CPPFLAGS"
         host_is_freebsd=yes
     ])
 AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])
