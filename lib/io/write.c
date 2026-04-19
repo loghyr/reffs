@@ -28,7 +28,7 @@
 #include "reffs/network.h"
 #include "reffs/ring.h"
 #include "ring_internal.h"
-#include "tsan_uring.h"
+#include "tsan_io.h"
 #include "reffs/rpc.h"
 #include "reffs/tls.h"
 #include "reffs/trace/io.h"
