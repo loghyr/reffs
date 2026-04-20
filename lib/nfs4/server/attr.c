@@ -2794,6 +2794,7 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 {
 	uint16_t type = inode->i_mode & S_IFMT;
 	struct super_block *sb = inode->i_sb;
+	nfsstat4 status = NFS4_OK;
 	int ret = 0;
 
 	switch (type) {
@@ -2821,25 +2822,33 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	}
 
 	ret = bitmap4_copy(supported_attributes, &nattr->supported_attrs);
-	if (ret)
+	if (ret) {
+		status = NFS4ERR_SERVERFAULT;
 		goto out;
+	}
 
 	nattr->filehandle.nfs_fh4_val =
 		(char *)network_file_handle_construct(sb->sb_id, inode->i_ino);
-	if (!nattr->filehandle.nfs_fh4_val)
+	if (!nattr->filehandle.nfs_fh4_val) {
+		status = NFS4ERR_SERVERFAULT;
 		goto out;
+	}
 
 	nattr->filehandle.nfs_fh4_len = sizeof(struct network_file_handle);
 
 	ret = reffs_owner_from_uid(&nattr->owner,
 				   reffs_id_to_uid(inode->i_uid));
-	if (ret)
+	if (ret) {
+		status = NFS4ERR_SERVERFAULT;
 		goto out;
+	}
 
 	ret = reffs_owner_group_from_gid(&nattr->owner_group,
 					 reffs_id_to_uid(inode->i_gid));
-	if (ret)
+	if (ret) {
+		status = NFS4ERR_SERVERFAULT;
 		goto out;
+	}
 
 	nattr->fh_expire_type = system_attrs.fh_expire_type;
 	nattr->change =
@@ -2910,8 +2919,10 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 		nattr->mounted_on_fileid = inode->i_ino;
 	ret = bitmap4_copy(&system_attrs.suppattr_exclcreat,
 			   &nattr->suppattr_exclcreat);
-	if (ret)
+	if (ret) {
+		status = NFS4ERR_SERVERFAULT;
 		goto out;
+	}
 	nattr->fs_charset_cap = system_attrs.fs_charset_cap;
 	nattr->clone_blksize = system_attrs.clone_blksize;
 	// nattr->space_freed;
@@ -3004,7 +3015,7 @@ static nfsstat4 inode_to_nattr(struct server_state *ss, struct inode *inode,
 	}
 
 out:
-	return NFS4_OK;
+	return status;
 }
 
 /*
