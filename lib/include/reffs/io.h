@@ -98,6 +98,10 @@ struct io_context {
  * its fd.  Cleared only when io_conn_write_done() passes the gate to the
  * next queued context.  Prevents concurrent 1MB write SQEs on the same
  * socket fd from interleaving TCP segments and corrupting large reads.
+ *
+ * Any code that propagates this flag to a continuation io_context (e.g. the
+ * partial-write path in io_handle_write) MUST also copy ic_write_gen so that
+ * io_conn_write_done() can validate the generation and release the gate.
  */
 #define IO_CONTEXT_WRITE_OWNED (1ULL << 6)
 	uint64_t ic_state;
@@ -124,6 +128,14 @@ struct io_context {
 	 * hash) so both lists can be maintained simultaneously.
 	 */
 	struct io_context *ic_write_next;
+
+	/*
+	 * Generation of the conn_info slot at the time this context claimed
+	 * the write gate.  io_conn_write_done() validates this so a stale
+	 * write CQE arriving after the fd is closed and reused cannot
+	 * prematurely release the new connection's gate.
+	 */
+	uint32_t ic_write_gen;
 };
 
 // Record state for reassembling fragmented RPC messages
@@ -201,6 +213,17 @@ struct conn_info {
 	bool ci_write_active;
 	struct io_context *ci_write_pending_head;
 	struct io_context *ci_write_pending_tail;
+
+	/*
+	 * Monotonically increasing generation counter.  Incremented each
+	 * time this slot is reused for a new connection (i.e., each call to
+	 * io_conn_register that allocates or reinitialises this slot).
+	 * Stored in ic_write_gen by io_conn_write_try_start() and verified
+	 * by io_conn_write_done() so stale write CQEs from a closed fd
+	 * cannot corrupt the gate state of a new connection that reused the
+	 * same fd number.
+	 */
+	uint32_t ci_generation;
 };
 
 /* ------------------------------------------------------------------ */
@@ -420,7 +443,7 @@ bool io_conn_has_write_ops(int fd);
  *   returned, so the caller simply calls rpc_trans_writer(next_ic, rc).
  */
 bool io_conn_write_try_start(int fd, struct io_context *ic);
-struct io_context *io_conn_write_done(int fd);
+struct io_context *io_conn_write_done(int fd, uint32_t gen);
 
 void io_check_for_listener_restart(int fd, struct connection_info *ci,
 				   struct ring_context *rc);
