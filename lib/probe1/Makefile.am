@@ -17,6 +17,6 @@ libreffs_probe1_la_SOURCES =	\
 	probe1_client.c		\
 	probe1_server.c
 
-# See lib/nfs4/server/Makefile.am for rationale.
+# Shared-lib dep on libreffs_dstore -- see lib/nfs4/server/Makefile.am.
 libreffs_probe1_la_LIBADD = \
 	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la

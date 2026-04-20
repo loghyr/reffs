@@ -37,11 +37,11 @@ libreffs_nfs4_server_la_SOURCES = \
 	trust_stateid_ops.c \
 	xattr.c
 
-# Fold the dstore convenience archive (noinst_LTLIBRARIES) into this
-# shared lib.  Required on macOS: ld won't pull unreferenced .o from
-# a static archive into a consumer dylib, so dstore_ops_local (only
-# referenced via the global `&dstore_ops_local` address in layout.c)
-# would stay unresolved at runtime.  Linux tolerates this via flat-
-# namespace late binding, but macOS two-level namespace does not.
+# libreffs_dstore is a shared library (installed); this dylib depends
+# on its dstore_ops_{nfsv3,nfsv4,local} globals and dstore_*/runway_*
+# functions.  Must be a shared (not static-convenience) dep, otherwise
+# each consumer dylib carries its own copy of the ops structs and
+# `ds->ds_ops == &dstore_ops_local` address comparisons fail across
+# copies (ASAN also flags it as an ODR violation under -fsanitize=address).
 libreffs_nfs4_server_la_LIBADD = \
 	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la
