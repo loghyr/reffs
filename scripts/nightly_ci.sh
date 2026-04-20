@@ -190,16 +190,18 @@ if [ "$SOAK_ONLY" = true ]; then
 else
 
 section_start build "Build"
+# Always rebuild from scratch -- the nightly's job is to test what's
+# currently in origin/main, not to discover whether autotools is
+# correctly detecting source-change deltas in a stale build tree.
+# Blow away the build directory, re-run autoreconf, re-run configure.
 cd "$REPO"
-if [ ! -f configure ]; then
-    mkdir -p m4 && autoreconf -fi 2>&1 | tail -3
-fi
+rm -rf "$BUILD"
+mkdir -p m4
+autoreconf -fi 2>&1 | tail -3
 
 mkdir -p "$BUILD"
 cd "$BUILD"
-if [ ! -f Makefile ]; then
-    "$REPO/configure" --enable-asan --enable-ubsan 2>&1 | tail -5
-fi
+"$REPO/configure" --enable-asan --enable-ubsan 2>&1 | tail -5
 
 make -j$(nproc) 2>&1 | tail -10
 BUILD_RC=$?
