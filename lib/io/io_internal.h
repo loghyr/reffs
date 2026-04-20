@@ -65,6 +65,14 @@ struct io_context {
 	 * hash) so both lists can be maintained simultaneously.
 	 */
 	struct io_context *ic_write_next;
+
+	/*
+	 * Generation of the conn_info slot at the time this context claimed
+	 * the write gate.  io_conn_write_done() validates this so a stale
+	 * write CQE arriving after the fd is closed and reused cannot
+	 * prematurely release the new connection's gate.
+	 */
+	uint32_t ic_write_gen;
 };
 
 /* Record state for reassembling fragmented RPC messages. */
@@ -117,6 +125,16 @@ struct conn_info {
 	bool ci_write_active;
 	struct io_context *ci_write_pending_head;
 	struct io_context *ci_write_pending_tail;
+
+	/*
+	 * Monotonically increasing generation counter.  Incremented each
+	 * time this slot is reused for a new connection.  Stored in
+	 * ic_write_gen by io_conn_write_try_start() and verified by
+	 * io_conn_write_done() so stale write CQEs from a closed fd cannot
+	 * corrupt the gate state of a new connection that reused the same
+	 * fd number.
+	 */
+	uint32_t ci_generation;
 };
 
 #endif /* _REFFS_IO_INTERNAL_H */

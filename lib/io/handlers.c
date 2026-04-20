@@ -240,7 +240,8 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 		 */
 		struct io_context *next_ic = NULL;
 		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED)
-			next_ic = io_conn_write_done(ic->ic_fd);
+			next_ic =
+				io_conn_write_done(ic->ic_fd, ic->ic_write_gen);
 		io_context_destroy(ic);
 		if (next_ic)
 			return rpc_trans_writer(next_ic, rc);
@@ -278,6 +279,7 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	 */
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
 		int fd_saved = ic->ic_fd;
+		uint32_t gen_saved = ic->ic_write_gen;
 		bool owned = (ic->ic_state & IO_CONTEXT_WRITE_OWNED) != 0;
 		ret = io_do_tls(ic, rc);
 		if (ret <= 0) {
@@ -290,7 +292,7 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 			 */
 			if (ret == 0 && owned) {
 				struct io_context *next_ic =
-					io_conn_write_done(fd_saved);
+					io_conn_write_done(fd_saved, gen_saved);
 				if (next_ic)
 					return rpc_trans_writer(next_ic, rc);
 			}
@@ -418,12 +420,13 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
 		int fd_saved = ic->ic_fd;
+		uint32_t gen_saved = ic->ic_write_gen;
 		bool owned = (ic->ic_state & IO_CONTEXT_WRITE_OWNED) != 0;
 		int ret = io_do_tls(ic, rc);
 		if (ret <= 0) {
 			if (ret == 0 && owned) {
 				struct io_context *next_ic =
-					io_conn_write_done(fd_saved);
+					io_conn_write_done(fd_saved, gen_saved);
 				if (next_ic)
 					return rpc_trans_writer(next_ic, rc);
 			}
@@ -456,8 +459,10 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 		 * continuation of the same write; it holds the gate for this fd
 		 * and must not try to re-acquire it in rpc_trans_writer().
 		 */
-		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED)
+		if (ic->ic_state & IO_CONTEXT_WRITE_OWNED) {
 			new_ic->ic_state |= IO_CONTEXT_WRITE_OWNED;
+			new_ic->ic_write_gen = ic->ic_write_gen;
+		}
 
 		/* Clear buffer ownership in old context to prevent double-free */
 		ic->ic_buffer = NULL;

@@ -442,7 +442,7 @@ if [ ! -d "$WARDTEST_DIR" ]; then
     echo "Cloning wardtest..."
     git clone git@github.com:loghyr/wardtest.git "$WARDTEST_DIR" 2>&1 | tail -3
 fi
-(cd "$WARDTEST_DIR" && git pull --ff-only 2>&1 | tail -3)
+(cd "$WARDTEST_DIR" && git fetch origin 2>&1 | tail -3 && git reset --hard origin/HEAD 2>&1 | tail -1)
 
 "$REPO/scripts/ci_wardtest.sh" --mount "$V4_MOUNT" --duration 60 \
     --wardtest-dir "$WARDTEST_DIR" \

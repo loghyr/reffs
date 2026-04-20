@@ -59,6 +59,8 @@ struct conn_info *io_conn_register(int fd, enum conn_state initial_state,
 		ci = connections[idx];
 	} else if (!connections[idx] ||
 		   connections[idx]->ci_state == CONN_UNUSED) {
+		uint32_t saved_gen =
+			connections[idx] ? connections[idx]->ci_generation : 0;
 		if (!connections[idx]) {
 			connections[idx] = malloc(sizeof(struct conn_info));
 			if (!connections[idx]) {
@@ -69,6 +71,7 @@ struct conn_info *io_conn_register(int fd, enum conn_state initial_state,
 
 		ci = connections[idx];
 		memset(ci, 0, sizeof(struct conn_info));
+		ci->ci_generation = saved_gen + 1;
 		ci->ci_fd = fd;
 	} else {
 		LOG("Connection slot collision for fd=%d", fd);
@@ -795,6 +798,7 @@ bool io_conn_write_try_start(int fd, struct io_context *ic)
 		struct conn_info *ci = connections[idx];
 		if (!ci->ci_write_active) {
 			ci->ci_write_active = true;
+			ic->ic_write_gen = ci->ci_generation;
 		} else {
 			ic->ic_write_next = NULL;
 			if (!ci->ci_write_pending_head) {
@@ -815,20 +819,25 @@ bool io_conn_write_try_start(int fd, struct io_context *ic)
 /*
  * io_conn_write_done -- release the per-fd write gate after a write completes.
  *
- * If there are queued writers, dequeue the head, mark it WRITE_OWNED, and
- * return it.  ci_write_active remains true so the returned ic can proceed
- * without re-claiming the gate.
+ * gen must match ci->ci_generation.  A mismatch means a stale write CQE
+ * arrived for a connection that has already been closed and whose fd was
+ * reused by a new connection.  In that case the gate belongs to the new
+ * connection and must not be touched; return NULL silently.
+ *
+ * If there are queued writers, dequeue the head, mark it WRITE_OWNED,
+ * stamp its ic_write_gen, and return it.  ci_write_active remains true.
  *
  * If the queue is empty, clear ci_write_active and return NULL.
  */
-struct io_context *io_conn_write_done(int fd)
+struct io_context *io_conn_write_done(int fd, uint32_t gen)
 {
 	struct io_context *next_ic = NULL;
 
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
-	if (connections[idx] && connections[idx]->ci_fd == fd) {
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_generation == gen) {
 		struct conn_info *ci = connections[idx];
 		if (ci->ci_write_pending_head) {
 			next_ic = ci->ci_write_pending_head;
@@ -837,6 +846,7 @@ struct io_context *io_conn_write_done(int fd)
 			if (!ci->ci_write_pending_head)
 				ci->ci_write_pending_tail = NULL;
 			next_ic->ic_state |= IO_CONTEXT_WRITE_OWNED;
+			next_ic->ic_write_gen = ci->ci_generation;
 		} else {
 			ci->ci_write_active = false;
 		}

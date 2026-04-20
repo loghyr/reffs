@@ -99,6 +99,10 @@ struct io_context;
  * its fd.  Cleared only when io_conn_write_done() passes the gate to the
  * next queued context.  Prevents concurrent 1MB write SQEs on the same
  * socket fd from interleaving TCP segments and corrupting large reads.
+ *
+ * Any code that propagates this flag to a continuation io_context (e.g. the
+ * partial-write path in io_handle_write) MUST also copy ic_write_gen so that
+ * io_conn_write_done() can validate the generation and release the gate.
  */
 #define IO_CONTEXT_WRITE_OWNED (1ULL << 6)
 
@@ -368,7 +372,7 @@ void io_conn_set_tls_handshaking(int fd, bool handshaking);
  *   returned, so the caller simply calls rpc_trans_writer(next_ic, rc).
  */
 bool io_conn_write_try_start(int fd, struct io_context *ic);
-struct io_context *io_conn_write_done(int fd);
+struct io_context *io_conn_write_done(int fd, uint32_t gen);
 
 void io_check_for_listener_restart(int fd, struct connection_info *ci,
 				   struct ring_context *rc);

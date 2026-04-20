@@ -203,12 +203,12 @@ START_TEST(test_write_gate_single)
 	ck_assert(io_conn_write_try_start(FD_A, &ic1));
 
 	/* Queue is empty -- done releases the gate and returns NULL. */
-	ck_assert_ptr_null(io_conn_write_done(FD_A));
+	ck_assert_ptr_null(io_conn_write_done(FD_A, ic1.ic_write_gen));
 
 	/* Gate should be free again. */
 	struct io_context ic2 = { 0 };
 	ck_assert(io_conn_write_try_start(FD_A, &ic2));
-	ck_assert_ptr_null(io_conn_write_done(FD_A));
+	ck_assert_ptr_null(io_conn_write_done(FD_A, ic2.ic_write_gen));
 }
 END_TEST
 
@@ -226,14 +226,76 @@ START_TEST(test_write_gate_contended)
 	ck_assert(!io_conn_write_try_start(FD_A, &ic3));
 
 	/* Handoff goes to ic2 then ic3 in FIFO order. */
-	struct io_context *next = io_conn_write_done(FD_A);
+	struct io_context *next = io_conn_write_done(FD_A, ic1.ic_write_gen);
 	ck_assert_ptr_eq(next, &ic2);
 
-	next = io_conn_write_done(FD_A);
+	next = io_conn_write_done(FD_A, ic2.ic_write_gen);
 	ck_assert_ptr_eq(next, &ic3);
 
 	/* Queue empty now. */
-	ck_assert_ptr_null(io_conn_write_done(FD_A));
+	ck_assert_ptr_null(io_conn_write_done(FD_A, ic3.ic_write_gen));
+}
+END_TEST
+
+START_TEST(test_write_gate_fd_reuse)
+{
+	/*
+	 * Simulate a stale write CQE arriving after the fd was closed and
+	 * reused for a new connection.  done() with the old generation must
+	 * not release the new connection's gate.
+	 */
+	(void)io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT);
+	struct io_context ic_old = { 0 };
+	ck_assert(io_conn_write_try_start(FD_A, &ic_old));
+	uint32_t old_gen = ic_old.ic_write_gen;
+
+	io_conn_unregister(FD_A);
+
+	/* Same fd reused for a new connection -- generation must differ. */
+	(void)io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT);
+	struct io_context ic_new = { 0 };
+	ck_assert(io_conn_write_try_start(FD_A, &ic_new));
+	ck_assert_int_ne((int)old_gen, (int)ic_new.ic_write_gen);
+
+	/* Stale done() with old generation must not release the new gate. */
+	ck_assert_ptr_null(io_conn_write_done(FD_A, old_gen));
+
+	/* Gate is still active -- a new writer must queue. */
+	struct io_context ic_queued = { 0 };
+	ck_assert(!io_conn_write_try_start(FD_A, &ic_queued));
+
+	/* Correct done() hands off to the queued writer. */
+	struct io_context *next = io_conn_write_done(FD_A, ic_new.ic_write_gen);
+	ck_assert_ptr_eq(next, &ic_queued);
+	ck_assert_ptr_null(io_conn_write_done(FD_A, ic_queued.ic_write_gen));
+}
+END_TEST
+
+START_TEST(test_write_gate_partial_write_continuation)
+{
+	/*
+	 * Simulate a partial-write continuation: io_handle_write creates a new
+	 * io_context, propagates IO_CONTEXT_WRITE_OWNED, and must also copy
+	 * ic_write_gen.  If ic_write_gen is zero (calloc default) on the
+	 * continuation, io_conn_write_done() will see a generation mismatch and
+	 * never release the gate.
+	 */
+	(void)io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT);
+
+	struct io_context ic_orig = { 0 };
+	ck_assert(io_conn_write_try_start(FD_A, &ic_orig));
+
+	/* Simulate the partial-write continuation: new context copies gen. */
+	struct io_context ic_cont = { 0 };
+	ic_cont.ic_write_gen = ic_orig.ic_write_gen;
+
+	/* done() via the continuation must release the gate. */
+	ck_assert_ptr_null(io_conn_write_done(FD_A, ic_cont.ic_write_gen));
+
+	/* Gate is free -- next writer gets it immediately. */
+	struct io_context ic_next = { 0 };
+	ck_assert(io_conn_write_try_start(FD_A, &ic_next));
+	ck_assert_ptr_null(io_conn_write_done(FD_A, ic_next.ic_write_gen));
 }
 END_TEST
 
@@ -252,6 +314,8 @@ static Suite *conn_info_suite(void)
 	tcase_add_test(tc, test_ops_on_unknown_fd);
 	tcase_add_test(tc, test_write_gate_single);
 	tcase_add_test(tc, test_write_gate_contended);
+	tcase_add_test(tc, test_write_gate_fd_reuse);
+	tcase_add_test(tc, test_write_gate_partial_write_continuation);
 	suite_add_tcase(s, tc);
 	return s;
 }
