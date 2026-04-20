@@ -69,6 +69,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -125,7 +126,29 @@ struct darwin_file_pool {
 
 	int completion_pipe[2]; /* [0]=main-loop read, [1]=worker write */
 
-	volatile sig_atomic_t running; /* 0 after io_backend_fini begins */
+	/*
+	 * Queue of jobs whose completion pipe write failed with a
+	 * non-EAGAIN/non-EINTR error (e.g. EPIPE on shutdown races).
+	 * Workers CANNOT call handle_backend_{pread,pwrite} inline --
+	 * those routines reach into RCU-managed rpc_trans refcounts via
+	 * rpc_protocol_free, and workers are deliberately not
+	 * rcu_register_thread'd (see file comment).  Instead workers
+	 * append here and the main loop drains on each tick.  Worst-
+	 * case latency: IO_URING_WAIT_SEC (~1s) before the stalled
+	 * task gets its -EIO completion.
+	 */
+	struct dp_job *failed_head;
+	struct dp_job *failed_tail;
+
+	/*
+	 * Set to 1 by pool_init before any worker starts; cleared to 0
+	 * by pool_fini.  Read both under job_mutex (dequeue, pipe-full
+	 * retry) and unlocked (worker outer loop).  Must be _Atomic so
+	 * the unlocked read in pool_worker observes the pool_fini store
+	 * without a data race, and so the release/acquire pair gives
+	 * workers a happens-before edge on the final job_head drain.
+	 */
+	_Atomic int running;
 };
 
 /*
@@ -156,7 +179,8 @@ static void pool_enqueue(struct darwin_file_pool *pool, struct dp_job *job)
 static struct dp_job *pool_dequeue(struct darwin_file_pool *pool)
 {
 	pthread_mutex_lock(&pool->job_mutex);
-	while (pool->running && !pool->job_head)
+	while (atomic_load_explicit(&pool->running, memory_order_acquire) &&
+	       !pool->job_head)
 		pthread_cond_wait(&pool->job_cond, &pool->job_mutex);
 
 	struct dp_job *job = pool->job_head;
@@ -232,7 +256,7 @@ static void *pool_worker(void *arg)
 {
 	struct darwin_file_pool *pool = arg;
 
-	while (pool->running) {
+	while (atomic_load_explicit(&pool->running, memory_order_acquire)) {
 		struct dp_job *job = pool_dequeue(pool);
 		if (!job)
 			break; /* running=0 and queue drained */
@@ -258,6 +282,22 @@ static void *pool_worker(void *arg)
 		 * atomic-or-EAGAIN for sizes <= PIPE_BUF.  Retry EAGAIN
 		 * via pipe_space_cond (signaled by the main loop after
 		 * it drains at least one pointer) and EINTR inline.
+		 *
+		 * Missed-wakeup guard: the main loop's drain+broadcast
+		 * is atomic under job_mutex, but a naive worker that
+		 * observes EAGAIN outside the mutex and only then locks
+		 * can race with a drain that completes (and broadcasts
+		 * to no waiter) in the window before the lock.  The
+		 * worker would then cond_wait on an already-satisfied
+		 * condition with no more broadcasts coming until the
+		 * next pipe fills -- a latent deadlock at high fan-in.
+		 *
+		 * Fix: re-attempt the write *under* job_mutex before
+		 * cond_wait.  If the main loop drained in the race
+		 * window, the pipe is now writable and the retry wins
+		 * without sleeping.  If the pipe is still full, the
+		 * drain has not happened yet, so the subsequent
+		 * cond_wait is guaranteed to see the next broadcast.
 		 */
 		for (;;) {
 			ssize_t w = write(pool->completion_pipe[1], &job,
@@ -269,32 +309,48 @@ static void *pool_worker(void *arg)
 			if (w < 0 &&
 			    (errno == EAGAIN || errno == EWOULDBLOCK)) {
 				pthread_mutex_lock(&pool->job_mutex);
-				/* Re-check running under the mutex to avoid
-				 * a race with io_backend_fini. */
-				if (!pool->running) {
+				if (!atomic_load_explicit(&pool->running,
+							  memory_order_acquire)) {
 					pthread_mutex_unlock(&pool->job_mutex);
 					free(job);
 					goto done;
 				}
-				pthread_cond_wait(&pool->pipe_space_cond,
-						  &pool->job_mutex);
+				w = write(pool->completion_pipe[1], &job,
+					  sizeof(job));
+				if (w == sizeof(job)) {
+					pthread_mutex_unlock(&pool->job_mutex);
+					break;
+				}
+				if (w < 0 && (errno == EAGAIN ||
+					      errno == EWOULDBLOCK)) {
+					pthread_cond_wait(&pool->pipe_space_cond,
+							  &pool->job_mutex);
+					pthread_mutex_unlock(&pool->job_mutex);
+					continue;
+				}
 				pthread_mutex_unlock(&pool->job_mutex);
-				continue;
+				if (w < 0 && errno == EINTR)
+					continue;
 			}
 			LOG("backend_darwin worker: pipe write failed: %s",
 			    strerror(errno));
-			/* Leak job: we cannot safely free it without
-			 * signaling completion, and signaling requires the
-			 * pipe we just failed to write.  Close the ic's
-			 * rt with an error instead so the task can make
-			 * progress. */
+			/*
+			 * Hand the failed job off to the main loop for
+			 * completion.  Cannot call handle_backend_{pread,
+			 * pwrite} here -- workers are not rcu_register_
+			 * thread'd, and handle_* -> rpc_protocol_free ->
+			 * urcu_ref_put requires RCU registration.
+			 */
 			job->result = -EIO;
 			job->saved_errno = EIO;
-			if (job->op == DP_OP_PREAD)
-				handle_backend_pread(job);
+			pthread_mutex_lock(&pool->job_mutex);
+			job->next = NULL;
+			if (pool->failed_tail)
+				pool->failed_tail->next = job;
 			else
-				handle_backend_pwrite(job);
-			free(job);
+				pool->failed_head = job;
+			pool->failed_tail = job;
+			pthread_mutex_unlock(&pool->job_mutex);
 			goto done;
 		}
 done:;
@@ -310,7 +366,7 @@ static int pool_init(struct darwin_file_pool *pool, struct ring_context *rc)
 {
 	memset(pool, 0, sizeof(*pool));
 	pool->num_workers = DP_DEFAULT_WORKERS;
-	pool->running = 1;
+	atomic_store_explicit(&pool->running, 1, memory_order_release);
 
 	if (pthread_mutex_init(&pool->job_mutex, NULL) != 0) {
 		LOG("backend_darwin: pool mutex init failed");
@@ -347,7 +403,8 @@ static int pool_init(struct darwin_file_pool *pool, struct ring_context *rc)
 			LOG("backend_darwin: pthread_create worker %d: %s", i,
 			    strerror(err));
 			/* Roll back started workers. */
-			pool->running = 0;
+			atomic_store_explicit(&pool->running, 0,
+					      memory_order_release);
 			pthread_cond_broadcast(&pool->job_cond);
 			for (int j = 0; j < i; j++)
 				pthread_join(pool->workers[j], NULL);
@@ -372,9 +429,11 @@ err_mutex:
 	return -1;
 }
 
+static void drain_failed_jobs(struct darwin_file_pool *pool);
+
 static void pool_fini(struct darwin_file_pool *pool)
 {
-	pool->running = 0;
+	atomic_store_explicit(&pool->running, 0, memory_order_release);
 
 	/* Wake any workers blocked on job_cond (empty queue) or
 	 * pipe_space_cond (pipe full). */
@@ -397,6 +456,10 @@ static void pool_fini(struct darwin_file_pool *pool)
 			handle_backend_pwrite(job);
 		free(job);
 	}
+
+	/* Drain any jobs the workers routed to the failed list
+	 * (fatal pipe-write error). */
+	drain_failed_jobs(pool);
 
 	close(pool->completion_pipe[0]);
 	close(pool->completion_pipe[1]);
@@ -426,6 +489,33 @@ void io_backend_fini(struct ring_context *rc)
 /* Event loop                                                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Drain any jobs a worker queued to failed_head after a fatal
+ * pipe-write error.  Completion runs here (on the main thread) where
+ * RCU registration and conn_mutex are safe to touch.
+ */
+static void drain_failed_jobs(struct darwin_file_pool *pool)
+{
+	struct dp_job *failed;
+
+	pthread_mutex_lock(&pool->job_mutex);
+	failed = pool->failed_head;
+	pool->failed_head = NULL;
+	pool->failed_tail = NULL;
+	pthread_mutex_unlock(&pool->job_mutex);
+
+	while (failed) {
+		struct dp_job *next = failed->next;
+		failed->next = NULL;
+		if (failed->op == DP_OP_PREAD)
+			handle_backend_pread(failed);
+		else
+			handle_backend_pwrite(failed);
+		free(failed);
+		failed = next;
+	}
+}
+
 void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 			  struct ring_context *rc)
 {
@@ -441,6 +531,8 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 		__atomic_load(running_flag, &running_local, __ATOMIC_SEQ_CST);
 		if (!running_local)
 			break;
+
+		drain_failed_jobs(&g_pool);
 
 		int n = kevent(rc->rc_kq_fd, NULL, 0, events, KQUEUE_BATCH_SIZE,
 			       &ts);
