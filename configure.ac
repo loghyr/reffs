@@ -758,14 +758,14 @@ AS_CASE([$host_os],
         # -Wpedantic entirely.
         CFLAGS="${CFLAGS} -Wno-variadic-macros -Wno-c23-extensions -Wno-gnu"
         # Apple CLT clang's -Wextra enables -Wsign-compare and
-        # -Wpointer-sign; GCC's -Wextra does not.  The reffs
-        # codebase has many int-vs-unsigned comparisons (gid_t,
-        # uid_t fields stored as `int`) that Linux builds accept
-        # without warning but Darwin builds reject under -Werror.
-        # Proper fix is to make the affected fields unsigned;
-        # pending that, silence the warnings locally.
-        # TODO: audit aup_uid/aup_gid typing in a follow-up commit.
-        CFLAGS="${CFLAGS} -Wno-sign-compare -Wno-pointer-sign"
+        # -Wpointer-sign; GCC's -Wextra does not.  The warnings
+        # came entirely from lib/utils/identity.c interacting with
+        # Darwin's base-libc struct authunix_parms, which declares
+        # aup_uid/aup_gid as `int` and aup_gids as `int *` while
+        # Linux libtirpc uses uid_t/gid_t (unsigned int).  Fixed
+        # in identity.c via AUP_UID/AUP_GID/AUP_GIDS cast macros;
+        # -Wno-sign-compare / -Wno-pointer-sign no longer needed.
+        # See #20.
         # Darwin's base-libc SunRPC declares clnt_create(char *, ...)
         # rather than clnt_create(const char *, ...) -- a pre-C89
         # signature that fires

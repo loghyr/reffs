@@ -60,6 +60,19 @@ struct rpc_cred {
 	};
 };
 
+/*
+ * Darwin's base-libc SunRPC declares struct authunix_parms with int
+ * for aup_uid/aup_gid and int * for aup_gids; Linux libtirpc and
+ * FreeBSD base libc use uid_t/gid_t (unsigned int).  Access these
+ * fields via AUP_UID / AUP_GID / AUP_GIDS to normalize to the
+ * unsigned semantics the RFC 5531 wire format defines and avoid
+ * sign-compare warnings on Darwin.  Zero cost on Linux/FreeBSD
+ * (cast between same-width same-signedness integers).
+ */
+#define AUP_UID(ap) ((uid_t)(ap)->aup_uid)
+#define AUP_GID(ap) ((gid_t)(ap)->aup_gid)
+#define AUP_GIDS(ap) ((const gid_t *)(ap)->aup_gids)
+
 struct rpc_info {
 	uint32_t ri_xid;
 	uint32_t ri_type;

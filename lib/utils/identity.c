@@ -23,6 +23,7 @@
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
 #include "reffs/log.h"
+#include "reffs/rpc.h" /* AUP_UID / AUP_GID / AUP_GIDS cast macros */
 #include "reffs/test.h"
 #include "reffs/inode.h"
 #include "reffs/identity.h"
@@ -105,10 +106,10 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 			     int mode, int __attribute__((unused)) flags)
 {
 	/* Superuser mode for now */
-	if (ap->aup_uid == 0)
+	if (AUP_UID(ap) == 0)
 		return 0;
 
-	if (ap->aup_uid == reffs_id_to_uid(inode->i_uid)) {
+	if (AUP_UID(ap) == reffs_id_to_uid(inode->i_uid)) {
 		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
 			return -EACCES;
 
@@ -130,9 +131,9 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 			return -EACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRUSR))
 			return -EACCES;
-	} else if (ap->aup_gid == reffs_id_to_uid(inode->i_gid) ||
+	} else if (AUP_GID(ap) == reffs_id_to_uid(inode->i_gid) ||
 		   gid_in_gids(reffs_id_to_uid(inode->i_gid), ap->aup_len,
-			       ap->aup_gids)) {
+			       (gid_t *)AUP_GIDS(ap))) {
 		if ((mode & W_OK) && !(inode->i_mode & S_IWGRP))
 			return -EACCES;
 		if ((mode & R_OK) && !(inode->i_mode & S_IRGRP))
@@ -173,11 +174,11 @@ bool can_user_chgrp_to_group(uid_t uid, gid_t target_gid,
 	if (!ap)
 		return false;
 
-	if (ap->aup_gid == target_gid)
+	if (AUP_GID(ap) == target_gid)
 		return true;
 
 	for (uint32_t i = 0; i < ap->aup_len; i++)
-		if (ap->aup_gids[i] == target_gid)
+		if (AUP_GIDS(ap)[i] == target_gid)
 			return true;
 
 	return false;
@@ -205,11 +206,11 @@ bool is_user_in_group(uid_t uid, gid_t group_to_check,
 	if (!ap)
 		return false;
 
-	if (ap->aup_gid == group_to_check)
+	if (AUP_GID(ap) == group_to_check)
 		return true;
 
 	for (uint32_t i = 0; i < ap->aup_len; i++)
-		if (ap->aup_gids[i] == group_to_check)
+		if (AUP_GIDS(ap)[i] == group_to_check)
 			return true;
 
 	return false;
@@ -219,14 +220,14 @@ int inode_privilege_check(struct inode *inode, struct authunix_parms *ap,
 			  enum privilege_op op, void *arg)
 {
 	/* Root can do anything */
-	if (!ap || ap->aup_uid == 0)
+	if (!ap || AUP_UID(ap) == 0)
 		return 0;
 
 	/* Owner checks */
 	switch (op) {
 	case PRIV_CHANGE_OWNER:
 		/* Only owner can change ownership */
-		if (ap->aup_uid != reffs_id_to_uid(inode->i_uid))
+		if (AUP_UID(ap) != reffs_id_to_uid(inode->i_uid))
 			return -EPERM;
 
 		/* Prevent non-root from giving away files */
@@ -237,27 +238,28 @@ int inode_privilege_check(struct inode *inode, struct authunix_parms *ap,
 
 	case PRIV_CHANGE_GROUP:
 		/* Only owner can change group */
-		if (ap->aup_uid != reffs_id_to_uid(inode->i_uid))
+		if (AUP_UID(ap) != reffs_id_to_uid(inode->i_uid))
 			return -EPERM;
 
 		/* User must be a member of the target group */
 		if (arg) {
 			gid_t new_gid = *(gid_t *)arg;
-			if (new_gid != (gid_t)-1 && new_gid != ap->aup_gid &&
-			    !gid_in_gids(new_gid, ap->aup_len, ap->aup_gids))
+			if (new_gid != (gid_t)-1 && new_gid != AUP_GID(ap) &&
+			    !gid_in_gids(new_gid, ap->aup_len,
+					 (gid_t *)AUP_GIDS(ap)))
 				return -EPERM;
 		}
 		break;
 
 	case PRIV_SET_SPECIAL_BITS:
 		/* Only owner can set special bits */
-		if (ap->aup_uid != reffs_id_to_uid(inode->i_uid))
+		if (AUP_UID(ap) != reffs_id_to_uid(inode->i_uid))
 			return -EPERM;
 		break;
 
 	case PRIV_TIME_CHANGE:
 		/* Only owner or root can change times */
-		if (ap->aup_uid != reffs_id_to_uid(inode->i_uid))
+		if (AUP_UID(ap) != reffs_id_to_uid(inode->i_uid))
 			return -EPERM;
 		break;
 	}

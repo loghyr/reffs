@@ -1186,13 +1186,13 @@ static int nfs3_op_write(struct rpc_trans *rt)
 		resok->count = dbw;
 	}
 
-	if ((inode->i_mode & S_ISGID) && ap.aup_uid != 0 &&
-	    ap.aup_uid != reffs_id_to_uid(inode->i_uid)) {
+	if ((inode->i_mode & S_ISGID) && AUP_UID(&ap) != 0 &&
+	    AUP_UID(&ap) != reffs_id_to_uid(inode->i_uid)) {
 		inode->i_mode &= ~S_ISGID;
 	}
 
-	if ((inode->i_mode & S_ISUID) && ap.aup_uid != 0 &&
-	    ap.aup_uid != reffs_id_to_uid(inode->i_uid)) {
+	if ((inode->i_mode & S_ISUID) && AUP_UID(&ap) != 0 &&
+	    AUP_UID(&ap) != reffs_id_to_uid(inode->i_uid)) {
 		inode->i_mode &= ~S_ISUID;
 	}
 

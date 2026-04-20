@@ -543,7 +543,7 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	 * After confirmation, any principal may create additional sessions.
 	 */
 	if (!nc->nc_confirmed &&
-	    compound->c_ap.aup_uid != nc->nc_principal_uid) {
+	    AUP_UID(&compound->c_ap) != nc->nc_principal_uid) {
 		nfs4_client_put(nc);
 		nc = NULL;
 		*status = NFS4ERR_CLID_INUSE;
