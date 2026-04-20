@@ -213,12 +213,28 @@ ssize_t posix_data_db_read(struct data_block *db, char *buffer, size_t size,
 			return ret;
 	}
 
-	ssize_t ret = pread(priv->pd_fd, buffer, size, offset);
-	if (ret < 0) {
+	/*
+	 * POSIX allows pread to return fewer bytes than requested for
+	 * any reason (signal delivery, short kernel queue, etc.); only
+	 * 0 indicates EOF.  Loop until we hit EOF, a real error, or
+	 * the full request is satisfied.
+	 */
+	size_t done = 0;
+	while (done < size) {
+		ssize_t n = pread(priv->pd_fd, buffer + done, size - done,
+				  offset + (off_t)done);
+		if (n > 0) {
+			done += (size_t)n;
+			continue;
+		}
+		if (n == 0)
+			break; /* EOF -- return accumulated bytes */
+		if (errno == EINTR)
+			continue;
 		LOG("pread from %s failed: %s", priv->pd_path, strerror(errno));
-		return -errno;
+		return done > 0 ? (ssize_t)done : -errno;
 	}
-	return ret;
+	return (ssize_t)done;
 }
 
 ssize_t posix_data_db_write(struct data_block *db, const char *buffer,
@@ -243,12 +259,28 @@ ssize_t posix_data_db_write(struct data_block *db, const char *buffer,
 		db->db_size = new_total;
 	}
 
-	ssize_t ret = pwrite(priv->pd_fd, buffer, size, offset);
-	if (ret < 0) {
+	/*
+	 * POSIX allows pwrite to return fewer bytes than requested
+	 * (signal, short queue).  Loop until the full request is
+	 * written or a real error occurs.  A 0 return with size > 0
+	 * is unusual; treat as retryable.
+	 */
+	size_t done = 0;
+	while (done < size) {
+		ssize_t n = pwrite(priv->pd_fd, buffer + done, size - done,
+				   offset + (off_t)done);
+		if (n > 0) {
+			done += (size_t)n;
+			continue;
+		}
+		if (n == 0)
+			continue; /* unusual; retry */
+		if (errno == EINTR)
+			continue;
 		LOG("pwrite to %s failed: %s", priv->pd_path, strerror(errno));
-		return -errno;
+		return done > 0 ? (ssize_t)done : -errno;
 	}
-	return ret;
+	return (ssize_t)done;
 }
 
 ssize_t posix_data_db_resize(struct data_block *db, size_t size)
