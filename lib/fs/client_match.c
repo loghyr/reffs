@@ -26,8 +26,11 @@
 #include <fnmatch.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <pthread.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 
 #include "reffs/client_match.h"
 
@@ -172,15 +175,100 @@ static bool match_cidr(const char *spec, const struct sockaddr_storage *peer)
 }
 
 /*
+ * Reverse-DNS cache for hostname-wildcard matching.  A single slow
+ * getnameinfo call would otherwise stall whichever worker picks up
+ * the request; the cache caps that blocking to once per peer per
+ * NAME_CACHE_TTL seconds.  Fixed-size direct-mapped table with one
+ * entry per bucket; collisions evict the older entry (acceptable
+ * since each miss only costs one extra DNS roundtrip and the eviction
+ * victim will retry on its next request).
+ */
+#define NAME_CACHE_SIZE 64
+#define NAME_CACHE_TTL 300 /* 5 minutes */
+
+struct name_cache_entry {
+	bool valid;
+	bool resolved; /* getnameinfo succeeded */
+	socklen_t addrlen;
+	struct sockaddr_storage addr;
+	time_t expires_at;
+	char host[NI_MAXHOST];
+};
+
+static struct name_cache_entry name_cache[NAME_CACHE_SIZE];
+static pthread_mutex_t name_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static uint32_t sockaddr_hash(const struct sockaddr_storage *peer,
+			      socklen_t addrlen)
+{
+	const unsigned char *p = (const unsigned char *)peer;
+	uint32_t h = 2166136261u; /* FNV-1a 32-bit offset basis */
+	for (socklen_t i = 0; i < addrlen; i++)
+		h = (h ^ p[i]) * 16777619u;
+	return h;
+}
+
+/*
+ * Resolve peer to a hostname using a TTL cache.  Writes the hostname
+ * into host_out (of size host_out_len) on success and returns 0;
+ * returns -1 on DNS failure.  Thread-safe.
+ */
+static int resolve_peer_cached(const struct sockaddr_storage *peer,
+			       socklen_t addrlen, char *host_out,
+			       size_t host_out_len)
+{
+	time_t now = time(NULL);
+	uint32_t idx = sockaddr_hash(peer, addrlen) % NAME_CACHE_SIZE;
+
+	pthread_mutex_lock(&name_cache_mutex);
+	struct name_cache_entry *e = &name_cache[idx];
+	if (e->valid && e->addrlen == addrlen &&
+	    memcmp(&e->addr, peer, addrlen) == 0 && e->expires_at > now) {
+		bool resolved = e->resolved;
+		if (resolved) {
+			strncpy(host_out, e->host, host_out_len - 1);
+			host_out[host_out_len - 1] = '\0';
+		}
+		pthread_mutex_unlock(&name_cache_mutex);
+		return resolved ? 0 : -1;
+	}
+	pthread_mutex_unlock(&name_cache_mutex);
+
+	/* Cache miss or expired: pay the sync lookup cost once. */
+	char host[NI_MAXHOST];
+	int rc = getnameinfo((const struct sockaddr *)peer, addrlen, host,
+			     sizeof(host), NULL, 0, NI_NAMEREQD);
+
+	pthread_mutex_lock(&name_cache_mutex);
+	memset(e, 0, sizeof(*e));
+	memcpy(&e->addr, peer, addrlen);
+	e->addrlen = addrlen;
+	e->valid = true;
+	e->expires_at = now + NAME_CACHE_TTL;
+	if (rc == 0) {
+		e->resolved = true;
+		strncpy(e->host, host, sizeof(e->host) - 1);
+		strncpy(host_out, host, host_out_len - 1);
+		host_out[host_out_len - 1] = '\0';
+	} else {
+		e->resolved = false;
+		e->host[0] = '\0';
+	}
+	pthread_mutex_unlock(&name_cache_mutex);
+
+	return rc == 0 ? 0 : -1;
+}
+
+/*
  * Match peer against a hostname wildcard spec (e.g. "*.lab.example.com").
- * Performs a reverse DNS lookup on peer; on failure, skips (never fail open).
- * Returns true on match.
+ * Reverse-DNS lookup is TTL-cached so a slow resolver only blocks once per
+ * peer per NAME_CACHE_TTL seconds.  On DNS failure, never fail open -- the
+ * rule is skipped.
  */
 static bool match_hostname_wildcard(const char *spec,
 				    const struct sockaddr_storage *peer)
 {
 	char host[NI_MAXHOST];
-	int rc;
 	socklen_t addrlen;
 
 	if (peer->ss_family == AF_INET)
@@ -190,10 +278,8 @@ static bool match_hostname_wildcard(const char *spec,
 	else
 		return false;
 
-	rc = getnameinfo((const struct sockaddr *)peer, addrlen, host,
-			 sizeof(host), NULL, 0, NI_NAMEREQD);
-	if (rc != 0)
-		return false; /* DNS failure: skip, never fail open */
+	if (resolve_peer_cached(peer, addrlen, host, sizeof(host)) != 0)
+		return false;
 
 	return fnmatch(spec, host, FNM_CASEFOLD) == 0;
 }
