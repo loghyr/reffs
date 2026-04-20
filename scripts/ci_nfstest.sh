@@ -13,7 +13,31 @@
 
 set -euo pipefail
 
-REFFSD_BIN=${1:-/build/src/reffsd}
+# Dual mode:
+#   Standalone:  ci_nfstest.sh [REFFSD_BIN]
+#   External:    ci_nfstest.sh --server HOST [--mount MOUNT_POINT] [--port PORT]
+
+REFFSD_BIN=""
+NFSTEST_SERVER=""
+NFSTEST_PORT="2049"
+NFSTEST_MOUNT=""
+EXTERNAL_MODE=false
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--server) NFSTEST_SERVER="$2"; EXTERNAL_MODE=true; shift 2 ;;
+		--port)   NFSTEST_PORT="$2"; shift 2 ;;
+		--mount)  NFSTEST_MOUNT="$2"; shift 2 ;;
+		*)        REFFSD_BIN="$1"; shift ;;
+	esac
+done
+
+if [ "$EXTERNAL_MODE" = false ]; then
+	REFFSD_BIN=${REFFSD_BIN:-/build/src/reffsd}
+	NFSTEST_SERVER="127.0.0.1"
+	NFSTEST_PORT="2049"
+fi
+
 EXTERNAL_DIR=${EXTERNAL_DIR:-$(cd "$(dirname "$0")/.." && pwd)/external}
 NFSTEST_DIR="$EXTERNAL_DIR/nfstest"
 NFSTEST_URL="git://git.linux-nfs.org/projects/mora/nfstest.git"
@@ -170,42 +194,45 @@ fi
 
 fetch_nfstest
 
-start_server || exit 1
+if [ "$EXTERNAL_MODE" = false ]; then
+	start_server || exit 1
+fi
 
-mkdir -p "$MOUNT"
+# In external mode, honour a caller-supplied mount point (already mounted).
+# Otherwise mount ourselves to avoid nfstest's libc.sync() triggering
+# D-state processes in the kernel NFS client (Docker containers share
+# the host kernel).
+if [ "$EXTERNAL_MODE" = true ] && [ -n "$NFSTEST_MOUNT" ]; then
+	MOUNT="$NFSTEST_MOUNT"
+	_our_mount=false
+else
+	_our_mount=true
+	umount -f -l "$MOUNT" 2>/dev/null || true
+	mkdir -p "$MOUNT"
+	mount -o vers=4.2,sec=sys "${NFSTEST_SERVER}:/" "$MOUNT" || {
+		info "Pre-mount failed"
+		[ "$EXTERNAL_MODE" = false ] && stop_server
+		exit 1
+	}
+fi
+
 RESULTS="$WORK_DIR/nfstest_results.txt"
 
 # Run selected nfstest modules that don't require multi-client setup.
 # nfstest_posix: POSIX API compliance over NFS
 # nfstest_alloc: space allocation (ALLOCATE/DEALLOCATE)
 # nfstest_cache: attribute caching behavior
-# nfstest_delegation: delegation handling
 #
 # Skip nfstest_pnfs (needs layout infrastructure),
+# nfstest_delegation (CB_RECALL compat issues),
 # nfstest_interop (needs multiple clients/servers).
-
-	#
-# Pre-mount before invoking nfstest.  nfstest's setup() calls
-# libc.sync() before its umount/mount cycle, which blocks in
-# wait_sb_inodes if any stale NFS superblock exists in the
-# kernel (Docker containers share the host kernel).  By mounting
-# ourselves and passing --nomount, we skip that path entirely.
-#
-umount -f -l "$MOUNT" 2>/dev/null || true
-mkdir -p "$MOUNT"
-mount -o vers=4.2,sec=sys 127.0.0.1:/ "$MOUNT" || {
-	info "Pre-mount failed"
-	stop_server
-	exit 1
-}
-
 for test_module in nfstest_posix nfstest_alloc nfstest_cache; do
 	test_path="$NFSTEST_DIR/test/$test_module"
 	if [ -f "$test_path" ]; then
 		info ""
 		info "--- $test_module ---"
 		if timeout --kill-after=30 300 "$test_path" \
-			--server 127.0.0.1 \
+			--server "$NFSTEST_SERVER" \
 			--export / \
 			--mtpoint "$MOUNT" \
 			--nfsversion 4.2 \
@@ -216,20 +243,24 @@ for test_module in nfstest_posix nfstest_alloc nfstest_cache; do
 			rc=$?
 			info "$test_module: exit $rc (baseline)"
 			# Break D-state processes stuck in kernel NFS calls.
-			umount -f -l "$MOUNT" 2>/dev/null || true
-			sleep 2
-			mkdir -p "$MOUNT"
-			mount -o vers=4.2,sec=sys 127.0.0.1:/ "$MOUNT" 2>/dev/null || true
+			if [ "$_our_mount" = true ]; then
+				umount -f -l "$MOUNT" 2>/dev/null || true
+				sleep 2
+				mkdir -p "$MOUNT"
+				mount -o vers=4.2,sec=sys "${NFSTEST_SERVER}:/" "$MOUNT" 2>/dev/null || true
+			fi
 		fi
 	else
 		info "Skipping $test_module (not found at $test_path)"
 	fi
 done
 
-umount -f -l "$MOUNT" 2>/dev/null || true
+[ "$_our_mount" = true ] && umount -f -l "$MOUNT" 2>/dev/null || true
 
-check_asan
-stop_server
+if [ "$EXTERNAL_MODE" = false ]; then
+	check_asan
+	stop_server
+fi
 
 info ""
 if [ "$FAILED" -eq 0 ]; then

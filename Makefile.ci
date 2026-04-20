@@ -317,6 +317,46 @@ libnfs: image $(LOGS_DIR)
 			exit \$$rc"
 
 # -----------------------------------------------------------------------
+# xfstests: XFS test suite NFS group (GPL -- external process only)
+# -----------------------------------------------------------------------
+
+xfstests: image $(LOGS_DIR)
+	@mkdir -p $(ROOT_DIR)/external
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(ROOT_DIR)/external:/external:Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			EXTERNAL_DIR=/external \
+			/src/scripts/ci_xfstests.sh /build/src/reffsd; \
+			rc=\$$?; \
+			cp -f /reffs_data/xfstests_results.txt /logs/xfstests_results.txt 2>/dev/null; \
+			cp -f /reffs_data/reffsd_xfstests.log /logs/xfstests.log 2>/dev/null; \
+			exit \$$rc"
+
+# -----------------------------------------------------------------------
+# ltp: Linux Test Project NFS subset (GPL -- external process only)
+# -----------------------------------------------------------------------
+
+ltp: image $(LOGS_DIR)
+	@mkdir -p $(ROOT_DIR)/external
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		-v $(ROOT_DIR)/external:/external:Z \
+		-v $(LOGS_DIR):/logs:Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			EXTERNAL_DIR=/external \
+			/src/scripts/ci_ltp.sh /build/src/reffsd; \
+			rc=\$$?; \
+			cp -f /reffs_data/ltp_results.txt /logs/ltp_results.txt 2>/dev/null; \
+			cp -f /reffs_data/reffsd_ltp.log /logs/ltp.log 2>/dev/null; \
+			exit \$$rc"
+
+# -----------------------------------------------------------------------
 # shell / ci-stop: interactive debugging
 # -----------------------------------------------------------------------
 
@@ -338,4 +378,4 @@ stop:
 		echo "No running CI containers."; \
 	fi
 
-.PHONY: image check full sec soak soak-noopt soak-tsan soak-rocksdb soak-core test cthon04 pynfs pjdfstest nfstest sigmund libnfs tls-stress shell stop
+.PHONY: image check full sec soak soak-noopt soak-tsan soak-rocksdb soak-core test cthon04 pynfs pjdfstest nfstest sigmund libnfs tls-stress xfstests ltp shell stop
