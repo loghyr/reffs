@@ -45,6 +45,7 @@
 #include "reffs/io.h"
 #include "reffs/ring.h"
 #include "ring_internal.h"
+#include "io_internal.h"
 #include "reffs/rpc.h"
 #include "reffs/task.h"
 
