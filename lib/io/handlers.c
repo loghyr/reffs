@@ -68,12 +68,14 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc);
  * Returns < 1 for error, 0 for no need for further processing,
  * 1 for using kTLS and fall through.
  *
- * Unreachable on FreeBSD PR #7 because io_tls_init_server_context is
- * not called from the kqueue io_handler_init -- ci->ci_ssl is always
- * NULL.  When PR #8 ports TLS, the io_request_write_op call at the
- * bottom must be adjusted to honor the per-fd write gate (otherwise
- * the subsequent writer's EVFILT_WRITE registration silently replaces
- * this one's on kqueue).  See PR #7 addendum B2 for the analysis.
+ * Reachable on all three backends now that kqueue_socket.c's
+ * io_handler_init wires io_tls_init_server_context (commit 53).
+ * On kqueue the io_request_write_op call at the bottom of the
+ * userspace-BIO branch submits outside the per-fd write gate --
+ * two concurrent TLS writers on the same fd would race via
+ * EVFILT_WRITE replacement.  Not yet observed in the wild because
+ * NFSv4.1 clients serialize TLS frames, but worth a follow-up
+ * audit if TLS throughput becomes a target.
  */
 static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 {
@@ -271,11 +273,10 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 	      ci ? ci->ci_tls_enabled : 0);
 #endif
 	/*
-	 * TLS branch.  On FreeBSD PR #7 this is unreachable because
-	 * io_tls_init_server_context is not called from the kqueue
-	 * io_handler_init, so ci->ci_ssl is never set.  PR #8 ports TLS
-	 * and must address the EVFILT_WRITE collision window that arises
-	 * when io_do_tls submits outside the write gate (see addendum).
+	 * TLS branch.  Reachable on all three backends as of #53.  The
+	 * EVFILT_WRITE collision window inside io_do_tls (submit outside
+	 * the write gate) remains a latent concurrency concern on
+	 * kqueue; see the note on io_do_tls above.
 	 */
 	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
 		int fd_saved = ic->ic_fd;

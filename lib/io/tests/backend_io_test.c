@@ -60,9 +60,8 @@ static void setup(void)
 	ck_assert_int_eq(io_backend_init(g_rc), 0);
 	io_backend_set_global(g_rc);
 	g_running = 1;
-	ck_assert_int_eq(pthread_create(&g_loop_thread, NULL, backend_loop,
-					NULL),
-			 0);
+	ck_assert_int_eq(
+		pthread_create(&g_loop_thread, NULL, backend_loop, NULL), 0);
 }
 
 static void teardown(void)
@@ -84,7 +83,8 @@ static bool wait_for_completion(struct rpc_trans *rt, int64_t sentinel,
 				int timeout_ms)
 {
 	for (int waited = 0; waited < timeout_ms; waited += 5) {
-		int64_t v = __atomic_load_n(&rt->rt_io_result, __ATOMIC_ACQUIRE);
+		int64_t v =
+			__atomic_load_n(&rt->rt_io_result, __ATOMIC_ACQUIRE);
 		if (v != sentinel)
 			return true;
 		usleep(5000);
@@ -108,9 +108,8 @@ START_TEST(test_pwrite_then_pread_roundtrip)
 	rt_w->rt_task = NULL; /* no task -- skip task_resume branch */
 	rt_w->rt_io_result = -1; /* sentinel */
 
-	ck_assert_int_eq(io_request_backend_pwrite(fd, payload, len, 0, rt_w,
-						   g_rc),
-			 0);
+	ck_assert_int_eq(
+		io_request_backend_pwrite(fd, payload, len, 0, rt_w, g_rc), 0);
 	ck_assert_msg(wait_for_completion(rt_w, -1, 2000),
 		      "pwrite completion did not fire within 2s");
 	ck_assert_int_eq((int)rt_w->rt_io_result, (int)len);

@@ -57,22 +57,29 @@
  * is that the handler ring also stores the ring_context as
  * g_network_rc so outside code can find it.
  *
- * TLS args are accepted but not yet used by this backend -- TLS
- * plumbing mirrors the liburing path and will be wired in a
- * subsequent commit together with the rest of lib/io/tls.c.
+ * TLS init mirrors lib/io/handler.c (liburing): initialize the
+ * conn-tracking table and pre-load the SSL_CTX from the caller's
+ * cert/key/ca paths.  io_tls_init_server_context itself calls
+ * SSL_library_init + OpenSSL_add_all_algorithms, so the kqueue/
+ * darwin path doesn't need to duplicate those.  Deferred init
+ * still works (handle_tls_handshake does a NULL-arg re-init for
+ * default paths), but wiring the explicit args at startup means
+ * --tls-cert is honored on FreeBSD and macOS too.  See #53.
  */
 int io_handler_init(struct ring_context *rc, const char *tls_cert,
 		    const char *tls_key, const char *tls_ca)
 {
-	(void)tls_cert;
-	(void)tls_key;
-	(void)tls_ca;
-
 	int ret = kq_setup(rc, "io_handler_init");
+	if (ret != 0)
+		return ret;
 
-	if (ret == 0)
-		io_network_set_global(rc);
-	return ret;
+	io_network_set_global(rc);
+	io_conn_init();
+
+	if (io_tls_init_server_context(tls_cert, tls_key, tls_ca) != 0)
+		TRACE("TLS context init deferred (certs not found at startup)");
+
+	return 0;
 }
 
 void io_handler_fini(struct ring_context *rc)
