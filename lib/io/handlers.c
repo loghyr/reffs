@@ -657,7 +657,14 @@ int io_handle_connect(struct io_context *ic, int result,
 	copy_connection_info(&ic->ic_ci, &rt->rt_info.ri_ci);
 	io_context_destroy(ic);
 
-	return io_rpc_trans_cb(rt);
+	int ret = io_rpc_trans_cb(rt);
+	/*
+	 * Drop the find-ref io_find_request_by_xid took on our behalf.
+	 * rt stays registered in pending_requests until the reply arrives;
+	 * the creator-ref keeps it alive.  See #31.
+	 */
+	rpc_protocol_free(rt);
+	return ret;
 }
 // Maximum reassembled RPC message size (matches IO_MAX_WRITE_SIZE + headers)
 #define MAX_RPC_MESSAGE_SIZE (2 * 1024 * 1024)

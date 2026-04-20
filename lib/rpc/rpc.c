@@ -1109,7 +1109,12 @@ int rpc_process_task(struct task *t)
 		rt->rt_context = rt_old->rt_context;
 		rt_old->rt_context = NULL;
 
-		/* rt_old is now a shell; release it (drops rt_rph ref). */
+		/*
+		 * rt_old is now a shell.  Drop the find-ref
+		 * io_find_request_by_xid took (#31) and then the creator-
+		 * ref: the second put triggers rpc_trans_release.
+		 */
+		rpc_protocol_free(rt_old);
 		rpc_protocol_free(rt_old);
 
 		/*

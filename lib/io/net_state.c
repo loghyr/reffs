@@ -75,7 +75,13 @@ struct rpc_trans *io_find_request_by_xid(uint32_t xid)
 		    pending_requests[i]->rt_info.ri_xid == xid) {
 			TRACE("rt=%p xid=0x%08x", (void *)pending_requests[i],
 			      xid);
-			rt = pending_requests[i];
+			/*
+			 * Take a ref under request_mutex so the rt can't be
+			 * freed between this function returning and the
+			 * caller's deref.  Caller MUST rpc_protocol_free()
+			 * the returned rt when done.  See #31.
+			 */
+			rt = rpc_trans_get(pending_requests[i]);
 			break;
 		}
 	}

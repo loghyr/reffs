@@ -17,6 +17,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <urcu/ref.h>
+
 #include "nfsv42_xdr.h"
 #include "reffs/darwin_rpc_compat.h" /* xdr_sizeof shim on __APPLE__ */
 #include "reffs/log.h"
@@ -119,6 +121,14 @@ static int cb_build_and_alloc(struct nfs4_session *session,
 		free(buf);
 		return ENOMEM;
 	}
+
+	/*
+	 * Initialize the urcu ref so io_find_request_by_xid -> rpc_trans_get
+	 * on this cb_rt (via the reply-matching path in rpc.c) operates on a
+	 * valid refcount.  Raw calloc leaves rt_ref zeroed; any subsequent
+	 * urcu_ref_get on that is UB.  See #31.
+	 */
+	urcu_ref_init(&cb_rt->rt_ref);
 
 	cb_rt->rt_fd = session->ns_cb_fd;
 	cb_rt->rt_reply = buf;
@@ -257,7 +267,14 @@ int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
 
 	/* Fire-and-forget: don't register, don't wait. */
 	ret = io_rpc_trans_cb(cb_rt);
-	free(cb_rt);
+	/*
+	 * Drop creator-ref.  rt_context is NULL on this path (no cb_pending
+	 * is set for fire-and-forget), so rpc_trans_release's protocol-
+	 * handler cleanup skips cleanly.  rt_reply was transferred to the
+	 * io_context by io_rpc_trans_cb on success; on failure it is still
+	 * ours and release frees it.
+	 */
+	rpc_protocol_free(cb_rt);
 
 	return ret;
 }
@@ -308,8 +325,10 @@ int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 
 	ret = io_register_request(cb_rt);
 	if (ret) {
-		free(cb_rt->rt_reply);
-		free(cb_rt);
+		/* cp is owned by the caller's cb_pending_alloc, not cb_rt;
+		 * clear rt_context so rpc_trans_release doesn't touch it. */
+		cb_rt->rt_context = NULL;
+		rpc_protocol_free(cb_rt);
 		return ret;
 	}
 
@@ -323,7 +342,8 @@ int nfs4_cb_getattr_send(struct nfs4_session *session, const nfs_fh4 *fh,
 	if (ret) {
 		io_unregister_request(xid);
 		cb_timeout_unregister(cp);
-		free(cb_rt);
+		cb_rt->rt_context = NULL;
+		rpc_protocol_free(cb_rt);
 		return ret;
 	}
 
@@ -394,8 +414,8 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 
 	ret = io_register_request(cb_rt);
 	if (ret) {
-		free(cb_rt->rt_reply);
-		free(cb_rt);
+		cb_rt->rt_context = NULL;
+		rpc_protocol_free(cb_rt);
 		return ret;
 	}
 
@@ -405,7 +425,8 @@ int nfs4_cb_layoutrecall_send(struct nfs4_session *session,
 	if (ret) {
 		io_unregister_request(xid);
 		cb_timeout_unregister(cp);
-		free(cb_rt);
+		cb_rt->rt_context = NULL;
+		rpc_protocol_free(cb_rt);
 		return ret;
 	}
 
