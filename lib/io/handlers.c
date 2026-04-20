@@ -1337,8 +1337,30 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 				return 0;
 			}
 
+			/*
+			 * A single TLS record may carry multiple application-
+			 * level chunks; SSL_read only returned what fit in the
+			 * buffer for the first chunk.  SSL_pending > 0 means
+			 * more plaintext is already buffered inside OpenSSL
+			 * and will NOT trigger a new readable event on the
+			 * fd -- the wire bytes have been consumed.  Drain
+			 * into remaining buffer space before returning to the
+			 * event loop.
+			 */
+			int total = decrypted;
+			while (total < (int)ic->ic_buffer_len &&
+			       SSL_pending(ci->ci_ssl) > 0) {
+				int more = SSL_read(
+					ci->ci_ssl,
+					(char *)ic->ic_buffer + total,
+					(int)ic->ic_buffer_len - total);
+				if (more <= 0)
+					break;
+				total += more;
+			}
+
 			// Update bytes_read with decrypted count
-			bytes_read = decrypted;
+			bytes_read = total;
 		}
 	}
 
