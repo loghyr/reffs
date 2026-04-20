@@ -6,6 +6,10 @@
 #ifndef _REFFS_FUSE_H
 #define _REFFS_FUSE_H
 
+/* Rocky/RHEL fuse v2 compat headers redirect to fuse3, which requires >= 30 */
+#ifndef FUSE_USE_VERSION
+#define FUSE_USE_VERSION 31
+#endif
 #include <fuse.h>
 
 int reffs_fuse_access(const char *path, int mode);

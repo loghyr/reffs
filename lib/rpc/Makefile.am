@@ -20,4 +20,4 @@ libreffs_rpc_la_SOURCES = \
 
 libreffs_rpc_la_LIBADD = \
 	$(top_builddir)/lib/io/libreffs_io.la \
-	$(GSSAPI_LIBS) $(NFSIDMAP_LIBS)
+	$(GSSAPI_LIBS) $(NFSIDMAP_LIBS) $(HDR_HISTOGRAM_LIBS)
