@@ -39,6 +39,7 @@ LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 # tls_write_count_test exercises io_handle_write which is backend-
 # specific and currently only implemented on the liburing backend.
 TESTS = \
+	backend_io_test \
 	conn_info_test \
 	tls_test
 
