@@ -83,18 +83,19 @@ AS_CASE([$host_os],
         # Homebrew prefix into each binary so `make check` finds
         # the dylibs without needing DYLD_LIBRARY_PATH in the
         # harness.
-        # Allow dylibs to carry undefined symbols that get resolved
-        # at runtime from the flat namespace.  Linux's default ld
-        # behavior is equivalent; macOS's two-level namespace is
-        # stricter and would otherwise require every reffs dylib to
-        # declare LIBADD for every noinst_LTLIBRARIES convenience
-        # archive whose symbols it references (e.g.,
-        # libreffs_nfs4_server.dylib references dstore_ops_local
-        # from libreffs_dstore.la).  `dynamic_lookup` matches the
-        # cross-platform expectation and lets the existing Makefile
-        # structure work unchanged.  Trade-off: marginally slower
-        # symbol resolution at dyld time; no functional difference.
-        LDFLAGS="-Wl,-undefined,dynamic_lookup $LDFLAGS"
+        # Reject dylibs with unresolved symbols at link time, matching
+        # Linux's -Wl,--no-undefined default.  This used to be
+        # -Wl,-undefined,dynamic_lookup to defer resolution until
+        # runtime because libreffs_dstore was a noinst_LTLIBRARIES
+        # static convenience archive: consumer dylibs referenced its
+        # dstore_ops_* globals via LIBADD folds that worked at
+        # runtime but not at strict link time.  Commit dee4a109
+        # promoted libreffs_dstore to a proper shared library (to
+        # fix an ASAN ODR violation on those same globals), which
+        # also closed the last strict-link gap -- switch to
+        # -Wl,-undefined,error so future missing LIBADDs are caught
+        # at build time instead of as obscure dyld failures.  See #48.
+        LDFLAGS="-Wl,-undefined,error $LDFLAGS"
         # Same EREMOTEIO/ENODATA story as FreeBSD: Darwin errno.h
         # has neither.  Pick reffs-internal sentinel values distinct
         # from every POSIX/Darwin errno.  Darwin ELAST is 106
@@ -133,7 +134,7 @@ AM_CONDITIONAL([HOST_DARWIN],  [test "x$host_is_darwin"  = "xyes"])
 # POSIX extensions accept4(2) and pipe2(2) are Linux and FreeBSD
 # extensions; Darwin has only accept(2) / pipe(2).  Use AC_CHECK_DECLS
 # (header-only probe) instead of AC_CHECK_FUNCS (link-test probe) --
-# the Darwin LDFLAGS addition of -Wl,-undefined,dynamic_lookup above
+# the Darwin LDFLAGS addition of -Wl,-undefined,error above
 # would cause a link test to SUCCEED even for symbols that don't
 # exist, so AC_CHECK_FUNCS gives the wrong answer on Darwin.
 # AC_CHECK_DECLS defines HAVE_DECL_ACCEPT4 / HAVE_DECL_PIPE2 as 0/1;
@@ -356,7 +357,7 @@ AS_IF([test "x$enable_freebsd_kqueue" != "xno"], [
     AC_CHECK_HEADERS([sys/event.h sys/aio.h])
     dnl accept4 is probed separately above via AC_CHECK_DECLS; do not
     dnl include it here -- AC_CHECK_FUNCS does a link test that wrongly
-    dnl succeeds on Darwin under -Wl,-undefined,dynamic_lookup.
+    dnl succeeds on Darwin under -Wl,-undefined,error.
     AC_CHECK_FUNCS([kqueue kevent aio_read aio_write aio_cancel aio_error aio_return])
     AS_IF([test "x$ac_cv_header_sys_event_h" = "xyes" && \
            test "x$ac_cv_header_sys_aio_h" = "xyes" && \
