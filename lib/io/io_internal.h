@@ -11,6 +11,24 @@
  * to external consumers (they hold pointers via the public API and
  * call accessors for any field they need).  See reffs/io.h for the
  * public contract.
+ *
+ * Lock ordering (2026-04-20 audit, #32):
+ *   conn_mutex   (lib/io/conn_info.c)   protects connections[] and per-ci state
+ *   context_mutex (lib/io/context.c)    protects context_hash[]
+ *   request_mutex (lib/io/net_state.c)  protects pending_requests[]  (leaf)
+ *   rc_mutex     (struct ring_context)  protects io_uring SQ          (leaf)
+ *   job_mutex    (lib/io/backend_darwin.c) protects the thread-pool queue (leaf)
+ *
+ * Canonical acquisition order when nesting is required:
+ *     conn_mutex -> context_mutex
+ *
+ * All other pairs are never nested.  io_context_destroy is the only
+ * function that takes context_mutex, and it is always called either
+ * with no locks held (most call sites) or after an explicit
+ * pthread_mutex_unlock(&conn_mutex) (e.g. io_conn_unregister).  The
+ * audit found no site that acquires these mutexes in the reverse
+ * order.  Do not introduce context_mutex -> conn_mutex acquisition
+ * without updating this comment and every inner-to-outer caller.
  */
 
 #include <stdbool.h>
