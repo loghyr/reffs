@@ -14,12 +14,77 @@
  */
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <sys/socket.h>
+#include <time.h>
 
 #include "reffs/io.h"
+#include "reffs/network.h"
 #include "reffs/tls.h"
 
-struct io_context;
+struct rpc_trans;
+
+/*
+ * IO operation context (was public; opaque outside lib/io/).
+ * External diagnostic callers copy the relevant subset into a
+ * struct io_context_snapshot instead of reaching into fields.
+ */
+struct io_context {
+	enum op_type ic_op_type;
+	int ic_fd;
+	uint32_t ic_id;
+	void *ic_buffer;
+
+	size_t ic_buffer_len;
+	size_t ic_position;
+	size_t ic_expected_len;
+
+	uint32_t ic_xid;
+
+	uint64_t ic_state;
+
+	time_t ic_action_time;
+
+	uint64_t ic_count;
+
+	struct connection_info ic_ci;
+
+	/*
+	 * Backend I/O ops (OP_TYPE_BACKEND_PREAD/PWRITE) store the owning
+	 * rpc_trans here so the completion handler can resume the task.
+	 * NULL for all network ops.
+	 */
+	struct rpc_trans *ic_rt;
+
+	struct io_context *ic_next;
+
+	/*
+	 * Per-fd write serialization queue.  Used only while this context is
+	 * waiting for the write gate on ic_fd.  NULL when not queued.
+	 * Distinct from ic_next (which links contexts in the active-context
+	 * hash) so both lists can be maintained simultaneously.
+	 */
+	struct io_context *ic_write_next;
+};
+
+/* Record state for reassembling fragmented RPC messages. */
+struct record_state {
+	bool rs_last_fragment;
+	uint32_t rs_fragment_len;
+	char *rs_data;
+	size_t rs_total_len;
+	size_t rs_capacity;
+	uint32_t rs_position;
+};
+
+/* Connection buffer state for reassembling messages. */
+struct buffer_state {
+	int bs_fd;
+	char *bs_data;
+	size_t bs_filled;
+	size_t bs_capacity;
+	struct record_state bs_record;
+};
 
 /* Connection info (was public; opaque outside lib/io/). */
 struct conn_info {

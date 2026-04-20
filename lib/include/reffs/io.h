@@ -74,19 +74,20 @@ enum op_type {
 
 struct rpc_trans;
 
-// IO operation context structure
-struct io_context {
-	enum op_type ic_op_type;
-	int ic_fd;
-	uint32_t ic_id;
-	void *ic_buffer;
+/*
+ * IO operation context -- opaque to callers outside lib/io/.  The full
+ * definition lives in lib/io/io_internal.h; diagnostic callers use
+ * io_context_probe_snapshot() below to get a POD copy instead of
+ * reaching into fields.  Mirrors struct conn_info (commit 9cfa366e)
+ * and ring_context (see reffs/ring.h).
+ */
+struct io_context;
 
-	size_t ic_buffer_len;
-	size_t ic_position;
-	size_t ic_expected_len;
-
-	uint32_t ic_xid;
-
+/* IO_CONTEXT_* state flag bits -- shared with the probe1 wire format
+ * (see lib/probe1/probe1_xdr.x), so they stay in the public header
+ * even though struct io_context itself is opaque.  The static_asserts
+ * in probe1_server.c keep wire and internal values in lockstep.
+ */
 #define IO_CONTEXT_ENTRY_STATE_ACTIVE (1ULL << 0)
 #define IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED (1ULL << 1)
 #define IO_CONTEXT_ENTRY_STATE_PENDING_FREE (1ULL << 2)
@@ -100,50 +101,14 @@ struct io_context {
  * socket fd from interleaving TCP segments and corrupting large reads.
  */
 #define IO_CONTEXT_WRITE_OWNED (1ULL << 6)
-	uint64_t ic_state;
 
-	time_t ic_action_time;
-
-	uint64_t ic_count;
-
-	struct connection_info ic_ci;
-
-	/*
-	 * Backend I/O ops (OP_TYPE_BACKEND_PREAD/PWRITE) store the owning
-	 * rpc_trans here so the completion handler can resume the task.
-	 * NULL for all network ops.
-	 */
-	struct rpc_trans *ic_rt;
-
-	struct io_context *ic_next;
-
-	/*
-	 * Per-fd write serialization queue.  Used only while this context is
-	 * waiting for the write gate on ic_fd.  NULL when not queued.
-	 * Distinct from ic_next (which links contexts in the active-context
-	 * hash) so both lists can be maintained simultaneously.
-	 */
-	struct io_context *ic_write_next;
-};
-
-// Record state for reassembling fragmented RPC messages
-struct record_state {
-	bool rs_last_fragment;
-	uint32_t rs_fragment_len;
-	char *rs_data;
-	size_t rs_total_len;
-	size_t rs_capacity;
-	uint32_t rs_position;
-};
-
-// Connection buffer state for reassembling messages
-struct buffer_state {
-	int bs_fd;
-	char *bs_data;
-	size_t bs_filled;
-	size_t bs_capacity;
-	struct record_state bs_record;
-};
+/*
+ * Buffer-state structs used by the record-marker reassembly layer.
+ * Full definitions are in lib/io/io_internal.h; external callers
+ * only pass pointers through the public API.
+ */
+struct record_state;
+struct buffer_state;
 
 #define CONNECTION_TIMEOUT_SECONDS 60 // Seconds of inactivity before timeout
 #define CONNECTION_TIMEOUT_CHECK_INTERVAL 10 // Check every 10 seconds
@@ -418,7 +383,36 @@ int *io_heartbeat_get_listeners(int *num);
 uint32_t io_heartbeat_period_get(void);
 uint32_t io_heartbeat_period_set(uint32_t seconds);
 
-struct io_context *io_context_probe(int fd, enum op_type op, uint64_t state,
-				    int *count);
+/*
+ * Diagnostic snapshot of an io_context (used by probe1 to dump active
+ * contexts without reaching into the opaque struct).  Fields mirror
+ * the relevant subset of struct io_context as of the probe call;
+ * no pointers into the live state, safe to retain after the call.
+ */
+struct io_context_snapshot {
+	enum op_type op_type;
+	int fd;
+	uint32_t id;
+	uint32_t xid;
+	size_t buffer_len;
+	size_t position;
+	size_t expected_len;
+	uint64_t state;
+	uint64_t count;
+	time_t action_time;
+	struct connection_info ci;
+};
+
+/*
+ * Capture a point-in-time snapshot of all io_contexts whose fd (if
+ * non-zero), op_type (if not OP_TYPE_ALL), and state mask match.
+ * Returns an array of *out_count entries on success, or NULL if no
+ * context matches or allocation fails.  Free with
+ * io_context_probe_snapshot_free().
+ */
+struct io_context_snapshot *io_context_probe_snapshot(int fd, enum op_type op,
+						      uint64_t state_mask,
+						      int *out_count);
+void io_context_probe_snapshot_free(struct io_context_snapshot *arr);
 
 #endif /* _REFFS_IO_H */

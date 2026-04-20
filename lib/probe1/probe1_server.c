@@ -392,63 +392,48 @@ static int probe1_op_io_contexts_list(struct rpc_trans *rt)
 	IO_CONTEXTS_LIST1res *res = ph->ph_res;
 	IO_CONTEXTS_LIST1resok *resok = &res->IO_CONTEXTS_LIST1res_u.iclr_resok;
 
-	struct io_context *ic_list = NULL;
-	struct io_context *ic;
-	int count;
-	int i = 0;
-
+	struct io_context_snapshot *snap = NULL;
+	int count = 0;
 	probe_io_context1 *pic = NULL;
 	time_t now = time(NULL);
 
-	ic_list = io_context_probe(
+	snap = io_context_probe_snapshot(
 		args->icla_fd, (enum op_type)args->icla_op,
 		IO_CONTEXT_ENTRY_STATE_ACTIVE |
 			IO_CONTEXT_ENTRY_STATE_MARKED_DESTROYED |
 			IO_CONTEXT_ENTRY_STATE_PENDING_FREE,
 		&count);
-	if (!ic_list) {
+	if (!snap) {
 		res->iclr_status = PROBE1ERR_NOENT;
-		goto out;
+		return 0;
 	}
 
 	pic = calloc(count, sizeof(*pic));
 	if (!pic) {
 		res->iclr_status = PROBE1ERR_NOMEM;
-		goto out;
+		io_context_probe_snapshot_free(snap);
+		return 0;
 	}
 
 	resok->iclr_now = probe_time1_from_time_t(now);
-
 	resok->iclr_pic.iclr_pic_val = pic;
 	resok->iclr_pic.iclr_pic_len = count;
 
-	for (ic = ic_list; ic; ic = ic_list) {
-		pic[i].pic_op_type = (probe_op_type1)ic->ic_op_type;
-		pic[i].pic_fd = ic->ic_fd;
-		pic[i].pic_id = ic->ic_id;
-		pic[i].pic_xid = ic->ic_xid;
-		pic[i].pic_buffer_len = ic->ic_buffer_len;
-		pic[i].pic_position = ic->ic_position;
-		pic[i].pic_expected_len = ic->ic_expected_len;
-		pic[i].pic_state = ic->ic_state;
-		pic[i].pic_count = ic->ic_count;
-
+	for (int i = 0; i < count; i++) {
+		pic[i].pic_op_type = (probe_op_type1)snap[i].op_type;
+		pic[i].pic_fd = snap[i].fd;
+		pic[i].pic_id = snap[i].id;
+		pic[i].pic_xid = snap[i].xid;
+		pic[i].pic_buffer_len = snap[i].buffer_len;
+		pic[i].pic_position = snap[i].position;
+		pic[i].pic_expected_len = snap[i].expected_len;
+		pic[i].pic_state = snap[i].state;
+		pic[i].pic_count = snap[i].count;
 		pic[i].pic_action_time =
-			probe_time1_from_time_t(ic->ic_action_time);
-
-		ic_list = ic->ic_next;
-		i++;
-		free(ic);
+			probe_time1_from_time_t(snap[i].action_time);
 	}
 
-out:
-	if (ic_list) {
-		for (ic = ic_list; ic; ic = ic_list) {
-			ic_list = ic->ic_next;
-			free(ic);
-		}
-	}
-
+	io_context_probe_snapshot_free(snap);
 	return 0;
 }
 
@@ -459,45 +444,33 @@ static int probe1_op_fd_infos_list(struct rpc_trans *rt)
 	FD_INFOS_LIST1res *res = ph->ph_res;
 	FD_INFOS_LIST1resok *resok = &res->FD_INFOS_LIST1res_u.filr_resok;
 
-	struct io_context *ic_list = NULL;
-	struct io_context *ic;
-	int count;
-	int i = 0;
-
+	struct io_context_snapshot *snap = NULL;
+	int count = 0;
 	probe_fd1 *pf = NULL;
 
-	ic_list = io_context_probe(args->fila_fd, OP_TYPE_READ,
-				   IO_CONTEXT_ENTRY_STATE_ACTIVE, &count);
-	if (!ic_list) {
+	snap = io_context_probe_snapshot(args->fila_fd, OP_TYPE_READ,
+					 IO_CONTEXT_ENTRY_STATE_ACTIVE, &count);
+	if (!snap) {
 		res->filr_status = PROBE1ERR_NOENT;
-		goto out;
+		return 0;
 	}
 
 	pf = calloc(count, sizeof(*pf));
 	if (!pf) {
 		res->filr_status = PROBE1ERR_NOMEM;
-		goto out;
+		io_context_probe_snapshot_free(snap);
+		return 0;
 	}
 
 	resok->filr_pf.filr_pf_val = pf;
 	resok->filr_pf.filr_pf_len = count;
 
-	for (ic = ic_list; ic; ic = ic_list) {
-		pf[i].pf_fd = ic->ic_fd;
-		probe_fd1_get_addr(&pf[i], &ic->ic_ci);
-
-		ic_list = ic->ic_next;
-		i++;
-		free(ic);
+	for (int i = 0; i < count; i++) {
+		pf[i].pf_fd = snap[i].fd;
+		probe_fd1_get_addr(&pf[i], &snap[i].ci);
 	}
 
-out:
-	if (ic_list) {
-		for (ic = ic_list; ic; ic = ic_list) {
-			ic_list = ic->ic_next;
-			free(ic);
-		}
-	}
+	io_context_probe_snapshot_free(snap);
 	return 0;
 }
 
