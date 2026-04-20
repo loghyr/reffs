@@ -20,7 +20,6 @@ reffsinclude_HEADERS = \
 	log.h \
 	memory.h \
 	network.h \
-	nfs3.h \
 	nfs4.h \
 	nfs4_stats.h \
 	ns.h \

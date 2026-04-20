@@ -24,8 +24,8 @@
 
 #include "reffs/log.h"
 #include "reffs/rpc.h"
-#include "reffs/nlm.h"
-#include "reffs/nsm.h"
+#include "nlm.h"
+#include "nsm.h"
 #include "reffs/nlm_lock.h"
 #include "reffs/inode.h"
 #include "reffs/super_block.h"

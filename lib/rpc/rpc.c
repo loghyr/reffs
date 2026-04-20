@@ -33,7 +33,7 @@
 #include "reffs/network.h"
 #include "reffs/rcu.h"
 #include "reffs/rpc.h"
-#include "reffs/gss_context.h"
+#include "gss_context.h"
 #include "reffs/task.h"
 #include "reffs/time.h"
 #include "reffs/tls.h"

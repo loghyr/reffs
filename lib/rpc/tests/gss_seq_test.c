@@ -17,7 +17,7 @@
 #include <urcu.h>
 #include <check.h>
 
-#include "reffs/gss_context.h"
+#include "gss_context.h"
 
 /*
  * Create a minimal gss_ctx_entry for testing.

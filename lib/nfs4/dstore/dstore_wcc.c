@@ -24,7 +24,7 @@
 
 #include "reffs/dstore.h"
 #include "reffs/dstore_ops.h"
-#include "reffs/dstore_wcc.h"
+#include "dstore_wcc.h"
 #include "reffs/layout_segment.h"
 #include "reffs/log.h"
 

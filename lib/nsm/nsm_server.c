@@ -21,7 +21,7 @@
 #include "sm_inter.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
-#include "reffs/nsm.h"
+#include "nsm.h"
 #include "reffs/nlm_lock.h"
 
 static int sm_state = 1;

@@ -21,7 +21,7 @@
 #include "nfsv42_names.h"
 #include "reffs/darwin_rpc_compat.h" /* xdr_sizeof shim on __APPLE__ */
 #include "reffs/dstore.h"
-#include "reffs/dstore_fanout.h"
+#include "dstore_fanout.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"

@@ -29,7 +29,7 @@
 #include <openssl/rand.h>
 #include <xxhash.h>
 
-#include "reffs/gss_context.h"
+#include "gss_context.h"
 #include "reffs/idmap.h"
 #include "reffs/identity_map.h"
 #include "reffs/log.h"

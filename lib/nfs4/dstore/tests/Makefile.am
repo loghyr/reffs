@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/nfs4/include @CHECK_CFLAGS@	\
+AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/nfs4/include			\
+	-I$(top_srcdir)/lib/nfs4/dstore @CHECK_CFLAGS@		\
 	$(URCU_CFLAGS) $(URCU_CDS_CFLAGS) $(FUSE_CFLAGS)	\
 	$(TIRPC_CFLAGS) $(ZLIB_CFLAGS) $(UUID_CFLAGS)		\
 	$(JEMALLOC_CFLAGS) $(HDR_HISTOGRAM_CFLAGS)		\

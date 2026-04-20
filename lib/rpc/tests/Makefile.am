@@ -9,6 +9,7 @@ AM_CFLAGS = -Im4 -I$(top_srcdir)/lib/fs @CHECK_CFLAGS@		\
 	$(URING_CFLAGS)						\
 	$(ZSTD_CFLAGS)						\
 	-I$(top_srcdir)/lib/include				\
+	-I$(top_srcdir)/lib/rpc					\
 	-I$(top_srcdir)/lib/tests				\
 	-I$(top_builddir)/lib/xdr
 

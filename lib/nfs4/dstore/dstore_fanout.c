@@ -21,7 +21,7 @@
 #include <string.h>
 
 #include "reffs/dstore.h"
-#include "reffs/dstore_fanout.h"
+#include "dstore_fanout.h"
 #include "reffs/dstore_ops.h"
 #include "reffs/log.h"
 #include "reffs/task.h"

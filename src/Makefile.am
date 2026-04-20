@@ -8,6 +8,9 @@ REFFS_GIT_VERSION = $(shell git -C $(top_srcdir) describe --always --dirty 2>/de
 AM_CFLAGS = \
 	-DREFFS_GIT_VERSION='"$(REFFS_GIT_VERSION)"' \
 	-I$(top_srcdir)/lib/include	\
+	-I$(top_srcdir)/lib/nfs3		\
+	-I$(top_srcdir)/lib/nlm		\
+	-I$(top_srcdir)/lib/nsm		\
 	-I$(top_builddir)/lib/xdr	\
 	-I$(top_srcdir)/third_party/tomlc99	\
 	$(TIRPC_CFLAGS)			\
