@@ -15,6 +15,16 @@
 #include <urcu/list.h>
 #include <uuid/uuid.h>
 
+/*
+ * UUID_STR_LEN (37 = 8-4-4-4-12 hex + 4 hyphens + NUL) is a libuuid
+ * constant on Linux, but Darwin's <uuid/uuid.h> only ships the
+ * uuid_string_t typedef and no named length.  Alias here at the one
+ * call site rather than via configure.ac CPPFLAGS.
+ */
+#ifndef UUID_STR_LEN
+#define UUID_STR_LEN 37
+#endif
+
 #include "reffs/backend.h"
 #include "reffs/rcu.h"
 #include "reffs/dirent.h"

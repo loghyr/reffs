@@ -135,20 +135,13 @@ AS_CASE([$host_os],
         # provides the historical authunix_create(3) (same
         # signature and semantics).  Alias via the preprocessor.
         CPPFLAGS="-Dauthsys_create=authunix_create $CPPFLAGS"
-        # Darwin's struct stat uses the historical BSD
-        # st_{atime,mtime,ctime}spec names for the nanosecond-
-        # resolution timespec fields.  POSIX 2008 (what Linux uses)
-        # spells them st_{atim,mtim,ctim}.  Alias the POSIX names
-        # to Darwin's so struct-member access in fs.c / fuse.c /
-        # fs tests works unchanged.
-        CPPFLAGS="-Dst_atim=st_atimespec $CPPFLAGS"
-        CPPFLAGS="-Dst_mtim=st_mtimespec $CPPFLAGS"
-        CPPFLAGS="-Dst_ctim=st_ctimespec $CPPFLAGS"
-        # UUID_STR_LEN is a libuuid constant on Linux (== 37; the
-        # size of the canonical "8-4-4-4-12" UUID string including
-        # the terminating NUL).  Darwin's <uuid/uuid.h> provides
-        # uuid_string_t (a 37-byte array) but no named constant.
-        CPPFLAGS="-DUUID_STR_LEN=37 $CPPFLAGS"
+        # Two Darwin-specific aliases previously lived in CPPFLAGS
+        # here:
+        #   -Dst_{atim,mtim,ctim}=st_{a,m,c}timespec
+        #   -DUUID_STR_LEN=37
+        # They now have source-visible #ifdef __APPLE__ stanzas in
+        # lib/include/reffs/fs.h and lib/fs/ns.c respectively, so
+        # the CPPFLAGS magic is no longer needed.  See #24.
         host_is_darwin=yes
     ])
 AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])

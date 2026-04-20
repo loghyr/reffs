@@ -7,6 +7,21 @@
 #define _REFFS_FS_H
 
 #include <sys/stat.h>
+
+/*
+ * Darwin spells the nanosecond-resolution timespec stat fields with
+ * the historical BSD names (st_*timespec); POSIX 2008 (Linux) uses
+ * st_*tim.  Alias here rather than silently via configure.ac
+ * CPPFLAGS so readers see the platform delta in source.  Every TU
+ * that accesses these fields already pulls reffs/fs.h directly or
+ * transitively (via reffs/inode.h / fs_test_harness.h).
+ */
+#ifdef __APPLE__
+#define st_atim st_atimespec
+#define st_mtim st_mtimespec
+#define st_ctim st_ctimespec
+#endif
+
 #include "reffs/types.h"
 #include "reffs/super_block.h"
 
