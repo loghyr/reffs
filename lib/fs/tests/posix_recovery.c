@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,8 +63,8 @@ int test_write_meta(struct test_context *ctx, uint64_t ino,
 		    struct inode_disk *id)
 {
 	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/sb_1/ino_%lu.meta", ctx->backend_path,
-		 ino);
+	snprintf(path, sizeof(path), "%s/sb_1/ino_%" PRIu64 ".meta",
+		 ctx->backend_path, ino);
 	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0)
 		return errno;
@@ -89,8 +90,8 @@ int test_write_dat(struct test_context *ctx, uint64_t ino, const void *data,
 		   size_t size)
 {
 	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/sb_1/ino_%lu.dat", ctx->backend_path,
-		 ino);
+	snprintf(path, sizeof(path), "%s/sb_1/ino_%" PRIu64 ".dat",
+		 ctx->backend_path, ino);
 	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0)
 		return errno;
@@ -105,8 +106,8 @@ int test_write_dat(struct test_context *ctx, uint64_t ino, const void *data,
 int test_write_lnk(struct test_context *ctx, uint64_t ino, const char *target)
 {
 	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/sb_1/ino_%lu.lnk", ctx->backend_path,
-		 ino);
+	snprintf(path, sizeof(path), "%s/sb_1/ino_%" PRIu64 ".lnk",
+		 ctx->backend_path, ino);
 	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0)
 		return errno;
@@ -123,8 +124,8 @@ int test_write_dir_header(struct test_context *ctx, uint64_t ino,
 			  uint64_t cookie_next, int *fd_out)
 {
 	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/sb_1/ino_%lu.dir", ctx->backend_path,
-		 ino);
+	snprintf(path, sizeof(path), "%s/sb_1/ino_%" PRIu64 ".dir",
+		 ctx->backend_path, ino);
 	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0)
 		return errno;

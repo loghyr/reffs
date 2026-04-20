@@ -20,17 +20,10 @@ AC_ARG_WITH([cc],
     [CC="$withval"],
     [])
 
-# Check if the specified compiler exists.  Use AS_IF (not raw
-# `if test ... then`) so the AC_MSG_ERROR expansion runs in m4
-# macro context.  autoconf 2.73 enforces this strictly; older
-# autoconf (2.71) on Linux / FreeBSD was lenient.
-AC_CHECK_PROG([CC_CHECK], [$CC], [yes], [no])
-AS_IF([test "x$CC_CHECK" = "xno"],
-      [AC_MSG_ERROR([Compiler $CC not found.])])
-
-# Display the compiler that will be used
-AC_MSG_RESULT([Using C compiler: $CC])
-
+dnl AC_PROG_CC below handles compiler discovery and errors out with
+dnl "no acceptable C compiler found" if CC is set to a non-existent
+dnl program.  No need for a custom AC_CHECK_PROG gate here -- it
+dnl tripped autoconf 2.73's strict macro-expansion rules on macOS.
 AC_PROG_CC
 AC_USE_SYSTEM_EXTENSIONS
 m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
@@ -75,11 +68,33 @@ AS_CASE([$host_os],
         AS_IF([test -d /opt/homebrew/include],
               [CPPFLAGS="-I/opt/homebrew/include $CPPFLAGS"])
         AS_IF([test -d /opt/homebrew/lib],
-              [LDFLAGS="-L/opt/homebrew/lib $LDFLAGS"])
+              [LDFLAGS="-L/opt/homebrew/lib $LDFLAGS"
+               LDFLAGS="-Wl,-rpath,/opt/homebrew/lib $LDFLAGS"])
         AS_IF([test -d /usr/local/include],
               [CPPFLAGS="-I/usr/local/include $CPPFLAGS"])
         AS_IF([test -d /usr/local/lib],
-              [LDFLAGS="-L/usr/local/lib $LDFLAGS"])
+              [LDFLAGS="-L/usr/local/lib $LDFLAGS"
+               LDFLAGS="-Wl,-rpath,/usr/local/lib $LDFLAGS"])
+        # Runtime dylib loading on macOS: libtool's uninstalled
+        # binary rpath points at build-tree .libs/ dirs, which
+        # don't contain Homebrew-installed dylibs
+        # (libhdr_histogram, liburcu, etc.).  Adding -rpath to
+        # /opt/homebrew/lib (and /usr/local/lib on Intel) bakes the
+        # Homebrew prefix into each binary so `make check` finds
+        # the dylibs without needing DYLD_LIBRARY_PATH in the
+        # harness.
+        # Allow dylibs to carry undefined symbols that get resolved
+        # at runtime from the flat namespace.  Linux's default ld
+        # behavior is equivalent; macOS's two-level namespace is
+        # stricter and would otherwise require every reffs dylib to
+        # declare LIBADD for every noinst_LTLIBRARIES convenience
+        # archive whose symbols it references (e.g.,
+        # libreffs_nfs4_server.dylib references dstore_ops_local
+        # from libreffs_dstore.la).  `dynamic_lookup` matches the
+        # cross-platform expectation and lets the existing Makefile
+        # structure work unchanged.  Trade-off: marginally slower
+        # symbol resolution at dyld time; no functional difference.
+        LDFLAGS="-Wl,-undefined,dynamic_lookup $LDFLAGS"
         # Same EREMOTEIO/ENODATA story as FreeBSD: Darwin errno.h
         # has neither.  Pick reffs-internal sentinel values distinct
         # from every POSIX/Darwin errno.  Darwin ELAST is 106
@@ -87,16 +102,74 @@ AS_CASE([$host_os],
         # fallback in lib/include/reffs/log.h.
         CPPFLAGS="-DEREMOTEIO=198 $CPPFLAGS"
         CPPFLAGS="-DENODATA=199   $CPPFLAGS"
+        # Force-include <rpc/rpc.h> so base-libc SunRPC pulls in
+        # <rpc/types.h> (bool_t) and <rpc/xdr.h> (XDR macros) for
+        # every compilation unit.  Generated XDR headers include
+        # <rpc/xdr.h> directly; Darwin's <rpc/xdr.h> does not
+        # transitively include <rpc/types.h>, same issue as FreeBSD.
+        CPPFLAGS="-include rpc/rpc.h $CPPFLAGS"
+        # Darwin's base-libc SunRPC provides xdr_u_int32_t / xdr_u_int64_t
+        # but not the Linux/libtirpc spellings xdr_uint32_t / xdr_uint64_t.
+        # The XDR compiler emits the Linux spellings.  Alias via macros
+        # so the generated code compiles unchanged.
+        CPPFLAGS="-Dxdr_uint32_t=xdr_u_int32_t $CPPFLAGS"
+        CPPFLAGS="-Dxdr_uint64_t=xdr_u_int64_t $CPPFLAGS"
+        # RPCSEC_GSS auth flavor (value 6, RFC 2203) is a libtirpc
+        # extension on Linux and FreeBSD's base SunRPC; Darwin's
+        # base SunRPC does not define it.  The XDR generator emits
+        # `case RPCSEC_GSS:` blocks that reference the identifier.
+        # Define it at the compiler level so Darwin can compile the
+        # generated code unchanged.
+        CPPFLAGS="-DRPCSEC_GSS=6 $CPPFLAGS"
+        # AUTH_SYS (value 1, RFC 5531) is the modern spelling;
+        # Darwin's <rpc/auth.h> only defines the historical
+        # AUTH_UNIX name.  Alias so reffs code using AUTH_SYS
+        # resolves to Darwin's AUTH_UNIX.
+        CPPFLAGS="-DAUTH_SYS=AUTH_UNIX $CPPFLAGS"
+        # AUTH_DH (value 3, RFC 5531 "Diffie-Hellman auth") is
+        # defined by Linux libtirpc but not by Darwin's base-libc
+        # SunRPC.  reffs dispatches on it in a few switch
+        # statements; define it so those compile unchanged.
+        CPPFLAGS="-DAUTH_DH=3 $CPPFLAGS"
+        # authsys_create(3) is the modern spelling; Darwin only
+        # provides the historical authunix_create(3) (same
+        # signature and semantics).  Alias via the preprocessor.
+        CPPFLAGS="-Dauthsys_create=authunix_create $CPPFLAGS"
+        # Darwin's struct stat uses the historical BSD
+        # st_{atime,mtime,ctime}spec names for the nanosecond-
+        # resolution timespec fields.  POSIX 2008 (what Linux uses)
+        # spells them st_{atim,mtim,ctim}.  Alias the POSIX names
+        # to Darwin's so struct-member access in fs.c / fuse.c /
+        # fs tests works unchanged.
+        CPPFLAGS="-Dst_atim=st_atimespec $CPPFLAGS"
+        CPPFLAGS="-Dst_mtim=st_mtimespec $CPPFLAGS"
+        CPPFLAGS="-Dst_ctim=st_ctimespec $CPPFLAGS"
+        # UUID_STR_LEN is a libuuid constant on Linux (== 37; the
+        # size of the canonical "8-4-4-4-12" UUID string including
+        # the terminating NUL).  Darwin's <uuid/uuid.h> provides
+        # uuid_string_t (a 37-byte array) but no named constant.
+        CPPFLAGS="-DUUID_STR_LEN=37 $CPPFLAGS"
         host_is_darwin=yes
     ])
 AM_CONDITIONAL([HOST_FREEBSD], [test "x$host_is_freebsd" = "xyes"])
 AM_CONDITIONAL([HOST_DARWIN],  [test "x$host_is_darwin"  = "xyes"])
 
 # POSIX extensions accept4(2) and pipe2(2) are Linux and FreeBSD
-# extensions; Darwin has only accept(2) / pipe(2).  Probe
-# unconditionally -- lib/io/posix_shims.h uses HAVE_ACCEPT4 and
-# HAVE_PIPE2 to pick the native syscall or a fcntl-based fallback.
-AC_CHECK_FUNCS([accept4 pipe2])
+# extensions; Darwin has only accept(2) / pipe(2).  Use AC_CHECK_DECLS
+# (header-only probe) instead of AC_CHECK_FUNCS (link-test probe) --
+# the Darwin LDFLAGS addition of -Wl,-undefined,dynamic_lookup above
+# would cause a link test to SUCCEED even for symbols that don't
+# exist, so AC_CHECK_FUNCS gives the wrong answer on Darwin.
+# AC_CHECK_DECLS defines HAVE_DECL_ACCEPT4 / HAVE_DECL_PIPE2 as 0/1;
+# posix_shims.h is gated on the HAVE_ACCEPT4 / HAVE_PIPE2 convention,
+# so alias via AC_DEFINE when the decls exist.
+AC_CHECK_DECLS([accept4], [AC_DEFINE([HAVE_ACCEPT4], [1],
+    [Define to 1 if you have the accept4 function])],
+    [], [[#include <sys/socket.h>]])
+AC_CHECK_DECLS([pipe2], [AC_DEFINE([HAVE_PIPE2], [1],
+    [Define to 1 if you have the pipe2 function])],
+    [], [[#include <unistd.h>
+#include <fcntl.h>]])
 
 AC_MSG_CHECKING([for C11 support])
 dnl Strip out the freaking -O2 by default!
@@ -125,104 +198,122 @@ AC_TYPE_UINT32_T
 AC_TYPE_UINT64_T
 AC_TYPE_UINT8_T
 
-PKG_CHECK_MODULES(URCU, liburcu, ,
-    [AC_MSG_ERROR([Could not configure liburcu support.])])
-
-PKG_CHECK_MODULES(URCU_CDS, liburcu-cds, ,
-    [AC_MSG_ERROR([Could not configure liburcu-cds support.])])
+dnl 3-arg form -- pkg-config emits a clear default error on failure.
+dnl 4-arg form with a custom error-action trips autoconf 2.73 strict
+dnl mode on macOS (the error-action argument is left overquoted and
+dnl its macro name survives to the output unexpanded).
+PKG_CHECK_MODULES([URCU], [liburcu])
+PKG_CHECK_MODULES([URCU_CDS], [liburcu-cds])
 
 # SunRPC lives in glibc's legacy tree on Linux (deprecated since
-# glibc 2.26) and is typically replaced by libtirpc.  FreeBSD ships
-# SunRPC in base libc, with identical <rpc/*.h> include paths and no
-# separate library.  Try libtirpc first; on failure, fall back to
-# empty CFLAGS/LIBS which makes the RPC calls resolve against base
-# libc.  Explicit detection of FreeBSD via host_os lets us skip the
-# misleading "Could not configure libtirpc" error there.
+# glibc 2.26) and is typically replaced by libtirpc.  FreeBSD and
+# Darwin (macOS) ship SunRPC in base libc, with identical <rpc/*.h>
+# include paths and no separate library.  Skip the libtirpc probe
+# on those hosts and fall back to empty CFLAGS/LIBS so the RPC
+# calls resolve against base libc.
 AS_CASE([$host_os],
-    [freebsd*|dragonfly*], [
+    [freebsd*|dragonfly*|darwin*], [
         TIRPC_CFLAGS=""
         TIRPC_LIBS=""
         AC_SUBST([TIRPC_CFLAGS])
         AC_SUBST([TIRPC_LIBS])
     ],
     [
-        PKG_CHECK_MODULES(TIRPC, libtirpc, ,
-            [AC_MSG_ERROR([Could not configure libtirpc support.])])
+        PKG_CHECK_MODULES([TIRPC], [libtirpc])
     ])
 
 PKG_CHECK_MODULES([CHECK], [check >= 0.15.2])
 
-AX_PTHREAD([PTHREAD_CFLAGS=-pthread], [AC_MSG_ERROR([Could not configure pthread support])])
+dnl Split the ACTION-IF-NOT-FOUND into its own AS_IF -- the 2nd arg
+dnl of AX_PTHREAD is stored unexpanded and trips autoconf 2.73's
+dnl strict mode (same pattern as PKG_CHECK_MODULES 4th arg).
+have_pthread=no
+AX_PTHREAD([PTHREAD_CFLAGS=-pthread; have_pthread=yes], [have_pthread=no])
+AS_IF([test "x$have_pthread" = "xno"],
+      [AC_MSG_ERROR([Could not configure pthread support])])
 AC_SUBST(PTHREAD_CFLAGS)
 
-PKG_CHECK_MODULES(XXHASH, libxxhash, , [AC_MSG_ERROR([Could not configure xxhash support.])])
+PKG_CHECK_MODULES([XXHASH], [libxxhash])
 
 # libfuse pkg-config module name differs by platform: "fuse" on
 # Linux (libfuse2/libfuse3 via the fuse or fuse3 module) and "fuse3"
-# on FreeBSD (fusefs-libs3).  Try both.
-PKG_CHECK_MODULES(FUSE, fuse3, , [
-    PKG_CHECK_MODULES(FUSE, fuse, , [
-        AC_MSG_ERROR([Could not configure fuse support (tried fuse3, fuse).])
-    ])
-])
+# on FreeBSD (fusefs-libs3).  Try both.  Darwin does not build FUSE
+# (lib/fs/Makefile.am gates fuse.c off on HOST_DARWIN), so skip the
+# probe entirely there -- also avoids autoconf 2.73's issue with
+# PKG_CHECK_MODULES nested fallbacks on macOS.
+AS_IF([test "x$host_is_darwin" = "xyes"],
+      [FUSE_CFLAGS=""
+       FUSE_LIBS=""
+       AC_SUBST([FUSE_CFLAGS])
+       AC_SUBST([FUSE_LIBS])],
+      [PKG_CHECK_MODULES([FUSE], [fuse3], [],
+           [PKG_CHECK_MODULES([FUSE], [fuse])])])
 
-# Check for programs
+# Check for programs.  Use AS_IF (not raw `if test ... then`) so that
+# any error/warn macro inside the branch expands in m4 context.
+# autoconf 2.73 (macOS Homebrew) enforces this strictly.
 AC_PATH_PROG([GIT], [git], [no])
-if test "x$GIT" = "xno"; then
-    AC_MSG_ERROR([git is required to build this project])
-fi
+AS_IF([test "x$GIT" = "xno"],
+      [AC_MSG_ERROR([git is required to build this project])])
 
 AC_PATH_PROG([CLANG_FORMAT], [clang-format], [no])
-if test "x$CLANG_FORMAT" = "xno"; then
-    AC_MSG_WARN([clang-format not found - 'make style' will fail])
-fi
+AS_IF([test "x$CLANG_FORMAT" = "xno"],
+      [AC_MSG_WARN([clang-format not found - 'make style' will fail])])
 
 AC_PATH_PROG([CLANG_TIDY], [clang-tidy], [no])
-if test "x$CLANG_TIDY" = "xno"; then
-    AC_MSG_WARN([clang-tidy not found])
-fi
+AS_IF([test "x$CLANG_TIDY" = "xno"],
+      [AC_MSG_WARN([clang-tidy not found])])
 
 AC_PATH_PROG([SCAN_BUILD], [scan-build], [no])
-if test "x$SCAN_BUILD" = "xno"; then
-    AC_MSG_WARN([scan-build not found - 'make scanbuild' will fail])
-fi
+AS_IF([test "x$SCAN_BUILD" = "xno"],
+      [AC_MSG_WARN([scan-build not found - 'make scanbuild' will fail])])
 
 AC_PATH_PROG([XDR_PARSER], [xdr-parser], [no])
-if test "x$XDR_PARSER" = "xno"; then
-    AC_MSG_ERROR([xdr-parser is required (pip install reply-xdr)])
-fi
+AS_IF([test "x$XDR_PARSER" = "xno"],
+      [AC_MSG_ERROR([xdr-parser is required (pip install reply-xdr)])])
 
 AC_PATH_PROG([BEAR], [bear], [no])
-if test "x$BEAR" = "xno"; then
-    AC_MSG_WARN([bear not found - 'make tidy' may fail])
-fi
+AS_IF([test "x$BEAR" = "xno"],
+      [AC_MSG_WARN([bear not found - 'make tidy' may fail])])
 
-# Check for libuuid
-AC_CHECK_HEADER([uuid/uuid.h],
-  [AC_CHECK_LIB([uuid], [uuid_generate],
-    [UUID_LIBS="-luuid"
+# Check for libuuid.  Linux and FreeBSD need -luuid; Darwin provides
+# uuid_generate* in libSystem (no separate library needed), so the
+# AC_CHECK_LIB probe fails there -- skip it on Darwin and leave
+# UUID_LIBS empty.  uuid/uuid.h is present on Darwin via
+# /usr/include/uuid/uuid.h, so the header probe still runs.
+AS_IF([test "x$host_is_darwin" = "xyes"],
+    [AC_CHECK_HEADER([uuid/uuid.h], [],
+        [AC_MSG_ERROR([uuid.h header not found])])
+     UUID_LIBS=""
      AC_DEFINE([HAVE_LIBUUID], [1], [Define if you have libuuid])],
-    [AC_MSG_ERROR([libuuid library not found])])],
-  [AC_MSG_ERROR([uuid.h header not found])])
+    [AC_CHECK_HEADER([uuid/uuid.h],
+        [AC_CHECK_LIB([uuid], [uuid_generate],
+            [UUID_LIBS="-luuid"
+             AC_DEFINE([HAVE_LIBUUID], [1], [Define if you have libuuid])],
+            [AC_MSG_ERROR([libuuid library not found])])],
+        [AC_MSG_ERROR([uuid.h header not found])])])
 AC_SUBST([UUID_LIBS])
 
-# Optional: check for uuid_generate_time_safe which is available in newer versions
-AC_CHECK_LIB([uuid], [uuid_generate_time_safe],
-  [AC_DEFINE([HAVE_UUID_GENERATE_TIME_SAFE], [1],
-             [Define if libuuid has uuid_generate_time_safe function])])
+# Optional: check for uuid_generate_time_safe which is available in
+# newer libuuid (Linux util-linux).  Darwin's libSystem does not
+# provide this variant; skip the probe there.
+AS_IF([test "x$host_is_darwin" != "xyes"],
+    [AC_CHECK_LIB([uuid], [uuid_generate_time_safe],
+        [AC_DEFINE([HAVE_UUID_GENERATE_TIME_SAFE], [1],
+                   [Define if libuuid has uuid_generate_time_safe function])])])
 
 AC_CHECK_HEADER([zlib.h], [], [AC_MSG_ERROR([zlib.h not found])])
 AC_CHECK_LIB([z], [crc32], [], [AC_MSG_ERROR([zlib library not found])])
 
 AC_PATH_PROG([PKG_CONFIG], [pkg-config], [no])
-if test "x$PKG_CONFIG" = "xno"; then
-  AC_MSG_ERROR([pkg-config not found])
-fi
+AS_IF([test "x$PKG_CONFIG" = "xno"],
+      [AC_MSG_ERROR([pkg-config not found])])
 
+dnl 3-arg form: on failure, PKG_CHECK_MODULES emits its default
+dnl "Package requirements were not met" error.  The 4-arg form with
+dnl a custom error action trips autoconf 2.73's strict mode on macOS.
 PKG_CHECK_MODULES([ZSTD], [libzstd >= 1.4.0],
-  [AC_DEFINE([HAVE_LIBZSTD], [1], [Define if libzstd is available])],
-  [AC_MSG_ERROR([libzstd >= 1.4.0 is required])]
-)
+  [AC_DEFINE([HAVE_LIBZSTD], [1], [Define if libzstd is available])])
 
 AC_SUBST([ZSTD_CFLAGS])
 AC_SUBST([ZSTD_LIBS])
@@ -243,30 +334,33 @@ AS_IF([test "x$enable_strict_posix" = "xyes"], [
     AC_DEFINE([HAVE_STRICT_POSIX], [1], [Define if strict POSIX permissions are enabled])
 ])
 
+dnl Check for liburing.  Split pkg-config and manual-check logic into
+dnl flat AS_IF blocks -- nesting an error-macro call inside the 4th
+dnl arg of PKG_CHECK_MODULES (or inside a raw `if test ... fi` block
+dnl inside that 4th arg) trips autoconf 2.73's strict mode.  Each
+dnl error path is now its own top-level AS_IF.
+have_liburing=no
 AS_IF([test "x$enable_linux_io_uring" != "xno"], [
-    # Check for liburing >= 2.3 (required for IORING_ASYNC_CANCEL_ALL, etc.)
-    PKG_CHECK_MODULES([URING], [liburing >= 2.3], [
-        AC_DEFINE([HAVE_LINUX_IO_URING], [1], [Define if Linux io_uring is available])
-        URING_LIBS="$URING_LIBS"
-    ], [
-        # Fallback to manual check if pkg-config fails or version is old
-        AC_CHECK_HEADERS([liburing.h], [
-            AC_CHECK_LIB([uring], [io_uring_queue_init], [
-                AC_MSG_WARN([liburing found but version check failed - build might fail if < 2.3])
-                AC_DEFINE([HAVE_LINUX_IO_URING], [1], [Define if Linux io_uring is available])
-                URING_LIBS="-luring"
-            ], [
-                if test "x$enable_linux_io_uring" = "xyes"; then
-                    AC_MSG_ERROR([io_uring support explicitly requested but liburing not found])
-                fi
-            ])
-        ], [
-            if test "x$enable_linux_io_uring" = "xyes"; then
-                AC_MSG_ERROR([io_uring support explicitly requested but liburing.h not found])
-            fi
-        ])
-    ])
+    PKG_CHECK_MODULES([URING], [liburing >= 2.3],
+        [AC_DEFINE([HAVE_LINUX_IO_URING], [1], [Define if Linux io_uring is available])
+         have_liburing=yes],
+        [have_liburing=no])
 ])
+AS_IF([test "x$have_liburing" = "xno" && test "x$enable_linux_io_uring" != "xno"], [
+    dnl pkg-config did not find liburing >= 2.3.  Fall back to a manual
+    dnl header+lib probe -- accepts any liburing but warns that the
+    dnl build may fail if < 2.3.
+    AC_CHECK_HEADERS([liburing.h],
+        [AC_CHECK_LIB([uring], [io_uring_queue_init],
+            [AC_MSG_WARN([liburing found but version check failed - build might fail if < 2.3])
+             AC_DEFINE([HAVE_LINUX_IO_URING], [1], [Define if Linux io_uring is available])
+             URING_LIBS="-luring"
+             have_liburing=yes],
+            [have_liburing=no])],
+        [have_liburing=no])
+])
+AS_IF([test "x$have_liburing" = "xno" && test "x$enable_linux_io_uring" = "xyes"],
+      [AC_MSG_ERROR([io_uring support explicitly requested but liburing/liburing.h not found])])
 AC_SUBST([URING_LIBS])
 
 # Check for FreeBSD aio + kqueue support
@@ -284,7 +378,10 @@ AC_ARG_ENABLE([freebsd-kqueue],
 have_freebsd_kqueue=no
 AS_IF([test "x$enable_freebsd_kqueue" != "xno"], [
     AC_CHECK_HEADERS([sys/event.h sys/aio.h])
-    AC_CHECK_FUNCS([kqueue kevent aio_read aio_write aio_cancel aio_error aio_return accept4])
+    dnl accept4 is probed separately above via AC_CHECK_DECLS; do not
+    dnl include it here -- AC_CHECK_FUNCS does a link test that wrongly
+    dnl succeeds on Darwin under -Wl,-undefined,dynamic_lookup.
+    AC_CHECK_FUNCS([kqueue kevent aio_read aio_write aio_cancel aio_error aio_return])
     AS_IF([test "x$ac_cv_header_sys_event_h" = "xyes" && \
            test "x$ac_cv_header_sys_aio_h" = "xyes" && \
            test "x$ac_cv_func_kqueue" = "xyes" && \
@@ -538,9 +635,10 @@ AS_IF([test "x$ac_cv_header_hdr_hdr_histogram_h" = "xyes"], [
 ])
 AC_SUBST([HDR_HISTOGRAM_LIBS])
 
-# Check for OpenSSL
-PKG_CHECK_MODULES([OPENSSL], [openssl >= 1.0.2], [],
-    [AC_MSG_ERROR([OpenSSL 1.0.2 or higher required])])
+# Check for OpenSSL.  3-arg form — PKG_CHECK_MODULES's default
+# "Package requirements not met" error is clear enough; the 4-arg
+# form with a custom error action trips autoconf 2.73's strict mode.
+PKG_CHECK_MODULES([OPENSSL], [openssl >= 1.0.2])
 
 # Add OpenSSL flags to CFLAGS and LDFLAGS
 AC_SUBST([OPENSSL_CFLAGS])
@@ -556,31 +654,39 @@ AC_SUBST([OPENSSL_LIBS])
 # integration glue exists).
 AC_CHECK_HEADERS([rpc/auth_gss.h])
 
-PKG_CHECK_MODULES([GSSAPI], [krb5-gssapi], [
-    AC_DEFINE([HAVE_GSSAPI_KRB5], [1], [Define if libgssapi_krb5 is available])
-], [
-    AC_MSG_WARN([libgssapi_krb5 not found — RPCSEC_GSS/krb5 disabled])
-])
+dnl Split the warn-on-failure into a separate AS_IF -- passing a
+dnl warn/error macro call as the 4th arg to PKG_CHECK_MODULES trips
+dnl autoconf 2.73's strict mode on macOS (the arg is left overquoted
+dnl and the macro name survives unexpanded).
+have_gssapi_krb5=no
+PKG_CHECK_MODULES([GSSAPI], [krb5-gssapi],
+    [AC_DEFINE([HAVE_GSSAPI_KRB5], [1], [Define if libgssapi_krb5 is available])
+     have_gssapi_krb5=yes],
+    [have_gssapi_krb5=no])
+AS_IF([test "x$have_gssapi_krb5" = "xno"],
+      [AC_MSG_WARN([libgssapi_krb5 not found -- RPCSEC_GSS/krb5 disabled])])
 AC_SUBST([GSSAPI_CFLAGS])
 AC_SUBST([GSSAPI_LIBS])
 
 # Check for libnfsidmap (optional — NFSv4 principal→uid mapping)
-PKG_CHECK_MODULES([NFSIDMAP], [libnfsidmap], [
-    AC_DEFINE([HAVE_LIBNFSIDMAP], [1], [Define if libnfsidmap is available])
-], [
-    AC_MSG_WARN([libnfsidmap not found — GSS principal mapping uses getpwnam fallback])
-])
+have_libnfsidmap=no
+PKG_CHECK_MODULES([NFSIDMAP], [libnfsidmap],
+    [AC_DEFINE([HAVE_LIBNFSIDMAP], [1], [Define if libnfsidmap is available])
+     have_libnfsidmap=yes],
+    [have_libnfsidmap=no])
+AS_IF([test "x$have_libnfsidmap" = "xno"],
+      [AC_MSG_WARN([libnfsidmap not found -- GSS principal mapping uses getpwnam fallback])])
 AC_SUBST([NFSIDMAP_CFLAGS])
 AC_SUBST([NFSIDMAP_LIBS])
 
 # Check for RocksDB (optional — RocksDB metadata backend)
-PKG_CHECK_MODULES([ROCKSDB], [rocksdb], [
-    AC_DEFINE([HAVE_ROCKSDB], [1], [Define if RocksDB is available])
-    have_rocksdb=yes
-], [
-    AC_MSG_WARN([RocksDB not found — RocksDB metadata backend disabled])
-    have_rocksdb=no
-])
+have_rocksdb=no
+PKG_CHECK_MODULES([ROCKSDB], [rocksdb],
+    [AC_DEFINE([HAVE_ROCKSDB], [1], [Define if RocksDB is available])
+     have_rocksdb=yes],
+    [have_rocksdb=no])
+AS_IF([test "x$have_rocksdb" = "xno"],
+      [AC_MSG_WARN([RocksDB not found -- RocksDB metadata backend disabled])])
 # FreeBSD's rocksdb.pc ships a broken LDFLAGS fragment
 # ("-Wl,-rpath -Wl,") which the linker cannot parse -- it reads
 # the empty argument as a library name and fails with "cannot
@@ -600,6 +706,7 @@ AC_ARG_ENABLE([noopt],
     [enable_noopt=$enableval], [enable_noopt=no])
 
 COMMON_FLAGS="${CFLAGS} -D_FILE_OFFSET_BITS=64 -DRCU_MEMBARRIER=1 -Wall -Wextra -Wformat=2 -Werror -fno-omit-frame-pointer -fasynchronous-unwind-tables"
+
 if test "x${enable_config_block}" = "xyes"; then
 if test "x${enable_debug}" = "xyes"; then
 	DEBUG_ENABLED=1
@@ -637,6 +744,45 @@ AS_CASE([$host_os],
         # Suppress both warning classes rather than drop -Wpedantic
         # entirely.
         CFLAGS="${CFLAGS} -Wno-variadic-macros -Wno-c23-extensions -Wno-gnu"
+    ],
+    [darwin*], [
+        # Silence the xdrproc_t cast warning on XDR-generator output.
+        # The flag name differs across clang versions:
+        #   - Apple CLT clang 20+ / upstream 20+: -Wcast-function-type-mismatch
+        #   - Upstream clang 19 and earlier: -Wcast-function-type-strict
+        #   - GCC (and older clangs): no such warning
+        # Probe each variant and add whichever the compiler accepts.
+        # Must come AFTER the -Wextra in the common CFLAGS block
+        # since -Wextra re-enables the grouped warning.
+        AX_CHECK_COMPILE_FLAG([-Wno-cast-function-type-mismatch],
+            [CFLAGS="${CFLAGS} -Wno-cast-function-type-mismatch"],
+            [AX_CHECK_COMPILE_FLAG([-Wno-cast-function-type-strict],
+                [CFLAGS="${CFLAGS} -Wno-cast-function-type-strict"],
+                [])])
+        # Same liburcu GNU-extension issue as FreeBSD: named
+        # variadic macros + zero-argument variadic macro
+        # invocations.  Suppress under -Wpedantic rather than drop
+        # -Wpedantic entirely.
+        CFLAGS="${CFLAGS} -Wno-variadic-macros -Wno-c23-extensions -Wno-gnu"
+        # Apple CLT clang's -Wextra enables -Wsign-compare and
+        # -Wpointer-sign; GCC's -Wextra does not.  The reffs
+        # codebase has many int-vs-unsigned comparisons (gid_t,
+        # uid_t fields stored as `int`) that Linux builds accept
+        # without warning but Darwin builds reject under -Werror.
+        # Proper fix is to make the affected fields unsigned;
+        # pending that, silence the warnings locally.
+        # TODO: audit aup_uid/aup_gid typing in a follow-up commit.
+        CFLAGS="${CFLAGS} -Wno-sign-compare -Wno-pointer-sign"
+        # Darwin's base-libc SunRPC declares clnt_create(char *, ...)
+        # rather than clnt_create(const char *, ...) -- a pre-C89
+        # signature that fires
+        # -Wincompatible-pointer-types-discards-qualifiers when
+        # reffs passes const-qualified strings.  Likewise the
+        # auth_destroy macro expands to a K&R-style indirect call
+        # that clang flags as -Wdeprecated-non-prototype under C23.
+        # Both are vendor-header artifacts, not reffs bugs.
+        CFLAGS="${CFLAGS} -Wno-incompatible-pointer-types-discards-qualifiers"
+        CFLAGS="${CFLAGS} -Wno-deprecated-non-prototype"
     ])
 
 AC_MSG_RESULT([C flags are ${CFLAGS}])

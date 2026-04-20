@@ -46,7 +46,6 @@
 #include "posix_shims.h"
 #include "tsan_io.h"
 
-
 /* ------------------------------------------------------------------ */
 /* Network-side: handler ring (init/fini/main_loop)                    */
 /* ------------------------------------------------------------------ */
@@ -62,10 +61,8 @@
  * plumbing mirrors the liburing path and will be wired in a
  * subsequent commit together with the rest of lib/io/tls.c.
  */
-int io_handler_init(struct ring_context *rc,
-		    const char *tls_cert,
-		    const char *tls_key,
-		    const char *tls_ca)
+int io_handler_init(struct ring_context *rc, const char *tls_cert,
+		    const char *tls_key, const char *tls_ca)
 {
 	(void)tls_cert;
 	(void)tls_key;
@@ -101,8 +98,7 @@ void io_handler_fini(struct ring_context *rc)
 int io_request_accept_op(int fd, struct connection_info *ci,
 			 struct ring_context *rc)
 {
-	struct io_context *ic =
-		io_context_create(OP_TYPE_ACCEPT, fd, NULL, 0);
+	struct io_context *ic = io_context_create(OP_TYPE_ACCEPT, fd, NULL, 0);
 
 	if (!ic)
 		return -ENOMEM;
@@ -212,8 +208,7 @@ static int kqueue_request_connect(struct ring_context *rc,
  *
  * Read/write are filled in by a later commit; stubbed here.
  */
-static void accept_and_dispatch(struct io_context *ic,
-				struct ring_context *rc)
+static void accept_and_dispatch(struct io_context *ic, struct ring_context *rc)
 {
 	/* reffs_accept4_nb_cloexec uses accept4 on Linux/FreeBSD,
 	 * accept+fcntl on Darwin. */
@@ -232,25 +227,22 @@ static void accept_and_dispatch(struct io_context *ic,
 	io_handle_accept(ic, err ? err : client_fd, rc);
 }
 
-static void connect_and_dispatch(struct io_context *ic,
-				 struct ring_context *rc)
+static void connect_and_dispatch(struct io_context *ic, struct ring_context *rc)
 {
 	int so_err = 0;
 	socklen_t so_errlen = sizeof(so_err);
 
-	if (getsockopt(ic->ic_fd, SOL_SOCKET, SO_ERROR, &so_err,
-		       &so_errlen) < 0)
+	if (getsockopt(ic->ic_fd, SOL_SOCKET, SO_ERROR, &so_err, &so_errlen) <
+	    0)
 		so_err = errno;
 
 	io_handle_connect(ic, -so_err, rc);
 }
 
 /* Forward declarations; definitions follow the main loop. */
-static void read_and_dispatch(struct io_context *ic,
-			      const struct kevent *ke,
+static void read_and_dispatch(struct io_context *ic, const struct kevent *ke,
 			      struct ring_context *rc);
-static void write_and_dispatch(struct io_context *ic,
-			       const struct kevent *ke,
+static void write_and_dispatch(struct io_context *ic, const struct kevent *ke,
 			       struct ring_context *rc);
 static void heartbeat_and_dispatch(struct io_context *ic,
 				   struct ring_context *rc);
@@ -272,8 +264,8 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		if (!running_local)
 			break;
 
-		int n = kevent(rc->rc_kq_fd, NULL, 0, events,
-			       KQUEUE_BATCH_SIZE, &ts);
+		int n = kevent(rc->rc_kq_fd, NULL, 0, events, KQUEUE_BATCH_SIZE,
+			       &ts);
 		if (n < 0) {
 			if (errno == EINTR)
 				continue;
@@ -286,9 +278,12 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		for (int i = 0; i < n; i++) {
 			struct kevent *ke = &events[i];
 
-			if (ke->filter == EVFILT_READ && (int)ke->ident == rc->rc_shutdown_pipe[0]) {
+			if (ke->filter == EVFILT_READ &&
+			    (int)ke->ident == rc->rc_shutdown_pipe[0]) {
 				char drain[64];
-				while (read(rc->rc_shutdown_pipe[0], drain, sizeof(drain)) > 0) { /* drain */ }
+				while (read(rc->rc_shutdown_pipe[0], drain,
+					    sizeof(drain)) > 0) { /* drain */
+				}
 				/* Shutdown wakeup; next iter picks up
 				 * running_flag. */
 				continue;
@@ -514,8 +509,8 @@ int io_send_request(struct rpc_trans *rt)
 			return err;
 		}
 
-		struct conn_info *ci = io_conn_register(
-			sockfd, CONN_CONNECTING, CONN_ROLE_CLIENT);
+		struct conn_info *ci = io_conn_register(sockfd, CONN_CONNECTING,
+							CONN_ROLE_CLIENT);
 		if (!ci) {
 			LOG("Failed to register connection");
 			io_socket_close(sockfd, ENOMEM);
@@ -611,8 +606,8 @@ int io_schedule_heartbeat(struct ring_context *rc)
 
 	uint32_t period = atomic_load_explicit(&kqueue_heartbeat_period,
 					       memory_order_relaxed);
-	return kqueue_arm_heartbeat_timer(
-		rc, ic, (uint64_t)period * 1000000000ULL);
+	return kqueue_arm_heartbeat_timer(rc, ic,
+					  (uint64_t)period * 1000000000ULL);
 }
 
 int io_handle_heartbeat(struct io_context *ic, int result,
@@ -631,8 +626,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 	if (now - kqueue_last_listener_check >=
 	    KQUEUE_LISTENER_CHECK_INTERVAL) {
 		int num_listeners;
-		int *listener_fds =
-			io_heartbeat_get_listeners(&num_listeners);
+		int *listener_fds = io_heartbeat_get_listeners(&num_listeners);
 
 		for (int i = 0; i < num_listeners; i++) {
 			int fd = listener_fds[i];
@@ -800,8 +794,7 @@ int io_resubmit_read(struct io_context *ic, struct ring_context *rc)
  * dispatch normally.  The next iteration gets ke->data == 0 + EV_EOF
  * and the close-path runs then.
  */
-static void read_and_dispatch(struct io_context *ic,
-			      const struct kevent *ke,
+static void read_and_dispatch(struct io_context *ic, const struct kevent *ke,
 			      struct ring_context *rc)
 {
 	ssize_t nread = read(ic->ic_fd, ic->ic_buffer, BUFFER_SIZE);
@@ -847,8 +840,7 @@ static void read_and_dispatch(struct io_context *ic,
  * (e.g. ECONNREFUSED on a connect + EVFILT_WRITE path).  We prefer it
  * when set.
  */
-static void write_and_dispatch(struct io_context *ic,
-			       const struct kevent *ke,
+static void write_and_dispatch(struct io_context *ic, const struct kevent *ke,
 			       struct ring_context *rc)
 {
 	if (ke->fflags != 0) {

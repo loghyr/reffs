@@ -6,6 +6,7 @@
 #ifndef _REFFS_TRACE_IO_H
 #define _REFFS_TRACE_IO_H
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include "reffs/io.h"
@@ -32,7 +33,7 @@ static inline void trace_io_read_submit(struct io_context *ic)
 {
 	reffs_trace_event(
 		REFFS_TRACE_CAT_IO, "io_read_submit", __LINE__,
-		"fd=%d op=%s id=%u len=%zu pos=%zu el=%zu state=0x%lx",
+		"fd=%d op=%s id=%u len=%zu pos=%zu el=%zu state=0x%" PRIx64,
 		ic->ic_fd, io_op_type_to_str(ic->ic_op_type), ic->ic_id,
 		ic->ic_buffer_len, ic->ic_position, ic->ic_expected_len,
 		ic->ic_state);
@@ -42,7 +43,7 @@ static inline void trace_io_write_submit(struct io_context *ic)
 {
 	reffs_trace_event(
 		REFFS_TRACE_CAT_IO, "io_write_submit", __LINE__,
-		"fd=%d op=%s id=%u len=%zu pos=%zu el=%zu state=0x%lx",
+		"fd=%d op=%s id=%u len=%zu pos=%zu el=%zu state=0x%" PRIx64,
 		ic->ic_fd, io_op_type_to_str(ic->ic_op_type), ic->ic_id,
 		ic->ic_buffer_len, ic->ic_position, ic->ic_expected_len,
 		ic->ic_state);
@@ -103,12 +104,14 @@ static inline void trace_io_eagain(struct io_context *ic, const char *func,
 	time_t now = time(NULL);
 	time_t age = now - ic->ic_action_time;
 
-	reffs_trace_event(
-		REFFS_TRACE_CAT_IO, func, line,
-		"EAGAIN: ic=%p op=%s fd=%d state=0x%lx age=%ld count=%ld pos=%zu el=%zu len=%zu id=%u",
-		(void *)ic, io_op_type_to_str(ic->ic_op_type), ic->ic_fd,
-		ic->ic_state, age, ic->ic_count, ic->ic_position,
-		ic->ic_expected_len, ic->ic_buffer_len, ic->ic_id);
+	reffs_trace_event(REFFS_TRACE_CAT_IO, func, line,
+			  "EAGAIN: ic=%p op=%s fd=%d state=0x%" PRIx64
+			  " age=%ld count=%" PRIu64
+			  " pos=%zu el=%zu len=%zu id=%u",
+			  (void *)ic, io_op_type_to_str(ic->ic_op_type),
+			  ic->ic_fd, ic->ic_state, age, ic->ic_count,
+			  ic->ic_position, ic->ic_expected_len,
+			  ic->ic_buffer_len, ic->ic_id);
 }
 
 static inline void trace_io_context(struct io_context *ic, const char *func,
@@ -118,13 +121,14 @@ static inline void trace_io_context(struct io_context *ic, const char *func,
 		time_t now = time(NULL);
 		time_t age = now - ic->ic_action_time;
 
-		reffs_trace_event(
-			REFFS_TRACE_CAT_IO, func, line,
-			"ic=%p op=%s fd=%d state=0x%lx age=%ld count=%ld pos=%zu el=%zu len=%zu id=%u",
-			(void *)ic, io_op_type_to_str(ic->ic_op_type),
-			ic->ic_fd, ic->ic_state, age, ic->ic_count,
-			ic->ic_position, ic->ic_expected_len, ic->ic_buffer_len,
-			ic->ic_id);
+		reffs_trace_event(REFFS_TRACE_CAT_IO, func, line,
+				  "ic=%p op=%s fd=%d state=0x%" PRIx64
+				  " age=%ld count=%" PRIu64
+				  " pos=%zu el=%zu len=%zu id=%u",
+				  (void *)ic, io_op_type_to_str(ic->ic_op_type),
+				  ic->ic_fd, ic->ic_state, age, ic->ic_count,
+				  ic->ic_position, ic->ic_expected_len,
+				  ic->ic_buffer_len, ic->ic_id);
 	}
 }
 
@@ -153,7 +157,8 @@ static inline void trace_io_writer(struct io_context *ic, const char *func,
 
 		reffs_trace_event(
 			REFFS_TRACE_CAT_IO, func, line,
-			"ic=%p fd=%d bl=%ld ip=%ld el=%ld r=%ld cs=%d count=%ld id=%u",
+			"ic=%p fd=%d bl=%ld ip=%ld el=%ld r=%ld cs=%d count=%" PRIu64
+			" id=%u",
 			(void *)ic, ic->ic_fd, ic->ic_buffer_len,
 			ic->ic_position, ic->ic_expected_len, remaining,
 			chunk_size, ic->ic_count, ic->ic_id);

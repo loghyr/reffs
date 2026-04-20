@@ -24,6 +24,7 @@
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
 #include "nfsv42_xdr.h"
+#include "reffs/darwin_rpc_compat.h" /* xdr_sizeof shim on __APPLE__ */
 #include "reffs/rcu.h"
 #include "reffs/rpc.h"
 #include "reffs/cmp.h"

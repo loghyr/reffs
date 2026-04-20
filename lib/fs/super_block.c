@@ -8,6 +8,7 @@
 #endif
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -211,7 +212,8 @@ static void super_block_remove_all_inodes(struct super_block *sb)
 	     __atomic_load_n(&sb->sb_delayed_count, __ATOMIC_RELAXED) > 0;
 	     i++) {
 		if (i % 20 == 0)
-			LOG("Waiting for delayed releases to drain (%lu remaining)",
+			LOG("Waiting for delayed releases to drain (%" PRIu64
+			    " remaining)",
 			    sb->sb_delayed_count);
 		usleep(50000); /* 50ms */
 	}

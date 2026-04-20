@@ -94,8 +94,8 @@ int kq_setup(struct ring_context *rc, const char *tag)
 
 	struct kevent ke;
 
-	EV_SET(&ke, rc->rc_shutdown_pipe[0], EVFILT_READ,
-	       EV_ADD | EV_CLEAR, 0, 0, NULL);
+	EV_SET(&ke, rc->rc_shutdown_pipe[0], EVFILT_READ, EV_ADD | EV_CLEAR, 0,
+	       0, NULL);
 	if (kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL) < 0) {
 		LOG("%s: EVFILT_READ add (shutdown pipe): %s", tag,
 		    strerror(errno));

@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <check.h>
@@ -26,8 +27,8 @@ static int write_custom_meta(struct test_context *ctx, uint64_t ino,
 			     uint32_t magic, uint32_t version)
 {
 	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/sb_1/ino_%lu.meta", ctx->backend_path,
-		 ino);
+	snprintf(path, sizeof(path), "%s/sb_1/ino_%" PRIu64 ".meta",
+		 ctx->backend_path, ino);
 	int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd < 0)
 		return errno;

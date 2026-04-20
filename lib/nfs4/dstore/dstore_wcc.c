@@ -17,6 +17,7 @@
  * See mds.md "WCC Data and Write Layout Checking".
  */
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
@@ -59,14 +60,14 @@ void dstore_wcc_check(const struct dstore_wcc *wcc,
 	 * DS reboot with clock reset.  Log for operator investigation.
 	 */
 	if (timespec_lt(&wcc->wcc_mtime, &ldf->ldf_mtime))
-		LOG("WWWL: dstore[%u] ino=%lu mtime went backwards "
+		LOG("WWWL: dstore[%u] ino=%" PRIu64 " mtime went backwards "
 		    "(%ld.%09ld -> %ld.%09ld) -- possible DS reboot",
 		    dstore_id, ino, (long)ldf->ldf_mtime.tv_sec,
 		    ldf->ldf_mtime.tv_nsec, (long)wcc->wcc_mtime.tv_sec,
 		    wcc->wcc_mtime.tv_nsec);
 
 	if (timespec_lt(&wcc->wcc_ctime, &ldf->ldf_ctime))
-		LOG("WWWL: dstore[%u] ino=%lu ctime went backwards "
+		LOG("WWWL: dstore[%u] ino=%" PRIu64 " ctime went backwards "
 		    "(%ld.%09ld -> %ld.%09ld) -- possible DS reboot",
 		    dstore_id, ino, (long)ldf->ldf_ctime.tv_sec,
 		    ldf->ldf_ctime.tv_nsec, (long)wcc->wcc_ctime.tv_sec,
@@ -83,7 +84,7 @@ void dstore_wcc_check(const struct dstore_wcc *wcc,
 			timespec_ne(&wcc->wcc_ctime, &ldf->ldf_ctime);
 
 		if (mtime_changed || ctime_changed)
-			LOG("WWWL: dstore[%u] ino=%lu DS file changed "
+			LOG("WWWL: dstore[%u] ino=%" PRIu64 " DS file changed "
 			    "without write layout (mtime %s, ctime %s)",
 			    dstore_id, ino, mtime_changed ? "changed" : "same",
 			    ctime_changed ? "changed" : "same");

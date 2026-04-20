@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include "nfsv42_xdr.h"
+#include "reffs/darwin_rpc_compat.h" /* xdr_sizeof shim on __APPLE__ */
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/rpc.h"

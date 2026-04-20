@@ -17,6 +17,9 @@
 #include <linux/fs.h>
 #endif
 
+#include <pthread.h>
+#include <sys/types.h> /* off_t */
+
 /*
  * copy_file_range(2) takes 'loff_t *' on Linux and 'off_t *' on
  * FreeBSD; both are signed 64-bit.  Alias to loff_t on FreeBSD so
@@ -26,7 +29,29 @@
 typedef off_t loff_t;
 #endif
 
-#include <pthread.h>
+#ifdef __APPLE__
+/*
+ * Darwin lacks copy_file_range(2).  Provide a never-succeeding
+ * stub so the call site compiles; the Darwin branch above forces
+ * the read+write fallback via `if (0)` so this stub is never
+ * actually invoked at runtime.  Defined static to avoid confusion
+ * with any future libc addition.
+ */
+static inline ssize_t copy_file_range(int src_fd, loff_t *soff, int dst_fd,
+				      loff_t *doff, size_t len,
+				      unsigned int flags)
+{
+	(void)src_fd;
+	(void)soff;
+	(void)dst_fd;
+	(void)doff;
+	(void)len;
+	(void)flags;
+	errno = ENOSYS;
+	return -1;
+}
+#endif
+
 #include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
@@ -217,8 +242,17 @@ uint32_t nfs4_op_copy(struct compound *compound)
 	int dst_fd = data_block_get_fd(compound->c_inode->i_db);
 	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
 
+#ifdef __APPLE__
+	/* Darwin lacks copy_file_range(2); force the read+write fallback
+	 * below. fcopyfile(3) is the Darwin equivalent but copies whole
+	 * files, not byte ranges, so it's not a drop-in here.  TODO:
+	 * when a byte-range zero-copy path is needed on Darwin, use
+	 * sendfile(2) (works fd->fd) or a dedicated Darwin branch. */
+	if (0) {
+#else
 	if (src_fd >= 0 && dst_fd >= 0) {
 		/* POSIX path: copy_file_range for zero-copy. */
+#endif
 		loff_t soff = (loff_t)src_offset;
 		loff_t doff = (loff_t)dst_offset;
 		uint64_t remaining = count;

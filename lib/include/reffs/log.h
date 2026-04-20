@@ -24,7 +24,7 @@
 #define EREMOTEIO 198
 #endif
 #ifndef ENODATA
-#define ENODATA   199
+#define ENODATA 199
 #endif
 
 #include <stdio.h>
@@ -79,7 +79,7 @@ extern FILE *reffs_log_file;
 		clock_gettime(CLOCK_REALTIME, &ts);                      \
 		struct tm *tm_info = localtime(&ts.tv_sec);              \
 		char time_str[32];                                       \
-		pid_t tid = reffs_gettid();                         \
+		pid_t tid = reffs_gettid();                              \
 		strftime(time_str, 20, "%Y-%m-%d %H:%M:%S", tm_info);    \
 		fprintf(stderr, "[%s.%09ld] [%d:%d] (%s:%d): " fmt "\n", \
 			time_str, ts.tv_nsec, getpid(), tid, __func__,   \
@@ -93,7 +93,7 @@ extern FILE *reffs_log_file;
 		clock_gettime(CLOCK_REALTIME, &ts);                        \
 		struct tm *tm_info = localtime(&ts.tv_sec);                \
 		char time_str[32];                                         \
-		pid_t tid = reffs_gettid();                           \
+		pid_t tid = reffs_gettid();                                \
 		strftime(time_str, 20, "%Y-%m-%d %H:%M:%S", tm_info);      \
 		fprintf(reffs_log_file ? reffs_log_file : stdout,          \
 			"[%s.%09ld] [%d:%d] (%s:%d): " fmt "\n", time_str, \

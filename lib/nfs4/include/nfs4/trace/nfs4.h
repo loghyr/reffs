@@ -6,6 +6,7 @@
 #ifndef _REFFS_NFS4_TRACE_NFS4_H
 #define _REFFS_NFS4_TRACE_NFS4_H
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -35,7 +36,8 @@ static inline void trace_nfs4_name(struct compound *compound, char *name,
 
 	reffs_trace_event(
 		REFFS_TRACE_CAT_NFS, func, line,
-		"compound=%p c_op=%u op=%s status=%s(%d) name=%s sb=%lu ino=%lu",
+		"compound=%p c_op=%u op=%s status=%s(%d) name=%s sb=%" PRIu64
+		" ino=%" PRIu64,
 		(void *)compound, compound->c_curr_op,
 		nfs4_op_name(compound->c_args->argarray
 				     .argarray_val[compound->c_curr_op]
@@ -56,7 +58,8 @@ static inline void trace_nfs4_compound_op(struct compound *compound,
 
 	reffs_trace_event(
 		REFFS_TRACE_CAT_NFS, func, line,
-		"compound=%p c_op=%u op=%s status=%s(%d) sb=%lu ino=%lu",
+		"compound=%p c_op=%u op=%s status=%s(%d) sb=%" PRIu64
+		" ino=%" PRIu64,
 		(void *)compound, compound->c_curr_op,
 		nfs4_op_name(compound->c_args->argarray
 				     .argarray_val[compound->c_curr_op]

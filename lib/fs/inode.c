@@ -9,6 +9,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -788,7 +789,8 @@ int inode_reconstruct_path_to_root(struct inode *inode)
 	while (!inode_already_anchored(cur)) {
 		if (cur->i_parent_ino == 0) {
 			/* No parent recorded -- filesystem corrupt / new inode */
-			LOG("ino %lu has no i_parent_ino, cannot reconstruct path",
+			LOG("ino %" PRIu64
+			    " has no i_parent_ino, cannot reconstruct path",
 			    cur->i_ino);
 			err = -ENOENT;
 			break;
@@ -825,7 +827,8 @@ int inode_reconstruct_path_to_root(struct inode *inode)
 			sizeof(link->pl_name), &link->pl_cookie);
 
 		if (err) {
-			LOG("dir_find_entry_by_ino: parent=%lu child=%lu: %d",
+			LOG("dir_find_entry_by_ino: parent=%" PRIu64
+			    " child=%" PRIu64 ": %d",
 			    cur->i_parent_ino, cur->i_ino, err);
 			inode_active_put(parent);
 			break;
@@ -875,7 +878,7 @@ int inode_reconstruct_path_to_root(struct inode *inode)
 			 * Should not happen -- we loaded it during the upward
 			 * walk and it should still be active.
 			 */
-			LOG("parent ino %lu vanished during replay",
+			LOG("parent ino %" PRIu64 " vanished during replay",
 			    link->pl_parent_ino);
 			err = -ENOENT;
 			break;
@@ -895,7 +898,7 @@ int inode_reconstruct_path_to_root(struct inode *inode)
 		inode_active_put(parent_inode);
 
 		if (!parent_de) {
-			LOG("could not get parent_de for ino %lu",
+			LOG("could not get parent_de for ino %" PRIu64,
 			    link->pl_parent_ino);
 			err = -ENOENT;
 			break;

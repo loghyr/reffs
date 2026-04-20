@@ -8,6 +8,7 @@
 #endif
 
 #include <errno.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -551,8 +552,9 @@ void io_context_stats(struct io_context_stats *ics)
 
 void io_context_log_stats(void)
 {
-	TRACE("Context state transitions: active_cancelled=0, active_destroyed=%ld, "
-	      "cancelled_freed=%ld, destroyed_freed=%ld created=%ld freed=%ld",
+	TRACE("Context state transitions: active_cancelled=0, active_destroyed=%" PRIu64
+	      ", cancelled_freed=%" PRIu64 ", destroyed_freed=%" PRIu64
+	      " created=%" PRIu64 " freed=%" PRIu64,
 	      atomic_load(&active_destroyed), atomic_load(&cancelled_freed),
 	      atomic_load(&destroyed_freed), atomic_load(&context_created),
 	      atomic_load(&context_freed));

@@ -373,7 +373,11 @@ int main(void)
 				 (char *)&rt->rt_info.ri_cred.rc_unix);
 			rt->rt_info.ri_auth_stat = AUTH_BADCRED;
 		} else {
-			LOG("time = %lu", rt->rt_info.ri_cred.rc_unix.aup_time);
+			/* aup_time is `unsigned int` on Darwin, `u_long` on
+			 * Linux libtirpc.  Cast to `unsigned long` for a
+			 * portable format. */
+			LOG("time = %lu",
+			    (unsigned long)rt->rt_info.ri_cred.rc_unix.aup_time);
 			LOG("machine = %s",
 			    rt->rt_info.ri_cred.rc_unix.aup_machname);
 			LOG("uid = %u", rt->rt_info.ri_cred.rc_unix.aup_uid);

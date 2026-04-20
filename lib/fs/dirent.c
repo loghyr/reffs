@@ -9,6 +9,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -419,7 +420,8 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 		uint32_t old_nlink = atomic_fetch_sub_explicit(
 			&parent_inode->i_nlink, 1, memory_order_relaxed);
 		if (old_nlink <= 2) {
-			LOG("WARNING: nlink for directory (ino %lu) dropped to %u! Resetting to 2 to prevent corruption.",
+			LOG("WARNING: nlink for directory (ino %" PRIu64
+			    ") dropped to %u! Resetting to 2 to prevent corruption.",
 			    parent_inode->i_ino, old_nlink - 1);
 			atomic_store_explicit(&parent_inode->i_nlink, 2,
 					      memory_order_relaxed);
@@ -432,7 +434,7 @@ void dirent_parent_release(struct reffs_dirent *rd, enum reffs_life_action rla)
 		int n = S_ISDIR(rd->rd_inode->i_mode) ? 2 : 1;
 		uint32_t old_nlink = atomic_fetch_sub_explicit(
 			&rd->rd_inode->i_nlink, n, memory_order_relaxed);
-		TRACE("ino=%lu old_nlink=%u sub=%d new_nlink=%u",
+		TRACE("ino=%" PRIu64 " old_nlink=%u sub=%d new_nlink=%u",
 		      rd->rd_inode->i_ino, old_nlink, n, old_nlink - n);
 
 		if (old_nlink - n == 0) {

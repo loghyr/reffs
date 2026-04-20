@@ -9,8 +9,9 @@
 # Prerequisites (run separately, this script does NOT install them
 # because the user may want to pick specific versions):
 #
-#   brew install autoconf automake libtool pkg-config cmake pipx \
-#       openssl@3 xxhash zstd rocksdb python@3.12
+#   brew install autoconf autoconf-archive automake libtool \
+#       pkg-config cmake pipx openssl@3 xxhash zstd rocksdb \
+#       check python@3.12
 #
 # Why pipx rather than pip?  macOS Python is PEP-668 externally-
 # managed, so `pip install --user reply-xdr` errors out.  pipx
@@ -115,8 +116,13 @@ echo
 echo "Next steps:"
 echo "  cd /path/to/reffs"
 echo "  mkdir -p m4                   # avoid aclocal-m4-missing on first run"
+echo "  export ACLOCAL_PATH=\"/opt/homebrew/share/aclocal:\$ACLOCAL_PATH\""
 echo "  export PKG_CONFIG_PATH=\"\$(brew --prefix openssl@3)/lib/pkgconfig:\$PKG_CONFIG_PATH\""
 echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 echo "  autoreconf -fvi               # -f force, -v verbose, -i install aux files"
 echo "  ./configure"
 echo "  make -j4"
+echo
+echo "ACLOCAL_PATH is required on macOS: Homebrew automake's aclocal"
+echo "looks in its own keg dir by default, so pkg.m4 (installed by"
+echo "pkg-config) isn't found without this."

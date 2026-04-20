@@ -7,6 +7,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -19,6 +20,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include "nfsv42_xdr.h"
+#include "reffs/darwin_rpc_compat.h" /* xdr_sizeof shim on __APPLE__ */
 #include "reffs/dstore.h"
 #include "reffs/dstore_fanout.h"
 #include "reffs/dstore_wcc.h"
@@ -3199,12 +3201,14 @@ static uint32_t nfs4_op_getattr_cb_resume(struct rpc_trans *rt)
 		 * For the initial implementation, having the CB round-trip
 		 * work is the important part; attr merging is next.
 		 */
-		TRACE("CB_GETATTR reply OK for ino=%lu", inode->i_ino);
+		TRACE("CB_GETATTR reply OK for ino=%" PRIu64, inode->i_ino);
 	} else if (cb_status == -ETIMEDOUT) {
-		TRACE("CB_GETATTR timeout for ino=%lu, using cached attrs",
+		TRACE("CB_GETATTR timeout for ino=%" PRIu64
+		      ", using cached attrs",
 		      inode->i_ino);
 	} else {
-		TRACE("CB_GETATTR failed (%d) for ino=%lu, using cached attrs",
+		TRACE("CB_GETATTR failed (%d) for ino=%" PRIu64
+		      ", using cached attrs",
 		      cb_status, inode->i_ino);
 	}
 
@@ -3335,7 +3339,8 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 			slot->fs_ds = dstore_find(ldf->ldf_dstore_id);
 			if (!slot->fs_ds) {
 				LOG("GETATTR: dstore[%u] not found for "
-				    "ino=%lu -- check data_server config",
+				    "ino=%" PRIu64
+				    " -- check data_server config",
 				    ldf->ldf_dstore_id, inode->i_ino);
 				dstore_fanout_free(df);
 				*status = NFS4ERR_DELAY;
@@ -4087,7 +4092,8 @@ uint32_t nfs4_op_setattr(struct compound *compound)
 			slot->fs_ds = dstore_find(ldf->ldf_dstore_id);
 			if (!slot->fs_ds) {
 				LOG("SETATTR: dstore[%u] not found for "
-				    "ino=%lu -- check data_server config",
+				    "ino=%" PRIu64
+				    " -- check data_server config",
 				    ldf->ldf_dstore_id,
 				    compound->c_inode->i_ino);
 				dstore_fanout_free(df);

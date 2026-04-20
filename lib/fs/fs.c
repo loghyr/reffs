@@ -8,6 +8,7 @@
 #endif
 
 #include <errno.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdatomic.h>
 #include <pthread.h>
@@ -339,7 +340,7 @@ int reffs_fs_create(const char *path, mode_t mode)
 	}
 
 	trace_fs_inode(dir, __func__, __LINE__);
-	TRACE("ino=%lu freeing struct at %p", dir->i_ino, (void *)dir);
+	TRACE("ino=%" PRIu64 " freeing struct at %p", dir->i_ino, (void *)dir);
 
 	ret = vfs_create(dir, nm->nm_name, mode, &ap, NULL, NULL, NULL);
 	inode_active_put(dir);
@@ -419,7 +420,7 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 	int ret;
 	struct authunix_parms ap;
 
-	TRACE("path=%s mode=0%o rdev=%lu", path, mode, rdev);
+	TRACE("path=%s mode=0%o rdev=%lu", path, mode, (unsigned long)rdev);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
 	if (ret)
@@ -468,7 +469,8 @@ int reffs_fs_symlink(const char *target, const char *linkpath)
 
 int reffs_fs_fallocate(const char *path, int mode, off_t offset, off_t len)
 {
-	TRACE("path=%s mode=0%o offset=%lu len=%lu", path, mode, offset, len);
+	TRACE("path=%s mode=0%o offset=%jd len=%jd", path, mode,
+	      (intmax_t)offset, (intmax_t)len);
 	return 0;
 }
 
@@ -563,7 +565,7 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 
 	int ret;
 
-	TRACE("path=%s size=%lu offset=%lu", path, size, offset);
+	TRACE("path=%s size=%lu offset=%jd", path, size, (intmax_t)offset);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -610,7 +612,7 @@ out:
 int reffs_fs_readdir(const char *path, void *buffer, char *filler, off_t offset)
 {
 	int ret = 0;
-	TRACE("path=%s offset=%lu", path, offset);
+	TRACE("path=%s offset=%jd", path, (intmax_t)offset);
 
 	TRACE("ret=%d", ret);
 	return ret;
@@ -844,7 +846,7 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 
 	int ret;
 
-	TRACE("path=%s size=%lu offset=%lu", path, size, offset);
+	TRACE("path=%s size=%lu offset=%jd", path, size, (intmax_t)offset);
 
 	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
 	if (ret)
@@ -924,12 +926,12 @@ void reffs_fs_recover(struct super_block *sb)
 	if (!sb || !sb->sb_ops || !sb->sb_ops->recover)
 		return;
 
-	TRACE("Starting recovery for sb %lu from %s", sb->sb_id,
+	TRACE("Starting recovery for sb %" PRIu64 " from %s", sb->sb_id,
 	      sb->sb_backend_path ? sb->sb_backend_path : "(none)");
 
 	sb->sb_ops->recover(sb);
 
-	TRACE("Recovery complete. Max inode: %lu", sb->sb_next_ino);
+	TRACE("Recovery complete. Max inode: %" PRIu64, sb->sb_next_ino);
 }
 
 int reffs_fs_usage(struct reffs_fs_usage_stats *stats)
@@ -962,7 +964,9 @@ int reffs_fs_usage(struct reffs_fs_usage_stats *stats)
 	else
 		stats->free_files = 0;
 
-	TRACE("internal: used_bytes=%lu free_bytes=%lu total_bytes=%lu used_files=%lu free_files=%lu total_files=%lu",
+	TRACE("internal: used_bytes=%" PRIu64 " free_bytes=%" PRIu64
+	      " total_bytes=%" PRIu64 " used_files=%" PRIu64
+	      " free_files=%" PRIu64 " total_files=%" PRIu64,
 	      stats->used_bytes, stats->free_bytes, stats->total_bytes,
 	      stats->used_files, stats->free_files, stats->total_files);
 

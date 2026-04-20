@@ -180,8 +180,8 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 		if (!running_local)
 			break;
 
-		int n = kevent(rc->rc_kq_fd, NULL, 0, events,
-			       KQUEUE_BATCH_SIZE, &ts);
+		int n = kevent(rc->rc_kq_fd, NULL, 0, events, KQUEUE_BATCH_SIZE,
+			       &ts);
 		if (n < 0) {
 			if (errno == EINTR)
 				continue;
@@ -194,9 +194,12 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 		for (int i = 0; i < n; i++) {
 			struct kevent *ke = &events[i];
 
-			if (ke->filter == EVFILT_READ && (int)ke->ident == rc->rc_shutdown_pipe[0]) {
+			if (ke->filter == EVFILT_READ &&
+			    (int)ke->ident == rc->rc_shutdown_pipe[0]) {
 				char drain[64];
-				while (read(rc->rc_shutdown_pipe[0], drain, sizeof(drain)) > 0) { /* drain */ }
+				while (read(rc->rc_shutdown_pipe[0], drain,
+					    sizeof(drain)) > 0) { /* drain */
+				}
 				/* Shutdown wake-up; next loop iteration
 				 * will observe running_flag and break. */
 				continue;
@@ -321,9 +324,8 @@ int io_request_backend_pread(int fd, void *buf, size_t len, off_t offset,
 	return 0;
 }
 
-int io_request_backend_pwrite(int fd, const void *buf, size_t len,
-			      off_t offset, struct rpc_trans *rt,
-			      struct ring_context *rc)
+int io_request_backend_pwrite(int fd, const void *buf, size_t len, off_t offset,
+			      struct rpc_trans *rt, struct ring_context *rc)
 {
 	struct io_context *ic =
 		io_context_create(OP_TYPE_BACKEND_PWRITE, fd, NULL, 0);

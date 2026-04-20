@@ -159,7 +159,13 @@ static void *grace_timer_thread(void *arg)
 	uint32_t grace_deadline = 2 * ss->ss_grace_time;
 
 	for (uint32_t elapsed = 0; elapsed < grace_deadline; elapsed++) {
+#ifdef __APPLE__
+		/* Darwin lacks clock_nanosleep(3).  For a relative sleep
+		 * (flags=0) on any clock, nanosleep() is equivalent. */
+		nanosleep(&ts, NULL);
+#else
 		clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, NULL);
+#endif
 
 		if (server_shutting_down(ss))
 			return NULL;

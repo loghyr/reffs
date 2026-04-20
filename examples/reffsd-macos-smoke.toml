@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# macOS first-smoke TOML — standalone NFS server on loopback.
+# - Port 3049 (not 2049) to avoid colliding with Apple's dormant
+#   nfsd or any mount.nfs defaults on the same host.
+# - POSIX backend against /Volumes/reffs_data (user-provided, empty).
+# - io_backend values tuned low for first smoke; raise once stable.
+
+[server]
+port              = 3049
+bind              = "*"
+role              = "standalone"
+minor_versions    = [1, 2]
+grace_period      = 45
+workers           = 8
+max_session_slots = 64
+log_level         = "debug"
+
+[backend]
+type       = "posix"
+path       = "/Volumes/reffs_data/data"
+state_file = "/Volumes/reffs_data/reffs.state"
+
+[iouring]
+# On Darwin these translate to thread-pool queue depths in
+# backend_darwin.c; the section name is historical.
+network_sq_size = 2048
+network_cq_size = 8192
+backend_sq_size = 512
+backend_cq_size = 2048
+
+[[export]]
+path        = "/"
+clients     = "*"
+access      = "rw"
+root_squash = false
+flavors     = ["sys"]

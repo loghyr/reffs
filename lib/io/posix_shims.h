@@ -32,8 +32,7 @@
  * Return value matches accept4(2): new fd on success, -1 with
  * errno on failure.
  */
-static inline int reffs_accept4_nb_cloexec(int sockfd,
-					   struct sockaddr *addr,
+static inline int reffs_accept4_nb_cloexec(int sockfd, struct sockaddr *addr,
 					   socklen_t *addrlen)
 {
 #ifdef HAVE_ACCEPT4

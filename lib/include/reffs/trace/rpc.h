@@ -6,6 +6,7 @@
 #ifndef _REFFS_TRACE_RPC_H
 #define _REFFS_TRACE_RPC_H
 
+#include <inttypes.h>
 #include <stdint.h>
 #include "reffs/rpc.h"
 #include "reffs/network.h"
@@ -16,14 +17,14 @@ static inline void trace_rpc_duration(struct rpc_trans *rt,
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
 
-	reffs_trace_event(
-		REFFS_TRACE_CAT_RPC, "rpc_duration", __LINE__,
-		"OP: %u,%u,%u took %lu ns (max=%lu ns, calls=%lu fails=%lu)",
-		rt->rt_info.ri_program, rt->rt_info.ri_version,
-		rt->rt_info.ri_procedure, duration_ns,
-		ph->ph_op_handler->roh_stats.rs_duration_max,
-		ph->ph_op_handler->roh_stats.rs_calls,
-		ph->ph_op_handler->roh_stats.rs_fails);
+	reffs_trace_event(REFFS_TRACE_CAT_RPC, "rpc_duration", __LINE__,
+			  "OP: %u,%u,%u took %" PRIu64 " ns (max=%" PRIu64
+			  " ns, calls=%" PRIu64 " fails=%" PRIu64 ")",
+			  rt->rt_info.ri_program, rt->rt_info.ri_version,
+			  rt->rt_info.ri_procedure, duration_ns,
+			  ph->ph_op_handler->roh_stats.rs_duration_max,
+			  ph->ph_op_handler->roh_stats.rs_calls,
+			  ph->ph_op_handler->roh_stats.rs_fails);
 }
 
 static inline void trace_rpc_task(struct rpc_trans *rt, const char *name,

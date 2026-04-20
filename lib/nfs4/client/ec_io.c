@@ -214,7 +214,13 @@ static int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 				 OP_CHUNK_WRITE);
 		struct timespec delay = { 0, (long)(50 * 1000000) << attempt };
 
+#ifdef __APPLE__
+		/* Darwin lacks clock_nanosleep(3).  For a relative sleep
+		 * (flags=0) on any clock, nanosleep() is equivalent. */
+		nanosleep(&delay, NULL);
+#else
 		clock_nanosleep(CLOCK_MONOTONIC, 0, &delay, NULL);
+#endif
 	}
 
 	return -ESTALE;
@@ -245,7 +251,13 @@ static int ec_chunk_read(struct ec_context *ctx, int mirror_idx,
 				 OP_CHUNK_READ);
 		struct timespec delay = { 0, (long)(50 * 1000000) << attempt };
 
+#ifdef __APPLE__
+		/* Darwin lacks clock_nanosleep(3).  For a relative sleep
+		 * (flags=0) on any clock, nanosleep() is equivalent. */
+		nanosleep(&delay, NULL);
+#else
 		clock_nanosleep(CLOCK_MONOTONIC, 0, &delay, NULL);
+#endif
 	}
 
 	return -ESTALE;

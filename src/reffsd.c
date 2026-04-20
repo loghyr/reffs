@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <rpc/pmap_clnt.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -310,11 +311,12 @@ int main(int argc, char *argv[])
 			{ "vfs.aio.max_aio_per_proc", 256 },
 			{ "vfs.aio.max_aio_queue", 4096 },
 		};
-		for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+		for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]);
+		     i++) {
 			unsigned int value = 0;
 			size_t len = sizeof(value);
-			if (sysctlbyname(probes[i].name, &value, &len, NULL, 0) !=
-			    0) {
+			if (sysctlbyname(probes[i].name, &value, &len, NULL,
+					 0) != 0) {
 				TRACE("FreeBSD %s not probeable: %s",
 				      probes[i].name, strerror(errno));
 				continue;
@@ -324,11 +326,12 @@ int main(int argc, char *argv[])
 				    "high-load NFS; raise via `sysctl -w %s=%u` "
 				    "(or add to /etc/sysctl.conf for persistence) if you "
 				    "see EAGAIN storms under concurrent file I/O",
-				    probes[i].name, value, probes[i].recommended,
-				    probes[i].name, probes[i].recommended);
+				    probes[i].name, value,
+				    probes[i].recommended, probes[i].name,
+				    probes[i].recommended);
 			} else {
-				TRACE("FreeBSD %s=%u (>= %u)", probes[i].name, value,
-				      probes[i].recommended);
+				TRACE("FreeBSD %s=%u (>= %u)", probes[i].name,
+				      value, probes[i].recommended);
 			}
 		}
 	}
@@ -871,7 +874,8 @@ out:
 
 	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
 
-	TRACE("Final io_context statistics: created=%ld, freed=%ld, difference=%ld",
+	TRACE("Final io_context statistics: created=%" PRIu64 ", freed=%" PRIu64
+	      ", difference=%" PRIu64,
 	      io_context_get_created(), io_context_get_freed(),
 	      io_context_get_created() - io_context_get_freed());
 

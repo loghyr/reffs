@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,14 +46,14 @@ static struct inode *nlm4_fh_to_inode(netobj *fh, struct super_block **sb_out)
 	nfh = (struct network_file_handle *)fh->n_bytes;
 	sb = super_block_find(nfh->nfh_sb);
 	if (!sb) {
-		TRACE("NLM4: SB %lu not found", nfh->nfh_sb);
+		TRACE("NLM4: SB %" PRIu64 " not found", nfh->nfh_sb);
 		return NULL;
 	}
 
 	inode = inode_find(sb, nfh->nfh_ino);
 	if (!inode) {
-		TRACE("NLM4: Inode %lu not found in SB %lu", nfh->nfh_ino,
-		      nfh->nfh_sb);
+		TRACE("NLM4: Inode %" PRIu64 " not found in SB %" PRIu64,
+		      nfh->nfh_ino, nfh->nfh_sb);
 		super_block_put(sb);
 		return NULL;
 	}

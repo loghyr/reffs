@@ -86,8 +86,7 @@ int io_heartbeat_init(struct ring_context *rc)
 
 uint32_t io_heartbeat_period_get(void)
 {
-	return atomic_load_explicit(&io_heartbeat_period,
-				    memory_order_relaxed);
+	return atomic_load_explicit(&io_heartbeat_period, memory_order_relaxed);
 }
 
 uint32_t io_heartbeat_period_set(uint32_t seconds)

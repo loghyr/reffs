@@ -108,8 +108,8 @@ struct dp_job {
 	void *buf;
 	size_t len;
 	off_t offset;
-	ssize_t result;     /* filled by worker */
-	int saved_errno;    /* filled by worker */
+	ssize_t result; /* filled by worker */
+	int saved_errno; /* filled by worker */
 	struct dp_job *next;
 };
 
@@ -118,14 +118,14 @@ struct darwin_file_pool {
 	int num_workers;
 
 	pthread_mutex_t job_mutex;
-	pthread_cond_t  job_cond;       /* signaled when a job is enqueued */
-	pthread_cond_t  pipe_space_cond;/* signaled when pipe has space */
-	struct dp_job  *job_head;
-	struct dp_job  *job_tail;
+	pthread_cond_t job_cond; /* signaled when a job is enqueued */
+	pthread_cond_t pipe_space_cond; /* signaled when pipe has space */
+	struct dp_job *job_head;
+	struct dp_job *job_tail;
 
-	int completion_pipe[2];         /* [0]=main-loop read, [1]=worker write */
+	int completion_pipe[2]; /* [0]=main-loop read, [1]=worker write */
 
-	volatile sig_atomic_t running;  /* 0 after io_backend_fini begins */
+	volatile sig_atomic_t running; /* 0 after io_backend_fini begins */
 };
 
 /*
@@ -235,12 +235,12 @@ static void *pool_worker(void *arg)
 	while (pool->running) {
 		struct dp_job *job = pool_dequeue(pool);
 		if (!job)
-			break;   /* running=0 and queue drained */
+			break; /* running=0 and queue drained */
 
 		switch (job->op) {
 		case DP_OP_PREAD:
-			job->result = pread(job->fd, job->buf, job->len,
-					    job->offset);
+			job->result =
+				pread(job->fd, job->buf, job->len, job->offset);
 			break;
 		case DP_OP_PWRITE:
 			job->result = pwrite(job->fd, job->buf, job->len,
@@ -266,7 +266,8 @@ static void *pool_worker(void *arg)
 				break;
 			if (w < 0 && errno == EINTR)
 				continue;
-			if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+			if (w < 0 &&
+			    (errno == EAGAIN || errno == EWOULDBLOCK)) {
 				pthread_mutex_lock(&pool->job_mutex);
 				/* Re-check running under the mutex to avoid
 				 * a race with io_backend_fini. */
@@ -296,8 +297,7 @@ static void *pool_worker(void *arg)
 			free(job);
 			goto done;
 		}
-done:
-		;
+done:;
 	}
 	return NULL;
 }
@@ -333,19 +333,19 @@ static int pool_init(struct darwin_file_pool *pool, struct ring_context *rc)
 	/* Register the pipe's read end with the backend ring's kqueue
 	 * so the main loop wakes on completion. */
 	struct kevent ke;
-	EV_SET(&ke, pool->completion_pipe[0], EVFILT_READ,
-	       EV_ADD | EV_CLEAR, 0, 0, NULL);
+	EV_SET(&ke, pool->completion_pipe[0], EVFILT_READ, EV_ADD | EV_CLEAR, 0,
+	       0, NULL);
 	if (kevent(rc->rc_kq_fd, &ke, 1, NULL, 0, NULL) < 0) {
 		LOG("backend_darwin: EVFILT_READ add: %s", strerror(errno));
 		goto err_pipe;
 	}
 
 	for (int i = 0; i < pool->num_workers; i++) {
-		int err = pthread_create(&pool->workers[i], NULL,
-					 pool_worker, pool);
+		int err = pthread_create(&pool->workers[i], NULL, pool_worker,
+					 pool);
 		if (err != 0) {
-			LOG("backend_darwin: pthread_create worker %d: %s",
-			    i, strerror(err));
+			LOG("backend_darwin: pthread_create worker %d: %s", i,
+			    strerror(err));
 			/* Roll back started workers. */
 			pool->running = 0;
 			pthread_cond_broadcast(&pool->job_cond);
@@ -442,8 +442,8 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 		if (!running_local)
 			break;
 
-		int n = kevent(rc->rc_kq_fd, NULL, 0, events,
-			       KQUEUE_BATCH_SIZE, &ts);
+		int n = kevent(rc->rc_kq_fd, NULL, 0, events, KQUEUE_BATCH_SIZE,
+			       &ts);
 		if (n < 0) {
 			if (errno == EINTR)
 				continue;
@@ -487,12 +487,10 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 					any_drained = true;
 				}
 				if (any_drained) {
-					pthread_mutex_lock(
-						&g_pool.job_mutex);
+					pthread_mutex_lock(&g_pool.job_mutex);
 					pthread_cond_broadcast(
 						&g_pool.pipe_space_cond);
-					pthread_mutex_unlock(
-						&g_pool.job_mutex);
+					pthread_mutex_unlock(&g_pool.job_mutex);
 				}
 				continue;
 			}
@@ -512,17 +510,26 @@ void io_backend_main_loop(volatile sig_atomic_t *running_flag,
 static int submit_file_op(enum dp_op_kind op, int fd, void *buf, size_t len,
 			  off_t offset, struct rpc_trans *rt)
 {
-	struct io_context *ic = io_context_create(
-		op == DP_OP_PREAD ? OP_TYPE_BACKEND_PREAD
-				  : OP_TYPE_BACKEND_PWRITE,
-		fd, NULL, 0);
+	struct io_context *ic =
+		io_context_create(op == DP_OP_PREAD ? OP_TYPE_BACKEND_PREAD :
+						      OP_TYPE_BACKEND_PWRITE,
+				  fd, NULL, 0);
 	if (!ic)
 		return -ENOMEM;
-	ic->ic_rt = rt;
+	/*
+	 * Take a refcount on rt that the completion handler's
+	 * rpc_protocol_free(rt) will drop.  Linux (backend.c:278,311) and
+	 * FreeBSD (backend_kqueue.c:298,336) do the same.  Without this
+	 * the completer drops a ref the backend never acquired, freeing
+	 * rt while the resumed task is still using it -- the root cause
+	 * of issue #44 (SIGSEGV in rpc_protocol_op_call at rpc.c:667).
+	 */
+	ic->ic_rt = rpc_trans_get(rt);
 	ic->ic_expected_len = len;
 
 	struct dp_job *job = calloc(1, sizeof(*job));
 	if (!job) {
+		rpc_protocol_free(ic->ic_rt);
 		io_context_destroy(ic);
 		return -ENOMEM;
 	}
@@ -541,14 +548,15 @@ static int submit_file_op(enum dp_op_kind op, int fd, void *buf, size_t len,
 }
 
 int io_request_backend_pread(int fd, void *buf, size_t len, off_t offset,
-			     struct rpc_trans *rt)
+			     struct rpc_trans *rt, struct ring_context *rc)
 {
+	(void)rc; /* Darwin thread-pool uses g_pool; rc unused here. */
 	return submit_file_op(DP_OP_PREAD, fd, buf, len, offset, rt);
 }
 
-int io_request_backend_pwrite(int fd, const void *buf, size_t len,
-			      off_t offset, struct rpc_trans *rt)
+int io_request_backend_pwrite(int fd, const void *buf, size_t len, off_t offset,
+			      struct rpc_trans *rt, struct ring_context *rc)
 {
-	return submit_file_op(DP_OP_PWRITE, fd, (void *)buf, len, offset,
-			      rt);
+	(void)rc;
+	return submit_file_op(DP_OP_PWRITE, fd, (void *)buf, len, offset, rt);
 }

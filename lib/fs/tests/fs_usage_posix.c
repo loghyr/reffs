@@ -9,6 +9,7 @@
 #endif
 
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <check.h>
@@ -290,11 +291,12 @@ START_TEST(test_fs_usage_posix_tmpfs)
 	ck_assert_int_eq(statvfs(proc_mount, &sv), 0);
 	ck_assert_int_eq(reffs_fs_usage(&stats), 0);
 
-	TRACE("reffs says total_bytes = %lu, used_bytes = %lu, free_bytes = %lu,"
-	      " total_files = %lu, used_files = %lu, free_files = %lu",
+	TRACE("reffs says total_bytes = %" PRIu64 ", used_bytes = %" PRIu64
+	      ", free_bytes = %" PRIu64 ", total_files = %" PRIu64
+	      ", used_files = %" PRIu64 ", free_files = %" PRIu64,
 	      stats.total_bytes, stats.used_bytes, stats.free_bytes,
 	      stats.total_files, stats.used_files, stats.free_files);
-	TRACE("sb has %lu", sb->sb_bytes_max);
+	TRACE("sb has %zu", sb->sb_bytes_max);
 
 	/* total_bytes: SIZE_MAX + (f_blocks*f_frsize) wraps to (f_blocks*f_frsize - 1) */
 	ck_assert_uint_eq(stats.total_bytes,

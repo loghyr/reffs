@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,7 +48,8 @@ static int stats_gather_cb(struct rpc_trans *rt)
 		goto done;
 	}
 
-	LOG("count=%lu replied=%lu rejected=%lu accepted=%lu authed=%lu",
+	LOG("count=%" PRIu64 " replied=%" PRIu64 " rejected=%" PRIu64
+	    " accepted=%" PRIu64 " authed=%" PRIu64,
 	    pp->pp_count, pp->pp_replied_errors, pp->pp_rejected_errors,
 	    pp->pp_accepted_errors, pp->pp_authed_errors);
 
@@ -60,7 +62,8 @@ static int stats_gather_cb(struct rpc_trans *rt)
 	for (uint32_t i = 0; i < pp->pp_ops.pp_ops_len; i++) {
 		uint64_t avg = pp->pp_ops.pp_ops_val[i].po_total_duration /
 			       pp->pp_ops.pp_ops_val[i].po_calls;
-		LOG("%3u %15s %10lu %16lu %16lu %16lu %16lu",
+		LOG("%3u %15s %10" PRIu64 " %16" PRIu64 " %16" PRIu64
+		    " %16" PRIu64 " %16" PRIu64,
 		    pp->pp_ops.pp_ops_val[i].po_op,
 		    pp->pp_ops.pp_ops_val[i].po_name,
 		    pp->pp_ops.pp_ops_val[i].po_calls,
@@ -117,7 +120,9 @@ static int context_cb(struct rpc_trans *rt)
 	if (res->pcr_status)
 		LOG("error = %d", res->pcr_status);
 	else
-		LOG("created=%lu freed=%lu active_cancelled=%lu active_destroyed=%lu cancelled_freed=%lu destroyed_freed=%lu",
+		LOG("created=%" PRIu64 " freed=%" PRIu64
+		    " active_cancelled=%" PRIu64 " active_destroyed=%" PRIu64
+		    " cancelled_freed=%" PRIu64 " destroyed_freed=%" PRIu64,
 		    resok->pcr_created, resok->pcr_freed,
 		    resok->pcr_active_cancelled, resok->pcr_active_destroyed,
 		    resok->pcr_cancelled_freed, resok->pcr_destroyed_freed);
@@ -157,7 +162,7 @@ struct rpc_trans *probe1_client_op_context(void)
 static void format_size_c(char *buf, size_t buf_len, int64_t size, bool human)
 {
 	if (!human) {
-		snprintf(buf, buf_len, "%ld", size);
+		snprintf(buf, buf_len, "%" PRId64, size);
 		return;
 	}
 
@@ -248,22 +253,25 @@ static int fs_usage_cb(struct rpc_trans *rt)
 			LOG("%-15s %20s %20s %15s", "Free Bytes", r_free,
 			    m_free, d_free);
 
-			LOG("%-15s %20lu %20lu %15ld", "Total Inodes",
-			    resok->fur_total_files, (uint64_t)sv.f_files,
+			LOG("%-15s %20" PRIu64 " %20" PRIu64 " %15ld",
+			    "Total Inodes", resok->fur_total_files,
+			    (uint64_t)sv.f_files,
 			    (long)resok->fur_total_files - (long)sv.f_files);
-			LOG("%-15s %20lu %20lu %15ld", "Used Inodes",
-			    resok->fur_used_files,
+			LOG("%-15s %20" PRIu64 " %20" PRIu64 " %15ld",
+			    "Used Inodes", resok->fur_used_files,
 			    (uint64_t)sv.f_files - (uint64_t)sv.f_ffree,
 			    (long)resok->fur_used_files -
 				    (long)(sv.f_files - (uint64_t)sv.f_ffree));
-			LOG("%-15s %20lu %20lu %15ld", "Free Inodes",
-			    resok->fur_free_files, (uint64_t)sv.f_ffree,
+			LOG("%-15s %20" PRIu64 " %20" PRIu64 " %15ld",
+			    "Free Inodes", resok->fur_free_files,
+			    (uint64_t)sv.f_ffree,
 			    (long)resok->fur_free_files - (long)sv.f_ffree);
 		} else {
 			LOG("Filesystem Usage:");
 			LOG("  Bytes: total=%s, used=%s, free=%s", r_total,
 			    r_used, r_free);
-			LOG("  Inodes: total=%lu, used=%lu, free=%lu",
+			LOG("  Inodes: total=%" PRIu64 ", used=%" PRIu64
+			    ", free=%" PRIu64,
 			    resok->fur_total_files, resok->fur_used_files,
 			    resok->fur_free_files);
 		}
@@ -323,8 +331,9 @@ static int nfs4_op_stats_cb(struct rpc_trans *rt)
 		probe_nfs4_op1 *pno = &resok->nosr_ops.nosr_ops_val[i];
 		if (!pno->pno_calls)
 			continue;
-		LOG("%3u %25s %10lu %10lu %12lu %12lu %16lu %16lu", pno->pno_op,
-		    pno->pno_name, pno->pno_calls, pno->pno_errors,
+		LOG("%3u %25s %10" PRIu64 " %10" PRIu64 " %12" PRIu64
+		    " %12" PRIu64 " %16" PRIu64 " %16" PRIu64,
+		    pno->pno_op, pno->pno_name, pno->pno_calls, pno->pno_errors,
 		    pno->pno_bytes_in, pno->pno_bytes_out,
 		    pno->pno_duration_total, pno->pno_duration_max);
 	}

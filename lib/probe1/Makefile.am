@@ -16,3 +16,7 @@ lib_LTLIBRARIES = libreffs_probe1.la
 libreffs_probe1_la_SOURCES =	\
 	probe1_client.c		\
 	probe1_server.c
+
+# See lib/nfs4/server/Makefile.am for rationale.
+libreffs_probe1_la_LIBADD = \
+	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la

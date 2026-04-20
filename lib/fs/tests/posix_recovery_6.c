@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <check.h>
@@ -50,8 +51,8 @@ START_TEST(test_atomic_write)
 	inode_sync_to_disk(inode);
 
 	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/sb_1/ino_%lu.meta", ctx.backend_path,
-		 inode->i_ino);
+	snprintf(path, sizeof(path), "%s/sb_1/ino_%" PRIu64 ".meta",
+		 ctx.backend_path, inode->i_ino);
 	ck_assert_int_eq(access(path, F_OK), 0);
 
 	/* Ensure no stray .tmp file is left behind */

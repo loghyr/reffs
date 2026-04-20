@@ -53,7 +53,15 @@ LDADD = \
 check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
-TESTS = \
+# FUSE-backed tests do not build on Darwin: lib/fs/fuse.c is gated
+# off (no macFUSE integration yet) and reffs/fuse.h can't provide
+# prototypes for fuse_fill_dir_t / fuse_file_info without the
+# system <fuse/fuse.h>.  Skip the fuse_* harness tests on Darwin;
+# the rest of the fs test-suite runs against the in-process fs API.
+if HOST_DARWIN
+FUSE_TESTS =
+else
+FUSE_TESTS = \
 	fuse_1 \
 	fuse_2 \
 	fuse_3 \
@@ -62,7 +70,21 @@ TESTS = \
 	fuse_6 \
 	fuse_7 \
 	fuse_8 \
-	fuse_9 \
+	fuse_9
+endif
+
+# fs_usage_posix relies on Linux user + mount namespaces
+# (CLONE_NEWUSER / CLONE_NEWNS) to isolate per-test mounts and
+# exercise size/inode accounting.  Darwin has no equivalent, so
+# skip this test there.  fs_usage_ram runs unchanged.
+if HOST_DARWIN
+FS_USAGE_POSIX_TEST =
+else
+FS_USAGE_POSIX_TEST = fs_usage_posix
+endif
+
+TESTS = \
+	$(FUSE_TESTS) \
 	inode_hashing \
 	inode_hashing_no_check \
 	lock_range_1 \
@@ -111,7 +133,7 @@ TESTS = \
 	posix_recovery_16 \
 	posix_force_load \
 	fs_usage_ram \
-	fs_usage_posix \
+	$(FS_USAGE_POSIX_TEST) \
 	layout_segment_test \
 	sb_lifecycle_test \
 	sb_mount_crossing_test \

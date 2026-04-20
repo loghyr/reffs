@@ -8,6 +8,7 @@
 #endif
 
 #include <arpa/inet.h>
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,7 @@
 
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
+#include "reffs/darwin_rpc_compat.h" /* xdr_sizeof shim on __APPLE__ */
 #include "reffs/dstore.h"
 #include "reffs/dstore_fanout.h"
 #include "reffs/dstore_ops.h"
@@ -280,7 +282,7 @@ layout_stateid_find_or_create(struct inode *inode, struct compound *compound)
 		/* Bump ref for the caller (hash table holds the other). */
 		stateid_get(&new_ls->ls_stid);
 		TRACE("LAYOUTGET: created layout stateid id=%u cookie=%u "
-		      "on ino=%lu",
+		      "on ino=%" PRIu64,
 		      new_ls->ls_stid.s_id, new_ls->ls_stid.s_cookie,
 		      inode->i_ino);
 	}
@@ -868,7 +870,8 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		inode_sync_to_disk(compound->c_inode);
 
-		TRACE("LAYOUTGET: created layout for ino=%lu with %u mirrors",
+		TRACE("LAYOUTGET: created layout for ino=%" PRIu64
+		      " with %u mirrors",
 		      compound->c_inode->i_ino, nfiles);
 
 		static _Atomic bool first_layout = true;
@@ -1053,7 +1056,8 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 out_stateid:
 	if (*status == NFS4_OK)
-		TRACE("LAYOUTGET: ino=%lu nfiles=%u stripe_unit=%u seqid=%u",
+		TRACE("LAYOUTGET: ino=%" PRIu64
+		      " nfiles=%u stripe_unit=%u seqid=%u",
 		      compound->c_inode->i_ino, seg->ls_nfiles,
 		      seg->ls_stripe_unit, ls->ls_stid.s_seqid);
 
@@ -1169,7 +1173,7 @@ nfs4_layout_implicit_return_rw(struct compound *compound,
 	uint64_t remaining = __atomic_and_fetch(
 		&ls->ls_state, ~LAYOUT_STATEID_IOMODE_RW, __ATOMIC_ACQ_REL);
 
-	TRACE("implicit LAYOUTRETURN(RW): ino=%lu remaining=0x%lx",
+	TRACE("implicit LAYOUTRETURN(RW): ino=%" PRIu64 " remaining=0x%lx",
 	      inode->i_ino, (unsigned long)remaining);
 
 	if (remaining == 0) {
@@ -1361,7 +1365,7 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	    stid->s_cookie != cookie) {
 		TRACE("LAYOUTRETURN: stateid lookup failed: stid=%p "
 		      "tag=%u cookie=%u (expected cookie=%u) "
-		      "seqid=%u id=%u ino=%lu",
+		      "seqid=%u id=%u ino=%" PRIu64,
 		      (void *)stid, stid ? stid->s_tag : 0,
 		      stid ? stid->s_cookie : 0, cookie, seqid, id,
 		      compound->c_inode->i_ino);
@@ -1412,7 +1416,7 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 			      stid);
 	}
 
-	TRACE("LAYOUTRETURN: ino=%lu iomode=%d remaining=0x%lx",
+	TRACE("LAYOUTRETURN: ino=%" PRIu64 " iomode=%d remaining=0x%lx",
 	      compound->c_inode->i_ino, args->lora_iomode,
 	      (unsigned long)remaining);
 
@@ -1568,7 +1572,7 @@ static void layouterror_fence_and_revoke(struct compound *compound,
 	}
 
 	inode_sync_to_disk(compound->c_inode);
-	LOG("LAYOUTERROR: fenced + chmod all instances for ino=%lu",
+	LOG("LAYOUTERROR: fenced + chmod all instances for ino=%" PRIu64,
 	    compound->c_inode->i_ino);
 }
 
@@ -1595,7 +1599,7 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 		device_error4 *de = &args->lea_errors.lea_errors_val[i];
 		uint32_t ds_id = deviceid_to_dstore(de->de_deviceid);
 
-		TRACE("LAYOUTERROR: ino=%lu dev=%u status=%d op=%d",
+		TRACE("LAYOUTERROR: ino=%" PRIu64 " dev=%u status=%d op=%d",
 		      compound->c_inode->i_ino, ds_id, de->de_status,
 		      de->de_opnum);
 
@@ -1726,7 +1730,8 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 
 			if (nfailed == 0) {
 				TRACE("LAYOUTERROR: trust gap healed for "
-				      "ino=%lu (BAD_STATEID re-registered "
+				      "ino=%" PRIu64
+				      " (BAD_STATEID re-registered "
 				      "on %d DS(es))",
 				      compound->c_inode->i_ino, ntight);
 				continue; /* NFS4_OK; gap healed */
@@ -1738,7 +1743,7 @@ uint32_t nfs4_op_layouterror(struct compound *compound)
 			 * to invalidate the client's access entirely.
 			 */
 			LOG("LAYOUTERROR: trust-gap recovery failed "
-			    "(%d/%d DS(es)) for ino=%lu; "
+			    "(%d/%d DS(es)) for ino=%" PRIu64 "; "
 			    "fencing",
 			    nfailed, ntight, compound->c_inode->i_ino);
 			layouterror_fence_and_revoke(compound, ss, lss);

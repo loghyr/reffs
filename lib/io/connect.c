@@ -148,4 +148,3 @@ int io_send_request(struct rpc_trans *rt)
 	// If we already have a connection or after establishing one synchronously
 	return io_rpc_trans_cb(rt);
 }
-

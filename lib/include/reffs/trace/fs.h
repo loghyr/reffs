@@ -6,6 +6,7 @@
 #ifndef _REFFS_TRACE_FS_H
 #define _REFFS_TRACE_FS_H
 
+#include <inttypes.h>
 #include <stdint.h>
 #include "reffs/dirent.h"
 #include "reffs/super_block.h"
@@ -31,8 +32,9 @@ static inline void trace_fs_client(struct client *client, const char *event,
 	if (!client)
 		return;
 
-	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line, "clid=%lu ref=%ld",
-			  client->c_id, client->c_ref.refcount);
+	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line,
+			  "clid=%" PRIu64 " ref=%ld", client->c_id,
+			  client->c_ref.refcount);
 }
 
 static inline void trace_fs_dirent(struct reffs_dirent *rd, const char *event,
@@ -48,20 +50,20 @@ static inline void trace_fs_dirent(struct reffs_dirent *rd, const char *event,
 static inline void trace_fs_inode(struct inode *inode, const char *event,
 				  int line)
 {
-	reffs_trace_event(
-		REFFS_TRACE_CAT_FS, event, line,
-		"inode=%p ref=%ld sb=%lu ino=%lu nlink=%u size=%lu mode=%u",
-		(void *)inode, inode ? inode->i_ref.refcount : 0,
-		inode ? (inode->i_sb ? inode->i_sb->sb_id : 0) : 0,
-		inode ? inode->i_ino : 0, inode ? inode->i_nlink : 0,
-		inode ? inode->i_size : 0, inode ? inode->i_mode : 0);
+	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line,
+			  "inode=%p ref=%ld sb=%" PRIu64 " ino=%" PRIu64
+			  " nlink=%u size=%" PRId64 " mode=%u",
+			  (void *)inode, inode ? inode->i_ref.refcount : 0,
+			  inode ? (inode->i_sb ? inode->i_sb->sb_id : 0) : 0,
+			  inode ? inode->i_ino : 0, inode ? inode->i_nlink : 0,
+			  inode ? inode->i_size : 0, inode ? inode->i_mode : 0);
 }
 
 static inline void trace_fs_super_block(struct super_block *sb,
 					const char *event, int line)
 {
 	reffs_trace_event(REFFS_TRACE_CAT_FS, event, line,
-			  "sb=%p ref=%ld id=%lu", (void *)sb,
+			  "sb=%p ref=%ld id=%" PRIu64, (void *)sb,
 			  sb ? sb->sb_ref.refcount : 0, sb ? sb->sb_id : 0);
 }
 

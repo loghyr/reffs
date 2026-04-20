@@ -17,3 +17,7 @@ AM_LDFLAGS = -rdynamic
 lib_LTLIBRARIES = libreffs_nfs3.la
 libreffs_nfs3_la_SOURCES = \
 	server.c
+
+# See lib/nfs4/server/Makefile.am for rationale.
+libreffs_nfs3_la_LIBADD = \
+	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la

@@ -7,6 +7,7 @@
 #include "config.h"
 #endif
 
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,7 +43,8 @@ static int posix_sb_alloc(struct super_block *sb, const char *backend_path)
 		return -ENOMEM;
 
 	char sb_dir[PATH_MAX];
-	snprintf(sb_dir, sizeof(sb_dir), "%s/sb_%lu", backend_path, sb->sb_id);
+	snprintf(sb_dir, sizeof(sb_dir), "%s/sb_%" PRIu64, backend_path,
+		 sb->sb_id);
 	if (mkdir(sb_dir, 0755) < 0 && errno != EEXIST) {
 		int err = errno;
 		LOG("mkdir %s failed: %s", sb_dir, strerror(err));
@@ -87,7 +89,7 @@ static void posix_inode_sync(struct inode *inode)
 
 	char path[PATH_MAX];
 	char tmp_path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/ino_%lu.meta", sb_priv->sb_dir,
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".meta", sb_priv->sb_dir,
 		 inode->i_ino);
 	/*
 	 * Include the thread ID in the tmp filename to avoid races when
@@ -162,8 +164,8 @@ static void posix_inode_sync(struct inode *inode)
 	}
 
 	if (S_ISLNK(inode->i_mode) && inode->i_symlink) {
-		snprintf(path, sizeof(path), "%s/ino_%lu.lnk", sb_priv->sb_dir,
-			 inode->i_ino);
+		snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".lnk",
+			 sb_priv->sb_dir, inode->i_ino);
 		snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%lu", path,
 			 (unsigned long)pthread_self());
 		fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -199,7 +201,7 @@ static void posix_inode_sync(struct inode *inode)
 	    inode->i_layout_segments->lss_count > 0) {
 		struct layout_segments *lss = inode->i_layout_segments;
 
-		snprintf(path, sizeof(path), "%s/ino_%lu.layouts",
+		snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".layouts",
 			 sb_priv->sb_dir, inode->i_ino);
 		snprintf(tmp_path, sizeof(tmp_path), "%s.tmp.%lu", path,
 			 (unsigned long)pthread_self());
@@ -289,7 +291,7 @@ static void posix_dir_sync(struct inode *inode)
 
 	char path[PATH_MAX];
 	char tmp_path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/ino_%lu.dir", sb_priv->sb_dir,
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".dir", sb_priv->sb_dir,
 		 inode->i_ino);
 	snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
 
@@ -345,7 +347,7 @@ static void posix_dir_sync(struct inode *inode)
 	rcu_read_unlock();
 	/* LOG after the read-side critical section: fprintf can block. */
 	if (snap_truncated)
-		LOG("posix_dir_sync: ino %lu has >%d children, "
+		LOG("posix_dir_sync: ino %" PRIu64 " has >%d children, "
 		    "truncating .dir snapshot",
 		    inode->i_ino, POSIX_DIR_SNAPSHOT_MAX);
 
@@ -370,7 +372,8 @@ static void posix_dir_sync(struct inode *inode)
 		dirent_put(snap[i]);
 
 	if (!ok) {
-		LOG("posix_dir_sync: write failed for ino %lu, leaving existing .dir intact",
+		LOG("posix_dir_sync: write failed for ino %" PRIu64
+		    ", leaving existing .dir intact",
 		    inode->i_ino);
 		close(fd);
 		unlink(tmp_path);
@@ -418,7 +421,7 @@ static int inode_load_from_disk(struct inode *inode)
 	struct reffs_disk_header hdr;
 	char path[PATH_MAX];
 
-	snprintf(path, sizeof(path), "%s/ino_%lu.meta", sb_priv->sb_dir,
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".meta", sb_priv->sb_dir,
 		 inode->i_ino);
 
 	int fd = open(path, O_RDONLY);
@@ -479,7 +482,7 @@ static int inode_load_from_disk(struct inode *inode)
 		sb->sb_next_ino = inode->i_ino + 1;
 
 	/* Re-open the data file if it exists. */
-	snprintf(path, sizeof(path), "%s/ino_%lu.dat", sb_priv->sb_dir,
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".dat", sb_priv->sb_dir,
 		 inode->i_ino);
 	if (!inode->i_db && access(path, F_OK) == 0) {
 		inode->i_db = data_block_alloc(inode, NULL, 0, 0);
@@ -508,7 +511,7 @@ static int inode_load_from_disk(struct inode *inode)
 	}
 
 	/* Re-load symlink target if it exists. */
-	snprintf(path, sizeof(path), "%s/ino_%lu.lnk", sb_priv->sb_dir,
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".lnk", sb_priv->sb_dir,
 		 inode->i_ino);
 	if (!inode->i_symlink && access(path, F_OK) == 0) {
 		fd = open(path, O_RDONLY);
@@ -533,8 +536,8 @@ static int inode_load_from_disk(struct inode *inode)
 	}
 
 	/* Re-load layout segments if they exist (MDS mode). */
-	snprintf(path, sizeof(path), "%s/ino_%lu.layouts", sb_priv->sb_dir,
-		 inode->i_ino);
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".layouts",
+		 sb_priv->sb_dir, inode->i_ino);
 	if (!inode->i_layout_segments && access(path, F_OK) == 0) {
 		fd = open(path, O_RDONLY);
 		if (fd >= 0) {
@@ -660,7 +663,7 @@ static int posix_dir_open(struct super_block *sb, uint64_t dir_ino, int *fd_out)
 		return -EINVAL;
 
 	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/ino_%lu.dir", sb_priv->sb_dir,
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".dir", sb_priv->sb_dir,
 		 dir_ino);
 
 	int fd = open(path, O_RDONLY);
@@ -723,7 +726,7 @@ static int posix_dir_find_entry_by_ino(struct super_block *sb, uint64_t dir_ino,
 			break;
 
 		if (name_len > REFFS_MAX_NAME) {
-			LOG("corrupt name_len %u in dir ino %lu", name_len,
+			LOG("corrupt name_len %u in dir ino %" PRIu64, name_len,
 			    dir_ino);
 			err = -EIO;
 			break;
@@ -777,7 +780,7 @@ static int posix_dir_find_entry_by_name(struct super_block *sb,
 			break;
 
 		if (name_len > REFFS_MAX_NAME) {
-			LOG("corrupt name_len %u in dir ino %lu", name_len,
+			LOG("corrupt name_len %u in dir ino %" PRIu64, name_len,
 			    dir_ino);
 			err = -EIO;
 			break;
@@ -819,20 +822,20 @@ static void posix_inode_free(struct inode *inode)
 
 	char path[PATH_MAX];
 
-	snprintf(path, sizeof(path), "%s/ino_%lu.meta", sb_priv->sb_dir,
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".meta", sb_priv->sb_dir,
 		 inode->i_ino);
 	unlink(path);
 
-	snprintf(path, sizeof(path), "%s/ino_%lu.dir", sb_priv->sb_dir,
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".dir", sb_priv->sb_dir,
 		 inode->i_ino);
 	unlink(path);
 
-	snprintf(path, sizeof(path), "%s/ino_%lu.lnk", sb_priv->sb_dir,
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".lnk", sb_priv->sb_dir,
 		 inode->i_ino);
 	unlink(path);
 
-	snprintf(path, sizeof(path), "%s/ino_%lu.layouts", sb_priv->sb_dir,
-		 inode->i_ino);
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".layouts",
+		 sb_priv->sb_dir, inode->i_ino);
 	unlink(path);
 }
 
@@ -849,7 +852,7 @@ static void posix_recover_directory_recursive(struct reffs_dirent *parent)
 		return;
 
 	char path[PATH_MAX];
-	snprintf(path, sizeof(path), "%s/ino_%lu.dir", sb_priv->sb_dir,
+	snprintf(path, sizeof(path), "%s/ino_%" PRIu64 ".dir", sb_priv->sb_dir,
 		 inode->i_ino);
 
 	int fd = open(path, O_RDONLY);
@@ -942,7 +945,8 @@ static void posix_recover(struct super_block *sb)
 		struct dirent *de;
 		while ((de = readdir(dir)) != NULL) {
 			uint64_t ino;
-			if (sscanf(de->d_name, "ino_%lu.meta", &ino) == 1) {
+			if (sscanf(de->d_name, "ino_%" SCNu64 ".meta", &ino) ==
+			    1) {
 				if (ino >= sb->sb_next_ino)
 					sb->sb_next_ino = ino + 1;
 			} else if (strstr(de->d_name, ".tmp")) {

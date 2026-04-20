@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # reffsd FreeBSD smoke test
 
 Minimum validation that the kqueue-backend data path (PR #7) works

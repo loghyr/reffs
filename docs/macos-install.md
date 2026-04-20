@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Building reffs on macOS
 
 Tested on macOS 14 Sonoma, Apple Silicon.  For the minimum
@@ -7,8 +12,8 @@ smoke test after installing, see `docs/macos-smoke.md` (pending).
 
 ```sh
 # 1. Homebrew packaged deps
-brew install autoconf automake libtool pkg-config cmake pipx \
-    openssl@3 xxhash zstd rocksdb python@3.12
+brew install autoconf autoconf-archive automake libtool pkg-config \
+    cmake pipx openssl@3 xxhash zstd rocksdb check python@3.12
 
 # 2. From-source deps (liburcu, HdrHistogram_c) + pipx install of xdr-parser
 cd /path/to/reffs
@@ -16,6 +21,7 @@ cd /path/to/reffs
 
 # 3. Build reffs
 mkdir -p m4
+export ACLOCAL_PATH="/opt/homebrew/share/aclocal:$ACLOCAL_PATH"
 export PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$PKG_CONFIG_PATH"
 export PATH="$HOME/.local/bin:$PATH"
 autoreconf -fvi
@@ -32,13 +38,20 @@ macOS ships the clang toolchain as part of Xcode Command Line
 Tools (`xcode-select --install`).  Everything else is Homebrew:
 
 ```sh
-brew install autoconf automake libtool pkg-config cmake pipx \
-    openssl@3 xxhash zstd rocksdb python@3.12
+brew install autoconf autoconf-archive automake libtool pkg-config \
+    cmake pipx openssl@3 xxhash zstd rocksdb check python@3.12
 ```
 
 - **autoconf / automake / libtool**: generate `configure` from
   `configure.ac`.  Required to build from a git checkout; source
   tarballs ship a pre-generated `configure`.
+- **autoconf-archive**: provides the `AX_*` macros (notably
+  `AX_PTHREAD` used by `configure.ac`).  Linux distros usually
+  bundle these with autoconf itself; on macOS Homebrew ships them
+  in a separate formula.  Without it, `autoreconf` fails with
+  "undefined or overquoted macro: AC_MSG_ERROR" at the
+  `AX_PTHREAD` call site (aclocal silently drops the unresolved
+  macro, same failure mode as a missing `pkg.m4`).
 - **cmake**: used by the HdrHistogram_c source build in step 2.
 - **pipx**: macOS Python is PEP-668 externally-managed, so
   `pip install --user` errors out.  pipx installs CLI tools
@@ -47,6 +60,9 @@ brew install autoconf automake libtool pkg-config cmake pipx \
   include path).  `./configure` finds it via `PKG_CONFIG_PATH`
   in step 3.
 - **xxhash, zstd, rocksdb**: reffs deps; all plain Homebrew bottles.
+- **check**: the C unit testing framework `make check` runs
+  against.  Required by `PKG_CHECK_MODULES([CHECK], [check >= 0.15.2])`
+  in `configure.ac`.
 - **python@3.12**: xdr-parser needs Python 3.12+ to resolve;
   Apple's bundled Python in Command Line Tools is 3.9 and too
   old for reply-xdr's dependency resolution.
@@ -113,6 +129,22 @@ mkdir -p m4
 quirk is macOS-specific to the autoconf/aclocal/libtool version
 combination Homebrew ships.)
 
+### Set ACLOCAL_PATH so aclocal finds pkg.m4
+
+Homebrew's `automake` installs `aclocal` with its default search dir
+at `$(brew --prefix automake)/share/aclocal`, *not* the shared
+`/opt/homebrew/share/aclocal` where Homebrew symlinks macros from
+other formulae (pkg-config, libtool, autoconf-archive).  Without
+this, `aclocal` silently drops `PKG_CHECK_MODULES` from
+`aclocal.m4`, and autoconf 2.73 then fails with "undefined or
+overquoted macro: AC_MSG_ERROR" at every `PKG_CHECK_MODULES` call
+site.  The error is misleading — the real cause is the missing
+`pkg.m4`.
+
+```sh
+export ACLOCAL_PATH="/opt/homebrew/share/aclocal:$ACLOCAL_PATH"
+```
+
 ### Set PKG_CONFIG_PATH for openssl
 
 Homebrew's `openssl@3` is keg-only — its pkgconfig files are not
@@ -165,9 +197,19 @@ grep IO_BACKEND_ config.log | head
 
 ### "AC_MSG_ERROR undefined or overquoted"
 
-You missed `mkdir -p m4` before `autoreconf`.  Run
-`autoreconf -fvi` (force re-regeneration) after creating the
-directory.
+Two common causes on macOS, both surface as this identical error:
+
+1. **Missing `m4/` subdirectory**: `mkdir -p m4` before
+   `autoreconf`.
+2. **`aclocal` can't find `pkg.m4`** (or other Homebrew-installed
+   macros like `ax_pthread.m4`): `export
+   ACLOCAL_PATH="/opt/homebrew/share/aclocal:$ACLOCAL_PATH"`.
+   Without this, aclocal silently drops `PKG_CHECK_MODULES` and
+   autoconf 2.73 then reports the `AC_MSG_ERROR` *inside* those
+   calls as undefined, pointing at whichever line was the first
+   victim.  The macro is fine; aclocal just didn't include it.
+
+Re-run `autoreconf -fvi` after fixing either.
 
 ### "Requested 'openssl >= 1.0.2' but ..."
 

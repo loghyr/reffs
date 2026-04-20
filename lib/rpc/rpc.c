@@ -26,6 +26,7 @@
 #include <sys/types.h>
 #include <time.h>
 
+#include "reffs/darwin_rpc_compat.h" /* xdr_sizeof shim on __APPLE__ */
 #include "reffs/log.h"
 #include "reffs/context.h"
 #include "reffs/io.h"
@@ -53,8 +54,26 @@ CDS_LIST_HEAD(rpc_program_handler_list);
 __attribute__((no_sanitize("function"))) static bool_t
 rpc_call_xdr(xdrproc_t fn, XDR *xdrs, void *obj)
 {
+#ifdef __APPLE__
+	/*
+	 * Darwin's xdrproc_t is int (*)(XDR *, void *, unsigned int) --
+	 * the third arg is recursion depth.  Linux (libtirpc) and
+	 * FreeBSD (base libc) use the historical 2-arg form.  reffs's
+	 * generated XDR funcs ignore the depth arg on Darwin, so
+	 * passing 0 is safe.
+	 */
+	return fn(xdrs, obj, 0);
+#else
 	return fn(xdrs, obj);
+#endif
 }
+
+/*
+ * Darwin's xdr_sizeof shim lives in reffs/darwin_rpc_compat.h and
+ * is force-included on Darwin via configure.ac's CPPFLAGS, so no
+ * explicit include is needed here.  Linux/FreeBSD get the native
+ * libtirpc/base-libc xdr_sizeof.
+ */
 
 static bool __rpc_log_packets = false;
 
@@ -1757,6 +1776,13 @@ handle_rpc_error:
 			rt->rt_offset += len;
 		}
 
+		if (rt->rt_offset != rt->rt_reply_len) {
+			LOG("XDR_SIZE_MISMATCH: xdr_size=%lu rt_offset=%zu "
+			    "rt_reply_len=%zu delta=%zd proc=%u prog=%u",
+			    xdr_size, rt->rt_offset, rt->rt_reply_len,
+			    (ssize_t)rt->rt_offset - (ssize_t)rt->rt_reply_len,
+			    rt->rt_info.ri_procedure, rt->rt_info.ri_program);
+		}
 		assert(rt->rt_offset == rt->rt_reply_len);
 
 #ifdef HAVE_GSSAPI_KRB5

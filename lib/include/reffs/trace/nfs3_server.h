@@ -6,6 +6,7 @@
 #ifndef _REFFS_TRACE_NFS3_SERVER_H
 #define _REFFS_TRACE_NFS3_SERVER_H
 
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include "reffs/trace/common.h"
@@ -32,7 +33,8 @@ static inline void trace_nfs3_srv_getattr(struct rpc_trans *rt,
 		(struct network_file_handle *)args->object.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_getattr", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
 
@@ -44,7 +46,8 @@ static inline void trace_nfs3_srv_setattr(struct rpc_trans *rt,
 		(struct network_file_handle *)args->object.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_setattr", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
 
@@ -56,7 +59,8 @@ static inline void trace_nfs3_srv_lookup(struct rpc_trans *rt,
 		(struct network_file_handle *)args->what.dir.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_lookup", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
 
@@ -68,7 +72,8 @@ static inline void trace_nfs3_srv_access(struct rpc_trans *rt,
 		(struct network_file_handle *)args->object.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_access", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
 
@@ -80,7 +85,8 @@ static inline void trace_nfs3_srv_readlink(struct rpc_trans *rt,
 		(struct network_file_handle *)args->symlink.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_readlink", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
 
@@ -90,11 +96,11 @@ static inline void trace_nfs3_srv_read(struct rpc_trans *rt, READ3args *args)
 	struct network_file_handle *nfh =
 		(struct network_file_handle *)args->file.data.data_val;
 
-	reffs_trace_event(
-		REFFS_TRACE_CAT_NFS, "nfs3_read", __LINE__,
-		"xid=0x%08x sb=%lu ino=%lu off=%zu count=%u crc=0x%08x",
-		rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, args->offset,
-		args->count, crc);
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_read", __LINE__,
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " off=%" PRIu64 " count=%u crc=0x%08x",
+			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
+			  args->offset, args->count, crc);
 }
 
 static inline void trace_nfs3_srv_write(struct rpc_trans *rt, WRITE3args *args)
@@ -104,7 +110,8 @@ static inline void trace_nfs3_srv_write(struct rpc_trans *rt, WRITE3args *args)
 		(struct network_file_handle *)args->file.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_write", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu off=%lu len=%u crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " off=%" PRIu64 " len=%u crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->offset, args->data.data_len, crc);
 }
@@ -117,7 +124,8 @@ static inline void trace_nfs3_srv_create(struct rpc_trans *rt,
 		(struct network_file_handle *)args->where.dir.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_create", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->where.name, crc);
 }
@@ -129,7 +137,8 @@ static inline void trace_nfs3_srv_mkdir(struct rpc_trans *rt, MKDIR3args *args)
 		(struct network_file_handle *)args->where.dir.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_mkdir", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->where.name, crc);
 }
@@ -142,7 +151,8 @@ static inline void trace_nfs3_srv_symlink(struct rpc_trans *rt,
 		(struct network_file_handle *)args->where.dir.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_symlink", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->symlink.symlink_data, crc);
 }
@@ -154,7 +164,8 @@ static inline void trace_nfs3_srv_mknod(struct rpc_trans *rt, MKNOD3args *args)
 		(struct network_file_handle *)args->where.dir.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_mknod", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->where.name, crc);
 }
@@ -167,7 +178,8 @@ static inline void trace_nfs3_srv_remove(struct rpc_trans *rt,
 		(struct network_file_handle *)args->object.dir.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_remove", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->object.name, crc);
 }
@@ -179,7 +191,8 @@ static inline void trace_nfs3_srv_rmdir(struct rpc_trans *rt, RMDIR3args *args)
 		(struct network_file_handle *)args->object.dir.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_rmdir", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu name=%s crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " name=%s crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->object.name, crc);
 }
@@ -194,12 +207,13 @@ static inline void trace_nfs3_srv_rename(struct rpc_trans *rt,
 	struct network_file_handle *nfh_dst =
 		(struct network_file_handle *)args->to.dir.data.data_val;
 
-	reffs_trace_event(
-		REFFS_TRACE_CAT_NFS, "nfs3_rename", __LINE__,
-		"xid=0x%08x sb_src=%lu ino_src=%lu sb_dst=%lu ino_dst=%lu from=%s to=%s crc_src=0x%08x crc_to=0x%08x",
-		rt->rt_info.ri_xid, nfh_src->nfh_sb, nfh_src->nfh_ino,
-		nfh_dst->nfh_sb, nfh_dst->nfh_ino, args->from.name,
-		args->to.name, crc_src, crc_to);
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_rename", __LINE__,
+			  "xid=0x%08x sb_src=%" PRIu64 " ino_src=%" PRIu64
+			  " sb_dst=%" PRIu64 " ino_dst=%" PRIu64
+			  " from=%s to=%s crc_src=0x%08x crc_to=0x%08x",
+			  rt->rt_info.ri_xid, nfh_src->nfh_sb, nfh_src->nfh_ino,
+			  nfh_dst->nfh_sb, nfh_dst->nfh_ino, args->from.name,
+			  args->to.name, crc_src, crc_to);
 }
 
 static inline void trace_nfs3_srv_link(struct rpc_trans *rt, LINK3args *args)
@@ -211,11 +225,13 @@ static inline void trace_nfs3_srv_link(struct rpc_trans *rt, LINK3args *args)
 	struct network_file_handle *nfh_dir =
 		(struct network_file_handle *)args->link.dir.data.data_val;
 
-	reffs_trace_event(
-		REFFS_TRACE_CAT_NFS, "nfs3_link", __LINE__,
-		"xid=0x%08x sb=%lu ino=%lu sb_dir=%lu ino_dir=%lu name=%s crc=0x%08x crc_dir=0x%08x",
-		rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, nfh_dir->nfh_sb,
-		nfh_dir->nfh_ino, args->link.name, crc, crc_dir);
+	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_link", __LINE__,
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " sb_dir=%" PRIu64 " ino_dir=%" PRIu64
+			  " name=%s crc=0x%08x crc_dir=0x%08x",
+			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
+			  nfh_dir->nfh_sb, nfh_dir->nfh_ino, args->link.name,
+			  crc, crc_dir);
 }
 
 static inline void trace_nfs3_srv_readdir(struct rpc_trans *rt,
@@ -226,7 +242,8 @@ static inline void trace_nfs3_srv_readdir(struct rpc_trans *rt,
 		(struct network_file_handle *)args->dir.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_readdir", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu cookie=0x%08lx crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " cookie=0x%08" PRIx64 " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->cookie, crc);
 }
@@ -239,7 +256,8 @@ static inline void trace_nfs3_srv_readdirplus(struct rpc_trans *rt,
 		(struct network_file_handle *)args->dir.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_readdirplus", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu cookie=0x%08lx crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " cookie=0x%08" PRIx64 " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino,
 			  args->cookie, crc);
 }
@@ -252,7 +270,8 @@ static inline void trace_nfs3_srv_fsstat(struct rpc_trans *rt,
 		(struct network_file_handle *)args->fsroot.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_fsstat", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
 
@@ -264,7 +283,8 @@ static inline void trace_nfs3_srv_fsinfo(struct rpc_trans *rt,
 		(struct network_file_handle *)args->fsroot.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_fsinfo", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
 
@@ -276,7 +296,8 @@ static inline void trace_nfs3_srv_pathconf(struct rpc_trans *rt,
 		(struct network_file_handle *)args->object.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_pathconf", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
 
@@ -288,7 +309,8 @@ static inline void trace_nfs3_srv_commit(struct rpc_trans *rt,
 		(struct network_file_handle *)args->file.data.data_val;
 
 	reffs_trace_event(REFFS_TRACE_CAT_NFS, "nfs3_commit", __LINE__,
-			  "xid=0x%08x sb=%lu ino=%lu crc=0x%08x",
+			  "xid=0x%08x sb=%" PRIu64 " ino=%" PRIu64
+			  " crc=0x%08x",
 			  rt->rt_info.ri_xid, nfh->nfh_sb, nfh->nfh_ino, crc);
 }
 

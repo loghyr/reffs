@@ -12,6 +12,29 @@
 #include "reffs/ring.h"
 #include "reffs/network.h"
 
+#ifdef __APPLE__
+/*
+ * Darwin's <mach/task.h> (pulled in transitively by <rpc/rpc.h>
+ * force-include, and by liburcu's arch headers via <mach/mach.h>)
+ * declares task_resume / task_suspend / task_create as Mach kernel
+ * APIs.  reffs's task_resume / task_suspend are unrelated worker-
+ * queue operations.
+ *
+ * Pre-include <mach/task.h> HERE, with the real names, so Mach's
+ * declarations are parsed first.  THEN #define the names to rename
+ * reffs's own symbols.  After the #define, any later
+ * (re-)inclusion of <mach/task.h> is a no-op thanks to its header
+ * guard, so the macro can't rewrite Mach's prototype into
+ * `kern_return_t reffs_task_resume(task_t)` and collide with
+ * reffs's `void reffs_task_resume(struct task *)`.
+ *
+ * Linux and FreeBSD are unaffected -- they never include <mach/task.h>.
+ */
+#include <mach/task.h>
+#define task_resume reffs_task_resume
+#define task_suspend reffs_task_suspend
+#endif
+
 struct rpc_trans;
 
 enum task_state {
