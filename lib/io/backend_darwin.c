@@ -309,8 +309,9 @@ static void *pool_worker(void *arg)
 			if (w < 0 &&
 			    (errno == EAGAIN || errno == EWOULDBLOCK)) {
 				pthread_mutex_lock(&pool->job_mutex);
-				if (!atomic_load_explicit(&pool->running,
-							  memory_order_acquire)) {
+				if (!atomic_load_explicit(
+					    &pool->running,
+					    memory_order_acquire)) {
 					pthread_mutex_unlock(&pool->job_mutex);
 					free(job);
 					goto done;
@@ -321,10 +322,11 @@ static void *pool_worker(void *arg)
 					pthread_mutex_unlock(&pool->job_mutex);
 					break;
 				}
-				if (w < 0 && (errno == EAGAIN ||
-					      errno == EWOULDBLOCK)) {
-					pthread_cond_wait(&pool->pipe_space_cond,
-							  &pool->job_mutex);
+				if (w < 0 &&
+				    (errno == EAGAIN || errno == EWOULDBLOCK)) {
+					pthread_cond_wait(
+						&pool->pipe_space_cond,
+						&pool->job_mutex);
 					pthread_mutex_unlock(&pool->job_mutex);
 					continue;
 				}

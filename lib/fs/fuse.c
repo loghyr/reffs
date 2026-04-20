@@ -146,7 +146,7 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	if (ret)
 		return ret;
 
-	/*
+		/*
 	 * libfuse2 fuse_fill_dir_t takes (buf, name, stat, off);
 	 * libfuse3 added a fifth enum fuse_fill_dir_flags argument.
 	 * configure.ac probes fuse3 before fuse, so either is possible

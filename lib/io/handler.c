@@ -399,8 +399,7 @@ void io_handler_fini(struct ring_context *rc)
 		io_uring_prep_cancel(sqe, NULL, IORING_ASYNC_CANCEL_ALL);
 		sret = io_uring_submit(&rc->rc_ring);
 		if (sret < 0)
-			LOG("io_uring_submit(cancel-all): %s",
-			    strerror(-sret));
+			LOG("io_uring_submit(cancel-all): %s", strerror(-sret));
 	}
 	pthread_mutex_unlock(&rc->rc_mutex);
 

@@ -255,9 +255,8 @@ struct io_context_snapshot *io_context_probe_snapshot(int fd, enum op_type op,
 
 			if (matched >= capacity) {
 				int new_cap = capacity ? capacity * 2 : 16;
-				struct io_context_snapshot *grown = realloc(
-					arr,
-					new_cap * sizeof(*arr));
+				struct io_context_snapshot *grown =
+					realloc(arr, new_cap * sizeof(*arr));
 				if (!grown) {
 					free(arr);
 					pthread_mutex_unlock(&context_mutex);
