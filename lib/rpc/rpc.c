@@ -144,8 +144,20 @@ rpc_program_handler_alloc(uint32_t program, uint32_t version,
 
 #ifdef HAVE_HDR_HISTOGRAM
 	for (size_t i = 0; i < roh_len; i++) {
-		hdr_init(1, INT64_C(3600000000000), 3,
-			 &roh[i].roh_stats.rs_histogram);
+		int hret = hdr_init(1, INT64_C(3600000000000), 3,
+				    &roh[i].roh_stats.rs_histogram);
+		if (hret != 0) {
+			/*
+			 * Non-fatal: latency histograms are telemetry-
+			 * only.  Leave rs_histogram NULL and the
+			 * HAVE_HDR_HISTOGRAM-gated stat paths will skip
+			 * recording for this op.  LOG so the operator
+			 * can tell that telemetry is degraded.
+			 */
+			LOG("hdr_init failed for program=%u op=%zu: %d",
+			    program, i, hret);
+			roh[i].roh_stats.rs_histogram = NULL;
+		}
 	}
 #endif
 

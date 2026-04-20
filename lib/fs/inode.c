@@ -1029,9 +1029,25 @@ static void ensure_reaper_thread(void)
 {
 	pthread_mutex_lock(&reaper_lock);
 	if (!reaper_running) {
-		reaper_running = true;
-		pthread_create(&reaper_thread, NULL, reaper_thread_func, NULL);
-		pthread_detach(reaper_thread);
+		int cret = pthread_create(&reaper_thread, NULL,
+					  reaper_thread_func, NULL);
+		if (cret != 0) {
+			/*
+			 * Reaper is best-effort: without it, delayed
+			 * inode active_put stays queued until the next
+			 * successful ensure_reaper_thread() call.  LOG
+			 * loudly so operators see the degraded state,
+			 * but don't fail init -- the next scheduler call
+			 * will retry.
+			 */
+			LOG("inode reaper pthread_create failed: %s -- "
+			    "delayed inode release is disabled until "
+			    "the next schedule call",
+			    strerror(cret));
+		} else {
+			reaper_running = true;
+			pthread_detach(reaper_thread);
+		}
 	}
 	pthread_mutex_unlock(&reaper_lock);
 }

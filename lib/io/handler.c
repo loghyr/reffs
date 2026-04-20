@@ -190,9 +190,14 @@ void io_handler_main_loop(volatile sig_atomic_t *running_flag,
 		pthread_mutex_lock(&rc->rc_mutex);
 		sqe = io_uring_get_sqe(&rc->rc_ring);
 		if (sqe) {
+			int sret;
+
 			io_uring_prep_poll_add(sqe, shutdown_efd, POLLIN);
 			io_uring_sqe_set_data(sqe, NULL);
-			io_uring_submit(&rc->rc_ring);
+			sret = io_uring_submit(&rc->rc_ring);
+			if (sret < 0)
+				LOG("io_uring_submit(shutdown-poll): %s",
+				    strerror(-sret));
 		}
 		pthread_mutex_unlock(&rc->rc_mutex);
 	}
@@ -389,8 +394,13 @@ void io_handler_fini(struct ring_context *rc)
 	pthread_mutex_lock(&rc->rc_mutex);
 	struct io_uring_sqe *sqe = io_uring_get_sqe(&rc->rc_ring);
 	if (sqe) {
+		int sret;
+
 		io_uring_prep_cancel(sqe, NULL, IORING_ASYNC_CANCEL_ALL);
-		io_uring_submit(&rc->rc_ring);
+		sret = io_uring_submit(&rc->rc_ring);
+		if (sret < 0)
+			LOG("io_uring_submit(cancel-all): %s",
+			    strerror(-sret));
 	}
 	pthread_mutex_unlock(&rc->rc_mutex);
 

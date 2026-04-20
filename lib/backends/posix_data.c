@@ -276,8 +276,12 @@ size_t posix_data_db_get_size(struct data_block *db)
 	struct posix_data_private *priv = db->db_storage_private;
 	struct stat st;
 	if (priv) {
-		if (priv->pd_fd < 0)
-			posix_data_db_reopen(priv);
+		if (priv->pd_fd < 0) {
+			int rret = posix_data_db_reopen(priv);
+			if (rret)
+				LOG("posix_data_db_reopen in get_size: %s",
+				    strerror(-rret));
+		}
 		if (priv->pd_fd >= 0 && fstat(priv->pd_fd, &st) == 0)
 			return st.st_size;
 	}
@@ -287,8 +291,12 @@ size_t posix_data_db_get_size(struct data_block *db)
 int posix_data_db_get_fd(struct data_block *db)
 {
 	struct posix_data_private *priv = db->db_storage_private;
-	if (priv && priv->pd_fd < 0)
-		posix_data_db_reopen(priv);
+	if (priv && priv->pd_fd < 0) {
+		int rret = posix_data_db_reopen(priv);
+		if (rret)
+			LOG("posix_data_db_reopen in get_fd: %s",
+			    strerror(-rret));
+	}
 	return (priv && priv->pd_fd >= 0) ? priv->pd_fd : -1;
 }
 

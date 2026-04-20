@@ -10,6 +10,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -638,9 +639,20 @@ uint64_t sb_registry_alloc_id(const char *state_dir)
 {
 	uint64_t id = sb_next_id++;
 
-	/* Persist the incremented counter immediately. */
-	if (state_dir)
-		sb_registry_save(state_dir);
+	/*
+	 * Persist the incremented counter immediately.  On failure the
+	 * in-core counter still advances, so callers won't reuse id;
+	 * LOG so operators can see that the registry file is out of
+	 * date and investigate before the next server restart.
+	 */
+	if (state_dir) {
+		int sret = sb_registry_save(state_dir);
+		if (sret)
+			LOG("sb_registry_save(%s) failed: %d -- in-core "
+			    "counter advanced to %" PRIu32 " but disk "
+			    "registry is stale",
+			    state_dir, sret, sb_next_id);
+	}
 
 	return id;
 }

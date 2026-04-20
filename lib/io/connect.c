@@ -130,8 +130,14 @@ int io_send_request(struct rpc_trans *rt)
 		addr = NULL;
 
 		// Submit and wait for connect completion
-		io_uring_submit(&rt->rt_rc->rc_ring);
+		int sret = io_uring_submit(&rt->rt_rc->rc_ring);
 		pthread_mutex_unlock(&rt->rt_rc->rc_mutex);
+		if (sret < 0) {
+			LOG("io_uring_submit(connect): %s", strerror(-sret));
+			io_context_destroy(ic);
+			io_socket_close(sockfd, -sret);
+			return -sret;
+		}
 
 		return 0; // Connection initiated, will be handled by callback
 	}
