@@ -22,6 +22,27 @@
 #include <rpc/rpc.h>
 #include <rpc/xdr.h>
 
+/*
+ * SunRPC identifier aliases.  Linux libtirpc (and FreeBSD base libc)
+ * provide modern names; Darwin's base-libc SunRPC ships only the
+ * historical pre-RFC-5531 names or omits constants entirely.  These
+ * aliases let reffs source -- including generated XDR files -- use
+ * the modern spellings unchanged.  Previously lived as CPPFLAGS -D
+ * macros in configure.ac; moved here for source-visibility (see #24).
+ */
+#define xdr_uint32_t xdr_u_int32_t
+#define xdr_uint64_t xdr_u_int64_t
+#ifndef RPCSEC_GSS
+#define RPCSEC_GSS 6 /* RFC 2203 */
+#endif
+#ifndef AUTH_SYS
+#define AUTH_SYS AUTH_UNIX /* RFC 5531 modern name */
+#endif
+#ifndef AUTH_DH
+#define AUTH_DH 3 /* RFC 5531 */
+#endif
+#define authsys_create authunix_create
+
 static inline bool_t reffs_xdr_count_putlong(XDR *xdrs, const int *lp)
 {
 	(void)lp;

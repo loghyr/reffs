@@ -108,33 +108,16 @@ AS_CASE([$host_os],
         # <rpc/xdr.h> directly; Darwin's <rpc/xdr.h> does not
         # transitively include <rpc/types.h>, same issue as FreeBSD.
         CPPFLAGS="-include rpc/rpc.h $CPPFLAGS"
-        # Darwin's base-libc SunRPC provides xdr_u_int32_t / xdr_u_int64_t
-        # but not the Linux/libtirpc spellings xdr_uint32_t / xdr_uint64_t.
-        # The XDR compiler emits the Linux spellings.  Alias via macros
-        # so the generated code compiles unchanged.
-        CPPFLAGS="-Dxdr_uint32_t=xdr_u_int32_t $CPPFLAGS"
-        CPPFLAGS="-Dxdr_uint64_t=xdr_u_int64_t $CPPFLAGS"
-        # RPCSEC_GSS auth flavor (value 6, RFC 2203) is a libtirpc
-        # extension on Linux and FreeBSD's base SunRPC; Darwin's
-        # base SunRPC does not define it.  The XDR generator emits
-        # `case RPCSEC_GSS:` blocks that reference the identifier.
-        # Define it at the compiler level so Darwin can compile the
-        # generated code unchanged.
-        CPPFLAGS="-DRPCSEC_GSS=6 $CPPFLAGS"
-        # AUTH_SYS (value 1, RFC 5531) is the modern spelling;
-        # Darwin's <rpc/auth.h> only defines the historical
-        # AUTH_UNIX name.  Alias so reffs code using AUTH_SYS
-        # resolves to Darwin's AUTH_UNIX.
-        CPPFLAGS="-DAUTH_SYS=AUTH_UNIX $CPPFLAGS"
-        # AUTH_DH (value 3, RFC 5531 "Diffie-Hellman auth") is
-        # defined by Linux libtirpc but not by Darwin's base-libc
-        # SunRPC.  reffs dispatches on it in a few switch
-        # statements; define it so those compile unchanged.
-        CPPFLAGS="-DAUTH_DH=3 $CPPFLAGS"
-        # authsys_create(3) is the modern spelling; Darwin only
-        # provides the historical authunix_create(3) (same
-        # signature and semantics).  Alias via the preprocessor.
-        CPPFLAGS="-Dauthsys_create=authunix_create $CPPFLAGS"
+        # Six SunRPC identifier aliases used to live here as -D
+        # macros (xdr_u?int{32,64}_t, RPCSEC_GSS, AUTH_SYS,
+        # AUTH_DH, authsys_create).  Moved into
+        # lib/include/reffs/darwin_rpc_compat.h as #ifdef __APPLE__
+        # stanzas; that header is force-included here so every TU,
+        # including generated XDR, sees the aliases.  Use an
+        # absolute path so the `-include` works from any Makefile
+        # subdir (cc's CWD is the subdir, not the build root).  See #24.
+        abs_top_srcdir=`cd "$srcdir" && pwd`
+        CPPFLAGS="-include $abs_top_srcdir/lib/include/reffs/darwin_rpc_compat.h $CPPFLAGS"
         # Two Darwin-specific aliases previously lived in CPPFLAGS
         # here:
         #   -Dst_{atim,mtim,ctim}=st_{a,m,c}timespec
