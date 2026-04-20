@@ -3,14 +3,21 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-#ifndef _REFFS_TRACE_IO_H
-#define _REFFS_TRACE_IO_H
+/*
+ * Private trace inlines for lib/io/.  Was lib/include/reffs/trace/io.h
+ * but had no external consumers and dereferenced the now-opaque
+ * struct conn_info, so it is demoted next to io_internal.h.
+ */
+
+#ifndef _REFFS_IO_TRACE_IO_H
+#define _REFFS_IO_TRACE_IO_H
 
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "reffs/io.h"
 #include "reffs/trace/common.h"
+
+#include "io_internal.h"
 
 /* IO specific trace functions */
 static inline void trace_io_accept_submit(struct io_context *ic)
@@ -193,4 +200,4 @@ static inline void trace_io_write_complete(int fd, int res,
 			  ic->ic_id);
 }
 
-#endif /* _REFFS_TRACE_IO_H */
+#endif /* _REFFS_IO_TRACE_IO_H */

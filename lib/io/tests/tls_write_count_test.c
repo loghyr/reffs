@@ -32,6 +32,8 @@
 #include "reffs/log.h"
 #include "reffs/io.h"
 
+#include "io_internal.h"
+
 /*
  * Fake fd that is unlikely to collide with any real open fd in the
  * test process.  Must not be 0/1/2 (stdio).

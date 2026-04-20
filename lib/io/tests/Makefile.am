@@ -7,6 +7,7 @@ AM_CFLAGS = -Im4 @CHECK_CFLAGS@				\
 	$(UUID_CFLAGS) $(JEMALLOC_CFLAGS)			\
 	$(HDR_HISTOGRAM_CFLAGS) $(URING_CFLAGS)			\
 	-I$(top_srcdir)/lib/include				\
+	-I$(top_srcdir)/lib/io					\
 	-I$(top_srcdir)/lib/tests				\
 	-I$(top_builddir)/lib/xdr
 

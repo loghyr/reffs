@@ -31,7 +31,9 @@
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/network.h"
-#include "reffs/trace/io.h"
+#include "trace_io.h"
+
+#include "io_internal.h"
 
 /* Array to track connection states, keyed by (fd % MAX_CONNECTIONS). */
 static struct conn_info *connections[MAX_CONNECTIONS];
@@ -842,4 +844,26 @@ struct io_context *io_conn_write_done(int fd)
 
 	pthread_mutex_unlock(&conn_mutex);
 	return next_ic;
+}
+
+bool io_conn_is_tls_enabled(int fd)
+{
+	bool enabled = false;
+
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd)
+		enabled = connections[idx]->ci_tls_enabled;
+	pthread_mutex_unlock(&conn_mutex);
+
+	return enabled;
+}
+
+void io_conn_set_tls_handshaking(int fd, bool handshaking)
+{
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd)
+		connections[idx]->ci_tls_handshaking = handshaking;
+	pthread_mutex_unlock(&conn_mutex);
 }

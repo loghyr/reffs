@@ -83,7 +83,7 @@
 #include "reffs/ring.h"
 #include "reffs/rpc.h"
 #include "reffs/task.h"
-#include "reffs/trace/io.h"
+#include "trace_io.h"
 
 #include "kqueue_common.h"
 #include "posix_shims.h"

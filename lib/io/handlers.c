@@ -54,7 +54,7 @@
 #include "reffs/ring.h"
 #include "reffs/rpc.h"
 #include "reffs/tls.h"
-#include "reffs/trace/io.h"
+#include "trace_io.h"
 
 /* Maximum reassembled RPC message size (matches IO_MAX_WRITE_SIZE + headers). */
 #define MAX_RPC_MESSAGE_SIZE (2 * 1024 * 1024)

@@ -30,7 +30,7 @@
 #include "ring_internal.h"
 #include "tsan_io.h"
 #include "reffs/rpc.h"
-#include "reffs/trace/io.h"
+#include "trace_io.h"
 
 struct connection_info;
 

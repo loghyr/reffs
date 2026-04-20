@@ -36,7 +36,7 @@
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/rpc.h"
-#include "reffs/trace/io.h"
+#include "trace_io.h"
 
 /* ------------------------------------------------------------------ */
 /* Request tracking                                                    */

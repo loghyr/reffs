@@ -7,7 +7,6 @@ reffsinclude_HEADERS =	\
 	common.h	\
 	events.h	\
 	fs.h		\
-	io.h		\
 	nfs3_server.h	\
 	rpc.h		\
 	types.h

@@ -170,38 +170,13 @@ enum conn_role {
 	CONN_ROLE_ACCEPTED // Server-accepted client connection
 };
 
-// Connection info structure
-struct conn_info {
-	int ci_fd; // File descriptor
-	enum conn_state ci_state; // Current connection state
-	enum conn_role ci_role; // Connection role
-	time_t ci_last_activity; // Last activity timestamp
-	struct sockaddr_storage ci_peer; // Peer address
-	socklen_t ci_peer_len; // Peer address length
-	struct sockaddr_storage ci_local; // Local address
-	socklen_t ci_local_len; // Local address length
-	uint32_t ci_xid; // Associated XID
-	bool ci_tls_enabled;
-	bool ci_tls_handshaking;
-	bool ci_handshake_final_pending;
-	int ci_handshake_final_bytes;
-	SSL *ci_ssl;
-	int ci_error; // Last error code
-	int ci_read_count; // Number of pending read operations
-	int ci_write_count; // Number of pending write operations
-	int ci_accept_count; // Number of pending accept operations
-	int ci_connect_count; // Number of pending connect operations
-
-	/*
-	 * Per-fd write serialization gate.  Only one io_context may have a
-	 * write SQE in flight for this fd at a time; concurrent writers queue
-	 * here and are drained by io_conn_write_done() as each write finishes.
-	 * Protected by conn_mutex in connect.c.
-	 */
-	bool ci_write_active;
-	struct io_context *ci_write_pending_head;
-	struct io_context *ci_write_pending_tail;
-};
+/*
+ * struct conn_info is opaque to callers outside lib/io/.  The full
+ * definition lives in lib/io/io_internal.h; reach into fields only
+ * via the io_conn_* accessors below.  Mirrors the ring_context
+ * opacity pattern -- see reffs/ring.h.
+ */
+struct conn_info;
 
 /* ------------------------------------------------------------------ */
 /* Network ring (existing)                                            */
@@ -404,6 +379,14 @@ int io_conn_set_error(int fd, int error_code);
 // Helper functions for operation tracking
 bool io_conn_has_read_ops(int fd);
 bool io_conn_has_write_ops(int fd);
+
+/*
+ * Accessors for callers outside lib/io/ that used to reach into
+ * struct conn_info directly.  Return false / no-op if fd has no
+ * registered connection.
+ */
+bool io_conn_is_tls_enabled(int fd);
+void io_conn_set_tls_handshaking(int fd, bool handshaking);
 
 /*
  * Per-fd write serialization gate.

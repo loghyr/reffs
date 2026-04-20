@@ -32,6 +32,8 @@
 #include "reffs/log.h"
 #include "reffs/io.h"
 
+#include "io_internal.h"
+
 /*
  * Three distinct fds well away from stdio (0/1/2) and from each other's
  * MAX_CONNECTIONS hash slot to avoid collision artefacts.  Chosen by

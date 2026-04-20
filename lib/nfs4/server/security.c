@@ -173,10 +173,8 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 {
 	uint32_t client_flavor = compound->c_rt->rt_info.ri_cred.rc_flavor;
 	const struct rpc_cred *cred = &compound->c_rt->rt_info.ri_cred;
-	struct conn_info *ci = compound->c_rt->rt_fd >= 0 ?
-				       io_conn_get(compound->c_rt->rt_fd) :
-				       NULL;
-	bool client_tls = ci && ci->ci_tls_enabled;
+	bool client_tls = compound->c_rt->rt_fd >= 0 &&
+			  io_conn_is_tls_enabled(compound->c_rt->rt_fd);
 	const enum reffs_auth_flavor *flavors;
 	unsigned int nflavors;
 

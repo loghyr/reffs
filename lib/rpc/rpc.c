@@ -1493,9 +1493,7 @@ int rpc_process_task(struct task *t)
 
 		ret = send_auth_tls_response(rt);
 
-		struct conn_info *ci = io_conn_get(rt->rt_fd);
-		if (ci)
-			ci->ci_tls_handshaking = true;
+		io_conn_set_tls_handshaking(rt->rt_fd, true);
 
 		rpc_program_handler_put(rph);
 		rpc_protocol_free(rt);
