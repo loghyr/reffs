@@ -292,3 +292,33 @@ Expected log: `io_handler_init: started (kqueue fd=N)`,
   ```sh
   log stream --predicate 'process == "reffsd"' --level debug
   ```
+
+## Known Issues
+
+### macOS-as-NFS-client to reffs: kernel-panic risk (#54)
+
+**Do not mount a reffs export from a macOS NFS client until this
+is cleared.**  During the macOS port first-smoke (2026-04-19),
+`mount -t nfs localhost:/export ...` from the same macOS host
+running reffsd kernel-panicked the machine and caused a full
+reboot.  We pivoted validation to a Linux NFS client on a
+separate host and confirmed the reffs server works end to end
+against Linux clients.  The bug is almost certainly in macOS's
+NFS client stack interacting with our server rather than in
+reffs itself, but that does not make the panic less of a user
+trap.
+
+**Tested client platforms:**
+
+| Platform        | Result |
+|-----------------|--------|
+| Linux (kernel 6.x, nfs-utils 2.6) | ✅ verified end to end |
+| FreeBSD 14      | untested (same base RPC stack as Darwin; unknown risk) |
+| macOS (Darwin)  | ❌ **panics the kernel — do not use** |
+
+**Workaround:** run the NFS client on a separate Linux host.
+
+**Tracking:** reproducing in a disposable macOS VM with a kernel
+panic log captured is TBD.  Until that happens and a root cause
+is filed upstream (Apple or OpenBSD/Darwin nfs), this section
+stays as a warning.
