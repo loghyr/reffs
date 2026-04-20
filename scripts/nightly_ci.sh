@@ -137,6 +137,10 @@ FAILED=0
 SKIPPED=0
 CI_START=$(date +%s)
 
+# Snapshot D-state PIDs before any tests so the end-of-nightly check
+# only flags processes introduced during this run, not pre-existing ones.
+DSTATE_BASELINE=$(ps -eo pid,stat 2>/dev/null | awk '$2~/^D/{print $1}' | sort)
+
 section_start() {
     eval "_section_${1}_start=$(date +%s)"
     echo ""
@@ -492,6 +496,28 @@ timeout $SOAK_TIMEOUT "$REPO/scripts/local_soak.sh" --rocksdb \
     grep -E '(=== |Health:.*restarts=[0-9]|PASS|FAIL)' | tail -20
 SOAK_ROCKSDB_RC=${PIPESTATUS[0]}
 record "soak_rocksdb" $SOAK_ROCKSDB_RC
+fi
+
+# -----------------------------------------------------------------------
+# D-state leak check: wait 90s then flag any PIDs not present at start
+# -----------------------------------------------------------------------
+
+section_start dstate_check "D-state leak check (90s settle)"
+sleep 90
+NEW_DSTATE=$(ps -eo pid,stat 2>/dev/null | awk '$2~/^D/{print $1}' | sort | \
+    comm -13 <(echo "$DSTATE_BASELINE") - 2>/dev/null || true)
+if [ -n "$NEW_DSTATE" ]; then
+    echo "New D-state processes introduced during nightly run:"
+    for _pid in $NEW_DSTATE; do
+        _comm=$(cat "/proc/$_pid/comm" 2>/dev/null || echo "?")
+        _wchan=$(cat "/proc/$_pid/wchan" 2>/dev/null || echo "?")
+        echo "  PID $_pid ($_comm) wchan=$_wchan"
+        sudo cat "/proc/$_pid/stack" 2>/dev/null | head -5 || true
+    done
+    record dstate_check 1
+else
+    echo "No new D-state processes."
+    record dstate_check 0
 fi
 
 # -----------------------------------------------------------------------
