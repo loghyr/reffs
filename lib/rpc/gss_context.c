@@ -830,6 +830,12 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 								 REFFS_ID_KRB5);
 
 			if (dom > 0) {
+				/*
+				 * XXH32 seed=0 is the canonical hash for
+				 * principal-to-local_id mapping.  This value
+				 * is stored in every inode owned by this
+				 * principal.  Never change the seed.
+				 */
 				uint32_t lid = XXH32(principal, p_ulen, 0);
 				reffs_id krb = REFFS_ID_MAKE(
 					REFFS_ID_KRB5, (uint32_t)dom, lid);
