@@ -361,9 +361,9 @@ retry:
 	fd = -1;
 
 	if (rename(tmp_path, path)) {
+		ret = -errno;
 		LOG("identity_map_persist: rename: %m");
 		unlink(tmp_path);
-		ret = -errno;
 	}
 
 out_unlock:
