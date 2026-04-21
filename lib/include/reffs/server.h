@@ -77,7 +77,8 @@ struct server_state {
 	/* Grace period */
 	struct timespec ss_grace_start;
 	uint32_t ss_grace_time; /* seconds */
-	uint32_t ss_unreclaimed; /* atomic: previous-boot clients not yet RECLAIM_COMPLETE'd */
+	_Atomic uint32_t
+		ss_unreclaimed; /* previous-boot clients not yet RECLAIM_COMPLETE'd */
 	pthread_t ss_grace_thread; /* timer thread; 0 if not running */
 
 	/*

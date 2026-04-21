@@ -219,8 +219,8 @@ void server_grace_end(struct server_state *ss)
 
 void server_reclaim_complete(struct server_state *ss)
 {
-	uint32_t prev =
-		__atomic_fetch_sub(&ss->ss_unreclaimed, 1, __ATOMIC_ACQ_REL);
+	uint32_t prev = atomic_fetch_sub_explicit(&ss->ss_unreclaimed, 1,
+						  memory_order_acq_rel);
 	if (prev == 1)
 		server_grace_end(ss);
 }
@@ -433,8 +433,9 @@ server_state_init(const char *state_path, int port,
 			      "skipping grace");
 			server_lifecycle_set(ss, SERVER_GRACE_ENDED);
 		} else {
-			__atomic_store_n(&ss->ss_unreclaimed, (uint32_t)nincs,
-					 __ATOMIC_RELAXED);
+			atomic_store_explicit(&ss->ss_unreclaimed,
+					      (uint32_t)nincs,
+					      memory_order_relaxed);
 			server_grace_start(ss);
 		}
 	} else {

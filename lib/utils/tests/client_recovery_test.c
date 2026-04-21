@@ -240,8 +240,8 @@ START_TEST(test_restart_sets_unreclaimed)
 		atomic_load_explicit(&ss2->ss_lifecycle, memory_order_acquire);
 	ck_assert(lc == SERVER_GRACE_STARTED || lc == SERVER_IN_GRACE);
 
-	uint32_t unreclaimed =
-		__atomic_load_n(&ss2->ss_unreclaimed, __ATOMIC_RELAXED);
+	uint32_t unreclaimed = atomic_load_explicit(&ss2->ss_unreclaimed,
+						    memory_order_relaxed);
 	ck_assert_uint_eq(unreclaimed, 3);
 
 	server_state_fini(ss2);
@@ -278,8 +278,9 @@ START_TEST(test_reclaim_decrements_unreclaimed)
 	server_state_put(got);
 
 	ck_assert(server_in_grace(ss2));
-	ck_assert_uint_eq(
-		__atomic_load_n(&ss2->ss_unreclaimed, __ATOMIC_RELAXED), 1);
+	ck_assert_uint_eq(atomic_load_explicit(&ss2->ss_unreclaimed,
+					       memory_order_relaxed),
+			  1);
 
 	/* Simulate reclaim_complete */
 	server_reclaim_complete(ss2);
