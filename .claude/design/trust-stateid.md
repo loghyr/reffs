@@ -671,6 +671,46 @@ TRUST_STATEID within `lease_period / 2` of expiry.
   dstore-vtable-v2.md)
 - Full Kerberos integration test (requires mini-KDC fixture)
 
+## Lock continuity on REVOKE_STATEID (draft-coordinated)
+
+The draft (see
+`~/Documents/ietf/flexfiles-v2/draft-haynes-nfsv4-flexfiles-v2.md`,
+sections `sec-chunk_guard_mds` and `sec-CHUNK_LOCK`) now requires
+that when REVOKE_STATEID revokes a stateid that holds one or more
+chunk locks on a DS, the locks MUST NOT be dropped.  The DS
+atomically transfers lock ownership on each held range to the
+MDS-escrow owner (reserved `chunk_guard4.cg_client_id ==
+CHUNK_GUARD_CLIENT_ID_MDS == 0xFFFFFFFF`).  The lock remains
+held until the client selected via CB_CHUNK_REPAIR issues
+CHUNK_LOCK with the new `CHUNK_LOCK_FLAGS_ADOPT` flag, which
+atomically transfers ownership from MDS-escrow to the repair
+client.
+
+Implementation implications when Step 2.7 is wired:
+
+- `trust_stateid_revoke()` in `lib/nfs4/server/trust_stateid.c`
+  MUST check whether the revoked stateid holds chunk locks (via
+  `chunk_store_find_locks_by_owner()` -- new) and, for each
+  held range, rewrite the chunk block's owner field to the
+  MDS-escrow sentinel rather than clearing it.
+- The chunk block's on-disk owner field (`cb_owner_id` etc.)
+  MUST be updated under the same write-temp/fdatasync/rename
+  boundary as the revocation itself, so the transfer is crash-safe.
+- The `cg_client_id == 0xFFFFFFFF` value MUST be rejected by
+  `nfs4_op_chunk_write` and `nfs4_op_chunk_lock` on any
+  client-originated request (return NFS4ERR_INVAL); it is only
+  producible by the DS internally.
+- `nfs4_op_chunk_lock` MUST accept a new `cla_flags` field and
+  the `CHUNK_LOCK_FLAGS_ADOPT` bit; the ADOPT path performs an
+  atomic owner rewrite regardless of whether the prior owner is
+  MDS-escrow (tight coupling) or a still-authenticated
+  orphaned client (loose coupling).
+
+These are tracked as work items for the same phase that wires
+`trust_stateid_revoke()`.  Do not ship REVOKE_STATEID-with-locks
+without the escrow semantics -- dropping a chunk lock is a
+write-hole generator.
+
 ## Key Files
 
 | File | Change |
