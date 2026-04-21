@@ -1519,10 +1519,16 @@ static int probe1_op_identity_map_remove(struct rpc_trans *rt)
 
 	int ret = identity_map_remove((reffs_id)args->imr_from);
 
-	if (ret == -ENOENT)
+	if (ret == -ENOENT) {
 		*res = PROBE1ERR_NOENT;
-	else if (ret)
+	} else if (ret) {
 		*res = PROBE1ERR_INVAL;
+	} else {
+		struct server_state *ss = server_state_find();
+
+		if (ss && ss->ss_state_dir)
+			identity_map_persist(ss->ss_state_dir);
+	}
 
 	return 0;
 }
