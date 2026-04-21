@@ -16,6 +16,7 @@
 
 #include <urcu.h>
 #include <check.h>
+#include <xxhash.h>
 
 #include "reffs/identity_map.h"
 
@@ -187,6 +188,41 @@ START_TEST(test_map_persist_load)
 }
 END_TEST
 
+/* Mapping survives fini+init+load cycle (full restart simulation). */
+START_TEST(test_mapping_survives_restart)
+{
+	ck_assert(dir_created);
+
+	reffs_id krb5 = REFFS_ID_MAKE(REFFS_ID_KRB5, 1, 99);
+	reffs_id unix_id = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 4242);
+
+	ck_assert_int_eq(identity_map_add(krb5, unix_id), 0);
+	ck_assert_int_eq(identity_map_persist(test_dir), 0);
+
+	identity_map_fini();
+	identity_map_init();
+	ck_assert_int_eq(identity_map_load(test_dir), 0);
+
+	/* Both directions intact after reload. */
+	ck_assert_uint_eq(identity_map_lookup(krb5), unix_id);
+	ck_assert_uint_eq(identity_map_lookup(unix_id), krb5);
+}
+END_TEST
+
+/*
+ * XXH32 principal hashing is stable: the same principal string must
+ * always produce the same local_id, both in this process and across
+ * restarts.  These vectors are canonical -- never change them.
+ */
+START_TEST(test_principal_local_id_stable)
+{
+	ck_assert_uint_eq(XXH32("alice",   5, 0), (uint32_t)0x753a727d);
+	ck_assert_uint_eq(XXH32("bob",     3, 0), (uint32_t)0x02bbe0e7);
+	ck_assert_uint_eq(XXH32("a",       1, 0), (uint32_t)0x550d7456);
+	ck_assert_uint_eq(XXH32("user123", 7, 0), (uint32_t)0x1ba25d57);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -209,6 +245,8 @@ static Suite *identity_map_suite(void)
 	tcase_add_test(tc_map, test_map_unix_for);
 	tcase_add_test(tc_map, test_map_unix_for_nobody);
 	tcase_add_test(tc_map, test_map_persist_load);
+	tcase_add_test(tc_map, test_mapping_survives_restart);
+	tcase_add_test(tc_map, test_principal_local_id_stable);
 	suite_add_tcase(s, tc_map);
 
 	return s;
