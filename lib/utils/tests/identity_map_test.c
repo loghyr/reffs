@@ -197,10 +197,15 @@ START_TEST(test_mapping_survives_restart)
 	reffs_id unix_id = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 4242);
 
 	ck_assert_int_eq(identity_map_add(krb5, unix_id), 0);
+	ck_assert_int_eq(identity_domain_persist(test_dir), 0);
 	ck_assert_int_eq(identity_map_persist(test_dir), 0);
 
+	/* Simulate restart: tear down both tables, reload both. */
 	identity_map_fini();
+	identity_domain_fini();
+	identity_domain_init();
 	identity_map_init();
+	ck_assert_int_eq(identity_domain_load(test_dir), 0);
 	ck_assert_int_eq(identity_map_load(test_dir), 0);
 
 	/* Both directions intact after reload. */
@@ -216,9 +221,9 @@ END_TEST
  */
 START_TEST(test_principal_local_id_stable)
 {
-	ck_assert_uint_eq(XXH32("alice",   5, 0), (uint32_t)0x753a727d);
-	ck_assert_uint_eq(XXH32("bob",     3, 0), (uint32_t)0x02bbe0e7);
-	ck_assert_uint_eq(XXH32("a",       1, 0), (uint32_t)0x550d7456);
+	ck_assert_uint_eq(XXH32("alice", 5, 0), (uint32_t)0x753a727d);
+	ck_assert_uint_eq(XXH32("bob", 3, 0), (uint32_t)0x02bbe0e7);
+	ck_assert_uint_eq(XXH32("a", 1, 0), (uint32_t)0x550d7456);
 	ck_assert_uint_eq(XXH32("user123", 7, 0), (uint32_t)0x1ba25d57);
 }
 END_TEST

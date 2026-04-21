@@ -1528,6 +1528,7 @@ static int probe1_op_identity_map_remove(struct rpc_trans *rt)
 
 		if (ss && ss->ss_state_dir)
 			identity_map_persist(ss->ss_state_dir);
+		server_state_put(ss);
 	}
 
 	return 0;

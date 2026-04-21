@@ -843,8 +843,10 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 					REFFS_ID_UNIX, 0, (uint32_t)*uid);
 
 				identity_map_add(krb, unix_id);
-				if (g_state_dir)
+				if (g_state_dir) {
+					identity_domain_persist(g_state_dir);
 					identity_map_persist(g_state_dir);
+				}
 			}
 		}
 	}

@@ -276,19 +276,15 @@ struct map_disk_entry {
 
 int identity_map_persist(const char *state_dir)
 {
-	char path[512], tmp[520];
+	char path[512], tmp_path[520];
 
 	if (snprintf(path, sizeof(path), "%s/%s", state_dir, MAP_FILE) >=
 	    (int)sizeof(path))
 		return -ENAMETOOLONG;
 
-	if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp))
+	if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path) >=
+	    (int)sizeof(tmp_path))
 		return -ENAMETOOLONG;
-
-	int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-
-	if (fd < 0)
-		return -errno;
 
 	/*
 	 * Collect entries into a heap array outside rcu_read_lock.
@@ -309,16 +305,14 @@ retry:
 		if (count == cap) {
 			uint32_t newcap = cap ? cap * 2 : 64;
 			rcu_read_unlock();
-			struct map_disk_entry *tmp2 =
-				realloc(entries,
-					newcap * sizeof(*entries));
-			if (!tmp2) {
+			struct map_disk_entry *grown =
+				realloc(entries, newcap * sizeof(*entries));
+
+			if (!grown) {
 				free(entries);
-				close(fd);
-				unlink(tmp);
 				return -ENOMEM;
 			}
-			entries = tmp2;
+			entries = grown;
 			cap = newcap;
 			goto retry;
 		}
@@ -330,8 +324,19 @@ retry:
 	}
 	rcu_read_unlock();
 
-	/* Serialize concurrent persist calls; only one writes at a time. */
+	/*
+	 * Serialize concurrent persist calls.  Open the tmp file inside
+	 * the lock so two racing callers cannot both truncate the same
+	 * inode before either has written its data.
+	 */
 	pthread_mutex_lock(&map_persist_lock);
+
+	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+
+	if (fd < 0) {
+		ret = -errno;
+		goto out_unlock;
+	}
 
 	struct map_disk_header hdr = {
 		.mh_magic = MAP_MAGIC,
@@ -355,12 +360,13 @@ retry:
 	close(fd);
 	fd = -1;
 
-	if (rename(tmp, path)) {
+	if (rename(tmp_path, path)) {
 		LOG("identity_map_persist: rename: %m");
-		unlink(tmp);
+		unlink(tmp_path);
 		ret = -errno;
 	}
 
+out_unlock:
 	pthread_mutex_unlock(&map_persist_lock);
 	free(entries);
 	return ret;
@@ -369,7 +375,7 @@ err:
 	pthread_mutex_unlock(&map_persist_lock);
 	free(entries);
 	close(fd);
-	unlink(tmp);
+	unlink(tmp_path);
 	return -EIO;
 }
 
