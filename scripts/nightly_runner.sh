@@ -21,6 +21,14 @@ PULL_LOG="/reffs_data/nightly_pull.log"
 
 cd "$REPO"
 
+echo "[$(date +%Y%m%d-%H%M%S)] nightly_runner: checkout main" >> "$PULL_LOG"
+if git checkout main >> "$PULL_LOG" 2>&1; then
+    echo "[$(date +%Y%m%d-%H%M%S)] nightly_runner: checkout ok" >> "$PULL_LOG"
+else
+    echo "[$(date +%Y%m%d-%H%M%S)] nightly_runner: checkout failed, aborting" >> "$PULL_LOG"
+    exit 1
+fi
+
 echo "[$(date +%Y%m%d-%H%M%S)] nightly_runner: git pull" >> "$PULL_LOG"
 if git pull --ff-only origin main >> "$PULL_LOG" 2>&1; then
     echo "[$(date +%Y%m%d-%H%M%S)] nightly_runner: pull ok" >> "$PULL_LOG"
