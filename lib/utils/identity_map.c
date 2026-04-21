@@ -21,6 +21,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -45,6 +46,7 @@ struct map_entry {
 };
 
 static struct cds_lfht *map_ht;
+static pthread_mutex_t map_persist_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ------------------------------------------------------------------ */
 /* Hash and match                                                      */
@@ -288,14 +290,48 @@ int identity_map_persist(const char *state_dir)
 	if (fd < 0)
 		return -errno;
 
-	/* Count entries under RCU read lock. */
-	uint32_t count = 0;
+	/*
+	 * Collect entries into a heap array outside rcu_read_lock.
+	 * I/O is not permitted inside rcu_read_lock; restart the
+	 * collection if realloc forces an unlock.
+	 */
+	struct map_disk_entry *entries = NULL;
+	uint32_t count = 0, cap = 0;
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
+	int ret = 0;
 
+retry:
+	count = 0;
 	rcu_read_lock();
-	cds_lfht_for_each(map_ht, &iter, node) count++;
+	cds_lfht_for_each(map_ht, &iter, node)
+	{
+		if (count == cap) {
+			uint32_t newcap = cap ? cap * 2 : 64;
+			rcu_read_unlock();
+			struct map_disk_entry *tmp2 =
+				realloc(entries,
+					newcap * sizeof(*entries));
+			if (!tmp2) {
+				free(entries);
+				close(fd);
+				unlink(tmp);
+				return -ENOMEM;
+			}
+			entries = tmp2;
+			cap = newcap;
+			goto retry;
+		}
+		struct map_entry *e =
+			caa_container_of(node, struct map_entry, me_node);
+		entries[count].md_key = e->me_key;
+		entries[count].md_value = e->me_value;
+		count++;
+	}
 	rcu_read_unlock();
+
+	/* Serialize concurrent persist calls; only one writes at a time. */
+	pthread_mutex_lock(&map_persist_lock);
 
 	struct map_disk_header hdr = {
 		.mh_magic = MAP_MAGIC,
@@ -304,42 +340,34 @@ int identity_map_persist(const char *state_dir)
 	};
 
 	ssize_t n = write(fd, &hdr, sizeof(hdr));
-
 	if (n != (ssize_t)sizeof(hdr))
 		goto err;
 
-	rcu_read_lock();
-	cds_lfht_for_each(map_ht, &iter, node)
-	{
-		struct map_entry *e =
-			caa_container_of(node, struct map_entry, me_node);
-		struct map_disk_entry de = {
-			.md_key = e->me_key,
-			.md_value = e->me_value,
-		};
-
-		n = write(fd, &de, sizeof(de));
-		if (n != (ssize_t)sizeof(de)) {
-			rcu_read_unlock();
+	for (uint32_t i = 0; i < count; i++) {
+		n = write(fd, &entries[i], sizeof(entries[i]));
+		if (n != (ssize_t)sizeof(entries[i]))
 			goto err;
-		}
 	}
-	rcu_read_unlock();
 
 	if (fdatasync(fd))
 		goto err;
 
 	close(fd);
+	fd = -1;
 
 	if (rename(tmp, path)) {
 		LOG("identity_map_persist: rename: %m");
 		unlink(tmp);
-		return -errno;
+		ret = -errno;
 	}
 
-	return 0;
+	pthread_mutex_unlock(&map_persist_lock);
+	free(entries);
+	return ret;
 
 err:
+	pthread_mutex_unlock(&map_persist_lock);
+	free(entries);
 	close(fd);
 	unlink(tmp);
 	return -EIO;
