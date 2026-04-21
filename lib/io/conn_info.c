@@ -31,7 +31,7 @@
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/network.h"
-#include "trace_io.h"
+#include "trace/io.h"
 
 #include "io_internal.h"
 

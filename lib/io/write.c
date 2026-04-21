@@ -33,7 +33,7 @@
 #include "ring_internal.h"
 #include "tsan_io.h"
 #include "reffs/rpc.h"
-#include "trace_io.h"
+#include "trace/io.h"
 
 int io_request_write_op(int fd, char *buf, int len, uint64_t state,
 			struct connection_info *ci, struct ring_context *rc)

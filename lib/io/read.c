@@ -29,7 +29,7 @@
 #include "reffs/ring.h"
 #include "ring_internal.h"
 #include "tsan_io.h"
-#include "trace_io.h"
+#include "trace/io.h"
 
 /*
  * io_resubmit_read -- submit another read on ic's fd, reusing ic's

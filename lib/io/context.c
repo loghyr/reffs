@@ -20,7 +20,7 @@
 #include "reffs/log.h"
 #include "reffs/io.h"
 #include "reffs/log.h"
-#include "trace_io.h"
+#include "trace/io.h"
 
 #ifdef HAVE_VM
 #define IO_CONTEXT_TIMEOUT (5)

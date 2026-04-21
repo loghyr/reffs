@@ -28,7 +28,7 @@
 #include "reffs/ring.h"
 #include "ring_internal.h"
 #include "tsan_io.h"
-#include "trace_io.h"
+#include "trace/io.h"
 
 struct accept_context {
 	struct sockaddr_storage ac_addr;

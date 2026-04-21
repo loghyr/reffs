@@ -41,7 +41,7 @@
 #include "reffs/ring.h"
 #include "reffs/rpc.h"
 #include "reffs/task.h"
-#include "trace_io.h"
+#include "trace/io.h"
 #include "kqueue_common.h"
 #include "posix_shims.h"
 #include "tsan_io.h"

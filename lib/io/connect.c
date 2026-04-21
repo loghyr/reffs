@@ -32,7 +32,7 @@
 #include "reffs/ring.h"
 #include "ring_internal.h"
 #include "reffs/rpc.h"
-#include "trace_io.h"
+#include "trace/io.h"
 
 int io_send_request(struct rpc_trans *rt)
 {
