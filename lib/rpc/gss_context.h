@@ -50,6 +50,9 @@ struct gss_ctx_entry {
 	struct rcu_head gc_rcu;
 };
 
+/* Point the GSS layer at the server state directory for map persistence. */
+void gss_context_set_state_dir(const char *dir);
+
 /* Module init/fini -- called from rpc layer init. */
 int gss_ctx_cache_init(void);
 void gss_ctx_cache_fini(void);

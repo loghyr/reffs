@@ -59,6 +59,9 @@
 #include "reffs/runway.h"
 #include "reffs/settings.h"
 
+/* GSS context cache -- declared in gss_context.h. */
+void gss_context_set_state_dir(const char *dir);
+
 #define NFS_PORT 2049
 
 /*
@@ -444,6 +447,7 @@ int main(int argc, char *argv[])
 	if (ss->ss_state_dir) {
 		identity_domain_load(ss->ss_state_dir);
 		identity_map_load(ss->ss_state_dir);
+		gss_context_set_state_dir(ss->ss_state_dir);
 	}
 	if (ss->ss_exchgid_flags & EXCHGID4_FLAG_USE_PNFS_MDS)
 		nfs4_attr_enable_layouts();

@@ -43,6 +43,7 @@
 
 static struct cds_lfht *gss_ctx_ht;
 static _Atomic bool gss_cred_available;
+static const char *g_state_dir;
 
 #ifdef HAVE_GSSAPI_KRB5
 static gss_cred_id_t gss_server_cred = GSS_C_NO_CREDENTIAL;
@@ -226,6 +227,11 @@ static void gss_ctx_reaper_fini(void)
 /* ------------------------------------------------------------------ */
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
+
+void gss_context_set_state_dir(const char *dir)
+{
+	g_state_dir = dir;
+}
 
 int gss_ctx_cache_init(void)
 {
@@ -831,6 +837,8 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 					REFFS_ID_UNIX, 0, (uint32_t)*uid);
 
 				identity_map_add(krb, unix_id);
+				if (g_state_dir)
+					identity_map_persist(g_state_dir);
 			}
 		}
 	}
