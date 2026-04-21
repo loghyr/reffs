@@ -61,8 +61,53 @@ FAILED=0
 # Per-mode result: "label:rc:files:tests:failed"
 RESULTS=()
 
+# NFSv3 known-failure list (space-separated binary names, no path prefix).
+#
+# op_access subtest 4: access(W_OK) on a 0444 file owned by the caller.
+#   POSIX says EACCES; reffs NFSv3 returns 0 (allowed).
+#
+# Why: inode_access_check_flags() carries REFFS_ACCESS_OWNER_OVERRIDE for
+# NFSv3 ACCESS, WRITE, and CREATE (see lib/utils/identity.c).  This flag
+# lets the file owner write to any regular file regardless of mode bits,
+# matching the behaviour of Linux nfsd and other production NFS servers.
+# Without it, git-over-NFS breaks: git does stat+access before open, and
+# some git operations (e.g. pack-objects) touch files it just chmod'd
+# read-only.  Whether git actually calls access(2) before writing is
+# hit-or-miss, but real deployments (Hammerspace, Linux nfsd) have all
+# settled on this workaround.
+#
+# NFSv4 is not affected: the NFSv4 ACCESS op uses inode_access_check()
+# without the override flag, so op_access passes cleanly on v4 mounts.
+#
+# To restore strict POSIX on NFSv3 at the cost of git-over-NFS compat,
+# configure with --enable-strict-posix.  The nightly does not do this
+# because ci_integration_test.sh exercises git clone over both v3 and v4.
+NFSv3_XFAIL="op_access"
+
+# Return 0 if every failing binary in PROVE_OUTPUT is in XFAIL_LIST.
+all_failures_are_known() {
+	local prove_output=$1 xfail_list=$2
+
+	# Extract failing binary names from the Test Summary Report block.
+	# prove prints them as "./op_foo  (Wstat: ...)" in the summary.
+	local failing
+	failing=$(echo "$prove_output" | \
+		awk '/^\.\/op_.*\(Wstat/{gsub(/^\.\//,""); gsub(/ .*/,""); print}' | \
+		sort -u)
+
+	[ -z "$failing" ] && return 1
+
+	local known
+	known=$(echo "$xfail_list" | tr ' ' '\n' | sort -u)
+
+	# Any failing test NOT in the known list?
+	local unexpected
+	unexpected=$(comm -23 <(echo "$failing") <(echo "$known"))
+	[ -z "$unexpected" ]
+}
+
 run_nfs_conformance() {
-	local label=$1 mount_path=$2
+	local label=$1 mount_path=$2 xfail="${3:-}"
 
 	info "--- $label ---"
 
@@ -92,8 +137,13 @@ run_nfs_conformance() {
 	rm -rf "$testdir" 2>/dev/null || sudo rm -rf "$testdir" 2>/dev/null || true
 
 	if [ "$rc" -ne 0 ]; then
-		info "$label: FAIL (prove exited $rc, $nfailed test(s) failed)"
-		FAILED=1
+		if [ -n "$xfail" ] && all_failures_are_known "$output" "$xfail"; then
+			info "$label: PASS ($ntests tests across $nfiles files," \
+			     "$nfailed known-failure(s): $xfail)"
+		else
+			info "$label: FAIL (prove exited $rc, $nfailed test(s) failed)"
+			FAILED=1
+		fi
 	else
 		info "$label: PASS ($ntests tests across $nfiles files)"
 	fi
@@ -111,7 +161,7 @@ fi
 
 if [ -n "$EXT_V3_MOUNT" ]; then
 	info "========== NFSv3 (mount: $EXT_V3_MOUNT) =========="
-	run_nfs_conformance "NFSv3" "$EXT_V3_MOUNT"
+	run_nfs_conformance "NFSv3" "$EXT_V3_MOUNT" "$NFSv3_XFAIL"
 	info ""
 fi
 

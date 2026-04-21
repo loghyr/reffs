@@ -114,10 +114,25 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 			return -EACCES;
 
 		/*
-		 * Git over NFS requires that the owner be able to write to
-		 * a regular file even if the write bit is not set (e.g. 0444).
-		 * Standard NFS servers (like Linux nfsd) allow this.
-		 * However, this violates strict POSIX semantics.
+		 * OWNER_OVERRIDE: the file owner may write any regular file
+		 * regardless of mode bits (e.g. 0444).  Linux nfsd and other
+		 * production NFS servers behave the same way.
+		 *
+		 * Why: git-over-NFS.  Git may chmod files read-only (e.g.
+		 * pack index files) then write them again.  Whether git
+		 * actually calls access(2) before open(2) is hit-or-miss --
+		 * Linux nfsd and other production NFS servers have all settled
+		 * on this workaround regardless.
+		 *
+		 * Consequence: op_access subtest 4 (W_OK on 0444, NFSv3)
+		 * intentionally fails the POSIX conformance suite.  It is
+		 * listed in NFSv3_XFAIL in scripts/ci_nfs_conformance_test.sh.
+		 *
+		 * NFSv4 ACCESS does NOT use this flag (see nfs4/server/attr.c),
+		 * so the v4 conformance run passes.
+		 *
+		 * Use --enable-strict-posix to disable at the cost of
+		 * git-over-NFS compatibility.
 		 */
 #ifndef HAVE_STRICT_POSIX
 		if ((flags & REFFS_ACCESS_OWNER_OVERRIDE) &&
