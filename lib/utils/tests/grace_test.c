@@ -246,6 +246,120 @@ START_TEST(test_timer_ends_grace)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Reclaim-complete on last unreclaimed client ends grace early        */
+/* ------------------------------------------------------------------ */
+
+START_TEST(test_reclaim_complete_ends_grace_early)
+{
+	/*
+	 * With 1 unreclaimed client, a single server_reclaim_complete()
+	 * must transition to GRACE_ENDED without waiting for the timer.
+	 * This is the RFC 8881 S8.4.2 "all clients reclaimed" early exit
+	 * path -- it's what keeps a routine restart from stalling real
+	 * work for a full grace period.
+	 */
+	struct server_state *ss1 = server_state_init(
+		state_dir, 2049, reffs_text_case_sensitive, REFFS_STORAGE_RAM);
+	ck_assert_ptr_nonnull(ss1);
+
+	struct client_incarnation_record crc = {
+		.crc_magic = 0x434C4943U,
+		.crc_slot = 1,
+		.crc_boot_seq = ss1->ss_persist.sps_boot_seq,
+		.crc_incarnation = 1,
+	};
+	ss1->ss_persist_ops->client_incarnation_add(ss1->ss_persist_ctx, &crc);
+	ss1->ss_persist.sps_clean_shutdown = 0;
+	ss1->ss_persist_ops->server_state_save(ss1->ss_persist_ctx,
+					       &ss1->ss_persist);
+	atomic_store_explicit(&ss1->ss_lifecycle, SERVER_SHUTTING_DOWN,
+			      memory_order_release);
+	if (ss1->ss_grace_thread) {
+		pthread_join(ss1->ss_grace_thread, NULL);
+		ss1->ss_grace_thread = 0;
+	}
+
+	struct server_state *ss2 = server_state_init(
+		state_dir, 2049, reffs_text_case_sensitive, REFFS_STORAGE_RAM);
+	ck_assert_ptr_nonnull(ss2);
+
+	ck_assert_uint_eq(atomic_load_explicit(&ss2->ss_unreclaimed,
+					       memory_order_relaxed),
+			  1);
+	ck_assert(server_in_grace(ss2));
+
+	server_reclaim_complete(ss2);
+
+	enum server_lifecycle lc =
+		atomic_load_explicit(&ss2->ss_lifecycle, memory_order_acquire);
+	ck_assert_int_eq(lc, SERVER_GRACE_ENDED);
+	ck_assert(!server_in_grace(ss2));
+
+	server_state_fini(ss2);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
+/* Partial reclaim keeps server in grace                               */
+/* ------------------------------------------------------------------ */
+
+START_TEST(test_reclaim_partial_stays_in_grace)
+{
+	/*
+	 * With 2 unreclaimed clients, one reclaim_complete() must leave
+	 * the server in grace so the second client can still reclaim.
+	 * Early-ending grace on partial reclaim would lose the second
+	 * client's state.
+	 */
+	struct server_state *ss1 = server_state_init(
+		state_dir, 2049, reffs_text_case_sensitive, REFFS_STORAGE_RAM);
+	ck_assert_ptr_nonnull(ss1);
+
+	struct client_incarnation_record crc1 = {
+		.crc_magic = 0x434C4943U,
+		.crc_slot = 1,
+		.crc_boot_seq = ss1->ss_persist.sps_boot_seq,
+		.crc_incarnation = 1,
+	};
+	struct client_incarnation_record crc2 = {
+		.crc_magic = 0x434C4943U,
+		.crc_slot = 2,
+		.crc_boot_seq = ss1->ss_persist.sps_boot_seq,
+		.crc_incarnation = 1,
+	};
+	ss1->ss_persist_ops->client_incarnation_add(ss1->ss_persist_ctx, &crc1);
+	ss1->ss_persist_ops->client_incarnation_add(ss1->ss_persist_ctx, &crc2);
+	ss1->ss_persist.sps_clean_shutdown = 0;
+	ss1->ss_persist_ops->server_state_save(ss1->ss_persist_ctx,
+					       &ss1->ss_persist);
+	atomic_store_explicit(&ss1->ss_lifecycle, SERVER_SHUTTING_DOWN,
+			      memory_order_release);
+	if (ss1->ss_grace_thread) {
+		pthread_join(ss1->ss_grace_thread, NULL);
+		ss1->ss_grace_thread = 0;
+	}
+
+	struct server_state *ss2 = server_state_init(
+		state_dir, 2049, reffs_text_case_sensitive, REFFS_STORAGE_RAM);
+	ck_assert_ptr_nonnull(ss2);
+
+	ck_assert_uint_eq(atomic_load_explicit(&ss2->ss_unreclaimed,
+					       memory_order_relaxed),
+			  2);
+	ck_assert(server_in_grace(ss2));
+
+	server_reclaim_complete(ss2);
+
+	ck_assert_uint_eq(atomic_load_explicit(&ss2->ss_unreclaimed,
+					       memory_order_relaxed),
+			  1);
+	ck_assert(server_in_grace(ss2));
+
+	server_state_fini(ss2);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Shutdown during grace                                               */
 /* ------------------------------------------------------------------ */
 
@@ -329,6 +443,8 @@ static Suite *grace_suite(void)
 	tcase_add_test(tc, test_dirty_start_enters_grace);
 	tcase_add_test(tc, test_started_to_in_grace_on_get);
 	tcase_add_test(tc, test_timer_ends_grace);
+	tcase_add_test(tc, test_reclaim_complete_ends_grace_early);
+	tcase_add_test(tc, test_reclaim_partial_stays_in_grace);
 	tcase_add_test(tc, test_shutdown_during_grace);
 	tcase_add_test(tc, test_nfs4_check_grace_helper);
 	tcase_set_timeout(tc, 10); /* timer test needs 3s */

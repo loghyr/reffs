@@ -199,7 +199,7 @@ No new package dependency.
 
 ## Phase 1: Stability — Crash Recovery and Long-Running (HIGH)
 
-### WI-1.1: Fix Grace Lifecycle Bug [M]
+### WI-1.1: Fix Grace Lifecycle Bug [M] — CLOSED 2026-04-21
 
 - server never leaves `SERVER_GRACE_STARTED`
 - Transition GRACE_STARTED -> IN_GRACE in `server_state_get()`
@@ -212,6 +212,26 @@ No new package dependency.
   so the GCC builtins may not generate correct fences on all
   platforms.  Fix: make `ss_lifecycle` `_Atomic enum server_lifecycle`
   and convert all accesses to C11.
+
+**Closure (2026-04-21)**:
+
+The state machine fix shipped earlier (`c55cba6205b0`, `bd875268b0af`,
+`28184c3e30e4`, `7576a3705813`).  Closing the remaining gaps:
+
+- `ss_unreclaimed` converted from GCC `__atomic_*` builtins to C11
+  `_Atomic uint32_t` + `atomic_fetch_sub_explicit` /
+  `atomic_store_explicit` / `atomic_load_explicit` (standards.md
+  "new code must use C11", not a grandfathered field).  Call sites:
+  `lib/utils/server.c` (2), `lib/utils/tests/client_recovery_test.c` (2).
+- Two missing planned unit tests added to `lib/utils/tests/grace_test.c`:
+  `test_reclaim_complete_ends_grace_early` and
+  `test_reclaim_partial_stays_in_grace`.  Test count now matches the
+  8 planned for WI-1.1.
+
+Note: the 2026-04-21 01:00 nightly soak_posix failure (D-state processes
+wedged in kernel `nfs_set_open_stateid_locked`) is not a WI-1.1 symptom
+-- the server reaches `GRACE_ENDED` correctly; the hang is client-side
+open-stateid contention after server restart, tracked separately.
 
 #### Grace State Machine Unit Tests
 
