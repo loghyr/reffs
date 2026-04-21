@@ -36,9 +36,15 @@ if [ -z "$EXT_V3_MOUNT" ] && [ -z "$EXT_V4_MOUNT" ]; then
 	exit 1
 fi
 
+NFS_CONFORMANCE_URL="https://github.com/loghyr/nfs-conformance.git"
+
 if [ ! -d "$NFS_CONFORMANCE_DIR" ]; then
-	echo "ci_nfs_conformance_test.sh: nfs-conformance dir not found: $NFS_CONFORMANCE_DIR -- skipping"
-	exit 0
+	echo "Cloning nfs-conformance into $NFS_CONFORMANCE_DIR ..."
+	git clone "$NFS_CONFORMANCE_URL" "$NFS_CONFORMANCE_DIR" 2>&1 | tail -5
+	if [ ! -d "$NFS_CONFORMANCE_DIR" ]; then
+		echo "ci_nfs_conformance_test.sh: clone failed -- skipping" >&2
+		exit 0
+	fi
 fi
 
 # Update from upstream before each run.
