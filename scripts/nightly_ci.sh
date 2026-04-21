@@ -34,6 +34,12 @@ set -uo pipefail
 # installs user-level tools (xdr-parser from reply-xdr).
 export PATH="$HOME/.local/bin:$PATH"
 
+# Cron has no ssh-agent, so git-over-ssh operations (nfs-conformance
+# pull, wardtest clone/fetch) must be told which key to use.  Use
+# BatchMode=yes so a missing/unusable key fails fast instead of
+# prompting for a password.
+export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/github_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes"
+
 # On Rocky/RHEL, HdrHistogram_c is built from source into /usr/local.
 # Extend PKG_CONFIG_PATH so configure finds it.
 export PKG_CONFIG_PATH="/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
