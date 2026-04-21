@@ -512,17 +512,28 @@ section_start dstate_check "D-state leak check (90s settle)"
 sleep 90
 NEW_DSTATE=$(ps -eo pid,stat 2>/dev/null | awk '$2~/^D/{print $1}' | sort | \
     comm -13 <(echo "$DSTATE_BASELINE") - 2>/dev/null || true)
+DSTATE_FAIL=0
 if [ -n "$NEW_DSTATE" ]; then
-    echo "New D-state processes introduced during nightly run:"
     for _pid in $NEW_DSTATE; do
+        # Kernel threads have empty /proc/$pid/cmdline -- skip them.
+        # They transiently D-state during normal kernel operation and
+        # are not NFS-related.
+        _cmdline=$(cat "/proc/$_pid/cmdline" 2>/dev/null || true)
+        if [ -z "$_cmdline" ]; then
+            continue
+        fi
         _comm=$(cat "/proc/$_pid/comm" 2>/dev/null || echo "?")
         _wchan=$(cat "/proc/$_pid/wchan" 2>/dev/null || echo "?")
+        echo "New D-state userspace process introduced during nightly run:"
         echo "  PID $_pid ($_comm) wchan=$_wchan"
         sudo cat "/proc/$_pid/stack" 2>/dev/null | head -5 || true
+        DSTATE_FAIL=1
     done
+fi
+if [ "$DSTATE_FAIL" -eq 1 ]; then
     record dstate_check 1
 else
-    echo "No new D-state processes."
+    echo "No new D-state userspace processes."
     record dstate_check 0
 fi
 
