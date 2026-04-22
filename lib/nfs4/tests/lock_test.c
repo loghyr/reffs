@@ -772,7 +772,10 @@ START_TEST(test_release_lockowner_no_locks)
 
 	cm_set_inode(cm, g_inode);
 
-	/* Insert a lock owner with ref=1 (just the list ref, no locks). */
+	/*
+	 * Insert a lock owner with ref=1, bypassing nfs4_get_lock_owner so
+	 * no list ref is added.  noop_lo_release lets the test free manually.
+	 */
 	static const char owner_bytes[] = "release-owner-nolocks";
 	struct nfs4_client *nc = cm->nc;
 

@@ -38,8 +38,7 @@ static void nfs4_client_free_rcu(struct rcu_head *rcu)
 	cds_list_for_each_entry_safe(lo, tmp, &nc->nc_lock_owners,
 				     lo_base.lo_list) {
 		cds_list_del(&lo->lo_base.lo_list);
-		free(lo->lo_owner.n_bytes);
-		free(lo);
+		lock_owner_put(&lo->lo_base); /* drop list ref */
 	}
 
 	pthread_mutex_destroy(&nc->nc_lock_owners_mutex);

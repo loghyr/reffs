@@ -29,17 +29,11 @@
 
 static void nfs4_lock_owner_release(struct urcu_ref *ref)
 {
-	struct nfs4_lock_owner __attribute__((unused)) *lo =
+	struct nfs4_lock_owner *lo =
 		caa_container_of(ref, struct nfs4_lock_owner, lo_base.lo_ref);
 
-	/*
-	 * Note: We don't remove from nc_lock_owners here because the client
-	 * might still be active and we want to reuse the owner.
-	 * The owner is freed when the client is freed, or explicitly via
-	 * RELEASE_LOCKOWNER.
-	 * Actually, for NFSv4, lock owners are often kept until explicitly
-	 * released.
-	 */
+	free(lo->lo_owner.n_bytes);
+	free(lo);
 }
 
 static bool nfs4_lock_owner_match(struct reffs_lock_owner *lo_base, void *arg)
@@ -108,6 +102,7 @@ static struct nfs4_lock_owner *nfs4_get_lock_owner(struct nfs4_client *nc,
 		memcpy(lo->lo_owner.n_bytes, owner->owner.owner_val,
 		       owner->owner.owner_len);
 		cds_list_add(&lo->lo_base.lo_list, &nc->nc_lock_owners);
+		lock_owner_get(&lo->lo_base); /* list ref */
 	}
 	pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
 	return lo;
@@ -313,7 +308,7 @@ uint32_t nfs4_op_lock(struct compound *compound)
 	if (!args->locker.new_lock_owner) {
 		urcu_ref_put(
 			&lo->lo_base.lo_ref,
-			lo->lo_base.lo_release); /* Drop ref from line 183 */
+			lo->lo_base.lo_release); /* Drop ref from line 210 */
 		stateid_put(&ls->ls_stid); /* Drop find ref */
 	}
 
@@ -518,11 +513,11 @@ uint32_t nfs4_op_release_lockowner(struct compound *compound)
 		if (nfs4_lock_owner_match(&lo->lo_base, args)) {
 			/*
 			 * RFC 8881 S18.22.3: LOCKS_HELD if this
-			 * owner has any locks on any inode.  Check
-			 * by looking for the owner's refcount -- if
-			 * it's > 1 (the list ref), locks exist.
+			 * owner has any locks on any inode.  With
+			 * the list ref (1) and stateid ref (1) the
+			 * baseline is 2; any ref above 2 is a lock.
 			 */
-			if (lo->lo_base.lo_ref.refcount > 1) {
+			if (lo->lo_base.lo_ref.refcount > 2) {
 				*status = NFS4ERR_LOCKS_HELD;
 				pthread_mutex_unlock(&nc->nc_lock_owners_mutex);
 				return 0;
