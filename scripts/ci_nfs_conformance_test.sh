@@ -47,9 +47,12 @@ if [ ! -d "$NFS_CONFORMANCE_DIR" ]; then
 	fi
 fi
 
-# Update from upstream before each run.
+# Update from upstream before each run.  A pull failure (e.g. no network,
+# missing SSH key) is non-fatal -- run with whatever is already present.
 echo "Updating nfs-conformance in $NFS_CONFORMANCE_DIR ..."
-git -C "$NFS_CONFORMANCE_DIR" pull --ff-only 2>&1 | tail -5
+if ! git -C "$NFS_CONFORMANCE_DIR" pull --ff-only 2>&1 | tail -5; then
+    echo "Warning: nfs-conformance git pull failed -- running with stale repo" >&2
+fi
 
 # Always rebuild after pulling.
 echo "Building nfs-conformance in $NFS_CONFORMANCE_DIR ..."

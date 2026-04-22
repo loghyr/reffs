@@ -48,7 +48,7 @@ export PKG_CONFIG_PATH="/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig${PKG
 # Configuration
 # -----------------------------------------------------------------------
 
-REPO=/home/loghyr/reffs
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD=$REPO/build
 RESULTS=/reffs_data/nightly
 LOCKFILE=/reffs_data/reffs_ci.lock
