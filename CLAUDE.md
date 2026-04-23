@@ -39,6 +39,7 @@ Design documents:
 @.claude/design/per-export-dstore.md
 @.claude/design/dstore-vtable-v2.md
 @.claude/design/trust-stateid.md
+@.claude/design/proxy-server.md
 
 Bug pattern encyclopedias (RCU, ref-counting, NFSv4 protocol):
 
