@@ -14,6 +14,7 @@ libreffs_nfs4_ps_la_SOURCES = \
 	chunk_io.c \
 	ds_io.c \
 	ec_pipeline.c \
+	ps_discovery.c \
 	ps_state.c
 
 SUBDIRS = tests

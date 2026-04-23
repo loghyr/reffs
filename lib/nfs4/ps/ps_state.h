@@ -13,6 +13,13 @@
 struct mds_session; /* forward: from lib/nfs4/client/ec_client.h */
 
 /*
+ * Upper bound on filehandle length used by proxy-server storage.
+ * NFSv4 caps at 128 bytes (RFC 8881).  Defining the limit locally
+ * keeps ps_state.h free of the generated XDR header.
+ */
+#define PS_MAX_FH_SIZE 128
+
+/*
  * Per-listener proxy-server runtime state.
  *
  * Populated from cfg.proxy_mds[] entries at reffsd startup, one entry
@@ -27,6 +34,17 @@ struct mds_session; /* forward: from lib/nfs4/client/ec_client.h */
  * session MUST check for NULL and fail gracefully
  * (NFS4ERR_NOTSUPP or NFS4ERR_DELAY as appropriate).
  *
+ * pls_mds_root_fh_len == 0 means the MDS root FH has not been
+ * discovered yet.  Populated by ps_state_set_mds_root_fh() after a
+ * successful PUTROOTFH+GETFH round-trip on the session.  Note that
+ * this is distinct from "session not open": a listener can have a
+ * valid pls_session but a zero pls_mds_root_fh_len if discovery
+ * failed at startup.  Future op handlers / forwarding paths must
+ * treat (session open && root FH empty) as an explicit error rather
+ * than blindly dereferencing an empty FH.  A `ps_state_discovery_complete()`
+ * helper will live here once the first consumer lands.
+ * NOT_NOW_BROWN_COW: discovery-complete helper.
+ *
  * See `.claude/design/proxy-server.md` phase 2.
  */
 struct ps_listener_state {
@@ -35,6 +53,8 @@ struct ps_listener_state {
 	uint16_t pls_upstream_port;
 	uint16_t pls_upstream_probe;
 	struct mds_session *pls_session; /* NULL until session opens */
+	uint8_t pls_mds_root_fh[PS_MAX_FH_SIZE];
+	uint32_t pls_mds_root_fh_len; /* 0 = not yet discovered */
 };
 
 /*
@@ -83,6 +103,20 @@ const struct ps_listener_state *ps_state_find(uint32_t listener_id);
  *   -ENOENT  no listener with this id is registered
  */
 int ps_state_set_session(uint32_t listener_id, struct mds_session *session);
+
+/*
+ * Record the MDS's root filehandle for this listener.  Fetched once
+ * at startup via ps_discovery_fetch_root_fh() and stored so future
+ * LOOKUP / GETATTR forwarding does not need to re-ask.  `fh_len == 0`
+ * is legal (clears the stored FH -- useful for test cleanup).
+ *
+ * Returns:
+ *   0        success
+ *   -ENOENT  no listener with this id is registered
+ *   -E2BIG   fh_len exceeds PS_MAX_FH_SIZE
+ */
+int ps_state_set_mds_root_fh(uint32_t listener_id, const uint8_t *fh,
+			     uint32_t fh_len);
 
 /*
  * Tear down the registry at shutdown.  Must run after all worker
