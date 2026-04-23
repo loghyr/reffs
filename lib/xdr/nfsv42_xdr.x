@@ -252,7 +252,8 @@ enum nfsstat4 {
  NFS4ERR_CODING_NOT_SUPPORTED = 10097,/* Coding Type unsupported  */
  NFS4ERR_PAYLOAD_NOT_CONSISTENT = 10098,/* payload inconsitent  */
  NFS4ERR_CHUNK_LOCKED   = 10099,/* chunk is locked  */
- NFS4ERR_CHUNK_GUARDED  = 10100 /* chunk is guarded  */
+ NFS4ERR_CHUNK_GUARDED  = 10100, /* chunk is guarded  */
+ NFS4ERR_PAYLOAD_LOST   = 10101 /* payload cannot be recovered */
 };
 
 /*
@@ -1487,6 +1488,13 @@ enum nfs_opnum4 {
  OP_TRUST_STATEID       = 90,
  OP_REVOKE_STATEID      = 91,
  OP_BULK_REVOKE_STATEID = 92,
+
+%/*
+% * Data-mover proxy ops: draft-haynes-nfsv4-flexfiles-v2-data-mover.
+% * Op numbers 93-94 are TBD pending IANA assignment; same caveat.
+% */
+ OP_PROXY_REGISTRATION  = 93,
+ OP_PROXY_PROGRESS      = 94,
 
  OP_ILLEGAL             = 10044
 };
@@ -3329,6 +3337,15 @@ union ACCESS_MASK4res switch (nfsstat4 amr_status) {
  * CHUNK op types — must precede the nfs_argop4 / nfs_resop4 unions.
  */
 
+/*
+ * Reserved chunk_guard4 owner id for an MDS-escrow during repair
+ * (draft-haynes-nfsv4-flexfiles-v2, sec-chunk_guard_mds).  The MDS
+ * uses this value as cg_client_id when holding a chunk lock across
+ * a repair hand-off; the repair client adopts via
+ * CHUNK_LOCK_FLAGS_ADOPT.
+ */
+const CHUNK_GUARD_CLIENT_ID_MDS = 0xFFFFFFFF;
+
 struct chunk_guard4 {
         uint32_t   cg_gen_id;
         uint32_t   cg_client_id;
@@ -3411,11 +3428,19 @@ union CHUNK_HEADER_READ4res switch (nfsstat4 chrr_status) {
         void;
 };
 
+/*
+ * CHUNK_LOCK_FLAGS_ADOPT: on CHUNK_LOCK, the client is adopting an
+ * existing MDS-escrow lock (draft-haynes-nfsv4-flexfiles-v2,
+ * sec-CHUNK_LOCK).  Used during repair hand-off.
+ */
+const CHUNK_LOCK_FLAGS_ADOPT = 0x00000001;
+
 struct CHUNK_LOCK4args {
     /* CURRENT_FH: file */
     stateid4        cla_stateid;
     offset4         cla_offset;
     count4          cla_count;
+    uint32_t        cla_flags;
     chunk_owner4    cla_owner;
 };
 
@@ -3621,6 +3646,59 @@ struct BULK_REVOKE_STATEID4res {
 };
 
 /*
+ * Flexible Files v2 erasure-coding type.  Defined here (before the
+ * nfs_argop4 dispatch union) because PROXY_REGISTRATION4args below
+ * declares an array of ffv2_coding_type4, and XDR requires types
+ * to be defined before use.  The layout-specific ffv2_* structs
+ * later in the file reuse this same enum.
+ */
+enum ffv2_coding_type4 {
+    FFV2_CODING_MIRRORED                    = 0x1,
+    FFV2_ENCODING_MOJETTE_SYSTEMATIC        = 0x2,
+    FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC    = 0x3,
+    FFV2_ENCODING_RS_VANDERMONDE            = 0x4
+};
+
+/*
+ * Data-mover proxy ops (draft-haynes-nfsv4-flexfiles-v2-data-mover).
+ *
+ * PROXY_REGISTRATION: a proxy server (PS) opens a session to the MDS
+ * and declares its supported codecs, co-residency affinity token,
+ * requested lease, and reserved flags.
+ *
+ * PROXY_PROGRESS: the PS reports interim and terminal status of an
+ * in-flight move or repair on the fore-channel of its session.
+ */
+struct PROXY_REGISTRATION4args {
+    ffv2_coding_type4  prr_codecs<>;
+    opaque             prr_affinity<>;
+    uint32_t           prr_lease;
+    uint32_t           prr_flags;
+};
+struct PROXY_REGISTRATION4resok {
+    uint64_t           prr_registration_id;
+    uint32_t           prr_granted_lease;
+};
+union PROXY_REGISTRATION4res switch (nfsstat4 prr_status) {
+    case NFS4_OK:
+        PROXY_REGISTRATION4resok  prr_resok4;
+    default:
+        void;
+};
+
+struct PROXY_PROGRESS4args {
+    uint64_t         ppa_registration_id;
+    uint64_t         ppa_operation_id;
+    bool             ppa_terminal;
+    nfsstat4         ppa_status;
+    uint64_t         ppa_bytes_done;
+    uint64_t         ppa_bytes_total;
+};
+struct PROXY_PROGRESS4res {
+    nfsstat4         ppr_status;
+};
+
+/*
  * RFC 9766 S3.3 -- LAYOUT_WCC: client reports DS WCC data to the MDS.
  * The MDS uses this to update cached DS attributes and suppress the
  * reflected GETATTR fan-out on a subsequent GETATTR in the same compound.
@@ -3783,6 +3861,13 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
  case OP_REVOKE_STATEID: REVOKE_STATEID4args oprevoke_stateid;
  case OP_BULK_REVOKE_STATEID: BULK_REVOKE_STATEID4args opbulk_revoke_stateid;
 
+ /* Data-mover proxy ops
+  * (draft-haynes-nfsv4-flexfiles-v2-data-mover) */
+ case OP_PROXY_REGISTRATION:
+      PROXY_REGISTRATION4args opproxy_registration;
+ case OP_PROXY_PROGRESS:
+      PROXY_PROGRESS4args opproxy_progress;
+
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       void;
 };
@@ -3936,6 +4021,13 @@ union nfs_resop4 switch (nfs_opnum4 resop) {
  case OP_TRUST_STATEID: TRUST_STATEID4res optrust_stateid;
  case OP_REVOKE_STATEID: REVOKE_STATEID4res oprevoke_stateid;
  case OP_BULK_REVOKE_STATEID: BULK_REVOKE_STATEID4res opbulk_revoke_stateid;
+
+ /* Data-mover proxy ops
+  * (draft-haynes-nfsv4-flexfiles-v2-data-mover) */
+ case OP_PROXY_REGISTRATION:
+      PROXY_REGISTRATION4res opproxy_registration;
+ case OP_PROXY_PROGRESS:
+      PROXY_PROGRESS4res opproxy_progress;
 
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       ILLEGAL4res opillegal;
@@ -4257,6 +4349,101 @@ struct CB_OFFLOAD4args {
 struct CB_OFFLOAD4res {
         nfsstat4        cor_status;
 };
+
+/*
+ * CB_CHUNK_REPAIR (draft-haynes-nfsv4-flexfiles-v2): MDS directs a
+ * selected client to repair one or more inconsistent chunk ranges.
+ */
+enum cb_chunk_repair_reason4 {
+    CB_REPAIR_REASON_RACE  = 1,
+    CB_REPAIR_REASON_SCRUB = 2
+};
+struct cb_chunk_range4 {
+    offset4         ccr_offset;
+    count4          ccr_count;
+    nfsstat4        ccr_error;
+};
+struct CB_CHUNK_REPAIR4args {
+    nfs_fh4                     ccra_fh;
+    stateid4                    ccra_layout_stateid;
+    nfstime4                    ccra_deadline;
+    cb_chunk_repair_reason4     ccra_reason;
+    cb_chunk_range4             ccra_ranges<>;
+};
+struct CB_CHUNK_REPAIR4res {
+    nfsstat4           ccrr_status;
+};
+
+/*
+ * CB_PROXY_* ops (draft-haynes-nfsv4-flexfiles-v2-data-mover):
+ * MDS-initiated directives that flow on the back-channel of the
+ * PS->MDS session.  Each args struct is declared with the fields
+ * the draft specifies; opaque bodies carry layout-type-specific
+ * source/destination descriptors.
+ */
+
+const CPM_FLAG_DUAL_WRITE = 0x00000001;
+
+struct CB_PROXY_MOVE4args {
+    nfs_fh4           cpma_fh;
+    uint64_t          cpma_operation_id;
+    uint32_t          cpma_flags;
+    nfstime4          cpma_deadline;
+    opaque            cpma_source_layout<>;
+    opaque            cpma_destination_layout<>;
+};
+struct CB_PROXY_MOVE4resok {
+    uint64_t          cpmr_accepted_operation_id;
+};
+union CB_PROXY_MOVE4res switch (nfsstat4 cpmr_status) {
+    case NFS4_OK:
+        CB_PROXY_MOVE4resok  cpmr_resok4;
+    default:
+        void;
+};
+
+struct CB_PROXY_REPAIR4args {
+    nfs_fh4           cpra_fh;
+    uint64_t          cpra_operation_id;
+    nfstime4          cpra_deadline;
+    opaque            cpra_source_layout<>;
+    opaque            cpra_destination_layout<>;
+};
+struct CB_PROXY_REPAIR4resok {
+    uint64_t          cprr_accepted_operation_id;
+};
+union CB_PROXY_REPAIR4res switch (nfsstat4 cprr_status) {
+    case NFS4_OK:
+        CB_PROXY_REPAIR4resok  cprr_resok4;
+    default:
+        void;
+};
+
+struct CB_PROXY_STATUS4args {
+    uint64_t          cpsa_registration_id;
+    uint64_t          cpsa_operation_id;
+};
+struct CB_PROXY_STATUS4resok {
+    bool              cpsr_terminal;
+    nfsstat4          cpsr_op_status;
+    uint64_t          cpsr_bytes_done;
+    uint64_t          cpsr_bytes_total;
+};
+union CB_PROXY_STATUS4res switch (nfsstat4 cpsr_status) {
+    case NFS4_OK:
+        CB_PROXY_STATUS4resok  cpsr_resok4;
+    default:
+        void;
+};
+
+struct CB_PROXY_CANCEL4args {
+    uint64_t          cpca_registration_id;
+    uint64_t          cpca_operation_id;
+};
+struct CB_PROXY_CANCEL4res {
+    nfsstat4          cpcr_status;
+};
+
 /*
  * Various definitions for CB_COMPOUND
  */
@@ -4277,6 +4464,17 @@ enum nfs_cb_opnum4 {
         OP_CB_NOTIFY_DEVICEID           = 14,
 %/* Callback operations new to NFSv4.2 */
         OP_CB_OFFLOAD                   = 15,
+
+%/* Flex Files v2 per-chunk repair callback
+% * (draft-haynes-nfsv4-flexfiles-v2, op number TBD pending IANA) */
+        OP_CB_CHUNK_REPAIR              = 16,
+
+%/* Data-mover proxy callbacks
+% * (draft-haynes-nfsv4-flexfiles-v2-data-mover, op numbers TBD) */
+        OP_CB_PROXY_MOVE                = 17,
+        OP_CB_PROXY_REPAIR              = 18,
+        OP_CB_PROXY_STATUS              = 19,
+        OP_CB_PROXY_CANCEL              = 20,
 
         OP_CB_ILLEGAL                   = 10044
 };
@@ -4312,6 +4510,22 @@ union nfs_cb_argop4 switch (nfs_cb_opnum4 argop) {
  /* new NFSv4.2 operations */
  case OP_CB_OFFLOAD:
       CB_OFFLOAD4args           opcboffload;
+
+ /* Flex Files v2 per-chunk repair
+  * (draft-haynes-nfsv4-flexfiles-v2) */
+ case OP_CB_CHUNK_REPAIR:
+      CB_CHUNK_REPAIR4args      opcbchunk_repair;
+
+ /* Data-mover proxy callbacks
+  * (draft-haynes-nfsv4-flexfiles-v2-data-mover) */
+ case OP_CB_PROXY_MOVE:
+      CB_PROXY_MOVE4args        opcbproxy_move;
+ case OP_CB_PROXY_REPAIR:
+      CB_PROXY_REPAIR4args      opcbproxy_repair;
+ case OP_CB_PROXY_STATUS:
+      CB_PROXY_STATUS4args      opcbproxy_status;
+ case OP_CB_PROXY_CANCEL:
+      CB_PROXY_CANCEL4args      opcbproxy_cancel;
 
  case OP_CB_ILLEGAL:            void;
 };
@@ -4357,6 +4571,22 @@ union nfs_cb_resop4 switch (nfs_cb_opnum4 resop) {
 
  /* new NFSv4.2 operations */
  case OP_CB_OFFLOAD:    CB_OFFLOAD4res  opcboffload;
+
+ /* Flex Files v2 per-chunk repair
+  * (draft-haynes-nfsv4-flexfiles-v2) */
+ case OP_CB_CHUNK_REPAIR:
+      CB_CHUNK_REPAIR4res       opcbchunk_repair;
+
+ /* Data-mover proxy callbacks
+  * (draft-haynes-nfsv4-flexfiles-v2-data-mover) */
+ case OP_CB_PROXY_MOVE:
+      CB_PROXY_MOVE4res         opcbproxy_move;
+ case OP_CB_PROXY_REPAIR:
+      CB_PROXY_REPAIR4res       opcbproxy_repair;
+ case OP_CB_PROXY_STATUS:
+      CB_PROXY_STATUS4res       opcbproxy_status;
+ case OP_CB_PROXY_CANCEL:
+      CB_PROXY_CANCEL4res       opcbproxy_cancel;
 
  /* Not new operation */
  case OP_CB_ILLEGAL:    CB_ILLEGAL4res  opcbillegal;
@@ -4532,6 +4762,13 @@ const FFV2_DS_FLAGS_ACTIVE        = 0x00000001;
 const FFV2_DS_FLAGS_SPARE         = 0x00000002;
 const FFV2_DS_FLAGS_PARITY        = 0x00000004;
 const FFV2_DS_FLAGS_REPAIR        = 0x00000008;
+/*
+ * FFV2_DS_FLAGS_PROXY
+ * (draft-haynes-nfsv4-flexfiles-v2-data-mover, sec-layout-shape)
+ * When set on a data-server entry, the client directs all CHUNK
+ * I/O for the file to that entry; the entry names a proxy server.
+ */
+const FFV2_DS_FLAGS_PROXY         = 0x00000040;
 
 typedef uint32_t            ffv2_ds_flags4;
 
@@ -4544,12 +4781,13 @@ struct ffv2_data_server4 {
     ffv2_ds_flags4          ffv2ds_flags;
 };
 
-enum ffv2_coding_type4 {
-    FFV2_CODING_MIRRORED                    = 0x1,
-    FFV2_ENCODING_MOJETTE_SYSTEMATIC        = 0x2,
-    FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC    = 0x3,
-    FFV2_ENCODING_RS_VANDERMONDE            = 0x4
-};
+/*
+ * ffv2_coding_type4 was previously defined here.  Moved earlier in
+ * the file (before the nfs_argop4 dispatch union) because the
+ * PROXY_REGISTRATION4args struct declares an array of
+ * ffv2_coding_type4, and XDR requires types to be defined before
+ * use.  See the definition near the chunk_guard4 block.
+ */
 
 /*
  * Generic data protection geometry — replaces per-encoding-type
