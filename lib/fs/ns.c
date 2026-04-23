@@ -128,6 +128,13 @@ int reffs_ns_init_proxy_listener(uint32_t listener_id)
 	if (!inode) {
 		LOG("reffs_ns_init_proxy_listener: no root inode on proxy sb (listener=%u)",
 		    listener_id);
+		/*
+		 * super_block_dirent_create() succeeded, so the dirent tree
+		 * must be released before dropping the alloc ref -- else the
+		 * sb sits in super_block_list holding dirents that will leak
+		 * until shutdown's release_all_fs_dirents() walks it.
+		 */
+		super_block_release_dirents(sb);
 		super_block_put(sb);
 		return -ENOENT;
 	}
