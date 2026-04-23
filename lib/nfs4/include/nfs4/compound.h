@@ -77,6 +77,16 @@ struct compound {
 	/* Compound-level state flags. */
 #define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)
 	uint32_t c_flags;
+
+	/*
+	 * Listener scope.  0 = native namespace; 1+ = a proxy-server
+	 * namespace defined by [[proxy_mds]].  Set at compound_alloc()
+	 * from the accepting fd's conn_info.  PUTFH / PUTROOTFH /
+	 * PUTPUBFH pass this to super_block_find_for_listener() so that
+	 * an FH minted on one listener and presented on another misses
+	 * the lookup and the client sees NFS4ERR_STALE.
+	 */
+	uint32_t c_listener_id;
 };
 
 int nfs4_proc_compound(struct rpc_trans *rt);
