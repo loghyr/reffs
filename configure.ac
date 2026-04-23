@@ -494,6 +494,8 @@ AC_CONFIG_FILES([
 	lib/nfs4/server/Makefile
 	lib/nfs4/client/Makefile
 	lib/nfs4/client/tests/Makefile
+	lib/nfs4/ps/Makefile
+	lib/nfs4/ps/tests/Makefile
 	lib/nfs4/dstore/Makefile
 	lib/nfs4/dstore/tests/Makefile
 	lib/fs/Makefile
