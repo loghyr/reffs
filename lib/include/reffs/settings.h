@@ -22,6 +22,7 @@
 #define REFFS_CONFIG_MAX_DATA_SERVERS 64
 #define REFFS_CONFIG_MAX_DSTORES 16
 #define REFFS_CONFIG_MAX_HOST 256
+#define REFFS_CONFIG_MAX_PROXY_MDS 8
 #define REFFS_FENCE_UID_MIN_DEFAULT 1024
 #define REFFS_FENCE_UID_MAX_DEFAULT 2048
 #define REFFS_LAYOUT_WIDTH_DEFAULT 6 /* RS(4,2): 4 data + 2 parity */
@@ -122,6 +123,26 @@ struct reffs_data_server_config {
 	enum reffs_ds_protocol protocol; /* default: nfsv3 */
 };
 
+/*
+ * [[proxy_mds]] -- proxy-server listener.
+ *
+ * Each entry defines a second NFS listener whose superblocks live
+ * in a separate, listener-scoped namespace.  The native listener on
+ * cfg->port is always listener_id 0; entries here are 1..N.  The
+ * (sb_id, listener_id) pair is the identity the NFS compound
+ * dispatch matches on -- an FH minted on one listener that arrives
+ * on another misses the scoped lookup and the client sees
+ * NFS4ERR_STALE.
+ *
+ * The `id` field is the per-listener identifier (1..N, unique, must
+ * not be 0 which is reserved for the native listener).
+ */
+struct reffs_proxy_mds_config {
+	uint32_t id; /* listener id: 1..N (0 reserved for native) */
+	uint16_t port; /* bind port, e.g. 4098 */
+	char bind[REFFS_CONFIG_MAX_BIND]; /* "*" = all IPv4 + IPv6 */
+};
+
 struct reffs_config {
 	/* [server] */
 	uint16_t port;
@@ -178,6 +199,10 @@ struct reffs_config {
 	struct reffs_data_server_config
 		data_servers[REFFS_CONFIG_MAX_DATA_SERVERS];
 	unsigned int ndata_servers;
+
+	/* [[proxy_mds]] -- additional listeners for proxy-server namespaces */
+	struct reffs_proxy_mds_config proxy_mds[REFFS_CONFIG_MAX_PROXY_MDS];
+	unsigned int nproxy_mds;
 };
 
 /*
