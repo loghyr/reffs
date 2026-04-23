@@ -58,8 +58,13 @@ RUN apt-get update && apt-get install -y \
     krb5-admin-server \
     && rm -rf /var/lib/apt/lists/*
 
-# Install xdrlib3 and reply-xdr (XDR parser + RPC library)
-RUN pip3 install --no-cache-dir --break-system-packages \
+# Install xdrlib3 and reply-xdr (XDR parser + RPC library).
+# Bump REPLY_XDR_REV to invalidate the layer when a newer reply-xdr
+# is required.  Dockerfile (dev) carries the same ARG -- keep the
+# two files in sync so ci-image and image track the same parser.
+ARG REPLY_XDR_REV=2026-04-22
+RUN echo "reply-xdr cache-bust: ${REPLY_XDR_REV}" && \
+    pip3 install --no-cache-dir --break-system-packages \
     xdrlib3 \
     reply-xdr@git+https://github.com/loghyr/reply.git
 

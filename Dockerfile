@@ -74,7 +74,16 @@ RUN activate-global-python-argcomplete --user && \
     echo 'eval "$(register-python-argcomplete reffs-probe.py)"' >> /root/.bashrc && \
     echo 'source /etc/profile.d/bash_completion.sh' >> /root/.bashrc
 
-RUN pip3 install --no-cache-dir \
+# reply-xdr (xdr-parser) is pulled from HEAD.  Bump REPLY_XDR_REV when
+# a newer reply-xdr is required (the value is only used to invalidate
+# the Docker layer cache -- the actual revision installed is still
+# main of the git repo).  The current value is the date the C-output
+# naming convention changed from "<prefix>_xdr.h" to "<prefix>.h";
+# older layers built before this date produce the wrong filenames for
+# ref_cp_xdr.x and break the lib/xdr/Makefile.am rules.
+ARG REPLY_XDR_REV=2026-04-22
+RUN echo "reply-xdr cache-bust: ${REPLY_XDR_REV}" && \
+    pip3 install --no-cache-dir \
     reply-xdr@git+https://github.com/loghyr/reply.git \
     xdrlib3 \
     xml2rfc
