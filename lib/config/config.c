@@ -570,6 +570,37 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 		}
 	}
 
+	arr = toml_array_in(root, "proxy_mds");
+	if (arr) {
+		int npmds = toml_array_nelem(arr);
+
+		if (npmds > REFFS_CONFIG_MAX_PROXY_MDS)
+			npmds = REFFS_CONFIG_MAX_PROXY_MDS;
+		cfg->nproxy_mds = (unsigned int)npmds;
+		for (int i = 0; i < npmds; i++) {
+			toml_table_t *pm_tbl = toml_table_at(arr, i);
+			struct reffs_proxy_mds_config *pmc = &cfg->proxy_mds[i];
+			toml_datum_t d;
+
+			strncpy(pmc->bind, "*", sizeof(pmc->bind) - 1);
+
+			d = toml_int_in(pm_tbl, "id");
+			if (d.ok)
+				pmc->id = (uint32_t)d.u.i;
+
+			d = toml_int_in(pm_tbl, "port");
+			if (d.ok)
+				pmc->port = (uint16_t)d.u.i;
+
+			d = toml_string_in(pm_tbl, "bind");
+			if (d.ok) {
+				strncpy(pmc->bind, d.u.s,
+					sizeof(pmc->bind) - 1);
+				free(d.u.s);
+			}
+		}
+	}
+
 	toml_free(root);
 	return 0;
 }

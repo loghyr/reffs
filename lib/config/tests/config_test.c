@@ -472,6 +472,77 @@ START_TEST(test_load_data_server_none)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* load -- [[proxy_mds]] entries                                        */
+/* ------------------------------------------------------------------ */
+
+START_TEST(test_load_proxy_mds_single)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[proxy_mds]]\n"
+				"id   = 1\n"
+				"port = 4098\n"
+				"bind = \"127.0.0.1\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nproxy_mds, 1);
+	ck_assert_uint_eq(cfg.proxy_mds[0].id, 1);
+	ck_assert_uint_eq(cfg.proxy_mds[0].port, 4098);
+	ck_assert_str_eq(cfg.proxy_mds[0].bind, "127.0.0.1");
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_proxy_mds_multiple)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[proxy_mds]]\n"
+				"id   = 1\n"
+				"port = 4098\n"
+				"\n"
+				"[[proxy_mds]]\n"
+				"id   = 2\n"
+				"port = 4099\n"
+				"bind = \"::1\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nproxy_mds, 2);
+	ck_assert_uint_eq(cfg.proxy_mds[0].id, 1);
+	ck_assert_uint_eq(cfg.proxy_mds[0].port, 4098);
+	ck_assert_str_eq(cfg.proxy_mds[0].bind, "*");
+	ck_assert_uint_eq(cfg.proxy_mds[1].id, 2);
+	ck_assert_uint_eq(cfg.proxy_mds[1].port, 4099);
+	ck_assert_str_eq(cfg.proxy_mds[1].bind, "::1");
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_proxy_mds_none)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[server]\nrole = \"mds\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nproxy_mds, 0);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* load -- bad file path                                                */
 /* ------------------------------------------------------------------ */
 
@@ -551,6 +622,9 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_data_server_single);
 	tcase_add_test(tc_load, test_load_data_server_multiple);
 	tcase_add_test(tc_load, test_load_data_server_none);
+	tcase_add_test(tc_load, test_load_proxy_mds_single);
+	tcase_add_test(tc_load, test_load_proxy_mds_multiple);
+	tcase_add_test(tc_load, test_load_proxy_mds_none);
 	tcase_add_test(tc_load, test_load_missing_file);
 	suite_add_tcase(s, tc_load);
 
