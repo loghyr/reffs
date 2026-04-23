@@ -537,6 +537,12 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 		return ENOMEM;
 	}
 
+	/*
+	 * Propagate the listener tag so the NFS compound path can scope
+	 * superblock lookups to this listener (proxy-server isolation).
+	 */
+	client_conn->ci_listener_id = io_conn_listener_id(listen_fd);
+
 	ic->ic_ci.ci_peer_len = sizeof(ic->ic_ci.ci_peer);
 	if (getpeername(client_fd, (struct sockaddr *)&ic->ic_ci.ci_peer,
 			&ic->ic_ci.ci_peer_len) == 0) {

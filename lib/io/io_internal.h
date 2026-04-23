@@ -153,6 +153,15 @@ struct conn_info {
 	 * fd number.
 	 */
 	uint32_t ci_generation;
+
+	/*
+	 * Listener that this fd belongs to.  For CONN_LISTENING fds this
+	 * is the listener's own id; for CONN_ACCEPTED fds this is copied
+	 * from the parent listener's conn_info.  0 = native listener
+	 * (cfg->port); 1..N = proxy_mds[] listeners.  Used at NFS
+	 * compound dispatch to scope superblock lookups.
+	 */
+	uint32_t ci_listener_id;
 };
 
 #endif /* _REFFS_IO_INTERNAL_H */

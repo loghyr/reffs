@@ -156,6 +156,13 @@ int main(int argc, char *argv[])
 	int lsnr_ipv6_nfs_fd = -1;
 	int lsnr_ipv4_probe_fd = -1;
 	int lsnr_ipv6_probe_fd = -1;
+	int lsnr_ipv4_proxy_fd[REFFS_CONFIG_MAX_PROXY_MDS];
+	int lsnr_ipv6_proxy_fd[REFFS_CONFIG_MAX_PROXY_MDS];
+
+	for (unsigned int i = 0; i < REFFS_CONFIG_MAX_PROXY_MDS; i++) {
+		lsnr_ipv4_proxy_fd[i] = -1;
+		lsnr_ipv6_proxy_fd[i] = -1;
+	}
 
 	int exit_code = 0;
 	int port = NFS_PORT;
@@ -671,7 +678,7 @@ int main(int argc, char *argv[])
 
 	pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
 
-	// Setup NFS listener
+	// Setup NFS listener (native listener_id = 0)
 	lsnr_ipv4_nfs_fd = io_lsnr_setup_ipv4(port);
 	if (lsnr_ipv4_nfs_fd < 0) {
 		LOG("Failed to setup listener on port %d", port);
@@ -679,6 +686,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	io_listener_register(lsnr_ipv4_nfs_fd, 0);
 	io_add_listener(lsnr_ipv4_nfs_fd);
 	io_request_accept_op(lsnr_ipv4_nfs_fd, NULL, rc);
 
@@ -689,6 +697,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	io_listener_register(lsnr_ipv6_nfs_fd, 0);
 	io_add_listener(lsnr_ipv6_nfs_fd);
 	io_request_accept_op(lsnr_ipv6_nfs_fd, NULL, rc);
 
@@ -699,6 +708,7 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	io_listener_register(lsnr_ipv4_probe_fd, 0);
 	io_add_listener(lsnr_ipv4_probe_fd);
 	io_request_accept_op(lsnr_ipv4_probe_fd, NULL, rc);
 
@@ -709,8 +719,54 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 
+	io_listener_register(lsnr_ipv6_probe_fd, 0);
 	io_add_listener(lsnr_ipv6_probe_fd);
 	io_request_accept_op(lsnr_ipv6_probe_fd, NULL, rc);
+
+	/*
+	 * [[proxy_mds]] listeners.  Each entry gets its own IPv4+IPv6 pair
+	 * on the configured port, tagged with listener_id = cfg.id so that
+	 * FHs minted on this listener are scoped to it at PUTFH/PUTROOTFH.
+	 */
+	for (unsigned int i = 0; i < cfg.nproxy_mds; i++) {
+		const struct reffs_proxy_mds_config *pmc = &cfg.proxy_mds[i];
+
+		if (pmc->id == 0) {
+			LOG("proxy_mds[%u]: id 0 is reserved for the native listener -- skipping",
+			    i);
+			continue;
+		}
+		if (pmc->port == 0) {
+			LOG("proxy_mds[%u] (id=%u): missing port -- skipping",
+			    i, pmc->id);
+			continue;
+		}
+
+		lsnr_ipv4_proxy_fd[i] = io_lsnr_setup_ipv4(pmc->port);
+		if (lsnr_ipv4_proxy_fd[i] < 0) {
+			LOG("Failed to setup proxy_mds[%u] IPv4 listener on port %u",
+			    i, pmc->port);
+			exit_code = 1;
+			goto out;
+		}
+		io_listener_register(lsnr_ipv4_proxy_fd[i], pmc->id);
+		io_add_listener(lsnr_ipv4_proxy_fd[i]);
+		io_request_accept_op(lsnr_ipv4_proxy_fd[i], NULL, rc);
+
+		lsnr_ipv6_proxy_fd[i] = io_lsnr_setup_ipv6(pmc->port);
+		if (lsnr_ipv6_proxy_fd[i] < 0) {
+			LOG("Failed to setup proxy_mds[%u] IPv6 listener on port %u",
+			    i, pmc->port);
+			exit_code = 1;
+			goto out;
+		}
+		io_listener_register(lsnr_ipv6_proxy_fd[i], pmc->id);
+		io_add_listener(lsnr_ipv6_proxy_fd[i]);
+		io_request_accept_op(lsnr_ipv6_proxy_fd[i], NULL, rc);
+
+		TRACE("proxy_mds[%u]: listener_id=%u bound on port %u", i,
+		      pmc->id, pmc->port);
+	}
 
 	/* aggressive cleanup of old registrations */
 	for (int v = 1; v <= 4; v++) {
@@ -845,6 +901,16 @@ int main(int argc, char *argv[])
 	if (lsnr_ipv6_nfs_fd >= 0) {
 		close(lsnr_ipv6_nfs_fd);
 		lsnr_ipv6_nfs_fd = -1;
+	}
+	for (unsigned int i = 0; i < REFFS_CONFIG_MAX_PROXY_MDS; i++) {
+		if (lsnr_ipv4_proxy_fd[i] >= 0) {
+			close(lsnr_ipv4_proxy_fd[i]);
+			lsnr_ipv4_proxy_fd[i] = -1;
+		}
+		if (lsnr_ipv6_proxy_fd[i] >= 0) {
+			close(lsnr_ipv6_proxy_fd[i]);
+			lsnr_ipv6_proxy_fd[i] = -1;
+		}
 	}
 
 	trace_lifecycle_shutdown(__func__, __LINE__,
