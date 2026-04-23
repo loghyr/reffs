@@ -77,6 +77,20 @@ const struct ps_listener_state *ps_state_find(uint32_t listener_id)
 	return NULL;
 }
 
+int ps_state_set_session(uint32_t listener_id, struct mds_session *session)
+{
+	unsigned int n =
+		atomic_load_explicit(&ps_nlisteners, memory_order_acquire);
+
+	for (unsigned int i = 0; i < n; i++) {
+		if (ps_listeners[i].pls_listener_id == listener_id) {
+			ps_listeners[i].pls_session = session;
+			return 0;
+		}
+	}
+	return -ENOENT;
+}
+
 void ps_state_fini(void)
 {
 	atomic_store_explicit(&ps_nlisteners, 0, memory_order_release);

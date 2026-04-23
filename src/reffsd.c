@@ -53,6 +53,7 @@
 #include "reffs/dstore.h"
 #include "reffs/runway.h"
 #include "reffs/settings.h"
+#include "ec_client.h"
 #include "ps_state.h"
 
 #define NFS_PORT 2049
@@ -513,6 +514,56 @@ int main(int argc, char *argv[])
 	}
 
 	/*
+	 * Open an NFSv4.2 client session from reffsd to each configured
+	 * upstream MDS.  Non-fatal: a create failure (MDS down at
+	 * startup) logs and leaves the listener's session NULL; the
+	 * proxy namespace stays dark until someone drives session
+	 * recovery (NOT_NOW_BROWN_COW) or reffsd is restarted.
+	 *
+	 * Empty address is intentional -- skip quietly, consistent with
+	 * the tolerance the config parser gives to proxy_mds entries
+	 * without an upstream.
+	 */
+	for (unsigned int i = 0; i < cfg.nproxy_mds; i++) {
+		const struct reffs_proxy_mds_config *pmc = &cfg.proxy_mds[i];
+		struct mds_session *ms;
+		char owner[256];
+		int r;
+
+		if (pmc->id == 0 || pmc->address[0] == '\0')
+			continue;
+
+		ms = calloc(1, sizeof(*ms));
+		if (!ms) {
+			LOG("proxy_mds[%u]: mds_session calloc failed", i);
+			exit_code = 1;
+			goto out;
+		}
+
+		snprintf(owner, sizeof(owner), "reffs-ps-%u", pmc->id);
+		mds_session_set_owner(ms, owner);
+
+		r = mds_session_create(ms, pmc->address);
+		if (r < 0) {
+			LOG("proxy_mds[%u] (listener_id=%u, upstream=%s): mds_session_create failed: %s -- listener stays dark",
+			    i, pmc->id, pmc->address, strerror(-r));
+			free(ms);
+			continue;
+		}
+
+		if (ps_state_set_session(pmc->id, ms) < 0) {
+			LOG("proxy_mds[%u]: ps_state_set_session unexpectedly failed",
+			    i);
+			mds_session_destroy(ms);
+			free(ms);
+			exit_code = 1;
+			goto out;
+		}
+		TRACE("proxy_mds[%u]: mds session open to %s", pmc->id,
+		      pmc->address);
+	}
+
+	/*
 	 * Load persisted exports from the registry.
 	 * The probe protocol is the sole authority for creating exports.
 	 * [[export]] config entries beyond index 0 are ignored -- use
@@ -914,7 +965,12 @@ out:
 	 *
 	 * Quick (default): persist state, skip full inode/dirent teardown,
 	 * exit immediately.  Treats shutdown like a power cut -- recovery
-	 * on restart handles the rest.  This is production behavior.
+	 * on restart handles the rest.  This is production behavior.  Any
+	 * open MDS-facing sessions from [[proxy_mds]] are NOT drained
+	 * here: the upstream MDS will see TCP RST and recover the lease
+	 * on its own timer, just like it would on a real power cut.
+	 * Adding wire-visible DESTROY_SESSION on this path would risk
+	 * hanging shutdown on an unreachable upstream.
 	 *
 	 * Graceful (REFFS_GRACEFUL_SHUTDOWN=1): full teardown of all inodes,
 	 * dirents, RCU callbacks.  Maximizes ASAN/LSAN coverage.  Used for
@@ -933,7 +989,24 @@ out:
 		 * matter, but putting it here keeps the "first things first"
 		 * rule -- PS-layer state is the newest stuff and clears
 		 * cleanly before we touch fs-layer state.
+		 *
+		 * Drain any open upstream sessions before clearing the
+		 * registry -- ps_state_fini is non-destructive on attached
+		 * mds_sessions, so ownership sits with us here.
 		 */
+		for (unsigned int i = 0; i < cfg.nproxy_mds; i++) {
+			uint32_t lid = cfg.proxy_mds[i].id;
+			const struct ps_listener_state *pls;
+
+			if (lid == 0)
+				continue;
+			pls = ps_state_find(lid);
+			if (!pls || !pls->pls_session)
+				continue;
+			mds_session_destroy(pls->pls_session);
+			free(pls->pls_session);
+			ps_state_set_session(lid, NULL);
+		}
 		ps_state_fini();
 
 		/*

@@ -9,6 +9,7 @@
 
 #include <check.h>
 #include <errno.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "reffs/settings.h"
@@ -184,6 +185,60 @@ START_TEST(test_register_null_rejected)
 }
 END_TEST
 
+/*
+ * A freshly-registered listener has pls_session == NULL.  The
+ * session is attached later by reffsd.c after mds_session_create()
+ * succeeds; until then, op handlers that read pls_session see NULL
+ * and must fail gracefully.
+ */
+START_TEST(test_session_defaults_null)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_ptr_null(ps_state_find(1)->pls_session);
+}
+END_TEST
+
+/*
+ * ps_state_set_session stores the pointer verbatim.  Registry does
+ * not dereference or own-destroy -- the caller is the owner.  A
+ * sentinel non-NULL pointer (cast from an integer) is enough to
+ * prove round-trip storage; no real mds_session is needed for this
+ * contract.
+ */
+START_TEST(test_set_session_stores_pointer)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+	struct mds_session *sentinel =
+		(struct mds_session *)(uintptr_t)0xDEADBEEF;
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_int_eq(ps_state_set_session(1, sentinel), 0);
+	ck_assert_ptr_eq(ps_state_find(1)->pls_session, sentinel);
+
+	/* NULL clears the stored pointer (used at shutdown). */
+	ck_assert_int_eq(ps_state_set_session(1, NULL), 0);
+	ck_assert_ptr_null(ps_state_find(1)->pls_session);
+}
+END_TEST
+
+/*
+ * Setting the session on an unregistered listener returns -ENOENT,
+ * not a silent no-op -- callers need to know the registry is in an
+ * unexpected state.
+ */
+START_TEST(test_set_session_unknown_id_fails)
+{
+	struct mds_session *sentinel =
+		(struct mds_session *)(uintptr_t)0xDEADBEEF;
+
+	/* Registry is empty (setup calls ps_state_init). */
+	ck_assert_int_eq(ps_state_set_session(42, sentinel), -ENOENT);
+	ck_assert_int_eq(ps_state_set_session(0, sentinel), -ENOENT);
+}
+END_TEST
+
 static Suite *ps_state_suite(void)
 {
 	Suite *s = suite_create("ps_state");
@@ -198,6 +253,9 @@ static Suite *ps_state_suite(void)
 	tcase_add_test(tc, test_register_multiple);
 	tcase_add_test(tc, test_fini_clears_registry);
 	tcase_add_test(tc, test_register_null_rejected);
+	tcase_add_test(tc, test_session_defaults_null);
+	tcase_add_test(tc, test_set_session_stores_pointer);
+	tcase_add_test(tc, test_set_session_unknown_id_fails);
 	suite_add_tcase(s, tc);
 	return s;
 }

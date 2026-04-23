@@ -10,6 +10,8 @@
 
 #include "reffs/settings.h"
 
+struct mds_session; /* forward: from lib/nfs4/client/ec_client.h */
+
 /*
  * Per-listener proxy-server runtime state.
  *
@@ -18,10 +20,12 @@
  * time via the compound's c_listener_id so op handlers can reach the
  * upstream-MDS binding for the listener the client connected on.
  *
- * This slice only stores the upstream binding.  The mds_session
- * handle (actual connection to the upstream) is added in a follow-up
- * slice; empty pls_upstream means "no upstream configured for this
- * listener -- keep the namespace dark".
+ * pls_session is NULL until reffsd opens a connection to the
+ * upstream (ps_state_set_session()).  A NULL session means any of:
+ * empty pls_upstream (no upstream configured), connect failed at
+ * startup, or session has been torn down.  Op handlers that need the
+ * session MUST check for NULL and fail gracefully
+ * (NFS4ERR_NOTSUPP or NFS4ERR_DELAY as appropriate).
  *
  * See `.claude/design/proxy-server.md` phase 2.
  */
@@ -30,6 +34,7 @@ struct ps_listener_state {
 	char pls_upstream[REFFS_CONFIG_MAX_HOST];
 	uint16_t pls_upstream_port;
 	uint16_t pls_upstream_probe;
+	struct mds_session *pls_session; /* NULL until session opens */
 };
 
 /*
@@ -66,9 +71,25 @@ int ps_state_register(const struct reffs_proxy_mds_config *cfg);
 const struct ps_listener_state *ps_state_find(uint32_t listener_id);
 
 /*
+ * Attach an mds_session to an already-registered listener.  The
+ * registry stores the pointer; ownership does not transfer -- the
+ * caller is responsible for calling mds_session_destroy() + free()
+ * before ps_state_fini() runs.  Passing NULL clears any stored
+ * pointer (used at shutdown, after the caller has destroyed the
+ * session).
+ *
+ * Returns:
+ *   0        success
+ *   -ENOENT  no listener with this id is registered
+ */
+int ps_state_set_session(uint32_t listener_id, struct mds_session *session);
+
+/*
  * Tear down the registry at shutdown.  Must run after all worker
  * threads have stopped, i.e. after io_handler_fini().  No
- * ps_state_find() call may be in flight.
+ * ps_state_find() call may be in flight.  Does NOT destroy any
+ * attached mds_session -- the caller MUST drain sessions via
+ * ps_state_set_session(id, NULL) + their own destroy first.
  */
 void ps_state_fini(void);
 
