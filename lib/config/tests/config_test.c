@@ -542,6 +542,92 @@ START_TEST(test_load_proxy_mds_none)
 }
 END_TEST
 
+START_TEST(test_load_proxy_mds_upstream_defaults)
+{
+	/*
+	 * A [[proxy_mds]] entry that omits mds_port / mds_probe must
+	 * get the standard NFS + probe ports (2049, 20490) so that the
+	 * MDS-client session in a later phase can open sockets without
+	 * admin ceremony for the common case.
+	 */
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[proxy_mds]]\n"
+				"id      = 1\n"
+				"port    = 4098\n"
+				"address = \"10.1.1.5\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nproxy_mds, 1);
+	ck_assert_str_eq(cfg.proxy_mds[0].address, "10.1.1.5");
+	ck_assert_uint_eq(cfg.proxy_mds[0].mds_port, 2049);
+	ck_assert_uint_eq(cfg.proxy_mds[0].mds_probe, 20490);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_proxy_mds_upstream_explicit)
+{
+	/*
+	 * Explicit mds_port / mds_probe override the defaults, letting
+	 * the PS point at an MDS running on non-standard ports (useful
+	 * for container deployments that multiplex multiple MDSes on
+	 * one host).
+	 */
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[proxy_mds]]\n"
+				"id        = 2\n"
+				"port      = 4099\n"
+				"address   = \"fd00::5\"\n"
+				"mds_port  = 12049\n"
+				"mds_probe = 30490\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nproxy_mds, 1);
+	ck_assert_str_eq(cfg.proxy_mds[0].address, "fd00::5");
+	ck_assert_uint_eq(cfg.proxy_mds[0].mds_port, 12049);
+	ck_assert_uint_eq(cfg.proxy_mds[0].mds_probe, 30490);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_proxy_mds_upstream_absent)
+{
+	/*
+	 * Missing address leaves the field empty string.  Later phases
+	 * treat empty address as "upstream unconfigured" rather than
+	 * failing reffsd startup, so the listener can still come up and
+	 * serve an empty proxy namespace.  Explicit here so the next
+	 * slice doesn't accidentally make empty-address fatal.
+	 */
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[proxy_mds]]\n"
+				"id   = 1\n"
+				"port = 4098\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nproxy_mds, 1);
+	ck_assert_str_eq(cfg.proxy_mds[0].address, "");
+	ck_assert_uint_eq(cfg.proxy_mds[0].mds_port, 2049);
+	ck_assert_uint_eq(cfg.proxy_mds[0].mds_probe, 20490);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* load -- bad file path                                                */
 /* ------------------------------------------------------------------ */
@@ -625,6 +711,9 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_proxy_mds_single);
 	tcase_add_test(tc_load, test_load_proxy_mds_multiple);
 	tcase_add_test(tc_load, test_load_proxy_mds_none);
+	tcase_add_test(tc_load, test_load_proxy_mds_upstream_defaults);
+	tcase_add_test(tc_load, test_load_proxy_mds_upstream_explicit);
+	tcase_add_test(tc_load, test_load_proxy_mds_upstream_absent);
 	tcase_add_test(tc_load, test_load_missing_file);
 	suite_add_tcase(s, tc_load);
 

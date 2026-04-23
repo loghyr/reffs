@@ -124,7 +124,7 @@ struct reffs_data_server_config {
 };
 
 /*
- * [[proxy_mds]] -- proxy-server listener.
+ * [[proxy_mds]] -- proxy-server listener plus upstream MDS binding.
  *
  * Each entry defines a second NFS listener whose superblocks live
  * in a separate, listener-scoped namespace.  The native listener on
@@ -136,11 +136,20 @@ struct reffs_data_server_config {
  *
  * The `id` field is the per-listener identifier (1..N, unique, must
  * not be 0 which is reserved for the native listener).
+ *
+ * `address`, `mds_port`, `mds_probe` describe the upstream MDS the
+ * proxy-server forwards to.  They are parsed here but not yet
+ * consulted at runtime -- the MDS-client session opens in a later
+ * Phase 2 slice.  `address == ""` marks the upstream as unconfigured;
+ * reffsd currently tolerates that and still opens the listener.
  */
 struct reffs_proxy_mds_config {
 	uint32_t id; /* listener id: 1..N (0 reserved for native) */
 	uint16_t port; /* bind port, e.g. 4098 */
 	char bind[REFFS_CONFIG_MAX_BIND]; /* "*" = all IPv4 + IPv6 */
+	char address[REFFS_CONFIG_MAX_HOST]; /* upstream MDS IPv4/IPv6 */
+	uint16_t mds_port; /* upstream MDS NFS port, default 2049 */
+	uint16_t mds_probe; /* upstream MDS probe port, default 20490 */
 };
 
 struct reffs_config {

@@ -583,6 +583,8 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 			toml_datum_t d;
 
 			strncpy(pmc->bind, "*", sizeof(pmc->bind) - 1);
+			pmc->mds_port = 2049;
+			pmc->mds_probe = 20490;
 
 			d = toml_int_in(pm_tbl, "id");
 			if (d.ok)
@@ -598,6 +600,21 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 					sizeof(pmc->bind) - 1);
 				free(d.u.s);
 			}
+
+			d = toml_string_in(pm_tbl, "address");
+			if (d.ok) {
+				strncpy(pmc->address, d.u.s,
+					sizeof(pmc->address) - 1);
+				free(d.u.s);
+			}
+
+			d = toml_int_in(pm_tbl, "mds_port");
+			if (d.ok)
+				pmc->mds_port = (uint16_t)d.u.i;
+
+			d = toml_int_in(pm_tbl, "mds_probe");
+			if (d.ok)
+				pmc->mds_probe = (uint16_t)d.u.i;
 		}
 	}
 
