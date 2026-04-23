@@ -1,16 +1,21 @@
 # SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-ACLOCAL_AMFLAGS = -Im4 
+ACLOCAL_AMFLAGS = -Im4
 
 REFFS_GIT_VERSION = $(shell git -C $(top_srcdir) describe --always --dirty 2>/dev/null || echo "unknown")
 
+# `lib/nfs4/client` is in the include path because reffsd's proxy-server
+# startup opens an MDS-facing client session (ec_client.h).  This does
+# not cross the lib/nfs4/include layering boundary that CLAUDE.md
+# forbids -- client/ is a sibling library, not the server-side headers.
 AM_CFLAGS = \
 	-DREFFS_GIT_VERSION='"$(REFFS_GIT_VERSION)"' \
 	-I$(top_srcdir)/lib/include	\
 	-I$(top_srcdir)/lib/nfs3		\
 	-I$(top_srcdir)/lib/nlm		\
 	-I$(top_srcdir)/lib/nsm		\
+	-I$(top_srcdir)/lib/nfs4/client	\
 	-I$(top_srcdir)/lib/nfs4/ps	\
 	-I$(top_builddir)/lib/xdr	\
 	-I$(top_srcdir)/third_party/tomlc99	\
