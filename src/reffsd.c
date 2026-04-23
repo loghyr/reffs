@@ -549,6 +549,28 @@ int main(int argc, char *argv[])
 		goto out;
 
 	/*
+	 * Create a listener-scoped root super_block for each configured
+	 * `[[proxy_mds]]` entry.  Each proxy listener gets its own empty
+	 * root namespace (sb_id=1 within its listener_id) so PUTROOTFH on
+	 * the proxy port resolves to something rather than returning
+	 * NFS4ERR_SERVERFAULT.  Must run before the network accept loop
+	 * arms -- workers consult super_block_find_for_listener() at
+	 * PUTFH/PUTROOTFH.
+	 */
+	for (unsigned int i = 0; i < cfg.nproxy_mds; i++) {
+		uint32_t lid = cfg.proxy_mds[i].id;
+
+		if (lid == 0)
+			continue; /* skip-reason already logged below */
+		if (reffs_ns_init_proxy_listener(lid) < 0) {
+			LOG("proxy_mds[%u] (listener_id=%u): root sb init failed",
+			    i, lid);
+			exit_code = 1;
+			goto out;
+		}
+	}
+
+	/*
 	 * Load persisted exports from the registry.
 	 * The probe protocol is the sole authority for creating exports.
 	 * [[export]] config entries beyond index 0 are ignored -- use
