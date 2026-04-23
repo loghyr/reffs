@@ -13,6 +13,7 @@ noinst_LTLIBRARIES = libreffs_nfs4_ps.la
 libreffs_nfs4_ps_la_SOURCES = \
 	chunk_io.c \
 	ds_io.c \
-	ec_pipeline.c
+	ec_pipeline.c \
+	ps_state.c
 
 SUBDIRS = tests

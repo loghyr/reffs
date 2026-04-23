@@ -11,6 +11,7 @@ AM_CFLAGS = \
 	-I$(top_srcdir)/lib/nfs3		\
 	-I$(top_srcdir)/lib/nlm		\
 	-I$(top_srcdir)/lib/nsm		\
+	-I$(top_srcdir)/lib/nfs4/ps	\
 	-I$(top_builddir)/lib/xdr	\
 	-I$(top_srcdir)/third_party/tomlc99	\
 	$(TIRPC_CFLAGS)			\
@@ -29,6 +30,7 @@ AM_CFLAGS = \
 LDADD = \
 	$(top_builddir)/lib/nfs4/server/libreffs_nfs4_server.la	\
 	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la	\
+	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps.la		\
 	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la	\
 	$(top_builddir)/lib/ec/libreffs_ec.la			\
 	$(top_builddir)/lib/nfs3/libreffs_nfs3.la		\

@@ -58,6 +58,7 @@
 #include "reffs/dstore.h"
 #include "reffs/runway.h"
 #include "reffs/settings.h"
+#include "ps_state.h"
 
 /* GSS context cache -- declared in gss_context.h. */
 void gss_context_set_state_dir(const char *dir);
@@ -556,7 +557,15 @@ int main(int argc, char *argv[])
 	 * NFS4ERR_SERVERFAULT.  Must run before the network accept loop
 	 * arms -- workers consult super_block_find_for_listener() at
 	 * PUTFH/PUTROOTFH.
+	 *
+	 * Also populate the per-listener PS state registry so future
+	 * op handlers can resolve c_listener_id -> upstream binding.
 	 */
+	if (ps_state_init() < 0) {
+		LOG("ps_state_init failed");
+		exit_code = 1;
+		goto out;
+	}
 	for (unsigned int i = 0; i < cfg.nproxy_mds; i++) {
 		uint32_t lid = cfg.proxy_mds[i].id;
 
@@ -564,6 +573,12 @@ int main(int argc, char *argv[])
 			continue; /* skip-reason already logged below */
 		if (reffs_ns_init_proxy_listener(lid) < 0) {
 			LOG("proxy_mds[%u] (listener_id=%u): root sb init failed",
+			    i, lid);
+			exit_code = 1;
+			goto out;
+		}
+		if (ps_state_register(&cfg.proxy_mds[i]) < 0) {
+			LOG("proxy_mds[%u] (listener_id=%u): ps_state_register failed",
 			    i, lid);
 			exit_code = 1;
 			goto out;
@@ -988,6 +1003,15 @@ out:
 	if (graceful) {
 		trace_lifecycle_shutdown(__func__, __LINE__,
 					 "graceful shutdown: full teardown");
+
+		/*
+		 * PS-state tear-down runs BEFORE ns_fini: the registry has
+		 * no sb references, so ordering against sb teardown doesn't
+		 * matter, but putting it here keeps the "first things first"
+		 * rule -- PS-layer state is the newest stuff and clears
+		 * cleanly before we touch fs-layer state.
+		 */
+		ps_state_fini();
 
 		/*
 		 * reffs_ns_fini calls super_block_drain which does its own

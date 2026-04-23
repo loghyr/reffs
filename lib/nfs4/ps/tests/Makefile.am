@@ -18,4 +18,5 @@ check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
-	ec_pipeline_stripe_test
+	ec_pipeline_stripe_test \
+	ps_state_test
