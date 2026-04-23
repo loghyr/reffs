@@ -193,6 +193,15 @@ struct conn_info {
 	int ci_connect_count; // Number of pending connect operations
 
 	/*
+	 * Listener that this fd belongs to.  For CONN_LISTENING fds this
+	 * is the listener's own id; for CONN_ACCEPTED fds this is copied
+	 * from the parent listener's conn_info.  0 = native listener
+	 * (cfg->port); 1..N = proxy_mds[] listeners.  Used at NFS
+	 * compound dispatch to scope superblock lookups.
+	 */
+	uint32_t ci_listener_id;
+
+	/*
 	 * Per-fd write serialization gate.  Only one io_context may have a
 	 * write SQE in flight for this fd at a time; concurrent writers queue
 	 * here and are drained by io_conn_write_done() as each write finishes.
@@ -342,6 +351,26 @@ int io_conn_check_timeouts(time_t timeout_seconds);
 
 int io_socket_close(int fd, int error);
 void io_add_listener(int fd);
+
+/*
+ * Register `fd` as a listening socket tagged with `listener_id` so
+ * every connection accepted on this fd inherits the tag.  Native
+ * listeners call this with id 0; proxy-server listeners use the
+ * id from their [[proxy_mds]] config entry.
+ *
+ * Idempotent: if the fd is already registered, the listener_id is
+ * updated.  Must be called before io_request_accept_op() arms the
+ * first accept.
+ */
+struct conn_info *io_listener_register(int fd, uint32_t listener_id);
+
+/*
+ * Return the listener_id that this fd (accepted or listening) is
+ * associated with.  Returns 0 if fd is unknown -- the native
+ * listener's id, which is the safe default for callers that do not
+ * care about proxy scoping.
+ */
+uint32_t io_conn_listener_id(int fd);
 
 void io_conn_dump(int fd);
 void io_conn_dump_all(void);
