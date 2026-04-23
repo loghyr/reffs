@@ -68,6 +68,18 @@ struct super_block {
 		*sb_root_inode; /* permanent i_active pin; dropped at unmount */
 	uint64_t sb_id;
 
+	/*
+	 * Listener scope.  0 = native namespace (served on :2049, the
+	 * default for every SB created before the proxy-server feature
+	 * landed).  1+ = a proxy namespace owned by a [[proxy_mds]]
+	 * config entry.  sb_id values are scoped per listener --
+	 * (sb_id, sb_listener_id) is the identity pair.  NFS compound
+	 * dispatch uses super_block_find_for_listener() to enforce this
+	 * scope; probe/admin paths continue to use the unscoped
+	 * super_block_find().
+	 */
+	uint32_t sb_listener_id;
+
 	uint64_t sb_next_ino;
 
 	char *sb_path;
@@ -180,6 +192,18 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 				      enum reffs_storage_type type,
 				      const char *backend_path);
 struct super_block *super_block_find(uint64_t id);
+
+/*
+ * Scope-respecting lookup used by the NFS compound dispatch path.
+ * Returns an SB only when both sb_id and sb_listener_id match.  An
+ * FH minted on one listener and presented on another will therefore
+ * miss (the caller returns NFS4ERR_STALE).  The unscoped
+ * super_block_find() is retained for admin/probe paths that
+ * legitimately need to enumerate SBs across listeners.
+ */
+struct super_block *super_block_find_for_listener(uint64_t id,
+						  uint32_t listener_id);
+
 struct super_block *super_block_get(struct super_block *sb);
 void super_block_put(struct super_block *sb);
 
