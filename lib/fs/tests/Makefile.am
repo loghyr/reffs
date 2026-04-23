@@ -136,6 +136,7 @@ TESTS = \
 	$(FS_USAGE_POSIX_TEST) \
 	layout_segment_test \
 	sb_lifecycle_test \
+	sb_listener_id_test \
 	sb_mount_crossing_test \
 	sb_mkdir_p_test \
 	sb_path_conflict_test \

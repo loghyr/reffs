@@ -576,6 +576,26 @@ struct super_block *super_block_find(uint64_t id)
 	return sb;
 }
 
+struct super_block *super_block_find_for_listener(uint64_t id,
+						  uint32_t listener_id)
+{
+	struct super_block *sb = NULL;
+	struct super_block *tmp;
+
+	rcu_read_lock();
+	cds_list_for_each_entry_rcu(tmp, &super_block_list, sb_link)
+		if (id == tmp->sb_id && listener_id == tmp->sb_listener_id) {
+			sb = super_block_get(tmp);
+			break;
+		}
+	rcu_read_unlock();
+
+	if (sb)
+		trace_fs_super_block(sb, __func__, __LINE__);
+
+	return sb;
+}
+
 struct super_block *super_block_get(struct super_block *sb)
 {
 	if (!sb)
