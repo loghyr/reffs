@@ -32,6 +32,7 @@
 #include "reffs/rpc.h"
 #include "reffs/cmp.h"
 #include "reffs/log.h"
+#include "reffs/io.h"
 #include "reffs/filehandle.h"
 #include "reffs/test.h"
 #include "reffs/time.h"
@@ -130,6 +131,7 @@ static struct compound *compound_alloc(struct rpc_trans *rt)
 	compound->c_rt = rt;
 	compound->c_args = (COMPOUND4args *)ph->ph_args;
 	compound->c_res = (COMPOUND4res *)ph->ph_res;
+	compound->c_listener_id = io_conn_listener_id(rt->rt_fd);
 	compound->c_alloc_seq = atomic_fetch_add_explicit(
 		&compound_alloc_counter, 1, memory_order_relaxed);
 

@@ -65,7 +65,8 @@ uint32_t nfs4_op_putfh(struct compound *compound)
 
 	if (nfh->nfh_sb != compound->c_curr_nfh.nfh_sb) {
 		super_block_put(compound->c_curr_sb);
-		compound->c_curr_sb = super_block_find(nfh->nfh_sb);
+		compound->c_curr_sb = super_block_find_for_listener(
+			nfh->nfh_sb, compound->c_listener_id);
 		if (!compound->c_curr_sb) {
 			*status = NFS4ERR_STALE;
 			return 0;
@@ -120,7 +121,8 @@ uint32_t nfs4_op_putpubfh(struct compound *compound)
 
 	if (compound->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
 		super_block_put(compound->c_curr_sb);
-		compound->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+		compound->c_curr_sb = super_block_find_for_listener(
+			SUPER_BLOCK_ROOT_ID, compound->c_listener_id);
 		if (!compound->c_curr_sb) {
 			*status = NFS4ERR_SERVERFAULT;
 			return 0;
@@ -163,7 +165,8 @@ uint32_t nfs4_op_putrootfh(struct compound *compound)
 
 	if (compound->c_curr_nfh.nfh_sb != SUPER_BLOCK_ROOT_ID) {
 		super_block_put(compound->c_curr_sb);
-		compound->c_curr_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+		compound->c_curr_sb = super_block_find_for_listener(
+			SUPER_BLOCK_ROOT_ID, compound->c_listener_id);
 		if (!compound->c_curr_sb) {
 			*status = NFS4ERR_SERVERFAULT;
 			return 0;
