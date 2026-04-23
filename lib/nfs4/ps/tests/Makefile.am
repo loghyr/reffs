@@ -19,4 +19,5 @@ LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
 	ec_pipeline_stripe_test \
+	ps_mount_client_test \
 	ps_state_test
