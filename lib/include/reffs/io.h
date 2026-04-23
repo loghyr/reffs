@@ -340,6 +340,15 @@ struct conn_info *io_listener_register(int fd, uint32_t listener_id);
  */
 uint32_t io_conn_listener_id(int fd);
 
+/*
+ * Set the listener_id on an already-registered fd (used by the
+ * accept handler to propagate the tag from the listening fd to the
+ * accepted client fd).  Takes conn_mutex -- readers via
+ * io_conn_listener_id() will observe the update once the lock is
+ * released.
+ */
+void io_conn_set_listener_id(int fd, uint32_t listener_id);
+
 void io_conn_dump(int fd);
 void io_conn_dump_all(void);
 

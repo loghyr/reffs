@@ -135,6 +135,15 @@ uint32_t io_conn_listener_id(int fd)
 	return id;
 }
 
+void io_conn_set_listener_id(int fd, uint32_t listener_id)
+{
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd)
+		connections[idx]->ci_listener_id = listener_id;
+	pthread_mutex_unlock(&conn_mutex);
+}
+
 void io_conn_update_state(int fd)
 {
 	pthread_mutex_lock(&conn_mutex);
