@@ -59,6 +59,7 @@
 #include "reffs/runway.h"
 #include "reffs/settings.h"
 #include "ec_client.h"
+#include "ps_discovery.h"
 #include "ps_state.h"
 
 /* GSS context cache -- declared in gss_context.h. */
@@ -634,6 +635,25 @@ int main(int argc, char *argv[])
 		}
 		TRACE("proxy_mds[%u]: mds session open to %s", pmc->id,
 		      pmc->address);
+
+		/*
+		 * Fetch the MDS's root FH so later LOOKUP / forwarding
+		 * paths have an anchor.  Non-fatal on failure -- the
+		 * session stays up but pls_mds_root_fh_len is 0, which
+		 * op handlers must treat as "discovery incomplete".
+		 */
+		uint8_t root_fh[PS_MAX_FH_SIZE];
+		uint32_t root_fh_len = 0;
+		int dret = ps_discovery_fetch_root_fh(
+			ms, root_fh, sizeof(root_fh), &root_fh_len);
+		if (dret < 0) {
+			LOG("proxy_mds[%u] (listener_id=%u): root FH discovery failed: %s",
+			    i, pmc->id, strerror(-dret));
+		} else {
+			ps_state_set_mds_root_fh(pmc->id, root_fh, root_fh_len);
+			TRACE("proxy_mds[%u]: MDS root FH cached (len=%u)",
+			      pmc->id, root_fh_len);
+		}
 	}
 
 	/*

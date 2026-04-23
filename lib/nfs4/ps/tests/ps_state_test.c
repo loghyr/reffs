@@ -239,6 +239,89 @@ START_TEST(test_set_session_unknown_id_fails)
 }
 END_TEST
 
+/*
+ * A freshly-registered listener has no MDS root FH stored
+ * (pls_mds_root_fh_len == 0).  Discovery populates this after
+ * mds_session_create succeeds.
+ */
+START_TEST(test_mds_root_fh_defaults_empty)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_uint_eq(ps_state_find(1)->pls_mds_root_fh_len, 0);
+}
+END_TEST
+
+/*
+ * set_mds_root_fh copies the bytes verbatim and records the length.
+ * Caller-owned buffer -- registry does not keep a reference to it.
+ */
+START_TEST(test_set_mds_root_fh_stores_bytes)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+	uint8_t fh[] = { 0x01, 0x02, 0x03, 0x04, 0x05 };
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_int_eq(ps_state_set_mds_root_fh(1, fh, sizeof(fh)), 0);
+
+	const struct ps_listener_state *pls = ps_state_find(1);
+
+	ck_assert_uint_eq(pls->pls_mds_root_fh_len, sizeof(fh));
+	ck_assert_mem_eq(pls->pls_mds_root_fh, fh, sizeof(fh));
+
+	/* Mutating the caller's buffer does not disturb the stored copy. */
+	fh[0] = 0xFF;
+	ck_assert_uint_eq(pls->pls_mds_root_fh[0], 0x01);
+}
+END_TEST
+
+/*
+ * Clearing (fh_len=0) is legal and does NOT require a non-NULL
+ * buffer -- it's the "forget what we learned" path.
+ */
+START_TEST(test_set_mds_root_fh_clear)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+	uint8_t fh[] = { 0x01, 0x02, 0x03 };
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_int_eq(ps_state_set_mds_root_fh(1, fh, sizeof(fh)), 0);
+	ck_assert_int_eq(ps_state_set_mds_root_fh(1, NULL, 0), 0);
+	ck_assert_uint_eq(ps_state_find(1)->pls_mds_root_fh_len, 0);
+}
+END_TEST
+
+/*
+ * NFSv4 FHs are <= 128 bytes (RFC 8881).  An over-size buffer
+ * returns -E2BIG so the caller can't silently truncate.
+ */
+START_TEST(test_set_mds_root_fh_too_big)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+	uint8_t fh[PS_MAX_FH_SIZE + 1];
+
+	memset(fh, 0xAB, sizeof(fh));
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_int_eq(ps_state_set_mds_root_fh(1, fh, sizeof(fh)), -E2BIG);
+	/* Previous (empty) state preserved on failure. */
+	ck_assert_uint_eq(ps_state_find(1)->pls_mds_root_fh_len, 0);
+}
+END_TEST
+
+/*
+ * Setting on an unregistered listener returns -ENOENT, same
+ * contract as set_session.
+ */
+START_TEST(test_set_mds_root_fh_unknown_id)
+{
+	uint8_t fh[] = { 0x01 };
+
+	ck_assert_int_eq(ps_state_set_mds_root_fh(42, fh, 1), -ENOENT);
+}
+END_TEST
+
 static Suite *ps_state_suite(void)
 {
 	Suite *s = suite_create("ps_state");
@@ -256,6 +339,11 @@ static Suite *ps_state_suite(void)
 	tcase_add_test(tc, test_session_defaults_null);
 	tcase_add_test(tc, test_set_session_stores_pointer);
 	tcase_add_test(tc, test_set_session_unknown_id_fails);
+	tcase_add_test(tc, test_mds_root_fh_defaults_empty);
+	tcase_add_test(tc, test_set_mds_root_fh_stores_bytes);
+	tcase_add_test(tc, test_set_mds_root_fh_clear);
+	tcase_add_test(tc, test_set_mds_root_fh_too_big);
+	tcase_add_test(tc, test_set_mds_root_fh_unknown_id);
 	suite_add_tcase(s, tc);
 	return s;
 }

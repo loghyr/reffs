@@ -91,6 +91,29 @@ int ps_state_set_session(uint32_t listener_id, struct mds_session *session)
 	return -ENOENT;
 }
 
+int ps_state_set_mds_root_fh(uint32_t listener_id, const uint8_t *fh,
+			     uint32_t fh_len)
+{
+	if (fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+	if (fh_len > 0 && !fh)
+		return -EINVAL;
+
+	unsigned int n =
+		atomic_load_explicit(&ps_nlisteners, memory_order_acquire);
+
+	for (unsigned int i = 0; i < n; i++) {
+		if (ps_listeners[i].pls_listener_id == listener_id) {
+			if (fh_len > 0)
+				memcpy(ps_listeners[i].pls_mds_root_fh, fh,
+				       fh_len);
+			ps_listeners[i].pls_mds_root_fh_len = fh_len;
+			return 0;
+		}
+	}
+	return -ENOENT;
+}
+
 void ps_state_fini(void)
 {
 	atomic_store_explicit(&ps_nlisteners, 0, memory_order_release);
