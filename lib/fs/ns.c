@@ -91,6 +91,70 @@ out:
 	return ret;
 }
 
+int reffs_ns_init_proxy_listener(uint32_t listener_id)
+{
+	struct super_block *sb;
+	struct inode *inode;
+	int ret;
+
+	if (!reffs_namespace_initialized) {
+		LOG("reffs_ns_init_proxy_listener: ns not initialized");
+		return -EINVAL;
+	}
+	if (listener_id == 0) {
+		LOG("reffs_ns_init_proxy_listener: listener_id 0 is reserved for the native root sb");
+		return -EINVAL;
+	}
+
+	sb = super_block_alloc(1, "/", REFFS_STORAGE_RAM, NULL);
+	if (!sb)
+		return -ENOMEM;
+
+	/*
+	 * Stamp the listener id before anyone else can consult
+	 * super_block_find_for_listener().  Startup-time init runs on
+	 * main's thread with no accept workers yet -- no race.
+	 */
+	sb->sb_listener_id = listener_id;
+	uuid_generate(sb->sb_uuid);
+
+	ret = super_block_dirent_create(sb, NULL, reffs_life_action_birth);
+	if (ret) {
+		super_block_put(sb);
+		return ret;
+	}
+
+	inode = inode_active_get(sb->sb_dirent->rd_inode);
+	if (!inode) {
+		LOG("reffs_ns_init_proxy_listener: no root inode on proxy sb (listener=%u)",
+		    listener_id);
+		super_block_put(sb);
+		return -ENOENT;
+	}
+
+	trace_fs_inode(inode, __func__, __LINE__);
+
+	inode->i_uid = REFFS_ID_ROOT_VAL;
+	inode->i_gid = REFFS_ID_ROOT_VAL;
+	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
+	inode->i_atime = inode->i_mtime;
+	inode->i_btime = inode->i_mtime;
+	inode->i_ctime = inode->i_mtime;
+	inode->i_mode = S_IFDIR | 0777;
+	inode->i_size = inode->i_sb->sb_block_size;
+	inode->i_used = 1;
+	inode->i_nlink = 2;
+
+	inode_active_put(inode);
+
+	/*
+	 * Keep the alloc ref: that single ref pins the sb in
+	 * super_block_list.  release_all_fs_dirents() walks the list
+	 * and drops it at shutdown, same as the native root sb.
+	 */
+	return 0;
+}
+
 void release_all_fs_dirents(void)
 {
 	struct super_block *sb, *tmp;
