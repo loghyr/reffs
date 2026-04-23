@@ -4,4 +4,4 @@
 # dstore must come before server / client: both LIBADD
 # libreffs_dstore.la so its objects get folded into the dylib at
 # link time on macOS (see lib/nfs4/server/Makefile.am for rationale).
-SUBDIRS = include common dstore server client tests
+SUBDIRS = include common dstore server client ps tests

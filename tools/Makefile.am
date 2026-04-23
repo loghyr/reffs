@@ -5,10 +5,12 @@ AM_CFLAGS = \
 	-I$(top_srcdir)/lib/include		\
 	-I$(top_srcdir)/lib/ec			\
 	-I$(top_srcdir)/lib/nfs4/client		\
+	-I$(top_srcdir)/lib/nfs4/ps		\
 	-I$(top_builddir)/lib/xdr		\
 	$(TIRPC_CFLAGS)
 
 NFS4_CLIENT_LIBS = \
+	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps.la		\
 	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la	\
 	$(top_builddir)/lib/xdr/libreffs_xdr.la			\
 	$(TIRPC_LIBS) $(GSSAPI_LIBS)
