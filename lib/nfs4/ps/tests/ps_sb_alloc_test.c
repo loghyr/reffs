@@ -163,9 +163,6 @@ START_TEST(test_alloc_for_export_bad_args)
 			 -EINVAL);
 	ck_assert_int_eq(ps_sb_alloc_for_export(pls, "nope", fh, sizeof(fh)),
 			 -EINVAL);
-	/* Root is not a legal mount point. */
-	ck_assert_int_eq(ps_sb_alloc_for_export(pls, "/", fh, sizeof(fh)),
-			 -EINVAL);
 	/* NULL / zero-length FH. */
 	ck_assert_int_eq(ps_sb_alloc_for_export(pls, "/y", NULL, sizeof(fh)),
 			 -EINVAL);
@@ -313,6 +310,56 @@ START_TEST(test_alloc_for_export_crosses_native_listener)
 }
 END_TEST
 
+/*
+ * Root-export case: the upstream MDS advertises "/" (reffsd's default
+ * [[export]] path).  Rather than fail, ps_sb_alloc_for_export attaches
+ * the proxy binding to the listener's existing root SB.  After this
+ * call, ps_inode_is_proxy() returns true for inodes on the listener
+ * root and every forward hook (LOOKUP / GETATTR) routes upstream.
+ */
+START_TEST(test_alloc_for_export_root_attaches_to_listener_root)
+{
+	const struct ps_listener_state *pls = ps_state_find(TEST_LISTENER_ID);
+	uint8_t fh[] = { 0xaa, 0xbb, 0xcc };
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(pls, "/", fh, sizeof(fh)), 0);
+
+	/*
+	 * Listener root SB (sb_id == SUPER_BLOCK_ROOT_ID, listener_id ==
+	 * TEST_LISTENER_ID) now carries a proxy binding.  No new SB was
+	 * created at "/" -- the root was upgraded in place.
+	 */
+	struct super_block *root = super_block_find_for_listener(
+		SUPER_BLOCK_ROOT_ID, TEST_LISTENER_ID);
+
+	ck_assert_ptr_nonnull(root);
+	ck_assert_ptr_nonnull(root->sb_proxy_binding);
+	super_block_put(root);
+
+	/* find_proxy_sb_by_path explicitly skips root SBs; nothing at "/". */
+	ck_assert_ptr_null(find_proxy_sb_by_path(TEST_LISTENER_ID, "/"));
+}
+END_TEST
+
+/*
+ * Double-bind refused: a second ps_sb_alloc_for_export(pls, "/", ...)
+ * after the first succeeded returns -EEXIST rather than silently
+ * overwriting the binding.  Protects against discovery running twice
+ * with a different FH (which would need an explicit refresh path
+ * with teardown semantics).
+ */
+START_TEST(test_alloc_for_export_root_double_bind_rejected)
+{
+	const struct ps_listener_state *pls = ps_state_find(TEST_LISTENER_ID);
+	uint8_t fh1[] = { 0x11 };
+	uint8_t fh2[] = { 0x22, 0x33 };
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(pls, "/", fh1, sizeof(fh1)), 0);
+	ck_assert_int_eq(ps_sb_alloc_for_export(pls, "/", fh2, sizeof(fh2)),
+			 -EEXIST);
+}
+END_TEST
+
 static Suite *ps_sb_alloc_suite(void)
 {
 	Suite *s = suite_create("ps_sb_alloc");
@@ -324,6 +371,9 @@ static Suite *ps_sb_alloc_suite(void)
 	tcase_add_test(tc, test_alloc_for_export_creates_parent_dirs);
 	tcase_add_test(tc, test_alloc_for_export_duplicate_path_rejected);
 	tcase_add_test(tc, test_alloc_for_export_crosses_native_listener);
+	tcase_add_test(tc,
+		       test_alloc_for_export_root_attaches_to_listener_root);
+	tcase_add_test(tc, test_alloc_for_export_root_double_bind_rejected);
 	suite_add_tcase(s, tc);
 	return s;
 }

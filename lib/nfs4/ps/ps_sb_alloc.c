@@ -32,13 +32,43 @@ int ps_sb_alloc_for_export(const struct ps_listener_state *pls,
 		return -EINVAL;
 	if (mds_fh_len > PS_MAX_FH_SIZE)
 		return -E2BIG;
+
 	/*
-	 * The listener's root SB already owns "/".  Mounting a proxy
-	 * SB at the same dirent would try to set RD_MOUNTED_ON on the
-	 * root and leave the namespace in an inconsistent state.
+	 * Root export (upstream advertises "/"): the listener's root SB
+	 * already owns "/".  Rather than allocate a second SB at "/"
+	 * (which would leave the namespace inconsistent -- you can't
+	 * mount a child SB on the root dirent), attach the proxy
+	 * binding to the listener's existing root SB.  After this hook,
+	 * every LOOKUP / GETATTR on this listener forwards upstream
+	 * because ps_inode_is_proxy() picks up sb_proxy_binding != NULL.
 	 */
-	if (strcmp(path, "/") == 0)
-		return -EINVAL;
+	if (strcmp(path, "/") == 0) {
+		struct super_block *root_sb = super_block_find_for_listener(
+			SUPER_BLOCK_ROOT_ID, pls->pls_listener_id);
+
+		if (!root_sb)
+			return -ENOENT;
+		if (root_sb->sb_proxy_binding) {
+			/*
+			 * Re-discovery or duplicate listener init.  Caller
+			 * probably meant to refresh the MDS FH, but that
+			 * needs a different entry point with teardown
+			 * semantics; refuse rather than silently overwrite.
+			 */
+			super_block_put(root_sb);
+			return -EEXIST;
+		}
+		binding = ps_sb_binding_alloc(pls->pls_listener_id, mds_fh,
+					      mds_fh_len);
+		if (!binding) {
+			super_block_put(root_sb);
+			return -ENOMEM;
+		}
+		super_block_set_proxy_binding(root_sb, binding,
+					      ps_sb_binding_free_cb);
+		super_block_put(root_sb);
+		return 0;
+	}
 
 	/*
 	 * Make sure the mount-point directory exists in the listener's
