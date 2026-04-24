@@ -649,11 +649,39 @@ int main(int argc, char *argv[])
 		if (dret < 0) {
 			LOG("proxy_mds[%u] (listener_id=%u): root FH discovery failed: %s",
 			    i, pmc->id, strerror(-dret));
-		} else {
-			ps_state_set_mds_root_fh(pmc->id, root_fh, root_fh_len);
-			TRACE("proxy_mds[%u]: MDS root FH cached (len=%u)",
-			      pmc->id, root_fh_len);
+			continue;
 		}
+
+		ps_state_set_mds_root_fh(pmc->id, root_fh, root_fh_len);
+		TRACE("proxy_mds[%u]: MDS root FH cached (len=%u)", pmc->id,
+		      root_fh_len);
+
+		/*
+		 * Enumerate the upstream's exports via MOUNT3 EXPORT and
+		 * cache each (path, upstream FH) pair on the listener.
+		 * Non-fatal on failure -- the listener stays up with an
+		 * empty exports table; client PUTFHs into unpopulated
+		 * paths get NFS4ERR_STALE until a future on-demand
+		 * re-discovery trigger or reffsd restart resolves the
+		 * condition.  ps_discovery_run holds the per-listener
+		 * discovery mutex across its body (see
+		 * lib/nfs4/ps/ps_state.c), so future LOOKUP-triggered
+		 * re-runs will serialize safely against this startup
+		 * invocation.
+		 */
+		const struct ps_listener_state *pls = ps_state_find(pmc->id);
+
+		if (!pls) {
+			LOG("proxy_mds[%u]: ps_state_find unexpectedly returned NULL after register",
+			    i);
+			continue;
+		}
+
+		int rret = ps_discovery_run(pls);
+
+		if (rret < 0)
+			LOG("proxy_mds[%u] (listener_id=%u): export discovery failed: %s",
+			    i, pmc->id, strerror(-rret));
 	}
 
 	/*
