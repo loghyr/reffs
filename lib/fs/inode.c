@@ -83,6 +83,23 @@ static void inode_free_rcu(struct rcu_head *rcu)
 	free(inode->i_symlink);
 	layout_segments_free(inode->i_layout_segments);
 	chunk_store_destroy(inode->i_chunk_store);
+
+	/*
+	 * Proxy-SB convention (slice 2e-iv-e): on a SB that carries a
+	 * sb_proxy_binding, i_storage_private points at a PS-owned
+	 * ps_inode_proxy_data -- a POD struct with no internal
+	 * allocations, so plain free() is the right release.  This
+	 * lets the per-inode upstream FH live as long as the inode
+	 * itself and die when the client stops using it (inode LRU
+	 * eviction -> i_ref drops to 0 -> this callback).  No
+	 * layering violation: fs/ doesn't call into PS; it just
+	 * releases the bytes PS calloc'd earlier.
+	 */
+	if (sb && sb->sb_proxy_binding && inode->i_storage_private) {
+		free(inode->i_storage_private);
+		inode->i_storage_private = NULL;
+	}
+
 	free(inode);
 
 	/* Drop the ref taken in inode_alloc (stored in i_sb); may free the superblock. */

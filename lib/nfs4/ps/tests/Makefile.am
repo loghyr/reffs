@@ -49,12 +49,19 @@ ps_sb_alloc_test_LDADD = @CHECK_LIBS@					\
 	$(URING_LIBS) $(ZLIB_LIBS) $(ZSTD_LIBS)				\
 	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
 
+# ps_inode_test uses the same fs_test_harness + real-SB setup as
+# ps_sb_alloc_test; mirror the CFLAGS / LDADD overrides so its
+# link resolves against the full fs / backends / rcu chain.
+ps_inode_test_CFLAGS = $(ps_sb_alloc_test_CFLAGS)
+ps_inode_test_LDADD = $(ps_sb_alloc_test_LDADD)
+
 check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
 	ec_pipeline_stripe_test \
 	ps_discovery_test \
+	ps_inode_test \
 	ps_mount_client_test \
 	ps_proxy_ops_test \
 	ps_sb_alloc_test \

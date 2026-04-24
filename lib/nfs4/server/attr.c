@@ -50,6 +50,7 @@
 #include "nfs4/cb.h"
 
 /* Proxy-server SB forwarding (see .claude/design/proxy-server.md). */
+#include "ps_inode.h"
 #include "ps_proxy_ops.h"
 #include "ps_sb.h"
 #include "ps_state.h"
@@ -3330,34 +3331,43 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 	/*
 	 * Proxy-SB fast path.  If the current inode lives in a proxy
 	 * SB, forward the GETATTR to the upstream MDS instead of
-	 * computing from local (empty) cached attrs.  This slice
-	 * (2e-iv-b) handles the SB root inode only -- that's the
-	 * inode a client first reaches via LOOKUP crossing into the
-	 * proxy namespace, and its upstream FH is already cached on
-	 * the binding.  Deeper inodes return NFS4ERR_NOTSUPP until
-	 * a later slice plumbs LOOKUP forwarding so each descendant
-	 * inode carries its own upstream FH.
+	 * computing from local (empty) cached attrs.
+	 *
+	 * The per-inode upstream FH comes from ps_inode_get_upstream_fh,
+	 * which handles both cases: a deeper inode populated by slice
+	 * 2e-iv-f's LOOKUP hook carries its FH in i_storage_private;
+	 * the SB root inode falls back to the SB binding's FH (cached
+	 * at discovery time before the inode itself existed).  If the
+	 * accessor returns -ENOENT, the client has an inode that the
+	 * LOOKUP path hasn't attached an FH to -- surface NFS4ERR_STALE
+	 * so the client re-resolves from its parent.
 	 */
 	if (inode && inode->i_sb && inode->i_sb->sb_proxy_binding) {
 		struct super_block *sb = inode->i_sb;
 		struct ps_sb_binding *binding = sb->sb_proxy_binding;
+		uint8_t upstream_fh[PS_MAX_FH_SIZE];
+		uint32_t upstream_fh_len = 0;
 
-		if (inode != sb->sb_root_inode) {
+		int fret = ps_inode_get_upstream_fh(inode, upstream_fh,
+						    sizeof(upstream_fh),
+						    &upstream_fh_len);
+		if (fret < 0) {
 			/*
-			 * Not reachable today: the PS doesn't forward
-			 * LOOKUP yet, so a client crossing into the
-			 * proxy namespace can only land on the SB's
-			 * root inode.  If we ever hit this branch in
-			 * reality something allocated a deeper dirent
-			 * on a proxy SB locally -- operator-visible
-			 * because it signals a bug, not a client
-			 * error.
+			 * -ENOENT here means the inode exists on the
+			 * proxy SB (e.g. from a failed mid-LOOKUP
+			 * allocation) but has no upstream FH recorded.
+			 * NFS4ERR_STALE tells the client to drop the
+			 * FH and re-resolve via its parent.  Other
+			 * errors are programmer bugs (NULL args, non-
+			 * proxy SB slipping through the outer check);
+			 * LOG and fall through to STALE to keep the
+			 * client responsive.
 			 */
-			LOG("proxy getattr: deeper inode ino=%" PRIu64
-			    " on proxy SB id=%" PRIu64 " listener=%u"
-			    " -- NOTSUPP pending LOOKUP forwarding",
-			    inode->i_ino, sb->sb_id, binding->psb_listener_id);
-			*status = NFS4ERR_NOTSUPP;
+			LOG("proxy getattr: ps_inode_get_upstream_fh ino=%" PRIu64
+			    " on proxy SB id=%" PRIu64 " listener=%u: %s",
+			    inode->i_ino, sb->sb_id, binding->psb_listener_id,
+			    strerror(-fret));
+			*status = NFS4ERR_STALE;
 			goto out;
 		}
 
@@ -3385,18 +3395,20 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 		 * then every forward emits a TRACE so operators have
 		 * visibility in the trace log.
 		 */
-		TRACE("proxy getattr: listener=%u path=%s (forwarded with PS creds)",
-		      binding->psb_listener_id,
+		TRACE("proxy getattr: listener=%u ino=%" PRIu64
+		      " path=%s (forwarded with PS creds)",
+		      binding->psb_listener_id, inode->i_ino,
 		      sb->sb_path ? sb->sb_path : "(null)");
 
 		struct ps_proxy_getattr_reply reply;
 
 		memset(&reply, 0, sizeof(reply));
 
-		int fret = ps_proxy_forward_getattr(
-			pls->pls_session, binding->psb_mds_fh,
-			binding->psb_mds_fh_len, attr_request->bitmap4_val,
-			attr_request->bitmap4_len, &reply);
+		fret = ps_proxy_forward_getattr(pls->pls_session, upstream_fh,
+						upstream_fh_len,
+						attr_request->bitmap4_val,
+						attr_request->bitmap4_len,
+						&reply);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, NFS4_OP_NUM(compound));
 			goto out;
