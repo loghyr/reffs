@@ -265,6 +265,109 @@ START_TEST(test_get_upstream_fh_edge_cases)
 }
 END_TEST
 
+/*
+ * ps_proxy_lookup_forward_for_inode arg validation.  The live-MDS
+ * happy path is deferred to CI integration + slice 2e-iv-g.  The
+ * "not a proxy SB" guard is the interesting one -- it prevents the
+ * function from calling into the PS session registry for inodes
+ * whose SBs might in the future use i_storage_private differently.
+ */
+START_TEST(test_lookup_forward_rejects_native_sb)
+{
+	uint8_t child_fh[PS_MAX_FH_SIZE];
+	uint32_t child_len = 0;
+	const char *name = "file.txt";
+
+	struct super_block *root = super_block_find(SUPER_BLOCK_ROOT_ID);
+
+	ck_assert_ptr_nonnull(root);
+
+	/*
+	 * Native-SB inode: the function must refuse rather than try
+	 * to look up a non-existent binding / listener session.
+	 */
+	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
+				 root->sb_root_inode, name, 8, child_fh,
+				 sizeof(child_fh), &child_len),
+			 -EINVAL);
+
+	super_block_put(root);
+}
+END_TEST
+
+START_TEST(test_lookup_forward_bad_args)
+{
+	uint8_t bind_fh[] = { 0x77, 0x88 };
+	uint8_t child_fh[PS_MAX_FH_SIZE];
+	uint32_t child_len = 0;
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(g_pls, "/look_test", bind_fh,
+						sizeof(bind_fh)),
+			 0);
+
+	struct super_block *sb = find_proxy_sb("/look_test");
+	struct inode *proxy_root = sb->sb_root_inode;
+
+	ck_assert_int_eq(
+		ps_proxy_lookup_forward_for_inode(NULL, "x", 1, child_fh,
+						  sizeof(child_fh), &child_len),
+		-EINVAL);
+	ck_assert_int_eq(
+		ps_proxy_lookup_forward_for_inode(proxy_root, NULL, 1, child_fh,
+						  sizeof(child_fh), &child_len),
+		-EINVAL);
+	ck_assert_int_eq(
+		ps_proxy_lookup_forward_for_inode(proxy_root, "x", 0, child_fh,
+						  sizeof(child_fh), &child_len),
+		-EINVAL);
+	ck_assert_int_eq(
+		ps_proxy_lookup_forward_for_inode(proxy_root, "x", 1, NULL,
+						  sizeof(child_fh), &child_len),
+		-EINVAL);
+	ck_assert_int_eq(
+		ps_proxy_lookup_forward_for_inode(proxy_root, "x", 1, child_fh,
+						  sizeof(child_fh), NULL),
+		-EINVAL);
+
+	super_block_put(sb);
+	cleanup_proxy_sb("/look_test");
+}
+END_TEST
+
+/*
+ * Proxy SB with a registered listener but NULL session (session
+ * never opened, or torn down) -> -ENOTCONN.  Lets the op-handler
+ * hook distinguish "transient" (DELAY) from "bad arg" (BUG) and
+ * "upstream missing" (NOENT).
+ */
+START_TEST(test_lookup_forward_no_session)
+{
+	uint8_t bind_fh[] = { 0xCA, 0xFE };
+	uint8_t child_fh[PS_MAX_FH_SIZE];
+	uint32_t child_len = 0;
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(g_pls, "/nosession", bind_fh,
+						sizeof(bind_fh)),
+			 0);
+
+	struct super_block *sb = find_proxy_sb("/nosession");
+
+	/*
+	 * The fixture registered listener TEST_LISTENER_ID via
+	 * ps_state_register but did NOT ps_state_set_session -- so
+	 * pls->pls_session is NULL and the forwarder must refuse
+	 * before attempting any RPC.
+	 */
+	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
+				 sb->sb_root_inode, "file", 4, child_fh,
+				 sizeof(child_fh), &child_len),
+			 -ENOTCONN);
+
+	super_block_put(sb);
+	cleanup_proxy_sb("/nosession");
+}
+END_TEST
+
 static Suite *ps_inode_suite(void)
 {
 	Suite *s = suite_create("ps_inode");
@@ -275,6 +378,9 @@ static Suite *ps_inode_suite(void)
 	tcase_add_test(tc, test_set_get_roundtrip_root);
 	tcase_add_test(tc, test_set_upstream_fh_rejects_bad_args);
 	tcase_add_test(tc, test_get_upstream_fh_edge_cases);
+	tcase_add_test(tc, test_lookup_forward_rejects_native_sb);
+	tcase_add_test(tc, test_lookup_forward_bad_args);
+	tcase_add_test(tc, test_lookup_forward_no_session);
 	suite_add_tcase(s, tc);
 	return s;
 }

@@ -71,4 +71,32 @@ int ps_inode_set_upstream_fh(struct inode *inode, const uint8_t *fh,
 int ps_inode_get_upstream_fh(const struct inode *inode, uint8_t *buf,
 			     uint32_t buf_len, uint32_t *len_out);
 
+/*
+ * Forward a single-component LOOKUP against the upstream MDS,
+ * anchored at `parent`'s upstream FH.  Thin composition of
+ * ps_inode_get_upstream_fh (parent FH) + ps_state_find (listener
+ * session) + ps_proxy_forward_lookup (the RPC).
+ *
+ * The op-handler hook (slice 2e-iv-g) takes the child FH this
+ * returns, allocates a local dirent+inode on the proxy SB, and
+ * attaches the FH via ps_inode_set_upstream_fh.  That's where
+ * the real NFSv4 LOOKUP semantics land.  This slice (2e-iv-f)
+ * delivers only the forwarding wrapper so the hook can land
+ * independently with its own review surface.
+ *
+ * Returns:
+ *   0         success -- child FH copied, length in *child_fh_len_out
+ *   -EINVAL   bad args, or parent is not on a proxy SB
+ *   -ENOTCONN listener has no MDS session (transient; caller should
+ *             surface NFS4ERR_DELAY)
+ *   -ENOENT   upstream says the child doesn't exist
+ *   -ENOSPC   child_fh_buf_len is smaller than the returned FH
+ *   -errno    transport / protocol failure
+ */
+int ps_proxy_lookup_forward_for_inode(const struct inode *parent,
+				      const char *name, uint32_t name_len,
+				      uint8_t *child_fh_buf,
+				      uint32_t child_fh_buf_len,
+				      uint32_t *child_fh_len_out);
+
 #endif /* _REFFS_PS_INODE_H */

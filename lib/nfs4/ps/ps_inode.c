@@ -17,7 +17,9 @@
 #include "reffs/super_block.h"
 
 #include "ps_inode.h"
+#include "ps_proxy_ops.h"
 #include "ps_sb.h"
+#include "ps_state.h"
 
 /*
  * Is this inode backed by a proxy SB?  Only those SBs follow the
@@ -102,4 +104,49 @@ int ps_inode_get_upstream_fh(const struct inode *inode, uint8_t *buf,
 	memcpy(buf, pid->upstream_fh, pid->upstream_fh_len);
 	*len_out = pid->upstream_fh_len;
 	return 0;
+}
+
+int ps_proxy_lookup_forward_for_inode(const struct inode *parent,
+				      const char *name, uint32_t name_len,
+				      uint8_t *child_fh_buf,
+				      uint32_t child_fh_buf_len,
+				      uint32_t *child_fh_len_out)
+{
+	if (!parent || !name || name_len == 0 || !child_fh_buf ||
+	    !child_fh_len_out)
+		return -EINVAL;
+	if (!ps_inode_is_proxy(parent))
+		return -EINVAL;
+
+	/*
+	 * Resolve the parent's upstream anchor.  ps_inode_get_upstream_fh
+	 * handles both the per-inode-override case (i_storage_private
+	 * was set by a prior LOOKUP hook on a deeper inode) and the
+	 * SB-root fallback case (the binding FH from discovery).
+	 */
+	uint8_t parent_fh[PS_MAX_FH_SIZE];
+	uint32_t parent_fh_len = 0;
+	int ret = ps_inode_get_upstream_fh(parent, parent_fh, sizeof(parent_fh),
+					   &parent_fh_len);
+
+	if (ret < 0)
+		return ret;
+
+	const struct ps_sb_binding *binding = parent->i_sb->sb_proxy_binding;
+	const struct ps_listener_state *pls =
+		ps_state_find(binding->psb_listener_id);
+
+	/*
+	 * No session -> transient proxy-side unavailability.  -ENOTCONN
+	 * is a clean signal for the op handler (slice 2e-iv-g) to
+	 * translate to NFS4ERR_DELAY without having to distinguish
+	 * session-down from generic I/O errors.
+	 */
+	if (!pls || !pls->pls_session)
+		return -ENOTCONN;
+
+	return ps_proxy_forward_lookup(pls->pls_session, parent_fh,
+				       parent_fh_len, name, name_len,
+				       child_fh_buf, child_fh_buf_len,
+				       child_fh_len_out);
 }
