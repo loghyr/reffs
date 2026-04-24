@@ -52,7 +52,7 @@ static int mount3_mnt(struct rpc_trans *rt)
 
 	TRACE("MNT: xid=0x%08x", rt->rt_info.ri_xid);
 
-	mr->fhs_status = find_matching_directory_entry(&nm, *dp,
+	mr->fhs_status = find_matching_directory_entry(&nm, 0, *dp,
 						       LAST_COMPONENT_IS_MATCH);
 	if (mr->fhs_status)
 		goto out;

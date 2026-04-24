@@ -100,6 +100,7 @@ TESTS = \
 	fs_test_vfs_ctime_capture \
 	fs_test_getattr \
 	fs_test_lru \
+	fs_test_listener_scoped \
 	fs_test_mkdir \
 	fs_test_mkdir_timestamps \
 	fs_test_nlink_semantics \

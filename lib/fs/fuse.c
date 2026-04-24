@@ -142,9 +142,11 @@ int reffs_fuse_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 	TRACE("path=%s offset=%lu", path, offset);
 
 	// For now expose find_matching_directory_entry because how to handle filler()?
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
-	if (ret)
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
+	if (ret) {
 		return ret;
+	}
 
 	/*
 	 * libfuse2 fuse_fill_dir_t takes (buf, name, stat, off);

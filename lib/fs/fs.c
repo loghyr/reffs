@@ -76,8 +76,8 @@ char *reffs_fs_get_backend_path(void)
 // FIXME: Ignores symlinks
 // TODO: Check to see if fuse allows them, but in any event, fix????
 //
-int find_matching_directory_entry(struct name_match **nm, const char *path,
-				  bool match_end)
+int find_matching_directory_entry(struct name_match **nm, uint32_t listener_id,
+				  const char *path, bool match_end)
 {
 	struct super_block *sb;
 	struct name_match *new;
@@ -93,7 +93,14 @@ int find_matching_directory_entry(struct name_match **nm, const char *path,
 
 	*nm = NULL;
 
-	sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+	/*
+	 * listener_id 0 = native namespace (pre-proxy behavior); any
+	 * other value picks the per-listener root SB created by
+	 * reffs_ns_init_proxy_listener().  super_block_find_for_listener
+	 * enforces the (sb_id=1, listener_id) pair so a listener cannot
+	 * traverse into another listener's tree even if sb_id collides.
+	 */
+	sb = super_block_find_for_listener(SUPER_BLOCK_ROOT_ID, listener_id);
 	if (!sb)
 		return -ENODEV;
 
@@ -226,7 +233,8 @@ int reffs_fs_access(const char *path, int mode, uid_t uid, gid_t gid)
 
 	TRACE("path=%s mode=0%o uid=%u gid=%u", path, mode, uid, gid);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		return ret;
 
@@ -261,7 +269,8 @@ int reffs_fs_chmod(const char *path, mode_t mode)
 
 	TRACE("path=%s mode=0%o", path, mode);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		return ret;
 
@@ -290,7 +299,8 @@ int reffs_fs_chown(const char *path, uid_t uid, gid_t gid)
 
 	TRACE("path=%s uid=%u gid=%u", path, uid, gid);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		return ret;
 
@@ -327,7 +337,8 @@ int reffs_fs_create(const char *path, mode_t mode)
 
 	TRACE("path=%s mode=0%o", path, mode);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_NEW);
 	if (ret)
 		return ret;
 
@@ -349,15 +360,17 @@ int reffs_fs_create(const char *path, mode_t mode)
 	return ret;
 }
 
-int reffs_fs_mkdir(const char *path, mode_t mode)
+int reffs_fs_mkdir_for_listener(uint32_t listener_id, const char *path,
+				mode_t mode)
 {
 	struct name_match *nm = NULL;
 	int ret;
 	struct authunix_parms ap;
 
-	TRACE("path=%s mode=0%o", path, mode);
+	TRACE("listener=%u path=%s mode=0%o", listener_id, path, mode);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
+	ret = find_matching_directory_entry(&nm, listener_id, path,
+					    LAST_COMPONENT_IS_NEW);
 	if (ret)
 		return ret;
 
@@ -375,12 +388,22 @@ int reffs_fs_mkdir(const char *path, mode_t mode)
 	return ret;
 }
 
+int reffs_fs_mkdir(const char *path, mode_t mode)
+{
+	return reffs_fs_mkdir_for_listener(0, path, mode);
+}
+
 /*
  * Recursive mkdir -- create all intermediate directories as needed.
  * Equivalent to `mkdir -p`.  Returns 0 on success, -errno on failure.
  * Existing directories along the path are silently skipped.
+ *
+ * listener_id 0 preserves the pre-proxy behavior (native namespace);
+ * non-zero picks the per-listener root SB.  Shared with the native
+ * variant via the helper below so there is one mkdir loop to maintain.
  */
-int reffs_fs_mkdir_p(const char *path, mode_t mode)
+int reffs_fs_mkdir_p_for_listener(uint32_t listener_id, const char *path,
+				  mode_t mode)
 {
 	char buf[REFFS_MAX_PATH + 1];
 	int ret;
@@ -400,18 +423,22 @@ int reffs_fs_mkdir_p(const char *path, mode_t mode)
 		if (*p != '/')
 			continue;
 		*p = '\0';
-		ret = reffs_fs_mkdir(buf, mode);
-		if (ret && ret != -EEXIST) {
+		ret = reffs_fs_mkdir_for_listener(listener_id, buf, mode);
+		if (ret && ret != -EEXIST)
 			return ret;
-		}
 		*p = '/';
 	}
 
 	/* Final component. */
-	ret = reffs_fs_mkdir(buf, mode);
+	ret = reffs_fs_mkdir_for_listener(listener_id, buf, mode);
 	if (ret == -EEXIST)
 		ret = 0;
 	return ret;
+}
+
+int reffs_fs_mkdir_p(const char *path, mode_t mode)
+{
+	return reffs_fs_mkdir_p_for_listener(0, path, mode);
 }
 
 int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
@@ -422,7 +449,8 @@ int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev)
 
 	TRACE("path=%s mode=0%o rdev=%lu", path, mode, (unsigned long)rdev);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_NEW);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_NEW);
 	if (ret)
 		return ret;
 
@@ -448,7 +476,7 @@ int reffs_fs_symlink(const char *target, const char *linkpath)
 
 	TRACE("target=%s linkpath=%s", target, linkpath);
 
-	ret = find_matching_directory_entry(&nm, linkpath,
+	ret = find_matching_directory_entry(&nm, 0, linkpath,
 					    LAST_COMPONENT_IS_NEW);
 	if (ret)
 		return ret;
@@ -480,7 +508,8 @@ int reffs_fs_getattr(const char *path, struct stat *st)
 	struct inode *inode;
 	int ret;
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret) {
 		goto out;
 	}
@@ -521,12 +550,12 @@ int reffs_fs_link(const char *old_path, const char *new_path)
 
 	TRACE("old_path=%s new_path=%s", old_path, new_path);
 
-	ret = find_matching_directory_entry(&nm_src, old_path,
+	ret = find_matching_directory_entry(&nm_src, 0, old_path,
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		return ret;
 
-	ret = find_matching_directory_entry(&nm_dst, new_path,
+	ret = find_matching_directory_entry(&nm_dst, 0, new_path,
 					    LAST_COMPONENT_IS_NEW);
 	if (ret) {
 		name_match_free(nm_src);
@@ -567,7 +596,8 @@ int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset)
 
 	TRACE("path=%s size=%lu offset=%jd", path, size, (intmax_t)offset);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		goto out;
 
@@ -626,7 +656,8 @@ int reffs_fs_readlink(const char *path, char *buffer, size_t len)
 
 	TRACE("path=%s len=%lu", path, len);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		goto out;
 
@@ -681,17 +712,17 @@ int reffs_fs_rename(const char *src_path, const char *dst_path)
 		return -EFAULT;
 	}
 
-	ret = find_matching_directory_entry(&nm_src, src_path,
+	ret = find_matching_directory_entry(&nm_src, 0, src_path,
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		return ret;
 
-	ret = find_matching_directory_entry(&nm_dst, dst_path,
+	ret = find_matching_directory_entry(&nm_dst, 0, dst_path,
 					    LAST_COMPONENT_IS_MATCH);
 	if (ret == 0) {
 		dst_exists = true;
 	} else if (ret == -ENOENT) {
-		ret = find_matching_directory_entry(&nm_dst, dst_path,
+		ret = find_matching_directory_entry(&nm_dst, 0, dst_path,
 						    LAST_COMPONENT_IS_NEW);
 		if (ret) {
 			name_match_free(nm_src);
@@ -744,7 +775,8 @@ int reffs_fs_rmdir(const char *path)
 		return -EBUSY;
 	}
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		return ret;
 
@@ -770,7 +802,8 @@ int reffs_fs_unlink(const char *path)
 
 	TRACE("path=%s", path);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		return ret;
 
@@ -797,7 +830,8 @@ int reffs_fs_utimensat(const char *path, const struct timespec times[2])
 
 	TRACE("path=%s", path);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		return ret;
 
@@ -848,7 +882,8 @@ int reffs_fs_write(const char *path, const char *buffer, size_t size,
 
 	TRACE("path=%s size=%lu offset=%jd", path, size, (intmax_t)offset);
 
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, 0, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		goto out;
 

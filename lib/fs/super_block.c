@@ -648,28 +648,44 @@ int super_block_mount(struct super_block *sb, const char *path)
 	if (sb->sb_lifecycle == SB_DESTROYED)
 		return -EINVAL;
 
-	/* Validate that 'path' exists as a directory. */
-	struct stat st;
-
-	if (reffs_fs_getattr(path, &st))
-		return -ENOENT;
-	if (!S_ISDIR(st.st_mode))
-		return -ENOTDIR;
-
 	/*
-	 * Resolve path to a dirent and set RD_MOUNTED_ON.
-	 * This flag tells LOOKUP to cross into the child sb.
+	 * Resolve path to a dirent in the same listener the child SB
+	 * belongs to.  A proxy SB (sb_listener_id != 0) mounts inside
+	 * its own listener's root namespace, not the native one.
+	 *
+	 * find_matching_directory_entry returns -ENOENT if the last
+	 * component is missing, so the legacy "stat + ISDIR" prelude
+	 * is redundant -- we check ISDIR on the resolved dirent's
+	 * inode below.  This also avoids a second path walk through
+	 * reffs_fs_getattr, which is still native-scoped.
 	 */
-	ret = find_matching_directory_entry(&nm, path, LAST_COMPONENT_IS_MATCH);
+	ret = find_matching_directory_entry(&nm, sb->sb_listener_id, path,
+					    LAST_COMPONENT_IS_MATCH);
 	if (ret)
 		return ret;
+
+	/* Mount target must be a directory. */
+	struct inode *mnt_inode = dirent_ensure_inode(nm->nm_dirent);
+
+	if (!mnt_inode) {
+		name_match_free(nm);
+		return -ENOENT;
+	}
+	bool is_dir = S_ISDIR(mnt_inode->i_mode);
+
+	inode_active_put(mnt_inode);
+	if (!is_dir) {
+		name_match_free(nm);
+		return -ENOTDIR;
+	}
 
 	__atomic_fetch_or(&nm->nm_dirent->rd_state, RD_MOUNTED_ON,
 			  __ATOMIC_RELEASE);
 
 	/* Store mount-point references on the child sb. */
 	sb->sb_mount_dirent = dirent_get(nm->nm_dirent);
-	sb->sb_parent_sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+	sb->sb_parent_sb = super_block_find_for_listener(SUPER_BLOCK_ROOT_ID,
+							 sb->sb_listener_id);
 	if (!sb->sb_parent_sb) {
 		__atomic_fetch_and(&nm->nm_dirent->rd_state, ~RD_MOUNTED_ON,
 				   __ATOMIC_RELEASE);

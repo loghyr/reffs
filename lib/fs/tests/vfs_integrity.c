@@ -35,13 +35,13 @@ START_TEST(test_vfs_is_subdir_logic)
 	ck_assert_int_eq(reffs_fs_mkdir("/b", 0755), 0);
 	ck_assert_int_eq(reffs_fs_mkdir("/a/sub", 0755), 0);
 
-	ck_assert_int_eq(find_matching_directory_entry(&nm_a, "/a",
+	ck_assert_int_eq(find_matching_directory_entry(&nm_a, 0, "/a",
 						       LAST_COMPONENT_IS_MATCH),
 			 0);
-	ck_assert_int_eq(find_matching_directory_entry(&nm_b, "/b",
+	ck_assert_int_eq(find_matching_directory_entry(&nm_b, 0, "/b",
 						       LAST_COMPONENT_IS_MATCH),
 			 0);
-	ck_assert_int_eq(find_matching_directory_entry(&nm_sub, "/a/sub",
+	ck_assert_int_eq(find_matching_directory_entry(&nm_sub, 0, "/a/sub",
 						       LAST_COMPONENT_IS_MATCH),
 			 0);
 
@@ -80,7 +80,7 @@ START_TEST(test_vfs_setattr_logic)
 	struct authunix_parms ap;
 
 	ck_assert_int_eq(reffs_fs_create("/test", 0644), 0);
-	ck_assert_int_eq(find_matching_directory_entry(&nm, "/test",
+	ck_assert_int_eq(find_matching_directory_entry(&nm, 0, "/test",
 						       LAST_COMPONENT_IS_MATCH),
 			 0);
 	inode = nm->nm_dirent->rd_inode;

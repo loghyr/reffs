@@ -33,8 +33,17 @@ struct name_match {
 
 #define LAST_COMPONENT_IS_MATCH (true)
 #define LAST_COMPONENT_IS_NEW (false)
-int find_matching_directory_entry(struct name_match **nm, const char *path,
-				  bool match_end);
+/*
+ * Resolve `path` against a listener-scoped namespace.
+ *
+ *   listener_id == 0 resolves against the native root SB (pre-proxy
+ *   behavior).  listener_id > 0 resolves against the proxy listener's
+ *   own root SB (sb_id=1 + sb_listener_id=N), letting callers that
+ *   operate on a [[proxy_mds]] namespace share this primitive without
+ *   hard-coding the native root.
+ */
+int find_matching_directory_entry(struct name_match **nm, uint32_t listener_id,
+				  const char *path, bool match_end);
 void name_match_free(struct name_match *nm);
 
 void reffs_fs_set_storage(enum reffs_storage_type type, const char *path);
@@ -65,6 +74,17 @@ int reffs_fs_getattr(const char *path, struct stat *st);
 int reffs_fs_link(const char *old_path, const char *new_path);
 int reffs_fs_mkdir(const char *path, mode_t mode);
 int reffs_fs_mkdir_p(const char *path, mode_t mode);
+
+/*
+ * Listener-scoped variants.  listener_id == 0 matches the legacy
+ * native behavior; non-zero resolves path components against the
+ * proxy listener's own root SB.  The legacy helpers above are thin
+ * wrappers (listener_id=0) so existing callers see no change.
+ */
+int reffs_fs_mkdir_for_listener(uint32_t listener_id, const char *path,
+				mode_t mode);
+int reffs_fs_mkdir_p_for_listener(uint32_t listener_id, const char *path,
+				  mode_t mode);
 int reffs_fs_mknod(const char *path, mode_t mode, dev_t rdev);
 int reffs_fs_read(const char *path, char *buffer, size_t size, off_t offset);
 int reffs_fs_readdir(const char *path, void *buffer, char *filler,
