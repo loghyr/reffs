@@ -35,3 +35,8 @@ void ps_sb_binding_free(struct ps_sb_binding *b)
 {
 	free(b);
 }
+
+void ps_sb_binding_free_cb(void *b)
+{
+	ps_sb_binding_free(b);
+}

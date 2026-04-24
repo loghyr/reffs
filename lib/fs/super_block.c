@@ -958,7 +958,7 @@ static bool is_path_prefix(const char *parent, const char *child)
 	       (child[len] == '/' || child[len] == '\0');
 }
 
-int super_block_check_path_conflict(const char *path)
+int super_block_check_path_conflict(uint32_t listener_id, const char *path)
 {
 	struct super_block *sb;
 
@@ -967,6 +967,14 @@ int super_block_check_path_conflict(const char *path)
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(sb, &super_block_list, sb_link) {
+		/*
+		 * Each listener has its own namespace -- "/foo" mounted on
+		 * the native listener does not collide with "/foo" on a
+		 * [[proxy_mds]] listener, and vice versa.  Only compare
+		 * against SBs that share the caller's listener scope.
+		 */
+		if (sb->sb_listener_id != listener_id)
+			continue;
 		/* Root is the pseudo-root -- prefix of everything by design. */
 		if (sb->sb_id == SUPER_BLOCK_ROOT_ID)
 			continue;

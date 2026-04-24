@@ -67,4 +67,51 @@ struct ps_sb_binding *ps_sb_binding_alloc(uint32_t listener_id,
  */
 void ps_sb_binding_free(struct ps_sb_binding *b);
 
+/*
+ * Same release, typed as `void (*)(void *)` so it can be passed
+ * directly to super_block_set_proxy_binding() as the release hook
+ * without the caller needing a function-pointer cast.
+ */
+void ps_sb_binding_free_cb(void *b);
+
+struct ps_listener_state; /* forward: from ps_state.h */
+
+/*
+ * Allocate, bind, and mount a proxy super_block for a single
+ * discovered upstream export on a [[proxy_mds]] listener.
+ *
+ * Sequence (failures roll back in reverse):
+ *   1. reffs_fs_mkdir_p_for_listener() on `path` so the mount-point
+ *      dirent exists in the listener's own namespace.
+ *   2. super_block_check_path_conflict() to refuse mounts that would
+ *      shadow or be shadowed by another SB.
+ *   3. sb_registry_alloc_id() for a fresh (in-core only, no
+ *      persistence) sb_id.
+ *   4. super_block_alloc(REFFS_STORAGE_RAM) + stamp sb_listener_id +
+ *      uuid_generate + super_block_dirent_create.
+ *   5. ps_sb_binding_alloc() + super_block_set_proxy_binding() so the
+ *      SB carries its upstream coordinates for op-handler dispatch.
+ *   6. super_block_mount() at `path` within the listener's namespace.
+ *
+ * Preconditions (caller responsibility):
+ *   pls is non-NULL and registered in ps_state;
+ *   path is absolute and non-root ("/" cannot be a mount point);
+ *   mds_fh is non-NULL and 0 < mds_fh_len <= PS_MAX_FH_SIZE;
+ *   concurrent callers on the same listener are serialized by
+ *   pls_discovery_mutex (ps_discovery_run's convention).
+ *
+ * Returns:
+ *   0        success -- SB is MOUNTED and discoverable via
+ *            super_block_find_for_listener(X, pls->pls_listener_id)
+ *   -EINVAL  bad args (NULL / non-absolute path / empty FH / path=="/")
+ *   -E2BIG   fh_len > PS_MAX_FH_SIZE
+ *   -EEXIST  another SB already owns `path` in this listener
+ *   -EBUSY   path conflicts with a parent mount on this listener
+ *   -ENOMEM  allocation failure
+ *   -errno   mkdir_p / mount failure propagating through
+ */
+int ps_sb_alloc_for_export(const struct ps_listener_state *pls,
+			   const char *path, const uint8_t *mds_fh,
+			   uint32_t mds_fh_len);
+
 #endif /* _REFFS_PS_SB_H */

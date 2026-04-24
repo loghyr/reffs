@@ -68,7 +68,7 @@ START_TEST(test_path_conflict_exact_match)
 
 	ck_assert_ptr_nonnull(child);
 
-	int ret = super_block_check_path_conflict("/alpo");
+	int ret = super_block_check_path_conflict(0, "/alpo");
 
 	ck_assert_int_eq(ret, -EEXIST);
 
@@ -90,7 +90,7 @@ START_TEST(test_path_conflict_parent_of_mounted)
 
 	ck_assert_ptr_nonnull(child);
 
-	int ret = super_block_check_path_conflict("/foo/bar");
+	int ret = super_block_check_path_conflict(0, "/foo/bar");
 
 	ck_assert_int_eq(ret, -EBUSY);
 
@@ -113,7 +113,7 @@ START_TEST(test_path_conflict_child_of_mounted)
 
 	ck_assert_ptr_nonnull(child);
 
-	int ret = super_block_check_path_conflict("/foo2/bar/deeper");
+	int ret = super_block_check_path_conflict(0, "/foo2/bar/deeper");
 
 	ck_assert_int_eq(ret, 0);
 
@@ -133,7 +133,7 @@ START_TEST(test_path_conflict_no_conflict)
 
 	ck_assert_ptr_nonnull(child);
 
-	int ret = super_block_check_path_conflict("/bravo");
+	int ret = super_block_check_path_conflict(0, "/bravo");
 
 	ck_assert_int_eq(ret, 0);
 
@@ -154,7 +154,7 @@ START_TEST(test_path_conflict_unmounted_no_conflict)
 	ck_assert_ptr_nonnull(child);
 	super_block_unmount(child);
 
-	int ret = super_block_check_path_conflict("/alpo3");
+	int ret = super_block_check_path_conflict(0, "/alpo3");
 
 	ck_assert_int_eq(ret, 0);
 
@@ -176,7 +176,7 @@ START_TEST(test_path_conflict_not_false_prefix)
 
 	ck_assert_ptr_nonnull(child);
 
-	int ret = super_block_check_path_conflict("/foo3bar");
+	int ret = super_block_check_path_conflict(0, "/foo3bar");
 
 	ck_assert_int_eq(ret, 0);
 

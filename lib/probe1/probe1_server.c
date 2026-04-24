@@ -981,7 +981,7 @@ static int probe1_op_sb_create(struct rpc_trans *rt)
 	int ret;
 
 	/* Check for path conflicts with existing mounts. */
-	ret = super_block_check_path_conflict(args->sca_path);
+	ret = super_block_check_path_conflict(0, args->sca_path);
 	if (ret) {
 		res->scr_status = (ret == -EEXIST) ? PROBE1ERR_EXIST :
 				  (ret == -EBUSY)  ? PROBE1ERR_BUSY :
@@ -1056,7 +1056,7 @@ static int probe1_op_sb_mount(struct rpc_trans *rt)
 	probe_stat1 *res = ph->ph_res;
 
 	/* Check for path conflicts before mounting. */
-	int ret = super_block_check_path_conflict(args->sma_path);
+	int ret = super_block_check_path_conflict(0, args->sma_path);
 
 	if (ret) {
 		*res = (ret == -EEXIST) ? PROBE1ERR_EXIST :
