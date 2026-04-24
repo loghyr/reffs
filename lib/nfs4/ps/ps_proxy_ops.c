@@ -322,6 +322,90 @@ out:
 	return ret;
 }
 
+int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
+			   uint32_t upstream_fh_len, uint32_t stateid_seqid,
+			   const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			   uint64_t offset, uint32_t stable,
+			   const uint8_t *data, uint32_t data_len,
+			   struct ps_proxy_write_reply *reply)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
+
+	if (!ms || !upstream_fh || upstream_fh_len == 0 || !stateid_other ||
+	    !data || data_len == 0 || !reply)
+		return -EINVAL;
+	if (upstream_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+	/* stable_how4: UNSTABLE4=0, DATA_SYNC4=1, FILE_SYNC4=2. */
+	if (stable > FILE_SYNC4)
+		return -EINVAL;
+
+	memset(reply, 0, sizeof(*reply));
+
+	/* SEQUENCE + PUTFH + WRITE = 3 ops */
+	ret = mds_compound_init(&mc, 3, "ps-proxy-write");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)upstream_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = upstream_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_WRITE);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	WRITE4args *wa = &slot->nfs_argop4_u.opwrite;
+
+	wa->stateid.seqid = stateid_seqid;
+	memcpy(wa->stateid.other, stateid_other, PS_STATEID_OTHER_SIZE);
+	wa->offset = offset;
+	wa->stable = (stable_how4)stable;
+	wa->data.data_val = (char *)data;
+	wa->data.data_len = data_len;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret)
+		goto out;
+
+	/* PUTFH status at index 1. */
+	res = mds_compound_result(&mc, 1);
+	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	/* WRITE result at index 2. */
+	res = mds_compound_result(&mc, 2);
+	if (!res || res->nfs_resop4_u.opwrite.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	WRITE4resok *wresok = &res->nfs_resop4_u.opwrite.WRITE4res_u.resok4;
+
+	reply->count = wresok->count;
+	reply->committed = (uint32_t)wresok->committed;
+	memcpy(reply->verifier, wresok->writeverf, PS_PROXY_VERIFIER_SIZE);
+	ret = 0;
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
 /*
  * RFC 8881 S5.8.1 attribute numbers.  Hard-coded rather than
  * pulled from nfsv42_xdr.h to keep this parser self-contained --

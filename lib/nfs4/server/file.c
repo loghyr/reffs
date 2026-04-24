@@ -1960,6 +1960,83 @@ uint32_t nfs4_op_write(struct compound *compound)
 		goto out;
 	}
 
+	/*
+	 * Proxy-SB fast path: forward WRITE to upstream MDS.  Mirror of
+	 * the READ hook -- local stateid / access-check machinery is
+	 * bypassed because the PS holds no open state for proxied
+	 * inodes; the MDS does its own stateid validation on the
+	 * forwarded compound.
+	 */
+	if (compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding) {
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+		uint8_t upstream_fh[PS_MAX_FH_SIZE];
+		uint32_t upstream_fh_len = 0;
+
+		int fret = ps_inode_get_upstream_fh(compound->c_inode,
+						    upstream_fh,
+						    sizeof(upstream_fh),
+						    &upstream_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		u_int write_len = args->data.data_len;
+
+		if (write_len == 0) {
+			/*
+			 * Zero-length WRITE is a no-op on the wire but
+			 * the RFC wants committed=FILE_SYNC4 and a
+			 * verifier.  Don't bother forwarding -- the
+			 * verifier is per-server anyway, so we mint a
+			 * local zero-verifier; if a caller actually
+			 * tests correlation we can extend later.
+			 */
+			resok->count = 0;
+			resok->committed = FILE_SYNC4;
+			memset(resok->writeverf, 0, sizeof(resok->writeverf));
+			goto out;
+		}
+		if (write_len > NFS4_MAX_RW_SIZE)
+			write_len = NFS4_MAX_RW_SIZE;
+
+		TRACE("proxy write: listener=%u ino=%" PRIu64 " offset=%" PRIu64
+		      " count=%u stable=%u (forwarded with PS creds)",
+		      binding->psb_listener_id, compound->c_inode->i_ino,
+		      args->offset, write_len, (unsigned)args->stable);
+
+		struct ps_proxy_write_reply wreply;
+
+		memset(&wreply, 0, sizeof(wreply));
+		fret = ps_proxy_forward_write(
+			pls->pls_session, upstream_fh, upstream_fh_len,
+			args->stateid.seqid,
+			(const uint8_t *)args->stateid.other, args->offset,
+			(uint32_t)args->stable,
+			(const uint8_t *)args->data.data_val, write_len,
+			&wreply);
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_WRITE);
+			goto out;
+		}
+
+		resok->count = wreply.count;
+		resok->committed = (stable_how4)wreply.committed;
+		memcpy(resok->writeverf, wreply.verifier,
+		       PS_PROXY_VERIFIER_SIZE);
+		goto out;
+	}
+
 	*status = nfs4_stateid_resolve(compound, compound->c_inode,
 				       &args->stateid, true, &stid);
 	if (*status != NFS4_OK)

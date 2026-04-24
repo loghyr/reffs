@@ -653,6 +653,97 @@ START_TEST(test_forward_open_owner_bounds)
 }
 END_TEST
 
+/*
+ * WRITE forwarder arg validation -- symmetric to the READ forwarder.
+ */
+START_TEST(test_forward_write_null_args)
+{
+	uint8_t fh[] = { 0x11 };
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0 };
+	uint8_t data[] = { 0xCA, 0xFE };
+	struct ps_proxy_write_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_write(NULL, fh, sizeof(fh), 0, other,
+						0, 0, data, sizeof(data),
+						&reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_write((void *)1, NULL, sizeof(fh), 0,
+						other, 0, 0, data, sizeof(data),
+						&reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, sizeof(fh), 0,
+						NULL, 0, 0, data, sizeof(data),
+						&reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, sizeof(fh), 0,
+						other, 0, 0, NULL, sizeof(data),
+						&reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, sizeof(fh), 0,
+						other, 0, 0, data, sizeof(data),
+						NULL),
+			 -EINVAL);
+}
+END_TEST
+
+START_TEST(test_forward_write_zero_lengths)
+{
+	uint8_t fh[] = { 0x33 };
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0 };
+	uint8_t data[] = { 0xAA };
+	struct ps_proxy_write_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, 0, 0, other, 0,
+						0, data, sizeof(data), &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, sizeof(fh), 0,
+						other, 0, 0, data, 0, &reply),
+			 -EINVAL);
+}
+END_TEST
+
+START_TEST(test_forward_write_fh_too_big)
+{
+	uint8_t big_fh[PS_MAX_FH_SIZE + 1];
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0 };
+	uint8_t data[] = { 0 };
+	struct ps_proxy_write_reply reply;
+
+	memset(big_fh, 0xAB, sizeof(big_fh));
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_write((void *)1, big_fh,
+						sizeof(big_fh), 0, other, 0, 0,
+						data, sizeof(data), &reply),
+			 -E2BIG);
+}
+END_TEST
+
+/*
+ * stable_how4 values are UNSTABLE4=0, DATA_SYNC4=1, FILE_SYNC4=2.
+ * Anything outside 0..2 is programmer error and short-circuits
+ * before the compound is built.
+ */
+START_TEST(test_forward_write_bad_stable)
+{
+	uint8_t fh[] = { 0x44 };
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0 };
+	uint8_t data[] = { 0 };
+	struct ps_proxy_write_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, sizeof(fh), 0,
+						other, 0, 99, data,
+						sizeof(data), &reply),
+			 -EINVAL);
+}
+END_TEST
+
 static Suite *ps_proxy_ops_suite(void)
 {
 	Suite *s = suite_create("ps_proxy_ops");
@@ -685,6 +776,10 @@ static Suite *ps_proxy_ops_suite(void)
 	tcase_add_test(tc, test_forward_open_zero_lengths);
 	tcase_add_test(tc, test_forward_open_parent_fh_too_big);
 	tcase_add_test(tc, test_forward_open_owner_bounds);
+	tcase_add_test(tc, test_forward_write_null_args);
+	tcase_add_test(tc, test_forward_write_zero_lengths);
+	tcase_add_test(tc, test_forward_write_fh_too_big);
+	tcase_add_test(tc, test_forward_write_bad_stable);
 	suite_add_tcase(s, tc);
 	return s;
 }

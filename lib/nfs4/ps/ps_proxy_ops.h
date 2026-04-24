@@ -348,4 +348,58 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 			  const struct ps_proxy_open_request *req,
 			  struct ps_proxy_open_reply *reply);
 
+/*
+ * NFSv4 verifier4 is 8 bytes (RFC 8881 S3.1).  Mirrored locally so
+ * callers can receive WRITE replies without pulling nfsv42_xdr.h.
+ */
+#define PS_PROXY_VERIFIER_SIZE 8
+
+/*
+ * Caller-owned result from ps_proxy_forward_write.  Fully copied
+ * out of the compound so no heap lives across the call.
+ *
+ *   count     -- bytes the MDS committed (may be < data_len).
+ *   committed -- stable_how4: UNSTABLE4=0, DATA_SYNC4=1, FILE_SYNC4=2.
+ *                Forwarded verbatim so the end client can decide
+ *                whether a follow-up COMMIT is required.
+ *   verifier  -- write verifier to correlate with a later COMMIT.
+ */
+struct ps_proxy_write_reply {
+	uint32_t count;
+	uint32_t committed;
+	uint8_t verifier[PS_PROXY_VERIFIER_SIZE];
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(upstream_fh) + WRITE on `ms`,
+ * copy the MDS's reply into `reply`.
+ *
+ * stateid_seqid + stateid_other make up the stateid4 on the wire.
+ * Today the only expected use is with the MDS's own open stateid
+ * (from ps_proxy_forward_open in slice 2e-iv-j), which the proxy
+ * pass-through model means the PS returned to the end client
+ * verbatim.  The primitive does no local validation; the MDS
+ * checks the stateid on its side.
+ *
+ * On any failure `reply` is left zero-initialised and no durable
+ * state ran on the upstream.
+ *
+ * NOT_NOW_BROWN_COW: credential forwarding (slice 2e-iv-c) and
+ * COMMIT forwarding (a follow-up; until then UNSTABLE4 writes
+ * cannot be flushed by the client).
+ *
+ * Returns:
+ *   0        success; reply populated
+ *   -EINVAL  ms / upstream_fh / stateid_other / data / reply NULL,
+ *            or upstream_fh_len / data_len == 0, or unknown stable
+ *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
+ *   -errno   RPC / compound failure, or a non-OK per-op status
+ */
+int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
+			   uint32_t upstream_fh_len, uint32_t stateid_seqid,
+			   const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			   uint64_t offset, uint32_t stable,
+			   const uint8_t *data, uint32_t data_len,
+			   struct ps_proxy_write_reply *reply);
+
 #endif /* _REFFS_PS_PROXY_OPS_H */
