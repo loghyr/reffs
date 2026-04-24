@@ -4,7 +4,9 @@
 AM_CFLAGS = -Im4 -I.			\
 	-I$(top_srcdir)/lib/include	\
 	-I$(top_srcdir)/lib/nfs4/include \
+	-I$(top_srcdir)/lib/nfs4/client \
 	-I$(top_srcdir)/lib/nfs4/dstore \
+	-I$(top_srcdir)/lib/nfs4/ps	\
 	-I$(top_builddir)/lib/xdr	\
 	$(TIRPC_CFLAGS)
 

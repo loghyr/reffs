@@ -48,6 +48,11 @@
 #include "nfs4/errors.h"
 #include "nfs4/stateid.h"
 #include "nfs4/cb.h"
+
+/* Proxy-server SB forwarding (see .claude/design/proxy-server.md). */
+#include "ps_proxy_ops.h"
+#include "ps_sb.h"
+#include "ps_state.h"
 #include "nfs4/session.h"
 #include "nfs4/client.h"
 #include "nfs4/owner.h"
@@ -3321,6 +3326,122 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 	/* Nothing requested */
 	if (attr_request->bitmap4_len == 0)
 		goto out;
+
+	/*
+	 * Proxy-SB fast path.  If the current inode lives in a proxy
+	 * SB, forward the GETATTR to the upstream MDS instead of
+	 * computing from local (empty) cached attrs.  This slice
+	 * (2e-iv-b) handles the SB root inode only -- that's the
+	 * inode a client first reaches via LOOKUP crossing into the
+	 * proxy namespace, and its upstream FH is already cached on
+	 * the binding.  Deeper inodes return NFS4ERR_NOTSUPP until
+	 * a later slice plumbs LOOKUP forwarding so each descendant
+	 * inode carries its own upstream FH.
+	 */
+	if (inode && inode->i_sb && inode->i_sb->sb_proxy_binding) {
+		struct super_block *sb = inode->i_sb;
+		struct ps_sb_binding *binding = sb->sb_proxy_binding;
+
+		if (inode != sb->sb_root_inode) {
+			/*
+			 * Not reachable today: the PS doesn't forward
+			 * LOOKUP yet, so a client crossing into the
+			 * proxy namespace can only land on the SB's
+			 * root inode.  If we ever hit this branch in
+			 * reality something allocated a deeper dirent
+			 * on a proxy SB locally -- operator-visible
+			 * because it signals a bug, not a client
+			 * error.
+			 */
+			LOG("proxy getattr: deeper inode ino=%" PRIu64
+			    " on proxy SB id=%" PRIu64 " listener=%u"
+			    " -- NOTSUPP pending LOOKUP forwarding",
+			    inode->i_ino, sb->sb_id, binding->psb_listener_id);
+			*status = NFS4ERR_NOTSUPP;
+			goto out;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			/*
+			 * Session didn't open at startup or was torn
+			 * down; tell the client to retry.  Matches the
+			 * NFS4ERR_DELAY convention for transient
+			 * proxy-side unavailability.
+			 */
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		/*
+		 * Audit-log obligation (see .claude/design/proxy-server.md
+		 * "Audit logging" + the reviewer NOTE on slice 2e-iv-a):
+		 * the compound rides on the PS session's credentials, not
+		 * the end client's AUTH_SYS credentials.  The
+		 * NOT_NOW_BROWN_COW in ps_proxy_ops.h documents the
+		 * follow-up (slice 2e-iv-c) that closes the gap; until
+		 * then every forward emits a TRACE so operators have
+		 * visibility in the trace log.
+		 */
+		TRACE("proxy getattr: listener=%u path=%s (forwarded with PS creds)",
+		      binding->psb_listener_id,
+		      sb->sb_path ? sb->sb_path : "(null)");
+
+		struct ps_proxy_getattr_reply reply;
+
+		memset(&reply, 0, sizeof(reply));
+
+		int fret = ps_proxy_forward_getattr(
+			pls->pls_session, binding->psb_mds_fh,
+			binding->psb_mds_fh_len, attr_request->bitmap4_val,
+			attr_request->bitmap4_len, &reply);
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, NFS4_OP_NUM(compound));
+			goto out;
+		}
+
+		/*
+		 * Copy the raw-bytes reply into fattr4's XDR-owned
+		 * storage.  The auto-generated XDR freer releases the
+		 * calloc'd buffers when the response is serialised, so
+		 * they must be plain calloc (not arena-alloc).
+		 */
+		if (reply.attrmask_len > 0) {
+			fattr->attrmask.bitmap4_val =
+				calloc(reply.attrmask_len, sizeof(uint32_t));
+			if (!fattr->attrmask.bitmap4_val) {
+				ps_proxy_getattr_reply_free(&reply);
+				*status = NFS4ERR_DELAY;
+				goto out;
+			}
+			memcpy(fattr->attrmask.bitmap4_val, reply.attrmask,
+			       reply.attrmask_len * sizeof(uint32_t));
+			fattr->attrmask.bitmap4_len = reply.attrmask_len;
+		}
+		if (reply.attr_vals_len > 0) {
+			fattr->attr_vals.attrlist4_val =
+				calloc(reply.attr_vals_len, 1);
+			if (!fattr->attr_vals.attrlist4_val) {
+				/*
+				 * bitmap4_val may have been allocated
+				 * just above; the XDR freer will reclaim
+				 * it when the compound's response is
+				 * torn down, so no manual cleanup here.
+				 */
+				ps_proxy_getattr_reply_free(&reply);
+				*status = NFS4ERR_DELAY;
+				goto out;
+			}
+			memcpy(fattr->attr_vals.attrlist4_val, reply.attr_vals,
+			       reply.attr_vals_len);
+			fattr->attr_vals.attrlist4_len = reply.attr_vals_len;
+		}
+
+		ps_proxy_getattr_reply_free(&reply);
+		goto out;
+	}
 
 	/*
 	 * MDS mode: if there is an active write layout on this inode
