@@ -1068,6 +1068,7 @@ int main(int argc, char *argv[])
 
 	// Run the main IO processing loop
 
+	LOG("reffsd ready: serving on port %d", port);
 	io_handler_main_loop(&running, rc);
 
 	/*

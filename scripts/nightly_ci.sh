@@ -343,10 +343,11 @@ UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1" \
 "$REFFSD" --config="$INT_CONFIG" >"$INT_LOG" 2>&1 &
 REFFSD_PID=$!
 
-# Wait for server
+# Wait for server (check log line emitted after pmap registrations,
+# not just TCP port -- port binds before pmap completes)
 SERVER_OK=false
-for i in $(seq 1 30); do
-    (echo >/dev/tcp/127.0.0.1/$NFS_PORT) 2>/dev/null && { SERVER_OK=true; break; }
+for i in $(seq 1 60); do
+    grep -q "reffsd ready:" "$INT_LOG" 2>/dev/null && { SERVER_OK=true; break; }
     kill -0 "$REFFSD_PID" 2>/dev/null || { echo "reffsd died during startup"; break; }
     sleep 1
 done

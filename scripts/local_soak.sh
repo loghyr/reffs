@@ -188,8 +188,8 @@ start_server() {
     "$REFFSD" --config="$CONFIG" -c 8 >>"$LOG" 2>&1 &
     REFFSD_PID=$!
 
-    for i in $(seq 1 30); do
-        (echo >/dev/tcp/127.0.0.1/$NFS_PORT) 2>/dev/null && break
+    for i in $(seq 1 60); do
+        grep -q "reffsd ready:" "$LOG" 2>/dev/null && break
         kill -0 "$REFFSD_PID" 2>/dev/null || {
             info "reffsd died during startup"
             tail -20 "$LOG"
