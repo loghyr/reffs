@@ -436,6 +436,143 @@ void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply)
 	memset(reply, 0, sizeof(*reply));
 }
 
+/*
+ * Open-owner bytes on the wire are opaque<>.  Most production clients
+ * keep the owner tight (32-64 bytes); the RFC does not impose a hard
+ * cap but we bound what we'll forward here so a misbehaving client
+ * cannot push unbounded opaque into the MDS via the PS.  512 is
+ * well above any real client but small enough that a malformed
+ * request is rejected loudly rather than amplified upstream.
+ */
+#define PS_PROXY_OPEN_OWNER_MAX 512
+
+int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *parent_fh,
+			  uint32_t parent_fh_len, const char *name,
+			  uint32_t name_len,
+			  const struct ps_proxy_open_request *req,
+			  struct ps_proxy_open_reply *reply)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
+
+	if (!ms || !parent_fh || parent_fh_len == 0 || !name || name_len == 0 ||
+	    !req || !reply)
+		return -EINVAL;
+	if (parent_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+	if (req->owner_data_len > PS_PROXY_OPEN_OWNER_MAX)
+		return -EINVAL;
+	if (req->owner_data_len > 0 && !req->owner_data)
+		return -EINVAL;
+
+	memset(reply, 0, sizeof(*reply));
+
+	/* SEQUENCE + PUTFH + OPEN + GETFH = 4 ops */
+	ret = mds_compound_init(&mc, 4, "ps-proxy-open");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)parent_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = parent_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_OPEN);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	OPEN4args *oa = &slot->nfs_argop4_u.opopen;
+
+	oa->seqid = req->seqid;
+	oa->share_access = req->share_access;
+	oa->share_deny = req->share_deny;
+	oa->owner.clientid = req->owner_clientid;
+	oa->owner.owner.owner_val = (char *)req->owner_data;
+	oa->owner.owner.owner_len = req->owner_data_len;
+	oa->openhow.opentype = OPEN4_NOCREATE;
+	oa->claim.claim = CLAIM_NULL;
+	oa->claim.open_claim4_u.file.utf8string_val = (char *)name;
+	oa->claim.open_claim4_u.file.utf8string_len = name_len;
+
+	slot = mds_compound_add_op(&mc, OP_GETFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret)
+		goto out;
+
+	/* PUTFH status at index 1. */
+	res = mds_compound_result(&mc, 1);
+	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	/*
+	 * OPEN result at index 2.  NFS4ERR_NOENT surfaces as -ENOENT
+	 * (client translates back to NFS4ERR_NOENT without re-parsing).
+	 * Any other non-OK collapses to -EREMOTEIO.
+	 */
+	res = mds_compound_result(&mc, 2);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	if (res->nfs_resop4_u.opopen.status != NFS4_OK) {
+		if (res->nfs_resop4_u.opopen.status == NFS4ERR_NOENT)
+			ret = -ENOENT;
+		else
+			ret = -EREMOTEIO;
+		goto out;
+	}
+
+	OPEN4resok *ores = &res->nfs_resop4_u.opopen.OPEN4res_u.resok4;
+
+	reply->stateid_seqid = ores->stateid.seqid;
+	memcpy(reply->stateid_other, ores->stateid.other, NFS4_OTHER_SIZE);
+	reply->rflags = ores->rflags;
+
+	/* GETFH result at index 3. */
+	res = mds_compound_result(&mc, 3);
+	if (!res || res->nfs_resop4_u.opgetfh.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	GETFH4resok *fhresok = &res->nfs_resop4_u.opgetfh.GETFH4res_u.resok4;
+
+	if (fhresok->object.nfs_fh4_len == 0) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	if (fhresok->object.nfs_fh4_len > PS_MAX_FH_SIZE) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	memcpy(reply->child_fh, fhresok->object.nfs_fh4_val,
+	       fhresok->object.nfs_fh4_len);
+	reply->child_fh_len = fhresok->object.nfs_fh4_len;
+
+	ret = 0;
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
 int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
 			  uint32_t upstream_fh_len, uint32_t stateid_seqid,
 			  const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],

@@ -9,6 +9,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "ps_state.h" /* PS_MAX_FH_SIZE */
+
 struct mds_session; /* lib/nfs4/client/ec_client.h */
 
 /*
@@ -244,5 +246,82 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
  * inner pointer.
  */
 void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply);
+
+/*
+ * OPEN forwarder input.  Scope is deliberately narrow: CLAIM_NULL +
+ * OPEN4_NOCREATE (the open a client issues before the first READ of
+ * an existing file).  CREATE-mode, CLAIM_PREVIOUS, delegation
+ * claims, and attr-carrying opens are separate slices; the hook in
+ * nfs4_op_open rejects them with NFS4ERR_NOTSUPP so they surface
+ * explicitly rather than quietly misbehaving.
+ *
+ * Owner handling: `owner_clientid` is the client's clientid4 and
+ * `owner_data` is the client's opaque open-owner bytes.  Both get
+ * forwarded verbatim as the open_owner4 on the MDS-facing compound.
+ * An end client that reuses the same (clientid, owner) tuple sees
+ * the MDS's idempotent OPEN semantics -- no local open-owner table
+ * on the PS.  Future work (credential forwarding slice 2e-iv-c) may
+ * wrap owner_data to disambiguate multiple end-clients that collide.
+ */
+struct ps_proxy_open_request {
+	uint32_t seqid;
+	uint32_t share_access;
+	uint32_t share_deny;
+	uint64_t owner_clientid;
+	const uint8_t *owner_data;
+	uint32_t owner_data_len;
+};
+
+/*
+ * OPEN forwarder result.  Caller-owned and self-contained (no heap
+ * allocations) -- copies out of the compound's XDR buffers so the
+ * caller does not have to track compound lifetime.
+ *
+ *   stateid_seqid / stateid_other -- the MDS's open stateid4.  The
+ *     hook returns this verbatim to the end client so the client's
+ *     next READ / WRITE / CLOSE rides with a stateid the MDS will
+ *     recognise.
+ *   rflags -- MDS's OPEN4resok.rflags, forwarded so the client gets
+ *     OPEN4_RESULT_LOCKTYPE_POSIX etc. straight from the MDS.
+ *   child_fh / child_fh_len -- MDS's GETFH for the opened object.
+ *
+ * Fields we deliberately drop for this slice: change_info4,
+ * attrset (CREATE-only), delegation.  The hook synthesises
+ * defaults for those (no delegation, zero cinfo, empty attrset).
+ */
+struct ps_proxy_open_reply {
+	uint32_t stateid_seqid;
+	uint8_t stateid_other[PS_STATEID_OTHER_SIZE];
+	uint32_t rflags;
+	uint8_t child_fh[PS_MAX_FH_SIZE];
+	uint32_t child_fh_len;
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(parent_fh) + OPEN(CLAIM_NULL,
+ * NOCREATE) + GETFH on `ms`, copy the MDS's reply into `reply`.
+ *
+ * `name` is a single UTF-8 component (no '/') of `name_len` bytes;
+ * it becomes the CLAIM_NULL.file in the outgoing OPEN.
+ *
+ * On any failure `reply` is left zero-initialised and nothing
+ * durable ran on the upstream.
+ *
+ * NOT_NOW_BROWN_COW: credential forwarding (2e-iv-c) and the OPEN
+ * shapes listed above.
+ *
+ * Returns:
+ *   0         success; reply populated
+ *   -EINVAL   NULL args / zero lengths / owner_data_len > reasonable cap
+ *   -E2BIG    parent_fh_len > PS_MAX_FH_SIZE
+ *   -ENOSPC   child FH larger than PS_MAX_FH_SIZE (MDS misbehaving)
+ *   -ENOENT   upstream returned NFS4ERR_NOENT
+ *   -errno    RPC / compound failure, or any other per-op status
+ */
+int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *parent_fh,
+			  uint32_t parent_fh_len, const char *name,
+			  uint32_t name_len,
+			  const struct ps_proxy_open_request *req,
+			  struct ps_proxy_open_reply *reply);
 
 #endif /* _REFFS_PS_PROXY_OPS_H */

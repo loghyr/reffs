@@ -544,6 +544,115 @@ START_TEST(test_read_reply_free_populated)
 }
 END_TEST
 
+/*
+ * OPEN forwarder arg validation.  Live-MDS coverage is CI
+ * integration; these guard the shortcuts before any compound is
+ * built.
+ */
+START_TEST(test_forward_open_null_args)
+{
+	uint8_t parent[] = { 0x01, 0x02 };
+	struct ps_proxy_open_request req = { 0 };
+	struct ps_proxy_open_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_open(NULL, parent, sizeof(parent),
+					       "f", 1, &req, &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_open((void *)1, NULL, sizeof(parent),
+					       "f", 1, &req, &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
+					       sizeof(parent), NULL, 1, &req,
+					       &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
+					       sizeof(parent), "f", 1, NULL,
+					       &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
+					       sizeof(parent), "f", 1, &req,
+					       NULL),
+			 -EINVAL);
+}
+END_TEST
+
+/*
+ * Zero-length parent FH / name are programmer errors: the MDS would
+ * reject either; the primitive refuses to send.
+ */
+START_TEST(test_forward_open_zero_lengths)
+{
+	uint8_t parent[] = { 0x01 };
+	struct ps_proxy_open_request req = { 0 };
+	struct ps_proxy_open_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent, 0, "f", 1,
+					       &req, &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
+					       sizeof(parent), "f", 0, &req,
+					       &reply),
+			 -EINVAL);
+}
+END_TEST
+
+/*
+ * Parent FH larger than PS_MAX_FH_SIZE short-circuits before the
+ * compound is built.
+ */
+START_TEST(test_forward_open_parent_fh_too_big)
+{
+	uint8_t big_parent[PS_MAX_FH_SIZE + 1];
+	struct ps_proxy_open_request req = { 0 };
+	struct ps_proxy_open_reply reply;
+
+	memset(big_parent, 0xAB, sizeof(big_parent));
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_open((void *)1, big_parent,
+					       sizeof(big_parent), "f", 1, &req,
+					       &reply),
+			 -E2BIG);
+}
+END_TEST
+
+/*
+ * Owner_data bounds: NULL+len>0 and oversized both surface as
+ * -EINVAL before the compound is built.  Protects the upstream from
+ * amplification by a malformed end-client OPEN.
+ */
+START_TEST(test_forward_open_owner_bounds)
+{
+	uint8_t parent[] = { 0x01 };
+	struct ps_proxy_open_request req = { 0 };
+	struct ps_proxy_open_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+
+	/* owner_data_len > 0 with NULL owner_data. */
+	req.owner_data = NULL;
+	req.owner_data_len = 16;
+	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
+					       sizeof(parent), "f", 1, &req,
+					       &reply),
+			 -EINVAL);
+
+	/* Oversized owner_data_len (> PS_PROXY_OPEN_OWNER_MAX = 512). */
+	uint8_t dummy[1] = { 0 };
+
+	req.owner_data = dummy;
+	req.owner_data_len = 4096;
+	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
+					       sizeof(parent), "f", 1, &req,
+					       &reply),
+			 -EINVAL);
+}
+END_TEST
+
 static Suite *ps_proxy_ops_suite(void)
 {
 	Suite *s = suite_create("ps_proxy_ops");
@@ -572,6 +681,10 @@ static Suite *ps_proxy_ops_suite(void)
 	tcase_add_test(tc, test_forward_read_fh_too_big);
 	tcase_add_test(tc, test_read_reply_free_null_safe);
 	tcase_add_test(tc, test_read_reply_free_populated);
+	tcase_add_test(tc, test_forward_open_null_args);
+	tcase_add_test(tc, test_forward_open_zero_lengths);
+	tcase_add_test(tc, test_forward_open_parent_fh_too_big);
+	tcase_add_test(tc, test_forward_open_owner_bounds);
 	suite_add_tcase(s, tc);
 	return s;
 }
