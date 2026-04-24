@@ -73,6 +73,41 @@ START_TEST(test_defaults_role)
 }
 END_TEST
 
+/*
+ * probe_port defaults to the XDR-pinned PROBE_PORT (20490).  Config
+ * surface lets operators override it so two reffsd on the same host
+ * can pick non-conflicting admin ports.
+ */
+START_TEST(test_defaults_probe_port)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+	ck_assert_int_eq(cfg.probe_port, 20490);
+}
+END_TEST
+
+/*
+ * [server] probe_port overrides the default; covers the same TOML
+ * path as test_load_server_port but for the probe listener.
+ */
+START_TEST(test_load_server_probe_port)
+{
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[server]\nprobe_port = 30491\n");
+
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_int_eq(cfg.probe_port, 30491);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
 START_TEST(test_defaults_minor_versions)
 {
 	struct reffs_config cfg;
@@ -683,6 +718,7 @@ Suite *config_suite(void)
 
 	TCase *tc_defaults = tcase_create("defaults");
 	tcase_add_test(tc_defaults, test_defaults_port);
+	tcase_add_test(tc_defaults, test_defaults_probe_port);
 	tcase_add_test(tc_defaults, test_defaults_role);
 	tcase_add_test(tc_defaults, test_defaults_minor_versions);
 	tcase_add_test(tc_defaults, test_defaults_grace_period);
@@ -696,6 +732,7 @@ Suite *config_suite(void)
 	TCase *tc_load = tcase_create("load");
 	tcase_add_test(tc_load, test_load_empty_file);
 	tcase_add_test(tc_load, test_load_server_port);
+	tcase_add_test(tc_load, test_load_server_probe_port);
 	tcase_add_test(tc_load, test_load_server_role_mds);
 	tcase_add_test(tc_load, test_load_server_role_ds_erasure);
 	tcase_add_test(tc_load, test_load_server_tls);

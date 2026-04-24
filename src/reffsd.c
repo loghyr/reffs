@@ -900,9 +900,14 @@ int main(int argc, char *argv[])
 	io_add_listener(lsnr_ipv6_nfs_fd);
 	io_request_accept_op(lsnr_ipv6_nfs_fd, NULL, rc);
 
-	lsnr_ipv4_probe_fd = io_lsnr_setup_ipv4(PROBE_PORT);
+	/*
+	 * [server] probe_port overrides the XDR-default PROBE_PORT so
+	 * two reffsd instances on the same host can pick non-conflicting
+	 * admin ports.  Default in parse_server sets it to PROBE_PORT.
+	 */
+	lsnr_ipv4_probe_fd = io_lsnr_setup_ipv4(cfg.probe_port);
 	if (lsnr_ipv4_probe_fd < 0) {
-		LOG("Failed to setup listener on port %d", PROBE_PORT);
+		LOG("Failed to setup listener on port %d", cfg.probe_port);
 		exit_code = 1;
 		goto out;
 	}
@@ -911,9 +916,9 @@ int main(int argc, char *argv[])
 	io_add_listener(lsnr_ipv4_probe_fd);
 	io_request_accept_op(lsnr_ipv4_probe_fd, NULL, rc);
 
-	lsnr_ipv6_probe_fd = io_lsnr_setup_ipv6(PROBE_PORT);
+	lsnr_ipv6_probe_fd = io_lsnr_setup_ipv6(cfg.probe_port);
 	if (lsnr_ipv6_probe_fd < 0) {
-		LOG("Failed to setup listener on port %d", PROBE_PORT);
+		LOG("Failed to setup listener on port %d", cfg.probe_port);
 		exit_code = 1;
 		goto out;
 	}

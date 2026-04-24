@@ -155,6 +155,7 @@ struct reffs_proxy_mds_config {
 struct reffs_config {
 	/* [server] */
 	uint16_t port;
+	uint16_t probe_port; /* internal admin/probe listener, default PROBE_PORT */
 	char bind[REFFS_CONFIG_MAX_BIND]; /* "*" = all IPv4 + IPv6 */
 	enum reffs_role role;
 	int minor_versions[2]; /* NFSv4 minor versions to advertise */

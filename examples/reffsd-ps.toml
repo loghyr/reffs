@@ -23,6 +23,10 @@
 # here means the native listener has no pNFS obligations of its
 # own -- probe ops and per-listener admin still work.
 port            = 2050
+# probe_port defaults to 20490 (PROBE_PORT in probe1_xdr.x).  When
+# running the PS alongside an upstream MDS on the same host, pick a
+# non-default port so the two reffsd instances don't fight for 20490.
+probe_port      = 20491
 bind            = "*"
 role            = "standalone"
 minor_versions  = [1, 2]

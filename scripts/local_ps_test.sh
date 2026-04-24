@@ -37,8 +37,12 @@ REFFSD="$BUILD_DIR/src/reffsd"
 
 # -- Ports (non-default so the test coexists with a running reffs) --
 MDS_PORT=12049
+MDS_PROBE_PORT=20490
 PS_NATIVE_PORT=12050
 PS_PROXY_PORT=14098
+# MDS and PS run on the same host, so the PS's native probe listener
+# must pick a port other than the XDR-default PROBE_PORT (20490).
+PS_PROBE_PORT=20491
 
 # -- Paths --
 RUN_DIR="/reffs_data/ps_test"
@@ -127,6 +131,7 @@ sudo mkdir -p "$MDS_MOUNT" "$PS_MOUNT"
 cat >"$MDS_CONFIG" <<EOF
 [server]
 port           = $MDS_PORT
+probe_port     = $MDS_PROBE_PORT
 bind           = "*"
 role           = "standalone"
 minor_versions = [1, 2]
@@ -150,6 +155,7 @@ EOF
 cat >"$PS_CONFIG" <<EOF
 [server]
 port           = $PS_NATIVE_PORT
+probe_port     = $PS_PROBE_PORT
 bind           = "*"
 role           = "standalone"
 minor_versions = [1, 2]

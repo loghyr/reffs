@@ -101,6 +101,13 @@ void reffs_config_defaults(struct reffs_config *cfg)
 
 	/* [server] */
 	cfg->port = 2049;
+	/*
+	 * probe_port default is the XDR-pinned PROBE_PORT (20490); the
+	 * XDR header is not pulled into this file to keep the config
+	 * layer independent of the generated wire types, so the default
+	 * is hardcoded here and matches lib/xdr/probe1_xdr.x.
+	 */
+	cfg->probe_port = 20490;
 	strncpy(cfg->bind, "*", sizeof(cfg->bind) - 1);
 	cfg->role = REFFS_ROLE_STANDALONE;
 	cfg->minor_versions[0] = 1;
@@ -155,6 +162,10 @@ static void parse_server(struct reffs_config *cfg, toml_table_t *srv)
 	d = toml_int_in(srv, "port");
 	if (d.ok)
 		cfg->port = (uint16_t)d.u.i;
+
+	d = toml_int_in(srv, "probe_port");
+	if (d.ok)
+		cfg->probe_port = (uint16_t)d.u.i;
 
 	d = toml_string_in(srv, "bind");
 	if (d.ok) {
