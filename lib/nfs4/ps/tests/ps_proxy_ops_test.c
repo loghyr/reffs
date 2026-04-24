@@ -147,6 +147,85 @@ START_TEST(test_reply_free_populated)
 }
 END_TEST
 
+/*
+ * LOOKUP-forwarding arg validation.  Live-MDS coverage is deferred
+ * to CI integration + slice 2e-iv-e (the op-handler hook).
+ */
+START_TEST(test_forward_lookup_null_args)
+{
+	uint8_t parent[] = { 0x11, 0x22, 0x33 };
+	uint8_t child[PS_MAX_FH_SIZE];
+	uint32_t child_len = 0;
+	const char *name = "file.txt";
+	uint32_t name_len = 8;
+
+	ck_assert_int_eq(ps_proxy_forward_lookup(NULL, parent, sizeof(parent),
+						 name, name_len, child,
+						 sizeof(child), &child_len),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_lookup(
+				 (void *)1, NULL, sizeof(parent), name,
+				 name_len, child, sizeof(child), &child_len),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_lookup(
+				 (void *)1, parent, sizeof(parent), NULL,
+				 name_len, child, sizeof(child), &child_len),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_lookup(
+				 (void *)1, parent, sizeof(parent), name,
+				 name_len, NULL, sizeof(child), &child_len),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
+						 sizeof(parent), name, name_len,
+						 child, sizeof(child), NULL),
+			 -EINVAL);
+}
+END_TEST
+
+/*
+ * Zero-length parent FH / name are protocol violations -- the MDS
+ * would reject either; the primitive refuses to send.
+ */
+START_TEST(test_forward_lookup_zero_lengths)
+{
+	uint8_t parent[] = { 0x01 };
+	uint8_t child[PS_MAX_FH_SIZE];
+	uint32_t child_len = 0;
+	const char *name = "x";
+
+	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent, 0, name, 1,
+						 child, sizeof(child),
+						 &child_len),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
+						 sizeof(parent), name, 0, child,
+						 sizeof(child), &child_len),
+			 -EINVAL);
+}
+END_TEST
+
+/*
+ * Parent FH larger than NFS4's 128-byte cap short-circuits before
+ * the compound is built.  Matches the other PS primitives
+ * (ps_sb_binding_alloc, ps_state_set_mds_root_fh,
+ * ps_proxy_forward_getattr).
+ */
+START_TEST(test_forward_lookup_parent_fh_too_big)
+{
+	uint8_t big_parent[PS_MAX_FH_SIZE + 1];
+	uint8_t child[PS_MAX_FH_SIZE];
+	uint32_t child_len = 0;
+	const char *name = "x";
+
+	memset(big_parent, 0xAB, sizeof(big_parent));
+
+	ck_assert_int_eq(ps_proxy_forward_lookup(
+				 (void *)1, big_parent, sizeof(big_parent),
+				 name, 1, child, sizeof(child), &child_len),
+			 -E2BIG);
+}
+END_TEST
+
 static Suite *ps_proxy_ops_suite(void)
 {
 	Suite *s = suite_create("ps_proxy_ops");
@@ -157,6 +236,9 @@ static Suite *ps_proxy_ops_suite(void)
 	tcase_add_test(tc, test_forward_getattr_fh_too_big);
 	tcase_add_test(tc, test_reply_free_null_safe);
 	tcase_add_test(tc, test_reply_free_populated);
+	tcase_add_test(tc, test_forward_lookup_null_args);
+	tcase_add_test(tc, test_forward_lookup_zero_lengths);
+	tcase_add_test(tc, test_forward_lookup_parent_fh_too_big);
 	suite_add_tcase(s, tc);
 	return s;
 }

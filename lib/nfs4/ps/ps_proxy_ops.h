@@ -92,4 +92,54 @@ int ps_proxy_forward_getattr(struct mds_session *ms, const uint8_t *upstream_fh,
  */
 void ps_proxy_getattr_reply_free(struct ps_proxy_getattr_reply *reply);
 
+/*
+ * Forward a LOOKUP of a single pathname component against the
+ * upstream MDS.  Sends SEQUENCE + PUTFH(parent_fh) + LOOKUP(name)
+ * + GETFH on `ms` and copies the child's upstream FH into the
+ * caller-supplied buffer.
+ *
+ * `name` is a bare component (no '/') UTF-8 string of `name_len`
+ * bytes; callers that need multi-component resolution either walk
+ * components themselves or use ps_discovery_walk_path (already
+ * batched for the discovery path).  Single-component here matches
+ * what nfs4_op_lookup sees from a client PUTFH + LOOKUP compound.
+ *
+ * On success, copies up to `child_fh_buf_len` bytes into
+ * `child_fh_buf` and writes the actual length to
+ * `*child_fh_len_out`.  If the upstream returns a larger FH than
+ * the buffer, returns -ENOSPC and leaves `*child_fh_len_out`
+ * untouched -- no partial copy.
+ *
+ * A missing child component on the upstream returns -ENOENT so
+ * the caller can surface NFS4ERR_NOENT to the client without
+ * having to re-parse a generic -EREMOTEIO.  Other NFS4ERR_*
+ * statuses collapse to -EREMOTEIO.
+ *
+ * NOT_NOW_BROWN_COW (slice 2e-iv-e integration):
+ *
+ *   - No caller wiring yet.  The nfs4_op_lookup hook that drives
+ *     this primitive lands in the next slice, because it also
+ *     needs to decide where the per-child upstream FH gets
+ *     stashed on the resulting local inode (sidecar map on the
+ *     SB vs. new pointer on struct inode).  That design decision
+ *     is the bulk of slice 2e-iv-e.
+ *
+ *   - Credential forwarding + FSID remap are still 2e-iv-c
+ *     concerns and apply identically to LOOKUP-forwarding.
+ *
+ * Returns:
+ *   0        success -- child FH copied, length in *child_fh_len_out
+ *   -EINVAL  ms / parent_fh / name / child_fh_buf / child_fh_len_out
+ *            is NULL, or parent_fh_len / name_len is 0
+ *   -E2BIG   parent_fh_len > PS_MAX_FH_SIZE
+ *   -ENOSPC  child_fh_buf_len is smaller than the returned FH
+ *   -ENOENT  upstream returned NFS4ERR_NOENT (missing child)
+ *   -errno   RPC / compound failure, or any other per-op status
+ */
+int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
+			    uint32_t parent_fh_len, const char *name,
+			    uint32_t name_len, uint8_t *child_fh_buf,
+			    uint32_t child_fh_buf_len,
+			    uint32_t *child_fh_len_out);
+
 #endif /* _REFFS_PS_PROXY_OPS_H */

@@ -149,3 +149,115 @@ out:
 	mds_compound_fini(&mc);
 	return ret;
 }
+
+int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
+			    uint32_t parent_fh_len, const char *name,
+			    uint32_t name_len, uint8_t *child_fh_buf,
+			    uint32_t child_fh_buf_len,
+			    uint32_t *child_fh_len_out)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
+
+	if (!ms || !parent_fh || parent_fh_len == 0 || !name || name_len == 0 ||
+	    !child_fh_buf || !child_fh_len_out)
+		return -EINVAL;
+	if (parent_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
+	/* SEQUENCE + PUTFH + LOOKUP + GETFH = 4 ops */
+	ret = mds_compound_init(&mc, 4, "ps-proxy-lookup");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	/* Same const-cast rationale as ps_proxy_forward_getattr. */
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)parent_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = parent_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_LOOKUP);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.oplookup.objname.utf8string_val = (char *)name;
+	slot->nfs_argop4_u.oplookup.objname.utf8string_len = name_len;
+
+	slot = mds_compound_add_op(&mc, OP_GETFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret)
+		goto out;
+
+	/* PUTFH status at index 1. */
+	res = mds_compound_result(&mc, 1);
+	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	/*
+	 * LOOKUP status at index 2.  Surface NFS4ERR_NOENT as -ENOENT
+	 * so the caller can return NFS4ERR_NOENT to the client without
+	 * re-parsing a generic -EREMOTEIO; any other non-OK status
+	 * collapses to -EREMOTEIO (network / protocol / state
+	 * violation on the upstream -- not actionable at this layer).
+	 */
+	res = mds_compound_result(&mc, 2);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	if (res->nfs_resop4_u.oplookup.status != NFS4_OK) {
+		if (res->nfs_resop4_u.oplookup.status == NFS4ERR_NOENT)
+			ret = -ENOENT;
+		else
+			ret = -EREMOTEIO;
+		goto out;
+	}
+
+	/* GETFH result at index 3. */
+	res = mds_compound_result(&mc, 3);
+	if (!res || res->nfs_resop4_u.opgetfh.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	GETFH4resok *fhresok = &res->nfs_resop4_u.opgetfh.GETFH4res_u.resok4;
+
+	/*
+	 * Zero-length FH would be a broken MDS response (no usable
+	 * anchor); matches the guard in ps_discovery_fetch_root_fh.
+	 */
+	if (fhresok->object.nfs_fh4_len == 0) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	if (fhresok->object.nfs_fh4_len > child_fh_buf_len) {
+		ret = -ENOSPC;
+		goto out;
+	}
+
+	memcpy(child_fh_buf, fhresok->object.nfs_fh4_val,
+	       fhresok->object.nfs_fh4_len);
+	*child_fh_len_out = fhresok->object.nfs_fh4_len;
+	ret = 0;
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
