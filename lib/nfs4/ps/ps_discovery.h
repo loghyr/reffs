@@ -77,4 +77,46 @@ int ps_discovery_walk_path(struct mds_session *ms, const char *path,
 			   uint8_t *fh_buf, uint32_t buf_size,
 			   uint32_t *fh_len_out);
 
+struct ps_listener_state; /* forward: from ps_state.h */
+
+/*
+ * Run one discovery pass for a listener.  Chains:
+ *
+ *   MOUNT3 EXPORT proc against pls_upstream  -> list of paths
+ *   per-path LOOKUP walk via pls_session     -> upstream FH
+ *   ps_state_add_export()                    -> cache entry
+ *
+ * Individual per-path failures (walk returning -ENOENT, add
+ * hitting PS_MAX_EXPORTS_PER_LISTENER, etc.) are logged and
+ * skipped so a single broken export does not drop every other
+ * path on the same upstream.  MOUNT3 enumeration failure
+ * propagates -- the coordinator has nothing to do if the
+ * upstream's mountd is unreachable.
+ *
+ * Preconditions (caller must satisfy):
+ *   pls->pls_upstream is set (non-empty)
+ *   pls->pls_session is non-NULL (reffsd opened it at startup)
+ *
+ * Returns:
+ *   0        success (>= 0 exports cached; individual failures
+ *            are only logged)
+ *   -EINVAL  pls is NULL, or pls_upstream is empty
+ *   -ENOTCONN  pls_session is NULL
+ *   -errno   MOUNT3 RPC / call failure (nothing cached)
+ *
+ * Safe to call more than once for on-demand re-discovery; the
+ * add-export path is update-in-place on duplicate paths.
+ *
+ * NOT_NOW_BROWN_COW: concurrent callers on the same listener.
+ * ps_state_add_export() documents a single-writer discipline
+ * (.claude/design/proxy-server.md).  Today the only caller is
+ * reffsd startup (single-threaded), so the invariant holds.  Slice
+ * 2e-iii-d will enable LOOKUP-triggered re-discovery from op-handler
+ * worker threads; that slice MUST add a per-listener mutex held
+ * across ps_discovery_run()'s body so two writers cannot race on
+ * pls_exports[] / pls_nexports.  Tracked here so the gap is not
+ * discovered at 2e-iii-d integration time.
+ */
+int ps_discovery_run(const struct ps_listener_state *pls);
+
 #endif /* _REFFS_PS_DISCOVERY_H */

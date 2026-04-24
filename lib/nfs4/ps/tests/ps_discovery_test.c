@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "ps_discovery.h"
+#include "ps_state.h"
 
 /*
  * The happy-path walker requires a live MDS session (CI integration
@@ -113,6 +114,55 @@ START_TEST(test_walk_rejects_long_component)
 }
 END_TEST
 
+/*
+ * ps_discovery_run arg validation: NULL pls short-circuits to
+ * -EINVAL before any MOUNT3 or compound attempt.  No network
+ * traffic, safe without a live upstream.
+ */
+START_TEST(test_run_rejects_null_pls)
+{
+	ck_assert_int_eq(ps_discovery_run(NULL), -EINVAL);
+}
+END_TEST
+
+/*
+ * Empty pls_upstream means the listener is configured without an
+ * upstream address (legal config; nothing to discover).  Coordinator
+ * short-circuits at the prereq check rather than asking MOUNT3 to
+ * resolve "" via the portmapper.
+ */
+START_TEST(test_run_rejects_empty_upstream)
+{
+	struct ps_listener_state pls;
+
+	memset(&pls, 0, sizeof(pls));
+	pls.pls_listener_id = 1;
+	/* pls_upstream left as all-zeros (empty string). */
+	/* pls_session value irrelevant -- upstream check runs first. */
+
+	ck_assert_int_eq(ps_discovery_run(&pls), -EINVAL);
+}
+END_TEST
+
+/*
+ * NULL pls_session is a programming error -- reffsd is expected to
+ * open the MDS session before calling the coordinator.  Return a
+ * distinct sentinel (-ENOTCONN) so the caller's logs can tell this
+ * apart from the "no upstream configured" case above.
+ */
+START_TEST(test_run_rejects_null_session)
+{
+	struct ps_listener_state pls;
+
+	memset(&pls, 0, sizeof(pls));
+	pls.pls_listener_id = 1;
+	strncpy(pls.pls_upstream, "127.0.0.1", sizeof(pls.pls_upstream) - 1);
+	/* pls_session left NULL. */
+
+	ck_assert_int_eq(ps_discovery_run(&pls), -ENOTCONN);
+}
+END_TEST
+
 static Suite *ps_discovery_suite(void)
 {
 	Suite *s = suite_create("ps_discovery");
@@ -122,6 +172,9 @@ static Suite *ps_discovery_suite(void)
 	tcase_add_test(tc, test_walk_rejects_relative_path);
 	tcase_add_test(tc, test_walk_rejects_excessive_depth);
 	tcase_add_test(tc, test_walk_rejects_long_component);
+	tcase_add_test(tc, test_run_rejects_null_pls);
+	tcase_add_test(tc, test_run_rejects_empty_upstream);
+	tcase_add_test(tc, test_run_rejects_null_session);
 	suite_add_tcase(s, tc);
 	return s;
 }

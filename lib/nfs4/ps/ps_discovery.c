@@ -8,13 +8,17 @@
 #endif
 
 #include <errno.h>
+#include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "nfsv42_xdr.h"
 
 #include "ec_client.h"
 #include "ps_discovery.h"
+#include "ps_mount_client.h"
+#include "ps_state.h"
 
 int ps_discovery_fetch_root_fh(struct mds_session *ms, uint8_t *fh_buf,
 			       uint32_t buf_size, uint32_t *fh_len_out)
@@ -286,4 +290,69 @@ int ps_discovery_walk_path(struct mds_session *ms, const char *path,
 out:
 	mds_compound_fini(&mc);
 	return ret;
+}
+
+int ps_discovery_run(const struct ps_listener_state *pls)
+{
+	struct ps_export_entry *entries = NULL;
+	size_t n = 0;
+	unsigned int ok = 0;
+	unsigned int fail = 0;
+	int ret;
+
+	if (!pls || pls->pls_upstream[0] == '\0')
+		return -EINVAL;
+	if (!pls->pls_session)
+		return -ENOTCONN;
+
+	ret = ps_mount_fetch_exports(pls->pls_upstream, &entries, &n);
+	if (ret < 0) {
+		/*
+		 * stderr rather than LOG() on purpose: reffs/log.h's LOG
+		 * pulls in libreffs_utils which transitively brings in the
+		 * full urcu/xxhash/fs dep graph, blowing up the unit-test
+		 * link.  The rest of the ps/ subsystem follows the same
+		 * "caller does structured logging" discipline; reffsd.c
+		 * will turn these lines into proper LOG events when it
+		 * consumes the coordinator in slice 2e-iii-d.
+		 */
+		fprintf(stderr,
+			"ps[%u]: MOUNT3 export enumeration against %s "
+			"failed: %d\n",
+			pls->pls_listener_id, pls->pls_upstream, ret);
+		return ret;
+	}
+
+	for (size_t i = 0; i < n; i++) {
+		uint8_t fh[PS_MAX_FH_SIZE];
+		uint32_t fh_len = 0;
+		int walk_r;
+		int add_r;
+
+		walk_r = ps_discovery_walk_path(pls->pls_session,
+						entries[i].path, fh, sizeof(fh),
+						&fh_len);
+		if (walk_r < 0) {
+			fprintf(stderr, "ps[%u]: walk of %s failed: %d\n",
+				pls->pls_listener_id, entries[i].path, walk_r);
+			fail++;
+			continue;
+		}
+
+		add_r = ps_state_add_export(pls->pls_listener_id,
+					    entries[i].path, fh, fh_len);
+		if (add_r < 0) {
+			fprintf(stderr, "ps[%u]: add export %s failed: %d\n",
+				pls->pls_listener_id, entries[i].path, add_r);
+			fail++;
+			continue;
+		}
+		ok++;
+	}
+
+	ps_mount_free_exports(entries);
+
+	fprintf(stderr, "ps[%u]: discovered %zu exports (%u ok, %u failed)\n",
+		pls->pls_listener_id, n, ok, fail);
+	return 0;
 }
