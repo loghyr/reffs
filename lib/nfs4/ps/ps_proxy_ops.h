@@ -6,6 +6,7 @@
 #ifndef _REFFS_PS_PROXY_OPS_H
 #define _REFFS_PS_PROXY_OPS_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 struct mds_session; /* lib/nfs4/client/ec_client.h */
@@ -141,5 +142,45 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 			    uint32_t name_len, uint8_t *child_fh_buf,
 			    uint32_t child_fh_buf_len,
 			    uint32_t *child_fh_len_out);
+
+/*
+ * Minimum attrs extracted from a forwarded GETATTR reply.  Exactly
+ * what ps_lookup_materialize needs to distinguish a directory from
+ * a regular file and establish an initial mode on the new inode.
+ * Other attrs (size, times, identity) are lazily populated by the
+ * next real GETATTR the client issues, which the forwarding path
+ * already handles in full via ps_proxy_forward_getattr.
+ */
+struct ps_proxy_attrs_min {
+	bool have_type; /* FATTR4_TYPE (bit 1) present in reply */
+	uint32_t type; /* nfs_ftype4 value, valid only if have_type */
+	bool have_mode; /* FATTR4_MODE (bit 33) present in reply */
+	uint32_t mode; /* mode4 payload, valid only if have_mode */
+};
+
+/*
+ * Parse a fattr4 reply (as returned by ps_proxy_forward_getattr in
+ * `attrmask` + `attr_vals`) into ps_proxy_attrs_min.  Only FATTR4_TYPE
+ * (RFC 8881 S5.8.1 bit 1) and FATTR4_MODE (RFC 8881 S5.8.2.15 bit 33)
+ * are recognised; any other bit set in attrmask returns -ENOTSUP
+ * because advancing past an unknown attribute would require the full
+ * size table and this parser is deliberately minimal.
+ *
+ * Framing is strict: attribute values appear in ascending bit order,
+ * TYPE and MODE each occupy 4 bytes big-endian (RFC 8881 S3.1),
+ * and the cursor must reach attr_vals_len exactly at end.  A zero-
+ * length attrmask paired with a zero-length attr_vals is legal and
+ * returns an empty ps_proxy_attrs_min with both have_* false.
+ *
+ * Returns:
+ *   0        success -- `out` populated; have_* reflect which bits
+ *            were present in the reply
+ *   -EINVAL  NULL args, truncated buffer, trailing bytes, or mask
+ *            non-empty with attr_vals empty (framing mismatch)
+ *   -ENOTSUP attrmask contains a bit this parser does not handle
+ */
+int ps_proxy_parse_attrs_min(const uint32_t *attrmask, uint32_t attrmask_len,
+			     const uint8_t *attr_vals, uint32_t attr_vals_len,
+			     struct ps_proxy_attrs_min *out);
 
 #endif /* _REFFS_PS_PROXY_OPS_H */

@@ -8,6 +8,7 @@
 #endif
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -260,4 +261,110 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 out:
 	mds_compound_fini(&mc);
 	return ret;
+}
+
+/*
+ * RFC 8881 S5.8.1 attribute numbers.  Hard-coded rather than
+ * pulled from nfsv42_xdr.h to keep this parser self-contained --
+ * the point of the minimum parser is that it does not depend on
+ * the fattr4 C type definitions; it walks the wire bytes
+ * directly.  If RFC 8881 ever renumbers these (it won't), the
+ * parser's tests catch the mismatch.
+ */
+#define PS_PROXY_FATTR4_TYPE_BIT 1
+#define PS_PROXY_FATTR4_MODE_BIT 33
+
+static uint32_t ps_proxy_be32_load(const uint8_t *p)
+{
+	return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+	       ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+static bool ps_proxy_bitmap_test(const uint32_t *attrmask,
+				 uint32_t attrmask_len, uint32_t bit)
+{
+	uint32_t word = bit / 32;
+	uint32_t off = bit % 32;
+
+	if (word >= attrmask_len)
+		return false;
+	return (attrmask[word] & (1u << off)) != 0;
+}
+
+int ps_proxy_parse_attrs_min(const uint32_t *attrmask, uint32_t attrmask_len,
+			     const uint8_t *attr_vals, uint32_t attr_vals_len,
+			     struct ps_proxy_attrs_min *out)
+{
+	if (!out)
+		return -EINVAL;
+	if (attrmask_len > 0 && !attrmask)
+		return -EINVAL;
+	if (attr_vals_len > 0 && !attr_vals)
+		return -EINVAL;
+
+	memset(out, 0, sizeof(*out));
+
+	/*
+	 * Empty reply: attrmask and attr_vals both zero-length is the
+	 * "server supports nothing we asked for" case.  Return cleanly;
+	 * caller sees have_type == have_mode == false.
+	 */
+	if (attrmask_len == 0 && attr_vals_len == 0)
+		return 0;
+
+	/*
+	 * Defensive: attrmask_len * 32 must fit in uint32_t so the bit
+	 * counter does not truncate.  The on-wire cap (RPC record size
+	 * / 4) is far below this; reject rather than silently walk a
+	 * subset of the mask.
+	 */
+	if (attrmask_len > UINT32_MAX / 32)
+		return -EINVAL;
+
+	uint32_t cursor = 0;
+	uint32_t total_bits = attrmask_len * 32;
+
+	for (uint32_t bit = 0; bit < total_bits; bit++) {
+		if (!ps_proxy_bitmap_test(attrmask, attrmask_len, bit))
+			continue;
+
+		switch (bit) {
+		case PS_PROXY_FATTR4_TYPE_BIT:
+			if (cursor + 4 > attr_vals_len)
+				return -EINVAL;
+			out->type = ps_proxy_be32_load(attr_vals + cursor);
+			out->have_type = true;
+			cursor += 4;
+			break;
+		case PS_PROXY_FATTR4_MODE_BIT:
+			if (cursor + 4 > attr_vals_len)
+				return -EINVAL;
+			out->mode = ps_proxy_be32_load(attr_vals + cursor);
+			out->have_mode = true;
+			cursor += 4;
+			break;
+		default:
+			/*
+			 * Bit we do not know how to size-or-decode.
+			 * Returning -ENOTSUP rather than best-effort
+			 * skip keeps the parser safe: the caller
+			 * requested FATTR4_TYPE | FATTR4_MODE, and
+			 * any other bit in the reply means either
+			 * the MDS added attrs we did not ask for
+			 * (protocol violation) or our request mask
+			 * drifted from what this parser handles.
+			 */
+			return -ENOTSUP;
+		}
+	}
+
+	/*
+	 * Trailing bytes after the last decoded attr indicate a
+	 * framing mismatch -- the reply claims fewer attrs than it
+	 * carries data for, which is malformed.
+	 */
+	if (cursor != attr_vals_len)
+		return -EINVAL;
+
+	return 0;
 }

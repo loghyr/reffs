@@ -226,6 +226,173 @@ START_TEST(test_forward_lookup_parent_fh_too_big)
 }
 END_TEST
 
+/*
+ * Parser: empty reply -- a server that supports none of the requested
+ * attrs returns attrmask_len=0 and attr_vals_len=0.  have_* must stay
+ * false so the caller falls back to placeholders.
+ */
+START_TEST(test_parse_attrs_empty)
+{
+	struct ps_proxy_attrs_min out;
+
+	ck_assert_int_eq(ps_proxy_parse_attrs_min(NULL, 0, NULL, 0, &out), 0);
+	ck_assert(!out.have_type);
+	ck_assert(!out.have_mode);
+}
+END_TEST
+
+/*
+ * Parser: FATTR4_TYPE alone (bit 1 -- word 0, bit mask 0x2).
+ * attr_vals carries a single nfs_ftype4 big-endian (4 bytes).
+ * NF4DIR = 2 per RFC 8881 S3.2.
+ */
+START_TEST(test_parse_attrs_type_only)
+{
+	uint32_t mask[] = { 0x00000002 };
+	uint8_t vals[] = { 0x00, 0x00, 0x00, 0x02 };
+	struct ps_proxy_attrs_min out;
+
+	ck_assert_int_eq(
+		ps_proxy_parse_attrs_min(mask, 1, vals, sizeof(vals), &out), 0);
+	ck_assert(out.have_type);
+	ck_assert_uint_eq(out.type, 2u);
+	ck_assert(!out.have_mode);
+}
+END_TEST
+
+/*
+ * Parser: FATTR4_MODE alone (bit 33 -- word 1, bit mask 0x2).
+ * attr_vals carries mode4 big-endian (4 bytes).  0o644 = 0x1A4.
+ */
+START_TEST(test_parse_attrs_mode_only)
+{
+	uint32_t mask[] = { 0x00000000, 0x00000002 };
+	uint8_t vals[] = { 0x00, 0x00, 0x01, 0xA4 };
+	struct ps_proxy_attrs_min out;
+
+	ck_assert_int_eq(
+		ps_proxy_parse_attrs_min(mask, 2, vals, sizeof(vals), &out), 0);
+	ck_assert(!out.have_type);
+	ck_assert(out.have_mode);
+	ck_assert_uint_eq(out.mode, 0x1A4u);
+}
+END_TEST
+
+/*
+ * Parser: both TYPE and MODE, in ascending bit order -- type first
+ * (bit 1) then mode (bit 33).  This is the request shape slice
+ * 2e-iv-h-ii will use on every LOOKUP forward.
+ */
+START_TEST(test_parse_attrs_type_and_mode)
+{
+	uint32_t mask[] = { 0x00000002, 0x00000002 };
+	uint8_t vals[] = {
+		0x00, 0x00, 0x00, 0x02, /* NF4DIR */
+		0x00, 0x00, 0x01, 0xED /* 0o755 */
+	};
+	struct ps_proxy_attrs_min out;
+
+	ck_assert_int_eq(
+		ps_proxy_parse_attrs_min(mask, 2, vals, sizeof(vals), &out), 0);
+	ck_assert(out.have_type);
+	ck_assert_uint_eq(out.type, 2u);
+	ck_assert(out.have_mode);
+	ck_assert_uint_eq(out.mode, 0x1EDu);
+}
+END_TEST
+
+/*
+ * Parser: unsupported bit -> -ENOTSUP.  FATTR4_CHANGE (bit 3) is a
+ * real attribute but would require 8 bytes of decode we do not
+ * carry.  Proves the parser refuses rather than mis-advancing the
+ * cursor on unknown attrs.
+ */
+START_TEST(test_parse_attrs_unsupported_bit)
+{
+	uint32_t mask[] = { 0x00000008 }; /* bit 3 */
+	uint8_t vals[] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+	struct ps_proxy_attrs_min out;
+
+	ck_assert_int_eq(ps_proxy_parse_attrs_min(mask, 1, vals, sizeof(vals),
+						  &out),
+			 -ENOTSUP);
+}
+END_TEST
+
+/*
+ * Parser: truncated attr_vals -> -EINVAL.  Mask claims TYPE is
+ * present but attr_vals has only 3 bytes (not enough for a 4-byte
+ * nfs_ftype4).
+ */
+START_TEST(test_parse_attrs_short_buffer)
+{
+	uint32_t mask[] = { 0x00000002 };
+	uint8_t vals[] = { 0x00, 0x00, 0x00 };
+	struct ps_proxy_attrs_min out;
+
+	ck_assert_int_eq(ps_proxy_parse_attrs_min(mask, 1, vals, sizeof(vals),
+						  &out),
+			 -EINVAL);
+}
+END_TEST
+
+/*
+ * Parser: trailing bytes beyond the last decoded attr -> -EINVAL.
+ * Mask claims only TYPE but attr_vals carries 8 bytes -- framing
+ * mismatch, reject rather than silently accept.
+ */
+START_TEST(test_parse_attrs_trailing_bytes)
+{
+	uint32_t mask[] = { 0x00000002 };
+	uint8_t vals[] = { 0, 0, 0, 2, 0, 0, 0, 0 };
+	struct ps_proxy_attrs_min out;
+
+	ck_assert_int_eq(ps_proxy_parse_attrs_min(mask, 1, vals, sizeof(vals),
+						  &out),
+			 -EINVAL);
+}
+END_TEST
+
+/*
+ * Parser: mask declares an attr is present but attr_vals is empty.
+ * Framing error the server never emits but a corrupted transport
+ * could -- the short-buffer branch trips on the first requested
+ * 4-byte decode and returns -EINVAL rather than reading past the
+ * end of attr_vals.
+ */
+START_TEST(test_parse_attrs_mask_set_no_values)
+{
+	uint32_t mask[] = { 0x00000002 };
+	struct ps_proxy_attrs_min out;
+
+	ck_assert_int_eq(ps_proxy_parse_attrs_min(mask, 1, NULL, 0, &out),
+			 -EINVAL);
+}
+END_TEST
+
+/*
+ * Parser: NULL out -> -EINVAL.  NULL attrmask with attrmask_len>0
+ * or NULL attr_vals with attr_vals_len>0 are also framing errors
+ * the caller should surface as -EINVAL rather than SEGV.
+ */
+START_TEST(test_parse_attrs_null_args)
+{
+	uint32_t mask[] = { 0x2 };
+	uint8_t vals[] = { 0, 0, 0, 2 };
+	struct ps_proxy_attrs_min out;
+
+	ck_assert_int_eq(ps_proxy_parse_attrs_min(mask, 1, vals, sizeof(vals),
+						  NULL),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_parse_attrs_min(NULL, 1, vals, sizeof(vals),
+						  &out),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_parse_attrs_min(mask, 1, NULL, sizeof(vals),
+						  &out),
+			 -EINVAL);
+}
+END_TEST
+
 static Suite *ps_proxy_ops_suite(void)
 {
 	Suite *s = suite_create("ps_proxy_ops");
@@ -239,6 +406,15 @@ static Suite *ps_proxy_ops_suite(void)
 	tcase_add_test(tc, test_forward_lookup_null_args);
 	tcase_add_test(tc, test_forward_lookup_zero_lengths);
 	tcase_add_test(tc, test_forward_lookup_parent_fh_too_big);
+	tcase_add_test(tc, test_parse_attrs_empty);
+	tcase_add_test(tc, test_parse_attrs_type_only);
+	tcase_add_test(tc, test_parse_attrs_mode_only);
+	tcase_add_test(tc, test_parse_attrs_type_and_mode);
+	tcase_add_test(tc, test_parse_attrs_unsupported_bit);
+	tcase_add_test(tc, test_parse_attrs_short_buffer);
+	tcase_add_test(tc, test_parse_attrs_trailing_bytes);
+	tcase_add_test(tc, test_parse_attrs_mask_set_no_values);
+	tcase_add_test(tc, test_parse_attrs_null_args);
 	suite_add_tcase(s, tc);
 	return s;
 }
