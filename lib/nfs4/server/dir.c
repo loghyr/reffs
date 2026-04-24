@@ -7,6 +7,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -31,6 +32,9 @@
 #include "reffs/time.h"
 #include "nfs4/trace/nfs4.h"
 #include "nfs4/changeid.h"
+
+#include "ps_inode.h"
+#include "ps_sb.h"
 
 uint32_t nfs4_op_lookup(struct compound *compound)
 {
@@ -96,14 +100,97 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 
 	child_de = dirent_load_child_by_name(compound->c_inode->i_dirent, name);
 	if (!child_de) {
-		*status = NFS4ERR_NOENT;
-		goto out;
+		/*
+		 * Proxy-SB fast path: if the parent lives on a proxy SB, the
+		 * child is not yet materialised locally -- forward the LOOKUP
+		 * upstream, then allocate a local dirent+inode for the
+		 * returned FH so subsequent ops in this compound (GETFH,
+		 * GETATTR, OPEN) operate on a real inode without another
+		 * round-trip.
+		 */
+		if (compound->c_inode->i_sb &&
+		    compound->c_inode->i_sb->sb_proxy_binding) {
+			const struct ps_sb_binding *binding =
+				compound->c_inode->i_sb->sb_proxy_binding;
+			uint8_t child_fh[PS_MAX_FH_SIZE];
+			uint32_t child_fh_len = 0;
+			int pret = ps_proxy_lookup_forward_for_inode(
+				compound->c_inode, args->objname.utf8string_val,
+				args->objname.utf8string_len, child_fh,
+				sizeof(child_fh), &child_fh_len);
+
+			if (pret == -ENOENT) {
+				*status = NFS4ERR_NOENT;
+				goto out;
+			}
+			if (pret == -ENOTCONN) {
+				/*
+				 * PS session is down; the startup-only
+				 * session model has no reconnect yet, so
+				 * NFS4ERR_DELAY matches the transient-
+				 * unavailability convention used on the
+				 * GETATTR hook.
+				 */
+				*status = NFS4ERR_DELAY;
+				goto out;
+			}
+			if (pret < 0) {
+				*status = errno_to_nfs4(pret, OP_LOOKUP);
+				goto out;
+			}
+
+			/*
+			 * Audit-log obligation (see proxy-server.md
+			 * "Audit logging"): the forwarded compound rides
+			 * on the PS session's credentials rather than the
+			 * end client's AUTH_SYS creds.  TRACE until slice
+			 * 2e-iv-c plumbs real credential forwarding.
+			 */
+			TRACE("proxy lookup: listener=%u parent_ino=%" PRIu64
+			      " name=%s (forwarded with PS creds)",
+			      binding->psb_listener_id,
+			      compound->c_inode->i_ino, name);
+
+			pret = ps_lookup_materialize(
+				compound->c_inode, args->objname.utf8string_val,
+				args->objname.utf8string_len, child_fh,
+				child_fh_len, &child_de, &child);
+			if (pret == -EEXIST) {
+				/*
+				 * A concurrent LOOKUP materialised the same
+				 * child between our forwarding RPC and the
+				 * alloc.  Re-find the dirent and fall through
+				 * to dirent_ensure_inode below (child stays
+				 * NULL in this branch).
+				 */
+				child_de = dirent_load_child_by_name(
+					compound->c_inode->i_dirent, name);
+				if (!child_de) {
+					*status = NFS4ERR_SERVERFAULT;
+					goto out;
+				}
+			} else if (pret < 0) {
+				*status = errno_to_nfs4(pret, OP_LOOKUP);
+				goto out;
+			}
+			/*
+			 * On success, child_de holds a ref (out parameter)
+			 * and child holds an active ref transferred from
+			 * inode_alloc.  The dirent_ensure_inode block below
+			 * is a no-op when child is already set.
+			 */
+		} else {
+			*status = NFS4ERR_NOENT;
+			goto out;
+		}
 	}
 
-	child = dirent_ensure_inode(child_de);
 	if (!child) {
-		*status = NFS4ERR_SERVERFAULT;
-		goto out;
+		child = dirent_ensure_inode(child_de);
+		if (!child) {
+			*status = NFS4ERR_SERVERFAULT;
+			goto out;
+		}
 	}
 
 	/*
