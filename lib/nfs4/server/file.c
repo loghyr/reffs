@@ -8,6 +8,7 @@
 #endif
 
 #include <errno.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -42,6 +43,11 @@
 #include "nfs4/client.h"
 #include "nfs4/cb.h"
 #include "nfs4/session.h"
+
+#include "ps_inode.h"
+#include "ps_proxy_ops.h"
+#include "ps_sb.h"
+#include "ps_state.h"
 
 /* Maximum bytes we'll service in a single READ or WRITE. */
 #define NFS4_MAX_RW_SIZE (1u << 20) /* 1 MiB */
@@ -1270,6 +1276,98 @@ uint32_t nfs4_op_read(struct compound *compound)
 
 	if (!S_ISREG(compound->c_inode->i_mode)) {
 		*status = NFS4ERR_INVAL;
+		goto out;
+	}
+
+	/*
+	 * Proxy-SB fast path: forward READ to upstream MDS without
+	 * consulting the local stateid / access-check machinery.  The
+	 * proxy SB holds no local state for this inode (no OPEN was
+	 * issued against the PS -- that's slice 2e-iv-j), so any
+	 * stateid-based checks here would over-reject.  The MDS does
+	 * its own stateid validation on the forwarded compound; if the
+	 * client's stateid is wrong, the MDS returns NFS4ERR_BAD_STATEID
+	 * and ps_proxy_forward_read surfaces it via -EREMOTEIO.
+	 */
+	if (compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding) {
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+		uint8_t upstream_fh[PS_MAX_FH_SIZE];
+		uint32_t upstream_fh_len = 0;
+
+		int fret = ps_inode_get_upstream_fh(compound->c_inode,
+						    upstream_fh,
+						    sizeof(upstream_fh),
+						    &upstream_fh_len);
+		if (fret < 0) {
+			/*
+			 * No upstream FH recorded -- either the LOOKUP
+			 * hook never materialised this inode (caller
+			 * handed us a stale FH) or i_storage_private
+			 * was not set.  Match the GETATTR hook's
+			 * convention: NFS4ERR_STALE so the client
+			 * re-resolves from its parent.
+			 */
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		/*
+		 * Clamp count to the server-side cap before forwarding;
+		 * the upstream MDS may have a smaller cap but will clamp
+		 * independently.  Better to pick the smaller of the two.
+		 */
+		count4 req_count = args->count;
+
+		if (req_count > NFS4_MAX_RW_SIZE)
+			req_count = NFS4_MAX_RW_SIZE;
+
+		TRACE("proxy read: listener=%u ino=%" PRIu64 " offset=%" PRIu64
+		      " count=%u (forwarded with PS creds)",
+		      binding->psb_listener_id, compound->c_inode->i_ino,
+		      args->offset, req_count);
+
+		struct ps_proxy_read_reply reply;
+
+		memset(&reply, 0, sizeof(reply));
+		/*
+		 * args->stateid.other is `char[12]` in the generated
+		 * XDR; cast to the uint8_t * the primitive takes.
+		 * Same signedness-cast rationale as the PUTFH
+		 * const-casts elsewhere in the forward path.
+		 */
+		fret = ps_proxy_forward_read(
+			pls->pls_session, upstream_fh, upstream_fh_len,
+			args->stateid.seqid,
+			(const uint8_t *)args->stateid.other, args->offset,
+			req_count, &reply);
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_READ);
+			goto out;
+		}
+
+		if (reply.data_len > 0) {
+			resok->data.data_val = calloc(reply.data_len, 1);
+			if (!resok->data.data_val) {
+				ps_proxy_read_reply_free(&reply);
+				*status = NFS4ERR_DELAY;
+				goto out;
+			}
+			memcpy(resok->data.data_val, reply.data,
+			       reply.data_len);
+			resok->data.data_len = reply.data_len;
+		}
+		resok->eof = reply.eof;
+		ps_proxy_read_reply_free(&reply);
 		goto out;
 	}
 
