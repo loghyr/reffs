@@ -434,6 +434,116 @@ START_TEST(test_parse_attrs_null_args)
 }
 END_TEST
 
+/*
+ * READ forwarder arg validation.  Live-MDS coverage is deferred to CI
+ * integration; these guard the shortcuts that fire before any
+ * compound is built.
+ */
+START_TEST(test_forward_read_null_args)
+{
+	uint8_t fh[] = { 0x11, 0x22 };
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0 };
+	struct ps_proxy_read_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_read(NULL, fh, sizeof(fh), 0, other,
+					       0, 4096, &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_read((void *)1, NULL, sizeof(fh), 0,
+					       other, 0, 4096, &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_read((void *)1, fh, sizeof(fh), 0,
+					       NULL, 0, 4096, &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_read((void *)1, fh, sizeof(fh), 0,
+					       other, 0, 4096, NULL),
+			 -EINVAL);
+}
+END_TEST
+
+/*
+ * Zero-length FH and zero count are programmer errors: the MDS would
+ * reject either; the primitive short-circuits locally.
+ */
+START_TEST(test_forward_read_zero_lengths)
+{
+	uint8_t fh[] = { 0x33 };
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0 };
+	struct ps_proxy_read_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_read((void *)1, fh, 0, 0, other, 0,
+					       4096, &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_read((void *)1, fh, sizeof(fh), 0,
+					       other, 0, 0, &reply),
+			 -EINVAL);
+}
+END_TEST
+
+/*
+ * FH lengths above PS_MAX_FH_SIZE short-circuit before the compound
+ * is built.  Matches the cap used by every other PS primitive.
+ */
+START_TEST(test_forward_read_fh_too_big)
+{
+	uint8_t big_fh[PS_MAX_FH_SIZE + 1];
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0 };
+	struct ps_proxy_read_reply reply;
+
+	memset(big_fh, 0xAB, sizeof(big_fh));
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_read((void *)1, big_fh,
+					       sizeof(big_fh), 0, other, 0,
+					       4096, &reply),
+			 -E2BIG);
+}
+END_TEST
+
+/*
+ * read_reply_free is NULL-safe and idempotent.  Mirrors the getattr-
+ * reply free helper contract.
+ */
+START_TEST(test_read_reply_free_null_safe)
+{
+	struct ps_proxy_read_reply reply = { 0 };
+
+	ps_proxy_read_reply_free(NULL);
+	ps_proxy_read_reply_free(&reply);
+
+	ck_assert_ptr_null(reply.data);
+	ck_assert_uint_eq(reply.data_len, 0);
+	ck_assert(!reply.eof);
+	ps_proxy_read_reply_free(&reply); /* idempotent */
+}
+END_TEST
+
+/*
+ * read_reply_free on a populated reply releases the data buffer and
+ * zeroes the struct.  LSan backstop catches a missing free if the
+ * helper ever stops releasing the field.
+ */
+START_TEST(test_read_reply_free_populated)
+{
+	struct ps_proxy_read_reply reply;
+
+	reply.data = calloc(64, 1);
+	ck_assert_ptr_nonnull(reply.data);
+	memset(reply.data, 0xAA, 64);
+	reply.data_len = 64;
+	reply.eof = true;
+
+	ps_proxy_read_reply_free(&reply);
+
+	ck_assert_ptr_null(reply.data);
+	ck_assert_uint_eq(reply.data_len, 0);
+	ck_assert(!reply.eof);
+}
+END_TEST
+
 static Suite *ps_proxy_ops_suite(void)
 {
 	Suite *s = suite_create("ps_proxy_ops");
@@ -457,6 +567,11 @@ static Suite *ps_proxy_ops_suite(void)
 	tcase_add_test(tc, test_parse_attrs_trailing_bytes);
 	tcase_add_test(tc, test_parse_attrs_mask_set_no_values);
 	tcase_add_test(tc, test_parse_attrs_null_args);
+	tcase_add_test(tc, test_forward_read_null_args);
+	tcase_add_test(tc, test_forward_read_zero_lengths);
+	tcase_add_test(tc, test_forward_read_fh_too_big);
+	tcase_add_test(tc, test_read_reply_free_null_safe);
+	tcase_add_test(tc, test_read_reply_free_populated);
 	suite_add_tcase(s, tc);
 	return s;
 }

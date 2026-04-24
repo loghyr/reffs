@@ -188,4 +188,61 @@ int ps_proxy_parse_attrs_min(const uint32_t *attrmask, uint32_t attrmask_len,
 			     const uint8_t *attr_vals, uint32_t attr_vals_len,
 			     struct ps_proxy_attrs_min *out);
 
+/*
+ * RFC 8881 stateid4.other is 12 bytes.  Mirrored here so callers can
+ * pass stateids without pulling nfsv42_xdr.h into headers that don't
+ * already include it.
+ */
+#define PS_STATEID_OTHER_SIZE 12
+
+/*
+ * Caller-owned result from ps_proxy_forward_read.  `data` is a heap
+ * buffer allocated inside the forward call (NULL when the MDS
+ * returned zero bytes); release via ps_proxy_read_reply_free()
+ * exactly once.  `eof` is the upstream's signal that the read
+ * reached end-of-file -- propagate verbatim to the client.
+ */
+struct ps_proxy_read_reply {
+	uint8_t *data;
+	uint32_t data_len;
+	bool eof;
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(upstream_fh) + READ on `ms`, then
+ * copy the MDS's payload into `reply`.  `stateid_seqid` + the 12-byte
+ * `stateid_other` make up a stateid4 on the wire; today the only
+ * caller passes the anonymous stateid (all-zeros) because OPEN
+ * forwarding has not landed yet and the anonymous stateid is the
+ * only one a client can legally use without a prior OPEN
+ * (RFC 8881 S8.2.3).
+ *
+ * On any failure `reply` fields are left zero-initialised and no
+ * buffer is allocated.
+ *
+ * NOT_NOW_BROWN_COW (slice 2e-iv-c): credential forwarding.  Today
+ * the compound rides on the PS session's credentials, not the end
+ * client's -- same caveat as the GETATTR / LOOKUP forwarders.
+ *
+ * Returns:
+ *   0        success; reply->data / data_len / eof populated
+ *   -EINVAL  ms / upstream_fh / stateid_other / reply NULL, or
+ *            upstream_fh_len / count is 0
+ *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
+ *   -ENOMEM  heap allocation failure
+ *   -errno   RPC / compound failure, or a non-OK per-op status
+ */
+int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
+			  uint32_t upstream_fh_len, uint32_t stateid_seqid,
+			  const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			  uint64_t offset, uint32_t count,
+			  struct ps_proxy_read_reply *reply);
+
+/*
+ * Release any buffer allocated by ps_proxy_forward_read into
+ * `reply` and zero the struct.  NULL-safe for the struct and the
+ * inner pointer.
+ */
+void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply);
+
 #endif /* _REFFS_PS_PROXY_OPS_H */

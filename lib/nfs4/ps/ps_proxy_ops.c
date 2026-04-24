@@ -427,3 +427,102 @@ int ps_proxy_parse_attrs_min(const uint32_t *attrmask, uint32_t attrmask_len,
 
 	return 0;
 }
+
+void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply)
+{
+	if (!reply)
+		return;
+	free(reply->data);
+	memset(reply, 0, sizeof(*reply));
+}
+
+int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
+			  uint32_t upstream_fh_len, uint32_t stateid_seqid,
+			  const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			  uint64_t offset, uint32_t count,
+			  struct ps_proxy_read_reply *reply)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
+
+	if (!ms || !upstream_fh || upstream_fh_len == 0 || !stateid_other ||
+	    !reply || count == 0)
+		return -EINVAL;
+	if (upstream_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
+	memset(reply, 0, sizeof(*reply));
+
+	/* SEQUENCE + PUTFH + READ = 3 ops */
+	ret = mds_compound_init(&mc, 3, "ps-proxy-read");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	/* Same const-cast rationale as ps_proxy_forward_getattr. */
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)upstream_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = upstream_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_READ);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	READ4args *ra = &slot->nfs_argop4_u.opread;
+
+	ra->stateid.seqid = stateid_seqid;
+	memcpy(ra->stateid.other, stateid_other, PS_STATEID_OTHER_SIZE);
+	ra->offset = offset;
+	ra->count = count;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret)
+		goto out;
+
+	/* PUTFH status at index 1. */
+	res = mds_compound_result(&mc, 1);
+	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	/* READ result at index 2. */
+	res = mds_compound_result(&mc, 2);
+	if (!res || res->nfs_resop4_u.opread.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	READ4resok *rresok = &res->nfs_resop4_u.opread.READ4res_u.resok4;
+
+	reply->eof = rresok->eof;
+	if (rresok->data.data_len > 0) {
+		reply->data = calloc(rresok->data.data_len, 1);
+		if (!reply->data) {
+			ret = -ENOMEM;
+			goto out_free_reply;
+		}
+		memcpy(reply->data, rresok->data.data_val,
+		       rresok->data.data_len);
+		reply->data_len = rresok->data.data_len;
+	}
+
+	ret = 0;
+	goto out;
+
+out_free_reply:
+	ps_proxy_read_reply_free(reply);
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
