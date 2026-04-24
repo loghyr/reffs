@@ -305,6 +305,19 @@ int ps_discovery_run(const struct ps_listener_state *pls)
 	if (!pls->pls_session)
 		return -ENOTCONN;
 
+	/*
+	 * Serialize concurrent discovery runs on the same listener.
+	 * Closes the single-writer gap flagged in slice 2e-iii-b: on-
+	 * demand re-discovery from op-handler workers is now safe
+	 * against two writers racing on pls_exports[] / pls_nexports.
+	 * Readers (op handlers calling ps_state_find_export) still use
+	 * the release/acquire atomics on ple_fh_len + pls_nexports and
+	 * do not block here.
+	 */
+	ret = ps_state_discovery_lock(pls->pls_listener_id);
+	if (ret < 0)
+		return ret;
+
 	ret = ps_mount_fetch_exports(pls->pls_upstream, &entries, &n);
 	if (ret < 0) {
 		/*
@@ -314,13 +327,13 @@ int ps_discovery_run(const struct ps_listener_state *pls)
 		 * link.  The rest of the ps/ subsystem follows the same
 		 * "caller does structured logging" discipline; reffsd.c
 		 * will turn these lines into proper LOG events when it
-		 * consumes the coordinator in slice 2e-iii-d.
+		 * consumes the coordinator in slice 2e-iii-e.
 		 */
 		fprintf(stderr,
 			"ps[%u]: MOUNT3 export enumeration against %s "
 			"failed: %d\n",
 			pls->pls_listener_id, pls->pls_upstream, ret);
-		return ret;
+		goto out;
 	}
 
 	for (size_t i = 0; i < n; i++) {
@@ -354,5 +367,9 @@ int ps_discovery_run(const struct ps_listener_state *pls)
 
 	fprintf(stderr, "ps[%u]: discovered %zu exports (%u ok, %u failed)\n",
 		pls->pls_listener_id, n, ok, fail);
-	return 0;
+	ret = 0;
+
+out:
+	ps_state_discovery_unlock(pls->pls_listener_id);
+	return ret;
 }

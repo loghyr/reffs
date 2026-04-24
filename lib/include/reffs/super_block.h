@@ -186,6 +186,20 @@ struct super_block {
 
 	/* Per-sb layout error statistics. */
 	struct reffs_layout_error_stats sb_layout_errors;
+
+	/*
+	 * Optional proxy-server binding.  NULL on every SB that was not
+	 * created by the PS subsystem; non-NULL on SBs backing a
+	 * [[proxy_mds]] upstream export.  Storage is opaque to lib/fs
+	 * (avoids pulling lib/nfs4/ps/ into fs's dependency graph) --
+	 * PS-land attaches a typed ps_sb_binding and a release callback
+	 * via super_block_set_proxy_binding(), and super_block_free()
+	 * invokes sb_proxy_binding_release() before tearing down other
+	 * fields.  Op-handler hot paths distinguish proxy vs native SBs
+	 * with a single NULL check on sb_proxy_binding.
+	 */
+	void *sb_proxy_binding;
+	void (*sb_proxy_binding_release)(void *);
 };
 
 struct super_block *super_block_alloc(uint64_t id, char *path,
@@ -241,6 +255,28 @@ const char *super_block_lifecycle_name(enum sb_lifecycle state);
  * Caller must super_block_put() when done.
  */
 struct super_block *super_block_find_mounted_on(struct reffs_dirent *de);
+
+/*
+ * Attach (or replace) a proxy-server binding on this SB.  `release`
+ * is invoked from super_block_free() with `binding` as its argument
+ * and is expected to tear down whatever the caller allocated; pass
+ * NULL for `release` if the binding is statically allocated.
+ *
+ * Passing binding == NULL (with release == NULL) clears any prior
+ * binding, releasing it first with the prior release hook -- used
+ * at unmount time before super_block_destroy().
+ *
+ * Replacing an existing binding releases the old one via its stored
+ * release hook before taking the new pointer, so callers do not
+ * need to detach + reattach on re-discovery.
+ *
+ * Callers MUST serialize concurrent invocations for the same SB.
+ * The PS subsystem enforces this via the per-listener
+ * pls_discovery_mutex held across discovery runs; no other
+ * in-tree caller exists today.
+ */
+void super_block_set_proxy_binding(struct super_block *sb, void *binding,
+				   void (*release)(void *));
 
 /*
  * Set per-client export policy rules.  Copies the rule array into

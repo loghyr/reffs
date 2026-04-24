@@ -467,6 +467,63 @@ START_TEST(test_add_export_full_table)
 }
 END_TEST
 
+/*
+ * Discovery mutex is initialised at register time and destroyable
+ * via fini.  A lock-unlock round-trip on a registered listener must
+ * succeed; a lock on an unknown id must return -ENOENT rather than
+ * blocking or dereferencing a bogus slot.
+ */
+START_TEST(test_discovery_lock_unlock)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+
+	ck_assert_int_eq(ps_state_discovery_lock(1), 0);
+	ck_assert_int_eq(ps_state_discovery_unlock(1), 0);
+
+	/* Same listener -- a second round-trip must work identically. */
+	ck_assert_int_eq(ps_state_discovery_lock(1), 0);
+	ck_assert_int_eq(ps_state_discovery_unlock(1), 0);
+}
+END_TEST
+
+/*
+ * Lock/unlock on an unregistered id returns -ENOENT.  Matches
+ * ps_state_set_session / ps_state_set_mds_root_fh conventions so
+ * callers can tell "no such listener" from "actual lock failure."
+ */
+START_TEST(test_discovery_lock_unknown_id)
+{
+	ck_assert_int_eq(ps_state_discovery_lock(42), -ENOENT);
+	ck_assert_int_eq(ps_state_discovery_unlock(42), -ENOENT);
+	ck_assert_int_eq(ps_state_discovery_lock(0), -ENOENT);
+}
+END_TEST
+
+/*
+ * fini after register + lock/unlock sequence runs cleanly -- the
+ * mutex is destroyable only when not held, so the lock/unlock
+ * pairing above is a prerequisite.  Implicitly verifies no slot
+ * escapes destruction when the registry is wiped.
+ */
+START_TEST(test_discovery_mutex_fini_clean)
+{
+	struct reffs_proxy_mds_config c1 = make_cfg(1, "10.0.0.5");
+	struct reffs_proxy_mds_config c2 = make_cfg(2, "10.0.0.6");
+
+	ck_assert_int_eq(ps_state_register(&c1), 0);
+	ck_assert_int_eq(ps_state_register(&c2), 0);
+
+	ck_assert_int_eq(ps_state_discovery_lock(1), 0);
+	ck_assert_int_eq(ps_state_discovery_unlock(1), 0);
+	ck_assert_int_eq(ps_state_discovery_lock(2), 0);
+	ck_assert_int_eq(ps_state_discovery_unlock(2), 0);
+
+	/* teardown fixture calls ps_state_fini -- must not assert. */
+}
+END_TEST
+
 static Suite *ps_state_suite(void)
 {
 	Suite *s = suite_create("ps_state");
@@ -493,6 +550,9 @@ static Suite *ps_state_suite(void)
 	tcase_add_test(tc, test_add_and_find_export);
 	tcase_add_test(tc, test_add_export_duplicate_path_updates);
 	tcase_add_test(tc, test_add_export_full_table);
+	tcase_add_test(tc, test_discovery_lock_unlock);
+	tcase_add_test(tc, test_discovery_lock_unknown_id);
+	tcase_add_test(tc, test_discovery_mutex_fini_clean);
 	suite_add_tcase(s, tc);
 	return s;
 }

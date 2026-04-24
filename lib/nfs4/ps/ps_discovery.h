@@ -105,17 +105,9 @@ struct ps_listener_state; /* forward: from ps_state.h */
  *   -errno   MOUNT3 RPC / call failure (nothing cached)
  *
  * Safe to call more than once for on-demand re-discovery; the
- * add-export path is update-in-place on duplicate paths.
- *
- * NOT_NOW_BROWN_COW: concurrent callers on the same listener.
- * ps_state_add_export() documents a single-writer discipline
- * (.claude/design/proxy-server.md).  Today the only caller is
- * reffsd startup (single-threaded), so the invariant holds.  Slice
- * 2e-iii-d will enable LOOKUP-triggered re-discovery from op-handler
- * worker threads; that slice MUST add a per-listener mutex held
- * across ps_discovery_run()'s body so two writers cannot race on
- * pls_exports[] / pls_nexports.  Tracked here so the gap is not
- * discovered at 2e-iii-d integration time.
+ * add-export path is update-in-place on duplicate paths, and
+ * ps_discovery_run() serializes concurrent callers on the same
+ * listener via the pls_discovery_mutex held across its body.
  */
 int ps_discovery_run(const struct ps_listener_state *pls);
 

@@ -60,6 +60,21 @@ int ps_state_register(const struct reffs_proxy_mds_config *cfg)
 	pls->pls_upstream_port = cfg->mds_port;
 	pls->pls_upstream_probe = cfg->mds_probe;
 
+	/*
+	 * Initialize the per-listener discovery mutex before publish so
+	 * any caller that acquire-loads pls_nlisteners and proceeds to
+	 * ps_state_discovery_lock() sees a fully constructed mutex.
+	 * Default attrs are fine -- no priority inheritance, no recursion.
+	 * Preserve the real POSIX errno (EAGAIN / EPERM / EINVAL / ENOMEM)
+	 * rather than flattening, so a future LOG line at the caller can
+	 * report something diagnostic.  The slot stays invisible because
+	 * pls_nlisteners has not been release-stored yet.
+	 */
+	int merr = pthread_mutex_init(&pls->pls_discovery_mutex, NULL);
+
+	if (merr != 0)
+		return -merr;
+
 	/* Publish: release-store pairs with acquire-load in ps_state_find. */
 	atomic_store_explicit(&ps_nlisteners, n + 1, memory_order_release);
 	return 0;
@@ -224,8 +239,41 @@ const struct ps_export *ps_state_find_export(uint32_t listener_id,
 	return NULL;
 }
 
+int ps_state_discovery_lock(uint32_t listener_id)
+{
+	struct ps_listener_state *pls = ps_listener_by_id(listener_id);
+
+	if (!pls)
+		return -ENOENT;
+	pthread_mutex_lock(&pls->pls_discovery_mutex);
+	return 0;
+}
+
+int ps_state_discovery_unlock(uint32_t listener_id)
+{
+	struct ps_listener_state *pls = ps_listener_by_id(listener_id);
+
+	if (!pls)
+		return -ENOENT;
+	pthread_mutex_unlock(&pls->pls_discovery_mutex);
+	return 0;
+}
+
 void ps_state_fini(void)
 {
+	/*
+	 * Destroy the per-listener discovery mutex for every slot that
+	 * was registered.  Readers that might still be in ps_state_find*
+	 * must be quiesced before fini runs (the same invariant the
+	 * table-level release-store establishes); destroying an
+	 * initialized mutex with no waiters is well-defined.
+	 */
+	unsigned int n =
+		atomic_load_explicit(&ps_nlisteners, memory_order_acquire);
+
+	for (unsigned int i = 0; i < n; i++)
+		pthread_mutex_destroy(&ps_listeners[i].pls_discovery_mutex);
+
 	atomic_store_explicit(&ps_nlisteners, 0, memory_order_release);
 	memset(ps_listeners, 0, sizeof(ps_listeners));
 }

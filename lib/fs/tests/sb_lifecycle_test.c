@@ -16,12 +16,14 @@
 #endif
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 
 #include <rpc/auth.h>
 #include <rpc/auth_unix.h>
 #include <check.h>
+#include <urcu.h>
 
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
@@ -311,6 +313,120 @@ START_TEST(test_root_sb_cannot_destroy)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Proxy binding release hook                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Counter-ref a release callback can bump.  Lives in the test so we
+ * can assert the hook fires exactly once on super_block destruction,
+ * regardless of the test's SB alloc/release order.
+ */
+static int proxy_binding_release_fired;
+
+static void count_release(void *binding)
+{
+	free(binding);
+	proxy_binding_release_fired++;
+}
+
+/*
+ * super_block_set_proxy_binding stashes an opaque pointer + release
+ * callback on the SB; super_block_free() must invoke the callback
+ * exactly once when the SB tears down.  This is the contract the
+ * proxy-server subsystem (lib/nfs4/ps/) relies on for binding
+ * lifetime and is the only user today.  Verified with a heap-
+ * allocated sentinel so LSan catches a missing release.
+ */
+START_TEST(test_sb_proxy_binding_release)
+{
+	struct super_block *sb =
+		super_block_alloc(200, "/proxy_test", REFFS_STORAGE_RAM, NULL);
+
+	ck_assert_ptr_nonnull(sb);
+
+	void *binding = calloc(1, 64);
+
+	ck_assert_ptr_nonnull(binding);
+
+	proxy_binding_release_fired = 0;
+	super_block_set_proxy_binding(sb, binding, count_release);
+
+	/* Fields are stashed verbatim -- no copy.  Compare the release
+	 * hook through a uintptr_t to avoid -Wpedantic complaints about
+	 * function-vs-data pointer comparison through check.h's void *.
+	 */
+	ck_assert_ptr_eq(sb->sb_proxy_binding, binding);
+	ck_assert_int_eq((uintptr_t)sb->sb_proxy_binding_release,
+			 (uintptr_t)count_release);
+
+	super_block_put(sb);
+
+	/*
+	 * put drops the last ref -> super_block_release -> call_rcu ->
+	 * super_block_free; the free path invokes the release hook.
+	 */
+	rcu_barrier();
+	ck_assert_int_eq(proxy_binding_release_fired, 1);
+}
+END_TEST
+
+/*
+ * Re-attaching a binding releases the old one first.  Lets the
+ * PS re-discovery path swap in a fresh binding without a separate
+ * detach step.  Two heap allocations: the first must be freed by
+ * the replace call; the second must be freed by super_block_put.
+ */
+START_TEST(test_sb_proxy_binding_replace)
+{
+	struct super_block *sb = super_block_alloc(201, "/proxy_replace",
+						   REFFS_STORAGE_RAM, NULL);
+
+	ck_assert_ptr_nonnull(sb);
+
+	void *first = calloc(1, 64);
+	void *second = calloc(1, 64);
+
+	ck_assert_ptr_nonnull(first);
+	ck_assert_ptr_nonnull(second);
+
+	proxy_binding_release_fired = 0;
+	super_block_set_proxy_binding(sb, first, count_release);
+	super_block_set_proxy_binding(sb, second, count_release);
+
+	/* The replace itself fires the release for `first`. */
+	ck_assert_int_eq(proxy_binding_release_fired, 1);
+	ck_assert_ptr_eq(sb->sb_proxy_binding, second);
+
+	super_block_put(sb);
+	rcu_barrier();
+
+	/* Total: first (at replace) + second (at SB free). */
+	ck_assert_int_eq(proxy_binding_release_fired, 2);
+}
+END_TEST
+
+/*
+ * A non-proxy SB (the common case) carries NULL binding + NULL
+ * release hook from the calloc path; super_block_free() must not
+ * invoke a NULL callback.  Regression guard against a future
+ * refactor forgetting the NULL check.
+ */
+START_TEST(test_sb_proxy_binding_absent_noop)
+{
+	struct super_block *sb =
+		super_block_alloc(202, "/no_binding", REFFS_STORAGE_RAM, NULL);
+
+	ck_assert_ptr_nonnull(sb);
+	ck_assert_ptr_null(sb->sb_proxy_binding);
+	ck_assert_int_eq((uintptr_t)sb->sb_proxy_binding_release, 0);
+
+	/* Must not crash. */
+	super_block_put(sb);
+	rcu_barrier();
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -354,6 +470,13 @@ static Suite *sb_lifecycle_suite(void)
 	tcase_add_checked_fixture(tc, fs_test_setup, fs_test_teardown);
 	tcase_add_test(tc, test_root_sb_cannot_unmount);
 	tcase_add_test(tc, test_root_sb_cannot_destroy);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("proxy_binding");
+	tcase_add_checked_fixture(tc, fs_test_setup, fs_test_teardown);
+	tcase_add_test(tc, test_sb_proxy_binding_release);
+	tcase_add_test(tc, test_sb_proxy_binding_replace);
+	tcase_add_test(tc, test_sb_proxy_binding_absent_noop);
 	suite_add_tcase(s, tc);
 
 	return s;

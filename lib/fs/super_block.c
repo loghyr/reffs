@@ -275,6 +275,17 @@ static void super_block_free(struct super_block *sb)
 
 	trace_fs_super_block(sb, __func__, __LINE__);
 
+	/*
+	 * Release the proxy-server binding (if any) before the backend
+	 * teardown so the PS-owned state goes away under the same lock
+	 * ordering the attach side used.  The callback is opaque here;
+	 * PS-land is the only registered provider today (ps_sb_binding_free).
+	 */
+	if (sb->sb_proxy_binding_release && sb->sb_proxy_binding)
+		sb->sb_proxy_binding_release(sb->sb_proxy_binding);
+	sb->sb_proxy_binding = NULL;
+	sb->sb_proxy_binding_release = NULL;
+
 	if (sb->sb_ops && sb->sb_ops->sb_free)
 		sb->sb_ops->sb_free(sb);
 
@@ -776,6 +787,26 @@ struct super_block *super_block_find_mounted_on(struct reffs_dirent *de)
 	rcu_read_unlock();
 
 	return sb;
+}
+
+void super_block_set_proxy_binding(struct super_block *sb, void *binding,
+				   void (*release)(void *))
+{
+	if (!sb)
+		return;
+
+	/*
+	 * Release the previous binding (if any) with its own stored
+	 * release callback before taking the new pointer.  This lets
+	 * the PS re-discovery path swap in a fresh binding without a
+	 * separate detach step, and keeps the "ownership == whoever
+	 * holds the pointer" invariant tight.
+	 */
+	if (sb->sb_proxy_binding_release && sb->sb_proxy_binding)
+		sb->sb_proxy_binding_release(sb->sb_proxy_binding);
+
+	sb->sb_proxy_binding = binding;
+	sb->sb_proxy_binding_release = release;
 }
 
 void super_block_set_client_rules(struct super_block *sb,

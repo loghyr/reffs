@@ -6,6 +6,7 @@
 #ifndef _REFFS_PS_STATE_H
 #define _REFFS_PS_STATE_H
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 
@@ -95,6 +96,18 @@ struct ps_listener_state {
 	 */
 	struct ps_export pls_exports[PS_MAX_EXPORTS_PER_LISTENER];
 	_Atomic uint32_t pls_nexports;
+
+	/*
+	 * Serializes discovery runs for this listener.  Held across the
+	 * whole body of ps_discovery_run() so two writers (reffsd startup
+	 * + an on-demand LOOKUP-triggered re-discovery) cannot race on
+	 * pls_exports[] / pls_nexports.  Initialized by ps_state_register
+	 * and destroyed by ps_state_fini; callers go through
+	 * ps_state_discovery_lock() / _unlock() rather than reaching
+	 * into the mutex directly so the "no lookup miss on the id"
+	 * invariant stays with the registry.
+	 */
+	pthread_mutex_t pls_discovery_mutex;
 };
 
 /*
@@ -157,6 +170,19 @@ int ps_state_set_session(uint32_t listener_id, struct mds_session *session);
  */
 int ps_state_set_mds_root_fh(uint32_t listener_id, const uint8_t *fh,
 			     uint32_t fh_len);
+
+/*
+ * Take (resp. release) the per-listener discovery mutex.  Used by
+ * ps_discovery_run() and any future on-demand re-discovery path to
+ * serialize writers on pls_exports[] while still letting readers
+ * (op handlers calling ps_state_find_export) proceed via the
+ * release/acquire atomics.  Returns:
+ *
+ *   0        success
+ *   -ENOENT  no listener with this id is registered
+ */
+int ps_state_discovery_lock(uint32_t listener_id);
+int ps_state_discovery_unlock(uint32_t listener_id);
 
 /*
  * Record a discovered upstream export on this listener.  Called by
