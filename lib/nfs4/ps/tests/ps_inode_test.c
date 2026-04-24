@@ -18,8 +18,10 @@
 
 #include <check.h>
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <urcu.h>
 
 #include "reffs/dirent.h"
@@ -30,6 +32,7 @@
 #include "reffs/super_block.h"
 
 #include "ps_inode.h"
+#include "ps_proxy_ops.h"
 #include "ps_sb.h"
 #include "ps_state.h"
 
@@ -289,7 +292,7 @@ START_TEST(test_lookup_forward_rejects_native_sb)
 	 */
 	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
 				 root->sb_root_inode, name, 8, child_fh,
-				 sizeof(child_fh), &child_len),
+				 sizeof(child_fh), &child_len, NULL, 0, NULL),
 			 -EINVAL);
 
 	super_block_put(root);
@@ -309,26 +312,26 @@ START_TEST(test_lookup_forward_bad_args)
 	struct super_block *sb = find_proxy_sb("/look_test");
 	struct inode *proxy_root = sb->sb_root_inode;
 
-	ck_assert_int_eq(
-		ps_proxy_lookup_forward_for_inode(NULL, "x", 1, child_fh,
-						  sizeof(child_fh), &child_len),
-		-EINVAL);
-	ck_assert_int_eq(
-		ps_proxy_lookup_forward_for_inode(proxy_root, NULL, 1, child_fh,
-						  sizeof(child_fh), &child_len),
-		-EINVAL);
-	ck_assert_int_eq(
-		ps_proxy_lookup_forward_for_inode(proxy_root, "x", 0, child_fh,
-						  sizeof(child_fh), &child_len),
-		-EINVAL);
-	ck_assert_int_eq(
-		ps_proxy_lookup_forward_for_inode(proxy_root, "x", 1, NULL,
-						  sizeof(child_fh), &child_len),
-		-EINVAL);
-	ck_assert_int_eq(
-		ps_proxy_lookup_forward_for_inode(proxy_root, "x", 1, child_fh,
-						  sizeof(child_fh), NULL),
-		-EINVAL);
+	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
+				 NULL, "x", 1, child_fh, sizeof(child_fh),
+				 &child_len, NULL, 0, NULL),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
+				 proxy_root, NULL, 1, child_fh,
+				 sizeof(child_fh), &child_len, NULL, 0, NULL),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
+				 proxy_root, "x", 0, child_fh, sizeof(child_fh),
+				 &child_len, NULL, 0, NULL),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
+				 proxy_root, "x", 1, NULL, sizeof(child_fh),
+				 &child_len, NULL, 0, NULL),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
+				 proxy_root, "x", 1, child_fh, sizeof(child_fh),
+				 NULL, NULL, 0, NULL),
+			 -EINVAL);
 
 	super_block_put(sb);
 	cleanup_proxy_sb("/look_test");
@@ -361,7 +364,7 @@ START_TEST(test_lookup_forward_no_session)
 	 */
 	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
 				 sb->sb_root_inode, "file", 4, child_fh,
-				 sizeof(child_fh), &child_len),
+				 sizeof(child_fh), &child_len, NULL, 0, NULL),
 			 -ENOTCONN);
 
 	super_block_put(sb);
@@ -392,8 +395,8 @@ START_TEST(test_materialize_creates_dirent_and_inode)
 	struct inode *child = NULL;
 
 	ck_assert_int_eq(ps_lookup_materialize(parent, "alice.txt", 9, child_fh,
-					       sizeof(child_fh), &child_de,
-					       &child),
+					       sizeof(child_fh), NULL,
+					       &child_de, &child),
 			 0);
 	ck_assert_ptr_nonnull(child_de);
 	ck_assert_ptr_nonnull(child);
@@ -444,14 +447,14 @@ START_TEST(test_materialize_rejects_duplicate)
 	struct inode *in1 = NULL;
 
 	ck_assert_int_eq(ps_lookup_materialize(parent, "dup", 3, fh_a,
-					       sizeof(fh_a), &de1, &in1),
+					       sizeof(fh_a), NULL, &de1, &in1),
 			 0);
 
 	struct reffs_dirent *de2 = NULL;
 	struct inode *in2 = NULL;
 
 	ck_assert_int_eq(ps_lookup_materialize(parent, "dup", 3, fh_b,
-					       sizeof(fh_b), &de2, &in2),
+					       sizeof(fh_b), NULL, &de2, &in2),
 			 -EEXIST);
 	ck_assert_ptr_null(de2);
 	ck_assert_ptr_null(in2);
@@ -478,7 +481,7 @@ START_TEST(test_materialize_rejects_native_sb)
 	ck_assert_ptr_nonnull(root);
 
 	ck_assert_int_eq(ps_lookup_materialize(root->sb_root_inode, "x", 1, fh,
-					       sizeof(fh), &de, &in),
+					       sizeof(fh), NULL, &de, &in),
 			 -EINVAL);
 
 	super_block_put(root);
@@ -509,31 +512,119 @@ START_TEST(test_materialize_rejects_bad_args)
 	struct inode *in = NULL;
 
 	ck_assert_int_eq(ps_lookup_materialize(NULL, "a", 1, fh, sizeof(fh),
-					       &de, &in),
+					       NULL, &de, &in),
 			 -EINVAL);
 	ck_assert_int_eq(ps_lookup_materialize(parent, NULL, 1, fh, sizeof(fh),
-					       &de, &in),
+					       NULL, &de, &in),
 			 -EINVAL);
 	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 0, fh, sizeof(fh),
-					       &de, &in),
+					       NULL, &de, &in),
 			 -EINVAL);
 	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, NULL, sizeof(fh),
-					       &de, &in),
+					       NULL, &de, &in),
 			 -EINVAL);
-	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, fh, 0, &de, &in),
-			 -EINVAL);
-	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, fh, sizeof(fh),
-					       NULL, &in),
+	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, fh, 0, NULL, &de,
+					       &in),
 			 -EINVAL);
 	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, fh, sizeof(fh),
-					       &de, NULL),
+					       NULL, NULL, &in),
+			 -EINVAL);
+	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, fh, sizeof(fh),
+					       NULL, &de, NULL),
 			 -EINVAL);
 	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, big, sizeof(big),
-					       &de, &in),
+					       NULL, &de, &in),
 			 -E2BIG);
 
 	super_block_put(sb);
 	cleanup_proxy_sb("/mat_args");
+}
+END_TEST
+
+/*
+ * Type promotion: when the caller supplies ps_proxy_attrs_min with
+ * have_type set to NF4DIR, materialise sets i_mode's type bits to
+ * S_IFDIR and initialises i_nlink to 2 (directory convention).
+ * Without this promotion, deep-path traversal via LOOKUP across a
+ * proxy SB trips on the S_ISDIR check in nfs4_op_lookup.
+ */
+START_TEST(test_materialize_promotes_directory_type)
+{
+	uint8_t bind_fh[] = { 0x55 };
+	uint8_t child_fh[] = { 0xAA, 0xBB, 0xCC };
+	struct ps_proxy_attrs_min attrs = {
+		.have_type = true,
+		.type = 2, /* NF4DIR */
+		.have_mode = true,
+		.mode = 0755,
+	};
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(g_pls, "/mat_type", bind_fh,
+						sizeof(bind_fh)),
+			 0);
+
+	struct super_block *sb = find_proxy_sb("/mat_type");
+	struct inode *parent = sb->sb_root_inode;
+	struct reffs_dirent *de = NULL;
+	struct inode *child = NULL;
+
+	ck_assert_int_eq(ps_lookup_materialize(parent, "subdir", 6, child_fh,
+					       sizeof(child_fh), &attrs, &de,
+					       &child),
+			 0);
+	ck_assert_ptr_nonnull(child);
+	ck_assert(S_ISDIR(child->i_mode));
+	ck_assert_uint_eq(child->i_mode & 07777, 0755u);
+	ck_assert_uint_eq(atomic_load_explicit(&child->i_nlink,
+					       memory_order_relaxed),
+			  2u);
+
+	inode_active_put(child);
+	dirent_put(de);
+	super_block_put(sb);
+	cleanup_proxy_sb("/mat_type");
+}
+END_TEST
+
+/*
+ * Type promotion: NF4REG with mode 0640 produces a regular file
+ * with nlink=1 and the requested permission bits.  Complements the
+ * directory case above.
+ */
+START_TEST(test_materialize_promotes_regular_type)
+{
+	uint8_t bind_fh[] = { 0x66 };
+	uint8_t child_fh[] = { 0x11 };
+	struct ps_proxy_attrs_min attrs = {
+		.have_type = true,
+		.type = 1, /* NF4REG */
+		.have_mode = true,
+		.mode = 0640,
+	};
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(g_pls, "/mat_reg", bind_fh,
+						sizeof(bind_fh)),
+			 0);
+
+	struct super_block *sb = find_proxy_sb("/mat_reg");
+	struct inode *parent = sb->sb_root_inode;
+	struct reffs_dirent *de = NULL;
+	struct inode *child = NULL;
+
+	ck_assert_int_eq(ps_lookup_materialize(parent, "hello.txt", 9, child_fh,
+					       sizeof(child_fh), &attrs, &de,
+					       &child),
+			 0);
+	ck_assert(S_ISREG(child->i_mode));
+	ck_assert_uint_eq(child->i_mode & 07777, 0640u);
+	ck_assert_uint_eq(atomic_load_explicit(&child->i_nlink,
+					       memory_order_relaxed),
+			  1u);
+
+	inode_active_put(child);
+	dirent_put(de);
+	super_block_put(sb);
+	cleanup_proxy_sb("/mat_reg");
 }
 END_TEST
 
@@ -554,6 +645,8 @@ static Suite *ps_inode_suite(void)
 	tcase_add_test(tc, test_materialize_rejects_duplicate);
 	tcase_add_test(tc, test_materialize_rejects_native_sb);
 	tcase_add_test(tc, test_materialize_rejects_bad_args);
+	tcase_add_test(tc, test_materialize_promotes_directory_type);
+	tcase_add_test(tc, test_materialize_promotes_regular_type);
 	suite_add_tcase(s, tc);
 	return s;
 }

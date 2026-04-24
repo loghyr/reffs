@@ -161,23 +161,62 @@ START_TEST(test_forward_lookup_null_args)
 
 	ck_assert_int_eq(ps_proxy_forward_lookup(NULL, parent, sizeof(parent),
 						 name, name_len, child,
-						 sizeof(child), &child_len),
+						 sizeof(child), &child_len,
+						 NULL, 0, NULL),
 			 -EINVAL);
-	ck_assert_int_eq(ps_proxy_forward_lookup(
-				 (void *)1, NULL, sizeof(parent), name,
-				 name_len, child, sizeof(child), &child_len),
+	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, NULL,
+						 sizeof(parent), name, name_len,
+						 child, sizeof(child),
+						 &child_len, NULL, 0, NULL),
 			 -EINVAL);
-	ck_assert_int_eq(ps_proxy_forward_lookup(
-				 (void *)1, parent, sizeof(parent), NULL,
-				 name_len, child, sizeof(child), &child_len),
-			 -EINVAL);
-	ck_assert_int_eq(ps_proxy_forward_lookup(
-				 (void *)1, parent, sizeof(parent), name,
-				 name_len, NULL, sizeof(child), &child_len),
+	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
+						 sizeof(parent), NULL, name_len,
+						 child, sizeof(child),
+						 &child_len, NULL, 0, NULL),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
 						 sizeof(parent), name, name_len,
-						 child, sizeof(child), NULL),
+						 NULL, sizeof(child),
+						 &child_len, NULL, 0, NULL),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
+						 sizeof(parent), name, name_len,
+						 child, sizeof(child), NULL,
+						 NULL, 0, NULL),
+			 -EINVAL);
+}
+END_TEST
+
+/*
+ * Attr-request / attrs_out consistency: a caller that asks for
+ * attrs must provide both the mask and the sink; either alone is a
+ * programmer bug the primitive rejects before hitting the compound.
+ */
+START_TEST(test_forward_lookup_attr_mismatch)
+{
+	uint8_t parent[] = { 0x01 };
+	uint8_t child[PS_MAX_FH_SIZE];
+	uint32_t child_len = 0;
+	uint32_t mask[] = { 0x2 };
+	struct ps_proxy_attrs_min attrs = { 0 };
+
+	/* mask provided, sink missing -> -EINVAL. */
+	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
+						 sizeof(parent), "x", 1, child,
+						 sizeof(child), &child_len,
+						 mask, 1, NULL),
+			 -EINVAL);
+	/* sink provided, mask missing -> -EINVAL. */
+	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
+						 sizeof(parent), "x", 1, child,
+						 sizeof(child), &child_len,
+						 NULL, 0, &attrs),
+			 -EINVAL);
+	/* mask+sink with zero mask length -> -EINVAL. */
+	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
+						 sizeof(parent), "x", 1, child,
+						 sizeof(child), &child_len,
+						 mask, 0, &attrs),
 			 -EINVAL);
 }
 END_TEST
@@ -195,11 +234,12 @@ START_TEST(test_forward_lookup_zero_lengths)
 
 	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent, 0, name, 1,
 						 child, sizeof(child),
-						 &child_len),
+						 &child_len, NULL, 0, NULL),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
 						 sizeof(parent), name, 0, child,
-						 sizeof(child), &child_len),
+						 sizeof(child), &child_len,
+						 NULL, 0, NULL),
 			 -EINVAL);
 }
 END_TEST
@@ -219,9 +259,10 @@ START_TEST(test_forward_lookup_parent_fh_too_big)
 
 	memset(big_parent, 0xAB, sizeof(big_parent));
 
-	ck_assert_int_eq(ps_proxy_forward_lookup(
-				 (void *)1, big_parent, sizeof(big_parent),
-				 name, 1, child, sizeof(child), &child_len),
+	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, big_parent,
+						 sizeof(big_parent), name, 1,
+						 child, sizeof(child),
+						 &child_len, NULL, 0, NULL),
 			 -E2BIG);
 }
 END_TEST
@@ -404,6 +445,7 @@ static Suite *ps_proxy_ops_suite(void)
 	tcase_add_test(tc, test_reply_free_null_safe);
 	tcase_add_test(tc, test_reply_free_populated);
 	tcase_add_test(tc, test_forward_lookup_null_args);
+	tcase_add_test(tc, test_forward_lookup_attr_mismatch);
 	tcase_add_test(tc, test_forward_lookup_zero_lengths);
 	tcase_add_test(tc, test_forward_lookup_parent_fh_too_big);
 	tcase_add_test(tc, test_parse_attrs_empty);

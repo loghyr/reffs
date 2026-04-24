@@ -112,11 +112,11 @@ int ps_inode_get_upstream_fh(const struct inode *inode, uint8_t *buf,
 	return 0;
 }
 
-int ps_proxy_lookup_forward_for_inode(const struct inode *parent,
-				      const char *name, uint32_t name_len,
-				      uint8_t *child_fh_buf,
-				      uint32_t child_fh_buf_len,
-				      uint32_t *child_fh_len_out)
+int ps_proxy_lookup_forward_for_inode(
+	const struct inode *parent, const char *name, uint32_t name_len,
+	uint8_t *child_fh_buf, uint32_t child_fh_buf_len,
+	uint32_t *child_fh_len_out, const uint32_t *attr_request,
+	uint32_t attr_request_len, struct ps_proxy_attrs_min *attrs_out)
 {
 	if (!parent || !name || name_len == 0 || !child_fh_buf ||
 	    !child_fh_len_out)
@@ -154,12 +154,51 @@ int ps_proxy_lookup_forward_for_inode(const struct inode *parent,
 	return ps_proxy_forward_lookup(pls->pls_session, parent_fh,
 				       parent_fh_len, name, name_len,
 				       child_fh_buf, child_fh_buf_len,
-				       child_fh_len_out);
+				       child_fh_len_out, attr_request,
+				       attr_request_len, attrs_out);
+}
+
+/*
+ * Map an NFSv4 nfs_ftype4 (RFC 8881 S3.2) to a POSIX S_IF* mode
+ * bit.  Returns 0 for unknown types so the caller keeps the
+ * placeholder mode rather than synthesising garbage.  NF4ATTRDIR
+ * / NF4NAMEDATTR have no POSIX equivalent; they also return 0 --
+ * a proxy that hosts named-attrs would need a type widening pass
+ * before reaching this layer.
+ */
+static uint32_t ps_ftype4_to_ifmt(uint32_t nf4_type)
+{
+	/*
+	 * Values hardcoded (rather than via NF4REG / NF4DIR constants
+	 * from nfsv42_xdr.h) to keep this file independent of the
+	 * generated wire XDR types -- the parser that supplies these
+	 * is byte-level and avoids the same dep.  RFC 8881 S3.2.
+	 */
+	switch (nf4_type) {
+	case 1: /* NF4REG */
+		return S_IFREG;
+	case 2: /* NF4DIR */
+		return S_IFDIR;
+	case 3: /* NF4BLK */
+		return S_IFBLK;
+	case 4: /* NF4CHR */
+		return S_IFCHR;
+	case 5: /* NF4LNK */
+		return S_IFLNK;
+	case 6: /* NF4SOCK */
+		return S_IFSOCK;
+	case 7: /* NF4FIFO */
+		return S_IFIFO;
+	default:
+		return 0;
+	}
 }
 
 int ps_lookup_materialize(struct inode *parent, const char *name,
 			  uint32_t name_len, const uint8_t *child_fh,
-			  uint32_t child_fh_len, struct reffs_dirent **out_de,
+			  uint32_t child_fh_len,
+			  const struct ps_proxy_attrs_min *attrs,
+			  struct reffs_dirent **out_de,
 			  struct inode **out_inode)
 {
 	if (!parent || !name || name_len == 0 || !child_fh ||
@@ -238,22 +277,40 @@ int ps_lookup_materialize(struct inode *parent, const char *name,
 	}
 
 	/*
-	 * Placeholder attributes.  The object type, size, timestamps, and
-	 * identity fields will be overwritten by the first forwarded
-	 * GETATTR on this inode -- we don't know them yet from LOOKUP
-	 * alone.  Mode 0644 is the safe default that makes the inode
-	 * immediately readable without access-check failures against
-	 * the end client before the first GETATTR lands.
+	 * Type + mode promotion.  If the caller fetched attrs alongside
+	 * the LOOKUP (slice 2e-iv-h piggyback), use them to set i_mode;
+	 * otherwise fall back to S_IFREG | 0644 as the safe default --
+	 * a regular file that is immediately readable without access-
+	 * check failures before the first real GETATTR lands.
 	 *
-	 * NOT_NOW_BROWN_COW: promote the object type (dir / symlink /
-	 * special) and fill real attrs by piggy-backing GETATTR on the
-	 * LOOKUP compound, or running a follow-up GETATTR before the
-	 * LOOKUP reply is returned.  Deferred to a later slice.
+	 * Size, times, and identity are still placeholders that the
+	 * first forwarded GETATTR on this inode will overwrite (that
+	 * hook is already end-to-end via ps_proxy_forward_getattr).
 	 */
+	uint32_t ifmt = S_IFREG;
+	uint32_t perm = 0644;
+
+	if (attrs && attrs->have_type) {
+		uint32_t mapped = ps_ftype4_to_ifmt(attrs->type);
+
+		if (mapped)
+			ifmt = mapped;
+	}
+	if (attrs && attrs->have_mode) {
+		/*
+		 * RFC 8881 S5.8.2.15 mode4 carries the POSIX permission
+		 * bits; the type lives in FATTR4_TYPE separately.  Mask
+		 * to 07777 so a server that stuffs extra bits in mode4
+		 * (setuid / setgid / sticky are in-band at 07000) still
+		 * gives us a clean permission slice.
+		 */
+		perm = attrs->mode & 07777;
+	}
+
 	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 0);
 	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 0);
-	inode->i_mode = S_IFREG | 0644;
-	inode->i_nlink = 1;
+	inode->i_mode = ifmt | perm;
+	inode->i_nlink = (ifmt == S_IFDIR) ? 2 : 1;
 	inode->i_size = 0;
 	inode->i_used = 0;
 	inode->i_parent_ino = parent->i_ino;

@@ -12,6 +12,7 @@
 
 struct inode; /* lib/include/reffs/inode.h */
 struct reffs_dirent; /* lib/include/reffs/dirent.h */
+struct ps_proxy_attrs_min; /* lib/nfs4/ps/ps_proxy_ops.h */
 
 /*
  * Per-inode proxy data.
@@ -76,29 +77,33 @@ int ps_inode_get_upstream_fh(const struct inode *inode, uint8_t *buf,
  * Forward a single-component LOOKUP against the upstream MDS,
  * anchored at `parent`'s upstream FH.  Thin composition of
  * ps_inode_get_upstream_fh (parent FH) + ps_state_find (listener
- * session) + ps_proxy_forward_lookup (the RPC).
+ * session) + ps_proxy_forward_lookup (the RPC).  When the caller
+ * supplies `attr_request` + `attrs_out`, a GETATTR rides on the
+ * same compound and the result is parsed into *attrs_out; pass
+ * all three NULL/zero to skip the GETATTR.
  *
- * The op-handler hook (slice 2e-iv-g) takes the child FH this
- * returns, allocates a local dirent+inode on the proxy SB, and
- * attaches the FH via ps_inode_set_upstream_fh.  That's where
- * the real NFSv4 LOOKUP semantics land.  This slice (2e-iv-f)
- * delivers only the forwarding wrapper so the hook can land
- * independently with its own review surface.
+ * The op-handler hook in nfs4_op_lookup takes the child FH this
+ * returns, feeds it plus the parsed attrs to ps_lookup_materialize,
+ * and returns the result to the client.
  *
  * Returns:
- *   0         success -- child FH copied, length in *child_fh_len_out
- *   -EINVAL   bad args, or parent is not on a proxy SB
+ *   0         success -- child FH copied, length in *child_fh_len_out;
+ *             attrs_out populated if requested
+ *   -EINVAL   bad args, parent is not on a proxy SB, or attr-request /
+ *             attrs_out consistency violated
  *   -ENOTCONN listener has no MDS session (transient; caller should
  *             surface NFS4ERR_DELAY)
  *   -ENOENT   upstream says the child doesn't exist
  *   -ENOSPC   child_fh_buf_len is smaller than the returned FH
+ *   -ENOTSUP  forwarded GETATTR reply contains an attr this parser
+ *             does not recognise
  *   -errno    transport / protocol failure
  */
-int ps_proxy_lookup_forward_for_inode(const struct inode *parent,
-				      const char *name, uint32_t name_len,
-				      uint8_t *child_fh_buf,
-				      uint32_t child_fh_buf_len,
-				      uint32_t *child_fh_len_out);
+int ps_proxy_lookup_forward_for_inode(
+	const struct inode *parent, const char *name, uint32_t name_len,
+	uint8_t *child_fh_buf, uint32_t child_fh_buf_len,
+	uint32_t *child_fh_len_out, const uint32_t *attr_request,
+	uint32_t attr_request_len, struct ps_proxy_attrs_min *attrs_out);
 
 /*
  * Materialize a local dirent + inode on a proxy SB for an upstream
@@ -113,9 +118,14 @@ int ps_proxy_lookup_forward_for_inode(const struct inode *parent,
  * stashed on the new inode so subsequent ops on this child can forward
  * to the upstream without a fresh LOOKUP round-trip.
  *
- * Object-type fix-up: this slice materializes every child as a regular
- * file with mode 0644.  LOOKUP alone does not reveal type; a follow-up
- * GETATTR fan-out (deferred) will promote directory/symlink/etc.
+ * `attrs` is an optional type + mode hint harvested from the forwarded
+ * GETATTR that rides on the same LOOKUP compound (slice 2e-iv-h).  When
+ * `attrs->have_type` is set, the new inode's mode gets the matching
+ * S_IFDIR / S_IFLNK / etc. (and i_nlink starts at 2 for directories).
+ * When `attrs->have_mode` is set, the permission bits come from there
+ * (masked to 07777).  Pass NULL to fall back to the S_IFREG | 0644
+ * placeholder -- subsequent GETATTRs on the new inode forward upstream
+ * and patch the attrs in full.
  *
  * On success, the out parameters carry live refs that the caller MUST
  * release:
@@ -132,7 +142,9 @@ int ps_proxy_lookup_forward_for_inode(const struct inode *parent,
  */
 int ps_lookup_materialize(struct inode *parent, const char *name,
 			  uint32_t name_len, const uint8_t *child_fh,
-			  uint32_t child_fh_len, struct reffs_dirent **out_de,
+			  uint32_t child_fh_len,
+			  const struct ps_proxy_attrs_min *attrs,
+			  struct reffs_dirent **out_de,
 			  struct inode **out_inode);
 
 #endif /* _REFFS_PS_INODE_H */

@@ -34,6 +34,7 @@
 #include "nfs4/changeid.h"
 
 #include "ps_inode.h"
+#include "ps_proxy_ops.h"
 #include "ps_sb.h"
 
 uint32_t nfs4_op_lookup(struct compound *compound)
@@ -114,10 +115,23 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 				compound->c_inode->i_sb->sb_proxy_binding;
 			uint8_t child_fh[PS_MAX_FH_SIZE];
 			uint32_t child_fh_len = 0;
+			/*
+			 * Request FATTR4_TYPE | FATTR4_MODE on the same
+			 * compound so ps_lookup_materialize can promote the
+			 * new inode off the S_IFREG placeholder and a second
+			 * LOOKUP into a proxied directory succeeds without
+			 * a round-trip to refresh the type.  Bits per RFC
+			 * 8881 S5.8.1: TYPE=1 (word 0, mask 0x2), MODE=33
+			 * (word 1, mask 0x2).
+			 */
+			static const uint32_t attr_req[] = { 0x2u, 0x2u };
+			struct ps_proxy_attrs_min attrs = { 0 };
+
 			int pret = ps_proxy_lookup_forward_for_inode(
 				compound->c_inode, args->objname.utf8string_val,
 				args->objname.utf8string_len, child_fh,
-				sizeof(child_fh), &child_fh_len);
+				sizeof(child_fh), &child_fh_len, attr_req, 2,
+				&attrs);
 
 			if (pret == -ENOENT) {
 				*status = NFS4ERR_NOENT;
@@ -132,6 +146,28 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 				 * GETATTR hook.
 				 */
 				*status = NFS4ERR_DELAY;
+				goto out;
+			}
+			if (pret == -ENOTSUP) {
+				/*
+				 * The upstream GETATTR returned an attr
+				 * ps_proxy_parse_attrs_min does not know
+				 * how to decode.  The compound-level
+				 * translation falls through errno_to_nfs4
+				 * to NFS4ERR_SERVERFAULT; LOG so operators
+				 * can see when the parser drifts from
+				 * what the MDS emits (request mask here
+				 * is TYPE|MODE, so any extra attr is an
+				 * MDS bug or a parser gap -- both worth
+				 * surfacing).
+				 */
+				LOG("proxy lookup: upstream GETATTR reply "
+				    "contains attr parser cannot decode; "
+				    "listener=%u parent_ino=%" PRIu64
+				    " name=%s",
+				    binding->psb_listener_id,
+				    compound->c_inode->i_ino, name);
+				*status = NFS4ERR_SERVERFAULT;
 				goto out;
 			}
 			if (pret < 0) {
@@ -154,7 +190,7 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 			pret = ps_lookup_materialize(
 				compound->c_inode, args->objname.utf8string_val,
 				args->objname.utf8string_len, child_fh,
-				child_fh_len, &child_de, &child);
+				child_fh_len, &attrs, &child_de, &child);
 			if (pret == -EEXIST) {
 				/*
 				 * A concurrent LOOKUP materialised the same

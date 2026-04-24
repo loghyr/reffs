@@ -47,6 +47,21 @@ struct ps_proxy_getattr_reply {
 };
 
 /*
+ * Minimum attrs extracted from a forwarded GETATTR reply.  Exactly
+ * what ps_lookup_materialize needs to distinguish a directory from
+ * a regular file and establish an initial mode on the new inode.
+ * Other attrs (size, times, identity) are lazily populated by the
+ * next real GETATTR the client issues, which the forwarding path
+ * already handles in full via ps_proxy_forward_getattr.
+ */
+struct ps_proxy_attrs_min {
+	bool have_type; /* FATTR4_TYPE (bit 1) present in reply */
+	uint32_t type; /* nfs_ftype4 value, valid only if have_type */
+	bool have_mode; /* FATTR4_MODE (bit 33) present in reply */
+	uint32_t mode; /* mode4 payload, valid only if have_mode */
+};
+
+/*
  * Build and send SEQUENCE + PUTFH(upstream_fh) + GETATTR(requested)
  * on `ms`, then copy the MDS's reply into `reply` (allocating the
  * two heap buffers described above).  On any failure, `reply`
@@ -97,7 +112,13 @@ void ps_proxy_getattr_reply_free(struct ps_proxy_getattr_reply *reply);
  * Forward a LOOKUP of a single pathname component against the
  * upstream MDS.  Sends SEQUENCE + PUTFH(parent_fh) + LOOKUP(name)
  * + GETFH on `ms` and copies the child's upstream FH into the
- * caller-supplied buffer.
+ * caller-supplied buffer.  When `attr_request` is non-NULL with
+ * `attr_request_len > 0` and `attrs_out` is non-NULL, a GETATTR
+ * for `attr_request` is appended to the same compound and the
+ * reply is parsed into `attrs_out` via ps_proxy_parse_attrs_min
+ * -- so the TYPE/MODE needed to materialise the child arrive in
+ * the same round-trip.  Pass NULL for `attr_request` or
+ * `attrs_out` to skip the GETATTR entirely.
  *
  * `name` is a bare component (no '/') UTF-8 string of `name_len`
  * bytes; callers that need multi-component resolution either walk
@@ -116,47 +137,31 @@ void ps_proxy_getattr_reply_free(struct ps_proxy_getattr_reply *reply);
  * having to re-parse a generic -EREMOTEIO.  Other NFS4ERR_*
  * statuses collapse to -EREMOTEIO.
  *
- * NOT_NOW_BROWN_COW (slice 2e-iv-e integration):
- *
- *   - No caller wiring yet.  The nfs4_op_lookup hook that drives
- *     this primitive lands in the next slice, because it also
- *     needs to decide where the per-child upstream FH gets
- *     stashed on the resulting local inode (sidecar map on the
- *     SB vs. new pointer on struct inode).  That design decision
- *     is the bulk of slice 2e-iv-e.
- *
- *   - Credential forwarding + FSID remap are still 2e-iv-c
- *     concerns and apply identically to LOOKUP-forwarding.
+ * NOT_NOW_BROWN_COW: credential forwarding + FSID remap are slice
+ * 2e-iv-c concerns and apply identically to LOOKUP-forwarding.
  *
  * Returns:
- *   0        success -- child FH copied, length in *child_fh_len_out
+ *   0        success -- child FH copied, length in *child_fh_len_out;
+ *            if attrs were requested, *attrs_out populated (have_*
+ *            reflect which attrs the MDS returned)
  *   -EINVAL  ms / parent_fh / name / child_fh_buf / child_fh_len_out
- *            is NULL, or parent_fh_len / name_len is 0
+ *            is NULL, parent_fh_len / name_len is 0, or the GETATTR
+ *            fattr4 reply is malformed
  *   -E2BIG   parent_fh_len > PS_MAX_FH_SIZE
  *   -ENOSPC  child_fh_buf_len is smaller than the returned FH
  *   -ENOENT  upstream returned NFS4ERR_NOENT (missing child)
+ *   -ENOTSUP the GETATTR reply contains an attr this parser does
+ *            not recognise (see ps_proxy_parse_attrs_min)
  *   -errno   RPC / compound failure, or any other per-op status
  */
 int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 			    uint32_t parent_fh_len, const char *name,
 			    uint32_t name_len, uint8_t *child_fh_buf,
 			    uint32_t child_fh_buf_len,
-			    uint32_t *child_fh_len_out);
-
-/*
- * Minimum attrs extracted from a forwarded GETATTR reply.  Exactly
- * what ps_lookup_materialize needs to distinguish a directory from
- * a regular file and establish an initial mode on the new inode.
- * Other attrs (size, times, identity) are lazily populated by the
- * next real GETATTR the client issues, which the forwarding path
- * already handles in full via ps_proxy_forward_getattr.
- */
-struct ps_proxy_attrs_min {
-	bool have_type; /* FATTR4_TYPE (bit 1) present in reply */
-	uint32_t type; /* nfs_ftype4 value, valid only if have_type */
-	bool have_mode; /* FATTR4_MODE (bit 33) present in reply */
-	uint32_t mode; /* mode4 payload, valid only if have_mode */
-};
+			    uint32_t *child_fh_len_out,
+			    const uint32_t *attr_request,
+			    uint32_t attr_request_len,
+			    struct ps_proxy_attrs_min *attrs_out);
 
 /*
  * Parse a fattr4 reply (as returned by ps_proxy_forward_getattr in

@@ -155,7 +155,10 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 			    uint32_t parent_fh_len, const char *name,
 			    uint32_t name_len, uint8_t *child_fh_buf,
 			    uint32_t child_fh_buf_len,
-			    uint32_t *child_fh_len_out)
+			    uint32_t *child_fh_len_out,
+			    const uint32_t *attr_request,
+			    uint32_t attr_request_len,
+			    struct ps_proxy_attrs_min *attrs_out)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -168,8 +171,24 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 	if (parent_fh_len > PS_MAX_FH_SIZE)
 		return -E2BIG;
 
-	/* SEQUENCE + PUTFH + LOOKUP + GETFH = 4 ops */
-	ret = mds_compound_init(&mc, 4, "ps-proxy-lookup");
+	/*
+	 * A caller that passes an attr_request without a sink (or a
+	 * sink without a request) is programmer-inconsistent -- the
+	 * compound either asks for attrs (both non-NULL with non-zero
+	 * length) or does not (both NULL/zero).  Mismatch is never
+	 * what the caller means; fail fast.
+	 */
+	bool want_attrs = (attr_request && attr_request_len > 0 && attrs_out);
+
+	if ((!!attr_request != !!attrs_out) ||
+	    (attr_request && attr_request_len == 0) ||
+	    (attrs_out && !attr_request))
+		return -EINVAL;
+
+	/* 4 ops without GETATTR, 5 ops with. */
+	unsigned nops = want_attrs ? 5 : 4;
+
+	ret = mds_compound_init(&mc, nops, "ps-proxy-lookup");
 	if (ret)
 		return ret;
 
@@ -198,6 +217,19 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 	if (!slot) {
 		ret = -ENOSPC;
 		goto out;
+	}
+
+	if (want_attrs) {
+		slot = mds_compound_add_op(&mc, OP_GETATTR);
+		if (!slot) {
+			ret = -ENOSPC;
+			goto out;
+		}
+		GETATTR4args *ga = &slot->nfs_argop4_u.opgetattr;
+
+		/* Same const-cast rationale as ps_proxy_forward_getattr. */
+		ga->attr_request.bitmap4_val = (uint32_t *)attr_request;
+		ga->attr_request.bitmap4_len = attr_request_len;
 	}
 
 	ret = mds_compound_send(&mc, ms);
@@ -251,6 +283,33 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 	if (fhresok->object.nfs_fh4_len > child_fh_buf_len) {
 		ret = -ENOSPC;
 		goto out;
+	}
+
+	if (want_attrs) {
+		/* GETATTR result at index 4. */
+		res = mds_compound_result(&mc, 4);
+		if (!res || res->nfs_resop4_u.opgetattr.status != NFS4_OK) {
+			ret = -EREMOTEIO;
+			goto out;
+		}
+
+		GETATTR4resok *gresok =
+			&res->nfs_resop4_u.opgetattr.GETATTR4res_u.resok4;
+		fattr4 *src = &gresok->obj_attributes;
+
+		/*
+		 * attrlist4 is `char *` on the wire (generated XDR);
+		 * the parser takes `const uint8_t *` because it only
+		 * does unsigned byte-level decodes.  Cast to drop the
+		 * signedness difference -- same pattern as the PUTFH
+		 * nfs_fh4_val const-cast elsewhere in this file.
+		 */
+		ret = ps_proxy_parse_attrs_min(
+			src->attrmask.bitmap4_val, src->attrmask.bitmap4_len,
+			(const uint8_t *)src->attr_vals.attrlist4_val,
+			src->attr_vals.attrlist4_len, attrs_out);
+		if (ret < 0)
+			goto out;
 	}
 
 	memcpy(child_fh_buf, fhresok->object.nfs_fh4_val,
