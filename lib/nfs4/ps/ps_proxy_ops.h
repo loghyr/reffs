@@ -248,12 +248,29 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
 void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply);
 
 /*
- * OPEN forwarder input.  Scope is deliberately narrow: CLAIM_NULL +
- * OPEN4_NOCREATE (the open a client issues before the first READ of
- * an existing file).  CREATE-mode, CLAIM_PREVIOUS, delegation
- * claims, and attr-carrying opens are separate slices; the hook in
- * nfs4_op_open rejects them with NFS4ERR_NOTSUPP so they surface
- * explicitly rather than quietly misbehaving.
+ * Recognised open_claim_type4 values for the OPEN forwarder.
+ * Mirroring just the two we support keeps callers off the
+ * nfsv42_xdr.h dependency.
+ *
+ *   PS_PROXY_OPEN_CLAIM_NULL -- CURRENT_FH is the parent directory;
+ *     primitive sends OPEN with claim={CLAIM_NULL, name}.  Linux
+ *     NFSv4 client uses this shape.
+ *   PS_PROXY_OPEN_CLAIM_FH   -- CURRENT_FH is the target file;
+ *     primitive sends OPEN with claim={CLAIM_FH}.  FreeBSD NFSv4
+ *     client uses this shape (open after LOOKUP-supplied FH).
+ */
+#define PS_PROXY_OPEN_CLAIM_NULL 0
+#define PS_PROXY_OPEN_CLAIM_FH 4
+
+/*
+ * OPEN forwarder input.  Scope is deliberately narrow:
+ *   - CLAIM_NULL (with name) + NOCREATE
+ *   - CLAIM_FH   (no name)   + NOCREATE
+ * Together these cover the open shapes a Linux or FreeBSD NFSv4
+ * client uses before the first READ of an existing file.  CREATE-
+ * mode, CLAIM_PREVIOUS, delegation claims, and attr-carrying
+ * opens are separate slices; the hook in nfs4_op_open rejects
+ * them with NFS4ERR_NOTSUPP.
  *
  * Owner handling: `owner_clientid` is the client's clientid4 and
  * `owner_data` is the client's opaque open-owner bytes.  Both get
@@ -264,6 +281,7 @@ void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply);
  * wrap owner_data to disambiguate multiple end-clients that collide.
  */
 struct ps_proxy_open_request {
+	uint32_t claim_type; /* PS_PROXY_OPEN_CLAIM_{NULL,FH} */
 	uint32_t seqid;
 	uint32_t share_access;
 	uint32_t share_deny;
@@ -298,11 +316,16 @@ struct ps_proxy_open_reply {
 };
 
 /*
- * Build and send SEQUENCE + PUTFH(parent_fh) + OPEN(CLAIM_NULL,
- * NOCREATE) + GETFH on `ms`, copy the MDS's reply into `reply`.
+ * Build and send SEQUENCE + PUTFH(current_fh) + OPEN + GETFH on
+ * `ms`, copy the MDS's reply into `reply`.
  *
- * `name` is a single UTF-8 component (no '/') of `name_len` bytes;
- * it becomes the CLAIM_NULL.file in the outgoing OPEN.
+ *   For req->claim_type == PS_PROXY_OPEN_CLAIM_NULL: `current_fh`
+ *     is the parent directory and `name` / `name_len` is the child
+ *     component to open (CLAIM_NULL.file on the wire).
+ *
+ *   For req->claim_type == PS_PROXY_OPEN_CLAIM_FH: `current_fh` is
+ *     the target file already known to the client and `name` /
+ *     `name_len` are ignored (CLAIM_FH carries no filename).
  *
  * On any failure `reply` is left zero-initialised and nothing
  * durable ran on the upstream.
@@ -312,14 +335,15 @@ struct ps_proxy_open_reply {
  *
  * Returns:
  *   0         success; reply populated
- *   -EINVAL   NULL args / zero lengths / owner_data_len > reasonable cap
- *   -E2BIG    parent_fh_len > PS_MAX_FH_SIZE
+ *   -EINVAL   NULL args, zero lengths where required, unsupported
+ *             claim_type, or owner_data_len > internal cap
+ *   -E2BIG    current_fh_len > PS_MAX_FH_SIZE
  *   -ENOSPC   child FH larger than PS_MAX_FH_SIZE (MDS misbehaving)
  *   -ENOENT   upstream returned NFS4ERR_NOENT
  *   -errno    RPC / compound failure, or any other per-op status
  */
-int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *parent_fh,
-			  uint32_t parent_fh_len, const char *name,
+int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
+			  uint32_t current_fh_len, const char *name,
 			  uint32_t name_len,
 			  const struct ps_proxy_open_request *req,
 			  struct ps_proxy_open_reply *reply);

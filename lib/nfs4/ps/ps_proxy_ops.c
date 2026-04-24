@@ -446,8 +446,8 @@ void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply)
  */
 #define PS_PROXY_OPEN_OWNER_MAX 512
 
-int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *parent_fh,
-			  uint32_t parent_fh_len, const char *name,
+int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
+			  uint32_t current_fh_len, const char *name,
 			  uint32_t name_len,
 			  const struct ps_proxy_open_request *req,
 			  struct ps_proxy_open_reply *reply)
@@ -457,14 +457,21 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *parent_fh,
 	nfs_resop4 *res;
 	int ret;
 
-	if (!ms || !parent_fh || parent_fh_len == 0 || !name || name_len == 0 ||
-	    !req || !reply)
+	if (!ms || !current_fh || current_fh_len == 0 || !req || !reply)
 		return -EINVAL;
-	if (parent_fh_len > PS_MAX_FH_SIZE)
+	if (current_fh_len > PS_MAX_FH_SIZE)
 		return -E2BIG;
 	if (req->owner_data_len > PS_PROXY_OPEN_OWNER_MAX)
 		return -EINVAL;
 	if (req->owner_data_len > 0 && !req->owner_data)
+		return -EINVAL;
+
+	bool is_claim_null = (req->claim_type == PS_PROXY_OPEN_CLAIM_NULL);
+	bool is_claim_fh = (req->claim_type == PS_PROXY_OPEN_CLAIM_FH);
+
+	if (!is_claim_null && !is_claim_fh)
+		return -EINVAL;
+	if (is_claim_null && (!name || name_len == 0))
 		return -EINVAL;
 
 	memset(reply, 0, sizeof(*reply));
@@ -483,8 +490,8 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *parent_fh,
 		ret = -ENOSPC;
 		goto out;
 	}
-	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)parent_fh;
-	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = parent_fh_len;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)current_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = current_fh_len;
 
 	slot = mds_compound_add_op(&mc, OP_OPEN);
 	if (!slot) {
@@ -500,9 +507,14 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *parent_fh,
 	oa->owner.owner.owner_val = (char *)req->owner_data;
 	oa->owner.owner.owner_len = req->owner_data_len;
 	oa->openhow.opentype = OPEN4_NOCREATE;
-	oa->claim.claim = CLAIM_NULL;
-	oa->claim.open_claim4_u.file.utf8string_val = (char *)name;
-	oa->claim.open_claim4_u.file.utf8string_len = name_len;
+	if (is_claim_null) {
+		oa->claim.claim = CLAIM_NULL;
+		oa->claim.open_claim4_u.file.utf8string_val = (char *)name;
+		oa->claim.open_claim4_u.file.utf8string_len = name_len;
+	} else {
+		/* CLAIM_FH: no per-claim payload (RFC 8881 S18.16.1). */
+		oa->claim.claim = CLAIM_FH;
+	}
 
 	slot = mds_compound_add_op(&mc, OP_GETFH);
 	if (!slot) {
