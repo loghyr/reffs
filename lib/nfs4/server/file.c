@@ -339,6 +339,170 @@ uint32_t nfs4_op_open(struct compound *compound)
 		}
 	}
 
+	/*
+	 * Proxy-SB fast path for OPEN.  Scope is CLAIM_NULL + NOCREATE
+	 * only -- the shape a client uses before the first READ of an
+	 * existing file.  Everything else on a proxy SB surfaces as
+	 * NFS4ERR_NOTSUPP so the gap is operator-visible rather than
+	 * quietly misbehaving; CREATE / CLAIM_PREVIOUS / delegation
+	 * claims are follow-up slices.
+	 *
+	 * Forwarding strategy: pass-through.  The MDS's open stateid
+	 * goes verbatim to the end client; the client's subsequent
+	 * READ/WRITE/CLOSE ride with that stateid and the proxy's
+	 * existing forward hooks (ps_proxy_forward_read etc.) relay
+	 * them straight back.  No PS-local open_stateid table; the
+	 * MDS owns all open state.
+	 */
+	if (compound->c_inode && compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding) {
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+
+		if (args->claim.claim != CLAIM_NULL ||
+		    args->openhow.opentype != OPEN4_NOCREATE) {
+			*status = NFS4ERR_NOTSUPP;
+			goto out;
+		}
+		if (!S_ISDIR(compound->c_inode->i_mode)) {
+			*status = NFS4ERR_NOTDIR;
+			goto out;
+		}
+
+		component4 *fname = &args->claim.open_claim4_u.file;
+
+		*status = nfs4_validate_component(fname);
+		if (*status)
+			goto out;
+		name = strndup(fname->utf8string_val, fname->utf8string_len);
+		if (!name) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		/* Parent dirent chain required for ps_lookup_materialize. */
+		if (!compound->c_inode->i_dirent) {
+			ret = inode_reconstruct_path_to_root(compound->c_inode);
+			if (ret) {
+				*status = NFS4ERR_STALE;
+				goto out;
+			}
+		}
+
+		uint8_t upstream_fh[PS_MAX_FH_SIZE];
+		uint32_t upstream_fh_len = 0;
+		int fret = ps_inode_get_upstream_fh(compound->c_inode,
+						    upstream_fh,
+						    sizeof(upstream_fh),
+						    &upstream_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		TRACE("proxy open: listener=%u parent_ino=%" PRIu64
+		      " name=%s (forwarded with PS creds)",
+		      binding->psb_listener_id, compound->c_inode->i_ino, name);
+
+		struct ps_proxy_open_request oreq = {
+			.seqid = args->seqid,
+			.share_access = share_access,
+			.share_deny = share_deny,
+			.owner_clientid = args->owner.clientid,
+			.owner_data =
+				(const uint8_t *)args->owner.owner.owner_val,
+			.owner_data_len = args->owner.owner.owner_len,
+		};
+		struct ps_proxy_open_reply oreply;
+
+		memset(&oreply, 0, sizeof(oreply));
+		fret = ps_proxy_forward_open(pls->pls_session, upstream_fh,
+					     upstream_fh_len,
+					     fname->utf8string_val,
+					     fname->utf8string_len, &oreq,
+					     &oreply);
+		if (fret == -ENOENT) {
+			*status = NFS4ERR_NOENT;
+			goto out;
+		}
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_OPEN);
+			goto out;
+		}
+
+		/*
+		 * Materialise a local dirent+inode so subsequent ops in
+		 * this compound (GETFH / GETATTR / READ) operate on a
+		 * real inode.  Skip if one already exists from a prior
+		 * LOOKUP on the same name.
+		 */
+		child_de = dirent_load_child_by_name(
+			compound->c_inode->i_dirent, name);
+		if (!child_de) {
+			fret = ps_lookup_materialize(
+				compound->c_inode, fname->utf8string_val,
+				fname->utf8string_len, oreply.child_fh,
+				oreply.child_fh_len, NULL, &child_de, &child);
+			if (fret < 0 && fret != -EEXIST) {
+				*status = errno_to_nfs4(fret, OP_OPEN);
+				goto out;
+			}
+			if (fret == -EEXIST) {
+				child_de = dirent_load_child_by_name(
+					compound->c_inode->i_dirent, name);
+				if (!child_de) {
+					*status = NFS4ERR_SERVERFAULT;
+					goto out;
+				}
+			}
+		}
+		if (!child) {
+			child = dirent_ensure_inode(child_de);
+			if (!child) {
+				*status = NFS4ERR_SERVERFAULT;
+				goto out;
+			}
+		}
+
+		/*
+		 * Update current FH + inode so a following GETFH/READ
+		 * op in the same compound sees the opened object.
+		 */
+		inode_active_put(compound->c_inode);
+		compound->c_inode = child;
+		child = NULL; /* transferred */
+		compound->c_curr_nfh.nfh_sb = compound->c_inode->i_sb->sb_id;
+		compound->c_curr_nfh.nfh_ino = compound->c_inode->i_ino;
+		stateid_put(compound->c_curr_stid);
+		compound->c_curr_stid = NULL;
+
+		/*
+		 * Hand the MDS's open stateid back to the end client
+		 * verbatim.  Client's next READ/WRITE/CLOSE rides with
+		 * a stateid the MDS recognises.
+		 */
+		resok->stateid.seqid = oreply.stateid_seqid;
+		memcpy(resok->stateid.other, oreply.stateid_other,
+		       NFS4_OTHER_SIZE);
+		resok->rflags = oreply.rflags;
+		resok->cinfo.atomic = FALSE;
+		resok->cinfo.before = 0;
+		resok->cinfo.after = 0;
+		bitmap4_destroy(&resok->attrset);
+		resok->delegation.delegation_type = OPEN_DELEGATE_NONE;
+
+		*status = NFS4_OK;
+		goto out;
+	}
+
 	/* Resolve target inode based on claim type. */
 	switch (args->claim.claim) {
 	case CLAIM_PREVIOUS:
