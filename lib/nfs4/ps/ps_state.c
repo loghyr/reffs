@@ -239,6 +239,34 @@ const struct ps_export *ps_state_find_export(uint32_t listener_id,
 	return NULL;
 }
 
+int ps_state_exports_for_each(uint32_t listener_id, ps_state_export_cb cb,
+			      void *ctx)
+{
+	if (!cb)
+		return -EINVAL;
+
+	struct ps_listener_state *pls = ps_listener_by_id(listener_id);
+
+	if (!pls)
+		return -ENOENT;
+
+	uint32_t n =
+		atomic_load_explicit(&pls->pls_nexports, memory_order_acquire);
+	unsigned int seen = 0;
+
+	for (uint32_t i = 0; i < n; i++) {
+		const struct ps_export *slot = &pls->pls_exports[i];
+		uint32_t fh_len = atomic_load_explicit(&slot->ple_fh_len,
+						       memory_order_acquire);
+
+		if (fh_len == 0)
+			continue;
+		cb(slot, ctx);
+		seen++;
+	}
+	return (int)seen;
+}
+
 int ps_state_discovery_lock(uint32_t listener_id)
 {
 	struct ps_listener_state *pls = ps_listener_by_id(listener_id);

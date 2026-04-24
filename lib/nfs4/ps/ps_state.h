@@ -185,6 +185,29 @@ int ps_state_discovery_lock(uint32_t listener_id);
 int ps_state_discovery_unlock(uint32_t listener_id);
 
 /*
+ * Walk the cached exports on a listener, invoking `cb` for each
+ * non-empty slot.  Callers that need to act on every discovered
+ * export (e.g. reffsd's startup SB allocator) use this instead of
+ * reaching into pls_exports[] directly, so the release/acquire
+ * contract on pls_nexports + ple_fh_len stays encapsulated and any
+ * future layout changes land in one place.
+ *
+ * `cb` is invoked synchronously for each non-empty entry with the
+ * slot pointer (valid for the duration of the call) and the
+ * caller's `ctx`.  A writer racing with the walker through
+ * ps_state_add_export will either be fully published (this call
+ * sees the new entry) or retired-then-republished (this call sees
+ * ple_fh_len==0 and skips the slot); there is no torn-FH window.
+ *
+ * Returns the number of entries the callback saw (>= 0),
+ * -ENOENT if no listener with this id is registered, or
+ * -EINVAL if cb is NULL.
+ */
+typedef void (*ps_state_export_cb)(const struct ps_export *ex, void *ctx);
+int ps_state_exports_for_each(uint32_t listener_id, ps_state_export_cb cb,
+			      void *ctx);
+
+/*
  * Record a discovered upstream export on this listener.  Called by
  * the discovery coordinator after MOUNT3 EXPORT lists a path and
  * ps_discovery_walk_path() resolves it to an FH on the upstream.

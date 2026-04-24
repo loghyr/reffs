@@ -524,6 +524,116 @@ START_TEST(test_discovery_mutex_fini_clean)
 }
 END_TEST
 
+/*
+ * Exports iterator test support: the callback pushes each slot it
+ * receives into a small capture buffer so the test can verify path,
+ * length, and FH bytes without colliding with the function-body
+ * stack of the test itself.
+ */
+struct export_capture_entry {
+	char path[64];
+	uint8_t fh[8];
+	uint32_t fh_len;
+};
+
+struct export_capture {
+	struct export_capture_entry entries[8];
+	unsigned int count;
+};
+
+static void capture_cb(const struct ps_export *ex, void *ctx)
+{
+	struct export_capture *cap = ctx;
+
+	if (cap->count >= 8)
+		return;
+
+	struct export_capture_entry *e = &cap->entries[cap->count++];
+
+	strncpy(e->path, ex->ple_path, sizeof(e->path) - 1);
+	e->fh_len = ex->ple_fh_len;
+	if (ex->ple_fh_len <= sizeof(e->fh))
+		memcpy(e->fh, ex->ple_fh, ex->ple_fh_len);
+}
+
+/*
+ * Empty listener: iterator returns 0 and does not invoke cb.  Proves
+ * the "no exports yet" case (common pre-discovery state) does not
+ * trip any stale entry by accident.
+ */
+START_TEST(test_exports_for_each_empty)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+	struct export_capture cap = { .count = 0 };
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_int_eq(ps_state_exports_for_each(1, capture_cb, &cap), 0);
+	ck_assert_uint_eq(cap.count, 0);
+}
+END_TEST
+
+/*
+ * Three exports: iterator visits each in registration order, every
+ * field round-trips.  Confirms the iterator sees the same slot
+ * addresses a ps_state_find_export would.
+ */
+START_TEST(test_exports_for_each_visits_all)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+	uint8_t fh_a[] = { 0x0a };
+	uint8_t fh_b[] = { 0x0b, 0x0c };
+	uint8_t fh_c[] = { 0x01, 0x02, 0x03 };
+	struct export_capture cap = { .count = 0 };
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_int_eq(ps_state_add_export(1, "/alpha", fh_a, sizeof(fh_a)),
+			 0);
+	ck_assert_int_eq(ps_state_add_export(1, "/beta", fh_b, sizeof(fh_b)),
+			 0);
+	ck_assert_int_eq(ps_state_add_export(1, "/gamma", fh_c, sizeof(fh_c)),
+			 0);
+
+	ck_assert_int_eq(ps_state_exports_for_each(1, capture_cb, &cap), 3);
+	ck_assert_uint_eq(cap.count, 3);
+
+	ck_assert_str_eq(cap.entries[0].path, "/alpha");
+	ck_assert_uint_eq(cap.entries[0].fh_len, sizeof(fh_a));
+	ck_assert_mem_eq(cap.entries[0].fh, fh_a, sizeof(fh_a));
+
+	ck_assert_str_eq(cap.entries[1].path, "/beta");
+	ck_assert_uint_eq(cap.entries[1].fh_len, sizeof(fh_b));
+	ck_assert_mem_eq(cap.entries[1].fh, fh_b, sizeof(fh_b));
+
+	ck_assert_str_eq(cap.entries[2].path, "/gamma");
+	ck_assert_uint_eq(cap.entries[2].fh_len, sizeof(fh_c));
+	ck_assert_mem_eq(cap.entries[2].fh, fh_c, sizeof(fh_c));
+}
+END_TEST
+
+/*
+ * Unknown listener: -ENOENT (matches set_session / set_mds_root_fh /
+ * discovery_lock conventions).  NULL cb: -EINVAL.
+ */
+START_TEST(test_exports_for_each_bad_args)
+{
+	struct export_capture cap = { .count = 0 };
+
+	ck_assert_int_eq(ps_state_exports_for_each(42, capture_cb, &cap),
+			 -ENOENT);
+	/*
+	 * Registry has id 0 reserved; listener_by_id(0) returns NULL so
+	 * the same -ENOENT fires rather than walking a bogus slot.
+	 */
+	ck_assert_int_eq(ps_state_exports_for_each(0, capture_cb, &cap),
+			 -ENOENT);
+
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_int_eq(ps_state_exports_for_each(1, NULL, &cap), -EINVAL);
+}
+END_TEST
+
 static Suite *ps_state_suite(void)
 {
 	Suite *s = suite_create("ps_state");
@@ -553,6 +663,9 @@ static Suite *ps_state_suite(void)
 	tcase_add_test(tc, test_discovery_lock_unlock);
 	tcase_add_test(tc, test_discovery_lock_unknown_id);
 	tcase_add_test(tc, test_discovery_mutex_fini_clean);
+	tcase_add_test(tc, test_exports_for_each_empty);
+	tcase_add_test(tc, test_exports_for_each_visits_all);
+	tcase_add_test(tc, test_exports_for_each_bad_args);
 	suite_add_tcase(s, tc);
 	return s;
 }

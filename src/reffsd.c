@@ -60,10 +60,38 @@
 #include "reffs/settings.h"
 #include "ec_client.h"
 #include "ps_discovery.h"
+#include "ps_sb.h"
 #include "ps_state.h"
 
 /* GSS context cache -- declared in gss_context.h. */
 void gss_context_set_state_dir(const char *dir);
+
+/*
+ * Context threaded through ps_state_exports_for_each to the per-
+ * export SB allocator.  Tallies per-listener so TRACE after the
+ * iteration reports ok/fail counts.
+ */
+struct ps_discovery_sb_ctx {
+	const struct ps_listener_state *pls;
+	unsigned int config_index; /* original cfg.proxy_mds[] index, for logs */
+	unsigned int ok;
+	unsigned int fail;
+};
+
+static void ps_discovery_sb_alloc_cb(const struct ps_export *ex, void *ctx_)
+{
+	struct ps_discovery_sb_ctx *ctx = ctx_;
+	int ar = ps_sb_alloc_for_export(ctx->pls, ex->ple_path, ex->ple_fh,
+					ex->ple_fh_len);
+
+	if (ar < 0) {
+		LOG("proxy_mds[%u]: ps_sb_alloc_for_export(%s) failed: %s",
+		    ctx->config_index, ex->ple_path, strerror(-ar));
+		ctx->fail++;
+	} else {
+		ctx->ok++;
+	}
+}
 
 #define NFS_PORT 2049
 
@@ -679,9 +707,44 @@ int main(int argc, char *argv[])
 
 		int rret = ps_discovery_run(pls);
 
-		if (rret < 0)
+		if (rret < 0) {
 			LOG("proxy_mds[%u] (listener_id=%u): export discovery failed: %s",
 			    i, pmc->id, strerror(-rret));
+			continue;
+		}
+
+		/*
+		 * Allocate and mount one proxy SB per discovered export so
+		 * client LOOKUP crossings into `/foo` on this listener's
+		 * :port traverse into a dedicated SB carrying the upstream
+		 * FH as its proxy binding.  Per-export failures are logged
+		 * and skipped (a single broken export must not drop every
+		 * other path on the same upstream); ps_sb_alloc_for_export
+		 * already serializes against other mounts on this listener
+		 * via super_block_check_path_conflict.
+		 */
+		struct ps_discovery_sb_ctx sb_ctx = {
+			.pls = pls,
+			.config_index = i,
+			.ok = 0,
+			.fail = 0,
+		};
+
+		ps_state_exports_for_each(pmc->id, ps_discovery_sb_alloc_cb,
+					  &sb_ctx);
+		TRACE("proxy_mds[%u]: mounted %u proxy SBs (%u failed)",
+		      pmc->id, sb_ctx.ok, sb_ctx.fail);
+		/*
+		 * Without this a listener where every discovered export
+		 * failed to mount would look indistinguishable (to an
+		 * admin tailing the log) from one that genuinely
+		 * discovered zero exports -- reffsd comes up looking
+		 * successful but serves NFS4ERR_STALE to every PUTFH.
+		 * LOG (not TRACE) because an operator needs to act.
+		 */
+		if (sb_ctx.ok == 0 && sb_ctx.fail > 0)
+			LOG("proxy_mds[%u] (listener_id=%u): ALL %u discovered exports failed to mount",
+			    i, pmc->id, sb_ctx.fail);
 	}
 
 	/*
