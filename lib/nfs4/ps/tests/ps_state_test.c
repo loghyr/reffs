@@ -10,6 +10,7 @@
 #include <check.h>
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "reffs/settings.h"
@@ -322,6 +323,150 @@ START_TEST(test_set_mds_root_fh_unknown_id)
 }
 END_TEST
 
+/*
+ * Bad-arg rejection for ps_state_add_export.  NULL / empty path,
+ * NULL FH, fh_len=0, oversize FH, oversize path, and unknown
+ * listener_id all short-circuit before any state mutation.  Zero-
+ * length FH is rejected because ple_fh_len == 0 is the empty-slot
+ * sentinel -- accepting a zero-length FH would be indistinguishable
+ * from "slot not populated" at read time.
+ */
+START_TEST(test_add_export_rejects_bad_args)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+	uint8_t fh[] = { 0x01, 0x02, 0x03 };
+	uint8_t big_fh[PS_MAX_FH_SIZE + 1];
+	char big_path[2000];
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+
+	/* Path validation. */
+	ck_assert_int_eq(ps_state_add_export(1, NULL, fh, sizeof(fh)), -EINVAL);
+	ck_assert_int_eq(ps_state_add_export(1, "", fh, sizeof(fh)), -EINVAL);
+
+	/* FH validation. */
+	ck_assert_int_eq(ps_state_add_export(1, "/x", NULL, sizeof(fh)),
+			 -EINVAL);
+	ck_assert_int_eq(ps_state_add_export(1, "/x", fh, 0), -EINVAL);
+
+	/* Size caps. */
+	memset(big_fh, 0xAB, sizeof(big_fh));
+	ck_assert_int_eq(ps_state_add_export(1, "/x", big_fh, sizeof(big_fh)),
+			 -E2BIG);
+
+	memset(big_path, 'a', sizeof(big_path) - 1);
+	big_path[0] = '/';
+	big_path[sizeof(big_path) - 1] = '\0';
+	ck_assert_int_eq(ps_state_add_export(1, big_path, fh, sizeof(fh)),
+			 -E2BIG);
+
+	/* Unknown listener. */
+	ck_assert_int_eq(ps_state_add_export(999, "/x", fh, sizeof(fh)),
+			 -ENOENT);
+}
+END_TEST
+
+/*
+ * Happy-path round-trip: add two exports on one listener, each is
+ * findable by path, the returned slot carries verbatim FH bytes,
+ * and find on an unknown path returns NULL.
+ */
+START_TEST(test_add_and_find_export)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+	uint8_t fh_a[] = { 0x0a, 0x0b, 0x0c };
+	uint8_t fh_b[] = { 0x01, 0x02, 0x03, 0x04 };
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_int_eq(
+		ps_state_add_export(1, "/export/a", fh_a, sizeof(fh_a)), 0);
+	ck_assert_int_eq(
+		ps_state_add_export(1, "/export/b", fh_b, sizeof(fh_b)), 0);
+
+	const struct ps_export *a = ps_state_find_export(1, "/export/a");
+
+	ck_assert_ptr_nonnull(a);
+	ck_assert_str_eq(a->ple_path, "/export/a");
+	ck_assert_uint_eq(a->ple_fh_len, sizeof(fh_a));
+	ck_assert_mem_eq(a->ple_fh, fh_a, sizeof(fh_a));
+
+	const struct ps_export *b = ps_state_find_export(1, "/export/b");
+
+	ck_assert_ptr_nonnull(b);
+	ck_assert_uint_eq(b->ple_fh_len, sizeof(fh_b));
+	ck_assert_mem_eq(b->ple_fh, fh_b, sizeof(fh_b));
+
+	/* Unknown path / unknown listener / bad path -- all NULL. */
+	ck_assert_ptr_null(ps_state_find_export(1, "/nope"));
+	ck_assert_ptr_null(ps_state_find_export(999, "/export/a"));
+	ck_assert_ptr_null(ps_state_find_export(1, NULL));
+	ck_assert_ptr_null(ps_state_find_export(1, ""));
+
+	/*
+	 * Prefix-match guard: /export/a MUST NOT satisfy a lookup for
+	 * /export/ab (or vice versa).  strcmp does a full-string
+	 * comparison, but adding the two cases explicitly documents
+	 * the invariant so a future "starts with" optimisation can't
+	 * silently regress it.
+	 */
+	ck_assert_ptr_null(ps_state_find_export(1, "/export/ab"));
+	ck_assert_ptr_null(ps_state_find_export(1, "/export"));
+}
+END_TEST
+
+/*
+ * Re-adding the same path updates the FH in place without growing
+ * the table.  This is the on-demand re-discovery path: after an
+ * upstream restart the MDS may re-issue new FHs for the same paths,
+ * and the PS refreshes its cache without accumulating stale entries.
+ */
+START_TEST(test_add_export_duplicate_path_updates)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+	uint8_t fh_old[] = { 0x11, 0x22 };
+	uint8_t fh_new[] = { 0xaa, 0xbb, 0xcc, 0xdd, 0xee };
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+	ck_assert_int_eq(
+		ps_state_add_export(1, "/data", fh_old, sizeof(fh_old)), 0);
+	ck_assert_int_eq(
+		ps_state_add_export(1, "/data", fh_new, sizeof(fh_new)), 0);
+
+	const struct ps_export *ex = ps_state_find_export(1, "/data");
+
+	ck_assert_ptr_nonnull(ex);
+	ck_assert_uint_eq(ex->ple_fh_len, sizeof(fh_new));
+	ck_assert_mem_eq(ex->ple_fh, fh_new, sizeof(fh_new));
+}
+END_TEST
+
+/*
+ * Saturate the per-listener exports array: PS_MAX_EXPORTS_PER_LISTENER
+ * unique paths register, the (N+1)th returns -ENOSPC.  Re-adding an
+ * existing path still succeeds (update-in-place does not consume a
+ * slot), so the cap is only on distinct paths.
+ */
+START_TEST(test_add_export_full_table)
+{
+	struct reffs_proxy_mds_config c = make_cfg(1, "10.0.0.5");
+	uint8_t fh[] = { 0x01 };
+	char path[64];
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+
+	for (uint32_t i = 0; i < PS_MAX_EXPORTS_PER_LISTENER; i++) {
+		snprintf(path, sizeof(path), "/p%u", i);
+		ck_assert_int_eq(ps_state_add_export(1, path, fh, sizeof(fh)),
+				 0);
+	}
+	ck_assert_int_eq(ps_state_add_export(1, "/overflow", fh, sizeof(fh)),
+			 -ENOSPC);
+
+	/* Re-adding an existing path still works -- update-in-place. */
+	ck_assert_int_eq(ps_state_add_export(1, "/p0", fh, sizeof(fh)), 0);
+}
+END_TEST
+
 static Suite *ps_state_suite(void)
 {
 	Suite *s = suite_create("ps_state");
@@ -344,6 +489,10 @@ static Suite *ps_state_suite(void)
 	tcase_add_test(tc, test_set_mds_root_fh_clear);
 	tcase_add_test(tc, test_set_mds_root_fh_too_big);
 	tcase_add_test(tc, test_set_mds_root_fh_unknown_id);
+	tcase_add_test(tc, test_add_export_rejects_bad_args);
+	tcase_add_test(tc, test_add_and_find_export);
+	tcase_add_test(tc, test_add_export_duplicate_path_updates);
+	tcase_add_test(tc, test_add_export_full_table);
 	suite_add_tcase(s, tc);
 	return s;
 }
