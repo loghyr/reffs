@@ -22,6 +22,7 @@
 #include <string.h>
 #include <urcu.h>
 
+#include "reffs/dirent.h"
 #include "reffs/fs.h"
 #include "reffs/inode.h"
 #include "reffs/ns.h"
@@ -368,6 +369,174 @@ START_TEST(test_lookup_forward_no_session)
 }
 END_TEST
 
+/*
+ * Happy path: after the LOOKUP forwarder returns a child FH, the
+ * materialize hook creates a local dirent + inode on the proxy SB,
+ * wires the upstream FH through ps_inode_set_upstream_fh, and leaves
+ * both entries discoverable via dirent_find for subsequent LOOKUPs
+ * from the same client.
+ */
+START_TEST(test_materialize_creates_dirent_and_inode)
+{
+	uint8_t bind_fh[] = { 0x11, 0x22 };
+	uint8_t child_fh[] = { 0xBE, 0xEF, 0xF0, 0x0D };
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(g_pls, "/mat_ok", bind_fh,
+						sizeof(bind_fh)),
+			 0);
+
+	struct super_block *sb = find_proxy_sb("/mat_ok");
+	struct inode *parent = sb->sb_root_inode;
+
+	struct reffs_dirent *child_de = NULL;
+	struct inode *child = NULL;
+
+	ck_assert_int_eq(ps_lookup_materialize(parent, "alice.txt", 9, child_fh,
+					       sizeof(child_fh), &child_de,
+					       &child),
+			 0);
+	ck_assert_ptr_nonnull(child_de);
+	ck_assert_ptr_nonnull(child);
+
+	/* Visible to a subsequent in-memory LOOKUP. */
+	struct reffs_dirent *found =
+		dirent_find(parent->i_dirent, reffs_case_get(), "alice.txt");
+
+	ck_assert_ptr_nonnull(found);
+	ck_assert_ptr_eq(found, child_de);
+	dirent_put(found);
+
+	/* Upstream FH is retrievable. */
+	uint8_t got[PS_MAX_FH_SIZE];
+	uint32_t got_len = 0;
+
+	ck_assert_int_eq(
+		ps_inode_get_upstream_fh(child, got, sizeof(got), &got_len), 0);
+	ck_assert_uint_eq(got_len, sizeof(child_fh));
+	ck_assert_mem_eq(got, child_fh, sizeof(child_fh));
+
+	inode_active_put(child);
+	dirent_put(child_de);
+	super_block_put(sb);
+	cleanup_proxy_sb("/mat_ok");
+}
+END_TEST
+
+/*
+ * Second materialize with the same name surfaces -EEXIST (concurrent-
+ * LOOKUP race).  Callers treat this as "another thread already did it"
+ * and fall back to the in-memory dirent.
+ */
+START_TEST(test_materialize_rejects_duplicate)
+{
+	uint8_t bind_fh[] = { 0x33 };
+	uint8_t fh_a[] = { 0xA1, 0xA2 };
+	uint8_t fh_b[] = { 0xB1, 0xB2, 0xB3 };
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(g_pls, "/mat_dup", bind_fh,
+						sizeof(bind_fh)),
+			 0);
+
+	struct super_block *sb = find_proxy_sb("/mat_dup");
+	struct inode *parent = sb->sb_root_inode;
+
+	struct reffs_dirent *de1 = NULL;
+	struct inode *in1 = NULL;
+
+	ck_assert_int_eq(ps_lookup_materialize(parent, "dup", 3, fh_a,
+					       sizeof(fh_a), &de1, &in1),
+			 0);
+
+	struct reffs_dirent *de2 = NULL;
+	struct inode *in2 = NULL;
+
+	ck_assert_int_eq(ps_lookup_materialize(parent, "dup", 3, fh_b,
+					       sizeof(fh_b), &de2, &in2),
+			 -EEXIST);
+	ck_assert_ptr_null(de2);
+	ck_assert_ptr_null(in2);
+
+	inode_active_put(in1);
+	dirent_put(de1);
+	super_block_put(sb);
+	cleanup_proxy_sb("/mat_dup");
+}
+END_TEST
+
+/*
+ * Native SB (no proxy binding) -> -EINVAL.  Keeps the helper from
+ * creating bogus dirents on the server's local namespace SBs.
+ */
+START_TEST(test_materialize_rejects_native_sb)
+{
+	uint8_t fh[] = { 0x01, 0x02 };
+	struct reffs_dirent *de = NULL;
+	struct inode *in = NULL;
+
+	struct super_block *root = super_block_find(SUPER_BLOCK_ROOT_ID);
+
+	ck_assert_ptr_nonnull(root);
+
+	ck_assert_int_eq(ps_lookup_materialize(root->sb_root_inode, "x", 1, fh,
+					       sizeof(fh), &de, &in),
+			 -EINVAL);
+
+	super_block_put(root);
+}
+END_TEST
+
+/*
+ * NULL / zero-length / oversize-FH guards.  Same flavor as the
+ * set_upstream_fh arg tests; belts and braces on the materialize API
+ * since it will be reachable from the LOOKUP op handler in the next
+ * slice and bad args there would be a server bug we want loud.
+ */
+START_TEST(test_materialize_rejects_bad_args)
+{
+	uint8_t bind_fh[] = { 0x44 };
+	uint8_t fh[] = { 0x01 };
+	uint8_t big[PS_MAX_FH_SIZE + 1];
+
+	memset(big, 0xAB, sizeof(big));
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(g_pls, "/mat_args", bind_fh,
+						sizeof(bind_fh)),
+			 0);
+
+	struct super_block *sb = find_proxy_sb("/mat_args");
+	struct inode *parent = sb->sb_root_inode;
+	struct reffs_dirent *de = NULL;
+	struct inode *in = NULL;
+
+	ck_assert_int_eq(ps_lookup_materialize(NULL, "a", 1, fh, sizeof(fh),
+					       &de, &in),
+			 -EINVAL);
+	ck_assert_int_eq(ps_lookup_materialize(parent, NULL, 1, fh, sizeof(fh),
+					       &de, &in),
+			 -EINVAL);
+	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 0, fh, sizeof(fh),
+					       &de, &in),
+			 -EINVAL);
+	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, NULL, sizeof(fh),
+					       &de, &in),
+			 -EINVAL);
+	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, fh, 0, &de, &in),
+			 -EINVAL);
+	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, fh, sizeof(fh),
+					       NULL, &in),
+			 -EINVAL);
+	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, fh, sizeof(fh),
+					       &de, NULL),
+			 -EINVAL);
+	ck_assert_int_eq(ps_lookup_materialize(parent, "a", 1, big, sizeof(big),
+					       &de, &in),
+			 -E2BIG);
+
+	super_block_put(sb);
+	cleanup_proxy_sb("/mat_args");
+}
+END_TEST
+
 static Suite *ps_inode_suite(void)
 {
 	Suite *s = suite_create("ps_inode");
@@ -381,6 +550,10 @@ static Suite *ps_inode_suite(void)
 	tcase_add_test(tc, test_lookup_forward_rejects_native_sb);
 	tcase_add_test(tc, test_lookup_forward_bad_args);
 	tcase_add_test(tc, test_lookup_forward_no_session);
+	tcase_add_test(tc, test_materialize_creates_dirent_and_inode);
+	tcase_add_test(tc, test_materialize_rejects_duplicate);
+	tcase_add_test(tc, test_materialize_rejects_native_sb);
+	tcase_add_test(tc, test_materialize_rejects_bad_args);
 	suite_add_tcase(s, tc);
 	return s;
 }

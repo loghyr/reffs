@@ -11,6 +11,7 @@
 #include "ps_state.h" /* PS_MAX_FH_SIZE */
 
 struct inode; /* lib/include/reffs/inode.h */
+struct reffs_dirent; /* lib/include/reffs/dirent.h */
 
 /*
  * Per-inode proxy data.
@@ -98,5 +99,40 @@ int ps_proxy_lookup_forward_for_inode(const struct inode *parent,
 				      uint8_t *child_fh_buf,
 				      uint32_t child_fh_buf_len,
 				      uint32_t *child_fh_len_out);
+
+/*
+ * Materialize a local dirent + inode on a proxy SB for an upstream
+ * child that has just been located via ps_proxy_lookup_forward_for_inode.
+ *
+ * `parent` MUST be a loaded directory inode on a proxy SB (its SB has
+ * sb_proxy_binding != NULL) whose dirent chain is resident; the LOOKUP
+ * hook in slice 2e-iv-g-ii runs inode_reconstruct_path_to_root before
+ * reaching here, so parent->i_dirent is non-NULL by contract.
+ *
+ * `child_fh` is the upstream MDS FH the caller just obtained.  It is
+ * stashed on the new inode so subsequent ops on this child can forward
+ * to the upstream without a fresh LOOKUP round-trip.
+ *
+ * Object-type fix-up: this slice materializes every child as a regular
+ * file with mode 0644.  LOOKUP alone does not reveal type; a follow-up
+ * GETATTR fan-out (deferred) will promote directory/symlink/etc.
+ *
+ * On success, the out parameters carry live refs that the caller MUST
+ * release:
+ *   *out_de     -- the ref-held dirent (release via dirent_put)
+ *   *out_inode  -- active ref on the inode (release via inode_active_put)
+ *
+ * Returns:
+ *   0         success
+ *   -EINVAL   bad args, parent not on a proxy SB, or parent not a dir
+ *   -E2BIG    child_fh_len > PS_MAX_FH_SIZE
+ *   -EEXIST   a dirent with this name already exists on the parent
+ *             (caller treats this as a concurrent-LOOKUP race)
+ *   -ENOMEM   dirent/inode allocation failed
+ */
+int ps_lookup_materialize(struct inode *parent, const char *name,
+			  uint32_t name_len, const uint8_t *child_fh,
+			  uint32_t child_fh_len, struct reffs_dirent **out_de,
+			  struct inode **out_inode);
 
 #endif /* _REFFS_PS_INODE_H */

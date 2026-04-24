@@ -12,9 +12,15 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
 
+#include "reffs/cmp.h"
+#include "reffs/dirent.h"
+#include "reffs/identity.h"
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
+#include "reffs/types.h"
 
 #include "ps_inode.h"
 #include "ps_proxy_ops.h"
@@ -149,4 +155,126 @@ int ps_proxy_lookup_forward_for_inode(const struct inode *parent,
 				       parent_fh_len, name, name_len,
 				       child_fh_buf, child_fh_buf_len,
 				       child_fh_len_out);
+}
+
+int ps_lookup_materialize(struct inode *parent, const char *name,
+			  uint32_t name_len, const uint8_t *child_fh,
+			  uint32_t child_fh_len, struct reffs_dirent **out_de,
+			  struct inode **out_inode)
+{
+	if (!parent || !name || name_len == 0 || !child_fh ||
+	    child_fh_len == 0 || !out_de || !out_inode)
+		return -EINVAL;
+	if (child_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+	if (!ps_inode_is_proxy(parent))
+		return -EINVAL;
+	if (!S_ISDIR(parent->i_mode))
+		return -EINVAL;
+	if (!parent->i_dirent)
+		return -EINVAL;
+
+	*out_de = NULL;
+	*out_inode = NULL;
+
+	/*
+	 * strndup so reffs_dirent owns a NUL-terminated copy of the name.
+	 * dirent_alloc takes `char *` and keeps its own duplicate, but
+	 * its callers uniformly pass NUL-terminated strings and dirent_find
+	 * uses strcmp, so we need a terminator here too.
+	 */
+	char *name_dup = strndup(name, name_len);
+
+	if (!name_dup)
+		return -ENOMEM;
+
+	/*
+	 * Fast-path duplicate check: if another thread already materialized
+	 * the same child (concurrent LOOKUP from a second client), surface
+	 * -EEXIST so the hook can fall back to the in-memory dirent without
+	 * leaking a second inode allocation.
+	 *
+	 * This is a best-effort pre-check, not a race-free guard.  Two
+	 * concurrent calls for the same (parent, name) can both observe
+	 * existing==NULL and both proceed to dirent_alloc.  The LOOKUP
+	 * hook in slice 2e-iv-g-ii is the caller's serialization point:
+	 * it holds the compound's single-dispatch discipline per parent
+	 * inode, so two compounds racing on the same parent are
+	 * interleaved one-at-a-time at the op-handler layer.  vfs_create
+	 * has the same pre-check but additionally holds parent->rd_rwlock
+	 * via vfs_lock_dirs -- if the LOOKUP hook ever parallelises
+	 * per-parent, the rwlock must move into this helper too.
+	 */
+	struct reffs_dirent *existing =
+		dirent_find(parent->i_dirent, reffs_case_get(), name_dup);
+
+	if (existing) {
+		dirent_put(existing);
+		free(name_dup);
+		return -EEXIST;
+	}
+
+	struct super_block *sb = parent->i_sb;
+	struct reffs_dirent *rd = dirent_alloc(parent->i_dirent, name_dup,
+					       reffs_life_action_load,
+					       false /* see type-fix note */);
+
+	if (!rd) {
+		free(name_dup);
+		return -ENOMEM;
+	}
+
+	/* dirent_alloc strdup'd name_dup into rd->rd_name; ours is done. */
+	free(name_dup);
+
+	uint64_t ino =
+		__atomic_add_fetch(&sb->sb_next_ino, 1, __ATOMIC_RELAXED);
+	struct inode *inode = inode_alloc(sb, ino);
+
+	if (!inode) {
+		dirent_parent_release(rd, reffs_life_action_unload);
+		dirent_put(rd);
+		return -ENOMEM;
+	}
+
+	/*
+	 * Placeholder attributes.  The object type, size, timestamps, and
+	 * identity fields will be overwritten by the first forwarded
+	 * GETATTR on this inode -- we don't know them yet from LOOKUP
+	 * alone.  Mode 0644 is the safe default that makes the inode
+	 * immediately readable without access-check failures against
+	 * the end client before the first GETATTR lands.
+	 *
+	 * NOT_NOW_BROWN_COW: promote the object type (dir / symlink /
+	 * special) and fill real attrs by piggy-backing GETATTR on the
+	 * LOOKUP compound, or running a follow-up GETATTR before the
+	 * LOOKUP reply is returned.  Deferred to a later slice.
+	 */
+	inode->i_uid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 0);
+	inode->i_gid = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 0);
+	inode->i_mode = S_IFREG | 0644;
+	inode->i_nlink = 1;
+	inode->i_size = 0;
+	inode->i_used = 0;
+	inode->i_parent_ino = parent->i_ino;
+	clock_gettime(CLOCK_REALTIME, &inode->i_mtime);
+	inode->i_atime = inode->i_mtime;
+	inode->i_ctime = inode->i_mtime;
+	inode->i_btime = inode->i_mtime;
+
+	int ret = ps_inode_set_upstream_fh(inode, child_fh, child_fh_len);
+
+	if (ret < 0) {
+		inode_active_put(inode);
+		dirent_parent_release(rd, reffs_life_action_unload);
+		dirent_put(rd);
+		return ret;
+	}
+
+	dirent_attach_inode(rd, inode);
+	rd->rd_ino = inode->i_ino;
+
+	*out_de = rd;
+	*out_inode = inode; /* transfers active ref from inode_alloc */
+	return 0;
 }
