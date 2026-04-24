@@ -16,6 +16,7 @@ libreffs_nfs4_ps_la_SOURCES = \
 	ec_pipeline.c \
 	ps_discovery.c \
 	ps_mount_client.c \
+	ps_sb.c \
 	ps_state.c
 
 SUBDIRS = tests
