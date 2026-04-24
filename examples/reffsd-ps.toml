@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# pNFS Flex Files proxy server (PS).
+#
+# The PS runs alongside a native NFSv4.2 server but carries a
+# second listener whose superblocks live in a listener-scoped
+# namespace backed by an upstream MDS.  Clients that mount the
+# proxy listener see the MDS's namespace, but LOOKUPs / GETATTRs
+# are forwarded across the PS's cached MDS session -- the PS does
+# not hold any persistent backing storage for proxied files.
+#
+# One PS proxies one MDS.  [[proxy_mds]] can in principle appear
+# multiple times for multi-MDS deployments; the current
+# implementation supports a single entry.
+#
+# See also: reffsd.toml (standalone), reffsd-mds.toml (MDS),
+# reffsd-ds.toml (DS), .claude/design/proxy-server.md
+
+[server]
+# Native listener port.  The PS's proxy listener is configured in
+# [[proxy_mds]] below and is independent of this.  role=standalone
+# here means the native listener has no pNFS obligations of its
+# own -- probe ops and per-listener admin still work.
+port            = 2050
+bind            = "*"
+role            = "standalone"
+minor_versions  = [1, 2]
+grace_period    = 45
+workers         = 8
+max_session_slots = 64
+log_level       = "info"
+
+[backend]
+# Native listener state + data.  The proxy SBs are RAM-backed
+# (discovered at startup from the MDS; no persistent counterpart),
+# so this path only holds state for the native listener's own SBs.
+type            = "posix"
+path            = "/var/lib/reffs/ps/data"
+state_file      = "/var/lib/reffs/ps/reffs.state"
+
+[iouring]
+network_sq_size = 2048
+network_cq_size = 8192
+backend_sq_size = 512
+backend_cq_size = 2048
+
+[[export]]
+path        = "/"
+clients     = "*"
+access      = "rw"
+root_squash = false
+flavors     = ["sys"]
+
+[[proxy_mds]]
+id          = 1                     # listener id (1..N; 0 reserved)
+port        = 4098                  # proxy listener port
+bind        = "*"
+address     = "127.0.0.1"           # upstream MDS IPv4/IPv6
+mds_port    = 2049                  # upstream MDS NFS port
+mds_probe   = 20490                 # upstream MDS probe port
