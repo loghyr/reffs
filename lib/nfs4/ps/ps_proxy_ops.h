@@ -414,9 +414,9 @@ struct ps_proxy_write_reply {
  * On any failure `reply` is left zero-initialised and no durable
  * state ran on the upstream.
  *
- * NOT_NOW_BROWN_COW: credential forwarding (slice 2e-iv-c) and
- * COMMIT forwarding (a follow-up; until then UNSTABLE4 writes
- * cannot be flushed by the client).
+ * Credential forwarding is wired (slice 2e-iv-c-iii).  COMMIT
+ * forwarding is implemented by ps_proxy_forward_commit() below
+ * so UNSTABLE4 writes can be flushed by the client.
  *
  * Returns:
  *   0        success; reply populated
@@ -432,6 +432,40 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 			   const uint8_t *data, uint32_t data_len,
 			   const struct authunix_parms *creds,
 			   struct ps_proxy_write_reply *reply);
+
+/*
+ * Caller-owned result from ps_proxy_forward_commit.  Fully copied
+ * out of the compound -- the only durable wire field is the
+ * write verifier the upstream returns so the client can detect
+ * server restarts that would have invalidated previously-acked
+ * unstable writes.
+ */
+struct ps_proxy_commit_reply {
+	uint8_t verifier[PS_PROXY_VERIFIER_SIZE];
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(upstream_fh) + COMMIT on `ms`,
+ * copy the MDS's writeverf into `reply`.
+ *
+ * `offset` and `count` carry the byte range the client is asking
+ * to flush -- forwarded verbatim to the upstream MDS, which
+ * decides whether the range is meaningful (RFC 8881 S18.3 lets
+ * a server commit more than the requested range).
+ *
+ * On any failure `reply` is left zero-initialised and no durable
+ * state ran on the upstream.
+ *
+ * Returns:
+ *   0        success; reply->verifier populated
+ *   -EINVAL  ms / upstream_fh / reply NULL, or upstream_fh_len == 0
+ *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
+ *   -errno   RPC / compound failure, or a non-OK per-op status
+ */
+int ps_proxy_forward_commit(struct mds_session *ms, const uint8_t *upstream_fh,
+			    uint32_t upstream_fh_len, uint64_t offset,
+			    uint32_t count, const struct authunix_parms *creds,
+			    struct ps_proxy_commit_reply *reply);
 
 /*
  * Caller-owned result from ps_proxy_forward_close.  CLOSE returns an

@@ -2401,6 +2401,53 @@ uint32_t nfs4_op_commit(struct compound *compound)
 	}
 
 	/*
+	 * Proxy-SB fast path: forward COMMIT to upstream MDS so a
+	 * client doing UNSTABLE4 writes through the PS can actually
+	 * flush them durably (the upstream is authoritative for the
+	 * write verifier).
+	 */
+	if (compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding) {
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+		uint8_t upstream_fh[PS_MAX_FH_SIZE];
+		uint32_t upstream_fh_len = 0;
+
+		int fret = ps_inode_get_upstream_fh(compound->c_inode,
+						    upstream_fh,
+						    sizeof(upstream_fh),
+						    &upstream_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		struct ps_proxy_commit_reply creply;
+
+		memset(&creply, 0, sizeof(creply));
+		fret = ps_proxy_forward_commit(pls->pls_session, upstream_fh,
+					       upstream_fh_len, args->offset,
+					       args->count, &compound->c_ap,
+					       &creply);
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_COMMIT);
+			goto out;
+		}
+
+		memcpy(resok->writeverf, creply.verifier,
+		       PS_PROXY_VERIFIER_SIZE);
+		goto out;
+	}
+
+	/*
 	 * All writes are already FILE_SYNC4, so there is nothing to flush.
 	 * Return the stable write verifier so the client can verify
 	 * stability across server restarts.
