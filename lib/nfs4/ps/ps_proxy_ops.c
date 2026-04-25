@@ -18,6 +18,7 @@
 #include "nfs4/errors.h"
 
 #include "ec_client.h"
+#include "ps_owner.h" /* PS_OWNER_TAG_SIZE for the wrapped owner cap */
 #include "ps_proxy_ops.h"
 #include "ps_state.h" /* PS_MAX_FH_SIZE */
 
@@ -1815,14 +1816,15 @@ void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply)
 }
 
 /*
- * Open-owner bytes on the wire are opaque<>.  Most production clients
- * keep the owner tight (32-64 bytes); the RFC does not impose a hard
- * cap but we bound what we'll forward here so a misbehaving client
- * cannot push unbounded opaque into the MDS via the PS.  512 is
- * well above any real client but small enough that a malformed
- * request is rejected loudly rather than amplified upstream.
+ * Open-owner bytes on the wire are opaque<NFS4_OPAQUE_LIMIT> -- 1024.
+ * The hook in nfs4_op_open wraps the raw end-client owner with a
+ * PS_OWNER_TAG_SIZE (8) byte tag (see ps_owner.h) before handing
+ * it here, so the cap on what reaches the wire is the spec maximum
+ * (1024) plus the tag (8) = 1032.  Cap matches what the upstream
+ * MDS will accept; a misbehaving caller is rejected loudly rather
+ * than amplified upstream.
  */
-#define PS_PROXY_OPEN_OWNER_MAX 512
+#define PS_PROXY_OPEN_OWNER_MAX (NFS4_OPAQUE_LIMIT + PS_OWNER_TAG_SIZE)
 
 int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 			  uint32_t current_fh_len, const char *name,

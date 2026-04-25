@@ -45,6 +45,7 @@
 #include "nfs4/session.h"
 
 #include "ps_inode.h"
+#include "ps_owner.h"
 #include "ps_proxy_ops.h"
 #include "ps_sb.h"
 #include "ps_state.h"
@@ -445,6 +446,44 @@ uint32_t nfs4_op_open(struct compound *compound)
 		      binding->psb_listener_id, compound->c_inode->i_ino,
 		      (unsigned)args->claim.claim, name ? name : "(claim_fh)");
 
+		/*
+		 * Wrap the raw end-client open-owner with the END
+		 * CLIENT's clientid4 (8 BE bytes).  Without this,
+		 * two end clients on the same PS that send identical
+		 * raw owner strings would collide in the MDS's
+		 * stateowner table -- both would map to the same
+		 * (PS_session_clientid, owner_data) and SHARE_DENY
+		 * accounting would mix their opens.  See ps_owner.h.
+		 *
+		 * Stack buffer sized for NFS4_OPAQUE_LIMIT (1024) raw
+		 * + tag (8) = 1032; covers any spec-conformant client.
+		 * args->owner.owner.owner_len was already bounded by
+		 * the XDR decoder to NFS4_OPAQUE_LIMIT.
+		 */
+		uint8_t wrapped_owner[NFS4_OPAQUE_LIMIT + PS_OWNER_TAG_SIZE];
+		uint32_t wrapped_owner_len = 0;
+		uint64_t end_client_id =
+			compound->c_nfs4_client ?
+				nfs4_client_to_client(compound->c_nfs4_client)
+					->c_id :
+				0;
+
+		int wret = ps_owner_wrap(
+			end_client_id,
+			(const uint8_t *)args->owner.owner.owner_val,
+			args->owner.owner.owner_len, wrapped_owner,
+			sizeof(wrapped_owner), &wrapped_owner_len);
+		if (wret < 0) {
+			/*
+			 * The XDR cap should keep us inside the stack
+			 * buffer; -ENOSPC here means a malformed XDR
+			 * decoder slipped past or NFS4_OPAQUE_LIMIT
+			 * changed.  Fail loudly.
+			 */
+			*status = NFS4ERR_SERVERFAULT;
+			goto out;
+		}
+
 		struct ps_proxy_open_request oreq = {
 			.claim_type = is_claim_null ? PS_PROXY_OPEN_CLAIM_NULL :
 						      PS_PROXY_OPEN_CLAIM_FH,
@@ -454,9 +493,8 @@ uint32_t nfs4_op_open(struct compound *compound)
 			.share_access = share_access,
 			.share_deny = share_deny,
 			.owner_clientid = args->owner.clientid,
-			.owner_data =
-				(const uint8_t *)args->owner.owner.owner_val,
-			.owner_data_len = args->owner.owner.owner_len,
+			.owner_data = wrapped_owner,
+			.owner_data_len = wrapped_owner_len,
 		};
 
 		if (is_create) {

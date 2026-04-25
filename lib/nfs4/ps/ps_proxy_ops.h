@@ -289,13 +289,14 @@ void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply);
  * opens are separate slices; the hook in nfs4_op_open rejects
  * them with NFS4ERR_NOTSUPP.
  *
- * Owner handling: `owner_clientid` is the client's clientid4 and
- * `owner_data` is the client's opaque open-owner bytes.  Both get
- * forwarded verbatim as the open_owner4 on the MDS-facing compound.
- * An end client that reuses the same (clientid, owner) tuple sees
- * the MDS's idempotent OPEN semantics -- no local open-owner table
- * on the PS.  Future work (credential forwarding slice 2e-iv-c) may
- * wrap owner_data to disambiguate multiple end-clients that collide.
+ * Owner handling: `owner_clientid` is the end client's wire-supplied
+ * clientid4 (forwarded verbatim; ignored by NFSv4.1+ MDSes).
+ * `owner_data` is the OPEN-owner bytes that will hit the wire as
+ * open_owner4.owner -- the caller is responsible for prefixing the
+ * end-client identity tag (see ps_owner.h, ps_owner_wrap) so two
+ * end clients on the same PS session do not collide on the MDS's
+ * stateowner table.  The forwarder treats owner_data as opaque from
+ * here.
  */
 struct ps_proxy_open_request {
 	uint32_t claim_type; /* PS_PROXY_OPEN_CLAIM_{NULL,FH} */
