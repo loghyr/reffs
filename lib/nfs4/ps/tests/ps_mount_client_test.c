@@ -78,11 +78,18 @@ static Suite *ps_mount_client_suite(void)
 	tcase_add_test(tc, test_free_null);
 	tcase_add_test(tc, test_fetch_connect_refused);
 	/*
-	 * Keep the refused-connect test inside the default 2s budget --
-	 * libtirpc's internal pmap lookup usually errors out quickly on
-	 * loopback.  Bump explicitly if this flakes.
+	 * test_fetch_connect_refused calls libtirpc clnt_create against a
+	 * host with no rpcbind / portmap listener.  On Darwin (and on
+	 * Linux hosts where rpcbind is not running) TIRPC's portmap
+	 * probe to port 111 takes ~5 seconds to fail before clnt_create
+	 * gives up and returns NULL.  Five back-to-back local runs on
+	 * Darwin all measured 5.03s total.  A 5s libcheck deadline hits
+	 * that boundary and trips intermittently.  15s gives enough
+	 * headroom for TIRPC's slow-fail path on every supported host
+	 * without slowing CI meaningfully when the test passes -- the
+	 * happy path is still ~5s and well under the bumped budget.
 	 */
-	tcase_set_timeout(tc, 5);
+	tcase_set_timeout(tc, 15);
 	suite_add_tcase(s, tc);
 	return s;
 }
