@@ -402,4 +402,42 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 			   const uint8_t *data, uint32_t data_len,
 			   struct ps_proxy_write_reply *reply);
 
+/*
+ * Caller-owned result from ps_proxy_forward_close.  CLOSE returns an
+ * updated stateid4 (same `other`, bumped `seqid`) that the end
+ * client treats as the canonical stateid going forward.  We copy
+ * both fields so the caller's hook can plug them into CLOSE4res
+ * verbatim without re-deriving.
+ */
+struct ps_proxy_close_reply {
+	uint32_t stateid_seqid;
+	uint8_t stateid_other[PS_STATEID_OTHER_SIZE];
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(upstream_fh) + CLOSE on `ms`,
+ * copy the MDS's updated stateid into `reply`.
+ *
+ * The stateid passed in is the end client's open stateid -- which
+ * for a proxy file is the MDS's own stateid from a prior OPEN
+ * forward (see slice 2e-iv-j).  No translation is needed.
+ *
+ * On any failure `reply` is left zero-initialised and no durable
+ * state ran on the upstream.
+ *
+ * NOT_NOW_BROWN_COW (slice 2e-iv-c): credential forwarding.
+ *
+ * Returns:
+ *   0        success; reply populated
+ *   -EINVAL  ms / upstream_fh / stateid_other / reply NULL, or
+ *            upstream_fh_len == 0
+ *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
+ *   -errno   RPC / compound failure, or non-OK per-op status
+ */
+int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
+			   uint32_t upstream_fh_len, uint32_t close_seqid,
+			   uint32_t stateid_seqid,
+			   const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			   struct ps_proxy_close_reply *reply);
+
 #endif /* _REFFS_PS_PROXY_OPS_H */

@@ -744,6 +744,62 @@ START_TEST(test_forward_write_bad_stable)
 }
 END_TEST
 
+/*
+ * CLOSE forwarder arg validation -- same shape as READ/WRITE.
+ */
+START_TEST(test_forward_close_null_args)
+{
+	uint8_t fh[] = { 0x11 };
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0 };
+	struct ps_proxy_close_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_close(NULL, fh, sizeof(fh), 0, 0,
+						other, &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_close((void *)1, NULL, sizeof(fh), 0,
+						0, other, &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_close((void *)1, fh, sizeof(fh), 0, 0,
+						NULL, &reply),
+			 -EINVAL);
+	ck_assert_int_eq(ps_proxy_forward_close((void *)1, fh, sizeof(fh), 0, 0,
+						other, NULL),
+			 -EINVAL);
+}
+END_TEST
+
+START_TEST(test_forward_close_zero_fh)
+{
+	uint8_t fh[] = { 0x33 };
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0 };
+	struct ps_proxy_close_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_close((void *)1, fh, 0, 0, 0, other,
+						&reply),
+			 -EINVAL);
+}
+END_TEST
+
+START_TEST(test_forward_close_fh_too_big)
+{
+	uint8_t big_fh[PS_MAX_FH_SIZE + 1];
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0 };
+	struct ps_proxy_close_reply reply;
+
+	memset(big_fh, 0xAB, sizeof(big_fh));
+	memset(&reply, 0, sizeof(reply));
+
+	ck_assert_int_eq(ps_proxy_forward_close((void *)1, big_fh,
+						sizeof(big_fh), 0, 0, other,
+						&reply),
+			 -E2BIG);
+}
+END_TEST
+
 static Suite *ps_proxy_ops_suite(void)
 {
 	Suite *s = suite_create("ps_proxy_ops");
@@ -780,6 +836,9 @@ static Suite *ps_proxy_ops_suite(void)
 	tcase_add_test(tc, test_forward_write_zero_lengths);
 	tcase_add_test(tc, test_forward_write_fh_too_big);
 	tcase_add_test(tc, test_forward_write_bad_stable);
+	tcase_add_test(tc, test_forward_close_null_args);
+	tcase_add_test(tc, test_forward_close_zero_fh);
+	tcase_add_test(tc, test_forward_close_fh_too_big);
 	suite_add_tcase(s, tc);
 	return s;
 }

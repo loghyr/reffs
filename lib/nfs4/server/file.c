@@ -1282,6 +1282,70 @@ uint32_t nfs4_op_close(struct compound *compound)
 	}
 
 	/*
+	 * Proxy-SB fast path: forward CLOSE to upstream MDS.  The end
+	 * client's stateid here is the MDS's own open stateid that
+	 * ps_proxy_forward_open returned verbatim in slice 2e-iv-j, so
+	 * no translation is needed.  Special stateids (anonymous /
+	 * current / bypass) are rejected -- the proxy has no local
+	 * open_stateid table to resolve "current", and anonymous /
+	 * bypass are invalid for CLOSE per RFC 8881 S18.2.3.
+	 */
+	if (compound->c_inode && compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding) {
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+
+		if (stateid4_is_special(&args->open_stateid)) {
+			*status = NFS4ERR_BAD_STATEID;
+			return 0;
+		}
+
+		uint8_t upstream_fh[PS_MAX_FH_SIZE];
+		uint32_t upstream_fh_len = 0;
+		int fret = ps_inode_get_upstream_fh(compound->c_inode,
+						    upstream_fh,
+						    sizeof(upstream_fh),
+						    &upstream_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			return 0;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+
+		TRACE("proxy close: listener=%u ino=%" PRIu64
+		      " (forwarded with PS creds)",
+		      binding->psb_listener_id, compound->c_inode->i_ino);
+
+		struct ps_proxy_close_reply creply;
+
+		memset(&creply, 0, sizeof(creply));
+		fret = ps_proxy_forward_close(
+			pls->pls_session, upstream_fh, upstream_fh_len,
+			args->seqid, args->open_stateid.seqid,
+			(const uint8_t *)args->open_stateid.other, &creply);
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_CLOSE);
+			return 0;
+		}
+
+		/*
+		 * Hand the MDS's updated open_stateid back to the end
+		 * client.  Same `other`, bumped `seqid`.
+		 */
+		res->CLOSE4res_u.open_stateid.seqid = creply.stateid_seqid;
+		memcpy(res->CLOSE4res_u.open_stateid.other,
+		       creply.stateid_other, NFS4_OTHER_SIZE);
+		return 0;
+	}
+
+	/*
 	 * RFC 8881 S16.2.3.1.2: current stateid -- substitute the
 	 * stateid set by a previous op in this compound (e.g., OPEN).
 	 */

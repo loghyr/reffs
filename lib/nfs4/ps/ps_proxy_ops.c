@@ -406,6 +406,82 @@ out:
 	return ret;
 }
 
+int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
+			   uint32_t upstream_fh_len, uint32_t close_seqid,
+			   uint32_t stateid_seqid,
+			   const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			   struct ps_proxy_close_reply *reply)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
+
+	if (!ms || !upstream_fh || upstream_fh_len == 0 || !stateid_other ||
+	    !reply)
+		return -EINVAL;
+	if (upstream_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
+	memset(reply, 0, sizeof(*reply));
+
+	/* SEQUENCE + PUTFH + CLOSE = 3 ops */
+	ret = mds_compound_init(&mc, 3, "ps-proxy-close");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)upstream_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = upstream_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_CLOSE);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	CLOSE4args *ca = &slot->nfs_argop4_u.opclose;
+
+	ca->seqid = close_seqid;
+	ca->open_stateid.seqid = stateid_seqid;
+	memcpy(ca->open_stateid.other, stateid_other, PS_STATEID_OTHER_SIZE);
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret)
+		goto out;
+
+	/* PUTFH status at index 1. */
+	res = mds_compound_result(&mc, 1);
+	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	/* CLOSE result at index 2. */
+	res = mds_compound_result(&mc, 2);
+	if (!res || res->nfs_resop4_u.opclose.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	stateid4 *new_sid = &res->nfs_resop4_u.opclose.CLOSE4res_u.open_stateid;
+
+	reply->stateid_seqid = new_sid->seqid;
+	memcpy(reply->stateid_other, new_sid->other, PS_STATEID_OTHER_SIZE);
+	ret = 0;
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
 /*
  * RFC 8881 S5.8.1 attribute numbers.  Hard-coded rather than
  * pulled from nfsv42_xdr.h to keep this parser self-contained --
