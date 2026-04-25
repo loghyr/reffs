@@ -245,6 +245,26 @@ START_TEST(test_forward_open_propagates_creds)
 }
 END_TEST
 
+START_TEST(test_forward_mkdir_propagates_creds)
+{
+	uint8_t parent[] = { 0xBB };
+	struct ps_proxy_mkdir_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+	capture_reset();
+
+	int ret = ps_proxy_forward_mkdir(test_session(), parent, sizeof(parent),
+					 "newdir", 6, NULL, 0, NULL, 0,
+					 &g_test_creds, &reply);
+
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert_ptr_eq(g_captured_creds, &g_test_creds);
+	ck_assert_uint_eq(g_captured_creds->aup_uid, TEST_UID);
+	ps_proxy_mkdir_reply_free(&reply);
+}
+END_TEST
+
 START_TEST(test_forward_rename_propagates_creds)
 {
 	uint8_t src[] = { 0x99 };
@@ -338,6 +358,7 @@ static Suite *ps_proxy_creds_forward_suite(void)
 	tcase_add_test(tc, test_forward_write_propagates_creds);
 	tcase_add_test(tc, test_forward_close_propagates_creds);
 	tcase_add_test(tc, test_forward_open_propagates_creds);
+	tcase_add_test(tc, test_forward_mkdir_propagates_creds);
 	tcase_add_test(tc, test_forward_rename_propagates_creds);
 	tcase_add_test(tc, test_forward_remove_propagates_creds);
 	tcase_add_test(tc, test_forward_commit_propagates_creds);

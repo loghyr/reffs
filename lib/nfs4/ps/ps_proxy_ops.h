@@ -556,6 +556,70 @@ int ps_proxy_forward_rename(struct mds_session *ms, const uint8_t *src_fh,
 			    struct ps_proxy_rename_reply *reply);
 
 /*
+ * Caller-owned result from ps_proxy_forward_mkdir.  Carries enough
+ * to populate the wire CREATE4resok the client expects (cinfo +
+ * attrset) plus the new directory's upstream FH and minimum attrs
+ * the caller's hook needs to materialise a local proxy-SB inode
+ * for the new object so subsequent ops in the same compound can
+ * see it.
+ *
+ * `attrset_mask` is heap-allocated by the forwarder (or NULL if
+ * the upstream returned an empty bitmap); release with
+ * ps_proxy_mkdir_reply_free() exactly once.
+ */
+struct ps_proxy_mkdir_reply {
+	struct {
+		bool atomic;
+		uint64_t before;
+		uint64_t after;
+	} cinfo;
+	uint32_t *attrset_mask;
+	uint32_t attrset_mask_len;
+	uint8_t child_fh[PS_MAX_FH_SIZE];
+	uint32_t child_fh_len;
+	struct ps_proxy_attrs_min child_attrs;
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(parent) + CREATE(NF4DIR, name,
+ * createattrs) + GETFH + GETATTR(TYPE|MODE) on `ms`, copy the
+ * upstream's results into `reply`.  After this returns 0 the
+ * caller has everything it needs to materialise a local proxy-SB
+ * inode for the new directory and switch the compound's CURRENT_FH
+ * to it (matching the on-wire CREATE semantics from RFC 8881
+ * S18.4 -- CURRENT_FH transitions to the new object).
+ *
+ * Per-op error fidelity: NFS4ERR_EXIST -> -EEXIST, NFS4ERR_ACCESS
+ * -> -EACCES, etc.  via nfs4_to_errno.
+ *
+ * On any failure `reply` is left zero-initialised and no durable
+ * state ran on the upstream.
+ *
+ * Returns:
+ *   0        success; reply populated
+ *   -EINVAL  any pointer NULL, parent_fh / name length 0
+ *   -E2BIG   parent_fh > PS_MAX_FH_SIZE
+ *   -ENOSPC  child FH > PS_MAX_FH_SIZE (MDS misbehaving)
+ *   -EEXIST  upstream returned NFS4ERR_EXIST (name already taken)
+ *   -ENOMEM  attrset_mask alloc failure
+ *   -errno   RPC / compound failure, or a non-OK per-op status
+ */
+int ps_proxy_forward_mkdir(struct mds_session *ms, const uint8_t *parent_fh,
+			   uint32_t parent_fh_len, const char *name,
+			   uint32_t name_len, const uint32_t *createattrs_mask,
+			   uint32_t createattrs_mask_len,
+			   const uint8_t *createattrs_vals,
+			   uint32_t createattrs_vals_len,
+			   const struct authunix_parms *creds,
+			   struct ps_proxy_mkdir_reply *reply);
+
+/*
+ * Release any heap allocated by ps_proxy_forward_mkdir into
+ * `reply` and zero the struct.  NULL-safe.
+ */
+void ps_proxy_mkdir_reply_free(struct ps_proxy_mkdir_reply *reply);
+
+/*
  * Caller-owned result from ps_proxy_forward_close.  CLOSE returns an
  * updated stateid4 (same `other`, bumped `seqid`) that the end
  * client treats as the canonical stateid going forward.  We copy

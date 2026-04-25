@@ -445,6 +445,118 @@ uint32_t nfs4_op_create(struct compound *compound)
 		goto out;
 	}
 
+	/*
+	 * Proxy-SB fast path: forward CREATE(NF4DIR) to upstream MDS,
+	 * then materialise a local proxy-SB inode for the new dir so
+	 * subsequent ops in this compound (GETFH, GETATTR) see it.
+	 *
+	 * Only NF4DIR is forwarded for now; NF4LNK / NF4BLK / NF4CHR /
+	 * NF4SOCK / NF4FIFO will be added in follow-up slices once the
+	 * mkdir pattern is shaken out on witchie/mage.  Other types fall
+	 * through to the local vfs_* path which would mutate the proxy
+	 * SB cache without reaching the upstream -- not ideal but
+	 * matches behaviour before this slice.
+	 */
+	if (compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding &&
+	    args->objtype.type == NF4DIR) {
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+		uint8_t parent_fh[PS_MAX_FH_SIZE];
+		uint32_t parent_fh_len = 0;
+
+		int fret = ps_inode_get_upstream_fh(compound->c_inode,
+						    parent_fh,
+						    sizeof(parent_fh),
+						    &parent_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		struct ps_proxy_mkdir_reply mreply;
+
+		memset(&mreply, 0, sizeof(mreply));
+		fret = ps_proxy_forward_mkdir(
+			pls->pls_session, parent_fh, parent_fh_len, name,
+			(uint32_t)strlen(name),
+			args->createattrs.attrmask.bitmap4_val,
+			args->createattrs.attrmask.bitmap4_len,
+			(const uint8_t *)
+				args->createattrs.attr_vals.attrlist4_val,
+			args->createattrs.attr_vals.attrlist4_len,
+			&compound->c_ap, &mreply);
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_CREATE);
+			goto out;
+		}
+
+		/*
+		 * Materialise a local proxy-SB inode for the new dir so
+		 * the wire CURRENT_FH transition (RFC 8881 S18.4: CREATE
+		 * makes the new object the CURRENT_FH) has a corresponding
+		 * local inode for follow-up ops in this compound.
+		 */
+		struct reffs_dirent *child_de = NULL;
+		struct inode *child = NULL;
+
+		fret = ps_lookup_materialize(
+			compound->c_inode, args->objname.utf8string_val,
+			args->objname.utf8string_len, mreply.child_fh,
+			mreply.child_fh_len, &mreply.child_attrs, &child_de,
+			&child);
+		if (fret == -EEXIST) {
+			/*
+			 * Concurrent LOOKUP / CREATE materialised the same
+			 * name between our forward RPC and the alloc.
+			 * Re-find the dirent + ensure_inode to recover.
+			 */
+			child_de = dirent_load_child_by_name(
+				compound->c_inode->i_dirent, name);
+			if (!child_de) {
+				ps_proxy_mkdir_reply_free(&mreply);
+				*status = NFS4ERR_SERVERFAULT;
+				goto out;
+			}
+			child = dirent_ensure_inode(child_de);
+			if (!child) {
+				ps_proxy_mkdir_reply_free(&mreply);
+				*status = NFS4ERR_SERVERFAULT;
+				goto out;
+			}
+		} else if (fret < 0) {
+			ps_proxy_mkdir_reply_free(&mreply);
+			*status = errno_to_nfs4(fret, OP_CREATE);
+			goto out;
+		}
+
+		/* Switch CURRENT_FH to the new dir, mirroring the wire op. */
+		inode_active_put(compound->c_inode);
+		compound->c_inode = child;
+		compound->c_curr_nfh.nfh_ino = compound->c_inode->i_ino;
+
+		resok->cinfo.atomic = mreply.cinfo.atomic;
+		resok->cinfo.before = mreply.cinfo.before;
+		resok->cinfo.after = mreply.cinfo.after;
+
+		/* attrset hand-off: the wire bitmap4 takes ownership. */
+		resok->attrset.bitmap4_val = mreply.attrset_mask;
+		resok->attrset.bitmap4_len = mreply.attrset_mask_len;
+		mreply.attrset_mask = NULL;
+		mreply.attrset_mask_len = 0;
+
+		ps_proxy_mkdir_reply_free(&mreply);
+		goto out;
+	}
+
 	ret = inode_access_check(compound->c_inode, &compound->c_ap, W_OK);
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_CREATE);
