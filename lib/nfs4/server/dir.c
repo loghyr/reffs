@@ -446,19 +446,22 @@ uint32_t nfs4_op_create(struct compound *compound)
 	}
 
 	/*
-	 * Proxy-SB fast path: forward CREATE(NF4DIR) and CREATE(NF4LNK)
-	 * to upstream MDS, then materialise a local proxy-SB inode for
-	 * the new object so subsequent ops in this compound (GETFH,
-	 * GETATTR) see it.
+	 * Proxy-SB fast path: forward CREATE for the six object types
+	 * the client can name (NF4DIR, NF4LNK, NF4BLK, NF4CHR, NF4SOCK,
+	 * NF4FIFO) to the upstream MDS, then materialise a local
+	 * proxy-SB inode for the new object so subsequent ops in this
+	 * compound (GETFH, GETATTR) see it.
 	 *
-	 * NF4BLK / NF4CHR / NF4SOCK / NF4FIFO still fall through to the
-	 * local vfs_* path -- those types are rare on NFS exports and
-	 * the createtype4 union encoding for devdata adds enough surface
-	 * to deserve a dedicated slice if/when needed.
+	 * NF4REG is created via OPEN4_CREATE (RFC 8881 S18.16.3), not
+	 * NFS4 CREATE, and has its own forwarder.  NF4ATTRDIR / NF4NAMEDATTR
+	 * are not part of the supported wire surface here; they fall
+	 * through to the local path which will reject them.
 	 */
 	if (compound->c_inode->i_sb &&
 	    compound->c_inode->i_sb->sb_proxy_binding &&
-	    (args->objtype.type == NF4DIR || args->objtype.type == NF4LNK)) {
+	    (args->objtype.type == NF4DIR || args->objtype.type == NF4LNK ||
+	     args->objtype.type == NF4BLK || args->objtype.type == NF4CHR ||
+	     args->objtype.type == NF4SOCK || args->objtype.type == NF4FIFO)) {
 		const struct ps_sb_binding *binding =
 			compound->c_inode->i_sb->sb_proxy_binding;
 		uint8_t parent_fh[PS_MAX_FH_SIZE];
@@ -524,8 +527,7 @@ uint32_t nfs4_op_create(struct compound *compound)
 			child_attrs = mreply.child_attrs;
 			mreply.attrset_mask = NULL; /* ownership transferred */
 			ps_proxy_mkdir_reply_free(&mreply);
-		} else {
-			/* NF4LNK */
+		} else if (args->objtype.type == NF4LNK) {
 			struct ps_proxy_symlink_reply sreply;
 			linktext4 *ld = &args->objtype.createtype4_u.linkdata;
 
@@ -554,6 +556,44 @@ uint32_t nfs4_op_create(struct compound *compound)
 			child_attrs = sreply.child_attrs;
 			sreply.attrset_mask = NULL;
 			ps_proxy_symlink_reply_free(&sreply);
+		} else {
+			/* NF4BLK / NF4CHR / NF4SOCK / NF4FIFO */
+			struct ps_proxy_mknod_reply nreply;
+			uint32_t s1 = 0, s2 = 0;
+
+			if (args->objtype.type == NF4BLK ||
+			    args->objtype.type == NF4CHR) {
+				specdata4 *sd =
+					&args->objtype.createtype4_u.devdata;
+				s1 = sd->specdata1;
+				s2 = sd->specdata2;
+			}
+
+			memset(&nreply, 0, sizeof(nreply));
+			fret = ps_proxy_forward_mknod(
+				pls->pls_session, parent_fh, parent_fh_len,
+				name, (uint32_t)strlen(name),
+				args->objtype.type, s1, s2,
+				args->createattrs.attrmask.bitmap4_val,
+				args->createattrs.attrmask.bitmap4_len,
+				(const uint8_t *)args->createattrs.attr_vals
+					.attrlist4_val,
+				args->createattrs.attr_vals.attrlist4_len,
+				&compound->c_ap, &nreply);
+			if (fret < 0) {
+				*status = errno_to_nfs4(fret, OP_CREATE);
+				goto out;
+			}
+			memcpy(child_fh, nreply.child_fh, nreply.child_fh_len);
+			child_fh_len = nreply.child_fh_len;
+			cinfo.atomic = nreply.cinfo.atomic;
+			cinfo.before = nreply.cinfo.before;
+			cinfo.after = nreply.cinfo.after;
+			attrset_mask = nreply.attrset_mask;
+			attrset_mask_len = nreply.attrset_mask_len;
+			child_attrs = nreply.child_attrs;
+			nreply.attrset_mask = NULL;
+			ps_proxy_mknod_reply_free(&nreply);
 		}
 
 		/*

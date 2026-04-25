@@ -673,6 +673,59 @@ int ps_proxy_forward_symlink(struct mds_session *ms, const uint8_t *parent_fh,
 void ps_proxy_symlink_reply_free(struct ps_proxy_symlink_reply *reply);
 
 /*
+ * Caller-owned result from ps_proxy_forward_mknod.  Same shape as
+ * the mkdir/symlink replies -- the only wire difference between
+ * CREATE(NF4DIR), CREATE(NF4LNK), and CREATE(NF4{BLK,CHR,SOCK,FIFO})
+ * is the createtype4 union payload, not the response.  Free with
+ * ps_proxy_mknod_reply_free() exactly once.
+ */
+struct ps_proxy_mknod_reply {
+	struct {
+		bool atomic;
+		uint64_t before;
+		uint64_t after;
+	} cinfo;
+	uint32_t *attrset_mask;
+	uint32_t attrset_mask_len;
+	uint8_t child_fh[PS_MAX_FH_SIZE];
+	uint32_t child_fh_len;
+	struct ps_proxy_attrs_min child_attrs;
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(parent) + CREATE(`type`, name,
+ * [devdata], createattrs) + GETFH + GETATTR(TYPE|MODE) on `ms`.
+ * Used for the four "special file" object types that have no
+ * dedicated forwarder: NF4BLK, NF4CHR, NF4SOCK, NF4FIFO.  Other
+ * types (NF4DIR, NF4LNK, NF4REG) have their own forwarders.
+ *
+ * `specdata1` / `specdata2` carry the major / minor device numbers
+ * for NF4BLK and NF4CHR (they fill the createtype4_u.devdata
+ * specdata4 union member).  For NF4SOCK and NF4FIFO they are
+ * ignored; pass 0.
+ *
+ * Returns:
+ *   0        success; reply populated
+ *   -EINVAL  any pointer NULL, parent_fh / name length 0, or
+ *            `type` not one of NF4BLK / NF4CHR / NF4SOCK / NF4FIFO
+ *   -E2BIG   parent_fh > PS_MAX_FH_SIZE
+ *   -ENOSPC  child FH > PS_MAX_FH_SIZE (MDS misbehaving)
+ *   -EEXIST  upstream returned NFS4ERR_EXIST (name already taken)
+ *   -ENOMEM  attrset_mask alloc failure
+ *   -errno   RPC / compound failure, or a non-OK per-op status
+ */
+int ps_proxy_forward_mknod(
+	struct mds_session *ms, const uint8_t *parent_fh,
+	uint32_t parent_fh_len, const char *name, uint32_t name_len,
+	uint32_t type, /* nfs_ftype4 value */
+	uint32_t specdata1, uint32_t specdata2,
+	const uint32_t *createattrs_mask, uint32_t createattrs_mask_len,
+	const uint8_t *createattrs_vals, uint32_t createattrs_vals_len,
+	const struct authunix_parms *creds, struct ps_proxy_mknod_reply *reply);
+
+void ps_proxy_mknod_reply_free(struct ps_proxy_mknod_reply *reply);
+
+/*
  * Caller-owned result from ps_proxy_forward_link.  The wire LINK
  * op (RFC 8881 S18.9) returns only the target-dir change_info4 --
  * a hardlink doesn't mint a new inode, so there's no GETFH /

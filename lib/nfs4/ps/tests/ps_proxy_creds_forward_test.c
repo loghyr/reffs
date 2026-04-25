@@ -383,6 +383,115 @@ START_TEST(test_forward_readdir_propagates_creds)
 }
 END_TEST
 
+/*
+ * mknod forwarder covers the four "special file" object types in
+ * one entry point.  Test each type individually to make sure the
+ * specdata-vs-no-devdata branch in the implementation didn't lose
+ * the cred argument along either path.
+ */
+START_TEST(test_forward_mknod_blk_propagates_creds)
+{
+	uint8_t parent[] = { 0xC1 };
+	struct ps_proxy_mknod_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+	capture_reset();
+
+	int ret = ps_proxy_forward_mknod(test_session(), parent, sizeof(parent),
+					 "blkdev", 6, NF4BLK, 8u, 16u, NULL, 0,
+					 NULL, 0, &g_test_creds, &reply);
+
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert_ptr_eq(g_captured_creds, &g_test_creds);
+	ck_assert_uint_eq(g_captured_creds->aup_uid, TEST_UID);
+	ps_proxy_mknod_reply_free(&reply);
+}
+END_TEST
+
+START_TEST(test_forward_mknod_chr_propagates_creds)
+{
+	uint8_t parent[] = { 0xC2 };
+	struct ps_proxy_mknod_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+	capture_reset();
+
+	int ret = ps_proxy_forward_mknod(test_session(), parent, sizeof(parent),
+					 "chrdev", 6, NF4CHR, 4u, 65u, NULL, 0,
+					 NULL, 0, &g_test_creds, &reply);
+
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert_ptr_eq(g_captured_creds, &g_test_creds);
+	ck_assert_uint_eq(g_captured_creds->aup_uid, TEST_UID);
+	ps_proxy_mknod_reply_free(&reply);
+}
+END_TEST
+
+START_TEST(test_forward_mknod_sock_propagates_creds)
+{
+	uint8_t parent[] = { 0xC3 };
+	struct ps_proxy_mknod_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+	capture_reset();
+
+	int ret = ps_proxy_forward_mknod(test_session(), parent, sizeof(parent),
+					 "sock", 4, NF4SOCK, 0, 0, NULL, 0,
+					 NULL, 0, &g_test_creds, &reply);
+
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert_ptr_eq(g_captured_creds, &g_test_creds);
+	ck_assert_uint_eq(g_captured_creds->aup_uid, TEST_UID);
+	ps_proxy_mknod_reply_free(&reply);
+}
+END_TEST
+
+START_TEST(test_forward_mknod_fifo_propagates_creds)
+{
+	uint8_t parent[] = { 0xC4 };
+	struct ps_proxy_mknod_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+	capture_reset();
+
+	int ret = ps_proxy_forward_mknod(test_session(), parent, sizeof(parent),
+					 "fifo", 4, NF4FIFO, 0, 0, NULL, 0,
+					 NULL, 0, &g_test_creds, &reply);
+
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert_ptr_eq(g_captured_creds, &g_test_creds);
+	ck_assert_uint_eq(g_captured_creds->aup_uid, TEST_UID);
+	ps_proxy_mknod_reply_free(&reply);
+}
+END_TEST
+
+/*
+ * Wrong-type guard: the dispatcher in dir.c must never let a
+ * NF4DIR / NF4LNK / NF4REG slip into ps_proxy_forward_mknod (those
+ * have their own forwarders).  The forwarder rejects with -EINVAL
+ * before any RPC fires, so g_send_call_count must stay 0.
+ */
+START_TEST(test_forward_mknod_rejects_wrong_type)
+{
+	uint8_t parent[] = { 0xC5 };
+	struct ps_proxy_mknod_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+	capture_reset();
+
+	int ret = ps_proxy_forward_mknod(test_session(), parent, sizeof(parent),
+					 "wrong", 5, NF4DIR, 0, 0, NULL, 0,
+					 NULL, 0, &g_test_creds, &reply);
+
+	ck_assert_int_eq(ret, -EINVAL);
+	ck_assert_int_eq(g_send_call_count, 0);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -406,6 +515,11 @@ static Suite *ps_proxy_creds_forward_suite(void)
 	tcase_add_test(tc, test_forward_remove_propagates_creds);
 	tcase_add_test(tc, test_forward_commit_propagates_creds);
 	tcase_add_test(tc, test_forward_readdir_propagates_creds);
+	tcase_add_test(tc, test_forward_mknod_blk_propagates_creds);
+	tcase_add_test(tc, test_forward_mknod_chr_propagates_creds);
+	tcase_add_test(tc, test_forward_mknod_sock_propagates_creds);
+	tcase_add_test(tc, test_forward_mknod_fifo_propagates_creds);
+	tcase_add_test(tc, test_forward_mknod_rejects_wrong_type);
 
 	suite_add_tcase(s, tc);
 	return s;
