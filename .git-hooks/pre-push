@@ -2,7 +2,18 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# reffs pre-push hook
+# reffs pre-push hook -- style + license only (default).
+#
+# Build / unit / integration coverage runs in CI (reffs.ci nightly,
+# garbo) and via `make -f Makefile.reffs ci-check` on demand.  The
+# pre-push hook stays scoped to the two checks that are cheap, fast,
+# and consistently catch human-introduced drift (clang-format and
+# SPDX header compliance).
+#
+# A heavier sibling variant `.git-hooks/pre-push.ci` runs the full
+# Docker check-ci pipeline (build + unit + integration); use that
+# when CI feedback is too slow to wait for.  See its header for how
+# to install it as the active hook.
 #
 # Install (pick one):
 #   cp .git-hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
@@ -10,23 +21,10 @@
 
 set -e
 
-# Style check: only changed lines, avoids cross-version clang-format drift
-if command -v git-clang-format >/dev/null 2>&1; then
-	echo "[pre-push] checking clang-format on changed lines ..."
-	DIFF=$(git clang-format --diff HEAD~1 2>/dev/null || true)
-	if echo "$DIFF" | grep -qv "^no modified files\|^clang-format did not"; then
-		echo "[pre-push] clang-format violations found. Run: git clang-format"
-		echo "$DIFF" | head -20
-		exit 1
-	fi
-fi
+echo "[pre-push] make -f Makefile.reffs style ..."
+make -f Makefile.reffs style
 
-# License headers + compatibility check
-echo "[pre-push] checking license headers and compatibility ..."
-SKIP_STYLE=1 make -f Makefile.reffs license
-
-# Full CI gate
-echo "[pre-push] running make -f Makefile.reffs check-ci ..."
-make -f Makefile.reffs check-ci
+echo "[pre-push] make -f Makefile.reffs license ..."
+make -f Makefile.reffs license
 
 echo "[pre-push] PASS"
