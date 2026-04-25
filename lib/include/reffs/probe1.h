@@ -44,4 +44,7 @@ struct rpc_trans *probe1_client_op_sb_set_dstores(uint64_t id,
 struct rpc_trans *probe1_client_op_sb_set_stripe_unit(uint64_t id,
 						      uint32_t stripe_unit);
 
+struct rpc_trans *probe1_client_op_inode_layout_list(uint64_t sb_id,
+						     uint64_t inum);
+
 #endif

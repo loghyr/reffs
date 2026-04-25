@@ -99,6 +99,7 @@ static struct option long_opts[] = {
 	{ "flavors", required_argument, 0, 'F' },
 	{ "dstores", required_argument, 0, 'D' },
 	{ "stripe-unit", required_argument, 0, 'U' },
+	{ "inum", required_argument, 0, 'N' },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -116,6 +117,7 @@ uint32_t cli_nflavors = 0;
 uint32_t cli_dstores[MAX_CLI_DSTORES];
 uint32_t cli_ndstores = 0;
 uint32_t cli_stripe_unit = 0;
+uint64_t cli_inum = 0;
 
 /*
  * Parse a comma-separated dstore ID list: "1,2,3"
@@ -186,7 +188,7 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "hc:f:p:o:s:g:v:HI:P:T:F:D:U:";
+	char *opts = "hc:f:p:o:s:g:v:HI:P:T:F:D:U:N:";
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -238,6 +240,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'U':
 			cli_stripe_unit = (uint32_t)strtoul(optarg, NULL, 0);
+			break;
+		case 'N':
+			cli_inum = (uint64_t)strtoull(optarg, NULL, 0);
 			break;
 		}
 	}
@@ -328,6 +333,8 @@ int main(int argc, char *argv[])
 	} else if (!strcmp(op, "sb-set-stripe-unit")) {
 		rt = probe1_client_op_sb_set_stripe_unit(sb_id,
 							 cli_stripe_unit);
+	} else if (!strcmp(op, "inode-layout-list")) {
+		rt = probe1_client_op_inode_layout_list(sb_id, cli_inum);
 	} else {
 		LOG("op = \"%s\" is not supported", op);
 	}

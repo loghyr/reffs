@@ -632,6 +632,64 @@ struct rpc_trans *probe1_client_op_sb_get(uint64_t id)
 	return rt;
 }
 
+static int inode_layout_list_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	INODE_LAYOUT_LIST1res *res = ph->ph_res;
+
+	if (res->ill_status) {
+		LOG("inode-layout-list error = %d", res->ill_status);
+	} else {
+		INODE_LAYOUT_LIST1resok *resok =
+			&res->INODE_LAYOUT_LIST1res_u.ill_resok;
+		printf("lss_gen=%" PRIu64 " mirrors=%u\n", resok->ill_lss_gen,
+		       resok->ill_mirrors.ill_mirrors_len);
+		for (uint32_t i = 0; i < resok->ill_mirrors.ill_mirrors_len;
+		     i++) {
+			probe_layout_mirror1 *m =
+				&resok->ill_mirrors.ill_mirrors_val[i];
+			printf("  [%u] dstore=%u fh_len=%u size=%" PRId64
+			       " mtime=%" PRId64 ".%09u\n",
+			       i, m->plm_dstore_id, m->plm_ds_fh.plm_ds_fh_len,
+			       m->plm_size, m->plm_mtime_sec,
+			       m->plm_mtime_nsec);
+		}
+	}
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_inode_layout_list(uint64_t sb_id,
+						     uint64_t inum)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_INODE_LAYOUT_LIST;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	INODE_LAYOUT_LIST1args *args = ph->ph_args;
+
+	args->ill_sb_id = sb_id;
+	args->ill_inum = inum;
+
+	rt->rt_cb = inode_layout_list_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
 struct rpc_trans *probe1_client_op_sb_set_flavors(uint64_t id,
 						  uint32_t *flavors,
 						  uint32_t nflavors)

@@ -376,6 +376,48 @@ struct SB_SET_STRIPE_UNIT1args {
 	unsigned int		ssu_stripe_unit;
 };
 
+/*
+ * INODE_LAYOUT_LIST (op 28) -- read-only enumeration of an inode's
+ * mirror set.  See .claude/design/mirror-lifecycle.md "Slice A".
+ *
+ * Resolves an inode by (sb_id, inum).  Returns:
+ *   - ill_lss_gen   -- per-inode layout-segments generation counter,
+ *                      bumped on every mutation by slice B' onward.
+ *                      Slice A returns 0 as a placeholder until B'
+ *                      lands the field on struct layout_segments.
+ *   - ill_mirrors[] -- one entry per layout_data_file, exposing the
+ *                      dstore_id, DS-side filehandle, and cached
+ *                      size/mtime.  Cached times reflect the last
+ *                      reflected GETATTR; admin reads them as a
+ *                      snapshot, not a live query.
+ */
+const PROBE1_MAX_LAYOUT_FH = 128;	/* matches LAYOUT_SEG_MAX_FH */
+
+struct probe_layout_mirror1 {
+	unsigned int		plm_dstore_id;
+	opaque			plm_ds_fh<PROBE1_MAX_LAYOUT_FH>;
+	hyper			plm_size;
+	hyper			plm_mtime_sec;
+	unsigned int		plm_mtime_nsec;
+};
+
+struct INODE_LAYOUT_LIST1args {
+	unsigned hyper		ill_sb_id;
+	unsigned hyper		ill_inum;
+};
+
+struct INODE_LAYOUT_LIST1resok {
+	unsigned hyper		ill_lss_gen;
+	probe_layout_mirror1	ill_mirrors<>;
+};
+
+union INODE_LAYOUT_LIST1res switch (probe_stat1 ill_status) {
+	case PROBE1_OK:
+		INODE_LAYOUT_LIST1resok	ill_resok;
+	default:
+		void;
+};
+
 /* SB_LINT_FLAVORS (op 20) */
 struct SB_LINT_FLAVORS1resok {
 	unsigned int	lfr_warnings;
@@ -554,5 +596,8 @@ program PROBE_PROGRAM {
 		probe_stat1 PROBEPROC1_SB_SET_DSTORES(SB_SET_DSTORES1args) = 25;
 		probe_stat1 PROBEPROC1_SB_SET_CLIENT_RULES(SB_SET_CLIENT_RULES1args) = 26;
 		probe_stat1 PROBEPROC1_SB_SET_STRIPE_UNIT(SB_SET_STRIPE_UNIT1args) = 27;
+
+		/* Mirror lifecycle ops -- see .claude/design/mirror-lifecycle.md */
+		INODE_LAYOUT_LIST1res PROBEPROC1_INODE_LAYOUT_LIST(INODE_LAYOUT_LIST1args) = 28;
 	} = 1;
 } = 211768;

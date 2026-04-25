@@ -240,6 +240,18 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_SB_SET_STRIPE_UNIT, args,
                          response_type='probe_stat1')
 
+    def inode_layout_list(self, sb_id, inum):
+        """Read-only enumeration of an inode's mirror set.
+
+        Returns INODE_LAYOUT_LIST1res with ill_lss_gen and the
+        ill_mirrors[] array (each mirror has plm_dstore_id,
+        plm_ds_fh, plm_size, plm_mtime_sec/nsec).  See
+        .claude/design/mirror-lifecycle.md "Slice A".
+        """
+        args = INODE_LAYOUT_LIST1args(sb_id, inum)
+        return self.proc(PROBEPROC1_INODE_LAYOUT_LIST, args,
+                         response_type='INODE_LAYOUT_LIST1res')
+
     def sb_set_client_rules(self, sb_id, rules):
         """Set per-client export policy rules on a superblock.
 

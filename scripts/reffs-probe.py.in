@@ -726,6 +726,20 @@ def sb_set_stripe_unit_cmd(client, args):
         print(f"Superblock {args.id} stripe unit set to {args.stripe_unit} bytes")
 
 
+def inode_layout_list_cmd(client, args):
+    res = client.inode_layout_list(args.sb_id, args.inum)
+    probe_error_handler(res)
+    resok = res.ill_resok
+    print(f"sb_id={args.sb_id} inum={args.inum} lss_gen={resok.ill_lss_gen} "
+          f"mirrors={len(resok.ill_mirrors)}")
+    for i, m in enumerate(resok.ill_mirrors):
+        fh_hex = m.plm_ds_fh.hex() if hasattr(m.plm_ds_fh, 'hex') else \
+            bytes(m.plm_ds_fh).hex()
+        print(f"  [{i}] dstore={m.plm_dstore_id} size={m.plm_size} "
+              f"mtime={m.plm_mtime_sec}.{m.plm_mtime_nsec:09d} "
+              f"fh={fh_hex}")
+
+
 def sb_set_client_rules_cmd(client, args):
     """Parse --rule strings and call sb_set_client_rules.
 
@@ -1055,6 +1069,15 @@ def parse_args():
                              dest='stripe_unit',
                              help='Stripe unit in bytes (power of 2; 0 = whole-file CSM)')
     p_sb_stripe.set_defaults(func=sb_set_stripe_unit_cmd)
+
+    p_inode_layout_list = subparsers.add_parser(
+        'inode-layout-list',
+        help='List the mirror set for an inode (read-only)')
+    p_inode_layout_list.add_argument('--sb-id', dest='sb_id', type=int,
+                                     required=True, help='Superblock ID')
+    p_inode_layout_list.add_argument('--inum', type=int, required=True,
+                                     help='Inode number')
+    p_inode_layout_list.set_defaults(func=inode_layout_list_cmd)
 
     p_sb_client_rules = subparsers.add_parser(
         'sb-set-client-rules',

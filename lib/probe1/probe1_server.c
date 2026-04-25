@@ -45,6 +45,8 @@
 #include "reffs/sb_registry.h"
 #include "reffs/dstore.h"
 #include "reffs/client.h"
+#include "reffs/inode.h"
+#include "reffs/layout_segment.h"
 #include "reffs/trace/rpc.h"
 
 struct probe_time1 probe_time1_from_time_t(time_t ts)
@@ -1190,6 +1192,137 @@ static int probe1_op_sb_get(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * INODE_LAYOUT_LIST -- read-only enumeration of an inode's mirror set.
+ * See .claude/design/mirror-lifecycle.md "Slice A".
+ *
+ * Resolves (sb_id, inum) -> inode, walks i_layout_segments under the
+ * inode's i_attr_mutex to pick a consistent snapshot, copies each
+ * layout_data_file into the wire array.  No bytes are read from any
+ * dstore; this is purely metadata.
+ */
+static int probe1_op_inode_layout_list(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	INODE_LAYOUT_LIST1args *args = ph->ph_args;
+	INODE_LAYOUT_LIST1res *res = ph->ph_res;
+	INODE_LAYOUT_LIST1resok *resok =
+		&res->INODE_LAYOUT_LIST1res_u.ill_resok;
+
+	struct super_block *sb = super_block_find(args->ill_sb_id);
+
+	if (!sb) {
+		res->ill_status = PROBE1ERR_NOENT;
+		return res->ill_status;
+	}
+
+	struct inode *inode = inode_find(sb, args->ill_inum);
+
+	if (!inode) {
+		super_block_put(sb);
+		res->ill_status = PROBE1ERR_NOENT;
+		return res->ill_status;
+	}
+
+	/*
+	 * Snapshot the layout under i_attr_mutex so a concurrent
+	 * LAYOUTGET / LAYOUTRETURN / LAYOUTCOMMIT does not mutate
+	 * lss_count / lss_segs / ls_files mid-walk.  Copy out, then
+	 * drop the mutex before the wire-encode allocations.
+	 */
+	pthread_mutex_lock(&inode->i_attr_mutex);
+
+	uint32_t total_files = 0;
+
+	if (inode->i_layout_segments) {
+		for (uint32_t s = 0; s < inode->i_layout_segments->lss_count;
+		     s++) {
+			total_files +=
+				inode->i_layout_segments->lss_segs[s].ls_nfiles;
+		}
+	}
+
+	probe_layout_mirror1 *mirrors = NULL;
+
+	if (total_files > 0) {
+		mirrors = calloc(total_files, sizeof(*mirrors));
+		if (!mirrors) {
+			pthread_mutex_unlock(&inode->i_attr_mutex);
+			inode_active_put(inode);
+			super_block_put(sb);
+			res->ill_status = PROBE1ERR_NOMEM;
+			return res->ill_status;
+		}
+	}
+
+	uint32_t mi = 0;
+
+	if (inode->i_layout_segments) {
+		for (uint32_t s = 0; s < inode->i_layout_segments->lss_count;
+		     s++) {
+			struct layout_segment *seg =
+				&inode->i_layout_segments->lss_segs[s];
+			for (uint32_t f = 0; f < seg->ls_nfiles; f++) {
+				struct layout_data_file *ldf =
+					&seg->ls_files[f];
+
+				mirrors[mi].plm_dstore_id = ldf->ldf_dstore_id;
+				if (ldf->ldf_fh_len > 0) {
+					mirrors[mi].plm_ds_fh.plm_ds_fh_val =
+						malloc(ldf->ldf_fh_len);
+					if (!mirrors[mi]
+						     .plm_ds_fh.plm_ds_fh_val) {
+						/*
+						 * Rare partial-fill path:
+						 * surface NOMEM and let the
+						 * res-free path reclaim what
+						 * we already filled.
+						 */
+						pthread_mutex_unlock(
+							&inode->i_attr_mutex);
+						resok->ill_mirrors
+							.ill_mirrors_val =
+							mirrors;
+						resok->ill_mirrors
+							.ill_mirrors_len = mi;
+						inode_active_put(inode);
+						super_block_put(sb);
+						res->ill_status =
+							PROBE1ERR_NOMEM;
+						return res->ill_status;
+					}
+					memcpy(mirrors[mi]
+						       .plm_ds_fh.plm_ds_fh_val,
+					       ldf->ldf_fh, ldf->ldf_fh_len);
+					mirrors[mi].plm_ds_fh.plm_ds_fh_len =
+						ldf->ldf_fh_len;
+				}
+				mirrors[mi].plm_size = ldf->ldf_size;
+				mirrors[mi].plm_mtime_sec =
+					(int64_t)ldf->ldf_mtime.tv_sec;
+				mirrors[mi].plm_mtime_nsec =
+					(uint32_t)ldf->ldf_mtime.tv_nsec;
+				mi++;
+			}
+		}
+	}
+
+	pthread_mutex_unlock(&inode->i_attr_mutex);
+
+	/*
+	 * lss_gen is added by Slice B'; until then, return 0 as a
+	 * placeholder.  Admin tooling should not rely on this value
+	 * for TOCTOU defence until B' lands.
+	 */
+	resok->ill_lss_gen = 0;
+	resok->ill_mirrors.ill_mirrors_val = mirrors;
+	resok->ill_mirrors.ill_mirrors_len = mi;
+
+	inode_active_put(inode);
+	super_block_put(sb);
+	return 0;
+}
+
 static int probe1_op_sb_set_flavors(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -1620,6 +1753,10 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_SB_SET_STRIPE_UNIT1args, SB_SET_STRIPE_UNIT1args,
 			   xdr_probe_stat1, probe_stat1,
 			   probe1_op_sb_set_stripe_unit),
+	RPC_OPERATION_INIT(PROBEPROC1, INODE_LAYOUT_LIST,
+			   xdr_INODE_LAYOUT_LIST1args, INODE_LAYOUT_LIST1args,
+			   xdr_INODE_LAYOUT_LIST1res, INODE_LAYOUT_LIST1res,
+			   probe1_op_inode_layout_list),
 };
 
 static struct rpc_program_handler *probe1_handler;
