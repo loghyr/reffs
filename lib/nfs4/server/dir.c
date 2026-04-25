@@ -621,6 +621,7 @@ uint32_t nfs4_op_create(struct compound *compound)
 			child = dirent_ensure_inode(child_de);
 			if (!child) {
 				free(attrset_mask);
+				dirent_put(child_de);
 				*status = NFS4ERR_SERVERFAULT;
 				goto out;
 			}
@@ -642,6 +643,17 @@ uint32_t nfs4_op_create(struct compound *compound)
 		/* attrset hand-off: wire bitmap4 takes ownership of the heap. */
 		resok->attrset.bitmap4_val = attrset_mask;
 		resok->attrset.bitmap4_len = attrset_mask_len;
+
+		/*
+		 * Drop the dirent ref from ps_lookup_materialize / the
+		 * EEXIST-recovery dirent_load_child_by_name now that the
+		 * compound's CURRENT_FH transition is done.  child_de is
+		 * declared inside this proxy block so the function-level
+		 * out: label cannot reach it -- the cleanup must live
+		 * here.  child's active ref was transferred to
+		 * compound->c_inode above and is owned by the compound.
+		 */
+		dirent_put(child_de);
 		goto out;
 	}
 
