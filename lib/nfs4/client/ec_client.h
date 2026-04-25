@@ -12,11 +12,13 @@
 #ifndef _REFFS_EC_CLIENT_H
 #define _REFFS_EC_CLIENT_H
 
+#include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include <rpc/rpc.h>
+#include <rpc/auth_unix.h>
 
 #include "nfsv42_xdr.h"
 
@@ -32,6 +34,23 @@ struct mds_session {
 	uint32_t ms_slot_seqid; /* next seqid for slot 0 */
 	uint32_t ms_maxrequestsize; /* negotiated fore-channel ca_maxrequestsize */
 	char ms_owner[256]; /* client owner string for EXCHANGE_ID */
+	/*
+	 * Serialises auth-swap + clnt_call inside mds_compound_send.
+	 * CLIENT's cl_auth is a single-owner field; concurrent compounds
+	 * that swap it in parallel would race on each other.  Today only
+	 * the proxy-server forwarders swap auth (per-compound end-client
+	 * creds); all other users leave the default auth from
+	 * mds_session_create and still pay the lock overhead -- a tiny
+	 * cost for code simplicity at reffsd's current concurrency.
+	 */
+	pthread_mutex_t ms_call_mutex;
+	/*
+	 * Default auth installed at session_create (authunix with PS's
+	 * own service identity).  Kept so mds_compound_send can restore
+	 * it after a per-compound override.  NULL means "never
+	 * installed" (e.g. GSS session that doesn't use ms_auth_default).
+	 */
+	AUTH *ms_auth_default;
 };
 
 /*
@@ -81,6 +100,23 @@ int mds_compound_add_sequence(struct mds_compound *mc, struct mds_session *ms);
 
 /* Send the COMPOUND and receive the response. */
 int mds_compound_send(struct mds_compound *mc, struct mds_session *ms);
+
+/*
+ * Same as mds_compound_send, but installs a per-compound AUTH_SYS
+ * credential before the RPC and restores the session's default
+ * auth after.  `creds` may be NULL (equivalent to mds_compound_send).
+ *
+ * The auth swap runs under ms->ms_call_mutex so concurrent compounds
+ * on the same session don't race on cl_auth.  If creds is non-NULL
+ * but authunix_create fails, the call is rejected with -ENOMEM
+ * before hitting the wire.
+ *
+ * Added for the proxy-server forwarders (slice 2e-iv-c) so a
+ * forwarded op can carry the end client's AUTH_SYS creds rather
+ * than the PS's service creds.
+ */
+int mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
+				const struct authunix_parms *creds);
 
 /* Access result for op at index i. */
 static inline nfs_resop4 *mds_compound_result(struct mds_compound *mc,

@@ -97,24 +97,69 @@ int mds_compound_add_sequence(struct mds_compound *mc, struct mds_session *ms)
 
 int mds_compound_send(struct mds_compound *mc, struct mds_session *ms)
 {
+	return mds_compound_send_with_auth(mc, ms, NULL);
+}
+
+int mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
+				const struct authunix_parms *creds)
+{
 	struct timeval tv = { .tv_sec = MDS_RPC_TIMEOUT_SEC, .tv_usec = 0 };
 	enum clnt_stat rpc_stat;
+	AUTH *override_auth = NULL;
+	int ret = 0;
 
 	memset(&mc->mc_res, 0, sizeof(mc->mc_res));
+
+	if (creds) {
+		/*
+		 * authunix_create takes non-const machname / gids
+		 * pointers in the standard TIRPC prototype; cast away
+		 * the const to match.  The call copies the bytes into
+		 * its own xdr_opaque so the caller's memory does not
+		 * need to outlive the AUTH.
+		 */
+		override_auth = authunix_create(
+			creds->aup_machname ? creds->aup_machname : (char *)"",
+			creds->aup_uid, creds->aup_gid, (int)creds->aup_len,
+			creds->aup_gids);
+		if (!override_auth)
+			return -ENOMEM;
+	}
+
+	pthread_mutex_lock(&ms->ms_call_mutex);
+
+	AUTH *saved_auth = NULL;
+
+	if (override_auth) {
+		saved_auth = ms->ms_clnt->cl_auth;
+		ms->ms_clnt->cl_auth = override_auth;
+	}
 
 	rpc_stat = clnt_call(ms->ms_clnt, NFSPROC4_COMPOUND,
 			     (xdrproc_t)xdr_COMPOUND4args,
 			     (caddr_t)&mc->mc_args, (xdrproc_t)xdr_COMPOUND4res,
 			     (caddr_t)&mc->mc_res, tv);
 
-	if (rpc_stat != RPC_SUCCESS)
-		return -EIO;
+	if (override_auth) {
+		ms->ms_clnt->cl_auth = saved_auth;
+	}
+
+	pthread_mutex_unlock(&ms->ms_call_mutex);
+
+	if (override_auth)
+		auth_destroy(override_auth);
+
+	if (rpc_stat != RPC_SUCCESS) {
+		ret = -EIO;
+		goto out;
+	}
 
 	/* Bump slot seqid on success. */
 	ms->ms_slot_seqid++;
 
 	if (mc->mc_res.status != NFS4_OK)
-		return -EREMOTEIO;
+		ret = -EREMOTEIO;
 
-	return 0;
+out:
+	return ret;
 }

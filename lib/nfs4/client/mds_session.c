@@ -334,12 +334,20 @@ int mds_session_create(struct mds_session *ms, const char *host)
 	if (ms->ms_owner[0] == '\0')
 		mds_session_set_owner(ms, NULL);
 
+	if (pthread_mutex_init(&ms->ms_call_mutex, NULL) != 0)
+		return -ENOMEM;
+
 	ms->ms_clnt = clnt_create(host, NFS4_PROGRAM, NFS_V4, "tcp");
-	if (!ms->ms_clnt)
+	if (!ms->ms_clnt) {
+		pthread_mutex_destroy(&ms->ms_call_mutex);
 		return -ECONNREFUSED;
+	}
 
 	/* AUTH_SYS is required by most exports; clnt_create defaults
 	 * to AUTH_NONE which the server rejects with NFS4ERR_WRONGSEC.
+	 * Remember the default auth on ms_auth_default so
+	 * mds_compound_send_with_auth can restore it after a per-
+	 * compound override.
 	 */
 	{
 		AUTH *auth = authunix_create_default();
@@ -347,6 +355,7 @@ int mds_session_create(struct mds_session *ms, const char *host)
 		if (auth) {
 			auth_destroy(ms->ms_clnt->cl_auth);
 			ms->ms_clnt->cl_auth = auth;
+			ms->ms_auth_default = auth;
 		}
 	}
 
@@ -366,6 +375,7 @@ int mds_session_create(struct mds_session *ms, const char *host)
 err:
 	if (ms->ms_clnt)
 		clnt_destroy(ms->ms_clnt);
+	pthread_mutex_destroy(&ms->ms_call_mutex);
 	memset(ms, 0, sizeof(*ms));
 	return ret;
 }
@@ -387,9 +397,14 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 	if (ms->ms_owner[0] == '\0')
 		mds_session_set_owner(ms, NULL);
 
+	if (pthread_mutex_init(&ms->ms_call_mutex, NULL) != 0)
+		return -ENOMEM;
+
 	ms->ms_clnt = clnt_create(host, NFS4_PROGRAM, NFS_V4, "tcp");
-	if (!ms->ms_clnt)
+	if (!ms->ms_clnt) {
+		pthread_mutex_destroy(&ms->ms_call_mutex);
 		return -ECONNREFUSED;
+	}
 
 	/*
 	 * RPCSEC_GSS via libtirpc's authgss_create_default.
@@ -429,12 +444,22 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 	if (!auth) {
 		fprintf(stderr, "ec_demo: authgss_create_default failed\n");
 		clnt_destroy(ms->ms_clnt);
+		pthread_mutex_destroy(&ms->ms_call_mutex);
 		memset(ms, 0, sizeof(*ms));
 		return -EACCES;
 	}
 
 	auth_destroy(ms->ms_clnt->cl_auth);
 	ms->ms_clnt->cl_auth = auth;
+	/*
+	 * Record the default auth so send_with_auth's restore path
+	 * works the same way as the AUTH_SYS session.  GSS sessions
+	 * never take the AUTH_SYS-override path today (PS's proxy
+	 * forwarders are AUTH_SYS only per slice 2e-iv-c scope), but
+	 * keeping the bookkeeping uniform avoids a branch in the send
+	 * helper.
+	 */
+	ms->ms_auth_default = auth;
 
 	ret = mds_exchange_id(ms);
 	if (ret)
@@ -450,6 +475,7 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 err:
 	if (ms->ms_clnt)
 		clnt_destroy(ms->ms_clnt);
+	pthread_mutex_destroy(&ms->ms_call_mutex);
 	memset(ms, 0, sizeof(*ms));
 	return ret;
 #else
@@ -466,5 +492,12 @@ void mds_session_destroy(struct mds_session *ms)
 	mds_destroy_session(ms);
 	mds_destroy_clientid(ms);
 	clnt_destroy(ms->ms_clnt);
+	/*
+	 * clnt_destroy calls auth_destroy on cl_auth; the default auth
+	 * we stored in ms_auth_default was the same pointer, so don't
+	 * double-destroy.  Just forget it.
+	 */
+	ms->ms_auth_default = NULL;
+	pthread_mutex_destroy(&ms->ms_call_mutex);
 	memset(ms, 0, sizeof(*ms));
 }
