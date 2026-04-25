@@ -149,4 +149,30 @@ int ps_lookup_materialize(struct inode *parent, const char *name,
 			  struct reffs_dirent **out_de,
 			  struct inode **out_inode);
 
+/*
+ * Evict the local cached dirent for `name` under `parent` (a proxy-SB
+ * directory), if one is resident in memory.  Used after a forwarded
+ * REMOVE / RENAME against the upstream MDS succeeds, so a follow-up
+ * LOOKUP through the PS does not hit a stale warm dirent that says
+ * the name still exists (REMOVE) or still resolves to the old inode
+ * (RENAME source).
+ *
+ * Memory-only: looks via dirent_find (no disk fault-in), so a name
+ * that was never resident is a no-op without a slow-path round-trip.
+ * Uses reffs_life_action_unload semantics: detach + drop refs, no
+ * nlink decrement, no on-disk teardown.  Proxy-SB inodes have no
+ * .meta / .dat backing for forwarded-from-upstream entries; the
+ * upstream MDS owns the authoritative state.
+ *
+ * No-op when:
+ *   - parent / name is NULL or name_len is 0
+ *   - parent's SB has no sb_proxy_binding (caller is on a native SB)
+ *   - parent has no resident dirent chain
+ *   - no child by that name is currently cached
+ *
+ * Always safe to call -- returns void.
+ */
+void ps_invalidate_local_dirent(struct inode *parent, const char *name,
+				uint32_t name_len);
+
 #endif /* _REFFS_PS_INODE_H */

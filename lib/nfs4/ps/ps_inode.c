@@ -336,3 +336,41 @@ int ps_lookup_materialize(struct inode *parent, const char *name,
 	*out_inode = inode; /* transfers active ref from inode_alloc */
 	return 0;
 }
+
+void ps_invalidate_local_dirent(struct inode *parent, const char *name,
+				uint32_t name_len)
+{
+	struct reffs_dirent *stale;
+	char *cstr;
+
+	if (!parent || !name || name_len == 0)
+		return;
+	if (!ps_inode_is_proxy(parent))
+		return;
+	if (!parent->i_dirent)
+		return;
+
+	/*
+	 * Memory-only lookup -- dirent_find walks parent->rd_children
+	 * under RCU and never faults the disk.  A name that was never
+	 * resident is a no-op without a slow-path round-trip.
+	 */
+	cstr = strndup(name, name_len);
+	if (!cstr)
+		return;
+
+	stale = dirent_find(parent->i_dirent, reffs_text_case_sensitive, cstr);
+	free(cstr);
+	if (!stale)
+		return;
+
+	/*
+	 * unload semantics: detach from sibling list + drop refs, no
+	 * nlink decrement, no on-disk teardown.  Proxy-SB inodes have
+	 * no .meta / .dat backing so the unload-vs-death distinction
+	 * matters here -- death would call inode_sync_to_disk which
+	 * is a posix-backend assumption that does not apply.
+	 */
+	dirent_parent_release(stale, reffs_life_action_unload);
+	dirent_put(stale);
+}

@@ -848,20 +848,15 @@ uint32_t nfs4_op_remove(struct compound *compound)
 		resok->cinfo.after = rreply.after;
 
 		/*
-		 * NOT_NOW_BROWN_COW: invalidate the local cached dirent
-		 * for `name` after the upstream REMOVE succeeds.  Today
-		 * a stale local cache means a follow-up LOOKUP through
-		 * the PS hits the warm dirent and reports the file
-		 * still exists until the next READDIR repopulates from
-		 * upstream.  Safe for cold-mount / single-client BAT
-		 * demo (the next op is usually GETATTR which forwards
-		 * fresh and gets NFS4ERR_NOENT directly), but a
-		 * multi-client warm-cache race needs the local prune.
-		 * The fix is dirent_load_child_by_name + a lifecycle
-		 * helper to detach the dirent without driving
-		 * vfs_remove's local-storage tear-down (proxy SB inodes
-		 * have no .dat file).
+		 * Drop the local cached dirent for `name` so a follow-up
+		 * LOOKUP through the PS forwards upstream (which now
+		 * returns NFS4ERR_NOENT) instead of resolving the
+		 * stale warm entry.  unload semantics -- no nlink work,
+		 * no on-disk teardown -- because proxy-SB inodes have
+		 * no .meta / .dat backing.
 		 */
+		ps_invalidate_local_dirent(compound->c_inode, name,
+					   (uint32_t)strlen(name));
 		goto out;
 	}
 
@@ -1044,14 +1039,21 @@ uint32_t nfs4_op_rename(struct compound *compound)
 		resok->target_cinfo.after = rnreply.target_cinfo.after;
 
 		/*
-		 * NOT_NOW_BROWN_COW: invalidate the local cached dirents
-		 * for both `oldname` (source) and `newname` (target if a
-		 * collision was overwritten) after the upstream RENAME
-		 * succeeds.  Same hazard as the REMOVE forwarder; the
-		 * BAT-demo path is single-client cold-mount which is
-		 * not affected, but a multi-client warm-cache race
-		 * needs the local prune.
+		 * Drop both stale local cached dirents:
+		 *   - `oldname` in the source directory (the entry moved
+		 *     away on the upstream)
+		 *   - `newname` in the target directory (NFSv4 RENAME
+		 *     atomically replaces the target if it existed; if
+		 *     no collision, this is a no-op since the name was
+		 *     never resident)
+		 * unload semantics -- no nlink work, no on-disk
+		 * teardown.  The next forwarded LOOKUP repopulates
+		 * the cache against the upstream's fresh state.
 		 */
+		ps_invalidate_local_dirent(old_dir, oldname,
+					   (uint32_t)strlen(oldname));
+		ps_invalidate_local_dirent(compound->c_inode, newname,
+					   (uint32_t)strlen(newname));
 		goto out;
 	}
 
@@ -1235,13 +1237,27 @@ uint32_t nfs4_op_link(struct compound *compound)
 		resok->cinfo.after = lreply.after;
 
 		/*
-		 * NOT_NOW_BROWN_COW: don't bump the local src_inode's
-		 * nlink or materialise a local dirent for the new name.
-		 * Same dcache-coherency caveat as the REMOVE / RENAME
-		 * forwarders -- a follow-up LOOKUP through the PS hits
-		 * the local cache (which doesn't have the new name) and
-		 * could miss the link until the next READDIR refreshes.
-		 * Acceptable for cold-mount BAT demo.
+		 * Deliberately no local materialise for the new dirent
+		 * and no nlink bump on the src_inode.  Why this is safe
+		 * (and the right call for the proxy):
+		 *
+		 *   1. Local cache has no negative entries -- a LOOKUP
+		 *      for `name` that misses in cache forwards upstream
+		 *      and goes through ps_lookup_materialize (the same
+		 *      path a fresh PS would take), which writes the
+		 *      correct dirent + inode in one shot.  No stale
+		 *      "name doesn't exist" pin to invalidate.
+		 *
+		 *   2. The local src_inode's nlink is not authoritative
+		 *      on a proxy SB -- every GETATTR on a proxy-SB
+		 *      inode forwards upstream.  The next forwarded
+		 *      GETATTR returns the upstream's post-LINK nlink
+		 *      directly to the client.
+		 *
+		 * Materialising eagerly here would require a follow-up
+		 * GETATTR-on-LINK round-trip just to populate the
+		 * placeholder attrs -- the lazy path above is one
+		 * fewer round-trip per LINK.
 		 */
 		goto out;
 	}

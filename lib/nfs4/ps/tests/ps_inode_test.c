@@ -631,6 +631,115 @@ START_TEST(test_materialize_promotes_regular_type)
 }
 END_TEST
 
+/*
+ * After a forwarded REMOVE / RENAME succeeds, the proxy needs to
+ * drop the corresponding cached dirent or a follow-up LOOKUP
+ * through the PS resolves the stale entry.  Materialise a child,
+ * confirm it is in cache, invalidate it, confirm it is gone.
+ */
+START_TEST(test_invalidate_drops_resident_dirent)
+{
+	uint8_t bind_fh[] = { 0x77 };
+	uint8_t child_fh[] = { 0xC0, 0xFF, 0xEE };
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(g_pls, "/inv_drop", bind_fh,
+						sizeof(bind_fh)),
+			 0);
+
+	struct super_block *sb = find_proxy_sb("/inv_drop");
+	struct inode *parent = sb->sb_root_inode;
+	struct reffs_dirent *de = NULL;
+	struct inode *child = NULL;
+
+	ck_assert_int_eq(ps_lookup_materialize(parent, "doomed", 6, child_fh,
+					       sizeof(child_fh), NULL, &de,
+					       &child),
+			 0);
+	/* drop our own caller refs -- only the dirent's parent ref keeps
+	 * it alive in the cache after this. */
+	inode_active_put(child);
+	dirent_put(de);
+
+	struct reffs_dirent *seen = dirent_find(
+		parent->i_dirent, reffs_text_case_sensitive, "doomed");
+	ck_assert_ptr_nonnull(seen);
+	dirent_put(seen);
+
+	ps_invalidate_local_dirent(parent, "doomed", 6);
+
+	struct reffs_dirent *gone = dirent_find(
+		parent->i_dirent, reffs_text_case_sensitive, "doomed");
+	ck_assert_ptr_null(gone);
+
+	super_block_put(sb);
+	cleanup_proxy_sb("/inv_drop");
+}
+END_TEST
+
+/*
+ * Invalidate on a name that was never resident is a no-op -- no
+ * disk fault-in (the helper uses dirent_find, not
+ * dirent_load_child_by_name) and no crash.  Important because the
+ * RENAME forwarder always invalidates `newname` in the destination
+ * dir even when there was no collision.
+ */
+START_TEST(test_invalidate_missing_name_is_noop)
+{
+	uint8_t bind_fh[] = { 0x78 };
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(g_pls, "/inv_miss", bind_fh,
+						sizeof(bind_fh)),
+			 0);
+
+	struct super_block *sb = find_proxy_sb("/inv_miss");
+
+	/* No dirent ever materialised for "ghost" -- helper must return
+	 * cleanly without faulting in from disk. */
+	ps_invalidate_local_dirent(sb->sb_root_inode, "ghost", 5);
+
+	struct reffs_dirent *gone = dirent_find(sb->sb_root_inode->i_dirent,
+						reffs_text_case_sensitive,
+						"ghost");
+	ck_assert_ptr_null(gone);
+
+	super_block_put(sb);
+	cleanup_proxy_sb("/inv_miss");
+}
+END_TEST
+
+/*
+ * Helper must guard against bad inputs without crashing -- the
+ * dispatcher in dir.c calls it unconditionally on the proxy
+ * fast-path success.  NULL parent, NULL/empty name, native SB
+ * inode all reach this without any other check.
+ */
+START_TEST(test_invalidate_handles_bad_args)
+{
+	/* All-NULL / zero-length cases. */
+	ps_invalidate_local_dirent(NULL, "x", 1);
+	ps_invalidate_local_dirent((struct inode *)0xDEAD, NULL, 1);
+	ps_invalidate_local_dirent((struct inode *)0xDEAD, "x", 0);
+
+	/* Native SB inode -- helper checks sb_proxy_binding before
+	 * touching anything else.  Grab sb up front so we can drop
+	 * the inode active ref before the super_block_put without
+	 * risking root->i_sb becoming UAF in the path. */
+	struct super_block *native = super_block_find(SUPER_BLOCK_ROOT_ID);
+	struct inode *root = inode_find(native, INODE_ROOT_ID);
+
+	ck_assert_ptr_nonnull(root);
+	ck_assert_ptr_null(native->sb_proxy_binding);
+
+	ps_invalidate_local_dirent(root, "anything", 8);
+	/* Dirent on the native SB must still be intact and
+	 * reachable. */
+	ck_assert_ptr_nonnull(root->i_dirent);
+
+	inode_active_put(root);
+	super_block_put(native);
+}
+END_TEST
+
 static Suite *ps_inode_suite(void)
 {
 	Suite *s = suite_create("ps_inode");
@@ -650,6 +759,9 @@ static Suite *ps_inode_suite(void)
 	tcase_add_test(tc, test_materialize_rejects_bad_args);
 	tcase_add_test(tc, test_materialize_promotes_directory_type);
 	tcase_add_test(tc, test_materialize_promotes_regular_type);
+	tcase_add_test(tc, test_invalidate_drops_resident_dirent);
+	tcase_add_test(tc, test_invalidate_missing_name_is_noop);
+	tcase_add_test(tc, test_invalidate_handles_bad_args);
 	suite_add_tcase(s, tc);
 	return s;
 }
