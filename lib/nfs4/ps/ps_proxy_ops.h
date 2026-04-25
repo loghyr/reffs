@@ -506,6 +506,56 @@ int ps_proxy_forward_remove(struct mds_session *ms, const uint8_t *parent_fh,
 			    struct ps_proxy_remove_reply *reply);
 
 /*
+ * Caller-owned result from ps_proxy_forward_rename.  Carries both
+ * change_info4 values the upstream MDS returns -- source dir +
+ * target dir -- so the end client can detect concurrent mutation
+ * on either side of the rename.
+ */
+struct ps_proxy_rename_reply {
+	struct {
+		bool atomic;
+		uint64_t before;
+		uint64_t after;
+	} source_cinfo;
+	struct {
+		bool atomic;
+		uint64_t before;
+		uint64_t after;
+	} target_cinfo;
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(src) + SAVEFH + PUTFH(dst) +
+ * RENAME(oldname, newname) on `ms`, copy both change_info4
+ * results into `reply`.  Both directories MUST be on the same
+ * upstream MDS (the caller's hook in nfs4_op_rename enforces
+ * this by checking both inodes live on the same proxy SB before
+ * forwarding).
+ *
+ * Both names are bare components (no '/') of the indicated
+ * lengths.  Like REMOVE, the primitive does no local cache
+ * invalidation.
+ *
+ * On any failure `reply` is left zero-initialised and no durable
+ * state ran on the upstream.
+ *
+ * Returns:
+ *   0        success; both cinfo blocks populated
+ *   -EINVAL  any pointer NULL, any length 0
+ *   -E2BIG   either FH > PS_MAX_FH_SIZE
+ *   -ENOENT  upstream returned NFS4ERR_NOENT (oldname missing)
+ *   -EEXIST  upstream returned NFS4ERR_EXIST (newname collision)
+ *   -errno   RPC / compound failure, or a non-OK per-op status
+ */
+int ps_proxy_forward_rename(struct mds_session *ms, const uint8_t *src_fh,
+			    uint32_t src_fh_len, const char *oldname,
+			    uint32_t oldname_len, const uint8_t *dst_fh,
+			    uint32_t dst_fh_len, const char *newname,
+			    uint32_t newname_len,
+			    const struct authunix_parms *creds,
+			    struct ps_proxy_rename_reply *reply);
+
+/*
  * Caller-owned result from ps_proxy_forward_close.  CLOSE returns an
  * updated stateid4 (same `other`, bumped `seqid`) that the end
  * client treats as the canonical stateid going forward.  We copy

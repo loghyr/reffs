@@ -618,6 +618,130 @@ out:
 	return ret;
 }
 
+int ps_proxy_forward_rename(struct mds_session *ms, const uint8_t *src_fh,
+			    uint32_t src_fh_len, const char *oldname,
+			    uint32_t oldname_len, const uint8_t *dst_fh,
+			    uint32_t dst_fh_len, const char *newname,
+			    uint32_t newname_len,
+			    const struct authunix_parms *creds,
+			    struct ps_proxy_rename_reply *reply)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
+
+	if (!ms || !src_fh || !oldname || !dst_fh || !newname || !reply)
+		return -EINVAL;
+	if (src_fh_len == 0 || oldname_len == 0 || dst_fh_len == 0 ||
+	    newname_len == 0)
+		return -EINVAL;
+	if (src_fh_len > PS_MAX_FH_SIZE || dst_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
+	memset(reply, 0, sizeof(*reply));
+
+	/* SEQUENCE + PUTFH(src) + SAVEFH + PUTFH(dst) + RENAME = 5 ops */
+	ret = mds_compound_init(&mc, 5, "ps-proxy-rename");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)src_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = src_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_SAVEFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)dst_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = dst_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_RENAME);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.oprename.oldname.utf8string_val = (char *)oldname;
+	slot->nfs_argop4_u.oprename.oldname.utf8string_len = oldname_len;
+	slot->nfs_argop4_u.oprename.newname.utf8string_val = (char *)newname;
+	slot->nfs_argop4_u.oprename.newname.utf8string_len = newname_len;
+
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	if (ret && ret != -EREMOTEIO)
+		goto out;
+	ret = 0;
+
+	/* PUTFH(src) status at index 1. */
+	res = mds_compound_result(&mc, 1);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
+
+	/* SAVEFH status at index 2. */
+	res = mds_compound_result(&mc, 2);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opsavefh.status);
+	if (ret)
+		goto out;
+
+	/* PUTFH(dst) status at index 3. */
+	res = mds_compound_result(&mc, 3);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
+
+	/* RENAME result at index 4. */
+	res = mds_compound_result(&mc, 4);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.oprename.status);
+	if (ret)
+		goto out;
+
+	RENAME4resok *rrresok = &res->nfs_resop4_u.oprename.RENAME4res_u.resok4;
+
+	reply->source_cinfo.atomic = rrresok->source_cinfo.atomic;
+	reply->source_cinfo.before = rrresok->source_cinfo.before;
+	reply->source_cinfo.after = rrresok->source_cinfo.after;
+	reply->target_cinfo.atomic = rrresok->target_cinfo.atomic;
+	reply->target_cinfo.before = rrresok->target_cinfo.before;
+	reply->target_cinfo.after = rrresok->target_cinfo.after;
+	ret = 0;
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
 int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 			   uint32_t upstream_fh_len, uint32_t close_seqid,
 			   uint32_t stateid_seqid,

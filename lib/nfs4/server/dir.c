@@ -783,6 +783,78 @@ uint32_t nfs4_op_rename(struct compound *compound)
 		goto out;
 	}
 
+	/*
+	 * Proxy-SB fast path: forward RENAME to upstream MDS so the
+	 * file actually moves there.  RFC 8881 returns NFS4ERR_XDEV
+	 * if the two directories aren't on the same fs -- here the
+	 * fs identity is "the same proxy SB" (which means the same
+	 * upstream MDS).  Cross-SB renames hit NFS4ERR_XDEV at the
+	 * generic check elsewhere; we only need to handle the
+	 * same-proxy-SB case.
+	 */
+	if (old_dir->i_sb && old_dir->i_sb->sb_proxy_binding &&
+	    compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding &&
+	    old_dir->i_sb == compound->c_inode->i_sb) {
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+		uint8_t src_fh[PS_MAX_FH_SIZE];
+		uint32_t src_fh_len = 0;
+		uint8_t dst_fh[PS_MAX_FH_SIZE];
+		uint32_t dst_fh_len = 0;
+
+		int fret = ps_inode_get_upstream_fh(
+			old_dir, src_fh, sizeof(src_fh), &src_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+		fret = ps_inode_get_upstream_fh(compound->c_inode, dst_fh,
+						sizeof(dst_fh), &dst_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		struct ps_proxy_rename_reply rnreply;
+
+		memset(&rnreply, 0, sizeof(rnreply));
+		fret = ps_proxy_forward_rename(
+			pls->pls_session, src_fh, src_fh_len, oldname,
+			(uint32_t)strlen(oldname), dst_fh, dst_fh_len, newname,
+			(uint32_t)strlen(newname), &compound->c_ap, &rnreply);
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_RENAME);
+			goto out;
+		}
+
+		resok->source_cinfo.atomic = rnreply.source_cinfo.atomic;
+		resok->source_cinfo.before = rnreply.source_cinfo.before;
+		resok->source_cinfo.after = rnreply.source_cinfo.after;
+		resok->target_cinfo.atomic = rnreply.target_cinfo.atomic;
+		resok->target_cinfo.before = rnreply.target_cinfo.before;
+		resok->target_cinfo.after = rnreply.target_cinfo.after;
+
+		/*
+		 * NOT_NOW_BROWN_COW: invalidate the local cached dirents
+		 * for both `oldname` (source) and `newname` (target if a
+		 * collision was overwritten) after the upstream RENAME
+		 * succeeds.  Same hazard as the REMOVE forwarder; the
+		 * BAT-demo path is single-client cold-mount which is
+		 * not affected, but a multi-client warm-cache race
+		 * needs the local prune.
+		 */
+		goto out;
+	}
+
 	ret = inode_access_check(old_dir, &compound->c_ap, W_OK);
 	if (ret) {
 		*status = errno_to_nfs4(ret, OP_RENAME);
