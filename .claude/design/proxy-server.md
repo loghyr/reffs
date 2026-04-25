@@ -756,6 +756,23 @@ reused with PS enabled.
 5. **PS-side GETATTR caching.** After delstid lands, add a layer
    of PS-local GETATTR cache with delegation-driven invalidation.
 
+## Downstream designs that depend on PS infrastructure
+
+- **`mirror-lifecycle.md`** -- admin-driven mirror lifecycle on
+  existing files (add / remove a mirror, drain a dstore, declare
+  a dstore lost, repair affected files).  See
+  [`.claude/design/mirror-lifecycle.md`](mirror-lifecycle.md).
+  Depends on this PS plan in two places:
+  - **Action item 1** (`lib/nfs4/client` refactor + extract
+    `lib/nfs4/ps/ec_pipeline.h` callable API) gates mirror-
+    lifecycle's slice F (`INODE_LAYOUT_CHANGE_CODEC`) and the
+    RS-reconstruct path of slice G2b
+    (`INODE_LAYOUT_REPAIR_MIRROR` for RS layouts).
+  - **Phase 8** (`CB_PROXY_MOVE` / `CB_PROXY_REPAIR`) is the PS
+    delegation surface for mirror-lifecycle's slice E (drain
+    autopilot) and slice G2 (REPAIR autopilot).  First impl of
+    those slices runs MDS-inline; PS delegation is the scale-up.
+
 ## Deferred / NOT_NOW_BROWN_COW
 
 - Inter-server COPY via COPY_NOTIFY through a PS.
