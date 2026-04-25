@@ -3795,6 +3795,136 @@ uint32_t nfs4_op_readdir(struct compound *compound)
 		return 0;
 	}
 
+	/*
+	 * Proxy-SB fast path: forward READDIR to the upstream MDS and
+	 * rebuild the entry4 list in the local response.  Scope: all
+	 * READDIR ops on a proxy SB take this path -- the local dirent
+	 * tree on a proxy SB only has children materialised by prior
+	 * LOOKUP hits, which is a subset of what the upstream holds.
+	 */
+	if (inode->i_sb && inode->i_sb->sb_proxy_binding) {
+		const struct ps_sb_binding *binding =
+			inode->i_sb->sb_proxy_binding;
+		uint8_t upstream_fh[PS_MAX_FH_SIZE];
+		uint32_t upstream_fh_len = 0;
+
+		int fret = ps_inode_get_upstream_fh(inode, upstream_fh,
+						    sizeof(upstream_fh),
+						    &upstream_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			return 0;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+
+		TRACE("proxy readdir: listener=%u ino=%" PRIu64
+		      " cookie=%" PRIu64
+		      " dircount=%u maxcount=%u (forwarded with PS creds)",
+		      binding->psb_listener_id, inode->i_ino, args->cookie,
+		      args->dircount, args->maxcount);
+
+		struct ps_proxy_readdir_reply rreply;
+
+		memset(&rreply, 0, sizeof(rreply));
+		fret = ps_proxy_forward_readdir(
+			pls->pls_session, upstream_fh, upstream_fh_len,
+			args->cookie, (const uint8_t *)args->cookieverf,
+			args->dircount, args->maxcount,
+			args->attr_request.bitmap4_val,
+			args->attr_request.bitmap4_len, &rreply);
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, NFS4_OP_NUM(compound));
+			return 0;
+		}
+
+		/*
+		 * Rebuild the wire entry4 list from the proxy reply.
+		 * Each entry's name / bitmap / attr bytes go into XDR-
+		 * owned calloc so the compound freer releases them
+		 * when the response is serialised.
+		 */
+		memcpy(resok->cookieverf, rreply.cookieverf,
+		       PS_PROXY_VERIFIER_SIZE);
+		resok->reply.eof = rreply.eof;
+		resok->reply.entries = NULL;
+
+		entry4 **tail = &resok->reply.entries;
+		struct ps_proxy_readdir_entry *src = rreply.entries;
+
+		while (src) {
+			entry4 *dst = calloc(1, sizeof(*dst));
+
+			if (!dst) {
+				*status = NFS4ERR_DELAY;
+				ps_proxy_readdir_reply_free(&rreply);
+				return 0;
+			}
+			dst->cookie = src->cookie;
+
+			if (src->name) {
+				size_t nl = strlen(src->name);
+
+				dst->name.utf8string_val = calloc(nl + 1, 1);
+				if (!dst->name.utf8string_val) {
+					free(dst);
+					*status = NFS4ERR_DELAY;
+					ps_proxy_readdir_reply_free(&rreply);
+					return 0;
+				}
+				memcpy(dst->name.utf8string_val, src->name, nl);
+				dst->name.utf8string_len = (uint32_t)nl;
+			}
+
+			if (src->attrmask_len > 0) {
+				dst->attrs.attrmask.bitmap4_val = calloc(
+					src->attrmask_len, sizeof(uint32_t));
+				if (!dst->attrs.attrmask.bitmap4_val) {
+					free(dst->name.utf8string_val);
+					free(dst);
+					*status = NFS4ERR_DELAY;
+					ps_proxy_readdir_reply_free(&rreply);
+					return 0;
+				}
+				memcpy(dst->attrs.attrmask.bitmap4_val,
+				       src->attrmask,
+				       src->attrmask_len * sizeof(uint32_t));
+				dst->attrs.attrmask.bitmap4_len =
+					src->attrmask_len;
+			}
+
+			if (src->attr_vals_len > 0) {
+				dst->attrs.attr_vals.attrlist4_val =
+					calloc(src->attr_vals_len, 1);
+				if (!dst->attrs.attr_vals.attrlist4_val) {
+					free(dst->attrs.attrmask.bitmap4_val);
+					free(dst->name.utf8string_val);
+					free(dst);
+					*status = NFS4ERR_DELAY;
+					ps_proxy_readdir_reply_free(&rreply);
+					return 0;
+				}
+				memcpy(dst->attrs.attr_vals.attrlist4_val,
+				       src->attr_vals, src->attr_vals_len);
+				dst->attrs.attr_vals.attrlist4_len =
+					src->attr_vals_len;
+			}
+
+			*tail = dst;
+			tail = &dst->nextentry;
+			src = src->next;
+		}
+
+		ps_proxy_readdir_reply_free(&rreply);
+		return 0;
+	}
+
 	ret = inode_access_check(inode, &compound->c_ap, R_OK);
 	if (ret) {
 		*status = errno_to_nfs4(ret, NFS4_OP_NUM(compound));

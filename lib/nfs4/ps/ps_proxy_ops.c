@@ -482,6 +482,175 @@ out:
 	return ret;
 }
 
+void ps_proxy_readdir_reply_free(struct ps_proxy_readdir_reply *reply)
+{
+	if (!reply)
+		return;
+	struct ps_proxy_readdir_entry *e = reply->entries;
+
+	while (e) {
+		struct ps_proxy_readdir_entry *next = e->next;
+
+		free(e->name);
+		free(e->attrmask);
+		free(e->attr_vals);
+		free(e);
+		e = next;
+	}
+	memset(reply, 0, sizeof(*reply));
+}
+
+int ps_proxy_forward_readdir(struct mds_session *ms, const uint8_t *upstream_fh,
+			     uint32_t upstream_fh_len, uint64_t cookie,
+			     const uint8_t cookieverf[PS_PROXY_VERIFIER_SIZE],
+			     uint32_t dircount, uint32_t maxcount,
+			     const uint32_t *attr_request,
+			     uint32_t attr_request_len,
+			     struct ps_proxy_readdir_reply *reply)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
+
+	if (!ms || !upstream_fh || upstream_fh_len == 0 || !cookieverf ||
+	    !reply)
+		return -EINVAL;
+	if (upstream_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+	if (attr_request_len > 0 && !attr_request)
+		return -EINVAL;
+
+	memset(reply, 0, sizeof(*reply));
+
+	/* SEQUENCE + PUTFH + READDIR = 3 ops */
+	ret = mds_compound_init(&mc, 3, "ps-proxy-readdir");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)upstream_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = upstream_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_READDIR);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	READDIR4args *ra = &slot->nfs_argop4_u.opreaddir;
+
+	ra->cookie = cookie;
+	memcpy(ra->cookieverf, cookieverf, PS_PROXY_VERIFIER_SIZE);
+	ra->dircount = dircount;
+	ra->maxcount = maxcount;
+	ra->attr_request.bitmap4_val = (uint32_t *)attr_request;
+	ra->attr_request.bitmap4_len = attr_request_len;
+
+	ret = mds_compound_send(&mc, ms);
+	if (ret)
+		goto out;
+
+	/* PUTFH status at index 1. */
+	res = mds_compound_result(&mc, 1);
+	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	/* READDIR result at index 2. */
+	res = mds_compound_result(&mc, 2);
+	if (!res || res->nfs_resop4_u.opreaddir.status != NFS4_OK) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	READDIR4resok *rresok =
+		&res->nfs_resop4_u.opreaddir.READDIR4res_u.resok4;
+
+	memcpy(reply->cookieverf, rresok->cookieverf, PS_PROXY_VERIFIER_SIZE);
+	reply->eof = rresok->reply.eof;
+
+	/*
+	 * Deep-copy the entry4 linked list.  Every field that lives in
+	 * the compound's XDR buffer (name, bitmap, attr bytes) has to
+	 * migrate to PS-owned heap so the caller can hold the reply
+	 * past mds_compound_fini.
+	 */
+	entry4 *src_head = rresok->reply.entries;
+	struct ps_proxy_readdir_entry **tail_link = &reply->entries;
+
+	for (entry4 *src = src_head; src != NULL; src = src->nextentry) {
+		struct ps_proxy_readdir_entry *dst = calloc(1, sizeof(*dst));
+
+		if (!dst) {
+			ret = -ENOMEM;
+			goto out_free_reply;
+		}
+		dst->cookie = src->cookie;
+
+		if (src->name.utf8string_len > 0) {
+			dst->name = strndup(src->name.utf8string_val,
+					    src->name.utf8string_len);
+			if (!dst->name) {
+				free(dst);
+				ret = -ENOMEM;
+				goto out_free_reply;
+			}
+		}
+
+		if (src->attrs.attrmask.bitmap4_len > 0) {
+			dst->attrmask = calloc(src->attrs.attrmask.bitmap4_len,
+					       sizeof(*dst->attrmask));
+			if (!dst->attrmask) {
+				free(dst->name);
+				free(dst);
+				ret = -ENOMEM;
+				goto out_free_reply;
+			}
+			memcpy(dst->attrmask, src->attrs.attrmask.bitmap4_val,
+			       src->attrs.attrmask.bitmap4_len *
+				       sizeof(*dst->attrmask));
+			dst->attrmask_len = src->attrs.attrmask.bitmap4_len;
+		}
+
+		if (src->attrs.attr_vals.attrlist4_len > 0) {
+			dst->attr_vals =
+				calloc(src->attrs.attr_vals.attrlist4_len, 1);
+			if (!dst->attr_vals) {
+				free(dst->attrmask);
+				free(dst->name);
+				free(dst);
+				ret = -ENOMEM;
+				goto out_free_reply;
+			}
+			memcpy(dst->attr_vals,
+			       src->attrs.attr_vals.attrlist4_val,
+			       src->attrs.attr_vals.attrlist4_len);
+			dst->attr_vals_len = src->attrs.attr_vals.attrlist4_len;
+		}
+
+		*tail_link = dst;
+		tail_link = &dst->next;
+	}
+
+	ret = 0;
+	goto out;
+
+out_free_reply:
+	ps_proxy_readdir_reply_free(reply);
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
 /*
  * RFC 8881 S5.8.1 attribute numbers.  Hard-coded rather than
  * pulled from nfsv42_xdr.h to keep this parser self-contained --

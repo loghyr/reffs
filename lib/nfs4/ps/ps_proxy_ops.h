@@ -440,4 +440,66 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 			   const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
 			   struct ps_proxy_close_reply *reply);
 
+/*
+ * A single READDIR entry as returned by the MDS, deep-copied into
+ * PS-owned heap storage so the caller can release the compound
+ * without losing the reply.  `name`, `attrmask`, and `attr_vals`
+ * each own a separate malloc; walk via ->next and release with
+ * ps_proxy_readdir_reply_free().
+ */
+struct ps_proxy_readdir_entry {
+	struct ps_proxy_readdir_entry *next;
+	uint64_t cookie;
+	char *name; /* NUL-terminated UTF-8 */
+	uint32_t *attrmask; /* bitmap4 words */
+	uint32_t attrmask_len;
+	uint8_t *attr_vals; /* attrlist4 bytes */
+	uint32_t attr_vals_len;
+};
+
+struct ps_proxy_readdir_reply {
+	uint8_t cookieverf[PS_PROXY_VERIFIER_SIZE];
+	struct ps_proxy_readdir_entry *entries; /* may be NULL (empty dir) */
+	bool eof;
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(upstream_fh) + READDIR on `ms`;
+ * deep-copy the MDS's dirlist4 into the PS-owned linked list on
+ * `reply`.  Client-supplied cookie / cookieverf / counts /
+ * attr_request are forwarded verbatim.
+ *
+ * attr_request is the bitmap4 the client supplied on its wire
+ * READDIR; the PS does not interpret it and the MDS returns
+ * whatever attrs it would normally encode.  A zero-length
+ * attr_request is legal (the MDS returns entries with empty
+ * attrs).
+ *
+ * On any failure `reply` is left zero-initialised and no heap
+ * allocations leak.
+ *
+ * NOT_NOW_BROWN_COW (slice 2e-iv-c): credential forwarding.
+ *
+ * Returns:
+ *   0        success; reply populated (entries may be NULL)
+ *   -EINVAL  ms / upstream_fh / reply / cookieverf NULL, or
+ *            upstream_fh_len == 0
+ *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
+ *   -ENOMEM  heap allocation failure during deep copy
+ *   -errno   RPC / compound failure, or a non-OK per-op status
+ */
+int ps_proxy_forward_readdir(struct mds_session *ms, const uint8_t *upstream_fh,
+			     uint32_t upstream_fh_len, uint64_t cookie,
+			     const uint8_t cookieverf[PS_PROXY_VERIFIER_SIZE],
+			     uint32_t dircount, uint32_t maxcount,
+			     const uint32_t *attr_request,
+			     uint32_t attr_request_len,
+			     struct ps_proxy_readdir_reply *reply);
+
+/*
+ * Release all heap owned by `reply` (entries list + each entry's
+ * name / attrmask / attr_vals) and zero the struct.  NULL-safe.
+ */
+void ps_proxy_readdir_reply_free(struct ps_proxy_readdir_reply *reply);
+
 #endif /* _REFFS_PS_PROXY_OPS_H */
