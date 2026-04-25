@@ -15,6 +15,8 @@
 
 #include "nfsv42_xdr.h"
 
+#include "nfs4/errors.h"
+
 #include "ec_client.h"
 #include "ps_proxy_ops.h"
 #include "ps_state.h" /* PS_MAX_FH_SIZE */
@@ -105,17 +107,23 @@ int ps_proxy_forward_getattr(struct mds_session *ms, const uint8_t *upstream_fh,
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
-	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
 
 	/* GETATTR result at index 2. */
 	res = mds_compound_result(&mc, 2);
-	if (!res || res->nfs_resop4_u.opgetattr.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opgetattr.status);
+	if (ret)
+		goto out;
 
 	GETATTR4resok *gresok =
 		&res->nfs_resop4_u.opgetattr.GETATTR4res_u.resok4;
@@ -258,37 +266,39 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
-	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
 
 	/*
-	 * LOOKUP status at index 2.  Surface NFS4ERR_NOENT as -ENOENT
-	 * so the caller can return NFS4ERR_NOENT to the client without
-	 * re-parsing a generic -EREMOTEIO; any other non-OK status
-	 * collapses to -EREMOTEIO (network / protocol / state
-	 * violation on the upstream -- not actionable at this layer).
+	 * LOOKUP status at index 2.  nfs4_to_errno maps NFS4ERR_NOENT
+	 * to -ENOENT (so the caller can return NFS4ERR_NOENT to the
+	 * client) and other status codes to their errno equivalents
+	 * (NFS4ERR_ACCESS -> -EACCES, etc.); unknown statuses collapse
+	 * to -EREMOTEIO.
 	 */
 	res = mds_compound_result(&mc, 2);
 	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
-	if (res->nfs_resop4_u.oplookup.status != NFS4_OK) {
-		if (res->nfs_resop4_u.oplookup.status == NFS4ERR_NOENT)
-			ret = -ENOENT;
-		else
-			ret = -EREMOTEIO;
+	ret = nfs4_to_errno(res->nfs_resop4_u.oplookup.status);
+	if (ret)
 		goto out;
-	}
 
 	/* GETFH result at index 3. */
 	res = mds_compound_result(&mc, 3);
-	if (!res || res->nfs_resop4_u.opgetfh.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opgetfh.status);
+	if (ret)
+		goto out;
 
 	GETFH4resok *fhresok = &res->nfs_resop4_u.opgetfh.GETFH4res_u.resok4;
 
@@ -308,10 +318,13 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 	if (want_attrs) {
 		/* GETATTR result at index 4. */
 		res = mds_compound_result(&mc, 4);
-		if (!res || res->nfs_resop4_u.opgetattr.status != NFS4_OK) {
+		if (!res) {
 			ret = -EREMOTEIO;
 			goto out;
 		}
+		ret = nfs4_to_errno(res->nfs_resop4_u.opgetattr.status);
+		if (ret)
+			goto out;
 
 		GETATTR4resok *gresok =
 			&res->nfs_resop4_u.opgetattr.GETATTR4res_u.resok4;
@@ -412,17 +425,23 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
-	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
 
 	/* WRITE result at index 2. */
 	res = mds_compound_result(&mc, 2);
-	if (!res || res->nfs_resop4_u.opwrite.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opwrite.status);
+	if (ret)
+		goto out;
 
 	WRITE4resok *wresok = &res->nfs_resop4_u.opwrite.WRITE4res_u.resok4;
 
@@ -499,17 +518,23 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
-	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
 
 	/* CLOSE result at index 2. */
 	res = mds_compound_result(&mc, 2);
-	if (!res || res->nfs_resop4_u.opclose.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opclose.status);
+	if (ret)
+		goto out;
 
 	stateid4 *new_sid = &res->nfs_resop4_u.opclose.CLOSE4res_u.open_stateid;
 
@@ -610,17 +635,23 @@ int ps_proxy_forward_readdir(struct mds_session *ms, const uint8_t *upstream_fh,
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
-	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
 
 	/* READDIR result at index 2. */
 	res = mds_compound_result(&mc, 2);
-	if (!res || res->nfs_resop4_u.opreaddir.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opreaddir.status);
+	if (ret)
+		goto out;
 
 	READDIR4resok *rresok =
 		&res->nfs_resop4_u.opreaddir.READDIR4res_u.resok4;
@@ -959,28 +990,29 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
-	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
 
 	/*
-	 * OPEN result at index 2.  NFS4ERR_NOENT surfaces as -ENOENT
-	 * (client translates back to NFS4ERR_NOENT without re-parsing).
-	 * Any other non-OK collapses to -EREMOTEIO.
+	 * OPEN result at index 2.  nfs4_to_errno preserves common
+	 * non-OK statuses (NFS4ERR_NOENT -> -ENOENT, NFS4ERR_ACCESS
+	 * -> -EACCES, etc.); the hook re-encodes via errno_to_nfs4
+	 * so the wire status the client sees matches what the upstream
+	 * MDS returned.
 	 */
 	res = mds_compound_result(&mc, 2);
 	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
-	if (res->nfs_resop4_u.opopen.status != NFS4_OK) {
-		if (res->nfs_resop4_u.opopen.status == NFS4ERR_NOENT)
-			ret = -ENOENT;
-		else
-			ret = -EREMOTEIO;
+	ret = nfs4_to_errno(res->nfs_resop4_u.opopen.status);
+	if (ret)
 		goto out;
-	}
 
 	OPEN4resok *ores = &res->nfs_resop4_u.opopen.OPEN4res_u.resok4;
 
@@ -990,10 +1022,13 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 
 	/* GETFH result at index 3. */
 	res = mds_compound_result(&mc, 3);
-	if (!res || res->nfs_resop4_u.opgetfh.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opgetfh.status);
+	if (ret)
+		goto out;
 
 	GETFH4resok *fhresok = &res->nfs_resop4_u.opgetfh.GETFH4res_u.resok4;
 
@@ -1081,17 +1116,23 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
-	if (!res || res->nfs_resop4_u.opputfh.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
 
 	/* READ result at index 2. */
 	res = mds_compound_result(&mc, 2);
-	if (!res || res->nfs_resop4_u.opread.status != NFS4_OK) {
+	if (!res) {
 		ret = -EREMOTEIO;
 		goto out;
 	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opread.status);
+	if (ret)
+		goto out;
 
 	READ4resok *rresok = &res->nfs_resop4_u.opread.READ4res_u.resok4;
 

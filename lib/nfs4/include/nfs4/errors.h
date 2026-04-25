@@ -19,6 +19,21 @@ bool nfs4_error_valid_for_cb_op(enum nfs_cb_opnum4 op, enum nfsstat4 stat);
 nfsstat4 errno_to_nfs4(int error, nfs_opnum4 op);
 
 /*
+ * Map an upstream nfsstat4 to a local negative errno suitable for
+ * returning from a forwarder primitive.  The intent is round-trip
+ * preservation: feeding the result back through errno_to_nfs4()
+ * yields the original status for codes that have a clean errno
+ * counterpart (NFS4ERR_ACCESS <-> -EACCES, NFS4ERR_NOENT <-> -ENOENT,
+ * etc.).  Codes without a clean errno collapse to -EREMOTEIO so
+ * callers see "remote-side problem we don't have a specific code
+ * for" rather than zero.
+ *
+ * Returns 0 for NFS4_OK.  Always returns negative for any non-OK
+ * status.
+ */
+int nfs4_to_errno(nfsstat4 status);
+
+/*
  * Validate a wire path component and map to the appropriate NFS4 error.
  * Returns NFS4_OK (0) on success.
  */

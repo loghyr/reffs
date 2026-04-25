@@ -2030,6 +2030,21 @@ nfsstat4 errno_to_nfs4(int error, nfs_opnum4 op)
 	case EBADOWNER:
 		status = NFS4ERR_BADOWNER;
 		break;
+	case EBADSTATEID:
+		status = NFS4ERR_BAD_STATEID;
+		break;
+	case ESTALESTATEID:
+		status = NFS4ERR_STALE_STATEID;
+		break;
+	case EOLDSTATEID:
+		status = NFS4ERR_OLD_STATEID;
+		break;
+	case EEXPIREDSTATEID:
+		status = NFS4ERR_EXPIRED;
+		break;
+	case ENOTSUP:
+		status = NFS4ERR_NOTSUPP;
+		break;
 	default:
 		status = NFS4ERR_SERVERFAULT;
 		break;
@@ -2046,4 +2061,62 @@ nfsstat4 errno_to_nfs4(int error, nfs_opnum4 op)
 	}
 
 	return status;
+}
+
+int nfs4_to_errno(nfsstat4 status)
+{
+	switch (status) {
+	case NFS4_OK:
+		return 0;
+	case NFS4ERR_PERM:
+		return -EPERM;
+	case NFS4ERR_NOENT:
+		return -ENOENT;
+	case NFS4ERR_IO:
+		return -EIO;
+	case NFS4ERR_NXIO:
+		return -ENXIO;
+	case NFS4ERR_ACCESS:
+		return -EACCES;
+	case NFS4ERR_EXIST:
+		return -EEXIST;
+	case NFS4ERR_XDEV:
+		return -EXDEV;
+	case NFS4ERR_NOTDIR:
+		return -ENOTDIR;
+	case NFS4ERR_ISDIR:
+		return -EISDIR;
+	case NFS4ERR_INVAL:
+		return -EINVAL;
+	case NFS4ERR_FBIG:
+		return -EFBIG;
+	case NFS4ERR_NOSPC:
+		return -ENOSPC;
+	case NFS4ERR_ROFS:
+		return -EROFS;
+	case NFS4ERR_MLINK:
+		return -EMLINK;
+	case NFS4ERR_NAMETOOLONG:
+		return -ENAMETOOLONG;
+	case NFS4ERR_NOTEMPTY:
+		return -ENOTEMPTY;
+	case NFS4ERR_DQUOT:
+		return -EDQUOT;
+	case NFS4ERR_STALE:
+		return -ESTALE;
+	case NFS4ERR_BADHANDLE:
+		return -EBADHANDLE;
+	case NFS4ERR_NOTSUPP:
+		return -ENOTSUP;
+	case NFS4ERR_BAD_STATEID:
+		return -EBADSTATEID;
+	case NFS4ERR_STALE_STATEID:
+		return -ESTALESTATEID;
+	case NFS4ERR_OLD_STATEID:
+		return -EOLDSTATEID;
+	case NFS4ERR_EXPIRED:
+		return -EEXPIREDSTATEID;
+	default:
+		return -EREMOTEIO;
+	}
 }

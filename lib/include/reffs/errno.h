@@ -26,6 +26,16 @@
 #define EBADXDR (REFFS_ERR_BASE + 9)
 #define EATTRNOTSUP (REFFS_ERR_BASE + 10)
 #define EBADOWNER (REFFS_ERR_BASE + 11)
+/*
+ * Stateid-class errnos.  These let nfs4_to_errno() and
+ * errno_to_nfs4() roundtrip the four stateid statuses without
+ * collapsing them onto unrelated POSIX errors (EBADHANDLE,
+ * ESTALE, etc.) that would mislead clients.
+ */
+#define EBADSTATEID (REFFS_ERR_BASE + 12)
+#define ESTALESTATEID (REFFS_ERR_BASE + 13)
+#define EOLDSTATEID (REFFS_ERR_BASE + 14)
+#define EEXPIREDSTATEID (REFFS_ERR_BASE + 15)
 #define EJUKEBOX EAGAIN
 
 #endif /* _REFFS_ERRNO_H */
