@@ -90,8 +90,17 @@ int ps_proxy_forward_getattr(struct mds_session *ms, const uint8_t *upstream_fh,
 	ga_args->attr_request.bitmap4_len = requested_mask_len;
 
 	ret = mds_compound_send(&mc, ms);
-	if (ret)
+	/*
+	 * -EREMOTEIO from mds_compound_send means the wire round-trip
+	 * succeeded but the COMPOUND4res top-level status was not
+	 * NFS4_OK (i.e. at least one op in the compound failed).  We
+	 * still want to inspect individual op statuses below to
+	 * surface the per-op error to the caller (NFS4ERR_NOENT on
+	 * LOOKUP, etc).  Only true wire failures (-EIO et al) bail.
+	 */
+	if (ret && ret != -EREMOTEIO)
 		goto out;
+	ret = 0;
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
@@ -233,8 +242,17 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 	}
 
 	ret = mds_compound_send(&mc, ms);
-	if (ret)
+	/*
+	 * -EREMOTEIO from mds_compound_send means the wire round-trip
+	 * succeeded but the COMPOUND4res top-level status was not
+	 * NFS4_OK (i.e. at least one op in the compound failed).  We
+	 * still want to inspect individual op statuses below to
+	 * surface the per-op error to the caller (NFS4ERR_NOENT on
+	 * LOOKUP, etc).  Only true wire failures (-EIO et al) bail.
+	 */
+	if (ret && ret != -EREMOTEIO)
 		goto out;
+	ret = 0;
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
@@ -377,8 +395,17 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	wa->data.data_len = data_len;
 
 	ret = mds_compound_send(&mc, ms);
-	if (ret)
+	/*
+	 * -EREMOTEIO from mds_compound_send means the wire round-trip
+	 * succeeded but the COMPOUND4res top-level status was not
+	 * NFS4_OK (i.e. at least one op in the compound failed).  We
+	 * still want to inspect individual op statuses below to
+	 * surface the per-op error to the caller (NFS4ERR_NOENT on
+	 * LOOKUP, etc).  Only true wire failures (-EIO et al) bail.
+	 */
+	if (ret && ret != -EREMOTEIO)
 		goto out;
+	ret = 0;
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
@@ -454,8 +481,17 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 	memcpy(ca->open_stateid.other, stateid_other, PS_STATEID_OTHER_SIZE);
 
 	ret = mds_compound_send(&mc, ms);
-	if (ret)
+	/*
+	 * -EREMOTEIO from mds_compound_send means the wire round-trip
+	 * succeeded but the COMPOUND4res top-level status was not
+	 * NFS4_OK (i.e. at least one op in the compound failed).  We
+	 * still want to inspect individual op statuses below to
+	 * surface the per-op error to the caller (NFS4ERR_NOENT on
+	 * LOOKUP, etc).  Only true wire failures (-EIO et al) bail.
+	 */
+	if (ret && ret != -EREMOTEIO)
 		goto out;
+	ret = 0;
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
@@ -555,8 +591,17 @@ int ps_proxy_forward_readdir(struct mds_session *ms, const uint8_t *upstream_fh,
 	ra->attr_request.bitmap4_len = attr_request_len;
 
 	ret = mds_compound_send(&mc, ms);
-	if (ret)
+	/*
+	 * -EREMOTEIO from mds_compound_send means the wire round-trip
+	 * succeeded but the COMPOUND4res top-level status was not
+	 * NFS4_OK (i.e. at least one op in the compound failed).  We
+	 * still want to inspect individual op statuses below to
+	 * surface the per-op error to the caller (NFS4ERR_NOENT on
+	 * LOOKUP, etc).  Only true wire failures (-EIO et al) bail.
+	 */
+	if (ret && ret != -EREMOTEIO)
 		goto out;
+	ret = 0;
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
@@ -894,8 +939,17 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 	}
 
 	ret = mds_compound_send(&mc, ms);
-	if (ret)
+	/*
+	 * -EREMOTEIO from mds_compound_send means the wire round-trip
+	 * succeeded but the COMPOUND4res top-level status was not
+	 * NFS4_OK (i.e. at least one op in the compound failed).  We
+	 * still want to inspect individual op statuses below to
+	 * surface the per-op error to the caller (NFS4ERR_NOENT on
+	 * LOOKUP, etc).  Only true wire failures (-EIO et al) bail.
+	 */
+	if (ret && ret != -EREMOTEIO)
 		goto out;
+	ret = 0;
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
@@ -1006,8 +1060,17 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	ra->count = count;
 
 	ret = mds_compound_send(&mc, ms);
-	if (ret)
+	/*
+	 * -EREMOTEIO from mds_compound_send means the wire round-trip
+	 * succeeded but the COMPOUND4res top-level status was not
+	 * NFS4_OK (i.e. at least one op in the compound failed).  We
+	 * still want to inspect individual op statuses below to
+	 * surface the per-op error to the caller (NFS4ERR_NOENT on
+	 * LOOKUP, etc).  Only true wire failures (-EIO et al) bail.
+	 */
+	if (ret && ret != -EREMOTEIO)
 		goto out;
+	ret = 0;
 
 	/* PUTFH status at index 1. */
 	res = mds_compound_result(&mc, 1);
