@@ -803,6 +803,32 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 	if (is_claim_null && (!name || name_len == 0))
 		return -EINVAL;
 
+	bool is_create = (req->opentype == PS_PROXY_OPEN_OPENTYPE_CREATE);
+
+	if (is_create) {
+		/*
+		 * RFC 8881 S18.16.1: CREATE-mode OPEN is only valid with
+		 * CLAIM_NULL.  CLAIM_FH targets an existing FH; there is
+		 * nothing to create.
+		 */
+		if (!is_claim_null)
+			return -EINVAL;
+		if (req->createmode != PS_PROXY_OPEN_CREATEMODE_UNCHECKED &&
+		    req->createmode != PS_PROXY_OPEN_CREATEMODE_GUARDED)
+			return -EINVAL;
+		/*
+		 * createattrs is allowed to be empty (server picks
+		 * defaults) but a non-zero-length mask must come with
+		 * non-NULL bytes, and vice versa.
+		 */
+		if (req->createattrs_mask_len > 0 && !req->createattrs_mask)
+			return -EINVAL;
+		if (req->createattrs_vals_len > 0 && !req->createattrs_vals)
+			return -EINVAL;
+	} else if (req->opentype != PS_PROXY_OPEN_OPENTYPE_NOCREATE) {
+		return -EINVAL;
+	}
+
 	memset(reply, 0, sizeof(*reply));
 
 	/* SEQUENCE + PUTFH + OPEN + GETFH = 4 ops */
@@ -835,7 +861,23 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 	oa->owner.clientid = req->owner_clientid;
 	oa->owner.owner.owner_val = (char *)req->owner_data;
 	oa->owner.owner.owner_len = req->owner_data_len;
-	oa->openhow.opentype = OPEN4_NOCREATE;
+	if (is_create) {
+		oa->openhow.opentype = OPEN4_CREATE;
+		oa->openhow.openflag4_u.how.mode =
+			(req->createmode == PS_PROXY_OPEN_CREATEMODE_GUARDED) ?
+				GUARDED4 :
+				UNCHECKED4;
+		fattr4 *cattrs =
+			&oa->openhow.openflag4_u.how.createhow4_u.createattrs;
+
+		cattrs->attrmask.bitmap4_val =
+			(uint32_t *)req->createattrs_mask;
+		cattrs->attrmask.bitmap4_len = req->createattrs_mask_len;
+		cattrs->attr_vals.attrlist4_val = (char *)req->createattrs_vals;
+		cattrs->attr_vals.attrlist4_len = req->createattrs_vals_len;
+	} else {
+		oa->openhow.opentype = OPEN4_NOCREATE;
+	}
 	if (is_claim_null) {
 		oa->claim.claim = CLAIM_NULL;
 		oa->claim.open_claim4_u.file.utf8string_val = (char *)name;

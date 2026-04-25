@@ -360,11 +360,32 @@ uint32_t nfs4_op_open(struct compound *compound)
 			compound->c_inode->i_sb->sb_proxy_binding;
 		bool is_claim_null = (args->claim.claim == CLAIM_NULL);
 		bool is_claim_fh = (args->claim.claim == CLAIM_FH);
+		bool is_create = (args->openhow.opentype == OPEN4_CREATE);
 
-		if ((!is_claim_null && !is_claim_fh) ||
-		    args->openhow.opentype != OPEN4_NOCREATE) {
+		if (!is_claim_null && !is_claim_fh) {
 			*status = NFS4ERR_NOTSUPP;
 			goto out;
+		}
+		/*
+		 * RFC 8881 S18.16.1: CREATE-mode OPEN requires a name to
+		 * create, so it is only valid with CLAIM_NULL.
+		 */
+		if (is_create && !is_claim_null) {
+			*status = NFS4ERR_INVAL;
+			goto out;
+		}
+		if (is_create) {
+			createmode4 cmode = args->openhow.openflag4_u.how.mode;
+
+			/*
+			 * EXCLUSIVE / EXCLUSIVE4_1 require verifier
+			 * dedup that the proxy doesn't yet mirror;
+			 * reject explicitly for now.
+			 */
+			if (cmode != UNCHECKED4 && cmode != GUARDED4) {
+				*status = NFS4ERR_NOTSUPP;
+				goto out;
+			}
 		}
 
 		component4 *fname = NULL;
@@ -427,6 +448,8 @@ uint32_t nfs4_op_open(struct compound *compound)
 		struct ps_proxy_open_request oreq = {
 			.claim_type = is_claim_null ? PS_PROXY_OPEN_CLAIM_NULL :
 						      PS_PROXY_OPEN_CLAIM_FH,
+			.opentype = is_create ? PS_PROXY_OPEN_OPENTYPE_CREATE :
+						PS_PROXY_OPEN_OPENTYPE_NOCREATE,
 			.seqid = args->seqid,
 			.share_access = share_access,
 			.share_deny = share_deny,
@@ -435,6 +458,24 @@ uint32_t nfs4_op_open(struct compound *compound)
 				(const uint8_t *)args->owner.owner.owner_val,
 			.owner_data_len = args->owner.owner.owner_len,
 		};
+
+		if (is_create) {
+			createhow4 *how = &args->openhow.openflag4_u.how;
+
+			oreq.createmode =
+				(how->mode == GUARDED4) ?
+					PS_PROXY_OPEN_CREATEMODE_GUARDED :
+					PS_PROXY_OPEN_CREATEMODE_UNCHECKED;
+			fattr4 *cattrs = &how->createhow4_u.createattrs;
+
+			oreq.createattrs_mask = cattrs->attrmask.bitmap4_val;
+			oreq.createattrs_mask_len =
+				cattrs->attrmask.bitmap4_len;
+			oreq.createattrs_vals =
+				(const uint8_t *)cattrs->attr_vals.attrlist4_val;
+			oreq.createattrs_vals_len =
+				cattrs->attr_vals.attrlist4_len;
+		}
 		struct ps_proxy_open_reply oreply;
 
 		memset(&oreply, 0, sizeof(oreply));

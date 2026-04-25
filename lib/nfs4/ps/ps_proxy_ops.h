@@ -262,6 +262,19 @@ void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply);
 #define PS_PROXY_OPEN_CLAIM_NULL 0
 #define PS_PROXY_OPEN_CLAIM_FH 4
 
+/* opentype4 mirror (RFC 8881 S18.16.1). */
+#define PS_PROXY_OPEN_OPENTYPE_NOCREATE 0
+#define PS_PROXY_OPEN_OPENTYPE_CREATE 1
+
+/*
+ * createmode4 mirror.  Only UNCHECKED and GUARDED are supported by
+ * the primitive today; EXCLUSIVE4_1 needs verifier handling and is
+ * a follow-up slice.  Callers passing EXCLUSIVE4 / EXCLUSIVE4_1
+ * see -EINVAL.
+ */
+#define PS_PROXY_OPEN_CREATEMODE_UNCHECKED 0
+#define PS_PROXY_OPEN_CREATEMODE_GUARDED 1
+
 /*
  * OPEN forwarder input.  Scope is deliberately narrow:
  *   - CLAIM_NULL (with name) + NOCREATE
@@ -282,6 +295,18 @@ void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply);
  */
 struct ps_proxy_open_request {
 	uint32_t claim_type; /* PS_PROXY_OPEN_CLAIM_{NULL,FH} */
+	/*
+	 * opentype + createmode + createattrs are consulted only when
+	 * the caller wants OPEN-with-CREATE (must be paired with
+	 * CLAIM_NULL).  For NOCREATE leave opentype=NOCREATE and the
+	 * createmode / createattrs fields are ignored.
+	 */
+	uint32_t opentype; /* PS_PROXY_OPEN_OPENTYPE_{NOCREATE,CREATE} */
+	uint32_t createmode; /* PS_PROXY_OPEN_CREATEMODE_{UNCHECKED,GUARDED} */
+	const uint32_t *createattrs_mask; /* bitmap4 words */
+	uint32_t createattrs_mask_len;
+	const uint8_t *createattrs_vals; /* attrlist4 bytes */
+	uint32_t createattrs_vals_len;
 	uint32_t seqid;
 	uint32_t share_access;
 	uint32_t share_deny;
