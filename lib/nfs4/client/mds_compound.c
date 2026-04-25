@@ -100,8 +100,9 @@ int mds_compound_send(struct mds_compound *mc, struct mds_session *ms)
 	return mds_compound_send_with_auth(mc, ms, NULL);
 }
 
-int mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
-				const struct authunix_parms *creds)
+__attribute__((weak)) int
+mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
+			    const struct authunix_parms *creds)
 {
 	struct timeval tv = { .tv_sec = MDS_RPC_TIMEOUT_SEC, .tv_usec = 0 };
 	enum clnt_stat rpc_stat;

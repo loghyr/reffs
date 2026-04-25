@@ -63,6 +63,7 @@ TESTS = \
 	ps_discovery_test \
 	ps_inode_test \
 	ps_mount_client_test \
+	ps_proxy_creds_forward_test \
 	ps_proxy_ops_test \
 	ps_sb_alloc_test \
 	ps_sb_test \
