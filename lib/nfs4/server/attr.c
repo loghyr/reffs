@@ -3407,7 +3407,7 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 		fret = ps_proxy_forward_getattr(pls->pls_session, upstream_fh,
 						upstream_fh_len,
 						attr_request->bitmap4_val,
-						attr_request->bitmap4_len,
+						attr_request->bitmap4_len, NULL,
 						&reply);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, NFS4_OP_NUM(compound));
@@ -3838,7 +3838,7 @@ uint32_t nfs4_op_readdir(struct compound *compound)
 			args->cookie, (const uint8_t *)args->cookieverf,
 			args->dircount, args->maxcount,
 			args->attr_request.bitmap4_val,
-			args->attr_request.bitmap4_len, &rreply);
+			args->attr_request.bitmap4_len, NULL, &rreply);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, NFS4_OP_NUM(compound));
 			return 0;

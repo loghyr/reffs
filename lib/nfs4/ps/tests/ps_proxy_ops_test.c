@@ -34,16 +34,16 @@ START_TEST(test_forward_getattr_null_args)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_getattr(NULL, fh, sizeof(fh), mask, 1,
-						  &reply),
+						  NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_getattr((void *)1, NULL, sizeof(fh),
-						  mask, 1, &reply),
+						  mask, 1, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_getattr((void *)1, fh, sizeof(fh),
-						  NULL, 1, &reply),
+						  NULL, 1, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_getattr((void *)1, fh, sizeof(fh),
-						  mask, 1, NULL),
+						  mask, 1, NULL, NULL),
 			 -EINVAL);
 }
 END_TEST
@@ -62,10 +62,10 @@ START_TEST(test_forward_getattr_zero_lengths)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_getattr((void *)1, fh, 0, mask, 1,
-						  &reply),
+						  NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_getattr((void *)1, fh, sizeof(fh),
-						  mask, 0, &reply),
+						  mask, 0, NULL, &reply),
 			 -EINVAL);
 }
 END_TEST
@@ -86,7 +86,7 @@ START_TEST(test_forward_getattr_fh_too_big)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_getattr((void *)1, big_fh,
-						  sizeof(big_fh), mask, 1,
+						  sizeof(big_fh), mask, 1, NULL,
 						  &reply),
 			 -E2BIG);
 }
@@ -162,27 +162,27 @@ START_TEST(test_forward_lookup_null_args)
 	ck_assert_int_eq(ps_proxy_forward_lookup(NULL, parent, sizeof(parent),
 						 name, name_len, child,
 						 sizeof(child), &child_len,
-						 NULL, 0, NULL),
+						 NULL, 0, NULL, NULL),
 			 -EINVAL);
-	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, NULL,
-						 sizeof(parent), name, name_len,
-						 child, sizeof(child),
-						 &child_len, NULL, 0, NULL),
-			 -EINVAL);
-	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
-						 sizeof(parent), NULL, name_len,
-						 child, sizeof(child),
-						 &child_len, NULL, 0, NULL),
-			 -EINVAL);
-	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
-						 sizeof(parent), name, name_len,
-						 NULL, sizeof(child),
-						 &child_len, NULL, 0, NULL),
-			 -EINVAL);
+	ck_assert_int_eq(
+		ps_proxy_forward_lookup((void *)1, NULL, sizeof(parent), name,
+					name_len, child, sizeof(child),
+					&child_len, NULL, 0, NULL, NULL),
+		-EINVAL);
+	ck_assert_int_eq(
+		ps_proxy_forward_lookup((void *)1, parent, sizeof(parent), NULL,
+					name_len, child, sizeof(child),
+					&child_len, NULL, 0, NULL, NULL),
+		-EINVAL);
+	ck_assert_int_eq(
+		ps_proxy_forward_lookup((void *)1, parent, sizeof(parent), name,
+					name_len, NULL, sizeof(child),
+					&child_len, NULL, 0, NULL, NULL),
+		-EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
 						 sizeof(parent), name, name_len,
 						 child, sizeof(child), NULL,
-						 NULL, 0, NULL),
+						 NULL, 0, NULL, NULL),
 			 -EINVAL);
 }
 END_TEST
@@ -204,19 +204,19 @@ START_TEST(test_forward_lookup_attr_mismatch)
 	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
 						 sizeof(parent), "x", 1, child,
 						 sizeof(child), &child_len,
-						 mask, 1, NULL),
+						 mask, 1, NULL, NULL),
 			 -EINVAL);
 	/* sink provided, mask missing -> -EINVAL. */
 	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
 						 sizeof(parent), "x", 1, child,
 						 sizeof(child), &child_len,
-						 NULL, 0, &attrs),
+						 NULL, 0, NULL, &attrs),
 			 -EINVAL);
 	/* mask+sink with zero mask length -> -EINVAL. */
 	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
 						 sizeof(parent), "x", 1, child,
 						 sizeof(child), &child_len,
-						 mask, 0, &attrs),
+						 mask, 0, NULL, &attrs),
 			 -EINVAL);
 }
 END_TEST
@@ -234,12 +234,13 @@ START_TEST(test_forward_lookup_zero_lengths)
 
 	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent, 0, name, 1,
 						 child, sizeof(child),
-						 &child_len, NULL, 0, NULL),
+						 &child_len, NULL, 0, NULL,
+						 NULL),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, parent,
 						 sizeof(parent), name, 0, child,
 						 sizeof(child), &child_len,
-						 NULL, 0, NULL),
+						 NULL, 0, NULL, NULL),
 			 -EINVAL);
 }
 END_TEST
@@ -259,10 +260,10 @@ START_TEST(test_forward_lookup_parent_fh_too_big)
 
 	memset(big_parent, 0xAB, sizeof(big_parent));
 
-	ck_assert_int_eq(ps_proxy_forward_lookup((void *)1, big_parent,
-						 sizeof(big_parent), name, 1,
-						 child, sizeof(child),
-						 &child_len, NULL, 0, NULL),
+	ck_assert_int_eq(ps_proxy_forward_lookup(
+				 (void *)1, big_parent, sizeof(big_parent),
+				 name, 1, child, sizeof(child), &child_len,
+				 NULL, 0, NULL, NULL),
 			 -E2BIG);
 }
 END_TEST
@@ -448,16 +449,16 @@ START_TEST(test_forward_read_null_args)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_read(NULL, fh, sizeof(fh), 0, other,
-					       0, 4096, &reply),
+					       0, 4096, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_read((void *)1, NULL, sizeof(fh), 0,
-					       other, 0, 4096, &reply),
+					       other, 0, 4096, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_read((void *)1, fh, sizeof(fh), 0,
-					       NULL, 0, 4096, &reply),
+					       NULL, 0, 4096, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_read((void *)1, fh, sizeof(fh), 0,
-					       other, 0, 4096, NULL),
+					       other, 0, 4096, NULL, NULL),
 			 -EINVAL);
 }
 END_TEST
@@ -475,10 +476,10 @@ START_TEST(test_forward_read_zero_lengths)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_read((void *)1, fh, 0, 0, other, 0,
-					       4096, &reply),
+					       4096, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_read((void *)1, fh, sizeof(fh), 0,
-					       other, 0, 0, &reply),
+					       other, 0, 0, NULL, &reply),
 			 -EINVAL);
 }
 END_TEST
@@ -498,7 +499,7 @@ START_TEST(test_forward_read_fh_too_big)
 
 	ck_assert_int_eq(ps_proxy_forward_read((void *)1, big_fh,
 					       sizeof(big_fh), 0, other, 0,
-					       4096, &reply),
+					       4096, NULL, &reply),
 			 -E2BIG);
 }
 END_TEST
@@ -558,22 +559,22 @@ START_TEST(test_forward_open_null_args)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_open(NULL, parent, sizeof(parent),
-					       "f", 1, &req, &reply),
+					       "f", 1, &req, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_open((void *)1, NULL, sizeof(parent),
-					       "f", 1, &req, &reply),
+					       "f", 1, &req, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
 					       sizeof(parent), NULL, 1, &req,
-					       &reply),
+					       NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
 					       sizeof(parent), "f", 1, NULL,
-					       &reply),
+					       NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
 					       sizeof(parent), "f", 1, &req,
-					       NULL),
+					       NULL, NULL),
 			 -EINVAL);
 }
 END_TEST
@@ -591,11 +592,11 @@ START_TEST(test_forward_open_zero_lengths)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent, 0, "f", 1,
-					       &req, &reply),
+					       &req, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
 					       sizeof(parent), "f", 0, &req,
-					       &reply),
+					       NULL, &reply),
 			 -EINVAL);
 }
 END_TEST
@@ -615,7 +616,7 @@ START_TEST(test_forward_open_parent_fh_too_big)
 
 	ck_assert_int_eq(ps_proxy_forward_open((void *)1, big_parent,
 					       sizeof(big_parent), "f", 1, &req,
-					       &reply),
+					       NULL, &reply),
 			 -E2BIG);
 }
 END_TEST
@@ -638,7 +639,7 @@ START_TEST(test_forward_open_owner_bounds)
 	req.owner_data_len = 16;
 	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
 					       sizeof(parent), "f", 1, &req,
-					       &reply),
+					       NULL, &reply),
 			 -EINVAL);
 
 	/* Oversized owner_data_len (> PS_PROXY_OPEN_OWNER_MAX = 512). */
@@ -648,7 +649,7 @@ START_TEST(test_forward_open_owner_bounds)
 	req.owner_data_len = 4096;
 	ck_assert_int_eq(ps_proxy_forward_open((void *)1, parent,
 					       sizeof(parent), "f", 1, &req,
-					       &reply),
+					       NULL, &reply),
 			 -EINVAL);
 }
 END_TEST
@@ -666,24 +667,24 @@ START_TEST(test_forward_write_null_args)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_write(NULL, fh, sizeof(fh), 0, other,
-						0, 0, data, sizeof(data),
+						0, 0, data, sizeof(data), NULL,
 						&reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_write((void *)1, NULL, sizeof(fh), 0,
 						other, 0, 0, data, sizeof(data),
-						&reply),
+						NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, sizeof(fh), 0,
 						NULL, 0, 0, data, sizeof(data),
-						&reply),
+						NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, sizeof(fh), 0,
 						other, 0, 0, NULL, sizeof(data),
-						&reply),
+						NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, sizeof(fh), 0,
 						other, 0, 0, data, sizeof(data),
-						NULL),
+						NULL, NULL),
 			 -EINVAL);
 }
 END_TEST
@@ -698,10 +699,12 @@ START_TEST(test_forward_write_zero_lengths)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, 0, 0, other, 0,
-						0, data, sizeof(data), &reply),
+						0, data, sizeof(data), NULL,
+						&reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, sizeof(fh), 0,
-						other, 0, 0, data, 0, &reply),
+						other, 0, 0, data, 0, NULL,
+						&reply),
 			 -EINVAL);
 }
 END_TEST
@@ -716,9 +719,9 @@ START_TEST(test_forward_write_fh_too_big)
 	memset(big_fh, 0xAB, sizeof(big_fh));
 	memset(&reply, 0, sizeof(reply));
 
-	ck_assert_int_eq(ps_proxy_forward_write((void *)1, big_fh,
-						sizeof(big_fh), 0, other, 0, 0,
-						data, sizeof(data), &reply),
+	ck_assert_int_eq(ps_proxy_forward_write(
+				 (void *)1, big_fh, sizeof(big_fh), 0, other, 0,
+				 0, data, sizeof(data), NULL, &reply),
 			 -E2BIG);
 }
 END_TEST
@@ -739,7 +742,7 @@ START_TEST(test_forward_write_bad_stable)
 
 	ck_assert_int_eq(ps_proxy_forward_write((void *)1, fh, sizeof(fh), 0,
 						other, 0, 99, data,
-						sizeof(data), &reply),
+						sizeof(data), NULL, &reply),
 			 -EINVAL);
 }
 END_TEST
@@ -756,16 +759,16 @@ START_TEST(test_forward_close_null_args)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_close(NULL, fh, sizeof(fh), 0, 0,
-						other, &reply),
+						other, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_close((void *)1, NULL, sizeof(fh), 0,
-						0, other, &reply),
+						0, other, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_close((void *)1, fh, sizeof(fh), 0, 0,
-						NULL, &reply),
+						NULL, NULL, &reply),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_forward_close((void *)1, fh, sizeof(fh), 0, 0,
-						other, NULL),
+						other, NULL, NULL),
 			 -EINVAL);
 }
 END_TEST
@@ -779,7 +782,7 @@ START_TEST(test_forward_close_zero_fh)
 	memset(&reply, 0, sizeof(reply));
 
 	ck_assert_int_eq(ps_proxy_forward_close((void *)1, fh, 0, 0, 0, other,
-						&reply),
+						NULL, &reply),
 			 -EINVAL);
 }
 END_TEST
@@ -795,7 +798,7 @@ START_TEST(test_forward_close_fh_too_big)
 
 	ck_assert_int_eq(ps_proxy_forward_close((void *)1, big_fh,
 						sizeof(big_fh), 0, 0, other,
-						&reply),
+						NULL, &reply),
 			 -E2BIG);
 }
 END_TEST

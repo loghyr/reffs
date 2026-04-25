@@ -13,6 +13,7 @@
 struct inode; /* lib/include/reffs/inode.h */
 struct reffs_dirent; /* lib/include/reffs/dirent.h */
 struct ps_proxy_attrs_min; /* lib/nfs4/ps/ps_proxy_ops.h */
+struct authunix_parms; /* <rpc/auth_unix.h> */
 
 /*
  * Per-inode proxy data.
@@ -103,7 +104,8 @@ int ps_proxy_lookup_forward_for_inode(
 	const struct inode *parent, const char *name, uint32_t name_len,
 	uint8_t *child_fh_buf, uint32_t child_fh_buf_len,
 	uint32_t *child_fh_len_out, const uint32_t *attr_request,
-	uint32_t attr_request_len, struct ps_proxy_attrs_min *attrs_out);
+	uint32_t attr_request_len, const struct authunix_parms *creds,
+	struct ps_proxy_attrs_min *attrs_out);
 
 /*
  * Materialize a local dirent + inode on a proxy SB for an upstream

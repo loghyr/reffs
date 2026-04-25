@@ -131,7 +131,7 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 				compound->c_inode, args->objname.utf8string_val,
 				args->objname.utf8string_len, child_fh,
 				sizeof(child_fh), &child_fh_len, attr_req, 2,
-				&attrs);
+				NULL, &attrs);
 
 			if (pret == -ENOENT) {
 				*status = NFS4ERR_NOENT;

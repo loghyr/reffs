@@ -116,7 +116,8 @@ int ps_proxy_lookup_forward_for_inode(
 	const struct inode *parent, const char *name, uint32_t name_len,
 	uint8_t *child_fh_buf, uint32_t child_fh_buf_len,
 	uint32_t *child_fh_len_out, const uint32_t *attr_request,
-	uint32_t attr_request_len, struct ps_proxy_attrs_min *attrs_out)
+	uint32_t attr_request_len, const struct authunix_parms *creds,
+	struct ps_proxy_attrs_min *attrs_out)
 {
 	if (!parent || !name || name_len == 0 || !child_fh_buf ||
 	    !child_fh_len_out)
@@ -155,7 +156,7 @@ int ps_proxy_lookup_forward_for_inode(
 				       parent_fh_len, name, name_len,
 				       child_fh_buf, child_fh_buf_len,
 				       child_fh_len_out, attr_request,
-				       attr_request_len, attrs_out);
+				       attr_request_len, creds, attrs_out);
 }
 
 /*

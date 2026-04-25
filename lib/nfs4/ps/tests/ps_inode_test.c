@@ -292,7 +292,8 @@ START_TEST(test_lookup_forward_rejects_native_sb)
 	 */
 	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
 				 root->sb_root_inode, name, 8, child_fh,
-				 sizeof(child_fh), &child_len, NULL, 0, NULL),
+				 sizeof(child_fh), &child_len, NULL, 0, NULL,
+				 NULL),
 			 -EINVAL);
 
 	super_block_put(root);
@@ -314,23 +315,24 @@ START_TEST(test_lookup_forward_bad_args)
 
 	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
 				 NULL, "x", 1, child_fh, sizeof(child_fh),
-				 &child_len, NULL, 0, NULL),
+				 &child_len, NULL, 0, NULL, NULL),
 			 -EINVAL);
-	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
-				 proxy_root, NULL, 1, child_fh,
-				 sizeof(child_fh), &child_len, NULL, 0, NULL),
-			 -EINVAL);
+	ck_assert_int_eq(
+		ps_proxy_lookup_forward_for_inode(proxy_root, NULL, 1, child_fh,
+						  sizeof(child_fh), &child_len,
+						  NULL, 0, NULL, NULL),
+		-EINVAL);
 	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
 				 proxy_root, "x", 0, child_fh, sizeof(child_fh),
-				 &child_len, NULL, 0, NULL),
+				 &child_len, NULL, 0, NULL, NULL),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
 				 proxy_root, "x", 1, NULL, sizeof(child_fh),
-				 &child_len, NULL, 0, NULL),
+				 &child_len, NULL, 0, NULL, NULL),
 			 -EINVAL);
 	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
 				 proxy_root, "x", 1, child_fh, sizeof(child_fh),
-				 NULL, NULL, 0, NULL),
+				 NULL, NULL, 0, NULL, NULL),
 			 -EINVAL);
 
 	super_block_put(sb);
@@ -364,7 +366,8 @@ START_TEST(test_lookup_forward_no_session)
 	 */
 	ck_assert_int_eq(ps_proxy_lookup_forward_for_inode(
 				 sb->sb_root_inode, "file", 4, child_fh,
-				 sizeof(child_fh), &child_len, NULL, 0, NULL),
+				 sizeof(child_fh), &child_len, NULL, 0, NULL,
+				 NULL),
 			 -ENOTCONN);
 
 	super_block_put(sb);

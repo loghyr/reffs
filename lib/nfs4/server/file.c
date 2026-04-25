@@ -482,7 +482,8 @@ uint32_t nfs4_op_open(struct compound *compound)
 		fret = ps_proxy_forward_open(
 			pls->pls_session, upstream_fh, upstream_fh_len,
 			fname ? fname->utf8string_val : NULL,
-			fname ? fname->utf8string_len : 0, &oreq, &oreply);
+			fname ? fname->utf8string_len : 0, &oreq, NULL,
+			&oreply);
 		if (fret == -ENOENT) {
 			*status = NFS4ERR_NOENT;
 			goto out;
@@ -1370,7 +1371,8 @@ uint32_t nfs4_op_close(struct compound *compound)
 		fret = ps_proxy_forward_close(
 			pls->pls_session, upstream_fh, upstream_fh_len,
 			args->seqid, args->open_stateid.seqid,
-			(const uint8_t *)args->open_stateid.other, &creply);
+			(const uint8_t *)args->open_stateid.other, NULL,
+			&creply);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_CLOSE);
 			return 0;
@@ -1635,7 +1637,7 @@ uint32_t nfs4_op_read(struct compound *compound)
 			pls->pls_session, upstream_fh, upstream_fh_len,
 			args->stateid.seqid,
 			(const uint8_t *)args->stateid.other, args->offset,
-			req_count, &reply);
+			req_count, NULL, &reply);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_READ);
 			goto out;
@@ -2128,7 +2130,7 @@ uint32_t nfs4_op_write(struct compound *compound)
 			args->stateid.seqid,
 			(const uint8_t *)args->stateid.other, args->offset,
 			(uint32_t)args->stable,
-			(const uint8_t *)args->data.data_val, write_len,
+			(const uint8_t *)args->data.data_val, write_len, NULL,
 			&wreply);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_WRITE);

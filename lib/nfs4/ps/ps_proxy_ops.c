@@ -32,6 +32,7 @@ int ps_proxy_forward_getattr(struct mds_session *ms, const uint8_t *upstream_fh,
 			     uint32_t upstream_fh_len,
 			     const uint32_t *requested_mask,
 			     uint32_t requested_mask_len,
+			     const struct authunix_parms *creds,
 			     struct ps_proxy_getattr_reply *reply)
 {
 	struct mds_compound mc;
@@ -89,7 +90,7 @@ int ps_proxy_forward_getattr(struct mds_session *ms, const uint8_t *upstream_fh,
 	ga_args->attr_request.bitmap4_val = (uint32_t *)requested_mask;
 	ga_args->attr_request.bitmap4_len = requested_mask_len;
 
-	ret = mds_compound_send(&mc, ms);
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -167,6 +168,7 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 			    uint32_t *child_fh_len_out,
 			    const uint32_t *attr_request,
 			    uint32_t attr_request_len,
+			    const struct authunix_parms *creds,
 			    struct ps_proxy_attrs_min *attrs_out)
 {
 	struct mds_compound mc;
@@ -241,7 +243,7 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 		ga->attr_request.bitmap4_len = attr_request_len;
 	}
 
-	ret = mds_compound_send(&mc, ms);
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -345,6 +347,7 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 			   const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
 			   uint64_t offset, uint32_t stable,
 			   const uint8_t *data, uint32_t data_len,
+			   const struct authunix_parms *creds,
 			   struct ps_proxy_write_reply *reply)
 {
 	struct mds_compound mc;
@@ -394,7 +397,7 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	wa->data.data_val = (char *)data;
 	wa->data.data_len = data_len;
 
-	ret = mds_compound_send(&mc, ms);
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -437,6 +440,7 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 			   uint32_t upstream_fh_len, uint32_t close_seqid,
 			   uint32_t stateid_seqid,
 			   const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			   const struct authunix_parms *creds,
 			   struct ps_proxy_close_reply *reply)
 {
 	struct mds_compound mc;
@@ -480,7 +484,7 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 	ca->open_stateid.seqid = stateid_seqid;
 	memcpy(ca->open_stateid.other, stateid_other, PS_STATEID_OTHER_SIZE);
 
-	ret = mds_compound_send(&mc, ms);
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -542,6 +546,7 @@ int ps_proxy_forward_readdir(struct mds_session *ms, const uint8_t *upstream_fh,
 			     uint32_t dircount, uint32_t maxcount,
 			     const uint32_t *attr_request,
 			     uint32_t attr_request_len,
+			     const struct authunix_parms *creds,
 			     struct ps_proxy_readdir_reply *reply)
 {
 	struct mds_compound mc;
@@ -590,7 +595,7 @@ int ps_proxy_forward_readdir(struct mds_session *ms, const uint8_t *upstream_fh,
 	ra->attr_request.bitmap4_val = (uint32_t *)attr_request;
 	ra->attr_request.bitmap4_len = attr_request_len;
 
-	ret = mds_compound_send(&mc, ms);
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -824,6 +829,7 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 			  uint32_t current_fh_len, const char *name,
 			  uint32_t name_len,
 			  const struct ps_proxy_open_request *req,
+			  const struct authunix_parms *creds,
 			  struct ps_proxy_open_reply *reply)
 {
 	struct mds_compound mc;
@@ -938,7 +944,7 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 		goto out;
 	}
 
-	ret = mds_compound_send(&mc, ms);
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -1014,6 +1020,7 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
 			  uint32_t upstream_fh_len, uint32_t stateid_seqid,
 			  const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
 			  uint64_t offset, uint32_t count,
+			  const struct authunix_parms *creds,
 			  struct ps_proxy_read_reply *reply)
 {
 	struct mds_compound mc;
@@ -1059,7 +1066,7 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	ra->offset = offset;
 	ra->count = count;
 
-	ret = mds_compound_send(&mc, ms);
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
