@@ -33,6 +33,7 @@
 
 #include "reffs/inode.h"
 #include "reffs/log.h"
+#include "reffs/posix_shims.h"
 
 /* Initial allocation: 64 blocks.  Grows by doubling. */
 #define CHUNK_STORE_INIT_BLOCKS 64
@@ -275,7 +276,7 @@ int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
 		}
 	}
 
-	if (fdatasync(fd)) {
+	if (reffs_fdatasync(fd)) {
 		LOG("chunk_store_persist: fdatasync(%s): %m", tmp);
 		ret = -errno;
 		goto err_close;

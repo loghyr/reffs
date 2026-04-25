@@ -33,6 +33,7 @@
 
 #include "reffs/identity_map.h"
 #include "reffs/log.h"
+#include "reffs/posix_shims.h"
 
 /* ------------------------------------------------------------------ */
 /* Hash table entry                                                    */
@@ -354,7 +355,7 @@ retry:
 			goto err;
 	}
 
-	if (fdatasync(fd))
+	if (reffs_fdatasync(fd))
 		goto err;
 
 	close(fd);

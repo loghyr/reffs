@@ -66,7 +66,7 @@
 #include "reffs/task.h"
 #include "trace/io.h"
 #include "kqueue_common.h"
-#include "posix_shims.h"
+#include "reffs/posix_shims.h"
 #include "tsan_io.h"
 
 /* ------------------------------------------------------------------ */

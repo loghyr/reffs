@@ -29,7 +29,7 @@
 #include "reffs/ring.h"
 
 #include "kqueue_common.h"
-#include "posix_shims.h"
+#include "reffs/posix_shims.h"
 
 static struct ring_context *g_backend_rc;
 static struct ring_context *g_network_rc;

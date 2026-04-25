@@ -27,6 +27,7 @@
 #include <unistd.h>
 #include <uuid/uuid.h>
 
+#include "reffs/posix_shims.h"
 #include "reffs/sb_registry.h"
 
 static int read_registry(const char *state_dir, struct sb_registry_header *hdr,
@@ -295,7 +296,9 @@ static int cmd_repair_counter(const char *state_dir)
 		}
 	}
 
-	fdatasync(fd);
+	if (reffs_fdatasync(fd) < 0)
+		fprintf(stderr, "fdatasync(%s) failed: %s\n", tmp,
+			strerror(errno));
 	close(fd);
 
 	if (rename(tmp, path)) {

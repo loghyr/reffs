@@ -107,4 +107,21 @@ static inline int reffs_pipe_nb_cloexec(int fds[2])
 #endif
 }
 
+/*
+ * reffs_fdatasync -- flush file data (and any metadata required to
+ * make the data retrievable) to stable storage.  POSIX fdatasync(2)
+ * on Linux/FreeBSD; F_FULLFSYNC fcntl on Darwin (HFS+/APFS), which
+ * asks the drive to flush its write cache to media -- stronger than
+ * fsync and the closest moral equivalent.  Returns 0 on success, -1
+ * with errno on failure.
+ */
+static inline int reffs_fdatasync(int fd)
+{
+#if HAVE_DECL_FDATASYNC
+	return fdatasync(fd);
+#else
+	return fcntl(fd, F_FULLFSYNC);
+#endif
+}
+
 #endif /* _REFFS_POSIX_SHIMS_H */

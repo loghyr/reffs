@@ -25,6 +25,7 @@
 
 #include "reffs/identity_map.h"
 #include "reffs/log.h"
+#include "reffs/posix_shims.h"
 
 static struct identity_domain domains[IDENTITY_DOMAIN_MAX];
 static uint32_t domain_count;
@@ -189,7 +190,7 @@ int identity_domain_persist(const char *state_dir)
 			goto err;
 	}
 
-	if (fdatasync(fd))
+	if (reffs_fdatasync(fd))
 		goto err;
 
 	close(fd);

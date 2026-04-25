@@ -17,6 +17,7 @@
 #include <netinet/in.h>
 
 #include "reffs/log.h"
+#include "reffs/posix_shims.h"
 #include "reffs/client_persist.h"
 
 /* ------------------------------------------------------------------ */
@@ -69,7 +70,7 @@ int client_identity_append(const char *state_dir,
 		goto out;
 	}
 
-	if (fdatasync(fd)) {
+	if (reffs_fdatasync(fd)) {
 		LOG("client_identity_append: fdatasync(%s): %m", path);
 		ret = -errno;
 	}
@@ -233,7 +234,7 @@ incarnations_write_and_swap(const char *state_dir,
 		}
 	}
 
-	if (fdatasync(fd)) {
+	if (reffs_fdatasync(fd)) {
 		LOG("incarnations_write_and_swap: fdatasync(%s): %m", new_path);
 		ret = -errno;
 		goto err_close;

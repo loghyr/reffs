@@ -23,6 +23,7 @@ reffsinclude_HEADERS = \
 	nfs4.h \
 	nfs4_stats.h \
 	ns.h \
+	posix_shims.h \
 	probe1.h \
 	rcu.h \
 	ring.h \

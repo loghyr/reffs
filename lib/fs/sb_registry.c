@@ -21,6 +21,7 @@
 #include "reffs/fs.h"
 #include "reffs/rcu.h"
 #include "reffs/log.h"
+#include "reffs/posix_shims.h"
 #include "reffs/sb_registry.h"
 #include "reffs/super_block.h"
 #include "reffs/dirent.h"
@@ -155,7 +156,7 @@ int sb_registry_save(const char *state_dir)
 		}
 	}
 
-	if (fdatasync(fd)) {
+	if (reffs_fdatasync(fd)) {
 		ret = -errno;
 		goto err_close;
 	}
@@ -431,7 +432,7 @@ int sb_client_rules_save(const char *state_dir, uint64_t sb_id,
 		}
 	}
 
-	if (fdatasync(fd)) {
+	if (reffs_fdatasync(fd)) {
 		ret = -errno;
 		goto err_close;
 	}

@@ -17,6 +17,7 @@
 #include <limits.h>
 
 #include "reffs/log.h"
+#include "reffs/posix_shims.h"
 #include "reffs/server_persist.h"
 
 #define SERVER_STATE_FILE "server_state"
@@ -125,7 +126,7 @@ int server_persist_save(const char *dir,
 		goto err_close;
 	}
 
-	if (fdatasync(fd)) {
+	if (reffs_fdatasync(fd)) {
 		LOG("server_persist_save: fdatasync(%s): %m", tmp);
 		ret = -errno;
 		goto err_close;

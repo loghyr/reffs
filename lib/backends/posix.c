@@ -30,6 +30,7 @@
 #include "reffs/layout_segment.h"
 #include "reffs/data_block.h"
 #include "reffs/log.h"
+#include "reffs/posix_shims.h"
 #include "reffs/trace/fs.h"
 
 struct posix_sb_private {
@@ -139,7 +140,7 @@ static void posix_inode_sync(struct inode *inode)
 	int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd >= 0) {
 		if (write(fd, &meta, sizeof(meta)) == sizeof(meta)) {
-			if (fdatasync(fd) < 0) {
+			if (reffs_fdatasync(fd) < 0) {
 				int err = errno;
 				LOG("fdatasync %s failed: %s", tmp_path,
 				    strerror(err));
@@ -172,7 +173,7 @@ static void posix_inode_sync(struct inode *inode)
 		if (fd >= 0) {
 			size_t len = strlen(inode->i_symlink);
 			if (write(fd, inode->i_symlink, len) == (ssize_t)len) {
-				if (fdatasync(fd) < 0) {
+				if (reffs_fdatasync(fd) < 0) {
 					int err = errno;
 					LOG("fdatasync %s failed: %s", tmp_path,
 					    strerror(err));
@@ -258,7 +259,7 @@ static void posix_inode_sync(struct inode *inode)
 				}
 			}
 
-			if (ok && fdatasync(fd) < 0) {
+			if (ok && reffs_fdatasync(fd) < 0) {
 				int err = errno;
 				LOG("fdatasync %s failed: %s", tmp_path,
 				    strerror(err));
@@ -380,7 +381,7 @@ static void posix_dir_sync(struct inode *inode)
 		return;
 	}
 
-	if (fdatasync(fd) < 0) {
+	if (reffs_fdatasync(fd) < 0) {
 		int err = errno;
 		LOG("posix_dir_sync: fdatasync %s failed: %s", tmp_path,
 		    strerror(err));

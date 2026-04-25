@@ -148,6 +148,11 @@ AC_CHECK_DECLS([pipe2], [AC_DEFINE([HAVE_PIPE2], [1],
     [], [[#include <unistd.h>
 #include <fcntl.h>]])
 
+# fdatasync(2) is POSIX on Linux/FreeBSD but absent on Darwin (which
+# offers fcntl(F_FULLFSYNC) as the moral equivalent).  Header-probe
+# rather than link-test for the same reason as accept4 / pipe2 above.
+AC_CHECK_DECLS([fdatasync], [], [], [[#include <unistd.h>]])
+
 AC_MSG_CHECKING([for C11 support])
 dnl Strip out the freaking -O2 by default!
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([],[])],
