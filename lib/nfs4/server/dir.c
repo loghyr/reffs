@@ -446,20 +446,19 @@ uint32_t nfs4_op_create(struct compound *compound)
 	}
 
 	/*
-	 * Proxy-SB fast path: forward CREATE(NF4DIR) to upstream MDS,
-	 * then materialise a local proxy-SB inode for the new dir so
-	 * subsequent ops in this compound (GETFH, GETATTR) see it.
+	 * Proxy-SB fast path: forward CREATE(NF4DIR) and CREATE(NF4LNK)
+	 * to upstream MDS, then materialise a local proxy-SB inode for
+	 * the new object so subsequent ops in this compound (GETFH,
+	 * GETATTR) see it.
 	 *
-	 * Only NF4DIR is forwarded for now; NF4LNK / NF4BLK / NF4CHR /
-	 * NF4SOCK / NF4FIFO will be added in follow-up slices once the
-	 * mkdir pattern is shaken out on witchie/mage.  Other types fall
-	 * through to the local vfs_* path which would mutate the proxy
-	 * SB cache without reaching the upstream -- not ideal but
-	 * matches behaviour before this slice.
+	 * NF4BLK / NF4CHR / NF4SOCK / NF4FIFO still fall through to the
+	 * local vfs_* path -- those types are rare on NFS exports and
+	 * the createtype4 union encoding for devdata adds enough surface
+	 * to deserve a dedicated slice if/when needed.
 	 */
 	if (compound->c_inode->i_sb &&
 	    compound->c_inode->i_sb->sb_proxy_binding &&
-	    args->objtype.type == NF4DIR) {
+	    (args->objtype.type == NF4DIR || args->objtype.type == NF4LNK)) {
 		const struct ps_sb_binding *binding =
 			compound->c_inode->i_sb->sb_proxy_binding;
 		uint8_t parent_fh[PS_MAX_FH_SIZE];
@@ -482,25 +481,83 @@ uint32_t nfs4_op_create(struct compound *compound)
 			goto out;
 		}
 
-		struct ps_proxy_mkdir_reply mreply;
+		/*
+		 * Both forwarders return the same shape (cinfo + attrset
+		 * + child_fh + child_attrs).  Drain into local vars so
+		 * the materialisation block is type-agnostic.
+		 */
+		uint8_t child_fh[PS_MAX_FH_SIZE];
+		uint32_t child_fh_len = 0;
+		struct {
+			bool atomic;
+			uint64_t before;
+			uint64_t after;
+		} cinfo = { 0, 0, 0 };
+		uint32_t *attrset_mask = NULL;
+		uint32_t attrset_mask_len = 0;
+		struct ps_proxy_attrs_min child_attrs = { 0 };
 
-		memset(&mreply, 0, sizeof(mreply));
-		fret = ps_proxy_forward_mkdir(
-			pls->pls_session, parent_fh, parent_fh_len, name,
-			(uint32_t)strlen(name),
-			args->createattrs.attrmask.bitmap4_val,
-			args->createattrs.attrmask.bitmap4_len,
-			(const uint8_t *)
-				args->createattrs.attr_vals.attrlist4_val,
-			args->createattrs.attr_vals.attrlist4_len,
-			&compound->c_ap, &mreply);
-		if (fret < 0) {
-			*status = errno_to_nfs4(fret, OP_CREATE);
-			goto out;
+		if (args->objtype.type == NF4DIR) {
+			struct ps_proxy_mkdir_reply mreply;
+
+			memset(&mreply, 0, sizeof(mreply));
+			fret = ps_proxy_forward_mkdir(
+				pls->pls_session, parent_fh, parent_fh_len,
+				name, (uint32_t)strlen(name),
+				args->createattrs.attrmask.bitmap4_val,
+				args->createattrs.attrmask.bitmap4_len,
+				(const uint8_t *)args->createattrs.attr_vals
+					.attrlist4_val,
+				args->createattrs.attr_vals.attrlist4_len,
+				&compound->c_ap, &mreply);
+			if (fret < 0) {
+				*status = errno_to_nfs4(fret, OP_CREATE);
+				goto out;
+			}
+			memcpy(child_fh, mreply.child_fh, mreply.child_fh_len);
+			child_fh_len = mreply.child_fh_len;
+			cinfo.atomic = mreply.cinfo.atomic;
+			cinfo.before = mreply.cinfo.before;
+			cinfo.after = mreply.cinfo.after;
+			attrset_mask = mreply.attrset_mask;
+			attrset_mask_len = mreply.attrset_mask_len;
+			child_attrs = mreply.child_attrs;
+			mreply.attrset_mask = NULL; /* ownership transferred */
+			ps_proxy_mkdir_reply_free(&mreply);
+		} else {
+			/* NF4LNK */
+			struct ps_proxy_symlink_reply sreply;
+			linktext4 *ld = &args->objtype.createtype4_u.linkdata;
+
+			memset(&sreply, 0, sizeof(sreply));
+			fret = ps_proxy_forward_symlink(
+				pls->pls_session, parent_fh, parent_fh_len,
+				name, (uint32_t)strlen(name), ld->linktext4_val,
+				ld->linktext4_len,
+				args->createattrs.attrmask.bitmap4_val,
+				args->createattrs.attrmask.bitmap4_len,
+				(const uint8_t *)args->createattrs.attr_vals
+					.attrlist4_val,
+				args->createattrs.attr_vals.attrlist4_len,
+				&compound->c_ap, &sreply);
+			if (fret < 0) {
+				*status = errno_to_nfs4(fret, OP_CREATE);
+				goto out;
+			}
+			memcpy(child_fh, sreply.child_fh, sreply.child_fh_len);
+			child_fh_len = sreply.child_fh_len;
+			cinfo.atomic = sreply.cinfo.atomic;
+			cinfo.before = sreply.cinfo.before;
+			cinfo.after = sreply.cinfo.after;
+			attrset_mask = sreply.attrset_mask;
+			attrset_mask_len = sreply.attrset_mask_len;
+			child_attrs = sreply.child_attrs;
+			sreply.attrset_mask = NULL;
+			ps_proxy_symlink_reply_free(&sreply);
 		}
 
 		/*
-		 * Materialise a local proxy-SB inode for the new dir so
+		 * Materialise a local proxy-SB inode for the new object so
 		 * the wire CURRENT_FH transition (RFC 8881 S18.4: CREATE
 		 * makes the new object the CURRENT_FH) has a corresponding
 		 * local inode for follow-up ops in this compound.
@@ -508,52 +565,43 @@ uint32_t nfs4_op_create(struct compound *compound)
 		struct reffs_dirent *child_de = NULL;
 		struct inode *child = NULL;
 
-		fret = ps_lookup_materialize(
-			compound->c_inode, args->objname.utf8string_val,
-			args->objname.utf8string_len, mreply.child_fh,
-			mreply.child_fh_len, &mreply.child_attrs, &child_de,
-			&child);
+		fret = ps_lookup_materialize(compound->c_inode,
+					     args->objname.utf8string_val,
+					     args->objname.utf8string_len,
+					     child_fh, child_fh_len,
+					     &child_attrs, &child_de, &child);
 		if (fret == -EEXIST) {
-			/*
-			 * Concurrent LOOKUP / CREATE materialised the same
-			 * name between our forward RPC and the alloc.
-			 * Re-find the dirent + ensure_inode to recover.
-			 */
 			child_de = dirent_load_child_by_name(
 				compound->c_inode->i_dirent, name);
 			if (!child_de) {
-				ps_proxy_mkdir_reply_free(&mreply);
+				free(attrset_mask);
 				*status = NFS4ERR_SERVERFAULT;
 				goto out;
 			}
 			child = dirent_ensure_inode(child_de);
 			if (!child) {
-				ps_proxy_mkdir_reply_free(&mreply);
+				free(attrset_mask);
 				*status = NFS4ERR_SERVERFAULT;
 				goto out;
 			}
 		} else if (fret < 0) {
-			ps_proxy_mkdir_reply_free(&mreply);
+			free(attrset_mask);
 			*status = errno_to_nfs4(fret, OP_CREATE);
 			goto out;
 		}
 
-		/* Switch CURRENT_FH to the new dir, mirroring the wire op. */
+		/* Switch CURRENT_FH to the new object, mirroring the wire op. */
 		inode_active_put(compound->c_inode);
 		compound->c_inode = child;
 		compound->c_curr_nfh.nfh_ino = compound->c_inode->i_ino;
 
-		resok->cinfo.atomic = mreply.cinfo.atomic;
-		resok->cinfo.before = mreply.cinfo.before;
-		resok->cinfo.after = mreply.cinfo.after;
+		resok->cinfo.atomic = cinfo.atomic;
+		resok->cinfo.before = cinfo.before;
+		resok->cinfo.after = cinfo.after;
 
-		/* attrset hand-off: the wire bitmap4 takes ownership. */
-		resok->attrset.bitmap4_val = mreply.attrset_mask;
-		resok->attrset.bitmap4_len = mreply.attrset_mask_len;
-		mreply.attrset_mask = NULL;
-		mreply.attrset_mask_len = 0;
-
-		ps_proxy_mkdir_reply_free(&mreply);
+		/* attrset hand-off: wire bitmap4 takes ownership of the heap. */
+		resok->attrset.bitmap4_val = attrset_mask;
+		resok->attrset.bitmap4_len = attrset_mask_len;
 		goto out;
 	}
 
@@ -1088,6 +1136,73 @@ uint32_t nfs4_op_link(struct compound *compound)
 
 	if (S_ISDIR(src_inode->i_mode)) {
 		*status = NFS4ERR_ISDIR;
+		goto out;
+	}
+
+	/*
+	 * Proxy-SB fast path: forward LINK to upstream MDS so the new
+	 * name actually appears on the upstream.  Both the source file
+	 * (SAVED_FH) and the target directory (CURRENT_FH) must live
+	 * on the same proxy SB; cross-SB hardlinks return NFS4ERR_XDEV
+	 * at the generic check elsewhere.
+	 */
+	if (src_inode->i_sb && src_inode->i_sb->sb_proxy_binding &&
+	    compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding &&
+	    src_inode->i_sb == compound->c_inode->i_sb) {
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+		uint8_t src_fh[PS_MAX_FH_SIZE];
+		uint32_t src_fh_len = 0;
+		uint8_t dst_fh[PS_MAX_FH_SIZE];
+		uint32_t dst_fh_len = 0;
+
+		int fret = ps_inode_get_upstream_fh(
+			src_inode, src_fh, sizeof(src_fh), &src_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+		fret = ps_inode_get_upstream_fh(compound->c_inode, dst_fh,
+						sizeof(dst_fh), &dst_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		struct ps_proxy_link_reply lreply;
+
+		memset(&lreply, 0, sizeof(lreply));
+		fret = ps_proxy_forward_link(pls->pls_session, src_fh,
+					     src_fh_len, dst_fh, dst_fh_len,
+					     name, (uint32_t)strlen(name),
+					     &compound->c_ap, &lreply);
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_LINK);
+			goto out;
+		}
+
+		resok->cinfo.atomic = lreply.atomic;
+		resok->cinfo.before = lreply.before;
+		resok->cinfo.after = lreply.after;
+
+		/*
+		 * NOT_NOW_BROWN_COW: don't bump the local src_inode's
+		 * nlink or materialise a local dirent for the new name.
+		 * Same dcache-coherency caveat as the REMOVE / RENAME
+		 * forwarders -- a follow-up LOOKUP through the PS hits
+		 * the local cache (which doesn't have the new name) and
+		 * could miss the link until the next READDIR refreshes.
+		 * Acceptable for cold-mount BAT demo.
+		 */
 		goto out;
 	}
 

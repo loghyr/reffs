@@ -245,6 +245,47 @@ START_TEST(test_forward_open_propagates_creds)
 }
 END_TEST
 
+START_TEST(test_forward_symlink_propagates_creds)
+{
+	uint8_t parent[] = { 0xCC };
+	struct ps_proxy_symlink_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+	capture_reset();
+
+	int ret = ps_proxy_forward_symlink(test_session(), parent,
+					   sizeof(parent), "lnk", 3, "/target",
+					   7, NULL, 0, NULL, 0, &g_test_creds,
+					   &reply);
+
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert_ptr_eq(g_captured_creds, &g_test_creds);
+	ck_assert_uint_eq(g_captured_creds->aup_uid, TEST_UID);
+	ps_proxy_symlink_reply_free(&reply);
+}
+END_TEST
+
+START_TEST(test_forward_link_propagates_creds)
+{
+	uint8_t src[] = { 0xDD };
+	uint8_t dst[] = { 0xEE };
+	struct ps_proxy_link_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+	capture_reset();
+
+	int ret = ps_proxy_forward_link(test_session(), src, sizeof(src), dst,
+					sizeof(dst), "newlink", 7,
+					&g_test_creds, &reply);
+
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert_ptr_eq(g_captured_creds, &g_test_creds);
+	ck_assert_uint_eq(g_captured_creds->aup_uid, TEST_UID);
+}
+END_TEST
+
 START_TEST(test_forward_mkdir_propagates_creds)
 {
 	uint8_t parent[] = { 0xBB };
@@ -359,6 +400,8 @@ static Suite *ps_proxy_creds_forward_suite(void)
 	tcase_add_test(tc, test_forward_close_propagates_creds);
 	tcase_add_test(tc, test_forward_open_propagates_creds);
 	tcase_add_test(tc, test_forward_mkdir_propagates_creds);
+	tcase_add_test(tc, test_forward_symlink_propagates_creds);
+	tcase_add_test(tc, test_forward_link_propagates_creds);
 	tcase_add_test(tc, test_forward_rename_propagates_creds);
 	tcase_add_test(tc, test_forward_remove_propagates_creds);
 	tcase_add_test(tc, test_forward_commit_propagates_creds);

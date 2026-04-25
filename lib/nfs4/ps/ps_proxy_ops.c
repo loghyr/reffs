@@ -928,6 +928,307 @@ out:
 	return ret;
 }
 
+void ps_proxy_symlink_reply_free(struct ps_proxy_symlink_reply *reply)
+{
+	if (!reply)
+		return;
+	free(reply->attrset_mask);
+	memset(reply, 0, sizeof(*reply));
+}
+
+int ps_proxy_forward_symlink(struct mds_session *ms, const uint8_t *parent_fh,
+			     uint32_t parent_fh_len, const char *name,
+			     uint32_t name_len, const char *linkdata,
+			     uint32_t linkdata_len,
+			     const uint32_t *createattrs_mask,
+			     uint32_t createattrs_mask_len,
+			     const uint8_t *createattrs_vals,
+			     uint32_t createattrs_vals_len,
+			     const struct authunix_parms *creds,
+			     struct ps_proxy_symlink_reply *reply)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
+
+	if (!ms || !parent_fh || !name || !linkdata || !reply)
+		return -EINVAL;
+	if (parent_fh_len == 0 || name_len == 0 || linkdata_len == 0)
+		return -EINVAL;
+	if (parent_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
+	memset(reply, 0, sizeof(*reply));
+
+	/* SEQUENCE + PUTFH + CREATE + GETFH + GETATTR = 5 ops */
+	ret = mds_compound_init(&mc, 5, "ps-proxy-symlink");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)parent_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = parent_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_CREATE);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	CREATE4args *cra = &slot->nfs_argop4_u.opcreate;
+
+	cra->objtype.type = NF4LNK;
+	cra->objtype.createtype4_u.linkdata.linktext4_val = (char *)linkdata;
+	cra->objtype.createtype4_u.linkdata.linktext4_len = linkdata_len;
+	cra->objname.utf8string_val = (char *)name;
+	cra->objname.utf8string_len = name_len;
+	cra->createattrs.attrmask.bitmap4_val = (uint32_t *)createattrs_mask;
+	cra->createattrs.attrmask.bitmap4_len = createattrs_mask_len;
+	cra->createattrs.attr_vals.attrlist4_val = (char *)createattrs_vals;
+	cra->createattrs.attr_vals.attrlist4_len = createattrs_vals_len;
+
+	slot = mds_compound_add_op(&mc, OP_GETFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+
+	slot = mds_compound_add_op(&mc, OP_GETATTR);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	static const uint32_t symlink_attr_req[] = { 0x2u, 0x2u };
+
+	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_val =
+		(uint32_t *)symlink_attr_req;
+	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_len = 2;
+
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	if (ret && ret != -EREMOTEIO)
+		goto out;
+	ret = 0;
+
+	/* PUTFH status at index 1. */
+	res = mds_compound_result(&mc, 1);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
+
+	/* CREATE result at index 2. */
+	res = mds_compound_result(&mc, 2);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opcreate.status);
+	if (ret)
+		goto out;
+
+	CREATE4resok *cresok = &res->nfs_resop4_u.opcreate.CREATE4res_u.resok4;
+
+	reply->cinfo.atomic = cresok->cinfo.atomic;
+	reply->cinfo.before = cresok->cinfo.before;
+	reply->cinfo.after = cresok->cinfo.after;
+
+	if (cresok->attrset.bitmap4_len > 0) {
+		reply->attrset_mask = calloc(cresok->attrset.bitmap4_len,
+					     sizeof(*reply->attrset_mask));
+		if (!reply->attrset_mask) {
+			ret = -ENOMEM;
+			goto out_free_reply;
+		}
+		memcpy(reply->attrset_mask, cresok->attrset.bitmap4_val,
+		       cresok->attrset.bitmap4_len *
+			       sizeof(*reply->attrset_mask));
+		reply->attrset_mask_len = cresok->attrset.bitmap4_len;
+	}
+
+	/* GETFH result at index 3. */
+	res = mds_compound_result(&mc, 3);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out_free_reply;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opgetfh.status);
+	if (ret)
+		goto out_free_reply;
+
+	GETFH4resok *fhresok = &res->nfs_resop4_u.opgetfh.GETFH4res_u.resok4;
+
+	if (fhresok->object.nfs_fh4_len == 0) {
+		ret = -EREMOTEIO;
+		goto out_free_reply;
+	}
+	if (fhresok->object.nfs_fh4_len > PS_MAX_FH_SIZE) {
+		ret = -ENOSPC;
+		goto out_free_reply;
+	}
+	memcpy(reply->child_fh, fhresok->object.nfs_fh4_val,
+	       fhresok->object.nfs_fh4_len);
+	reply->child_fh_len = fhresok->object.nfs_fh4_len;
+
+	/* GETATTR result at index 4. */
+	res = mds_compound_result(&mc, 4);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out_free_reply;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opgetattr.status);
+	if (ret)
+		goto out_free_reply;
+
+	GETATTR4resok *gresok =
+		&res->nfs_resop4_u.opgetattr.GETATTR4res_u.resok4;
+
+	ret = ps_proxy_parse_attrs_min(
+		gresok->obj_attributes.attrmask.bitmap4_val,
+		gresok->obj_attributes.attrmask.bitmap4_len,
+		(const uint8_t *)gresok->obj_attributes.attr_vals.attrlist4_val,
+		gresok->obj_attributes.attr_vals.attrlist4_len,
+		&reply->child_attrs);
+	if (ret)
+		goto out_free_reply;
+
+	ret = 0;
+	goto out;
+
+out_free_reply:
+	ps_proxy_symlink_reply_free(reply);
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
+int ps_proxy_forward_link(struct mds_session *ms, const uint8_t *src_fh,
+			  uint32_t src_fh_len, const uint8_t *dst_dir_fh,
+			  uint32_t dst_dir_fh_len, const char *newname,
+			  uint32_t newname_len,
+			  const struct authunix_parms *creds,
+			  struct ps_proxy_link_reply *reply)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
+
+	if (!ms || !src_fh || !dst_dir_fh || !newname || !reply)
+		return -EINVAL;
+	if (src_fh_len == 0 || dst_dir_fh_len == 0 || newname_len == 0)
+		return -EINVAL;
+	if (src_fh_len > PS_MAX_FH_SIZE || dst_dir_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
+	memset(reply, 0, sizeof(*reply));
+
+	/* SEQUENCE + PUTFH(src) + SAVEFH + PUTFH(dst_dir) + LINK = 5 ops */
+	ret = mds_compound_init(&mc, 5, "ps-proxy-link");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)src_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = src_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_SAVEFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)dst_dir_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = dst_dir_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_LINK);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.oplink.newname.utf8string_val = (char *)newname;
+	slot->nfs_argop4_u.oplink.newname.utf8string_len = newname_len;
+
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	if (ret && ret != -EREMOTEIO)
+		goto out;
+	ret = 0;
+
+	/* PUTFH(src) at index 1. */
+	res = mds_compound_result(&mc, 1);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
+
+	/* SAVEFH at index 2. */
+	res = mds_compound_result(&mc, 2);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opsavefh.status);
+	if (ret)
+		goto out;
+
+	/* PUTFH(dst_dir) at index 3. */
+	res = mds_compound_result(&mc, 3);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
+
+	/* LINK result at index 4. */
+	res = mds_compound_result(&mc, 4);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.oplink.status);
+	if (ret)
+		goto out;
+
+	LINK4resok *lresok = &res->nfs_resop4_u.oplink.LINK4res_u.resok4;
+
+	reply->atomic = lresok->cinfo.atomic;
+	reply->before = lresok->cinfo.before;
+	reply->after = lresok->cinfo.after;
+	ret = 0;
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
 int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 			   uint32_t upstream_fh_len, uint32_t close_seqid,
 			   uint32_t stateid_seqid,

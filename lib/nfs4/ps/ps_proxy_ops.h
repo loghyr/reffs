@@ -620,6 +620,94 @@ int ps_proxy_forward_mkdir(struct mds_session *ms, const uint8_t *parent_fh,
 void ps_proxy_mkdir_reply_free(struct ps_proxy_mkdir_reply *reply);
 
 /*
+ * Caller-owned result from ps_proxy_forward_symlink.  Same shape
+ * as ps_proxy_mkdir_reply -- the only wire difference between
+ * CREATE(NF4DIR) and CREATE(NF4LNK) is the createtype4 union
+ * payload, not the response.  Free with
+ * ps_proxy_symlink_reply_free() exactly once.
+ */
+struct ps_proxy_symlink_reply {
+	struct {
+		bool atomic;
+		uint64_t before;
+		uint64_t after;
+	} cinfo;
+	uint32_t *attrset_mask;
+	uint32_t attrset_mask_len;
+	uint8_t child_fh[PS_MAX_FH_SIZE];
+	uint32_t child_fh_len;
+	struct ps_proxy_attrs_min child_attrs;
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(parent) + CREATE(NF4LNK,
+ * name, linkdata, createattrs) + GETFH + GETATTR(TYPE|MODE)
+ * on `ms`.  Same response shape as the mkdir forwarder; the
+ * caller's hook materialises a local proxy-SB inode for the new
+ * symlink so subsequent ops in the same compound see it.
+ *
+ * `linkdata` is the symlink target string of `linkdata_len`
+ * bytes; the upstream MDS stores it verbatim.  Must be non-NULL
+ * and non-zero.
+ *
+ * Returns:
+ *   0        success; reply populated
+ *   -EINVAL  any pointer NULL, parent_fh / name / linkdata length 0
+ *   -E2BIG   parent_fh > PS_MAX_FH_SIZE
+ *   -ENOSPC  child FH > PS_MAX_FH_SIZE (MDS misbehaving)
+ *   -EEXIST  upstream returned NFS4ERR_EXIST
+ *   -ENOMEM  attrset_mask alloc failure
+ *   -errno   RPC / compound failure, or a non-OK per-op status
+ */
+int ps_proxy_forward_symlink(struct mds_session *ms, const uint8_t *parent_fh,
+			     uint32_t parent_fh_len, const char *name,
+			     uint32_t name_len, const char *linkdata,
+			     uint32_t linkdata_len,
+			     const uint32_t *createattrs_mask,
+			     uint32_t createattrs_mask_len,
+			     const uint8_t *createattrs_vals,
+			     uint32_t createattrs_vals_len,
+			     const struct authunix_parms *creds,
+			     struct ps_proxy_symlink_reply *reply);
+
+void ps_proxy_symlink_reply_free(struct ps_proxy_symlink_reply *reply);
+
+/*
+ * Caller-owned result from ps_proxy_forward_link.  The wire LINK
+ * op (RFC 8881 S18.9) returns only the target-dir change_info4 --
+ * a hardlink doesn't mint a new inode, so there's no GETFH /
+ * GETATTR pair to bring back.  The local hook just bumps the
+ * source inode's nlink and reports the upstream cinfo verbatim.
+ */
+struct ps_proxy_link_reply {
+	bool atomic;
+	uint64_t before;
+	uint64_t after;
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(src_fh) + SAVEFH + PUTFH(dst_dir_fh)
+ * + LINK(newname) on `ms`.  Mirrors how the wire LINK op identifies
+ * the source file (SAVED_FH) and the target directory (CURRENT_FH).
+ * Both must be on the same upstream MDS (caller's hook checks
+ * same-proxy-SB before forwarding; cross-SB hits NFS4ERR_XDEV
+ * before this point).
+ *
+ * Returns:
+ *   0        success; reply->{atomic,before,after} populated
+ *   -EINVAL  any pointer NULL, any length 0
+ *   -E2BIG   either FH > PS_MAX_FH_SIZE
+ *   -EEXIST  upstream returned NFS4ERR_EXIST (newname collision)
+ *   -errno   RPC / compound failure, or a non-OK per-op status
+ */
+int ps_proxy_forward_link(struct mds_session *ms, const uint8_t *src_fh,
+			  uint32_t src_fh_len, const uint8_t *dst_dir_fh,
+			  uint32_t dst_dir_fh_len, const char *newname,
+			  uint32_t newname_len,
+			  const struct authunix_parms *creds,
+			  struct ps_proxy_link_reply *reply);
+
+/*
  * Caller-owned result from ps_proxy_forward_close.  CLOSE returns an
  * updated stateid4 (same `other`, bumped `seqid`) that the end
  * client treats as the canonical stateid going forward.  We copy
