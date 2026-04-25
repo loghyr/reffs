@@ -468,6 +468,44 @@ int ps_proxy_forward_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 			    struct ps_proxy_commit_reply *reply);
 
 /*
+ * Caller-owned result from ps_proxy_forward_remove.  Carries the
+ * upstream MDS's change_info4 verbatim so the end client can detect
+ * a concurrent mutation that raced with the REMOVE; the
+ * before/after pair is what the server side of REMOVE4resok holds.
+ */
+struct ps_proxy_remove_reply {
+	bool atomic; /* TRUE if before/after are an atomic pair */
+	uint64_t before;
+	uint64_t after;
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(parent_upstream_fh) + REMOVE(name)
+ * on `ms`, copy the MDS's change_info4 into `reply`.
+ *
+ * `name` is a bare component (no '/') of `name_len` bytes.  The
+ * primitive does no local cache invalidation -- the client's
+ * dcache invalidates on cinfo mismatch the next time it issues
+ * a LOOKUP / READDIR through the PS.
+ *
+ * On any failure `reply` is left zero-initialised and no durable
+ * state ran on the upstream.
+ *
+ * Returns:
+ *   0        success; reply->{atomic,before,after} populated
+ *   -EINVAL  ms / parent_fh / name / reply NULL, or
+ *            parent_fh_len / name_len == 0
+ *   -E2BIG   parent_fh_len > PS_MAX_FH_SIZE
+ *   -ENOENT  upstream returned NFS4ERR_NOENT (no such name)
+ *   -errno   RPC / compound failure, or a non-OK per-op status
+ */
+int ps_proxy_forward_remove(struct mds_session *ms, const uint8_t *parent_fh,
+			    uint32_t parent_fh_len, const char *name,
+			    uint32_t name_len,
+			    const struct authunix_parms *creds,
+			    struct ps_proxy_remove_reply *reply);
+
+/*
  * Caller-owned result from ps_proxy_forward_close.  CLOSE returns an
  * updated stateid4 (same `other`, bumped `seqid`) that the end
  * client treats as the canonical stateid going forward.  We copy

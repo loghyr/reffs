@@ -536,6 +536,88 @@ out:
 	return ret;
 }
 
+int ps_proxy_forward_remove(struct mds_session *ms, const uint8_t *parent_fh,
+			    uint32_t parent_fh_len, const char *name,
+			    uint32_t name_len,
+			    const struct authunix_parms *creds,
+			    struct ps_proxy_remove_reply *reply)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
+
+	if (!ms || !parent_fh || !name || !reply)
+		return -EINVAL;
+	if (parent_fh_len == 0 || name_len == 0)
+		return -EINVAL;
+	if (parent_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
+	memset(reply, 0, sizeof(*reply));
+
+	/* SEQUENCE + PUTFH + REMOVE = 3 ops */
+	ret = mds_compound_init(&mc, 3, "ps-proxy-remove");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)parent_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = parent_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_REMOVE);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opremove.target.utf8string_val = (char *)name;
+	slot->nfs_argop4_u.opremove.target.utf8string_len = name_len;
+
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	if (ret && ret != -EREMOTEIO)
+		goto out;
+	ret = 0;
+
+	/* PUTFH status at index 1. */
+	res = mds_compound_result(&mc, 1);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
+
+	/* REMOVE result at index 2. */
+	res = mds_compound_result(&mc, 2);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opremove.status);
+	if (ret)
+		goto out;
+
+	REMOVE4resok *rresok = &res->nfs_resop4_u.opremove.REMOVE4res_u.resok4;
+
+	reply->atomic = rresok->cinfo.atomic;
+	reply->before = rresok->cinfo.before;
+	reply->after = rresok->cinfo.after;
+	ret = 0;
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
 int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 			   uint32_t upstream_fh_len, uint32_t close_seqid,
 			   uint32_t stateid_seqid,

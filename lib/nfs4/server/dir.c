@@ -36,6 +36,7 @@
 #include "ps_inode.h"
 #include "ps_proxy_ops.h"
 #include "ps_sb.h"
+#include "ps_state.h"
 
 uint32_t nfs4_op_lookup(struct compound *compound)
 {
@@ -596,6 +597,71 @@ uint32_t nfs4_op_remove(struct compound *compound)
 	}
 	if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
 		*status = NFS4ERR_BADNAME;
+		goto out;
+	}
+
+	/*
+	 * Proxy-SB fast path: forward REMOVE to upstream MDS so the
+	 * file actually goes away.  The local proxy SB only holds a
+	 * cache of the upstream namespace; deleting it locally would
+	 * leave the file on the upstream and cause a future LOOKUP to
+	 * see it again.
+	 */
+	if (compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding) {
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+		uint8_t parent_fh[PS_MAX_FH_SIZE];
+		uint32_t parent_fh_len = 0;
+
+		int fret = ps_inode_get_upstream_fh(compound->c_inode,
+						    parent_fh,
+						    sizeof(parent_fh),
+						    &parent_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			goto out;
+		}
+
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			goto out;
+		}
+
+		struct ps_proxy_remove_reply rreply;
+
+		memset(&rreply, 0, sizeof(rreply));
+		fret = ps_proxy_forward_remove(pls->pls_session, parent_fh,
+					       parent_fh_len, name,
+					       (uint32_t)strlen(name),
+					       &compound->c_ap, &rreply);
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_REMOVE);
+			goto out;
+		}
+
+		resok->cinfo.atomic = rreply.atomic;
+		resok->cinfo.before = rreply.before;
+		resok->cinfo.after = rreply.after;
+
+		/*
+		 * NOT_NOW_BROWN_COW: invalidate the local cached dirent
+		 * for `name` after the upstream REMOVE succeeds.  Today
+		 * a stale local cache means a follow-up LOOKUP through
+		 * the PS hits the warm dirent and reports the file
+		 * still exists until the next READDIR repopulates from
+		 * upstream.  Safe for cold-mount / single-client BAT
+		 * demo (the next op is usually GETATTR which forwards
+		 * fresh and gets NFS4ERR_NOENT directly), but a
+		 * multi-client warm-cache race needs the local prune.
+		 * The fix is dirent_load_child_by_name + a lifecycle
+		 * helper to detach the dirent without driving
+		 * vfs_remove's local-storage tear-down (proxy SB inodes
+		 * have no .dat file).
+		 */
 		goto out;
 	}
 
