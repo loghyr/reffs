@@ -36,6 +36,7 @@
 #include "ps_inode.h"
 #include "ps_proxy_ops.h"
 #include "ps_sb.h"
+#include "ps_security.h"
 #include "ps_state.h"
 
 uint32_t nfs4_op_lookup(struct compound *compound)
@@ -112,6 +113,12 @@ uint32_t nfs4_op_lookup(struct compound *compound)
 		 */
 		if (compound->c_inode->i_sb &&
 		    compound->c_inode->i_sb->sb_proxy_binding) {
+			if (ps_proxy_compound_is_gss(compound)) {
+				TRACE("proxy lookup: refused -- RPCSEC_GSS "
+				      "forwarding not yet implemented");
+				*status = NFS4ERR_WRONGSEC;
+				goto out;
+			}
 			const struct ps_sb_binding *binding =
 				compound->c_inode->i_sb->sb_proxy_binding;
 			uint8_t child_fh[PS_MAX_FH_SIZE];
@@ -462,6 +469,12 @@ uint32_t nfs4_op_create(struct compound *compound)
 	    (args->objtype.type == NF4DIR || args->objtype.type == NF4LNK ||
 	     args->objtype.type == NF4BLK || args->objtype.type == NF4CHR ||
 	     args->objtype.type == NF4SOCK || args->objtype.type == NF4FIFO)) {
+		if (ps_proxy_compound_is_gss(compound)) {
+			TRACE("proxy create: refused -- RPCSEC_GSS forwarding "
+			      "not yet implemented");
+			*status = NFS4ERR_WRONGSEC;
+			goto out;
+		}
 		const struct ps_sb_binding *binding =
 			compound->c_inode->i_sb->sb_proxy_binding;
 		uint8_t parent_fh[PS_MAX_FH_SIZE];
@@ -821,6 +834,12 @@ uint32_t nfs4_op_remove(struct compound *compound)
 	 */
 	if (compound->c_inode->i_sb &&
 	    compound->c_inode->i_sb->sb_proxy_binding) {
+		if (ps_proxy_compound_is_gss(compound)) {
+			TRACE("proxy remove: refused -- RPCSEC_GSS forwarding "
+			      "not yet implemented");
+			*status = NFS4ERR_WRONGSEC;
+			goto out;
+		}
 		const struct ps_sb_binding *binding =
 			compound->c_inode->i_sb->sb_proxy_binding;
 		uint8_t parent_fh[PS_MAX_FH_SIZE];
@@ -1003,6 +1022,12 @@ uint32_t nfs4_op_rename(struct compound *compound)
 	    compound->c_inode->i_sb &&
 	    compound->c_inode->i_sb->sb_proxy_binding &&
 	    old_dir->i_sb == compound->c_inode->i_sb) {
+		if (ps_proxy_compound_is_gss(compound)) {
+			TRACE("proxy rename: refused -- RPCSEC_GSS forwarding "
+			      "not yet implemented");
+			*status = NFS4ERR_WRONGSEC;
+			goto out;
+		}
 		const struct ps_sb_binding *binding =
 			compound->c_inode->i_sb->sb_proxy_binding;
 		uint8_t src_fh[PS_MAX_FH_SIZE];
@@ -1204,6 +1229,12 @@ uint32_t nfs4_op_link(struct compound *compound)
 	    compound->c_inode->i_sb &&
 	    compound->c_inode->i_sb->sb_proxy_binding &&
 	    src_inode->i_sb == compound->c_inode->i_sb) {
+		if (ps_proxy_compound_is_gss(compound)) {
+			TRACE("proxy link: refused -- RPCSEC_GSS forwarding "
+			      "not yet implemented");
+			*status = NFS4ERR_WRONGSEC;
+			goto out;
+		}
 		const struct ps_sb_binding *binding =
 			compound->c_inode->i_sb->sb_proxy_binding;
 		uint8_t src_fh[PS_MAX_FH_SIZE];

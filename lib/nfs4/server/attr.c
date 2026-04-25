@@ -53,6 +53,7 @@
 #include "ps_inode.h"
 #include "ps_proxy_ops.h"
 #include "ps_sb.h"
+#include "ps_security.h"
 #include "ps_state.h"
 #include "nfs4/session.h"
 #include "nfs4/client.h"
@@ -3343,6 +3344,12 @@ uint32_t nfs4_op_getattr(struct compound *compound)
 	 * so the client re-resolves from its parent.
 	 */
 	if (inode && inode->i_sb && inode->i_sb->sb_proxy_binding) {
+		if (ps_proxy_compound_is_gss(compound)) {
+			TRACE("proxy getattr: refused -- RPCSEC_GSS forwarding "
+			      "not yet implemented");
+			*status = NFS4ERR_WRONGSEC;
+			goto out;
+		}
 		struct super_block *sb = inode->i_sb;
 		struct ps_sb_binding *binding = sb->sb_proxy_binding;
 		uint8_t upstream_fh[PS_MAX_FH_SIZE];
@@ -3803,6 +3810,12 @@ uint32_t nfs4_op_readdir(struct compound *compound)
 	 * LOOKUP hits, which is a subset of what the upstream holds.
 	 */
 	if (inode->i_sb && inode->i_sb->sb_proxy_binding) {
+		if (ps_proxy_compound_is_gss(compound)) {
+			TRACE("proxy readdir: refused -- RPCSEC_GSS forwarding "
+			      "not yet implemented");
+			*status = NFS4ERR_WRONGSEC;
+			return 0;
+		}
 		const struct ps_sb_binding *binding =
 			inode->i_sb->sb_proxy_binding;
 		uint8_t upstream_fh[PS_MAX_FH_SIZE];

@@ -20,6 +20,7 @@ libreffs_nfs4_ps_la_SOURCES = \
 	ps_owner.c \
 	ps_proxy_ops.c \
 	ps_sb.c \
+	ps_security.c \
 	ps_state.c
 
 # ps_sb_alloc.c needs lib/fs symbols (super_block_alloc, mkdir_p_for_listener,

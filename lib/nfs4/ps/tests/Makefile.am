@@ -3,6 +3,7 @@
 
 AM_CFLAGS = -I$(top_srcdir)/lib/include		\
 	-I$(top_srcdir)/lib/nfs4/client		\
+	-I$(top_srcdir)/lib/nfs4/include	\
 	-I$(top_srcdir)/lib/nfs4/ps		\
 	-I$(top_builddir)/lib/xdr		\
 	$(TIRPC_CFLAGS)				\
@@ -68,4 +69,5 @@ TESTS = \
 	ps_proxy_ops_test \
 	ps_sb_alloc_test \
 	ps_sb_test \
+	ps_security_test \
 	ps_state_test
