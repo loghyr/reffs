@@ -110,8 +110,9 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 		return 0;
 
 	if (AUP_UID(ap) == reffs_id_to_uid(inode->i_uid)) {
-		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR))
+		if ((mode & X_OK) && !(inode->i_mode & S_IXUSR)) {
 			return -EACCES;
+		}
 
 		/*
 		 * OWNER_OVERRIDE: the file owner may write any regular file
@@ -136,10 +137,9 @@ int inode_access_check_flags(struct inode *inode, struct authunix_parms *ap,
 		 */
 #ifndef HAVE_STRICT_POSIX
 		if ((flags & REFFS_ACCESS_OWNER_OVERRIDE) &&
-		    S_ISREG(inode->i_mode))
+		    S_ISREG(inode->i_mode)) {
 			return 0;
-#else
-		/* flags unused when HAVE_STRICT_POSIX is defined */
+		}
 #endif
 
 		if ((mode & W_OK) && !(inode->i_mode & S_IWUSR))
