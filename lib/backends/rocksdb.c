@@ -322,6 +322,7 @@ static void rocksdb_inode_sync(struct inode *inode)
 		 * the POSIX backend's .layouts file (minus the disk header).
 		 */
 		size_t buf_sz = sizeof(uint32_t); /* count */
+		buf_sz += sizeof(uint64_t); /* lss_gen (slice B') */
 		for (uint32_t s = 0; s < lss->lss_count; s++) {
 			buf_sz += sizeof(struct layout_segment_disk);
 			buf_sz += lss->lss_segs[s].ls_nfiles *
@@ -333,6 +334,15 @@ static void rocksdb_inode_sync(struct inode *inode)
 			char *p = buf;
 			memcpy(p, &lss->lss_count, sizeof(uint32_t));
 			p += sizeof(uint32_t);
+			/*
+			 * lss_gen (slice B') -- snapshot once with relaxed
+			 * load; the caller holds i_attr_mutex so no concurrent
+			 * mutator is bumping it.
+			 */
+			uint64_t gen_snapshot = atomic_load_explicit(
+				&lss->lss_gen, memory_order_relaxed);
+			memcpy(p, &gen_snapshot, sizeof(gen_snapshot));
+			p += sizeof(gen_snapshot);
 
 			for (uint32_t s = 0; s < lss->lss_count; s++) {
 				struct layout_segment *seg = &lss->lss_segs[s];
@@ -515,11 +525,14 @@ static int rocksdb_inode_alloc(struct inode *inode)
 		if (err) {
 			rocksdb_free(err);
 			err = NULL;
-		} else if (val && vlen >= sizeof(uint32_t)) {
+		} else if (val && vlen >= sizeof(uint32_t) + sizeof(uint64_t)) {
 			const char *p = val;
 			uint32_t count;
 			memcpy(&count, p, sizeof(count));
 			p += sizeof(count);
+			uint64_t gen_disk;
+			memcpy(&gen_disk, p, sizeof(gen_disk));
+			p += sizeof(gen_disk);
 
 			if (count > 0) {
 				struct layout_segments *lss =
@@ -617,10 +630,23 @@ static int rocksdb_inode_alloc(struct inode *inode)
 						}
 					}
 
-					if (ok)
+					if (ok) {
+						/*
+						 * Reconstruction used
+						 * layout_segments_add which
+						 * bumps lss_gen; overwrite
+						 * with the persisted value
+						 * so the gen surfaces
+						 * unchanged across a
+						 * sync/load round-trip.
+						 */
+						atomic_store_explicit(
+							&lss->lss_gen, gen_disk,
+							memory_order_relaxed);
 						inode->i_layout_segments = lss;
-					else
+					} else {
 						layout_segments_free(lss);
+					}
 				}
 			}
 			rocksdb_free(val);

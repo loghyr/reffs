@@ -19,6 +19,7 @@
 #ifndef _REFFS_LAYOUT_SEGMENT_H
 #define _REFFS_LAYOUT_SEGMENT_H
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
@@ -100,9 +101,34 @@ struct layout_segment {
 
 /*
  * In-memory: all layout segments for an inode.
+ *
+ * lss_gen is the per-inode layout generation counter, monotonically
+ * bumped on every mutation (add/remove segment, slice C/D mirror
+ * mutations).  Used by the INODE_LAYOUT_* probe ops as a TOCTOU
+ * defence: LIST returns it, ADD/REMOVE require expected_gen to
+ * match.  See .claude/design/mirror-lifecycle.md "Slice B'".
+ *
+ * Persisted with the layout segments on-disk (after lss_count in
+ * both POSIX .layouts files and the RocksDB layouts CF value).  No
+ * SB_REGISTRY version bump per CLAUDE.md "Deployment Status: No
+ * persistent storage has been deployed."
+ *
+ * _Atomic so the field is race-safe under TSan even if a future
+ * reader appears outside i_attr_mutex.  Today the only reader is
+ * the INODE_LAYOUT_LIST handler, which snapshots under
+ * i_attr_mutex.  Writes (in layout_segments_add) and persistence
+ * snapshots in the backends use atomic_*_explicit with relaxed
+ * memory order: the gen has no consumer that requires happens-before
+ * ordering against the segment array, which is read in the same
+ * unprotected window today (notably LAYOUTCOMMIT drops i_attr_mutex
+ * before calling inode_sync_to_disk).  If a future caller reads gen
+ * AND requires it to be coherent with a paired write to lss_segs /
+ * lss_count, the matching site needs an explicit acquire/release
+ * pair, not a tightening of the field's memory order alone.
  */
 struct layout_segments {
 	uint32_t lss_count;
+	_Atomic uint64_t lss_gen;
 	struct layout_segment *lss_segs; /* array of lss_count entries */
 };
 

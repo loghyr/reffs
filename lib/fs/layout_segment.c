@@ -40,5 +40,6 @@ int layout_segments_add(struct layout_segments *lss,
 	lss->lss_segs = new_segs;
 	lss->lss_segs[lss->lss_count] = *seg;
 	lss->lss_count = n;
+	atomic_fetch_add_explicit(&lss->lss_gen, 1, memory_order_relaxed);
 	return 0;
 }

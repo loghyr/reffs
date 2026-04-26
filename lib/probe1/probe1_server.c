@@ -1307,14 +1307,22 @@ static int probe1_op_inode_layout_list(struct rpc_trans *rt)
 		}
 	}
 
+	/*
+	 * lss_gen as of Slice B' -- monotonic counter bumped on every
+	 * mutation.  Snapshot under the same i_attr_mutex hold so the
+	 * gen returned matches the mirror snapshot above.  Slices C/D
+	 * pass the value back as expected_gen for TOCTOU defence; if
+	 * the layout was mutated between this LIST and the follow-up
+	 * ADD/REMOVE, the gen mismatch surfaces as PROBE1ERR_STALE.
+	 */
+	resok->ill_lss_gen =
+		inode->i_layout_segments ?
+			atomic_load_explicit(&inode->i_layout_segments->lss_gen,
+					     memory_order_relaxed) :
+			0;
+
 	pthread_mutex_unlock(&inode->i_attr_mutex);
 
-	/*
-	 * lss_gen is added by Slice B'; until then, return 0 as a
-	 * placeholder.  Admin tooling should not rely on this value
-	 * for TOCTOU defence until B' lands.
-	 */
-	resok->ill_lss_gen = 0;
 	resok->ill_mirrors.ill_mirrors_val = mirrors;
 	resok->ill_mirrors.ill_mirrors_len = mi;
 

@@ -16,6 +16,7 @@
  *   5. dstore_id persisted: verify dstore ID (not name) round-trips
  */
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -310,6 +311,121 @@ START_TEST(test_multiple_segments)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Slice B' tests: lss_gen counter                                      */
+/* ------------------------------------------------------------------ */
+
+START_TEST(test_lss_gen_starts_at_zero)
+{
+	struct layout_segments *lss = layout_segments_alloc();
+
+	ck_assert_ptr_nonnull(lss);
+	ck_assert_uint_eq(
+		atomic_load_explicit(&lss->lss_gen, memory_order_relaxed), 0);
+
+	layout_segments_free(lss);
+}
+END_TEST
+
+START_TEST(test_lss_gen_bumps_on_add)
+{
+	struct layout_segments *lss = layout_segments_alloc();
+
+	ck_assert_ptr_nonnull(lss);
+
+	uint64_t gen_pre =
+		atomic_load_explicit(&lss->lss_gen, memory_order_relaxed);
+
+	struct layout_data_file *files =
+		calloc(1, sizeof(struct layout_data_file));
+
+	files[0] = make_data_file(7, 0xAB, 1024);
+
+	struct layout_segment seg = {
+		.ls_offset = 0,
+		.ls_length = 0,
+		.ls_stripe_unit = 0,
+		.ls_k = 1,
+		.ls_m = 0,
+		.ls_nfiles = 1,
+		.ls_layout_type = LAYOUT4_FLEX_FILES,
+		.ls_files = files,
+	};
+
+	ck_assert_int_eq(layout_segments_add(lss, &seg), 0);
+
+	uint64_t gen_post =
+		atomic_load_explicit(&lss->lss_gen, memory_order_relaxed);
+
+	ck_assert_uint_gt(gen_post, gen_pre);
+
+	/* Second add bumps again. */
+	struct layout_data_file *files2 =
+		calloc(1, sizeof(struct layout_data_file));
+
+	files2[0] = make_data_file(8, 0xCD, 2048);
+	seg.ls_files = files2;
+
+	ck_assert_int_eq(layout_segments_add(lss, &seg), 0);
+
+	uint64_t gen_post2 =
+		atomic_load_explicit(&lss->lss_gen, memory_order_relaxed);
+
+	ck_assert_uint_gt(gen_post2, gen_post);
+
+	layout_segments_free(lss);
+}
+END_TEST
+
+START_TEST(test_lss_gen_persists_across_inode_sync)
+{
+	struct inode *inode = inode_alloc(g_posix_sb, 600);
+
+	ck_assert_ptr_nonnull(inode);
+
+	struct layout_segments *lss = layout_segments_alloc();
+	struct layout_data_file *files =
+		calloc(2, sizeof(struct layout_data_file));
+
+	files[0] = make_data_file(50, 0xEE, 4096);
+	files[1] = make_data_file(60, 0xFF, 4096);
+
+	struct layout_segment seg = {
+		.ls_offset = 0,
+		.ls_length = 0,
+		.ls_stripe_unit = 0,
+		.ls_k = 2,
+		.ls_m = 0,
+		.ls_nfiles = 2,
+		.ls_layout_type = LAYOUT4_FLEX_FILES,
+		.ls_files = files,
+	};
+
+	layout_segments_add(lss, &seg);
+	inode->i_layout_segments = lss;
+
+	uint64_t gen_pre =
+		atomic_load_explicit(&lss->lss_gen, memory_order_relaxed);
+
+	ck_assert_uint_gt(gen_pre, 0);
+
+	/* Persist + reload via backend. */
+	inode_sync_to_disk(inode);
+	layout_segments_free(inode->i_layout_segments);
+	inode->i_layout_segments = NULL;
+
+	ck_assert_int_eq(g_posix_sb->sb_ops->inode_alloc(inode), 0);
+	ck_assert_ptr_nonnull(inode->i_layout_segments);
+
+	uint64_t gen_loaded = atomic_load_explicit(
+		&inode->i_layout_segments->lss_gen, memory_order_relaxed);
+
+	ck_assert_uint_eq(gen_loaded, gen_pre);
+
+	inode_active_put(inode);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 
 Suite *layout_segment_suite(void)
 {
@@ -320,6 +436,8 @@ Suite *layout_segment_suite(void)
 	tcase_add_checked_fixture(tc_mem, setup_mem, teardown_mem);
 	tcase_add_test(tc_mem, test_alloc_free);
 	tcase_add_test(tc_mem, test_add_segment);
+	tcase_add_test(tc_mem, test_lss_gen_starts_at_zero);
+	tcase_add_test(tc_mem, test_lss_gen_bumps_on_add);
 	suite_add_tcase(s, tc_mem);
 
 	TCase *tc_posix = tcase_create("persistence");
@@ -327,6 +445,7 @@ Suite *layout_segment_suite(void)
 	tcase_add_checked_fixture(tc_posix, setup_posix, teardown_posix);
 	tcase_add_test(tc_posix, test_persist_load);
 	tcase_add_test(tc_posix, test_multiple_segments);
+	tcase_add_test(tc_posix, test_lss_gen_persists_across_inode_sync);
 	suite_add_tcase(s, tc_posix);
 
 	return s;

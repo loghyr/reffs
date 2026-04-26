@@ -218,6 +218,17 @@ static void posix_inode_sync(struct inode *inode)
 			ok = ok && write(fd, &lss->lss_count,
 					 sizeof(lss->lss_count)) ==
 					   sizeof(lss->lss_count);
+			/*
+			 * lss_gen (slice B') -- snapshot once with relaxed
+			 * load; we hold the inode's i_attr_mutex via the
+			 * call chain into inode_sync_to_disk so no concurrent
+			 * mutator is bumping it underneath us.
+			 */
+			uint64_t gen_snapshot = atomic_load_explicit(
+				&lss->lss_gen, memory_order_relaxed);
+			ok = ok &&
+			     write(fd, &gen_snapshot, sizeof(gen_snapshot)) ==
+				     sizeof(gen_snapshot);
 
 			for (uint32_t s = 0; ok && s < lss->lss_count; s++) {
 				struct layout_segment *seg = &lss->lss_segs[s];
@@ -551,6 +562,9 @@ static int inode_load_from_disk(struct inode *inode)
 			ok = ok && hdr.rdh_version == REFFS_DISK_VERSION_1;
 			ok = ok &&
 			     read(fd, &count, sizeof(count)) == sizeof(count);
+			uint64_t gen_disk = 0;
+			ok = ok && read(fd, &gen_disk, sizeof(gen_disk)) ==
+					   sizeof(gen_disk);
 
 			if (ok && count > 0) {
 				struct layout_segments *lss =
@@ -632,10 +646,23 @@ static int inode_load_from_disk(struct inode *inode)
 						}
 					}
 
-					if (ok)
+					if (ok) {
+						/*
+						 * Reconstruction used
+						 * layout_segments_add which
+						 * bumps lss_gen; overwrite
+						 * with the persisted value
+						 * so the gen surfaces
+						 * unchanged across a
+						 * sync/load round-trip.
+						 */
+						atomic_store_explicit(
+							&lss->lss_gen, gen_disk,
+							memory_order_relaxed);
 						inode->i_layout_segments = lss;
-					else
+					} else {
 						layout_segments_free(lss);
+					}
 				}
 			}
 			close(fd);
