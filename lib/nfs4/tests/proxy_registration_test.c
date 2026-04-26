@@ -190,6 +190,29 @@ static void pr_allowlist_set(const char *principal)
 	server_state_put(ss);
 }
 
+/*
+ * Slice 6b-iv: same as pr_allowlist_set but for the TLS-fingerprint
+ * column of the allowlist.  An entry sets EITHER principal OR
+ * fingerprint, not both -- the entry binds to one identity context.
+ * Passing NULL clears the entire list.
+ */
+static void pr_allowlist_set_fingerprint(const char *fingerprint)
+{
+	struct server_state *ss = server_state_find();
+
+	ck_assert_ptr_nonnull(ss);
+	ss->ss_nallowed_ps = 0;
+	if (fingerprint) {
+		ss->ss_allowed_ps[0][0] = '\0';
+		strncpy(ss->ss_allowed_ps_tls_fingerprint[0], fingerprint,
+			REFFS_CONFIG_MAX_TLS_FINGERPRINT - 1);
+		ss->ss_allowed_ps_tls_fingerprint
+			[0][REFFS_CONFIG_MAX_TLS_FINGERPRINT - 1] = '\0';
+		ss->ss_nallowed_ps = 1;
+	}
+	server_state_put(ss);
+}
+
 static void setup(void)
 {
 	nfs4_test_setup();
@@ -549,6 +572,97 @@ START_TEST(test_proxy_registration_after_expiry_succeeds)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* mTLS auth-context (slice 6b-iv)                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A TLS-only session whose peer cert SHA-256 fingerprint is on the
+ * tls_cert_fingerprint allowlist is permitted, even with no GSS
+ * principal.  Mocks the production wiring (which is NOT_NOW_BROWN_COW
+ * alongside the matching c_gss_principal wiring) by setting
+ * c_tls_fingerprint directly.
+ */
+START_TEST(test_proxy_registration_accept_tls_fingerprint)
+{
+	const char fp[] = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:"
+			  "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
+
+	pr_allowlist_set_fingerprint(fp);
+
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+			 NULL /* no GSS principal -- TLS-only context */);
+
+	cm->compound->c_tls_fingerprint = fp;
+
+	pr_args(cm)->prr_flags = 0;
+	pr_args(cm)->prr_registration_id.prr_registration_id_len = 0;
+
+	nfs4_op_proxy_registration(cm->compound);
+
+	ck_assert_int_eq(pr_res(cm)->prrr_status, NFS4_OK);
+	ck_assert(cm->compound->c_nfs4_client->nc_is_registered_ps);
+	pr_free(cm);
+}
+END_TEST
+
+/*
+ * TLS context present but the fingerprint is NOT on the allowlist.
+ * The session has no other identity to fall back on, so the handler
+ * rejects with NFS4ERR_PERM -- mirrors the principal-not-allowlisted
+ * case from slice 6b-i.
+ */
+START_TEST(test_proxy_registration_reject_tls_fingerprint_not_allowlisted)
+{
+	const char allowed_fp[] =
+		"AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:"
+		"AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
+	const char wrong_fp[] =
+		"FF:FF:FF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:"
+		"AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
+
+	pr_allowlist_set_fingerprint(allowed_fp);
+
+	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, NULL);
+
+	cm->compound->c_tls_fingerprint = wrong_fp;
+
+	pr_args(cm)->prr_flags = 0;
+	pr_args(cm)->prr_registration_id.prr_registration_id_len = 0;
+
+	nfs4_op_proxy_registration(cm->compound);
+
+	ck_assert_int_eq(pr_res(cm)->prrr_status, NFS4ERR_PERM);
+	ck_assert(!cm->compound->c_nfs4_client->nc_is_registered_ps);
+	pr_free(cm);
+}
+END_TEST
+
+/*
+ * Both identity contexts NULL (AUTH_SYS over plain TCP).  The slice
+ * 6a behaviour MUST be preserved: NFS4ERR_PERM.  This test pins the
+ * "if BOTH NULL reject" gate so a future cleanup that accidentally
+ * collapses the two checks into "if ANY non-NULL accept" gets caught.
+ */
+START_TEST(test_proxy_registration_reject_both_contexts_null)
+{
+	pr_allowlist_set_fingerprint("does-not-matter");
+
+	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, NULL);
+	/* c_tls_fingerprint stays NULL (calloc default). */
+
+	pr_args(cm)->prr_flags = 0;
+	pr_args(cm)->prr_registration_id.prr_registration_id_len = 0;
+
+	nfs4_op_proxy_registration(cm->compound);
+
+	ck_assert_int_eq(pr_res(cm)->prrr_status, NFS4ERR_PERM);
+	ck_assert(!cm->compound->c_nfs4_client->nc_is_registered_ps);
+	pr_free(cm);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* PROXY_PROGRESS (slice 6a stub)                                      */
 /* ------------------------------------------------------------------ */
 
@@ -598,6 +712,11 @@ static Suite *proxy_registration_suite(void)
 	tcase_add_test(tc, test_proxy_registration_renewal_same_id);
 	tcase_add_test(tc, test_proxy_registration_squat_blocked);
 	tcase_add_test(tc, test_proxy_registration_after_expiry_succeeds);
+	tcase_add_test(tc, test_proxy_registration_accept_tls_fingerprint);
+	tcase_add_test(
+		tc,
+		test_proxy_registration_reject_tls_fingerprint_not_allowlisted);
+	tcase_add_test(tc, test_proxy_registration_reject_both_contexts_null);
 	tcase_add_test(tc, test_proxy_progress_returns_notsupp);
 	suite_add_tcase(s, tc);
 

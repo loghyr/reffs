@@ -74,6 +74,20 @@ struct compound {
 	 * skipped because c_gss_principal is always NULL.
 	 */
 
+	/*
+	 * Slice 6b-iv: TLS peer certificate identity context.  SHA-256
+	 * of the peer cert's DER encoding, formatted as colon-separated
+	 * hex.  NULL when the session is not over TLS or the peer did
+	 * not present a cert.  PROXY_REGISTRATION matches against
+	 * either this OR c_gss_principal (slice 6b-i allowlist).
+	 *
+	 * NOT_NOW_BROWN_COW: populate from
+	 * tls_get_peer_cert_fingerprint() once the dispatch path wires
+	 * SSL session -> compound (deferred alongside the c_gss_principal
+	 * production wiring; both are mockable in unit tests today).
+	 */
+	const char *c_tls_fingerprint; /* NULL for non-TLS or no peer cert */
+
 	/* Compound-level state flags. */
 #define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)
 	uint32_t c_flags;

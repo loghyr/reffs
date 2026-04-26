@@ -660,6 +660,22 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 					sizeof(aps->principal) - 1);
 				free(d.u.s);
 			}
+
+			/*
+			 * Slice 6b-iv: TLS-fingerprint alternative to
+			 * principal.  Stored verbatim; the runtime
+			 * matcher does case-sensitive exact-string
+			 * comparison so the operator must format the
+			 * value the same way the production
+			 * tls_get_peer_cert_fingerprint() helper will
+			 * (deferred -- see proxy-server-phase6b.md).
+			 */
+			d = toml_string_in(aps_tbl, "tls_cert_fingerprint");
+			if (d.ok) {
+				strncpy(aps->tls_cert_fingerprint, d.u.s,
+					sizeof(aps->tls_cert_fingerprint) - 1);
+				free(d.u.s);
+			}
 		}
 	}
 

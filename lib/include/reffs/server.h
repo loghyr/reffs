@@ -155,6 +155,14 @@ struct server_state {
 	 */
 	char ss_allowed_ps[REFFS_CONFIG_MAX_ALLOWED_PS]
 			  [REFFS_CONFIG_MAX_PRINCIPAL];
+	/*
+	 * Slice 6b-iv: parallel array for the mTLS-fingerprint identity
+	 * column.  Indexed in lockstep with ss_allowed_ps -- entry i
+	 * has either a non-empty principal OR a non-empty fingerprint,
+	 * not both.
+	 */
+	char ss_allowed_ps_tls_fingerprint[REFFS_CONFIG_MAX_ALLOWED_PS]
+					  [REFFS_CONFIG_MAX_TLS_FINGERPRINT];
 	unsigned int ss_nallowed_ps;
 };
 

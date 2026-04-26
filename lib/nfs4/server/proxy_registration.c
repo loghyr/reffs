@@ -44,19 +44,35 @@
 #include "nfs4/client.h"
 
 /*
- * Returns true if `principal` exactly matches any entry in the
- * server-state allowlist.  Empty allowlist -> always false (deny).
- * Realm fuzz / DNS canonicalization / glob are intentionally
- * NOT supported -- an entry binds to one Kerberos identity, full
- * stop.  See proxy-server-phase6b.md "Security model".
+ * Returns true if either identity context (GSS principal OR TLS
+ * fingerprint) exactly matches any entry in the server-state
+ * allowlist.  Empty allowlist -> always false (deny).  Realm fuzz /
+ * DNS canonicalization / glob are intentionally NOT supported on
+ * either column -- an entry binds to one identity, full stop.  See
+ * proxy-server-phase6b.md "Security model".
+ *
+ * Slice 6b-i seeded the principal column; slice 6b-iv added the
+ * tls_fingerprint column.  Either context is sufficient -- the
+ * matched identity (principal OR fingerprint) is the privilege
+ * grant, and a registration only needs ONE recognised identity.
  */
-static bool ps_principal_allowed(const struct server_state *ss,
-				 const char *principal)
+static bool ps_identity_allowed(const struct server_state *ss,
+				const char *principal,
+				const char *tls_fingerprint)
 {
-	if (!principal || principal[0] == '\0')
+	bool have_principal = principal && principal[0] != '\0';
+	bool have_fingerprint = tls_fingerprint && tls_fingerprint[0] != '\0';
+
+	if (!have_principal && !have_fingerprint)
 		return false;
 	for (unsigned int i = 0; i < ss->ss_nallowed_ps; i++) {
-		if (strcmp(ss->ss_allowed_ps[i], principal) == 0)
+		if (have_principal && ss->ss_allowed_ps[i][0] != '\0' &&
+		    strcmp(ss->ss_allowed_ps[i], principal) == 0)
+			return true;
+		if (have_fingerprint &&
+		    ss->ss_allowed_ps_tls_fingerprint[i][0] != '\0' &&
+		    strcmp(ss->ss_allowed_ps_tls_fingerprint[i],
+			   tls_fingerprint) == 0)
 			return true;
 	}
 	return false;
@@ -109,29 +125,30 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	/*
 	 * The data-mover draft (sec-security) mandates that the
 	 * MDS<->PS session use RPCSEC_GSS or RPC-over-TLS with mutual
-	 * authentication; AUTH_SYS is forbidden.  c_gss_principal is
-	 * the only signal currently available -- a non-NULL value
-	 * proves RPCSEC_GSS authentication.
+	 * authentication; AUTH_SYS over plain TCP is forbidden.  Slice
+	 * 6b-iv broadens the slice-6a "no GSS principal -> reject"
+	 * check to "neither GSS principal NOR TLS fingerprint -> reject":
+	 * a TLS-authenticated session with an allowlisted client cert
+	 * is now a valid identity context, even with no GSS principal.
 	 *
-	 * NOT_NOW_BROWN_COW: distinguish AUTH_SYS from TLS-only
-	 * sessions.  TLS-only sessions have no GSS principal so they
-	 * are also rejected here, which is too strict for a future
-	 * mTLS-PS deployment.  Slice 6b adds the TLS auth-context
-	 * check (and the [[allowed_ps]] allowlist that consumes the
-	 * resulting identity).
+	 * Production wiring of c_gss_principal and c_tls_fingerprint
+	 * remains NOT_NOW_BROWN_COW -- both fields are populated only
+	 * via test mocks today.  See compound.h.
 	 */
-	if (compound->c_gss_principal == NULL) {
+	if (compound->c_gss_principal == NULL &&
+	    compound->c_tls_fingerprint == NULL) {
 		*status = NFS4ERR_PERM;
 		return 0;
 	}
 
 	/*
-	 * Slice 6b-i: identity check.  The GSS principal must be on
-	 * the operator-curated [[allowed_ps]] allowlist.  Default-deny:
-	 * an absent or empty list rejects every PROXY_REGISTRATION,
-	 * which is the correct posture for a security-sensitive
-	 * privilege grant.  LOG (not TRACE) every reject -- a rejected
-	 * registration is operator-actionable (misconfig or attack).
+	 * Slice 6b-i + 6b-iv: identity check.  Either the GSS principal
+	 * OR the TLS fingerprint must match an entry on the operator-
+	 * curated [[allowed_ps]] allowlist.  Default-deny: an absent or
+	 * empty list rejects every PROXY_REGISTRATION, which is the
+	 * correct posture for a security-sensitive privilege grant.
+	 * LOG (not TRACE) every reject -- a rejected registration is
+	 * operator-actionable (misconfig or attack).
 	 *
 	 * Use compound->c_server_state (grabbed once per compound by
 	 * dispatch_compound) rather than server_state_find() -- avoids
@@ -140,10 +157,15 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	 * here because dispatch returned NFS4ERR_DELAY before this
 	 * handler can run if the lookup failed.
 	 */
-	if (!ps_principal_allowed(compound->c_server_state,
-				  compound->c_gss_principal)) {
-		LOG("PROXY_REGISTRATION: principal '%s' not on allowlist",
-		    compound->c_gss_principal);
+	if (!ps_identity_allowed(compound->c_server_state,
+				 compound->c_gss_principal,
+				 compound->c_tls_fingerprint)) {
+		LOG("PROXY_REGISTRATION: identity not on allowlist "
+		    "(principal=%s tls_fingerprint=%s)",
+		    compound->c_gss_principal ? compound->c_gss_principal :
+						"(null)",
+		    compound->c_tls_fingerprint ? compound->c_tls_fingerprint :
+						  "(null)");
 		*status = NFS4ERR_PERM;
 		return 0;
 	}
@@ -160,7 +182,8 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	 */
 	struct nfs4_client *self = compound->c_nfs4_client;
 	struct nfs4_client *other = nfs4_client_find_other_registered_ps(
-		compound->c_server_state, self, compound->c_gss_principal);
+		compound->c_server_state, self, compound->c_gss_principal,
+		compound->c_tls_fingerprint);
 
 	uint64_t lease_period_ns =
 		(uint64_t)server_lease_time(compound->c_server_state) *
@@ -180,10 +203,15 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 				       other->nc_ps_registration_id_len) == 0);
 
 		if (expire_ns > now_ns && !same_id) {
-			LOG("PROXY_REGISTRATION: squat blocked -- principal "
-			    "'%s' already registered with different "
-			    "registration_id",
-			    compound->c_gss_principal);
+			LOG("PROXY_REGISTRATION: squat blocked -- identity "
+			    "already registered with different "
+			    "registration_id (principal=%s tls_fingerprint=%s)",
+			    compound->c_gss_principal ?
+				    compound->c_gss_principal :
+				    "(null)",
+			    compound->c_tls_fingerprint ?
+				    compound->c_tls_fingerprint :
+				    "(null)");
 			nfs4_client_put(other);
 			*status = NFS4ERR_DELAY;
 			return 0;
@@ -208,9 +236,22 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	 * .claude/design/proxy-server.md "Privilege model".  Audit
 	 * logging of the bypassed ops landed in slice 6b-ii.
 	 */
-	strncpy(self->nc_ps_principal, compound->c_gss_principal,
-		REFFS_CONFIG_MAX_PRINCIPAL - 1);
-	self->nc_ps_principal[REFFS_CONFIG_MAX_PRINCIPAL - 1] = '\0';
+	if (compound->c_gss_principal) {
+		strncpy(self->nc_ps_principal, compound->c_gss_principal,
+			REFFS_CONFIG_MAX_PRINCIPAL - 1);
+		self->nc_ps_principal[REFFS_CONFIG_MAX_PRINCIPAL - 1] = '\0';
+	} else {
+		self->nc_ps_principal[0] = '\0';
+	}
+	if (compound->c_tls_fingerprint) {
+		strncpy(self->nc_ps_tls_fingerprint,
+			compound->c_tls_fingerprint,
+			REFFS_CONFIG_MAX_TLS_FINGERPRINT - 1);
+		self->nc_ps_tls_fingerprint[REFFS_CONFIG_MAX_TLS_FINGERPRINT -
+					    1] = '\0';
+	} else {
+		self->nc_ps_tls_fingerprint[0] = '\0';
+	}
 	if (args->prr_registration_id.prr_registration_id_len > 0) {
 		memcpy(self->nc_ps_registration_id,
 		       args->prr_registration_id.prr_registration_id_val,
@@ -234,8 +275,10 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 			      memory_order_release);
 
 	LOG("PROXY_REGISTRATION: client granted PS privilege "
-	    "(principal=%s exchgid_flags=0x%x)",
-	    compound->c_gss_principal,
+	    "(principal=%s tls_fingerprint=%s exchgid_flags=0x%x)",
+	    compound->c_gss_principal ? compound->c_gss_principal : "(null)",
+	    compound->c_tls_fingerprint ? compound->c_tls_fingerprint :
+					  "(null)",
 	    compound->c_nfs4_client->nc_exchgid_flags);
 
 	/* status stays NFS4_OK (zero from calloc'd resarray). */

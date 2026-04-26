@@ -449,7 +449,173 @@ strategy in standards.md.
 Tests: `test_proxy_registration_rejects_squat`,
 `test_proxy_registration_accepts_renewal`.
 
-## 6b-iv sketch
+## 6b-iv: mTLS auth-context (this slice -- minimal scope)
+
+### Goal
+
+Allow PROXY_REGISTRATION over a TLS-only session whose client cert
+is on the operator allowlist, in addition to the existing
+RPCSEC_GSS-principal path.  The compound's identity-context is
+broadened from "GSS principal only" to "GSS principal OR TLS
+fingerprint".
+
+### Scope decision: minimal mockable identity
+
+Today `compound->c_gss_principal` is **never populated in production**
+-- it is `NOT_NOW_BROWN_COW` per the comment in
+`lib/nfs4/include/nfs4/compound.h` and exercised only via unit-test
+mocks that set the field directly.  This slice mirrors that pattern
+for the new TLS-fingerprint context: the compound gains a
+`c_tls_fingerprint` field, the allowlist accepts a
+`tls_cert_fingerprint` value, and the handler matches against either
+context.  Production wiring of `c_tls_fingerprint` (TLS handshake
+SHA-256 of peer cert -> compound) is **deferred** alongside the
+matching `c_gss_principal` wiring -- both should land together once
+production GSS+mTLS auth contexts are designed end-to-end.
+
+This keeps slice 6b-iv self-contained, testable, and the security
+model (broadened identity context, default-deny, exact-string match)
+fully exercised by unit tests.
+
+### Config
+
+```toml
+# Either form is accepted.  An entry MUST set exactly one of
+# principal / tls_cert_fingerprint -- not both, not neither.
+[[allowed_ps]]
+principal = "host/ps.example.com@REALM"
+
+[[allowed_ps]]
+tls_cert_fingerprint = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89"
+```
+
+The fingerprint is a SHA-256 of the peer cert's DER encoding,
+formatted as colon-separated hex (95 chars: 32 bytes * 2 + 31
+colons).  The matcher does exact-string comparison (case-sensitive
+hex), same discipline as the principal path.
+
+### Data structures
+
+```c
+/* lib/include/reffs/settings.h -- extend reffs_allowed_ps_config */
+
+#define REFFS_CONFIG_MAX_TLS_FINGERPRINT 128 /* room for sha256 hex */
+
+struct reffs_allowed_ps_config {
+    char principal[REFFS_CONFIG_MAX_PRINCIPAL];
+    char tls_cert_fingerprint[REFFS_CONFIG_MAX_TLS_FINGERPRINT];
+};
+```
+
+server_state mirror grows similarly:
+`ss_allowed_ps_tls_fingerprint[N][LEN]`.  Empty string in either
+field means "not set"; an entry MUST have exactly one set.
+
+### Compound field
+
+```c
+/* lib/nfs4/include/nfs4/compound.h */
+const char *c_gss_principal;     /* existing: NULL for AUTH_SYS */
+const char *c_tls_fingerprint;   /* new: NULL when no TLS or no peer cert */
+```
+
+Both NULL == AUTH_SYS over plain TCP, the AUTH_SYS-rejection case.
+
+### Handler change
+
+Replace the slice-6a "if (c_gss_principal == NULL) reject" with
+"if BOTH NULL reject", and `ps_principal_allowed()` becomes
+`ps_identity_allowed()` matching either context:
+
+```c
+if (compound->c_gss_principal == NULL &&
+    compound->c_tls_fingerprint == NULL) {
+    *status = NFS4ERR_PERM;
+    return 0;
+}
+
+if (!ps_identity_allowed(compound->c_server_state,
+                          compound->c_gss_principal,
+                          compound->c_tls_fingerprint)) {
+    LOG("PROXY_REGISTRATION: identity not on allowlist "
+        "(principal=%s tls_fingerprint=%s)",
+        compound->c_gss_principal ?: "(null)",
+        compound->c_tls_fingerprint ?: "(null)");
+    *status = NFS4ERR_PERM;
+    return 0;
+}
+```
+
+`ps_identity_allowed()` returns true if EITHER (gss_principal
+present AND matches some `principal` allowlist entry) OR
+(tls_fingerprint present AND matches some `tls_cert_fingerprint`
+allowlist entry).  It does NOT require both to match -- one is
+sufficient.  Empty allowlist is still default-deny.
+
+### Squat-guard interaction (slice 6b-iii)
+
+The squat-guard scans `nc_ps_principal` to find an existing
+registration.  For TLS-fingerprint-authenticated clients, capture
+the fingerprint into a sibling field `nc_ps_tls_fingerprint` and
+extend the scan to match either field.  Same renewal vs squat
+semantics; identity is the matched context (principal OR fingerprint),
+not the literal field name.
+
+NOTE: a renewal that switches identity contexts (e.g., the PS reauths
+over GSS one time and TLS the next) is NOT supported -- it would
+look like a squat to the scanner.  Document as deferred; production
+PS deployments do not switch contexts mid-flight.
+
+### Tests (extend proxy_registration_test.c)
+
+| Test | Intent |
+|------|--------|
+| `test_proxy_registration_accept_tls_fingerprint` | TLS-only context (c_gss_principal=NULL, c_tls_fingerprint=allowlisted) -> NFS4_OK |
+| `test_proxy_registration_reject_tls_fingerprint_not_allowlisted` | Fingerprint present but not on the allowlist -> NFS4ERR_PERM |
+| `test_proxy_registration_reject_both_contexts_null` | Both contexts NULL (AUTH_SYS over plain TCP) -> NFS4ERR_PERM (slice 6a behaviour preserved) |
+
+Tests need a `pr_allowlist_set_fingerprint()` helper analogous to
+`pr_allowlist_set()`.  The `pr_alloc()` helper grows a
+`tls_fingerprint` parameter (passed alongside `gss_principal`).
+
+### Test impact
+
+| File | Impact |
+|------|--------|
+| `lib/nfs4/tests/proxy_registration_test.c` | EXTEND -- 3 new tests, all existing tests get `NULL` for the new tls_fingerprint param to `pr_alloc` (mechanical) |
+| `lib/config/tests/config_test.c` | EXTEND -- 1 new test for `tls_cert_fingerprint` parser path |
+| All other tests | PASS (additive) |
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `lib/include/reffs/settings.h` | `tls_cert_fingerprint` field on `reffs_allowed_ps_config`, REFFS_CONFIG_MAX_TLS_FINGERPRINT |
+| `lib/include/reffs/server.h` | `ss_allowed_ps_tls_fingerprint[][]` mirror |
+| `lib/config/config.c` | Parse `tls_cert_fingerprint` from `[[allowed_ps]]` |
+| `src/reffsd.c` | Snapshot the new fingerprint array |
+| `lib/nfs4/include/nfs4/compound.h` | `c_tls_fingerprint` field |
+| `lib/nfs4/include/nfs4/client.h` | `nc_ps_tls_fingerprint[]` field for squat-guard |
+| `lib/nfs4/server/proxy_registration.c` | `ps_identity_allowed()` helper, both-null check, capture tls_fingerprint on self |
+| `lib/nfs4/server/client.c` | Extend `nfs4_client_find_other_registered_ps()` to match either principal or fingerprint |
+| `lib/nfs4/tests/proxy_registration_test.c` | Tests + helpers |
+| `lib/config/tests/config_test.c` | New parser test |
+
+### Deferred
+
+- Production wiring: TLS handshake -> SHA-256 of peer cert ->
+  `compound->c_tls_fingerprint`.  Same status as the unwired
+  `c_gss_principal` path.  Both wired together in a future slice.
+- Identity-context-switching renewal (PS reauths from GSS to TLS
+  or vice versa across reconnects).
+- Allowlist entry with BOTH principal AND tls_cert_fingerprint set
+  (today's parser silently allows it; a future slice could enforce
+  XOR with a config-time validation error).
+
+---
+
+## 6b-iv sketch (replaced by the section above; keeping the
+## following text as historical context only)
 
 The hardest of the four because it crosses the io / nfs4 layer
 boundary.  When a TLS handshake completes, the client cert

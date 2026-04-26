@@ -77,6 +77,15 @@ struct nfs4_client {
 	 * on another session concurrently.
 	 */
 	char nc_ps_principal[REFFS_CONFIG_MAX_PRINCIPAL];
+	/*
+	 * Slice 6b-iv: TLS-fingerprint identity context.  Empty when
+	 * the registration came in via GSS principal; non-empty when it
+	 * came in via mTLS client cert.  Squat-guard scans BOTH this
+	 * and nc_ps_principal so a TLS-authenticated PS gets the same
+	 * "second registration with different id -> NFS4ERR_DELAY"
+	 * protection.
+	 */
+	char nc_ps_tls_fingerprint[REFFS_CONFIG_MAX_TLS_FINGERPRINT];
 	char nc_ps_registration_id[PROXY_REGISTRATION_ID_MAX];
 	uint32_t nc_ps_registration_id_len;
 	_Atomic uint64_t nc_ps_lease_expire_ns;
@@ -141,18 +150,19 @@ void nfs4_client_put(struct nfs4_client *nc);
 /*
  * nfs4_client_find_other_registered_ps - scan the client hashtable
  * for an in-memory client (other than `self`) holding the
- * registered-PS privilege with the given GSS principal (slice
- * 6b-iii squat-guard).
+ * registered-PS privilege whose identity matches EITHER the given
+ * GSS principal (slice 6b-iii squat-guard) OR the given TLS
+ * fingerprint (slice 6b-iv).  At least one of the two arguments
+ * must be a non-NULL non-empty string; either or both may be set.
  *
  * Returns ref-bumped match or NULL.  Caller drops ref via
  * nfs4_client_put().  Does NOT filter by lease expiry -- the caller
  * decides squat (still valid + different id) vs renewal (still
  * valid + same id) vs expired-treat-as-fresh (lease in past).
  */
-struct nfs4_client *
-nfs4_client_find_other_registered_ps(struct server_state *ss,
-				     const struct nfs4_client *self,
-				     const char *principal);
+struct nfs4_client *nfs4_client_find_other_registered_ps(
+	struct server_state *ss, const struct nfs4_client *self,
+	const char *principal, const char *tls_fingerprint);
 
 /*
  * nfs4_client_find_by_owner - find an in-memory client by ownerid.

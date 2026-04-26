@@ -25,6 +25,12 @@
 #define REFFS_CONFIG_MAX_PROXY_MDS 8
 #define REFFS_CONFIG_MAX_ALLOWED_PS 8
 #define REFFS_CONFIG_MAX_PRINCIPAL 256
+/*
+ * Room for a SHA-256 fingerprint formatted as colon-separated hex
+ * (32 bytes * 2 + 31 colons = 95 chars, +NUL).  128 leaves headroom
+ * for SHA-384/512 if a future slice extends the hash agility.
+ */
+#define REFFS_CONFIG_MAX_TLS_FINGERPRINT 128
 #define REFFS_FENCE_UID_MIN_DEFAULT 1024
 #define REFFS_FENCE_UID_MAX_DEFAULT 2048
 #define REFFS_LAYOUT_WIDTH_DEFAULT 6 /* RS(4,2): 4 data + 2 parity */
@@ -156,13 +162,15 @@ struct reffs_proxy_mds_config {
 
 /*
  * MDS-only.  Each [[allowed_ps]] block names a single Proxy Server
- * identity permitted to send PROXY_REGISTRATION (slice 6b-i: only the
- * RPCSEC_GSS principal field is consumed; mTLS cert fingerprints
- * arrive in slice 6b-iv).  The default deny model means an empty list
+ * identity permitted to send PROXY_REGISTRATION.  An entry sets
+ * EXACTLY one of `principal` (RPCSEC_GSS path, slice 6b-i) or
+ * `tls_cert_fingerprint` (mTLS path, slice 6b-iv) -- empty string
+ * means "not set".  The default-deny model means an empty allowlist
  * rejects every registration -- see proxy-server-phase6b.md.
  */
 struct reffs_allowed_ps_config {
 	char principal[REFFS_CONFIG_MAX_PRINCIPAL];
+	char tls_cert_fingerprint[REFFS_CONFIG_MAX_TLS_FINGERPRINT];
 };
 
 struct reffs_config {

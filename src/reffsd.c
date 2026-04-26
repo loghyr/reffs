@@ -462,6 +462,12 @@ int main(int argc, char *argv[])
 		strncpy(ss->ss_allowed_ps[i], cfg.allowed_ps[i].principal,
 			REFFS_CONFIG_MAX_PRINCIPAL - 1);
 		ss->ss_allowed_ps[i][REFFS_CONFIG_MAX_PRINCIPAL - 1] = '\0';
+		/* Slice 6b-iv: TLS-fingerprint identity column. */
+		strncpy(ss->ss_allowed_ps_tls_fingerprint[i],
+			cfg.allowed_ps[i].tls_cert_fingerprint,
+			REFFS_CONFIG_MAX_TLS_FINGERPRINT - 1);
+		ss->ss_allowed_ps_tls_fingerprint
+			[i][REFFS_CONFIG_MAX_TLS_FINGERPRINT - 1] = '\0';
 	}
 	ss->ss_nallowed_ps = cfg.nallowed_ps;
 

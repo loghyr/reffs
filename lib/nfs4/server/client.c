@@ -92,16 +92,17 @@ void nfs4_client_put(struct nfs4_client *nc)
  * here -- the caller distinguishes valid-lease-squat from
  * expired-treat-as-fresh.
  */
-struct nfs4_client *
-nfs4_client_find_other_registered_ps(struct server_state *ss,
-				     const struct nfs4_client *self,
-				     const char *principal)
+struct nfs4_client *nfs4_client_find_other_registered_ps(
+	struct server_state *ss, const struct nfs4_client *self,
+	const char *principal, const char *tls_fingerprint)
 {
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 	struct nfs4_client *match = NULL;
+	bool have_principal = principal && principal[0] != '\0';
+	bool have_fingerprint = tls_fingerprint && tls_fingerprint[0] != '\0';
 
-	if (!ss || !ss->ss_client_ht || !principal || principal[0] == '\0')
+	if (!ss || !ss->ss_client_ht || (!have_principal && !have_fingerprint))
 		return NULL;
 
 	rcu_read_lock();
@@ -119,13 +120,23 @@ nfs4_client_find_other_registered_ps(struct server_state *ss,
 		 * Acquire-load pairs with the release-store in
 		 * proxy_registration.c that publishes nc_is_registered_ps:
 		 * if we observe true here, the adjacent nc_ps_principal /
-		 * nc_ps_registration_id / nc_ps_lease_expire_ns fields are
-		 * also visible.
+		 * nc_ps_tls_fingerprint / nc_ps_registration_id /
+		 * nc_ps_lease_expire_ns fields are also visible.
 		 */
 		if (!atomic_load_explicit(&nc->nc_is_registered_ps,
 					  memory_order_acquire))
 			continue;
-		if (strcmp(nc->nc_ps_principal, principal) != 0)
+
+		bool matches = false;
+
+		if (have_principal && nc->nc_ps_principal[0] != '\0' &&
+		    strcmp(nc->nc_ps_principal, principal) == 0)
+			matches = true;
+		if (!matches && have_fingerprint &&
+		    nc->nc_ps_tls_fingerprint[0] != '\0' &&
+		    strcmp(nc->nc_ps_tls_fingerprint, tls_fingerprint) == 0)
+			matches = true;
+		if (!matches)
 			continue;
 		if (!client_get(c))
 			continue; /* dying */
