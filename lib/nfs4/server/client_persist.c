@@ -107,16 +107,23 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 	 * every DS that supports TRUST_STATEID.  Best-effort -- expiry
 	 * proceeds regardless of whether revocation succeeds.
 	 *
+	 * Use collect_all (not collect_available): drained dstores still
+	 * carry live trust-stateid tables, so a client whose lease
+	 * expires while it has stateids on a drained dstore must still
+	 * have them revoked there.  The TRUST_STATEID RPC itself is
+	 * gated on connectivity inside dstore_bulk_revoke_stateid.
+	 *
 	 * clientid4 == client->c_id (nfs4 layer stores clientid4 in c_id).
 	 */
 	{
 		struct dstore *revoke_dstores[DSTORE_REVOKE_MAX];
-		uint32_t nrevoke = dstore_collect_available(revoke_dstores,
-							    DSTORE_REVOKE_MAX);
+		uint32_t nrevoke =
+			dstore_collect_all(revoke_dstores, DSTORE_REVOKE_MAX);
 		uint64_t clientid = client->c_id;
 
 		for (uint32_t ri = 0; ri < nrevoke; ri++) {
-			if (revoke_dstores[ri]->ds_tight_coupled)
+			if (revoke_dstores[ri]->ds_tight_coupled &&
+			    dstore_is_connected(revoke_dstores[ri]))
 				dstore_bulk_revoke_stateid(revoke_dstores[ri],
 							   clientid);
 			dstore_put(revoke_dstores[ri]);

@@ -100,6 +100,7 @@ static struct option long_opts[] = {
 	{ "dstores", required_argument, 0, 'D' },
 	{ "stripe-unit", required_argument, 0, 'U' },
 	{ "inum", required_argument, 0, 'N' },
+	{ "dstore-id", required_argument, 0, 'S' },
 	{ NULL, 0, NULL, 0 },
 };
 
@@ -118,6 +119,7 @@ uint32_t cli_dstores[MAX_CLI_DSTORES];
 uint32_t cli_ndstores = 0;
 uint32_t cli_stripe_unit = 0;
 uint64_t cli_inum = 0;
+uint32_t cli_dstore_id = 0;
 
 /*
  * Parse a comma-separated dstore ID list: "1,2,3"
@@ -188,7 +190,7 @@ int main(int argc, char *argv[])
 	// Initialize userspace RCU
 	rcu_init();
 
-	char *opts = "hc:f:p:o:s:g:v:HI:P:T:F:D:U:N:";
+	char *opts = "hc:f:p:o:s:g:v:HI:P:T:F:D:U:N:S:";
 
 	while ((opt = getopt_long(argc, argv, opts, long_opts, NULL)) != -1) {
 		switch (opt) {
@@ -243,6 +245,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'N':
 			cli_inum = (uint64_t)strtoull(optarg, NULL, 0);
+			break;
+		case 'S':
+			cli_dstore_id = (uint32_t)strtoul(optarg, NULL, 0);
 			break;
 		}
 	}
@@ -335,6 +340,12 @@ int main(int argc, char *argv[])
 							 cli_stripe_unit);
 	} else if (!strcmp(op, "inode-layout-list")) {
 		rt = probe1_client_op_inode_layout_list(sb_id, cli_inum);
+	} else if (!strcmp(op, "dstore-list")) {
+		rt = probe1_client_op_dstore_list();
+	} else if (!strcmp(op, "dstore-drain")) {
+		rt = probe1_client_op_dstore_drain(cli_dstore_id);
+	} else if (!strcmp(op, "dstore-undrain")) {
+		rt = probe1_client_op_dstore_undrain(cli_dstore_id);
 	} else {
 		LOG("op = \"%s\" is not supported", op);
 	}

@@ -499,9 +499,13 @@ int dstore_reconnect(struct dstore *ds)
 
 	/*
 	 * Another thread may have reconnected while we waited for
-	 * the lock.  If the dstore is already available, we're done.
+	 * the lock.  If the dstore is already connected, we're done.
+	 *
+	 * Use is_connected (not is_available): drain only blocks new
+	 * placements; an already-mounted drained dstore must not be
+	 * torn down by a passing reconnect probe.
 	 */
-	if (dstore_is_available(ds)) {
+	if (dstore_is_connected(ds)) {
 		pthread_mutex_unlock(&ds->ds_clnt_mutex);
 		return 0;
 	}
@@ -586,6 +590,37 @@ uint32_t dstore_collect_available(struct dstore **out, uint32_t max)
 			if (ref)
 				out[n++] = ref;
 		}
+		cds_lfht_next(g_dstore_ht, &iter);
+	}
+	rcu_read_unlock();
+	return n;
+}
+
+/*
+ * dstore_collect_all -- gather refs to every dstore in the global
+ * pool, regardless of mount / drain / reconnecting state.  Used by
+ * the DSTORE_LIST probe op (mirror-lifecycle Slice B) to surface
+ * the full operator dashboard.  Caller drops each ref via
+ * dstore_put().
+ */
+uint32_t dstore_collect_all(struct dstore **out, uint32_t max)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	uint32_t n = 0;
+
+	if (!g_dstore_ht)
+		return 0;
+
+	rcu_read_lock();
+	cds_lfht_first(g_dstore_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL && n < max) {
+		struct dstore *ds =
+			caa_container_of(node, struct dstore, ds_node);
+		struct dstore *ref = dstore_get(ds);
+
+		if (ref)
+			out[n++] = ref;
 		cds_lfht_next(g_dstore_ht, &iter);
 	}
 	rcu_read_unlock();

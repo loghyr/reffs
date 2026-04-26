@@ -690,6 +690,151 @@ struct rpc_trans *probe1_client_op_inode_layout_list(uint64_t sb_id,
 	return rt;
 }
 
+/* Slice B: dstore lifecycle ops. */
+
+static const char *dstore_state_name(probe_dstore_state1 s)
+{
+	switch (s) {
+	case PROBE1_DSTORE_ALIVE:
+		return "ALIVE";
+	case PROBE1_DSTORE_DRAINING:
+		return "DRAINING";
+	case PROBE1_DSTORE_DRAINED:
+		return "DRAINED";
+	case PROBE1_DSTORE_LOST:
+		return "LOST";
+	case PROBE1_DSTORE_DESTROYED:
+		return "DESTROYED";
+	}
+	return "?";
+}
+
+static int dstore_list_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	DSTORE_LIST1res *res = ph->ph_res;
+
+	if (res->dlr_status) {
+		LOG("dstore-list error = %d", res->dlr_status);
+	} else {
+		DSTORE_LIST1resok *resok = &res->DSTORE_LIST1res_u.dlr_resok;
+
+		printf("%-4s %-30s %-30s %-10s %-7s %-5s %-10s %s\n", "ID",
+		       "ADDRESS", "PATH", "STATE", "DRAINED", "LOST",
+		       "INSTANCES", "RUNWAY");
+		for (uint32_t i = 0; i < resok->dlr_dstores.dlr_dstores_len;
+		     i++) {
+			probe_dstore_info1 *d =
+				&resok->dlr_dstores.dlr_dstores_val[i];
+			printf("%-4u %-30s %-30s %-10s %-7s %-5s %-10" PRIu64
+			       " %u\n",
+			       d->pdi_id, d->pdi_address ? d->pdi_address : "",
+			       d->pdi_path ? d->pdi_path : "",
+			       dstore_state_name(d->pdi_state),
+			       d->pdi_drained ? "yes" : "no",
+			       d->pdi_lost ? "yes" : "no",
+			       d->pdi_instance_count, d->pdi_runway_capacity);
+		}
+	}
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_dstore_list(void)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_DSTORE_LIST;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+
+	rt->rt_cb = dstore_list_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+static int dstore_drain_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	probe_stat1 *res = ph->ph_res;
+
+	if (*res)
+		LOG("dstore-drain error = %d", *res);
+	else
+		printf("OK\n");
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_dstore_drain(uint32_t dstore_id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_DSTORE_DRAIN;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	DSTORE_DRAIN1args *args = ph->ph_args;
+
+	args->dda_id = dstore_id;
+	rt->rt_cb = dstore_drain_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
+struct rpc_trans *probe1_client_op_dstore_undrain(uint32_t dstore_id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_DSTORE_UNDRAIN;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	DSTORE_UNDRAIN1args *args = ph->ph_args;
+
+	args->dua_id = dstore_id;
+	/* Reuse drain_cb: same status-only response shape. */
+	rt->rt_cb = dstore_drain_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
 struct rpc_trans *probe1_client_op_sb_set_flavors(uint64_t id,
 						  uint32_t *flavors,
 						  uint32_t nflavors)

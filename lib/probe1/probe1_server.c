@@ -47,6 +47,7 @@
 #include "reffs/client.h"
 #include "reffs/inode.h"
 #include "reffs/layout_segment.h"
+#include "reffs/runway.h"
 #include "reffs/trace/rpc.h"
 
 struct probe_time1 probe_time1_from_time_t(time_t ts)
@@ -1331,6 +1332,122 @@ static int probe1_op_inode_layout_list(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * Slice B: dstore lifecycle ops (DSTORE_LIST / DSTORE_DRAIN /
+ * DSTORE_UNDRAIN).  See .claude/design/mirror-lifecycle.md "Slice B".
+ */
+
+#define PROBE1_DSTORE_LIST_MAX 256
+
+static enum probe_dstore_state1 dstore_observable_state(const struct dstore *ds)
+{
+	bool drained =
+		atomic_load_explicit(&ds->ds_drained, memory_order_acquire);
+
+	/*
+	 * DRAINED (count == 0) and LOST require slice B''/G state that
+	 * isn't wired yet -- collapse those to DRAINING/ALIVE for now;
+	 * later slices flip the bits without changing the wire surface.
+	 */
+	return drained ? PROBE1_DSTORE_DRAINING : PROBE1_DSTORE_ALIVE;
+}
+
+static int probe1_op_dstore_list(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	DSTORE_LIST1res *res = ph->ph_res;
+	DSTORE_LIST1resok *resok = &res->DSTORE_LIST1res_u.dlr_resok;
+
+	struct dstore **dss = calloc(PROBE1_DSTORE_LIST_MAX, sizeof(*dss));
+
+	if (!dss) {
+		res->dlr_status = PROBE1ERR_NOMEM;
+		return res->dlr_status;
+	}
+
+	uint32_t n = dstore_collect_all(dss, PROBE1_DSTORE_LIST_MAX);
+
+	if (n == 0) {
+		free(dss);
+		return 0;
+	}
+
+	probe_dstore_info1 *out = calloc(n, sizeof(*out));
+
+	if (!out) {
+		for (uint32_t i = 0; i < n; i++)
+			dstore_put(dss[i]);
+		free(dss);
+		res->dlr_status = PROBE1ERR_NOMEM;
+		return res->dlr_status;
+	}
+
+	for (uint32_t i = 0; i < n; i++) {
+		struct dstore *ds = dss[i];
+
+		out[i].pdi_id = ds->ds_id;
+		out[i].pdi_address = strdup(ds->ds_address);
+		out[i].pdi_path = strdup(ds->ds_path);
+		out[i].pdi_state = dstore_observable_state(ds);
+		out[i].pdi_drained = atomic_load_explicit(&ds->ds_drained,
+							  memory_order_acquire);
+		/* pdi_lost wired in slice G */
+		out[i].pdi_lost = false;
+		/* pdi_instance_count wired in slice B'' (reverse index) */
+		out[i].pdi_instance_count = 0;
+		out[i].pdi_runway_capacity =
+			ds->ds_runway ? ds->ds_runway->rw_capacity : 0;
+		dstore_put(ds);
+	}
+	free(dss);
+
+	resok->dlr_dstores.dlr_dstores_val = out;
+	resok->dlr_dstores.dlr_dstores_len = n;
+	return 0;
+}
+
+static int probe1_op_dstore_drain(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	DSTORE_DRAIN1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct dstore *ds = dstore_find(args->dda_id);
+
+	if (!ds) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	/*
+	 * Idempotent per state-machine "DSTORE_DRAIN on DRAINING" rule:
+	 * setting an already-set bit is a no-op and returns OK.
+	 */
+	atomic_store_explicit(&ds->ds_drained, true, memory_order_release);
+	dstore_put(ds);
+	*res = PROBE1_OK;
+	return 0;
+}
+
+static int probe1_op_dstore_undrain(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	DSTORE_UNDRAIN1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	struct dstore *ds = dstore_find(args->dua_id);
+
+	if (!ds) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	atomic_store_explicit(&ds->ds_drained, false, memory_order_release);
+	dstore_put(ds);
+	*res = PROBE1_OK;
+	return 0;
+}
+
 static int probe1_op_sb_set_flavors(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -1765,6 +1882,15 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_INODE_LAYOUT_LIST1args, INODE_LAYOUT_LIST1args,
 			   xdr_INODE_LAYOUT_LIST1res, INODE_LAYOUT_LIST1res,
 			   probe1_op_inode_layout_list),
+	RPC_OPERATION_INIT(PROBEPROC1, DSTORE_LIST, NULL, NULL,
+			   xdr_DSTORE_LIST1res, DSTORE_LIST1res,
+			   probe1_op_dstore_list),
+	RPC_OPERATION_INIT(PROBEPROC1, DSTORE_DRAIN, xdr_DSTORE_DRAIN1args,
+			   DSTORE_DRAIN1args, xdr_probe_stat1, probe_stat1,
+			   probe1_op_dstore_drain),
+	RPC_OPERATION_INIT(PROBEPROC1, DSTORE_UNDRAIN, xdr_DSTORE_UNDRAIN1args,
+			   DSTORE_UNDRAIN1args, xdr_probe_stat1, probe_stat1,
+			   probe1_op_dstore_undrain),
 };
 
 static struct rpc_program_handler *probe1_handler;

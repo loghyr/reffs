@@ -418,6 +418,64 @@ union INODE_LAYOUT_LIST1res switch (probe_stat1 ill_status) {
 		void;
 };
 
+/*
+ * DSTORE_LIST (op 33) -- read-only operator dashboard.  Returns one
+ * entry per dstore in the global pool.  See
+ * .claude/design/mirror-lifecycle.md "Slice B".
+ */
+enum probe_dstore_state1 {
+	PROBE1_DSTORE_ALIVE	= 0,
+	PROBE1_DSTORE_DRAINING	= 1,
+	PROBE1_DSTORE_DRAINED	= 2,
+	PROBE1_DSTORE_LOST	= 3,
+	PROBE1_DSTORE_DESTROYED	= 4
+};
+
+const PROBE1_DSTORE_ADDR_MAX = 256;
+const PROBE1_DSTORE_PATH_MAX = 1024;
+
+struct probe_dstore_info1 {
+	unsigned int		pdi_id;
+	string			pdi_address<PROBE1_DSTORE_ADDR_MAX>;
+	string			pdi_path<PROBE1_DSTORE_PATH_MAX>;
+	probe_dstore_state1	pdi_state;
+	bool			pdi_drained;
+	bool			pdi_lost;
+	unsigned hyper		pdi_instance_count;
+	unsigned int		pdi_runway_capacity;
+};
+
+struct DSTORE_LIST1resok {
+	probe_dstore_info1	dlr_dstores<>;
+};
+
+union DSTORE_LIST1res switch (probe_stat1 dlr_status) {
+	case PROBE1_OK:
+		DSTORE_LIST1resok	dlr_resok;
+	default:
+		void;
+};
+
+/*
+ * DSTORE_DRAIN (op 34) -- mark a dstore as drained (no new
+ * placements; existing instances stay reachable).  Returns
+ * probe_stat1 directly.  Idempotent: DRAIN on a draining dstore is
+ * a no-op (returns OK).
+ */
+struct DSTORE_DRAIN1args {
+	unsigned int		dda_id;
+};
+
+/*
+ * DSTORE_UNDRAIN (op 35) -- clear the drained flag.  Already-migrated
+ * files stay on their new dstores; in-flight autopilot workers detect
+ * the UNDRAIN at the post-ADD checkpoint and abort the REMOVE
+ * (slice E).  Returns probe_stat1 directly.
+ */
+struct DSTORE_UNDRAIN1args {
+	unsigned int		dua_id;
+};
+
 /* SB_LINT_FLAVORS (op 20) */
 struct SB_LINT_FLAVORS1resok {
 	unsigned int	lfr_warnings;
@@ -599,5 +657,10 @@ program PROBE_PROGRAM {
 
 		/* Mirror lifecycle ops -- see .claude/design/mirror-lifecycle.md */
 		INODE_LAYOUT_LIST1res PROBEPROC1_INODE_LAYOUT_LIST(INODE_LAYOUT_LIST1args) = 28;
+
+		/* Slice B: dstore lifecycle ops */
+		DSTORE_LIST1res PROBEPROC1_DSTORE_LIST(void) = 33;
+		probe_stat1 PROBEPROC1_DSTORE_DRAIN(DSTORE_DRAIN1args) = 34;
+		probe_stat1 PROBEPROC1_DSTORE_UNDRAIN(DSTORE_UNDRAIN1args) = 35;
 	} = 1;
 } = 211768;

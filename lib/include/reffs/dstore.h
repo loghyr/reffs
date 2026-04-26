@@ -18,6 +18,7 @@
 
 #include <netinet/in.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -87,6 +88,24 @@ struct dstore {
 	 * Read-only after that; no synchronization needed.
 	 */
 	bool ds_tight_coupled;
+
+	/*
+	 * Drain flag (mirror-lifecycle Slice B).  When true, LAYOUTGET /
+	 * runway-pop excludes this dstore from new placements.  Existing
+	 * instances on the dstore remain reachable until migrated off
+	 * (slice E autopilot) or the dstore is destroyed.
+	 *
+	 * Declared as a separate _Atomic bool rather than a bit in
+	 * ds_state because ds_state uses GCC __atomic_* builtins (a
+	 * grandfathered field per .claude/standards.md "Two atomic APIs
+	 * in use").  C11 _Atomic separate field is the right precedent
+	 * for fresh state -- "Do not add new GCC-builtin atomic fields."
+	 *
+	 * NOT_NOW_BROWN_COW: persist across reffsd restarts (today the
+	 * flag resets on boot).  See .claude/design/mirror-lifecycle.md
+	 * "Drain persistence".
+	 */
+	_Atomic bool ds_drained;
 
 	/* Layout error stats reported by clients for this dstore. */
 	struct reffs_layout_error_stats ds_layout_errors;
@@ -160,10 +179,37 @@ int dstore_probe_root_access(struct dstore *ds);
 /* Connection management                                               */
 
 /*
- * dstore_is_available -- true if the dstore is mounted and not
- * currently reconnecting.  Lock-free atomic check.
+ * dstore_is_available -- true if the dstore is mounted, not
+ * currently reconnecting, and not flagged for drain.  Lock-free
+ * atomic check; used by LAYOUTGET / runway-pop to exclude dstores
+ * that should not receive new placements.
+ *
+ * Drain semantics (mirror-lifecycle Slice B): a drained dstore is
+ * unavailable for NEW placements; existing instances are still
+ * reachable via the normal data path -- this helper governs only
+ * placement, not I/O.
  */
 static inline bool dstore_is_available(const struct dstore *ds)
+{
+	uint64_t s;
+
+	__atomic_load(&ds->ds_state, &s, __ATOMIC_ACQUIRE);
+	if (!(s & DSTORE_IS_MOUNTED) || (s & DSTORE_IS_RECONNECTING))
+		return false;
+	return !atomic_load_explicit(&ds->ds_drained, memory_order_acquire);
+}
+
+/*
+ * dstore_is_connected -- true if the dstore is mounted and not
+ * currently reconnecting.  Ignores the drain flag.
+ *
+ * Use this for connection-liveness checks (e.g. dstore_reconnect's
+ * already-up short-circuit) and for any fan-out that must reach
+ * existing instances on a drained dstore (e.g. lease-expiry
+ * TRUST_STATEID bulk-revoke).  Use dstore_is_available() only for
+ * placement decisions (LAYOUTGET, runway-pop).
+ */
+static inline bool dstore_is_connected(const struct dstore *ds)
 {
 	uint64_t s;
 
@@ -193,6 +239,14 @@ int dstore_reconnect(struct dstore *ds);
  * max: size of out[].  Returns the number of dstores collected.
  */
 uint32_t dstore_collect_available(struct dstore **out, uint32_t max);
+
+/*
+ * dstore_collect_all -- gather refs to every dstore, regardless of
+ * mount / drain / reconnecting state.  Used by the DSTORE_LIST probe
+ * op for the operator dashboard.  Caller drops each ref via
+ * dstore_put().
+ */
+uint32_t dstore_collect_all(struct dstore **out, uint32_t max);
 
 /* ------------------------------------------------------------------ */
 /* Bulk operations                                                     */

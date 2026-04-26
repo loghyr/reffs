@@ -252,6 +252,32 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_INODE_LAYOUT_LIST, args,
                          response_type='INODE_LAYOUT_LIST1res')
 
+    # Slice B: dstore lifecycle.
+    def dstore_list(self):
+        """Operator dashboard for the dstore pool.  Returns
+        DSTORE_LIST1res with one probe_dstore_info1 per dstore
+        (id, address, path, state, drained, lost, instance_count,
+        runway_capacity).  See .claude/design/mirror-lifecycle.md
+        "Slice B"."""
+        return self.proc(PROBEPROC1_DSTORE_LIST,
+                         response_type='DSTORE_LIST1res')
+
+    def dstore_drain(self, dstore_id):
+        """Mark a dstore as drained (no new placements; existing
+        instances stay reachable).  Idempotent."""
+        args = DSTORE_DRAIN1args(dstore_id)
+        return self.proc(PROBEPROC1_DSTORE_DRAIN, args,
+                         response_type='probe_stat1')
+
+    def dstore_undrain(self, dstore_id):
+        """Clear the drained flag on a dstore.  Already-migrated
+        files stay on their new dstores; in-flight slice-E workers
+        detect the UNDRAIN at the post-ADD checkpoint and abort
+        the REMOVE."""
+        args = DSTORE_UNDRAIN1args(dstore_id)
+        return self.proc(PROBEPROC1_DSTORE_UNDRAIN, args,
+                         response_type='probe_stat1')
+
     def sb_set_client_rules(self, sb_id, rules):
         """Set per-client export policy rules on a superblock.
 

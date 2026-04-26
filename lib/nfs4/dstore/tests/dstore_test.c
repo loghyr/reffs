@@ -20,8 +20,15 @@
  *   4. duplicate ID: rejected by cds_lfht_add_unique
  *   5. unmounted:    dstore_is_available returns false
  *   6. unload_all:   drains the hash table
+ *   7. drain mechanics (mirror-lifecycle Slice B):
+ *        - drain excludes from collect_available
+ *        - undrain restores it
+ *        - drained still in collect_all
+ *        - drain idempotent (DRAINING -> DRAINING no-op)
+ *        - drain does not affect is_connected
  */
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -245,6 +252,145 @@ START_TEST(test_remote_vtable)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Drain bit mechanics (mirror-lifecycle Slice B)                      */
+/* ------------------------------------------------------------------ */
+
+/* Helper: count how many of the given dstore IDs appear in `arr`,
+ * dropping a ref on every entry as we go. */
+static unsigned drain_count_ids(struct dstore **arr, uint32_t n,
+				const uint32_t *ids, unsigned nids)
+{
+	unsigned hits = 0;
+
+	for (uint32_t i = 0; i < n; i++) {
+		for (unsigned j = 0; j < nids; j++) {
+			if (arr[i]->ds_id == ids[j]) {
+				hits++;
+				break;
+			}
+		}
+		dstore_put(arr[i]);
+	}
+	return hits;
+}
+
+START_TEST(test_drain_excludes_from_collect_available)
+{
+	struct dstore *a = dstore_alloc(60, "127.0.0.1", FAKE_DS_PATH,
+					REFFS_DS_PROTO_NFSV3, false);
+	struct dstore *b = dstore_alloc(61, "127.0.0.1", FAKE_DS_PATH,
+					REFFS_DS_PROTO_NFSV3, false);
+
+	ck_assert_ptr_nonnull(a);
+	ck_assert_ptr_nonnull(b);
+	/* Local-vtable dstores start mounted+available. */
+	ck_assert(dstore_is_available(a));
+	ck_assert(dstore_is_available(b));
+
+	atomic_store_explicit(&a->ds_drained, true, memory_order_release);
+	ck_assert(!dstore_is_available(a));
+	ck_assert(dstore_is_available(b));
+
+	struct dstore *out[8] = { 0 };
+	uint32_t n = dstore_collect_available(out, 8);
+	uint32_t want_b[1] = { 61 };
+	uint32_t want_a[1] = { 60 };
+
+	ck_assert_uint_eq(drain_count_ids(out, n, want_b, 1), 1);
+	/* a must NOT appear -- re-collect to recheck (refs already dropped). */
+	n = dstore_collect_available(out, 8);
+	ck_assert_uint_eq(drain_count_ids(out, n, want_a, 1), 0);
+
+	dstore_put(a);
+	dstore_put(b);
+}
+END_TEST
+
+START_TEST(test_undrain_restores)
+{
+	struct dstore *ds = dstore_alloc(62, "127.0.0.1", FAKE_DS_PATH,
+					 REFFS_DS_PROTO_NFSV3, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert(dstore_is_available(ds));
+
+	atomic_store_explicit(&ds->ds_drained, true, memory_order_release);
+	ck_assert(!dstore_is_available(ds));
+
+	atomic_store_explicit(&ds->ds_drained, false, memory_order_release);
+	ck_assert(dstore_is_available(ds));
+
+	struct dstore *out[8] = { 0 };
+	uint32_t n = dstore_collect_available(out, 8);
+	uint32_t want[1] = { 62 };
+
+	ck_assert_uint_eq(drain_count_ids(out, n, want, 1), 1);
+
+	dstore_put(ds);
+}
+END_TEST
+
+START_TEST(test_drained_still_in_collect_all)
+{
+	struct dstore *a = dstore_alloc(63, "127.0.0.1", FAKE_DS_PATH,
+					REFFS_DS_PROTO_NFSV3, false);
+	struct dstore *b = dstore_alloc(64, "127.0.0.1", FAKE_DS_PATH,
+					REFFS_DS_PROTO_NFSV3, false);
+
+	ck_assert_ptr_nonnull(a);
+	ck_assert_ptr_nonnull(b);
+
+	/* Drain a; collect_all must still return both. */
+	atomic_store_explicit(&a->ds_drained, true, memory_order_release);
+
+	struct dstore *out[8] = { 0 };
+	uint32_t n = dstore_collect_all(out, 8);
+	uint32_t want[2] = { 63, 64 };
+
+	ck_assert_uint_eq(drain_count_ids(out, n, want, 2), 2);
+
+	dstore_put(a);
+	dstore_put(b);
+}
+END_TEST
+
+START_TEST(test_drain_idempotent)
+{
+	struct dstore *ds = dstore_alloc(65, "127.0.0.1", FAKE_DS_PATH,
+					 REFFS_DS_PROTO_NFSV3, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert(dstore_is_available(ds));
+
+	/* DSTORE_DRAIN on DRAINING -- second store is a no-op. */
+	atomic_store_explicit(&ds->ds_drained, true, memory_order_release);
+	atomic_store_explicit(&ds->ds_drained, true, memory_order_release);
+	ck_assert(!dstore_is_available(ds));
+	ck_assert(atomic_load_explicit(&ds->ds_drained, memory_order_acquire));
+
+	dstore_put(ds);
+}
+END_TEST
+
+START_TEST(test_drain_does_not_affect_is_connected)
+{
+	struct dstore *ds = dstore_alloc(66, "127.0.0.1", FAKE_DS_PATH,
+					 REFFS_DS_PROTO_NFSV3, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert(dstore_is_available(ds));
+	ck_assert(dstore_is_connected(ds));
+
+	atomic_store_explicit(&ds->ds_drained, true, memory_order_release);
+	/* Drained -- not eligible for placement, but still connected. */
+	ck_assert(!dstore_is_available(ds));
+	ck_assert(dstore_is_connected(ds));
+
+	dstore_put(ds);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -271,6 +417,16 @@ Suite *dstore_suite(void)
 	tcase_add_test(tc_vtable, test_local_vtable_localhost);
 	tcase_add_test(tc_vtable, test_remote_vtable);
 	suite_add_tcase(s, tc_vtable);
+
+	TCase *tc_drain = tcase_create("drain");
+
+	tcase_add_checked_fixture(tc_drain, setup, teardown);
+	tcase_add_test(tc_drain, test_drain_excludes_from_collect_available);
+	tcase_add_test(tc_drain, test_undrain_restores);
+	tcase_add_test(tc_drain, test_drained_still_in_collect_all);
+	tcase_add_test(tc_drain, test_drain_idempotent);
+	tcase_add_test(tc_drain, test_drain_does_not_affect_is_connected);
+	suite_add_tcase(s, tc_drain);
 
 	return s;
 }

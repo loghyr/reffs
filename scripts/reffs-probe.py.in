@@ -740,6 +740,38 @@ def inode_layout_list_cmd(client, args):
               f"fh={fh_hex}")
 
 
+# Slice B: dstore lifecycle.
+DSTORE_STATE_NAMES = {
+    0: 'ALIVE', 1: 'DRAINING', 2: 'DRAINED', 3: 'LOST', 4: 'DESTROYED',
+}
+
+
+def dstore_list_cmd(client, args):
+    res = client.dstore_list()
+    probe_error_handler(res)
+    resok = res.dlr_resok
+    print(f"{'ID':<4} {'ADDRESS':<30} {'PATH':<30} {'STATE':<10} "
+          f"{'DRAIN':<6} {'LOST':<5} {'INSTANCES':<10} {'RUNWAY':<7}")
+    for d in resok.dlr_dstores:
+        print(f"{d.pdi_id:<4} {d.pdi_address:<30} {d.pdi_path:<30} "
+              f"{DSTORE_STATE_NAMES.get(d.pdi_state, '?'):<10} "
+              f"{('yes' if d.pdi_drained else 'no'):<6} "
+              f"{('yes' if d.pdi_lost else 'no'):<5} "
+              f"{d.pdi_instance_count:<10} {d.pdi_runway_capacity:<7}")
+
+
+def dstore_drain_cmd(client, args):
+    res = client.dstore_drain(args.id)
+    probe_error_handler(res)
+    print(f"Dstore {args.id} drained (no new placements)")
+
+
+def dstore_undrain_cmd(client, args):
+    res = client.dstore_undrain(args.id)
+    probe_error_handler(res)
+    print(f"Dstore {args.id} undrained (placements re-enabled)")
+
+
 def sb_set_client_rules_cmd(client, args):
     """Parse --rule strings and call sb_set_client_rules.
 
@@ -1078,6 +1110,25 @@ def parse_args():
     p_inode_layout_list.add_argument('--inum', type=int, required=True,
                                      help='Inode number')
     p_inode_layout_list.set_defaults(func=inode_layout_list_cmd)
+
+    p_dstore_list = subparsers.add_parser(
+        'dstore-list',
+        help='List all dstores with their state (operator dashboard)')
+    p_dstore_list.set_defaults(func=dstore_list_cmd)
+
+    p_dstore_drain = subparsers.add_parser(
+        'dstore-drain',
+        help='Mark a dstore as drained (no new placements)')
+    p_dstore_drain.add_argument('--id', type=int, required=True,
+                                help='Dstore ID')
+    p_dstore_drain.set_defaults(func=dstore_drain_cmd)
+
+    p_dstore_undrain = subparsers.add_parser(
+        'dstore-undrain',
+        help='Clear the drained flag on a dstore')
+    p_dstore_undrain.add_argument('--id', type=int, required=True,
+                                  help='Dstore ID')
+    p_dstore_undrain.set_defaults(func=dstore_undrain_cmd)
 
     p_sb_client_rules = subparsers.add_parser(
         'sb-set-client-rules',
