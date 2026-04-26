@@ -18,6 +18,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <rpc/auth.h>
@@ -230,7 +231,8 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 	 * (a healthy PS triggers this on every traversal).
 	 */
 	if (compound->c_nfs4_client &&
-	    compound->c_nfs4_client->nc_is_registered_ps &&
+	    atomic_load_explicit(&compound->c_nfs4_client->nc_is_registered_ps,
+				 memory_order_acquire) &&
 	    op_is_namespace_discovery(curr_opnum)) {
 		TRACE("PS-bypass: op=%u client_flavor=%u tls=%d sb_id=%lu",
 		      curr_opnum, client_flavor, client_tls,

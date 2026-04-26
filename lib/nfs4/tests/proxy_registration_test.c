@@ -419,6 +419,136 @@ START_TEST(test_proxy_registration_accept_allowlisted)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Squat-guard / renewal / lease (slice 6b-iii)                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Helper: send PROXY_REGISTRATION on the given context with the given
+ * registration_id (NULL/0 for an empty id).  Caller owns cm and
+ * checks status / the nc_is_registered_ps flag itself.
+ */
+static void pr_send(struct pr_ctx *cm, const char *reg_id, uint32_t reg_id_len)
+{
+	pr_args(cm)->prr_flags = 0;
+	pr_args(cm)->prr_registration_id.prr_registration_id_len = reg_id_len;
+	pr_args(cm)->prr_registration_id.prr_registration_id_val =
+		(char *)reg_id;
+	nfs4_op_proxy_registration(cm->compound);
+}
+
+/*
+ * A second PROXY_REGISTRATION from a different session (different
+ * clientid) but the same GSS principal AND the same registration_id
+ * is a renewal.  Both clients end up registered; the original
+ * client's lease is bumped on the renewal so its still-connected
+ * session does not lose privilege between "renewed on new session"
+ * and "old session times out on its own".
+ */
+START_TEST(test_proxy_registration_renewal_same_id)
+{
+	const char id[] = "ps-id-aaaa-bbbb";
+
+	pr_allowlist_set("host/ps.example.com@REALM");
+
+	struct pr_ctx *first = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+					"host/ps.example.com@REALM");
+
+	pr_send(first, id, sizeof(id) - 1);
+	ck_assert_int_eq(pr_res(first)->prrr_status, NFS4_OK);
+	ck_assert(first->compound->c_nfs4_client->nc_is_registered_ps);
+	uint64_t first_expire_after_register = atomic_load_explicit(
+		&first->compound->c_nfs4_client->nc_ps_lease_expire_ns,
+		memory_order_acquire);
+
+	struct pr_ctx *second = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+					 "host/ps.example.com@REALM");
+
+	pr_send(second, id, sizeof(id) - 1);
+	ck_assert_int_eq(pr_res(second)->prrr_status, NFS4_OK);
+	ck_assert(second->compound->c_nfs4_client->nc_is_registered_ps);
+
+	uint64_t first_expire_after_renew = atomic_load_explicit(
+		&first->compound->c_nfs4_client->nc_ps_lease_expire_ns,
+		memory_order_acquire);
+	ck_assert_uint_ge(first_expire_after_renew,
+			  first_expire_after_register);
+
+	pr_free(second);
+	pr_free(first);
+}
+END_TEST
+
+/*
+ * A second PROXY_REGISTRATION from a different session, same GSS
+ * principal, but DIFFERENT registration_id is a squat attempt.  The
+ * MDS responds with NFS4ERR_DELAY and refuses to grant the privilege.
+ * The original client's grant remains intact.
+ */
+START_TEST(test_proxy_registration_squat_blocked)
+{
+	const char id_a[] = "ps-id-aaaa-bbbb";
+	const char id_b[] = "ps-id-cccc-dddd";
+
+	pr_allowlist_set("host/ps.example.com@REALM");
+
+	struct pr_ctx *first = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+					"host/ps.example.com@REALM");
+
+	pr_send(first, id_a, sizeof(id_a) - 1);
+	ck_assert_int_eq(pr_res(first)->prrr_status, NFS4_OK);
+
+	struct pr_ctx *second = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+					 "host/ps.example.com@REALM");
+
+	pr_send(second, id_b, sizeof(id_b) - 1);
+
+	ck_assert_int_eq(pr_res(second)->prrr_status, NFS4ERR_DELAY);
+	ck_assert(!second->compound->c_nfs4_client->nc_is_registered_ps);
+	ck_assert(first->compound->c_nfs4_client->nc_is_registered_ps);
+
+	pr_free(second);
+	pr_free(first);
+}
+END_TEST
+
+/*
+ * Lease-expired-then-fresh: after the original PS's lease expires,
+ * a second registration with a DIFFERENT id is no longer a squat and
+ * succeeds.  Simulated by stomping the lease_expire field to 1 (well
+ * in the past) -- production code would wait the actual lease period.
+ */
+START_TEST(test_proxy_registration_after_expiry_succeeds)
+{
+	const char id_a[] = "ps-id-aaaa-bbbb";
+	const char id_b[] = "ps-id-cccc-dddd";
+
+	pr_allowlist_set("host/ps.example.com@REALM");
+
+	struct pr_ctx *first = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+					"host/ps.example.com@REALM");
+
+	pr_send(first, id_a, sizeof(id_a) - 1);
+	ck_assert_int_eq(pr_res(first)->prrr_status, NFS4_OK);
+
+	/* Force the first client's lease to be expired. */
+	atomic_store_explicit(
+		&first->compound->c_nfs4_client->nc_ps_lease_expire_ns, 1,
+		memory_order_release);
+
+	struct pr_ctx *second = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+					 "host/ps.example.com@REALM");
+
+	pr_send(second, id_b, sizeof(id_b) - 1);
+
+	ck_assert_int_eq(pr_res(second)->prrr_status, NFS4_OK);
+	ck_assert(second->compound->c_nfs4_client->nc_is_registered_ps);
+
+	pr_free(second);
+	pr_free(first);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* PROXY_PROGRESS (slice 6a stub)                                      */
 /* ------------------------------------------------------------------ */
 
@@ -465,6 +595,9 @@ static Suite *proxy_registration_suite(void)
 	tcase_add_test(tc, test_proxy_registration_reject_empty_allowlist);
 	tcase_add_test(tc, test_proxy_registration_principal_exact_match);
 	tcase_add_test(tc, test_proxy_registration_accept_allowlisted);
+	tcase_add_test(tc, test_proxy_registration_renewal_same_id);
+	tcase_add_test(tc, test_proxy_registration_squat_blocked);
+	tcase_add_test(tc, test_proxy_registration_after_expiry_succeeds);
 	tcase_add_test(tc, test_proxy_progress_returns_notsupp);
 	suite_add_tcase(s, tc);
 

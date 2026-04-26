@@ -6,10 +6,13 @@
 #ifndef _REFFS_NFS4_CLIENT_H
 #define _REFFS_NFS4_CLIENT_H
 
+#include <stdatomic.h>
+
 #include "reffs/rcu.h"
 #include "nfsv42_xdr.h"
 #include "reffs/client.h"
 #include "reffs/nfs4_stats.h"
+#include "reffs/settings.h"
 
 struct server_state;
 
@@ -51,10 +54,33 @@ struct nfs4_client {
 	 * forwarded end-client credentials normally.  See
 	 * .claude/design/proxy-server.md "Privilege model".
 	 *
-	 * Read-mostly after registration (set once, cleared at client
-	 * expire); plain bool is sufficient -- no atomic needed.
+	 * Atomic (release on publication, acquire on read) because the
+	 * slice 6b-iii squat-guard scans the client hashtable from one
+	 * session while another session may be in the middle of
+	 * publishing its own registration -- this flag is the publication
+	 * marker for the adjacent nc_ps_principal / nc_ps_registration_id
+	 * / nc_ps_lease_expire_ns fields.  Without release/acquire a
+	 * scanner could observe nc_is_registered_ps == true while still
+	 * reading uninitialised principal bytes.
 	 */
-	bool nc_is_registered_ps;
+	_Atomic bool nc_is_registered_ps;
+
+	/*
+	 * PROXY_REGISTRATION identity + lease (slice 6b-iii).  Only
+	 * meaningful when nc_is_registered_ps == true.  Set at
+	 * registration time so the squat-guard can scan for "another
+	 * registered client with the same GSS principal"; lease is in
+	 * CLOCK_MONOTONIC ns (dual-clock strategy in standards.md).
+	 *
+	 * nc_ps_lease_expire_ns is _Atomic because the renewal path
+	 * writes it from one session while the squat-check reader runs
+	 * on another session concurrently.
+	 */
+	char nc_ps_principal[REFFS_CONFIG_MAX_PRINCIPAL];
+	char nc_ps_registration_id[PROXY_REGISTRATION_ID_MAX];
+	uint32_t nc_ps_registration_id_len;
+	_Atomic uint64_t nc_ps_lease_expire_ns;
+
 	uint32_t nc_create_seq; /* expected csa_sequence for CREATE_SESSION */
 	void *nc_create_reply; /* cached CREATE_SESSION XDR reply */
 	uint32_t nc_create_reply_len;
@@ -111,6 +137,22 @@ struct nfs4_client *nfs4_client_find(clientid4 clid);
 
 struct nfs4_client *nfs4_client_get(struct nfs4_client *nc);
 void nfs4_client_put(struct nfs4_client *nc);
+
+/*
+ * nfs4_client_find_other_registered_ps - scan the client hashtable
+ * for an in-memory client (other than `self`) holding the
+ * registered-PS privilege with the given GSS principal (slice
+ * 6b-iii squat-guard).
+ *
+ * Returns ref-bumped match or NULL.  Caller drops ref via
+ * nfs4_client_put().  Does NOT filter by lease expiry -- the caller
+ * decides squat (still valid + different id) vs renewal (still
+ * valid + same id) vs expired-treat-as-fresh (lease in past).
+ */
+struct nfs4_client *
+nfs4_client_find_other_registered_ps(struct server_state *ss,
+				     const struct nfs4_client *self,
+				     const char *principal);
 
 /*
  * nfs4_client_find_by_owner - find an in-memory client by ownerid.

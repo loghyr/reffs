@@ -29,6 +29,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
@@ -37,6 +38,7 @@
 #include "nfsv42_names.h"
 #include "reffs/log.h"
 #include "reffs/server.h"
+#include "reffs/time.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/client.h"
@@ -147,14 +149,89 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	}
 
 	/*
-	 * Record the privilege on the client.  Future namespace-
-	 * discovery ops (LOOKUP / LOOKUPP / PUTFH / PUTROOTFH / GETFH /
-	 * SEQUENCE) on any session belonging to this client will
-	 * bypass export-rule filtering -- see
-	 * .claude/design/proxy-server.md "Privilege model".  Audit
-	 * logging of the bypassed ops lands in slice 6b-ii.
+	 * Slice 6b-iii: squat-guard.  If another in-memory client is
+	 * already registered with this same GSS principal AND its
+	 * lease is still valid AND the incoming prr_registration_id
+	 * does not match -- this is a different peer trying to displace
+	 * an active PS.  Refuse with NFS4ERR_DELAY so the legit PS keeps
+	 * its grant; the attacker (or the legit PS after a state-loss
+	 * restart) must wait one lease period.  A matching id is a
+	 * renewal: refresh the prior client's lease and proceed.
 	 */
-	compound->c_nfs4_client->nc_is_registered_ps = true;
+	struct nfs4_client *self = compound->c_nfs4_client;
+	struct nfs4_client *other = nfs4_client_find_other_registered_ps(
+		compound->c_server_state, self, compound->c_gss_principal);
+
+	uint64_t lease_period_ns =
+		(uint64_t)server_lease_time(compound->c_server_state) *
+		1000000000ULL;
+
+	if (other) {
+		uint64_t now_ns = reffs_now_ns();
+		uint64_t expire_ns = atomic_load_explicit(
+			&other->nc_ps_lease_expire_ns, memory_order_acquire);
+		bool same_id = other->nc_ps_registration_id_len ==
+				       args->prr_registration_id
+					       .prr_registration_id_len &&
+			       (other->nc_ps_registration_id_len == 0 ||
+				memcmp(other->nc_ps_registration_id,
+				       args->prr_registration_id
+					       .prr_registration_id_val,
+				       other->nc_ps_registration_id_len) == 0);
+
+		if (expire_ns > now_ns && !same_id) {
+			LOG("PROXY_REGISTRATION: squat blocked -- principal "
+			    "'%s' already registered with different "
+			    "registration_id",
+			    compound->c_gss_principal);
+			nfs4_client_put(other);
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+		if (expire_ns > now_ns && same_id) {
+			/* Renewal: bump prior client's lease so the still-
+			 * connected old session does not lose its privilege
+			 * between "renewed on new session" and "old session
+			 * times out on its own". */
+			atomic_store_explicit(&other->nc_ps_lease_expire_ns,
+					      now_ns + lease_period_ns,
+					      memory_order_release);
+		}
+		/* Else expired: treat as fresh, fall through. */
+		nfs4_client_put(other);
+	}
+
+	/*
+	 * Capture identity + lease on self, then record the privilege.
+	 * Future namespace-discovery ops on any session belonging to
+	 * this client will bypass export-rule filtering -- see
+	 * .claude/design/proxy-server.md "Privilege model".  Audit
+	 * logging of the bypassed ops landed in slice 6b-ii.
+	 */
+	strncpy(self->nc_ps_principal, compound->c_gss_principal,
+		REFFS_CONFIG_MAX_PRINCIPAL - 1);
+	self->nc_ps_principal[REFFS_CONFIG_MAX_PRINCIPAL - 1] = '\0';
+	if (args->prr_registration_id.prr_registration_id_len > 0) {
+		memcpy(self->nc_ps_registration_id,
+		       args->prr_registration_id.prr_registration_id_val,
+		       args->prr_registration_id.prr_registration_id_len);
+	}
+	self->nc_ps_registration_id_len =
+		args->prr_registration_id.prr_registration_id_len;
+	atomic_store_explicit(&self->nc_ps_lease_expire_ns,
+			      reffs_now_ns() + lease_period_ns,
+			      memory_order_release);
+	/*
+	 * Publication: this release-store is the synchronisation point
+	 * for the squat-guard scanner running on another session.  All
+	 * stores above (principal / registration_id / lease) MUST be
+	 * visible to a scanner that observes nc_is_registered_ps == true
+	 * via acquire-load -- see client.c's
+	 * nfs4_client_find_other_registered_ps and security.c's
+	 * registered-PS bypass check.
+	 */
+	atomic_store_explicit(&self->nc_is_registered_ps, true,
+			      memory_order_release);
 
 	LOG("PROXY_REGISTRATION: client granted PS privilege "
 	    "(principal=%s exchgid_flags=0x%x)",

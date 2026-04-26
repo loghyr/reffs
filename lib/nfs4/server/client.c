@@ -7,6 +7,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -70,6 +71,69 @@ void nfs4_client_put(struct nfs4_client *nc)
 {
 	if (nc)
 		client_put(&nc->nc_client);
+}
+
+/*
+ * nfs4_client_find_other_registered_ps -- iterate the client hashtable
+ * for the first in-memory client (other than `self`) holding the
+ * registered-PS privilege with a matching GSS principal.
+ *
+ * Used by the slice 6b-iii squat-guard: a second PROXY_REGISTRATION
+ * from a different session (different clientid) but the same
+ * principal is either a renewal (same prr_registration_id) or a
+ * squat (different id).  The handler decides which based on the
+ * returned client's nc_ps_registration_id.
+ *
+ * Rule 6 lifecycle: takes a find ref via urcu_ref_get_unless_zero
+ * and skips dying entries.  Caller drops the ref via
+ * nfs4_client_put().  rcu_read_lock is held only across the scan.
+ *
+ * Returns ref-bumped match or NULL.  Lease expiry is NOT consulted
+ * here -- the caller distinguishes valid-lease-squat from
+ * expired-treat-as-fresh.
+ */
+struct nfs4_client *
+nfs4_client_find_other_registered_ps(struct server_state *ss,
+				     const struct nfs4_client *self,
+				     const char *principal)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct nfs4_client *match = NULL;
+
+	if (!ss || !ss->ss_client_ht || !principal || principal[0] == '\0')
+		return NULL;
+
+	rcu_read_lock();
+	cds_lfht_first(ss->ss_client_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct client *c =
+			caa_container_of(node, struct client, c_node);
+		struct nfs4_client *nc = client_to_nfs4(c);
+
+		cds_lfht_next(ss->ss_client_ht, &iter);
+
+		if (nc == self)
+			continue;
+		/*
+		 * Acquire-load pairs with the release-store in
+		 * proxy_registration.c that publishes nc_is_registered_ps:
+		 * if we observe true here, the adjacent nc_ps_principal /
+		 * nc_ps_registration_id / nc_ps_lease_expire_ns fields are
+		 * also visible.
+		 */
+		if (!atomic_load_explicit(&nc->nc_is_registered_ps,
+					  memory_order_acquire))
+			continue;
+		if (strcmp(nc->nc_ps_principal, principal) != 0)
+			continue;
+		if (!client_get(c))
+			continue; /* dying */
+		match = nc;
+		break;
+	}
+	rcu_read_unlock();
+	return match;
 }
 
 /* ------------------------------------------------------------------ */

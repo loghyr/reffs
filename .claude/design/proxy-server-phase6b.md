@@ -244,6 +244,179 @@ Tests: `test_registered_ps_bypasses_export_filter_on_lookup`,
 `test_registered_ps_does_not_bypass_root_squash` (proves the bypass
 is namespace-discovery-only), `test_registered_ps_lookup_audit_logged`.
 
+## 6b-iii: squat-guard + lease + renewal (this slice)
+
+### Goal
+
+Refuse a PROXY_REGISTRATION from a different identity-pair (principal,
+registration_id) while an existing PS registration with the same
+principal still holds a valid lease, returning `NFS4ERR_DELAY`.
+Distinguish a *renewal* (same `prr_registration_id`) from a *squat*
+(different id) and let renewal succeed without waiting for the prior
+lease to expire.
+
+### Threat model
+
+A PS opens a session, sends `PROXY_REGISTRATION`, gets the privilege.
+A second peer opens its own session, authenticates with the same GSS
+principal (compromise of the keytab, or a benign restart of the PS),
+and sends a fresh `PROXY_REGISTRATION`.  Without the squat-guard the
+second registration silently succeeds and the first PS keeps thinking
+it owns the relationship.  With the squat-guard the second
+registration fails fast with `NFS4ERR_DELAY` until the first lease
+expires (default: NFSv4 lease period, ~90s).
+
+### Renewal vs squat
+
+The data-mover draft requires that a PS pick a `prr_registration_id`
+once at startup and reuse it across reconnects.  A reconnecting PS
+sends the *same* id; an attacker (or a restarted PS that lost its
+state) sends a different id.  Same id == renewal == always allowed.
+Different id while the prior lease is valid == squat == DELAY.
+
+### Per-client state added
+
+Add to `struct nfs4_client`:
+
+```c
+/* PROXY_REGISTRATION state -- only meaningful when
+ * nc_is_registered_ps == true.  The principal is captured at
+ * registration time so the squat-guard can look up "any other
+ * registered client with the same identity".  The lease is in
+ * CLOCK_MONOTONIC ns per the dual-clock strategy in standards.md;
+ * concurrent renewal writers and scan readers require _Atomic.
+ */
+char nc_ps_principal[REFFS_CONFIG_MAX_PRINCIPAL];
+char nc_ps_registration_id[PROXY_REGISTRATION_ID_MAX];
+uint32_t nc_ps_registration_id_len;
+_Atomic uint64_t nc_ps_lease_expire_ns;
+```
+
+`REFFS_CONFIG_MAX_PRINCIPAL` already exists from slice 6b-i;
+`PROXY_REGISTRATION_ID_MAX` (= 64) is the XDR-pinned limit.
+
+### Scan helper
+
+```c
+/*
+ * nfs4_client_find_other_registered_ps -- scan for another in-memory
+ * client (not `self`) holding nc_is_registered_ps with the given
+ * GSS principal.  Returns ref-bumped match or NULL.  Caller drops
+ * the ref via nfs4_client_put().  Does NOT filter by lease expiry --
+ * the caller decides squat vs expired-treat-as-fresh.
+ */
+struct nfs4_client *
+nfs4_client_find_other_registered_ps(struct server_state *ss,
+                                     const struct nfs4_client *self,
+                                     const char *principal);
+```
+
+Implementation iterates `ss->ss_client_ht` under `rcu_read_lock`,
+takes a `urcu_ref_get_unless_zero` on each candidate, exact-matches
+`nc_ps_principal`, returns the first hit.  Rule 6 lifecycle.
+
+### Handler change
+
+After the slice 6b-i allowlist check (which sets up that the principal
+is trusted), but before setting `nc_is_registered_ps`:
+
+```c
+struct nfs4_client *self = compound->c_nfs4_client;
+struct nfs4_client *other = nfs4_client_find_other_registered_ps(
+    compound->c_server_state, self, compound->c_gss_principal);
+
+if (other) {
+    uint64_t now_ns = reffs_now_ns();
+    uint64_t expire_ns = atomic_load_explicit(
+        &other->nc_ps_lease_expire_ns, memory_order_acquire);
+    bool same_id =
+        other->nc_ps_registration_id_len == args->prr_registration_id.len &&
+        memcmp(other->nc_ps_registration_id,
+               args->prr_registration_id.val,
+               other->nc_ps_registration_id_len) == 0;
+
+    if (expire_ns > now_ns && !same_id) {
+        LOG("PROXY_REGISTRATION: squat blocked -- principal '%s' "
+            "already registered with different registration_id",
+            compound->c_gss_principal);
+        nfs4_client_put(other);
+        *status = NFS4ERR_DELAY;
+        return 0;
+    }
+    /* Same id (renewal) OR expired (treat as fresh): drop the
+     * other ref and fall through to register self normally.
+     * Renewal also refreshes the prior client's lease so the still-
+     * connected old session does not lose its privilege between
+     * "renewed on new session" and "old session expires". */
+    if (expire_ns > now_ns && same_id) {
+        atomic_store_explicit(&other->nc_ps_lease_expire_ns,
+            now_ns + lease_period_ns,
+            memory_order_release);
+    }
+    nfs4_client_put(other);
+}
+
+/* Capture identity + lease on self */
+strncpy(self->nc_ps_principal, compound->c_gss_principal,
+        REFFS_CONFIG_MAX_PRINCIPAL - 1);
+self->nc_ps_principal[REFFS_CONFIG_MAX_PRINCIPAL - 1] = '\0';
+if (args->prr_registration_id.len > 0)
+    memcpy(self->nc_ps_registration_id,
+           args->prr_registration_id.val,
+           args->prr_registration_id.len);
+self->nc_ps_registration_id_len = args->prr_registration_id.len;
+atomic_store_explicit(&self->nc_ps_lease_expire_ns,
+    reffs_now_ns() + lease_period_ns,
+    memory_order_release);
+self->nc_is_registered_ps = true;
+```
+
+`lease_period_ns` is `(uint64_t)server_lease_time(ss) * 1000000000ULL`
+-- reuse the configured NFSv4 lease (45s default).
+
+### Tests
+
+Extend `proxy_registration_test.c`:
+
+| Test | Intent |
+|------|--------|
+| `test_proxy_registration_renewal_same_id` | Two PROXY_REGISTRATION calls, same principal, same registration_id, both succeed; the first client's lease expire is bumped on the renewal |
+| `test_proxy_registration_squat_blocked` | Two calls, same principal, different registration_id, second returns NFS4ERR_DELAY |
+| `test_proxy_registration_after_expiry_succeeds` | Two calls, same principal, different ids; between them artificially expire the first client's lease; second succeeds |
+
+The first ctx's pr_free MUST be called AFTER the second registration
+runs, otherwise the first client is destroyed and the squat-guard
+finds nothing to compare against.  Use a small `pr_free_after` helper
+or just stash the first ctx and free in reverse order.
+
+### Test impact
+
+| File | Impact |
+|------|--------|
+| `lib/nfs4/tests/proxy_registration_test.c` | EXTEND -- 3 new tests, no change to existing |
+| All other tests | PASS (additive) |
+
+### Files changed (6b-iii)
+
+| File | Change |
+|------|--------|
+| `lib/nfs4/include/nfs4/client.h` | New struct fields (4: principal, registration_id, len, _Atomic expire) |
+| `lib/nfs4/include/nfs4/client.h` | Declare `nfs4_client_find_other_registered_ps()` |
+| `lib/nfs4/server/client.c` | Implement the scan helper |
+| `lib/nfs4/server/proxy_registration.c` | Squat-guard + lease assignment in handler |
+| `lib/nfs4/tests/proxy_registration_test.c` | 3 new tests |
+
+### Deferred
+
+- Renewal across an MDS restart (would require persisting registered-PS
+  state to the namespace DB).  Acceptable: an MDS restart kicks every
+  PS through fresh registration, so the lease starts over.
+- Server-driven lease expiry sweep (no need: the squat check looks at
+  expire_ns lazily, so an expired-but-still-in-table client just looks
+  unregistered to the next squat probe).
+
+---
+
 ## 6b-iii sketch
 
 Add per-client lease tracking:
