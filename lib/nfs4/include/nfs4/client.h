@@ -42,6 +42,19 @@ struct nfs4_client {
 	bool nc_reclaim_done; /* true after first RECLAIM_COMPLETE */
 	uint32_t nc_exchgid_flags; /* eia_flags from client's EXCHANGE_ID */
 	uid_t nc_principal_uid; /* AUTH_SYS uid at EXCHANGE_ID time */
+	/*
+	 * Set true after a successful PROXY_REGISTRATION on a session
+	 * owned by this client.  Grants one narrow privilege: namespace
+	 * discovery ops (LOOKUP / LOOKUPP / PUTFH / PUTROOTFH / GETFH /
+	 * SEQUENCE) bypass export-rule filtering on this client's
+	 * sessions.  Every other op continues to authorize against the
+	 * forwarded end-client credentials normally.  See
+	 * .claude/design/proxy-server.md "Privilege model".
+	 *
+	 * Read-mostly after registration (set once, cleared at client
+	 * expire); plain bool is sufficient -- no atomic needed.
+	 */
+	bool nc_is_registered_ps;
 	uint32_t nc_create_seq; /* expected csa_sequence for CREATE_SESSION */
 	void *nc_create_reply; /* cached CREATE_SESSION XDR reply */
 	uint32_t nc_create_reply_len;

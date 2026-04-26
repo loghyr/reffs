@@ -139,6 +139,8 @@ nfs4_op_cb op_table[OP_MAX] = {
 	[OP_TRUST_STATEID] = nfs4_op_trust_stateid,
 	[OP_REVOKE_STATEID] = nfs4_op_revoke_stateid,
 	[OP_BULK_REVOKE_STATEID] = nfs4_op_bulk_revoke_stateid,
+	[OP_PROXY_REGISTRATION] = nfs4_op_proxy_registration,
+	[OP_PROXY_PROGRESS] = nfs4_op_proxy_progress,
 };
 
 bool dispatch_compound(struct compound *compound)

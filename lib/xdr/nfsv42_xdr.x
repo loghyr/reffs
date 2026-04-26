@@ -1488,6 +1488,21 @@ enum nfs_opnum4 {
  OP_REVOKE_STATEID      = 91,
  OP_BULK_REVOKE_STATEID = 92,
 
+%/*
+% * Proxy-server fore-channel ops: draft-haynes-nfsv4-flexfiles-v2-data-mover.
+% * Op numbers 93-94 are TBD pending IANA assignment; same caveat as
+% * CHUNK / TRUST_STATEID above.  Assigned sequentially after the
+% * trust-stateid block on the assumption that the data-mover draft
+% * lands after the flexfiles-v2 draft on the IETF datatracker.
+% *
+% * PROXY_PROGRESS is wire-allocated here for op-numbering stability;
+% * its handler in this slice is a NFS4ERR_NOTSUPP stub (no
+% * MDS-initiated CB ops exist yet -- enabled in slice 6c when
+% * CB_PROXY_MOVE / CB_PROXY_REPAIR land).
+% */
+ OP_PROXY_REGISTRATION  = 93,
+ OP_PROXY_PROGRESS      = 94,
+
  OP_ILLEGAL             = 10044
 };
 
@@ -3621,6 +3636,62 @@ struct BULK_REVOKE_STATEID4res {
 };
 
 /*
+ * Proxy-server fore-channel ops: draft-haynes-nfsv4-flexfiles-v2-data-mover.
+ *
+ * PROXY_REGISTRATION: a proxy server registers itself with the
+ *   metadata server it intends to proxy.  After successful
+ *   registration the MDS marks the session's client record so that
+ *   namespace-discovery ops (LOOKUP / LOOKUPP / PUTFH / PUTROOTFH /
+ *   GETFH / SEQUENCE) bypass the export-rule filter on this session
+ *   only -- every other op continues to authorize against the
+ *   forwarded end-client credentials normally.
+ *
+ *   prr_registration_id is a per-PS opaque cookie that distinguishes
+ *   a renewal (matching id from the same allowlisted identity) from
+ *   a registration squat (different id from the same identity while
+ *   an existing one holds a valid lease -- MDS returns NFS4ERR_DELAY
+ *   in that case; see the data-mover draft sec-PROXY_REGISTRATION).
+ *
+ *   prr_flags is reserved per RFC 8178 Section 4.4.3 -- non-zero
+ *   bits MUST be rejected with NFS4ERR_INVAL until they are
+ *   assigned by a future draft revision.
+ *
+ *   The session carrying PROXY_REGISTRATION MUST have been created
+ *   over RPCSEC_GSS or RPC-over-TLS with mutual authentication
+ *   (per data-mover draft sec-security); AUTH_SYS is explicitly
+ *   forbidden on the MDS<->PS session.  The handler returns
+ *   NFS4ERR_PERM if the carrying session does not satisfy this.
+ *
+ * PROXY_PROGRESS: a proxy server reports interim and terminal
+ *   status of an MDS-initiated CB_PROXY_MOVE / CB_PROXY_REPAIR
+ *   operation.  Wire-allocated here for op-number stability; the
+ *   handler is a NFS4ERR_NOTSUPP stub until slice 6c lands the
+ *   CB_PROXY_* receive paths.
+ */
+const PROXY_REGISTRATION_ID_MAX = 64;
+
+struct PROXY_REGISTRATION4args {
+    uint32_t  prr_flags;            /* MUST be 0 -- RFC 8178 reserved */
+    opaque    prr_registration_id<PROXY_REGISTRATION_ID_MAX>;
+};
+struct PROXY_REGISTRATION4res {
+    nfsstat4  prrr_status;
+};
+
+struct PROXY_PROGRESS4args {
+    /*
+     * Wire layout placeholder -- the data-mover draft pins the
+     * full operation argument set in slice 7 / 8 (CB_PROXY_* land).
+     * Defined here so OP_PROXY_PROGRESS is wire-decodable; handler
+     * always returns NFS4ERR_NOTSUPP in slice 6a.
+     */
+    uint32_t  pra_flags;
+};
+struct PROXY_PROGRESS4res {
+    nfsstat4  prar_status;
+};
+
+/*
  * RFC 9766 S3.3 -- LAYOUT_WCC: client reports DS WCC data to the MDS.
  * The MDS uses this to update cached DS attributes and suppress the
  * reflected GETATTR fan-out on a subsequent GETATTR in the same compound.
@@ -3783,6 +3854,10 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
  case OP_REVOKE_STATEID: REVOKE_STATEID4args oprevoke_stateid;
  case OP_BULK_REVOKE_STATEID: BULK_REVOKE_STATEID4args opbulk_revoke_stateid;
 
+ /* Proxy-server fore-channel ops (data-mover draft) */
+ case OP_PROXY_REGISTRATION: PROXY_REGISTRATION4args opproxy_registration;
+ case OP_PROXY_PROGRESS:     PROXY_PROGRESS4args     opproxy_progress;
+
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       void;
 };
@@ -3936,6 +4011,10 @@ union nfs_resop4 switch (nfs_opnum4 resop) {
  case OP_TRUST_STATEID: TRUST_STATEID4res optrust_stateid;
  case OP_REVOKE_STATEID: REVOKE_STATEID4res oprevoke_stateid;
  case OP_BULK_REVOKE_STATEID: BULK_REVOKE_STATEID4res opbulk_revoke_stateid;
+
+ /* Proxy-server fore-channel ops (data-mover draft) */
+ case OP_PROXY_REGISTRATION: PROXY_REGISTRATION4res opproxy_registration;
+ case OP_PROXY_PROGRESS:     PROXY_PROGRESS4res     opproxy_progress;
 
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       ILLEGAL4res opillegal;
