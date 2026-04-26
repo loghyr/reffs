@@ -4336,6 +4336,72 @@ struct CB_OFFLOAD4args {
 struct CB_OFFLOAD4res {
         nfsstat4        cor_status;
 };
+
+%/*
+% * MDS-to-PS callback ops (draft-haynes-nfsv4-flexfiles-v2-data-mover).
+% * Op numbers 95-98 are TBD pending IANA assignment; same caveat as
+% * the proxy fore-channel block (OP_PROXY_REGISTRATION/PROGRESS, 93-94).
+% *
+% * Slice 6c-i wires the XDR shape only; the PS-side CB receive path
+% * arrives in slice 6c-ii.  Today these structs are unreferenced --
+% * the regenerated header is consumed by the existing CB infrastructure
+% * but no handler is wired against them yet.
+% *
+% * CB_PROXY_STATUS asks the PS to report its current operation status
+% * (idle, busy with N inflight, draining).  CB_PROXY_MOVE +
+% * CB_PROXY_REPAIR delegate whole-file move / repair work to the PS.
+% * CB_PROXY_CANCEL aborts an in-progress move or repair.
+% *
+% * cpma_/cpra_/cpca_operation_id is an opaque cookie the MDS assigns
+% * per outstanding op so a later CB_PROXY_CANCEL can address a
+% * specific in-flight operation.
+% */
+const PROXY_OPERATION_ID_MAX = 32;
+
+enum proxy_op_status4 {
+        PROXY_OP_STATUS_IDLE     = 0,
+        PROXY_OP_STATUS_BUSY     = 1,
+        PROXY_OP_STATUS_DRAINING = 2
+};
+
+struct CB_PROXY_STATUS4args {
+        uint32_t        cpsa_flags;     /* MUST be 0 (RFC 8178 reserved) */
+};
+struct CB_PROXY_STATUS4resok {
+        proxy_op_status4 cpsr_status;
+        uint32_t         cpsr_inflight; /* in-progress move/repair count */
+};
+union CB_PROXY_STATUS4res switch (nfsstat4 cpsr_status_code) {
+ case NFS4_OK:
+        CB_PROXY_STATUS4resok cpsr_resok;
+ default:
+        void;
+};
+
+struct CB_PROXY_MOVE4args {
+        uint32_t        cpma_flags;
+        opaque          cpma_operation_id<PROXY_OPERATION_ID_MAX>;
+};
+struct CB_PROXY_MOVE4res {
+        nfsstat4        cpmr_status;
+};
+
+struct CB_PROXY_REPAIR4args {
+        uint32_t        cpra_flags;
+        opaque          cpra_operation_id<PROXY_OPERATION_ID_MAX>;
+};
+struct CB_PROXY_REPAIR4res {
+        nfsstat4        cprr_status;
+};
+
+struct CB_PROXY_CANCEL4args {
+        uint32_t        cpca_flags;
+        opaque          cpca_operation_id<PROXY_OPERATION_ID_MAX>;
+};
+struct CB_PROXY_CANCEL4res {
+        nfsstat4        cpcr_status;
+};
+
 /*
  * Various definitions for CB_COMPOUND
  */
@@ -4356,6 +4422,17 @@ enum nfs_cb_opnum4 {
         OP_CB_NOTIFY_DEVICEID           = 14,
 %/* Callback operations new to NFSv4.2 */
         OP_CB_OFFLOAD                   = 15,
+
+%/*
+% * MDS-to-PS callback operations
+% * (draft-haynes-nfsv4-flexfiles-v2-data-mover).  Op numbers 95-98
+% * are TBD pending IANA assignment; same caveat as the proxy
+% * fore-channel block (OP_PROXY_REGISTRATION/PROGRESS, 93-94).
+% */
+        OP_CB_PROXY_STATUS              = 95,
+        OP_CB_PROXY_MOVE                = 96,
+        OP_CB_PROXY_REPAIR              = 97,
+        OP_CB_PROXY_CANCEL              = 98,
 
         OP_CB_ILLEGAL                   = 10044
 };
@@ -4391,6 +4468,16 @@ union nfs_cb_argop4 switch (nfs_cb_opnum4 argop) {
  /* new NFSv4.2 operations */
  case OP_CB_OFFLOAD:
       CB_OFFLOAD4args           opcboffload;
+
+ /* MDS-to-PS data-mover ops */
+ case OP_CB_PROXY_STATUS:
+      CB_PROXY_STATUS4args      opcbproxy_status;
+ case OP_CB_PROXY_MOVE:
+      CB_PROXY_MOVE4args        opcbproxy_move;
+ case OP_CB_PROXY_REPAIR:
+      CB_PROXY_REPAIR4args      opcbproxy_repair;
+ case OP_CB_PROXY_CANCEL:
+      CB_PROXY_CANCEL4args      opcbproxy_cancel;
 
  case OP_CB_ILLEGAL:            void;
 };
@@ -4436,6 +4523,19 @@ union nfs_cb_resop4 switch (nfs_cb_opnum4 resop) {
 
  /* new NFSv4.2 operations */
  case OP_CB_OFFLOAD:    CB_OFFLOAD4res  opcboffload;
+
+ /* MDS-to-PS data-mover ops */
+ case OP_CB_PROXY_STATUS:
+                        CB_PROXY_STATUS4res
+                                        opcbproxy_status;
+ case OP_CB_PROXY_MOVE: CB_PROXY_MOVE4res
+                                        opcbproxy_move;
+ case OP_CB_PROXY_REPAIR:
+                        CB_PROXY_REPAIR4res
+                                        opcbproxy_repair;
+ case OP_CB_PROXY_CANCEL:
+                        CB_PROXY_CANCEL4res
+                                        opcbproxy_cancel;
 
  /* Not new operation */
  case OP_CB_ILLEGAL:    CB_ILLEGAL4res  opcbillegal;
