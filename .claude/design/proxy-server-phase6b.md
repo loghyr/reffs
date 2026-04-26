@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+
 # Proxy Server Phase 6b: Allowlist + Bypass + Squat-Guard + mTLS
 
 ## Context

@@ -29,8 +29,40 @@
 #include "reffs/rpc.h"
 #include "reffs/server.h"
 #include "reffs/settings.h"
+#include "nfs4/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
+
+/*
+ * Returns true if `op` is a namespace-discovery op that bypasses
+ * export-rule filtering for a registered Proxy Server (slice 6b-ii).
+ *
+ * Discovery ops let a registered PS walk the MDS namespace to
+ * resolve client-driven LOOKUP / GETFH paths into FHs the PS can
+ * cache and re-present on its :4098 listener.  Data-access ops
+ * (OPEN, READ, WRITE, etc.) are NOT in this set: they apply normal
+ * authorization against the forwarded client credentials.
+ *
+ * GETFH and SEQUENCE are listed in the design (proxy-server.md
+ * "Privilege model") but do not call nfs4_check_wrongsec(), so they
+ * are not enumerated here.  RESTOREFH is included because it is a
+ * put-FH op that can land on a flavor-restricted export, same as
+ * PUTFH.
+ */
+static bool op_is_namespace_discovery(uint32_t opnum)
+{
+	switch (opnum) {
+	case OP_PUTFH:
+	case OP_PUTPUBFH:
+	case OP_PUTROOTFH:
+	case OP_RESTOREFH:
+	case OP_LOOKUP:
+	case OP_LOOKUPP:
+		return true;
+	default:
+		return false;
+	}
+}
 
 /*
  * Kerberos 5 OID: 1.2.840.113554.1.2.2 (DER encoding).
@@ -177,6 +209,36 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 			  io_conn_is_tls_enabled(compound->c_rt->rt_fd);
 	const enum reffs_auth_flavor *flavors;
 	unsigned int nflavors;
+	uint32_t curr_opnum =
+		compound->c_args->argarray.argarray_val[compound->c_curr_op]
+			.argop;
+
+	/*
+	 * Slice 6b-ii: registered Proxy Server bypass.  A client whose
+	 * PROXY_REGISTRATION succeeded (slice 6b-i) gets nc_is_registered_ps
+	 * set; on namespace-discovery ops only, we skip both the
+	 * client-rule peer match and the flavor check, granting the PS
+	 * the narrow privilege it needs to walk the MDS namespace.
+	 *
+	 * Data-access ops (OPEN, READ, etc.) still hit the normal path.
+	 * The forwarded-credentials story for those ops is unchanged --
+	 * see proxy-server.md "Privilege model".
+	 *
+	 * Audit at TRACE: every bypassed compound emits one line so an
+	 * operator with the trace category enabled can review the
+	 * namespace-shape disclosure after the fact.  LOG would flood
+	 * (a healthy PS triggers this on every traversal).
+	 */
+	if (compound->c_nfs4_client &&
+	    compound->c_nfs4_client->nc_is_registered_ps &&
+	    op_is_namespace_discovery(curr_opnum)) {
+		TRACE("PS-bypass: op=%u client_flavor=%u tls=%d sb_id=%lu",
+		      curr_opnum, client_flavor, client_tls,
+		      compound->c_curr_sb ?
+			      (unsigned long)compound->c_curr_sb->sb_id :
+			      0UL);
+		return NFS4_OK;
+	}
 
 	/*
 	 * Per-export client rule path: match this connection's peer

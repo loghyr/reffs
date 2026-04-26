@@ -36,9 +36,12 @@
 #include "reffs/dirent.h"
 #include "reffs/fs.h"
 #include "reffs/filehandle.h"
+#include "nfs4/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4_test_harness.h"
+
+#include <netinet/in.h>
 
 /* ------------------------------------------------------------------ */
 /* Test fixture state                                                  */
@@ -100,7 +103,20 @@ struct wrongsec_ctx {
 	struct rpc_trans rt;
 	struct task task;
 	struct compound *compound;
+	struct nfs4_client *nc; /* non-NULL when registered_ps was set */
 };
+
+/*
+ * Unique clientid per make_ctx_registered_ps call -- nfs4_client_alloc
+ * fails if the slot is already taken (RCU defers the actual delete),
+ * same gotcha pr_next_clientid() works around in proxy_registration_test.
+ */
+static clientid4 wrongsec_next_clientid(void)
+{
+	static clientid4 next = 0xCACE0100;
+
+	return next++;
+}
 
 /*
  * Allocate a compound with nops slots.  The caller fills in each
@@ -151,6 +167,33 @@ static struct wrongsec_ctx *make_ctx(unsigned int nops, uint32_t flavor,
 	return ctx;
 }
 
+/*
+ * Same as make_ctx() but additionally attach a registered-PS client
+ * (slice 6b-i grants nc_is_registered_ps via PROXY_REGISTRATION; here
+ * we set the flag directly to test the slice 6b-ii bypass in
+ * isolation).
+ */
+static struct wrongsec_ctx *
+make_ctx_registered_ps(unsigned int nops, uint32_t flavor, uint32_t gss_svc)
+{
+	struct wrongsec_ctx *ctx = make_ctx(nops, flavor, gss_svc);
+
+	verifier4 v;
+	struct sockaddr_in sin;
+
+	memset(&v, 0x42, sizeof(v));
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_addr.s_addr = htonl(0x7f000003);
+	sin.sin_port = htons(2049);
+
+	ctx->nc = nfs4_client_alloc(&v, &sin, 1, wrongsec_next_clientid(), 0);
+	ck_assert_ptr_nonnull(ctx->nc);
+	ctx->nc->nc_is_registered_ps = true;
+	ctx->compound->c_nfs4_client = nfs4_client_get(ctx->nc);
+	return ctx;
+}
+
 static void free_ctx(struct wrongsec_ctx *ctx)
 {
 	if (!ctx)
@@ -165,6 +208,8 @@ static void free_ctx(struct wrongsec_ctx *ctx)
 		super_block_put(c->c_saved_sb);
 		stateid_put(c->c_curr_stid);
 		stateid_put(c->c_saved_stid);
+		if (c->c_nfs4_client)
+			nfs4_client_put(c->c_nfs4_client);
 		if (c->c_args) {
 			/* Free per-op allocations in argarray. */
 			for (u_int i = 0; i < c->c_args->argarray.argarray_len;
@@ -241,6 +286,8 @@ static void free_ctx(struct wrongsec_ctx *ctx)
 		}
 		free(c);
 	}
+	if (ctx->nc)
+		nfs4_client_put(ctx->nc);
 	free(ctx);
 }
 
@@ -767,6 +814,125 @@ START_TEST(test_two_putfh_getattr_no_wrongsec)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* PS bypass tests (slice 6b-ii)                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Baseline: PUTROOTFH + LOOKUP("secure") with AUTH_SYS without the
+ * registered-PS flag fails WRONGSEC on the LOOKUP (mirrors
+ * test_putrootfh_lookup_wrongsec_on_lookup at line 351 -- pinned
+ * here as the no-bypass control to be visibly different from the
+ * registered-PS variants below).
+ */
+START_TEST(test_unregistered_no_bypass_on_lookup)
+{
+	struct wrongsec_ctx *ctx = make_ctx(2, AUTH_SYS, 0);
+
+	set_op_putrootfh(ctx, 0);
+	set_op_lookup(ctx, 1, "secure");
+
+	dispatch_compound(ctx->compound);
+
+	ck_assert_int_eq(op_status(ctx, 0), NFS4_OK);
+	ck_assert_int_eq(op_status(ctx, 1), NFS4ERR_WRONGSEC);
+
+	free_ctx(ctx);
+}
+END_TEST
+
+/*
+ * Slice 6b-ii: a registered PS bypasses the per-export flavor check
+ * on namespace-discovery ops.  Same compound as the baseline above
+ * but with nc_is_registered_ps = true on the calling client -- LOOKUP
+ * into /secure (AUTH_SYS-blocked) now succeeds, demonstrating the
+ * narrow privilege the PS earns via PROXY_REGISTRATION.
+ */
+START_TEST(test_registered_ps_bypasses_wrongsec_on_lookup)
+{
+	struct wrongsec_ctx *ctx = make_ctx_registered_ps(2, AUTH_SYS, 0);
+
+	set_op_putrootfh(ctx, 0);
+	set_op_lookup(ctx, 1, "secure");
+
+	dispatch_compound(ctx->compound);
+
+	ck_assert_int_eq(op_status(ctx, 0), NFS4_OK);
+	ck_assert_int_eq(op_status(ctx, 1), NFS4_OK);
+
+	free_ctx(ctx);
+}
+END_TEST
+
+/*
+ * Bypass also covers PUTFH directly into a restricted export.
+ * Without the bypass this fails WRONGSEC on PUTFH (mirrors
+ * test_putfh_getattr_wrongsec at line 492 -- AUTH_SYS into KRB5-only
+ * /secure rejects).  With the bypass, PUTFH succeeds and GETATTR
+ * follows.  GETATTR does not call nfs4_check_wrongsec itself, so the
+ * attr read proceeds -- this is the design intent: a PS doing a
+ * directory-walk equivalent ("ls -l") needs FH + attrs in one
+ * compound.  Data-access ops (OPEN / READ / WRITE) remain blocked --
+ * see test_registered_ps_does_not_bypass_open below.
+ */
+START_TEST(test_registered_ps_bypasses_wrongsec_on_putfh)
+{
+	struct wrongsec_ctx *ctx = make_ctx_registered_ps(2, AUTH_SYS, 0);
+
+	set_op_putfh(ctx, 0, child_sb_id, INODE_ROOT_ID);
+	set_op_getattr(ctx, 1);
+
+	dispatch_compound(ctx->compound);
+
+	ck_assert_int_eq(op_status(ctx, 0), NFS4_OK);
+	ck_assert_int_eq(op_status(ctx, 1), NFS4_OK);
+
+	free_ctx(ctx);
+}
+END_TEST
+
+/*
+ * Counter-test: the bypass is namespace-discovery only.  OPEN is a
+ * data-access op and MUST NOT bypass the flavor check, even for a
+ * registered PS.  This is the load-bearing test for the design
+ * promise that "every other op applies normal authorization using
+ * the RPC credentials on the compound".
+ */
+START_TEST(test_registered_ps_does_not_bypass_open)
+{
+	struct wrongsec_ctx *ctx = make_ctx_registered_ps(2, AUTH_SYS, 0);
+
+	set_op_putfh(ctx, 0, child_sb_id, INODE_ROOT_ID);
+	/*
+	 * Use OP_OPEN as the discriminator op -- nfs4_op_open()
+	 * calls nfs4_check_wrongsec() (file.c:290) and OP_OPEN is
+	 * NOT in the namespace-discovery set.
+	 *
+	 * Initialize the OPEN arg union to a benign CLAIM_NULL stub so
+	 * the test survives a future handler that pre-reads any OPEN
+	 * field before the wrongsec check; today nfs4_op_open() bails on
+	 * wrongsec first, but the test's contract is "OPEN rejects, full
+	 * stop" and shouldn't depend on handler internals.
+	 */
+	nfs_argop4 *open_arg = &ctx->compound->c_args->argarray.argarray_val[1];
+
+	open_arg->argop = OP_OPEN;
+	open_arg->nfs_argop4_u.opopen.claim.claim = CLAIM_NULL;
+
+	dispatch_compound(ctx->compound);
+
+	/*
+	 * PUTFH bypasses (discovery op).  OPEN does not.  The OPEN
+	 * fails WRONGSEC because /secure requires KRB5 and the
+	 * compound carries AUTH_SYS.
+	 */
+	ck_assert_int_eq(op_status(ctx, 0), NFS4_OK);
+	ck_assert_int_eq(op_status(ctx, 1), NFS4ERR_WRONGSEC);
+
+	free_ctx(ctx);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -800,6 +966,14 @@ static Suite *wrongsec_suite(void)
 	tcase_add_test(tc, test_putfh_savefh_getattr_wrongsec);
 	tcase_add_test(tc, test_two_putfh_lookup_no_wrongsec_on_first);
 	tcase_add_test(tc, test_two_putfh_getattr_no_wrongsec);
+	suite_add_tcase(s, tc);
+
+	tc = tcase_create("ps_bypass");
+	tcase_add_checked_fixture(tc, wrongsec_setup, wrongsec_teardown);
+	tcase_add_test(tc, test_unregistered_no_bypass_on_lookup);
+	tcase_add_test(tc, test_registered_ps_bypasses_wrongsec_on_lookup);
+	tcase_add_test(tc, test_registered_ps_bypasses_wrongsec_on_putfh);
+	tcase_add_test(tc, test_registered_ps_does_not_bypass_open);
 	suite_add_tcase(s, tc);
 
 	return s;
