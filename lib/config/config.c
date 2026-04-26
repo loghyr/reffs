@@ -115,6 +115,14 @@ void reffs_config_defaults(struct reffs_config *cfg)
 	cfg->n_minor_versions = 2;
 	cfg->grace_period = 45;
 	cfg->tls = false;
+	/*
+	 * Register with rpcbind by default to preserve NFSv3 MOUNT
+	 * auto-discovery for upgraded deployments.  Soak/CI scripts
+	 * (Bucket A in .claude/design/no-rpcbind.md) opt OUT to false
+	 * to avoid the ~22 startup round-trips that have caused
+	 * readiness-race flakes.
+	 */
+	cfg->register_with_rpcbind = true;
 	ncpus = sysconf(_SC_NPROCESSORS_ONLN);
 	cfg->workers = (ncpus > 0 && ncpus <= 64) ? (unsigned int)ncpus : 8;
 	cfg->max_session_slots = 64;
@@ -198,6 +206,10 @@ static void parse_server(struct reffs_config *cfg, toml_table_t *srv)
 	d = toml_bool_in(srv, "tls");
 	if (d.ok)
 		cfg->tls = (bool)d.u.b;
+
+	d = toml_bool_in(srv, "register_with_rpcbind");
+	if (d.ok)
+		cfg->register_with_rpcbind = (bool)d.u.b;
 
 	d = toml_string_in(srv, "tls_cert");
 	if (d.ok) {

@@ -199,11 +199,10 @@ cd "$PROJECT_ROOT"
 # ----------------------------------------------------------------------
 # rpcbind
 # ----------------------------------------------------------------------
-if ! pgrep -x rpcbind >/dev/null; then
-	info "Starting rpcbind..."
-	sudo rpcbind 2>/dev/null || die "rpcbind failed to start"
-	sleep 1
-fi
+# NFSv4-only soak: rpcbind is not required (the MDS and PS TOML
+# configs both set register_with_rpcbind = false, and NFSv4 uses
+# well-known port 2049 directly per RFC 8881 S1.5).  Removed the
+# historical rpcbind start step -- see .claude/design/no-rpcbind.md.
 
 # ----------------------------------------------------------------------
 # Fresh dirs + configs
@@ -214,13 +213,15 @@ sudo mkdir -p "$MOUNT_BASE"
 
 cat >"$MDS_CONFIG" <<EOF
 [server]
-port           = $MDS_PORT
-probe_port     = $MDS_PROBE_PORT
-bind           = "*"
-role           = "standalone"
-minor_versions = [1, 2]
-grace_period   = 5
-workers        = 4
+port                  = $MDS_PORT
+probe_port            = $MDS_PROBE_PORT
+bind                  = "*"
+role                  = "standalone"
+minor_versions        = [1, 2]
+grace_period          = 5
+workers               = 4
+# NFSv4-only soak; opt out of rpcbind (no-rpcbind.md).
+register_with_rpcbind = false
 
 [backend]
 type       = "posix"
@@ -237,13 +238,15 @@ EOF
 
 cat >"$PS_CONFIG" <<EOF
 [server]
-port           = $PS_NATIVE_PORT
-probe_port     = $PS_PROBE_PORT
-bind           = "*"
-role           = "standalone"
-minor_versions = [1, 2]
-grace_period   = 5
-workers        = 4
+port                  = $PS_NATIVE_PORT
+probe_port            = $PS_PROBE_PORT
+bind                  = "*"
+role                  = "standalone"
+minor_versions        = [1, 2]
+grace_period          = 5
+workers               = 4
+# NFSv4-only soak; opt out of rpcbind (no-rpcbind.md).
+register_with_rpcbind = false
 
 [backend]
 type       = "posix"

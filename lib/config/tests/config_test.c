@@ -266,6 +266,58 @@ START_TEST(test_load_server_tls)
 }
 END_TEST
 
+/*
+ * [server] register_with_rpcbind defaults to true.  This pins the
+ * upgrade-safe default for NFSv3 MOUNT auto-discovery; an admin who
+ * upgrades reffsd into an existing rpcbind environment without
+ * reading the changelog must continue to see MOUNT discovery work.
+ * See .claude/design/no-rpcbind.md.
+ */
+START_TEST(test_defaults_register_with_rpcbind_true)
+{
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+	ck_assert(cfg.register_with_rpcbind);
+}
+END_TEST
+
+START_TEST(test_load_server_register_with_rpcbind_true)
+{
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[server]\nregister_with_rpcbind = true\n");
+
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(cfg.register_with_rpcbind);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_server_register_with_rpcbind_false)
+{
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[server]\nregister_with_rpcbind = false\n");
+
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(!cfg.register_with_rpcbind);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
 START_TEST(test_load_server_log_level_debug)
 {
 	struct reffs_config cfg;
@@ -727,6 +779,7 @@ Suite *config_suite(void)
 	tcase_add_test(tc_defaults, test_defaults_log_level_info);
 	tcase_add_test(tc_defaults, test_defaults_one_export);
 	tcase_add_test(tc_defaults, test_defaults_iouring_sizes);
+	tcase_add_test(tc_defaults, test_defaults_register_with_rpcbind_true);
 	suite_add_tcase(s, tc_defaults);
 
 	TCase *tc_load = tcase_create("load");
@@ -736,6 +789,8 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_server_role_mds);
 	tcase_add_test(tc_load, test_load_server_role_ds_erasure);
 	tcase_add_test(tc_load, test_load_server_tls);
+	tcase_add_test(tc_load, test_load_server_register_with_rpcbind_true);
+	tcase_add_test(tc_load, test_load_server_register_with_rpcbind_false);
 	tcase_add_test(tc_load, test_load_server_log_level_debug);
 	tcase_add_test(tc_load, test_load_server_minor_versions);
 	tcase_add_test(tc_load, test_load_backend_posix);

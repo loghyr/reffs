@@ -148,13 +148,17 @@ NFS_PORT=12049
 
 cat >"$CONFIG" <<EOF
 [server]
-port           = $NFS_PORT
-bind           = "*"
-role           = "standalone"
-minor_versions = [1, 2]
-grace_period   = 5
-workers        = 4
-trace_file     = "$TRACE"
+port                  = $NFS_PORT
+bind                  = "*"
+role                  = "standalone"
+minor_versions        = [1, 2]
+grace_period          = 5
+workers               = 4
+trace_file            = "$TRACE"
+# NFSv4-only soak; opt out of rpcbind to skip the ~22 startup
+# round-trips that have caused readiness-race flakes (see
+# .claude/design/no-rpcbind.md).
+register_with_rpcbind = false
 
 [backend]
 type       = "$BACKEND_TYPE"
@@ -415,10 +419,10 @@ workload_fileops() {
 
 info "=== Local soak: ${DURATION_MIN}m, restart every ${RESTART_MIN}m, ${CLIENTS} clients, backend=${BACKEND_TYPE} ==="
 
-if ! rpcinfo -p 127.0.0.1 >/dev/null 2>&1; then
-    sudo rpcbind || die "rpcbind failed"
-    sleep 1
-fi
+# NFSv4-only soak: rpcbind is not required (the TOML config sets
+# register_with_rpcbind = false, and NFSv4 uses well-known port
+# 2049 directly per RFC 8881 S1.5).  Removed the historical
+# rpcbind start step -- see .claude/design/no-rpcbind.md.
 
 sudo mkdir -p "$MOUNT"
 sudo chmod 777 "$MOUNT"

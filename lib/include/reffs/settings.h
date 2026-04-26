@@ -164,6 +164,16 @@ struct reffs_config {
 	bool tls;
 	char tls_cert[REFFS_CONFIG_MAX_PATH];
 	char tls_key[REFFS_CONFIG_MAX_PATH];
+	/*
+	 * Register reffsd's NFS programs (NFSv4, NFSv3, MOUNT, NLM,
+	 * NSM) with the local rpcbind/portmap daemon at startup.
+	 * Required for NFSv3 clients that auto-discover MOUNT/NLM
+	 * ports via rpcbind.  Set to false for NFSv4-only deployments
+	 * and for soak/CI runs where the ~22 rpcbind round-trips at
+	 * startup cause readiness-race flakes.  Default true preserves
+	 * upgrade compatibility -- see .claude/design/no-rpcbind.md.
+	 */
+	bool register_with_rpcbind;
 	unsigned int workers;
 	unsigned int max_session_slots;
 	char log_file[REFFS_CONFIG_MAX_PATH]; /* "" = stderr */

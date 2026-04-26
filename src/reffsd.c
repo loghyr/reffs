@@ -100,8 +100,13 @@ static void ps_discovery_sb_alloc_cb(const struct ps_export *ex, void *ctx_)
  * These are weak symbols consulted before main() and before the ASAN_OPTIONS /
  * UBSAN_OPTIONS environment variables, so they act as a built-in default.
  *
- * detect_leaks=0  -- pmap_set() (TIRPC) and pthread stacks produce
- *                   process-lifetime LSan false positives we cannot fix.
+ * detect_leaks=0  -- pthread stacks produce process-lifetime LSan
+ *                   false positives we cannot fix.  When [server]
+ *                   register_with_rpcbind = true (the default),
+ *                   pmap_set() (TIRPC) is an additional source --
+ *                   see .claude/design/no-rpcbind.md for the slice
+ *                   that lets soak/CI runs opt out via
+ *                   register_with_rpcbind = false.
  * halt_on_error=0 -- continue after the first error so the full run is visible
  *                   in the log rather than stopping at the first finding.
  */
@@ -972,92 +977,106 @@ int main(int argc, char *argv[])
 		      pmc->id, pmc->port);
 	}
 
-	/* aggressive cleanup of old registrations */
-	for (int v = 1; v <= 4; v++) {
-		pmap_unset(NLM_PROG, v);
-	}
-	pmap_unset(SM_PROG, SM_VERS);
-	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
-	pmap_unset(NFS3_PROGRAM, NFS_V3);
-	pmap_unset(NFS4_PROGRAM, NFS_V4);
+	/*
+	 * Skip rpcbind registration entirely when [server]
+	 * register_with_rpcbind = false.  See
+	 * .claude/design/no-rpcbind.md: NFSv4 uses well-known port 2049
+	 * (RFC 8881 S1.5) and does not need rpcbind; only NFSv3 MOUNT
+	 * auto-discovery clients do.  The ~22 round-trips here can
+	 * cause readiness-race flakes when rpcbind is slow or
+	 * contended.
+	 */
+	if (cfg.register_with_rpcbind) {
+		/* aggressive cleanup of old registrations */
+		for (int v = 1; v <= 4; v++) {
+			pmap_unset(NLM_PROG, v);
+		}
+		pmap_unset(SM_PROG, SM_VERS);
+		pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
+		pmap_unset(NFS3_PROGRAM, NFS_V3);
+		pmap_unset(NFS4_PROGRAM, NFS_V4);
 
-	/* NFSv4 */
-	if (pmap_set(NFS4_PROGRAM, NFS_V4, IPPROTO_TCP, port)) {
-		TRACE("Registered NFSv4 TCP on port %d", port);
-	} else {
-		LOG("Failed to register NFSv4 TCP");
-	}
+		/* NFSv4 */
+		if (pmap_set(NFS4_PROGRAM, NFS_V4, IPPROTO_TCP, port)) {
+			TRACE("Registered NFSv4 TCP on port %d", port);
+		} else {
+			LOG("Failed to register NFSv4 TCP");
+		}
 
-	/* NFSv3 */
-	if (pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
-		TRACE("Registered NFSv3 TCP on port %d", port);
-	} else {
-		LOG("Failed to register NFSv3 TCP");
-	}
-	if (pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_UDP, port)) {
-		TRACE("Registered NFSv3 UDP on port %d", port);
-	} else {
-		LOG("Failed to register NFSv3 UDP");
-	}
+		/* NFSv3 */
+		if (pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_TCP, port)) {
+			TRACE("Registered NFSv3 TCP on port %d", port);
+		} else {
+			LOG("Failed to register NFSv3 TCP");
+		}
+		if (pmap_set(NFS3_PROGRAM, NFS_V3, IPPROTO_UDP, port)) {
+			TRACE("Registered NFSv3 UDP on port %d", port);
+		} else {
+			LOG("Failed to register NFSv3 UDP");
+		}
 
-	/* MOUNTv3 */
-	if (pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, port)) {
-		TRACE("Registered MOUNTv3 TCP on port %d", port);
-	} else {
-		LOG("Failed to register MOUNTv3 TCP");
-	}
-	if (pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_UDP, port)) {
-		TRACE("Registered MOUNTv3 UDP on port %d", port);
-	} else {
-		LOG("Failed to register MOUNTv3 UDP");
-	}
+		/* MOUNTv3 */
+		if (pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_TCP, port)) {
+			TRACE("Registered MOUNTv3 TCP on port %d", port);
+		} else {
+			LOG("Failed to register MOUNTv3 TCP");
+		}
+		if (pmap_set(MOUNT_PROGRAM, MOUNT_V3, IPPROTO_UDP, port)) {
+			TRACE("Registered MOUNTv3 UDP on port %d", port);
+		} else {
+			LOG("Failed to register MOUNTv3 UDP");
+		}
 
-	/* NLMv4 */
-	if (pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_TCP, port)) {
-		TRACE("Registered NLMv4 TCP on port %d", port);
-	} else {
-		LOG("Failed to register NLMv4 TCP");
-	}
-	if (pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_UDP, port)) {
-		TRACE("Registered NLMv4 UDP on port %d", port);
-	} else {
-		LOG("Failed to register NLMv4 UDP");
-	}
+		/* NLMv4 */
+		if (pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_TCP, port)) {
+			TRACE("Registered NLMv4 TCP on port %d", port);
+		} else {
+			LOG("Failed to register NLMv4 TCP");
+		}
+		if (pmap_set(NLM_PROG, NLM4_VERS, IPPROTO_UDP, port)) {
+			TRACE("Registered NLMv4 UDP on port %d", port);
+		} else {
+			LOG("Failed to register NLMv4 UDP");
+		}
 
-	/* NLMv3 */
-	if (pmap_set(NLM_PROG, NLM_VERSX, IPPROTO_TCP, port)) {
-		TRACE("Registered NLMv3 TCP on port %d", port);
-	} else {
-		LOG("Failed to register NLMv3 TCP");
-	}
-	if (pmap_set(NLM_PROG, NLM_VERSX, IPPROTO_UDP, port)) {
-		TRACE("Registered NLMv3 UDP on port %d", port);
-	} else {
-		LOG("Failed to register NLMv3 UDP");
-	}
+		/* NLMv3 */
+		if (pmap_set(NLM_PROG, NLM_VERSX, IPPROTO_TCP, port)) {
+			TRACE("Registered NLMv3 TCP on port %d", port);
+		} else {
+			LOG("Failed to register NLMv3 TCP");
+		}
+		if (pmap_set(NLM_PROG, NLM_VERSX, IPPROTO_UDP, port)) {
+			TRACE("Registered NLMv3 UDP on port %d", port);
+		} else {
+			LOG("Failed to register NLMv3 UDP");
+		}
 
-	/* NLMv1 */
-	if (pmap_set(NLM_PROG, NLM_VERS, IPPROTO_TCP, port)) {
-		TRACE("Registered NLMv1 TCP on port %d", port);
-	} else {
-		LOG("Failed to register NLMv1 TCP");
-	}
-	if (pmap_set(NLM_PROG, NLM_VERS, IPPROTO_UDP, port)) {
-		TRACE("Registered NLMv1 UDP on port %d", port);
-	} else {
-		LOG("Failed to register NLMv1 UDP");
-	}
+		/* NLMv1 */
+		if (pmap_set(NLM_PROG, NLM_VERS, IPPROTO_TCP, port)) {
+			TRACE("Registered NLMv1 TCP on port %d", port);
+		} else {
+			LOG("Failed to register NLMv1 TCP");
+		}
+		if (pmap_set(NLM_PROG, NLM_VERS, IPPROTO_UDP, port)) {
+			TRACE("Registered NLMv1 UDP on port %d", port);
+		} else {
+			LOG("Failed to register NLMv1 UDP");
+		}
 
-	/* NSM */
-	if (pmap_set(SM_PROG, SM_VERS, IPPROTO_TCP, port)) {
-		TRACE("Registered NSM TCP on port %d", port);
+		/* NSM */
+		if (pmap_set(SM_PROG, SM_VERS, IPPROTO_TCP, port)) {
+			TRACE("Registered NSM TCP on port %d", port);
+		} else {
+			LOG("Failed to register NSM TCP");
+		}
+		if (pmap_set(SM_PROG, SM_VERS, IPPROTO_UDP, port)) {
+			TRACE("Registered NSM UDP on port %d", port);
+		} else {
+			LOG("Failed to register NSM UDP");
+		}
 	} else {
-		LOG("Failed to register NSM TCP");
-	}
-	if (pmap_set(SM_PROG, SM_VERS, IPPROTO_UDP, port)) {
-		TRACE("Registered NSM UDP on port %d", port);
-	} else {
-		LOG("Failed to register NSM UDP");
+		TRACE("rpcbind registration disabled "
+		      "(register_with_rpcbind = false)");
 	}
 
 	// Spawn backend file-I/O ring thread
@@ -1133,13 +1152,15 @@ out:
 		backend_thread_started = false;
 	}
 
-	pmap_unset(NLM_PROG, NLM4_VERS);
-	pmap_unset(NLM_PROG, NLM_VERSX);
-	pmap_unset(NLM_PROG, NLM_VERS);
-	pmap_unset(SM_PROG, SM_VERS);
-	pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
-	pmap_unset(NFS3_PROGRAM, NFS_V3);
-	pmap_unset(NFS4_PROGRAM, NFS_V4);
+	if (cfg.register_with_rpcbind) {
+		pmap_unset(NLM_PROG, NLM4_VERS);
+		pmap_unset(NLM_PROG, NLM_VERSX);
+		pmap_unset(NLM_PROG, NLM_VERS);
+		pmap_unset(SM_PROG, SM_VERS);
+		pmap_unset(MOUNT_PROGRAM, MOUNT_V3);
+		pmap_unset(NFS3_PROGRAM, NFS_V3);
+		pmap_unset(NFS4_PROGRAM, NFS_V4);
+	}
 
 	if (rc_backend_inited)
 		io_backend_fini(rc_backend);
