@@ -476,6 +476,26 @@ struct DSTORE_UNDRAIN1args {
 	unsigned int		dua_id;
 };
 
+/*
+ * DSTORE_INSTANCE_COUNT (op 36) -- read the cached count of (sb, inum)
+ * entries indexed against this dstore (mirror-lifecycle Slice B'').
+ * Admin's fast "is the drain complete?" query (DSTORE_LIST is the
+ * dashboard form).  Returns the count via the resok branch when the
+ * dstore exists; PROBE1ERR_NOENT in the error branch otherwise.
+ */
+struct DSTORE_INSTANCE_COUNT1args {
+	unsigned int		dica_id;
+};
+struct DSTORE_INSTANCE_COUNT1resok {
+	unsigned hyper		dicr_count;
+};
+union DSTORE_INSTANCE_COUNT1res switch (probe_stat1 dicr_status) {
+	case PROBE1_OK:
+		DSTORE_INSTANCE_COUNT1resok dicr_resok;
+	default:
+		void;
+};
+
 /* SB_LINT_FLAVORS (op 20) */
 struct SB_LINT_FLAVORS1resok {
 	unsigned int	lfr_warnings;
@@ -662,5 +682,10 @@ program PROBE_PROGRAM {
 		DSTORE_LIST1res PROBEPROC1_DSTORE_LIST(void) = 33;
 		probe_stat1 PROBEPROC1_DSTORE_DRAIN(DSTORE_DRAIN1args) = 34;
 		probe_stat1 PROBEPROC1_DSTORE_UNDRAIN(DSTORE_UNDRAIN1args) = 35;
+
+		/* Slice B'': dstore reverse-index instance counter */
+		DSTORE_INSTANCE_COUNT1res
+		PROBEPROC1_DSTORE_INSTANCE_COUNT(DSTORE_INSTANCE_COUNT1args)
+			= 36;
 	} = 1;
 } = 211768;

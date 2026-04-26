@@ -772,6 +772,14 @@ def dstore_undrain_cmd(client, args):
     print(f"Dstore {args.id} undrained (placements re-enabled)")
 
 
+def dstore_instance_count_cmd(client, args):
+    res = client.dstore_instance_count(args.id)
+    if res.dicr_status:
+        probe_error_handler(res.dicr_status)
+        return
+    print(res.dicr_resok.dicr_count)
+
+
 def sb_set_client_rules_cmd(client, args):
     """Parse --rule strings and call sb_set_client_rules.
 
@@ -1129,6 +1137,13 @@ def parse_args():
     p_dstore_undrain.add_argument('--id', type=int, required=True,
                                   help='Dstore ID')
     p_dstore_undrain.set_defaults(func=dstore_undrain_cmd)
+
+    p_dstore_instance_count = subparsers.add_parser(
+        'dstore-instance-count',
+        help='Count of (sb, inum) entries indexed against this dstore')
+    p_dstore_instance_count.add_argument('--id', type=int, required=True,
+                                         help='Dstore ID')
+    p_dstore_instance_count.set_defaults(func=dstore_instance_count_cmd)
 
     p_sb_client_rules = subparsers.add_parser(
         'sb-set-client-rules',

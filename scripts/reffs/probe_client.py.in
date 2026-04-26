@@ -278,6 +278,16 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_DSTORE_UNDRAIN, args,
                          response_type='probe_stat1')
 
+    def dstore_instance_count(self, dstore_id):
+        """Read the cached count of (sb, inum) entries indexed against
+        this dstore (mirror-lifecycle Slice B'').  Admin's fast
+        'is the drain complete?' query.  Returns
+        DSTORE_INSTANCE_COUNT1res; success branch carries dicr_count.
+        """
+        args = DSTORE_INSTANCE_COUNT1args(dstore_id)
+        return self.proc(PROBEPROC1_DSTORE_INSTANCE_COUNT, args,
+                         response_type='DSTORE_INSTANCE_COUNT1res')
+
     def sb_set_client_rules(self, sb_id, rules):
         """Set per-client export policy rules on a superblock.
 

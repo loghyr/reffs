@@ -107,6 +107,19 @@ struct dstore {
 	 */
 	_Atomic bool ds_drained;
 
+	/*
+	 * Cached count of (sb, inum) entries indexed against this dstore
+	 * across all SBs (mirror-lifecycle Slice B'').  The persistent
+	 * reverse index is the source of truth; this is a hot-path cache
+	 * for DSTORE_INSTANCE_COUNT and (in slice G) DSTORE_DESTROY
+	 * admission control.  Bumped/decremented in the same code path
+	 * that adds/removes index entries.  Memory order is relaxed --
+	 * no synchronization-with semantics required since the index is
+	 * authoritative.  Rebuilt at server startup by walking SBs and
+	 * summing dstore_index_count() per (sb, this dstore).
+	 */
+	_Atomic uint64_t ds_instance_count;
+
 	/* Layout error stats reported by clients for this dstore. */
 	struct reffs_layout_error_stats ds_layout_errors;
 };

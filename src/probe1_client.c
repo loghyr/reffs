@@ -346,6 +346,8 @@ int main(int argc, char *argv[])
 		rt = probe1_client_op_dstore_drain(cli_dstore_id);
 	} else if (!strcmp(op, "dstore-undrain")) {
 		rt = probe1_client_op_dstore_undrain(cli_dstore_id);
+	} else if (!strcmp(op, "dstore-instance-count")) {
+		rt = probe1_client_op_dstore_instance_count(cli_dstore_id);
 	} else {
 		LOG("op = \"%s\" is not supported", op);
 	}

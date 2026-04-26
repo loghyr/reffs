@@ -105,6 +105,10 @@ struct reffs_storage_ops *reffs_backend_compose(enum reffs_md_type md,
 	co->co_ops.recover = md_ops->recover;
 	co->co_ops.chunk_persist = md_ops->chunk_persist;
 	co->co_ops.chunk_load = md_ops->chunk_load;
+	co->co_ops.dstore_index_add = md_ops->dstore_index_add;
+	co->co_ops.dstore_index_remove = md_ops->dstore_index_remove;
+	co->co_ops.dstore_index_iter = md_ops->dstore_index_iter;
+	co->co_ops.dstore_index_count = md_ops->dstore_index_count;
 
 	/* Copy data function pointers from the data template */
 	switch (data) {

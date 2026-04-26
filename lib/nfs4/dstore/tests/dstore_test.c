@@ -28,6 +28,7 @@
  *        - drain does not affect is_connected
  */
 
+#include <errno.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +37,7 @@
 
 #include "reffs/dstore.h"
 #include "reffs/dstore_ops.h"
+#include "reffs/super_block.h"
 #include "nfs4_test_harness.h"
 
 #define FAKE_DS_ADDR "192.0.2.1"
@@ -391,6 +393,184 @@ START_TEST(test_drain_does_not_affect_is_connected)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Reverse-index mechanics (mirror-lifecycle Slice B'')                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The dstore reverse index lives on a struct super_block, accessed
+ * via sb->sb_ops->dstore_index_*.  The test harness's root SB is
+ * RAM-backed, so the RAM impl is exercised here.  Slice C/D/E will
+ * exercise it via real layout-mutation paths; this test set covers
+ * the underlying primitives.
+ */
+
+struct count_arg {
+	uint32_t ds_id;
+	unsigned hits;
+	uint64_t inums[16];
+	int stop_after;
+};
+
+static int count_cb(uint32_t ds_id, uint64_t inum, void *arg)
+{
+	struct count_arg *ca = arg;
+
+	ck_assert_uint_eq(ds_id, ca->ds_id);
+	if (ca->hits < (sizeof(ca->inums) / sizeof(ca->inums[0])))
+		ca->inums[ca->hits] = inum;
+	ca->hits++;
+	if (ca->stop_after > 0 && (int)ca->hits >= ca->stop_after)
+		return 1; /* signal iter to stop */
+	return 0;
+}
+
+START_TEST(test_dstore_index_add_count_remove)
+{
+	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+	uint64_t n = 0;
+
+	ck_assert_ptr_nonnull(sb);
+	/* Function-pointer non-NULL check; ck_assert_ptr_nonnull casts to
+	 * `const void *` which is pedantic-flagged for fn ptrs. */
+	ck_assert(sb->sb_ops->dstore_index_add != NULL);
+	ck_assert(sb->sb_ops->dstore_index_remove != NULL);
+	ck_assert(sb->sb_ops->dstore_index_count != NULL);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_count(sb, 100, &n), 0);
+	ck_assert_uint_eq(n, 0);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 100, 11), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 100, 22), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 100, 33), 0);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_count(sb, 100, &n), 0);
+	ck_assert_uint_eq(n, 3);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 100, 22), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_count(sb, 100, &n), 0);
+	ck_assert_uint_eq(n, 2);
+
+	/* Cleanup -- leave the index empty for the next test. */
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 100, 11), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 100, 33), 0);
+	super_block_put(sb);
+}
+END_TEST
+
+START_TEST(test_dstore_index_add_duplicate_eexist)
+{
+	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 200, 50), 0);
+	/* Same (ds_id, inum) again -- idempotent contract: -EEXIST. */
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 200, 50), -EEXIST);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 200, 50), 0);
+	super_block_put(sb);
+}
+END_TEST
+
+START_TEST(test_dstore_index_remove_missing_enoent)
+{
+	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 300, 99), -ENOENT);
+	super_block_put(sb);
+}
+END_TEST
+
+START_TEST(test_dstore_index_isolation_by_dsid)
+{
+	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+	uint64_t n = 0;
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 400, 1), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 400, 2), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 401, 3), 0);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_count(sb, 400, &n), 0);
+	ck_assert_uint_eq(n, 2);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_count(sb, 401, &n), 0);
+	ck_assert_uint_eq(n, 1);
+
+	/* Same inum on a different ds_id is a different entry. */
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 401, 1), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_count(sb, 400, &n), 0);
+	ck_assert_uint_eq(n, 2);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_count(sb, 401, &n), 0);
+	ck_assert_uint_eq(n, 2);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 400, 1), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 400, 2), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 401, 3), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 401, 1), 0);
+	super_block_put(sb);
+}
+END_TEST
+
+START_TEST(test_dstore_index_iter_callback_filters_by_dsid)
+{
+	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+	struct count_arg ca = { .ds_id = 500 };
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 500, 11), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 500, 22), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 501, 33), 0);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_iter(sb, 500, count_cb, &ca),
+			 0);
+	ck_assert_uint_eq(ca.hits, 2);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 500, 11), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 500, 22), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 501, 33), 0);
+	super_block_put(sb);
+}
+END_TEST
+
+START_TEST(test_dstore_index_iter_callback_break)
+{
+	struct super_block *sb = super_block_find(SUPER_BLOCK_ROOT_ID);
+	struct count_arg ca = { .ds_id = 600, .stop_after = 2 };
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 600, 1), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 600, 2), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 600, 3), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_add(sb, 600, 4), 0);
+
+	/* Callback returns 1 after seeing 2 entries; iter must stop. */
+	int r = sb->sb_ops->dstore_index_iter(sb, 600, count_cb, &ca);
+
+	ck_assert_int_eq(r, 1);
+	ck_assert_uint_eq(ca.hits, 2);
+
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 600, 1), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 600, 2), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 600, 3), 0);
+	ck_assert_int_eq(sb->sb_ops->dstore_index_remove(sb, 600, 4), 0);
+	super_block_put(sb);
+}
+END_TEST
+
+START_TEST(test_dstore_instance_count_field_present)
+{
+	struct dstore *ds = dstore_alloc(700, "127.0.0.1", FAKE_DS_PATH,
+					 REFFS_DS_PROTO_NFSV3, false);
+
+	ck_assert_ptr_nonnull(ds);
+	/*
+	 * Cache starts at 0 -- slice B''-stage1 only adds the field;
+	 * stage 2 wires the rebuild.  This test pins the initial value
+	 * so a future cache-rebuild change can't silently break the
+	 * "fresh dstore is empty" invariant.
+	 */
+	ck_assert_uint_eq(atomic_load_explicit(&ds->ds_instance_count,
+					       memory_order_relaxed),
+			  0);
+	dstore_put(ds);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -427,6 +607,18 @@ Suite *dstore_suite(void)
 	tcase_add_test(tc_drain, test_drain_idempotent);
 	tcase_add_test(tc_drain, test_drain_does_not_affect_is_connected);
 	suite_add_tcase(s, tc_drain);
+
+	TCase *tc_idx = tcase_create("dstore_index");
+
+	tcase_add_checked_fixture(tc_idx, setup, teardown);
+	tcase_add_test(tc_idx, test_dstore_index_add_count_remove);
+	tcase_add_test(tc_idx, test_dstore_index_add_duplicate_eexist);
+	tcase_add_test(tc_idx, test_dstore_index_remove_missing_enoent);
+	tcase_add_test(tc_idx, test_dstore_index_isolation_by_dsid);
+	tcase_add_test(tc_idx, test_dstore_index_iter_callback_filters_by_dsid);
+	tcase_add_test(tc_idx, test_dstore_index_iter_callback_break);
+	tcase_add_test(tc_idx, test_dstore_instance_count_field_present);
+	suite_add_tcase(s, tc_idx);
 
 	return s;
 }

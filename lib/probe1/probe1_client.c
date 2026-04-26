@@ -835,6 +835,50 @@ struct rpc_trans *probe1_client_op_dstore_undrain(uint32_t dstore_id)
 	return rt;
 }
 
+static int dstore_instance_count_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	DSTORE_INSTANCE_COUNT1res *res = ph->ph_res;
+
+	if (res->dicr_status) {
+		LOG("dstore-instance-count error = %d", res->dicr_status);
+	} else {
+		printf("%" PRIu64 "\n",
+		       (uint64_t)res->DSTORE_INSTANCE_COUNT1res_u.dicr_resok
+			       .dicr_count);
+	}
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_dstore_instance_count(uint32_t dstore_id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_DSTORE_INSTANCE_COUNT;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	DSTORE_INSTANCE_COUNT1args *args = ph->ph_args;
+
+	args->dica_id = dstore_id;
+	rt->rt_cb = dstore_instance_count_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
 struct rpc_trans *probe1_client_op_sb_set_flavors(uint64_t id,
 						  uint32_t *flavors,
 						  uint32_t nflavors)

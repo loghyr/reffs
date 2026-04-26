@@ -1448,6 +1448,34 @@ static int probe1_op_dstore_undrain(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * DSTORE_INSTANCE_COUNT (op 36, mirror-lifecycle Slice B'') -- read
+ * the cached count of (sb, inum) entries indexed against this dstore.
+ * O(1) -- consults the ds_instance_count atomic on the dstore.  The
+ * authoritative source is the per-SB reverse index; the cache is
+ * rebuilt at server startup by walking SBs and summing counts.
+ */
+static int probe1_op_dstore_instance_count(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	DSTORE_INSTANCE_COUNT1args *args = ph->ph_args;
+	DSTORE_INSTANCE_COUNT1res *res = ph->ph_res;
+
+	struct dstore *ds = dstore_find(args->dica_id);
+
+	if (!ds) {
+		res->dicr_status = PROBE1ERR_NOENT;
+		return res->dicr_status;
+	}
+
+	res->dicr_status = PROBE1_OK;
+	res->DSTORE_INSTANCE_COUNT1res_u.dicr_resok.dicr_count =
+		atomic_load_explicit(&ds->ds_instance_count,
+				     memory_order_relaxed);
+	dstore_put(ds);
+	return 0;
+}
+
 static int probe1_op_sb_set_flavors(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -1891,6 +1919,11 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 	RPC_OPERATION_INIT(PROBEPROC1, DSTORE_UNDRAIN, xdr_DSTORE_UNDRAIN1args,
 			   DSTORE_UNDRAIN1args, xdr_probe_stat1, probe_stat1,
 			   probe1_op_dstore_undrain),
+	RPC_OPERATION_INIT(
+		PROBEPROC1, DSTORE_INSTANCE_COUNT,
+		xdr_DSTORE_INSTANCE_COUNT1args, DSTORE_INSTANCE_COUNT1args,
+		xdr_DSTORE_INSTANCE_COUNT1res, DSTORE_INSTANCE_COUNT1res,
+		probe1_op_dstore_instance_count),
 };
 
 static struct rpc_program_handler *probe1_handler;
