@@ -141,6 +141,21 @@ struct server_state {
 
 	/* Aggregate layout error stats (from LAYOUTERROR reports). */
 	struct reffs_layout_error_stats ss_layout_errors;
+
+	/*
+	 * MDS-side allowlist of Proxy Server identities permitted to
+	 * send PROXY_REGISTRATION (slice 6b-i).  Snapshot of
+	 * cfg.allowed_ps[] copied in server_state_set_allowed_ps()
+	 * after server_state_init() returns.  Empty list means
+	 * default-deny: zero PROXY_REGISTRATIONs accepted.
+	 *
+	 * Restart-only -- changing the allowlist requires a server
+	 * restart, which also kills any in-flight session that an
+	 * attacker might be holding.
+	 */
+	char ss_allowed_ps[REFFS_CONFIG_MAX_ALLOWED_PS]
+			  [REFFS_CONFIG_MAX_PRINCIPAL];
+	unsigned int ss_nallowed_ps;
 };
 
 /* ------------------------------------------------------------------ */

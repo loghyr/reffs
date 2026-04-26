@@ -169,6 +169,27 @@ static PROXY_REGISTRATION4res *pr_res(struct pr_ctx *cm)
 			.nfs_resop4_u.opproxy_registration;
 }
 
+/*
+ * Seed the singleton server_state's [[allowed_ps]] mirror with one
+ * principal.  Slice 6b-i flips the default to deny-all, so any test
+ * that wants the handler to ACCEPT a GSS principal must call this
+ * first.  Calling with NULL clears the list.
+ */
+static void pr_allowlist_set(const char *principal)
+{
+	struct server_state *ss = server_state_find();
+
+	ck_assert_ptr_nonnull(ss);
+	ss->ss_nallowed_ps = 0;
+	if (principal) {
+		strncpy(ss->ss_allowed_ps[0], principal,
+			REFFS_CONFIG_MAX_PRINCIPAL - 1);
+		ss->ss_allowed_ps[0][REFFS_CONFIG_MAX_PRINCIPAL - 1] = '\0';
+		ss->ss_nallowed_ps = 1;
+	}
+	server_state_put(ss);
+}
+
 static void setup(void)
 {
 	nfs4_test_setup();
@@ -176,6 +197,18 @@ static void setup(void)
 
 static void teardown(void)
 {
+	/*
+	 * Reset allowlist before tearing down so a test's allowlist
+	 * does not bleed into the next test (the singleton server_state
+	 * is recreated by nfs4_test_teardown but explicit reset is
+	 * cheap insurance).
+	 */
+	struct server_state *ss = server_state_find();
+
+	if (ss) {
+		ss->ss_nallowed_ps = 0;
+		server_state_put(ss);
+	}
 	nfs4_test_teardown();
 }
 
@@ -184,11 +217,16 @@ static void teardown(void)
 /* ------------------------------------------------------------------ */
 
 /*
- * Happy path: USE_NON_PNFS session + GSS principal + zero prr_flags
- * -> NFS4_OK and the client is marked registered.
+ * Happy path: USE_NON_PNFS session + GSS principal on the allowlist
+ * + zero prr_flags -> NFS4_OK and the client is marked registered.
+ *
+ * Slice 6b-i: pr_allowlist_set() is required because the default is
+ * deny-all.  Slice 6a's version of this test did not need it.
  */
 START_TEST(test_proxy_registration_success)
 {
+	pr_allowlist_set("host/ps.example.com@REALM");
+
 	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
 				     "host/ps.example.com@REALM");
 
@@ -279,6 +317,108 @@ START_TEST(test_proxy_registration_rejects_auth_sys_session)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Allowlist checks (slice 6b-i)                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * GSS-authenticated session whose principal is NOT on the allowlist
+ * is rejected with NFS4ERR_PERM.  The allowlist is the operator-
+ * curated list of identities permitted to act as a Proxy Server;
+ * anyone else gets the same answer as AUTH_SYS.
+ */
+START_TEST(test_proxy_registration_reject_not_allowlisted)
+{
+	pr_allowlist_set("host/ps.example.com@REALM");
+
+	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+				     "host/intruder.example.com@REALM");
+
+	pr_args(cm)->prr_flags = 0;
+	pr_args(cm)->prr_registration_id.prr_registration_id_len = 0;
+
+	nfs4_op_proxy_registration(cm->compound);
+
+	ck_assert_int_eq(pr_res(cm)->prrr_status, NFS4ERR_PERM);
+	ck_assert(!cm->compound->c_nfs4_client->nc_is_registered_ps);
+	pr_free(cm);
+}
+END_TEST
+
+/*
+ * Default deny: an empty allowlist rejects every PROXY_REGISTRATION,
+ * even one with a syntactically valid GSS principal.  This is the
+ * secure default an admin gets if [[allowed_ps]] is omitted from the
+ * config.
+ */
+START_TEST(test_proxy_registration_reject_empty_allowlist)
+{
+	pr_allowlist_set(NULL); /* zero entries */
+
+	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+				     "host/ps.example.com@REALM");
+
+	pr_args(cm)->prr_flags = 0;
+	pr_args(cm)->prr_registration_id.prr_registration_id_len = 0;
+
+	nfs4_op_proxy_registration(cm->compound);
+
+	ck_assert_int_eq(pr_res(cm)->prrr_status, NFS4ERR_PERM);
+	ck_assert(!cm->compound->c_nfs4_client->nc_is_registered_ps);
+	pr_free(cm);
+}
+END_TEST
+
+/*
+ * Exact-string match -- realm differences MUST cause a reject.
+ * Allowlist entry is "host/ps.example.com@REALM"; an attacker cannot
+ * substitute "host/ps.example.com@OTHER" and slip through.  Pinned
+ * here because Kerberos display names look interchangeable to a
+ * casual reader and a future "case-insensitive realm" change would
+ * silently widen the trust boundary.
+ */
+START_TEST(test_proxy_registration_principal_exact_match)
+{
+	pr_allowlist_set("host/ps.example.com@REALM");
+
+	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+				     "host/ps.example.com@OTHER");
+
+	pr_args(cm)->prr_flags = 0;
+	pr_args(cm)->prr_registration_id.prr_registration_id_len = 0;
+
+	nfs4_op_proxy_registration(cm->compound);
+
+	ck_assert_int_eq(pr_res(cm)->prrr_status, NFS4ERR_PERM);
+	ck_assert(!cm->compound->c_nfs4_client->nc_is_registered_ps);
+	pr_free(cm);
+}
+END_TEST
+
+/*
+ * Allowlisted GSS principal accepted.  Mirror of the success test
+ * but pinned as a separate case so a regression in the allowlist
+ * code path is visibly distinct from a regression in the slice-6a
+ * baseline.
+ */
+START_TEST(test_proxy_registration_accept_allowlisted)
+{
+	pr_allowlist_set("host/ps.example.com@REALM");
+
+	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+				     "host/ps.example.com@REALM");
+
+	pr_args(cm)->prr_flags = 0;
+	pr_args(cm)->prr_registration_id.prr_registration_id_len = 0;
+
+	nfs4_op_proxy_registration(cm->compound);
+
+	ck_assert_int_eq(pr_res(cm)->prrr_status, NFS4_OK);
+	ck_assert(cm->compound->c_nfs4_client->nc_is_registered_ps);
+	pr_free(cm);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* PROXY_PROGRESS (slice 6a stub)                                      */
 /* ------------------------------------------------------------------ */
 
@@ -321,6 +461,10 @@ static Suite *proxy_registration_suite(void)
 	tcase_add_test(tc,
 		       test_proxy_registration_rejects_without_use_non_pnfs);
 	tcase_add_test(tc, test_proxy_registration_rejects_auth_sys_session);
+	tcase_add_test(tc, test_proxy_registration_reject_not_allowlisted);
+	tcase_add_test(tc, test_proxy_registration_reject_empty_allowlist);
+	tcase_add_test(tc, test_proxy_registration_principal_exact_match);
+	tcase_add_test(tc, test_proxy_registration_accept_allowlisted);
 	tcase_add_test(tc, test_proxy_progress_returns_notsupp);
 	suite_add_tcase(s, tc);
 

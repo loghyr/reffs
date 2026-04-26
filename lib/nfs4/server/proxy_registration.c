@@ -6,14 +6,17 @@
 /*
  * PROXY_REGISTRATION + PROXY_PROGRESS op handlers.
  *
- * Slice 6a (mirror of design phase 6 in
- * .claude/design/proxy-server.md):
+ * Slice 6a + 6b-i (mirror of design phase 6 in
+ * .claude/design/proxy-server.md and slice plan in
+ * .claude/design/proxy-server-phase6b.md):
  *
  *   - PROXY_REGISTRATION wires the bare flag-bit and
  *     session-context validation, sets nc_is_registered_ps on the
- *     calling client.  ALLOWLIST IDENTITY CHECK + SQUAT-GUARD +
- *     TLS-vs-AUTH_SYS distinction land in slice 6b along with
- *     audit logging.
+ *     calling client (6a), and rejects any GSS principal absent
+ *     from the [[allowed_ps]] allowlist (6b-i).  SQUAT-GUARD +
+ *     RENEWAL + TLS-vs-AUTH_SYS distinction land in slices
+ *     6b-iii / 6b-iv along with the bypass-wiring + audit logs
+ *     (6b-ii) that consume nc_is_registered_ps.
  *
  *   - PROXY_PROGRESS is wire-allocated (op number 94) but its
  *     handler is a NFS4ERR_NOTSUPP stub.  No MDS-initiated CB
@@ -26,14 +29,36 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 #include "nfsv42_xdr.h"
 #include "nfsv42_names.h"
 #include "reffs/log.h"
+#include "reffs/server.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/client.h"
+
+/*
+ * Returns true if `principal` exactly matches any entry in the
+ * server-state allowlist.  Empty allowlist -> always false (deny).
+ * Realm fuzz / DNS canonicalization / glob are intentionally
+ * NOT supported -- an entry binds to one Kerberos identity, full
+ * stop.  See proxy-server-phase6b.md "Security model".
+ */
+static bool ps_principal_allowed(const struct server_state *ss,
+				 const char *principal)
+{
+	if (!principal || principal[0] == '\0')
+		return false;
+	for (unsigned int i = 0; i < ss->ss_nallowed_ps; i++) {
+		if (strcmp(ss->ss_allowed_ps[i], principal) == 0)
+			return true;
+	}
+	return false;
+}
 
 uint32_t nfs4_op_proxy_registration(struct compound *compound)
 {
@@ -99,12 +124,35 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	}
 
 	/*
+	 * Slice 6b-i: identity check.  The GSS principal must be on
+	 * the operator-curated [[allowed_ps]] allowlist.  Default-deny:
+	 * an absent or empty list rejects every PROXY_REGISTRATION,
+	 * which is the correct posture for a security-sensitive
+	 * privilege grant.  LOG (not TRACE) every reject -- a rejected
+	 * registration is operator-actionable (misconfig or attack).
+	 *
+	 * Use compound->c_server_state (grabbed once per compound by
+	 * dispatch_compound) rather than server_state_find() -- avoids
+	 * the GRACE_STARTED -> IN_GRACE side-effect transition and a
+	 * redundant ref bump.  c_server_state is provably non-NULL
+	 * here because dispatch returned NFS4ERR_DELAY before this
+	 * handler can run if the lookup failed.
+	 */
+	if (!ps_principal_allowed(compound->c_server_state,
+				  compound->c_gss_principal)) {
+		LOG("PROXY_REGISTRATION: principal '%s' not on allowlist",
+		    compound->c_gss_principal);
+		*status = NFS4ERR_PERM;
+		return 0;
+	}
+
+	/*
 	 * Record the privilege on the client.  Future namespace-
 	 * discovery ops (LOOKUP / LOOKUPP / PUTFH / PUTROOTFH / GETFH /
 	 * SEQUENCE) on any session belonging to this client will
 	 * bypass export-rule filtering -- see
 	 * .claude/design/proxy-server.md "Privilege model".  Audit
-	 * logging of the bypassed ops lands in slice 6b.
+	 * logging of the bypassed ops lands in slice 6b-ii.
 	 */
 	compound->c_nfs4_client->nc_is_registered_ps = true;
 

@@ -641,6 +641,28 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 		}
 	}
 
+	arr = toml_array_in(root, "allowed_ps");
+	if (arr) {
+		int naps = toml_array_nelem(arr);
+
+		if (naps > REFFS_CONFIG_MAX_ALLOWED_PS)
+			naps = REFFS_CONFIG_MAX_ALLOWED_PS;
+		cfg->nallowed_ps = (unsigned int)naps;
+		for (int i = 0; i < naps; i++) {
+			toml_table_t *aps_tbl = toml_table_at(arr, i);
+			struct reffs_allowed_ps_config *aps =
+				&cfg->allowed_ps[i];
+			toml_datum_t d;
+
+			d = toml_string_in(aps_tbl, "principal");
+			if (d.ok) {
+				strncpy(aps->principal, d.u.s,
+					sizeof(aps->principal) - 1);
+				free(d.u.s);
+			}
+		}
+	}
+
 	toml_free(root);
 	return 0;
 }

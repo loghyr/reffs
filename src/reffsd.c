@@ -453,6 +453,18 @@ int main(int argc, char *argv[])
 		ss->ss_nflavors = 1;
 	}
 
+	/*
+	 * Snapshot [[allowed_ps]] -- restart-only allowlist for
+	 * PROXY_REGISTRATION (slice 6b-i).  Default-deny if absent.
+	 */
+	for (unsigned int i = 0;
+	     i < cfg.nallowed_ps && i < REFFS_CONFIG_MAX_ALLOWED_PS; i++) {
+		strncpy(ss->ss_allowed_ps[i], cfg.allowed_ps[i].principal,
+			REFFS_CONFIG_MAX_PRINCIPAL - 1);
+		ss->ss_allowed_ps[i][REFFS_CONFIG_MAX_PRINCIPAL - 1] = '\0';
+	}
+	ss->ss_nallowed_ps = cfg.nallowed_ps;
+
 	rc = ring_context_alloc();
 	rc_backend = ring_context_alloc();
 	if (!rc || !rc_backend) {

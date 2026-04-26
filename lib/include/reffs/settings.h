@@ -23,6 +23,8 @@
 #define REFFS_CONFIG_MAX_DSTORES 16
 #define REFFS_CONFIG_MAX_HOST 256
 #define REFFS_CONFIG_MAX_PROXY_MDS 8
+#define REFFS_CONFIG_MAX_ALLOWED_PS 8
+#define REFFS_CONFIG_MAX_PRINCIPAL 256
 #define REFFS_FENCE_UID_MIN_DEFAULT 1024
 #define REFFS_FENCE_UID_MAX_DEFAULT 2048
 #define REFFS_LAYOUT_WIDTH_DEFAULT 6 /* RS(4,2): 4 data + 2 parity */
@@ -152,6 +154,17 @@ struct reffs_proxy_mds_config {
 	uint16_t mds_probe; /* upstream MDS probe port, default 20490 */
 };
 
+/*
+ * MDS-only.  Each [[allowed_ps]] block names a single Proxy Server
+ * identity permitted to send PROXY_REGISTRATION (slice 6b-i: only the
+ * RPCSEC_GSS principal field is consumed; mTLS cert fingerprints
+ * arrive in slice 6b-iv).  The default deny model means an empty list
+ * rejects every registration -- see proxy-server-phase6b.md.
+ */
+struct reffs_allowed_ps_config {
+	char principal[REFFS_CONFIG_MAX_PRINCIPAL];
+};
+
 struct reffs_config {
 	/* [server] */
 	uint16_t port;
@@ -223,6 +236,10 @@ struct reffs_config {
 	/* [[proxy_mds]] -- additional listeners for proxy-server namespaces */
 	struct reffs_proxy_mds_config proxy_mds[REFFS_CONFIG_MAX_PROXY_MDS];
 	unsigned int nproxy_mds;
+
+	/* [[allowed_ps]] -- MDS-side allowlist for PROXY_REGISTRATION */
+	struct reffs_allowed_ps_config allowed_ps[REFFS_CONFIG_MAX_ALLOWED_PS];
+	unsigned int nallowed_ps;
 };
 
 /*

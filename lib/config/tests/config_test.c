@@ -716,6 +716,74 @@ START_TEST(test_load_proxy_mds_upstream_absent)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* load -- [[allowed_ps]] entries (slice 6b-i)                          */
+/* ------------------------------------------------------------------ */
+
+START_TEST(test_load_allowed_ps_single)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[allowed_ps]]\n"
+				"principal = \"host/ps.example.com@REALM\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nallowed_ps, 1);
+	ck_assert_str_eq(cfg.allowed_ps[0].principal,
+			 "host/ps.example.com@REALM");
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_allowed_ps_multiple)
+{
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[allowed_ps]]\n"
+				"principal = \"host/ps1.example.com@REALM\"\n"
+				"\n"
+				"[[allowed_ps]]\n"
+				"principal = \"host/ps2.example.com@REALM\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nallowed_ps, 2);
+	ck_assert_str_eq(cfg.allowed_ps[0].principal,
+			 "host/ps1.example.com@REALM");
+	ck_assert_str_eq(cfg.allowed_ps[1].principal,
+			 "host/ps2.example.com@REALM");
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_allowed_ps_none)
+{
+	/*
+	 * Default-deny: a config without any [[allowed_ps]] block
+	 * yields nallowed_ps=0; the runtime check rejects every
+	 * registration.
+	 */
+	struct reffs_config cfg;
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[server]\nrole = \"mds\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nallowed_ps, 0);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* load -- bad file path                                                */
 /* ------------------------------------------------------------------ */
 
@@ -806,6 +874,9 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_proxy_mds_upstream_defaults);
 	tcase_add_test(tc_load, test_load_proxy_mds_upstream_explicit);
 	tcase_add_test(tc_load, test_load_proxy_mds_upstream_absent);
+	tcase_add_test(tc_load, test_load_allowed_ps_single);
+	tcase_add_test(tc_load, test_load_allowed_ps_multiple);
+	tcase_add_test(tc_load, test_load_allowed_ps_none);
 	tcase_add_test(tc_load, test_load_missing_file);
 	suite_add_tcase(s, tc_load);
 
