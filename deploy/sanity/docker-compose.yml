@@ -195,6 +195,7 @@ services:
     profiles:
       - ps-demo
       - ps-demo-kmount
+      - ps-demo-codecs
 
   ps-a:
     image: reffs-dev
@@ -227,6 +228,7 @@ services:
     profiles:
       - ps-demo
       - ps-demo-kmount
+      - ps-demo-codecs
 
   ps-b:
     image: reffs-dev
@@ -259,6 +261,7 @@ services:
     profiles:
       - ps-demo
       - ps-demo-kmount
+      - ps-demo-codecs
 
   ps-demo:
     container_name: reffs-sanity-ps-client
@@ -281,6 +284,34 @@ services:
       "
     profiles:
       - ps-demo
+
+  ps-demo-codecs:
+    container_name: reffs-sanity-ps-codec-client
+    image: reffs-dev
+    privileged: true
+    depends_on:
+      ps-a:
+        condition: service_healthy
+      ps-b:
+        condition: service_healthy
+    networks:
+      - sanity
+    volumes:
+      - sanity-build-vol:/shared:ro
+      - ../../:/reffs:ro,z
+    # Cross-PS multi-codec test via ec_demo (no kernel mount).  PS
+    # forwards LAYOUTGET / GETDEVICEINFO / LAYOUTRETURN to MDS; ec_demo
+    # dials upstream DSes directly.  Configure root SB before the test
+    # runs so it has codec-friendly layout-types/dstores/stripe.
+    command: >
+      /bin/bash -c "
+        /shared/build/scripts/reffs-probe.py --host reffs-mds sb-set-layout-types --id 1 --layout-types ffv1 ffv2 ;
+        /shared/build/scripts/reffs-probe.py --host reffs-mds sb-set-dstores --id 1 --dstores 1 2 3 4 5 6 ;
+        /shared/build/scripts/reffs-probe.py --host reffs-mds sb-set-stripe-unit --id 1 --stripe-unit 4096 ;
+        /reffs/deploy/sanity/run-ps-demo-codecs.sh /shared/build/tools/ec_demo reffs-ps-a reffs-ps-b
+      "
+    profiles:
+      - ps-demo-codecs
 
   ps-demo-kmount:
     container_name: reffs-sanity-ps-kclient

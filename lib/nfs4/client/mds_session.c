@@ -14,9 +14,12 @@
  */
 
 #include <errno.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <rpc/rpc.h>
@@ -456,6 +459,76 @@ void mds_session_set_owner(struct mds_session *ms, const char *id)
 			 (unsigned)getpid());
 }
 
+/*
+ * Open an NFSv4 client handle to `host`.  If `host` contains a colon
+ * (e.g. "reffs-ps-a:2049"), the part after the colon is parsed as a
+ * TCP port number and the connection is made directly to that port
+ * via clnttcp_create -- bypassing portmap.  This is required for PS
+ * deployments where the proxy listener and the native listener live
+ * on different ports and the standard NFS port (2049) hosts the
+ * proxy listener that does not register with rpcbind.  Without a
+ * colon the host is passed straight to clnt_create which uses
+ * portmap as before.
+ *
+ * Returns a CLIENT * on success or NULL on failure.  Caller frees
+ * via clnt_destroy.
+ */
+static CLIENT *mds_session_clnt_open(const char *host)
+{
+	const char *colon;
+
+	if (!host)
+		return NULL;
+	colon = strrchr(host, ':');
+	if (!colon)
+		return clnt_create(host, NFS4_PROGRAM, NFS_V4, "tcp");
+
+	char host_buf[256];
+	size_t host_len = (size_t)(colon - host);
+
+	if (host_len == 0 || host_len >= sizeof(host_buf))
+		return NULL;
+	memcpy(host_buf, host, host_len);
+	host_buf[host_len] = '\0';
+
+	int port = atoi(colon + 1);
+
+	if (port <= 0 || port > 65535)
+		return NULL;
+
+	struct addrinfo hints = {
+		.ai_family = AF_INET,
+		.ai_socktype = SOCK_STREAM,
+	};
+	struct addrinfo *res = NULL;
+
+	if (getaddrinfo(host_buf, NULL, &hints, &res) != 0 || !res)
+		return NULL;
+
+	struct sockaddr_in sin = *(struct sockaddr_in *)res->ai_addr;
+
+	freeaddrinfo(res);
+	sin.sin_port = htons((uint16_t)port);
+
+	int fd = socket(AF_INET, SOCK_STREAM, 0);
+
+	if (fd < 0)
+		return NULL;
+	if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
+		close(fd);
+		return NULL;
+	}
+
+	CLIENT *clnt = clnttcp_create(&sin, NFS4_PROGRAM, NFS_V4, &fd, 0, 0);
+
+	if (!clnt) {
+		close(fd);
+		return NULL;
+	}
+	/* clnttcp_create takes ownership of fd via the xprt; freed by clnt_destroy. */
+	return clnt;
+}
+
 int mds_session_create(struct mds_session *ms, const char *host)
 {
 	int ret;
@@ -476,7 +549,7 @@ int mds_session_create(struct mds_session *ms, const char *host)
 	if (pthread_mutex_init(&ms->ms_call_mutex, NULL) != 0)
 		return -ENOMEM;
 
-	ms->ms_clnt = clnt_create(host, NFS4_PROGRAM, NFS_V4, "tcp");
+	ms->ms_clnt = mds_session_clnt_open(host);
 	if (!ms->ms_clnt) {
 		pthread_mutex_destroy(&ms->ms_call_mutex);
 		return -ECONNREFUSED;
@@ -539,7 +612,7 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 	if (pthread_mutex_init(&ms->ms_call_mutex, NULL) != 0)
 		return -ENOMEM;
 
-	ms->ms_clnt = clnt_create(host, NFS4_PROGRAM, NFS_V4, "tcp");
+	ms->ms_clnt = mds_session_clnt_open(host);
 	if (!ms->ms_clnt) {
 		pthread_mutex_destroy(&ms->ms_call_mutex);
 		return -ECONNREFUSED;

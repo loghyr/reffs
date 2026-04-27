@@ -2213,24 +2213,127 @@ int ps_proxy_forward_layoutget(
 	const struct authunix_parms *creds,
 	struct ps_proxy_layoutget_reply *reply)
 {
-	(void)ms;
-	(void)upstream_fh;
-	(void)upstream_fh_len;
-	(void)signal_layout_avail;
-	(void)layout_type;
-	(void)iomode;
-	(void)offset;
-	(void)length;
-	(void)minlength;
-	(void)stateid_seqid;
-	(void)stateid_other;
-	(void)maxcount;
-	(void)creds;
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
 
-	if (!reply)
+	if (!ms || !upstream_fh || upstream_fh_len == 0 || !stateid_other ||
+	    !reply)
 		return -EINVAL;
+	if (upstream_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
 	memset(reply, 0, sizeof(*reply));
-	return -ENOSYS; /* foundation stub: real impl pending */
+
+	ret = mds_compound_init(&mc, 3, "ps-proxy-layoutget");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)upstream_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = upstream_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_LAYOUTGET);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	LAYOUTGET4args *la = &slot->nfs_argop4_u.oplayoutget;
+
+	la->loga_signal_layout_avail = signal_layout_avail;
+	la->loga_layout_type = (layouttype4)layout_type;
+	la->loga_iomode = (layoutiomode4)iomode;
+	la->loga_offset = offset;
+	la->loga_length = length;
+	la->loga_minlength = minlength;
+	la->loga_stateid.seqid = stateid_seqid;
+	memcpy(la->loga_stateid.other, stateid_other, NFS4_OTHER_SIZE);
+	la->loga_maxcount = maxcount;
+
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	if (ret && ret != -EREMOTEIO)
+		goto out;
+	ret = 0;
+
+	res = mds_compound_result(&mc, 1);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
+
+	res = mds_compound_result(&mc, 2);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.oplayoutget.logr_status);
+	if (ret)
+		goto out;
+
+	LAYOUTGET4resok *lresok =
+		&res->nfs_resop4_u.oplayoutget.LAYOUTGET4res_u.logr_resok4;
+
+	reply->return_on_close = lresok->logr_return_on_close;
+	reply->stateid_seqid = lresok->logr_stateid.seqid;
+	memcpy(reply->stateid_other, lresok->logr_stateid.other,
+	       PS_STATEID_OTHER_SIZE);
+	reply->nlayouts = lresok->logr_layout.logr_layout_len;
+
+	if (reply->nlayouts == 0) {
+		ret = 0;
+		goto out;
+	}
+
+	reply->layouts = calloc(reply->nlayouts, sizeof(*reply->layouts));
+	if (!reply->layouts) {
+		ret = -ENOMEM;
+		goto out_free_reply;
+	}
+
+	for (uint32_t i = 0; i < reply->nlayouts; i++) {
+		layout4 *src = &lresok->logr_layout.logr_layout_val[i];
+		struct ps_proxy_layout_segment *dst = &reply->layouts[i];
+
+		dst->lo_offset = src->lo_offset;
+		dst->lo_length = src->lo_length;
+		dst->lo_iomode = src->lo_iomode;
+		dst->lo_content_type = src->lo_content.loc_type;
+		dst->lo_content_body_len =
+			src->lo_content.loc_body.loc_body_len;
+		if (dst->lo_content_body_len == 0) {
+			dst->lo_content_body = NULL;
+			continue;
+		}
+		dst->lo_content_body = malloc(dst->lo_content_body_len);
+		if (!dst->lo_content_body) {
+			ret = -ENOMEM;
+			goto out_free_reply;
+		}
+		memcpy(dst->lo_content_body,
+		       src->lo_content.loc_body.loc_body_val,
+		       dst->lo_content_body_len);
+	}
+
+	ret = 0;
+	goto out;
+
+out_free_reply:
+	ps_proxy_layoutget_reply_free(reply);
+out:
+	mds_compound_fini(&mc);
+	return ret;
 }
 
 int ps_proxy_forward_getdeviceinfo(struct mds_session *ms,
@@ -2239,16 +2342,79 @@ int ps_proxy_forward_getdeviceinfo(struct mds_session *ms,
 				   const struct authunix_parms *creds,
 				   struct ps_proxy_getdeviceinfo_reply *reply)
 {
-	(void)ms;
-	(void)deviceid;
-	(void)layout_type;
-	(void)maxcount;
-	(void)creds;
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
 
-	if (!reply)
+	if (!ms || !deviceid || !reply)
 		return -EINVAL;
+
 	memset(reply, 0, sizeof(*reply));
-	return -ENOSYS;
+
+	ret = mds_compound_init(&mc, 2, "ps-proxy-getdeviceinfo");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_GETDEVICEINFO);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	GETDEVICEINFO4args *ga = &slot->nfs_argop4_u.opgetdeviceinfo;
+
+	memcpy(ga->gdia_device_id, deviceid, NFS4_DEVICEID4_SIZE);
+	ga->gdia_layout_type = (layouttype4)layout_type;
+	ga->gdia_maxcount = maxcount;
+	ga->gdia_notify_types.bitmap4_len = 0;
+	ga->gdia_notify_types.bitmap4_val = NULL;
+
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	if (ret && ret != -EREMOTEIO)
+		goto out;
+	ret = 0;
+
+	res = mds_compound_result(&mc, 1);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opgetdeviceinfo.gdir_status);
+	if (ret)
+		goto out;
+
+	GETDEVICEINFO4resok *gresok = &res->nfs_resop4_u.opgetdeviceinfo
+					       .GETDEVICEINFO4res_u.gdir_resok4;
+
+	reply->da_layout_type = gresok->gdir_device_addr.da_layout_type;
+	reply->da_addr_body_len =
+		gresok->gdir_device_addr.da_addr_body.da_addr_body_len;
+	if (reply->da_addr_body_len > 0) {
+		reply->da_addr_body = malloc(reply->da_addr_body_len);
+		if (!reply->da_addr_body) {
+			ret = -ENOMEM;
+			goto out_free_reply;
+		}
+		memcpy(reply->da_addr_body,
+		       gresok->gdir_device_addr.da_addr_body.da_addr_body_val,
+		       reply->da_addr_body_len);
+	}
+	if (gresok->gdir_notification.bitmap4_len > 0)
+		reply->notification_mask =
+			gresok->gdir_notification.bitmap4_val[0];
+
+	ret = 0;
+	goto out;
+
+out_free_reply:
+	ps_proxy_getdeviceinfo_reply_free(reply);
+out:
+	mds_compound_fini(&mc);
+	return ret;
 }
 
 int ps_proxy_forward_layoutreturn(
@@ -2261,23 +2427,99 @@ int ps_proxy_forward_layoutreturn(
 	const struct authunix_parms *creds,
 	struct ps_proxy_layoutreturn_reply *reply)
 {
-	(void)ms;
-	(void)upstream_fh;
-	(void)upstream_fh_len;
-	(void)reclaim;
-	(void)layout_type;
-	(void)iomode;
-	(void)return_type;
-	(void)offset;
-	(void)length;
-	(void)stateid_seqid;
-	(void)stateid_other;
-	(void)lr_body;
-	(void)lr_body_len;
-	(void)creds;
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	nfs_resop4 *res;
+	int ret;
 
-	if (!reply)
+	if (!ms || !upstream_fh || upstream_fh_len == 0 || !reply)
 		return -EINVAL;
+	if (upstream_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+	if (lr_body_len > 0 && !lr_body)
+		return -EINVAL;
+
 	memset(reply, 0, sizeof(*reply));
-	return -ENOSYS;
+
+	ret = mds_compound_init(&mc, 3, "ps-proxy-layoutreturn");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PUTFH);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_val = (char *)upstream_fh;
+	slot->nfs_argop4_u.opputfh.object.nfs_fh4_len = upstream_fh_len;
+
+	slot = mds_compound_add_op(&mc, OP_LAYOUTRETURN);
+	if (!slot) {
+		ret = -ENOSPC;
+		goto out;
+	}
+	LAYOUTRETURN4args *lra = &slot->nfs_argop4_u.oplayoutreturn;
+
+	lra->lora_reclaim = reclaim;
+	lra->lora_layout_type = (layouttype4)layout_type;
+	lra->lora_iomode = (layoutiomode4)iomode;
+	lra->lora_layoutreturn.lr_returntype = (layoutreturn_type4)return_type;
+	if (return_type == LAYOUTRETURN4_FILE) {
+		layoutreturn_file4 *lrf =
+			&lra->lora_layoutreturn.layoutreturn4_u.lr_layout;
+
+		lrf->lrf_offset = offset;
+		lrf->lrf_length = length;
+		lrf->lrf_stateid.seqid = stateid_seqid;
+		memcpy(lrf->lrf_stateid.other, stateid_other, NFS4_OTHER_SIZE);
+		lrf->lrf_body.lrf_body_val = (char *)lr_body;
+		lrf->lrf_body.lrf_body_len = lr_body_len;
+	}
+
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	if (ret && ret != -EREMOTEIO)
+		goto out;
+	ret = 0;
+
+	res = mds_compound_result(&mc, 1);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.opputfh.status);
+	if (ret)
+		goto out;
+
+	res = mds_compound_result(&mc, 2);
+	if (!res) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = nfs4_to_errno(res->nfs_resop4_u.oplayoutreturn.lorr_status);
+	if (ret)
+		goto out;
+
+	if (return_type == LAYOUTRETURN4_FILE) {
+		layoutreturn_stateid *st =
+			&res->nfs_resop4_u.oplayoutreturn.LAYOUTRETURN4res_u
+				 .lorr_stateid;
+
+		reply->stateid_present = st->lrs_present;
+		if (reply->stateid_present) {
+			reply->stateid_seqid =
+				st->layoutreturn_stateid_u.lrs_stateid.seqid;
+			memcpy(reply->stateid_other,
+			       st->layoutreturn_stateid_u.lrs_stateid.other,
+			       PS_STATEID_OTHER_SIZE);
+		}
+	}
+
+	ret = 0;
+out:
+	mds_compound_fini(&mc);
+	return ret;
 }

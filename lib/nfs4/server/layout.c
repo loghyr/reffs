@@ -90,41 +90,51 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 
 	/*
 	 * Proxy-SB fast path (task #150): forward GETDEVICEINFO to
-	 * upstream MDS so ec_demo can resolve a deviceid returned in
-	 * a forwarded LAYOUTGET to the upstream DS's network address.
-	 * Foundation stub returns -ENOSYS -> NOTSUPP; deep-copy
-	 * implementation lands in the next commit.
+	 * upstream MDS.  The compound has no PUTFH (deviceids are not
+	 * filehandles), so c_curr_sb is not set when GETDEVICEINFO
+	 * runs.  Detect proxy-ness via the connection's listener_id
+	 * instead: if the listener has a proxy MDS session, this is a
+	 * proxy listener and the GETDEVICEINFO must forward.
+	 *
+	 * Asymmetry note: LAYOUTGET / LAYOUTRETURN below key off the
+	 * current FH's sb_proxy_binding; only GETDEVICEINFO uses
+	 * c_listener_id, because no PUTFH is in this op's compound.
 	 */
-	if (compound->c_curr_sb && compound->c_curr_sb->sb_proxy_binding) {
-		const struct ps_sb_binding *binding =
-			compound->c_curr_sb->sb_proxy_binding;
+	if (compound->c_listener_id != 0) {
 		const struct ps_listener_state *pls =
-			ps_state_find(binding->psb_listener_id);
+			ps_state_find(compound->c_listener_id);
 		if (!pls || !pls->pls_session) {
-			*status = NFS4ERR_DELAY;
-			return 0;
+			TRACE("GETDEVICEINFO listener_id=%u not registered as PS, treating as native",
+			      compound->c_listener_id);
 		}
-		struct ps_proxy_getdeviceinfo_reply gdireply;
+		if (pls && pls->pls_session) {
+			struct ps_proxy_getdeviceinfo_reply gdireply;
 
-		memset(&gdireply, 0, sizeof(gdireply));
-		int fret = ps_proxy_forward_getdeviceinfo(
-			pls->pls_session, (const uint8_t *)args->gdia_device_id,
-			args->gdia_layout_type, args->gdia_maxcount,
-			&compound->c_ap, &gdireply);
-		if (fret == -ENOSYS) {
-			*status = NFS4ERR_NOTSUPP;
+			memset(&gdireply, 0, sizeof(gdireply));
+			int fret = ps_proxy_forward_getdeviceinfo(
+				pls->pls_session,
+				(const uint8_t *)args->gdia_device_id,
+				args->gdia_layout_type, args->gdia_maxcount,
+				&compound->c_ap, &gdireply);
+			if (fret < 0) {
+				*status = errno_to_nfs4(fret, OP_GETDEVICEINFO);
+				ps_proxy_getdeviceinfo_reply_free(&gdireply);
+				return 0;
+			}
+			resok->gdir_device_addr.da_layout_type =
+				gdireply.da_layout_type;
+			resok->gdir_device_addr.da_addr_body.da_addr_body_len =
+				gdireply.da_addr_body_len;
+			resok->gdir_device_addr.da_addr_body.da_addr_body_val =
+				(char *)gdireply.da_addr_body;
+			gdireply.da_addr_body = NULL;
+			gdireply.da_addr_body_len = 0;
+			resok->gdir_notification.bitmap4_len = 0;
+			resok->gdir_notification.bitmap4_val = NULL;
+			*status = NFS4_OK;
 			ps_proxy_getdeviceinfo_reply_free(&gdireply);
 			return 0;
 		}
-		if (fret < 0) {
-			*status = errno_to_nfs4(fret, OP_GETDEVICEINFO);
-			ps_proxy_getdeviceinfo_reply_free(&gdireply);
-			return 0;
-		}
-		/* Real-impl wires gdireply -> resok here. */
-		ps_proxy_getdeviceinfo_reply_free(&gdireply);
-		*status = NFS4ERR_NOTSUPP;
-		return 0;
 	}
 
 	uint32_t dstore_id = deviceid_to_dstore(args->gdia_device_id);
@@ -785,22 +795,53 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			args->loga_minlength, args->loga_stateid.seqid,
 			(const uint8_t *)args->loga_stateid.other,
 			args->loga_maxcount, &compound->c_ap, &lgreply);
-		if (fret == -ENOSYS) {
-			*status = NFS4ERR_NOTSUPP;
-			ps_proxy_layoutget_reply_free(&lgreply);
-			return 0;
-		}
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_LAYOUTGET);
 			ps_proxy_layoutget_reply_free(&lgreply);
 			return 0;
 		}
 		/*
-		 * Real-impl wires lgreply -> resok here.  Stub commit
-		 * never reaches this branch (ENOSYS above).
+		 * Wire the deep-copied reply into the response.  The
+		 * per-segment opaque body buffers are handed off to the
+		 * response struct; lgreply zeroes its pointers so the
+		 * trailing reply_free is a no-op.  The XDR free walks
+		 * loc_body_val to release them when the compound tears
+		 * down.
 		 */
+		resok->logr_return_on_close = lgreply.return_on_close;
+		resok->logr_stateid.seqid = lgreply.stateid_seqid;
+		memcpy(resok->logr_stateid.other, lgreply.stateid_other,
+		       NFS4_OTHER_SIZE);
+		resok->logr_layout.logr_layout_len = lgreply.nlayouts;
+		if (lgreply.nlayouts > 0) {
+			resok->logr_layout.logr_layout_val = calloc(
+				lgreply.nlayouts,
+				sizeof(*resok->logr_layout.logr_layout_val));
+			if (!resok->logr_layout.logr_layout_val) {
+				*status = NFS4ERR_DELAY;
+				ps_proxy_layoutget_reply_free(&lgreply);
+				return 0;
+			}
+			for (uint32_t i = 0; i < lgreply.nlayouts; i++) {
+				layout4 *dst =
+					&resok->logr_layout.logr_layout_val[i];
+				struct ps_proxy_layout_segment *src =
+					&lgreply.layouts[i];
+
+				dst->lo_offset = src->lo_offset;
+				dst->lo_length = src->lo_length;
+				dst->lo_iomode = src->lo_iomode;
+				dst->lo_content.loc_type = src->lo_content_type;
+				dst->lo_content.loc_body.loc_body_len =
+					src->lo_content_body_len;
+				dst->lo_content.loc_body.loc_body_val =
+					(char *)src->lo_content_body;
+				src->lo_content_body = NULL;
+				src->lo_content_body_len = 0;
+			}
+		}
+		*status = NFS4_OK;
 		ps_proxy_layoutget_reply_free(&lgreply);
-		*status = NFS4ERR_NOTSUPP;
 		return 0;
 	}
 
@@ -1462,16 +1503,21 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 			(const uint8_t *)lrf->lrf_stateid.other,
 			(const uint8_t *)lrf->lrf_body.lrf_body_val,
 			lrf->lrf_body.lrf_body_len, &compound->c_ap, &lrreply);
-		if (fret == -ENOSYS) {
-			*status = NFS4ERR_NOTSUPP;
-			return 0;
-		}
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_LAYOUTRETURN);
 			return 0;
 		}
-		/* Real-impl wires lrreply -> res here. */
-		*status = NFS4ERR_NOTSUPP;
+		res->LAYOUTRETURN4res_u.lorr_stateid.lrs_present =
+			lrreply.stateid_present;
+		if (lrreply.stateid_present) {
+			res->LAYOUTRETURN4res_u.lorr_stateid
+				.layoutreturn_stateid_u.lrs_stateid.seqid =
+				lrreply.stateid_seqid;
+			memcpy(res->LAYOUTRETURN4res_u.lorr_stateid
+				       .layoutreturn_stateid_u.lrs_stateid.other,
+			       lrreply.stateid_other, NFS4_OTHER_SIZE);
+		}
+		*status = NFS4_OK;
 		return 0;
 	}
 
