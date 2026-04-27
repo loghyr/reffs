@@ -12,6 +12,7 @@
 
 #include "reffs/filehandle.h"
 #include "reffs/rpc.h"
+#include "reffs/settings.h"
 #include "reffs/super_block.h"
 #include "reffs/inode.h"
 #include "reffs/stateid.h"
@@ -68,11 +69,20 @@ struct compound {
 	 */
 	const char *c_gss_principal; /* NULL for AUTH_SYS */
 	/*
-	 * NOT_NOW_BROWN_COW: populate c_gss_principal from the GSS
-	 * context once RPCSEC_GSS is supported on the DS path.  Until
-	 * then CHUNK_WRITE/READ principal validation (te_principal) is
-	 * skipped because c_gss_principal is always NULL.
+	 * Backing storage for c_gss_principal in the production path
+	 * (slice plan-A.i).  compound_alloc() calls
+	 * rpc_cred_get_gss_principal(); on success it copies the
+	 * principal into c_gss_principal_buf and points
+	 * c_gss_principal at the buffer.  Test mocks may bypass the
+	 * buffer and point c_gss_principal at a string literal --
+	 * compound_free() does not free or unwind this field.
+	 *
+	 * NOT_NOW_BROWN_COW (was deferred until plan-A.i): production
+	 * wiring of c_gss_principal from the GSS context now lives in
+	 * compound_alloc().  Unit tests retain the bypass-the-buffer
+	 * pattern.
 	 */
+	char c_gss_principal_buf[REFFS_CONFIG_MAX_PRINCIPAL];
 
 	/*
 	 * Slice 6b-iv: TLS peer certificate identity context.  SHA-256
@@ -87,6 +97,15 @@ struct compound {
 	 * production wiring; both are mockable in unit tests today).
 	 */
 	const char *c_tls_fingerprint; /* NULL for non-TLS or no peer cert */
+	/*
+	 * Backing storage for c_tls_fingerprint in the production
+	 * path (slice plan-A.ii).  compound_alloc() calls
+	 * io_conn_get_peer_cert_fingerprint(); on success it copies
+	 * the formatted hex into c_tls_fingerprint_buf and points
+	 * c_tls_fingerprint at the buffer.  Test mocks may bypass
+	 * the buffer and point c_tls_fingerprint at a string literal.
+	 */
+	char c_tls_fingerprint_buf[REFFS_CONFIG_MAX_TLS_FINGERPRINT];
 
 	/* Compound-level state flags. */
 #define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)

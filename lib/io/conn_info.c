@@ -19,6 +19,8 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <openssl/ssl.h>
+#include <openssl/sha.h>
+#include <openssl/x509.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -901,6 +903,79 @@ bool io_conn_is_tls_enabled(int fd)
 	pthread_mutex_unlock(&conn_mutex);
 
 	return enabled;
+}
+
+int io_conn_get_peer_cert_fingerprint(int fd, char *out_buf, size_t out_buf_len)
+{
+	if (!out_buf || out_buf_len == 0)
+		return -EINVAL;
+	/* SHA-256 colon-hex: 32 bytes * 2 hex chars + 31 colons + NUL = 96 */
+	if (out_buf_len < 96)
+		return -ENOSPC;
+
+	out_buf[0] = '\0';
+
+	X509 *cert = NULL;
+
+	/*
+	 * Slice plan-A.ii: pull the X509 reference INSIDE the locked
+	 * window.  SSL_get_peer_certificate ref-bumps the X509 (we
+	 * X509_free below to balance), but SSL itself is NOT
+	 * refcounted by that call -- pulling a raw SSL pointer out of
+	 * the conn table and using it after unlock would race with a
+	 * concurrent SSL_free in io_conn_unregister / handlers.c
+	 * teardown paths (UAF).  So read-and-extract under the lock,
+	 * drop the lock, then operate on the (independently
+	 * refcounted) X509 alone.
+	 */
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_tls_enabled && connections[idx]->ci_ssl)
+		cert = SSL_get_peer_certificate(connections[idx]->ci_ssl);
+	pthread_mutex_unlock(&conn_mutex);
+
+	if (!cert)
+		return -ENOENT;
+
+	/* Serialize cert to DER, hash, hex-format. */
+	int der_len = i2d_X509(cert, NULL);
+	int ret = 0;
+
+	if (der_len <= 0) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+	unsigned char *der = malloc(der_len);
+
+	if (!der) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	unsigned char *p = der;
+
+	if (i2d_X509(cert, &p) <= 0) {
+		free(der);
+		ret = -ENOENT;
+		goto out;
+	}
+
+	unsigned char hash[SHA256_DIGEST_LENGTH];
+
+	SHA256(der, der_len, hash);
+	free(der);
+
+	/* Format as colon-separated uppercase hex. */
+	for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+		snprintf(out_buf + i * 3, 4, "%02X%s", hash[i],
+			 (i == SHA256_DIGEST_LENGTH - 1) ? "" : ":");
+	}
+
+out:
+	X509_free(cert);
+	return ret;
 }
 
 void io_conn_set_tls_handshaking(int fd, bool handshaking)

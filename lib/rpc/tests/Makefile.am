@@ -42,4 +42,5 @@ TESTS =				\
 	rpc_call		\
 	rpc_reply_test		\
 	gss_seq_test		\
-	gss_auth_test
+	gss_auth_test		\
+	gss_principal_test

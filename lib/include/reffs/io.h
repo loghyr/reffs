@@ -387,6 +387,21 @@ bool io_conn_is_tls_enabled(int fd);
 void io_conn_set_tls_handshaking(int fd, bool handshaking);
 
 /*
+ * Slice plan-A.ii: extract the SHA-256 fingerprint of the TLS
+ * peer's certificate (DER-encoded), formatted as colon-separated
+ * uppercase hex.  Used by compound_alloc() to populate
+ * compound->c_tls_fingerprint for PROXY_REGISTRATION's mTLS
+ * allowlist match (slice 6b-iv).
+ *
+ * Returns 0 on success, -ENOENT when the connection is not over
+ * TLS / no peer cert was presented / OpenSSL not compiled in,
+ * -EINVAL on bad arguments, -ENOSPC when out_buf is too small
+ * (requires 96 bytes for SHA-256 colon-hex + NUL).
+ */
+int io_conn_get_peer_cert_fingerprint(int fd, char *out_buf,
+				      size_t out_buf_len);
+
+/*
  * Per-fd write serialization gate.
  *
  * io_conn_write_try_start() -- atomically claim the write gate for fd.

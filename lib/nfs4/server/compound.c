@@ -141,6 +141,40 @@ static struct compound *compound_alloc(struct rpc_trans *rt)
 		return NULL;
 	}
 
+	/*
+	 * Slice plan-A.i: production wiring of c_gss_principal.
+	 * On RPCSEC_GSS-authenticated compounds, look up the GSS
+	 * context and copy the display-name principal into the
+	 * compound's owned buffer.  c_gss_principal stays NULL on
+	 * AUTH_SYS, on builds without GSS support, and on RPCSEC_GSS
+	 * non-DATA procedures (RPCSEC_GSS_INIT etc., where the
+	 * context is not yet established).  Consumers
+	 * (PROXY_REGISTRATION allowlist check, TRUST_STATEID
+	 * principal validation) test the field for non-NULL before
+	 * using it.
+	 */
+	if (rpc_cred_get_gss_principal(
+		    &rt->rt_info, compound->c_gss_principal_buf,
+		    sizeof(compound->c_gss_principal_buf)) == 0) {
+		compound->c_gss_principal = compound->c_gss_principal_buf;
+	}
+
+	/*
+	 * Slice plan-A.ii: production wiring of c_tls_fingerprint.
+	 * On TLS-protected connections that presented a peer cert,
+	 * compute the SHA-256 fingerprint and copy it into the
+	 * compound's owned buffer.  c_tls_fingerprint stays NULL on
+	 * non-TLS connections, on TLS connections without a peer
+	 * cert (server-only TLS), and in test mocks that point the
+	 * field at a string literal directly.
+	 */
+	if (rt->rt_fd >= 0 &&
+	    io_conn_get_peer_cert_fingerprint(
+		    rt->rt_fd, compound->c_tls_fingerprint_buf,
+		    sizeof(compound->c_tls_fingerprint_buf)) == 0) {
+		compound->c_tls_fingerprint = compound->c_tls_fingerprint_buf;
+	}
+
 	return compound;
 }
 

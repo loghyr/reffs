@@ -63,10 +63,16 @@ int ds_session_create(struct dstore *ds)
 	 * Connect to the DS.  mds_session_create does:
 	 *   clnt_create --> EXCHANGE_ID --> CREATE_SESSION --> RECLAIM_COMPLETE
 	 *
-	 * But it uses EXCHGID4_FLAG_USE_PNFS_MDS.  We need USE_NON_PNFS.
-	 * For now, reuse as-is -- the DS accepts either flag.
-	 * NOT_NOW_BROWN_COW: fork mds_session_create to accept a flags
-	 * parameter, or add a ds_session_create that uses USE_NON_PNFS.
+	 * Slice plan-A.iii flipped mds_session_create's EXCHANGE_ID
+	 * flag from EXCHGID4_FLAG_USE_PNFS_MDS to USE_NON_PNFS (the
+	 * PS is a regular NFSv4 client of its upstream MDS).  The DS
+	 * also wants USE_NON_PNFS, so the change is the right
+	 * direction for this caller too.  Note: any code path on the
+	 * DS server side that previously gated on USE_PNFS_MDS
+	 * (e.g., TRUST_STATEID per
+	 * lib/nfs4/server/trust_stateid_ops.c) now sees USE_NON_PNFS
+	 * here as well; those paths need verification before being
+	 * relied on against an MDS-to-DS session.
 	 */
 	ret = mds_session_create(ms, ds->ds_address);
 	if (ret) {

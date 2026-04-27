@@ -81,7 +81,15 @@ static int mds_exchange_id(struct mds_session *ms)
 
 	memcpy(&args->eia_clientowner.co_verifier, &pid, sizeof(pid));
 
-	args->eia_flags = EXCHGID4_FLAG_USE_PNFS_MDS;
+	/*
+	 * Slice plan-A.iii: PS connecting to its upstream MDS uses
+	 * USE_NON_PNFS -- it is a regular NFSv4 client of the MDS,
+	 * not a peer MDS.  PROXY_REGISTRATION requires this flag
+	 * (see lib/nfs4/server/proxy_registration.c).  Was previously
+	 * USE_PNFS_MDS by mistake (NOT_NOW_BROWN_COW in
+	 * dstore-vtable-v2.md), corrected here.
+	 */
+	args->eia_flags = EXCHGID4_FLAG_USE_NON_PNFS;
 	args->eia_state_protect.spa_how = SP4_NONE;
 	args->eia_client_impl_id.eia_client_impl_id_len = 0;
 	args->eia_client_impl_id.eia_client_impl_id_val = NULL;
@@ -239,6 +247,92 @@ static void mds_reclaim_complete(struct mds_session *ms)
 	mds_compound_send(&mc, ms);
 out:
 	mds_compound_fini(&mc);
+}
+
+/* ------------------------------------------------------------------ */
+/* PROXY_REGISTRATION (slice plan-A.iii)                               */
+/* ------------------------------------------------------------------ */
+
+int mds_session_send_proxy_registration(struct mds_session *ms,
+					const uint8_t *registration_id,
+					uint32_t registration_id_len)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret = -EIO;
+
+	if (!ms || (registration_id_len > 0 && !registration_id))
+		return -EINVAL;
+	if (registration_id_len > PROXY_REGISTRATION_ID_MAX)
+		return -EINVAL;
+
+	if (mds_compound_init(&mc, 2, "proxy_registration"))
+		return -ENOMEM;
+
+	if (mds_compound_add_sequence(&mc, ms))
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PROXY_REGISTRATION);
+	if (!slot)
+		goto out;
+
+	PROXY_REGISTRATION4args *args =
+		&slot->nfs_argop4_u.opproxy_registration;
+	args->prr_flags = 0;
+	args->prr_registration_id.prr_registration_id_len = registration_id_len;
+	args->prr_registration_id.prr_registration_id_val =
+		(char *)registration_id; /* libtirpc XDR borrows */
+
+	if (mds_compound_send(&mc, ms))
+		goto out;
+
+	if (mc.mc_res.status != NFS4_OK) {
+		fprintf(stderr, "proxy_registration: COMPOUND status %u\n",
+			mc.mc_res.status);
+		ret = -EIO;
+		goto out;
+	}
+	if (mc.mc_res.resarray.resarray_len < 2) {
+		fprintf(stderr, "proxy_registration: short resarray (%u)\n",
+			mc.mc_res.resarray.resarray_len);
+		goto out;
+	}
+	nfsstat4 op_status =
+		mc.mc_res.resarray.resarray_val[1]
+			.nfs_resop4_u.opproxy_registration.prrr_status;
+	switch (op_status) {
+	case NFS4_OK:
+		ret = 0;
+		break;
+	case NFS4ERR_PERM:
+		ret = -EPERM;
+		break;
+	case NFS4ERR_DELAY:
+		ret = -EAGAIN;
+		break;
+	case NFS4ERR_INVAL:
+		ret = -EINVAL;
+		break;
+	case NFS4ERR_NOTSUPP:
+		ret = -ENOTSUP;
+		break;
+	case NFS4ERR_BADXDR:
+		ret = -EBADMSG;
+		break;
+	case NFS4ERR_OP_NOT_IN_SESSION:
+		ret = -EPROTO;
+		break;
+	default:
+		fprintf(stderr,
+			"proxy_registration: MDS returned nfsstat4 %u\n",
+			op_status);
+		ret = -EIO;
+		break;
+	}
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
 }
 
 /* ------------------------------------------------------------------ */

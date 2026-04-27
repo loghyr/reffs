@@ -23,7 +23,9 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
+#include <openssl/rand.h>
 
+#include "ec_client.h" /* mds_session_send_proxy_registration (slice plan-A.iii) */
 #include "mntv3_xdr.h"
 #include "nfsv3_xdr.h"
 #include "nfsv42_xdr.h"
@@ -686,6 +688,43 @@ int main(int argc, char *argv[])
 		}
 		TRACE("proxy_mds[%u]: mds session open to %s", pmc->id,
 		      pmc->address);
+
+		/*
+		 * Slice plan-A.iii: send PROXY_REGISTRATION on the
+		 * freshly-opened MDS session so the PS picks up the
+		 * registered-PS attribute (`nc_is_registered_ps`) on the
+		 * MDS-side client record.  Subsequent namespace-discovery
+		 * ops (LOOKUP / GETFH / etc.) get the slice 6b-ii bypass.
+		 *
+		 * registration_id: random 16 bytes per PS-process lifetime
+		 * for first-smoke testing.  Persistent registration_id
+		 * (so a PS restart looks like renewal not squat) is a
+		 * NOT_NOW_BROWN_COW for a follow-up slice; today a PS
+		 * restart triggers the squat-guard's NFS4ERR_DELAY for
+		 * one lease period, after which it succeeds.
+		 *
+		 * Non-fatal on PS failure: log and continue.  An MDS
+		 * without [[allowed_ps]] configured (or with the PS not
+		 * on the list) returns -EPERM; the PS keeps running but
+		 * without bypass, which is the correct behavior for an
+		 * unregistered NFSv4 client.
+		 */
+		uint8_t registration_id[16];
+
+		if (RAND_bytes(registration_id, sizeof(registration_id)) != 1) {
+			LOG("proxy_mds[%u]: RAND_bytes for registration_id failed",
+			    i);
+		} else {
+			int prr_ret = mds_session_send_proxy_registration(
+				ms, registration_id, sizeof(registration_id));
+			if (prr_ret == 0) {
+				TRACE("proxy_mds[%u]: PROXY_REGISTRATION OK",
+				      pmc->id);
+			} else {
+				LOG("proxy_mds[%u]: PROXY_REGISTRATION failed: %s -- PS will operate without registered-PS privilege",
+				    pmc->id, strerror(-prr_ret));
+			}
+		}
 
 		/*
 		 * Fetch the MDS's root FH so later LOOKUP / forwarding

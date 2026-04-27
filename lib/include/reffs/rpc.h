@@ -230,6 +230,31 @@ static inline uint32_t *rpc_encode_uint32_t(struct rpc_trans *rt, uint32_t *p,
 
 int rpc_protocol_allocate_call(struct rpc_trans *rt);
 void rpc_protocol_free(struct rpc_trans *rt);
+
+/*
+ * Extract the GSS display name (principal) from an RPCSEC_GSS-
+ * authenticated rpc_info into the caller's buffer.  Copies the
+ * string so the caller does not depend on the GSS context cache
+ * lifetime.
+ *
+ * Returns 0 on success (out_buf populated, NUL-terminated, never
+ * truncated past out_buf_len-1).
+ *
+ * Returns -ENOENT when the credential is not RPCSEC_GSS, when the
+ * GSS context cache lookup misses (handle is no longer cached),
+ * when the cached context has no client name (e.g., probe traffic
+ * before the GSS handshake completes), or when GSS support is
+ * compiled out (no HAVE_GSSAPI_KRB5).
+ *
+ * Returns -EINVAL on bad arguments (NULL info, NULL buf, zero-len
+ * buf).
+ *
+ * Slice plan-A.i: consumed by compound_alloc() to populate
+ * compound->c_gss_principal in production (today the field is
+ * populated only by unit-test mocks).
+ */
+int rpc_cred_get_gss_principal(const struct rpc_info *info, char *out_buf,
+			       size_t out_buf_len);
 struct rpc_trans *rpc_trans_get(struct rpc_trans *rt);
 int rpc_protocol_op_call(struct rpc_trans *rt);
 void rpc_complete_resumed_task(struct rpc_trans *rt, struct task *t);

@@ -1182,6 +1182,64 @@ int gss_ctx_wrap_reply(struct gss_ctx_entry *entry, uint32_t svc, uint32_t seq,
 #endif /* HAVE_GSSAPI_KRB5 */
 
 /*
+ * Slice plan-A.i: extract the GSS display name (principal) from
+ * an RPCSEC_GSS-authenticated rpc_info.  Lives outside the
+ * HAVE_GSSAPI_KRB5 block so callers (compound_alloc) link
+ * unconditionally; in non-GSS builds the function returns
+ * -ENOENT, which is the same signal a non-GSS credential gets
+ * in a GSS-enabled build.
+ */
+int rpc_cred_get_gss_principal(const struct rpc_info *info,
+			       char *out_buf
+#ifndef HAVE_GSSAPI_KRB5
+			       __attribute__((unused))
+#endif
+			       ,
+			       size_t out_buf_len
+#ifndef HAVE_GSSAPI_KRB5
+			       __attribute__((unused))
+#endif
+)
+{
+	if (!info)
+		return -EINVAL;
+#ifdef HAVE_GSSAPI_KRB5
+	if (!out_buf || out_buf_len == 0)
+		return -EINVAL;
+	if (info->ri_cred.rc_flavor != RPCSEC_GSS)
+		return -ENOENT;
+
+	/*
+	 * gss_ctx_find takes a find ref the caller must put.  Look up
+	 * by the handle bytes carried in the credential header; the
+	 * cache outlives the compound (RPCSEC_GSS_DESTROY for this
+	 * context would have torn down the session before we got
+	 * here), but copy the principal anyway so the compound does
+	 * not depend on cache lifetime past this call.
+	 */
+	struct gss_ctx_entry *ctx =
+		gss_ctx_find(info->ri_cred.rc_gss.gc_handle,
+			     info->ri_cred.rc_gss.gc_handle_len);
+	if (!ctx)
+		return -ENOENT;
+
+	char *principal = gss_ctx_principal(ctx);
+
+	gss_ctx_put(ctx);
+
+	if (!principal)
+		return -ENOENT;
+
+	strncpy(out_buf, principal, out_buf_len - 1);
+	out_buf[out_buf_len - 1] = '\0';
+	free(principal);
+	return 0;
+#else
+	return -ENOENT;
+#endif
+}
+
+/*
  * Handle RPCSEC_GSS_INIT / CONTINUE_INIT.
  *
  * The RPC call body (after the header) is the gss_token from the

@@ -73,6 +73,31 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 			   enum ec_sec_flavor sec);
 void mds_session_destroy(struct mds_session *ms);
 
+/*
+ * Slice plan-A.iii: PS-side PROXY_REGISTRATION send.  Builds the
+ * compound `SEQUENCE PROXY_REGISTRATION(reg_id)` and sends it to
+ * the upstream MDS over `ms`.  The PS uses this once at startup
+ * to declare itself a registered Proxy Server; the MDS validates
+ * the identity context (`compound->c_gss_principal` from slice
+ * plan-A.i, or `compound->c_tls_fingerprint` from plan-A.ii)
+ * against the `[[allowed_ps]]` allowlist (slice 6b-i).
+ *
+ * `registration_id` is a stable per-PS-instance opaque cookie the
+ * MDS uses to distinguish a renewal (same id, refreshes lease)
+ * from a squat attempt (different id while prior lease is valid;
+ * MDS returns NFS4ERR_DELAY).  Caller is responsible for
+ * persisting the id across PS-process restarts (see
+ * proxy-server-plan-a.md "registration_id persistence").
+ *
+ * Returns 0 on NFS4_OK, -EPERM if the MDS rejected (allowlist
+ * miss / AUTH_SYS / wrong session flag), -EAGAIN on
+ * NFS4ERR_DELAY (squat blocked; caller MAY retry after one
+ * lease period), other -errno on protocol failures.
+ */
+int mds_session_send_proxy_registration(struct mds_session *ms,
+					const uint8_t *registration_id,
+					uint32_t registration_id_len);
+
 /* ------------------------------------------------------------------ */
 /* COMPOUND builder                                                    */
 /* ------------------------------------------------------------------ */
