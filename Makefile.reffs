@@ -68,6 +68,8 @@ help:
 	@echo "Sanity targets:"
 	@echo "  run-sanity      - Multi-codec sanity test (1 MDS + 6 DSes, 5 SBs, write+read+diff)"
 	@echo "  stop-sanity     - Stop sanity containers"
+	@echo "  run-ps-demo     - PS demo (1 MDS + 6 DSes + 2 PSes; write via PS-A, read via PS-B)"
+	@echo "  stop-ps-demo    - Stop PS-demo containers"
 
 # --- Build targets ---
 
@@ -355,4 +357,37 @@ run-sanity: image
 stop-sanity:
 	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile run down -v 2>/dev/null || true
 
-.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-sanity stop-sanity
+# --- PS Demo (1 MDS + 6 DSes + 2 PSes + cross-PS test client) ---
+#
+# Builds on run-sanity by adding two PS containers (ps-a, ps-b) both
+# pointing at the MDS.  Test client writes a file via PS-A and reads
+# it back via PS-B, byte-exact diff per SB.  Skips /ffv2-mj per task
+# #147 (mojette CHUNK_READ bug, unrelated to the proxy path).
+
+run-ps-demo: image
+	@mkdir -p $(SANITY_LOGS)
+	@echo "Building reffs in builder container..."
+	$(DOCKER) compose -f $(SANITY_COMPOSE) run --rm builder
+	@echo "Starting MDS + 6 DSes, then provisioning SBs, then PSes..."
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo \
+		up -d ds0 ds1 ds2 ds3 ds4 ds5 mds
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo \
+		run --rm mds-setup
+	@# Start PSes sequentially -- concurrent EXCHANGE_ID from two PSes
+	@# can race the MDS state-persist tempfile rename and one of them
+	@# fails session_create.  Stagger to dodge.
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo up -d ps-a
+	@bash -c 'until [ "$$($(DOCKER) inspect -f "{{.State.Health.Status}}" reffs-sanity-ps-a 2>/dev/null)" = "healthy" ]; do sleep 1; done'
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo up -d ps-b
+	@echo "Running cross-PS demo client..."
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo run --rm ps-demo \
+		2>&1 | tee $(SANITY_LOGS)/ps-demo.log
+	@echo ""
+	@echo "Result log: $(SANITY_LOGS)/ps-demo.log"
+	@echo "Containers still running -- 'make -f Makefile.reffs stop-ps-demo' to tear down"
+	@echo "View logs: docker logs reffs-sanity-ps-a / reffs-sanity-ps-b / etc."
+
+stop-ps-demo:
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo down -v 2>/dev/null || true
+
+.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-sanity stop-sanity run-ps-demo stop-ps-demo

@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# PS config for the multi-PS sanity demo (deploy/sanity).  Shared by
+# both ps-a and ps-b containers.  The native NFSv4.2 listener carries
+# no proxy obligations of its own (role=standalone); the proxy
+# listener (port 4098) attaches to the upstream MDS named reffs-mds
+# on the docker bridge.
+#
+# PROXY_REGISTRATION will fail with NFS4ERR_PERM in this topology
+# (Plan A: identity contexts wired but no GSS/TLS in the smoke);
+# the PS continues without registered-PS privilege.  AUTH_SYS-mode
+# forward ops still work for the demo's normal-IO test surface.
+
+# Native listener bound to a non-default port so the PROXY listener
+# can claim the standard NFS port 2049 (see [[proxy_mds]] below).
+# This lets `ec_demo --mds reffs-ps-a` (which connects to port 2049
+# by TIRPC default) land on the proxy namespace as intended.
+[server]
+port              = 12050
+probe_port        = 20491
+bind              = "*"
+role              = "standalone"
+minor_versions    = [1, 2]
+grace_period      = 5
+workers           = 4
+max_session_slots = 16
+log_level         = "info"
+
+[backend]
+type              = "posix"
+path              = "/tmp/reffs_ps_data"
+state_file        = "/tmp/reffs_ps_state"
+
+[iouring]
+network_sq_size   = 256
+network_cq_size   = 1024
+backend_sq_size   = 64
+backend_cq_size   = 256
+
+[[export]]
+path        = "/"
+clients     = "*"
+access      = "rw"
+root_squash = false
+flavors     = ["sys"]
+
+[[proxy_mds]]
+id          = 1
+port        = 2049              # standard NFS port -- ec_demo --mds <ps>
+                                #   defaults here via TIRPC
+bind        = "*"
+address     = "reffs-mds"
+mds_port    = 2049
+mds_probe   = 20490

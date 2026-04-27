@@ -1,22 +1,22 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Multi-codec sanity test: 1 MDS + 6 DSes + 1 client on a Docker bridge.
+# Multi-codec sanity test: 1 MDS + 6 DSes + 2 PSes + 1 client on a
+# Docker bridge.
 #
 # A builder container compiles once into a shared volume.  All other
 # containers mount that volume read-only and run pre-built binaries.
 #
-# Designed so two PSes (A, B) can be added later for the proxy
-# end-to-end test once the REFFS_DATA_PROXY backend lands per
-# .claude/design/proxy-server.md phases 3-4.
+# Two profiles:
+#   default ('run-sanity' make target): client tests SBs directly against
+#     MDS (no PS in the loop).  4/5 SBs PASS on main as of 2026-04-27.
+#   'ps-demo' ('run-ps-demo'): client mounts both PSes, writes via PS-A,
+#     reads from PS-B, byte-exact diff.  Exercises the existing ps_proxy_*
+#     forward path against AUTH_SYS clients.
 #
 # Usage:
-#   docker compose -f deploy/sanity/docker-compose.yml up -d builder
-#   docker compose -f deploy/sanity/docker-compose.yml up -d \
-#       ds0 ds1 ds2 ds3 ds4 ds5 mds
-#   docker compose -f deploy/sanity/docker-compose.yml --profile run up sanity
-# Or:
-#   make -f Makefile.reffs run-sanity   (target added separately)
+#   make -f Makefile.reffs run-sanity      (no PS)
+#   make -f Makefile.reffs run-ps-demo     (with 2 PSes)
 
 x-ds-common: &ds-common
   image: reffs-dev
@@ -173,6 +173,111 @@ services:
       "
     profiles:
       - run
+
+  mds-setup:
+    container_name: reffs-sanity-mds-setup
+    image: reffs-dev
+    depends_on:
+      mds:
+        condition: service_healthy
+    networks:
+      - sanity
+    volumes:
+      - sanity-build-vol:/shared:ro
+      - ../../:/reffs:ro,z
+    # Oneshot: create the 5 sanity SBs on the MDS, then exit.  The
+    # PSes depend on completion so that when they start, the MDS
+    # already advertises every SB they need to discover via MOUNT.
+    command: >
+      /bin/bash -c "
+        /reffs/deploy/sanity/setup-sbs.sh reffs-mds
+      "
+    profiles:
+      - ps-demo
+
+  ps-a:
+    image: reffs-dev
+    container_name: reffs-sanity-ps-a
+    privileged: true
+    depends_on:
+      mds-setup:
+        condition: service_completed_successfully
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - sanity-build-vol:/shared:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+    networks:
+      sanity:
+        aliases: [reffs-ps-a]
+    command: >
+      /bin/bash -c "
+        rm -rf /tmp/reffs_ps_data /tmp/reffs_ps_state &&
+        mkdir -p /tmp/reffs_ps_data/sb_1 /tmp/reffs_ps_state &&
+        exec /shared/build/src/reffsd --config=/shared/src/deploy/sanity/ps.toml
+      "
+    profiles:
+      - ps-demo
+
+  ps-b:
+    image: reffs-dev
+    container_name: reffs-sanity-ps-b
+    privileged: true
+    depends_on:
+      mds-setup:
+        condition: service_completed_successfully
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - sanity-build-vol:/shared:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+    networks:
+      sanity:
+        aliases: [reffs-ps-b]
+    command: >
+      /bin/bash -c "
+        rm -rf /tmp/reffs_ps_data /tmp/reffs_ps_state &&
+        mkdir -p /tmp/reffs_ps_data/sb_1 /tmp/reffs_ps_state &&
+        exec /shared/build/src/reffsd --config=/shared/src/deploy/sanity/ps.toml
+      "
+    profiles:
+      - ps-demo
+
+  ps-demo:
+    container_name: reffs-sanity-ps-client
+    image: reffs-dev
+    privileged: true
+    depends_on:
+      ps-a:
+        condition: service_healthy
+      ps-b:
+        condition: service_healthy
+    networks:
+      - sanity
+    volumes:
+      - sanity-build-vol:/shared:ro
+      - ../../:/reffs:ro,z
+    # SBs already provisioned by mds-setup before ps-a/ps-b started.
+    command: >
+      /bin/bash -c "
+        /reffs/deploy/sanity/run-ps-demo.sh /shared/build/tools/ec_demo reffs-ps-a reffs-ps-b
+      "
+    profiles:
+      - ps-demo
 
 volumes:
   sanity-build-vol:
