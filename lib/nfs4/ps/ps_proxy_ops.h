@@ -272,12 +272,22 @@ void ps_proxy_read_reply_free(struct ps_proxy_read_reply *reply);
 
 /*
  * createmode4 mirror.  Only UNCHECKED and GUARDED are supported by
- * the primitive today; EXCLUSIVE4_1 needs verifier handling and is
- * a follow-up slice.  Callers passing EXCLUSIVE4 / EXCLUSIVE4_1
- * see -EINVAL.
+ * the primitive.  EXCLUSIVE4 / EXCLUSIVE4_1 are forwarded verbatim
+ * to the upstream MDS, which owns the verifier-dedup state; the PS
+ * does not attempt to mirror that state locally.
+ *
+ * The Linux NFSv4.2 kernel client uses EXCLUSIVE4_1 by default for
+ * any OPEN(CREATE), so this primitive must accept it -- otherwise
+ * basic file creation through a kernel-mounted PS fails with
+ * NFS4ERR_NOTSUPP.
  */
 #define PS_PROXY_OPEN_CREATEMODE_UNCHECKED 0
 #define PS_PROXY_OPEN_CREATEMODE_GUARDED 1
+#define PS_PROXY_OPEN_CREATEMODE_EXCLUSIVE 2 /* RFC 8881: verifier only */
+#define PS_PROXY_OPEN_CREATEMODE_EXCLUSIVE_1 3 /* RFC 8881: verifier + attrs */
+
+/* NFSv4 verifier4 is 8 bytes (RFC 8881 S3.1). */
+#define PS_PROXY_OPEN_CREATEVERF_SIZE 8
 
 /*
  * OPEN forwarder input.  Scope is deliberately narrow:
@@ -307,11 +317,17 @@ struct ps_proxy_open_request {
 	 * createmode / createattrs fields are ignored.
 	 */
 	uint32_t opentype; /* PS_PROXY_OPEN_OPENTYPE_{NOCREATE,CREATE} */
-	uint32_t createmode; /* PS_PROXY_OPEN_CREATEMODE_{UNCHECKED,GUARDED} */
+	uint32_t createmode; /* PS_PROXY_OPEN_CREATEMODE_* */
 	const uint32_t *createattrs_mask; /* bitmap4 words */
 	uint32_t createattrs_mask_len;
 	const uint8_t *createattrs_vals; /* attrlist4 bytes */
 	uint32_t createattrs_vals_len;
+	/*
+	 * Verifier for EXCLUSIVE4 and EXCLUSIVE4_1.  Caller forwards
+	 * the end client's verifier verbatim; the PS does not invent
+	 * one.  Ignored for UNCHECKED / GUARDED.
+	 */
+	uint8_t createverf[PS_PROXY_OPEN_CREATEVERF_SIZE];
 	uint32_t seqid;
 	uint32_t share_access;
 	uint32_t share_deny;

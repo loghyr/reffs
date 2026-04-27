@@ -1866,12 +1866,15 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 		if (!is_claim_null)
 			return -EINVAL;
 		if (req->createmode != PS_PROXY_OPEN_CREATEMODE_UNCHECKED &&
-		    req->createmode != PS_PROXY_OPEN_CREATEMODE_GUARDED)
+		    req->createmode != PS_PROXY_OPEN_CREATEMODE_GUARDED &&
+		    req->createmode != PS_PROXY_OPEN_CREATEMODE_EXCLUSIVE &&
+		    req->createmode != PS_PROXY_OPEN_CREATEMODE_EXCLUSIVE_1)
 			return -EINVAL;
 		/*
-		 * createattrs is allowed to be empty (server picks
-		 * defaults) but a non-zero-length mask must come with
-		 * non-NULL bytes, and vice versa.
+		 * UNCHECKED4 / GUARDED4 / EXCLUSIVE4_1 carry createattrs;
+		 * EXCLUSIVE4 carries verifier only.  createattrs is allowed
+		 * to be empty (server picks defaults) but a non-zero-length
+		 * mask must come with non-NULL bytes, and vice versa.
 		 */
 		if (req->createattrs_mask_len > 0 && !req->createattrs_mask)
 			return -EINVAL;
@@ -1915,18 +1918,61 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 	oa->owner.owner.owner_len = req->owner_data_len;
 	if (is_create) {
 		oa->openhow.opentype = OPEN4_CREATE;
-		oa->openhow.openflag4_u.how.mode =
-			(req->createmode == PS_PROXY_OPEN_CREATEMODE_GUARDED) ?
-				GUARDED4 :
-				UNCHECKED4;
-		fattr4 *cattrs =
-			&oa->openhow.openflag4_u.how.createhow4_u.createattrs;
+		switch (req->createmode) {
+		case PS_PROXY_OPEN_CREATEMODE_GUARDED:
+			oa->openhow.openflag4_u.how.mode = GUARDED4;
+			break;
+		case PS_PROXY_OPEN_CREATEMODE_EXCLUSIVE:
+			oa->openhow.openflag4_u.how.mode = EXCLUSIVE4;
+			break;
+		case PS_PROXY_OPEN_CREATEMODE_EXCLUSIVE_1:
+			oa->openhow.openflag4_u.how.mode = EXCLUSIVE4_1;
+			break;
+		case PS_PROXY_OPEN_CREATEMODE_UNCHECKED:
+		default:
+			oa->openhow.openflag4_u.how.mode = UNCHECKED4;
+			break;
+		}
 
-		cattrs->attrmask.bitmap4_val =
-			(uint32_t *)req->createattrs_mask;
-		cattrs->attrmask.bitmap4_len = req->createattrs_mask_len;
-		cattrs->attr_vals.attrlist4_val = (char *)req->createattrs_vals;
-		cattrs->attr_vals.attrlist4_len = req->createattrs_vals_len;
+		switch (oa->openhow.openflag4_u.how.mode) {
+		case UNCHECKED4:
+		case GUARDED4: {
+			fattr4 *cattrs = &oa->openhow.openflag4_u.how
+						  .createhow4_u.createattrs;
+
+			cattrs->attrmask.bitmap4_val =
+				(uint32_t *)req->createattrs_mask;
+			cattrs->attrmask.bitmap4_len =
+				req->createattrs_mask_len;
+			cattrs->attr_vals.attrlist4_val =
+				(char *)req->createattrs_vals;
+			cattrs->attr_vals.attrlist4_len =
+				req->createattrs_vals_len;
+			break;
+		}
+		case EXCLUSIVE4:
+			memcpy(&oa->openhow.openflag4_u.how.createhow4_u
+					.createverf,
+			       req->createverf, NFS4_VERIFIER_SIZE);
+			break;
+		case EXCLUSIVE4_1: {
+			creatverfattr *cb =
+				&oa->openhow.openflag4_u.how.createhow4_u
+					 .ch_createboth;
+
+			memcpy(cb->cva_verf, req->createverf,
+			       NFS4_VERIFIER_SIZE);
+			cb->cva_attrs.attrmask.bitmap4_val =
+				(uint32_t *)req->createattrs_mask;
+			cb->cva_attrs.attrmask.bitmap4_len =
+				req->createattrs_mask_len;
+			cb->cva_attrs.attr_vals.attrlist4_val =
+				(char *)req->createattrs_vals;
+			cb->cva_attrs.attr_vals.attrlist4_len =
+				req->createattrs_vals_len;
+			break;
+		}
+		}
 	} else {
 		oa->openhow.opentype = OPEN4_NOCREATE;
 	}

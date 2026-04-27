@@ -386,11 +386,16 @@ uint32_t nfs4_op_open(struct compound *compound)
 			createmode4 cmode = args->openhow.openflag4_u.how.mode;
 
 			/*
-			 * EXCLUSIVE / EXCLUSIVE4_1 require verifier
-			 * dedup that the proxy doesn't yet mirror;
-			 * reject explicitly for now.
+			 * UNCHECKED4 / GUARDED4 / EXCLUSIVE4 / EXCLUSIVE4_1
+			 * are all forwarded to the upstream MDS verbatim.
+			 * The MDS owns the verifier-dedup state; the PS does
+			 * not mirror it.  Linux NFSv4.2 kernel client uses
+			 * EXCLUSIVE4_1 by default for any OPEN(CREATE), so
+			 * accepting it is required for kernel-mounted PS to
+			 * work for normal file creation.
 			 */
-			if (cmode != UNCHECKED4 && cmode != GUARDED4) {
+			if (cmode != UNCHECKED4 && cmode != GUARDED4 &&
+			    cmode != EXCLUSIVE4 && cmode != EXCLUSIVE4_1) {
 				*status = NFS4ERR_NOTSUPP;
 				goto out;
 			}
@@ -506,20 +511,49 @@ uint32_t nfs4_op_open(struct compound *compound)
 
 		if (is_create) {
 			createhow4 *how = &args->openhow.openflag4_u.how;
+			fattr4 *cattrs = NULL;
 
-			oreq.createmode =
-				(how->mode == GUARDED4) ?
-					PS_PROXY_OPEN_CREATEMODE_GUARDED :
+			switch (how->mode) {
+			case GUARDED4:
+				oreq.createmode =
+					PS_PROXY_OPEN_CREATEMODE_GUARDED;
+				cattrs = &how->createhow4_u.createattrs;
+				break;
+			case EXCLUSIVE4:
+				oreq.createmode =
+					PS_PROXY_OPEN_CREATEMODE_EXCLUSIVE;
+				memcpy(oreq.createverf,
+				       how->createhow4_u.createverf,
+				       PS_PROXY_OPEN_CREATEVERF_SIZE);
+				break;
+			case EXCLUSIVE4_1:
+				oreq.createmode =
+					PS_PROXY_OPEN_CREATEMODE_EXCLUSIVE_1;
+				memcpy(oreq.createverf,
+				       how->createhow4_u.ch_createboth.cva_verf,
+				       PS_PROXY_OPEN_CREATEVERF_SIZE);
+				cattrs = &how->createhow4_u.ch_createboth
+						  .cva_attrs;
+				break;
+			case UNCHECKED4:
+			default:
+				oreq.createmode =
 					PS_PROXY_OPEN_CREATEMODE_UNCHECKED;
-			fattr4 *cattrs = &how->createhow4_u.createattrs;
+				cattrs = &how->createhow4_u.createattrs;
+				break;
+			}
 
-			oreq.createattrs_mask = cattrs->attrmask.bitmap4_val;
-			oreq.createattrs_mask_len =
-				cattrs->attrmask.bitmap4_len;
-			oreq.createattrs_vals =
-				(const uint8_t *)cattrs->attr_vals.attrlist4_val;
-			oreq.createattrs_vals_len =
-				cattrs->attr_vals.attrlist4_len;
+			if (cattrs) {
+				oreq.createattrs_mask =
+					cattrs->attrmask.bitmap4_val;
+				oreq.createattrs_mask_len =
+					cattrs->attrmask.bitmap4_len;
+				oreq.createattrs_vals =
+					(const uint8_t *)
+						cattrs->attr_vals.attrlist4_val;
+				oreq.createattrs_vals_len =
+					cattrs->attr_vals.attrlist4_len;
+			}
 		}
 		struct ps_proxy_open_reply oreply;
 
