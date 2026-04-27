@@ -160,10 +160,19 @@ static int mds_create_session(struct mds_session *ms)
 	args->csa_sequence = ms->ms_create_seq;
 	args->csa_flags = 0;
 
-	/* Fore channel: modest values for a demo client. */
+	/*
+	 * Fore channel sizes.  Must HEADROOM the largest expected
+	 * data payload + RPC/NFS overhead -- a 1 MiB WRITE compound
+	 * runs SEQUENCE + PUTFH + WRITE(1MiB) which overshoots a
+	 * literal 1 MiB cap and the MDS rejects with
+	 * NFS4ERR_REQ_TOO_BIG.  Ask for 4 MiB; the server clamps to
+	 * its own NFS4_SESSION_MAX_REQUEST_SIZE (1 MiB + 64 KiB =
+	 * ~1.06 MiB) which is enough for a 1 MiB data payload plus
+	 * the sub-kilobyte compound prefix.
+	 */
 	args->csa_fore_chan_attrs.ca_headerpadsize = 0;
-	args->csa_fore_chan_attrs.ca_maxrequestsize = 1048576;
-	args->csa_fore_chan_attrs.ca_maxresponsesize = 1048576;
+	args->csa_fore_chan_attrs.ca_maxrequestsize = 4U * 1024U * 1024U;
+	args->csa_fore_chan_attrs.ca_maxresponsesize = 4U * 1024U * 1024U;
 	args->csa_fore_chan_attrs.ca_maxresponsesize_cached = 4096;
 	args->csa_fore_chan_attrs.ca_maxoperations = 16;
 	args->csa_fore_chan_attrs.ca_maxrequests = 1;
