@@ -494,6 +494,400 @@ Race transitions (must be specified before slice B lands):
   test `test_no_index_entry_added_to_drained_ds` that asserts
   this property under concurrent admin operations.
 
+## Drain access semantics
+
+> **Status note (2026-04-26)**: this section was substantially
+> rewritten in conversation with the draft author after the original
+> design (which excluded D from RW layouts during drain) was found to
+> introduce divergence races and to over-reach by overloading
+> `nc_is_registered_ps` as a "trusted writer" capability.  The
+> simplified design below was driven by these recognitions:
+>
+> 1. The PS does not introspect the file's layout state.  It
+>    receives work assignments from the MDS (in `PROXY_PROGRESS`
+>    poll-replies) and operates against MDS-supplied descriptors --
+>    it never issues a "give me a layout for this file" call that
+>    has to know about drain.
+> 2. Migration consistency is achieved by keeping the draining
+>    dstore as a normal CSM target throughout the migration.
+>    Existing client writes flow to all mirrors including D; the
+>    PS reads from D as a regular client; the swap happens
+>    atomically at PROXY_DONE time via a two-layout commit.
+> 3. The privilege model in slice 6b stays narrow.
+>    `nc_is_registered_ps` is consumed only by namespace-discovery
+>    bypass (slice 6b-ii); it is NOT extended to cover RW LAYOUTGET
+>    on draining mirrors.
+
+The DRAINING state is a window during which the dstore is still
+serving I/O while the autopilot moves instances off.  The semantic
+question is: which layout grants and which I/O fan-outs should
+target a draining dstore, and which should be diverted?
+
+### Goal
+
+Live drain.  Clients should not observe `NFS4ERR_LAYOUTUNAVAILABLE`
+or write failures while a drain runs in the background.  The
+operator's intent is "make the dstore unused", not "shut down all
+access to the dstore".
+
+### Rules
+
+The DRAINING state filters **only the runway**.  Everything else
+operates normally:
+
+| Path | Behavior on a draining dstore |
+|------|-------------------------------|
+| Runway pop (new-file placement) | **skip D** -- no new instances allocated on a draining dstore |
+| OPEN on existing file with mirror on D | normal (D included in mirror set) |
+| LAYOUTGET (READ or RW) | normal (D included in returned layout) |
+| Client CSM WRITE | hits all mirrors including D (D stays in sync) |
+| InBand WRITE fan-out | hits all mirrors including D |
+| Per-file migration (ADD/REMOVE swap) | atomic via the two-layout commit (see below) |
+
+D stays writable throughout the drain.  The drain transitions to
+DRAINED when `ds_instance_count == 0`, i.e., when every existing
+file's mirror on D has been migrated off.
+
+This was a major simplification from an earlier draft of this
+section.  The earlier design tried to filter LAYOUTGET (exclude D
+from RW grants) and the InBand fan-out (exclude D from writes) to
+"protect" D from new writes.  That introduced two problems:
+
+1. **Append divergence** -- a new client write would land on
+   {E, G} but skip D, leaving D's instance stale; if the operator
+   then issued UNDRAIN, D would be a stale mirror.
+2. **PS-write conflict** -- the PS itself does CSM writes during
+   migration; excluding D would also exclude the PS, which broke
+   the symmetry it relied on.
+
+By keeping D as a normal CSM target throughout, both problems
+disappear.  The migration's correctness comes from the two-layout
+commit (next subsection), not from filtering writes.
+
+### Two-layout state for in-flight migrations
+
+For each file F whose mirror on D is being migrated, the MDS
+persists **three logical layout records** in the inode while
+migration is in flight:
+
+- `L1` -- the **active** layout for external clients.  Mirror set
+  includes D unchanged: `{D, E, ...}`.  All external traffic
+  (existing layouts in client caches, fresh LAYOUTGETs) sees L1.
+- `L2` -- the **candidate** post-migration layout.  Mirror set
+  has D replaced by the target G: `{E, G, ...}`.  L2 is not
+  visible to external clients during the migration window.
+- `L3` -- the **composite** layout served only to the registered
+  PS that owns the migration.  L3 has TWO mirror entries the PS
+  must understand:
+  - `M1` (read source): the current L1 mirror set `{D, E, ...}`
+  - `M2` (write target): the augmented set `{D, E, G, ...}` --
+    every L1 mirror PLUS G
+
+  The PS reads source bytes from any mirror in `M1`; writes via
+  CSM to every mirror in `M2`.  Note `M2` includes D and E, NOT
+  just G -- this is what keeps D in sync with concurrent external
+  client writes (the PS doing CSM to D+E+G, and external clients
+  doing CSM to D+E via L1, converge on the same byte image).
+
+When the migration commits (`PROXY_DONE(OK)`), the MDS atomically:
+
+1. Flips the active layout to L2 (D dropped, G promoted)
+2. Drops the L1 record
+3. Drops the L3 composite (PS no longer needs the migration view)
+4. Issues `CB_LAYOUTRECALL` to external clients holding cached L1
+5. Internal `REMOVE_MIRROR(D)` is **deferred** until all L1
+   layouts have been recalled and returned (or expired)
+
+Step 5's deferral matters: a client holding a cached L1 may have a
+WRITE in flight that lands on D *after* the L1->L2 swap.  If
+`REMOVE_MIRROR(D)` ran immediately on the swap, the late write
+could arrive at D after D had been unlinked, producing a
+NFS3ERR_STALE on the client's CSM (visible client failure).  The
+mitigation is to gate `REMOVE_MIRROR(D)` on "no outstanding L1
+layout for this file":
+
+- After step 4 (CB_LAYOUTRECALL fired), the autopilot worker
+  parks the file in a pending-remove queue.
+- Each LAYOUTRETURN that drops an L1 layout for this file
+  decrements the file's "L1 holders" counter.
+- When the counter reaches zero (or one lease period elapses with
+  CB_LAYOUTRECALL declined, see slice E for the force-after-2-
+  lease-periods rule), the autopilot runs the deferred
+  `REMOVE_MIRROR(D)`.
+
+Late writes that arrive at D between step 1 and step 5 are
+**harmless**: they land on D's instance which is being unlinked;
+the bytes are dropped with the unlink.  The client sees the write
+succeed (CSM to D succeeded *before* unlink) and the data is
+present on the surviving mirrors {E, G}.  No data loss; no client
+visible error.
+
+If a late write arrives **after** D's instance is unlinked (rare:
+client held its L1 cache past CB_LAYOUTRECALL), the write to D
+returns NFS3ERR_STALE to the client.  The client retries CSM with
+its cached layout; on next LAYOUTGET it gets L2 and writes only
+to {E, G} thereafter.  This is a recoverable transient error, not
+data loss.
+
+When the migration fails (`PROXY_DONE(FAIL)` or `PROXY_CANCEL`),
+the MDS atomically:
+
+1. Keeps L1 active unchanged
+2. Drops L2 (G is dropped from the candidate; the half-filled G
+   instance is unlinked)
+3. Drops L3
+4. No CB_LAYOUTRECALL needed (external clients never saw L2)
+
+In the steady state during migration:
+
+- **External clients writing to F**: write CSM to L1's mirror set
+  `{D, E}`.  D and E stay in sync via this CSM.
+- **PS writing to F**: writes CSM to L3.M2 = `{D, E, G}`.  D and
+  E receive the same writes external clients would issue (so no
+  divergence).  G fills as the PS catches up from `M1` reads.
+- **Concurrent client writes during PS catch-up**: land on D and
+  E via L1; the PS's parallel CSM to D, E, AND G means G receives
+  the live writes too.  G converges without explicit reconciliation.
+- **Reads from F (any caller)**: served from any mirror in L1
+  `{D, E}`; never from G during migration (G might still be
+  catching up).
+
+### Pinned definitions (avoid framing drift)
+
+- **L1.mirrors = the file's pre-migration mirror set** including D
+- **L2.mirrors = (L1.mirrors - {D}) + {G}**
+- **L3.M1 = L1.mirrors** (PS's read source set)
+- **L3.M2 = L1.mirrors + {G}** (PS's write target set; STILL
+  includes D because D must remain in sync until commit)
+
+If a future doc rev needs to refer to "the PS's write set" or
+"the post-migration set", use the symbols above to avoid the
+ambiguity an earlier draft of this section had.
+
+When the PS believes G has the full byte image, it issues
+`PROXY_DONE(layout_stid, status=OK)`.  The MDS atomically swaps
+the active layout L1 -> L2.  External clients with cached layouts
+get LAYOUTRECALL on next access (or naturally re-LAYOUTGET on
+expiry), receive L2, write to {E, G} thereafter, never touch D
+again.  Internal `REMOVE_MIRROR(D)` runs from the swap moment.
+
+If the swap is interrupted by an MDS reboot, the persisted
+L1+L2+migration_owner state lets the MDS recover: the PS reclaims
+its layout via standard NFSv4 reclaim, MDS recognises the
+in-flight migration, PS continues from where it was.  The DS
+holds the bytes the PS already wrote to G; nothing is lost.
+
+### What the PS does NOT need
+
+The two-layout model lets the drain semantics avoid:
+
+- **No CB_PROXY_* receive infrastructure on the PS.**  Work
+  assignments arrive in `PROXY_PROGRESS` poll-replies on the PS's
+  outbound MDS session.  Pure fore-channel.
+- **No new claim type.**  PS uses normal `OPEN(CLAIM_NULL)` /
+  `OPEN_RECLAIM(CLAIM_PREVIOUS)`.  The MDS recognises the
+  registered-PS session and serves the L3 composite layout instead
+  of a normal RW layout.
+- **No new stateid type.**  The layout stateid issued by the
+  MDS for L3 *is* the per-move identifier.  The MDS keys its
+  persisted migration record on the layout stateid.
+- **No `nc_is_registered_ps` overload.**  Slice 6b's privilege
+  flag stays narrow (namespace-discovery bypass).  The migration
+  layout grant is gated by session identity (registered-PS) only.
+- **No write barrier per migration window.**  CSM-during-catch-up
+  converges; concurrent writes are not lost; no client stall.
+
+### What the runway DOES still skip
+
+`runway_pop` skips a draining dstore unconditionally (slice B).
+This applies to ALL callers (including the PS).  The runway is
+for fresh-file creation -- a dstore that's being drained should
+not receive new files, since they would immediately need
+migration off.
+
+### Drain race with `[[allowed_ps]]` allowlist edit
+
+If the operator removes the PS from the allowlist mid-drain,
+in-flight `PROXY_PROGRESS` polls and `PROXY_DONE` commits keep
+working: the privilege check is `nc_is_registered_ps`, a per-client
+flag set at PROXY_REGISTRATION time, not a per-op recheck against
+the live allowlist.  Mid-drain allowlist edits are a sharp tool;
+the worst case is a slightly-delayed loss of privilege after the
+PS's session expires.  Operator wanting an immediate revoke
+restarts reffsd, which kills the PS's session and forces
+re-registration against the new allowlist.
+
+### Drain races with DSTORE_LOST
+
+A draining dstore that fails mid-drain (network partition, disk
+unrecoverable) transitions DRAINING -> LOST via `DSTORE_LOST`.
+Failure shapes, all handled by existing infra:
+
+- **Source-read fail** (PS doing CHUNK_READ from D as part of
+  catch-up): returns `-EIO` / `-ENXIO`.  PS reports
+  `PROXY_DONE(layout_stid, status=FAIL)`.  MDS commits back to L1
+  untouched.  DSTORE_LOST pass 2 owns the index cleanup.
+- **Target-write fail** (PS doing CHUNK_WRITE to G): returns
+  `-EIO` / `-ENXIO`.  Same `PROXY_DONE(FAIL)` + L1 commit.  G is
+  abandoned; a future autopilot pass picks a different target.
+
+The MDS's atomic-rollback semantics on `PROXY_DONE(FAIL)` mean
+no partial state escapes to clients.
+
+### Reboot recovery
+
+The MDS persists three independent things to make reboot recovery
+work:
+
+1. **Client identity** -- normal NFSv4 client-state persistence
+   (RFC 8881 S8.4).  The PS's `client_owner4` + assigned
+   `clientid4` survive MDS reboot.  This is not new: reffs already
+   persists clients in the namespace DB
+   (`lib/fs/client.c`) and the PS shows up as a regular client.
+2. **The PS-registration attribute** -- on rejoin, the MDS knows
+   the PS was previously registered (`nc_is_registered_ps == true`
+   on the persisted `nfs4_client` record).  The PS does NOT need
+   to re-issue PROXY_REGISTRATION first.
+3. **In-flight migration records** -- per file currently being
+   migrated:
+   `{file_FH, source_dstore, target_dstore, owning_PS_clientid,
+   started_at}`.  Lives in the namespace DB alongside (1) and (2).
+   Note: keyed on `clientid` (which is stable across PS-process
+   restarts as long as the PS reuses its `client_owner4`), NOT on
+   the layout stateid (which is volatile per-boot).
+
+Recovery sequence:
+
+1. MDS reloads (1)+(2)+(3) before granting any reclaim ops.
+2. PS reconnects.  EXCHANGE_ID with its prior `client_owner4`
+   recovers the same `clientid4` (slice 4b client recovery
+   already does this for normal NFSv4 clients; PS is no special
+   case).  The MDS sees `nc_is_registered_ps == true` from the
+   persisted record.
+3. PS issues `RECLAIM_COMPLETE` after CREATE_SESSION.
+4. **Per-file recovery** for each in-flight migration uses
+   standard NFSv4 reclaim semantics, with one PS-side
+   persistence requirement:
+
+   - **PS persists each migration's layout stateid locally** when
+     the MDS grants L3.  Lives in PS-side state (a small sidecar
+     file or DB table keyed by file FH).  This is the only PS-side
+     persistence the data mover requires; without it the PS cannot
+     reclaim the layout after PS-process restart, and the
+     migration is abandoned.
+   - PS issues `OPEN_RECLAIM(CLAIM_PREVIOUS, file_FH)` per RFC
+     8881 S9.11.1 / S10.2.1.  The MDS validates that the prior
+     `clientid4` had an OPEN on this file (which it did -- the
+     OPEN was created via the PROXY_PROGRESS-reply assignment
+     handler).  MDS re-grants the OPEN.
+   - PS issues `LAYOUTGET(reclaim=true)` per RFC 8881 S18.43.3,
+     supplying the previously-persisted layout stateid as the
+     reclaim key.  The MDS validates that:
+     - The session's client has `nc_is_registered_ps == true`
+     - A persisted in-flight migration record exists for this
+       `(clientid, file_FH, layout_stateid)` triple
+     - The reclaim falls within the grace window
+     and re-grants the L3 composite with a fresh layout stateid
+     (the stateid the PS supplied is consumed; a new one is
+     issued for the resumed migration session).
+   - This is exactly the standard NFSv4 layout reclaim path; no
+     new claim type or wire signal is required.  The PS-side
+     persistence of the layout stateid is the only protocol
+     surface the PS must implement beyond what a normal
+     layout-holding NFSv4 client does.
+5. PS continues the migration from wherever it left off.  Bytes
+   already on G are preserved (DS holds them); PS reads remaining
+   bytes from D, writes to G.
+6. Eventually `PROXY_DONE` fires; commit completes.
+
+**Ordering**: standard NFSv4 reclaim (RECLAIM_COMPLETE) MUST
+precede any per-file migration reclaim above.  PROXY_REGISTRATION
+is NOT re-issued -- the persisted `nc_is_registered_ps` flag
+makes it implicit.  If the PS's identity rotated (different
+`client_owner4` because PS process state was lost), it must
+PROXY_REGISTRATION fresh; but then the in-flight migration
+records keyed on the OLD clientid don't match the NEW one,
+recovery fails (NFS4ERR_NO_GRACE), and the autopilot retries the
+moves as fresh assignments.
+
+If the persisted migration record cannot be matched (e.g., MDS
+lost it in a state corruption), the per-file reclaim returns
+`NFS4ERR_NO_GRACE` or `NFS4ERR_RECLAIM_BAD`; PS reports the move
+as failed via PROXY_DONE(FAIL); autopilot retries on a fresh
+`PROXY_PROGRESS` poll with a new target dstore.
+
+### Implementation pointers
+
+The drain semantics themselves are nearly trivial after this
+simplification:
+
+1. **Runway pop** (slice B, already done): skip drained dstores.
+2. **LAYOUTGET (lib/nfs4/server/layout.c)**: no change required.
+   D stays in normal layouts.
+3. **InBand WRITE fan-out (lib/nfs4/server/file.c)**: no change
+   required.  D stays in normal fan-out.
+
+The complexity moves to the two-layout commit machinery (separate
+section, slice E):
+
+4. **Per-inode migration record** persisted in the namespace DB.
+5. **Two-layout state** in the inode (L1 active, L2 candidate).
+6. **PS-recognising LAYOUTGET path**: when a registered-PS session
+   does LAYOUTGET on a file with an in-flight migration record
+   owned by that session, return L3 composite instead of L1.
+7. **PROXY_DONE handler**: on success, swap active layout L1->L2,
+   delete migration record, internal REMOVE_MIRROR(D); on failure,
+   keep L1, drop L2/G via internal cleanup.
+8. **Reclaim recognition**: on OPEN_RECLAIM/LAYOUTGET-reclaim from
+   a registered-PS session, look up persisted migration records
+   keyed by `(session_principal, file_FH)`, re-grant if found.
+
+LOC estimate: ~600-1000 LOC across slices E + 6c-iii (PROXY_DONE)
++ 6d (reclaim recognition).  This is its own slice ladder, tracked
+in proxy-server-phase6c.md.
+
+### Tests
+
+Add to slice E (drain autopilot) and slice 6c-iii (PROXY_DONE):
+
+| Test | Intent |
+|------|--------|
+| `test_drain_layoutget_normal_includes_d` | LAYOUTGET on a file with mirror on D returns D in the layout (READ and RW iomode) |
+| `test_drain_inband_write_includes_d` | InBand WRITE fan-out hits D |
+| `test_drain_csm_keeps_d_in_sync` | A series of client writes during drain leave D, E, G all bit-identical |
+| `test_migration_ps_layoutget_returns_l3` | Registered-PS session's LAYOUTGET on a file with in-flight migration returns L3 composite (M1=L1, M2=L2 mirrors) |
+| `test_migration_proxy_done_ok_commits_l2` | After PROXY_DONE(layout_stid, OK), the inode's active layout flips to L2 (D removed); subsequent LAYOUTGETs return L2 |
+| `test_migration_proxy_done_fail_keeps_l1` | After PROXY_DONE(layout_stid, FAIL), the inode's active layout stays L1 (D retained); G is dropped from inode state |
+| `test_migration_proxy_cancel_keeps_l1` | PROXY_CANCEL has the same effect as PROXY_DONE(FAIL) |
+| `test_migration_concurrent_csm_during_catchup` | Client writes during PS catch-up land on G via PS's CSM; final state is consistent |
+| `test_migration_reboot_recovery` | MDS restart mid-migration; PS reclaims via OPEN_RECLAIM(CLAIM_PREVIOUS); migration completes |
+| `test_migration_reboot_lost_record` | MDS lost migration record during reboot; PS reclaim returns NO_GRACE; PS retries via fresh PROXY_PROGRESS poll |
+| `test_undrain_layoutget_unchanged` | Drain has no effect on LAYOUTGET; UNDRAIN is observable only via the autopilot stopping new work assignments |
+| `test_drain_dstore_lost_midflight` | DSTORE_LOST during PS migration: source-read returns -EIO; PS reports PROXY_DONE(FAIL); L1 commits |
+
+### RFC alignment
+
+- RFC 8435 S5.1 (Flex Files layout iomode semantics)
+- RFC 8435 S5.4 (mirror repair / Flex Files mirroring writes)
+- RFC 8881 S8.4 (state recovery / RECLAIM_COMPLETE / grace period)
+- RFC 8881 S9.11.1 (CLAIM_PREVIOUS reclaim preconditions)
+- RFC 8881 S10.2.1 (recovery from server reboot)
+- RFC 8881 S13.6 (layout iomode and CSM write semantics; gives
+  the framing for L3.M2 carrying both source-readable and write-
+  target mirror entries)
+- RFC 8881 S18.43 (LAYOUTGET; S18.43.3 specifically for the
+  reclaim variant -- and the data-mover-specific PS reclaim
+  divergence from it, see "Reboot recovery" subsection above)
+- RFC 8881 S18.51 (LAYOUTRETURN; relevant to the L1->L2 swap
+  + deferred REMOVE_MIRROR(D) gate on L1 holders)
+- RFC 8881 S20.3 (CB_LAYOUTRECALL semantics for the L1 recall
+  path during the swap)
+- draft-haynes-nfsv4-flexfiles-v2 (FFV2 layout body / mirror
+  semantics)
+- draft-haynes-nfsv4-flexfiles-v2-data-mover (PS protocol; **needs
+  draft updates**, see proxy-server-phase6c.md)
+
+
 ## Slice ladder
 
 Each slice is a single git topic branch with one or more commits,
