@@ -879,4 +879,126 @@ int ps_proxy_forward_readdir(struct mds_session *ms, const uint8_t *upstream_fh,
  */
 void ps_proxy_readdir_reply_free(struct ps_proxy_readdir_reply *reply);
 
+/* ------------------------------------------------------------------ */
+/* Layout passthrough -- task #150 (codec demos through PS)           */
+/* ------------------------------------------------------------------ */
+/*
+ * The PS forwards layout-related ops verbatim to the upstream MDS
+ * and returns the response unchanged.  Clients (e.g. ec_demo) then
+ * dial the upstream DSes directly using the deviceids from the
+ * forwarded layout body -- the PS is not in the data path.
+ *
+ * Requires the client to have IP reachability to the DSes (true on
+ * deploy/sanity's docker bridge).  For NAT'd / firewalled
+ * deployments where the PS is the only network path, a "translation"
+ * variant that rewrites deviceids to point at the PS itself is the
+ * follow-up.
+ */
+
+/*
+ * One layout segment in a PS-owned heap copy of LAYOUTGET4resok.
+ * Mirrors layout4 from RFC 8881 S3.3.13: offset/length/iomode + an
+ * opaque body whose interpretation depends on lo_content_type.
+ */
+struct ps_proxy_layout_segment {
+	uint64_t lo_offset;
+	uint64_t lo_length;
+	uint32_t lo_iomode;
+	uint32_t lo_content_type; /* layouttype4 */
+	uint8_t *lo_content_body; /* heap, layout body bytes */
+	uint32_t lo_content_body_len;
+};
+
+/*
+ * PS-owned heap copy of LAYOUTGET4resok.  layouts[] and each
+ * segment's lo_content_body are heap-allocated; release exactly
+ * once via ps_proxy_layoutget_reply_free().  The MDS-issued layout
+ * stateid passes through verbatim so the client's subsequent
+ * LAYOUTRETURN / LAYOUTCOMMIT can ride with a stateid the MDS will
+ * recognise.
+ */
+struct ps_proxy_layoutget_reply {
+	bool return_on_close;
+	uint32_t stateid_seqid;
+	uint8_t stateid_other[PS_STATEID_OTHER_SIZE];
+	uint32_t nlayouts;
+	struct ps_proxy_layout_segment *layouts; /* heap array */
+};
+
+/*
+ * Build and send SEQUENCE + PUTFH(upstream_fh) + LAYOUTGET on `ms`,
+ * then deep-copy the LAYOUTGET4resok into `reply`.  All variable-
+ * length fields (layout4 array + each lo_content body) move to
+ * PS-owned heap so the caller can hold the reply past
+ * mds_compound_fini.
+ *
+ * Returns:
+ *   0        success; reply populated (nlayouts may be 0)
+ *   -EINVAL  ms / upstream_fh / stateid_other / reply NULL, or
+ *            upstream_fh_len == 0
+ *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
+ *   -ENOMEM  heap allocation failure during deep copy
+ *   -ENOSYS  forwarder is the foundation stub -- impl pending in
+ *            the real-implementation commit (DELETE this branch
+ *            once the deep-copy is wired)
+ *   -errno   RPC / compound failure, or non-OK per-op status
+ */
+int ps_proxy_forward_layoutget(
+	struct mds_session *ms, const uint8_t *upstream_fh,
+	uint32_t upstream_fh_len, bool signal_layout_avail,
+	uint32_t layout_type, uint32_t iomode, uint64_t offset, uint64_t length,
+	uint64_t minlength, uint32_t stateid_seqid,
+	const uint8_t stateid_other[PS_STATEID_OTHER_SIZE], uint32_t maxcount,
+	const struct authunix_parms *creds,
+	struct ps_proxy_layoutget_reply *reply);
+
+void ps_proxy_layoutget_reply_free(struct ps_proxy_layoutget_reply *reply);
+
+/*
+ * GETDEVICEINFO forward.  Returns a PS-owned deep copy of the MDS's
+ * device_addr4 (layouttype + opaque addr_body).  ec_demo calls this
+ * once per unique deviceid in a freshly-acquired layout to learn
+ * how to dial each DS.
+ */
+struct ps_proxy_getdeviceinfo_reply {
+	uint32_t da_layout_type;
+	uint8_t *da_addr_body; /* heap, addr body bytes */
+	uint32_t da_addr_body_len;
+	uint32_t notification_mask; /* bitmap4: notification bits */
+};
+
+int ps_proxy_forward_getdeviceinfo(struct mds_session *ms,
+				   const uint8_t deviceid[16],
+				   uint32_t layout_type, uint32_t maxcount,
+				   const struct authunix_parms *creds,
+				   struct ps_proxy_getdeviceinfo_reply *reply);
+
+void ps_proxy_getdeviceinfo_reply_free(
+	struct ps_proxy_getdeviceinfo_reply *reply);
+
+/*
+ * LAYOUTRETURN forward.  Most LAYOUTRETURN responses are simple
+ * (status + stateid for non-RETURN_ALL cases) so we just copy the
+ * stateid out.  return_all skips the per-file path and returns no
+ * stateid.
+ *
+ * lr_body / lr_body_len are the opaque layoutreturn_file4 body
+ * (kind-specific; ec_demo passes empty for plain returns).
+ */
+struct ps_proxy_layoutreturn_reply {
+	bool stateid_present;
+	uint32_t stateid_seqid;
+	uint8_t stateid_other[PS_STATEID_OTHER_SIZE];
+};
+
+int ps_proxy_forward_layoutreturn(
+	struct mds_session *ms, const uint8_t *upstream_fh,
+	uint32_t upstream_fh_len, bool reclaim, uint32_t layout_type,
+	uint32_t iomode, uint32_t return_type, uint64_t offset, uint64_t length,
+	uint32_t stateid_seqid,
+	const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+	const uint8_t *lr_body, uint32_t lr_body_len,
+	const struct authunix_parms *creds,
+	struct ps_proxy_layoutreturn_reply *reply);
+
 #endif /* _REFFS_PS_PROXY_OPS_H */

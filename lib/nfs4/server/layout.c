@@ -37,6 +37,10 @@
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
+#include "ps_inode.h"
+#include "ps_proxy_ops.h"
+#include "ps_sb.h"
+#include "ps_state.h"
 #include "nfs4/stateid.h"
 
 /* ------------------------------------------------------------------ */
@@ -81,6 +85,45 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	    args->gdia_layout_type != LAYOUT4_FLEX_FILES &&
 	    args->gdia_layout_type != LAYOUT4_FLEX_FILES_V2) {
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
+		return 0;
+	}
+
+	/*
+	 * Proxy-SB fast path (task #150): forward GETDEVICEINFO to
+	 * upstream MDS so ec_demo can resolve a deviceid returned in
+	 * a forwarded LAYOUTGET to the upstream DS's network address.
+	 * Foundation stub returns -ENOSYS -> NOTSUPP; deep-copy
+	 * implementation lands in the next commit.
+	 */
+	if (compound->c_curr_sb && compound->c_curr_sb->sb_proxy_binding) {
+		const struct ps_sb_binding *binding =
+			compound->c_curr_sb->sb_proxy_binding;
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+		struct ps_proxy_getdeviceinfo_reply gdireply;
+
+		memset(&gdireply, 0, sizeof(gdireply));
+		int fret = ps_proxy_forward_getdeviceinfo(
+			pls->pls_session, (const uint8_t *)args->gdia_device_id,
+			args->gdia_layout_type, args->gdia_maxcount,
+			&compound->c_ap, &gdireply);
+		if (fret == -ENOSYS) {
+			*status = NFS4ERR_NOTSUPP;
+			ps_proxy_getdeviceinfo_reply_free(&gdireply);
+			return 0;
+		}
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_GETDEVICEINFO);
+			ps_proxy_getdeviceinfo_reply_free(&gdireply);
+			return 0;
+		}
+		/* Real-impl wires gdireply -> resok here. */
+		ps_proxy_getdeviceinfo_reply_free(&gdireply);
+		*status = NFS4ERR_NOTSUPP;
 		return 0;
 	}
 
@@ -703,6 +746,65 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	}
 
 	/*
+	 * Proxy-SB fast path (task #150): forward LAYOUTGET to upstream
+	 * MDS, return the layout body verbatim.  ec_demo then dials the
+	 * upstream DSes directly using the deviceids in the layout.  See
+	 * .claude/design/proxy-server.md.
+	 *
+	 * Foundation stub: ps_proxy_forward_layoutget returns -ENOSYS
+	 * until the deep-copy implementation lands; surface as NOTSUPP
+	 * so ec_demo gets a clean diagnostic.
+	 */
+	if (compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding) {
+		uint8_t upstream_fh[PS_MAX_FH_SIZE];
+		uint32_t upstream_fh_len = 0;
+		int fret = ps_inode_get_upstream_fh(compound->c_inode,
+						    upstream_fh,
+						    sizeof(upstream_fh),
+						    &upstream_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			return 0;
+		}
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+		struct ps_proxy_layoutget_reply lgreply;
+
+		memset(&lgreply, 0, sizeof(lgreply));
+		fret = ps_proxy_forward_layoutget(
+			pls->pls_session, upstream_fh, upstream_fh_len,
+			args->loga_signal_layout_avail, layout_type,
+			args->loga_iomode, args->loga_offset, args->loga_length,
+			args->loga_minlength, args->loga_stateid.seqid,
+			(const uint8_t *)args->loga_stateid.other,
+			args->loga_maxcount, &compound->c_ap, &lgreply);
+		if (fret == -ENOSYS) {
+			*status = NFS4ERR_NOTSUPP;
+			ps_proxy_layoutget_reply_free(&lgreply);
+			return 0;
+		}
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_LAYOUTGET);
+			ps_proxy_layoutget_reply_free(&lgreply);
+			return 0;
+		}
+		/*
+		 * Real-impl wires lgreply -> resok here.  Stub commit
+		 * never reaches this branch (ENOSYS above).
+		 */
+		ps_proxy_layoutget_reply_free(&lgreply);
+		*status = NFS4ERR_NOTSUPP;
+		return 0;
+	}
+
+	/*
 	 * Per-export layout policy: only grant layouts for exports
 	 * that have the requested layout type enabled.  The root
 	 * export (/) and per-flavor exports (/krb5, /sys, etc.)
@@ -1316,6 +1418,60 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 		TRACE("LAYOUTRETURN: unknown layout type %d",
 		      args->lora_layout_type);
 		*status = NFS4ERR_UNKNOWN_LAYOUTTYPE;
+		return 0;
+	}
+
+	/*
+	 * Proxy-SB fast path (task #150): forward LAYOUTRETURN to the
+	 * upstream MDS so it can free the layout state it issued via
+	 * the forwarded LAYOUTGET.  Foundation stub returns -ENOSYS ->
+	 * NOTSUPP; deep-copy implementation lands in the next commit.
+	 */
+	if (compound->c_inode && compound->c_inode->i_sb &&
+	    compound->c_inode->i_sb->sb_proxy_binding &&
+	    args->lora_layoutreturn.lr_returntype == LAYOUTRETURN4_FILE) {
+		uint8_t upstream_fh[PS_MAX_FH_SIZE];
+		uint32_t upstream_fh_len = 0;
+		int fret = ps_inode_get_upstream_fh(compound->c_inode,
+						    upstream_fh,
+						    sizeof(upstream_fh),
+						    &upstream_fh_len);
+		if (fret < 0) {
+			*status = NFS4ERR_STALE;
+			return 0;
+		}
+		const struct ps_sb_binding *binding =
+			compound->c_inode->i_sb->sb_proxy_binding;
+		const struct ps_listener_state *pls =
+			ps_state_find(binding->psb_listener_id);
+		if (!pls || !pls->pls_session) {
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+		layoutreturn_file4 *lrf =
+			&args->lora_layoutreturn.layoutreturn4_u.lr_layout;
+		struct ps_proxy_layoutreturn_reply lrreply;
+
+		memset(&lrreply, 0, sizeof(lrreply));
+		fret = ps_proxy_forward_layoutreturn(
+			pls->pls_session, upstream_fh, upstream_fh_len,
+			args->lora_reclaim, args->lora_layout_type,
+			args->lora_iomode,
+			args->lora_layoutreturn.lr_returntype, lrf->lrf_offset,
+			lrf->lrf_length, lrf->lrf_stateid.seqid,
+			(const uint8_t *)lrf->lrf_stateid.other,
+			(const uint8_t *)lrf->lrf_body.lrf_body_val,
+			lrf->lrf_body.lrf_body_len, &compound->c_ap, &lrreply);
+		if (fret == -ENOSYS) {
+			*status = NFS4ERR_NOTSUPP;
+			return 0;
+		}
+		if (fret < 0) {
+			*status = errno_to_nfs4(fret, OP_LAYOUTRETURN);
+			return 0;
+		}
+		/* Real-impl wires lrreply -> res here. */
+		*status = NFS4ERR_NOTSUPP;
 		return 0;
 	}
 

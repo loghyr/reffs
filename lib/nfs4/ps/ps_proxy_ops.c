@@ -2173,3 +2173,111 @@ out:
 	mds_compound_fini(&mc);
 	return ret;
 }
+
+/* ------------------------------------------------------------------ */
+/* Layout passthrough (task #150) -- foundation stubs.                */
+/*                                                                    */
+/* The reply_free helpers below are fully wired so the handler hooks  */
+/* in lib/nfs4/server/layout.c can call them on every error path.     */
+/* The forwarders themselves return -ENOSYS until the real            */
+/* deep-copy implementation lands (next commit in this session).      */
+/* ------------------------------------------------------------------ */
+
+void ps_proxy_layoutget_reply_free(struct ps_proxy_layoutget_reply *reply)
+{
+	if (!reply)
+		return;
+	if (reply->layouts) {
+		for (uint32_t i = 0; i < reply->nlayouts; i++)
+			free(reply->layouts[i].lo_content_body);
+		free(reply->layouts);
+	}
+	memset(reply, 0, sizeof(*reply));
+}
+
+void ps_proxy_getdeviceinfo_reply_free(
+	struct ps_proxy_getdeviceinfo_reply *reply)
+{
+	if (!reply)
+		return;
+	free(reply->da_addr_body);
+	memset(reply, 0, sizeof(*reply));
+}
+
+int ps_proxy_forward_layoutget(
+	struct mds_session *ms, const uint8_t *upstream_fh,
+	uint32_t upstream_fh_len, bool signal_layout_avail,
+	uint32_t layout_type, uint32_t iomode, uint64_t offset, uint64_t length,
+	uint64_t minlength, uint32_t stateid_seqid,
+	const uint8_t stateid_other[PS_STATEID_OTHER_SIZE], uint32_t maxcount,
+	const struct authunix_parms *creds,
+	struct ps_proxy_layoutget_reply *reply)
+{
+	(void)ms;
+	(void)upstream_fh;
+	(void)upstream_fh_len;
+	(void)signal_layout_avail;
+	(void)layout_type;
+	(void)iomode;
+	(void)offset;
+	(void)length;
+	(void)minlength;
+	(void)stateid_seqid;
+	(void)stateid_other;
+	(void)maxcount;
+	(void)creds;
+
+	if (!reply)
+		return -EINVAL;
+	memset(reply, 0, sizeof(*reply));
+	return -ENOSYS; /* foundation stub: real impl pending */
+}
+
+int ps_proxy_forward_getdeviceinfo(struct mds_session *ms,
+				   const uint8_t deviceid[16],
+				   uint32_t layout_type, uint32_t maxcount,
+				   const struct authunix_parms *creds,
+				   struct ps_proxy_getdeviceinfo_reply *reply)
+{
+	(void)ms;
+	(void)deviceid;
+	(void)layout_type;
+	(void)maxcount;
+	(void)creds;
+
+	if (!reply)
+		return -EINVAL;
+	memset(reply, 0, sizeof(*reply));
+	return -ENOSYS;
+}
+
+int ps_proxy_forward_layoutreturn(
+	struct mds_session *ms, const uint8_t *upstream_fh,
+	uint32_t upstream_fh_len, bool reclaim, uint32_t layout_type,
+	uint32_t iomode, uint32_t return_type, uint64_t offset, uint64_t length,
+	uint32_t stateid_seqid,
+	const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+	const uint8_t *lr_body, uint32_t lr_body_len,
+	const struct authunix_parms *creds,
+	struct ps_proxy_layoutreturn_reply *reply)
+{
+	(void)ms;
+	(void)upstream_fh;
+	(void)upstream_fh_len;
+	(void)reclaim;
+	(void)layout_type;
+	(void)iomode;
+	(void)return_type;
+	(void)offset;
+	(void)length;
+	(void)stateid_seqid;
+	(void)stateid_other;
+	(void)lr_body;
+	(void)lr_body_len;
+	(void)creds;
+
+	if (!reply)
+		return -EINVAL;
+	memset(reply, 0, sizeof(*reply));
+	return -ENOSYS;
+}
