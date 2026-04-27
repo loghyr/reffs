@@ -47,6 +47,8 @@ wait_for_probe() {
 # Returns the SB id at the given mount path, or empty string.
 # sb-list output is tabular: "ID  UUID  Path  State  Flavors"
 # (columns 1, 2, 3, 4, 5).  Header lines start with "ID" or "--".
+# This parser depends on the column ordering above; if reffs-probe.py
+# sb-list ever grows or reorders columns, update the awk index.
 sb_id_for_path() {
     local path="$1"
     "$PROBE" "${PROBE_OPTS[@]}" sb-list 2>/dev/null \
@@ -80,6 +82,26 @@ set_dstores() {
     "$PROBE" "${PROBE_OPTS[@]}" sb-set-dstores --id "$id" --dstores "$@" >&2
 }
 
+set_layout_types() {
+    local id="$1"; shift
+    "$PROBE" "${PROBE_OPTS[@]}" sb-set-layout-types --id "$id" --layout-types "$@" >&2
+}
+
+set_stripe_unit() {
+    local id="$1"
+    local unit="$2"
+    "$PROBE" "${PROBE_OPTS[@]}" sb-set-stripe-unit --id "$id" --stripe-unit "$unit" >&2
+}
+
+set_client_rules() {
+    # Permit AUTH_SYS rw access from any client, no root squash.
+    # Without rules, sb_client_rules is empty and nfs4_check_wrongsec
+    # / nfs3_check_access return ACCESS for every request.
+    local id="$1"
+    "$PROBE" "${PROBE_OPTS[@]}" sb-set-client-rules --id "$id" \
+        --rule "match=*,access=rw,root_squash=false,flavors=sys" >&2
+}
+
 mount_sb() {
     local id="$1"
     local path="$2"
@@ -89,11 +111,19 @@ mount_sb() {
     }
 }
 
+# provision <path> <layout-type> <stripe-unit>
+#   layout-type: ffv1 | ffv2
+#   stripe-unit: 0 (whole-file CSM) | 4096 (4K per user spec)
 provision() {
     local path="$1"
+    local layout="$2"
+    local stripe="$3"
     local id
     id=$(create_sb "$path")
     set_dstores "$id" 1 2 3 4 5 6
+    set_layout_types "$id" "$layout"
+    set_stripe_unit "$id" "$stripe"
+    set_client_rules "$id"
     mount_sb "$id" "$path"
 }
 
@@ -101,9 +131,12 @@ main() {
     wait_for_probe
 
     echo "=== Provisioning sanity SBs (all bound to all 6 DSes) ===" >&2
-    for path in /ffv1-csm /ffv1-stripes /ffv2-csm /ffv2-rs /ffv2-mj; do
-        provision "$path"
-    done
+    # path             layout  stripe (0=CSM, 4096=4K)
+    provision /ffv1-csm     ffv1  0
+    provision /ffv1-stripes ffv1  4096
+    provision /ffv2-csm     ffv2  0
+    provision /ffv2-rs      ffv2  4096
+    provision /ffv2-mj      ffv2  4096
 
     echo "=== Final SB list ===" >&2
     "$PROBE" "${PROBE_OPTS[@]}" sb-list >&2

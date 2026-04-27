@@ -8,8 +8,16 @@
 /*
  * File operations for the EC demo client.
  *
- * PUTROOTFH + OPEN (CLAIM_NULL) to open/create a file, CLOSE to
- * release the open stateid.
+ * PUTROOTFH + LOOKUP* + OPEN (CLAIM_NULL) to open/create a file
+ * relative to the MDS root, CLOSE to release the open stateid.
+ *
+ * NFSv4 OPEN takes a single-component name; multi-component paths
+ * are walked via LOOKUP ops between PUTROOTFH and OPEN.  The
+ * compound shape is:
+ *     SEQUENCE PUTROOTFH (LOOKUP "comp_i")* OPEN(last) GETFH
+ * For a path like "/ffv1-csm/test.bin" that yields one LOOKUP for
+ * "ffv1-csm" then an OPEN for "test.bin".  A bare "test.bin" at
+ * root takes zero LOOKUPs, matching the original 4-op shape.
  */
 
 #include <arpa/inet.h>
@@ -28,41 +36,134 @@
 /* OPEN                                                                */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Split path into "/"-separated components.  Returns a heap array of
+ * component pointers into a single heap buffer plus the count via
+ * *nout.  Caller frees both via free(*components_out) and
+ * free(*buf_out).  A path like "/a/b/c" yields {"a","b","c"} (3
+ * components).  Empty / NULL path returns 0 components.
+ *
+ * The components point into buf_out -- they live as long as the
+ * buffer does, so libtirpc's xdr_opaque-style "borrow the bytes
+ * during clnt_call" pattern works for both LOOKUP4args.objname and
+ * OPEN4args.claim.file: we keep both buffers alive until
+ * mds_compound_send returns.
+ */
+static int split_path(const char *path, char ***components_out, char **buf_out,
+		      size_t *nout)
+{
+	*components_out = NULL;
+	*buf_out = NULL;
+	*nout = 0;
+
+	if (!path)
+		return -EINVAL;
+
+	while (*path == '/')
+		path++;
+	if (!*path)
+		return -EINVAL;
+
+	char *buf = strdup(path);
+	if (!buf)
+		return -ENOMEM;
+
+	/*
+	 * Upper bound on component count: separator count + 1.  This
+	 * over-estimates for "//"-runs and trailing slashes (strtok_r
+	 * collapses empty tokens), which is fine -- the array is
+	 * sized once and the real count is reported via *nout.
+	 */
+	size_t cap = 0;
+	for (const char *p = path; *p; p++)
+		if (*p == '/')
+			cap++;
+	cap++;
+
+	char **comps = calloc(cap, sizeof(char *));
+	if (!comps) {
+		free(buf);
+		return -ENOMEM;
+	}
+
+	size_t n = 0;
+	char *save = NULL;
+	for (char *tok = strtok_r(buf, "/", &save); tok != NULL;
+	     tok = strtok_r(NULL, "/", &save)) {
+		if (*tok == '\0')
+			continue;
+		comps[n++] = tok;
+	}
+
+	if (n == 0) {
+		free(comps);
+		free(buf);
+		return -EINVAL;
+	}
+
+	*components_out = comps;
+	*buf_out = buf;
+	*nout = n;
+	return 0;
+}
+
 int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
+	char **comps = NULL;
+	char *path_buf = NULL;
+	size_t ncomps = 0;
 	int ret;
 
 	memset(mf, 0, sizeof(*mf));
 
-	/* SEQUENCE + PUTROOTFH + OPEN + GETFH = 4 ops */
-	ret = mds_compound_init(&mc, 4, "open");
+	ret = split_path(path, &comps, &path_buf, &ncomps);
 	if (ret)
 		return ret;
 
-	/* Op 0: SEQUENCE */
-	ret = mds_compound_add_sequence(&mc, ms);
+	/* SEQ + PUTROOTFH + (ncomps-1)*LOOKUP + OPEN + GETFH */
+	int nops = 4 + ((int)ncomps - 1);
+	ret = mds_compound_init(&mc, nops, "open");
 	if (ret) {
-		mds_compound_fini(&mc);
+		free(comps);
+		free(path_buf);
 		return ret;
 	}
+
+	/* Op 0: SEQUENCE */
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out_err;
 
 	/* Op 1: PUTROOTFH */
 	slot = mds_compound_add_op(&mc, OP_PUTROOTFH);
 	if (!slot) {
-		mds_compound_fini(&mc);
-		return -ENOSPC;
+		ret = -ENOSPC;
+		goto out_err;
 	}
 
-	/* Op 2: OPEN (CLAIM_NULL -- open by name relative to current FH) */
+	/* LOOKUP for each component except the last. */
+	for (size_t i = 0; i < ncomps - 1; i++) {
+		slot = mds_compound_add_op(&mc, OP_LOOKUP);
+		if (!slot) {
+			ret = -ENOSPC;
+			goto out_err;
+		}
+		slot->nfs_argop4_u.oplookup.objname.utf8string_val = comps[i];
+		slot->nfs_argop4_u.oplookup.objname.utf8string_len =
+			strlen(comps[i]);
+	}
+
+	/* OPEN: last component is the file to create/open. */
 	slot = mds_compound_add_op(&mc, OP_OPEN);
 	if (!slot) {
-		mds_compound_fini(&mc);
-		return -ENOSPC;
+		ret = -ENOSPC;
+		goto out_err;
 	}
 
 	OPEN4args *open_args = &slot->nfs_argop4_u.opopen;
+	const char *fname = comps[ncomps - 1];
 
 	open_args->seqid = 0;
 	open_args->share_access = OPEN4_SHARE_ACCESS_BOTH |
@@ -82,39 +183,44 @@ int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf)
 	       sizeof(fattr4));
 
 	open_args->claim.claim = CLAIM_NULL;
-	open_args->claim.open_claim4_u.file.utf8string_val = (char *)path;
-	open_args->claim.open_claim4_u.file.utf8string_len = strlen(path);
+	open_args->claim.open_claim4_u.file.utf8string_val = (char *)fname;
+	open_args->claim.open_claim4_u.file.utf8string_len = strlen(fname);
 
-	/* Op 3: GETFH -- get the filehandle for the opened file. */
+	/* GETFH -- get the filehandle for the opened file. */
 	slot = mds_compound_add_op(&mc, OP_GETFH);
 	if (!slot) {
-		mds_compound_fini(&mc);
-		return -ENOSPC;
+		ret = -ENOSPC;
+		goto out_err;
 	}
 
 	ret = mds_compound_send(&mc, ms);
-	if (ret) {
-		mds_compound_fini(&mc);
-		return ret;
-	}
+	if (ret)
+		goto out_err;
 
-	/* Extract open stateid from OPEN result (op index 2). */
-	nfs_resop4 *open_res = mds_compound_result(&mc, 2);
+	/*
+	 * OPEN result lives at index (2 + (ncomps - 1)): SEQ at 0,
+	 * PUTROOTFH at 1, then ncomps-1 LOOKUPs, then OPEN.
+	 * GETFH follows at OPEN+1.
+	 */
+	int open_idx = 2 + (int)(ncomps - 1);
+	int getfh_idx = open_idx + 1;
+
+	nfs_resop4 *open_res = mds_compound_result(&mc, open_idx);
 
 	if (!open_res || open_res->nfs_resop4_u.opopen.status != NFS4_OK) {
-		mds_compound_fini(&mc);
-		return -EREMOTEIO;
+		ret = -EREMOTEIO;
+		goto out_err;
 	}
 
 	OPEN4resok *resok = &open_res->nfs_resop4_u.opopen.OPEN4res_u.resok4;
 	memcpy(&mf->mf_stateid, &resok->stateid, sizeof(stateid4));
 
-	/* Extract filehandle from GETFH result (op index 3). */
-	nfs_resop4 *getfh_res = mds_compound_result(&mc, 3);
+	/* Extract filehandle from GETFH result. */
+	nfs_resop4 *getfh_res = mds_compound_result(&mc, getfh_idx);
 
 	if (!getfh_res || getfh_res->nfs_resop4_u.opgetfh.status != NFS4_OK) {
-		mds_compound_fini(&mc);
-		return -EREMOTEIO;
+		ret = -EREMOTEIO;
+		goto out_err;
 	}
 
 	GETFH4resok *fhresok =
@@ -123,14 +229,22 @@ int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf)
 	mf->mf_fh.nfs_fh4_len = fhresok->object.nfs_fh4_len;
 	mf->mf_fh.nfs_fh4_val = malloc(fhresok->object.nfs_fh4_len);
 	if (!mf->mf_fh.nfs_fh4_val) {
-		mds_compound_fini(&mc);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out_err;
 	}
 	memcpy(mf->mf_fh.nfs_fh4_val, fhresok->object.nfs_fh4_val,
 	       fhresok->object.nfs_fh4_len);
 
 	mds_compound_fini(&mc);
+	free(comps);
+	free(path_buf);
 	return 0;
+
+out_err:
+	mds_compound_fini(&mc);
+	free(comps);
+	free(path_buf);
+	return ret;
 }
 
 /* ------------------------------------------------------------------ */
