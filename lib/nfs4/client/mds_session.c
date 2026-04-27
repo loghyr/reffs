@@ -253,6 +253,43 @@ out:
 /* PROXY_REGISTRATION (slice plan-A.iii)                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Map a PROXY_REGISTRATION nfsstat4 -- whether at the COMPOUND level
+ * (mc_res.status) or the per-op level (prrr_status) -- to an errno.
+ *
+ * Both levels surface the same error class because PROXY_REGISTRATION
+ * is the last (and only failure-bearing) op in our compound: per RFC
+ * 8881 S15.2, the COMPOUND status equals the status of the op that
+ * failed, so a NFS4ERR_PERM at the op level shows up as a
+ * NFS4ERR_PERM mc_res.status as well.  The same mapping is correct
+ * for both.
+ *
+ * Return -EIO for unmapped statuses; caller diagnostics name the
+ * specific value.
+ */
+static int proxy_reg_nfsstat_to_errno(nfsstat4 status)
+{
+	switch (status) {
+	case NFS4_OK:
+		return 0;
+	case NFS4ERR_PERM:
+		return -EPERM;
+	case NFS4ERR_DELAY:
+		return -EAGAIN;
+	case NFS4ERR_INVAL:
+		return -EINVAL;
+	case NFS4ERR_NOTSUPP:
+	case NFS4ERR_OP_ILLEGAL:
+		return -ENOSYS;
+	case NFS4ERR_BADXDR:
+		return -EBADMSG;
+	case NFS4ERR_OP_NOT_IN_SESSION:
+		return -EPROTO;
+	default:
+		return -EIO;
+	}
+}
+
 int mds_session_send_proxy_registration(struct mds_session *ms,
 					const uint8_t *registration_id,
 					uint32_t registration_id_len)
@@ -260,6 +297,7 @@ int mds_session_send_proxy_registration(struct mds_session *ms,
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret = -EIO;
+	int sret;
 
 	if (!ms || (registration_id_len > 0 && !registration_id))
 		return -EINVAL;
@@ -283,51 +321,49 @@ int mds_session_send_proxy_registration(struct mds_session *ms,
 	args->prr_registration_id.prr_registration_id_val =
 		(char *)registration_id; /* libtirpc XDR borrows */
 
-	if (mds_compound_send(&mc, ms))
+	/*
+	 * mds_compound_send returns -EREMOTEIO when the COMPOUND replied
+	 * with a non-OK status.  That is information we care about, not
+	 * a transport failure -- treat it as success-of-the-call so the
+	 * COMPOUND-level mapping below can run.  Any OTHER negative
+	 * return (RPC stat != RPC_SUCCESS, encoder failure) IS a real
+	 * transport failure and should propagate as -EIO.
+	 */
+	sret = mds_compound_send(&mc, ms);
+	if (sret && sret != -EREMOTEIO)
 		goto out;
 
+	/*
+	 * COMPOUND-level status carries the failure when an op short-
+	 * circuited.  Map it through the same nfsstat4 helper so the PS
+	 * caller sees -EPERM / -ENOSYS / -EAGAIN / etc. rather than the
+	 * historical default of -EIO.  fflush stderr because our process
+	 * runs long-lived; without an explicit flush, line-buffered
+	 * stderr does not appear in a redirected log file.
+	 */
 	if (mc.mc_res.status != NFS4_OK) {
-		fprintf(stderr, "proxy_registration: COMPOUND status %u\n",
-			mc.mc_res.status);
-		ret = -EIO;
+		ret = proxy_reg_nfsstat_to_errno(mc.mc_res.status);
+		fprintf(stderr,
+			"proxy_registration: COMPOUND status %u (errno %d)\n",
+			mc.mc_res.status, -ret);
+		fflush(stderr);
 		goto out;
 	}
 	if (mc.mc_res.resarray.resarray_len < 2) {
 		fprintf(stderr, "proxy_registration: short resarray (%u)\n",
 			mc.mc_res.resarray.resarray_len);
+		fflush(stderr);
 		goto out;
 	}
 	nfsstat4 op_status =
 		mc.mc_res.resarray.resarray_val[1]
 			.nfs_resop4_u.opproxy_registration.prrr_status;
-	switch (op_status) {
-	case NFS4_OK:
-		ret = 0;
-		break;
-	case NFS4ERR_PERM:
-		ret = -EPERM;
-		break;
-	case NFS4ERR_DELAY:
-		ret = -EAGAIN;
-		break;
-	case NFS4ERR_INVAL:
-		ret = -EINVAL;
-		break;
-	case NFS4ERR_NOTSUPP:
-		ret = -ENOTSUP;
-		break;
-	case NFS4ERR_BADXDR:
-		ret = -EBADMSG;
-		break;
-	case NFS4ERR_OP_NOT_IN_SESSION:
-		ret = -EPROTO;
-		break;
-	default:
+	ret = proxy_reg_nfsstat_to_errno(op_status);
+	if (ret == -EIO && op_status != NFS4_OK) {
 		fprintf(stderr,
 			"proxy_registration: MDS returned nfsstat4 %u\n",
 			op_status);
-		ret = -EIO;
-		break;
+		fflush(stderr);
 	}
 
 out:
