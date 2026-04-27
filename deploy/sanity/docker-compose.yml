@@ -1,0 +1,182 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Multi-codec sanity test: 1 MDS + 6 DSes + 1 client on a Docker bridge.
+#
+# A builder container compiles once into a shared volume.  All other
+# containers mount that volume read-only and run pre-built binaries.
+#
+# Designed so two PSes (A, B) can be added later for the proxy
+# end-to-end test once the REFFS_DATA_PROXY backend lands per
+# .claude/design/proxy-server.md phases 3-4.
+#
+# Usage:
+#   docker compose -f deploy/sanity/docker-compose.yml up -d builder
+#   docker compose -f deploy/sanity/docker-compose.yml up -d \
+#       ds0 ds1 ds2 ds3 ds4 ds5 mds
+#   docker compose -f deploy/sanity/docker-compose.yml --profile run up sanity
+# Or:
+#   make -f Makefile.reffs run-sanity   (target added separately)
+
+x-ds-common: &ds-common
+  image: reffs-dev
+  privileged: true
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+  volumes:
+    - sanity-build-vol:/shared:ro
+  healthcheck:
+    test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
+    interval: 5s
+    timeout: 3s
+    retries: 120
+    start_period: 5s
+  command: >
+    /bin/bash -c "
+      while [ ! -f /shared/ready ]; do sleep 1; done &&
+      rm -rf /tmp/reffs_ds_data /tmp/reffs_ds_state &&
+      mkdir -p /tmp/reffs_ds_data/sb_1 /tmp/reffs_ds_state &&
+      exec /shared/build/src/reffsd --config=/shared/src/deploy/sanity/ds.toml
+    "
+
+services:
+  builder:
+    container_name: reffs-sanity-builder
+    image: reffs-dev
+    volumes:
+      - ../../:/reffs:ro,z
+      - sanity-build-vol:/shared
+    command: >
+      /bin/bash -c "
+        rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /shared/src/ &&
+        find /shared/src -name 'parsetab.py' -delete &&
+        cd /shared/src && mkdir -p m4 && autoreconf -fi &&
+        mkdir -p /shared/build && cd /shared/build &&
+        /shared/src/configure &&
+        find /shared -name 'parsetab.py' -delete &&
+        make -j1 &&
+        touch /shared/ready &&
+        echo 'Builder done.'
+      "
+
+  ds0:
+    <<: *ds-common
+    container_name: reffs-sanity-ds0
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      sanity:
+        aliases: [reffs-ds0]
+
+  ds1:
+    <<: *ds-common
+    container_name: reffs-sanity-ds1
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      sanity:
+        aliases: [reffs-ds1]
+
+  ds2:
+    <<: *ds-common
+    container_name: reffs-sanity-ds2
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      sanity:
+        aliases: [reffs-ds2]
+
+  ds3:
+    <<: *ds-common
+    container_name: reffs-sanity-ds3
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      sanity:
+        aliases: [reffs-ds3]
+
+  ds4:
+    <<: *ds-common
+    container_name: reffs-sanity-ds4
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      sanity:
+        aliases: [reffs-ds4]
+
+  ds5:
+    <<: *ds-common
+    container_name: reffs-sanity-ds5
+    depends_on:
+      builder:
+        condition: service_completed_successfully
+    networks:
+      sanity:
+        aliases: [reffs-ds5]
+
+  mds:
+    container_name: reffs-sanity-mds
+    image: reffs-dev
+    privileged: true
+    depends_on:
+      ds0: { condition: service_healthy }
+      ds1: { condition: service_healthy }
+      ds2: { condition: service_healthy }
+      ds3: { condition: service_healthy }
+      ds4: { condition: service_healthy }
+      ds5: { condition: service_healthy }
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    networks:
+      sanity:
+        aliases: [reffs-mds]
+    volumes:
+      - sanity-build-vol:/shared:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 120
+      start_period: 5s
+    command: >
+      /bin/bash -c "
+        rm -rf /tmp/reffs_mds_data /tmp/reffs_mds_state &&
+        mkdir -p /tmp/reffs_mds_data /tmp/reffs_mds_state &&
+        exec /shared/build/src/reffsd --config=/shared/src/deploy/sanity/mds.toml
+      "
+
+  sanity:
+    container_name: reffs-sanity-client
+    image: reffs-dev
+    privileged: true
+    depends_on:
+      mds:
+        condition: service_healthy
+    networks:
+      - sanity
+    volumes:
+      - sanity-build-vol:/shared:ro
+      - ../../:/reffs:ro,z
+    command: >
+      /bin/bash -c "
+        /reffs/deploy/sanity/setup-sbs.sh reffs-mds &&
+        /reffs/deploy/sanity/run-sanity.sh /shared/build/tools/ec_demo reffs-mds
+      "
+    profiles:
+      - run
+
+volumes:
+  sanity-build-vol:
+
+networks:
+  sanity:
+    driver: bridge

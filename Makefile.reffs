@@ -64,6 +64,10 @@ help:
 	@echo "Benchmark targets:"
 	@echo "  run-benchmark   - EC codec benchmark: SIMD + scalar + degraded (1 MDS + 10 DSes)"
 	@echo "  stop-benchmark  - Stop benchmark containers"
+	@echo ""
+	@echo "Sanity targets:"
+	@echo "  run-sanity      - Multi-codec sanity test (1 MDS + 6 DSes, 5 SBs, write+read+diff)"
+	@echo "  stop-sanity     - Stop sanity containers"
 
 # --- Build targets ---
 
@@ -324,4 +328,31 @@ run-benchmark: image
 stop-benchmark:
 	$(DOCKER) compose -f $(BENCH_COMPOSE) --profile run down -v 2>/dev/null || true
 
-.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark
+# --- Multi-codec Sanity Test (1 MDS + 6 DSes in Docker) ---
+#
+# Provisions 5 SBs (/ffv1-csm, /ffv1-stripes, /ffv2-csm, /ffv2-rs,
+# /ffv2-mj) all bound to all 6 DSes, then writes/reads/diffs a fixed
+# payload per SB.  Foundation for the eventual proxy end-to-end test
+# once REFFS_DATA_PROXY backend lands; for now, no PSes in the loop.
+
+SANITY_COMPOSE = deploy/sanity/docker-compose.yml
+SANITY_LOGS    = $(ROOT_DIR)/logs/sanity
+
+run-sanity: image
+	@mkdir -p $(SANITY_LOGS)
+	@echo "Building reffs in builder container..."
+	$(DOCKER) compose -f $(SANITY_COMPOSE) run --rm builder
+	@echo "Starting MDS + 6 DSes..."
+	$(DOCKER) compose -f $(SANITY_COMPOSE) up -d ds0 ds1 ds2 ds3 ds4 ds5 mds
+	@echo "Waiting for services to become healthy..."
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile run run --rm sanity \
+		2>&1 | tee $(SANITY_LOGS)/sanity.log
+	@echo ""
+	@echo "Result log: $(SANITY_LOGS)/sanity.log"
+	@echo "Containers still running -- 'make -f Makefile.reffs stop-sanity' to tear down"
+	@echo "View logs: docker logs reffs-sanity-mds / reffs-sanity-ds0 / etc."
+
+stop-sanity:
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile run down -v 2>/dev/null || true
+
+.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-sanity stop-sanity

@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# DS config for the multi-codec sanity test (deploy/sanity).
+# Shared across all 6 DSes; each DS instance creates its own state
+# dirs from the docker-compose command-line.
+
+[server]
+port            = 2049
+bind            = "*"
+role            = "ds"
+minor_versions  = [1, 2]
+grace_period    = 5
+workers         = 4
+log_level       = "info"
+
+[backend]
+type            = "posix"
+path            = "/tmp/reffs_ds_data"
+state_file      = "/tmp/reffs_ds_state"
+
+[[export]]
+path        = "/"
+clients     = "*"
+access      = "rw"
+root_squash = false
+flavors     = ["sys"]
