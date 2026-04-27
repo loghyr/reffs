@@ -3724,8 +3724,33 @@ enum proxy_op_kind4 {
     PROXY_OP_CANCEL_PRIOR = 2
 };
 
+%/*
+% * proxy_stateid4 -- canonical MDS-issued handle for an in-flight
+% * proxy migration (draft-haynes-nfsv4-flexfiles-v2-data-mover,
+% * "proxy_stateid4: A New Stateid Type" section).  Wire shape
+% * reuses stateid4; the value space is disjoint from open / lock /
+% * layout / delegation stateids by *context* (only PROXY_PROGRESS,
+% * PROXY_DONE, PROXY_CANCEL args carry one).  The reffs MDS embeds
+% * `boot_seq` in the high-order bytes of `other[12]` so a
+% * proxy_stateid presented after MDS reboot can be rejected with
+% * NFS4ERR_STALE_STATEID without a hash probe.  The implementation
+% * layout used is { uint16_t boot_seq | uint16_t reserved |
+% * uint64_t opaque }; the opaque tail is getrandom(2) output.
+% */
+typedef stateid4 proxy_stateid4;
+
 struct proxy_assignment4 {
     proxy_op_kind4  pa_kind;
+    /*
+     * The proxy_stateid the MDS minted when accepting this
+     * assignment.  The PS uses it as the handle in the eventual
+     * PROXY_DONE / PROXY_CANCEL.  For PROXY_OP_CANCEL_PRIOR
+     * assignments, this names the proxy_stateid of the
+     * already-delivered assignment being rescinded; the MDS has
+     * unhashed the migration record on its side and the PS MUST
+     * NOT issue PROXY_DONE / PROXY_CANCEL for it.
+     */
+    proxy_stateid4  pa_stateid;
     nfs_fh4         pa_file_fh;
     uint64_t        pa_source_dstore_id;
     uint64_t        pa_target_dstore_id;
@@ -3771,15 +3796,15 @@ default:
 };
 
 struct PROXY_DONE4args {
-    stateid4    pd_layout_stid;     /* identifies the migration */
-    nfsstat4    pd_status;          /* NFS4_OK = commit L2; else = rollback */
+    proxy_stateid4  pd_stateid;     /* identifies the migration */
+    nfsstat4        pd_status;      /* NFS4_OK = commit; else = rollback */
 };
 struct PROXY_DONE4res {
     nfsstat4    pdr_status;
 };
 
 struct PROXY_CANCEL4args {
-    stateid4    pc_layout_stid;
+    proxy_stateid4  pc_stateid;
 };
 struct PROXY_CANCEL4res {
     nfsstat4    pcr_status;

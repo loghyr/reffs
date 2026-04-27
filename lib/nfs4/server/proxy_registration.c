@@ -309,9 +309,13 @@ uint32_t nfs4_op_proxy_done(struct compound *compound)
 
 	/*
 	 * Slice 6c-w: stub.  Real handler lands in slice 6c-x along
-	 * with the two-layout state machinery on the inode (L1 = current
-	 * layout; L2 = post-migration candidate; PROXY_DONE(OK) atomically
-	 * swaps L1 -> L2; PROXY_DONE(FAIL) rolls back).
+	 * with the per-instance migration delta machinery and the
+	 * priority-ordered authorization rule (registered-PS identity
+	 * match on the migration record's owner_reg, NOT clientid4)
+	 * specified in the design doc revision
+	 * (.claude/design/proxy-server-phase6c-revision.md).
+	 * pd_stateid is now a proxy_stateid4 (typedef stateid4) per
+	 * the same revision.
 	 */
 	res->pdr_status = NFS4ERR_NOTSUPP;
 	return 0;
@@ -323,10 +327,12 @@ uint32_t nfs4_op_proxy_cancel(struct compound *compound)
 
 	/*
 	 * Slice 6c-w: stub.  Real handler lands in slice 6c-x; resolves
-	 * the in-flight migration record by layout stateid and is
-	 * idempotent (NFS4_OK both for "found and dropped" and "no such
-	 * migration" so the PS does not need to track ack state across
-	 * retries).
+	 * the in-flight migration record by proxy_stateid (typedef
+	 * stateid4 per the 6c-x design revision) and is idempotent --
+	 * NFS4ERR_BAD_STATEID for unknown stateids in the current boot,
+	 * NFS4ERR_STALE_STATEID for stateids minted in a prior boot,
+	 * and NFS4_OK for the "found and dropped" case so the PS does
+	 * not need to track ack state across retries.
 	 */
 	res->pcr_status = NFS4ERR_NOTSUPP;
 	return 0;
