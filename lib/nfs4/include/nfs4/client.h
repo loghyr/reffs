@@ -7,6 +7,9 @@
 #define _REFFS_NFS4_CLIENT_H
 
 #include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 
 #include "reffs/rcu.h"
 #include "nfsv42_xdr.h"
@@ -119,6 +122,95 @@ static inline struct nfs4_client *client_to_nfs4(struct client *client)
 static inline struct client *nfs4_client_to_client(struct nfs4_client *nc)
 {
 	return &nc->nc_client;
+}
+
+/*
+ * nfs4_client_registered_ps_identity -- canonical registered-PS
+ * identity for this client.
+ *
+ * Returns a pointer to the identity string the MDS should record on
+ * a migration record's owner_reg field, and that subsequent
+ * PROXY_DONE / PROXY_CANCEL handlers compare against the calling
+ * session's identity (per the priority-ordered authorization rule
+ * in draft-haynes-nfsv4-flexfiles-v2-data-mover sec-PROXY_DONE,
+ * Authorization).
+ *
+ * Selection order:
+ *   1. nc_ps_registration_id if non-empty (the explicit
+ *      PS-supplied id, used to distinguish renewal from squat
+ *      across reconnect).
+ *   2. nc_ps_principal if non-empty (GSS machine principal that
+ *      authenticated PROXY_REGISTRATION).
+ *   3. nc_ps_tls_fingerprint if non-empty (mTLS client-cert
+ *      identity that authenticated PROXY_REGISTRATION).
+ *   4. NULL if the client is not a registered PS.
+ *
+ * The string returned by (1) is a counted opaque per the XDR
+ * (`prr_registration_id<PROXY_REGISTRATION_ID_MAX>`); the caller
+ * must use the matching length from
+ * `nc_ps_registration_id_len`.  Strings returned by (2) and (3)
+ * are NUL-terminated by the registration handler and may be
+ * compared with strcmp / strncmp; they have no separate length
+ * field.
+ *
+ * The identity is captured under `nc_is_registered_ps` release/acquire
+ * publication (see the field comment), so this accessor is safe to
+ * call from any reader that has already observed
+ * `atomic_load_explicit(&nc->nc_is_registered_ps, memory_order_acquire)
+ *  == true`.
+ */
+static inline const char *
+nfs4_client_registered_ps_identity(const struct nfs4_client *nc,
+				   uint32_t *len_out)
+{
+	if (!nc)
+		return NULL;
+	if (!atomic_load_explicit(
+		    &((struct nfs4_client *)nc)->nc_is_registered_ps,
+		    memory_order_acquire))
+		return NULL;
+	if (nc->nc_ps_registration_id_len > 0) {
+		if (len_out)
+			*len_out = nc->nc_ps_registration_id_len;
+		return nc->nc_ps_registration_id;
+	}
+	if (nc->nc_ps_principal[0] != '\0') {
+		if (len_out)
+			*len_out = (uint32_t)strlen(nc->nc_ps_principal);
+		return nc->nc_ps_principal;
+	}
+	if (nc->nc_ps_tls_fingerprint[0] != '\0') {
+		if (len_out)
+			*len_out = (uint32_t)strlen(nc->nc_ps_tls_fingerprint);
+		return nc->nc_ps_tls_fingerprint;
+	}
+	return NULL;
+}
+
+/*
+ * nfs4_client_registered_ps_identity_eq -- compare two clients'
+ * canonical registered-PS identities.  Returns true when both
+ * resolve to the same identity (same selection rank AND same bytes
+ * of the same length); false otherwise.  Two clients with no
+ * registered-PS identity (NULL accessor result) compare as NOT
+ * equal -- absence of identity is not the same as a match.
+ *
+ * Used by the migration record's authorization check: the calling
+ * session's identity must match the record's recorded owner_reg.
+ */
+static inline bool
+nfs4_client_registered_ps_identity_eq(const struct nfs4_client *a,
+				      const struct nfs4_client *b)
+{
+	uint32_t alen = 0, blen = 0;
+	const char *aid = nfs4_client_registered_ps_identity(a, &alen);
+	const char *bid = nfs4_client_registered_ps_identity(b, &blen);
+
+	if (!aid || !bid)
+		return false;
+	if (alen != blen)
+		return false;
+	return memcmp(aid, bid, alen) == 0;
 }
 
 /* ------------------------------------------------------------------ */

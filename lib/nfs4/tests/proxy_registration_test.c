@@ -690,6 +690,171 @@ START_TEST(test_proxy_progress_returns_notsupp)
 }
 END_TEST
 
+/*
+ * Slice 6c-x.0: nfs4_client_registered_ps_identity accessor.
+ * The accessor returns the canonical authorization principal for
+ * subsequent migration-record owner_reg matching: registration_id
+ * if non-empty, else GSS principal, else mTLS fingerprint, else NULL.
+ */
+START_TEST(test_registered_ps_identity_unregistered)
+{
+	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+				     "host/ps.example.com@REALM");
+	uint32_t len = 999;
+	const char *id;
+
+	id = nfs4_client_registered_ps_identity(cm->compound->c_nfs4_client,
+						&len);
+	ck_assert_ptr_null(id);
+	ck_assert_uint_eq(len, 999); /* untouched on miss */
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_registered_ps_identity_prefers_registration_id)
+{
+	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+				     "host/ps.example.com@REALM");
+	struct nfs4_client *nc = cm->compound->c_nfs4_client;
+	const char id_bytes[] = { 0xde, 0xad, 0xbe, 0xef, 0x42 };
+	uint32_t len = 0;
+	const char *out;
+
+	memcpy(nc->nc_ps_registration_id, id_bytes, sizeof(id_bytes));
+	nc->nc_ps_registration_id_len = sizeof(id_bytes);
+	strncpy(nc->nc_ps_principal, "host/other@REALM",
+		sizeof(nc->nc_ps_principal) - 1);
+	atomic_store_explicit(&nc->nc_is_registered_ps, true,
+			      memory_order_release);
+
+	out = nfs4_client_registered_ps_identity(nc, &len);
+	ck_assert_ptr_eq(out, nc->nc_ps_registration_id);
+	ck_assert_uint_eq(len, sizeof(id_bytes));
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_registered_ps_identity_falls_back_to_principal)
+{
+	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+				     "host/ps.example.com@REALM");
+	struct nfs4_client *nc = cm->compound->c_nfs4_client;
+	uint32_t len = 0;
+	const char *out;
+
+	nc->nc_ps_registration_id_len = 0;
+	strncpy(nc->nc_ps_principal, "host/ps.example.com@REALM",
+		sizeof(nc->nc_ps_principal) - 1);
+	atomic_store_explicit(&nc->nc_is_registered_ps, true,
+			      memory_order_release);
+
+	out = nfs4_client_registered_ps_identity(nc, &len);
+	ck_assert_ptr_eq(out, nc->nc_ps_principal);
+	ck_assert_uint_eq(len, (uint32_t)strlen(nc->nc_ps_principal));
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_registered_ps_identity_falls_back_to_tls)
+{
+	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+				     "host/ps.example.com@REALM");
+	struct nfs4_client *nc = cm->compound->c_nfs4_client;
+	uint32_t len = 0;
+	const char *out;
+
+	nc->nc_ps_registration_id_len = 0;
+	nc->nc_ps_principal[0] = '\0';
+	strncpy(nc->nc_ps_tls_fingerprint, "sha256:aabbccdd",
+		sizeof(nc->nc_ps_tls_fingerprint) - 1);
+	atomic_store_explicit(&nc->nc_is_registered_ps, true,
+			      memory_order_release);
+
+	out = nfs4_client_registered_ps_identity(nc, &len);
+	ck_assert_ptr_eq(out, nc->nc_ps_tls_fingerprint);
+	ck_assert_uint_eq(len, (uint32_t)strlen(nc->nc_ps_tls_fingerprint));
+	pr_free(cm);
+}
+END_TEST
+
+/*
+ * Two clients with the same prr_registration_id (and otherwise
+ * different fields) compare as equal.  This is the load-bearing
+ * property for the squat-guard / cross-reconnect-DONE/CANCEL flow:
+ * a PS that drops its session and reconnects with a fresh
+ * EXCHANGE_ID retains authority over its own in-flight migrations.
+ */
+START_TEST(test_registered_ps_identity_eq_same_registration_id)
+{
+	struct pr_ctx *cm_a = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
+				       "host/ps.example.com@REALM");
+	struct pr_ctx *cm_b =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/different@REALM");
+	struct nfs4_client *a = cm_a->compound->c_nfs4_client;
+	struct nfs4_client *b = cm_b->compound->c_nfs4_client;
+	const char id_bytes[] = "ps-instance-7";
+
+	memcpy(a->nc_ps_registration_id, id_bytes, sizeof(id_bytes));
+	a->nc_ps_registration_id_len = sizeof(id_bytes);
+	memcpy(b->nc_ps_registration_id, id_bytes, sizeof(id_bytes));
+	b->nc_ps_registration_id_len = sizeof(id_bytes);
+	atomic_store_explicit(&a->nc_is_registered_ps, true,
+			      memory_order_release);
+	atomic_store_explicit(&b->nc_is_registered_ps, true,
+			      memory_order_release);
+
+	ck_assert(nfs4_client_registered_ps_identity_eq(a, b));
+	pr_free(cm_a);
+	pr_free(cm_b);
+}
+END_TEST
+
+START_TEST(test_registered_ps_identity_eq_different_principal)
+{
+	struct pr_ctx *cm_a =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps-a@REALM");
+	struct pr_ctx *cm_b =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps-b@REALM");
+	struct nfs4_client *a = cm_a->compound->c_nfs4_client;
+	struct nfs4_client *b = cm_b->compound->c_nfs4_client;
+
+	a->nc_ps_registration_id_len = 0;
+	b->nc_ps_registration_id_len = 0;
+	strncpy(a->nc_ps_principal, "host/ps-a@REALM",
+		sizeof(a->nc_ps_principal) - 1);
+	strncpy(b->nc_ps_principal, "host/ps-b@REALM",
+		sizeof(b->nc_ps_principal) - 1);
+	atomic_store_explicit(&a->nc_is_registered_ps, true,
+			      memory_order_release);
+	atomic_store_explicit(&b->nc_is_registered_ps, true,
+			      memory_order_release);
+
+	ck_assert(!nfs4_client_registered_ps_identity_eq(a, b));
+	pr_free(cm_a);
+	pr_free(cm_b);
+}
+END_TEST
+
+/*
+ * Absence of identity is NOT a match: two unregistered clients (or
+ * one registered + one unregistered) compare as unequal.  This
+ * prevents a broken auth path from accidentally granting a default
+ * "any unregistered client matches any other" rule.
+ */
+START_TEST(test_registered_ps_identity_eq_both_unregistered)
+{
+	struct pr_ctx *cm_a =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/x@REALM");
+	struct pr_ctx *cm_b =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/y@REALM");
+
+	ck_assert(!nfs4_client_registered_ps_identity_eq(
+		cm_a->compound->c_nfs4_client, cm_b->compound->c_nfs4_client));
+	pr_free(cm_a);
+	pr_free(cm_b);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -718,6 +883,13 @@ static Suite *proxy_registration_suite(void)
 		test_proxy_registration_reject_tls_fingerprint_not_allowlisted);
 	tcase_add_test(tc, test_proxy_registration_reject_both_contexts_null);
 	tcase_add_test(tc, test_proxy_progress_returns_notsupp);
+	tcase_add_test(tc, test_registered_ps_identity_unregistered);
+	tcase_add_test(tc, test_registered_ps_identity_prefers_registration_id);
+	tcase_add_test(tc, test_registered_ps_identity_falls_back_to_principal);
+	tcase_add_test(tc, test_registered_ps_identity_falls_back_to_tls);
+	tcase_add_test(tc, test_registered_ps_identity_eq_same_registration_id);
+	tcase_add_test(tc, test_registered_ps_identity_eq_different_principal);
+	tcase_add_test(tc, test_registered_ps_identity_eq_both_unregistered);
 	suite_add_tcase(s, tc);
 
 	return s;
