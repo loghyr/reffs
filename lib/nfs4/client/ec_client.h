@@ -302,9 +302,9 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 /* ------------------------------------------------------------------ */
 
 int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
-		size_t data_len);
+		size_t data_len, layouttype4 layout_type);
 int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
-	       size_t buf_len, size_t *out_len);
+	       size_t buf_len, size_t *out_len, layouttype4 layout_type);
 
 /* ------------------------------------------------------------------ */
 /* EC I/O -- high-level erasure-coded write/read                        */

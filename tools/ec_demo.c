@@ -262,7 +262,7 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 /* ------------------------------------------------------------------ */
 
 static int cmd_put(const char *mds_host, const char *nfs_file,
-		   const char *local_file)
+		   const char *local_file, layouttype4 layout_type)
 {
 	struct mds_session ms;
 	size_t data_len;
@@ -281,7 +281,7 @@ static int cmd_put(const char *mds_host, const char *nfs_file,
 	}
 
 	fprintf(stderr, "ec_demo: put %zu bytes to %s\n", data_len, nfs_file);
-	ret = plain_write(&ms, nfs_file, data, data_len);
+	ret = plain_write(&ms, nfs_file, data, data_len, layout_type);
 	if (ret)
 		fprintf(stderr, "ec_demo: put failed: %d\n", ret);
 	else
@@ -293,7 +293,8 @@ static int cmd_put(const char *mds_host, const char *nfs_file,
 }
 
 static int cmd_get(const char *mds_host, const char *nfs_file,
-		   const char *local_file, size_t expected_len)
+		   const char *local_file, size_t expected_len,
+		   layouttype4 layout_type)
 {
 	struct mds_session ms;
 	int ret;
@@ -315,7 +316,7 @@ static int cmd_get(const char *mds_host, const char *nfs_file,
 	size_t out_len = 0;
 
 	fprintf(stderr, "ec_demo: get %s\n", nfs_file);
-	ret = plain_read(&ms, nfs_file, buf, buf_len, &out_len);
+	ret = plain_read(&ms, nfs_file, buf, buf_len, &out_len, layout_type);
 	if (ret) {
 		fprintf(stderr, "ec_demo: get failed: %d\n", ret);
 	} else {
@@ -332,7 +333,7 @@ static int cmd_get(const char *mds_host, const char *nfs_file,
 }
 
 static int cmd_check(const char *mds_host, const char *nfs_file,
-		     const char *local_file)
+		     const char *local_file, layouttype4 layout_type)
 {
 	struct mds_session ms;
 	size_t orig_len;
@@ -361,7 +362,7 @@ static int cmd_check(const char *mds_host, const char *nfs_file,
 	size_t out_len = 0;
 
 	fprintf(stderr, "ec_demo: check %s against %s\n", nfs_file, local_file);
-	ret = plain_read(&ms, nfs_file, buf, orig_len, &out_len);
+	ret = plain_read(&ms, nfs_file, buf, orig_len, &out_len, layout_type);
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
 	} else if (out_len < orig_len) {
@@ -895,7 +896,7 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "ec_demo: put requires --input\n");
 			return 1;
 		}
-		return cmd_put(mds_host, nfs_file, local_input);
+		return cmd_put(mds_host, nfs_file, local_input, layout_type);
 	}
 
 	if (strcmp(cmd, "get") == 0) {
@@ -903,7 +904,8 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "ec_demo: get requires --output\n");
 			return 1;
 		}
-		return cmd_get(mds_host, nfs_file, local_output, read_size);
+		return cmd_get(mds_host, nfs_file, local_output, read_size,
+			       layout_type);
 	}
 
 	if (strcmp(cmd, "bigfile") == 0) {
@@ -934,7 +936,7 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "ec_demo: check requires --input\n");
 			return 1;
 		}
-		return cmd_check(mds_host, nfs_file, local_input);
+		return cmd_check(mds_host, nfs_file, local_input, layout_type);
 	}
 
 	/* EC commands need valid k/m.  Stripe allows m=0. */

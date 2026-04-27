@@ -343,7 +343,7 @@ static void ec_disconnect_all(struct ec_context *ctx)
 /* ------------------------------------------------------------------ */
 
 int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
-		size_t data_len)
+		size_t data_len, layouttype4 layout_type)
 {
 	struct mds_file mf;
 	struct ec_layout layout;
@@ -353,8 +353,7 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	if (ret)
 		return ret;
 
-	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_RW, LAYOUT4_FLEX_FILES,
-			     &layout);
+	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_RW, layout_type, &layout);
 	if (ret)
 		goto out_close;
 
@@ -412,7 +411,7 @@ out_close:
 /* ------------------------------------------------------------------ */
 
 int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
-	       size_t buf_len, size_t *out_len)
+	       size_t buf_len, size_t *out_len, layouttype4 layout_type)
 {
 	struct mds_file mf;
 	struct ec_layout layout;
@@ -422,8 +421,7 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	if (ret)
 		return ret;
 
-	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_READ, LAYOUT4_FLEX_FILES,
-			     &layout);
+	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_READ, layout_type, &layout);
 	if (ret)
 		goto out_close;
 
@@ -873,9 +871,12 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 				continue;
 			}
 
+			uint32_t err_opnum = OP_READ;
+
 			if (ctx.ctx_ds_sess) {
 				uint32_t nblk = DIV_CEIL(rsz, rd_chunk_sz);
 
+				err_opnum = OP_CHUNK_READ;
 				ret = ec_chunk_read(
 					&ctx, i,
 					(uint64_t)s * DIV_CEIL(ds_stride,
@@ -889,7 +890,7 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 				present[i] = (ret == 0 && nread == rsz);
 			}
 			if (!present[i])
-				ec_report_ds_error(&ctx, i, OP_READ);
+				ec_report_ds_error(&ctx, i, err_opnum);
 		}
 
 		/* RS-decode to reconstruct any missing shards. */
