@@ -685,7 +685,7 @@ START_TEST(test_proxy_progress_returns_notsupp)
 	PROXY_PROGRESS4res *res = &cm->compound->c_res->resarray.resarray_val[0]
 					   .nfs_resop4_u.opproxy_progress;
 
-	ck_assert_int_eq(res->prar_status, NFS4ERR_NOTSUPP);
+	ck_assert_int_eq(res->ppr_status, NFS4ERR_NOTSUPP);
 	pr_free(cm);
 }
 END_TEST

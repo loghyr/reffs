@@ -19,10 +19,13 @@
  *     (6b-ii) that consume nc_is_registered_ps.
  *
  *   - PROXY_PROGRESS is wire-allocated (op number 94) but its
- *     handler is a NFS4ERR_NOTSUPP stub.  No MDS-initiated CB
- *     ops exist yet -- the receive path arrives in slice 6c when
- *     CB_PROXY_MOVE / CB_PROXY_REPAIR land.  Stubbing the
- *     fore-channel op now is purely for op-number stability.
+ *     handler is a NFS4ERR_NOTSUPP stub.  Slice 6c-w (the
+ *     2026-04-26 architecture revision) walked back the original
+ *     CB_PROXY_* design and re-shaped PROXY_PROGRESS as a fore-
+ *     channel poll whose reply carries work assignments inline;
+ *     slice 6c-y populates the assignment list from the autopilot
+ *     queue.  Until then the handler stays as a NFS4ERR_NOTSUPP
+ *     stub.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -290,11 +293,41 @@ uint32_t nfs4_op_proxy_progress(struct compound *compound)
 	PROXY_PROGRESS4res *res = NFS4_OP_RES_SETUP(compound, opproxy_progress);
 
 	/*
-	 * Slice 6a: stub.  PROXY_PROGRESS reports interim/terminal
-	 * status of MDS-initiated CB_PROXY_MOVE / CB_PROXY_REPAIR.
-	 * Until slice 6c lands the CB receive path there is nothing
-	 * for a PS to report progress on.
+	 * Slice 6c-w: response shape now carries assignments on
+	 * NFS4_OK; populating that list is slice 6c-y's job (consumes
+	 * the autopilot queue).  Until then the stub returns
+	 * NFS4ERR_NOTSUPP, which selects the union's `default` arm
+	 * (no resok body emitted on the wire).
 	 */
-	res->prar_status = NFS4ERR_NOTSUPP;
+	res->ppr_status = NFS4ERR_NOTSUPP;
+	return 0;
+}
+
+uint32_t nfs4_op_proxy_done(struct compound *compound)
+{
+	PROXY_DONE4res *res = NFS4_OP_RES_SETUP(compound, opproxy_done);
+
+	/*
+	 * Slice 6c-w: stub.  Real handler lands in slice 6c-x along
+	 * with the two-layout state machinery on the inode (L1 = current
+	 * layout; L2 = post-migration candidate; PROXY_DONE(OK) atomically
+	 * swaps L1 -> L2; PROXY_DONE(FAIL) rolls back).
+	 */
+	res->pdr_status = NFS4ERR_NOTSUPP;
+	return 0;
+}
+
+uint32_t nfs4_op_proxy_cancel(struct compound *compound)
+{
+	PROXY_CANCEL4res *res = NFS4_OP_RES_SETUP(compound, opproxy_cancel);
+
+	/*
+	 * Slice 6c-w: stub.  Real handler lands in slice 6c-x; resolves
+	 * the in-flight migration record by layout stateid and is
+	 * idempotent (NFS4_OK both for "found and dropped" and "no such
+	 * migration" so the PS does not need to track ack state across
+	 * retries).
+	 */
+	res->pcr_status = NFS4ERR_NOTSUPP;
 	return 0;
 }

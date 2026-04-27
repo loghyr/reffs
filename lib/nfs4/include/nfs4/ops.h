@@ -113,6 +113,8 @@ uint32_t nfs4_op_revoke_stateid(struct compound *compound);
 uint32_t nfs4_op_bulk_revoke_stateid(struct compound *compound);
 uint32_t nfs4_op_proxy_registration(struct compound *compound);
 uint32_t nfs4_op_proxy_progress(struct compound *compound);
+uint32_t nfs4_op_proxy_done(struct compound *compound);
+uint32_t nfs4_op_proxy_cancel(struct compound *compound);
 uint32_t nfs4_op_illegal(struct compound *compound);
 
 const char *nfs4_op_name(nfs_opnum4 op);

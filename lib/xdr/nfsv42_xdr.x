@@ -1495,13 +1495,18 @@ enum nfs_opnum4 {
 % * trust-stateid block on the assumption that the data-mover draft
 % * lands after the flexfiles-v2 draft on the IETF datatracker.
 % *
-% * PROXY_PROGRESS is wire-allocated here for op-numbering stability;
-% * its handler in this slice is a NFS4ERR_NOTSUPP stub (no
-% * MDS-initiated CB ops exist yet -- enabled in slice 6c when
-% * CB_PROXY_MOVE / CB_PROXY_REPAIR land).
+% * Architecture revision (2026-04-26, see
+% * .claude/design/proxy-server-phase6c.md): the back-channel
+% * CB_PROXY_* approach is retired; PS work is delivered inline as
+% * assignments in the PROXY_PROGRESS reply, and per-move terminal
+% * state is reported via fore-channel PROXY_DONE / PROXY_CANCEL.
+% * PROXY_DONE and PROXY_CANCEL operate on the persisted migration
+% * record only; LAYOUTRETURN (existing op) handles layout state.
 % */
  OP_PROXY_REGISTRATION  = 93,
  OP_PROXY_PROGRESS      = 94,
+ OP_PROXY_DONE          = 99,
+ OP_PROXY_CANCEL        = 100,
 
  OP_ILLEGAL             = 10044
 };
@@ -3662,11 +3667,30 @@ struct BULK_REVOKE_STATEID4res {
  *   forbidden on the MDS<->PS session.  The handler returns
  *   NFS4ERR_PERM if the carrying session does not satisfy this.
  *
- * PROXY_PROGRESS: a proxy server reports interim and terminal
- *   status of an MDS-initiated CB_PROXY_MOVE / CB_PROXY_REPAIR
- *   operation.  Wire-allocated here for op-number stability; the
- *   handler is a NFS4ERR_NOTSUPP stub until slice 6c lands the
- *   CB_PROXY_* receive paths.
+ * PROXY_PROGRESS: a registered proxy server polls the MDS to
+ *   request work, report progress on in-flight migrations, and
+ *   pick up new assignments.  The reply carries (a) a lease ack
+ *   so the PS knows the registration is still alive, and (b) zero
+ *   or more assignments the MDS wants this PS to start work on.
+ *   Architecture revision (2026-04-26) -- replaces the original
+ *   "report status of CB_PROXY_MOVE / CB_PROXY_REPAIR" framing
+ *   with fore-channel polling.  See
+ *   .claude/design/proxy-server-phase6c.md.
+ *
+ * PROXY_DONE: terminal-status notification from the PS to the
+ *   MDS, tagged by the layout stateid that LAYOUTGET returned for
+ *   the migration's L3 composite layout.  pd_status carries the
+ *   PS's commit decision: NFS4_OK = "commit L2" (atomic L1 -> L2
+ *   swap on the MDS); any other status = "rollback" (drop L2 / G
+ *   half-fill, keep L1).  Operates on the persisted migration
+ *   record only; LAYOUTRETURN (RFC 8881 S18.51) earlier in the
+ *   compound is what releases the L3 layout itself.
+ *
+ * PROXY_CANCEL: PS-initiated drop of an assigned-but-unfinished
+ *   work item.  Idempotent; the MDS keys the lookup on the layout
+ *   stateid and returns NFS4_OK for both "found and dropped" and
+ *   "no such migration" so the PS does not need to track ack state
+ *   across retries.
  */
 const PROXY_REGISTRATION_ID_MAX = 64;
 
@@ -3678,17 +3702,87 @@ struct PROXY_REGISTRATION4res {
     nfsstat4  prrr_status;
 };
 
+%/*
+% * proxy_op_kind4 -- the kind of work the MDS is delegating.
+% *
+% *   PROXY_OP_MOVE       -- migrate the file's data from a source
+% *                          dstore to a target dstore (drain
+% *                          autopilot or admin-initiated move).
+% *   PROXY_OP_REPAIR     -- reconstruct a missing-or-corrupt
+% *                          mirror onto a target dstore (RS or
+% *                          mirror repair after DSTORE_LOST /
+% *                          LAYOUTERROR).
+% *   PROXY_OP_CANCEL_PRIOR -- the MDS asks the PS to abandon a
+% *                          previously-delivered assignment.  Used
+% *                          when the MDS rescinds an assignment
+% *                          before the PS has acknowledged it via
+% *                          OPEN+LAYOUTGET.
+% */
+enum proxy_op_kind4 {
+    PROXY_OP_MOVE         = 0,
+    PROXY_OP_REPAIR       = 1,
+    PROXY_OP_CANCEL_PRIOR = 2
+};
+
+struct proxy_assignment4 {
+    proxy_op_kind4  pa_kind;
+    nfs_fh4         pa_file_fh;
+    uint64_t        pa_source_dstore_id;
+    uint64_t        pa_target_dstore_id;
+    /*
+     * Kind-specific descriptor space for future fields (e.g.
+     * source/dest layout descriptors so the PS can dial the
+     * source DSes immediately without a second LAYOUTGET).  Empty
+     * in slice 6c-w; future slices extend.
+     */
+    opaque          pa_descriptor<>;
+};
+
 struct PROXY_PROGRESS4args {
     /*
-     * Wire layout placeholder -- the data-mover draft pins the
-     * full operation argument set in slice 7 / 8 (CB_PROXY_* land).
-     * Defined here so OP_PROXY_PROGRESS is wire-decodable; handler
-     * always returns NFS4ERR_NOTSUPP in slice 6a.
+     * Heartbeat-only in slice 6c-w -- args extend in 6c-y when the
+     * PS reports progress on its in-flight migrations and signals
+     * its appetite for new assignments.
      */
-    uint32_t  pra_flags;
+    uint32_t  ppa_flags;
 };
-struct PROXY_PROGRESS4res {
-    nfsstat4  prar_status;
+
+struct PROXY_PROGRESS4resok {
+    /*
+     * Lease ack: seconds remaining until the PS's registration
+     * lease would expire absent further PROXY_PROGRESS.  Drives
+     * the PS's adaptive poll cadence.
+     */
+    uint32_t            ppr_lease_remaining_sec;
+    /*
+     * Zero or more work assignments the MDS hands to this PS.
+     * The PS treats receipt as authoritative -- the MDS has
+     * already created the in-flight migration record on its side
+     * and committed the (file_FH, target_dstore_id) invariant.
+     */
+    proxy_assignment4   ppr_assignments<>;
+};
+
+union PROXY_PROGRESS4res switch (nfsstat4 ppr_status) {
+case NFS4_OK:
+    PROXY_PROGRESS4resok ppr_resok;
+default:
+    void;
+};
+
+struct PROXY_DONE4args {
+    stateid4    pd_layout_stid;     /* identifies the migration */
+    nfsstat4    pd_status;          /* NFS4_OK = commit L2; else = rollback */
+};
+struct PROXY_DONE4res {
+    nfsstat4    pdr_status;
+};
+
+struct PROXY_CANCEL4args {
+    stateid4    pc_layout_stid;
+};
+struct PROXY_CANCEL4res {
+    nfsstat4    pcr_status;
 };
 
 /*
@@ -3857,6 +3951,8 @@ union nfs_argop4 switch (nfs_opnum4 argop) {
  /* Proxy-server fore-channel ops (data-mover draft) */
  case OP_PROXY_REGISTRATION: PROXY_REGISTRATION4args opproxy_registration;
  case OP_PROXY_PROGRESS:     PROXY_PROGRESS4args     opproxy_progress;
+ case OP_PROXY_DONE:         PROXY_DONE4args         opproxy_done;
+ case OP_PROXY_CANCEL:       PROXY_CANCEL4args       opproxy_cancel;
 
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       void;
@@ -4015,6 +4111,8 @@ union nfs_resop4 switch (nfs_opnum4 resop) {
  /* Proxy-server fore-channel ops (data-mover draft) */
  case OP_PROXY_REGISTRATION: PROXY_REGISTRATION4res opproxy_registration;
  case OP_PROXY_PROGRESS:     PROXY_PROGRESS4res     opproxy_progress;
+ case OP_PROXY_DONE:         PROXY_DONE4res         opproxy_done;
+ case OP_PROXY_CANCEL:       PROXY_CANCEL4res       opproxy_cancel;
 
  /* Operations not new to NFSv4.1 */
  case OP_ILLEGAL:       ILLEGAL4res opillegal;
@@ -4338,69 +4436,25 @@ struct CB_OFFLOAD4res {
 };
 
 %/*
-% * MDS-to-PS callback ops (draft-haynes-nfsv4-flexfiles-v2-data-mover).
-% * Op numbers 95-98 are TBD pending IANA assignment; same caveat as
-% * the proxy fore-channel block (OP_PROXY_REGISTRATION/PROGRESS, 93-94).
+% * MDS-to-PS callback op slots 95-98 (draft-haynes-nfsv4-flexfiles-
+% * v2-data-mover) are RETIRED in the 2026-04-26 architecture
+% * revision.  See .claude/design/proxy-server-phase6c.md.
 % *
-% * Slice 6c-i wires the XDR shape only; the PS-side CB receive path
-% * arrives in slice 6c-ii.  Today these structs are unreferenced --
-% * the regenerated header is consumed by the existing CB infrastructure
-% * but no handler is wired against them yet.
+% * Slice 6c-i had originally wired four CB ops (CB_PROXY_STATUS,
+% * CB_PROXY_MOVE, CB_PROXY_REPAIR, CB_PROXY_CANCEL) under op
+% * numbers 95-98 to deliver work assignments and cancel requests
+% * from MDS to PS.  Slice 6c-w walks all four back: the protocol
+% * is now fore-channel-only.  Work assignments arrive in
+% * PROXY_PROGRESS replies; per-move terminal state is reported by
+% * the PS via PROXY_DONE / PROXY_CANCEL.
 % *
-% * CB_PROXY_STATUS asks the PS to report its current operation status
-% * (idle, busy with N inflight, draining).  CB_PROXY_MOVE +
-% * CB_PROXY_REPAIR delegate whole-file move / repair work to the PS.
-% * CB_PROXY_CANCEL aborts an in-progress move or repair.
-% *
-% * cpma_/cpra_/cpca_operation_id is an opaque cookie the MDS assigns
-% * per outstanding op so a later CB_PROXY_CANCEL can address a
-% * specific in-flight operation.
+% * Op numbers 95-98 are RESERVED -- they MUST NOT be reused, even
+% * for unrelated callback ops.  Globally-unique op numbers keep
+% * future audits and implementor mental models clean.  Reservation
+% * is recorded in nfs_cb_opnum4 below as OP_PROXY_RESERVED_95
+% * through OP_PROXY_RESERVED_98.  No struct definitions remain
+% * for the retired ops.
 % */
-const PROXY_OPERATION_ID_MAX = 32;
-
-enum proxy_op_status4 {
-        PROXY_OP_STATUS_IDLE     = 0,
-        PROXY_OP_STATUS_BUSY     = 1,
-        PROXY_OP_STATUS_DRAINING = 2
-};
-
-struct CB_PROXY_STATUS4args {
-        uint32_t        cpsa_flags;     /* MUST be 0 (RFC 8178 reserved) */
-};
-struct CB_PROXY_STATUS4resok {
-        proxy_op_status4 cpsr_status;
-        uint32_t         cpsr_inflight; /* in-progress move/repair count */
-};
-union CB_PROXY_STATUS4res switch (nfsstat4 cpsr_status_code) {
- case NFS4_OK:
-        CB_PROXY_STATUS4resok cpsr_resok;
- default:
-        void;
-};
-
-struct CB_PROXY_MOVE4args {
-        uint32_t        cpma_flags;
-        opaque          cpma_operation_id<PROXY_OPERATION_ID_MAX>;
-};
-struct CB_PROXY_MOVE4res {
-        nfsstat4        cpmr_status;
-};
-
-struct CB_PROXY_REPAIR4args {
-        uint32_t        cpra_flags;
-        opaque          cpra_operation_id<PROXY_OPERATION_ID_MAX>;
-};
-struct CB_PROXY_REPAIR4res {
-        nfsstat4        cprr_status;
-};
-
-struct CB_PROXY_CANCEL4args {
-        uint32_t        cpca_flags;
-        opaque          cpca_operation_id<PROXY_OPERATION_ID_MAX>;
-};
-struct CB_PROXY_CANCEL4res {
-        nfsstat4        cpcr_status;
-};
 
 /*
  * Various definitions for CB_COMPOUND
@@ -4424,15 +4478,16 @@ enum nfs_cb_opnum4 {
         OP_CB_OFFLOAD                   = 15,
 
 %/*
-% * MDS-to-PS callback operations
-% * (draft-haynes-nfsv4-flexfiles-v2-data-mover).  Op numbers 95-98
-% * are TBD pending IANA assignment; same caveat as the proxy
-% * fore-channel block (OP_PROXY_REGISTRATION/PROGRESS, 93-94).
+% * MDS-to-PS callback op slots 95-98 are RESERVED per the
+% * 2026-04-26 architecture revision.  See above and
+% * .claude/design/proxy-server-phase6c.md.  These constants exist
+% * to keep the wire op-number space stable; no case arms in
+% * nfs_cb_argop4 / nfs_cb_resop4 reference them.
 % */
-        OP_CB_PROXY_STATUS              = 95,
-        OP_CB_PROXY_MOVE                = 96,
-        OP_CB_PROXY_REPAIR              = 97,
-        OP_CB_PROXY_CANCEL              = 98,
+        OP_PROXY_RESERVED_95            = 95,
+        OP_PROXY_RESERVED_96            = 96,
+        OP_PROXY_RESERVED_97            = 97,
+        OP_PROXY_RESERVED_98            = 98,
 
         OP_CB_ILLEGAL                   = 10044
 };
@@ -4469,16 +4524,11 @@ union nfs_cb_argop4 switch (nfs_cb_opnum4 argop) {
  case OP_CB_OFFLOAD:
       CB_OFFLOAD4args           opcboffload;
 
- /* MDS-to-PS data-mover ops */
- case OP_CB_PROXY_STATUS:
-      CB_PROXY_STATUS4args      opcbproxy_status;
- case OP_CB_PROXY_MOVE:
-      CB_PROXY_MOVE4args        opcbproxy_move;
- case OP_CB_PROXY_REPAIR:
-      CB_PROXY_REPAIR4args      opcbproxy_repair;
- case OP_CB_PROXY_CANCEL:
-      CB_PROXY_CANCEL4args      opcbproxy_cancel;
-
+ /*
+  * MDS-to-PS data-mover CB ops 95-98 retired in slice 6c-w; the op
+  * numbers are reserved (see OP_PROXY_RESERVED_95..98 above) but
+  * have no callable handler.
+  */
  case OP_CB_ILLEGAL:            void;
 };
 
@@ -4524,18 +4574,10 @@ union nfs_cb_resop4 switch (nfs_cb_opnum4 resop) {
  /* new NFSv4.2 operations */
  case OP_CB_OFFLOAD:    CB_OFFLOAD4res  opcboffload;
 
- /* MDS-to-PS data-mover ops */
- case OP_CB_PROXY_STATUS:
-                        CB_PROXY_STATUS4res
-                                        opcbproxy_status;
- case OP_CB_PROXY_MOVE: CB_PROXY_MOVE4res
-                                        opcbproxy_move;
- case OP_CB_PROXY_REPAIR:
-                        CB_PROXY_REPAIR4res
-                                        opcbproxy_repair;
- case OP_CB_PROXY_CANCEL:
-                        CB_PROXY_CANCEL4res
-                                        opcbproxy_cancel;
+ /*
+  * MDS-to-PS data-mover CB ops 95-98 retired in slice 6c-w (see
+  * nfs_cb_argop4 above).
+  */
 
  /* Not new operation */
  case OP_CB_ILLEGAL:    CB_ILLEGAL4res  opcbillegal;
