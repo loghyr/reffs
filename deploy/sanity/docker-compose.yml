@@ -194,6 +194,7 @@ services:
       "
     profiles:
       - ps-demo
+      - ps-demo-kmount
 
   ps-a:
     image: reffs-dev
@@ -225,6 +226,7 @@ services:
       "
     profiles:
       - ps-demo
+      - ps-demo-kmount
 
   ps-b:
     image: reffs-dev
@@ -256,6 +258,7 @@ services:
       "
     profiles:
       - ps-demo
+      - ps-demo-kmount
 
   ps-demo:
     container_name: reffs-sanity-ps-client
@@ -278,6 +281,39 @@ services:
       "
     profiles:
       - ps-demo
+
+  ps-demo-kmount:
+    container_name: reffs-sanity-ps-kclient
+    image: reffs-dev
+    # Mount NFSv4.2 from inside the container -- needs CAP_SYS_ADMIN
+    # plus the host kernel having nfs / nfs4 client modules loaded.
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    depends_on:
+      ps-a:
+        condition: service_healthy
+      ps-b:
+        condition: service_healthy
+    networks:
+      - sanity
+    volumes:
+      - sanity-build-vol:/shared:ro
+      - ../../:/reffs:ro,z
+    # The reffs-dev image is Fedora-based and ships nfs-utils; if not,
+    # `dnf -y install nfs-utils` here.  Pivots away from ec_demo /
+    # codecs to plain dd through the kernel client -- exercises the
+    # ps_proxy_forward_{read,write,getattr,lookup,open,close} chain
+    # that has been wired and tested via scripts/local_ps_test.sh.
+    command: >
+      /bin/bash -c "
+        rpm -q nfs-utils >/dev/null 2>&1 || dnf -y install nfs-utils >/dev/null 2>&1 || true ;
+        /reffs/deploy/sanity/run-ps-demo-kmount.sh reffs-ps-a reffs-ps-b
+      "
+    profiles:
+      - ps-demo-kmount
 
 volumes:
   sanity-build-vol:

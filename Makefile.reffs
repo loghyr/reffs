@@ -68,8 +68,10 @@ help:
 	@echo "Sanity targets:"
 	@echo "  run-sanity      - Multi-codec sanity test (1 MDS + 6 DSes, 5 SBs, write+read+diff)"
 	@echo "  stop-sanity     - Stop sanity containers"
-	@echo "  run-ps-demo     - PS demo (1 MDS + 6 DSes + 2 PSes; write via PS-A, read via PS-B)"
+	@echo "  run-ps-demo     - PS demo via ec_demo (1 MDS + 6 DSes + 2 PSes; blocked on gaps #149/#150)"
 	@echo "  stop-ps-demo    - Stop PS-demo containers"
+	@echo "  run-ps-demo-kmount - PS demo via Linux NFSv4.2 kernel mount (workaround; needs SYS_ADMIN)"
+	@echo "  stop-ps-demo-kmount - Stop kernel-mount PS-demo containers"
 
 # --- Build targets ---
 
@@ -390,4 +392,30 @@ run-ps-demo: image
 stop-ps-demo:
 	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo down -v 2>/dev/null || true
 
-.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-sanity stop-sanity run-ps-demo stop-ps-demo
+# Kernel-mount variant: client mounts both PSes via Linux NFSv4.2,
+# does write/read/diff via plain dd+cmp.  Exercises the
+# ps_proxy_forward_* chain for normal I/O without touching layouts
+# or codecs.  Workaround for the layout-passthrough gap (#150).
+
+run-ps-demo-kmount: image
+	@mkdir -p $(SANITY_LOGS)
+	@echo "Building reffs in builder container..."
+	$(DOCKER) compose -f $(SANITY_COMPOSE) run --rm builder
+	@echo "Starting MDS + 6 DSes, then provisioning SBs, then PSes..."
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo-kmount \
+		up -d ds0 ds1 ds2 ds3 ds4 ds5 mds
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo-kmount \
+		run --rm mds-setup
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo-kmount up -d ps-a
+	@bash -c 'until [ "$$($(DOCKER) inspect -f "{{.State.Health.Status}}" reffs-sanity-ps-a 2>/dev/null)" = "healthy" ]; do sleep 1; done'
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo-kmount up -d ps-b
+	@echo "Running kernel-mount cross-PS demo client..."
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo-kmount run --rm ps-demo-kmount \
+		2>&1 | tee $(SANITY_LOGS)/ps-demo-kmount.log
+	@echo ""
+	@echo "Result log: $(SANITY_LOGS)/ps-demo-kmount.log"
+
+stop-ps-demo-kmount:
+	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo-kmount down -v 2>/dev/null || true
+
+.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-sanity stop-sanity run-ps-demo stop-ps-demo run-ps-demo-kmount stop-ps-demo-kmount
