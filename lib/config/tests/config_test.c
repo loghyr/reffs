@@ -16,6 +16,7 @@
 #include "config.h"
 #endif
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -716,6 +717,193 @@ START_TEST(test_load_proxy_mds_upstream_absent)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* load -- [[proxy_mds]] TLS fields (slice plan-1-tls.b, #139)         */
+/* ------------------------------------------------------------------ */
+
+START_TEST(test_load_proxy_mds_tls_omitted_stays_off)
+{
+	/*
+	 * Default for an entry that omits all tls_* keys: tls_mode
+	 * stays at OFF (= 0) and the cert/key/ca paths are empty.
+	 * Pre-#139 configs and dev/smoke topologies that have no
+	 * cert wired must keep working without edits.
+	 */
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[proxy_mds]]\n"
+				"id      = 1\n"
+				"port    = 4098\n"
+				"address = \"10.1.1.5\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nproxy_mds, 1);
+	ck_assert_int_eq((int)cfg.proxy_mds[0].tls_mode,
+			 (int)REFFS_PROXY_TLS_OFF);
+	ck_assert_str_eq(cfg.proxy_mds[0].tls_cert, "");
+	ck_assert_str_eq(cfg.proxy_mds[0].tls_key, "");
+	ck_assert_str_eq(cfg.proxy_mds[0].tls_ca, "");
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_proxy_mds_tls_cert_implies_starttls)
+{
+	/*
+	 * Setting tls_cert + tls_key without an explicit tls_mode
+	 * defaults the mode to STARTTLS -- the RFC 9289 default
+	 * for upgrading an NFS port that still accepts plain
+	 * compounds.  CA path is optional (verify-self-signed
+	 * topologies leave it empty).
+	 */
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[proxy_mds]]\n"
+				"id       = 3\n"
+				"port     = 4098\n"
+				"address  = \"10.1.1.5\"\n"
+				"tls_cert = \"/etc/reffs/ps.crt\"\n"
+				"tls_key  = \"/etc/reffs/ps.key\"\n"
+				"tls_ca   = \"/etc/reffs/ca.crt\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_uint_eq(cfg.nproxy_mds, 1);
+	ck_assert_int_eq((int)cfg.proxy_mds[0].tls_mode,
+			 (int)REFFS_PROXY_TLS_STARTTLS);
+	ck_assert_str_eq(cfg.proxy_mds[0].tls_cert, "/etc/reffs/ps.crt");
+	ck_assert_str_eq(cfg.proxy_mds[0].tls_key, "/etc/reffs/ps.key");
+	ck_assert_str_eq(cfg.proxy_mds[0].tls_ca, "/etc/reffs/ca.crt");
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_proxy_mds_tls_mode_direct)
+{
+	/*
+	 * Explicit tls_mode = "direct" picks tls_direct_connect over
+	 * the AUTH_TLS NULL probe, used when a TLS-fronted proxy
+	 * (haproxy, nginx) wraps the MDS port.
+	 */
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[proxy_mds]]\n"
+				"id       = 4\n"
+				"port     = 4098\n"
+				"address  = \"10.1.1.5\"\n"
+				"tls_cert = \"/etc/reffs/ps.crt\"\n"
+				"tls_key  = \"/etc/reffs/ps.key\"\n"
+				"tls_ca   = \"/etc/reffs/ca.crt\"\n"
+				"tls_mode = \"direct\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert_int_eq((int)cfg.proxy_mds[0].tls_mode,
+			 (int)REFFS_PROXY_TLS_DIRECT);
+	ck_assert_str_eq(cfg.proxy_mds[0].tls_ca, "/etc/reffs/ca.crt");
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_proxy_mds_tls_cert_without_ca_rejected)
+{
+	/*
+	 * mTLS without a CA bundle silently disables MDS server-cert
+	 * verification.  In production that is a downgrade vector.
+	 * Require an explicit tls_insecure_no_verify=true opt-in so a
+	 * forgotten tls_ca line in production fails closed; the smoke /
+	 * self-signed-MDS topology (slice plan-1-tls.c) sets the flag
+	 * and is exercised by test_load_proxy_mds_tls_cert_no_verify_ok.
+	 */
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[proxy_mds]]\n"
+				"id       = 6\n"
+				"port     = 4098\n"
+				"address  = \"10.1.1.5\"\n"
+				"tls_cert = \"/etc/reffs/ps.crt\"\n"
+				"tls_key  = \"/etc/reffs/ps.key\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), -EINVAL);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_proxy_mds_tls_cert_no_verify_ok)
+{
+	/*
+	 * Explicit tls_insecure_no_verify=true makes the cert-without-
+	 * CA combination valid -- the smoke / self-signed-MDS path.
+	 * tls_ca stays empty; mds_session_clnt_open_tls drops to
+	 * no_verify=1 only because the operator named the flag.
+	 */
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+
+	char *path =
+		write_toml("[[proxy_mds]]\n"
+			   "id                       = 7\n"
+			   "port                     = 4098\n"
+			   "address                  = \"10.1.1.5\"\n"
+			   "tls_cert                 = \"/etc/reffs/ps.crt\"\n"
+			   "tls_key                  = \"/etc/reffs/ps.key\"\n"
+			   "tls_insecure_no_verify   = true\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), 0);
+	ck_assert(cfg.proxy_mds[0].tls_insecure_no_verify);
+	ck_assert_str_eq(cfg.proxy_mds[0].tls_ca, "");
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+START_TEST(test_load_proxy_mds_tls_half_config_rejected)
+{
+	/*
+	 * Half-configured mTLS (cert without key, or key without cert)
+	 * is a config error: the SSL handshake cannot complete and an
+	 * opaque PS-startup failure would frustrate operators.  Catch
+	 * the asymmetry at parse time with -EINVAL.
+	 */
+	struct reffs_config cfg;
+
+	reffs_config_defaults(&cfg);
+
+	char *path = write_toml("[[proxy_mds]]\n"
+				"id       = 5\n"
+				"port     = 4098\n"
+				"address  = \"10.1.1.5\"\n"
+				"tls_cert = \"/etc/reffs/ps.crt\"\n");
+	ck_assert_ptr_nonnull(path);
+
+	ck_assert_int_eq(reffs_config_load(&cfg, path), -EINVAL);
+
+	unlink(path);
+	free(path);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* load -- [[allowed_ps]] entries (slice 6b-i)                          */
 /* ------------------------------------------------------------------ */
 
@@ -895,6 +1083,13 @@ Suite *config_suite(void)
 	tcase_add_test(tc_load, test_load_proxy_mds_upstream_defaults);
 	tcase_add_test(tc_load, test_load_proxy_mds_upstream_explicit);
 	tcase_add_test(tc_load, test_load_proxy_mds_upstream_absent);
+	tcase_add_test(tc_load, test_load_proxy_mds_tls_omitted_stays_off);
+	tcase_add_test(tc_load, test_load_proxy_mds_tls_cert_implies_starttls);
+	tcase_add_test(tc_load, test_load_proxy_mds_tls_mode_direct);
+	tcase_add_test(tc_load, test_load_proxy_mds_tls_half_config_rejected);
+	tcase_add_test(tc_load,
+		       test_load_proxy_mds_tls_cert_without_ca_rejected);
+	tcase_add_test(tc_load, test_load_proxy_mds_tls_cert_no_verify_ok);
 	tcase_add_test(tc_load, test_load_allowed_ps_single);
 	tcase_add_test(tc_load, test_load_allowed_ps_multiple);
 	tcase_add_test(tc_load, test_load_allowed_ps_tls_cert_fingerprint);

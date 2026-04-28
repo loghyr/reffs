@@ -38,6 +38,7 @@ LDADD = \
 	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps_sb.la	\
 	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps.la		\
 	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la	\
+	$(top_builddir)/lib/tls/libreffs_tls.la			\
 	$(top_builddir)/lib/ec/libreffs_ec.la			\
 	$(top_builddir)/lib/nfs3/libreffs_nfs3.la		\
 	$(top_builddir)/lib/mount3/libreffs_mount3.la	\

@@ -11,7 +11,8 @@ AM_CFLAGS = -I$(top_srcdir)/lib/include		\
 
 LDADD = @CHECK_LIBS@						\
 	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps.la		\
-	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la	\
+	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la \
+	$(top_builddir)/lib/tls/libreffs_tls.la	\
 	$(top_builddir)/lib/xdr/libreffs_xdr.la			\
 	$(TIRPC_LIBS)
 
@@ -34,7 +35,8 @@ ps_sb_alloc_test_LDADD = @CHECK_LIBS@					\
 	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la		\
 	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps_sb.la		\
 	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps.la			\
-	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la		\
+	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la \
+	$(top_builddir)/lib/tls/libreffs_tls.la		\
 	$(top_builddir)/lib/nlm/libnlm.la				\
 	$(top_builddir)/lib/nsm/libnsm.la				\
 	$(top_builddir)/lib/fs/libreffs_fs.la				\

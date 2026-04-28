@@ -679,9 +679,24 @@ int main(int argc, char *argv[])
 		snprintf(owner, sizeof(owner), "reffs-ps-%u", pmc->id);
 		mds_session_set_owner(ms, owner);
 
-		r = mds_session_create(ms, pmc->address);
+		/*
+		 * TLS path (slice plan-1-tls.b): mds_session_create_tls
+		 * routes through tls_starttls / tls_direct_connect +
+		 * mds_tls_xprt_create when tls_cert + tls_key are set.
+		 * When both are empty it falls back to the plain-TCP
+		 * path that mds_session_create has always taken.  Both
+		 * branches end with a working CLIENT* + EXCHANGE_ID +
+		 * CREATE_SESSION on `ms`; downstream PROXY_REGISTRATION
+		 * picks up the TLS peer fingerprint via the per-fd
+		 * accessor on the MDS side (see lib/nfs4/server/
+		 * compound.c c_tls_fingerprint wiring).
+		 */
+		r = mds_session_create_tls(ms, pmc->address, pmc->mds_port,
+					   pmc->tls_cert, pmc->tls_key,
+					   pmc->tls_ca, (int)pmc->tls_mode,
+					   pmc->tls_insecure_no_verify);
 		if (r < 0) {
-			LOG("proxy_mds[%u] (listener_id=%u, upstream=%s): mds_session_create failed: %s -- listener stays dark",
+			LOG("proxy_mds[%u] (listener_id=%u, upstream=%s): mds_session_create_tls failed: %s -- listener stays dark",
 			    i, pmc->id, pmc->address, strerror(-r));
 			free(ms);
 			continue;

@@ -151,6 +151,21 @@ struct reffs_data_server_config {
  * Phase 2 slice.  `address == ""` marks the upstream as unconfigured;
  * reffsd currently tolerates that and still opens the listener.
  */
+/*
+ * tls_mode controls how the PS-MDS session brings TLS up
+ * (RFC 9289 / data-mover sec-security).  Default OFF preserves
+ * the pre-TLS plain-TCP behaviour for tests and dev configs that
+ * have no certs to wire.  STARTTLS issues an AUTH_TLS NULL probe
+ * on a fresh TCP conn before SSL_connect.  DIRECT runs SSL_connect
+ * immediately -- useful when fronting the MDS with a TLS-only
+ * proxy that would reject the cleartext STARTTLS preamble.
+ */
+enum reffs_proxy_tls_mode {
+	REFFS_PROXY_TLS_OFF = 0,
+	REFFS_PROXY_TLS_STARTTLS = 1,
+	REFFS_PROXY_TLS_DIRECT = 2,
+};
+
 struct reffs_proxy_mds_config {
 	uint32_t id; /* listener id: 1..N (0 reserved for native) */
 	uint16_t port; /* bind port, e.g. 4098 */
@@ -158,6 +173,33 @@ struct reffs_proxy_mds_config {
 	char address[REFFS_CONFIG_MAX_HOST]; /* upstream MDS IPv4/IPv6 */
 	uint16_t mds_port; /* upstream MDS NFS port, default 2049 */
 	uint16_t mds_probe; /* upstream MDS probe port, default 20490 */
+
+	/*
+	 * Mutually-authenticated TLS for the PS-MDS session.  When
+	 * any of tls_cert / tls_key is set, the session opens via
+	 * tls_starttls (or tls_direct_connect) and PROXY_REGISTRATION
+	 * carries the client cert SHA-256 fingerprint into the MDS
+	 * allowlist check (see lib/nfs4/server/compound.c +
+	 * lib/nfs4/server/proxy_registration.c).  All three paths are
+	 * required for full mTLS: client cert + key (so the PS proves
+	 * its identity to the MDS) and a CA bundle (so the PS verifies
+	 * the MDS server cert).  An empty path string skips that piece
+	 * -- e.g., tls_ca = "" with no_verify-equivalent semantics for
+	 * dev / smoke topologies that use a self-signed MDS cert.
+	 */
+	char tls_cert[REFFS_CONFIG_MAX_PATH];
+	char tls_key[REFFS_CONFIG_MAX_PATH];
+	char tls_ca[REFFS_CONFIG_MAX_PATH];
+	enum reffs_proxy_tls_mode tls_mode;
+	/*
+	 * Explicit opt-out of MDS server-cert verification.  Required
+	 * when tls_cert/tls_key are set but tls_ca is empty (the
+	 * smoke / self-signed-MDS topology used by slice plan-1-tls.c).
+	 * Default false: cert-without-CA without this flag is rejected
+	 * at parse time so a missing tls_ca line in a production config
+	 * cannot silently downgrade to "TLS without identity check".
+	 */
+	bool tls_insecure_no_verify;
 };
 
 /*

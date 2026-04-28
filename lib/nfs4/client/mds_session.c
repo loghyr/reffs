@@ -48,9 +48,14 @@ static gss_OID_desc krb5oid_desc = {
 };
 #endif
 
+#include <openssl/ssl.h>
+
 #include "nfsv42_xdr.h"
 #include "reffs/filehandle.h"
+#include "reffs/settings.h"
+#include "reffs/tls_client.h"
 #include "ec_client.h"
+#include "mds_tls_xprt.h"
 
 /* ------------------------------------------------------------------ */
 /* EXCHANGE_ID                                                         */
@@ -839,6 +844,176 @@ err:
 	return ret;
 }
 
+/*
+ * TLS-protected variant of mds_session_clnt_open.  Brings up an
+ * mTLS connection (via tls_starttls or tls_direct_connect) and
+ * wraps the SSL+fd in a libtirpc CLIENT* via mds_tls_xprt_create.
+ *
+ * On success returns a CLIENT* and stores the owning SSL_CTX into
+ * *ctx_out -- caller (mds_session_create_tls) attaches it to
+ * ms->ms_tls_ctx so mds_session_destroy frees it after
+ * clnt_destroy.  On NULL return all transient resources are
+ * released here.
+ */
+static CLIENT *
+mds_session_clnt_open_tls(const char *host, uint16_t port, const char *tls_cert,
+			  const char *tls_key, const char *tls_ca, int tls_mode,
+			  bool insecure_no_verify, SSL_CTX **ctx_out)
+{
+	struct tls_client_config cfg = {
+		.cert_path = (tls_cert && tls_cert[0] != '\0') ? tls_cert :
+								 NULL,
+		.key_path = (tls_key && tls_key[0] != '\0') ? tls_key : NULL,
+		.ca_path = (tls_ca && tls_ca[0] != '\0') ? tls_ca : NULL,
+		/*
+		 * Server-cert verification is on by default; an empty
+		 * tls_ca path disables verification only when the
+		 * operator explicitly set tls_insecure_no_verify=true.
+		 * The config parser rejects the unset case at startup
+		 * so a forgotten tls_ca line cannot silently downgrade.
+		 */
+		.no_verify = insecure_no_verify ? 1 : 0,
+	};
+	SSL_CTX *ctx = NULL;
+	SSL *ssl = NULL;
+	int fd = -1;
+
+	*ctx_out = NULL;
+
+	fd = tls_tcp_connect(host, (int)port);
+	if (fd < 0)
+		return NULL;
+
+	ctx = tls_client_ctx_create(&cfg);
+	if (!ctx)
+		goto err;
+
+	if (tls_mode == REFFS_PROXY_TLS_DIRECT)
+		ssl = tls_direct_connect(fd, ctx, 0);
+	else
+		ssl = tls_starttls(fd, ctx, 0);
+	if (!ssl)
+		goto err;
+
+	CLIENT *clnt = mds_tls_xprt_create(fd, ssl, NFS4_PROGRAM, NFS_V4);
+
+	if (!clnt) {
+		SSL_free(ssl);
+		goto err;
+	}
+	/*
+	 * The XPRT now owns fd + ssl.  Hand the SSL_CTX out so the
+	 * session lifetime owns it; the CTX MUST outlive every SSL
+	 * spawned from it (per OpenSSL contract).  mds_session_destroy
+	 * frees the CTX after clnt_destroy completes.
+	 */
+	*ctx_out = ctx;
+	return clnt;
+err:
+	if (ssl)
+		SSL_free(ssl);
+	if (ctx)
+		SSL_CTX_free(ctx);
+	if (fd >= 0)
+		close(fd);
+	return NULL;
+}
+
+int mds_session_create_tls(struct mds_session *ms, const char *host,
+			   uint16_t port, const char *tls_cert,
+			   const char *tls_key, const char *tls_ca,
+			   int tls_mode, bool tls_insecure_no_verify)
+{
+	int ret;
+
+	/*
+	 * No-cert config falls back to plain TCP -- a config carrying
+	 * empty cert paths is the operator saying "this listener is
+	 * pre-TLS"; refusing here would force every dev / smoke topology
+	 * to add a cert to the [[proxy_mds]] block.
+	 */
+	if (!tls_cert || tls_cert[0] == '\0' || !tls_key ||
+	    tls_key[0] == '\0') {
+		/*
+		 * Bare host (no ":port") for the default NFS port lets
+		 * mds_session_create skip its colon-splitting parser
+		 * entirely, which is the IPv4-only path today.  For a
+		 * non-default port we still have to encode "host:port",
+		 * which is why this branch is IPv4-only -- IPv6 literals
+		 * contain colons and the parser strrchr's the last one.
+		 * Fixing the IPv6 case requires bracketing in
+		 * mds_session_clnt_open too and is tracked as
+		 * NOT_NOW_BROWN_COW; the deploy/sanity stack uses IPv4
+		 * addresses so this is not a regression for #139.
+		 */
+		if (port == 0 || port == 2049)
+			return mds_session_create(ms, host);
+
+		/* host:port = max 256 + 1 + 5 + NUL */
+		char hostport[REFFS_CONFIG_MAX_HOST + 8];
+		int n = snprintf(hostport, sizeof(hostport), "%s:%u", host,
+				 (unsigned)port);
+
+		if (n < 0 || (size_t)n >= sizeof(hostport))
+			return -EINVAL;
+		return mds_session_create(ms, hostport);
+	}
+
+	char saved_owner[256];
+
+	memcpy(saved_owner, ms->ms_owner, sizeof(saved_owner));
+	memset(ms, 0, sizeof(*ms));
+	memcpy(ms->ms_owner, saved_owner, sizeof(ms->ms_owner));
+
+	if (ms->ms_owner[0] == '\0')
+		mds_session_set_owner(ms, NULL);
+
+	if (pthread_mutex_init(&ms->ms_call_mutex, NULL) != 0)
+		return -ENOMEM;
+
+	SSL_CTX *tls_ctx = NULL;
+
+	ms->ms_clnt = mds_session_clnt_open_tls(host, port, tls_cert, tls_key,
+						tls_ca, tls_mode,
+						tls_insecure_no_verify,
+						&tls_ctx);
+	if (!ms->ms_clnt) {
+		pthread_mutex_destroy(&ms->ms_call_mutex);
+		return -ECONNREFUSED;
+	}
+	ms->ms_tls_ctx = tls_ctx;
+
+	{
+		AUTH *auth = authunix_create_default();
+
+		if (auth) {
+			auth_destroy(ms->ms_clnt->cl_auth);
+			ms->ms_clnt->cl_auth = auth;
+			ms->ms_auth_default = auth;
+		}
+	}
+
+	ret = mds_exchange_id(ms);
+	if (ret)
+		goto err;
+	ret = mds_create_session(ms);
+	if (ret)
+		goto err;
+	mds_reclaim_complete(ms);
+	return 0;
+
+err:
+	if (ms->ms_clnt)
+		clnt_destroy(ms->ms_clnt);
+	if (ms->ms_tls_ctx) {
+		SSL_CTX_free(ms->ms_tls_ctx);
+		ms->ms_tls_ctx = NULL;
+	}
+	pthread_mutex_destroy(&ms->ms_call_mutex);
+	memset(ms, 0, sizeof(*ms));
+	return ret;
+}
+
 int mds_session_create_sec(struct mds_session *ms, const char *host,
 			   enum ec_sec_flavor sec)
 {
@@ -957,6 +1132,16 @@ void mds_session_destroy(struct mds_session *ms)
 	 * double-destroy.  Just forget it.
 	 */
 	ms->ms_auth_default = NULL;
+	/*
+	 * SSL_CTX must outlive every SSL spawned from it (OpenSSL
+	 * contract).  The custom XPRT freed its SSL inside
+	 * clnt_destroy above; freeing the CTX now is safe.  No-op
+	 * for plain-TCP sessions where ms_tls_ctx stays NULL.
+	 */
+	if (ms->ms_tls_ctx) {
+		SSL_CTX_free(ms->ms_tls_ctx);
+		ms->ms_tls_ctx = NULL;
+	}
 	pthread_mutex_destroy(&ms->ms_call_mutex);
 	memset(ms, 0, sizeof(*ms));
 }

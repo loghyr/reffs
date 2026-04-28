@@ -638,6 +638,94 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 			d = toml_int_in(pm_tbl, "mds_probe");
 			if (d.ok)
 				pmc->mds_probe = (uint16_t)d.u.i;
+
+			/*
+			 * TLS for the PS-MDS session (slice plan-1-tls.b,
+			 * .claude/design/proxy-server-tls.md).  An empty /
+			 * absent tls_cert leaves tls_mode at OFF and the
+			 * session stays on plain TCP.
+			 */
+			d = toml_string_in(pm_tbl, "tls_cert");
+			if (d.ok) {
+				strncpy(pmc->tls_cert, d.u.s,
+					sizeof(pmc->tls_cert) - 1);
+				free(d.u.s);
+			}
+			d = toml_string_in(pm_tbl, "tls_key");
+			if (d.ok) {
+				strncpy(pmc->tls_key, d.u.s,
+					sizeof(pmc->tls_key) - 1);
+				free(d.u.s);
+			}
+			d = toml_string_in(pm_tbl, "tls_ca");
+			if (d.ok) {
+				strncpy(pmc->tls_ca, d.u.s,
+					sizeof(pmc->tls_ca) - 1);
+				free(d.u.s);
+			}
+
+			d = toml_string_in(pm_tbl, "tls_mode");
+			if (d.ok) {
+				if (strcmp(d.u.s, "starttls") == 0)
+					pmc->tls_mode =
+						REFFS_PROXY_TLS_STARTTLS;
+				else if (strcmp(d.u.s, "direct") == 0)
+					pmc->tls_mode = REFFS_PROXY_TLS_DIRECT;
+				else if (strcmp(d.u.s, "off") == 0)
+					pmc->tls_mode = REFFS_PROXY_TLS_OFF;
+				/* Anything else falls through to OFF. */
+				free(d.u.s);
+			} else if (pmc->tls_cert[0] != '\0') {
+				/*
+				 * If tls_cert is set but tls_mode wasn't
+				 * named, default to STARTTLS (RFC 9289
+				 * default for upgrading an NFS port that
+				 * still accepts plain compounds).
+				 */
+				pmc->tls_mode = REFFS_PROXY_TLS_STARTTLS;
+			}
+
+			d = toml_bool_in(pm_tbl, "tls_insecure_no_verify");
+			if (d.ok)
+				pmc->tls_insecure_no_verify = (bool)d.u.b;
+
+			/*
+			 * Half-configured mTLS is a config error: cert
+			 * without key (or key without cert) cannot
+			 * complete the SSL handshake.  Catching it at
+			 * parse time gives the operator a clear message
+			 * instead of an opaque SSL_connect failure at
+			 * PS startup.
+			 */
+			bool have_cert = pmc->tls_cert[0] != '\0';
+			bool have_key = pmc->tls_key[0] != '\0';
+			bool have_ca = pmc->tls_ca[0] != '\0';
+
+			if (have_cert != have_key) {
+				LOG("config: [[proxy_mds]] %u: tls_cert and tls_key must both be set, or neither",
+				    (unsigned)i);
+				toml_free(root);
+				return -EINVAL;
+			}
+
+			/*
+			 * mTLS without a CA bundle would silently disable
+			 * server-cert verification.  In production this is
+			 * a downgrade vector: an attacker intercepting the
+			 * TCP connection could present any cert and the PS
+			 * would proceed.  Require an explicit
+			 * tls_insecure_no_verify=true opt-in so the smoke /
+			 * self-signed-MDS topology (slice plan-1-tls.c)
+			 * stays expressible while a forgotten tls_ca line
+			 * in production fails closed.
+			 */
+			if (have_cert && !have_ca &&
+			    !pmc->tls_insecure_no_verify) {
+				LOG("config: [[proxy_mds]] %u: tls_cert is set but tls_ca is empty; set tls_ca or explicitly tls_insecure_no_verify=true",
+				    (unsigned)i);
+				toml_free(root);
+				return -EINVAL;
+			}
 		}
 	}
 

@@ -12,8 +12,9 @@ AM_CFLAGS = \
 NFS4_CLIENT_LIBS = \
 	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps.la		\
 	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la	\
+	$(top_builddir)/lib/tls/libreffs_tls.la			\
 	$(top_builddir)/lib/xdr/libreffs_xdr.la			\
-	$(TIRPC_LIBS) $(GSSAPI_LIBS)
+	$(TIRPC_LIBS) $(GSSAPI_LIBS) $(OPENSSL_LIBS)
 
 ec_demo_SOURCES = ec_demo.c
 ec_demo_LDADD = $(NFS4_CLIENT_LIBS) \

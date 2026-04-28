@@ -51,6 +51,15 @@ struct mds_session {
 	 * installed" (e.g. GSS session that doesn't use ms_auth_default).
 	 */
 	AUTH *ms_auth_default;
+	/*
+	 * Owned SSL_CTX for TLS-protected sessions
+	 * (mds_session_create_tls).  NULL on plain TCP sessions.
+	 * mds_session_destroy frees this AFTER clnt_destroy so the
+	 * SSL_free inside the custom XPRT runs while its parent CTX
+	 * is still alive.  Type is void * so this header stays free
+	 * of the OpenSSL include.
+	 */
+	void *ms_tls_ctx;
 };
 
 /*
@@ -71,6 +80,26 @@ enum ec_sec_flavor {
 int mds_session_create(struct mds_session *ms, const char *host);
 int mds_session_create_sec(struct mds_session *ms, const char *host,
 			   enum ec_sec_flavor sec);
+
+/*
+ * TLS variant for the PS-MDS session (slice plan-1-tls.b,
+ * .claude/design/proxy-server-tls.md).  When tls_cert and tls_key
+ * are non-empty, opens a TCP connection to host:port, brings up
+ * mutually-authenticated TLS via tls_starttls (or direct TLS if
+ * tls_mode == REFFS_PROXY_TLS_DIRECT, value 2), then wraps the
+ * SSL in a libtirpc CLIENT* via mds_tls_xprt_create.  When the
+ * cert paths are empty, falls through to the plain mds_session_create
+ * path.
+ *
+ * tls_mode values mirror enum reffs_proxy_tls_mode in
+ * lib/include/reffs/settings.h: 0 = OFF, 1 = STARTTLS, 2 = DIRECT.
+ * Header avoids the settings.h dep so ec_client stays light.
+ */
+int mds_session_create_tls(struct mds_session *ms, const char *host,
+			   uint16_t port, const char *tls_cert,
+			   const char *tls_key, const char *tls_ca,
+			   int tls_mode, bool tls_insecure_no_verify);
+
 void mds_session_destroy(struct mds_session *ms);
 
 /*
