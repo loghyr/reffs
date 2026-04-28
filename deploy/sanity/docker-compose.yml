@@ -26,7 +26,7 @@ x-ds-common: &ds-common
       soft: 65536
       hard: 65536
   volumes:
-    - sanity-build-vol:/shared:ro
+    - sanity-build-vol:/shared:ro,z
   healthcheck:
     test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
     interval: 5s
@@ -47,7 +47,7 @@ services:
     image: reffs-dev
     volumes:
       - ../../:/reffs:ro,z
-      - sanity-build-vol:/shared
+      - sanity-build-vol:/shared:z
     command: >
       /bin/bash -c "
         rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /shared/src/ &&
@@ -140,7 +140,7 @@ services:
       sanity:
         aliases: [reffs-mds]
     volumes:
-      - sanity-build-vol:/shared:ro
+      - sanity-build-vol:/shared:ro,z
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
       interval: 5s
@@ -164,7 +164,7 @@ services:
     networks:
       - sanity
     volumes:
-      - sanity-build-vol:/shared:ro
+      - sanity-build-vol:/shared:ro,z
       - ../../:/reffs:ro,z
     command: >
       /bin/bash -c "
@@ -183,7 +183,7 @@ services:
     networks:
       - sanity
     volumes:
-      - sanity-build-vol:/shared:ro
+      - sanity-build-vol:/shared:ro,z
       - ../../:/reffs:ro,z
     # Oneshot: create the 5 sanity SBs on the MDS, then exit.  The
     # PSes depend on completion so that when they start, the MDS
@@ -209,7 +209,7 @@ services:
         soft: 65536
         hard: 65536
     volumes:
-      - sanity-build-vol:/shared:ro
+      - sanity-build-vol:/shared:ro,z
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
       interval: 5s
@@ -242,7 +242,7 @@ services:
         soft: 65536
         hard: 65536
     volumes:
-      - sanity-build-vol:/shared:ro
+      - sanity-build-vol:/shared:ro,z
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
       interval: 5s
@@ -275,7 +275,7 @@ services:
     networks:
       - sanity
     volumes:
-      - sanity-build-vol:/shared:ro
+      - sanity-build-vol:/shared:ro,z
       - ../../:/reffs:ro,z
     # SBs already provisioned by mds-setup before ps-a/ps-b started.
     command: >
@@ -297,7 +297,7 @@ services:
     networks:
       - sanity
     volumes:
-      - sanity-build-vol:/shared:ro
+      - sanity-build-vol:/shared:ro,z
       - ../../:/reffs:ro,z
     # Cross-PS multi-codec test via ec_demo (no kernel mount).  PS
     # forwards LAYOUTGET / GETDEVICEINFO / LAYOUTRETURN to MDS; ec_demo
@@ -331,7 +331,7 @@ services:
     networks:
       - sanity
     volumes:
-      - sanity-build-vol:/shared:ro
+      - sanity-build-vol:/shared:ro,z
       - ../../:/reffs:ro,z
     # The reffs-dev image is Fedora-based and ships nfs-utils; if not,
     # `dnf -y install nfs-utils` here.  Pivots away from ec_demo /
