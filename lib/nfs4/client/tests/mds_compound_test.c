@@ -188,6 +188,76 @@ START_TEST(test_result_accessor_null)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Slice 6c-z: PS-side senders + step driver -- input validation       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Wire-shape coverage (real round-trip against an MDS) is integration
+ * test territory and lives in the soak / sanity-demo harnesses.
+ * Here we just pin the NULL-input contract so callers from the PS
+ * main loop fail loudly on a stale `ms` rather than silently sending
+ * a malformed request.
+ */
+START_TEST(test_send_proxy_progress_null_ms_returns_einval)
+{
+	struct ps_progress_assignment dummy;
+	uint32_t lease = 0;
+
+	ck_assert_int_eq(mds_session_send_proxy_progress(NULL, &dummy, 1,
+							 &lease),
+			 -EINVAL);
+}
+END_TEST
+
+START_TEST(test_send_proxy_done_null_inputs_return_einval)
+{
+	stateid4 stid = { 0 };
+
+	ck_assert_int_eq(mds_session_send_proxy_done(NULL, &stid, NFS4_OK),
+			 -EINVAL);
+	/*
+	 * Casting non-NULL bytes to mds_session* without a real session
+	 * would crash the sender; only the explicit NULL-stateid path is
+	 * a safe NULL-input check at this scope.  The send path's
+	 * non-NULL-ms validation is exercised by the integration soak.
+	 */
+}
+END_TEST
+
+START_TEST(test_send_proxy_done_null_stateid_returns_einval)
+{
+	/*
+	 * Pass a non-NULL pointer for ms that the sender will fail to
+	 * dereference if it gets past the NULL-stateid check; the test
+	 * relies on the early NULL-stateid return to short-circuit before
+	 * any field access.  Any non-NULL value works as the sentinel.
+	 */
+	struct mds_session *fake = (struct mds_session *)(uintptr_t)0x1;
+
+	ck_assert_int_eq(mds_session_send_proxy_done(fake, NULL, NFS4_OK),
+			 -EINVAL);
+}
+END_TEST
+
+START_TEST(test_send_proxy_cancel_null_inputs_return_einval)
+{
+	stateid4 stid = { 0 };
+	struct mds_session *fake = (struct mds_session *)(uintptr_t)0x1;
+
+	ck_assert_int_eq(mds_session_send_proxy_cancel(NULL, &stid), -EINVAL);
+	ck_assert_int_eq(mds_session_send_proxy_cancel(fake, NULL), -EINVAL);
+}
+END_TEST
+
+START_TEST(test_ps_migration_step_null_ms_returns_einval)
+{
+	uint32_t lease = 0;
+
+	ck_assert_int_eq(ps_migration_step(NULL, NULL, NULL, &lease), -EINVAL);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite setup                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -204,6 +274,11 @@ static Suite *mds_compound_suite(void)
 	tcase_add_test(tc, test_add_sequence);
 	tcase_add_test(tc, test_add_sequence_overflow);
 	tcase_add_test(tc, test_result_accessor_null);
+	tcase_add_test(tc, test_send_proxy_progress_null_ms_returns_einval);
+	tcase_add_test(tc, test_send_proxy_done_null_inputs_return_einval);
+	tcase_add_test(tc, test_send_proxy_done_null_stateid_returns_einval);
+	tcase_add_test(tc, test_send_proxy_cancel_null_inputs_return_einval);
+	tcase_add_test(tc, test_ps_migration_step_null_ms_returns_einval);
 
 	suite_add_tcase(s, tc);
 	return s;

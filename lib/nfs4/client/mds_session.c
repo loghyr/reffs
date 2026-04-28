@@ -49,6 +49,7 @@ static gss_OID_desc krb5oid_desc = {
 #endif
 
 #include "nfsv42_xdr.h"
+#include "reffs/filehandle.h"
 #include "ec_client.h"
 
 /* ------------------------------------------------------------------ */
@@ -381,6 +382,252 @@ int mds_session_send_proxy_registration(struct mds_session *ms,
 out:
 	mds_compound_fini(&mc);
 	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* PROXY_PROGRESS / PROXY_DONE / PROXY_CANCEL (slice 6c-z)            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Map a proxy_done / cancel nfsstat4 into the PS-side errno.
+ * Mirrors the priority-ordered authorization rule on the MDS:
+ *   PERM           -> -EPERM   (not registered, owner mismatch)
+ *   STALE_STATEID  -> -ESTALE  (stateid from prior boot)
+ *   BAD_STATEID    -> -EBADF   (no record / file mismatch)
+ *   OLD_STATEID    -> -EAGAIN  (seqid out of order)
+ *   INVAL          -> -EINVAL  (reserved-flag bit set, etc.)
+ *   NOTSUPP        -> -ENOSYS  (server doesn't speak this op)
+ *   OK             ->  0
+ *   default        -> -EIO
+ */
+static int proxy_op_nfsstat_to_errno(nfsstat4 status)
+{
+	switch (status) {
+	case NFS4_OK:
+		return 0;
+	case NFS4ERR_PERM:
+		return -EPERM;
+	case NFS4ERR_STALE_STATEID:
+		return -ESTALE;
+	case NFS4ERR_BAD_STATEID:
+		return -EBADF;
+	case NFS4ERR_OLD_STATEID:
+		return -EAGAIN;
+	case NFS4ERR_INVAL:
+		return -EINVAL;
+	case NFS4ERR_NOTSUPP:
+		return -ENOSYS;
+	default:
+		return -EIO;
+	}
+}
+
+int mds_session_send_proxy_progress(
+	struct mds_session *ms, struct ps_progress_assignment *out_assignments,
+	uint32_t max_assignments, uint32_t *lease_remaining_sec)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret = -EIO;
+	int sret;
+
+	if (!ms)
+		return -EINVAL;
+
+	if (mds_compound_init(&mc, 2, "proxy_progress"))
+		return -ENOMEM;
+	if (mds_compound_add_sequence(&mc, ms))
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PROXY_PROGRESS);
+	if (!slot)
+		goto out;
+	slot->nfs_argop4_u.opproxy_progress.ppa_flags = 0;
+
+	sret = mds_compound_send(&mc, ms);
+	if (sret && sret != -EREMOTEIO) {
+		ret = sret;
+		goto out;
+	}
+
+	if (mc.mc_res.status != NFS4_OK) {
+		ret = proxy_op_nfsstat_to_errno(mc.mc_res.status);
+		goto out;
+	}
+	if (mc.mc_res.resarray.resarray_len < 2) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+
+	PROXY_PROGRESS4res *res = &mc.mc_res.resarray.resarray_val[1]
+					   .nfs_resop4_u.opproxy_progress;
+
+	if (res->ppr_status != NFS4_OK) {
+		ret = proxy_op_nfsstat_to_errno(res->ppr_status);
+		goto out;
+	}
+
+	PROXY_PROGRESS4resok *resok = &res->PROXY_PROGRESS4res_u.ppr_resok;
+
+	if (lease_remaining_sec)
+		*lease_remaining_sec = resok->ppr_lease_remaining_sec;
+
+	uint32_t n = resok->ppr_assignments.ppr_assignments_len;
+
+	if (n > max_assignments)
+		n = max_assignments;
+	for (uint32_t i = 0; i < n; i++) {
+		const proxy_assignment4 *a =
+			&resok->ppr_assignments.ppr_assignments_val[i];
+		out_assignments[i].pa_kind = (uint32_t)a->pa_kind;
+		out_assignments[i].pa_stateid = a->pa_stateid;
+		out_assignments[i].pa_source_dstore_id = a->pa_source_dstore_id;
+		out_assignments[i].pa_target_dstore_id = a->pa_target_dstore_id;
+		/*
+		 * pa_file_fh is the network_file_handle bytes the MDS
+		 * marshalled at slice-6c-y reply-build time.  Decode
+		 * back to (sb_id, ino) so the PS-side OPEN+LAYOUTGET
+		 * has the file identity in hand.
+		 */
+		out_assignments[i].pa_sb_id = 0;
+		out_assignments[i].pa_ino = 0;
+		if (a->pa_file_fh.nfs_fh4_len ==
+		    sizeof(struct network_file_handle)) {
+			struct network_file_handle nfh;
+
+			memcpy(&nfh, a->pa_file_fh.nfs_fh4_val, sizeof(nfh));
+			out_assignments[i].pa_sb_id = nfh.nfh_sb;
+			out_assignments[i].pa_ino = nfh.nfh_ino;
+		}
+	}
+	ret = (int)n;
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
+int mds_session_send_proxy_done(struct mds_session *ms,
+				const stateid4 *pd_stateid, nfsstat4 pd_status)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret = -EIO;
+	int sret;
+
+	if (!ms || !pd_stateid)
+		return -EINVAL;
+
+	if (mds_compound_init(&mc, 2, "proxy_done"))
+		return -ENOMEM;
+	if (mds_compound_add_sequence(&mc, ms))
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PROXY_DONE);
+	if (!slot)
+		goto out;
+	slot->nfs_argop4_u.opproxy_done.pd_stateid = *pd_stateid;
+	slot->nfs_argop4_u.opproxy_done.pd_status = pd_status;
+
+	sret = mds_compound_send(&mc, ms);
+	if (sret && sret != -EREMOTEIO) {
+		ret = sret;
+		goto out;
+	}
+	if (mc.mc_res.status != NFS4_OK) {
+		ret = proxy_op_nfsstat_to_errno(mc.mc_res.status);
+		goto out;
+	}
+	if (mc.mc_res.resarray.resarray_len < 2) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = proxy_op_nfsstat_to_errno(
+		mc.mc_res.resarray.resarray_val[1]
+			.nfs_resop4_u.opproxy_done.pdr_status);
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
+int mds_session_send_proxy_cancel(struct mds_session *ms,
+				  const stateid4 *pc_stateid)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	int ret = -EIO;
+	int sret;
+
+	if (!ms || !pc_stateid)
+		return -EINVAL;
+
+	if (mds_compound_init(&mc, 2, "proxy_cancel"))
+		return -ENOMEM;
+	if (mds_compound_add_sequence(&mc, ms))
+		goto out;
+
+	slot = mds_compound_add_op(&mc, OP_PROXY_CANCEL);
+	if (!slot)
+		goto out;
+	slot->nfs_argop4_u.opproxy_cancel.pc_stateid = *pc_stateid;
+
+	sret = mds_compound_send(&mc, ms);
+	if (sret && sret != -EREMOTEIO) {
+		ret = sret;
+		goto out;
+	}
+	if (mc.mc_res.status != NFS4_OK) {
+		ret = proxy_op_nfsstat_to_errno(mc.mc_res.status);
+		goto out;
+	}
+	if (mc.mc_res.resarray.resarray_len < 2) {
+		ret = -EREMOTEIO;
+		goto out;
+	}
+	ret = proxy_op_nfsstat_to_errno(
+		mc.mc_res.resarray.resarray_val[1]
+			.nfs_resop4_u.opproxy_cancel.pcr_status);
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
+int ps_migration_step(struct mds_session *ms, ps_assignment_handler handler,
+		      void *ctx, uint32_t *lease_remaining_sec)
+{
+	if (!ms)
+		return -EINVAL;
+
+	/*
+	 * Cap matches the MDS's PROXY_PROGRESS_MAX_BATCH (8 in slice
+	 * 6c-y).  The MDS won't send more, so a fixed-size stack
+	 * buffer is sufficient and avoids any allocation in the hot
+	 * polling path.
+	 */
+	struct ps_progress_assignment items[8];
+	uint32_t lease = 0;
+	int got = mds_session_send_proxy_progress(
+		ms, items, sizeof(items) / sizeof(items[0]), &lease);
+
+	if (lease_remaining_sec)
+		*lease_remaining_sec = lease;
+	if (got < 0)
+		return got;
+
+	int processed = 0;
+
+	for (int i = 0; i < got; i++) {
+		if (handler) {
+			int hret = handler(ms, &items[i], ctx);
+
+			if (hret < 0)
+				return hret;
+		}
+		processed++;
+	}
+	return processed;
 }
 
 /* ------------------------------------------------------------------ */

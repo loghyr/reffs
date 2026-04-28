@@ -98,6 +98,122 @@ int mds_session_send_proxy_registration(struct mds_session *ms,
 					const uint8_t *registration_id,
 					uint32_t registration_id_len);
 
+/*
+ * Slice 6c-z: PS-side PROXY_PROGRESS / PROXY_DONE / PROXY_CANCEL
+ * senders + the PS migration step driver.  See
+ * lib/nfs4/server/proxy_registration.c for the MDS side and
+ * draft-haynes-nfsv4-flexfiles-v2-data-mover sec-PROXY_PROGRESS /
+ * sec-PROXY_DONE / sec-PROXY_CANCEL for the wire shapes.
+ *
+ * The migration step driver is the thin wrapper that reffsd-as-PS
+ * runs on a polling cadence: it sends one PROXY_PROGRESS, invokes
+ * a caller-supplied callback for each work assignment in the
+ * reply, and lets the caller decide whether to drive each one
+ * synchronously or queue it for a worker thread.  The actual
+ * byte-shoveling that fulfils a MOVE / REPAIR assignment lives
+ * outside this slice (slot reserved for a future slice that wires
+ * the ec_pipeline against the migration's source/target dstores).
+ */
+
+/*
+ * Sent-and-decoded representation of one assignment from the
+ * PROXY_PROGRESS reply.  Mirrors proxy_assignment4 with the
+ * file_FH unpacked into (sb_id, ino) since that's what the PS's
+ * downstream OPEN+LAYOUTGET needs anyway.
+ */
+struct ps_progress_assignment {
+	uint32_t pa_kind; /* proxy_op_kind4: MOVE | REPAIR | CANCEL_PRIOR */
+	stateid4 pa_stateid; /* proxy_stateid; PS uses in DONE/CANCEL */
+	uint64_t pa_sb_id;
+	uint64_t pa_ino;
+	uint64_t pa_source_dstore_id;
+	uint64_t pa_target_dstore_id;
+};
+
+/*
+ * mds_session_send_proxy_progress -- send PROXY_PROGRESS, decode
+ * the reply.
+ *
+ * On NFS4_OK: populates `*lease_remaining_sec` with the MDS's
+ * lease-renewal hint and copies up to `max_assignments` work items
+ * into `out_assignments` (no allocation; caller owns storage).
+ * Returns the number of assignments actually delivered.
+ *
+ * Negative return: -EPERM if the MDS rejected the call (caller is
+ * not registered-PS; should not happen for a PS that has already
+ * registered), -EINVAL if the MDS rejected ppa_flags as reserved,
+ * -EREMOTEIO on COMPOUND-level failure, other -errno on protocol
+ * failure.
+ */
+int mds_session_send_proxy_progress(
+	struct mds_session *ms, struct ps_progress_assignment *out_assignments,
+	uint32_t max_assignments, uint32_t *lease_remaining_sec);
+
+/*
+ * mds_session_send_proxy_done -- terminal commit / rollback for an
+ * in-flight migration the PS was assigned via PROXY_PROGRESS.
+ *
+ * The PS issues this in a compound `SEQUENCE PUTFH(file_FH)
+ * LAYOUTRETURN(L3_stid) PROXY_DONE(pd_stateid, status)` per the
+ * draft.  The wrapper here builds just the SEQUENCE+PROXY_DONE
+ * pair -- the surrounding LAYOUTRETURN + the L3_stateid mgmt are
+ * the PS's responsibility (a future slice that wires the
+ * ec_pipeline byte-shoveling will compound them all together).
+ *
+ * `status == NFS4_OK` directs the MDS to commit the migration.
+ * Any other value rolls back.
+ *
+ * Returns 0 on NFS4_OK, -EPERM on identity/auth mismatch,
+ * -ESTALE on STALE_STATEID, -EBADF on BAD_STATEID, -EAGAIN on
+ * OLD_STATEID, -EREMOTEIO on COMPOUND failure, other -errno.
+ */
+int mds_session_send_proxy_done(struct mds_session *ms,
+				const stateid4 *pd_stateid, nfsstat4 pd_status);
+
+/*
+ * mds_session_send_proxy_cancel -- abandon an assigned migration
+ * the PS cannot complete.  Same auth + error mapping as
+ * mds_session_send_proxy_done.
+ */
+int mds_session_send_proxy_cancel(struct mds_session *ms,
+				  const stateid4 *pc_stateid);
+
+/*
+ * Callback invoked by ps_migration_step for each assignment in
+ * the PROXY_PROGRESS reply.  The PS can drive the work
+ * synchronously, queue it on a worker thread, or hand it off to
+ * the ec_pipeline -- this slice is silent on the choice.  The
+ * callback's return value is reflected back to the caller of
+ * ps_migration_step in case it needs to short-circuit.
+ *
+ * Note: `ms` is the same session passed to ps_migration_step,
+ * convenient for the callback to issue PROXY_DONE / PROXY_CANCEL
+ * once the work completes.
+ */
+typedef int (*ps_assignment_handler)(struct mds_session *ms,
+				     const struct ps_progress_assignment *a,
+				     void *ctx);
+
+/*
+ * ps_migration_step -- one PROXY_PROGRESS poll iteration.
+ *
+ * Sends PROXY_PROGRESS to `ms`'s upstream MDS, invokes `handler`
+ * once per delivered assignment (in FIFO order), and returns the
+ * number of assignments processed.  `lease_remaining_sec` is
+ * populated with the MDS's lease-renewal hint regardless of how
+ * many assignments were delivered (zero or more); the caller uses
+ * it to size the next poll deadline (lease/2 in steady state).
+ *
+ * Negative return values pass through from the underlying
+ * mds_session_send_proxy_progress.
+ *
+ * The PS's main loop is responsible for the polling cadence;
+ * this function is a single step.  No internal threading; the
+ * caller drives the cadence.
+ */
+int ps_migration_step(struct mds_session *ms, ps_assignment_handler handler,
+		      void *ctx, uint32_t *lease_remaining_sec);
+
 /* ------------------------------------------------------------------ */
 /* COMPOUND builder                                                    */
 /* ------------------------------------------------------------------ */
