@@ -122,6 +122,32 @@ trust_stateid_test_LDADD = \
 	$(ZSTD_LIBS)					\
 	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
 
+# migration_record_test exercises the dual-index lfht primitives;
+# parallel LDADD to trust_stateid_test for consistency.
+migration_record_test_LDADD = \
+	@CHECK_LIBS@					\
+	$(top_builddir)/lib/tests/libreffs_test.la	\
+	$(top_builddir)/lib/nfs4/server/libreffs_nfs4_server.la	\
+	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la	\
+	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps.la	\
+	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la	\
+	$(top_builddir)/lib/nlm/libnlm.la		\
+	$(top_builddir)/lib/nsm/libnsm.la		\
+	$(top_builddir)/lib/fs/libreffs_fs.la		\
+	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
+	$(top_builddir)/lib/io/libreffs_io.la		\
+	$(top_builddir)/lib/utils/libreffs_utils.la	\
+	$(top_builddir)/lib/trace/libreffs_trace.la	\
+	$(top_builddir)/lib/backends/libbackends.la	\
+	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
+	-lxxhash -lpthread				\
+	$(URCU_LIBS) $(URCU_CDS_LIBS) $(FUSE_LIBS)	\
+	$(TIRPC_LIBS) $(ZLIB_LIBS) $(UUID_LIBS)		\
+	$(OPENSSL_LIBS)					\
+	$(URING_LIBS)					\
+	$(ZSTD_LIBS)					\
+	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
+
 # proxy_stateid_test is a pure value-primitive unit test; it does not
 # need the fs / nfs4 harnesses but does pull in libreffs_test for the
 # reffs_test_run_suite wrapper (which configures Check for CK_NOFORK
@@ -163,6 +189,7 @@ TESTS = \
 	lock_test \
 	nfs4_client_persist \
 	nfs4_session \
+	migration_record_test \
 	open_trunc_test \
 	proxy_registration_test \
 	proxy_stateid_test \

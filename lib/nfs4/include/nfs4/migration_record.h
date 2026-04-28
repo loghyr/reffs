@@ -1,0 +1,339 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+/*
+ * In-flight proxy migration record table -- slice 6c-x.2.
+ *
+ * The MDS records one migration_record per active PROXY_OP_MOVE /
+ * PROXY_OP_REPAIR assignment delivered to a registered PS.  The
+ * record is the persisted (in-memory only in slice 6c-x; on-disk
+ * in slice 6c-zz) state that PROXY_DONE / PROXY_CANCEL act on, and
+ * that the LAYOUTGET view-build path consults to compute the
+ * during-migration view of the file's layout.
+ *
+ * Two indices:
+ *   1. by proxy_stateid.other[12] -- for PROXY_DONE / PROXY_CANCEL
+ *      O(1) lookup from a PS-supplied proxy_stateid (slice 6c-x.3)
+ *   2. by inode pointer            -- for the LAYOUTGET view-build
+ *      path (slice 6c-x.4) and the constraint that an inode has at
+ *      most one in-flight migration at a time
+ *
+ * Both indices are `cds_lfht`.  Rule 6 (patterns/ref-counting.md)
+ * governs entry lifecycle, with the dual-index dance noted in the
+ * design doc revision section "RCU + Rule 6 discipline for
+ * migration_record table".
+ *
+ * Slice 6c-x.2 ships only the table primitives + reaper; per-instance
+ * delta machinery is captured here as the `mr_deltas` field but
+ * actual delta application is wired up in slice 6c-x.4 (LAYOUTGET
+ * view-build) and 6c-x.5 (CB_LAYOUTRECALL on commit).
+ */
+
+#ifndef _REFFS_NFS4_MIGRATION_RECORD_H
+#define _REFFS_NFS4_MIGRATION_RECORD_H
+
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <urcu/rculfhash.h>
+#include <urcu/ref.h>
+#include <urcu/call-rcu.h>
+
+#include "nfsv42_xdr.h"
+
+/*
+ * Mirrors REFFS_CONFIG_MAX_PRINCIPAL / _TLS_FINGERPRINT /
+ * PROXY_REGISTRATION_ID_MAX from settings.h + nfsv42_xdr -- the
+ * record copies whichever variant the caller's session captured at
+ * PROXY_REGISTRATION time.  Sized to the largest of the three so a
+ * single buffer accommodates any identity rank.
+ */
+#define MIGRATION_OWNER_REG_MAX 256
+
+/*
+ * Migration phase.  Single-writer transitions during the slice's
+ * lifetime: PENDING -> IN_PROGRESS -> { COMMITTED, ABANDONED }.
+ *
+ * COMMITTED and ABANDONED are sticky terminal phases -- once entered,
+ * the record is immediately unhashed and the creation ref dropped.
+ * A reader that holds a find ref past the phase transition can still
+ * observe the final phase value before the RCU-deferred free.
+ *
+ * _Atomic because the LAYOUTGET view-build path (slice 6c-x.4) reads
+ * mr_phase concurrently with the DONE / CANCEL handlers and the
+ * reaper.
+ */
+enum migration_phase {
+	MIGRATION_PHASE_PENDING = 0,
+	MIGRATION_PHASE_IN_PROGRESS = 1,
+	MIGRATION_PHASE_COMMITTED = 2,
+	MIGRATION_PHASE_ABANDONED = 3,
+};
+
+/*
+ * Per-instance delta describing one transformation on one mirror /
+ * shard position within one segment of i_layout_segments.  The
+ * delta machinery itself is wired up in slice 6c-x.4 (the
+ * LAYOUTGET view-build path applies deltas to the base segments to
+ * compute the during-migration view); this slice carries the deltas
+ * as opaque payload on the record so 6c-x.4 has the array shape
+ * already in hand.
+ *
+ * `ld_state` semantics:
+ *   STABLE     -- unchanged baseline (deltas don't normally carry
+ *                 STABLE entries; included for completeness)
+ *   DRAINING   -- slot being decommissioned; LAYOUTGET omits this
+ *                 slot under omit-and-replace policy and replaces
+ *                 it with the matching INCOMING slot
+ *   INCOMING   -- new slot the PS is filling; emitted in place of
+ *                 the matching DRAINING under omit-and-replace
+ *   INTERPOSED -- slot whose visible endpoint is the PS, with the
+ *                 PS internally fanning writes to one or more
+ *                 target DSes.  Used by keep-and-shadow (deferred
+ *                 to a future slice when PS-as-DS plumbing exists);
+ *                 not emitted by 6c-x autopilot paths.
+ */
+enum migration_instance_state {
+	MIGRATION_INSTANCE_STABLE = 0,
+	MIGRATION_INSTANCE_DRAINING = 1,
+	MIGRATION_INSTANCE_INCOMING = 2,
+	MIGRATION_INSTANCE_INTERPOSED = 3,
+};
+
+struct migration_instance_delta {
+	uint32_t mid_seg_index; /* index in inode->i_layout_segments */
+	uint32_t mid_instance_index; /* index in segment's ls_files */
+	enum migration_instance_state mid_state;
+	/*
+	 * For DRAINING: cross-reference into the parent record's
+	 * deltas[] array of the matching INCOMING delta that shadows
+	 * this slot.  UINT32_MAX when unused (record builder never
+	 * paired this DRAINING with an INCOMING -- e.g., a pure
+	 * reduction).
+	 */
+	uint32_t mid_replacement_delta_idx;
+};
+
+/*
+ * Migration record.  Fields documented inline; see
+ * .claude/design/proxy-server-phase6c-revision.md "Authorization"
+ * and "State-machine completeness" for the normative contract.
+ */
+struct migration_record {
+	/*
+	 * MUST be first -- container_of relies on this for the
+	 * stateid-keyed hash table.  cds_lfht_node has no embedded
+	 * type tag, so the placement is the only way the hash callback
+	 * recovers the enclosing struct.
+	 */
+	struct cds_lfht_node mr_stid_node;
+	/* Second hash node -- inode-keyed index. */
+	struct cds_lfht_node mr_ino_node;
+
+	struct rcu_head mr_rcu;
+	struct urcu_ref mr_ref;
+
+	/* Identifying handles. */
+	uint8_t mr_stateid_other[NFS4_OTHER_SIZE];
+	uint64_t mr_ino;
+	struct super_block *mr_sb; /* sb pointer, captured at register time */
+
+	/*
+	 * Owner identity (registered-PS canonical principal -- selection
+	 * order matches nfs4_client_registered_ps_identity in nfs4/client.h).
+	 * Bytes copied at register time; NOT a pointer to the client's
+	 * field, because the client may be reaped while the record is
+	 * still active (see slice 6c-x.0 review note N2).
+	 */
+	char mr_owner_reg[MIGRATION_OWNER_REG_MAX];
+	uint32_t mr_owner_reg_len; /* registration_id length; or strlen()
+				    * for principal/fingerprint */
+
+	/* Lifecycle / liveness. */
+	_Atomic enum migration_phase mr_phase;
+	/*
+	 * CLOCK_MONOTONIC ns of last PROXY_PROGRESS heartbeat from the
+	 * owning PS; the reaper uses this to detect lease expiry
+	 * (1.5x lease period of silence -> ABANDONED).  Two-clock
+	 * pattern from .claude/design/trust-stateid.md.  _Atomic so the
+	 * renewal path can update without locking.
+	 */
+	_Atomic uint64_t mr_last_progress_mono_ns;
+
+	/*
+	 * Per-instance deltas.  Ownership: the record OWNS the array
+	 * (allocated at register, freed at release).  Array length is
+	 * mr_ndeltas; entries are immutable after the record is hashed
+	 * (per design-doc invariant 3 -- record-replacement, not
+	 * in-place delta mutation, encodes any state change).
+	 */
+	uint32_t mr_ndeltas;
+	struct migration_instance_delta *mr_deltas;
+};
+
+/* ------------------------------------------------------------------ */
+/* Lifecycle                                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * migration_record_init -- allocate the global hash tables and
+ * start the lease-expiry reaper thread.  Called at server startup.
+ *
+ * Returns 0 on success, negative errno on failure.
+ */
+int migration_record_init(void);
+
+/*
+ * migration_record_fini -- drain both hash tables, stop the reaper,
+ * free all resources.  Called at server shutdown.  Idempotent.
+ */
+void migration_record_fini(void);
+
+/* ------------------------------------------------------------------ */
+/* Mutation                                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * migration_record_create -- allocate, populate, and hash a new
+ * migration record.
+ *
+ * Caller passes:
+ *   - The proxy_stateid the MDS just minted (slice 6c-x.1 alloc
+ *     primitives produce this; slice 6c-y's PROXY_PROGRESS reply
+ *     builder threads it through).
+ *   - The inode the migration applies to (single record per inode;
+ *     a second create that targets an inode with an active record
+ *     returns -EBUSY without replacing the prior record).
+ *   - The owning registered-PS identity bytes + length (typically
+ *     supplied via nfs4_client_registered_ps_identity()).  The
+ *     record copies the bytes; the caller may free its source.
+ *   - A pre-built array of per-instance deltas; the record takes
+ *     ownership of the array (frees at release).  Pass NULL +
+ *     ndeltas=0 for an empty migration (rare; mainly tests).
+ *   - The initial heartbeat timestamp (CLOCK_MONOTONIC ns).
+ *
+ * Returns 0 on success.  Errors:
+ *   -EINVAL if owner_len exceeds MIGRATION_OWNER_REG_MAX, or any
+ *           required pointer is NULL
+ *   -EBUSY  if the inode already has an active record
+ *   -ENOMEM on allocation failure
+ *
+ * On any error path the caller's `deltas` array is NOT freed --
+ * the caller retains ownership when create fails.  This matches
+ * the convention in lib/fs/super_block.c (caller cleans up its
+ * own input on construction failure).
+ */
+int migration_record_create(const stateid4 *stid, struct super_block *sb,
+			    uint64_t ino, const char *owner_reg,
+			    uint32_t owner_reg_len,
+			    struct migration_instance_delta *deltas,
+			    uint32_t ndeltas, uint64_t initial_progress_mono_ns,
+			    struct migration_record **out_mr);
+
+/*
+ * migration_record_renew -- update an existing record's
+ * mr_last_progress_mono_ns to extend its lease.
+ *
+ * Looked up by proxy_stateid.other; not-found returns -ENOENT
+ * (ABANDONED records have already been unhashed by the reaper, so
+ * this is the right error code -- the PS will see it surface as
+ * NFS4ERR_BAD_STATEID via the standard PROXY_PROGRESS error path).
+ *
+ * Thread-safe; uses an atomic store on mr_last_progress_mono_ns.
+ */
+int migration_record_renew(const stateid4 *stid, uint64_t now_mono_ns);
+
+/*
+ * migration_record_unhash -- explicit removal from both indices.
+ * Idempotent; calling on a record already removed is a no-op.
+ *
+ * The function only removes from the hash tables; it does NOT drop
+ * the creation ref.  Call migration_record_put() afterward to
+ * complete the destroy.
+ *
+ * Used by:
+ *   - migration_record_commit  (PROXY_DONE(NFS4_OK) handler)
+ *   - migration_record_abandon (PROXY_DONE(FAIL), PROXY_CANCEL,
+ *                               reaper expiry)
+ */
+void migration_record_unhash(struct migration_record *mr);
+
+/*
+ * migration_record_commit -- transition phase to COMMITTED, unhash,
+ * and signal the LAYOUTGET view-build path to flush the
+ * during-migration view.  The caller (PROXY_DONE handler)
+ * subsequently applies the deltas to the inode's i_layout_segments
+ * (slice 6c-x.4) and issues CB_LAYOUTRECALL for affected clients
+ * (slice 6c-x.5).
+ *
+ * Returns 0 on success, -EALREADY if the record is no longer in
+ * a committable phase (already COMMITTED or ABANDONED).
+ */
+int migration_record_commit(struct migration_record *mr);
+
+/*
+ * migration_record_abandon -- transition phase to ABANDONED, unhash,
+ * and discard the deltas without applying them.  Used by:
+ *   - PROXY_DONE(non-OK) handler (rollback)
+ *   - PROXY_CANCEL handler
+ *   - the lease-expiry reaper
+ *
+ * Returns 0 on success, -EALREADY if the record is no longer in
+ * an abandonable phase.
+ */
+int migration_record_abandon(struct migration_record *mr);
+
+/* ------------------------------------------------------------------ */
+/* Lookup                                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * migration_record_find_by_stateid -- O(1) lookup by
+ * proxy_stateid.other.  Returns a ref-bumped record, or NULL when
+ * no record exists for this stateid.
+ *
+ * Caller MUST drop the find ref via migration_record_put() when
+ * done.  Records in terminal phases (COMMITTED / ABANDONED) are
+ * NOT returned -- the unhash step in commit / abandon removes them
+ * from this index before transitioning the phase atomic.
+ */
+struct migration_record *migration_record_find_by_stateid(const stateid4 *stid);
+
+/*
+ * migration_record_find_by_inode -- lookup by inode pointer.
+ * Returns a ref-bumped record, or NULL when the inode has no
+ * active migration.  Caller MUST drop via migration_record_put().
+ *
+ * Used by:
+ *   - LAYOUTGET (slice 6c-x.4) to apply deltas before encoding
+ *   - migration_record_create's invariant check (single in-flight
+ *     migration per inode)
+ */
+struct migration_record *migration_record_find_by_inode(uint64_t ino);
+
+/*
+ * migration_record_put -- drop a reference.  Drives the record
+ * through the Rule 6 release callback (cds_lfht_del on both
+ * indices, then call_rcu free) when the refcount reaches zero.
+ */
+void migration_record_put(struct migration_record *mr);
+
+/* ------------------------------------------------------------------ */
+/* Reaper                                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * migration_record_reaper_scan -- one-shot pass over the table,
+ * abandoning any record whose mr_last_progress_mono_ns has aged
+ * past `max_silence_ns` ago.
+ *
+ * Public so unit tests can drive expiry deterministically (the
+ * production reaper thread calls this on its own cadence).
+ */
+void migration_record_reaper_scan(uint64_t max_silence_ns,
+				  uint64_t now_mono_ns);
+
+#endif /* _REFFS_NFS4_MIGRATION_RECORD_H */
