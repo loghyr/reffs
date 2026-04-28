@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Example MDS config for the slice plan-1-tls.c PS-MDS smoke (#139).
+# Pairs with deploy/sanity/ps-tls.toml.  Pre-conditions:
+#   - run deploy/sanity/setup-mini-ca.sh first; replace the
+#     tls_cert_fingerprint string below with the SHA-256 hash
+#     emitted into /tmp/reffs_ps_tls/ps.fpr.
+#   - The MDS still listens on plain TCP -- the PS-MDS session
+#     uses STARTTLS to upgrade.  TLS server-cert plumbing for the
+#     MDS NFS port is already shipped (see [server] tls_cert /
+#     tls_key in lib/include/reffs/settings.h).
+
+[server]
+port              = 2049
+bind              = "*"
+role              = "mds"
+minor_versions    = [1, 2]
+grace_period      = 5
+workers           = 4
+log_level         = "info"
+layout_width      = 6
+register_with_rpcbind = false
+# MDS server-side TLS cert (the PS verifies this on STARTTLS).
+# Use the same self-signed pair from setup-mini-ca.sh.
+tls               = true
+tls_cert          = "/tmp/reffs_ps_tls/ca.crt"
+tls_key           = "/tmp/reffs_ps_tls/ca.key"
+# CA bundle for verifying the PS client cert.  Setting this flips
+# the server-side TLS context to SSL_VERIFY_PEER and requires every
+# TLS client to present a cert; without it io_conn_get_peer_cert_-
+# fingerprint returns -ENOENT and PROXY_REGISTRATION can never see
+# a fingerprint to allowlist.
+tls_ca            = "/tmp/reffs_ps_tls/ca.crt"
+
+[backend]
+type              = "posix"
+path              = "/tmp/reffs_mds_data"
+state_file        = "/tmp/reffs_mds_state"
+
+[[export]]
+path              = "/"
+clients           = "*"
+access            = "rw"
+root_squash       = false
+flavors           = ["sys", "tls"]
+
+# REPLACE the fingerprint below with the value in
+# /tmp/reffs_ps_tls/ps.fpr after running setup-mini-ca.sh.
+# The MDS rejects every other PS identity (default-deny).
+[[allowed_ps]]
+tls_cert_fingerprint = "REPLACE_WITH_PS_FINGERPRINT"

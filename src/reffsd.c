@@ -482,7 +482,8 @@ int main(int argc, char *argv[])
 	}
 
 	// Initialize IO handler
-	if (io_handler_init(rc, cfg.tls_cert, cfg.tls_key, NULL) < 0) {
+	if (io_handler_init(rc, cfg.tls_cert, cfg.tls_key,
+			    cfg.tls_ca[0] != '\0' ? cfg.tls_ca : NULL) < 0) {
 		exit_code = 1;
 		goto out;
 	}

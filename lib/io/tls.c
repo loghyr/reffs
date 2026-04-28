@@ -100,10 +100,24 @@ static void ssl_info_callback(const SSL __attribute__((unused)) * ssl, int type,
 }
 
 int io_tls_init_server_context(const char *cfg_cert, const char *cfg_key,
-			       const char *cfg_ca __attribute__((unused)))
+			       const char *cfg_ca)
 {
-	if (reffs_server_ssl_ctx != NULL)
-		return 0; // Already initialized
+	if (reffs_server_ssl_ctx != NULL) {
+		/*
+		 * KNOWN LIMITATION (slice plan-1-tls.c, #139): the SSL_CTX
+		 * is process-global, so the FIRST caller's cfg_ca decides
+		 * verify mode for every subsequent listener.  In a combined
+		 * role=mds + [[proxy_mds]] reffsd that brings up two TLS-
+		 * capable listeners (the MDS NFS port that wants
+		 * SSL_VERIFY_PEER for mTLS PSes, and a per-listener proxy
+		 * port that may not), only the first call wins.  Per-
+		 * listener SSL_CTX allocation is tracked NOT_NOW_BROWN_COW
+		 * for a future slice; today the smoke topology has a
+		 * single TLS listener so this constraint does not affect
+		 * the deliverable.  Document in proxy-server-tls.md.
+		 */
+		return 0;
+	}
 
 	ERR_clear_error();
 	unsigned long err;
@@ -138,7 +152,32 @@ int io_tls_init_server_context(const char *cfg_cert, const char *cfg_key,
 	SSL_CTX_set_session_id_context(reffs_server_ssl_ctx,
 				       (const unsigned char *)"reffs", 5);
 
-	SSL_CTX_set_verify(reffs_server_ssl_ctx, SSL_VERIFY_NONE, NULL);
+	/*
+	 * Slice plan-1-tls.c (#139): when the operator supplies a CA
+	 * bundle, request and verify the peer's client cert so the
+	 * per-connection peer-cert fingerprint becomes available to
+	 * io_conn_get_peer_cert_fingerprint (used by the MDS
+	 * PROXY_REGISTRATION allowlist check at
+	 * lib/nfs4/server/proxy_registration.c).  Without a CA bundle
+	 * we keep the historical SSL_VERIFY_NONE so existing TLS-
+	 * server-only deployments do not start rejecting clients.
+	 */
+	if (cfg_ca && cfg_ca[0] != '\0') {
+		if (SSL_CTX_load_verify_locations(reffs_server_ssl_ctx, cfg_ca,
+						  NULL) != 1) {
+			TRACE("io_tls: SSL_CTX_load_verify_locations(%s) failed",
+			      cfg_ca);
+			SSL_CTX_free(reffs_server_ssl_ctx);
+			reffs_server_ssl_ctx = NULL;
+			return EINVAL;
+		}
+		SSL_CTX_set_verify(reffs_server_ssl_ctx,
+				   SSL_VERIFY_PEER |
+					   SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+				   NULL);
+	} else {
+		SSL_CTX_set_verify(reffs_server_ssl_ctx, SSL_VERIFY_NONE, NULL);
+	}
 
 	SSL_CTX_clear_options(reffs_server_ssl_ctx, SSL_OP_ALL);
 	SSL_CTX_clear_options(reffs_server_ssl_ctx, SSL_OP_NO_RENEGOTIATION);

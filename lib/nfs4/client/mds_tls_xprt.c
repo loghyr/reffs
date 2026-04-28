@@ -56,6 +56,26 @@
 #define MDS_TLS_BUFSZ (64 * 1024)
 
 /*
+ * libtirpc declares xdrproc_t in two flavours in <rpc/xdr.h>
+ * (one fixed-arg, one variadic), and each XDR proc has its own
+ * specific struct type for the second argument
+ * (xdr_COMPOUND4args takes COMPOUND4args *, etc.).  Calling any
+ * of them through `xdrproc_t` flags UBSAN's
+ * `-fsanitize=function` because the runtime function-type tag
+ * never matches the call-site cast.  libtirpc's own clnt_vc.c
+ * builds with -fno-sanitize=function for the same reason; we
+ * narrowly disable the check on the wrapper helper that does
+ * the indirection.  No correctness issue -- the procs do match
+ * their own declared types and the smoke runs end to end --
+ * just a strict type-tag mismatch.
+ */
+__attribute__((no_sanitize("function"))) static bool_t
+mds_tls_call_xdrproc(xdrproc_t proc, XDR *xdrs, void *objp)
+{
+	return proc(xdrs, objp);
+}
+
+/*
  * RPC wire constants -- not platform-specific.  Named with an
  * RPCWIRE_ prefix to avoid clashing with libtirpc / Apple RPC
  * macro definitions of the same bare names.
@@ -184,7 +204,7 @@ static int mds_tls_encode_call(CLIENT *clnt, uint32_t proc, xdrproc_t xargs,
 
 	xdrmem_create(&xdrs, (char *)(buf + pos), (u_int)(MDS_TLS_BUFSZ - pos),
 		      XDR_ENCODE);
-	if (!xargs(&xdrs, argsp)) {
+	if (!mds_tls_call_xdrproc(xargs, &xdrs, argsp)) {
 		mds_tls_set_err(priv, RPC_CANTENCODEARGS, EIO);
 		return -1;
 	}
@@ -306,7 +326,7 @@ static enum clnt_stat mds_tls_call(CLIENT *clnt, rpcproc_t proc,
 
 		xdrmem_create(&xdrs, (char *)(priv->reply_buf + body_pos),
 			      (u_int)((size_t)n - body_pos), XDR_DECODE);
-		if (!xresults(&xdrs, resultsp)) {
+		if (!mds_tls_call_xdrproc(xresults, &xdrs, resultsp)) {
 			mds_tls_set_err(priv, RPC_CANTDECODERES, EIO);
 			return RPC_CANTDECODERES;
 		}
@@ -331,7 +351,7 @@ static bool_t mds_tls_freeres(CLIENT *clnt __attribute__((unused)),
 
 	memset(&xdrs, 0, sizeof(xdrs));
 	xdrs.x_op = XDR_FREE;
-	return xresults(&xdrs, resultsp);
+	return mds_tls_call_xdrproc(xresults, &xdrs, resultsp);
 }
 
 static void mds_tls_abort(CLIENT *clnt __attribute__((unused)))

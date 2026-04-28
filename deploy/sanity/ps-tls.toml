@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Example PS config for the slice plan-1-tls.c PS-MDS smoke (#139).
+# Pairs with deploy/sanity/mds-tls.toml.  Pre-conditions:
+#   - run deploy/sanity/setup-mini-ca.sh first.
+#
+# This config spins up a PS listener bound to 127.0.0.1:4098 (so it
+# can run alongside the MDS on the same host without port clashes)
+# whose [[proxy_mds]] block carries the mini-CA materials.  The PS
+# brings up STARTTLS to the MDS, presents ps.crt as its client cert,
+# and the MDS recognises the cert via the [[allowed_ps]] fingerprint
+# allowlist.
+
+[server]
+port              = 12050
+probe_port        = 20491
+bind              = "127.0.0.1"
+role              = "standalone"
+minor_versions    = [1, 2]
+grace_period      = 5
+workers           = 4
+log_level         = "info"
+register_with_rpcbind = false
+
+[backend]
+type              = "posix"
+path              = "/tmp/reffs_ps_data"
+state_file        = "/tmp/reffs_ps_state"
+
+[[export]]
+path              = "/"
+clients           = "*"
+access            = "rw"
+root_squash       = false
+flavors           = ["sys"]
+
+[[proxy_mds]]
+id                       = 1
+port                     = 4098                # PS listener port
+bind                     = "127.0.0.1"
+address                  = "127.0.0.1"          # upstream MDS host
+mds_port                 = 2049
+mds_probe                = 20490
+
+# mTLS materials for the PS-MDS session.  The PS verifies the MDS
+# server cert against ca.crt (also self-signed in this smoke; the
+# real deployment would point tls_ca at the operator's CA bundle).
+tls_cert                 = "/tmp/reffs_ps_tls/ps.crt"
+tls_key                  = "/tmp/reffs_ps_tls/ps.key"
+tls_ca                   = "/tmp/reffs_ps_tls/ca.crt"
+tls_mode                 = "starttls"
+
+# Default for tls_insecure_no_verify is false; set it true ONLY for
+# the smoke topology where the MDS is self-signed.  In production
+# tls_ca is the operator's trusted CA bundle and this stays false.
+tls_insecure_no_verify   = false

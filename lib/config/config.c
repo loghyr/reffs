@@ -223,6 +223,12 @@ static void parse_server(struct reffs_config *cfg, toml_table_t *srv)
 		free(d.u.s);
 	}
 
+	d = toml_string_in(srv, "tls_ca");
+	if (d.ok) {
+		strncpy(cfg->tls_ca, d.u.s, sizeof(cfg->tls_ca) - 1);
+		free(d.u.s);
+	}
+
 	d = toml_int_in(srv, "workers");
 	if (d.ok && d.u.i > 0) {
 		cfg->workers = (unsigned int)d.u.i;

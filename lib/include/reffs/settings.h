@@ -228,6 +228,16 @@ struct reffs_config {
 	char tls_cert[REFFS_CONFIG_MAX_PATH];
 	char tls_key[REFFS_CONFIG_MAX_PATH];
 	/*
+	 * CA bundle for verifying client certs.  When set, the
+	 * server-side TLS context goes from SSL_VERIFY_NONE to
+	 * SSL_VERIFY_PEER | FAIL_IF_NO_PEER_CERT so the per-connection
+	 * peer-cert fingerprint becomes available for the MDS
+	 * PROXY_REGISTRATION allowlist (slice plan-1-tls.c, #139).
+	 * Empty string preserves the historical TLS-server-only
+	 * behaviour for clients that don't present a cert.
+	 */
+	char tls_ca[REFFS_CONFIG_MAX_PATH];
+	/*
 	 * Register reffsd's NFS programs (NFSv4, NFSv3, MOUNT, NLM,
 	 * NSM) with the local rpcbind/portmap daemon at startup.
 	 * Required for NFSv3 clients that auto-discover MOUNT/NLM
