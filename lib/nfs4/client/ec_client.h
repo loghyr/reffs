@@ -60,6 +60,19 @@ struct mds_session {
 	 * of the OpenSSL include.
 	 */
 	void *ms_tls_ctx;
+	/*
+	 * EXCHGID4 flag the session sends in EXCHANGE_ID.  Default 0
+	 * means "use the historical EXCHGID4_FLAG_USE_NON_PNFS" --
+	 * what the PS-MDS path needs and what every existing caller
+	 * of mds_session_create relies on.  The MDS-to-DS dstore
+	 * vtable (lib/nfs4/dstore/dstore_ops_nfsv4.c when it lands)
+	 * sets this to EXCHGID4_FLAG_USE_PNFS_MDS so trust_stateid
+	 * gating on the DS side accepts TRUST_STATEID compounds from
+	 * the MDS.  Set the field before mds_session_create*; zero
+	 * preserves existing behaviour.  See task #140 in the topic
+	 * board ("Plan A reviewer follow-up #1").
+	 */
+	uint32_t ms_exchgid_flags;
 };
 
 /*
@@ -101,6 +114,16 @@ int mds_session_create_tls(struct mds_session *ms, const char *host,
 			   int tls_mode, bool tls_insecure_no_verify);
 
 void mds_session_destroy(struct mds_session *ms);
+
+/*
+ * Map a PROXY_REGISTRATION COMPOUND or per-op nfsstat4 onto the
+ * negative-errno value the PS startup loop expects.  Surfaced here
+ * (not file-local in mds_session.c) so unit tests can pin the
+ * mapping without driving a full RPC round-trip; callers other
+ * than PROXY_REGISTRATION should not use it -- the mapping reflects
+ * that op's documented error contract specifically.
+ */
+int proxy_reg_nfsstat_to_errno(nfsstat4 status);
 
 /*
  * Slice plan-A.iii: PS-side PROXY_REGISTRATION send.  Builds the

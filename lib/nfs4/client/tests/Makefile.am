@@ -20,4 +20,5 @@ LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
 	mds_compound_test \
-	mds_tls_xprt_test
+	mds_tls_xprt_test \
+	proxy_reg_status_test

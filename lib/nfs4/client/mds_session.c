@@ -91,14 +91,19 @@ static int mds_exchange_id(struct mds_session *ms)
 	memcpy(&args->eia_clientowner.co_verifier, &pid, sizeof(pid));
 
 	/*
-	 * Slice plan-A.iii: PS connecting to its upstream MDS uses
-	 * USE_NON_PNFS -- it is a regular NFSv4 client of the MDS,
-	 * not a peer MDS.  PROXY_REGISTRATION requires this flag
-	 * (see lib/nfs4/server/proxy_registration.c).  Was previously
-	 * USE_PNFS_MDS by mistake (NOT_NOW_BROWN_COW in
-	 * dstore-vtable-v2.md), corrected here.
+	 * EXCHGID4 flag is caller-controllable via ms_exchgid_flags
+	 * so the same client lib serves both the PS-MDS path
+	 * (USE_NON_PNFS -- a regular NFSv4 client; required by
+	 * PROXY_REGISTRATION at lib/nfs4/server/proxy_registration.c)
+	 * and the future MDS-to-DS dstore path (USE_PNFS_MDS --
+	 * required by trust_stateid_ops.c which gates TRUST_STATEID
+	 * acceptance on the flag).  Default zero preserves the
+	 * pre-#140 USE_NON_PNFS behaviour for every existing caller
+	 * of mds_session_create.  Tracked as task #140 reviewer
+	 * follow-up #1.
 	 */
-	args->eia_flags = EXCHGID4_FLAG_USE_NON_PNFS;
+	args->eia_flags = ms->ms_exchgid_flags ? ms->ms_exchgid_flags :
+						 EXCHGID4_FLAG_USE_NON_PNFS;
 	args->eia_state_protect.spa_how = SP4_NONE;
 	args->eia_client_impl_id.eia_client_impl_id_len = 0;
 	args->eia_client_impl_id.eia_client_impl_id_val = NULL;
@@ -285,7 +290,7 @@ out:
  * Return -EIO for unmapped statuses; caller diagnostics name the
  * specific value.
  */
-static int proxy_reg_nfsstat_to_errno(nfsstat4 status)
+int proxy_reg_nfsstat_to_errno(nfsstat4 status)
 {
 	switch (status) {
 	case NFS4_OK:
@@ -786,14 +791,19 @@ int mds_session_create(struct mds_session *ms, const char *host)
 	int ret;
 
 	/*
-	 * Preserve ms_owner if the caller set it before create.
-	 * Otherwise generate a default from hostname:PID.
+	 * Preserve caller-set fields across the memset-zero pattern.
+	 * ms_owner: optional client-owner override, else default to
+	 * hostname:PID.  ms_exchgid_flags: caller picks USE_NON_PNFS
+	 * (PS-MDS path) vs USE_PNFS_MDS (MDS-to-DS path); zero
+	 * defaults to USE_NON_PNFS in mds_exchange_id.
 	 */
 	char saved_owner[256];
+	uint32_t saved_exchgid = ms->ms_exchgid_flags;
 
 	memcpy(saved_owner, ms->ms_owner, sizeof(saved_owner));
 	memset(ms, 0, sizeof(*ms));
 	memcpy(ms->ms_owner, saved_owner, sizeof(ms->ms_owner));
+	ms->ms_exchgid_flags = saved_exchgid;
 
 	if (ms->ms_owner[0] == '\0')
 		mds_session_set_owner(ms, NULL);
