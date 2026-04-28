@@ -2,11 +2,40 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * EC demo client -- minimal NFSv4.2 client for erasure-coding demonstration.
+ * NFSv4.2 client library -- the public surface every reffs MDS-
+ * facing consumer (ec_demo, the PS forwarders, the dstore-vtable-v2
+ * MDS-to-DS path, nfs_krb5_test) calls.
  *
  * Talks NFSv4.2 to the MDS (EXCHANGE_ID, CREATE_SESSION, SEQUENCE,
  * OPEN, LAYOUTGET, GETDEVICEINFO, LAYOUTRETURN, CLOSE) and NFSv3 to
- * the data servers (READ, WRITE).
+ * the data servers (READ, WRITE).  CHUNK ops over NFSv4.2 are also
+ * here for the v2 / RFC 9754 erasure path.
+ *
+ * History: this header is named ec_client.h because the original
+ * caller was the standalone tool tools/ec_demo.  It has since grown
+ * a second life as the MDS-client library for everything PS-side,
+ * which is why ec_demo-specific types (ec_layout, ec_mirror,
+ * ec_device) keep the prefix even though no consumer of this header
+ * is required to be an EC tool.
+ *
+ * Re-entrancy / threading contract:
+ *   - struct mds_session is single-owner.  Two threads must not
+ *     drive the same session concurrently; mds_compound_send takes
+ *     ms_call_mutex internally so per-compound auth swaps inside
+ *     the PS forwarders are safe, but higher-level state (slot
+ *     seqid, layout state, last-error) is not protected against
+ *     reordering across threads.  The PS uses one session per
+ *     listener; ec_demo uses one session per CLI invocation.
+ *   - struct ds_conn is single-owner per (DS, client-uid/gid).
+ *     The PS dedups DS connections per (host:port, uid, gid)
+ *     tuple; concurrent reads / writes on the same ds_conn are
+ *     not safe (libtirpc CLIENT* serialisation is at clnt_call
+ *     granularity, and ds_read / ds_write hold no extra mutex).
+ *   - struct mds_compound and struct ec_layout are stack-local;
+ *     no thread shares them.
+ *   - mds_session_destroy is only safe from the same thread that
+ *     last drove the session; callers needing a destroy from a
+ *     different thread should serialise externally.
  */
 
 #ifndef _REFFS_EC_CLIENT_H

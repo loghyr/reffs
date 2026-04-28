@@ -706,7 +706,7 @@ void mds_session_set_owner(struct mds_session *ms, const char *id)
 	char hostname[128];
 
 	if (gethostname(hostname, sizeof(hostname)) < 0)
-		snprintf(hostname, sizeof(hostname), "ec_demo");
+		snprintf(hostname, sizeof(hostname), "reffs-mds-client");
 
 	if (id && id[0] != '\0')
 		snprintf(ms->ms_owner, sizeof(ms->ms_owner), "%s:%s", hostname,
@@ -1086,7 +1086,8 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 	AUTH *auth = authgss_create_default(ms->ms_clnt, service, &gss_sec);
 
 	if (!auth) {
-		fprintf(stderr, "ec_demo: authgss_create_default failed\n");
+		fprintf(stderr,
+			"mds_session_create_sec: authgss_create_default failed\n");
 		clnt_destroy(ms->ms_clnt);
 		pthread_mutex_destroy(&ms->ms_call_mutex);
 		memset(ms, 0, sizeof(*ms));

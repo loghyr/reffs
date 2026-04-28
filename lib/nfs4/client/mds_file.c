@@ -170,10 +170,19 @@ int mds_file_open(struct mds_session *ms, const char *path, struct mds_file *mf)
 				  OPEN4_SHARE_ACCESS_WANT_NO_DELEG;
 	open_args->share_deny = OPEN4_SHARE_DENY_NONE;
 
-	/* Open owner: use clientid + "ec_demo". */
+	/*
+	 * Open owner: clientid + ms_owner.  ms_owner is the
+	 * `hostname:id` string mds_session_set_owner built; its bytes
+	 * are stable for the lifetime of the session, so referencing
+	 * them from here is safe across the clnt_call below.  Using
+	 * the session's own owner instead of a tool-specific literal
+	 * lets two callers (PS and ec_demo) see distinct OPEN owners
+	 * on the wire and prevents accidental open-stateid collisions
+	 * when both run against the same MDS.
+	 */
 	open_args->owner.clientid = ms->ms_clientid;
-	open_args->owner.owner.owner_val = (char *)"ec_demo";
-	open_args->owner.owner.owner_len = 7;
+	open_args->owner.owner.owner_val = ms->ms_owner;
+	open_args->owner.owner.owner_len = (uint32_t)strlen(ms->ms_owner);
 
 	/* Create if not exists, open if exists. */
 	open_args->openhow.opentype = OPEN4_CREATE;
