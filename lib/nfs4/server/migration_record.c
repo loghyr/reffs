@@ -41,6 +41,7 @@
 #include "reffs/inode.h"
 #include "reffs/log.h"
 #include "reffs/rcu.h"
+#include "reffs/runway.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
 #include "reffs/time.h"
@@ -67,6 +68,14 @@ static pthread_t migration_reaper_thread;
 static pthread_mutex_t migration_reaper_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t migration_reaper_cv = PTHREAD_COND_INITIALIZER;
 static _Atomic bool migration_reaper_running;
+
+/*
+ * Slice 6c-zz persistence helpers (defined later in this file).
+ * Forward-declared here because migration_record_create and
+ * migration_record_unhash call them.
+ */
+static void migration_record_save_one(const struct migration_record *mr);
+static void migration_record_remove_one(const uint8_t *stateid_other);
 
 /* ------------------------------------------------------------------ */
 /* Hash + match callbacks                                              */
@@ -390,6 +399,16 @@ int migration_record_create(const stateid4 *stid, struct super_block *sb,
 	cds_lfht_add(migration_ht_ino, mr_hash_ino(ino), &mr->mr_ino_node);
 	rcu_read_unlock();
 
+	/*
+	 * Slice 6c-zz: persist the freshly-hashed record so a future
+	 * MDS restart can reload it.  Save AFTER the hash insert so a
+	 * crash during persist still leaves the in-memory state
+	 * consistent (the record is live and its proxy_stateid is the
+	 * same; the next save attempt -- e.g. on commit -- supersedes
+	 * the partial state).  No-op when persistence is unattached.
+	 */
+	migration_record_save_one(mr);
+
 	*out_mr = mr;
 	return 0;
 }
@@ -416,6 +435,13 @@ void migration_record_unhash(struct migration_record *mr)
 	cds_lfht_del(migration_ht_stid, &mr->mr_stid_node);
 	cds_lfht_del(migration_ht_ino, &mr->mr_ino_node);
 	rcu_read_unlock();
+
+	/*
+	 * Slice 6c-zz: remove from disk too.  Symmetric with the
+	 * save in migration_record_create.  Idempotent at the backend
+	 * (already-removed -> 0).
+	 */
+	migration_record_remove_one(mr->mr_stateid_other);
 }
 
 int migration_record_commit(struct migration_record *mr)
@@ -581,6 +607,207 @@ void migration_release_view(struct layout_segment *view)
 	free(view->ls_files);
 	view->ls_files = NULL;
 	view->ls_nfiles = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Slice 6c-zz: persistence + reload                                   */
+
+/*
+ * Compile-time guards: the persistent header
+ * lib/include/reffs/migration_persist.h hardcodes the constants it
+ * shares with the in-memory side (NFS4_OTHER_SIZE / MIGRATION_OWNER_REG_MAX
+ * / RUNWAY_MAX_FH) so the backends layer does not have to pull in
+ * lib/nfs4 headers (one-way dependency rule).  Drift between the two
+ * copies would silently corrupt the on-disk format on reload, so
+ * pin them here -- this is the only .c file that includes both
+ * sides and can check.
+ */
+_Static_assert(MR_PERSIST_NFS4_OTHER_SIZE == NFS4_OTHER_SIZE,
+	       "migration_persist.h NFS4_OTHER_SIZE drift");
+_Static_assert(MR_PERSIST_OWNER_REG_MAX == MIGRATION_OWNER_REG_MAX,
+	       "migration_persist.h owner_reg max drift");
+_Static_assert(MR_PERSIST_FH_MAX == RUNWAY_MAX_FH,
+	       "migration_persist.h FH max drift vs runway");
+
+int migration_record_to_persistent(const struct migration_record *mr,
+				   struct migration_record_persistent *out)
+{
+	if (!mr || !out)
+		return -EINVAL;
+	if (mr->mr_ndeltas > MR_PERSIST_MAX_DELTAS)
+		return -E2BIG;
+
+	memset(out, 0, sizeof(*out));
+	memcpy(out->mrp_stateid_other, mr->mr_stateid_other,
+	       MR_PERSIST_NFS4_OTHER_SIZE);
+	out->mrp_seqid =
+		atomic_load_explicit(&mr->mr_seqid, memory_order_relaxed);
+	out->mrp_sb_id = mr->mr_sb ? mr->mr_sb->sb_id : 0;
+	out->mrp_ino = mr->mr_ino;
+	out->mrp_owner_reg_len = mr->mr_owner_reg_len;
+	if (mr->mr_owner_reg_len > 0)
+		memcpy(out->mrp_owner_reg, mr->mr_owner_reg,
+		       mr->mr_owner_reg_len);
+	out->mrp_ndeltas = mr->mr_ndeltas;
+	for (uint32_t i = 0; i < mr->mr_ndeltas; i++) {
+		const struct migration_instance_delta *src = &mr->mr_deltas[i];
+		struct mr_persist_instance_delta *dst = &out->mrp_deltas[i];
+
+		dst->pmid_seg_index = src->mid_seg_index;
+		dst->pmid_instance_index = src->mid_instance_index;
+		dst->pmid_state = (uint32_t)src->mid_state;
+		dst->pmid_replacement_delta_idx =
+			src->mid_replacement_delta_idx;
+		dst->pmid_replacement_file.pldf_dstore_id =
+			src->mid_replacement_file.ldf_dstore_id;
+		dst->pmid_replacement_file.pldf_fh_len =
+			src->mid_replacement_file.ldf_fh_len;
+		if (src->mid_replacement_file.ldf_fh_len > 0)
+			memcpy(dst->pmid_replacement_file.pldf_fh,
+			       src->mid_replacement_file.ldf_fh,
+			       src->mid_replacement_file.ldf_fh_len);
+	}
+	return 0;
+}
+
+int migration_record_from_persistent(
+	const struct migration_record_persistent *mrp)
+{
+	if (!mrp)
+		return -EINVAL;
+	if (mrp->mrp_owner_reg_len == 0 ||
+	    mrp->mrp_owner_reg_len > MIGRATION_OWNER_REG_MAX)
+		return -EINVAL;
+	if (mrp->mrp_ndeltas > MR_PERSIST_MAX_DELTAS)
+		return -EINVAL;
+
+	struct migration_instance_delta *deltas = NULL;
+
+	if (mrp->mrp_ndeltas > 0) {
+		deltas = calloc(mrp->mrp_ndeltas, sizeof(*deltas));
+		if (!deltas)
+			return -ENOMEM;
+		for (uint32_t i = 0; i < mrp->mrp_ndeltas; i++) {
+			const struct mr_persist_instance_delta *src =
+				&mrp->mrp_deltas[i];
+			struct migration_instance_delta *dst = &deltas[i];
+
+			dst->mid_seg_index = src->pmid_seg_index;
+			dst->mid_instance_index = src->pmid_instance_index;
+			dst->mid_state =
+				(enum migration_instance_state)src->pmid_state;
+			dst->mid_replacement_delta_idx =
+				src->pmid_replacement_delta_idx;
+			dst->mid_replacement_file.ldf_dstore_id =
+				src->pmid_replacement_file.pldf_dstore_id;
+			dst->mid_replacement_file.ldf_fh_len =
+				src->pmid_replacement_file.pldf_fh_len;
+			if (src->pmid_replacement_file.pldf_fh_len > 0)
+				memcpy(dst->mid_replacement_file.ldf_fh,
+				       src->pmid_replacement_file.pldf_fh,
+				       src->pmid_replacement_file.pldf_fh_len);
+		}
+	}
+
+	stateid4 stid;
+
+	memset(&stid, 0, sizeof(stid));
+	stid.seqid = mrp->mrp_seqid;
+	memcpy(stid.other, mrp->mrp_stateid_other, MR_PERSIST_NFS4_OTHER_SIZE);
+
+	struct migration_record *mr = NULL;
+	/*
+	 * sb is NULL on the reload path -- the in-memory super_block
+	 * pointer cannot be reconstructed from disk.  PROXY_DONE /
+	 * PROXY_CANCEL handlers compare on (sb_id, ino) when
+	 * c_curr_sb is NULL anyway (slice 6c-x.3 priority-rule
+	 * step 5), so a NULL sb is benign at the auth layer.  A
+	 * future refinement could re-resolve sb_id -> super_block
+	 * via super_block_find_for_listener after sb_registry_load
+	 * runs.
+	 */
+	int ret = migration_record_create(&stid, NULL, mrp->mrp_ino,
+					  (const char *)mrp->mrp_owner_reg,
+					  mrp->mrp_owner_reg_len, deltas,
+					  mrp->mrp_ndeltas, reffs_now_ns(),
+					  &mr);
+
+	if (ret < 0) {
+		free(deltas);
+		return ret;
+	}
+	/* deltas[] ownership transferred into mr by create. */
+	return 0;
+}
+
+/*
+ * Persistence hook: callable from the persist_ops backend if the
+ * caller wired one in.  These two functions are NULL when the
+ * server runs without persistence (RAM backend); record save /
+ * remove become no-ops in that case.
+ */
+static const struct persist_ops *mr_persist_ops;
+static void *mr_persist_ctx;
+
+void migration_record_persist_attach(const struct persist_ops *ops, void *ctx)
+{
+	mr_persist_ops = ops;
+	mr_persist_ctx = ctx;
+}
+
+static void migration_record_save_one(const struct migration_record *mr)
+{
+	if (!mr_persist_ops || !mr_persist_ops->migration_record_save)
+		return;
+
+	struct migration_record_persistent buf;
+
+	if (migration_record_to_persistent(mr, &buf) < 0)
+		return;
+	(void)mr_persist_ops->migration_record_save(mr_persist_ctx, &buf);
+}
+
+static void migration_record_remove_one(const uint8_t *stateid_other)
+{
+	if (!mr_persist_ops || !mr_persist_ops->migration_record_remove)
+		return;
+	(void)mr_persist_ops->migration_record_remove(mr_persist_ctx,
+						      stateid_other);
+}
+
+struct mr_load_ctx {
+	int loaded;
+};
+
+static int mr_load_cb(const struct migration_record_persistent *mrp, void *arg)
+{
+	struct mr_load_ctx *lc = arg;
+	int ret = migration_record_from_persistent(mrp);
+
+	if (ret == 0)
+		lc->loaded++;
+	/*
+	 * Per-record errors are non-fatal: log and skip so a single
+	 * malformed record doesn't block the rest of the table from
+	 * loading.  -EBUSY in particular means the inode already had a
+	 * live record before reload, which shouldn't happen at init but
+	 * isn't a load failure.
+	 */
+	if (ret < 0 && ret != -EBUSY)
+		LOG("migration_record_load: record skipped: %d", ret);
+	return 0;
+}
+
+int migration_record_load_persisted(const struct persist_ops *ops, void *ctx)
+{
+	if (!ops || !ops->migration_record_load)
+		return 0;
+	struct mr_load_ctx lc = { .loaded = 0 };
+	int ret = ops->migration_record_load(ctx, mr_load_cb, &lc);
+
+	if (ret < 0)
+		return ret;
+	return lc.loaded;
 }
 
 unsigned int migration_recall_layouts(struct inode *inode,

@@ -74,7 +74,8 @@ int proxy_stateid_alloc(uint16_t boot_seq, stateid4 *out)
 	 * we care about and remains cryptographically negligible.
 	 */
 	uuid_generate_random(u);
-	memcpy(&out->other[PROXY_STATEID_OPAQUE_OFF], u, PROXY_STATEID_OPAQUE_LEN);
+	memcpy(&out->other[PROXY_STATEID_OPAQUE_OFF], u,
+	       PROXY_STATEID_OPAQUE_LEN);
 
 	return 0;
 }

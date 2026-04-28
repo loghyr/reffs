@@ -50,8 +50,8 @@
 #define PROXY_STATEID_BOOT_SEQ_LEN 2
 #define PROXY_STATEID_RESERVED_OFF 2
 #define PROXY_STATEID_RESERVED_LEN 2
-#define PROXY_STATEID_OPAQUE_OFF   4
-#define PROXY_STATEID_OPAQUE_LEN   8
+#define PROXY_STATEID_OPAQUE_OFF 4
+#define PROXY_STATEID_OPAQUE_LEN 8
 
 /*
  * proxy_stateid_alloc -- mint a fresh proxy_stateid for the given

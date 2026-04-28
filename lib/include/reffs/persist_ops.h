@@ -23,6 +23,7 @@
 struct server_persistent_state;
 struct client_identity_record;
 struct client_incarnation_record;
+struct migration_record_persistent; /* opaque to non-nfs4 callers */
 
 struct persist_ops {
 	/* Server state */
@@ -51,6 +52,36 @@ struct persist_ops {
 	int (*client_incarnation_load)(void *ctx,
 				       struct client_incarnation_record *recs,
 				       size_t max_recs, size_t *count);
+
+	/*
+	 * Migration records (slice 6c-zz).  In-flight proxy migrations
+	 * survive MDS restart so PROXY_DONE / PROXY_CANCEL on a
+	 * proxy_stateid minted before restart can still resolve to
+	 * the right record.  Save on create; remove on commit/abandon;
+	 * load on init walks every persisted record back into memory.
+	 *
+	 * Keyed by proxy_stateid.other[NFS4_OTHER_SIZE = 12].  The
+	 * persistent payload (struct migration_record_persistent,
+	 * defined in lib/nfs4/include/nfs4/migration_record.h) carries
+	 * the minimum needed to reconstruct the in-memory record:
+	 *   - proxy_stateid.other + seqid
+	 *   - owner_reg + len
+	 *   - file_FH (sb_id, ino)
+	 *   - deltas[] (per-instance migration state)
+	 *
+	 * mr_phase and mr_last_progress_mono_ns are NOT persisted.  On
+	 * load each record starts in PENDING with last_progress = now;
+	 * the lease reaper will abandon if the PS does not poll
+	 * PROXY_PROGRESS within 1.5x lease.
+	 */
+	int (*migration_record_save)(
+		void *ctx, const struct migration_record_persistent *mrp);
+	int (*migration_record_remove)(void *ctx, const uint8_t *stateid_other);
+	int (*migration_record_load)(
+		void *ctx,
+		int (*cb)(const struct migration_record_persistent *mrp,
+			  void *arg),
+		void *arg);
 
 	/* Cleanup */
 	void (*fini)(void *ctx);

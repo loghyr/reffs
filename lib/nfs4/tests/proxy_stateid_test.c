@@ -131,8 +131,7 @@ START_TEST(test_extract_round_trip)
 
 	for (size_t i = 0; i < sizeof(seqs) / sizeof(seqs[0]); i++) {
 		ck_assert_int_eq(proxy_stateid_alloc(seqs[i], &s), 0);
-		ck_assert_uint_eq(proxy_stateid_extract_boot_seq(&s),
-				  seqs[i]);
+		ck_assert_uint_eq(proxy_stateid_extract_boot_seq(&s), seqs[i]);
 	}
 }
 END_TEST

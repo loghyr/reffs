@@ -44,6 +44,7 @@
 
 #include "nfsv42_xdr.h"
 #include "reffs/layout_segment.h"
+#include "reffs/migration_persist.h"
 
 /*
  * Mirrors REFFS_CONFIG_MAX_PRINCIPAL / _TLS_FINGERPRINT /
@@ -444,5 +445,73 @@ struct server_state;
 unsigned int migration_recall_layouts(struct inode *inode,
 				      struct client *exclude_client,
 				      struct server_state *ss);
+
+/* ------------------------------------------------------------------ */
+/* Slice 6c-zz: persistence + reload                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * struct migration_record_persistent + MR_PERSIST_MAX_DELTAS + the
+ * persistent delta types are defined in
+ * lib/include/reffs/migration_persist.h so the backends layer can
+ * see them without depending on lib/nfs4 (one-way dep rule).  See
+ * that header for the wire-stable layout and field documentation.
+ *
+ * Conversion helpers (in-memory <-> persistent):
+ */
+
+/*
+ * migration_record_to_persistent -- copy the in-memory record's
+ * persistable subset into `*out`.  Returns 0 on success, -E2BIG if
+ * the record carries more deltas than the persistent format can
+ * hold (caller is responsible for keeping deltas within
+ * MR_PERSIST_MAX_DELTAS).
+ *
+ * `out` is fully populated (memset before fill); padding bytes are
+ * zeroed so the on-disk byte-image is deterministic.
+ */
+struct migration_record;
+int migration_record_to_persistent(const struct migration_record *mr,
+				   struct migration_record_persistent *out);
+
+/*
+ * migration_record_from_persistent -- create an in-memory record
+ * from a persistent payload and hash it into both indices.
+ * Used by migration_record_load_persisted at init time; not a
+ * public API for normal create.
+ *
+ * Returns 0 on success.  -EBUSY if the inode already has an active
+ * record (should not happen at init -- the table is fresh -- but
+ * defensive against double-load).  -EINVAL on a malformed payload
+ * (oversize fields).
+ */
+int migration_record_from_persistent(
+	const struct migration_record_persistent *mrp);
+
+/*
+ * migration_record_load_persisted -- walk the persist_ops backend
+ * for every migration record stored on disk and re-hash it into
+ * the in-memory tables.  Called once at server init *after*
+ * migration_record_init().  No-op when the persist_ops vtable is
+ * NULL or its migration_record_load slot is NULL (e.g. RAM-backed
+ * server with no persistence).
+ *
+ * Returns the number of records loaded, or negative -errno on
+ * fatal load failure (per-record failures are skipped + logged).
+ */
+struct persist_ops;
+int migration_record_load_persisted(const struct persist_ops *ops, void *ctx);
+
+/*
+ * migration_record_persist_attach -- install the persistence backend
+ * the in-memory layer should call on save / remove.  Pass NULL ops
+ * to detach (RAM-backed servers leave it unattached -- save / remove
+ * become no-ops).
+ *
+ * Called once at server init *before* migration_record_create() can
+ * be invoked by op handlers; subsequent saves go through the
+ * attached backend.
+ */
+void migration_record_persist_attach(const struct persist_ops *ops, void *ctx);
 
 #endif /* _REFFS_NFS4_MIGRATION_RECORD_H */
