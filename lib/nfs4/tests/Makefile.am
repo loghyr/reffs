@@ -122,6 +122,36 @@ trust_stateid_test_LDADD = \
 	$(ZSTD_LIBS)					\
 	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
 
+# proxy_stateid_test is a pure value-primitive unit test; it does not
+# need the fs / nfs4 harnesses but does pull in libreffs_test for the
+# reffs_test_run_suite wrapper (which configures Check for CK_NOFORK
+# and registers the thread for RCU).  Keeping the LDADD parallel to
+# trust_stateid_test makes it easy to diff when the two slices'
+# implementations need to share helpers.
+proxy_stateid_test_LDADD = \
+	@CHECK_LIBS@					\
+	$(top_builddir)/lib/tests/libreffs_test.la	\
+	$(top_builddir)/lib/nfs4/server/libreffs_nfs4_server.la	\
+	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la	\
+	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps.la	\
+	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la	\
+	$(top_builddir)/lib/nlm/libnlm.la		\
+	$(top_builddir)/lib/nsm/libnsm.la		\
+	$(top_builddir)/lib/fs/libreffs_fs.la		\
+	$(top_builddir)/lib/rpc/libreffs_rpc.la		\
+	$(top_builddir)/lib/io/libreffs_io.la		\
+	$(top_builddir)/lib/utils/libreffs_utils.la	\
+	$(top_builddir)/lib/trace/libreffs_trace.la	\
+	$(top_builddir)/lib/backends/libbackends.la	\
+	$(top_builddir)/lib/xdr/libreffs_xdr.la		\
+	-lxxhash -lpthread				\
+	$(URCU_LIBS) $(URCU_CDS_LIBS) $(FUSE_LIBS)	\
+	$(TIRPC_LIBS) $(ZLIB_LIBS) $(UUID_LIBS)		\
+	$(OPENSSL_LIBS)					\
+	$(URING_LIBS)					\
+	$(ZSTD_LIBS)					\
+	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
+
 TESTS = \
 	bitmap \
 	cb_pending \
@@ -135,6 +165,7 @@ TESTS = \
 	nfs4_session \
 	open_trunc_test \
 	proxy_registration_test \
+	proxy_stateid_test \
 	reflected_getattr_test \
 	sec_label \
 	stateid_unhash \

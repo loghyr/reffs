@@ -39,6 +39,7 @@ libreffs_nfs4_server_la_SOURCES = \
 	trust_stateid.c \
 	trust_stateid_ops.c \
 	proxy_registration.c \
+	proxy_stateid.c \
 	xattr.c
 
 # libreffs_dstore is a shared library (installed); this dylib depends
