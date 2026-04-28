@@ -8,11 +8,14 @@
 # (task #150 layout passthrough); ec_demo dials the upstream DSes
 # directly using deviceids in the forwarded layout.
 #
-# Codecs tested (skips mojette-sys per task #147):
+# Codecs tested:
 #   /ffv1-csm/      v1 plain mirror across all 6 DSes
 #   /ffv1-stripes/  v1 striped k=6 m=0 (no parity)
 #   /ffv2-csm/      v2 plain mirror via CHUNK ops
 #   /ffv2-rs/       v2 Reed-Solomon k=4 m=2
+#   /ffv2-mj/       v2 Mojette systematic k=4 m=2 (re-enabled
+#                   after task #147's variable-shard ds_stride
+#                   ceiling-divide fix)
 #
 # Per-SB paths -- each codec lands on its own SB so the matrix
 # exercises the listener mount-crossing path through PS instead of
@@ -37,7 +40,16 @@ PS_B="${3:-reffs-ps-b}:2049"
 PAYLOAD_SIZE=$((96 * 1024))
 PAYLOAD="/tmp/codec_payload.bin"
 
+# Mojette gets its own payload at the 4 KiB-shard reference geometry
+# (k=4 -> 16 KiB total) that matches the validated benchmark Tier 1-4
+# runs (deploy/benchmark/results/*.csv).  Larger-shard mojette is
+# tracked as a follow-up; the projection-size-vs-chunk-alignment
+# math at 24 KiB shards is the exact corner #147 partially closed.
+PAYLOAD_MJ_SIZE=$((16 * 1024))
+PAYLOAD_MJ="/tmp/codec_payload_mj.bin"
+
 dd if=/dev/urandom of="$PAYLOAD" bs="$PAYLOAD_SIZE" count=1 status=none
+dd if=/dev/urandom of="$PAYLOAD_MJ" bs="$PAYLOAD_MJ_SIZE" count=1 status=none
 
 declare -A RESULTS
 declare -a ORDER
@@ -47,7 +59,9 @@ run_codec() {
     local sb_path="$2"
     local layout="$3"
     local write_op="$4"
-    shift 4
+    local payload="$5"
+    local payload_size="$6"
+    shift 6
     local args=( "$@" )
 
     local fname="${sb_path}/codec_${label}.bin"
@@ -58,11 +72,11 @@ run_codec() {
     ORDER+=("$label")
     rm -f "$out"
 
-    echo "--- $label  layout=$layout  ${args[*]}  write via PS-A, read via PS-B ---"
+    echo "--- $label  layout=$layout  ${args[*]}  size=${payload_size}  write via PS-A, read via PS-B ---"
 
     if ! "$EC_DEMO" "$write_op" \
             --mds "$PS_A" --layout "$layout" \
-            --file "$fname" --input "$PAYLOAD" \
+            --file "$fname" --input "$payload" \
             "${args[@]}" \
             >"$logw" 2>&1; then
         echo "  WRITE FAILED -- log:"
@@ -80,7 +94,7 @@ run_codec() {
 
     if ! "$EC_DEMO" "$read_op" \
             --mds "$PS_B" --layout "$layout" \
-            --file "$fname" --output "$out" --size "$PAYLOAD_SIZE" \
+            --file "$fname" --output "$out" --size "$payload_size" \
             "${args[@]}" \
             >"$logr" 2>&1; then
         echo "  READ FAILED -- log:"
@@ -89,12 +103,12 @@ run_codec() {
         return
     fi
 
-    if cmp -s "$PAYLOAD" "$out"; then
+    if cmp -s "$payload" "$out"; then
         echo "  PASS"
         RESULTS[$label]="PASS"
     else
         local in_size out_size
-        in_size=$(stat -c%s "$PAYLOAD")
+        in_size=$(stat -c%s "$payload")
         out_size=$(stat -c%s "$out")
         echo "  DIFF MISMATCH (in=$in_size out=$out_size)"
         echo "  write log:"
@@ -108,11 +122,16 @@ run_codec() {
 main() {
     echo "=== PS multi-codec demo: write via $PS_A, read via $PS_B (payload=${PAYLOAD_SIZE}) ==="
 
-    run_codec ffv1-plain    /ffv1-csm     v1   put
-    run_codec ffv1-stripe   /ffv1-stripes v1   write --codec stripe \
-              --k 6 --m 0
-    run_codec ffv2-plain    /ffv2-csm     v2   put
-    run_codec ffv2-rs       /ffv2-rs      v2   write --codec rs \
+    run_codec ffv1-plain    /ffv1-csm     v1   put \
+              "$PAYLOAD"    "$PAYLOAD_SIZE"
+    run_codec ffv1-stripe   /ffv1-stripes v1   write \
+              "$PAYLOAD"    "$PAYLOAD_SIZE" --codec stripe --k 6 --m 0
+    run_codec ffv2-plain    /ffv2-csm     v2   put \
+              "$PAYLOAD"    "$PAYLOAD_SIZE"
+    run_codec ffv2-rs       /ffv2-rs      v2   write \
+              "$PAYLOAD"    "$PAYLOAD_SIZE" --codec rs --k 4 --m 2
+    run_codec ffv2-mj       /ffv2-mj      v2   write \
+              "$PAYLOAD_MJ" "$PAYLOAD_MJ_SIZE" --codec mojette-sys \
               --k 4 --m 2
 
     echo
