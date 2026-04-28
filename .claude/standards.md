@@ -309,6 +309,46 @@ internally.  Call them unconditionally — no guard needed at call sites.
 
 ---
 
+## XDR Proc Indirection and UBSan Suppression
+
+`xdrproc_t` is `bool_t (*)(XDR *, ...)` -- variadic for historical reasons.
+Real XDR procs are non-variadic (e.g. `bool_t xdr_FOO(XDR *, FOO *)`).
+Calling them through `xdrproc_t` is ABI-safe (the variadic shape was always
+called with two args in practice and every libtirpc / Apple-RPC consumer
+relies on that), but it is a strict function-pointer-type mismatch that
+UBSan's `-fsanitize=function` flags at runtime.
+
+The reffs convention: isolate every indirect call through `xdrproc_t` in a
+single `__attribute__((no_sanitize("function")))` wrapper per TU.  Existing
+wrappers:
+
+| File | Wrapper | Notes |
+|------|---------|-------|
+| `lib/rpc/rpc.c` | `rpc_call_xdr` | Server-side dispatch.  Branches Linux/Darwin (Darwin's `xdrproc_t` carries a third recursion-depth arg). |
+| `lib/nfs4/client/mds_tls_xprt.c` | `mds_tls_call_xdrproc` | Client-side TLS xprt encode/decode.  Linux-only path. |
+
+Rules:
+
+- **Do not add a fresh `(xdrproc_t)foo` cast at a new call site.**  Route
+  through the existing wrapper for that TU.  If a TU does not yet have one,
+  add a narrow `__attribute__((no_sanitize("function")))` static helper
+  alongside an explanatory comment matching the two above.
+- The `xdr_sizeof` call below is the documented exception -- it is a
+  measurement primitive, not a real XDR call, and libtirpc itself casts to
+  `xdrproc_t` at the API boundary.
+- For test code that needs an `xdrproc_t`-shaped function that always
+  returns FALSE (encode-failure injection), declare the test helper as
+  variadic (`bool_t f(XDR *, ...)`) so the implicit conversion to
+  `xdrproc_t` is clean without a cast.  Cast `xdr_void` (libtirpc declares
+  it `bool_t xdr_void(void)`) through `(xdrproc_t)(void *)` to bypass
+  `-Wcast-function-type-mismatch`.
+
+Lock-step with libtirpc and Apple's RPC: both projects use the same
+`-fno-sanitize=function` carve-out for the same reason.  The suppression
+is a strict-typing accommodation, not evidence of an actual bug.
+
+---
+
 ## XDR Sizing
 
 **Always use `xdr_sizeof()`, never `sizeof()`** when allocating or measuring XDR-encoded structs.
