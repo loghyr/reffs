@@ -8,6 +8,7 @@
 #endif
 
 #include <errno.h>
+#include <stdbool.h>
 #include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -20,6 +21,31 @@
 #include "reffs/log.h"
 #include "reffs/tls.h"
 
+/*
+ * Per-listener SSL_CTX registry.  Index 0 is the native NFS listener;
+ * 1..REFFS_TLS_MAX_LISTENERS-1 are the [[proxy_mds]] listeners.
+ * 16 slots covers REFFS_CONFIG_MAX_PROXY_MDS=8 with headroom; the
+ * cost is 16 pointers (~128 bytes).
+ *
+ * Populated by io_tls_init_listener_context (and the back-compat
+ * io_tls_init_server_context for slot 0).  Read by
+ * io_tls_get_listener_context, which the accept path calls per-fd
+ * via the conn_info ci_listener_id.
+ *
+ * Single-writer (server startup, before any worker thread runs);
+ * multi-reader (every TLS-accept compares).  The registry is set
+ * up before any TLS connection can fire -- no synchronization
+ * needed beyond the implicit publish-before-accept happens-before.
+ */
+#define REFFS_TLS_MAX_LISTENERS 16
+static SSL_CTX *listener_ctx[REFFS_TLS_MAX_LISTENERS];
+
+/*
+ * Back-compat alias.  Old call sites that used the global directly
+ * (lib/io/handlers.c) now go through io_tls_get_listener_context;
+ * this pointer mirrors slot 0 so external test fixtures that may
+ * have read it before the refactor still see the native context.
+ */
 SSL_CTX *reffs_server_ssl_ctx = NULL;
 
 #ifdef NOT_NOW
@@ -99,199 +125,205 @@ static void ssl_info_callback(const SSL __attribute__((unused)) * ssl, int type,
 	}
 }
 
-int io_tls_init_server_context(const char *cfg_cert, const char *cfg_key,
-			       const char *cfg_ca)
+/*
+ * Build a fresh SSL_CTX with the cert / key / CA the caller named.
+ * Returns NULL on any failure (cert load, key load, mismatch, etc.).
+ * Caller owns the returned context and must SSL_CTX_free it.
+ *
+ * Cert / key path priority: argument -> env (REFFS_CERT_PATH /
+ * REFFS_KEY_PATH) -> /etc/tlshd/ defaults (shared with kernel
+ * tlshd).  CA path is honoured verbatim when set; empty leaves
+ * verify mode at SSL_VERIFY_NONE for backwards-compat.
+ */
+static SSL_CTX *build_ssl_ctx(const char *cfg_cert, const char *cfg_key,
+			      const char *cfg_ca)
 {
-	if (reffs_server_ssl_ctx != NULL) {
-		/*
-		 * KNOWN LIMITATION (slice plan-1-tls.c, #139): the SSL_CTX
-		 * is process-global, so the FIRST caller's cfg_ca decides
-		 * verify mode for every subsequent listener.  In a combined
-		 * role=mds + [[proxy_mds]] reffsd that brings up two TLS-
-		 * capable listeners (the MDS NFS port that wants
-		 * SSL_VERIFY_PEER for mTLS PSes, and a per-listener proxy
-		 * port that may not), only the first call wins.  Per-
-		 * listener SSL_CTX allocation is tracked NOT_NOW_BROWN_COW
-		 * for a future slice; today the smoke topology has a
-		 * single TLS listener so this constraint does not affect
-		 * the deliverable.  Document in proxy-server-tls.md.
-		 */
-		return 0;
-	}
-
 	ERR_clear_error();
-	unsigned long err;
-	while ((err = ERR_get_error()) != 0) {
-		char err_buf[256];
-		ERR_error_string_n(err, err_buf, sizeof(err_buf));
-		TRACE("OpenSSL error at startup: %s", err_buf);
-	}
 
-	TRACE("OpenSSL version: %s", OpenSSL_version(OPENSSL_VERSION));
-	TRACE("OpenSSL TLS method: %p", (void *)TLS_server_method());
+	SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
 
-	SSL_load_error_strings();
-	ERR_load_crypto_strings();
-
-	// Initialize OpenSSL
-	SSL_library_init();
-	OpenSSL_add_all_algorithms();
-	SSL_load_error_strings();
-
-	// Create a new SSL context
-	reffs_server_ssl_ctx = SSL_CTX_new(TLS_server_method());
-	if (!reffs_server_ssl_ctx) {
+	if (!ctx) {
 		TRACE("Error creating SSL context");
-		return EINVAL;
+		return NULL;
 	}
 
-	SSL_CTX_set_info_callback(reffs_server_ssl_ctx, ssl_info_callback);
-
-	SSL_CTX_set_session_cache_mode(reffs_server_ssl_ctx,
-				       SSL_SESS_CACHE_SERVER);
-	SSL_CTX_set_session_id_context(reffs_server_ssl_ctx,
-				       (const unsigned char *)"reffs", 5);
+	SSL_CTX_set_info_callback(ctx, ssl_info_callback);
+	SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_SERVER);
+	SSL_CTX_set_session_id_context(ctx, (const unsigned char *)"reffs", 5);
 
 	/*
 	 * Slice plan-1-tls.c (#139): when the operator supplies a CA
 	 * bundle, request and verify the peer's client cert so the
 	 * per-connection peer-cert fingerprint becomes available to
 	 * io_conn_get_peer_cert_fingerprint (used by the MDS
-	 * PROXY_REGISTRATION allowlist check at
-	 * lib/nfs4/server/proxy_registration.c).  Without a CA bundle
-	 * we keep the historical SSL_VERIFY_NONE so existing TLS-
-	 * server-only deployments do not start rejecting clients.
+	 * PROXY_REGISTRATION allowlist check).  Without a CA bundle we
+	 * keep the historical SSL_VERIFY_NONE so existing TLS-server-
+	 * only deployments do not start rejecting clients.
 	 */
 	if (cfg_ca && cfg_ca[0] != '\0') {
-		if (SSL_CTX_load_verify_locations(reffs_server_ssl_ctx, cfg_ca,
-						  NULL) != 1) {
+		if (SSL_CTX_load_verify_locations(ctx, cfg_ca, NULL) != 1) {
 			TRACE("io_tls: SSL_CTX_load_verify_locations(%s) failed",
 			      cfg_ca);
-			SSL_CTX_free(reffs_server_ssl_ctx);
-			reffs_server_ssl_ctx = NULL;
-			return EINVAL;
+			SSL_CTX_free(ctx);
+			return NULL;
 		}
-		SSL_CTX_set_verify(reffs_server_ssl_ctx,
-				   SSL_VERIFY_PEER |
-					   SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-				   NULL);
+		SSL_CTX_set_verify(
+			ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+			NULL);
 	} else {
-		SSL_CTX_set_verify(reffs_server_ssl_ctx, SSL_VERIFY_NONE, NULL);
+		SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
 	}
 
-	SSL_CTX_clear_options(reffs_server_ssl_ctx, SSL_OP_ALL);
-	SSL_CTX_clear_options(reffs_server_ssl_ctx, SSL_OP_NO_RENEGOTIATION);
-
-	SSL_CTX_set_options(reffs_server_ssl_ctx, SSL_OP_LEGACY_SERVER_CONNECT);
+	SSL_CTX_clear_options(ctx, SSL_OP_ALL);
+	SSL_CTX_clear_options(ctx, SSL_OP_NO_RENEGOTIATION);
+	SSL_CTX_set_options(ctx, SSL_OP_LEGACY_SERVER_CONNECT);
 	SSL_CTX_set_options(
-		reffs_server_ssl_ctx,
-		SSL_OP_NO_TICKET |
-			SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION |
-			SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
+		ctx, SSL_OP_NO_TICKET |
+			     SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION |
+			     SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
 
-	SSL_CTX_set_max_send_fragment(reffs_server_ssl_ctx, 16384);
-
-	SSL_CTX_set_verify_depth(reffs_server_ssl_ctx, 4);
-
-#ifdef TLS_DEBUGGING
-	// Log the verification settings
-	TRACE("TLS verify mode: %d, depth: %d",
-	      SSL_CTX_get_verify_mode(reffs_server_ssl_ctx),
-	      SSL_CTX_get_verify_depth(reffs_server_ssl_ctx));
-#endif
+	SSL_CTX_set_max_send_fragment(ctx, 16384);
+	SSL_CTX_set_verify_depth(ctx, 4);
 
 	const char *min_tls = getenv("REFFS_MIN_TLS_VERSION");
+
 	if (min_tls) {
-		if (strcmp(min_tls, "1.0") == 0) {
-			TRACE("Setting minimum TLS version to 1.0");
-			SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx,
-						      TLS1_VERSION);
-		} else if (strcmp(min_tls, "1.1") == 0) {
-			TRACE("Setting minimum TLS version to 1.1");
-			SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx,
-						      TLS1_1_VERSION);
-		} else if (strcmp(min_tls, "1.2") == 0) {
-			TRACE("Setting minimum TLS version to 1.2");
-			SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx,
-						      TLS1_2_VERSION);
-		} else {
-			TRACE("Setting minimum TLS version to 1.3");
-			SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx,
-						      TLS1_3_VERSION);
-		}
+		if (strcmp(min_tls, "1.0") == 0)
+			SSL_CTX_set_min_proto_version(ctx, TLS1_VERSION);
+		else if (strcmp(min_tls, "1.1") == 0)
+			SSL_CTX_set_min_proto_version(ctx, TLS1_1_VERSION);
+		else if (strcmp(min_tls, "1.2") == 0)
+			SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+		else
+			SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
 	} else {
-		SSL_CTX_set_min_proto_version(reffs_server_ssl_ctx,
-					      TLS1_3_VERSION);
-		SSL_CTX_set_max_proto_version(reffs_server_ssl_ctx,
-					      TLS1_3_VERSION);
+		SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+		SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
 	}
 
-#ifdef TLS_DEBUGGING
-	const char *ciphers = "HIGH:!aNULL:!MD5:!RC4";
-	if (SSL_CTX_set_cipher_list(reffs_server_ssl_ctx, ciphers) == 0) {
-		TRACE("Error setting cipher list");
-		SSL_CTX_free(reffs_server_ssl_ctx);
-		reffs_server_ssl_ctx = NULL;
-		return EINVAL;
-	}
-
-	TRACE("Selected ciphers: %s", ciphers);
-#endif
-
-	/*
-	 * Certificate path priority: argument --> env var --> /etc/tlshd/.
-	 * The /etc/tlshd/ default shares certs with kernel tlshd so
-	 * both can use the same CA on the host.
-	 */
 	const char *cert_path = cfg_cert && cfg_cert[0] ? cfg_cert : NULL;
+
 	if (!cert_path)
 		cert_path = getenv("REFFS_CERT_PATH");
 	if (!cert_path)
 		cert_path = "/etc/tlshd/server.pem";
 
 	const char *key_path = cfg_key && cfg_key[0] ? cfg_key : NULL;
+
 	if (!key_path)
 		key_path = getenv("REFFS_KEY_PATH");
 	if (!key_path)
 		key_path = "/etc/tlshd/server.key";
 
-	// Load certificates and private key
-	if (SSL_CTX_use_certificate_file(reffs_server_ssl_ctx, cert_path,
-					 SSL_FILETYPE_PEM) <= 0) {
-		TRACE("Error loading certificate file");
-		SSL_CTX_free(reffs_server_ssl_ctx);
-		reffs_server_ssl_ctx = NULL;
-		return EINVAL;
+	if (SSL_CTX_use_certificate_file(ctx, cert_path, SSL_FILETYPE_PEM) <=
+	    0) {
+		TRACE("Error loading certificate file %s", cert_path);
+		SSL_CTX_free(ctx);
+		return NULL;
 	}
-
-	if (SSL_CTX_use_PrivateKey_file(reffs_server_ssl_ctx, key_path,
-					SSL_FILETYPE_PEM) <= 0) {
-		TRACE("Error loading private key file");
-		SSL_CTX_free(reffs_server_ssl_ctx);
-		reffs_server_ssl_ctx = NULL;
-		return EINVAL;
+	if (SSL_CTX_use_PrivateKey_file(ctx, key_path, SSL_FILETYPE_PEM) <= 0) {
+		TRACE("Error loading private key file %s", key_path);
+		SSL_CTX_free(ctx);
+		return NULL;
 	}
-
-	// Check key and certificate compatibility
-	if (!SSL_CTX_check_private_key(reffs_server_ssl_ctx)) {
+	if (!SSL_CTX_check_private_key(ctx)) {
 		TRACE("Private key and certificate do not match");
-		SSL_CTX_free(reffs_server_ssl_ctx);
-		reffs_server_ssl_ctx = NULL;
-		return EINVAL;
+		SSL_CTX_free(ctx);
+		return NULL;
 	}
-
-	// Set ALPN for RPC-with-TLS (RFC 9289)
-	const unsigned char alpn_protos[] = {
-		6, 's', 'u', 'n', 'r', 'p', 'c' // 6 is the length of "sunrpc"
-	};
 
 	/* RFC 9289 S3: server MUST select "sunrpc" via ALPN. */
-	TRACE("Installing ALPN select callback for sunrpc (RFC 9289)");
-	SSL_CTX_set_alpn_protos(reffs_server_ssl_ctx, alpn_protos,
-				sizeof(alpn_protos));
-	SSL_CTX_set_alpn_select_cb(reffs_server_ssl_ctx, io_tls_alpn_select_cb,
-				   NULL);
+	const unsigned char alpn_protos[] = { 6, 's', 'u', 'n', 'r', 'p', 'c' };
 
-	TRACE("Server TLS context initialized successfully");
+	SSL_CTX_set_alpn_protos(ctx, alpn_protos, sizeof(alpn_protos));
+	SSL_CTX_set_alpn_select_cb(ctx, io_tls_alpn_select_cb, NULL);
+
+	return ctx;
+}
+
+int io_tls_init_listener_context(uint32_t listener_id, const char *cfg_cert,
+				 const char *cfg_key, const char *cfg_ca)
+{
+	if (listener_id >= REFFS_TLS_MAX_LISTENERS) {
+		LOG("io_tls: listener_id %u exceeds REFFS_TLS_MAX_LISTENERS=%d",
+		    listener_id, REFFS_TLS_MAX_LISTENERS);
+		return -EINVAL;
+	}
+
+	if (listener_ctx[listener_id]) {
+		/*
+		 * Idempotent: a second call with the same listener_id
+		 * (e.g. retry, double-init) is a no-op.  If the operator
+		 * meant to swap configurations they need to tear down the
+		 * listener and re-create.
+		 */
+		return 0;
+	}
+
+	/*
+	 * One-time OpenSSL global init.  These are safe to call many
+	 * times -- libssl ref-counts internally -- but we keep the
+	 * trace output for the FIRST listener only so logs are not
+	 * flooded on combined deployments.
+	 */
+	static bool ossl_inited;
+
+	if (!ossl_inited) {
+		TRACE("OpenSSL version: %s", OpenSSL_version(OPENSSL_VERSION));
+		SSL_load_error_strings();
+		ERR_load_crypto_strings();
+		SSL_library_init();
+		OpenSSL_add_all_algorithms();
+		ossl_inited = true;
+	}
+
+	SSL_CTX *ctx = build_ssl_ctx(cfg_cert, cfg_key, cfg_ca);
+
+	if (!ctx)
+		return -EINVAL;
+
+	listener_ctx[listener_id] = ctx;
+
+	/*
+	 * Mirror slot 0 onto the back-compat global so old call sites
+	 * that read reffs_server_ssl_ctx directly (some tests, the
+	 * pre-refactor accept-path) still see the native context.
+	 */
+	if (listener_id == 0)
+		reffs_server_ssl_ctx = ctx;
+
+	TRACE("Server TLS context for listener_id=%u initialised", listener_id);
 	return 0;
+}
+
+int io_tls_init_server_context(const char *cfg_cert, const char *cfg_key,
+			       const char *cfg_ca)
+{
+	int ret = io_tls_init_listener_context(0, cfg_cert, cfg_key, cfg_ca);
+
+	/*
+	 * Match the historical return shape: 0 on success, EINVAL on
+	 * any failure.  Callers existed before the per-listener API
+	 * and expect the bare positive errno.
+	 */
+	return (ret == 0) ? 0 : EINVAL;
+}
+
+SSL_CTX *io_tls_get_listener_context(uint32_t listener_id)
+{
+	if (listener_id >= REFFS_TLS_MAX_LISTENERS)
+		return NULL;
+	if (listener_ctx[listener_id])
+		return listener_ctx[listener_id];
+	/*
+	 * Fall back to the native (slot 0) context.  Historical
+	 * single-listener deployments brought TLS up via slot 0; a
+	 * proxy listener that has not registered its own server-side
+	 * TLS cert (today: every [[proxy_mds]] listener) keeps the
+	 * pre-refactor behaviour of using the same context as the
+	 * native listener.  The combined deployment that wants
+	 * different posture per listener will register both slots
+	 * explicitly and never reach this fallback.
+	 */
+	return listener_ctx[0];
 }

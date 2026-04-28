@@ -959,17 +959,21 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		return ret;
 	}
 
-	// Case 2: New handshake - create SSL object
-	SSL *ssl = SSL_new(reffs_server_ssl_ctx);
+	// Case 2: New handshake - create SSL object using the
+	// per-listener context (the conn_info already carries the
+	// listener_id this fd was accepted on).
+	SSL_CTX *ctx = io_tls_get_listener_context(io_conn_listener_id(fd));
+	SSL *ssl = SSL_new(ctx);
+
 	if (!ssl) {
-		LOG("Failed to create SSL for fd=%d", fd);
+		LOG("Failed to create SSL for fd=%d (listener_id=%u, ctx=%p)",
+		    fd, io_conn_listener_id(fd), (void *)ctx);
 		return EINVAL;
 	}
 
 #ifdef TLS_DEBUGGING
-	TRACE("SSL %p using SSL_CTX %p", (void *)ssl,
-	      (void *)SSL_get_SSL_CTX(ssl));
-	TRACE("reffs_server_ssl_ctx is %p", (void *)reffs_server_ssl_ctx);
+	TRACE("SSL %p using SSL_CTX %p (listener_id=%u)", (void *)ssl,
+	      (void *)SSL_get_SSL_CTX(ssl), io_conn_listener_id(fd));
 
 	// Log current ALPN state
 	const unsigned char *proto = NULL;
