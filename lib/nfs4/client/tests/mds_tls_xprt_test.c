@@ -330,6 +330,70 @@ START_TEST(test_initial_err_state_is_success)
 }
 END_TEST
 
+/*
+ * xdrproc_t-shaped variant that always reports failure -- declared
+ * variadic to match libtirpc's xdrproc_t signature exactly so the
+ * implicit conversion to xdrproc_t at the clnt_call site is clean
+ * under -Wincompatible-function-pointer-types.  Forces the encode
+ * leg of mds_tls_call to take the RPC_CANTENCODEARGS path before
+ * any network I/O happens, avoiding the in-memory BIO fixture's
+ * "no second thread for tls_rpc_recv" limitation while still
+ * pinning a real call-failure error code on the wire-side state
+ * machine.
+ */
+static bool_t xdr_always_false(XDR *xdrs, ...)
+{
+	(void)xdrs;
+	return FALSE;
+}
+
+START_TEST(test_call_encode_failure_sets_re_status)
+{
+	struct ssl_pair p = { 0 };
+
+	ck_assert_int_eq(ssl_pair_setup(&p), 0);
+	ck_assert_int_eq(ssl_pair_handshake(&p), 0);
+
+	CLIENT *clnt = mds_tls_xprt_create(p.client_fd, p.client, 100003u, 4u);
+
+	ck_assert_ptr_nonnull(clnt);
+
+	/*
+	 * AUTH_NONE so mds_tls_marshal_auth succeeds and we reach the
+	 * actual user-args encode where xdr_always_false fires.
+	 */
+	clnt->cl_auth = authnone_create();
+
+	/*
+	 * libtirpc declares xdr_void with `bool_t xdr_void(void)` --
+	 * casting it to xdrproc_t (variadic) trips
+	 * -Wcast-function-type-mismatch.  Route the cast through `void *`
+	 * to bypass the function-pointer-type check; the function is
+	 * never called on the encode-failure path so the ABI mismatch
+	 * cannot matter at runtime.
+	 */
+	enum clnt_stat st = clnt_call(clnt, 0, xdr_always_false, NULL,
+				      (xdrproc_t)(void *)xdr_void, NULL,
+				      (struct timeval){ .tv_sec = 1 });
+
+	ck_assert_int_eq(st, RPC_CANTENCODEARGS);
+
+	struct rpc_err err;
+
+	clnt_geterr(clnt, &err);
+	ck_assert_int_eq(err.re_status, RPC_CANTENCODEARGS);
+
+	auth_destroy(clnt->cl_auth);
+	clnt->cl_auth = NULL;
+
+	p.client = NULL;
+	p.client_fd = -1;
+
+	clnt_destroy(clnt);
+	ssl_pair_teardown(&p);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite setup                                                        */
 /* ------------------------------------------------------------------ */
@@ -343,6 +407,7 @@ static Suite *mds_tls_xprt_suite(void)
 	tcase_add_test(tc, test_create_destroy_lifecycle);
 	tcase_add_test(tc, test_create_keeps_fd_and_ssl_on_failure);
 	tcase_add_test(tc, test_initial_err_state_is_success);
+	tcase_add_test(tc, test_call_encode_failure_sets_re_status);
 	suite_add_tcase(s, tc);
 	return s;
 }

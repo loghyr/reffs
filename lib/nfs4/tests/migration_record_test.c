@@ -823,6 +823,158 @@ START_TEST(test_persist_reload_empty_backend)
 }
 END_TEST
 
+START_TEST(test_persist_reload_null_ops)
+{
+	/*
+	 * NULL ops MUST short-circuit cleanly (loaded == 0).  This is
+	 * the call shape used at server startup before the persist
+	 * backend has been attached -- we MUST not crash, and MUST not
+	 * report any negative error.
+	 */
+	int loaded = migration_record_load_persisted(NULL, NULL);
+
+	ck_assert_int_eq(loaded, 0);
+}
+END_TEST
+
+START_TEST(test_persist_reload_no_load_op)
+{
+	/*
+	 * ops with a NULL .migration_record_load is a partial backend
+	 * (e.g. save-only).  Same short-circuit as NULL ops -- this is
+	 * the path the flatfile backend takes before its persisted-dir
+	 * is created.
+	 */
+	struct persist_ops partial = {
+		.migration_record_save = mock_persist_save,
+		.migration_record_remove = mock_persist_remove,
+		.migration_record_load = NULL,
+	};
+	int loaded = migration_record_load_persisted(&partial, NULL);
+
+	ck_assert_int_eq(loaded, 0);
+}
+END_TEST
+
+/*
+ * Backend that returns -EIO from .migration_record_load.  Used to
+ * verify that backend-level errors propagate through
+ * migration_record_load_persisted instead of being masked as
+ * "loaded == 0".
+ */
+static int
+mock_persist_load_eio(void *ctx __attribute__((unused)),
+		      int (*cb)(const struct migration_record_persistent *,
+				void *) __attribute__((unused)),
+		      void *cb_arg __attribute__((unused)))
+{
+	return -EIO;
+}
+
+START_TEST(test_persist_reload_backend_error_propagates)
+{
+	struct persist_ops failing = {
+		.migration_record_save = mock_persist_save,
+		.migration_record_remove = mock_persist_remove,
+		.migration_record_load = mock_persist_load_eio,
+	};
+	struct mock_persist mp = { 0 };
+	int loaded = migration_record_load_persisted(&failing, &mp);
+
+	/*
+	 * Negative return must be surfaced verbatim, not coerced to 0
+	 * or to the (uninitialised) loaded counter.
+	 */
+	ck_assert_int_eq(loaded, -EIO);
+}
+END_TEST
+
+START_TEST(test_persist_reload_skips_busy_records)
+{
+	/*
+	 * Two persisted records with the same inode collide on reload --
+	 * the second one's migration_record_create returns -EBUSY which
+	 * mr_load_cb logs and skips.  The function MUST still return the
+	 * count of successful loads (1), not the number of records
+	 * presented (2) and not -EBUSY.
+	 *
+	 * Strategy: drive two real saves through migration_record_create
+	 * (so the persisted snapshots pass migration_record_from_persistent
+	 * validation on reload), abandon the live records, then rewrite
+	 * the second snapshot's inode to collide with the first.  This
+	 * keeps every other field of the captured record byte-identical
+	 * to what the production save path produces, so the only thing
+	 * the reload sees differently is the duplicated inode -- which is
+	 * exactly the EBUSY path under test.
+	 */
+	struct mock_persist mp = { 0 };
+
+	migration_record_persist_attach(&mock_persist_ops, &mp);
+
+	stateid4 s1 = make_stid(0x0700);
+	stateid4 s2 = make_stid(0x0701);
+	struct migration_record *mr1 = NULL;
+	struct migration_record *mr2 = NULL;
+
+	ck_assert_int_eq(migration_record_create(&s1, fake_sb(), 4900, "ps", 2,
+						 NULL, 0, 1, &mr1),
+			 0);
+	ck_assert_int_eq(migration_record_create(&s2, fake_sb(), 4901, "ps", 2,
+						 NULL, 0, 1, &mr2),
+			 0);
+	ck_assert_uint_eq(mp.nrecs, 2);
+
+	/*
+	 * Snapshot the two saved records before we tear down -- abandon
+	 * is going to call mock_persist_remove which mutates mp.recs.
+	 */
+	struct migration_record_persistent saved[2];
+
+	saved[0] = mp.recs[0];
+	saved[1] = mp.recs[1];
+
+	migration_record_abandon(mr1);
+	migration_record_abandon(mr2);
+
+	/*
+	 * Re-populate the backend with two real-shape records, both
+	 * pointing at the first record's inode (4900).  The first
+	 * reload succeeds; the second hits the per-inode invariant
+	 * inside migration_record_create and returns -EBUSY.
+	 */
+	mp.nrecs = 0;
+	mp.recs[mp.nrecs++] = saved[0];
+	saved[1].mrp_ino = saved[0].mrp_ino;
+	mp.recs[mp.nrecs++] = saved[1];
+
+	int loaded = migration_record_load_persisted(&mock_persist_ops, &mp);
+
+	ck_assert_int_eq(loaded, 1);
+
+	/*
+	 * Confirm the live record is findable on both indices -- the
+	 * surviving record is the FIRST persisted snapshot (the second
+	 * one was the one rejected with EBUSY).
+	 */
+	struct migration_record *by_ino = migration_record_find_by_inode(4900);
+
+	ck_assert_ptr_nonnull(by_ino);
+	migration_record_put(by_ino);
+
+	struct migration_record *by_stid =
+		migration_record_find_by_stateid(&s1);
+
+	ck_assert_ptr_nonnull(by_stid);
+	migration_record_put(by_stid);
+
+	/*
+	 * Leave the live record for mr_teardown's migration_record_fini()
+	 * to drain -- mirroring test_persist_reload_round_trip's pattern.
+	 */
+	migration_record_persist_attach(NULL, NULL);
+}
+END_TEST
+
 START_TEST(test_persist_attach_null_is_safe)
 {
 	/* Detach with NULL must not crash; subsequent create must work. */
@@ -878,6 +1030,10 @@ static Suite *migration_record_suite(void)
 	tcase_add_test(tc, test_persist_remove_on_commit);
 	tcase_add_test(tc, test_persist_reload_round_trip);
 	tcase_add_test(tc, test_persist_reload_empty_backend);
+	tcase_add_test(tc, test_persist_reload_null_ops);
+	tcase_add_test(tc, test_persist_reload_no_load_op);
+	tcase_add_test(tc, test_persist_reload_backend_error_propagates);
+	tcase_add_test(tc, test_persist_reload_skips_busy_records);
 	tcase_add_test(tc, test_persist_attach_null_is_safe);
 	suite_add_tcase(s, tc);
 
