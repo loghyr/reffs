@@ -23,10 +23,13 @@
 #include <string.h>
 #include <urcu.h>
 
+#include "reffs/dirent.h"
 #include "reffs/fs.h"
+#include "reffs/inode.h"
 #include "reffs/ns.h"
 #include "reffs/settings.h"
 #include "reffs/super_block.h"
+#include "reffs/types.h"
 
 #include "ps_sb.h"
 #include "ps_state.h"
@@ -360,6 +363,95 @@ START_TEST(test_alloc_for_export_root_double_bind_rejected)
 }
 END_TEST
 
+/*
+ * Regression coverage for task #149: a per-listener LOOKUP from the
+ * listener root must mount-cross into a child proxy SB allocated by
+ * ps_sb_alloc_for_export.  The earlier symptom (NFS4ERR_NOENT on
+ * LOOKUP "<sub>" against PS) showed up when the upstream MDS did
+ * NOT export "/" -- the listener root then had no proxy_binding
+ * upstream-forward path, and the mount-crossing fallback had to
+ * carry the whole load.  This test exercises that fallback in
+ * isolation: simulate a listener whose root has no binding (i.e.,
+ * MDS exported only sub-paths), allocate a proxy SB at "/data",
+ * and verify that the listener-root dirent named "data":
+ *   1. exists locally (mkdir_p inside ps_sb_alloc_for_export
+ *      created it),
+ *   2. has RD_MOUNTED_ON set,
+ *   3. resolves via super_block_find_mounted_on() to the new
+ *      proxy SB, whose root inode is reachable.
+ *
+ * If any link in that chain breaks, ec_demo (and any other client)
+ * issuing PUTROOTFH+LOOKUP("data") against this listener will see
+ * NFS4ERR_NOENT exactly as #149 reported.
+ */
+START_TEST(test_lookup_mount_cross_without_root_binding)
+{
+	const struct ps_listener_state *pls = ps_state_find(TEST_LISTENER_ID);
+	uint8_t fh[] = { 0x42, 0x49, 0x47 };
+
+	/*
+	 * Critical: do NOT call ps_sb_alloc_for_export(pls, "/", ...)
+	 * first.  This simulates the multi-codec deploy/sanity setup
+	 * where the upstream MDS exports only /ffv1-csm, /ffv1-stripes,
+	 * etc., and never advertises "/" -- which is the historical
+	 * #149 reproducer.
+	 */
+	struct super_block *root_sb = super_block_find_for_listener(
+		SUPER_BLOCK_ROOT_ID, TEST_LISTENER_ID);
+
+	ck_assert_ptr_nonnull(root_sb);
+	ck_assert_ptr_null(root_sb->sb_proxy_binding);
+
+	ck_assert_int_eq(ps_sb_alloc_for_export(pls, "/data", fh, sizeof(fh)),
+			 0);
+
+	/*
+	 * Drive the same dirent lookup the real LOOKUP handler uses.
+	 * dirent_find is the in-memory fast path; mkdir_p inside
+	 * ps_sb_alloc_for_export must have populated it.
+	 */
+	struct reffs_dirent *root_de = root_sb->sb_root_inode->i_dirent;
+
+	ck_assert_ptr_nonnull(root_de);
+
+	struct reffs_dirent *child_de =
+		dirent_find(root_de, reffs_text_case_sensitive, "data");
+
+	ck_assert_ptr_nonnull(child_de);
+
+	/* Mount-crossing flag is the trigger the LOOKUP handler tests. */
+	ck_assert_uint_ne(__atomic_load_n(&child_de->rd_state,
+					  __ATOMIC_ACQUIRE) &
+				  RD_MOUNTED_ON,
+			  0);
+
+	/* And the dirent resolves to the proxy SB we just allocated. */
+	struct super_block *mounted = super_block_find_mounted_on(child_de);
+
+	ck_assert_ptr_nonnull(mounted);
+	ck_assert_ptr_nonnull(mounted->sb_path);
+	ck_assert_str_eq(mounted->sb_path, "/data");
+	ck_assert_uint_eq(mounted->sb_listener_id, TEST_LISTENER_ID);
+	ck_assert_ptr_nonnull(mounted->sb_root_inode);
+
+	super_block_put(mounted);
+	dirent_put(child_de);
+
+	/* Tear down so fs_test_teardown's ns_fini sees a tidy state. */
+	struct super_block *sb =
+		find_proxy_sb_by_path(TEST_LISTENER_ID, "/data");
+
+	ck_assert_ptr_nonnull(sb);
+	super_block_unmount(sb);
+	super_block_destroy(sb);
+	super_block_release_dirents(sb);
+	super_block_put(sb); /* find ref */
+	super_block_put(sb); /* alloc ref */
+
+	super_block_put(root_sb);
+}
+END_TEST
+
 static Suite *ps_sb_alloc_suite(void)
 {
 	Suite *s = suite_create("ps_sb_alloc");
@@ -374,6 +466,7 @@ static Suite *ps_sb_alloc_suite(void)
 	tcase_add_test(tc,
 		       test_alloc_for_export_root_attaches_to_listener_root);
 	tcase_add_test(tc, test_alloc_for_export_root_double_bind_rejected);
+	tcase_add_test(tc, test_lookup_mount_cross_without_root_binding);
 	suite_add_tcase(s, tc);
 	return s;
 }
