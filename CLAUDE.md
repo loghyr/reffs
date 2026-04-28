@@ -124,9 +124,41 @@ Run before push. ASAN/LSAN clean required. A pre-push hook is in
 
 ## Workflow rules
 
-### Review before commit
-Always run `/review` BEFORE committing, not after.  The workflow is:
-make changes → run reviewer → fix findings → commit.
+### Review before commit (gated)
+Run `/review` BEFORE committing, not after, when the slice meets
+ANY of these criteria.  When NONE of them apply, review the diff
+inline against `.claude/standards.md` and let the user be the
+second pair of eyes -- the reviewer agent costs ~5-8 KiB of
+returned text per pass, which adds up over a long session.
+
+Trigger the reviewer agent for:
+- XDR / wire-format changes (`lib/xdr/*.x`, anything that touches
+  COMPOUND args/results, op numbering) -- standards.md rule 9
+  classifies these as BLOCKER-bait.
+- On-disk format changes (registry, server state, client state,
+  chunk store, identity tables, RocksDB CFs).
+- RCU or ref-counting lifecycle changes (anything in
+  `lib/fs/dirent.c`, `lib/fs/inode.c`, hash-table entry
+  add/del/release paths) -- patterns/rcu-violations.md and
+  patterns/ref-counting.md are the matching review checklists.
+- Lock-ordering / locking-discipline changes.
+- Cross-layer boundary additions (`lib/nfs4/*` <-> `lib/fs/*`,
+  `src/` <-> `lib/nfs4/include/*`, backends <-> nfs4).
+- Any persistent-state migration code.
+- Any single slice over ~150 LOC of substantive change (test
+  fixtures and generated code don't count).
+
+Skip the reviewer agent (review inline) for:
+- Config plumbing (parser additions, TOML field threading).
+- Style-only or comment-only changes after a `fix-style` run.
+- Test-only additions where the production code did not move.
+- Single-file refactors under ~150 LOC that touch no XDR / no
+  RCU / no on-disk format.
+- Demo / deploy / docs changes.
+
+When in doubt, ask the user: "this is a {trigger-class} slice --
+want the reviewer agent or inline review?"  Asking costs one
+turn; an unnecessary reviewer pass costs more.
 
 ### RPC wire changes need check-ci
 Changes to `lib/rpc/rpc.c` reply encoding, credential parsing, or
