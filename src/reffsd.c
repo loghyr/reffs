@@ -501,6 +501,15 @@ int main(int argc, char *argv[])
 		exit_code = 1;
 		goto out;
 	}
+	/*
+	 * Slice 6c-zz wiring: install the persistence backend on the
+	 * migration_record table and reload any in-flight migrations
+	 * from a previous boot.  No-op for RAM-backed servers
+	 * (ss_persist_ops is always set, but ss_persist_ctx is NULL
+	 * with no state_dir, and the flatfile backend treats NULL ctx
+	 * as a no-op).
+	 */
+	nfs4_migration_persist_init(ss->ss_persist_ops, ss->ss_persist_ctx);
 	if (idmap_init(cfg.nfs4_domain))
 		TRACE("idmap_init failed, using numeric owner strings");
 

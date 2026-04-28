@@ -26,6 +26,8 @@
 #include "nfsv42_xdr.h"
 #include "nfs4/migration_record.h"
 #include "nfs4/proxy_stateid.h"
+#include "reffs/migration_persist.h"
+#include "reffs/persist_ops.h"
 #include "libreffs_test.h"
 
 /* ------------------------------------------------------------------ */
@@ -628,6 +630,206 @@ START_TEST(test_recall_layouts_no_inode_returns_zero)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Slice 6c-zz wiring: persist backend + reload                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Tiny in-test persist backend that captures save / remove calls in
+ * a fixed-size array, so a "restart" can be simulated without hitting
+ * the filesystem.  Mirrors the flatfile backend's contract: append on
+ * save, drop-by-stateid on remove, callback-iterate on load.
+ */
+#define MOCK_PERSIST_CAP 8
+struct mock_persist {
+	struct migration_record_persistent recs[MOCK_PERSIST_CAP];
+	size_t nrecs;
+};
+
+static int mock_persist_save(void *ctx,
+			     const struct migration_record_persistent *mrp)
+{
+	struct mock_persist *mp = ctx;
+
+	if (mp->nrecs >= MOCK_PERSIST_CAP)
+		return -ENOSPC;
+	mp->recs[mp->nrecs++] = *mrp;
+	return 0;
+}
+
+static int mock_persist_remove(void *ctx, const uint8_t *stateid_other)
+{
+	struct mock_persist *mp = ctx;
+
+	for (size_t i = 0; i < mp->nrecs; i++) {
+		if (memcmp(mp->recs[i].mrp_stateid_other, stateid_other,
+			   MR_PERSIST_NFS4_OTHER_SIZE) == 0) {
+			memmove(&mp->recs[i], &mp->recs[i + 1],
+				(mp->nrecs - i - 1) * sizeof(mp->recs[0]));
+			mp->nrecs--;
+			return 0;
+		}
+	}
+	return 0; /* idempotent: missing == success */
+}
+
+static int
+mock_persist_load(void *ctx,
+		  int (*cb)(const struct migration_record_persistent *, void *),
+		  void *cb_arg)
+{
+	struct mock_persist *mp = ctx;
+
+	for (size_t i = 0; i < mp->nrecs; i++) {
+		int ret = cb(&mp->recs[i], cb_arg);
+
+		if (ret < 0)
+			return ret;
+	}
+	return 0;
+}
+
+static const struct persist_ops mock_persist_ops = {
+	.migration_record_save = mock_persist_save,
+	.migration_record_remove = mock_persist_remove,
+	.migration_record_load = mock_persist_load,
+};
+
+START_TEST(test_persist_save_on_create)
+{
+	struct mock_persist mp = { 0 };
+
+	migration_record_persist_attach(&mock_persist_ops, &mp);
+
+	stateid4 s = make_stid(0x0427);
+	struct migration_record *mr = NULL;
+
+	ck_assert_int_eq(migration_record_create(&s, fake_sb(), 4001, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	ck_assert_uint_eq(mp.nrecs, 1);
+	ck_assert_uint_eq(mp.recs[0].mrp_ino, 4001);
+
+	migration_record_abandon(mr);
+	migration_record_persist_attach(NULL, NULL);
+}
+END_TEST
+
+START_TEST(test_persist_remove_on_abandon)
+{
+	struct mock_persist mp = { 0 };
+
+	migration_record_persist_attach(&mock_persist_ops, &mp);
+
+	stateid4 s = make_stid(0x0427);
+	struct migration_record *mr = NULL;
+
+	ck_assert_int_eq(migration_record_create(&s, fake_sb(), 4002, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	ck_assert_uint_eq(mp.nrecs, 1);
+
+	/*
+	 * abandon calls unhash internally, which calls remove_one against
+	 * the persistence backend.  Symmetric with the save in create.
+	 */
+	migration_record_abandon(mr);
+	ck_assert_uint_eq(mp.nrecs, 0);
+
+	migration_record_persist_attach(NULL, NULL);
+}
+END_TEST
+
+START_TEST(test_persist_remove_on_commit)
+{
+	struct mock_persist mp = { 0 };
+
+	migration_record_persist_attach(&mock_persist_ops, &mp);
+
+	stateid4 s = make_stid(0x0427);
+	struct migration_record *mr = NULL;
+
+	ck_assert_int_eq(migration_record_create(&s, fake_sb(), 4005, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	ck_assert_uint_eq(mp.nrecs, 1);
+
+	migration_record_commit(mr);
+	ck_assert_uint_eq(mp.nrecs, 0);
+
+	migration_record_persist_attach(NULL, NULL);
+}
+END_TEST
+
+START_TEST(test_persist_reload_round_trip)
+{
+	struct mock_persist mp = { 0 };
+	stateid4 s = make_stid(0x0427);
+
+	/* Phase 1: create + persist a record. */
+	migration_record_persist_attach(&mock_persist_ops, &mp);
+
+	struct migration_record *mr = NULL;
+
+	ck_assert_int_eq(migration_record_create(&s, fake_sb(), 4003,
+						 "ps-instance-zz", 14, NULL, 0,
+						 1234ULL * 1000000000ULL, &mr),
+			 0);
+	migration_record_put(mr); /* drop creation-extra ref */
+
+	/*
+	 * Phase 2: simulate MDS restart -- detach the backend, fini the
+	 * tables (drains in-memory state), re-init, reload from persist.
+	 */
+	migration_record_persist_attach(NULL, NULL);
+	migration_record_fini();
+	ck_assert_int_eq(migration_record_init(), 0);
+
+	int loaded = migration_record_load_persisted(&mock_persist_ops, &mp);
+
+	ck_assert_int_eq(loaded, 1);
+
+	/* Phase 3: the reloaded record is findable on both indices. */
+	struct migration_record *found = migration_record_find_by_stateid(&s);
+
+	ck_assert_ptr_nonnull(found);
+	ck_assert_uint_eq(found->mr_ino, 4003);
+	ck_assert_uint_eq(found->mr_owner_reg_len, 14);
+	ck_assert_mem_eq(found->mr_owner_reg, "ps-instance-zz", 14);
+	migration_record_put(found);
+
+	struct migration_record *by_ino = migration_record_find_by_inode(4003);
+
+	ck_assert_ptr_nonnull(by_ino);
+	migration_record_put(by_ino);
+}
+END_TEST
+
+START_TEST(test_persist_reload_empty_backend)
+{
+	struct mock_persist mp = { 0 };
+
+	int loaded = migration_record_load_persisted(&mock_persist_ops, &mp);
+
+	ck_assert_int_eq(loaded, 0);
+}
+END_TEST
+
+START_TEST(test_persist_attach_null_is_safe)
+{
+	/* Detach with NULL must not crash; subsequent create must work. */
+	migration_record_persist_attach(NULL, NULL);
+
+	stateid4 s = make_stid(0x0427);
+	struct migration_record *mr = NULL;
+
+	ck_assert_int_eq(migration_record_create(&s, fake_sb(), 4004, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	migration_record_abandon(mr);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -662,6 +864,12 @@ static Suite *migration_record_suite(void)
 	tcase_add_test(tc, test_apply_deltas_other_segment_untouched);
 	tcase_add_test(tc, test_apply_deltas_empty_input_segment);
 	tcase_add_test(tc, test_recall_layouts_no_inode_returns_zero);
+	tcase_add_test(tc, test_persist_save_on_create);
+	tcase_add_test(tc, test_persist_remove_on_abandon);
+	tcase_add_test(tc, test_persist_remove_on_commit);
+	tcase_add_test(tc, test_persist_reload_round_trip);
+	tcase_add_test(tc, test_persist_reload_empty_backend);
+	tcase_add_test(tc, test_persist_attach_null_is_safe);
 	suite_add_tcase(s, tc);
 
 	return s;

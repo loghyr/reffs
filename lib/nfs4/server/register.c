@@ -39,6 +39,8 @@
 #include "reffs/vfs.h"
 #include "reffs/identity.h"
 #include "reffs/errno.h"
+#include "reffs/nfs4.h"
+#include "reffs/persist_ops.h"
 #include "nfs4/trace/nfs4.h"
 #include "nfs4/attr.h"
 #include "nfs4/compound.h"
@@ -122,5 +124,31 @@ int nfs4_protocol_deregister(void)
 
 	nfs4_attribute_fini();
 
+	return 0;
+}
+
+int nfs4_migration_persist_init(const struct persist_ops *ops, void *ctx)
+{
+	/*
+	 * RAM-backed servers (no state_dir) get ops set but ctx NULL --
+	 * skip entirely so save / remove are silent no-ops and the load
+	 * path does not return -EINVAL from the flatfile backend.
+	 */
+	if (!ops || !ctx)
+		return 0;
+
+	migration_record_persist_attach(ops, ctx);
+
+	int ret = migration_record_load_persisted(ops, ctx);
+
+	if (ret < 0) {
+		LOG("nfs4_migration_persist_init: load failed: %d (continuing -- "
+		    "stale records will be reaped after 1.5x lease)",
+		    ret);
+		return ret;
+	}
+	if (ret > 0)
+		TRACE("nfs4_migration_persist_init: reloaded %d migration record(s)",
+		      ret);
 	return 0;
 }
