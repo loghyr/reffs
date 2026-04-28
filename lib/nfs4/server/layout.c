@@ -35,6 +35,7 @@
 #include "nfs4/attr.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
+#include "nfs4/migration_record.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
 #include "ps_inode.h"
@@ -1048,21 +1049,53 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	struct layout_segment *seg = &lss->lss_segs[0];
 
 	/*
+	 * Slice 6c-x.4: during-migration view.  If a migration record
+	 * is hashed for this inode, apply its per-instance deltas to
+	 * the base segment to compute the LAYOUTGET-visible view.
+	 * `i_layout_segments` itself is never mutated; the view is a
+	 * transient that lives only for the duration of this op (freed
+	 * by migration_release_view at the end of the build path).
+	 *
+	 * The view-build is always omit-and-replace per slice 6c-x.4
+	 * scope: DRAINING slots are omitted, INCOMING slots inserted.
+	 * Keep-and-shadow (INTERPOSED) requires PS-as-DS plumbing not
+	 * present in this slice.
+	 */
+	struct migration_record *mig =
+		migration_record_find_by_inode(compound->c_inode->i_ino);
+	struct layout_segment view = { 0 };
+	struct layout_segment *build_seg = seg;
+
+	if (mig) {
+		int vret =
+			migration_apply_deltas_to_segment(seg, 0, mig, &view);
+
+		migration_record_put(mig);
+		if (vret < 0) {
+			*status = NFS4ERR_DELAY;
+			goto out_stateid;
+		}
+		build_seg = &view;
+	}
+
+	/*
 	 * Build the layout body.  Dispatch based on what the client
 	 * requested: ff_layout4 (v1) or ffv2_layout4 (v2).
 	 */
 	char *body = NULL;
 	u_long xdr_size = 0;
 
-	if (seg->ls_layout_type == LAYOUT4_NFSV4_1_FILES)
-		*status = layoutget_build_file(seg, &body, &xdr_size);
-	else if (seg->ls_layout_type == LAYOUT4_FLEX_FILES_V2)
-		*status = layoutget_build_v2(seg, &body, &xdr_size);
+	if (build_seg->ls_layout_type == LAYOUT4_NFSV4_1_FILES)
+		*status = layoutget_build_file(build_seg, &body, &xdr_size);
+	else if (build_seg->ls_layout_type == LAYOUT4_FLEX_FILES_V2)
+		*status = layoutget_build_v2(build_seg, &body, &xdr_size);
 	else
-		*status = layoutget_build_v1(seg, &body, &xdr_size);
+		*status = layoutget_build_v1(build_seg, &body, &xdr_size);
 
-	if (*status != NFS4_OK)
+	if (*status != NFS4_OK) {
+		migration_release_view(&view);
 		goto out_stateid;
+	}
 
 	/* Build the response. */
 	resok->logr_return_on_close = true;
@@ -1075,18 +1108,30 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	resok->logr_layout.logr_layout_val = calloc(1, sizeof(layout4));
 	if (!resok->logr_layout.logr_layout_val) {
 		free(body);
+		migration_release_view(&view);
 		*status = NFS4ERR_DELAY;
 		goto out_stateid;
 	}
 
 	layout4 *lo = &resok->logr_layout.logr_layout_val[0];
 
-	lo->lo_offset = seg->ls_offset;
-	lo->lo_length = seg->ls_length ? seg->ls_length : NFS4_UINT64_MAX;
+	lo->lo_offset = build_seg->ls_offset;
+	lo->lo_length = build_seg->ls_length ? build_seg->ls_length :
+					       NFS4_UINT64_MAX;
 	lo->lo_iomode = args->loga_iomode;
-	lo->lo_content.loc_type = seg->ls_layout_type;
+	lo->lo_content.loc_type = build_seg->ls_layout_type;
 	lo->lo_content.loc_body.loc_body_val = body;
 	lo->lo_content.loc_body.loc_body_len = (u_int)xdr_size;
+
+	/*
+	 * View is no longer needed -- the body has been encoded.
+	 * Release before the tight-coupling fan-out which keys off the
+	 * BASE segment's per-DS list (the migration record's INCOMING
+	 * DSes get their TRUST_STATEID via the slice 6c-y / 6c-z PS-side
+	 * path, not via this LAYOUTGET fan-out).  Safe to release a
+	 * zero-initialized view.
+	 */
+	migration_release_view(&view);
 
 	/*
 	 * Tight-coupling: propagate the layout stateid to each DS that

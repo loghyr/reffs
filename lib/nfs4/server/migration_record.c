@@ -479,6 +479,102 @@ struct migration_record *migration_record_find_by_stateid(const stateid4 *stid)
 	return mr;
 }
 
+int migration_apply_deltas_to_segment(const struct layout_segment *base_seg,
+				      uint32_t base_seg_index,
+				      const struct migration_record *mr,
+				      struct layout_segment *out_view)
+{
+	if (!base_seg || !mr || !out_view)
+		return -EINVAL;
+
+	/*
+	 * Worst-case view size: every base instance survives + every
+	 * INCOMING delta in this segment is appended.  Walk the deltas
+	 * once to count the INCOMING entries; allocate accordingly.
+	 */
+	uint32_t incoming = 0;
+
+	for (uint32_t i = 0; i < mr->mr_ndeltas; i++) {
+		const struct migration_instance_delta *d = &mr->mr_deltas[i];
+
+		if (d->mid_seg_index == base_seg_index &&
+		    d->mid_state == MIGRATION_INSTANCE_INCOMING)
+			incoming++;
+	}
+
+	uint32_t cap = base_seg->ls_nfiles + incoming;
+
+	/*
+	 * Copy scalar fields from the base segment.  ls_files / ls_nfiles
+	 * are populated below.
+	 */
+	*out_view = *base_seg;
+	out_view->ls_files = NULL;
+	out_view->ls_nfiles = 0;
+
+	if (cap == 0)
+		return 0; /* empty layout, no allocation needed */
+
+	out_view->ls_files = calloc(cap, sizeof(*out_view->ls_files));
+	if (!out_view->ls_files)
+		return -ENOMEM;
+
+	uint32_t out_n = 0;
+
+	/*
+	 * Phase 1: copy non-DRAINING base entries.  Skip any base
+	 * position covered by a DRAINING delta (omit-and-replace).
+	 * INTERPOSED is forward-compat per design-doc invariant 3 --
+	 * no slice-6c-x autopilot path emits INTERPOSED, so the
+	 * lookup below will not find one in this slice; if a future
+	 * slice adds them, we keep the base entry (the PS shadow is
+	 * invisible to the LAYOUTGET view by definition).
+	 */
+	for (uint32_t i = 0; i < base_seg->ls_nfiles; i++) {
+		bool draining = false;
+
+		for (uint32_t k = 0; k < mr->mr_ndeltas; k++) {
+			const struct migration_instance_delta *d =
+				&mr->mr_deltas[k];
+
+			if (d->mid_seg_index == base_seg_index &&
+			    d->mid_instance_index == i &&
+			    d->mid_state == MIGRATION_INSTANCE_DRAINING) {
+				draining = true;
+				break;
+			}
+		}
+		if (draining)
+			continue;
+		out_view->ls_files[out_n++] = base_seg->ls_files[i];
+	}
+
+	/*
+	 * Phase 2: append INCOMING entries.  Each INCOMING delta
+	 * carries a fully-populated layout_data_file in
+	 * mid_replacement_file (built by the record's creator).
+	 */
+	for (uint32_t k = 0; k < mr->mr_ndeltas; k++) {
+		const struct migration_instance_delta *d = &mr->mr_deltas[k];
+
+		if (d->mid_seg_index == base_seg_index &&
+		    d->mid_state == MIGRATION_INSTANCE_INCOMING)
+			out_view->ls_files[out_n++] = d->mid_replacement_file;
+	}
+
+	out_view->ls_nfiles = out_n;
+	return 0;
+}
+
+void migration_release_view(struct layout_segment *view)
+{
+	if (!view)
+		return;
+	free(view->ls_files);
+	view->ls_files = NULL;
+	view->ls_nfiles = 0;
+}
+
 struct migration_record *migration_record_find_by_inode(uint64_t ino)
 {
 	if (!migration_ht_ino)

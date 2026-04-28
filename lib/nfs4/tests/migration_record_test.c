@@ -427,6 +427,188 @@ START_TEST(test_fini_drains_outstanding_records)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Slice 6c-x.4: apply-deltas view                                     */
+/* ------------------------------------------------------------------ */
+
+static struct layout_data_file make_ldf(uint32_t dstore_id, uint8_t fh_byte)
+{
+	struct layout_data_file ldf = { 0 };
+
+	ldf.ldf_dstore_id = dstore_id;
+	ldf.ldf_fh_len = 4;
+	ldf.ldf_fh[0] = fh_byte;
+	return ldf;
+}
+
+START_TEST(test_apply_deltas_no_record_returns_base_unchanged)
+{
+	stateid4 s = make_stid(0x0427);
+	struct migration_record *mr = NULL;
+	struct layout_data_file files[2] = { make_ldf(1, 0xAA),
+					     make_ldf(2, 0xBB) };
+	struct layout_segment base = {
+		.ls_offset = 0,
+		.ls_length = 0,
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_nfiles = 2,
+		.ls_files = files,
+	};
+	struct layout_segment view = { 0 };
+
+	ck_assert_int_eq(migration_record_create(&s, fake_sb(), 9001, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	ck_assert_int_eq(migration_apply_deltas_to_segment(&base, 0, mr, &view),
+			 0);
+	ck_assert_uint_eq(view.ls_nfiles, 2);
+	ck_assert_uint_eq(view.ls_files[0].ldf_dstore_id, 1);
+	ck_assert_uint_eq(view.ls_files[1].ldf_dstore_id, 2);
+	migration_release_view(&view);
+	migration_record_abandon(mr);
+}
+END_TEST
+
+START_TEST(test_apply_deltas_draining_omitted_incoming_inserted)
+{
+	stateid4 s = make_stid(0x0427);
+	struct migration_record *mr = NULL;
+	struct layout_data_file files[3] = { make_ldf(1, 0xAA),
+					     make_ldf(2, 0xBB),
+					     make_ldf(3, 0xCC) };
+	struct layout_segment base = {
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_nfiles = 3,
+		.ls_files = files,
+	};
+	/*
+	 * Drain instance 1 (dstore 2), replace with INCOMING dstore 4.
+	 * Expected view: { dstore 1, dstore 3, dstore 4 } -- DRAINING
+	 * is omitted, INCOMING appended.
+	 */
+	struct migration_instance_delta *deltas = calloc(2, sizeof(*deltas));
+
+	deltas[0].mid_seg_index = 0;
+	deltas[0].mid_instance_index = 1;
+	deltas[0].mid_state = MIGRATION_INSTANCE_DRAINING;
+	deltas[0].mid_replacement_delta_idx = 1;
+
+	deltas[1].mid_seg_index = 0;
+	deltas[1].mid_instance_index = 0; /* unused for INCOMING */
+	deltas[1].mid_state = MIGRATION_INSTANCE_INCOMING;
+	deltas[1].mid_replacement_file = make_ldf(4, 0xDD);
+
+	ck_assert_int_eq(migration_record_create(&s, fake_sb(), 9002, "ps", 2,
+						 deltas, 2, 1, &mr),
+			 0);
+
+	struct layout_segment view = { 0 };
+
+	ck_assert_int_eq(migration_apply_deltas_to_segment(&base, 0, mr, &view),
+			 0);
+	ck_assert_uint_eq(view.ls_nfiles, 3);
+	ck_assert_uint_eq(view.ls_files[0].ldf_dstore_id, 1);
+	ck_assert_uint_eq(view.ls_files[1].ldf_dstore_id, 3);
+	ck_assert_uint_eq(view.ls_files[2].ldf_dstore_id, 4);
+	migration_release_view(&view);
+	migration_record_abandon(mr);
+}
+END_TEST
+
+START_TEST(test_apply_deltas_pure_drain_no_replacement)
+{
+	stateid4 s = make_stid(0x0427);
+	struct migration_record *mr = NULL;
+	struct layout_data_file files[2] = { make_ldf(1, 0xAA),
+					     make_ldf(2, 0xBB) };
+	struct layout_segment base = {
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_nfiles = 2,
+		.ls_files = files,
+	};
+	struct migration_instance_delta *deltas = calloc(1, sizeof(*deltas));
+
+	deltas[0].mid_seg_index = 0;
+	deltas[0].mid_instance_index = 0;
+	deltas[0].mid_state = MIGRATION_INSTANCE_DRAINING;
+	deltas[0].mid_replacement_delta_idx = UINT32_MAX; /* no pair */
+
+	ck_assert_int_eq(migration_record_create(&s, fake_sb(), 9003, "ps", 2,
+						 deltas, 1, 1, &mr),
+			 0);
+
+	struct layout_segment view = { 0 };
+
+	ck_assert_int_eq(migration_apply_deltas_to_segment(&base, 0, mr, &view),
+			 0);
+	ck_assert_uint_eq(view.ls_nfiles, 1);
+	ck_assert_uint_eq(view.ls_files[0].ldf_dstore_id, 2);
+	migration_release_view(&view);
+	migration_record_abandon(mr);
+}
+END_TEST
+
+START_TEST(test_apply_deltas_other_segment_untouched)
+{
+	stateid4 s = make_stid(0x0427);
+	struct migration_record *mr = NULL;
+	struct layout_data_file files[2] = { make_ldf(1, 0xAA),
+					     make_ldf(2, 0xBB) };
+	struct layout_segment base = {
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_nfiles = 2,
+		.ls_files = files,
+	};
+	/* Delta targets segment index 5; we apply to base at index 0. */
+	struct migration_instance_delta *deltas = calloc(1, sizeof(*deltas));
+
+	deltas[0].mid_seg_index = 5;
+	deltas[0].mid_instance_index = 0;
+	deltas[0].mid_state = MIGRATION_INSTANCE_DRAINING;
+	deltas[0].mid_replacement_delta_idx = UINT32_MAX;
+
+	ck_assert_int_eq(migration_record_create(&s, fake_sb(), 9004, "ps", 2,
+						 deltas, 1, 1, &mr),
+			 0);
+
+	struct layout_segment view = { 0 };
+
+	ck_assert_int_eq(migration_apply_deltas_to_segment(&base, 0, mr, &view),
+			 0);
+	/* No deltas matched seg_index 0 -- view equals base. */
+	ck_assert_uint_eq(view.ls_nfiles, 2);
+	ck_assert_uint_eq(view.ls_files[0].ldf_dstore_id, 1);
+	ck_assert_uint_eq(view.ls_files[1].ldf_dstore_id, 2);
+	migration_release_view(&view);
+	migration_record_abandon(mr);
+}
+END_TEST
+
+START_TEST(test_apply_deltas_empty_input_segment)
+{
+	stateid4 s = make_stid(0x0427);
+	struct migration_record *mr = NULL;
+	struct layout_segment base = {
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_nfiles = 0,
+		.ls_files = NULL,
+	};
+
+	ck_assert_int_eq(migration_record_create(&s, fake_sb(), 9005, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+
+	struct layout_segment view = { 0 };
+
+	ck_assert_int_eq(migration_apply_deltas_to_segment(&base, 0, mr, &view),
+			 0);
+	ck_assert_uint_eq(view.ls_nfiles, 0);
+	ck_assert_ptr_null(view.ls_files);
+	migration_release_view(&view); /* idempotent on zero */
+	migration_record_abandon(mr);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -454,6 +636,12 @@ static Suite *migration_record_suite(void)
 	tcase_add_test(tc, test_reaper_keeps_recent_record);
 	tcase_add_test(tc, test_reaper_skips_zero_progress);
 	tcase_add_test(tc, test_fini_drains_outstanding_records);
+	tcase_add_test(tc, test_apply_deltas_no_record_returns_base_unchanged);
+	tcase_add_test(tc,
+		       test_apply_deltas_draining_omitted_incoming_inserted);
+	tcase_add_test(tc, test_apply_deltas_pure_drain_no_replacement);
+	tcase_add_test(tc, test_apply_deltas_other_segment_untouched);
+	tcase_add_test(tc, test_apply_deltas_empty_input_segment);
 	suite_add_tcase(s, tc);
 
 	return s;

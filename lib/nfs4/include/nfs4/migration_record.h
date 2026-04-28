@@ -43,6 +43,7 @@
 #include <urcu/call-rcu.h>
 
 #include "nfsv42_xdr.h"
+#include "reffs/layout_segment.h"
 
 /*
  * Mirrors REFFS_CONFIG_MAX_PRINCIPAL / _TLS_FINGERPRINT /
@@ -115,6 +116,14 @@ struct migration_instance_delta {
 	 * reduction).
 	 */
 	uint32_t mid_replacement_delta_idx;
+	/*
+	 * For INCOMING: the new layout_data_file the LAYOUTGET
+	 * view-build path inserts when computing the during-migration
+	 * view (slice 6c-x.4).  Built by the migration record's
+	 * creator (slice 6c-y autopilot).  Unused for DRAINING /
+	 * STABLE / INTERPOSED -- zero-init is fine.
+	 */
+	struct layout_data_file mid_replacement_file;
 };
 
 /*
@@ -349,5 +358,55 @@ void migration_record_put(struct migration_record *mr);
  */
 void migration_record_reaper_scan(uint64_t max_silence_ns,
 				  uint64_t now_mono_ns);
+
+/* ------------------------------------------------------------------ */
+/* Slice 6c-x.4: layout-build "during-migration view"                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * migration_apply_deltas_to_segment -- compute the during-migration
+ * view of `base_seg` per the omit-and-replace policy.
+ *
+ * For each instance position in base_seg->ls_files:
+ *   - If a DRAINING delta in `mr` matches (base_seg_index, i),
+ *     omit this position from the view.
+ *   - Otherwise copy the base entry to the view.
+ * Then, for each INCOMING delta in `mr` matching base_seg_index,
+ * append `mid_replacement_file` to the view.
+ *
+ * STABLE deltas are no-ops at this scope (they describe the
+ * baseline; LAYOUTGET emits the base entry unchanged whether the
+ * record carries a STABLE delta for the slot or not).
+ *
+ * INTERPOSED deltas are NOT consumed -- they require PS-as-DS
+ * plumbing that is out of scope for slice 6c-x.  An INTERPOSED
+ * delta in the record is silently passed through as a STABLE-
+ * equivalent (the base entry stays); record builders in this
+ * slice MUST NOT emit INTERPOSED.
+ *
+ * Out parameters (caller responsibilities):
+ *   - `*out_view` is populated with the view's scalar fields and
+ *     a freshly-malloc'd `ls_files` array of length `out_view->ls_nfiles`.
+ *   - The caller MUST call migration_release_view(out_view) once
+ *     it has finished encoding the layout body.
+ *
+ * Returns 0 on success, -ENOMEM on allocation failure.
+ *
+ * Thread-safe: reads only immutable record fields (deltas are
+ * frozen after the record is hashed per design-doc invariant 3).
+ * No RCU section is taken; the caller's existing record-find ref
+ * keeps the record alive for the duration of this call.
+ */
+int migration_apply_deltas_to_segment(const struct layout_segment *base_seg,
+				      uint32_t base_seg_index,
+				      const struct migration_record *mr,
+				      struct layout_segment *out_view);
+
+/*
+ * migration_release_view -- free the view's `ls_files` array.
+ * Idempotent on a zero-initialized view.  Does NOT touch
+ * `view->ls_files` if it is NULL.
+ */
+void migration_release_view(struct layout_segment *view);
 
 #endif /* _REFFS_NFS4_MIGRATION_RECORD_H */
