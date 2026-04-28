@@ -31,7 +31,9 @@
 #include "reffs/task.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
+#include "nfs4/migration_record.h"
 #include "nfs4/ops.h"
+#include "nfs4/proxy_stateid.h"
 #include "nfs4/stateid.h"
 #include "nfs4_test_harness.h"
 
@@ -856,6 +858,333 @@ START_TEST(test_registered_ps_identity_eq_both_unregistered)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* PROXY_DONE / PROXY_CANCEL handlers (slice 6c-x.3)                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Helper: stamp the calling client as a registered PS with the given
+ * canonical identity bytes.  Mirrors what proxy_registration.c does on
+ * a successful PROXY_REGISTRATION but lets tests skip the wire-format
+ * dance.
+ */
+static void register_ps_identity(struct nfs4_client *nc, const char *id_bytes,
+				 uint32_t id_len)
+{
+	memcpy(nc->nc_ps_registration_id, id_bytes, id_len);
+	nc->nc_ps_registration_id_len = id_len;
+	atomic_store_explicit(&nc->nc_is_registered_ps, true,
+			      memory_order_release);
+}
+
+/*
+ * Helper: prep the compound to dispatch PROXY_DONE.  Sets the op slot,
+ * arms args, and parks PUTFH-equivalent state on c_curr_nfh so the FH
+ * matches the migration record.
+ */
+static PROXY_DONE4args *pd_setup(struct pr_ctx *cm, const stateid4 *stid,
+				 nfsstat4 status, uint64_t ino)
+{
+	cm->compound->c_args->argarray.argarray_val[0].argop = OP_PROXY_DONE;
+	cm->compound->c_res->resarray.resarray_val[0].resop = OP_PROXY_DONE;
+	PROXY_DONE4args *args = &cm->compound->c_args->argarray.argarray_val[0]
+					 .nfs_argop4_u.opproxy_done;
+
+	args->pd_stateid = *stid;
+	args->pd_status = status;
+	cm->compound->c_curr_nfh.nfh_ino = ino;
+	cm->compound->c_curr_sb = NULL; /* validate skips sb cmp when NULL */
+	return args;
+}
+
+static PROXY_CANCEL4args *pc_setup(struct pr_ctx *cm, const stateid4 *stid,
+				   uint64_t ino)
+{
+	cm->compound->c_args->argarray.argarray_val[0].argop = OP_PROXY_CANCEL;
+	cm->compound->c_res->resarray.resarray_val[0].resop = OP_PROXY_CANCEL;
+	PROXY_CANCEL4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opproxy_cancel;
+
+	args->pc_stateid = *stid;
+	cm->compound->c_curr_nfh.nfh_ino = ino;
+	cm->compound->c_curr_sb = NULL;
+	return args;
+}
+
+static PROXY_DONE4res *pd_res(struct pr_ctx *cm)
+{
+	return &cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opproxy_done;
+}
+
+static PROXY_CANCEL4res *pc_res(struct pr_ctx *cm)
+{
+	return &cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opproxy_cancel;
+}
+
+START_TEST(test_proxy_done_not_registered_returns_perm)
+{
+	stateid4 stid;
+
+	ck_assert_int_eq(proxy_stateid_alloc(0x0001, &stid), 0);
+
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+
+	pd_setup(cm, &stid, NFS4_OK, 5001);
+	nfs4_op_proxy_done(cm->compound);
+	ck_assert_int_eq(pd_res(cm)->pdr_status, NFS4ERR_PERM);
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_done_stale_boot_returns_stale_stateid)
+{
+	stateid4 stid;
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+	ck_assert_int_eq(migration_record_init(), 0);
+
+	/*
+	 * Mint a stateid for a boot_seq that's not the current
+	 * server's boot_seq.  The current server's boot_seq is
+	 * non-zero (it bumps on every init); using 0 guarantees a
+	 * mismatch.
+	 */
+	ck_assert_int_eq(proxy_stateid_alloc(0xFFFE, &stid), 0);
+	pd_setup(cm, &stid, NFS4_OK, 5002);
+	nfs4_op_proxy_done(cm->compound);
+	ck_assert_int_eq(pd_res(cm)->pdr_status, NFS4ERR_STALE_STATEID);
+
+	migration_record_fini();
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_done_unknown_stateid_returns_bad_stateid)
+{
+	stateid4 stid;
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+	struct server_state *ss = cm->compound->c_server_state;
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+	ck_assert_int_eq(migration_record_init(), 0);
+
+	ck_assert_int_eq(proxy_stateid_alloc(server_boot_seq(ss), &stid), 0);
+	/* No record for this stateid -> NFS4ERR_BAD_STATEID. */
+	pd_setup(cm, &stid, NFS4_OK, 5003);
+	nfs4_op_proxy_done(cm->compound);
+	ck_assert_int_eq(pd_res(cm)->pdr_status, NFS4ERR_BAD_STATEID);
+
+	migration_record_fini();
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_done_owner_mismatch_returns_perm)
+{
+	stateid4 stid;
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+	struct server_state *ss = cm->compound->c_server_state;
+	struct migration_record *mr = NULL;
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps-A", 4);
+	ck_assert_int_eq(migration_record_init(), 0);
+
+	ck_assert_int_eq(proxy_stateid_alloc(server_boot_seq(ss), &stid), 0);
+	/* Create record OWNED BY ps-B. */
+	ck_assert_int_eq(migration_record_create(&stid, NULL, 5004, "ps-B", 4,
+						 NULL, 0, 1, &mr),
+			 0);
+	pd_setup(cm, &stid, NFS4_OK, 5004);
+	nfs4_op_proxy_done(cm->compound);
+	ck_assert_int_eq(pd_res(cm)->pdr_status, NFS4ERR_PERM);
+	/* Record stays intact (find returns it). */
+	struct migration_record *found =
+		migration_record_find_by_stateid(&stid);
+
+	ck_assert_ptr_eq(found, mr);
+	migration_record_put(found);
+	migration_record_abandon(mr);
+	migration_record_fini();
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_done_file_mismatch_returns_bad_stateid)
+{
+	stateid4 stid;
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+	struct server_state *ss = cm->compound->c_server_state;
+	struct migration_record *mr = NULL;
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+	ck_assert_int_eq(migration_record_init(), 0);
+
+	ck_assert_int_eq(proxy_stateid_alloc(server_boot_seq(ss), &stid), 0);
+	ck_assert_int_eq(migration_record_create(&stid, NULL, 5005, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	/* PUTFH a DIFFERENT file. */
+	pd_setup(cm, &stid, NFS4_OK, 9999);
+	nfs4_op_proxy_done(cm->compound);
+	ck_assert_int_eq(pd_res(cm)->pdr_status, NFS4ERR_BAD_STATEID);
+
+	migration_record_abandon(mr);
+	migration_record_fini();
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_done_old_seqid_returns_old_stateid)
+{
+	stateid4 stid;
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+	struct server_state *ss = cm->compound->c_server_state;
+	struct migration_record *mr = NULL;
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+	ck_assert_int_eq(migration_record_init(), 0);
+
+	ck_assert_int_eq(proxy_stateid_alloc(server_boot_seq(ss), &stid), 0);
+	ck_assert_int_eq(migration_record_create(&stid, NULL, 5006, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	/*
+	 * Caller presents an OLDER seqid.  The record was created with
+	 * stid->seqid (1); presenting 0 mimics a stale renewal slot.
+	 */
+	stid.seqid = 0;
+	pd_setup(cm, &stid, NFS4_OK, 5006);
+	nfs4_op_proxy_done(cm->compound);
+	ck_assert_int_eq(pd_res(cm)->pdr_status, NFS4ERR_OLD_STATEID);
+
+	migration_record_abandon(mr);
+	migration_record_fini();
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_done_ok_commits_and_unhashes)
+{
+	stateid4 stid;
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+	struct server_state *ss = cm->compound->c_server_state;
+	struct migration_record *mr = NULL;
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+	ck_assert_int_eq(migration_record_init(), 0);
+
+	ck_assert_int_eq(proxy_stateid_alloc(server_boot_seq(ss), &stid), 0);
+	ck_assert_int_eq(migration_record_create(&stid, NULL, 5007, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	pd_setup(cm, &stid, NFS4_OK, 5007);
+	nfs4_op_proxy_done(cm->compound);
+	ck_assert_int_eq(pd_res(cm)->pdr_status, NFS4_OK);
+
+	/* Record is unhashed after commit. */
+	ck_assert_ptr_null(migration_record_find_by_stateid(&stid));
+	ck_assert_ptr_null(migration_record_find_by_inode(5007));
+
+	migration_record_fini();
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_done_fail_abandons)
+{
+	stateid4 stid;
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+	struct server_state *ss = cm->compound->c_server_state;
+	struct migration_record *mr = NULL;
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+	ck_assert_int_eq(migration_record_init(), 0);
+
+	ck_assert_int_eq(proxy_stateid_alloc(server_boot_seq(ss), &stid), 0);
+	ck_assert_int_eq(migration_record_create(&stid, NULL, 5008, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	pd_setup(cm, &stid, NFS4ERR_DELAY, 5008);
+	nfs4_op_proxy_done(cm->compound);
+	ck_assert_int_eq(pd_res(cm)->pdr_status, NFS4_OK);
+	/* Record gone (abandon path). */
+	ck_assert_ptr_null(migration_record_find_by_stateid(&stid));
+
+	migration_record_fini();
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_cancel_abandons)
+{
+	stateid4 stid;
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+	struct server_state *ss = cm->compound->c_server_state;
+	struct migration_record *mr = NULL;
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+	ck_assert_int_eq(migration_record_init(), 0);
+
+	ck_assert_int_eq(proxy_stateid_alloc(server_boot_seq(ss), &stid), 0);
+	ck_assert_int_eq(migration_record_create(&stid, NULL, 5009, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	pc_setup(cm, &stid, 5009);
+	nfs4_op_proxy_cancel(cm->compound);
+	ck_assert_int_eq(pc_res(cm)->pcr_status, NFS4_OK);
+	ck_assert_ptr_null(migration_record_find_by_stateid(&stid));
+
+	migration_record_fini();
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_done_idempotent_returns_bad_stateid_on_repeat)
+{
+	stateid4 stid;
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+	struct server_state *ss = cm->compound->c_server_state;
+	struct migration_record *mr = NULL;
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+	ck_assert_int_eq(migration_record_init(), 0);
+
+	ck_assert_int_eq(proxy_stateid_alloc(server_boot_seq(ss), &stid), 0);
+	ck_assert_int_eq(migration_record_create(&stid, NULL, 5010, "ps", 2,
+						 NULL, 0, 1, &mr),
+			 0);
+	pd_setup(cm, &stid, NFS4_OK, 5010);
+	nfs4_op_proxy_done(cm->compound);
+	ck_assert_int_eq(pd_res(cm)->pdr_status, NFS4_OK);
+
+	/*
+	 * Second DONE: the record is gone (commit unhashed it), so the
+	 * find step in proxy_record_validate returns NULL, surfaces as
+	 * NFS4ERR_BAD_STATEID per the priority-ordered rule.
+	 */
+	pd_setup(cm, &stid, NFS4_OK, 5010);
+	nfs4_op_proxy_done(cm->compound);
+	ck_assert_int_eq(pd_res(cm)->pdr_status, NFS4ERR_BAD_STATEID);
+
+	migration_record_fini();
+	pr_free(cm);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -890,6 +1219,17 @@ static Suite *proxy_registration_suite(void)
 	tcase_add_test(tc, test_registered_ps_identity_eq_same_registration_id);
 	tcase_add_test(tc, test_registered_ps_identity_eq_different_principal);
 	tcase_add_test(tc, test_registered_ps_identity_eq_both_unregistered);
+	tcase_add_test(tc, test_proxy_done_not_registered_returns_perm);
+	tcase_add_test(tc, test_proxy_done_stale_boot_returns_stale_stateid);
+	tcase_add_test(tc, test_proxy_done_unknown_stateid_returns_bad_stateid);
+	tcase_add_test(tc, test_proxy_done_owner_mismatch_returns_perm);
+	tcase_add_test(tc, test_proxy_done_file_mismatch_returns_bad_stateid);
+	tcase_add_test(tc, test_proxy_done_old_seqid_returns_old_stateid);
+	tcase_add_test(tc, test_proxy_done_ok_commits_and_unhashes);
+	tcase_add_test(tc, test_proxy_done_fail_abandons);
+	tcase_add_test(tc, test_proxy_cancel_abandons);
+	tcase_add_test(
+		tc, test_proxy_done_idempotent_returns_bad_stateid_on_repeat);
 	suite_add_tcase(s, tc);
 
 	return s;

@@ -152,6 +152,20 @@ struct migration_record {
 	uint32_t mr_owner_reg_len; /* registration_id length; or strlen()
 				    * for principal/fingerprint */
 
+	/*
+	 * Most recently issued seqid for this proxy_stateid.  Bumped
+	 * on every renewal (slice 6c-y / 6c-z); compared against the
+	 * caller's pd_stateid.seqid in the PROXY_DONE / PROXY_CANCEL
+	 * priority-ordered authorization rule (-> NFS4ERR_OLD_STATEID
+	 * on mismatch, per RFC 8881 S8.2.4).
+	 *
+	 * _Atomic uint32_t because the renewal path writes from the
+	 * PROXY_PROGRESS handler thread while the DONE / CANCEL
+	 * handlers read concurrently.  Initialized to the stateid's
+	 * minted seqid (1 from proxy_stateid_alloc).
+	 */
+	_Atomic uint32_t mr_seqid;
+
 	/* Lifecycle / liveness. */
 	_Atomic enum migration_phase mr_phase;
 	/*

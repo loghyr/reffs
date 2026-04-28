@@ -45,6 +45,8 @@
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/client.h"
+#include "nfs4/migration_record.h"
+#include "nfs4/proxy_stateid.h"
 
 /*
  * Returns true if either identity context (GSS principal OR TLS
@@ -303,37 +305,136 @@ uint32_t nfs4_op_proxy_progress(struct compound *compound)
 	return 0;
 }
 
-uint32_t nfs4_op_proxy_done(struct compound *compound)
+/*
+ * Priority-ordered authorization rule for PROXY_DONE / PROXY_CANCEL,
+ * per draft-haynes-nfsv4-flexfiles-v2-data-mover sec-PROXY_DONE:
+ *
+ *   1. Caller's session is registered-PS  -> NFS4ERR_PERM
+ *   2. stateid.other matches current boot_seq  -> NFS4ERR_STALE_STATEID
+ *   3. Migration record exists for this stateid  -> NFS4ERR_BAD_STATEID
+ *   4. Caller's registered-PS identity matches record.owner_reg
+ *      -> NFS4ERR_PERM
+ *   5. Current FH matches record.file_FH  -> NFS4ERR_BAD_STATEID
+ *   6. seqid matches the record's most recently issued seqid
+ *      -> NFS4ERR_OLD_STATEID
+ *
+ * On all-checks-pass returns NFS4_OK and *out_mr is the
+ * ref-bumped migration record (caller drops via
+ * migration_record_put after applying side effects).  On any
+ * failure returns the matching nfsstat4 and *out_mr is NULL.
+ */
+static nfsstat4 proxy_record_validate(struct compound *compound,
+				      const stateid4 *stid,
+				      struct migration_record **out_mr)
 {
-	PROXY_DONE4res *res = NFS4_OP_RES_SETUP(compound, opproxy_done);
+	*out_mr = NULL;
+
+	struct nfs4_client *nc = compound->c_nfs4_client;
+
+	if (!nc || !atomic_load_explicit(&nc->nc_is_registered_ps,
+					 memory_order_acquire))
+		return NFS4ERR_PERM;
+
+	struct server_state *ss = compound->c_server_state;
+	uint16_t boot_seq = ss ? server_boot_seq(ss) : 0;
+
+	if (proxy_stateid_is_stale(stid, boot_seq))
+		return NFS4ERR_STALE_STATEID;
+
+	struct migration_record *mr = migration_record_find_by_stateid(stid);
+
+	if (!mr)
+		return NFS4ERR_BAD_STATEID;
+
+	uint32_t caller_len = 0;
+	const char *caller_id =
+		nfs4_client_registered_ps_identity(nc, &caller_len);
+
+	if (!caller_id || caller_len != mr->mr_owner_reg_len ||
+	    memcmp(caller_id, mr->mr_owner_reg, caller_len) != 0) {
+		migration_record_put(mr);
+		return NFS4ERR_PERM;
+	}
 
 	/*
-	 * Slice 6c-w: stub.  Real handler lands in slice 6c-x along
-	 * with the per-instance migration delta machinery and the
-	 * priority-ordered authorization rule (registered-PS identity
-	 * match on the migration record's owner_reg, NOT clientid4)
-	 * specified in the design doc revision
-	 * (.claude/design/proxy-server-phase6c-revision.md).
-	 * pd_stateid is now a proxy_stateid4 (typedef stateid4) per
-	 * the same revision.
+	 * File-FH match: PUTFH precondition.  The compound's current
+	 * NFH carries (sb_id, ino); the migration record holds (sb,
+	 * ino) -- compare both to fully identify the file.  An empty
+	 * NFH (no PUTFH preceded) reads as nfh_ino == 0, which can't
+	 * match a real migration's mr_ino.
 	 */
-	res->pdr_status = NFS4ERR_NOTSUPP;
+	if (compound->c_curr_nfh.nfh_ino != mr->mr_ino ||
+	    (compound->c_curr_sb && compound->c_curr_sb != mr->mr_sb)) {
+		migration_record_put(mr);
+		return NFS4ERR_BAD_STATEID;
+	}
+
+	uint32_t cur_seqid =
+		atomic_load_explicit(&mr->mr_seqid, memory_order_acquire);
+
+	if (stid->seqid != cur_seqid) {
+		migration_record_put(mr);
+		return NFS4ERR_OLD_STATEID;
+	}
+
+	*out_mr = mr;
+	return NFS4_OK;
+}
+
+uint32_t nfs4_op_proxy_done(struct compound *compound)
+{
+	PROXY_DONE4args *args = NFS4_OP_ARG_SETUP(compound, opproxy_done);
+	PROXY_DONE4res *res = NFS4_OP_RES_SETUP(compound, opproxy_done);
+	struct migration_record *mr = NULL;
+
+	res->pdr_status =
+		proxy_record_validate(compound, &args->pd_stateid, &mr);
+	if (res->pdr_status != NFS4_OK)
+		return 0;
+
+	/*
+	 * Side effects keyed off pd_status:
+	 *
+	 *   NFS4_OK    -> commit the migration (transitions phase to
+	 *                 COMMITTED and unhashes the record).  Slice
+	 *                 6c-x.4 wires the actual per-instance delta
+	 *                 application onto i_layout_segments; slice
+	 *                 6c-x.5 issues CB_LAYOUTRECALL on DRAINING
+	 *                 slot removal.  This slice ships the protocol
+	 *                 surface + record-state mutation only.
+	 *   non-OK     -> abandon the migration (rollback).  No CB
+	 *                 needed: external clients never saw the
+	 *                 post-image (omit-and-replace policy delays
+	 *                 the layout flip until after the recall).
+	 *
+	 * commit / abandon return -EALREADY if the record is already
+	 * in a terminal phase.  That is a benign double-call (e.g., the
+	 * reaper raced ahead of the PS's PROXY_DONE); we still return
+	 * NFS4_OK to the PS so its state machine ticks forward.
+	 */
+	if (args->pd_status == NFS4_OK)
+		(void)migration_record_commit(mr);
+	else
+		(void)migration_record_abandon(mr);
+
+	migration_record_put(mr);
+	res->pdr_status = NFS4_OK;
 	return 0;
 }
 
 uint32_t nfs4_op_proxy_cancel(struct compound *compound)
 {
+	PROXY_CANCEL4args *args = NFS4_OP_ARG_SETUP(compound, opproxy_cancel);
 	PROXY_CANCEL4res *res = NFS4_OP_RES_SETUP(compound, opproxy_cancel);
+	struct migration_record *mr = NULL;
 
-	/*
-	 * Slice 6c-w: stub.  Real handler lands in slice 6c-x; resolves
-	 * the in-flight migration record by proxy_stateid (typedef
-	 * stateid4 per the 6c-x design revision) and is idempotent --
-	 * NFS4ERR_BAD_STATEID for unknown stateids in the current boot,
-	 * NFS4ERR_STALE_STATEID for stateids minted in a prior boot,
-	 * and NFS4_OK for the "found and dropped" case so the PS does
-	 * not need to track ack state across retries.
-	 */
-	res->pcr_status = NFS4ERR_NOTSUPP;
+	res->pcr_status =
+		proxy_record_validate(compound, &args->pc_stateid, &mr);
+	if (res->pcr_status != NFS4_OK)
+		return 0;
+
+	(void)migration_record_abandon(mr);
+	migration_record_put(mr);
+	res->pcr_status = NFS4_OK;
 	return 0;
 }

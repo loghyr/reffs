@@ -364,6 +364,7 @@ int migration_record_create(const stateid4 *stid, struct super_block *sb,
 	memcpy(mr->mr_owner_reg, owner_reg, owner_reg_len);
 	mr->mr_owner_reg_len = owner_reg_len;
 
+	atomic_store_explicit(&mr->mr_seqid, stid->seqid, memory_order_relaxed);
 	atomic_store_explicit(&mr->mr_phase, MIGRATION_PHASE_PENDING,
 			      memory_order_relaxed);
 	atomic_store_explicit(&mr->mr_last_progress_mono_ns,
