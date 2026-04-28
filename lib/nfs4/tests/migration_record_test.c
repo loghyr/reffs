@@ -28,6 +28,7 @@
 #include "nfs4/proxy_stateid.h"
 #include "reffs/migration_persist.h"
 #include "reffs/persist_ops.h"
+#include "reffs/super_block.h"
 #include "libreffs_test.h"
 
 /* ------------------------------------------------------------------ */
@@ -53,15 +54,23 @@ static stateid4 make_stid(uint16_t boot_seq)
 }
 
 /*
- * Tests don't need a real super_block for table-level primitives;
- * a unique-pointer placeholder is sufficient since the field is
- * captured-but-unused at this slice (slice 6c-x.4 will read it).
+ * A real-enough super_block for the table-level tests.  Pre-Tier-2
+ * the helper returned a 1-byte sentinel cast to super_block * --
+ * sufficient when the only access was the captured-pointer compare.
+ * After mr_sb_id propagation (Tier 2 #2) migration_record_create
+ * dereferences sb->sb_id, so the fake must have a real sb_id field
+ * at the right offset.  Statically-zero-initialised covers the rest
+ * of the struct; tests don't touch any other field.  fake_sb_id()
+ * is the test-fixture sb_id callers can compare against in
+ * persistence round-trip assertions.
  */
+#define FAKE_SB_ID 0x1234ULL
+
 static struct super_block *fake_sb(void)
 {
-	static char sentinel;
+	static struct super_block sb = { .sb_id = FAKE_SB_ID };
 
-	return (struct super_block *)&sentinel;
+	return &sb;
 }
 
 /* ------------------------------------------------------------------ */

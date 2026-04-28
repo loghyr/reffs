@@ -150,6 +150,18 @@ struct migration_record {
 	uint8_t mr_stateid_other[NFS4_OTHER_SIZE];
 	uint64_t mr_ino;
 	struct super_block *mr_sb; /* sb pointer, captured at register time */
+	/*
+	 * mr_sb_id mirrors mr_sb->sb_id at register time and survives
+	 * the persistence reload path where mr_sb is NULL (the on-disk
+	 * format carries mrp_sb_id but the in-memory record has no
+	 * super_block * yet -- the sb table is rebuilt by sb_registry
+	 * load on a different schedule).  Auth fallback at PROXY_DONE
+	 * / PROXY_CANCEL time uses (mr_sb_id, mr_ino) to match a
+	 * stateid against a record when c_curr_sb is NULL or has not
+	 * yet resolved through the in-memory pointer.  Slice 6c-zz
+	 * reviewer note W2.
+	 */
+	uint64_t mr_sb_id;
 
 	/*
 	 * Owner identity (registered-PS canonical principal -- selection

@@ -377,6 +377,7 @@ int migration_record_create(const stateid4 *stid, struct super_block *sb,
 	memcpy(mr->mr_stateid_other, stid->other, NFS4_OTHER_SIZE);
 	mr->mr_ino = ino;
 	mr->mr_sb = sb;
+	mr->mr_sb_id = sb ? sb->sb_id : 0;
 
 	memcpy(mr->mr_owner_reg, owner_reg, owner_reg_len);
 	mr->mr_owner_reg_len = owner_reg_len;
@@ -642,7 +643,13 @@ int migration_record_to_persistent(const struct migration_record *mr,
 	       MR_PERSIST_NFS4_OTHER_SIZE);
 	out->mrp_seqid =
 		atomic_load_explicit(&mr->mr_seqid, memory_order_relaxed);
-	out->mrp_sb_id = mr->mr_sb ? mr->mr_sb->sb_id : 0;
+	/*
+	 * Use mr_sb_id (set at register time and preserved across
+	 * the persistence reload path) rather than dereferencing
+	 * mr_sb here.  After a reload mr_sb is NULL but mr_sb_id
+	 * still carries the original sb identity.
+	 */
+	out->mrp_sb_id = mr->mr_sb_id;
 	out->mrp_ino = mr->mr_ino;
 	out->mrp_owner_reg_len = mr->mr_owner_reg_len;
 	if (mr->mr_owner_reg_len > 0)
@@ -736,6 +743,14 @@ int migration_record_from_persistent(
 		free(deltas);
 		return ret;
 	}
+	/*
+	 * Patch in the persisted sb_id so PROXY_DONE / PROXY_CANCEL
+	 * lookups still see the right sb identity even though the
+	 * in-memory super_block * is NULL on the reload path.  Slice
+	 * 6c-zz reviewer note W2.
+	 */
+	mr->mr_sb_id = mrp->mrp_sb_id;
+
 	/* deltas[] ownership transferred into mr by create. */
 	return 0;
 }

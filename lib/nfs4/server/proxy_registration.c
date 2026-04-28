@@ -501,11 +501,31 @@ static nfsstat4 proxy_record_validate(struct compound *compound,
 	 * ino) -- compare both to fully identify the file.  An empty
 	 * NFH (no PUTFH preceded) reads as nfh_ino == 0, which can't
 	 * match a real migration's mr_ino.
+	 *
+	 * Two sb-comparison shapes, depending on whether the record
+	 * was created in-memory or reloaded from disk:
+	 *   - In-memory record (mr_sb non-NULL): pointer compare
+	 *     against the compound's current sb.
+	 *   - Reloaded record (mr_sb == NULL after persistence
+	 *     reload, slice 6c-zz): fall back to mr_sb_id, which
+	 *     was preserved through the round-trip via mrp_sb_id.
+	 *     This is the auth-fallback path slice 6c-zz reviewer
+	 *     note W2 flagged as missing.
 	 */
-	if (compound->c_curr_nfh.nfh_ino != mr->mr_ino ||
-	    (compound->c_curr_sb && compound->c_curr_sb != mr->mr_sb)) {
+	if (compound->c_curr_nfh.nfh_ino != mr->mr_ino) {
 		migration_record_put(mr);
 		return NFS4ERR_BAD_STATEID;
+	}
+	if (compound->c_curr_sb) {
+		bool sb_mismatch =
+			mr->mr_sb ?
+				(compound->c_curr_sb != mr->mr_sb) :
+				(compound->c_curr_sb->sb_id != mr->mr_sb_id);
+
+		if (sb_mismatch) {
+			migration_record_put(mr);
+			return NFS4ERR_BAD_STATEID;
+		}
 	}
 
 	uint32_t cur_seqid =
