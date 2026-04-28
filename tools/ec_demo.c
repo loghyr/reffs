@@ -6,7 +6,7 @@
 #endif
 
 /*
- * EC demo client — command-line tool for erasure-coded pNFS I/O.
+ * EC demo client -- command-line tool for erasure-coded pNFS I/O.
  *
  * Usage:
  *   ec_demo write  --mds HOST --file NAME --input FILE  [--k K] [--m M]
@@ -16,6 +16,20 @@
  * Connects to the MDS via NFSv4.2, gets a Flex Files layout, resolves
  * data servers via GETDEVICEINFO, then does RS-encoded I/O directly
  * to the data servers via NFSv3.
+ *
+ * Logging posture: this is a CLI demo, not a daemon, so user-facing
+ * progress and error lines go through fprintf(stderr, ...) -- no
+ * daemon-style timestamps or trace sink.  reffs's LOG/TRACE macros
+ * are server-oriented (LOG to stderr with timestamp + line number,
+ * TRACE to a separate trace file).  We deliberately do not use them
+ * here; ec_demo's stderr is the user's tty.
+ *
+ * NOT_NOW_BROWN_COW: if benchmark introspection ever wants per-op
+ * timing inside ec_demo, add a -v / -q flag and route the new lines
+ * through TRACE() with a dedicated category, leaving the existing
+ * fprintf progress messages intact.  Plan A follow-up #5 was filed
+ * against this question and explicitly closed (Tier 5 cleanup pass)
+ * with "no change" -- the current posture is correct for a demo CLI.
  */
 
 #include <errno.h>
