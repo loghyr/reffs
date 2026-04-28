@@ -9,15 +9,19 @@
 # directly using deviceids in the forwarded layout.
 #
 # Codecs tested (skips mojette-sys per task #147):
-#   put          v1 plain mirror across all 6 DSes
-#   stripe k=6   v1 striped (no parity)
-#   put          v2 plain mirror via CHUNK ops
-#   rs k=4 m=2   v2 Reed-Solomon
+#   /ffv1-csm/      v1 plain mirror across all 6 DSes
+#   /ffv1-stripes/  v1 striped k=6 m=0 (no parity)
+#   /ffv2-csm/      v2 plain mirror via CHUNK ops
+#   /ffv2-rs/       v2 Reed-Solomon k=4 m=2
 #
-# Bare filenames at the MDS root SB (no per-SB paths) -- the root SB
-# is configured by setup-sbs.sh / mds-setup with layout-types=both,
-# dstores=1..6, stripe-unit=4096.  This sidesteps task #149
-# (per-listener multi-SB mount-crossing).
+# Per-SB paths -- each codec lands on its own SB so the matrix
+# exercises the listener mount-crossing path through PS instead of
+# the root-SB sidestep that the early matrix used.  setup-sbs.sh
+# configures each SB with the right layout-types / dstores /
+# stripe-unit before this script runs.  The mount-crossing path
+# itself is unit-pinned by lib/nfs4/ps/tests/ps_sb_alloc_test.c
+# test_lookup_mount_cross_without_root_binding (task #149's
+# regression test).
 #
 # Usage: run-ps-demo-codecs.sh <ec_demo_path> <ps_a_host> <ps_b_host>
 
@@ -40,12 +44,13 @@ declare -a ORDER
 
 run_codec() {
     local label="$1"
-    local layout="$2"
-    local write_op="$3"
-    shift 3
+    local sb_path="$2"
+    local layout="$3"
+    local write_op="$4"
+    shift 4
     local args=( "$@" )
 
-    local fname="codec_${label}.bin"
+    local fname="${sb_path}/codec_${label}.bin"
     local out="/tmp/out_${label}.bin"
     local logw="/tmp/logw_${label}.txt"
     local logr="/tmp/logr_${label}.txt"
@@ -103,10 +108,12 @@ run_codec() {
 main() {
     echo "=== PS multi-codec demo: write via $PS_A, read via $PS_B (payload=${PAYLOAD_SIZE}) ==="
 
-    run_codec ffv1-plain    v1   put
-    run_codec ffv1-stripe   v1   write --codec stripe      --k 6 --m 0
-    run_codec ffv2-plain    v2   put
-    run_codec ffv2-rs       v2   write --codec rs          --k 4 --m 2
+    run_codec ffv1-plain    /ffv1-csm     v1   put
+    run_codec ffv1-stripe   /ffv1-stripes v1   write --codec stripe \
+              --k 6 --m 0
+    run_codec ffv2-plain    /ffv2-csm     v2   put
+    run_codec ffv2-rs       /ffv2-rs      v2   write --codec rs \
+              --k 4 --m 2
 
     echo
     echo "=== PS-demo codecs result matrix ==="
