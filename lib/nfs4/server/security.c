@@ -206,8 +206,12 @@ nfsstat4 nfs4_check_wrongsec(struct compound *compound)
 {
 	uint32_t client_flavor = compound->c_rt->rt_info.ri_cred.rc_flavor;
 	const struct rpc_cred *cred = &compound->c_rt->rt_info.ri_cred;
-	bool client_tls = compound->c_rt->rt_fd >= 0 &&
-			  io_conn_is_tls_enabled(compound->c_rt->rt_fd);
+	/*
+	 * Read the cached TLS bit from compound_alloc() rather than
+	 * re-entering io_conn_is_tls_enabled()'s conn_mutex on every op
+	 * in the compound (Plan A follow-up #2).
+	 */
+	bool client_tls = compound->c_is_tls;
 	const enum reffs_auth_flavor *flavors;
 	unsigned int nflavors;
 	uint32_t curr_opnum =

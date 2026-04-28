@@ -107,6 +107,17 @@ struct compound {
 	 */
 	char c_tls_fingerprint_buf[REFFS_CONFIG_MAX_TLS_FINGERPRINT];
 
+	/*
+	 * Plan A follow-up #2: cache the connection's TLS state at
+	 * compound_alloc() time.  The TLS bit on a conn_info never
+	 * mid-compound flips (STARTTLS only fires before any compound
+	 * dispatch), so the per-op nfs4_check_wrongsec() callers can
+	 * read this scalar instead of taking conn_mutex via
+	 * io_conn_is_tls_enabled().  A 16-op compound saves 16 mutex
+	 * lock/unlock cycles.
+	 */
+	bool c_is_tls;
+
 	/* Compound-level state flags. */
 #define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)
 	uint32_t c_flags;
