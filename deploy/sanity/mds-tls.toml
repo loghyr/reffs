@@ -40,10 +40,12 @@ state_file        = "/tmp/reffs_mds_state"
 
 [[export]]
 path              = "/"
-clients           = "*"
-access            = "rw"
-root_squash       = false
-flavors           = ["sys", "tls"]
+
+    [[export.clients]]
+    match           = "*"
+    access          = "rw"
+    root_squash     = false
+    flavors         = ["sys", "tls"]
 
 # REPLACE the fingerprint below with the value in
 # /tmp/reffs_ps_tls/ps.fpr after running setup-mini-ca.sh.

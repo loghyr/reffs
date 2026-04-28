@@ -27,7 +27,9 @@ backend_cq_size = 2048
 
 [[export]]
 path        = "/"
-clients     = "*"
-access      = "rw"
-root_squash = false
-flavors     = ["sys"]
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]

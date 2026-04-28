@@ -30,10 +30,12 @@ state_file        = "/tmp/reffs_ps_state"
 
 [[export]]
 path              = "/"
-clients           = "*"
-access            = "rw"
-root_squash       = false
-flavors           = ["sys"]
+
+    [[export.clients]]
+    match           = "*"
+    access          = "rw"
+    root_squash     = false
+    flavors         = ["sys"]
 
 [[proxy_mds]]
 id                       = 1

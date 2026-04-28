@@ -19,7 +19,9 @@ state_file      = "/tmp/reffs_ds_state"
 
 [[export]]
 path        = "/ds1"
-clients     = "*"
-access      = "rw"
-root_squash = false
-flavors     = ["sys"]
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]

@@ -21,10 +21,12 @@ ds_path         = "/tmp/reffs_combined_ds"
 
 [[export]]
 path        = "/"
-clients     = "*"
-access      = "rw"
-root_squash = false
-flavors     = ["sys"]
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]
 
 [[data_server]]
 id      = 1
