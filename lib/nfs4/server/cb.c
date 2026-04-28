@@ -279,6 +279,71 @@ int nfs4_cb_recall(struct nfs4_session *session, const stateid4 *stateid,
 	return ret;
 }
 
+/*
+ * Fire-and-forget variant of nfs4_cb_layoutrecall_send.  Same wire
+ * shape (CB_COMPOUND { SEQUENCE, CB_LAYOUTRECALL { LAYOUTRECALL4_FILE,
+ * fh, range, lo_stateid } }), but no cb_pending and no caller wait
+ * for the ack -- mirrors nfs4_cb_recall above.
+ *
+ * Intended for the migration-commit recall path (slice 6c-x.5):
+ * PROXY_DONE(NFS4_OK) issues recalls to every external client whose
+ * cached layout includes a now-removed DRAINING DS.  The PS does
+ * not block on the ack; the next LAYOUTGET each client issues sees
+ * the post-image (omit-and-replace policy) and the lease reaper
+ * handles unresponsive clients.
+ */
+int nfs4_cb_layoutrecall_fnf(struct nfs4_session *session,
+			     layouttype4 layout_type, layoutiomode4 iomode,
+			     int changed, const nfs_fh4 *fh, uint64_t offset,
+			     uint64_t length, const stateid4 *lo_stateid)
+{
+	CB_COMPOUND4args args = { 0 };
+	nfs_cb_argop4 ops[2] = { 0 };
+	CB_LAYOUTRECALL4args *lr;
+	struct rpc_trans *cb_rt;
+	uint32_t xid;
+	int ret;
+
+	if (!session || !fh || !lo_stateid)
+		return EINVAL;
+	if (session->ns_cb_fd < 0)
+		return ENOTCONN;
+
+	args.tag.utf8string_val = (char *)"CB_LAYOUTRECALL";
+	args.tag.utf8string_len = sizeof("CB_LAYOUTRECALL") - 1;
+	args.minorversion = 1;
+	args.callback_ident = session->ns_cb_program;
+	args.argarray.argarray_len = 2;
+	args.argarray.argarray_val = ops;
+
+	cb_fill_sequence(&ops[0], session);
+
+	ops[1].argop = OP_CB_LAYOUTRECALL;
+	lr = &ops[1].nfs_cb_argop4_u.opcblayoutrecall;
+	lr->clora_type = layout_type;
+	lr->clora_iomode = iomode;
+	lr->clora_changed = changed;
+
+	lr->clora_recall.lor_recalltype = LAYOUTRECALL4_FILE;
+	lr->clora_recall.layoutrecall4_u.lor_layout.lor_fh.nfs_fh4_len =
+		fh->nfs_fh4_len;
+	lr->clora_recall.layoutrecall4_u.lor_layout.lor_fh.nfs_fh4_val =
+		fh->nfs_fh4_val;
+	lr->clora_recall.layoutrecall4_u.lor_layout.lor_offset = offset;
+	lr->clora_recall.layoutrecall4_u.lor_layout.lor_length = length;
+	memcpy(&lr->clora_recall.layoutrecall4_u.lor_layout.lor_stateid,
+	       lo_stateid, sizeof(stateid4));
+
+	ret = cb_build_and_alloc(session, &args, &cb_rt, &xid);
+	if (ret)
+		return ret;
+
+	/* Fire-and-forget: don't register, don't wait for ack. */
+	ret = io_rpc_trans_cb(cb_rt);
+	rpc_protocol_free(cb_rt);
+	return ret;
+}
+
 /* ------------------------------------------------------------------ */
 /* CB_GETATTR -- send and wait for reply                                */
 /* ------------------------------------------------------------------ */

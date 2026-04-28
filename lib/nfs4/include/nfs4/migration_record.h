@@ -409,4 +409,40 @@ int migration_apply_deltas_to_segment(const struct layout_segment *base_seg,
  */
 void migration_release_view(struct layout_segment *view);
 
+/* ------------------------------------------------------------------ */
+/* Slice 6c-x.5: post-commit recall on DRAINING removal                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Forward declarations -- avoids pulling the full inode / client /
+ * server_state headers into the migration record header.
+ */
+struct inode;
+struct client;
+struct server_state;
+
+/*
+ * migration_recall_layouts -- queue CB_LAYOUTRECALL on every
+ * external layout outstanding for `inode`, except those held by
+ * `exclude_client` (the registered PS that just committed the
+ * migration; that client already acknowledged the post-image via
+ * its own LAYOUTRETURN inside the same compound).
+ *
+ * Fire-and-forget: each recall uses nfs4_cb_layoutrecall_fnf and
+ * does not wait for the client's ack.  The caller (PROXY_DONE
+ * handler) returns NFS4_OK as soon as the queueing is done; the
+ * lease reaper handles any client whose CB back-channel is broken.
+ *
+ * Returns the number of CB_LAYOUTRECALLs queued (0 if no external
+ * layouts exist on this inode, or if `inode` is NULL).
+ *
+ * No-op if the inode has no stateids hashed (i_stateids == NULL)
+ * or has only stateids of types other than Layout_Stateid.  Skips
+ * any layout stateid whose s_client is NULL or matches
+ * `exclude_client`.
+ */
+unsigned int migration_recall_layouts(struct inode *inode,
+				      struct client *exclude_client,
+				      struct server_state *ss);
+
 #endif /* _REFFS_NFS4_MIGRATION_RECORD_H */

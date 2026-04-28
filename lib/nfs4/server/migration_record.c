@@ -36,11 +36,19 @@
 #include <xxhash.h>
 
 #include "nfsv42_xdr.h"
+#include "reffs/client.h"
+#include "reffs/filehandle.h"
+#include "reffs/inode.h"
 #include "reffs/log.h"
 #include "reffs/rcu.h"
 #include "reffs/server.h"
+#include "reffs/super_block.h"
 #include "reffs/time.h"
+#include "nfs4/cb.h"
+#include "nfs4/client.h"
 #include "nfs4/migration_record.h"
+#include "nfs4/session.h"
+#include "nfs4/stateid.h"
 
 /* ------------------------------------------------------------------ */
 /* Internal state                                                      */
@@ -573,6 +581,68 @@ void migration_release_view(struct layout_segment *view)
 	free(view->ls_files);
 	view->ls_files = NULL;
 	view->ls_nfiles = 0;
+}
+
+unsigned int migration_recall_layouts(struct inode *inode,
+				      struct client *exclude_client,
+				      struct server_state *ss)
+{
+	if (!inode || !inode->i_stateids)
+		return 0;
+
+	/*
+	 * The fh used in CB_LAYOUTRECALL is the standard MDS file
+	 * handle: { sb_id, ino }.  Build once and reuse for every
+	 * recall in the loop -- the layout_recall body copies the
+	 * bytes during XDR encode.
+	 */
+	struct network_file_handle cb_nfh = { 0 };
+
+	cb_nfh.nfh_ino = inode->i_ino;
+	cb_nfh.nfh_sb = inode->i_sb ? inode->i_sb->sb_id : 0;
+	nfs_fh4 cb_fh4 = {
+		.nfs_fh4_len = sizeof(cb_nfh),
+		.nfs_fh4_val = (char *)&cb_nfh,
+	};
+
+	unsigned int queued = 0;
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	rcu_read_lock();
+	cds_lfht_for_each(inode->i_stateids, &iter, node)
+	{
+		struct stateid *stid =
+			caa_container_of(node, struct stateid, s_inode_node);
+
+		if (stid->s_tag != Layout_Stateid)
+			continue;
+		if (!stid->s_client || stid->s_client == exclude_client)
+			continue;
+		if (!stateid_get(stid))
+			continue;
+
+		struct nfs4_client *nc = client_to_nfs4(stid->s_client);
+		struct nfs4_session *sess =
+			ss ? nfs4_session_find_for_client(ss, nc) : NULL;
+
+		if (sess) {
+			stateid4 wire_stid;
+
+			pack_stateid4(&wire_stid, stid);
+			(void)nfs4_cb_layoutrecall_fnf(
+				sess, LAYOUT4_FLEX_FILES_V2,
+				LAYOUTIOMODE4_ANY, /* changed=any */
+				1 /* clora_changed=true */, &cb_fh4,
+				0 /* offset */, NFS4_UINT64_MAX /* length */,
+				&wire_stid);
+			nfs4_session_put(sess);
+			queued++;
+		}
+		stateid_put(stid);
+	}
+	rcu_read_unlock();
+	return queued;
 }
 
 struct migration_record *migration_record_find_by_inode(uint64_t ino)

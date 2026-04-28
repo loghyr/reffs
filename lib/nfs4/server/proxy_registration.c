@@ -412,10 +412,31 @@ uint32_t nfs4_op_proxy_done(struct compound *compound)
 	 * reaper raced ahead of the PS's PROXY_DONE); we still return
 	 * NFS4_OK to the PS so its state machine ticks forward.
 	 */
-	if (args->pd_status == NFS4_OK)
+	if (args->pd_status == NFS4_OK) {
 		(void)migration_record_commit(mr);
-	else
+		/*
+		 * Slice 6c-x.5: queue CB_LAYOUTRECALL on every external
+		 * layout outstanding for this inode (excluding the PS's
+		 * own client, which already returned its L3 layout via
+		 * the LAYOUTRETURN earlier in this compound).  Clients
+		 * holding pre-migration layouts that included the now-
+		 * removed DRAINING DS get told to re-LAYOUTGET, at which
+		 * point the during-migration view (slice 6c-x.4) is
+		 * already gone and they see the post-image directly.
+		 *
+		 * Fire-and-forget: PROXY_DONE returns NFS4_OK as soon as
+		 * the queueing is done; the lease reaper handles any
+		 * client whose CB back-channel is broken.
+		 */
+		(void)migration_recall_layouts(
+			compound->c_inode,
+			compound->c_nfs4_client ?
+				nfs4_client_to_client(compound->c_nfs4_client) :
+				NULL,
+			compound->c_server_state);
+	} else {
 		(void)migration_record_abandon(mr);
+	}
 
 	migration_record_put(mr);
 	res->pdr_status = NFS4_OK;
