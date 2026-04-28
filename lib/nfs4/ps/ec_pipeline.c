@@ -707,8 +707,20 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 
 	/* FINALIZE + COMMIT for CHUNK ops (v2). */
 	if (ret == 0 && ctx.ctx_ds_sess) {
+		/*
+		 * Per-stripe block stride is DIV_CEIL(ds_stride, chunk_sz)
+		 * (matches the write-side offset arithmetic at lines 656 +
+		 * 689).  Without the ceiling here, mojette-systematic --
+		 * whose parity shards exceed ds_stride's nearest multiple of
+		 * chunk_sz (e.g. parity wsz=12296 with chunk_sz=4096 needs 4
+		 * blocks, not the truncated 3) -- writes its trailing block
+		 * each stripe but never FINALIZE/COMMITs it, so CHUNK_READ
+		 * returns NFS4ERR_IO.  RS shard sizes happen to land exactly
+		 * on chunk boundaries and so survive integer truncation,
+		 * which masked the bug until #147.
+		 */
 		uint32_t total_blocks =
-			(uint32_t)(nstripes * (ds_stride / chunk_sz));
+			(uint32_t)(nstripes * DIV_CEIL(ds_stride, chunk_sz));
 
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];

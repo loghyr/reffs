@@ -159,6 +159,84 @@ START_TEST(test_shard_data_pointer_offsets)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* CHUNK total_blocks math                                             */
+/*                                                                     */
+/* The v2 CHUNK write path strides each per-stripe write by            */
+/* DIV_CEIL(ds_stride, chunk_sz) blocks (ec_pipeline.c lines 656,      */
+/* 689) and FINALIZE/COMMIT must cover that same total.  Task #147     */
+/* was a truncation bug -- nstripes * (ds_stride / chunk_sz) under-    */
+/* covered when ds_stride was not a chunk-multiple, which is the       */
+/* mojette-systematic case.  These tests pin both sides agreeing.      */
+/* ------------------------------------------------------------------ */
+
+#define DIV_CEIL(a, b) (((a) + (b) - 1) / (b))
+
+static uint32_t total_blocks(size_t nstripes, size_t ds_stride, size_t chunk_sz)
+{
+	return (uint32_t)(nstripes * DIV_CEIL(ds_stride, chunk_sz));
+}
+
+static uint32_t per_stripe_block_stride(size_t ds_stride, size_t chunk_sz)
+{
+	return (uint32_t)DIV_CEIL(ds_stride, chunk_sz);
+}
+
+START_TEST(test_finalize_total_blocks_rs_aligned)
+{
+	/* RS shard sizes happen to land on chunk boundaries -- this
+	 * case worked before #147 because integer truncation produced
+	 * the same answer as ceiling.
+	 */
+	size_t chunk_sz = 4096;
+	size_t ds_stride = 24576; /* 6 chunks exactly (k=4 with 24K shards) */
+	size_t nstripes = 4;
+
+	ck_assert_uint_eq(per_stripe_block_stride(ds_stride, chunk_sz), 6);
+	ck_assert_uint_eq(total_blocks(nstripes, ds_stride, chunk_sz),
+			  nstripes * 6);
+}
+END_TEST
+
+START_TEST(test_finalize_total_blocks_mojette_unaligned)
+{
+	/*
+	 * Mojette parity sizes don't land on chunk boundaries.
+	 * Reproducer numbers from the task description: data wsz=4096
+	 * (1 block), parity[0] wsz=8208 (3 blocks), parity[1] wsz=12296
+	 * (4 blocks).  ds_stride = max = 12296.  chunk_sz = 4096.
+	 * Per-stripe write stride must be 4 (4*4096 = 16384 >= 12296),
+	 * and total_blocks for FINALIZE/COMMIT must agree.  The pre-#147
+	 * truncation gave 3 here, leaving the 4th block PENDING and
+	 * causing the next CHUNK_READ to return NFS4ERR_IO.
+	 */
+	size_t chunk_sz = 4096;
+	size_t ds_stride = 12296;
+	size_t nstripes = 4;
+
+	ck_assert_uint_eq(per_stripe_block_stride(ds_stride, chunk_sz), 4);
+	ck_assert_uint_eq(total_blocks(nstripes, ds_stride, chunk_sz),
+			  nstripes * 4);
+	/* Belt-and-braces: the bad pre-#147 value would be nstripes * 3. */
+	ck_assert_uint_ne(total_blocks(nstripes, ds_stride, chunk_sz),
+			  nstripes * 3);
+}
+END_TEST
+
+START_TEST(test_finalize_total_blocks_one_byte_over)
+{
+	/* One byte over a chunk boundary -- the most adversarial case
+	 * for ceiling vs truncation.  Stride must round up by one. */
+	size_t chunk_sz = 4096;
+	size_t ds_stride = 4097;
+	size_t nstripes = 8;
+
+	ck_assert_uint_eq(per_stripe_block_stride(ds_stride, chunk_sz), 2);
+	ck_assert_uint_eq(total_blocks(nstripes, ds_stride, chunk_sz),
+			  nstripes * 2);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite setup                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -174,6 +252,9 @@ static Suite *ec_io_suite(void)
 	tcase_add_test(tc, test_pad_various_k);
 	tcase_add_test(tc, test_pad_multiple_stripes);
 	tcase_add_test(tc, test_shard_data_pointer_offsets);
+	tcase_add_test(tc, test_finalize_total_blocks_rs_aligned);
+	tcase_add_test(tc, test_finalize_total_blocks_mojette_unaligned);
+	tcase_add_test(tc, test_finalize_total_blocks_one_byte_over);
 
 	suite_add_tcase(s, tc);
 	return s;
