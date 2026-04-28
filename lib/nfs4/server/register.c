@@ -47,6 +47,7 @@
 #include "nfs4/lease_reaper.h"
 #include "nfs4/trust_stateid.h"
 #include "nfs4/migration_record.h"
+#include "nfs4/proxy_assignment_queue.h"
 
 /*
  * On locking order:
@@ -99,6 +100,7 @@ int nfs4_protocol_register(void)
 	lease_reaper_init();
 	trust_stateid_init();
 	migration_record_init();
+	proxy_assignment_queue_init();
 
 	return 0;
 }
@@ -108,6 +110,7 @@ int nfs4_protocol_deregister(void)
 	if (!nfsv4_registered)
 		return 0;
 
+	proxy_assignment_queue_fini();
 	migration_record_fini();
 	trust_stateid_fini();
 	lease_reaper_fini();

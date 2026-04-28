@@ -29,10 +29,12 @@
 #include "reffs/server.h"
 #include "reffs/super_block.h"
 #include "reffs/task.h"
+#include "reffs/time.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/migration_record.h"
 #include "nfs4/ops.h"
+#include "nfs4/proxy_assignment_queue.h"
 #include "nfs4/proxy_stateid.h"
 #include "nfs4/stateid.h"
 #include "nfs4_test_harness.h"
@@ -669,30 +671,6 @@ END_TEST
 /* ------------------------------------------------------------------ */
 
 /*
- * Slice 6a: the handler is a NFS4ERR_NOTSUPP stub.  Pin that the
- * stub responds, doesn't crash, and doesn't accidentally inherit
- * any other status.
- */
-START_TEST(test_proxy_progress_returns_notsupp)
-{
-	struct pr_ctx *cm = pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS,
-				     "host/ps.example.com@REALM");
-
-	cm->compound->c_args->argarray.argarray_val[0].argop =
-		OP_PROXY_PROGRESS;
-	cm->compound->c_res->resarray.resarray_val[0].resop = OP_PROXY_PROGRESS;
-
-	nfs4_op_proxy_progress(cm->compound);
-
-	PROXY_PROGRESS4res *res = &cm->compound->c_res->resarray.resarray_val[0]
-					   .nfs_resop4_u.opproxy_progress;
-
-	ck_assert_int_eq(res->ppr_status, NFS4ERR_NOTSUPP);
-	pr_free(cm);
-}
-END_TEST
-
-/*
  * Slice 6c-x.0: nfs4_client_registered_ps_identity accessor.
  * The accessor returns the canonical authorization principal for
  * subsequent migration-record owner_reg matching: registration_id
@@ -1167,6 +1145,217 @@ START_TEST(test_proxy_done_idempotent_returns_bad_stateid_on_repeat)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Slice 6c-y: PROXY_PROGRESS assignment delivery                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Helper: arm the compound for a PROXY_PROGRESS dispatch with the
+ * given ppa_flags.
+ */
+static PROXY_PROGRESS4args *pp_setup(struct pr_ctx *cm, uint32_t flags)
+{
+	cm->compound->c_args->argarray.argarray_val[0].argop =
+		OP_PROXY_PROGRESS;
+	cm->compound->c_res->resarray.resarray_val[0].resop = OP_PROXY_PROGRESS;
+	PROXY_PROGRESS4args *args =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opproxy_progress;
+
+	args->ppa_flags = flags;
+	return args;
+}
+
+static PROXY_PROGRESS4res *pp_res(struct pr_ctx *cm)
+{
+	return &cm->compound->c_res->resarray.resarray_val[0]
+			.nfs_resop4_u.opproxy_progress;
+}
+
+static void pp_res_free(struct pr_ctx *cm)
+{
+	PROXY_PROGRESS4res *res = pp_res(cm);
+
+	if (res->ppr_status != NFS4_OK)
+		return;
+	PROXY_PROGRESS4resok *resok = &res->PROXY_PROGRESS4res_u.ppr_resok;
+
+	for (uint32_t i = 0; i < resok->ppr_assignments.ppr_assignments_len;
+	     i++) {
+		proxy_assignment4 *a =
+			&resok->ppr_assignments.ppr_assignments_val[i];
+
+		free(a->pa_file_fh.nfs_fh4_val);
+		a->pa_file_fh.nfs_fh4_val = NULL;
+	}
+	free(resok->ppr_assignments.ppr_assignments_val);
+	resok->ppr_assignments.ppr_assignments_val = NULL;
+	resok->ppr_assignments.ppr_assignments_len = 0;
+}
+
+START_TEST(test_proxy_progress_not_registered_returns_perm)
+{
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+
+	pp_setup(cm, 0);
+	nfs4_op_proxy_progress(cm->compound);
+	ck_assert_int_eq(pp_res(cm)->ppr_status, NFS4ERR_PERM);
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_progress_bad_flags_returns_inval)
+{
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+
+	pp_setup(cm, 0x0001); /* any non-zero bit -- reserved */
+	nfs4_op_proxy_progress(cm->compound);
+	ck_assert_int_eq(pp_res(cm)->ppr_status, NFS4ERR_INVAL);
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_progress_empty_queue_returns_zero_assignments)
+{
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+
+	pp_setup(cm, 0);
+	nfs4_op_proxy_progress(cm->compound);
+	ck_assert_int_eq(pp_res(cm)->ppr_status, NFS4_OK);
+	PROXY_PROGRESS4resok *resok =
+		&pp_res(cm)->PROXY_PROGRESS4res_u.ppr_resok;
+
+	ck_assert_uint_eq(resok->ppr_assignments.ppr_assignments_len, 0);
+	pp_res_free(cm);
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_progress_pulls_one_assignment)
+{
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+
+	struct proxy_assignment_item item = {
+		.paq_kind = PROXY_OP_MOVE,
+		.paq_sb_id = 1,
+		.paq_ino = 6001,
+		.paq_source_dstore_id = 7,
+		.paq_target_dstore_id = 8,
+	};
+	ck_assert_int_eq(proxy_assignment_queue_push(&item), 0);
+
+	pp_setup(cm, 0);
+	nfs4_op_proxy_progress(cm->compound);
+	ck_assert_int_eq(pp_res(cm)->ppr_status, NFS4_OK);
+
+	PROXY_PROGRESS4resok *resok =
+		&pp_res(cm)->PROXY_PROGRESS4res_u.ppr_resok;
+
+	ck_assert_uint_eq(resok->ppr_assignments.ppr_assignments_len, 1);
+	proxy_assignment4 *a = &resok->ppr_assignments.ppr_assignments_val[0];
+
+	ck_assert_int_eq((int)a->pa_kind, PROXY_OP_MOVE);
+	ck_assert_uint_eq(a->pa_source_dstore_id, 7);
+	ck_assert_uint_eq(a->pa_target_dstore_id, 8);
+	/* Migration record was created -- find by stateid confirms. */
+	struct migration_record *mr =
+		migration_record_find_by_stateid(&a->pa_stateid);
+
+	ck_assert_ptr_nonnull(mr);
+	migration_record_put(mr);
+	migration_record_abandon(mr);
+
+	pp_res_free(cm);
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_progress_pulls_multi_assignments)
+{
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+
+	for (uint64_t i = 0; i < 3; i++) {
+		struct proxy_assignment_item item = {
+			.paq_kind = PROXY_OP_REPAIR,
+			.paq_sb_id = 1,
+			.paq_ino = 6100 + i,
+			.paq_source_dstore_id = 1,
+			.paq_target_dstore_id = 2,
+		};
+		ck_assert_int_eq(proxy_assignment_queue_push(&item), 0);
+	}
+
+	pp_setup(cm, 0);
+	nfs4_op_proxy_progress(cm->compound);
+	ck_assert_int_eq(pp_res(cm)->ppr_status, NFS4_OK);
+
+	PROXY_PROGRESS4resok *resok =
+		&pp_res(cm)->PROXY_PROGRESS4res_u.ppr_resok;
+
+	ck_assert_uint_eq(resok->ppr_assignments.ppr_assignments_len, 3);
+
+	/* Drain the migration records the handler created. */
+	for (uint32_t i = 0; i < resok->ppr_assignments.ppr_assignments_len;
+	     i++) {
+		proxy_assignment4 *a =
+			&resok->ppr_assignments.ppr_assignments_val[i];
+		struct migration_record *mr =
+			migration_record_find_by_stateid(&a->pa_stateid);
+
+		if (mr) {
+			migration_record_put(mr);
+			migration_record_abandon(mr);
+		}
+	}
+	pp_res_free(cm);
+	pr_free(cm);
+}
+END_TEST
+
+START_TEST(test_proxy_progress_lease_remaining_set)
+{
+	struct pr_ctx *cm =
+		pr_alloc(EXCHGID4_FLAG_USE_NON_PNFS, "host/ps@REALM");
+
+	register_ps_identity(cm->compound->c_nfs4_client, "ps", 2);
+	/* Set a known future lease expiry: 90s from now. */
+	uint64_t deadline = reffs_now_ns() + 90ULL * 1000000000ULL;
+
+	atomic_store_explicit(
+		&cm->compound->c_nfs4_client->nc_ps_lease_expire_ns, deadline,
+		memory_order_release);
+
+	pp_setup(cm, 0);
+	nfs4_op_proxy_progress(cm->compound);
+	ck_assert_int_eq(pp_res(cm)->ppr_status, NFS4_OK);
+
+	PROXY_PROGRESS4resok *resok =
+		&pp_res(cm)->PROXY_PROGRESS4res_u.ppr_resok;
+
+	/*
+	 * Allow some slack -- the handler reads now after we wrote
+	 * the deadline, so the remaining could be 89 / 90.  Bound:
+	 * non-zero and not absurd.
+	 */
+	ck_assert(resok->ppr_lease_remaining_sec >= 88);
+	ck_assert(resok->ppr_lease_remaining_sec <= 90);
+
+	pp_res_free(cm);
+	pr_free(cm);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -1193,7 +1382,6 @@ static Suite *proxy_registration_suite(void)
 		tc,
 		test_proxy_registration_reject_tls_fingerprint_not_allowlisted);
 	tcase_add_test(tc, test_proxy_registration_reject_both_contexts_null);
-	tcase_add_test(tc, test_proxy_progress_returns_notsupp);
 	tcase_add_test(tc, test_registered_ps_identity_unregistered);
 	tcase_add_test(tc, test_registered_ps_identity_prefers_registration_id);
 	tcase_add_test(tc, test_registered_ps_identity_falls_back_to_principal);
@@ -1212,6 +1400,13 @@ static Suite *proxy_registration_suite(void)
 	tcase_add_test(tc, test_proxy_cancel_abandons);
 	tcase_add_test(
 		tc, test_proxy_done_idempotent_returns_bad_stateid_on_repeat);
+	tcase_add_test(tc, test_proxy_progress_not_registered_returns_perm);
+	tcase_add_test(tc, test_proxy_progress_bad_flags_returns_inval);
+	tcase_add_test(
+		tc, test_proxy_progress_empty_queue_returns_zero_assignments);
+	tcase_add_test(tc, test_proxy_progress_pulls_one_assignment);
+	tcase_add_test(tc, test_proxy_progress_pulls_multi_assignments);
+	tcase_add_test(tc, test_proxy_progress_lease_remaining_set);
 	suite_add_tcase(s, tc);
 
 	return s;

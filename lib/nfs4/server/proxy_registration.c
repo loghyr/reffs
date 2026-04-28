@@ -46,6 +46,7 @@
 #include "nfs4/ops.h"
 #include "nfs4/client.h"
 #include "nfs4/migration_record.h"
+#include "nfs4/proxy_assignment_queue.h"
 #include "nfs4/proxy_stateid.h"
 
 /*
@@ -290,18 +291,156 @@ uint32_t nfs4_op_proxy_registration(struct compound *compound)
 	return 0;
 }
 
+/*
+ * Cap on assignments delivered per PROXY_PROGRESS poll.  Bounds
+ * the response size and the per-poll cost of stateid mints +
+ * record creates.  A PS that has bandwidth for more work just
+ * polls more frequently; the per-poll bound keeps any single
+ * poll's wire size predictable.
+ */
+#define PROXY_PROGRESS_MAX_BATCH 8
+
 uint32_t nfs4_op_proxy_progress(struct compound *compound)
 {
+	PROXY_PROGRESS4args *args =
+		NFS4_OP_ARG_SETUP(compound, opproxy_progress);
 	PROXY_PROGRESS4res *res = NFS4_OP_RES_SETUP(compound, opproxy_progress);
 
 	/*
-	 * Slice 6c-w: response shape now carries assignments on
-	 * NFS4_OK; populating that list is slice 6c-y's job (consumes
-	 * the autopilot queue).  Until then the stub returns
-	 * NFS4ERR_NOTSUPP, which selects the union's `default` arm
-	 * (no resok body emitted on the wire).
+	 * RFC 8178 S4.4.3 -- ppa_flags is reserved.  Reject any
+	 * non-zero bit until a future revision assigns one.
 	 */
-	res->ppr_status = NFS4ERR_NOTSUPP;
+	if (args->ppa_flags != 0) {
+		res->ppr_status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	/*
+	 * Caller must be a registered PS.  The PROXY_PROGRESS poll
+	 * is the PS's heartbeat + work-pickup channel; non-PS clients
+	 * have no business here.
+	 */
+	struct nfs4_client *nc = compound->c_nfs4_client;
+
+	if (!nc || !atomic_load_explicit(&nc->nc_is_registered_ps,
+					 memory_order_acquire)) {
+		res->ppr_status = NFS4ERR_PERM;
+		return 0;
+	}
+
+	/*
+	 * Slice 6b-iii's squat-guard refreshes nc_ps_lease_expire_ns
+	 * on every PROXY_PROGRESS via the SEQUENCE-driven lease
+	 * renewal path.  Surface the remaining seconds to the PS so it
+	 * can size its next poll interval.  Floor to zero on a stale
+	 * lease (the lease reaper will reap shortly).
+	 */
+	uint64_t now_ns = reffs_now_ns();
+	uint64_t expire_ns = atomic_load_explicit(&nc->nc_ps_lease_expire_ns,
+						  memory_order_acquire);
+	uint32_t remaining_sec = 0;
+
+	if (expire_ns > now_ns)
+		remaining_sec =
+			(uint32_t)((expire_ns - now_ns) / 1000000000ULL);
+
+	/*
+	 * Pop up to PROXY_PROGRESS_MAX_BATCH work items from the
+	 * autopilot queue.  For each, mint a fresh proxy_stateid,
+	 * create the in-flight migration record, and emit a
+	 * proxy_assignment4 entry.  If migration_record_create returns
+	 * -EBUSY (the inode already has an active migration -- per-
+	 * inode invariant from slice 6c-x.2), drop the item and move
+	 * on; the autopilot will re-enqueue when the prior migration
+	 * commits or aborts.
+	 */
+	struct proxy_assignment_item items[PROXY_PROGRESS_MAX_BATCH];
+	size_t took =
+		proxy_assignment_queue_pop(items, PROXY_PROGRESS_MAX_BATCH);
+
+	PROXY_PROGRESS4resok *resok = &res->PROXY_PROGRESS4res_u.ppr_resok;
+
+	resok->ppr_lease_remaining_sec = remaining_sec;
+	resok->ppr_assignments.ppr_assignments_len = 0;
+	resok->ppr_assignments.ppr_assignments_val = NULL;
+
+	if (took > 0) {
+		proxy_assignment4 *out =
+			calloc(took, sizeof(proxy_assignment4));
+
+		if (!out) {
+			res->ppr_status = NFS4ERR_DELAY;
+			return 0;
+		}
+
+		uint16_t boot_seq =
+			compound->c_server_state ?
+				server_boot_seq(compound->c_server_state) :
+				0;
+		uint32_t built = 0;
+		uint32_t owner_len = 0;
+		const char *owner_id =
+			nfs4_client_registered_ps_identity(nc, &owner_len);
+
+		for (size_t i = 0; i < took; i++) {
+			stateid4 stid;
+
+			if (proxy_stateid_alloc(boot_seq, &stid) != 0)
+				continue;
+
+			/*
+			 * Build the file FH (sb_id, ino) inline.  Allocated
+			 * on the heap because the XDR encoder owns the
+			 * buffer until xdr_free runs against the response.
+			 */
+			struct network_file_handle *cb_nfh =
+				calloc(1, sizeof(*cb_nfh));
+
+			if (!cb_nfh)
+				continue;
+			cb_nfh->nfh_sb = items[i].paq_sb_id;
+			cb_nfh->nfh_ino = items[i].paq_ino;
+
+			struct migration_record *mr = NULL;
+			int cret = migration_record_create(
+				&stid, NULL, items[i].paq_ino,
+				owner_id ? owner_id : "",
+				owner_len ? owner_len : 1, NULL, 0, now_ns,
+				&mr);
+
+			if (cret < 0) {
+				/*
+				 * Inode already has an in-flight migration
+				 * (-EBUSY) or other create failure -- skip
+				 * this item.  The autopilot may re-enqueue
+				 * after the prior migration retires.
+				 */
+				free(cb_nfh);
+				continue;
+			}
+
+			out[built].pa_kind = (proxy_op_kind4)items[i].paq_kind;
+			out[built].pa_stateid = stid;
+			out[built].pa_file_fh.nfs_fh4_len = sizeof(*cb_nfh);
+			out[built].pa_file_fh.nfs_fh4_val = (char *)cb_nfh;
+			out[built].pa_source_dstore_id =
+				items[i].paq_source_dstore_id;
+			out[built].pa_target_dstore_id =
+				items[i].paq_target_dstore_id;
+			out[built].pa_descriptor.pa_descriptor_len = 0;
+			out[built].pa_descriptor.pa_descriptor_val = NULL;
+			built++;
+		}
+
+		if (built == 0) {
+			free(out);
+		} else {
+			resok->ppr_assignments.ppr_assignments_len = built;
+			resok->ppr_assignments.ppr_assignments_val = out;
+		}
+	}
+
+	res->ppr_status = NFS4_OK;
 	return 0;
 }
 
