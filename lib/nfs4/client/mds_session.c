@@ -24,6 +24,8 @@
 
 #include <rpc/rpc.h>
 
+#include "host_port.h"
+
 /*
  * GSS-RPC support requires BOTH:
  *   - libgssapi_krb5 (HAVE_GSSAPI_KRB5) for the GSSAPI itself, and
@@ -732,26 +734,24 @@ void mds_session_set_owner(struct mds_session *ms, const char *id)
  */
 static CLIENT *mds_session_clnt_open(const char *host)
 {
-	const char *colon;
-
 	if (!host)
 		return NULL;
-	colon = strrchr(host, ':');
-	if (!colon)
-		return clnt_create(host, NFS4_PROGRAM, NFS_V4, "tcp");
 
 	char host_buf[256];
-	size_t host_len = (size_t)(colon - host);
+	int port = 0;
 
-	if (host_len == 0 || host_len >= sizeof(host_buf))
+	if (mds_parse_host_port(host, host_buf, sizeof(host_buf), &port) < 0)
 		return NULL;
-	memcpy(host_buf, host, host_len);
-	host_buf[host_len] = '\0';
 
-	int port = atoi(colon + 1);
-
-	if (port <= 0 || port > 65535)
-		return NULL;
+	/*
+	 * No explicit port -> hand the bare host string to libtirpc's
+	 * portmap-driven path.  This is the only call site that still
+	 * goes through portmap; the explicit-port path below bypasses
+	 * it for PS deployments where the proxy listener does not
+	 * register with rpcbind.
+	 */
+	if (port == 0)
+		return clnt_create(host_buf, NFS4_PROGRAM, NFS_V4, "tcp");
 
 	struct addrinfo hints = {
 		.ai_family = AF_INET,
