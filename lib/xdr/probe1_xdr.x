@@ -370,6 +370,33 @@ struct SB_SET_CLIENT_RULES1args {
 	probe_client_rule1	scra_rules<PROBE1_MAX_CLIENT_RULES>;
 };
 
+/*
+ * SB_GET_CLIENT_RULES (op 29) -- read-side counterpart of
+ * SB_SET_CLIENT_RULES.  Returns the matched sb's rule list verbatim.
+ * SB_GET (op 18) returns the same rules embedded in probe_sb_info1
+ * but with the rest of the sb summary attached; this op lets the PS
+ * pull just the rules without paying for the full info encode.
+ *
+ * NOT_NOW_BROWN_COW: gate this op on the [[allowed_ps]] allowlist
+ * once the probe transport surfaces the caller's mTLS fingerprint /
+ * GSS principal (see .claude/design/proxy-server.md).  Today the op
+ * is reachable from any probe caller; that matches the rest of the
+ * probe protocol's open-by-default posture, but is wider than the
+ * design ultimately wants.
+ */
+struct SB_GET_CLIENT_RULES1args {
+	unsigned hyper		sgcra_id;
+};
+struct SB_GET_CLIENT_RULES1resok {
+	probe_client_rule1	sgcrr_rules<PROBE1_MAX_CLIENT_RULES>;
+};
+union SB_GET_CLIENT_RULES1res switch (probe_stat1 sgcrr_status) {
+	case PROBE1_OK:
+		SB_GET_CLIENT_RULES1resok	sgcrr_resok;
+	default:
+		void;
+};
+
 /* SB_SET_STRIPE_UNIT (op 27) -- returns probe_stat1 directly */
 struct SB_SET_STRIPE_UNIT1args {
 	unsigned hyper		ssu_id;
@@ -677,6 +704,10 @@ program PROBE_PROGRAM {
 
 		/* Mirror lifecycle ops -- see .claude/design/mirror-lifecycle.md */
 		INODE_LAYOUT_LIST1res PROBEPROC1_INODE_LAYOUT_LIST(INODE_LAYOUT_LIST1args) = 28;
+
+		/* Read-side rules pull (PS-side rule cache hydration) */
+		SB_GET_CLIENT_RULES1res
+		PROBEPROC1_SB_GET_CLIENT_RULES(SB_GET_CLIENT_RULES1args) = 29;
 
 		/* Slice B: dstore lifecycle ops */
 		DSTORE_LIST1res PROBEPROC1_DSTORE_LIST(void) = 33;

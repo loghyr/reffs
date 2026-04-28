@@ -1017,6 +1017,95 @@ struct rpc_trans *probe1_client_op_sb_set_client_rules(
 	return rt;
 }
 
+static const char *flavor_name(probe_auth_flavor1 f)
+{
+	switch (f) {
+	case PROBE1_AUTH_SYS:
+		return "sys";
+	case PROBE1_AUTH_KRB5:
+		return "krb5";
+	case PROBE1_AUTH_KRB5I:
+		return "krb5i";
+	case PROBE1_AUTH_KRB5P:
+		return "krb5p";
+	case PROBE1_AUTH_TLS:
+		return "tls";
+	default:
+		return "?";
+	}
+}
+
+static int sb_get_client_rules_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_GET_CLIENT_RULES1res *res = ph->ph_res;
+
+	if (res->sgcrr_status) {
+		LOG("sb-get-client-rules error = %d", res->sgcrr_status);
+	} else {
+		SB_GET_CLIENT_RULES1resok *resok =
+			&res->SB_GET_CLIENT_RULES1res_u.sgcrr_resok;
+
+		LOG("Rules (%u):", resok->sgcrr_rules.sgcrr_rules_len);
+		for (uint32_t i = 0; i < resok->sgcrr_rules.sgcrr_rules_len;
+		     i++) {
+			const probe_client_rule1 *r =
+				&resok->sgcrr_rules.sgcrr_rules_val[i];
+			char fbuf[128];
+			size_t off = 0;
+
+			fbuf[0] = '\0';
+			for (uint32_t j = 0; j < r->pcr_flavors.pcr_flavors_len;
+			     j++) {
+				int n = snprintf(
+					fbuf + off, sizeof(fbuf) - off,
+					j == 0 ? "%s" : ",%s",
+					flavor_name(
+						r->pcr_flavors
+							.pcr_flavors_val[j]));
+				if (n < 0 || (size_t)n >= sizeof(fbuf) - off)
+					break;
+				off += (size_t)n;
+			}
+			LOG("  match=%s rw=%d root_squash=%d all_squash=%d "
+			    "flavors=[%s]",
+			    r->pcr_match ? r->pcr_match : "", r->pcr_rw,
+			    r->pcr_root_squash, r->pcr_all_squash, fbuf);
+		}
+	}
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_sb_get_client_rules(uint64_t id)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_SB_GET_CLIENT_RULES;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_GET_CLIENT_RULES1args *args = ph->ph_args;
+
+	args->sgcra_id = id;
+
+	rt->rt_cb = sb_get_client_rules_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
 struct rpc_trans *probe1_client_op_sb_set_dstores(uint64_t id,
 						  const uint32_t *dstore_ids,
 						  uint32_t ndstores)

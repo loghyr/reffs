@@ -1671,6 +1671,98 @@ static int probe1_op_sb_set_client_rules(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * Read-side counterpart of SB_SET_CLIENT_RULES.  Looks up the sb,
+ * copies sb->sb_client_rules out into the wire-form rule list.
+ *
+ * NOT_NOW_BROWN_COW: gate this op on the [[allowed_ps]] allowlist
+ * (mTLS fingerprint or GSS principal).  Today the probe transport
+ * does not surface either to handlers, so the gate is deferred.
+ * See .claude/design/proxy-server.md "Export-rule mirror via probe
+ * protocol".
+ */
+static int probe1_op_sb_get_client_rules(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_GET_CLIENT_RULES1args *args = ph->ph_args;
+	SB_GET_CLIENT_RULES1res *res = ph->ph_res;
+
+	struct super_block *sb = super_block_find(args->sgcra_id);
+
+	if (!sb) {
+		res->sgcrr_status = PROBE1ERR_NOENT;
+		return 0;
+	}
+
+	unsigned int n = sb->sb_nclient_rules;
+
+	if (n > PROBE1_MAX_CLIENT_RULES)
+		n = PROBE1_MAX_CLIENT_RULES;
+
+	probe_client_rule1 *out = NULL;
+
+	if (n > 0) {
+		out = calloc(n, sizeof(*out));
+		if (!out) {
+			super_block_put(sb);
+			res->sgcrr_status = PROBE1ERR_NOMEM;
+			return 0;
+		}
+	}
+
+	for (unsigned int i = 0; i < n; i++) {
+		const struct sb_client_rule *r = &sb->sb_client_rules[i];
+		probe_client_rule1 *pr = &out[i];
+
+		pr->pcr_match = strdup(r->scr_match);
+		if (!pr->pcr_match) {
+			for (unsigned int k = 0; k < i; k++)
+				free(out[k].pcr_match);
+			free(out);
+			super_block_put(sb);
+			res->sgcrr_status = PROBE1ERR_NOMEM;
+			return 0;
+		}
+		pr->pcr_rw = r->scr_rw;
+		pr->pcr_root_squash = r->scr_root_squash;
+		pr->pcr_all_squash = r->scr_all_squash;
+
+		unsigned int nf = r->scr_nflavors;
+
+		if (nf > PROBE1_MAX_FLAVORS)
+			nf = PROBE1_MAX_FLAVORS;
+		pr->pcr_flavors.pcr_flavors_len = nf;
+		if (nf > 0) {
+			pr->pcr_flavors.pcr_flavors_val =
+				calloc(nf, sizeof(probe_auth_flavor1));
+			if (!pr->pcr_flavors.pcr_flavors_val) {
+				for (unsigned int k = 0; k <= i; k++) {
+					free(out[k].pcr_match);
+					free(out[k].pcr_flavors.pcr_flavors_val);
+				}
+				free(out);
+				super_block_put(sb);
+				res->sgcrr_status = PROBE1ERR_NOMEM;
+				return 0;
+			}
+			for (unsigned int j = 0; j < nf; j++)
+				pr->pcr_flavors.pcr_flavors_val[j] =
+					(probe_auth_flavor1)r->scr_flavors[j];
+		} else {
+			pr->pcr_flavors.pcr_flavors_val = NULL;
+		}
+	}
+
+	res->sgcrr_status = PROBE1_OK;
+	res->SB_GET_CLIENT_RULES1res_u.sgcrr_resok.sgcrr_rules.sgcrr_rules_len =
+		n;
+	res->SB_GET_CLIENT_RULES1res_u.sgcrr_resok.sgcrr_rules.sgcrr_rules_val =
+		out;
+
+	super_block_put(sb);
+	return 0;
+}
+
 static int probe1_op_sb_set_stripe_unit(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -1902,6 +1994,10 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_SB_SET_CLIENT_RULES1args,
 			   SB_SET_CLIENT_RULES1args, xdr_probe_stat1,
 			   probe_stat1, probe1_op_sb_set_client_rules),
+	RPC_OPERATION_INIT(
+		PROBEPROC1, SB_GET_CLIENT_RULES, xdr_SB_GET_CLIENT_RULES1args,
+		SB_GET_CLIENT_RULES1args, xdr_SB_GET_CLIENT_RULES1res,
+		SB_GET_CLIENT_RULES1res, probe1_op_sb_get_client_rules),
 	RPC_OPERATION_INIT(PROBEPROC1, SB_SET_STRIPE_UNIT,
 			   xdr_SB_SET_STRIPE_UNIT1args, SB_SET_STRIPE_UNIT1args,
 			   xdr_probe_stat1, probe_stat1,

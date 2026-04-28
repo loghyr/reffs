@@ -813,6 +813,30 @@ def sb_set_client_rules_cmd(client, args):
     print(f"Superblock {args.id} client rules set ({len(rules)} rule(s))")
 
 
+def sb_get_client_rules_cmd(client, args):
+    """Read-side counterpart of sb-set-client-rules.
+
+    Pulls and prints the rule list for the named superblock.  Used as
+    a sanity-check after sb-set-client-rules and as the PS-side rule
+    cache hydration entry-point (see proxy-server.md).
+    """
+    res = client.sb_get_client_rules(args.id)
+    probe_error_handler(res.sgcrr_status)
+    rules = list(res.sgcrr_resok.sgcrr_rules) if res.sgcrr_resok.sgcrr_rules else []
+    print(f"Superblock {args.id} client rules ({len(rules)}):")
+    for i, r in enumerate(rules):
+        match = r.pcr_match.decode('ascii', 'replace') \
+            if isinstance(r.pcr_match, (bytes, bytearray)) else r.pcr_match
+        flavor_names = []
+        for f in (r.pcr_flavors or []):
+            name = AUTH_FLAVOR_MAP.get(f, str(f))
+            flavor_names.append(name)
+        flav_str = ','.join(flavor_names) if flavor_names else '(none)'
+        print(f"  [{i}] match={match} access={'rw' if r.pcr_rw else 'ro'} "
+              f"root_squash={r.pcr_root_squash} all_squash={r.pcr_all_squash} "
+              f"flavors=[{flav_str}]")
+
+
 def sb_lint_flavors_cmd(client, args):
     res = client.sb_lint_flavors()
     probe_error_handler(res.lfr_status)
@@ -1156,6 +1180,13 @@ def parse_args():
         help='Rule: match=<spec>,access=rw|ro,root_squash=true|false,'
              'all_squash=true|false,flavors=f1:f2 (repeatable)')
     p_sb_client_rules.set_defaults(func=sb_set_client_rules_cmd)
+
+    p_sb_get_client_rules = subparsers.add_parser(
+        'sb-get-client-rules',
+        help='Read the per-client export policy rules on a superblock')
+    p_sb_get_client_rules.add_argument('--id', type=int, required=True,
+                                       help='Superblock ID')
+    p_sb_get_client_rules.set_defaults(func=sb_get_client_rules_cmd)
 
     p_sb_lint = subparsers.add_parser('sb-lint-flavors', help='Check flavor consistency')
     p_sb_lint.set_defaults(func=sb_lint_flavors_cmd)

@@ -299,6 +299,18 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_SB_SET_CLIENT_RULES, args,
                          response_type='probe_stat1')
 
+    def sb_get_client_rules(self, sb_id):
+        """Read-side counterpart of sb_set_client_rules.
+
+        Returns SB_GET_CLIENT_RULES1res; on success the resok branch
+        carries sgcrr_rules (a list of probe_client_rule1).  The PS-side
+        rule cache populates from this op at registration time and on
+        per-rule-refresh triggers (see proxy-server.md).
+        """
+        args = SB_GET_CLIENT_RULES1args(sb_id)
+        return self.proc(PROBEPROC1_SB_GET_CLIENT_RULES, args,
+                         response_type='SB_GET_CLIENT_RULES1res')
+
     def sb_lint_flavors(self):
         """Check flavor consistency across all mounted exports."""
         return self.proc(PROBEPROC1_SB_LINT_FLAVORS, response_type='SB_LINT_FLAVORS1res')

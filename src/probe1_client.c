@@ -58,6 +58,7 @@ static void usage(const char *prog)
 	printf("                                     sb-unmount - Unmount a superblock\n");
 	printf("                                     sb-destroy - Destroy a superblock\n");
 	printf("                                     sb-get    - Get superblock info\n");
+	printf("                                     sb-get-client-rules - Pull rule list for sb\n");
 	printf("                                     sb-lint-flavors - Check flavor consistency\n");
 	printf("                                     sb-set-flavors - Set sb security flavors\n");
 	printf("                                     sb-set-dstores - Bind DSes to superblock\n");
@@ -323,6 +324,8 @@ int main(int argc, char *argv[])
 		rt = probe1_client_op_sb_destroy(sb_id);
 	} else if (!strcmp(op, "sb-get")) {
 		rt = probe1_client_op_sb_get(sb_id);
+	} else if (!strcmp(op, "sb-get-client-rules")) {
+		rt = probe1_client_op_sb_get_client_rules(sb_id);
 	} else if (!strcmp(op, "sb-set-flavors")) {
 		if (cli_nflavors == 0) {
 			LOG("sb-set-flavors requires --flavors (e.g., --flavors sys,krb5)");

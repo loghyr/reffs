@@ -238,6 +238,43 @@ def test_sb_set_client_rules(client, sb_id):
     check_status_ok(res3, "sb_set_client_rules (clear) status")
 
 
+def test_sb_get_client_rules(client, sb_id):
+    """SB_GET_CLIENT_RULES round-trips the rule list set by SB_SET_CLIENT_RULES."""
+    from reffs.probe1_xdr_type import probe_client_rule1
+    print(f"\n--- test_sb_get_client_rules (id={sb_id}) ---")
+
+    # Set known state, then read back via the dedicated op.
+    rule = probe_client_rule1(
+        b'10.0.0.0/8',
+        True,
+        False,
+        False,
+        [PROBE1_AUTH_SYS, PROBE1_AUTH_KRB5],
+    )
+    set_res = client.sb_set_client_rules(sb_id, [rule])
+    check_status_ok(set_res, "sb_set_client_rules pre-get")
+
+    get_res = client.sb_get_client_rules(sb_id)
+    check_status_ok(get_res.sgcrr_status, "sb_get_client_rules status")
+    rules = list(get_res.sgcrr_resok.sgcrr_rules) if get_res.sgcrr_resok.sgcrr_rules else []
+    check(len(rules) == 1, f"sb_get_client_rules returned 1 rule (got {len(rules)})")
+    if rules:
+        r = rules[0]
+        match = r.pcr_match.decode('ascii') if isinstance(r.pcr_match, (bytes, bytearray)) else r.pcr_match
+        check(match == '10.0.0.0/8', f"rule match=10.0.0.0/8 (got {match!r})")
+        check(r.pcr_rw is True, "rule pcr_rw=True")
+        check(r.pcr_root_squash is False, "rule pcr_root_squash=False")
+        check(len(r.pcr_flavors) == 2, f"2 flavors (got {len(r.pcr_flavors)})")
+
+    # Empty-rule round-trip: clearing should leave sgcrr_rules empty.
+    clear_res = client.sb_set_client_rules(sb_id, [])
+    check_status_ok(clear_res, "sb_set_client_rules clear pre-get")
+    get_res2 = client.sb_get_client_rules(sb_id)
+    check_status_ok(get_res2.sgcrr_status, "sb_get_client_rules after clear")
+    rules2 = list(get_res2.sgcrr_resok.sgcrr_rules) if get_res2.sgcrr_resok.sgcrr_rules else []
+    check(len(rules2) == 0, f"empty rule list after clear (got {len(rules2)})")
+
+
 def test_sb_unmount(client, sb_id):
     """SB_UNMOUNT should transition to UNMOUNTED."""
     print(f"\n--- test_sb_unmount (id={sb_id}) ---")
@@ -284,6 +321,7 @@ def main():
 
     # Phase 3b: Set per-client rules before mount
     test_sb_set_client_rules(client, sb_id)
+    test_sb_get_client_rules(client, sb_id)
 
     # Phase 4: Mount
     test_sb_mount(client, sb_id, TEST_PATH)
