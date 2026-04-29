@@ -233,7 +233,15 @@ mount_nfs() {
     # the kernel NFS client wait 60s after a TCP break before retrying,
     # which races with the D-state grace window and causes false failures.
     info "  mount: vers=4.2,sec=sys,port=$NFS_PORT,timeo=100 -> $MOUNT"
-    sudo timeout 30 mount -v -o vers=4.2,sec=sys,port=$NFS_PORT,timeo=100 127.0.0.1:/ "$MOUNT" 2>&1
+    # 180s wrapper because the Linux NFSv4 client's
+    # nfs4_discover_server_trunking probe takes ~2m24s on loopback
+    # against reffsd (4 RPC rounds, each ~30s with timeo=100 +
+    # retrans=2).  nightly_ci.sh's wardtest mount has no timeout
+    # wrapper at all, which is why it sits through it; soak's
+    # previous 30s cap was killing mount mid-probe.  Root-cause
+    # investigation of why trunking is doing four retries on
+    # loopback is a follow-up.
+    sudo timeout 180 mount -v -o vers=4.2,sec=sys,port=$NFS_PORT,timeo=100 127.0.0.1:/ "$MOUNT" 2>&1
     local rc=$?
     if [ "$rc" -eq 0 ]; then
         info "  mount: success"
