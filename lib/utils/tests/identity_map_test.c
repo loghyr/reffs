@@ -9,6 +9,7 @@
 #include "config.h" /* IWYU pragma: keep */
 #endif
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -215,6 +216,31 @@ START_TEST(test_mapping_survives_restart)
 END_TEST
 
 /*
+ * Remove must unhash both the forward and reverse entries.  The
+ * map_find rewrite that closed the UAF must keep this contract.
+ */
+START_TEST(test_map_remove_drops_both_directions)
+{
+	reffs_id krb5 = REFFS_ID_MAKE(REFFS_ID_KRB5, 7, 1234);
+	reffs_id unix_id = REFFS_ID_MAKE(REFFS_ID_UNIX, 0, 5678);
+
+	ck_assert_int_eq(identity_map_add(krb5, unix_id), 0);
+	/* Both directions resolve before remove. */
+	ck_assert_uint_eq(identity_map_lookup(krb5), unix_id);
+	ck_assert_uint_eq(identity_map_lookup(unix_id), krb5);
+
+	ck_assert_int_eq(identity_map_remove(krb5), 0);
+
+	/* Both directions return the input (no mapping). */
+	ck_assert_uint_eq(identity_map_lookup(krb5), krb5);
+	ck_assert_uint_eq(identity_map_lookup(unix_id), unix_id);
+
+	/* Removing again returns -ENOENT. */
+	ck_assert_int_eq(identity_map_remove(krb5), -ENOENT);
+}
+END_TEST
+
+/*
  * XXH32 principal hashing is stable: the same principal string must
  * always produce the same local_id, both in this process and across
  * restarts.  These vectors are canonical -- never change them.
@@ -251,6 +277,7 @@ static Suite *identity_map_suite(void)
 	tcase_add_test(tc_map, test_map_unix_for_nobody);
 	tcase_add_test(tc_map, test_map_persist_load);
 	tcase_add_test(tc_map, test_mapping_survives_restart);
+	tcase_add_test(tc_map, test_map_remove_drops_both_directions);
 	tcase_add_test(tc_map, test_principal_local_id_stable);
 	suite_add_tcase(s, tc_map);
 

@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -159,24 +160,37 @@ int identity_map_add(reffs_id a, reffs_id b)
 	return ret;
 }
 
-static struct map_entry *map_find(reffs_id key)
+/*
+ * Look up a key, copy the value out under the read-side critical
+ * section, and indicate whether the key was found.  Returning the
+ * map_entry pointer to the caller would be a use-after-free: a
+ * concurrent identity_map_remove can call_rcu the entry between our
+ * unlock and the caller's deref.  reffs_id is a small POD so copying
+ * it under the lock is cheap.
+ */
+static bool map_find_value(reffs_id key, reffs_id *value_out)
 {
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 	unsigned long hash = map_hash(key);
+	bool found = false;
 
 	if (!map_ht)
-		return NULL;
+		return false;
 
 	rcu_read_lock();
 	cds_lfht_lookup(map_ht, hash, map_match, &key, &iter);
 	node = cds_lfht_iter_get_node(&iter);
+	if (node) {
+		struct map_entry *e =
+			caa_container_of(node, struct map_entry, me_node);
+
+		*value_out = e->me_value;
+		found = true;
+	}
 	rcu_read_unlock();
 
-	if (!node)
-		return NULL;
-
-	return caa_container_of(node, struct map_entry, me_node);
+	return found;
 }
 
 reffs_id identity_map_unix_for(reffs_id id)
@@ -185,48 +199,71 @@ reffs_id identity_map_unix_for(reffs_id id)
 	if (REFFS_ID_IS_UNIX(id))
 		return id;
 
-	struct map_entry *e = map_find(id);
+	reffs_id value;
 
-	if (e && REFFS_ID_IS_UNIX(e->me_value))
-		return e->me_value;
+	if (map_find_value(id, &value) && REFFS_ID_IS_UNIX(value))
+		return value;
 
 	return REFFS_ID_NOBODY_VAL;
 }
 
 reffs_id identity_map_lookup(reffs_id id)
 {
-	struct map_entry *e = map_find(id);
+	reffs_id value;
 
-	if (e)
-		return e->me_value;
+	if (map_find_value(id, &value))
+		return value;
 
 	return id;
 }
 
 int identity_map_remove(reffs_id key)
 {
-	struct map_entry *e = map_find(key);
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	unsigned long hash = map_hash(key);
+	reffs_id reverse_key = 0;
+	bool removed = false;
 
-	if (!e)
+	if (!map_ht)
 		return -ENOENT;
 
-	reffs_id reverse_key = e->me_value;
-
-	/* Remove forward mapping. */
+	/*
+	 * Resolve, capture reverse_key, and unlink the forward entry
+	 * in a single rcu_read_lock so the entry cannot be freed under
+	 * us between lookup and del.
+	 */
 	rcu_read_lock();
-	cds_lfht_del(map_ht, &e->me_node);
-	rcu_read_unlock();
-	call_rcu(&e->me_rcu, map_entry_free_rcu);
+	cds_lfht_lookup(map_ht, hash, map_match, &key, &iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (node) {
+		struct map_entry *e =
+			caa_container_of(node, struct map_entry, me_node);
 
-	/* Remove reverse mapping. */
-	struct map_entry *rev = map_find(reverse_key);
-
-	if (rev) {
-		rcu_read_lock();
-		cds_lfht_del(map_ht, &rev->me_node);
-		rcu_read_unlock();
-		call_rcu(&rev->me_rcu, map_entry_free_rcu);
+		reverse_key = e->me_value;
+		if (cds_lfht_del(map_ht, node) == 0) {
+			call_rcu(&e->me_rcu, map_entry_free_rcu);
+			removed = true;
+		}
 	}
+	rcu_read_unlock();
+
+	if (!removed)
+		return -ENOENT;
+
+	/* Remove reverse mapping in its own critical section. */
+	hash = map_hash(reverse_key);
+	rcu_read_lock();
+	cds_lfht_lookup(map_ht, hash, map_match, &reverse_key, &iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (node) {
+		struct map_entry *rev =
+			caa_container_of(node, struct map_entry, me_node);
+
+		if (cds_lfht_del(map_ht, node) == 0)
+			call_rcu(&rev->me_rcu, map_entry_free_rcu);
+	}
+	rcu_read_unlock();
 
 	return 0;
 }
