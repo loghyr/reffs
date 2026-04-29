@@ -236,6 +236,48 @@ START_TEST(test_finalize_total_blocks_one_byte_over)
 }
 END_TEST
 
+START_TEST(test_finalize_total_blocks_mojette_24k)
+{
+	/*
+	 * 24 KiB Mojette systematic, k=4 m=2.  Production geometry
+	 * after lifting EC_SHARD_SIZE_DEFAULT off the 4 KiB cap.
+	 * Per .claude/design/mojette-24k-shards.md:
+	 *
+	 *   shard_size = 24576 (P=3072 columns)
+	 *   parity[0] (p=2):  6146 elem * 8 = 49168 bytes
+	 *   parity[1] (p=3):  9217 elem * 8 = 73736 bytes
+	 *   ds_stride        = max = 73736
+	 *   chunk_sz (MDS-issued ffm_striping_unit_size) = 4096
+	 *
+	 * Per-stripe block stride MUST be ceil(73736 / 4096) = 19.
+	 * For a 96 KiB payload (k * shard_size = 1 stripe),
+	 * total_blocks MUST be 1 * 19 = 19.  Pre-#147 truncation
+	 * gave nstripes * 18 here, which left block 18 of every
+	 * shard PENDING and broke CHUNK_READ on the parity[1] mirror.
+	 */
+	size_t chunk_sz = 4096;
+	size_t ds_stride = 73736;
+	size_t nstripes = 1;
+
+	ck_assert_uint_eq(per_stripe_block_stride(ds_stride, chunk_sz), 19);
+	ck_assert_uint_eq(total_blocks(nstripes, ds_stride, chunk_sz),
+			  nstripes * 19);
+
+	/* Belt-and-braces: the bad pre-#147 value would be nstripes * 18. */
+	ck_assert_uint_ne(total_blocks(nstripes, ds_stride, chunk_sz),
+			  nstripes * 18);
+
+	/*
+	 * Multi-stripe sanity at the same 24 KiB geometry.  4 stripes
+	 * (a 384 KiB payload) must finalise 4 * 19 = 76 blocks per
+	 * mirror.
+	 */
+	nstripes = 4;
+	ck_assert_uint_eq(total_blocks(nstripes, ds_stride, chunk_sz),
+			  nstripes * 19);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite setup                                                         */
 /* ------------------------------------------------------------------ */
@@ -255,6 +297,7 @@ static Suite *ec_io_suite(void)
 	tcase_add_test(tc, test_finalize_total_blocks_rs_aligned);
 	tcase_add_test(tc, test_finalize_total_blocks_mojette_unaligned);
 	tcase_add_test(tc, test_finalize_total_blocks_one_byte_over);
+	tcase_add_test(tc, test_finalize_total_blocks_mojette_24k);
 
 	suite_add_tcase(s, tc);
 	return s;

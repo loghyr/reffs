@@ -50,8 +50,18 @@ __attribute__((format(printf, 1, 2))) static void ec_log(const char *fmt, ...)
 	va_end(ap);
 }
 
-/* Shard size: 4 KiB (capped for io_uring large-message workaround). */
-#define EC_SHARD_SIZE (4 * 1024)
+/*
+ * EC_SHARD_SIZE_DEFAULT is exported by ec_client.h so callers that
+ * want the historical 4 KiB benchmark geometry have a named
+ * constant.  ec_write_codec / ec_read_codec take shard_size as a
+ * parameter; only the back-compat ec_write / ec_read wrappers
+ * below pin to the default.
+ *
+ * Per-RPC chunk cap on the plain (non-EC) path.  This is the
+ * NFSv3 READ/WRITE round-trip size, not a stripe shard, and is
+ * unrelated to the EC pipeline's shard_size knob.
+ */
+#define PLAIN_RPC_CHUNK (4 * 1024)
 
 /* Ceiling division -- needed for chunk block counts with variable-size shards. */
 #define DIV_CEIL(a, b) (((a) + (b) - 1) / (b))
@@ -379,16 +389,17 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 		goto out_layout;
 
 	/*
-	 * Write in EC_SHARD_SIZE chunks.  The io_uring read pipeline
-	 * stalls on NFSv3 RPCs larger than ~32KB; cap at shard size.
+	 * Write in PLAIN_RPC_CHUNK-sized RPCs.  This is the NFSv3
+	 * write loop on a single mirror; unrelated to the EC
+	 * pipeline's per-stripe shard_size.
 	 */
 	size_t off = 0;
 
 	while (off < data_len) {
 		uint32_t chunk = (uint32_t)(data_len - off);
 
-		if (chunk > EC_SHARD_SIZE)
-			chunk = EC_SHARD_SIZE;
+		if (chunk > PLAIN_RPC_CHUNK)
+			chunk = PLAIN_RPC_CHUNK;
 		ret = ds_write(&dc, layout.el_mirrors[0].em_fh,
 			       layout.el_mirrors[0].em_fh_len, (uint64_t)off,
 			       data + off, chunk);
@@ -445,15 +456,15 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	if (ret)
 		goto out_layout;
 
-	/* Read in EC_SHARD_SIZE chunks (io_uring large message workaround). */
+	/* Read in PLAIN_RPC_CHUNK-sized RPCs (single-mirror plain path). */
 	size_t total = 0;
 
 	while (total < buf_len) {
 		uint32_t want = (uint32_t)(buf_len - total);
 		uint32_t nread = 0;
 
-		if (want > EC_SHARD_SIZE)
-			want = EC_SHARD_SIZE;
+		if (want > PLAIN_RPC_CHUNK)
+			want = PLAIN_RPC_CHUNK;
 		ret = ds_read(&dc, layout.el_mirrors[0].em_fh,
 			      layout.el_mirrors[0].em_fh_len, (uint64_t)total,
 			      buf + total, want, &nread);
@@ -482,10 +493,21 @@ out_close:
 
 int ec_write_codec(struct mds_session *ms, const char *path,
 		   const uint8_t *data, size_t data_len, int k, int m,
-		   enum ec_codec_type codec_type, layouttype4 layout_type)
+		   enum ec_codec_type codec_type, layouttype4 layout_type,
+		   size_t shard_size)
 {
 	struct ec_context ctx;
 	int ret;
+
+	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0) {
+		/*
+		 * Mojette grids index columns as uint64_t.  A non-multiple
+		 * of 8 leaves a fractional column at the tail and breaks
+		 * the codec.  RS uses bytes directly but the same
+		 * constraint costs nothing.
+		 */
+		return -EINVAL;
+	}
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;
@@ -532,7 +554,6 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	 * Pad data to a multiple of k * shard_size.  Each stripe
 	 * encodes k shards of shard_size bytes.
 	 */
-	size_t shard_size = EC_SHARD_SIZE;
 	size_t stripe_data = (size_t)k * shard_size;
 	size_t padded_len =
 		((data_len + stripe_data - 1) / stripe_data) * stripe_data;
@@ -770,7 +791,7 @@ out_codec:
 int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		  size_t buf_len, size_t *out_len, int k, int m,
 		  enum ec_codec_type codec_type, layouttype4 layout_type,
-		  uint64_t skip_ds_mask)
+		  uint64_t skip_ds_mask, size_t shard_size)
 {
 	struct ec_context ctx;
 	int ret;
@@ -783,6 +804,9 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		       nskip, m);
 		return -EINVAL;
 	}
+
+	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0)
+		return -EINVAL;
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;
@@ -811,7 +835,6 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	if (ret)
 		goto out_layout;
 
-	size_t shard_size = EC_SHARD_SIZE;
 	size_t stripe_data = (size_t)k * shard_size;
 
 	/*
@@ -950,12 +973,12 @@ int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	     size_t data_len, int k, int m)
 {
 	return ec_write_codec(ms, path, data, data_len, k, m, EC_CODEC_RS,
-			      LAYOUT4_FLEX_FILES);
+			      LAYOUT4_FLEX_FILES, EC_SHARD_SIZE_DEFAULT);
 }
 
 int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	    size_t buf_len, size_t *out_len, int k, int m)
 {
 	return ec_read_codec(ms, path, buf, buf_len, out_len, k, m, EC_CODEC_RS,
-			     LAYOUT4_FLEX_FILES, 0);
+			     LAYOUT4_FLEX_FILES, 0, EC_SHARD_SIZE_DEFAULT);
 }

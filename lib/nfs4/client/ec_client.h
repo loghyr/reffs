@@ -519,12 +519,28 @@ int ec_write(struct mds_session *ms, const char *path, const uint8_t *data,
 int ec_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	    size_t buf_len, size_t *out_len, int k, int m);
 
+/*
+ * shard_size: bytes per data shard (= grid row width for Mojette,
+ * bytes per RS shard).  Must be a non-zero multiple of 8 (Mojette
+ * indexes columns as uint64_t).  Pass EC_SHARD_SIZE_DEFAULT for
+ * the historical 4 KiB benchmark geometry; passing 24576 enables
+ * the Mojette 24 KiB shard demo (96 KiB / k=4) without changing
+ * the codec or the FINALIZE/COMMIT total_blocks math.
+ */
 int ec_write_codec(struct mds_session *ms, const char *path,
 		   const uint8_t *data, size_t data_len, int k, int m,
-		   enum ec_codec_type codec_type, layouttype4 layout_type);
+		   enum ec_codec_type codec_type, layouttype4 layout_type,
+		   size_t shard_size);
 int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		  size_t buf_len, size_t *out_len, int k, int m,
 		  enum ec_codec_type codec_type, layouttype4 layout_type,
-		  uint64_t skip_ds_mask);
+		  uint64_t skip_ds_mask, size_t shard_size);
+
+/*
+ * Default shard size for the back-compat ec_write / ec_read
+ * wrappers (4 KiB).  Exported so callers that want the legacy
+ * geometry have a named constant rather than a magic number.
+ */
+#define EC_SHARD_SIZE_DEFAULT (4 * 1024)
 
 #endif /* _REFFS_EC_CLIENT_H */

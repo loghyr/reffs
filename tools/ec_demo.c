@@ -132,7 +132,8 @@ static int session_open(struct mds_session *ms, const char *mds_host)
 
 static int cmd_write(const char *mds_host, const char *nfs_file,
 		     const char *local_file, int k, int m,
-		     enum ec_codec_type codec_type, layouttype4 layout_type)
+		     enum ec_codec_type codec_type, layouttype4 layout_type,
+		     size_t shard_size)
 {
 	struct mds_session ms;
 	size_t data_len;
@@ -150,10 +151,10 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 		return 1;
 	}
 
-	fprintf(stderr, "ec_demo: writing %zu bytes to %s (%d+%d)\n", data_len,
-		nfs_file, k, m);
+	fprintf(stderr, "ec_demo: writing %zu bytes to %s (%d+%d, shard=%zu)\n",
+		data_len, nfs_file, k, m, shard_size);
 	ret = ec_write_codec(&ms, nfs_file, data, data_len, k, m, codec_type,
-			     layout_type);
+			     layout_type, shard_size);
 	if (ret)
 		fprintf(stderr, "ec_demo: write failed: %d\n", ret);
 	else
@@ -167,7 +168,7 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 static int cmd_read(const char *mds_host, const char *nfs_file,
 		    const char *local_file, int k, int m, size_t expected_len,
 		    enum ec_codec_type codec_type, layouttype4 layout_type,
-		    uint64_t skip_ds_mask)
+		    uint64_t skip_ds_mask, size_t shard_size)
 {
 	struct mds_session ms;
 	int ret;
@@ -188,9 +189,10 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 
 	size_t out_len = 0;
 
-	fprintf(stderr, "ec_demo: reading %s (RS %d+%d)\n", nfs_file, k, m);
+	fprintf(stderr, "ec_demo: reading %s (%d+%d, shard=%zu)\n", nfs_file, k,
+		m, shard_size);
 	ret = ec_read_codec(&ms, nfs_file, buf, buf_len, &out_len, k, m,
-			    codec_type, layout_type, skip_ds_mask);
+			    codec_type, layout_type, skip_ds_mask, shard_size);
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
 	} else {
@@ -209,7 +211,7 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 static int cmd_verify(const char *mds_host, const char *nfs_file,
 		      const char *local_file, int k, int m,
 		      enum ec_codec_type codec_type, layouttype4 layout_type,
-		      uint64_t skip_ds_mask)
+		      uint64_t skip_ds_mask, size_t shard_size)
 {
 	struct mds_session ms;
 	size_t orig_len;
@@ -237,10 +239,10 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 
 	size_t out_len = 0;
 
-	fprintf(stderr, "ec_demo: verifying %s against %s (RS %d+%d)\n",
-		nfs_file, local_file, k, m);
+	fprintf(stderr, "ec_demo: verifying %s against %s (%d+%d, shard=%zu)\n",
+		nfs_file, local_file, k, m, shard_size);
 	ret = ec_read_codec(&ms, nfs_file, buf, orig_len, &out_len, k, m,
-			    codec_type, layout_type, skip_ds_mask);
+			    codec_type, layout_type, skip_ds_mask, shard_size);
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
 	} else if (out_len < orig_len) {
@@ -731,7 +733,11 @@ static void usage(void)
 		"  --skip-ds LIST   Comma-separated DS indices to skip"
 		" on read (degraded mode)\n"
 		"  --force-scalar   Disable SIMD in Mojette forward"
-		" transform (benchmark scalar path)\n");
+		" transform (benchmark scalar path)\n"
+		"  --shard-size N   Per-data-shard byte size for EC"
+		" (default: 4096; must be a multiple of 8).\n"
+		"                   Use 24576 for the Mojette 24 KiB"
+		" demo at 96 KiB / k=4 payloads.\n");
 }
 
 static struct option long_options[] = {
@@ -750,6 +756,7 @@ static struct option long_options[] = {
 	{ "skip-ds", required_argument, NULL, 'S' },
 	{ "force-scalar", no_argument, NULL, 'F' },
 	{ "sec", required_argument, NULL, 'x' },
+	{ "shard-size", required_argument, NULL, 'Z' },
 	{ "help", no_argument, NULL, '?' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -768,6 +775,7 @@ int main(int argc, char *argv[])
 	layouttype4 layout_type = LAYOUT4_FLEX_FILES;
 	const char *client_id = NULL;
 	uint64_t skip_ds_mask = 0;
+	size_t shard_size = EC_SHARD_SIZE_DEFAULT;
 	int opt;
 
 	if (argc < 2) {
@@ -782,7 +790,7 @@ int main(int argc, char *argv[])
 	argv++;
 	optind = 1;
 
-	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:C:c:d:l:S:x:D?",
+	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:C:c:d:l:S:x:Z:D?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -874,6 +882,15 @@ int main(int argc, char *argv[])
 		}
 		case 'F':
 			moj_force_scalar(true);
+			break;
+		case 'Z':
+			shard_size = (size_t)atol(optarg);
+			if (shard_size == 0 ||
+			    (shard_size % sizeof(uint64_t)) != 0) {
+				fprintf(stderr, "ec_demo: --shard-size must be"
+						" a non-zero multiple of 8\n");
+				return 1;
+			}
 			break;
 		case 'x':
 			if (!strcasecmp(optarg, "sys"))
@@ -967,7 +984,7 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_write(mds_host, nfs_file, local_input, k, m,
-				 codec_type, layout_type);
+				 codec_type, layout_type, shard_size);
 	}
 
 	if (strcmp(cmd, "read") == 0) {
@@ -977,7 +994,7 @@ int main(int argc, char *argv[])
 		}
 		return cmd_read(mds_host, nfs_file, local_output, k, m,
 				read_size, codec_type, layout_type,
-				skip_ds_mask);
+				skip_ds_mask, shard_size);
 	}
 
 	if (strcmp(cmd, "verify") == 0) {
@@ -986,7 +1003,8 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_verify(mds_host, nfs_file, local_input, k, m,
-				  codec_type, layout_type, skip_ds_mask);
+				  codec_type, layout_type, skip_ds_mask,
+				  shard_size);
 	}
 
 	fprintf(stderr, "ec_demo: unknown command '%s'\n", cmd);
