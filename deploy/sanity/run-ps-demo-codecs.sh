@@ -40,20 +40,16 @@ PS_B="${3:-reffs-ps-b}:2049"
 PAYLOAD_SIZE=$((96 * 1024))
 PAYLOAD="/tmp/codec_payload.bin"
 
-# Mojette gets its own payload at the 4 KiB-shard reference geometry
-# (k=4 -> 16 KiB total) that matches the validated benchmark Tier 1-4
-# runs (deploy/benchmark/results/*.csv).  Larger-shard mojette is
-# tracked as a follow-up; the projection-size-vs-chunk-alignment
-# math at 24 KiB shards is the exact corner #147 partially closed.
-# The codec itself is now unit-pinned at 24 KiB shards by
-# lib/ec/tests/mojette_codec_test.c (test_sys_24k_*); what remains
-# open is the PS-pipeline path through ec_pipeline + CHUNK_FINALIZE
-# at the 24 KiB geometry, not the encode/decode correctness.
-PAYLOAD_MJ_SIZE=$((16 * 1024))
-PAYLOAD_MJ="/tmp/codec_payload_mj.bin"
+# Mojette runs at the same 96 KiB payload as the other codecs by
+# routing through ec_demo --shard-size 24576 (k=4 -> 24 KiB per
+# data shard, one stripe per file).  See
+# .claude/design/mojette-24k-shards.md.  Slice A
+# (commit 258c88534693) parameterised shard_size in ec_pipeline
+# and pinned the FINALIZE math; this enables the previously-gated
+# 24 KiB Mojette case in the cross-PS matrix.
+MJ_SHARD_SIZE=$((24 * 1024))
 
 dd if=/dev/urandom of="$PAYLOAD" bs="$PAYLOAD_SIZE" count=1 status=none
-dd if=/dev/urandom of="$PAYLOAD_MJ" bs="$PAYLOAD_MJ_SIZE" count=1 status=none
 
 declare -A RESULTS
 declare -a ORDER
@@ -135,8 +131,8 @@ main() {
     run_codec ffv2-rs       /ffv2-rs      v2   write \
               "$PAYLOAD"    "$PAYLOAD_SIZE" --codec rs --k 4 --m 2
     run_codec ffv2-mj       /ffv2-mj      v2   write \
-              "$PAYLOAD_MJ" "$PAYLOAD_MJ_SIZE" --codec mojette-sys \
-              --k 4 --m 2
+              "$PAYLOAD"    "$PAYLOAD_SIZE" --codec mojette-sys \
+              --k 4 --m 2 --shard-size "$MJ_SHARD_SIZE"
 
     echo
     echo "=== PS-demo codecs result matrix ==="
