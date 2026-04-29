@@ -464,8 +464,11 @@ START_TEST(test_forward_read_null_args)
 END_TEST
 
 /*
- * Zero-length FH and zero count are programmer errors: the MDS would
- * reject either; the primitive short-circuits locally.
+ * Zero-length FH is a programmer error: the MDS would reject and the
+ * primitive short-circuits locally.  Zero count is a no-op success
+ * per RFC 8881 S18.22 (READ count=0 returns zero bytes); we
+ * short-circuit before the compound is built so the MDS round-trip is
+ * skipped.
  */
 START_TEST(test_forward_read_zero_lengths)
 {
@@ -478,9 +481,10 @@ START_TEST(test_forward_read_zero_lengths)
 	ck_assert_int_eq(ps_proxy_forward_read((void *)1, fh, 0, 0, other, 0,
 					       4096, NULL, &reply),
 			 -EINVAL);
+	/* count == 0 is a valid no-op (RFC 8881 S18.22). */
 	ck_assert_int_eq(ps_proxy_forward_read((void *)1, fh, sizeof(fh), 0,
 					       other, 0, 0, NULL, &reply),
-			 -EINVAL);
+			 0);
 }
 END_TEST
 

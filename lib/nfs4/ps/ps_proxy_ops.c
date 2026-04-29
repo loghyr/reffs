@@ -22,6 +22,16 @@
 #include "ps_proxy_ops.h"
 #include "ps_state.h" /* PS_MAX_FH_SIZE */
 
+/*
+ * GETATTR(TYPE, MODE) bitmap reused by mkdir / symlink / mknod
+ * forwarders to piggyback the type+mode lookup on a single compound.
+ *   word 0, bit 1  = FATTR4_TYPE  (offset 1 in the spec's attr table)
+ *   word 1, bit 1  = FATTR4_MODE  (offset 33 = 32 + 1, into word 1)
+ * See lib/xdr/nfsv42_xdr.x and ps_proxy_ops.c:1721 ps_proxy_bitmap_test
+ * for the bit layout.
+ */
+static const uint32_t ps_proxy_attr_req_type_mode[] = { 0x2u, 0x2u };
+
 void ps_proxy_getattr_reply_free(struct ps_proxy_getattr_reply *reply)
 {
 	if (!reply)
@@ -820,13 +830,10 @@ int ps_proxy_forward_mkdir(struct mds_session *ms, const uint8_t *parent_fh,
 	/*
 	 * Request FATTR4_TYPE | FATTR4_MODE so the caller's hook can
 	 * materialise a local inode with the right type bits without
-	 * a follow-up GETATTR round-trip.  Same bit set as
-	 * ps_proxy_lookup_forward_for_inode uses.
+	 * a follow-up GETATTR round-trip.
 	 */
-	static const uint32_t mkdir_attr_req[] = { 0x2u, 0x2u };
-
 	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_val =
-		(uint32_t *)mkdir_attr_req;
+		(uint32_t *)ps_proxy_attr_req_type_mode;
 	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_len = 2;
 
 	ret = mds_compound_send_with_auth(&mc, ms, creds);
@@ -1007,10 +1014,8 @@ int ps_proxy_forward_symlink(struct mds_session *ms, const uint8_t *parent_fh,
 		ret = -ENOSPC;
 		goto out;
 	}
-	static const uint32_t symlink_attr_req[] = { 0x2u, 0x2u };
-
 	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_val =
-		(uint32_t *)symlink_attr_req;
+		(uint32_t *)ps_proxy_attr_req_type_mode;
 	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_len = 2;
 
 	ret = mds_compound_send_with_auth(&mc, ms, creds);
@@ -1205,10 +1210,8 @@ int ps_proxy_forward_mknod(struct mds_session *ms, const uint8_t *parent_fh,
 	 * forwarders ask for: lets the materialiser stamp the local
 	 * proxy-SB inode without a follow-up GETATTR round-trip.
 	 */
-	static const uint32_t mknod_attr_req[] = { 0x2u, 0x2u };
-
 	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_val =
-		(uint32_t *)mknod_attr_req;
+		(uint32_t *)ps_proxy_attr_req_type_mode;
 	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_len = 2;
 
 	ret = mds_compound_send_with_auth(&mc, ms, creds);
@@ -2033,7 +2036,8 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 	OPEN4resok *ores = &res->nfs_resop4_u.opopen.OPEN4res_u.resok4;
 
 	reply->stateid_seqid = ores->stateid.seqid;
-	memcpy(reply->stateid_other, ores->stateid.other, NFS4_OTHER_SIZE);
+	memcpy(reply->stateid_other, ores->stateid.other,
+	       PS_STATEID_OTHER_SIZE);
 	reply->rflags = ores->rflags;
 
 	/* GETFH result at index 3. */
@@ -2080,12 +2084,24 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	int ret;
 
 	if (!ms || !upstream_fh || upstream_fh_len == 0 || !stateid_other ||
-	    !reply || count == 0)
+	    !reply)
 		return -EINVAL;
 	if (upstream_fh_len > PS_MAX_FH_SIZE)
 		return -E2BIG;
 
 	memset(reply, 0, sizeof(*reply));
+
+	/*
+	 * RFC 8881 S18.22 allows READ with count == 0 (zero-byte read,
+	 * still valid as a no-op).  Short-circuit here so we don't
+	 * round-trip to the MDS just to copy zero bytes back.  Set EOF
+	 * iff offset is at or past the file size -- but the PS does not
+	 * know the file size without a GETATTR, so the safe answer for
+	 * count == 0 is "not at EOF, zero bytes read" (matches what a
+	 * normal MDS would return).
+	 */
+	if (count == 0)
+		return 0;
 
 	/* SEQUENCE + PUTFH + READ = 3 ops */
 	ret = mds_compound_init(&mc, 3, "ps-proxy-read");
@@ -2256,7 +2272,7 @@ int ps_proxy_forward_layoutget(
 	la->loga_length = length;
 	la->loga_minlength = minlength;
 	la->loga_stateid.seqid = stateid_seqid;
-	memcpy(la->loga_stateid.other, stateid_other, NFS4_OTHER_SIZE);
+	memcpy(la->loga_stateid.other, stateid_other, PS_STATEID_OTHER_SIZE);
 	la->loga_maxcount = maxcount;
 
 	ret = mds_compound_send_with_auth(&mc, ms, creds);
