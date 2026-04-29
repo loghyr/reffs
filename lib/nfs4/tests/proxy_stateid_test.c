@@ -98,8 +98,15 @@ START_TEST(test_alloc_boot_seq_big_endian)
 	stateid4 s;
 
 	ck_assert_int_eq(proxy_stateid_alloc(0x04AB, &s), 0);
-	ck_assert_uint_eq(s.other[0], 0x04);
-	ck_assert_uint_eq(s.other[1], 0xAB);
+	/*
+	 * Cast through uint8_t before the unsigned compare: stateid4.other
+	 * is char[12] and char is signed on x86/x86_64, so other[1] = 0xAB
+	 * sign-extends to a huge uint64_t in ck_assert_uint_eq's internal
+	 * promotion if read as a bare char.  Bit pattern is what we care
+	 * about.
+	 */
+	ck_assert_uint_eq((uint8_t)s.other[0], 0x04);
+	ck_assert_uint_eq((uint8_t)s.other[1], 0xAB);
 }
 END_TEST
 

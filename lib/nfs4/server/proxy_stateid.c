@@ -103,8 +103,19 @@ uint16_t proxy_stateid_extract_boot_seq(const stateid4 *stid)
 {
 	if (!stid)
 		return 0;
-	return ((uint16_t)stid->other[PROXY_STATEID_BOOT_SEQ_OFF + 0] << 8) |
-	       (uint16_t)stid->other[PROXY_STATEID_BOOT_SEQ_OFF + 1];
+	/*
+	 * stateid4.other is char[12].  C leaves char's signedness up to
+	 * the implementation: signed on x86/x86_64, unsigned on aarch64
+	 * and many others.  Without the (uint8_t) cast, a byte with the
+	 * high bit set (>= 0x80) sign-extends through integer promotion
+	 * before the (uint16_t) cast, so e.g. byte 0xAB becomes 0xFFAB
+	 * instead of 0x00AB.  The static_asserts above guarantee the
+	 * offsets are correct; this guarantees the bytes themselves
+	 * decode portably.
+	 */
+	return ((uint16_t)(uint8_t)stid->other[PROXY_STATEID_BOOT_SEQ_OFF + 0]
+		<< 8) |
+	       (uint16_t)(uint8_t)stid->other[PROXY_STATEID_BOOT_SEQ_OFF + 1];
 }
 
 bool proxy_stateid_is_stale(const stateid4 *stid, uint16_t current_boot_seq)
