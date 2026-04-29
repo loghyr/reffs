@@ -45,6 +45,10 @@ PAYLOAD="/tmp/codec_payload.bin"
 # runs (deploy/benchmark/results/*.csv).  Larger-shard mojette is
 # tracked as a follow-up; the projection-size-vs-chunk-alignment
 # math at 24 KiB shards is the exact corner #147 partially closed.
+# The codec itself is now unit-pinned at 24 KiB shards by
+# lib/ec/tests/mojette_codec_test.c (test_sys_24k_*); what remains
+# open is the PS-pipeline path through ec_pipeline + CHUNK_FINALIZE
+# at the 24 KiB geometry, not the encode/decode correctness.
 PAYLOAD_MJ_SIZE=$((16 * 1024))
 PAYLOAD_MJ="/tmp/codec_payload_mj.bin"
 

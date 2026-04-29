@@ -30,6 +30,21 @@
 #define SHARD_LEN (TEST_P * (int)sizeof(uint64_t))
 #define MAX_PROJ_BYTES (49 * (int)sizeof(uint64_t))
 
+/*
+ * Production-relevant 24 KiB shard geometry: k=4 means a 96 KiB
+ * payload fans out to 4 data shards of 24 KiB each (matches
+ * deploy/sanity/run-sanity.sh).  P_24K = 24576 / 8 = 3072 cols;
+ * the largest projection (p=3, q=1, P=3072, Q=4) is
+ * |3|*(P-1) + |1|*(Q-1) + 1 = 9217 elements = 73736 bytes.  Buffer
+ * sizing for non-systematic at this geometry must account for the
+ * full 9217 * 8 footprint per shard.
+ */
+#define BIG_K 4
+#define BIG_M 2
+#define BIG_P 3072
+#define BIG_SHARD_LEN (BIG_P * (int)sizeof(uint64_t))
+#define BIG_MAX_PROJ_BYTES (9217 * (int)sizeof(uint64_t))
+
 /* Fill a shard with a deterministic pattern. */
 static void fill_shard(uint8_t *buf, size_t len, int idx)
 {
@@ -229,6 +244,240 @@ START_TEST(test_sys_too_many_losses)
 }
 END_TEST
 
+/*
+ * 24 KiB-shard correctness.  Production sanity (run-sanity.sh)
+ * fans 96 KiB out across k=4 mirrors at 24 KiB per data shard; the
+ * codec must round-trip at that geometry, including under loss.
+ * BIG_P=3072 makes the inverse non-trivial -- the prior tests at
+ * P=16 hide any large-grid regression in moj_inverse.
+ */
+
+START_TEST(test_sys_24k_no_loss)
+{
+	struct ec_codec *c = ec_mojette_sys_create(BIG_K, BIG_M);
+	uint8_t *data[BIG_K], *parity[BIG_M], *orig[BIG_K];
+
+	/*
+	 * Parity buffers must hold the largest projection (p=3 case
+	 * is 9217 elements, the p=2 case is 6146).  Sized at
+	 * BIG_MAX_PROJ_BYTES so neither parity write overruns.
+	 */
+	alloc_shards(data, parity, orig, BIG_K, BIG_M, BIG_SHARD_LEN,
+		     BIG_SHARD_LEN, BIG_MAX_PROJ_BYTES);
+
+	int ret = c->ec_encode(c, data, parity, BIG_SHARD_LEN);
+
+	ck_assert_int_eq(ret, 0);
+
+	/* Data is unchanged (systematic). */
+	for (int i = 0; i < BIG_K; i++)
+		ck_assert_int_eq(memcmp(data[i], orig[i], BIG_SHARD_LEN), 0);
+
+	uint8_t *shards[BIG_K + BIG_M];
+	bool present[BIG_K + BIG_M];
+
+	for (int i = 0; i < BIG_K; i++)
+		shards[i] = data[i];
+	for (int i = 0; i < BIG_M; i++)
+		shards[BIG_K + i] = parity[i];
+	for (int i = 0; i < BIG_K + BIG_M; i++)
+		present[i] = true;
+
+	ret = c->ec_decode(c, shards, present, BIG_SHARD_LEN);
+	ck_assert_int_eq(ret, 0);
+	for (int i = 0; i < BIG_K; i++)
+		ck_assert_int_eq(memcmp(data[i], orig[i], BIG_SHARD_LEN), 0);
+
+	free_bufs(data, BIG_K);
+	free_bufs(parity, BIG_M);
+	free_bufs(orig, BIG_K);
+	ec_codec_destroy(c);
+}
+END_TEST
+
+START_TEST(test_sys_24k_one_data_loss)
+{
+	struct ec_codec *c = ec_mojette_sys_create(BIG_K, BIG_M);
+	uint8_t *data[BIG_K], *parity[BIG_M], *orig[BIG_K];
+
+	alloc_shards(data, parity, orig, BIG_K, BIG_M, BIG_SHARD_LEN,
+		     BIG_SHARD_LEN, BIG_MAX_PROJ_BYTES);
+
+	c->ec_encode(c, data, parity, BIG_SHARD_LEN);
+
+	uint8_t *shards[BIG_K + BIG_M];
+	bool present[BIG_K + BIG_M];
+
+	for (int i = 0; i < BIG_K; i++)
+		shards[i] = data[i];
+	for (int i = 0; i < BIG_M; i++)
+		shards[BIG_K + i] = parity[i];
+	for (int i = 0; i < BIG_K + BIG_M; i++)
+		present[i] = true;
+
+	/* Lose data shard 1.  Inverse runs at n_inv=1, Q=1 -- cheap. */
+	present[1] = false;
+	memset(data[1], 0, BIG_SHARD_LEN);
+
+	int ret = c->ec_decode(c, shards, present, BIG_SHARD_LEN);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(data[1], orig[1], BIG_SHARD_LEN), 0);
+
+	free_bufs(data, BIG_K);
+	free_bufs(parity, BIG_M);
+	free_bufs(orig, BIG_K);
+	ec_codec_destroy(c);
+}
+END_TEST
+
+START_TEST(test_sys_24k_two_data_loss)
+{
+	struct ec_codec *c = ec_mojette_sys_create(BIG_K, BIG_M);
+	uint8_t *data[BIG_K], *parity[BIG_M], *orig[BIG_K];
+
+	alloc_shards(data, parity, orig, BIG_K, BIG_M, BIG_SHARD_LEN,
+		     BIG_SHARD_LEN, BIG_MAX_PROJ_BYTES);
+
+	c->ec_encode(c, data, parity, BIG_SHARD_LEN);
+
+	uint8_t *shards[BIG_K + BIG_M];
+	bool present[BIG_K + BIG_M];
+
+	for (int i = 0; i < BIG_K; i++)
+		shards[i] = data[i];
+	for (int i = 0; i < BIG_M; i++)
+		shards[BIG_K + i] = parity[i];
+	for (int i = 0; i < BIG_K + BIG_M; i++)
+		present[i] = true;
+
+	/*
+	 * Lose data shards 0 and 3 -- non-adjacent missing rows.
+	 * Inverse runs at n_inv=2, P=3072, Q=2 -- ~6144 cells, ~75M
+	 * inner-loop ops; well under the 2-second per-test budget
+	 * even with ASAN slowdown.
+	 */
+	present[0] = false;
+	present[3] = false;
+	memset(data[0], 0, BIG_SHARD_LEN);
+	memset(data[3], 0, BIG_SHARD_LEN);
+
+	int ret = c->ec_decode(c, shards, present, BIG_SHARD_LEN);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(data[0], orig[0], BIG_SHARD_LEN), 0);
+	ck_assert_int_eq(memcmp(data[3], orig[3], BIG_SHARD_LEN), 0);
+
+	free_bufs(data, BIG_K);
+	free_bufs(parity, BIG_M);
+	free_bufs(orig, BIG_K);
+	ec_codec_destroy(c);
+}
+END_TEST
+
+START_TEST(test_sys_24k_only_parity_loss)
+{
+	struct ec_codec *c = ec_mojette_sys_create(BIG_K, BIG_M);
+	uint8_t *data[BIG_K], *parity[BIG_M], *orig[BIG_K];
+
+	alloc_shards(data, parity, orig, BIG_K, BIG_M, BIG_SHARD_LEN,
+		     BIG_SHARD_LEN, BIG_MAX_PROJ_BYTES);
+
+	c->ec_encode(c, data, parity, BIG_SHARD_LEN);
+
+	/* Capture parity values to compare after re-encode. */
+	uint8_t *parity_orig[BIG_M];
+
+	for (int i = 0; i < BIG_M; i++) {
+		parity_orig[i] = malloc(BIG_MAX_PROJ_BYTES);
+		ck_assert_ptr_nonnull(parity_orig[i]);
+		memcpy(parity_orig[i], parity[i], BIG_MAX_PROJ_BYTES);
+	}
+
+	uint8_t *shards[BIG_K + BIG_M];
+	bool present[BIG_K + BIG_M];
+
+	for (int i = 0; i < BIG_K; i++)
+		shards[i] = data[i];
+	for (int i = 0; i < BIG_M; i++)
+		shards[BIG_K + i] = parity[i];
+	for (int i = 0; i < BIG_K + BIG_M; i++)
+		present[i] = true;
+
+	/* Lose only parity (re-encode path -- no inverse needed). */
+	present[BIG_K] = false;
+	present[BIG_K + 1] = false;
+	memset(parity[0], 0, BIG_MAX_PROJ_BYTES);
+	memset(parity[1], 0, BIG_MAX_PROJ_BYTES);
+
+	int ret = c->ec_decode(c, shards, present, BIG_SHARD_LEN);
+
+	ck_assert_int_eq(ret, 0);
+
+	/*
+	 * Parity must round-trip bit-exactly.  Compare only the
+	 * meaningful prefix (each projection has a distinct size,
+	 * and projection size < BIG_MAX_PROJ_BYTES for p < 3).
+	 */
+	size_t p2_bytes = c->ec_shard_size(c, BIG_K + 0, BIG_SHARD_LEN);
+	size_t p3_bytes = c->ec_shard_size(c, BIG_K + 1, BIG_SHARD_LEN);
+
+	ck_assert_int_eq(memcmp(parity[0], parity_orig[0], p2_bytes), 0);
+	ck_assert_int_eq(memcmp(parity[1], parity_orig[1], p3_bytes), 0);
+
+	for (int i = 0; i < BIG_M; i++)
+		free(parity_orig[i]);
+	free_bufs(data, BIG_K);
+	free_bufs(parity, BIG_M);
+	free_bufs(orig, BIG_K);
+	ec_codec_destroy(c);
+}
+END_TEST
+
+START_TEST(test_sys_24k_one_data_one_parity_loss)
+{
+	struct ec_codec *c = ec_mojette_sys_create(BIG_K, BIG_M);
+	uint8_t *data[BIG_K], *parity[BIG_M], *orig[BIG_K];
+
+	alloc_shards(data, parity, orig, BIG_K, BIG_M, BIG_SHARD_LEN,
+		     BIG_SHARD_LEN, BIG_MAX_PROJ_BYTES);
+
+	c->ec_encode(c, data, parity, BIG_SHARD_LEN);
+
+	uint8_t *shards[BIG_K + BIG_M];
+	bool present[BIG_K + BIG_M];
+
+	for (int i = 0; i < BIG_K; i++)
+		shards[i] = data[i];
+	for (int i = 0; i < BIG_M; i++)
+		shards[BIG_K + i] = parity[i];
+	for (int i = 0; i < BIG_K + BIG_M; i++)
+		present[i] = true;
+
+	/*
+	 * Lose data[2] AND parity[1] (the larger p=3 projection).
+	 * Decoder must rebuild data[2] from the single remaining
+	 * parity (p=2), then re-derive the missing parity via
+	 * encode.  This is the realistic single-DS-failure case
+	 * where one mirror serving a parity chunk is also gone.
+	 */
+	present[2] = false;
+	present[BIG_K + 1] = false;
+	memset(data[2], 0, BIG_SHARD_LEN);
+	memset(parity[1], 0, BIG_MAX_PROJ_BYTES);
+
+	int ret = c->ec_decode(c, shards, present, BIG_SHARD_LEN);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(data[2], orig[2], BIG_SHARD_LEN), 0);
+
+	free_bufs(data, BIG_K);
+	free_bufs(parity, BIG_M);
+	free_bufs(orig, BIG_K);
+	ec_codec_destroy(c);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Non-systematic tests                                                */
 /* ------------------------------------------------------------------ */
@@ -405,6 +654,11 @@ static Suite *mojette_codec_suite(void)
 	tcase_add_test(tc_sys, test_sys_one_data_loss);
 	tcase_add_test(tc_sys, test_sys_two_data_loss);
 	tcase_add_test(tc_sys, test_sys_too_many_losses);
+	tcase_add_test(tc_sys, test_sys_24k_no_loss);
+	tcase_add_test(tc_sys, test_sys_24k_one_data_loss);
+	tcase_add_test(tc_sys, test_sys_24k_two_data_loss);
+	tcase_add_test(tc_sys, test_sys_24k_only_parity_loss);
+	tcase_add_test(tc_sys, test_sys_24k_one_data_one_parity_loss);
 	suite_add_tcase(s, tc_sys);
 
 	TCase *tc_nonsys = tcase_create("non-systematic");
