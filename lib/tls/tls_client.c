@@ -31,6 +31,7 @@
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 
 #include "reffs/tls_client.h"
 
@@ -89,8 +90,40 @@ SSL_CTX *tls_client_ctx_create(const struct tls_client_config *cfg)
 		return NULL;
 	}
 
-	if (cfg->no_verify)
+	/*
+	 * Enable peer verification when a CA is present.  OpenSSL's
+	 * default SSL_CTX verify mode is SSL_VERIFY_NONE -- loading a
+	 * CA via SSL_CTX_load_verify_locations does not turn checking
+	 * on; that requires an explicit SSL_CTX_set_verify call.  When
+	 * the operator supplies a CA the contract is "verify the
+	 * server", and that includes hostname binding via SAN/CN if
+	 * cfg->hostname is set.  cfg->no_verify takes precedence as
+	 * the explicit downgrade for tests and ad-hoc deployments.
+	 */
+	if (cfg->no_verify) {
 		SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+	} else if (cfg->ca_path) {
+		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+		if (cfg->hostname) {
+			X509_VERIFY_PARAM *p = SSL_CTX_get0_param(ctx);
+
+			if (X509_VERIFY_PARAM_set1_host(p, cfg->hostname, 0) !=
+			    1) {
+				fprintf(stderr,
+					"tls: failed to set verify hostname: %s\n",
+					cfg->hostname);
+				SSL_CTX_free(ctx);
+				return NULL;
+			}
+		}
+	} else {
+		/*
+		 * No CA configured and no_verify not set: keep the
+		 * historical no-verify behaviour explicit so we never
+		 * silently inherit an OpenSSL default.
+		 */
+		SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+	}
 
 	return ctx;
 }

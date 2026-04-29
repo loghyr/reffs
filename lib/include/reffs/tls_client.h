@@ -24,6 +24,9 @@ struct tls_client_config {
 	const char *cert_path; /* client certificate (mutual TLS), or NULL */
 	const char *key_path; /* client private key, or NULL */
 	const char *ca_path; /* CA certificate for server verification, or NULL */
+	const char *hostname; /* expected server hostname/IP for SAN match,
+			       * NULL skips hostname check (e.g. unit tests
+			       * with ad-hoc certs). */
 	int no_verify; /* skip server certificate verification */
 };
 

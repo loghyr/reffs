@@ -876,6 +876,15 @@ mds_session_clnt_open_tls(const char *host, uint16_t port, const char *tls_cert,
 		.key_path = (tls_key && tls_key[0] != '\0') ? tls_key : NULL,
 		.ca_path = (tls_ca && tls_ca[0] != '\0') ? tls_ca : NULL,
 		/*
+		 * Bind verification to the connect target so a CA-signed
+		 * cert for some other host cannot MITM us.  X509_VERIFY_PARAM
+		 * accepts both DNS names and IP literals; "host" here is
+		 * whatever the operator put in the [[proxy_mds]] address
+		 * field, which is the same value the certificate must have
+		 * issued for.
+		 */
+		.hostname = host,
+		/*
 		 * Server-cert verification is on by default; an empty
 		 * tls_ca path disables verification only when the
 		 * operator explicitly set tls_insecure_no_verify=true.
