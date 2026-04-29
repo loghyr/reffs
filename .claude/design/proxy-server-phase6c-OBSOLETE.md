@@ -3,21 +3,20 @@ SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
-# Proxy Server Phase 6c: PS-side CB receive path (XDR + dispatch + handler)
+# OBSOLETE: superseded by proxy-server-phase6c-revision.md
 
-> **Status note (2026-04-26)**: this document was originally
-> structured around CB_PROXY_* (back-channel) ops and a CB-receive
-> infrastructure on the PS.  A subsequent design conversation with
-> the draft author concluded that the back-channel architecture is
-> wrong for the PS use case -- the PS work-assignment + status
-> reporting are all fore-channel, with the MDS replying to PS-
-> issued `PROXY_PROGRESS` polls.  The CB_PROXY_* ops landed in
-> slice 6c-i (op numbers 95-98) need to be walked back.  See
-> "Architecture revision (2026-04-26)" at the end of this doc for
-> the new design.  The slice 6c-ii / 6c-iii sketches above the
-> revision section are **superseded**; the slice ladder restarts
-> with new slice names (6c-w through 6c-z).  Slice 6c-i's XDR
-> additions are also revised -- see the revision for the new shape.
+> **DO NOT FOLLOW THIS DESIGN.**  Retained as historical context for
+> the original CB_PROXY_* (back-channel) plan, which has been walked
+> back.  The current design lives in
+> [`proxy-server-phase6c-revision.md`](proxy-server-phase6c-revision.md).
+> Op numbers 95-98 are reserved as `OP_PROXY_RESERVED_95..98` per the
+> walkback (see `lib/xdr/nfsv42_xdr.x:4468-4515`).
+>
+> The contents below are the original phase6c plan, kept only to make
+> reviewing the walkback diff intelligible.  Anything past this banner
+> is non-normative and should not be used to guide new work.
+
+# Proxy Server Phase 6c (ORIGINAL, OBSOLETE): PS-side CB receive path
 
 ## Context
 

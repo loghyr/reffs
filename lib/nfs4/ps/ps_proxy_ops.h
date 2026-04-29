@@ -70,16 +70,17 @@ struct ps_proxy_attrs_min {
  * two heap buffers described above).  On any failure, `reply`
  * fields are left zero-initialised and no buffers are allocated.
  *
- * NOT_NOW_BROWN_COW (both deferred to slice 2e-iv-c):
+ * Credential forwarding: the end-client's AUTH_SYS credentials are
+ * threaded via `creds` and applied with mds_compound_send_with_auth,
+ * so the MDS sees the real caller and applies its own export policy.
+ * RPCSEC_GSSv3 forwarding remains deferred (the PS's MDS-facing
+ * session is AUTH_SYS today).
  *
- *   1. Credential forwarding.  Today the compound carries whatever
- *      credentials the listener's mds_session was opened with
- *      (typically the PS's service uid/gid).  The proxy-server
- *      design requires the END CLIENT'S AUTH_SYS credentials to
- *      ride on the forwarded op so the MDS applies its own export
- *      policy to the real caller.  That needs a per-compound creds
- *      override on the mds_session's TIRPC handle, which
- *      mds_compound_* does not expose today.
+ * NOT_NOW_BROWN_COW:
+ *
+ *   1. RPCSEC_GSSv3 credential forwarding.  Required to proxy
+ *      Kerberos-authenticated end clients; out of scope for the
+ *      AUTH_SYS-only initial deployment.
  *
  *   2. FSID remap.  If the requested_mask includes FATTR4_FSID the
  *      MDS's fsid gets forwarded verbatim; a client would then see
