@@ -179,8 +179,10 @@ static struct compound *compound_alloc(struct rpc_trans *rt)
 	 * Plan A follow-up #2: cache the conn_info TLS bit so the per-op
 	 * nfs4_check_wrongsec() and any future compound-scoped readers
 	 * skip io_conn_is_tls_enabled()'s conn_mutex round-trip on every
-	 * op.  c_tls_fingerprint above already drove a conn_info lookup;
-	 * piggyback on that touch.
+	 * op.  This is one extra conn_info lookup at compound creation
+	 * (the fingerprint pull above does its own); we accept that
+	 * cost to amortise over the per-op readers.  Folding both into
+	 * a single io_conn API call is a future optimisation.
 	 */
 	compound->c_is_tls = rt->rt_fd >= 0 &&
 			     io_conn_is_tls_enabled(rt->rt_fd);

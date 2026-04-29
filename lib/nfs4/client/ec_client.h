@@ -543,4 +543,15 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
  */
 #define EC_SHARD_SIZE_DEFAULT (4 * 1024)
 
+/*
+ * Upper bound on shard_size accepted by ec_write_codec / ec_read_codec.
+ * 1 MiB is well above any geometry we care about (Mojette 24 KiB at
+ * P=3072 is the largest case shipped; the next plausible step is
+ * 32 KiB) and bounds the per-stripe allocation to a sane size:
+ * stripe_data = k * shard_size <= k * 1 MiB.  Catches caller-passed
+ * garbage (CLI flag, malformed config) before we multiply our way
+ * into a SIZE_MAX overflow.
+ */
+#define EC_SHARD_SIZE_MAX (1u * 1024u * 1024u)
+
 #endif /* _REFFS_EC_CLIENT_H */

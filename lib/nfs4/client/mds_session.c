@@ -706,16 +706,42 @@ out:
 void mds_session_set_owner(struct mds_session *ms, const char *id)
 {
 	char hostname[128];
+	int n;
 
 	if (gethostname(hostname, sizeof(hostname)) < 0)
 		snprintf(hostname, sizeof(hostname), "reffs-mds-client");
+	/*
+	 * gethostname does not guarantee NUL-termination if the hostname
+	 * fills the buffer.  Force a terminator so subsequent snprintf
+	 * never reads past the end.
+	 */
+	hostname[sizeof(hostname) - 1] = '\0';
 
 	if (id && id[0] != '\0')
-		snprintf(ms->ms_owner, sizeof(ms->ms_owner), "%s:%s", hostname,
-			 id);
+		n = snprintf(ms->ms_owner, sizeof(ms->ms_owner), "%s:%s",
+			     hostname, id);
 	else
-		snprintf(ms->ms_owner, sizeof(ms->ms_owner), "%s:%u", hostname,
-			 (unsigned)getpid());
+		n = snprintf(ms->ms_owner, sizeof(ms->ms_owner), "%s:%u",
+			     hostname, (unsigned)getpid());
+
+	/*
+	 * EXCHANGE_ID's clientowner4.co_ownerid is what the server keys
+	 * client identity on.  Two distinct hosts whose FQDNs differ
+	 * only past the truncation point would collide on the server
+	 * after this snprintf truncates.  Rare in practice but trivially
+	 * possible in container/k8s names.  When that happens, fall
+	 * back to the FQDN tail (most-distinguishing component) plus
+	 * PID so the truncation is at least visible/recoverable.
+	 */
+	if (n < 0 || (size_t)n >= sizeof(ms->ms_owner)) {
+		size_t hlen = strlen(hostname);
+		const char *tail = hostname;
+
+		if (hlen > 32)
+			tail = hostname + (hlen - 32);
+		snprintf(ms->ms_owner, sizeof(ms->ms_owner), "reffs..%s:%u",
+			 tail, (unsigned)getpid());
+	}
 }
 
 /*

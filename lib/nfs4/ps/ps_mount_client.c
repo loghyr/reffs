@@ -8,6 +8,7 @@
 #endif
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,6 +17,7 @@
 #include "mntv3_xdr.h"
 
 #include "ps_mount_client.h"
+#include "ps_state.h" /* PS_MAX_EXPORTS_PER_LISTENER */
 
 void ps_mount_free_exports(struct ps_export_entry *arr)
 {
@@ -23,19 +25,29 @@ void ps_mount_free_exports(struct ps_export_entry *arr)
 }
 
 /*
- * Walk the exports linked list, counting entries.  Bounded by PS's
- * own registry capacity in practice; we cap here at 1024 to avoid
- * a pathological server pinning the caller's memory.
+ * Walk the exports linked list, counting entries.  Cap at the PS
+ * registry capacity (PS_MAX_EXPORTS_PER_LISTENER) since exports past
+ * that are silently dropped by ps_state_add_export.  An MDS that
+ * advertises more is logged so the operator can see the truncation
+ * rather than wonder why some exports are missing.
  */
-#define PS_MOUNT_MAX_EXPORTS 1024
+#define PS_MOUNT_MAX_EXPORTS PS_MAX_EXPORTS_PER_LISTENER
 
 static size_t count_exports(const exports head)
 {
 	size_t n = 0;
 	const struct exportnode *p;
 
-	for (p = head; p && n < PS_MOUNT_MAX_EXPORTS; p = p->ex_next)
+	for (p = head; p; p = p->ex_next)
 		n++;
+	if (n > PS_MOUNT_MAX_EXPORTS) {
+		fprintf(stderr,
+			"ps_mount: upstream advertises %zu exports, "
+			"PS will only register the first %d "
+			"(PS_MAX_EXPORTS_PER_LISTENER)\n",
+			n, PS_MOUNT_MAX_EXPORTS);
+		n = PS_MOUNT_MAX_EXPORTS;
+	}
 	return n;
 }
 

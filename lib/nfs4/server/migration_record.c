@@ -772,6 +772,8 @@ void migration_record_persist_attach(const struct persist_ops *ops, void *ctx)
 
 static void migration_record_save_one(const struct migration_record *mr)
 {
+	int ret;
+
 	if (!mr_persist_ops || !mr_persist_ops->migration_record_save)
 		return;
 
@@ -779,15 +781,36 @@ static void migration_record_save_one(const struct migration_record *mr)
 
 	if (migration_record_to_persistent(mr, &buf) < 0)
 		return;
-	(void)mr_persist_ops->migration_record_save(mr_persist_ctx, &buf);
+
+	ret = mr_persist_ops->migration_record_save(mr_persist_ctx, &buf);
+	if (ret < 0) {
+		/*
+		 * Persist failure is not fatal -- the record is live in
+		 * the in-memory tables, the next save attempt (commit,
+		 * lease renewal) supersedes it -- but the operator should
+		 * see it: ENOSPC at this point means migrations issued
+		 * after this point will not survive an MDS restart.
+		 */
+		LOG("migration_record: persist save failed (errno %d); "
+		    "in-memory state still consistent",
+		    -ret);
+	}
 }
 
 static void migration_record_remove_one(const uint8_t *stateid_other)
 {
+	int ret;
+
 	if (!mr_persist_ops || !mr_persist_ops->migration_record_remove)
 		return;
-	(void)mr_persist_ops->migration_record_remove(mr_persist_ctx,
+
+	ret = mr_persist_ops->migration_record_remove(mr_persist_ctx,
 						      stateid_other);
+	if (ret < 0) {
+		LOG("migration_record: persist remove failed (errno %d); "
+		    "stale on-disk record will be reaped on next save or load",
+		    -ret);
+	}
 }
 
 struct mr_load_ctx {

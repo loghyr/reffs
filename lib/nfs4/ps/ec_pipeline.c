@@ -499,12 +499,15 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	struct ec_context ctx;
 	int ret;
 
-	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0) {
+	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0 ||
+	    shard_size > EC_SHARD_SIZE_MAX) {
 		/*
 		 * Mojette grids index columns as uint64_t.  A non-multiple
 		 * of 8 leaves a fractional column at the tail and breaks
 		 * the codec.  RS uses bytes directly but the same
-		 * constraint costs nothing.
+		 * constraint costs nothing.  The upper bound bounds
+		 * stripe_data = k * shard_size against (size_t) overflow
+		 * for caller-passed garbage.
 		 */
 		return -EINVAL;
 	}
@@ -805,7 +808,8 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		return -EINVAL;
 	}
 
-	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0)
+	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0 ||
+	    shard_size > EC_SHARD_SIZE_MAX)
 		return -EINVAL;
 
 	memset(&ctx, 0, sizeof(ctx));

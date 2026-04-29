@@ -21,6 +21,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -30,6 +31,24 @@
 
 #include "nfsv42_xdr.h"
 #include "nfs4/proxy_stateid.h"
+
+/*
+ * Layout invariant: the offsets and lengths in proxy_stateid.h must
+ * exactly tile NFS4_OTHER_SIZE (12 bytes for stateid4.other).  If the
+ * XDR widens stateid4.other or the header offsets drift, this catches
+ * it at compile time before silent wire corruption ships.
+ */
+_Static_assert(PROXY_STATEID_BOOT_SEQ_OFF == 0,
+	       "proxy_stateid boot_seq must start at offset 0");
+_Static_assert(PROXY_STATEID_BOOT_SEQ_OFF + PROXY_STATEID_BOOT_SEQ_LEN ==
+		       PROXY_STATEID_RESERVED_OFF,
+	       "proxy_stateid reserved must follow boot_seq");
+_Static_assert(PROXY_STATEID_RESERVED_OFF + PROXY_STATEID_RESERVED_LEN ==
+		       PROXY_STATEID_OPAQUE_OFF,
+	       "proxy_stateid opaque must follow reserved");
+_Static_assert(PROXY_STATEID_OPAQUE_OFF + PROXY_STATEID_OPAQUE_LEN ==
+		       NFS4_OTHER_SIZE,
+	       "proxy_stateid layout must exactly tile NFS4_OTHER_SIZE");
 
 int proxy_stateid_alloc(uint16_t boot_seq, stateid4 *out)
 {
