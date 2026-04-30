@@ -242,14 +242,12 @@ services:
     volumes:
       - build-vol:/shared:ro
       - ../../:/reffs:ro,z
+    # NB: keep the whole exec on one logical line.  bash -c's STRING
+    # treats newlines inside the double-quoted command as command
+    # separators, NOT line continuations -- splitting args onto
+    # multiple lines runs ec_benchmark_shards.sh with no args.
     command: >
-      /bin/bash -c "
-        exec /reffs/scripts/ec_benchmark_shards.sh
-          --simd-binary   /shared/build/tools/ec_demo
-          --scalar-binary /shared/build-noscalar-vec/tools/ec_demo
-          --mds reffs-mds
-          --layout v1
-      "
+      /bin/bash -c "exec /reffs/scripts/ec_benchmark_shards.sh --simd-binary /shared/build/tools/ec_demo --scalar-binary /shared/build-noscalar-vec/tools/ec_demo --mds reffs-mds --layout v1"
     profiles:
       - shards
 
