@@ -18,7 +18,7 @@ x-ds-common: &ds-common
       soft: 65536
       hard: 65536
   volumes:
-    - build-vol:/shared:ro
+    - build-vol:/shared:ro,z
   healthcheck:
     test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
     interval: 5s
@@ -39,7 +39,7 @@ services:
     image: reffs-dev
     volumes:
       - ../../:/reffs:ro,z
-      - build-vol:/shared
+      - build-vol:/shared:z
     command: >
       /bin/bash -c "
         rsync -a --exclude='.git' --exclude='build' --exclude='logs' /reffs/ /shared/src/ &&
@@ -193,7 +193,7 @@ services:
       - "2049:2049"
       - "2049:2049/udp"
     volumes:
-      - build-vol:/shared:ro
+      - build-vol:/shared:ro,z
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/2049' 2>/dev/null"]
       interval: 5s
@@ -217,7 +217,7 @@ services:
     networks:
       - bench
     volumes:
-      - build-vol:/shared:ro
+      - build-vol:/shared:ro,z
       - ../../:/reffs:ro,z
     command: >
       /bin/bash -c "
@@ -240,7 +240,7 @@ services:
     networks:
       - bench
     volumes:
-      - build-vol:/shared:ro
+      - build-vol:/shared:ro,z
       - ../../:/reffs:ro,z
     # NB: keep the whole exec on one logical line.  bash -c's STRING
     # treats newlines inside the double-quoted command as command
