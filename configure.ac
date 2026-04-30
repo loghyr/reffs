@@ -476,6 +476,26 @@ AC_ARG_ENABLE([all-trace-categories],
 AS_IF([test "x$enable_all_trace_categories" = "xyes"],
     [AC_DEFINE([ENABLE_ALL_TRACE_CATEGORIES], [1], [Define if all trace categories should be enabled by default])])
 
+AC_ARG_ENABLE(noscalar-vec,
+[  --enable-noscalar-vec   Disable compiler auto-vectorization of the
+                          scalar codec paths (lib/ec/*.c).  Used by the
+                          SIMD-vs-scalar honest comparison in
+                          experiments/03-larger-shards: without these
+                          flags the compiler may auto-vectorize the
+                          'scalar' code path, making the SIMD vs scalar
+                          benchmark meaningless.  Configure a separate
+                          build tree with --enable-noscalar-vec to get
+                          a binary whose scalar path is genuinely scalar.],
+[case "${enableval}" in
+        yes) noscalar_vec_enabled=true ;;
+        no)  noscalar_vec_enabled=false ;;
+        *) AC_MSG_ERROR(bad value ${enableval} for --enable-noscalar-vec) ;;
+esac],[noscalar_vec_enabled=false])
+if test "x${enable_noscalar_vec}" = "xyes"; then
+        NOSCALAR_VEC_CFLAGS="-fno-tree-vectorize -fno-slp-vectorize"
+        AC_SUBST(NOSCALAR_VEC_CFLAGS)
+fi
+
 AC_ARG_ENABLE(asan,
 [  --enable-asan      Compile with address sanitizer],
 [case "${enableval}" in
