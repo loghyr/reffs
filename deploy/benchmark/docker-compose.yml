@@ -49,8 +49,12 @@ services:
         /shared/src/configure &&
         find /shared -name 'parsetab.py' -delete &&
         make -j1 &&
+        echo 'SIMD build done; starting noscalar-vec build for experiment 03...' &&
+        mkdir -p /shared/build-noscalar-vec && cd /shared/build-noscalar-vec &&
+        /shared/src/configure --enable-noscalar-vec &&
+        make -j1 &&
         touch /shared/ready &&
-        echo 'Builder done.'
+        echo 'Both builds done.'
       "
 
   ds0:
@@ -221,6 +225,33 @@ services:
       "
     profiles:
       - run
+
+  # experiment 03 -- larger-shard SIMD-vs-scalar matrix.
+  # Uses both /shared/build (SIMD) and /shared/build-noscalar-vec
+  # (scalar-honest, no-vec compile flags on the codec sources).
+  # See reffs-docs/experiments/03-larger-shards.md.
+  bench-shards:
+    container_name: reffs-bench-shards
+    image: reffs-dev
+    privileged: true
+    depends_on:
+      mds:
+        condition: service_healthy
+    networks:
+      - bench
+    volumes:
+      - build-vol:/shared:ro
+      - ../../:/reffs:ro,z
+    command: >
+      /bin/bash -c "
+        exec /reffs/scripts/ec_benchmark_shards.sh
+          --simd-binary   /shared/build/tools/ec_demo
+          --scalar-binary /shared/build-noscalar-vec/tools/ec_demo
+          --mds reffs-mds
+          --layout v1
+      "
+    profiles:
+      - shards
 
 volumes:
   build-vol:

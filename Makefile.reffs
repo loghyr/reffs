@@ -334,6 +334,29 @@ run-benchmark: image
 stop-benchmark:
 	$(DOCKER) compose -f $(BENCH_COMPOSE) --profile run down -v 2>/dev/null || true
 
+# Experiment 03 -- larger-shard SIMD-vs-scalar matrix (HS-35556 topology).
+# Brings up MDS + 10 DSes from the existing benchmark compose (the
+# builder is already wired to produce both /shared/build and
+# /shared/build-noscalar-vec) and then runs the shards wrapper which
+# iterates over (shard size, SIMD/scalar) cells.
+# Results: logs/benchmark/larger-shards-<host>.csv
+# See reffs-docs/experiments/03-larger-shards.md.
+run-larger-shards: image
+	@mkdir -p $(BENCH_LOGS)
+	@echo "Building both reffs flavors (SIMD + noscalar-vec)..."
+	$(DOCKER) compose -f $(BENCH_COMPOSE) run --rm builder
+	@echo "Starting MDS + 10 DSes..."
+	$(DOCKER) compose -f $(BENCH_COMPOSE) up -d ds0 ds1 ds2 ds3 ds4 ds5 ds6 ds7 ds8 ds9 mds
+	@echo "Running larger-shard SIMD-vs-scalar matrix..."
+	$(DOCKER) compose -f $(BENCH_COMPOSE) --profile shards run --rm bench-shards \
+		2>$(BENCH_LOGS)/larger-shards-$(shell hostname -s).err \
+		| tee $(BENCH_LOGS)/larger-shards-$(shell hostname -s).csv
+	@echo ""
+	@echo "Results saved to $(BENCH_LOGS)/larger-shards-$(shell hostname -s).csv"
+	@echo "Containers still running -- use 'make -f Makefile.reffs stop-benchmark' to tear down"
+
+stop-larger-shards: stop-benchmark
+
 # --- Multi-codec Sanity Test (1 MDS + 6 DSes in Docker) ---
 #
 # Provisions 5 SBs (/ffv1-csm, /ffv1-stripes, /ffv2-csm, /ffv2-rs,
@@ -444,4 +467,4 @@ run-ps-demo-codecs: image
 stop-ps-demo-codecs:
 	$(DOCKER) compose -f $(SANITY_COMPOSE) --profile ps-demo-codecs down -v 2>/dev/null || true
 
-.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-sanity stop-sanity run-ps-demo stop-ps-demo run-ps-demo-kmount stop-ps-demo-kmount run-ps-demo-codecs stop-ps-demo-codecs
+.PHONY: all help build check configure compile_commands scanbuild style fix-style license clean mrproper image build-in-docker run-image test-image shell reconf install-hooks run-combined stop-combined clean-combined run-pnfs test-pnfs stop-pnfs logs-pnfs run-benchmark stop-benchmark run-larger-shards stop-larger-shards run-sanity stop-sanity run-ps-demo stop-ps-demo run-ps-demo-kmount stop-ps-demo-kmount run-ps-demo-codecs stop-ps-demo-codecs
