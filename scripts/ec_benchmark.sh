@@ -13,6 +13,11 @@
 #                  skipped to measure reconstruction overhead.
 # --force-scalar   Pass --force-scalar to ec_demo (disable SIMD).
 # --layout TYPE    Layout type: v1 (NFSv3 DS I/O, default) or v2 (CHUNK ops).
+# --shard-size N   Per-data-shard byte size passed to ec_demo's
+#                  --shard-size flag.  Default: empty (ec_demo's own
+#                  default of 4096 applies).  The shard size is added
+#                  to the CSV output as a column so wrappers iterating
+#                  over multiple shard sizes produce a single merged CSV.
 
 set -e
 
@@ -24,11 +29,14 @@ DEGRADE=0
 FORCE_SCALAR=""
 LAYOUT_ARG=""
 LAYOUT_TAG="v1"
+SHARD_SIZE_ARG=""
+SHARD_SIZE_TAG="default"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --degrade) DEGRADE="$2"; shift 2 ;;
         --force-scalar) FORCE_SCALAR="--force-scalar"; shift ;;
         --layout) LAYOUT_ARG="--layout $2"; LAYOUT_TAG="$2"; shift 2 ;;
+        --shard-size) SHARD_SIZE_ARG="--shard-size $2"; SHARD_SIZE_TAG="$2"; shift 2 ;;
         *) break ;;
     esac
 done
@@ -37,7 +45,10 @@ EC_DEMO="${1:-/build/tools/ec_demo}"
 MDS="${2:-localhost}"
 RUNS=5
 WARMUP=2
-SIZES="4096 16384 65536 262144 1048576"
+# File sizes (bytes) are env-overridable so wrapper scripts can
+# extend the matrix.  Default matches the historical benchmark
+# matrix (4 KiB - 1 MiB).
+SIZES="${SIZES:-4096 16384 65536 262144 1048576}"
 
 # Geometries to test: "k:m" pairs
 GEOMETRIES="4:2 8:2"
@@ -115,7 +126,7 @@ bench_one() {
         # shellcheck disable=SC2086
         "$EC_DEMO" write --mds "$MDS" --file "$fname" --input "$input" \
             --k "$k" --m "$m" --codec "$codec" \
-            $FORCE_SCALAR $LAYOUT_ARG 2>/dev/null
+            $FORCE_SCALAR $LAYOUT_ARG $SHARD_SIZE_ARG 2>/dev/null
         local t1
         t1=$(now_ms)
         write_ms=$(( t1 - t0 ))
@@ -127,7 +138,8 @@ bench_one() {
     # shellcheck disable=SC2086
     "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
         --k "$k" --m "$m" --codec "$codec" --size "$sz" \
-        $skip_arg $FORCE_SCALAR $LAYOUT_ARG 2>>/tmp/ec_bench_err.log
+        $skip_arg $FORCE_SCALAR $LAYOUT_ARG $SHARD_SIZE_ARG \
+        2>>/tmp/ec_bench_err.log
     local t1
     t1=$(now_ms)
     local read_ms=$(( t1 - t0 ))
@@ -138,7 +150,7 @@ bench_one() {
         verify="FAIL"
     fi
 
-    echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode},${LAYOUT_TAG},${CPU_INFO}"
+    echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode},${LAYOUT_TAG},${CPU_INFO},${SHARD_SIZE_TAG}"
 }
 
 # ------------------------------------------------------------------ #
@@ -172,7 +184,10 @@ bench_plain() {
         verify="FAIL"
     fi
 
-    echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO}"
+    # Shard size has no meaning for the plain (no-codec) path -- but
+    # we still write it to keep the CSV column count uniform across
+    # codec and plain rows.
+    echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO},${SHARD_SIZE_TAG}"
 }
 
 # ------------------------------------------------------------------ #
