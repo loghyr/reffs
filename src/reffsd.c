@@ -952,6 +952,18 @@ int main(int argc, char *argv[])
 			} else {
 				LOG("root sb not found after ns_init: pNFS layout config not applied");
 			}
+		} else if (cfg.ndata_servers > 0) {
+			/*
+			 * data_server entries configured but no export sets
+			 * layout_types -- the per-export layout-policy gate
+			 * will deny every LAYOUTGET.  Likely a stale config
+			 * predating that gate; surface it loudly.
+			 */
+			LOG("config: %u data_server entries but no "
+			    "export has layout_types -- LAYOUTGET will "
+			    "deny all clients (add layout_types = "
+			    "[\"ffv1\", \"ffv2\"] to enable pNFS)",
+			    cfg.ndata_servers);
 		}
 	}
 
