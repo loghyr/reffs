@@ -185,11 +185,48 @@ static int mount_get_root_fh(struct dstore *ds)
 	enum clnt_stat rpc_stat;
 	int ret = 0;
 
-	mnt_clnt = clnt_create(ds->ds_address, MOUNT_PROGRAM, MOUNT_V3, "tcp");
-	if (!mnt_clnt) {
-		LOG("dstore[%u]: clnt_create(%s) MOUNT failed: %s", ds->ds_id,
-		    ds->ds_address, clnt_spcreateerror(""));
-		return -ECONNREFUSED;
+	if (ds->ds_port > 0) {
+		/*
+		 * Explicit port -> bypass portmap.  reffsd-as-DS does not
+		 * register MOUNT_V3 with rpcbind on a non-standard port,
+		 * so the portmap lookup would fail.  Connect directly to
+		 * <address>:<port> using clnttcp_create.
+		 */
+		struct sockaddr_in sin;
+		struct addrinfo hints = {
+			.ai_family = AF_INET,
+			.ai_socktype = SOCK_STREAM,
+		};
+		struct addrinfo *res = NULL;
+
+		if (getaddrinfo(ds->ds_address, NULL, &hints, &res) != 0 ||
+		    !res) {
+			LOG("dstore[%u]: getaddrinfo(%s) failed", ds->ds_id,
+			    ds->ds_address);
+			return -ECONNREFUSED;
+		}
+		sin = *(struct sockaddr_in *)res->ai_addr;
+		freeaddrinfo(res);
+		sin.sin_port = htons(ds->ds_port);
+
+		int fd = RPC_ANYSOCK;
+
+		mnt_clnt = clnttcp_create(&sin, MOUNT_PROGRAM, MOUNT_V3, &fd,
+					  0, 0);
+		if (!mnt_clnt) {
+			LOG("dstore[%u]: clnttcp_create(%s:%u) MOUNT failed",
+			    ds->ds_id, ds->ds_address, ds->ds_port);
+			return -ECONNREFUSED;
+		}
+	} else {
+		mnt_clnt = clnt_create(ds->ds_address, MOUNT_PROGRAM, MOUNT_V3,
+				       "tcp");
+		if (!mnt_clnt) {
+			LOG("dstore[%u]: clnt_create(%s) MOUNT failed: %s",
+			    ds->ds_id, ds->ds_address,
+			    clnt_spcreateerror(""));
+			return -ECONNREFUSED;
+		}
 	}
 
 	path = ds->ds_path;
@@ -236,12 +273,39 @@ out:
 	/*
 	 * MOUNT gave us the root FH.  Now create the NFS program client
 	 * that will be used for all subsequent control-plane RPCs
-	 * (CREATE, GETATTR, SETATTR, REMOVE).
+	 * (CREATE, GETATTR, SETATTR, REMOVE).  Same port-or-portmap
+	 * choice as MOUNT above.
 	 */
-	ds->ds_clnt = clnt_create(ds->ds_address, NFS3_PROGRAM, NFS_V3, "tcp");
+	if (ds->ds_port > 0) {
+		struct sockaddr_in sin;
+		struct addrinfo hints = {
+			.ai_family = AF_INET,
+			.ai_socktype = SOCK_STREAM,
+		};
+		struct addrinfo *res = NULL;
+
+		if (getaddrinfo(ds->ds_address, NULL, &hints, &res) != 0 ||
+		    !res) {
+			LOG("dstore[%u]: getaddrinfo(%s) failed (NFS)",
+			    ds->ds_id, ds->ds_address);
+			ds->ds_root_fh_len = 0;
+			return -ECONNREFUSED;
+		}
+		sin = *(struct sockaddr_in *)res->ai_addr;
+		freeaddrinfo(res);
+		sin.sin_port = htons(ds->ds_port);
+
+		int fd = RPC_ANYSOCK;
+
+		ds->ds_clnt = clnttcp_create(&sin, NFS3_PROGRAM, NFS_V3, &fd,
+					     0, 0);
+	} else {
+		ds->ds_clnt = clnt_create(ds->ds_address, NFS3_PROGRAM,
+					  NFS_V3, "tcp");
+	}
 	if (!ds->ds_clnt) {
-		LOG("dstore[%u]: clnt_create(%s) NFS failed: %s", ds->ds_id,
-		    ds->ds_address, clnt_spcreateerror(""));
+		LOG("dstore[%u]: clnt_create(%s:%u) NFS failed: %s", ds->ds_id,
+		    ds->ds_address, ds->ds_port, clnt_spcreateerror(""));
 		ds->ds_root_fh_len = 0;
 		return -ECONNREFUSED;
 	}
@@ -361,8 +425,9 @@ int dstore_probe_root_access(struct dstore *ds)
 /* Alloc / find                                                        */
 /* ------------------------------------------------------------------ */
 
-struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
-			    enum reffs_ds_protocol protocol, bool do_mount)
+struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
+			    const char *path, enum reffs_ds_protocol protocol,
+			    bool do_mount)
 {
 	struct dstore *ds;
 	struct cds_lfht_node *node;
@@ -377,6 +442,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
 
 	ds->ds_id = id;
 	ds->ds_protocol = protocol;
+	ds->ds_port = port;
 	strncpy(ds->ds_address, address, sizeof(ds->ds_address) - 1);
 	strncpy(ds->ds_path, path, sizeof(ds->ds_path) - 1);
 	pthread_mutex_init(&ds->ds_clnt_mutex, NULL);
@@ -555,7 +621,8 @@ int dstore_load_config(const struct reffs_config *cfg)
 		const struct reffs_data_server_config *dsc =
 			&cfg->data_servers[i];
 		struct dstore *ds = dstore_alloc(
-			dsc->id, dsc->address, dsc->path, dsc->protocol, true);
+			dsc->id, dsc->address, dsc->port, dsc->path,
+			dsc->protocol, true);
 
 		if (!ds) {
 			LOG("dstore[%u]: alloc failed for %s:%s", i,

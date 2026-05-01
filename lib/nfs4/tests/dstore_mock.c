@@ -151,7 +151,7 @@ struct dstore_mock *dstore_mock_alloc(uint32_t id)
 	 * Register the dstore in the global hash table (mount=false so
 	 * we don't actually try to connect to any NFS server).
 	 */
-	dm->dm_ds = dstore_alloc(id, "mock-ds", "/mock", REFFS_DS_PROTO_NFSV3,
+	dm->dm_ds = dstore_alloc(id, "mock-ds", 0, "/mock", REFFS_DS_PROTO_NFSV3,
 				 false);
 	if (!dm->dm_ds) {
 		free(dm);

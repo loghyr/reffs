@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
 codec,geom,file_size,run,write_ms,read_ms,verify,mode,layout,cpu,shard_size,simd_mode
 codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd,simd
 plain,1+0,65536,1,238,152,OK,healthy,v1,x86_64,Intel(R) Core(TM) i5-9500 CPU @ 3.00GHz,7.0.0-10950-g339daa9ec960,avx2,4096,simd

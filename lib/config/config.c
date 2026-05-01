@@ -581,6 +581,10 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 				free(d.u.s);
 			}
 
+			d = toml_int_in(ds_tbl, "port");
+			if (d.ok && d.u.i > 0 && d.u.i < 65536)
+				dsc->port = (uint16_t)d.u.i;
+
 			d = toml_string_in(ds_tbl, "path");
 			if (d.ok) {
 				strncpy(dsc->path, d.u.s,

@@ -44,6 +44,7 @@ struct dstore {
 	/* Config (immutable after alloc) */
 	char ds_address[REFFS_CONFIG_MAX_HOST]; /* hostname or IP from config */
 	char ds_ip[INET_ADDRSTRLEN]; /* resolved dotted-decimal IP */
+	uint16_t ds_port; /* explicit port; 0 = portmap default */
 	char ds_path[REFFS_CONFIG_MAX_PATH];
 
 	/* DS protocol: nfsv3 (flex files) or nfsv4 (file layouts). */
@@ -153,8 +154,9 @@ void dstore_fini(void);
  * Returns a ref-bumped pointer on success (caller must dstore_put),
  * or NULL on failure (duplicate ID).
  */
-struct dstore *dstore_alloc(uint32_t id, const char *address, const char *path,
-			    enum reffs_ds_protocol protocol, bool mount);
+struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
+			    const char *path, enum reffs_ds_protocol protocol,
+			    bool mount);
 
 /*
  * dstore_find -- look up by id.

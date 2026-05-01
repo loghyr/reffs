@@ -127,6 +127,7 @@ enum reffs_ds_protocol {
 struct reffs_data_server_config {
 	uint32_t id; /* unique dstore ID */
 	char address[REFFS_CONFIG_MAX_HOST]; /* IPv4 or IPv6 address */
+	uint16_t port; /* explicit NFS port; 0 = portmap (default) */
 	char path[REFFS_CONFIG_MAX_PATH]; /* export path on the DS */
 	enum reffs_ds_protocol protocol; /* default: nfsv3 */
 };
