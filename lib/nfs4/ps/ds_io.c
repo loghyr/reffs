@@ -18,6 +18,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
 #include <rpc/rpc.h>
 #include <rpc/auth.h>
 
@@ -35,7 +39,38 @@ int ds_connect(struct ds_conn *dc, const struct ec_device *dev, uint32_t uid,
 {
 	memset(dc, 0, sizeof(*dc));
 
-	dc->dc_clnt = clnt_create(dev->ed_host, NFS3_PROGRAM, NFS_V3, "tcp");
+	/*
+	 * If the layout's uaddr encoded a non-default port (ed_port != 0 &&
+	 * != 2049), bypass portmap and connect directly via clnttcp_create.
+	 * Cross-host bench setups pack multiple DSes onto one host with
+	 * register_with_rpcbind=false; their non-default ports are not
+	 * registered with rpcbind and clnt_create's portmap lookup would
+	 * fail or return the wrong port.
+	 */
+	if (dev->ed_port > 0 && dev->ed_port != 2049) {
+		struct sockaddr_in sin;
+		struct addrinfo hints = {
+			.ai_family = AF_INET,
+			.ai_socktype = SOCK_STREAM,
+		};
+		struct addrinfo *res = NULL;
+
+		if (getaddrinfo(dev->ed_host, NULL, &hints, &res) != 0 ||
+		    !res)
+			return -ECONNREFUSED;
+
+		sin = *(struct sockaddr_in *)res->ai_addr;
+		freeaddrinfo(res);
+		sin.sin_port = htons(dev->ed_port);
+
+		int fd = RPC_ANYSOCK;
+
+		dc->dc_clnt = clnttcp_create(&sin, NFS3_PROGRAM, NFS_V3, &fd,
+					     0, 0);
+	} else {
+		dc->dc_clnt = clnt_create(dev->ed_host, NFS3_PROGRAM, NFS_V3,
+					  "tcp");
+	}
 	if (!dc->dc_clnt)
 		return -ECONNREFUSED;
 
