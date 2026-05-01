@@ -148,11 +148,17 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 
 	/*
 	 * The universal address format for TCP/IPv4 is:
-	 *   "h1.h2.h3.h4.p1.p2" where p1.p2 is port 2049 = 8.1
+	 *   "h1.h2.h3.h4.p1.p2" where p1*256+p2 = NFS port (default 2049 = 8.1).
+	 *
+	 * If the dstore was configured with an explicit port (ds_port > 0),
+	 * encode that port; otherwise use the standard 2049.  Cross-host
+	 * benchmarks pack multiple DSes onto one host with distinct ports.
 	 */
 	char uaddr[64];
+	uint16_t ds_port = ds->ds_port > 0 ? ds->ds_port : 2049;
 
-	snprintf(uaddr, sizeof(uaddr), "%s.8.1", ds->ds_ip);
+	snprintf(uaddr, sizeof(uaddr), "%s.%u.%u", ds->ds_ip,
+		 (ds_port >> 8) & 0xff, ds_port & 0xff);
 
 	netaddr4 na;
 	char *netid = "tcp";
