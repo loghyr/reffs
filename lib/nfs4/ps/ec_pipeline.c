@@ -147,14 +147,32 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 					ctx->ctx_ds_sess[existing];
 			} else {
 				char ds_id[32];
+				char host_arg[280];
 
 				snprintf(ds_id, sizeof(ds_id), "ds%u-%u", i,
 					 getpid());
 				mds_session_set_owner(&ctx->ctx_ds_sess[i],
 						      ds_id);
+				/*
+				 * Pass "host:port" when the layout's uaddr
+				 * encoded a non-zero port -- mds_session_clnt_open
+				 * bypasses portmap and connects directly to
+				 * <host>:<port>.  Required for cross-host setups
+				 * where DSes pack onto a single host network with
+				 * register_with_rpcbind=false (shadow's rpcbind
+				 * has no NFS service registered there).
+				 */
+				if (ctx->ctx_devs[i].ed_port > 0)
+					snprintf(host_arg, sizeof(host_arg),
+						 "%s:%u",
+						 ctx->ctx_devs[i].ed_host,
+						 ctx->ctx_devs[i].ed_port);
+				else
+					snprintf(host_arg, sizeof(host_arg),
+						 "%s",
+						 ctx->ctx_devs[i].ed_host);
 				ret = mds_session_create(
-					&ctx->ctx_ds_sess[i],
-					ctx->ctx_devs[i].ed_host);
+					&ctx->ctx_ds_sess[i], host_arg);
 			}
 		} else {
 			/*
