@@ -54,17 +54,79 @@ fi
 echo "[bringup] host IP: $HOST_IP"
 
 # -- step 1: mini-CA --------------------------------------------------
-echo "[bringup] minting mini-CA in $TLS_DIR..."
+# Mint TWO PS certs (ps-A, ps-B).  The data-mover draft's squat-
+# guard (proxy_registration.c) rejects a second PROXY_REGISTRATION
+# from the same identity while the first holds a valid lease.  PS A
+# and PS B must therefore have distinct certs (= distinct
+# fingerprints = distinct identities on the [[allowed_ps]] list).
+echo "[bringup] minting mini-CA + PS A + PS B certs in $TLS_DIR..."
 bash "$REPO/deploy/sanity/setup-mini-ca.sh" "$TLS_DIR"
-PS_FPR=$(cat "$TLS_DIR/ps.fpr")
-echo "[bringup] PS cert fingerprint: $PS_FPR"
+# setup-mini-ca produces ps.crt / ps.key / ps.fpr -- rename to A's slot
+mv "$TLS_DIR/ps.crt" "$TLS_DIR/ps-A.crt"
+mv "$TLS_DIR/ps.key" "$TLS_DIR/ps-A.key"
+mv "$TLS_DIR/ps.fpr" "$TLS_DIR/ps-A.fpr"
+# Mint PS B's cert against the same CA: gen key, build CSR with
+# distinct CN, sign with ca.crt.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+    -out "$TLS_DIR/ps-B.key" 2>/dev/null
+PS_B_CFG=$(mktemp)
+cat > "$PS_B_CFG" <<'EOF'
+[req]
+distinguished_name = dn
+prompt = no
+[dn]
+CN = reffs-test-PS-B
+EOF
+openssl req -new -key "$TLS_DIR/ps-B.key" -config "$PS_B_CFG" \
+    -out "$TLS_DIR/ps-B.csr" 2>/dev/null
+rm -f "$PS_B_CFG"
+openssl x509 -req -in "$TLS_DIR/ps-B.csr" \
+    -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" \
+    -CAcreateserial -days 7 -out "$TLS_DIR/ps-B.crt" 2>/dev/null
+rm -f "$TLS_DIR/ps-B.csr" "$TLS_DIR/ca.srl"
+openssl x509 -in "$TLS_DIR/ps-B.crt" -noout -fingerprint -sha256 \
+    | sed 's/^.*Fingerprint=//' \
+    > "$TLS_DIR/ps-B.fpr"
+chmod 0600 "$TLS_DIR/ps-B.key"
+
+PS_A_FPR=$(cat "$TLS_DIR/ps-A.fpr")
+PS_B_FPR=$(cat "$TLS_DIR/ps-B.fpr")
+echo "[bringup] PS A fingerprint: $PS_A_FPR"
+echo "[bringup] PS B fingerprint: $PS_B_FPR"
 
 # -- step 2: splice configs (working copies; never edit originals) ----
+# MDS allowlist needs BOTH fingerprints.  The placeholder line in
+# mds-tls.toml is replaced with two [[allowed_ps]] blocks.
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-sed "s|REPLACE_WITH_PS_FINGERPRINT|$PS_FPR|" "$MDS_TLS_TOML" > "$WORK/mds-tls.toml"
-sed "s|REPLACE_WITH_MDS_HOST|$HOST_IP|"      "$PS_A_TOML"    > "$WORK/ps-tls-A.toml"
-sed "s|REPLACE_WITH_MDS_HOST|$HOST_IP|"      "$PS_B_TOML"    > "$WORK/ps-tls-B.toml"
+ALLOWED_BLOCK="[[allowed_ps]]
+tls_cert_fingerprint = \"$PS_A_FPR\"
+
+[[allowed_ps]]
+tls_cert_fingerprint = \"$PS_B_FPR\""
+awk -v block="$ALLOWED_BLOCK" '
+    /^\[\[allowed_ps\]\]/ { in_block=1 }
+    in_block && /^tls_cert_fingerprint/ {
+        print block
+        in_block=0
+        next
+    }
+    in_block && /^$/ { in_block=0; next }
+    in_block { next }
+    { print }
+' "$MDS_TLS_TOML" > "$WORK/mds-tls.toml"
+
+# Each PS config gets its own cert + key.  The shipped templates
+# point both at /tmp/reffs_ps_tls/ps.crt/key (the smoke topology).
+# Rewrite to per-PS paths.
+sed -e "s|REPLACE_WITH_MDS_HOST|$HOST_IP|" \
+    -e "s|/tmp/reffs_ps_tls/ps.crt|$TLS_DIR/ps-A.crt|" \
+    -e "s|/tmp/reffs_ps_tls/ps.key|$TLS_DIR/ps-A.key|" \
+    "$PS_A_TOML" > "$WORK/ps-tls-A.toml"
+sed -e "s|REPLACE_WITH_MDS_HOST|$HOST_IP|" \
+    -e "s|/tmp/reffs_ps_tls/ps.crt|$TLS_DIR/ps-B.crt|" \
+    -e "s|/tmp/reffs_ps_tls/ps.key|$TLS_DIR/ps-B.key|" \
+    "$PS_B_TOML" > "$WORK/ps-tls-B.toml"
 
 # -- step 3: stop prior stack -----------------------------------------
 echo "[bringup] tearing down prior bench + PS containers..."
