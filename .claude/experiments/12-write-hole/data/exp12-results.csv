@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+kill_ms,outcome,read_ok,diff_X,diff_Y
+50,MIXED,1,44875,
+150,MIXED,1,212178,
+300,MIXED,1,497739,
+450,MIXED,1,775295,
+600,POST_WRITE_Y,1,,
+800,POST_WRITE_Y,1,,
+kill_ms,outcome,read_ok,diff_X
+50,PRE_WRITE_X,1,
+150,READ_FAILED,0,
+300,POST_WRITE_Y,1,
+450,POST_WRITE_Y,1,
+600,POST_WRITE_Y,1,
+800,POST_WRITE_Y,1,
