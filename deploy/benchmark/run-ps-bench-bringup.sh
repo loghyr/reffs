@@ -88,6 +88,9 @@ sudo docker compose -f "$COMPOSE" up -d --wait \
 # the compose-managed mds and starting our own with a binding
 # overlay.
 sudo docker rm -f reffs-bench-mds 2>/dev/null || true
+# Same prelude as the docker-compose mds service: state + data
+# dirs must exist before reffsd reads its config (otherwise
+# server_state_init fails on the missing state_file path).
 sudo docker run -d --name reffs-bench-mds \
     --network benchmark_default \
     --network-alias reffs-mds \
@@ -97,7 +100,10 @@ sudo docker run -d --name reffs-bench-mds \
     -v "$WORK/mds-tls.toml:/etc/mds.toml:ro,z" \
     -v "$TLS_DIR:$TLS_DIR:ro,z" \
     reffs-dev:latest \
-    /shared/build/src/reffsd --config=/etc/mds.toml >/dev/null
+    /bin/bash -c "rm -rf /tmp/reffs_mds_data /tmp/reffs_mds_state && \
+                  mkdir -p /tmp/reffs_mds_data /tmp/reffs_mds_state && \
+                  exec /shared/build/src/reffsd --config=/etc/mds.toml" \
+    >/dev/null
 
 # Wait for MDS to listen on host:2049
 echo "[bringup] waiting for MDS..."
@@ -134,32 +140,47 @@ done
 sleep 6
 
 # -- step 6: assert PROXY_REGISTRATION succeeded ----------------------
+# A PS that gets "listener stays dark" passes the no-PROXY_REGISTRATION-
+# failed check by accident (no registration was attempted because the
+# upstream session itself failed).  Check both: PS-side connect, and
+# MDS-side privilege grant.
 fail=0
 for tag in A B; do
     name=reffs-ps-$tag
     log=$(sudo docker logs "$name" 2>&1)
-    if echo "$log" | grep -q "PROXY_REGISTRATION failed"; then
+    if echo "$log" | grep -q "listener stays dark"; then
+        echo "FAIL: PS $tag upstream session never came up:"
+        echo "$log" | grep -iE "listener stays dark|create_tls failed" | head -3
+        fail=$((fail + 1))
+    elif echo "$log" | grep -q "PROXY_REGISTRATION failed"; then
         echo "FAIL: PS $tag PROXY_REGISTRATION failed:"
         echo "$log" | grep -i "registration\|tls" | head -5
         fail=$((fail + 1))
     elif echo "$log" | grep -q "reffsd ready"; then
-        echo "[bringup] PS $tag: ready, no PROXY_REGISTRATION failure"
+        echo "[bringup] PS $tag: ready (no listener-dark, no registration failure)"
     else
-        echo "WARN: PS $tag has no 'reffsd ready' line yet"
+        echo "FAIL: PS $tag has no 'reffsd ready' line yet"
         fail=$((fail + 1))
     fi
 done
 
-if [ $fail -gt 0 ]; then
-    echo "[bringup] $fail/2 PSes did not register cleanly -- see logs above"
-    exit 1
-fi
-
-# Verify the MDS log carries the success line for both PS attempts
+# MDS-side grant count is the authoritative check -- one log line per
+# successful PROXY_REGISTRATION.  Anything less than 2 is a failure
+# even if the PS-side log was clean.
 mds_grants=$(sudo docker logs reffs-bench-mds 2>&1 \
                  | grep -c "PROXY_REGISTRATION: client granted PS privilege" \
                  || true)
 echo "[bringup] MDS granted PS privilege $mds_grants time(s) (expect 2)"
+if [ "$mds_grants" != "2" ]; then
+    echo "FAIL: expected 2 PROXY_REGISTRATION grants on MDS"
+    sudo docker logs reffs-bench-mds 2>&1 | grep -i "PROXY_REG\|tls_finger" | head -10
+    fail=$((fail + 1))
+fi
+
+if [ $fail -gt 0 ]; then
+    echo "[bringup] $fail check(s) failed -- topology not usable for cross-PS exps"
+    exit 1
+fi
 
 echo "[bringup] DONE.  PS A on 127.0.0.1:4098, PS B on 127.0.0.1:4099"
 echo "          MDS visible at 127.0.0.1:2049 (TLS server cert: $TLS_DIR/ca.crt)"
