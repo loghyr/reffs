@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+N,variant,total_files,errors,duration_s,aggregate_MBps
+1,plain,22,0,30,2.93
+2,plain,54,2,30,7.20
+4,plain,68,5,30,9.07
+8,plain,72,7,30,9.60
+1,rs,13,0,30,1.73
+2,rs,28,1,30,3.73
+4,rs,34,6,30,4.53
+8,rs,64,9,30,8.53
+N,variant,total_files,errors,duration_s,aggregate_MBps
+16,plain,80,14,30,10.67
+16,rs,96,14,30,12.80
+32,plain,92,16,30,12.27
+32,rs,78,33,30,10.40
