@@ -171,8 +171,8 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 					snprintf(host_arg, sizeof(host_arg),
 						 "%s",
 						 ctx->ctx_devs[i].ed_host);
-				ret = mds_session_create(
-					&ctx->ctx_ds_sess[i], host_arg);
+				ret = mds_session_create(&ctx->ctx_ds_sess[i],
+							 host_arg);
 			}
 		} else {
 			/*
@@ -820,8 +820,8 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	uint64_t valid_mask = (k + m < 64) ? (1ULL << (k + m)) - 1 : ~0ULL;
 	int nskip = __builtin_popcountll(skip_ds_mask & valid_mask);
 
-	if (nskip > 0 && nskip >= m) {
-		ec_log("ec_read: skip_ds_mask has %d bits set, need < m=%d\n",
+	if (nskip > m) {
+		ec_log("ec_read: skip_ds_mask has %d bits set, need <= m=%d\n",
 		       nskip, m);
 		return -EINVAL;
 	}
