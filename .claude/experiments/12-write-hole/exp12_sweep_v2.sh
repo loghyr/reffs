@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
 set -eu
 cd ~/reffs
 echo "kill_ms,outcome,read_ok,diff_X"
