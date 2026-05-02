@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# PS instance A for cross-PS bench experiments.
+# Pairs with deploy/benchmark/mds-tls.toml + ps-tls-B.toml.
+#
+# Listener on host port 4098.  Standalone-role reffsd whose
+# [[proxy_mds]] block opens an mTLS NFSv4.2 session to the bench
+# MDS via STARTTLS.  Bench MDS sees the PS's allowlisted cert
+# fingerprint and grants registered-PS privilege.
+#
+# Run via deploy/benchmark/run-ps-bench-bringup.sh; that script
+# also patches the placeholder address with the actual host IP
+# so the PS reaches the bench MDS over the LAN.
+
+[server]
+port                  = 12058
+probe_port            = 20598
+bind                  = "*"
+role                  = "standalone"
+minor_versions        = [1, 2]
+grace_period          = 5
+workers               = 4
+log_level             = "info"
+register_with_rpcbind = false
+
+[backend]
+type        = "posix"
+path        = "/tmp/ps_A_data"
+state_file  = "/tmp/ps_A_state"
+
+[[export]]
+path        = "/"
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]
+
+[[proxy_mds]]
+id        = 1
+port      = 4098
+bind      = "*"
+address   = "REPLACE_WITH_MDS_HOST"
+mds_port  = 2049
+mds_probe = 20490
+
+tls_cert  = "/tmp/reffs_ps_tls/ps.crt"
+tls_key   = "/tmp/reffs_ps_tls/ps.key"
+tls_ca    = "/tmp/reffs_ps_tls/ca.crt"
+tls_mode  = "starttls"
+
+# Self-signed CA in the smoke topology -- accept the MDS server cert
+# without verifying against an external CA bundle.  Production
+# deployments leave this false and trust the operator's CA.
+tls_insecure_no_verify = true

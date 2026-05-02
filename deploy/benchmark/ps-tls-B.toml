@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# PS instance B -- second PS for cross-PS coherence experiments.
+# Same topology as ps-tls-A.toml but distinct ports + state dirs.
+# Same identity (ps.crt) -- one allowlisted fingerprint serves
+# both PS instances in this smoke setup.
+
+[server]
+port                  = 12059
+probe_port            = 20599
+bind                  = "*"
+role                  = "standalone"
+minor_versions        = [1, 2]
+grace_period          = 5
+workers               = 4
+log_level             = "info"
+register_with_rpcbind = false
+
+[backend]
+type        = "posix"
+path        = "/tmp/ps_B_data"
+state_file  = "/tmp/ps_B_state"
+
+[[export]]
+path        = "/"
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]
+
+[[proxy_mds]]
+id        = 2
+port      = 4099
+bind      = "*"
+address   = "REPLACE_WITH_MDS_HOST"
+mds_port  = 2049
+mds_probe = 20490
+
+tls_cert  = "/tmp/reffs_ps_tls/ps.crt"
+tls_key   = "/tmp/reffs_ps_tls/ps.key"
+tls_ca    = "/tmp/reffs_ps_tls/ca.crt"
+tls_mode  = "starttls"
+
+tls_insecure_no_verify = true

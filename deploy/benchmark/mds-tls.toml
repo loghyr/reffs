@@ -1,0 +1,108 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Bench MDS config WITH TLS for PS-attached experiments
+# (#5 cross-PS coherence, #10 PS vs ec_demo throughput,
+#  #11 multi-writer disjoint, #13 adjacent writes).
+#
+# Pairs with deploy/benchmark/ps-tls-A.toml + ps-tls-B.toml.
+# Pre-conditions:
+#   1. Run deploy/sanity/setup-mini-ca.sh /tmp/reffs_ps_tls
+#   2. Run scripts/patch-allowed-ps-fpr.sh to splice the actual
+#      PS fingerprint into the placeholder below.
+# Both are wrapped by deploy/benchmark/run-ps-bench-bringup.sh.
+#
+# This file is the deploy/benchmark/mds.toml plus a TLS block plus
+# an [[allowed_ps]] block.  Keep the rest in sync with mds.toml.
+
+[server]
+port            = 2049
+bind            = "*"
+role            = "mds"
+minor_versions  = [1, 2]
+grace_period    = 5
+workers         = 4
+log_level       = "info"
+layout_width    = 10
+register_with_rpcbind = false
+tls             = true
+tls_cert        = "/tmp/reffs_ps_tls/ca.crt"
+tls_key         = "/tmp/reffs_ps_tls/ca.key"
+tls_ca          = "/tmp/reffs_ps_tls/ca.crt"
+
+[backend]
+type            = "posix"
+path            = "/tmp/reffs_mds_data"
+state_file      = "/tmp/reffs_mds_state"
+
+[[export]]
+path         = "/"
+layout_types = ["ffv1", "ffv2"]
+dstores      = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys", "tls"]
+
+# REPLACED by run-ps-bench-bringup.sh with the SHA-256 fingerprint
+# emitted into /tmp/reffs_ps_tls/ps.fpr at mini-CA setup time.  A
+# default-deny config is the right posture; the placeholder string
+# never matches a real cert.
+[[allowed_ps]]
+tls_cert_fingerprint = "REPLACE_WITH_PS_FINGERPRINT"
+
+# Both PS instances use the SAME ps.crt -- they're the same identity
+# in this smoke topology.  In production each PS would have its own
+# cert and a separate [[allowed_ps]] entry per identity.
+
+[[data_server]]
+id = 1
+address = "reffs-ds0"
+path = "/"
+
+[[data_server]]
+id = 2
+address = "reffs-ds1"
+path = "/"
+
+[[data_server]]
+id = 3
+address = "reffs-ds2"
+path = "/"
+
+[[data_server]]
+id = 4
+address = "reffs-ds3"
+path = "/"
+
+[[data_server]]
+id = 5
+address = "reffs-ds4"
+path = "/"
+
+[[data_server]]
+id = 6
+address = "reffs-ds5"
+path = "/"
+
+[[data_server]]
+id = 7
+address = "reffs-ds6"
+path = "/"
+
+[[data_server]]
+id = 8
+address = "reffs-ds7"
+path = "/"
+
+[[data_server]]
+id = 9
+address = "reffs-ds8"
+path = "/"
+
+[[data_server]]
+id = 10
+address = "reffs-ds9"
+path = "/"
