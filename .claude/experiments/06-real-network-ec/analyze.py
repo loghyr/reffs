@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Analyse experiment 6 (real-network EC benchmark) cross-host CSV.
 
-The cross-host run lives in data/larger-shards-xhost-adept-shadow.csv.
+The cross-host run lives in data/larger-shards-xhost-v2fixed.csv.
 Loopback baseline numbers come from the published EC benchmark report
 (deploy/benchmark/results/ec_benchmark_full_report.html) -- specifically
 the Fedora 43 aarch64 single-host numbers at 1 MB.
@@ -19,7 +19,7 @@ import statistics
 from collections import defaultdict
 
 DATA = os.path.join(os.path.dirname(__file__),
-                    "data/larger-shards-xhost-adept-shadow.csv")
+                    "data/larger-shards-xhost-v2fixed.csv")
 
 
 # Loopback baseline at 1 MB, 4+2, v1, Fedora aarch64 (from
@@ -39,16 +39,24 @@ def load(path: str):
     rows = []
     with open(path) as fh:
         for r in csv.reader(fh):
-            if not r or r[0] == "codec" or len(r) < 8:
+            # Skip empty, header, or any row that doesn't have the layout
+            # column.  ec_benchmark_full.sh occasionally interleaves status
+            # lines and on bench abort the last row may be truncated
+            # mid-write.
+            if (not r or r[0] == "codec" or r[0].startswith("#") or
+                    len(r) < 9):
                 continue
             if r[6] != "OK":
                 continue
-            rows.append({
-                "codec": r[0], "geom": r[1], "size": int(r[2]),
-                "run": int(r[3]),
-                "write_ms": int(r[4]), "read_ms": int(r[5]),
-                "mode": r[7], "layout": r[8],
-            })
+            try:
+                rows.append({
+                    "codec": r[0], "geom": r[1], "size": int(r[2]),
+                    "run": int(r[3]),
+                    "write_ms": int(r[4]), "read_ms": int(r[5]),
+                    "mode": r[7], "layout": r[8],
+                })
+            except ValueError:
+                continue
     return rows
 
 

@@ -9,7 +9,8 @@ Closes the long-standing hedge in `progress_report.md` §2.6 and
 `ec_benchmark_full_report.md` §6: *"single-host bridge network
 (near-zero network latency); ratios are expected to hold."*  This
 experiment validates that on a real LAN the codec ordering and
-overhead structure documented in the loopback baseline reproduce.
+overhead structure documented in the loopback baseline reproduce
+-- and surfaces one place they don't.
 
 ## Setup
 
@@ -24,140 +25,144 @@ overhead structure documented in the loopback baseline reproduce.
 - 10 DSes packed onto shadow's host network (one reffsd process
   per DS), distinct ports 2050-2059, each with its own
   `register_with_rpcbind=false` config.
-- This required three reffs source patches to enable per-DS port
-  selection: `65fb1f155739` (config), `9afd722bd9ee` (uaddr
-  encode), `bdde4f6539db` (client port-bypass).  All
-  backward-compatible (default port=0 → existing portmap path).
+- This required four reffs source patches to enable per-DS port
+  selection across the full client + MDS + DS path:
+  `65fb1f155739` (config), `9afd722bd9ee` (uaddr encode),
+  `bdde4f6539db` (v1 NFSv3 client port-bypass), `e45ffbed434d`
+  (v2 NFSv4.2 client `host:port`).  All backward-compatible
+  (default port=0 → existing portmap path).
 - 5 runs per (codec, geometry, file_size, mode, layout).
-- Layouts measured: v1 (NFSv3 DS I/O); **v2 (CHUNK ops) flagged —
-  see §"Anomaly: v2 results invalid".**
+- Layouts: v1 (NFSv3 DS I/O) and v2 (CHUNK ops over NFSv4.2).
 - Modes: healthy, degraded-1.
 - Sizes: 4, 16, 64, 256, 1024 KiB.
-- 1400 OK rows total (700 v1 + 700 v2).
+- 1398 OK rows total (700 v1 + 698 v2; 2 rows lost to a
+  transient SSH disconnect on the bench driver).
 
-Raw CSV: `data/larger-shards-xhost-adept-shadow.csv`.
+Raw CSV: `data/larger-shards-xhost-v2fixed.csv`.  The
+prior-run CSV with the broken v2 path is preserved as
+`larger-shards-xhost-adept-shadow.csv` for diff reference.
 
-## Headline: v1 cross-host ratios validate the loopback baseline
+## Headline 1: codec ordering preserved at every file size
 
-**Codec ordering preserved at every file size.**  Mojette
-non-systematic remains the slowest read path at every size; RS and
-Mojette systematic land within ~7% of each other on healthy reads.
-The qualitative ordering documented in
-`ec_benchmark_full_report.md` §1 is reproduced cross-host without
-changes.
+Mojette non-systematic remains the slowest read path at every
+size; RS and Mojette systematic land within ~7% of each other on
+healthy reads.  The qualitative ordering documented in
+`ec_benchmark_full_report.md` §1 is reproduced cross-host
+without changes.
 
 | size | RS read (ms) | Msys read (ms) | Mnsys read (ms) | order preserved |
 |------|-------------:|---------------:|----------------:|-----------------|
-| 4 KiB | 50 | 50 | 59 | yes |
-| 16 KiB | 50 | 52 | 57 | yes |
-| 64 KiB | 77 | 78 | 112 | yes |
-| 256 KiB | 174 | 183 | 329 | yes |
-| 1 MiB | 573 | 612 | 1223 | yes |
+| 4 KiB | 52 | 50 | 57 | yes |
+| 16 KiB | 49 | 49 | 57 | yes |
+| 64 KiB | 78 | 79 | 113 | yes |
+| 256 KiB | 174 | 185 | 333 | yes |
+| 1 MiB | 569 | 605 | 1190 | yes |
 
-(v1, healthy, 4+2, median across 5 runs, scalar build.)
+(v1, healthy, 4+2, median across 5 runs.)
 
-**Reconstruction overhead at 8+2 is essentially free.**  Mojette
-systematic at 8+2 reads a missing-shard file slightly *faster*
-than the healthy case (because degraded-1 reads only need k of n
-shards — one fewer round-trip on the LAN).  Far below the
-acceptance threshold of +10%.
+## Headline 2: reconstruction overhead is essentially free
+
+Mojette systematic at 8+2 reads a missing-shard file slightly
+*faster* than the healthy case (because degraded-1 reads only
+need k of n shards — one fewer round-trip on the LAN).  Far
+below the +10% acceptance threshold.
 
 | size | Msys 8+2 healthy r (ms) | Msys 8+2 degraded r (ms) | overhead |
 |------|------------------------:|-------------------------:|---------:|
-| 4 KiB | 57 | 56 | -1.8% |
-| 16 KiB | 55 | 54 | -1.8% |
-| 64 KiB | 73 | 68 | -6.8% |
-| 256 KiB | 158 | 153 | -3.2% |
-| 1 MiB | 505 | 487 | -3.6% |
+| 4 KiB | 58 | 54 | -6.9% |
+| 16 KiB | 58 | 54 | -6.9% |
+| 64 KiB | 74 | 72 | -2.7% |
+| 256 KiB | 161 | 155 | -3.7% |
+| 1 MiB | 515 | 496 | -3.7% |
 
-**Cross-host vs loopback multiplier at 1 MB is 5-7×.**  Within the
-1.5×-5× acceptance band defined in the spec, with mojette-sys
-reads landing slightly above (6.6×).  The multiplier is dominated
-by per-shard RTT cost: each shard adds ~0.86 ms × N round-trips
-that the loopback baseline didn't pay.  On 10 GbE with sub-100 µs
-RTT, the multiplier collapses toward 1.5-2×.
+## Headline 3: cross-host vs loopback multiplier at 1 MB is 4.8-6.5×
+
+Within the spec's 1.5×-5× acceptance band for the larger codecs;
+mojette-sys reads land slightly above (6.5×).  The multiplier is
+dominated by per-shard RTT cost: each shard adds ~0.86 ms × N
+round-trips that the loopback baseline didn't pay.  On 10 GbE
+with sub-100 µs RTT, the multiplier collapses toward 1.5-2×.
 
 | codec | loopback w (ms) | xhost w (ms) | w ratio | loopback r | xhost r | r ratio |
 |-------|----------------:|-------------:|--------:|-----------:|--------:|--------:|
-| plain | 65 | 405 | 6.2× | 63 | 372 | 5.9× |
-| RS 4+2 | 110 | 672 | 6.1× | 96 | 573 | 6.0× |
-| Msys 4+2 | 122 | 643 | 5.3× | 93 | 612 | 6.6× |
-| Mnsys 4+2 | 123 | 673 | 5.5× | 249 | 1223 | 4.9× |
+| plain | 65 | 415 | 6.4× | 63 | 377 | 6.0× |
+| RS 4+2 | 110 | 663 | 6.0× | 96 | 569 | 5.9× |
+| Msys 4+2 | 122 | 650 | 5.3× | 93 | 605 | 6.5× |
+| Mnsys 4+2 | 123 | 685 | 5.6× | 249 | 1190 | 4.8× |
 
 (Loopback baseline = Fedora 43 aarch64 single-host docker bridge
 network from `ec_benchmark_full_report.md` §5.3, 1 MB / 4+2 / v1.)
 
+## Headline 4: v2 protocol overhead is RTT-dominated at small writes
+
+The loopback report measured v2-vs-v1 write overhead at +7-22%.
+On the LAN that overhead **balloons at small file sizes and
+collapses at large ones**:
+
+| codec | size | v1 w (ms) | v2 w (ms) | overhead |
+|-------|------|----------:|----------:|---------:|
+| RS 4+2 | 4 KiB | 81 | 152 | +88% |
+| RS 4+2 | 16 KiB | 79 | 163 | +106% |
+| RS 4+2 | 64 KiB | 109 | 202 | +85% |
+| RS 4+2 | 256 KiB | 223 | 321 | +44% |
+| RS 4+2 | 1024 KiB | 663 | 686 | +3% |
+| Msys 4+2 | 4 KiB | 78 | 158 | +103% |
+| Msys 4+2 | 1024 KiB | 650 | 642 | **-1%** |
+| Mnsys 4+2 | 4 KiB | 80 | 152 | +90% |
+| Mnsys 4+2 | 1024 KiB | 685 | 663 | **-3%** |
+
+The pattern is consistent across all three codecs: at 1 MiB the
+v2 cost converges to v1 (within ±3%); below that, fixed-cost
+CHUNK_FINALIZE + CHUNK_COMMIT round-trips dominate.  Each extra
+RTT costs ~1 ms on the LAN where loopback paid almost nothing.
+
+This is **not a protocol problem** — it's the predictable cost
+of v2's persistence-split (the +7-22% loopback finding) when
+the round-trips that get split out are no longer free.  The
+implication for FFv2 deployments:
+
+- For workloads dominated by **small-file writes**, v2's
+  persistence-split adds substantial real cost on a real
+  network.  The progress_report's "+7-22%" is loopback-only.
+- For workloads with **typical file sizes (≥ 1 MiB)**, v2 is
+  effectively free vs v1 even cross-host.
+- 10 GbE / sub-100 µs RTT would compress the small-file
+  overhead band toward the loopback figure.
+
 ## Implications for the FFv2 progress story
 
-- **Section 2.6's hedge can be tightened.**  "Ratios are
-  reproducible across networks" is now backed by data, not just
-  expectation.  The Tier-1 loopback results no longer carry the
-  "provisional, loopback only" caveat from `README.md`.
+- **§2.6's "loopback only" hedge can be retired for v1 numbers
+  and for codec/reconstruction findings.**  Cross-host LAN
+  preserves codec ordering, preserves reconstruction near-zero,
+  and the absolute multiplier sits in the expected 1 GbE band.
+- **§1.2's v2-vs-v1 "+7-22% writes" claim needs a small caveat
+  for the small-file regime cross-host.**  Suggest adding one
+  sentence: "On a 1 GbE LAN this overhead grows to +44-106% for
+  files < 256 KiB due to per-RTT fixed cost; the +7-22% bound
+  holds for files ≥ 1 MiB and on lower-latency interconnects."
 - **Mojette systematic 8+2 holds up under real-network
-  conditions.**  Reconstruction overhead stays at -2 to -7%
-  (degraded slightly faster than healthy) — the recommended
-  operating point survives translation off the loopback bridge.
-- **The cost of fault tolerance is unchanged.**  RS and Mojette
-  systematic continue to perform within 7% of each other on
-  healthy reads.  The codec is invisible on the systematic fast
-  path even cross-host.
-
-## Anomaly: v2 results invalid
-
-The v2 (CHUNK ops) phases produced suspiciously *fast* numbers —
-9× faster on writes and 18× faster on reads than v1 at 1 MiB —
-which is the opposite of the loopback baseline's +7-22% v2
-overhead.  Verify status was OK (cmp matched), but:
-
-- v2 write times are essentially constant (~70 ms) regardless of
-  file size from 4 KiB to 1 MiB; a real cross-host data transfer
-  must scale with payload.
-- The v2 path uses `mds_session_create(host)` which goes through
-  rpcbind on the DS host.  Shadow's host rpcbind has no NFS
-  service registered (the cross DSes use `register_with_rpcbind
-  = false` to coexist on the host network).  With no
-  registration, `clnt_create` should fail — yet the bench
-  reports OK.  Either:
-  1. The v2 path is silently failing the DS connect and falling
-     back to inband I/O via the MDS, where data lives on adept's
-     local docker bridge (fast) but never crosses the LAN to
-     shadow.
-  2. The verify mechanism is not catching the silent failure
-     because the data round-trips through MDS-side caching.
-  3. Some other fast path is short-circuiting CHUNK ops.
-
-The v2 cross-host numbers are therefore **not reportable** until
-this is investigated.  See follow-up at end of this document.
-
-The v1 cross-host numbers are well-validated: the v1 path uses
-`ds_io.c` with explicit-port bypass (commit `bdde4f6539db`); the
-clnttcp_create direct connect to shadow:2050+ is verified by
-strace to send actual NFSv3 WRITE/READ payloads, and the
-absolute latencies (5-7× loopback) are consistent with per-shard
-LAN RTT.
+  conditions.**  Recommended operating point survives.
 
 ## Acceptance criteria summary
 
 | criterion | required | observed | result |
 |-----------|----------|----------|--------|
 | Codec ordering preserved | every file size | every file size | PASS |
-| Msys 8+2 reconstruction | < +10% | -2 to -7% | PASS |
-| v2 write overhead | < +30% | n/a (invalid) | DEFERRED |
-| Cross-host / loopback at 1 MB | 1.5-5× | 4.9-6.6× | MARGINAL (1 GbE; 10 GbE would land squarely) |
+| Msys 8+2 reconstruction | < +10% | -3 to -7% | PASS |
+| v2 write overhead | < +30% | +3% at 1 MiB / +44-106% < 256 KiB | PASS at ≥1 MiB; FAIL small-file cross-host |
+| Cross-host / loopback at 1 MB | 1.5-5× | 4.8-6.5× | MARGINAL (1 GbE; 10 GbE expected to land squarely) |
 
-## Follow-up
+## Notes for the implementer following up
 
-1. **Fix v2 cross-host path.**  Plumb `ed_port` into
-   `ec_pipeline.c`'s `mds_session_create` call (currently passes
-   only `ed_host`).  Likely a one-line change in the format string
-   passed to `mds_session_create`: `host:port` instead of `host`.
-   The `mds_session_clnt_open` parser already supports the
-   `host:port` form (per commit `a38cb6a0f7b7`).
-2. **Add v2 cross-host validation.**  Reproduce the v2 phase with
-   strace to confirm CHUNK_WRITE actually traverses the LAN.
-3. **Re-run experiment 6 v2 phases** after the fix; update this
-   report and §6 of the ec_benchmark_full_report.
+The four-commit patch chain that enabled this experiment is the
+first end-to-end demonstration of multi-DS reffs over a real
+LAN with packed DSes.  The infrastructure is reusable for:
 
-These are tracked in this experiment's directory; the v1 numbers
-above are independent of the fix and can be quoted in the
-progress report immediately.
+- Experiment 5 (cross-PS coherence) once PS phases ship — the
+  port-bypass fits the same DSes-on-one-host pattern.
+- Future tier-2 benchmarks at 10 GbE — drop the "cross-host /
+  loopback multiplier" expectation from 5× to 1.5-2× and the
+  v2-small-file overhead from 100% to ~22%.
+- Any reffs deployment scenario where multiple DSes share a
+  host network (lab setups, single-server demonstrations,
+  podman-compose alternatives to docker-compose).
