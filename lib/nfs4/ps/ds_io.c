@@ -55,8 +55,7 @@ int ds_connect(struct ds_conn *dc, const struct ec_device *dev, uint32_t uid,
 		};
 		struct addrinfo *res = NULL;
 
-		if (getaddrinfo(dev->ed_host, NULL, &hints, &res) != 0 ||
-		    !res)
+		if (getaddrinfo(dev->ed_host, NULL, &hints, &res) != 0 || !res)
 			return -ECONNREFUSED;
 
 		sin = *(struct sockaddr_in *)res->ai_addr;
@@ -65,11 +64,11 @@ int ds_connect(struct ds_conn *dc, const struct ec_device *dev, uint32_t uid,
 
 		int fd = RPC_ANYSOCK;
 
-		dc->dc_clnt = clnttcp_create(&sin, NFS3_PROGRAM, NFS_V3, &fd,
-					     0, 0);
+		dc->dc_clnt =
+			clnttcp_create(&sin, NFS3_PROGRAM, NFS_V3, &fd, 0, 0);
 	} else {
-		dc->dc_clnt = clnt_create(dev->ed_host, NFS3_PROGRAM, NFS_V3,
-					  "tcp");
+		dc->dc_clnt =
+			clnt_create(dev->ed_host, NFS3_PROGRAM, NFS_V3, "tcp");
 	}
 	if (!dc->dc_clnt)
 		return -ECONNREFUSED;

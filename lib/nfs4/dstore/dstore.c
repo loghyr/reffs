@@ -211,8 +211,8 @@ static int mount_get_root_fh(struct dstore *ds)
 
 		int fd = RPC_ANYSOCK;
 
-		mnt_clnt = clnttcp_create(&sin, MOUNT_PROGRAM, MOUNT_V3, &fd,
-					  0, 0);
+		mnt_clnt = clnttcp_create(&sin, MOUNT_PROGRAM, MOUNT_V3, &fd, 0,
+					  0);
 		if (!mnt_clnt) {
 			LOG("dstore[%u]: clnttcp_create(%s:%u) MOUNT failed",
 			    ds->ds_id, ds->ds_address, ds->ds_port);
@@ -223,8 +223,7 @@ static int mount_get_root_fh(struct dstore *ds)
 				       "tcp");
 		if (!mnt_clnt) {
 			LOG("dstore[%u]: clnt_create(%s) MOUNT failed: %s",
-			    ds->ds_id, ds->ds_address,
-			    clnt_spcreateerror(""));
+			    ds->ds_id, ds->ds_address, clnt_spcreateerror(""));
 			return -ECONNREFUSED;
 		}
 	}
@@ -297,11 +296,11 @@ out:
 
 		int fd = RPC_ANYSOCK;
 
-		ds->ds_clnt = clnttcp_create(&sin, NFS3_PROGRAM, NFS_V3, &fd,
-					     0, 0);
+		ds->ds_clnt =
+			clnttcp_create(&sin, NFS3_PROGRAM, NFS_V3, &fd, 0, 0);
 	} else {
-		ds->ds_clnt = clnt_create(ds->ds_address, NFS3_PROGRAM,
-					  NFS_V3, "tcp");
+		ds->ds_clnt = clnt_create(ds->ds_address, NFS3_PROGRAM, NFS_V3,
+					  "tcp");
 	}
 	if (!ds->ds_clnt) {
 		LOG("dstore[%u]: clnt_create(%s:%u) NFS failed: %s", ds->ds_id,
@@ -620,9 +619,9 @@ int dstore_load_config(const struct reffs_config *cfg)
 	for (unsigned int i = 0; i < n; i++) {
 		const struct reffs_data_server_config *dsc =
 			&cfg->data_servers[i];
-		struct dstore *ds = dstore_alloc(
-			dsc->id, dsc->address, dsc->port, dsc->path,
-			dsc->protocol, true);
+		struct dstore *ds = dstore_alloc(dsc->id, dsc->address,
+						 dsc->port, dsc->path,
+						 dsc->protocol, true);
 
 		if (!ds) {
 			LOG("dstore[%u]: alloc failed for %s:%s", i,
