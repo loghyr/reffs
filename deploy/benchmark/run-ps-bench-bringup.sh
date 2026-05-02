@@ -92,7 +92,7 @@ sudo docker rm -f reffs-bench-mds 2>/dev/null || true
 # dirs must exist before reffsd reads its config (otherwise
 # server_state_init fails on the missing state_file path).
 sudo docker run -d --name reffs-bench-mds \
-    --network benchmark_default \
+    --network benchmark_bench \
     --network-alias reffs-mds \
     --privileged \
     -p 2049:2049 \
