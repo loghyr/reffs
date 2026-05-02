@@ -105,14 +105,24 @@ sudo docker run -d --name reffs-bench-mds \
                   exec /shared/build/src/reffsd --config=/etc/mds.toml" \
     >/dev/null
 
-# Wait for MDS to listen on host:2049
-echo "[bringup] waiting for MDS..."
-for i in $(seq 1 60); do
-    if (echo > /dev/tcp/127.0.0.1/2049) 2>/dev/null; then
-        echo "[bringup] MDS listening"
+# Wait for MDS to ACTUALLY be serving compounds, not just bound.
+# The kernel's listen queue accepts TCP before reffsd reads from
+# the socket, so a /dev/tcp probe passes well before the dstore
+# mount loop finishes (~22 s on adept for 10 DSes).  The
+# authoritative signal is the "reffsd ready" log line.
+echo "[bringup] waiting for MDS to finish dstore init..."
+for i in $(seq 1 120); do
+    if sudo docker logs reffs-bench-mds 2>&1 \
+            | grep -q "reffsd ready"; then
+        echo "[bringup] MDS ready (took ~${i}s)"
         break
     fi
     sleep 1
+    if [ "$i" -eq 120 ]; then
+        echo "FAIL: MDS never logged 'reffsd ready' after 120s"
+        sudo docker logs reffs-bench-mds 2>&1 | tail -10
+        exit 1
+    fi
 done
 
 # -- step 5: launch PSes ----------------------------------------------
