@@ -980,18 +980,22 @@ int mds_session_create_tls(struct mds_session *ms, const char *host,
 	if (!tls_cert || tls_cert[0] == '\0' || !tls_key ||
 	    tls_key[0] == '\0') {
 		/*
-		 * Bare host (no ":port") for the default NFS port lets
-		 * mds_session_create skip its colon-splitting parser
-		 * entirely, which is the IPv4-only path today.  For a
-		 * non-default port we still have to encode "host:port",
-		 * which is why this branch is IPv4-only -- IPv6 literals
-		 * contain colons and the parser strrchr's the last one.
-		 * Fixing the IPv6 case requires bracketing in
-		 * mds_session_clnt_open too and is tracked as
-		 * NOT_NOW_BROWN_COW; the deploy/sanity stack uses IPv4
-		 * addresses so this is not a regression for #139.
+		 * port == 0 means "no explicit port" -- pass bare host so
+		 * mds_session_create's portmap path runs (the legacy
+		 * behaviour for callers that don't know which port the
+		 * upstream listens on).  For any explicit port -- including
+		 * the standard 2049 -- encode host:port so
+		 * mds_session_clnt_open bypasses portmap and connects
+		 * directly.  This is required when the upstream NFS service
+		 * isn't registered with the host-side rpcbind (typical for
+		 * containerised reffsd or PS deployments where rpcbind on
+		 * the visible IP is the host's, not the container's).
+		 *
+		 * IPv4-only path today: IPv6 literals contain colons and
+		 * the parser strrchr's the last one; bracketing in
+		 * mds_session_clnt_open is NOT_NOW_BROWN_COW.
 		 */
-		if (port == 0 || port == 2049)
+		if (port == 0)
 			return mds_session_create(ms, host);
 
 		/* host:port = max 256 + 1 + 5 + NUL */
