@@ -132,6 +132,26 @@ bench_one() {
         write_ms=$(( t1 - t0 ))
     fi
 
+    # Clear the output file before every read.
+    #
+    # If we don't, a leftover output file from a previous codec /
+    # iteration / size masquerades as a successful read when the
+    # current ec_demo invocation fails: ec_demo on read failure
+    # exits non-zero and does NOT write the output file, so the
+    # subsequent `cmp -s "$input" "/tmp/out_${sz}"` ends up
+    # comparing the input against the stale file.  If the prior
+    # codec succeeded (and ec_demo wrote the same input back),
+    # the cmp matches and verify=OK is reported -- a false
+    # positive that hides the failure.
+    #
+    # This pattern hid a Mojette-systematic FINALIZE bug for
+    # months: RS ran first, wrote /tmp/out_${sz} correctly, then
+    # Mojette ran second, failed silently, and the bench reported
+    # OK.  The fix in chunk_store_transition (skip EMPTY blocks
+    # in sparse-write FINALIZE/COMMIT ranges) closed the protocol
+    # bug; this rm closes the harness anti-pattern that hid it.
+    rm -f "/tmp/out_${sz}"
+
     # Read (with optional --skip-ds for degraded mode)
     local t0
     t0=$(now_ms)
@@ -144,11 +164,18 @@ bench_one() {
     t1=$(now_ms)
     local read_ms=$(( t1 - t0 ))
 
-    # Verify
+    # Verify -- after the rm above, an absent or stale output file
+    # cannot pretend to match.  cmp returns non-zero on any mismatch
+    # including a missing output file (cmp aborts with status 2).
     local verify="OK"
     if ! cmp -s "$input" "/tmp/out_${sz}"; then
         verify="FAIL"
     fi
+
+    # Defense-in-depth: also remove the output file at end-of-cell
+    # so the invariant "no stale /tmp/out_* survives a cell" is
+    # visible by inspection without having to trace control flow.
+    rm -f "/tmp/out_${sz}"
 
     echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode},${LAYOUT_TAG},${CPU_INFO},${SHARD_SIZE_TAG}"
 }
@@ -173,6 +200,9 @@ bench_plain() {
     t1=$(now_ms)
     local write_ms=$(( t1 - t0 ))
 
+    # See bench_one for the rationale; same anti-pattern, same fix.
+    rm -f "/tmp/out_${sz}"
+
     t0=$(now_ms)
     "$EC_DEMO" get --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
         --size "$sz" 2>/dev/null
@@ -188,6 +218,7 @@ bench_plain() {
     # we still write it to keep the CSV column count uniform across
     # codec and plain rows.
     echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO},${SHARD_SIZE_TAG}"
+    rm -f "/tmp/out_${sz}"
 }
 
 # ------------------------------------------------------------------ #
@@ -210,6 +241,9 @@ bench_stripe() {
     t1=$(now_ms)
     local write_ms=$(( t1 - t0 ))
 
+    # See bench_one for the rationale; same anti-pattern, same fix.
+    rm -f "/tmp/out_${sz}"
+
     t0=$(now_ms)
     "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
         --k $NUM_DS --m 0 --codec stripe --size "$sz" 2>/dev/null
@@ -222,6 +256,7 @@ bench_stripe() {
     fi
 
     echo "stripe,${NUM_DS}+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO}"
+    rm -f "/tmp/out_${sz}"
 }
 
 # ------------------------------------------------------------------ #

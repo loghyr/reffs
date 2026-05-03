@@ -752,14 +752,13 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 		/*
 		 * Per-stripe block stride is DIV_CEIL(ds_stride, chunk_sz)
 		 * (matches the write-side offset arithmetic at lines 656 +
-		 * 689).  Without the ceiling here, mojette-systematic --
-		 * whose parity shards exceed ds_stride's nearest multiple of
-		 * chunk_sz (e.g. parity wsz=12296 with chunk_sz=4096 needs 4
-		 * blocks, not the truncated 3) -- writes its trailing block
-		 * each stripe but never FINALIZE/COMMITs it, so CHUNK_READ
-		 * returns NFS4ERR_IO.  RS shard sizes happen to land exactly
-		 * on chunk boundaries and so survive integer truncation,
-		 * which masked the bug until #147.
+		 * 689).  This range covers the *file space* the parity-
+		 * largest shard occupies; sparse-writing shards (data
+		 * shards under Mojette systematic, which write 1 block
+		 * per stride; parity[0] which writes 3 of 4) leave holes
+		 * within this range.  chunk_store_transition skips
+		 * EMPTY blocks so the FINALIZE/COMMIT is correct for
+		 * sparse layouts as well as RS's contiguous layout.
 		 */
 		uint32_t total_blocks =
 			(uint32_t)(nstripes * DIV_CEIL(ds_stride, chunk_sz));
@@ -825,6 +824,10 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		       nskip, m);
 		return -EINVAL;
 	}
+
+	ec_log("ec_read: codec=%d k=%d m=%d shard_size=%zu skip_mask=0x%llx nskip=%d\n",
+	       (int)codec_type, k, m, shard_size,
+	       (unsigned long long)skip_ds_mask, nskip);
 
 	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0 ||
 	    shard_size > EC_SHARD_SIZE_MAX)
@@ -940,11 +943,16 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 							       rd_chunk_sz),
 					nblk, shards[i], rd_chunk_sz, &nread);
 				present[i] = (ret == 0 && nread == nblk);
+				ec_log("ec_read: stripe %zu shard[%d] CHUNK_READ rsz=%u nblk=%u rd_chunk_sz=%u ret=%d nread=%u present=%d\n",
+				       s, i, rsz, nblk, rd_chunk_sz, ret, nread,
+				       (int)present[i]);
 			} else {
 				ret = ds_read(&ctx.ctx_conns[i], em->em_fh,
 					      em->em_fh_len, s * ds_stride,
 					      shards[i], rsz, &nread);
 				present[i] = (ret == 0 && nread == rsz);
+				ec_log("ec_read: stripe %zu shard[%d] ds_read rsz=%u ret=%d nread=%u present=%d\n",
+				       s, i, rsz, ret, nread, (int)present[i]);
 			}
 			if (!present[i])
 				ec_report_ds_error(&ctx, i, err_opnum);
@@ -953,6 +961,7 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		/* RS-decode to reconstruct any missing shards. */
 		ret = ctx.ctx_codec->ec_decode(ctx.ctx_codec, shards, present,
 					       shard_size);
+		ec_log("ec_read: stripe %zu ec_decode ret=%d\n", s, ret);
 		if (ret)
 			break;
 

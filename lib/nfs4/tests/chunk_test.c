@@ -606,6 +606,100 @@ START_TEST(test_chunk_finalize_transitions_state)
 }
 END_TEST
 
+/*
+ * Sparse FINALIZE: codecs with variable-size shards (Mojette
+ * systematic; any future projection codec) write blocks at a
+ * stride wider than they actually fill -- a data shard may write
+ * one chunk per stripe while the largest parity shard writes
+ * four, leaving holes at offsets in between.  FINALIZE / COMMIT
+ * span the full nominal range and must tolerate the EMPTY holes
+ * rather than aborting at the first one (the latent bug
+ * surfaced by experiment 14, see commit history).
+ *
+ * This test writes blocks at offsets 0 and 4 (leaving offsets 1,
+ * 2, 3 as EMPTY holes), then FINALIZEs the contiguous range
+ * [0, 5).  The expected behaviour after the chunk_store_transition
+ * fix: NFS4_OK, blocks 0 and 4 transition to FINALIZED, blocks
+ * 1/2/3 remain EMPTY.
+ */
+START_TEST(test_chunk_finalize_skips_empty_in_range)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	/* Write block 0. */
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);
+	nfs4_op_chunk_write(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write.cwr_status,
+			 NFS4_OK);
+	free_write_res(cm);
+
+	/* Write block 4 (leaves 1, 2, 3 as EMPTY holes). */
+	cm_reset_slot(cm, 0);
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 4, NULL, 0);
+	nfs4_op_chunk_write(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write.cwr_status,
+			 NFS4_OK);
+	free_write_res(cm);
+
+	struct chunk_store *cs = g_inode->i_chunk_store;
+
+	ck_assert_ptr_nonnull(cs);
+	ck_assert_int_eq(chunk_store_lookup(cs, 0)->cb_state,
+			 CHUNK_STATE_PENDING);
+	ck_assert_int_eq(chunk_store_lookup(cs, 1)->cb_state,
+			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(chunk_store_lookup(cs, 2)->cb_state,
+			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(chunk_store_lookup(cs, 3)->cb_state,
+			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(chunk_store_lookup(cs, 4)->cb_state,
+			 CHUNK_STATE_PENDING);
+
+	/* FINALIZE the full nominal stride [0, 5) -- must skip holes. */
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+
+	chunk_owner4 owner = { .co_id = 99 };
+	CHUNK_FINALIZE4args *fargs =
+		&cm->compound->c_args->argarray.argarray_val[0]
+			 .nfs_argop4_u.opchunk_finalize;
+	fargs->cfa_offset = 0;
+	fargs->cfa_count = 5;
+	fargs->cfa_chunks.cfa_chunks_val = &owner;
+	fargs->cfa_chunks.cfa_chunks_len = 1;
+
+	nfs4_op_chunk_finalize(cm->compound);
+
+	CHUNK_FINALIZE4res *fres =
+		&cm->compound->c_res->resarray.resarray_val[0]
+			 .nfs_resop4_u.opchunk_finalize;
+	ck_assert_int_eq(fres->cfr_status, NFS4_OK);
+	ck_assert_int_eq(fres->CHUNK_FINALIZE4res_u.cfr_resok4.cfr_status
+				 .cfr_status_val[0],
+			 NFS4_OK);
+
+	/* Written blocks transitioned; holes still EMPTY. */
+	ck_assert_int_eq(chunk_store_lookup(cs, 0)->cb_state,
+			 CHUNK_STATE_FINALIZED);
+	ck_assert_int_eq(chunk_store_lookup(cs, 1)->cb_state,
+			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(chunk_store_lookup(cs, 2)->cb_state,
+			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(chunk_store_lookup(cs, 3)->cb_state,
+			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(chunk_store_lookup(cs, 4)->cb_state,
+			 CHUNK_STATE_FINALIZED);
+
+	free_finalize_res(cm);
+	cm_free(cm);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Group D: CHUNK_COMMIT                                               */
 /* ------------------------------------------------------------------ */
@@ -708,6 +802,92 @@ START_TEST(test_chunk_commit_transitions_state)
 
 	/* Block must now be COMMITTED. */
 	ck_assert_int_eq(blk->cb_state, CHUNK_STATE_COMMITTED);
+
+	free_commit_res(cm);
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * Sparse COMMIT: same shape as test_chunk_finalize_skips_empty_in_range
+ * but exercises the FINALIZED -> COMMITTED transition through
+ * chunk_store_transition.  Same EMPTY-skip rule must apply: COMMIT on
+ * a range with EMPTY interior holes finalizes only the FINALIZED
+ * blocks and leaves the holes EMPTY.
+ */
+START_TEST(test_chunk_commit_skips_empty_in_range)
+{
+	static char buf[CHUNK_SZ];
+	chunk_owner4 owner = { .co_id = 99 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	/* Write block 0. */
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, NULL, 0);
+	nfs4_op_chunk_write(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write.cwr_status,
+			 NFS4_OK);
+	free_write_res(cm);
+
+	/* Write block 4 (leaves 1, 2, 3 as EMPTY holes). */
+	cm_reset_slot(cm, 0);
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 4, NULL, 0);
+	nfs4_op_chunk_write(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write.cwr_status,
+			 NFS4_OK);
+	free_write_res(cm);
+
+	/* FINALIZE the full nominal range -- covers the holes. */
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
+	{
+		CHUNK_FINALIZE4args *fargs =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_finalize;
+		fargs->cfa_offset = 0;
+		fargs->cfa_count = 5;
+		fargs->cfa_chunks.cfa_chunks_val = &owner;
+		fargs->cfa_chunks.cfa_chunks_len = 1;
+	}
+	nfs4_op_chunk_finalize(cm->compound);
+	ck_assert_int_eq(cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_finalize.cfr_status,
+			 NFS4_OK);
+	free_finalize_res(cm);
+
+	/* COMMIT the full nominal range -- must also skip the holes. */
+	cm_reset_slot(cm, 0);
+	cm_set_op(cm, 0, OP_CHUNK_COMMIT);
+	{
+		CHUNK_COMMIT4args *cargs =
+			&cm->compound->c_args->argarray.argarray_val[0]
+				 .nfs_argop4_u.opchunk_commit;
+		cargs->cca_offset = 0;
+		cargs->cca_count = 5;
+		cargs->cca_chunks.cca_chunks_val = &owner;
+		cargs->cca_chunks.cca_chunks_len = 1;
+	}
+	nfs4_op_chunk_commit(cm->compound);
+
+	CHUNK_COMMIT4res *cres = &cm->compound->c_res->resarray.resarray_val[0]
+					  .nfs_resop4_u.opchunk_commit;
+	ck_assert_int_eq(cres->ccr_status, NFS4_OK);
+
+	struct chunk_store *cs = g_inode->i_chunk_store;
+
+	ck_assert_int_eq(chunk_store_lookup(cs, 0)->cb_state,
+			 CHUNK_STATE_COMMITTED);
+	ck_assert_int_eq(chunk_store_lookup(cs, 1)->cb_state,
+			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(chunk_store_lookup(cs, 2)->cb_state,
+			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(chunk_store_lookup(cs, 3)->cb_state,
+			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(chunk_store_lookup(cs, 4)->cb_state,
+			 CHUNK_STATE_COMMITTED);
 
 	free_commit_res(cm);
 	cm_free(cm);
@@ -991,12 +1171,14 @@ static Suite *chunk_suite(void)
 	tcase_add_checked_fixture(tc_c, chunk_setup, chunk_teardown);
 	tcase_add_test(tc_c, test_chunk_finalize_no_store);
 	tcase_add_test(tc_c, test_chunk_finalize_transitions_state);
+	tcase_add_test(tc_c, test_chunk_finalize_skips_empty_in_range);
 	suite_add_tcase(s, tc_c);
 
 	TCase *tc_d = tcase_create("chunk_commit");
 	tcase_add_checked_fixture(tc_d, chunk_setup, chunk_teardown);
 	tcase_add_test(tc_d, test_chunk_commit_no_store);
 	tcase_add_test(tc_d, test_chunk_commit_transitions_state);
+	tcase_add_test(tc_d, test_chunk_commit_skips_empty_in_range);
 	suite_add_tcase(s, tc_d);
 
 	TCase *tc_e = tcase_create("chunk_read");

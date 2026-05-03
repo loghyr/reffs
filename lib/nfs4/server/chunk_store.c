@@ -195,6 +195,8 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 			   enum chunk_state from_state,
 			   enum chunk_state to_state)
 {
+	uint32_t ntransitioned = 0;
+
 	for (uint32_t i = 0; i < count; i++) {
 		uint64_t off = offset + i;
 
@@ -203,15 +205,39 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 
 		struct chunk_block *blk = &cs->cs_blocks[off];
 
+		/*
+		 * Skip EMPTY blocks in the requested range.  Codecs with
+		 * variable-size shards (Mojette systematic; any future
+		 * projection codec) write sparsely: a data shard may
+		 * write 1 block per stripe while the largest parity
+		 * shard writes 4, leaving 3 holes per stripe in the data
+		 * shard's file.  FINALIZE / COMMIT span the full nominal
+		 * range and must tolerate the holes -- there is nothing
+		 * to transition for an EMPTY block.  Other state
+		 * mismatches (e.g. COMMIT on PENDING without an
+		 * intervening FINALIZE) remain hard errors so the state
+		 * machine stays monotonic.
+		 */
+		if (blk->cb_state == CHUNK_STATE_EMPTY)
+			continue;
 		if (blk->cb_state != from_state)
 			return -EINVAL;
 		if (blk->cb_owner_id != owner_id)
 			return -EINVAL;
 
 		blk->cb_state = to_state;
+		ntransitioned++;
 	}
 
-	cs->cs_dirty = true;
+	/*
+	 * Only mark the store dirty if we actually moved at least one
+	 * block.  An all-EMPTY range (e.g. a sparse-writing shard whose
+	 * stride is 1 block per stripe, finalised at a stage where no
+	 * blocks have yet been written) is a legitimate no-op and must
+	 * not trigger a chunk_store_persist meta-file rewrite.
+	 */
+	if (ntransitioned > 0)
+		cs->cs_dirty = true;
 	return 0;
 }
 
