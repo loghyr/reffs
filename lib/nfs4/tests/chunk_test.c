@@ -651,12 +651,11 @@ START_TEST(test_chunk_finalize_skips_empty_in_range)
 	ck_assert_ptr_nonnull(cs);
 	ck_assert_int_eq(chunk_store_lookup(cs, 0)->cb_state,
 			 CHUNK_STATE_PENDING);
-	ck_assert_int_eq(chunk_store_lookup(cs, 1)->cb_state,
-			 CHUNK_STATE_EMPTY);
-	ck_assert_int_eq(chunk_store_lookup(cs, 2)->cb_state,
-			 CHUNK_STATE_EMPTY);
-	ck_assert_int_eq(chunk_store_lookup(cs, 3)->cb_state,
-			 CHUNK_STATE_EMPTY);
+	/* EMPTY blocks are masked by chunk_store_lookup (returns NULL);
+	 * read the underlying array directly to verify the holes. */
+	ck_assert_int_eq(cs->cs_blocks[1].cb_state, CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(cs->cs_blocks[2].cb_state, CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(cs->cs_blocks[3].cb_state, CHUNK_STATE_EMPTY);
 	ck_assert_int_eq(chunk_store_lookup(cs, 4)->cb_state,
 			 CHUNK_STATE_PENDING);
 
@@ -683,15 +682,13 @@ START_TEST(test_chunk_finalize_skips_empty_in_range)
 				 .cfr_status_val[0],
 			 NFS4_OK);
 
-	/* Written blocks transitioned; holes still EMPTY. */
+	/* Written blocks transitioned; holes still EMPTY (masked by
+	 * lookup -- read cs_blocks directly). */
 	ck_assert_int_eq(chunk_store_lookup(cs, 0)->cb_state,
 			 CHUNK_STATE_FINALIZED);
-	ck_assert_int_eq(chunk_store_lookup(cs, 1)->cb_state,
-			 CHUNK_STATE_EMPTY);
-	ck_assert_int_eq(chunk_store_lookup(cs, 2)->cb_state,
-			 CHUNK_STATE_EMPTY);
-	ck_assert_int_eq(chunk_store_lookup(cs, 3)->cb_state,
-			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(cs->cs_blocks[1].cb_state, CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(cs->cs_blocks[2].cb_state, CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(cs->cs_blocks[3].cb_state, CHUNK_STATE_EMPTY);
 	ck_assert_int_eq(chunk_store_lookup(cs, 4)->cb_state,
 			 CHUNK_STATE_FINALIZED);
 
@@ -880,12 +877,9 @@ START_TEST(test_chunk_commit_skips_empty_in_range)
 
 	ck_assert_int_eq(chunk_store_lookup(cs, 0)->cb_state,
 			 CHUNK_STATE_COMMITTED);
-	ck_assert_int_eq(chunk_store_lookup(cs, 1)->cb_state,
-			 CHUNK_STATE_EMPTY);
-	ck_assert_int_eq(chunk_store_lookup(cs, 2)->cb_state,
-			 CHUNK_STATE_EMPTY);
-	ck_assert_int_eq(chunk_store_lookup(cs, 3)->cb_state,
-			 CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(cs->cs_blocks[1].cb_state, CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(cs->cs_blocks[2].cb_state, CHUNK_STATE_EMPTY);
+	ck_assert_int_eq(cs->cs_blocks[3].cb_state, CHUNK_STATE_EMPTY);
 	ck_assert_int_eq(chunk_store_lookup(cs, 4)->cb_state,
 			 CHUNK_STATE_COMMITTED);
 
