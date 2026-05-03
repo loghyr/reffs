@@ -43,16 +43,48 @@ What closed:
 
 What is still TODO for the experiment proper:
 
-The bring-up surface is now reachable; the actual
-visibility-latency measurement (write through PS A, read through
-PS B, observe the time between commit at PS A and the read
-returning the new content at PS B) has not yet been run.  Needs
-a small driver script that opens two ec_demo sessions (one
-against `127.0.0.1:4098`, one against `127.0.0.1:4099`), writes
-a known payload via PS A, polls via PS B in tight loop, records
-the wall-clock delta until the new content appears.  Pre-fix
-this could not even start; post-fix it is ~1 day of harness
-work.
+The bring-up surface is now reachable but a fresh blocker was
+surfaced in the data path on first attempt (2026-05-02):
+
+```
+PS A trace:
+  proxy open: listener=1 current_ino=1 claim=0 name=viz1
+              (forwarded with PS creds)
+  nfs4_op_open status=NFS4ERR_SERVERFAULT(10006) claim=0
+              access=3 deny=0
+  (561us elapsed)
+
+ec_demo client: write failed: -121
+```
+
+The bench MDS log shows no incoming OPEN for the file -- the
+PS rejects the request internally before forwarding it
+upstream.  `ps_proxy_forward_open` (lib/nfs4/server/file.c
+around line 561) is the call that produced the failing fret.
+Likely the function returned an errno with no clean mapping
+in `errno_to_nfs4` (default -> NFS4ERR_SERVERFAULT).  The
+561us elapsed is consistent with "failed before any RPC went
+out."
+
+Cause not yet root-caused.  Suspect classes (in priority order):
+1. PS-MDS session's per-PS export discovery missed the path,
+   so PUTROOTFH+LOOKUP under PS creds returns an error that
+   ps_proxy_forward_open relays as a non-mapped errno.
+2. ps_proxy_forward_open's internal compound construction has
+   a bug for the OPEN case specifically (CHUNK ops worked in
+   the PS smoke).
+3. PS creds forwarding has a dropped step (cred propagation
+   into the upstream session).
+
+Visibility-latency measurement is therefore still pending --
+the harness exists (`/tmp/exp5_visibility.sh`) and runs
+correctly against a working PS, but every iteration currently
+returns WRITE_FAIL = -121.  Investigation of the SERVERFAULT
+is the next slice.
+
+NOT in this slice's commit; surfaced cleanly on the deck's
+slide 17/18 honest-scope ("kernel-mount-through-PS still
+pending; protocol path not yet end-to-end").
 
 ## Setup attempted
 
