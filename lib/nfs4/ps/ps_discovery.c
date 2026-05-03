@@ -318,7 +318,16 @@ int ps_discovery_run(const struct ps_listener_state *pls)
 	if (ret < 0)
 		return ret;
 
-	ret = ps_mount_fetch_exports(pls->pls_upstream, &entries, &n);
+	/*
+	 * Pass pls_upstream_port so the MOUNT3 enumeration bypasses
+	 * portmap when the upstream is reachable on a known port.
+	 * Required for container topologies (the bench MDS runs in
+	 * docker; the host's rpcbind has no MOUNT_V3 registered).
+	 * port == 0 falls back to portmap for non-containerised
+	 * deployments where rpcbind knows the upstream's NFS services.
+	 */
+	ret = ps_mount_fetch_exports(pls->pls_upstream, pls->pls_upstream_port,
+				     &entries, &n);
 	if (ret < 0) {
 		/*
 		 * stderr rather than LOG() on purpose: reffs/log.h's LOG

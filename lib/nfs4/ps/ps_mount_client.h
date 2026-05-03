@@ -16,11 +16,27 @@
  * retries to discover what paths the upstream MDS exports so the PS
  * can allocate a proxy superblock per discovered path.
  *
- * Uses portmapper to locate the MOUNT_PROGRAM port (reffsd
- * pmap-registers MOUNT3 at startup, so this resolves cleanly
- * against any reffs upstream).  Portmapper-less deployments are
- * NOT_NOW_BROWN_COW -- would need clnt_tli_create with an explicit
- * netbuf and port.
+ * Two transport modes selected by `port`:
+ *
+ *   port == 0 -- portmap-driven.  Uses clnt_create with proto=tcp,
+ *                which queries the host's rpcbind for the MOUNT_V3
+ *                program port.  Works against any reffs upstream
+ *                that pmap-registers MOUNT3 at startup, AND against
+ *                a host whose rpcbind knows about MOUNT3.  Fails
+ *                on container topologies where the upstream MDS
+ *                runs in docker but the host's rpcbind has no
+ *                NFS/MOUNT services registered (the bench case).
+ *
+ *   port  > 0 -- explicit-port direct connect.  Builds a sockaddr_in
+ *                via getaddrinfo and uses clnttcp_create on the
+ *                supplied port, bypassing portmap entirely.
+ *                Required for the bench/container topology and any
+ *                deployment where rpcbind is unavailable or
+ *                stale.  Mirrors the bdde4f6539db pattern used in
+ *                ds_io.c and the mds_session_clnt_open
+ *                explicit-port path.  IPv4 only (AF_INET hint to
+ *                getaddrinfo); IPv6 upstreams are not supported on
+ *                this path.
  *
  * On success, `*out` is a heap-allocated array of `struct
  * ps_export_entry` with `*nout` elements; caller must release via
@@ -42,8 +58,8 @@ struct ps_export_entry {
 	char path[PS_MOUNT_PATH_MAX];
 };
 
-int ps_mount_fetch_exports(const char *host, struct ps_export_entry **out,
-			   size_t *nout);
+int ps_mount_fetch_exports(const char *host, uint16_t port,
+			   struct ps_export_entry **out, size_t *nout);
 
 /*
  * Release an array returned by ps_mount_fetch_exports().  NULL-safe.

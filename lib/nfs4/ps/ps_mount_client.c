@@ -8,9 +8,12 @@
 #endif
 
 #include <errno.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 
 #include <rpc/rpc.h>
 
@@ -51,10 +54,10 @@ static size_t count_exports(const exports head)
 	return n;
 }
 
-int ps_mount_fetch_exports(const char *host, struct ps_export_entry **out,
-			   size_t *nout)
+int ps_mount_fetch_exports(const char *host, uint16_t port,
+			   struct ps_export_entry **out, size_t *nout)
 {
-	CLIENT *clnt;
+	CLIENT *clnt = NULL;
 	exports list = NULL;
 	enum clnt_stat rpc_stat;
 	struct timeval tmo = { .tv_sec = 10, .tv_usec = 0 };
@@ -66,7 +69,53 @@ int ps_mount_fetch_exports(const char *host, struct ps_export_entry **out,
 	*out = NULL;
 	*nout = 0;
 
-	clnt = clnt_create(host, MOUNT_PROGRAM, MOUNT_V3, "tcp");
+	if (port > 0) {
+		/*
+		 * Explicit-port direct connect: bypass portmap.  Required
+		 * for container topologies where the host's rpcbind has no
+		 * MOUNT_V3 service registered (e.g. the bench MDS runs in
+		 * docker; the host's rpcbind doesn't see it).  Mirrors
+		 * ds_io.c's bdde4f6539db pattern and the mds_session
+		 * explicit-port path.
+		 */
+		struct addrinfo hints = { .ai_family = AF_INET,
+					  .ai_socktype = SOCK_STREAM };
+		struct addrinfo *res = NULL;
+		struct sockaddr_in sin;
+
+		if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res)
+			return -ECONNREFUSED;
+
+		/*
+		 * AF_INET is a hint, not a guarantee; some resolvers can
+		 * return AF_INET6 if no v4 record exists.  Casting an
+		 * AF_INET6 sockaddr_in6 to sockaddr_in and writing
+		 * sin_port aliases the wrong byte offset and produces a
+		 * connection to a garbage port (silent failure -> harder
+		 * to diagnose).  Reject non-v4 returns explicitly.
+		 */
+		if (res->ai_addr->sa_family != AF_INET) {
+			freeaddrinfo(res);
+			return -ECONNREFUSED;
+		}
+
+		sin = *(struct sockaddr_in *)res->ai_addr;
+		freeaddrinfo(res);
+		sin.sin_port = htons(port);
+
+		int fd = RPC_ANYSOCK;
+
+		clnt = clnttcp_create(&sin, MOUNT_PROGRAM, MOUNT_V3, &fd, 0, 0);
+	} else {
+		/*
+		 * Portmap-driven path: works against any upstream whose
+		 * host's rpcbind knows about MOUNT_V3.  reffsd
+		 * pmap-registers MOUNT3 at startup, so this resolves
+		 * cleanly for non-containerised deployments.
+		 */
+		clnt = clnt_create(host, MOUNT_PROGRAM, MOUNT_V3, "tcp");
+	}
+
 	if (!clnt)
 		return -ECONNREFUSED;
 

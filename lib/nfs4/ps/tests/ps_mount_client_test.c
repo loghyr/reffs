@@ -22,11 +22,11 @@ START_TEST(test_fetch_invalid_args)
 	struct ps_export_entry *arr = NULL;
 	size_t n = 0;
 
-	ck_assert_int_eq(ps_mount_fetch_exports(NULL, &arr, &n), -EINVAL);
-	ck_assert_int_eq(ps_mount_fetch_exports("", &arr, &n), -EINVAL);
-	ck_assert_int_eq(ps_mount_fetch_exports("127.0.0.1", NULL, &n),
+	ck_assert_int_eq(ps_mount_fetch_exports(NULL, 0, &arr, &n), -EINVAL);
+	ck_assert_int_eq(ps_mount_fetch_exports("", 0, &arr, &n), -EINVAL);
+	ck_assert_int_eq(ps_mount_fetch_exports("127.0.0.1", 0, NULL, &n),
 			 -EINVAL);
-	ck_assert_int_eq(ps_mount_fetch_exports("127.0.0.1", &arr, NULL),
+	ck_assert_int_eq(ps_mount_fetch_exports("127.0.0.1", 0, &arr, NULL),
 			 -EINVAL);
 }
 END_TEST
@@ -61,7 +61,28 @@ START_TEST(test_fetch_connect_refused)
 	struct ps_export_entry *arr = (struct ps_export_entry *)0xDEAD;
 	size_t n = 42;
 
-	int r = ps_mount_fetch_exports("127.0.0.1", &arr, &n);
+	int r = ps_mount_fetch_exports("127.0.0.1", 0, &arr, &n);
+
+	ck_assert_int_lt(r, 0);
+	ck_assert_ptr_null(arr);
+	ck_assert_uint_eq(n, 0);
+}
+END_TEST
+
+/*
+ * Same shape as test_fetch_connect_refused but exercises the
+ * explicit-port code path (port > 0 takes clnttcp_create instead
+ * of clnt_create).  Port 1 on loopback is reliably refused (not
+ * listening, no portmap involvement).  Failing cleanly here proves
+ * the explicit-port path's connect-failure handling matches the
+ * portmap path's (out=NULL, n=0, return < 0).
+ */
+START_TEST(test_fetch_connect_refused_explicit_port)
+{
+	struct ps_export_entry *arr = (struct ps_export_entry *)0xDEAD;
+	size_t n = 42;
+
+	int r = ps_mount_fetch_exports("127.0.0.1", 1, &arr, &n);
 
 	ck_assert_int_lt(r, 0);
 	ck_assert_ptr_null(arr);
@@ -87,6 +108,16 @@ static Suite *ps_mount_client_suite(void)
 	 * to libtirpc.so.  Tracked: GitHub issue #57.
 	 */
 	(void)test_fetch_connect_refused;
+	/*
+	 * test_fetch_connect_refused_explicit_port exercises the new
+	 * clnttcp_create explicit-port path (port > 0 in
+	 * ps_mount_fetch_exports).  Enabled because the explicit-port
+	 * path does NOT call into libtirpc's pmap_set /
+	 * authunix_create_default leak surface (issue #57 affects only
+	 * the portmap path).  This is the only test giving make-check
+	 * coverage of the new code path the slice exists to add.
+	 */
+	tcase_add_test(tc, test_fetch_connect_refused_explicit_port);
 	/*
 	 * test_fetch_connect_refused calls libtirpc clnt_create against a
 	 * host with no rpcbind / portmap listener.  On Darwin (and on
