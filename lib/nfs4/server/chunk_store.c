@@ -81,6 +81,7 @@ static void block_to_disk(const struct chunk_block *blk,
 	dsk->cbd_payload_id = blk->cb_payload_id;
 	dsk->cbd_crc32 = blk->cb_crc32;
 	dsk->cbd_chunk_size = blk->cb_chunk_size;
+	dsk->cbd_writer_clientid = blk->cb_writer_clientid;
 }
 
 static void disk_to_block(const struct chunk_block_disk *dsk,
@@ -94,6 +95,7 @@ static void disk_to_block(const struct chunk_block_disk *dsk,
 	blk->cb_payload_id = dsk->cbd_payload_id;
 	blk->cb_crc32 = dsk->cbd_crc32;
 	blk->cb_chunk_size = dsk->cbd_chunk_size;
+	blk->cb_writer_clientid = dsk->cbd_writer_clientid;
 }
 
 /* ------------------------------------------------------------------ */
@@ -239,6 +241,83 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 	if (ntransitioned > 0)
 		cs->cs_dirty = true;
 	return 0;
+}
+
+int chunk_store_rollback(struct chunk_store *cs, uint64_t offset,
+			 uint32_t count, uint32_t owner_id)
+{
+	uint32_t ntransitioned = 0;
+
+	for (uint32_t i = 0; i < count; i++) {
+		uint64_t off = offset + i;
+
+		if (off >= cs->cs_nblocks)
+			return -EINVAL;
+
+		struct chunk_block *blk = &cs->cs_blocks[off];
+
+		/* Sparse-rollback: EMPTY blocks within the range are no-ops. */
+		if (blk->cb_state == CHUNK_STATE_EMPTY)
+			continue;
+
+		if (blk->cb_owner_id != owner_id)
+			return -EINVAL;
+
+		switch (blk->cb_state) {
+		case CHUNK_STATE_PENDING:
+		case CHUNK_STATE_FINALIZED:
+			blk->cb_state = CHUNK_STATE_EMPTY;
+			ntransitioned++;
+			break;
+		case CHUNK_STATE_COMMITTED:
+			/*
+			 * Repair-path: COMMITTED rollback requires cg_gen_id
+			 * handling per draft-haynes-nfsv4-flexfiles-v2
+			 * sec-CHUNK_ROLLBACK; not implemented in this slice.
+			 * NOT_NOW_BROWN_COW.
+			 */
+			return -ENOTSUP;
+		default:
+			return -EINVAL;
+		}
+	}
+
+	if (ntransitioned > 0)
+		cs->cs_dirty = true;
+	return 0;
+}
+
+uint32_t chunk_store_rollback_for_client(struct chunk_store *cs,
+					 uint64_t writer_clientid)
+{
+	uint32_t ntransitioned = 0;
+
+	if (!cs)
+		return 0;
+
+	for (uint64_t off = 0; off < cs->cs_nblocks; off++) {
+		struct chunk_block *blk = &cs->cs_blocks[off];
+
+		if (blk->cb_writer_clientid != writer_clientid)
+			continue;
+
+		/*
+		 * Lease-driven cleanup: in-flight (PENDING) and
+		 * finalised-but-uncommitted (FINALIZED) chunks owned by
+		 * a dead writer are released back to EMPTY.  Already-
+		 * COMMITTED chunks stay committed -- the writer's durable
+		 * work survives its session expiry by design.
+		 */
+		if (blk->cb_state == CHUNK_STATE_PENDING ||
+		    blk->cb_state == CHUNK_STATE_FINALIZED) {
+			blk->cb_state = CHUNK_STATE_EMPTY;
+			ntransitioned++;
+		}
+	}
+
+	if (ntransitioned > 0)
+		cs->cs_dirty = true;
+	return ntransitioned;
 }
 
 /* ------------------------------------------------------------------ */

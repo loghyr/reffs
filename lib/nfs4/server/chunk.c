@@ -31,12 +31,14 @@
 
 #include "nfsv42_xdr.h"
 #include "reffs/data_block.h"
+#include "reffs/fs.h"
 #include "reffs/inode.h"
 #include "reffs/log.h"
 #include "reffs/rpc.h"
 #include "reffs/server.h"
 #include "reffs/time.h"
 #include "nfs4/chunk_store.h"
+#include "nfs4/client.h"
 #include "nfs4/compound.h"
 #include "nfs4/ops.h"
 #include "nfs4/stateid.h"
@@ -232,6 +234,23 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 					    args->cwa_crc32s.cwa_crc32s_val[i] :
 					    0,
 			.cb_chunk_size = blk_size,
+			/*
+			 * Server-known writer identity for lease-driven
+			 * rollback: nfs4_client_expire calls
+			 * chunk_store_rollback_for_client(cs, this_clientid)
+			 * to release PENDING/FINALIZED chunks owned by a
+			 * dead writer.  Zero when no NFSv4.1 client is
+			 * attached (anonymous/legacy path), in which case
+			 * the lease reaper sweep can never match and the
+			 * rollback story degenerates to manual recovery via
+			 * the CHUNK_ROLLBACK protocol op.
+			 */
+			.cb_writer_clientid =
+				compound->c_nfs4_client ?
+					nfs4_client_to_client(
+						compound->c_nfs4_client)
+						->c_id :
+					0,
 		};
 
 		if (chunk_store_write(cs, args->cwa_offset + i, &blk) < 0) {
@@ -634,10 +653,79 @@ uint32_t nfs4_op_chunk_repaired(struct compound *compound)
 
 uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 {
+	CHUNK_ROLLBACK4args *args =
+		NFS4_OP_ARG_SETUP(compound, opchunk_rollback);
 	CHUNK_ROLLBACK4res *res = NFS4_OP_RES_SETUP(compound, opchunk_rollback);
 	nfsstat4 *status = &res->crr_status;
+	CHUNK_ROLLBACK4resok *resok =
+		NFS4_OP_RESOK_SETUP(res, CHUNK_ROLLBACK4res_u, crr_resok4);
 
-	*status = NFS4ERR_NOTSUPP;
+	if (network_file_handle_empty(&compound->c_curr_nfh)) {
+		*status = NFS4ERR_NOFILEHANDLE;
+		return 0;
+	}
+
+	if (!compound->c_inode) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	uint32_t count = (uint32_t)args->crb_count;
+
+	if (count == 0 || args->crb_chunks.crb_chunks_len == 0) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
+
+	struct chunk_store *cs = compound->c_inode->i_chunk_store;
+
+	if (!cs) {
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_NOENT;
+		return 0;
+	}
+
+	/*
+	 * Per draft-haynes-nfsv4-flexfiles-v2 fig-chunk-state-machine:
+	 * ROLLBACK admits PENDING -> EMPTY and FINALIZED -> EMPTY.  The
+	 * COMMITTED -> newer-COMMITTED repair path requires cg_gen_id
+	 * handling and is NOT_NOW_BROWN_COW; chunk_store_rollback returns
+	 * -ENOTSUP for that case and we surface NFS4ERR_NOTSUPP.
+	 *
+	 * Unlike FINALIZE/COMMIT (which return per-owner status arrays),
+	 * the CHUNK_ROLLBACK4resok shape carries only writeverf -- the
+	 * outer crr_status reports the operation's overall outcome.  We
+	 * apply each owner's rollback in sequence; the first failure
+	 * stops the loop and surfaces in *status.
+	 */
+	uint32_t nowners = args->crb_chunks.crb_chunks_len;
+
+	for (uint32_t i = 0; i < nowners; i++) {
+		chunk_owner4 *co = &args->crb_chunks.crb_chunks_val[i];
+		int ret = chunk_store_rollback(cs, args->crb_offset, count,
+					       co->co_id);
+
+		if (ret == -ENOTSUP) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_NOTSUPP;
+			return 0;
+		}
+		if (ret < 0) {
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_INVAL;
+			return 0;
+		}
+	}
+
+	/* Persist the EMPTY state -- rollback must survive DS restart. */
+	chunk_store_persist(cs, compound->c_server_state->ss_state_dir,
+			    compound->c_inode->i_ino);
+
+	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+	chunk_write_verf(compound->c_server_state, resok->crr_writeverf);
 
 	return 0;
 }
@@ -650,6 +738,174 @@ uint32_t nfs4_op_chunk_unlock(struct compound *compound)
 	*status = NFS4ERR_NOTSUPP;
 
 	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Server-wide rollback for a dying writer                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Two-pass collection of inodes that may carry orphan chunks for a
+ * dying writer.  Pass 1 (under rcu_read_lock, in the callback) takes
+ * inode_active_get_rcu refs and records inode pointers.  Pass 2
+ * (outside rcu) drops the lock and per-inode locks i_attr_mutex,
+ * sweeps the chunk_store, persists, releases.
+ *
+ * The collection buffer grows in increments outside RCU; the
+ * callback under RCU only appends to a pre-sized region and signals
+ * "buffer full" to the caller so the caller can grow + retry.  This
+ * keeps the RCU read-side critical section blocking-free per
+ * .claude/patterns/rcu-violations.md Pattern 1.
+ */
+
+#define CHUNK_ROLLBACK_INITIAL_INODE_CAP 64
+#define CHUNK_ROLLBACK_MAX_GROW_RETRIES 5 /* 64 -> 128 -> ... -> 2048 */
+
+struct chunk_rollback_collect {
+	struct inode **inodes; /* pre-sized buffer */
+	uint32_t cap;
+	uint32_t n;
+	bool overflow; /* set if cap was reached during a pass */
+};
+
+static int chunk_rollback_collect_cb(struct inode *inode, void *arg)
+{
+	struct chunk_rollback_collect *ctx = arg;
+
+	/*
+	 * Quick filter: only collect inodes that already have a
+	 * chunk_store.  Reading i_chunk_store without the i_attr_mutex
+	 * is deliberate-loose: a stale NULL just means we skip an inode
+	 * whose chunks pass-2 would re-discover under the lock anyway,
+	 * which is the worst-case "missed sweep" -- and even that is
+	 * a benign miss because the dying writer's session is already
+	 * gone, so it cannot be issuing fresh CHUNK_WRITEs that would
+	 * stick PENDING after this expiry.  Pass 2 always re-reads
+	 * i_chunk_store under i_attr_mutex before doing real work, so
+	 * a stale read here cannot cause incorrect rollback.  The
+	 * non-NULL case is monotonic: a chunk_store, once attached to
+	 * an inode by chunk_store_get (under i_attr_mutex), is not
+	 * detached until inode_release; pass-2 sees the same pointer
+	 * we recorded here.
+	 */
+	if (!inode->i_chunk_store)
+		return 0;
+
+	if (ctx->n >= ctx->cap) {
+		ctx->overflow = true;
+		return 1; /* signal "stop iterating; resize" */
+	}
+
+	/*
+	 * Take the active ref BEFORE recording in the buffer.  A failed
+	 * inode_active_get_rcu (inode is dying) returns 0 and never
+	 * advances ctx->n, so pass 2 never sees a NULL slot.  This
+	 * ordering is load-bearing -- a refactor that increments ctx->n
+	 * before the get would either leak the slot or feed pass 2 a
+	 * NULL pointer to dereference.
+	 */
+	if (!inode_active_get_rcu(inode))
+		return 0; /* inode is being torn down -- skip */
+
+	ctx->inodes[ctx->n++] = inode;
+	return 0;
+}
+
+uint32_t chunk_rollback_for_client(uint64_t writer_clientid,
+				   const char *state_dir)
+{
+	struct chunk_rollback_collect ctx = {
+		.cap = CHUNK_ROLLBACK_INITIAL_INODE_CAP,
+		.n = 0,
+		.overflow = false,
+	};
+
+	ctx.inodes = calloc(ctx.cap, sizeof(*ctx.inodes));
+	if (!ctx.inodes)
+		return 0;
+
+	/*
+	 * Collect-and-grow loop.  reffs_fs_for_each_inode currently
+	 * ignores the callback's non-zero return for early-stop; if
+	 * the buffer fills, we still walk the rest under RCU but the
+	 * callback short-circuits at the buffer-full check.  Until
+	 * the FS layer supports a real early-stop, the safe shape is
+	 * to size generously up front and re-walk if overflow occurred.
+	 *
+	 * Bounded by CHUNK_ROLLBACK_MAX_GROW_RETRIES so a pathological
+	 * insert-storm during the walk cannot loop forever.  The cap
+	 * (~2048 inodes-with-chunk-stores by the last grow) is generous
+	 * relative to current bench scale; if it ever fires we want a
+	 * loud TRACE and graceful give-up, not silent unboundedness.
+	 */
+	for (uint32_t retry = 0;; retry++) {
+		ctx.n = 0;
+		ctx.overflow = false;
+
+		reffs_fs_for_each_inode(chunk_rollback_collect_cb, &ctx);
+
+		if (!ctx.overflow)
+			break;
+
+		/* Drop the active refs collected in this aborted pass. */
+		for (uint32_t i = 0; i < ctx.n; i++)
+			inode_active_put(ctx.inodes[i]);
+
+		if (retry >= CHUNK_ROLLBACK_MAX_GROW_RETRIES) {
+			TRACE("chunk_rollback_for_client: giving up after %u "
+			      "grow retries (cap=%u, clientid=0x%" PRIx64 ")",
+			      retry, ctx.cap, writer_clientid);
+			free(ctx.inodes);
+			return 0;
+		}
+
+		/* Grow + retry. */
+		uint32_t new_cap = ctx.cap * 2;
+		struct inode **nbuf =
+			realloc(ctx.inodes, new_cap * sizeof(*ctx.inodes));
+
+		if (!nbuf) {
+			free(ctx.inodes);
+			return 0;
+		}
+		ctx.inodes = nbuf;
+		ctx.cap = new_cap;
+		TRACE("chunk_rollback_for_client: grew inode buffer to %u "
+		      "(retry %u, clientid=0x%" PRIx64 ")",
+		      new_cap, retry + 1, writer_clientid);
+	}
+
+	/* Pass 2: outside RCU, do the real work per inode. */
+	uint32_t total = 0;
+
+	for (uint32_t i = 0; i < ctx.n; i++) {
+		struct inode *inode = ctx.inodes[i];
+
+		pthread_mutex_lock(&inode->i_attr_mutex);
+		if (inode->i_chunk_store) {
+			uint32_t n = chunk_store_rollback_for_client(
+				inode->i_chunk_store, writer_clientid);
+			if (n > 0) {
+				total += n;
+				if (state_dir)
+					chunk_store_persist(
+						inode->i_chunk_store, state_dir,
+						inode->i_ino);
+			}
+		}
+		pthread_mutex_unlock(&inode->i_attr_mutex);
+
+		inode_active_put(inode);
+	}
+
+	free(ctx.inodes);
+
+	if (total > 0)
+		TRACE("chunk_rollback_for_client: clientid=0x%" PRIx64
+		      " rolled back %u block(s) across %u inode(s)",
+		      writer_clientid, total, ctx.n);
+
+	return total;
 }
 
 uint32_t nfs4_op_chunk_write_repair(struct compound *compound)

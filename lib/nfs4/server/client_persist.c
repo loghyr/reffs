@@ -24,6 +24,7 @@
 #include "reffs/server.h"
 #include "nfs4/trace/nfs4.h"
 #include "reffs/trace/fs.h"
+#include "nfs4/chunk_store.h"
 #include "nfs4/client.h"
 #include "nfs4/client_persist.h"
 
@@ -129,6 +130,30 @@ void nfs4_client_expire(struct server_state *ss, struct nfs4_client *nc)
 			dstore_put(revoke_dstores[ri]);
 		}
 	}
+
+	/*
+	 * Lease-driven CHUNK_ROLLBACK: release any PENDING / FINALIZED
+	 * chunks owned by this dying writer.  Closes the kill_ms=150
+	 * READ_FAILED cell in experiment 12 (write-hole) -- without this
+	 * sweep, a writer killed mid-stripe leaves blocks PENDING
+	 * forever and subsequent CHUNK_READs return NFS4ERR_IO until the
+	 * MDS removes the file.  See draft-haynes-nfsv4-flexfiles-v2
+	 * sec-system-model-consistency for the per-chunk consistency
+	 * model and `experiments/12-write-hole.md` for the cell that
+	 * motivated this hook.
+	 *
+	 * Already-COMMITTED chunks survive expiry by design (the
+	 * writer's durable work persists past its session); only
+	 * in-flight state is released.
+	 *
+	 * This is a server-wide inode walk; cost grows with the number
+	 * of inodes that have a chunk_store, not with the number of
+	 * dying clients.  For very large file counts, an indexed
+	 * "writers -> {inode}" reverse map would let the sweep target
+	 * exactly the affected inodes; that scaling is on slide 14's
+	 * open-class disclosure (NOT_NOW_BROWN_COW).
+	 */
+	chunk_rollback_for_client((uint64_t)client->c_id, ss->ss_state_dir);
 
 	/*
 	 * Order matters -- see handoff invariants:

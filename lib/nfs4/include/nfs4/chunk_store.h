@@ -43,11 +43,21 @@ struct chunk_block {
 	enum chunk_state cb_state;
 	uint32_t cb_flags; /* CHUNK_BLOCK_LOCKED, etc. */
 	uint32_t cb_gen_id; /* chunk_guard4.cg_gen_id */
-	uint32_t cb_client_id; /* chunk_guard4.cg_client_id */
+	uint32_t cb_client_id; /* chunk_guard4.cg_client_id (client-supplied) */
 	uint32_t cb_owner_id; /* chunk_owner4.co_id */
 	uint32_t cb_payload_id;
 	uint32_t cb_crc32;
 	uint32_t cb_chunk_size; /* actual payload size (varies for Mojette) */
+	/*
+	 * clientid4 of the writing session (server-known identity,
+	 * distinct from cb_client_id which is the client-supplied
+	 * chunk_guard4.cg_client_id).  Set on CHUNK_WRITE; used by
+	 * nfs4_client_expire to roll back PENDING/FINALIZED chunks
+	 * left orphaned by a dead writer (the lease-driven half of
+	 * the chunk-state-machine liveness story per
+	 * draft-haynes-nfsv4-flexfiles-v2 sec-system-model-consistency).
+	 */
+	uint64_t cb_writer_clientid;
 };
 
 /*
@@ -77,6 +87,7 @@ struct chunk_block_disk {
 	uint32_t cbd_payload_id;
 	uint32_t cbd_crc32;
 	uint32_t cbd_chunk_size;
+	uint64_t cbd_writer_clientid; /* see chunk_block.cb_writer_clientid */
 };
 
 /*
@@ -125,6 +136,43 @@ int chunk_store_transition(struct chunk_store *cs, uint64_t offset,
 			   enum chunk_state to_state);
 
 /*
+ * chunk_store_rollback -- transition PENDING and/or FINALIZED blocks
+ * matching owner_id to EMPTY at offsets [offset, offset+count).
+ *
+ * Implements the CHUNK_ROLLBACK protocol-op semantics from
+ * draft-haynes-nfsv4-flexfiles-v2 fig-chunk-state-machine:
+ *   PENDING   -> EMPTY   (discard PENDING)
+ *   FINALIZED -> EMPTY   (discard FINALIZED)
+ *   COMMITTED -> -ENOTSUP (repair-path; requires cg_gen_id handling
+ *                          not implemented in this slice)
+ *   EMPTY     -> skip    (no-op; sparse-rollback semantics)
+ *
+ * Returns 0 on success, -EINVAL if a block has wrong owner_id,
+ * -ENOTSUP if a matching block is COMMITTED.
+ */
+int chunk_store_rollback(struct chunk_store *cs, uint64_t offset,
+			 uint32_t count, uint32_t owner_id);
+
+/*
+ * chunk_store_rollback_for_client -- sweep ALL blocks in PENDING or
+ * FINALIZED state owned by writer_clientid, transitioning them to
+ * EMPTY.  Used by the lease reaper when a client's lease expires.
+ *
+ * Differs from chunk_store_rollback (the protocol-op helper):
+ *   - Matches on cb_writer_clientid, not cb_owner_id (clients pick
+ *     arbitrary co_id values; clientid4 is the server-known identity
+ *     the lease reaper has).
+ *   - Skips COMMITTED silently (lease expiry recovers in-flight state
+ *     only; already-committed work stays committed).
+ *   - No range; sweeps the entire chunk_store.
+ *
+ * Returns the number of blocks transitioned (zero is legitimate --
+ * the dead client may have had no in-flight chunks on this inode).
+ */
+uint32_t chunk_store_rollback_for_client(struct chunk_store *cs,
+					 uint64_t writer_clientid);
+
+/*
  * chunk_store_persist -- write metadata to disk.
  *
  * Path: <state_dir>/chunks/<inode_ino>.meta
@@ -150,5 +198,28 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino);
  * chunk_store_destroy -- free the chunk store.
  */
 void chunk_store_destroy(struct chunk_store *cs);
+
+/*
+ * chunk_rollback_for_client -- server-wide sweep.
+ *
+ * For every inode in every superblock, transition any PENDING or
+ * FINALIZED chunk owned by writer_clientid to EMPTY.  Persists each
+ * affected chunk_store to disk.
+ *
+ * Two-pass implementation per .claude/patterns/rcu-violations.md
+ * Pattern 1: collect inode active-refs under rcu_read_lock; drop
+ * the lock; then per-inode lock + chunk_store_rollback_for_client +
+ * persist + unlock + drop ref.
+ *
+ * Called from nfs4_client_expire after the TRUST_STATEID bulk-revoke
+ * to release in-flight chunks orphaned by the dying client (the
+ * lease-driven half of the chunk-state-machine liveness story per
+ * draft-haynes-nfsv4-flexfiles-v2 sec-system-model-consistency).
+ *
+ * state_dir: server's ss_state_dir (may be NULL to skip persist).
+ * Returns total blocks rolled back across all inodes.
+ */
+uint32_t chunk_rollback_for_client(uint64_t writer_clientid,
+				   const char *state_dir);
 
 #endif /* NFS4_CHUNK_STORE_H */
