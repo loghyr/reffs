@@ -11,13 +11,48 @@ alongside DSes and a client connects to whichever is nearest.
 This experiment measures the visibility latency when a write
 goes through PS1 and the read goes through PS2.
 
-## Status: PARTIAL -- PS bring-up surfaced two upstream blockers
+## Status: BRING-UP UNBLOCKED 2026-05-02; visibility-latency test still TODO
 
-PS itself starts and listens on its `[[proxy_mds]] port`, but
-the upstream session to the bench MDS lands in a degraded
-state.  The end-to-end client-via-PS read/write path is
-therefore not exercisable with the current bench-MDS topology
-without additional infrastructure work.
+The original PARTIAL stemmed from three blockers; all three are
+now closed.  PS A and PS B come up cleanly against the bench MDS
+on dreamer:
+
+```
+[bringup] MDS granted PS privilege 2 time(s) (expect 2)
+[bringup] PS A: ready (no listener-dark, no registration failure)
+[bringup] PS B: ready (no listener-dark, no registration failure)
+[bringup] DONE.  PS A on 127.0.0.1:4098, PS B on 127.0.0.1:4099
+```
+
+What closed:
+
+1. ~~mds_session_create_tls portmap path~~ -- closed by commit
+   `6a06d4626772` (prior session).
+2. ~~PROXY_REGISTRATION allowlist~~ -- closed by the bench
+   scaffolding work (mds-tls.toml + ps-tls-{A,B}.toml + the
+   per-PS cert minting in run-ps-bench-bringup.sh splicing
+   fingerprints into [[allowed_ps]] blocks).  Two PSes register
+   successfully; squat-guard works correctly between them.
+3. ~~MOUNT3 export discovery via portmap~~ -- closed by commit
+   `cbd135b544c4 ps_mount_client: explicit-port bypass for MOUNT3
+   enumeration` (this slice).  ps_mount_fetch_exports now takes
+   an explicit port; ps_discovery_run passes
+   `pls->pls_upstream_port` and bypasses the host's rpcbind
+   entirely.  Same shape as the bdde4f6539db pattern in ds_io.c
+   and the mds_session explicit-port path.
+
+What is still TODO for the experiment proper:
+
+The bring-up surface is now reachable; the actual
+visibility-latency measurement (write through PS A, read through
+PS B, observe the time between commit at PS A and the read
+returning the new content at PS B) has not yet been run.  Needs
+a small driver script that opens two ec_demo sessions (one
+against `127.0.0.1:4098`, one against `127.0.0.1:4099`), writes
+a known payload via PS A, polls via PS B in tight loop, records
+the wall-clock delta until the new content appears.  Pre-fix
+this could not even start; post-fix it is ~1 day of harness
+work.
 
 ## Setup attempted
 
