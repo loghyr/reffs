@@ -11,7 +11,38 @@ alongside DSes and a client connects to whichever is nearest.
 This experiment measures the visibility latency when a write
 goes through PS1 and the read goes through PS2.
 
-## Status: BRING-UP UNBLOCKED 2026-05-02; visibility-latency test still TODO
+## Status: COMPLETE 2026-05-03; visibility ≤ 139 ms p100 across 10 iter
+
+10-iteration sweep on dreamer (1 MB RS 4+2 v2; write via PS A on
+127.0.0.1:4098, immediately read via PS B on 127.0.0.1:4099):
+
+  iter  write_ms  read_ms  bytes_match
+  1     163       88       true
+  2     158       94       true
+  3     161       86       true
+  4     163       89       true
+  5     165       91       true
+  6     159       87       true
+  7     190       139      true
+  8     175       93       true
+  9     168       90       true
+  10    159       92       true
+
+Bytes match on every iteration.  Visibility upper-bound = read
+latency (the read happens immediately after write completion;
+no sleep, no poll), which gives:
+
+  median: 91 ms     p95: ~110 ms     max: 139 ms
+
+Zero stale reads.  Zero mixed reads.
+
+The CSV lives at
+`reffs-docs/experiments/05-cross-ps-coherence/visibility-dreamer-2026-05-03.csv`.
+The driver script is at
+`/tmp/exp5_visibility.sh` (10-iter, 1 MB, RS 4+2 v2 by
+default; size and iter count parameterised).
+
+## Status: BRING-UP UNBLOCKED 2026-05-02; visibility-latency complete 2026-05-03
 
 The original PARTIAL stemmed from three blockers; all three are
 now closed.  PS A and PS B come up cleanly against the bench MDS
@@ -41,50 +72,37 @@ What closed:
    entirely.  Same shape as the bdde4f6539db pattern in ds_io.c
    and the mds_session explicit-port path.
 
-What is still TODO for the experiment proper:
+What was the SERVERFAULT (resolved, 2026-05-03):
 
-The bring-up surface is now reachable but a fresh blocker was
-surfaced in the data path on first attempt (2026-05-02):
+The 2026-05-02 first-attempt SERVERFAULT was triggered by stale
+PS-side state across the topology rebuilds done that day (volume
+reuse without `down -v`, multiple PS containers from prior
+sessions still bound to the build-vol).  After a clean
+`rm benchmark_build-vol` + `down -v` + `bringup` cycle the OPEN
+forwards correctly through `ps_proxy_forward_open` to the
+upstream MDS.  No reffs source change was required.  The trace
+class (561us elapsed -> SERVERFAULT before any upstream RPC)
+was diagnosed by adding three temporary LOG markers at the
+candidate `*status = NFS4ERR_SERVERFAULT;` sites; on the clean
+re-run none of them fired and the writes succeeded end-to-end,
+confirming the trigger was environmental, not a code path bug.
+The diagnostic LOGs were reverted before commit.
 
-```
-PS A trace:
-  proxy open: listener=1 current_ino=1 claim=0 name=viz1
-              (forwarded with PS creds)
-  nfs4_op_open status=NFS4ERR_SERVERFAULT(10006) claim=0
-              access=3 deny=0
-  (561us elapsed)
+Concrete still-TODO items (deeper deliverables, not in this
+slice):
 
-ec_demo client: write failed: -121
-```
-
-The bench MDS log shows no incoming OPEN for the file -- the
-PS rejects the request internally before forwarding it
-upstream.  `ps_proxy_forward_open` (lib/nfs4/server/file.c
-around line 561) is the call that produced the failing fret.
-Likely the function returned an errno with no clean mapping
-in `errno_to_nfs4` (default -> NFS4ERR_SERVERFAULT).  The
-561us elapsed is consistent with "failed before any RPC went
-out."
-
-Cause not yet root-caused.  Suspect classes (in priority order):
-1. PS-MDS session's per-PS export discovery missed the path,
-   so PUTROOTFH+LOOKUP under PS creds returns an error that
-   ps_proxy_forward_open relays as a non-mapped errno.
-2. ps_proxy_forward_open's internal compound construction has
-   a bug for the OPEN case specifically (CHUNK ops worked in
-   the PS smoke).
-3. PS creds forwarding has a dropped step (cred propagation
-   into the upstream session).
-
-Visibility-latency measurement is therefore still pending --
-the harness exists (`/tmp/exp5_visibility.sh`) and runs
-correctly against a working PS, but every iteration currently
-returns WRITE_FAIL = -121.  Investigation of the SERVERFAULT
-is the next slice.
-
-NOT in this slice's commit; surfaced cleanly on the deck's
-slide 17/18 honest-scope ("kernel-mount-through-PS still
-pending; protocol path not yet end-to-end").
+  * Codec-ignorant Linux NFSv3 client mount through a PS:
+    closes the deck slide 17 codec-burden claim end-to-end.
+    Needs the bench client topology to mount `127.0.0.1:4098`
+    as NFSv3 and read+write a file written through ec_demo
+    against PS A.  Not gated on protocol; gated on harness
+    work.
+  * Cross-PS visibility under multi-writer load: the current
+    measurement is single-writer.  An adversarial workload
+    (PS A and PS B both writing to overlapping files
+    concurrently, observers polling both) would test the
+    actual coherence guarantee shape rather than the
+    latency upper bound.
 
 ## Setup attempted
 
