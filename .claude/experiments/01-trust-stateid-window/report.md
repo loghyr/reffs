@@ -151,12 +151,97 @@ v2 LAYOUTGET issue is fixed and the same race is re-run.
 
 ## Caveats
 
-- Single race observation; no statistical distribution.
 - Latency-budget claim from the spec ("p99 < 10 ms") is not
   measurable from client side alone.  This experiment confirms
-  the **correctness** half of the §3.5/§3.6 claims; the
-  **bound** half awaits Variant B instrumentation.
+  the **correctness** half of the §3.5/§3.6 claims **only when
+  the slow writer is recalled early** (Mode 2 below); when the
+  slow writer wins (Mode 1), the late writer's CHUNK_WRITEs
+  still land at the DSes and produce on-disk MIXED state.
 - The v1 result depends on the fencing implementation
   (synthetic uid/gid rotation per `mds.md`) rather than the
   TRUST_STATEID/REVOKE_STATEID protocol itself; the v2 result
   would test the actual TRUST path.
+
+## N=20 multi-run sweep (2026-05-03)
+
+The original v1 result above is a **single observation**.  The
+new harness (`exp01_race_harness.sh` + `exp01_race_sweep.sh`,
+see `harness.md`) runs N=20 rounds against the same bench docker
+stack on adept and emits per-round CSV under
+`data/race_v1_N20_4plus2_rs_100MB.csv`.
+
+### Outcome distribution
+
+| Outcome | Count | Share |
+|---------|-------|-------|
+| Clean A-win (file = A) | 0 | 0 % |
+| Clean B-win (file = B) | 7 | 35 % |
+| **MIXED** (file = neither) | **13** | **65 %** |
+| READ_FAILED | 0 | 0 % |
+
+### Two mechanism modes
+
+- **Mode 2 (clean B-win, 7/20)**: MDS revokes A early -- A's
+  first failed stripe lands between stripe 76 and stripe 222 in
+  this sweep.  B completes all 6400 stripes; final file = B.
+  This is the mode the original `report.md` v1 result documented.
+- **Mode 1 (MIXED, 13/20)**: A completes the entire 100 MiB
+  write before MDS revocation reaches B; B's CHUNK_WRITEs that
+  land at the DSes **before** REVOKE_STATEID propagates produce
+  partial overlay onto A's clean write.  B's stripe-shard
+  count when this happens ranges 68 -> 3222 (median ~500),
+  corresponding to 187 KiB -> 8.7 MiB of B's content overlaid
+  on A's content -- producing a final file that is **byte-
+  identical to neither input**.
+
+### Reconciliation check
+
+A natural objection: "MIXED could be a transient read-stale
+artefact; the read-back happens immediately after both writers
+exit, before the MDS has fully reconciled the layout state."
+
+The harness's `--read-delay-s S` knob inserts S seconds between
+the writers exiting and the read-back.  At `--read-delay-s 30`
+(single round), the result is still:
+
+```
+final_winner=MIXED
+a_rc=0  b_rc=1
+b_stripes_ok=106
+mixed_diff_a=293794   (~287 KiB diff from A)
+mixed_diff_b=104154374  (B mostly different)
+```
+
+MIXED persists across a 30-second reconciliation window.  The
+split-brain is **on-disk**, not just a stale read view.
+
+### Implication for §3.5 / §3.6 of progress_report.md
+
+The §3.6 claim *"the trust-stateid mechanism prevents split-
+brain writes"* is empirically **falsified** at the measured
+workload (RS 4+2, 100 MiB, 0.5 s delay).  The mechanism
+prevents split-brain only in Mode 2 (35% of rounds).  In
+Mode 1, the trust window between B's first CHUNK_WRITE and
+REVOKE_STATEID's arrival at the DSes is non-zero, and
+B's writes land during that window.
+
+The single original observation happened to be in the 35%
+clean-B-win bucket; the harness exposes the 65% MIXED bucket
+that the single run could not have shown.
+
+### What this changes upstream
+
+This finding affects:
+
+- `progress_report.md` §3.5 / §3.6 -- the prevention claim
+  needs scoping to "the writer that gets recalled cannot
+  corrupt parity *after* the recall propagates", not the
+  unconditional "prevents split-brain" claim.
+- `ietf126.md` slide 16 -- the v1 row needs to acknowledge
+  the 65% MIXED rate at this workload.
+- `claude_review.md` §7.3 -- the §7.3 claim about the
+  trust-stateid mechanism preventing split-brain is now
+  empirically falsified for the measured configuration.
+
+These propagation edits are tracked separately from the
+harness slice itself.
