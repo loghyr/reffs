@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
 
 #include <urcu/compiler.h>
 #include <urcu/rculfhash.h>
@@ -282,4 +283,67 @@ struct stateid *stateid_inode_find_delegation(struct inode *inode,
 	rcu_read_unlock();
 
 	return found;
+}
+
+/* ------------------------------------------------------------------ */
+/* Layout-stateid conflict scan (trust-stateid slice 1)                */
+
+int stateid_inode_collect_layouts_excluding(struct inode *inode,
+					    struct client *exclude_client,
+					    struct stateid ***out,
+					    uint32_t *count)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct stateid **arr = NULL;
+	uint32_t cap = 0;
+	uint32_t n = 0;
+	int ret = 0;
+
+	*out = NULL;
+	*count = 0;
+
+	if (!inode || !inode->i_stateids)
+		return 0;
+
+	rcu_read_lock();
+	cds_lfht_for_each(inode->i_stateids, &iter, node)
+	{
+		struct stateid *stid =
+			caa_container_of(node, struct stateid, s_inode_node);
+		if (stid->s_tag != Layout_Stateid)
+			continue;
+		if (stid->s_client == exclude_client)
+			continue;
+
+		struct stateid *got = stateid_get(stid);
+		if (!got)
+			continue; /* dying entry; skip */
+
+		if (n == cap) {
+			uint32_t new_cap = cap ? cap * 2 : 4;
+			struct stateid **grown =
+				realloc(arr, new_cap * sizeof(*arr));
+			if (!grown) {
+				stateid_put(got);
+				ret = -ENOMEM;
+				break;
+			}
+			arr = grown;
+			cap = new_cap;
+		}
+		arr[n++] = got;
+	}
+	rcu_read_unlock();
+
+	if (ret) {
+		for (uint32_t i = 0; i < n; i++)
+			stateid_put(arr[i]);
+		free(arr);
+		return ret;
+	}
+
+	*out = arr;
+	*count = n;
+	return 0;
 }

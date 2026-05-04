@@ -192,6 +192,7 @@ TESTS = \
 	delegation_lifecycle \
 	errors \
 	file_ops \
+	layout_conflict_scan_test \
 	lock_test \
 	nfs4_client_persist \
 	nfs4_session \

@@ -181,6 +181,28 @@ struct open_stateid *stateid_inode_find_open(struct inode *inode,
  */
 struct stateid *stateid_inode_find_delegation(struct inode *inode,
 					      struct client *exclude_client);
+
+/*
+ * stateid_inode_collect_layouts_excluding - collect ALL Layout_Stateids
+ * on `inode` belonging to clients OTHER than `exclude_client`.
+ *
+ * On success returns 0; *out is a heap-allocated array of ref-bumped
+ * struct stateid pointers and *count is the number of entries.  Caller
+ * frees the array with free() AND drops each entry's ref via
+ * stateid_put().  When *count == 0, *out is NULL (no allocation).
+ *
+ * Returns -ENOMEM if allocation fails (no refs taken).
+ *
+ * This is the conflict-detection step for trust-stateid slice 1: at
+ * LAYOUTGET grant time, the MDS scans for sibling layout stateids on
+ * the same inode held by OTHER clients (the prior-client set that
+ * needs CB_LAYOUTRECALL + REVOKE_STATEID before the new layout is
+ * granted).  See `.claude/design/trust-stateid-slice-1.md`.
+ */
+int stateid_inode_collect_layouts_excluding(struct inode *inode,
+					    struct client *exclude_client,
+					    struct stateid ***out,
+					    uint32_t *count);
 struct lock_stateid *lock_stateid_alloc(struct inode *inode,
 					struct client *client);
 struct layout_stateid *layout_stateid_alloc(struct inode *inode,
