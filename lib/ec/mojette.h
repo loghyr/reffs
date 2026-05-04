@@ -32,7 +32,7 @@ struct moj_direction {
 
 /*
  * A single 1D projection along one direction.
- * Bins accumulate element sums modulo 2^64.
+ * Bins accumulate element sums in (GF(2)^64, XOR).
  */
 struct moj_projection {
 	uint64_t *mp_bins;
@@ -42,47 +42,48 @@ struct moj_projection {
 /*
  * moj_projection_size -- compute the number of bins for a projection.
  *
- *   B(p, q, P, Q) = |p|(Q-1) + |q|(P-1) + 1
+ * Paper / HCF convention: b = row*p + col*q - off.
+ *   row*p ranges over |p|*(Q-1) (row spans Q-1 steps scaled by |p|).
+ *   col*q ranges over |q|*(P-1) (col spans P-1 steps scaled by |q|).
+ *   B = |p|*(Q-1) + |q|*(P-1) + 1.
  */
 static inline int moj_projection_size(int p, int q, int P, int Q)
 {
 	int abs_p = p < 0 ? -p : p;
 	int abs_q = q < 0 ? -q : q;
 
-	/*
-	 * b = col*p - row*q ranges over |p|*(P-1) + |q|*(Q-1) + 1
-	 * distinct values.  col spans P-1 steps scaled by |p|, row
-	 * spans Q-1 steps scaled by |q|, plus 1 for the zero value.
-	 */
-	return abs_p * (P - 1) + abs_q * (Q - 1) + 1;
+	return abs_p * (Q - 1) + abs_q * (P - 1) + 1;
 }
 
 /*
- * moj_bin_offset -- compute the minimum bin index for a projection.
+ * moj_bin_offset -- compute the offset to subtract from row*p + col*q
+ * to get a 0-based bin index.
  *
- * Bin b receives pixel (row, col) when b = col*p - row*q.
- * The minimum value of b over 0<=row<Q, 0<=col<P determines
- * the offset to add so that array indices start at 0.
+ * Bin formula (paper / HCF convention): b = row*p + col*q - off.
+ * The minimum value of (row*p + col*q) over 0<=row<Q, 0<=col<P is
+ * negative-or-zero; off is that minimum (also negative-or-zero) so
+ * that subtracting it shifts the array indices to start at 0.
  *
- * Returns the value to ADD to (col*p - row*q) to get a 0-based index.
+ * Returns the value to SUBTRACT from (row*p + col*q) -- i.e., the
+ * minimum of (row*p + col*q) (negative or zero).
  */
 static inline int moj_bin_offset(int p, int q, int P, int Q)
 {
 	int min_b = 0;
 
 	/*
-	 * b = col*p - row*q
-	 * Minimize over col in [0, P-1] and row in [0, Q-1].
+	 * b = row*p + col*q
+	 * Minimize over row in [0, Q-1] and col in [0, P-1].
 	 */
 	if (p < 0)
-		min_b += p * (P - 1); /* col*p minimized at col=P-1 */
-	/* else p >= 0: col*p minimized at col=0, contributes 0 */
+		min_b += p * (Q - 1); /* row*p minimized at row=Q-1 */
+	/* else p >= 0: row*p minimized at row=0, contributes 0 */
 
-	if (q > 0)
-		min_b -= q * (Q - 1); /* -row*q minimized at row=Q-1 */
-	/* else q <= 0: -row*q minimized at row=0, contributes 0 */
+	if (q < 0)
+		min_b += q * (P - 1); /* col*q minimized at col=P-1 */
+	/* else q >= 0: col*q minimized at col=0, contributes 0 */
 
-	return -min_b; /* negate: this is the value to ADD */
+	return min_b; /* negative or zero -- subtract from row*p + col*q */
 }
 
 /*
@@ -135,23 +136,114 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		 struct moj_projection **projs);
 
 /*
+ * moj_inverse_sparse -- partially-known-grid dispatcher.
+ *
+ * Wraps moj_inverse_peel_sparse / moj_inverse_gd_sparse, choosing
+ * the algorithm based on the moj_force_gd flag (gd if set and
+ * shape permits, peel otherwise).
+ */
+int moj_inverse_sparse(uint64_t *grid, int P, int Q,
+		       const struct moj_direction *dirs, int n,
+		       struct moj_projection **projs,
+		       const int *missing, int n_missing);
+
+/*
  * moj_inverse -- reconstruct a grid from projections.
  *
- * Corner-peeling algorithm: iteratively find bins that sum exactly
- * one unknown pixel, back-project, subtract from all projections.
+ * Dispatcher.  Default routes to moj_inverse_peel (corner-peeling).
+ * When moj_force_gd(true) is set, validates the direction shape
+ * (q==1 for all dirs, n==Q) and routes to moj_inverse_gd; falls
+ * back to moj_inverse_peel if the shape rejects.
  *
  * grid:     output P x Q matrix (zeroed on entry, filled on return).
  * P, Q:     grid dimensions.
  * dirs:     array of n directions corresponding to projs.
  * n:        number of available projections.
  * projs:    array of n projections.  Modified in place (bins are
- *           subtracted during reconstruction).
+ *           XORed during reconstruction).
  *
  * Returns 0 on success, -EIO if reconstruction stalls (Katz criterion
- * not met).
+ * not met for peel; shape-check failure routes to peel).
  */
 int moj_inverse(uint64_t *grid, int P, int Q, const struct moj_direction *dirs,
 		int n, struct moj_projection **projs);
+
+/*
+ * moj_inverse_peel -- corner-peeling inverse Mojette transform.
+ *
+ * Iteratively finds bins with exactly one unknown contributor, back-
+ * projects, XORs out the recovered pixel from all projections.  Works
+ * for any direction set that satisfies Katz; does not require q==1
+ * or n==Q.
+ *
+ * Same parameter semantics as moj_inverse.
+ */
+int moj_inverse_peel(uint64_t *grid, int P, int Q,
+		     const struct moj_direction *dirs, int n,
+		     struct moj_projection **projs);
+
+/*
+ * moj_inverse_peel_sparse -- corner-peeling inverse on a partially
+ * known grid.
+ *
+ * grid is pre-filled with known data rows (rows NOT in missing[]),
+ * and zeros in missing rows; missing[] lists the n_missing row
+ * indices that the caller wants reconstructed.  Bins in projs[] are
+ * the FULL forward bins (including known-row contributions); this
+ * function XORs the known-row contributions out internally.
+ *
+ * Returns 0 on success, -EIO on stall, -ENOMEM on alloc failure.
+ */
+int moj_inverse_peel_sparse(uint64_t *grid, int P, int Q,
+			    const struct moj_direction *dirs, int n,
+			    struct moj_projection **projs,
+			    const int *missing, int n_missing);
+
+/*
+ * moj_inverse_gd -- geometry-driven inverse Mojette transform.
+ *
+ * Implements Normand-Kingston-Evenou DGCI 2006: a one-shot sweep
+ * that recovers pixels in a deterministic geometric order, without
+ * scanning bins for singletons.  Faster than corner-peeling for
+ * dense-failures geometries.
+ *
+ * Constraints (caller responsibility — the dispatcher checks):
+ *   - md_q == 1 for every direction
+ *   - n == Q (every row of the reduced grid is a failure)
+ *
+ * Same parameter semantics as moj_inverse.
+ */
+int moj_inverse_gd(uint64_t *grid, int P, int Q,
+		   const struct moj_direction *dirs, int n,
+		   struct moj_projection **projs);
+
+/*
+ * moj_inverse_gd_sparse -- geometry-driven inverse on a partially
+ * known grid.
+ *
+ * grid is pre-filled with known data rows (rows NOT in missing[]),
+ * and zeros in missing rows.  missing[] is sorted ascending and
+ * lists n_missing rows to reconstruct.  Bins are FULL forward bins
+ * (no pre-subtraction needed -- the DGCI sweep ordering handles
+ * known-row contributions naturally during the diagonal walk).
+ *
+ * Constraints: q==1 for every direction, n == n_missing.
+ *
+ * Returns 0 on success, -EINVAL on shape rejection, -ENOMEM on alloc.
+ */
+int moj_inverse_gd_sparse(uint64_t *grid, int P, int Q,
+			  const struct moj_direction *dirs, int n,
+			  struct moj_projection **projs,
+			  const int *missing, int n_missing);
+
+/*
+ * moj_force_gd -- enable / disable geometry-driven inverse dispatch.
+ *
+ * When set to true, moj_inverse() routes to moj_inverse_gd if the
+ * direction shape (q==1, n==Q) permits, otherwise falls back to
+ * moj_inverse_peel.  Default is false (always peel).
+ */
+void moj_force_gd(bool force);
 
 /*
  * moj_katz_check -- verify the Katz reconstruction criterion.

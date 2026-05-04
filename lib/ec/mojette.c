@@ -27,26 +27,29 @@
  *   Parrein B., Normand N., Guedon J.-P., "Multiple Description
  *   Coding Using Exact Discrete Radon Transform", IEEE DCC, 2001.
  *
- * Arithmetic is unsigned 64-bit wrapping (mod 2^64).  No Galois
- * field operations.
+ * Bin formula (paper / HCF convention): b = row*p + col*q - off.
+ * Pixels accumulate into bins via XOR.  With q=1 (the conventional
+ * choice, per Parrein 2001), b varies by 1 per col step regardless
+ * of p -- so the inner loop XORs a row's worth of pixels into a
+ * sequential run of bins, and SIMD is fully effective for ANY p.
  *
- * SIMD acceleration (AArch64 NEON) for directions with |p|=1, q=1:
+ * Arithmetic is bitwise XOR over (GF(2)^64): each bin accumulates
+ * contributing pixels with `^=`, and the inverse subtraction is the
+ * same XOR.  XOR has no carry chain, scales straightforwardly to
+ * 128-/256-/512-bit SIMD lanes as a single bit-parallel unit, and
+ * matches the broader Mojette literature.
  *
- *   p=+1: bin b = col + (off-row), so adjacent columns map to adjacent
- *         bins in ascending order.  The row loop becomes a plain
- *         sequential vector add (vaddq_u64), unrolled 4-wide.
+ * SIMD acceleration (AArch64 NEON, x86_64 SSE2, x86_64 AVX2):
  *
- *   p=-1: bin b = (off-row) - col, so adjacent columns map to
- *         adjacent bins in descending order.  Pairs of bins are loaded
- *         ascending, the two grid lanes are swapped (vextq_u64), and
- *         the result is stored back -- again sequential, 4-wide.
+ *   For each row r and direction (p, q=1), bin pointer is
+ *   `prj->bins + r*p - off`; the inner loop XORs grid[r][0..P-1]
+ *   into bins[bin_ptr .. bin_ptr+P-1] sequentially.  One ascending
+ *   helper per ISA covers all directions.
  *
  * The StreamScale patent (US 8,683,296) covers SIMD-accelerated
- * Galois field arithmetic.  Mojette uses no GF operations; these
- * NEON paths are plain integer addition and are unaffected.
- *
- * Directions with |p|>1 produce stride-|p| scatter into bins; no
- * SIMD benefit is available and the scalar path is used.
+ * Galois-field MULTIPLICATION (GF(2^8) by tabled split-shuffles).
+ * Mojette uses only XOR, which is the trivial group operation in
+ * (GF(2)^64, +) and is unaffected by that patent.
  */
 
 #include "mojette.h"
@@ -65,14 +68,20 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
-/* Force-scalar toggle                                                 */
+/* Force-scalar / force-gd toggles                                     */
 /* ------------------------------------------------------------------ */
 
 static _Atomic bool moj_scalar_only;
+static _Atomic bool moj_gd_enabled;
 
 void moj_force_scalar(bool force)
 {
 	moj_scalar_only = force;
+}
+
+void moj_force_gd(bool force)
+{
+	moj_gd_enabled = force;
 }
 
 /* ------------------------------------------------------------------ */
@@ -170,17 +179,16 @@ bool moj_katz_check(const struct moj_direction *dirs, int n, int P, int Q)
 /* Forward Mojette transform                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Single ascending-bins SIMD helper per ISA.  Paper bin formula
+ * `b = row*p + col*q - off` with q=1 makes b sequential in col for
+ * any p, so one helper covers every direction.
+ */
+
 #ifdef __aarch64__
 
-/*
- * moj_fwd_row_p1 -- accumulate one grid row into bins for p=+1, q=1.
- *
- * For p=+1: b = col + (off-row), so bin indices are sequential and
- * ascending.  dst points to bins[off-row]; we add src[0..P-1] into
- * dst[0..P-1] using 4-wide NEON (two 128-bit vectors per iteration).
- */
-static void moj_fwd_row_p1(const uint64_t *__restrict__ src, int P,
-			   uint64_t *__restrict__ dst)
+static void moj_fwd_row_seq(const uint64_t *__restrict__ src, int P,
+			    uint64_t *__restrict__ dst)
 {
 	int col = 0;
 
@@ -190,140 +198,19 @@ static void moj_fwd_row_p1(const uint64_t *__restrict__ src, int P,
 		uint64x2_t s0 = vld1q_u64(src + col);
 		uint64x2_t s1 = vld1q_u64(src + col + 2);
 
-		vst1q_u64(dst + col, vaddq_u64(d0, s0));
-		vst1q_u64(dst + col + 2, vaddq_u64(d1, s1));
+		vst1q_u64(dst + col, veorq_u64(d0, s0));
+		vst1q_u64(dst + col + 2, veorq_u64(d1, s1));
 	}
 	for (; col < P; col++)
-		dst[col] += src[col];
+		dst[col] ^= src[col];
 }
 
-/*
- * moj_fwd_row_pm1 -- accumulate one grid row into bins for p=-1, q=1.
- *
- * For p=-1: b = (off-row) - col, so bin indices are sequential and
- * descending.  dst points to bins[off-row].
- *
- * For a pair at col and col+1:
- *   dst[-col]   += src[col]
- *   dst[-col-1] += src[col+1]
- *
- * Load bins as {dst[-col-1], dst[-col]} (ascending in memory), load
- * grid as {src[col], src[col+1]}, swap grid lanes with vextq_u64,
- * then add and store.  Unrolled 4-wide.
- */
-static void moj_fwd_row_pm1(const uint64_t *__restrict__ src, int P,
-			    uint64_t *__restrict__ dst)
-{
-	int col = 0;
-
-	for (; col + 4 <= P; col += 4) {
-		/* Load two ascending bin pairs (each covers 2 columns). */
-		uint64x2_t b0 = vld1q_u64(dst - col - 1);
-		uint64x2_t b1 = vld1q_u64(dst - col - 3);
-
-		/* Load two sequential grid pairs. */
-		uint64x2_t g0 = vld1q_u64(src + col);
-		uint64x2_t g1 = vld1q_u64(src + col + 2);
-
-		/*
-		 * Swap lanes so {src[col], src[col+1]} becomes
-		 * {src[col+1], src[col]}, matching the reversed bin order:
-		 *   b0 = {bins[-col-1], bins[-col]}  <-- add {src[col+1], src[col]}
-		 *   b1 = {bins[-col-3], bins[-col-2]} <-- add {src[col+3], src[col+2]}
-		 */
-		vst1q_u64(dst - col - 1, vaddq_u64(b0, vextq_u64(g0, g0, 1)));
-		vst1q_u64(dst - col - 3, vaddq_u64(b1, vextq_u64(g1, g1, 1)));
-	}
-	for (; col + 2 <= P; col += 2) {
-		uint64x2_t bv = vld1q_u64(dst - col - 1);
-		uint64x2_t gv = vld1q_u64(src + col);
-
-		vst1q_u64(dst - col - 1, vaddq_u64(bv, vextq_u64(gv, gv, 1)));
-	}
-	for (; col < P; col++)
-		dst[-col] += src[col];
-}
-
-#endif /* __aarch64__ */
-
-#if defined(__SSE2__) || defined(__AVX2__)
-
-/*
- * moj_fwd_row_p1_sse2 -- sequential ascending bins, SSE2 (x86_64).
- *
- * Identical logic to the NEON p=+1 path but using 128-bit SSE2
- * intrinsics: _mm_add_epi64 on pairs loaded with _mm_loadu_si128.
- * Unrolled 4-wide (two 128-bit ops per iteration).
- */
-static void moj_fwd_row_p1_sse2(const uint64_t *__restrict__ src, int P,
-				uint64_t *__restrict__ dst)
-{
-	int col = 0;
-
-	for (; col + 4 <= P; col += 4) {
-		__m128i d0 = _mm_loadu_si128((const __m128i *)(dst + col));
-		__m128i d1 = _mm_loadu_si128((const __m128i *)(dst + col + 2));
-		__m128i s0 = _mm_loadu_si128((const __m128i *)(src + col));
-		__m128i s1 = _mm_loadu_si128((const __m128i *)(src + col + 2));
-
-		_mm_storeu_si128((__m128i *)(dst + col), _mm_add_epi64(d0, s0));
-		_mm_storeu_si128((__m128i *)(dst + col + 2),
-				 _mm_add_epi64(d1, s1));
-	}
-	for (; col < P; col++)
-		dst[col] += src[col];
-}
-
-/*
- * moj_fwd_row_pm1_sse2 -- sequential descending bins, SSE2 (x86_64).
- *
- * Identical logic to the NEON p=-1 path.  Two 64-bit lanes are swapped
- * with _mm_shuffle_epi32(v, 0x4E): the constant 0x4E = _MM_SHUFFLE(1,0,3,2)
- * moves 32-bit dwords [2,3,0,1], which swaps the two 64-bit halves.
- * This is the SSE2 equivalent of vextq_u64(v, v, 1).
- */
-static void moj_fwd_row_pm1_sse2(const uint64_t *__restrict__ src, int P,
-				 uint64_t *__restrict__ dst)
-{
-	int col = 0;
-
-	for (; col + 4 <= P; col += 4) {
-		__m128i b0 = _mm_loadu_si128((const __m128i *)(dst - col - 1));
-		__m128i b1 = _mm_loadu_si128((const __m128i *)(dst - col - 3));
-		__m128i g0 = _mm_loadu_si128((const __m128i *)(src + col));
-		__m128i g1 = _mm_loadu_si128((const __m128i *)(src + col + 2));
-
-		_mm_storeu_si128((__m128i *)(dst - col - 1),
-				 _mm_add_epi64(b0,
-					       _mm_shuffle_epi32(g0, 0x4E)));
-		_mm_storeu_si128((__m128i *)(dst - col - 3),
-				 _mm_add_epi64(b1,
-					       _mm_shuffle_epi32(g1, 0x4E)));
-	}
-	for (; col + 2 <= P; col += 2) {
-		__m128i bv = _mm_loadu_si128((const __m128i *)(dst - col - 1));
-		__m128i gv = _mm_loadu_si128((const __m128i *)(src + col));
-
-		_mm_storeu_si128((__m128i *)(dst - col - 1),
-				 _mm_add_epi64(bv,
-					       _mm_shuffle_epi32(gv, 0x4E)));
-	}
-	for (; col < P; col++)
-		dst[-col] += src[col];
-}
-
-#endif /* __SSE2__ || __AVX2__ */
+#elif defined(__SSE2__) || defined(__AVX2__)
 
 #ifdef __AVX2__
 
-/*
- * moj_fwd_row_p1_avx2 -- sequential ascending bins, AVX2 (x86_64).
- *
- * 256-bit (4 x uint64_t) per iteration, double the width of SSE2.
- * Same logic: load bins, load grid, add, store.
- */
-static void moj_fwd_row_p1_avx2(const uint64_t *__restrict__ src, int P,
-				uint64_t *__restrict__ dst)
+static void moj_fwd_row_seq(const uint64_t *__restrict__ src, int P,
+			    uint64_t *__restrict__ dst)
 {
 	int col = 0;
 
@@ -336,72 +223,52 @@ static void moj_fwd_row_p1_avx2(const uint64_t *__restrict__ src, int P,
 			_mm256_loadu_si256((const __m256i *)(src + col + 4));
 
 		_mm256_storeu_si256((__m256i *)(dst + col),
-				    _mm256_add_epi64(d0, s0));
+				    _mm256_xor_si256(d0, s0));
 		_mm256_storeu_si256((__m256i *)(dst + col + 4),
-				    _mm256_add_epi64(d1, s1));
+				    _mm256_xor_si256(d1, s1));
 	}
 	for (; col + 4 <= P; col += 4) {
 		__m256i dv = _mm256_loadu_si256((const __m256i *)(dst + col));
 		__m256i sv = _mm256_loadu_si256((const __m256i *)(src + col));
 
 		_mm256_storeu_si256((__m256i *)(dst + col),
-				    _mm256_add_epi64(dv, sv));
+				    _mm256_xor_si256(dv, sv));
 	}
-	/* Delegate remaining columns to the SSE2 p1 handler. */
-	if (col < P)
-		moj_fwd_row_p1_sse2(src + col, P - col, dst + col);
+	for (; col + 2 <= P; col += 2) {
+		__m128i dv = _mm_loadu_si128((const __m128i *)(dst + col));
+		__m128i sv = _mm_loadu_si128((const __m128i *)(src + col));
+
+		_mm_storeu_si128((__m128i *)(dst + col),
+				 _mm_xor_si128(dv, sv));
+	}
+	for (; col < P; col++)
+		dst[col] ^= src[col];
 }
 
-/*
- * moj_fwd_row_pm1_avx2 -- sequential descending bins, AVX2 (x86_64).
- *
- * For p=-1 the bins descend: dst[-col] += src[col].  Within a 4-element
- * AVX2 vector, we need to reverse the element order.  Load grid as
- * {g[0], g[1], g[2], g[3]}, reverse to {g[3], g[2], g[1], g[0]} with
- * _mm256_permute4x64_epi64(v, 0x1B), then add to the ascending bin
- * vector at dst[-col-3..dst[-col].
- *
- * 0x1B = _MM_SHUFFLE(0,1,2,3): lane 0<--3, 1<--2, 2<--1, 3<--0.
- */
-static void moj_fwd_row_pm1_avx2(const uint64_t *__restrict__ src, int P,
-				 uint64_t *__restrict__ dst)
+#else /* __SSE2__ only */
+
+static void moj_fwd_row_seq(const uint64_t *__restrict__ src, int P,
+			    uint64_t *__restrict__ dst)
 {
 	int col = 0;
 
-	for (; col + 8 <= P; col += 8) {
-		__m256i b0 =
-			_mm256_loadu_si256((const __m256i *)(dst - col - 3));
-		__m256i b1 =
-			_mm256_loadu_si256((const __m256i *)(dst - col - 7));
-		__m256i g0 = _mm256_loadu_si256((const __m256i *)(src + col));
-		__m256i g1 =
-			_mm256_loadu_si256((const __m256i *)(src + col + 4));
-
-		_mm256_storeu_si256(
-			(__m256i *)(dst - col - 3),
-			_mm256_add_epi64(b0,
-					 _mm256_permute4x64_epi64(g0, 0x1B)));
-		_mm256_storeu_si256(
-			(__m256i *)(dst - col - 7),
-			_mm256_add_epi64(b1,
-					 _mm256_permute4x64_epi64(g1, 0x1B)));
-	}
 	for (; col + 4 <= P; col += 4) {
-		__m256i bv =
-			_mm256_loadu_si256((const __m256i *)(dst - col - 3));
-		__m256i gv = _mm256_loadu_si256((const __m256i *)(src + col));
+		__m128i d0 = _mm_loadu_si128((const __m128i *)(dst + col));
+		__m128i d1 = _mm_loadu_si128((const __m128i *)(dst + col + 2));
+		__m128i s0 = _mm_loadu_si128((const __m128i *)(src + col));
+		__m128i s1 = _mm_loadu_si128((const __m128i *)(src + col + 2));
 
-		_mm256_storeu_si256(
-			(__m256i *)(dst - col - 3),
-			_mm256_add_epi64(bv,
-					 _mm256_permute4x64_epi64(gv, 0x1B)));
+		_mm_storeu_si128((__m128i *)(dst + col), _mm_xor_si128(d0, s0));
+		_mm_storeu_si128((__m128i *)(dst + col + 2),
+				 _mm_xor_si128(d1, s1));
 	}
-	/* Delegate remaining columns to the SSE2 pm1 handler. */
-	if (col < P)
-		moj_fwd_row_pm1_sse2(src + col, P - col, dst - col);
+	for (; col < P; col++)
+		dst[col] ^= src[col];
 }
 
 #endif /* __AVX2__ */
+
+#endif /* __aarch64__ / __SSE2__ / __AVX2__ */
 
 void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		 const struct moj_direction *dirs, int n,
@@ -417,35 +284,20 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		       (size_t)proj->mp_nbins * sizeof(uint64_t));
 
 		/*
-		 * SIMD fast path for |p|=1, q=1.
+		 * SIMD fast path for q=1.
 		 *
-		 * Bin indices are sequential (ascending for p=+1, descending
-		 * for p=-1), so each row reduces to a plain vector add with
-		 * no scatter.  Dispatch order: AVX2 > SSE2 > NEON > scalar.
-		 * Bypassed entirely when moj_force_scalar(true) is set.
+		 * Paper bin formula `b = row*p + col*q - off` with q=1 gives
+		 * b sequential in col for any p; bin pointer for row r is
+		 * `bins + r*p - off`, then we XOR a row's worth of pixels in.
+		 * Bypassed when moj_force_scalar(true) is set.
 		 */
 #if defined(__aarch64__) || defined(__SSE2__) || defined(__AVX2__)
-		if (!moj_scalar_only && q == 1 && (p == 1 || p == -1)) {
+		if (!moj_scalar_only && q == 1) {
 			for (int row = 0; row < Q; row++) {
 				const uint64_t *src = grid + (size_t)row * P;
-				uint64_t *dst = proj->mp_bins + (off - row);
+				uint64_t *dst = proj->mp_bins + (row * p - off);
 
-#ifdef __aarch64__
-				if (p == 1)
-					moj_fwd_row_p1(src, P, dst);
-				else
-					moj_fwd_row_pm1(src, P, dst);
-#elif defined(__AVX2__)
-				if (p == 1)
-					moj_fwd_row_p1_avx2(src, P, dst);
-				else
-					moj_fwd_row_pm1_avx2(src, P, dst);
-#else /* __SSE2__ */
-				if (p == 1)
-					moj_fwd_row_p1_sse2(src, P, dst);
-				else
-					moj_fwd_row_pm1_sse2(src, P, dst);
-#endif
+				moj_fwd_row_seq(src, P, dst);
 			}
 			continue;
 		}
@@ -453,9 +305,9 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
 		/* General scalar path -- handles any (p, q). */
 		for (int row = 0; row < Q; row++) {
 			for (int col = 0; col < P; col++) {
-				int b = col * p - row * q + off;
+				int b = row * p + col * q - off;
 
-				proj->mp_bins[b] += grid[row * P + col];
+				proj->mp_bins[b] ^= grid[row * P + col];
 			}
 		}
 	}
@@ -470,7 +322,7 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
  *
  * For each projection, maintain a count of how many unknown pixels
  * map to each bin.  When a count reaches 1, the bin is reconstructible:
- * its value (after subtracting known contributions) IS the unknown
+ * its value (after XORing out known contributions) IS the unknown
  * pixel.  After recovering a pixel, decrement the contributor count
  * in every projection that includes it.
  *
@@ -478,8 +330,9 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
  * would require.
  */
 
-int moj_inverse(uint64_t *grid, int P, int Q, const struct moj_direction *dirs,
-		int n, struct moj_projection **projs)
+int moj_inverse_peel(uint64_t *grid, int P, int Q,
+		     const struct moj_direction *dirs, int n,
+		     struct moj_projection **projs)
 {
 	int total = P * Q;
 	int recovered = 0;
@@ -526,8 +379,8 @@ int moj_inverse(uint64_t *grid, int P, int Q, const struct moj_direction *dirs,
 	for (int row = 0; row < Q; row++) {
 		for (int col = 0; col < P; col++) {
 			for (int i = 0; i < n; i++) {
-				int b = col * dirs[i].md_p -
-					row * dirs[i].md_q + offsets[i];
+				int b = row * dirs[i].md_p +
+					col * dirs[i].md_q - offsets[i];
 
 				count[i][b]++;
 			}
@@ -562,7 +415,7 @@ int moj_inverse(uint64_t *grid, int P, int Q, const struct moj_direction *dirs,
 						if (known[row * P + col])
 							continue;
 						int bb =
-							col * p - row * q + off;
+							row * p + col * q - off;
 						if (bb == b) {
 							u_row = row;
 							u_col = col;
@@ -574,7 +427,7 @@ int moj_inverse(uint64_t *grid, int P, int Q, const struct moj_direction *dirs,
 found:;
 				/*
 				 * The bin value IS the pixel value (all
-				 * other contributors have been subtracted
+				 * other contributors have been XORed out
 				 * as they were recovered).
 				 */
 				uint64_t val = proj->mp_bins[b];
@@ -585,15 +438,15 @@ found:;
 				progress = true;
 
 				/*
-				 * Subtract the recovered pixel from every
+				 * XOR the recovered pixel out of every
 				 * projection and decrement their counts.
 				 */
 				for (int j = 0; j < n; j++) {
-					int bj = u_col * dirs[j].md_p -
-						 u_row * dirs[j].md_q +
+					int bj = u_row * dirs[j].md_p +
+						 u_col * dirs[j].md_q -
 						 offsets[j];
 
-					projs[j]->mp_bins[bj] -= val;
+					projs[j]->mp_bins[bj] ^= val;
 					count[j][bj]--;
 				}
 			}
@@ -613,4 +466,628 @@ out_offsets:
 	free(offsets);
 	free(known);
 	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* Corner-peeling on a partially known grid                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * moj_inverse_peel_sparse -- corner-peeling on a P*Q grid where some
+ * rows are pre-filled (known) and the rest are missing.
+ *
+ * grid: pre-filled with known rows, missing rows zero.
+ * missing[]: sorted ascending; rows[missing[i]] are unknown.
+ *
+ * Bins are FULL forward bins (containing XOR of all rows including
+ * known ones).  We pre-subtract known-row contributions so bin
+ * contents reflect only unknown pixels, then run standard peel.
+ */
+int moj_inverse_peel_sparse(uint64_t *grid, int P, int Q,
+			    const struct moj_direction *dirs, int n,
+			    struct moj_projection **projs,
+			    const int *missing, int n_missing)
+{
+	int total = P * Q;
+	int recovered = 0;
+	int ret = -EIO;
+	bool *missing_row = NULL;
+	bool *known = NULL;
+	int *offsets = NULL;
+	int **count = NULL;
+
+	if (!missing || n_missing < 1 || n_missing > Q)
+		return -EINVAL;
+
+	missing_row = calloc((size_t)Q, sizeof(bool));
+	known = calloc((size_t)total, sizeof(bool));
+	offsets = calloc((size_t)n, sizeof(int));
+	if (!missing_row || !known || !offsets) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	for (int i = 0; i < n_missing; i++) {
+		if (missing[i] < 0 || missing[i] >= Q) {
+			ret = -EINVAL;
+			goto out;
+		}
+		missing_row[missing[i]] = true;
+	}
+
+	/* Pixels in non-missing rows are already known. */
+	int n_unknown = 0;
+
+	for (int row = 0; row < Q; row++) {
+		if (missing_row[row])
+			continue;
+		for (int col = 0; col < P; col++)
+			known[row * P + col] = true;
+	}
+	n_unknown = n_missing * P;
+	recovered = total - n_unknown;
+
+	for (int i = 0; i < n; i++)
+		offsets[i] = moj_bin_offset(dirs[i].md_p, dirs[i].md_q, P, Q);
+
+	count = calloc((size_t)n, sizeof(int *));
+	if (!count) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	for (int i = 0; i < n; i++) {
+		count[i] = calloc((size_t)projs[i]->mp_nbins, sizeof(int));
+		if (!count[i]) {
+			ret = -ENOMEM;
+			goto out_count;
+		}
+	}
+
+	/*
+	 * Initialize: for each (row, col, i),
+	 *   if known: XOR pixel out of bin (so bin = XOR of unknowns).
+	 *   else:     count[i][b]++.
+	 */
+	for (int row = 0; row < Q; row++) {
+		for (int col = 0; col < P; col++) {
+			bool is_known = !missing_row[row];
+
+			for (int i = 0; i < n; i++) {
+				int b = row * dirs[i].md_p +
+					col * dirs[i].md_q - offsets[i];
+
+				if (is_known)
+					projs[i]->mp_bins[b] ^=
+						grid[row * P + col];
+				else
+					count[i][b]++;
+			}
+		}
+	}
+
+	/* Iterative peel. */
+	while (recovered < total) {
+		bool progress = false;
+
+		for (int i = 0; i < n; i++) {
+			int p = dirs[i].md_p;
+			int q = dirs[i].md_q;
+			int off = offsets[i];
+			struct moj_projection *proj = projs[i];
+
+			for (int b = 0; b < proj->mp_nbins; b++) {
+				if (count[i][b] != 1)
+					continue;
+
+				int u_row = -1, u_col = -1;
+
+				for (int row = 0; row < Q; row++) {
+					if (!missing_row[row])
+						continue;
+					for (int col = 0; col < P; col++) {
+						if (known[row * P + col])
+							continue;
+						int bb =
+							row * p + col * q - off;
+						if (bb == b) {
+							u_row = row;
+							u_col = col;
+							goto found;
+						}
+					}
+				}
+				continue;
+found:;
+				uint64_t val = proj->mp_bins[b];
+
+				grid[u_row * P + u_col] = val;
+				known[u_row * P + u_col] = true;
+				recovered++;
+				progress = true;
+
+				for (int j = 0; j < n; j++) {
+					int bj = u_row * dirs[j].md_p +
+						 u_col * dirs[j].md_q -
+						 offsets[j];
+
+					projs[j]->mp_bins[bj] ^= val;
+					count[j][bj]--;
+				}
+			}
+		}
+
+		if (!progress)
+			break;
+	}
+
+	ret = recovered == total ? 0 : -EIO;
+
+out_count:
+	if (count) {
+		for (int i = 0; i < n; i++)
+			free(count[i]);
+		free(count);
+	}
+out:
+	free(offsets);
+	free(known);
+	free(missing_row);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* Geometry-driven inverse (DGCI 2006)                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * moj_inverse_gd -- geometry-driven reconstruction.
+ *
+ * Reference:
+ *   Normand N., Kingston A., Evenou P., "A Geometry Driven
+ *   Reconstruction Algorithm for the Mojette Transform",
+ *   DGCI 2006, LNCS 4245, pp. 122-133.
+ *
+ * Operates on a P*Q grid where every row is unknown (np == Q,
+ * failures = {0, 1, ..., Q-1} dense).  Reffs's codec layer always
+ * presents this dense-failures shape, so the sparse-failures
+ * correction in the k_offsets recurrence collapses to zero and is
+ * dropped.
+ *
+ * Sort projections by slope (md_p / md_q) descending via an index
+ * array; the caller's dirs[] / projs[] are not mutated.  Bin
+ * formula: b = row*p + col*q - off (paper / HCF convention).
+ *
+ * Sweep: for k from -max(k_off[0], k_off[np-1]) to P - m_off, and
+ * for each sorted projection l, recover pixel (y=l, x=k+k_off[l])
+ * by walking the projection's line through that pixel and XORing
+ * already-recovered neighbours, then XORing the bin value.
+ */
+
+struct moj_gd_pair {
+	int p;
+	int q;
+	int idx;
+};
+
+static int moj_gd_pair_cmp(const void *a, const void *b)
+{
+	const struct moj_gd_pair *pa = a;
+	const struct moj_gd_pair *pb = b;
+	double sa = (double)pa->p / (double)pa->q;
+	double sb = (double)pb->p / (double)pb->q;
+
+	/* Descending by p/q. */
+	if (sa > sb)
+		return -1;
+	if (sa < sb)
+		return 1;
+	return 0;
+}
+
+int moj_inverse_gd(uint64_t *grid, int P, int Q,
+		   const struct moj_direction *dirs, int n,
+		   struct moj_projection **projs)
+{
+	int np = n;
+	int ret = -EIO;
+	struct moj_gd_pair *pairs = NULL;
+	int *sorted_idx = NULL;
+	int *sorted_p = NULL;
+	int *off = NULL;
+	int *k_off = NULL;
+
+	if (np != Q || P < 1 || Q < 1)
+		return -EINVAL;
+
+	for (int i = 0; i < np; i++) {
+		if (dirs[i].md_q != 1)
+			return -EINVAL;
+	}
+
+	pairs = calloc((size_t)np, sizeof(*pairs));
+	sorted_idx = calloc((size_t)np, sizeof(int));
+	sorted_p = calloc((size_t)np, sizeof(int));
+	off = calloc((size_t)np, sizeof(int));
+	k_off = calloc((size_t)np, sizeof(int));
+	if (!pairs || !sorted_idx || !sorted_p || !off || !k_off) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	memset(grid, 0, (size_t)P * (size_t)Q * sizeof(uint64_t));
+
+	/* Sort by slope p/q descending via an index array. */
+	for (int i = 0; i < np; i++) {
+		pairs[i].p = dirs[i].md_p;
+		pairs[i].q = dirs[i].md_q;
+		pairs[i].idx = i;
+	}
+	qsort(pairs, (size_t)np, sizeof(*pairs), moj_gd_pair_cmp);
+	for (int l = 0; l < np; l++) {
+		sorted_idx[l] = pairs[l].idx;
+		sorted_p[l] = pairs[l].p;
+		off[l] = moj_bin_offset(dirs[pairs[l].idx].md_p,
+					dirs[pairs[l].idx].md_q, P, Q);
+	}
+
+	/*
+	 * Compute k_offsets in sorted order.  Failures = {0..np-1}
+	 * (dense), so failures[i+1] - failures[i] - 1 = 0 in the
+	 * recurrence and the sparse correction is dropped.
+	 *
+	 *   s_minus = sum max(0, -p_l) for interior l in [1, np-2]
+	 *   s_plus  = sum max(0,  p_l) for interior l in [1, np-2]
+	 *   k_off[np-1] = max(max(0, -p_{np-1}) + s_minus,
+	 *                     max(0,  p_{np-1}) + s_plus)
+	 *   k_off[i]    = k_off[i+1] + p_{i+1}            for i = np-2..0
+	 */
+	int s_minus = 0;
+	int s_plus = 0;
+
+	for (int i = 1; i < np - 1; i++) {
+		int p = sorted_p[i];
+
+		s_minus += p < 0 ? -p : 0;
+		s_plus += p > 0 ? p : 0;
+	}
+
+	if (np == 1) {
+		int p0 = sorted_p[0];
+
+		k_off[0] = p0 < 0 ? -p0 : p0;
+	} else {
+		int p_last = sorted_p[np - 1];
+		int neg_term = (p_last < 0 ? -p_last : 0) + s_minus;
+		int pos_term = (p_last > 0 ? p_last : 0) + s_plus;
+
+		k_off[np - 1] = neg_term > pos_term ? neg_term : pos_term;
+		for (int i = np - 2; i >= 0; i--)
+			k_off[i] = k_off[i + 1] + sorted_p[i + 1];
+	}
+
+	int m_off = k_off[0];
+
+	for (int l = 1; l < np; l++) {
+		if (k_off[l] < m_off)
+			m_off = k_off[l];
+	}
+
+	int k_lo_neg = k_off[0];
+	int k_hi_neg = k_off[np - 1];
+	int k_lo = -(k_lo_neg > k_hi_neg ? k_lo_neg : k_hi_neg);
+	int k_hi = P - m_off;
+
+	for (int k = k_lo; k < k_hi; k++) {
+		for (int l = 0; l < np; l++) {
+			int x = k + k_off[l];
+			int y = l;
+
+			if (x < 0 || x >= P)
+				continue;
+
+			int orig = sorted_idx[l];
+			int p = sorted_p[l];
+			uint64_t pixel = 0;
+
+			if (p != 0) {
+				/*
+				 * Walk along the line through (y, x) for
+				 * slope (p, q=1).  The line satisfies
+				 * row*p + col = const.  Stepping row by -1
+				 * keeps it constant iff col steps by +p;
+				 * stepping row by +1 iff col steps by -p.
+				 */
+				int xtop = x;
+				int ytop = y;
+
+				while (ytop > 0 && xtop + p >= 0 &&
+				       xtop + p < P) {
+					xtop += p;
+					ytop -= 1;
+					pixel ^= grid[ytop * P + xtop];
+				}
+				int xdn = x;
+				int ydn = y;
+
+				while (ydn < Q - 1 && xdn - p >= 0 &&
+				       xdn - p < P) {
+					xdn -= p;
+					ydn += 1;
+					pixel ^= grid[ydn * P + xdn];
+				}
+			} else {
+				/*
+				 * p == 0: column-sum projection.  Bin
+				 * b = col - off contains XOR of all
+				 * pixels in column x; recover (y, x) by
+				 * XORing all OTHER pixels in column x.
+				 */
+				for (int i = 0; i < Q; i++) {
+					if (i != y)
+						pixel ^= grid[i * P + x];
+				}
+			}
+
+			int b = y * p + x - off[l];
+
+			grid[y * P + x] = projs[orig]->mp_bins[b] ^ pixel;
+		}
+	}
+
+	ret = 0;
+
+out:
+	free(k_off);
+	free(off);
+	free(sorted_p);
+	free(sorted_idx);
+	free(pairs);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* Geometry-driven inverse on a partially known grid (sparse failures) */
+/* ------------------------------------------------------------------ */
+
+/*
+ * moj_inverse_gd_sparse -- DGCI on a P*Q grid where some rows are
+ * known and the rest are missing.
+ *
+ * grid is pre-filled with known data rows; missing rows are zero.
+ * missing[] (sorted ascending) lists n_missing rows to recover.
+ * Bins are FULL forward bins (no pre-subtraction); the sweep
+ * ordering ensures all OTHER pixels on each line are either known
+ * or already recovered when the algorithm reads them from grid[].
+ */
+int moj_inverse_gd_sparse(uint64_t *grid, int P, int Q,
+			  const struct moj_direction *dirs, int n,
+			  struct moj_projection **projs,
+			  const int *missing, int n_missing)
+{
+	int np = n;
+	int ret = -EIO;
+	struct moj_gd_pair *pairs = NULL;
+	int *sorted_idx = NULL;
+	int *sorted_p = NULL;
+	int *off = NULL;
+	int *k_off = NULL;
+
+	if (np != n_missing || P < 1 || Q < 1 || n_missing < 1 ||
+	    n_missing > Q)
+		return -EINVAL;
+
+	for (int i = 0; i < np; i++) {
+		if (dirs[i].md_q != 1)
+			return -EINVAL;
+	}
+	for (int i = 0; i < n_missing; i++) {
+		if (missing[i] < 0 || missing[i] >= Q)
+			return -EINVAL;
+		if (i > 0 && missing[i] <= missing[i - 1])
+			return -EINVAL; /* must be strictly ascending */
+	}
+
+	pairs = calloc((size_t)np, sizeof(*pairs));
+	sorted_idx = calloc((size_t)np, sizeof(int));
+	sorted_p = calloc((size_t)np, sizeof(int));
+	off = calloc((size_t)np, sizeof(int));
+	k_off = calloc((size_t)np, sizeof(int));
+	if (!pairs || !sorted_idx || !sorted_p || !off || !k_off) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	/* Sort by slope p/q descending via an index array. */
+	for (int i = 0; i < np; i++) {
+		pairs[i].p = dirs[i].md_p;
+		pairs[i].q = dirs[i].md_q;
+		pairs[i].idx = i;
+	}
+	qsort(pairs, (size_t)np, sizeof(*pairs), moj_gd_pair_cmp);
+	for (int l = 0; l < np; l++) {
+		sorted_idx[l] = pairs[l].idx;
+		sorted_p[l] = pairs[l].p;
+		off[l] = moj_bin_offset(dirs[pairs[l].idx].md_p,
+					dirs[pairs[l].idx].md_q, P, Q);
+	}
+
+	/*
+	 * Compute k_offsets in sorted order with the sparse-failures
+	 * correction term `(missing[i+1] - missing[i] - 1) * p_{i+1}`.
+	 */
+	int s_minus = 0;
+	int s_plus = 0;
+
+	for (int i = 1; i < np - 1; i++) {
+		int p = sorted_p[i];
+
+		s_minus += p < 0 ? -p : 0;
+		s_plus += p > 0 ? p : 0;
+	}
+
+	if (np == 1) {
+		int p0 = sorted_p[0];
+
+		k_off[0] = p0 < 0 ? -p0 : p0;
+	} else {
+		int p_last = sorted_p[np - 1];
+		int neg_term = (p_last < 0 ? -p_last : 0) + s_minus;
+		int pos_term = (p_last > 0 ? p_last : 0) + s_plus;
+
+		k_off[np - 1] = neg_term > pos_term ? neg_term : pos_term;
+		for (int i = np - 2; i >= 0; i--) {
+			k_off[i] = k_off[i + 1] + sorted_p[i + 1];
+			int gap = missing[i + 1] - missing[i] - 1;
+
+			if (gap > 0) {
+				int corr = gap * sorted_p[i + 1];
+
+				for (int j = i + 1; j < np; j++)
+					k_off[j] -= corr;
+			}
+		}
+	}
+
+	int m_off = k_off[0];
+
+	for (int l = 1; l < np; l++) {
+		if (k_off[l] < m_off)
+			m_off = k_off[l];
+	}
+
+	int k_lo_neg = k_off[0];
+	int k_hi_neg = k_off[np - 1];
+	int k_lo = -(k_lo_neg > k_hi_neg ? k_lo_neg : k_hi_neg);
+	int k_hi = P - m_off;
+
+	for (int k = k_lo; k < k_hi; k++) {
+		for (int l = 0; l < np; l++) {
+			int x = k + k_off[l];
+			int y = missing[l];
+
+			if (x < 0 || x >= P)
+				continue;
+
+			int orig = sorted_idx[l];
+			int p = sorted_p[l];
+			uint64_t pixel = 0;
+
+			if (p != 0) {
+				int xtop = x;
+				int ytop = y;
+
+				while (ytop > 0 && xtop + p >= 0 &&
+				       xtop + p < P) {
+					xtop += p;
+					ytop -= 1;
+					pixel ^= grid[ytop * P + xtop];
+				}
+				int xdn = x;
+				int ydn = y;
+
+				while (ydn < Q - 1 && xdn - p >= 0 &&
+				       xdn - p < P) {
+					xdn -= p;
+					ydn += 1;
+					pixel ^= grid[ydn * P + xdn];
+				}
+			} else {
+				/* p==0: column-sum projection. */
+				for (int i = 0; i < Q; i++) {
+					if (i != y)
+						pixel ^= grid[i * P + x];
+				}
+			}
+
+			int b = y * p + x - off[l];
+
+			grid[y * P + x] = projs[orig]->mp_bins[b] ^ pixel;
+		}
+	}
+
+	ret = 0;
+
+out:
+	free(k_off);
+	free(off);
+	free(sorted_p);
+	free(sorted_idx);
+	free(pairs);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
+/* Dispatcher                                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * moj_inverse -- routes to peel or gd.
+ *
+ * Default: corner-peeling (always works for any direction set
+ * satisfying Katz).  When moj_force_gd(true) is set AND the direction
+ * shape (q==1 for all dirs, n==Q) permits, routes to moj_inverse_gd.
+ * If the shape rejects or gd returns -ENOSYS, falls back to peel
+ * transparently.
+ *
+ * The shape check `q==1 && n==Q` makes Katz `Σ|q_i| = Q` trivially
+ * satisfied, so no separate Katz call is needed in the dispatch
+ * path.
+ */
+int moj_inverse(uint64_t *grid, int P, int Q, const struct moj_direction *dirs,
+		int n, struct moj_projection **projs)
+{
+	if (atomic_load_explicit(&moj_gd_enabled, memory_order_relaxed) &&
+	    n == Q) {
+		bool ok = true;
+
+		for (int i = 0; i < n; i++) {
+			if (dirs[i].md_q != 1) {
+				ok = false;
+				break;
+			}
+		}
+		if (ok) {
+			int ret = moj_inverse_gd(grid, P, Q, dirs, n, projs);
+
+			if (ret != -ENOSYS && ret != -EINVAL)
+				return ret;
+			/* Fall through to peel on shape rejection. */
+		}
+	}
+	return moj_inverse_peel(grid, P, Q, dirs, n, projs);
+}
+
+/*
+ * moj_inverse_sparse -- partially-known-grid dispatcher.
+ *
+ * If moj_force_gd is set and shape permits (q==1 for all dirs,
+ * n == n_missing), routes to gd_sparse; falls back to peel_sparse
+ * if shape rejects.  Default: peel_sparse.
+ */
+int moj_inverse_sparse(uint64_t *grid, int P, int Q,
+		       const struct moj_direction *dirs, int n,
+		       struct moj_projection **projs,
+		       const int *missing, int n_missing)
+{
+	if (atomic_load_explicit(&moj_gd_enabled, memory_order_relaxed) &&
+	    n == n_missing) {
+		bool ok = true;
+
+		for (int i = 0; i < n; i++) {
+			if (dirs[i].md_q != 1) {
+				ok = false;
+				break;
+			}
+		}
+		if (ok) {
+			int ret = moj_inverse_gd_sparse(grid, P, Q, dirs, n,
+							projs, missing,
+							n_missing);
+
+			if (ret != -ENOSYS && ret != -EINVAL)
+				return ret;
+		}
+	}
+	return moj_inverse_peel_sparse(grid, P, Q, dirs, n, projs, missing,
+				       n_missing);
 }

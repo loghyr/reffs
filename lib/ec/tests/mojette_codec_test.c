@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include "reffs/ec.h"
+#include "mojette.h"
 
 /*
  * Grid: k rows of P uint64_t elements.  shard_len = P * 8 bytes.
@@ -643,6 +644,25 @@ END_TEST
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * gd parameterization: re-run a subset of the codec tests with
+ * moj_force_gd(true) to confirm the dispatcher routes to gd (and
+ * gd-or-its-peel-fallback recovers correctly through both sys and
+ * nonsys codec paths).  When gd is stubbed (-ENOSYS), the
+ * dispatcher transparently falls back to peel — so these tests
+ * pass identically.  Once gd is implemented, the same tests
+ * exercise gd via the codec.
+ */
+static void gd_codec_setup(void)
+{
+	moj_force_gd(true);
+}
+
+static void gd_codec_teardown(void)
+{
+	moj_force_gd(false);
+}
+
 static Suite *mojette_codec_suite(void)
 {
 	Suite *s = suite_create("mojette_codec");
@@ -669,6 +689,16 @@ static Suite *mojette_codec_suite(void)
 	tcase_add_test(tc_nonsys, test_nonsys_max_loss);
 	tcase_add_test(tc_nonsys, test_nonsys_too_many_losses);
 	suite_add_tcase(s, tc_nonsys);
+
+	TCase *tc_gd = tcase_create("gd-codec");
+
+	tcase_add_checked_fixture(tc_gd, gd_codec_setup, gd_codec_teardown);
+	tcase_add_test(tc_gd, test_sys_one_data_loss);
+	tcase_add_test(tc_gd, test_sys_two_data_loss);
+	tcase_add_test(tc_gd, test_sys_24k_two_data_loss);
+	tcase_add_test(tc_gd, test_nonsys_one_loss);
+	tcase_add_test(tc_gd, test_nonsys_max_loss);
+	suite_add_tcase(s, tc_gd);
 
 	return s;
 }
