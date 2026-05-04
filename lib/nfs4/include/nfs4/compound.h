@@ -120,6 +120,17 @@ struct compound {
 
 	/* Compound-level state flags. */
 #define COMPOUND_DS_ATTRS_REFRESHED (1u << 0)
+/*
+ * Trust-stateid slice 1: set by nfs4_layoutget_check_conflicts
+ * before it pauses for the REVOKE_STATEID fan-out.  The resume
+ * callback re-invokes nfs4_op_layoutget; the second pass checks
+ * this flag and skips the conflict scan.  Without it, the scan
+ * sees the same prior-client MDS-side Layout_Stateids on the
+ * second pass (REVOKE only clears DS-side trust entries; the
+ * MDS-side struct stateid stays until lease expiry / LAYOUTRETURN)
+ * and the op infinite-loops.
+ */
+#define COMPOUND_LAYOUTGET_REVOKE_DONE (1u << 1)
 	uint32_t c_flags;
 
 	/*

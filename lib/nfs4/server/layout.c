@@ -891,6 +891,16 @@ int nfs4_layoutget_check_conflicts(struct compound *compound)
 	struct rpc_trans *rt = compound->c_rt;
 	struct task *t = rt->rt_task;
 
+	/*
+	 * Mark the compound as having attempted the conflict-recall
+	 * BEFORE pausing.  The resume callback re-invokes
+	 * nfs4_op_layoutget; without this flag the second pass would
+	 * see the same prior-client MDS-side stateids in
+	 * inode->i_stateids (REVOKE only clears DS-side trust
+	 * entries) and infinite-loop.
+	 */
+	compound->c_flags |= COMPOUND_LAYOUTGET_REVOKE_DONE;
+
 	rt->rt_next_action = nfs4_op_layoutget_revoke_resume;
 	rt->rt_async_data = df;
 	task_pause(t);
@@ -1213,11 +1223,17 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	 * Trust-stateid slice 1: detect prior-client layout stateids on
 	 * this inode and revoke them at the DSes synchronously before
 	 * granting the new client's layout.  If a recall + revoke is
-	 * pending, the resume callback re-invokes nfs4_op_layoutget,
-	 * which sees an empty conflict set on the second pass and
-	 * proceeds normally.
+	 * pending, the resume callback re-invokes nfs4_op_layoutget;
+	 * the COMPOUND_LAYOUTGET_REVOKE_DONE flag set by the conflict
+	 * helper before pause makes the second pass skip this step.
+	 *
+	 * Skipping is the correct behaviour: REVOKE_STATEID clears
+	 * DS-side trust entries but leaves the MDS-side stateid in
+	 * inode->i_stateids until lease expiry / LAYOUTRETURN, so the
+	 * scan would otherwise find the same priors and loop.
 	 */
-	if (nfs4_layoutget_check_conflicts(compound))
+	if (!(compound->c_flags & COMPOUND_LAYOUTGET_REVOKE_DONE) &&
+	    nfs4_layoutget_check_conflicts(compound))
 		return NFS4_OP_FLAG_ASYNC;
 
 	/* Find or create a layout stateid for this client + inode. */

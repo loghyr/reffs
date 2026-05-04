@@ -163,9 +163,12 @@ static int mock_revoke_stateid(struct dstore *ds,
 
 	atomic_fetch_add_explicit(&dm->dm_revoke_calls, 1,
 				  memory_order_relaxed);
-	dm->dm_last_revoke_seqid = stid_seqid;
+	atomic_store_explicit(&dm->dm_last_revoke_seqid, stid_seqid,
+			      memory_order_release);
+	pthread_mutex_lock(&dm->dm_last_revoke_lock);
 	memcpy(dm->dm_last_revoke_other, stid_other,
 	       sizeof(dm->dm_last_revoke_other));
+	pthread_mutex_unlock(&dm->dm_last_revoke_lock);
 	return 0;
 }
 
@@ -184,6 +187,8 @@ struct dstore_mock *dstore_mock_alloc(uint32_t id)
 
 	if (!dm)
 		return NULL;
+
+	pthread_mutex_init(&dm->dm_last_revoke_lock, NULL);
 
 	/* Initialize the embedded vtable. */
 	dm->dm_ops.name = "mock";
@@ -244,6 +249,7 @@ void dstore_mock_free(struct dstore_mock *dm)
 		dstore_put(ds); /* creation ref */
 	}
 
+	pthread_mutex_destroy(&dm->dm_last_revoke_lock);
 	free(dm);
 }
 
@@ -269,8 +275,11 @@ void dstore_mock_reset(struct dstore_mock *dm)
 	dm->dm_reply_size = 0;
 	dm->dm_reply_mtime = (struct timespec){ 0, 0 };
 	dm->dm_getattr_fail = false;
-	dm->dm_last_revoke_seqid = 0;
+	atomic_store_explicit(&dm->dm_last_revoke_seqid, 0,
+			      memory_order_relaxed);
+	pthread_mutex_lock(&dm->dm_last_revoke_lock);
 	memset(dm->dm_last_revoke_other, 0, sizeof(dm->dm_last_revoke_other));
+	pthread_mutex_unlock(&dm->dm_last_revoke_lock);
 }
 
 /* ------------------------------------------------------------------ */

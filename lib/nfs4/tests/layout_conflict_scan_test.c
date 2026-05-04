@@ -455,10 +455,15 @@ START_TEST(test_revoke_fanout_single)
 	mock_drive_fanout(&fanout_fc->rt);
 
 	ck_assert_uint_eq(dstore_mock_revoke_calls(fanout_mock), 1);
-	ck_assert_uint_eq(fanout_mock->dm_last_revoke_seqid, 0xDECAFBAD);
+	ck_assert_uint_eq(
+		atomic_load_explicit(&fanout_mock->dm_last_revoke_seqid,
+				     memory_order_acquire),
+		0xDECAFBAD);
+	pthread_mutex_lock(&fanout_mock->dm_last_revoke_lock);
 	for (uint32_t i = 0; i < sizeof(fanout_mock->dm_last_revoke_other); i++)
 		ck_assert_uint_eq(fanout_mock->dm_last_revoke_other[i],
 				  (uint8_t)(0xA0 + i));
+	pthread_mutex_unlock(&fanout_mock->dm_last_revoke_lock);
 
 	dstore_fanout_free(df);
 }

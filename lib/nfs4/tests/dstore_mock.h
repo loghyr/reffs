@@ -30,6 +30,7 @@
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <pthread.h>
 #include <time.h>
 
 #include "reffs/dstore_ops.h"
@@ -63,11 +64,14 @@ struct dstore_mock {
 	/*
 	 * Last revoke_stateid args received (for tests that assert which
 	 * stateid was revoked at this DS).  When N priors are revoked
-	 * against this mock, only the LAST one is retained -- tests that
-	 * need per-call recording can use dm_revoke_calls and a sequence
-	 * of single-prior tests instead.
+	 * against this mock, multiple fan-out worker threads write
+	 * concurrently -- the seqid write is atomic; the 12-byte other
+	 * field is protected by dm_last_revoke_lock.  Tests that need
+	 * per-call recording can use dm_revoke_calls and a sequence of
+	 * single-prior tests instead.
 	 */
-	uint32_t dm_last_revoke_seqid;
+	_Atomic uint32_t dm_last_revoke_seqid;
+	pthread_mutex_t dm_last_revoke_lock;
 	uint8_t dm_last_revoke_other[12]; /* NFS4_OTHER_SIZE */
 
 	/*
