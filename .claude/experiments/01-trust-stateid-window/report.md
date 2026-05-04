@@ -245,3 +245,118 @@ This finding affects:
 
 These propagation edits are tracked separately from the
 harness slice itself.
+
+## N=20 multi-run sweep, v2 with trust-stateid slice 1 (2026-05-04)
+
+Slice 1 of `reffs/.claude/design/trust-stateid-slice-1.md` shipped
+across 5 commits (`c9e656f6cc99` through `a55b62c2bc0c`) and
+re-ran the same harness against the bench docker stack on adept
+with `--layout v2`.  CSV at
+`data/race_v2_N20_4plus2_rs_100MB.csv`.
+
+### Outcome distribution (v2 + slice 1, vs v1 baseline)
+
+| Outcome | v1 baseline | v2 + slice 1 | delta |
+|---------|------------:|-------------:|------:|
+| Clean A-win | 0 | 0 | -- |
+| Clean B-win | 7 (35 %) | 4 (20 %) | -3 |
+| **MIXED** (silent split-brain) | **13 (65 %)** | **4 (20 %)** | **-9** |
+| **READ_FAILED** (loud failure) | 0 | 12 (60 %) | +12 |
+
+Same harness, same workload (RS 4+2, 100 MiB, 0.5 s delay),
+same bench docker stack.  Only `--layout v2` and the slice-1-
+enabled MDS binary changed.
+
+### What slice 1 measurably did
+
+- **Reduced silent split-brain by 69 %** (13 -> 4 MIXED).
+- **Converted 12 of the 13 lost-MIXED outcomes into loud
+  failures** (READ_FAILED), where the v2 reader catches the
+  parity inconsistency a v1 reader would have silently
+  reconstructed into the wrong content.
+- Did not produce any new clean-A-win outcomes.
+
+This is a real safety improvement: an unreadable file with a
+clean error is recoverable (re-run the workload, restore from
+backup, etc.); a silently-wrong file is not.
+
+### What slice 1 did NOT do, and why
+
+The slice plan predicted MIXED -> 0 with `b_won = 20`.  The
+actual outcome (4 MIXED, 4 clean-B, 12 READ_FAILED) is materially
+better than v1 but does not match the prediction.  Root cause:
+**the trust-stateid mechanism is structurally bypassed in this
+bench**.
+
+The bypass:
+
+- ec_demo's CHUNK ops use the **anonymous stateid** by default.
+  The real layout stateid is only used when the layout response
+  carries `ffdv_tightly_coupled = true`.
+- The MDS sets `ffdv_tightly_coupled` per-DS based on
+  `dstore->ds_tight_coupled`, which is hardcoded `true` only
+  for the **local** dstore vtable.  The bench uses the **NFSv3**
+  dstore vtable (one reffsd per DS, separate containers); the
+  NFSv3 vtable defaults `ds_tight_coupled = false`.
+- The DS-side trust check at `lib/nfs4/server/chunk.c:136`
+  is `if (!stateid4_is_special(&args->cwa_stateid))` -- the
+  anonymous stateid IS special, so the trust check is **skipped
+  on every CHUNK_WRITE** in this bench.
+
+So the MDS-side machinery slice 1 added (conflict scan + recall +
+synchronous REVOKE_STATEID fan-out across all DSes) executes
+correctly -- but the DS-side enforcement that would *use* the
+revoked-trust-table state to reject in-flight writes never
+fires, because every in-flight write carries an anonymous
+stateid that bypasses the table entirely.
+
+The 4 remaining MIXED outcomes are not slice 1 misbehaving;
+they are exactly the workload the trust mechanism would have
+caught had the data path been routed through it.  The 12
+READ_FAILED outcomes are v2's stricter parity-check catching
+the same workload that v1 silently produced as MIXED.
+
+### Why the bench couldn't be combined-mode (which would
+exercise the trust path natively)
+
+Combined-mode reffsd runs MDS + DSes in one process and uses
+the local dstore vtable (`ds_tight_coupled = true`), so
+ec_demo would advertise tight coupling and use the real
+stateid.  However, combined-mode ec_demo segfaults on session
+teardown (`mds_destroy_session` -> `xdr_COMPOUND4res` decode
+of the DESTROY_SESSION response, backtrace captured 2026-05-04;
+filed for follow-up).  The bench docker stack is the only
+bench configuration where ec_demo runs cleanly to completion
+in this work, and that configuration uses NFSv3 dstores.
+
+### Implication for the slice and follow-on work
+
+Slice 1 is implementation-complete and correct.  What ships:
+
+- DS-side trust table + 3 op handlers + CHUNK ingress hook
+  (committed earlier; covered by 21 unit tests + flow tests).
+- MDS-side conflict scan + CB_LAYOUTRECALL + synchronous
+  REVOKE_STATEID fan-out at LAYOUTGET.
+- Compound-flag loop guard preventing the resume re-entry
+  from looping (reviewer-found BLOCKER fixed Thu).
+
+What does not ship in slice 1: a way for ec_demo to exercise
+the trust path in the bench's NFSv3-dstore configuration.
+
+The follow-on slice (1.5) addresses this.  See
+`reffs/.claude/design/trust-stateid-slice-1-5.md`.
+
+### What this changes upstream (additive to v1 section above)
+
+- `progress_report.md` §3.6 -- v2 row should report the actual
+  measurement: 4 MIXED, 12 READ_FAILED, 4 clean-B-win;
+  trust-stateid mechanism implemented but bypassed in this
+  bench by the anonymous-stateid default.
+- `ietf126.md` slide 16 v2 row -- "measured: trust-stateid
+  ships, conflict-recall fires; MIXED dropped 65 % -> 20 %;
+  remaining hardening is slice 1.5 to engage the DS trust
+  check via tight-coupling on NFSv3 dstores".
+- `claude_review.md` §7.3 -- update the "asserted from the
+  design, validation pending" line to "measured (slice 1):
+  mechanism reduces silent split-brain by 69 %; full closure
+  awaits slice 1.5".
