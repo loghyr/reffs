@@ -238,8 +238,7 @@ static void moj_fwd_row_seq(const uint64_t *__restrict__ src, int P,
 		__m128i dv = _mm_loadu_si128((const __m128i *)(dst + col));
 		__m128i sv = _mm_loadu_si128((const __m128i *)(src + col));
 
-		_mm_storeu_si128((__m128i *)(dst + col),
-				 _mm_xor_si128(dv, sv));
+		_mm_storeu_si128((__m128i *)(dst + col), _mm_xor_si128(dv, sv));
 	}
 	for (; col < P; col++)
 		dst[col] ^= src[col];
@@ -485,8 +484,8 @@ out_offsets:
  */
 int moj_inverse_peel_sparse(uint64_t *grid, int P, int Q,
 			    const struct moj_direction *dirs, int n,
-			    struct moj_projection **projs,
-			    const int *missing, int n_missing)
+			    struct moj_projection **projs, const int *missing,
+			    int n_missing)
 {
 	int total = P * Q;
 	int recovered = 0;
@@ -861,8 +860,8 @@ out:
  */
 int moj_inverse_gd_sparse(uint64_t *grid, int P, int Q,
 			  const struct moj_direction *dirs, int n,
-			  struct moj_projection **projs,
-			  const int *missing, int n_missing)
+			  struct moj_projection **projs, const int *missing,
+			  int n_missing)
 {
 	int np = n;
 	int ret = -EIO;
@@ -872,8 +871,7 @@ int moj_inverse_gd_sparse(uint64_t *grid, int P, int Q,
 	int *off = NULL;
 	int *k_off = NULL;
 
-	if (np != n_missing || P < 1 || Q < 1 || n_missing < 1 ||
-	    n_missing > Q)
+	if (np != n_missing || P < 1 || Q < 1 || n_missing < 1 || n_missing > Q)
 		return -EINVAL;
 
 	for (int i = 0; i < np; i++) {
@@ -1066,8 +1064,8 @@ int moj_inverse(uint64_t *grid, int P, int Q, const struct moj_direction *dirs,
  */
 int moj_inverse_sparse(uint64_t *grid, int P, int Q,
 		       const struct moj_direction *dirs, int n,
-		       struct moj_projection **projs,
-		       const int *missing, int n_missing)
+		       struct moj_projection **projs, const int *missing,
+		       int n_missing)
 {
 	if (atomic_load_explicit(&moj_gd_enabled, memory_order_relaxed) &&
 	    n == n_missing) {
@@ -1080,9 +1078,8 @@ int moj_inverse_sparse(uint64_t *grid, int P, int Q,
 			}
 		}
 		if (ok) {
-			int ret = moj_inverse_gd_sparse(grid, P, Q, dirs, n,
-							projs, missing,
-							n_missing);
+			int ret = moj_inverse_gd_sparse(
+				grid, P, Q, dirs, n, projs, missing, n_missing);
 
 			if (ret != -ENOSYS && ret != -EINVAL)
 				return ret;

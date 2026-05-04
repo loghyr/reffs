@@ -209,8 +209,7 @@ static int mojette_sys_decode(struct ec_codec *codec, uint8_t **shards,
 
 	for (int i = 0; i < k; i++) {
 		if (present[i])
-			memcpy(full_grid + (size_t)i * P, shards[i],
-			       shard_len);
+			memcpy(full_grid + (size_t)i * P, shards[i], shard_len);
 		else
 			missing_rows[midx++] = i;
 	}

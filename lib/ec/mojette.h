@@ -144,8 +144,8 @@ void moj_forward(const uint64_t *__restrict__ grid, int P, int Q,
  */
 int moj_inverse_sparse(uint64_t *grid, int P, int Q,
 		       const struct moj_direction *dirs, int n,
-		       struct moj_projection **projs,
-		       const int *missing, int n_missing);
+		       struct moj_projection **projs, const int *missing,
+		       int n_missing);
 
 /*
  * moj_inverse -- reconstruct a grid from projections.
@@ -196,8 +196,8 @@ int moj_inverse_peel(uint64_t *grid, int P, int Q,
  */
 int moj_inverse_peel_sparse(uint64_t *grid, int P, int Q,
 			    const struct moj_direction *dirs, int n,
-			    struct moj_projection **projs,
-			    const int *missing, int n_missing);
+			    struct moj_projection **projs, const int *missing,
+			    int n_missing);
 
 /*
  * moj_inverse_gd -- geometry-driven inverse Mojette transform.
@@ -233,8 +233,8 @@ int moj_inverse_gd(uint64_t *grid, int P, int Q,
  */
 int moj_inverse_gd_sparse(uint64_t *grid, int P, int Q,
 			  const struct moj_direction *dirs, int n,
-			  struct moj_projection **projs,
-			  const int *missing, int n_missing);
+			  struct moj_projection **projs, const int *missing,
+			  int n_missing);
 
 /*
  * moj_force_gd -- enable / disable geometry-driven inverse dispatch.
