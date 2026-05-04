@@ -1,0 +1,30 @@
+This file records third-party copyright grants for code incorporated
+into reffs under license terms different from the original.
+
+reffs is AGPL-3.0-or-later.  Each entry below documents a grant from
+the original copyright holder permitting their code to be relicensed
+under AGPL-3.0-or-later for inclusion in this project.
+
+----------------------------------------------------------------------
+
+Grant from Pierre Evenou, received via Slack 2026-05-04, for code
+incorporated in PR #58 (https://github.com/loghyr/reffs/pull/58):
+
+    I, Pierre Evenou, am the copyright holder of mojette
+    (https://github.com/0x9dhcf/mojette).
+
+    I grant permission for the Mojette codec logic copied from
+    mojette into reffs PR #58 to be relicensed under
+     AGPL-3.0-or-later.
+
+    Signed: Pierre Evenou
+    Date: 2026-05-04
+
+Files in reffs derived in part from mojette:
+  - lib/ec/mojette.c
+  - lib/ec/mojette.h
+  - lib/ec/mojette_codec.c
+  - tools/moj_bench.c
+
+The geometry-driven inverse algorithm and paper bin convention come
+from this source; the surrounding glue and tests are reffs-original.

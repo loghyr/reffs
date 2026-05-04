@@ -8,7 +8,10 @@
 /*
  * Mojette transform -- core forward and inverse algorithms.
  *
- * Clean-room implementation from published academic sources only:
+ * Portions derived from Pierre Evenou's "mojette" project under a
+ * relicensing grant; see LICENSE-EXCEPTIONS.txt at the repo root.
+ *
+ * Reference algorithm sources:
  *
  *   Guedon J.-P. (ed.), "The Mojette Transform: Theory and
  *   Applications", ISTE/Wiley, 2009.

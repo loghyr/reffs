@@ -4,13 +4,15 @@
 /*
  * Mojette transform -- internal header.
  *
- * Clean-room implementation from published academic sources:
+ * Reference algorithm sources:
  *   - Guedon (2005), "The Mojette Transform: Theory and Applications"
  *   - Normand et al. (2006), "How and Why the Mojette Transform Works"
+ *   - Normand, Kingston, Evenou (DGCI 2006), geometry-driven inverse
  *   - Katz (1978), reconstruction criterion
  *   - Parrein et al. (2001), q_i=1 direction selection
  *
- * NOT derived from any existing implementation (RozoFS or otherwise).
+ * Portions derived from Pierre Evenou's "mojette" project under a
+ * relicensing grant; see LICENSE-EXCEPTIONS.txt at the repo root.
  */
 
 #ifndef _REFFS_MOJETTE_H

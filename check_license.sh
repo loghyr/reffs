@@ -28,8 +28,9 @@ check_spdx_headers() {
 }
 
 # Get a list of all files, excluding .gitignore, LICENSES directory, .x files,
-# LICENSE, COPYING files, and XDR-generated Python files (have "DO NOT EDIT" marker).
-files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|^LICENSE$|(^|/)COPYING$|deploy/benchmark/results/|_xdr_(const|type|pack)\.py$')
+# LICENSE / LICENSE-EXCEPTIONS, COPYING files, and XDR-generated Python files
+# (which have "DO NOT EDIT" marker).
+files=$(git ls-files | grep -vE '\.gitignore$|LICENSES/|\.x$|^LICENSE([-.][A-Za-z0-9.-]+)?$|(^|/)COPYING$|deploy/benchmark/results/|_xdr_(const|type|pack)\.py$')
 
 # Check each file
 error_count=0
