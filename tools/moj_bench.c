@@ -1,6 +1,10 @@
 /* SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com> */
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
+#ifdef HAVE_CONFIG_H
+#include "config.h" // IWYU pragma: keep
+#endif
+
 /*
  * moj_bench -- algorithm-level microbenchmark for the Mojette inverse.
  *
