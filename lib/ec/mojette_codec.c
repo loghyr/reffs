@@ -147,9 +147,11 @@ static int mojette_sys_decode(struct ec_codec *codec, uint8_t **shards,
 	}
 
 	/*
-	 * Some data rows are missing.  Collect available projections
-	 * (parity shards) and subtract the contributions of known
-	 * data rows, then inverse-solve for missing rows.
+	 * Some data rows are missing.  Build the full P*k grid with
+	 * known rows pre-filled, missing rows zeroed, and call the
+	 * sparse-failures inverse.  The DGCI sweep handles known
+	 * rows naturally during the diagonal walk; corner-peeling
+	 * pre-subtracts known contributions internally.
 	 */
 	int n_avail_proj = 0;
 
@@ -161,29 +163,29 @@ static int mojette_sys_decode(struct ec_codec *codec, uint8_t **shards,
 	if (n_avail_proj < missing_data)
 		return -EIO;
 
-	/*
-	 * Build projections from parity shards.  Subtract known rows'
-	 * contributions so that only missing rows remain.
-	 */
+	/* Use exactly missing_data parity projections (n == n_missing). */
+	int n_inv = missing_data;
 	struct moj_direction *sub_dirs =
-		calloc((size_t)n_avail_proj, sizeof(*sub_dirs));
+		calloc((size_t)n_inv, sizeof(*sub_dirs));
 	struct moj_projection **sub_projs =
-		calloc((size_t)n_avail_proj, sizeof(*sub_projs));
+		calloc((size_t)n_inv, sizeof(*sub_projs));
+	int *missing_rows = calloc((size_t)missing_data, sizeof(int));
+	uint64_t *full_grid = calloc((size_t)P * k, sizeof(uint64_t));
 
-	if (!sub_dirs || !sub_projs) {
-		free(sub_dirs);
+	if (!sub_dirs || !sub_projs || !missing_rows || !full_grid) {
+		free(full_grid);
+		free(missing_rows);
 		free(sub_projs);
+		free(sub_dirs);
 		return -ENOMEM;
 	}
 
 	int pidx = 0;
 	int ret = -ENOMEM;
 
-	for (int i = 0; i < m; i++) {
+	for (int i = 0; i < m && pidx < n_inv; i++) {
 		if (!present[k + i])
 			continue;
-		if (pidx >= n_avail_proj)
-			break;
 
 		int dir_idx = k + i;
 
@@ -196,132 +198,37 @@ static int mojette_sys_decode(struct ec_codec *codec, uint8_t **shards,
 		if (!sub_projs[pidx])
 			goto out;
 
-		/* Load projection bins from parity shard. */
+		/* Load FULL parity bins (no pre-subtraction here). */
 		memcpy(sub_projs[pidx]->mp_bins, shards[k + i],
 		       (size_t)nbins * sizeof(uint64_t));
-
-		/* Subtract known data rows' contributions. */
-		int p = sub_dirs[pidx].md_p;
-		int q = sub_dirs[pidx].md_q;
-		int off = moj_bin_offset(p, q, P, k);
-
-		for (int row = 0; row < k; row++) {
-			if (!present[row])
-				continue;
-			const uint64_t *row_data =
-				(const uint64_t *)shards[row];
-
-			for (int col = 0; col < P; col++) {
-				int b = col * p - row * q + off;
-
-				sub_projs[pidx]->mp_bins[b] -= row_data[col];
-			}
-		}
 		pidx++;
 	}
 
-	/*
-	 * Build a reduced grid with only the missing rows.  Map
-	 * missing row indices to consecutive rows in the sub-grid.
-	 */
-	int *missing_rows = calloc((size_t)missing_data, sizeof(int));
-
-	if (!missing_rows)
-		goto out;
-
+	/* Pre-fill known data rows; collect missing row indices ascending. */
 	int midx = 0;
 
 	for (int i = 0; i < k; i++) {
-		if (!present[i])
+		if (present[i])
+			memcpy(full_grid + (size_t)i * P, shards[i],
+			       shard_len);
+		else
 			missing_rows[midx++] = i;
 	}
 
-	/*
-	 * Remap directions for the reduced grid.  The reduced grid
-	 * has P columns and missing_data rows.  Each projection has
-	 * already had known rows subtracted.  We need to use only
-	 * missing_data projections (Katz: sum(|q|) >= missing_data).
-	 *
-	 * Use at most missing_data projections for the inverse.
-	 */
-	int n_inv = missing_data;
-	uint64_t *reduced_grid = calloc((size_t)P * n_inv, sizeof(uint64_t));
-
-	if (!reduced_grid) {
-		free(missing_rows);
-		goto out;
-	}
-
-	/*
-	 * Remap the projections for the reduced grid.  The bin
-	 * equation for the full grid was b = col*p - row*q + off.
-	 * For the reduced grid, we need to re-index the missing rows
-	 * as 0, 1, ..., missing_data-1.  Create new projections with
-	 * only the contributions from missing rows.
-	 */
-	struct moj_projection **inv_projs =
-		calloc((size_t)n_inv, sizeof(*inv_projs));
-
-	if (!inv_projs) {
-		free(reduced_grid);
-		free(missing_rows);
-		goto out;
-	}
-
-	for (int i = 0; i < n_inv; i++) {
-		int nbins = moj_projection_size(sub_dirs[i].md_p,
-						sub_dirs[i].md_q, P, n_inv);
-
-		inv_projs[i] = moj_projection_create(nbins);
-		if (!inv_projs[i]) {
-			for (int j = 0; j < i; j++)
-				moj_projection_destroy(inv_projs[j]);
-			free(inv_projs);
-			free(reduced_grid);
-			free(missing_rows);
-			goto out;
-		}
-
-		/*
-		 * Re-project the subtracted bins into the reduced grid's
-		 * bin space.  Missing row j in the full grid becomes
-		 * row j in the reduced grid.
-		 */
-		int p = sub_dirs[i].md_p;
-		int q = sub_dirs[i].md_q;
-		int full_off = moj_bin_offset(p, q, P, k);
-		int red_off = moj_bin_offset(p, q, P, n_inv);
-
-		for (int mr = 0; mr < n_inv; mr++) {
-			int full_row = missing_rows[mr];
-
-			for (int col = 0; col < P; col++) {
-				int full_b = col * p - full_row * q + full_off;
-				int red_b = col * p - mr * q + red_off;
-
-				inv_projs[i]->mp_bins[red_b] +=
-					sub_projs[i]->mp_bins[full_b];
-			}
-		}
-	}
-
-	/* Inverse on the reduced grid. */
-	ret = moj_inverse(reduced_grid, P, n_inv, sub_dirs, n_inv, inv_projs);
+	ret = moj_inverse_sparse(full_grid, P, k, sub_dirs, n_inv, sub_projs,
+				 missing_rows, missing_data);
 
 	if (ret == 0) {
 		/* Copy recovered rows back into shards. */
-		for (int i = 0; i < n_inv; i++)
+		for (int i = 0; i < missing_data; i++)
 			memcpy(shards[missing_rows[i]],
-			       reduced_grid + (size_t)i * P, shard_len);
+			       full_grid + (size_t)missing_rows[i] * P,
+			       shard_len);
 	}
 
-	for (int i = 0; i < n_inv; i++)
-		moj_projection_destroy(inv_projs[i]);
-	free(inv_projs);
-	free(reduced_grid);
-	free(missing_rows);
-
 out:
+	free(full_grid);
+	free(missing_rows);
 	for (int i = 0; i < pidx; i++)
 		moj_projection_destroy(sub_projs[i]);
 	free(sub_projs);

@@ -67,21 +67,21 @@ static void free_projs(struct moj_projection **projs, int n)
 
 START_TEST(test_projection_size)
 {
-	/* B = |p|(P-1) + |q|(Q-1) + 1 */
+	/* Paper convention: B = |p|(Q-1) + |q|(P-1) + 1 */
 
-	/* p=0, q=1, P=64, Q=4: B = 0 + 3 + 1 = 4 */
-	ck_assert_int_eq(moj_projection_size(0, 1, 64, 4), 4);
+	/* p=0, q=1, P=64, Q=4: B = 0 + 63 + 1 = 64 */
+	ck_assert_int_eq(moj_projection_size(0, 1, 64, 4), 64);
 
-	/* p=1, q=1, P=64, Q=4: B = 63 + 3 + 1 = 67 */
+	/* p=1, q=1, P=64, Q=4: B = 3 + 63 + 1 = 67 */
 	ck_assert_int_eq(moj_projection_size(1, 1, 64, 4), 67);
 
-	/* p=-2, q=1, P=64, Q=4: B = 126 + 3 + 1 = 130 */
-	ck_assert_int_eq(moj_projection_size(-2, 1, 64, 4), 130);
+	/* p=-2, q=1, P=64, Q=4: B = 6 + 63 + 1 = 70 */
+	ck_assert_int_eq(moj_projection_size(-2, 1, 64, 4), 70);
 
-	/* p=0, q=1, P=128, Q=4: B = 0 + 3 + 1 = 4 */
-	ck_assert_int_eq(moj_projection_size(0, 1, 128, 4), 4);
+	/* p=0, q=1, P=128, Q=4: B = 0 + 127 + 1 = 128 */
+	ck_assert_int_eq(moj_projection_size(0, 1, 128, 4), 128);
 
-	/* p=1, q=1, P=128, Q=4: B = 127 + 3 + 1 = 131 */
+	/* p=1, q=1, P=128, Q=4: B = 3 + 127 + 1 = 131 */
 	ck_assert_int_eq(moj_projection_size(1, 1, 128, 4), 131);
 }
 END_TEST
@@ -297,11 +297,14 @@ START_TEST(test_zero_grid)
 }
 END_TEST
 
-START_TEST(test_wrapping_arithmetic)
+START_TEST(test_xor_identity)
 {
 	/*
-	 * Verify mod-2^64 arithmetic works: fill grid with large
-	 * values that will overflow when summed.
+	 * Verify XOR algebra works across the full uint64_t range:
+	 * fill grid with high-bit values that exercise every byte of
+	 * the bin word.  XOR is bit-parallel with no overflow concerns,
+	 * so the forward+inverse round-trip must reproduce the input
+	 * exactly regardless of bit pattern.
 	 */
 	int P = 4, Q = 4, n = 4;
 	struct moj_direction dirs[] = {
@@ -467,16 +470,18 @@ END_TEST
 /*
  * test_simd_bins_p1 -- exact bin values for p=+1, q=1 on a 3x2 grid.
  *
+ * Paper convention: b = row*p + col*q - off.
+ *
  * fill_grid values (i*37+13, row-major):
  *   row 0: [13, 50, 87]     row 1: [124, 161, 198]
  *
- * bin b = col*p - row*q + off = col - row + (Q-1) = col - row + 1:
- *   b=0: (r=1,c=0) --> 124
- *   b=1: (r=0,c=0) + (r=1,c=1) --> 13 + 161 = 174
- *   b=2: (r=0,c=1) + (r=1,c=2) --> 50 + 198 = 248
- *   b=3: (r=0,c=2) --> 87
+ * For p=1, q=1: off = 0 (min of row+col is 0).  b = row + col.
+ *   b=0: (r=0,c=0) --> 13
+ *   b=1: (r=0,c=1) ^ (r=1,c=0) --> 50 ^ 124 = 78
+ *   b=2: (r=0,c=2) ^ (r=1,c=1) --> 87 ^ 161 = 246
+ *   b=3: (r=1,c=2) --> 198
  *
- * P=3 < 4: 4-wide SIMD loop does not fire; scalar path only.
+ * P=3 < 4: 4-wide SIMD loop does not fire; scalar tail path only.
  * Anchors the bin addressing formula numerically.
  */
 START_TEST(test_simd_bins_p1)
@@ -484,7 +489,7 @@ START_TEST(test_simd_bins_p1)
 	int P = 3, Q = 2, n = 1;
 	struct moj_direction dirs[] = { { 1, 1 } };
 	uint64_t grid[6];
-	uint64_t expected[4] = { 124, 174, 248, 87 };
+	uint64_t expected[4] = { 13, 78, 246, 198 };
 
 	fill_grid(grid, P, Q);
 
@@ -506,22 +511,23 @@ END_TEST
  * test_simd_bins_pm1 -- exact bin values for p=-1, q=1 on a 3x2 grid.
  *
  * Same grid as test_simd_bins_p1.
- * bin b = -col - row + off, off = P+Q-2 = 3:
- *   b=0: (r=1,c=2) --> 198
- *   b=1: (r=0,c=2) + (r=1,c=1) --> 87 + 161 = 248
- *   b=2: (r=0,c=1) + (r=1,c=0) --> 50 + 124 = 174
- *   b=3: (r=0,c=0) --> 13
+ * Paper convention: b = row*p + col*q - off.
+ * For p=-1, q=1: off = -(Q-1) = -1.  b = -row + col - (-1) = -row + col + 1.
+ *   b=0: (r=1,c=0) --> 124
+ *   b=1: (r=0,c=0) ^ (r=1,c=1) --> 13 ^ 161 = 172
+ *   b=2: (r=0,c=1) ^ (r=1,c=2) --> 50 ^ 198 = 244
+ *   b=3: (r=0,c=2) --> 87
  *
- * P=3: NEON/SSE2 2-wide cleanup loop fires for cols 0--1; scalar
- * handles col 2.  Verifies the lane-swap (vextq_u64 / shuffle) and
- * the negative-offset addressing for the partial-width case.
+ * In paper convention with q=1, bins are sequential in col for any p
+ * (bin pointer = bins + row*p - off shifts per row; cols XOR in
+ * sequentially).  Same SIMD helper handles every direction.
  */
 START_TEST(test_simd_bins_pm1)
 {
 	int P = 3, Q = 2, n = 1;
 	struct moj_direction dirs[] = { { -1, 1 } };
 	uint64_t grid[6];
-	uint64_t expected[4] = { 198, 248, 174, 13 };
+	uint64_t expected[4] = { 124, 172, 244, 87 };
 
 	fill_grid(grid, P, Q);
 
@@ -584,6 +590,284 @@ START_TEST(test_simd_vs_scalar_large)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Geometry-driven (gd) tests                                          */
+/*                                                                     */
+/* Setup toggles moj_force_gd(true); teardown restores false.  Every   */
+/* test in this tcase exercises moj_inverse_gd directly to keep the    */
+/* assertions grounded — not via the dispatcher.                       */
+/* ------------------------------------------------------------------ */
+
+static void gd_setup(void)
+{
+	moj_force_gd(true);
+}
+
+static void gd_teardown(void)
+{
+	moj_force_gd(false);
+}
+
+START_TEST(test_gd_4x3)
+{
+	int P = 4, Q = 3, n = 3;
+	struct moj_direction dirs[] = { { -1, 1 }, { 1, 1 }, { 2, 1 } };
+	uint64_t grid[12], recovered[12];
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse_gd(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(grid, recovered, sizeof(grid)), 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+START_TEST(test_gd_6x4)
+{
+	int P = 6, Q = 4, n = 4;
+	struct moj_direction dirs[] = {
+		{ -2, 1 }, { -1, 1 }, { 1, 1 }, { 2, 1 }
+	};
+	uint64_t grid[24], recovered[24];
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse_gd(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(grid, recovered, sizeof(grid)), 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+START_TEST(test_gd_q1)
+{
+	/*
+	 * Q=1 degenerate case.  np=1, sweep collapses to copying the
+	 * sole bin into the single row.  s_minus = s_plus = 0 (empty
+	 * interior range).
+	 */
+	int P = 4, Q = 1, n = 1;
+	struct moj_direction dirs[] = { { 1, 1 } };
+	uint64_t grid[4], recovered[4];
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse_gd(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(grid, recovered, sizeof(grid)), 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+START_TEST(test_gd_q2)
+{
+	/* Q=2: smallest non-trivial case where rdv != 0. */
+	int P = 4, Q = 2, n = 2;
+	struct moj_direction dirs[] = { { -1, 1 }, { 1, 1 } };
+	uint64_t grid[8], recovered[8];
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse_gd(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(grid, recovered, sizeof(grid)), 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+START_TEST(test_gd_n_neq_q_rejection)
+{
+	/*
+	 * gd requires n == Q.  Passing n != Q must return -EINVAL.
+	 * (The dispatcher would normally fall back to peel; here we
+	 * call gd directly.)
+	 */
+	int P = 4, Q = 3, n = 4;
+	struct moj_direction dirs[] = {
+		{ -2, 1 }, { -1, 1 }, { 1, 1 }, { 2, 1 }
+	};
+	uint64_t recovered[12];
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	int ret = moj_inverse_gd(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, -EINVAL);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+START_TEST(test_gd_zero_grid)
+{
+	int P = 6, Q = 4, n = 4;
+	struct moj_direction dirs[] = {
+		{ -2, 1 }, { -1, 1 }, { 1, 1 }, { 2, 1 }
+	};
+	uint64_t grid[24] = { 0 }, recovered[24];
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse_gd(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	for (int i = 0; i < 24; i++)
+		ck_assert_uint_eq(recovered[i], 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+START_TEST(test_gd_p0_row_parity)
+{
+	/*
+	 * Exercise p==0 alongside non-zero slopes.  In paper
+	 * convention with q=1, p==0 is the column-XOR parity (bin
+	 * b = col - off); the gd sweep ordering must arrange other
+	 * column-x pixels to be recovered before p==0 is reached for
+	 * pixel (y, x).  Test name is historical (p==0 was row-parity
+	 * in reffs's earlier convention).
+	 *
+	 * P=4, Q=3, n=3, dirs={-1, 0, 1}.
+	 * Katz: sum|q|=3 >= Q=3.
+	 */
+	int P = 4, Q = 3, n = 3;
+	struct moj_direction dirs[] = { { -1, 1 }, { 0, 1 }, { 1, 1 } };
+	uint64_t grid[12], recovered[12];
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse_gd(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(grid, recovered, sizeof(grid)), 0);
+
+	free_projs(projs, n);
+}
+END_TEST
+
+START_TEST(test_gd_24k_geometry)
+{
+	/*
+	 * Production geometry: P=3072, Q=2, n=2.  ~6144 cells, well
+	 * within the 2-second per-test budget.  Mirrors the existing
+	 * test_sys_24k codec scenarios.
+	 */
+	int P = 3072, Q = 2, n = 2;
+	struct moj_direction dirs[] = { { -1, 1 }, { 1, 1 } };
+	uint64_t *grid = calloc((size_t)P * Q, sizeof(uint64_t));
+	uint64_t *recovered = calloc((size_t)P * Q, sizeof(uint64_t));
+
+	ck_assert_ptr_nonnull(grid);
+	ck_assert_ptr_nonnull(recovered);
+
+	for (int i = 0; i < P * Q; i++)
+		grid[i] = (uint64_t)(i * 37 + 13);
+
+	struct moj_projection **projs = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs);
+
+	moj_forward(grid, P, Q, dirs, n, projs);
+
+	int ret = moj_inverse_gd(recovered, P, Q, dirs, n, projs);
+
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(memcmp(grid, recovered, P * Q * sizeof(uint64_t)),
+			 0);
+
+	free_projs(projs, n);
+	free(recovered);
+	free(grid);
+}
+END_TEST
+
+START_TEST(test_gd_vs_peel_parity)
+{
+	/*
+	 * gd and peel must produce byte-identical recovered grids on
+	 * the same input.  The forward bins are the same (algebra is
+	 * shared), so any divergence in the recovered output is a gd
+	 * bug.
+	 */
+	int P = 6, Q = 4, n = 4;
+	struct moj_direction dirs[] = {
+		{ -2, 1 }, { -1, 1 }, { 1, 1 }, { 2, 1 }
+	};
+	uint64_t grid[24];
+	uint64_t recovered_gd[24];
+	uint64_t recovered_peel[24];
+
+	fill_grid(grid, P, Q);
+
+	struct moj_projection **projs_gd = alloc_projs(dirs, n, P, Q);
+	struct moj_projection **projs_peel = alloc_projs(dirs, n, P, Q);
+
+	ck_assert_ptr_nonnull(projs_gd);
+	ck_assert_ptr_nonnull(projs_peel);
+
+	moj_forward(grid, P, Q, dirs, n, projs_gd);
+	moj_forward(grid, P, Q, dirs, n, projs_peel);
+
+	int rgd = moj_inverse_gd(recovered_gd, P, Q, dirs, n, projs_gd);
+	int rpe = moj_inverse_peel(recovered_peel, P, Q, dirs, n, projs_peel);
+
+	ck_assert_int_eq(rgd, 0);
+	ck_assert_int_eq(rpe, 0);
+	ck_assert_int_eq(memcmp(recovered_gd, recovered_peel, sizeof(grid)),
+			 0);
+	ck_assert_int_eq(memcmp(grid, recovered_gd, sizeof(grid)), 0);
+
+	free_projs(projs_gd, n);
+	free_projs(projs_peel, n);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -592,6 +876,7 @@ static Suite *mojette_suite(void)
 	Suite *s = suite_create("mojette");
 	TCase *tc = tcase_create("core");
 	TCase *tc_simd = tcase_create("simd");
+	TCase *tc_gd = tcase_create("gd");
 
 	tcase_add_test(tc, test_projection_size);
 	tcase_add_test(tc, test_direction_generation);
@@ -601,7 +886,7 @@ static Suite *mojette_suite(void)
 	tcase_add_test(tc, test_inverse_subset);
 	tcase_add_test(tc, test_inverse_too_few);
 	tcase_add_test(tc, test_zero_grid);
-	tcase_add_test(tc, test_wrapping_arithmetic);
+	tcase_add_test(tc, test_xor_identity);
 	suite_add_tcase(s, tc);
 
 	tcase_add_test(tc_simd, test_simd_p1_roundtrip);
@@ -612,6 +897,18 @@ static Suite *mojette_suite(void)
 	tcase_add_test(tc_simd, test_simd_bins_pm1);
 	tcase_add_test(tc_simd, test_simd_vs_scalar_large);
 	suite_add_tcase(s, tc_simd);
+
+	tcase_add_checked_fixture(tc_gd, gd_setup, gd_teardown);
+	tcase_add_test(tc_gd, test_gd_4x3);
+	tcase_add_test(tc_gd, test_gd_6x4);
+	tcase_add_test(tc_gd, test_gd_q1);
+	tcase_add_test(tc_gd, test_gd_q2);
+	tcase_add_test(tc_gd, test_gd_n_neq_q_rejection);
+	tcase_add_test(tc_gd, test_gd_zero_grid);
+	tcase_add_test(tc_gd, test_gd_p0_row_parity);
+	tcase_add_test(tc_gd, test_gd_24k_geometry);
+	tcase_add_test(tc_gd, test_gd_vs_peel_parity);
+	suite_add_tcase(s, tc_gd);
 
 	return s;
 }
