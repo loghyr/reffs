@@ -52,8 +52,8 @@ static int cmp_u64(const void *a, const void *b)
 	return x < y ? -1 : x > y;
 }
 
-static struct moj_projection **
-alloc_projs(const struct moj_direction *dirs, int n, int P, int Q)
+static struct moj_projection **alloc_projs(const struct moj_direction *dirs,
+					   int n, int P, int Q)
 {
 	struct moj_projection **projs = calloc((size_t)n, sizeof(*projs));
 
@@ -70,9 +70,8 @@ static void free_projs(struct moj_projection **projs, int n)
 	free(projs);
 }
 
-static void
-bench_dense(const char *label, int P, int Q, int n,
-	    const struct moj_direction *dirs)
+static void bench_dense(const char *label, int P, int Q, int n,
+			const struct moj_direction *dirs)
 {
 	uint64_t *grid = calloc((size_t)P * Q, sizeof(uint64_t));
 	uint64_t *recovered = calloc((size_t)P * Q, sizeof(uint64_t));
@@ -138,15 +137,15 @@ bench_dense(const char *label, int P, int Q, int n,
 	free(grid);
 }
 
-static void
-bench_sparse(const char *label, int P, int k, int m,
-	     const struct moj_direction *dirs_n, const int *missing,
-	     int n_missing)
+static void bench_sparse(const char *label, int P, int k, int m,
+			 const struct moj_direction *dirs_n, const int *missing,
+			 int n_missing)
 {
 	uint64_t *grid_orig = calloc((size_t)P * k, sizeof(uint64_t));
 
 	for (int i = 0; i < P * k; i++)
-		grid_orig[i] = (uint64_t)(i * 0x9E3779B97F4A7C15ULL + 0xCAFEBABE);
+		grid_orig[i] =
+			(uint64_t)(i * 0x9E3779B97F4A7C15ULL + 0xCAFEBABE);
 
 	struct moj_projection **parity = alloc_projs(dirs_n + k, m, P, k);
 
@@ -189,8 +188,7 @@ bench_sparse(const char *label, int P, int k, int m,
 
 		uint64_t t0 = now_ns();
 		int rp = moj_inverse_peel_sparse(grid_p, P, k, dirs_n + k, m,
-						 projs_p, missing,
-						 n_missing);
+						 projs_p, missing, n_missing);
 		uint64_t t1 = now_ns();
 
 		if (run >= WARMUP)
@@ -237,10 +235,9 @@ bench_sparse(const char *label, int P, int k, int m,
 /* Codec-level bench (RS vs Mojette-sys vs Mojette-nonsys, peel/gd)    */
 /* ------------------------------------------------------------------ */
 
-static void
-bench_codec(const char *label, struct ec_codec *codec, int k, int m,
-	    size_t shard_len, const int *missing, int n_missing,
-	    bool force_gd)
+static void bench_codec(const char *label, struct ec_codec *codec, int k, int m,
+			size_t shard_len, const int *missing, int n_missing,
+			bool force_gd)
 {
 	uint8_t *data[k];
 	uint8_t *parity[m];
@@ -263,8 +260,8 @@ bench_codec(const char *label, struct ec_codec *codec, int k, int m,
 				data_buf_len = s;
 		}
 		for (int i = 0; i < m; i++) {
-			size_t s = codec->ec_shard_size(codec, k + i,
-							shard_len);
+			size_t s =
+				codec->ec_shard_size(codec, k + i, shard_len);
 
 			if (s > parity_buf_len)
 				parity_buf_len = s;
@@ -330,8 +327,7 @@ bench_codec(const char *label, struct ec_codec *codec, int k, int m,
 		for (int i = 0; i < n_missing; i++) {
 			if (memcmp(data[missing[i]], orig[missing[i]],
 				   shard_len) != 0) {
-				fprintf(stderr,
-					"FAIL %s verify shard %d\n",
+				fprintf(stderr, "FAIL %s verify shard %d\n",
 					label, missing[i]);
 			}
 		}
@@ -358,9 +354,8 @@ bench_codec(const char *label, struct ec_codec *codec, int k, int m,
 		free(parity[i]);
 }
 
-static void
-bench_codec_set(int k, int m, size_t shard_len, const int *missing,
-		int n_missing, const char *miss_label)
+static void bench_codec_set(int k, int m, size_t shard_len, const int *missing,
+			    int n_missing, const char *miss_label)
 {
 	struct ec_codec *rs = ec_rs_create(k, m);
 	struct ec_codec *msys = ec_mojette_sys_create(k, m);
@@ -374,8 +369,7 @@ bench_codec_set(int k, int m, size_t shard_len, const int *missing,
 	snprintf(buf, sizeof(buf), "Mojette-sys %d+%d %s peel", k, m,
 		 miss_label);
 	bench_codec(buf, msys, k, m, shard_len, missing, n_missing, false);
-	snprintf(buf, sizeof(buf), "Mojette-sys %d+%d %s gd", k, m,
-		 miss_label);
+	snprintf(buf, sizeof(buf), "Mojette-sys %d+%d %s gd", k, m, miss_label);
 	bench_codec(buf, msys, k, m, shard_len, missing, n_missing, true);
 
 	snprintf(buf, sizeof(buf), "Mojette-nonsys %d+%d %s peel", k, m,
@@ -401,10 +395,9 @@ int main(void)
 	struct moj_direction d_4x4[] = {
 		{ -2, 1 }, { -1, 1 }, { 1, 1 }, { 2, 1 }
 	};
-	struct moj_direction d_8x8[] = {
-		{ -4, 1 }, { -3, 1 }, { -2, 1 }, { -1, 1 },
-		{ 1, 1 },  { 2, 1 },  { 3, 1 },  { 4, 1 }
-	};
+	struct moj_direction d_8x8[] = { { -4, 1 }, { -3, 1 }, { -2, 1 },
+					 { -1, 1 }, { 1, 1 },  { 2, 1 },
+					 { 3, 1 },  { 4, 1 } };
 	struct moj_direction d_2x2[] = { { -1, 1 }, { 1, 1 } };
 
 	bench_dense("dense 16x4 (RS-4+2-ish)", 16, 4, 4, d_4x4);
@@ -417,26 +410,23 @@ int main(void)
 	bench_dense("dense 3072x2 (24K codec demo)", 3072, 2, 2, d_2x2);
 
 	printf("\n=== sparse (k=4, m=2, lose 2 data rows) ===\n");
-	struct moj_direction d_n6[] = {
-		{ -3, 1 }, { -2, 1 }, { -1, 1 }, { 1, 1 }, { 2, 1 }, { 3, 1 }
-	};
+	struct moj_direction d_n6[] = { { -3, 1 }, { -2, 1 }, { -1, 1 },
+					{ 1, 1 },  { 2, 1 },  { 3, 1 } };
 	int miss03[] = { 0, 3 };
 	int miss12[] = { 1, 2 };
 
-	bench_sparse("sys k=4 m=2 P=512 lose{0,3}", 512, 4, 2, d_n6, miss03,
-		     2);
-	bench_sparse("sys k=4 m=2 P=512 lose{1,2}", 512, 4, 2, d_n6, miss12,
-		     2);
+	bench_sparse("sys k=4 m=2 P=512 lose{0,3}", 512, 4, 2, d_n6, miss03, 2);
+	bench_sparse("sys k=4 m=2 P=512 lose{1,2}", 512, 4, 2, d_n6, miss12, 2);
 	bench_sparse("sys k=4 m=2 P=4096 lose{0,3}", 4096, 4, 2, d_n6, miss03,
 		     2);
 	bench_sparse("sys k=4 m=2 P=4096 lose{1,2}", 4096, 4, 2, d_n6, miss12,
 		     2);
 
 	printf("\n=== sparse (k=8, m=2, lose 2 data rows) ===\n");
-	struct moj_direction d_n10[] = {
-		{ -5, 1 }, { -4, 1 }, { -3, 1 }, { -2, 1 }, { -1, 1 },
-		{ 1, 1 },  { 2, 1 },  { 3, 1 },  { 4, 1 },  { 5, 1 }
-	};
+	struct moj_direction d_n10[] = { { -5, 1 }, { -4, 1 }, { -3, 1 },
+					 { -2, 1 }, { -1, 1 }, { 1, 1 },
+					 { 2, 1 },  { 3, 1 },  { 4, 1 },
+					 { 5, 1 } };
 	int miss07[] = { 0, 7 };
 
 	bench_sparse("sys k=8 m=2 P=512 lose{0,7}", 512, 8, 2, d_n10, miss07,

@@ -793,7 +793,8 @@ int main(int argc, char *argv[])
 	argv++;
 	optind = 1;
 
-	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:C:c:d:l:S:x:Z:DFG?",
+	while ((opt = getopt_long(argc, argv,
+				  "h:f:i:o:k:m:s:C:c:d:l:S:x:Z:DFG?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':

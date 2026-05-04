@@ -817,8 +817,7 @@ START_TEST(test_gd_24k_geometry)
 	int ret = moj_inverse_gd(recovered, P, Q, dirs, n, projs);
 
 	ck_assert_int_eq(ret, 0);
-	ck_assert_int_eq(memcmp(grid, recovered, P * Q * sizeof(uint64_t)),
-			 0);
+	ck_assert_int_eq(memcmp(grid, recovered, P * Q * sizeof(uint64_t)), 0);
 
 	free_projs(projs, n);
 	free(recovered);
@@ -858,8 +857,7 @@ START_TEST(test_gd_vs_peel_parity)
 
 	ck_assert_int_eq(rgd, 0);
 	ck_assert_int_eq(rpe, 0);
-	ck_assert_int_eq(memcmp(recovered_gd, recovered_peel, sizeof(grid)),
-			 0);
+	ck_assert_int_eq(memcmp(recovered_gd, recovered_peel, sizeof(grid)), 0);
 	ck_assert_int_eq(memcmp(grid, recovered_gd, sizeof(grid)), 0);
 
 	free_projs(projs_gd, n);
