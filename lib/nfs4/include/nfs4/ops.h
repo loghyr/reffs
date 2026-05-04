@@ -163,6 +163,15 @@ uint32_t nfs4_op_layoutreturn_resume(struct rpc_trans *rt);
 uint32_t nfs4_op_layoutget_trust_resume(struct rpc_trans *rt);
 
 /*
+ * nfs4_op_layoutget_revoke_resume - fan-out resume for the trust-stateid
+ * slice 1 conflict-recall path: REVOKE_STATEID for prior-client layout
+ * stateids has completed (or failed best-effort).  Re-invokes
+ * nfs4_op_layoutget; the second pass sees an empty conflict set and
+ * proceeds to the normal grant + TRUST_STATEID flow.
+ */
+uint32_t nfs4_op_layoutget_revoke_resume(struct rpc_trans *rt);
+
+/*
  * nfs4_recall_dir_delegations - recall all directory delegations on dir
  * except those held by exclude.
  *

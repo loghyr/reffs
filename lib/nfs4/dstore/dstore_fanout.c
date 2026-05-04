@@ -93,6 +93,19 @@ static void *fanout_thread(void *arg)
 			df->df_ts_clientid, df->df_ts_expire_sec,
 			df->df_ts_expire_nsec, df->df_ts_principal);
 		break;
+
+	case FANOUT_REVOKE_STATEID:
+		/*
+		 * Trust-stateid slice 1 conflict-recall path: each slot
+		 * carries the prior-client stateid this DS should drop
+		 * from its trust table.  N priors x M DSes are packed
+		 * into one fan-out so we only task_pause once.
+		 */
+		ret = dstore_revoke_stateid(slot->fs_ds, slot->fs_fh,
+					    slot->fs_fh_len,
+					    slot->fs_revoke_seqid,
+					    slot->fs_revoke_other);
+		break;
 	}
 
 	if (slot->fs_ldf)

@@ -34,6 +34,15 @@ struct fanout_slot {
 	struct layout_data_file *fs_ldf; /* back-pointer to layout data file */
 	int fs_result; /* 0 or -errno */
 	struct dstore_wcc fs_wcc; /* post-op WCC from SETATTR ops */
+	/*
+	 * FANOUT_REVOKE_STATEID per-slot stateid: the trust-stateid
+	 * slice 1 conflict-recall path packs N prior-client stateids
+	 * x M DSes in one fan-out, each slot carrying the stateid the
+	 * recipient DS should remove from its trust table.  Other
+	 * fanout_op types ignore these fields.
+	 */
+	uint32_t fs_revoke_seqid;
+	uint8_t fs_revoke_other[12]; /* NFS4_OTHER_SIZE */
 };
 
 /* Operation type for the fan-out. */
@@ -43,6 +52,7 @@ enum fanout_op {
 	FANOUT_FENCE,
 	FANOUT_CHMOD,
 	FANOUT_TRUST_STATEID,
+	FANOUT_REVOKE_STATEID,
 };
 
 /* Fan-out context -- allocated per compound that needs DS fan-out. */

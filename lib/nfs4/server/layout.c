@@ -729,6 +729,182 @@ uint32_t nfs4_op_layoutget_trust_resume(struct rpc_trans *rt)
 }
 
 /* ------------------------------------------------------------------ */
+/* LAYOUTGET conflict-recall (trust-stateid slice 1)                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * nfs4_op_layoutget_revoke_resume - resume after the conflict-recall
+ * REVOKE_STATEID fan-out completes.  Re-invokes nfs4_op_layoutget;
+ * the second pass sees an empty conflict set and proceeds to the
+ * normal grant + TRUST_STATEID flow.
+ *
+ * Best-effort on fan-out failure: a DS that didn't ack the revoke
+ * may still honor the prior client's stateid until lease expiry;
+ * the MIXED outcome the slice closes in the common case can recur
+ * for the duration of one lease.  Logged; no retry.
+ */
+uint32_t nfs4_op_layoutget_revoke_resume(struct rpc_trans *rt)
+{
+	struct compound *compound = rt->rt_compound;
+	struct dstore_fanout *df = rt->rt_async_data;
+
+	rt->rt_async_data = NULL;
+
+	int result = dstore_fanout_result(df);
+
+	if (result != 0)
+		TRACE("LAYOUTGET: conflict-recall REVOKE_STATEID fan-out "
+		      "failed (%d) -- prior-client trust entries may persist",
+		      result);
+
+	dstore_fanout_free(df);
+	return nfs4_op_layoutget(compound);
+}
+
+/*
+ * nfs4_layoutget_check_conflicts - the trust-stateid slice 1 conflict-
+ * detection step.
+ *
+ * Walks the inode's stateid table for Layout_Stateids belonging to
+ * clients OTHER than the caller.  If any are found:
+ *   - Fires CB_LAYOUTRECALL_FNF to each prior client (best-effort).
+ *   - Builds a REVOKE_STATEID fan-out across N priors x M DSes,
+ *     packed into a single fanout so we only task_pause once.
+ *   - Pauses the compound; the resume callback re-invokes
+ *     nfs4_op_layoutget.
+ *
+ * Returns:
+ *   1  -- async pause issued; caller returns NFS4_OP_FLAG_ASYNC.
+ *   0  -- no conflict, or conflict detected but the recall path could
+ *         not be set up (no layout segments yet, no eligible DSes,
+ *         allocation failure).  Caller proceeds inline.
+ *
+ * Pre-condition: i_attr_mutex must NOT be held.  The recall does not
+ * mutate the inode's i_layout_segments; it acts on the trust tables
+ * at the DSes.
+ */
+static int nfs4_layoutget_check_conflicts(struct compound *compound)
+{
+	struct inode *inode = compound->c_inode;
+
+	if (!inode || !compound->c_nfs4_client)
+		return 0;
+
+	struct client *self = nfs4_client_to_client(compound->c_nfs4_client);
+	struct layout_segments *lss = inode->i_layout_segments;
+
+	/*
+	 * No layout segments yet means no DSes to revoke against; the
+	 * very first LAYOUTGET on the inode never has a conflict.  This
+	 * is the common case and is checked first to keep the no-op
+	 * path cheap.
+	 */
+	if (!lss || lss->lss_count == 0)
+		return 0;
+
+	struct stateid **priors = NULL;
+	uint32_t npriors = 0;
+	int rc = stateid_inode_collect_layouts_excluding(inode, self, &priors,
+							 &npriors);
+
+	if (rc != 0 || npriors == 0)
+		return 0;
+
+	/*
+	 * Fire CB_LAYOUTRECALL_FNF to each prior client.  The recall is
+	 * best-effort and fire-and-forget -- the MDS does not wait for
+	 * the client's DELEGRETURN/LAYOUTRETURN.  Correctness comes from
+	 * the synchronous REVOKE_STATEID below, not from the client
+	 * honoring this recall.  Reuses the migration-recall helper
+	 * which already implements exactly this iteration.
+	 */
+	struct server_state *ss = compound->c_server_state;
+
+	(void)migration_recall_layouts(inode, self, ss);
+
+	/*
+	 * Build the REVOKE_STATEID fan-out: N priors x M DSes packed
+	 * into one fanout so we only task_pause once.
+	 */
+	struct layout_segment *seg = &lss->lss_segs[0];
+	uint32_t M = seg->ls_nfiles;
+	uint32_t total_slots = npriors * M;
+
+	if (total_slots == 0)
+		goto cleanup_priors;
+
+	struct dstore_fanout *df = dstore_fanout_alloc(total_slots);
+
+	if (!df)
+		goto cleanup_priors;
+
+	df->df_op = FANOUT_REVOKE_STATEID;
+
+	uint32_t fi = 0;
+	int setup_ok = 1;
+
+	for (uint32_t p = 0; p < npriors && setup_ok; p++) {
+		stateid4 wire_stid;
+
+		pack_stateid4(&wire_stid, priors[p]);
+
+		for (uint32_t f = 0; f < M; f++) {
+			struct layout_data_file *ldf = &seg->ls_files[f];
+			struct dstore *ds = dstore_find(ldf->ldf_dstore_id);
+
+			if (!ds) {
+				setup_ok = 0;
+				break;
+			}
+
+			struct fanout_slot *slot = &df->df_slots[fi++];
+
+			slot->fs_ds = ds; /* fanout_free will dstore_put */
+			slot->fs_fh_len = ldf->ldf_fh_len;
+			memcpy(slot->fs_fh, ldf->ldf_fh, ldf->ldf_fh_len);
+			slot->fs_ldf = ldf;
+			slot->fs_revoke_seqid = wire_stid.seqid;
+			memcpy(slot->fs_revoke_other, wire_stid.other,
+			       sizeof(slot->fs_revoke_other));
+		}
+	}
+
+	if (fi != total_slots)
+		setup_ok = 0;
+
+	if (!setup_ok) {
+		dstore_fanout_free(df);
+		goto cleanup_priors;
+	}
+
+	/*
+	 * Drop the find-refs the scan took; the priors themselves stay
+	 * in the trust tables until the REVOKE_STATEID fan-out fires.
+	 * Their own MDS-side stateids will be torn down naturally on
+	 * client lease expiry or LAYOUTRETURN; the slice's job is the
+	 * DS-side trust entry only.
+	 */
+	for (uint32_t p = 0; p < npriors; p++)
+		stateid_put(priors[p]);
+	free(priors);
+
+	struct rpc_trans *rt = compound->c_rt;
+	struct task *t = rt->rt_task;
+
+	rt->rt_next_action = nfs4_op_layoutget_revoke_resume;
+	rt->rt_async_data = df;
+	task_pause(t);
+	dstore_fanout_launch(df, t);
+	return 1;
+
+cleanup_priors:
+	for (uint32_t p = 0; p < npriors; p++)
+		stateid_put(priors[p]);
+	free(priors);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* LAYOUTGET                                                           */
 /*                                                                     */
 /* Returns a Flex Files layout for the current filehandle.  Clients    */
@@ -1032,6 +1208,17 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		}
 	}
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+
+	/*
+	 * Trust-stateid slice 1: detect prior-client layout stateids on
+	 * this inode and revoke them at the DSes synchronously before
+	 * granting the new client's layout.  If a recall + revoke is
+	 * pending, the resume callback re-invokes nfs4_op_layoutget,
+	 * which sees an empty conflict set on the second pass and
+	 * proceeds normally.
+	 */
+	if (nfs4_layoutget_check_conflicts(compound))
+		return NFS4_OP_FLAG_ASYNC;
 
 	/* Find or create a layout stateid for this client + inode. */
 	struct layout_stateid *ls =
