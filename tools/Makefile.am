@@ -32,4 +32,9 @@ nfs_tls_test_LDADD = \
 er_demo_SOURCES = er_demo.c
 er_demo_LDADD = $(NFS4_CLIENT_LIBS)
 
-bin_PROGRAMS = ec_demo er_demo nfs_krb5_test nfs_tls_test
+# Algorithm-level Mojette inverse microbenchmark (peel vs gd).
+# No NFS dependencies -- links only against libreffs_ec.la.
+moj_bench_SOURCES = moj_bench.c
+moj_bench_LDADD = $(top_builddir)/lib/ec/libreffs_ec.la
+
+bin_PROGRAMS = ec_demo er_demo nfs_krb5_test nfs_tls_test moj_bench

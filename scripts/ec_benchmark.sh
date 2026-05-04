@@ -12,6 +12,7 @@
 # --degrade N      After each healthy read, re-read with N data shards
 #                  skipped to measure reconstruction overhead.
 # --force-scalar   Pass --force-scalar to ec_demo (disable SIMD).
+# --force-gd       Pass --force-gd to ec_demo (use geometry-driven inverse).
 # --layout TYPE    Layout type: v1 (NFSv3 DS I/O, default) or v2 (CHUNK ops).
 # --shard-size N   Per-data-shard byte size passed to ec_demo's
 #                  --shard-size flag.  Default: empty (ec_demo's own
@@ -27,6 +28,8 @@ set -e
 
 DEGRADE=0
 FORCE_SCALAR=""
+FORCE_GD=""
+INVERSE_TAG="peel"
 LAYOUT_ARG=""
 LAYOUT_TAG="v1"
 SHARD_SIZE_ARG=""
@@ -35,6 +38,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --degrade) DEGRADE="$2"; shift 2 ;;
         --force-scalar) FORCE_SCALAR="--force-scalar"; shift ;;
+        --force-gd) FORCE_GD="--force-gd"; INVERSE_TAG="gd"; shift ;;
         --layout) LAYOUT_ARG="--layout $2"; LAYOUT_TAG="$2"; shift 2 ;;
         --shard-size) SHARD_SIZE_ARG="--shard-size $2"; SHARD_SIZE_TAG="$2"; shift 2 ;;
         *) break ;;
@@ -112,7 +116,9 @@ bench_one() {
     local geom="${k}+${m}"
     local stag="s"
     [ -n "$FORCE_SCALAR" ] && stag="n"
-    local fname="bench_${LAYOUT_TAG}_${stag}_${codec}_${geom}_${sz}_${run}"
+    local itag="p"
+    [ -n "$FORCE_GD" ] && itag="g"
+    local fname="bench_${LAYOUT_TAG}_${stag}${itag}_${codec}_${geom}_${sz}_${run}"
     local input="/tmp/bench_${sz}"
     local skip_arg=""
     [ -n "$skip_ds" ] && skip_arg="--skip-ds $skip_ds"
@@ -126,7 +132,7 @@ bench_one() {
         # shellcheck disable=SC2086
         "$EC_DEMO" write --mds "$MDS" --file "$fname" --input "$input" \
             --k "$k" --m "$m" --codec "$codec" \
-            $FORCE_SCALAR $LAYOUT_ARG $SHARD_SIZE_ARG 2>/dev/null
+            $FORCE_SCALAR $FORCE_GD $LAYOUT_ARG $SHARD_SIZE_ARG 2>/dev/null
         local t1
         t1=$(now_ms)
         write_ms=$(( t1 - t0 ))
@@ -158,7 +164,7 @@ bench_one() {
     # shellcheck disable=SC2086
     "$EC_DEMO" read --mds "$MDS" --file "$fname" --output "/tmp/out_${sz}" \
         --k "$k" --m "$m" --codec "$codec" --size "$sz" \
-        $skip_arg $FORCE_SCALAR $LAYOUT_ARG $SHARD_SIZE_ARG \
+        $skip_arg $FORCE_SCALAR $FORCE_GD $LAYOUT_ARG $SHARD_SIZE_ARG \
         2>>/tmp/ec_bench_err.log
     local t1
     t1=$(now_ms)
@@ -177,7 +183,7 @@ bench_one() {
     # visible by inspection without having to trace control flow.
     rm -f "/tmp/out_${sz}"
 
-    echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode},${LAYOUT_TAG},${CPU_INFO},${SHARD_SIZE_TAG}"
+    echo "${codec},${geom},${sz},${run},${write_ms},${read_ms},${verify},${mode},${LAYOUT_TAG},${CPU_INFO},${INVERSE_TAG},${SHARD_SIZE_TAG}"
 }
 
 # ------------------------------------------------------------------ #
@@ -217,7 +223,7 @@ bench_plain() {
     # Shard size has no meaning for the plain (no-codec) path -- but
     # we still write it to keep the CSV column count uniform across
     # codec and plain rows.
-    echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO},${SHARD_SIZE_TAG}"
+    echo "plain,1+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO},${INVERSE_TAG},${SHARD_SIZE_TAG}"
     rm -f "/tmp/out_${sz}"
 }
 
@@ -255,7 +261,7 @@ bench_stripe() {
         verify="FAIL"
     fi
 
-    echo "stripe,${NUM_DS}+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO}"
+    echo "stripe,${NUM_DS}+0,${sz},${run},${write_ms},${read_ms},${verify},healthy,${LAYOUT_TAG},${CPU_INFO},${INVERSE_TAG},${SHARD_SIZE_TAG}"
     rm -f "/tmp/out_${sz}"
 }
 
@@ -306,19 +312,32 @@ wait_for_mds
 generate_test_files
 
 # CSV header
-echo "codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd"
+echo "codec,geometry,size_bytes,run,write_ms,read_ms,verify,mode,layout,arch,cpu,kernel,simd,inverse,shard_size"
+
+# gd only affects Mojette inverse paths.  In gd phases skip
+# plain/stripe/RS (their numbers are inverse-invariant) so the CSV
+# stays clean and runtime halves.
+if [ -n "$FORCE_GD" ]; then
+    RUN_BASELINES=0
+    EC_CODECS="mojette-sys mojette-nonsys"
+else
+    RUN_BASELINES=1
+    EC_CODECS="rs mojette-sys mojette-nonsys"
+fi
 
 for sz in $SIZES; do
     echo "--- Size: $sz bytes ---" >&2
 
     # Warmup (not recorded)
     for w in $(seq 1 $WARMUP); do
-        bench_plain "$sz" "w${w}" > /dev/null 2>&1 || true
-        bench_stripe "$sz" "w${w}" > /dev/null 2>&1 || true
+        if [ "$RUN_BASELINES" = "1" ]; then
+            bench_plain "$sz" "w${w}" > /dev/null 2>&1 || true
+            bench_stripe "$sz" "w${w}" > /dev/null 2>&1 || true
+        fi
         for geom in $GEOMETRIES; do
             k=${geom%%:*}
             m=${geom##*:}
-            for codec in rs mojette-sys mojette-nonsys; do
+            for codec in $EC_CODECS; do
                 bench_one "$codec" "$k" "$m" "$sz" "w${w}" "healthy" "" \
                     > /dev/null 2>&1 || true
             done
@@ -327,9 +346,11 @@ for sz in $SIZES; do
 
     # Measured runs
     for run in $(seq 1 $RUNS); do
-        # Plain + stripe baselines
-        bench_plain "$sz" "$run"
-        bench_stripe "$sz" "$run"
+        # Plain + stripe baselines (only in peel phases)
+        if [ "$RUN_BASELINES" = "1" ]; then
+            bench_plain "$sz" "$run"
+            bench_stripe "$sz" "$run"
+        fi
 
         # Each geometry
         for geom in $GEOMETRIES; do
@@ -339,19 +360,18 @@ for sz in $SIZES; do
             # Healthy pass -- || true prevents set -e from killing
             # the script when a codec/layout combination fails
             # (e.g., Mojette + v2 CHUNK variable chunk size mismatch).
-            bench_one "rs" "$k" "$m" "$sz" "$run" "healthy" "" || true
-            bench_one "mojette-sys" "$k" "$m" "$sz" "$run" "healthy" "" || true
-            bench_one "mojette-nonsys" "$k" "$m" "$sz" "$run" "healthy" "" || true
+            for codec in $EC_CODECS; do
+                bench_one "$codec" "$k" "$m" "$sz" "$run" "healthy" "" \
+                    || true
+            done
 
             # Degraded pass (skip plain and stripe -- no redundancy)
             if [ "$DEGRADE" -gt 0 ] && [ "$DEGRADE" -le "$m" ]; then
                 skip_list=$(build_skip_list "$DEGRADE")
-                bench_one "rs" "$k" "$m" "$sz" "$run" \
-                    "degraded-${DEGRADE}" "$skip_list" || true
-                bench_one "mojette-sys" "$k" "$m" "$sz" "$run" \
-                    "degraded-${DEGRADE}" "$skip_list" || true
-                bench_one "mojette-nonsys" "$k" "$m" "$sz" "$run" \
-                    "degraded-${DEGRADE}" "$skip_list" || true
+                for codec in $EC_CODECS; do
+                    bench_one "$codec" "$k" "$m" "$sz" "$run" \
+                        "degraded-${DEGRADE}" "$skip_list" || true
+                done
             fi
         done
     done
