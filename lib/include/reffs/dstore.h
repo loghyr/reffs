@@ -154,9 +154,19 @@ void dstore_fini(void);
  * Returns a ref-bumped pointer on success (caller must dstore_put),
  * or NULL on failure (duplicate ID).
  */
+/*
+ * tight_coupling: trust-stateid slice 1.5 opt-in for NFSv3 dstores
+ * known to be reffsd.  When true, ds_tight_coupled is set true at
+ * alloc time (before the dstore is published to the hash table) so
+ * the MDS advertises ffdv_tightly_coupled=true in GETDEVICEINFO and
+ * ec_demo uses the real layout stateid in CHUNK ops.  Local dstores
+ * always set ds_tight_coupled=true regardless of this flag (combined
+ * mode is structurally tight); NFSv4 dstores rely on probe_tight_coupling
+ * at session-setup time and ignore this flag.
+ */
 struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 			    const char *path, enum reffs_ds_protocol protocol,
-			    bool mount);
+			    bool mount, bool tight_coupling);
 
 /*
  * dstore_find -- look up by id.

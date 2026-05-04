@@ -130,6 +130,20 @@ struct reffs_data_server_config {
 	uint16_t port; /* explicit NFS port; 0 = portmap (default) */
 	char path[REFFS_CONFIG_MAX_PATH]; /* export path on the DS */
 	enum reffs_ds_protocol protocol; /* default: nfsv3 */
+	/*
+	 * Trust-stateid slice 1.5: opt-in tight-coupling override
+	 * for NFSv3 dstores.  The NFSv3 vtable defaults
+	 * ds_tight_coupled = false because a generic NFSv3 server
+	 * cannot enforce a trust table.  When the operator KNOWS
+	 * the DS is reffsd (e.g., the bench docker stack), setting
+	 * `tight_coupling = true` forces the dstore-alloc path to
+	 * advertise tight-coupling -- ec_demo then uses the real
+	 * layout stateid in CHUNK_WRITE / READ, and the DS-side
+	 * trust table check at chunk.c:136 actually fires.
+	 *
+	 * Default: false (preserves the existing behaviour).
+	 */
+	bool tight_coupling;
 };
 
 /*

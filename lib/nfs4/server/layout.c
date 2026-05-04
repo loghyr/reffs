@@ -202,8 +202,27 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 		ffda.ffda_netaddrs.multipath_list4_val = &na;
 
 		memset(&ver, 0, sizeof(ver));
-		ver.ffdv_version = 3;
-		ver.ffdv_minorversion = 0;
+		/*
+		 * Trust-stateid slice 1.5: when the dstore is tight-coupled
+		 * (slice 1.5 opt-in for NFSv3 dstores known to be reffsd, or
+		 * always-true for local dstores), advertise NFSv4.2 in the
+		 * device-version reply.  The client's tight-coupling activator
+		 * at lib/nfs4/client/mds_layout.c:389 requires
+		 * `ffdv_version==4 && ffdv_minorversion==2` before it accepts
+		 * `ffdv_tightly_coupled=true`.  Hardcoding v3/0 here meant the
+		 * tight-coupling flag was never actionable on the client.
+		 *
+		 * For non-tight-coupled (generic NFSv3) dstores, keep the v3/0
+		 * advertisement so legacy clients continue to use NFSv3 WRITE
+		 * for v1 layouts.
+		 */
+		if (ds->ds_tight_coupled) {
+			ver.ffdv_version = 4;
+			ver.ffdv_minorversion = 2;
+		} else {
+			ver.ffdv_version = 3;
+			ver.ffdv_minorversion = 0;
+		}
 		ver.ffdv_rsize = 1048576;
 		ver.ffdv_wsize = 1048576;
 		ver.ffdv_tightly_coupled = ds->ds_tight_coupled;

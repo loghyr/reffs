@@ -426,7 +426,7 @@ int dstore_probe_root_access(struct dstore *ds)
 
 struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 			    const char *path, enum reffs_ds_protocol protocol,
-			    bool do_mount)
+			    bool do_mount, bool tight_coupling)
 {
 	struct dstore *ds;
 	struct cds_lfht_node *node;
@@ -447,6 +447,17 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 	pthread_mutex_init(&ds->ds_clnt_mutex, NULL);
 
 	/*
+	 * Trust-stateid slice 1.5: opt-in tight-coupling for NFSv3
+	 * dstores known to be reffsd.  Set BEFORE the hash-table
+	 * publish so readers never see ds_tight_coupled=false on
+	 * a tight-coupled dstore.  Local dstores override below
+	 * (combined mode is structurally tight); NFSv4 dstores
+	 * rely on probe_tight_coupling at session-setup time.
+	 */
+	if (tight_coupling)
+		ds->ds_tight_coupled = true;
+
+	/*
 	 * Select the ops vtable: local if the address is the loopback
 	 * or matches our own server.  For remote DSes, select based
 	 * on the configured protocol.
@@ -454,6 +465,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 	if (!strcmp(address, "127.0.0.1") || !strcmp(address, "::1") ||
 	    !strcmp(address, "localhost") || dstore_address_is_local(address)) {
 		ds->ds_ops = &dstore_ops_local;
+		ds->ds_tight_coupled = true; /* combined mode is always tight */
 		__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED,
 				  __ATOMIC_RELEASE);
 
@@ -621,7 +633,8 @@ int dstore_load_config(const struct reffs_config *cfg)
 			&cfg->data_servers[i];
 		struct dstore *ds = dstore_alloc(dsc->id, dsc->address,
 						 dsc->port, dsc->path,
-						 dsc->protocol, true);
+						 dsc->protocol, true,
+						 dsc->tight_coupling);
 
 		if (!ds) {
 			LOG("dstore[%u]: alloc failed for %s:%s", i,

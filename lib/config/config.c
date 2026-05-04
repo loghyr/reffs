@@ -600,6 +600,15 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 					dsc->protocol = REFFS_DS_PROTO_NFSV3;
 				free(d.u.s);
 			}
+
+			/*
+			 * Trust-stateid slice 1.5: opt-in tight-coupling
+			 * for NFSv3 dstores known to be reffsd.  See
+			 * .claude/design/trust-stateid-slice-1-5.md.
+			 */
+			d = toml_bool_in(ds_tbl, "tight_coupling");
+			if (d.ok)
+				dsc->tight_coupling = (bool)d.u.b;
 		}
 	}
 

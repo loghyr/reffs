@@ -33,48 +33,68 @@ dstores      = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 id      = 1
 address = "reffs-ds0"
 path    = "/"
+tight_coupling = true
+protocol = "nfsv4"
 
 [[data_server]]
 id      = 2
 address = "reffs-ds1"
 path    = "/"
+tight_coupling = true
+protocol = "nfsv4"
 
 [[data_server]]
 id      = 3
 address = "reffs-ds2"
 path    = "/"
+tight_coupling = true
+protocol = "nfsv4"
 
 [[data_server]]
 id      = 4
 address = "reffs-ds3"
 path    = "/"
+tight_coupling = true
+protocol = "nfsv4"
 
 [[data_server]]
 id      = 5
 address = "reffs-ds4"
 path    = "/"
+tight_coupling = true
+protocol = "nfsv4"
 
 [[data_server]]
 id      = 6
 address = "reffs-ds5"
 path    = "/"
+tight_coupling = true
+protocol = "nfsv4"
 
 [[data_server]]
 id      = 7
 address = "reffs-ds6"
 path    = "/"
+tight_coupling = true
+protocol = "nfsv4"
 
 [[data_server]]
 id      = 8
 address = "reffs-ds7"
 path    = "/"
+tight_coupling = true
+protocol = "nfsv4"
 
 [[data_server]]
 id      = 9
 address = "reffs-ds8"
 path    = "/"
+tight_coupling = true
+protocol = "nfsv4"
 
 [[data_server]]
 id      = 10
 address = "reffs-ds9"
 path    = "/"
+tight_coupling = true
+protocol = "nfsv4"

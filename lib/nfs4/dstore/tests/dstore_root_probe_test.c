@@ -84,7 +84,7 @@ static const struct dstore_ops dstore_ops_probe_test = {
 static struct dstore *make_probe_dstore(uint32_t id)
 {
 	struct dstore *ds = dstore_alloc(id, "192.0.2.1", 0, "/test",
-					 REFFS_DS_PROTO_NFSV3, false);
+					 REFFS_DS_PROTO_NFSV3, false, false);
 	if (!ds)
 		return NULL;
 
