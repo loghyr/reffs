@@ -57,6 +57,18 @@ struct dstore_mock {
 	_Atomic uint32_t dm_truncate_calls;
 	_Atomic uint32_t dm_fence_calls;
 	_Atomic uint32_t dm_chmod_calls;
+	_Atomic uint32_t dm_revoke_calls;
+	_Atomic uint32_t dm_trust_calls;
+
+	/*
+	 * Last revoke_stateid args received (for tests that assert which
+	 * stateid was revoked at this DS).  When N priors are revoked
+	 * against this mock, only the LAST one is retained -- tests that
+	 * need per-call recording can use dm_revoke_calls and a sequence
+	 * of single-prior tests instead.
+	 */
+	uint32_t dm_last_revoke_seqid;
+	uint8_t dm_last_revoke_other[12]; /* NFS4_OTHER_SIZE */
 
 	/*
 	 * Reply values written into the layout_data_file on getattr.
@@ -123,6 +135,16 @@ static inline uint32_t dstore_mock_fence_calls(const struct dstore_mock *dm)
 static inline uint32_t dstore_mock_chmod_calls(const struct dstore_mock *dm)
 {
 	return atomic_load_explicit(&dm->dm_chmod_calls, memory_order_relaxed);
+}
+
+static inline uint32_t dstore_mock_revoke_calls(const struct dstore_mock *dm)
+{
+	return atomic_load_explicit(&dm->dm_revoke_calls, memory_order_relaxed);
+}
+
+static inline uint32_t dstore_mock_trust_calls(const struct dstore_mock *dm)
+{
+	return atomic_load_explicit(&dm->dm_trust_calls, memory_order_relaxed);
 }
 
 /* ------------------------------------------------------------------ */

@@ -125,6 +125,56 @@ static int mock_remove(struct dstore *ds __attribute__((unused)),
 	return -ENOSYS;
 }
 
+/*
+ * Trust-stateid hooks: count only.  No mock trust table; tests that
+ * need to assert "the prior client's trust entry is gone" use the
+ * revoke-call counter instead.  The probe_tight_coupling stub
+ * returns 0 so dstore_alloc considers the mock tight-coupled (which
+ * the slice 1 path requires before issuing TRUST_STATEID).
+ */
+static int mock_probe_tight_coupling(struct dstore *ds __attribute__((unused)))
+{
+	return 0;
+}
+
+static int mock_trust_stateid(struct dstore *ds,
+			      const uint8_t *fh __attribute__((unused)),
+			      uint32_t fh_len __attribute__((unused)),
+			      uint32_t stid_seqid __attribute__((unused)),
+			      const uint8_t *stid_other __attribute__((unused)),
+			      uint32_t iomode __attribute__((unused)),
+			      uint64_t clientid __attribute__((unused)),
+			      int64_t expire_sec __attribute__((unused)),
+			      uint32_t expire_nsec __attribute__((unused)),
+			      const char *principal __attribute__((unused)))
+{
+	struct dstore_mock *dm = mock_from_ds(ds);
+
+	atomic_fetch_add_explicit(&dm->dm_trust_calls, 1, memory_order_relaxed);
+	return 0;
+}
+
+static int mock_revoke_stateid(struct dstore *ds,
+			       const uint8_t *fh __attribute__((unused)),
+			       uint32_t fh_len __attribute__((unused)),
+			       uint32_t stid_seqid, const uint8_t *stid_other)
+{
+	struct dstore_mock *dm = mock_from_ds(ds);
+
+	atomic_fetch_add_explicit(&dm->dm_revoke_calls, 1,
+				  memory_order_relaxed);
+	dm->dm_last_revoke_seqid = stid_seqid;
+	memcpy(dm->dm_last_revoke_other, stid_other,
+	       sizeof(dm->dm_last_revoke_other));
+	return 0;
+}
+
+static int mock_bulk_revoke_stateid(struct dstore *ds __attribute__((unused)),
+				    uint64_t clientid __attribute__((unused)))
+{
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Lifecycle                                                           */
 
@@ -143,6 +193,10 @@ struct dstore_mock *dstore_mock_alloc(uint32_t id)
 	dm->dm_ops.truncate = mock_truncate;
 	dm->dm_ops.fence = mock_fence;
 	dm->dm_ops.getattr = mock_getattr;
+	dm->dm_ops.probe_tight_coupling = mock_probe_tight_coupling;
+	dm->dm_ops.trust_stateid = mock_trust_stateid;
+	dm->dm_ops.revoke_stateid = mock_revoke_stateid;
+	dm->dm_ops.bulk_revoke_stateid = mock_bulk_revoke_stateid;
 	/* read/write/commit remain NULL -- not needed for fan-out tests */
 
 	dm->dm_id = id;
@@ -210,9 +264,13 @@ void dstore_mock_reset(struct dstore_mock *dm)
 	atomic_store_explicit(&dm->dm_truncate_calls, 0, memory_order_relaxed);
 	atomic_store_explicit(&dm->dm_fence_calls, 0, memory_order_relaxed);
 	atomic_store_explicit(&dm->dm_chmod_calls, 0, memory_order_relaxed);
+	atomic_store_explicit(&dm->dm_revoke_calls, 0, memory_order_relaxed);
+	atomic_store_explicit(&dm->dm_trust_calls, 0, memory_order_relaxed);
 	dm->dm_reply_size = 0;
 	dm->dm_reply_mtime = (struct timespec){ 0, 0 };
 	dm->dm_getattr_fail = false;
+	dm->dm_last_revoke_seqid = 0;
+	memset(dm->dm_last_revoke_other, 0, sizeof(dm->dm_last_revoke_other));
 }
 
 /* ------------------------------------------------------------------ */

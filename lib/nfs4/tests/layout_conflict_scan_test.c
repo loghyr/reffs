@@ -352,23 +352,180 @@ START_TEST(test_scan_growth_boundary)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Group B: FANOUT_REVOKE_STATEID end-to-end through the dstore_mock  */
+/*                                                                     */
+/* Group A above tests the scan function in isolation.  Group B tests */
+/* the second half of the slice's conflict-recall pipeline: that a    */
+/* manually-built FANOUT_REVOKE_STATEID fan-out with the new per-slot */
+/* fs_revoke_seqid / fs_revoke_other fields actually delivers the     */
+/* per-slot args to the dstore vtable's revoke_stateid hook.  The     */
+/* mock's revoke_stateid hook records the args; we assert.            */
+/*                                                                     */
+/* What this group does NOT test (deferred to Friday harness):         */
+/*  - the full LAYOUTGET path that triggers the conflict scan + recall */
+/*  - real CB_LAYOUTRECALL fan-out to live clients                     */
+/*  - real REVOKE propagation timing across cross-host DSes            */
+/* ------------------------------------------------------------------ */
+
+#include "reffs/dstore.h"
+#include "reffs/rpc.h"
+#include "reffs/task.h"
+#include "../dstore/dstore_fanout.h"
+#include "dstore_mock.h"
+
+#define MOCK_DS_ID 8861
+
+/* Minimal task + rpc_trans pair for fan-out tests. */
+struct fanout_ctx {
+	struct rpc_trans rt;
+	struct task task;
+};
+
+static struct fanout_ctx *make_fanout_ctx(void)
+{
+	struct fanout_ctx *fc = calloc(1, sizeof(*fc));
+
+	ck_assert_ptr_nonnull(fc);
+	atomic_store_explicit(&fc->task.t_state, TASK_RUNNING,
+			      memory_order_relaxed);
+	fc->rt.rt_task = &fc->task;
+	fc->rt.rt_fd = -1;
+	return fc;
+}
+
+static struct dstore_mock *fanout_mock;
+static struct fanout_ctx *fanout_fc;
+
+static void fanout_setup(void)
+{
+	nfs4_test_setup();
+	/*
+	 * The mock pulls in dstore_alloc, which requires the dstore
+	 * subsystem to be initialised.  nfs4_test_setup does not call
+	 * dstore_init for us; mock-using TCases do it explicitly per
+	 * the reflected_getattr_test pattern (rg_dstore_setup).
+	 */
+	ck_assert_int_eq(dstore_init(), 0);
+	fanout_mock = dstore_mock_alloc(MOCK_DS_ID);
+	ck_assert_ptr_nonnull(fanout_mock);
+	fanout_fc = make_fanout_ctx();
+}
+
+static void fanout_teardown(void)
+{
+	free(fanout_fc);
+	fanout_fc = NULL;
+	dstore_mock_free(fanout_mock);
+	fanout_mock = NULL;
+	/*
+	 * Tear down nfs4 state first (may expire stateids that touch
+	 * the dstore table); only then tear down dstore.  Same order
+	 * as rg_dstore_teardown.
+	 */
+	nfs4_test_teardown();
+	dstore_fini();
+}
+
+/*
+ * One mock DS, one prior stateid -- the simplest revoke fan-out.
+ * Asserts the mock saw exactly one revoke call carrying the
+ * stateid we put in the slot.
+ */
+START_TEST(test_revoke_fanout_single)
+{
+	struct dstore_fanout *df = dstore_fanout_alloc(1);
+
+	ck_assert_ptr_nonnull(df);
+	df->df_op = FANOUT_REVOKE_STATEID;
+
+	struct dstore *ds = dstore_find(MOCK_DS_ID);
+
+	ck_assert_ptr_nonnull(ds);
+
+	struct fanout_slot *slot = &df->df_slots[0];
+
+	slot->fs_ds = ds; /* fanout_free will dstore_put */
+	slot->fs_fh_len = 0;
+	slot->fs_revoke_seqid = 0xDECAFBAD;
+	for (uint32_t i = 0; i < sizeof(slot->fs_revoke_other); i++)
+		slot->fs_revoke_other[i] = (uint8_t)(0xA0 + i);
+
+	task_pause(fanout_fc->rt.rt_task);
+	dstore_fanout_launch(df, fanout_fc->rt.rt_task);
+	mock_drive_fanout(&fanout_fc->rt);
+
+	ck_assert_uint_eq(dstore_mock_revoke_calls(fanout_mock), 1);
+	ck_assert_uint_eq(fanout_mock->dm_last_revoke_seqid, 0xDECAFBAD);
+	for (uint32_t i = 0; i < sizeof(fanout_mock->dm_last_revoke_other); i++)
+		ck_assert_uint_eq(fanout_mock->dm_last_revoke_other[i],
+				  (uint8_t)(0xA0 + i));
+
+	dstore_fanout_free(df);
+}
+END_TEST
+
+/*
+ * Three slots all targeting the same mock DS, three distinct
+ * stateids -- the N-priors-x-1-DS shape.  Asserts the mock saw
+ * three revokes (the count discriminates the per-slot args even
+ * though only the LAST args are retained).
+ */
+START_TEST(test_revoke_fanout_three_priors)
+{
+	struct dstore_fanout *df = dstore_fanout_alloc(3);
+
+	ck_assert_ptr_nonnull(df);
+	df->df_op = FANOUT_REVOKE_STATEID;
+
+	for (uint32_t i = 0; i < 3; i++) {
+		struct dstore *ds = dstore_find(MOCK_DS_ID);
+
+		ck_assert_ptr_nonnull(ds);
+		struct fanout_slot *slot = &df->df_slots[i];
+
+		slot->fs_ds = ds;
+		slot->fs_fh_len = 0;
+		slot->fs_revoke_seqid = 1000 + i;
+		memset(slot->fs_revoke_other, (int)(0x10 + i),
+		       sizeof(slot->fs_revoke_other));
+	}
+
+	task_pause(fanout_fc->rt.rt_task);
+	dstore_fanout_launch(df, fanout_fc->rt.rt_task);
+	mock_drive_fanout(&fanout_fc->rt);
+
+	ck_assert_uint_eq(dstore_mock_revoke_calls(fanout_mock), 3);
+
+	dstore_fanout_free(df);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 
 static Suite *layout_conflict_scan_suite(void)
 {
 	Suite *s = suite_create("layout_conflict_scan");
-	TCase *tc = tcase_create("scan");
+	TCase *tc_scan = tcase_create("scan");
 
-	tcase_add_checked_fixture(tc, scan_setup, scan_teardown);
-	tcase_add_test(tc, test_scan_empty_inode);
-	tcase_add_test(tc, test_scan_only_self);
-	tcase_add_test(tc, test_scan_one_other);
-	tcase_add_test(tc, test_scan_two_others_with_self);
-	tcase_add_test(tc, test_scan_three_others_no_self);
-	tcase_add_test(tc, test_scan_null_inode);
-	tcase_add_test(tc, test_scan_mixed_tags);
-	tcase_add_test(tc, test_scan_growth_boundary);
-	suite_add_tcase(s, tc);
+	tcase_add_checked_fixture(tc_scan, scan_setup, scan_teardown);
+	tcase_add_test(tc_scan, test_scan_empty_inode);
+	tcase_add_test(tc_scan, test_scan_only_self);
+	tcase_add_test(tc_scan, test_scan_one_other);
+	tcase_add_test(tc_scan, test_scan_two_others_with_self);
+	tcase_add_test(tc_scan, test_scan_three_others_no_self);
+	tcase_add_test(tc_scan, test_scan_null_inode);
+	tcase_add_test(tc_scan, test_scan_mixed_tags);
+	tcase_add_test(tc_scan, test_scan_growth_boundary);
+	suite_add_tcase(s, tc_scan);
+
+	TCase *tc_fanout = tcase_create("revoke_fanout");
+
+	tcase_add_checked_fixture(tc_fanout, fanout_setup, fanout_teardown);
+	tcase_add_test(tc_fanout, test_revoke_fanout_single);
+	tcase_add_test(tc_fanout, test_revoke_fanout_three_priors);
+	suite_add_tcase(s, tc_fanout);
+
 	return s;
 }
 

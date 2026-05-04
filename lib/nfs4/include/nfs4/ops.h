@@ -172,6 +172,15 @@ uint32_t nfs4_op_layoutget_trust_resume(struct rpc_trans *rt);
 uint32_t nfs4_op_layoutget_revoke_resume(struct rpc_trans *rt);
 
 /*
+ * nfs4_layoutget_check_conflicts - conflict-detection step for trust-
+ * stateid slice 1.  Returns 1 if an async REVOKE_STATEID fan-out is
+ * in flight (caller returns NFS4_OP_FLAG_ASYNC), 0 if no conflict
+ * (caller proceeds inline).  Exposed in this header so unit tests can
+ * exercise the path without building a full LAYOUTGET compound.
+ */
+int nfs4_layoutget_check_conflicts(struct compound *compound);
+
+/*
  * nfs4_recall_dir_delegations - recall all directory delegations on dir
  * except those held by exclude.
  *

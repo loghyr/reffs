@@ -7,7 +7,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ## Context
 
-`draft-haynes-nfsv4-flexfiles-v2-data-mover` defines a Proxy Server
+[`draft-haynes-nfsv4-flexfiles-v2-proxy-server`](https://datatracker.ietf.org/doc/draft-haynes-nfsv4-flexfiles-v2-proxy-server/) defines a Proxy Server
 role: a peer of the MDS and DSes that carries out whole-file
 operations (move, repair) and codec translation on behalf of clients
 that cannot speak the file's native codec.  The protocol surface is
@@ -327,7 +327,7 @@ The FH returned is cached on the proxy SB's root inode.
 
 ## PROXY_REGISTRATION authentication
 
-The data-mover draft (`sec-security`) mandates that the MDS <-> PS
+The proxy-server draft (`sec-security`) mandates that the MDS <-> PS
 session MUST use RPCSEC_GSS or RPC-over-TLS with mutual
 authentication; AUTH_SYS on that session is explicitly forbidden.
 An earlier draft of this plan offered AUTH_SYS + source-IP
@@ -563,7 +563,7 @@ Also add the MDS's `[[allowed_ps]]` allowlist check and the
 | `test_proxy_registration_success` | Allowlisted PS sends PROXY_REGISTRATION; MDS records it; session flagged |
 | `test_proxy_registration_reject_not_allowlisted` | Non-allowlisted identity --> NFS4ERR_PERM |
 | `test_proxy_registration_reject_bad_prr_flags` | Non-zero prr_flags --> NFS4ERR_INVAL (per RFC 8178) |
-| `test_proxy_registration_rejects_without_use_non_pnfs` | PROXY_REGISTRATION on a session whose EXCHANGE_ID did not set `EXCHGID4_FLAG_USE_NON_PNFS` --> NFS4ERR_PERM (per data-mover draft sec-PROXY_REGISTRATION) |
+| `test_proxy_registration_rejects_without_use_non_pnfs` | PROXY_REGISTRATION on a session whose EXCHANGE_ID did not set `EXCHGID4_FLAG_USE_NON_PNFS` --> NFS4ERR_PERM (per proxy-server draft sec-PROXY_REGISTRATION) |
 | `test_proxy_registration_rejects_auth_sys_session` | PROXY_REGISTRATION over an AUTH_SYS (non-GSS, non-TLS) session --> NFS4ERR_PERM; the MDS <-> PS session MUST use RPCSEC_GSS or RPC-over-TLS |
 | `test_proxy_registration_rejects_squat` | Second PROXY_REGISTRATION from the same allowlisted identity while an existing one holds a valid lease --> NFS4ERR_DELAY; log entry present |
 | `test_proxy_registration_accepts_renewal` | Second PROXY_REGISTRATION with matching `prr_registration_id` --> NFS4_OK, lease refreshed |

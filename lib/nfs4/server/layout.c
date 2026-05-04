@@ -783,7 +783,7 @@ uint32_t nfs4_op_layoutget_revoke_resume(struct rpc_trans *rt)
  * mutate the inode's i_layout_segments; it acts on the trust tables
  * at the DSes.
  */
-static int nfs4_layoutget_check_conflicts(struct compound *compound)
+int nfs4_layoutget_check_conflicts(struct compound *compound)
 {
 	struct inode *inode = compound->c_inode;
 

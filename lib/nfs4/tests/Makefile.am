@@ -16,6 +16,10 @@ reflected_getattr_test_LDADD = \
 	$(builddir)/libdstore_mock.la			\
 	$(LDADD)
 
+layout_conflict_scan_test_LDADD = \
+	$(builddir)/libdstore_mock.la			\
+	$(LDADD)
+
 LDADD = \
 	@CHECK_LIBS@					\
 	$(top_builddir)/lib/tests/libreffs_test.la	\
