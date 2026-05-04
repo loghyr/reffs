@@ -734,6 +734,8 @@ static void usage(void)
 		" on read (degraded mode)\n"
 		"  --force-scalar   Disable SIMD in Mojette forward"
 		" transform (benchmark scalar path)\n"
+		"  --force-gd       Use geometry-driven Mojette inverse"
+		" instead of corner-peeling (benchmark)\n"
 		"  --shard-size N   Per-data-shard byte size for EC"
 		" (default: 4096; must be a multiple of 8).\n"
 		"                   Use 24576 for the Mojette 24 KiB"
@@ -755,6 +757,7 @@ static struct option long_options[] = {
 	{ "layout", required_argument, NULL, 'l' },
 	{ "skip-ds", required_argument, NULL, 'S' },
 	{ "force-scalar", no_argument, NULL, 'F' },
+	{ "force-gd", no_argument, NULL, 'G' },
 	{ "sec", required_argument, NULL, 'x' },
 	{ "shard-size", required_argument, NULL, 'Z' },
 	{ "help", no_argument, NULL, '?' },
@@ -790,7 +793,7 @@ int main(int argc, char *argv[])
 	argv++;
 	optind = 1;
 
-	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:C:c:d:l:S:x:Z:D?",
+	while ((opt = getopt_long(argc, argv, "h:f:i:o:k:m:s:C:c:d:l:S:x:Z:DFG?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -882,6 +885,9 @@ int main(int argc, char *argv[])
 		}
 		case 'F':
 			moj_force_scalar(true);
+			break;
+		case 'G':
+			moj_force_gd(true);
 			break;
 		case 'Z':
 			shard_size = (size_t)atol(optarg);

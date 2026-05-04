@@ -84,6 +84,26 @@ All layout operations implemented in `lib/nfs4/server/layout.c`:
 **2026-03-24: all 4 codecs verified end-to-end on combined mode:**
   plain, RS 4+2, Mojette-sys 4+2, Mojette-nonsys 4+2.
 
+**2026-05-04: Mojette algebra switched to (GF(2)^64, XOR).** Forward,
+peel inverse, codec, and SIMD paths (NEON/SSE2/AVX2) converted from
+mod-2^64 addition. XOR has no carry chain and scales straightforwardly
+to 128-/256-/512-bit SIMD lanes; matches the broader Mojette
+literature.
+
+**2026-05-04: Geometry-driven inverse landed.** Reffs's Mojette bin
+formula refactored from `b = col*p − row*q` to paper / HCF convention
+`b = row*p + col*q − off` (Pierre's prior `(p, q)` usage was the
+transpose of the published convention; HCF is source of truth).
+Forward SIMD collapsed from six helpers (p1 / pm1 × NEON / SSE2 / AVX2)
+to three (one ascending-bins helper per ISA), and now covers ALL
+directions with q=1 — not just |p|=1.  `moj_inverse_gd()` ported as
+direct adaptation of HCF's `inverse()`: sort projections by p/q
+descending, dense-failures k_offsets recurrence (sparse correction
+collapses to zero in reduced-grid case), walk along line via
+(col += p, row -= 1).  Dispatcher (`moj_inverse`) routes to peel by
+default; `moj_force_gd(true)` opts into gd.  `--force-gd` flag in
+ec_demo, `inverse=peel|gd` axis in ec_benchmark_full.sh.
+
 ### 4a. CB Response Infrastructure — DONE
 
 - CB response handling: pause compound, send CB, wait for reply, resume
