@@ -94,7 +94,7 @@ int ds_session_create(struct dstore *ds)
 		return ret;
 	}
 
-	if (!mds_compound_add_sequence(&mc, ms))
+	if (mds_compound_add_sequence(&mc, ms))
 		goto fh_err;
 
 	if (!mds_compound_add_op(&mc, OP_PUTROOTFH))

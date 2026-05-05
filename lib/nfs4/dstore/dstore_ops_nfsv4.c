@@ -37,7 +37,7 @@
 static int add_seq_putfh(struct mds_compound *mc, struct mds_session *ms,
 			 const uint8_t *fh, uint32_t fh_len)
 {
-	if (!mds_compound_add_sequence(mc, ms))
+	if (mds_compound_add_sequence(mc, ms))
 		return -ENOSPC;
 
 	nfs_argop4 *slot = mds_compound_add_op(mc, OP_PUTFH);
@@ -668,7 +668,7 @@ static int nfsv4_probe_tight_coupling(struct dstore *ds)
 	if (ret)
 		return ret;
 
-	if (!mds_compound_add_sequence(&mc, ms))
+	if (mds_compound_add_sequence(&mc, ms))
 		goto err;
 
 	if (!mds_compound_add_op(&mc, OP_PUTROOTFH))
@@ -835,7 +835,7 @@ static int nfsv4_bulk_revoke_stateid(struct dstore *ds, uint64_t clientid)
 	if (ret)
 		return ret;
 
-	if (!mds_compound_add_sequence(&mc, ms))
+	if (mds_compound_add_sequence(&mc, ms))
 		goto err;
 
 	slot = mds_compound_add_op(&mc, OP_BULK_REVOKE_STATEID);
