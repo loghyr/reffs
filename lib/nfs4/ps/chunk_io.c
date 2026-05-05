@@ -105,6 +105,10 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	cwa->cwa_chunks.cwa_chunks_len = data_len;
 	cwa->cwa_chunks.cwa_chunks_val = (char *)data;
 
+	fprintf(stderr,
+		"ds_chunk_write: send seqid=%u (ms_slot_seqid before bump)\n",
+		mc.mc_args.argarray.argarray_val[0]
+			.nfs_argop4_u.opsequence.sa_sequenceid);
 	ret = mds_compound_send(&mc, ds);
 	/*
 	 * mds_compound_send returns -EREMOTEIO when any op in the
