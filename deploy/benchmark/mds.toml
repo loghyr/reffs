@@ -12,6 +12,7 @@ grace_period    = 5
 workers         = 4
 log_level       = "info"
 layout_width    = 10
+register_with_rpcbind = false
 
 [backend]
 type            = "posix"
