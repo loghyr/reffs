@@ -382,43 +382,74 @@ CSV: `data/race_v2_N20_4plus2_rs_100MB_postPR58.csv`.
 |---|---:|---:|---:|---:|---:|---:|
 | v1 baseline (no trust-stateid) | 20 | 0 | 7 | 13 | 0 | 0 |
 | v2 + slice 1 (NFSv3 default, mechanism dormant) | 20 | 0 | 4 | 4 | 12 | 0 |
-| **v2 + slice 1.5 (tight_coupling=true, mechanism engaged)** | **20** | **0** | **0** | **0** | **20** | **0** |
+| **v2 + slice 1.5 (tight_coupling=true)** -- *interpretation retracted* | 20 | 0 | 0 | 0 | 20 | 0 |
 
-`mixed = 0 / 20`.  The trust-stateid trust table at the DS,
-populated by TRUST_STATEID fan-out at LAYOUTGET and revoked
-synchronously at conflict, **measurably eliminates silent
-split-brain across this entire 20-round sweep.**  This is the
-slice 1.5 safety property landing where slice 1 only achieved
-it sometimes (4/20 mixed) by relying on conflict-recall alone
-without the DS-side trust check engaged.
+**Retraction of the morning summary (2026-05-05 PM).**  The morning
+closeout interpreted `mixed = 0 / 20` as "the trust-stateid trust
+table measurably eliminates silent split-brain across the sweep".
+With the slice 1.6 diagnostic logging added later the same day
+(commits `a2b85419d103`, `804dd5df24c3`), the per-COMPOUND
+status came into view and showed both writers were failing at
+**stripe 0** with `NFS4ERR_BAD_STATEID` -- before B's race-onset
+delay (0.5 s) had even elapsed.  No race was actually occurring;
+the 0 / 20 MIXED was vacuous.
+
+The morning summary was wrong.  The trust-stateid mechanism's
+effect on cross-writer split-brain remains *unmeasured* on the
+v2 path.  Two prerequisite bugs were masking the real behaviour:
+
+1. **Dead-code BAD_STATEID mapping in `ds_chunk_write`.**
+   When CHUNK_WRITE returns `NFS4ERR_BAD_STATEID`, the COMPOUND
+   reply has `mc_res.status = NFS4ERR_BAD_STATEID` and
+   `mds_compound_send` returns `-EREMOTEIO`.  ds_chunk_write
+   then `goto out_crc` immediately, skipping the per-op status
+   check that had the `BAD_STATEID -> -ESTALE` mapping.  Net
+   effect: BAD_STATEID surfaces as `-EREMOTEIO`, the inner
+   retry-on-ESTALE in ec_chunk_write never fires, slice 1.6's
+   outer retry-on-ESTALE never fires.  Fixed in `a2b85419d103`
+   by remapping in the EREMOTEIO branch.
+
+2. **DS-session slot-sequence-ID desync after a failed CHUNK_WRITE.**
+   With the BAD_STATEID remap in place, the slice 1.6 outer
+   retry now fires correctly on the first failure.  Re-LAYOUTGET
+   succeeds, the retry's CHUNK_WRITE goes out -- and the COMPOUND
+   replies with `status = NFS4ERR_SEQ_MISORDERED (10063)`,
+   `resarray_len = 1` (only SEQUENCE responded; PUTFH and
+   CHUNK_WRITE never executed).  The DS-session slot's expected
+   sequence ID is one step out of sync with what the client is
+   sending.  This blocks all retries -- inner and outer -- and
+   prevents the trust mechanism from being exercised across a
+   completing race.  Tracked as a separate slice; the fix is
+   either client-side (don't increment the slot seqid on a
+   COMPOUND that fails before any op completes) or server-side
+   (correct slot bookkeeping on partial COMPOUND failures), TBD
+   on diagnosis.
 
 ### Availability cost
 
 `read_failed = 20 / 20`.  Every round produced a file that
-neither A nor B could read back.  The harness reports
-`a_rc=1 b_rc=1` (both writes failed), `a_stripes_ok=0`, and
-`b_stripes_ok=0` -- meaning neither client's writer ever
-reported a successful stripe commit.
+neither A nor B could read back -- but the morning interpretation
+of "trust check rejects loser's writes; both fail to FINALIZE"
+was wrong.  The PM diagnostic showed `a_first_fail_stripe = 0`
+and `a_stripes_ok = 0`: A had not committed *any* stripe before
+failing.  At 100 MiB / 4 KiB shards / 4-data, A would need to
+write ~30 stripes in 0.5 s before B's race onset -- that didn't
+happen because every CHUNK_WRITE was failing immediately at
+the first DS.
 
-This matches the slice 1.5 decision matrix's `mixed = 0,
-read_failed > 0` row: "mechanism prevents silent split-brain
-but a race window between recall and re-grant produces
-unreadable file in some rounds".  In our measurement that
-window covers all 20 rounds, not "some" -- so the safety
-property ships, but the availability story still needs work.
+The 20 / 20 read_failed is therefore a *consequence of the two
+bugs above*, not a meaningful property of the trust-stateid
+mechanism.
 
-### Why this is acceptable as a slice 1.5 closeout
+### Slice 1.5 closeout status
 
-The slice 1.5 design explicitly prioritises safety over
-availability: `stateids.md` calls out that converting silent
-split-brain into a loud failure is the right trade.  A file
-that returns NFS4ERR_BAD_STATEID on read is far better than
-a file that returns mixed bytes from two writers.  Operators
-can detect the loud failure and recover; they cannot detect
-silent corruption.
-
-The slice ships its stated property and updates the upstream
-documentation to record the measured result.
+**Open.**  The slice 1.5 design + plumbing (LAYOUTGET trust
+fan-out, DS-side trust table, REVOKE_STATEID synchronous
+fan-out at conflict-recall) ships, and shows the right *shape*
+under the diagnostic: writes are rejected with BAD_STATEID at
+the DS trust check.  But the closeout *measurement* awaits a
+race that completes at least one write, which awaits the
+SEQ_MISORDERED retry-path bug being closed.
 
 ### Followup work (out of scope for slice 1.5)
 
