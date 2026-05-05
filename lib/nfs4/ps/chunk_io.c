@@ -106,6 +106,21 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	cwa->cwa_chunks.cwa_chunks_val = (char *)data;
 
 	ret = mds_compound_send(&mc, ds);
+	/*
+	 * mds_compound_send returns -EREMOTEIO when any op in the
+	 * COMPOUND replied with status != NFS4_OK; mc_res.status holds
+	 * the failing op's status (RFC 8881 S15.1.4).  When that op is
+	 * CHUNK_WRITE failing with NFS4ERR_BAD_STATEID -- the trust-
+	 * stateid revocation signal -- map to -ESTALE so the inner
+	 * retry in ec_chunk_write and the outer retry in
+	 * ec_write_codec (slice 1.6) can recognise it.  Without this
+	 * remap the BAD_STATEID surfaces as -EREMOTEIO, the per-op
+	 * status check below is unreachable, and the retry path is
+	 * effectively dead for the only error mode it was designed
+	 * to handle.
+	 */
+	if (ret == -EREMOTEIO && mc.mc_res.status == NFS4ERR_BAD_STATEID)
+		ret = -ESTALE;
 	if (ret)
 		goto out_crc;
 
@@ -187,6 +202,11 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	cra->cra_count = count;
 
 	ret = mds_compound_send(&mc, ds);
+	/* See ds_chunk_write: surface CHUNK_READ BAD_STATEID as -ESTALE
+	 * so the slice 1.6 retry path can recognise it.
+	 */
+	if (ret == -EREMOTEIO && mc.mc_res.status == NFS4ERR_BAD_STATEID)
+		ret = -ESTALE;
 	if (ret)
 		goto out;
 
