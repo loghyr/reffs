@@ -453,7 +453,8 @@ if [ ! -d "$WARDTEST_DIR" ]; then
     echo "Cloning wardtest..."
     git clone git@github.com:loghyr/wardtest.git "$WARDTEST_DIR" 2>&1 | tail -3
 fi
-(cd "$WARDTEST_DIR" && git fetch origin 2>&1 | tail -3 && git reset --hard origin/HEAD 2>&1 | tail -1)
+# wardtest changes infrequently -- skip the per-nightly fetch.  Run
+# `cd ~/wardtest && git pull` manually when there's a real update.
 
 "$REPO/scripts/ci_wardtest.sh" --mount "$V4_MOUNT" --duration 60 \
     --wardtest-dir "$WARDTEST_DIR" \
