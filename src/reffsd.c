@@ -484,12 +484,14 @@ int main(int argc, char *argv[])
 	// Initialize IO handler
 	if (io_handler_init(rc, cfg.tls_cert, cfg.tls_key,
 			    cfg.tls_ca[0] != '\0' ? cfg.tls_ca : NULL) < 0) {
+		LOG("io_handler_init failed");
 		exit_code = 1;
 		goto out;
 	}
 
 	// Initialize backend file-I/O ring
 	if (io_backend_init(rc_backend) < 0) {
+		LOG("io_backend_init failed");
 		io_handler_fini(rc);
 		exit_code = 1;
 		goto out;
@@ -499,6 +501,7 @@ int main(int argc, char *argv[])
 
 	// Set up protocol handlers
 	if (nfs4_protocol_register()) {
+		LOG("nfs4_protocol_register failed");
 		exit_code = 1;
 		goto out;
 	}
@@ -526,31 +529,37 @@ int main(int argc, char *argv[])
 		nfs4_attr_enable_layouts();
 
 	if (nfs3_protocol_register()) {
+		LOG("nfs3_protocol_register failed");
 		exit_code = 1;
 		goto out;
 	}
 
 	if (mount3_protocol_register()) {
+		LOG("mount3_protocol_register failed");
 		exit_code = 1;
 		goto out;
 	}
 
 	if (nlm4_protocol_register()) {
+		LOG("nlm4_protocol_register failed");
 		exit_code = 1;
 		goto out;
 	}
 
 	if (nlm_protocol_register()) {
+		LOG("nlm_protocol_register failed");
 		exit_code = 1;
 		goto out;
 	}
 
 	if (sm_protocol_register()) {
+		LOG("sm_protocol_register failed");
 		exit_code = 1;
 		goto out;
 	}
 
 	if (probe1_protocol_register()) {
+		LOG("probe1_protocol_register failed");
 		exit_code = 1;
 		goto out;
 	}
