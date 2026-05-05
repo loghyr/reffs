@@ -119,8 +119,19 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	 * effectively dead for the only error mode it was designed
 	 * to handle.
 	 */
-	if (ret == -EREMOTEIO && mc.mc_res.status == NFS4ERR_BAD_STATEID)
-		ret = -ESTALE;
+	if (ret == -EREMOTEIO) {
+		/* Surface the failing op's status so retry callers (and
+		 * developers) can see WHICH op failed -- resarray_len
+		 * tells us how far the COMPOUND got (1 = SEQUENCE failed,
+		 * 2 = PUTFH failed, 3 = CHUNK_WRITE failed).
+		 */
+		fprintf(stderr,
+			"ds_chunk_write: COMPOUND failed status=%u (resarray_len=%u)\n",
+			(unsigned)mc.mc_res.status,
+			mc.mc_res.resarray.resarray_len);
+		if (mc.mc_res.status == NFS4ERR_BAD_STATEID)
+			ret = -ESTALE;
+	}
 	if (ret)
 		goto out_crc;
 
