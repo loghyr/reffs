@@ -505,6 +505,56 @@ out_close:
 	return ret;
 }
 
+/*
+ * Slice 1.6: outer retry on -ESTALE from ec_chunk_write/_read.
+ *
+ * ec_chunk_write retries NFS4ERR_BAD_STATEID three times with
+ * 50/100/200 ms backoff and on exhaustion returns -ESTALE.  When
+ * the trust entry has actually been revoked (slice 1.5 race
+ * scenario), the inner retry alone cannot recover -- the stateid
+ * stays revoked until the client gets a fresh layout from the
+ * MDS.  ec_layout_refresh is the outer retry the inner path was
+ * designed to feed into: free the stale layout, back off briefly,
+ * re-LAYOUTGET, re-resolve mirrors, and let the caller retry the
+ * failed stripe with the new stateid.  Bounded retry (3 attempts)
+ * prevents a layout ping-pong with a competing writer; on
+ * exhaustion the original -ESTALE propagates and the write fails
+ * cleanly -- which is the slice 1.5 "loud failure" property,
+ * preserved.
+ */
+#define EC_OUTER_RETRY_MAX 3
+
+static int ec_layout_refresh(struct ec_context *ctx, struct mds_session *ms,
+			     layouttype4 layout_type, layoutiomode4 iomode,
+			     int attempt)
+{
+	struct timespec delay = { 0, (long)(100 * 1000000) << (attempt - 1) };
+	int ret;
+
+#ifdef __APPLE__
+	nanosleep(&delay, NULL);
+#else
+	clock_nanosleep(CLOCK_MONOTONIC, 0, &delay, NULL);
+#endif
+
+	ec_layout_free(&ctx->ctx_layout);
+	ret = mds_layout_get(ms, &ctx->ctx_file, iomode, layout_type,
+			     &ctx->ctx_layout);
+	if (ret) {
+		ec_log("ec_layout_refresh: LAYOUTGET failed: %d\n", ret);
+		return ret;
+	}
+	if (ctx->ctx_layout.el_nmirrors < (uint32_t)(ctx->ctx_k + ctx->ctx_m)) {
+		ec_log("ec_layout_refresh: insufficient mirrors %u\n",
+		       ctx->ctx_layout.el_nmirrors);
+		return -EINVAL;
+	}
+	ret = ec_resolve_mirrors(ctx);
+	if (ret)
+		ec_log("ec_layout_refresh: resolve_mirrors failed: %d\n", ret);
+	return ret;
+}
+
 /* ------------------------------------------------------------------ */
 /* EC Write                                                            */
 /* ------------------------------------------------------------------ */
@@ -664,6 +714,9 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	}
 
 	for (size_t s = 0; s < nstripes; s++) {
+		int outer_retry = 0;
+
+retry_stripe:
 		/* Point data shards into the padded buffer. */
 		for (int i = 0; i < k; i++)
 			data_shards[i] = padded + s * stripe_data +
@@ -711,6 +764,21 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 			}
 			ec_log("ec_write: data[%d] ok\n", i);
 		}
+		if (ret == -ESTALE && outer_retry < EC_OUTER_RETRY_MAX) {
+			outer_retry++;
+			ec_log("ec_write: stripe %zu data STALE, "
+			       "outer retry %d/%d (re-LAYOUTGET)\n",
+			       s, outer_retry, EC_OUTER_RETRY_MAX);
+			ret = ec_layout_refresh(&ctx, ms, layout_type,
+						LAYOUTIOMODE4_RW, outer_retry);
+			if (ret == 0)
+				goto retry_stripe;
+			ec_log("ec_write: stripe %zu refresh failed: %d, "
+			       "giving up\n",
+			       s, ret);
+			ret = -ESTALE;
+			break;
+		}
 		if (ret)
 			break;
 
@@ -742,6 +810,21 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 				break;
 			}
 			ec_log("ec_write: parity[%d] ok\n", i);
+		}
+		if (ret == -ESTALE && outer_retry < EC_OUTER_RETRY_MAX) {
+			outer_retry++;
+			ec_log("ec_write: stripe %zu parity STALE, "
+			       "outer retry %d/%d (re-LAYOUTGET)\n",
+			       s, outer_retry, EC_OUTER_RETRY_MAX);
+			ret = ec_layout_refresh(&ctx, ms, layout_type,
+						LAYOUTIOMODE4_RW, outer_retry);
+			if (ret == 0)
+				goto retry_stripe;
+			ec_log("ec_write: stripe %zu refresh failed: %d, "
+			       "giving up\n",
+			       s, ret);
+			ret = -ESTALE;
+			break;
 		}
 		if (ret)
 			break;
@@ -919,6 +1002,11 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	}
 
 	for (size_t s = 0; s < nstripes && total_read < buf_len; s++) {
+		int outer_retry = 0;
+		bool stale_seen;
+
+retry_stripe_read:
+		stale_seen = false;
 		/* Read all k+m shards (tolerate failures up to m). */
 		for (int i = 0; i < total; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
@@ -954,6 +1042,8 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 				ec_log("ec_read: stripe %zu shard[%d] ds_read rsz=%u ret=%d nread=%u present=%d\n",
 				       s, i, rsz, ret, nread, (int)present[i]);
 			}
+			if (ret == -ESTALE)
+				stale_seen = true;
 			if (!present[i])
 				ec_report_ds_error(&ctx, i, err_opnum);
 		}
@@ -962,6 +1052,22 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		ret = ctx.ctx_codec->ec_decode(ctx.ctx_codec, shards, present,
 					       shard_size);
 		ec_log("ec_read: stripe %zu ec_decode ret=%d\n", s, ret);
+		if (ret && stale_seen && outer_retry < EC_OUTER_RETRY_MAX) {
+			outer_retry++;
+			ec_log("ec_read: stripe %zu decode failed with stale "
+			       "shards, outer retry %d/%d (re-LAYOUTGET)\n",
+			       s, outer_retry, EC_OUTER_RETRY_MAX);
+			ret = ec_layout_refresh(&ctx, ms, layout_type,
+						LAYOUTIOMODE4_READ,
+						outer_retry);
+			if (ret == 0)
+				goto retry_stripe_read;
+			ec_log("ec_read: stripe %zu refresh failed: %d, "
+			       "giving up\n",
+			       s, ret);
+			ret = -ESTALE;
+			break;
+		}
 		if (ret)
 			break;
 
