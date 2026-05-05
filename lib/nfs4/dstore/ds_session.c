@@ -40,20 +40,12 @@ int ds_session_create(struct dstore *ds)
 	struct mds_session *ms;
 	int ret;
 
-	TRACE("ds_session_create: entry dstore[%u] addr=%s", ds->ds_id,
-	      ds->ds_address);
-
-	if (ds->ds_v4_session) {
-		TRACE("ds_session_create: dstore[%u] already connected",
-		      ds->ds_id);
+	if (ds->ds_v4_session)
 		return 0; /* already connected */
-	}
 
 	ms = calloc(1, sizeof(*ms));
-	if (!ms) {
-		TRACE("ds_session_create: dstore[%u] calloc failed", ds->ds_id);
+	if (!ms)
 		return -ENOMEM;
-	}
 
 	/*
 	 * Build a unique owner string: "mds-ds:<ds_id>:<hostname>:<pid>"
@@ -82,11 +74,7 @@ int ds_session_create(struct dstore *ds)
 	 * here as well; those paths need verification before being
 	 * relied on against an MDS-to-DS session.
 	 */
-	TRACE("ds_session_create: dstore[%u] calling mds_session_create",
-	      ds->ds_id);
 	ret = mds_session_create(ms, ds->ds_address);
-	TRACE("ds_session_create: dstore[%u] mds_session_create returned %d",
-	      ds->ds_id, ret);
 	if (ret) {
 		LOG("ds_session: failed to connect to DS %s (dstore %u): %d",
 		    ds->ds_address, ds->ds_id, ret);
@@ -116,10 +104,6 @@ int ds_session_create(struct dstore *ds)
 		goto fh_err;
 
 	ret = mds_compound_send(&mc, ms);
-	TRACE("ds_session_create: dstore[%u] PUTROOTFH+GETFH send ret=%d "
-	      "compound_status=%u resarray_len=%u",
-	      ds->ds_id, ret, (unsigned)mc.mc_res.status,
-	      mc.mc_res.resarray.resarray_len);
 	if (ret)
 		goto fh_err;
 
@@ -144,11 +128,7 @@ int ds_session_create(struct dstore *ds)
 	memcpy(ds->ds_root_fh, getfh_ok->object.nfs_fh4_val,
 	       getfh_ok->object.nfs_fh4_len);
 	ds->ds_root_fh_len = getfh_ok->object.nfs_fh4_len;
-	uint64_t after_mount __attribute__((unused)) = __atomic_or_fetch(
-		&ds->ds_state, DSTORE_IS_MOUNTED, __ATOMIC_RELEASE);
-
-	TRACE("ds_session_create: dstore[%u] MOUNTED set, state now 0x%lx, fh_len=%u",
-	      ds->ds_id, (unsigned long)after_mount, ds->ds_root_fh_len);
+	__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED, __ATOMIC_RELEASE);
 
 	mds_compound_fini(&mc);
 	ds->ds_v4_session = ms;
@@ -173,8 +153,6 @@ int ds_session_create(struct dstore *ds)
 	return 0;
 
 fh_err:
-	TRACE("ds_session_create: dstore[%u] fh_err exit ret=%d", ds->ds_id,
-	      ret);
 	mds_compound_fini(&mc);
 	mds_session_destroy(ms);
 	free(ms);
