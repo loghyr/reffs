@@ -443,13 +443,57 @@ mechanism.
 
 ### Slice 1.5 closeout status
 
-**Open.**  The slice 1.5 design + plumbing (LAYOUTGET trust
-fan-out, DS-side trust table, REVOKE_STATEID synchronous
-fan-out at conflict-recall) ships, and shows the right *shape*
-under the diagnostic: writes are rejected with BAD_STATEID at
-the DS trust check.  But the closeout *measurement* awaits a
-race that completes at least one write, which awaits the
-SEQ_MISORDERED retry-path bug being closed.
+**Open -- and pinned on a different blocker than the morning
+retraction first suggested.**
+
+Through the afternoon of 2026-05-05, three layered issues were
+identified in order:
+
+1. *Dead-code BAD_STATEID -> -ESTALE mapping in ds_chunk_write*
+   (commit `a2b85419d103`) -- without this, the inner retry in
+   ec_chunk_write never saw the right errno and slice 1.6's
+   outer retry never fired.  Fixed.
+2. *DS-session slot-seqid desync after re-LAYOUTGET* (commit
+   `2e3fc6156cb7`) -- ec_layout_refresh was calling
+   ec_resolve_mirrors, which calloc-overwrites ctx_ds_sess and
+   resets sessions to seqid=1 while the server still has
+   sl_seqid at the value reached by the inner retries.  The
+   retry's COMPOUND failed with SEQ_MISORDERED at SEQUENCE.
+   Fixed by skipping ec_resolve_mirrors and reusing the
+   existing DS sessions (the bench's DS pool is stable).
+3. *NFSv3 dstores have no TRUST_STATEID fan-out path* (the
+   ROOT blocker, surfaced once 1+2 were out of the way).
+   `dstore_ops_nfsv3` has no `trust_stateid` vtable slot --
+   TRUST_STATEID is an NFSv4 op.  Slice 1.5's
+   `tight_coupling = true` setting on NFSv3 dstores configures
+   the MDS and client to *expect* a populated trust table, but
+   the MDS has no protocol mechanism to actually write to it
+   over an NFSv3 connection.  The trust table stays empty;
+   every CHUNK_WRITE with the real stateid is rejected with
+   BAD_STATEID.
+
+The slice 1.5 plan explicitly deferred Phase 2 Step 2.2
+(NFSv4 dstore vtable bring-up) but did not flag that this
+deferral makes `tight_coupling = true` unimplementable on the
+existing NFSv3 dstores -- the slice ships a config knob that
+the wire protocol can't honor.  Slice 1.5 the *design* is
+correct; slice 1.5 the *bench measurement* needs Phase 2.
+
+### Slice 1.6 closeout status
+
+**Closed (as a code slice).  Not closeable as a measurement
+yet.**  The outer retry implementation
+(`085012716b19`, `2e3fc6156cb7`) is the right shape: when
+CHUNK_WRITE fails with BAD_STATEID after the inner retry
+exhausts, the outer retry fetches a fresh layout and resumes
+the failed stripe with a new stateid -- preserving DS sessions
+across the refresh so SEQUENCE stays in sync.  That logic is
+now provably exercised end-to-end on the bench (3 outer x 3
+inner = 12 BAD_STATEID rejections per stripe before giving
+up, all 12 reaching CHUNK_WRITE with `resarray_len=3`).
+Whether the retries *recover* a race is gated on Phase 2
+landing the NFSv4 dstore path so the trust table actually
+gets populated.
 
 ### Followup work (out of scope for slice 1.5)
 
