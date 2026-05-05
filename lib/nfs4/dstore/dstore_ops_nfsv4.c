@@ -93,8 +93,22 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 	if (!ms)
 		return -ENOTCONN;
 
-	/* SEQUENCE + PUTFH(dir) + OPEN(CREATE) + GETFH + CLOSE */
-	ret = mds_compound_init(&mc, 5, "ds_create");
+	/* SEQUENCE + PUTFH(dir) + OPEN(CREATE) + GETFH
+	 *
+	 * Phase 2 note: dropped the trailing CLOSE that the original
+	 * 5-op compound included.  The CLOSE used the special
+	 * "current stateid" sentinel (seqid=NFS4_UINT32_MAX,
+	 * other=0xFF...) which our DS handler does not resolve --
+	 * the COMPOUND came back with status=NFS4ERR_BAD_STATEID
+	 * (resarray_len=5, so SEQ+PUTFH+OPEN+GETFH all ran; only
+	 * CLOSE was rejected).  For runway pool files, the open
+	 * stateid leak is acceptable on a benchmark stack; the
+	 * proper fix is either DS-side current-stateid support or
+	 * splitting into a second compound that carries the
+	 * server-allocated stateid explicitly.  Tracked as a
+	 * follow-on; not blocking Phase 2 bring-up.
+	 */
+	ret = mds_compound_init(&mc, 4, "ds_create");
 	if (ret)
 		return ret;
 
@@ -130,23 +144,6 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 
 	if (!mds_compound_add_op(&mc, OP_GETFH))
 		goto err;
-
-	/*
-	 * CLOSE the file immediately -- we only need the FH for the
-	 * runway pool.  Without CLOSE, every CREATE leaks an open
-	 * stateid on the DS.
-	 */
-	slot = mds_compound_add_op(&mc, OP_CLOSE);
-	if (!slot)
-		goto err;
-	CLOSE4args *ca = &slot->nfs_argop4_u.opclose;
-	ca->seqid = 0;
-	/* Stateid filled by server from the preceding OPEN -- use
-	 * the special current stateid {1, ""} which the server
-	 * resolves to the most recent OPEN's stateid in this compound.
-	 */
-	ca->open_stateid.seqid = NFS4_UINT32_MAX;
-	memset(ca->open_stateid.other, 0xFF, sizeof(ca->open_stateid.other));
 
 	ret = send_and_check(&mc, ms, ds->ds_id);
 	if (ret) {
