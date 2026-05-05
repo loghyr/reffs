@@ -156,7 +156,7 @@ void dstore_fini(void)
 /* MOUNT client                                                        */
 /* ------------------------------------------------------------------ */
 
-static void resolve_ds_ip(struct dstore *ds)
+void resolve_ds_ip(struct dstore *ds)
 {
 	struct addrinfo hints, *res;
 

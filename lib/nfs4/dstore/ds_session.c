@@ -31,6 +31,8 @@
 #include "reffs/filehandle.h"
 #include "reffs/log.h"
 
+void resolve_ds_ip(struct dstore *ds);
+
 /* ------------------------------------------------------------------ */
 /* Session create / destroy                                            */
 /* ------------------------------------------------------------------ */
@@ -128,6 +130,18 @@ int ds_session_create(struct dstore *ds)
 	memcpy(ds->ds_root_fh, getfh_ok->object.nfs_fh4_val,
 	       getfh_ok->object.nfs_fh4_len);
 	ds->ds_root_fh_len = getfh_ok->object.nfs_fh4_len;
+
+	/*
+	 * Resolve hostname to dotted-decimal IP for use in
+	 * GETDEVICEINFO uaddrs.  The MDS-side encoder requires
+	 * a numeric IPv4 address (uaddr "h1.h2.h3.h4.p1.p2"); the
+	 * NFSv3 mount path does this in mount_get_root_fh, but
+	 * NFSv4 dstores took a separate code path and were leaving
+	 * ds_ip unset, producing uaddrs like ".8.1" that the
+	 * client's parse_uaddr rejects with -EINVAL.
+	 */
+	resolve_ds_ip(ds);
+
 	__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED, __ATOMIC_RELEASE);
 
 	mds_compound_fini(&mc);
