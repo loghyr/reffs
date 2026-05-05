@@ -1013,13 +1013,30 @@ void reffs_fs_for_each_inode(int (*cb)(struct inode *, void *), void *arg)
 	struct super_block *sb;
 	struct inode *inode;
 	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
 
 	rcu_read_lock();
 	cds_list_for_each_entry_rcu(sb, super_block_list_head(), sb_link) {
-		cds_lfht_for_each_entry(sb->sb_inodes, &iter, inode, i_node) {
+		/*
+		 * Manual iteration rather than cds_lfht_for_each_entry: on
+		 * an empty table the macro speculatively computes
+		 * caa_container_of(NULL, ...) before the loop's NULL
+		 * condition stops it.  That arithmetic is legal C (the
+		 * pointer is never dereferenced) but UBSAN's
+		 * pointer-overflow check is stricter than the standard
+		 * and trips with halt_on_error=1.  Reproduces on the first
+		 * EXCHANGE_ID into an MDS+DS combined reffsd via
+		 * chunk_rollback_for_client when no client has yet created
+		 * any inodes.  Checking the iter node before
+		 * caa_container_of keeps the arithmetic off the empty path.
+		 */
+		cds_lfht_first(sb->sb_inodes, &iter);
+		while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+			inode = caa_container_of(node, struct inode, i_node);
 			if (cb(inode, arg)) {
-				/* Callback can return non-zero to stop early, but we don't need it yet */
+				/* non-zero stop-early not used yet */
 			}
+			cds_lfht_next(sb->sb_inodes, &iter);
 		}
 	}
 	rcu_read_unlock();
