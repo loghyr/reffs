@@ -549,10 +549,29 @@ static int ec_layout_refresh(struct ec_context *ctx, struct mds_session *ms,
 		       ctx->ctx_layout.el_nmirrors);
 		return -EINVAL;
 	}
-	ret = ec_resolve_mirrors(ctx);
-	if (ret)
-		ec_log("ec_layout_refresh: resolve_mirrors failed: %d\n", ret);
-	return ret;
+
+	/*
+	 * Reuse the existing DS sessions (and their slot-sequence-ID
+	 * state) -- a fresh ec_resolve_mirrors would calloc-overwrite
+	 * ctx_ds_sess and reset every session to seqid=1, while the
+	 * server side still has sl_seqid at the value reached during
+	 * the prior failed CHUNK_WRITEs.  Mismatch surfaces as
+	 * NFS4ERR_SEQ_MISORDERED on the very first op of the retry's
+	 * COMPOUND and the trust check never runs.
+	 *
+	 * The bench-stack assumption is that the DS pool is stable
+	 * across LAYOUTGET retries -- mirrors[i].em_deviceid resolves
+	 * to the same DS as before -- so reusing ctx_devs (and the
+	 * sessions hung off it) is safe.  Just propagate
+	 * em_tight_coupled onto the new layout's mirrors so the
+	 * stateid choice in ec_chunk_write/_read uses the right path.
+	 */
+	for (uint32_t i = 0; i < ctx->ctx_layout.el_nmirrors; i++) {
+		struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[i];
+
+		em->em_tight_coupled = ctx->ctx_devs[i].ed_tight_coupled;
+	}
+	return 0;
 }
 
 /* ------------------------------------------------------------------ */
