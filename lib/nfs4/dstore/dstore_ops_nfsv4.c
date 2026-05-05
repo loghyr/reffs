@@ -62,7 +62,9 @@ static int send_and_check(struct mds_compound *mc, struct mds_session *ms,
 	int ret = mds_compound_send(mc, ms);
 
 	if (ret) {
-		LOG("dstore[%u]: NFSv4 compound RPC failed: %d", ds_id, ret);
+		LOG("dstore[%u]: NFSv4 compound RPC failed: ret=%d status=%u resarray_len=%u",
+		    ds_id, ret, (unsigned)mc->mc_res.status,
+		    mc->mc_res.resarray.resarray_len);
 		return -EIO;
 	}
 
