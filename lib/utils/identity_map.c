@@ -316,6 +316,13 @@ int identity_map_persist(const char *state_dir)
 {
 	char path[512], tmp_path[520];
 
+	/*
+	 * Roles that don't init the identity map (DS) reach this on
+	 * shutdown via the unconditional persist call in main().
+	 */
+	if (!map_ht)
+		return 0;
+
 	if (snprintf(path, sizeof(path), "%s/%s", state_dir, MAP_FILE) >=
 	    (int)sizeof(path))
 		return -ENAMETOOLONG;
