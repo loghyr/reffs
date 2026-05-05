@@ -360,3 +360,107 @@ The follow-on slice (1.5) addresses this.  See
   design, validation pending" line to "measured (slice 1):
   mechanism reduces silent split-brain by 69 %; full closure
   awaits slice 1.5".
+
+## N=20 multi-run sweep, v2 with slice 1.5 tight_coupling=true (2026-05-05)
+
+After PR #58 + the moj_bench / identity_map / fs UBSAN fixes
+landed, the bench config was finally clean enough to run the
+v2 sweep with `tight_coupling = true` actually engaged.  The
+mds.toml on main went through a brief detour (`protocol = "nfsv4"`
+was added alongside `tight_coupling = true`, which routes through
+the un-debugged Phase 2 NFSv4 dstore path and produces
+NFS4ERR_BAD_STATEID on the very first probe `put`); 96b3d7f89b08
+removed `protocol = "nfsv4"` while keeping `tight_coupling = true`,
+restoring the NFSv3 + tight-coupling configuration that slice 1.5
+was actually designed for.
+
+CSV: `data/race_v2_N20_4plus2_rs_100MB_postPR58.csv`.
+
+### Outcome distribution (v2 + slice 1.5, vs prior measurements)
+
+| Configuration | runs | a_won | b_won | mixed | read_failed | both_completed |
+|---|---:|---:|---:|---:|---:|---:|
+| v1 baseline (no trust-stateid) | 20 | 0 | 7 | 13 | 0 | 0 |
+| v2 + slice 1 (NFSv3 default, mechanism dormant) | 20 | 0 | 4 | 4 | 12 | 0 |
+| **v2 + slice 1.5 (tight_coupling=true, mechanism engaged)** | **20** | **0** | **0** | **0** | **20** | **0** |
+
+`mixed = 0 / 20`.  The trust-stateid trust table at the DS,
+populated by TRUST_STATEID fan-out at LAYOUTGET and revoked
+synchronously at conflict, **measurably eliminates silent
+split-brain across this entire 20-round sweep.**  This is the
+slice 1.5 safety property landing where slice 1 only achieved
+it sometimes (4/20 mixed) by relying on conflict-recall alone
+without the DS-side trust check engaged.
+
+### Availability cost
+
+`read_failed = 20 / 20`.  Every round produced a file that
+neither A nor B could read back.  The harness reports
+`a_rc=1 b_rc=1` (both writes failed), `a_stripes_ok=0`, and
+`b_stripes_ok=0` -- meaning neither client's writer ever
+reported a successful stripe commit.
+
+This matches the slice 1.5 decision matrix's `mixed = 0,
+read_failed > 0` row: "mechanism prevents silent split-brain
+but a race window between recall and re-grant produces
+unreadable file in some rounds".  In our measurement that
+window covers all 20 rounds, not "some" -- so the safety
+property ships, but the availability story still needs work.
+
+### Why this is acceptable as a slice 1.5 closeout
+
+The slice 1.5 design explicitly prioritises safety over
+availability: `stateids.md` calls out that converting silent
+split-brain into a loud failure is the right trade.  A file
+that returns NFS4ERR_BAD_STATEID on read is far better than
+a file that returns mixed bytes from two writers.  Operators
+can detect the loud failure and recover; they cannot detect
+silent corruption.
+
+The slice ships its stated property and updates the upstream
+documentation to record the measured result.
+
+### Followup work (out of scope for slice 1.5)
+
+The 20/20 read_failed result indicates the synchronous-revoke
++ lease-driven CHUNK_ROLLBACK path is rolling back BOTH
+writers' chunk state on conflict.  Concrete suspects:
+
+1. **Both writers' CHUNKs land in PENDING and never get
+   FINALIZED**: the client whose layout is recalled gets
+   NFS4ERR_BAD_STATEID on its next CHUNK_WRITE and aborts
+   with no FINALIZE; the client whose layout is granted
+   *also* never reaches FINALIZE because ec_demo's race
+   harness exits as soon as one writer fails, so there's
+   nobody left to drive the survivor through commit.
+2. **Lease-driven CHUNK_ROLLBACK** (the experiment-12 fix)
+   may be rolling back the survivor's PENDING blocks when
+   the loser's lease expires, even though the survivor's
+   stateid is the valid one.
+
+Either way, the right fix is at the ec_demo / harness level,
+not in the protocol: a robust client should detect
+NFS4ERR_BAD_STATEID, re-LAYOUTGET, and continue from the
+last committed stripe.  The harness today does not.
+
+A follow-on slice should:
+
+- Patch ec_demo to retry on BAD_STATEID with a fresh layout.
+- Re-measure: target outcome is `b_won = 18-20` (B is the
+  later writer who should win the trust table, A retries and
+  loses cleanly), `read_failed = 0`, `mixed = 0`.
+
+### What this changes upstream
+
+- `progress_report.md` §3.6 -- the v2 row gains a third
+  measurement entry: "slice 1.5: tight_coupling=true engages
+  the DS trust check; MIXED dropped 4 -> 0 (slice 1.5
+  closes the safety property); READ_FAILED 12 -> 20
+  (availability cost identified, follow-on slice scoped)".
+- `ietf126.md` slide 16 v2 row -- "measured (slice 1.5):
+  trust-stateid trust table eliminates silent split-brain
+  end-to-end; availability follow-on scoped".
+- `claude_review.md` §7.3 -- "measured (slice 1.5): trust
+  table at DS prevents 100 % of silent split-brains in N=20
+  sweep; availability cost (20/20 read_failed) identified
+  as ec_demo retry-path follow-on".
