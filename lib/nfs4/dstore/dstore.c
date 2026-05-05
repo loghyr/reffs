@@ -495,6 +495,9 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 	urcu_ref_init(&ds->ds_ref); /* ref 1: hash table */
 
 	/* Connect and mount (skipped for local / unit tests). */
+	TRACE("dstore[%u]: do_mount=%d protocol=%d (NFSV3=%d NFSV4=%d) addr=%s",
+	      id, (int)do_mount, (int)protocol, REFFS_DS_PROTO_NFSV3,
+	      REFFS_DS_PROTO_NFSV4, address);
 	if (do_mount && protocol == REFFS_DS_PROTO_NFSV4) {
 		/* NFSv4 DS: establish session + get root FH */
 		if (ds_session_create(ds) < 0)
