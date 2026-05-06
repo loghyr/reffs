@@ -82,8 +82,17 @@ int mds_compound_add_sequence(struct mds_compound *mc, struct mds_session *ms)
 
 	SEQUENCE4args *args = &slot->nfs_argop4_u.opsequence;
 
+	/*
+	 * sa_sessionid and sa_sequenceid are placeholders -- they are
+	 * (re)written inside ms_call_mutex by mds_compound_send_with_auth
+	 * just before clnt_call.  Single-slot session serialization
+	 * requires seqids to be assigned in send order, so we cannot
+	 * read ms_slot_seqid here at compound-build time without a
+	 * lock; concurrent workers would read identical values and
+	 * issue duplicate seqids -> NFS4ERR_SEQ_MISORDERED at the server.
+	 */
 	memcpy(args->sa_sessionid, ms->ms_sessionid, sizeof(sessionid4));
-	args->sa_sequenceid = ms->ms_slot_seqid;
+	args->sa_sequenceid = 0;
 	args->sa_slotid = 0;
 	args->sa_highest_slotid = 0;
 	args->sa_cachethis = false;
@@ -129,6 +138,22 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 
 	pthread_mutex_lock(&ms->ms_call_mutex);
 
+	/*
+	 * Single-slot serialization: assign sa_sequenceid INSIDE the
+	 * lock so concurrent worker threads see consecutive values.
+	 * Patches op[0] (SEQUENCE) sessionid+seqid; harmless if the
+	 * caller built a compound that does not start with SEQUENCE.
+	 */
+	SEQUENCE4args *seq = NULL;
+
+	if (mc->mc_count > 0 &&
+	    mc->mc_args.argarray.argarray_val[0].argop == OP_SEQUENCE) {
+		seq = &mc->mc_args.argarray.argarray_val[0]
+			       .nfs_argop4_u.opsequence;
+		memcpy(seq->sa_sessionid, ms->ms_sessionid, sizeof(sessionid4));
+		seq->sa_sequenceid = ms->ms_slot_seqid;
+	}
+
 	AUTH *saved_auth = NULL;
 
 	if (override_auth) {
@@ -145,6 +170,22 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 		ms->ms_clnt->cl_auth = saved_auth;
 	}
 
+	/*
+	 * Bump slot seqid only if SEQUENCE itself succeeded.  RFC 8881
+	 * S18.46.3: the server does not advance its slot when SEQUENCE
+	 * fails (e.g. NFS4ERR_SEQ_MISORDERED, BADSESSION).  Bumping on
+	 * RPC_SUCCESS regardless of SEQUENCE status drifts the local
+	 * seqid ahead of the server and produces persistent
+	 * SEQ_MISORDERED on every subsequent call.  Increment under
+	 * the lock to keep assignment+increment atomic.
+	 */
+	if (rpc_stat == RPC_SUCCESS && seq != NULL &&
+	    mc->mc_res.resarray.resarray_len > 0 &&
+	    mc->mc_res.resarray.resarray_val[0].resop == OP_SEQUENCE &&
+	    mc->mc_res.resarray.resarray_val[0]
+			    .nfs_resop4_u.opsequence.sr_status == NFS4_OK)
+		ms->ms_slot_seqid++;
+
 	pthread_mutex_unlock(&ms->ms_call_mutex);
 
 	if (override_auth)
@@ -154,9 +195,6 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 		ret = -EIO;
 		goto out;
 	}
-
-	/* Bump slot seqid on success. */
-	ms->ms_slot_seqid++;
 
 	if (mc->mc_res.status != NFS4_OK)
 		ret = -EREMOTEIO;
