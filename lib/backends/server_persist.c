@@ -7,10 +7,11 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
-#include <stdlib.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -101,8 +102,22 @@ int server_persist_save(const char *dir,
          * Write to a temp file alongside the target, then rename into
          * place.  This avoids leaving a half-written record if we crash
          * mid-write -- rename is atomic on POSIX for same-filesystem ops.
+         *
+         * Disambiguate the .tmp filename per call so concurrent
+         * EXCHANGE_IDs (each calling server_alloc_client_slot ->
+         * server_state_save) do not race on a single fixed name.
+         * Without this, two callers can both open(O_TRUNC) the same
+         * .tmp, the first rename consumes the file, and the second
+         * rename returns ENOENT -- which fails slot allocation,
+         * which fails EXCHANGE_ID, which the chunk-collision harness
+         * surfaced under N=4 contention.
          */
-	if (snprintf(tmp, sizeof(tmp), "%s.tmp", path) >= (int)sizeof(tmp)) {
+	static _Atomic uint64_t s_persist_seq = 0;
+	uint64_t seq = atomic_fetch_add_explicit(&s_persist_seq, 1,
+						 memory_order_relaxed);
+
+	if (snprintf(tmp, sizeof(tmp), "%s.tmp.%u.%" PRIu64, path,
+		     (unsigned)getpid(), seq) >= (int)sizeof(tmp)) {
 		LOG("server_persist_save: path too long: %s", path);
 		return -ENAMETOOLONG;
 	}
