@@ -56,20 +56,72 @@ static int add_seq_putfh(struct mds_compound *mc, struct mds_session *ms,
  * Send a compound and check for success.  Returns 0 on NFS4_OK,
  * -EIO on RPC or compound-level failure.
  */
-static int send_and_check(struct mds_compound *mc, struct mds_session *ms,
-			  uint32_t ds_id)
+/*
+ * send_and_check_ds -- send a compound + reconnect-on-BADSESSION.
+ *
+ * If the DS replies NFS4ERR_BADSESSION on SEQUENCE (the MDS-to-DS
+ * session got expired or evicted -- typically because ec_demo's
+ * client sessions to the same DS have crowded the DS's session
+ * table), tear down our session, reconnect, patch the SEQUENCE
+ * args in the compound with the new sessionid + slot seqid, and
+ * resend once.  If the resend also fails, give up with -EIO.
+ *
+ * This is the Phase 2 fix for the round-2-and-on regression seen
+ * in the slice 1.5/1.6 N=20 v2 race sweep: round 1's race fired a
+ * REVOKE_STATEID fan-out that hit BADSESSION on every DS, prior
+ * trust entries persisted, and every subsequent client's
+ * CHUNK_WRITE got rejected with BAD_STATEID for layouts whose
+ * stateid the MDS thought it had registered.
+ */
+static int send_and_check_ds(struct mds_compound *mc, struct dstore *ds)
 {
+	struct mds_session *ms = ds->ds_v4_session;
 	int ret = mds_compound_send(mc, ms);
+
+	if (ret == -EREMOTEIO && mc->mc_res.status == NFS4ERR_BADSESSION) {
+		LOG("dstore[%u]: BADSESSION on MDS-to-DS session, "
+		    "reconnecting and retrying once",
+		    ds->ds_id);
+		ds_session_destroy(ds);
+		if (ds_session_create(ds) < 0) {
+			LOG("dstore[%u]: BADSESSION reconnect failed",
+			    ds->ds_id);
+			return -EIO;
+		}
+
+		/* New session -- patch SEQUENCE op (always op 0 in our
+		 * compounds) with the new sessionid + slot seqid before
+		 * resending.
+		 */
+		ms = ds->ds_v4_session;
+		if (mc->mc_args.argarray.argarray_len > 0) {
+			nfs_argop4 *seq = &mc->mc_args.argarray.argarray_val[0];
+			if (seq->argop == OP_SEQUENCE) {
+				SEQUENCE4args *sa =
+					&seq->nfs_argop4_u.opsequence;
+
+				memcpy(sa->sa_sessionid, ms->ms_sessionid,
+				       sizeof(sessionid4));
+				sa->sa_sequenceid = ms->ms_slot_seqid;
+			}
+		}
+
+		/* Drop the previous (BADSESSION) reply before retry. */
+		xdr_free((xdrproc_t)xdr_COMPOUND4res, (caddr_t)&mc->mc_res);
+		memset(&mc->mc_res, 0, sizeof(mc->mc_res));
+
+		ret = mds_compound_send(mc, ms);
+	}
 
 	if (ret) {
 		LOG("dstore[%u]: NFSv4 compound RPC failed: ret=%d status=%u resarray_len=%u",
-		    ds_id, ret, (unsigned)mc->mc_res.status,
+		    ds->ds_id, ret, (unsigned)mc->mc_res.status,
 		    mc->mc_res.resarray.resarray_len);
 		return -EIO;
 	}
 
 	if (mc->mc_res.status != NFS4_OK) {
-		LOG("dstore[%u]: NFSv4 compound failed: status=%d", ds_id,
+		LOG("dstore[%u]: NFSv4 compound failed: status=%d", ds->ds_id,
 		    mc->mc_res.status);
 		return -EIO;
 	}
@@ -145,7 +197,7 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 	if (!mds_compound_add_op(&mc, OP_GETFH))
 		goto err;
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	if (ret) {
 		mds_compound_fini(&mc);
 		return ret;
@@ -207,7 +259,7 @@ static int nfsv4_remove(struct dstore *ds, const uint8_t *dir_fh,
 	ra->target.utf8string_val = (char *)name;
 	ra->target.utf8string_len = strlen(name);
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	mds_compound_fini(&mc);
 	return ret;
 
@@ -257,7 +309,7 @@ static int nfsv4_getattr(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	ga->attr_request.bitmap4_len = 2;
 	ga->attr_request.bitmap4_val = attr_bits;
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	if (ret) {
 		ldf->ldf_stale = true;
 		mds_compound_fini(&mc);
@@ -356,7 +408,7 @@ static int nfsv4_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	sa->obj_attributes.attr_vals.attrlist4_len = 4;
 	sa->obj_attributes.attr_vals.attrlist4_val = mode_buf;
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	mds_compound_fini(&mc);
 	return ret;
 
@@ -411,7 +463,7 @@ static int nfsv4_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	sa->obj_attributes.attr_vals.attrlist4_len = 8;
 	sa->obj_attributes.attr_vals.attrlist4_val = size_buf;
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	mds_compound_fini(&mc);
 	return ret;
 
@@ -458,7 +510,7 @@ static int nfsv4_fence(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	if (add_seq_putfh(&mc, ms, fh, fh_len))
 		goto err;
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	mds_compound_fini(&mc);
 	return ret;
 
@@ -501,7 +553,7 @@ static ssize_t nfsv4_read(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	ra->offset = offset;
 	ra->count = (uint32_t)(len > UINT32_MAX ? UINT32_MAX : len);
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	if (ret) {
 		mds_compound_fini(&mc);
 		return ret;
@@ -567,7 +619,7 @@ static ssize_t nfsv4_write(struct dstore *ds, const uint8_t *fh,
 	wa->data.data_val = (char *)buf;
 	wa->data.data_len = (uint32_t)(len > UINT32_MAX ? UINT32_MAX : len);
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	if (ret) {
 		mds_compound_fini(&mc);
 		return ret;
@@ -622,7 +674,7 @@ static int nfsv4_commit(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	ca->offset = offset;
 	ca->count = count;
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	mds_compound_fini(&mc);
 	return ret;
 
@@ -761,7 +813,7 @@ static int nfsv4_trust_stateid(struct dstore *ds, const uint8_t *fh,
 		ta->tsa_principal.utf8string_len = 0;
 	}
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	mds_compound_fini(&mc);
 	return ret;
 
@@ -802,7 +854,7 @@ static int nfsv4_revoke_stateid(struct dstore *ds, const uint8_t *fh,
 	ra->rsa_layout_stateid.seqid = stid_seqid;
 	memcpy(ra->rsa_layout_stateid.other, stid_other, NFS4_OTHER_SIZE);
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	mds_compound_fini(&mc);
 	return ret;
 
@@ -846,7 +898,7 @@ static int nfsv4_bulk_revoke_stateid(struct dstore *ds, uint64_t clientid)
 
 	ba->brsa_clientid = clientid;
 
-	ret = send_and_check(&mc, ms, ds->ds_id);
+	ret = send_and_check_ds(&mc, ds);
 	mds_compound_fini(&mc);
 	return ret;
 
