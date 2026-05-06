@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Post-fix sweep for SEQ_MISORDERED race in mds_compound (commit cd1dc817c043).
+# Bench: 10 NFSv4 dstores, tight_coupling=true, MDS-to-DS single-slot session.
+# Pre-fix baseline at race_v2_N20_4plus2_rs_10MB_phase2.csv (only round 7 a_rc=0).
+round,layout,codec,k,m,size_mb,delay_ms,a_rc,b_rc,a_stripes_ok,a_first_fail_stripe,b_stripes_ok,final_winner,mixed_diff_a,mixed_diff_b
+1,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+2,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+3,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+4,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+5,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+6,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+7,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+8,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+9,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+10,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+11,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+12,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+13,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+14,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+15,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+16,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+17,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+18,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+19,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
+20,v2,rs,4,2,10,500,0,0,3840,NA,3840,READ_FAILED,NA,NA
