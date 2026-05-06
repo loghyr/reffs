@@ -44,13 +44,36 @@
 
 /*
  * require_mds_client -- return true if the compound has an associated
- * nfs4_client that presented EXCHGID4_FLAG_USE_PNFS_MDS at EXCHANGE_ID.
+ * nfs4_client that is allowed to issue trust-stateid ops.
+ *
+ * Phase 2 NFSv4 dstore bring-up: the MDS-to-DS session uses
+ * EXCHGID4_FLAG_USE_NON_PNFS per RFC 8881 S18.35 ("MDS is a plain
+ * NFSv4 client of the DS, not the DS's MDS"), but the original guard
+ * only accepted EXCHGID4_FLAG_USE_PNFS_MDS -- so every TRUST_STATEID
+ * /REVOKE_STATEID/BULK_REVOKE_STATEID from the MDS came back with
+ * NFS4ERR_PERM.  Probe at startup reported tight coupling disabled
+ * for every dstore even though the protocol is wired correctly on
+ * both sides.
+ *
+ * Accept either flag: USE_PNFS_MDS for legacy callers, USE_NON_PNFS
+ * for the MDS-to-DS path.  Production deployments will want a real
+ * allowlist (similar to [[allowed_ps]] for proxy-server registration);
+ * tracked as a follow-on.  For now, any session that completed
+ * EXCHANGE_ID is allowed to fan out trust state to this DS -- the DS
+ * has no authentication wider than the connection's RPCSEC and the
+ * TRUST_STATEID op itself is purely advisory (the actual access
+ * control is the client's stateid match against the trust table).
  */
 static bool require_mds_client(struct compound *compound, nfsstat4 *status)
 {
-	if (!compound->c_nfs4_client ||
-	    !(compound->c_nfs4_client->nc_exchgid_flags &
-	      EXCHGID4_FLAG_USE_PNFS_MDS)) {
+	if (!compound->c_nfs4_client) {
+		*status = NFS4ERR_PERM;
+		return false;
+	}
+	uint32_t flags = compound->c_nfs4_client->nc_exchgid_flags;
+
+	if (!(flags &
+	      (EXCHGID4_FLAG_USE_PNFS_MDS | EXCHGID4_FLAG_USE_NON_PNFS))) {
 		*status = NFS4ERR_PERM;
 		return false;
 	}
