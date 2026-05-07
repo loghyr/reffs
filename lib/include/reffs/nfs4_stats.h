@@ -101,4 +101,25 @@ struct reffs_layout_error_stats {
 	_Atomic uint64_t les_other; /* everything else */
 };
 
+/* ------------------------------------------------------------------ */
+/* Chunk activity stats (per-sb)                                       */
+/*                                                                     */
+/* Diagnostic counters for chunk-collision validation                  */
+/* (.claude/design/chunk-collision-validation.md, BLOCKER 2).  The     */
+/* harness reads these before/after a sweep and asserts on the deltas. */
+/* ------------------------------------------------------------------ */
+
+struct reffs_chunk_stats {
+	_Atomic uint64_t cs_writes; /* total CHUNK_WRITE accepted */
+	_Atomic uint64_t
+		cs_pending_displaced; /* new PENDING overrode prior PENDING from a different owner */
+	_Atomic uint64_t cs_finalize_crc_fail; /* FINALIZE saw CRC mismatch */
+	_Atomic uint64_t
+		cs_commit_crc_recompute; /* COMMIT recomputed CRC vs persisted */
+	_Atomic uint64_t cs_rollback_invoked; /* CHUNK_ROLLBACK fired */
+	_Atomic uint64_t
+		cs_repair_initiated; /* repair path entered (today: 0) */
+	_Atomic uint64_t cs_fences_rotated; /* synthetic uid/gid bumps */
+};
+
 #endif /* _REFFS_NFS4_STATS_H */

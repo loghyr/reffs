@@ -2046,6 +2046,11 @@ static void layouterror_fence_and_revoke(struct compound *compound,
 		dstore_put(ds);
 	}
 
+	if (compound->c_curr_sb)
+		atomic_fetch_add_explicit(
+			&compound->c_curr_sb->sb_chunk_stats.cs_fences_rotated,
+			1, memory_order_relaxed);
+
 	inode_sync_to_disk(compound->c_inode);
 	LOG("LAYOUTERROR: fenced + chmod all instances for ino=%" PRIu64,
 	    compound->c_inode->i_ino);

@@ -679,6 +679,24 @@ def sb_get_cmd(client, args):
         print(f"  Dstores:  {dstore_ids}")
     if hasattr(sb, 'psi_stripe_unit') and sb.psi_stripe_unit:
         print(f"  Stripe:   {sb.psi_stripe_unit}")
+    if hasattr(sb, 'psi_chunk_stats'):
+        cs = sb.psi_chunk_stats
+        # Print chunk stats only if any non-zero (avoids clutter on
+        # SBs that haven't seen chunk activity).
+        fields = (
+            ('writes', cs.pcs_writes),
+            ('pending_displaced', cs.pcs_pending_displaced),
+            ('finalize_crc_fail', cs.pcs_finalize_crc_fail),
+            ('commit_crc_recompute', cs.pcs_commit_crc_recompute),
+            ('rollback_invoked', cs.pcs_rollback_invoked),
+            ('repair_initiated', cs.pcs_repair_initiated),
+            ('fences_rotated', cs.pcs_fences_rotated),
+        )
+        if any(v for _, v in fields):
+            print("  Chunks:")
+            for name, val in fields:
+                if val:
+                    print(f"    {name}: {val}")
 
 
 def sb_set_flavors_cmd(client, args):

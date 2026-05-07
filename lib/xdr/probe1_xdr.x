@@ -276,6 +276,23 @@ struct probe_client_rule1 {
 	probe_auth_flavor1	pcr_flavors<PROBE1_MAX_FLAVORS>;
 };
 
+/*
+ * Chunk activity counters (per-sb).  See
+ * .claude/design/chunk-collision-validation.md (BLOCKER 2):
+ * harness reads these before/after a sweep and asserts on
+ * deltas to prove contention happened cleanly.  Future-facing
+ * fields stay zero until the corresponding code path lands.
+ */
+struct probe_chunk_stats1 {
+	unsigned hyper		pcs_writes;
+	unsigned hyper		pcs_pending_displaced;
+	unsigned hyper		pcs_finalize_crc_fail;
+	unsigned hyper		pcs_commit_crc_recompute;
+	unsigned hyper		pcs_rollback_invoked;
+	unsigned hyper		pcs_repair_initiated;
+	unsigned hyper		pcs_fences_rotated;
+};
+
 struct probe_sb_info1 {
 	unsigned hyper		psi_id;
 	opaque			psi_uuid[16];
@@ -294,6 +311,8 @@ struct probe_sb_info1 {
 	unsigned int		psi_ndstores;
 	unsigned int		psi_dstore_ids<PROBE1_MAX_DSTORES>;
 	unsigned int		psi_stripe_unit;
+	/* Chunk activity counters (appended for wire compat). */
+	probe_chunk_stats1	psi_chunk_stats;
 };
 
 /* SB_LIST (op 13) */

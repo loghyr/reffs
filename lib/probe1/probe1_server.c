@@ -869,6 +869,24 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 	}
 	psi->psi_stripe_unit = sb->sb_stripe_unit;
 
+	/* Chunk activity counters. */
+	const struct reffs_chunk_stats *cs = &sb->sb_chunk_stats;
+
+	psi->psi_chunk_stats.pcs_writes =
+		atomic_load_explicit(&cs->cs_writes, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_pending_displaced = atomic_load_explicit(
+		&cs->cs_pending_displaced, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_finalize_crc_fail = atomic_load_explicit(
+		&cs->cs_finalize_crc_fail, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_commit_crc_recompute = atomic_load_explicit(
+		&cs->cs_commit_crc_recompute, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_rollback_invoked = atomic_load_explicit(
+		&cs->cs_rollback_invoked, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_repair_initiated = atomic_load_explicit(
+		&cs->cs_repair_initiated, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_fences_rotated = atomic_load_explicit(
+		&cs->cs_fences_rotated, memory_order_relaxed);
+
 	/* Per-client export rules. */
 	unsigned int nr = sb->sb_nclient_rules;
 

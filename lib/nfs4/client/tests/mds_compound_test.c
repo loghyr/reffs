@@ -134,7 +134,15 @@ START_TEST(test_add_sequence)
 
 	SEQUENCE4args *seq = &slot->nfs_argop4_u.opsequence;
 
-	ck_assert_uint_eq(seq->sa_sequenceid, 42);
+	/*
+	 * sa_sequenceid is a placeholder at compound-build time: the
+	 * actual value is patched into the SEQUENCE op inside
+	 * ms_call_mutex by mds_compound_send_with_auth, just before
+	 * clnt_call.  This is the SEQ_MISORDERED race fix -- two
+	 * concurrent worker threads cannot read identical seqids at
+	 * build time (commit cd1dc817c043).  See mds_compound.c.
+	 */
+	ck_assert_uint_eq(seq->sa_sequenceid, 0);
 	ck_assert_uint_eq(seq->sa_slotid, 0);
 	ck_assert_uint_eq(seq->sa_highest_slotid, 0);
 

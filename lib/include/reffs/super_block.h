@@ -187,6 +187,9 @@ struct super_block {
 	/* Per-sb layout error statistics. */
 	struct reffs_layout_error_stats sb_layout_errors;
 
+	/* Per-sb chunk-activity statistics (chunk-collision validation). */
+	struct reffs_chunk_stats sb_chunk_stats;
+
 	/*
 	 * Optional proxy-server binding.  NULL on every SB that was not
 	 * created by the PS subsystem; non-NULL on SBs backing a

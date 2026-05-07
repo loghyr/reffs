@@ -23,6 +23,7 @@
  */
 
 #include <inttypes.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -217,6 +218,10 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 
 	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
 
+	struct reffs_chunk_stats *cstats =
+		compound->c_curr_sb ? &compound->c_curr_sb->sb_chunk_stats :
+				      NULL;
+
 	/* Record per-block metadata.  Last block may be smaller. */
 	for (uint32_t i = 0; i < nchunks; i++) {
 		uint32_t blk_size = chunk_size;
@@ -253,12 +258,36 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 					0,
 		};
 
+		/*
+		 * Chunk-collision detection: peek at the prior block.  If
+		 * it's PENDING from a different owner, this write is
+		 * displacing concurrent writer's in-flight bytes -- the
+		 * harness reads cs_pending_displaced as proof that
+		 * contention actually happened.
+		 */
+		if (cstats) {
+			struct chunk_block *prev =
+				chunk_store_lookup(cs, args->cwa_offset + i);
+
+			if (prev && prev->cb_state == CHUNK_STATE_PENDING &&
+			    (prev->cb_gen_id != blk.cb_gen_id ||
+			     prev->cb_client_id != blk.cb_client_id ||
+			     prev->cb_owner_id != blk.cb_owner_id))
+				atomic_fetch_add_explicit(
+					&cstats->cs_pending_displaced, 1,
+					memory_order_relaxed);
+		}
+
 		if (chunk_store_write(cs, args->cwa_offset + i, &blk) < 0) {
 			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 			*status = NFS4ERR_DELAY;
 			return 0;
 		}
 	}
+
+	if (cstats)
+		atomic_fetch_add_explicit(&cstats->cs_writes, 1,
+					  memory_order_relaxed);
 
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 
@@ -660,6 +689,11 @@ uint32_t nfs4_op_chunk_rollback(struct compound *compound)
 	CHUNK_ROLLBACK4resok *resok =
 		NFS4_OP_RESOK_SETUP(res, CHUNK_ROLLBACK4res_u, crr_resok4);
 
+	if (compound->c_curr_sb)
+		atomic_fetch_add_explicit(
+			&compound->c_curr_sb->sb_chunk_stats.cs_rollback_invoked,
+			1, memory_order_relaxed);
+
 	if (network_file_handle_empty(&compound->c_curr_nfh)) {
 		*status = NFS4ERR_NOFILEHANDLE;
 		return 0;
@@ -913,6 +947,11 @@ uint32_t nfs4_op_chunk_write_repair(struct compound *compound)
 	CHUNK_WRITE_REPAIR4res *res =
 		NFS4_OP_RES_SETUP(compound, opchunk_write_repair);
 	nfsstat4 *status = &res->cwrr_status;
+
+	if (compound->c_curr_sb)
+		atomic_fetch_add_explicit(
+			&compound->c_curr_sb->sb_chunk_stats.cs_repair_initiated,
+			1, memory_order_relaxed);
 
 	*status = NFS4ERR_NOTSUPP;
 
