@@ -1719,12 +1719,19 @@ uint32_t nfs4_op_read(struct compound *compound)
 
 		memset(&reply, 0, sizeof(reply));
 		/*
+		 * PS Phase 3: route proxy SB reads through the EC
+		 * pipeline (LAYOUTGET + CHUNK_READ + decode) instead of
+		 * the transparent forward to upstream MDS.  Same
+		 * signature so the call is a 1:1 swap; codec parameters
+		 * are pinned to RS 4+2 / FFV2 / 4 KiB inside the shim
+		 * for this slice (see proxy-server-phase3.md Risk #1).
+		 *
 		 * args->stateid.other is `char[12]` in the generated
-		 * XDR; cast to the uint8_t * the primitive takes.
-		 * Same signedness-cast rationale as the PUTFH
-		 * const-casts elsewhere in the forward path.
+		 * XDR; cast to the uint8_t * the primitive takes (same
+		 * signedness-cast rationale as the PUTFH const-casts
+		 * elsewhere in the forward path).
 		 */
-		fret = ps_proxy_forward_read(
+		fret = ps_proxy_pipeline_read(
 			pls->pls_session, upstream_fh, upstream_fh_len,
 			args->stateid.seqid,
 			(const uint8_t *)args->stateid.other, args->offset,

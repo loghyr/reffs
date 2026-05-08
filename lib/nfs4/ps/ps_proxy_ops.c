@@ -2190,6 +2190,112 @@ out:
 	return ret;
 }
 
+/*
+ * PS Phase 3: pipeline-driven read.
+ *
+ * Builds a struct mds_file from the caller-supplied upstream FH and
+ * end-client open stateid, hands it to ec_read_codec_with_file, and
+ * copies the requested byte range out of the decoded payload.
+ *
+ * Codec is hard-coded to RS 4+2 / FFV2 / 4 KiB shards for this slice.
+ * See .claude/design/proxy-server-phase3.md Risk #1.
+ */
+int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
+			   uint32_t upstream_fh_len, uint32_t stateid_seqid,
+			   const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			   uint64_t offset, uint32_t count,
+			   const struct authunix_parms *creds
+			   __attribute__((unused)),
+			   struct ps_proxy_read_reply *reply)
+{
+	struct mds_file mf;
+	uint8_t *whole_buf = NULL;
+	size_t whole_len = 0;
+	size_t out_len = 0;
+	int ret;
+
+	if (!ms || !upstream_fh || upstream_fh_len == 0 || !stateid_other ||
+	    !reply)
+		return -EINVAL;
+	if (upstream_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
+	memset(reply, 0, sizeof(*reply));
+
+	if (count == 0)
+		return 0;
+
+	/*
+	 * The pipeline reads from stripe 0 up to buf_len bytes (no
+	 * intrinsic offset support today).  Allocate a buffer covering
+	 * [0, offset+count) and copy out the [offset, offset+count) slice
+	 * for the client.  Wasteful for large offsets but correct; real
+	 * partial-range support is a follow-on optimisation, see plan
+	 * "Deferred / NOT_NOW_BROWN_COW".
+	 */
+	whole_len = (size_t)offset + (size_t)count;
+
+	whole_buf = calloc(1, whole_len);
+	if (!whole_buf)
+		return -ENOMEM;
+
+	/*
+	 * mds_file is a {stateid, fh} tuple.  We construct it from the
+	 * end-client's open stateid (carried verbatim) and the upstream
+	 * FH discovered at PS startup.  ec_read_codec_with_file does
+	 * not take ownership; the local copy here is sufficient for the
+	 * duration of the call.
+	 */
+	memset(&mf, 0, sizeof(mf));
+	mf.mf_stateid.seqid = stateid_seqid;
+	memcpy(mf.mf_stateid.other, stateid_other, sizeof(mf.mf_stateid.other));
+	/*
+	 * mf_fh.nfs_fh4_val is `char *` in the generated XDR; cast away
+	 * the const here -- ec_read_codec_with_file (and the LAYOUTGET
+	 * primitive it calls) does not mutate the FH bytes.
+	 */
+	mf.mf_fh.nfs_fh4_val = (char *)upstream_fh;
+	mf.mf_fh.nfs_fh4_len = upstream_fh_len;
+
+	ret = ec_read_codec_with_file(ms, &mf, whole_buf, whole_len, &out_len,
+				      /* k */ 4, /* m */ 2, EC_CODEC_RS,
+				      LAYOUT4_FLEX_FILES_V2,
+				      /* skip_ds_mask */ 0,
+				      /* shard_size */ 4096);
+	if (ret) {
+		free(whole_buf);
+		return ret;
+	}
+
+	/* Map decoded length to the requested byte range. */
+	size_t avail = (out_len > offset) ? (out_len - (size_t)offset) : 0;
+	size_t copy = (avail < count) ? avail : count;
+
+	if (copy > 0) {
+		reply->data = malloc(copy);
+		if (!reply->data) {
+			free(whole_buf);
+			return -ENOMEM;
+		}
+		memcpy(reply->data, whole_buf + offset, copy);
+		reply->data_len = (uint32_t)copy;
+	}
+
+	/*
+	 * EOF approximation: the pipeline doesn't surface a definitive
+	 * EOF signal.  If we got back fewer bytes than requested, the
+	 * file is at most `out_len` bytes long, so the read reached
+	 * end-of-file.  An NFS client following up with another READ
+	 * past offset+copy will get a 0-byte EOF reply via the same
+	 * logic.  Better signalling is a follow-on (cache the inode
+	 * size on first GETATTR).
+	 */
+	reply->eof = (copy < count);
+
+	free(whole_buf);
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Layout passthrough (task #150) -- foundation stubs.                */
 /*                                                                    */

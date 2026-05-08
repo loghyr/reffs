@@ -246,6 +246,47 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
 			  struct ps_proxy_read_reply *reply);
 
 /*
+ * Drive an EC-decoded read through ec_pipeline (LAYOUTGET +
+ * CHUNK_READ + decode) using the caller-provided upstream FH +
+ * end-client open stateid -- no PUTROOTFH+LOOKUP+OPEN dance.
+ *
+ * Same shape as ps_proxy_forward_read so the call site in
+ * nfs4_op_read can swap them out 1:1.  PS Phase 3 -- see
+ * .claude/design/proxy-server-phase3.md.
+ *
+ * Codec parameters for this slice are pinned to RS 4+2, layout
+ * type LAYOUT4_FLEX_FILES_V2, shard size 4096.  An incoming layout
+ * whose shape differs would surface as a decode failure inside
+ * ec_pipeline (logged, returns -EINVAL).  Parameter discovery
+ * (read codec/k/m from the layout) is its own NOT_NOW_BROWN_COW.
+ *
+ * The `creds` parameter is currently unused (Phase 3.5 wires
+ * end-client cred forwarding through the pipeline).  Accepted in
+ * the signature now to keep the call-site swap clean and avoid a
+ * second signature change later.
+ *
+ * On success, `reply->data` is a heap buffer holding `reply->data_len`
+ * bytes.  Free via ps_proxy_read_reply_free().  `reply->eof` is true
+ * iff the read returned fewer bytes than requested (best-effort EOF
+ * approximation -- the pipeline does not surface a definitive EOF
+ * signal today).
+ *
+ * Returns:
+ *   0        success
+ *   -EINVAL  ms / upstream_fh / stateid_other / reply NULL, or
+ *            upstream_fh_len / count == 0
+ *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
+ *   -ENOMEM  allocation failure
+ *   -errno   pipeline failure (decode error, layout failure, etc.)
+ */
+int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
+			   uint32_t upstream_fh_len, uint32_t stateid_seqid,
+			   const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			   uint64_t offset, uint32_t count,
+			   const struct authunix_parms *creds,
+			   struct ps_proxy_read_reply *reply);
+
+/*
  * Release any buffer allocated by ps_proxy_forward_read into
  * `reply` and zero the struct.  NULL-safe for the struct and the
  * inner pointer.

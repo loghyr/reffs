@@ -910,16 +910,22 @@ out_codec:
 /* Read                                                                */
 /* ------------------------------------------------------------------ */
 
-int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
-		  size_t buf_len, size_t *out_len, int k, int m,
-		  enum ec_codec_type codec_type, layouttype4 layout_type,
-		  uint64_t skip_ds_mask, size_t shard_size)
+int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
+			    uint8_t *buf, size_t buf_len, size_t *out_len,
+			    int k, int m, enum ec_codec_type codec_type,
+			    layouttype4 layout_type, uint64_t skip_ds_mask,
+			    size_t shard_size)
 {
 	struct ec_context ctx;
 	int ret;
 	/* Count only bits in the valid range [0, k+m). */
 	uint64_t valid_mask = (k + m < 64) ? (1ULL << (k + m)) - 1 : ~0ULL;
 	int nskip = __builtin_popcountll(skip_ds_mask & valid_mask);
+
+	if (!mf) {
+		ec_log("ec_read_with_file: NULL mds_file\n");
+		return -EINVAL;
+	}
 
 	if (nskip > m) {
 		ec_log("ec_read: skip_ds_mask has %d bits set, need <= m=%d\n",
@@ -939,19 +945,16 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	ctx.ctx_ms = ms;
 	ctx.ctx_k = k;
 	ctx.ctx_m = m;
+	ctx.ctx_file = *mf; /* caller owns the underlying mf; we shallow-copy */
 
 	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
 	if (!ctx.ctx_codec)
 		return -ENOMEM;
 
-	ret = mds_file_open(ms, path, &ctx.ctx_file);
-	if (ret)
-		goto out_codec;
-
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ, layout_type,
 			     &ctx.ctx_layout);
 	if (ret)
-		goto out_close;
+		goto out_codec;
 
 	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
 		ret = -EINVAL;
@@ -1114,10 +1117,28 @@ out_conns:
 out_layout:
 	mds_layout_return(ms, &ctx.ctx_file, &ctx.ctx_layout);
 	ec_layout_free(&ctx.ctx_layout);
-out_close:
-	mds_file_close(ms, &ctx.ctx_file);
 out_codec:
 	ec_codec_destroy(ctx.ctx_codec);
+	return ret;
+}
+
+int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
+		  size_t buf_len, size_t *out_len, int k, int m,
+		  enum ec_codec_type codec_type, layouttype4 layout_type,
+		  uint64_t skip_ds_mask, size_t shard_size)
+{
+	struct mds_file mf;
+	int ret;
+
+	ret = mds_file_open(ms, path, &mf);
+	if (ret)
+		return ret;
+
+	ret = ec_read_codec_with_file(ms, &mf, buf, buf_len, out_len, k, m,
+				      codec_type, layout_type, skip_ds_mask,
+				      shard_size);
+
+	mds_file_close(ms, &mf);
 	return ret;
 }
 

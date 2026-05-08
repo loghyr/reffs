@@ -537,6 +537,29 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		  uint64_t skip_ds_mask, size_t shard_size);
 
 /*
+ * FH-anchored variant of ec_read_codec.  Skips the OPEN-by-path
+ * dance (PUTROOTFH + LOOKUP* + OPEN + GETFH) and uses the caller-
+ * provided mds_file directly.  The caller owns the mds_file's
+ * lifecycle (the FH bytes and the open stateid).  This function
+ * does NOT call mds_file_open or mds_file_close.
+ *
+ * Used by the proxy-server subsystem to drive EC reads through the
+ * pipeline without re-opening files it already discovered (PS
+ * Phase 3 -- see .claude/design/proxy-server-phase3.md).
+ * ec_read_codec() remains the caller-friendly form for ec_demo and
+ * tests.
+ *
+ * Layout grant is acquired internally and returned via LAYOUTRETURN
+ * before this function returns.  No layout state leaks across the
+ * call.
+ */
+int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
+			    uint8_t *buf, size_t buf_len, size_t *out_len,
+			    int k, int m, enum ec_codec_type codec_type,
+			    layouttype4 layout_type, uint64_t skip_ds_mask,
+			    size_t shard_size);
+
+/*
  * Default shard size for the back-compat ec_write / ec_read
  * wrappers (4 KiB).  Exported so callers that want the legacy
  * geometry have a named constant rather than a magic number.
