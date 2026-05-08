@@ -62,6 +62,7 @@
 #include "reffs/settings.h"
 #include "ec_client.h"
 #include "ps_discovery.h"
+#include "ps_renewal.h"
 #include "ps_sb.h"
 #include "ps_state.h"
 
@@ -1081,6 +1082,38 @@ int main(int argc, char *argv[])
 	}
 
 	/*
+	 * Start the PS upstream-session keepalive thread.  Each
+	 * [[proxy_mds]] listener owns a long-lived NFSv4.2 session to
+	 * its upstream MDS; without periodic SEQUENCE renewals the MDS
+	 * expires the session after one lease period (~90s) of
+	 * inactivity, and the next forwarded client op fails with
+	 * NFS4ERR_BADSESSION.  See lib/nfs4/ps/ps_renewal.h.
+	 *
+	 * Pick interval = lease / 3 so a single missed tick leaves time
+	 * for two more before the lease expires; cap at the default-
+	 * lease-derived 30s for low-config-touch deployments.  Skip
+	 * entirely when no [[proxy_mds]] is configured -- spawning a
+	 * thread that would walk an empty listener table on every tick
+	 * is pure waste.
+	 */
+	if (cfg.nproxy_mds > 0) {
+		uint32_t interval = server_lease_time(ss) / 3;
+
+		if (interval == 0)
+			interval = 30;
+		int prret = ps_renewal_start(interval);
+
+		if (prret < 0)
+			LOG("ps_renewal_start failed: %d (PS upstream sessions "
+			    "may expire under low traffic)",
+			    prret);
+		else
+			TRACE("ps_renewal: keepalive thread running, "
+			      "interval=%us",
+			      interval);
+	}
+
+	/*
 	 * Skip rpcbind registration entirely when [server]
 	 * register_with_rpcbind = false.  See
 	 * .claude/design/no-rpcbind.md: NFSv4 uses well-known port 2049
@@ -1311,7 +1344,14 @@ out:
 		 * Drain any open upstream sessions before clearing the
 		 * registry -- ps_state_fini is non-destructive on attached
 		 * mds_sessions, so ownership sits with us here.
+		 *
+		 * Stop the renewal thread first so it can't race the
+		 * session teardown by trying to send SEQUENCE on a
+		 * mds_session_destroy'd ms_clnt.  ps_renewal_stop joins
+		 * the worker before returning.
 		 */
+		ps_renewal_stop();
+
 		for (unsigned int i = 0; i < cfg.nproxy_mds; i++) {
 			uint32_t lid = cfg.proxy_mds[i].id;
 			const struct ps_listener_state *pls;

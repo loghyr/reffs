@@ -19,6 +19,7 @@ libreffs_nfs4_ps_la_SOURCES = \
 	ps_mount_client.c \
 	ps_owner.c \
 	ps_proxy_ops.c \
+	ps_renewal.c \
 	ps_sb.c \
 	ps_security.c \
 	ps_state.c

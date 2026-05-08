@@ -238,6 +238,29 @@ const struct ps_export *ps_state_find_export(uint32_t listener_id,
 					     const char *path);
 
 /*
+ * Iteration callback for ps_state_listeners_for_each.  Returning
+ * non-zero short-circuits the iteration (the value is propagated to
+ * the caller as the for_each return).  Returning 0 continues.
+ */
+typedef int (*ps_state_listener_cb)(const struct ps_listener_state *pls,
+				    void *arg);
+
+/*
+ * Walk every registered listener in registration order, invoking
+ * `cb(pls, arg)` for each.  Used by the PS renewal thread to
+ * iterate active upstream sessions.
+ *
+ * Safe to call from any thread post-init.  The registry is treated
+ * as read-only here; callers that mutate session pointers must use
+ * ps_state_set_session() per-id.
+ *
+ * Returns:
+ *   0     iteration completed
+ *   N     `cb` returned non-zero N (iteration stopped early)
+ */
+int ps_state_listeners_for_each(ps_state_listener_cb cb, void *arg);
+
+/*
  * Tear down the registry at shutdown.  Must run after all worker
  * threads have stopped, i.e. after io_handler_fini().  No
  * ps_state_find() call may be in flight.  Does NOT destroy any

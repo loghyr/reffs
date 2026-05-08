@@ -267,6 +267,23 @@ int ps_state_exports_for_each(uint32_t listener_id, ps_state_export_cb cb,
 	return (int)seen;
 }
 
+int ps_state_listeners_for_each(ps_state_listener_cb cb, void *arg)
+{
+	if (!cb)
+		return -EINVAL;
+
+	unsigned int n =
+		atomic_load_explicit(&ps_nlisteners, memory_order_acquire);
+
+	for (unsigned int i = 0; i < n; i++) {
+		int r = cb(&ps_listeners[i], arg);
+
+		if (r)
+			return r;
+	}
+	return 0;
+}
+
 int ps_state_discovery_lock(uint32_t listener_id)
 {
 	struct ps_listener_state *pls = ps_listener_by_id(listener_id);

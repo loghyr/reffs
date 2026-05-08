@@ -180,6 +180,23 @@ int mds_session_send_proxy_registration(struct mds_session *ms,
 					uint32_t registration_id_len);
 
 /*
+ * Send a SEQUENCE-only compound to renew the upstream lease.
+ *
+ * Used by the PS renewal thread to keep its [[proxy_mds]] sessions
+ * alive between bursts of forwarded client traffic.  Without periodic
+ * renewals the upstream MDS expires the session after one lease
+ * period (~90s by default) and subsequent forwards return
+ * NFS4ERR_BADSESSION; see .claude/design/proxy-server.md "Phase 6
+ * follow-on: PS upstream session keepalive".
+ *
+ * Returns:
+ *   0        success (server accepted SEQUENCE; session still alive)
+ *   -errno   wire failure or non-OK SEQUENCE status; caller logs and
+ *            optionally schedules a reconnect (NOT_NOW_BROWN_COW).
+ */
+int mds_session_renew_lease(struct mds_session *ms);
+
+/*
  * Slice 6c-z: PS-side PROXY_PROGRESS / PROXY_DONE / PROXY_CANCEL
  * senders + the PS migration step driver.  See
  * lib/nfs4/server/proxy_registration.c for the MDS side and

@@ -275,6 +275,46 @@ out:
 }
 
 /* ------------------------------------------------------------------ */
+/* Lease renewal -- SEQUENCE-only compound                              */
+/* ------------------------------------------------------------------ */
+
+int mds_session_renew_lease(struct mds_session *ms)
+{
+	struct mds_compound mc;
+	int ret;
+
+	if (!ms)
+		return -EINVAL;
+
+	/*
+	 * SEQUENCE alone.  RFC 8881 S18.46 -- the SEQUENCE op refreshes
+	 * the lease as a side effect of slot bookkeeping.  No other ops
+	 * needed; the COMPOUND succeeds iff SEQUENCE is accepted.
+	 */
+	ret = mds_compound_init(&mc, 1, "ps-renew-lease");
+	if (ret)
+		return ret;
+
+	ret = mds_compound_add_sequence(&mc, ms);
+	if (ret)
+		goto out;
+
+	ret = mds_compound_send(&mc, ms);
+	/*
+	 * mds_compound_send returns -EREMOTEIO when COMPOUND4res.status
+	 * is non-OK.  For SEQUENCE-only that maps to the SEQUENCE op's
+	 * own status (e.g. NFS4ERR_BADSESSION when the lease has lapsed
+	 * already, NFS4ERR_SEQ_MISORDERED if our slot bookkeeping has
+	 * drifted).  Surface as -errno for the caller to log; reconnect
+	 * is a NOT_NOW_BROWN_COW.
+	 */
+
+out:
+	mds_compound_fini(&mc);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /* PROXY_REGISTRATION (slice plan-A.iii)                               */
 /* ------------------------------------------------------------------ */
 
