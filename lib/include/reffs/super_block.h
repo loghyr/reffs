@@ -85,6 +85,12 @@ struct super_block {
 	char *sb_path;
 
 	enum reffs_storage_type sb_storage_type;
+	/*
+	 * sb_md_type: the md axis composed into sb_ops at alloc time.
+	 * Cached so super_block_set_data_axis() can re-compose with a
+	 * new data axis without re-deriving from sb_storage_type.
+	 */
+	enum reffs_md_type sb_md_type;
 	char *sb_backend_path;
 
 	const struct reffs_storage_ops *sb_ops;
@@ -208,6 +214,23 @@ struct super_block {
 struct super_block *super_block_alloc(uint64_t id, char *path,
 				      enum reffs_storage_type type,
 				      const char *backend_path);
+
+/*
+ * Re-compose the SB's storage ops for a different data axis.
+ * Used by the proxy-server subsystem to flip a freshly allocated
+ * proxy SB from md=RAM,data=RAM to md=RAM,data=PROXY before any
+ * dirent tree is created -- see PS Phase 3 in
+ * .claude/design/proxy-server-phase3.md.
+ *
+ * The caller must hold the SB exclusively (no other thread observes
+ * sb->sb_ops yet); the helper assumes single-owner semantics and
+ * does NOT serialise the re-composition.  Returns 0 on success, or
+ * -EINVAL if the (md, data) pair violates reffs_backend_compose's
+ * constraints.
+ */
+int super_block_set_data_axis(struct super_block *sb,
+			      enum reffs_data_type data);
+
 struct super_block *super_block_find(uint64_t id);
 
 /*

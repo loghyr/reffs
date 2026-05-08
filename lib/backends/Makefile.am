@@ -20,6 +20,7 @@ libbackends_la_SOURCES = \
 	ram_data.c \
 	posix.c \
 	posix_data.c \
+	proxy_data.c \
 	server_persist.c
 
 if HAVE_ROCKSDB

@@ -30,6 +30,7 @@ enum reffs_md_type {
 enum reffs_data_type {
 	REFFS_DATA_RAM = 0,
 	REFFS_DATA_POSIX = 1,
+	REFFS_DATA_PROXY = 2,
 };
 
 #define REFFS_DISK_MAGIC_META 0x5245464d /* 'REFM' */
@@ -221,5 +222,26 @@ ssize_t ram_data_db_resize(struct data_block *db, size_t size);
 size_t ram_data_db_get_size(struct data_block *db);
 int ram_data_db_get_fd(struct data_block *db);
 void ram_data_inode_cleanup(struct inode *inode);
+
+/* ------------------------------------------------------------------ */
+/* PROXY data backend -- declarations for composition                  */
+/*                                                                     */
+/* Used for proxy super_blocks (PS Phase 3 -- see                      */
+/* .claude/design/proxy-server-phase3.md).  Pairs with REFFS_MD_RAM:   */
+/* metadata is a RAM cache of upstream MDS state, data is fetched on   */
+/* demand via ec_pipeline (no on-disk persistence).                    */
+/* ------------------------------------------------------------------ */
+
+int proxy_data_db_alloc(struct data_block *db, struct inode *inode,
+			const char *buffer, size_t size, off_t offset);
+void proxy_data_db_free(struct data_block *db);
+ssize_t proxy_data_db_read(struct data_block *db, char *buffer, size_t size,
+			   off_t offset);
+ssize_t proxy_data_db_write(struct data_block *db, const char *buffer,
+			    size_t size, off_t offset);
+ssize_t proxy_data_db_resize(struct data_block *db, size_t size);
+size_t proxy_data_db_get_size(struct data_block *db);
+int proxy_data_db_get_fd(struct data_block *db);
+void proxy_data_inode_cleanup(struct inode *inode);
 
 #endif /* _REFFS_BACKEND_H */

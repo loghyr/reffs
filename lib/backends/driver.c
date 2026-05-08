@@ -73,13 +73,22 @@ static void composed_inode_free(struct inode *inode)
 struct reffs_storage_ops *reffs_backend_compose(enum reffs_md_type md,
 						enum reffs_data_type data)
 {
-	/* Constraint: md=RAM <-> data=RAM */
-	if (md == REFFS_MD_RAM && data != REFFS_DATA_RAM) {
-		LOG("Invalid backend composition: RAM md requires RAM data");
+	/*
+	 * Composition constraints:
+	 *   md=RAM   <->  data in {RAM, PROXY}
+	 *   md!=RAM  <->  data=POSIX
+	 *
+	 * RAM/PROXY is the proxy-server SB shape: metadata is a RAM
+	 * cache of upstream MDS state, data has no on-disk persistence
+	 * (fetched on demand via ec_pipeline -- see PS Phase 3 in
+	 * .claude/design/proxy-server-phase3.md).
+	 */
+	if (md == REFFS_MD_RAM && data == REFFS_DATA_POSIX) {
+		LOG("Invalid backend composition: RAM md cannot use POSIX data");
 		return NULL;
 	}
-	if (md != REFFS_MD_RAM && data == REFFS_DATA_RAM) {
-		LOG("Invalid backend composition: non-RAM md requires non-RAM data");
+	if (md != REFFS_MD_RAM && data != REFFS_DATA_POSIX) {
+		LOG("Invalid backend composition: non-RAM md requires POSIX data");
 		return NULL;
 	}
 
@@ -135,6 +144,17 @@ struct reffs_storage_ops *reffs_backend_compose(enum reffs_md_type md,
 		co->co_ops.db_get_fd = posix_data_db_get_fd;
 		co->co_data_inode_cleanup = posix_data_inode_cleanup;
 		break;
+	case REFFS_DATA_PROXY:
+		co->co_ops.db_alloc = proxy_data_db_alloc;
+		co->co_ops.db_free = proxy_data_db_free;
+		co->co_ops.db_release_resources = NULL;
+		co->co_ops.db_read = proxy_data_db_read;
+		co->co_ops.db_write = proxy_data_db_write;
+		co->co_ops.db_resize = proxy_data_db_resize;
+		co->co_ops.db_get_size = proxy_data_db_get_size;
+		co->co_ops.db_get_fd = proxy_data_db_get_fd;
+		co->co_data_inode_cleanup = proxy_data_inode_cleanup;
+		break;
 	default:
 		LOG("Unknown data backend type: %d", data);
 		free(co);
@@ -152,7 +172,8 @@ struct reffs_storage_ops *reffs_backend_compose(enum reffs_md_type md,
 	switch (md) {
 	case REFFS_MD_RAM:
 		co->co_ops.type = REFFS_STORAGE_RAM;
-		co->co_ops.name = "ram+ram";
+		co->co_ops.name = (data == REFFS_DATA_PROXY) ? "ram+proxy" :
+							       "ram+ram";
 		break;
 	case REFFS_MD_POSIX:
 		co->co_ops.type = REFFS_STORAGE_POSIX;

@@ -516,6 +516,11 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 		return NULL;
 	}
 
+	/* Remember the md type so super_block_set_data_axis() can pair
+	 * it with a new data axis without re-deriving from sb_storage_type.
+	 */
+	sb->sb_md_type = md;
+
 	CDS_INIT_LIST_HEAD(&sb->sb_link);
 
 	CDS_INIT_LIST_HEAD(&sb->sb_inode_lru);
@@ -566,6 +571,31 @@ struct super_block *super_block_alloc(uint64_t id, char *path,
 	trace_fs_super_block(sb, __func__, __LINE__);
 
 	return sb;
+}
+
+int super_block_set_data_axis(struct super_block *sb, enum reffs_data_type data)
+{
+	const struct reffs_storage_ops *new_ops;
+
+	if (!sb)
+		return -EINVAL;
+
+	new_ops = reffs_backend_compose(sb->sb_md_type, data);
+	if (!new_ops)
+		return -EINVAL;
+
+	/*
+	 * Single-owner contract: caller has the SB exclusively (e.g.
+	 * fresh from super_block_alloc, before dirent_create or any
+	 * publish to the listener namespace).  No serialisation here.
+	 */
+	const struct reffs_storage_ops *old_ops = sb->sb_ops;
+
+	sb->sb_ops = new_ops;
+	if (old_ops)
+		reffs_backend_free_ops(old_ops);
+
+	return 0;
 }
 
 struct super_block *super_block_find(uint64_t id)
