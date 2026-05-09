@@ -66,7 +66,7 @@ static uint32_t parse_owner_id(const char *str, uint32_t len)
 
 int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 		   layoutiomode4 iomode, layouttype4 layout_type,
-		   struct ec_layout *layout)
+		   const struct authunix_parms *creds, struct ec_layout *layout)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -109,7 +109,7 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 	memcpy(&lg_args->loga_stateid, &mf->mf_stateid, sizeof(stateid4));
 	lg_args->loga_maxcount = 65536;
 
-	ret = mds_compound_send(&mc, ms);
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
 	if (ret) {
 		mds_compound_fini(&mc);
 		return ret;
@@ -405,6 +405,7 @@ int mds_getdeviceinfo(struct mds_session *ms, const deviceid4 devid,
 /* ------------------------------------------------------------------ */
 
 int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
+		      const struct authunix_parms *creds,
 		      struct ec_layout *layout)
 {
 	struct mds_compound mc;
@@ -449,7 +450,7 @@ int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
 	lrf->lrf_body.lrf_body_len = 0;
 	lrf->lrf_body.lrf_body_val = NULL;
 
-	ret = mds_compound_send(&mc, ms);
+	ret = mds_compound_send_with_auth(&mc, ms, creds);
 	mds_compound_fini(&mc);
 	return ret;
 }

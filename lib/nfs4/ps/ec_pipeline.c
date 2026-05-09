@@ -381,7 +381,8 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	if (ret)
 		return ret;
 
-	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_RW, layout_type, &layout);
+	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_RW, layout_type, NULL,
+			     &layout);
 	if (ret)
 		goto out_close;
 
@@ -428,7 +429,7 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 
 	ds_disconnect(&dc);
 out_layout:
-	mds_layout_return(ms, &mf, &layout);
+	mds_layout_return(ms, &mf, NULL, &layout);
 	ec_layout_free(&layout);
 out_close:
 	mds_file_close(ms, &mf);
@@ -450,7 +451,8 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	if (ret)
 		return ret;
 
-	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_READ, layout_type, &layout);
+	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_READ, layout_type, NULL,
+			     &layout);
 	if (ret)
 		goto out_close;
 
@@ -498,7 +500,7 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 
 	ds_disconnect(&dc);
 out_layout:
-	mds_layout_return(ms, &mf, &layout);
+	mds_layout_return(ms, &mf, NULL, &layout);
 	ec_layout_free(&layout);
 out_close:
 	mds_file_close(ms, &mf);
@@ -538,7 +540,19 @@ static int ec_layout_refresh(struct ec_context *ctx, struct mds_session *ms,
 #endif
 
 	ec_layout_free(&ctx->ctx_layout);
-	ret = mds_layout_get(ms, &ctx->ctx_file, iomode, layout_type,
+	/*
+	 * ec_layout_refresh is the recovery path inside ec_chunk_write
+	 * / ec_chunk_read after the DS rejected an op with -ESTALE.
+	 * It re-fetches the layout using the session's default auth
+	 * (NULL creds) -- the original LAYOUTGET's caller-supplied
+	 * creds are not plumbed down into the per-shard recovery loop
+	 * yet.  Acceptable for now: the recovery path runs against the
+	 * same MDS the original LAYOUTGET hit, so a different cred
+	 * would not unblock anything we care about.  Threading the
+	 * caller's creds through is NOT_NOW_BROWN_COW for the same
+	 * follow-on slice that does DS-side cred forwarding.
+	 */
+	ret = mds_layout_get(ms, &ctx->ctx_file, iomode, layout_type, NULL,
 			     &ctx->ctx_layout);
 	if (ret) {
 		ec_log("ec_layout_refresh: LAYOUTGET failed: %d\n", ret);
@@ -616,7 +630,7 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	}
 
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
-			     &ctx.ctx_layout);
+			     NULL, &ctx.ctx_layout);
 	if (ret) {
 		ec_log("ec_write: LAYOUTGET failed: %d\n", ret);
 		goto out_close;
@@ -897,7 +911,7 @@ out_parity:
 out_conns:
 	ec_disconnect_all(&ctx);
 out_layout:
-	mds_layout_return(ms, &ctx.ctx_file, &ctx.ctx_layout);
+	mds_layout_return(ms, &ctx.ctx_file, NULL, &ctx.ctx_layout);
 	ec_layout_free(&ctx.ctx_layout);
 out_close:
 	mds_file_close(ms, &ctx.ctx_file);
@@ -914,7 +928,8 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 			    uint8_t *buf, size_t buf_len, size_t *out_len,
 			    int k, int m, enum ec_codec_type codec_type,
 			    layouttype4 layout_type, uint64_t skip_ds_mask,
-			    size_t shard_size)
+			    size_t shard_size,
+			    const struct authunix_parms *creds)
 {
 	struct ec_context ctx;
 	int ret;
@@ -952,7 +967,7 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 		return -ENOMEM;
 
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ, layout_type,
-			     &ctx.ctx_layout);
+			     creds, &ctx.ctx_layout);
 	if (ret)
 		goto out_codec;
 
@@ -1115,7 +1130,7 @@ retry_stripe_read:
 out_conns:
 	ec_disconnect_all(&ctx);
 out_layout:
-	mds_layout_return(ms, &ctx.ctx_file, &ctx.ctx_layout);
+	mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
 	ec_layout_free(&ctx.ctx_layout);
 out_codec:
 	ec_codec_destroy(ctx.ctx_codec);
@@ -1134,9 +1149,15 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	if (ret)
 		return ret;
 
+	/*
+	 * Back-compat wrapper for ec_demo / direct callers: no per-call
+	 * cred override, the session's default auth is used.  PS callers
+	 * go through ec_read_codec_with_file directly so they can pass
+	 * the end client's creds.
+	 */
 	ret = ec_read_codec_with_file(ms, &mf, buf, buf_len, out_len, k, m,
 				      codec_type, layout_type, skip_ds_mask,
-				      shard_size);
+				      shard_size, NULL);
 
 	mds_file_close(ms, &mf);
 	return ret;

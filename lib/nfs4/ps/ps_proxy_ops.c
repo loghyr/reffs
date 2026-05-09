@@ -2255,8 +2255,7 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 			   uint32_t upstream_fh_len, uint32_t stateid_seqid,
 			   const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
 			   uint64_t offset, uint32_t count,
-			   const struct authunix_parms *creds
-			   __attribute__((unused)),
+			   const struct authunix_parms *creds,
 			   struct ps_proxy_read_reply *reply)
 {
 	struct mds_file mf;
@@ -2312,7 +2311,7 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 				      /* k */ 4, /* m */ 2, EC_CODEC_RS,
 				      LAYOUT4_FLEX_FILES_V2,
 				      /* skip_ds_mask */ 0,
-				      /* shard_size */ 4096);
+				      /* shard_size */ 4096, creds);
 	if (ret) {
 		free(whole_buf);
 		return ret;

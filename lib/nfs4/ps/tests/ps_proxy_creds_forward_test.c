@@ -492,6 +492,98 @@ START_TEST(test_forward_mknod_rejects_wrong_type)
 }
 END_TEST
 
+/*
+ * ps_proxy_pipeline_read carries the end-client AUTH_SYS creds
+ * through ec_read_codec_with_file -> mds_layout_get -> the wire
+ * compound.  The mock above captures the creds pointer reaching
+ * mds_compound_send_with_auth; the assertion is the same shape
+ * as the per-forwarder tests above (-EIO short-circuits the
+ * pipeline before any per-op result is touched, so no XDR tree
+ * needs to be constructed).
+ *
+ * Closes slice (b2): forwarded creds on proxy READ path.
+ */
+START_TEST(test_pipeline_read_propagates_creds)
+{
+	uint8_t fh[] = { 0xCC, 0xDD };
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0xEE };
+	struct ps_proxy_read_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+	capture_reset();
+
+	int ret = ps_proxy_pipeline_read(test_session(), fh, sizeof(fh),
+					 /* stateid_seqid */ 1, other,
+					 /* offset */ 0, /* count */ 4096,
+					 &g_test_creds, &reply);
+
+	/*
+	 * mds_compound_send_with_auth is mocked to return -EIO; the
+	 * pipeline's mds_layout_get path bails on that, the codec is
+	 * destroyed, and ps_proxy_pipeline_read returns the underlying
+	 * error verbatim.  -EIO is the wire-level errno the mock
+	 * returns; the pipeline's translation of "send failed" to
+	 * "no layout available" surfaces as -EIO out the top.
+	 */
+	ck_assert_int_eq(ret, -EIO);
+	/*
+	 * Exactly one send fires: mds_layout_get's LAYOUTGET compound,
+	 * which the mock fails with -EIO.  ec_read_codec_with_file's
+	 * error path takes `goto out_codec` directly (skipping
+	 * out_layout) because there is no layout grant to return when
+	 * LAYOUTGET itself failed -- so mds_layout_return does not
+	 * run in this synthetic failure scenario.
+	 *
+	 * The cleanup-path correctness ("when LAYOUTRETURN does run,
+	 * it carries the same end-client creds") is enforced by
+	 * inspection of the call site at lib/nfs4/ps/ec_pipeline.c
+	 * (the out_layout label passes the same `creds` parameter).
+	 * Driving that path through the test harness would require a
+	 * mock that returns a synthetic LAYOUTGET success with a
+	 * decodable layout body, which is well beyond a creds-
+	 * propagation unit test.
+	 */
+	ck_assert_uint_eq(g_send_call_count, 1);
+	ck_assert_ptr_eq(g_captured_creds, &g_test_creds);
+	ck_assert_uint_eq(g_captured_creds->aup_uid, TEST_UID);
+	ck_assert_uint_eq(g_captured_creds->aup_gid, TEST_GID);
+
+	/* No data should be returned given the pipeline failed. */
+	ck_assert_ptr_null(reply.data);
+}
+END_TEST
+
+/*
+ * NULL-creds companion: ps_proxy_pipeline_read with creds=NULL
+ * must propagate the NULL through to mds_compound_send_with_auth
+ * so the session's default auth is used (the back-compat path
+ * ec_demo / dstore-MDS-to-DS rely on).  Mirrors the
+ * test_forward_*_null_creds discipline applied to the per-forwarder
+ * tests above so a future regression that tries to inject a fallback
+ * AUTH_SYS principal here would fail loudly.
+ */
+START_TEST(test_pipeline_read_null_creds)
+{
+	uint8_t fh[] = { 0x77 };
+	uint8_t other[PS_STATEID_OTHER_SIZE] = { 0x88 };
+	struct ps_proxy_read_reply reply;
+
+	memset(&reply, 0, sizeof(reply));
+	capture_reset();
+
+	int ret = ps_proxy_pipeline_read(test_session(), fh, sizeof(fh),
+					 /* stateid_seqid */ 1, other,
+					 /* offset */ 0, /* count */ 4096, NULL,
+					 &reply);
+
+	ck_assert_int_eq(ret, -EIO);
+	/* Same single-send rationale as the propagates_creds test above. */
+	ck_assert_uint_eq(g_send_call_count, 1);
+	ck_assert_ptr_null(g_captured_creds);
+	ck_assert_ptr_null(reply.data);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -520,6 +612,8 @@ static Suite *ps_proxy_creds_forward_suite(void)
 	tcase_add_test(tc, test_forward_mknod_sock_propagates_creds);
 	tcase_add_test(tc, test_forward_mknod_fifo_propagates_creds);
 	tcase_add_test(tc, test_forward_mknod_rejects_wrong_type);
+	tcase_add_test(tc, test_pipeline_read_propagates_creds);
+	tcase_add_test(tc, test_pipeline_read_null_creds);
 
 	suite_add_tcase(s, tc);
 	return s;

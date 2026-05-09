@@ -466,10 +466,21 @@ struct ec_layout {
 	struct ec_mirror *el_mirrors;
 };
 
+/*
+ * mds_layout_get / mds_layout_return -- LAYOUTGET / LAYOUTRETURN
+ * over `ms`.  `creds` is an optional per-call AUTH_SYS override that
+ * the proxy-server forwarders use to surface the end client's
+ * identity to the upstream MDS (see ps_proxy_pipeline_read in
+ * lib/nfs4/ps/ps_proxy_ops.c).  Pass NULL to use the session's
+ * default auth -- the historical behaviour, which every non-PS
+ * caller (ec_demo, ec_pipeline back-compat wrappers) still wants.
+ */
 int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 		   layoutiomode4 iomode, layouttype4 layout_type,
+		   const struct authunix_parms *creds,
 		   struct ec_layout *layout);
 int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
+		      const struct authunix_parms *creds,
 		      struct ec_layout *layout);
 void ec_layout_free(struct ec_layout *layout);
 
@@ -614,11 +625,25 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
  * before this function returns.  No layout state leaks across the
  * call.
  */
+/*
+ * `creds` -- optional per-call AUTH_SYS override for the MDS-side
+ * compounds (LAYOUTGET / LAYOUTRETURN).  The proxy-server forwarders
+ * pass the end client's credentials so the upstream MDS authorises
+ * the layout grant against the originating identity rather than the
+ * PS service identity.  Pass NULL to use the session's default auth
+ * (ec_demo, dstore-MDS-to-DS, internal back-compat wrappers).
+ *
+ * NOT_NOW_BROWN_COW: DS-side cred forwarding (CHUNK_READ /
+ * NFSv3 READ to the DS) is a separate slice -- the DS sessions
+ * are pooled across requests today and don't yet have a per-call
+ * auth swap.  This call's `creds` only reaches the MDS hops.
+ */
 int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 			    uint8_t *buf, size_t buf_len, size_t *out_len,
 			    int k, int m, enum ec_codec_type codec_type,
 			    layouttype4 layout_type, uint64_t skip_ds_mask,
-			    size_t shard_size);
+			    size_t shard_size,
+			    const struct authunix_parms *creds);
 
 /*
  * Default shard size for the back-compat ec_write / ec_read
