@@ -759,6 +759,19 @@ int main(int argc, char *argv[])
 				LOG("proxy_mds[%u]: PROXY_REGISTRATION failed: %s -- PS will operate without registered-PS privilege",
 				    pmc->id, strerror(-prr_ret));
 			}
+			/*
+			 * Stash the id on the listener state so the renewal
+			 * thread's reconnect path (lib/nfs4/ps/ps_renewal.c)
+			 * re-issues PROXY_REGISTRATION with the SAME cookie
+			 * after a session-killer wire status -- the upstream
+			 * MDS recognises that as a renewal and refreshes the
+			 * lease without making us wait out the squat-guard
+			 * window.  Stash unconditionally (even on send-failure
+			 * above): a later reconnect may succeed where the
+			 * boot send did not (transient -EAGAIN, etc.).
+			 */
+			ps_state_set_registration_id(pmc->id, registration_id,
+						     sizeof(registration_id));
 		}
 
 		/*

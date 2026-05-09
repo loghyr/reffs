@@ -302,8 +302,21 @@ int ps_discovery_run(const struct ps_listener_state *pls)
 
 	if (!pls || pls->pls_upstream[0] == '\0')
 		return -EINVAL;
-	if (!pls->pls_session)
+	/*
+	 * Session-presence check via the borrow API: the renewal thread
+	 * may swap pls_session under us, so a raw read of pls->pls_session
+	 * is unsafe even at this top-of-function check.  Borrow only to
+	 * test for presence, then release immediately -- per-walk borrows
+	 * inside the loop below take their own short-lived rdlocks so the
+	 * renewal thread can reconnect mid-discovery without waiting for
+	 * the whole run to finish.
+	 */
+	struct mds_session *probe =
+		ps_listener_session_borrow(pls->pls_listener_id);
+
+	if (!probe)
 		return -ENOTCONN;
+	ps_listener_session_release(pls->pls_listener_id);
 
 	/*
 	 * Serialize concurrent discovery runs on the same listener.
@@ -351,9 +364,20 @@ int ps_discovery_run(const struct ps_listener_state *pls)
 		int walk_r;
 		int add_r;
 
-		walk_r = ps_discovery_walk_path(pls->pls_session,
-						entries[i].path, fh, sizeof(fh),
-						&fh_len);
+		struct mds_session *walk_ms =
+			ps_listener_session_borrow(pls->pls_listener_id);
+
+		if (!walk_ms) {
+			fprintf(stderr,
+				"ps[%u]: session unavailable mid-discovery, "
+				"aborting walks\n",
+				pls->pls_listener_id);
+			fail++;
+			break;
+		}
+		walk_r = ps_discovery_walk_path(walk_ms, entries[i].path, fh,
+						sizeof(fh), &fh_len);
+		ps_listener_session_release(pls->pls_listener_id);
 		if (walk_r < 0) {
 			fprintf(stderr, "ps[%u]: walk of %s failed: %d\n",
 				pls->pls_listener_id, entries[i].path, walk_r);

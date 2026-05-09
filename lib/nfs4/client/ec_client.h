@@ -192,9 +192,26 @@ int mds_session_send_proxy_registration(struct mds_session *ms,
  * Returns:
  *   0        success (server accepted SEQUENCE; session still alive)
  *   -errno   wire failure or non-OK SEQUENCE status; caller logs and
- *            optionally schedules a reconnect (NOT_NOW_BROWN_COW).
+ *            optionally schedules a reconnect via the _ex variant
+ *            below + ps_session_is_dead().
  */
 int mds_session_renew_lease(struct mds_session *ms);
+
+/*
+ * Same as mds_session_renew_lease but also exposes the SEQUENCE op's
+ * wire-level sr_status.  The PS reconnect path needs this to
+ * distinguish session-killer codes (NFS4ERR_BADSESSION,
+ * NFS4ERR_DEADSESSION, NFS4ERR_STALE_CLIENTID) from per-op transients
+ * like NFS4ERR_DELAY -- mds_compound_send flattens both into
+ * -EREMOTEIO.
+ *
+ * On a successful round-trip with a non-OK SEQUENCE status, returns
+ * -EREMOTEIO and sets *sr_status_out to the wire status.  On RPC-
+ * level failure (no decoded SEQUENCE result), returns the underlying
+ * errno and sets *sr_status_out to NFS4_OK.  sr_status_out may be
+ * NULL.
+ */
+int mds_session_renew_lease_ex(struct mds_session *ms, nfsstat4 *sr_status_out);
 
 /*
  * Slice 6c-z: PS-side PROXY_PROGRESS / PROXY_DONE / PROXY_CANCEL

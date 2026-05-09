@@ -10,10 +10,12 @@
 #include <errno.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "reffs/settings.h"
 
+#include "ec_client.h" /* mds_session_destroy */
 #include "ps_state.h"
 
 #define PS_MAX_LISTENERS REFFS_CONFIG_MAX_PROXY_MDS
@@ -28,6 +30,8 @@ static struct ps_listener_state ps_listeners[PS_MAX_LISTENERS];
  * touched by readers.
  */
 static _Atomic unsigned int ps_nlisteners;
+
+static struct ps_listener_state *ps_listener_by_id(uint32_t listener_id);
 
 int ps_state_init(void)
 {
@@ -61,6 +65,23 @@ int ps_state_register(const struct reffs_proxy_mds_config *cfg)
 	pls->pls_upstream_probe = cfg->mds_probe;
 
 	/*
+	 * Cache TLS bring-up parameters so the renewal thread's reconnect
+	 * path can replay mds_session_create_tls() after the original
+	 * session dies.  Empty paths are legal (cleartext fallback) --
+	 * mds_session_create_tls treats all-empty as "no TLS, plain TCP".
+	 */
+	strncpy(pls->pls_tls_cert, cfg->tls_cert,
+		sizeof(pls->pls_tls_cert) - 1);
+	pls->pls_tls_cert[sizeof(pls->pls_tls_cert) - 1] = '\0';
+	strncpy(pls->pls_tls_key, cfg->tls_key, sizeof(pls->pls_tls_key) - 1);
+	pls->pls_tls_key[sizeof(pls->pls_tls_key) - 1] = '\0';
+	strncpy(pls->pls_tls_ca, cfg->tls_ca, sizeof(pls->pls_tls_ca) - 1);
+	pls->pls_tls_ca[sizeof(pls->pls_tls_ca) - 1] = '\0';
+	pls->pls_tls_mode = (int)cfg->tls_mode;
+	pls->pls_tls_insecure_no_verify = cfg->tls_insecure_no_verify;
+	pls->pls_registration_id_len = 0; /* boot path stashes it later */
+
+	/*
 	 * Initialize the per-listener discovery mutex before publish so
 	 * any caller that acquire-loads pls_nlisteners and proceeds to
 	 * ps_state_discovery_lock() sees a fully constructed mutex.
@@ -74,6 +95,21 @@ int ps_state_register(const struct reffs_proxy_mds_config *cfg)
 
 	if (merr != 0)
 		return -merr;
+
+	/*
+	 * Same rationale for the session-lifetime rwlock: must be fully
+	 * constructed before any reader can acquire it via the borrow
+	 * helper, which only becomes reachable once the slot is published.
+	 */
+	int rerr = pthread_rwlock_init(&pls->pls_session_rwlock, NULL);
+
+	if (rerr != 0) {
+		pthread_mutex_destroy(&pls->pls_discovery_mutex);
+		return -rerr;
+	}
+
+	pls->pls_reconnect_backoff_sec = 0;
+	pls->pls_reconnect_next_attempt_ns = 0;
 
 	/* Publish: release-store pairs with acquire-load in ps_state_find. */
 	atomic_store_explicit(&ps_nlisteners, n + 1, memory_order_release);
@@ -99,11 +135,41 @@ int ps_state_set_session(uint32_t listener_id, struct mds_session *session)
 
 	for (unsigned int i = 0; i < n; i++) {
 		if (ps_listeners[i].pls_listener_id == listener_id) {
+			/*
+			 * Take the write lock so this initial-publish path
+			 * (boot, and the shutdown clear) cannot race with a
+			 * worker borrow.  Unlike ps_listener_session_replace,
+			 * this helper does NOT destroy any prior session --
+			 * the caller retains ownership (boot owns the new
+			 * session it just built; shutdown destroys after
+			 * clearing).
+			 */
+			pthread_rwlock_wrlock(
+				&ps_listeners[i].pls_session_rwlock);
 			ps_listeners[i].pls_session = session;
+			pthread_rwlock_unlock(
+				&ps_listeners[i].pls_session_rwlock);
 			return 0;
 		}
 	}
 	return -ENOENT;
+}
+
+int ps_state_set_registration_id(uint32_t listener_id, const uint8_t *id,
+				 uint32_t len)
+{
+	struct ps_listener_state *pls = ps_listener_by_id(listener_id);
+
+	if (!pls)
+		return -ENOENT;
+	if (len > sizeof(pls->pls_registration_id))
+		return -EINVAL;
+	if (len > 0 && !id)
+		return -EINVAL;
+	if (len > 0)
+		memcpy(pls->pls_registration_id, id, len);
+	pls->pls_registration_id_len = len;
+	return 0;
 }
 
 int ps_state_set_mds_root_fh(uint32_t listener_id, const uint8_t *fh,
@@ -307,18 +373,138 @@ int ps_state_discovery_unlock(uint32_t listener_id)
 void ps_state_fini(void)
 {
 	/*
-	 * Destroy the per-listener discovery mutex for every slot that
-	 * was registered.  Readers that might still be in ps_state_find*
-	 * must be quiesced before fini runs (the same invariant the
-	 * table-level release-store establishes); destroying an
-	 * initialized mutex with no waiters is well-defined.
+	 * Destroy the per-listener discovery mutex + session rwlock for
+	 * every slot that was registered.  Readers that might still be
+	 * in ps_state_find* must be quiesced before fini runs (the same
+	 * invariant the table-level release-store establishes);
+	 * destroying an initialized mutex/rwlock with no waiters is
+	 * well-defined.  Sessions themselves are owned/freed by the
+	 * caller via ps_state_set_session(id, NULL) (the contract on
+	 * this function's docstring) so we do not destroy them here.
 	 */
 	unsigned int n =
 		atomic_load_explicit(&ps_nlisteners, memory_order_acquire);
 
-	for (unsigned int i = 0; i < n; i++)
+	for (unsigned int i = 0; i < n; i++) {
 		pthread_mutex_destroy(&ps_listeners[i].pls_discovery_mutex);
+		pthread_rwlock_destroy(&ps_listeners[i].pls_session_rwlock);
+	}
 
 	atomic_store_explicit(&ps_nlisteners, 0, memory_order_release);
 	memset(ps_listeners, 0, sizeof(ps_listeners));
+}
+
+/* ------------------------------------------------------------------ */
+/* Reconnect support: borrow/release/replace + classifier + backoff    */
+/* ------------------------------------------------------------------ */
+
+struct mds_session *ps_listener_session_borrow(uint32_t listener_id)
+{
+	struct ps_listener_state *pls = ps_listener_by_id(listener_id);
+
+	if (!pls)
+		return NULL;
+
+	pthread_rwlock_rdlock(&pls->pls_session_rwlock);
+	struct mds_session *ms = pls->pls_session;
+
+	if (!ms) {
+		pthread_rwlock_unlock(&pls->pls_session_rwlock);
+		return NULL;
+	}
+	return ms;
+}
+
+void ps_listener_session_release(uint32_t listener_id)
+{
+	struct ps_listener_state *pls = ps_listener_by_id(listener_id);
+
+	if (!pls)
+		return;
+	pthread_rwlock_unlock(&pls->pls_session_rwlock);
+}
+
+int ps_listener_session_replace(uint32_t listener_id,
+				struct mds_session *new_session)
+{
+	struct ps_listener_state *pls = ps_listener_by_id(listener_id);
+
+	if (!pls)
+		return -ENOENT;
+
+	pthread_rwlock_wrlock(&pls->pls_session_rwlock);
+	struct mds_session *old_session = pls->pls_session;
+
+	pls->pls_session = new_session;
+	pthread_rwlock_unlock(&pls->pls_session_rwlock);
+
+	/*
+	 * Destroy the old session OUTSIDE the write lock.  Two reasons:
+	 *   1. mds_session_destroy sends DESTROY_SESSION + DESTROY_CLIENTID
+	 *      on the wire; even on an already-dead session that round-trip
+	 *      may take RPC-timeout-many seconds.  Holding the wrlock that
+	 *      whole time blocks every new borrower; new sessions installed
+	 *      via this same call would also race with destroy on a
+	 *      poorly-ordered call site.
+	 *   2. clnt_destroy + SSL_CTX_free are reentrancy-tolerant once
+	 *      the wire ops have completed; no other thread can reach the
+	 *      old session because its publish-pointer was already cleared
+	 *      under the wlock.
+	 */
+	if (old_session) {
+		mds_session_destroy(old_session);
+		free(old_session);
+	}
+	return 0;
+}
+
+bool ps_session_is_dead(int err, nfsstat4 sr_status)
+{
+	switch (sr_status) {
+	case NFS4ERR_BADSESSION:
+	case NFS4ERR_DEADSESSION:
+	case NFS4ERR_STALE_CLIENTID:
+	case NFS4ERR_BAD_SESSION_DIGEST:
+		return true;
+	default:
+		break;
+	}
+	switch (err) {
+	case -EIO:
+	case -EPIPE:
+	case -ECONNRESET:
+	case -ETIMEDOUT:
+	case -ENOTCONN:
+	case -ENETUNREACH:
+		return true;
+	default:
+		return false;
+	}
+}
+
+uint32_t ps_reconnect_backoff_next(uint32_t *backoff_sec)
+{
+	if (!backoff_sec)
+		return 0;
+
+	uint32_t cur = *backoff_sec;
+
+	/*
+	 * Schedule: 0, 1, 2, 4, 8, 16, 32, 60, 60, ...  First call
+	 * (cur == 0) returns 0 (immediate retry permitted), bumps to 1.
+	 * Subsequent calls double the wait until the 60-second cap.
+	 */
+	if (cur == 0)
+		*backoff_sec = 1;
+	else if (cur < 32)
+		*backoff_sec = cur * 2;
+	else
+		*backoff_sec = 60;
+	return cur;
+}
+
+void ps_reconnect_backoff_reset(uint32_t *backoff_sec)
+{
+	if (backoff_sec)
+		*backoff_sec = 0;
 }

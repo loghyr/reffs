@@ -102,21 +102,21 @@ uint32_t nfs4_op_getdeviceinfo(struct compound *compound)
 	 * c_listener_id, because no PUTFH is in this op's compound.
 	 */
 	if (compound->c_listener_id != 0) {
-		const struct ps_listener_state *pls =
-			ps_state_find(compound->c_listener_id);
-		if (!pls || !pls->pls_session) {
+		struct mds_session *ms =
+			ps_listener_session_borrow(compound->c_listener_id);
+
+		if (!ms) {
 			TRACE("GETDEVICEINFO listener_id=%u not registered as PS, treating as native",
 			      compound->c_listener_id);
-		}
-		if (pls && pls->pls_session) {
+		} else {
 			struct ps_proxy_getdeviceinfo_reply gdireply;
 
 			memset(&gdireply, 0, sizeof(gdireply));
 			int fret = ps_proxy_forward_getdeviceinfo(
-				pls->pls_session,
-				(const uint8_t *)args->gdia_device_id,
+				ms, (const uint8_t *)args->gdia_device_id,
 				args->gdia_layout_type, args->gdia_maxcount,
 				&compound->c_ap, &gdireply);
+			ps_listener_session_release(compound->c_listener_id);
 			if (fret < 0) {
 				*status = errno_to_nfs4(fret, OP_GETDEVICEINFO);
 				ps_proxy_getdeviceinfo_reply_free(&gdireply);
@@ -991,9 +991,10 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 		}
 		const struct ps_sb_binding *binding =
 			compound->c_inode->i_sb->sb_proxy_binding;
-		const struct ps_listener_state *pls =
-			ps_state_find(binding->psb_listener_id);
-		if (!pls || !pls->pls_session) {
+		struct mds_session *ms =
+			ps_listener_session_borrow(binding->psb_listener_id);
+
+		if (!ms) {
 			*status = NFS4ERR_DELAY;
 			return 0;
 		}
@@ -1001,12 +1002,13 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 
 		memset(&lgreply, 0, sizeof(lgreply));
 		fret = ps_proxy_forward_layoutget(
-			pls->pls_session, upstream_fh, upstream_fh_len,
+			ms, upstream_fh, upstream_fh_len,
 			args->loga_signal_layout_avail, layout_type,
 			args->loga_iomode, args->loga_offset, args->loga_length,
 			args->loga_minlength, args->loga_stateid.seqid,
 			(const uint8_t *)args->loga_stateid.other,
 			args->loga_maxcount, &compound->c_ap, &lgreply);
+		ps_listener_session_release(binding->psb_listener_id);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_LAYOUTGET);
 			ps_proxy_layoutget_reply_free(&lgreply);
@@ -1756,9 +1758,10 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 		}
 		const struct ps_sb_binding *binding =
 			compound->c_inode->i_sb->sb_proxy_binding;
-		const struct ps_listener_state *pls =
-			ps_state_find(binding->psb_listener_id);
-		if (!pls || !pls->pls_session) {
+		struct mds_session *ms =
+			ps_listener_session_borrow(binding->psb_listener_id);
+
+		if (!ms) {
 			*status = NFS4ERR_DELAY;
 			return 0;
 		}
@@ -1768,14 +1771,14 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 
 		memset(&lrreply, 0, sizeof(lrreply));
 		fret = ps_proxy_forward_layoutreturn(
-			pls->pls_session, upstream_fh, upstream_fh_len,
-			args->lora_reclaim, args->lora_layout_type,
-			args->lora_iomode,
+			ms, upstream_fh, upstream_fh_len, args->lora_reclaim,
+			args->lora_layout_type, args->lora_iomode,
 			args->lora_layoutreturn.lr_returntype, lrf->lrf_offset,
 			lrf->lrf_length, lrf->lrf_stateid.seqid,
 			(const uint8_t *)lrf->lrf_stateid.other,
 			(const uint8_t *)lrf->lrf_body.lrf_body_val,
 			lrf->lrf_body.lrf_body_len, &compound->c_ap, &lrreply);
+		ps_listener_session_release(binding->psb_listener_id);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_LAYOUTRETURN);
 			return 0;

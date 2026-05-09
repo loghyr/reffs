@@ -445,10 +445,10 @@ uint32_t nfs4_op_open(struct compound *compound)
 			goto out;
 		}
 
-		const struct ps_listener_state *pls =
-			ps_state_find(binding->psb_listener_id);
+		struct mds_session *ms =
+			ps_listener_session_borrow(binding->psb_listener_id);
 
-		if (!pls || !pls->pls_session) {
+		if (!ms) {
 			*status = NFS4ERR_DELAY;
 			goto out;
 		}
@@ -492,6 +492,7 @@ uint32_t nfs4_op_open(struct compound *compound)
 			 * decoder slipped past or NFS4_OPAQUE_LIMIT
 			 * changed.  Fail loudly.
 			 */
+			ps_listener_session_release(binding->psb_listener_id);
 			*status = NFS4ERR_SERVERFAULT;
 			goto out;
 		}
@@ -558,11 +559,12 @@ uint32_t nfs4_op_open(struct compound *compound)
 		struct ps_proxy_open_reply oreply;
 
 		memset(&oreply, 0, sizeof(oreply));
-		fret = ps_proxy_forward_open(
-			pls->pls_session, upstream_fh, upstream_fh_len,
-			fname ? fname->utf8string_val : NULL,
-			fname ? fname->utf8string_len : 0, &oreq,
-			&compound->c_ap, &oreply);
+		fret = ps_proxy_forward_open(ms, upstream_fh, upstream_fh_len,
+					     fname ? fname->utf8string_val :
+						     NULL,
+					     fname ? fname->utf8string_len : 0,
+					     &oreq, &compound->c_ap, &oreply);
+		ps_listener_session_release(binding->psb_listener_id);
 		if (fret == -ENOENT) {
 			*status = NFS4ERR_NOENT;
 			goto out;
@@ -1438,10 +1440,10 @@ uint32_t nfs4_op_close(struct compound *compound)
 			return 0;
 		}
 
-		const struct ps_listener_state *pls =
-			ps_state_find(binding->psb_listener_id);
+		struct mds_session *ms =
+			ps_listener_session_borrow(binding->psb_listener_id);
 
-		if (!pls || !pls->pls_session) {
+		if (!ms) {
 			*status = NFS4ERR_DELAY;
 			return 0;
 		}
@@ -1454,10 +1456,11 @@ uint32_t nfs4_op_close(struct compound *compound)
 
 		memset(&creply, 0, sizeof(creply));
 		fret = ps_proxy_forward_close(
-			pls->pls_session, upstream_fh, upstream_fh_len,
-			args->seqid, args->open_stateid.seqid,
+			ms, upstream_fh, upstream_fh_len, args->seqid,
+			args->open_stateid.seqid,
 			(const uint8_t *)args->open_stateid.other,
 			&compound->c_ap, &creply);
+		ps_listener_session_release(binding->psb_listener_id);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_CLOSE);
 			return 0;
@@ -1692,10 +1695,10 @@ uint32_t nfs4_op_read(struct compound *compound)
 			goto out;
 		}
 
-		const struct ps_listener_state *pls =
-			ps_state_find(binding->psb_listener_id);
+		struct mds_session *ms =
+			ps_listener_session_borrow(binding->psb_listener_id);
 
-		if (!pls || !pls->pls_session) {
+		if (!ms) {
 			*status = NFS4ERR_DELAY;
 			goto out;
 		}
@@ -1732,10 +1735,10 @@ uint32_t nfs4_op_read(struct compound *compound)
 		 * elsewhere in the forward path).
 		 */
 		fret = ps_proxy_pipeline_read(
-			pls->pls_session, upstream_fh, upstream_fh_len,
-			args->stateid.seqid,
+			ms, upstream_fh, upstream_fh_len, args->stateid.seqid,
 			(const uint8_t *)args->stateid.other, args->offset,
 			req_count, &compound->c_ap, &reply);
+		ps_listener_session_release(binding->psb_listener_id);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_READ);
 			goto out;
@@ -2194,10 +2197,10 @@ uint32_t nfs4_op_write(struct compound *compound)
 			goto out;
 		}
 
-		const struct ps_listener_state *pls =
-			ps_state_find(binding->psb_listener_id);
+		struct mds_session *ms =
+			ps_listener_session_borrow(binding->psb_listener_id);
 
-		if (!pls || !pls->pls_session) {
+		if (!ms) {
 			*status = NFS4ERR_DELAY;
 			goto out;
 		}
@@ -2213,6 +2216,7 @@ uint32_t nfs4_op_write(struct compound *compound)
 			 * local zero-verifier; if a caller actually
 			 * tests correlation we can extend later.
 			 */
+			ps_listener_session_release(binding->psb_listener_id);
 			resok->count = 0;
 			resok->committed = FILE_SYNC4;
 			memset(resok->writeverf, 0, sizeof(resok->writeverf));
@@ -2230,12 +2234,12 @@ uint32_t nfs4_op_write(struct compound *compound)
 
 		memset(&wreply, 0, sizeof(wreply));
 		fret = ps_proxy_forward_write(
-			pls->pls_session, upstream_fh, upstream_fh_len,
-			args->stateid.seqid,
+			ms, upstream_fh, upstream_fh_len, args->stateid.seqid,
 			(const uint8_t *)args->stateid.other, args->offset,
 			(uint32_t)args->stable,
 			(const uint8_t *)args->data.data_val, write_len,
 			&compound->c_ap, &wreply);
+		ps_listener_session_release(binding->psb_listener_id);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_WRITE);
 			goto out;
@@ -2532,10 +2536,10 @@ uint32_t nfs4_op_commit(struct compound *compound)
 			goto out;
 		}
 
-		const struct ps_listener_state *pls =
-			ps_state_find(binding->psb_listener_id);
+		struct mds_session *ms =
+			ps_listener_session_borrow(binding->psb_listener_id);
 
-		if (!pls || !pls->pls_session) {
+		if (!ms) {
 			*status = NFS4ERR_DELAY;
 			goto out;
 		}
@@ -2543,10 +2547,10 @@ uint32_t nfs4_op_commit(struct compound *compound)
 		struct ps_proxy_commit_reply creply;
 
 		memset(&creply, 0, sizeof(creply));
-		fret = ps_proxy_forward_commit(pls->pls_session, upstream_fh,
-					       upstream_fh_len, args->offset,
-					       args->count, &compound->c_ap,
-					       &creply);
+		fret = ps_proxy_forward_commit(ms, upstream_fh, upstream_fh_len,
+					       args->offset, args->count,
+					       &compound->c_ap, &creply);
+		ps_listener_session_release(binding->psb_listener_id);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_COMMIT);
 			goto out;

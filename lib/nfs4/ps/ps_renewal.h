@@ -29,12 +29,27 @@
  * tick (network blip, GC stall) still leaves time for two more
  * before the lease expires.
  *
- * Reconnect on BADSESSION:
- *   NOT_NOW_BROWN_COW.  When a renewal returns NFS4ERR_BADSESSION
- *   (lease already expired between ticks), the thread logs once and
- *   leaves pls_session in place.  Subsequent forwarded ops will hit
- *   the same status; reconnect logic that ties to the [[proxy_mds]]
- *   config to recreate the TLS session is its own slice.
+ * Reconnect on session-killer wire codes:
+ *   When the renewal returns NFS4ERR_BADSESSION / NFS4ERR_DEADSESSION
+ *   / NFS4ERR_STALE_CLIENTID -- or a connection-killer errno like
+ *   -EPIPE / -ECONNRESET -- the thread tears down the dead session
+ *   and replays the bring-up: TLS handshake + EXCHANGE_ID +
+ *   CREATE_SESSION + PROXY_REGISTRATION (with the same
+ *   registration_id reffsd's boot path generated, so the upstream
+ *   MDS treats it as a renewal not a squat).  Failed reconnect
+ *   attempts apply a capped exponential backoff (0s, 1s, 2s, 4s,
+ *   8s, 16s, 32s, 60s, 60s, ...) per listener; success resets the
+ *   backoff to 0.  Cached upstream FHs on proxy SBs survive the
+ *   reconnect -- they identify upstream inodes which are stable
+ *   across the upstream session's lifetime.  See
+ *   .claude/design/ps-reconnect.md.
+ *
+ *   Worker forwarders that observe a session-killer in their own
+ *   compound do NOT trigger reconnect -- they return NFS4ERR_DELAY
+ *   (or NFS4ERR_IO) to the end client and rely on the next renewal
+ *   tick to detect.  Worst-case recovery is one renewal interval
+ *   (default 30s for a 90s lease).  A worker-path "kick the
+ *   renewal early" path is NOT_NOW_BROWN_COW for the next slice.
  */
 
 /*

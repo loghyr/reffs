@@ -8,8 +8,10 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdint.h>
 
+#include "nfsv42_xdr.h" /* nfsstat4 */
 #include "reffs/settings.h"
 
 struct mds_session; /* forward: from lib/nfs4/client/ec_client.h */
@@ -108,6 +110,57 @@ struct ps_listener_state {
 	 * invariant stays with the registry.
 	 */
 	pthread_mutex_t pls_discovery_mutex;
+
+	/*
+	 * Reconnect: protects pls_session lifetime.  Workers take a read
+	 * lock for the duration of a forwarded RPC; the renewal thread
+	 * takes a write lock when swapping in a freshly built session
+	 * after the previous one died (NFS4ERR_BADSESSION /
+	 * NFS4ERR_DEADSESSION / NFS4ERR_STALE_CLIENTID / connection drop).
+	 * See .claude/design/ps-reconnect.md.
+	 *
+	 * Lock order rule (verified by TSAN soak):
+	 *   pls_session_rwlock (read or write)
+	 *     -> mds_session::ms_call_mutex (acquired only inside
+	 *        mds_compound_send_with_auth and mds_session_destroy)
+	 * No path acquires ms_call_mutex before the rwlock.
+	 *
+	 * pls_reconnect_backoff_sec is the next wait interval before the
+	 * renewal thread re-attempts reconnect after a failed attempt;
+	 * grows by doubling 1, 2, 4, 8, 16, 32, capped at 60.  Zero means
+	 * "first attempt allowed immediately" (steady state and right
+	 * after a successful reconnect).
+	 *
+	 * pls_reconnect_next_attempt_ns is a CLOCK_MONOTONIC deadline; the
+	 * renewal thread skips the reconnect path until reffs_now_ns()
+	 * crosses it.  Zero means "no wait scheduled".
+	 */
+	pthread_rwlock_t pls_session_rwlock;
+	uint32_t pls_reconnect_backoff_sec;
+	uint64_t pls_reconnect_next_attempt_ns;
+
+	/*
+	 * Cached bring-up parameters used by the renewal thread to
+	 * replay TLS + EXCHANGE_ID + CREATE_SESSION + PROXY_REGISTRATION
+	 * after a session-killer wire status.  Copied from the
+	 * reffs_proxy_mds_config at register time; immutable after.
+	 *
+	 * pls_registration_id is set once by ps_state_set_registration_id
+	 * after reffsd's bootstrap RAND_bytes; reusing the same id on
+	 * reconnect lets the upstream MDS recognise the new
+	 * PROXY_REGISTRATION as a renewal (not a squat) so it does not
+	 * have to wait out the squat-guard window before accepting.
+	 * pls_registration_id_len == 0 means the boot path has not yet
+	 * populated the id; the renewal thread treats reconnect as
+	 * impossible in that state and skips.
+	 */
+	char pls_tls_cert[REFFS_CONFIG_MAX_PATH];
+	char pls_tls_key[REFFS_CONFIG_MAX_PATH];
+	char pls_tls_ca[REFFS_CONFIG_MAX_PATH];
+	int pls_tls_mode; /* mirrors enum reffs_proxy_tls_mode */
+	bool pls_tls_insecure_no_verify;
+	uint8_t pls_registration_id[16];
+	uint32_t pls_registration_id_len;
 };
 
 /*
@@ -268,5 +321,88 @@ int ps_state_listeners_for_each(ps_state_listener_cb cb, void *arg);
  * ps_state_set_session(id, NULL) + their own destroy first.
  */
 void ps_state_fini(void);
+
+/*
+ * Stash the registration_id reffsd's boot path generated for this
+ * listener so the renewal thread's reconnect path can re-issue
+ * PROXY_REGISTRATION with the same id (which the MDS treats as a
+ * renewal, not a squat).  Replaces any prior id; passing len == 0
+ * clears the cached id (used by tests).  Returns 0 on success,
+ * -ENOENT if the listener id is unknown, -EINVAL if len exceeds
+ * the on-state buffer.
+ */
+int ps_state_set_registration_id(uint32_t listener_id, const uint8_t *id,
+				 uint32_t len);
+
+/*
+ * Borrow the listener's current upstream session under a read lock.
+ * Returns NULL if the listener id is unknown OR the session pointer
+ * is NULL (boot before first connect, or the renewal thread is mid-
+ * reconnect and has temporarily cleared the slot).  When NULL is
+ * returned, no lock is held and the caller MUST NOT call
+ * ps_listener_session_release().
+ *
+ * On non-NULL return the read lock is held until
+ * ps_listener_session_release(listener_id) runs.  Callers MUST keep
+ * the borrow region tight -- it brackets the entire forwarded RPC,
+ * so a write-lock requester (the renewal thread mid-reconnect)
+ * waits for every in-flight forwarder to finish before destroying
+ * the old session.
+ */
+struct mds_session *ps_listener_session_borrow(uint32_t listener_id);
+void ps_listener_session_release(uint32_t listener_id);
+
+/*
+ * Replace the listener's session pointer under a write lock.
+ * Acquires the write lock (waiting for all in-flight readers to
+ * finish), stores `new_session` (which may be NULL to clear the
+ * slot), then -- if there was a prior non-NULL session -- calls
+ * `mds_session_destroy(old)` and `free(old)` after the lock has
+ * been released to keep the destroy off the lock.
+ *
+ * Ownership: after a successful return the listener owns
+ * `new_session`.  Callers building a fresh session via
+ * mds_session_create_tls() pass the new session in and stop
+ * tracking it themselves.
+ *
+ * Returns 0 on success, -ENOENT if the listener id is unknown.
+ */
+int ps_listener_session_replace(uint32_t listener_id,
+				struct mds_session *new_session);
+
+/*
+ * Classify the result of an attempted upstream operation.  Returns
+ * true if the (errno, sr_status) tuple indicates the upstream
+ * session is dead and must be rebuilt; false for per-op transients
+ * (e.g. NFS4ERR_DELAY) and successes.
+ *
+ * Session-killer wire codes:
+ *   NFS4ERR_BADSESSION, NFS4ERR_DEADSESSION,
+ *   NFS4ERR_STALE_CLIENTID, NFS4ERR_BAD_SESSION_DIGEST
+ *
+ * Connection-killer errno codes (sr_status irrelevant):
+ *   -EIO, -EPIPE, -ECONNRESET, -ETIMEDOUT, -ENOTCONN, -ENETUNREACH
+ *
+ * Pure factory function -- no global state, no locking.  Used by the
+ * renewal thread on each tick and unit-testable in isolation.
+ */
+bool ps_session_is_dead(int err, nfsstat4 sr_status);
+
+/*
+ * Backoff scheduler for reconnect attempts.  Pure functions on the
+ * caller-owned counter so unit tests can step the schedule without
+ * touching the global registry.
+ *
+ * ps_reconnect_backoff_next: returns the wait (in seconds) the
+ * renewal thread MUST honour before its next reconnect attempt and
+ * advances `*backoff_sec` along the schedule (0, 1, 2, 4, 8, 16, 32,
+ * 60, 60, ...).  The first call (with *backoff_sec == 0) returns 0
+ * (immediate retry permitted) and bumps to 1.
+ *
+ * ps_reconnect_backoff_reset: zeroes the counter; called after a
+ * successful reconnect.
+ */
+uint32_t ps_reconnect_backoff_next(uint32_t *backoff_sec);
+void ps_reconnect_backoff_reset(uint32_t *backoff_sec);
 
 #endif /* _REFFS_PS_STATE_H */

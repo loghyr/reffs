@@ -58,6 +58,17 @@ ps_sb_alloc_test_LDADD = @CHECK_LIBS@					\
 ps_inode_test_CFLAGS = $(ps_sb_alloc_test_CFLAGS)
 ps_inode_test_LDADD = $(ps_sb_alloc_test_LDADD)
 
+# ps_reconnect_test links ps_renewal.c (start/stop lifecycle test),
+# which calls LOG()/TRACE() from libreffs_trace and libreffs_utils.
+# The default lean LDADD above doesn't pull those in, so override.
+# Mirrors ps_sb_alloc_test_LDADD because the lifecycle test pulls
+# in ps_renewal.c which calls LOG()/TRACE(); LOG/TRACE pull
+# libreffs_utils which transitively pulls libreffs_fs / backends /
+# rcu / fuse / etc.  Plus libreffs_ec because libreffs_nfs4_ps
+# pulls ec_pipeline which references ec_codec_destroy / ec_rs_create.
+ps_reconnect_test_LDADD = $(ps_sb_alloc_test_LDADD)			\
+	$(top_builddir)/lib/ec/libreffs_ec.la
+
 check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
@@ -69,6 +80,7 @@ TESTS = \
 	ps_owner_test \
 	ps_proxy_creds_forward_test \
 	ps_proxy_ops_test \
+	ps_reconnect_test \
 	ps_sb_alloc_test \
 	ps_sb_test \
 	ps_security_test \

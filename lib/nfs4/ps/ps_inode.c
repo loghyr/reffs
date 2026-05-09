@@ -140,23 +140,26 @@ int ps_proxy_lookup_forward_for_inode(
 		return ret;
 
 	const struct ps_sb_binding *binding = parent->i_sb->sb_proxy_binding;
-	const struct ps_listener_state *pls =
-		ps_state_find(binding->psb_listener_id);
+	struct mds_session *ms =
+		ps_listener_session_borrow(binding->psb_listener_id);
 
 	/*
-	 * No session -> transient proxy-side unavailability.  -ENOTCONN
-	 * is a clean signal for the op handler (slice 2e-iv-g) to
-	 * translate to NFS4ERR_DELAY without having to distinguish
-	 * session-down from generic I/O errors.
+	 * No session -> transient proxy-side unavailability (boot before
+	 * first connect, or renewal thread mid-reconnect).  -ENOTCONN is
+	 * a clean signal for the op handler (slice 2e-iv-g) to translate
+	 * to NFS4ERR_DELAY without having to distinguish session-down
+	 * from generic I/O errors.
 	 */
-	if (!pls || !pls->pls_session)
+	if (!ms)
 		return -ENOTCONN;
 
-	return ps_proxy_forward_lookup(pls->pls_session, parent_fh,
-				       parent_fh_len, name, name_len,
-				       child_fh_buf, child_fh_buf_len,
-				       child_fh_len_out, attr_request,
-				       attr_request_len, creds, attrs_out);
+	ret = ps_proxy_forward_lookup(ms, parent_fh, parent_fh_len, name,
+				      name_len, child_fh_buf, child_fh_buf_len,
+				      child_fh_len_out, attr_request,
+				      attr_request_len, creds, attrs_out);
+
+	ps_listener_session_release(binding->psb_listener_id);
+	return ret;
 }
 
 /*

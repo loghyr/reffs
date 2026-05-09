@@ -280,16 +280,23 @@ out:
 
 int mds_session_renew_lease(struct mds_session *ms)
 {
+	return mds_session_renew_lease_ex(ms, NULL);
+}
+
+int mds_session_renew_lease_ex(struct mds_session *ms, nfsstat4 *sr_status_out)
+{
 	struct mds_compound mc;
 	int ret;
+
+	if (sr_status_out)
+		*sr_status_out = NFS4_OK;
 
 	if (!ms)
 		return -EINVAL;
 
 	/*
 	 * SEQUENCE alone.  RFC 8881 S18.46 -- the SEQUENCE op refreshes
-	 * the lease as a side effect of slot bookkeeping.  No other ops
-	 * needed; the COMPOUND succeeds iff SEQUENCE is accepted.
+	 * the lease as a side effect of slot bookkeeping.
 	 */
 	ret = mds_compound_init(&mc, 1, "ps-renew-lease");
 	if (ret)
@@ -300,14 +307,18 @@ int mds_session_renew_lease(struct mds_session *ms)
 		goto out;
 
 	ret = mds_compound_send(&mc, ms);
+
 	/*
-	 * mds_compound_send returns -EREMOTEIO when COMPOUND4res.status
-	 * is non-OK.  For SEQUENCE-only that maps to the SEQUENCE op's
-	 * own status (e.g. NFS4ERR_BADSESSION when the lease has lapsed
-	 * already, NFS4ERR_SEQ_MISORDERED if our slot bookkeeping has
-	 * drifted).  Surface as -errno for the caller to log; reconnect
-	 * is a NOT_NOW_BROWN_COW.
+	 * Even on -EREMOTEIO (non-OK COMPOUND status), the SEQUENCE op
+	 * result is decoded.  The PS reconnect classifier needs the wire
+	 * status to distinguish session-killers (BADSESSION, DEADSESSION,
+	 * STALE_CLIENTID) from per-op transients like DELAY -- the bare
+	 * -EREMOTEIO mapping flattens that distinction.
 	 */
+	if (sr_status_out && mc.mc_res.resarray.resarray_len > 0 &&
+	    mc.mc_res.resarray.resarray_val[0].resop == OP_SEQUENCE)
+		*sr_status_out = mc.mc_res.resarray.resarray_val[0]
+					 .nfs_resop4_u.opsequence.sr_status;
 
 out:
 	mds_compound_fini(&mc);
