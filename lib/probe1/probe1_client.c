@@ -740,6 +740,69 @@ static int dstore_list_cb(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * PS_LISTENER_LIST callback / wrapper -- prints one row per
+ * registered upstream PS listener showing reconnect-state telemetry
+ * (session-present, current backoff, next-attempt deadline).  The
+ * deadline is CLOCK_MONOTONIC nanoseconds; rendering it as "0" when
+ * unset and as raw nanoseconds otherwise keeps the output diff-able
+ * without depending on the operator's local clock view.
+ */
+static int ps_listener_list_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	PS_LISTENER_LIST1res *res = ph->ph_res;
+
+	if (res->pllr_status) {
+		LOG("ps-listener-list error = %d", res->pllr_status);
+	} else {
+		PS_LISTENER_LIST1resok *resok =
+			&res->PS_LISTENER_LIST1res_u.pllr_resok;
+
+		printf("%-4s %-32s %-6s %-9s %-8s %s\n", "ID", "UPSTREAM",
+		       "PORT", "SESSION?", "BACKOFF", "NEXT_NS");
+		for (uint32_t i = 0;
+		     i < resok->pllr_listeners.pllr_listeners_len; i++) {
+			struct probe_ps_listener_info1 *p =
+				&resok->pllr_listeners.pllr_listeners_val[i];
+			printf("%-4u %-32s %-6u %-9s %-8u %" PRIu64 "\n",
+			       p->ppli_listener_id,
+			       p->ppli_upstream ? p->ppli_upstream : "",
+			       p->ppli_upstream_port,
+			       p->ppli_session_present ? "yes" : "no",
+			       p->ppli_reconnect_backoff_sec,
+			       p->ppli_reconnect_next_attempt_ns);
+		}
+	}
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_ps_listener_list(void)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_PS_LISTENER_LIST;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+
+	rt->rt_cb = ps_listener_list_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
 struct rpc_trans *probe1_client_op_dstore_list(void)
 {
 	int ret;

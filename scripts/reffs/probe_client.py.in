@@ -252,6 +252,16 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_INODE_LAYOUT_LIST, args,
                          response_type='INODE_LAYOUT_LIST1res')
 
+    def ps_listener_list(self):
+        """Snapshot of every registered proxy-server upstream listener:
+        listener id, upstream host:port, whether the upstream MDS
+        session is currently open, and the current reconnect schedule
+        (backoff seconds + CLOCK_MONOTONIC nanosecond deadline of the
+        next attempt).  Closes the "Probe visibility for reconnect
+        state" deferral in .claude/design/ps-reconnect.md."""
+        return self.proc(PROBEPROC1_PS_LISTENER_LIST,
+                         response_type='PS_LISTENER_LIST1res')
+
     # Slice B: dstore lifecycle.
     def dstore_list(self):
         """Operator dashboard for the dstore pool.  Returns

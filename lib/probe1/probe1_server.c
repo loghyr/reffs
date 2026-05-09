@@ -50,6 +50,16 @@
 #include "reffs/runway.h"
 #include "reffs/trace/rpc.h"
 
+/*
+ * lib/nfs4/ps/ps_state.h is private to the PS subsystem; the probe
+ * pulls it in via the per-target -I$(top_srcdir)/lib/nfs4/ps in
+ * lib/probe1/Makefile.am to back the PS_LISTENER_LIST handler below.
+ * The library symbols (ps_state_listeners_for_each, the borrow API)
+ * resolve at reffsd link time -- libreffs_probe1 itself declares no
+ * direct dep on libreffs_nfs4_ps.
+ */
+#include "ps_state.h"
+
 struct probe_time1 probe_time1_from_time_t(time_t ts)
 {
 	struct probe_time1 pt;
@@ -1370,6 +1380,125 @@ static enum probe_dstore_state1 dstore_observable_state(const struct dstore *ds)
 	return drained ? PROBE1_DSTORE_DRAINING : PROBE1_DSTORE_ALIVE;
 }
 
+/*
+ * PS_LISTENER_LIST handler -- snapshot every registered PS upstream
+ * listener's reconnect state.  Closes the "Probe visibility for
+ * reconnect state" deferral in .claude/design/ps-reconnect.md.
+ *
+ * Per-listener fields surfaced to the wire:
+ *   - listener id, upstream host:port (from cached config; the
+ *     upstream string is empty when no upstream is configured for
+ *     the listener -- ps_state_register accepts that case)
+ *   - whether pls_session is currently non-NULL (snapshot via the
+ *     borrow API, which holds the per-listener rdlock for the
+ *     duration of the read)
+ *   - current reconnect backoff counter and the CLOCK_MONOTONIC
+ *     deadline of the next scheduled attempt (0 = no wait scheduled)
+ *
+ * Locking shape: ps_state_listeners_for_each holds NO lock during
+ * the callback (it acquire-loads pls_nlisteners and walks the static
+ * registry array), so calling ps_listener_session_borrow inside the
+ * collect callback only ever takes the target listener's rdlock for
+ * the brief snapshot.  No nested-lock or fan-out hazard against the
+ * renewal thread's writer path (ps_listener_session_replace), which
+ * waits on the same rdlock as a wrlock requester.
+ */
+_Static_assert(REFFS_CONFIG_MAX_HOST <= PROBE1_PS_UPSTREAM_MAX,
+	       "REFFS_CONFIG_MAX_HOST must fit in PROBE1_PS_UPSTREAM_MAX -- "
+	       "bump the wire cap if the on-host buffer grows");
+
+struct probe1_ps_collect_ctx {
+	struct probe_ps_listener_info1 *out;
+	uint32_t cap;
+	uint32_t n;
+	int err;
+};
+
+static int probe1_ps_collect_one(const struct ps_listener_state *pls, void *arg)
+{
+	struct probe1_ps_collect_ctx *ctx = arg;
+
+	if (ctx->n >= ctx->cap)
+		return 0; /* truncate; the cap is the registry max */
+
+	struct probe_ps_listener_info1 *info = &ctx->out[ctx->n];
+
+	info->ppli_listener_id = pls->pls_listener_id;
+	info->ppli_upstream =
+		strdup(pls->pls_upstream[0] ? pls->pls_upstream : "");
+	if (!info->ppli_upstream) {
+		ctx->err = -ENOMEM;
+		return -ENOMEM;
+	}
+	info->ppli_upstream_port = pls->pls_upstream_port;
+
+	/*
+	 * Snapshot session presence via the borrow API: returns NULL
+	 * (without holding the lock) if pls_session is NULL, otherwise
+	 * returns the pointer with the rdlock held -- we drop the lock
+	 * immediately after observing non-NULL.
+	 */
+	struct mds_session *ms =
+		ps_listener_session_borrow(pls->pls_listener_id);
+
+	if (ms) {
+		info->ppli_session_present = true;
+		ps_listener_session_release(pls->pls_listener_id);
+	} else {
+		info->ppli_session_present = false;
+	}
+
+	info->ppli_reconnect_backoff_sec = atomic_load_explicit(
+		&pls->pls_reconnect_backoff_sec, memory_order_acquire);
+	info->ppli_reconnect_next_attempt_ns = atomic_load_explicit(
+		&pls->pls_reconnect_next_attempt_ns, memory_order_acquire);
+
+	ctx->n++;
+	return 0;
+}
+
+static int probe1_op_ps_listener_list(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	PS_LISTENER_LIST1res *res = ph->ph_res;
+	PS_LISTENER_LIST1resok *resok = &res->PS_LISTENER_LIST1res_u.pllr_resok;
+
+	/*
+	 * Allocate up-front for the registry's static cap.  The for_each
+	 * iteration walks at most that many entries, and a tight cap
+	 * means a single malloc rather than a grow loop.
+	 */
+	uint32_t cap = REFFS_CONFIG_MAX_PROXY_MDS;
+	struct probe_ps_listener_info1 *out = calloc(cap, sizeof(*out));
+
+	if (!out) {
+		res->pllr_status = PROBE1ERR_NOMEM;
+		return res->pllr_status;
+	}
+
+	struct probe1_ps_collect_ctx ctx = {
+		.out = out,
+		.cap = cap,
+		.n = 0,
+		.err = 0,
+	};
+
+	ps_state_listeners_for_each(probe1_ps_collect_one, &ctx);
+
+	if (ctx.err) {
+		for (uint32_t i = 0; i < ctx.n; i++)
+			free(out[i].ppli_upstream);
+		free(out);
+		res->pllr_status = (ctx.err == -ENOMEM) ? PROBE1ERR_NOMEM :
+							  PROBE1ERR_INVAL;
+		return res->pllr_status;
+	}
+
+	resok->pllr_listeners.pllr_listeners_val = out;
+	resok->pllr_listeners.pllr_listeners_len = ctx.n;
+	return 0;
+}
+
 static int probe1_op_dstore_list(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -2024,6 +2153,9 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_INODE_LAYOUT_LIST1args, INODE_LAYOUT_LIST1args,
 			   xdr_INODE_LAYOUT_LIST1res, INODE_LAYOUT_LIST1res,
 			   probe1_op_inode_layout_list),
+	RPC_OPERATION_INIT(PROBEPROC1, PS_LISTENER_LIST, NULL, NULL,
+			   xdr_PS_LISTENER_LIST1res, PS_LISTENER_LIST1res,
+			   probe1_op_ps_listener_list),
 	RPC_OPERATION_INIT(PROBEPROC1, DSTORE_LIST, NULL, NULL,
 			   xdr_DSTORE_LIST1res, DSTORE_LIST1res,
 			   probe1_op_dstore_list),

@@ -3,6 +3,7 @@
 
 AM_CFLAGS = -Im4 -I. \
 	-I$(top_srcdir)/lib/include	\
+	-I$(top_srcdir)/lib/nfs4/ps	\
 	-I$(top_builddir)/lib/xdr	\
 	$(PTHREAD_CFLAGS)		\
 	$(URCU_CFLAGS)			\

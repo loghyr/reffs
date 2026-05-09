@@ -48,6 +48,13 @@ struct rpc_trans *probe1_client_op_sb_set_stripe_unit(uint64_t id,
 struct rpc_trans *probe1_client_op_inode_layout_list(uint64_t sb_id,
 						     uint64_t inum);
 
+/*
+ * PS reconnect-state introspection.  See
+ * .claude/design/ps-reconnect.md "Admin diagnostics" and
+ * lib/xdr/probe1_xdr.x PS_LISTENER_LIST.
+ */
+struct rpc_trans *probe1_client_op_ps_listener_list(void);
+
 /* Slice B: dstore lifecycle ops. */
 struct rpc_trans *probe1_client_op_dstore_list(void);
 struct rpc_trans *probe1_client_op_dstore_drain(uint32_t dstore_id);

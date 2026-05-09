@@ -542,6 +542,45 @@ union DSTORE_INSTANCE_COUNT1res switch (probe_stat1 dicr_status) {
 		void;
 };
 
+/* ------------------------------------------------------------------ */
+/* PS_LISTENER_LIST (op 30) -- per-listener PS upstream-session and    */
+/* reconnect schedule snapshot for runtime introspection.              */
+/*                                                                     */
+/* Closes the "Probe visibility for reconnect state" deferral in       */
+/* .claude/design/ps-reconnect.md.  Each entry mirrors the relevant    */
+/* fields from struct ps_listener_state (lib/nfs4/ps/ps_state.h):      */
+/*   - ppli_session_present: snapshot of whether pls_session != NULL   */
+/*     at the moment the handler ran (atomic via the borrow API)       */
+/*   - ppli_reconnect_backoff_sec: current backoff counter             */
+/*   - ppli_reconnect_next_attempt_ns: CLOCK_MONOTONIC deadline (0 =   */
+/*     "no wait scheduled")                                            */
+/*                                                                     */
+/* Internal-only protocol (probe1 ships C+Python clients with the      */
+/* server) so this is wire-additive without back-compat constraints.   */
+/* ------------------------------------------------------------------ */
+
+const PROBE1_PS_UPSTREAM_MAX = 256;
+
+struct probe_ps_listener_info1 {
+	unsigned int	ppli_listener_id;
+	string		ppli_upstream<PROBE1_PS_UPSTREAM_MAX>;
+	unsigned int	ppli_upstream_port;
+	bool		ppli_session_present;
+	unsigned int	ppli_reconnect_backoff_sec;
+	unsigned hyper	ppli_reconnect_next_attempt_ns;
+};
+
+struct PS_LISTENER_LIST1resok {
+	probe_ps_listener_info1	pllr_listeners<>;
+};
+
+union PS_LISTENER_LIST1res switch (probe_stat1 pllr_status) {
+	case PROBE1_OK:
+		PS_LISTENER_LIST1resok	pllr_resok;
+	default:
+		void;
+};
+
 /* SB_LINT_FLAVORS (op 20) */
 struct SB_LINT_FLAVORS1resok {
 	unsigned int	lfr_warnings;
@@ -727,6 +766,10 @@ program PROBE_PROGRAM {
 		/* Read-side rules pull (PS-side rule cache hydration) */
 		SB_GET_CLIENT_RULES1res
 		PROBEPROC1_SB_GET_CLIENT_RULES(SB_GET_CLIENT_RULES1args) = 29;
+
+		/* PS reconnect-state introspection
+		 * (.claude/design/ps-reconnect.md "Admin diagnostics") */
+		PS_LISTENER_LIST1res PROBEPROC1_PS_LISTENER_LIST(void) = 30;
 
 		/* Slice B: dstore lifecycle ops */
 		DSTORE_LIST1res PROBEPROC1_DSTORE_LIST(void) = 33;

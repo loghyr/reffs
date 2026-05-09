@@ -764,6 +764,22 @@ DSTORE_STATE_NAMES = {
 }
 
 
+def ps_listener_list_cmd(client, args):
+    """Snapshot of every registered PS upstream listener (id, upstream
+    host:port, session_present, reconnect schedule)."""
+    res = client.ps_listener_list()
+    probe_error_handler(res)
+    resok = res.pllr_resok
+    print(f"{'ID':<4} {'UPSTREAM':<32} {'PORT':<6} {'SESSION?':<9} "
+          f"{'BACKOFF':<8} {'NEXT_NS':<20}")
+    for p in resok.pllr_listeners:
+        print(f"{p.ppli_listener_id:<4} {p.ppli_upstream:<32} "
+              f"{p.ppli_upstream_port:<6} "
+              f"{('yes' if p.ppli_session_present else 'no'):<9} "
+              f"{p.ppli_reconnect_backoff_sec:<8} "
+              f"{p.ppli_reconnect_next_attempt_ns}")
+
+
 def dstore_list_cmd(client, args):
     res = client.dstore_list()
     probe_error_handler(res)
@@ -1160,6 +1176,11 @@ def parse_args():
     p_inode_layout_list.add_argument('--inum', type=int, required=True,
                                      help='Inode number')
     p_inode_layout_list.set_defaults(func=inode_layout_list_cmd)
+
+    p_ps_listener_list = subparsers.add_parser(
+        'ps-listener-list',
+        help='List PS upstream listeners with reconnect-state telemetry')
+    p_ps_listener_list.set_defaults(func=ps_listener_list_cmd)
 
     p_dstore_list = subparsers.add_parser(
         'dstore-list',
