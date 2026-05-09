@@ -713,6 +713,18 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
+		/*
+		 * Tag the session so worker forwarders that observe a
+		 * session-killer wire status can wake the PS renewal thread
+		 * via ps_listener_kick_reconnect (see ec_client.h
+		 * ms_kick_listener_id and lib/nfs4/ps/ps_proxy_ops.c
+		 * ps_proxy_send_with_kick).  Set BEFORE publishing the
+		 * session into the listener slot so a fast worker arriving
+		 * via the rwlock cannot see an untagged session.
+		 */
+		atomic_store_explicit(&ms->ms_kick_listener_id, pmc->id,
+				      memory_order_relaxed);
+
 		if (ps_state_set_session(pmc->id, ms) < 0) {
 			LOG("proxy_mds[%u]: ps_state_set_session unexpectedly failed",
 			    i);

@@ -42,6 +42,7 @@
 #define _REFFS_EC_CLIENT_H
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -102,6 +103,32 @@ struct mds_session {
 	 * board ("Plan A reviewer follow-up #1").
 	 */
 	uint32_t ms_exchgid_flags;
+	/*
+	 * Optional per-session tag used by the proxy-server forwarders
+	 * (lib/nfs4/ps/ps_proxy_ops.c).  When non-zero, the worker-side
+	 * compound-send wrapper classifies the result via
+	 * ps_session_is_dead and, on a session-killer, calls
+	 * ps_listener_kick_reconnect(ms_kick_listener_id) so the PS
+	 * renewal thread starts the rebuild without waiting for the
+	 * next renewal interval.  Default 0 means "no kick wanted":
+	 * sessions that aren't owned by a PS listener (ec_demo client,
+	 * dstore MDS-to-DS sessions) leave this at zero and the wrapper
+	 * is a thin pass-through.
+	 *
+	 * _Atomic with relaxed ordering: writes happen at session
+	 * publish (single writer, before any worker can see the
+	 * session pointer), reads happen on the worker hot path.  The
+	 * publish edge in ps_state_set_session / ps_listener_session_replace
+	 * (rwlock-protected swap of pls_session) provides the
+	 * synchronizes-with for the field's value to be visible.
+	 * Relaxed is sufficient because the ordering already comes
+	 * from the rwlock; the atomic qualifier is there to (a)
+	 * eliminate data-race UB on the read side from many worker
+	 * threads, and (b) keep TSAN clean if a future code path
+	 * writes the field outside the rwlock-protected publish (e.g.
+	 * an admin-driven retag) racing with worker reads.
+	 */
+	_Atomic uint32_t ms_kick_listener_id;
 };
 
 /*

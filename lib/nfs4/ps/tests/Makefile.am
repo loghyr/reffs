@@ -69,6 +69,20 @@ ps_inode_test_LDADD = $(ps_sb_alloc_test_LDADD)
 ps_reconnect_test_LDADD = $(ps_sb_alloc_test_LDADD)			\
 	$(top_builddir)/lib/ec/libreffs_ec.la
 
+# ps_proxy_kick_test pulls in ps_proxy_ops.c (which transitively
+# touches the same LOG/TRACE + ec_pipeline chain), so it needs the
+# same LDADD as ps_reconnect_test.
+ps_proxy_kick_test_LDADD = $(ps_reconnect_test_LDADD)
+
+# ps_proxy_ops_test and ps_proxy_creds_forward_test pull in
+# ps_proxy_ops.o which now references ps_listener_kick_reconnect.
+# That symbol lives in ps_state.o which references ps_renewal_kick
+# in ps_renewal.o, and ps_renewal.o calls LOG()/TRACE() -- the same
+# transitive dep chain ps_reconnect_test already covers.  Mirror its
+# LDADD so the linker resolves reffs_log_file / reffs_trace_event.
+ps_proxy_ops_test_LDADD = $(ps_reconnect_test_LDADD)
+ps_proxy_creds_forward_test_LDADD = $(ps_reconnect_test_LDADD)
+
 check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
@@ -79,6 +93,7 @@ TESTS = \
 	ps_mount_client_test \
 	ps_owner_test \
 	ps_proxy_creds_forward_test \
+	ps_proxy_kick_test \
 	ps_proxy_ops_test \
 	ps_reconnect_test \
 	ps_sb_alloc_test \

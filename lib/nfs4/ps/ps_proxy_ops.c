@@ -8,6 +8,7 @@
 #endif
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -20,7 +21,57 @@
 #include "ec_client.h"
 #include "ps_owner.h" /* PS_OWNER_TAG_SIZE for the wrapped owner cap */
 #include "ps_proxy_ops.h"
+#include "ps_proxy_ops_internal.h" /* ps_proxy_send_with_kick (whitebox) */
 #include "ps_state.h" /* PS_MAX_FH_SIZE */
+
+/*
+ * Worker-side compound send: wraps mds_compound_send_with_auth and,
+ * if the result classifies as a session-killer (per ps_session_is_dead)
+ * AND the session is tagged with a kick listener id (set at session
+ * publish time -- see ec_client.h ms_kick_listener_id and the wiring
+ * in src/reffsd.c + lib/nfs4/ps/ps_renewal.c), wakes the renewal
+ * thread so reconnect runs on the next tick instead of waiting out
+ * the rest of the renewal interval.
+ *
+ * Returns the underlying send_with_auth value verbatim -- this is a
+ * pure side effect on the kick path; the caller's per-op result
+ * inspection is unchanged.
+ *
+ * For sessions without a kick tag (ec_demo, MDS-to-DS dstore vtable),
+ * this is a thin pass-through with one extra atomic_load on the hot
+ * path -- negligible overhead next to the wire round-trip the call
+ * just did.
+ */
+int ps_proxy_send_with_kick(struct mds_compound *mc, struct mds_session *ms,
+			    const struct authunix_parms *creds)
+{
+	int ret = mds_compound_send_with_auth(mc, ms, creds);
+	uint32_t listener_id = atomic_load_explicit(&ms->ms_kick_listener_id,
+						    memory_order_relaxed);
+
+	if (listener_id == 0)
+		return ret;
+
+	/*
+	 * SEQUENCE is always op 0 in our compounds.  If resarray is
+	 * shorter than 1 the SEQUENCE never decoded (wire-level failure
+	 * before any op result landed) -- ps_session_is_dead's errno
+	 * branch covers that case with sr_status defaulted to NFS4_OK.
+	 */
+	nfsstat4 sr_status = NFS4_OK;
+
+	if (mc->mc_res.resarray.resarray_len > 0) {
+		nfs_resop4 *seq_res = &mc->mc_res.resarray.resarray_val[0];
+
+		if (seq_res->resop == OP_SEQUENCE)
+			sr_status = seq_res->nfs_resop4_u.opsequence.sr_status;
+	}
+
+	if (ps_session_is_dead(ret, sr_status))
+		ps_listener_kick_reconnect(listener_id);
+
+	return ret;
+}
 
 /*
  * GETATTR(TYPE, MODE) bitmap reused by mkdir / symlink / mknod
@@ -103,7 +154,7 @@ int ps_proxy_forward_getattr(struct mds_session *ms, const uint8_t *upstream_fh,
 	ga_args->attr_request.bitmap4_val = (uint32_t *)requested_mask;
 	ga_args->attr_request.bitmap4_len = requested_mask_len;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -262,7 +313,7 @@ int ps_proxy_forward_lookup(struct mds_session *ms, const uint8_t *parent_fh,
 		ga->attr_request.bitmap4_len = attr_request_len;
 	}
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -421,7 +472,7 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	wa->data.data_val = (char *)data;
 	wa->data.data_len = data_len;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -512,7 +563,7 @@ int ps_proxy_forward_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	ca->offset = offset;
 	ca->count = count;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	if (ret && ret != -EREMOTEIO)
 		goto out;
 	ret = 0;
@@ -592,7 +643,7 @@ int ps_proxy_forward_remove(struct mds_session *ms, const uint8_t *parent_fh,
 	slot->nfs_argop4_u.opremove.target.utf8string_val = (char *)name;
 	slot->nfs_argop4_u.opremove.target.utf8string_len = name_len;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	if (ret && ret != -EREMOTEIO)
 		goto out;
 	ret = 0;
@@ -693,7 +744,7 @@ int ps_proxy_forward_rename(struct mds_session *ms, const uint8_t *src_fh,
 	slot->nfs_argop4_u.oprename.newname.utf8string_val = (char *)newname;
 	slot->nfs_argop4_u.oprename.newname.utf8string_len = newname_len;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	if (ret && ret != -EREMOTEIO)
 		goto out;
 	ret = 0;
@@ -836,7 +887,7 @@ int ps_proxy_forward_mkdir(struct mds_session *ms, const uint8_t *parent_fh,
 		(uint32_t *)ps_proxy_attr_req_type_mode;
 	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_len = 2;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	if (ret && ret != -EREMOTEIO)
 		goto out;
 	ret = 0;
@@ -1018,7 +1069,7 @@ int ps_proxy_forward_symlink(struct mds_session *ms, const uint8_t *parent_fh,
 		(uint32_t *)ps_proxy_attr_req_type_mode;
 	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_len = 2;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	if (ret && ret != -EREMOTEIO)
 		goto out;
 	ret = 0;
@@ -1214,7 +1265,7 @@ int ps_proxy_forward_mknod(struct mds_session *ms, const uint8_t *parent_fh,
 		(uint32_t *)ps_proxy_attr_req_type_mode;
 	slot->nfs_argop4_u.opgetattr.attr_request.bitmap4_len = 2;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	if (ret && ret != -EREMOTEIO)
 		goto out;
 	ret = 0;
@@ -1370,7 +1421,7 @@ int ps_proxy_forward_link(struct mds_session *ms, const uint8_t *src_fh,
 	slot->nfs_argop4_u.oplink.newname.utf8string_val = (char *)newname;
 	slot->nfs_argop4_u.oplink.newname.utf8string_len = newname_len;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	if (ret && ret != -EREMOTEIO)
 		goto out;
 	ret = 0;
@@ -1475,7 +1526,7 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 	ca->open_stateid.seqid = stateid_seqid;
 	memcpy(ca->open_stateid.other, stateid_other, PS_STATEID_OTHER_SIZE);
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -1592,7 +1643,7 @@ int ps_proxy_forward_readdir(struct mds_session *ms, const uint8_t *upstream_fh,
 	ra->attr_request.bitmap4_val = (uint32_t *)attr_request;
 	ra->attr_request.bitmap4_len = attr_request_len;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -1994,7 +2045,7 @@ int ps_proxy_forward_open(struct mds_session *ms, const uint8_t *current_fh,
 		goto out;
 	}
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -2133,7 +2184,7 @@ int ps_proxy_forward_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	ra->offset = offset;
 	ra->count = count;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	/*
 	 * -EREMOTEIO from mds_compound_send means the wire round-trip
 	 * succeeded but the COMPOUND4res top-level status was not
@@ -2381,7 +2432,7 @@ int ps_proxy_forward_layoutget(
 	memcpy(la->loga_stateid.other, stateid_other, PS_STATEID_OTHER_SIZE);
 	la->loga_maxcount = maxcount;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	if (ret && ret != -EREMOTEIO)
 		goto out;
 	ret = 0;
@@ -2495,7 +2546,7 @@ int ps_proxy_forward_getdeviceinfo(struct mds_session *ms,
 	ga->gdia_notify_types.bitmap4_len = 0;
 	ga->gdia_notify_types.bitmap4_val = NULL;
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	if (ret && ret != -EREMOTEIO)
 		goto out;
 	ret = 0;
@@ -2602,7 +2653,7 @@ int ps_proxy_forward_layoutreturn(
 		lrf->lrf_body.lrf_body_len = lr_body_len;
 	}
 
-	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	ret = ps_proxy_send_with_kick(&mc, ms, creds);
 	if (ret && ret != -EREMOTEIO)
 		goto out;
 	ret = 0;

@@ -80,6 +80,17 @@ static int ps_listener_reconnect(struct ps_listener_state *pls)
 	}
 
 	/*
+	 * Tag the new session so worker forwarders observing a
+	 * session-killer can wake the renewal thread early.  Set BEFORE
+	 * publishing into the listener slot via
+	 * ps_listener_session_replace so a worker that grabs the rdlock
+	 * post-swap cannot see the new session untagged.  See
+	 * ec_client.h ms_kick_listener_id.
+	 */
+	atomic_store_explicit(&new_ms->ms_kick_listener_id,
+			      pls->pls_listener_id, memory_order_relaxed);
+
+	/*
 	 * Honour shutdown that arrived between alloc and TLS handshake.
 	 * Don't publish a session reffsd is about to tear down anyway --
 	 * cleaner shutdown trace, no race on the rwlock destroy at fini.
