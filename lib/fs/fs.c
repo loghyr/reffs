@@ -129,7 +129,7 @@ int find_matching_directory_entry(struct name_match **nm, uint32_t listener_id,
 	}
 
 	/* Find the last component name */
-	char *last_slash = strrchr(path, '/');
+	const char *last_slash = strrchr(path, '/');
 	if (last_slash)
 		new->nm_name = strdup(last_slash + 1);
 	else
