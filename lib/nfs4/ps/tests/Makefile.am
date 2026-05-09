@@ -9,34 +9,24 @@ AM_CFLAGS = -I$(top_srcdir)/lib/include		\
 	$(TIRPC_CFLAGS)				\
 	@CHECK_CFLAGS@
 
-LDADD = @CHECK_LIBS@						\
-	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps.la		\
-	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la \
-	$(top_builddir)/lib/tls/libreffs_tls.la	\
-	$(top_builddir)/lib/xdr/libreffs_xdr.la			\
-	$(TIRPC_LIBS)
-
-# ps_sb_alloc_test exercises super_block_alloc + mount inside a live
-# listener namespace, so it needs the full fs/backends/rcu/rpc/io dep
-# graph plus fs_test_harness.  This is the only PS test that pays
-# that cost -- the default LDADD above stays lean for everyone else.
-ps_sb_alloc_test_CFLAGS = $(AM_CFLAGS)					\
-	-I$(top_srcdir)/lib/fs/tests					\
-	-I$(top_srcdir)/lib/nfs4/include				\
-	-I$(top_srcdir)/lib/tests					\
-	$(URCU_CFLAGS) $(URCU_CDS_CFLAGS)				\
-	$(UUID_CFLAGS) $(OPENSSL_CFLAGS)				\
-	$(URING_CFLAGS) $(HDR_HISTOGRAM_CFLAGS)				\
-	$(JEMALLOC_CFLAGS) $(ZLIB_CFLAGS) $(ZSTD_CFLAGS)
-ps_sb_alloc_test_LDADD = @CHECK_LIBS@					\
+# Default LDADD covers the full transitive chain because the static
+# libreffs_nfs4_ps archive exposes ps_proxy_ops -> ps_state ->
+# ps_renewal -> LOG/TRACE/EC, and clang 22 / Fedora 44 strict linking
+# (ld.bfd, no lazy resolution for static archives in --as-needed) drags
+# the whole chain in once any PS symbol is referenced.  Past attempts
+# at a "lean" default broke under every new PS slice; this default is
+# the contract.  ps_sb_alloc_test still has an extra CFLAGS-only override
+# for fs_test_harness include paths.
+LDADD = @CHECK_LIBS@							\
 	$(top_builddir)/lib/tests/libreffs_test.la			\
 	$(top_builddir)/lib/fs/tests/libreffs_fs_test.la		\
 	$(top_builddir)/lib/nfs4/server/libreffs_nfs4_server.la		\
 	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la		\
 	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps_sb.la		\
 	$(top_builddir)/lib/nfs4/ps/libreffs_nfs4_ps.la			\
-	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la \
-	$(top_builddir)/lib/tls/libreffs_tls.la		\
+	$(top_builddir)/lib/ec/libreffs_ec.la				\
+	$(top_builddir)/lib/nfs4/client/libreffs_nfs4_client.la		\
+	$(top_builddir)/lib/tls/libreffs_tls.la				\
 	$(top_builddir)/lib/nlm/libnlm.la				\
 	$(top_builddir)/lib/nsm/libnsm.la				\
 	$(top_builddir)/lib/fs/libreffs_fs.la				\
@@ -52,36 +42,22 @@ ps_sb_alloc_test_LDADD = @CHECK_LIBS@					\
 	$(URING_LIBS) $(ZLIB_LIBS) $(ZSTD_LIBS)				\
 	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
 
-# ps_inode_test uses the same fs_test_harness + real-SB setup as
-# ps_sb_alloc_test; mirror the CFLAGS / LDADD overrides so its
-# link resolves against the full fs / backends / rcu chain.
+# ps_sb_alloc_test exercises super_block_alloc + mount inside a live
+# listener namespace, so it needs the fs_test_harness include paths
+# in addition to the default LDADD chain (which already covers the
+# fs/backends/rcu/rpc/io libs).
+ps_sb_alloc_test_CFLAGS = $(AM_CFLAGS)					\
+	-I$(top_srcdir)/lib/fs/tests					\
+	-I$(top_srcdir)/lib/nfs4/include				\
+	-I$(top_srcdir)/lib/tests					\
+	$(URCU_CFLAGS) $(URCU_CDS_CFLAGS)				\
+	$(UUID_CFLAGS) $(OPENSSL_CFLAGS)				\
+	$(URING_CFLAGS) $(HDR_HISTOGRAM_CFLAGS)				\
+	$(JEMALLOC_CFLAGS) $(ZLIB_CFLAGS) $(ZSTD_CFLAGS)
+
+# ps_inode_test uses the same fs_test_harness include paths as
+# ps_sb_alloc_test.  LDADD comes from the default (no override).
 ps_inode_test_CFLAGS = $(ps_sb_alloc_test_CFLAGS)
-ps_inode_test_LDADD = $(ps_sb_alloc_test_LDADD)
-
-# ps_reconnect_test links ps_renewal.c (start/stop lifecycle test),
-# which calls LOG()/TRACE() from libreffs_trace and libreffs_utils.
-# The default lean LDADD above doesn't pull those in, so override.
-# Mirrors ps_sb_alloc_test_LDADD because the lifecycle test pulls
-# in ps_renewal.c which calls LOG()/TRACE(); LOG/TRACE pull
-# libreffs_utils which transitively pulls libreffs_fs / backends /
-# rcu / fuse / etc.  Plus libreffs_ec because libreffs_nfs4_ps
-# pulls ec_pipeline which references ec_codec_destroy / ec_rs_create.
-ps_reconnect_test_LDADD = $(ps_sb_alloc_test_LDADD)			\
-	$(top_builddir)/lib/ec/libreffs_ec.la
-
-# ps_proxy_kick_test pulls in ps_proxy_ops.c (which transitively
-# touches the same LOG/TRACE + ec_pipeline chain), so it needs the
-# same LDADD as ps_reconnect_test.
-ps_proxy_kick_test_LDADD = $(ps_reconnect_test_LDADD)
-
-# ps_proxy_ops_test and ps_proxy_creds_forward_test pull in
-# ps_proxy_ops.o which now references ps_listener_kick_reconnect.
-# That symbol lives in ps_state.o which references ps_renewal_kick
-# in ps_renewal.o, and ps_renewal.o calls LOG()/TRACE() -- the same
-# transitive dep chain ps_reconnect_test already covers.  Mirror its
-# LDADD so the linker resolves reffs_log_file / reffs_trace_event.
-ps_proxy_ops_test_LDADD = $(ps_reconnect_test_LDADD)
-ps_proxy_creds_forward_test_LDADD = $(ps_reconnect_test_LDADD)
 
 check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
