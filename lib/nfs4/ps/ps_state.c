@@ -16,6 +16,7 @@
 #include "reffs/settings.h"
 
 #include "ec_client.h" /* mds_session_destroy */
+#include "ps_renewal.h" /* ps_renewal_kick */
 #include "ps_state.h"
 
 #define PS_MAX_LISTENERS REFFS_CONFIG_MAX_PROXY_MDS
@@ -108,8 +109,18 @@ int ps_state_register(const struct reffs_proxy_mds_config *cfg)
 		return -rerr;
 	}
 
-	pls->pls_reconnect_backoff_sec = 0;
-	pls->pls_reconnect_next_attempt_ns = 0;
+	/*
+	 * Init-before-publish: relaxed is sufficient because the
+	 * release-store on ps_nlisteners below provides the publish edge
+	 * for every field in this slot.  Use the explicit atomic store
+	 * (rather than plain assignment) for consistency with every other
+	 * access to these fields elsewhere -- a future grep audit should
+	 * find no plain reads or writes of either atomic.
+	 */
+	atomic_store_explicit(&pls->pls_reconnect_backoff_sec, 0,
+			      memory_order_relaxed);
+	atomic_store_explicit(&pls->pls_reconnect_next_attempt_ns, 0,
+			      memory_order_relaxed);
 
 	/* Publish: release-store pairs with acquire-load in ps_state_find. */
 	atomic_store_explicit(&ps_nlisteners, n + 1, memory_order_release);
@@ -422,6 +433,30 @@ void ps_listener_session_release(uint32_t listener_id)
 	if (!pls)
 		return;
 	pthread_rwlock_unlock(&pls->pls_session_rwlock);
+}
+
+void ps_listener_kick_reconnect(uint32_t listener_id)
+{
+	struct ps_listener_state *pls = ps_listener_by_id(listener_id);
+
+	if (!pls)
+		return;
+
+	/*
+	 * Reset the schedule to "next attempt is allowed immediately"
+	 * BEFORE waking the renewal thread.  Order matters: if we woke
+	 * first, the thread could read a stale (in-the-future) deadline
+	 * and skip the reconnect on its first post-wake tick, costing
+	 * us a full renewal interval before the schedule is observed
+	 * cleared.  Each store is independent (no compound update); a
+	 * release-store on each is sufficient because the renewal
+	 * thread acquire-loads each field separately at tick time.
+	 */
+	atomic_store_explicit(&pls->pls_reconnect_next_attempt_ns, 0,
+			      memory_order_release);
+	atomic_store_explicit(&pls->pls_reconnect_backoff_sec, 0,
+			      memory_order_release);
+	ps_renewal_kick();
 }
 
 int ps_listener_session_replace(uint32_t listener_id,

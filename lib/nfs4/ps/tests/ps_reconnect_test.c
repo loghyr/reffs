@@ -10,6 +10,7 @@
 #include <check.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -608,8 +609,11 @@ START_TEST(test_tick_no_session_in_backoff)
 	uint64_t now_ns =
 		(uint64_t)mono.tv_sec * 1000000000ULL + (uint64_t)mono.tv_nsec;
 	/* 1 hour out -- well past any test runtime. */
-	pls->pls_reconnect_next_attempt_ns = now_ns + 3600ULL * 1000000000ULL;
-	pls->pls_reconnect_backoff_sec = 16;
+	atomic_store_explicit(&pls->pls_reconnect_next_attempt_ns,
+			      now_ns + 3600ULL * 1000000000ULL,
+			      memory_order_release);
+	atomic_store_explicit(&pls->pls_reconnect_backoff_sec, 16,
+			      memory_order_release);
 
 	struct renewal_tick_ctx ctx = { 0 };
 
@@ -620,7 +624,9 @@ START_TEST(test_tick_no_session_in_backoff)
 	ck_assert_uint_eq(ctx.reconnect_attempted, 0);
 	ck_assert_uint_eq(ctx.reconnect_succeeded, 0);
 	/* Skip path must NOT touch backoff state. */
-	ck_assert_uint_eq(pls->pls_reconnect_backoff_sec, 16);
+	ck_assert_uint_eq(atomic_load_explicit(&pls->pls_reconnect_backoff_sec,
+					       memory_order_acquire),
+			  16);
 }
 END_TEST
 
@@ -645,8 +651,13 @@ START_TEST(test_tick_no_session_no_backoff_attempts_reconnect)
 		(struct ps_listener_state *)ps_state_find(52);
 
 	ck_assert_ptr_nonnull(pls);
-	ck_assert_uint_eq(pls->pls_reconnect_next_attempt_ns, 0);
-	ck_assert_uint_eq(pls->pls_reconnect_backoff_sec, 0);
+	ck_assert_uint_eq(
+		atomic_load_explicit(&pls->pls_reconnect_next_attempt_ns,
+				     memory_order_acquire),
+		0);
+	ck_assert_uint_eq(atomic_load_explicit(&pls->pls_reconnect_backoff_sec,
+					       memory_order_acquire),
+			  0);
 
 	struct renewal_tick_ctx ctx = { 0 };
 
@@ -658,8 +669,111 @@ START_TEST(test_tick_no_session_no_backoff_attempts_reconnect)
 	/* Connect refused -- reconnect could not succeed. */
 	ck_assert_uint_eq(ctx.reconnect_succeeded, 0);
 	/* Failure path armed a future deadline + advanced backoff. */
-	ck_assert_uint_ne(pls->pls_reconnect_next_attempt_ns, 0);
-	ck_assert_uint_ne(pls->pls_reconnect_backoff_sec, 0);
+	ck_assert_uint_ne(
+		atomic_load_explicit(&pls->pls_reconnect_next_attempt_ns,
+				     memory_order_acquire),
+		0);
+	ck_assert_uint_ne(atomic_load_explicit(&pls->pls_reconnect_backoff_sec,
+					       memory_order_acquire),
+			  0);
+}
+END_TEST
+
+/*
+ * ps_listener_kick_reconnect on an unknown listener id is a safe
+ * no-op.  Workers that learn a listener id from a forwarded RPC may
+ * race with admin-driven listener removal (NOT_NOW_BROWN_COW today
+ * but the API contract has to hold for that future).
+ */
+START_TEST(test_kick_unknown_listener_noop)
+{
+	ps_listener_kick_reconnect(999); /* must not crash */
+}
+END_TEST
+
+/*
+ * Kicking a registered listener clears both schedule fields,
+ * regardless of their prior values.  This is the core mechanism: a
+ * worker that observed BADSESSION wants the next renewal tick to
+ * attempt a reconnect now, not wait out a previously-armed backoff
+ * deadline from a stale failed attempt.
+ */
+START_TEST(test_kick_clears_schedule)
+{
+	struct reffs_proxy_mds_config c = make_cfg(60);
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+
+	struct ps_listener_state *pls =
+		(struct ps_listener_state *)ps_state_find(60);
+
+	ck_assert_ptr_nonnull(pls);
+
+	/* Arm a future deadline and advanced backoff. */
+	atomic_store_explicit(&pls->pls_reconnect_next_attempt_ns,
+			      1234567890ULL, memory_order_release);
+	atomic_store_explicit(&pls->pls_reconnect_backoff_sec, 32,
+			      memory_order_release);
+
+	ps_listener_kick_reconnect(60);
+
+	ck_assert_uint_eq(
+		atomic_load_explicit(&pls->pls_reconnect_next_attempt_ns,
+				     memory_order_acquire),
+		0);
+	ck_assert_uint_eq(atomic_load_explicit(&pls->pls_reconnect_backoff_sec,
+					       memory_order_acquire),
+			  0);
+}
+END_TEST
+
+/*
+ * Kick is idempotent -- calling it twice (or many times) leaves the
+ * schedule in the same cleared state and does not harm a third call.
+ * Workers may race on the same listener; the kick handles each
+ * independently.
+ */
+START_TEST(test_kick_idempotent)
+{
+	struct reffs_proxy_mds_config c = make_cfg(61);
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+
+	ps_listener_kick_reconnect(61);
+	ps_listener_kick_reconnect(61);
+	ps_listener_kick_reconnect(61);
+
+	struct ps_listener_state *pls =
+		(struct ps_listener_state *)ps_state_find(61);
+
+	ck_assert_ptr_nonnull(pls);
+	ck_assert_uint_eq(
+		atomic_load_explicit(&pls->pls_reconnect_next_attempt_ns,
+				     memory_order_acquire),
+		0);
+	ck_assert_uint_eq(atomic_load_explicit(&pls->pls_reconnect_backoff_sec,
+					       memory_order_acquire),
+			  0);
+}
+END_TEST
+
+/*
+ * ps_renewal_kick before ps_renewal_start and after ps_renewal_stop
+ * MUST be safe.  The mutex/CV are static and live for the program's
+ * lifetime, so broadcast on them with no thread parked is a no-op.
+ * This contract matters because workers can in principle call kick
+ * from any phase of reffsd lifecycle (early init or post-shutdown
+ * cleanup paths).
+ */
+START_TEST(test_kick_before_start_and_after_stop)
+{
+	ps_renewal_kick(); /* before any start */
+
+	ck_assert_int_eq(ps_renewal_start(1), 0);
+	ps_renewal_kick(); /* with thread running */
+	ps_renewal_stop();
+
+	ps_renewal_kick(); /* after stop */
 }
 END_TEST
 
@@ -684,8 +798,13 @@ START_TEST(test_register_caches_tls_params)
 	ck_assert_int_eq(pls->pls_tls_mode, 2);
 	ck_assert_int_eq(pls->pls_tls_insecure_no_verify, 1);
 	/* Backoff fields zero-initialised at registration. */
-	ck_assert_uint_eq(pls->pls_reconnect_backoff_sec, 0);
-	ck_assert_uint_eq(pls->pls_reconnect_next_attempt_ns, 0);
+	ck_assert_uint_eq(atomic_load_explicit(&pls->pls_reconnect_backoff_sec,
+					       memory_order_acquire),
+			  0);
+	ck_assert_uint_eq(
+		atomic_load_explicit(&pls->pls_reconnect_next_attempt_ns,
+				     memory_order_acquire),
+		0);
 }
 END_TEST
 
@@ -734,6 +853,21 @@ static Suite *ps_reconnect_suite(void)
 	tcase_add_checked_fixture(quiesce, setup, teardown);
 	tcase_add_test(quiesce, test_session_replace_quiesces_in_flight);
 	suite_add_tcase(s, quiesce);
+
+	TCase *kick = tcase_create("kick");
+
+	/*
+	 * Same fixture as renewal_thread tcase: clean registry per test.
+	 * The "before_start_and_after_stop" test exercises the renewal
+	 * thread lifecycle so it gets the same headroom budget.
+	 */
+	tcase_add_checked_fixture(kick, setup, teardown);
+	tcase_set_timeout(kick, 5);
+	tcase_add_test(kick, test_kick_unknown_listener_noop);
+	tcase_add_test(kick, test_kick_clears_schedule);
+	tcase_add_test(kick, test_kick_idempotent);
+	tcase_add_test(kick, test_kick_before_start_and_after_stop);
+	suite_add_tcase(s, kick);
 
 	TCase *renewal = tcase_create("renewal_thread");
 

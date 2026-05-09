@@ -163,8 +163,11 @@ int renewal_tick_one(const struct ps_listener_state *pls_const, void *arg)
 
 		uint64_t now_ns = reffs_now_ns();
 
-		if (pls->pls_reconnect_next_attempt_ns != 0 &&
-		    now_ns < pls->pls_reconnect_next_attempt_ns) {
+		uint64_t deadline_ns = atomic_load_explicit(
+			&pls->pls_reconnect_next_attempt_ns,
+			memory_order_acquire);
+
+		if (deadline_ns != 0 && now_ns < deadline_ns) {
 			ctx->reconnect_skipped_backoff++;
 			return 0;
 		}
@@ -174,16 +177,25 @@ int renewal_tick_one(const struct ps_listener_state *pls_const, void *arg)
 
 		if (rret == 0) {
 			ctx->reconnect_succeeded++;
-			ps_reconnect_backoff_reset(
-				&pls->pls_reconnect_backoff_sec);
-			pls->pls_reconnect_next_attempt_ns = 0;
+			atomic_store_explicit(&pls->pls_reconnect_backoff_sec,
+					      0, memory_order_release);
+			atomic_store_explicit(
+				&pls->pls_reconnect_next_attempt_ns, 0,
+				memory_order_release);
 			LOG("ps_renewal: listener_id=%u reconnected to upstream %s",
 			    pls->pls_listener_id, pls->pls_upstream);
 		} else {
-			uint32_t wait_sec = ps_reconnect_backoff_next(
-				&pls->pls_reconnect_backoff_sec);
-			pls->pls_reconnect_next_attempt_ns =
-				now_ns + (uint64_t)wait_sec * 1000000000ULL;
+			uint32_t backoff = atomic_load_explicit(
+				&pls->pls_reconnect_backoff_sec,
+				memory_order_acquire);
+			uint32_t wait_sec = ps_reconnect_backoff_next(&backoff);
+
+			atomic_store_explicit(&pls->pls_reconnect_backoff_sec,
+					      backoff, memory_order_release);
+			atomic_store_explicit(
+				&pls->pls_reconnect_next_attempt_ns,
+				now_ns + (uint64_t)wait_sec * 1000000000ULL,
+				memory_order_release);
 			LOG("ps_renewal: listener_id=%u reconnect to %s failed: %s "
 			    "(next attempt in %us)",
 			    pls->pls_listener_id, pls->pls_upstream,
@@ -230,8 +242,10 @@ int renewal_tick_one(const struct ps_listener_state *pls_const, void *arg)
 	 * proceeds without waiting for a future tick.  Backoff stays
 	 * at 0 (first attempt is always immediate).
 	 */
-	pls->pls_reconnect_next_attempt_ns = 0;
-	pls->pls_reconnect_backoff_sec = 0;
+	atomic_store_explicit(&pls->pls_reconnect_next_attempt_ns, 0,
+			      memory_order_release);
+	atomic_store_explicit(&pls->pls_reconnect_backoff_sec, 0,
+			      memory_order_release);
 
 	uint64_t now_ns = reffs_now_ns();
 
@@ -240,15 +254,23 @@ int renewal_tick_one(const struct ps_listener_state *pls_const, void *arg)
 
 	if (rret == 0) {
 		ctx->reconnect_succeeded++;
-		ps_reconnect_backoff_reset(&pls->pls_reconnect_backoff_sec);
-		pls->pls_reconnect_next_attempt_ns = 0;
+		atomic_store_explicit(&pls->pls_reconnect_backoff_sec, 0,
+				      memory_order_release);
+		atomic_store_explicit(&pls->pls_reconnect_next_attempt_ns, 0,
+				      memory_order_release);
 		LOG("ps_renewal: listener_id=%u reconnected to upstream %s",
 		    pls->pls_listener_id, pls->pls_upstream);
 	} else {
-		uint32_t wait_sec = ps_reconnect_backoff_next(
-			&pls->pls_reconnect_backoff_sec);
-		pls->pls_reconnect_next_attempt_ns =
-			now_ns + (uint64_t)wait_sec * 1000000000ULL;
+		uint32_t backoff = atomic_load_explicit(
+			&pls->pls_reconnect_backoff_sec, memory_order_acquire);
+		uint32_t wait_sec = ps_reconnect_backoff_next(&backoff);
+
+		atomic_store_explicit(&pls->pls_reconnect_backoff_sec, backoff,
+				      memory_order_release);
+		atomic_store_explicit(&pls->pls_reconnect_next_attempt_ns,
+				      now_ns + (uint64_t)wait_sec *
+						       1000000000ULL,
+				      memory_order_release);
 		LOG("ps_renewal: listener_id=%u reconnect to %s failed: %s "
 		    "(next attempt in %us)",
 		    pls->pls_listener_id, pls->pls_upstream, strerror(-rret),
@@ -336,4 +358,19 @@ void ps_renewal_stop(void)
 	pthread_mutex_unlock(&s_renewal_mtx);
 
 	pthread_join(s_renewal_thread, NULL);
+}
+
+void ps_renewal_kick(void)
+{
+	/*
+	 * Wake the renewal thread early.  Safe before start (no thread
+	 * is parked on the CV; broadcast is a no-op) and after stop
+	 * (s_renewal_running == 0; the thread has already joined and
+	 * the CV is just static memory).  The mutex pair is required
+	 * by POSIX -- without it the broadcast can race with the
+	 * thread's pthread_cond_timedwait setup and lose the wake.
+	 */
+	pthread_mutex_lock(&s_renewal_mtx);
+	pthread_cond_broadcast(&s_renewal_cv);
+	pthread_mutex_unlock(&s_renewal_mtx);
 }

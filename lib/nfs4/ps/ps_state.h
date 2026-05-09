@@ -134,10 +134,19 @@ struct ps_listener_state {
 	 * pls_reconnect_next_attempt_ns is a CLOCK_MONOTONIC deadline; the
 	 * renewal thread skips the reconnect path until reffs_now_ns()
 	 * crosses it.  Zero means "no wait scheduled".
+	 *
+	 * Both are _Atomic because the worker-path kick
+	 * (ps_listener_kick_reconnect, see below) clears them concurrently
+	 * with the renewal thread's own reads/writes.  Use
+	 * atomic_load_explicit / atomic_store_explicit -- all schedule
+	 * accesses are independent reads / unconditional writes; no
+	 * compare-and-swap is needed because the schedule is advisory
+	 * (the tick logic is idempotent if state changes between read
+	 * and write).
 	 */
 	pthread_rwlock_t pls_session_rwlock;
-	uint32_t pls_reconnect_backoff_sec;
-	uint64_t pls_reconnect_next_attempt_ns;
+	_Atomic uint32_t pls_reconnect_backoff_sec;
+	_Atomic uint64_t pls_reconnect_next_attempt_ns;
 
 	/*
 	 * Cached bring-up parameters used by the renewal thread to
@@ -351,6 +360,31 @@ int ps_state_set_registration_id(uint32_t listener_id, const uint8_t *id,
  */
 struct mds_session *ps_listener_session_borrow(uint32_t listener_id);
 void ps_listener_session_release(uint32_t listener_id);
+
+/*
+ * Wake the PS renewal thread early and zero the reconnect schedule
+ * for `listener_id` so the next tick attempts a reconnect immediately.
+ *
+ * Called by worker forwarders that observed a session-killer wire
+ * status (see ps_session_is_dead) on their own compound -- shrinks
+ * the worst-case recovery window from one renewal interval down to
+ * one TLS handshake.  Without the kick, recovery waits for the next
+ * scheduled tick.
+ *
+ * Idempotent and safe from any thread.  Unknown listener id is a
+ * no-op.  Safe to call before ps_renewal_start() (the wake is
+ * harmless when no thread is parked on the CV) and after
+ * ps_renewal_stop() (same).
+ *
+ * Does NOT clear pls_session -- the renewal thread's own SEQUENCE
+ * renewal will observe BADSESSION on the next tick and run the
+ * already-tested classify + replace + reconnect path.  Workers
+ * that already know the session is dead pay one extra round-trip
+ * for the renewal thread to re-observe it; this preserves the
+ * single-writer discipline on pls_session (only the renewal thread
+ * writes it).
+ */
+void ps_listener_kick_reconnect(uint32_t listener_id);
 
 /*
  * Replace the listener's session pointer under a write lock.

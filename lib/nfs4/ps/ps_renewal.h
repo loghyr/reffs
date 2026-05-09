@@ -45,11 +45,13 @@
  *   .claude/design/ps-reconnect.md.
  *
  *   Worker forwarders that observe a session-killer in their own
- *   compound do NOT trigger reconnect -- they return NFS4ERR_DELAY
- *   (or NFS4ERR_IO) to the end client and rely on the next renewal
- *   tick to detect.  Worst-case recovery is one renewal interval
- *   (default 30s for a 90s lease).  A worker-path "kick the
- *   renewal early" path is NOT_NOW_BROWN_COW for the next slice.
+ *   compound return NFS4ERR_DELAY (or NFS4ERR_IO) to the end client.
+ *   They MAY also call ps_listener_kick_reconnect(listener_id) to
+ *   wake the renewal thread early -- this shrinks worst-case
+ *   recovery from one renewal interval (default 30s for a 90s
+ *   lease) down to one TLS handshake.  See
+ *   ps_listener_kick_reconnect in ps_state.h for the worker API and
+ *   ps_renewal_kick below for the bare wake primitive.
  */
 
 /*
@@ -67,5 +69,20 @@ int ps_renewal_start(uint32_t interval_seconds);
  * ps_state_fini() because the thread reads ps_listeners[].
  */
 void ps_renewal_stop(void);
+
+/*
+ * Wake the renewal thread early without touching any per-listener
+ * schedule state.  The next iteration of the renewal loop runs
+ * immediately rather than waiting out the remaining cond_timedwait
+ * interval.  Idempotent and safe from any thread; safe before
+ * ps_renewal_start() and after ps_renewal_stop().
+ *
+ * Most callers want ps_listener_kick_reconnect(listener_id) (in
+ * ps_state.h) which combines the wake with a per-listener
+ * schedule reset.  This bare primitive is exposed for tests and
+ * for any future caller that wants to wake the thread without
+ * advancing the schedule of any specific listener.
+ */
+void ps_renewal_kick(void);
 
 #endif /* _REFFS_PS_RENEWAL_H */
