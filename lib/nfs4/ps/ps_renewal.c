@@ -17,10 +17,12 @@
 
 #include "nfsv42_xdr.h"
 #include "reffs/log.h"
+#include "reffs/posix_shims.h"
 #include "reffs/time.h"
 
 #include "ec_client.h"
 #include "ps_renewal.h"
+#include "ps_renewal_internal.h"
 #include "ps_state.h"
 
 static pthread_t s_renewal_thread;
@@ -30,18 +32,10 @@ static pthread_cond_t s_renewal_cv = PTHREAD_COND_INITIALIZER;
 static uint32_t s_renewal_interval_seconds;
 
 /*
- * Per-tick context used by the renewal_tick_one callback to
- * accumulate counts so the trace line at the end of the tick
- * has aggregate data without per-listener log spam.
+ * struct renewal_tick_ctx and renewal_tick_one's signature live in
+ * ps_renewal_internal.h so the whitebox tests can invoke the same
+ * callback the production thread runs through ps_state_listeners_for_each.
  */
-struct renewal_tick_ctx {
-	uint32_t renewed;
-	uint32_t failed;
-	uint32_t skipped_no_session;
-	uint32_t reconnect_attempted;
-	uint32_t reconnect_succeeded;
-	uint32_t reconnect_skipped_backoff;
-};
 
 /*
  * Build a fresh upstream session for `pls` using the cached bring-up
@@ -141,8 +135,7 @@ static int ps_listener_reconnect(struct ps_listener_state *pls)
  * session is dead and the backoff deadline has elapsed, runs a
  * reconnect.
  */
-static int renewal_tick_one(const struct ps_listener_state *pls_const,
-			    void *arg)
+int renewal_tick_one(const struct ps_listener_state *pls_const, void *arg)
 {
 	struct renewal_tick_ctx *ctx = arg;
 	/*
@@ -266,7 +259,7 @@ static int renewal_tick_one(const struct ps_listener_state *pls_const,
 
 static void *ps_renewal_thread_fn(void *arg __attribute__((unused)))
 {
-	pthread_setname_np(pthread_self(), "ps-renewal");
+	reffs_pthread_setname_self("ps-renewal");
 
 	while (atomic_load_explicit(&s_renewal_running, memory_order_acquire)) {
 		struct renewal_tick_ctx ctx = { 0 };

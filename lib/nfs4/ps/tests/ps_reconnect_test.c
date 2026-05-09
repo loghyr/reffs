@@ -20,6 +20,7 @@
 #include "reffs/settings.h"
 
 #include "ps_renewal.h"
+#include "ps_renewal_internal.h"
 #include "ps_state.h"
 
 static void setup(void)
@@ -503,27 +504,162 @@ END_TEST
  * destroyed and freed before publish.  The bench soak covers this
  * dynamically; an in-process reproducer is NOT_NOW_BROWN_COW.
  */
-START_TEST(test_renewal_start_stop_clean)
+/*
+ * ps_renewal_start refuses interval=0.  The renewal thread loop
+ * uses interval as the cond_timedwait deadline; a zero interval
+ * would tight-loop or trigger UB depending on libc.  Defensive
+ * validation matters here because the value flows from a config
+ * file (which the operator can typo).
+ */
+START_TEST(test_renewal_start_zero_interval_invalid)
 {
+	ck_assert_int_eq(ps_renewal_start(0), -EINVAL);
+}
+END_TEST
+
+/*
+ * Second ps_renewal_start while the thread is already running must
+ * NOT spawn a second worker -- the atomic CAS gates it -- and must
+ * return 0 (not an error).  ps_renewal_stop then joins the single
+ * thread cleanly.
+ */
+START_TEST(test_renewal_start_idempotent)
+{
+	ck_assert_int_eq(ps_renewal_start(1), 0);
+	ck_assert_int_eq(ps_renewal_start(1), 0);
+	ck_assert_int_eq(ps_renewal_start(1), 0);
+	ps_renewal_stop();
+	/* Re-startable after a clean stop. */
+	ck_assert_int_eq(ps_renewal_start(1), 0);
+	ps_renewal_stop();
+}
+END_TEST
+
+/*
+ * ps_renewal_stop while the thread is not running must be a no-op
+ * (no pthread_join of an uninitialised handle, no crash).  Idempotent
+ * for the case where shutdown can be called twice -- once by an
+ * explicit teardown path, once by atexit / cleanup.
+ */
+START_TEST(test_renewal_stop_when_not_running)
+{
+	ps_renewal_stop();
+	ps_renewal_stop();
+}
+END_TEST
+
+/*
+ * Tick on a listener with no session and no upstream configured:
+ * bumps skipped_no_session and takes no action.  Models a
+ * registration where the operator left address blank -- the renewal
+ * thread must not spin trying to connect to an empty string.
+ */
+START_TEST(test_tick_no_session_no_upstream)
+{
+	struct reffs_proxy_mds_config c = make_cfg(50);
+
+	c.address[0] = '\0';
+	c.mds_port = 0;
+	ck_assert_int_eq(ps_state_register(&c), 0);
+
+	const struct ps_listener_state *pls = ps_state_find(50);
+
+	ck_assert_ptr_nonnull(pls);
+	ck_assert_int_eq(pls->pls_upstream[0], '\0');
+
+	struct renewal_tick_ctx ctx = { 0 };
+
+	ck_assert_int_eq(renewal_tick_one(pls, &ctx), 0);
+
+	ck_assert_uint_eq(ctx.skipped_no_session, 1);
+	ck_assert_uint_eq(ctx.reconnect_attempted, 0);
+	ck_assert_uint_eq(ctx.reconnect_skipped_backoff, 0);
+	ck_assert_uint_eq(ctx.reconnect_succeeded, 0);
+	ck_assert_uint_eq(ctx.renewed, 0);
+	ck_assert_uint_eq(ctx.failed, 0);
+}
+END_TEST
+
+/*
+ * Tick on a listener with no session and an upstream, but the
+ * backoff deadline is in the future: bumps reconnect_skipped_backoff
+ * and takes NO connect attempt.  The deadline gates the retry so
+ * the renewal thread does not hammer a known-bad upstream.
+ */
+START_TEST(test_tick_no_session_in_backoff)
+{
+	struct reffs_proxy_mds_config c = make_cfg(51);
+
+	ck_assert_int_eq(ps_state_register(&c), 0);
+
 	/*
-	 * Use a 1-second interval so we don't make the test slow.
-	 * No registered listener means the tick callback finds nothing
-	 * to do; we are validating the start/stop primitives + the
-	 * cond_broadcast wake on stop.
+	 * Cast away const to set the backoff deadline.  The for_each
+	 * contract gives a const view; the registry storage itself is
+	 * mutable -- mirrors what renewal_tick_one does internally.
 	 */
-	ck_assert_int_eq(ps_renewal_start(1), 0);
+	struct ps_listener_state *pls =
+		(struct ps_listener_state *)ps_state_find(51);
 
-	/* Idempotent: a second start returns 0 without spawning. */
-	ck_assert_int_eq(ps_renewal_start(1), 0);
+	ck_assert_ptr_nonnull(pls);
 
-	ps_renewal_stop();
+	struct timespec mono;
 
-	/* Idempotent stop. */
-	ps_renewal_stop();
+	clock_gettime(CLOCK_MONOTONIC, &mono);
+	uint64_t now_ns =
+		(uint64_t)mono.tv_sec * 1000000000ULL + (uint64_t)mono.tv_nsec;
+	/* 1 hour out -- well past any test runtime. */
+	pls->pls_reconnect_next_attempt_ns = now_ns + 3600ULL * 1000000000ULL;
+	pls->pls_reconnect_backoff_sec = 16;
 
-	/* Re-startable after stop. */
-	ck_assert_int_eq(ps_renewal_start(1), 0);
-	ps_renewal_stop();
+	struct renewal_tick_ctx ctx = { 0 };
+
+	ck_assert_int_eq(renewal_tick_one(pls, &ctx), 0);
+
+	ck_assert_uint_eq(ctx.skipped_no_session, 1);
+	ck_assert_uint_eq(ctx.reconnect_skipped_backoff, 1);
+	ck_assert_uint_eq(ctx.reconnect_attempted, 0);
+	ck_assert_uint_eq(ctx.reconnect_succeeded, 0);
+	/* Skip path must NOT touch backoff state. */
+	ck_assert_uint_eq(pls->pls_reconnect_backoff_sec, 16);
+}
+END_TEST
+
+/*
+ * Tick on a listener with no session, an upstream, and no backoff
+ * deadline: must attempt the reconnect.  Pointing at 127.0.0.1:1
+ * makes connect() return ECONNREFUSED in microseconds (port 1 is
+ * IANA-reserved tcpmux, virtually never bound on dev/CI hosts).
+ * After the failed attempt, renewal_tick_one must arm a deadline
+ * and advance the backoff schedule -- proving the failure path is
+ * wired, not just the decision to attempt.
+ */
+START_TEST(test_tick_no_session_no_backoff_attempts_reconnect)
+{
+	struct reffs_proxy_mds_config c = make_cfg(52);
+
+	strncpy(c.address, "127.0.0.1", sizeof(c.address) - 1);
+	c.mds_port = 1;
+	ck_assert_int_eq(ps_state_register(&c), 0);
+
+	struct ps_listener_state *pls =
+		(struct ps_listener_state *)ps_state_find(52);
+
+	ck_assert_ptr_nonnull(pls);
+	ck_assert_uint_eq(pls->pls_reconnect_next_attempt_ns, 0);
+	ck_assert_uint_eq(pls->pls_reconnect_backoff_sec, 0);
+
+	struct renewal_tick_ctx ctx = { 0 };
+
+	ck_assert_int_eq(renewal_tick_one(pls, &ctx), 0);
+
+	ck_assert_uint_eq(ctx.skipped_no_session, 1);
+	ck_assert_uint_eq(ctx.reconnect_attempted, 1);
+	ck_assert_uint_eq(ctx.reconnect_skipped_backoff, 0);
+	/* Connect refused -- reconnect could not succeed. */
+	ck_assert_uint_eq(ctx.reconnect_succeeded, 0);
+	/* Failure path armed a future deadline + advanced backoff. */
+	ck_assert_uint_ne(pls->pls_reconnect_next_attempt_ns, 0);
+	ck_assert_uint_ne(pls->pls_reconnect_backoff_sec, 0);
 }
 END_TEST
 
@@ -599,17 +735,31 @@ static Suite *ps_reconnect_suite(void)
 	tcase_add_test(quiesce, test_session_replace_quiesces_in_flight);
 	suite_add_tcase(s, quiesce);
 
-	TCase *lifecycle = tcase_create("lifecycle");
-	/* No fixture: the renewal thread reads from the global registry,
-	 * which is in whatever state the prior tests left it.  An empty
-	 * registry is the simplest pre-condition; this test does not
-	 * register any listeners. */
-	tcase_add_test(lifecycle, test_renewal_start_stop_clean);
-	/* Bump the per-test budget a little -- the renewal thread spins
-	 * up a real pthread + cond + mutex.  Default is 4s; we stay well
-	 * under 2s but give headroom for slow CI. */
-	tcase_set_timeout(lifecycle, 5);
-	suite_add_tcase(s, lifecycle);
+	TCase *renewal = tcase_create("renewal_thread");
+
+	/*
+	 * Fixture wraps every test so the registry starts clean and is
+	 * fully torn down between cases -- the tick tests register
+	 * listeners with overlapping ids that must not leak across
+	 * runs.  start/stop tests don't register listeners but share
+	 * the fixture for symmetry.
+	 *
+	 * Bump the per-test budget a little -- the renewal thread
+	 * spins up a real pthread + cond + mutex, and the
+	 * attempts-reconnect test issues a real connect() to a
+	 * refused port.  Default is 4s; we stay well under 2s but
+	 * give headroom for slow CI.
+	 */
+	tcase_add_checked_fixture(renewal, setup, teardown);
+	tcase_set_timeout(renewal, 5);
+	tcase_add_test(renewal, test_renewal_start_zero_interval_invalid);
+	tcase_add_test(renewal, test_renewal_start_idempotent);
+	tcase_add_test(renewal, test_renewal_stop_when_not_running);
+	tcase_add_test(renewal, test_tick_no_session_no_upstream);
+	tcase_add_test(renewal, test_tick_no_session_in_backoff);
+	tcase_add_test(renewal,
+		       test_tick_no_session_no_backoff_attempts_reconnect);
+	suite_add_tcase(s, renewal);
 
 	return s;
 }

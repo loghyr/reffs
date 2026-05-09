@@ -21,6 +21,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -121,6 +122,24 @@ static inline int reffs_fdatasync(int fd)
 	return fdatasync(fd);
 #else
 	return fcntl(fd, F_FULLFSYNC);
+#endif
+}
+
+/*
+ * reffs_pthread_setname_self -- name the current thread.  Linux's
+ * pthread_setname_np takes (pthread_t, const char *) and can name
+ * any thread; Darwin's takes (const char *) and can only name the
+ * caller.  reffs only ever names the current thread, so the lossy
+ * intersection is fine.  Returns 0 on success or a positive errno
+ * on failure (matches the Linux contract; Darwin is silent so we
+ * pass its return through).
+ */
+static inline int reffs_pthread_setname_self(const char *name)
+{
+#ifdef __APPLE__
+	return pthread_setname_np(name);
+#else
+	return pthread_setname_np(pthread_self(), name);
 #endif
 }
 

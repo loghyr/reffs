@@ -117,7 +117,8 @@ struct reffs_chunk_stats {
 	_Atomic uint64_t
 		cs_commit_crc_recompute; /* COMMIT recomputed CRC vs persisted */
 	_Atomic uint64_t cs_rollback_invoked; /* CHUNK_ROLLBACK fired */
-	_Atomic uint64_t cs_repair_initiated; /* repair path entered (today: 0) */
+	_Atomic uint64_t
+		cs_repair_initiated; /* repair path entered (today: 0) */
 	_Atomic uint64_t cs_fences_rotated; /* synthetic uid/gid bumps */
 };
 
