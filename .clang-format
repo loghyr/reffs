@@ -1,7 +1,17 @@
 # SPDX-FileCopyrightText: 2023 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: GPL-2.0
 #
-# clang-format configuration file. Intended for clang-format >=  20.1.2.
+# clang-format configuration file. Intended for clang-format >= 22.1.4.
+#
+# Version contract: the formatting that ships in Fedora 44's
+# clang-format (22.1.4) is canonical.  Earlier versions (notably the
+# clang-format-21 that ships on Fedora 43) tighten the column-limit
+# accounting for trailing comments and will produce extra line breaks
+# on lines whose code+comment crosses 80 cols but whose code alone
+# does not.  When that happens, prefer trimming the trailing comment
+# (or moving it above the field) over accepting the older format's
+# break -- the file should be byte-identical under clang-format-22 so
+# the nightly on garbo (Fedora 44) does not flag it.
 #
 # For more information, see:
 #
