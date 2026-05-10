@@ -95,9 +95,16 @@ fetch_pynfs() {
 	# Set up a virtual environment for pynfs dependencies.
 	# ply is GPL -- installed as a runtime tool dependency in the
 	# venv, not linked into reffs.
+	#
+	# A bare "venv dir exists" check is not enough: a Fedora
+	# distro upgrade (e.g. 43 -> 44) bumps the Python minor
+	# version, and the venv's bundled pip becomes ABI-broken.
+	# Probe for a working pip; nuke and recreate if missing.
 	PYNFS_VENV="$PYNFS_DIR/.venv"
-	if [ ! -d "$PYNFS_VENV" ]; then
-		info "pynfs: creating virtual environment"
+	if [ ! -d "$PYNFS_VENV" ] || \
+	   ! "$PYNFS_VENV/bin/python3" -c 'import pip' >/dev/null 2>&1; then
+		info "pynfs: (re)creating virtual environment"
+		rm -rf "$PYNFS_VENV"
 		python3 -m venv "$PYNFS_VENV"
 	fi
 	. "$PYNFS_VENV/bin/activate"
@@ -106,9 +113,18 @@ fetch_pynfs() {
 
 	# Build pynfs v4.1 only (generates XDR code from .x files).
 	# Skip 4.0 -- we only test NFSv4.1/4.2.
-	if [ ! -d "$PYNFS_DIR/nfs4.1/nfs4" ]; then
+	#
+	# Build artifact lives at nfs4.1/build/lib/nfs4/.  A symlink
+	# nfs4.1/nfs4 -> build/lib/nfs4 lets testserver.py do
+	# "import nfs4" from cwd nfs4.1/.  Older pynfs versions
+	# placed the artifact directly at nfs4.1/nfs4; the symlink
+	# keeps both layouts working without script changes.
+	if [ ! -e "$PYNFS_DIR/nfs4.1/build/lib/nfs4" ]; then
 		info "pynfs: building (setup.py build)"
 		(cd "$PYNFS_DIR" && python3 setup.py build) 2>&1 | tail -5
+	fi
+	if [ ! -e "$PYNFS_DIR/nfs4.1/nfs4" ]; then
+		ln -s build/lib/nfs4 "$PYNFS_DIR/nfs4.1/nfs4"
 	fi
 }
 
@@ -231,11 +247,31 @@ if [ "$EXTERNAL_MODE" = false ]; then
 	stop_server
 fi
 
-# Summary: count pass/fail from output
-PASS_COUNT=$(grep -c '^\*\*\*\? PASS' "$RESULTS_FILE" 2>/dev/null || echo 0)
-FAIL_COUNT=$(grep -c '^\*\*\*\? FAILURE' "$RESULTS_FILE" 2>/dev/null || echo 0)
-WARN_COUNT=$(grep -c '^\*\*\*\? WARNING' "$RESULTS_FILE" 2>/dev/null || echo 0)
-SKIP_COUNT=$(grep -c 'DEPENDENCY' "$RESULTS_FILE" 2>/dev/null || echo 0)
+# Summary: count pass/fail from output.
+#
+# Modern pynfs (post ~2020) ends every run with one summary line:
+#   "Of those: <N> Skipped, <N> Failed, <N> Warned, <N> Passed"
+# That single line is the authoritative count and is robust against
+# per-test-line format changes (older greps for '^*** PASS' missed
+# every test under modern pynfs and reported 0/0/0/0).
+SUMMARY=$(grep -E '^Of those:' "$RESULTS_FILE" 2>/dev/null | tail -1)
+if [ -n "$SUMMARY" ]; then
+	# Each count is the token immediately preceding its label.
+	PASS_COUNT=$(echo "$SUMMARY" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^Passed/) print $(i-1) }')
+	FAIL_COUNT=$(echo "$SUMMARY" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^Failed/) print $(i-1) }')
+	WARN_COUNT=$(echo "$SUMMARY" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^Warned/) print $(i-1) }')
+	SKIP_COUNT=$(echo "$SUMMARY" | awk '{ for (i=1;i<=NF;i++) if ($i ~ /^Skipped/) print $(i-1) }')
+else
+	# Legacy format fallback (older pynfs, kept for safety).
+	PASS_COUNT=$(grep -c '^\*\*\*\? PASS' "$RESULTS_FILE" 2>/dev/null || echo 0)
+	FAIL_COUNT=$(grep -c '^\*\*\*\? FAILURE' "$RESULTS_FILE" 2>/dev/null || echo 0)
+	WARN_COUNT=$(grep -c '^\*\*\*\? WARNING' "$RESULTS_FILE" 2>/dev/null || echo 0)
+	SKIP_COUNT=$(grep -c 'DEPENDENCY' "$RESULTS_FILE" 2>/dev/null || echo 0)
+fi
+PASS_COUNT=${PASS_COUNT:-0}
+FAIL_COUNT=${FAIL_COUNT:-0}
+WARN_COUNT=${WARN_COUNT:-0}
+SKIP_COUNT=${SKIP_COUNT:-0}
 
 info ""
 info "=== pynfs Results ==="
