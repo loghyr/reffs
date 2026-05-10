@@ -306,9 +306,32 @@ nfs_cleanup() {
 if [ -z "${goto_email:-}" ]; then
 section_start nfs_setup "Start NFS server + mounts"
 
+# Defensive: a prior aborted nightly can leave /mnt/reffs_v{3,4}
+# as zombie NFS mounts (kernel mount survives reffsd dying).  Any
+# subsequent access path (mkdir, stat, even mountpoint -q) hits the
+# dead RPC port and parks the caller in uninterruptible D-state.
+# Force-detach BEFORE we touch the paths -- 30s upper bound per
+# umount.  Without this guard we sat 2.5h on a single hung mkdir
+# in the 2026-05-09 Fedora-44 restoration nightly.
+for m in "$V3_MOUNT" "$V4_MOUNT"; do
+    if mount | grep -q " $m type nfs"; then
+        echo "  zombie NFS mount detected at $m -- force-detaching"
+        timeout 30 sudo umount -lf "$m" 2>&1 || true
+    fi
+done
+
 rm -rf "$INT_DATA" "$INT_STATE"
 mkdir -p "$INT_DATA" "$INT_STATE"
-sudo mkdir -p "$V4_MOUNT" "$V3_MOUNT"
+# Per-command timeouts: mkdir / mount on a stale NFS mountpoint can
+# wedge in D-state.  Bail loudly instead of running stale.
+if ! timeout 60 sudo mkdir -p "$V4_MOUNT" "$V3_MOUNT" 2>&1; then
+    echo "  mkdir of mountpoints timed out (60s) -- skipping NFS phase"
+    record "nfs_setup" 1
+    goto_email=true
+fi
+fi
+
+if [ -z "${goto_email:-}" ]; then
 
 cat > "$INT_CONFIG" <<EOF
 [server]
@@ -355,17 +378,25 @@ done
 if [ "$SERVER_OK" = true ]; then
     echo "  reffsd up (PID $REFFSD_PID, port $NFS_PORT)"
 
+    # mount.nfs honours the kernel mount-timeout (timeo=) but with
+    # hard,retrans=2 a non-responsive server can still loop for many
+    # minutes.  Cap each mount attempt at 90s -- well above the 60s
+    # nominal timeo so genuine slow servers still succeed.
     echo "  Mounting NFSv4.2 at $V4_MOUNT"
-    sudo mount -o vers=4.2,sec=sys,hard,timeo=600,port=$NFS_PORT \
-        127.0.0.1:/ "$V4_MOUNT" 2>&1
+    timeout 90 sudo mount -o vers=4.2,sec=sys,hard,timeo=600,port=$NFS_PORT \
+        127.0.0.1:/ "$V4_MOUNT" 2>&1 || \
+            echo "  v4 mount timed out"
 
     echo "  Mounting NFSv3 at $V3_MOUNT"
-    sudo mount -o vers=3,sec=sys,hard,nolock,tcp,mountproto=tcp,timeo=600,port=$NFS_PORT \
-        127.0.0.1:/ "$V3_MOUNT" 2>&1
+    timeout 90 sudo mount -o vers=3,sec=sys,hard,nolock,tcp,mountproto=tcp,timeo=600,port=$NFS_PORT \
+        127.0.0.1:/ "$V3_MOUNT" 2>&1 || \
+            echo "  v3 mount timed out"
 
+    # mountpoint -q stats the path; on a half-mounted NFS endpoint
+    # that stat itself can hang -- timeout-wrap defensively.
     V4_OK=false; V3_OK=false
-    sudo mountpoint -q "$V4_MOUNT" 2>/dev/null && V4_OK=true
-    sudo mountpoint -q "$V3_MOUNT" 2>/dev/null && V3_OK=true
+    timeout 10 sudo mountpoint -q "$V4_MOUNT" 2>/dev/null && V4_OK=true
+    timeout 10 sudo mountpoint -q "$V3_MOUNT" 2>/dev/null && V3_OK=true
     echo "  NFSv4.2: $V4_OK  NFSv3: $V3_OK"
 
     if [ "$V4_OK" = true ] && [ "$V3_OK" = true ]; then
