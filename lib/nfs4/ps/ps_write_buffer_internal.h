@@ -55,6 +55,17 @@ struct ps_write_buffer {
 	uint32_t pwb_upstream_fh_len;
 	uint32_t pwb_listener_id;
 
+	/*
+	 * Latest stateid_seqid seen on a WRITE into this buffer.
+	 * COMMIT op doesn't carry a stateid; pipeline_commit uses
+	 * this stashed value when constructing the mds_file for
+	 * ec_write_codec_with_file's LAYOUTGET.  Updated under
+	 * pwb_mutex by every WRITE; a stale seqid would surface as
+	 * NFS4ERR_BAD_STATEID on the upstream LAYOUTGET, which the
+	 * codec returns to pipeline_commit verbatim.
+	 */
+	uint32_t pwb_stateid_seqid;
+
 	/* Bytes */
 	uint8_t *pwb_data; /* malloc, grows as needed */
 	size_t pwb_capacity; /* allocated bytes */

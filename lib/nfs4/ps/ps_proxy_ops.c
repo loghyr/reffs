@@ -2432,15 +2432,14 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	int ret;
 
 	/*
-	 * stateid_seqid + creds + stable are accepted for API symmetry
-	 * with ps_proxy_pipeline_read / ps_proxy_forward_write.  Phase
-	 * 4a does no upstream call here (the COMMIT-time flush in
-	 * 4a.2c is where creds get threaded through), and every WRITE
-	 * is treated as UNSTABLE4 regardless of `stable`.  Marked
-	 * unused so a future regression that DOES need them gets a
-	 * compile-time hint.
+	 * `stable` and `creds` are unused at this entry.  Phase 4a
+	 * downgrades every WRITE to UNSTABLE4 regardless of `stable`;
+	 * `creds` is threaded through ec_write_codec_with_file by
+	 * pipeline_commit (the COMMIT-time flush in 4a.2c), not here.
+	 * `stateid_seqid` IS used: stashed in the buffer under
+	 * pwb_mutex so pipeline_commit's LAYOUTGET has a stateid to
+	 * present (the COMMIT op itself carries none).
 	 */
-	(void)stateid_seqid;
 	(void)stable;
 	(void)creds;
 
@@ -2524,6 +2523,15 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	memcpy(buf->pwb_data + offset, data, data_len);
 	if (need > buf->pwb_high_water)
 		buf->pwb_high_water = need;
+	/*
+	 * Stash the latest stateid_seqid for pipeline_commit's
+	 * LAYOUTGET.  Last writer wins; if a concurrent WRITE on the
+	 * same buffer overwrote ours, pipeline_commit gets whichever
+	 * seqid landed under pwb_mutex last.  Phase 4a's
+	 * single-writer-per-(stateid, fh) model means there is only
+	 * one writer in the happy path.
+	 */
+	buf->pwb_stateid_seqid = stateid_seqid;
 	pthread_mutex_unlock(&buf->pwb_mutex);
 
 	ps_write_buffer_release_find_ref(buf, pls);
@@ -2539,6 +2547,120 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	reply->committed = 0; /* UNSTABLE4 */
 	pwb_compose_listener_verifier(pls, reply->verifier);
 	return 0;
+}
+
+int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
+			     uint32_t upstream_fh_len, uint64_t offset,
+			     uint32_t count, const struct authunix_parms *creds,
+			     struct ps_proxy_commit_reply *reply)
+{
+	uint32_t listener_id;
+	struct ps_listener_state *pls;
+	struct ps_write_buffer *buf;
+	struct mds_file mf;
+	uint64_t buf_gen;
+	uint8_t local_data_snapshot_required = 0;
+	int ret;
+
+	/*
+	 * `offset` and `count` are accepted for API symmetry with
+	 * ps_proxy_forward_commit and the on-wire COMMIT4args.  Phase
+	 * 4a flushes the entire buffered prefix on every COMMIT
+	 * regardless of the requested range (RFC 8881 S18.3.4
+	 * explicitly permits the server to commit more than asked).
+	 * Per-range slice tracking with a coverage bitmap is Phase 4b
+	 * territory.
+	 */
+	(void)offset;
+	(void)count;
+	(void)local_data_snapshot_required;
+
+	if (!ms || !upstream_fh || upstream_fh_len == 0 || !reply)
+		return -EINVAL;
+	if (upstream_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
+	memset(reply, 0, sizeof(*reply));
+
+	listener_id = atomic_load_explicit(&ms->ms_kick_listener_id,
+					   memory_order_relaxed);
+	if (listener_id == 0)
+		return -EINVAL;
+	pls = (struct ps_listener_state *)ps_state_find(listener_id);
+	if (!pls)
+		return -ENOENT;
+
+	if (!ps_write_buffer_enter_quiesce_or_bail(pls))
+		return -EAGAIN;
+
+	buf = ps_write_buffer_find_by_fh(pls, upstream_fh, upstream_fh_len);
+	if (!buf) {
+		/*
+		 * No buffered bytes for this FH -- spec-permitted no-op
+		 * COMMIT.  Return success with the listener verifier so
+		 * a client that interleaves COMMITs across reads-only
+		 * files still gets a consistent verifier.
+		 * find_by_fh released our enter_quiesce reservation on
+		 * its NULL path (symmetric contract).
+		 */
+		pwb_compose_listener_verifier(pls, reply->verifier);
+		return 0;
+	}
+
+	pthread_mutex_lock(&buf->pwb_mutex);
+	buf_gen = buf->pwb_listener_gen;
+	if (buf_gen !=
+	    atomic_load_explicit(&pls->pls_boot_gen, memory_order_acquire)) {
+		pthread_mutex_unlock(&buf->pwb_mutex);
+		ps_write_buffer_drop(buf, pls);
+		return -ESTALE;
+	}
+
+	/*
+	 * Construct an mds_file from the buffer's stashed key.  The
+	 * codec only reads it; we don't take ownership of any
+	 * upstream state.  stateid_seqid is whichever WRITE landed
+	 * last under pwb_mutex; stateid_other was set at alloc time
+	 * and never changes.
+	 */
+	memset(&mf, 0, sizeof(mf));
+	mf.mf_stateid.seqid = buf->pwb_stateid_seqid;
+	memcpy(mf.mf_stateid.other, buf->pwb_stateid_other,
+	       PS_STATEID_OTHER_SIZE);
+	mf.mf_fh.nfs_fh4_val = (char *)buf->pwb_upstream_fh;
+	mf.mf_fh.nfs_fh4_len = buf->pwb_upstream_fh_len;
+
+	/*
+	 * Hold pwb_mutex across the flush so a concurrent WRITE
+	 * cannot mutate the buffer while ec_write_codec_with_file
+	 * reads from pwb_data.  pwb_mutex is leaf-most among PS
+	 * locks (standards.md rule 4 / design doc reviewer checklist
+	 * rule 4); the codec acquires no other PS lock, so this is
+	 * safe.  The flush can be slow (LAYOUTGET + per-DS
+	 * CHUNK_WRITE storm); Phase 4b will revisit if profiling
+	 * shows this serialises in practice.
+	 */
+	ret = ec_write_codec_with_file(ms, &mf, buf->pwb_data,
+				       buf->pwb_high_water, /* k */ 4,
+				       /* m */ 2, EC_CODEC_RS,
+				       LAYOUT4_FLEX_FILES_V2,
+				       /* shard_size */ 4096, creds);
+	pthread_mutex_unlock(&buf->pwb_mutex);
+
+	if (ret == 0) {
+		/* Success: drop the buffer, return the listener verifier. */
+		ps_write_buffer_drop(buf, pls);
+		pwb_compose_listener_verifier(pls, reply->verifier);
+		return 0;
+	}
+
+	/*
+	 * Failure: keep the buffer so the client can retry COMMIT.
+	 * Return -EIO (op handler will map to NFS4ERR_IO).  Drop only
+	 * the per-op find ref; the table ref stays.
+	 */
+	ps_write_buffer_release_find_ref(buf, pls);
+	return -EIO;
 }
 
 /* ------------------------------------------------------------------ */

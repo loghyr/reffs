@@ -72,6 +72,7 @@ TESTS = \
 	ps_proxy_creds_forward_test \
 	ps_proxy_kick_test \
 	ps_proxy_ops_test \
+	ps_proxy_pipeline_commit_test \
 	ps_proxy_pipeline_write_test \
 	ps_reconnect_test \
 	ps_sb_alloc_test \

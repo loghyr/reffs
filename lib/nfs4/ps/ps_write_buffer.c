@@ -402,6 +402,50 @@ struct ps_write_buffer *ps_write_buffer_lookup_or_alloc(
 	return buf;
 }
 
+struct ps_write_buffer *
+ps_write_buffer_find_by_fh(struct ps_listener_state *pls,
+			   const uint8_t *upstream_fh, uint32_t upstream_fh_len)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct ps_write_buffer *found = NULL;
+
+	if (!pls || !pls->pls_write_buffer_ht || !upstream_fh ||
+	    upstream_fh_len == 0 || upstream_fh_len > PS_MAX_FH_SIZE) {
+		if (pls)
+			ps_write_buffer_leave_quiesce(pls);
+		return NULL;
+	}
+
+	rcu_read_lock();
+	cds_lfht_first(pls->pls_write_buffer_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct ps_write_buffer *buf = caa_container_of(
+			node, struct ps_write_buffer, pwb_ht_node);
+
+		if (buf->pwb_upstream_fh_len == upstream_fh_len &&
+		    memcmp(buf->pwb_upstream_fh, upstream_fh,
+			   upstream_fh_len) == 0) {
+			if (urcu_ref_get_unless_zero(&buf->pwb_ref)) {
+				found = buf;
+				break;
+			}
+			/*
+			 * Lost race with teardown of this entry; keep
+			 * scanning -- another writer's buffer for the
+			 * same FH (Phase 4a documented limitation) may
+			 * still be live.
+			 */
+		}
+		cds_lfht_next(pls->pls_write_buffer_ht, &iter);
+	}
+	rcu_read_unlock();
+
+	if (!found)
+		ps_write_buffer_leave_quiesce(pls);
+	return found;
+}
+
 void ps_write_buffer_release_find_ref(struct ps_write_buffer *buffer,
 				      struct ps_listener_state *pls)
 {

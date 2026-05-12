@@ -571,6 +571,37 @@ int ps_proxy_forward_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 			    struct ps_proxy_commit_reply *reply);
 
 /*
+ * PS Phase 4a: pipeline-driven COMMIT.  Flushes the per-listener
+ * write buffer for `upstream_fh` through ec_write_codec_with_file
+ * (encode + per-DS CHUNK_WRITE + FINALIZE + COMMIT).  On success
+ * the buffer is dropped from the table; on failure the buffer is
+ * kept so a client retry can re-attempt the flush.
+ *
+ * The COMMIT op carries no stateid, so this entry looks the
+ * buffer up by `upstream_fh` alone (linear scan; Phase 4a's
+ * single-writer-per-FH model means at most one match).  The
+ * codec's LAYOUTGET uses the stateid stashed by the latest
+ * WRITE on the same buffer.
+ *
+ * `offset` and `count` are accepted from the wire but ignored:
+ * Phase 4a flushes the entire buffered prefix on every COMMIT
+ * (RFC 8881 S18.3.4 lets the server commit more than asked).
+ *
+ * Returns:
+ *   0        success; reply->verifier populated
+ *   -EINVAL  ms / upstream_fh / reply NULL, or upstream_fh_len == 0
+ *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
+ *   -EAGAIN  listener draining / stopped (transient)
+ *   -ESTALE  listener boot generation changed under us
+ *   -EIO     ec_write_codec_with_file failure; buffer retained for retry
+ *   -ENOENT  ms is not bound to a registered listener
+ */
+int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
+			     uint32_t upstream_fh_len, uint64_t offset,
+			     uint32_t count, const struct authunix_parms *creds,
+			     struct ps_proxy_commit_reply *reply);
+
+/*
  * Caller-owned result from ps_proxy_forward_remove.  Carries the
  * upstream MDS's change_info4 verbatim so the end client can detect
  * a concurrent mutation that raced with the REMOVE; the
