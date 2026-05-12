@@ -89,13 +89,13 @@ struct ps_write_buffer {
 #define PS_WRITE_BUFFER_HASH_BUCKETS_INIT 64
 
 /*
- * Single-WRITE / total-buffered cap (default 1 GiB).  Set at the
- * listener level so each listener can have its own cap; today every
- * listener uses the same default.
+ * Single-WRITE / total-buffered cap (default 1 GiB).
  *
- * Configurable via [[ps]] write_buffer_max_bytes in reffs.toml
- * (parser plumbing is Phase 4a step 9; 4a.2a ships the constant
- * with the default and the cap-check site reads the constant).
+ * NOT_NOW_BROWN_COW: the design's [[ps]] write_buffer_max_bytes
+ * TOML field (Phase 4a step 9) is a follow-on slice.  Today this
+ * is a compile-time constant; the pipeline shim is structured so
+ * a later slice can swap a per-listener `pls_write_buffer_max`
+ * field in without surface changes.
  */
 #define REFFS_PS_WRITE_BUFFER_MAX (1024UL * 1024UL * 1024UL)
 

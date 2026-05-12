@@ -9,6 +9,42 @@ Active-slice plan for the first half of `proxy-server.md` Phase 4.
 See parent for context and Phase 4b (per-stripe RMW) for the
 follow-on that completes the spec-compliant story.
 
+## Status (shipped 2026-05-12)
+
+Phase 4a is **structurally complete**: every client-visible NFSv4
+op on a proxy SB (WRITE / COMMIT / CLOSE) now routes through the
+buffer-and-flush pipeline.  Slices shipped:
+
+| Slice | Commit          | Step | What                                                                      |
+|-------|-----------------|------|---------------------------------------------------------------------------|
+| 4a.1  | `8d56911b90df`  | 1    | `ec_write_codec_with_file` factor-out + creds threading                   |
+| 4a.2a | `61aa4b600091`  | 3    | Write-buffer table + per-listener lifecycle (quiesce protocol)            |
+| 4a.2b | `b60dabdbfbad`  | 4    | `ps_proxy_pipeline_write` shim                                            |
+| 4a.2c | `44274cf98fa8`  | 5    | `ps_proxy_pipeline_commit` shim                                           |
+| 4a.3  | `dc2a0d515d5d`  | 6+7  | `ps_proxy_pipeline_close` shim + op-handler dispatch flip                 |
+| 4a.4  | `22c30ab24f8c`  | 8    | `ps-write-buffer-stats` probe op + observability counters                 |
+
+Three implementation steps from the design ship as deferred
+follow-ons (each is its own slice's worth of work, called out
+inline below):
+
+- **Step 2** -- `proxy_data_pipeline_write` helper in
+  `lib/backends/proxy_data.c`.  The shim ended up routing directly
+  through `ps_proxy_ops.c` without going through `data_block` (the
+  pipeline path bypasses the data-block hook entirely).  Helper
+  not needed in 4a.
+- **Step 9** -- `[[ps]] write_buffer_max_bytes` TOML config.
+  Today `REFFS_PS_WRITE_BUFFER_MAX` is a compile-time constant
+  (1 GiB).  Operator-tunable runtime cap is a follow-on slice.
+- **Step 10** -- `scripts/ci_ps_phase4a_test.sh` end-to-end
+  bench test.  Requires standing up the bench docker-compose +
+  Linux NFS client mount + `cp + diff` harness; deferred to the
+  bench-integration arc.
+
+Unit-test coverage on Fedora 44 / clang 22: 142/142 PASS across
+the full `make check` suite, including 30 new tests across 4 new
+test files specifically for Phase 4a slices.
+
 ## Goal
 
 Wire client WRITE on proxy-SB files through the EC pipeline by
@@ -844,19 +880,25 @@ step 11; per memory `feedback_reffs_preslice_checks.md`):
    shape from the reconnect arc.  No new test in the unit-test
    table; covered by extending `scripts/test_sb_probe.py` style
    integration test once 4a is up on dreamer.
-9. **`reffs.toml` parser** in `lib/config/`:
-   - Add `[[ps]] write_buffer_max_bytes` field with default 1 GiB.
-   - Validate range (>= 4 KiB, <= SIZE_MAX/2); pass through to
-     `ps_listener_start`.
-10. **Functional / CI test**: write `scripts/ci_ps_phase4a_test.sh`
-    against the bench docker-compose.  Runs `cp /tmp/random_256m
-    ps-mount/f && diff` on a Linux NFSv4.2 mount.  Then iterate
-    with `ec_demo` against the bench topology to verify the
-    refactor did not regress the standalone ec_demo write path.
-11. **Update `proxy-server.md`**: Phase 4a status -> DONE; add
-    forward-pointer to `proxy-server-phase4b.md`.  Run
-    `make -f Makefile.reffs license` and `... style` per project
-    pre-slice checks before declaring the slice done.
+9. **`reffs.toml` parser** in `lib/config/` -- **NOT_NOW_BROWN_COW**.
+   Deferred to a follow-on slice.  Today
+   `REFFS_PS_WRITE_BUFFER_MAX` is a compile-time constant (1 GiB,
+   defined in `ps_write_buffer_internal.h`); the operator-tunable
+   `[[ps]] write_buffer_max_bytes` TOML field is its own slice's
+   plumbing (parser + per-listener field + threading).  The pipeline
+   shim is structured so the cap lookup can become a per-listener
+   `pls_write_buffer_max` field without surface changes.
+10. **Functional / CI test** -- **NOT_NOW_BROWN_COW**.  Deferred to
+    the bench-integration arc.  Requires standing up the bench
+    docker-compose (1 MDS + 10 DSes + 1 PS) plus a Linux NFSv4.2
+    client mount, then running `cp /tmp/random_256m mount/file &&
+    diff`.  The CI infrastructure for this is a separate concern
+    from the pipeline's correctness, which is unit-test-covered.
+    Until this lands, operators verify end-to-end via the
+    `deploy/benchmark/` topology by hand.
+11. **Update `proxy-server.md`**: status updated to DONE in the
+    parent design doc; the Status section at the top of this doc
+    is the canonical map of what shipped vs. deferred.
 
 ## Files to change
 

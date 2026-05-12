@@ -502,6 +502,15 @@ Measure latency and throughput as a baseline.
 
 ### Phase 4: Client WRITE
 
+Split into two slices.  **Phase 4a** ships the wiring -- WRITE on a
+proxy-SB file is buffered in PS RAM per (open stateid, upstream FH)
+and flushed through `ec_write_codec_with_file` on COMMIT (or on
+CLOSE-side best-effort flush).  Phase 4a is **DONE** as of 2026-05-12;
+see `.claude/design/proxy-server-phase4a.md` for the shipped-slice
+table.  Phase 4a unblocks `cp largefile mount/file` and IOR `-F 1`
+(file-per-process); it does NOT unblock chunk-collision Track 2
+(IOR `-F 0` shared-file) -- that is Phase 4b's per-stripe RMW work.
+
 Plumb `db_write` similarly.  End-to-end: client writes to PS --> PS
 encodes --> CHUNK_WRITE to DSes; client reads back --> PS decodes.
 
