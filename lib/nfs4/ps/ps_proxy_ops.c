@@ -2448,8 +2448,6 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 		return -EINVAL;
 	if (upstream_fh_len > PS_MAX_FH_SIZE)
 		return -E2BIG;
-	if (data_len > REFFS_PS_WRITE_BUFFER_MAX)
-		return -EFBIG; /* single WRITE larger than cap; no retry helps */
 
 	memset(reply, 0, sizeof(*reply));
 
@@ -2468,6 +2466,19 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	pls = (struct ps_listener_state *)ps_state_find(listener_id);
 	if (!pls)
 		return -ENOENT;
+
+	/*
+	 * Single-WRITE cap check.  After ps_state_find so we can
+	 * record the rejection in the per-listener stats counter;
+	 * before enter_quiesce so a hammering client doesn't keep
+	 * us churning the active-refs counter for guaranteed-FBIG
+	 * requests.
+	 */
+	if (data_len > REFFS_PS_WRITE_BUFFER_MAX) {
+		atomic_fetch_add_explicit(&pls->pls_fbig_rejections_total, 1,
+					  memory_order_relaxed);
+		return -EFBIG;
+	}
 
 	/*
 	 * Take the per-listener quiesce reservation.  After this point
@@ -2508,6 +2519,8 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	size_t need = (size_t)offset + (size_t)data_len;
 
 	if (need > REFFS_PS_WRITE_BUFFER_MAX) {
+		atomic_fetch_add_explicit(&pls->pls_cap_rejections_total, 1,
+					  memory_order_relaxed);
 		pthread_mutex_unlock(&buf->pwb_mutex);
 		ps_write_buffer_release_find_ref(buf, pls);
 		return -EAGAIN; /* transient cap pressure */

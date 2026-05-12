@@ -780,6 +780,25 @@ def ps_listener_list_cmd(client, args):
               f"{p.ppli_reconnect_next_attempt_ns}")
 
 
+def ps_write_buffer_stats_cmd(client, args):
+    """Per-listener Phase 4a write-buffer counters.  Useful for bench
+    harnesses to confirm COMMIT really flushed the table between runs
+    and for triage of -EFBIG / -EAGAIN rejections seen by clients."""
+    res = client.ps_write_buffer_stats()
+    probe_error_handler(res)
+    resok = res.pwbsr_resok
+    print(f"{'ID':<4} {'ACTIVE':<8} {'BYTES':<10} {'PEAK':<10} "
+          f"{'CAP_REJ':<10} {'TIMEOUTS':<10} {'FBIG_REJ':<10}")
+    for p in resok.pwbsr_listeners:
+        print(f"{p.ppwbs_listener_id:<4} "
+              f"{p.ppwbs_active_buffers:<8} "
+              f"{p.ppwbs_total_bytes_buffered:<10} "
+              f"{p.ppwbs_peak_bytes_buffered:<10} "
+              f"{p.ppwbs_cap_rejections_total:<10} "
+              f"{p.ppwbs_close_flush_timeouts_total:<10} "
+              f"{p.ppwbs_fbig_rejections_total:<10}")
+
+
 def dstore_list_cmd(client, args):
     res = client.dstore_list()
     probe_error_handler(res)
@@ -1181,6 +1200,11 @@ def parse_args():
         'ps-listener-list',
         help='List PS upstream listeners with reconnect-state telemetry')
     p_ps_listener_list.set_defaults(func=ps_listener_list_cmd)
+
+    p_ps_write_buffer_stats = subparsers.add_parser(
+        'ps-write-buffer-stats',
+        help='Per-listener PS Phase 4a write-buffer counters')
+    p_ps_write_buffer_stats.set_defaults(func=ps_write_buffer_stats_cmd)
 
     p_dstore_list = subparsers.add_parser(
         'dstore-list',

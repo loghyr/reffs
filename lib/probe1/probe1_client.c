@@ -803,6 +803,65 @@ struct rpc_trans *probe1_client_op_ps_listener_list(void)
 	return rt;
 }
 
+static int ps_write_buffer_stats_cb(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	PS_WRITE_BUFFER_STATS1res *res = ph->ph_res;
+
+	if (res->pwbsr_status) {
+		LOG("ps-write-buffer-stats error = %d", res->pwbsr_status);
+	} else {
+		PS_WRITE_BUFFER_STATS1resok *resok =
+			&res->PS_WRITE_BUFFER_STATS1res_u.pwbsr_resok;
+
+		printf("%-4s %-10s %-10s %-10s %-12s %-12s %-12s\n", "ID",
+		       "ACTIVE", "BYTES", "PEAK", "CAP_REJ", "TIMEOUTS",
+		       "FBIG_REJ");
+		for (uint32_t i = 0;
+		     i < resok->pwbsr_listeners.pwbsr_listeners_len; i++) {
+			struct probe_ps_write_buffer_stats1 *p =
+				&resok->pwbsr_listeners.pwbsr_listeners_val[i];
+
+			printf("%-4u %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64
+			       " %-12" PRIu64 " %-12" PRIu64 " %-12" PRIu64
+			       "\n",
+			       p->ppwbs_listener_id, p->ppwbs_active_buffers,
+			       p->ppwbs_total_bytes_buffered,
+			       p->ppwbs_peak_bytes_buffered,
+			       p->ppwbs_cap_rejections_total,
+			       p->ppwbs_close_flush_timeouts_total,
+			       p->ppwbs_fbig_rejections_total);
+		}
+	}
+	io_handler_stop();
+	return 0;
+}
+
+struct rpc_trans *probe1_client_op_ps_write_buffer_stats(void)
+{
+	int ret;
+	struct rpc_trans *rt = rpc_trans_create();
+
+	if (!rt)
+		return NULL;
+	rt->rt_info.ri_program = PROBE_PROGRAM;
+	rt->rt_info.ri_version = PROBE_V1;
+	rt->rt_info.ri_procedure = PROBEPROC1_PS_WRITE_BUFFER_STATS;
+
+	ret = rpc_protocol_allocate_call(rt);
+	if (ret) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+
+	rt->rt_cb = ps_write_buffer_stats_cb;
+	if (rpc_prepare_send_call(rt)) {
+		rpc_protocol_free(rt);
+		return NULL;
+	}
+	return rt;
+}
+
 struct rpc_trans *probe1_client_op_dstore_list(void)
 {
 	int ret;

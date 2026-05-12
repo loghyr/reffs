@@ -262,6 +262,17 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_PS_LISTENER_LIST,
                          response_type='PS_LISTENER_LIST1res')
 
+    def ps_write_buffer_stats(self):
+        """Per-listener Phase 4a write-buffer counters: active
+        buffers, total/peak bytes buffered (reserved zero in 4a;
+        delta-tracking lands in 4b), cap-rejections (offset+count
+        exceeded write_buffer_max_bytes), close-flush timeouts
+        (reserved zero until the timeout mechanism lands), and
+        FBIG rejections (single WRITE > cap).  See
+        .claude/design/proxy-server-phase4a.md "Admin interface"."""
+        return self.proc(PROBEPROC1_PS_WRITE_BUFFER_STATS,
+                         response_type='PS_WRITE_BUFFER_STATS1res')
+
     # Slice B: dstore lifecycle.
     def dstore_list(self):
         """Operator dashboard for the dstore pool.  Returns

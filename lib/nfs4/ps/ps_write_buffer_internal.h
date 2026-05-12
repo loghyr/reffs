@@ -119,16 +119,10 @@ extern _Atomic(void (*)(void)) ps_test_hook_pre_state_load;
 extern _Atomic(void (*)(void)) ps_test_hook_in_codec_flush;
 extern _Atomic(uint64_t (*)(void)) ps_test_hook_clock_now_ns;
 
-/* ------------------------------------------------------------------ */
-/* Whitebox helpers used by tests                                      */
-/* ------------------------------------------------------------------ */
-
 /*
- * Count entries currently in the buffer table.  Used by drain tests
- * to assert the table is empty after teardown.  Walks the table
- * under rcu_read_lock; safe to call any time the listener is
- * registered.
+ * ps_write_buffer_table_count was moved to the public header
+ * (ps_write_buffer.h) since the ps-write-buffer-stats probe handler
+ * is the primary caller; tests pick it up from the same header.
  */
-size_t ps_write_buffer_table_count(struct ps_listener_state *pls);
 
 #endif /* PS_WRITE_BUFFER_INTERNAL_H */

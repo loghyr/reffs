@@ -59,6 +59,7 @@
  * direct dep on libreffs_nfs4_ps.
  */
 #include "ps_state.h"
+#include "ps_write_buffer.h" /* ps_write_buffer_table_count */
 
 struct probe_time1 probe_time1_from_time_t(time_t ts)
 {
@@ -1499,6 +1500,79 @@ static int probe1_op_ps_listener_list(struct rpc_trans *rt)
 	return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* PS_WRITE_BUFFER_STATS (op 37) -- Phase 4a observability             */
+/* ------------------------------------------------------------------ */
+
+struct probe1_pwbs_collect_ctx {
+	struct probe_ps_write_buffer_stats1 *out;
+	uint32_t cap;
+	uint32_t n;
+};
+
+static int probe1_pwbs_collect_one(const struct ps_listener_state *pls,
+				   void *arg)
+{
+	struct probe1_pwbs_collect_ctx *ctx = arg;
+
+	if (ctx->n >= ctx->cap)
+		return 0;
+
+	struct probe_ps_write_buffer_stats1 *info = &ctx->out[ctx->n];
+
+	info->ppwbs_listener_id = pls->pls_listener_id;
+	/*
+	 * ps_write_buffer_table_count takes non-const pls and walks
+	 * under rcu_read_lock.  Safe to cast: we treat it read-only.
+	 */
+	info->ppwbs_active_buffers =
+		ps_write_buffer_table_count((struct ps_listener_state *)pls);
+
+	/*
+	 * total_bytes_buffered + peak_bytes_buffered: reserved for
+	 * Phase 4b which adds the delta-tracking under pwb_mutex.
+	 */
+	info->ppwbs_total_bytes_buffered = 0;
+	info->ppwbs_peak_bytes_buffered = 0;
+
+	info->ppwbs_cap_rejections_total = atomic_load_explicit(
+		&pls->pls_cap_rejections_total, memory_order_relaxed);
+	info->ppwbs_close_flush_timeouts_total = atomic_load_explicit(
+		&pls->pls_close_flush_timeouts_total, memory_order_relaxed);
+	info->ppwbs_fbig_rejections_total = atomic_load_explicit(
+		&pls->pls_fbig_rejections_total, memory_order_relaxed);
+
+	ctx->n++;
+	return 0;
+}
+
+static int probe1_op_ps_write_buffer_stats(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	PS_WRITE_BUFFER_STATS1res *res = ph->ph_res;
+	PS_WRITE_BUFFER_STATS1resok *resok =
+		&res->PS_WRITE_BUFFER_STATS1res_u.pwbsr_resok;
+	uint32_t cap = REFFS_CONFIG_MAX_PROXY_MDS;
+	struct probe_ps_write_buffer_stats1 *out = calloc(cap, sizeof(*out));
+
+	if (!out) {
+		res->pwbsr_status = PROBE1ERR_NOMEM;
+		return res->pwbsr_status;
+	}
+
+	struct probe1_pwbs_collect_ctx ctx = {
+		.out = out,
+		.cap = cap,
+		.n = 0,
+	};
+
+	ps_state_listeners_for_each(probe1_pwbs_collect_one, &ctx);
+
+	resok->pwbsr_listeners.pwbsr_listeners_val = out;
+	resok->pwbsr_listeners.pwbsr_listeners_len = ctx.n;
+	return 0;
+}
+
 static int probe1_op_dstore_list(struct rpc_trans *rt)
 {
 	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
@@ -2170,6 +2244,10 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 		xdr_DSTORE_INSTANCE_COUNT1args, DSTORE_INSTANCE_COUNT1args,
 		xdr_DSTORE_INSTANCE_COUNT1res, DSTORE_INSTANCE_COUNT1res,
 		probe1_op_dstore_instance_count),
+	RPC_OPERATION_INIT(PROBEPROC1, PS_WRITE_BUFFER_STATS, NULL, NULL,
+			   xdr_PS_WRITE_BUFFER_STATS1res,
+			   PS_WRITE_BUFFER_STATS1res,
+			   probe1_op_ps_write_buffer_stats),
 };
 
 static struct rpc_program_handler *probe1_handler;

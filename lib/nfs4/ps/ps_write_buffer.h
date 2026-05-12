@@ -171,4 +171,17 @@ void ps_write_buffer_release_find_ref(struct ps_write_buffer *buffer,
 void ps_write_buffer_drop(struct ps_write_buffer *buffer,
 			  struct ps_listener_state *pls);
 
+/* ------------------------------------------------------------------ */
+/* Diagnostics                                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Count entries currently in the per-listener buffer table.  Walks
+ * under rcu_read_lock; safe to call any time the listener is
+ * registered.  Used by the ps-write-buffer-stats probe handler and
+ * by drain-correctness tests.  Lazy count -- no maintained counter
+ * to avoid extra work on the hot path.
+ */
+size_t ps_write_buffer_table_count(struct ps_listener_state *pls);
+
 #endif /* _REFFS_PS_WRITE_BUFFER_H */

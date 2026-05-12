@@ -64,6 +64,7 @@ static void usage(const char *prog)
 	printf("                                     sb-set-dstores - Bind DSes to superblock\n");
 	printf("                                     sb-set-stripe-unit - Set FFv1 stripe unit\n");
 	printf("                                     ps-listener-list - List PS upstream listeners + reconnect state\n");
+	printf("                                     ps-write-buffer-stats - Per-listener Phase 4a write-buffer counters\n");
 	printf("  -I  --sb-id=ID               Superblock ID for sb-* operations\n");
 	printf("  -P  --sb-path=PATH           Path for sb-create/sb-mount\n");
 	printf("  -T  --storage-type=TYPE      Storage type (0=ram, 1=posix)\n");
@@ -346,6 +347,8 @@ int main(int argc, char *argv[])
 		rt = probe1_client_op_inode_layout_list(sb_id, cli_inum);
 	} else if (!strcmp(op, "ps-listener-list")) {
 		rt = probe1_client_op_ps_listener_list();
+	} else if (!strcmp(op, "ps-write-buffer-stats")) {
+		rt = probe1_client_op_ps_write_buffer_stats();
 	} else if (!strcmp(op, "dstore-list")) {
 		rt = probe1_client_op_dstore_list();
 	} else if (!strcmp(op, "dstore-drain")) {

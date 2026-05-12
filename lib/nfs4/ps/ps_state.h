@@ -229,6 +229,37 @@ struct ps_listener_state {
 	pthread_mutex_t pls_drain_mutex;
 	pthread_cond_t pls_drain_cv;
 	struct cds_lfht *pls_write_buffer_ht;
+
+	/*
+	 * Phase 4a observability counters exposed via the
+	 * ps-write-buffer-stats probe op.  All-relaxed atomics: the
+	 * probe handler reports a self-consistent snapshot of the
+	 * counters at a moment in time, not a transactionally
+	 * consistent picture across all of them; relaxed ordering
+	 * keeps the increment sites off the hot path's memory order
+	 * cost.  Forward-compat reserves two counters (peak bytes,
+	 * close-flush timeouts) that stay zero until Phase 4b adds
+	 * the bookkeeping that maintains them.
+	 *
+	 *   pls_cap_rejections_total  pipeline_write returned -EAGAIN
+	 *                             because offset+count exceeded
+	 *                             REFFS_PS_WRITE_BUFFER_MAX
+	 *   pls_fbig_rejections_total pipeline_write returned -EFBIG
+	 *                             because data_len alone exceeded
+	 *                             REFFS_PS_WRITE_BUFFER_MAX
+	 *   pls_close_flush_timeouts_total
+	 *                             reserved -- close-flush timeout
+	 *                             machinery (design Risk #7) is
+	 *                             deferred; counter stays zero
+	 *                             until that lands.
+	 *
+	 * The active_buffers count + total_bytes_buffered are NOT
+	 * counters here; they are computed lazily by the probe
+	 * handler walking the buffer table (cheap; tables are small).
+	 */
+	_Atomic uint64_t pls_cap_rejections_total;
+	_Atomic uint64_t pls_fbig_rejections_total;
+	_Atomic uint64_t pls_close_flush_timeouts_total;
 };
 
 /*

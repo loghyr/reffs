@@ -167,6 +167,12 @@ int ps_write_buffer_table_init(struct ps_listener_state *pls)
 	atomic_store_explicit(&pls->pls_boot_gen, 1, memory_order_relaxed);
 	atomic_store_explicit(&pls->pls_active_buffer_refs, 0,
 			      memory_order_relaxed);
+	atomic_store_explicit(&pls->pls_cap_rejections_total, 0,
+			      memory_order_relaxed);
+	atomic_store_explicit(&pls->pls_fbig_rejections_total, 0,
+			      memory_order_relaxed);
+	atomic_store_explicit(&pls->pls_close_flush_timeouts_total, 0,
+			      memory_order_relaxed);
 	return 0;
 }
 

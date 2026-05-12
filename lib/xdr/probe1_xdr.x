@@ -581,6 +581,55 @@ union PS_LISTENER_LIST1res switch (probe_stat1 pllr_status) {
 		void;
 };
 
+/* ------------------------------------------------------------------ */
+/* PS_WRITE_BUFFER_STATS (op 37) -- per-listener write-buffer counters */
+/* and live-state snapshot.  Phase 4a observability surface; see       */
+/* .claude/design/proxy-server-phase4a.md "Admin interface".           */
+/*                                                                     */
+/* Per-listener fields:                                                */
+/*   ppwbs_active_buffers              count of live entries in the    */
+/*                                     listener's pls_write_buffer_ht  */
+/*                                     at the moment the handler ran  */
+/*                                     (lazy walk -- no maintained    */
+/*                                     counter)                       */
+/*   ppwbs_total_bytes_buffered        sum of pwb_high_water across   */
+/*                                     all live buffers; reserved 0   */
+/*                                     until Phase 4b adds the delta-  */
+/*                                     tracking under pwb_mutex       */
+/*   ppwbs_peak_bytes_buffered         high watermark; reserved 0     */
+/*                                     until Phase 4b                  */
+/*   ppwbs_cap_rejections_total        WRITEs rejected with            */
+/*                                     NFS4ERR_DELAY because           */
+/*                                     offset+count > cap              */
+/*   ppwbs_close_flush_timeouts_total  reserved 0 until the design's  */
+/*                                     watchdog-thread close-on-      */
+/*                                     deadline mechanism lands       */
+/*   ppwbs_fbig_rejections_total       WRITEs rejected with           */
+/*                                     NFS4ERR_FBIG because           */
+/*                                     data_len > cap                 */
+/* ------------------------------------------------------------------ */
+
+struct probe_ps_write_buffer_stats1 {
+	unsigned int	ppwbs_listener_id;
+	unsigned hyper	ppwbs_active_buffers;
+	unsigned hyper	ppwbs_total_bytes_buffered;
+	unsigned hyper	ppwbs_peak_bytes_buffered;
+	unsigned hyper	ppwbs_cap_rejections_total;
+	unsigned hyper	ppwbs_close_flush_timeouts_total;
+	unsigned hyper	ppwbs_fbig_rejections_total;
+};
+
+struct PS_WRITE_BUFFER_STATS1resok {
+	probe_ps_write_buffer_stats1	pwbsr_listeners<>;
+};
+
+union PS_WRITE_BUFFER_STATS1res switch (probe_stat1 pwbsr_status) {
+	case PROBE1_OK:
+		PS_WRITE_BUFFER_STATS1resok	pwbsr_resok;
+	default:
+		void;
+};
+
 /* SB_LINT_FLAVORS (op 20) */
 struct SB_LINT_FLAVORS1resok {
 	unsigned int	lfr_warnings;
@@ -780,5 +829,10 @@ program PROBE_PROGRAM {
 		DSTORE_INSTANCE_COUNT1res
 		PROBEPROC1_DSTORE_INSTANCE_COUNT(DSTORE_INSTANCE_COUNT1args)
 			= 36;
+
+		/* PS write-buffer observability
+		 * (.claude/design/proxy-server-phase4a.md slice 4a.4) */
+		PS_WRITE_BUFFER_STATS1res
+		PROBEPROC1_PS_WRITE_BUFFER_STATS(void) = 37;
 	} = 1;
 } = 211768;

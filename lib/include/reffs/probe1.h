@@ -55,6 +55,13 @@ struct rpc_trans *probe1_client_op_inode_layout_list(uint64_t sb_id,
  */
 struct rpc_trans *probe1_client_op_ps_listener_list(void);
 
+/*
+ * PS Phase 4a write-buffer observability.  See
+ * .claude/design/proxy-server-phase4a.md "Admin interface" and
+ * lib/xdr/probe1_xdr.x PS_WRITE_BUFFER_STATS.
+ */
+struct rpc_trans *probe1_client_op_ps_write_buffer_stats(void);
+
 /* Slice B: dstore lifecycle ops. */
 struct rpc_trans *probe1_client_op_dstore_list(void);
 struct rpc_trans *probe1_client_op_dstore_drain(uint32_t dstore_id);
