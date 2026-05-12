@@ -646,6 +646,32 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 			    const struct authunix_parms *creds);
 
 /*
+ * FH-anchored variant of ec_write_codec.  Mirror of
+ * ec_read_codec_with_file: caller provides a pre-opened mds_file
+ * and an optional AUTH_SYS override.  This function does NOT call
+ * mds_file_open or mds_file_close.
+ *
+ * Used by the proxy-server subsystem (PS Phase 4a) to flush
+ * COMMIT-buffered WRITE bytes through the EC pipeline against an
+ * already-discovered upstream file, carrying the end client's
+ * credentials to the upstream MDS for LAYOUTGET / LAYOUTRETURN.
+ * See .claude/design/proxy-server-phase4a.md.
+ *
+ * `creds` -- optional per-call AUTH_SYS override for the MDS-side
+ * compounds (LAYOUTGET / LAYOUTRETURN).  Pass NULL to use the
+ * session's default auth (ec_demo, internal back-compat).  The
+ * same NOT_NOW_BROWN_COW for DS-side cred forwarding documented
+ * on ec_read_codec_with_file applies here -- CHUNK_WRITE /
+ * FINALIZE / COMMIT to DSes still use the DS session's pooled
+ * auth, not `creds`.
+ */
+int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
+			     const uint8_t *data, size_t data_len, int k, int m,
+			     enum ec_codec_type codec_type,
+			     layouttype4 layout_type, size_t shard_size,
+			     const struct authunix_parms *creds);
+
+/*
  * Default shard size for the back-compat ec_write / ec_read
  * wrappers (4 KiB).  Exported so callers that want the legacy
  * geometry have a named constant rather than a magic number.

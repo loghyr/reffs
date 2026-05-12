@@ -592,13 +592,19 @@ static int ec_layout_refresh(struct ec_context *ctx, struct mds_session *ms,
 /* EC Write                                                            */
 /* ------------------------------------------------------------------ */
 
-int ec_write_codec(struct mds_session *ms, const char *path,
-		   const uint8_t *data, size_t data_len, int k, int m,
-		   enum ec_codec_type codec_type, layouttype4 layout_type,
-		   size_t shard_size)
+int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
+			     const uint8_t *data, size_t data_len, int k, int m,
+			     enum ec_codec_type codec_type,
+			     layouttype4 layout_type, size_t shard_size,
+			     const struct authunix_parms *creds)
 {
 	struct ec_context ctx;
 	int ret;
+
+	if (!mf) {
+		ec_log("ec_write_with_file: NULL mds_file\n");
+		return -EINVAL;
+	}
 
 	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0 ||
 	    shard_size > EC_SHARD_SIZE_MAX) {
@@ -617,23 +623,17 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	ctx.ctx_ms = ms;
 	ctx.ctx_k = k;
 	ctx.ctx_m = m;
+	ctx.ctx_file = *mf; /* caller owns the underlying mf; we shallow-copy */
 
 	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
 	if (!ctx.ctx_codec)
 		return -ENOMEM;
 
-	/* Open file on MDS. */
-	ret = mds_file_open(ms, path, &ctx.ctx_file);
-	if (ret) {
-		ec_log("ec_write: OPEN failed: %d\n", ret);
-		goto out_codec;
-	}
-
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
-			     NULL, &ctx.ctx_layout);
+			     creds, &ctx.ctx_layout);
 	if (ret) {
 		ec_log("ec_write: LAYOUTGET failed: %d\n", ret);
-		goto out_close;
+		goto out_codec;
 	}
 
 	ec_log("ec_write: LAYOUTGET ok: %u mirrors, type=%u\n",
@@ -911,12 +911,39 @@ out_parity:
 out_conns:
 	ec_disconnect_all(&ctx);
 out_layout:
-	mds_layout_return(ms, &ctx.ctx_file, NULL, &ctx.ctx_layout);
+	mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
 	ec_layout_free(&ctx.ctx_layout);
-out_close:
-	mds_file_close(ms, &ctx.ctx_file);
 out_codec:
 	ec_codec_destroy(ctx.ctx_codec);
+	return ret;
+}
+
+int ec_write_codec(struct mds_session *ms, const char *path,
+		   const uint8_t *data, size_t data_len, int k, int m,
+		   enum ec_codec_type codec_type, layouttype4 layout_type,
+		   size_t shard_size)
+{
+	struct mds_file mf;
+	int ret;
+
+	ret = mds_file_open(ms, path, &mf);
+	if (ret) {
+		ec_log("ec_write: OPEN failed: %d\n", ret);
+		return ret;
+	}
+
+	/*
+	 * Back-compat wrapper for ec_demo / direct callers: no per-call
+	 * cred override, the session's default auth is used.  PS callers
+	 * go through ec_write_codec_with_file directly so they can pass
+	 * the end client's creds.  Mirror of ec_read_codec at the bottom
+	 * of this file.
+	 */
+	ret = ec_write_codec_with_file(ms, &mf, data, data_len, k, m,
+				       codec_type, layout_type, shard_size,
+				       NULL);
+
+	mds_file_close(ms, &mf);
 	return ret;
 }
 
