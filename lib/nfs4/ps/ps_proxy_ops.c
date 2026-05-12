@@ -23,6 +23,9 @@
 #include "ps_proxy_ops.h"
 #include "ps_proxy_ops_internal.h" /* ps_proxy_send_with_kick (whitebox) */
 #include "ps_state.h" /* PS_MAX_FH_SIZE */
+#include "ps_write_buffer.h"
+#include "ps_write_buffer_internal.h" /* struct ps_write_buffer (field access
+				       * for the byte-copy critical section) */
 
 /*
  * Worker-side compound send: wraps mds_compound_send_with_auth and,
@@ -2343,6 +2346,198 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	reply->eof = (copy < count);
 
 	free(whole_buf);
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 4a: pipeline-driven WRITE -- buffer-fill side.                */
+/*                                                                    */
+/* This is the WRITE entry point op handlers route to on proxy SBs.   */
+/* It does not call upstream; it appends client bytes to the          */
+/* per-(stateid, fh) write buffer on the listener.  The COMMIT-time   */
+/* flush through ec_write_codec_with_file is slice 4a.2c.             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Compose the per-listener write verifier.  Phase 4a uses the
+ * listener's boot generation packed into 8 bytes -- a listener
+ * restart bumps pls_boot_gen, so a client's COMMIT after the
+ * restart sees a different verifier and rewrites (RFC 8881 S18.3.4
+ * semantics).
+ */
+static void pwb_compose_listener_verifier(const struct ps_listener_state *pls,
+					  uint8_t out[PS_PROXY_VERIFIER_SIZE])
+{
+	uint64_t gen =
+		atomic_load_explicit(&pls->pls_boot_gen, memory_order_acquire);
+
+	memcpy(out, &gen, PS_PROXY_VERIFIER_SIZE);
+}
+
+/*
+ * Grow the buffer's pwb_data to at least `need_capacity` bytes.
+ * Doubling strategy keeps amortised reallocation cost low for
+ * sequential-append workloads (the common Linux NFS client
+ * pattern).  Caller holds pwb_mutex.
+ */
+static int pwb_ensure_capacity(struct ps_write_buffer *buf,
+			       size_t need_capacity)
+{
+	size_t new_cap;
+	uint8_t *new_data;
+
+	if (buf->pwb_capacity >= need_capacity)
+		return 0;
+
+	new_cap = buf->pwb_capacity ? buf->pwb_capacity : 4096;
+	while (new_cap < need_capacity) {
+		if (new_cap > REFFS_PS_WRITE_BUFFER_MAX / 2) {
+			new_cap = need_capacity; /* final jump -- no overflow */
+			break;
+		}
+		new_cap *= 2;
+	}
+
+	new_data = realloc(buf->pwb_data, new_cap);
+	if (!new_data)
+		return -ENOMEM;
+
+	/*
+	 * Zero the freshly grown tail so sparse writes (offsets beyond
+	 * the previous high_water) read back as zeros, matching the
+	 * POSIX sparse-file semantics the design's test inventory pins
+	 * (test_write_buffer_sparse_holes_zero_filled).
+	 */
+	if (new_cap > buf->pwb_capacity)
+		memset(new_data + buf->pwb_capacity, 0,
+		       new_cap - buf->pwb_capacity);
+
+	buf->pwb_data = new_data;
+	buf->pwb_capacity = new_cap;
+	return 0;
+}
+
+int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
+			    uint32_t upstream_fh_len, uint32_t stateid_seqid,
+			    const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			    uint64_t offset, uint32_t stable,
+			    const uint8_t *data, uint32_t data_len,
+			    const struct authunix_parms *creds,
+			    struct ps_proxy_write_reply *reply)
+{
+	uint32_t listener_id;
+	struct ps_listener_state *pls;
+	struct ps_write_buffer *buf;
+	uint64_t buf_gen;
+	int ret;
+
+	/*
+	 * stateid_seqid + creds + stable are accepted for API symmetry
+	 * with ps_proxy_pipeline_read / ps_proxy_forward_write.  Phase
+	 * 4a does no upstream call here (the COMMIT-time flush in
+	 * 4a.2c is where creds get threaded through), and every WRITE
+	 * is treated as UNSTABLE4 regardless of `stable`.  Marked
+	 * unused so a future regression that DOES need them gets a
+	 * compile-time hint.
+	 */
+	(void)stateid_seqid;
+	(void)stable;
+	(void)creds;
+
+	if (!ms || !upstream_fh || upstream_fh_len == 0 || !stateid_other ||
+	    !data || data_len == 0 || !reply)
+		return -EINVAL;
+	if (upstream_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+	if (data_len > REFFS_PS_WRITE_BUFFER_MAX)
+		return -EFBIG; /* single WRITE larger than cap; no retry helps */
+
+	memset(reply, 0, sizeof(*reply));
+
+	/*
+	 * Derive listener_id from the session's kick tag.  Sessions
+	 * not owned by a PS listener (ec_demo, dstore MDS-to-DS) have
+	 * ms_kick_listener_id == 0; those callers do not reach this
+	 * shim (op handlers only dispatch here for proxy SBs).  An
+	 * unowned session reaching us is a programmer error.
+	 */
+	listener_id = atomic_load_explicit(&ms->ms_kick_listener_id,
+					   memory_order_relaxed);
+	if (listener_id == 0)
+		return -EINVAL;
+
+	pls = (struct ps_listener_state *)ps_state_find(listener_id);
+	if (!pls)
+		return -ENOENT;
+
+	/*
+	 * Take the per-listener quiesce reservation.  After this point
+	 * every NULL/failure path either calls leave_quiesce directly
+	 * (the no-buffer / cap-exceeded branches) or hands the
+	 * reservation to ps_write_buffer_release_find_ref via
+	 * drop_find_ref (the happy path).
+	 */
+	if (!ps_write_buffer_enter_quiesce_or_bail(pls))
+		return -EAGAIN; /* listener draining / stopped */
+
+	buf = ps_write_buffer_lookup_or_alloc(pls, stateid_other, upstream_fh,
+					      upstream_fh_len);
+	if (!buf) {
+		/*
+		 * lookup_or_alloc released our enter_quiesce reservation
+		 * already on its NULL path (symmetric contract); nothing
+		 * else to clean up here.
+		 */
+		return -EAGAIN;
+	}
+
+	/*
+	 * Total buffered cap check.  Done UNDER pwb_mutex so a
+	 * concurrent WRITE on the same buffer cannot grow capacity
+	 * past the cap in parallel with us.
+	 */
+	pthread_mutex_lock(&buf->pwb_mutex);
+
+	buf_gen = buf->pwb_listener_gen;
+	if (buf_gen !=
+	    atomic_load_explicit(&pls->pls_boot_gen, memory_order_acquire)) {
+		pthread_mutex_unlock(&buf->pwb_mutex);
+		ps_write_buffer_drop(buf, pls);
+		return -ESTALE;
+	}
+
+	size_t need = (size_t)offset + (size_t)data_len;
+
+	if (need > REFFS_PS_WRITE_BUFFER_MAX) {
+		pthread_mutex_unlock(&buf->pwb_mutex);
+		ps_write_buffer_release_find_ref(buf, pls);
+		return -EAGAIN; /* transient cap pressure */
+	}
+
+	ret = pwb_ensure_capacity(buf, need);
+	if (ret != 0) {
+		pthread_mutex_unlock(&buf->pwb_mutex);
+		ps_write_buffer_release_find_ref(buf, pls);
+		return ret;
+	}
+
+	memcpy(buf->pwb_data + offset, data, data_len);
+	if (need > buf->pwb_high_water)
+		buf->pwb_high_water = need;
+	pthread_mutex_unlock(&buf->pwb_mutex);
+
+	ps_write_buffer_release_find_ref(buf, pls);
+
+	/*
+	 * Reply.  count == data_len (we accepted every byte into the
+	 * buffer); committed = UNSTABLE4 (Phase 4a's downgrade-all);
+	 * verifier carries the listener boot generation so a client
+	 * COMMIT after a listener restart will detect the verifier
+	 * mismatch and rewrite.
+	 */
+	reply->count = data_len;
+	reply->committed = 0; /* UNSTABLE4 */
+	pwb_compose_listener_verifier(pls, reply->verifier);
 	return 0;
 }
 

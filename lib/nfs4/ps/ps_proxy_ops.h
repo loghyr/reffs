@@ -493,6 +493,50 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
 			   struct ps_proxy_write_reply *reply);
 
 /*
+ * PS Phase 4a: pipeline-driven WRITE through the per-listener
+ * write-buffer table.  The bytes are buffered in PS RAM; the
+ * COMMIT-time flush through ec_write_codec_with_file is slice
+ * 4a.2c.  See .claude/design/proxy-server-phase4a.md.
+ *
+ * Mirror of ps_proxy_pipeline_read for the write path.  Looks up
+ * (or allocates) the per-(stateid, fh) buffer on the listener
+ * derived from ms->ms_kick_listener_id; copies the WRITE payload
+ * into the buffer at `offset`; replies UNSTABLE4 + the per-listener
+ * verifier so the client knows a follow-up COMMIT is required
+ * (Phase 4a downgrades every WRITE to UNSTABLE4 -- DATA_SYNC4 /
+ * FILE_SYNC4 is documented Phase 4b territory).
+ *
+ * `creds` is accepted for forward-compat with the 4a.2c COMMIT
+ * shim (which threads them through ec_write_codec_with_file's
+ * mds_layout_get) -- this WRITE entry does not call upstream and
+ * ignores the value.
+ *
+ * `stable` is accepted from the wire so the eventual reply mirrors
+ * the requested mode if Phase 4b lifts the UNSTABLE4 restriction;
+ * for 4a it is ignored and the reply always carries UNSTABLE4.
+ *
+ * Returns:
+ *   0           success; reply populated with count, UNSTABLE4,
+ *               and the listener verifier
+ *   -EINVAL     ms / upstream_fh / stateid_other / data / reply NULL,
+ *               or upstream_fh_len / data_len == 0
+ *   -E2BIG      upstream_fh_len > PS_MAX_FH_SIZE
+ *   -EFBIG      data_len > REFFS_PS_WRITE_BUFFER_MAX (single WRITE
+ *               larger than the buffer cap can never succeed)
+ *   -EAGAIN     listener draining / stopped, or buffered total
+ *               (offset+count) past REFFS_PS_WRITE_BUFFER_MAX
+ *   -ESTALE     listener boot generation changed under us
+ *   -ENOMEM     buffer-table alloc failure
+ */
+int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
+			    uint32_t upstream_fh_len, uint32_t stateid_seqid,
+			    const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			    uint64_t offset, uint32_t stable,
+			    const uint8_t *data, uint32_t data_len,
+			    const struct authunix_parms *creds,
+			    struct ps_proxy_write_reply *reply);
+
+/*
  * Caller-owned result from ps_proxy_forward_commit.  Fully copied
  * out of the compound -- the only durable wire field is the
  * write verifier the upstream returns so the client can detect
