@@ -934,6 +934,38 @@ int ps_proxy_forward_close(struct mds_session *ms, const uint8_t *upstream_fh,
 			   struct ps_proxy_close_reply *reply);
 
 /*
+ * PS Phase 4a: pre-CLOSE buffer flush hook.  Called by the
+ * nfs4_op_close proxy branch BEFORE ps_proxy_forward_close so any
+ * buffered WRITEs land upstream before the open stateid is
+ * released.  Best-effort: failure here does NOT abort the CLOSE;
+ * the caller proceeds to ps_proxy_forward_close regardless.  This
+ * matches the design's "CLOSE has no retry surface" contract --
+ * if the flush fails, the bytes are lost but the upstream stateid
+ * is still released so the client doesn't leak it.
+ *
+ * NOT_NOW_BROWN_COW: the design's watchdog-thread close-on-deadline
+ * mechanism (REFFS_PS_FLUSH_TIMEOUT_NS) is deferred.  Today the
+ * flush blocks for as long as ec_write_codec_with_file takes.  A
+ * future slice will add the per-RPC budget + xprt-fd-close
+ * watchdog (design's "Flush timeout interrupt mechanism" subsection).
+ *
+ * Returns:
+ *   0        success (buffer flushed and dropped, or no buffer
+ *            existed for this (stateid, fh))
+ *   -EINVAL  argument validation failed
+ *   -E2BIG   upstream_fh_len > PS_MAX_FH_SIZE
+ *   -EAGAIN  listener draining / stopped
+ *   -ESTALE  listener boot generation changed under us
+ *   -EIO     ec_write_codec_with_file failure; buffer dropped
+ *            anyway (CLOSE has no retry path); bytes lost
+ *   -ENOENT  ms is not bound to a registered listener
+ */
+int ps_proxy_pipeline_close(struct mds_session *ms, const uint8_t *upstream_fh,
+			    uint32_t upstream_fh_len, uint32_t stateid_seqid,
+			    const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			    const struct authunix_parms *creds);
+
+/*
  * A single READDIR entry as returned by the MDS, deep-copied into
  * PS-owned heap storage so the caller can release the compound
  * without losing the reply.  `name`, `attrmask`, and `attr_vals`

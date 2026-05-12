@@ -403,6 +403,47 @@ struct ps_write_buffer *ps_write_buffer_lookup_or_alloc(
 }
 
 struct ps_write_buffer *
+ps_write_buffer_lookup(struct ps_listener_state *pls,
+		       const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+		       const uint8_t *upstream_fh, uint32_t upstream_fh_len)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct ps_write_buffer *buf = NULL;
+	struct pwb_match_arg key = {
+		.stateid_other = stateid_other,
+		.fh = upstream_fh,
+		.fh_len = upstream_fh_len,
+	};
+	unsigned long hash;
+
+	if (!pls || !pls->pls_write_buffer_ht || !stateid_other ||
+	    !upstream_fh || upstream_fh_len == 0 ||
+	    upstream_fh_len > PS_MAX_FH_SIZE) {
+		if (pls)
+			ps_write_buffer_leave_quiesce(pls);
+		return NULL;
+	}
+
+	hash = pwb_hash(stateid_other, upstream_fh, upstream_fh_len);
+
+	rcu_read_lock();
+	cds_lfht_lookup(pls->pls_write_buffer_ht, hash, pwb_match, &key, &iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (node) {
+		buf = caa_container_of(node, struct ps_write_buffer,
+				       pwb_ht_node);
+		if (!urcu_ref_get_unless_zero(&buf->pwb_ref))
+			buf = NULL;
+	}
+	rcu_read_unlock();
+
+	if (!buf)
+		ps_write_buffer_leave_quiesce(pls);
+	return buf;
+}
+
+struct ps_write_buffer *
 ps_write_buffer_find_by_fh(struct ps_listener_state *pls,
 			   const uint8_t *upstream_fh, uint32_t upstream_fh_len)
 {

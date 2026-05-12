@@ -119,6 +119,24 @@ struct ps_write_buffer *ps_write_buffer_lookup_or_alloc(
 	const uint8_t *upstream_fh, uint32_t upstream_fh_len);
 
 /*
+ * Find an existing buffer for (stateid_other, upstream_fh) WITHOUT
+ * allocating.  Returns NULL if no such buffer exists.  Used by the
+ * CLOSE shim: CLOSE carries the stateid (unlike COMMIT) and we
+ * must not accidentally allocate a buffer on a file that had no
+ * writes.
+ *
+ * Caller MUST have already passed enter_quiesce_or_bail.  On
+ * non-NULL return the caller owns a per-op find ref (release via
+ * release_find_ref / drop).  On NULL return the enter_quiesce
+ * reservation has been released (symmetric NULL contract, same
+ * as lookup_or_alloc).
+ */
+struct ps_write_buffer *ps_write_buffer_lookup(
+	struct ps_listener_state *pls,
+	const uint8_t stateid_other[12], /* PS_STATEID_OTHER_SIZE */
+	const uint8_t *upstream_fh, uint32_t upstream_fh_len);
+
+/*
  * Find a buffer by upstream FH alone (no stateid).  Used by the
  * COMMIT shim, which doesn't have a stateid to key on.  Linear
  * scan of the per-listener table; Phase 4a's single-writer-per-FH

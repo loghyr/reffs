@@ -1452,6 +1452,25 @@ uint32_t nfs4_op_close(struct compound *compound)
 		      " (forwarded with PS creds)",
 		      binding->psb_listener_id, compound->c_inode->i_ino);
 
+		/*
+		 * Phase 4a step 6: flush any buffered WRITEs for this
+		 * (stateid, fh) BEFORE the upstream CLOSE releases the
+		 * open stateid.  Best-effort -- if the flush fails the
+		 * bytes are lost, but the CLOSE still proceeds so the
+		 * upstream stateid does not leak.  TRACE the loss so
+		 * the operator-visible counter (slice 4a.4) catches it.
+		 */
+		int flush_ret = ps_proxy_pipeline_close(
+			ms, upstream_fh, upstream_fh_len,
+			args->open_stateid.seqid,
+			(const uint8_t *)args->open_stateid.other,
+			&compound->c_ap);
+
+		if (flush_ret < 0 && flush_ret != -ENOENT)
+			TRACE("proxy close: pre-CLOSE flush failed ret=%d "
+			      "(bytes may be lost; proceeding with forward CLOSE)",
+			      flush_ret);
+
 		struct ps_proxy_close_reply creply;
 
 		memset(&creply, 0, sizeof(creply));
@@ -2233,7 +2252,15 @@ uint32_t nfs4_op_write(struct compound *compound)
 		struct ps_proxy_write_reply wreply;
 
 		memset(&wreply, 0, sizeof(wreply));
-		fret = ps_proxy_forward_write(
+		/*
+		 * Phase 4a step 7: proxy WRITE goes through the pipeline
+		 * (buffer-on-WRITE, flush-on-COMMIT) instead of forward_write.
+		 * No fallback to forward_write on this branch -- mixing the
+		 * two would produce two different verifier sources for the
+		 * same client+file, see proxy-server-phase4a.md "RFC
+		 * compliance" + Risk #3a.
+		 */
+		fret = ps_proxy_pipeline_write(
 			ms, upstream_fh, upstream_fh_len, args->stateid.seqid,
 			(const uint8_t *)args->stateid.other, args->offset,
 			(uint32_t)args->stable,
@@ -2547,9 +2574,18 @@ uint32_t nfs4_op_commit(struct compound *compound)
 		struct ps_proxy_commit_reply creply;
 
 		memset(&creply, 0, sizeof(creply));
-		fret = ps_proxy_forward_commit(ms, upstream_fh, upstream_fh_len,
-					       args->offset, args->count,
-					       &compound->c_ap, &creply);
+		/*
+		 * Phase 4a step 7: proxy COMMIT flushes the per-listener
+		 * write buffer through the pipeline.  The pipeline path
+		 * also handles the no-buffered-bytes case (returns the
+		 * listener verifier directly), so no forward_commit
+		 * fallback is needed -- and removing it keeps the
+		 * verifier-source uniform (see Risk #3a in the design).
+		 */
+		fret = ps_proxy_pipeline_commit(ms, upstream_fh,
+						upstream_fh_len, args->offset,
+						args->count, &compound->c_ap,
+						&creply);
 		ps_listener_session_release(binding->psb_listener_id);
 		if (fret < 0) {
 			*status = errno_to_nfs4(fret, OP_COMMIT);

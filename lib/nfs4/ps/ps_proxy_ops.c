@@ -2663,6 +2663,84 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	return -EIO;
 }
 
+int ps_proxy_pipeline_close(struct mds_session *ms, const uint8_t *upstream_fh,
+			    uint32_t upstream_fh_len, uint32_t stateid_seqid,
+			    const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
+			    const struct authunix_parms *creds)
+{
+	uint32_t listener_id;
+	struct ps_listener_state *pls;
+	struct ps_write_buffer *buf;
+	struct mds_file mf;
+	uint64_t buf_gen;
+	int ret;
+
+	(void)stateid_seqid; /* stashed in the buffer at WRITE time */
+
+	if (!ms || !upstream_fh || upstream_fh_len == 0 || !stateid_other)
+		return -EINVAL;
+	if (upstream_fh_len > PS_MAX_FH_SIZE)
+		return -E2BIG;
+
+	listener_id = atomic_load_explicit(&ms->ms_kick_listener_id,
+					   memory_order_relaxed);
+	if (listener_id == 0)
+		return -EINVAL;
+	pls = (struct ps_listener_state *)ps_state_find(listener_id);
+	if (!pls)
+		return -ENOENT;
+
+	if (!ps_write_buffer_enter_quiesce_or_bail(pls))
+		return -EAGAIN;
+
+	/*
+	 * Non-allocating lookup: CLOSE on a file that had no buffered
+	 * writes is the common case (read-only opens, opens that
+	 * already COMMIT'd).  If no buffer exists, return success;
+	 * the op handler still calls forward_close.
+	 */
+	buf = ps_write_buffer_lookup(pls, stateid_other, upstream_fh,
+				     upstream_fh_len);
+	if (!buf)
+		return 0; /* no buffered bytes; quiesce already released */
+
+	pthread_mutex_lock(&buf->pwb_mutex);
+	buf_gen = buf->pwb_listener_gen;
+	if (buf_gen !=
+	    atomic_load_explicit(&pls->pls_boot_gen, memory_order_acquire)) {
+		pthread_mutex_unlock(&buf->pwb_mutex);
+		ps_write_buffer_drop(buf, pls);
+		return -ESTALE;
+	}
+
+	memset(&mf, 0, sizeof(mf));
+	mf.mf_stateid.seqid = buf->pwb_stateid_seqid;
+	memcpy(mf.mf_stateid.other, buf->pwb_stateid_other,
+	       PS_STATEID_OTHER_SIZE);
+	mf.mf_fh.nfs_fh4_val = (char *)buf->pwb_upstream_fh;
+	mf.mf_fh.nfs_fh4_len = buf->pwb_upstream_fh_len;
+
+	/*
+	 * Best-effort flush.  Same call shape as pipeline_commit, but
+	 * here the buffer is UNCONDITIONALLY dropped on the way out --
+	 * CLOSE has no retry surface; if the flush fails the bytes
+	 * are lost but the upstream open stateid still gets released
+	 * by the caller's subsequent forward_close.  Bytes-loss path
+	 * is operator-visible via the close_flush_timeouts_total
+	 * counter the design's "ps-write-buffer-stats" probe op
+	 * exposes (slice 4a.4).
+	 */
+	ret = ec_write_codec_with_file(ms, &mf, buf->pwb_data,
+				       buf->pwb_high_water, /* k */ 4,
+				       /* m */ 2, EC_CODEC_RS,
+				       LAYOUT4_FLEX_FILES_V2,
+				       /* shard_size */ 4096, creds);
+	pthread_mutex_unlock(&buf->pwb_mutex);
+
+	ps_write_buffer_drop(buf, pls);
+	return ret == 0 ? 0 : -EIO;
+}
+
 /* ------------------------------------------------------------------ */
 /* Layout passthrough (task #150) -- foundation stubs.                */
 /*                                                                    */
