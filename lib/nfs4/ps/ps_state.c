@@ -8,6 +8,7 @@
 #endif
 
 #include <errno.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -18,6 +19,7 @@
 #include "ec_client.h" /* mds_session_destroy */
 #include "ps_renewal.h" /* ps_renewal_kick */
 #include "ps_state.h"
+#include "ps_write_buffer.h"
 
 #define PS_MAX_LISTENERS REFFS_CONFIG_MAX_PROXY_MDS
 
@@ -121,6 +123,20 @@ int ps_state_register(const struct reffs_proxy_mds_config *cfg)
 			      memory_order_relaxed);
 	atomic_store_explicit(&pls->pls_reconnect_next_attempt_ns, 0,
 			      memory_order_relaxed);
+
+	/*
+	 * Phase 4a per-listener buffer table + quiesce primitives.
+	 * Sets pls_state = RUNNING and pls_boot_gen = 1 internally.
+	 * Init-before-publish discipline same as the locks above --
+	 * the release-store on ps_nlisteners below fences these.
+	 */
+	int werr = ps_write_buffer_table_init(pls);
+
+	if (werr != 0) {
+		pthread_rwlock_destroy(&pls->pls_session_rwlock);
+		pthread_mutex_destroy(&pls->pls_discovery_mutex);
+		return werr;
+	}
 
 	/* Publish: release-store pairs with acquire-load in ps_state_find. */
 	atomic_store_explicit(&ps_nlisteners, n + 1, memory_order_release);
@@ -381,20 +397,89 @@ int ps_state_discovery_unlock(uint32_t listener_id)
 	return 0;
 }
 
+int ps_listener_stop(uint32_t listener_id)
+{
+	struct ps_listener_state *pls = ps_listener_by_id(listener_id);
+	enum ps_listener_state_kind expected;
+
+	if (!pls)
+		return -ENOENT;
+
+	/*
+	 * CAS-elect the destroyer: exactly one caller transitions
+	 * RUNNING -> DRAINING and proceeds through the wait + destroy.
+	 * Any concurrent / repeat caller either observes STOPPED (the
+	 * destroyer already finished) or DRAINING (the destroyer is
+	 * still running) and waits for STOPPED before returning.
+	 *
+	 * Without this election the original implementation would let
+	 * a second caller fall through to a duplicate
+	 * ps_write_buffer_table_destroy(), double-destroying the lfht
+	 * + pls_drain_mutex + pls_drain_cv.  Reviewer caught this in
+	 * verdict-1 of 4a.2a; the design's prose said "atomic
+	 * exchange" but exchange does not gate followers.
+	 */
+	expected = PS_LISTENER_RUNNING;
+	if (!atomic_compare_exchange_strong_explicit(
+		    &pls->pls_state, &expected, PS_LISTENER_DRAINING,
+		    memory_order_acq_rel, memory_order_acquire)) {
+		if (expected == PS_LISTENER_STOPPED)
+			return 0;
+		/*
+		 * Another thread won the CAS and is in the destroy
+		 * path.  Wait for STOPPED.  sched_yield rather than
+		 * cv_wait here -- the cv/mutex the destroyer uses are
+		 * about to be destroyed; introducing a second cv just
+		 * for this rare path would complicate the lifecycle.
+		 * Destroy is bounded by REFFS_PS_FLUSH_TIMEOUT_NS in
+		 * practice, so the spin is finite.
+		 */
+		while (atomic_load_explicit(&pls->pls_state,
+					    memory_order_acquire) !=
+		       PS_LISTENER_STOPPED)
+			sched_yield();
+		return 0;
+	}
+
+	/*
+	 * We are the destroyer.  Wait for in-flight ops to drain.
+	 * After the DRAINING store above, enter_quiesce_or_bail sees
+	 * != RUNNING and bails without taking find refs; existing
+	 * in-flight ops will drop theirs on their unwind.
+	 */
+	pthread_mutex_lock(&pls->pls_drain_mutex);
+	while (atomic_load_explicit(&pls->pls_active_buffer_refs,
+				    memory_order_acquire) > 0)
+		pthread_cond_wait(&pls->pls_drain_cv, &pls->pls_drain_mutex);
+	pthread_mutex_unlock(&pls->pls_drain_mutex);
+
+	/* Drain the table + destroy the cv/mutex/lfht. */
+	ps_write_buffer_table_destroy(pls);
+
+	/* Publish STOPPED LAST so spinning followers see destroy-complete. */
+	atomic_store_explicit(&pls->pls_state, PS_LISTENER_STOPPED,
+			      memory_order_release);
+	return 0;
+}
+
 void ps_state_fini(void)
 {
 	/*
-	 * Destroy the per-listener discovery mutex + session rwlock for
-	 * every slot that was registered.  Readers that might still be
-	 * in ps_state_find* must be quiesced before fini runs (the same
-	 * invariant the table-level release-store establishes);
-	 * destroying an initialized mutex/rwlock with no waiters is
-	 * well-defined.  Sessions themselves are owned/freed by the
-	 * caller via ps_state_set_session(id, NULL) (the contract on
-	 * this function's docstring) so we do not destroy them here.
+	 * Drive every registered listener through DRAINING -> STOPPED
+	 * first so the Phase 4a buffer table + drain CV + drain mutex
+	 * get destroyed under the quiesce protocol (callers that might
+	 * still be in op-handler context observe DRAINING and bail).
+	 * Then destroy the long-lived discovery mutex + session rwlock.
+	 *
+	 * Sessions themselves are owned/freed by the caller via
+	 * ps_state_set_session(id, NULL) (the contract on this
+	 * function's docstring) so we do not destroy them here.
 	 */
 	unsigned int n =
 		atomic_load_explicit(&ps_nlisteners, memory_order_acquire);
+
+	for (unsigned int i = 0; i < n; i++)
+		ps_listener_stop(ps_listeners[i].pls_listener_id);
 
 	for (unsigned int i = 0; i < n; i++) {
 		pthread_mutex_destroy(&ps_listeners[i].pls_discovery_mutex);
@@ -417,6 +502,24 @@ struct mds_session *ps_listener_session_borrow(uint32_t listener_id)
 		return NULL;
 
 	pthread_rwlock_rdlock(&pls->pls_session_rwlock);
+	/*
+	 * Phase 4a listener-borrow contract: refuse the borrow when
+	 * the listener is no longer RUNNING.  This is the gate that
+	 * lets ps_listener_stop bound the forward path's lifetime
+	 * too -- callers that observe NULL during DRAINING/STOPPED
+	 * map to NFS4ERR_DELAY rather than touching about-to-be-freed
+	 * session memory.  acquire-load pairs with the release-store
+	 * in ps_listener_stop.  Loaded UNDER the rdlock so the
+	 * session pointer we observe next cannot be swapped from
+	 * under us in the same critical section.
+	 */
+	enum ps_listener_state_kind state =
+		atomic_load_explicit(&pls->pls_state, memory_order_acquire);
+
+	if (state != PS_LISTENER_RUNNING) {
+		pthread_rwlock_unlock(&pls->pls_session_rwlock);
+		return NULL;
+	}
 	struct mds_session *ms = pls->pls_session;
 
 	if (!ms) {

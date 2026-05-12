@@ -15,6 +15,28 @@
 #include "reffs/settings.h"
 
 struct mds_session; /* forward: from lib/nfs4/client/ec_client.h */
+struct cds_lfht; /* forward: liburcu lock-free hash table */
+
+/*
+ * Per-listener lifecycle state machine -- Phase 4a quiesce protocol.
+ *
+ *   RUNNING   accepting new ops; buffer-table writes and the
+ *             session-borrow path both gated on this state.
+ *   DRAINING  ps_listener_stop has been called; no new ops, in-flight
+ *             ops finish, then teardown walks the buffer table.
+ *   STOPPED   teardown complete.  Slot stays in the registry (so
+ *             ps_state_find still resolves the id) but all op-handler
+ *             entry points return NFS4ERR_DELAY.  ps_state_fini turns
+ *             every running listener through DRAINING -> STOPPED before
+ *             destroying mutexes and rwlocks.
+ *
+ * See `.claude/design/proxy-server-phase4a.md` "Quiesce protocol".
+ */
+enum ps_listener_state_kind {
+	PS_LISTENER_RUNNING = 0, /* zero so ps_state_register init clears to */
+	PS_LISTENER_DRAINING = 1, /* it -- minus the explicit store below.  */
+	PS_LISTENER_STOPPED = 2,
+};
 
 /*
  * Upper bound on filehandle length used by proxy-server storage.
@@ -170,6 +192,43 @@ struct ps_listener_state {
 	bool pls_tls_insecure_no_verify;
 	uint8_t pls_registration_id[16];
 	uint32_t pls_registration_id_len;
+
+	/*
+	 * Phase 4a quiesce protocol (.claude/design/proxy-server-phase4a.md).
+	 *
+	 * pls_state           lifecycle gate; release-store on transition,
+	 *                     acquire-load by op handlers after the
+	 *                     pls_active_buffer_refs increment closes the
+	 *                     TOCTOU window.
+	 * pls_boot_gen        monotonic per-listener generation; bumped on
+	 *                     each ps_state_register (today only at boot;
+	 *                     re-register is NOT_NOW_BROWN_COW).  Each
+	 *                     buffer carries the gen seen at alloc time
+	 *                     so a listener restart invalidates buffers
+	 *                     from the prior generation without scanning.
+	 * pls_active_buffer_refs  active-op counter: number of op handlers
+	 *                     that may still touch a buffer or look up
+	 *                     pls_write_buffer_ht.  Incremented by
+	 *                     enter_quiesce_or_bail BEFORE the state check;
+	 *                     decremented + cv-broadcast by leave_quiesce.
+	 *                     Teardown waits on this reaching zero.
+	 * pls_drain_mutex /
+	 * pls_drain_cv        wakeup primitive for the teardown wait.
+	 *                     Standard cv-predicate discipline: teardown
+	 *                     loads pls_active_buffer_refs UNDER the
+	 *                     mutex; leave_quiesce takes the mutex around
+	 *                     the broadcast to avoid lost-wakeup.
+	 * pls_write_buffer_ht the buffer table (Rule 6 lifecycle in
+	 *                     ps_write_buffer.c).  cds_lfht_new'd in
+	 *                     register; iterated + destroyed in
+	 *                     ps_listener_stop.
+	 */
+	_Atomic enum ps_listener_state_kind pls_state;
+	_Atomic uint64_t pls_boot_gen;
+	_Atomic uint64_t pls_active_buffer_refs;
+	pthread_mutex_t pls_drain_mutex;
+	pthread_cond_t pls_drain_cv;
+	struct cds_lfht *pls_write_buffer_ht;
 };
 
 /*
@@ -358,7 +417,43 @@ int ps_state_set_registration_id(uint32_t listener_id, const uint8_t *id,
  * waits for every in-flight forwarder to finish before destroying
  * the old session.
  */
+/*
+ * Borrow a per-listener mds_session pointer for the duration of one
+ * forwarded RPC.  Returns NULL when:
+ *   - the listener id is not registered
+ *   - the listener has no session attached yet (boot race / disconnect)
+ *   - the listener's pls_state is not PS_LISTENER_RUNNING (Phase 4a
+ *     quiesce protocol -- the session is being torn down)
+ *
+ * Callers MUST pair every non-NULL return with ps_listener_session_release.
+ */
 struct mds_session *ps_listener_session_borrow(uint32_t listener_id);
+
+/*
+ * Quiesce + tear down one listener's per-listener state (Phase 4a).
+ * Synchronous; returns after every in-flight buffer-table op has
+ * dropped its find ref and the write-buffer table has been destroyed.
+ *
+ * Sequence:
+ *   1. release-store pls_state = DRAINING.  After this, every new op
+ *      that calls enter_quiesce_or_bail() sees DRAINING and returns
+ *      false (op handler maps to NFS4ERR_DELAY).
+ *   2. wait on pls_drain_cv until pls_active_buffer_refs reaches 0.
+ *      The mutex around the predicate check defends against a
+ *      lost-wakeup race with leave_quiesce.
+ *   3. walk pls_write_buffer_ht under rcu_read_lock dropping every
+ *      table ref; synchronize_rcu; destroy the hash table.
+ *   4. release-store pls_state = STOPPED.
+ *
+ * Idempotent: a second call on an already-STOPPED listener is a
+ * no-op.  Returns -ENOENT if the listener id is not registered.
+ *
+ * ps_state_fini calls this internally on every registered listener
+ * before destroying the mutexes / rwlocks / cv.  Direct callers can
+ * use it to drain a single listener (e.g. tests, future admin-driven
+ * teardown) without taking the whole registry down.
+ */
+int ps_listener_stop(uint32_t listener_id);
 void ps_listener_session_release(uint32_t listener_id);
 
 /*

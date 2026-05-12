@@ -22,7 +22,8 @@ libreffs_nfs4_ps_la_SOURCES = \
 	ps_renewal.c \
 	ps_sb.c \
 	ps_security.c \
-	ps_state.c
+	ps_state.c \
+	ps_write_buffer.c
 
 # ps_sb_alloc.c needs lib/fs symbols (super_block_alloc, mkdir_p_for_listener,
 # etc.) that the other PS unit tests deliberately do NOT link.  Pulling it

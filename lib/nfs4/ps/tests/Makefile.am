@@ -66,6 +66,7 @@ TESTS = \
 	ec_pipeline_stripe_test \
 	ps_discovery_test \
 	ps_inode_test \
+	ps_listener_lifecycle_test \
 	ps_mount_client_test \
 	ps_owner_test \
 	ps_proxy_creds_forward_test \
@@ -75,4 +76,5 @@ TESTS = \
 	ps_sb_alloc_test \
 	ps_sb_test \
 	ps_security_test \
-	ps_state_test
+	ps_state_test \
+	ps_write_buffer_test
