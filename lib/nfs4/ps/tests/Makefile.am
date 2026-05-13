@@ -79,4 +79,5 @@ TESTS = \
 	ps_sb_test \
 	ps_security_test \
 	ps_state_test \
+	ps_write_buffer_rmw_test \
 	ps_write_buffer_test

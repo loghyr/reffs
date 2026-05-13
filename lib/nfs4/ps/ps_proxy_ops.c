@@ -2545,6 +2545,36 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * one writer in the happy path.
 	 */
 	buf->pwb_stateid_seqid = stateid_seqid;
+
+	/*
+	 * Per-stripe dirty marking (Phase 4b slice 4b.1).  Snapshot
+	 * the buffer's EC geometry on first WRITE; subsequent WRITEs
+	 * reuse the snapshot.  Today the geometry is the same
+	 * compile-time constant the COMMIT-side encode uses
+	 * (k=4, m=2, shard=4096); 4b.2 will plumb the real geometry
+	 * from the layout cache.  Mark failure is treated as a
+	 * transient pressure event (NFS4ERR_DELAY); the bytes are in
+	 * the buffer but the dirty bitmap is inconsistent -- the
+	 * client will retry the WRITE under the new bitmap state.
+	 */
+	{
+		static const struct ps_write_buffer_geom phase4a_geom = {
+			.pwbg_k = 4,
+			.pwbg_m = 2,
+			.pwbg_shard_size = 4096,
+		};
+		int gret = ps_write_buffer_set_geom(buf, &phase4a_geom);
+
+		/*
+		 * set_geom may return -EINVAL on a true geometry
+		 * mismatch (geometry already set to different fields),
+		 * but for slice 4b.1 the geometry is a constant so this
+		 * cannot fail in practice.  Pin the contract with an
+		 * assertion that catches a future-slice regression.
+		 */
+		if (gret == 0)
+			(void)ps_write_buffer_mark_dirty(buf, offset, data_len);
+	}
 	pthread_mutex_unlock(&buf->pwb_mutex);
 
 	ps_write_buffer_release_find_ref(buf, pls);

@@ -89,8 +89,98 @@ static int pwb_match(struct cds_lfht_node *node, const void *key)
 }
 
 /* ------------------------------------------------------------------ */
+/* Dirty-stripe table (Phase 4b)                                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The dirty hash table is keyed by stripe number (uint32_t).  We
+ * use cds_lfht for size-flexibility (sparse vs dense workloads);
+ * the per-buffer mutex (pwb_mutex) provides all the serialisation
+ * the table needs.  rcu_read_lock is taken around the cds_lfht
+ * traversals purely to satisfy liburcu's API contract.
+ */
+#define PS_DIRTY_HT_BUCKETS_INIT 16u
+
+static unsigned long pds_hash(uint32_t stripe_no)
+{
+	return (unsigned long)stripe_no;
+}
+
+static int pds_match(struct cds_lfht_node *node, const void *key)
+{
+	const struct ps_dirty_stripe *ds =
+		caa_container_of(node, struct ps_dirty_stripe, pds_ht_node);
+	const uint32_t *want = key;
+
+	return ds->pds_stripe_no == *want;
+}
+
+/* Small bit-array helpers on a uint8_t[] backing store. */
+static void pds_set_bit(uint8_t *mask, uint32_t bit)
+{
+	mask[bit >> 3] |= (uint8_t)(1u << (bit & 7u));
+}
+
+static bool pds_test_bit(const uint8_t *mask, uint32_t bit)
+{
+	return (mask[bit >> 3] & (1u << (bit & 7u))) != 0;
+}
+
+static bool pds_all_bits_set(const uint8_t *mask, uint32_t nbits)
+{
+	uint32_t i;
+
+	for (i = 0; i < nbits; i++) {
+		if (!pds_test_bit(mask, i))
+			return false;
+	}
+	return true;
+}
+
+/* ------------------------------------------------------------------ */
 /* Release callbacks (Rule 6 lifecycle)                                */
 /* ------------------------------------------------------------------ */
+
+/*
+ * Drain the dirty-stripe table for a buffer that is about to be
+ * freed.  Caller must guarantee no other thread can touch the
+ * table -- pwb_release is the call site, and at that point the
+ * refcount is zero (no find/table ref outstanding) and the buffer
+ * has just been removed from the per-listener table.
+ *
+ * Direct free of the dirty entries is safe: the dirty hash table
+ * is only reachable via buf->pwb_dirty_ht, the buffer is now
+ * unreachable, and pwb_mutex (held only by mark_dirty/lookup) is
+ * not contended.  rcu_read_lock around the iterator is liburcu
+ * API boilerplate.  We do this synchronously in pwb_release
+ * rather than from the rcu callback so cds_lfht_destroy is never
+ * called from a call_rcu context (rcu-violations.md Pattern 6
+ * footgun -- some lfht destroy paths may eventually call
+ * synchronize_rcu).
+ */
+static void pwb_dirty_table_drain(struct ps_write_buffer *buf)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+
+	if (!buf->pwb_dirty_ht)
+		return;
+
+	rcu_read_lock();
+	cds_lfht_first(buf->pwb_dirty_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct ps_dirty_stripe *ds = caa_container_of(
+			node, struct ps_dirty_stripe, pds_ht_node);
+
+		cds_lfht_next(buf->pwb_dirty_ht, &iter);
+		cds_lfht_del(buf->pwb_dirty_ht, node);
+		free(ds->pds_partial_mask);
+		free(ds);
+	}
+	rcu_read_unlock();
+	cds_lfht_destroy(buf->pwb_dirty_ht, NULL);
+	buf->pwb_dirty_ht = NULL;
+}
 
 static void pwb_rcu_free(struct rcu_head *head)
 {
@@ -113,6 +203,9 @@ static void pwb_rcu_free(struct rcu_head *head)
  * Requires pwb_ht to be set; buffers that were never inserted
  * (alloc-then-fail-before-insert) must not reach this release --
  * lookup_or_alloc destroys those directly.
+ *
+ * Dirty-stripe drain runs synchronously here (before the rcu
+ * callback) so cds_lfht_destroy never runs from a call_rcu context.
  */
 static void pwb_release(struct urcu_ref *ref)
 {
@@ -121,6 +214,7 @@ static void pwb_release(struct urcu_ref *ref)
 
 	if (buf->pwb_ht)
 		cds_lfht_del(buf->pwb_ht, &buf->pwb_ht_node);
+	pwb_dirty_table_drain(buf);
 	call_rcu(&buf->pwb_rcu_head, pwb_rcu_free);
 }
 
@@ -517,6 +611,253 @@ void ps_write_buffer_drop(struct ps_write_buffer *buffer,
 	urcu_ref_put(&buffer->pwb_ref, pwb_release); /* find */
 	urcu_ref_put(&buffer->pwb_ref, pwb_release); /* table */
 	ps_write_buffer_leave_quiesce(pls);
+}
+
+/* ------------------------------------------------------------------ */
+/* Dirty-bitmap public API (Phase 4b)                                  */
+/* ------------------------------------------------------------------ */
+
+int ps_write_buffer_set_geom(struct ps_write_buffer *buf,
+			     const struct ps_write_buffer_geom *geom)
+{
+	uint64_t stripe;
+
+	if (!buf || !geom)
+		return -EINVAL;
+	if (geom->pwbg_k == 0 || geom->pwbg_shard_size == 0)
+		return -EINVAL;
+
+	/* k * shard_size overflow check */
+	stripe = (uint64_t)geom->pwbg_k * (uint64_t)geom->pwbg_shard_size;
+	if (stripe > UINT32_MAX)
+		return -EINVAL;
+
+	if (buf->pwb_geom_set) {
+		/* Idempotent: identical fields => no-op success. */
+		if (buf->pwb_geom.pwbg_k == geom->pwbg_k &&
+		    buf->pwb_geom.pwbg_m == geom->pwbg_m &&
+		    buf->pwb_geom.pwbg_shard_size == geom->pwbg_shard_size)
+			return 0;
+		/*
+		 * Different geometry after the buffer has been touched
+		 * is a fatal mismatch; the caller (pipeline shim in
+		 * slice 4b.2 onward) drops the buffer and replies
+		 * NFS4ERR_STALE so the client rewrites under the new
+		 * geometry.
+		 */
+		return -EINVAL;
+	}
+
+	buf->pwb_geom = *geom;
+	buf->pwb_geom_set = true;
+	return 0;
+}
+
+/*
+ * Look up an existing dirty entry, or allocate one if absent.
+ * Caller MUST hold buf->pwb_mutex.  Returns NULL on allocation
+ * failure.
+ *
+ * The first dirty mark on a buffer allocates the dirty hash table
+ * lazily; subsequent calls reuse it.  The hash table is destroyed
+ * in pwb_rcu_free.
+ */
+static struct ps_dirty_stripe *pds_lookup_or_alloc(struct ps_write_buffer *buf,
+						   uint32_t stripe_no)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct ps_dirty_stripe *ds;
+	uint32_t k;
+
+	if (!buf->pwb_dirty_ht) {
+		buf->pwb_dirty_ht = cds_lfht_new(PS_DIRTY_HT_BUCKETS_INIT,
+						 PS_DIRTY_HT_BUCKETS_INIT,
+						 /* max_nr_buckets */ 0,
+						 CDS_LFHT_AUTO_RESIZE, NULL);
+		if (!buf->pwb_dirty_ht)
+			return NULL;
+	}
+
+	rcu_read_lock();
+	cds_lfht_lookup(buf->pwb_dirty_ht, pds_hash(stripe_no), pds_match,
+			&stripe_no, &iter);
+	node = cds_lfht_iter_get_node(&iter);
+	rcu_read_unlock();
+	if (node)
+		return caa_container_of(node, struct ps_dirty_stripe,
+					pds_ht_node);
+
+	ds = calloc(1, sizeof(*ds));
+	if (!ds)
+		return NULL;
+
+	ds->pds_stripe_no = stripe_no;
+	k = buf->pwb_geom.pwbg_k;
+	ds->pds_partial_mask_bits = k;
+	/*
+	 * Allocate the partial mask up-front (tiny -- 1 byte for the
+	 * typical k=4).  "Fully dirty" is signalled by promoting the
+	 * pointer to NULL (free'd) once every bit becomes set.
+	 * Allocating immediately removes the otherwise-ambiguous
+	 * "NULL means uninitialised vs NULL means fully dirty" state
+	 * a fresh entry would have.
+	 */
+	ds->pds_partial_mask = calloc(1, (k + 7u) / 8u);
+	if (!ds->pds_partial_mask) {
+		free(ds);
+		return NULL;
+	}
+	cds_lfht_node_init(&ds->pds_ht_node);
+
+	rcu_read_lock();
+	/*
+	 * cds_lfht_add_unique handles concurrent inserts -- though
+	 * pwb_mutex serialises everything here, the API requires this
+	 * shape and the cost is negligible.
+	 */
+	{
+		struct cds_lfht_node *existing = cds_lfht_add_unique(
+			buf->pwb_dirty_ht, pds_hash(stripe_no), pds_match,
+			&stripe_no, &ds->pds_ht_node);
+
+		if (existing != &ds->pds_ht_node) {
+			rcu_read_unlock();
+			free(ds->pds_partial_mask);
+			free(ds);
+			return caa_container_of(
+				existing, struct ps_dirty_stripe, pds_ht_node);
+		}
+	}
+	rcu_read_unlock();
+	return ds;
+}
+
+int ps_write_buffer_mark_dirty(struct ps_write_buffer *buf, uint64_t offset,
+			       uint32_t count)
+{
+	uint32_t stripe_size;
+	uint32_t shard_size;
+	uint32_t k;
+	uint64_t end;
+	uint32_t first_stripe;
+	uint32_t last_stripe;
+	uint32_t stripe_no;
+
+	if (!buf || count == 0)
+		return -EINVAL;
+	if (!buf->pwb_geom_set)
+		return -EINVAL;
+
+	shard_size = buf->pwb_geom.pwbg_shard_size;
+	k = buf->pwb_geom.pwbg_k;
+	stripe_size = k * shard_size;
+
+	end = offset + (uint64_t)count;
+	first_stripe = (uint32_t)(offset / stripe_size);
+	last_stripe = (uint32_t)((end - 1) / stripe_size);
+
+	for (stripe_no = first_stripe; stripe_no <= last_stripe; stripe_no++) {
+		struct ps_dirty_stripe *ds;
+		uint64_t stripe_base = (uint64_t)stripe_no * stripe_size;
+		uint64_t stripe_end = stripe_base + stripe_size;
+		uint64_t hit_lo = offset > stripe_base ? offset : stripe_base;
+		uint64_t hit_hi = end < stripe_end ? end : stripe_end;
+		uint32_t first_shard;
+		uint32_t last_shard;
+		uint32_t shard;
+
+		ds = pds_lookup_or_alloc(buf, stripe_no);
+		if (!ds)
+			return -ENOMEM;
+
+		/*
+		 * Stripe already fully dirty (every shard previously
+		 * marked).  A further partial mark cannot demote it;
+		 * skip the bit accounting entirely.
+		 */
+		if (!ds->pds_partial_mask)
+			continue;
+
+		first_shard = (uint32_t)((hit_lo - stripe_base) / shard_size);
+		/*
+		 * Inclusive last shard: hit_hi is one past the last
+		 * written byte, so subtract 1 before dividing.
+		 */
+		last_shard =
+			(uint32_t)((hit_hi - 1 - stripe_base) / shard_size);
+
+		for (shard = first_shard; shard <= last_shard; shard++)
+			pds_set_bit(ds->pds_partial_mask, shard);
+
+		/*
+		 * Promote to fully dirty (NULL mask, no RMW at flush)
+		 * if this mark filled the last empty shard.
+		 */
+		if (pds_all_bits_set(ds->pds_partial_mask, k)) {
+			free(ds->pds_partial_mask);
+			ds->pds_partial_mask = NULL;
+		}
+	}
+
+	return 0;
+}
+
+size_t ps_write_buffer_dirty_count(struct ps_write_buffer *buf)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	size_t n = 0;
+
+	if (!buf || !buf->pwb_dirty_ht)
+		return 0;
+
+	rcu_read_lock();
+	cds_lfht_first(buf->pwb_dirty_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		n++;
+		cds_lfht_next(buf->pwb_dirty_ht, &iter);
+	}
+	rcu_read_unlock();
+	return n;
+}
+
+struct ps_dirty_stripe *
+ps_write_buffer_dirty_lookup(struct ps_write_buffer *buf, uint32_t stripe_no)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct ps_dirty_stripe *ds = NULL;
+
+	if (!buf || !buf->pwb_dirty_ht)
+		return NULL;
+
+	rcu_read_lock();
+	cds_lfht_lookup(buf->pwb_dirty_ht, pds_hash(stripe_no), pds_match,
+			&stripe_no, &iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (node)
+		ds = caa_container_of(node, struct ps_dirty_stripe,
+				      pds_ht_node);
+	rcu_read_unlock();
+	return ds;
+}
+
+bool ps_dirty_stripe_is_fully_dirty(const struct ps_dirty_stripe *ds)
+{
+	return ds && ds->pds_partial_mask == NULL;
+}
+
+bool ps_dirty_stripe_shard_is_dirty(const struct ps_dirty_stripe *ds,
+				    uint32_t shard)
+{
+	if (!ds)
+		return false;
+	if (!ds->pds_partial_mask)
+		return true; /* fully dirty */
+	if (shard >= ds->pds_partial_mask_bits)
+		return false;
+	return pds_test_bit(ds->pds_partial_mask, shard);
 }
 
 /* ------------------------------------------------------------------ */

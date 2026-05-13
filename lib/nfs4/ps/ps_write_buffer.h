@@ -38,6 +38,28 @@
 struct ps_write_buffer; /* opaque to most callers; full def in
 				 * ps_write_buffer_internal.h.            */
 
+/*
+ * Erasure-coding geometry snapshot for a single buffer (Phase 4b).
+ * Cached on first WRITE via ps_write_buffer_set_geom so the dirty-
+ * stripe bitmap and RMW path see a consistent (k, m, shard_size)
+ * tuple even if the underlying layout reissues with different
+ * parameters mid-buffer (a geometry mismatch at flush time forces
+ * a buffer drop + NFS4ERR_STALE; see proxy-server-phase4b.md).
+ *
+ * Field semantics:
+ *   pwbg_k          number of data shards per stripe
+ *   pwbg_m          number of parity shards per stripe (informational
+ *                   for the buffer; the encode path consumes m, the
+ *                   dirty bitmap only tracks data shards)
+ *   pwbg_shard_size bytes per shard.  Stripe size derived as
+ *                   pwbg_k * pwbg_shard_size.
+ */
+struct ps_write_buffer_geom {
+	uint32_t pwbg_k;
+	uint32_t pwbg_m;
+	uint32_t pwbg_shard_size;
+};
+
 /* ------------------------------------------------------------------ */
 /* Per-listener buffer-table lifecycle                                 */
 /* ------------------------------------------------------------------ */
@@ -170,6 +192,50 @@ void ps_write_buffer_release_find_ref(struct ps_write_buffer *buffer,
  */
 void ps_write_buffer_drop(struct ps_write_buffer *buffer,
 			  struct ps_listener_state *pls);
+
+/* ------------------------------------------------------------------ */
+/* Per-stripe dirty bitmap (Phase 4b)                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Snapshot encoding geometry on first WRITE.  Idempotent: a second
+ * call with identical fields is a no-op; a call with different
+ * fields after the geometry is already set returns -EINVAL.
+ * Geometry is required before ps_write_buffer_mark_dirty.
+ *
+ * Caller MUST hold buf->pwb_mutex.  Returns 0 on success,
+ * -EINVAL on geometry mismatch or invalid fields (k == 0,
+ * shard_size == 0, k * shard_size overflow).
+ */
+int ps_write_buffer_set_geom(struct ps_write_buffer *buf,
+			     const struct ps_write_buffer_geom *geom);
+
+/*
+ * Mark the byte range [offset, offset+count) dirty.  Allocates per-
+ * stripe entries lazily; each entry tracks which of the k data
+ * shards are touched.  A write covering all k shards of a stripe
+ * (or a later widening write that completes the coverage) collapses
+ * the entry's partial mask to "fully dirty" (no RMW read needed at
+ * flush time).
+ *
+ * Caller MUST hold buf->pwb_mutex and the buffer's geometry MUST
+ * be set (ps_write_buffer_set_geom returned 0).  Returns 0 on
+ * success.  Returns -ENOMEM if the dirty hash table or a stripe
+ * entry cannot be allocated; in this partial-failure case any
+ * stripes that succeeded stay marked, and the caller treats the
+ * failure as an NFS4ERR_DELAY (the client retries the WRITE).
+ * Returns -EINVAL if geometry is not set or count == 0.
+ */
+int ps_write_buffer_mark_dirty(struct ps_write_buffer *buf, uint64_t offset,
+			       uint32_t count);
+
+/*
+ * Count of dirty stripe entries in this buffer.  Caller MUST hold
+ * buf->pwb_mutex.  Walks the dirty hash table; cost is O(N) in the
+ * number of dirty stripes.  Used by tests and by the forthcoming
+ * ps-write-buffer-stats probe extension (slice 4b.7).
+ */
+size_t ps_write_buffer_dirty_count(struct ps_write_buffer *buf);
 
 /* ------------------------------------------------------------------ */
 /* Diagnostics                                                         */

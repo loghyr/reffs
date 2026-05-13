@@ -26,13 +26,36 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <stdbool.h>
 #include <urcu.h>
 #include <urcu/rculfhash.h>
 #include <urcu/ref.h>
 
 #include "ps_state.h" /* PS_MAX_FH_SIZE */
+#include "ps_write_buffer.h" /* struct ps_write_buffer_geom */
 
 #define PS_STATEID_OTHER_SIZE 12
+
+/*
+ * Per-stripe dirty-tracking entry (PS Phase 4b).  Lives in
+ * pwb_dirty_ht; one entry per stripe that has received any WRITE
+ * bytes since the last successful flush.  Mutated and read under
+ * pwb_mutex -- no concurrent access discipline beyond the buffer's
+ * leaf mutex.
+ *
+ * pds_partial_mask == NULL means "fully dirty" -- every data shard
+ * in this stripe is in the buffer; flush can encode directly from
+ * the buffer with no RMW read.  Non-NULL means the mask has one
+ * bit per data shard (pwbg_k bits, rounded up to bytes); a bit
+ * set means that shard has been written.  The mask is promoted to
+ * NULL ("fully dirty") when all bits become set.
+ */
+struct ps_dirty_stripe {
+	struct cds_lfht_node pds_ht_node;
+	uint32_t pds_stripe_no;
+	uint32_t pds_partial_mask_bits; /* == geom.pwbg_k when allocated */
+	uint8_t *pds_partial_mask; /* NULL => fully dirty */
+};
 
 struct ps_write_buffer {
 	struct cds_lfht_node pwb_ht_node;
@@ -75,6 +98,18 @@ struct ps_write_buffer {
 	pthread_mutex_t pwb_mutex; /* leaf; serialises buffer mutation */
 	struct urcu_ref pwb_ref; /* table + per-op find refs */
 	uint64_t pwb_listener_gen; /* listener boot generation snapshot */
+
+	/*
+	 * Per-stripe RMW state (Phase 4b).  Geometry is snapshot on
+	 * first WRITE via ps_write_buffer_set_geom; pwb_geom_set
+	 * gates subsequent set_geom calls (idempotent for matching
+	 * fields, -EINVAL on mismatch).  pwb_dirty_ht is allocated
+	 * lazily on first dirty mark.  Both fields are mutated and
+	 * read under pwb_mutex.
+	 */
+	struct ps_write_buffer_geom pwb_geom;
+	bool pwb_geom_set;
+	struct cds_lfht *pwb_dirty_ht;
 
 	/* RCU callback head for deferred free. */
 	struct rcu_head pwb_rcu_head;
@@ -124,5 +159,38 @@ extern _Atomic(uint64_t (*)(void)) ps_test_hook_clock_now_ns;
  * (ps_write_buffer.h) since the ps-write-buffer-stats probe handler
  * is the primary caller; tests pick it up from the same header.
  */
+
+/* ------------------------------------------------------------------ */
+/* Dirty-bitmap whitebox surface (Phase 4b)                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Look up a single stripe's dirty entry by stripe number.  Returns
+ * NULL if the stripe has not been written.  Caller MUST hold
+ * buf->pwb_mutex; the returned pointer is valid only while the
+ * mutex is held.
+ *
+ * Whitebox-only: production code walks the dirty table via the
+ * forthcoming flush iterator in slice 4b.2.  Tests use this for
+ * point-inspection of the bitmap state.
+ */
+struct ps_dirty_stripe *
+ps_write_buffer_dirty_lookup(struct ps_write_buffer *buf, uint32_t stripe_no);
+
+/*
+ * True iff every data shard in this stripe is dirty (no RMW read
+ * needed at flush).  Equivalent to pds_partial_mask == NULL.
+ * Caller MUST hold the owning buffer's pwb_mutex.
+ */
+bool ps_dirty_stripe_is_fully_dirty(const struct ps_dirty_stripe *ds);
+
+/*
+ * True iff shard `shard` (0..k-1) is dirty in this stripe.  A
+ * fully-dirty stripe (NULL pds_partial_mask) reports every shard
+ * as dirty.  Out-of-range shard returns false.  Caller MUST hold
+ * the owning buffer's pwb_mutex.
+ */
+bool ps_dirty_stripe_shard_is_dirty(const struct ps_dirty_stripe *ds,
+				    uint32_t shard);
 
 #endif /* PS_WRITE_BUFFER_INTERNAL_H */
