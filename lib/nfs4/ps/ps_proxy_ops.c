@@ -2626,23 +2626,23 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	size_t n_stripes = 0;
 	size_t capacity = 0;
 	size_t stripe_size = 0;
+	size_t remaining_dirty = 0;
 	int ret;
-
-	/*
-	 * `offset` and `count` are accepted for API symmetry with
-	 * ps_proxy_forward_commit and the on-wire COMMIT4args.  Slice
-	 * 4b.3 still flushes the full set of dirty stripes regardless
-	 * of the requested range (RFC 8881 S18.3.4 explicitly permits
-	 * the server to commit more than asked).  Range-honouring
-	 * intersection lands in slice 4b.5.
-	 */
-	(void)offset;
-	(void)count;
 
 	if (!ms || !upstream_fh || upstream_fh_len == 0 || !reply)
 		return -EINVAL;
 	if (upstream_fh_len > PS_MAX_FH_SIZE)
 		return -E2BIG;
+	/*
+	 * Slice 4b.5 range honouring promotes count to u64 to compute
+	 * `offset + count`.  Reject ranges that would wrap; without
+	 * this guard a malicious client could set offset near
+	 * UINT64_MAX and force `req_end` to zero, which would falsely
+	 * skip every stripe in the dirty walk and return success for
+	 * bytes that were never flushed.
+	 */
+	if (count > 0 && offset > UINT64_MAX - (uint64_t)count)
+		return -EINVAL;
 
 	memset(reply, 0, sizeof(*reply));
 
@@ -2751,15 +2751,43 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 		while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
 			struct ps_dirty_stripe *ds = caa_container_of(
 				node, struct ps_dirty_stripe, pds_ht_node);
+			uint32_t s = ds->pds_stripe_no;
 
 			cds_lfht_next(buf->pwb_dirty_ht, &iter);
+
+			/*
+			 * Slice 4b.5 range honouring.  When the client
+			 * passes a bounded range (count > 0), skip
+			 * stripes whose byte range [base, base + stripe_
+			 * size) does not intersect [offset, offset +
+			 * count); skipped stripes stay in pwb_dirty_ht
+			 * for a later COMMIT.  count == 0 is the RFC
+			 * 8881 S18.3.4 "commit everything" sentinel and
+			 * disables the filter (matched by the Linux
+			 * NFSv4 server and by ec_demo).  RFC 8881 also
+			 * permits the server to commit more than asked,
+			 * so the filter is a courtesy to clients that
+			 * pipeline narrow COMMITs across a wide write
+			 * range; the visible client-facing semantics
+			 * (a successful COMMIT means the requested bytes
+			 * are stable) are unchanged.
+			 */
+			if (count > 0) {
+				uint64_t base = (uint64_t)s * stripe_size;
+				uint64_t end = base + stripe_size;
+				uint64_t req_end = offset + count;
+
+				if (end <= offset || base >= req_end)
+					continue;
+			}
+
 			/*
 			 * Defensive: capacity == total from the count
 			 * walk above; pwb_mutex prevented any growth in
 			 * between, so n_stripes < capacity always holds.
 			 */
 			if (n_stripes < capacity)
-				stripe_nos[n_stripes++] = ds->pds_stripe_no;
+				stripe_nos[n_stripes++] = s;
 		}
 		rcu_read_unlock();
 	}
@@ -2915,6 +2943,12 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 		ps_write_buffer_dirty_remove(buf, s);
 	}
 	/*
+	 * Snapshot remaining dirty count under pwb_mutex: it
+	 * disambiguates "every dirty stripe was flushed" from "range
+	 * filter left some stripes behind" once the mutex is dropped.
+	 */
+	remaining_dirty = ps_write_buffer_dirty_count(buf);
+	/*
 	 * No verifier snapshot needed on this drop path: see the
 	 * success branch below for why the reply is listener-only.
 	 */
@@ -2923,14 +2957,13 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 
 	if (ret == 0) {
 		/*
-		 * All dirty stripes flushed (or there were none -- the
-		 * post-success no-op case where a prior COMMIT left the
-		 * buffer alive and the client re-COMMITs with no
-		 * intervening WRITE).  Drop the buffer; matches 4a's
-		 * success contract.  A subsequent WRITE on the same
-		 * (stateid, fh) lazy-allocates a fresh buffer.
+		 * Slice 4b.5: drop the buffer only when no dirty
+		 * stripes remain (the full-flush case, identical to 4a's
+		 * success contract).  When the range filter left some
+		 * dirty stripes behind, release the find ref instead so
+		 * the buffer survives for a later wider-range COMMIT.
 		 *
-		 * Verifier policy on this success-drop path: return the
+		 * Verifier policy on this success path: return the
 		 * listener-only encoding (mds_verf_set = false).  The
 		 * WRITE replies the client correlates against were
 		 * issued earlier in THIS buffer's lifetime, and at those
@@ -2946,7 +2979,10 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 		 * routes through ps_compose_write_verf with a real
 		 * pwb_mds_verf snapshot.
 		 */
-		ps_write_buffer_drop(buf, pls);
+		if (remaining_dirty == 0)
+			ps_write_buffer_drop(buf, pls);
+		else
+			ps_write_buffer_release_find_ref(buf, pls);
 		ps_compose_write_verf(pls, false, NULL, reply->verifier);
 		return 0;
 	}

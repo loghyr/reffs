@@ -350,6 +350,161 @@ START_TEST(test_commit_partial_stripe_attempts_rmw_read)
 }
 END_TEST
 
+/* ------------------------------------------------------------------ */
+/* Slice 4b.5: COMMIT range honouring                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Peek the dirty hash table for a single stripe, returning true if
+ * the stripe is currently marked dirty.  Wraps the locking + ref
+ * dance so the test bodies stay readable.
+ */
+static bool peek_stripe_dirty(uint8_t *fh, size_t fh_len, uint32_t stripe_no)
+{
+	struct ps_listener_state *pls =
+		(struct ps_listener_state *)ps_state_find(TEST_LISTENER_ID);
+	struct ps_write_buffer *buf;
+	struct ps_dirty_stripe *ds;
+	bool dirty;
+
+	ck_assert(ps_write_buffer_enter_quiesce_or_bail(pls));
+	buf = ps_write_buffer_find_by_fh(pls, fh, fh_len);
+	if (!buf)
+		return false;
+	pthread_mutex_lock(&buf->pwb_mutex);
+	ds = ps_write_buffer_dirty_lookup(buf, stripe_no);
+	dirty = (ds != NULL);
+	pthread_mutex_unlock(&buf->pwb_mutex);
+	ps_write_buffer_release_find_ref(buf, pls);
+	return dirty;
+}
+
+START_TEST(test_commit_range_intersects_dirty)
+{
+	uint8_t fh[] = { TEST_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xB6 };
+	uint8_t *data = calloc(1, TG_STRIPE);
+	struct ps_proxy_write_reply w;
+	struct ps_proxy_commit_reply c;
+
+	ck_assert_ptr_nonnull(data);
+
+	/* Mark stripe 0 dirty. */
+	memset(&w, 0, sizeof(w));
+	ck_assert_int_eq(ps_proxy_pipeline_write(test_session(), fh, sizeof(fh),
+						 0, sid, 0, 0, data, TG_STRIPE,
+						 NULL, &w),
+			 0);
+	/* Mark stripe 5 dirty (byte range 5*TG_STRIPE .. 6*TG_STRIPE). */
+	memset(&w, 0, sizeof(w));
+	ck_assert_int_eq(ps_proxy_pipeline_write(test_session(), fh, sizeof(fh),
+						 0, sid, 5ULL * TG_STRIPE, 0,
+						 data, TG_STRIPE, NULL, &w),
+			 0);
+
+	ck_assert(peek_stripe_dirty(fh, sizeof(fh), 0));
+	ck_assert(peek_stripe_dirty(fh, sizeof(fh), 5));
+
+	/*
+	 * COMMIT(offset=0, count=TG_STRIPE).  Only stripe 0 intersects
+	 * the requested range; stripe 5 is filtered out by 4b.5's range
+	 * honouring and never reaches the per-stripe flush primitive.
+	 * The mock fails the stripe-0 LAYOUTGET with -EIO, so the
+	 * commit returns -EIO and both stripes remain dirty (stripe 0
+	 * because the flush failed, stripe 5 because it was skipped by
+	 * range).  Exactly one upstream attempt fires.
+	 */
+	memset(&c, 0, sizeof(c));
+	int ret = ps_proxy_pipeline_commit(test_session(), fh, sizeof(fh), 0,
+					   TG_STRIPE, NULL, &c);
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert_uint_eq(listener_table_count(), 1);
+	ck_assert(peek_stripe_dirty(fh, sizeof(fh), 0));
+	ck_assert(peek_stripe_dirty(fh, sizeof(fh), 5));
+
+	free(data);
+}
+END_TEST
+
+START_TEST(test_commit_range_excludes_dirty_skips_flush)
+{
+	uint8_t fh[] = { TEST_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xB7 };
+	uint8_t *data = calloc(1, TG_STRIPE);
+	struct ps_proxy_write_reply w;
+	struct ps_proxy_commit_reply c;
+
+	ck_assert_ptr_nonnull(data);
+
+	/* Only stripe 5 dirty. */
+	memset(&w, 0, sizeof(w));
+	ck_assert_int_eq(ps_proxy_pipeline_write(test_session(), fh, sizeof(fh),
+						 0, sid, 5ULL * TG_STRIPE, 0,
+						 data, TG_STRIPE, NULL, &w),
+			 0);
+	ck_assert(peek_stripe_dirty(fh, sizeof(fh), 5));
+
+	/*
+	 * COMMIT(offset=0, count=TG_STRIPE).  Stripe 5's range
+	 * [5*TG_STRIPE, 6*TG_STRIPE) does not intersect [0, TG_STRIPE);
+	 * the range filter skips the only dirty entry.  Zero upstream
+	 * attempts fire, the COMMIT returns success (the requested
+	 * range had no dirty bytes), and the buffer stays alive with
+	 * stripe 5 still dirty for a later wider-range COMMIT.
+	 */
+	memset(&c, 0, sizeof(c));
+	int ret = ps_proxy_pipeline_commit(test_session(), fh, sizeof(fh), 0,
+					   TG_STRIPE, NULL, &c);
+	ck_assert_int_eq(ret, 0);
+	ck_assert_int_eq(g_send_call_count, 0);
+	ck_assert_uint_eq(listener_table_count(), 1);
+	ck_assert(peek_stripe_dirty(fh, sizeof(fh), 5));
+
+	free(data);
+}
+END_TEST
+
+START_TEST(test_commit_range_zero_count_flushes_all)
+{
+	uint8_t fh[] = { TEST_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xB8 };
+	uint8_t *data = calloc(1, TG_STRIPE);
+	struct ps_proxy_write_reply w;
+	struct ps_proxy_commit_reply c;
+
+	ck_assert_ptr_nonnull(data);
+
+	/* Only stripe 5 dirty -- far outside any non-zero count range
+	 * that starts at offset 0.  count=0 must override that. */
+	memset(&w, 0, sizeof(w));
+	ck_assert_int_eq(ps_proxy_pipeline_write(test_session(), fh, sizeof(fh),
+						 0, sid, 5ULL * TG_STRIPE, 0,
+						 data, TG_STRIPE, NULL, &w),
+			 0);
+	ck_assert(peek_stripe_dirty(fh, sizeof(fh), 5));
+
+	/*
+	 * COMMIT(offset=0, count=0) -- the RFC 8881 S18.3.4 "commit
+	 * everything" sentinel.  The range filter must be disabled so
+	 * stripe 5 is included in the flush walk; the mock then fails
+	 * its LAYOUTGET with -EIO.  Exactly one upstream attempt
+	 * fires; without the count==0 special case, the filter would
+	 * exclude every dirty stripe (no [offset, offset+0) range
+	 * intersects anything) and zero attempts would fire.
+	 */
+	memset(&c, 0, sizeof(c));
+	int ret = ps_proxy_pipeline_commit(test_session(), fh, sizeof(fh), 0, 0,
+					   NULL, &c);
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert_uint_eq(listener_table_count(), 1);
+	ck_assert(peek_stripe_dirty(fh, sizeof(fh), 5));
+
+	free(data);
+}
+END_TEST
+
 START_TEST(test_commit_multi_dirty_stops_on_first_failure)
 {
 	uint8_t fh[] = { TEST_FH_BYTE };
@@ -415,6 +570,9 @@ static Suite *ps_proxy_pipeline_commit_suite(void)
 	tcase_add_test(tc, test_commit_after_listener_stop_returns_eagain);
 	tcase_add_test(tc, test_commit_partial_stripe_attempts_rmw_read);
 	tcase_add_test(tc, test_commit_multi_dirty_stops_on_first_failure);
+	tcase_add_test(tc, test_commit_range_intersects_dirty);
+	tcase_add_test(tc, test_commit_range_excludes_dirty_skips_flush);
+	tcase_add_test(tc, test_commit_range_zero_count_flushes_all);
 
 	suite_add_tcase(s, tc);
 	return s;
