@@ -2602,21 +2602,23 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	struct ps_write_buffer *buf;
 	struct mds_file mf;
 	uint64_t buf_gen;
-	uint8_t local_data_snapshot_required = 0;
+	uint32_t *stripe_nos = NULL;
+	size_t n_stripes = 0;
+	size_t capacity = 0;
+	bool partial_seen = false;
+	size_t stripe_size = 0;
 	int ret;
 
 	/*
 	 * `offset` and `count` are accepted for API symmetry with
-	 * ps_proxy_forward_commit and the on-wire COMMIT4args.  Phase
-	 * 4a flushes the entire buffered prefix on every COMMIT
-	 * regardless of the requested range (RFC 8881 S18.3.4
-	 * explicitly permits the server to commit more than asked).
-	 * Per-range slice tracking with a coverage bitmap is Phase 4b
-	 * territory.
+	 * ps_proxy_forward_commit and the on-wire COMMIT4args.  Slice
+	 * 4b.2 still flushes the full set of dirty stripes regardless
+	 * of the requested range (RFC 8881 S18.3.4 explicitly permits
+	 * the server to commit more than asked).  Range-honouring
+	 * intersection lands in slice 4b.5.
 	 */
 	(void)offset;
 	(void)count;
-	(void)local_data_snapshot_required;
 
 	if (!ms || !upstream_fh || upstream_fh_len == 0 || !reply)
 		return -EINVAL;
@@ -2674,33 +2676,149 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	mf.mf_fh.nfs_fh4_len = buf->pwb_upstream_fh_len;
 
 	/*
-	 * Hold pwb_mutex across the flush so a concurrent WRITE
-	 * cannot mutate the buffer while ec_write_codec_with_file
-	 * reads from pwb_data.  pwb_mutex is leaf-most among PS
-	 * locks (standards.md rule 4 / design doc reviewer checklist
-	 * rule 4); the codec acquires no other PS lock, so this is
-	 * safe.  The flush can be slow (LAYOUTGET + per-DS
-	 * CHUNK_WRITE storm); Phase 4b will revisit if profiling
-	 * shows this serialises in practice.
+	 * Phase 4b.2 per-stripe flush walk.  Two-pass: collect the
+	 * stripe-numbers of every fully-dirty entry into a local
+	 * array, then call ec_write_stripe_with_file per entry.
+	 * Partial-mask entries (a WRITE that touched some but not
+	 * all shards of a stripe) are the RMW slice's territory
+	 * (4b.3); a partial-mask sighting in this slice forces the
+	 * entire COMMIT to return NFS4ERR_IO with the buffer kept so
+	 * the client retries.  No fully-dirty stripes are flushed in
+	 * that case -- a "half-flushed" buffer leaves the client
+	 * uncertain about which bytes are durable.
+	 *
+	 * pwb_mutex is held across the per-stripe RPCs (LAYOUTGET +
+	 * CHUNK_WRITE storm) for the same reason 4a holds it across
+	 * the codec call: serialisation is the simplest correct
+	 * answer when the client kernel already serialises ops per
+	 * (stateid, fh).  Risk #1 in proxy-server-phase4b.md tracks
+	 * this for future async pipelining.
 	 */
-	ret = ec_write_codec_with_file(ms, &mf, buf->pwb_data,
-				       buf->pwb_high_water, /* k */ 4,
-				       /* m */ 2, EC_CODEC_RS,
-				       LAYOUT4_FLEX_FILES_V2,
-				       /* shard_size */ 4096, creds);
+	if (buf->pwb_geom_set) {
+		stripe_size = (size_t)buf->pwb_geom.pwbg_k *
+			      buf->pwb_geom.pwbg_shard_size;
+	}
+
+	if (buf->pwb_dirty_ht && stripe_size > 0) {
+		struct cds_lfht_iter iter;
+		struct cds_lfht_node *node;
+		size_t total;
+
+		/*
+		 * Two-pass to keep allocation OUT of the rcu_read_lock
+		 * section (patterns/rcu-violations.md Pattern 1).
+		 * pwb_mutex is held across both passes, so the entry
+		 * count cannot change between them.  ps_write_buffer_
+		 * dirty_count walks the table once for the total
+		 * (including any partial-mask entries -- a safe upper
+		 * bound on the fully-dirty stripe_nos array).
+		 */
+		total = ps_write_buffer_dirty_count(buf);
+		if (total > 0) {
+			stripe_nos = malloc(total * sizeof(uint32_t));
+			if (!stripe_nos) {
+				pthread_mutex_unlock(&buf->pwb_mutex);
+				ps_write_buffer_release_find_ref(buf, pls);
+				return -ENOMEM;
+			}
+			capacity = total;
+		}
+
+		rcu_read_lock();
+		cds_lfht_first(buf->pwb_dirty_ht, &iter);
+		while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+			struct ps_dirty_stripe *ds = caa_container_of(
+				node, struct ps_dirty_stripe, pds_ht_node);
+
+			cds_lfht_next(buf->pwb_dirty_ht, &iter);
+			if (ds->pds_partial_mask != NULL) {
+				partial_seen = true;
+				continue;
+			}
+			/*
+			 * Defensive: capacity == total from the count
+			 * walk above; pwb_mutex prevented any growth in
+			 * between, so n_stripes < capacity always holds
+			 * unless the table mutated under our nose --
+			 * which it cannot.  The bound check is a
+			 * standards.md belt-and-suspenders, not a real
+			 * recovery path.
+			 */
+			if (n_stripes < capacity)
+				stripe_nos[n_stripes++] = ds->pds_stripe_no;
+		}
+		rcu_read_unlock();
+	}
+
+	if (partial_seen) {
+		/*
+		 * NFS4ERR_IO for partial-mask buffer.  Buffer stays,
+		 * dirty entries untouched; the client retries COMMIT
+		 * after either filling the stripe (collapsing it to
+		 * fully-dirty) or once slice 4b.3 lands RMW.
+		 */
+		free(stripe_nos);
+		pthread_mutex_unlock(&buf->pwb_mutex);
+		ps_write_buffer_release_find_ref(buf, pls);
+		return -EIO;
+	}
+
+	ret = 0;
+	for (size_t i = 0; i < n_stripes; i++) {
+		uint32_t s = stripe_nos[i];
+		size_t base = (size_t)s * stripe_size;
+
+		if (base + stripe_size > buf->pwb_high_water) {
+			/*
+			 * Defensive: a fully-dirty stripe whose bytes
+			 * extend past pwb_high_water cannot have come
+			 * from a legitimate WRITE (mark_dirty is called
+			 * after the memcpy + high_water update).  Bail
+			 * with -EIO rather than read past the buffer.
+			 */
+			ret = -EIO;
+			break;
+		}
+
+		ret = ec_write_stripe_with_file(
+			ms, &mf, (uint64_t)s, buf->pwb_data + base, stripe_size,
+			(int)buf->pwb_geom.pwbg_k, (int)buf->pwb_geom.pwbg_m,
+			EC_CODEC_RS, LAYOUT4_FLEX_FILES_V2,
+			buf->pwb_geom.pwbg_shard_size, creds);
+		if (ret) {
+			/*
+			 * Per-stripe failure: this stripe's dirty entry
+			 * stays so the client retry re-flushes it.
+			 * Remaining unflushed stripes in stripe_nos[]
+			 * also stay marked -- conservative: a future
+			 * retry walks them all again.  No half-flush
+			 * state.
+			 */
+			break;
+		}
+		ps_write_buffer_dirty_remove(buf, s);
+	}
+	free(stripe_nos);
 	pthread_mutex_unlock(&buf->pwb_mutex);
 
 	if (ret == 0) {
-		/* Success: drop the buffer, return the listener verifier. */
+		/*
+		 * All dirty stripes flushed (or there were none -- the
+		 * post-success no-op case where a prior COMMIT left the
+		 * buffer alive and the client re-COMMITs with no
+		 * intervening WRITE).  Drop the buffer; matches 4a's
+		 * success contract.  A subsequent WRITE on the same
+		 * (stateid, fh) lazy-allocates a fresh buffer.
+		 */
 		ps_write_buffer_drop(buf, pls);
 		pwb_compose_listener_verifier(pls, reply->verifier);
 		return 0;
 	}
 
 	/*
-	 * Failure: keep the buffer so the client can retry COMMIT.
-	 * Return -EIO (op handler will map to NFS4ERR_IO).  Drop only
-	 * the per-op find ref; the table ref stays.
+	 * Failure: keep the buffer with remaining dirty entries.  The
+	 * client retries COMMIT and the walk picks up where this one
+	 * left off.
 	 */
 	ps_write_buffer_release_find_ref(buf, pls);
 	return -EIO;

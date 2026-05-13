@@ -848,6 +848,38 @@ bool ps_dirty_stripe_is_fully_dirty(const struct ps_dirty_stripe *ds)
 	return ds && ds->pds_partial_mask == NULL;
 }
 
+void ps_write_buffer_dirty_remove(struct ps_write_buffer *buf,
+				  uint32_t stripe_no)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	struct ps_dirty_stripe *ds;
+
+	if (!buf || !buf->pwb_dirty_ht)
+		return;
+
+	/*
+	 * Caller holds buf->pwb_mutex (pipeline_commit's flush walk).
+	 * The dirty table has no concurrent readers outside the mutex,
+	 * so the direct-free pattern from pwb_dirty_table_drain
+	 * applies: del then free, no call_rcu needed.  rcu_read_lock
+	 * is liburcu API boilerplate.
+	 */
+	rcu_read_lock();
+	cds_lfht_lookup(buf->pwb_dirty_ht, pds_hash(stripe_no), pds_match,
+			&stripe_no, &iter);
+	node = cds_lfht_iter_get_node(&iter);
+	if (!node) {
+		rcu_read_unlock();
+		return;
+	}
+	ds = caa_container_of(node, struct ps_dirty_stripe, pds_ht_node);
+	cds_lfht_del(buf->pwb_dirty_ht, node);
+	rcu_read_unlock();
+	free(ds->pds_partial_mask);
+	free(ds);
+}
+
 bool ps_dirty_stripe_shard_is_dirty(const struct ps_dirty_stripe *ds,
 				    uint32_t shard)
 {

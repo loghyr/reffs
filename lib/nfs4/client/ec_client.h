@@ -672,6 +672,32 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 			     const struct authunix_parms *creds);
 
 /*
+ * Per-stripe write primitive (PS Phase 4b).  Mirror of
+ * ec_write_codec_with_file but encodes and writes exactly one
+ * stripe at file-level stripe number `stripe_no`, with its own
+ * LAYOUTGET / FINALIZE / COMMIT / LAYOUTRETURN cycle.
+ *
+ * `stripe_bytes` MUST be exactly k * shard_size bytes -- the
+ * caller (ps_proxy_pipeline_commit walking the dirty-stripe
+ * bitmap) only invokes this for fully-dirty stripes where every
+ * data shard is present in the buffer.  Partial-stripe RMW is
+ * the next slice (4b.3) and is implemented separately.
+ *
+ * DS-side block offsets are computed from `stripe_no` so two
+ * concurrent PSes writing disjoint stripes of the same upstream
+ * FH no longer clobber each other's bytes (the 4a multi-writer
+ * bug).  Returns 0 on success or -errno on failure; on failure
+ * the dirty bitmap entry for `stripe_no` MUST stay set so the
+ * client can retry COMMIT.
+ */
+int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
+			      uint64_t stripe_no, const uint8_t *stripe_bytes,
+			      size_t stripe_len, int k, int m,
+			      enum ec_codec_type codec_type,
+			      layouttype4 layout_type, size_t shard_size,
+			      const struct authunix_parms *creds);
+
+/*
  * Default shard size for the back-compat ec_write / ec_read
  * wrappers (4 KiB).  Exported so callers that want the legacy
  * geometry have a named constant rather than a magic number.

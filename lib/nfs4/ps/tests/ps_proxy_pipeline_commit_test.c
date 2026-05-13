@@ -66,6 +66,18 @@ int mds_compound_send_with_auth(struct mds_compound *mc __attribute__((unused)),
 #define TEST_LISTENER_ID 11
 #define TEST_FH_BYTE 0xC0
 
+/*
+ * Geometry constants matching the WRITE handler's hardcoded Phase 4a
+ * snapshot (k=4, m=2, shard=4096).  Tests that exercise the slice
+ * 4b.2 fully-dirty flush path WRITE a TG_STRIPE-sized buffer so the
+ * dirty-bitmap walker sees a fully-dirty entry (pds_partial_mask
+ * NULL) and invokes ec_write_stripe_with_file.  Tests that exercise
+ * the partial-mask -EIO path WRITE a sub-stripe range instead.
+ */
+#define TG_K 4u
+#define TG_SHARD 4096u
+#define TG_STRIPE (TG_K * TG_SHARD) /* 16384 */
+
 static struct mds_session g_test_session;
 
 static void setup(void)
@@ -136,25 +148,29 @@ START_TEST(test_commit_returns_same_verifier_as_writes)
 {
 	uint8_t fh[] = { TEST_FH_BYTE };
 	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xB1 };
-	uint8_t data[] = { 'x' };
+	uint8_t *data = calloc(1, TG_STRIPE);
 	struct ps_proxy_write_reply w;
 	struct ps_proxy_commit_reply c;
 
+	ck_assert_ptr_nonnull(data);
 	memset(&w, 0, sizeof(w));
 	int ret = ps_proxy_pipeline_write(test_session(), fh, sizeof(fh), 0,
-					  sid, 0, 0, data, sizeof(data), NULL,
-					  &w);
+					  sid, 0, 0, data, TG_STRIPE, NULL, &w);
 	ck_assert_int_eq(ret, 0);
 
 	memset(&c, 0, sizeof(c));
 	ret = ps_proxy_pipeline_commit(test_session(), fh, sizeof(fh), 0, 0,
 				       NULL, &c);
 	/*
-	 * The mock fails LAYOUTGET so commit returns -EIO, but the
-	 * reply.verifier is populated only on the success path.
-	 * Repeat WITHOUT a prior WRITE (no buffer) and compare the
-	 * verifier the no-op path emits.  Both paths derive from the
-	 * same pls_boot_gen, so they MUST match.
+	 * The full-stripe WRITE marks the buffer fully-dirty for
+	 * stripe 0; the slice 4b.2 commit walk dispatches
+	 * ec_write_stripe_with_file -> mds_layout_get, the mock
+	 * returns -EIO, the codec bails before any DS work, and
+	 * pipeline_commit returns -EIO to the caller.
+	 * reply.verifier is populated only on the success path;
+	 * fire a no-buffer COMMIT below to capture the listener
+	 * verifier and prove it matches the WRITE's verifier --
+	 * both derive from pls_boot_gen.
 	 */
 	ck_assert_int_eq(ret, -EIO);
 
@@ -166,6 +182,7 @@ START_TEST(test_commit_returns_same_verifier_as_writes)
 	ck_assert_int_eq(ret, 0);
 	ck_assert_int_eq(memcmp(c.verifier, w.verifier, PS_PROXY_VERIFIER_SIZE),
 			 0);
+	free(data);
 }
 END_TEST
 
@@ -173,14 +190,15 @@ START_TEST(test_commit_keeps_buffer_on_failure)
 {
 	uint8_t fh[] = { TEST_FH_BYTE };
 	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xB2 };
-	uint8_t data[] = { 'y' };
+	uint8_t *data = calloc(1, TG_STRIPE);
 	struct ps_proxy_write_reply w;
 	struct ps_proxy_commit_reply c;
 
+	ck_assert_ptr_nonnull(data);
 	memset(&w, 0, sizeof(w));
 	ck_assert_int_eq(ps_proxy_pipeline_write(test_session(), fh, sizeof(fh),
-						 0, sid, 0, 0, data,
-						 sizeof(data), NULL, &w),
+						 0, sid, 0, 0, data, TG_STRIPE,
+						 NULL, &w),
 			 0);
 	ck_assert_uint_eq(listener_table_count(), 1);
 
@@ -189,10 +207,19 @@ START_TEST(test_commit_keeps_buffer_on_failure)
 					   NULL, &c);
 
 	ck_assert_int_eq(ret, -EIO);
-	/* Buffer must remain so the client can retry COMMIT. */
+	/*
+	 * Buffer must remain so the client can retry COMMIT.  In
+	 * slice 4b.2 the failure path also leaves the dirty entry
+	 * for stripe 0 set so the retry walks back to the same
+	 * ec_write_stripe_with_file call.
+	 */
 	ck_assert_uint_eq(listener_table_count(), 1);
-	/* And the upstream LAYOUTGET was attempted exactly once. */
+	/* And the upstream LAYOUTGET was attempted exactly once
+	 * (one fully-dirty stripe -> one per-stripe primitive call
+	 * -> one mds_layout_get attempt before the strong-override
+	 * returns -EIO). */
 	ck_assert_int_eq(g_send_call_count, 1);
+	free(data);
 }
 END_TEST
 
@@ -200,17 +227,17 @@ START_TEST(test_commit_attempt_uses_buffered_seqid)
 {
 	uint8_t fh[] = { TEST_FH_BYTE };
 	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xB3 };
-	uint8_t data[] = { 'z' };
+	uint8_t *data = calloc(1, TG_STRIPE);
 	struct ps_proxy_write_reply w;
 	struct ps_proxy_commit_reply c;
 	struct ps_listener_state *pls;
 	struct ps_write_buffer *buf;
 
+	ck_assert_ptr_nonnull(data);
 	memset(&w, 0, sizeof(w));
 	ck_assert_int_eq(ps_proxy_pipeline_write(test_session(), fh, sizeof(fh),
 						 /* stateid_seqid */ 42, sid, 0,
-						 0, data, sizeof(data), NULL,
-						 &w),
+						 0, data, TG_STRIPE, NULL, &w),
 			 0);
 
 	/*
@@ -226,17 +253,20 @@ START_TEST(test_commit_attempt_uses_buffered_seqid)
 	ps_write_buffer_release_find_ref(buf, pls);
 
 	/*
-	 * Now drive the actual commit attempt.  We don't have a way
-	 * to inspect the LAYOUTGET stateid that mds_layout_get sends
-	 * (the strong override fires after the compound is built),
-	 * so this test pins the buffer-side seqid stash and trusts
-	 * the codec call path -- a regression that stops storing
-	 * seqid would fail the ck_assert above and surface here.
+	 * Drive the commit attempt with a fully-dirty buffer so the
+	 * 4b.2 walk dispatches ec_write_stripe_with_file -- which is
+	 * the path that carries the stashed seqid into LAYOUTGET.
+	 * The strong override fires after the compound is built so
+	 * we can't inspect the stateid on the wire, but a regression
+	 * that stops storing seqid would surface above on the
+	 * pwb_stateid_seqid peek.
 	 */
 	memset(&c, 0, sizeof(c));
 	int ret = ps_proxy_pipeline_commit(test_session(), fh, sizeof(fh), 0, 0,
 					   NULL, &c);
 	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	free(data);
 }
 END_TEST
 
@@ -278,6 +308,84 @@ START_TEST(test_commit_after_listener_stop_returns_eagain)
 }
 END_TEST
 
+START_TEST(test_commit_partial_stripe_returns_io_without_flush)
+{
+	uint8_t fh[] = { TEST_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xB4 };
+	uint8_t data[] = { 'p' }; /* 1 byte -- a sub-shard WRITE */
+	struct ps_proxy_write_reply w;
+	struct ps_proxy_commit_reply c;
+
+	memset(&w, 0, sizeof(w));
+	ck_assert_int_eq(ps_proxy_pipeline_write(test_session(), fh, sizeof(fh),
+						 0, sid, 0, 0, data,
+						 sizeof(data), NULL, &w),
+			 0);
+
+	/*
+	 * Slice 4b.2 contract: a partial-mask dirty entry forces
+	 * the COMMIT walk to short-circuit with NFS4ERR_IO BEFORE
+	 * any upstream LAYOUTGET is attempted.  The buffer is kept
+	 * so the client can either widen the WRITE to fill the
+	 * stripe (collapsing the mask to "fully dirty") or wait for
+	 * slice 4b.3's RMW path.
+	 */
+	memset(&c, 0, sizeof(c));
+	int ret = ps_proxy_pipeline_commit(test_session(), fh, sizeof(fh), 0, 0,
+					   NULL, &c);
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 0);
+	ck_assert_uint_eq(listener_table_count(), 1);
+}
+END_TEST
+
+START_TEST(test_commit_multi_dirty_stops_on_first_failure)
+{
+	uint8_t fh[] = { TEST_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xB5 };
+	uint8_t *data = calloc(1, TG_STRIPE);
+	struct ps_proxy_write_reply w;
+	struct ps_proxy_commit_reply c;
+
+	ck_assert_ptr_nonnull(data);
+
+	/* WRITE stripe 0 (offset 0). */
+	memset(&w, 0, sizeof(w));
+	ck_assert_int_eq(ps_proxy_pipeline_write(test_session(), fh, sizeof(fh),
+						 0, sid, 0, 0, data, TG_STRIPE,
+						 NULL, &w),
+			 0);
+	/* WRITE stripe 1 (offset TG_STRIPE). */
+	memset(&w, 0, sizeof(w));
+	ck_assert_int_eq(ps_proxy_pipeline_write(test_session(), fh, sizeof(fh),
+						 0, sid, TG_STRIPE, 0, data,
+						 TG_STRIPE, NULL, &w),
+			 0);
+
+	/*
+	 * Two fully-dirty stripes.  The walk dispatches
+	 * ec_write_stripe_with_file for stripe 0 first; the strong
+	 * override fails LAYOUTGET on that call, and the loop
+	 * `break`s before attempting stripe 1.  Expected:
+	 *   - ret == -EIO
+	 *   - g_send_call_count == 1 (exactly the failing stripe's
+	 *     LAYOUTGET attempt; stripe 1 NOT attempted)
+	 *   - buffer stays (listener_table_count == 1)
+	 *   - both dirty entries remain (we don't observe them
+	 *     directly here -- the dirty-bitmap whitebox tests in
+	 *     ps_write_buffer_rmw_test pin that contract).
+	 */
+	memset(&c, 0, sizeof(c));
+	int ret = ps_proxy_pipeline_commit(test_session(), fh, sizeof(fh), 0, 0,
+					   NULL, &c);
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert_uint_eq(listener_table_count(), 1);
+
+	free(data);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -294,6 +402,8 @@ static Suite *ps_proxy_pipeline_commit_suite(void)
 	tcase_add_test(tc, test_commit_attempt_uses_buffered_seqid);
 	tcase_add_test(tc, test_commit_arg_validation);
 	tcase_add_test(tc, test_commit_after_listener_stop_returns_eagain);
+	tcase_add_test(tc, test_commit_partial_stripe_returns_io_without_flush);
+	tcase_add_test(tc, test_commit_multi_dirty_stops_on_first_failure);
 
 	suite_add_tcase(s, tc);
 	return s;

@@ -918,6 +918,305 @@ out_codec:
 	return ret;
 }
 
+/*
+ * Per-stripe write primitive (PS Phase 4b slice 4b.2).
+ *
+ * Encodes and writes exactly one fully-dirty stripe at file-level
+ * stripe number `stripe_no` using its own LAYOUTGET / FINALIZE /
+ * COMMIT / LAYOUTRETURN cycle.  The DS-side block offset is
+ * derived from `stripe_no` so two concurrent PSes writing
+ * disjoint stripes of the same upstream file do not stomp on each
+ * other's bytes -- that is the 4a multi-writer-shared-file fix.
+ *
+ * Caller MUST pass exactly k * shard_size bytes in
+ * stripe_bytes -- partial-stripe RMW is the next slice (4b.3) and
+ * lives outside this primitive.  The structure intentionally
+ * mirrors ec_write_codec_with_file's per-stripe inner loop body
+ * to keep the failure modes (encode error, DS write error,
+ * NFS4ERR_BAD_STATEID retry via ec_chunk_write, ESTALE outer
+ * retry via ec_layout_refresh) identical.  A refactor that
+ * factors the shared inner loop into a helper is tracked in the
+ * 4b.8 wrap-up; for now the duplication is contained.
+ */
+int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
+			      uint64_t stripe_no, const uint8_t *stripe_bytes,
+			      size_t stripe_len, int k, int m,
+			      enum ec_codec_type codec_type,
+			      layouttype4 layout_type, size_t shard_size,
+			      const struct authunix_parms *creds)
+{
+	struct ec_context ctx;
+	uint8_t **data_shards = NULL;
+	uint8_t **parity_shards = NULL;
+	uint8_t **enc_data = NULL;
+	bool nonsys;
+	uint32_t chunk_sz;
+	size_t ds_stride;
+	int outer_retry = 0;
+	int ret;
+
+	if (!mf || !stripe_bytes) {
+		ec_log("ec_write_stripe: NULL mf / stripe_bytes\n");
+		return -EINVAL;
+	}
+
+	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0 ||
+	    shard_size > EC_SHARD_SIZE_MAX) {
+		/*
+		 * Same constraint as ec_write_codec_with_file: Mojette
+		 * grids index columns as uint64_t and the upper bound
+		 * defends against caller-passed garbage when computing
+		 * stripe_data = k * shard_size.
+		 */
+		return -EINVAL;
+	}
+
+	if (k <= 0 || m <= 0)
+		return -EINVAL;
+	if (stripe_len != (size_t)k * shard_size) {
+		/*
+		 * The dirty-bitmap walker only invokes this for entries
+		 * with pds_partial_mask == NULL, which means every data
+		 * shard is present.  A mismatch is a programmer error
+		 * upstream -- the buffer's geometry diverged from what
+		 * the caller passed.
+		 */
+		ec_log("ec_write_stripe: stripe_len %zu != k*shard %zu\n",
+		       stripe_len, (size_t)k * shard_size);
+		return -EINVAL;
+	}
+
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.ctx_ms = ms;
+	ctx.ctx_k = k;
+	ctx.ctx_m = m;
+	ctx.ctx_file = *mf; /* shallow copy; caller owns mf */
+
+	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
+	if (!ctx.ctx_codec)
+		return -ENOMEM;
+
+	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
+			     creds, &ctx.ctx_layout);
+	if (ret) {
+		ec_log("ec_write_stripe: LAYOUTGET failed: %d\n", ret);
+		goto out_codec;
+	}
+
+	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
+		ec_log("ec_write_stripe: need %d mirrors, got %u\n", k + m,
+		       ctx.ctx_layout.el_nmirrors);
+		ret = -EINVAL;
+		goto out_layout;
+	}
+
+	ret = ec_resolve_mirrors(&ctx);
+	if (ret) {
+		ec_log("ec_write_stripe: resolve_mirrors failed: %d\n", ret);
+		goto out_layout;
+	}
+
+	data_shards = calloc(k, sizeof(uint8_t *));
+	parity_shards = calloc(m, sizeof(uint8_t *));
+	if (!data_shards || !parity_shards) {
+		ret = -ENOMEM;
+		goto out_shards;
+	}
+
+	for (int i = 0; i < m; i++) {
+		size_t psz = shard_write_size(ctx.ctx_codec, k + i, shard_size);
+
+		parity_shards[i] = calloc(1, psz);
+		if (!parity_shards[i]) {
+			ret = -ENOMEM;
+			goto out_shards;
+		}
+	}
+
+	nonsys = (codec_type == EC_CODEC_MOJETTE_NONSYS);
+	if (nonsys) {
+		enc_data = calloc(k, sizeof(uint8_t *));
+		if (!enc_data) {
+			ret = -ENOMEM;
+			goto out_shards;
+		}
+		for (int i = 0; i < k; i++) {
+			size_t dsz =
+				shard_write_size(ctx.ctx_codec, i, shard_size);
+
+			enc_data[i] = calloc(1, dsz);
+			if (!enc_data[i]) {
+				ret = -ENOMEM;
+				goto out_shards;
+			}
+		}
+	}
+
+	chunk_sz = ctx.ctx_layout.el_chunk_size;
+	if (chunk_sz == 0)
+		chunk_sz = (uint32_t)shard_size;
+
+	ds_stride = shard_size;
+	for (int i = 0; i < k + m; i++) {
+		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+
+		if (sz > ds_stride)
+			ds_stride = sz;
+	}
+
+retry_stripe:
+	/* Point data shards into stripe_bytes (the encode call only
+	 * reads from data_shards; the nonsys copy below provides a
+	 * separate mutable buffer for codecs that overwrite their input).
+	 */
+	for (int i = 0; i < k; i++)
+		data_shards[i] =
+			(uint8_t *)stripe_bytes + (size_t)i * shard_size;
+
+	if (nonsys) {
+		for (int i = 0; i < k; i++)
+			memcpy(enc_data[i], data_shards[i], shard_size);
+	}
+
+	ret = ctx.ctx_codec->ec_encode(ctx.ctx_codec,
+				       nonsys ? enc_data : data_shards,
+				       parity_shards, shard_size);
+	if (ret) {
+		ec_log("ec_write_stripe: encode failed: %d\n", ret);
+		goto out_shards;
+	}
+
+	/* Write data shards to mirrors 0..k-1 at the stripe's DS offset. */
+	for (int i = 0; i < k; i++) {
+		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
+		uint32_t wsz = (uint32_t)shard_write_size(ctx.ctx_codec, i,
+							  shard_size);
+		uint8_t *src = nonsys ? enc_data[i] : data_shards[i];
+
+		if (ctx.ctx_ds_sess) {
+			ret = ec_chunk_write(&ctx, i,
+					     stripe_no * DIV_CEIL(ds_stride,
+								  chunk_sz),
+					     chunk_sz, src, wsz, 1);
+		} else {
+			ret = ds_write(&ctx.ctx_conns[i], em->em_fh,
+				       em->em_fh_len, stripe_no * ds_stride,
+				       src, wsz);
+		}
+		if (ret) {
+			ec_log("ec_write_stripe: stripe %llu data[%d] "
+			       "FAILED: %d\n",
+			       (unsigned long long)stripe_no, i, ret);
+			ec_report_ds_error(&ctx, i, OP_WRITE);
+			break;
+		}
+	}
+	if (ret == -ESTALE && outer_retry < EC_OUTER_RETRY_MAX) {
+		outer_retry++;
+		ec_log("ec_write_stripe: stripe %llu data STALE, "
+		       "outer retry %d/%d (re-LAYOUTGET)\n",
+		       (unsigned long long)stripe_no, outer_retry,
+		       EC_OUTER_RETRY_MAX);
+		ret = ec_layout_refresh(&ctx, ms, layout_type, LAYOUTIOMODE4_RW,
+					outer_retry);
+		if (ret == 0)
+			goto retry_stripe;
+		ret = -ESTALE;
+		goto out_shards;
+	}
+	if (ret)
+		goto out_shards;
+
+	/* Write parity shards to mirrors k..k+m-1. */
+	for (int i = 0; i < m; i++) {
+		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[k + i];
+		uint32_t wsz = (uint32_t)shard_write_size(ctx.ctx_codec, k + i,
+							  shard_size);
+
+		if (ctx.ctx_ds_sess) {
+			ret = ec_chunk_write(
+				&ctx, k + i,
+				stripe_no * DIV_CEIL(ds_stride, chunk_sz),
+				chunk_sz, parity_shards[i], wsz, 1);
+		} else {
+			ret = ds_write(&ctx.ctx_conns[k + i], em->em_fh,
+				       em->em_fh_len, stripe_no * ds_stride,
+				       parity_shards[i], wsz);
+		}
+		if (ret) {
+			ec_log("ec_write_stripe: stripe %llu parity[%d] "
+			       "FAILED: %d\n",
+			       (unsigned long long)stripe_no, i, ret);
+			ec_report_ds_error(&ctx, k + i, OP_WRITE);
+			break;
+		}
+	}
+	if (ret == -ESTALE && outer_retry < EC_OUTER_RETRY_MAX) {
+		outer_retry++;
+		ec_log("ec_write_stripe: stripe %llu parity STALE, "
+		       "outer retry %d/%d (re-LAYOUTGET)\n",
+		       (unsigned long long)stripe_no, outer_retry,
+		       EC_OUTER_RETRY_MAX);
+		ret = ec_layout_refresh(&ctx, ms, layout_type, LAYOUTIOMODE4_RW,
+					outer_retry);
+		if (ret == 0)
+			goto retry_stripe;
+		ret = -ESTALE;
+		goto out_shards;
+	}
+	if (ret)
+		goto out_shards;
+
+	/*
+	 * FINALIZE + COMMIT for just this stripe's blocks (v2 only).
+	 * blocks_per_stripe matches ec_write_codec_with_file's
+	 * per-stripe block stride; the [base_block, base_block +
+	 * blocks_per_stripe) range covers the file space the parity-
+	 * largest shard occupies, with sparse codecs leaving holes
+	 * that chunk_store_transition skips.
+	 */
+	if (ctx.ctx_ds_sess) {
+		uint32_t blocks_per_stripe =
+			(uint32_t)DIV_CEIL(ds_stride, chunk_sz);
+		uint64_t base_block = stripe_no * (uint64_t)blocks_per_stripe;
+
+		for (int i = 0; i < k + m && ret == 0; i++) {
+			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
+
+			ret = ds_chunk_finalize(&ctx.ctx_ds_sess[i], em->em_fh,
+						em->em_fh_len, base_block,
+						blocks_per_stripe, 1);
+		}
+		for (int i = 0; i < k + m && ret == 0; i++) {
+			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
+
+			ret = ds_chunk_commit(&ctx.ctx_ds_sess[i], em->em_fh,
+					      em->em_fh_len, base_block,
+					      blocks_per_stripe, 1);
+		}
+	}
+
+out_shards:
+	if (enc_data) {
+		for (int i = 0; i < k; i++)
+			free(enc_data[i]);
+		free(enc_data);
+	}
+	if (parity_shards) {
+		for (int i = 0; i < m; i++)
+			free(parity_shards[i]);
+		free(parity_shards);
+	}
+	free(data_shards);
+	ec_disconnect_all(&ctx);
+out_layout:
+	mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
+	ec_layout_free(&ctx.ctx_layout);
+out_codec:
+	ec_codec_destroy(ctx.ctx_codec);
+	return ret;
+}
+
 int ec_write_codec(struct mds_session *ms, const char *path,
 		   const uint8_t *data, size_t data_len, int k, int m,
 		   enum ec_codec_type codec_type, layouttype4 layout_type,

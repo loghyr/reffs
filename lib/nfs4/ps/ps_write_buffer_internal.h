@@ -193,4 +193,19 @@ bool ps_dirty_stripe_is_fully_dirty(const struct ps_dirty_stripe *ds);
 bool ps_dirty_stripe_shard_is_dirty(const struct ps_dirty_stripe *ds,
 				    uint32_t shard);
 
+/*
+ * Remove a single stripe entry from the buffer's dirty hash
+ * table.  No-op if `stripe_no` is not currently marked dirty.
+ * Caller MUST hold buf->pwb_mutex; the helper is invoked by
+ * ps_proxy_pipeline_commit (PS Phase 4b slice 4b.2) after a
+ * successful per-stripe flush.
+ *
+ * The dirty table has no readers outside pwb_mutex (lookup_or_alloc
+ * and the table-drain path are the only other touchers, both
+ * mutex-bound), so the entry is freed directly without call_rcu --
+ * same pattern as pwb_dirty_table_drain.
+ */
+void ps_write_buffer_dirty_remove(struct ps_write_buffer *buf,
+				  uint32_t stripe_no);
+
 #endif /* PS_WRITE_BUFFER_INTERNAL_H */
