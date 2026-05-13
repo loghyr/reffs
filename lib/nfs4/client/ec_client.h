@@ -698,6 +698,41 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      const struct authunix_parms *creds);
 
 /*
+ * Per-stripe read primitive (PS Phase 4b slice 4b.3).  Mirror of
+ * ec_write_stripe_with_file but for the RMW prefix: acquires a
+ * READ layout, issues CHUNK_READ on each of the k+m mirrors for
+ * exactly this stripe's blocks, decodes via the codec's
+ * `ec_decode` (k-of-(k+m) quorum), and copies the k reconstructed
+ * data shards into `stripe_bytes`.  `stripe_bytes` MUST be exactly
+ * `k * shard_size` bytes -- the caller (the partial-stripe RMW
+ * walk in ps_proxy_pipeline_commit) then overwrites the dirty
+ * shard ranges from its in-memory buffer before invoking
+ * ec_write_stripe_with_file to flush the merged stripe.
+ *
+ * The CHUNK_READ pass tolerates up to `m` unreachable shards; if
+ * more than `m` shards are missing the decode fails with -EIO and
+ * the caller's COMMIT returns NFS4ERR_IO (the dirty bits stay set
+ * so a client retry can flush once the affected DSes recover).
+ * Sparse-file semantics (every shard reads back zero bytes) are
+ * out of scope for this slice -- a partial-stripe RMW into a stripe
+ * with no prior bytes on the DS returns -EIO.  The functional
+ * scripts/ci_ps_phase4b_test.sh covers the success path against
+ * a real MDS+DSes.
+ *
+ * `creds` -- optional per-call AUTH_SYS override for the MDS-side
+ * compounds (LAYOUTGET / LAYOUTRETURN).  Same forwarding contract
+ * as ec_write_stripe_with_file; pass NULL to use the session's
+ * default auth.  The same NOT_NOW_BROWN_COW for DS-side cred
+ * forwarding documented on ec_read_codec_with_file applies.
+ */
+int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
+			     uint64_t stripe_no, uint8_t *stripe_bytes,
+			     size_t stripe_len, int k, int m,
+			     enum ec_codec_type codec_type,
+			     layouttype4 layout_type, size_t shard_size,
+			     const struct authunix_parms *creds);
+
+/*
  * Default shard size for the back-compat ec_write / ec_read
  * wrappers (4 KiB).  Exported so callers that want the legacy
  * geometry have a named constant rather than a magic number.

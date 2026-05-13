@@ -308,7 +308,7 @@ START_TEST(test_commit_after_listener_stop_returns_eagain)
 }
 END_TEST
 
-START_TEST(test_commit_partial_stripe_returns_io_without_flush)
+START_TEST(test_commit_partial_stripe_attempts_rmw_read)
 {
 	uint8_t fh[] = { TEST_FH_BYTE };
 	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xB4 };
@@ -323,18 +323,29 @@ START_TEST(test_commit_partial_stripe_returns_io_without_flush)
 			 0);
 
 	/*
-	 * Slice 4b.2 contract: a partial-mask dirty entry forces
-	 * the COMMIT walk to short-circuit with NFS4ERR_IO BEFORE
-	 * any upstream LAYOUTGET is attempted.  The buffer is kept
-	 * so the client can either widen the WRITE to fill the
-	 * stripe (collapsing the mask to "fully dirty") or wait for
-	 * slice 4b.3's RMW path.
+	 * Slice 4b.3 contract: a partial-mask dirty entry triggers
+	 * the RMW prefix read (ec_read_stripe_with_file) BEFORE the
+	 * encode + write back.  The strong-override fails the very
+	 * first compound (the RMW read's LAYOUTGET) with -EIO;
+	 * expected counts:
+	 *   - ret == -EIO (per-stripe failure propagates).
+	 *   - g_send_call_count == 1 -- LAYOUTGET attempted.  This
+	 *     is the slice 4b.2 -> 4b.3 flip: 4b.2 short-circuited
+	 *     at 0 sends, 4b.3 fires at least 1.
+	 *   - buffer kept (listener_table_count == 1) so the client
+	 *     can retry COMMIT once the DSes are reachable.
+	 *
+	 * The success path (post-decode merge + CHUNK_WRITE +
+	 * FINALIZE + COMMIT) is exercised end-to-end by
+	 * scripts/ci_ps_phase4b_test.sh against a real MDS+DS
+	 * topology.  Pinning it in a unit test would require a
+	 * full mock MDS+DS pair, which is out of scope.
 	 */
 	memset(&c, 0, sizeof(c));
 	int ret = ps_proxy_pipeline_commit(test_session(), fh, sizeof(fh), 0, 0,
 					   NULL, &c);
 	ck_assert_int_eq(ret, -EIO);
-	ck_assert_int_eq(g_send_call_count, 0);
+	ck_assert_int_eq(g_send_call_count, 1);
 	ck_assert_uint_eq(listener_table_count(), 1);
 }
 END_TEST
@@ -402,7 +413,7 @@ static Suite *ps_proxy_pipeline_commit_suite(void)
 	tcase_add_test(tc, test_commit_attempt_uses_buffered_seqid);
 	tcase_add_test(tc, test_commit_arg_validation);
 	tcase_add_test(tc, test_commit_after_listener_stop_returns_eagain);
-	tcase_add_test(tc, test_commit_partial_stripe_returns_io_without_flush);
+	tcase_add_test(tc, test_commit_partial_stripe_attempts_rmw_read);
 	tcase_add_test(tc, test_commit_multi_dirty_stops_on_first_failure);
 
 	suite_add_tcase(s, tc);

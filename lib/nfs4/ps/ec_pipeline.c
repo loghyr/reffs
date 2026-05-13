@@ -1217,6 +1217,193 @@ out_codec:
 	return ret;
 }
 
+int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
+			     uint64_t stripe_no, uint8_t *stripe_bytes,
+			     size_t stripe_len, int k, int m,
+			     enum ec_codec_type codec_type,
+			     layouttype4 layout_type, size_t shard_size,
+			     const struct authunix_parms *creds)
+{
+	struct ec_context ctx;
+	uint8_t **shards = NULL;
+	bool *present = NULL;
+	uint32_t rd_chunk_sz;
+	size_t ds_stride;
+	int total;
+	int outer_retry = 0;
+	int ret;
+
+	if (!mf || !stripe_bytes) {
+		ec_log("ec_read_stripe: NULL mf / stripe_bytes\n");
+		return -EINVAL;
+	}
+
+	if (k <= 0 || m <= 0)
+		return -EINVAL;
+
+	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0 ||
+	    shard_size > EC_SHARD_SIZE_MAX)
+		return -EINVAL;
+
+	if (stripe_len != (size_t)k * shard_size) {
+		/*
+		 * Same defensive contract as ec_write_stripe_with_file: the
+		 * caller MUST allocate exactly k*shard_size for the k data
+		 * shards.  A mismatch is a programmer error in the RMW
+		 * walker upstream -- the buffer's geometry diverged from
+		 * what the caller passed.
+		 */
+		ec_log("ec_read_stripe: stripe_len %zu != k*shard %zu\n",
+		       stripe_len, (size_t)k * shard_size);
+		return -EINVAL;
+	}
+
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.ctx_ms = ms;
+	ctx.ctx_k = k;
+	ctx.ctx_m = m;
+	ctx.ctx_file = *mf; /* shallow copy; caller owns mf */
+
+	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
+	if (!ctx.ctx_codec)
+		return -ENOMEM;
+
+	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ, layout_type,
+			     creds, &ctx.ctx_layout);
+	if (ret) {
+		ec_log("ec_read_stripe: LAYOUTGET failed: %d\n", ret);
+		goto out_codec;
+	}
+
+	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
+		ec_log("ec_read_stripe: need %d mirrors, got %u\n", k + m,
+		       ctx.ctx_layout.el_nmirrors);
+		ret = -EINVAL;
+		goto out_layout;
+	}
+
+	ret = ec_resolve_mirrors(&ctx);
+	if (ret) {
+		ec_log("ec_read_stripe: resolve_mirrors failed: %d\n", ret);
+		goto out_layout;
+	}
+
+	rd_chunk_sz = ctx.ctx_layout.el_chunk_size;
+	if (rd_chunk_sz == 0)
+		rd_chunk_sz = (uint32_t)shard_size;
+
+	total = k + m;
+	shards = calloc(total, sizeof(uint8_t *));
+	present = calloc(total, sizeof(bool));
+	if (!shards || !present) {
+		ret = -ENOMEM;
+		goto out_shards;
+	}
+
+	for (int i = 0; i < total; i++) {
+		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+
+		/*
+		 * v2 CHUNK reads return whole blocks; round up to a chunk
+		 * boundary like ec_read_codec_with_file does.
+		 */
+		if (ctx.ctx_ds_sess)
+			sz = DIV_CEIL(sz, rd_chunk_sz) * rd_chunk_sz;
+
+		shards[i] = calloc(1, sz);
+		if (!shards[i]) {
+			ret = -ENOMEM;
+			goto out_shards;
+		}
+	}
+
+	/* DS offset stride matches the write side. */
+	ds_stride = shard_size;
+	for (int i = 0; i < total; i++) {
+		size_t sz = shard_write_size(ctx.ctx_codec, i, shard_size);
+
+		if (sz > ds_stride)
+			ds_stride = sz;
+	}
+
+retry_stripe_read: {
+	bool stale_seen = false;
+
+	for (int i = 0; i < total; i++) {
+		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
+		uint32_t nread = 0;
+		uint32_t rsz = (uint32_t)shard_write_size(ctx.ctx_codec, i,
+							  shard_size);
+		uint32_t err_opnum = OP_READ;
+
+		if (ctx.ctx_ds_sess) {
+			uint32_t nblk = DIV_CEIL(rsz, rd_chunk_sz);
+
+			err_opnum = OP_CHUNK_READ;
+			ret = ec_chunk_read(
+				&ctx, i,
+				stripe_no * DIV_CEIL(ds_stride, rd_chunk_sz),
+				nblk, shards[i], rd_chunk_sz, &nread);
+			present[i] = (ret == 0 && nread == nblk);
+		} else {
+			ret = ds_read(&ctx.ctx_conns[i], em->em_fh,
+				      em->em_fh_len, stripe_no * ds_stride,
+				      shards[i], rsz, &nread);
+			present[i] = (ret == 0 && nread == rsz);
+		}
+		if (ret == -ESTALE)
+			stale_seen = true;
+		if (!present[i])
+			ec_report_ds_error(&ctx, i, err_opnum);
+	}
+
+	ret = ctx.ctx_codec->ec_decode(ctx.ctx_codec, shards, present,
+				       shard_size);
+	if (ret && stale_seen && outer_retry < EC_OUTER_RETRY_MAX) {
+		outer_retry++;
+		ec_log("ec_read_stripe: stripe %llu decode failed "
+		       "with stale shards, outer retry %d/%d "
+		       "(re-LAYOUTGET)\n",
+		       (unsigned long long)stripe_no, outer_retry,
+		       EC_OUTER_RETRY_MAX);
+		ret = ec_layout_refresh(&ctx, ms, layout_type,
+					LAYOUTIOMODE4_READ, outer_retry);
+		if (ret == 0)
+			goto retry_stripe_read;
+		ec_log("ec_read_stripe: stripe %llu refresh failed: "
+		       "%d\n",
+		       (unsigned long long)stripe_no, ret);
+		ret = -ESTALE;
+		goto out_shards;
+	}
+	if (ret) {
+		ec_log("ec_read_stripe: stripe %llu decode failed: %d\n",
+		       (unsigned long long)stripe_no, ret);
+		goto out_shards;
+	}
+}
+
+	/* Copy the k reconstructed data shards into stripe_bytes. */
+	for (int i = 0; i < k; i++)
+		memcpy(stripe_bytes + (size_t)i * shard_size, shards[i],
+		       shard_size);
+
+out_shards:
+	if (shards) {
+		for (int i = 0; i < total; i++)
+			free(shards[i]);
+		free(shards);
+	}
+	free(present);
+	ec_disconnect_all(&ctx);
+out_layout:
+	mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
+	ec_layout_free(&ctx.ctx_layout);
+out_codec:
+	ec_codec_destroy(ctx.ctx_codec);
+	return ret;
+}
+
 int ec_write_codec(struct mds_session *ms, const char *path,
 		   const uint8_t *data, size_t data_len, int k, int m,
 		   enum ec_codec_type codec_type, layouttype4 layout_type,
