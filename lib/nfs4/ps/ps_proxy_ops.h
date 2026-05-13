@@ -506,27 +506,35 @@ int ps_proxy_forward_write(struct mds_session *ms, const uint8_t *upstream_fh,
  * (Phase 4a downgrades every WRITE to UNSTABLE4 -- DATA_SYNC4 /
  * FILE_SYNC4 is documented Phase 4b territory).
  *
- * `creds` is accepted for forward-compat with the 4a.2c COMMIT
- * shim (which threads them through ec_write_codec_with_file's
- * mds_layout_get) -- this WRITE entry does not call upstream and
- * ignores the value.
+ * `creds` is threaded through the per-stripe primitives when the
+ * slice 4b.6 inline flush fires (stable != UNSTABLE4); the
+ * UNSTABLE4 path defers the upstream call to COMMIT.
  *
- * `stable` is accepted from the wire so the eventual reply mirrors
- * the requested mode if Phase 4b lifts the UNSTABLE4 restriction;
- * for 4a it is ignored and the reply always carries UNSTABLE4.
+ * `stable` (stable_how4 per RFC 8881 S3.1.16):
+ *   0 (UNSTABLE4)  -- buffer-only, reply UNSTABLE4 + composed verf
+ *   1 (DATA_SYNC4) -- inline flush of the touched stripes, reply
+ *                     DATA_SYNC4 + composed verf
+ *   2 (FILE_SYNC4) -- same flush as DATA_SYNC4, reply FILE_SYNC4
+ *                     (reffs does not distinguish data vs metadata
+ *                     sync on the DS side)
+ * Other values are rejected as -EINVAL.
  *
  * Returns:
- *   0           success; reply populated with count, UNSTABLE4,
- *               and the listener verifier
+ *   0           success; reply populated with count, `stable`, and
+ *               the composed verifier
  *   -EINVAL     ms / upstream_fh / stateid_other / data / reply NULL,
- *               or upstream_fh_len / data_len == 0
+ *               or upstream_fh_len / data_len == 0, or unknown
+ *               stable
  *   -E2BIG      upstream_fh_len > PS_MAX_FH_SIZE
  *   -EFBIG      data_len > REFFS_PS_WRITE_BUFFER_MAX (single WRITE
  *               larger than the buffer cap can never succeed)
  *   -EAGAIN     listener draining / stopped, or buffered total
  *               (offset+count) past REFFS_PS_WRITE_BUFFER_MAX
  *   -ESTALE     listener boot generation changed under us
- *   -ENOMEM     buffer-table alloc failure
+ *   -ENOMEM     buffer-table or per-stripe scratch alloc failure
+ *   -EIO        inline-flush per-stripe write failed; dirty bits
+ *               for the touched stripes stay set so the client can
+ *               retry (only possible when stable != UNSTABLE4)
  */
 int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 			    uint32_t upstream_fh_len, uint32_t stateid_seqid,

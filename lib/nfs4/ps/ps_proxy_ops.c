@@ -2415,6 +2415,240 @@ static int pwb_ensure_capacity(struct ps_write_buffer *buf,
 	return 0;
 }
 
+/*
+ * Flush every dirty stripe in `buf` whose byte range [base, base +
+ * stripe_size) intersects [range_start, range_start + range_count).
+ * `range_count == 0` is the "flush every dirty stripe" sentinel
+ * (RFC 8881 S18.3.4 COMMIT semantics) and disables the filter; the
+ * sentinel is only used by `ps_proxy_pipeline_commit`, whose
+ * `count == 0` clients ask for a full commit.  The
+ * `ps_proxy_pipeline_write` inline-flush caller always passes
+ * `range_count == data_len > 0` (data_len == 0 is rejected before
+ * this helper is reached) and therefore never triggers the
+ * sentinel.
+ *
+ * Caller MUST hold `buf->pwb_mutex`.  The lock is held across the
+ * per-stripe RPCs (LAYOUTGET + CHUNK_READ + CHUNK_WRITE storm) per
+ * the design's serialisation argument (Risk #1 in proxy-server-
+ * phase4b.md tracks future async pipelining).
+ *
+ * Per-stripe dispatch:
+ *   - fully-dirty (pds_partial_mask == NULL): direct
+ *     ec_write_stripe_with_file from buf->pwb_data + base
+ *     (the 4b.2 full-stripe path).
+ *   - partial-mask: RMW.  Alloc a stripe-sized scratch buffer,
+ *     ec_read_stripe_with_file the existing stripe from the DS,
+ *     overwrite the shards covered by pds_partial_mask with bytes
+ *     from buf->pwb_data, then ec_write_stripe_with_file the merged
+ *     stripe (the 4b.3 RMW path).
+ *
+ * Successful per-stripe flushes remove the dirty entry from
+ * `pwb_dirty_ht`.  Any captured MDS verifier (from the per-stripe
+ * primitive's writeverf out-param) is folded into `buf->pwb_mds_verf`
+ * last-writer-wins -- the MDS verifier is monotonic per upstream
+ * boot epoch, so two stripes flushing in sequence see the same
+ * verifier unless an MDS restart happened between them, in which
+ * case the later stripe's verifier is the correct one to keep
+ * (Risk #7 in proxy-server-phase4b.md).
+ *
+ * Shared by `ps_proxy_pipeline_commit` (slice 4b.5; the full or
+ * range-bound dirty walk at COMMIT time) and
+ * `ps_proxy_pipeline_write` (slice 4b.6; the FILE_SYNC4 / DATA_SYNC4
+ * inline flush over just the bytes this WRITE touched).
+ *
+ * Returns:
+ *    0       every intersecting dirty stripe flushed cleanly (or no
+ *            stripes intersected); dirty entries for the flushed
+ *            stripes are removed; pwb_mds_verf reflects the most
+ *            recent per-stripe verifier if any was captured.
+ *   -EIO     a per-stripe flush failed; the loop bails on the first
+ *            failure and the remaining dirty entries -- including
+ *            the one that failed -- are kept for a client retry.
+ *   -ENOMEM  scratch / stripe_nos allocation failed; same retention
+ *            semantics as -EIO.
+ */
+static int pwb_flush_range_locked(struct ps_write_buffer *buf,
+				  struct mds_session *ms,
+				  const struct authunix_parms *creds,
+				  uint64_t range_start, uint64_t range_count)
+{
+	struct mds_file mf;
+	size_t stripe_size = 0;
+	uint32_t *stripe_nos = NULL;
+	size_t n_stripes = 0;
+	size_t capacity = 0;
+	int ret = 0;
+
+	if (!buf->pwb_geom_set)
+		return 0; /* no geometry -> no dirty stripes ever marked */
+
+	stripe_size =
+		(size_t)buf->pwb_geom.pwbg_k * buf->pwb_geom.pwbg_shard_size;
+	if (stripe_size == 0 || !buf->pwb_dirty_ht)
+		return 0;
+
+	/*
+	 * Construct an mds_file from the buffer's stashed key.  The
+	 * codec only reads it; we don't take ownership of any upstream
+	 * state.  stateid_seqid is whichever WRITE landed last under
+	 * pwb_mutex; stateid_other was set at alloc time and never
+	 * changes.
+	 */
+	memset(&mf, 0, sizeof(mf));
+	mf.mf_stateid.seqid = buf->pwb_stateid_seqid;
+	memcpy(mf.mf_stateid.other, buf->pwb_stateid_other,
+	       PS_STATEID_OTHER_SIZE);
+	mf.mf_fh.nfs_fh4_val = (char *)buf->pwb_upstream_fh;
+	mf.mf_fh.nfs_fh4_len = buf->pwb_upstream_fh_len;
+
+	{
+		struct cds_lfht_iter iter;
+		struct cds_lfht_node *node;
+		size_t total;
+
+		/*
+		 * Two-pass to keep allocation OUT of the rcu_read_lock
+		 * section (patterns/rcu-violations.md Pattern 1).
+		 * pwb_mutex is held across both passes, so the entry
+		 * count cannot change between them.
+		 */
+		total = ps_write_buffer_dirty_count(buf);
+		if (total > 0) {
+			stripe_nos = malloc(total * sizeof(uint32_t));
+			if (!stripe_nos)
+				return -ENOMEM;
+			capacity = total;
+		}
+
+		rcu_read_lock();
+		cds_lfht_first(buf->pwb_dirty_ht, &iter);
+		while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+			struct ps_dirty_stripe *ds = caa_container_of(
+				node, struct ps_dirty_stripe, pds_ht_node);
+			uint32_t s = ds->pds_stripe_no;
+
+			cds_lfht_next(buf->pwb_dirty_ht, &iter);
+
+			/*
+			 * Range filter (slice 4b.5 + 4b.6): skip
+			 * stripes whose [base, base + stripe_size) does
+			 * not intersect [range_start, range_end).  count
+			 * == 0 is the "every dirty stripe" sentinel.
+			 */
+			if (range_count > 0) {
+				uint64_t base = (uint64_t)s * stripe_size;
+				uint64_t end = base + stripe_size;
+				uint64_t range_end = range_start + range_count;
+
+				if (end <= range_start || base >= range_end)
+					continue;
+			}
+
+			/* Defensive: capacity == total from the count
+			 * walk; pwb_mutex prevented any growth. */
+			if (n_stripes < capacity)
+				stripe_nos[n_stripes++] = s;
+		}
+		rcu_read_unlock();
+	}
+
+	for (size_t i = 0; i < n_stripes; i++) {
+		uint32_t s = stripe_nos[i];
+		size_t base = (size_t)s * stripe_size;
+		struct ps_dirty_stripe *ds;
+		bool is_partial;
+		uint8_t stripe_mds_verf[PS_WRITE_VERIFIER_SIZE];
+		bool stripe_mds_verf_set = false;
+
+		ds = ps_write_buffer_dirty_lookup(buf, s);
+		if (!ds)
+			continue; /* defensive; cannot happen */
+		is_partial = (ds->pds_partial_mask != NULL);
+
+		if (is_partial) {
+			uint8_t *scratch;
+			uint32_t k = buf->pwb_geom.pwbg_k;
+			size_t shard_sz = buf->pwb_geom.pwbg_shard_size;
+			bool capacity_ok = true;
+
+			scratch = malloc(stripe_size);
+			if (!scratch) {
+				ret = -ENOMEM;
+				break;
+			}
+
+			ret = ec_read_stripe_with_file(
+				ms, &mf, (uint64_t)s, scratch, stripe_size,
+				(int)buf->pwb_geom.pwbg_k,
+				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
+				LAYOUT4_FLEX_FILES_V2,
+				buf->pwb_geom.pwbg_shard_size, creds);
+			if (ret) {
+				free(scratch);
+				break;
+			}
+
+			for (uint32_t shard = 0; shard < k; shard++) {
+				size_t shard_off;
+
+				if (!ps_dirty_stripe_shard_is_dirty(ds, shard))
+					continue;
+				shard_off = base + (size_t)shard * shard_sz;
+				if (shard_off + shard_sz > buf->pwb_capacity) {
+					capacity_ok = false;
+					break;
+				}
+				memcpy(scratch + (size_t)shard * shard_sz,
+				       buf->pwb_data + shard_off, shard_sz);
+			}
+			if (!capacity_ok) {
+				free(scratch);
+				ret = -EIO;
+				break;
+			}
+
+			ret = ec_write_stripe_with_file(
+				ms, &mf, (uint64_t)s, scratch, stripe_size,
+				(int)buf->pwb_geom.pwbg_k,
+				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
+				LAYOUT4_FLEX_FILES_V2,
+				buf->pwb_geom.pwbg_shard_size, creds,
+				stripe_mds_verf, &stripe_mds_verf_set);
+			free(scratch);
+			if (ret)
+				break;
+		} else {
+			if (base + stripe_size > buf->pwb_high_water) {
+				/* Defensive: a fully-dirty stripe whose
+				 * bytes extend past pwb_high_water cannot
+				 * have come from a legitimate WRITE. */
+				ret = -EIO;
+				break;
+			}
+
+			ret = ec_write_stripe_with_file(
+				ms, &mf, (uint64_t)s, buf->pwb_data + base,
+				stripe_size, (int)buf->pwb_geom.pwbg_k,
+				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
+				LAYOUT4_FLEX_FILES_V2,
+				buf->pwb_geom.pwbg_shard_size, creds,
+				stripe_mds_verf, &stripe_mds_verf_set);
+			if (ret)
+				break;
+		}
+
+		if (stripe_mds_verf_set) {
+			memcpy(buf->pwb_mds_verf, stripe_mds_verf,
+			       PS_WRITE_VERIFIER_SIZE);
+			buf->pwb_mds_verf_set = true;
+		}
+		ps_write_buffer_dirty_remove(buf, s);
+	}
+
+	free(stripe_nos);
+	return ret;
+}
+
 int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 			    uint32_t upstream_fh_len, uint32_t stateid_seqid,
 			    const uint8_t stateid_other[PS_STATEID_OTHER_SIZE],
@@ -2430,22 +2664,28 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	int ret;
 
 	/*
-	 * `stable` and `creds` are unused at this entry.  Phase 4a
-	 * downgrades every WRITE to UNSTABLE4 regardless of `stable`;
-	 * `creds` is threaded through ec_write_codec_with_file by
-	 * pipeline_commit (the COMMIT-time flush in 4a.2c), not here.
-	 * `stateid_seqid` IS used: stashed in the buffer under
-	 * pwb_mutex so pipeline_commit's LAYOUTGET has a stateid to
-	 * present (the COMMIT op itself carries none).
+	 * Slice 4b.6 activates `stable` and `creds`: a WRITE with
+	 * `stable != UNSTABLE4` triggers an inline flush of the
+	 * stripes this WRITE just touched, with `creds` threaded
+	 * through ec_*_stripe_with_file's LAYOUTGET / CHUNK_WRITE /
+	 * FINALIZE / COMMIT compounds.  UNSTABLE4 keeps the 4a
+	 * deferred-flush contract.  `stateid_seqid` is stashed in the
+	 * buffer for COMMIT-time LAYOUTGET.
+	 *
+	 * stable_how4 (RFC 8881 S3.1.16): 0 UNSTABLE4, 1 DATA_SYNC4,
+	 * 2 FILE_SYNC4.  The XDR decoder already rejects out-of-range
+	 * enum values on the wire, so this check is defence-in-depth
+	 * for the internal-caller path -- an op handler or future
+	 * slice that hands us an int instead of the decoded enum -- so
+	 * the inline-flush branch only ever sees a recognised value.
 	 */
-	(void)stable;
-	(void)creds;
-
 	if (!ms || !upstream_fh || upstream_fh_len == 0 || !stateid_other ||
 	    !data || data_len == 0 || !reply)
 		return -EINVAL;
 	if (upstream_fh_len > PS_MAX_FH_SIZE)
 		return -E2BIG;
+	if (stable > 2)
+		return -EINVAL;
 
 	memset(reply, 0, sizeof(*reply));
 
@@ -2575,16 +2815,42 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	}
 
 	/*
+	 * Slice 4b.6 inline flush.  If the client asked for FILE_SYNC4
+	 * (2) or DATA_SYNC4 (1), walk the dirty stripes whose byte
+	 * ranges intersect this WRITE's [offset, offset + data_len)
+	 * and flush each one via the shared per-stripe helper.  We
+	 * still hold pwb_mutex across the per-stripe RPCs (same
+	 * serialisation argument as the COMMIT path); the client
+	 * kernel already serialises ops per (stateid, fh).
+	 *
+	 * The helper captures any per-stripe MDS verifier into
+	 * pwb_mds_verf last-writer-wins, which the verifier snapshot
+	 * below picks up.  On success the reply carries the requested
+	 * stable level + the composed (listener XOR mds) verifier;
+	 * on failure the dirty bits stay set for any unflushed
+	 * stripes and the WRITE returns -EIO so the client can retry.
+	 *
+	 * reffs does not distinguish DATA_SYNC4 from FILE_SYNC4 on
+	 * the DS side (the dstore vtable has no metadata-sync split
+	 * separate from data-sync); both modes drive the same flush.
+	 */
+	if (stable != 0) {
+		int flush_ret = pwb_flush_range_locked(buf, ms, creds, offset,
+						       data_len);
+
+		if (flush_ret) {
+			pthread_mutex_unlock(&buf->pwb_mutex);
+			ps_write_buffer_release_find_ref(buf, pls);
+			return flush_ret;
+		}
+	}
+
+	/*
 	 * Snapshot the composed-verifier state under pwb_mutex BEFORE
-	 * we drop the find ref.  Today every successful COMMIT drops
-	 * the buffer, so a buffer reaching the WRITE reply path with
-	 * pwb_mds_verf_set == true would have to come from a follow-on
-	 * slice (4b.6 FILE_SYNC4 inline flush captures a verifier
-	 * without dropping the buffer).  Pinning the snapshot here
-	 * makes the WRITE reply behave correctly under that future
-	 * slice without a second sweep of this code; today it is the
-	 * mds_verf_set == false fall-through (listener-only verifier),
-	 * unchanged from 4a.
+	 * we drop the find ref.  The UNSTABLE4 path leaves
+	 * pwb_mds_verf_set false; the inline-flush path above may
+	 * have just set it, which is the slice 4b.4 / 4b.6 verifier-
+	 * mix design's intended cross-WRITE state.
 	 */
 	bool snap_mds_set = buf->pwb_mds_verf_set;
 	uint8_t snap_mds_verf[PS_WRITE_VERIFIER_SIZE] = { 0 };
@@ -2599,14 +2865,16 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 
 	/*
 	 * Reply.  count == data_len (we accepted every byte into the
-	 * buffer); committed = UNSTABLE4 (Phase 4a's downgrade-all);
-	 * verifier is the composed (listener XOR MDS-if-captured) form
-	 * so a listener restart OR an upstream DS reboot between WRITE
-	 * and COMMIT both surface as verifier mismatches (RFC 8881
-	 * S18.32.4 semantics; Risk #3a in proxy-server-phase4b.md).
+	 * buffer); committed mirrors `stable` -- UNSTABLE4 for the
+	 * 4a deferred-flush path, DATA_SYNC4 / FILE_SYNC4 when the
+	 * 4b.6 inline flush completed; the composed verifier (listener
+	 * XOR MDS-if-captured) lets the client detect either a listener
+	 * restart OR an upstream DS reboot between WRITE and COMMIT
+	 * as a mismatch (RFC 8881 S18.32.4 semantics; Risk #3a in
+	 * proxy-server-phase4b.md).
 	 */
 	reply->count = data_len;
-	reply->committed = 0; /* UNSTABLE4 */
+	reply->committed = stable;
 	ps_compose_write_verf(pls, snap_mds_set, snap_mds_verf,
 			      reply->verifier);
 	return 0;
@@ -2620,12 +2888,7 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	uint32_t listener_id;
 	struct ps_listener_state *pls;
 	struct ps_write_buffer *buf;
-	struct mds_file mf;
 	uint64_t buf_gen;
-	uint32_t *stripe_nos = NULL;
-	size_t n_stripes = 0;
-	size_t capacity = 0;
-	size_t stripe_size = 0;
 	size_t remaining_dirty = 0;
 	int ret;
 
@@ -2683,276 +2946,25 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	}
 
 	/*
-	 * Construct an mds_file from the buffer's stashed key.  The
-	 * codec only reads it; we don't take ownership of any
-	 * upstream state.  stateid_seqid is whichever WRITE landed
-	 * last under pwb_mutex; stateid_other was set at alloc time
-	 * and never changes.
-	 */
-	memset(&mf, 0, sizeof(mf));
-	mf.mf_stateid.seqid = buf->pwb_stateid_seqid;
-	memcpy(mf.mf_stateid.other, buf->pwb_stateid_other,
-	       PS_STATEID_OTHER_SIZE);
-	mf.mf_fh.nfs_fh4_val = (char *)buf->pwb_upstream_fh;
-	mf.mf_fh.nfs_fh4_len = buf->pwb_upstream_fh_len;
-
-	/*
-	 * Phase 4b.3 per-stripe flush walk.  Two-pass: collect the
-	 * stripe-numbers of every dirty entry into a local array,
-	 * then dispatch per-stripe.  Each entry is either:
-	 *   - fully-dirty (pds_partial_mask == NULL) -- direct
-	 *     ec_write_stripe_with_file from buf->pwb_data + base
-	 *     (the 4b.2 path); or
-	 *   - partial-mask -- RMW: alloc a stripe-sized scratch
-	 *     buffer, read the existing stripe from the DS via
-	 *     ec_read_stripe_with_file, overwrite the shards
-	 *     covered by pds_partial_mask with bytes from the PS
-	 *     write buffer, then ec_write_stripe_with_file the
-	 *     merged stripe.  This replaces 4b.2's partial_seen
-	 *     short-circuit (which returned NFS4ERR_IO without
-	 *     attempting any flush).
+	 * Delegate the per-stripe flush walk (collect + RMW or full-
+	 * stripe write + verifier capture) to the shared helper.  The
+	 * helper honours the range filter for count > 0; count == 0
+	 * is the RFC 8881 S18.3.4 "commit everything" sentinel.
 	 *
-	 * pwb_mutex is held across the per-stripe RPCs (LAYOUTGET +
-	 * CHUNK_READ + CHUNK_WRITE storm) for the same reason 4a
-	 * holds it across the codec call: serialisation is the
-	 * simplest correct answer when the client kernel already
-	 * serialises ops per (stateid, fh).  Risk #1 in proxy-server-
-	 * phase4b.md tracks this for future async pipelining.
+	 * Slice 4b.6 extracted this walk into pwb_flush_range_locked
+	 * so the FILE_SYNC4 / DATA_SYNC4 inline flush in
+	 * ps_proxy_pipeline_write can share the same per-stripe
+	 * machinery -- including the captured MDS-verifier last-
+	 * writer-wins fold into pwb_mds_verf.
 	 */
-	if (buf->pwb_geom_set) {
-		stripe_size = (size_t)buf->pwb_geom.pwbg_k *
-			      buf->pwb_geom.pwbg_shard_size;
-	}
+	ret = pwb_flush_range_locked(buf, ms, creds, offset, count);
 
-	if (buf->pwb_dirty_ht && stripe_size > 0) {
-		struct cds_lfht_iter iter;
-		struct cds_lfht_node *node;
-		size_t total;
-
-		/*
-		 * Two-pass to keep allocation OUT of the rcu_read_lock
-		 * section (patterns/rcu-violations.md Pattern 1).
-		 * pwb_mutex is held across both passes, so the entry
-		 * count cannot change between them.
-		 */
-		total = ps_write_buffer_dirty_count(buf);
-		if (total > 0) {
-			stripe_nos = malloc(total * sizeof(uint32_t));
-			if (!stripe_nos) {
-				pthread_mutex_unlock(&buf->pwb_mutex);
-				ps_write_buffer_release_find_ref(buf, pls);
-				return -ENOMEM;
-			}
-			capacity = total;
-		}
-
-		rcu_read_lock();
-		cds_lfht_first(buf->pwb_dirty_ht, &iter);
-		while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
-			struct ps_dirty_stripe *ds = caa_container_of(
-				node, struct ps_dirty_stripe, pds_ht_node);
-			uint32_t s = ds->pds_stripe_no;
-
-			cds_lfht_next(buf->pwb_dirty_ht, &iter);
-
-			/*
-			 * Slice 4b.5 range honouring.  When the client
-			 * passes a bounded range (count > 0), skip
-			 * stripes whose byte range [base, base + stripe_
-			 * size) does not intersect [offset, offset +
-			 * count); skipped stripes stay in pwb_dirty_ht
-			 * for a later COMMIT.  count == 0 is the RFC
-			 * 8881 S18.3.4 "commit everything" sentinel and
-			 * disables the filter (matched by the Linux
-			 * NFSv4 server and by ec_demo).  RFC 8881 also
-			 * permits the server to commit more than asked,
-			 * so the filter is a courtesy to clients that
-			 * pipeline narrow COMMITs across a wide write
-			 * range; the visible client-facing semantics
-			 * (a successful COMMIT means the requested bytes
-			 * are stable) are unchanged.
-			 */
-			if (count > 0) {
-				uint64_t base = (uint64_t)s * stripe_size;
-				uint64_t end = base + stripe_size;
-				uint64_t req_end = offset + count;
-
-				if (end <= offset || base >= req_end)
-					continue;
-			}
-
-			/*
-			 * Defensive: capacity == total from the count
-			 * walk above; pwb_mutex prevented any growth in
-			 * between, so n_stripes < capacity always holds.
-			 */
-			if (n_stripes < capacity)
-				stripe_nos[n_stripes++] = s;
-		}
-		rcu_read_unlock();
-	}
-
-	ret = 0;
-	for (size_t i = 0; i < n_stripes; i++) {
-		uint32_t s = stripe_nos[i];
-		size_t base = (size_t)s * stripe_size;
-		struct ps_dirty_stripe *ds;
-		bool is_partial;
-		uint8_t stripe_mds_verf[PS_WRITE_VERIFIER_SIZE];
-		bool stripe_mds_verf_set = false;
-
-		/*
-		 * Re-lookup under pwb_mutex (still held); the entry
-		 * pointer is stable as long as no one removes it, and
-		 * we are the only remover.
-		 */
-		ds = ps_write_buffer_dirty_lookup(buf, s);
-		if (!ds) {
-			/*
-			 * Cannot happen: stripe_nos came from this same
-			 * locked walk and has no duplicates.  Defensive
-			 * skip rather than NULL-deref.
-			 */
-			continue;
-		}
-		is_partial = (ds->pds_partial_mask != NULL);
-
-		if (is_partial) {
-			uint8_t *scratch;
-			uint32_t k = buf->pwb_geom.pwbg_k;
-			size_t shard_sz = buf->pwb_geom.pwbg_shard_size;
-			bool capacity_ok = true;
-
-			scratch = malloc(stripe_size);
-			if (!scratch) {
-				ret = -ENOMEM;
-				break;
-			}
-
-			/*
-			 * RMW prefix: read the existing stripe from
-			 * the DS into the scratch buffer.  Failure here
-			 * (DS unreachable, decode quorum lost, or the
-			 * stripe never had bytes on the DS at all)
-			 * leaves the dirty entry intact -- the client
-			 * retries COMMIT once the DSes recover.
-			 */
-			ret = ec_read_stripe_with_file(
-				ms, &mf, (uint64_t)s, scratch, stripe_size,
-				(int)buf->pwb_geom.pwbg_k,
-				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
-				LAYOUT4_FLEX_FILES_V2,
-				buf->pwb_geom.pwbg_shard_size, creds);
-			if (ret) {
-				free(scratch);
-				break;
-			}
-
-			/*
-			 * Overwrite the dirty shards with bytes from
-			 * the PS write buffer.  Per-shard capacity
-			 * bound: pds_partial_mask sets a bit when ANY
-			 * byte of the shard was touched, so mark_dirty's
-			 * contract only guarantees pwb_capacity >= first
-			 * byte + count -- which can be smaller than the
-			 * shard's upper edge.  pwb_ensure_capacity's
-			 * doubling strategy normally rounds new_cap up
-			 * to a power of two (multiple of shard_size for
-			 * shard_size == 4 KiB), so the upper edge is in-
-			 * bounds for any normally-sized buffer.  The
-			 * final-jump branch (need_capacity > REFFS_PS_
-			 * WRITE_BUFFER_MAX / 2) sets new_cap = need_
-			 * capacity exactly, which can leave a dirty
-			 * shard outside the allocation; in that corner
-			 * we fail this stripe with NFS4ERR_IO and keep
-			 * the dirty entry so a retry after the buffer
-			 * grows further can flush.  Untouched bytes
-			 * within a dirty shard (sub-shard WRITE in
-			 * pwb_data) are zero-fill from pwb_ensure_
-			 * capacity's freshly-grown tail; the design's
-			 * "Partial mask granularity" section documents
-			 * the shard-granularity trade-off.
-			 */
-			for (uint32_t shard = 0; shard < k; shard++) {
-				size_t shard_off;
-
-				if (!ps_dirty_stripe_shard_is_dirty(ds, shard))
-					continue;
-				shard_off = base + (size_t)shard * shard_sz;
-				if (shard_off + shard_sz > buf->pwb_capacity) {
-					capacity_ok = false;
-					break;
-				}
-				memcpy(scratch + (size_t)shard * shard_sz,
-				       buf->pwb_data + shard_off, shard_sz);
-			}
-			if (!capacity_ok) {
-				free(scratch);
-				ret = -EIO;
-				break;
-			}
-
-			ret = ec_write_stripe_with_file(
-				ms, &mf, (uint64_t)s, scratch, stripe_size,
-				(int)buf->pwb_geom.pwbg_k,
-				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
-				LAYOUT4_FLEX_FILES_V2,
-				buf->pwb_geom.pwbg_shard_size, creds,
-				stripe_mds_verf, &stripe_mds_verf_set);
-			free(scratch);
-			if (ret)
-				break;
-		} else {
-			if (base + stripe_size > buf->pwb_high_water) {
-				/*
-				 * Defensive: a fully-dirty stripe whose
-				 * bytes extend past pwb_high_water cannot
-				 * have come from a legitimate WRITE (mark_
-				 * dirty is called after the memcpy +
-				 * high_water update).  Bail with -EIO
-				 * rather than read past the buffer.
-				 */
-				ret = -EIO;
-				break;
-			}
-
-			ret = ec_write_stripe_with_file(
-				ms, &mf, (uint64_t)s, buf->pwb_data + base,
-				stripe_size, (int)buf->pwb_geom.pwbg_k,
-				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
-				LAYOUT4_FLEX_FILES_V2,
-				buf->pwb_geom.pwbg_shard_size, creds,
-				stripe_mds_verf, &stripe_mds_verf_set);
-			if (ret)
-				break;
-		}
-		/*
-		 * Capture the per-stripe MDS verifier into the buffer's
-		 * composed-verifier slot.  Last-writer-wins per buffer:
-		 * the MDS verifier is monotonic per upstream boot epoch,
-		 * so two stripes flushing in sequence both see the same
-		 * verifier unless an MDS restart happened between them,
-		 * in which case the later stripe's verifier is the
-		 * correct one to keep (Risk #7 in proxy-server-phase4b.md).
-		 */
-		if (stripe_mds_verf_set) {
-			memcpy(buf->pwb_mds_verf, stripe_mds_verf,
-			       PS_WRITE_VERIFIER_SIZE);
-			buf->pwb_mds_verf_set = true;
-		}
-		ps_write_buffer_dirty_remove(buf, s);
-	}
 	/*
 	 * Snapshot remaining dirty count under pwb_mutex: it
 	 * disambiguates "every dirty stripe was flushed" from "range
 	 * filter left some stripes behind" once the mutex is dropped.
 	 */
 	remaining_dirty = ps_write_buffer_dirty_count(buf);
-	/*
-	 * No verifier snapshot needed on this drop path: see the
-	 * success branch below for why the reply is listener-only.
-	 */
-	free(stripe_nos);
 	pthread_mutex_unlock(&buf->pwb_mutex);
 
 	if (ret == 0) {
@@ -2990,10 +3002,13 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	/*
 	 * Failure: keep the buffer with remaining dirty entries.  The
 	 * client retries COMMIT and the walk picks up where this one
-	 * left off.
+	 * left off.  Propagate the helper's ret verbatim (-EIO from a
+	 * per-stripe codec failure, -ENOMEM from a scratch / stripe_
+	 * nos allocation failure) so the op handler can map errno to
+	 * the right wire status.
 	 */
 	ps_write_buffer_release_find_ref(buf, pls);
-	return -EIO;
+	return ret;
 }
 
 int ps_proxy_pipeline_close(struct mds_session *ms, const uint8_t *upstream_fh,

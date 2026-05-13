@@ -9,19 +9,26 @@
 
 /*
  * Buffer-fill behaviour of ps_proxy_pipeline_write (PS Phase 4a
- * slice 4a.2b).  These tests pin the contract clients see across
- * sequential, sparse, and overwrite WRITE patterns -- without
- * involving any upstream MDS / DS round-trip.  The COMMIT-time
- * flush is slice 4a.2c.
+ * slice 4a.2b) plus the slice 4b.6 inline-flush behaviour for
+ * stable != UNSTABLE4.  The UNSTABLE4 tests pin the buffered-bytes
+ * contract clients see across sequential, sparse, and overwrite
+ * WRITE patterns -- without any upstream MDS / DS round-trip.
+ * The 4b.6 tests cover the FILE_SYNC4 / DATA_SYNC4 path, which
+ * calls into ec_*_stripe_with_file -> mds_compound_send_with_auth;
+ * those tests use the strong-override below to short-circuit the
+ * codec with -EIO so we can assert on attempt counts and post-
+ * flush dirty state without standing up a full mock MDS+DS.
  *
  * Tests reach into struct ps_write_buffer directly (via the
  * whitebox internal header) to verify the bytes landed where
- * expected.  No mds_compound_send_with_auth override needed:
- * pipeline_write never calls upstream.
+ * expected and to peek the dirty-stripe bitmap after a flush.
  */
 
 #include <check.h>
 #include <errno.h>
+#include <pthread.h>
+#include <rpc/rpc.h>
+#include <rpc/auth_unix.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -36,6 +43,24 @@
 #include "ps_state.h"
 #include "ps_write_buffer.h"
 #include "ps_write_buffer_internal.h"
+
+/* ------------------------------------------------------------------ */
+/* Strong override of mds_compound_send_with_auth (declared weak in   */
+/* lib/nfs4/client/mds_compound.c).  Active for every test in this    */
+/* TU -- the 4a UNSTABLE4 tests never reach upstream so the override  */
+/* is silent for them; the 4b.6 inline-flush tests rely on it.        */
+/* ------------------------------------------------------------------ */
+
+static int g_send_call_count;
+
+int mds_compound_send_with_auth(struct mds_compound *mc __attribute__((unused)),
+				struct mds_session *ms __attribute__((unused)),
+				const struct authunix_parms *creds
+				__attribute__((unused)))
+{
+	g_send_call_count++;
+	return -EIO; /* bail the codec before any DS work */
+}
 
 /* ------------------------------------------------------------------ */
 /* Fixture                                                             */
@@ -63,6 +88,8 @@ static void setup(void)
 	memset(&g_test_session, 0, sizeof(g_test_session));
 	atomic_store_explicit(&g_test_session.ms_kick_listener_id,
 			      TEST_LISTENER_ID, memory_order_relaxed);
+
+	g_send_call_count = 0;
 }
 
 static void teardown(void)
@@ -296,6 +323,253 @@ START_TEST(test_write_arg_validation)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Slice 4b.6: FILE_SYNC4 / DATA_SYNC4 inline flush                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Geometry constants mirror the WRITE handler's hardcoded Phase 4a
+ * snapshot (k=4, m=2, shard=4096).  A full TG_STRIPE-sized WRITE
+ * marks the buffer fully-dirty for the touched stripe, so the
+ * 4b.6 inline flush dispatches via ec_write_stripe_with_file
+ * (fully-dirty fast path) rather than the partial-mask RMW path.
+ */
+#define TG_K 4u
+#define TG_SHARD 4096u
+#define TG_STRIPE (TG_K * TG_SHARD) /* 16384 */
+
+/*
+ * Peek a single stripe's dirty entry by stripe number.  Returns
+ * true if the stripe is currently in pwb_dirty_ht.  Acquires
+ * quiesce + find ref + mutex for the duration of the lookup,
+ * then releases the find ref.
+ */
+static bool peek_stripe_dirty(const uint8_t *sid, const uint8_t *fh,
+			      size_t fh_len, uint32_t stripe_no)
+{
+	struct ps_listener_state *pls =
+		(struct ps_listener_state *)ps_state_find(TEST_LISTENER_ID);
+	struct ps_write_buffer *buf;
+	struct ps_dirty_stripe *ds;
+	bool dirty;
+
+	ck_assert(ps_write_buffer_enter_quiesce_or_bail(pls));
+	buf = ps_write_buffer_lookup(pls, sid, fh, fh_len);
+	if (!buf)
+		return false;
+	pthread_mutex_lock(&buf->pwb_mutex);
+	ds = ps_write_buffer_dirty_lookup(buf, stripe_no);
+	dirty = (ds != NULL);
+	pthread_mutex_unlock(&buf->pwb_mutex);
+	ps_write_buffer_release_find_ref(buf, pls);
+	return dirty;
+}
+
+START_TEST(test_write_unstable_buffers_only)
+{
+	uint8_t fh[] = { TEST_UPSTREAM_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xD1 };
+	uint8_t *data = calloc(1, TG_STRIPE);
+	struct ps_proxy_write_reply r;
+
+	ck_assert_ptr_nonnull(data);
+	memset(&r, 0, sizeof(r));
+
+	int ret = ps_proxy_pipeline_write(test_session(), fh, sizeof(fh), 0,
+					  sid, 0, /* stable UNSTABLE4 */ 0,
+					  data, TG_STRIPE, NULL, &r);
+	/*
+	 * UNSTABLE4 is the 4a deferred-flush path: bytes land in the
+	 * buffer, no upstream RPC fires, reply carries UNSTABLE4 +
+	 * the composed listener verifier.  Stripe 0 is now dirty
+	 * pending a future COMMIT.
+	 */
+	ck_assert_int_eq(ret, 0);
+	ck_assert_uint_eq(r.count, TG_STRIPE);
+	ck_assert_uint_eq(r.committed, 0); /* UNSTABLE4 */
+	ck_assert_int_eq(g_send_call_count, 0);
+	ck_assert(peek_stripe_dirty(sid, fh, sizeof(fh), 0));
+
+	free(data);
+}
+END_TEST
+
+START_TEST(test_write_file_sync_flushes_inline)
+{
+	uint8_t fh[] = { TEST_UPSTREAM_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xD2 };
+	uint8_t *data = calloc(1, TG_STRIPE);
+	struct ps_proxy_write_reply r;
+
+	ck_assert_ptr_nonnull(data);
+	memset(&r, 0, sizeof(r));
+
+	int ret = ps_proxy_pipeline_write(test_session(), fh, sizeof(fh), 0,
+					  sid, 0, /* stable FILE_SYNC4 */ 2,
+					  data, TG_STRIPE, NULL, &r);
+	/*
+	 * FILE_SYNC4 triggers the slice 4b.6 inline flush.  The
+	 * strong-override fails ec_write_stripe_with_file's
+	 * LAYOUTGET with -EIO, the per-stripe helper returns -EIO,
+	 * and the WRITE propagates -EIO.  Exactly one upstream
+	 * attempt fires (the fully-dirty stripe 0); the dirty
+	 * entry for stripe 0 stays set so the client can retry.
+	 * The UNSTABLE4 path (the test above) fires zero attempts;
+	 * this asymmetry is the smoking gun that the inline flush
+	 * was invoked.
+	 */
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert(peek_stripe_dirty(sid, fh, sizeof(fh), 0));
+
+	free(data);
+}
+END_TEST
+
+START_TEST(test_write_data_sync_flushes_inline)
+{
+	uint8_t fh[] = { TEST_UPSTREAM_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xD3 };
+	uint8_t *data = calloc(1, TG_STRIPE);
+	struct ps_proxy_write_reply r;
+
+	ck_assert_ptr_nonnull(data);
+	memset(&r, 0, sizeof(r));
+
+	int ret = ps_proxy_pipeline_write(test_session(), fh, sizeof(fh), 0,
+					  sid, 0, /* stable DATA_SYNC4 */ 1,
+					  data, TG_STRIPE, NULL, &r);
+	/*
+	 * DATA_SYNC4 takes the same inline-flush path as FILE_SYNC4
+	 * (reffs does not distinguish data vs metadata sync on the
+	 * DS side).  Same -EIO + 1-attempt + dirty-bit-retained
+	 * expectations as test_write_file_sync_flushes_inline.
+	 */
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert(peek_stripe_dirty(sid, fh, sizeof(fh), 0));
+
+	free(data);
+}
+END_TEST
+
+START_TEST(test_write_file_sync_failure_keeps_buffer)
+{
+	uint8_t fh[] = { TEST_UPSTREAM_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xD4 };
+	uint8_t *data = calloc(1, TG_STRIPE);
+	struct ps_proxy_write_reply r;
+	struct ps_listener_state *pls;
+
+	ck_assert_ptr_nonnull(data);
+	memset(&r, 0, sizeof(r));
+
+	int ret = ps_proxy_pipeline_write(test_session(), fh, sizeof(fh), 0,
+					  sid, 0, /* FILE_SYNC4 */ 2, data,
+					  TG_STRIPE, NULL, &r);
+	/*
+	 * Failure-path lifetime contract: when the inline flush
+	 * fails the WRITE returns -EIO, but the buffer survives
+	 * (release_find_ref drops only the per-op ref; the table
+	 * ref keeps the buffer alive for a client retry).  The
+	 * dirty bit for the touched stripe is retained so the
+	 * retry's COMMIT walks the same stripe.  The companion
+	 * test_write_file_sync_flushes_inline already pins the
+	 * -EIO + dirty-bit-kept return contract; this test adds
+	 * the buffer-survival assertion via listener_table_count.
+	 */
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	ck_assert(peek_stripe_dirty(sid, fh, sizeof(fh), 0));
+	pls = (struct ps_listener_state *)ps_state_find(TEST_LISTENER_ID);
+	ck_assert_uint_eq(ps_write_buffer_table_count(pls), 1);
+
+	free(data);
+}
+END_TEST
+
+START_TEST(test_write_file_sync_other_buffer_unaffected)
+{
+	uint8_t fh[] = { TEST_UPSTREAM_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xD5 };
+	uint8_t *data = calloc(1, TG_STRIPE);
+	struct ps_proxy_write_reply r1, r2;
+
+	ck_assert_ptr_nonnull(data);
+	memset(&r1, 0, sizeof(r1));
+	memset(&r2, 0, sizeof(r2));
+
+	/*
+	 * UNSTABLE4 WRITE to stripe 0 (buffered, no flush).
+	 */
+	ck_assert_int_eq(ps_proxy_pipeline_write(test_session(), fh, sizeof(fh),
+						 0, sid, 0, /* UNSTABLE4 */ 0,
+						 data, TG_STRIPE, NULL, &r1),
+			 0);
+	ck_assert(peek_stripe_dirty(sid, fh, sizeof(fh), 0));
+	ck_assert_int_eq(g_send_call_count, 0);
+
+	/*
+	 * FILE_SYNC4 WRITE to stripe 5 (offset 5 * TG_STRIPE).  The
+	 * range filter inside pwb_flush_range_locked scopes the
+	 * flush walk to stripes intersecting [5*TG_STRIPE,
+	 * 6*TG_STRIPE), which is just stripe 5.  Stripe 0 stays
+	 * buffered and dirty.  The strong-override fails stripe 5
+	 * with -EIO so we observe g_send_call_count == 1 and the
+	 * WRITE returns -EIO.
+	 *
+	 * Discrimination caveat: the strong-override's
+	 * unconditional -EIO means the walk loop bails after the
+	 * first attempt regardless of which stripe came first in
+	 * the lfht iteration order.  This test confirms the
+	 * post-flush state (both stripes dirty, buffer alive, one
+	 * upstream attempt) but does NOT by itself distinguish
+	 * "range filter scoped the walk to {5}" from "no filter,
+	 * walk hit 0 or 5 first and broke" -- both produce the
+	 * same assertions.  The Group D suite as a whole pins the
+	 * contract: test_write_unstable_buffers_only (0 attempts)
+	 * + test_write_file_sync_flushes_inline (1 attempt on the
+	 * just-written stripe) establish that the inline flush is
+	 * gated on stable and on the WRITE's stripe.  A success-
+	 * path mock that disambiguates the walk order is queued
+	 * as a follow-up (would also let us assert
+	 * `committed = FILE_SYNC4` end-to-end).
+	 */
+	int ret = ps_proxy_pipeline_write(test_session(), fh, sizeof(fh), 0,
+					  sid, 5ULL * TG_STRIPE,
+					  /* FILE_SYNC4 */ 2, data, TG_STRIPE,
+					  NULL, &r2);
+	ck_assert_int_eq(ret, -EIO);
+	ck_assert_int_eq(g_send_call_count, 1);
+	/* Stripe 0 dirty: it was outside the WRITE's byte range. */
+	ck_assert(peek_stripe_dirty(sid, fh, sizeof(fh), 0));
+	/* Stripe 5 dirty: attempted, failed, bit kept for retry. */
+	ck_assert(peek_stripe_dirty(sid, fh, sizeof(fh), 5));
+
+	free(data);
+}
+END_TEST
+
+START_TEST(test_write_unknown_stable_rejected)
+{
+	uint8_t fh[] = { TEST_UPSTREAM_FH_BYTE };
+	uint8_t sid[PS_STATEID_OTHER_SIZE] = { 0xD6 };
+	uint8_t data[] = { 'x' };
+	struct ps_proxy_write_reply r;
+
+	memset(&r, 0, sizeof(r));
+	/*
+	 * stable_how4 is 0/1/2; 3 is wire-malformed.  Reject before
+	 * any buffer / upstream work happens.
+	 */
+	int ret = ps_proxy_pipeline_write(test_session(), fh, sizeof(fh), 0,
+					  sid, 0, /* invalid */ 3, data,
+					  sizeof(data), NULL, &r);
+	ck_assert_int_eq(ret, -EINVAL);
+	ck_assert_int_eq(g_send_call_count, 0);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -312,6 +586,12 @@ static Suite *ps_proxy_pipeline_write_suite(void)
 	tcase_add_test(tc, test_write_larger_than_cap_returns_fbig);
 	tcase_add_test(tc, test_write_after_listener_stop_returns_eagain);
 	tcase_add_test(tc, test_write_arg_validation);
+	tcase_add_test(tc, test_write_unstable_buffers_only);
+	tcase_add_test(tc, test_write_file_sync_flushes_inline);
+	tcase_add_test(tc, test_write_data_sync_flushes_inline);
+	tcase_add_test(tc, test_write_file_sync_failure_keeps_buffer);
+	tcase_add_test(tc, test_write_file_sync_other_buffer_unaffected);
+	tcase_add_test(tc, test_write_unknown_stable_rejected);
 
 	suite_add_tcase(s, tc);
 	return s;
