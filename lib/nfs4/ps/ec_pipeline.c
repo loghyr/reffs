@@ -890,8 +890,8 @@ retry_stripe:
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 
 			ret = ds_chunk_commit(&ctx.ctx_ds_sess[i], em->em_fh,
-					      em->em_fh_len, 0, total_blocks,
-					      1);
+					      em->em_fh_len, 0, total_blocks, 1,
+					      NULL);
 		}
 	}
 
@@ -943,7 +943,8 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      size_t stripe_len, int k, int m,
 			      enum ec_codec_type codec_type,
 			      layouttype4 layout_type, size_t shard_size,
-			      const struct authunix_parms *creds)
+			      const struct authunix_parms *creds,
+			      uint8_t mds_verf_out[8], bool *mds_verf_set_out)
 {
 	struct ec_context ctx;
 	uint8_t **data_shards = NULL;
@@ -1179,6 +1180,8 @@ retry_stripe:
 		uint32_t blocks_per_stripe =
 			(uint32_t)DIV_CEIL(ds_stride, chunk_sz);
 		uint64_t base_block = stripe_no * (uint64_t)blocks_per_stripe;
+		uint8_t first_verf[8];
+		bool captured_verf = false;
 
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
@@ -1189,10 +1192,32 @@ retry_stripe:
 		}
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
+			/*
+			 * Capture the writeverf from mirror 0 only (PS
+			 * Phase 4b slice 4b.4).  The loop exits on the
+			 * first error (ret != 0 in the for-condition);
+			 * if mirror 0 errors no verifier is captured.
+			 * Otherwise mirror 0's writeverf is the sample
+			 * we keep and we pass NULL for mirrors
+			 * 1..k+m-1 to skip the per-call copy.  One
+			 * verifier per stripe-flush is sufficient:
+			 * monotonic per upstream boot epoch, fed by
+			 * 4b.6's FILE_SYNC4 inline flush path into the
+			 * WRITE-reply composer (Risk #7 in proxy-
+			 * server-phase4b.md).
+			 */
+			ret = ds_chunk_commit(
+				&ctx.ctx_ds_sess[i], em->em_fh, em->em_fh_len,
+				base_block, blocks_per_stripe, 1,
+				captured_verf ? NULL : first_verf);
+			if (ret == 0 && !captured_verf)
+				captured_verf = true;
+		}
 
-			ret = ds_chunk_commit(&ctx.ctx_ds_sess[i], em->em_fh,
-					      em->em_fh_len, base_block,
-					      blocks_per_stripe, 1);
+		if (ret == 0 && captured_verf && mds_verf_out &&
+		    mds_verf_set_out) {
+			memcpy(mds_verf_out, first_verf, 8);
+			*mds_verf_set_out = true;
 		}
 	}
 

@@ -914,3 +914,39 @@ size_t ps_write_buffer_table_count(struct ps_listener_state *pls)
 	rcu_read_unlock();
 	return n;
 }
+
+/* ------------------------------------------------------------------ */
+/* Composed write verifier (Phase 4b slice 4b.4)                       */
+/* ------------------------------------------------------------------ */
+
+void ps_compose_write_verf(const struct ps_listener_state *pls,
+			   bool mds_verf_set,
+			   const uint8_t mds_verf[PS_WRITE_VERIFIER_SIZE],
+			   uint8_t out[PS_WRITE_VERIFIER_SIZE])
+{
+	uint64_t gen;
+
+	if (!pls || !out)
+		return;
+
+	/*
+	 * Listener half: per-listener boot generation packed into the
+	 * verifier.  Matches the 4a pwb_compose_listener_verifier
+	 * encoding; this function is its 4b.4 superset (XOR-folds the
+	 * MDS half on top).
+	 */
+	gen = atomic_load_explicit(&pls->pls_boot_gen, memory_order_acquire);
+	memcpy(out, &gen, PS_WRITE_VERIFIER_SIZE);
+
+	if (!mds_verf_set)
+		return;
+
+	/*
+	 * MDS half: XOR the captured writeverf into the listener bytes.
+	 * Verifier compare is equality, so an XOR collision (same bytes
+	 * out for two different mds_verf values) only causes a missed-
+	 * mismatch -- the client retries on the next COMMIT.
+	 */
+	for (size_t i = 0; i < PS_WRITE_VERIFIER_SIZE; i++)
+		out[i] ^= mds_verf[i];
+}

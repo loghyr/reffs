@@ -562,9 +562,18 @@ int ds_chunk_finalize(struct mds_session *ds, const uint8_t *fh,
 
 /*
  * ds_chunk_commit -- CHUNK_COMMIT on a data server.
+ *
+ * `writeverf_out` (PS Phase 4b slice 4b.4) -- optional 8-byte buffer
+ * that receives the response's `ccr_writeverf` on success.  Pass
+ * NULL to ignore.  The verifier captures the DS's boot-epoch token
+ * and is folded into the PS composed write verifier (see
+ * ps_compose_write_verf) so a DS reboot between WRITE and COMMIT
+ * surfaces to the client as a verifier mismatch.  On error or NULL
+ * pass-through the buffer is left untouched.
  */
 int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
-		    uint64_t block_offset, uint32_t count, uint32_t owner_id);
+		    uint64_t block_offset, uint32_t count, uint32_t owner_id,
+		    uint8_t writeverf_out[8]);
 
 /* ------------------------------------------------------------------ */
 /* Plain I/O -- write/read through layout, no erasure coding            */
@@ -690,12 +699,23 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
  * the dirty bitmap entry for `stripe_no` MUST stay set so the
  * client can retry COMMIT.
  */
+/*
+ * `mds_verf_out` / `mds_verf_set_out` (PS Phase 4b slice 4b.4) --
+ * optional out-params for the composed-write-verifier mix.  On
+ * success the function captures the writeverf from the first
+ * mirror's CHUNK_COMMIT response into `mds_verf_out` and sets
+ * `*mds_verf_set_out = true`.  Pass NULL for both to skip the
+ * capture (ec_demo and the back-compat ec_write_codec callers do
+ * not need this).  On failure or NULL pass-through neither out-
+ * param is touched.
+ */
 int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      uint64_t stripe_no, const uint8_t *stripe_bytes,
 			      size_t stripe_len, int k, int m,
 			      enum ec_codec_type codec_type,
 			      layouttype4 layout_type, size_t shard_size,
-			      const struct authunix_parms *creds);
+			      const struct authunix_parms *creds,
+			      uint8_t mds_verf_out[8], bool *mds_verf_set_out);
 
 /*
  * Per-stripe read primitive (PS Phase 4b slice 4b.3).  Mirror of

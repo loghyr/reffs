@@ -7,6 +7,7 @@
 #include "config.h" // IWYU pragma: keep
 #endif
 
+#include <assert.h>
 #include <errno.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -2359,20 +2360,17 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 /* ------------------------------------------------------------------ */
 
 /*
- * Compose the per-listener write verifier.  Phase 4a uses the
- * listener's boot generation packed into 8 bytes -- a listener
- * restart bumps pls_boot_gen, so a client's COMMIT after the
- * restart sees a different verifier and rewrites (RFC 8881 S18.3.4
- * semantics).
+ * Compose the per-listener write verifier (PS Phase 4b slice 4b.4).
+ *
+ * The 4a helper that packed pls_boot_gen into 8 bytes is now folded
+ * into ps_compose_write_verf in ps_write_buffer.c -- pass
+ * `mds_verf_set == false` to get the listener-only encoding 4a
+ * used.  This shim keeps the buffer/commit reply call sites short
+ * while delegating the actual mix to the shared helper.
  */
-static void pwb_compose_listener_verifier(const struct ps_listener_state *pls,
-					  uint8_t out[PS_PROXY_VERIFIER_SIZE])
-{
-	uint64_t gen =
-		atomic_load_explicit(&pls->pls_boot_gen, memory_order_acquire);
-
-	memcpy(out, &gen, PS_PROXY_VERIFIER_SIZE);
-}
+static_assert(PS_PROXY_VERIFIER_SIZE == PS_WRITE_VERIFIER_SIZE,
+	      "verifier widths must match across ps_proxy_ops.h and "
+	      "ps_write_buffer.h");
 
 /*
  * Grow the buffer's pwb_data to at least `need_capacity` bytes.
@@ -2575,6 +2573,26 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 		if (gret == 0)
 			(void)ps_write_buffer_mark_dirty(buf, offset, data_len);
 	}
+
+	/*
+	 * Snapshot the composed-verifier state under pwb_mutex BEFORE
+	 * we drop the find ref.  Today every successful COMMIT drops
+	 * the buffer, so a buffer reaching the WRITE reply path with
+	 * pwb_mds_verf_set == true would have to come from a follow-on
+	 * slice (4b.6 FILE_SYNC4 inline flush captures a verifier
+	 * without dropping the buffer).  Pinning the snapshot here
+	 * makes the WRITE reply behave correctly under that future
+	 * slice without a second sweep of this code; today it is the
+	 * mds_verf_set == false fall-through (listener-only verifier),
+	 * unchanged from 4a.
+	 */
+	bool snap_mds_set = buf->pwb_mds_verf_set;
+	uint8_t snap_mds_verf[PS_WRITE_VERIFIER_SIZE] = { 0 };
+
+	if (snap_mds_set)
+		memcpy(snap_mds_verf, buf->pwb_mds_verf,
+		       PS_WRITE_VERIFIER_SIZE);
+
 	pthread_mutex_unlock(&buf->pwb_mutex);
 
 	ps_write_buffer_release_find_ref(buf, pls);
@@ -2582,13 +2600,15 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	/*
 	 * Reply.  count == data_len (we accepted every byte into the
 	 * buffer); committed = UNSTABLE4 (Phase 4a's downgrade-all);
-	 * verifier carries the listener boot generation so a client
-	 * COMMIT after a listener restart will detect the verifier
-	 * mismatch and rewrite.
+	 * verifier is the composed (listener XOR MDS-if-captured) form
+	 * so a listener restart OR an upstream DS reboot between WRITE
+	 * and COMMIT both surface as verifier mismatches (RFC 8881
+	 * S18.32.4 semantics; Risk #3a in proxy-server-phase4b.md).
 	 */
 	reply->count = data_len;
 	reply->committed = 0; /* UNSTABLE4 */
-	pwb_compose_listener_verifier(pls, reply->verifier);
+	ps_compose_write_verf(pls, snap_mds_set, snap_mds_verf,
+			      reply->verifier);
 	return 0;
 }
 
@@ -2643,11 +2663,13 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 		 * No buffered bytes for this FH -- spec-permitted no-op
 		 * COMMIT.  Return success with the listener verifier so
 		 * a client that interleaves COMMITs across reads-only
-		 * files still gets a consistent verifier.
+		 * files still gets a consistent verifier.  No buffer
+		 * means no captured MDS verifier; the composer falls
+		 * back to listener-only.
 		 * find_by_fh released our enter_quiesce reservation on
 		 * its NULL path (symmetric contract).
 		 */
-		pwb_compose_listener_verifier(pls, reply->verifier);
+		ps_compose_write_verf(pls, false, NULL, reply->verifier);
 		return 0;
 	}
 
@@ -2748,6 +2770,8 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 		size_t base = (size_t)s * stripe_size;
 		struct ps_dirty_stripe *ds;
 		bool is_partial;
+		uint8_t stripe_mds_verf[PS_WRITE_VERIFIER_SIZE];
+		bool stripe_mds_verf_set = false;
 
 		/*
 		 * Re-lookup under pwb_mutex (still held); the entry
@@ -2845,7 +2869,8 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 				(int)buf->pwb_geom.pwbg_k,
 				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
 				LAYOUT4_FLEX_FILES_V2,
-				buf->pwb_geom.pwbg_shard_size, creds);
+				buf->pwb_geom.pwbg_shard_size, creds,
+				stripe_mds_verf, &stripe_mds_verf_set);
 			free(scratch);
 			if (ret)
 				break;
@@ -2868,12 +2893,31 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 				stripe_size, (int)buf->pwb_geom.pwbg_k,
 				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
 				LAYOUT4_FLEX_FILES_V2,
-				buf->pwb_geom.pwbg_shard_size, creds);
+				buf->pwb_geom.pwbg_shard_size, creds,
+				stripe_mds_verf, &stripe_mds_verf_set);
 			if (ret)
 				break;
 		}
+		/*
+		 * Capture the per-stripe MDS verifier into the buffer's
+		 * composed-verifier slot.  Last-writer-wins per buffer:
+		 * the MDS verifier is monotonic per upstream boot epoch,
+		 * so two stripes flushing in sequence both see the same
+		 * verifier unless an MDS restart happened between them,
+		 * in which case the later stripe's verifier is the
+		 * correct one to keep (Risk #7 in proxy-server-phase4b.md).
+		 */
+		if (stripe_mds_verf_set) {
+			memcpy(buf->pwb_mds_verf, stripe_mds_verf,
+			       PS_WRITE_VERIFIER_SIZE);
+			buf->pwb_mds_verf_set = true;
+		}
 		ps_write_buffer_dirty_remove(buf, s);
 	}
+	/*
+	 * No verifier snapshot needed on this drop path: see the
+	 * success branch below for why the reply is listener-only.
+	 */
 	free(stripe_nos);
 	pthread_mutex_unlock(&buf->pwb_mutex);
 
@@ -2885,9 +2929,25 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 		 * intervening WRITE).  Drop the buffer; matches 4a's
 		 * success contract.  A subsequent WRITE on the same
 		 * (stateid, fh) lazy-allocates a fresh buffer.
+		 *
+		 * Verifier policy on this success-drop path: return the
+		 * listener-only encoding (mds_verf_set = false).  The
+		 * WRITE replies the client correlates against were
+		 * issued earlier in THIS buffer's lifetime, and at those
+		 * earlier WRITEs pwb_mds_verf_set was still false (the
+		 * per-stripe capture only happens INSIDE this COMMIT's
+		 * loop, after the WRITE replies were already sent).
+		 * Folding the captured verifier here would cause
+		 * V_w != V_c in the happy single-cycle case and trigger
+		 * an unnecessary client rewrite on every WRITE/COMMIT
+		 * pair.  4b.6 (FILE_SYNC4 inline flush) is the slice
+		 * that produces a cross-WRITE captured verifier and the
+		 * fold happens via the WRITE reply path -- which already
+		 * routes through ps_compose_write_verf with a real
+		 * pwb_mds_verf snapshot.
 		 */
 		ps_write_buffer_drop(buf, pls);
-		pwb_compose_listener_verifier(pls, reply->verifier);
+		ps_compose_write_verf(pls, false, NULL, reply->verifier);
 		return 0;
 	}
 

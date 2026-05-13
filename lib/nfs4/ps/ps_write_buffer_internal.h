@@ -111,6 +111,21 @@ struct ps_write_buffer {
 	bool pwb_geom_set;
 	struct cds_lfht *pwb_dirty_ht;
 
+	/*
+	 * Composed-verifier state (PS Phase 4b slice 4b.4).  pwb_mds_verf
+	 * captures the most recent writeverf observed in a successful
+	 * per-stripe flush's CHUNK_COMMIT response (currently the first
+	 * mirror's ccr_writeverf -- a per-DS-boot-epoch token).
+	 * pwb_mds_verf_set is false until the first successful flush;
+	 * ps_compose_write_verf folds the captured bytes into the
+	 * listener verifier so a DS reboot between WRITE and COMMIT
+	 * surfaces to the client as a verifier mismatch (RFC 8881
+	 * S18.32.4 semantics).  Mutated and read under pwb_mutex;
+	 * snapshotted by the reply paths before any drop/unref.
+	 */
+	uint8_t pwb_mds_verf[8]; /* == NFS4_VERIFIER_SIZE */
+	bool pwb_mds_verf_set;
+
 	/* RCU callback head for deferred free. */
 	struct rcu_head pwb_rcu_head;
 };

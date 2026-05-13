@@ -250,4 +250,50 @@ size_t ps_write_buffer_dirty_count(struct ps_write_buffer *buf);
  */
 size_t ps_write_buffer_table_count(struct ps_listener_state *pls);
 
+/* ------------------------------------------------------------------ */
+/* Composed write verifier (Phase 4b slice 4b.4)                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * NFSv4 verifier4 width in bytes (RFC 8881 S3.1).  Mirrored from
+ * PS_PROXY_VERIFIER_SIZE in ps_proxy_ops.h so callers that only
+ * include this header (the buffer + tests) do not need to pull in
+ * the wider op-handler surface for one constant.
+ */
+#define PS_WRITE_VERIFIER_SIZE 8
+
+/*
+ * Compose the 8-byte write verifier returned in WRITE / COMMIT
+ * replies.  Folds two halves: the per-listener boot generation
+ * (changes on PS restart) XOR'd with an optional MDS-supplied
+ * verifier byte-string (changes on upstream DS-boot-epoch change).
+ *
+ * `mds_verf_set == false` -> output equals the listener verifier
+ * unmodified; this is the "buffer has never flushed yet" path.  The
+ * client's subsequent COMMIT still sees the same listener verifier
+ * and the WRITE/COMMIT comparison succeeds when no MDS restart has
+ * happened.
+ *
+ * `mds_verf_set == true` -> output is `listener_verf XOR
+ * mds_verf[0..PS_WRITE_VERIFIER_SIZE]`.  An upstream MDS/DS reboot
+ * between WRITE and COMMIT changes `mds_verf`, the composed
+ * verifier changes, and the client sees a mismatch on COMMIT and
+ * rewrites -- closing Risk #3a from Phase 4a (silent data loss).
+ *
+ * Composition is XOR (non-cryptographic) because verifier compare
+ * is equality and collisions only cause a missed-mismatch, which
+ * degrades to "wait for the next COMMIT" (not a correctness
+ * violation).  See proxy-server-phase4b.md "Composed write
+ * verifier" and Risk #4.
+ *
+ * The buffer's `pwb_mds_verf` / `pwb_mds_verf_set` are mutated
+ * under pwb_mutex; the reply paths snapshot those into local
+ * stack copies before unlocking and call this helper with the
+ * snapshot.  The function itself takes no locks and is pure.
+ */
+void ps_compose_write_verf(const struct ps_listener_state *pls,
+			   bool mds_verf_set,
+			   const uint8_t mds_verf[PS_WRITE_VERIFIER_SIZE],
+			   uint8_t out[PS_WRITE_VERIFIER_SIZE]);
+
 #endif /* _REFFS_PS_WRITE_BUFFER_H */

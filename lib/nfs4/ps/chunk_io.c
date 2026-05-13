@@ -364,7 +364,8 @@ out:
 /* ------------------------------------------------------------------ */
 
 int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
-		    uint64_t block_offset, uint32_t count, uint32_t owner_id)
+		    uint64_t block_offset, uint32_t count, uint32_t owner_id,
+		    uint8_t writeverf_out[8])
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -413,8 +414,20 @@ int ds_chunk_commit(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	nfs_resop4 *res_slot = mds_compound_result(&mc, 2);
 
 	if (!res_slot ||
-	    res_slot->nfs_resop4_u.opchunk_commit.ccr_status != NFS4_OK)
+	    res_slot->nfs_resop4_u.opchunk_commit.ccr_status != NFS4_OK) {
 		ret = -EIO;
+	} else if (writeverf_out) {
+		/*
+		 * Capture the per-DS writeverf (PS Phase 4b slice 4b.4).
+		 * Folded into the PS composed write verifier so a DS
+		 * reboot between WRITE and COMMIT surfaces to the client
+		 * as a verifier mismatch.
+		 */
+		memcpy(writeverf_out,
+		       res_slot->nfs_resop4_u.opchunk_commit.CHUNK_COMMIT4res_u
+			       .ccr_resok4.ccr_writeverf,
+		       8);
+	}
 
 out:
 	if (mc.mc_args.argarray.argarray_len > 2) {
