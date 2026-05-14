@@ -507,9 +507,17 @@ proxy-SB file is buffered in PS RAM per (open stateid, upstream FH)
 and flushed through `ec_write_codec_with_file` on COMMIT (or on
 CLOSE-side best-effort flush).  Phase 4a is **DONE** as of 2026-05-12;
 see `.claude/design/proxy-server-phase4a.md` for the shipped-slice
-table.  Phase 4a unblocks `cp largefile mount/file` and IOR `-F 1`
-(file-per-process); it does NOT unblock chunk-collision Track 2
-(IOR `-F 0` shared-file) -- that is Phase 4b's per-stripe RMW work.
+table.
+
+**Phase 4b** ships the per-stripe RMW path, the composed write
+verifier (listener boot-gen XOR MDS-captured writeverf), the inline
+FILE_SYNC4 / DATA_SYNC4 flush at WRITE time, COMMIT range honouring,
+and the slice-4b.7 observability extension to
+`ps-write-buffer-stats`.  Phase 4b is **DONE** as of 2026-05-13; see
+`.claude/design/proxy-server-phase4b.md` for the shipped-slice
+table.  Together 4a + 4b unblock `cp largefile mount/file`, IOR
+`-F 1` (file-per-process), AND IOR `-F 0` chunk-collision Track 2
+(shared-file).
 
 Plumb `db_write` similarly.  End-to-end: client writes to PS --> PS
 encodes --> CHUNK_WRITE to DSes; client reads back --> PS decodes.

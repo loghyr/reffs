@@ -12,9 +12,23 @@ tracking, partial-stripe RMW, and the verifier composition that
 together unblock chunk-collision-validation Track 2 (IOR `-F 0`
 shared file).
 
-## Status (planning, 2026-05-12)
+## Status (shipped 2026-05-13)
 
-Phase 4a left three classes of incorrectness on the table:
+Phase 4b is **structurally complete**: every problem in the table
+below is closed.  Slices shipped:
+
+| Slice | Commit          | What                                                                                         |
+|-------|-----------------|----------------------------------------------------------------------------------------------|
+| 4b.1  | `9c614d357925`  | Per-stripe dirty bitmap + WRITE-time marking                                                  |
+| 4b.2  | `d328298ed903`  | Per-stripe full-stripe flush primitive                                                        |
+| 4b.3  | `52b31473ead6`  | Partial-stripe RMW (CHUNK_READ prefix + merge + CHUNK_WRITE)                                  |
+| 4b.4  | `fa5f476a9942`  | Composed write verifier (listener boot-gen XOR captured MDS writeverf)                        |
+| 4b.5  | `35694853b318`  | COMMIT range honouring (intersect dirty stripes with args->offset / args->count)              |
+| 4b.6  | `481ed36dd97b`  | FILE_SYNC4 / DATA_SYNC4 inline flush on WRITE                                                 |
+| 4b.7  | `ca34e7195da3`  | `ps-write-buffer-stats` probe extension + Group E collision-counter regression tests          |
+| 4b.8  | _this commit_   | Wrap-up: design docs updated to "DONE"                                                        |
+
+Phase 4a entered with three classes of incorrectness on the table:
 
 | Problem | 4a behaviour | 4b fix |
 |---------|--------------|--------|

@@ -704,19 +704,23 @@ verifier mismatch on COMMIT and rewrite.
 
 - **Phase 4b: per-stripe RMW.**  The spec-compliant path that
   preserves multi-writer-shared-file semantics and unblocks
-  Track 2 chunk-collision IOR `-F 0`.  Tracked as its own design
-  doc (`proxy-server-phase4b.md`) once 4a lands.
+  Track 2 chunk-collision IOR `-F 0`.  Shipped 2026-05-13; the
+  finalised design doc is `proxy-server-phase4b.md`.  4b also
+  delivered the composed write verifier (4b.4), COMMIT range
+  honouring (4b.5), and the FILE_SYNC4 / DATA_SYNC4 inline flush
+  (4b.6) -- so the "Phase 4b territory" mentions on
+  DATA_SYNC4 / FILE_SYNC4 below are now closed.
 - **Direct-to-disk WRITE (no buffering).**  An optimisation for
   writes that perfectly align to stripe boundaries (offset and
   count both multiples of `k * shard_size`).  These could
   encode-and-stripe inline without buffering.  Defer; correctness
   first, perf later.
-- **DATA_SYNC4 / FILE_SYNC4 honoured.**  Today every write is
-  treated as UNSTABLE4 regardless of client request.  The spec
-  permits this but a client asking for FILE_SYNC4 expects
-  durability before the WRITE reply.  Phase 4b territory; will
-  require synchronous flush on the WRITE itself rather than at
-  COMMIT.
+- **DATA_SYNC4 / FILE_SYNC4 honoured.**  Phase 4a treated every
+  write as UNSTABLE4 regardless of client request.  Phase 4b
+  slice 4b.6 shipped the inline flush so that a client asking
+  for FILE_SYNC4 / DATA_SYNC4 now observes the requested level
+  in the reply once the per-stripe flush succeeds.  No longer
+  deferred.
 - **Buffer spill to disk.**  The 1 GiB RAM cap is restrictive for
   workloads with many parallel large open files.  A spill-to-tmp
   fallback is plausible but not in 4a scope.
