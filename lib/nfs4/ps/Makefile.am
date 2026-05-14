@@ -16,6 +16,7 @@ libreffs_nfs4_ps_la_SOURCES = \
 	ec_pipeline.c \
 	ps_discovery.c \
 	ps_inode.c \
+	ps_local_addr.c \
 	ps_mount_client.c \
 	ps_owner.c \
 	ps_proxy_ops.c \

@@ -10,6 +10,7 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <sys/socket.h> /* struct sockaddr_storage, socklen_t */
 
 #include "nfsv42_xdr.h" /* nfsstat4 */
 #include "reffs/settings.h"
@@ -52,6 +53,30 @@ enum ps_listener_state_kind {
  * more, the extras are logged and skipped.
  */
 #define PS_MAX_EXPORTS_PER_LISTENER 32
+
+/*
+ * Maximum local IP addresses the PS tracks per listener for the
+ * Phase 5 short-circuit decision.  Each entry is the result of
+ * getifaddrs(3) at register time.  A handful covers all practical
+ * topologies: loopback + a couple of LAN / overlay interfaces;
+ * containerised deployments rarely exceed 4.  Excess interfaces
+ * are silently truncated -- a remote DS address that happens to
+ * coincide with a truncated local interface simply takes the
+ * RPC path, which is correct (just not optimal).
+ */
+#define PS_MAX_LOCAL_ADDRS 8
+
+/*
+ * One local IP address the PS could route to.  Stored as a
+ * sockaddr_storage so the same array can hold both IPv4 and IPv6
+ * entries; la_len records the meaningful prefix so memcmp on the
+ * family-specific portion (sin_addr / sin6_addr) is well-defined
+ * without reading past the active field.
+ */
+struct ps_local_addr {
+	struct sockaddr_storage la_ss;
+	socklen_t la_len;
+};
 
 /*
  * Per-discovered-export record: the upstream path and the FH we
@@ -274,6 +299,25 @@ struct ps_listener_state {
 	_Atomic uint64_t pls_close_flush_timeouts_total;
 	_Atomic uint64_t pls_rmw_reads_total;
 	_Atomic uint64_t pls_rmw_read_failures_total;
+
+	/*
+	 * Phase 5 short-circuit address table.  Seeded once by
+	 * ps_local_addr_seed() during ps_state_register(), before the
+	 * slot is published via the release-store on ps_nlisteners.
+	 * Readers (per-mirror fanout setup) consult the table via
+	 * ps_local_addr_match() to decide whether a DS deviceinfo
+	 * resolves to a local DS sb and the RPC path can be bypassed.
+	 *
+	 * The table is single-writer / many-reader and immutable after
+	 * register-time seed, so no atomic discipline is needed --
+	 * the publish edge on ps_nlisteners fences every byte.
+	 *
+	 * pls_nlocal_addrs caps at PS_MAX_LOCAL_ADDRS; hosts with more
+	 * interfaces are truncated silently, which only costs the
+	 * short-circuit win on the dropped addresses.
+	 */
+	struct ps_local_addr pls_local_addrs[PS_MAX_LOCAL_ADDRS];
+	uint32_t pls_nlocal_addrs;
 };
 
 /*

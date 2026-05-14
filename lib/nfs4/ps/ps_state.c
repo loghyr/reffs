@@ -17,6 +17,7 @@
 #include "reffs/settings.h"
 
 #include "ec_client.h" /* mds_session_destroy */
+#include "ps_local_addr.h"
 #include "ps_renewal.h" /* ps_renewal_kick */
 #include "ps_state.h"
 #include "ps_write_buffer.h"
@@ -137,6 +138,15 @@ int ps_state_register(const struct reffs_proxy_mds_config *cfg)
 		pthread_mutex_destroy(&pls->pls_discovery_mutex);
 		return werr;
 	}
+
+	/*
+	 * Phase 5 short-circuit table.  Best-effort -- a getifaddrs(3)
+	 * failure leaves the table empty, and ps_local_addr_match() then
+	 * returns false for every probe so the RPC path runs.  That is
+	 * always safe; the only consequence is missing the co-resident DS
+	 * fast-path win.  Registration must not fail on a seed error.
+	 */
+	(void)ps_local_addr_seed(pls);
 
 	/* Publish: release-store pairs with acquire-load in ps_state_find. */
 	atomic_store_explicit(&ps_nlisteners, n + 1, memory_order_release);
