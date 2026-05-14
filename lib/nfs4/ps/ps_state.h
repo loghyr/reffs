@@ -334,10 +334,12 @@ struct ps_listener_state {
 	 */
 	int (*pls_sc_write_fn)(const uint8_t *fh, uint32_t fh_len,
 			       uint64_t block_offset, const uint8_t *data,
-			       size_t data_len);
+			       size_t data_len, uint32_t fwd_uid,
+			       uint32_t fwd_gid);
 	int (*pls_sc_read_fn)(const uint8_t *fh, uint32_t fh_len,
 			      uint64_t block_offset, size_t buf_len,
-			      uint8_t *buf, uint32_t *nread);
+			      uint8_t *buf, uint32_t *nread, uint32_t fwd_uid,
+			      uint32_t fwd_gid);
 };
 
 /*

@@ -60,12 +60,17 @@ void ps_shortcircuit_install(struct ps_listener_state *pls);
  * `offset` units the upstream RPC path uses; the helpers do not
  * scale by block size).
  *
- * NOT_NOW_BROWN_COW (slice 5.3): per-request cred check against the
- * local DS file's synthetic uid/gid.  Slice 5.2 leaves the access
- * decision to the caller's wider authorization model; until 5.3
- * lands, callers MUST gate the dispatch hook on a credential test
- * upstream.  Direct callers (e.g. unit tests) bypass that gate by
- * construction.
+ * Per-request cred check: forwarded_uid / forwarded_gid carry the
+ * synthetic AUTH_SYS credentials the layout granted to the upstream
+ * client.  The helpers compare them against the local file's stored
+ * i_uid / i_gid (the synthetic-fenced values the MDS chmod'd onto
+ * the DS file at runway-pop time) and return -EACCES on mismatch
+ * BEFORE touching the data block.  This mirrors what the RPC path's
+ * NFSv3 / CHUNK access check would have rejected.  Callers pass the
+ * same uid/gid pair the layout-decode placed on
+ * struct ec_mirror.em_uid / em_gid; root-squash (if any) is
+ * expected to have already transformed those values upstream so a
+ * forwarded uid=0 against a fenced file decodes here as a mismatch.
  *
  * NOT_NOW_BROWN_COW (slice 5.4): trust-stateid table lookup.  Once
  * trust-stateid Phase 1 ships on the PS, the layout stateid MUST
@@ -74,10 +79,12 @@ void ps_shortcircuit_install(struct ps_listener_state *pls);
  */
 int ps_shortcircuit_write(const uint8_t *fh, uint32_t fh_len,
 			  uint64_t block_offset, const uint8_t *data,
-			  size_t data_len);
+			  size_t data_len, uint32_t forwarded_uid,
+			  uint32_t forwarded_gid);
 
 int ps_shortcircuit_read(const uint8_t *fh, uint32_t fh_len,
 			 uint64_t block_offset, size_t buf_len, uint8_t *buf,
-			 uint32_t *nread);
+			 uint32_t *nread, uint32_t forwarded_uid,
+			 uint32_t forwarded_gid);
 
 #endif /* _REFFS_PS_SHORTCIRCUIT_H */

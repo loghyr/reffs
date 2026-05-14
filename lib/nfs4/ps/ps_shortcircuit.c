@@ -9,12 +9,14 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
 
 #include "reffs/data_block.h"
 #include "reffs/filehandle.h"
+#include "reffs/identity.h"
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 
@@ -82,9 +84,30 @@ static void finish_lookup(struct super_block *sb, struct inode *inode)
 	super_block_put(sb);
 }
 
+/*
+ * Forwarded-cred check against the local file's synthetic uid/gid.
+ * The MDS chmod'd the runway file with the synthetic uid/gid the
+ * layout grants to the upstream client, so a layout-honoured I/O
+ * always carries matching credentials.  The RPC path enforces this
+ * via AUTH_SYS owner / group match before the data block is touched;
+ * the short path replicates the rule so a forwarded cred the RPC
+ * path would reject (wrong uid, or root squashed to nobody) does
+ * not silently succeed here.  Accept-on-either matches the typical
+ * UNIX open-access pattern (owner OR group hit grants access).
+ */
+static bool creds_match(const struct inode *inode, uint32_t fwd_uid,
+			uint32_t fwd_gid)
+{
+	uint32_t stored_uid = reffs_id_to_uid(inode->i_uid);
+	uint32_t stored_gid = reffs_id_to_uid(inode->i_gid);
+
+	return fwd_uid == stored_uid || fwd_gid == stored_gid;
+}
+
 int ps_shortcircuit_write(const uint8_t *fh, uint32_t fh_len,
 			  uint64_t block_offset, const uint8_t *data,
-			  size_t data_len)
+			  size_t data_len, uint32_t forwarded_uid,
+			  uint32_t forwarded_gid)
 {
 	uint64_t sb_id, ino;
 	int ret;
@@ -99,6 +122,11 @@ int ps_shortcircuit_write(const uint8_t *fh, uint32_t fh_len,
 	ret = lookup_target(sb_id, ino, &sb, &inode);
 	if (ret)
 		return ret;
+
+	if (!creds_match(inode, forwarded_uid, forwarded_gid)) {
+		finish_lookup(sb, inode);
+		return -EACCES;
+	}
 
 	/*
 	 * Lock ordering matches lib/nfs4/server/chunk.c's nfs4_op_chunk_write:
@@ -147,7 +175,8 @@ void ps_shortcircuit_install(struct ps_listener_state *pls)
 
 int ps_shortcircuit_read(const uint8_t *fh, uint32_t fh_len,
 			 uint64_t block_offset, size_t buf_len, uint8_t *buf,
-			 uint32_t *nread)
+			 uint32_t *nread, uint32_t forwarded_uid,
+			 uint32_t forwarded_gid)
 {
 	uint64_t sb_id, ino;
 	int ret;
@@ -164,6 +193,11 @@ int ps_shortcircuit_read(const uint8_t *fh, uint32_t fh_len,
 	ret = lookup_target(sb_id, ino, &sb, &inode);
 	if (ret)
 		return ret;
+
+	if (!creds_match(inode, forwarded_uid, forwarded_gid)) {
+		finish_lookup(sb, inode);
+		return -EACCES;
+	}
 
 	pthread_rwlock_rdlock(&inode->i_db_rwlock);
 	if (inode->i_db) {

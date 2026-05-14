@@ -263,7 +263,8 @@ static int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 		uint64_t byte_off = block_offset * (uint64_t)chunk_sz;
 
 		return ctx->ctx_pls->pls_sc_write_fn(em->em_fh, em->em_fh_len,
-						     byte_off, src, wsz);
+						     byte_off, src, wsz,
+						     em->em_uid, em->em_gid);
 	}
 
 	for (int attempt = 0; attempt < 3; attempt++) {
@@ -321,7 +322,8 @@ static int ec_chunk_read(struct ec_context *ctx, int mirror_idx,
 
 		return ctx->ctx_pls->pls_sc_read_fn(em->em_fh, em->em_fh_len,
 						    byte_off, buf_len, shard,
-						    nread);
+						    nread, em->em_uid,
+						    em->em_gid);
 	}
 
 	for (int attempt = 0; attempt < 3; attempt++) {

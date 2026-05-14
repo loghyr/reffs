@@ -38,6 +38,16 @@
 
 #include "fs_test_harness.h"
 
+/*
+ * Synthetic uid/gid the tests chown the runway-equivalent file to,
+ * matching the MDS fence range default (1024-2048).  Keeping the
+ * value distinct from both 0 (root) and 65534 (nobody) lets the
+ * slice-5.3 cred-check cases exercise their intended paths without
+ * the fixture aliasing onto either edge.
+ */
+#define SC_TEST_UID 1024
+#define SC_TEST_GID 1024
+
 static void sc_setup(void)
 {
 	fs_test_setup();
@@ -76,16 +86,20 @@ static uint32_t build_fh(uint8_t *out, uint64_t sb_id, uint64_t ino)
 }
 
 /*
- * Create a regular file at `path` inside the root sb and return its
- * inode number via the standard stat(2) interface.  reffs_fs_create
- * lives at the public API surface; recurring through the same path
- * the NFS handlers use is the most representative test setup.
+ * Create a regular file at `path` inside the root sb, chown it to
+ * the slice-5.3 synthetic uid/gid (so the cred-check path has a
+ * deterministic target), and return its inode number.  Recurring
+ * through the public reffs_fs_* surface keeps the fixture aligned
+ * with the path the NFS handlers actually exercise; the chown is
+ * the test stand-in for the MDS runway-pop fence that would set
+ * the synthetic owner on a real DS file.
  */
 static uint64_t make_test_file(const char *path)
 {
 	struct stat st;
 
 	ck_assert_int_eq(reffs_fs_create(path, 0644), 0);
+	ck_assert_int_eq(reffs_fs_chown(path, SC_TEST_UID, SC_TEST_GID), 0);
 	ck_assert_int_eq(reffs_fs_getattr(path, &st), 0);
 	return (uint64_t)st.st_ino;
 }
@@ -108,10 +122,12 @@ START_TEST(test_shortcircuit_roundtrip)
 	uint32_t nread = 0;
 
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0,
-					       (const uint8_t *)payload, plen),
+					       (const uint8_t *)payload, plen,
+					       SC_TEST_UID, SC_TEST_GID),
 			 0);
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
-					      read_buf, &nread),
+					      read_buf, &nread, SC_TEST_UID,
+					      SC_TEST_GID),
 			 0);
 	ck_assert_uint_eq(nread, plen);
 	ck_assert_mem_eq(read_buf, payload, plen);
@@ -136,10 +152,12 @@ START_TEST(test_shortcircuit_offset_addressing)
 	memset(writeB, 0xBB, sizeof(writeB));
 
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, writeA,
-					       sizeof(writeA)),
+					       sizeof(writeA), SC_TEST_UID,
+					       SC_TEST_GID),
 			 0);
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 4096, writeB,
-					       sizeof(writeB)),
+					       sizeof(writeB), SC_TEST_UID,
+					       SC_TEST_GID),
 			 0);
 
 	uint8_t readA[16] = { 0 };
@@ -147,13 +165,15 @@ START_TEST(test_shortcircuit_offset_addressing)
 	uint32_t na = 0, nb = 0;
 
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(readA),
-					      readA, &na),
+					      readA, &na, SC_TEST_UID,
+					      SC_TEST_GID),
 			 0);
 	ck_assert_uint_eq(na, sizeof(writeA));
 	ck_assert_mem_eq(readA, writeA, sizeof(writeA));
 
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 4096, sizeof(readB),
-					      readB, &nb),
+					      readB, &nb, SC_TEST_UID,
+					      SC_TEST_GID),
 			 0);
 	ck_assert_uint_eq(nb, sizeof(writeB));
 	ck_assert_mem_eq(readB, writeB, sizeof(writeB));
@@ -175,10 +195,11 @@ START_TEST(test_shortcircuit_stale_sb)
 	uint8_t buf[8] = { 0 };
 	uint32_t nread = 0;
 
-	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, buf, sizeof(buf)),
+	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, buf, sizeof(buf),
+					       SC_TEST_UID, SC_TEST_GID),
 			 -ESTALE);
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(buf), buf,
-					      &nread),
+					      &nread, SC_TEST_UID, SC_TEST_GID),
 			 -ESTALE);
 }
 END_TEST
@@ -197,10 +218,11 @@ START_TEST(test_shortcircuit_stale_ino)
 	uint8_t buf[8] = { 0 };
 	uint32_t nread = 0;
 
-	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, buf, sizeof(buf)),
+	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, buf, sizeof(buf),
+					       SC_TEST_UID, SC_TEST_GID),
 			 -ESTALE);
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(buf), buf,
-					      &nread),
+					      &nread, SC_TEST_UID, SC_TEST_GID),
 			 -ESTALE);
 }
 END_TEST
@@ -221,14 +243,16 @@ START_TEST(test_shortcircuit_bad_fh)
 
 	/* NULL fh */
 	ck_assert_int_eq(ps_shortcircuit_write(NULL, fh_len, 0, buf,
-					       sizeof(buf)),
+					       sizeof(buf), SC_TEST_UID,
+					       SC_TEST_GID),
 			 -EINVAL);
 
 	/* fh_len too small to contain the wire struct */
-	ck_assert_int_eq(ps_shortcircuit_write(fh, 4, 0, buf, sizeof(buf)),
+	ck_assert_int_eq(ps_shortcircuit_write(fh, 4, 0, buf, sizeof(buf),
+					       SC_TEST_UID, SC_TEST_GID),
 			 -EINVAL);
 	ck_assert_int_eq(ps_shortcircuit_read(fh, 4, 0, sizeof(buf), buf,
-					      &nread),
+					      &nread, SC_TEST_UID, SC_TEST_GID),
 			 -EINVAL);
 
 	/*
@@ -242,8 +266,105 @@ START_TEST(test_shortcircuit_bad_fh)
 	bad_vers_fh[0] = 0xff; /* clobber nfh_vers low byte */
 	bad_vers_fh[1] = 0xff;
 	ck_assert_int_eq(ps_shortcircuit_write(bad_vers_fh, sizeof(bad_vers_fh),
-					       0, buf, sizeof(buf)),
+					       0, buf, sizeof(buf), SC_TEST_UID,
+					       SC_TEST_GID),
 			 -EINVAL);
+}
+END_TEST
+
+/*
+ * Slice 5.3: a forwarded uid + gid that does NOT match the local
+ * file's synthetic uid/gid must reject before any data block I/O.
+ * The MDS chmod'd the runway file with SC_TEST_UID/SC_TEST_GID; a
+ * client whose layout cred carries different values is presenting
+ * a credential the RPC path's AUTH_SYS check would refuse, and the
+ * short path must refuse too -- otherwise short-circuit becomes a
+ * blanket ACL override.  Verify both write and read return -EACCES
+ * and that no bytes land in the inode (read after the rejected
+ * write returns nread == 0).
+ */
+START_TEST(test_shortcircuit_reject_wrong_uid)
+{
+	uint64_t ino = make_test_file("/sc_reject");
+	uint8_t fh[64];
+	uint32_t fh_len = build_fh(fh, SUPER_BLOCK_ROOT_ID, ino);
+	const uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+	uint8_t read_buf[16] = { 0 };
+	uint32_t nread = 0;
+
+	/* Wrong uid AND wrong gid -- neither matches the stored pair. */
+	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, payload,
+					       sizeof(payload), SC_TEST_UID + 1,
+					       SC_TEST_GID + 1),
+			 -EACCES);
+	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
+					      read_buf, &nread, SC_TEST_UID + 1,
+					      SC_TEST_GID + 1),
+			 -EACCES);
+
+	/*
+	 * A subsequent matching-cred read must observe an unwritten
+	 * data block -- the rejected write did not modify state.
+	 */
+	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
+					      read_buf, &nread, SC_TEST_UID,
+					      SC_TEST_GID),
+			 0);
+	ck_assert_uint_eq(nread, 0);
+}
+END_TEST
+
+/*
+ * Slice 5.3: forwarded uid matches stored synthetic uid -- write
+ * proceeds and the bytes land in the inode.  The complementary
+ * accept case to test_shortcircuit_reject_wrong_uid; together they
+ * prove the cred-check is enforcement, not theatre.
+ */
+START_TEST(test_shortcircuit_accept_matching_uid)
+{
+	uint64_t ino = make_test_file("/sc_accept");
+	uint8_t fh[64];
+	uint32_t fh_len = build_fh(fh, SUPER_BLOCK_ROOT_ID, ino);
+	const uint8_t payload[] = "accept-write";
+	uint8_t read_buf[16] = { 0 };
+	uint32_t nread = 0;
+
+	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, payload,
+					       sizeof(payload), SC_TEST_UID,
+					       SC_TEST_GID),
+			 0);
+	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
+					      read_buf, &nread, SC_TEST_UID,
+					      SC_TEST_GID),
+			 0);
+	ck_assert_uint_eq(nread, sizeof(payload));
+	ck_assert_mem_eq(read_buf, payload, sizeof(payload));
+}
+END_TEST
+
+/*
+ * Slice 5.3: root_squash semantics.  When the upstream RPC layer
+ * squashes a client uid=0 down to nobody (65534), the squashed
+ * credential is what reaches the short-circuit dispatch hook.
+ * Squashing happens before this layer, so the helper sees uid=65534
+ * vs the file's stored synthetic uid -- which must mismatch and
+ * reject.  This test pins the contract that the cred check honours
+ * whatever transformation the RPC layer applied; the short path
+ * never re-elevates a squashed credential.
+ */
+START_TEST(test_shortcircuit_root_squash)
+{
+	uint64_t ino = make_test_file("/sc_squash");
+	uint8_t fh[64];
+	uint32_t fh_len = build_fh(fh, SUPER_BLOCK_ROOT_ID, ino);
+	const uint8_t payload[4] = { 9, 9, 9, 9 };
+	const uint32_t nobody_uid = 65534;
+	const uint32_t nobody_gid = 65534;
+
+	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, payload,
+					       sizeof(payload), nobody_uid,
+					       nobody_gid),
+			 -EACCES);
 }
 END_TEST
 
@@ -258,6 +379,9 @@ static Suite *ps_shortcircuit_suite(void)
 	tcase_add_test(tc, test_shortcircuit_stale_sb);
 	tcase_add_test(tc, test_shortcircuit_stale_ino);
 	tcase_add_test(tc, test_shortcircuit_bad_fh);
+	tcase_add_test(tc, test_shortcircuit_reject_wrong_uid);
+	tcase_add_test(tc, test_shortcircuit_accept_matching_uid);
+	tcase_add_test(tc, test_shortcircuit_root_squash);
 	suite_add_tcase(s, tc);
 	return s;
 }
