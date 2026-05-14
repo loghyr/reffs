@@ -613,8 +613,8 @@ START_TEST(test_ec_write_codec_with_file_propagates_creds)
 	int ret = ec_write_codec_with_file(test_session(), &mf, data,
 					   sizeof(data), /* k */ 4, /* m */ 2,
 					   EC_CODEC_RS, LAYOUT4_FLEX_FILES_V2,
-					   /* shard_size */ 4096,
-					   &g_test_creds);
+					   /* shard_size */ 4096, &g_test_creds,
+					   /* pls */ NULL);
 
 	ck_assert_int_eq(ret, -EIO);
 	/*
@@ -648,7 +648,8 @@ START_TEST(test_ec_write_codec_with_file_null_creds)
 	int ret = ec_write_codec_with_file(test_session(), &mf, data,
 					   sizeof(data), /* k */ 4, /* m */ 2,
 					   EC_CODEC_RS, LAYOUT4_FLEX_FILES_V2,
-					   /* shard_size */ 4096, NULL);
+					   /* shard_size */ 4096, NULL,
+					   /* pls */ NULL);
 
 	ck_assert_int_eq(ret, -EIO);
 	ck_assert_uint_eq(g_send_call_count, 1);

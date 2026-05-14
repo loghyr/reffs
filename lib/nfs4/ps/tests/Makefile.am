@@ -59,6 +59,11 @@ ps_sb_alloc_test_CFLAGS = $(AM_CFLAGS)					\
 # ps_sb_alloc_test.  LDADD comes from the default (no override).
 ps_inode_test_CFLAGS = $(ps_sb_alloc_test_CFLAGS)
 
+# ps_shortcircuit_test reaches into the local DS sb via real
+# super_block_find / inode_find / data_block_* calls, so it needs
+# the same fs_test_harness include paths as ps_sb_alloc_test.
+ps_shortcircuit_test_CFLAGS = $(ps_sb_alloc_test_CFLAGS)
+
 check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
@@ -79,6 +84,7 @@ TESTS = \
 	ps_sb_alloc_test \
 	ps_sb_test \
 	ps_security_test \
+	ps_shortcircuit_test \
 	ps_state_test \
 	ps_write_buffer_rmw_test \
 	ps_write_buffer_test \

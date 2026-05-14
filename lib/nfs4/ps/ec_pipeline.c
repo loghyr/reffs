@@ -33,6 +33,8 @@
 
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
+#include "ps_local_addr.h"
+#include "ps_state.h"
 #include "reffs/ec.h"
 
 #include <time.h>
@@ -80,6 +82,14 @@ struct ec_context {
 	struct ec_codec *ctx_codec;
 	uint32_t ctx_k;
 	uint32_t ctx_m;
+	/*
+	 * Phase 5 short-circuit: caller-provided PS listener state.
+	 * NULL for ec_demo and standalone callers; non-NULL only on
+	 * the PS pipeline path.  Threaded through ec_resolve_mirrors
+	 * to ps_local_addr_match() so each mirror's em_local flag is
+	 * set correctly.
+	 */
+	struct ps_listener_state *ctx_pls;
 };
 
 /*
@@ -137,6 +147,17 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 		 * stateid (TRUST_STATEID path) instead of the anonymous stateid.
 		 */
 		em->em_tight_coupled = ctx->ctx_devs[i].ed_tight_coupled;
+
+		/*
+		 * Phase 5 short-circuit decision.  Always runs the match
+		 * call (it returns false on NULL pls so non-PS callers see
+		 * a no-op).  Numeric-address compare against the listener's
+		 * pls_local_addrs[] table -- DNS-free hot path; hostnames
+		 * fall back to the RPC path because the match primitive
+		 * uses AI_NUMERICHOST.
+		 */
+		em->em_local = ps_local_addr_match(ctx->ctx_pls,
+						   ctx->ctx_devs[i].ed_host);
 
 		if (use_v2) {
 			/* NFSv4.2 session to each DS -- unique owner per mirror. */
@@ -223,6 +244,28 @@ static int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 	const stateid4 *stid =
 		em->em_tight_coupled ? &ctx->ctx_layout.el_stateid : NULL;
 
+	/*
+	 * Phase 5 short-circuit: when the mirror lives on this same PS,
+	 * the byte offset for db_write is `block_offset * chunk_sz`
+	 * (the same arithmetic the local DS CHUNK_WRITE handler runs
+	 * before calling data_block_write).  owner_id and stid are
+	 * unused on this path -- the local sb's i_db_rwlock already
+	 * serialises concurrent writers; trust-stateid is the slice
+	 * 5.4 follow-up.
+	 *
+	 * Indirected through pls_sc_write_fn so this TU (linked into
+	 * libreffs_nfs4_ps.la and pulled in by ec_demo) does not
+	 * statically reference ps_shortcircuit_write -- the install
+	 * hook lives in libreffs_nfs4_ps_sb.la and only reffsd / the
+	 * PS unit tests link that.
+	 */
+	if (em->em_local && ctx->ctx_pls && ctx->ctx_pls->pls_sc_write_fn) {
+		uint64_t byte_off = block_offset * (uint64_t)chunk_sz;
+
+		return ctx->ctx_pls->pls_sc_write_fn(em->em_fh, em->em_fh_len,
+						     byte_off, src, wsz);
+	}
+
 	for (int attempt = 0; attempt < 3; attempt++) {
 		int ret;
 
@@ -264,6 +307,22 @@ static int ec_chunk_read(struct ec_context *ctx, int mirror_idx,
 	struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[mirror_idx];
 	const stateid4 *stid =
 		em->em_tight_coupled ? &ctx->ctx_layout.el_stateid : NULL;
+
+	/*
+	 * Phase 5 short-circuit.  Mirrors the write-side hook:
+	 * byte_offset = block_offset * rd_chunk_sz, request `nblk *
+	 * rd_chunk_sz` bytes.  The helper sets *nread to whatever the
+	 * local data block returned (zero for a sparse / missing
+	 * region, matching the RPC path's behaviour).
+	 */
+	if (em->em_local && ctx->ctx_pls && ctx->ctx_pls->pls_sc_read_fn) {
+		uint64_t byte_off = block_offset * (uint64_t)rd_chunk_sz;
+		size_t buf_len = (size_t)nblk * (size_t)rd_chunk_sz;
+
+		return ctx->ctx_pls->pls_sc_read_fn(em->em_fh, em->em_fh_len,
+						    byte_off, buf_len, shard,
+						    nread);
+	}
 
 	for (int attempt = 0; attempt < 3; attempt++) {
 		int ret;
@@ -596,7 +655,8 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 			     const uint8_t *data, size_t data_len, int k, int m,
 			     enum ec_codec_type codec_type,
 			     layouttype4 layout_type, size_t shard_size,
-			     const struct authunix_parms *creds)
+			     const struct authunix_parms *creds,
+			     struct ps_listener_state *pls)
 {
 	struct ec_context ctx;
 	int ret;
@@ -623,6 +683,7 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	ctx.ctx_ms = ms;
 	ctx.ctx_k = k;
 	ctx.ctx_m = m;
+	ctx.ctx_pls = pls;
 	ctx.ctx_file = *mf; /* caller owns the underlying mf; we shallow-copy */
 
 	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
@@ -944,7 +1005,8 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      enum ec_codec_type codec_type,
 			      layouttype4 layout_type, size_t shard_size,
 			      const struct authunix_parms *creds,
-			      uint8_t mds_verf_out[8], bool *mds_verf_set_out)
+			      uint8_t mds_verf_out[8], bool *mds_verf_set_out,
+			      struct ps_listener_state *pls)
 {
 	struct ec_context ctx;
 	uint8_t **data_shards = NULL;
@@ -991,6 +1053,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	ctx.ctx_ms = ms;
 	ctx.ctx_k = k;
 	ctx.ctx_m = m;
+	ctx.ctx_pls = pls;
 	ctx.ctx_file = *mf; /* shallow copy; caller owns mf */
 
 	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
@@ -1247,7 +1310,8 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			     size_t stripe_len, int k, int m,
 			     enum ec_codec_type codec_type,
 			     layouttype4 layout_type, size_t shard_size,
-			     const struct authunix_parms *creds)
+			     const struct authunix_parms *creds,
+			     struct ps_listener_state *pls)
 {
 	struct ec_context ctx;
 	uint8_t **shards = NULL;
@@ -1287,6 +1351,7 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	ctx.ctx_ms = ms;
 	ctx.ctx_k = k;
 	ctx.ctx_m = m;
+	ctx.ctx_pls = pls;
 	ctx.ctx_file = *mf; /* shallow copy; caller owns mf */
 
 	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
@@ -1452,7 +1517,7 @@ int ec_write_codec(struct mds_session *ms, const char *path,
 	 */
 	ret = ec_write_codec_with_file(ms, &mf, data, data_len, k, m,
 				       codec_type, layout_type, shard_size,
-				       NULL);
+				       NULL, NULL);
 
 	mds_file_close(ms, &mf);
 	return ret;
@@ -1467,7 +1532,8 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 			    int k, int m, enum ec_codec_type codec_type,
 			    layouttype4 layout_type, uint64_t skip_ds_mask,
 			    size_t shard_size,
-			    const struct authunix_parms *creds)
+			    const struct authunix_parms *creds,
+			    struct ps_listener_state *pls)
 {
 	struct ec_context ctx;
 	int ret;
@@ -1498,6 +1564,7 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	ctx.ctx_ms = ms;
 	ctx.ctx_k = k;
 	ctx.ctx_m = m;
+	ctx.ctx_pls = pls;
 	ctx.ctx_file = *mf; /* caller owns the underlying mf; we shallow-copy */
 
 	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
@@ -1695,7 +1762,7 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 	 */
 	ret = ec_read_codec_with_file(ms, &mf, buf, buf_len, out_len, k, m,
 				      codec_type, layout_type, skip_ds_mask,
-				      shard_size, NULL);
+				      shard_size, NULL, NULL);
 
 	mds_file_close(ms, &mf);
 	return ret;

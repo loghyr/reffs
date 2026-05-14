@@ -52,6 +52,16 @@
 
 #include "nfsv42_xdr.h"
 
+/*
+ * Forward decl for the PS listener state.  Defined in
+ * lib/nfs4/ps/ps_state.h; opaque to non-PS callers.  Threaded as
+ * the trailing `pls` parameter on the public ec_pipeline entry
+ * points (Phase 5 short-circuit).  ec_demo and other standalone
+ * callers pass NULL -- the dispatch then leaves em_local false on
+ * every mirror and the existing RPC path runs unchanged.
+ */
+struct ps_listener_state;
+
 /* ------------------------------------------------------------------ */
 /* MDS session                                                         */
 /* ------------------------------------------------------------------ */
@@ -453,6 +463,17 @@ struct ec_mirror {
 	uint32_t em_gid;
 	uint32_t em_flags; /* FFV2_DS_FLAGS_* (v2 only, 0 for v1) */
 	bool em_tight_coupled; /* DS supports TRUST_STATEID */
+	/*
+	 * em_local: set by ec_resolve_mirrors when the mirror's
+	 * deviceinfo resolves to one of the PS's own bound addresses
+	 * (Phase 5 short-circuit).  When true, ec_chunk_read /
+	 * ec_chunk_write bypass the DS RPC and call the local DS sb's
+	 * data backend directly via ps_shortcircuit_read / _write.
+	 * Always false when the caller did not pass a pls (ec_demo,
+	 * standalone unit tests) -- the dispatch falls through to the
+	 * existing RPC path with zero behaviour change.
+	 */
+	bool em_local;
 };
 
 /* Parsed layout from LAYOUTGET. */
@@ -652,7 +673,8 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 			    int k, int m, enum ec_codec_type codec_type,
 			    layouttype4 layout_type, uint64_t skip_ds_mask,
 			    size_t shard_size,
-			    const struct authunix_parms *creds);
+			    const struct authunix_parms *creds,
+			    struct ps_listener_state *pls);
 
 /*
  * FH-anchored variant of ec_write_codec.  Mirror of
@@ -678,7 +700,8 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 			     const uint8_t *data, size_t data_len, int k, int m,
 			     enum ec_codec_type codec_type,
 			     layouttype4 layout_type, size_t shard_size,
-			     const struct authunix_parms *creds);
+			     const struct authunix_parms *creds,
+			     struct ps_listener_state *pls);
 
 /*
  * Per-stripe write primitive (PS Phase 4b).  Mirror of
@@ -715,7 +738,8 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      enum ec_codec_type codec_type,
 			      layouttype4 layout_type, size_t shard_size,
 			      const struct authunix_parms *creds,
-			      uint8_t mds_verf_out[8], bool *mds_verf_set_out);
+			      uint8_t mds_verf_out[8], bool *mds_verf_set_out,
+			      struct ps_listener_state *pls);
 
 /*
  * Per-stripe read primitive (PS Phase 4b slice 4b.3).  Mirror of
@@ -750,7 +774,8 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			     size_t stripe_len, int k, int m,
 			     enum ec_codec_type codec_type,
 			     layouttype4 layout_type, size_t shard_size,
-			     const struct authunix_parms *creds);
+			     const struct authunix_parms *creds,
+			     struct ps_listener_state *pls);
 
 /*
  * Default shard size for the back-compat ec_write / ec_read

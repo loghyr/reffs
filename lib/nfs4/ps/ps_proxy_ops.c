@@ -2311,11 +2311,19 @@ int ps_proxy_pipeline_read(struct mds_session *ms, const uint8_t *upstream_fh,
 	mf.mf_fh.nfs_fh4_val = (char *)upstream_fh;
 	mf.mf_fh.nfs_fh4_len = upstream_fh_len;
 
+	/*
+	 * NOT_NOW_BROWN_COW (Phase 5 follow-up): wire listener_id into
+	 * ps_proxy_pipeline_read so the per-mirror short-circuit can
+	 * also fire on the READ path.  Slice 5.2 ships the write-path
+	 * dispatch; reads still take the RPC path on every mirror
+	 * regardless of co-residency.
+	 */
 	ret = ec_read_codec_with_file(ms, &mf, whole_buf, whole_len, &out_len,
 				      /* k */ 4, /* m */ 2, EC_CODEC_RS,
 				      LAYOUT4_FLEX_FILES_V2,
 				      /* skip_ds_mask */ 0,
-				      /* shard_size */ 4096, creds);
+				      /* shard_size */ 4096, creds,
+				      /* pls */ NULL);
 	if (ret) {
 		free(whole_buf);
 		return ret;
@@ -2601,7 +2609,7 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 				(int)buf->pwb_geom.pwbg_k,
 				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
 				LAYOUT4_FLEX_FILES_V2,
-				buf->pwb_geom.pwbg_shard_size, creds);
+				buf->pwb_geom.pwbg_shard_size, creds, pls);
 			if (ret) {
 				atomic_fetch_add_explicit(
 					&pls->pls_rmw_read_failures_total, 1,
@@ -2635,7 +2643,7 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
 				LAYOUT4_FLEX_FILES_V2,
 				buf->pwb_geom.pwbg_shard_size, creds,
-				stripe_mds_verf, &stripe_mds_verf_set);
+				stripe_mds_verf, &stripe_mds_verf_set, pls);
 			free(scratch);
 			if (ret)
 				break;
@@ -2654,7 +2662,7 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
 				LAYOUT4_FLEX_FILES_V2,
 				buf->pwb_geom.pwbg_shard_size, creds,
-				stripe_mds_verf, &stripe_mds_verf_set);
+				stripe_mds_verf, &stripe_mds_verf_set, pls);
 			if (ret)
 				break;
 		}
@@ -3104,7 +3112,7 @@ int ps_proxy_pipeline_close(struct mds_session *ms, const uint8_t *upstream_fh,
 				       buf->pwb_high_water, /* k */ 4,
 				       /* m */ 2, EC_CODEC_RS,
 				       LAYOUT4_FLEX_FILES_V2,
-				       /* shard_size */ 4096, creds);
+				       /* shard_size */ 4096, creds, pls);
 	pthread_mutex_unlock(&buf->pwb_mutex);
 
 	ps_write_buffer_drop(buf, pls);

@@ -64,6 +64,7 @@
 #include "ps_discovery.h"
 #include "ps_renewal.h"
 #include "ps_sb.h"
+#include "ps_shortcircuit.h"
 #include "ps_state.h"
 
 /* GSS context cache -- declared in gss_context.h. */
@@ -658,6 +659,19 @@ int main(int argc, char *argv[])
 			exit_code = 1;
 			goto out;
 		}
+		/*
+		 * Phase 5 short-circuit dispatch: install function
+		 * pointers on the freshly-registered pls so the EC
+		 * pipeline can bypass loopback RPC for mirrors that
+		 * resolve to one of our own bound addresses.  Cast away
+		 * const because ps_state_find returns a read-only view;
+		 * ps_shortcircuit_install is the single legitimate
+		 * mutator, called once at startup before any worker can
+		 * observe the new slot.  See ps_shortcircuit.h for the
+		 * archive-split rationale.
+		 */
+		ps_shortcircuit_install(
+			(struct ps_listener_state *)ps_state_find(lid));
 	}
 
 	/*

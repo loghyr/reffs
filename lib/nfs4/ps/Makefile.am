@@ -26,13 +26,21 @@ libreffs_nfs4_ps_la_SOURCES = \
 	ps_state.c \
 	ps_write_buffer.c
 
-# ps_sb_alloc.c needs lib/fs symbols (super_block_alloc, mkdir_p_for_listener,
-# etc.) that the other PS unit tests deliberately do NOT link.  Pulling it
-# into libreffs_nfs4_ps.la would force every PS test to pull in the full
-# fs + urcu + uuid dep graph.  Keep it in its own convenience library so
-# only reffsd (and the dedicated ps_sb_alloc_test) pay that cost.
+# ps_sb_alloc.c and ps_shortcircuit.c need lib/fs symbols
+# (super_block_alloc, mkdir_p_for_listener, super_block_find,
+# inode_find, data_block_*).  Keeping them in their own convenience
+# library means ec_demo and other lib/nfs4/ps consumers that do NOT
+# link lib/fs still build cleanly -- libreffs_nfs4_ps.la stays
+# free of cross-archive references into lib/fs.
+#
+# The Phase 5 dispatch hook in ec_pipeline.c calls into
+# ps_shortcircuit via function pointers stashed on
+# ps_listener_state (installed by ps_shortcircuit_install, which
+# only reffsd / the PS unit tests invoke).  This indirection is
+# what lets the symbol-graph split stand.
 libreffs_nfs4_ps_sb_la_SOURCES = \
-	ps_sb_alloc.c
+	ps_sb_alloc.c \
+	ps_shortcircuit.c
 libreffs_nfs4_ps_sb_la_CFLAGS = $(AM_CFLAGS) $(UUID_CFLAGS)
 
 SUBDIRS = tests

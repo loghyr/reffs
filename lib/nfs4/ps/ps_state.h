@@ -318,6 +318,26 @@ struct ps_listener_state {
 	 */
 	struct ps_local_addr pls_local_addrs[PS_MAX_LOCAL_ADDRS];
 	uint32_t pls_nlocal_addrs;
+
+	/*
+	 * Phase 5 short-circuit dispatch indirection.  Installed by
+	 * ps_shortcircuit_install() (lives in libreffs_nfs4_ps_sb.la,
+	 * which depends on the lib/fs symbol graph).  ec_pipeline.c
+	 * (libreffs_nfs4_ps.la) calls through these function pointers
+	 * rather than referencing ps_shortcircuit_write / _read
+	 * directly so that ec_demo and other lib/nfs4/ps consumers
+	 * that do NOT link lib/fs can still link cleanly -- the
+	 * pointers stay NULL when ps_shortcircuit_install is never
+	 * called, and the dispatch hook falls through to the RPC
+	 * path.  reffsd + the PS unit tests call install at register
+	 * time; ec_demo never does.
+	 */
+	int (*pls_sc_write_fn)(const uint8_t *fh, uint32_t fh_len,
+			       uint64_t block_offset, const uint8_t *data,
+			       size_t data_len);
+	int (*pls_sc_read_fn)(const uint8_t *fh, uint32_t fh_len,
+			      uint64_t block_offset, size_t buf_len,
+			      uint8_t *buf, uint32_t *nread);
 };
 
 /*
