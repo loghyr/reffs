@@ -607,6 +607,26 @@ union PS_LISTENER_LIST1res switch (probe_stat1 pllr_status) {
 /*   ppwbs_fbig_rejections_total       WRITEs rejected with           */
 /*                                     NFS4ERR_FBIG because           */
 /*                                     data_len > cap                 */
+/*                                                                     */
+/* Slice 4b.7 additions (wire-additive append; probe is internal-     */
+/* only, client + server ship together):                              */
+/*                                                                     */
+/*   ppwbs_dirty_stripes_total         sum of dirty-stripe entries    */
+/*                                     across every live buffer on    */
+/*                                     this listener.  Lazy walk --   */
+/*                                     no maintained counter; cost is */
+/*                                     O(buffers * dirty stripes).    */
+/*                                     Operator signal "stuff is      */
+/*                                     buffered and waiting to flush".*/
+/*   ppwbs_rmw_reads_total             CHUNK_READ count for partial-  */
+/*                                     stripe RMW prefixes.  High on  */
+/*                                     non-RMW-heavy workloads flags  */
+/*                                     unexpected partial-stripe      */
+/*                                     patterns from the client.     */
+/*   ppwbs_rmw_read_failures_total     RMW prefix CHUNK_READ          */
+/*                                     failures.  Surfaces DS         */
+/*                                     degradation the WRITE-side    */
+/*                                     counters miss.                 */
 /* ------------------------------------------------------------------ */
 
 struct probe_ps_write_buffer_stats1 {
@@ -617,6 +637,9 @@ struct probe_ps_write_buffer_stats1 {
 	unsigned hyper	ppwbs_cap_rejections_total;
 	unsigned hyper	ppwbs_close_flush_timeouts_total;
 	unsigned hyper	ppwbs_fbig_rejections_total;
+	unsigned hyper	ppwbs_dirty_stripes_total;
+	unsigned hyper	ppwbs_rmw_reads_total;
+	unsigned hyper	ppwbs_rmw_read_failures_total;
 };
 
 struct PS_WRITE_BUFFER_STATS1resok {

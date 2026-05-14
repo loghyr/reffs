@@ -250,6 +250,22 @@ size_t ps_write_buffer_dirty_count(struct ps_write_buffer *buf);
  */
 size_t ps_write_buffer_table_count(struct ps_listener_state *pls);
 
+/*
+ * Sum of dirty-stripe entries across every live buffer on this
+ * listener.  Walks under rcu_read_lock + per-buffer Rule 6 find
+ * ref (the inner pwb_dirty_ht is cds_lfht_destroy'd synchronously
+ * inside pwb_release before the rcu callback, so a ref-less walk
+ * would UAF the inner table on a concurrent last-put).  Cost is
+ * O(buffers * dirty stripes per buffer).  Used by the
+ * ps-write-buffer-stats probe extension (slice 4b.7) as an
+ * operator signal that "stuff is buffered and waiting to flush".
+ * Best-effort snapshot: a buffer in mid-teardown (refcount zero)
+ * is skipped, and the inner walk is unsynchronized w.r.t.
+ * pwb_mutex so concurrent mark_dirty / dirty_remove may add or
+ * subtract from the running total -- acceptable for observability.
+ */
+size_t ps_write_buffer_dirty_total(struct ps_listener_state *pls);
+
 /* ------------------------------------------------------------------ */
 /* Composed write verifier (Phase 4b slice 4b.4)                       */
 /* ------------------------------------------------------------------ */

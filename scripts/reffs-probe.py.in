@@ -788,7 +788,8 @@ def ps_write_buffer_stats_cmd(client, args):
     probe_error_handler(res)
     resok = res.pwbsr_resok
     print(f"{'ID':<4} {'ACTIVE':<8} {'BYTES':<10} {'PEAK':<10} "
-          f"{'CAP_REJ':<10} {'TIMEOUTS':<10} {'FBIG_REJ':<10}")
+          f"{'CAP_REJ':<10} {'TIMEOUTS':<10} {'FBIG_REJ':<10} "
+          f"{'DIRTY':<8} {'RMW_RD':<8} {'RMW_FAIL':<10}")
     for p in resok.pwbsr_listeners:
         print(f"{p.ppwbs_listener_id:<4} "
               f"{p.ppwbs_active_buffers:<8} "
@@ -796,7 +797,10 @@ def ps_write_buffer_stats_cmd(client, args):
               f"{p.ppwbs_peak_bytes_buffered:<10} "
               f"{p.ppwbs_cap_rejections_total:<10} "
               f"{p.ppwbs_close_flush_timeouts_total:<10} "
-              f"{p.ppwbs_fbig_rejections_total:<10}")
+              f"{p.ppwbs_fbig_rejections_total:<10} "
+              f"{p.ppwbs_dirty_stripes_total:<8} "
+              f"{p.ppwbs_rmw_reads_total:<8} "
+              f"{p.ppwbs_rmw_read_failures_total:<10}")
 
 
 def dstore_list_cmd(client, args):

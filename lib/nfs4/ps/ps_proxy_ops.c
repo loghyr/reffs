@@ -2456,6 +2456,13 @@ static int pwb_ensure_capacity(struct ps_write_buffer *buf,
  * `ps_proxy_pipeline_write` (slice 4b.6; the FILE_SYNC4 / DATA_SYNC4
  * inline flush over just the bytes this WRITE touched).
  *
+ * `pls` is the owning listener (always non-NULL today; both
+ * pipeline callers reach this helper only after a successful
+ * ps_state_find).  Slice 4b.7 uses it to bump
+ * pls_rmw_reads_total / pls_rmw_read_failures_total around the
+ * RMW prefix CHUNK_READ -- relaxed atomics for the
+ * ps-write-buffer-stats probe surface.
+ *
  * Returns:
  *    0       every intersecting dirty stripe flushed cleanly (or no
  *            stripes intersected); dirty entries for the flushed
@@ -2468,6 +2475,7 @@ static int pwb_ensure_capacity(struct ps_write_buffer *buf,
  *            semantics as -EIO.
  */
 static int pwb_flush_range_locked(struct ps_write_buffer *buf,
+				  struct ps_listener_state *pls,
 				  struct mds_session *ms,
 				  const struct authunix_parms *creds,
 				  uint64_t range_start, uint64_t range_count)
@@ -2577,6 +2585,17 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 				break;
 			}
 
+			/*
+			 * Slice 4b.7 observability: count the RMW prefix
+			 * read attempt before we make the call, and the
+			 * failure on a non-zero return.  Both relaxed --
+			 * the probe reports a self-consistent snapshot, not
+			 * a transactional one.  pls is non-NULL by
+			 * helper-doc contract; both callers reach this
+			 * helper only after a successful ps_state_find.
+			 */
+			atomic_fetch_add_explicit(&pls->pls_rmw_reads_total, 1,
+						  memory_order_relaxed);
 			ret = ec_read_stripe_with_file(
 				ms, &mf, (uint64_t)s, scratch, stripe_size,
 				(int)buf->pwb_geom.pwbg_k,
@@ -2584,6 +2603,9 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 				LAYOUT4_FLEX_FILES_V2,
 				buf->pwb_geom.pwbg_shard_size, creds);
 			if (ret) {
+				atomic_fetch_add_explicit(
+					&pls->pls_rmw_read_failures_total, 1,
+					memory_order_relaxed);
 				free(scratch);
 				break;
 			}
@@ -2835,8 +2857,8 @@ int ps_proxy_pipeline_write(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * separate from data-sync); both modes drive the same flush.
 	 */
 	if (stable != 0) {
-		int flush_ret = pwb_flush_range_locked(buf, ms, creds, offset,
-						       data_len);
+		int flush_ret = pwb_flush_range_locked(buf, pls, ms, creds,
+						       offset, data_len);
 
 		if (flush_ret) {
 			pthread_mutex_unlock(&buf->pwb_mutex);
@@ -2957,7 +2979,7 @@ int ps_proxy_pipeline_commit(struct mds_session *ms, const uint8_t *upstream_fh,
 	 * machinery -- including the captured MDS-verifier last-
 	 * writer-wins fold into pwb_mds_verf.
 	 */
-	ret = pwb_flush_range_locked(buf, ms, creds, offset, count);
+	ret = pwb_flush_range_locked(buf, pls, ms, creds, offset, count);
 
 	/*
 	 * Snapshot remaining dirty count under pwb_mutex: it

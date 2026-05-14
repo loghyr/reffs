@@ -1542,6 +1542,19 @@ static int probe1_pwbs_collect_one(const struct ps_listener_state *pls,
 	info->ppwbs_fbig_rejections_total = atomic_load_explicit(
 		&pls->pls_fbig_rejections_total, memory_order_relaxed);
 
+	/*
+	 * Slice 4b.7 additions: dirty_stripes_total is computed lazily
+	 * across the listener's buffer table (cheap; tables are small).
+	 * rmw_reads_total / rmw_read_failures_total are maintained
+	 * relaxed-atomics bumped inside pwb_flush_range_locked.
+	 */
+	info->ppwbs_dirty_stripes_total =
+		ps_write_buffer_dirty_total((struct ps_listener_state *)pls);
+	info->ppwbs_rmw_reads_total = atomic_load_explicit(
+		&pls->pls_rmw_reads_total, memory_order_relaxed);
+	info->ppwbs_rmw_read_failures_total = atomic_load_explicit(
+		&pls->pls_rmw_read_failures_total, memory_order_relaxed);
+
 	ctx->n++;
 	return 0;
 }

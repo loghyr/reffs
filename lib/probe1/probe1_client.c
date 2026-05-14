@@ -814,9 +814,10 @@ static int ps_write_buffer_stats_cb(struct rpc_trans *rt)
 		PS_WRITE_BUFFER_STATS1resok *resok =
 			&res->PS_WRITE_BUFFER_STATS1res_u.pwbsr_resok;
 
-		printf("%-4s %-10s %-10s %-10s %-12s %-12s %-12s\n", "ID",
-		       "ACTIVE", "BYTES", "PEAK", "CAP_REJ", "TIMEOUTS",
-		       "FBIG_REJ");
+		printf("%-4s %-10s %-10s %-10s %-12s %-12s %-12s %-10s "
+		       "%-10s %-10s\n",
+		       "ID", "ACTIVE", "BYTES", "PEAK", "CAP_REJ", "TIMEOUTS",
+		       "FBIG_REJ", "DIRTY", "RMW_RD", "RMW_FAIL");
 		for (uint32_t i = 0;
 		     i < resok->pwbsr_listeners.pwbsr_listeners_len; i++) {
 			struct probe_ps_write_buffer_stats1 *p =
@@ -824,13 +825,17 @@ static int ps_write_buffer_stats_cb(struct rpc_trans *rt)
 
 			printf("%-4u %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64
 			       " %-12" PRIu64 " %-12" PRIu64 " %-12" PRIu64
+			       " %-10" PRIu64 " %-10" PRIu64 " %-10" PRIu64
 			       "\n",
 			       p->ppwbs_listener_id, p->ppwbs_active_buffers,
 			       p->ppwbs_total_bytes_buffered,
 			       p->ppwbs_peak_bytes_buffered,
 			       p->ppwbs_cap_rejections_total,
 			       p->ppwbs_close_flush_timeouts_total,
-			       p->ppwbs_fbig_rejections_total);
+			       p->ppwbs_fbig_rejections_total,
+			       p->ppwbs_dirty_stripes_total,
+			       p->ppwbs_rmw_reads_total,
+			       p->ppwbs_rmw_read_failures_total);
 		}
 	}
 	io_handler_stop();

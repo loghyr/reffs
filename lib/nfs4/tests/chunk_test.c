@@ -1138,6 +1138,142 @@ START_TEST(test_chunk_full_cycle)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Group G: chunk-collision counter observability (Phase 4b.7)         */
+/*                                                                     */
+/* The cs_pending_displaced counter increments when a CHUNK_WRITE      */
+/* lands at an offset whose previous PENDING block came from a         */
+/* different writer (cb_gen_id / cb_client_id / cb_owner_id differs).  */
+/* The PS-pipeline framing in the design document ("two simulated PS   */
+/* clientids") is conceptual; the actual contract under test is the   */
+/* per-sb chunk-stats increment logic, which the design's chunk-       */
+/* collision validation slice (BLOCKER 2) shipped just before this    */
+/* slice.  Group E in proxy-server-phase4b.md.                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Override the owner fields on the CHUNK_WRITE in slot 0 so the
+ * test can simulate two distinct writers contending on the same
+ * block.  Call AFTER set_write_args.
+ */
+static void set_owner(struct cm_ctx *cm, uint64_t gen_id, uint64_t client_id,
+		      uint64_t owner_id)
+{
+	CHUNK_WRITE4args *args = &cm->compound->c_args->argarray.argarray_val[0]
+					  .nfs_argop4_u.opchunk_write;
+
+	args->cwa_owner.co_guard.cg_gen_id = gen_id;
+	args->cwa_owner.co_guard.cg_client_id = client_id;
+	args->cwa_owner.co_id = owner_id;
+}
+
+START_TEST(test_multi_ps_disjoint_stripes_no_collisions)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	/*
+	 * PS-A writes to block 0; PS-B writes to block 1.  Disjoint
+	 * offsets so the chunk-collision detection in chunk.c never
+	 * sees a PENDING block from a different owner.
+	 */
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
+	set_owner(cm, /* gen_id */ 1, /* client_id */ 0xA1, /* owner_id */ 10);
+	nfs4_op_chunk_write(cm->compound);
+	{
+		CHUNK_WRITE4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write;
+		ck_assert_int_eq(res->cwr_status, NFS4_OK);
+	}
+	free_write_res(cm);
+	cm_reset_slot(cm, 0);
+
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* block index */ 1, NULL,
+		       0);
+	set_owner(cm, /* gen_id */ 2, /* client_id */ 0xB2, /* owner_id */ 20);
+	nfs4_op_chunk_write(cm->compound);
+	{
+		CHUNK_WRITE4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write;
+		ck_assert_int_eq(res->cwr_status, NFS4_OK);
+	}
+	free_write_res(cm);
+
+	/*
+	 * Disjoint stripes -> no collision counter increment.  Per-
+	 * stripe ordering in pNFS-FF v2 keeps writers off each other's
+	 * blocks; this is the smoking-gun that the design's "two PS
+	 * clientids COMMIT disjoint stripes" pattern does not produce
+	 * spurious counter bumps.
+	 */
+	ck_assert_uint_eq(
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_pending_displaced,
+				     memory_order_relaxed),
+		0);
+
+	cm_free(cm);
+}
+END_TEST
+
+START_TEST(test_multi_ps_overlap_stripe_increments_displaced)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	/* PS-A writes to block 0 with owner A. */
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
+	set_owner(cm, /* gen_id */ 1, /* client_id */ 0xA1, /* owner_id */ 10);
+	nfs4_op_chunk_write(cm->compound);
+	{
+		CHUNK_WRITE4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write;
+		ck_assert_int_eq(res->cwr_status, NFS4_OK);
+	}
+	free_write_res(cm);
+	cm_reset_slot(cm, 0);
+
+	/*
+	 * PS-B writes to block 0 with a different owner triple.  The
+	 * existing PENDING block was from owner A, so the new write
+	 * sees the prior PENDING is owned by someone else and bumps
+	 * cs_pending_displaced before overriding (last-writer-wins
+	 * matches POSIX behaviour; the counter just records that
+	 * contention happened).
+	 */
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
+	set_owner(cm, /* gen_id */ 2, /* client_id */ 0xB2, /* owner_id */ 20);
+	nfs4_op_chunk_write(cm->compound);
+	{
+		CHUNK_WRITE4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write;
+		ck_assert_int_eq(res->cwr_status, NFS4_OK);
+	}
+	free_write_res(cm);
+
+	/*
+	 * Counter must have incremented at least once for the
+	 * single overlapping block.  "At least once" rather than
+	 * "exactly once" mirrors the design wording: the counter is
+	 * observational, not protective, and a future slice that
+	 * adds redundant detection sites must not break this test.
+	 */
+	ck_assert_uint_ge(
+		atomic_load_explicit(&g_sb->sb_chunk_stats.cs_pending_displaced,
+				     memory_order_relaxed),
+		1);
+
+	cm_free(cm);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -1186,6 +1322,12 @@ static Suite *chunk_suite(void)
 	tcase_add_checked_fixture(tc_f, chunk_setup, chunk_teardown);
 	tcase_add_test(tc_f, test_chunk_full_cycle);
 	suite_add_tcase(s, tc_f);
+
+	TCase *tc_g = tcase_create("collision_counter");
+	tcase_add_checked_fixture(tc_g, chunk_setup, chunk_teardown);
+	tcase_add_test(tc_g, test_multi_ps_disjoint_stripes_no_collisions);
+	tcase_add_test(tc_g, test_multi_ps_overlap_stripe_increments_displaced);
+	suite_add_tcase(s, tc_g);
 
 	return s;
 }

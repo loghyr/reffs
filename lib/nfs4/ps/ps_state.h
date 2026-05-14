@@ -252,14 +252,28 @@ struct ps_listener_state {
 	 *                             machinery (design Risk #7) is
 	 *                             deferred; counter stays zero
 	 *                             until that lands.
+	 *   pls_rmw_reads_total       Phase 4b.7: CHUNK_READ issued as
+	 *                             a partial-stripe RMW prefix.
+	 *                             High on non-RMW-heavy workloads
+	 *                             flags unexpected partial-stripe
+	 *                             patterns from the client.
+	 *   pls_rmw_read_failures_total Phase 4b.7: RMW prefix
+	 *                             CHUNK_READ failure (DS
+	 *                             unreachable / decode quorum
+	 *                             lost).  Surfaces DS degradation
+	 *                             the WRITE-side counters miss.
 	 *
 	 * The active_buffers count + total_bytes_buffered are NOT
 	 * counters here; they are computed lazily by the probe
 	 * handler walking the buffer table (cheap; tables are small).
+	 * dirty_stripes_total is also lazy-computed by walking each
+	 * buffer's pwb_dirty_ht (Phase 4b.7).
 	 */
 	_Atomic uint64_t pls_cap_rejections_total;
 	_Atomic uint64_t pls_fbig_rejections_total;
 	_Atomic uint64_t pls_close_flush_timeouts_total;
+	_Atomic uint64_t pls_rmw_reads_total;
+	_Atomic uint64_t pls_rmw_read_failures_total;
 };
 
 /*

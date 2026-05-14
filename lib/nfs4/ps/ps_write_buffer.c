@@ -267,6 +267,10 @@ int ps_write_buffer_table_init(struct ps_listener_state *pls)
 			      memory_order_relaxed);
 	atomic_store_explicit(&pls->pls_close_flush_timeouts_total, 0,
 			      memory_order_relaxed);
+	atomic_store_explicit(&pls->pls_rmw_reads_total, 0,
+			      memory_order_relaxed);
+	atomic_store_explicit(&pls->pls_rmw_read_failures_total, 0,
+			      memory_order_relaxed);
 	return 0;
 }
 
@@ -913,6 +917,67 @@ size_t ps_write_buffer_table_count(struct ps_listener_state *pls)
 	}
 	rcu_read_unlock();
 	return n;
+}
+
+size_t ps_write_buffer_dirty_total(struct ps_listener_state *pls)
+{
+	struct cds_lfht_iter iter;
+	struct cds_lfht_node *node;
+	size_t total = 0;
+
+	if (!pls || !pls->pls_write_buffer_ht)
+		return 0;
+
+	/*
+	 * Rule 6 lifecycle: ref-get each buffer before touching its
+	 * inner pwb_dirty_ht.  pwb_release synchronously calls
+	 * pwb_dirty_table_drain (which cds_lfht_destroy's the inner
+	 * table) BEFORE the call_rcu defers the buffer struct free,
+	 * so the outer rcu_read_lock alone protects only the
+	 * buffer's memory -- not the inner table's allocation.  A
+	 * concurrent last-put on `buf` would free pwb_dirty_ht
+	 * mid-walk.  urcu_ref_get_unless_zero blocks pwb_release
+	 * for the duration of the inner walk; on a buffer already
+	 * in mid-teardown (refcount zero) we skip it (the dirty
+	 * count is "best effort" and the buffer is about to vanish).
+	 *
+	 * "Advance BEFORE put" (patterns/rcu-violations.md Pattern
+	 * 7): the put may run pwb_release synchronously, which
+	 * cds_lfht_del's `buf` from pls_write_buffer_ht.  Advance
+	 * past the node before dropping the ref so the outer
+	 * iterator never traverses from a deleted node.
+	 *
+	 * Inner walk is unsynchronized w.r.t. pwb_mutex; concurrent
+	 * mark_dirty / dirty_remove may add or remove entries.  The
+	 * probe contract is a best-effort observability snapshot,
+	 * not a transactionally consistent count.
+	 */
+	rcu_read_lock();
+	cds_lfht_first(pls->pls_write_buffer_ht, &iter);
+	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
+		struct ps_write_buffer *buf = caa_container_of(
+			node, struct ps_write_buffer, pwb_ht_node);
+		struct cds_lfht_iter dirty_iter;
+		struct cds_lfht_node *dirty_node;
+
+		cds_lfht_next(pls->pls_write_buffer_ht, &iter);
+
+		if (!urcu_ref_get_unless_zero(&buf->pwb_ref))
+			continue; /* buffer in mid-teardown; skip */
+
+		if (buf->pwb_dirty_ht) {
+			cds_lfht_first(buf->pwb_dirty_ht, &dirty_iter);
+			while ((dirty_node = cds_lfht_iter_get_node(
+					&dirty_iter)) != NULL) {
+				total++;
+				cds_lfht_next(buf->pwb_dirty_ht, &dirty_iter);
+			}
+		}
+
+		urcu_ref_put(&buf->pwb_ref, pwb_release);
+	}
+	rcu_read_unlock();
+	return total;
 }
 
 /* ------------------------------------------------------------------ */
