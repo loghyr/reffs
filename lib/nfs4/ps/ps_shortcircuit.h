@@ -9,6 +9,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "nfsv42_xdr.h" /* stateid4 */
+
 struct ps_listener_state; /* fwd: ps_state.h */
 
 /*
@@ -72,19 +74,37 @@ void ps_shortcircuit_install(struct ps_listener_state *pls);
  * expected to have already transformed those values upstream so a
  * forwarded uid=0 against a fenced file decodes here as a mismatch.
  *
- * NOT_NOW_BROWN_COW (slice 5.4): trust-stateid table lookup.  Once
- * trust-stateid Phase 1 ships on the PS, the layout stateid MUST
- * be checked here against the local DS sb's trust table; until
- * then the table is empty and every short-circuit accepts.
+ * Trust-stateid check: if layout_stid is non-NULL, the helper looks
+ * it up in the global trust table (the same table the RPC path's
+ * nfs4_op_chunk_write consults) and rejects the I/O when the entry
+ * is missing, not TRUST_ACTIVE, TRUST_PENDING (MDS re-registering),
+ * or expired.  The mapping mirrors what the RPC path returns on the
+ * same conditions:
+ *   missing / inactive            -- -EBADSTATEID  (NFS4ERR_BAD_STATEID)
+ *   expired                       -- -EEXPIREDSTATEID
+ *   TRUST_PENDING                 -- -EAGAIN       (NFS4ERR_DELAY)
+ * A NULL layout_stid means the caller wants the anonymous-stateid
+ * semantics the RPC path follows when stateid4_is_special() is true
+ * -- no trust lookup, no per-stateid gating.  The dispatch hook in
+ * ec_pipeline.c passes NULL when em_tight_coupled is false; once
+ * tight coupling is negotiated for a mirror the real layout stateid
+ * comes through and the gate becomes load-bearing.
+ *
+ * Note on table-empty behavior: when the trust table happens to be
+ * empty (DS booted with no MDS-issued registrations yet), every
+ * non-NULL stateid misses and the helper returns -EBADSTATEID.
+ * That matches the RPC path -- the DS rejects every non-anonymous
+ * stateid until the MDS catches up.  Callers that need legacy
+ * accept-everything semantics MUST pass NULL.
  */
 int ps_shortcircuit_write(const uint8_t *fh, uint32_t fh_len,
 			  uint64_t block_offset, const uint8_t *data,
 			  size_t data_len, uint32_t forwarded_uid,
-			  uint32_t forwarded_gid);
+			  uint32_t forwarded_gid, const stateid4 *layout_stid);
 
 int ps_shortcircuit_read(const uint8_t *fh, uint32_t fh_len,
 			 uint64_t block_offset, size_t buf_len, uint8_t *buf,
 			 uint32_t *nread, uint32_t forwarded_uid,
-			 uint32_t forwarded_gid);
+			 uint32_t forwarded_gid, const stateid4 *layout_stid);
 
 #endif /* _REFFS_PS_SHORTCIRCUIT_H */

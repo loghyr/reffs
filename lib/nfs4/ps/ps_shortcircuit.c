@@ -9,19 +9,40 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
+#include <time.h>
 
 #include "reffs/data_block.h"
+#include "reffs/errno.h"
 #include "reffs/filehandle.h"
 #include "reffs/identity.h"
 #include "reffs/inode.h"
 #include "reffs/super_block.h"
 
+#include "nfs4/trust_stateid.h"
+
 #include "ps_shortcircuit.h"
 #include "ps_state.h"
+
+/*
+ * CLOCK_MONOTONIC nanoseconds, used for trust-entry expiry checks.
+ * Inlined here rather than pulling in reffs/time.h because that
+ * header transitively includes nfsv3_xdr.h, which is not on this
+ * TU's include path (ps_shortcircuit.c lives in lib/nfs4/ps, which
+ * does not link the NFSv3 wire stubs).
+ */
+static uint64_t sc_now_mono_ns(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * UINT64_C(1000000000) +
+	       (uint64_t)ts.tv_nsec;
+}
 
 /*
  * Decode a wire FH into (sb_id, ino).  Returns 0 on success or
@@ -104,15 +125,59 @@ static bool creds_match(const struct inode *inode, uint32_t fwd_uid,
 	return fwd_uid == stored_uid || fwd_gid == stored_gid;
 }
 
+/*
+ * Trust-stateid gate for the short path.  NULL stateid bypasses the
+ * check (matches the RPC path's stateid4_is_special() bypass for
+ * anonymous I/O).  Non-NULL stateid is required to be present in the
+ * global trust table with TRUST_ACTIVE set, not TRUST_PENDING, and
+ * not expired -- the same rule lib/nfs4/server/chunk.c's
+ * nfs4_op_chunk_write enforces before allowing CHUNK_WRITE.  Without
+ * this gate the short path becomes a layout-stateid override, since
+ * a stale or revoked stateid the RPC path would reject can still
+ * land bytes on the local DS file.
+ */
+static int check_stateid(const stateid4 *layout_stid)
+{
+	if (!layout_stid)
+		return 0;
+
+	struct trust_entry *te = trust_stateid_find(layout_stid);
+
+	if (!te)
+		return -EBADSTATEID;
+
+	uint32_t flags =
+		atomic_load_explicit(&te->te_flags, memory_order_acquire);
+	int ret = 0;
+
+	if (flags & TRUST_PENDING) {
+		ret = -EAGAIN;
+	} else if (!(flags & TRUST_ACTIVE)) {
+		ret = -EBADSTATEID;
+	} else {
+		uint64_t now = sc_now_mono_ns();
+		uint64_t exp = atomic_load_explicit(&te->te_expire_ns,
+						    memory_order_acquire);
+
+		if (exp != 0 && exp <= now)
+			ret = -EEXPIREDSTATEID;
+	}
+	trust_entry_put(te);
+	return ret;
+}
+
 int ps_shortcircuit_write(const uint8_t *fh, uint32_t fh_len,
 			  uint64_t block_offset, const uint8_t *data,
 			  size_t data_len, uint32_t forwarded_uid,
-			  uint32_t forwarded_gid)
+			  uint32_t forwarded_gid, const stateid4 *layout_stid)
 {
 	uint64_t sb_id, ino;
 	int ret;
 
 	ret = decode_fh(fh, fh_len, &sb_id, &ino);
+	if (ret)
+		return ret;
+	ret = check_stateid(layout_stid);
 	if (ret)
 		return ret;
 
@@ -176,7 +241,7 @@ void ps_shortcircuit_install(struct ps_listener_state *pls)
 int ps_shortcircuit_read(const uint8_t *fh, uint32_t fh_len,
 			 uint64_t block_offset, size_t buf_len, uint8_t *buf,
 			 uint32_t *nread, uint32_t forwarded_uid,
-			 uint32_t forwarded_gid)
+			 uint32_t forwarded_gid, const stateid4 *layout_stid)
 {
 	uint64_t sb_id, ino;
 	int ret;
@@ -184,6 +249,9 @@ int ps_shortcircuit_read(const uint8_t *fh, uint32_t fh_len,
 	if (nread)
 		*nread = 0;
 	ret = decode_fh(fh, fh_len, &sb_id, &ino);
+	if (ret)
+		return ret;
+	ret = check_stateid(layout_stid);
 	if (ret)
 		return ret;
 

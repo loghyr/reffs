@@ -29,9 +29,13 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "reffs/errno.h"
 #include "reffs/filehandle.h"
 #include "reffs/fs.h"
 #include "reffs/super_block.h"
+
+#include "nfs4/trust_stateid.h"
+#include "nfsv42_xdr.h"
 
 #include "ps_shortcircuit.h"
 #include "ps_state.h"
@@ -53,19 +57,46 @@ static void sc_setup(void)
 	fs_test_setup();
 	ck_assert_int_eq(ps_state_init(), 0);
 	/*
+	 * Slice 5.4: the cred / stateid check helpers in
+	 * ps_shortcircuit.c call trust_stateid_find() when the dispatch
+	 * passes a non-NULL stateid.  The table must exist or
+	 * trust_stateid_find returns NULL on every lookup; the empty-
+	 * table path is correct (all non-anonymous stateids reject) but
+	 * the trust-table tests need to register an entry, which
+	 * requires the table to be initialized.
+	 */
+	ck_assert_int_eq(trust_stateid_init(), 0);
+	/*
 	 * The test exercises the helpers directly (no dispatch hook
 	 * indirection), so ps_shortcircuit_install on a registered
 	 * pls is not strictly necessary here.  We do not register a
-	 * listener in this fixture because all five tests operate
-	 * against the root sb -- the helper only needs sb_id + ino,
-	 * not a listener context.
+	 * listener in this fixture because all tests operate against
+	 * the root sb -- the helper only needs sb_id + ino, not a
+	 * listener context.
 	 */
 }
 
 static void sc_teardown(void)
 {
+	trust_stateid_fini();
 	ps_state_fini();
 	fs_test_teardown();
+}
+
+/*
+ * Build a stateid4 with a deterministic non-zero `other` so the
+ * trust-table lookup has something stable to hash on.  The seqid
+ * is fixed -- trust_stateid_find keys only on other[], so seqid
+ * variation here is irrelevant.
+ */
+static stateid4 make_test_stateid(uint8_t tag)
+{
+	stateid4 s = { 0 };
+
+	s.seqid = 1;
+	for (int i = 0; i < NFS4_OTHER_SIZE; i++)
+		s.other[i] = (char)(tag + i);
+	return s;
 }
 
 /*
@@ -123,11 +154,11 @@ START_TEST(test_shortcircuit_roundtrip)
 
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0,
 					       (const uint8_t *)payload, plen,
-					       SC_TEST_UID, SC_TEST_GID),
+					       SC_TEST_UID, SC_TEST_GID, NULL),
 			 0);
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
 					      read_buf, &nread, SC_TEST_UID,
-					      SC_TEST_GID),
+					      SC_TEST_GID, NULL),
 			 0);
 	ck_assert_uint_eq(nread, plen);
 	ck_assert_mem_eq(read_buf, payload, plen);
@@ -153,11 +184,11 @@ START_TEST(test_shortcircuit_offset_addressing)
 
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, writeA,
 					       sizeof(writeA), SC_TEST_UID,
-					       SC_TEST_GID),
+					       SC_TEST_GID, NULL),
 			 0);
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 4096, writeB,
 					       sizeof(writeB), SC_TEST_UID,
-					       SC_TEST_GID),
+					       SC_TEST_GID, NULL),
 			 0);
 
 	uint8_t readA[16] = { 0 };
@@ -166,14 +197,14 @@ START_TEST(test_shortcircuit_offset_addressing)
 
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(readA),
 					      readA, &na, SC_TEST_UID,
-					      SC_TEST_GID),
+					      SC_TEST_GID, NULL),
 			 0);
 	ck_assert_uint_eq(na, sizeof(writeA));
 	ck_assert_mem_eq(readA, writeA, sizeof(writeA));
 
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 4096, sizeof(readB),
 					      readB, &nb, SC_TEST_UID,
-					      SC_TEST_GID),
+					      SC_TEST_GID, NULL),
 			 0);
 	ck_assert_uint_eq(nb, sizeof(writeB));
 	ck_assert_mem_eq(readB, writeB, sizeof(writeB));
@@ -196,10 +227,11 @@ START_TEST(test_shortcircuit_stale_sb)
 	uint32_t nread = 0;
 
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, buf, sizeof(buf),
-					       SC_TEST_UID, SC_TEST_GID),
+					       SC_TEST_UID, SC_TEST_GID, NULL),
 			 -ESTALE);
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(buf), buf,
-					      &nread, SC_TEST_UID, SC_TEST_GID),
+					      &nread, SC_TEST_UID, SC_TEST_GID,
+					      NULL),
 			 -ESTALE);
 }
 END_TEST
@@ -219,10 +251,11 @@ START_TEST(test_shortcircuit_stale_ino)
 	uint32_t nread = 0;
 
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, buf, sizeof(buf),
-					       SC_TEST_UID, SC_TEST_GID),
+					       SC_TEST_UID, SC_TEST_GID, NULL),
 			 -ESTALE);
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(buf), buf,
-					      &nread, SC_TEST_UID, SC_TEST_GID),
+					      &nread, SC_TEST_UID, SC_TEST_GID,
+					      NULL),
 			 -ESTALE);
 }
 END_TEST
@@ -244,15 +277,16 @@ START_TEST(test_shortcircuit_bad_fh)
 	/* NULL fh */
 	ck_assert_int_eq(ps_shortcircuit_write(NULL, fh_len, 0, buf,
 					       sizeof(buf), SC_TEST_UID,
-					       SC_TEST_GID),
+					       SC_TEST_GID, NULL),
 			 -EINVAL);
 
 	/* fh_len too small to contain the wire struct */
 	ck_assert_int_eq(ps_shortcircuit_write(fh, 4, 0, buf, sizeof(buf),
-					       SC_TEST_UID, SC_TEST_GID),
+					       SC_TEST_UID, SC_TEST_GID, NULL),
 			 -EINVAL);
 	ck_assert_int_eq(ps_shortcircuit_read(fh, 4, 0, sizeof(buf), buf,
-					      &nread, SC_TEST_UID, SC_TEST_GID),
+					      &nread, SC_TEST_UID, SC_TEST_GID,
+					      NULL),
 			 -EINVAL);
 
 	/*
@@ -267,7 +301,7 @@ START_TEST(test_shortcircuit_bad_fh)
 	bad_vers_fh[1] = 0xff;
 	ck_assert_int_eq(ps_shortcircuit_write(bad_vers_fh, sizeof(bad_vers_fh),
 					       0, buf, sizeof(buf), SC_TEST_UID,
-					       SC_TEST_GID),
+					       SC_TEST_GID, NULL),
 			 -EINVAL);
 }
 END_TEST
@@ -295,11 +329,11 @@ START_TEST(test_shortcircuit_reject_wrong_uid)
 	/* Wrong uid AND wrong gid -- neither matches the stored pair. */
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, payload,
 					       sizeof(payload), SC_TEST_UID + 1,
-					       SC_TEST_GID + 1),
+					       SC_TEST_GID + 1, NULL),
 			 -EACCES);
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
 					      read_buf, &nread, SC_TEST_UID + 1,
-					      SC_TEST_GID + 1),
+					      SC_TEST_GID + 1, NULL),
 			 -EACCES);
 
 	/*
@@ -308,7 +342,7 @@ START_TEST(test_shortcircuit_reject_wrong_uid)
 	 */
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
 					      read_buf, &nread, SC_TEST_UID,
-					      SC_TEST_GID),
+					      SC_TEST_GID, NULL),
 			 0);
 	ck_assert_uint_eq(nread, 0);
 }
@@ -331,11 +365,11 @@ START_TEST(test_shortcircuit_accept_matching_uid)
 
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, payload,
 					       sizeof(payload), SC_TEST_UID,
-					       SC_TEST_GID),
+					       SC_TEST_GID, NULL),
 			 0);
 	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
 					      read_buf, &nread, SC_TEST_UID,
-					      SC_TEST_GID),
+					      SC_TEST_GID, NULL),
 			 0);
 	ck_assert_uint_eq(nread, sizeof(payload));
 	ck_assert_mem_eq(read_buf, payload, sizeof(payload));
@@ -363,8 +397,123 @@ START_TEST(test_shortcircuit_root_squash)
 
 	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, payload,
 					       sizeof(payload), nobody_uid,
-					       nobody_gid),
+					       nobody_gid, NULL),
 			 -EACCES);
+}
+END_TEST
+
+/*
+ * Slice 5.4: NULL layout stateid is the "anonymous stateid"
+ * shortcut.  The dispatch hook in ec_pipeline.c passes NULL when
+ * em_tight_coupled is false (the mirror's GETDEVICEINFO did not
+ * advertise tight coupling), and the helper MUST accept without
+ * consulting the trust table.  Today's compat path: the table
+ * starts empty; without this bypass, every short-circuit would
+ * reject -EBADSTATEID once Phase 1 trust-stateid is wired in.
+ */
+START_TEST(test_shortcircuit_null_stateid_skips_trust_check)
+{
+	uint64_t ino = make_test_file("/sc_nullstid");
+	uint8_t fh[64];
+	uint32_t fh_len = build_fh(fh, SUPER_BLOCK_ROOT_ID, ino);
+	const uint8_t payload[8] = { 0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 0, 1 };
+	uint8_t read_buf[16] = { 0 };
+	uint32_t nread = 0;
+
+	/*
+	 * NULL stid even with an EMPTY trust table -- the bypass
+	 * fires before any lookup.  No registration in this test.
+	 */
+	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, payload,
+					       sizeof(payload), SC_TEST_UID,
+					       SC_TEST_GID, NULL),
+			 0);
+	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
+					      read_buf, &nread, SC_TEST_UID,
+					      SC_TEST_GID, NULL),
+			 0);
+	ck_assert_uint_eq(nread, sizeof(payload));
+	ck_assert_mem_eq(read_buf, payload, sizeof(payload));
+}
+END_TEST
+
+/*
+ * Slice 5.4: forwarded layout stateid that IS registered in the
+ * trust table (TRUST_ACTIVE, unexpired) accepts.  This pins the
+ * load-bearing case once tight coupling is enabled per-mirror --
+ * the RPC path's nfs4_op_chunk_write would accept on the same
+ * stateid, so the short path must too, otherwise tight-coupled
+ * mirrors lose I/O the moment the dispatch hook fires.
+ */
+START_TEST(test_shortcircuit_trusted_stateid_accepted)
+{
+	uint64_t ino = make_test_file("/sc_trustedstid");
+	uint8_t fh[64];
+	uint32_t fh_len = build_fh(fh, SUPER_BLOCK_ROOT_ID, ino);
+	stateid4 trusted = make_test_stateid(0x42);
+	clientid4 cid = 0x1234567890ABCDEFULL;
+	/* Lease deadline well in the future. */
+	uint64_t expire_ns = UINT64_C(1) << 62;
+
+	ck_assert_int_eq(trust_stateid_register(&trusted, ino, cid,
+						LAYOUTIOMODE4_RW, expire_ns,
+						""),
+			 0);
+
+	const uint8_t payload[] = "trust!";
+	uint8_t read_buf[16] = { 0 };
+	uint32_t nread = 0;
+
+	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, payload,
+					       sizeof(payload), SC_TEST_UID,
+					       SC_TEST_GID, &trusted),
+			 0);
+	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
+					      read_buf, &nread, SC_TEST_UID,
+					      SC_TEST_GID, &trusted),
+			 0);
+	ck_assert_uint_eq(nread, sizeof(payload));
+	ck_assert_mem_eq(read_buf, payload, sizeof(payload));
+}
+END_TEST
+
+/*
+ * Slice 5.4: forwarded layout stateid that is NOT in the trust
+ * table -- the RPC path rejects with NFS4ERR_BAD_STATEID, so the
+ * short path returns -EBADSTATEID.  This is the canonical phase 5
+ * test_shortcircuit_rejects_unknown_stateid case from
+ * proxy-server.md: a forwarded stateid for a file the MDS never
+ * registered (e.g., from a different client's lease, or a
+ * revoked layout) must not bypass authorization.  Verify the
+ * data block stays unwritten by reading back with NULL stid
+ * afterward and observing nread == 0.
+ */
+START_TEST(test_shortcircuit_rejects_unknown_stateid)
+{
+	uint64_t ino = make_test_file("/sc_unknownstid");
+	uint8_t fh[64];
+	uint32_t fh_len = build_fh(fh, SUPER_BLOCK_ROOT_ID, ino);
+	stateid4 unknown = make_test_stateid(0x88);
+	const uint8_t payload[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
+	uint8_t read_buf[16] = { 0 };
+	uint32_t nread = 0;
+
+	/* No trust_stateid_register call -- the table does not know `unknown`. */
+	ck_assert_int_eq(ps_shortcircuit_write(fh, fh_len, 0, payload,
+					       sizeof(payload), SC_TEST_UID,
+					       SC_TEST_GID, &unknown),
+			 -EBADSTATEID);
+	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
+					      read_buf, &nread, SC_TEST_UID,
+					      SC_TEST_GID, &unknown),
+			 -EBADSTATEID);
+
+	/* Unwritten data block: subsequent NULL-stid read sees nread == 0. */
+	ck_assert_int_eq(ps_shortcircuit_read(fh, fh_len, 0, sizeof(read_buf),
+					      read_buf, &nread, SC_TEST_UID,
+					      SC_TEST_GID, NULL),
+			 0);
+	ck_assert_uint_eq(nread, 0);
 }
 END_TEST
 
@@ -382,6 +531,9 @@ static Suite *ps_shortcircuit_suite(void)
 	tcase_add_test(tc, test_shortcircuit_reject_wrong_uid);
 	tcase_add_test(tc, test_shortcircuit_accept_matching_uid);
 	tcase_add_test(tc, test_shortcircuit_root_squash);
+	tcase_add_test(tc, test_shortcircuit_null_stateid_skips_trust_check);
+	tcase_add_test(tc, test_shortcircuit_trusted_stateid_accepted);
+	tcase_add_test(tc, test_shortcircuit_rejects_unknown_stateid);
 	suite_add_tcase(s, tc);
 	return s;
 }
