@@ -627,6 +627,23 @@ union PS_LISTENER_LIST1res switch (probe_stat1 pllr_status) {
 /*                                     failures.  Surfaces DS         */
 /*                                     degradation the WRITE-side    */
 /*                                     counters miss.                 */
+/*                                                                     */
+/* Slice 5.5 addition (wire-additive append; probe is internal-only,  */
+/* client + server ship together):                                    */
+/*                                                                     */
+/*   ppwbs_shortcircuit_total          CHUNK read/write calls the     */
+/*                                     ec_pipeline dispatch hook     */
+/*                                     routed through the local-VFS  */
+/*                                     short-circuit (em_local +     */
+/*                                     pls_sc_*_fn installed) rather */
+/*                                     than the RPC fanout.          */
+/*                                     Benchmarks read it before /   */
+/*                                     after a workload to prove the */
+/*                                     short path actually fired --  */
+/*                                     when it stays zero on a       */
+/*                                     combined DS+PS box the        */
+/*                                     deployment is silently        */
+/*                                     misconfigured.                */
 /* ------------------------------------------------------------------ */
 
 struct probe_ps_write_buffer_stats1 {
@@ -640,6 +657,7 @@ struct probe_ps_write_buffer_stats1 {
 	unsigned hyper	ppwbs_dirty_stripes_total;
 	unsigned hyper	ppwbs_rmw_reads_total;
 	unsigned hyper	ppwbs_rmw_read_failures_total;
+	unsigned hyper	ppwbs_shortcircuit_total;
 };
 
 struct PS_WRITE_BUFFER_STATS1resok {

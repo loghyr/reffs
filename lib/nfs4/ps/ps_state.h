@@ -287,6 +287,16 @@ struct ps_listener_state {
 	 *                             unreachable / decode quorum
 	 *                             lost).  Surfaces DS degradation
 	 *                             the WRITE-side counters miss.
+	 *   pls_shortcircuit_total    Phase 5.5: bumped whenever the
+	 *                             ec_pipeline dispatch hook
+	 *                             routes a per-mirror CHUNK
+	 *                             read/write through the local
+	 *                             VFS short-circuit (em_local +
+	 *                             pls_sc_*_fn installed) instead
+	 *                             of issuing an RPC.  Benchmarks
+	 *                             prove the short path actually
+	 *                             fired by checking this counter
+	 *                             before/after the workload.
 	 *
 	 * The active_buffers count + total_bytes_buffered are NOT
 	 * counters here; they are computed lazily by the probe
@@ -299,6 +309,7 @@ struct ps_listener_state {
 	_Atomic uint64_t pls_close_flush_timeouts_total;
 	_Atomic uint64_t pls_rmw_reads_total;
 	_Atomic uint64_t pls_rmw_read_failures_total;
+	_Atomic uint64_t pls_shortcircuit_total;
 
 	/*
 	 * Phase 5 short-circuit address table.  Seeded once by
@@ -341,6 +352,24 @@ struct ps_listener_state {
 			      uint8_t *buf, uint32_t *nread, uint32_t fwd_uid,
 			      uint32_t fwd_gid, const stateid4 *layout_stid);
 };
+
+/*
+ * Bump pls_shortcircuit_total -- called from ec_pipeline.c's
+ * per-mirror dispatch hook whenever the short-circuit path is
+ * routed instead of the RPC fanout.  Inline because it is one
+ * relaxed atomic add on the hot dispatch path; unit tests bump it
+ * directly to verify the probe-surface plumbing without staging an
+ * ec_context.  NULL-tolerant so the dispatch hook can call it
+ * unconditionally after the em_local / pls / sc_fn guards.
+ */
+static inline void
+ps_listener_record_shortcircuit(struct ps_listener_state *pls)
+{
+	if (!pls)
+		return;
+	atomic_fetch_add_explicit(&pls->pls_shortcircuit_total, 1,
+				  memory_order_relaxed);
+}
 
 /*
  * Initialize the registry.  Call once during reffsd startup before

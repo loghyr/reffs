@@ -1555,6 +1555,17 @@ static int probe1_pwbs_collect_one(const struct ps_listener_state *pls,
 	info->ppwbs_rmw_read_failures_total = atomic_load_explicit(
 		&pls->pls_rmw_read_failures_total, memory_order_relaxed);
 
+	/*
+	 * Slice 5.5: short-circuit hit count.  Surfaced so benchmarks
+	 * can prove the per-mirror dispatch routed through the local-
+	 * VFS fast path instead of falling back to the RPC fanout.
+	 * Stays zero on hosts that never hit the em_local guard, so a
+	 * misconfigured combined DS+PS surfaces here as a regression
+	 * rather than as a silent slow workload.
+	 */
+	info->ppwbs_shortcircuit_total = atomic_load_explicit(
+		&pls->pls_shortcircuit_total, memory_order_relaxed);
+
 	ctx->n++;
 	return 0;
 }

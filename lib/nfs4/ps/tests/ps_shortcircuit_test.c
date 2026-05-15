@@ -517,6 +517,71 @@ START_TEST(test_shortcircuit_rejects_unknown_stateid)
 }
 END_TEST
 
+/*
+ * Slice 5.5: pls_shortcircuit_total bumps when the ec_pipeline
+ * dispatch hook routes through the short-circuit path.  The bump
+ * lives in `ps_listener_record_shortcircuit()`, an inline helper
+ * the dispatch hook calls before invoking pls_sc_write_fn /
+ * pls_sc_read_fn; calling the helper directly N times against a
+ * freshly-registered pls verifies the counter atomic + the probe
+ * surface's load both observe N.  The dispatch-hook call site is
+ * exercised by the higher-level integration test
+ * (test_shortcircuit_partial_2_mirrors, follow-up slice); this
+ * test pins the counter primitive in isolation so a future
+ * refactor that swaps the helper for a direct atomic call cannot
+ * silently drop the probe-surface plumbing.
+ */
+#define SC_COUNTER_TEST_LISTENER_ID 31337
+START_TEST(test_shortcircuit_counter_increments)
+{
+	struct reffs_proxy_mds_config cfg;
+
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.id = SC_COUNTER_TEST_LISTENER_ID;
+	cfg.port = 4098;
+	cfg.mds_port = 2049;
+	cfg.mds_probe = 20490;
+	strncpy(cfg.address, "127.0.0.1", sizeof(cfg.address) - 1);
+	ck_assert_int_eq(ps_state_register(&cfg), 0);
+
+	struct ps_listener_state *pls =
+		(struct ps_listener_state *)ps_state_find(
+			SC_COUNTER_TEST_LISTENER_ID);
+
+	ck_assert_ptr_nonnull(pls);
+	/*
+	 * Fresh listener: ps_state_register zero-inits the counter
+	 * cluster.  The probe handler will surface this as 0.
+	 */
+	ck_assert_uint_eq(atomic_load_explicit(&pls->pls_shortcircuit_total,
+					       memory_order_relaxed),
+			  0);
+
+	const unsigned int N = 17;
+
+	for (unsigned int i = 0; i < N; i++)
+		ps_listener_record_shortcircuit(pls);
+
+	ck_assert_uint_eq(atomic_load_explicit(&pls->pls_shortcircuit_total,
+					       memory_order_relaxed),
+			  N);
+
+	/*
+	 * NULL pls is a no-op: the dispatch hook guards on pls != NULL
+	 * before calling the helper, but the helper is also called
+	 * from contexts where pls is reached via a function-pointer
+	 * chain that may not have a valid listener (ec_demo, which
+	 * never installs a pls).  Test that explicitly so a future
+	 * refactor that hoists the helper above the dispatch guard
+	 * does not segfault.
+	 */
+	ps_listener_record_shortcircuit(NULL);
+	ck_assert_uint_eq(atomic_load_explicit(&pls->pls_shortcircuit_total,
+					       memory_order_relaxed),
+			  N);
+}
+END_TEST
+
 static Suite *ps_shortcircuit_suite(void)
 {
 	Suite *s = suite_create("ps_shortcircuit");
@@ -534,6 +599,7 @@ static Suite *ps_shortcircuit_suite(void)
 	tcase_add_test(tc, test_shortcircuit_null_stateid_skips_trust_check);
 	tcase_add_test(tc, test_shortcircuit_trusted_stateid_accepted);
 	tcase_add_test(tc, test_shortcircuit_rejects_unknown_stateid);
+	tcase_add_test(tc, test_shortcircuit_counter_increments);
 	suite_add_tcase(s, tc);
 	return s;
 }

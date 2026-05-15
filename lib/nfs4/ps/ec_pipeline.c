@@ -262,6 +262,7 @@ static int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 	if (em->em_local && ctx->ctx_pls && ctx->ctx_pls->pls_sc_write_fn) {
 		uint64_t byte_off = block_offset * (uint64_t)chunk_sz;
 
+		ps_listener_record_shortcircuit(ctx->ctx_pls);
 		return ctx->ctx_pls->pls_sc_write_fn(em->em_fh, em->em_fh_len,
 						     byte_off, src, wsz,
 						     em->em_uid, em->em_gid,
@@ -321,6 +322,7 @@ static int ec_chunk_read(struct ec_context *ctx, int mirror_idx,
 		uint64_t byte_off = block_offset * (uint64_t)rd_chunk_sz;
 		size_t buf_len = (size_t)nblk * (size_t)rd_chunk_sz;
 
+		ps_listener_record_shortcircuit(ctx->ctx_pls);
 		return ctx->ctx_pls->pls_sc_read_fn(em->em_fh, em->em_fh_len,
 						    byte_off, buf_len, shard,
 						    nread, em->em_uid,

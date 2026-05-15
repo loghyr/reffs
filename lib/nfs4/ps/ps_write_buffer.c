@@ -271,6 +271,8 @@ int ps_write_buffer_table_init(struct ps_listener_state *pls)
 			      memory_order_relaxed);
 	atomic_store_explicit(&pls->pls_rmw_read_failures_total, 0,
 			      memory_order_relaxed);
+	atomic_store_explicit(&pls->pls_shortcircuit_total, 0,
+			      memory_order_relaxed);
 	return 0;
 }
 
