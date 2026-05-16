@@ -42,6 +42,7 @@
 #endif
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -54,6 +55,18 @@
 #include "mds_tls_xprt.h"
 
 #define MDS_TLS_BUFSZ (64 * 1024)
+
+#ifndef __APPLE__
+/*
+ * The CLIENT* trampoline below is libtirpc-shaped: cl_call /
+ * cl_abort / cl_control function-pointer signatures and the
+ * caddr_t cl_private slot match libtirpc's <rpc/clnt.h>, not the
+ * Apple-RPC variant in macOS libsystem.  The file's purpose is the
+ * Linux PS-MDS TLS xprt; macOS gets a NULL-returning stub at the
+ * bottom of the file so mds_session.c's TLS branch fails cleanly
+ * (it already handles NULL from mds_tls_xprt_create) rather than
+ * the build breaking.
+ */
 
 /*
  * libtirpc declares xdrproc_t in two flavours in <rpc/xdr.h>
@@ -449,3 +462,18 @@ CLIENT *mds_tls_xprt_create(int fd, SSL *ssl, uint32_t prog, uint32_t vers)
 
 	return clnt;
 }
+
+#else /* __APPLE__ */
+
+CLIENT *mds_tls_xprt_create(int fd __attribute__((unused)),
+			    SSL *ssl __attribute__((unused)),
+			    uint32_t prog __attribute__((unused)),
+			    uint32_t vers __attribute__((unused)))
+{
+	fprintf(stderr,
+		"mds_tls_xprt_create: TLS xprt requires libtirpc and is "
+		"not supported on Darwin; PS-MDS TLS unavailable\n");
+	return NULL;
+}
+
+#endif /* __APPLE__ */
