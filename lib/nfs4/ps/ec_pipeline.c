@@ -236,9 +236,15 @@ static void ec_report_ds_error(struct ec_context *ctx, int mirror_idx,
  * report LAYOUTERROR to the MDS and retry with exponential backoff.
  * After 3 failed attempts, return -ESTALE so the caller can LAYOUTRETURN.
  */
-static int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
-			  uint64_t block_offset, uint32_t chunk_sz,
-			  const uint8_t *src, uint32_t wsz, uint32_t owner_id)
+/*
+ * Non-static so ec_pipeline_dispatch_test (lib/nfs4/ps/tests/)
+ * can drive the Phase 5 short-circuit dispatch hook below
+ * without standing up a full LAYOUTGET stack.  See
+ * ec_pipeline_internal.h for the test-only declaration.
+ */
+int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
+		   uint64_t block_offset, uint32_t chunk_sz, const uint8_t *src,
+		   uint32_t wsz, uint32_t owner_id)
 {
 	struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[mirror_idx];
 	const stateid4 *stid =
@@ -302,10 +308,13 @@ static int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 
 /*
  * ec_chunk_read -- CHUNK_READ with BAD_STATEID retry for tight coupling.
+ *
+ * Non-static for the same dispatch-test reason as ec_chunk_write
+ * above; see ec_pipeline_internal.h.
  */
-static int ec_chunk_read(struct ec_context *ctx, int mirror_idx,
-			 uint64_t block_offset, uint32_t nblk, uint8_t *shard,
-			 uint32_t rd_chunk_sz, uint32_t *nread)
+int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
+		  uint32_t nblk, uint8_t *shard, uint32_t rd_chunk_sz,
+		  uint32_t *nread)
 {
 	struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[mirror_idx];
 	const stateid4 *stid =

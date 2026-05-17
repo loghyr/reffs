@@ -1,0 +1,86 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+#ifndef EC_PIPELINE_INTERNAL_H
+#define EC_PIPELINE_INTERNAL_H
+
+/*
+ * Whitebox surface for ec_pipeline.c.  Tests include this header
+ * to drive the per-mirror CHUNK dispatch (ec_chunk_write /
+ * ec_chunk_read) directly without standing up a full LAYOUTGET +
+ * codec stack.  The Phase 5 short-circuit dispatch hook lives at
+ * the very top of those functions; the partial-2-mirrors test
+ * needs to exercise the hook with synthetic per-mirror em_local
+ * flags, so the test allocates a struct ec_context on the stack
+ * and calls the helper directly.
+ *
+ * Same precedent as ps_write_buffer_internal.h: the consumer is
+ * in the same library, the helper is one-call-deep, and stacking
+ * up accessors would be more code than just exposing the struct.
+ * Production callers outside ec_pipeline.c do NOT include this
+ * header.
+ */
+
+#include <stdint.h>
+
+#include "nfsv42_xdr.h"
+#include "ec_client.h"
+#include "ps_state.h"
+
+/*
+ * Mirror of the static struct ec_context in ec_pipeline.c.  Kept
+ * in sync by code review -- if a field is added to ec_pipeline.c's
+ * private definition without updating this header, the test
+ * compilation will not catch the divergence (the test includes
+ * this header, ec_pipeline.c does not).  The reviewer must check
+ * both.
+ *
+ * The compiler does NOT verify struct identity across TUs -- C
+ * does not have nominal struct typing.  ec_pipeline.c's local
+ * `struct ec_context` and this declaration are independent type
+ * declarations that happen to share a name; the linker resolves
+ * pointer-to-struct references by name + binary layout.  Field
+ * order / alignment must match exactly.
+ */
+struct ec_context {
+	struct mds_session *ctx_ms;
+	struct mds_file ctx_file;
+	struct ec_layout ctx_layout;
+	struct ec_device *ctx_devs;
+	struct ds_conn *ctx_conns; /* NFSv3 DS connections (v1) */
+	struct mds_session *ctx_ds_sess; /* NFSv4.2 DS sessions (v2) */
+	struct ec_codec *ctx_codec;
+	uint32_t ctx_k;
+	uint32_t ctx_m;
+	struct ps_listener_state *ctx_pls;
+};
+
+/*
+ * Per-mirror CHUNK_WRITE.  Phase 5 short-circuit dispatch lives
+ * at the top of this function (em_local && ctx_pls &&
+ * pls_sc_write_fn).  Returns 0 on success, -errno on failure.
+ * The dispatch path through pls_sc_write_fn returns whatever the
+ * installed stub returns; the RPC path returns the ds_chunk_write
+ * status (which falls through to mds_compound_send_with_auth).
+ *
+ * Public via this internal header for
+ * ec_pipeline_dispatch_test.c.  ec_pipeline.c retains its single
+ * definition; the test TU links against it through the
+ * libreffs_nfs4_ps.la static archive.
+ */
+int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
+		   uint64_t block_offset, uint32_t chunk_sz, const uint8_t *src,
+		   uint32_t wsz, uint32_t owner_id);
+
+/*
+ * Per-mirror CHUNK_READ.  Mirrors ec_chunk_write -- same
+ * dispatch hook at the top, same fall-through to ds_chunk_read
+ * on the RPC path.
+ */
+int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
+		  uint32_t nblk, uint8_t *shard, uint32_t rd_chunk_sz,
+		  uint32_t *nread);
+
+#endif /* EC_PIPELINE_INTERNAL_H */
