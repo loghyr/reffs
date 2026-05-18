@@ -20,7 +20,9 @@
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <stdbool.h>
+#include <stdio.h> /* tmpfile, fflush, fread -- audit-log capture test */
 #include <string.h>
+#include <unistd.h> /* dup, dup2, close, fileno -- audit-log capture test */
 #include <rpc/auth.h>
 #include <rpc/xdr.h>
 
@@ -932,6 +934,155 @@ START_TEST(test_registered_ps_does_not_bypass_open)
 }
 END_TEST
 
+/*
+ * Counter-test: root_squash is NOT bypassed for non-discovery ops.
+ * The bypass at security.c:237-247 returns NFS4_OK before the
+ * rule-match block at security.c:253+, so on a discovery op the
+ * squash never runs.  For ANY other op (the load-bearing case being
+ * data ops like LAYOUTGET / OPEN / READ / WRITE), control reaches
+ * the rule-match path where rpc_cred_squash applies BEFORE the
+ * flavor check.  Squash applies even when the flavor check is
+ * about to reject, because the order is: match rule, squash, then
+ * compare flavors.
+ *
+ * Proof: registered-PS with uid=0 + AUTH_SYS, child_sb_id rule has
+ * root_squash=true (default for the super_block_set_flavors shim
+ * per export-policy.md).  PUTFH succeeds via the bypass without
+ * touching c_ap.  OPEN runs the rule-match path; the rule sets
+ * c_ap.aup_uid = 65534, c_ap.aup_gid = 65534; then the flavor
+ * check rejects AUTH_SYS on the KRB5-only export and OPEN returns
+ * WRONGSEC.  The squash happened.
+ *
+ * This pins the design promise from proxy-server.md "Privilege
+ * model": `root_squash applies in the normal way based on the
+ * client-rule for the PS's source address and the forwarded
+ * credentials.`  A future refactor that hoists the bypass above
+ * the squash (or that drops the squash from the bypass-fall-
+ * through path) breaks the assertion.
+ */
+START_TEST(test_registered_ps_does_not_bypass_root_squash)
+{
+	struct wrongsec_ctx *ctx = make_ctx_registered_ps(2, AUTH_SYS, 0);
+
+	/*
+	 * Force uid=0 on the compound's working credential -- make_ctx
+	 * calloc's c_ap so aup_uid is already 0, but write it
+	 * explicitly so a future make_ctx change that initialises
+	 * aup_uid to a non-zero default does not silently turn this
+	 * test green for the wrong reason.
+	 */
+	ctx->compound->c_ap.aup_uid = 0;
+	ctx->compound->c_ap.aup_gid = 0;
+
+	set_op_putfh(ctx, 0, child_sb_id, INODE_ROOT_ID);
+	/*
+	 * Same OPEN(CLAIM_NULL) stub as test_registered_ps_does_not_
+	 * bypass_open above.  The handler will reach
+	 * nfs4_check_wrongsec, hit the rule-match path (since the op
+	 * is not in op_is_namespace_discovery), and apply squash
+	 * before the flavor check returns WRONGSEC.
+	 */
+	nfs_argop4 *open_arg = &ctx->compound->c_args->argarray.argarray_val[1];
+
+	open_arg->argop = OP_OPEN;
+	open_arg->nfs_argop4_u.opopen.claim.claim = CLAIM_NULL;
+
+	dispatch_compound(ctx->compound);
+
+	/* PUTFH bypassed; OPEN rejected on flavor (and squash already ran). */
+	ck_assert_int_eq(op_status(ctx, 0), NFS4_OK);
+	ck_assert_int_eq(op_status(ctx, 1), NFS4ERR_WRONGSEC);
+
+	/* The load-bearing assertion: squash applied. */
+	ck_assert_uint_eq(ctx->compound->c_ap.aup_uid, 65534);
+	ck_assert_uint_eq(ctx->compound->c_ap.aup_gid, 65534);
+
+	free_ctx(ctx);
+}
+END_TEST
+
+/*
+ * Audit-log capture: the bypass emits a TRACE line at
+ * security.c:241 every time it fires.  This test runs a bypassed
+ * LOOKUP and grep's the captured trace output for the "PS-bypass:"
+ * substring.
+ *
+ * Capture mechanism: the reffs test harness inits the trace
+ * subsystem with `reffs_trace_init(NULL)` (libreffs_test.c:36),
+ * which sets the internal `trace_fp` to `stderr` (common.c:238).
+ * `reffs_trace_event` writes via `fprintf(trace_fp, ...)` and
+ * calls `fflush(trace_fp)` after each event (common.c:343).  The
+ * test thus captures stderr to a `tmpfile()` stream, runs the
+ * dispatch, and reads the captured bytes back.  No production
+ * API surface needed.
+ *
+ * Buffer sizing: 64 KiB is plenty for a 2-op compound's trace
+ * output.  If the bypass line falls outside the first 64 KiB the
+ * assertion fires and we resize.
+ */
+START_TEST(test_registered_ps_lookup_audit_logged)
+{
+	struct wrongsec_ctx *ctx = make_ctx_registered_ps(2, AUTH_SYS, 0);
+
+	set_op_putrootfh(ctx, 0);
+	set_op_lookup(ctx, 1, "secure");
+
+	/*
+	 * Redirect stderr to a tmpfile (unlinked at fclose).  fflush
+	 * stderr first so any pending pre-test output flushes to the
+	 * real stderr before the swap.
+	 */
+	fflush(stderr);
+	int saved_fd = dup(STDERR_FILENO);
+
+	ck_assert_int_ne(saved_fd, -1);
+
+	FILE *tf = tmpfile();
+
+	ck_assert_ptr_nonnull(tf);
+
+	int rc = dup2(fileno(tf), STDERR_FILENO);
+
+	ck_assert_int_ne(rc, -1);
+
+	dispatch_compound(ctx->compound);
+
+	fflush(stderr);
+	fseek(tf, 0, SEEK_SET);
+	char buf[64 * 1024];
+	size_t n = fread(buf, 1, sizeof(buf) - 1, tf);
+
+	buf[n < sizeof(buf) ? n : sizeof(buf) - 1] = '\0';
+
+	/* Restore stderr before any assertion fires -- otherwise the
+	 * test framework's failure message would land in the tmpfile
+	 * and never reach the operator's terminal. */
+	rc = dup2(saved_fd, STDERR_FILENO);
+	close(saved_fd);
+	fclose(tf);
+	ck_assert_int_ne(rc, -1);
+
+	/* Bypass actually fired (otherwise the audit line wouldn't
+	 * exist either -- guard the audit assertion with the behavior
+	 * assertion so a regression that drops the bypass entirely
+	 * produces a clearer failure). */
+	ck_assert_int_eq(op_status(ctx, 0), NFS4_OK);
+	ck_assert_int_eq(op_status(ctx, 1), NFS4_OK);
+
+	/* The load-bearing assertion: the audit line landed in the
+	 * trace stream.  The exact format ("PS-bypass: op=%u ...") is
+	 * the production string at security.c:241; matching the prefix
+	 * is enough to detect "the line fires" without coupling to
+	 * specific field values. */
+	ck_assert_msg(strstr(buf, "PS-bypass:") != NULL,
+		      "expected TRACE 'PS-bypass:' substring in captured "
+		      "stderr (read %zu bytes)",
+		      n);
+
+	free_ctx(ctx);
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
@@ -974,6 +1125,8 @@ static Suite *wrongsec_suite(void)
 	tcase_add_test(tc, test_registered_ps_bypasses_wrongsec_on_lookup);
 	tcase_add_test(tc, test_registered_ps_bypasses_wrongsec_on_putfh);
 	tcase_add_test(tc, test_registered_ps_does_not_bypass_open);
+	tcase_add_test(tc, test_registered_ps_does_not_bypass_root_squash);
+	tcase_add_test(tc, test_registered_ps_lookup_audit_logged);
 	suite_add_tcase(s, tc);
 
 	return s;
