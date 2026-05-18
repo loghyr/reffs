@@ -568,6 +568,33 @@ struct probe_ps_listener_info1 {
 	bool		ppli_session_present;
 	unsigned int	ppli_reconnect_backoff_sec;
 	unsigned hyper	ppli_reconnect_next_attempt_ns;
+	/*
+	 * Wire-additive observability fields (per
+	 * .claude/design/ps-listener-list-observability.md).  Probe1
+	 * is internal-only (reviewer rule 9 explicit exemption), so
+	 * the append is rebuild-only; no migration.
+	 *
+	 *   ppli_sc_installed -- pls_sc_write_fn != NULL.  False on a
+	 *     listener that registered but never ran
+	 *     ps_shortcircuit_install (the ec_demo path, or a test
+	 *     fixture that omits the install step).
+	 *   ppli_root_fh_resolved -- pls_mds_root_fh_len != 0.  False
+	 *     between ps_state_register and the first successful
+	 *     upstream PUTROOTFH+GETFH.  Distinguishes "session up,
+	 *     discovery not yet run" from "session up, discovery
+	 *     completed".
+	 *   ppli_nexports -- count of paths discovered from the
+	 *     upstream MDS's MOUNT3 EXPORT reply.  Zero means
+	 *     discovery has not happened or returned no paths.
+	 *   ppli_nlocal_addrs -- size of the per-listener local-
+	 *     address table that gates em_local on the dispatch hook
+	 *     (Phase 5 short-circuit).  Zero means short-circuit will
+	 *     never fire even when pls_sc_write_fn is non-NULL.
+	 */
+	bool		ppli_sc_installed;
+	bool		ppli_root_fh_resolved;
+	unsigned int	ppli_nexports;
+	unsigned int	ppli_nlocal_addrs;
 };
 
 struct PS_LISTENER_LIST1resok {

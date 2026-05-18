@@ -73,6 +73,7 @@ TESTS = \
 	ps_discovery_test \
 	ps_inode_test \
 	ps_listener_lifecycle_test \
+	ps_listener_list_observability_test \
 	ps_local_addr_test \
 	ps_mount_client_test \
 	ps_owner_test \

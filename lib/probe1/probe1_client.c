@@ -759,19 +759,33 @@ static int ps_listener_list_cb(struct rpc_trans *rt)
 		PS_LISTENER_LIST1resok *resok =
 			&res->PS_LISTENER_LIST1res_u.pllr_resok;
 
-		printf("%-4s %-32s %-6s %-9s %-8s %s\n", "ID", "UPSTREAM",
-		       "PORT", "SESSION?", "BACKOFF", "NEXT_NS");
+		/*
+		 * SC + EXPORTS columns hug the right edge so the
+		 * existing left layout (ID/UPSTREAM/PORT/SESSION?/
+		 * BACKOFF/NEXT_NS) stays in muscle-memory positions for
+		 * operators who already scripted against this row.  The
+		 * remaining two observability fields (ppli_root_fh_resolved
+		 * and ppli_nlocal_addrs) are available via the underlying
+		 * XDR for callers that decode the response directly; the
+		 * Python CLI surfaces all four columns for full visibility.
+		 */
+		printf("%-4s %-32s %-6s %-9s %-8s %-20s %-3s %s\n", "ID",
+		       "UPSTREAM", "PORT", "SESSION?", "BACKOFF", "NEXT_NS",
+		       "SC", "EXPORTS");
 		for (uint32_t i = 0;
 		     i < resok->pllr_listeners.pllr_listeners_len; i++) {
 			struct probe_ps_listener_info1 *p =
 				&resok->pllr_listeners.pllr_listeners_val[i];
-			printf("%-4u %-32s %-6u %-9s %-8u %" PRIu64 "\n",
+			printf("%-4u %-32s %-6u %-9s %-8u %-20" PRIu64
+			       " %-3s %u\n",
 			       p->ppli_listener_id,
 			       p->ppli_upstream ? p->ppli_upstream : "",
 			       p->ppli_upstream_port,
 			       p->ppli_session_present ? "yes" : "no",
 			       p->ppli_reconnect_backoff_sec,
-			       p->ppli_reconnect_next_attempt_ns);
+			       p->ppli_reconnect_next_attempt_ns,
+			       p->ppli_sc_installed ? "Y" : "N",
+			       p->ppli_nexports);
 		}
 	}
 	io_handler_stop();

@@ -1454,6 +1454,40 @@ static int probe1_ps_collect_one(const struct ps_listener_state *pls, void *arg)
 	info->ppli_reconnect_next_attempt_ns = atomic_load_explicit(
 		&pls->pls_reconnect_next_attempt_ns, memory_order_acquire);
 
+	/*
+	 * Observability fields (per
+	 * .claude/design/ps-listener-list-observability.md).  All four
+	 * are reads of existing per-listener state; the source-field
+	 * contracts are tested in
+	 * lib/nfs4/ps/tests/ps_listener_list_observability_test.c.
+	 *
+	 * pls_sc_write_fn: plain read.  Install-once at register time
+	 * (ps_state.h:340-345); the release-store on pls_nlisteners
+	 * inside ps_state_register fences the assignment, and the
+	 * borrow API the surrounding handler already uses pairs an
+	 * acquire-load on pls_nlisteners on entry.  No further fence
+	 * needed.
+	 *
+	 * pls_mds_root_fh_len: plain read.  Discovery mutates it from
+	 * a worker thread; the bool collapse hides any tearing (a
+	 * partial write either renders as zero or non-zero, both of
+	 * which match exactly one of the two observable states the
+	 * field encodes -- "discovered" vs "not yet").
+	 *
+	 * pls_nexports: _Atomic uint32_t.  Acquire-load pairs with the
+	 * release-store in ps_state_add_export (ps_state.h:142-145).
+	 *
+	 * pls_nlocal_addrs: plain read.  Seeded once at register time
+	 * by ps_local_addr_seed (ps_state.h:316-324) and immutable
+	 * thereafter -- the release-store on pls_nlisteners is the
+	 * publish edge.
+	 */
+	info->ppli_sc_installed = (pls->pls_sc_write_fn != NULL);
+	info->ppli_root_fh_resolved = (pls->pls_mds_root_fh_len != 0);
+	info->ppli_nexports =
+		atomic_load_explicit(&pls->pls_nexports, memory_order_acquire);
+	info->ppli_nlocal_addrs = pls->pls_nlocal_addrs;
+
 	ctx->n++;
 	return 0;
 }

@@ -765,19 +765,31 @@ DSTORE_STATE_NAMES = {
 
 
 def ps_listener_list_cmd(client, args):
-    """Snapshot of every registered PS upstream listener (id, upstream
-    host:port, session_present, reconnect schedule)."""
+    """Snapshot of every registered PS upstream listener: identity,
+    reconnect schedule, and observability fields documented in
+    .claude/design/ps-listener-list-observability.md.
+
+    Columns:
+      SC       -- short-circuit dispatch installed (pls_sc_write_fn set)
+      ROOT_FH  -- MDS root FH resolved from upstream PUTROOTFH+GETFH
+      NEXP     -- discovered upstream exports (MOUNT3 EXPORT)
+      NADDR    -- local-address table size (gates em_local)
+    """
     res = client.ps_listener_list()
     probe_error_handler(res)
     resok = res.pllr_resok
     print(f"{'ID':<4} {'UPSTREAM':<32} {'PORT':<6} {'SESSION?':<9} "
-          f"{'BACKOFF':<8} {'NEXT_NS':<20}")
+          f"{'BACKOFF':<8} {'NEXT_NS':<20} "
+          f"{'SC':<3} {'ROOT_FH':<8} {'NEXP':<5} {'NADDR':<5}")
     for p in resok.pllr_listeners:
         print(f"{p.ppli_listener_id:<4} {p.ppli_upstream:<32} "
               f"{p.ppli_upstream_port:<6} "
               f"{('yes' if p.ppli_session_present else 'no'):<9} "
               f"{p.ppli_reconnect_backoff_sec:<8} "
-              f"{p.ppli_reconnect_next_attempt_ns}")
+              f"{p.ppli_reconnect_next_attempt_ns:<20} "
+              f"{('Y' if p.ppli_sc_installed else 'N'):<3} "
+              f"{('Y' if p.ppli_root_fh_resolved else 'N'):<8} "
+              f"{p.ppli_nexports:<5} {p.ppli_nlocal_addrs:<5}")
 
 
 def ps_write_buffer_stats_cmd(client, args):
