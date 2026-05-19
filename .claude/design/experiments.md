@@ -90,7 +90,7 @@ running them.  Each is a real defect, tracked here until fixed.
 | ID | Defect | Surfaced by | Status |
 |----|--------|-------------|--------|
 | **INV-5** | Concurrent mTLS session establishment from multiple PSes to one MDS races `mds_session_create_tls` and most sessions fail with `EIO` (`Input/output error -- listener stays dark`).  With 4 PSes cold-starting together, Track 2 runs lost 1-of-4 and 3-of-4 sessions on two of three attempts. | Track 2 ([`chunk-collision-track2.md`](chunk-collision-track2.md)), 2026-05-19 | **CLOSED 2026-05-19 by Stage 3 Slice 1.**  Stage 4 re-run on dreamer (NPS=4, even with the 4-second stagger still in place) shows 0-of-4 lost sessions and MDS grants matching expected `NPS`.  Verified with the safe-API repro `conn_lifecycle_race_test` green under TSAN.  The 4-second stagger in `run-ps-bench-bringup.sh` is now belt-and-braces -- consider revisiting once Slice 3 lands. |
-| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **NARROWED again by Slice 3, STILL OPEN (Stage 4 run 6, 2026-05-19).**  Affected-PS count narrows monotonically across slices: run 4 (no fix) 4-of-4, run 5 (Slice 1) 2-of-4, run 6 (Slice 3) 1-of-4.  Zero ASAN/UBSAN across all runs since Slice 1.  But IOR still aborts with the same `fsync(15) failed` + `stat()` cascade, and the MDS log still shows `Connection not tracked for fd=N` AND the same `SSL_ERROR_ZERO_RETURN` (alert error:00000000) sequence.  The "Track 2 run 6 timeline" subsection below shows the PS sees EIO BEFORE any close_notify -- the close_notify is the consequence of the PS deciding its upstream is dead, not the cause.  Slice 4 (`CONN_CLOSING` + generation-check extension) is the natural next step: the "Connection not tracked for fd=N" line is exactly the symptom Slice 4 was designed to address. |
+| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **OPEN, but trigger isolated to upstream of lib/io/ (Stage 4 run 7, 2026-05-19).**  Affected-PS count: run 4 (no fix) 4-of-4, run 5 (Slice 1) 2-of-4, run 6 (Slice 3) 1-of-4, run 7 (Slice 4) 1-of-4.  Zero ASAN/UBSAN across all runs since Slice 1.  Slice 4 closed the last fd-lifecycle hazard the design plan enumerated -- the `Connection not tracked for fd=N` log line moved from 15 ms-after-EIO (a fd-reuse race) to 1 m 51 s late (a stale CQE on a fully-drained slot, diagnostic only).  IOR still aborts.  The MDS log is now SILENT before the SSL_ERROR_ZERO_RETURN -- no socket close, no RPC error, no allocation failure -- so the trigger is invisible from MDS-side instrumentation.  PS-0 sees TIRPC EIO with `sr_status=0` (SEQUENCE itself returned NFS4_OK), meaning the EIO came from the TIRPC reply path, not from a protocol error.  See the "Track 2 run 7 timeline" subsection.  Next step: add MDS-side RPC reply-send tracing AND/OR PS-side TIRPC error-code tracing to attribute the disconnect to one of (a) MDS sent a reply that never reached the PS, (b) PS-side TIRPC parsed a malformed reply, (c) protocol-level disconnect with no log surface.  Further lib/io/ slices are unlikely to help. |
 
 ### INV-5 characterization (2026-05-19, first dig)
 
@@ -373,6 +373,95 @@ INV-6 on its own.
 
 The natural next slice is Slice 4 (CONN_CLOSING + generation
 extension) as originally planned in `.claude/design/io-conn-lifecycle.md`.
+
+### Track 2 run 7 timeline (Slice 4 live, 2026-05-19)
+
+Slice 4 (commit 33661fce9d79) added `CONN_CLOSING` + drain helper +
+gates on every public lookup / count-increment.  Run 7 outcome:
+
+- Bringup clean.
+- 1 of 4 PSes (PS-0) lost session, **same count as run 6** -- but
+  the symptom shape changed.
+- IOR aborts at `fsync(15) failed`, same as runs 4-6.
+- Zero ASAN/UBSAN.
+
+Per-thread timeline:
+
+| Time | Actor | Event |
+|------|-------|-------|
+| 23:33:44 | IOR | start |
+| 23:33:50.718 | PS-0 | `upstream session is dead (errno=I/O sr_status=0)` |
+| 23:33:50.737 | MDS | SSL error 6 on fd=25 (peer close_notify) |
+| 23:34:05 -> 23:35:41 | MDS | repeated SSL errors on fd=21 (PS retry traffic) |
+| **23:35:41.309** | **MDS** | **`Connection not tracked for fd=21` (1 m 51 s LATE)** |
+| 23:36:11.320 | PS-0 | reconnect succeeds (~141 s outage) |
+
+The critical shift: in runs 4-6 the `Connection not tracked for
+fd=N` line fired 15 ms after the PS's EIO -- a tight fd-reuse race
+that Slice 4 was designed to close.  In run 7 it fires **1 m 51 s
+later** -- a stale CQE landing on the now-fully-drained slot after
+its `CONN_CLOSING -> CONN_UNUSED` transition, when the new conn has
+not yet re-registered.  The fd-lifecycle hazard is closed; the
+message is now diagnostic noise rather than a symptom of state
+corruption.
+
+But IOR still aborts and the affected-PS count did not improve.
+The disconnect trigger is now firmly **upstream of fd-lifecycle**:
+
+- **MDS log is silent until the SSL error.**  No `Connection
+  not tracked`, no socket close, no rpc error, no allocation
+  failure -- nothing between IOR start and the moment PS-0
+  declares its session dead.  The break is invisible from
+  MDS-side instrumentation.
+- **PS-0 sees `errno=I/O sr_status=0`.**  `sr_status=0` means
+  the SEQUENCE op itself returned NFS4_OK; the EIO came from
+  the TIRPC layer (reply read or RPC dispatch), not from a
+  protocol error.
+- **The MDS sends `SSL_ERROR_ZERO_RETURN` *after* PS-0 already
+  decided to reconnect** -- still the consequence of PS
+  close_notify, not the trigger.
+
+What is the actual trigger?  Plausible suspects, in priority
+order:
+
+1. **An RPC reply on the MDS side never reaches the PS.**  The
+   MDS reads a request, processes it, writes the reply -- but
+   the reply never lands on the PS's TIRPC.  PS times out (or
+   reads 0), returns EIO.  MDS sees no error of its own
+   because the write succeeded locally; the close_notify comes
+   later from the PS, which the MDS dutifully logs.
+2. **PS-side TIRPC parses a malformed reply.**  Some reply
+   header byte is off, TIRPC declares the session bad, EIO.
+3. **MDS / PS clock skew or protocol-level error that does
+   not surface in logs.**
+
+The next slice should not be more lib/io/ defence in depth --
+Slices 1+2+3+4 have together demonstrably closed every
+*memory-safety* and *fd-lifecycle* hazard the design plan
+enumerated, but INV-6 persists.  Two reasonable directions:
+
+- **Add MDS-side RPC instrumentation:** log every reply send
+  (xid, fd, byte count) at TRACE level, then re-run Track 2
+  with TRACE enabled.  This tests hypothesis 1 directly.  If
+  the MDS logs a reply send and the PS still sees EIO, the
+  trigger is wire-loss or PS-side parsing -- hypothesis 2 or
+  3.  If the MDS does not log a reply send, the bug is on the
+  MDS dispatch path BEFORE the reply.
+- **Add PS-side TIRPC error path instrumentation:** log the
+  specific TIRPC error code (CLNT_PERROR-equivalent) when
+  renewal_tick_one declares the session dead.  Today it only
+  prints `errno=I/O`; the underlying TIRPC `rpc_stat` carries
+  the actual failure mode (timeout, RPC_CANTRECV, etc.).
+
+Lower-prior: just ship Slice 4 alongside the existing
+slices and accept that Track 2 IOR remains blocked until the
+upstream RPC dispatch / TIRPC interaction is understood.  All
+four slices are independently load-bearing for future work
+(PS in production, the chunk-collision Track 1 harness,
+soak-test runs), and their cost is paid even if Track 2 stays
+red.
+
+INV-1 DS instrumentation still gated on a clean Track 2 run.
 
 ---
 

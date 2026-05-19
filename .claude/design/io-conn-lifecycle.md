@@ -451,6 +451,45 @@ State machine for Slice 4 (`CONN_CLOSING`):
 retries) rather than reusing it; on `CONN_UNUSED` it reuses as
 today.
 
+## Stage 4 Track 2 run 7 (Slice 4 live, 2026-05-19)
+
+Run 7 ran the same harness with Slices 1, 2, 3, and 4 all live.
+INV-6's surface shape changed but the count did not improve:
+
+- Affected-PS count stays at 1 of 4 (same as run 6).
+- The `Connection not tracked for fd=N` log line MOVED from 15 ms-
+  after-EIO (a fd-reuse race that Slice 4 was designed to close)
+  to 1 m 51 s LATE (a stale CQE landing on a fully-drained slot).
+  The fd-lifecycle hazard is closed; the message is now diagnostic
+  noise, not a symptom of state corruption.
+- MDS log is SILENT before the SSL_ERROR_ZERO_RETURN -- no socket
+  close, no RPC error, no allocation failure -- so the disconnect
+  trigger is **invisible from MDS-side instrumentation**.
+- PS sees TIRPC EIO with `sr_status=0` (SEQUENCE itself returned
+  NFS4_OK), meaning the EIO came from the TIRPC reply path, not
+  a protocol-level error.
+- Zero ASAN/UBSAN.
+
+Implications: Slices 1+2+3+4 together close every *memory-safety*
+and *fd-lifecycle* hazard the lifecycle plan enumerated.  INV-6
+remains open but its trigger is now firmly **upstream of lib/io/**.
+Further lib/io/ slices are unlikely to help.
+
+Next-step candidates (NOT in this slice):
+
+- **MDS-side RPC reply-send tracing.**  Log every reply send (xid,
+  fd, byte count) at TRACE level on the dispatch path, then re-run
+  Track 2.  Tests "MDS sent a reply that never reached PS".
+- **PS-side TIRPC error-code tracing.**  `renewal_tick_one` today
+  only prints `errno=I/O` when declaring the session dead; the
+  underlying TIRPC `rpc_stat` carries the specific failure mode
+  (timeout, CANTRECV, AUTHERROR).  Adding that line would
+  attribute the disconnect to one of timeout / parse-failure /
+  transport-error.
+
+Full timeline and analysis live in `.claude/design/experiments.md`
+under "Track 2 run 7 timeline".
+
 ## Stage 4 Track 2 run 6 (Slice 3 live, 2026-05-19)
 
 Run 6 ran the same harness with Slices 1, 2 and 3 all live.  INV-6
