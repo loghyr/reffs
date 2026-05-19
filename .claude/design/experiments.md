@@ -89,8 +89,8 @@ running them.  Each is a real defect, tracked here until fixed.
 
 | ID | Defect | Surfaced by | Status |
 |----|--------|-------------|--------|
-| **INV-5** | Concurrent mTLS session establishment from multiple PSes to one MDS races `mds_session_create_tls` and most sessions fail with `EIO` (`Input/output error -- listener stays dark`).  With 4 PSes cold-starting together, Track 2 runs lost 1-of-4 and 3-of-4 sessions on two of three attempts. | Track 2 ([`chunk-collision-track2.md`](chunk-collision-track2.md)), 2026-05-19 | **OPEN.**  Harness staggered (`run-ps-bench-bringup.sh`, 4 s between PS launches) as a stopgap so Track 2 can proceed.  Real fix -- making `mds_session_create_tls` / the MDS TLS-accept path concurrency-safe -- is a separate slice.  Also bites production PSes reconnecting together after an MDS restart. |
-| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **OPEN.**  Suspects: COMMIT-through-proxy (the `fsync`) and/or cross-PS GETATTR visibility -- a file written via PS 0 then `stat`'d via PS 3.  Needs the PS + MDS container logs from the run (the harness leaves the containers up).  Distinct from INV-5, which was bringup-time. |
+| **INV-5** | Concurrent mTLS session establishment from multiple PSes to one MDS races `mds_session_create_tls` and most sessions fail with `EIO` (`Input/output error -- listener stays dark`).  With 4 PSes cold-starting together, Track 2 runs lost 1-of-4 and 3-of-4 sessions on two of three attempts. | Track 2 ([`chunk-collision-track2.md`](chunk-collision-track2.md)), 2026-05-19 | **CLOSED 2026-05-19 by Stage 3 Slice 1.**  Stage 4 re-run on dreamer (NPS=4, even with the 4-second stagger still in place) shows 0-of-4 lost sessions and MDS grants matching expected `NPS`.  Verified with the safe-API repro `conn_lifecycle_race_test` green under TSAN.  The 4-second stagger in `run-ps-bench-bringup.sh` is now belt-and-braces -- consider revisiting once Slice 3 lands. |
+| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **NARROWED, STILL OPEN (Stage 4 run 5, 2026-05-19).**  Slice 1 closed the `ci_ssl` UAF -- run 5 hits no ASAN/UBSAN -- and only 2 of 4 PSes broke vs all 4 in run 4.  But the underlying mid-IOR disconnect trigger is unchanged: same `Connection not tracked for fd=N` MDS log line, same `fsync(15) failed` + `stat()` IOR abort.  See the "Track 2 re-run after Slice 1" subsection below for the full timeline.  Slice 3 (`CONN_CLOSING` + generation-check extension) and the deferred `SSL_read`/`SSL_write` serialisation (currently NOT_NOW_BROWN_COW in `io-conn-lifecycle.md`) are the two candidate next slices. |
 
 ### INV-5 characterization (2026-05-19, first dig)
 
@@ -265,6 +265,61 @@ runtime init before `main()`); the repro is exercised on dreamer
 (Fedora aarch64).  macOS still builds the tree fine.
 
 That red test anchors the Stage 3 fix.
+
+### Track 2 re-run after Slice 1 (2026-05-19)
+
+Stage 3 Slice 1 (commits `1c7aae9a6276` + `50572a93024d`) refcounted
+`ci_ssl` and added the lock-safe TLS-flag accessors.  Slice 2
+(`5ad0b516b8c3` + `078b0c9d70fa`) promoted the lifecycle-race test
+into `TESTS` and verified it GREEN under TSAN.  Stage 4 re-ran
+Track 2 (`NPS=4`, basic IOR `-w -r -W -R -e -k`, no `--reorder`) on
+dreamer to assess INV-5/INV-6 status with the safe API live.
+
+**Outcome:**
+
+| Symptom | Run 4 (pre-Slice-1) | Run 5 (post-Slice-1) |
+|---------|---------------------|----------------------|
+| INV-5 -- bringup mTLS race -- lost sessions | 1-of-4 and 3-of-4 on two of three attempts | **0-of-4: clean** -- all 4 PSes registered, MDS granted 4 grants |
+| Mid-IOR disconnect trigger | ~4 s into IOR, all 4 PSes lost session | ~6 s into IOR, **2 of 4 PSes** lost session (PS-0 and PS-2) |
+| MDS log line on the break | `Connection not tracked for fd=N` | same line, same call site (`io_rpc_trans_cb:307`) |
+| Reconnect outage | ~90 s (INV-5 amplified the break) | ~95 s on PS-0 / PS-2 (exp backoff 0/1/2/4/8/16 s) |
+| IOR end state | aborted at `fsync(15) failed` + `stat()` failed | **same abort, same `fsync(15) failed` + `stat()` failed** |
+| Memory-safety symptoms (ASAN / UBSAN) | -- | **none** -- harness scan of MDS/DS/PS logs reports `PASS: no ASAN/UBSAN errors` |
+
+**Interpretation.**  INV-5 and INV-6 are *not* one bug with two
+faces -- the earlier hypothesis from the lib/io read was incomplete.
+Slice 1 demonstrably closes INV-5 (the bringup-time symptom) and
+removes the memory-safety attack surface around `ci_ssl` (no
+ASAN/UBSAN in this run), but the mid-workload PS<->MDS disconnect
+trigger fires unchanged.  The `Connection not tracked for fd=N`
+line still appears, which is exactly what Slice 3's `CONN_CLOSING`
++ generation-check extension is designed to address (per
+`.claude/design/io-conn-lifecycle.md`, Defects 2 and 3 in the root
+cause).  Slice 1 addressed Defect 1 (`ci_ssl` UAF); Defects 2 and 3
+are still live.
+
+Open hypothesis for the trigger itself (what makes the SSL session
+break ~6 s into IOR's write load):
+
+1. **Concurrent `SSL_read` vs worker `SSL_write` on one `SSL`** --
+   flagged as Deferred / NOT_NOW_BROWN_COW in the lifecycle plan
+   ("Mechanism A makes it memory-safe; full serialisation is a
+   separate slice and is not required to unblock Track 2").  Run 5
+   shows that "not required to unblock Track 2" no longer holds:
+   memory safety alone is insufficient for IOR to complete.
+2. **The fd-reuse hazard of Defect 2** -- the SSL error on fd=21 /
+   fd=23 in the MDS log keeps repeating after the original break,
+   suggesting state from a torn-down conn is being read on a
+   reused or stale slot.  This is Slice 3's territory.
+3. **A real protocol-level error** at the first heavy write that
+   the SSL machinery is mis-reporting as an SSL alert.  Lower
+   prior; the same line "SSL error 6, alert: error:00000000" is
+   `SSL_ERROR_ZERO_RETURN` with no real alert payload, consistent
+   with a peer-closed underlying socket rather than a protocol
+   fault.
+
+INV-1 DS instrumentation remains gated on a clean Track 2 run,
+which Slice 1 alone does not deliver.
 
 ---
 
