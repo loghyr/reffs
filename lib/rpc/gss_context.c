@@ -815,6 +815,22 @@ int gss_ctx_map_to_unix(struct gss_ctx_entry *entry, uid_t *uid, gid_t *gid)
 #endif
 
 	trace_security_gss_map(principal, *uid, *gid, __func__, __LINE__);
+
+	/*
+	 * A principal that resolved only to the nobody uid (65534) has
+	 * no real identity here.  Recording it would poison the maps:
+	 * idmap_cache_uid's 65534 -> principal reverse entry and
+	 * identity_map_add's krb5_id -> unix(65534) entry both assume
+	 * the uid identifies one principal, but every unmapped
+	 * principal shares 65534 -- so the reverse lookup becomes a
+	 * race that misattributes every nobody-owned file to one
+	 * arbitrary principal.  Return the nobody uid uncached.
+	 */
+	if (*uid == 65534) {
+		free(principal);
+		return 0;
+	}
+
 	idmap_cache_uid(*uid, principal);
 
 	/*
