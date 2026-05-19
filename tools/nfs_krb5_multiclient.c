@@ -56,6 +56,17 @@
 #define READY_TIMEOUT_SEC 20
 #define SKIP_EXIT 77
 
+/*
+ * Per-worker credential cache path.  Wrapping the buffer in a struct
+ * avoids the `char (*ccache)[N]` pointer-to-array declarator, which
+ * different clang-format versions disagree about (some space the type
+ * before the `(`, some don't) and so flap between local and CI style
+ * checks.  Plain `struct ... *` is version-stable.
+ */
+struct krb5mc_ccache {
+	char path[320];
+};
+
 static void usage(void)
 {
 	fprintf(stderr,
@@ -279,7 +290,7 @@ int main(int argc, char *argv[])
 	char reffsd_dir[] = "/tmp/krb5mc_XXXXXX";
 	bool dir_made = false;
 	char datadir[280], statedir[280], toml[280], trace[280], logpath[280];
-	char(*ccache)[320] = NULL;
+	struct krb5mc_ccache *ccache = NULL;
 	pid_t *wpid = NULL;
 	int rc = 1;
 
@@ -461,8 +472,9 @@ int main(int argc, char *argv[])
 		goto out;
 	}
 	for (int i = 0; i < clients; i++) {
-		if (krb5_env_client_ccache(env, i, same_principal, ccache[i],
-					   sizeof(ccache[i])) != KRB5_ENV_OK) {
+		if (krb5_env_client_ccache(
+			    env, i, same_principal, ccache[i].path,
+			    sizeof(ccache[i].path)) != KRB5_ENV_OK) {
 			fprintf(stderr,
 				"nfs_krb5_multiclient: provisioning worker "
 				"%d failed\n",
@@ -498,7 +510,7 @@ int main(int argc, char *argv[])
 			continue;
 		}
 		if (pid == 0) {
-			const char *cc = ccache[i];
+			const char *cc = ccache[i].path;
 			char owner[64];
 			char princ[256];
 			struct krb5_client_args a;
