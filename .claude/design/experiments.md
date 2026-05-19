@@ -113,6 +113,47 @@ From `mds_session_create_tls` (`lib/nfs4/client/mds_session.c:1018`):
 Root-causing the MDS accept path -- and the fix -- is a separate
 slice; this records the finding and the first dig.
 
+### INV-6 characterization (2026-05-19, dig)
+
+Run-4 logs (PS-0 / PS-3 + MDS) show INV-6 is a cascade -- and the
+same fault family as INV-5.
+
+Timeline (run 4):
+
+- `17:45:56`  IOR begins its write phase through the 4 PS mounts.
+- `17:46:00`  MDS io layer: `CQE error for op=WRITE, fd=24:
+  Broken pipe`, plus `SSL error 6` (`SSL_ERROR_ZERO_RETURN` --
+  TLS connection closed) on the PS connections.  **The PS<->MDS
+  TLS connections break ~4 s into IOR's write load.**
+- `17:46:00-02`  each PS: `upstream session is dead (errno=EIO)`
+  -> forces a reconnect.
+- All 4 PSes reconnect at once -> the **INV-5** concurrent-mTLS
+  race -> reconnect fails repeatedly (`Input/output error`) for
+  ~90 s (exp backoff 0/1/2/4/8/16 s).
+- `17:46:38`  MDS: `io_rpc_trans_cb: Connection not tracked for
+  fd=21` -- an fd-lifecycle / connection-tracking confusion.
+- `17:47:45-53`  PSes finally reconnect -- far too late; IOR
+  aborted long before.
+
+So INV-6 is two faults:
+
+1. **The established PS<->MDS RPC-over-TLS connection breaks
+   under IOR write load** (~4 s in).  MDS side: an io_uring
+   `WRITE` CQE returns `EPIPE` and the TLS read sees a closed
+   connection.  Root cause is in the MDS `lib/io/` TLS +
+   io_uring connection path; the `Connection not tracked for fd`
+   line points at an fd-lifecycle bug.
+2. **INV-5 then amplifies it**: a connection blip that should
+   cost one quick reconnect instead costs ~90 s because all PSes
+   reconnect simultaneously and lose the mTLS race.
+
+Net: **INV-5 and INV-6 are one problem with two faces** -- the
+PS<->MDS RPC-over-TLS path is not robust, neither at concurrent
+establishment (INV-5) nor under sustained write load (INV-6).
+The fix is an `lib/io/` TLS + io_uring connection-lifecycle
+slice; fixing INV-5 alone would shorten the outage but not stop
+the mid-workload disconnect.
+
 ---
 
 ## How the groups connect
