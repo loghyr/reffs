@@ -154,6 +154,82 @@ The fix is an `lib/io/` TLS + io_uring connection-lifecycle
 slice; fixing INV-5 alone would shorten the outage but not stop
 the mid-workload disconnect.
 
+### INV-5/INV-6 root cause (2026-05-19, lib/io read)
+
+Read of `lib/io/conn_info.c`, `io_internal.h`, `accept.c`,
+`handlers.c`.  The connection table is
+
+```
+static struct conn_info *connections[MAX_CONNECTIONS];  /* 65536 */
+... connections[fd % MAX_CONNECTIONS] ...
+```
+
+Since accepted fds are always far below 65536, `fd % 65536 == fd`
+-- the table is a **direct fd-indexed array**.  The "Connection
+slot collision" branch in `io_conn_register()` is therefore dead
+code in practice; slot collision is NOT the INV-5 cause.  The
+`conn_info` struct itself is malloc'd once per fd number and
+reused -- never freed until `io_conn_cleanup()` -- so there is no
+use-after-free on the `conn_info` pointer.  The defects are
+narrower and real:
+
+- **Defect 1 -- `ci_ssl` is an unguarded pointer.**
+  `io_conn_unregister()` / `io_conn_destroy()` do
+  `SSL_shutdown` + `SSL_free` + NULL on `ci_ssl` under
+  `conn_mutex`.  But every consumer holding a `struct conn_info *`
+  (returned by `io_conn_get()`, which drops the lock before
+  returning) reads `ci->ci_ssl` and uses the SSL *outside* the
+  lock -- `handlers.c:281` is the live example: it caches `ci`,
+  tests `ci->ci_ssl`, then calls `io_do_tls()` which uses it.  A
+  concurrent unregister `SSL_free`s that object -> UAF.
+  `handlers.c:99` already admits the hazard in a comment:
+  "ci->ci_ssl = NULL at any time after an SSL error."  This is
+  the prime suspect for INV-6's mid-load disconnect: one worker
+  `SSL_write`s on an SSL another worker just freed.
+
+- **Defect 2 -- fd reuse only partly guarded.**  On reconnect the
+  kernel hands back the same fd number; `io_conn_register()`
+  reuses the *same* slot, `memset`s it, bumps `ci_generation`.
+  `ci_generation` is checked in exactly one place --
+  `io_conn_write_done()`, the write gate.  `ci_ssl`,
+  `ci_tls_enabled`, `ci_state`, `ci_xid` are NOT generation-
+  checked, so a stale in-flight op for the *old* connection N
+  reads/mutates the *new* connection's state once fd N is reused.
+
+- **Defect 3 -- no CLOSING state.**  The code flags this gap
+  itself: `io_conn_check_timeouts()` comment (conn_info.c lines
+  ~778-783) -- "the fix is a per-slot CLOSING state to block
+  reuse; for now the simplicity is worth it."  Between
+  `io_conn_unregister()` (sets `ci_fd = -1`) and the next
+  `io_conn_register()`, an in-flight CQE resolves `io_conn_get()`
+  to NULL ("Connection not tracked for fd=N" -- the INV-6 log
+  line) or, after reuse, to the WRONG connection.
+
+So "Connection not tracked" is the *benign* face -- a NULL lookup
+that just drops a reply.  The dangerous face is the reuse/teardown
+window where `ci_ssl` is freed under an active user or
+`io_conn_get()` returns a connection that is not the caller's.
+INV-5 (concurrent establishment) and INV-6 (mid-load teardown)
+are the same defect class: `conn_info` has no lifecycle
+discipline.
+
+Fix-slice shape (separate work, own branch off main):
+1. Refcount `ci_ssl` (or hold `conn_mutex` across every SSL use)
+   so consumers cannot use-after-free.
+2. Add a `CONN_CLOSING` state that blocks slot reuse until
+   in-flight ops on the old fd drain.
+3. Extend the generation check beyond the write gate -- have
+   `io_conn_get()` hand back `(ci, generation)` and require
+   callers to revalidate, or key every accessor by `(fd, gen)`.
+
+**Stage 1 repro (next):** a multithreaded
+`lib/io/tests/conn_lifecycle_race_test.c` built with
+`--enable-tsan` -- a thread pool doing register / get (read
+`ci_ssl`) / unregister on a small rotating set of fd numbers with
+real `SSL` objects from a test `SSL_CTX`.  Expect a TSAN
+data-race report on `ci_ssl` and an ASAN UAF on the SSL object.
+That red test anchors the fix.
+
 ---
 
 ## How the groups connect
