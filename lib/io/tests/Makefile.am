@@ -33,7 +33,13 @@ LDADD = \
 	$(FUSE_LIBS)					\
 	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
 
-check_PROGRAMS = $(TESTS)
+# conn_lifecycle_race_test is a deliberate red reproducer for the
+# INV-5/INV-6 conn_info lifecycle defect (unguarded ci_ssl).  It is
+# built but NOT listed in TESTS -- `make check` compiles it without
+# running it.  Run it by hand under --enable-tsan / --enable-asan to
+# observe the data race / use-after-free.  It moves into TESTS once
+# the lib/io/ connection-lifecycle fix lands.
+check_PROGRAMS = $(TESTS) conn_lifecycle_race_test
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 # tls_write_count_test exercises io_handle_write which is backend-
