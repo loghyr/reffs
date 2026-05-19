@@ -59,13 +59,18 @@ Flow:
     (default 10 MB).
 5.  Fork N workers, each in a subshell:
     *   `KRB5CCNAME=<run-dir>/ccaches/cc_<i>`
-    *   `exec ec_demo verify --mds <server>
+    *   `ec_demo write --mds <server>
         --file <path>/krb5stress_<i> --input <input>
         --sec <sec> --layout v1 --codec <codec> --k <K> --m <M>
         --id krb5stress_<i>`
+    *   then `exec ec_demo verify ...` (same args) to read back
+        and compare.
 
-    `verify` writes then reads back and compares -- one invocation
-    is a full FFv1 round-trip per worker.
+    `ec_demo verify` reads + compares only -- it does NOT write
+    first.  So the worker writes the file in one invocation and
+    verifies the readback in a second invocation, both with the
+    same per-worker krb5 ccache, which together exercise the full
+    FFv1 round-trip under one identity.
 
     Each worker's stdout / stderr go to
     `<run-dir>/logs/worker_<i>.log`.

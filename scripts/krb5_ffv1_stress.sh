@@ -42,10 +42,11 @@ Usage: krb5_ffv1_stress.sh --server <host[:port]>
                            [--sec krb5|krb5i|krb5p]   (default krb5)
 
 Drives N krb5-authenticated NFSv4.2 clients at an external FFv1
-server.  Each worker runs:
-    ec_demo verify --mds <server> --file <path>/krb5stress_<i> ...
-which writes a file, reads it back, and compares -- one invocation
-exercises the full FFv1 layout path (LAYOUTGET + DS I/O) per worker.
+server.  Each worker writes <path>/krb5stress_<i> with the supplied
+input via `ec_demo write --layout v1`, then `ec_demo verify` reads
+it back and compares.  Both invocations run against the worker's
+per-worker krb5 ccache, exercising the full FFv1 LAYOUTGET + DS I/O
+path under one identity.
 
 The script does NOT provision the server, the KDC, or the AD users.
 --principals is a file of "<principal> <password>" lines, one per
@@ -158,9 +159,25 @@ mkdir -p "$log_dir"
 path_dir=${path_dir%/}  # strip trailing slash, if any
 
 declare -a pids
+# ec_demo's `verify` subcommand only reads and compares -- it does
+# not write first.  So each worker WRITES the file, then VERIFIES
+# the readback against the same local input.  Both invocations run
+# against the per-worker krb5 ccache so the round-trip exercises
+# write + read against the FFv1 server under one identity.
 for ((i = 0; i < clients; i++)); do
 	(
 		export KRB5CCNAME=$cc_dir/cc_$i
+		set -e
+		"$ec_demo" write \
+			--mds "$server" \
+			--file "$path_dir/krb5stress_$i" \
+			--input "$local_input" \
+			--sec "$sec" \
+			--layout v1 \
+			--codec "$codec" \
+			--k "$k" \
+			--m "$m" \
+			--id "krb5stress_$i"
 		exec "$ec_demo" verify \
 			--mds "$server" \
 			--file "$path_dir/krb5stress_$i" \
@@ -170,9 +187,8 @@ for ((i = 0; i < clients; i++)); do
 			--codec "$codec" \
 			--k "$k" \
 			--m "$m" \
-			--id "krb5stress_$i" \
-			>"$log_dir/worker_$i.log" 2>&1
-	) &
+			--id "krb5stress_$i"
+	) >"$log_dir/worker_$i.log" 2>&1 &
 	pids+=("$!")
 done
 
