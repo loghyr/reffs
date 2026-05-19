@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Chunk-collision Track 2 harness: drive IOR (-F 0 shared file,
+# Chunk-collision Track 2 harness: drive IOR (shared-file,
 # write-then-verify) through N Proxy Server containers.  Each PS
 # holds its own MDS-facing session, so N PSes = N distinct
 # clientid4s contending on one shared MDS file -- the multi-writer
@@ -69,7 +69,7 @@ IMAGE=reffs-dev:latest
 
 echo "=== chunk-collision Track 2 ==="
 echo "  PSes / ranks: ${N}"
-echo "  IOR:          -F 0 -w -r -W -R ${REORDER} -e -k"
+echo "  IOR:          shared file, -w -r -W -R ${REORDER} -e -k"
 echo "                -t ${XFER} -b ${BLOCK} -s ${SEGS} -i ${ITERS}"
 echo "  shared file:  /ior_shared.dat (one MDS file via N PSes)"
 echo ""
@@ -140,9 +140,12 @@ WRAP
 chmod +x /usr/local/bin/ior-rank.sh
 
 set +e
+# IOR shared-file mode is the DEFAULT -- do NOT pass -F (that flag
+# is the boolean file-per-process toggle; there is no "-F 0", and
+# a stray "0" makes IOR reject the whole command line).
 mpirun --allow-run-as-root --oversubscribe -np \$N \
 	/usr/local/bin/ior-rank.sh \
-	-a POSIX -F 0 -w -r -W -R \$REORDER -e -k \
+	-a POSIX -w -r -W -R \$REORDER -e -k \
 	-t \$XFER -b \$BLOCK -s \$SEGS -i \$ITERS
 rc=\$?
 set -e
