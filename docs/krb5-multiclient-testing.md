@@ -238,7 +238,7 @@ workload the server is designed for), and tallies pass / fail.
 
 ### What you provide
 
-- a reffs build with `./build/tools/ec_demo`,
+- a reffs build (steps below) so `./build/tools/ec_demo` exists,
 - the server's `host[:port]`,
 - a directory path on the server the workers can write into,
 - a *principals* file: one `<principal> <password>` per line,
@@ -248,6 +248,30 @@ workload the server is designed for), and tallies pass / fail.
 You also need `kinit` on the test host and a reachable krb5 realm
 (your AD or MIT KDC).  The script does not install or configure
 those.
+
+### Getting a reffs build
+
+On a Linux host with autotools and a C toolchain:
+
+```sh
+git clone https://github.com/loghyr/reffs.git
+cd reffs
+mkdir -p m4 && autoreconf -fi
+mkdir build && cd build
+../configure
+make -j tools/ec_demo
+```
+
+`configure` will name any missing development packages.  On
+Fedora / RHEL the usual set is `gcc autoconf automake libtool
+pkgconfig libtirpc-devel openssl-devel krb5-devel libuuid-devel
+userspace-rcu-devel libev-devel libcap-devel`; on Ubuntu use the
+same names with `-dev`.  If you would rather use a containerised
+build, `make -f Makefile.reffs image` builds a development image
+with everything pinned (Dockerfile lives at the top of the tree).
+
+You only need `tools/ec_demo` for this script; the full `make -j`
+will also work.
 
 ### Running it
 
