@@ -5,7 +5,8 @@
 # (#5 cross-PS coherence, #10 PS vs ec_demo throughput,
 #  #11 multi-writer disjoint, #13 adjacent writes).
 #
-# Pairs with deploy/benchmark/ps-tls-A.toml + ps-tls-B.toml.
+# Pairs with deploy/benchmark/ps-tls.toml (the indexed PS template
+# that run-ps-bench-bringup.sh stamps once per PS).
 # Pre-conditions:
 #   1. Run deploy/sanity/setup-mini-ca.sh /tmp/reffs_ps_tls
 #   2. Run scripts/patch-allowed-ps-fpr.sh to splice the actual
@@ -46,16 +47,15 @@ dstores      = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     root_squash = false
     flavors     = ["sys", "tls"]
 
-# REPLACED by run-ps-bench-bringup.sh with the SHA-256 fingerprint
-# emitted into /tmp/reffs_ps_tls/ps.fpr at mini-CA setup time.  A
+# REPLACED by run-ps-bench-bringup.sh: this single placeholder
+# [[allowed_ps]] block is rewritten into one block per PS, each
+# carrying that PS's own SHA-256 cert fingerprint (ps-N.fpr from
+# mini-CA setup).  Every PS has a distinct cert/identity so the
+# data-mover squat-guard does not reject PSes after the first.  A
 # default-deny config is the right posture; the placeholder string
 # never matches a real cert.
 [[allowed_ps]]
 tls_cert_fingerprint = "REPLACE_WITH_PS_FINGERPRINT"
-
-# Both PS instances use the SAME ps.crt -- they're the same identity
-# in this smoke topology.  In production each PS would have its own
-# cert and a separate [[allowed_ps]] entry per identity.
 
 [[data_server]]
 id = 1
