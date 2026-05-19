@@ -172,11 +172,25 @@ torn:
  * is not registered. */
 bool io_conn_tls_snapshot(int fd, bool *tls_enabled,
                           bool *handshaking);
+
+/* Write the TLS flags as a pair under conn_mutex. */
+void io_conn_tls_set_state(int fd, bool tls_enabled,
+                           bool handshaking);
 ```
 
 `io_conn_is_tls_enabled()` already exists and is lock-safe; this
 adds the handshaking flag and a combined read so a consumer sees a
 consistent pair.
+
+`io_conn_tls_set_state` is the write half of Mechanism B (added
+during Slice 1 -- the original four-function sketch named only the
+snapshot reader).  The handshake-progress writes in
+`process_ssl_accept` / `io_handle_write` set `ci_tls_enabled` +
+`ci_tls_handshaking` together, so a paired locked setter keeps a
+concurrent `io_conn_tls_snapshot` from observing a torn
+(enabled && handshaking) state.  The pre-existing single-flag
+`io_conn_set_tls_handshaking` is reused where only the handshaking
+bit changes.
 
 ### Mechanism C -- CONN_CLOSING fd-reuse hardening (Slice 3, lower priority)
 
