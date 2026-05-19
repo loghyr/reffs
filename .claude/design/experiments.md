@@ -90,7 +90,7 @@ running them.  Each is a real defect, tracked here until fixed.
 | ID | Defect | Surfaced by | Status |
 |----|--------|-------------|--------|
 | **INV-5** | Concurrent mTLS session establishment from multiple PSes to one MDS races `mds_session_create_tls` and most sessions fail with `EIO` (`Input/output error -- listener stays dark`).  With 4 PSes cold-starting together, Track 2 runs lost 1-of-4 and 3-of-4 sessions on two of three attempts. | Track 2 ([`chunk-collision-track2.md`](chunk-collision-track2.md)), 2026-05-19 | **CLOSED 2026-05-19 by Stage 3 Slice 1.**  Stage 4 re-run on dreamer (NPS=4, even with the 4-second stagger still in place) shows 0-of-4 lost sessions and MDS grants matching expected `NPS`.  Verified with the safe-API repro `conn_lifecycle_race_test` green under TSAN.  The 4-second stagger in `run-ps-bench-bringup.sh` is now belt-and-braces -- consider revisiting once Slice 3 lands. |
-| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **NARROWED, STILL OPEN (Stage 4 run 5, 2026-05-19).**  Slice 1 closed the `ci_ssl` UAF -- run 5 hits no ASAN/UBSAN -- and only 2 of 4 PSes broke vs all 4 in run 4.  But the underlying mid-IOR disconnect trigger is unchanged: same `Connection not tracked for fd=N` MDS log line, same `fsync(15) failed` + `stat()` IOR abort.  See the "Track 2 re-run after Slice 1" subsection below for the full timeline.  Slice 3 (`CONN_CLOSING` + generation-check extension) and the deferred `SSL_read`/`SSL_write` serialisation (currently NOT_NOW_BROWN_COW in `io-conn-lifecycle.md`) are the two candidate next slices. |
+| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **NARROWED again by Slice 3, STILL OPEN (Stage 4 run 6, 2026-05-19).**  Affected-PS count narrows monotonically across slices: run 4 (no fix) 4-of-4, run 5 (Slice 1) 2-of-4, run 6 (Slice 3) 1-of-4.  Zero ASAN/UBSAN across all runs since Slice 1.  But IOR still aborts with the same `fsync(15) failed` + `stat()` cascade, and the MDS log still shows `Connection not tracked for fd=N` AND the same `SSL_ERROR_ZERO_RETURN` (alert error:00000000) sequence.  The "Track 2 run 6 timeline" subsection below shows the PS sees EIO BEFORE any close_notify -- the close_notify is the consequence of the PS deciding its upstream is dead, not the cause.  Slice 4 (`CONN_CLOSING` + generation-check extension) is the natural next step: the "Connection not tracked for fd=N" line is exactly the symptom Slice 4 was designed to address. |
 
 ### INV-5 characterization (2026-05-19, first dig)
 
@@ -320,6 +320,59 @@ break ~6 s into IOR's write load):
 
 INV-1 DS instrumentation remains gated on a clean Track 2 run,
 which Slice 1 alone does not deliver.
+
+### Track 2 run 6 timeline (Slice 3 live, 2026-05-19)
+
+Stage 3 Slice 3 (commit 23dfe116108c) added per-SSL serialisation
+via `SSL_set_ex_data` + a `pthread_mutex_t` taken around every
+`SSL_` and `BIO_` call on a slot-owned SSL.  Track 2 re-ran with
+the slice live; outcome:
+
+- Bringup clean (same as run 5).
+- Only **1 of 4 PSes** (PS-0) lost its session vs 2 in run 5 and
+  4 in run 4 -- INV-6's amplification narrows monotonically across
+  slices.
+- IOR still aborts at `fsync(15) failed` + `stat() failed`,
+  same as runs 4 and 5.
+- Zero ASAN/UBSAN, same as run 5.
+
+Per-thread timeline (extracted from `docker logs reffs-bench-mds`
+and `docker logs reffs-ps-0`):
+
+| Time | Actor | Event |
+|------|-------|-------|
+| 22:43:16 | IOR | start (rank 0 on PS-0) |
+| 22:43:22.086 | PS-0 (renewal_tick) | `upstream session is dead (errno=Input/output error sr_status=0) -- forcing reconnect` |
+| 22:43:22.091 | MDS (io_rpc_trans_cb:331) | `Connection not tracked for fd=21` |
+| 22:43:22.106 | MDS (io_handle_read) | `SSL error 6` on fd=25 (SSL_ERROR_ZERO_RETURN, peer close_notify) |
+| 22:43:37 -> 22:45:07 | PS-0 | exponential-backoff reconnect attempts (0/1/2/4/8/16/30 s) |
+| 22:45:07 | PS-0 | reconnect succeeds |
+
+Two facts the run-5 analysis got wrong, now corrected:
+
+1. **PS sees EIO BEFORE any close_notify.**  The PS's renewal
+   thread detects `errno=Input/output error sr_status=0` from
+   the TIRPC layer and forces a reconnect.  Only then does the
+   PS send close_notify to the MDS.  The MDS's SSL_ERROR_ZERO_
+   RETURN is the *consequence* of the PS already deciding to
+   tear down -- not the trigger.
+
+2. **`Connection not tracked for fd=N` precedes the SSL error
+   by 15 ms.**  The MDS event loop took an io_rpc_trans_cb
+   completion for a fd that `io_conn_get()` had just lost --
+   classic stale-CQE / fd-reuse symptom.  This is exactly what
+   Defects 2 (no generation check beyond write gate) and 3 (no
+   `CONN_CLOSING` state) in the lifecycle plan target.
+
+The original hypothesis ("event-loop SSL_read races worker
+SSL_write under sustained load") was plausible but wrong as a
+*primary* cause; the data points at fd-lifecycle, not SSL state.
+Slice 3 still contributes -- the affected-PS count went 4 -> 2 -> 1
+across runs and zero ASAN/UBSAN persists -- but it does not close
+INV-6 on its own.
+
+The natural next slice is Slice 4 (CONN_CLOSING + generation
+extension) as originally planned in `.claude/design/io-conn-lifecycle.md`.
 
 ---
 
