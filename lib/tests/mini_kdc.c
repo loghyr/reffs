@@ -5,11 +5,14 @@
 #include "config.h" /* IWYU pragma: keep */
 #endif
 
+#include <arpa/inet.h>
 #include <errno.h>
+#include <netinet/in.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -31,6 +34,38 @@ static int have_cmd(const char *cmd)
 
 	snprintf(check, sizeof(check), "command -v %s >/dev/null 2>&1", cmd);
 	return run(check);
+}
+
+/*
+ * Grab a free loopback TCP port for the KDC to bind.  The port must
+ * be discoverable by the client, so it is written into both
+ * kdc.conf (where krb5kdc binds) and krb5.conf (where kinit looks).
+ * Returns the port, or -1 on failure.
+ *
+ * There is a small TOCTOU window between closing the probe socket
+ * and krb5kdc binding the port -- acceptable for a test fixture.
+ */
+static int find_free_port(void)
+{
+	struct sockaddr_in sa;
+	socklen_t len = sizeof(sa);
+	int fd = socket(AF_INET, SOCK_STREAM, 0);
+	int port = -1;
+
+	if (fd < 0)
+		return -1;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sin_family = AF_INET;
+	sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	sa.sin_port = 0;
+
+	if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0 &&
+	    getsockname(fd, (struct sockaddr *)&sa, &len) == 0)
+		port = ntohs(sa.sin_port);
+
+	close(fd);
+	return port;
 }
 
 int mini_kdc_start(struct mini_kdc *kdc, const char *service,
@@ -59,6 +94,17 @@ int mini_kdc_start(struct mini_kdc *kdc, const char *service,
 	snprintf(kdc->kdc_krb5conf, sizeof(kdc->kdc_krb5conf), "%s/krb5.conf",
 		 kdc->kdc_dir);
 
+	/*
+	 * Pick the KDC's port up front: it has to agree between
+	 * kdc.conf (krb5kdc binds it) and krb5.conf (kinit dials it).
+	 */
+	int kdc_port = find_free_port();
+
+	if (kdc_port < 0) {
+		fprintf(stderr, "mini_kdc: no free port for the KDC\n");
+		goto err;
+	}
+
 	/* Write krb5.conf. */
 	char path[512];
 
@@ -75,10 +121,10 @@ int mini_kdc_start(struct mini_kdc *kdc, const char *service,
 		"    rdns = false\n"
 		"[realms]\n"
 		"    %s = {\n"
-		"        kdc = localhost\n"
+		"        kdc = localhost:%d\n"
 		"        admin_server = localhost\n"
 		"    }\n",
-		MINI_KDC_REALM, MINI_KDC_REALM);
+		MINI_KDC_REALM, MINI_KDC_REALM, kdc_port);
 	fclose(fp);
 
 	/* Write kdc.conf. */
@@ -88,16 +134,17 @@ int mini_kdc_start(struct mini_kdc *kdc, const char *service,
 		goto err;
 	fprintf(fp,
 		"[kdcdefaults]\n"
-		"    kdc_ports = 0\n"
-		"    kdc_tcp_ports = 0\n"
+		"    kdc_ports = %d\n"
+		"    kdc_tcp_ports = %d\n"
 		"[realms]\n"
 		"    %s = {\n"
 		"        database_name = %s/principal\n"
 		"        key_stash_file = %s/.k5.%s\n"
-		"        kdc_ports = 0\n"
-		"        kdc_tcp_ports = 0\n"
+		"        kdc_ports = %d\n"
+		"        kdc_tcp_ports = %d\n"
 		"    }\n",
-		MINI_KDC_REALM, kdc->kdc_dir, kdc->kdc_dir, MINI_KDC_REALM);
+		kdc_port, kdc_port, MINI_KDC_REALM, kdc->kdc_dir, kdc->kdc_dir,
+		MINI_KDC_REALM, kdc_port, kdc_port);
 	fclose(fp);
 
 	/* Set environment for all krb5 commands. */
@@ -171,6 +218,60 @@ int mini_kdc_start(struct mini_kdc *kdc, const char *service,
 err:
 	mini_kdc_stop(kdc);
 	return -1;
+}
+
+int mini_kdc_kinit(struct mini_kdc *kdc, const char *principal, const char *tag,
+		   char *ccache_out, size_t ccache_sz)
+{
+	char cmd[1024];
+	char ccache[320];
+
+	if (!kdc->kdc_started) {
+		fprintf(stderr, "mini_kdc: kinit before KDC started\n");
+		return -1;
+	}
+
+	/*
+	 * Dedicated credential cache inside the KDC temp tree, so
+	 * mini_kdc_stop's rm -rf reaps it.  The name is keyed on @tag
+	 * (not the principal) so several caches can hold tickets for
+	 * the same principal.  kinit -c targets this cache explicitly
+	 * rather than the process-global one set by mini_kdc_start.
+	 */
+	snprintf(ccache, sizeof(ccache), "%s/cc_%s", kdc->kdc_dir, tag);
+
+	snprintf(cmd, sizeof(cmd), "echo %s | kinit -c %s %s@%s 2>/dev/null",
+		 MINI_KDC_PASS, ccache, principal, MINI_KDC_REALM);
+	if (run(cmd)) {
+		fprintf(stderr, "mini_kdc: kinit %s (%s) failed\n", principal,
+			tag);
+		return -1;
+	}
+
+	snprintf(ccache_out, ccache_sz, "%s", ccache);
+	return 0;
+}
+
+int mini_kdc_add_user(struct mini_kdc *kdc, const char *name, char *ccache_out,
+		      size_t ccache_sz)
+{
+	char cmd[1024];
+
+	if (!kdc->kdc_started) {
+		fprintf(stderr, "mini_kdc: add_user before KDC started\n");
+		return -1;
+	}
+
+	/* Create the user principal with the shared test password. */
+	snprintf(cmd, sizeof(cmd),
+		 "kadmin.local -r %s addprinc -pw %s %s@%s 2>/dev/null",
+		 MINI_KDC_REALM, MINI_KDC_PASS, name, MINI_KDC_REALM);
+	if (run(cmd)) {
+		fprintf(stderr, "mini_kdc: addprinc %s failed\n", name);
+		return -1;
+	}
+
+	return mini_kdc_kinit(kdc, name, name, ccache_out, ccache_sz);
 }
 
 void mini_kdc_stop(struct mini_kdc *kdc)

@@ -50,6 +50,35 @@ int mini_kdc_start(struct mini_kdc *kdc, const char *service,
 		   const char *hostname);
 
 /*
+ * Provision an additional user principal <name>@TEST.REFFS on an
+ * already-started KDC and kinit it into a dedicated credential
+ * cache.  ccache_out receives that cache's path; hand it to a
+ * worker as KRB5CCNAME to select this identity.
+ *
+ * The cache lives inside the KDC's temp directory, so mini_kdc_stop
+ * reaps it along with everything else.
+ *
+ * Returns 0 on success, -1 on failure (KDC not started, addprinc
+ * or kinit failed).
+ */
+int mini_kdc_add_user(struct mini_kdc *kdc, const char *name, char *ccache_out,
+		      size_t ccache_sz);
+
+/*
+ * Obtain a fresh TGT for an already-existing principal into its own
+ * dedicated credential cache.  Unlike mini_kdc_add_user this does not
+ * create the principal.  @tag makes the cache file name unique, so
+ * several caches can each hold a ticket for the same principal: the
+ * MIT krb5 FILE: ccache is not safe for concurrent use by multiple
+ * processes, so callers that fork many workers under one identity
+ * must give each worker its own cache.
+ *
+ * Returns 0 on success, -1 on failure (KDC not started, kinit failed).
+ */
+int mini_kdc_kinit(struct mini_kdc *kdc, const char *principal, const char *tag,
+		   char *ccache_out, size_t ccache_sz);
+
+/*
  * Stop the KDC and clean up all temporary files.
  */
 void mini_kdc_stop(struct mini_kdc *kdc);
