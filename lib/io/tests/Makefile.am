@@ -33,20 +33,21 @@ LDADD = \
 	$(FUSE_LIBS)					\
 	$(HDR_HISTOGRAM_LIBS) $(JEMALLOC_LIBS)
 
-# conn_lifecycle_race_test is a deliberate red reproducer for the
-# INV-5/INV-6 conn_info lifecycle defect (unguarded ci_ssl).  It is
-# built but NOT listed in TESTS -- `make check` compiles it without
-# running it.  Run it by hand under --enable-tsan / --enable-asan to
-# observe the data race / use-after-free.  It moves into TESTS once
-# the lib/io/ connection-lifecycle fix lands.
-check_PROGRAMS = $(TESTS) conn_lifecycle_race_test
+check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
+
+# conn_lifecycle_race_test was a deliberate red reproducer for the
+# INV-5/INV-6 conn_info lifecycle defect (unguarded ci_ssl).  Slice 1
+# of .claude/design/io-conn-lifecycle.md added the refcounted ci_ssl
+# accessors and the lock-safe TLS-flag snapshot; the test now uses
+# that safe API and is expected to stay GREEN under TSAN and ASAN.
 
 # tls_write_count_test exercises io_handle_write which is backend-
 # specific and currently only implemented on the liburing backend.
 TESTS = \
 	backend_io_test \
 	conn_info_test \
+	conn_lifecycle_race_test \
 	tls_test
 
 if IO_BACKEND_LIBURING

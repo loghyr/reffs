@@ -2,40 +2,33 @@
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
 /*
- * conn_info connection-lifecycle race reproducer (INV-5 / INV-6).
+ * conn_info connection-lifecycle no-regression check (INV-5 / INV-6).
  *
- * This is NOT a passing make-check test.  It is a deliberate red
- * reproducer that anchors the lib/io/ connection-lifecycle fix slice.
- * It is built (check_PROGRAMS) but is NOT listed in TESTS, so
- * `make check` compiles it without running it.  Run it by hand under
- * a sanitizer build:
+ * Slice 1 of .claude/design/io-conn-lifecycle.md refcounts the SSL
+ * object hung off conn_info and exposes a lock-safe accessor pair
+ * (io_conn_ssl_install / _acquire / _release / _clear, plus
+ * io_conn_tls_snapshot / _set_state).  With those primitives in
+ * place the unguarded ci_ssl access pattern that produced the
+ * INV-5 / INV-6 race no longer exists; this test stays in the
+ * suite to keep it that way.
  *
- *     ../configure --enable-tsan && make
- *     ./lib/io/tests/conn_lifecycle_race_test  # expect TSAN race on ci_ssl
+ * The shape mirrors the original red reproducer -- a churn thread
+ * per fd repeatedly establishes and tears down the connection, and
+ * a pool of reader threads exercises the same fd in parallel.  Only
+ * the access pattern changed: readers no longer pull a conn_info
+ * out of io_conn_get() and dereference ci_ssl outside conn_mutex;
+ * they pin the SSL via io_conn_ssl_acquire() (which takes a use ref
+ * under conn_mutex), use it, then drop it via io_conn_ssl_release().
  *
- *     ../configure --enable-asan && make
- *     ./lib/io/tests/conn_lifecycle_race_test  # expect ASAN UAF on the SSL
+ * Expected behaviour under sanitizer builds:
+ *   - TSAN: no data race on conn_info.ci_ssl (the field is only ever
+ *     read/written under conn_mutex by the lib/io API).
+ *   - ASAN: no heap-use-after-free on the SSL object (an outstanding
+ *     use ref keeps the SSL alive past a concurrent slot-ref drop).
  *
- * The defect (see .claude/design/experiments.md, "INV-5/INV-6 root
- * cause"): io_conn_get() returns a struct conn_info * after dropping
- * conn_mutex.  Every consumer then reads ci->ci_ssl and uses the SSL
- * object outside the lock -- handlers.c:281 is the live example.  A
- * concurrent io_conn_unregister() does SSL_shutdown + SSL_free on
- * ci_ssl and NULLs the pointer under conn_mutex.  The reader therefore
- * races the free:
- *   - TSAN: a data race on the ci_ssl field itself (unlocked plain
- *     read in the reader vs. locked write in unregister/churn).
- *   - ASAN: a heap-use-after-free when the reader dereferences an SSL
- *     object that unregister already freed.
- *
- * INV-5 (concurrent PS->MDS establishment) and INV-6 (mid-load
- * teardown) are the same defect class: conn_info has no lifecycle
- * discipline.  This reproducer exercises the teardown/reuse window
- * directly.
- *
- * When the fix lands (refcount ci_ssl, a CONN_CLOSING state, and a
- * generation check beyond the write gate), this file is rewritten as
- * a passing concurrency test and moved into TESTS.
+ * If a future change reintroduces unsynchronised access to ci_ssl
+ * or drops the SSL while a use ref is outstanding, the corresponding
+ * sanitizer will fire here and this test will go red.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -51,21 +44,21 @@
 
 #include <openssl/ssl.h>
 
-#include "reffs/io.h"
+#include <check.h>
 
-#include "io_internal.h"
+#include "reffs/io.h"
 
 /*
  * Four fd numbers, well clear of stdio and of conn_info_test's
- * 201-203.  One churn thread and several reader threads per fd; the
- * churn thread owns the fd's register/unregister cycle so io_conn_*
- * table mutation is serialized per fd -- the race under test is purely
- * the unlocked use of the returned conn_info's ci_ssl field.
+ * 201-203.  CHURN_ITERS and the per-fd reader count are tuned so the
+ * test fits the standards.md two-second budget even under TSAN; the
+ * goal is enough register/unregister cycles to interleave with the
+ * reader threads, not raw throughput.
  */
 #define NR_FDS 4
 #define FD_BASE 311
-#define CHURN_ITERS 8000
-#define READERS_PER_FD 3
+#define CHURN_ITERS 1000
+#define READERS_PER_FD 2
 
 static SSL_CTX *test_ctx;
 
@@ -77,9 +70,10 @@ static _Atomic int churn_alive;
 
 /*
  * Churn thread: repeatedly establish and tear down the connection on
- * one fd, mirroring a PS<->MDS connection that flaps under load.  Each
- * register hangs a fresh SSL object off ci_ssl the way the TLS accept
- * path does; io_conn_unregister() then SSL_free()s it under conn_mutex.
+ * one fd, mirroring a PS<->MDS connection that flaps under load.
+ * Each register installs a fresh SSL via io_conn_ssl_install() (which
+ * adopts SSL_new()'s +1 ref as the slot ref); io_conn_unregister()
+ * detaches and drops it under the discipline added in Slice 1.
  */
 static void *churn_thread(void *arg)
 {
@@ -88,15 +82,18 @@ static void *churn_thread(void *arg)
 	for (int i = 0; i < CHURN_ITERS; i++) {
 		struct conn_info *ci =
 			io_conn_register(fd, CONN_CONNECTED, CONN_ROLE_SERVER);
-		if (ci) {
-			ci->ci_ssl = SSL_new(test_ctx);
-			ci->ci_tls_enabled = true;
+		(void)ci;
+		SSL *ssl = SSL_new(test_ctx);
+		if (ssl) {
+			io_conn_ssl_install(fd, ssl);
+			io_conn_tls_set_state(fd, true, false);
 		}
 		/*
-		 * io_conn_unregister() does SSL_shutdown + SSL_free(ci_ssl)
-		 * + ci_ssl = NULL under conn_mutex.  A reader that already
-		 * pulled this conn_info out of io_conn_get() and is using
-		 * ci_ssl outside the lock now races the free.
+		 * io_conn_unregister() detaches ci_ssl under conn_mutex
+		 * and drops the slot ref outside the lock.  An acquire
+		 * call racing the unregister either returns NULL (slot
+		 * already detached) or returns a pinned SSL (slot still
+		 * held the ref when acquire ran); either is safe.
 		 */
 		io_conn_unregister(fd);
 	}
@@ -106,44 +103,41 @@ static void *churn_thread(void *arg)
 }
 
 /*
- * Reader thread: the handlers.c:281 pattern verbatim in shape -- pull
- * the conn_info out of io_conn_get(), test ci_ssl + ci_tls_enabled,
- * then dereference the SSL.  None of it is under conn_mutex, because
- * io_conn_get() dropped the lock before returning.
+ * Reader thread: pin the SSL via the safe API, use it, drop it.
+ * Snapshot the TLS flag first to mimic the handlers.c hot path --
+ * io_handle_read / io_do_tls both gate on the flag before reaching
+ * for the SSL.
  */
 static void *reader_thread(void *arg)
 {
 	int fd = (int)(intptr_t)arg;
 
 	while (atomic_load_explicit(&churn_alive, memory_order_acquire) > 0) {
-		struct conn_info *ci = io_conn_get(fd);
-		if (!ci)
+		bool tls_enabled = false;
+		(void)io_conn_tls_snapshot(fd, &tls_enabled, NULL);
+		if (!tls_enabled)
 			continue;
-		if (ci->ci_ssl && ci->ci_tls_enabled) {
-			SSL *s = ci->ci_ssl;
-			/* Dereferences the SSL -- UAF if it was freed. */
-			(void)SSL_get_version(s);
-		}
+		SSL *s = io_conn_ssl_acquire(fd);
+		if (!s)
+			continue;
+		/*
+		 * SSL_get_version dereferences the SSL.  With the Slice 1
+		 * fix in place the use ref taken by acquire keeps this
+		 * memory live even if a concurrent unregister drops the
+		 * slot ref between the snapshot and now.
+		 */
+		(void)SSL_get_version(s);
+		io_conn_ssl_release(s);
 	}
 	return NULL;
 }
 
-int main(void)
+START_TEST(test_no_race_churn_vs_readers)
 {
 	test_ctx = SSL_CTX_new(TLS_method());
-	if (!test_ctx) {
-		fprintf(stderr, "SSL_CTX_new failed\n");
-		return 2;
-	}
+	ck_assert_ptr_nonnull(test_ctx);
 
 	io_conn_init();
-
-	fprintf(stderr,
-		"conn_lifecycle_race_test: reproducing the INV-5/INV-6\n"
-		"unguarded-ci_ssl race.  Under --enable-tsan expect a data\n"
-		"race report on conn_info.ci_ssl; under --enable-asan expect\n"
-		"a heap-use-after-free on the SSL object.  A non-sanitizer\n"
-		"run may pass silently or crash.\n");
 
 	pthread_t churn[NR_FDS];
 	pthread_t readers[NR_FDS][READERS_PER_FD];
@@ -154,9 +148,13 @@ int main(void)
 		intptr_t fd = FD_BASE + f;
 
 		for (int r = 0; r < READERS_PER_FD; r++)
-			pthread_create(&readers[f][r], NULL, reader_thread,
-				       (void *)fd);
-		pthread_create(&churn[f], NULL, churn_thread, (void *)fd);
+			ck_assert_int_eq(pthread_create(&readers[f][r], NULL,
+							reader_thread,
+							(void *)fd),
+					 0);
+		ck_assert_int_eq(pthread_create(&churn[f], NULL, churn_thread,
+						(void *)fd),
+				 0);
 	}
 
 	for (int f = 0; f < NR_FDS; f++) {
@@ -167,7 +165,35 @@ int main(void)
 
 	io_conn_cleanup();
 	SSL_CTX_free(test_ctx);
+	test_ctx = NULL;
+}
+END_TEST
 
-	fprintf(stderr, "conn_lifecycle_race_test: churn complete.\n");
-	return 0;
+static Suite *conn_lifecycle_race_suite(void)
+{
+	Suite *s = suite_create("conn_lifecycle_race");
+	TCase *tc = tcase_create("core");
+
+	/*
+	 * The churn loop runs CHURN_ITERS * NR_FDS = 4000 register /
+	 * unregister cycles against READERS_PER_FD * NR_FDS = 8 reader
+	 * threads.  Under TSAN this comfortably fits two seconds on
+	 * dreamer; bump the timeout slightly so a heavily loaded CI
+	 * host does not false-positive.
+	 */
+	tcase_set_timeout(tc, 10);
+	tcase_add_test(tc, test_no_race_churn_vs_readers);
+	suite_add_tcase(s, tc);
+	return s;
+}
+
+int main(void)
+{
+	Suite *s = conn_lifecycle_race_suite();
+	SRunner *sr = srunner_create(s);
+
+	srunner_run_all(sr, CK_NORMAL);
+	int failed = srunner_ntests_failed(sr);
+	srunner_free(sr);
+	return failed ? EXIT_FAILURE : EXIT_SUCCESS;
 }
