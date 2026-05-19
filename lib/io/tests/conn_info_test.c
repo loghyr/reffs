@@ -29,6 +29,8 @@
 
 #include <check.h>
 
+#include <openssl/ssl.h>
+
 #include "reffs/log.h"
 #include "reffs/io.h"
 
@@ -45,14 +47,31 @@
 #define FD_B 202
 #define FD_C 203
 
+/*
+ * Backs the io_conn_ssl_* lifecycle tests with real SSL objects.
+ * Created per-test in setup() so install/acquire/clear exercise the
+ * actual OpenSSL refcount path the fix relies on.
+ */
+static SSL_CTX *test_ctx;
+
 static void setup(void)
 {
 	io_conn_init();
+	test_ctx = SSL_CTX_new(TLS_method());
 }
 
 static void teardown(void)
 {
+	/*
+	 * io_conn_cleanup() first: it SSL_free()s any object still in a
+	 * slot, which drops the SSL's ref on test_ctx -- so the ctx must
+	 * outlive it.
+	 */
 	io_conn_cleanup();
+	if (test_ctx) {
+		SSL_CTX_free(test_ctx);
+		test_ctx = NULL;
+	}
 }
 
 START_TEST(test_register_and_get)
@@ -299,6 +318,137 @@ START_TEST(test_write_gate_partial_write_continuation)
 }
 END_TEST
 
+/*
+ * SSL-object lifecycle tests (INV-5 / INV-6 fix).  These exercise the
+ * io_conn_ssl_* / io_conn_tls_* accessors that replaced unguarded
+ * ci_ssl access.  The defect they guard against: io_conn_get()
+ * returned a raw conn_info whose ci_ssl a consumer dereferenced after
+ * conn_mutex was dropped, racing a concurrent SSL_free in teardown.
+ */
+START_TEST(test_ssl_install_acquire_release)
+{
+	(void)io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_SERVER);
+
+	SSL *ssl = SSL_new(test_ctx);
+	ck_assert_ptr_nonnull(ssl);
+	io_conn_ssl_install(FD_A, ssl);
+
+	/* install marks the connection handshaking, not yet enabled. */
+	bool enabled = true, handshaking = false;
+	ck_assert(io_conn_tls_snapshot(FD_A, &enabled, &handshaking));
+	ck_assert(!enabled);
+	ck_assert(handshaking);
+
+	/* acquire returns the installed SSL with a use-ref held. */
+	SSL *got = io_conn_ssl_acquire(FD_A);
+	ck_assert_ptr_eq(got, ssl);
+	io_conn_ssl_release(got);
+
+	/* clear drops the slot ref and frees the SSL; acquire now NULL. */
+	io_conn_ssl_clear(FD_A);
+	ck_assert_ptr_null(io_conn_ssl_acquire(FD_A));
+}
+END_TEST
+
+START_TEST(test_ssl_acquire_unregistered)
+{
+	/* No connection registered for FD_C. */
+	ck_assert_ptr_null(io_conn_ssl_acquire(FD_C));
+	/* snapshot reports the fd as absent. */
+	ck_assert(!io_conn_tls_snapshot(FD_C, NULL, NULL));
+}
+END_TEST
+
+START_TEST(test_ssl_acquire_no_ssl)
+{
+	/* Registered, but no SSL installed -- acquire returns NULL. */
+	(void)io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_SERVER);
+	ck_assert_ptr_null(io_conn_ssl_acquire(FD_A));
+}
+END_TEST
+
+START_TEST(test_ssl_clear_idempotent)
+{
+	(void)io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_SERVER);
+
+	SSL *ssl = SSL_new(test_ctx);
+	ck_assert_ptr_nonnull(ssl);
+	io_conn_ssl_install(FD_A, ssl);
+
+	io_conn_ssl_clear(FD_A);
+	/* Second clear is a no-op -- no double free. */
+	io_conn_ssl_clear(FD_A);
+
+	/* Clear on a registered fd that never had an SSL is also safe. */
+	(void)io_conn_register(FD_B, CONN_CONNECTED, CONN_ROLE_SERVER);
+	io_conn_ssl_clear(FD_B);
+}
+END_TEST
+
+START_TEST(test_ssl_clear_with_outstanding_ref)
+{
+	/*
+	 * The core INV-5 / INV-6 safety property: a use-ref taken by
+	 * io_conn_ssl_acquire() keeps the SSL object alive even after
+	 * io_conn_ssl_clear() drops the slot's ref.  The acquirer may
+	 * safely dereference the SSL until it releases.
+	 */
+	(void)io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_SERVER);
+
+	SSL *ssl = SSL_new(test_ctx);
+	ck_assert_ptr_nonnull(ssl);
+	io_conn_ssl_install(FD_A, ssl);
+
+	SSL *use = io_conn_ssl_acquire(FD_A);
+	ck_assert_ptr_eq(use, ssl);
+
+	/* Drop the slot's ref while the use-ref is still outstanding. */
+	io_conn_ssl_clear(FD_A);
+
+	/* The SSL must still be valid -- dereference it (no UAF). */
+	ck_assert_ptr_nonnull(SSL_get_version(use));
+
+	/* Releasing the last (use) ref frees it; ASAN/LSAN verify. */
+	io_conn_ssl_release(use);
+}
+END_TEST
+
+START_TEST(test_ssl_unregister_clears_ssl)
+{
+	(void)io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_SERVER);
+
+	SSL *ssl = SSL_new(test_ctx);
+	ck_assert_ptr_nonnull(ssl);
+	io_conn_ssl_install(FD_A, ssl);
+
+	/* unregister tears down the SSL along with the slot. */
+	ck_assert_int_eq(io_conn_unregister(FD_A), 0);
+	ck_assert_ptr_null(io_conn_ssl_acquire(FD_A));
+}
+END_TEST
+
+START_TEST(test_tls_snapshot)
+{
+	(void)io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_SERVER);
+
+	bool enabled = true, handshaking = true;
+
+	/* Fresh connection: both flags clear. */
+	ck_assert(io_conn_tls_snapshot(FD_A, &enabled, &handshaking));
+	ck_assert(!enabled);
+	ck_assert(!handshaking);
+
+	/* set_state writes the flags as a pair. */
+	io_conn_tls_set_state(FD_A, true, false);
+	ck_assert(io_conn_tls_snapshot(FD_A, &enabled, &handshaking));
+	ck_assert(enabled);
+	ck_assert(!handshaking);
+
+	/* Unregistered fd: snapshot returns false. */
+	ck_assert(!io_conn_tls_snapshot(FD_B, &enabled, &handshaking));
+}
+END_TEST
+
 static Suite *conn_info_suite(void)
 {
 	Suite *s = suite_create("conn_info");
@@ -316,6 +466,13 @@ static Suite *conn_info_suite(void)
 	tcase_add_test(tc, test_write_gate_contended);
 	tcase_add_test(tc, test_write_gate_fd_reuse);
 	tcase_add_test(tc, test_write_gate_partial_write_continuation);
+	tcase_add_test(tc, test_ssl_install_acquire_release);
+	tcase_add_test(tc, test_ssl_acquire_unregistered);
+	tcase_add_test(tc, test_ssl_acquire_no_ssl);
+	tcase_add_test(tc, test_ssl_clear_idempotent);
+	tcase_add_test(tc, test_ssl_clear_with_outstanding_ref);
+	tcase_add_test(tc, test_ssl_unregister_clears_ssl);
+	tcase_add_test(tc, test_tls_snapshot);
 	suite_add_tcase(s, tc);
 	return s;
 }

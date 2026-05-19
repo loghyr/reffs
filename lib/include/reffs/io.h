@@ -402,6 +402,41 @@ int io_conn_get_peer_cert_fingerprint(int fd, char *out_buf,
 				      size_t out_buf_len);
 
 /*
+ * TLS lifecycle for a connection's SSL object (INV-5 / INV-6 fix).
+ *
+ * struct conn_info is a stable slot, but ci_ssl is installed by the
+ * event-loop thread and freed by the heartbeat thread (io_socket_close
+ * -> io_conn_unregister) and by io_handle_read error paths, while
+ * worker threads issue SSL_write on the same object.  Reaching into
+ * ci_ssl through an io_conn_get() pointer races that teardown -- a
+ * use-after-free on the SSL and a data race on the field itself.
+ *
+ * These accessors make ci_ssl access memory-safe by leaning on the
+ * SSL object's own atomic refcount (SSL_up_ref / SSL_free):
+ *
+ *   io_conn_ssl_install -- hand a freshly SSL_new()'d object to the
+ *       slot.  The +1 ref it arrives with becomes the slot's ref.
+ *       Also marks the connection as handshaking.  If the fd is no
+ *       longer registered the object is freed instead.
+ *   io_conn_ssl_acquire -- take a use-ref under conn_mutex and return
+ *       the SSL, or NULL if fd has no SSL.  MUST pair with _release.
+ *   io_conn_ssl_release -- drop a use-ref taken by _acquire.
+ *   io_conn_ssl_clear   -- drop the slot's ref and clear the TLS
+ *       flags.  Idempotent.  An outstanding use-ref keeps the SSL
+ *       memory alive until its holder releases.
+ *
+ * io_conn_tls_snapshot reads the TLS flags as a consistent pair under
+ * conn_mutex (returns false if fd is not registered).
+ * io_conn_tls_set_state writes them as a pair.
+ */
+void io_conn_ssl_install(int fd, SSL *ssl);
+SSL *io_conn_ssl_acquire(int fd);
+void io_conn_ssl_release(SSL *ssl);
+void io_conn_ssl_clear(int fd);
+bool io_conn_tls_snapshot(int fd, bool *tls_enabled, bool *handshaking);
+void io_conn_tls_set_state(int fd, bool tls_enabled, bool handshaking);
+
+/*
  * Per-fd write serialization gate.
  *
  * io_conn_write_try_start() -- atomically claim the write gate for fd.
