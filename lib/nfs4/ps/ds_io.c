@@ -187,7 +187,8 @@ int ds_read(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,
 
 	if (got > len)
 		got = len;
-	memcpy(data, resok->data.data_val, got);
+	if (got > 0)
+		memcpy(data, resok->data.data_val, got);
 	*nread = got;
 
 	xdr_free((xdrproc_t)xdr_READ3res, (caddr_t)&res);

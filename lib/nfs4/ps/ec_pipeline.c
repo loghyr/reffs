@@ -398,8 +398,22 @@ static void ec_disconnect_all(struct ec_context *ctx)
 {
 	uint32_t n = ctx->ctx_layout.el_nmirrors;
 
+	/*
+	 * Iterate backward: ec_resolve_mirrors shallow-copies a
+	 * resolved entry to higher indexes when find_existing_conn()
+	 * finds the same host:port at a lower index, so duplicates
+	 * always live AFTER their canonical entry.  Walking backward
+	 * means every alias's dup-check sees its canonical at a lower
+	 * j (still alive, not yet destroyed) and skips; only the
+	 * canonical -- which has no earlier match -- reaches the
+	 * actual destroy at index 0.  A forward walk would NULL the
+	 * canonical's clnt mid-loop and then the alias's dup-check
+	 * against NULL would falsely succeed, calling
+	 * clnt_destroy / mds_session_destroy a second time on the
+	 * already-freed CLIENT (#60).
+	 */
 	if (ctx->ctx_ds_sess) {
-		for (uint32_t i = 0; i < n; i++) {
+		for (uint32_t i = n; i-- > 0;) {
 			/* Skip duplicates (shared sessions). */
 			bool dup = false;
 
@@ -418,7 +432,7 @@ static void ec_disconnect_all(struct ec_context *ctx)
 	}
 
 	if (ctx->ctx_conns) {
-		for (uint32_t i = 0; i < n; i++) {
+		for (uint32_t i = n; i-- > 0;) {
 			bool dup = false;
 
 			for (uint32_t j = 0; j < i; j++) {
