@@ -308,13 +308,98 @@ already recorded in the Slice 1 status section (still
 `backend.c:122` / `backend.c:146` / `backend_io_test.c:69`) -- not
 regressed by Slice 2, still tracked separately.
 
-**Slice 3 -- CONN_CLOSING fd-reuse hardening (after Track 2 re-run).**
-7. Add `CONN_CLOSING`; `io_conn_unregister` -> `CONN_CLOSING`;
-   drain-driven `CONN_CLOSING -> CONN_UNUSED`; block
-   `io_conn_register` reuse of a `CONN_CLOSING` slot.
-8. Extend the generation check beyond the write gate.
+**Slice 3 -- SSL_read / SSL_write serialisation (promoted from
+NOT_NOW_BROWN_COW after Stage 4 Track 2 run 5).**
 
-State machine for Slice 3 (`CONN_CLOSING`):
+Stage 4 showed memory safety alone is insufficient to unblock
+Track 2: even with no UAF, OpenSSL's `SSL_read` (event loop) and
+`SSL_write` (worker) on one `SSL` race the libssl state machine
+and the MDS sends `close_notify` to the PS ~6 s into IOR's write
+load.  Add a per-`SSL` mutex that exclusively gates every
+`SSL_*` / `BIO_*` call against every other one on the same SSL.
+
+Mechanism C (per-SSL serialisation):
+
+7. **Per-SSL lock attached via `SSL_set_ex_data`.**  An
+   `int reffs_ssl_io_lock_index` (`SSL_get_ex_new_index`) is
+   minted at `io_conn_init()` time.  `io_conn_ssl_install`
+   allocates a `struct reffs_ssl_io_lock { pthread_mutex_t mu; }`,
+   initialises the mutex, and attaches it via
+   `SSL_set_ex_data(ssl, idx, lock)`.  An ex_data free callback
+   registered at index-creation time destroys the mutex and
+   frees the struct when the SSL's refcount finally reaches zero
+   (which is after every use ref drops).  This binds the
+   mutex's life exactly to the SSL's life -- no slot reuse can
+   poison it.
+
+8. **New API:** `void io_conn_ssl_io_lock(SSL *ssl)` and
+   `void io_conn_ssl_io_unlock(SSL *ssl)`.  Look up the lock
+   via `SSL_get_ex_data` and `pthread_mutex_lock` /
+   `pthread_mutex_unlock`.  The pair is always called between
+   `io_conn_ssl_acquire` and `io_conn_ssl_release`.
+
+9. **Call-site conversion in `lib/io/handlers.c`:** wrap every
+   `SSL_read`, `SSL_write`, `SSL_accept`, `BIO_read`,
+   `BIO_write`, `BIO_flush` call that operates on an SSL we
+   own with the io_lock / io_unlock pair.  Sites (from the
+   2026-05-19 enumeration):
+
+   - `io_do_tls` -- `SSL_write` + `BIO_read(wbio)` drain loop
+     (line ~136 / ~177)
+   - `io_handle_write` handshake-final-pending branches --
+     `BIO_flush(SSL_get_wbio(ssl))` (lines ~379, ~406)
+   - `process_ssl_accept` -- `SSL_accept(ssl)` (line ~809) and
+     the `BIO_read(wbio)` drain (line ~870)
+   - `handle_tls_handshake` -- `BIO_write(rbio, ...)` (line ~800)
+   - `io_handle_read` -- `BIO_write(rbio, ...)` + `SSL_read`
+     drain (lines ~1338, ~1350, ~1397)
+
+10. **Teardown discipline.**  `conn_ssl_drop` (the
+    outside-conn_mutex SSL_shutdown + SSL_free helper) takes
+    the per-SSL io_lock before `SSL_shutdown` so it cannot
+    race a still-outstanding worker `SSL_write`.  Workers
+    holding a use ref but no io_lock are immune (they have
+    not entered SSL territory yet); workers holding the
+    io_lock complete their call before teardown proceeds.
+
+Lock ordering rules (lift them out of comments into the doc so
+the reviewer can check):
+
+- `conn_mutex` (process-wide) is **never** held across an
+  `SSL_*` call.  Existing Slice 1 discipline.  Unchanged.
+- `per-SSL io_lock` is **always** taken *outside* `conn_mutex`.
+  Callers do `io_conn_ssl_acquire` (which takes conn_mutex
+  internally and drops it), THEN `io_conn_ssl_io_lock`.
+- `per-SSL io_lock` is acquired by exactly one of: a worker
+  about to call SSL_write/BIO_*, the event-loop thread about
+  to call SSL_read/SSL_accept/BIO_*, or the teardown thread
+  about to call SSL_shutdown.  No nested SSL locks (one SSL
+  per call site).
+
+Test plan:
+
+- New `lib/io/tests/conn_ssl_serial_test.c` -- concurrent
+  reader + writer + churn threads on one SSL via the safe API;
+  asserts no SSL_ERROR, no crash, libcheck `Suite` so it
+  fits LOG_COMPILER.  Sized for the two-second TSAN budget.
+- `conn_lifecycle_race_test.c` -- add io_lock / io_unlock
+  around `SSL_get_version` so the existing churn test also
+  exercises the serialised path.
+- `make check` macOS + dreamer ASAN + dreamer TSAN clean.
+- Track 2 re-run -- the success criterion: IOR completes
+  without `fsync(15) failed` or `stat()` failed.
+
+Reviewer-gated (lock-ordering discipline change).
+
+**Slice 4 -- CONN_CLOSING fd-reuse hardening (was Slice 3 in
+the original plan; renumbered now that Mechanism C took the
+Slice-3 slot).**
+11. Add `CONN_CLOSING`; `io_conn_unregister` -> `CONN_CLOSING`;
+    drain-driven `CONN_CLOSING -> CONN_UNUSED`; block
+    `io_conn_register` reuse of a `CONN_CLOSING` slot.
+12. Extend the generation check beyond the write gate.
+
+State machine for Slice 4 (`CONN_CLOSING`):
 
 ```
    live state ---- io_conn_unregister ----> CONN_CLOSING
