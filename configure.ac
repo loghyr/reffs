@@ -654,7 +654,18 @@ AC_SUBST([OPENSSL_LIBS])
 # its libtirpc-specific block on this, not on HAVE_GSSAPI_KRB5
 # (which only says GSSAPI is available, not that the SunRPC
 # integration glue exists).
+#
+# On Linux the libtirpc headers live in their own include directory
+# (/usr/include/tirpc), reachable only via TIRPC_CFLAGS.
+# AC_CHECK_HEADERS preprocesses with CPPFLAGS, which does not carry
+# TIRPC_CFLAGS -- so probe with it temporarily added.  Without this
+# the installed header reads as absent and the whole RPCSEC_GSS
+# client path (mds_session_create_sec's krb5 branch) is silently
+# compiled out, degrading krb5 client sessions to AUTH_SYS.
+reffs_save_CPPFLAGS="$CPPFLAGS"
+CPPFLAGS="$CPPFLAGS $TIRPC_CFLAGS"
 AC_CHECK_HEADERS([rpc/auth_gss.h])
+CPPFLAGS="$reffs_save_CPPFLAGS"
 
 dnl Split the warn-on-failure into a separate AS_IF -- passing a
 dnl warn/error macro call as the 4th arg to PKG_CHECK_MODULES trips
