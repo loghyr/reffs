@@ -299,6 +299,32 @@ krb5: image
 			/src/scripts/ci_krb5_multiclient.sh /build/src/reffsd"
 
 # -----------------------------------------------------------------------
+# ffv1-stress: pre-push check for scripts/krb5_ffv1_stress.sh
+# -----------------------------------------------------------------------
+# Self-contained reproducer for the QA-facing stress driver: stands
+# up a mini-KDC + a combined-mode reffsd configured for FFv1 + krb5,
+# provisions N test principals, runs scripts/krb5_ffv1_stress.sh
+# against them, asserts every worker passes.  Distinct from `krb5`,
+# which exercises plain MDS I/O via nfs_krb5_multiclient; this one
+# exercises the LAYOUTGET + DS I/O path that krb5_ffv1_stress.sh
+# actually drives in the field.
+#
+# EXPECTED RED until #60 is fixed (heap-use-after-free in
+# ec_disconnect_all surfaces in the DS-side teardown after a
+# successful LAYOUTGET).  See test_krb5_ffv1_stress_local.sh for
+# the full context; the script under test is fine, the failure is
+# in the reffs client library.
+
+ffv1-stress: image
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			ASAN_OPTIONS=detect_leaks=0 \
+			/src/scripts/test_krb5_ffv1_stress_local.sh /build/src/reffsd"
+
+# -----------------------------------------------------------------------
 # sigmund: Sigmund NFS test framework
 # -----------------------------------------------------------------------
 
@@ -400,4 +426,4 @@ stop:
 		echo "No running CI containers."; \
 	fi
 
-.PHONY: image check full sec soak soak-noopt soak-tsan soak-rocksdb soak-core test cthon04 pynfs pjdfstest nfstest sigmund libnfs tls-stress xfstests ltp shell stop
+.PHONY: image check full sec soak soak-noopt soak-tsan soak-rocksdb soak-core test cthon04 pynfs pjdfstest nfstest sigmund libnfs tls-stress xfstests ltp krb5 ffv1-stress shell stop
