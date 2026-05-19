@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Indexed Proxy Server instance template.  run-ps-bench-bringup.sh
+# stamps one working copy per PS, substituting the REPLACE_WITH_*
+# placeholders below; the originals are never edited.
+#
+#   REPLACE_WITH_PS_NFS_PORT   -- this reffsd's own NFS port
+#   REPLACE_WITH_PS_PROBE_PORT -- this reffsd's probe port
+#   REPLACE_WITH_PS_DATA       -- backend data dir
+#   REPLACE_WITH_PS_STATE      -- backend state file
+#   REPLACE_WITH_PS_ID         -- [[proxy_mds]] id (1-based)
+#   REPLACE_WITH_PS_PORT       -- PS listener port (4098 + index)
+#   REPLACE_WITH_MDS_HOST      -- bench MDS host IP
+#   REPLACE_WITH_PS_CERT       -- this PS's mTLS client cert
+#   REPLACE_WITH_PS_KEY        -- this PS's mTLS client key
+#
+# Each PS gets its OWN cert (distinct fingerprint = distinct
+# [[allowed_ps]] identity on the MDS).  The data-mover squat-guard
+# in proxy_registration.c rejects a second PROXY_REGISTRATION from
+# the same identity while the first holds a valid lease, so PSes
+# sharing one cert would not all register.
+#
+# Standalone-role reffsd whose [[proxy_mds]] block opens an mTLS
+# NFSv4.2 session to the bench MDS via STARTTLS.  The bench MDS
+# sees the PS's allowlisted cert fingerprint and grants
+# registered-PS privilege.
+
+[server]
+port                  = REPLACE_WITH_PS_NFS_PORT
+probe_port            = REPLACE_WITH_PS_PROBE_PORT
+bind                  = "*"
+role                  = "standalone"
+minor_versions        = [1, 2]
+grace_period          = 5
+workers               = 4
+log_level             = "info"
+register_with_rpcbind = false
+
+[backend]
+type        = "posix"
+path        = "REPLACE_WITH_PS_DATA"
+state_file  = "REPLACE_WITH_PS_STATE"
+
+[[export]]
+path        = "/"
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys"]
+
+[[proxy_mds]]
+id        = REPLACE_WITH_PS_ID
+port      = REPLACE_WITH_PS_PORT
+bind      = "*"
+address   = "REPLACE_WITH_MDS_HOST"
+mds_port  = 2049
+mds_probe = 20490
+
+tls_cert  = "REPLACE_WITH_PS_CERT"
+tls_key   = "REPLACE_WITH_PS_KEY"
+tls_ca    = "/tmp/reffs_ps_tls/ca.crt"
+tls_mode  = "starttls"
+
+# Self-signed CA in the bench topology -- accept the MDS server
+# cert without verifying against an external CA bundle.  Production
+# deployments leave this false and trust the operator's CA.
+tls_insecure_no_verify = true

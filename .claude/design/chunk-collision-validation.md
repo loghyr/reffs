@@ -139,7 +139,7 @@ correctness bug.
 
 Estimated work: ~150 LOC in ec_demo, no protocol changes.
 
-### Track 2 -- IOR via N PS containers (after PS Phases 3 AND 4)
+### Track 2 -- IOR via N PS containers (UNGATED -- PS Phase 3 + 4 shipped)
 
 When `proxy-server.md` Phase 3 (`REFFS_DATA_PROXY` backend, client
 READ wired through pipeline) AND Phase 4 (client WRITE wired
@@ -167,7 +167,10 @@ clientids hammering the same file.
 
 This gives the HPC-tool recognition (IOR is everyone's reference
 parallel-I/O test) plus the multi-clientid contention surface.
-**Gated on PS Phase 4.**
+**Ungated as of 2026-05-19** -- PS Phase 3 (proxy READ) and Phase
+4a+4b (proxy WRITE) shipped.  The full Track 2 implementation
+design is `.claude/design/chunk-collision-track2.md`; the harness
+is `deploy/benchmark/run_chunk_collision_track2.sh`.
 
 ### Track 3 -- Linux NFS clients direct (BASELINE ONLY, no EC conflict)
 
@@ -317,10 +320,10 @@ goals.md.
 2. **Phase 2 (small): ec_demo `--offset` / `--length`.**  Extend
    ec_demo to support partial-range puts.  Unblocks Track 1b.
 
-3. **Phase 3 (after PS Phase 4): Track 2 harness.**  Compose
-   fragment + MPI launcher for IOR via N PSes.  Document the
-   gate on PS Phase 4 explicitly so this isn't blocked behind
-   a half-built feature.
+3. **Phase 3: Track 2 harness -- designed 2026-05-19.**  MPI
+   launcher for IOR via N PSes.  The PS Phase 3/4 gate is
+   satisfied.  See `.claude/design/chunk-collision-track2.md` and
+   `deploy/benchmark/run_chunk_collision_track2.sh`.
 
 4. **Phase 4 (parallel with any of the above): Track 3
    baseline.**  Existing CI already does some of this; formalize

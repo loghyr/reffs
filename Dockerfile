@@ -42,11 +42,14 @@ RUN dnf -y install \
     llvm-devel \
     make \
     net-tools \
+    nfs-utils \
     ninja-build \
     nslookup \
     krb5-devel \
     krb5-workstation \
     libnfsidmap-devel \
+    openmpi \
+    openmpi-devel \
     openssl-devel \
     perf \
     procps-ng \
@@ -78,6 +81,31 @@ RUN pip3 install --no-cache-dir \
     reply-xdr@git+https://github.com/loghyr/reply.git \
     xdrlib3 \
     xml2rfc
+
+# IOR + OpenMPI for chunk-collision Track 2 (see
+# deploy/benchmark/run_chunk_collision_track2.sh and
+# .claude/design/chunk-collision-track2.md).  N proxy servers act
+# as N distinct clientids contending on one shared MDS file; IOR
+# -F 0 -W -R -C is the parallel writer/verifier and mpirun the
+# launcher.  OpenMPI is packaged; IOR (github.com/hpc/ior) is not,
+# so it is built from a pinned release tag.  Fedora puts the MPI
+# wrappers under /usr/lib64/openmpi -- expose them on PATH so both
+# the build and the harness find mpicc/mpirun without `module load`.
+ENV PATH="/usr/lib64/openmpi/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/lib64/openmpi/lib"
+# IOR 4.0.0 predates the C23 toolchain default; Fedora 43's GCC 15
+# builds -std=gnu23, which turns implicit function declarations and
+# related legacy-C constructs into hard errors.  Pin the build to
+# gnu17 and downgrade the new-default errors so the release tag
+# stays usable on a modern Fedora base.
+RUN git clone --depth 1 --branch 4.0.0 \
+        https://github.com/hpc/ior /tmp/ior && \
+    cd /tmp/ior && ./bootstrap && \
+    ./configure MPICC=mpicc \
+        CFLAGS="-O2 -std=gnu17 -Wno-error=implicit-function-declaration -Wno-error=implicit-int -Wno-error=incompatible-pointer-types" && \
+    make -j"$(nproc)" && \
+    make install && \
+    rm -rf /tmp/ior
 
 # Test users for NFSv4 identity tests (matches Dockerfile.ci).
 RUN groupadd -g 3300 nfsgroup && \

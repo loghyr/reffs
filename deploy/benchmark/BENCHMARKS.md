@@ -113,6 +113,61 @@ docker compose down -v   # removes containers AND the build-vol volume
 
 ---
 
+## Chunk-Collision Validation (correctness, not performance)
+
+The suites above measure EC throughput.  A separate set of
+harnesses in `deploy/benchmark/` validates **correctness** of the
+CHUNK state machine under concurrent writes to the same chunk from
+distinct NFSv4.2 clientids -- the bug surfaces a throughput
+benchmark cannot reach (it has one writer per chunk by
+construction).
+
+These are NOT performance runs.  Container throughput numbers do
+not transfer; the output that matters is "zero verify mismatches"
+and "zero sanitizer errors."  Design:
+`.claude/design/chunk-collision-validation.md`; the index of all
+collision/investigation work is `.claude/design/experiments.md`.
+
+### Track 1 -- multiple ec_demo instances
+
+`run_chunk_collision.sh` launches N concurrent codec-aware
+`ec_demo write/verify` instances, each with a distinct `--id`, all
+targeting one MDS file.  N distinct clientids contend on every
+chunk; the verify phase asserts the surviving file is *some*
+writer's complete encoding, not a frankenstein of partial writes.
+
+```bash
+cd deploy/benchmark
+docker compose --profile collision up bench-collision
+# or directly:
+./run_chunk_collision.sh --n 4 --codec rs --layout v2 --iterations 20
+```
+
+### Track 2 -- IOR via N Proxy Servers
+
+`run_chunk_collision_track2.sh` drives `IOR -F 0 -W -R -C`
+(shared-file, write-then-verify) through N Proxy Server
+containers.  Each PS holds its own MDS-facing session, so N PSes =
+N distinct clientids on one shared MDS file -- the same contention
+surface as Track 1, exercised through the client-visible POSIX
+path (kernel NFS mount -> PS listener -> proxy data backend ->
+CHUNK ops).  Design: `.claude/design/chunk-collision-track2.md`.
+
+```bash
+cd deploy/benchmark
+./run_chunk_collision_track2.sh --n 4
+./run_chunk_collision_track2.sh --n 8 --reorder
+```
+
+Track 2 needs IOR + OpenMPI + nfs-utils in the `reffs-dev` image
+(added to the root `Dockerfile`); rebuild with
+`make -f Makefile.reffs image` before the first Track 2 run.  The
+harness brings up MDS + 10 DSes + N PSes itself (via
+`run-ps-bench-bringup.sh`), runs IOR, and checks the IOR verify
+result plus an ASAN/UBSAN scan of every container log.
+
+---
+
 ## Benchmark Script Reference
 
 `scripts/ec_benchmark.sh [--degrade N] <ec_demo_path> <mds_host>`
