@@ -9,6 +9,7 @@
 #   make -f Makefile.ci soak          # 30-minute stability soak
 #   make -f Makefile.ci cthon04       # Connectathon test suite
 #   make -f Makefile.ci tls-stress    # TLS connection stress test
+#   make -f Makefile.ci krb5          # multi-client Kerberos NFS test
 
 ROOT_DIR := $(shell git rev-parse --show-toplevel 2>/dev/null || pwd)
 SUDO ?= $(shell docker ps >/dev/null 2>&1 || echo sudo)
@@ -275,6 +276,27 @@ nfstest: image $(LOGS_DIR)
 			cp -f /reffs_data/nfstest_results.txt /logs/nfstest_results.txt 2>/dev/null; \
 			cp -f /reffs_data/reffsd_nfstest.log /logs/nfstest.log 2>/dev/null; \
 			exit \$$rc"
+
+# -----------------------------------------------------------------------
+# krb5: multi-client Kerberos NFS functional test
+# -----------------------------------------------------------------------
+# nfs_krb5_multiclient owns the entire lifecycle: it starts an
+# embedded mini-KDC, spawns a reffsd configured for that realm with a
+# krb5 root export, provisions N principals, and forks N krb5 client
+# workers.  The CI image (Dockerfile.ci) ships krb5-kdc /
+# krb5-admin-server, so the mini-KDC starts here; on an image lacking
+# them the driver exits 77 and the script skips cleanly.
+#
+# QA usage and troubleshooting: docs/krb5-multiclient-testing.md.
+
+krb5: image
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			ASAN_OPTIONS=detect_leaks=0 \
+			/src/scripts/ci_krb5_multiclient.sh /build/src/reffsd"
 
 # -----------------------------------------------------------------------
 # sigmund: Sigmund NFS test framework

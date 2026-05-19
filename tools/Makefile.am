@@ -20,8 +20,19 @@ ec_demo_SOURCES = ec_demo.c
 ec_demo_LDADD = $(NFS4_CLIENT_LIBS) \
 	$(top_builddir)/lib/ec/libreffs_ec.la
 
-nfs_krb5_test_SOURCES = nfs_krb5_test.c
+nfs_krb5_test_SOURCES = nfs_krb5_test.c krb5_client_core.c krb5_client_core.h
 nfs_krb5_test_LDADD = $(NFS4_CLIENT_LIBS)
+
+# Multi-client krb5 driver: owns a krb5 environment + a spawned reffsd
+# + N client workers.  krb5_env's embedded provider wraps the mini_kdc
+# fixture, so this links libreffs_test.la and the extra -I reaches
+# lib/tests for mini_kdc.h.
+nfs_krb5_multiclient_SOURCES = \
+	nfs_krb5_multiclient.c krb5_client_core.c krb5_client_core.h \
+	krb5_env.c krb5_env.h
+nfs_krb5_multiclient_CFLAGS = $(AM_CFLAGS) -I$(top_srcdir)/lib/tests
+nfs_krb5_multiclient_LDADD = $(NFS4_CLIENT_LIBS) \
+	$(top_builddir)/lib/tests/libreffs_test.la
 
 nfs_tls_test_SOURCES = nfs_tls_test.c
 nfs_tls_test_CFLAGS = $(AM_CFLAGS) $(OPENSSL_CFLAGS)
@@ -37,4 +48,5 @@ er_demo_LDADD = $(NFS4_CLIENT_LIBS)
 moj_bench_SOURCES = moj_bench.c
 moj_bench_LDADD = $(top_builddir)/lib/ec/libreffs_ec.la
 
-bin_PROGRAMS = ec_demo er_demo nfs_krb5_test nfs_tls_test moj_bench
+bin_PROGRAMS = ec_demo er_demo nfs_krb5_test nfs_krb5_multiclient \
+	nfs_tls_test moj_bench

@@ -43,6 +43,7 @@ help:
 	@echo "  sigmund     - Sigmund NFS test framework"
 	@echo "  libnfs      - libnfs userspace client tests"
 	@echo "  tls-stress  - TLS connection stress test"
+	@echo "  krb5        - multi-client Kerberos NFS functional test"
 	@echo "  shell       - Shell into running CI container"
 	@echo "  stop        - Kill any running CI containers"
 	@echo "  run-image       - Run the NFS server in the docker container"
