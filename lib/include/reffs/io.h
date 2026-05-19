@@ -437,6 +437,33 @@ bool io_conn_tls_snapshot(int fd, bool *tls_enabled, bool *handshaking);
 void io_conn_tls_set_state(int fd, bool tls_enabled, bool handshaking);
 
 /*
+ * Per-SSL I/O serialisation gate (Stage 3 Slice 3, INV-6).
+ *
+ * Memory safety for ci_ssl is handled by io_conn_ssl_acquire/_release,
+ * but OpenSSL's SSL_read / SSL_write / SSL_accept / BIO_* are not safe
+ * to call concurrently on one SSL: the event-loop thread issues
+ * SSL_read on the read path, a worker issues SSL_write under the per-
+ * fd write gate, and io_conn_unregister's SSL_shutdown can race both.
+ * Stage 4 Track 2 run 5 confirmed this hazard fires under sustained
+ * IOR write load (the MDS sends an unprompted close_notify ~6 s in).
+ *
+ * io_conn_ssl_io_lock takes a per-SSL mutex bound to the SSL's life
+ * via SSL_set_ex_data; io_conn_ssl_io_unlock releases it.  Always
+ * call lock/unlock between io_conn_ssl_acquire and io_conn_ssl_release,
+ * around every SSL_read / SSL_write / SSL_accept / BIO_read /
+ * BIO_write / BIO_flush on a slot-owned SSL.  The conn_ssl_drop
+ * teardown helper takes the same lock before SSL_shutdown so it
+ * cannot race a still-running worker.  Safe to call with ssl == NULL
+ * (no-op); the lock is attached eagerly at io_conn_ssl_install time.
+ *
+ * Lock ordering: per-SSL io_lock is ALWAYS taken outside conn_mutex.
+ * Callers acquire the SSL first (which briefly takes conn_mutex
+ * internally and drops it), THEN take the io_lock.
+ */
+void io_conn_ssl_io_lock(SSL *ssl);
+void io_conn_ssl_io_unlock(SSL *ssl);
+
+/*
  * Per-fd write serialization gate.
  *
  * io_conn_write_try_start() -- atomically claim the write gate for fd.

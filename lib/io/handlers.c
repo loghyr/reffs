@@ -83,6 +83,7 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 	int rc_val = 0;
 	int ktls_enabled = 0;
 	SSL *ssl;
+	bool locked = false;
 
 	TRACE("ic=%p fd=%d type=%s bl=%zu id=%u", (void *)ic, ic->ic_fd,
 	      io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
@@ -107,6 +108,20 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 		io_context_destroy(ic);
 		return -ECONNRESET;
 	}
+
+	/*
+	 * Hold the per-SSL io_lock for every SSL_ / BIO_ call below --
+	 * including the kTLS probe, which queries libssl BIO flags --
+	 * so the event loop's SSL_read cannot race with us (Stage 3
+	 * Slice 3, INV-6).  Error paths MUST unlock before calling
+	 * io_socket_close: io_socket_close -> io_conn_unregister ->
+	 * conn_ssl_drop re-acquires this same mutex (to gate its own
+	 * SSL_shutdown), which would self-deadlock.  The `locked`
+	 * tracker makes the "out:" path skip an extra unlock once an
+	 * error path has already done it.
+	 */
+	io_conn_ssl_io_lock(ssl);
+	locked = true;
 
 	/* Write directly using TLS if not using kTLS */
 #ifdef BIO_get_ktls_send
@@ -150,6 +165,9 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 			io_ssl_err_print(ic->ic_fd, "write error", __func__,
 					 __LINE__);
 
+		/* Drop the io_lock before io_socket_close; see comment above. */
+		io_conn_ssl_io_unlock(ssl);
+		locked = false;
 		io_socket_close(ic->ic_fd, EINVAL);
 		io_context_destroy(ic);
 		rc_val = -EINVAL;
@@ -168,6 +186,8 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 		unsigned char *write_buffer = malloc(pending);
 		if (!write_buffer) {
 			LOG("Failed to allocate memory for TLS data");
+			io_conn_ssl_io_unlock(ssl);
+			locked = false;
 			io_socket_close(ic->ic_fd, ENOMEM);
 			io_context_destroy(ic);
 			rc_val = -ENOMEM;
@@ -186,6 +206,8 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 			if (ret != 0) {
 				LOG("Failed to submit TLS data write: %d", ret);
 				free(write_buffer);
+				io_conn_ssl_io_unlock(ssl);
+				locked = false;
 				io_socket_close(ic->ic_fd, -ret);
 				io_context_destroy(ic);
 				rc_val = ret;
@@ -202,6 +224,8 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 	io_context_destroy(ic);
 	rc_val = 0;
 out:
+	if (locked)
+		io_conn_ssl_io_unlock(ssl);
 	io_conn_ssl_release(ssl);
 	return rc_val;
 }
@@ -376,6 +400,7 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 
 			SSL *ssl = io_conn_ssl_acquire(ic->ic_fd);
 			if (ssl) {
+				io_conn_ssl_io_lock(ssl);
 				BIO_flush(SSL_get_wbio(ssl));
 				TRACE("TLS mode now active for fd=%d",
 				      ic->ic_fd);
@@ -387,6 +412,7 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 				TRACE("kTLS status for fd=%d: send=%d, recv=%d",
 				      ic->ic_fd, ktls_send, ktls_recv);
 #endif
+				io_conn_ssl_io_unlock(ssl);
 				io_conn_ssl_release(ssl);
 			}
 		}
@@ -403,6 +429,7 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 
 			SSL *ssl = io_conn_ssl_acquire(ic->ic_fd);
 			if (ssl) {
+				io_conn_ssl_io_lock(ssl);
 				BIO_flush(SSL_get_wbio(ssl));
 				TRACE("TLS mode now active for fd=%d",
 				      ic->ic_fd);
@@ -414,6 +441,7 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 				TRACE("kTLS status for fd=%d: send=%d, recv=%d",
 				      ic->ic_fd, ktls_send, ktls_recv);
 #endif
+				io_conn_ssl_io_unlock(ssl);
 				io_conn_ssl_release(ssl);
 			}
 		}
@@ -953,8 +981,16 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 	if (handshaking) {
 		SSL *ssl = io_conn_ssl_acquire(fd);
 		if (ssl) {
+			/*
+			 * process_ssl_accept drives the libssl state machine
+			 * (BIO_write, SSL_accept, BIO_pending, BIO_read), so
+			 * the per-SSL io_lock must be held around the whole
+			 * call (Stage 3 Slice 3, INV-6).
+			 */
+			io_conn_ssl_io_lock(ssl);
 			int ret =
 				process_ssl_accept(ssl, ci, fd, data, len, rc);
+			io_conn_ssl_io_unlock(ssl);
 
 			const unsigned char *b = (const unsigned char *)data;
 			if (len == 6 && b[0] == 0x14 && b[1] == 0x03 &&
@@ -1034,7 +1070,10 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 		return ENOTCONN;
 	}
 
+	/* Same discipline as Case 1 -- serialise the SSL state machine. */
+	io_conn_ssl_io_lock(ssl);
 	int ret = process_ssl_accept(ssl, ci, fd, data, len, rc);
+	io_conn_ssl_io_unlock(ssl);
 
 #ifdef TLS_DEBUGGING
 	if (len == 6 && bytes[0] == 0x14 && bytes[1] == 0x03 &&
@@ -1333,12 +1372,25 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 		// the SSL cannot be freed under us mid-decrypt.
 		SSL *ssl = tls_enabled ? io_conn_ssl_acquire(client_fd) : NULL;
 		if (ssl) {
+			/*
+			 * Hold the per-SSL io_lock around every SSL_ and
+			 * BIO_ call below.  The event loop reads here while
+			 * workers SSL_write in io_do_tls; without
+			 * serialisation libssl's state machine races and
+			 * the MDS sends an unprompted close_notify under
+			 * sustained load (Stage 3 Slice 3, INV-6).  Every
+			 * early-return path unlocks before releasing the
+			 * use-ref.
+			 */
+			io_conn_ssl_io_lock(ssl);
+
 			// Feed data to SSL
 			BIO *rbio = SSL_get_rbio(ssl);
 			int bw = BIO_write(rbio, ic->ic_buffer, bytes_read);
 			if (bw != bytes_read) {
 				LOG("BIO_write short: expected %d got %d",
 				    bytes_read, bw);
+				io_conn_ssl_io_unlock(ssl);
 				io_conn_ssl_release(ssl);
 				io_socket_close(ic->ic_fd, EIO);
 				io_context_destroy(ic);
@@ -1360,6 +1412,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 				 * case so logging would only produce noise. */
 				if (ssl_err == SSL_ERROR_WANT_READ ||
 				    ssl_err == SSL_ERROR_WANT_WRITE) {
+					io_conn_ssl_io_unlock(ssl);
 					io_conn_ssl_release(ssl);
 					goto cleanup;
 				}
@@ -1374,6 +1427,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 				// SSL error
 				io_ssl_err_print(ic->ic_fd, "read error",
 						 __func__, __LINE__);
+				io_conn_ssl_io_unlock(ssl);
 				io_conn_ssl_release(ssl);
 				io_conn_ssl_clear(ic->ic_fd);
 				io_socket_close(ic->ic_fd, EINVAL);
@@ -1404,6 +1458,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 
 			// Update bytes_read with decrypted count
 			bytes_read = total;
+			io_conn_ssl_io_unlock(ssl);
 			io_conn_ssl_release(ssl);
 		}
 	}
