@@ -268,6 +268,23 @@ TSAN/ASAN verification for this slice runs on **dreamer**
 5. Build + `make check` on dreamer; reviewer agent (lock-ordering
    / lifecycle -> reviewer-gated per `.claude/CLAUDE.md`).
 
+**Slice 1 status: DONE 2026-05-19** (commits `1c7aae9a6276` design
+amendment, `50572a93024d` code).  macOS build clean + full
+`make check` 100% pass; reviewer agent found no BLOCKERs.  dreamer
+(`reffs-cc-t2`, Fedora aarch64) ASAN build + full `make check`
+clean (every suite FAIL:0/ERROR:0, no sanitizer reports); dreamer
+TSAN: `conn_info_test` (incl. the 7 new SSL-lifecycle tests),
+`tls_test`, `tls_write_count_test` all GREEN, no TSAN warning
+references `conn_info.c` / `handlers.c`.
+
+Pre-existing issue surfaced (NOT this slice): `backend_io_test`
+fails under TSAN with data races in `lib/io/backend.c`
+`io_handle_backend_pread` / `io_handle_backend_pwrite` and the
+test's own `teardown` -- the async file-I/O ring, a separate
+subsystem from the network/TLS conn_info path.  `backend.c` was
+last touched 2026-04-20 and is untouched by this slice.  Tracked
+for a separate fix; does not block the Track 2 re-run.
+
 **Slice 2 -- promote the reproducer.**
 6. Rewrite `conn_lifecycle_race_test.c` to the safe API; verify
    GREEN under TSAN and ASAN on dreamer; move it into `TESTS`.
