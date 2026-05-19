@@ -121,12 +121,16 @@ static void *reader_thread(void *arg)
 		if (!s)
 			continue;
 		/*
-		 * SSL_get_version dereferences the SSL.  With the Slice 1
-		 * fix in place the use ref taken by acquire keeps this
-		 * memory live even if a concurrent unregister drops the
-		 * slot ref between the snapshot and now.
+		 * Hold the per-SSL io_lock across the dereference -- the
+		 * Slice 3 serialisation gate.  SSL_get_version is read-
+		 * only but the call shape mirrors the handlers.c hot path
+		 * (acquire / lock / use / unlock / release) so a future
+		 * regression that drops either step is caught here under
+		 * load even before TSAN.
 		 */
+		io_conn_ssl_io_lock(s);
 		(void)SSL_get_version(s);
+		io_conn_ssl_io_unlock(s);
 		io_conn_ssl_release(s);
 	}
 	return NULL;

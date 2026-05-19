@@ -41,10 +41,72 @@
 static struct conn_info *connections[MAX_CONNECTIONS];
 static pthread_mutex_t conn_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/*
+ * Per-SSL I/O serialisation lock (Stage 3 Slice 3, INV-6).
+ *
+ * Memory safety for ci_ssl is in Slice 1; this lock serialises the
+ * SSL state machine itself.  An ex_data index minted once at
+ * io_conn_init() time tags each conn_info-owned SSL with a
+ * reffs_ssl_io_lock that the install/lock/unlock/drop helpers
+ * consult.  The free callback runs when OpenSSL's own SSL refcount
+ * finally reaches zero, so the lock outlives every use-ref taken
+ * by io_conn_ssl_acquire.
+ */
+struct reffs_ssl_io_lock {
+	pthread_mutex_t rsil_mu;
+};
+
+static int reffs_ssl_io_lock_index = -1;
+
+static void ssl_io_lock_free(void *parent __attribute__((unused)), void *ptr,
+			     CRYPTO_EX_DATA *ad __attribute__((unused)),
+			     int idx __attribute__((unused)),
+			     long argl __attribute__((unused)),
+			     void *argp __attribute__((unused)))
+{
+	struct reffs_ssl_io_lock *lock = ptr;
+
+	if (!lock)
+		return;
+	/*
+	 * OpenSSL invokes this callback when the SSL's ref count reaches
+	 * zero, so no other thread can still be using the lock by
+	 * happens-before through the SSL ref counter.  But ThreadSanitizer
+	 * does not always track the OpenSSL atomic refcount as a
+	 * synchronisation primitive, and when the heap reuses this struct's
+	 * memory for the next SSL's lock it cannot distinguish the new
+	 * object from the old.  Re-lock and unlock the mutex here: the
+	 * pthread_mutex_lock acquire forms an explicit happens-before with
+	 * every prior pthread_mutex_unlock on this address (including
+	 * across threads), which is the synchronisation TSAN can see.
+	 * Uncontended at this point, so the cost is one cache miss.
+	 */
+	pthread_mutex_lock(&lock->rsil_mu);
+	pthread_mutex_unlock(&lock->rsil_mu);
+	pthread_mutex_destroy(&lock->rsil_mu);
+	free(lock);
+}
+
 int io_conn_init(void)
 {
 	pthread_mutex_lock(&conn_mutex);
 	memset(connections, 0, sizeof(connections));
+	/*
+	 * OpenSSL ex_data indices are global to the library, not the
+	 * SSL_CTX; mint once per process and reuse across every
+	 * io_conn_init() the test suite issues.  The free callback
+	 * lives in this TU so the destroy is in lock-step with the
+	 * acquisition discipline.
+	 */
+	if (reffs_ssl_io_lock_index < 0) {
+		reffs_ssl_io_lock_index = SSL_get_ex_new_index(
+			0, NULL, NULL, NULL, ssl_io_lock_free);
+		if (reffs_ssl_io_lock_index < 0) {
+			pthread_mutex_unlock(&conn_mutex);
+			LOG("SSL_get_ex_new_index failed");
+			return -1;
+		}
+	}
 	pthread_mutex_unlock(&conn_mutex);
 	return 0;
 }
@@ -525,12 +587,21 @@ static SSL *conn_ssl_detach_locked(struct conn_info *ci)
  * object alive past this call.  SSL_shutdown queues the close_notify
  * the same way the pre-refcount teardown did.  NULL-tolerant.  Must be
  * called with conn_mutex NOT held.
+ *
+ * SSL_shutdown writes the close_notify record into libssl state, so
+ * it MUST NOT run concurrent with a worker SSL_write or the event
+ * loop SSL_read on the same SSL (Stage 3 Slice 3).  Take the per-SSL
+ * io_lock first: outstanding use-ref holders that have entered an
+ * SSL_ or BIO_ call hold the lock; we wait for them to finish before
+ * issuing the shutdown.
  */
 static void conn_ssl_drop(SSL *ssl)
 {
 	if (!ssl)
 		return;
+	io_conn_ssl_io_lock(ssl);
 	SSL_shutdown(ssl);
+	io_conn_ssl_io_unlock(ssl);
 	SSL_free(ssl);
 }
 
@@ -1035,6 +1106,31 @@ void io_conn_ssl_install(int fd, SSL *ssl)
 {
 	SSL *orphan = NULL;
 
+	/*
+	 * Attach the per-SSL io_lock now, while we still own the +1 ref
+	 * SSL_new() handed us and before publishing into the slot.  If
+	 * the allocation or attach fails we still install the SSL --
+	 * io_conn_ssl_io_lock/_unlock are NULL-tolerant -- and rely on
+	 * the in-flight write-gate to bound contention; logged so an
+	 * operator can spot persistent allocation pressure.
+	 */
+	if (ssl && reffs_ssl_io_lock_index >= 0 &&
+	    !SSL_get_ex_data(ssl, reffs_ssl_io_lock_index)) {
+		struct reffs_ssl_io_lock *lock = calloc(1, sizeof(*lock));
+		if (lock) {
+			pthread_mutex_init(&lock->rsil_mu, NULL);
+			if (SSL_set_ex_data(ssl, reffs_ssl_io_lock_index,
+					    lock) == 0) {
+				pthread_mutex_destroy(&lock->rsil_mu);
+				free(lock);
+				LOG("SSL_set_ex_data failed; SSL on fd=%d will run unserialised",
+				    fd);
+			}
+		} else {
+			LOG("OOM allocating reffs_ssl_io_lock for fd=%d", fd);
+		}
+	}
+
 	pthread_mutex_lock(&conn_mutex);
 	int idx = fd % MAX_CONNECTIONS;
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
@@ -1126,4 +1222,33 @@ void io_conn_tls_set_state(int fd, bool tls_enabled, bool handshaking)
 		connections[idx]->ci_tls_handshaking = handshaking;
 	}
 	pthread_mutex_unlock(&conn_mutex);
+}
+
+/*
+ * Per-SSL I/O serialisation (Stage 3 Slice 3, INV-6).  The lock is
+ * attached to the SSL itself via ex_data, so its life matches the
+ * SSL's life and slot reuse cannot poison it.  NULL-tolerant on the
+ * SSL pointer and on a missing ex_data lock (only logged once at
+ * install time): callers must always be safe to invoke even if the
+ * lock allocation failed, otherwise an OOM at install time would
+ * turn into a deadlock here.
+ */
+void io_conn_ssl_io_lock(SSL *ssl)
+{
+	if (!ssl || reffs_ssl_io_lock_index < 0)
+		return;
+	struct reffs_ssl_io_lock *lock =
+		SSL_get_ex_data(ssl, reffs_ssl_io_lock_index);
+	if (lock)
+		pthread_mutex_lock(&lock->rsil_mu);
+}
+
+void io_conn_ssl_io_unlock(SSL *ssl)
+{
+	if (!ssl || reffs_ssl_io_lock_index < 0)
+		return;
+	struct reffs_ssl_io_lock *lock =
+		SSL_get_ex_data(ssl, reffs_ssl_io_lock_index);
+	if (lock)
+		pthread_mutex_unlock(&lock->rsil_mu);
 }
