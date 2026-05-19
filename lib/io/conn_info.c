@@ -58,6 +58,10 @@ struct reffs_ssl_io_lock {
 
 static int reffs_ssl_io_lock_index = -1;
 
+/* Stage 3 Slice 4 drain helper (definition below); forward declared
+ * here because the remove_*_op paths call it before its definition. */
+static void conn_drain_if_idle_locked(struct conn_info *ci);
+
 static void ssl_io_lock_free(void *parent __attribute__((unused)), void *ptr,
 			     CRYPTO_EX_DATA *ad __attribute__((unused)),
 			     int idx __attribute__((unused)),
@@ -119,6 +123,19 @@ struct conn_info *io_conn_register(int fd, enum conn_state initial_state,
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_state == CONN_CLOSING) {
+		/*
+		 * Stage 3 Slice 4 (INV-6): a prior connection on this slot
+		 * is still draining in-flight CQEs.  Refuse to reuse the
+		 * slot now -- if we did, a stale completion for the old
+		 * connection would land on the new one and corrupt state.
+		 * The accept path is expected to retry; if no retry exists
+		 * the kernel's next accept() will give us the same fd and
+		 * we'll succeed once the drain completes.
+		 */
+		pthread_mutex_unlock(&conn_mutex);
+		return NULL;
+	}
 	if (connections[idx] && connections[idx]->ci_fd == fd) {
 		ci = connections[idx];
 	} else if (!connections[idx] ||
@@ -166,7 +183,14 @@ struct conn_info *io_conn_get(int fd)
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
-	if (connections[idx] && connections[idx]->ci_fd == fd) {
+	/*
+	 * Stage 3 Slice 4 (INV-6): a slot in CONN_CLOSING is unregistered
+	 * from the caller's point of view; only in-flight count
+	 * bookkeeping (io_conn_remove_*_op / io_conn_write_done) is allowed
+	 * to touch it, and those use the internal *_locked helpers below.
+	 */
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_state != CONN_CLOSING) {
 		ci = connections[idx];
 	}
 
@@ -253,7 +277,15 @@ int io_conn_add_read_op(int fd)
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
-	if (connections[idx] && connections[idx]->ci_fd == fd) {
+	/*
+	 * Stage 3 Slice 4 (INV-6): a late add_read_op racing
+	 * io_conn_unregister must not resurrect a CLOSING slot out of
+	 * its drain.  Caller gating via io_conn_get / tls_snapshot
+	 * catches the typical case but the check/add pair is not
+	 * atomic, so the predicate here is the authoritative gate.
+	 */
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_state != CONN_CLOSING) {
 		connections[idx]->ci_read_count++;
 		connections[idx]->ci_last_activity = time(NULL);
 
@@ -292,33 +324,45 @@ int io_conn_remove_read_op(int fd)
 				fd, connections[idx]->ci_read_count, __func__,
 				__LINE__);
 
-			enum conn_state old_state = connections[idx]->ci_state;
-			enum conn_state new_state;
+			/*
+			 * Skip the state-machine transitions for CONN_CLOSING
+			 * (Stage 3 Slice 4) -- the slot is draining toward
+			 * CONN_UNUSED, not into a live state.  Decrement the
+			 * counter and let conn_drain_if_idle_locked complete
+			 * the transition.
+			 */
+			if (connections[idx]->ci_state != CONN_CLOSING) {
+				enum conn_state old_state =
+					connections[idx]->ci_state;
+				enum conn_state new_state;
 
-			if (connections[idx]->ci_read_count > 0) {
-				if (connections[idx]->ci_write_count > 0) {
-					new_state = CONN_READWRITE;
+				if (connections[idx]->ci_read_count > 0) {
+					if (connections[idx]->ci_write_count >
+					    0) {
+						new_state = CONN_READWRITE;
+					} else {
+						new_state = CONN_READING;
+					}
+				} else if (connections[idx]->ci_write_count >
+					   0) {
+					new_state = CONN_WRITING;
 				} else {
-					new_state = CONN_READING;
+					new_state = CONN_CONNECTED;
 				}
-			} else if (connections[idx]->ci_write_count > 0) {
-				new_state = CONN_WRITING;
-			} else {
-				new_state = CONN_CONNECTED;
-			}
 
-			if (old_state != new_state) {
-				trace_io_connection_state_change(fd, old_state,
-								 new_state,
-								 __func__,
-								 __LINE__);
-				connections[idx]->ci_state = new_state;
+				if (old_state != new_state) {
+					trace_io_connection_state_change(
+						fd, old_state, new_state,
+						__func__, __LINE__);
+					connections[idx]->ci_state = new_state;
+				}
 			}
 		} else {
 			LOG("Warning: Attempt to remove read op when count is zero for fd=%d",
 			    fd);
 		}
 		connections[idx]->ci_last_activity = time(NULL);
+		conn_drain_if_idle_locked(connections[idx]);
 		ret = 0;
 	}
 
@@ -332,7 +376,9 @@ int io_conn_add_write_op(int fd)
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
-	if (connections[idx] && connections[idx]->ci_fd == fd) {
+	/* See add_read_op above for the CLOSING gate rationale. */
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_state != CONN_CLOSING) {
 		connections[idx]->ci_write_count++;
 		connections[idx]->ci_last_activity = time(NULL);
 		trace_io_connection_count(fd, connections[idx]->ci_write_count,
@@ -374,33 +420,40 @@ int io_conn_remove_write_op(int fd)
 				fd, connections[idx]->ci_write_count, __func__,
 				__LINE__);
 
-			enum conn_state old_state = connections[idx]->ci_state;
-			enum conn_state new_state;
+			/* Skip state transitions for draining slots; see
+			 * matching comment in io_conn_remove_read_op. */
+			if (connections[idx]->ci_state != CONN_CLOSING) {
+				enum conn_state old_state =
+					connections[idx]->ci_state;
+				enum conn_state new_state;
 
-			if (connections[idx]->ci_write_count > 0) {
-				if (connections[idx]->ci_read_count > 0) {
-					new_state = CONN_READWRITE;
+				if (connections[idx]->ci_write_count > 0) {
+					if (connections[idx]->ci_read_count >
+					    0) {
+						new_state = CONN_READWRITE;
+					} else {
+						new_state = CONN_WRITING;
+					}
+				} else if (connections[idx]->ci_read_count >
+					   0) {
+					new_state = CONN_READING;
 				} else {
-					new_state = CONN_WRITING;
+					new_state = CONN_CONNECTED;
 				}
-			} else if (connections[idx]->ci_read_count > 0) {
-				new_state = CONN_READING;
-			} else {
-				new_state = CONN_CONNECTED;
-			}
 
-			if (old_state != new_state) {
-				trace_io_connection_state_change(fd, old_state,
-								 new_state,
-								 __func__,
-								 __LINE__);
-				connections[idx]->ci_state = new_state;
+				if (old_state != new_state) {
+					trace_io_connection_state_change(
+						fd, old_state, new_state,
+						__func__, __LINE__);
+					connections[idx]->ci_state = new_state;
+				}
 			}
 		} else {
 			LOG("Warning: Attempt to remove write op when count is zero for fd=%d",
 			    fd);
 		}
 		connections[idx]->ci_last_activity = time(NULL);
+		conn_drain_if_idle_locked(connections[idx]);
 		ret = 0;
 	}
 
@@ -414,7 +467,9 @@ int io_conn_add_accept_op(int fd)
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
-	if (connections[idx] && connections[idx]->ci_fd == fd) {
+	/* See add_read_op above for the CLOSING gate rationale. */
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_state != CONN_CLOSING) {
 		connections[idx]->ci_accept_count++;
 		connections[idx]->ci_last_activity = time(NULL);
 		trace_io_connection_count(fd, connections[idx]->ci_accept_count,
@@ -459,6 +514,7 @@ int io_conn_remove_accept_op(int fd)
 			    fd);
 		}
 		connections[idx]->ci_last_activity = time(NULL);
+		conn_drain_if_idle_locked(connections[idx]);
 		ret = 0;
 	}
 
@@ -472,7 +528,9 @@ int io_conn_add_connect_op(int fd)
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
-	if (connections[idx] && connections[idx]->ci_fd == fd) {
+	/* See add_read_op above for the CLOSING gate rationale. */
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_state != CONN_CLOSING) {
 		connections[idx]->ci_connect_count++;
 		connections[idx]->ci_last_activity = time(NULL);
 		trace_io_connection_count(fd,
@@ -519,6 +577,7 @@ int io_conn_remove_connect_op(int fd)
 			    fd);
 		}
 		connections[idx]->ci_last_activity = time(NULL);
+		conn_drain_if_idle_locked(connections[idx]);
 		ret = 0;
 	}
 
@@ -618,6 +677,28 @@ void io_conn_destroy(struct conn_info *ci)
 	free(ci);
 }
 
+/*
+ * conn_drain_if_idle_locked -- if a slot in CONN_CLOSING has drained
+ * (no in-flight read/write/accept/connect ops, write gate idle),
+ * complete its transition to CONN_UNUSED so it can be reused.  Stage
+ * 3 Slice 4 (INV-6) -- complements io_conn_unregister, which now
+ * leaves the slot in CONN_CLOSING so stale CQEs land on the correct
+ * conn_info rather than corrupting whatever connection has reused
+ * the fd in the meantime.  Caller holds conn_mutex.
+ */
+static void conn_drain_if_idle_locked(struct conn_info *ci)
+{
+	if (ci->ci_state != CONN_CLOSING)
+		return;
+	if (ci->ci_read_count || ci->ci_write_count || ci->ci_accept_count ||
+	    ci->ci_connect_count)
+		return;
+	if (ci->ci_write_active)
+		return;
+	ci->ci_state = CONN_UNUSED;
+	ci->ci_fd = -1;
+}
+
 int io_conn_unregister(int fd)
 {
 	int ret = -1;
@@ -639,22 +720,29 @@ int io_conn_unregister(int fd)
 		dead_ssl = conn_ssl_detach_locked(connections[idx]);
 
 		/*
-		 * Drain the pending write queue before clearing ci_fd.
-		 * We must extract the list under conn_mutex but call
-		 * io_context_destroy() outside it, because destroy takes
-		 * conn_mutex internally (sequential, not nested -- safe).
+		 * Drain the pending write queue before transitioning state.
+		 * Extract under conn_mutex but call io_context_destroy()
+		 * outside it (destroy takes conn_mutex internally --
+		 * sequential, not nested -- safe).
 		 */
 		drain_head = connections[idx]->ci_write_pending_head;
 		connections[idx]->ci_write_pending_head = NULL;
 		connections[idx]->ci_write_pending_tail = NULL;
 		connections[idx]->ci_write_active = false;
 
-		connections[idx]->ci_state = CONN_UNUSED;
-		connections[idx]->ci_fd = -1;
-		connections[idx]->ci_read_count = 0;
-		connections[idx]->ci_write_count = 0;
-		connections[idx]->ci_accept_count = 0;
-		connections[idx]->ci_connect_count = 0;
+		/*
+		 * Stage 3 Slice 4 (INV-6): mark the slot CONN_CLOSING but
+		 * keep ci_fd and the in-flight counters.  Stale CQEs
+		 * landing on this fd will still find this slot (rather
+		 * than a freshly-reused one) and naturally decrement the
+		 * counters via the *_remove_op / io_conn_write_done paths,
+		 * which call conn_drain_if_idle_locked to transition to
+		 * CONN_UNUSED once everything quiesces.  io_conn_register
+		 * refuses to reuse a CONN_CLOSING slot, so a new accept
+		 * on the same fd number waits for the old conn to drain.
+		 */
+		connections[idx]->ci_state = CONN_CLOSING;
+		conn_drain_if_idle_locked(connections[idx]);
 		ret = 0;
 	} else {
 		LOG("Failed to unregister connection fd=%d - not found or mismatch",
@@ -771,6 +859,8 @@ const char *io_conn_state_to_str(enum conn_state state)
 		return "DISCONNECTING";
 	case CONN_ERROR:
 		return "ERROR";
+	case CONN_CLOSING:
+		return "CLOSING";
 	default:
 		return "UNKNOWN";
 	}
@@ -886,29 +976,64 @@ int io_conn_check_timeouts(time_t timeout_seconds)
 	 * conn_info slot.  For timed-out-idle connections this is
 	 * vanishingly unlikely (no completions fire on a truly idle fd),
 	 * and the worst case is closing a newly-accepted client which
-	 * will reconnect.  If this race ever materializes under real
-	 * load, the fix is a per-slot CLOSING state to block reuse; for
-	 * now the simplicity is worth it.
+	 * will reconnect.  Slice 4 added the CONN_CLOSING state for the
+	 * other half of this hazard (slot reuse mid-drain); this sweep
+	 * does not close CLOSING slots -- their fd was already closed at
+	 * io_socket_close time and re-closing it here would risk
+	 * double-close on a descriptor the OS may have handed to a new
+	 * caller.  Stuck-CLOSING slots (drain never completes) are
+	 * force-drained in a separate pass below, with a logged warning
+	 * but no socket close.
 	 *
 	 * Stack array sized at MAX_CONNECTIONS is fine: ~4 KB on the
 	 * heartbeat thread, which does not recurse.
 	 */
 	int to_close[MAX_CONNECTIONS];
 	int n_to_close = 0;
+	int n_force_drained = 0;
 
 	pthread_mutex_lock(&conn_mutex);
 
 	for (int i = 0; i < MAX_CONNECTIONS; i++) {
-		if (connections[i] && connections[i]->ci_state != CONN_UNUSED &&
-		    connections[i]->ci_fd >= 0) {
-			if (now - connections[i]->ci_last_activity >
-			    timeout_seconds) {
-				LOG("Connection fd=%d timed out (%ld seconds inactive)",
-				    connections[i]->ci_fd,
-				    now - connections[i]->ci_last_activity);
-				to_close[n_to_close++] = connections[i]->ci_fd;
-			}
+		if (!connections[i] ||
+		    connections[i]->ci_state == CONN_UNUSED ||
+		    connections[i]->ci_fd < 0)
+			continue;
+		if (now - connections[i]->ci_last_activity <= timeout_seconds)
+			continue;
+		if (connections[i]->ci_state == CONN_CLOSING) {
+			/*
+			 * Drain never completed for this slot (a CQE
+			 * incremented a count but the matching decrement
+			 * never ran -- io_uring cancellation, worker
+			 * giving up without calling remove_*_op, etc.).
+			 * The fd was already closed at the original
+			 * io_conn_unregister; force the slot to UNUSED
+			 * here so it can be reused, but do not call
+			 * io_socket_close again.
+			 */
+			LOG("Connection fd=%d stuck in CLOSING for %ld seconds (counts: r=%d w=%d a=%d c=%d, write_active=%d); force-draining",
+			    connections[i]->ci_fd,
+			    now - connections[i]->ci_last_activity,
+			    connections[i]->ci_read_count,
+			    connections[i]->ci_write_count,
+			    connections[i]->ci_accept_count,
+			    connections[i]->ci_connect_count,
+			    connections[i]->ci_write_active);
+			connections[i]->ci_read_count = 0;
+			connections[i]->ci_write_count = 0;
+			connections[i]->ci_accept_count = 0;
+			connections[i]->ci_connect_count = 0;
+			connections[i]->ci_write_active = false;
+			connections[i]->ci_state = CONN_UNUSED;
+			connections[i]->ci_fd = -1;
+			n_force_drained++;
+			continue;
 		}
+		LOG("Connection fd=%d timed out (%ld seconds inactive)",
+		    connections[i]->ci_fd,
+		    now - connections[i]->ci_last_activity);
+		to_close[n_to_close++] = connections[i]->ci_fd;
 	}
 
 	pthread_mutex_unlock(&conn_mutex);
@@ -916,7 +1041,7 @@ int io_conn_check_timeouts(time_t timeout_seconds)
 	for (int i = 0; i < n_to_close; i++)
 		io_socket_close(to_close[i], ETIMEDOUT);
 
-	return n_to_close;
+	return n_to_close + n_force_drained;
 }
 
 /*
@@ -939,7 +1064,9 @@ bool io_conn_write_try_start(int fd, struct io_context *ic)
 	pthread_mutex_lock(&conn_mutex);
 
 	int idx = fd % MAX_CONNECTIONS;
-	if (connections[idx] && connections[idx]->ci_fd == fd) {
+	/* Stage 3 Slice 4: do not start new writes on a draining slot. */
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_state != CONN_CLOSING) {
 		struct conn_info *ci = connections[idx];
 		if (!ci->ci_write_active) {
 			ci->ci_write_active = true;
@@ -995,6 +1122,11 @@ struct io_context *io_conn_write_done(int fd, uint32_t gen)
 		} else {
 			ci->ci_write_active = false;
 		}
+		/*
+		 * Stage 3 Slice 4 (INV-6): the write gate just emptied
+		 * may have been the last in-flight op on a CLOSING slot.
+		 */
+		conn_drain_if_idle_locked(ci);
 	}
 
 	pthread_mutex_unlock(&conn_mutex);
@@ -1163,7 +1295,15 @@ SSL *io_conn_ssl_acquire(int fd)
 
 	pthread_mutex_lock(&conn_mutex);
 	int idx = fd % MAX_CONNECTIONS;
+	/*
+	 * Stage 3 Slice 4: ci_ssl is detached in io_conn_unregister
+	 * before the state moves to CONN_CLOSING, so the ssl pointer
+	 * is already NULL here in practice; the explicit state check
+	 * is defence in depth in case a future caller re-installs an
+	 * SSL on a draining slot.
+	 */
 	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_state != CONN_CLOSING &&
 	    connections[idx]->ci_ssl) {
 		ssl = connections[idx]->ci_ssl;
 		SSL_up_ref(ssl);
@@ -1202,7 +1342,15 @@ bool io_conn_tls_snapshot(int fd, bool *tls_enabled, bool *handshaking)
 
 	pthread_mutex_lock(&conn_mutex);
 	int idx = fd % MAX_CONNECTIONS;
-	if (connections[idx] && connections[idx]->ci_fd == fd) {
+	/*
+	 * Stage 3 Slice 4 (INV-6): treat a CONN_CLOSING slot as gone --
+	 * callers (notably io_rpc_trans_cb) use this snapshot as the
+	 * gate for "is the connection still tracked", and the slot is
+	 * not tracked from a fresh op's point of view once it has
+	 * entered the drain state.
+	 */
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_state != CONN_CLOSING) {
 		if (tls_enabled)
 			*tls_enabled = connections[idx]->ci_tls_enabled;
 		if (handshaking)

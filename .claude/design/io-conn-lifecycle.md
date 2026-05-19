@@ -399,6 +399,43 @@ Slice-3 slot).**
     `io_conn_register` reuse of a `CONN_CLOSING` slot.
 12. Extend the generation check beyond the write gate.
 
+**Slice 4 status: DONE 2026-05-19.**  Item 11 shipped in full:
+`enum conn_state` grows `CONN_CLOSING`, `io_conn_unregister` now
+leaves the slot in CLOSING (keeping `ci_fd` set and counts
+intact instead of force-zeroing), a new
+`conn_drain_if_idle_locked` helper transitions to UNUSED once
+every read/write/accept/connect count hits zero and the write
+gate is idle, and every public gateway that hands a live
+reference to a caller (`io_conn_register`, `io_conn_get`,
+`io_conn_tls_snapshot`, `io_conn_ssl_acquire`,
+`io_conn_write_try_start`) plus every count-increment path
+(`io_conn_add_{read,write,accept,connect}_op`) refuses CLOSING.
+The `io_conn_check_timeouts` sweep was updated to force-drain
+slots that stay in CLOSING longer than the timeout (logging the
+stuck counts), but it does NOT call `io_socket_close` on them
+since the fd was already closed at the original unregister --
+avoids a double-close on a descriptor the OS may have reused.
+
+Item 12 ("extend the generation check beyond the write gate")
+intentionally NOT shipped: the CLOSING drain mechanism subsumes
+the threat the generation check would mitigate, because slot
+reuse is now gated by drain completion.  A stale CQE from
+before the cycle lands on the still-existing old slot (counts
+naturally decrement), and a new conn never registers until the
+old one has fully drained.  The write-gate generation check
+remains as belt-and-braces.  Item 12 stays available as a
+future hardening slice if the drain ever proves leak-prone.
+
+Verification: macOS clean build + full `make check` 100% pass;
+dreamer ASAN make -C lib/io/tests check 5/5 PASS, no sanitizer
+reports; dreamer TSAN 4/5 PASS, only `backend_io_test` still
+fails with the same pre-existing `backend.c:122` / `:146` /
+`backend_io_test.c:69` race recorded in the Slice 1 status
+section -- not regressed.  Reviewer agent found two WARNINGs
+(add_*_op resurrection of CLOSING slots, timeout-sweep double-
+close on CLOSING slots); both fixed in the same slice before
+commit.
+
 State machine for Slice 4 (`CONN_CLOSING`):
 
 ```
