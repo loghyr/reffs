@@ -1143,10 +1143,21 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 	/*
 	 * RPCSEC_GSS via libtirpc's authgss_create_default.
 	 * service_name is "nfs@host" -- the server's service principal.
+	 *
+	 * Strip any ":port" suffix: the GSS host-based service name
+	 * must be the bare host so it canonicalizes to
+	 * nfs/<host>@REALM.  mds_session_clnt_open() already parses
+	 * host:port for the transport; do the same here.
 	 */
 	char service[512];
+	char svc_host[256];
+	int svc_port = 0;
 
-	snprintf(service, sizeof(service), "nfs@%s", host);
+	if (mds_parse_host_port(host, svc_host, sizeof(svc_host), &svc_port) ==
+	    0)
+		snprintf(service, sizeof(service), "nfs@%s", svc_host);
+	else
+		snprintf(service, sizeof(service), "nfs@%s", host);
 
 	rpc_gss_svc_t gss_svc;
 
