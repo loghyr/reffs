@@ -301,9 +301,11 @@ err_unlink_new:
 	return ret;
 }
 
-int client_incarnation_load(const char *state_dir,
-			    struct client_incarnation_record *recs,
-			    size_t max_recs, size_t *count)
+/* Caller must hold incarnations_lock. */
+static int
+client_incarnation_load_locked(const char *state_dir,
+			       struct client_incarnation_record *recs,
+			       size_t max_recs, size_t *count)
 {
 	char link_path[PATH_MAX];
 	char target_path[PATH_MAX];
@@ -380,6 +382,23 @@ int client_incarnation_load(const char *state_dir,
 	return ret;
 }
 
+/*
+ * Public reader.  Takes incarnations_lock so a concurrent
+ * incarnations_write_and_swap cannot unlink the A/B side mid-read,
+ * which would otherwise surface as a spurious -ENOENT.
+ */
+int client_incarnation_load(const char *state_dir,
+			    struct client_incarnation_record *recs,
+			    size_t max_recs, size_t *count)
+{
+	int ret;
+
+	pthread_mutex_lock(&incarnations_lock);
+	ret = client_incarnation_load_locked(state_dir, recs, max_recs, count);
+	pthread_mutex_unlock(&incarnations_lock);
+	return ret;
+}
+
 int client_incarnation_add(const char *state_dir,
 			   const struct client_incarnation_record *crc)
 {
@@ -399,7 +418,7 @@ int client_incarnation_add(const char *state_dir,
 
 	pthread_mutex_lock(&incarnations_lock);
 
-	ret = client_incarnation_load(state_dir, recs, max_recs, &count);
+	ret = client_incarnation_load_locked(state_dir, recs, max_recs, &count);
 	if (ret && ret != -ENOENT)
 		goto out;
 
@@ -427,7 +446,7 @@ int client_incarnation_remove(const char *state_dir, uint32_t slot)
 
 	pthread_mutex_lock(&incarnations_lock);
 
-	ret = client_incarnation_load(state_dir, recs, max_recs, &count);
+	ret = client_incarnation_load_locked(state_dir, recs, max_recs, &count);
 	if (ret == -ENOENT) {
 		ret = -ENOENT; /* slot not present in empty file */
 		goto out;

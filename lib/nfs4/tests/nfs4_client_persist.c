@@ -455,6 +455,143 @@ START_TEST(test_incarnation_concurrent_add)
 }
 END_TEST
 
+/*
+ * Reader-vs-writer regression (issue #59): incarnations_write_and_swap
+ * renames the swap symlink then unlinks the old A/B side.  An
+ * unserialised client_incarnation_load that resolves the symlink
+ * before the swap and open()s after the unlink sees a spurious
+ * -ENOENT.  With the public reader under incarnations_lock every load
+ * is serialised against every swap, so a record the writers never
+ * touch is always visible and load never spuriously fails.
+ */
+#define RW_WRITERS 4
+#define RW_WRITER_CYCLES 40
+#define RW_READERS 4
+#define RW_READER_LOADS 300
+#define RW_BASELINE_SLOT 200
+
+struct rw_writer_arg {
+	const char *state_dir;
+	uint32_t slot;
+	pthread_barrier_t *barrier;
+	int fail;
+};
+
+struct rw_reader_arg {
+	const char *state_dir;
+	pthread_barrier_t *barrier;
+	int bad_ret; /* loads that returned non-zero */
+	int missing; /* loads where the baseline slot was absent */
+};
+
+static void rw_fill_crc(struct client_incarnation_record *crc, uint32_t slot)
+{
+	verifier4 v;
+	struct sockaddr_in sin;
+
+	make_verifier(&v, (uint8_t)slot);
+	make_sin(&sin, 0x7f000001, 2049);
+	memset(crc, 0, sizeof(*crc));
+	crc->crc_magic = CLIENT_INCARNATION_MAGIC;
+	crc->crc_slot = slot;
+	crc->crc_boot_seq = 1;
+	crc->crc_incarnation = 0;
+	memcpy(crc->crc_verifier, &v, NFS4_VERIFIER_SIZE);
+	sockaddr_in_to_full_str(&sin, crc->crc_addr, sizeof(crc->crc_addr));
+}
+
+static void *rw_writer(void *p)
+{
+	struct rw_writer_arg *a = p;
+	struct client_incarnation_record crc;
+
+	rw_fill_crc(&crc, a->slot);
+	pthread_barrier_wait(a->barrier);
+	for (int i = 0; i < RW_WRITER_CYCLES; i++) {
+		if (client_incarnation_add(a->state_dir, &crc) != 0 ||
+		    client_incarnation_remove(a->state_dir, a->slot) != 0)
+			a->fail++;
+	}
+	return NULL;
+}
+
+static void *rw_reader(void *p)
+{
+	struct rw_reader_arg *a = p;
+	struct client_incarnation_record recs[TEST_MAX_INCS];
+	size_t n;
+
+	pthread_barrier_wait(a->barrier);
+	for (int i = 0; i < RW_READER_LOADS; i++) {
+		bool seen = false;
+
+		n = 0;
+		if (client_incarnation_load(a->state_dir, recs, TEST_MAX_INCS,
+					    &n) != 0) {
+			a->bad_ret++;
+			continue;
+		}
+		for (size_t j = 0; j < n; j++) {
+			if (recs[j].crc_slot == RW_BASELINE_SLOT) {
+				seen = true;
+				break;
+			}
+		}
+		if (!seen)
+			a->missing++;
+	}
+	return NULL;
+}
+
+START_TEST(test_incarnation_concurrent_read)
+{
+	pthread_t wt[RW_WRITERS], rt[RW_READERS];
+	struct rw_writer_arg warg[RW_WRITERS];
+	struct rw_reader_arg rarg[RW_READERS];
+	struct client_incarnation_record baseline;
+	pthread_barrier_t barrier;
+
+	/* A record the writers never touch -- every reader must see it. */
+	rw_fill_crc(&baseline, RW_BASELINE_SLOT);
+	ck_assert_int_eq(client_incarnation_add(g_ss->ss_state_dir, &baseline),
+			 0);
+
+	ck_assert_int_eq(pthread_barrier_init(&barrier, NULL,
+					      RW_WRITERS + RW_READERS),
+			 0);
+
+	for (int i = 0; i < RW_READERS; i++) {
+		rarg[i].state_dir = g_ss->ss_state_dir;
+		rarg[i].barrier = &barrier;
+		rarg[i].bad_ret = 0;
+		rarg[i].missing = 0;
+		ck_assert_int_eq(
+			pthread_create(&rt[i], NULL, rw_reader, &rarg[i]), 0);
+	}
+	for (int i = 0; i < RW_WRITERS; i++) {
+		warg[i].state_dir = g_ss->ss_state_dir;
+		warg[i].slot = (uint32_t)(300 + i);
+		warg[i].barrier = &barrier;
+		warg[i].fail = 0;
+		ck_assert_int_eq(
+			pthread_create(&wt[i], NULL, rw_writer, &warg[i]), 0);
+	}
+	for (int i = 0; i < RW_READERS; i++)
+		ck_assert_int_eq(pthread_join(rt[i], NULL), 0);
+	for (int i = 0; i < RW_WRITERS; i++)
+		ck_assert_int_eq(pthread_join(wt[i], NULL), 0);
+	pthread_barrier_destroy(&barrier);
+
+	for (int i = 0; i < RW_WRITERS; i++)
+		ck_assert_int_eq(warg[i].fail, 0);
+	/* No spurious -ENOENT, and the baseline record never vanished. */
+	for (int i = 0; i < RW_READERS; i++) {
+		ck_assert_int_eq(rarg[i].bad_ret, 0);
+		ck_assert_int_eq(rarg[i].missing, 0);
+	}
+}
+END_TEST
+
 /* ------------------------------------------------------------------ */
 /* nfs4_client_find_by_owner                                           */
 /* ------------------------------------------------------------------ */
@@ -885,6 +1022,7 @@ Suite *nfs4_client_persist_suite(void)
 	tcase_add_test(tc, test_incarnation_add_remove);
 	tcase_add_test(tc, test_incarnation_symlink_swap_atomicity);
 	tcase_add_test(tc, test_incarnation_concurrent_add);
+	tcase_add_test(tc, test_incarnation_concurrent_read);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("find_by_owner");
