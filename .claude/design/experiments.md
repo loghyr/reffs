@@ -222,13 +222,49 @@ Fix-slice shape (separate work, own branch off main):
    `io_conn_get()` hand back `(ci, generation)` and require
    callers to revalidate, or key every accessor by `(fd, gen)`.
 
-**Stage 1 repro (next):** a multithreaded
-`lib/io/tests/conn_lifecycle_race_test.c` built with
-`--enable-tsan` -- a thread pool doing register / get (read
-`ci_ssl`) / unregister on a small rotating set of fd numbers with
-real `SSL` objects from a test `SSL_CTX`.  Expect a TSAN
-data-race report on `ci_ssl` and an ASAN UAF on the SSL object.
-That red test anchors the fix.
+**Stage 1 repro (DONE 2026-05-19, commit 8cd8149b50e1):**
+`lib/io/tests/conn_lifecycle_race_test.c` -- churn threads
+register/unregister a small set of fds with real `SSL` objects
+while reader threads run the `handlers.c:281` pattern
+(`io_conn_get()` then read `ci->ci_ssl` outside `conn_mutex`).
+Built as a `check_PROGRAM` but kept out of `TESTS`, so `make
+check` only compiles it; it is run by hand under a sanitizer
+build.
+
+TSAN on dreamer (`--enable-tsan`) confirms the diagnosis RED --
+two data races, exit 66:
+
+- `conn_lifecycle_race_test.c:92` write of `ci->ci_ssl`
+  (8 bytes) in churn vs `:122` read in reader -- the unguarded
+  `ci_ssl` pointer, Defect 1.
+- `:93` write of `ci->ci_tls_enabled` (1 byte) in churn vs
+  `:122` read in reader -- same defect class, the
+  non-generation-checked TLS state of Defect 2.
+
+Both races are on the `conn_info` struct (heap block of 360
+bytes allocated by `io_conn_register` at `conn_info.c:67`); the
+struct is stable, the *fields* are raced.  This is the root
+cause confirmed: every reader of an `io_conn_get()` return value
+touches `ci_ssl` / `ci_tls_enabled` with no lock.  The test
+terminates cleanly (no hang, no deadlock) -- it is purely a
+sanitizer-RED repro, not a crash.
+
+An `--enable-asan` run of the same binary on dreamer was clean
+(exit 0).  The `conn_info`-field race is what fires
+deterministically; the downstream use-after-free on the freed
+`SSL` object itself needs the reader descheduled between caching
+`ci_ssl` and dereferencing it -- a window the tight reader loop
+rarely hits.  A one-line `sched_yield()` in the reader would
+widen it to demonstrate the UAF directly (the literal INV-6
+"SSL_write on a just-freed SSL" mechanism); not done yet, since
+the TSAN field-race already confirms the diagnosis.
+
+Note: sanitizers do not run on the macOS dev box (Darwin 25.5 /
+macOS 26 -- TSAN segfaults and ASAN deadlocks in their own
+runtime init before `main()`); the repro is exercised on dreamer
+(Fedora aarch64).  macOS still builds the tree fine.
+
+That red test anchors the Stage 3 fix.
 
 ---
 
