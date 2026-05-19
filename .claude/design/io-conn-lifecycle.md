@@ -289,6 +289,25 @@ for a separate fix; does not block the Track 2 re-run.
 6. Rewrite `conn_lifecycle_race_test.c` to the safe API; verify
    GREEN under TSAN and ASAN on dreamer; move it into `TESTS`.
 
+**Slice 2 status: DONE 2026-05-19.**  Test rewritten to drive the
+churn / reader threads through `io_conn_ssl_install`,
+`io_conn_ssl_acquire` / `_release`, `io_conn_tls_snapshot`, and
+`io_conn_tls_set_state` -- no direct `ci_ssl` / `ci_tls_enabled`
+access remains; `#include "io_internal.h"` dropped.  Wrapped in a
+libcheck `Suite` so the LOG_COMPILER picks it up uniformly with the
+rest of the io tests, and moved from `check_PROGRAMS`-only into
+`TESTS`.  Sized to fit the standards.md two-second budget under
+TSAN: CHURN_ITERS=1000, NR_FDS=4, READERS_PER_FD=2 -- runs in 107 ms
+under TSAN on dreamer.  macOS clean build + full `make check` 100%
+pass; dreamer ASAN: 5/5 io tests PASS, no sanitizer reports; dreamer
+TSAN: `conn_lifecycle_race_test` PASS plus `conn_info_test` /
+`tls_test` / `tls_write_count_test` PASS, zero TSAN warnings on
+`lib/io/conn_info.c` / `handlers.c` / `tests/conn_lifecycle_race_test.c`.
+The `backend_io_test` TSAN failure carries the same three warnings
+already recorded in the Slice 1 status section (still
+`backend.c:122` / `backend.c:146` / `backend_io_test.c:69`) -- not
+regressed by Slice 2, still tracked separately.
+
 **Slice 3 -- CONN_CLOSING fd-reuse hardening (after Track 2 re-run).**
 7. Add `CONN_CLOSING`; `io_conn_unregister` -> `CONN_CLOSING`;
    drain-driven `CONN_CLOSING -> CONN_UNUSED`; block
