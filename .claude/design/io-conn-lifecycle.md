@@ -329,12 +329,56 @@ State machine for Slice 3 (`CONN_CLOSING`):
 retries) rather than reusing it; on `CONN_UNUSED` it reuses as
 today.
 
+## Stage 4 Track 2 re-run (2026-05-19): Slice 1 effect
+
+Track 2 re-ran on dreamer (`NPS=4`) once Slices 1 and 2 were
+pushed.  Net:
+
+- **INV-5 CLOSED.**  4 of 4 PSes registered, MDS granted 4
+  privileges, zero "listener stays dark" errors.  The safe API
+  removed the establishment-time race.
+- **INV-6 NARROWED but still OPEN.**  Memory-safety symptoms gone
+  (harness scan reports `PASS: no ASAN/UBSAN errors`) and only 2
+  of 4 PSes lost session (vs all 4 in run 4), but the
+  mid-IOR-write disconnect itself is unchanged: same MDS
+  `Connection not tracked for fd=N` log line, same `fsync(15)
+  failed` + `stat()` IOR abort.  Affected PSes do reconnect, but
+  on a 95 s exp-backoff -- far too late for IOR's `fsync`.
+
+INV-1 DS instrumentation stays gated on a clean Track 2 run --
+not delivered yet.  Full timeline and interpretation in
+`.claude/design/experiments.md` Group C ("Track 2 re-run after
+Slice 1").
+
+The two candidate next slices, in priority order:
+
+1. **Slice 3 (as planned)** -- `CONN_CLOSING` + generation
+   extension closes Defects 2 and 3, which match the
+   `Connection not tracked for fd=N` line and the fd-reuse
+   hazard.  Open question: does this alone stop the SSL break
+   trigger, or only stop the *recovery* (stale-CQE) damage?
+2. **Promote the deferred `SSL_read` / `SSL_write` serialisation
+   to a real slice.**  The original design called it
+   NOT_NOW_BROWN_COW with "not required to unblock Track 2";
+   Track 2 run 5 disproves that assumption.  If the disconnect
+   trigger is an SSL state-machine race between the event-loop
+   reader and a worker writer, this slice is on the critical
+   path.
+
+Open dig for the next slot: capture an MDS-side trace at the
+*moment* of the first break (~6 s into IOR write) to attribute
+the SSL_ERROR_ZERO_RETURN to either (a) a peer-closed socket
+(PS side decision) or (b) an SSL state corruption (suggesting
+the read/write concurrency hazard).
+
 ## Deferred / NOT_NOW_BROWN_COW
 
 - Serialising event-loop `SSL_read` against worker `SSL_write` on
   one `SSL` (the pre-existing reader/writer concurrency hazard).
-  Mechanism A makes it memory-safe; full serialisation is a
-  separate slice and is not required to unblock Track 2.
+  Mechanism A makes it memory-safe; the Stage 4 Track 2 re-run
+  shows that *memory* safety alone is insufficient for IOR to
+  complete -- this hazard may be on the critical path and is a
+  candidate to leave NOT_NOW_BROWN_COW for a real slice.
 - Replacing the flat `connections[]` array + single `conn_mutex`
   with a sharded or RCU-backed table.  Out of scope.
 
