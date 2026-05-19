@@ -19,6 +19,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <pthread.h>
 #include <netinet/in.h>
 
 #include <check.h>
@@ -360,6 +361,97 @@ START_TEST(test_incarnation_symlink_swap_atomicity)
 	}
 	ck_assert(!slot10);
 	ck_assert(slot11);
+}
+END_TEST
+
+/*
+ * Concurrency regression: many clients establishing sessions at once
+ * drive concurrent client_incarnation_add calls.  Each does an
+ * unserialised load-modify-write on the symlink-swapped active set,
+ * so without incarnations_lock they race -- two pick the same
+ * inactive A/B side and O_TRUNC it, collide on the shared .tmp swap
+ * symlink (EEXIST), and lose each other's additions.  Every add must
+ * succeed and every slot must survive.
+ */
+#define CONC_THREADS 16
+#define CONC_SLOT_BASE 100
+
+struct conc_add_arg {
+	const char *state_dir;
+	uint32_t slot;
+	pthread_barrier_t *barrier;
+	int ret;
+};
+
+static void *conc_add_worker(void *p)
+{
+	struct conc_add_arg *a = p;
+	struct client_incarnation_record crc;
+	verifier4 v;
+	struct sockaddr_in sin;
+
+	make_verifier(&v, (uint8_t)a->slot);
+	make_sin(&sin, 0x7f000001, 2049);
+
+	memset(&crc, 0, sizeof(crc));
+	crc.crc_magic = CLIENT_INCARNATION_MAGIC;
+	crc.crc_slot = a->slot;
+	crc.crc_boot_seq = 1;
+	crc.crc_incarnation = 0;
+	memcpy(crc.crc_verifier, &v, NFS4_VERIFIER_SIZE);
+	sockaddr_in_to_full_str(&sin, crc.crc_addr, sizeof(crc.crc_addr));
+
+	/* Release all workers together to maximise the overlap. */
+	pthread_barrier_wait(a->barrier);
+	a->ret = client_incarnation_add(a->state_dir, &crc);
+	return NULL;
+}
+
+START_TEST(test_incarnation_concurrent_add)
+{
+	pthread_t tid[CONC_THREADS];
+	struct conc_add_arg arg[CONC_THREADS];
+	pthread_barrier_t barrier;
+	struct client_incarnation_record active[TEST_MAX_INCS];
+	size_t nactive;
+
+	ck_assert_int_eq(pthread_barrier_init(&barrier, NULL, CONC_THREADS), 0);
+
+	for (int i = 0; i < CONC_THREADS; i++) {
+		arg[i].state_dir = g_ss->ss_state_dir;
+		arg[i].slot = (uint32_t)(CONC_SLOT_BASE + i);
+		arg[i].barrier = &barrier;
+		arg[i].ret = -1;
+		ck_assert_int_eq(pthread_create(&tid[i], NULL, conc_add_worker,
+						&arg[i]),
+				 0);
+	}
+	for (int i = 0; i < CONC_THREADS; i++)
+		ck_assert_int_eq(pthread_join(tid[i], NULL), 0);
+	pthread_barrier_destroy(&barrier);
+
+	/* Every add succeeded -- no EEXIST on the swap symlink. */
+	for (int i = 0; i < CONC_THREADS; i++)
+		ck_assert_int_eq(arg[i].ret, 0);
+
+	/* Every slot survived -- no lost updates. */
+	nactive = 0;
+	ck_assert_int_eq(client_incarnation_load(g_ss->ss_state_dir, active,
+						 TEST_MAX_INCS, &nactive),
+			 0);
+	ck_assert_uint_eq(nactive, CONC_THREADS);
+	for (int i = 0; i < CONC_THREADS; i++) {
+		bool found = false;
+
+		for (size_t j = 0; j < nactive; j++) {
+			if (active[j].crc_slot ==
+			    (uint32_t)(CONC_SLOT_BASE + i)) {
+				found = true;
+				break;
+			}
+		}
+		ck_assert(found);
+	}
 }
 END_TEST
 
@@ -792,6 +884,7 @@ Suite *nfs4_client_persist_suite(void)
 	tcase_add_checked_fixture(tc, setup, teardown);
 	tcase_add_test(tc, test_incarnation_add_remove);
 	tcase_add_test(tc, test_incarnation_symlink_swap_atomicity);
+	tcase_add_test(tc, test_incarnation_concurrent_add);
 	suite_add_tcase(s, tc);
 
 	tc = tcase_create("find_by_owner");

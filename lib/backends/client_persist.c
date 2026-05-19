@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <unistd.h>
 #include <limits.h>
 #include <netinet/in.h>
@@ -138,6 +139,13 @@ int client_identity_load(const char *state_dir,
 /* client_incarnations -- symlink-swapped active set                   */
 
 /*
+ * Serializes the load-modify-write in client_incarnation_add and
+ * client_incarnation_remove against each other -- they share the
+ * A/B active-set files and the .tmp swap symlink.
+ */
+static pthread_mutex_t incarnations_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/*
  * Determine which of .A or .B the symlink currently points to, so we
  * know which one to write next.  Returns 'A' or 'B', or 0 on error.
  */
@@ -259,6 +267,13 @@ incarnations_write_and_swap(const char *state_dir,
 	/* new_path is the full path; symlink target should be basename */
 	const char *target = (side == 'A') ? INCARNATIONS_B : INCARNATIONS_A;
 
+	/*
+	 * A crash between the symlink and rename below leaves a stale
+	 * tmp_link that would fail every future symlink() with EEXIST.
+	 * incarnations_lock makes us the only writer, so clearing it
+	 * first is safe and keeps the swap idempotent.
+	 */
+	unlink(tmp_link);
 	if (symlink(target, tmp_link)) {
 		LOG("incarnations_write_and_swap: symlink(%s, %s): %m", target,
 		    tmp_link);
@@ -382,6 +397,8 @@ int client_incarnation_add(const char *state_dir,
 	if (!recs)
 		return -ENOMEM;
 
+	pthread_mutex_lock(&incarnations_lock);
+
 	ret = client_incarnation_load(state_dir, recs, max_recs, &count);
 	if (ret && ret != -ENOENT)
 		goto out;
@@ -390,6 +407,7 @@ int client_incarnation_add(const char *state_dir,
 	ret = incarnations_write_and_swap(state_dir, recs, count);
 
 out:
+	pthread_mutex_unlock(&incarnations_lock);
 	free(recs);
 	return ret;
 }
@@ -406,6 +424,8 @@ int client_incarnation_remove(const char *state_dir, uint32_t slot)
 	recs = calloc(max_recs, sizeof(*recs));
 	if (!recs)
 		return -ENOMEM;
+
+	pthread_mutex_lock(&incarnations_lock);
 
 	ret = client_incarnation_load(state_dir, recs, max_recs, &count);
 	if (ret == -ENOENT) {
@@ -433,6 +453,7 @@ int client_incarnation_remove(const char *state_dir, uint32_t slot)
 	ret = incarnations_write_and_swap(state_dir, recs, new_count);
 
 out:
+	pthread_mutex_unlock(&incarnations_lock);
 	free(recs);
 	return ret;
 }
