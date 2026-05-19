@@ -79,8 +79,10 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc);
  */
 static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 {
-	struct conn_info *ci = io_conn_get(ic->ic_fd);
 	size_t remaining = ic->ic_buffer_len - ic->ic_position;
+	int rc_val = 0;
+	int ktls_enabled = 0;
+	SSL *ssl;
 
 	TRACE("ic=%p fd=%d type=%s bl=%zu id=%u", (void *)ic, ic->ic_fd,
 	      io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
@@ -91,15 +93,15 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 	}
 
 	/*
-	 * Guard: the connection may have been torn down (TCP RST from
-	 * client) between when the write was queued and when the worker
-	 * picked it up.  ci or ci_ssl can be NULL/freed.
-	 *
-	 * Save ci_ssl to a local -- the event loop thread can set
-	 * ci->ci_ssl = NULL at any time after an SSL error.  If we
-	 * see NULL, the connection is dead and there's nothing to write.
+	 * Take a use-ref on the connection's SSL.  The event loop or the
+	 * heartbeat thread can tear the connection down (TCP RST, idle
+	 * timeout) between when this write was queued and when the worker
+	 * picked it up.  io_conn_ssl_acquire() returns NULL once the SSL
+	 * has been cleared; otherwise the use-ref keeps the SSL object
+	 * alive for the duration of this call even if the slot's ref is
+	 * dropped concurrently.
 	 */
-	SSL *ssl = ci ? ci->ci_ssl : NULL;
+	ssl = io_conn_ssl_acquire(ic->ic_fd);
 	if (!ssl) {
 		TRACE("fd=%d: connection gone, dropping TLS write", ic->ic_fd);
 		io_context_destroy(ic);
@@ -107,108 +109,101 @@ static int io_do_tls(struct io_context *ic, struct ring_context *rc)
 	}
 
 	/* Write directly using TLS if not using kTLS */
-	int ktls_enabled = 0;
 #ifdef BIO_get_ktls_send
 	ktls_enabled = BIO_get_ktls_send(SSL_get_wbio(ssl));
 #endif
 
 	TRACE("ic=%p fd=%d type=%s bl=%ld id=%u", (void *)ic, ic->ic_fd,
 	      io_op_type_to_str(ic->ic_op_type), ic->ic_buffer_len, ic->ic_id);
-	if (!ktls_enabled) {
-		/* Check if we've already processed this context for TLS */
-		if (ic->ic_state & IO_CONTEXT_TLS_BIO_PROCESSED) {
-			TRACE("ic=%p id=%u already processed for TLS, destroying",
-			      (void *)ic, ic->ic_id);
-			io_context_destroy(ic);
-			return 0;
-		}
 
-		/* Handle in userspace */
-		rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
-		int ret = SSL_write(ssl,
-				    (char *)ic->ic_buffer + ic->ic_position,
-				    remaining);
-
-		if (ret <= 0) {
-			int err = SSL_get_error(ssl, ret);
-			if (err == SSL_ERROR_WANT_WRITE) {
-				io_ssl_err_print(
-					ic->ic_fd,
-					"unexpected WANT_WRITE on write",
-					__func__, __LINE__);
-				io_socket_close(ic->ic_fd, EINVAL);
-				io_context_destroy(ic);
-				return -EINVAL;
-			}
-			if (err == SSL_ERROR_WANT_READ) {
-				io_ssl_err_print(
-					ic->ic_fd,
-					"WANT_READ during write (key-update?)",
-					__func__, __LINE__);
-				io_socket_close(ic->ic_fd, EINVAL);
-				io_context_destroy(ic);
-				return -EINVAL;
-			}
-
-			/* Real error */
-			io_ssl_err_print(ic->ic_fd, "write error", __func__,
-					 __LINE__);
-			io_socket_close(ic->ic_fd, EINVAL);
-			io_context_destroy(ic);
-			return -EINVAL;
-		} else {
-			BIO *wbio = SSL_get_wbio(ssl);
-			int pending = BIO_pending(wbio);
-
-			TRACE("SSL_write processed %d bytes, resulting in %d bytes of TLS data",
-			      ret, pending);
-
-			ic->ic_state |= IO_CONTEXT_TLS_BIO_PROCESSED;
-
-			if (pending > 0) {
-				unsigned char *write_buffer = malloc(pending);
-				if (!write_buffer) {
-					LOG("Failed to allocate memory for TLS data");
-					io_socket_close(ic->ic_fd, ENOMEM);
-					io_context_destroy(ic);
-					return -ENOMEM;
-				}
-
-				int bytes =
-					BIO_read(wbio, write_buffer, pending);
-				TRACE("Read %d bytes of encrypted data from BIO",
-				      bytes);
-
-				if (bytes > 0) {
-					ret = io_request_write_op(
-						ic->ic_fd, (char *)write_buffer,
-						bytes,
-						IO_CONTEXT_DIRECT_TLS_DATA,
-						&ic->ic_ci, rc);
-
-					if (ret != 0) {
-						LOG("Failed to submit TLS data write: %d",
-						    ret);
-						free(write_buffer);
-						io_socket_close(ic->ic_fd,
-								-ret);
-						io_context_destroy(ic);
-						return ret;
-					}
-
-					TRACE("Submitted %d bytes of TLS data via io_request_write_op",
-					      bytes);
-				} else {
-					free(write_buffer);
-				}
-			}
-		}
-
-		io_context_destroy(ic);
-		return 0;
+	if (ktls_enabled) {
+		/* kTLS: caller falls through to io_resubmit_write. */
+		rc_val = 1;
+		goto out;
 	}
 
-	return 1;
+	/* Check if we've already processed this context for TLS */
+	if (ic->ic_state & IO_CONTEXT_TLS_BIO_PROCESSED) {
+		TRACE("ic=%p id=%u already processed for TLS, destroying",
+		      (void *)ic, ic->ic_id);
+		io_context_destroy(ic);
+		rc_val = 0;
+		goto out;
+	}
+
+	/* Handle in userspace */
+	rpc_log_packet("TLS: ", ic->ic_buffer, ic->ic_buffer_len);
+	int ret = SSL_write(ssl, (char *)ic->ic_buffer + ic->ic_position,
+			    remaining);
+
+	if (ret <= 0) {
+		int err = SSL_get_error(ssl, ret);
+		if (err == SSL_ERROR_WANT_WRITE)
+			io_ssl_err_print(ic->ic_fd,
+					 "unexpected WANT_WRITE on write",
+					 __func__, __LINE__);
+		else if (err == SSL_ERROR_WANT_READ)
+			io_ssl_err_print(ic->ic_fd,
+					 "WANT_READ during write (key-update?)",
+					 __func__, __LINE__);
+		else
+			io_ssl_err_print(ic->ic_fd, "write error", __func__,
+					 __LINE__);
+
+		io_socket_close(ic->ic_fd, EINVAL);
+		io_context_destroy(ic);
+		rc_val = -EINVAL;
+		goto out;
+	}
+
+	BIO *wbio = SSL_get_wbio(ssl);
+	int pending = BIO_pending(wbio);
+
+	TRACE("SSL_write processed %d bytes, resulting in %d bytes of TLS data",
+	      ret, pending);
+
+	ic->ic_state |= IO_CONTEXT_TLS_BIO_PROCESSED;
+
+	if (pending > 0) {
+		unsigned char *write_buffer = malloc(pending);
+		if (!write_buffer) {
+			LOG("Failed to allocate memory for TLS data");
+			io_socket_close(ic->ic_fd, ENOMEM);
+			io_context_destroy(ic);
+			rc_val = -ENOMEM;
+			goto out;
+		}
+
+		int bytes = BIO_read(wbio, write_buffer, pending);
+		TRACE("Read %d bytes of encrypted data from BIO", bytes);
+
+		if (bytes > 0) {
+			ret = io_request_write_op(ic->ic_fd,
+						  (char *)write_buffer, bytes,
+						  IO_CONTEXT_DIRECT_TLS_DATA,
+						  &ic->ic_ci, rc);
+
+			if (ret != 0) {
+				LOG("Failed to submit TLS data write: %d", ret);
+				free(write_buffer);
+				io_socket_close(ic->ic_fd, -ret);
+				io_context_destroy(ic);
+				rc_val = ret;
+				goto out;
+			}
+
+			TRACE("Submitted %d bytes of TLS data via io_request_write_op",
+			      bytes);
+		} else {
+			free(write_buffer);
+		}
+	}
+
+	io_context_destroy(ic);
+	rc_val = 0;
+out:
+	io_conn_ssl_release(ssl);
+	return rc_val;
 }
 
 /*
@@ -267,18 +262,18 @@ static int rpc_trans_writer(struct io_context *ic, struct ring_context *rc)
 		ic->ic_state |= IO_CONTEXT_WRITE_OWNED;
 	}
 
-	struct conn_info *ci = io_conn_get(ic->ic_fd);
-#ifdef TLS_DEBUGGING
-	TRACE("ci=%p ssl=%p tls=%d", (void *)ci, ci ? (void *)ci->ci_ssl : NULL,
-	      ci ? ci->ci_tls_enabled : 0);
-#endif
 	/*
 	 * TLS branch.  Reachable on all three backends as of #53.  The
 	 * EVFILT_WRITE collision window inside io_do_tls (submit outside
 	 * the write gate) remains a latent concurrency concern on
 	 * kqueue; see the note on io_do_tls above.
+	 *
+	 * io_do_tls takes its own use-ref on the SSL; here a lock-safe
+	 * snapshot of the TLS-enabled flag decides whether to encrypt.
 	 */
-	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
+	bool tls_enabled = false;
+	io_conn_tls_snapshot(ic->ic_fd, &tls_enabled, NULL);
+	if (tls_enabled) {
 		int fd_saved = ic->ic_fd;
 		uint32_t gen_saved = ic->ic_write_gen;
 		bool owned = (ic->ic_state & IO_CONTEXT_WRITE_OWNED) != 0;
@@ -308,16 +303,10 @@ int io_rpc_trans_cb(struct rpc_trans *rt)
 {
 	struct io_context *ic;
 
-	struct conn_info *ci = io_conn_get(rt->rt_fd);
-	if (!ci) {
+	if (!io_conn_tls_snapshot(rt->rt_fd, NULL, NULL)) {
 		LOG("Connection not tracked for fd=%d", rt->rt_fd);
 		return ENOTCONN;
 	}
-
-#ifdef TLS_DEBUGGING
-	TRACE("ci=%p th=%d tls=%d ssl=%p", (void *)ci, ci->ci_tls_handshaking,
-	      ci->ci_tls_enabled, (void *)ci->ci_ssl);
-#endif
 
 	ic = io_context_create(OP_TYPE_WRITE, rt->rt_fd, rt->rt_reply,
 			       rt->rt_reply_len);
@@ -379,18 +368,27 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 			TRACE("Final TLS handshake message sent for fd=%d",
 			      ic->ic_fd);
 			ci->ci_handshake_final_pending = false;
-			ci->ci_tls_enabled = true;
-			BIO_flush(SSL_get_wbio(ci->ci_ssl));
-			TRACE("TLS mode now active for fd=%d", ic->ic_fd);
+			/*
+			 * Last handshake record is on the wire: switch the
+			 * connection to encrypted mode under conn_mutex.
+			 */
+			io_conn_tls_set_state(ic->ic_fd, true, false);
 
+			SSL *ssl = io_conn_ssl_acquire(ic->ic_fd);
+			if (ssl) {
+				BIO_flush(SSL_get_wbio(ssl));
+				TRACE("TLS mode now active for fd=%d",
+				      ic->ic_fd);
 #ifdef BIO_get_ktls_send
-			int ktls_send =
-				BIO_get_ktls_send(SSL_get_wbio(ci->ci_ssl));
-			int ktls_recv =
-				BIO_get_ktls_recv(SSL_get_rbio(ci->ci_ssl));
-			TRACE("kTLS status for fd=%d: send=%d, recv=%d",
-			      ic->ic_fd, ktls_send, ktls_recv);
+				int ktls_send =
+					BIO_get_ktls_send(SSL_get_wbio(ssl));
+				int ktls_recv =
+					BIO_get_ktls_recv(SSL_get_rbio(ssl));
+				TRACE("kTLS status for fd=%d: send=%d, recv=%d",
+				      ic->ic_fd, ktls_send, ktls_recv);
 #endif
+				io_conn_ssl_release(ssl);
+			}
 		}
 	}
 
@@ -402,24 +400,31 @@ int io_handle_write(struct io_context *ic, int bytes_written,
 			TRACE("Final TLS handshake message sent for fd=%d",
 			      ic->ic_fd);
 			ci2->ci_handshake_final_pending = false;
-			BIO_flush(SSL_get_wbio(ci2->ci_ssl));
-			TRACE("TLS mode now active for fd=%d", ic->ic_fd);
 
+			SSL *ssl = io_conn_ssl_acquire(ic->ic_fd);
+			if (ssl) {
+				BIO_flush(SSL_get_wbio(ssl));
+				TRACE("TLS mode now active for fd=%d",
+				      ic->ic_fd);
 #ifdef BIO_get_ktls_send
-			int ktls_send =
-				BIO_get_ktls_send(SSL_get_wbio(ci2->ci_ssl));
-			int ktls_recv =
-				BIO_get_ktls_recv(SSL_get_rbio(ci2->ci_ssl));
-			TRACE("kTLS status for fd=%d: send=%d, recv=%d",
-			      ic->ic_fd, ktls_send, ktls_recv);
+				int ktls_send =
+					BIO_get_ktls_send(SSL_get_wbio(ssl));
+				int ktls_recv =
+					BIO_get_ktls_recv(SSL_get_rbio(ssl));
+				TRACE("kTLS status for fd=%d: send=%d, recv=%d",
+				      ic->ic_fd, ktls_send, ktls_recv);
 #endif
+				io_conn_ssl_release(ssl);
+			}
 		}
 
 		io_context_destroy(ic);
 		return 0;
 	}
 
-	if (ci && ci->ci_ssl && ci->ci_tls_enabled) {
+	bool tls_enabled = false;
+	io_conn_tls_snapshot(ic->ic_fd, &tls_enabled, NULL);
+	if (tls_enabled) {
 		int fd_saved = ic->ic_fd;
 		uint32_t gen_saved = ic->ic_write_gen;
 		bool owned = (ic->ic_state & IO_CONTEXT_WRITE_OWNED) != 0;
@@ -831,8 +836,7 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 		}
 
 		// Always enable TLS if handshake completes, regardless of ALPN
-		ci->ci_tls_enabled = true;
-		ci->ci_tls_handshaking = false;
+		io_conn_tls_set_state(fd, true, false);
 	} else {
 		TRC("TLS handshake not yet complete");
 
@@ -846,8 +850,7 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 			if (SSL_state_string_long(ssl) &&
 			    strstr(SSL_state_string_long(ssl), "early data")) {
 				TRC("Special case: Detected likely completed handshake - enabling TLS");
-				ci->ci_tls_enabled = true;
-				ci->ci_tls_handshaking = false;
+				io_conn_tls_set_state(fd, true, false);
 				ci->ci_handshake_final_pending = true;
 				ci->ci_handshake_final_bytes = 0;
 			} else {
@@ -902,7 +905,7 @@ static int process_ssl_accept(SSL *ssl, struct conn_info *ci, int fd,
 	}
 
 	// If we get here, the handshake is complete
-	ci->ci_tls_handshaking = false;
+	io_conn_set_tls_handshaking(fd, false);
 	TRC("TLS handshake completed logically for fd=%d, waiting for final message to be sent",
 	    fd);
 	return 0;
@@ -945,18 +948,28 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 	}
 
 	// Case 1: Continuing an existing handshake
-	if (ci->ci_tls_handshaking && ci->ci_ssl) {
-		int ret = process_ssl_accept(ci->ci_ssl, ci, fd, data, len, rc);
+	bool handshaking = false;
+	io_conn_tls_snapshot(fd, NULL, &handshaking);
+	if (handshaking) {
+		SSL *ssl = io_conn_ssl_acquire(fd);
+		if (ssl) {
+			int ret =
+				process_ssl_accept(ssl, ci, fd, data, len, rc);
 
-		const unsigned char *bytes = (const unsigned char *)data;
-		if (bytes[0] == 0x14 && bytes[1] == 0x03 && bytes[2] == 0x03 &&
-		    len == 6) {
-			TRC("ChangeCipherSpec received, forcing TLS compatibility mode for Fedora client");
-			ci->ci_tls_enabled = true;
-			ci->ci_tls_handshaking = false;
+			const unsigned char *b = (const unsigned char *)data;
+			if (len == 6 && b[0] == 0x14 && b[1] == 0x03 &&
+			    b[2] == 0x03) {
+				TRC("ChangeCipherSpec received, forcing TLS compatibility mode for Fedora client");
+				io_conn_tls_set_state(fd, true, false);
+			}
+
+			io_conn_ssl_release(ssl);
+			return ret;
 		}
-
-		return ret;
+		/*
+		 * handshaking flag set but the SSL was already cleared
+		 * (a teardown raced us) -- fall through and start fresh.
+		 */
 	}
 
 	// Case 2: New handshake - create SSL object using the
@@ -1007,11 +1020,19 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 	// Associate BIOs with SSL object
 	SSL_set_bio(ssl, rbio, wbio);
 
-	// Store the SSL object in the connection info
-	ci->ci_ssl = ssl;
-	ci->ci_tls_handshaking = true;
-	ci->ci_tls_enabled = false;
-	ci->ci_handshake_final_pending = false;
+	/*
+	 * Hand the SSL to the connection slot.  io_conn_ssl_install()
+	 * takes the +1 ref SSL_new() returned as the slot's ref and
+	 * marks the connection handshaking.  Re-acquire a use-ref so
+	 * process_ssl_accept() can drive the handshake even if the
+	 * slot's ref is dropped concurrently by teardown.
+	 */
+	io_conn_ssl_install(fd, ssl);
+	ssl = io_conn_ssl_acquire(fd);
+	if (!ssl) {
+		LOG("Connection fd=%d gone during TLS handshake setup", fd);
+		return ENOTCONN;
+	}
 
 	int ret = process_ssl_accept(ssl, ci, fd, data, len, rc);
 
@@ -1019,11 +1040,11 @@ static int handle_tls_handshake(int fd, const void *data, size_t len,
 	if (len == 6 && bytes[0] == 0x14 && bytes[1] == 0x03 &&
 	    bytes[2] == 0x03) {
 		TRACE("ChangeCipherSpec received, forcing TLS compatibility mode for Fedora client");
-		ci->ci_tls_enabled = true;
-		ci->ci_tls_handshaking = false;
+		io_conn_tls_set_state(fd, true, false);
 	}
 #endif
 
+	io_conn_ssl_release(ssl);
 	return ret;
 }
 // Process the RPC record marker and reassemble fragments
@@ -1288,18 +1309,19 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 
 	if (ci) {
 		ci->ci_last_activity = time(NULL);
+
+		bool tls_enabled = false;
+		bool tls_handshaking = false;
+		io_conn_tls_snapshot(client_fd, &tls_enabled, &tls_handshaking);
 #ifdef TLS_DEBUGGING
-		TRACE("ci=%p th=%d tls=%d ssl=%p", (void *)ci,
-		      ci->ci_tls_handshaking, ci->ci_tls_enabled,
-		      (void *)ci->ci_ssl);
+		TRACE("fd=%d th=%d tls=%d", client_fd, tls_handshaking,
+		      tls_enabled);
 #endif
-		if (ci->ci_tls_handshaking) {
+		if (tls_handshaking) {
 			ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer,
 						   bytes_read, rc);
 			if (ret) {
-				SSL_free(ci->ci_ssl);
-				ci->ci_ssl = NULL;
-				ci->ci_tls_handshaking = false;
+				io_conn_ssl_clear(ic->ic_fd);
 				io_socket_close(ic->ic_fd, EINVAL);
 				io_context_destroy(ic);
 				return 0;
@@ -1307,28 +1329,30 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 			goto get_more;
 		}
 
-		// If TLS is enabled, decrypt the data
-		if (ci->ci_tls_enabled && ci->ci_ssl) {
+		// If TLS is enabled, decrypt the data.  Take a use-ref so
+		// the SSL cannot be freed under us mid-decrypt.
+		SSL *ssl = tls_enabled ? io_conn_ssl_acquire(client_fd) : NULL;
+		if (ssl) {
 			// Feed data to SSL
-			BIO *rbio = SSL_get_rbio(ci->ci_ssl);
+			BIO *rbio = SSL_get_rbio(ssl);
 			int bw = BIO_write(rbio, ic->ic_buffer, bytes_read);
 			if (bw != bytes_read) {
 				LOG("BIO_write short: expected %d got %d",
 				    bytes_read, bw);
+				io_conn_ssl_release(ssl);
 				io_socket_close(ic->ic_fd, EIO);
 				io_context_destroy(ic);
 				return 0;
 			}
 
 			// Read decrypted data
-			int decrypted = SSL_read(ci->ci_ssl, ic->ic_buffer,
-						 ic->ic_buffer_len);
+			int decrypted =
+				SSL_read(ssl, ic->ic_buffer, ic->ic_buffer_len);
 			rpc_log_packet("TLS: ", ic->ic_buffer,
 				       ic->ic_buffer_len);
 
 			if (decrypted <= 0) {
-				int ssl_err =
-					SSL_get_error(ci->ci_ssl, decrypted);
+				int ssl_err = SSL_get_error(ssl, decrypted);
 
 				/* WANT_READ/WANT_WRITE are not errors: the
 				 * TLS state machine needs more data or buffer
@@ -1336,6 +1360,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 				 * case so logging would only produce noise. */
 				if (ssl_err == SSL_ERROR_WANT_READ ||
 				    ssl_err == SSL_ERROR_WANT_WRITE) {
+					io_conn_ssl_release(ssl);
 					goto cleanup;
 				}
 
@@ -1349,9 +1374,8 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 				// SSL error
 				io_ssl_err_print(ic->ic_fd, "read error",
 						 __func__, __LINE__);
-				SSL_free(ci->ci_ssl);
-				ci->ci_ssl = NULL;
-				ci->ci_tls_handshaking = false;
+				io_conn_ssl_release(ssl);
+				io_conn_ssl_clear(ic->ic_fd);
 				io_socket_close(ic->ic_fd, EINVAL);
 				io_context_destroy(ic);
 				return 0;
@@ -1369,10 +1393,9 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 			 */
 			int total = decrypted;
 			while (total < (int)ic->ic_buffer_len &&
-			       SSL_pending(ci->ci_ssl) > 0) {
+			       SSL_pending(ssl) > 0) {
 				int more = SSL_read(
-					ci->ci_ssl,
-					(char *)ic->ic_buffer + total,
+					ssl, (char *)ic->ic_buffer + total,
 					(int)ic->ic_buffer_len - total);
 				if (more <= 0)
 					break;
@@ -1381,6 +1404,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 
 			// Update bytes_read with decrypted count
 			bytes_read = total;
+			io_conn_ssl_release(ssl);
 		}
 	}
 
@@ -1396,9 +1420,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 					   rc);
 		if (ret) {
 			if (ci) {
-				SSL_free(ci->ci_ssl);
-				ci->ci_ssl = NULL;
-				ci->ci_tls_handshaking = false;
+				io_conn_ssl_clear(ic->ic_fd);
 				io_socket_close(ic->ic_fd, EINVAL);
 				io_context_destroy(ic);
 

@@ -499,19 +499,51 @@ bool io_conn_is_state(int fd, enum conn_state state)
 	return result;
 }
 
+/*
+ * conn_ssl_detach_locked -- detach the SSL object and clear the TLS
+ * flags on a slot, with conn_mutex already held by the caller.
+ *
+ * Returns the detached SSL (the caller MUST drop the slot's ref via
+ * conn_ssl_drop() *after* releasing conn_mutex -- SSL_shutdown /
+ * SSL_free must never run under the process-wide conn_mutex), or NULL
+ * if the slot had no SSL.  Idempotent: a second call returns NULL.
+ */
+static SSL *conn_ssl_detach_locked(struct conn_info *ci)
+{
+	SSL *ssl = ci->ci_ssl;
+
+	ci->ci_ssl = NULL;
+	ci->ci_tls_enabled = false;
+	ci->ci_tls_handshaking = false;
+	return ssl;
+}
+
+/*
+ * conn_ssl_drop -- drop the slot's ref on an SSL object.  SSL objects
+ * carry their own atomic refcount; SSL_free decrements it and frees at
+ * zero, so an outstanding use-ref (io_conn_ssl_acquire) keeps the
+ * object alive past this call.  SSL_shutdown queues the close_notify
+ * the same way the pre-refcount teardown did.  NULL-tolerant.  Must be
+ * called with conn_mutex NOT held.
+ */
+static void conn_ssl_drop(SSL *ssl)
+{
+	if (!ssl)
+		return;
+	SSL_shutdown(ssl);
+	SSL_free(ssl);
+}
+
 void io_conn_destroy(struct conn_info *ci)
 {
 	if (!ci)
 		return;
 
-	if (ci->ci_ssl) {
-		SSL_shutdown(ci->ci_ssl);
-		SSL_free(ci->ci_ssl);
-		ci->ci_ssl = NULL;
-	}
-	ci->ci_tls_enabled = false;
-	ci->ci_tls_handshaking = false;
+	pthread_mutex_lock(&conn_mutex);
+	SSL *ssl = conn_ssl_detach_locked(ci);
+	pthread_mutex_unlock(&conn_mutex);
 
+	conn_ssl_drop(ssl);
 	free(ci);
 }
 
@@ -519,6 +551,7 @@ int io_conn_unregister(int fd)
 {
 	int ret = -1;
 	struct io_context *drain_head = NULL;
+	SSL *dead_ssl = NULL;
 
 	pthread_mutex_lock(&conn_mutex);
 
@@ -528,13 +561,11 @@ int io_conn_unregister(int fd)
 		      io_conn_state_to_str(connections[idx]->ci_state),
 		      io_conn_role_to_str(connections[idx]->ci_role));
 
-		if (connections[idx]->ci_ssl) {
-			SSL_shutdown(connections[idx]->ci_ssl);
-			SSL_free(connections[idx]->ci_ssl);
-			connections[idx]->ci_ssl = NULL;
-			connections[idx]->ci_tls_enabled = false;
-			connections[idx]->ci_tls_handshaking = false;
-		}
+		/*
+		 * Detach the SSL under conn_mutex; SSL_shutdown / SSL_free
+		 * happen below, after the lock is released.
+		 */
+		dead_ssl = conn_ssl_detach_locked(connections[idx]);
 
 		/*
 		 * Drain the pending write queue before clearing ci_fd.
@@ -560,6 +591,8 @@ int io_conn_unregister(int fd)
 	}
 
 	pthread_mutex_unlock(&conn_mutex);
+
+	conn_ssl_drop(dead_ssl);
 
 	while (drain_head) {
 		struct io_context *next = drain_head->ic_write_next;
@@ -605,11 +638,16 @@ void io_conn_cleanup(void)
 
 	for (int i = 0; i < MAX_CONNECTIONS; i++) {
 		if (connections[i]) {
-			if (connections[i]->ci_ssl) {
-				SSL_shutdown(connections[i]->ci_ssl);
-				SSL_free(connections[i]->ci_ssl);
-				connections[i]->ci_ssl = NULL;
-			}
+			/*
+			 * Detach then drop the SSL.  conn_ssl_drop() runs
+			 * under conn_mutex here, which io_conn_ssl_clear()
+			 * deliberately avoids -- acceptable only because
+			 * io_conn_cleanup() runs single-threaded at process
+			 * shutdown, so there is no other connection's
+			 * bookkeeping for the held lock to stall.
+			 */
+			SSL *ssl = conn_ssl_detach_locked(connections[i]);
+			conn_ssl_drop(ssl);
 
 			free(connections[i]);
 			connections[i] = NULL;
@@ -984,5 +1022,108 @@ void io_conn_set_tls_handshaking(int fd, bool handshaking)
 	int idx = fd % MAX_CONNECTIONS;
 	if (connections[idx] && connections[idx]->ci_fd == fd)
 		connections[idx]->ci_tls_handshaking = handshaking;
+	pthread_mutex_unlock(&conn_mutex);
+}
+
+/*
+ * TLS SSL-object lifecycle (INV-5 / INV-6 fix).  See reffs/io.h for
+ * the contract.  The SSL object's own atomic refcount is the lifecycle
+ * counter: the slot holds one ref, each io_conn_ssl_acquire() adds a
+ * use-ref, and the object frees when the last ref is dropped.
+ */
+void io_conn_ssl_install(int fd, SSL *ssl)
+{
+	SSL *orphan = NULL;
+
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		struct conn_info *ci = connections[idx];
+		/*
+		 * A fresh handshake should never find an SSL already
+		 * installed; detach any stale one defensively so it
+		 * cannot leak.
+		 */
+		orphan = ci->ci_ssl;
+		ci->ci_ssl = ssl;
+		ci->ci_tls_handshaking = true;
+		ci->ci_tls_enabled = false;
+		ci->ci_handshake_final_pending = false;
+	} else {
+		/*
+		 * fd vanished between SSL_new() and install -- the +1 we
+		 * were handed has no slot to live in.
+		 */
+		orphan = ssl;
+	}
+	pthread_mutex_unlock(&conn_mutex);
+
+	conn_ssl_drop(orphan);
+}
+
+SSL *io_conn_ssl_acquire(int fd)
+{
+	SSL *ssl = NULL;
+
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_ssl) {
+		ssl = connections[idx]->ci_ssl;
+		SSL_up_ref(ssl);
+	}
+	pthread_mutex_unlock(&conn_mutex);
+	return ssl;
+}
+
+void io_conn_ssl_release(SSL *ssl)
+{
+	/*
+	 * Drop a use-ref.  Not SSL_shutdown -- a use-ref holder finishing
+	 * with the object is a refcount event, not a protocol event; the
+	 * close_notify is queued once by conn_ssl_drop() at teardown.
+	 */
+	if (ssl)
+		SSL_free(ssl);
+}
+
+void io_conn_ssl_clear(int fd)
+{
+	SSL *ssl = NULL;
+
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd)
+		ssl = conn_ssl_detach_locked(connections[idx]);
+	pthread_mutex_unlock(&conn_mutex);
+
+	conn_ssl_drop(ssl);
+}
+
+bool io_conn_tls_snapshot(int fd, bool *tls_enabled, bool *handshaking)
+{
+	bool found = false;
+
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		if (tls_enabled)
+			*tls_enabled = connections[idx]->ci_tls_enabled;
+		if (handshaking)
+			*handshaking = connections[idx]->ci_tls_handshaking;
+		found = true;
+	}
+	pthread_mutex_unlock(&conn_mutex);
+	return found;
+}
+
+void io_conn_tls_set_state(int fd, bool tls_enabled, bool handshaking)
+{
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd) {
+		connections[idx]->ci_tls_enabled = tls_enabled;
+		connections[idx]->ci_tls_handshaking = handshaking;
+	}
 	pthread_mutex_unlock(&conn_mutex);
 }
