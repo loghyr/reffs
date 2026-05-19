@@ -11,6 +11,9 @@
 # which passes NPS=4 or NPS=8).
 #
 # Pre-conditions:
+#   - A LINUX host: this orchestrates privileged containers and
+#     --network=host PS listeners and uses iproute2 (`ip`).  It
+#     does not run on macOS / Docker Desktop.
 #   - reffs-dev image built (root Dockerfile, via `make image`).
 #   - benchmark_build-vol populated (this script runs the
 #     docker-compose `builder` service if not).
@@ -42,6 +45,17 @@ if ! [[ "$NPS" =~ ^[0-9]+$ ]] || [ "$NPS" -lt 1 ] || [ "$NPS" -gt 32 ]; then
     exit 1
 fi
 
+# This harness is Linux-host infrastructure.  Fail early and
+# clearly rather than dying with a cryptic exit 127 deep in a
+# pipeline if iproute2 is absent (the run-on-macOS-by-mistake case).
+if ! command -v ip >/dev/null 2>&1; then
+    echo "FAIL: this harness requires a Linux host -- iproute2"
+    echo "('ip') not found.  The bench topology uses privileged"
+    echo "containers and --network=host PS listeners; run it on a"
+    echo "Linux bench host (dreamer / garbo), not macOS."
+    exit 1
+fi
+
 # -- paths ------------------------------------------------------------
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -54,7 +68,7 @@ echo "[bringup] bringing up MDS + 10 DSes + $NPS PS(es)"
 
 # -- step 0: discover this host's LAN IP ------------------------------
 HOST_IP=$(ip -4 addr show 2>/dev/null | awk '/inet 192\./ {print $2; exit}' \
-              | cut -d/ -f1)
+              | cut -d/ -f1 || true)
 if [ -z "$HOST_IP" ]; then
     HOST_IP=127.0.0.1
 fi
@@ -226,6 +240,13 @@ for r in $(seq 0 $((NPS - 1))); do
         reffs-dev:latest \
         /shared/build/src/reffsd --config=/etc/ps.toml >/dev/null
     echo "[bringup] PS $r started -> $name (listener 127.0.0.1:$((4098 + r)))"
+    # Stagger PS startups.  Concurrent mTLS session establishment to
+    # the MDS races and most sessions fail with EIO -- a real
+    # mds_session_create_tls concurrency bug that Track 2 surfaced
+    # (tracked as INV-5 in .claude/design/experiments.md).  A few
+    # seconds between launches keeps each PS's STARTTLS handshake
+    # clear of the others' until that bug is fixed.
+    sleep 4
 done
 
 sleep 6

@@ -82,6 +82,17 @@ measurement step is a thin add-on.
 
 ---
 
+## Group C: bugs surfaced by the harnesses
+
+Findings the validation harnesses turned up -- the payoff of
+running them.  Each is a real defect, tracked here until fixed.
+
+| ID | Defect | Surfaced by | Status |
+|----|--------|-------------|--------|
+| **INV-5** | Concurrent mTLS session establishment from multiple PSes to one MDS races `mds_session_create_tls` and most sessions fail with `EIO` (`Input/output error -- listener stays dark`).  With 4 PSes cold-starting together, Track 2 runs lost 1-of-4 and 3-of-4 sessions on two of three attempts. | Track 2 ([`chunk-collision-track2.md`](chunk-collision-track2.md)), 2026-05-19 | **OPEN.**  Harness staggered (`run-ps-bench-bringup.sh`, 4 s between PS launches) as a stopgap so Track 2 can proceed.  Real fix -- making `mds_session_create_tls` / the MDS TLS-accept path concurrency-safe -- is a separate slice.  Also bites production PSes reconnecting together after an MDS restart. |
+
+---
+
 ## How the groups connect
 
 The chunk-collision harnesses (Group A) were built to find
