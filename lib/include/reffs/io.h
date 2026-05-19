@@ -129,7 +129,21 @@ enum conn_state {
 	CONN_WRITING, // Socket writing in progress
 	CONN_READWRITE, // Socket with both read and write in progress
 	CONN_DISCONNECTING, // In the process of disconnecting
-	CONN_ERROR // Connection in error state
+	CONN_ERROR, // Connection in error state
+	/*
+	 * Slot unregistered but in-flight ops (read/write/accept/connect
+	 * counts, write gate) have not yet drained.  Set by
+	 * io_conn_unregister; transitions to CONN_UNUSED once every count
+	 * decrements to zero and the write gate is idle.  Lookups via
+	 * io_conn_get / io_conn_tls_snapshot fail while CLOSING so callers
+	 * see the slot as gone, but the underlying counters keep being
+	 * decremented by stale CQEs landing -- which is the whole point:
+	 * a slot must not be reused for a new fd until those CQEs drain,
+	 * otherwise an old completion would corrupt the new connection's
+	 * state.  io_conn_register on a CLOSING slot returns NULL so the
+	 * accept path can retry.  Stage 3 Slice 4 (INV-6).
+	 */
+	CONN_CLOSING
 };
 
 enum conn_role {
