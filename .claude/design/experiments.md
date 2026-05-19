@@ -31,7 +31,7 @@ the same chunk from distinct NFSv4.2 clientids.  Master design:
 |----|--------------|--------|--------|
 | **T1** | N concurrent `ec_demo write/verify` instances, one MDS file, distinct `--id` per writer | `chunk-collision-validation.md` | **SHIPPED** -- harness `deploy/benchmark/run_chunk_collision.sh`; per-sb chunk counters + probe surface landed (BLOCKER 2); reviewer verdict #2 done |
 | **T1b** | `ec_demo --offset/--length` partial-range writes -- sub-chunk byte interleave | `chunk-collision-validation.md` (Track 1b) | **PLANNED** -- ~150 LOC `ec_demo` extension; not started |
-| **T2** | `IOR -F 0 -W -R -C` via N Proxy Server containers; N PSes = N clientids on one shared MDS file | [`chunk-collision-track2.md`](chunk-collision-track2.md) | **DESIGNED** -- harness `deploy/benchmark/run_chunk_collision_track2.sh` written; `reffs-dev` image rebuilt with IOR/MPI/nfs-utils (2026-05-19); pending first end-to-end run |
+| **T2** | IOR shared-file write+verify via N Proxy Server containers; N PSes = N clientids on one shared MDS file | [`chunk-collision-track2.md`](chunk-collision-track2.md) | **IN PROGRESS** -- harness + image done; staggered bringup verified clean; run 4 (2026-05-19) reached IOR but IOR write+verify fails in the PS proxy path -- see INV-6 |
 | **T3** | Linux NFS client direct-to-MDS, as a no-EC-conflict sanity baseline | `chunk-collision-validation.md` (Track 3) | **PARTIAL** -- covered by existing CI git-clone-over-NFS |
 
 ---
@@ -90,6 +90,28 @@ running them.  Each is a real defect, tracked here until fixed.
 | ID | Defect | Surfaced by | Status |
 |----|--------|-------------|--------|
 | **INV-5** | Concurrent mTLS session establishment from multiple PSes to one MDS races `mds_session_create_tls` and most sessions fail with `EIO` (`Input/output error -- listener stays dark`).  With 4 PSes cold-starting together, Track 2 runs lost 1-of-4 and 3-of-4 sessions on two of three attempts. | Track 2 ([`chunk-collision-track2.md`](chunk-collision-track2.md)), 2026-05-19 | **OPEN.**  Harness staggered (`run-ps-bench-bringup.sh`, 4 s between PS launches) as a stopgap so Track 2 can proceed.  Real fix -- making `mds_session_create_tls` / the MDS TLS-accept path concurrency-safe -- is a separate slice.  Also bites production PSes reconnecting together after an MDS restart. |
+| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **OPEN.**  Suspects: COMMIT-through-proxy (the `fsync`) and/or cross-PS GETATTR visibility -- a file written via PS 0 then `stat`'d via PS 3.  Needs the PS + MDS container logs from the run (the harness leaves the containers up).  Distinct from INV-5, which was bringup-time. |
+
+### INV-5 characterization (2026-05-19, first dig)
+
+From `mds_session_create_tls` (`lib/nfs4/client/mds_session.c:1018`):
+
+- The 4 PSes are separate processes -- INV-5 is **not** a
+  shared-memory race within one reffsd.
+- The TLS *transport* comes up: `mds_session_clnt_open_tls`
+  returns a non-NULL client (a handshake failure there returns
+  `-ECONNREFUSED`, not the observed `-EIO`).
+- The `-EIO` propagates out of `mds_exchange_id()` or
+  `mds_create_session()` -- the **first RPC(s) over the freshly
+  established TLS session fail**, not the handshake itself.
+- So under N concurrent STARTTLS connects the TLS session
+  establishes but EXCHANGE_ID / CREATE_SESSION over it dies.
+  Prime suspect: the **MDS-side RPC-over-TLS accept path**
+  (`lib/io/tls.c` plus the io_uring accept loop) racing
+  per-connection TLS state when several handshakes land at once.
+
+Root-causing the MDS accept path -- and the fix -- is a separate
+slice; this records the finding and the first dig.
 
 ---
 
