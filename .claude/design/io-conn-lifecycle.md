@@ -414,6 +414,29 @@ State machine for Slice 4 (`CONN_CLOSING`):
 retries) rather than reusing it; on `CONN_UNUSED` it reuses as
 today.
 
+## Stage 4 Track 2 run 6 (Slice 3 live, 2026-05-19)
+
+Run 6 ran the same harness with Slices 1, 2 and 3 all live.  INV-6
+narrows again -- 1 of 4 PSes broke vs 2 in run 5 and 4 in run 4 --
+but IOR still aborts at `fsync(15) failed`.  Critically, the
+per-thread log timeline (in `.claude/design/experiments.md` under
+"Track 2 run 6 timeline") shows the PS sees EIO BEFORE any
+close_notify, and the MDS's `Connection not tracked for fd=N`
+fires 15 ms BEFORE the SSL error.  The original hypothesis (SSL
+state-machine race) was plausible but wrong as a *primary* cause;
+the data points at fd-lifecycle, not SSL state.
+
+Implications for Slice 3:
+
+- Slice 3 still contributes -- the affected-PS count is monotonic
+  4 -> 2 -> 1, and zero ASAN/UBSAN persists -- so the
+  serialisation gate did remove some amplification path.  Keep
+  it; do not revert.
+- Slice 3 does NOT close INV-6.  Slice 4 (CONN_CLOSING +
+  generation extension) directly targets the
+  `Connection not tracked for fd=N` symptom and is the natural
+  next slice.
+
 ## Stage 4 Track 2 re-run (2026-05-19): Slice 1 effect
 
 Track 2 re-ran on dreamer (`NPS=4`) once Slices 1 and 2 were
