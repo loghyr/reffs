@@ -1,0 +1,206 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# krb5_ffv1_stress.sh -- N krb5 NFSv4.2 clients against an external
+# Flex Files v1 server, via ec_demo.
+#
+# Distinct from ci_krb5_multiclient.sh: that one stands up a reffsd
+# and an embedded KDC for self-contained CI.  This one assumes the
+# NFSv4.2 server and the KDC already exist (it provisions nothing),
+# and drives the FFv1 layout path -- LAYOUTGET + direct DS I/O via
+# ec_demo -- because the intended target does not proxy inbound I/O.
+#
+# See .claude/design/krb5-ffv1-stress.md for the design rationale
+# and docs/krb5-multiclient-testing.md for QA-facing instructions.
+
+set -euo pipefail
+
+server=
+path_dir=
+clients=
+principals=
+ec_demo=./build/tools/ec_demo
+local_input=
+size=$((10 * 1024 * 1024))
+k=4
+m=2
+codec=rs
+sec=krb5
+
+usage() {
+	cat >&2 <<'EOF'
+Usage: krb5_ffv1_stress.sh --server <host[:port]>
+                           --path <dir-on-server>
+                           --clients <N>
+                           --principals <file>
+                           [--ec-demo <path>]   (default ./build/tools/ec_demo)
+                           [--input <file>]    (else generate --size of urandom)
+                           [--size <bytes>]    (default 10 MB)
+                           [--k <K>] [--m <M>] (default 4+2)
+                           [--codec rs|mojette-sys|mojette-nonsys|stripe]
+                           [--sec krb5|krb5i|krb5p]   (default krb5)
+
+Drives N krb5-authenticated NFSv4.2 clients at an external FFv1
+server.  Each worker runs:
+    ec_demo verify --mds <server> --file <path>/krb5stress_<i> ...
+which writes a file, reads it back, and compares -- one invocation
+exercises the full FFv1 layout path (LAYOUTGET + DS I/O) per worker.
+
+The script does NOT provision the server, the KDC, or the AD users.
+--principals is a file of "<principal> <password>" lines, one per
+worker, principals fully qualified (user@REALM); blank lines and
+'#' comments are ignored.  The script kinit's each principal into
+its own credential cache and points the corresponding worker at it.
+
+The test host must be configured so its sssd/idmap resolves the
+realm's users to distinct uids -- otherwise the server side sees
+every worker as nobody.  See docs/krb5-multiclient-testing.md.
+
+Exit 0 = every worker PASS; 1 = one or more workers failed (failing
+workers' log tails are dumped to stderr and the run directory is
+kept for inspection).
+EOF
+}
+
+die() {
+	echo "FATAL: $*" >&2
+	exit 1
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--server) server=$2; shift 2 ;;
+	--path) path_dir=$2; shift 2 ;;
+	--clients) clients=$2; shift 2 ;;
+	--principals) principals=$2; shift 2 ;;
+	--ec-demo) ec_demo=$2; shift 2 ;;
+	--input) local_input=$2; shift 2 ;;
+	--size) size=$2; shift 2 ;;
+	--k) k=$2; shift 2 ;;
+	--m) m=$2; shift 2 ;;
+	--codec) codec=$2; shift 2 ;;
+	--sec) sec=$2; shift 2 ;;
+	-h | --help) usage; exit 0 ;;
+	*) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
+	esac
+done
+
+[ -n "$server" ]      || { usage; die "--server is required"; }
+[ -n "$path_dir" ]    || { usage; die "--path is required"; }
+[ -n "$clients" ]     || { usage; die "--clients is required"; }
+[ -n "$principals" ]  || { usage; die "--principals is required"; }
+[[ "$clients" =~ ^[0-9]+$ ]] || die "--clients must be a positive integer"
+[ "$clients" -ge 1 ]  || die "--clients must be >= 1"
+[ -x "$ec_demo" ]     || die "ec_demo not executable: $ec_demo"
+[ -r "$principals" ]  || die "principals file not readable: $principals"
+command -v kinit >/dev/null 2>&1 || die "kinit not in PATH"
+
+# --------------------------------------------------------------------
+# Read the principals file.
+
+declare -a princ_names princ_pws
+while read -r name pw rest; do
+	case "$name" in '' | '#'*) continue ;; esac
+	[ -n "$pw" ] || die "malformed principals line (no password): $name"
+	princ_names+=("$name")
+	princ_pws+=("$pw")
+done <"$principals"
+
+[ "${#princ_names[@]}" -ge "$clients" ] ||
+	die "principals file has ${#princ_names[@]} identities, need $clients"
+
+# --------------------------------------------------------------------
+# Per-run private directory (ccaches + per-worker logs + local input).
+
+run_dir=$(mktemp -d /tmp/krb5_ffv1_stress.XXXXXX)
+keep_dir=0
+cleanup() {
+	if [ "$keep_dir" -eq 0 ]; then
+		rm -rf "$run_dir"
+	else
+		echo "krb5_ffv1_stress: run dir kept: $run_dir" >&2
+	fi
+}
+trap cleanup EXIT
+
+# Local input: --input given, or generate --size bytes from urandom.
+if [ -n "$local_input" ]; then
+	[ -r "$local_input" ] || die "--input not readable: $local_input"
+else
+	local_input=$run_dir/input.bin
+	# head -c is portable across Linux and macOS.
+	head -c "$size" /dev/urandom >"$local_input" ||
+		die "could not generate $size bytes of input"
+fi
+
+# --------------------------------------------------------------------
+# kinit each principal into its own credential cache.
+
+cc_dir=$run_dir/ccaches
+mkdir -p "$cc_dir"
+for ((i = 0; i < clients; i++)); do
+	cc=$cc_dir/cc_$i
+	# Password on stdin, not on the command line (so it doesn't show
+	# in ps).  printf '%s' avoids a trailing newline.
+	if ! printf '%s' "${princ_pws[$i]}" |
+		kinit -c "$cc" "${princ_names[$i]}" 2>/dev/null; then
+		keep_dir=1
+		die "kinit failed for ${princ_names[$i]} (cc=$cc)"
+	fi
+done
+
+# --------------------------------------------------------------------
+# Fork N workers.
+
+log_dir=$run_dir/logs
+mkdir -p "$log_dir"
+path_dir=${path_dir%/}  # strip trailing slash, if any
+
+declare -a pids
+for ((i = 0; i < clients; i++)); do
+	(
+		export KRB5CCNAME=$cc_dir/cc_$i
+		exec "$ec_demo" verify \
+			--mds "$server" \
+			--file "$path_dir/krb5stress_$i" \
+			--input "$local_input" \
+			--sec "$sec" \
+			--layout v1 \
+			--codec "$codec" \
+			--k "$k" \
+			--m "$m" \
+			--id "krb5stress_$i" \
+			>"$log_dir/worker_$i.log" 2>&1
+	) &
+	pids+=("$!")
+done
+
+# --------------------------------------------------------------------
+# Collect.
+
+passed=0
+failed=0
+failed_idxs=()
+for ((i = 0; i < clients; i++)); do
+	if wait "${pids[$i]}"; then
+		passed=$((passed + 1))
+	else
+		failed=$((failed + 1))
+		failed_idxs+=("$i")
+	fi
+done
+
+if [ "$failed" -eq 0 ]; then
+	echo "PASS $passed/$clients krb5 FFv1 clients (server=$server)"
+	exit 0
+fi
+
+# Failure: keep the run dir, dump each failing worker's log tail.
+keep_dir=1
+echo "FAIL $passed/$clients krb5 FFv1 clients ($failed failed)" >&2
+for idx in "${failed_idxs[@]}"; do
+	echo "----- worker $idx (${princ_names[$idx]}) -----" >&2
+	tail -n 40 "$log_dir/worker_$idx.log" >&2
+done
+exit 1

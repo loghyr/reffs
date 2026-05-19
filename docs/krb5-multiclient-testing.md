@@ -218,6 +218,73 @@ non-empty. To assert it exactly:
    showing up owned by `nobody`, which means the server's identity
    mapping is wrong for that principal.
 
+## Stressing an external FFv1 server (any NFSv4.2 server)
+
+The modes above stand up reffs themselves and stress it.  If you
+want to point N krb5 clients at an **already-running** NFSv4.2
+server that issues Flex Files v1 layouts -- for instance, the AD-
+joined NFS server in your QA environment -- use the companion
+script:
+
+```
+scripts/krb5_ffv1_stress.sh
+```
+
+It does not provision the server, the KDC, or the users.  It just
+`kinit`s N principals you supply, launches N `ec_demo verify`
+instances in parallel (each as a distinct krb5 identity, hitting
+the FFv1 layout path -- `LAYOUTGET` + direct DS I/O -- exactly the
+workload the server is designed for), and tallies pass / fail.
+
+### What you provide
+
+- a reffs build with `./build/tools/ec_demo`,
+- the server's `host[:port]`,
+- a directory path on the server the workers can write into,
+- a *principals* file: one `<principal> <password>` per line,
+  principals fully qualified (`user@REALM`); blank lines and `#`
+  comments are ignored.
+
+You also need `kinit` on the test host and a reachable krb5 realm
+(your AD or MIT KDC).  The script does not install or configure
+those.
+
+### Running it
+
+```sh
+./scripts/krb5_ffv1_stress.sh \
+    --server nfs.example.com \
+    --path /your/share/stress \
+    --clients 8 \
+    --principals /path/to/principals.txt
+```
+
+Each of the 8 workers writes `/your/share/stress/krb5stress_<i>`,
+reads it back, and compares -- exiting 0 on a clean round trip.
+The script exits `PASS N/N` or `FAIL k/N (m failed)`; on any
+failure it keeps its run directory and dumps each failing worker's
+log tail to stderr.
+
+Useful options: `--size <bytes>` (default 10 MB), `--k <K> --m <M>`
+(EC geometry; default 4+2), `--codec rs|mojette-sys|mojette-nonsys|stripe`,
+`--ec-demo <path>` if your build is elsewhere.  `--help` lists the
+full set.
+
+### The precondition (server side)
+
+NFSv4 with krb5 maps a principal to a Unix uid **on the server**, so
+for N distinct krb5 clients to appear as N distinct file owners the
+**server's** sssd/idmap must resolve your realm's users into
+distinct uids.  For AD, that's typically the server host AD-joined
+with sssd configured `ldap_id_mapping = False` so it reads AD's
+`uidNumber` / `gidNumber` attributes.  If that is not the case the
+test still runs and each worker still verifies its own data, but
+every file lands owned by the server's "nobody" uid -- you are no
+longer stressing per-identity handling.
+
+Treat the principals file as a credential: mode `0600`, never
+commit it.
+
 ## Troubleshooting
 
 **The run failed — where do I look?**
