@@ -222,11 +222,6 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		compound->c_curr_sb ? &compound->c_curr_sb->sb_chunk_stats :
 				      NULL;
 
-	/* INV-1 diag: confirm cstats path is reached on the DS. */
-	TRACE("INV1_DIAG: chunk_write nchunks=%u c_curr_sb=%p cstats=%p sb_id=%lu",
-	      nchunks, (void *)compound->c_curr_sb, (void *)cstats,
-	      compound->c_curr_sb ? compound->c_curr_sb->sb_id : 0UL);
-
 	/* Record per-block metadata.  Last block may be smaller. */
 	for (uint32_t i = 0; i < nchunks; i++) {
 		uint32_t blk_size = chunk_size;
