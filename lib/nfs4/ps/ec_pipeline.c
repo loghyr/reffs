@@ -1665,9 +1665,22 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 		return -EINVAL;
 	}
 
-	if (nskip > m) {
-		ec_log("ec_read: skip_ds_mask has %d bits set, need <= m=%d\n",
-		       nskip, m);
+	/*
+	 * Loss tolerance is codec-shaped:
+	 *   - MIRROR replicates data[0] across all k mirrors; any single
+	 *     surviving shard reconstructs.  Tolerate up to k-1 losses.
+	 *   - Every other codec is erasure-coded (RS / Mojette / STRIPE)
+	 *     and follows the usual "tolerate at most m losses" rule.
+	 * Using one rule for both shapes (the old `nskip > m` gate)
+	 * rejected legitimate degraded reads on MIRROR layouts where
+	 * m == 0 by construction.
+	 */
+	int max_loss = (codec_type == EC_CODEC_MIRROR) ? (k - 1) : m;
+
+	if (nskip > max_loss) {
+		ec_log("ec_read: skip_ds_mask has %d bits set, "
+		       "need <= %d for codec=%d (k=%d, m=%d)\n",
+		       nskip, max_loss, (int)codec_type, k, m);
 		return -EINVAL;
 	}
 
