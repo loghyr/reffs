@@ -725,7 +725,7 @@ static void usage(void)
 		"  --delete-first   Remove file before bigfile write"
 		" (forces fresh inode)\n"
 		"  --codec TYPE     Codec: rs (default), mojette-sys,"
-		" mojette-nonsys, stripe\n"
+		" mojette-nonsys, stripe, mirror\n"
 		"  --id ID          Client identity (default: PID)."
 		" Unique per concurrent instance.\n"
 		"  --layout TYPE    Layout: v1 (default, NFSv3 DS),"
@@ -853,6 +853,8 @@ int main(int argc, char *argv[])
 				codec_type = EC_CODEC_MOJETTE_NONSYS;
 			else if (strcmp(optarg, "stripe") == 0)
 				codec_type = EC_CODEC_STRIPE;
+			else if (strcmp(optarg, "mirror") == 0)
+				codec_type = EC_CODEC_MIRROR;
 			else {
 				fprintf(stderr, "ec_demo: unknown codec '%s'\n",
 					optarg);
@@ -977,8 +979,11 @@ int main(int argc, char *argv[])
 		return cmd_check(mds_host, nfs_file, local_input, layout_type);
 	}
 
-	/* EC commands need valid k/m.  Stripe allows m=0. */
-	int m_min = (codec_type == EC_CODEC_STRIPE) ? 0 : 1;
+	/* EC commands need valid k/m.  Stripe and mirror allow m=0. */
+	int m_min = (codec_type == EC_CODEC_STRIPE ||
+		     codec_type == EC_CODEC_MIRROR) ?
+			    0 :
+			    1;
 
 	if (k < 1 || m < m_min || k + m > 255) {
 		fprintf(stderr, "ec_demo: invalid k=%d m=%d\n", k, m);

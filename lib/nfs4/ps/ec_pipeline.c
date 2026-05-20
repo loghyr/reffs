@@ -376,6 +376,25 @@ static struct ec_codec *ec_create_codec(int k, int m,
 		return ec_mojette_nonsys_create(k, m);
 	case EC_CODEC_STRIPE:
 		return ec_stripe_create(k);
+	case EC_CODEC_MIRROR:
+		/*
+		 * Wire-side: FFV2_ENCODING_MIRRORED, N replicas, no
+		 * parity.  The codec itself is sound -- encode
+		 * replicates data[0] verbatim, decode picks any
+		 * present shard -- but the pipeline write / read
+		 * paths still assume the striped data layout used
+		 * by the (k, m) codecs (each data[i] pointed at a
+		 * different offset in a padded source buffer).
+		 * For MIRRORED, every data[i] must point at the
+		 * SAME offset, and reads must skip the (k-1) of N
+		 * sibling replicas once one verifies.  That wiring
+		 * is the next slice; until then we expose the
+		 * factory entry (so the codec is reachable from
+		 * tests and from the CLI) and gate the pipeline
+		 * write / read paths against MIRRORED above so we
+		 * never silently mis-stripe across replicas.
+		 */
+		return ec_mirror_create(k);
 	default:
 		return NULL;
 	}
@@ -705,6 +724,23 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 		 * for caller-passed garbage.
 		 */
 		return -EINVAL;
+	}
+
+	if (codec_type == EC_CODEC_MIRROR) {
+		/*
+		 * The MIRROR codec exists in the factory (see
+		 * ec_create_codec) but the pipeline's striped data
+		 * layout writes each data[i] to a different file
+		 * offset, which would silently fan k different
+		 * stripe slices to the supposedly-replicated
+		 * mirrors.  Refuse here until the pipeline learns
+		 * to lay every data[i] at the SAME offset for
+		 * MIRRORED.  Tracking: pipeline integration for
+		 * FFV2_ENCODING_MIRRORED.
+		 */
+		ec_log("ec_write_with_file: EC_CODEC_MIRROR pipeline "
+		       "integration not yet wired\n");
+		return -ENOSYS;
 	}
 
 	memset(&ctx, 0, sizeof(ctx));
@@ -1587,6 +1623,13 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	if (shard_size == 0 || (shard_size % sizeof(uint64_t)) != 0 ||
 	    shard_size > EC_SHARD_SIZE_MAX)
 		return -EINVAL;
+
+	if (codec_type == EC_CODEC_MIRROR) {
+		/* Same gate as the write path; see comment there. */
+		ec_log("ec_read_with_file: EC_CODEC_MIRROR pipeline "
+		       "integration not yet wired\n");
+		return -ENOSYS;
+	}
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;

@@ -116,6 +116,19 @@ struct ec_codec *ec_mojette_nonsys_create(int k, int m);
 struct ec_codec *ec_stripe_create(int k);
 
 /*
+ * ec_mirror_create -- create a mirror codec (N replicas, no parity).
+ *
+ * k: number of replicas (1..255).  m is implicitly 0.
+ *
+ * Encode replicates data[0] verbatim into data[1..k-1]; decode
+ * picks any present shard and copies it into the missing slots.
+ * Wire-side this is the client codec for the FFv2 layout type's
+ * FFV2_ENCODING_MIRRORED encoding (see draft-haynes-nfsv4-flexfiles-v2
+ * section sec-encoding-mirrored).
+ */
+struct ec_codec *ec_mirror_create(int k);
+
+/*
  * ec_codec_destroy -- release a codec and all internal state.
  */
 void ec_codec_destroy(struct ec_codec *codec);
