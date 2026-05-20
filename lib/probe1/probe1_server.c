@@ -902,6 +902,12 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 	/* Chunk activity counters. */
 	const struct reffs_chunk_stats *cs = &sb->sb_chunk_stats;
 
+	LOG("INV1_DIAG_READ: reading sb=%p sb_id=%lu &cs_writes=%p cs_writes=%llu",
+	    (const void *)sb, (unsigned long)sb->sb_id,
+	    (const void *)&cs->cs_writes,
+	    (unsigned long long)atomic_load_explicit(&cs->cs_writes,
+						     memory_order_relaxed));
+
 	psi->psi_chunk_stats.pcs_writes =
 		atomic_load_explicit(&cs->cs_writes, memory_order_relaxed);
 	psi->psi_chunk_stats.pcs_pending_displaced = atomic_load_explicit(
