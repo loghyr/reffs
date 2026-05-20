@@ -949,10 +949,6 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 		&cs->cs_writes_32plus, memory_order_relaxed);
 	psi->psi_chunk_stats.pcs_fragmentation_runs = 0;
 
-	LOG("INV1_DIAG_PSI: after-assign psi=%p pcs_writes=%llu pcs_blocks_full=%llu",
-	    (void *)psi, (unsigned long long)psi->psi_chunk_stats.pcs_writes,
-	    (unsigned long long)psi->psi_chunk_stats.pcs_blocks_full);
-
 	/* Per-client export rules. */
 	unsigned int nr = sb->sb_nclient_rules;
 
