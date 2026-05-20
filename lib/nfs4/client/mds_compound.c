@@ -14,12 +14,11 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <rpc/rpc.h>
-
-#include "reffs/log.h"
 
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
@@ -207,13 +206,15 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 		 */
 		struct rpc_err rerr;
 		clnt_geterr(ms->ms_clnt, &rerr);
-		LOG("mds_compound_send: clnt_call returned rpc_stat=%d (%s) "
-		    "re_status=%d re_errno=%d tag=%.*s",
-		    (int)rpc_stat, clnt_sperrno(rpc_stat), (int)rerr.re_status,
-		    rerr.re_errno, (int)mc->mc_args.tag.utf8string_len,
-		    mc->mc_args.tag.utf8string_val ?
-			    mc->mc_args.tag.utf8string_val :
-			    "");
+		fprintf(stderr,
+			"mds_compound_send: clnt_call returned rpc_stat=%d (%s) "
+			"re_status=%d re_errno=%d tag=%.*s\n",
+			(int)rpc_stat, clnt_sperrno(rpc_stat),
+			(int)rerr.re_status, rerr.re_errno,
+			(int)mc->mc_args.tag.utf8string_len,
+			mc->mc_args.tag.utf8string_val ?
+				mc->mc_args.tag.utf8string_val :
+				"");
 		ret = -EIO;
 		goto out;
 	}
