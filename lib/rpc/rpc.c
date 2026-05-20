@@ -667,7 +667,7 @@ void rpc_log_packet(const char *prefix, const void *data, size_t len)
 				ptr += sprintf(ptr, "   ");
 		}
 
-		TRACE("%s%s", prefix, line);
+		LOG("%s%s", prefix, line); /* DIAG: was TRACE */
 	}
 }
 
