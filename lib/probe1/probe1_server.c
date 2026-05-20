@@ -898,6 +898,32 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 	psi->psi_chunk_stats.pcs_fences_rotated = atomic_load_explicit(
 		&cs->cs_fences_rotated, memory_order_relaxed);
 
+	/*
+	 * INV-1 partial-stripe write counters
+	 * (.claude/design/inv1-ds-instrumentation.md).  pcs_fragmentation_runs
+	 * stays 0 in this slice -- chunk_store_count_runs() exists and is
+	 * unit-tested, but wiring it here would require taking the inode lock
+	 * for every inode in the sb and that needs a per-inode probe op.
+	 * Deferred to a follow-up slice that adds INODE_CHUNK_STATS.
+	 */
+	psi->psi_chunk_stats.pcs_blocks_full =
+		atomic_load_explicit(&cs->cs_blocks_full, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_blocks_partial = atomic_load_explicit(
+		&cs->cs_blocks_partial, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_blocks_first_write = atomic_load_explicit(
+		&cs->cs_blocks_first_write, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_blocks_overwrite = atomic_load_explicit(
+		&cs->cs_blocks_overwrite, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_writes_1block = atomic_load_explicit(
+		&cs->cs_writes_1block, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_writes_2to7 =
+		atomic_load_explicit(&cs->cs_writes_2to7, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_writes_8to31 = atomic_load_explicit(
+		&cs->cs_writes_8to31, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_writes_32plus = atomic_load_explicit(
+		&cs->cs_writes_32plus, memory_order_relaxed);
+	psi->psi_chunk_stats.pcs_fragmentation_runs = 0;
+
 	/* Per-client export rules. */
 	unsigned int nr = sb->sb_nclient_rules;
 

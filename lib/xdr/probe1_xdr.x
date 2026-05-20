@@ -291,6 +291,20 @@ struct probe_chunk_stats1 {
 	unsigned hyper		pcs_rollback_invoked;
 	unsigned hyper		pcs_repair_initiated;
 	unsigned hyper		pcs_fences_rotated;
+	/*
+	 * INV-1 partial-stripe write instrumentation (appended for
+	 * wire compat; probe is internal-only, client+server ship
+	 * together).  See .claude/design/inv1-ds-instrumentation.md.
+	 */
+	unsigned hyper		pcs_blocks_full;
+	unsigned hyper		pcs_blocks_partial;
+	unsigned hyper		pcs_blocks_first_write;
+	unsigned hyper		pcs_blocks_overwrite;
+	unsigned hyper		pcs_writes_1block;
+	unsigned hyper		pcs_writes_2to7;
+	unsigned hyper		pcs_writes_8to31;
+	unsigned hyper		pcs_writes_32plus;
+	unsigned hyper		pcs_fragmentation_runs;
 };
 
 struct probe_sb_info1 {

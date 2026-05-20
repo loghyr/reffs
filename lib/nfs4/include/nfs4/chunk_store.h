@@ -200,6 +200,24 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino);
 void chunk_store_destroy(struct chunk_store *cs);
 
 /*
+ * chunk_store_count_runs -- count contiguous runs of non-EMPTY
+ * blocks separated by EMPTY gaps.
+ *
+ * INV-1 fragmentation measurement (see
+ * .claude/design/inv1-ds-instrumentation.md).  A defragmented
+ * file is one run; a shared-file workload with interleaved
+ * writes from multiple writers produces many more.
+ *
+ * Caller must hold the owning inode's i_attr_mutex (matches the
+ * convention for every other chunk_store_* function -- the cs
+ * array can be grown by chunk_store_write, so a lock-free reader
+ * would race a concurrent grow).
+ *
+ * Returns the run count.  An empty store returns 0.
+ */
+uint64_t chunk_store_count_runs(const struct chunk_store *cs);
+
+/*
  * chunk_rollback_for_client -- server-wide sweep.
  *
  * For every inode in every superblock, transition any PENDING or

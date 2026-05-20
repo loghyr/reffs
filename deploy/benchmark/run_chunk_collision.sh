@@ -22,7 +22,13 @@
 #   run_chunk_collision.sh [--n N] [--codec rs|mojette-sys|mojette-nonsys]
 #                          [--layout v1|v2] [--size BYTES]
 #                          [--iterations N] [--mds HOST]
-#                          [--ec_demo PATH]
+#                          [--ec_demo PATH] [--inv1-report] [--probe PATH]
+#
+# --inv1-report: after the workload, query the per-sb chunk-activity
+# counters and print a quotable summary of the partial-stripe write
+# pattern the DSes saw.  Backs the INV-1 measurement promised on the
+# IETF nfsv4 WG list (Hellwig msg 5 + msg 9).  See
+# .claude/design/inv1-ds-instrumentation.md.
 
 set -euo pipefail
 
@@ -33,6 +39,8 @@ SIZE=$((4 * 1024 * 1024))   # 4 MiB
 ITER=20
 MDS="reffs-mds"
 EC_DEMO=""
+INV1_REPORT=0
+PROBE=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -43,6 +51,8 @@ while [[ $# -gt 0 ]]; do
 		--iterations) ITER="$2";       shift 2 ;;
 		--mds)        MDS="$2";        shift 2 ;;
 		--ec_demo)    EC_DEMO="$2";    shift 2 ;;
+		--inv1-report) INV1_REPORT=1;  shift   ;;
+		--probe)      PROBE="$2";      shift 2 ;;
 		-h|--help)
 			grep '^# ' "$0" | sed 's/^# \{0,1\}//'
 			exit 0 ;;
@@ -184,6 +194,62 @@ echo ""
 echo "=== summary ==="
 echo "  iterations:    ${ITER}"
 echo "  corruptions:   ${corrupt}"
+
+# --- INV-1 report (.claude/design/inv1-ds-instrumentation.md) ---
+# Quotable two-block summary of what the DSes actually saw during the
+# workload.  Answers Hellwig's partial-stripe-write question with
+# numbers pulled from the per-sb chunk-activity counters.
+if (( INV1_REPORT )); then
+	if [[ -z "${PROBE}" ]]; then
+		for cand in /shared/build/scripts/reffs-probe.py \
+			    /reffs/build/scripts/reffs-probe.py \
+			    /usr/local/bin/reffs-probe.py \
+			    reffs-probe.py; do
+			if command -v "${cand}" >/dev/null 2>&1; then
+				PROBE="${cand}"
+				break
+			fi
+		done
+	fi
+	if [[ -z "${PROBE}" ]] || ! command -v "${PROBE}" >/dev/null 2>&1; then
+		echo ""
+		echo "  INV-1 report: reffs-probe.py not found (pass --probe PATH)"
+	else
+		echo ""
+		echo "=== INV-1 partial-stripe write pattern (DS view) ==="
+		# Filter sb-list output to the chunk-activity lines.  Each SB
+		# with non-zero activity prints a "Chunks:" block; pull the
+		# INV-1 fields verbatim.  The Track 1 harness drives a single
+		# MDS namespace so only one SB lights up, but we sum to be
+		# safe under future multi-export topologies.
+		"${PROBE}" --host "${MDS}" sb-list 2>/dev/null \
+			| awk '
+				/^  Chunks:/         { in_chunks = 1; next }
+				/^[^ ]/              { in_chunks = 0 }
+				/^  [^ ]/            { in_chunks = 0 }
+				in_chunks && /blocks_full:/         { full         += $2 }
+				in_chunks && /blocks_partial:/      { partial      += $2 }
+				in_chunks && /blocks_first_write:/  { first        += $2 }
+				in_chunks && /blocks_overwrite:/    { overwrite    += $2 }
+				in_chunks && /writes_1block:/       { w1           += $2 }
+				in_chunks && /writes_2to7:/         { w27          += $2 }
+				in_chunks && /writes_8to31:/        { w831         += $2 }
+				in_chunks && /writes_32plus:/       { w32          += $2 }
+				in_chunks && /pending_displaced:/   { displaced    += $2 }
+				END {
+				    printf("  full / partial blocks:       %d / %d\n",
+				           full, partial)
+				    printf("  first-write / overwrite:     %d / %d\n",
+				           first, overwrite)
+				    printf("  writes by batch (1/2-7/8-31/32+): %d / %d / %d / %d\n",
+				           w1, w27, w831, w32)
+				    printf("  cs_pending_displaced (collision proof): %d\n",
+				           displaced)
+				    printf("  (fragmentation_runs: deferred to INODE_CHUNK_STATS probe op)\n")
+				}'
+	fi
+fi
+
 if (( corrupt > 0 )); then
 	echo "  workdir kept:  ${WORKDIR}"
 	trap - EXIT

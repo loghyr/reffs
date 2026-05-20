@@ -691,6 +691,18 @@ def sb_get_cmd(client, args):
             ('rollback_invoked', cs.pcs_rollback_invoked),
             ('repair_initiated', cs.pcs_repair_initiated),
             ('fences_rotated', cs.pcs_fences_rotated),
+            # INV-1 partial-stripe write instrumentation
+            # (.claude/design/inv1-ds-instrumentation.md).
+            ('blocks_full', getattr(cs, 'pcs_blocks_full', 0)),
+            ('blocks_partial', getattr(cs, 'pcs_blocks_partial', 0)),
+            ('blocks_first_write', getattr(cs, 'pcs_blocks_first_write', 0)),
+            ('blocks_overwrite', getattr(cs, 'pcs_blocks_overwrite', 0)),
+            ('writes_1block', getattr(cs, 'pcs_writes_1block', 0)),
+            ('writes_2to7', getattr(cs, 'pcs_writes_2to7', 0)),
+            ('writes_8to31', getattr(cs, 'pcs_writes_8to31', 0)),
+            ('writes_32plus', getattr(cs, 'pcs_writes_32plus', 0)),
+            ('fragmentation_runs',
+             getattr(cs, 'pcs_fragmentation_runs', 0)),
         )
         if any(v for _, v in fields):
             print("  Chunks:")

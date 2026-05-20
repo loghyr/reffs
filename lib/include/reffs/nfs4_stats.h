@@ -119,6 +119,24 @@ struct reffs_chunk_stats {
 	_Atomic uint64_t cs_rollback_invoked; /* CHUNK_ROLLBACK fired */
 	_Atomic uint64_t cs_repair_initiated; /* repair entered (today: 0) */
 	_Atomic uint64_t cs_fences_rotated; /* synthetic uid/gid bumps */
+
+	/*
+	 * INV-1 instrumentation -- partial-stripe write pattern on
+	 * the DS.  Answers Hellwig msg 5 (in-place update semantics)
+	 * + msg 9 (NFS block size) by quantifying what the DS
+	 * actually sees during T1b (sub-chunk interleave) and T2
+	 * (IOR shared-file through PSes) workloads.  See
+	 * .claude/design/inv1-ds-instrumentation.md.  Relaxed
+	 * memory order -- diagnostic counters, not synchronization.
+	 */
+	_Atomic uint64_t cs_blocks_full; /* len == chunk_size */
+	_Atomic uint64_t cs_blocks_partial; /* 0 < len < chunk_size */
+	_Atomic uint64_t cs_blocks_first_write; /* prev cb_state == EMPTY */
+	_Atomic uint64_t cs_blocks_overwrite; /* prev cb_state != EMPTY */
+	_Atomic uint64_t cs_writes_1block; /* cwa_chunks_len == 1 */
+	_Atomic uint64_t cs_writes_2to7; /* 2..7 */
+	_Atomic uint64_t cs_writes_8to31; /* 8..31 */
+	_Atomic uint64_t cs_writes_32plus; /* >= 32 */
 };
 
 #endif /* _REFFS_NFS4_STATS_H */

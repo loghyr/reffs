@@ -482,3 +482,26 @@ void chunk_store_destroy(struct chunk_store *cs)
 	free(cs->cs_blocks);
 	free(cs);
 }
+
+uint64_t chunk_store_count_runs(const struct chunk_store *cs)
+{
+	uint64_t runs = 0;
+	bool in_run = false;
+
+	if (!cs || cs->cs_nblocks == 0)
+		return 0;
+
+	for (uint64_t off = 0; off < cs->cs_nblocks; off++) {
+		bool occupied = cs->cs_blocks[off].cb_state !=
+				CHUNK_STATE_EMPTY;
+
+		if (occupied && !in_run) {
+			/* Transition EMPTY -> non-EMPTY starts a new run. */
+			runs++;
+			in_run = true;
+		} else if (!occupied) {
+			in_run = false;
+		}
+	}
+	return runs;
+}

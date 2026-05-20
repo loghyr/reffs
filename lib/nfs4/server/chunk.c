@@ -259,11 +259,17 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		};
 
 		/*
-		 * Chunk-collision detection: peek at the prior block.  If
-		 * it's PENDING from a different owner, this write is
-		 * displacing concurrent writer's in-flight bytes -- the
-		 * harness reads cs_pending_displaced as proof that
-		 * contention actually happened.
+		 * INV-1 / chunk-collision detection: peek at the prior
+		 * block before overwriting.  Two axes:
+		 *   - cs_pending_displaced: prior PENDING from a
+		 *     different owner -- proof of actual contention,
+		 *     harness assertion for chunk-collision validation.
+		 *   - cs_blocks_first_write / cs_blocks_overwrite:
+		 *     EMPTY vs non-EMPTY prior state -- INV-1's RMW
+		 *     ratio answering Hellwig msg 5 (in-place update).
+		 *   - cs_blocks_full / cs_blocks_partial: blk_size
+		 *     vs chunk_size -- INV-1's full vs partial write
+		 *     ratio answering Hellwig msg 9 (NFS block size).
 		 */
 		if (cstats) {
 			struct chunk_block *prev =
@@ -276,6 +282,31 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 				atomic_fetch_add_explicit(
 					&cstats->cs_pending_displaced, 1,
 					memory_order_relaxed);
+
+			/*
+			 * chunk_store_lookup returns NULL for EMPTY (and for
+			 * out-of-range offsets, which never happens here --
+			 * chunk_store_write below grows the array if needed,
+			 * but the lookup sees the pre-grow state).  Either
+			 * way, NULL == first-write for INV-1's purposes.
+			 */
+			if (prev == NULL)
+				atomic_fetch_add_explicit(
+					&cstats->cs_blocks_first_write, 1,
+					memory_order_relaxed);
+			else
+				atomic_fetch_add_explicit(
+					&cstats->cs_blocks_overwrite, 1,
+					memory_order_relaxed);
+
+			if (blk_size == chunk_size)
+				atomic_fetch_add_explicit(
+					&cstats->cs_blocks_full, 1,
+					memory_order_relaxed);
+			else
+				atomic_fetch_add_explicit(
+					&cstats->cs_blocks_partial, 1,
+					memory_order_relaxed);
 		}
 
 		if (chunk_store_write(cs, args->cwa_offset + i, &blk) < 0) {
@@ -285,9 +316,26 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		}
 	}
 
-	if (cstats)
+	if (cstats) {
 		atomic_fetch_add_explicit(&cstats->cs_writes, 1,
 					  memory_order_relaxed);
+		/*
+		 * INV-1 per-write block-count histogram.  Buckets sized
+		 * for the practical range observed in T2 IOR runs
+		 * (typically 1, 4, or 16 chunks per CHUNK_WRITE).
+		 */
+		_Atomic uint64_t *bucket;
+
+		if (nchunks == 1)
+			bucket = &cstats->cs_writes_1block;
+		else if (nchunks < 8)
+			bucket = &cstats->cs_writes_2to7;
+		else if (nchunks < 32)
+			bucket = &cstats->cs_writes_8to31;
+		else
+			bucket = &cstats->cs_writes_32plus;
+		atomic_fetch_add_explicit(bucket, 1, memory_order_relaxed);
+	}
 
 	pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 

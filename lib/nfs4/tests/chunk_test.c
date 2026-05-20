@@ -1274,6 +1274,272 @@ START_TEST(test_multi_ps_overlap_stripe_increments_displaced)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Group H: INV-1 partial-stripe write instrumentation                 */
+/*                                                                     */
+/* Quantifies what DSes actually see during T1b / T2 to answer         */
+/* Hellwig msg 5 (in-place update) + msg 9 (NFS block size).           */
+/* See .claude/design/inv1-ds-instrumentation.md.                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Single CHUNK_WRITE with len == chunk_size: counts as a full block,
+ * a first-write (empty prior state), and a 1-block batch.
+ */
+START_TEST(test_inv1_full_block_counted)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
+	nfs4_op_chunk_write(cm->compound);
+	{
+		CHUNK_WRITE4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write;
+		ck_assert_int_eq(res->cwr_status, NFS4_OK);
+	}
+	free_write_res(cm);
+
+	struct reffs_chunk_stats *st = &g_sb->sb_chunk_stats;
+
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_full,
+					       memory_order_relaxed),
+			  1);
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_partial,
+					       memory_order_relaxed),
+			  0);
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_writes_1block,
+					       memory_order_relaxed),
+			  1);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * Two-block CHUNK_WRITE where total_data is not a multiple of
+ * chunk_size.  The chunk.c loop sizes the last block to the
+ * remainder; that block is counted as partial.
+ */
+START_TEST(test_inv1_partial_tail_counted)
+{
+	const uint32_t total = CHUNK_SZ + (CHUNK_SZ / 2); /* 1.5 chunks */
+	static char buf[CHUNK_SZ + CHUNK_SZ / 2];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	set_write_args(cm, buf, total, CHUNK_SZ, /* offset */ 0, NULL, 0);
+	nfs4_op_chunk_write(cm->compound);
+	{
+		CHUNK_WRITE4res *res =
+			&cm->compound->c_res->resarray.resarray_val[0]
+				 .nfs_resop4_u.opchunk_write;
+		ck_assert_int_eq(res->cwr_status, NFS4_OK);
+	}
+	free_write_res(cm);
+
+	struct reffs_chunk_stats *st = &g_sb->sb_chunk_stats;
+
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_full,
+					       memory_order_relaxed),
+			  1);
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_partial,
+					       memory_order_relaxed),
+			  1);
+	/* Two blocks in one write -> 2to7 bucket. */
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_writes_2to7,
+					       memory_order_relaxed),
+			  1);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * Single CHUNK_WRITE into an empty chunk_store: prior block is EMPTY,
+ * counted as first-write.
+ */
+START_TEST(test_inv1_first_write_counted)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
+	nfs4_op_chunk_write(cm->compound);
+	free_write_res(cm);
+
+	struct reffs_chunk_stats *st = &g_sb->sb_chunk_stats;
+
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_first_write,
+					       memory_order_relaxed),
+			  1);
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_overwrite,
+					       memory_order_relaxed),
+			  0);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * Two writes to the same offset: first counts as first-write, second
+ * counts as overwrite.  Move in lockstep with cs_pending_displaced --
+ * verifies the new counters are wired alongside the existing one
+ * without disturbing it.
+ */
+START_TEST(test_inv1_overwrite_counted)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	/* PS-A first write -> EMPTY prior state, first-write. */
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
+	set_owner(cm, /* gen_id */ 1, /* client_id */ 0xA1, /* owner_id */ 10);
+	nfs4_op_chunk_write(cm->compound);
+	free_write_res(cm);
+	cm_reset_slot(cm, 0);
+
+	/* PS-B write to same offset -> PENDING prior, overwrite. */
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
+	set_owner(cm, /* gen_id */ 2, /* client_id */ 0xB2, /* owner_id */ 20);
+	nfs4_op_chunk_write(cm->compound);
+	free_write_res(cm);
+
+	struct reffs_chunk_stats *st = &g_sb->sb_chunk_stats;
+
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_first_write,
+					       memory_order_relaxed),
+			  1);
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_blocks_overwrite,
+					       memory_order_relaxed),
+			  1);
+	/* Existing pending-displaced counter must also have moved. */
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_pending_displaced,
+					       memory_order_relaxed),
+			  1);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * Three writes with 1, 4, and 16 blocks respectively.  Each lands in
+ * a distinct bucket: cs_writes_1block, cs_writes_2to7, cs_writes_8to31.
+ * The 32+ bucket stays at zero -- the bucket boundaries are what they
+ * are; if they ever move, this test must move with them.
+ */
+START_TEST(test_inv1_batch_histogram)
+{
+	static char buf[16 * CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	/* 1-block write at offset 0. */
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL, 0);
+	nfs4_op_chunk_write(cm->compound);
+	free_write_res(cm);
+	cm_reset_slot(cm, 0);
+
+	/* 4-block write at offset 1 (PENDING -> overwrites the first
+	 * block once, then writes 3 fresh ones -- bucket counter cares
+	 * about nchunks per call, not collisions). */
+	set_write_args(cm, buf, 4 * CHUNK_SZ, CHUNK_SZ, /* offset */ 1, NULL,
+		       0);
+	nfs4_op_chunk_write(cm->compound);
+	free_write_res(cm);
+	cm_reset_slot(cm, 0);
+
+	/* 16-block write at offset 100 (well past prior blocks). */
+	set_write_args(cm, buf, 16 * CHUNK_SZ, CHUNK_SZ, /* offset */ 100, NULL,
+		       0);
+	nfs4_op_chunk_write(cm->compound);
+	free_write_res(cm);
+
+	struct reffs_chunk_stats *st = &g_sb->sb_chunk_stats;
+
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_writes_1block,
+					       memory_order_relaxed),
+			  1);
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_writes_2to7,
+					       memory_order_relaxed),
+			  1);
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_writes_8to31,
+					       memory_order_relaxed),
+			  1);
+	ck_assert_uint_eq(atomic_load_explicit(&st->cs_writes_32plus,
+					       memory_order_relaxed),
+			  0);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * Empty chunk_store: count_runs returns 0.
+ *
+ * NULL-tolerant per the function's doc-comment -- callers that
+ * enumerate inodes from a fill_sb_info path may hit inodes whose
+ * i_chunk_store has never been allocated.
+ */
+START_TEST(test_inv1_fragmentation_zero_runs)
+{
+	ck_assert_uint_eq(chunk_store_count_runs(NULL), 0);
+}
+END_TEST
+
+/*
+ * Dense write fills blocks [0..3] PENDING -- one contiguous run.
+ */
+START_TEST(test_inv1_fragmentation_one_run)
+{
+	static char buf[4 * CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	set_write_args(cm, buf, 4 * CHUNK_SZ, CHUNK_SZ, /* offset */ 0, NULL,
+		       0);
+	nfs4_op_chunk_write(cm->compound);
+	free_write_res(cm);
+
+	ck_assert_uint_eq(chunk_store_count_runs(g_inode->i_chunk_store), 1);
+
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * Three sparse writes at offsets 0, 8, 16 produce three runs separated
+ * by EMPTY gaps.  Sweep must count each run exactly once.
+ */
+START_TEST(test_inv1_fragmentation_three_runs)
+{
+	static char buf[CHUNK_SZ];
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+
+	const uint64_t offsets[] = { 0, 8, 16 };
+
+	for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++) {
+		set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, offsets[i], NULL,
+			       0);
+		nfs4_op_chunk_write(cm->compound);
+		free_write_res(cm);
+		cm_reset_slot(cm, 0);
+	}
+
+	ck_assert_uint_eq(chunk_store_count_runs(g_inode->i_chunk_store), 3);
+
+	cm_free(cm);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Suite                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -1328,6 +1594,18 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_g, test_multi_ps_disjoint_stripes_no_collisions);
 	tcase_add_test(tc_g, test_multi_ps_overlap_stripe_increments_displaced);
 	suite_add_tcase(s, tc_g);
+
+	TCase *tc_h = tcase_create("inv1_instrumentation");
+	tcase_add_checked_fixture(tc_h, chunk_setup, chunk_teardown);
+	tcase_add_test(tc_h, test_inv1_full_block_counted);
+	tcase_add_test(tc_h, test_inv1_partial_tail_counted);
+	tcase_add_test(tc_h, test_inv1_first_write_counted);
+	tcase_add_test(tc_h, test_inv1_overwrite_counted);
+	tcase_add_test(tc_h, test_inv1_batch_histogram);
+	tcase_add_test(tc_h, test_inv1_fragmentation_zero_runs);
+	tcase_add_test(tc_h, test_inv1_fragmentation_one_run);
+	tcase_add_test(tc_h, test_inv1_fragmentation_three_runs);
+	suite_add_tcase(s, tc_h);
 
 	return s;
 }
