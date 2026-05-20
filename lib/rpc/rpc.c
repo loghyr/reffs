@@ -75,7 +75,7 @@ rpc_call_xdr(xdrproc_t fn, XDR *xdrs, void *obj)
  * libtirpc/base-libc xdr_sizeof.
  */
 
-static bool __rpc_log_packets = false;
+static bool __rpc_log_packets = true; /* DIAG: temp -- sb-list wire dump */
 
 void rpc_enable_packet_logging(void)
 {

@@ -619,6 +619,39 @@ def sb_list_cmd(client, args):
         flav_str = ','.join(flavors) if flavors else '(none)'
         sb_uuid = format_uuid(sb.psi_uuid) if hasattr(sb, 'psi_uuid') else 'n/a'
         print(f"{sb.psi_id:<6} {sb_uuid:<38} {path:<24} {state:<12} {flav_str}")
+        # Indented Chunks: block (same idiom as sb-get) -- only when
+        # any counter is non-zero, so quiet SBs don't add clutter.
+        # Lets --inv1-report (run_chunk_collision.sh) aggregate
+        # chunk activity from sb-list output without needing a
+        # separate sb-get per DS.
+        if hasattr(sb, 'psi_chunk_stats'):
+            cs = sb.psi_chunk_stats
+            fields = (
+                ('writes', cs.pcs_writes),
+                ('pending_displaced', cs.pcs_pending_displaced),
+                ('finalize_crc_fail', cs.pcs_finalize_crc_fail),
+                ('commit_crc_recompute', cs.pcs_commit_crc_recompute),
+                ('rollback_invoked', cs.pcs_rollback_invoked),
+                ('repair_initiated', cs.pcs_repair_initiated),
+                ('fences_rotated', cs.pcs_fences_rotated),
+                ('blocks_full', getattr(cs, 'pcs_blocks_full', 0)),
+                ('blocks_partial', getattr(cs, 'pcs_blocks_partial', 0)),
+                ('blocks_first_write',
+                 getattr(cs, 'pcs_blocks_first_write', 0)),
+                ('blocks_overwrite',
+                 getattr(cs, 'pcs_blocks_overwrite', 0)),
+                ('writes_1block', getattr(cs, 'pcs_writes_1block', 0)),
+                ('writes_2to7', getattr(cs, 'pcs_writes_2to7', 0)),
+                ('writes_8to31', getattr(cs, 'pcs_writes_8to31', 0)),
+                ('writes_32plus', getattr(cs, 'pcs_writes_32plus', 0)),
+                ('fragmentation_runs',
+                 getattr(cs, 'pcs_fragmentation_runs', 0)),
+            )
+            if any(v for _, v in fields):
+                print("  Chunks:")
+                for name, val in fields:
+                    if val:
+                        print(f"    {name}: {val}")
 
 
 def sb_create_cmd(client, args):
