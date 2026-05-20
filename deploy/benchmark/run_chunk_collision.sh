@@ -23,12 +23,19 @@
 #                          [--layout v1|v2] [--size BYTES]
 #                          [--iterations N] [--mds HOST]
 #                          [--ec_demo PATH] [--inv1-report] [--probe PATH]
+#                          [--ds-list HOST1,HOST2,...]
 #
 # --inv1-report: after the workload, query the per-sb chunk-activity
 # counters and print a quotable summary of the partial-stripe write
 # pattern the DSes saw.  Backs the INV-1 measurement promised on the
 # IETF nfsv4 WG list (Hellwig msg 5 + msg 9).  See
 # .claude/design/inv1-ds-instrumentation.md.
+#
+# --ds-list: comma-separated probe hosts to sum INV-1 counters over.
+# CHUNK_WRITE lands on the DSes (not the MDS), so the MDS alone reads
+# as zero in any non-combined topology.  Pass the DS containers /
+# hosts here, e.g. --ds-list reffs-bench-ds0,reffs-bench-ds1,...
+# Combined-mode runs can omit (MDS and DS share the sb).
 
 set -euo pipefail
 
@@ -41,6 +48,7 @@ MDS="reffs-mds"
 EC_DEMO=""
 INV1_REPORT=0
 PROBE=""
+DS_LIST=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -53,6 +61,7 @@ while [[ $# -gt 0 ]]; do
 		--ec_demo)    EC_DEMO="$2";    shift 2 ;;
 		--inv1-report) INV1_REPORT=1;  shift   ;;
 		--probe)      PROBE="$2";      shift 2 ;;
+		--ds-list)    DS_LIST="$2";    shift 2 ;;
 		-h|--help)
 			grep '^# ' "$0" | sed 's/^# \{0,1\}//'
 			exit 0 ;;
@@ -217,36 +226,57 @@ if (( INV1_REPORT )); then
 	else
 		echo ""
 		echo "=== INV-1 partial-stripe write pattern (DS view) ==="
-		# Filter sb-list output to the chunk-activity lines.  Each SB
-		# with non-zero activity prints a "Chunks:" block; pull the
-		# INV-1 fields verbatim.  The Track 1 harness drives a single
-		# MDS namespace so only one SB lights up, but we sum to be
-		# safe under future multi-export topologies.
-		"${PROBE}" --host "${MDS}" sb-list 2>/dev/null \
-			| awk '
-				/^  Chunks:/         { in_chunks = 1; next }
-				/^[^ ]/              { in_chunks = 0 }
-				/^  [^ ]/            { in_chunks = 0 }
-				in_chunks && /blocks_full:/         { full         += $2 }
-				in_chunks && /blocks_partial:/      { partial      += $2 }
-				in_chunks && /blocks_first_write:/  { first        += $2 }
-				in_chunks && /blocks_overwrite:/    { overwrite    += $2 }
-				in_chunks && /writes_1block:/       { w1           += $2 }
-				in_chunks && /writes_2to7:/         { w27          += $2 }
-				in_chunks && /writes_8to31:/        { w831         += $2 }
-				in_chunks && /writes_32plus:/       { w32          += $2 }
-				in_chunks && /pending_displaced:/   { displaced    += $2 }
-				END {
-				    printf("  full / partial blocks:       %d / %d\n",
-				           full, partial)
-				    printf("  first-write / overwrite:     %d / %d\n",
-				           first, overwrite)
-				    printf("  writes by batch (1/2-7/8-31/32+): %d / %d / %d / %d\n",
-				           w1, w27, w831, w32)
-				    printf("  cs_pending_displaced (collision proof): %d\n",
-				           displaced)
-				    printf("  (fragmentation_runs: deferred to INODE_CHUNK_STATS probe op)\n")
-				}'
+
+		# CHUNK_WRITE lands on each DS the layout selects, not on
+		# the MDS.  The MDS only sees LAYOUTGET; its sb_chunk_stats
+		# stays at zero.  Build a target list that always includes
+		# the MDS (for completeness in combined-mode T1b where the
+		# same process holds both roles) and any DSes the operator
+		# named via --ds-list.
+		TARGETS=("${MDS}")
+		if [[ -n "${DS_LIST}" ]]; then
+			# shellcheck disable=SC2206
+			DS_ARR=(${DS_LIST//,/ })
+			TARGETS+=("${DS_ARR[@]}")
+		fi
+
+		# Stream sb-list from every target into a single awk pass.
+		# The 'Chunks:' block follows each SB's header.  Per-SB
+		# counters print only when non-zero (the sb-list idiom), so
+		# the absence of a counter line means zero for that SB --
+		# the sum stays correct.
+		for tgt in "${TARGETS[@]}"; do
+			"${PROBE}" --host "${tgt}" sb-list 2>/dev/null \
+				| awk -v host="${tgt}" '
+					/^  Chunks:/         { in_chunks = 1; next }
+					/^[^ ]/              { in_chunks = 0 }
+					/^  [^ ]/            { in_chunks = 0 }
+					in_chunks { print host, $0 }'
+		done | awk '
+			$2 == "blocks_full:"        { full       += $3 }
+			$2 == "blocks_partial:"     { partial    += $3 }
+			$2 == "blocks_first_write:" { first      += $3 }
+			$2 == "blocks_overwrite:"   { overwrite  += $3 }
+			$2 == "writes_1block:"      { w1         += $3 }
+			$2 == "writes_2to7:"        { w27        += $3 }
+			$2 == "writes_8to31:"       { w831       += $3 }
+			$2 == "writes_32plus:"      { w32        += $3 }
+			$2 == "pending_displaced:"  { displaced  += $3 }
+			$2 == "writes:"             { writes     += $3 }
+			END {
+			    printf("  CHUNK_WRITE calls accepted:  %d\n", writes)
+			    printf("  full / partial blocks:       %d / %d\n",
+			           full, partial)
+			    printf("  first-write / overwrite:     %d / %d\n",
+			           first, overwrite)
+			    printf("  writes by batch (1/2-7/8-31/32+): %d / %d / %d / %d\n",
+			           w1, w27, w831, w32)
+			    printf("  cs_pending_displaced (collision proof): %d\n",
+			           displaced)
+			    printf("  (fragmentation_runs: deferred to INODE_CHUNK_STATS probe op)\n")
+			    if (writes == 0)
+			        printf("\n  NOTE: zero CHUNK_WRITEs observed.  T1b uses ec_demo\n         which drives CHUNK_WRITE end-to-end; verify the MDS\n         + DS hosts are reachable via the probe and that --ds-list\n         covers every layout target.\n")
+			}'
 	fi
 fi
 
