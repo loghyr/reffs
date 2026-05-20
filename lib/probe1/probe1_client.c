@@ -401,6 +401,50 @@ static void print_sb_info(const probe_sb_info1 *psi)
 	    (unsigned long)psi->psi_bytes_max,
 	    (unsigned long)psi->psi_inodes_used,
 	    (unsigned long)psi->psi_inodes_max);
+
+	/*
+	 * Surface non-zero chunk_stats (parity with Python sb-list).
+	 * Quiet sbs print nothing; active sbs get one Chunks: line
+	 * per non-zero counter so harnesses can grep them.
+	 */
+	const probe_chunk_stats1 *cs = &psi->psi_chunk_stats;
+	struct {
+		const char *name;
+		uint64_t val;
+	} fields[] = {
+		{ "writes", cs->pcs_writes },
+		{ "pending_displaced", cs->pcs_pending_displaced },
+		{ "finalize_crc_fail", cs->pcs_finalize_crc_fail },
+		{ "commit_crc_recompute", cs->pcs_commit_crc_recompute },
+		{ "rollback_invoked", cs->pcs_rollback_invoked },
+		{ "repair_initiated", cs->pcs_repair_initiated },
+		{ "fences_rotated", cs->pcs_fences_rotated },
+		{ "blocks_full", cs->pcs_blocks_full },
+		{ "blocks_partial", cs->pcs_blocks_partial },
+		{ "blocks_first_write", cs->pcs_blocks_first_write },
+		{ "blocks_overwrite", cs->pcs_blocks_overwrite },
+		{ "writes_1block", cs->pcs_writes_1block },
+		{ "writes_2to7", cs->pcs_writes_2to7 },
+		{ "writes_8to31", cs->pcs_writes_8to31 },
+		{ "writes_32plus", cs->pcs_writes_32plus },
+		{ "fragmentation_runs", cs->pcs_fragmentation_runs },
+	};
+	bool any = false;
+
+	for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); i++) {
+		if (fields[i].val) {
+			any = true;
+			break;
+		}
+	}
+	if (any) {
+		LOG("  Chunks:");
+		for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); i++) {
+			if (fields[i].val)
+				LOG("    %s: %lu", fields[i].name,
+				    (unsigned long)fields[i].val);
+		}
+	}
 }
 
 static int sb_list_cb(struct rpc_trans *rt)
