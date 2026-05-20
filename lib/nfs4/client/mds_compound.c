@@ -19,6 +19,8 @@
 
 #include <rpc/rpc.h>
 
+#include "reffs/log.h"
+
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
 
@@ -192,6 +194,26 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 		auth_destroy(override_auth);
 
 	if (rpc_stat != RPC_SUCCESS) {
+		/*
+		 * Stage 4 INV-6 dig: surface the TIRPC failure mode.  The
+		 * caller (renewal_tick_one, layout/IO compound issuers)
+		 * only logs `errno=I/O` from the -EIO we return here, which
+		 * collapses every distinct TIRPC failure -- timeout,
+		 * unreachable peer, malformed reply, auth error -- to one
+		 * indistinguishable line.  Track 2 runs 5/6/7 each lost a
+		 * PS->MDS session at "errno=I/O sr_status=0" with no MDS-
+		 * side log surface; the actual rpc_stat / re_status (from
+		 * clnt_geterr) is the missing attribution.
+		 */
+		struct rpc_err rerr;
+		clnt_geterr(ms->ms_clnt, &rerr);
+		LOG("mds_compound_send: clnt_call returned rpc_stat=%d (%s) "
+		    "re_status=%d re_errno=%d tag=%.*s",
+		    (int)rpc_stat, clnt_sperrno(rpc_stat), (int)rerr.re_status,
+		    rerr.re_errno, (int)mc->mc_args.tag.utf8string_len,
+		    mc->mc_args.tag.utf8string_val ?
+			    mc->mc_args.tag.utf8string_val :
+			    "");
 		ret = -EIO;
 		goto out;
 	}
