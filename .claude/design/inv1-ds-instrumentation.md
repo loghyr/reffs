@@ -251,46 +251,87 @@ exercise the contention path.
 | 8 unit tests in `chunk_test.c` | DONE; 28/28 pass on macOS |
 | **Live INV-1 numbers from T1b on dreamer** | **BLOCKED** -- DS-role SIGSEGV |
 
-### Capture attempt 2026-05-20: blocked
+### Capture attempt 2026-05-20: CAPTURED -- INV-1 numbers from T1b
 
-Ran the non-TLS bench (10 DSes + MDS, no PSes) on dreamer with
-ec_demo + `--layout v2 --codec rs --n 8 --iterations 4`.
-ec_demo reported "write OK" for every stripe and the harness
-reported CORRUPTION on every iteration (expected -- concurrent
-writers contending on one file).  BUT:
+After two pre-existing latent bugs surfaced by my diagnostic
+queries:
 
-- **All 10 DS reffsd processes SIGSEGV'd within ~2 seconds**
-  right after the harness's post-run `sb-list` traversal
-  started.  MDS stayed healthy.
-- Cores landed in `/var/lib/systemd/coredump/` on dreamer
-  (10 of them, exit 139).
-- DS sb-list showed zero chunk-stats activity -- consistent
-  with the SIGSEGV firing before the increments hit the
-  probe-readable counters, OR the writes never reaching the
-  CHUNK handler in the first place.  Backtraces required to
-  disambiguate; not done in this session.
+1. **`probe1_op_nfs4_op_stats` SIGSEGV on `strdup(NULL)`** for
+   op codes < 3 (NFSv4 ops start at OP_ACCESS = 3).  Hit on
+   every DS the moment `nfs4-op-stats` was queried.  Fixed in
+   `911a93fa9982` (global loop) + `b60e7a44b103` (per-sb
+   loop).
 
-Tracked in memory as
-[[project-ds-role-sigsegv-on-t1b-teardown]].
+2. **`sb-list` returns 0 superblocks from the C client
+   `reffs_probe1_clnt`, and 0-valued chunk-stats from the
+   Python client** -- but `sb-get --id 1` correctly returns
+   all the new INV-1 fields with their actual values.  Both
+   clients have current XDR schemas.  Diagnosed via paired
+   LOG()s on the increment and read sides: server-side
+   `&cs_writes`, `cs_writes=256`, and
+   `psi->psi_chunk_stats.pcs_writes=256` all agree.  The bug
+   is in `sb-list`'s array-encoding/decoding (a pre-existing
+   issue unrelated to the INV-1 slice but blocking
+   `--inv1-report`).  Tracked separately; `sb-get --id 1` per
+   DS is the workaround.
 
-### What unblocks the WG-list numbers
+#### Numbers (T1b, 4 writers, 4 iters, 4 MiB file, RS 4+2, 4 KiB chunks)
 
-1. Decompress one DS core
-   (`zstd -d /var/lib/systemd/coredump/core.reffsd.0.*.zst`)
-   and pull a backtrace against
-   `/shared/build/src/.libs/reffsd` in the bench-builder
-   container.  Identify the crash site.
-2. If the crash is in shutdown / CB-recall teardown, gate the
-   probe traversal until the MDS releases all outstanding
-   layouts.
-3. If it's something my INV-1 reads triggered, fix and re-run
-   `make check` to confirm.
-4. Re-run T1b with `--inv1-report --ds-list reffs-bench-ds0,...,reffs-bench-ds9`
-   and capture the four ratios.
+Topology: dreamer bench, 10 DSes, 4+2 RS uses ds0-ds5
+(layout selects 6 of 10).  Per DS:
 
-The slice itself does not need to wait for (1)-(4) -- the
-instrumentation is correct per unit tests and shipped.  Live
-capture is the follow-up.
+```
+CHUNK_WRITE calls accepted:   4352
+full / partial blocks:        4352 / 0          (100% full)
+first-write / overwrite:      512 / 3840        (~12% / 88% RMW)
+writes by batch (1/2-7/...):  4352 / 0 / 0 / 0  (every call = 1 chunk)
+cs_pending_displaced:         0                 (see below)
+```
+
+Sum across 6 DSes:
+
+```
+CHUNK_WRITE calls:    4352 * 6 = 26112
+full blocks:          26112 (100%)
+partial blocks:       0
+first-write blocks:   3072
+overwrite blocks:     23040
+```
+
+#### `cs_pending_displaced = 0` -- why no PENDING-on-PENDING
+
+The 4-writer workload still serialised at the
+ec_demo level (write -> FINALIZE -> COMMIT per writer
+before the next).  By the time writer B's CHUNK_WRITE for
+block X arrives, writer A's block X is in FINALIZED state,
+not PENDING.  `cs_pending_displaced` only fires when the
+prior block is PENDING from a different owner; the
+`cs_blocks_overwrite = 3840` counter captures the broader
+"non-EMPTY prior" case and is the right RMW signal for
+INV-1.  Truly concurrent T1b (writers racing past
+FINALIZE) would bump pending_displaced; that's not what
+this workload generates.
+
+#### What this answers for Christoph
+
+1. **Partial vs full block ratio**: 100% full, 0% partial.
+   The PS / EC pipeline aligns every write to chunk_size
+   before issuing CHUNK_WRITE.  The partial-stripe RMW
+   Christoph was worried about on the DS does not appear --
+   the encode layer above the DS handles alignment.
+2. **First-write vs in-place overwrite**: ~12% first /
+   88% overwrite.  Heavy RMW under contention, as expected
+   for the T1b 4-writers-on-one-file workload; the DS
+   does see in-place updates, but they are full-chunk
+   overwrites (point 1) not partial-stripe RMWs.
+3. **Per-write block-count histogram**: every CHUNK_WRITE
+   call carries exactly 1 chunk.  4 KiB shards.  No
+   batching at the wire.
+4. **Fragmentation**: not yet -- the sweep function is
+   shipped but the per-inode probe op to surface it is the
+   Slice 1b follow-up.
+
+These numbers will be cited in the WG-list reply.
 
 ## Cross-references
 
