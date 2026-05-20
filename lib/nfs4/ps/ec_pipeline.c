@@ -379,20 +379,13 @@ static struct ec_codec *ec_create_codec(int k, int m,
 	case EC_CODEC_MIRROR:
 		/*
 		 * Wire-side: FFV2_ENCODING_MIRRORED, N replicas, no
-		 * parity.  The codec itself is sound -- encode
-		 * replicates data[0] verbatim, decode picks any
-		 * present shard -- but the pipeline write / read
-		 * paths still assume the striped data layout used
-		 * by the (k, m) codecs (each data[i] pointed at a
-		 * different offset in a padded source buffer).
-		 * For MIRRORED, every data[i] must point at the
-		 * SAME offset, and reads must skip the (k-1) of N
-		 * sibling replicas once one verifies.  That wiring
-		 * is the next slice; until then we expose the
-		 * factory entry (so the codec is reachable from
-		 * tests and from the CLI) and gate the pipeline
-		 * write / read paths against MIRRORED above so we
-		 * never silently mis-stripe across replicas.
+		 * parity.  Encode replicates data[0] verbatim,
+		 * decode picks any present shard.  The pipeline
+		 * branches on codec_type == EC_CODEC_MIRROR in
+		 * ec_write_codec_with_file / ec_read_codec_with_file
+		 * to lay every data_shards[i] at the same stripe
+		 * offset and to emit one shard's worth per stripe
+		 * on output.
 		 */
 		return ec_mirror_create(k);
 	default:

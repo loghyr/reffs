@@ -409,7 +409,7 @@ require `ci-full` to pass before moving on.
 | `test_pipeline_mds_session_create` | Pipeline opens an MDS session; teardown closes cleanly |
 | `test_pipeline_layoutget_decode` | LAYOUTGET returns an `ffv2_layout4`; pipeline decodes to per-mirror DS lists |
 | `test_pipeline_write_roundtrip` | Pipeline writes a buffer, reads it back, bytes match (against a combined MDS+DS reffs instance) |
-| `test_pipeline_read_plain_codec` | FFV2_CODING_MIRRORED roundtrip |
+| `test_pipeline_read_plain_codec` | FFV2_ENCODING_PASSTHROUGH roundtrip |
 | `test_pipeline_read_rs_codec` | FFV2_ENCODING_RS_VANDERMONDE roundtrip |
 | `test_pipeline_read_mojette_sys_codec` | FFV2_ENCODING_MOJETTE_SYSTEMATIC roundtrip |
 

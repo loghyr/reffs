@@ -64,6 +64,8 @@ static int mirror_decode(struct ec_codec *codec, uint8_t **shards,
 	}
 	if (src < 0)
 		return -EIO; /* no replica survived */
+	if (!shards || !shards[src])
+		return -EINVAL;
 
 	for (int i = 0; i < codec->ec_k; i++) {
 		if (present[i])
