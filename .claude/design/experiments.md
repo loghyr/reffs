@@ -90,7 +90,7 @@ running them.  Each is a real defect, tracked here until fixed.
 | ID | Defect | Surfaced by | Status |
 |----|--------|-------------|--------|
 | **INV-5** | Concurrent mTLS session establishment from multiple PSes to one MDS races `mds_session_create_tls` and most sessions fail with `EIO` (`Input/output error -- listener stays dark`).  With 4 PSes cold-starting together, Track 2 runs lost 1-of-4 and 3-of-4 sessions on two of three attempts. | Track 2 ([`chunk-collision-track2.md`](chunk-collision-track2.md)), 2026-05-19 | **CLOSED 2026-05-19 by Stage 3 Slice 1.**  Stage 4 re-run on dreamer (NPS=4, even with the 4-second stagger still in place) shows 0-of-4 lost sessions and MDS grants matching expected `NPS`.  Verified with the safe-API repro `conn_lifecycle_race_test` green under TSAN.  The 4-second stagger in `run-ps-bench-bringup.sh` is now belt-and-braces -- consider revisiting once Slice 3 lands. |
-| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **OPEN, but trigger isolated to upstream of lib/io/ (Stage 4 run 7, 2026-05-19).**  Affected-PS count: run 4 (no fix) 4-of-4, run 5 (Slice 1) 2-of-4, run 6 (Slice 3) 1-of-4, run 7 (Slice 4) 1-of-4.  Zero ASAN/UBSAN across all runs since Slice 1.  Slice 4 closed the last fd-lifecycle hazard the design plan enumerated -- the `Connection not tracked for fd=N` log line moved from 15 ms-after-EIO (a fd-reuse race) to 1 m 51 s late (a stale CQE on a fully-drained slot, diagnostic only).  IOR still aborts.  The MDS log is now SILENT before the SSL_ERROR_ZERO_RETURN -- no socket close, no RPC error, no allocation failure -- so the trigger is invisible from MDS-side instrumentation.  PS-0 sees TIRPC EIO with `sr_status=0` (SEQUENCE itself returned NFS4_OK), meaning the EIO came from the TIRPC reply path, not from a protocol error.  See the "Track 2 run 7 timeline" subsection.  Next step: add MDS-side RPC reply-send tracing AND/OR PS-side TIRPC error-code tracing to attribute the disconnect to one of (a) MDS sent a reply that never reached the PS, (b) PS-side TIRPC parsed a malformed reply, (c) protocol-level disconnect with no log surface.  Further lib/io/ slices are unlikely to help. |
+| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **ROOT CAUSE IDENTIFIED: `RPC_CANTDECODERES` on every PS->MDS reply mid-stream (Stage 4 run 8, 2026-05-20).**  Track 2 runs 5-7 narrowed INV-6 monotonically through Slices 1-4 (4 -> 2 -> 1 -> 1 affected PSes) while closing every memory-safety and fd-lifecycle hazard.  Run 8 added a TIRPC `clnt_geterr` log on the `clnt_call != RPC_SUCCESS` branch and **every PS** -- not just the one that triggered MPI_ABORT -- now logs `rpc_stat=2 (RPC: Can't decode result) re_status=2 re_errno=5` for every COMPOUND tag (`ps-proxy-layoutget`, `getattr`, `getdeviceinfo`, `layoutreturn`, `renew-lease`, `destroy_session`).  The MDS sends bytes, the PS receives them, the XDR decoder rejects them.  This is a stream-state desync, not a per-fd / per-conn lifecycle defect.  See "Track 2 run 8 timeline" below.  Hypotheses (high prior first): (a) MDS-side multi-fragment RPC record marking re-overlaps fragments under sustained load (the FIXED 2026-03-27 io_uring large-message stall in `goals.md` resembles this -- regression?), (b) TLS record-boundary issue where a single RPC reply spans TLS records and one record is delivered to TIRPC out of order, (c) io_uring write-side reorders when two replies submit concurrently, (d) MDS-side XDR encoder bug specific to a reply path activated under load.  Further lib/io/ slices are unlikely to help; the next dig is **MDS-side reply-byte tracing** (xid, fd, byte count, optionally checksum) to compare with PS-side received bytes. |
 
 ### INV-5 characterization (2026-05-19, first dig)
 
@@ -462,6 +462,93 @@ soak-test runs), and their cost is paid even if Track 2 stays
 red.
 
 INV-1 DS instrumentation still gated on a clean Track 2 run.
+
+### Track 2 run 8 timeline (TIRPC instrumentation, 2026-05-20)
+
+Commit `dd0aedcd2653` added a one-line `fprintf(stderr, ...)` on
+the `clnt_call != RPC_SUCCESS` branch of `mds_compound_send` that
+logs `rpc_stat`, `clnt_sperrno(rpc_stat)`, and the
+`clnt_geterr`-returned `re_status` + `re_errno` plus the compound
+tag.  Without it, every TIRPC failure mode collapses to a bare
+`-EIO` in the caller.
+
+Outcome of run 8: **every PS** logs the same line, repeatedly,
+for many tags:
+
+```
+mds_compound_send: clnt_call returned rpc_stat=2 (RPC: Can't decode result) re_status=2 re_errno=5 tag=ps-proxy-layoutget
+mds_compound_send: clnt_call returned rpc_stat=2 (RPC: Can't decode result) re_status=2 re_errno=5 tag=ps-proxy-getattr
+mds_compound_send: clnt_call returned rpc_stat=2 (RPC: Can't decode result) re_status=2 re_errno=5 tag=ps-proxy-getdeviceinfo
+mds_compound_send: clnt_call returned rpc_stat=2 (RPC: Can't decode result) re_status=2 re_errno=5 tag=ps-proxy-layoutreturn
+mds_compound_send: clnt_call returned rpc_stat=2 (RPC: Can't decode result) re_status=2 re_errno=5 tag=ps-renew-lease
+mds_compound_send: clnt_call returned rpc_stat=2 (RPC: Can't decode result) re_status=2 re_errno=5 tag=destroy_session
+```
+
+`rpc_stat=2` is `RPC_CANTDECODERES` -- TIRPC received reply bytes
+from the MDS and the XDR decoder rejected them.  Not a timeout
+(`RPC_TIMEDOUT=5`), not a transport error (`RPC_CANTRECV=11`),
+not auth (`RPC_AUTHERROR=13`).  **An XDR-level corruption on the
+MDS->PS reply path.**
+
+Key facts that constrain the hypotheses:
+
+1. **All 4 PSes hit it -- not just the one that triggered
+   MPI_ABORT.**  Earlier "1 of 4 PSes affected" observations were
+   counting only the rank whose IOR mount actually noticed.
+2. **Tags span layout, attribute, device-info, layout-return,
+   lease-renewal, session-destroy ops.**  Every compound type the
+   PS issues fails the same way.  Not specific to one op handler.
+3. **It works at first, then breaks mid-stream.**  All four PSes
+   complete PROXY_REGISTRATION cleanly and stay up for ~10-30
+   seconds before the first CANTDECODERES.  Classic stream-state
+   desynchronization shape -- RPC record marker out of sync with
+   TCP byte offset, or TLS record boundary misalignment, or
+   io_uring multi-fragment-write reorder.
+4. **Bytes do reach the PS.**  No `RPC_CANTRECV` (transport read
+   failed) -- TIRPC's read-side delivered SOME bytes; the XDR
+   decode of those bytes failed.
+5. **No corresponding MDS-side error log.**  The MDS sent the
+   reply successfully from its point of view.  The
+   SSL_ERROR_ZERO_RETURN the MDS logs comes much later, from the
+   PS sending close_notify after deciding its session is dead.
+
+Hypothesis priority list:
+
+A. **MDS-side multi-fragment RPC record marking re-overlap under
+   sustained load.**  `goals.md` records a FIXED 2026-03-27 bug
+   in this area ("Multi-fragment RPC record marking reassembly
+   was overwriting earlier fragments. EC_SHARD_SIZE can now
+   increase beyond 4KB").  The fix was on the *read* side; the
+   *write* (reply) side may have a parallel hazard.
+
+B. **TLS record-boundary mismatch with RPC record marker.**  A
+   single RPC reply spans multiple TLS records.  The PS-side
+   read reassembly expects record-marker continuity at TCP byte
+   offset N; if a TLS record is delivered to TIRPC truncated or
+   re-ordered, the marker walks off the rails and every
+   subsequent reply decodes wrong.
+
+C. **io_uring write-side reorder when two replies submit
+   concurrently.**  The lib/io/ write gate (Slice 1+ context)
+   serialises per-fd writes inside reffsd, but on the wire two
+   io_request_write_op submissions can complete out of order if
+   the kernel splits them across submission queues or rings.
+   Less likely given how io_uring serialises per-fd writes, but
+   worth a probe.
+
+D. **MDS-side XDR encoder bug specific to a reply path
+   activated under load.**  Lowest prior because every reply
+   path is failing the same way; a single-encoder bug usually
+   shows up per-op.
+
+Next dig: **MDS-side reply-byte tracing.**  Add an analogous
+diagnostic on the MDS reply path: log xid, fd, total byte count,
+and an XXH3 checksum of the marker+payload bytes as they leave
+io_request_write_op.  Compare with the PS-side received bytes
+(may need a parallel PS-side dig recording reply byte count +
+checksum at TIRPC reply-buffer level).  A byte-count mismatch
+points at hypothesis A or C; a count match with checksum
+mismatch points at B (TLS) or memory corruption.
 
 ---
 
