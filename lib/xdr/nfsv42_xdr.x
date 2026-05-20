@@ -4791,10 +4791,11 @@ struct ffv2_data_server4 {
 };
 
 enum ffv2_coding_type4 {
-    FFV2_CODING_MIRRORED                    = 0x1,
+    FFV2_ENCODING_PASSTHROUGH               = 0x1,
     FFV2_ENCODING_MOJETTE_SYSTEMATIC        = 0x2,
     FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC    = 0x3,
-    FFV2_ENCODING_RS_VANDERMONDE            = 0x4
+    FFV2_ENCODING_RS_VANDERMONDE            = 0x4,
+    FFV2_ENCODING_MIRRORED                  = 0x5
 };
 
 /*
