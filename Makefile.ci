@@ -325,6 +325,30 @@ ffv1-stress: image
 			/src/scripts/test_krb5_ffv1_stress_local.sh /build/src/reffsd"
 
 # -----------------------------------------------------------------------
+# mirror: end-to-end functional check for FFV2_ENCODING_MIRRORED
+# -----------------------------------------------------------------------
+# Stands up a combined-mode reffsd with N loopback dstores so the
+# MDS allocates N mirrors per layout, then runs ec_demo
+# `write` + `verify` (+ a degraded `verify` with one mirror
+# skipped) against it with --codec mirror --k N --m 0.  Asserts
+# every invocation exits 0 -- the data fans out via CHUNK_WRITE
+# to N replicas, is readable back via CHUNK_READ from any present
+# replica, and byte-compares identical to the input.
+#
+# Wired but not run by default; the `check` and `full` targets do
+# not exercise the MIRROR pipeline path.  Run explicitly via
+# `make -f Makefile.ci mirror`.
+
+mirror: image
+	$(DOCKER) run --rm --privileged \
+		--ulimit nofile=65536:65536 \
+		-v $(ROOT_DIR):/reffs:ro,Z \
+		$(CI_IMAGE_NAME) \
+		/bin/bash -c "$(call CI_BUILD,--enable-asan --enable-ubsan) && \
+			ASAN_OPTIONS=detect_leaks=0 \
+			/src/scripts/test_mirror_local.sh /build/src/reffsd"
+
+# -----------------------------------------------------------------------
 # sigmund: Sigmund NFS test framework
 # -----------------------------------------------------------------------
 
@@ -426,4 +450,4 @@ stop:
 		echo "No running CI containers."; \
 	fi
 
-.PHONY: image check full sec soak soak-noopt soak-tsan soak-rocksdb soak-core test cthon04 pynfs pjdfstest nfstest sigmund libnfs tls-stress xfstests ltp krb5 ffv1-stress shell stop
+.PHONY: image check full sec soak soak-noopt soak-tsan soak-rocksdb soak-core test cthon04 pynfs pjdfstest nfstest sigmund libnfs tls-stress xfstests ltp krb5 ffv1-stress mirror shell stop
