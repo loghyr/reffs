@@ -576,8 +576,18 @@ static int probe1_op_nfs4_op_stats(struct rpc_trans *rt)
 		probe_nfs4_op1 *pno = &resok->nosr_ops.nosr_ops_val[i];
 		struct reffs_op_stats *s = &ss->ss_nfs4_op_stats[i];
 
+		/*
+		 * nfs4_op_name returns NULL for op codes < 3 (NFSv4 ops
+		 * start at OP_ACCESS=3 per RFC 8881) and for any gap in
+		 * the generated nfsv42_names.c switch.  strdup(NULL) is
+		 * UB -- glibc dereferences and SIGSEGVs in __strlen.
+		 * Substitute a stable placeholder so the wire response
+		 * always carries a non-NULL string for every op slot.
+		 */
+		const char *name = nfs4_op_name((nfs_opnum4)i);
+
 		pno->pno_op = i;
-		pno->pno_name = strdup(nfs4_op_name((nfs_opnum4)i));
+		pno->pno_name = strdup(name ? name : "OP_UNKNOWN");
 		pno->pno_calls = atomic_load_explicit(&s->os_calls,
 						      memory_order_relaxed);
 		pno->pno_errors = atomic_load_explicit(&s->os_errors,
