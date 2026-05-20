@@ -14,6 +14,7 @@ LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 TESTS = \
 	gf_test \
 	matrix_test \
+	mirror_test \
 	mojette_test \
 	mojette_codec_test \
 	rs_test

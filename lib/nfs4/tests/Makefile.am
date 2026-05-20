@@ -201,6 +201,7 @@ TESTS = \
 	compound_async \
 	delegation_lifecycle \
 	errors \
+	ffv2_hint_test \
 	file_ops \
 	layout_conflict_scan_test \
 	lock_test \
