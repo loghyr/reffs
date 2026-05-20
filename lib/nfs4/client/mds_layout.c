@@ -64,13 +64,63 @@ static uint32_t parse_owner_id(const char *str, uint32_t len)
 /* LAYOUTGET                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * pack_layouthint_ffv2 -- encode the caller's FFv2
+ * fflh_supported_types preference list into a malloc'd opaque
+ * buffer suitable for loga_layouthint.loh_body.  Returns 0 on
+ * success and stores the buffer + length in *out_body / *out_len;
+ * the caller owns and must free() the buffer.  Returns -errno on
+ * failure.  Caller passes NULL/0 to elide the hint -- in that
+ * case this helper is not invoked.
+ *
+ * Wire format: ffv2_layouthint4 with fflh_supported_types<> filled
+ * from the caller's preference list and fflh_preferred_protection
+ * left as a zero ffv2_data_protection4 (the MDS treats absent /
+ * zero preferred_protection as "match my geometry").
+ */
+static int pack_layouthint_ffv2(const uint32_t *supported_types,
+				uint32_t n_supported_types, char **out_body,
+				uint32_t *out_len)
+{
+	const size_t bufsz = 256;
+	char *body = calloc(1, bufsz);
+
+	if (!body)
+		return -ENOMEM;
+
+	ffv2_layouthint4 lh;
+
+	memset(&lh, 0, sizeof(lh));
+	lh.fflh_supported_types.fflh_supported_types_len = n_supported_types;
+	lh.fflh_supported_types.fflh_supported_types_val =
+		(ffv2_coding_type4 *)supported_types;
+
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, body, bufsz, XDR_ENCODE);
+	if (!xdr_ffv2_layouthint4(&xdrs, &lh)) {
+		xdr_destroy(&xdrs);
+		free(body);
+		return -EOVERFLOW;
+	}
+	uint32_t used = xdr_getpos(&xdrs);
+	xdr_destroy(&xdrs);
+
+	*out_body = body;
+	*out_len = used;
+	return 0;
+}
+
 int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 		   layoutiomode4 iomode, layouttype4 layout_type,
+		   const uint32_t *supported_types, uint32_t n_supported_types,
 		   const struct authunix_parms *creds, struct ec_layout *layout)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	char *hint_body = NULL;
+	uint32_t hint_len = 0;
 
 	memset(layout, 0, sizeof(*layout));
 
@@ -109,7 +159,39 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 	memcpy(&lg_args->loga_stateid, &mf->mf_stateid, sizeof(stateid4));
 	lg_args->loga_maxcount = 65536;
 
+	/*
+	 * Pack the FFv2 codec-negotiation hint when the caller surfaced
+	 * one and the layout type carries the FFv2 hint format.  Other
+	 * layout types leave loh_body empty.
+	 */
+	if (supported_types && n_supported_types > 0 &&
+	    layout_type == LAYOUT4_FLEX_FILES_V2) {
+		int hret = pack_layouthint_ffv2(supported_types,
+						n_supported_types, &hint_body,
+						&hint_len);
+		if (hret) {
+			mds_compound_fini(&mc);
+			return hret;
+		}
+		lg_args->loga_layouthint.loh_type = LAYOUT4_FLEX_FILES_V2;
+		lg_args->loga_layouthint.loh_body.loh_body_val = hint_body;
+		lg_args->loga_layouthint.loh_body.loh_body_len = hint_len;
+	}
+
 	ret = mds_compound_send_with_auth(&mc, ms, creds);
+	/*
+	 * After send returns the encoded wire bytes have been copied
+	 * out; the source body buffer can go regardless of success.
+	 * Clearing the lg_args pointer first avoids any later free()
+	 * via mds_compound_fini's XDR-arg destructor reading the same
+	 * pointer.
+	 */
+	if (hint_body) {
+		lg_args->loga_layouthint.loh_body.loh_body_val = NULL;
+		lg_args->loga_layouthint.loh_body.loh_body_len = 0;
+		free(hint_body);
+		hint_body = NULL;
+	}
 	if (ret) {
 		mds_compound_fini(&mc);
 		return ret;

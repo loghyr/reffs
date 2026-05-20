@@ -93,6 +93,51 @@ struct ec_context {
 };
 
 /*
+ * codec_type_to_supported -- map an ec_codec_type to a one-element
+ * fflh_supported_types<> hint for LAYOUTGET (see
+ * draft-haynes-nfsv4-flexfiles-v2 sec-codec-negotiation).
+ *
+ * Wire values from lib/xdr/nfsv42_xdr.x ffv2_coding_type4:
+ *   FFV2_ENCODING_PASSTHROUGH               = 0x1
+ *   FFV2_ENCODING_MOJETTE_SYSTEMATIC        = 0x2
+ *   FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC    = 0x3
+ *   FFV2_ENCODING_RS_VANDERMONDE            = 0x4
+ *   FFV2_ENCODING_MIRRORED                  = 0x5
+ *
+ * Hardcoding the wire values here avoids dragging nfsv42_xdr.h into
+ * every pipeline TU; the mapping is asserted by the MDS-side
+ * pick_coding_type helper in lib/nfs4/server/layout.c and by the
+ * client-side coding-type checks in this same file.  If a new
+ * codec is added to ec_codec_type, this switch is the single point
+ * of update.
+ *
+ * Returns the number of entries written into out_hint[1] (0 or 1).
+ * EC_CODEC_STRIPE has no FFv2 wire counterpart yet, so it emits
+ * no hint and lets the server default to PASSTHROUGH.
+ */
+static uint32_t codec_type_to_supported(enum ec_codec_type codec_type,
+					uint32_t out_hint[1])
+{
+	switch (codec_type) {
+	case EC_CODEC_RS:
+		out_hint[0] = 0x4; /* FFV2_ENCODING_RS_VANDERMONDE */
+		return 1;
+	case EC_CODEC_MOJETTE_SYS:
+		out_hint[0] = 0x2; /* FFV2_ENCODING_MOJETTE_SYSTEMATIC */
+		return 1;
+	case EC_CODEC_MOJETTE_NONSYS:
+		out_hint[0] = 0x3; /* FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC */
+		return 1;
+	case EC_CODEC_MIRROR:
+		out_hint[0] = 0x5; /* FFV2_ENCODING_MIRRORED */
+		return 1;
+	case EC_CODEC_STRIPE:
+	default:
+		return 0;
+	}
+}
+
+/*
  * Find an existing connection to the same DS host, or return -1.
  */
 static int find_existing_conn(struct ec_context *ctx, uint32_t idx)
@@ -480,8 +525,8 @@ int plain_write(struct mds_session *ms, const char *path, const uint8_t *data,
 	if (ret)
 		return ret;
 
-	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_RW, layout_type, NULL,
-			     &layout);
+	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_RW, layout_type, NULL, 0,
+			     NULL, &layout);
 	if (ret)
 		goto out_close;
 
@@ -550,8 +595,8 @@ int plain_read(struct mds_session *ms, const char *path, uint8_t *buf,
 	if (ret)
 		return ret;
 
-	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_READ, layout_type, NULL,
-			     &layout);
+	ret = mds_layout_get(ms, &mf, LAYOUTIOMODE4_READ, layout_type, NULL, 0,
+			     NULL, &layout);
 	if (ret)
 		goto out_close;
 
@@ -651,8 +696,8 @@ static int ec_layout_refresh(struct ec_context *ctx, struct mds_session *ms,
 	 * caller's creds through is NOT_NOW_BROWN_COW for the same
 	 * follow-on slice that does DS-side cred forwarding.
 	 */
-	ret = mds_layout_get(ms, &ctx->ctx_file, iomode, layout_type, NULL,
-			     &ctx->ctx_layout);
+	ret = mds_layout_get(ms, &ctx->ctx_file, iomode, layout_type, NULL, 0,
+			     NULL, &ctx->ctx_layout);
 	if (ret) {
 		ec_log("ec_layout_refresh: LAYOUTGET failed: %d\n", ret);
 		return ret;
@@ -741,8 +786,12 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	if (!ctx.ctx_codec)
 		return -ENOMEM;
 
+	uint32_t hint[1];
+	uint32_t hint_n = codec_type_to_supported(codec_type, hint);
+
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
-			     creds, &ctx.ctx_layout);
+			     hint_n ? hint : NULL, hint_n, creds,
+			     &ctx.ctx_layout);
 	if (ret) {
 		ec_log("ec_write: LAYOUTGET failed: %d\n", ret);
 		goto out_codec;
@@ -1122,8 +1171,12 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	if (!ctx.ctx_codec)
 		return -ENOMEM;
 
+	uint32_t hint[1];
+	uint32_t hint_n = codec_type_to_supported(codec_type, hint);
+
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
-			     creds, &ctx.ctx_layout);
+			     hint_n ? hint : NULL, hint_n, creds,
+			     &ctx.ctx_layout);
 	if (ret) {
 		ec_log("ec_write_stripe: LAYOUTGET failed: %d\n", ret);
 		goto out_codec;
@@ -1420,8 +1473,12 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	if (!ctx.ctx_codec)
 		return -ENOMEM;
 
+	uint32_t hint[1];
+	uint32_t hint_n = codec_type_to_supported(codec_type, hint);
+
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ, layout_type,
-			     creds, &ctx.ctx_layout);
+			     hint_n ? hint : NULL, hint_n, creds,
+			     &ctx.ctx_layout);
 	if (ret) {
 		ec_log("ec_read_stripe: LAYOUTGET failed: %d\n", ret);
 		goto out_codec;
@@ -1643,8 +1700,12 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	if (!ctx.ctx_codec)
 		return -ENOMEM;
 
+	uint32_t hint[1];
+	uint32_t hint_n = codec_type_to_supported(codec_type, hint);
+
 	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ, layout_type,
-			     creds, &ctx.ctx_layout);
+			     hint_n ? hint : NULL, hint_n, creds,
+			     &ctx.ctx_layout);
 	if (ret)
 		goto out_codec;
 

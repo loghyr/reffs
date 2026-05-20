@@ -67,6 +67,72 @@ static uint32_t deviceid_to_dstore(const deviceid4 devid)
 	return ntohl(net_id);
 }
 
+/*
+ * pick_coding_type -- choose an FFv2 coding type for a fresh
+ * LAYOUTGET on an FFv2-typed layout, honouring the client's
+ * loga_layouthint when present.
+ *
+ * Wire surface (RFC 8881 S18.43 + draft-haynes-nfsv4-flexfiles-v2
+ * sec-codec-negotiation): the client packs an ffv2_layouthint4
+ * into loga_layouthint.loh_body for layouttype4 ==
+ * LAYOUT4_FLEX_FILES_V2.  fflh_supported_types<> is ordered by the
+ * client's preference; we accept the first entry that names a
+ * known FFv2 encoding.
+ *
+ * Failure modes are all "fall back to PASSTHROUGH":
+ *   - loh_body absent / empty                 (legacy client)
+ *   - loh_type != FFv2                        (caller error)
+ *   - XDR decode failure                      (malformed hint)
+ *   - empty fflh_supported_types<>            (client said
+ *                                              "I have no preference")
+ *   - unrecognised first entry                (forward-compat)
+ *
+ * PASSTHROUGH (0x1) matches the FFv1-compat path the MDS has emitted
+ * to every client up to now, so silently degrading there preserves
+ * existing behaviour for clients that have not yet learned to pack
+ * the hint.
+ */
+static uint32_t pick_coding_type(const layouthint4 *hint,
+				 layouttype4 layout_type)
+{
+	if (layout_type != LAYOUT4_FLEX_FILES_V2)
+		return FFV2_ENCODING_PASSTHROUGH;
+	if (!hint || hint->loh_type != LAYOUT4_FLEX_FILES_V2)
+		return FFV2_ENCODING_PASSTHROUGH;
+	if (hint->loh_body.loh_body_len == 0 || !hint->loh_body.loh_body_val)
+		return FFV2_ENCODING_PASSTHROUGH;
+
+	ffv2_layouthint4 lh;
+	XDR xdrs;
+
+	memset(&lh, 0, sizeof(lh));
+	xdrmem_create(&xdrs, hint->loh_body.loh_body_val,
+		      hint->loh_body.loh_body_len, XDR_DECODE);
+	bool_t ok = xdr_ffv2_layouthint4(&xdrs, &lh);
+	xdr_destroy(&xdrs);
+
+	uint32_t picked = FFV2_ENCODING_PASSTHROUGH;
+	if (ok && lh.fflh_supported_types.fflh_supported_types_len > 0) {
+		uint32_t first =
+			lh.fflh_supported_types.fflh_supported_types_val[0];
+		switch (first) {
+		case FFV2_ENCODING_PASSTHROUGH:
+		case FFV2_ENCODING_MOJETTE_SYSTEMATIC:
+		case FFV2_ENCODING_MOJETTE_NON_SYSTEMATIC:
+		case FFV2_ENCODING_RS_VANDERMONDE:
+		case FFV2_ENCODING_MIRRORED:
+			picked = first;
+			break;
+		default:
+			/* unknown enum value, leave PASSTHROUGH */
+			break;
+		}
+	}
+
+	xdr_free((xdrproc_t)xdr_ffv2_layouthint4, &lh);
+	return picked;
+}
+
 /* ------------------------------------------------------------------ */
 /* GETDEVICEINFO                                                       */
 /*                                                                     */
@@ -592,25 +658,16 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg, char **out_body,
 	ffv2_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[0];
 
 	/*
-	 * m == 0 emits FFV2_ENCODING_PASSTHROUGH (wire value 0x1,
-	 * same shape as the pre-FFV2_ENCODING_PASSTHROUGH rename
-	 * FFV2_CODING_MIRRORED).  This is the FFv1-compatible
-	 * default until the layouthint negotiation surface lands
-	 * and the MDS can pick FFV2_ENCODING_MIRRORED (or any other
-	 * specific encoding type) based on the client's
-	 * fflh_supported_types.  Choosing MIRRORED unconditionally
-	 * here would have been wire-incorrect for the non-mirror
-	 * codecs (RS, Mojette, STRIPE) -- the layout would claim
-	 * MIRRORED while the client wrote disjoint stripes or shards.
-	 * See draft-haynes-nfsv4-flexfiles-v2 sections
-	 * sec-encoding-passthrough, sec-encoding-mirrored, and
-	 * sec-codec-negotiation for the per-client-hint selection
-	 * that replaces this stopgap.
+	 * Emit the segment's persisted coding type.  Zero (no defined
+	 * FFv2 enum value) is treated as FFV2_ENCODING_PASSTHROUGH so
+	 * segments allocated before this field existed (or by callers
+	 * that left it zero) continue to wire-emit the FFv1-compatible
+	 * default.  See draft-haynes-nfsv4-flexfiles-v2 sections
+	 * sec-encoding-passthrough through sec-codec-negotiation.
 	 */
-	if (seg->ls_m == 0)
-		mirror->ffm_coding_type = FFV2_ENCODING_PASSTHROUGH;
-	else
-		mirror->ffm_coding_type = FFV2_ENCODING_RS_VANDERMONDE;
+	mirror->ffm_coding_type = seg->ls_coding_type ?
+					  seg->ls_coding_type :
+					  FFV2_ENCODING_PASSTHROUGH;
 	mirror->ffm_protection.fdp_data = seg->ls_k;
 	mirror->ffm_protection.fdp_parity = seg->ls_m;
 
@@ -1219,6 +1276,8 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			.ls_m = 0,
 			.ls_nfiles = nfiles,
 			.ls_layout_type = layout_type,
+			.ls_coding_type = pick_coding_type(
+				&args->loga_layouthint, layout_type),
 			.ls_files = files,
 		};
 

@@ -495,9 +495,20 @@ struct ec_layout {
  * lib/nfs4/ps/ps_proxy_ops.c).  Pass NULL to use the session's
  * default auth -- the historical behaviour, which every non-PS
  * caller (ec_demo, ec_pipeline back-compat wrappers) still wants.
+ *
+ * `supported_types` is the FFv2 codec-negotiation hint
+ * (draft-haynes-nfsv4-flexfiles-v2 sec-codec-negotiation).  The
+ * caller passes an array of ffv2_coding_type4 values ordered by
+ * preference; the MDS picks the first one it supports and emits a
+ * layout describing it.  Pass NULL / 0 to elide the hint -- the
+ * MDS then defaults to FFV2_ENCODING_PASSTHROUGH for compatibility
+ * with clients that have not yet learned to surface a preference.
+ * Only used for layout_type == LAYOUT4_FLEX_FILES_V2; ignored for
+ * other layout types.
  */
 int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 		   layoutiomode4 iomode, layouttype4 layout_type,
+		   const uint32_t *supported_types, uint32_t n_supported_types,
 		   const struct authunix_parms *creds,
 		   struct ec_layout *layout);
 int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
