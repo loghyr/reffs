@@ -75,7 +75,7 @@ rpc_call_xdr(xdrproc_t fn, XDR *xdrs, void *obj)
  * libtirpc/base-libc xdr_sizeof.
  */
 
-static bool __rpc_log_packets = true; /* DIAG: temp -- sb-list wire dump */
+static bool __rpc_log_packets = false;
 
 void rpc_enable_packet_logging(void)
 {
@@ -667,7 +667,7 @@ void rpc_log_packet(const char *prefix, const void *data, size_t len)
 				ptr += sprintf(ptr, "   ");
 		}
 
-		LOG("%s%s", prefix, line); /* DIAG: was TRACE */
+		TRACE("%s%s", prefix, line);
 	}
 }
 
@@ -1118,8 +1118,53 @@ int rpc_process_task(struct task *t)
 		rpc_protocol_free(rt_old);
 
 		/*
-		 * Invoke the reply callback immediately.  The callback is
-		 * responsible for decoding rt->rt_body if needed.
+		 * Decode the response body into ph_res so the callback can
+		 * read decoded fields directly.
+		 *
+		 * The RPC reply header (mtype, reply_stat, verifier,
+		 * accept_stat) has already been consumed by the decode_uint32
+		 * sequence above -- `p` now points one word past
+		 * accept_stat.  The remaining bytes are the per-op response
+		 * struct, encoded via roh_res_f.
+		 *
+		 * Was: "callback is responsible for decoding rt->rt_body" --
+		 * but no client callback in the tree actually decoded, so
+		 * every response read came back as the calloc'd zero in
+		 * ph_res.  Symptom: `reffs_probe1_clnt --op sb-list` printed
+		 * `Superblocks (0)` because slr_sbs_len decoded as 0 (it
+		 * stayed at calloc-zero); `--op sb-get` printed id=0 path=""
+		 * for the same reason.  Wire bytes are correct (verified via
+		 * RX hex dumps); only the in-memory result struct was empty.
+		 *
+		 * roh_res_f may be NULL for ops with void responses (none
+		 * present in probe1 today, but the server table allows it);
+		 * skip the decode in that case.
+		 */
+		struct protocol_handler *cb_ph =
+			(struct protocol_handler *)rt->rt_context;
+
+		if (cb_ph && cb_ph->ph_op_handler &&
+		    cb_ph->ph_op_handler->roh_res_f && cb_ph->ph_res) {
+			XDR cb_xdrs = { 0 };
+			size_t cb_remaining =
+				rt->rt_body_len -
+				(size_t)((const char *)p -
+					 (const char *)rt->rt_body);
+
+			xdrmem_create(&cb_xdrs, (char *)p, cb_remaining,
+				      XDR_DECODE);
+			if (!rpc_call_xdr(cb_ph->ph_op_handler->roh_res_f,
+					  &cb_xdrs, cb_ph->ph_res)) {
+				LOG("rpc: client decode of reply (xid=0x%08x) "
+				    "failed via roh_res_f",
+				    rt->rt_info.ri_xid);
+			}
+			xdr_destroy(&cb_xdrs);
+		}
+
+		/*
+		 * Invoke the reply callback.  ph_res is now decoded;
+		 * the callback reads fields directly.
 		 */
 		if (rt->rt_cb)
 			rt->rt_cb(rt);
