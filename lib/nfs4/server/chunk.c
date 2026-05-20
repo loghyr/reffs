@@ -322,13 +322,8 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	}
 
 	if (cstats) {
-		uint64_t prev_cs_writes = atomic_fetch_add_explicit(
-			&cstats->cs_writes, 1, memory_order_relaxed);
-
-		LOG("INV1_DIAG_POST: incremented &cs_writes=%p old=%llu sb=%p",
-		    (void *)&cstats->cs_writes,
-		    (unsigned long long)prev_cs_writes,
-		    (void *)compound->c_curr_sb);
+		atomic_fetch_add_explicit(&cstats->cs_writes, 1,
+					  memory_order_relaxed);
 		/*
 		 * INV-1 per-write block-count histogram.  Buckets sized
 		 * for the practical range observed in T2 IOR runs
