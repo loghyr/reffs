@@ -32,6 +32,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -45,6 +46,16 @@
 #include <rpc/rpc.h>
 
 #include "mds_tls_xprt.h"
+
+#ifndef __APPLE__
+/*
+ * mds_tls_xprt is a libtirpc-CLIENT* shim and only compiles on Linux.
+ * The Darwin build of mds_tls_xprt.c is a stub that returns NULL
+ * (see __APPLE__ branch there); every assertion in this suite then
+ * fails on a missing CLIENT*.  Skip the entire suite at the source
+ * level: main() returns 77 (autotools SKIP) on Darwin, and dreamer
+ * runs the real suite.  See feedback_remote_build_dreamer in memory.
+ */
 
 /* ------------------------------------------------------------------ */
 /* In-process SSL pair fixture                                        */
@@ -371,8 +382,15 @@ START_TEST(test_call_encode_failure_sets_re_status)
 	 * to bypass the function-pointer-type check; the function is
 	 * never called on the encode-failure path so the ABI mismatch
 	 * cannot matter at runtime.
+	 *
+	 * Same applies to xdr_always_false: declared variadic (line ~344
+	 * above) so it converts implicitly under older xdrproc_t typedefs,
+	 * but the macOS 26 SDK's clnt_call macro expands to a stricter
+	 * non-variadic xdrproc_t (matching how libtirpc's typedef now
+	 * reads).  The `(xdrproc_t)(void *)` cast restores the bypass.
 	 */
-	enum clnt_stat st = clnt_call(clnt, 0, xdr_always_false, NULL,
+	enum clnt_stat st = clnt_call(clnt, 0,
+				      (xdrproc_t)(void *)xdr_always_false, NULL,
 				      (xdrproc_t)(void *)xdr_void, NULL,
 				      (struct timeval){ .tv_sec = 1 });
 
@@ -411,9 +429,23 @@ static Suite *mds_tls_xprt_suite(void)
 	suite_add_tcase(s, tc);
 	return s;
 }
+#endif /* __APPLE__ */
 
 int main(void)
 {
+#ifdef __APPLE__
+	/*
+	 * mds_tls_xprt is intentionally a stub on Darwin -- see the
+	 * __APPLE__ branch in lib/nfs4/client/mds_tls_xprt.c.  The
+	 * suite asserts on a non-NULL CLIENT*; on Darwin the create
+	 * call returns NULL by design.  Skip cleanly (autotools
+	 * `make check` SKIP exit code 77) so the build is green on
+	 * macOS; dreamer (Linux + libtirpc) runs the real suite.
+	 */
+	fprintf(stderr,
+		"mds_tls_xprt_test: skipped on Darwin -- TLS xprt requires libtirpc\n");
+	return 77;
+#else
 	int failed;
 	SRunner *sr = srunner_create(mds_tls_xprt_suite());
 
@@ -421,4 +453,5 @@ int main(void)
 	failed = srunner_ntests_failed(sr);
 	srunner_free(sr);
 	return failed == 0 ? 0 : 1;
+#endif
 }
