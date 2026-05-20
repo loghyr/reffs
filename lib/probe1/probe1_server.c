@@ -641,9 +641,18 @@ static int probe1_op_nfs4_op_stats(struct rpc_trans *rt)
 						&sns->sns_ops.sns_ops_val[j];
 					struct reffs_op_stats *s =
 						&sb->sb_nfs4_op_stats[j];
+					/*
+					 * Same NULL-from-nfs4_op_name guard as
+					 * the global loop above -- this per-sb
+					 * loop has the identical strdup(NULL)
+					 * crash for op codes < 3.
+					 */
+					const char *jname =
+						nfs4_op_name((nfs_opnum4)j);
+
 					pno->pno_op = j;
 					pno->pno_name = strdup(
-						nfs4_op_name((nfs_opnum4)j));
+						jname ? jname : "OP_UNKNOWN");
 					pno->pno_calls = atomic_load_explicit(
 						&s->os_calls,
 						memory_order_relaxed);
