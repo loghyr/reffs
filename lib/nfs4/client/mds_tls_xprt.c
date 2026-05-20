@@ -230,6 +230,12 @@ static int mds_tls_encode_call(CLIENT *clnt, uint32_t proc, xdrproc_t xargs,
 /*
  * Decode the reply header and leave the XDR stream positioned at
  * the start of the results.  Returns RPC_SUCCESS on success.
+ *
+ * On failure logs which stage of the header parse rejected the
+ * bytes plus the first 32 received bytes -- INV-6 root-cause dig:
+ * Track 2 PSes log rpc_stat=2 (RPC_CANTDECODERES) for every
+ * compound mid-stream, and we need to know whether the header or
+ * the body decoder is the rejector.
  */
 static enum clnt_stat
 mds_tls_decode_reply_header(struct mds_tls_xprt_priv *priv, size_t reply_len,
@@ -238,44 +244,72 @@ mds_tls_decode_reply_header(struct mds_tls_xprt_priv *priv, size_t reply_len,
 	size_t pos = 0;
 	uint8_t *buf = priv->reply_buf;
 	uint32_t v;
+	const char *what = "?";
+	uint32_t got = 0;
 
 	/* xid */
-	if (get_u32(buf, reply_len, &pos, &v) < 0)
+	if (get_u32(buf, reply_len, &pos, &v) < 0) {
+		what = "xid read short";
 		goto bad;
-	if (v != expected_xid)
+	}
+	got = v;
+	if (v != expected_xid) {
+		what = "xid mismatch";
 		goto bad;
+	}
 
 	/* direction = REPLY */
-	if (get_u32(buf, reply_len, &pos, &v) < 0)
+	if (get_u32(buf, reply_len, &pos, &v) < 0) {
+		what = "direction read short";
 		goto bad;
-	if (v != RPCWIRE_REPLY)
+	}
+	got = v;
+	if (v != RPCWIRE_REPLY) {
+		what = "direction != REPLY";
 		goto bad;
+	}
 
 	/* reply_stat: ACCEPTED or DENIED */
-	if (get_u32(buf, reply_len, &pos, &v) < 0)
+	if (get_u32(buf, reply_len, &pos, &v) < 0) {
+		what = "reply_stat read short";
 		goto bad;
+	}
+	got = v;
 	if (v == RPCWIRE_MSG_DENIED) {
 		mds_tls_set_err(priv, RPC_AUTHERROR, EACCES);
 		return RPC_AUTHERROR;
 	}
-	if (v != RPCWIRE_MSG_ACCEPTED)
+	if (v != RPCWIRE_MSG_ACCEPTED) {
+		what = "reply_stat unrecognised";
 		goto bad;
+	}
 
 	/* opaque_auth verifier: flavor + length + body (skip body) */
-	if (get_u32(buf, reply_len, &pos, &v) < 0)
-		goto bad; /* flavor */
-	if (get_u32(buf, reply_len, &pos, &v) < 0)
-		goto bad; /* length */
+	if (get_u32(buf, reply_len, &pos, &v) < 0) {
+		what = "verf flavor read short";
+		goto bad;
+	}
+	got = v;
+	if (get_u32(buf, reply_len, &pos, &v) < 0) {
+		what = "verf length read short";
+		goto bad;
+	}
+	got = v;
 	uint32_t verf_len = v;
 	uint32_t verf_padded = (verf_len + 3) & ~3u;
 
-	if (pos + verf_padded > reply_len)
+	if (pos + verf_padded > reply_len) {
+		what = "verf body overruns reply";
 		goto bad;
+	}
 	pos += verf_padded;
 
 	/* accept_stat */
-	if (get_u32(buf, reply_len, &pos, &v) < 0)
+	if (get_u32(buf, reply_len, &pos, &v) < 0) {
+		what = "accept_stat read short";
 		goto bad;
+	}
+	got = v;
 	if (v != RPCWIRE_PROC_SUCCESS) {
 		/*
 		 * Map every non-success accept_stat onto a generic
@@ -294,7 +328,16 @@ mds_tls_decode_reply_header(struct mds_tls_xprt_priv *priv, size_t reply_len,
 	*body_pos_out = pos;
 	return RPC_SUCCESS;
 
-bad:
+bad: {
+	char hex[128];
+	size_t n = reply_len < 32 ? reply_len : 32;
+	size_t p = 0;
+	for (size_t i = 0; i < n && p + 3 < sizeof(hex); i++)
+		p += (size_t)snprintf(hex + p, sizeof(hex) - p, "%02x", buf[i]);
+	fprintf(stderr,
+		"mds_tls_decode_reply_header: %s -- pos=%zu reply_len=%zu expected_xid=0x%08x got=0x%08x first%zu=%s\n",
+		what, pos, reply_len, expected_xid, got, n, hex);
+}
 	mds_tls_set_err(priv, RPC_CANTDECODERES, EIO);
 	return RPC_CANTDECODERES;
 }
@@ -340,6 +383,27 @@ static enum clnt_stat mds_tls_call(CLIENT *clnt, rpcproc_t proc,
 		xdrmem_create(&xdrs, (char *)(priv->reply_buf + body_pos),
 			      (u_int)((size_t)n - body_pos), XDR_DECODE);
 		if (!mds_tls_call_xdrproc(xresults, &xdrs, resultsp)) {
+			/*
+			 * INV-6 dig: body-XDR rejection.  Log enough state
+			 * to tell apart truncated reply (n - body_pos
+			 * surprisingly short), wrong opcode list, or
+			 * stream-desync (bytes look unrelated to a
+			 * COMPOUND4res).
+			 */
+			size_t body_len = (size_t)n - body_pos;
+			size_t hex_n = body_len < 32 ? body_len : 32;
+			char hex[128];
+			size_t p = 0;
+			for (size_t i = 0; i < hex_n && p + 3 < sizeof(hex);
+			     i++)
+				p += (size_t)snprintf(
+					hex + p, sizeof(hex) - p, "%02x",
+					priv->reply_buf[body_pos + i]);
+			fprintf(stderr,
+				"mds_tls_call: body XDR decode failed -- "
+				"xid=0x%08x proc=%u reply_len=%zd body_pos=%zu body_len=%zu first%zu=%s\n",
+				xid, (unsigned)proc, n, body_pos, body_len,
+				hex_n, hex);
 			mds_tls_set_err(priv, RPC_CANTDECODERES, EIO);
 			return RPC_CANTDECODERES;
 		}
