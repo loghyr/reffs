@@ -640,14 +640,43 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 	 */
 	nfs4_session_destroy_zombies(compound->c_server_state, nc);
 
-	/* Save back-channel parameters. */
+	/*
+	 * Save back-channel parameters.  RFC 8881 S18.36.3: only treat
+	 * the connection as a back channel if the client opted in via
+	 * CREATE_SESSION4_FLAG_CONN_BACK_CHAN.  Without the flag,
+	 * leaving ns_cb_fd at -1 (the nfs4_session_alloc default) tells
+	 * the cb.c dispatch path "no back channel for this session" --
+	 * every cb sender already guards on ns_cb_fd < 0.  Setting
+	 * ns_cb_fd unconditionally was Stage 3 / INV-6's actual root
+	 * cause: callbacks landed on a PS forward-channel connection
+	 * the PS never advertised, the PS mds_tls_xprt read them as
+	 * replies, every subsequent reply-slot drifted by one and the
+	 * session was unrecoverable (run 9 timeline in
+	 * `.claude/design/experiments.md`).
+	 *
+	 * ns_cb_program is saved regardless -- it is harmless metadata,
+	 * only consumed by the cb.c senders (all of which already gate
+	 * on ns_cb_fd < 0).  A future BIND_CONN_TO_SESSION back-channel
+	 * promotion (CDFC4_BACK; currently `nfs4_op_bind_conn_to_session`
+	 * returns NFS4ERR_NOTSUPP for that direction) would benefit from
+	 * having the program number already on hand.
+	 */
 	ns->ns_cb_program = args->csa_cb_program;
-	ns->ns_cb_fd = compound->c_rt->rt_fd;
 	ns->ns_cb_seqid = 0;
+	if (args->csa_flags & CREATE_SESSION4_FLAG_CONN_BACK_CHAN)
+		ns->ns_cb_fd = compound->c_rt->rt_fd;
 
 	memcpy(resok->csr_sessionid, ns->ns_sessionid, sizeof(sessionid4));
 	resok->csr_sequence = args->csa_sequence;
-	resok->csr_flags = 0;
+	/*
+	 * RFC 8881 S18.36.3: csr_flags reflects what the server
+	 * actually established.  Mirror CONN_BACK_CHAN when we did set
+	 * up the back channel, so the client knows the connection is
+	 * dual-purpose.  PERSIST and CONN_RDMA stay clear -- we do not
+	 * support either yet.
+	 */
+	resok->csr_flags = args->csa_flags &
+			   CREATE_SESSION4_FLAG_CONN_BACK_CHAN;
 
 	resok->csr_fore_chan_attrs.ca_headerpadsize = ns->ns_headerpadsize;
 	resok->csr_fore_chan_attrs.ca_maxrequestsize = ns->ns_maxrequestsize;
