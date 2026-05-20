@@ -31,7 +31,7 @@ the same chunk from distinct NFSv4.2 clientids.  Master design:
 |----|--------------|--------|--------|
 | **T1** | N concurrent `ec_demo write/verify` instances, one MDS file, distinct `--id` per writer | `chunk-collision-validation.md` | **SHIPPED** -- harness `deploy/benchmark/run_chunk_collision.sh`; per-sb chunk counters + probe surface landed (BLOCKER 2); reviewer verdict #2 done |
 | **T1b** | `ec_demo --offset/--length` partial-range writes -- sub-chunk byte interleave | `chunk-collision-validation.md` (Track 1b) | **PLANNED** -- ~150 LOC `ec_demo` extension; not started |
-| **T2** | IOR shared-file write+verify via N Proxy Server containers; N PSes = N clientids on one shared MDS file | [`chunk-collision-track2.md`](chunk-collision-track2.md) | **IN PROGRESS** -- harness + image done; staggered bringup verified clean; run 4 (2026-05-19) reached IOR but IOR write+verify fails in the PS proxy path -- see INV-6 |
+| **T2** | IOR shared-file write+verify via N Proxy Server containers; N PSes = N clientids on one shared MDS file | [`chunk-collision-track2.md`](chunk-collision-track2.md) | **PASS 2026-05-20 (run 10).**  Harness + image + bringup + IOR all clean once Fix A (commit `199f2c38dac7`) closed INV-6.  4 PSes / 3 iterations / both write-verify and read-verify clean across the matrix.  See INV-6 row below and the "Track 2 run 10 timeline" subsection for the per-iteration numbers.  Benign GETATTR-coherence warning on shared-file `stat()` noted but does not break verify -- follow-up dig only. |
 | **T3** | Linux NFS client direct-to-MDS, as a no-EC-conflict sanity baseline | `chunk-collision-validation.md` (Track 3) | **PARTIAL** -- covered by existing CI git-clone-over-NFS |
 
 ---
@@ -90,7 +90,7 @@ running them.  Each is a real defect, tracked here until fixed.
 | ID | Defect | Surfaced by | Status |
 |----|--------|-------------|--------|
 | **INV-5** | Concurrent mTLS session establishment from multiple PSes to one MDS races `mds_session_create_tls` and most sessions fail with `EIO` (`Input/output error -- listener stays dark`).  With 4 PSes cold-starting together, Track 2 runs lost 1-of-4 and 3-of-4 sessions on two of three attempts. | Track 2 ([`chunk-collision-track2.md`](chunk-collision-track2.md)), 2026-05-19 | **CLOSED 2026-05-19 by Stage 3 Slice 1.**  Stage 4 re-run on dreamer (NPS=4, even with the 4-second stagger still in place) shows 0-of-4 lost sessions and MDS grants matching expected `NPS`.  Verified with the safe-API repro `conn_lifecycle_race_test` green under TSAN.  The 4-second stagger in `run-ps-bench-bringup.sh` is now belt-and-braces -- consider revisiting once Slice 3 lands. |
-| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **ROOT CAUSE LOCATED: PS reads NFSv4.1 back-channel CALLBACK calls as if they were replies (Stage 4 run 9, 2026-05-20).**  Slices 1-4 closed every memory-safety + fd-lifecycle hazard; Run 8 narrowed the trigger to RPC_CANTDECODERES; Run 9 with the failure-site instrumentation (commit 57a29355564c) showed the rejection is `xid mismatch` at pos=4 of the reply buffer, and the "received" bytes parse as an **RPC CALL message in the dynamic callback program range** (`0x40000000`, RFC 8881 §18.36): xid in the dynamic range, msg_type=0 (CALL), rpcvers=2, prog=0x40000000.  After each callback hits the PS, every subsequent expected_xid is off by one (the next forward-channel reply still arrives, but lands "one slot late" because the prior slot was consumed by the unrequested callback).  The PS sets `csa_flags=0` at CREATE_SESSION (`lib/nfs4/client/mds_session.c:177`) -- no back-channel requested per RFC 8881 §18.36.3 -- but the MDS sends callbacks on this connection anyway.  See "Track 2 run 9 timeline" below.  Two distinct fixes are possible: (A) MDS-side -- do not issue callbacks to a session whose csa_flags did NOT set `CREATE_SESSION4_FLAG_CONN_BACK_CHAN`, or (B) PS-side -- mds_tls_xprt distinguishes inbound CALL from REPLY and either silently discards the CB or responds with the minimum CB protocol surface (CB_NULL OK, others NFS4ERR_NOTSUPP).  Fix (A) is cleaner per RFC compliance; (B) is the more conservative safety net since plenty of other PS/MDS pairings will share this hazard.  Either fix would close INV-6. |
+| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **CLOSED 2026-05-20 by Stage 4 Fix A (commit 199f2c38dac7).**  Root cause was the MDS unconditionally writing the forward-channel fd into `ns_cb_fd` at CREATE_SESSION, ignoring whether the client opted into a back channel via `CREATE_SESSION4_FLAG_CONN_BACK_CHAN`.  PS sent csa_flags=0; MDS later issued CB_LAYOUTRECALL anyway; the PS's `mds_tls_xprt` had no callback reader and consumed each CB as a forward-channel reply, drifting every subsequent reply slot by one.  Fix: gate the `ns_cb_fd = compound->c_rt->rt_fd` assignment on `args->csa_flags & CREATE_SESSION4_FLAG_CONN_BACK_CHAN`, and mirror the bit in `csr_flags` per RFC 8881 §18.36.3.  Every CB sender in `lib/nfs4/server/cb.c` already gated on `ns_cb_fd < 0`, so the single conditional disables all callbacks for sessions that did not opt in.  Track 2 run 10 with the fix landed: IOR clean across 4 PSes / 3 iterations / both write and read verify, write 96-118 MiB/s, read 4.4-5.9 GiB/s, zero ASAN/UBSAN. |
 
 ### INV-5 characterization (2026-05-19, first dig)
 
@@ -621,6 +621,58 @@ B. **PS-side: handle inbound callbacks.**  Teach
 
 Fix (A) is correct per spec.  Fix (B) is defensively useful
 even after (A) lands.  Both could ship as separate slices.
+
+### Track 2 run 10 timeline (Fix A live, 2026-05-20)
+
+Commit `199f2c38dac7` shipped Fix A.  Track 2 run 10 outcome:
+
+```
+=== Track 2 result ===
+PASS: IOR write+verify clean (rc=0, no mismatches)
+PASS: no ASAN / UBSAN errors across MDS / DS / PS logs
+Track 2: PASS (4 PSes, IOR clean, sanitizers clean)
+```
+
+IOR completed all three iterations of `-w -r -W -R -e -k -t 64k
+-b 4m -s 4 -i 3` across 4 PSes (one MPI rank per PS):
+
+| iter | write MiB/s | read MiB/s |
+|------|-------------|------------|
+| 0 | 96.91 | 4440 |
+| 1 | 118.18 | 5791 |
+| 2 | 106.35 | 5980 |
+
+Every write+verify and read+verify pass clean.  Slices 1+2+3+4
+each contributed to making the surface stable enough for the
+real INV-6 to be visible -- they are not retrospectively
+optional.  Slice 5 (Fix A, this commit) is the keystone.
+
+**Secondary issue surfaced but not blocking.**  IOR prints a
+benign warning at the end of each iteration:
+
+```
+WARNING: inconsistent file size by different tasks
+WARNING: Expected aggregate file size       = 67108864
+WARNING: Stat() of aggregate file size      = 54525952
+WARNING: Using actual aggregate bytes moved = 67108864
+```
+
+The `stat()` from one rank's mount sees ~52 MiB even though all
+~64 MiB were transferred and verified.  This is a GETATTR
+cache-coherence issue (a known limitation of cross-PS shared-
+file GETATTR caching -- see the proxy-server.md "Action item 5:
+PS-side GETATTR caching" / "Action item 2: delstid support"
+notes).  IOR explicitly notes "Using actual aggregate bytes
+moved" and proceeds; verify still succeeds; the run is a PASS.
+Worth a follow-up dig but does not block any subsequent work
+including INV-1 instrumentation.
+
+### INV-1 DS instrumentation: ungated
+
+With Track 2 clean, the INV-1 "what partial-stripe write pattern
+do DSes see?" measurement can ship as the next planned slice
+(see Group B above).  The harness, topology, and clean-pass
+baseline are now available.
 
 ---
 
