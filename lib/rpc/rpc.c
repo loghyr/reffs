@@ -1118,14 +1118,14 @@ int rpc_process_task(struct task *t)
 		rpc_protocol_free(rt_old);
 
 		/*
-		 * Decode the response body into ph_res so the callback can
-		 * read decoded fields directly.
+		 * Decode the rest of the RPC reply header and the
+		 * response body into ph_res, so the callback can read
+		 * decoded fields directly.
 		 *
-		 * The RPC reply header (mtype, reply_stat, verifier,
-		 * accept_stat) has already been consumed by the decode_uint32
-		 * sequence above -- `p` now points one word past
-		 * accept_stat.  The remaining bytes are the per-op response
-		 * struct, encoded via roh_res_f.
+		 * At this point `p` is past xid + mtype only.  We still
+		 * need to consume reply_stat, the verifier (flavor +
+		 * length-prefixed body), and accept_stat before the
+		 * per-op response payload starts.
 		 *
 		 * Was: "callback is responsible for decoding rt->rt_body" --
 		 * but no client callback in the tree actually decoded, so
@@ -1145,21 +1145,62 @@ int rpc_process_task(struct task *t)
 
 		if (cb_ph && cb_ph->ph_op_handler &&
 		    cb_ph->ph_op_handler->roh_res_f && cb_ph->ph_res) {
-			XDR cb_xdrs = { 0 };
-			size_t cb_remaining =
-				rt->rt_body_len -
-				(size_t)((const char *)p -
-					 (const char *)rt->rt_body);
+			/* Parse the rest of the RPC reply header.  The
+			 * server side mirrors this with
+			 * rpc_build_accepted_header / encode_reply_verifier
+			 * / encode accept_stat.  Anything below ACCEPTED ->
+			 * SUCCESS is treated as "no decode" -- the callback
+			 * sees ph_res == calloc'd zero and ri_accept_stat
+			 * conveys the error to higher layers. */
+			uint32_t reply_stat;
+			uint32_t verf_flavor;
+			uint32_t verf_body_len;
+			uint32_t accept_stat;
 
-			xdrmem_create(&cb_xdrs, (char *)p, cb_remaining,
-				      XDR_DECODE);
-			if (!rpc_call_xdr(cb_ph->ph_op_handler->roh_res_f,
-					  &cb_xdrs, cb_ph->ph_res)) {
-				LOG("rpc: client decode of reply (xid=0x%08x) "
-				    "failed via roh_res_f",
-				    rt->rt_info.ri_xid);
+			p = rpc_decode_uint32_t(rt, p, &reply_stat);
+			if (p && reply_stat == 0 /* MSG_ACCEPTED */) {
+				p = rpc_decode_uint32_t(rt, p, &verf_flavor);
+				if (p)
+					p = rpc_decode_uint32_t(rt, p,
+								&verf_body_len);
+				/* Skip verifier opaque body, padded to 4. */
+				if (p && verf_body_len > 0) {
+					size_t pad = (4 - (verf_body_len & 3)) &
+						     3;
+					size_t skip = verf_body_len + pad;
+
+					if ((const char *)p + skip >
+					    (const char *)rt->rt_body +
+						    rt->rt_body_len) {
+						p = NULL;
+					} else {
+						p = (uint32_t *)((char *)p +
+								 skip);
+					}
+				}
+				if (p)
+					p = rpc_decode_uint32_t(rt, p,
+								&accept_stat);
+				if (p && accept_stat == 0 /* SUCCESS */) {
+					XDR cb_xdrs = { 0 };
+					size_t cb_remaining =
+						rt->rt_body_len -
+						(size_t)((const char *)p -
+							 (const char *)
+								 rt->rt_body);
+
+					xdrmem_create(&cb_xdrs, (char *)p,
+						      cb_remaining, XDR_DECODE);
+					if (!rpc_call_xdr(cb_ph->ph_op_handler
+								  ->roh_res_f,
+							  &cb_xdrs,
+							  cb_ph->ph_res)) {
+						LOG("rpc: client decode of reply (xid=0x%08x) failed via roh_res_f",
+						    rt->rt_info.ri_xid);
+					}
+					xdr_destroy(&cb_xdrs);
+				}
 			}
-			xdr_destroy(&cb_xdrs);
 		}
 
 		/*
