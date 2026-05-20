@@ -592,23 +592,23 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg, char **out_body,
 	ffv2_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[0];
 
 	/*
-	 * m == 0 emits FFV2_ENCODING_MIRRORED -- the chunked-with-
-	 * integrity mirror.  reffs always writes the data plane
-	 * through CHUNK_WRITE / CHUNK_READ regardless of m, so the
-	 * wire-stated encoding type matches what the data servers
-	 * actually carry (per-chunk CRC32, chunk_guard4, the chunk
-	 * lifecycle).  FFV2_ENCODING_PASSTHROUGH (the FFv1-on-ramp
-	 * legacy that uses NFSv3 WRITE / READ directly with no chunk
-	 * envelope) is defined in the draft for assimilation /
-	 * heterogeneous-mirror use cases but is not what reffs's MDS
-	 * emits for fresh layouts; a future commit may add a
-	 * per-mirror-set hint surface for clients that explicitly
-	 * want the PASSTHROUGH shape.  See
-	 * draft-haynes-nfsv4-flexfiles-v2 sections
-	 * sec-encoding-passthrough and sec-encoding-mirrored.
+	 * m == 0 emits FFV2_ENCODING_PASSTHROUGH (wire value 0x1,
+	 * same shape as the pre-FFV2_ENCODING_PASSTHROUGH rename
+	 * FFV2_CODING_MIRRORED).  This is the FFv1-compatible
+	 * default until the layouthint negotiation surface lands
+	 * and the MDS can pick FFV2_ENCODING_MIRRORED (or any other
+	 * specific encoding type) based on the client's
+	 * fflh_supported_types.  Choosing MIRRORED unconditionally
+	 * here would have been wire-incorrect for the non-mirror
+	 * codecs (RS, Mojette, STRIPE) -- the layout would claim
+	 * MIRRORED while the client wrote disjoint stripes or shards.
+	 * See draft-haynes-nfsv4-flexfiles-v2 sections
+	 * sec-encoding-passthrough, sec-encoding-mirrored, and
+	 * sec-codec-negotiation for the per-client-hint selection
+	 * that replaces this stopgap.
 	 */
 	if (seg->ls_m == 0)
-		mirror->ffm_coding_type = FFV2_ENCODING_MIRRORED;
+		mirror->ffm_coding_type = FFV2_ENCODING_PASSTHROUGH;
 	else
 		mirror->ffm_coding_type = FFV2_ENCODING_RS_VANDERMONDE;
 	mirror->ffm_protection.fdp_data = seg->ls_k;
