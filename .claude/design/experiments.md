@@ -90,7 +90,7 @@ running them.  Each is a real defect, tracked here until fixed.
 | ID | Defect | Surfaced by | Status |
 |----|--------|-------------|--------|
 | **INV-5** | Concurrent mTLS session establishment from multiple PSes to one MDS races `mds_session_create_tls` and most sessions fail with `EIO` (`Input/output error -- listener stays dark`).  With 4 PSes cold-starting together, Track 2 runs lost 1-of-4 and 3-of-4 sessions on two of three attempts. | Track 2 ([`chunk-collision-track2.md`](chunk-collision-track2.md)), 2026-05-19 | **CLOSED 2026-05-19 by Stage 3 Slice 1.**  Stage 4 re-run on dreamer (NPS=4, even with the 4-second stagger still in place) shows 0-of-4 lost sessions and MDS grants matching expected `NPS`.  Verified with the safe-API repro `conn_lifecycle_race_test` green under TSAN.  The 4-second stagger in `run-ps-bench-bringup.sh` is now belt-and-braces -- consider revisiting once Slice 3 lands. |
-| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **ROOT CAUSE IDENTIFIED: `RPC_CANTDECODERES` on every PS->MDS reply mid-stream (Stage 4 run 8, 2026-05-20).**  Track 2 runs 5-7 narrowed INV-6 monotonically through Slices 1-4 (4 -> 2 -> 1 -> 1 affected PSes) while closing every memory-safety and fd-lifecycle hazard.  Run 8 added a TIRPC `clnt_geterr` log on the `clnt_call != RPC_SUCCESS` branch and **every PS** -- not just the one that triggered MPI_ABORT -- now logs `rpc_stat=2 (RPC: Can't decode result) re_status=2 re_errno=5` for every COMPOUND tag (`ps-proxy-layoutget`, `getattr`, `getdeviceinfo`, `layoutreturn`, `renew-lease`, `destroy_session`).  The MDS sends bytes, the PS receives them, the XDR decoder rejects them.  This is a stream-state desync, not a per-fd / per-conn lifecycle defect.  See "Track 2 run 8 timeline" below.  Hypotheses (high prior first): (a) MDS-side multi-fragment RPC record marking re-overlaps fragments under sustained load (the FIXED 2026-03-27 io_uring large-message stall in `goals.md` resembles this -- regression?), (b) TLS record-boundary issue where a single RPC reply spans TLS records and one record is delivered to TIRPC out of order, (c) io_uring write-side reorders when two replies submit concurrently, (d) MDS-side XDR encoder bug specific to a reply path activated under load.  Further lib/io/ slices are unlikely to help; the next dig is **MDS-side reply-byte tracing** (xid, fd, byte count, optionally checksum) to compare with PS-side received bytes. |
+| **INV-6** | A real kernel NFS client running IOR shared-file write+verify through the PS proxy path fails: `fsync()` warns "failed" and `stat()` on the proxied file errors (`aiori-POSIX.c:866`), aborting IOR.  The PS proxy data/metadata path does not survive an IOR `-w -r -W -R -e` shared-file workload. | Track 2 run 4, 2026-05-19 -- the first run to reach IOR (topology + harness now clean) | **ROOT CAUSE LOCATED: PS reads NFSv4.1 back-channel CALLBACK calls as if they were replies (Stage 4 run 9, 2026-05-20).**  Slices 1-4 closed every memory-safety + fd-lifecycle hazard; Run 8 narrowed the trigger to RPC_CANTDECODERES; Run 9 with the failure-site instrumentation (commit 57a29355564c) showed the rejection is `xid mismatch` at pos=4 of the reply buffer, and the "received" bytes parse as an **RPC CALL message in the dynamic callback program range** (`0x40000000`, RFC 8881 §18.36): xid in the dynamic range, msg_type=0 (CALL), rpcvers=2, prog=0x40000000.  After each callback hits the PS, every subsequent expected_xid is off by one (the next forward-channel reply still arrives, but lands "one slot late" because the prior slot was consumed by the unrequested callback).  The PS sets `csa_flags=0` at CREATE_SESSION (`lib/nfs4/client/mds_session.c:177`) -- no back-channel requested per RFC 8881 §18.36.3 -- but the MDS sends callbacks on this connection anyway.  See "Track 2 run 9 timeline" below.  Two distinct fixes are possible: (A) MDS-side -- do not issue callbacks to a session whose csa_flags did NOT set `CREATE_SESSION4_FLAG_CONN_BACK_CHAN`, or (B) PS-side -- mds_tls_xprt distinguishes inbound CALL from REPLY and either silently discards the CB or responds with the minimum CB protocol surface (CB_NULL OK, others NFS4ERR_NOTSUPP).  Fix (A) is cleaner per RFC compliance; (B) is the more conservative safety net since plenty of other PS/MDS pairings will share this hazard.  Either fix would close INV-6. |
 
 ### INV-5 characterization (2026-05-19, first dig)
 
@@ -549,6 +549,78 @@ io_request_write_op.  Compare with the PS-side received bytes
 checksum at TIRPC reply-buffer level).  A byte-count mismatch
 points at hypothesis A or C; a count match with checksum
 mismatch points at B (TLS) or memory corruption.
+
+### Track 2 run 9 timeline (header/body localisation, 2026-05-20)
+
+Commit `57a29355564c` split RPC_CANTDECODERES into seven named
+header-stage failures (xid mismatch, direction != REPLY, verf
+overruns reply, etc.) and a body-XDR failure, each logging the
+first 32 bytes of the offending buffer.  Run 9 outcome:
+
+**All failures are header-stage xid mismatches, not body XDR.**
+Sample PS-0 log (first failing read):
+
+```
+mds_tls_decode_reply_header: xid mismatch -- pos=4 reply_len=192
+ expected_xid=0x00000016 got=0x10000004
+ first32=1000000400000000000000024000000000000001000000010000000000000000
+```
+
+Parsing `first32` as RPC wire bytes:
+
+| Offset | Bytes | Meaning | Note |
+|--------|-------|---------|------|
+| 0..3 | 10 00 00 04 | xid = 0x10000004 | In the dynamic xid range |
+| 4..7 | 00 00 00 00 | msg_type = 0 | **CALL** -- not REPLY (=1) |
+| 8..11 | 00 00 00 02 | rpcvers = 2 | Valid |
+| 12..15 | 40 00 00 00 | prog = 0x40000000 | **Dynamic callback program** (RFC 8881 §18.36) |
+| 16..19 | 00 00 00 01 | vers = 1 | |
+| 20..23 | 00 00 00 01 | proc = 1 | (CB_COMPOUND? or CB_NULL?) |
+
+This is an **RPC CALL message, not a reply**.  Specifically a
+back-channel callback (program in the dynamic range, RFC 8881
+§18.36 allocates 0x40000000+ for `cb_program`).  The MDS is
+issuing a CB_COMPOUND or CB_NULL on the PS's forward-channel
+TLS connection.
+
+The PS sets `csa_flags=0` at CREATE_SESSION
+(`lib/nfs4/client/mds_session.c:177`) -- no back-channel
+requested, per RFC 8881 §18.36.3 the `CREATE_SESSION4_FLAG_
+CONN_BACK_CHAN` bit is the opt-in.  The PS-side `mds_tls_xprt`
+has no back-channel handling and unconditionally reads every
+reply slot as `xargs` -> `tls_rpc_send` -> `tls_rpc_recv` ->
+decode-as-reply.  When a callback arrives between two forward
+calls, the next `tls_rpc_recv` reads the callback's marker +
+body, decode-as-reply fails on xid (callback xid != PS's
+expected reply xid), and the actual reply to the PS's call
+arrives "one slot late" -- so every subsequent expected_xid is
+off by one, forever.
+
+Three of four PSes hit this in run 9; PS-1 did not, presumably
+because it never held a layout that the MDS chose to recall.
+The cascade is also explains the "1 of 4 affected" pattern in
+runs 5/6/7 -- every PS that gets a callback breaks; one of
+them breaking aborts IOR via MPI.
+
+Two distinct fixes close INV-6:
+
+A. **MDS-side: respect csa_flags.**  Do not issue callbacks on
+   a session whose `CREATE_SESSION` did not set
+   `CREATE_SESSION4_FLAG_CONN_BACK_CHAN`.  Per RFC 8881 §18.36.3
+   this is the correct behaviour; check where MDS picks a
+   connection for `CB_COMPOUND` issuance and gate on the flag.
+   Cleaner per-spec; a few touched files in `lib/nfs4/server/`.
+
+B. **PS-side: handle inbound callbacks.**  Teach
+   `mds_tls_xprt` to peek `msg_type` at offset 4 of the read
+   reply buffer and, when it sees CALL (=0), route to a small
+   callback responder: CB_NULL -> success, anything else ->
+   NFS4ERR_NOTSUPP, then continue waiting for the actual
+   forward-channel reply.  Conservative safety net; any future
+   MDS / PS pairing inherits the same defence.
+
+Fix (A) is correct per spec.  Fix (B) is defensively useful
+even after (A) lands.  Both could ship as separate slices.
 
 ---
 
