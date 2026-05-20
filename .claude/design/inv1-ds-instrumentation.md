@@ -240,6 +240,58 @@ exercise the contention path.
 - **None on wire format**.  Probe XDR is internal; appending
   new fields is the documented carve-out.
 
+## Status: slice committed; live capture blocked on a DS-bench issue
+
+| Item | Status |
+|------|--------|
+| Counters in `nfs4_op_chunk_write` | DONE (commit `9f66efa4014d`) |
+| `chunk_store_count_runs()` | DONE; unit-tested |
+| Probe XDR + `fill_sb_info` | DONE; `pcs_fragmentation_runs` plumbed at 0 |
+| `--inv1-report` + `--ds-list` in T1b harness | DONE (commit `bb7560ca833e`) |
+| 8 unit tests in `chunk_test.c` | DONE; 28/28 pass on macOS |
+| **Live INV-1 numbers from T1b on dreamer** | **BLOCKED** -- DS-role SIGSEGV |
+
+### Capture attempt 2026-05-20: blocked
+
+Ran the non-TLS bench (10 DSes + MDS, no PSes) on dreamer with
+ec_demo + `--layout v2 --codec rs --n 8 --iterations 4`.
+ec_demo reported "write OK" for every stripe and the harness
+reported CORRUPTION on every iteration (expected -- concurrent
+writers contending on one file).  BUT:
+
+- **All 10 DS reffsd processes SIGSEGV'd within ~2 seconds**
+  right after the harness's post-run `sb-list` traversal
+  started.  MDS stayed healthy.
+- Cores landed in `/var/lib/systemd/coredump/` on dreamer
+  (10 of them, exit 139).
+- DS sb-list showed zero chunk-stats activity -- consistent
+  with the SIGSEGV firing before the increments hit the
+  probe-readable counters, OR the writes never reaching the
+  CHUNK handler in the first place.  Backtraces required to
+  disambiguate; not done in this session.
+
+Tracked in memory as
+[[project-ds-role-sigsegv-on-t1b-teardown]].
+
+### What unblocks the WG-list numbers
+
+1. Decompress one DS core
+   (`zstd -d /var/lib/systemd/coredump/core.reffsd.0.*.zst`)
+   and pull a backtrace against
+   `/shared/build/src/.libs/reffsd` in the bench-builder
+   container.  Identify the crash site.
+2. If the crash is in shutdown / CB-recall teardown, gate the
+   probe traversal until the MDS releases all outstanding
+   layouts.
+3. If it's something my INV-1 reads triggered, fix and re-run
+   `make check` to confirm.
+4. Re-run T1b with `--inv1-report --ds-list reffs-bench-ds0,...,reffs-bench-ds9`
+   and capture the four ratios.
+
+The slice itself does not need to wait for (1)-(4) -- the
+instrumentation is correct per unit tests and shipped.  Live
+capture is the follow-up.
+
 ## Cross-references
 
 - [`experiments.md`](experiments.md) -- INV-1 ungated entry,
