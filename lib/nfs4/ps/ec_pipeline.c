@@ -143,6 +143,12 @@ static uint32_t codec_type_to_supported(enum ec_codec_type codec_type,
 }
 
 /*
+ * Forward declaration so ec_resolve_mirrors' failure unwind can
+ * reach the cleanup helper (defined below).
+ */
+static void ec_disconnect_all(struct ec_context *ctx);
+
+/*
  * Find an existing connection to the same DS host, or return -1.
  */
 static int find_existing_conn(struct ec_context *ctx, uint32_t idx)
@@ -191,15 +197,26 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 		}
 	}
 
+	/*
+	 * Mid-loop failures unwind through `out_err` so partially
+	 * allocated unique sessions (slice 6: heap-allocated, dedup'd by
+	 * pointer) and ctx_devs / ctx_conns get reclaimed.  Routing
+	 * direct returns would leak every successful per-mirror
+	 * mds_session_create that ran before the first failure --
+	 * ASAN-visible, and the pre-slice-6 inline-struct shape had the
+	 * same kind of leak with a smaller surface (one inline struct
+	 * per mirror) until this fix.
+	 */
+	int ret = 0;
+
 	for (uint32_t i = 0; i < n; i++) {
 		struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[i];
-		int ret;
 
 		ret = mds_getdeviceinfo(ctx->ctx_ms, em->em_deviceid,
 					ctx->ctx_layout.el_layout_type,
 					&ctx->ctx_devs[i]);
 		if (ret)
-			return ret;
+			goto out_err;
 
 		/*
 		 * Propagate the tight-coupling flag from the device to the
@@ -239,8 +256,10 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 
 				ctx->ctx_ds_sess[i] =
 					calloc(1, sizeof(struct mds_session));
-				if (!ctx->ctx_ds_sess[i])
-					return -ENOMEM;
+				if (!ctx->ctx_ds_sess[i]) {
+					ret = -ENOMEM;
+					goto out_err;
+				}
 				snprintf(ds_id, sizeof(ds_id), "ds%u-%u", i,
 					 getpid());
 				mds_session_set_owner(ctx->ctx_ds_sess[i],
@@ -283,10 +302,20 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 			}
 		}
 		if (ret)
-			return ret;
+			goto out_err;
 	}
 
 	return 0;
+
+out_err:
+	/*
+	 * ec_disconnect_all is NULL-safe per-slot and dedup-aware
+	 * (slot j < i sharing a pointer with slot i owns the destroy),
+	 * so it cleanly reclaims whatever was allocated before the
+	 * failing iteration.  Also frees ctx_devs / ctx_conns.
+	 */
+	ec_disconnect_all(ctx);
+	return ret;
 }
 
 /*
