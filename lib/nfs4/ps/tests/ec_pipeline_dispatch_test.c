@@ -167,7 +167,19 @@ static int recording_sc_read(const uint8_t *fh, uint32_t fh_len,
 #define TEST_CHUNK_SZ 4096
 
 static struct ec_mirror g_mirrors[2];
-static struct mds_session g_ds_sess[2];
+/*
+ * ec_context.ctx_ds_sess is an array of pointers (one per mirror)
+ * since the combined-mode dedup fix made each entry shareable as
+ * a pointer.  The dispatch test never actually drives a real RPC
+ * on these sessions -- the short-circuit hook short-circuits
+ * before the session is touched -- so a pair of pointers to
+ * dummy memory is enough.  We keep two distinct backing structs
+ * so that any inadvertent dereference inside the test still has
+ * predictable per-mirror state.
+ */
+static struct mds_session g_ds_sess_backing[2];
+static struct mds_session *g_ds_sess[2] = { &g_ds_sess_backing[0],
+					    &g_ds_sess_backing[1] };
 
 static void dispatch_setup(void)
 {
@@ -184,7 +196,9 @@ static void dispatch_setup(void)
 	ck_assert_int_eq(ps_state_register(&cfg), 0);
 
 	memset(g_mirrors, 0, sizeof(g_mirrors));
-	memset(g_ds_sess, 0, sizeof(g_ds_sess));
+	memset(g_ds_sess_backing, 0, sizeof(g_ds_sess_backing));
+	g_ds_sess[0] = &g_ds_sess_backing[0];
+	g_ds_sess[1] = &g_ds_sess_backing[1];
 
 	g_mirrors[0].em_fh_len = 1;
 	g_mirrors[0].em_fh[0] = MIRROR0_FH_BYTE;

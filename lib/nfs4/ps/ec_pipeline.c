@@ -78,7 +78,12 @@ struct ec_context {
 	struct ec_layout ctx_layout;
 	struct ec_device *ctx_devs;
 	struct ds_conn *ctx_conns; /* NFSv3 DS connections (v1) */
-	struct mds_session *ctx_ds_sess; /* NFSv4.2 DS sessions (v2) */
+	/*
+	 * Array of pointers, one per mirror.  See the matching
+	 * declaration in ec_pipeline_internal.h for the lock-step
+	 * binary-layout contract and the dedup rationale.
+	 */
+	struct mds_session **ctx_ds_sess;
 	struct ec_codec *ctx_codec;
 	uint32_t ctx_k;
 	uint32_t ctx_m;
@@ -161,7 +166,17 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 		return -ENOMEM;
 
 	if (use_v2) {
-		ctx->ctx_ds_sess = calloc(n, sizeof(struct mds_session));
+		/*
+		 * Array of pointers; each unique session is calloc'd
+		 * below.  Combined-mode duplicates (multiple mirrors on
+		 * the same DS host:port) share the same pointer so a
+		 * single ms_call_mutex + slot_seqid serialises all per-
+		 * mirror compounds on that NFSv4.1 session, instead of
+		 * three independent counters aliasing into the server's
+		 * DRC cache (which silently no-op'd writes/reads on the
+		 * 2nd and 3rd mirror).
+		 */
+		ctx->ctx_ds_sess = calloc(n, sizeof(struct mds_session *));
 		if (!ctx->ctx_ds_sess) {
 			free(ctx->ctx_devs);
 			ctx->ctx_devs = NULL;
@@ -209,15 +224,26 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 			int existing = find_existing_conn(ctx, i);
 
 			if (existing >= 0) {
+				/*
+				 * Pointer dedup: share the SAME session
+				 * struct, so ms_call_mutex + ms_slot_seqid
+				 * are also shared and the server sees a
+				 * single monotonic seqid stream on this
+				 * sessionid.
+				 */
 				ctx->ctx_ds_sess[i] =
 					ctx->ctx_ds_sess[existing];
 			} else {
 				char ds_id[32];
 				char host_arg[280];
 
+				ctx->ctx_ds_sess[i] =
+					calloc(1, sizeof(struct mds_session));
+				if (!ctx->ctx_ds_sess[i])
+					return -ENOMEM;
 				snprintf(ds_id, sizeof(ds_id), "ds%u-%u", i,
 					 getpid());
-				mds_session_set_owner(&ctx->ctx_ds_sess[i],
+				mds_session_set_owner(ctx->ctx_ds_sess[i],
 						      ds_id);
 				/*
 				 * Pass "host:port" when the layout's uaddr
@@ -237,7 +263,7 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 					snprintf(host_arg, sizeof(host_arg),
 						 "%s",
 						 ctx->ctx_devs[i].ed_host);
-				ret = mds_session_create(&ctx->ctx_ds_sess[i],
+				ret = mds_session_create(ctx->ctx_ds_sess[i],
 							 host_arg);
 			}
 		} else {
@@ -323,7 +349,7 @@ int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 	for (int attempt = 0; attempt < 3; attempt++) {
 		int ret;
 
-		ret = ds_chunk_write(&ctx->ctx_ds_sess[mirror_idx], em->em_fh,
+		ret = ds_chunk_write(ctx->ctx_ds_sess[mirror_idx], em->em_fh,
 				     em->em_fh_len, block_offset, chunk_sz, src,
 				     wsz, owner_id, stid);
 		if (ret != -ESTALE)
@@ -386,7 +412,7 @@ int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 	for (int attempt = 0; attempt < 3; attempt++) {
 		int ret;
 
-		ret = ds_chunk_read(&ctx->ctx_ds_sess[mirror_idx], em->em_fh,
+		ret = ds_chunk_read(ctx->ctx_ds_sess[mirror_idx], em->em_fh,
 				    em->em_fh_len, block_offset, nblk, shard,
 				    rd_chunk_sz, nread, stid);
 		if (ret != -ESTALE)
@@ -471,18 +497,30 @@ static void ec_disconnect_all(struct ec_context *ctx)
 	 */
 	if (ctx->ctx_ds_sess) {
 		for (uint32_t i = n; i-- > 0;) {
-			/* Skip duplicates (shared sessions). */
+			if (!ctx->ctx_ds_sess[i])
+				continue;
+			/*
+			 * Pointer dedup: combined-mode mirrors share a
+			 * single heap-allocated mds_session via pointer
+			 * copy in ec_resolve_mirrors.  Destroy each
+			 * unique session exactly once -- the slot at
+			 * index j (j < i) that aliases us still owns
+			 * the destroy, so skip here.
+			 */
 			bool dup = false;
 
 			for (uint32_t j = 0; j < i; j++) {
-				if (ctx->ctx_ds_sess[j].ms_clnt ==
-				    ctx->ctx_ds_sess[i].ms_clnt) {
+				if (ctx->ctx_ds_sess[j] ==
+				    ctx->ctx_ds_sess[i]) {
 					dup = true;
 					break;
 				}
 			}
-			if (!dup)
-				mds_session_destroy(&ctx->ctx_ds_sess[i]);
+			if (!dup) {
+				mds_session_destroy(ctx->ctx_ds_sess[i]);
+				free(ctx->ctx_ds_sess[i]);
+			}
+			ctx->ctx_ds_sess[i] = NULL;
 		}
 		free(ctx->ctx_ds_sess);
 		ctx->ctx_ds_sess = NULL;
@@ -1054,14 +1092,14 @@ retry_stripe:
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 
-			ret = ds_chunk_finalize(&ctx.ctx_ds_sess[i], em->em_fh,
+			ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
 						em->em_fh_len, 0, total_blocks,
 						1);
 		}
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 
-			ret = ds_chunk_commit(&ctx.ctx_ds_sess[i], em->em_fh,
+			ret = ds_chunk_commit(ctx.ctx_ds_sess[i], em->em_fh,
 					      em->em_fh_len, 0, total_blocks, 1,
 					      NULL);
 		}
@@ -1364,7 +1402,7 @@ retry_stripe:
 		for (int i = 0; i < k + m && ret == 0; i++) {
 			struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 
-			ret = ds_chunk_finalize(&ctx.ctx_ds_sess[i], em->em_fh,
+			ret = ds_chunk_finalize(ctx.ctx_ds_sess[i], em->em_fh,
 						em->em_fh_len, base_block,
 						blocks_per_stripe, 1);
 		}
@@ -1385,7 +1423,7 @@ retry_stripe:
 			 * server-phase4b.md).
 			 */
 			ret = ds_chunk_commit(
-				&ctx.ctx_ds_sess[i], em->em_fh, em->em_fh_len,
+				ctx.ctx_ds_sess[i], em->em_fh, em->em_fh_len,
 				base_block, blocks_per_stripe, 1,
 				captured_verf ? NULL : first_verf);
 			if (ret == 0 && !captured_verf)

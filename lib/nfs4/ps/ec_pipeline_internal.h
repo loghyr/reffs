@@ -50,7 +50,19 @@ struct ec_context {
 	struct ec_layout ctx_layout;
 	struct ec_device *ctx_devs;
 	struct ds_conn *ctx_conns; /* NFSv3 DS connections (v1) */
-	struct mds_session *ctx_ds_sess; /* NFSv4.2 DS sessions (v2) */
+	/*
+	 * NFSv4.2 DS sessions, one pointer per mirror.  Pointer (not
+	 * inline struct) so that combined-mode dedup -- multiple
+	 * mirrors resolving to the same DS host:port -- can SHARE a
+	 * single mds_session via pointer copy instead of struct copy.
+	 * The earlier struct-copy form gave each "mirror" its own
+	 * slot_seqid counter on the same NFSv4.1 sessionid, which
+	 * aliased into the server's DRC and silently no-op'd writes /
+	 * reads for all but the first mirror.  Each unique connection
+	 * is heap-allocated; duplicates share the pointer and are
+	 * destroyed exactly once by ec_disconnect_all.
+	 */
+	struct mds_session **ctx_ds_sess;
 	struct ec_codec *ctx_codec;
 	uint32_t ctx_k;
 	uint32_t ctx_m;
