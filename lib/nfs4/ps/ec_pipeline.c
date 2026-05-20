@@ -726,22 +726,16 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 		return -EINVAL;
 	}
 
-	if (codec_type == EC_CODEC_MIRROR) {
-		/*
-		 * The MIRROR codec exists in the factory (see
-		 * ec_create_codec) but the pipeline's striped data
-		 * layout writes each data[i] to a different file
-		 * offset, which would silently fan k different
-		 * stripe slices to the supposedly-replicated
-		 * mirrors.  Refuse here until the pipeline learns
-		 * to lay every data[i] at the SAME offset for
-		 * MIRRORED.  Tracking: pipeline integration for
-		 * FFV2_ENCODING_MIRRORED.
-		 */
-		ec_log("ec_write_with_file: EC_CODEC_MIRROR pipeline "
-		       "integration not yet wired\n");
-		return -ENOSYS;
-	}
+	/*
+	 * MIRROR semantics inside this function: every data_shards[i]
+	 * points at the SAME stripe offset and every mirror replica
+	 * receives the same bytes via CHUNK_WRITE / ds_write.  The
+	 * encoder (ec_mirror_create) is the no-op for the aliased-
+	 * buffer case; the actual replication is the per-mirror fan-
+	 * out loop below.  stripe_data and the data_shards stride
+	 * pick up the per-codec branch immediately below.
+	 */
+	const bool is_mirror = (codec_type == EC_CODEC_MIRROR);
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;
@@ -780,10 +774,13 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	ec_log("ec_write: resolved %u mirrors\n", ctx.ctx_layout.el_nmirrors);
 
 	/*
-	 * Pad data to a multiple of k * shard_size.  Each stripe
-	 * encodes k shards of shard_size bytes.
+	 * Pad data to a multiple of stripe_data.  For striping codecs
+	 * each stripe encodes k shards of shard_size bytes, so
+	 * stripe_data = k * shard_size.  For MIRROR each "stripe" is
+	 * one chunk's worth of bytes replicated to N data servers, so
+	 * stripe_data = shard_size.
 	 */
-	size_t stripe_data = (size_t)k * shard_size;
+	size_t stripe_data = is_mirror ? shard_size : (size_t)k * shard_size;
 	size_t padded_len =
 		((data_len + stripe_data - 1) / stripe_data) * stripe_data;
 	uint8_t *padded = calloc(1, padded_len);
@@ -875,10 +872,18 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 		int outer_retry = 0;
 
 retry_stripe:
-		/* Point data shards into the padded buffer. */
+		/*
+		 * Point data shards into the padded buffer.  Striping
+		 * codecs (RS / Mojette / STRIPE) give each shard a
+		 * disjoint shard_size slice of the stripe.  MIRROR
+		 * points every shard at the same shard_size slice;
+		 * the replication happens when we fan out the writes
+		 * to N mirrors below.
+		 */
 		for (int i = 0; i < k; i++)
-			data_shards[i] = padded + s * stripe_data +
-					 (size_t)i * shard_size;
+			data_shards[i] =
+				padded + s * stripe_data +
+				(is_mirror ? 0 : (size_t)i * shard_size);
 
 		if (nonsys) {
 			for (int i = 0; i < k; i++)
@@ -1624,12 +1629,15 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	    shard_size > EC_SHARD_SIZE_MAX)
 		return -EINVAL;
 
-	if (codec_type == EC_CODEC_MIRROR) {
-		/* Same gate as the write path; see comment there. */
-		ec_log("ec_read_with_file: EC_CODEC_MIRROR pipeline "
-		       "integration not yet wired\n");
-		return -ENOSYS;
-	}
+	/*
+	 * MIRROR semantics: every replica holds the same chunk
+	 * payload at the same file offset.  The pipeline reads from
+	 * every present replica and the mirror_decode picks any one
+	 * to populate the missing slots; the output-copy step
+	 * downstream collapses the N identical shards to a single
+	 * stripe-sized run in `buf`.
+	 */
+	const bool is_mirror = (codec_type == EC_CODEC_MIRROR);
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.ctx_ms = ms;
@@ -1656,11 +1664,13 @@ int ec_read_codec_with_file(struct mds_session *ms, struct mds_file *mf,
 	if (ret)
 		goto out_layout;
 
-	size_t stripe_data = (size_t)k * shard_size;
+	size_t stripe_data = is_mirror ? shard_size : (size_t)k * shard_size;
 
 	/*
 	 * We don't know the original data length, so we read as many
-	 * stripes as fit in buf_len (rounded up).
+	 * stripes as fit in buf_len (rounded up).  For MIRROR each
+	 * stripe is one chunk worth of bytes; for striping codecs
+	 * each stripe is k * shard_size bytes split across k shards.
 	 */
 	size_t nstripes = (buf_len + stripe_data - 1) / stripe_data;
 
@@ -1784,14 +1794,28 @@ retry_stripe_read:
 		if (ret)
 			break;
 
-		/* Copy data shards (0..k-1) to output buffer. */
-		for (int i = 0; i < k && total_read < buf_len; i++) {
+		if (is_mirror) {
+			/*
+			 * Every replica's shard now holds the same
+			 * stripe bytes (post-decode).  Emit one stripe
+			 * worth (shard_size) to the output and move on.
+			 */
 			size_t copy = shard_size;
 
 			if (total_read + copy > buf_len)
 				copy = buf_len - total_read;
-			memcpy(buf + total_read, shards[i], copy);
+			memcpy(buf + total_read, shards[0], copy);
 			total_read += copy;
+		} else {
+			/* Copy data shards (0..k-1) to output buffer. */
+			for (int i = 0; i < k && total_read < buf_len; i++) {
+				size_t copy = shard_size;
+
+				if (total_read + copy > buf_len)
+					copy = buf_len - total_read;
+				memcpy(buf + total_read, shards[i], copy);
+				total_read += copy;
+			}
 		}
 	}
 
