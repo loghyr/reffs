@@ -250,24 +250,26 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 		hb_state.last_listener_check = now;
 	}
 
-	// Check connection timeouts and read operations
-	if (now - hb_state.last_connection_check >= CONNECTION_CHECK_INTERVAL) {
-		// Define timeout in seconds
-		const int conn_timeout = 60; // 1 minute timeout
+	/*
+	 * Connection timeout sweep -- run every heartbeat tick, NOT on
+	 * the slower CONNECTION_CHECK_INTERVAL cadence, so a wedged
+	 * CONN_CLOSING slot is force-drained within a second or two of
+	 * crossing CONN_CLOSING_FORCE_DRAIN_SECS rather than waiting up
+	 * to a full check interval (see conn-info-closing-wedge.md).
+	 * io_conn_check_timeouts is the single shared implementation the
+	 * kqueue loop also calls -- closing live connections idle past
+	 * the idle timeout and force-draining stuck CONN_CLOSING slots --
+	 * so the two event loops cannot drift in their timeout policy.
+	 */
+	io_conn_check_timeouts(60 /* idle live-connection timeout */,
+			       CONN_CLOSING_FORCE_DRAIN_SECS);
 
-		// Scan all active connections
+	// Re-arm a pending read on any live connection that has lost one.
+	if (now - hb_state.last_connection_check >= CONNECTION_CHECK_INTERVAL) {
 		for (int fd = 3; fd < MAX_CONNECTIONS; fd++) {
 			struct conn_info *ci = io_conn_get(fd);
 			if (!ci || ci->ci_state != CONN_CONNECTED)
 				continue;
-
-			// Check for stale connections
-			if (now - ci->ci_last_activity > conn_timeout) {
-				LOG("Connection fd=%d inactive for %ld seconds - closing",
-				    fd, (long)(now - ci->ci_last_activity));
-				io_socket_close(fd, ETIMEDOUT);
-				continue;
-			}
 
 			// Ensure each active connection has a pending read operation
 			if (ci->ci_read_count == 0) {

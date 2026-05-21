@@ -449,6 +449,118 @@ START_TEST(test_tls_snapshot)
 }
 END_TEST
 
+/*
+ * CONN_CLOSING force-drain (conn-info-closing-wedge.md, Slice 1).
+ *
+ * io_conn_unregister leaves a slot in CONN_CLOSING with its
+ * in-flight op counters intact; the slot only reaches CONN_UNUSED
+ * once every counter drains to zero (conn_drain_if_idle_locked).
+ * If a counter leaks -- a CQE-completion path that skips its
+ * io_conn_remove_*_op -- the slot is wedged forever and
+ * io_conn_register refuses to reuse it.  io_conn_check_timeouts
+ * is the backstop: a CONN_CLOSING slot idle past the closing
+ * deadline is force-drained back to CONN_UNUSED.
+ *
+ * wedge_slot() reproduces the leak deterministically: register,
+ * add two read ops, remove only one, unregister.  The slot lands
+ * in CONN_CLOSING with ci_read_count == 1 and never drains on its
+ * own.  A wedged slot is observable through io_conn_register:
+ * it returns NULL while the slot is CONN_CLOSING and non-NULL
+ * once the slot is reclaimed.
+ *
+ * The closing deadline passed to io_conn_check_timeouts is -1 in
+ * the force-drain tests: a slot's age is now - ci_last_activity,
+ * always >= 0, so a -1 deadline force-drains every CONN_CLOSING
+ * slot regardless of age.  That keeps the tests free of any sleep
+ * (the freshly-wedged slot is 0 s old).  The deadline IS exercised
+ * from the other side by test_closing_not_force_drained_before_
+ * timeout, which passes a positive deadline and asserts the young
+ * slot is spared.
+ */
+static void wedge_slot(int fd)
+{
+	(void)io_conn_register(fd, CONN_CONNECTED, CONN_ROLE_CLIENT);
+	ck_assert_int_eq(io_conn_add_read_op(fd), 0);
+	ck_assert_int_eq(io_conn_add_read_op(fd), 0);
+	/* Remove only one of the two -- simulates the Bug-A leak. */
+	ck_assert_int_eq(io_conn_remove_read_op(fd), 0);
+	ck_assert_int_eq(io_conn_unregister(fd), 0);
+}
+
+START_TEST(test_closing_drain_completes_when_balanced)
+{
+	/* Healthy path: every add paired with a remove -> the slot
+	 * drains to CONN_UNUSED the instant io_conn_unregister runs,
+	 * with no force-drain needed. */
+	(void)io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT);
+	ck_assert_int_eq(io_conn_add_read_op(FD_A), 0);
+	ck_assert_int_eq(io_conn_add_read_op(FD_A), 0);
+	ck_assert_int_eq(io_conn_remove_read_op(FD_A), 0);
+	ck_assert_int_eq(io_conn_remove_read_op(FD_A), 0);
+	ck_assert_int_eq(io_conn_unregister(FD_A), 0);
+
+	/* Slot is CONN_UNUSED: immediately re-registerable. */
+	ck_assert_ptr_nonnull(
+		io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT));
+}
+END_TEST
+
+START_TEST(test_closing_force_drain_reclaims_wedged_slot)
+{
+	wedge_slot(FD_A);
+
+	/* Wedged: io_conn_register refuses the CONN_CLOSING slot. */
+	ck_assert_ptr_null(
+		io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT));
+
+	/* Sweep: closing deadline -1 force-drains regardless of age,
+	 * idle deadline huge so no live-idle slot is touched. */
+	int reaped = io_conn_check_timeouts(3600, -1);
+	ck_assert_int_ge(reaped, 1);
+
+	/* Slot reclaimed -> registration now succeeds. */
+	ck_assert_ptr_nonnull(
+		io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT));
+}
+END_TEST
+
+START_TEST(test_closing_not_force_drained_before_timeout)
+{
+	wedge_slot(FD_A);
+
+	/* Slot just entered CONN_CLOSING; with a 5 s closing deadline
+	 * it is too young to force-drain -- a drain still in progress
+	 * must not be reaped out from under itself. */
+	int reaped = io_conn_check_timeouts(3600, 5);
+	ck_assert_int_eq(reaped, 0);
+
+	/* Still wedged. */
+	ck_assert_ptr_null(
+		io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT));
+}
+END_TEST
+
+START_TEST(test_closing_force_drain_spares_live_connections)
+{
+	/* A live CONN_CONNECTED connection alongside a wedged slot:
+	 * the closing force-drain must reclaim the wedged slot without
+	 * disturbing the live one (idle deadline huge). */
+	(void)io_conn_register(FD_B, CONN_CONNECTED, CONN_ROLE_CLIENT);
+	wedge_slot(FD_A);
+
+	int reaped = io_conn_check_timeouts(3600, -1);
+	ck_assert_int_ge(reaped, 1);
+
+	/* FD_A reclaimed; FD_B untouched and still live. */
+	ck_assert_ptr_nonnull(
+		io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT));
+	struct conn_info *live = io_conn_get(FD_B);
+
+	ck_assert_ptr_nonnull(live);
+	ck_assert_int_eq(live->ci_state, CONN_CONNECTED);
+}
+END_TEST
+
 static Suite *conn_info_suite(void)
 {
 	Suite *s = suite_create("conn_info");
@@ -473,6 +585,10 @@ static Suite *conn_info_suite(void)
 	tcase_add_test(tc, test_ssl_clear_with_outstanding_ref);
 	tcase_add_test(tc, test_ssl_unregister_clears_ssl);
 	tcase_add_test(tc, test_tls_snapshot);
+	tcase_add_test(tc, test_closing_drain_completes_when_balanced);
+	tcase_add_test(tc, test_closing_force_drain_reclaims_wedged_slot);
+	tcase_add_test(tc, test_closing_not_force_drained_before_timeout);
+	tcase_add_test(tc, test_closing_force_drain_spares_live_connections);
 	suite_add_tcase(s, tc);
 	return s;
 }

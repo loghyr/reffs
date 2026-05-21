@@ -45,6 +45,16 @@
 #define MAX_CONNECTIONS 65536 // Maximum number of concurrent client connections
 #define MAX_LISTENERS 1024
 
+/*
+ * A conn_info slot stuck in CONN_CLOSING longer than this is wedged
+ * -- a healthy drain completes in milliseconds -- and is force-
+ * drained back to CONN_UNUSED by io_conn_check_timeouts.  Five
+ * seconds is three orders of magnitude past a healthy drain, so it
+ * cannot false-positive a drain merely in progress.  See
+ * .claude/design/conn-info-closing-wedge.md.
+ */
+#define CONN_CLOSING_FORCE_DRAIN_SECS 5
+
 #define IO_URING_WAIT_SEC (1)
 #define IO_URING_WAIT_NSEC (0)
 
@@ -329,7 +339,17 @@ int io_conn_unregister(int fd);
 void io_conn_cleanup(void);
 const char *io_conn_state_to_str(enum conn_state state);
 const char *io_conn_role_to_str(enum conn_role role);
-int io_conn_check_timeouts(time_t timeout_seconds);
+/*
+ * Sweep the connection table.  idle_timeout_seconds bounds live
+ * (CONN_CONNECTED / READING / ...) connections inactive that long
+ * -- they are closed.  closing_timeout_seconds bounds slots stuck
+ * in CONN_CLOSING: a slot whose drain has not completed in that
+ * long is force-drained back to CONN_UNUSED so its fd-keyed table
+ * slot can be reused (see .claude/design/conn-info-closing-wedge.md).
+ * Returns the count of connections closed plus slots force-drained.
+ */
+int io_conn_check_timeouts(time_t idle_timeout_seconds,
+			   time_t closing_timeout_seconds);
 
 int io_socket_close(int fd, int error);
 void io_add_listener(int fd);

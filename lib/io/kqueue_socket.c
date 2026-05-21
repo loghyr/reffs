@@ -660,7 +660,8 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 	 * the shared conn_info module which holds the activity timestamps.
 	 */
 	if (now - kqueue_last_conn_check >= KQUEUE_CONN_CHECK_INTERVAL) {
-		int closed = io_conn_check_timeouts(KQUEUE_CONN_TIMEOUT);
+		int closed = io_conn_check_timeouts(
+			KQUEUE_CONN_TIMEOUT, CONN_CLOSING_FORCE_DRAIN_SECS);
 		if (closed > 0)
 			TRACE("Heartbeat: closed %d inactive connections",
 			      closed);

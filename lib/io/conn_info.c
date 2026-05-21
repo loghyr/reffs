@@ -953,7 +953,8 @@ void io_conn_dump_all(void)
 	pthread_mutex_unlock(&conn_mutex);
 }
 
-int io_conn_check_timeouts(time_t timeout_seconds)
+int io_conn_check_timeouts(time_t idle_timeout_seconds,
+			   time_t closing_timeout_seconds)
 {
 	time_t now = time(NULL);
 	/*
@@ -999,22 +1000,25 @@ int io_conn_check_timeouts(time_t timeout_seconds)
 		    connections[i]->ci_state == CONN_UNUSED ||
 		    connections[i]->ci_fd < 0)
 			continue;
-		if (now - connections[i]->ci_last_activity <= timeout_seconds)
-			continue;
+
+		time_t idle = now - connections[i]->ci_last_activity;
+
+		/*
+		 * CONN_CLOSING slots get their own, much shorter deadline
+		 * (closing_timeout_seconds): a healthy drain finishes in
+		 * milliseconds, so a slot still CLOSING seconds later is
+		 * wedged -- a CQE incremented a count but the matching
+		 * decrement never ran (io_uring cancellation, a worker
+		 * giving up without calling remove_*_op, etc.).  The fd
+		 * was already closed at the original io_conn_unregister;
+		 * force the slot to UNUSED here so it can be reused, but
+		 * do not call io_socket_close again.
+		 */
 		if (connections[i]->ci_state == CONN_CLOSING) {
-			/*
-			 * Drain never completed for this slot (a CQE
-			 * incremented a count but the matching decrement
-			 * never ran -- io_uring cancellation, worker
-			 * giving up without calling remove_*_op, etc.).
-			 * The fd was already closed at the original
-			 * io_conn_unregister; force the slot to UNUSED
-			 * here so it can be reused, but do not call
-			 * io_socket_close again.
-			 */
+			if (idle <= closing_timeout_seconds)
+				continue;
 			LOG("Connection fd=%d stuck in CLOSING for %ld seconds (counts: r=%d w=%d a=%d c=%d, write_active=%d); force-draining",
-			    connections[i]->ci_fd,
-			    now - connections[i]->ci_last_activity,
+			    connections[i]->ci_fd, (long)idle,
 			    connections[i]->ci_read_count,
 			    connections[i]->ci_write_count,
 			    connections[i]->ci_accept_count,
@@ -1030,9 +1034,12 @@ int io_conn_check_timeouts(time_t timeout_seconds)
 			n_force_drained++;
 			continue;
 		}
+
+		/* Live connection: close it if idle past the idle deadline. */
+		if (idle <= idle_timeout_seconds)
+			continue;
 		LOG("Connection fd=%d timed out (%ld seconds inactive)",
-		    connections[i]->ci_fd,
-		    now - connections[i]->ci_last_activity);
+		    connections[i]->ci_fd, (long)idle);
 		to_close[n_to_close++] = connections[i]->ci_fd;
 	}
 
