@@ -2824,13 +2824,6 @@ struct LAYOUTGET4args {
         length4                 loga_minlength;
         stateid4                loga_stateid;
         count4                  loga_maxcount;
-        /*
-         * RFC 8881 S18.43.  Optional client hint; loh_body is
-         * layouttype4-specific (see ffv2_layouthint4 for FFv2).
-         * Clients that have nothing to say MUST send loh_type =
-         * loga_layout_type and loh_body<> empty.
-         */
-        layouthint4             loga_layouthint;
 };
 struct LAYOUTGET4resok {
         bool               logr_return_on_close;

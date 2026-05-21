@@ -24,9 +24,6 @@
 #include <rpc/xdr.h>
 
 #include "nfsv42_xdr.h"
-
-#include "nfs4/ffv2_hint.h"
-
 #include "ec_client.h"
 
 /* ------------------------------------------------------------------ */
@@ -67,23 +64,13 @@ static uint32_t parse_owner_id(const char *str, uint32_t len)
 /* LAYOUTGET                                                           */
 /* ------------------------------------------------------------------ */
 
-/*
- * The FFv2 codec-negotiation packer lives in
- * lib/nfs4/common/ffv2_hint.c so the client (here) and the MDS
- * server share one source of truth.  See nfs4/ffv2_hint.h for the
- * contract.
- */
-
 int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 		   layoutiomode4 iomode, layouttype4 layout_type,
-		   const uint32_t *supported_types, uint32_t n_supported_types,
 		   const struct authunix_parms *creds, struct ec_layout *layout)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
-	char *hint_body = NULL;
-	uint32_t hint_len = 0;
 
 	memset(layout, 0, sizeof(*layout));
 
@@ -122,38 +109,7 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 	memcpy(&lg_args->loga_stateid, &mf->mf_stateid, sizeof(stateid4));
 	lg_args->loga_maxcount = 65536;
 
-	/*
-	 * Pack the FFv2 codec-negotiation hint when the caller surfaced
-	 * one and the layout type carries the FFv2 hint format.  Other
-	 * layout types leave loh_body empty.
-	 */
-	if (supported_types && n_supported_types > 0 &&
-	    layout_type == LAYOUT4_FLEX_FILES_V2) {
-		int hret = ffv2_hint_pack(supported_types, n_supported_types,
-					  &hint_body, &hint_len);
-		if (hret) {
-			mds_compound_fini(&mc);
-			return hret;
-		}
-		lg_args->loga_layouthint.loh_type = LAYOUT4_FLEX_FILES_V2;
-		lg_args->loga_layouthint.loh_body.loh_body_val = hint_body;
-		lg_args->loga_layouthint.loh_body.loh_body_len = hint_len;
-	}
-
 	ret = mds_compound_send_with_auth(&mc, ms, creds);
-	/*
-	 * After send returns the encoded wire bytes have been copied
-	 * out; the source body buffer can go regardless of success.
-	 * Clearing the lg_args pointer first avoids any later free()
-	 * via mds_compound_fini's XDR-arg destructor reading the same
-	 * pointer.
-	 */
-	if (hint_body) {
-		lg_args->loga_layouthint.loh_body.loh_body_val = NULL;
-		lg_args->loga_layouthint.loh_body.loh_body_len = 0;
-		free(hint_body);
-		hint_body = NULL;
-	}
 	if (ret) {
 		mds_compound_fini(&mc);
 		return ret;

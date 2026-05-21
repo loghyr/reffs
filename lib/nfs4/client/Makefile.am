@@ -23,7 +23,6 @@ libreffs_nfs4_client_la_SOURCES = \
 # mds_session.c + mds_tls_xprt.c reference these unconditionally
 # (slice plan-1-tls.b, .claude/design/proxy-server-tls.md).
 libreffs_nfs4_client_la_LIBADD = \
-	$(top_builddir)/lib/nfs4/common/libreffs_nfs4_common.la \
 	$(top_builddir)/lib/tls/libreffs_tls.la \
 	$(OPENSSL_LIBS)
 

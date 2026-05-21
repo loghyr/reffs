@@ -35,7 +35,6 @@
 #include "nfs4/attr.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
-#include "nfs4/ffv2_hint.h"
 #include "nfs4/migration_record.h"
 #include "nfs4/ops.h"
 #include "nfs4/errors.h"
@@ -67,13 +66,6 @@ static uint32_t deviceid_to_dstore(const deviceid4 devid)
 	memcpy(&net_id, devid + 12, sizeof(net_id));
 	return ntohl(net_id);
 }
-
-/*
- * Coding-type negotiation lives in lib/nfs4/common/ffv2_hint.c so
- * the client (mds_layout.c) and the MDS (here) share one source of
- * truth.  See nfs4/ffv2_hint.h for the contract; we call
- * ffv2_hint_pick() directly from the LAYOUTGET handler below.
- */
 
 /* ------------------------------------------------------------------ */
 /* GETDEVICEINFO                                                       */
@@ -600,16 +592,25 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg, char **out_body,
 	ffv2_mirror4 *mirror = &ffl.ffl_mirrors.ffl_mirrors_val[0];
 
 	/*
-	 * Emit the segment's persisted coding type.  Zero (no defined
-	 * FFv2 enum value) is treated as FFV2_ENCODING_PASSTHROUGH so
-	 * segments allocated before this field existed (or by callers
-	 * that left it zero) continue to wire-emit the FFv1-compatible
-	 * default.  See draft-haynes-nfsv4-flexfiles-v2 sections
-	 * sec-encoding-passthrough through sec-codec-negotiation.
+	 * m == 0 emits FFV2_ENCODING_PASSTHROUGH; m > 0 emits
+	 * FFV2_ENCODING_RS_VANDERMONDE.  This is a stopgap: the MDS has
+	 * no per-file record of which codec the client actually uses.
+	 *
+	 * NOT_NOW_BROWN_COW: the codec-negotiation hint that would let
+	 * the MDS emit the correct ffm_coding_type (MIRRORED, Mojette,
+	 * ...) was attempted as a loga_layouthint field on
+	 * LAYOUTGET4args and reverted -- RFC 8881 S18.43 has no such
+	 * field, so a fixed struct field there breaks every stock
+	 * kernel NFS client (it over-reads the COMPOUND).  A correct
+	 * carrier is the fattr4_layout_hint SETATTR attribute
+	 * (RFC 8881 attribute 63) or a new draft op; until one lands,
+	 * ec_demo selects its codec from the --codec CLI flag and the
+	 * wire ffm_coding_type is advisory only.
 	 */
-	mirror->ffm_coding_type = seg->ls_coding_type ?
-					  seg->ls_coding_type :
-					  FFV2_ENCODING_PASSTHROUGH;
+	if (seg->ls_m == 0)
+		mirror->ffm_coding_type = FFV2_ENCODING_PASSTHROUGH;
+	else
+		mirror->ffm_coding_type = FFV2_ENCODING_RS_VANDERMONDE;
 	mirror->ffm_protection.fdp_data = seg->ls_k;
 	mirror->ffm_protection.fdp_parity = seg->ls_m;
 
@@ -1218,8 +1219,6 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			.ls_m = 0,
 			.ls_nfiles = nfiles,
 			.ls_layout_type = layout_type,
-			.ls_coding_type = ffv2_hint_pick(&args->loga_layouthint,
-							 layout_type),
 			.ls_files = files,
 		};
 

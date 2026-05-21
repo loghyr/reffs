@@ -51,5 +51,4 @@ libreffs_nfs4_server_la_SOURCES = \
 # `ds->ds_ops == &dstore_ops_local` address comparisons fail across
 # copies (ASAN also flags it as an ODR violation under -fsanitize=address).
 libreffs_nfs4_server_la_LIBADD = \
-	$(top_builddir)/lib/nfs4/common/libreffs_nfs4_common.la \
 	$(top_builddir)/lib/nfs4/dstore/libreffs_dstore.la

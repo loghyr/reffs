@@ -354,7 +354,6 @@ static void rocksdb_inode_sync(struct inode *inode)
 					.ls_m = seg->ls_m,
 					.ls_nfiles = seg->ls_nfiles,
 					.ls_layout_type = seg->ls_layout_type,
-					.ls_coding_type = seg->ls_coding_type,
 				};
 				memcpy(p, &lsd, sizeof(lsd));
 				p += sizeof(lsd);
@@ -616,8 +615,6 @@ static int rocksdb_inode_alloc(struct inode *inode)
 									lsd.ls_nfiles,
 								.ls_layout_type =
 									lsd.ls_layout_type,
-								.ls_coding_type =
-									lsd.ls_coding_type,
 								.ls_files =
 									files,
 							};

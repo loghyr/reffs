@@ -48,16 +48,6 @@ struct layout_data_file_disk {
 /*
  * On-disk: a layout segment header followed by nfiles data file entries.
  * Written as: layout_segment_disk + nfiles * layout_data_file_disk
- *
- * ls_coding_type carries the FFv2 ffv2_coding_type4 wire value chosen
- * for this segment.  0 (no defined enum value) is treated as
- * FFV2_ENCODING_PASSTHROUGH (the FFv1-compatible default) so segments
- * persisted before this field existed restore correctly.  See
- * draft-haynes-nfsv4-flexfiles-v2 sec-codec-negotiation.
- *
- * Field added to the tail of the struct; CLAUDE.md says no
- * persistent storage has been deployed, so no version bump or
- * migration code.
  */
 struct layout_segment_disk {
 	uint64_t ls_offset; /* byte range start */
@@ -67,7 +57,6 @@ struct layout_segment_disk {
 	uint16_t ls_m; /* parity devices */
 	uint32_t ls_nfiles; /* number of data file entries */
 	uint32_t ls_layout_type; /* layouttype4: LAYOUT4_FLEX_FILES, etc. */
-	uint32_t ls_coding_type; /* ffv2_coding_type4; 0 = PASSTHROUGH */
 };
 
 /*
@@ -98,11 +87,6 @@ struct layout_data_file {
 
 /*
  * In-memory: a layout segment with its data file array.
- *
- * ls_coding_type: see comment on layout_segment_disk.  Zero means
- * "treat as PASSTHROUGH" so segments that pre-date this field (or
- * legacy callers that did not initialise it) behave as the FFv1
- * compat path did.
  */
 struct layout_segment {
 	uint64_t ls_offset;
@@ -112,7 +96,6 @@ struct layout_segment {
 	uint16_t ls_m;
 	uint32_t ls_nfiles;
 	uint32_t ls_layout_type; /* layouttype4: LAYOUT4_FLEX_FILES, etc. */
-	uint32_t ls_coding_type; /* ffv2_coding_type4; 0 = PASSTHROUGH */
 	struct layout_data_file *ls_files; /* array of ls_nfiles entries */
 };
 
