@@ -561,6 +561,40 @@ START_TEST(test_closing_force_drain_spares_live_connections)
 }
 END_TEST
 
+START_TEST(test_idle_sweep_spares_listeners)
+{
+	/*
+	 * io_conn_check_timeouts must never idle-reap a listener: a
+	 * listener with no incoming connections is idle by definition,
+	 * and closing it would silently stop the server accepting.
+	 * CONN_LISTENING is an idle listener; CONN_ACCEPTING is a
+	 * listener with an accept SQE armed.
+	 */
+	(void)io_conn_register(FD_A, CONN_LISTENING, CONN_ROLE_SERVER);
+
+	(void)io_conn_register(FD_B, CONN_CONNECTED, CONN_ROLE_SERVER);
+	ck_assert_int_eq(io_conn_add_accept_op(FD_B), 0);
+	ck_assert_int_eq(io_conn_get(FD_B)->ci_state, CONN_ACCEPTING);
+
+	/*
+	 * idle deadline -1: now - ci_last_activity is always >= 0, so a
+	 * -1 deadline would reap every non-listener slot regardless of
+	 * age.  Both listener-state slots must survive it untouched.
+	 */
+	io_conn_check_timeouts(-1, 3600);
+
+	struct conn_info *a = io_conn_get(FD_A);
+
+	ck_assert_ptr_nonnull(a);
+	ck_assert_int_eq(a->ci_state, CONN_LISTENING);
+
+	struct conn_info *b = io_conn_get(FD_B);
+
+	ck_assert_ptr_nonnull(b);
+	ck_assert_int_eq(b->ci_state, CONN_ACCEPTING);
+}
+END_TEST
+
 static Suite *conn_info_suite(void)
 {
 	Suite *s = suite_create("conn_info");
@@ -589,6 +623,7 @@ static Suite *conn_info_suite(void)
 	tcase_add_test(tc, test_closing_force_drain_reclaims_wedged_slot);
 	tcase_add_test(tc, test_closing_not_force_drained_before_timeout);
 	tcase_add_test(tc, test_closing_force_drain_spares_live_connections);
+	tcase_add_test(tc, test_idle_sweep_spares_listeners);
 	suite_add_tcase(s, tc);
 	return s;
 }

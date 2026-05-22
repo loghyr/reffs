@@ -1035,6 +1035,23 @@ int io_conn_check_timeouts(time_t idle_timeout_seconds,
 			continue;
 		}
 
+		/*
+		 * Listener sockets are exempt from the idle sweep: a
+		 * listener with no incoming connections is idle by
+		 * definition, not stale, and closing it would silently
+		 * stop the server accepting on that service.  CONN_LISTENING
+		 * is an idle listener; CONN_ACCEPTING is a listener with an
+		 * accept SQE armed (ci_last_activity is only refreshed when
+		 * an accept is (re-)armed, so a quiet listener's timestamp
+		 * ages indefinitely).  The pre-unification io_uring
+		 * heartbeat skipped these implicitly by acting only on
+		 * CONN_CONNECTED; io_conn_check_timeouts must do so
+		 * explicitly now that both event loops share it.
+		 */
+		if (connections[i]->ci_state == CONN_LISTENING ||
+		    connections[i]->ci_state == CONN_ACCEPTING)
+			continue;
+
 		/* Live connection: close it if idle past the idle deadline. */
 		if (idle <= idle_timeout_seconds)
 			continue;

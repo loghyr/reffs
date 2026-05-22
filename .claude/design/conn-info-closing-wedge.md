@@ -166,33 +166,59 @@ Design decisions:
 Slice 1 alone makes the MDS production-safe (bounded self-heal)
 and unblocks Track 2's 8-rank case.
 
-### Slice 2 -- fix the counter leak (Bug A) at the source
+### Slice 2 -- stop idle-reaping listener sockets
 
-Eliminate the leak so the force-drain never has to fire.
+Slice 1 shipped; running `run_chunk_collision_track2.sh --n 8`
+against it then PASSED -- the force-drain backstop cleared 4
+wedged slots in ~6 s each and all 8 PSes registered.  The
+force-drain warning lines, which print the per-counter state,
+pinned the leaked counter:
 
-Investigation approach (the leaked counter is not yet pinned):
+```
+Connection fd=18 stuck in CLOSING for 6 seconds
+  (counts: r=0 w=0 a=1 c=0, write_active=0); force-draining
+```
 
-1. Add paired add/remove tracing: every `io_conn_add_*_op` and
-   `io_conn_remove_*_op` logs `(fd, counter, value, caller)` under
-   a build flag.
-2. Reproduce with `run_chunk_collision_track2.sh --n 8` on a Linux
-   bench host (dreamer); the wedge reproduces reliably at N=8.
-3. From the force-drain warning line -- which already prints
-   `r=%d w=%d a=%d c=%d write_active=%d` -- identify which
-   counter is non-zero on the wedged slot.
-4. Walk the CQE-completion path for that op type in `handler.c`
-   and find the early-return that skips `io_conn_remove_*_op`
-   (the "connection not tracked / closing, bail" branch).
-5. Fix: that path must decrement its counter before returning --
-   an SQE that was counted at submit time must be un-counted at
-   completion time on **every** path, success or error, tracked
-   or not.
+`a=1` -- the stuck counter is `ci_accept_count`, and the wedged
+fds (18, 19, 20) are **listener sockets**: the MDS opens a TCP
+listener per RPC service (NFSv4, NFSv3, MOUNT, NLM, NSM).  A
+quiet listener sits in `CONN_ACCEPTING` with exactly one accept
+SQE armed -- `ci_accept_count == 1` is its *healthy* idle state,
+not a leak.
 
-The fix is delicate: it sits in the exact code the INV-6
-Stage-3-Slice-4 hold was added to protect.  The decrement must
-happen on the *correct* `conn_info` (matched by `ci_fd`, as the
-other `*_remove_op` paths already do) so a stale CQE still cannot
-touch a reused slot.
+Root cause is in Slice 1 itself.  `io_conn_check_timeouts`'s
+idle-close pass reaps any non-UNUSED, non-CLOSING slot idle past
+`idle_timeout_seconds`.  The pre-Slice-1 io_uring heartbeat scan
+acted only on `CONN_CONNECTED` slots, so it skipped listeners
+implicitly; Slice 1 unified the two event loops onto the shared
+`io_conn_check_timeouts`, which has no such exclusion.  A
+listener gets no incoming connections during a Track 2 run, so
+its `ci_last_activity` (refreshed only when an accept is
+re-armed) ages past 60 s and the unified sweep `io_socket_close`s
+it -- sending a perfectly healthy listener into `CONN_CLOSING`
+with its armed accept op as the "stuck" `a=1`.
+
+Fix: `io_conn_check_timeouts` skips `CONN_LISTENING` and
+`CONN_ACCEPTING` slots in the idle-close pass.  A listener with
+no incoming connections is idle by definition, not stale;
+closing it silently stops the server accepting on that service.
+The `CONN_CLOSING` force-drain pass is unchanged -- a listener
+that genuinely closes still drains correctly.
+
+This also corrects a latent defect in the kqueue path, which has
+always called `io_conn_check_timeouts` and so has always been
+able to idle-reap its own listeners; the shared fix covers both
+loops.
+
+NOT_NOW_BROWN_COW: the original pre-Slice-1 wedge (the first
+N=8 run, `fd=23`, before Slice 1 existed and thus before the
+listener-reaping regression) was not counter-instrumented -- the
+counts-printing force-drain only runs with Slice 1.  If an N=8
+acceptance run with Slice 1 + Slice 2 still logs any
+"force-draining" warning, a genuine accept-CQE-completion leak
+remains (a cancelled-accept CQE not pairing its
+`io_conn_remove_accept_op`) and gets its own follow-up.  A clean
+run closes the BLOCKER outright.
 
 ## Tests (first)
 
@@ -216,25 +242,22 @@ Extend `lib/io/tests/conn_info_test.c`:
 
 ### Slice 2 -- unit
 
-Once the leaked counter and its CQE path are identified, add a
-test that drives that specific completion path (success and the
-closing/not-tracked error variant) and asserts the add/remove
-counter is balanced -- i.e. `conn_drain_if_idle_locked` completes
-with no force-drain needed.
+`lib/io/tests/conn_info_test.c` gains
+`test_idle_sweep_spares_listeners`: register one `CONN_LISTENING`
+slot and one `CONN_ACCEPTING` slot, run `io_conn_check_timeouts`
+with an idle deadline of -1 (which would reap every non-listener
+slot regardless of age), and assert both listener-state slots
+survive in their original state.
 
 ## Test impact analysis
 
 | File | Impact |
 |------|--------|
-| `lib/io/tests/conn_info_test.c` | **EXTENDED** -- 4 new Slice-1 tests; existing cases unchanged |
-| `lib/io/tests/conn_lifecycle_race_test.c` | **PASS, no change** -- the INV-5/INV-6 TSAN repro; Slice 1 adds a heartbeat caller but does not change `io_conn_*` semantics |
-| `lib/io/tests/tls_write_count_test.c` | **PASS, no change** -- write-counter accounting is not touched by Slice 1 |
-| All other `make check` tests | **PASS** -- Slice 1 changes only the io_uring heartbeat's timeout call; no protocol or fs surface |
+| `lib/io/tests/conn_info_test.c` | **EXTENDED** -- 4 new Slice-1 tests + 1 Slice-2 test; existing cases unchanged |
+| `lib/io/tests/conn_lifecycle_race_test.c` | **PASS, no change** -- the INV-5/INV-6 TSAN repro; the slices add a heartbeat caller but do not change `io_conn_*` semantics |
+| `lib/io/tests/tls_write_count_test.c` | **PASS, no change** -- write-counter accounting is untouched |
+| All other `make check` tests | **PASS** -- the slices change only the io_uring heartbeat's timeout call and the idle-sweep listener exclusion; no protocol or fs surface |
 | `run_chunk_collision_track2.sh` (Tracks 2 basic/reorder) | **PASS** -- already green; the N=8 case moves from FAIL to PASS |
-
-Slice 2's test impact is assessed when the leaked counter is
-identified; expected to be additive (one new targeted test) with
-no existing-test changes.
 
 ## Risk
 
@@ -250,12 +273,12 @@ no existing-test changes.
   `test_closing_not_drained_before_timeout` guards the lower
   bound.
 
-- **Slice 2: medium.**  It edits the CQE-completion path inside
-  the INV-6 anti-UAF region.  A decrement applied to the wrong
-  `conn_info` (not matched by `ci_fd`) re-introduces exactly the
-  UAF the `CONN_CLOSING` hold prevents.  The fix must match
-  `ci_fd` like the existing `*_remove_op` paths.  TSAN
-  (`conn_lifecycle_race_test`) is the regression gate.
+- **Slice 2: low.**  It adds two state values to a `continue`
+  predicate in the idle-close pass -- `CONN_LISTENING` and
+  `CONN_ACCEPTING` slots are skipped.  No counter accounting, no
+  CQE path, no lock-ordering change; it restores an exclusion the
+  pre-unification io_uring heartbeat already had.  The
+  `CONN_CLOSING` force-drain pass is untouched.
 
 ## Deferred / NOT_NOW_BROWN_COW
 
@@ -276,11 +299,11 @@ no existing-test changes.
 
 | File | Change |
 |------|--------|
-| `lib/io/conn_info.c` | Slice 1: separate `CONN_CLOSING` timeout in `io_conn_check_timeouts`.  Slice 2: the counter-leak fix lands here or in `handler.c`. |
+| `lib/io/conn_info.c` | Slice 1: separate `CONN_CLOSING` timeout in `io_conn_check_timeouts`.  Slice 2: idle-close pass skips `CONN_LISTENING` / `CONN_ACCEPTING`. |
 | `lib/io/heartbeat.c` | Slice 1: connection-check block calls `io_conn_check_timeouts`; drop the parallel `CONN_CONNECTED`-only timeout scan |
-| `lib/io/handler.c` | Slice 2: the leaking CQE-completion path |
-| `lib/include/reffs/io.h` | Slice 1: `CONN_CLOSING_FORCE_DRAIN_SECS` constant |
-| `lib/io/tests/conn_info_test.c` | Slice 1: 4 new tests |
+| `lib/include/reffs/io.h` | Slice 1: `CONN_CLOSING_FORCE_DRAIN_SECS` constant + 2-arg `io_conn_check_timeouts` |
+| `lib/io/kqueue_socket.c` | Slice 1: caller passes the closing deadline |
+| `lib/io/tests/conn_info_test.c` | Slice 1: 4 new tests; Slice 2: 1 new test |
 | `deploy/benchmark/run_chunk_collision_track2.sh` | acceptance test (`--n 8`) |
 
 ## Acceptance
@@ -291,6 +314,7 @@ The BLOCKER is cleared when:
    loop; a wedged `CONN_CLOSING` slot self-heals within
    `CONN_CLOSING_FORCE_DRAIN_SECS`; `make check` green; Track 2
    `--n 8` reaches IOR and passes on a Linux bench host.
-2. Slice 2 lands: the counter leak is fixed at source; a Track 2
-   `--n 8` run completes with **zero** "stuck in CLOSING ...
-   force-draining" warnings in the MDS log.
+   **Done -- landed 654ecb3754ea; N=8 run PASSED.**
+2. Slice 2 lands: listener sockets are exempt from the idle-close
+   sweep; a Track 2 `--n 8` run completes with **zero** "stuck in
+   CLOSING ... force-draining" warnings in the MDS log.
