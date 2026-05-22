@@ -318,3 +318,12 @@ The BLOCKER is cleared when:
 2. Slice 2 lands: listener sockets are exempt from the idle-close
    sweep; a Track 2 `--n 8` run completes with **zero** "stuck in
    CLOSING ... force-draining" warnings in the MDS log.
+   **Done -- landed 730d9787a2be; N=8 run PASSED with 0
+   force-drain warnings.**
+
+BLOCKER CLOSED.  Slice 1's force-drain backstop remains in place
+as the safety net: should a genuine accept-CQE-completion leak
+ever surface (the NOT_NOW_BROWN_COW above), a wedged slot still
+self-heals within `CONN_CLOSING_FORCE_DRAIN_SECS` and logs a
+warning -- that warning, not a stuck server, is the signal to
+re-open the investigation.
