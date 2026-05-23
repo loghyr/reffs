@@ -3752,8 +3752,8 @@ struct proxy_assignment4 {
      */
     proxy_stateid4  pa_stateid;
     nfs_fh4         pa_file_fh;
-    uint64_t        pa_source_dstore_id;
-    uint64_t        pa_target_dstore_id;
+    deviceid4       pa_source_deviceid;
+    deviceid4       pa_target_deviceid;
     /*
      * Kind-specific descriptor space for future fields (e.g.
      * source/dest layout descriptors so the PS can dial the

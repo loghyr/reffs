@@ -22,9 +22,14 @@
  *   { proxy_op_kind4 pa_kind;
  *     proxy_stateid4 pa_stateid;
  *     nfs_fh4        pa_file_fh;
- *     uint64_t       pa_source_dstore_id;
- *     uint64_t       pa_target_dstore_id;
+ *     deviceid4      pa_source_deviceid;
+ *     deviceid4      pa_target_deviceid;
  *     opaque         pa_descriptor<>; }
+ *
+ * The internal paq_source_dstore_id / paq_target_dstore_id are
+ * the reffs-side dstore identifiers (uint64); the wire encode /
+ * decode in nfs4/proxy_deviceid.h packs them into the
+ * deviceid4 byte array.
  *
  * proxy_stateid is minted at PROXY_PROGRESS reply time, NOT at
  * enqueue time -- the queue holds work descriptions; the migration

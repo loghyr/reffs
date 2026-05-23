@@ -53,6 +53,7 @@ static gss_OID_desc krb5oid_desc = {
 #include <openssl/ssl.h>
 
 #include "nfsv42_xdr.h"
+#include "nfs4/proxy_deviceid.h"
 #include "reffs/filehandle.h"
 #include "reffs/settings.h"
 #include "reffs/tls_client.h"
@@ -544,8 +545,10 @@ int mds_session_send_proxy_progress(
 			&resok->ppr_assignments.ppr_assignments_val[i];
 		out_assignments[i].pa_kind = (uint32_t)a->pa_kind;
 		out_assignments[i].pa_stateid = a->pa_stateid;
-		out_assignments[i].pa_source_dstore_id = a->pa_source_dstore_id;
-		out_assignments[i].pa_target_dstore_id = a->pa_target_dstore_id;
+		out_assignments[i].pa_source_dstore_id =
+			proxy_deviceid_decode(a->pa_source_deviceid);
+		out_assignments[i].pa_target_dstore_id =
+			proxy_deviceid_decode(a->pa_target_deviceid);
 		/*
 		 * pa_file_fh is the network_file_handle bytes the MDS
 		 * marshalled at slice-6c-y reply-build time.  Decode

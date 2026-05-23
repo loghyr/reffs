@@ -35,6 +35,7 @@
 #include "nfs4/migration_record.h"
 #include "nfs4/ops.h"
 #include "nfs4/proxy_assignment_queue.h"
+#include "nfs4/proxy_deviceid.h"
 #include "nfs4/proxy_stateid.h"
 #include "nfs4/stateid.h"
 #include "nfs4_test_harness.h"
@@ -1262,8 +1263,8 @@ START_TEST(test_proxy_progress_pulls_one_assignment)
 	proxy_assignment4 *a = &resok->ppr_assignments.ppr_assignments_val[0];
 
 	ck_assert_int_eq((int)a->pa_kind, PROXY_OP_MOVE);
-	ck_assert_uint_eq(a->pa_source_dstore_id, 7);
-	ck_assert_uint_eq(a->pa_target_dstore_id, 8);
+	ck_assert_uint_eq(proxy_deviceid_decode(a->pa_source_deviceid), 7);
+	ck_assert_uint_eq(proxy_deviceid_decode(a->pa_target_deviceid), 8);
 	/* Migration record was created -- find by stateid confirms. */
 	struct migration_record *mr =
 		migration_record_find_by_stateid(&a->pa_stateid);

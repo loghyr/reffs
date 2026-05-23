@@ -47,6 +47,7 @@
 #include "nfs4/client.h"
 #include "nfs4/migration_record.h"
 #include "nfs4/proxy_assignment_queue.h"
+#include "nfs4/proxy_deviceid.h"
 #include "nfs4/proxy_stateid.h"
 
 /*
@@ -423,10 +424,10 @@ uint32_t nfs4_op_proxy_progress(struct compound *compound)
 			out[built].pa_stateid = stid;
 			out[built].pa_file_fh.nfs_fh4_len = sizeof(*cb_nfh);
 			out[built].pa_file_fh.nfs_fh4_val = (char *)cb_nfh;
-			out[built].pa_source_dstore_id =
-				items[i].paq_source_dstore_id;
-			out[built].pa_target_dstore_id =
-				items[i].paq_target_dstore_id;
+			proxy_deviceid_encode(out[built].pa_source_deviceid,
+					      items[i].paq_source_dstore_id);
+			proxy_deviceid_encode(out[built].pa_target_deviceid,
+					      items[i].paq_target_dstore_id);
 			out[built].pa_descriptor.pa_descriptor_len = 0;
 			out[built].pa_descriptor.pa_descriptor_val = NULL;
 			built++;
