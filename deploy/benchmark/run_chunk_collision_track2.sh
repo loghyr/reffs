@@ -208,6 +208,32 @@ else
 	fail=$((fail + san_hits))
 fi
 
+# Criterion 4: zero CONN_CLOSING force-drain warnings.  Per
+# .claude/design/conn-info-closing-wedge.md (BLOCKER CLOSED): the
+# Slice 1 backstop is a safety net; any "stuck in CLOSING ...
+# force-draining" line emitted by lib/io/conn_info.c is the signal
+# that a genuine accept-CQE-completion leak (Bug A) has surfaced
+# and needs its own follow-up.  Slice 2's listener-exemption fix
+# means a clean run is reachable; if this criterion fails, capture
+# the warning lines (the "(counts: r=%d w=%d a=%d c=%d, ...)" block
+# pins the leaked counter) before tearing down the containers.
+drain_hits=0
+for c in reffs-bench-mds $(sudo docker ps -a --format '{{.Names}}' \
+                               | grep -E '^reffs-bench-ds|^reffs-ps-'); do
+	if sudo docker logs "$c" 2>&1 \
+	     | grep -qE 'stuck in CLOSING.*force-draining'; then
+		echo "FAIL: CONN_CLOSING force-drain warning in ${c}:"
+		sudo docker logs "$c" 2>&1 \
+			| grep -E 'stuck in CLOSING.*force-draining' | head -5
+		drain_hits=$((drain_hits + 1))
+	fi
+done
+if [ "${drain_hits}" -eq 0 ]; then
+	echo "PASS: no CONN_CLOSING force-drain warnings across MDS / DS / PS logs"
+else
+	fail=$((fail + drain_hits))
+fi
+
 echo ""
 if [ "${fail}" -gt 0 ]; then
 	echo "Track 2: FAIL (${fail} issue(s)).  Containers left up for"
@@ -215,6 +241,6 @@ if [ "${fail}" -gt 0 ]; then
 	exit 2
 fi
 
-echo "Track 2: PASS (${N} PSes, IOR clean, sanitizers clean)"
+echo "Track 2: PASS (${N} PSes, IOR clean, sanitizers clean, no force-drain warnings)"
 echo "IOR log: /tmp/reffs-t2-ior.log"
 exit 0
