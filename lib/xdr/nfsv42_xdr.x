@@ -4835,7 +4835,6 @@ struct ffv2_stripes4 {
 struct ffv2_mirror4 {
         ffv2_coding_type4       ffm_coding_type;
         ffv2_data_protection4   ffm_protection;
-        /* ffv2_key4               ffm_key; */
         ffv2_striping           ffm_striping;
         uint32_t                ffm_striping_unit_size; /* The minimum stripe unit size is 64 bytes. */
         uint32_t                ffm_client_id;
