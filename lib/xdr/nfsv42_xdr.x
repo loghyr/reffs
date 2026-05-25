@@ -1478,21 +1478,20 @@ enum nfs_opnum4 {
  OP_CHUNK_UNLOCK        = 86,
  OP_CHUNK_WRITE         = 87,
  OP_CHUNK_WRITE_REPAIR  = 88,
- OP_EXCHANGE_RANGE      = 89,
 
 %/*
-% * Trust-stateid ops: draft-haynes-nfsv4-flexfiles-v2.  Op numbers 90-92
+% * Trust-stateid ops: draft-haynes-nfsv4-flexfiles-v2.  Op numbers 89-91
 % * are TBD pending IANA assignment; same caveat as CHUNK ops above.
 % */
- OP_TRUST_STATEID       = 90,
- OP_REVOKE_STATEID      = 91,
- OP_BULK_REVOKE_STATEID = 92,
+ OP_TRUST_STATEID       = 89,
+ OP_REVOKE_STATEID      = 90,
+ OP_BULK_REVOKE_STATEID = 91,
 
 %/*
-% * Proxy-server fore-channel ops: draft-haynes-nfsv4-flexfiles-v2-data-mover.
-% * Op numbers 93-94 are TBD pending IANA assignment; same caveat as
+% * Proxy-server fore-channel ops: draft-haynes-nfsv4-flexfiles-v2-proxy-server.
+% * Op numbers 92-95 are TBD pending IANA assignment; same caveat as
 % * CHUNK / TRUST_STATEID above.  Assigned sequentially after the
-% * trust-stateid block on the assumption that the data-mover draft
+% * trust-stateid block on the assumption that the proxy-server draft
 % * lands after the flexfiles-v2 draft on the IETF datatracker.
 % *
 % * Architecture revision (2026-04-26, see
@@ -1503,10 +1502,18 @@ enum nfs_opnum4 {
 % * PROXY_DONE and PROXY_CANCEL operate on the persisted migration
 % * record only; LAYOUTRETURN (existing op) handles layout state.
 % */
- OP_PROXY_REGISTRATION  = 93,
- OP_PROXY_PROGRESS      = 94,
- OP_PROXY_DONE          = 99,
- OP_PROXY_CANCEL        = 100,
+ OP_PROXY_REGISTRATION  = 92,
+ OP_PROXY_PROGRESS      = 93,
+ OP_PROXY_DONE          = 94,
+ OP_PROXY_CANCEL        = 95,
+
+%/*
+% * EXCHANGE_RANGE: draft-haynes-nfsv4-swap.  Placed after the proxy
+% * block to resolve an op-number collision with OP_TRUST_STATEID;
+% * the original assignment at 89 conflicted with the trust-stateid
+% * block.  Op number remains TBD pending IANA assignment.
+% */
+ OP_EXCHANGE_RANGE      = 96,
 
  OP_ILLEGAL             = 10044
 };

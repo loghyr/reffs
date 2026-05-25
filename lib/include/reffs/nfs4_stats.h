@@ -25,10 +25,9 @@
  * generated nfsv42_xdr.h (e.g. backends, utils).
  *
  * OP_MAX is defined in nfsv42_names.h as (highest op code + 1).
- * Slice 6c-w added OP_PROXY_DONE = 99 and OP_PROXY_CANCEL = 100, so
- * OP_MAX is currently 101.  We use 104 for a small margin.  A
- * _Static_assert in ops.c enforces that OP_MAX never exceeds this
- * value.
+ * Highest assigned op is OP_PROXY_CANCEL = 95, so OP_MAX is
+ * currently 96.  We use 104 for a small margin.  A _Static_assert
+ * in ops.c enforces that OP_MAX never exceeds this value.
  */
 #define REFFS_NFS4_OP_MAX 104
 
