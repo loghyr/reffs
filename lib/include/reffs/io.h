@@ -124,7 +124,36 @@ struct io_context;
 struct record_state;
 struct buffer_state;
 
-#define CONNECTION_TIMEOUT_SECONDS 60 // Seconds of inactivity before timeout
+/*
+ * Idle-timeout for live (CONN_CONNECTED) sockets that have NOT
+ * had any application-level read / write activity, as seen by
+ * io_conn_check_timeouts.
+ *
+ * Slice 3 of conn-info-closing-wedge raised this from 60 s.
+ * The original 60 s was inherited from a generic "idle TCP"
+ * heuristic; for an NFS-server connection that is too aggressive.
+ * The Linux kernel NFS client legitimately leaves the connection
+ * quiet for many seconds between RPCs -- userspace mount.nfs4
+ * does its own work between the initial RPC NULL probe and
+ * EXCHANGE_ID, lease renewals are minutes apart, and a session
+ * waiting for a callback round-trip looks just like an idle
+ * connection at the byte level.  Track 2 N=8 reproduced the
+ * regression: kernel mount.nfs4 sent its NULL probe, took 2+
+ * minutes setting up the next RPC, and the server reaped the
+ * connection at 60 s -- the client surfaced "mount(2): Input
+ * /output error".  See .claude/design/conn-info-closing-wedge.md
+ * Slice 3.
+ *
+ * 600 s (10 min) is a compromise between "never idle-close an
+ * NFS connection" (which is what the Linux kernel NFS server
+ * does) and keeping a real safety net for genuinely abandoned
+ * slots.  No production NFS RPC sequence has a 10-minute gap by
+ * design; anything longer is dead and worth closing.  If the
+ * bench surfaces a future scenario that legitimately exceeds
+ * this, raise further or switch to TCP-keepalive observation
+ * (option 2 in the design).
+ */
+#define CONNECTION_TIMEOUT_SECONDS 600
 #define CONNECTION_TIMEOUT_CHECK_INTERVAL 10 // Check every 10 seconds
 
 // Connection states

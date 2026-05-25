@@ -561,6 +561,53 @@ START_TEST(test_closing_force_drain_spares_live_connections)
 }
 END_TEST
 
+START_TEST(test_connected_idle_under_new_deadline_not_reaped)
+{
+	/*
+	 * Slice 3 of conn-info-closing-wedge raised
+	 * CONNECTION_TIMEOUT_SECONDS from 60 s to 600 s.  This test is
+	 * the regression guard against a future change re-lowering the
+	 * deadline (or any code path re-introducing the old 60 s
+	 * literal): a CONN_CONNECTED slot idle 5 minutes (300 s) must
+	 * survive an idle sweep at the new deadline.  Track 2 N=8
+	 * reproduced the original failure -- kernel mount.nfs4 takes 2+
+	 * minutes between the initial RPC NULL probe and EXCHANGE_ID,
+	 * and the server reaping the connection at 60 s surfaced as
+	 * "mount(2): Input/output error".
+	 *
+	 * Backdates ci_last_activity directly via the internal struct
+	 * (io_internal.h is in this TU's includes) so the test stays
+	 * sleep-free and well under the 2 s per-test budget.
+	 */
+	struct conn_info *ci =
+		io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT);
+	ck_assert_ptr_nonnull(ci);
+
+	ci->ci_last_activity = time(NULL) - 300;
+
+	int reaped = io_conn_check_timeouts(CONNECTION_TIMEOUT_SECONDS,
+					    CONN_CLOSING_FORCE_DRAIN_SECS);
+	ck_assert_int_eq(reaped, 0);
+
+	struct conn_info *ci2 = io_conn_get(FD_A);
+	ck_assert_ptr_nonnull(ci2);
+	ck_assert_int_eq(ci2->ci_state, CONN_CONNECTED);
+}
+END_TEST
+
+/*
+ * NOT_NOW_BROWN_COW: a counterweight "idle past deadline IS reaped"
+ * test was attempted but io_conn_check_timeouts' idle-close path
+ * calls io_socket_close, which in turn drives the real io backend
+ * (io_uring / kqueue) -- not initialized in the unit-test harness,
+ * so it hangs.  The upper-bound is exercised end-to-end by the
+ * Track 2 bench (commit 969e3f9c514b's Criterion 4 gates on no
+ * stuck-CLOSING warnings, which would surface if the deadline
+ * never fired).  Splitting io_conn_check_timeouts into decide vs
+ * act would let unit tests verify both halves, but that refactor
+ * is bigger than this slice.
+ */
+
 START_TEST(test_idle_sweep_spares_listeners)
 {
 	/*
@@ -623,6 +670,7 @@ static Suite *conn_info_suite(void)
 	tcase_add_test(tc, test_closing_force_drain_reclaims_wedged_slot);
 	tcase_add_test(tc, test_closing_not_force_drained_before_timeout);
 	tcase_add_test(tc, test_closing_force_drain_spares_live_connections);
+	tcase_add_test(tc, test_connected_idle_under_new_deadline_not_reaped);
 	tcase_add_test(tc, test_idle_sweep_spares_listeners);
 	suite_add_tcase(s, tc);
 	return s;

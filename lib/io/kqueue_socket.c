@@ -431,7 +431,13 @@ static int kqueue_arm_heartbeat_timer(struct ring_context *rc,
 #define KQUEUE_HEARTBEAT_INTERVAL_SEC 1
 #define KQUEUE_LISTENER_CHECK_INTERVAL 5
 #define KQUEUE_CONN_CHECK_INTERVAL 10
-#define KQUEUE_CONN_TIMEOUT 60
+/*
+ * Slice 3 of conn-info-closing-wedge: the live-connection idle
+ * deadline is the shared CONNECTION_TIMEOUT_SECONDS so the kqueue
+ * (BSD/macOS) and io_uring (Linux) event loops cannot drift on
+ * timeout policy.  Both loops call io_conn_check_timeouts; both
+ * MUST pass the same idle deadline.
+ */
 
 /*
  * kqueue_heartbeat_period is read on the main loop thread
@@ -660,8 +666,9 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 	 * the shared conn_info module which holds the activity timestamps.
 	 */
 	if (now - kqueue_last_conn_check >= KQUEUE_CONN_CHECK_INTERVAL) {
-		int closed = io_conn_check_timeouts(
-			KQUEUE_CONN_TIMEOUT, CONN_CLOSING_FORCE_DRAIN_SECS);
+		int closed =
+			io_conn_check_timeouts(CONNECTION_TIMEOUT_SECONDS,
+					       CONN_CLOSING_FORCE_DRAIN_SECS);
 		if (closed > 0)
 			TRACE("Heartbeat: closed %d inactive connections",
 			      closed);

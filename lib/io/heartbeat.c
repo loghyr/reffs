@@ -261,7 +261,7 @@ int io_handle_heartbeat(struct io_context *ic, int result,
 	 * the idle timeout and force-draining stuck CONN_CLOSING slots --
 	 * so the two event loops cannot drift in their timeout policy.
 	 */
-	io_conn_check_timeouts(60 /* idle live-connection timeout */,
+	io_conn_check_timeouts(CONNECTION_TIMEOUT_SECONDS,
 			       CONN_CLOSING_FORCE_DRAIN_SECS);
 
 	// Re-arm a pending read on any live connection that has lost one.
