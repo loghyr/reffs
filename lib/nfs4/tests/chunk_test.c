@@ -531,7 +531,15 @@ START_TEST(test_chunk_finalize_no_store)
 	cm_set_inode(cm, g_inode);
 	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
 
-	chunk_owner4 owner = { .co_id = 99 };
+	/*
+	 * cg_client_id must be a non-reserved value
+	 * (CHUNK_GUARD_CLIENT_ID_NONE = 0 and CHUNK_GUARD_CLIENT_ID_MDS
+	 * = 0xFFFFFFFF are rejected with NFS4ERR_INVAL per
+	 * draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none).  0xBEEF
+	 * matches the value set_write_args() uses on the writer side so
+	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
+	 */
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
 	CHUNK_FINALIZE4args *args =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_finalize;
@@ -579,7 +587,15 @@ START_TEST(test_chunk_finalize_transitions_state)
 	cm_reset_slot(cm, 0);
 	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
 
-	chunk_owner4 owner = { .co_id = 99 };
+	/*
+	 * cg_client_id must be a non-reserved value
+	 * (CHUNK_GUARD_CLIENT_ID_NONE = 0 and CHUNK_GUARD_CLIENT_ID_MDS
+	 * = 0xFFFFFFFF are rejected with NFS4ERR_INVAL per
+	 * draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none).  0xBEEF
+	 * matches the value set_write_args() uses on the writer side so
+	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
+	 */
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
 	CHUNK_FINALIZE4args *args =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_finalize;
@@ -663,7 +679,15 @@ START_TEST(test_chunk_finalize_skips_empty_in_range)
 	cm_reset_slot(cm, 0);
 	cm_set_op(cm, 0, OP_CHUNK_FINALIZE);
 
-	chunk_owner4 owner = { .co_id = 99 };
+	/*
+	 * cg_client_id must be a non-reserved value
+	 * (CHUNK_GUARD_CLIENT_ID_NONE = 0 and CHUNK_GUARD_CLIENT_ID_MDS
+	 * = 0xFFFFFFFF are rejected with NFS4ERR_INVAL per
+	 * draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none).  0xBEEF
+	 * matches the value set_write_args() uses on the writer side so
+	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
+	 */
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
 	CHUNK_FINALIZE4args *fargs =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_finalize;
@@ -712,7 +736,15 @@ START_TEST(test_chunk_commit_no_store)
 	cm_set_inode(cm, g_inode);
 	cm_set_op(cm, 0, OP_CHUNK_COMMIT);
 
-	chunk_owner4 owner = { .co_id = 99 };
+	/*
+	 * cg_client_id must be a non-reserved value
+	 * (CHUNK_GUARD_CLIENT_ID_NONE = 0 and CHUNK_GUARD_CLIENT_ID_MDS
+	 * = 0xFFFFFFFF are rejected with NFS4ERR_INVAL per
+	 * draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none).  0xBEEF
+	 * matches the value set_write_args() uses on the writer side so
+	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
+	 */
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
 	CHUNK_COMMIT4args *args =
 		&cm->compound->c_args->argarray.argarray_val[0]
 			 .nfs_argop4_u.opchunk_commit;
@@ -739,7 +771,15 @@ END_TEST
 START_TEST(test_chunk_commit_transitions_state)
 {
 	static char buf[CHUNK_SZ];
-	chunk_owner4 owner = { .co_id = 99 };
+	/*
+	 * cg_client_id must be a non-reserved value
+	 * (CHUNK_GUARD_CLIENT_ID_NONE = 0 and CHUNK_GUARD_CLIENT_ID_MDS
+	 * = 0xFFFFFFFF are rejected with NFS4ERR_INVAL per
+	 * draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none).  0xBEEF
+	 * matches the value set_write_args() uses on the writer side so
+	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
+	 */
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -815,7 +855,15 @@ END_TEST
 START_TEST(test_chunk_commit_skips_empty_in_range)
 {
 	static char buf[CHUNK_SZ];
-	chunk_owner4 owner = { .co_id = 99 };
+	/*
+	 * cg_client_id must be a non-reserved value
+	 * (CHUNK_GUARD_CLIENT_ID_NONE = 0 and CHUNK_GUARD_CLIENT_ID_MDS
+	 * = 0xFFFFFFFF are rejected with NFS4ERR_INVAL per
+	 * draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none).  0xBEEF
+	 * matches the value set_write_args() uses on the writer side so
+	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
+	 */
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
 	struct cm_ctx *cm = cm_alloc(1);
 
 	cm_set_inode(cm, g_inode);
@@ -1007,7 +1055,15 @@ START_TEST(test_chunk_full_cycle)
 	static char wbuf[CHUNK_SZ];
 
 	memset(wbuf, 0xAB, sizeof(wbuf));
-	chunk_owner4 owner = { .co_id = 99 };
+	/*
+	 * cg_client_id must be a non-reserved value
+	 * (CHUNK_GUARD_CLIENT_ID_NONE = 0 and CHUNK_GUARD_CLIENT_ID_MDS
+	 * = 0xFFFFFFFF are rejected with NFS4ERR_INVAL per
+	 * draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none).  0xBEEF
+	 * matches the value set_write_args() uses on the writer side so
+	 * owner-id lookups across WRITE / FINALIZE / COMMIT line up.
+	 */
+	chunk_owner4 owner = { .co_guard.cg_client_id = 0xBEEF, .co_id = 99 };
 
 	struct cm_ctx *cm = cm_alloc(1);
 

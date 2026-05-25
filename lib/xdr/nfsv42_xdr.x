@@ -3356,6 +3356,24 @@ union ACCESS_MASK4res switch (nfsstat4 amr_status) {
  * CHUNK op types — must precede the nfs_argop4 / nfs_resop4 unions.
  */
 
+/*
+ * Reserved cg_client_id values; see draft-haynes-nfsv4-flexfiles-v2
+ * sec-chunk_guard_none and sec-chunk_guard_mds.  Both ends of the
+ * 32-bit value space are off-limits to MDS assignment.
+ *
+ *   NONE (0x00000000) -- defends against uninitialized cg_client_id
+ *   fields passing as a real client, and ensures the deterministic
+ *   tiebreaker (numerically lowest wins) does not encode an implicit
+ *   "client 0 wins" priority.
+ *
+ *   MDS  (0xFFFFFFFF) -- escrow identity used when REVOKE_STATEID
+ *   transfers a chunk lock to the MDS during in-flight repair; the
+ *   lock is later adopted by the repair client via
+ *   CHUNK_LOCK_FLAGS_ADOPT.
+ */
+const CHUNK_GUARD_CLIENT_ID_NONE = 0x00000000;
+const CHUNK_GUARD_CLIENT_ID_MDS  = 0xFFFFFFFF;
+
 struct chunk_guard4 {
         uint32_t   cg_gen_id;
         uint32_t   cg_client_id;

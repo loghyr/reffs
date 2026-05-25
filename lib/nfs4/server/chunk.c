@@ -24,6 +24,7 @@
 
 #include <inttypes.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -57,6 +58,18 @@ static void chunk_write_verf(struct server_state *ss, verifier4 out_verf)
 	memcpy(out_verf + NFS4_VERIFIER_SIZE - 2, &boot_seq, 2);
 }
 
+/*
+ * Reject client-supplied cg_client_id sentinels.  Per draft-haynes-
+ * nfsv4-flexfiles-v2 sec-chunk_guard_none and sec-chunk_guard_mds,
+ * clients MUST NOT present either reserved value, and the data
+ * server MUST reject with NFS4ERR_INVAL.
+ */
+static inline bool chunk_cid_is_reserved(uint32_t cid)
+{
+	return cid == CHUNK_GUARD_CLIENT_ID_NONE ||
+	       cid == CHUNK_GUARD_CLIENT_ID_MDS;
+}
+
 /* ------------------------------------------------------------------ */
 /* CHUNK_WRITE                                                         */
 /* ------------------------------------------------------------------ */
@@ -82,6 +95,11 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	uint32_t chunk_size = args->cwa_chunk_size;
 
 	if (chunk_size == 0 || args->cwa_chunks.cwa_chunks_len == 0) {
+		*status = NFS4ERR_INVAL;
+		return 0;
+	}
+
+	if (chunk_cid_is_reserved(args->cwa_owner.co_guard.cg_client_id)) {
 		*status = NFS4ERR_INVAL;
 		return 0;
 	}
@@ -565,6 +583,14 @@ uint32_t nfs4_op_chunk_finalize(struct compound *compound)
 		return 0;
 	}
 
+	for (uint32_t i = 0; i < args->cfa_chunks.cfa_chunks_len; i++) {
+		if (chunk_cid_is_reserved(args->cfa_chunks.cfa_chunks_val[i]
+						  .co_guard.cg_client_id)) {
+			*status = NFS4ERR_INVAL;
+			return 0;
+		}
+	}
+
 	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);
 
 	struct chunk_store *cs = compound->c_inode->i_chunk_store;
@@ -636,6 +662,14 @@ uint32_t nfs4_op_chunk_commit(struct compound *compound)
 	if (count == 0 || args->cca_chunks.cca_chunks_len == 0) {
 		*status = NFS4ERR_INVAL;
 		return 0;
+	}
+
+	for (uint32_t i = 0; i < args->cca_chunks.cca_chunks_len; i++) {
+		if (chunk_cid_is_reserved(args->cca_chunks.cca_chunks_val[i]
+						  .co_guard.cg_client_id)) {
+			*status = NFS4ERR_INVAL;
+			return 0;
+		}
 	}
 
 	pthread_mutex_lock(&compound->c_inode->i_attr_mutex);

@@ -1147,7 +1147,18 @@ static void chunk_set_write_args(struct cm_ctx *cm, const stateid4 *stid)
 	args->cwa_chunk_size = CHUNK_TEST_SIZE;
 	args->cwa_chunks.cwa_chunks_val = buf;
 	args->cwa_chunks.cwa_chunks_len = CHUNK_TEST_SIZE;
-	/* no CRC32 array */
+	/*
+	 * cg_client_id must not be a reserved sentinel
+	 * (CHUNK_GUARD_CLIENT_ID_NONE = 0 or CHUNK_GUARD_CLIENT_ID_MDS
+	 * = 0xFFFFFFFF) -- the DS rejects either with NFS4ERR_INVAL
+	 * per draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none.
+	 * Without setting this the wire validation rejects the
+	 * compound before the trust-hook check we are exercising.
+	 */
+	args->cwa_owner.co_guard.cg_client_id = 0xBEEF;
+	args->cwa_owner.co_guard.cg_gen_id = 1;
+	args->cwa_owner.co_id = 99;
+	/* no checksum array */
 }
 
 /*
