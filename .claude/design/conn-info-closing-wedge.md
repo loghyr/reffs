@@ -321,9 +321,190 @@ The BLOCKER is cleared when:
    **Done -- landed 730d9787a2be; N=8 run PASSED with 0
    force-drain warnings.**
 
-BLOCKER CLOSED.  Slice 1's force-drain backstop remains in place
-as the safety net: should a genuine accept-CQE-completion leak
-ever surface (the NOT_NOW_BROWN_COW above), a wedged slot still
-self-heals within `CONN_CLOSING_FORCE_DRAIN_SECS` and logs a
-warning -- that warning, not a stuck server, is the signal to
+~~BLOCKER CLOSED.~~  Slice 1's force-drain backstop remains in
+place as the safety net: should a genuine accept-CQE-completion
+leak ever surface (the NOT_NOW_BROWN_COW above), a wedged slot
+still self-heals within `CONN_CLOSING_FORCE_DRAIN_SECS` and logs
+a warning -- that warning, not a stuck server, is the signal to
 re-open the investigation.
+
+**BLOCKER REOPENED 2026-05-25** by the conditional NOT_NOW_BROWN_COW
+above.  Track 2 `--n 8` run with the new
+[Criterion 4 in the harness](../../deploy/benchmark/run_chunk_collision_track2.sh)
+(commit `969e3f9c514b`, "bench: track2 acceptance gates on zero
+force-drain warnings") surfaced the predicted reopener -- but
+with a sharper diagnosis than the original design anticipated.
+See "Slice 3" below.
+
+## Slice 3 -- the leak is on the read path, the symptom is mount EIO
+
+### What the bench surfaced
+
+Four runs of Track 2 `--n 8` against the new Criterion-4-gated
+harness on garbo (2026-05-24/25) all surfaced the same pattern:
+
+| Run | mount.nfs4 failed on | force-drain hits | tcpdump |
+|-----|----------------------|------------------|---------|
+| 1 | `/mnt/ps-6` | 17 containers (1 each: 7 PSes + 10 DSes; MDS clean, ps-7 never tried) | (not armed) |
+| 2 | (SELinux blocked patched harness) | 8 (DSes only -- IOR never started) | not armed |
+| 3 | `/mnt/ps-1` | 11 containers (1 each: 1 PS + 10 DSes) | armed but stale-file silent failure |
+| 4 | `/mnt/ps-1` | 18 containers (1 each: 8 PSes + 10 DSes; mount.nfs4 -vvv + tcpdump captured) | 1294 pkts captured |
+
+The IOR client reports the kernel mount call's errno:
+
+    mount.nfs4: mount(2): Input/output error
+    mount.nfs4: mount system call failed for /mnt/ps-1
+
+The mount target shifted from `ps-6` (run 1) to `ps-1` (runs 3, 4)
+-- different PS each time -- so the failure is NOT order-dependent
+on a specific PS.  It's a per-connection race.
+
+### tcpdump pinned the cause
+
+Run 4's pcap (`/tmp/reffs-bench-pcap.pcap`, 182 KiB, 1294 packets)
+captured the failing port-4099 (ps-1) handshake in full.  The
+critical sequence on the FIRST connection from the kernel client
+(port 940) to the PS (port 4099):
+
+```
+09:12:04.836611  TCP SYN     client -> PS
+09:12:04.836645  TCP SYN/ACK PS -> client
+09:12:04.836672  TCP ACK     client -> PS               (handshake done)
+09:12:04.836731  client -> PS    44 bytes  (RPC NULL probe)
+09:12:04.837448  PS -> client    28 bytes  (NULL reply)
+09:12:04 .. 09:14:29             keepalive ACKs only    (~2 min 25 sec silence)
+09:14:29.056149  client -> PS   252 bytes  (EXCHANGE_ID --
+                                            payload contains
+                                            "Linux NFSv4.2 garbo"
+                                            in eia_client_owner.co_owner_id)
+09:14:29.056307  PS -> client   FIN                     <-- PS closed
+09:14:29.056402  client -> PS   FIN/ACK
+                                                        (kernel then opens
+                                                         a fresh TCP conn
+                                                         from port 924 and
+                                                         the EXCHANGE_ID
+                                                         eventually completes
+                                                         -- but mount.nfs4
+                                                         had already given
+                                                         up and returned
+                                                         EIO to userspace)
+```
+
+PS-1's reffsd log shows the close was the unified
+`io_conn_check_timeouts` idle reaper firing:
+
+```
+[2026-05-25 16:13:05.277916124] [1:1] (io_conn_check_timeouts:1059):
+    Connection fd=14 timed out (61 seconds inactive)
+[2026-05-25 16:13:11.284481655] [1:1] (io_conn_check_timeouts:1026):
+    Connection fd=14 stuck in CLOSING for 6 seconds
+    (counts: r=1 w=0 a=0 c=0, write_active=0); force-draining
+```
+
+The fingerprint is `r=1` on every container (not `a=1` like Slice
+1 caught) -- so the leak is on the **read-CQE-completion path**,
+not the accept path.  Different specific bug, same code family
+(a CQE-completion path early-returning without
+`io_conn_remove_*_op`).
+
+### Root cause: idle reaper too aggressive for NFS-server connections
+
+The Linux kernel NFS client's RPC engine treats a connection as
+long-lived: an established TCP connection is reused across the
+multi-RPC mount handshake, lease renewals, and op pipelining.
+Multi-second gaps between RPCs are normal -- especially during
+mount-time when userspace `mount.nfs4` does its own work between
+the NULL probe and EXCHANGE_ID.
+
+Pre-Slice-1, the Linux io_uring heartbeat only inspected
+`CONN_CONNECTED` slots and did NOT apply an idle-close deadline.
+Slice 1 unified the two event loops onto `io_conn_check_timeouts`
+to gain the `CONN_CLOSING` force-drain backstop.  Slice 2 exempted
+listener sockets from idle-close (they were getting reaped too).
+But CONNECTED-with-NFS-traffic was left subject to a 60-second
+idle reaper that the io_uring path never had before.  That makes
+Slice 1's unification, in the absence of further exemption, a
+regression on the deployment platform.
+
+The two symptoms (mount EIO + r=1 leak) share one root.  When the
+idle reaper closes a CONNECTED slot:
+
+- The close path leaves the in-flight READ SQE's counter
+  un-decremented (this is Bug A predicted in the original
+  Slice 2 NOT_NOW_BROWN_COW -- but on the **read** sub-path of
+  the same code family, not the **accept** sub-path the design
+  anticipated).  Hence `r=1` in the force-drain warning.
+- The kernel client's RPC engine sees the server close mid-mount-
+  handshake, surfaces `EIO` to the mount(2) syscall.  Hence the
+  IOR-visible `mount(2): Input/output error`.
+
+### Fix plan -- one slice, two parts
+
+#### Slice 3a -- exempt CONNECTED-with-NFS-traffic from the idle reaper
+
+The minimum fix that unblocks Track 2 `--n 8`.  Options
+(non-exclusive):
+
+1. **Raise the CONNECTED idle deadline** from 60s to something
+   NFS-appropriate.  NFSv4.1 default lease is 90s and clients
+   expect the connection to outlive lease renewal cycles; a
+   5--10 minute deadline (300--600s) is consistent with kernel
+   NFS server behaviour, which typically does not idle-close at
+   all.
+2. **Track TCP-level keepalive activity** as "not idle" instead
+   of only counting application-level reads/writes.  A quiet-but-
+   ACK'd connection is healthy; closing it is wrong.
+3. **Exempt CONNECTED slots from idle-close entirely** when they
+   carry an NFSv4 session-bearing protocol -- match what kqueue
+   was doing before Slice 1 unified the timeouts.  Cleanest, but
+   reintroduces the per-loop divergence Slice 1 was trying to
+   eliminate.
+
+Option (1) is the smallest patch and matches the principle of
+least surprise vs the kernel server.  Option (2) is more correct
+but requires plumbing `tcp_info`-style keepalive observation
+into `ci_last_activity`.
+
+#### Slice 3b -- fix the read-counter leak at source
+
+Independent of the timeout policy, the read-CQE-completion path
+needs to pair `io_conn_add_read_op` with `io_conn_remove_read_op`
+on every exit.  Audit every `io_conn_add_read_op` site for a
+matching `remove` on its CQE-completion path (cancellation /
+error / short-read branches).  This is the read-path twin of the
+accept-path audit the original Slice-2 NOT_NOW_BROWN_COW scoped.
+
+The force-drain backstop catches the leak after 5s either way, so
+Slice 3b is a correctness-and-hygiene fix rather than an
+unblocker.  Land it in the same slice as 3a since the leak is
+how we see Slice 3a's symptom in the harness.
+
+### Tests (first)
+
+| Test | Where | Intent |
+|------|-------|--------|
+| `test_connected_idle_not_reaped_under_minute` | `lib/io/tests/conn_info_test.c` | Register a CONN_CONNECTED slot with a recent ci_last_activity; run `io_conn_check_timeouts` with the SAME idle deadline as production (whatever Slice 3a settles on); assert the slot is NOT closed.  This is the regression guard against Slice 1's unification re-introducing the aggressive reap. |
+| `test_connected_idle_reaped_after_real_deadline` | same | Same as above but advance time past the (post-Slice-3a) production idle deadline; assert the slot IS closed.  Confirms the deadline still works, just at the right magnitude. |
+| `test_read_op_remove_paired_on_cancel` | same | Submit a read op, cancel it; observe the CQE-cancel path; assert `ci_read_count` returns to zero.  Reproduces the r=1 leak the bench surfaced. |
+| `test_read_op_remove_paired_on_close` | same | Submit a read op, close the connection synchronously (not via timeout); assert `ci_read_count` returns to zero. |
+
+### Acceptance
+
+The BLOCKER is re-cleared when:
+
+3. Slice 3a + 3b land: `make check` green; the four new unit
+   tests pass; Track 2 `--n 8` on a Linux bench host completes
+   with **zero** mount.nfs4 EIO failures AND **zero**
+   `stuck in CLOSING` force-drain warnings (Criterion 4 of the
+   harness, commit `969e3f9c514b`).
+
+The harness Criterion 4 (gating on zero force-drain warnings)
+becomes the standing acceptance gate going forward.  If a future
+slice somewhere else in the io_conn lifecycle introduces another
+leak -- on the write path, the connect path, or back on the
+accept path -- it will surface as a force-drain warning, the
+Criterion 4 acceptance will fail, and the BLOCKER will reopen
+again under whatever sub-path the data indicates.  The pattern
+of "force-drain warning => reopen => add the missing
+`io_conn_remove_*_op` audit for that sub-path" is the durable
+shape.
