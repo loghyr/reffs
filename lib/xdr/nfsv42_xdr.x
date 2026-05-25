@@ -250,7 +250,7 @@ enum nfsstat4 {
 
  /* Erasure Coding errors start here. */
  NFS4ERR_CODING_NOT_SUPPORTED = 10097,/* Coding Type unsupported  */
- NFS4ERR_PAYLOAD_NOT_CONSISTENT = 10098,/* payload inconsitent  */
+ NFS4ERR_PAYLOAD_NOT_ATOMIC = 10098,/* payload not atomic  */
  NFS4ERR_CHUNK_LOCKED   = 10099,/* chunk is locked  */
  NFS4ERR_CHUNK_GUARDED  = 10100 /* chunk is guarded  */
 };
