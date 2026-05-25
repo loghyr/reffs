@@ -831,6 +831,35 @@ int io_socket_close(int fd, int error)
 	TRACE("Closing %d", fd);
 
 	io_client_fd_unregister(fd);
+
+	/*
+	 * Slice 3c of conn-info-closing-wedge:
+	 *
+	 * shutdown(SHUT_RDWR) before close() so any pending io_uring read
+	 * SQE on this fd receives a CQE.  In io_uring semantics, an SQE
+	 * holds its own reference on the kernel struct file independently
+	 * of userspace fd refs -- close(fd) alone does NOT cancel a
+	 * pending read; the SQE stays alive in the kernel and no CQE is
+	 * delivered, so io_context_destroy() never runs and the per-fd
+	 * read counter stays pinned at 1.  The conn_info slot then enters
+	 * CONN_CLOSING with r=1, never drains to r=0, and
+	 * io_conn_check_timeouts() has to force-drain it after
+	 * CONN_CLOSING_FORCE_DRAIN_SECS (logged as
+	 * "stuck in CLOSING ... force-draining" on MDS/DS/PS).
+	 *
+	 * shutdown(SHUT_RDWR) propagates the TCP close to the SQE, which
+	 * completes with res=0 (EOF) or res=-ECONNRESET.  Both are
+	 * already handled in handler.c: the EOF branch and the
+	 * -ECANCELED/-ECONNRESET branch (the latter wired in Slice 3b)
+	 * call io_context_destroy(), which decrements the per-fd read
+	 * counter via io_conn_remove_read_op(), letting the slot drain
+	 * cleanly to r=0 well before the 5-second force-drain backstop.
+	 *
+	 * shutdown() return is intentionally ignored -- if the peer has
+	 * already torn down, -ENOTCONN is harmless; close() below is
+	 * what releases the userspace fd ref.
+	 */
+	shutdown(fd, SHUT_RDWR);
 	return close(fd);
 }
 
