@@ -22,6 +22,7 @@
 
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
+#include "nfs4/chunk_checksum.h"
 
 /* ------------------------------------------------------------------ */
 /* CHUNK_WRITE                                                         */
@@ -80,15 +81,17 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	cwa->cwa_chunk_size = chunk_size;
 
 	/*
-	 * Compute CRC32 per chunk.  The last chunk may be shorter than
-	 * chunk_size when data_len is not a multiple (Mojette parity
-	 * projections produce variable-sized shards).
+	 * Compute CRC32 per chunk and wrap each in a checksum4.  The
+	 * last chunk may be shorter than chunk_size when data_len is
+	 * not a multiple (Mojette parity projections produce variable-
+	 * sized shards).
 	 */
 	uint32_t nchunks = (data_len + chunk_size - 1) / chunk_size;
 
-	cwa->cwa_crc32s.cwa_crc32s_len = nchunks;
-	cwa->cwa_crc32s.cwa_crc32s_val = calloc(nchunks, sizeof(uint32_t));
-	if (!cwa->cwa_crc32s.cwa_crc32s_val) {
+	cwa->cwa_checksums.cwa_checksums_len = nchunks;
+	cwa->cwa_checksums.cwa_checksums_val =
+		calloc(nchunks, sizeof(checksum4));
+	if (!cwa->cwa_checksums.cwa_checksums_val) {
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -98,8 +101,15 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 
 		if (i == nchunks - 1 && data_len % chunk_size != 0)
 			clen = data_len % chunk_size;
-		cwa->cwa_crc32s.cwa_crc32s_val[i] = (uint32_t)crc32(
+		uint32_t crc = (uint32_t)crc32(
 			0L, data + (size_t)i * chunk_size, (uInt)clen);
+
+		if (chunk_checksum_pack_crc32(
+			    &cwa->cwa_checksums.cwa_checksums_val[i], crc) <
+		    0) {
+			ret = -ENOMEM;
+			goto out_crc;
+		}
 	}
 
 	cwa->cwa_chunks.cwa_chunks_len = data_len;
@@ -150,9 +160,22 @@ out_crc:
 	/* Don't let mds_compound_fini free our caller's data buffer. */
 	cwa->cwa_chunks.cwa_chunks_val = NULL;
 	cwa->cwa_chunks.cwa_chunks_len = 0;
-	free(cwa->cwa_crc32s.cwa_crc32s_val);
-	cwa->cwa_crc32s.cwa_crc32s_val = NULL;
-	cwa->cwa_crc32s.cwa_crc32s_len = 0;
+	/*
+	 * Release the cs_value buffer inside each checksum4 entry
+	 * before freeing the array.  mds_compound_fini cannot walk
+	 * into the inner opaque<> buffers for us because it operates
+	 * on the top-level argop array.
+	 */
+	if (cwa->cwa_checksums.cwa_checksums_val) {
+		for (uint32_t i = 0; i < cwa->cwa_checksums.cwa_checksums_len;
+		     i++) {
+			free(cwa->cwa_checksums.cwa_checksums_val[i]
+				     .cs_value.cs_value_val);
+		}
+		free(cwa->cwa_checksums.cwa_checksums_val);
+	}
+	cwa->cwa_checksums.cwa_checksums_val = NULL;
+	cwa->cwa_checksums.cwa_checksums_len = 0;
 out:
 	/* Don't let fini free our caller's FH. */
 	if (mc.mc_args.argarray.argarray_len > 1) {
@@ -250,20 +273,36 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		       rc->cr_chunk.cr_chunk_val, copy);
 
 		/*
-		 * Verify CRC from server against received data.
-		 * Detects network corruption on the read path.
+		 * Verify the server-supplied checksum against the received
+		 * data.  Detects network corruption on the read path.
+		 *
+		 * Only CHECKSUM_ALG_CRC32 is implemented; other algorithms
+		 * (or a malformed entry) are skipped after a warning -- the
+		 * data is still delivered, but unverified.  The MDS-side
+		 * ffm_checksum_algorithm assignment plus client-side
+		 * LAYOUTGET check should keep the wire to algorithms we can
+		 * compute, so hitting this skip path is an anomaly worth
+		 * surfacing.
 		 */
-		if (rc->cr_crc != 0) {
+		uint32_t server_crc;
+
+		if (chunk_checksum_unpack_crc32(&rc->cr_checksum,
+						&server_crc) != NFS4_OK) {
+			fprintf(stderr,
+				"ds_chunk_read: block %u checksum algorithm "
+				"%u not supported; skipping verification\n",
+				i, (unsigned)rc->cr_checksum.cs_algorithm);
+		} else if (server_crc != 0) {
 			uint32_t wire_crc = (uint32_t)crc32(
 				0L, (const Bytef *)rc->cr_chunk.cr_chunk_val,
 				(uInt)copy);
 
-			if (wire_crc != rc->cr_crc) {
+			if (wire_crc != server_crc) {
 				fprintf(stderr,
 					"ds_chunk_read: CRC mismatch "
 					"block %u: server 0x%08x "
 					"wire 0x%08x\n",
-					i, rc->cr_crc, wire_crc);
+					i, server_crc, wire_crc);
 				ret = -EIO;
 				goto out;
 			}

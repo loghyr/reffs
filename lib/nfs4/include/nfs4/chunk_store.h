@@ -39,6 +39,15 @@ enum chunk_state {
  * but in-memory we use a flags word for extensibility. */
 #define CHUNK_BLOCK_LOCKED 0x1
 
+/*
+ * CHUNK_VALUE_MAX is sized for the largest supported checksum (SHA512,
+ * 64 bytes).  CRC32 / CRC32C / FLETCHER4 use 4-8 of the 64 bytes; the
+ * rest is zero-padded.  The wasted space is acceptable for the Phase 1
+ * fixed-size record format; a variable-length payload area can replace
+ * it when storage density warrants it.
+ */
+#define CHUNK_VALUE_MAX 64
+
 struct chunk_block {
 	enum chunk_state cb_state;
 	uint32_t cb_flags; /* CHUNK_BLOCK_LOCKED, etc. */
@@ -46,7 +55,17 @@ struct chunk_block {
 	uint32_t cb_client_id; /* chunk_guard4.cg_client_id (client-supplied) */
 	uint32_t cb_owner_id; /* chunk_owner4.co_id */
 	uint32_t cb_payload_id;
-	uint32_t cb_crc32;
+	/*
+	 * Checksum carried with the chunk on the wire and persisted with
+	 * the metadata.  cb_checksum_algorithm is one of CHECKSUM_ALG_*;
+	 * cb_checksum_value holds the algorithm's raw bytes (big-endian
+	 * for fixed-width integers, opaque for hashes) with cb_checksum_len
+	 * bytes valid.  Length 0 means "no checksum supplied" (legacy /
+	 * untrusted writer path).
+	 */
+	uint32_t cb_checksum_algorithm;
+	uint32_t cb_checksum_len;
+	uint8_t cb_checksum_value[CHUNK_VALUE_MAX];
 	uint32_t cb_chunk_size; /* actual payload size (varies for Mojette) */
 	/*
 	 * clientid4 of the writing session (server-known identity,
@@ -85,8 +104,11 @@ struct chunk_block_disk {
 	uint32_t cbd_client_id;
 	uint32_t cbd_owner_id;
 	uint32_t cbd_payload_id;
-	uint32_t cbd_crc32;
+	uint32_t cbd_checksum_algorithm; /* CHECKSUM_ALG_* */
+	uint32_t cbd_checksum_len; /* bytes valid in cbd_checksum_value */
+	uint8_t cbd_checksum_value[CHUNK_VALUE_MAX];
 	uint32_t cbd_chunk_size;
+	uint32_t cbd_pad; /* keep 8-byte alignment for cbd_writer_clientid */
 	uint64_t cbd_writer_clientid; /* see chunk_block.cb_writer_clientid */
 };
 

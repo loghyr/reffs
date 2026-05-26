@@ -79,8 +79,12 @@ static void block_to_disk(const struct chunk_block *blk,
 	dsk->cbd_client_id = blk->cb_client_id;
 	dsk->cbd_owner_id = blk->cb_owner_id;
 	dsk->cbd_payload_id = blk->cb_payload_id;
-	dsk->cbd_crc32 = blk->cb_crc32;
+	dsk->cbd_checksum_algorithm = blk->cb_checksum_algorithm;
+	dsk->cbd_checksum_len = blk->cb_checksum_len;
+	memcpy(dsk->cbd_checksum_value, blk->cb_checksum_value,
+	       sizeof(dsk->cbd_checksum_value));
 	dsk->cbd_chunk_size = blk->cb_chunk_size;
+	dsk->cbd_pad = 0;
 	dsk->cbd_writer_clientid = blk->cb_writer_clientid;
 }
 
@@ -93,7 +97,12 @@ static void disk_to_block(const struct chunk_block_disk *dsk,
 	blk->cb_client_id = dsk->cbd_client_id;
 	blk->cb_owner_id = dsk->cbd_owner_id;
 	blk->cb_payload_id = dsk->cbd_payload_id;
-	blk->cb_crc32 = dsk->cbd_crc32;
+	blk->cb_checksum_algorithm = dsk->cbd_checksum_algorithm;
+	blk->cb_checksum_len = dsk->cbd_checksum_len;
+	if (blk->cb_checksum_len > sizeof(blk->cb_checksum_value))
+		blk->cb_checksum_len = sizeof(blk->cb_checksum_value);
+	memcpy(blk->cb_checksum_value, dsk->cbd_checksum_value,
+	       sizeof(blk->cb_checksum_value));
 	blk->cb_chunk_size = dsk->cbd_chunk_size;
 	blk->cb_writer_clientid = dsk->cbd_writer_clientid;
 }

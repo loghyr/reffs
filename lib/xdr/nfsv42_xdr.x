@@ -252,7 +252,9 @@ enum nfsstat4 {
  NFS4ERR_CODING_NOT_SUPPORTED = 10097,/* Coding Type unsupported  */
  NFS4ERR_PAYLOAD_NOT_ATOMIC = 10098,/* payload not atomic  */
  NFS4ERR_CHUNK_LOCKED   = 10099,/* chunk is locked  */
- NFS4ERR_CHUNK_GUARDED  = 10100 /* chunk is guarded  */
+ NFS4ERR_CHUNK_GUARDED  = 10100,/* chunk is guarded  */
+ NFS4ERR_PAYLOAD_LOST   = 10101,/* unrecoverable per CB_CHUNK_REPAIR */
+ NFS4ERR_LAYOUT_CHECKSUM_NOT_SUPPORTED = 10102/* layout names checksum algorithm client cannot speak */
 };
 
 /*
@@ -3384,6 +3386,27 @@ struct chunk_owner4 {
 	uint32_t       co_id;
 };
 
+/*
+ * Per-chunk integrity check.  cs_algorithm names a registered
+ * checksum algorithm; cs_value carries the algorithm-specific
+ * bytes at the registered length.  See
+ * draft-haynes-nfsv4-flexfiles-v2 sec-checksum4.
+ */
+typedef uint32_t   checksum_algorithm4;
+
+const CHECKSUM_ALG_NONE      = 0;
+const CHECKSUM_ALG_CRC32     = 1;
+const CHECKSUM_ALG_CRC32C    = 2;
+const CHECKSUM_ALG_FLETCHER4 = 3;
+const CHECKSUM_ALG_SHA256    = 4;
+const CHECKSUM_ALG_SHA512    = 5;
+const CHECKSUM_ALG_BLAKE3    = 6;
+
+struct checksum4 {
+	checksum_algorithm4   cs_algorithm;
+	opaque                cs_value<>;
+};
+
 struct CHUNK_COMMIT4args {
     /* CURRENT_FH: file */
     offset4         cca_offset;
@@ -3481,7 +3504,7 @@ struct CHUNK_READ4args {
 };
 
 struct read_chunk4 {
-    uint32_t        cr_crc;
+    checksum4       cr_checksum;
     uint32_t        cr_effective_len;
     chunk_owner4    cr_owner;
     uint32_t        cr_payload_id;
@@ -3579,7 +3602,7 @@ struct CHUNK_WRITE4args {
     uint32_t           cwa_flags;
     write_chunk_guard4 cwa_guard;
     uint32_t           cwa_chunk_size;
-    uint32_t           cwa_crc32s<>;
+    checksum4          cwa_checksums<>;
     opaque             cwa_chunks<>;
 };
 
@@ -3607,7 +3630,7 @@ struct CHUNK_WRITE_REPAIR4args {
     chunk_owner4       cwra_owner;
     uint32_t           cwra_payload_id;
     uint32_t           cwra_chunk_size;
-    uint32_t           cwra_crc32s<>;
+    checksum4          cwra_checksums<>;
     opaque             cwra_chunks<>;
 };
 
@@ -4856,6 +4879,7 @@ struct ffv2_mirror4 {
         ffv2_striping           ffm_striping;
         uint32_t                ffm_striping_unit_size; /* The minimum stripe unit size is 64 bytes. */
         uint32_t                ffm_client_id;
+        checksum_algorithm4     ffm_checksum_algorithm;
         ffv2_stripes4           ffm_stripes<>; /* Length of this array is the stripe count */
 };
 

@@ -42,6 +42,7 @@
 #include "reffs/inode.h"
 #include "reffs/server.h"
 #include "reffs/super_block.h"
+#include "nfs4/chunk_checksum.h"
 #include "nfs4/chunk_store.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
@@ -201,8 +202,11 @@ static void chunk_teardown(void)
 
 /*
  * Build CHUNK_WRITE args in slot 0.  Uses an anonymous stateid so trust
- * table validation is bypassed.  Caller provides the data buffer and CRC
- * array (pass NULL/0 for no CRC validation).
+ * table validation is bypassed.  Caller provides the data buffer and a
+ * uint32_t CRC array (pass NULL/0 for no checksum validation).  The
+ * function wraps each CRC into a checksum4 (CHECKSUM_ALG_CRC32, 4 bytes
+ * big-endian) -- the cs_value buffers and the checksum4 array are heap-
+ * allocated here and released by free_write_args.
  */
 static void set_write_args(struct cm_ctx *cm, char *buf, uint32_t buf_len,
 			   uint32_t chunk_size, uint64_t offset, uint32_t *crcs,
@@ -219,12 +223,46 @@ static void set_write_args(struct cm_ctx *cm, char *buf, uint32_t buf_len,
 	args->cwa_chunk_size = chunk_size;
 	args->cwa_chunks.cwa_chunks_val = buf;
 	args->cwa_chunks.cwa_chunks_len = buf_len;
-	args->cwa_crc32s.cwa_crc32s_val = crcs;
-	args->cwa_crc32s.cwa_crc32s_len = ncrc;
+
+	if (ncrc > 0 && crcs != NULL) {
+		args->cwa_checksums.cwa_checksums_val =
+			calloc(ncrc, sizeof(checksum4));
+		args->cwa_checksums.cwa_checksums_len = ncrc;
+		for (uint32_t i = 0; i < ncrc; i++) {
+			(void)chunk_checksum_pack_crc32(
+				&args->cwa_checksums.cwa_checksums_val[i],
+				crcs[i]);
+		}
+	} else {
+		args->cwa_checksums.cwa_checksums_val = NULL;
+		args->cwa_checksums.cwa_checksums_len = 0;
+	}
+
 	args->cwa_payload_id = 0x4242;
 	args->cwa_owner.co_guard.cg_gen_id = 7;
 	args->cwa_owner.co_guard.cg_client_id = 0xBEEF;
 	args->cwa_owner.co_id = 99;
+}
+
+/*
+ * Release the heap allocations made by set_write_args for the
+ * cwa_checksums array.  Safe to call when the array is empty.
+ */
+static void free_write_args(struct cm_ctx *cm)
+{
+	CHUNK_WRITE4args *args = &cm->compound->c_args->argarray.argarray_val[0]
+					  .nfs_argop4_u.opchunk_write;
+
+	if (args->cwa_checksums.cwa_checksums_val) {
+		for (uint32_t i = 0; i < args->cwa_checksums.cwa_checksums_len;
+		     i++) {
+			free(args->cwa_checksums.cwa_checksums_val[i]
+				     .cs_value.cs_value_val);
+		}
+		free(args->cwa_checksums.cwa_checksums_val);
+		args->cwa_checksums.cwa_checksums_val = NULL;
+		args->cwa_checksums.cwa_checksums_len = 0;
+	}
 }
 
 /* Free the per-chunk status array from a successful CHUNK_WRITE result. */
@@ -359,6 +397,7 @@ START_TEST(test_chunk_write_crc_mismatch)
 					.nfs_resop4_u.opchunk_write;
 	ck_assert_int_eq(res->cwr_status, NFS4ERR_INVAL);
 
+	free_write_args(cm);
 	cm_free(cm);
 }
 END_TEST
@@ -505,12 +544,22 @@ START_TEST(test_chunk_write_valid_crc)
 					.nfs_resop4_u.opchunk_write;
 	ck_assert_int_eq(res->cwr_status, NFS4_OK);
 
-	/* Stored CRC must match what we provided. */
+	/*
+	 * Stored checksum must match what we provided: algorithm
+	 * CRC32, 4 bytes, big-endian encoding of good_crc.
+	 */
 	struct chunk_block *blk = chunk_store_lookup(g_inode->i_chunk_store, 0);
 
 	ck_assert_ptr_nonnull(blk);
-	ck_assert_uint_eq(blk->cb_crc32, good_crc);
+	ck_assert_uint_eq(blk->cb_checksum_algorithm, CHECKSUM_ALG_CRC32);
+	ck_assert_uint_eq(blk->cb_checksum_len, 4);
+	uint32_t stored = ((uint32_t)blk->cb_checksum_value[0] << 24) |
+			  ((uint32_t)blk->cb_checksum_value[1] << 16) |
+			  ((uint32_t)blk->cb_checksum_value[2] << 8) |
+			  (uint32_t)blk->cb_checksum_value[3];
+	ck_assert_uint_eq(stored, good_crc);
 
+	free_write_args(cm);
 	free_write_res(cm);
 	cm_free(cm);
 }

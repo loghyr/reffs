@@ -39,6 +39,7 @@
 #include "reffs/rpc.h"
 #include "reffs/server.h"
 #include "reffs/time.h"
+#include "nfs4/chunk_checksum.h"
 #include "nfs4/chunk_store.h"
 #include "nfs4/client.h"
 #include "nfs4/compound.h"
@@ -118,14 +119,29 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		return 0;
 	}
 
-	/* Validate CRC32 for each chunk if provided. */
-	if (args->cwa_crc32s.cwa_crc32s_len > 0 &&
-	    args->cwa_crc32s.cwa_crc32s_len != nchunks) {
+	/*
+	 * Validate per-chunk checksums if provided.  The wire type is
+	 * checksum4; only CHECKSUM_ALG_CRC32 is supported by this
+	 * implementation -- chunk_checksum_unpack_crc32() rejects other
+	 * algorithms or wrong cs_value lengths with NFS4ERR_INVAL.
+	 */
+	uint32_t nchecksums = args->cwa_checksums.cwa_checksums_len;
+
+	if (nchecksums > 0 && nchecksums != nchunks) {
 		*status = NFS4ERR_INVAL;
 		return 0;
 	}
 
-	for (uint32_t i = 0; i < args->cwa_crc32s.cwa_crc32s_len; i++) {
+	for (uint32_t i = 0; i < nchecksums; i++) {
+		uint32_t expected;
+		nfsstat4 ust = chunk_checksum_unpack_crc32(
+			&args->cwa_checksums.cwa_checksums_val[i], &expected);
+
+		if (ust != NFS4_OK) {
+			*status = ust;
+			return 0;
+		}
+
 		const uint8_t *cdata =
 			(const uint8_t *)args->cwa_chunks.cwa_chunks_val +
 			(size_t)i * chunk_size;
@@ -135,10 +151,10 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 			clen = total_data % chunk_size;
 		uint32_t computed = (uint32_t)crc32(0L, cdata, (uInt)clen);
 
-		if (computed != args->cwa_crc32s.cwa_crc32s_val[i]) {
+		if (computed != expected) {
 			TRACE("CHUNK_WRITE: CRC mismatch chunk %u: "
 			      "expected 0x%08x got 0x%08x",
-			      i, args->cwa_crc32s.cwa_crc32s_val[i], computed);
+			      i, expected, computed);
 			*status = NFS4ERR_INVAL;
 			return 0;
 		}
@@ -247,15 +263,40 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		if (i == nchunks - 1 && total_data % chunk_size != 0)
 			blk_size = total_data % chunk_size;
 
+		/*
+		 * Persist the algorithm and value bytes verbatim from the
+		 * wire.  We already validated the entry above for the only
+		 * algorithm this implementation accepts (CRC32, 4 bytes);
+		 * the persistence path simply copies what the client sent
+		 * so that CHUNK_READ can echo the same algorithm tag back.
+		 *
+		 * When no checksum was supplied, cb_checksum_len is 0 and
+		 * the bit-rot check on CHUNK_READ is skipped.
+		 */
+		uint32_t blk_csum_algo = CHECKSUM_ALG_NONE;
+		uint32_t blk_csum_len = 0;
+		uint8_t blk_csum_value[CHUNK_VALUE_MAX] = { 0 };
+
+		if (i < nchecksums) {
+			const checksum4 *cs =
+				&args->cwa_checksums.cwa_checksums_val[i];
+
+			blk_csum_algo = cs->cs_algorithm;
+			blk_csum_len = cs->cs_value.cs_value_len;
+			if (blk_csum_len > sizeof(blk_csum_value))
+				blk_csum_len = sizeof(blk_csum_value);
+			memcpy(blk_csum_value, cs->cs_value.cs_value_val,
+			       blk_csum_len);
+		}
+
 		struct chunk_block blk = {
 			.cb_state = CHUNK_STATE_PENDING,
 			.cb_gen_id = args->cwa_owner.co_guard.cg_gen_id,
 			.cb_client_id = args->cwa_owner.co_guard.cg_client_id,
 			.cb_owner_id = args->cwa_owner.co_id,
 			.cb_payload_id = args->cwa_payload_id,
-			.cb_crc32 = (args->cwa_crc32s.cwa_crc32s_len > i) ?
-					    args->cwa_crc32s.cwa_crc32s_val[i] :
-					    0,
+			.cb_checksum_algorithm = blk_csum_algo,
+			.cb_checksum_len = blk_csum_len,
 			.cb_chunk_size = blk_size,
 			/*
 			 * Server-known writer identity for lease-driven
@@ -275,6 +316,9 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 						->c_id :
 					0,
 		};
+
+		memcpy(blk.cb_checksum_value, blk_csum_value,
+		       sizeof(blk.cb_checksum_value));
 
 		/*
 		 * INV-1 / chunk-collision detection: peek at the prior
@@ -488,7 +532,14 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		struct chunk_block *blk = chunk_store_lookup(cs, off);
 		read_chunk4 *rc = &resok->crr_chunks.crr_chunks_val[i];
 
-		rc->cr_crc = blk->cb_crc32;
+		if (chunk_checksum_pack(
+			    &rc->cr_checksum, blk->cb_checksum_algorithm,
+			    blk->cb_checksum_value, blk->cb_checksum_len) < 0) {
+			pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
 		rc->cr_effective_len = blk->cb_chunk_size;
 		rc->cr_owner.co_guard.cg_gen_id = blk->cb_gen_id;
 		rc->cr_owner.co_guard.cg_client_id = blk->cb_client_id;
@@ -525,19 +576,40 @@ uint32_t nfs4_op_chunk_read(struct compound *compound)
 		}
 
 		/*
-		 * Verify stored CRC against data read from disk.
-		 * Detects silent data corruption (bit rot).
+		 * Verify the stored checksum against data read from disk.
+		 * Detects silent data corruption (bit rot).  Only CRC32 is
+		 * implemented; other algorithms are persisted verbatim but
+		 * not recomputed (the integrity check degrades to "trust
+		 * the stored bytes", which is still useful when the stored
+		 * checksum itself was corrupted on disk -- the client side
+		 * recomputes against the data anyway).
 		 */
-		if (blk->cb_crc32 != 0) {
+		if (blk->cb_checksum_len > 0 &&
+		    blk->cb_checksum_algorithm == CHECKSUM_ALG_CRC32 &&
+		    blk->cb_checksum_len == 4) {
+			uint32_t stored_crc =
+				((uint32_t)blk->cb_checksum_value[0] << 24) |
+				((uint32_t)blk->cb_checksum_value[1] << 16) |
+				((uint32_t)blk->cb_checksum_value[2] << 8) |
+				(uint32_t)blk->cb_checksum_value[3];
 			uint32_t disk_crc = (uint32_t)crc32(
 				0L, (const Bytef *)rc->cr_chunk.cr_chunk_val,
 				(uInt)blk->cb_chunk_size);
 
-			if (disk_crc != blk->cb_crc32) {
+			if (disk_crc != stored_crc) {
 				LOG("CHUNK_READ: CRC mismatch block %" PRIu64
 				    ": stored 0x%08x disk 0x%08x",
-				    off, blk->cb_crc32, disk_crc);
-				rc->cr_crc = disk_crc;
+				    off, stored_crc, disk_crc);
+				/*
+				 * Re-pack with the disk-derived CRC so the
+				 * client sees what was actually read; XDR
+				 * free will release the new allocation.
+				 */
+				free(rc->cr_checksum.cs_value.cs_value_val);
+				rc->cr_checksum.cs_value.cs_value_val = NULL;
+				rc->cr_checksum.cs_value.cs_value_len = 0;
+				(void)chunk_checksum_pack_crc32(
+					&rc->cr_checksum, disk_crc);
 			}
 		}
 	}
