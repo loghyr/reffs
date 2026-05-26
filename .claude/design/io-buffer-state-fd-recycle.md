@@ -5,6 +5,27 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Buffer-state FD Recycle Race (BLOCKER)
 
+## Revision history
+
+- **2026-05-26 (initial draft)**: written against the bench symptoms.
+- **2026-05-26 (revision 1)**: design-stage reviewer pass identified
+  three BLOCKERs and six WARNINGs:
+  - BLOCKER-1: eager `ci_bs` alloc at register breaks the
+    TLS-ClientHello discriminant at `handlers.c:1471`. **Fixed**
+    by switching to pointer + lazy alloc preserved.
+  - BLOCKER-2: TDD step 1 "RED tests" wouldn't compile against
+    the pre-fix tree. **Fixed** by reframing the slice as
+    "single commit, build broken between steps 1 and 6".
+  - BLOCKER-3: cited `lib/fs/tests/inode_alloc_test.c`
+    malloc-fail pattern doesn't exist. **Fixed** by replacing
+    `test_bs_freed_on_register_failure` with
+    `test_bs_lifecycle_thread_race` modelled on
+    `conn_lifecycle_race_test.c::test_no_race_churn_vs_readers`.
+  - WARN-1..WARN-6 + NOTEs: incorporated inline (call-site
+    table corrected, Hazard B TCP-shutdown limb acknowledged
+    and deferred, free-ordering revised, inline-bs alternative
+    added to alternatives-considered, verbatim LOG quote fixed).
+
 ## Context
 
 Surfaced by chunk-collision Track 2 N=8 fio bench on 2026-05-26
@@ -120,6 +141,14 @@ sequence:
   sees the old `conn_buffers[11]` was NULL'd by X — so this path is
   safe in isolation.
 
+**Hazard A precise wording**: if the bs free in
+`io_client_fd_unregister` completes before the new accept's bs
+create starts, the path is safe. Today there is **nothing that
+enforces this ordering** — `io_client_fd_unregister` is outside
+`conn_mutex`, and the new accept's `io_buffer_state_create` is
+also outside `conn_mutex`. The window is small in the common
+case but is fundamentally unbounded under load.
+
 ### Hazard B: Double-CQE during close
 
 Looking at the ds9 log:
@@ -172,6 +201,20 @@ The "already occupied" log line is one window of this race; a
 quieter "wrong buffer state for the wrong connection" is the
 worse window.
 
+**Hazard B has a TCP-shutdown limb this fix does NOT address.**
+If the second `io_socket_close(11)` runs on a recycled fd
+(option (b) in the race above — kernel handed fd=11 to a new
+accept after the 1st close returned), the second close's
+`shutdown(11, SHUT_RDWR)` tears down the **new** connection's
+TCP and the `close(11)` releases its fd, from under whichever
+thread was driving the new conn. The fold-in proposed here
+fixes only the buffer_state slice of Hazard B; the
+duplicate-close-of-recycled-fd slice requires an orthogonal
+"close-once" gate per conn_info (e.g., a CAS-protected
+`ci_close_done` flag set under `conn_mutex` inside
+`io_socket_close`). Tracked as a NOT_NOW_BROWN_COW (see Deferred
+section item 5).
+
 ### Hazard C: Bypass paths skipping `io_client_fd_unregister`
 
 `io_handle_accept` (handlers.c:522) does:
@@ -198,20 +241,61 @@ fires until the next idle reaper sweep (601s later). This is a
 slow leak rather than a race, but lives in the same code surface
 and any restructure must close it.
 
-## Proposed Fix: embed buffer_state into conn_info
+## Proposed Fix: bs pointer in conn_info, lazy-alloc, freed at drain
 
-The cleanest fix is to **fold `struct buffer_state` into `struct
-conn_info`** so its lifecycle is automatically tied to the
-conn-info lifecycle, which is already correctly gated by
-`conn_mutex` + INV-6.
+The cleanest fix is to **add a `struct buffer_state *ci_bs`
+field to `struct conn_info`** and migrate its lifecycle into the
+conn-info side, which is already correctly gated by `conn_mutex`
++ INV-6.
+
+The fix keeps the existing **lazy allocation** semantics
+(allocate on first plain-NFS read, not at register time —
+critical for the TLS-ClientHello detection at
+`handlers.c:1471` — see note below). It changes only the
+**free** side: instead of `io_client_fd_unregister` freeing
+outside any lock at close time, the bs is freed at the
+`CONN_CLOSING → CONN_UNUSED` transition inside
+`conn_drain_if_idle_locked`, under `conn_mutex`.
+
+### Why lazy allocation must be preserved
+
+`lib/io/handlers.c:1471` reads:
+
+```c
+bs = io_buffer_state_get(client_fd);
+if (!bs && is_tls_client_hello(ic->ic_buffer, bytes_read)) {
+    /* TLS path: handshake first, no plain-NFS bs allocated */
+    ret = handle_tls_handshake(...);
+    ...
+}
+
+if (!bs)
+    bs = io_buffer_state_create(client_fd);
+```
+
+The `!bs` test discriminates "first read on a fresh
+connection" from "this connection is already carrying RPC
+traffic" — only the first state is safe to run the
+ClientHello probe on, because the probe matches against the
+first 5 bytes of the kernel's TLS record header and would
+false-positive on payload bytes that match. **Pre-allocating
+`ci_bs` at `io_conn_register` time would make `!bs` always
+false, silently regressing TLS-on-mixed-port detection.** The
+fix preserves the `ci_bs == NULL` discriminant.
 
 ### State diagram (after fix)
 
 ```
-io_conn_register(fd)             buffer_state initialised inline
-   |   under conn_mutex          (bs_data malloc'd; bs_record zeroed)
+io_conn_register(fd)             ci_bs = NULL (no alloc yet)
+   |   under conn_mutex
    v
 CONN_ACCEPTED / CONN_CONNECTED
+   |
+   v  (first plain-NFS read, via handlers.c:1471)
+io_buffer_state_create(fd)       ci_bs = malloc(...); bs_data alloc'd
+   |   under conn_mutex          (or lazy-init via a locked wrapper)
+   v
+[normal read/write traffic; ci_bs lives across CQEs]
    |
    v  (CQE error or idle timeout)
 io_socket_close(fd)
@@ -219,7 +303,9 @@ io_socket_close(fd)
    |--> io_conn_unregister(fd) under conn_mutex
    |       |  (drain pending writes, detach SSL, set CONN_CLOSING)
    |       v
-   |    CONN_CLOSING  (in-flight CQEs still find this slot)
+   |    CONN_CLOSING  (in-flight CQEs still find this slot;
+   |                   ci_bs still readable for stale CQEs to
+   |                   land in via the *_locked accessors)
    |
    |--> shutdown(fd, SHUT_RDWR)
    |--> close(fd)
@@ -230,20 +316,33 @@ io_conn_remove_read_op() / io_conn_remove_write_op()
    |   under conn_mutex
    v
 conn_drain_if_idle_locked()
-   |   counters all 0, write_active=false
+   |   counters all 0, write_active=false; under conn_mutex
+   |   1. ci_state = CONN_UNUSED
+   |   2. ci_fd = -1               <-- publish UNUSED first
+   |   3. free(ci_bs->bs_data); free(ci_bs->bs_record.rs_data);
+   |      free(ci_bs); ci_bs = NULL    (or NULL_after_lock-free)
    v
-CONN_UNUSED  <-- HERE: free bs_data / bs_record.rs_data inline
-   |              (slot becomes reusable in the same atomic step)
+CONN_UNUSED  (slot reusable; bs gone)
    v
 io_conn_register(new_fd_same_slot) succeeds  // INV-6 gate clears
+   v
+ci_bs = NULL (fresh conn, no alloc yet -- TLS probe path armed again)
 ```
 
-The free of `bs_data` and `bs_record.rs_data` moves into
-`conn_drain_if_idle_locked()` (same function, under the same lock,
-in the same atomic transition that resets `ci_state` to
-`CONN_UNUSED` and `ci_fd` to -1). Allocation moves into
-`io_conn_register()` at the same moment `ci_state` becomes
-`CONN_ACCEPTED` / `CONN_CONNECTED`.
+### Free-ordering rationale
+
+The `CONN_UNUSED / ci_fd = -1` writes happen **before** the bs
+free, even though the entire transition is under
+`conn_mutex`. The reason: a late `io_conn_remove_read_op(fd)`
+arriving with a stale fd matches via `ci_fd == fd` and would
+access `ci_bs` while decrementing its counter. If the free
+happened first and the `ci_fd = -1` publish second, a racing
+CQE handler on the same fd that took the lock between the free
+and the publish would dereference freed memory. With the
+ordering reversed — publish UNUSED and `ci_fd = -1` first, then
+free `ci_bs` — once the lock is released, no fd-keyed lookup
+matches this slot, so the bs is logically unreachable and the
+free under the same lock-held window is race-free.
 
 ### Why this is correct
 
@@ -268,10 +367,11 @@ in the same atomic transition that resets `ci_state` to
 
 | Caller | Before | After |
 |--------|--------|-------|
-| `io_handle_accept` | `io_conn_register(fd, ...)` then `io_client_fd_register(fd)` | `io_conn_register(fd, ...)` (single call; bs initialised inside) |
-| `io_handle_connect` | same | same |
-| `io_socket_close` | `io_conn_unregister(fd)` then `io_client_fd_unregister(fd)` then `shutdown` + `close` | `io_conn_unregister(fd)` then `shutdown` + `close` (bs freed by drain transition) |
-| `io_buffer_state_get(fd)` | direct read of `conn_buffers[fd % MAX_CONNECTIONS]` | `pthread_mutex_lock(conn_mutex)`; load `ci->ci_bs` if `ci->ci_fd == fd && ci->ci_state != CONN_CLOSING`; unlock |
+| `io_handle_accept` (`handlers.c:522`) | `io_conn_register` then `io_client_fd_register` (bs alloc'd eagerly) | `io_conn_register` only; bs stays NULL until first read |
+| `io_handle_connect` (`handlers.c:635`) | `io_conn_register` only (bs was never alloc'd here — client-side connects don't pre-alloc bs; it's lazy-created on first read via the read path at `handlers.c:1471`) | unchanged — `io_conn_register` only; bs still lazy-created on first read |
+| Read path (`handlers.c:1471`) | `io_buffer_state_get` then optional `io_buffer_state_create` (the latter outside `conn_mutex`) | `io_buffer_state_get_locked` (or equivalent) and `io_buffer_state_create_locked`, both taking `conn_mutex` and operating on `ci->ci_bs`. `!bs` discriminant for the TLS-ClientHello probe is preserved. |
+| `io_socket_close` (`conn_info.c:819`) | `io_conn_unregister` then `io_client_fd_unregister` (frees bs outside lock) then `shutdown` + `close` | `io_conn_unregister` then `shutdown` + `close`; bs freed lazily by `conn_drain_if_idle_locked` once all CQE counters drain |
+| `io_buffer_state_get(fd)` | direct read of `conn_buffers[fd % MAX_CONNECTIONS]` | takes `conn_mutex`; loads `ci->ci_bs` iff `ci->ci_fd == fd && ci->ci_state != CONN_CLOSING`; unlock |
 
 `io_buffer_state_get()` callers will pay an extra `conn_mutex`
 acquire — but they already pay one in surrounding `io_conn_*`
@@ -279,6 +379,34 @@ calls, and the receive-buffer path is not on the lock-contended
 hot path (it is per-fd, per-record). Hot paths can take the lock
 once and operate on a pointer captured under it (caveat: must
 re-check before re-using, same rule as existing INV-6 accessors).
+
+### Alternative considered: inline `struct buffer_state` directly into `struct conn_info`
+
+Rather than `struct buffer_state *ci_bs` with lazy alloc, put
+the entire `struct buffer_state` (head, ~50 bytes) inline. Only
+`bs_data` (8 KiB capacity) and `bs_record.rs_data` (variable)
+would still need heap allocation.
+
+Rejected for two reasons:
+
+1. **Memory cost**: `MAX_CONNECTIONS = 65536` × 50 bytes = 3.2 MiB
+   of always-resident `struct buffer_state` headers, regardless
+   of live-connection count. Embedded ports and small VMs care
+   about this; the per-conn_info struct is already ~200 bytes.
+2. **TLS detection**: the `!bs` discriminant at
+   `handlers.c:1471` becomes `!bs_data` instead of `!bs`, which
+   is a different flag (the head exists from process start;
+   data is what's lazily allocated). Working but more
+   error-prone — a developer maintaining the read path would
+   need to remember that `bs_data == NULL` means "fresh, run
+   TLS probe", rather than the more natural "bs == NULL" of the
+   pointer variant. The pointer variant keeps the existing
+   semantics intact.
+
+The pointer variant adds one heap alloc per connection (which
+happens today anyway — `io_buffer_state_create` already
+mallocs both `buffer_state` and `bs_data` separately) and no
+memory cost at zero live connections. Picking the pointer.
 
 ### Alternative considered: hash map (per the FIXME hint)
 
@@ -333,15 +461,22 @@ are affected (this is internal to lib/io).
 ### New unit tests
 
 **File**: `lib/io/tests/conn_info_test.c` (extend, +5 tests; brings total
-from 27 to 32):
+from 27 to 32). These tests reference the **post-fold** API
+(`ci_bs` on `conn_info`, lazy-created via the lock-aware accessor) —
+they will not compile against the pre-fix tree (no
+`io_buffer_state_create_locked` exists today). They land in the
+same slice as the implementation, with the build broken between
+step 1 (tests in) and step 5 (call sites converted). The reffs
+codebase already uses this single-slice TDD pattern (see e.g.
+`lib/backends/tests/Makefile.am`-conditional `rocksdb_test.c`).
 
 | Test | Intent |
 |------|--------|
-| `test_bs_attached_on_register` | After `io_conn_register(fd, CONN_ACCEPTED, ROLE_SERVER)`, `io_buffer_state_get(fd)` returns non-NULL with `bs_capacity == 2 * BUFFER_SIZE` and `bs_filled == 0`. |
-| `test_bs_freed_on_drain_to_unused` | Register fd, increment then decrement read_count via add/remove_read_op; verify slot transitions to CONN_UNUSED and `io_buffer_state_get(fd)` returns NULL. |
-| `test_bs_survives_closing` | Register fd, add_read_op (count=1), io_conn_unregister (-> CONN_CLOSING); verify `io_buffer_state_get_locked` (internal accessor used by CQE handlers) still returns the bs while in CLOSING. |
-| `test_bs_no_alias_on_recycle` | Register fd=N, transition to CONN_UNUSED via drain, re-register fd=N. `io_buffer_state_get` returns the *new* bs (different pointer if test infra exposes addresses; otherwise verify bs_filled is 0 on the new one). |
-| `test_bs_freed_on_register_failure` | Register fd, then force a malloc-fail path on `bs_data` (test-only injection); verify `io_conn_register` returns NULL and the conn_info slot rolls back to UNUSED. |
+| `test_bs_null_after_register` | After `io_conn_register(fd, CONN_ACCEPTED, ROLE_SERVER)`, `io_buffer_state_get(fd)` returns NULL — lazy allocation preserved (regression guard for the TLS-ClientHello discriminant at `handlers.c:1471`). |
+| `test_bs_freed_on_drain_to_unused` | Register fd; lazy-create a bs via `io_buffer_state_create(fd)`; increment then decrement read_count via add/remove_read_op; verify slot transitions to CONN_UNUSED and `io_buffer_state_get(fd)` returns NULL post-drain. |
+| `test_bs_survives_closing` | Register fd; create bs; add_read_op (count=1); io_conn_unregister (-> CONN_CLOSING); verify the **`_locked`-prefixed** accessor used by CQE handlers (the one that operates while holding `conn_mutex`) still returns the same bs while in CLOSING. |
+| `test_bs_no_alias_on_recycle` | Register fd=N; create bs; transition to CONN_UNUSED via drain; re-register fd=N; create a new bs. Verify the second bs is freshly initialised (bs_filled==0, bs_capacity==2*BUFFER_SIZE) and `io_buffer_state_get` post-second-register returns the new bs, not the (freed) old one. Sequential single-thread test — exercises the post-fix invariant, not the race. |
+| `test_bs_lifecycle_thread_race` | Multi-thread regression test using the pattern in `lib/io/tests/conn_lifecycle_race_test.c::test_no_race_churn_vs_readers`: spawn 2 threads. Thread A repeatedly drives `io_conn_register(N) → io_buffer_state_create(N) → io_conn_unregister(N) → drain (decrement counters) → repeat` on fd=N. Thread B repeatedly drives `io_conn_remove_read_op(N) → io_buffer_state_get_locked(N)` and asserts that whatever bs is returned (NULL or non-NULL) is consistent (no UAF, no torn pointer). Run for 10k iterations under ASAN/TSAN. This is the regression guard for Hazard A and Hazard B's buffer-state slice. |
 
 ### Functional test
 
@@ -368,24 +503,24 @@ sufficient. No new CI integration harness needed.
 
 ### Test infrastructure
 
-The malloc-fail injection for `test_bs_freed_on_register_failure`
-needs a test-only override of `malloc`. Two options:
-- (a) Use `__attribute__((weak))` on a wrapper in `lib/io/net_state.c`
-  that the test overrides — but liburcu and other dependencies
-  also override malloc symbols, so this is fragile.
-- (b) Add an internal test-only counter `io_test_malloc_fail_after_N`
-  that drops to -1 normally and decrements on each `io_alloc_*`
-  call in lib/io, triggering NULL return when it reaches 0.
-  Visible only when `#ifdef REFFS_TESTING` is set by the test
-  Makefile.
+`test_bs_lifecycle_thread_race` uses the same template as
+`lib/io/tests/conn_lifecycle_race_test.c::test_no_race_churn_vs_readers`
+— spawn worker threads via the existing test harness's
+`pthread_create` pattern, churn the lifecycle, run under
+ASAN/TSAN as part of the standard test build. No new test
+infrastructure required.
 
-Picking (b). One `#ifdef`-gated counter in `lib/io/net_state.c`
-+ matching `extern` in a test header. Same pattern used elsewhere
-in the codebase for malloc-fail testing in
-`lib/fs/tests/inode_alloc_test.c` (verify before relying on
-this; if no such existing pattern, drop the malloc-fail test
-and replace with a "double-register fails" check using a real
-in-line code path).
+**Earlier draft proposed a malloc-fail-injection counter**
+(`io_test_malloc_fail_after_N`, gated by `#ifdef REFFS_TESTING`)
+patterned after a hypothetical existing test in
+`lib/fs/tests/inode_alloc_test.c`. **That file does not exist
+in the tree** (verified by reviewer); no such injection
+pattern is established elsewhere. The proposed
+`test_bs_freed_on_register_failure` has been replaced by the
+multi-thread `test_bs_lifecycle_thread_race` above, which
+exercises the same lifecycle correctness without needing
+malloc-fail injection. Any future malloc-fail injection work
+is out of scope for this slice.
 
 ## Deferred / NOT_NOW_BROWN_COW items
 
@@ -394,8 +529,7 @@ in-line code path).
    sessions should send SEQUENCE periodically to keep the
    underlying TCP connection alive. Fixing the session-level
    keep-alive would have masked the buffer_state race today.
-   Track separately as a follow-up:
-   `feedback_mds_ds_session_keepalive` (write later).
+   Track separately as a follow-up.
 2. **Hash-map keying for `conn_info`/`conn_buffers`.** The
    FIXME-marked alternative; not needed once buffer_state is
    folded into conn_info, since the (fd → slot) collision
@@ -410,6 +544,17 @@ in-line code path).
    to confirm none assumes a NULL `conn_buffers[]` slot means
    "no conn" rather than "no bs". Defer until the fold-in
    lands and the call sites are reduced to one accessor.
+5. **`io_socket_close` close-once gate (Hazard B's TCP slice).**
+   This design fixes only the buffer_state slice of Hazard B.
+   The duplicate-close-of-recycled-fd slice (where a second
+   `io_socket_close(fd)` after fd recycling tears down the new
+   connection's TCP via `shutdown(fd, SHUT_RDWR)` and `close(fd)`)
+   requires a per-conn_info close-once gate. The natural shape
+   is a CAS-protected `ci_close_done` flag under `conn_mutex`
+   set inside `io_socket_close` after `io_conn_unregister`
+   succeeds; a second call with `ci_close_done == true` skips
+   the `shutdown` + `close`. Deferred as a follow-up BLOCKER
+   slice in its own right.
 
 ## Admin interface
 
@@ -417,34 +562,66 @@ None — internal to `lib/io/`. No probe op added. No CLI added.
 
 ## Implementation order
 
-1. **TDD: write the 5 new unit tests first** (RED). They will fail
-   against the current `conn_buffers[]` parallel array because
-   that array doesn't expose the "freed-on-drain" semantics.
-2. **Add `ci_bs` field to `struct conn_info`** (or
-   `struct buffer_state ci_bs;` inline if size is reasonable;
-   capacity-2*BUFFER_SIZE = 8KB by default — embed pointer-only
-   if we want to keep conn_info small, but pointer + lazy alloc
-   on first read keeps allocation overhead similar to today).
-3. **Wire allocate** into `io_conn_register` after the existing
-   conn-info field init (before unlocking `conn_mutex`).
-4. **Wire free** into `conn_drain_if_idle_locked`, immediately
-   before the transition to `CONN_UNUSED`.
-5. **Replace `conn_buffers[]` reads** with `connections[idx]->ci_bs`
-   reads (under `conn_mutex` or via a locked accessor). Use the
-   existing `*_locked` pattern in `conn_info.c`.
+The whole slice lands in a single commit — tests reference
+post-fix API so they cannot land before the implementation
+without breaking the build.
+
+1. **TDD: write the 5 new unit tests** against the post-fold
+   API (`ci_bs` on `struct conn_info`; `io_buffer_state_get`
+   that reads `connections[idx]->ci_bs` under `conn_mutex`).
+   The tests will not compile against the pre-fix tree (no
+   `ci_bs` field exists yet); they go in alongside steps 2–6
+   in the same TDD slice. The build stays broken between the
+   beginning of step 1 and the end of step 6.
+2. **Add `struct buffer_state *ci_bs` field** to
+   `struct conn_info`. Initialise to NULL in
+   `io_conn_register`. Do **not** allocate the bs head at
+   register time — lazy allocation on first read is required
+   to preserve the TLS-ClientHello discriminant at
+   `handlers.c:1471` (see "Why lazy allocation must be
+   preserved" above).
+3. **Replace `io_buffer_state_get(fd)`** with a wrapper that
+   takes `conn_mutex` and reads `connections[idx]->ci_bs`
+   iff `ci->ci_fd == fd && ci->ci_state != CONN_CLOSING` (the
+   CLOSING filter mirrors `io_conn_get`). Add a `_locked`
+   variant for the read-handler / CQE-handler paths that
+   already hold `conn_mutex`.
+4. **Replace `io_buffer_state_create(fd)`** with a wrapper
+   that takes `conn_mutex`, allocates the `struct buffer_state`
+   and `bs_data`, stores into `connections[idx]->ci_bs`, and
+   returns it. Refuse (return NULL) if `ci_state == CONN_CLOSING`.
+5. **Wire free** into `conn_drain_if_idle_locked`,
+   **after** the existing `ci_state = CONN_UNUSED;
+   ci_fd = -1;` writes. The order matters — see "Free-ordering
+   rationale" above. Under the same `conn_mutex` acquisition,
+   free `ci_bs->bs_data`, free `ci_bs->bs_record.rs_data` if
+   non-NULL, free `ci_bs`, NULL the pointer.
 6. **Delete `conn_buffers[]`**, `io_client_fd_register`,
-   `io_client_fd_unregister`. The free loop in
-   `io_net_state_fini` either goes away (the per-conn_info
-   teardown in `io_conn_cleanup` would handle it) or becomes
-   a simple sweep of any still-allocated slots.
-7. **Run the existing `make check`** — must remain green on the
-   non-ASAN build.
-8. **Re-run Track 2 N=8 fio on garbo.** Criterion 4 must be 0.
-   Criteria 1 and 3 must still pass.
+   `io_client_fd_unregister`. Move the per-bs free out of
+   `io_net_state_fini` into `io_conn_cleanup` at
+   `conn_info.c:794` (which already iterates `connections[]`
+   at process shutdown and frees each — the bs free becomes
+   a natural extension of that loop). Verify the call order in
+   `io_handler_fini`: `io_conn_cleanup` must run before
+   `io_net_state_fini`, since after the cleanup
+   `io_net_state_fini` only has the pending-requests table to
+   handle. If the order today is reversed, fix it in this
+   slice.
+7. **Run `make check`** on the non-ASAN build — must remain
+   green. (libcheck+ASAN on macOS hangs; documented
+   environmental issue, run lib/io tests on the non-ASAN build
+   for verification.)
+8. **Re-run Track 2 N=8 fio on garbo** via the existing harness
+   (`deploy/benchmark/run_chunk_collision_track2.sh --n 8`).
+   Criterion 4 must be 0. Criteria 1 and 3 must still pass.
+   The `io: conn_buffers alias: ...` LOG line (verbatim from
+   `net_state.c:192-194` — the actual text is `io: conn_buffers
+   alias: fd=%d slot=%d already occupied`) must not appear in
+   any container's docker logs.
 9. **Reviewer gate.** This is a ref-counting / lifecycle change
    touching `lib/io/`; per `.claude/CLAUDE.md` it is an RCU /
-   ref-counting lifecycle slice. Run the reviewer agent before
-   commit.
+   ref-counting lifecycle slice. Run the reviewer agent on the
+   code diff before commit.
 
 ## RFC References
 
