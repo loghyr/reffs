@@ -85,6 +85,19 @@ int io_handler_init(struct ring_context *rc, const char *tls_cert,
 void io_handler_fini(struct ring_context *rc)
 {
 	kq_teardown(rc);
+	/*
+	 * io_conn_cleanup() MUST run before io_net_state_fini(): the
+	 * per-connection record-reassembly buffer (struct buffer_state)
+	 * now lives on struct conn_info as ci_bs and is freed inside
+	 * io_conn_cleanup().  Before the fold-in
+	 * (.claude/design/io-buffer-state-fd-recycle.md), kqueue
+	 * io_handler_fini did not call io_conn_cleanup at all -- the bs
+	 * free was incidentally covered by io_net_state_fini walking a
+	 * parallel conn_buffers[] array.  After the fold-in, that path
+	 * is gone; without this call the kqueue shutdown leaks every
+	 * surviving bs.
+	 */
+	io_conn_cleanup();
 	io_net_state_fini();
 }
 

@@ -162,6 +162,18 @@ struct conn_info {
 	 * compound dispatch to scope superblock lookups.
 	 */
 	uint32_t ci_listener_id;
+
+	/*
+	 * Per-connection buffer state for RPC record reassembly.  NULL
+	 * until the first plain-NFS read; lazy-allocated by
+	 * io_buffer_state_create() under conn_mutex.  Freed by
+	 * conn_drain_if_idle_locked() after the slot transitions to
+	 * CONN_UNUSED, also under conn_mutex.  The NULL-on-fresh-register
+	 * is load-bearing for the TLS-ClientHello discriminant at
+	 * io_handle_read (handlers.c).  See
+	 * .claude/design/io-buffer-state-fd-recycle.md.
+	 */
+	struct buffer_state *ci_bs;
 };
 
 #endif /* _REFFS_IO_INTERNAL_H */

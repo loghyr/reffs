@@ -612,7 +612,17 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 		ic->ic_ci.ci_local_len = 0;
 	}
 
-	io_client_fd_register(client_fd);
+	/*
+	 * The per-fd buffer_state used to be eagerly allocated here via
+	 * io_client_fd_register(client_fd).  After the fold-in (see
+	 * .claude/design/io-buffer-state-fd-recycle.md), the bs lives on
+	 * struct conn_info as ci_bs and is lazy-allocated on the first
+	 * plain-NFS read by io_handle_read (handlers.c:~1491).  The
+	 * NULL-on-fresh-register state is load-bearing: the
+	 * TLS-ClientHello discriminant at handlers.c:~1471 uses
+	 * (io_buffer_state_get(fd) == NULL) as "first read on a fresh
+	 * connection -- safe to probe for ClientHello".
+	 */
 
 	struct conn_info *conn = io_conn_get(client_fd);
 	if (conn) {

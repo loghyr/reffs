@@ -154,6 +154,14 @@ struct conn_info *io_conn_register(int fd, enum conn_state initial_state,
 		memset(ci, 0, sizeof(struct conn_info));
 		ci->ci_generation = saved_gen + 1;
 		ci->ci_fd = fd;
+		/*
+		 * ci_bs stays NULL on fresh registration; the buffer state
+		 * is lazy-allocated by io_buffer_state_create() on the first
+		 * plain-NFS read.  The NULL state is load-bearing for the
+		 * TLS-ClientHello discriminant at the `is_tls_client_hello` probe in io_handle_read.
+		 * (The memset above already zeroed ci_bs; this comment
+		 * documents the invariant the caller relies on.)
+		 */
 	} else {
 		LOG("Connection slot collision for fd=%d", fd);
 	}
@@ -686,6 +694,98 @@ void io_conn_destroy(struct conn_info *ci)
  * conn_info rather than corrupting whatever connection has reused
  * the fd in the meantime.  Caller holds conn_mutex.
  */
+/*
+ * io_buffer_state_get -- look up the per-connection record-reassembly
+ * buffer for fd.  Takes conn_mutex internally.  Returns NULL if the
+ * connection isn't registered, the fd doesn't match the slot, or the
+ * slot is in CONN_CLOSING (the latter mirrors io_conn_get -- a
+ * draining slot is logically unregistered from the user-facing API,
+ * even though stale CQEs may still find it via the *_locked
+ * accessors).
+ *
+ * The returned bs pointer is safe to dereference outside conn_mutex
+ * for the duration of the CQE handler that called this: as long as
+ * the caller holds at least one in-flight op on the fd (its read or
+ * write CQE counter is non-zero), conn_drain_if_idle_locked cannot
+ * fire and the bs will not be freed.  See
+ * .claude/design/io-buffer-state-fd-recycle.md.
+ */
+struct buffer_state *io_buffer_state_get(int fd)
+{
+	struct buffer_state *bs = NULL;
+
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+	if (connections[idx] && connections[idx]->ci_fd == fd &&
+	    connections[idx]->ci_state != CONN_CLOSING) {
+		bs = connections[idx]->ci_bs;
+	}
+	pthread_mutex_unlock(&conn_mutex);
+	return bs;
+}
+
+/*
+ * io_buffer_state_create -- lazy-allocate the per-connection record
+ * reassembly buffer for fd.  Idempotent: if ci_bs is already set,
+ * return the existing pointer.  Refuses (returns NULL) for an
+ * unregistered fd, a slot-mismatch, or a CONN_CLOSING slot.
+ *
+ * Allocates the buffer_state head and its 2*BUFFER_SIZE accumulator
+ * under conn_mutex; on allocation failure leaves ci_bs NULL and
+ * returns NULL.  Callers (currently only io_handle_read) MUST gate
+ * on a prior io_buffer_state_get returning NULL -- the
+ * NULL-on-fresh-register state is load-bearing for the
+ * TLS-ClientHello discriminant at the `is_tls_client_hello` probe in io_handle_read.
+ */
+struct buffer_state *io_buffer_state_create(int fd)
+{
+	struct buffer_state *bs = NULL;
+
+	pthread_mutex_lock(&conn_mutex);
+	int idx = fd % MAX_CONNECTIONS;
+	struct conn_info *ci = connections[idx];
+	if (!ci || ci->ci_fd != fd || ci->ci_state == CONN_CLOSING) {
+		pthread_mutex_unlock(&conn_mutex);
+		return NULL;
+	}
+	if (ci->ci_bs) {
+		/*
+		 * Idempotent: a prior call already allocated the bs.
+		 * This can happen if two CQE handlers for the same fd
+		 * race on first-read; the second to enter sees ci_bs
+		 * non-NULL and reuses it.
+		 */
+		bs = ci->ci_bs;
+		pthread_mutex_unlock(&conn_mutex);
+		return bs;
+	}
+
+	bs = malloc(sizeof(struct buffer_state));
+	if (!bs) {
+		pthread_mutex_unlock(&conn_mutex);
+		return NULL;
+	}
+	bs->bs_fd = fd;
+	bs->bs_capacity = BUFFER_SIZE * 2;
+	bs->bs_data = malloc(bs->bs_capacity);
+	bs->bs_filled = 0;
+	bs->bs_record.rs_last_fragment = false;
+	bs->bs_record.rs_fragment_len = 0;
+	bs->bs_record.rs_data = NULL;
+	bs->bs_record.rs_total_len = 0;
+	bs->bs_record.rs_capacity = 0;
+	bs->bs_record.rs_position = 0;
+
+	if (!bs->bs_data) {
+		free(bs);
+		pthread_mutex_unlock(&conn_mutex);
+		return NULL;
+	}
+	ci->ci_bs = bs;
+	pthread_mutex_unlock(&conn_mutex);
+	return bs;
+}
+
 static void conn_drain_if_idle_locked(struct conn_info *ci)
 {
 	if (ci->ci_state != CONN_CLOSING)
@@ -695,8 +795,27 @@ static void conn_drain_if_idle_locked(struct conn_info *ci)
 		return;
 	if (ci->ci_write_active)
 		return;
+	/*
+	 * Publish CONN_UNUSED + ci_fd = -1 BEFORE freeing ci_bs.  A late
+	 * stale-CQE handler that took conn_mutex between these writes and
+	 * the bs free would match on ci_fd == fd in an *_locked accessor
+	 * and access freed memory.  With this ordering, once we publish
+	 * ci_fd = -1, no fd-keyed lookup matches this slot, so the bs is
+	 * logically unreachable for the rest of this critical section.
+	 *
+	 * The free runs under the same conn_mutex acquisition (the caller
+	 * holds it for the entire drain transition); see
+	 * .claude/design/io-buffer-state-fd-recycle.md "Free-ordering
+	 * rationale".
+	 */
 	ci->ci_state = CONN_UNUSED;
 	ci->ci_fd = -1;
+	if (ci->ci_bs) {
+		free(ci->ci_bs->bs_data);
+		free(ci->ci_bs->bs_record.rs_data);
+		free(ci->ci_bs);
+		ci->ci_bs = NULL;
+	}
 }
 
 int io_conn_unregister(int fd)
@@ -808,6 +927,25 @@ void io_conn_cleanup(void)
 			SSL *ssl = conn_ssl_detach_locked(connections[i]);
 			conn_ssl_drop(ssl);
 
+			/*
+			 * Free any lazy-allocated buffer state still attached
+			 * to this conn_info.  In the normal lifecycle this is
+			 * freed at the CONN_CLOSING -> CONN_UNUSED transition
+			 * in conn_drain_if_idle_locked, but at process
+			 * shutdown we get here with live connections that
+			 * never drained.  io_net_state_fini used to walk a
+			 * parallel conn_buffers[] array for the same effect;
+			 * after the fold-in (see
+			 * .claude/design/io-buffer-state-fd-recycle.md) the
+			 * bs lives on conn_info and is freed here.
+			 */
+			if (connections[i]->ci_bs) {
+				free(connections[i]->ci_bs->bs_data);
+				free(connections[i]->ci_bs->bs_record.rs_data);
+				free(connections[i]->ci_bs);
+				connections[i]->ci_bs = NULL;
+			}
+
 			free(connections[i]);
 			connections[i] = NULL;
 		}
@@ -830,7 +968,21 @@ int io_socket_close(int fd, int error)
 
 	TRACE("Closing %d", fd);
 
-	io_client_fd_unregister(fd);
+	/*
+	 * The buffer_state used to be freed here via
+	 * io_client_fd_unregister(fd), which walked a parallel
+	 * conn_buffers[] array outside conn_mutex.  That created a race:
+	 * a second close path on a recycled fd could free the new
+	 * connection's bs, or a new accept's io_buffer_state_create
+	 * could collide with a stale slot ("conn_buffers alias: ...
+	 * slot=N already occupied").  See
+	 * .claude/design/io-buffer-state-fd-recycle.md.
+	 *
+	 * After the fold-in: the bs lives on struct conn_info as
+	 * ci_bs and is freed at the CONN_CLOSING -> CONN_UNUSED
+	 * transition in conn_drain_if_idle_locked, under conn_mutex,
+	 * once all in-flight CQE counters drain.  No work to do here.
+	 */
 
 	/*
 	 * Slice 3c of conn-info-closing-wedge:
@@ -996,10 +1148,15 @@ int io_conn_check_timeouts(time_t idle_timeout_seconds,
 	 *     wait.  Release the mutex first.
 	 *
 	 *  2. The original code used raw close(fd) + manual ci_state flip,
-	 *     which left conn_buffers[fd % MAX_CONNECTIONS] populated --
-	 *     a buffer_state leak.  io_socket_close() calls
-	 *     io_client_fd_unregister() which frees the buffer_state
-	 *     properly.
+	 *     which left the per-fd buffer_state populated -- a leak.
+	 *     io_socket_close() goes through io_conn_unregister(), which
+	 *     transitions the slot to CONN_CLOSING; the bs then drains
+	 *     to free via conn_drain_if_idle_locked() once all in-flight
+	 *     op counters hit zero.  (Pre-fold-in, io_socket_close called
+	 *     a separate io_client_fd_unregister() that walked a parallel
+	 *     conn_buffers[] array; the fold-in moved that lifecycle into
+	 *     conn_info.  See
+	 *     .claude/design/io-buffer-state-fd-recycle.md.)
 	 *
 	 * Race note: between the scan and the close, another thread
 	 * could accept a new connection whose fd hashes to the same

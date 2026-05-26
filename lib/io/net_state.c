@@ -12,8 +12,12 @@
  *     listener-restart path uses this to re-arm the accept op when a
  *     listener socket is closed.
  *
- *   - conn_buffers[] / io_buffer_state_*: per-fd accumulating buffers
- *     for reassembling RPC records across partial TCP reads.
+ *   - io_buffer_append: append helper for per-fd record-reassembly
+ *     buffers.  The buffers themselves live on struct conn_info as
+ *     ci_bs and are managed (lazy-allocate, drain-free) in
+ *     lib/io/conn_info.c so their lifecycle is coordinated with
+ *     conn_mutex + the CONN_CLOSING gate -- see
+ *     .claude/design/io-buffer-state-fd-recycle.md.
  *
  * Extracted from lib/io/handler.c so both the io_uring and kqueue
  * backends share a single implementation.  The only state this
@@ -144,66 +148,14 @@ int *io_heartbeat_get_listeners(int *num)
 /* Per-fd buffer state                                                 */
 /* ------------------------------------------------------------------ */
 
-static struct buffer_state *conn_buffers[MAX_CONNECTIONS];
-
-void io_client_fd_register(int fd)
-{
-	io_buffer_state_create(fd);
-}
-
-void io_client_fd_unregister(int fd)
-{
-	struct buffer_state *bs = io_buffer_state_get(fd);
-	if (bs) {
-		free(bs->bs_data);
-		if (bs->bs_record.rs_data) {
-			free(bs->bs_record.rs_data);
-		}
-		free(bs);
-		conn_buffers[fd % MAX_CONNECTIONS] = NULL;
-	}
-}
-
-struct buffer_state *io_buffer_state_create(int fd)
-{
-	struct buffer_state *bs = malloc(sizeof(struct buffer_state));
-	if (!bs)
-		return NULL;
-
-	bs->bs_fd = fd;
-	bs->bs_capacity = BUFFER_SIZE * 2;
-	bs->bs_data = malloc(bs->bs_capacity);
-	bs->bs_filled = 0;
-
-	bs->bs_record.rs_last_fragment = false;
-	bs->bs_record.rs_fragment_len = 0;
-	bs->bs_record.rs_data = NULL;
-	bs->bs_record.rs_total_len = 0;
-	bs->bs_record.rs_capacity = 0;
-	bs->bs_record.rs_position = 0;
-
-	if (!bs->bs_data) {
-		free(bs);
-		return NULL;
-	}
-
-	int slot = fd % MAX_CONNECTIONS;
-	if (conn_buffers[slot] != NULL) {
-		LOG("io: conn_buffers alias: fd=%d slot=%d already occupied -- "
-		    "increase MAX_CONNECTIONS or use a hash map",
-		    fd, slot);
-		free(bs->bs_data);
-		free(bs);
-		return NULL;
-	}
-	conn_buffers[slot] = bs;
-	return bs;
-}
-
-struct buffer_state *io_buffer_state_get(int fd)
-{
-	return conn_buffers[fd % MAX_CONNECTIONS];
-}
+/*
+ * io_buffer_state_create() and io_buffer_state_get() live in
+ * lib/io/conn_info.c so they can manage ci_bs on struct conn_info
+ * under conn_mutex.  io_client_fd_register / io_client_fd_unregister
+ * are gone -- buffer state is lazy-allocated on first read and freed
+ * at the CONN_CLOSING -> CONN_UNUSED transition.  See
+ * .claude/design/io-buffer-state-fd-recycle.md.
+ */
 
 bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len)
 {
@@ -243,6 +195,13 @@ bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len)
 /*
  * Free everything held by this module.  Called from each backend's
  * io_handler_fini after in-flight operations have drained.
+ *
+ * The per-fd buffer_state used to be freed here via a sweep of the
+ * conn_buffers[] array; after the fold-in, those buffers live on
+ * struct conn_info and are freed by io_conn_cleanup() in
+ * lib/io/conn_info.c.  Callers must invoke io_conn_cleanup() BEFORE
+ * io_net_state_fini() so any conn_info still holding a bs releases
+ * it (otherwise the bs leaks at shutdown).
  */
 void io_net_state_fini(void)
 {
@@ -254,17 +213,4 @@ void io_net_state_fini(void)
 		}
 	}
 	pthread_mutex_unlock(&request_mutex);
-
-	for (int i = 0; i < MAX_CONNECTIONS; i++) {
-		if (conn_buffers[i]) {
-			if (conn_buffers[i]->bs_data) {
-				free(conn_buffers[i]->bs_data);
-			}
-			if (conn_buffers[i]->bs_record.rs_data) {
-				free(conn_buffers[i]->bs_record.rs_data);
-			}
-			free(conn_buffers[i]);
-			conn_buffers[i] = NULL;
-		}
-	}
 }

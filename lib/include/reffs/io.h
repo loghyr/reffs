@@ -284,10 +284,14 @@ void wait_for_worker_threads(void);
 void io_mark_main_thread(void);
 void add_task(struct task *task);
 
-void io_client_fd_register(int fd);
-void io_client_fd_unregister(int fd);
-
 // Buffers
+//
+// The per-connection record-reassembly buffer is lazy-allocated on
+// the first plain-NFS read via io_buffer_state_create(fd) and freed
+// at the CONN_CLOSING -> CONN_UNUSED transition in conn_info.c.  The
+// previous io_client_fd_register / io_client_fd_unregister pair is
+// gone; the buffer state lives on struct conn_info as ci_bs.  See
+// .claude/design/io-buffer-state-fd-recycle.md.
 bool io_buffer_append(struct buffer_state *bs, const char *data, size_t len);
 struct buffer_state *io_buffer_state_create(int fd);
 struct buffer_state *io_buffer_state_get(int fd);

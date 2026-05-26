@@ -22,6 +22,7 @@
 #include "config.h"
 #endif
 
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -707,6 +708,229 @@ START_TEST(test_read_op_remove_paired_on_close)
 }
 END_TEST
 
+/*
+ * --------------------------------------------------------------------
+ * Buffer-state fold-in tests
+ * (see .claude/design/io-buffer-state-fd-recycle.md)
+ * --------------------------------------------------------------------
+ *
+ * After the fold-in, struct buffer_state lives on struct conn_info as
+ * ci_bs and its lifecycle is gated by conn_mutex + INV-6 (CONN_CLOSING).
+ * Five tests below cover the post-fix invariants:
+ *
+ *   1. lazy-alloc: ci_bs is NULL on fresh register (load-bearing for
+ *      the TLS-ClientHello discriminant at handlers.c:1471).
+ *   2. drain-frees-bs: when the slot transitions CLOSING -> UNUSED via
+ *      conn_drain_if_idle_locked, the bs is freed and ci_bs is NULL'd.
+ *   3. closing-keeps-bs: while the slot is in CONN_CLOSING, the bs
+ *      remains attached so stale CQEs can still find it.
+ *   4. recycle-fresh: registering fd=N after a full lifecycle yields a
+ *      fresh bs (bs_filled==0), not the old one's state.
+ *   5. lifecycle-thread-race: multi-threaded churn (register / create-bs
+ *      / unregister / drain) on a single fd must remain UAF-clean under
+ *      ASAN; pattern follows conn_lifecycle_race_test.c.
+ */
+
+START_TEST(test_bs_null_after_register)
+{
+	struct conn_info *ci =
+		io_conn_register(FD_A, CONN_ACCEPTED, CONN_ROLE_SERVER);
+	ck_assert_ptr_nonnull(ci);
+
+	/* Lazy allocation: no bs until the first plain-NFS read calls
+	 * io_buffer_state_create.  The TLS-ClientHello detection at
+	 * handlers.c:1471 depends on this being NULL on a fresh
+	 * connection -- if io_conn_register eager-alloc'd the bs, the
+	 * detection would silently always-fail. */
+	ck_assert_ptr_null(io_buffer_state_get(FD_A));
+	ck_assert_ptr_null(ci->ci_bs);
+}
+END_TEST
+
+START_TEST(test_bs_freed_on_drain_to_unused)
+{
+	struct conn_info *ci =
+		io_conn_register(FD_A, CONN_ACCEPTED, CONN_ROLE_SERVER);
+	ck_assert_ptr_nonnull(ci);
+
+	struct buffer_state *bs = io_buffer_state_create(FD_A);
+	ck_assert_ptr_nonnull(bs);
+	ck_assert_ptr_eq(io_buffer_state_get(FD_A), bs);
+
+	/* Move slot to CONN_CLOSING with one in-flight read; the
+	 * incremental drain will reach UNUSED only when the count
+	 * reaches zero via remove_read_op. */
+	ck_assert_int_eq(io_conn_add_read_op(FD_A), 0);
+	ck_assert_int_eq(io_conn_unregister(FD_A), 0);
+	/* In CLOSING with r=1: bs still attached. */
+	ck_assert_ptr_nonnull(ci->ci_bs);
+
+	/* Decrement to zero -> conn_drain_if_idle_locked frees bs and
+	 * transitions to UNUSED.  ci is still our pointer; we re-check
+	 * via the public API now that ci_fd has been cleared. */
+	ck_assert_int_eq(io_conn_remove_read_op(FD_A), 0);
+	ck_assert_int_eq(ci->ci_state, CONN_UNUSED);
+	ck_assert_int_eq(ci->ci_fd, -1);
+	ck_assert_ptr_null(ci->ci_bs);
+	ck_assert_ptr_null(io_buffer_state_get(FD_A));
+}
+END_TEST
+
+START_TEST(test_bs_survives_closing)
+{
+	struct conn_info *ci =
+		io_conn_register(FD_A, CONN_ACCEPTED, CONN_ROLE_SERVER);
+	ck_assert_ptr_nonnull(ci);
+
+	struct buffer_state *bs = io_buffer_state_create(FD_A);
+	ck_assert_ptr_nonnull(bs);
+
+	/* Pin in CLOSING by leaving an in-flight read. */
+	ck_assert_int_eq(io_conn_add_read_op(FD_A), 0);
+	ck_assert_int_eq(io_conn_unregister(FD_A), 0);
+	ck_assert_int_eq(ci->ci_state, CONN_CLOSING);
+
+	/* io_buffer_state_get returns NULL for CLOSING (mirrors
+	 * io_conn_get, which also hides CLOSING from the user-facing
+	 * API).  But ci_bs is still attached on the slot -- visible to
+	 * the internal *_locked accessors used by stale-CQE handlers. */
+	ck_assert_ptr_null(io_buffer_state_get(FD_A));
+	ck_assert_ptr_eq(ci->ci_bs, bs);
+
+	/* Drain to UNUSED; bs is now freed. */
+	ck_assert_int_eq(io_conn_remove_read_op(FD_A), 0);
+	ck_assert_ptr_null(ci->ci_bs);
+}
+END_TEST
+
+START_TEST(test_bs_no_alias_on_recycle)
+{
+	/* First lifecycle: register, create bs, drain to UNUSED. */
+	(void)io_conn_register(FD_A, CONN_ACCEPTED, CONN_ROLE_SERVER);
+	struct buffer_state *first = io_buffer_state_create(FD_A);
+	ck_assert_ptr_nonnull(first);
+	/* Stamp the first bs so we can distinguish reuse vs. fresh. */
+	first->bs_filled = 4242;
+	ck_assert_int_eq(io_conn_unregister(FD_A), 0);
+	/* No in-flight ops, no SSL: unregister drains directly to
+	 * UNUSED and frees the first bs.  io_buffer_state_get returns
+	 * NULL because the slot is UNUSED. */
+	ck_assert_ptr_null(io_buffer_state_get(FD_A));
+
+	/* Second lifecycle on the same fd number.  io_conn_register
+	 * succeeds (INV-6 gate cleared); io_buffer_state_create yields
+	 * a fresh bs with bs_filled == 0, NOT the prior stamped value. */
+	(void)io_conn_register(FD_A, CONN_ACCEPTED, CONN_ROLE_SERVER);
+	struct buffer_state *second = io_buffer_state_create(FD_A);
+	ck_assert_ptr_nonnull(second);
+	ck_assert_uint_eq(second->bs_filled, 0);
+	/*
+	 * Pointer equality is not guaranteed (malloc may return a
+	 * different region) but the freshness of bs_filled is enough
+	 * to prove the slot is not aliased to the prior bs.
+	 */
+}
+END_TEST
+
+struct bs_race_arg {
+	int fd;
+	int iterations;
+	int churn_errors;
+};
+
+static void *bs_race_churn(void *arg)
+{
+	struct bs_race_arg *a = (struct bs_race_arg *)arg;
+
+	for (int i = 0; i < a->iterations; i++) {
+		struct conn_info *ci = io_conn_register(a->fd, CONN_ACCEPTED,
+							CONN_ROLE_SERVER);
+		if (!ci) {
+			/*
+			 * Lost the INV-6 race against a still-CLOSING slot
+			 * from a prior iteration's reader.  Retry; not a
+			 * failure.
+			 */
+			i--;
+			continue;
+		}
+		struct buffer_state *bs = io_buffer_state_create(a->fd);
+		if (!bs) {
+			a->churn_errors++;
+			(void)io_conn_unregister(a->fd);
+			continue;
+		}
+		(void)io_conn_unregister(a->fd);
+	}
+	return NULL;
+}
+
+static void *bs_race_reader(void *arg)
+{
+	struct bs_race_arg *a = (struct bs_race_arg *)arg;
+
+	for (int i = 0; i < a->iterations; i++) {
+		/*
+		 * The production caller (io_handle_read) follows the
+		 * "drain-can't-fire-while-I-hold-a-read-op" contract --
+		 * its read-op CQE is in flight, so ci_read_count > 0,
+		 * so conn_drain_if_idle_locked is gated.  The test
+		 * deliberately exercises the *lookup* under conn_mutex
+		 * without holding an in-flight op: any UAF this would
+		 * yield comes from the lookup path itself (e.g. reading
+		 * a freed conn_info), NOT from the post-lookup pointer
+		 * dereference -- because by the time we read bs_capacity
+		 * we have already released conn_mutex and any race-with-
+		 * free has either already happened (in which case the
+		 * pointer is NULL because the lookup serialised it) or
+		 * has not yet started (in which case the bs is still
+		 * live).  This is the same lock-protected-lookup pattern
+		 * used by the conn_lifecycle_race_test reader.
+		 *
+		 * ASAN is the load-bearing oracle here: if any of the
+		 * 25,000 lookup+touch iterations triggers a use-after-
+		 * free or a torn pointer, ASAN aborts.  Running cleanly
+		 * is the regression signal.
+		 */
+		struct buffer_state *bs = io_buffer_state_get(a->fd);
+		if (bs) {
+			/*
+			 * bs_capacity is written once at create time and
+			 * never mutated for the lifetime of this bs, so
+			 * even with concurrent realloc on bs_data the
+			 * capacity field stays valid for our window.
+			 */
+			volatile size_t cap = bs->bs_capacity;
+			(void)cap;
+		}
+	}
+	return NULL;
+}
+
+START_TEST(test_bs_lifecycle_thread_race)
+{
+	pthread_t churn, reader;
+	struct bs_race_arg ca = { .fd = FD_A,
+				  .iterations = 5000,
+				  .churn_errors = 0 };
+	struct bs_race_arg ra = { .fd = FD_A,
+				  .iterations = 20000,
+				  .churn_errors = 0 };
+
+	ck_assert_int_eq(pthread_create(&churn, NULL, bs_race_churn, &ca), 0);
+	ck_assert_int_eq(pthread_create(&reader, NULL, bs_race_reader, &ra), 0);
+
+	pthread_join(churn, NULL);
+	pthread_join(reader, NULL);
+
+	/* The churn thread may see io_buffer_state_create return NULL
+	 * if it races and the slot is CLOSING; that's not a failure
+	 * (the design says _create refuses CLOSING).  But it should be
+	 * a small fraction.  Tolerate up to 10% of iterations. */
+	ck_assert_int_lt(ca.churn_errors, ca.iterations / 10);
+}
+END_TEST
+
 START_TEST(test_idle_sweep_spares_listeners)
 {
 	/*
@@ -772,6 +996,11 @@ static Suite *conn_info_suite(void)
 	tcase_add_test(tc, test_connected_idle_under_new_deadline_not_reaped);
 	tcase_add_test(tc, test_read_op_remove_paired_on_cancel);
 	tcase_add_test(tc, test_read_op_remove_paired_on_close);
+	tcase_add_test(tc, test_bs_null_after_register);
+	tcase_add_test(tc, test_bs_freed_on_drain_to_unused);
+	tcase_add_test(tc, test_bs_survives_closing);
+	tcase_add_test(tc, test_bs_no_alias_on_recycle);
+	tcase_add_test(tc, test_bs_lifecycle_thread_race);
 	tcase_add_test(tc, test_idle_sweep_spares_listeners);
 	suite_add_tcase(s, tc);
 	return s;
