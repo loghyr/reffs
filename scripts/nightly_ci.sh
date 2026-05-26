@@ -600,7 +600,7 @@ fi
 
 {
     echo "Subject: $SUBJECT"
-    echo "From: reffs-ci@$HOSTNAME"
+    echo "From: loghyr+reffs-ci@gmail.com"
     echo "To: $EMAIL"
     echo ""
     echo "Nightly CI: $HOSTNAME $(date)"
