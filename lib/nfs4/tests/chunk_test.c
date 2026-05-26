@@ -566,6 +566,163 @@ START_TEST(test_chunk_write_valid_crc)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Pending Change 6 step 8: server-side algorithm enforcement          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Build a CHUNK_WRITE args with a single hand-built checksum4 entry.
+ * Caller is responsible for free_write_args() since we allocate the
+ * checksums array via calloc directly here (set_write_args' shape
+ * is uint32_t CRC -> checksum4, which doesn't let us exercise the
+ * unknown-algorithm / mismatched-length paths).
+ */
+static void set_write_args_raw_checksum(struct cm_ctx *cm, char *buf,
+					uint32_t buf_len, uint32_t chunk_size,
+					uint64_t offset, uint32_t algo,
+					const uint8_t *value,
+					uint32_t value_len)
+{
+	cm_set_op(cm, 0, OP_CHUNK_WRITE);
+	CHUNK_WRITE4args *args = &cm->compound->c_args->argarray.argarray_val[0]
+					  .nfs_argop4_u.opchunk_write;
+
+	memset(&args->cwa_stateid, 0, sizeof(args->cwa_stateid));
+	args->cwa_offset = offset;
+	args->cwa_stable = UNSTABLE4;
+	args->cwa_chunk_size = chunk_size;
+	args->cwa_chunks.cwa_chunks_val = buf;
+	args->cwa_chunks.cwa_chunks_len = buf_len;
+
+	args->cwa_checksums.cwa_checksums_val = calloc(1, sizeof(checksum4));
+	args->cwa_checksums.cwa_checksums_len = 1;
+	args->cwa_checksums.cwa_checksums_val[0].cs_algorithm = algo;
+	args->cwa_checksums.cwa_checksums_val[0].cs_value.cs_value_len =
+		value_len;
+	if (value_len > 0) {
+		uint8_t *v = calloc(1, value_len);
+
+		if (value)
+			memcpy(v, value, value_len);
+		args->cwa_checksums.cwa_checksums_val[0].cs_value.cs_value_val =
+			(char *)v;
+	}
+
+	args->cwa_payload_id = 0x4242;
+	args->cwa_owner.co_guard.cg_gen_id = 7;
+	args->cwa_owner.co_guard.cg_client_id = 0xBEEF;
+	args->cwa_owner.co_id = 99;
+}
+
+/*
+ * An unknown wire algorithm (numerically outside the registered
+ * CHECKSUM_ALG_* range) must be rejected before any per-file state
+ * is established.  After the rejection the chunk_store must NOT have
+ * been created (the test relies on i_chunk_store staying NULL).
+ */
+START_TEST(test_chunk_write_unknown_algorithm_rejected)
+{
+	static char buf[CHUNK_SZ];
+	uint8_t junk[4] = { 0, 0, 0, 0 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	set_write_args_raw_checksum(cm, buf, CHUNK_SZ, CHUNK_SZ, 0,
+				    /* algo */ 0xDEADBEEF, junk, 4);
+
+	nfs4_op_chunk_write(cm->compound);
+
+	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					.nfs_resop4_u.opchunk_write;
+	ck_assert_int_eq(res->cwr_status, NFS4ERR_INVAL);
+	ck_assert_ptr_null(g_inode->i_chunk_store);
+
+	free_write_args(cm);
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * A wire algorithm we recognise but with the wrong cs_value length
+ * is rejected.  CRC32 with 8 bytes is the canonical case: the
+ * algorithm is fine, the length is not.
+ */
+START_TEST(test_chunk_write_wrong_length_rejected)
+{
+	static char buf[CHUNK_SZ];
+	uint8_t junk[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	set_write_args_raw_checksum(cm, buf, CHUNK_SZ, CHUNK_SZ, 0,
+				    CHECKSUM_ALG_CRC32, junk, 8);
+
+	nfs4_op_chunk_write(cm->compound);
+
+	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					.nfs_resop4_u.opchunk_write;
+	ck_assert_int_eq(res->cwr_status, NFS4ERR_INVAL);
+
+	free_write_args(cm);
+	cm_free(cm);
+}
+END_TEST
+
+/*
+ * First CHUNK_WRITE establishes the per-file algorithm; the
+ * chunk_store carries the value forward across subsequent writes,
+ * and a second write declaring a different algorithm is rejected
+ * with NFS4ERR_INVAL even when that algorithm is otherwise valid
+ * (correct length, in the registered set).
+ */
+START_TEST(test_chunk_write_per_file_algorithm_consistency)
+{
+	/* Step 1: write with CRC32, expect OK + cs_checksum_algorithm set. */
+	static char buf[CHUNK_SZ];
+	uint32_t good_crc = (uint32_t)crc32(0L, (const Bytef *)buf, CHUNK_SZ);
+	struct cm_ctx *cm = cm_alloc(1);
+
+	cm_set_inode(cm, g_inode);
+	set_write_args(cm, buf, CHUNK_SZ, CHUNK_SZ, 0, &good_crc, 1);
+	nfs4_op_chunk_write(cm->compound);
+
+	CHUNK_WRITE4res *res = &cm->compound->c_res->resarray.resarray_val[0]
+					.nfs_resop4_u.opchunk_write;
+	ck_assert_int_eq(res->cwr_status, NFS4_OK);
+	ck_assert_ptr_nonnull(g_inode->i_chunk_store);
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_checksum_algorithm,
+			  CHECKSUM_ALG_CRC32);
+
+	free_write_args(cm);
+	free_write_res(cm);
+
+	/*
+	 * Step 2: same file, raw CHECKSUM_ALG_CRC32C entry with the
+	 * right length (4 bytes) -- pre-validation accepts the wire,
+	 * but the per-file consistency check rejects with INVAL
+	 * because the file is already locked to CRC32.
+	 */
+	cm_reset_slot(cm, 0);
+	uint8_t four_bytes[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
+
+	set_write_args_raw_checksum(cm, buf, CHUNK_SZ, CHUNK_SZ, 1,
+				    CHECKSUM_ALG_CRC32C, four_bytes, 4);
+	nfs4_op_chunk_write(cm->compound);
+
+	res = &cm->compound->c_res->resarray.resarray_val[0]
+		       .nfs_resop4_u.opchunk_write;
+	ck_assert_int_eq(res->cwr_status, NFS4ERR_INVAL);
+
+	/* File's algorithm must remain CRC32 -- the second write did
+	 * not overwrite the policy. */
+	ck_assert_uint_eq(g_inode->i_chunk_store->cs_checksum_algorithm,
+			  CHECKSUM_ALG_CRC32);
+
+	free_write_args(cm);
+	cm_free(cm);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 /* Group C: CHUNK_FINALIZE                                             */
 /* ------------------------------------------------------------------ */
 
@@ -1666,6 +1823,9 @@ static Suite *chunk_suite(void)
 	tcase_add_test(tc_b, test_chunk_write_multi_block);
 	tcase_add_test(tc_b, test_chunk_write_updates_inode_size);
 	tcase_add_test(tc_b, test_chunk_write_valid_crc);
+	tcase_add_test(tc_b, test_chunk_write_unknown_algorithm_rejected);
+	tcase_add_test(tc_b, test_chunk_write_wrong_length_rejected);
+	tcase_add_test(tc_b, test_chunk_write_per_file_algorithm_consistency);
 	suite_add_tcase(s, tc_b);
 
 	TCase *tc_c = tcase_create("chunk_finalize");

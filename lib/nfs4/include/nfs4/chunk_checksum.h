@@ -68,6 +68,39 @@ static inline int chunk_checksum_pack_crc32(checksum4 *out, uint32_t crc)
 }
 
 /*
+ * Return the registered cs_value byte length for the named algorithm,
+ * or -1 for unknown algorithms.  Used by step-8 wire-validation in
+ * CHUNK_WRITE to reject malformed inputs before any compute-side work
+ * (the algorithms whose value length is not the IANA-registered size
+ * are by definition not the algorithm they claim to be).
+ *
+ * BLAKE3 produces variable-length output; reffs locks to the default
+ * 32 bytes per the spec recommendation.  Future deployments wanting
+ * longer outputs need a second canonical length here.
+ */
+static inline int chunk_checksum_expected_len(uint32_t algorithm)
+{
+	switch (algorithm) {
+	case CHECKSUM_ALG_NONE:
+		return 0;
+	case CHECKSUM_ALG_CRC32:
+		return 4;
+	case CHECKSUM_ALG_CRC32C:
+		return 4;
+	case CHECKSUM_ALG_FLETCHER4:
+		return 8;
+	case CHECKSUM_ALG_SHA256:
+		return 32;
+	case CHECKSUM_ALG_SHA512:
+		return 64;
+	case CHECKSUM_ALG_BLAKE3:
+		return 32;
+	default:
+		return -1;
+	}
+}
+
+/*
  * Encode an arbitrary algorithm + raw value bytes into a checksum4.
  * Allocates a fresh cs_value buffer of `len` bytes.  Caller-owned on
  * the request side; XDR-free-owned on the response side.  Returns 0

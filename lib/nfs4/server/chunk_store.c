@@ -367,6 +367,7 @@ int chunk_store_persist(struct chunk_store *cs, const char *state_dir,
 		.csh_nblocks = cs->cs_high_water,
 		.csh_inode_ino = inode_ino,
 		.csh_chunk_size = cs->cs_chunk_size,
+		.csh_checksum_algorithm = cs->cs_checksum_algorithm,
 	};
 	ssize_t n = write(fd, &hdr, sizeof(hdr));
 
@@ -464,6 +465,7 @@ struct chunk_store *chunk_store_load(const char *state_dir, uint64_t inode_ino)
 	cs->cs_nblocks = alloc;
 	cs->cs_high_water = nblocks;
 	cs->cs_chunk_size = hdr.csh_chunk_size;
+	cs->cs_checksum_algorithm = hdr.csh_checksum_algorithm;
 
 	for (uint64_t i = 0; i < nblocks; i++) {
 		struct chunk_block_disk dsk;

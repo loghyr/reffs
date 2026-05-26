@@ -94,7 +94,13 @@ struct chunk_store_header {
 	uint64_t csh_nblocks; /* number of block entries that follow */
 	uint64_t csh_inode_ino; /* owning inode number */
 	uint32_t csh_chunk_size; /* nominal chunk size (disk stride) */
-	uint32_t csh_pad; /* align to 32 bytes */
+	/*
+	 * Pending Change 6 step 8: per-file checksum algorithm (see
+	 * struct chunk_store.cs_checksum_algorithm).  Reused csh_pad
+	 * slot -- no version bump per CLAUDE.md "Deployment Status:
+	 * No persistent storage has been deployed".
+	 */
+	uint32_t csh_checksum_algorithm;
 };
 
 struct chunk_block_disk {
@@ -121,6 +127,17 @@ struct chunk_store {
 	uint64_t cs_nblocks; /* allocated entries */
 	uint64_t cs_high_water; /* highest offset written + 1 */
 	uint32_t cs_chunk_size; /* nominal chunk size (disk stride) */
+	/*
+	 * Pending Change 6 step 8: the file's checksum algorithm,
+	 * captured on first CHUNK_WRITE.  Subsequent CHUNK_WRITE /
+	 * CHUNK_WRITE_REPAIR with a wire cs_algorithm that does not
+	 * match this value are rejected with NFS4ERR_INVAL.  Zero
+	 * (CHECKSUM_ALG_NONE) means "no algorithm established yet";
+	 * the next CHUNK_WRITE establishes it.  Persisted in
+	 * chunk_store_header so a DS restart preserves the per-file
+	 * policy.
+	 */
+	uint32_t cs_checksum_algorithm;
 	bool cs_dirty; /* needs persistence */
 };
 

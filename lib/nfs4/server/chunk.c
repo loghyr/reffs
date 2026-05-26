@@ -132,6 +132,53 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		return 0;
 	}
 
+	/*
+	 * Step 8 pre-validation: every wire checksum4 uses the same
+	 * algorithm and a value length that matches that algorithm's
+	 * registered size.  Unknown algorithms, mixed-algorithm
+	 * payloads, and wrong lengths are all NFS4ERR_INVAL.
+	 *
+	 * Per-file algorithm consistency (the second half of step 8)
+	 * runs below after chunk_store_get -- the chunk_store is the
+	 * authoritative record of the file's established algorithm.
+	 */
+	uint32_t wire_algo = 0;
+
+	if (nchecksums > 0) {
+		wire_algo =
+			args->cwa_checksums.cwa_checksums_val[0].cs_algorithm;
+		int expected_value_len = chunk_checksum_expected_len(wire_algo);
+
+		if (expected_value_len < 0) {
+			TRACE("CHUNK_WRITE: unknown checksum algorithm %u",
+			      wire_algo);
+			*status = NFS4ERR_INVAL;
+			return 0;
+		}
+		for (uint32_t i = 0; i < nchecksums; i++) {
+			const checksum4 *cs4 =
+				&args->cwa_checksums.cwa_checksums_val[i];
+
+			if (cs4->cs_algorithm != wire_algo) {
+				TRACE("CHUNK_WRITE: mixed-algorithm payload "
+				      "(entry %u: %u vs first %u)",
+				      i, cs4->cs_algorithm, wire_algo);
+				*status = NFS4ERR_INVAL;
+				return 0;
+			}
+			if ((int)cs4->cs_value.cs_value_len !=
+			    expected_value_len) {
+				TRACE("CHUNK_WRITE: checksum length "
+				      "mismatch (algo %u expects %d, "
+				      "got %u)",
+				      wire_algo, expected_value_len,
+				      cs4->cs_value.cs_value_len);
+				*status = NFS4ERR_INVAL;
+				return 0;
+			}
+		}
+	}
+
 	for (uint32_t i = 0; i < nchecksums; i++) {
 		uint32_t expected;
 		nfsstat4 ust = chunk_checksum_unpack_crc32(
@@ -210,6 +257,26 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
 		*status = NFS4ERR_DELAY;
 		return 0;
+	}
+
+	/*
+	 * Step 8 per-file consistency.  The first CHUNK_WRITE on a
+	 * file establishes the algorithm; later writes must match it.
+	 * A wire payload with no checksums (nchecksums == 0) leaves
+	 * the file's policy untouched.  Mismatches are NFS4ERR_INVAL.
+	 */
+	if (nchecksums > 0) {
+		if (cs->cs_checksum_algorithm == 0) {
+			cs->cs_checksum_algorithm = wire_algo;
+			cs->cs_dirty = true;
+		} else if (cs->cs_checksum_algorithm != wire_algo) {
+			TRACE("CHUNK_WRITE: per-file algorithm mismatch "
+			      "(file=%u wire=%u)",
+			      cs->cs_checksum_algorithm, wire_algo);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_INVAL;
+			return 0;
+		}
 	}
 
 	/* Record the nominal chunk size (disk stride for offset calc). */
