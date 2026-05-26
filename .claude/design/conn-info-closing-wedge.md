@@ -508,3 +508,65 @@ again under whatever sub-path the data indicates.  The pattern
 of "force-drain warning => reopen => add the missing
 `io_conn_remove_*_op` audit for that sub-path" is the durable
 shape.
+
+### Closure (2026-05-25)
+
+Slice 3 shipped in three commits:
+
+- **3a** (`7b17ec5b944f`, "raise CONNECTED idle deadline from 60s
+  to 600s"): unifies the deadline to 600s in
+  `CONNECTION_TIMEOUT_SECONDS`, with the rationale that NFS
+  control connections idle past 60s during normal mount-handshake
+  pauses.
+- **3b** (`e8e28b4f033c`, "pair -ECANCELED CQE with
+  io_context_destroy"): plugs the read-counter leak on the
+  cancellation CQE branch in `handler.c` so a cancelled read SQE
+  decrements `ci_read_count`.
+- **3c** (`33e9c6ddfd02`, "shutdown(SHUT_RDWR) before close() in
+  io_socket_close"): NOT in the original Slice 3 plan; surfaced
+  by the bench re-run after 3a + 3b which still showed 10 DS-side
+  `r=1` force-drains.  Diagnosis: in io_uring semantics a pending
+  read SQE holds its own reference on the kernel `struct file`
+  independently of the userspace fd refs, so `close(fd)` alone
+  does not deliver a CQE for the pending read; the SQE stays live
+  in the kernel and no completion runs, so `io_context_destroy()`
+  never decrements the per-fd read counter.  `shutdown(SHUT_RDWR)`
+  before `close(fd)` propagates the TCP close to the SQE, which
+  then completes with `res=0` (EOF) or `res=-ECONNRESET`; both
+  branches in `handler.c` already call `io_context_destroy()` (the
+  `-ECONNRESET` / `-ECANCELED` branch via Slice 3b), so the read
+  counter drains cleanly well before the 5-second force-drain
+  backstop.
+
+**Verification (2026-05-25):**
+
+- Two fresh `run_chunk_collision_track2.sh --n 8` runs against the
+  3a + 3b + 3c stack on garbo (1 MDS + 10 DSes + 8 PSes).  Both
+  runs flagged Criterion 1 FAIL on the IOR `MPI_Init` /
+  `libfabric` SIGBUS (an orthogonal OpenMPI shared-memory issue
+  in the IOR container, unrelated to reffs) but PASSED Criterion 3
+  (sanitizers) and Criterion 4 (force-drain warnings) cleanly.
+- Containers left up after each bench run for additional dwell.
+  Force-drain counts re-checked at +50 minutes uptime
+  (~5 deadline windows) and at +5 hours uptime (~30 windows):
+  **zero force-drain warnings across all 19 containers in both
+  re-checks.**  With the 600s deadline firing repeatedly on the
+  idle MDS-to-DS bringup connections, the absence of warnings is
+  the conclusive signal that the SQE leak the prior runs
+  surfaced is closed at source.
+
+~~**BLOCKER CLOSED.**~~  The Slice 1 force-drain backstop still
+sits as the safety net.  Criterion 4 remains the standing
+acceptance gate: any future force-drain warning is the same
+"force-drain warning => reopen => audit the missing
+`io_conn_remove_*_op` sub-path" pattern -- but with Slice 3c, the
+audit for the read-CQE-completion path now includes the
+io_uring-specific "fd close does not cancel pending SQE" footgun;
+any new leak surfaces a fresh sub-path or a fresh footgun, not a
+recurrence of this one.
+
+The IOR `MPI_Init` SIGBUS that keeps the Track 2 bench from a
+fully green run is tracked separately (OpenMPI / libfabric
+shared-memory container configuration); it has no bearing on the
+io_conn lifecycle and does not need to gate this BLOCKER's
+closure.

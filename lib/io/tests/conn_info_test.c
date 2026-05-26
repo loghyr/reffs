@@ -608,6 +608,105 @@ END_TEST
  * is bigger than this slice.
  */
 
+START_TEST(test_read_op_remove_paired_on_cancel)
+{
+	/*
+	 * Slice 3b of conn-info-closing-wedge: the -ECANCELED / -ECONNRESET
+	 * CQE branch in handler.c was returning without calling
+	 * io_context_destroy(), so a cancelled read SQE never decremented
+	 * ci_read_count and the slot wedged in CONN_CLOSING with r=1.
+	 *
+	 * This test simulates the full cycle the post-3b handler runs on
+	 * a cancellation CQE: io_context_create(OP_TYPE_READ) increments
+	 * ci_read_count via io_conn_add_read_op, and io_context_destroy()
+	 * -- which the cancellation branch now calls -- must decrement it
+	 * via io_conn_remove_read_op.  Both ends of the pair live in
+	 * lib/io/context.c (the create / destroy switch on ic_op_type);
+	 * what the test pins is the invariant the handler.c branches
+	 * depend on: every create has a matching destroy, and the pair
+	 * leaves the per-fd counter balanced.
+	 *
+	 * Reproduces the r=1 leak fingerprint the bench captured before
+	 * Slice 3b: drop the io_context_destroy() call here and the
+	 * post-destroy ci_read_count assertion below would fail at 1.
+	 */
+	ck_assert_int_eq(io_context_init(), 0);
+
+	struct conn_info *ci =
+		io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT);
+	ck_assert_ptr_nonnull(ci);
+
+	struct io_context *ic = io_context_create(OP_TYPE_READ, FD_A, NULL, 0);
+	ck_assert_ptr_nonnull(ic);
+	ck_assert_int_eq(ci->ci_read_count, 1);
+	ck_assert_int_eq(ci->ci_state, CONN_READING);
+
+	/* The cancellation CQE branch's recovery action: destroy the
+	 * context, which io_conn_remove_read_op's the per-fd counter. */
+	io_context_destroy(ic);
+
+	ck_assert_int_eq(ci->ci_read_count, 0);
+	ck_assert_int_eq(ci->ci_state, CONN_CONNECTED);
+}
+END_TEST
+
+START_TEST(test_read_op_remove_paired_on_close)
+{
+	/*
+	 * Slice 3c of conn-info-closing-wedge: io_socket_close() now
+	 * issues shutdown(SHUT_RDWR) before close(fd) so the pending
+	 * read SQE in the kernel actually receives a CQE (EOF or
+	 * ECONNRESET).  Without that, the SQE held the kernel struct
+	 * file alive past userspace close and no CQE ever arrived, so
+	 * io_context_destroy never ran and ci_read_count stayed pinned
+	 * at 1 in CONN_CLOSING -- the r=1 force-drain fingerprint.
+	 *
+	 * This test simulates the post-3c sequence: a read is in flight
+	 * (ci_read_count == 1, CONN_READING), io_conn_unregister moves
+	 * the slot to CONN_CLOSING but deliberately keeps ci_fd and the
+	 * counters (INV-6 anti-UAF -- a stale CQE must still find its
+	 * conn_info).  Then the CQE that Slice 3c's shutdown guarantees
+	 * will arrive runs io_context_destroy, which decrements
+	 * ci_read_count and the slot drains all the way to CONN_UNUSED
+	 * without needing the 5-second force-drain backstop.
+	 *
+	 * Drop the io_context_destroy() call here and the slot stays in
+	 * CONN_CLOSING with r=1 -- exactly what the bench saw before
+	 * Slice 3c made the CQE actually fire.
+	 */
+	ck_assert_int_eq(io_context_init(), 0);
+
+	struct conn_info *ci =
+		io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT);
+	ck_assert_ptr_nonnull(ci);
+
+	struct io_context *ic = io_context_create(OP_TYPE_READ, FD_A, NULL, 0);
+	ck_assert_ptr_nonnull(ic);
+	ck_assert_int_eq(ci->ci_read_count, 1);
+
+	/* Synchronous close path: unregister moves slot to CLOSING but
+	 * keeps ci_read_count pinned -- the in-flight read SQE has not
+	 * completed yet, and the counter must outlive the userspace
+	 * close so the eventual CQE finds a valid conn_info. */
+	ck_assert_int_eq(io_conn_unregister(FD_A), 0);
+	ck_assert_int_eq(ci->ci_state, CONN_CLOSING);
+	ck_assert_int_eq(ci->ci_read_count, 1);
+
+	/* The CQE that Slice 3c's shutdown(SHUT_RDWR) ensures arrives
+	 * runs io_context_destroy, which drains the counter and the
+	 * slot reaches CONN_UNUSED with no force-drain needed. */
+	io_context_destroy(ic);
+
+	ck_assert_int_eq(ci->ci_read_count, 0);
+
+	/* Slot is fully drained -- io_conn_register on the same fd
+	 * succeeds (vs. failing on a still-CLOSING slot, which is the
+	 * fingerprint the bench saw before Slice 3c). */
+	ck_assert_ptr_nonnull(
+		io_conn_register(FD_A, CONN_CONNECTED, CONN_ROLE_CLIENT));
+}
+END_TEST
+
 START_TEST(test_idle_sweep_spares_listeners)
 {
 	/*
@@ -671,6 +770,8 @@ static Suite *conn_info_suite(void)
 	tcase_add_test(tc, test_closing_not_force_drained_before_timeout);
 	tcase_add_test(tc, test_closing_force_drain_spares_live_connections);
 	tcase_add_test(tc, test_connected_idle_under_new_deadline_not_reaped);
+	tcase_add_test(tc, test_read_op_remove_paired_on_cancel);
+	tcase_add_test(tc, test_read_op_remove_paired_on_close);
 	tcase_add_test(tc, test_idle_sweep_spares_listeners);
 	suite_add_tcase(s, tc);
 	return s;
