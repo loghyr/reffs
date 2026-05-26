@@ -60,6 +60,47 @@ static uint32_t parse_owner_id(const char *str, uint32_t len)
 	return (uint32_t)strtoul(buf, NULL, 10);
 }
 
+/*
+ * Pending Change 6 step 7: enumerate which CHECKSUM_ALG_* values this
+ * client knows how to compute end-to-end.
+ *
+ * Today only CRC32 has a working dispatcher
+ * (lib/nfs4/include/nfs4/chunk_checksum.h chunk_checksum_pack_crc32 /
+ * chunk_checksum_unpack_crc32).  CRC32C and the hash algorithms are
+ * defined in the IANA registry but not yet implemented; a layout that
+ * declares any of them must be returned to the MDS with
+ * NFS4ERR_LAYOUT_CHECKSUM_NOT_SUPPORTED so the MDS can either reissue
+ * with an algorithm the client supports or surface the policy
+ * mismatch to the operator.
+ */
+static bool layout_checksum_supported(uint32_t alg)
+{
+	switch (alg) {
+	case CHECKSUM_ALG_NONE: /* server has no policy; client computes nothing */
+	case CHECKSUM_ALG_CRC32:
+		return true;
+	default:
+		return false;
+	}
+}
+
+int ec_layout_validate_checksums(const struct ec_layout *layout,
+				 uint32_t *bad_mirror_out)
+{
+	if (!layout || !layout->el_mirrors)
+		return 0;
+	for (uint32_t i = 0; i < layout->el_nmirrors; i++) {
+		uint32_t alg = layout->el_mirrors[i].em_checksum_algorithm;
+
+		if (!layout_checksum_supported(alg)) {
+			if (bad_mirror_out)
+				*bad_mirror_out = i;
+			return -ENOTSUP;
+		}
+	}
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* LAYOUTGET                                                           */
 /* ------------------------------------------------------------------ */
@@ -198,6 +239,15 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 				       sizeof(deviceid4));
 				em->em_efficiency = ds->ffv2ds_efficiency;
 				em->em_flags = ds->ffv2ds_flags;
+				/*
+				 * The MDS only emits one mirror per layout
+				 * today, so every data server in m0 inherits
+				 * the same algorithm.  When multi-mirror
+				 * layouts land, this loop should index into
+				 * the matching ffv2_mirror4.
+				 */
+				em->em_checksum_algorithm =
+					m0->ffm_checksum_algorithm;
 
 				if (ds->ffv2ds_file_info.ffv2ds_file_info_len >
 				    0) {
@@ -224,6 +274,45 @@ int mds_layout_get(struct mds_session *ms, struct mds_file *mf,
 		}
 
 		xdr_free((xdrproc_t)xdr_ffv2_layout4, (caddr_t)&ffl);
+
+		/*
+		 * Pending Change 6 step 7: validate every mirror's
+		 * checksum algorithm against the client's supported set.
+		 * Cleaning up internally keeps the caller's contract
+		 * simple: a non-zero return from mds_layout_get always
+		 * means "do nothing further with `layout`" -- in
+		 * particular, do NOT call mds_layout_return on it.
+		 * ec_layout_free memsets the struct so a defensive
+		 * caller that calls it anyway sees a no-op.
+		 */
+		uint32_t bad_mirror = 0;
+		int vret = ec_layout_validate_checksums(layout, &bad_mirror);
+
+		if (vret == -ENOTSUP) {
+			uint32_t bad_alg = layout->el_mirrors[bad_mirror]
+						   .em_checksum_algorithm;
+
+			fprintf(stderr,
+				"mds_layout_get: mirror %u declares "
+				"checksum algorithm %u which this client "
+				"does not implement; returning layout with "
+				"NFS4ERR_LAYOUT_CHECKSUM_NOT_SUPPORTED\n",
+				bad_mirror, bad_alg);
+			/*
+			 * Best-effort error reporting -- the goal is to
+			 * let the MDS know we are walking away from this
+			 * grant; failure to deliver that notice just
+			 * means the layout sits until lease expiry.
+			 */
+			(void)mds_layout_error(
+				ms, mf, layout, bad_mirror,
+				NFS4ERR_LAYOUT_CHECKSUM_NOT_SUPPORTED,
+				OP_LAYOUTGET);
+			(void)mds_layout_return(ms, mf, creds, layout);
+			ec_layout_free(layout);
+			mds_compound_fini(&mc);
+			return -ENOTSUP;
+		}
 	} else {
 		/* ---- Flex Files v1 ---- */
 		ff_layout4 ffl;

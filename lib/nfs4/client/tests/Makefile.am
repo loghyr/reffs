@@ -19,6 +19,7 @@ check_PROGRAMS = $(TESTS)
 LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
+	ec_layout_checksum_test \
 	host_port_test \
 	mds_compound_test \
 	mds_tls_xprt_test \

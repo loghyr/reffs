@@ -464,6 +464,14 @@ struct ec_mirror {
 	uint32_t em_flags; /* FFV2_DS_FLAGS_* (v2 only, 0 for v1) */
 	bool em_tight_coupled; /* DS supports TRUST_STATEID */
 	/*
+	 * Per-mirror checksum algorithm from the layout
+	 * (ffm_checksum_algorithm).  Used to dispatch CRC computation
+	 * on CHUNK_WRITE and verification on CHUNK_READ; the supported-
+	 * set check happens inside mds_layout_get so callers never see
+	 * a layout this client can't compute against.
+	 */
+	uint32_t em_checksum_algorithm;
+	/*
 	 * em_local: set by ec_resolve_mirrors when the mirror's
 	 * deviceinfo resolves to one of the PS's own bound addresses
 	 * (Phase 5 short-circuit).  When true, ec_chunk_read /
@@ -504,6 +512,21 @@ int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
 		      const struct authunix_parms *creds,
 		      struct ec_layout *layout);
 void ec_layout_free(struct ec_layout *layout);
+
+/*
+ * Pending Change 6 step 7: validate every mirror's
+ * em_checksum_algorithm against the client's supported set.
+ * Returns 0 if every mirror declares an algorithm this client can
+ * compute, -ENOTSUP otherwise (with *bad_mirror_out set to the
+ * first offending mirror index when non-NULL).  Does NOT mutate
+ * the layout.  mds_layout_get calls this immediately after
+ * decoding the wire layout and, on failure, issues LAYOUTERROR +
+ * LAYOUTRETURN before returning -ENOTSUP to the caller; callers
+ * can also call it directly against a hand-built layout for
+ * unit-testing the policy.
+ */
+int ec_layout_validate_checksums(const struct ec_layout *layout,
+				 uint32_t *bad_mirror_out);
 
 /*
  * mds_layout_error -- report a DS I/O error to the MDS.
