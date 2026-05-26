@@ -712,6 +712,17 @@ def sb_get_cmd(client, args):
         print(f"  Dstores:  {dstore_ids}")
     if hasattr(sb, 'psi_stripe_unit') and sb.psi_stripe_unit:
         print(f"  Stripe:   {sb.psi_stripe_unit}")
+    if hasattr(sb, 'psi_checksum_algorithm'):
+        # 0 = NONE = "no policy, use server default" (currently CRC32).
+        # Display the name when non-zero so admins see what the MDS
+        # is stamping on layouts; suppress when unset.
+        alg = sb.psi_checksum_algorithm
+        if alg:
+            names = {
+                1: 'crc32', 2: 'crc32c', 3: 'fletcher4',
+                4: 'sha256', 5: 'sha512', 6: 'blake3',
+            }
+            print(f"  Checksum: {names.get(alg, f'unknown({alg})')}")
     if hasattr(sb, 'psi_chunk_stats'):
         cs = sb.psi_chunk_stats
         # Print chunk stats only if any non-zero (avoids clutter on
@@ -787,6 +798,37 @@ def sb_set_stripe_unit_cmd(client, args):
         print(f"Superblock {args.id} stripe unit cleared (whole-file CSM)")
     else:
         print(f"Superblock {args.id} stripe unit set to {args.stripe_unit} bytes")
+
+
+_CHECKSUM_ALG_NAMES = {
+    'none': 0,
+    'crc32': 1,
+    'crc32c': 2,
+    'fletcher4': 3,
+    'sha256': 4,
+    'sha512': 5,
+    'blake3': 6,
+}
+
+
+def sb_set_checksum_algorithm_cmd(client, args):
+    alg_arg = args.algorithm.lower()
+    if alg_arg.isdigit():
+        alg = int(alg_arg)
+    elif alg_arg in _CHECKSUM_ALG_NAMES:
+        alg = _CHECKSUM_ALG_NAMES[alg_arg]
+    else:
+        valid = ', '.join(_CHECKSUM_ALG_NAMES)
+        raise SystemExit(f"unknown algorithm '{args.algorithm}'; valid: {valid}")
+    res = client.sb_set_checksum_algorithm(args.id, alg)
+    probe_error_handler(res)
+    if alg == 0:
+        print(f"Superblock {args.id} checksum policy cleared "
+              f"(LAYOUTGET will use server default)")
+    else:
+        name = next((k for k, v in _CHECKSUM_ALG_NAMES.items() if v == alg),
+                    str(alg))
+        print(f"Superblock {args.id} checksum algorithm set to {name}")
 
 
 def inode_layout_list_cmd(client, args):
@@ -1248,6 +1290,17 @@ def parse_args():
                              dest='stripe_unit',
                              help='Stripe unit in bytes (power of 2; 0 = whole-file CSM)')
     p_sb_stripe.set_defaults(func=sb_set_stripe_unit_cmd)
+
+    p_sb_csum = subparsers.add_parser(
+        'sb-set-checksum-algorithm',
+        help='Set MDS checksum algorithm for layouts on a superblock')
+    p_sb_csum.add_argument('--id', type=int, required=True,
+                           help='Superblock ID')
+    p_sb_csum.add_argument(
+        '--algorithm', type=str, required=True,
+        help='Algorithm: none, crc32 (default), crc32c, fletcher4, '
+             'sha256, sha512, blake3 (or a numeric CHECKSUM_ALG_*)')
+    p_sb_csum.set_defaults(func=sb_set_checksum_algorithm_cmd)
 
     p_inode_layout_list = subparsers.add_parser(
         'inode-layout-list',

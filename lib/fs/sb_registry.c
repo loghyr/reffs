@@ -121,6 +121,8 @@ int sb_registry_save(const char *state_dir)
 				entries[i].sre_dstore_ids[d] =
 					sb->sb_dstore_ids[d];
 			entries[i].sre_stripe_unit = sb->sb_stripe_unit;
+			entries[i].sre_checksum_algorithm =
+				sb->sb_checksum_algorithm;
 			i++;
 		}
 		rcu_read_unlock();
@@ -337,6 +339,7 @@ int sb_registry_load(const char *state_dir)
 				sb->sb_dstore_ids[d] = e->sre_dstore_ids[d];
 		}
 		sb->sb_stripe_unit = e->sre_stripe_unit;
+		sb->sb_checksum_algorithm = e->sre_checksum_algorithm;
 
 		ret = super_block_dirent_create(sb, NULL,
 						reffs_life_action_birth);

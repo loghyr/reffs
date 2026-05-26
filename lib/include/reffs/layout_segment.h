@@ -28,6 +28,21 @@
 #define LAYOUT_SEG_MAX_FILES 32 /* max data files per segment */
 
 /*
+ * checksum_algorithm4 wire values, replicated here so files that
+ * can't include the generated nfsv42_xdr.h (backends, registry,
+ * tests) can still reference the algorithm tag.  Kept in lock-step
+ * with the XDR const declarations in lib/xdr/nfsv42_xdr.x; the
+ * MDS-side use site has a _Static_assert that catches drift.
+ */
+#define LAYOUT_CHECKSUM_ALG_NONE 0
+#define LAYOUT_CHECKSUM_ALG_CRC32 1
+#define LAYOUT_CHECKSUM_ALG_CRC32C 2
+#define LAYOUT_CHECKSUM_ALG_FLETCHER4 3
+#define LAYOUT_CHECKSUM_ALG_SHA256 4
+#define LAYOUT_CHECKSUM_ALG_SHA512 5
+#define LAYOUT_CHECKSUM_ALG_BLAKE3 6
+
+/*
  * On-disk: cached attributes for a single data file on a DS.
  * Refreshed at LAYOUTRETURN time.
  */
@@ -48,6 +63,15 @@ struct layout_data_file_disk {
 /*
  * On-disk: a layout segment header followed by nfiles data file entries.
  * Written as: layout_segment_disk + nfiles * layout_data_file_disk
+ *
+ * ls_checksum_algorithm holds the CHECKSUM_ALG_* value the MDS picked
+ * for this segment at creation time; the value is carried into every
+ * LAYOUTGET response on the segment's mirrors (ffm_checksum_algorithm)
+ * so the client and DSes agree on which algorithm bytes get computed
+ * over.  A stored value of 0 (CHECKSUM_ALG_NONE) is treated as
+ * CHECKSUM_ALG_CRC32 on load -- a hold-over for segments persisted
+ * before this field existed; no deployment exists so no migration
+ * code is needed (per CLAUDE.md "Deployment Status").
  */
 struct layout_segment_disk {
 	uint64_t ls_offset; /* byte range start */
@@ -57,6 +81,7 @@ struct layout_segment_disk {
 	uint16_t ls_m; /* parity devices */
 	uint32_t ls_nfiles; /* number of data file entries */
 	uint32_t ls_layout_type; /* layouttype4: LAYOUT4_FLEX_FILES, etc. */
+	uint32_t ls_checksum_algorithm; /* CHECKSUM_ALG_* */
 };
 
 /*
@@ -96,6 +121,7 @@ struct layout_segment {
 	uint16_t ls_m;
 	uint32_t ls_nfiles;
 	uint32_t ls_layout_type; /* layouttype4: LAYOUT4_FLEX_FILES, etc. */
+	uint32_t ls_checksum_algorithm; /* CHECKSUM_ALG_* (see disk twin) */
 	struct layout_data_file *ls_files; /* array of ls_nfiles entries */
 };
 

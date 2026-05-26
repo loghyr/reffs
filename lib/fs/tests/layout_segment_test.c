@@ -426,6 +426,106 @@ START_TEST(test_lss_gen_persists_across_inode_sync)
 END_TEST
 
 /* ------------------------------------------------------------------ */
+/* Pending Change 6 step 6: per-segment checksum algorithm              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The in-memory ls_checksum_algorithm survives layout_segments_add
+ * and is read back from the container.  Validates the field plumbing
+ * up to and including layout_segments_add's copy semantics.
+ */
+START_TEST(test_segment_carries_checksum_algorithm)
+{
+	struct layout_segments *lss = layout_segments_alloc();
+	struct layout_data_file *files =
+		calloc(1, sizeof(struct layout_data_file));
+
+	files[0] = make_data_file(99, 0xFE, 1024);
+
+	struct layout_segment seg = {
+		.ls_offset = 0,
+		.ls_length = 0,
+		.ls_stripe_unit = 0,
+		.ls_k = 1,
+		.ls_m = 0,
+		.ls_nfiles = 1,
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_checksum_algorithm = LAYOUT_CHECKSUM_ALG_CRC32C,
+		.ls_files = files,
+	};
+
+	ck_assert_int_eq(layout_segments_add(lss, &seg), 0);
+	ck_assert_uint_eq(lss->lss_segs[0].ls_checksum_algorithm,
+			  LAYOUT_CHECKSUM_ALG_CRC32C);
+
+	layout_segments_free(lss);
+}
+END_TEST
+
+/*
+ * ls_checksum_algorithm round-trips through the POSIX backend's
+ * .layouts file.  Persist with CRC32C, reload, verify the value
+ * comes back; persist with NONE (0) and verify the load path
+ * applies the CRC32 default per layout_segment.h.
+ */
+START_TEST(test_persist_checksum_algorithm)
+{
+	struct inode *inode = inode_alloc(g_posix_sb, 700);
+
+	ck_assert_ptr_nonnull(inode);
+
+	struct layout_segments *lss = layout_segments_alloc();
+	struct layout_data_file *files =
+		calloc(1, sizeof(struct layout_data_file));
+
+	files[0] = make_data_file(70, 0x77, 4096);
+
+	struct layout_segment seg = {
+		.ls_offset = 0,
+		.ls_length = 0,
+		.ls_stripe_unit = 0,
+		.ls_k = 1,
+		.ls_m = 0,
+		.ls_nfiles = 1,
+		.ls_layout_type = LAYOUT4_FLEX_FILES_V2,
+		.ls_checksum_algorithm = LAYOUT_CHECKSUM_ALG_CRC32C,
+		.ls_files = files,
+	};
+
+	layout_segments_add(lss, &seg);
+	inode->i_layout_segments = lss;
+
+	inode_sync_to_disk(inode);
+	layout_segments_free(inode->i_layout_segments);
+	inode->i_layout_segments = NULL;
+
+	ck_assert_int_eq(g_posix_sb->sb_ops->inode_alloc(inode), 0);
+	ck_assert_ptr_nonnull(inode->i_layout_segments);
+	ck_assert_uint_eq(
+		inode->i_layout_segments->lss_segs[0].ls_checksum_algorithm,
+		LAYOUT_CHECKSUM_ALG_CRC32C);
+
+	/*
+	 * Now persist with NONE and verify the load path defaults to
+	 * CRC32 -- the migration story for segments written before
+	 * the algorithm field existed.
+	 */
+	inode->i_layout_segments->lss_segs[0].ls_checksum_algorithm =
+		LAYOUT_CHECKSUM_ALG_NONE;
+	inode_sync_to_disk(inode);
+	layout_segments_free(inode->i_layout_segments);
+	inode->i_layout_segments = NULL;
+
+	ck_assert_int_eq(g_posix_sb->sb_ops->inode_alloc(inode), 0);
+	ck_assert_uint_eq(
+		inode->i_layout_segments->lss_segs[0].ls_checksum_algorithm,
+		LAYOUT_CHECKSUM_ALG_CRC32);
+
+	inode_active_put(inode);
+}
+END_TEST
+
+/* ------------------------------------------------------------------ */
 
 Suite *layout_segment_suite(void)
 {
@@ -438,6 +538,7 @@ Suite *layout_segment_suite(void)
 	tcase_add_test(tc_mem, test_add_segment);
 	tcase_add_test(tc_mem, test_lss_gen_starts_at_zero);
 	tcase_add_test(tc_mem, test_lss_gen_bumps_on_add);
+	tcase_add_test(tc_mem, test_segment_carries_checksum_algorithm);
 	suite_add_tcase(s, tc_mem);
 
 	TCase *tc_posix = tcase_create("persistence");
@@ -446,6 +547,7 @@ Suite *layout_segment_suite(void)
 	tcase_add_test(tc_posix, test_persist_load);
 	tcase_add_test(tc_posix, test_multiple_segments);
 	tcase_add_test(tc_posix, test_lss_gen_persists_across_inode_sync);
+	tcase_add_test(tc_posix, test_persist_checksum_algorithm);
 	suite_add_tcase(s, tc_posix);
 
 	return s;

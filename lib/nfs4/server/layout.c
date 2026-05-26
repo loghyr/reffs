@@ -614,6 +614,40 @@ static nfsstat4 layoutget_build_v2(struct layout_segment *seg, char **out_body,
 	mirror->ffm_protection.fdp_data = seg->ls_k;
 	mirror->ffm_protection.fdp_parity = seg->ls_m;
 
+	/*
+	 * Per draft-haynes-nfsv4-flexfiles-v2 (tigran-5e), ffm_checksum_algorithm
+	 * carries the per-mirror tag the client and DSes use to checksum
+	 * chunks.  Reffs picks the algorithm at LAYOUTGET-creation time
+	 * (Pending Change 6 step 6) and stores it on the segment; subsequent
+	 * LAYOUTGETs on the same file echo the same value.  A zero stored
+	 * value is migrated to CRC32 in the load path (layout_segment.h),
+	 * so a literal CHECKSUM_ALG_NONE here would only appear for the
+	 * one-shot in-memory case where the SB had no policy when the
+	 * segment was built -- defend by mapping that back to CRC32 too.
+	 *
+	 * The LAYOUT_CHECKSUM_ALG_* mirror constants in layout_segment.h
+	 * exist so this MDS file (which can include the XDR header) can
+	 * cross-check via _Static_assert that the lightweight constants
+	 * match the wire values.  Drift would silently break interop.
+	 */
+	_Static_assert(LAYOUT_CHECKSUM_ALG_NONE == CHECKSUM_ALG_NONE,
+		       "CHECKSUM_ALG_NONE drift");
+	_Static_assert(LAYOUT_CHECKSUM_ALG_CRC32 == CHECKSUM_ALG_CRC32,
+		       "CHECKSUM_ALG_CRC32 drift");
+	_Static_assert(LAYOUT_CHECKSUM_ALG_CRC32C == CHECKSUM_ALG_CRC32C,
+		       "CHECKSUM_ALG_CRC32C drift");
+	_Static_assert(LAYOUT_CHECKSUM_ALG_FLETCHER4 == CHECKSUM_ALG_FLETCHER4,
+		       "CHECKSUM_ALG_FLETCHER4 drift");
+	_Static_assert(LAYOUT_CHECKSUM_ALG_SHA256 == CHECKSUM_ALG_SHA256,
+		       "CHECKSUM_ALG_SHA256 drift");
+	_Static_assert(LAYOUT_CHECKSUM_ALG_SHA512 == CHECKSUM_ALG_SHA512,
+		       "CHECKSUM_ALG_SHA512 drift");
+	_Static_assert(LAYOUT_CHECKSUM_ALG_BLAKE3 == CHECKSUM_ALG_BLAKE3,
+		       "CHECKSUM_ALG_BLAKE3 drift");
+	mirror->ffm_checksum_algorithm = seg->ls_checksum_algorithm ?
+						 seg->ls_checksum_algorithm :
+						 CHECKSUM_ALG_CRC32;
+
 	mirror->ffm_striping = FFV2_STRIPING_DENSE;
 	mirror->ffm_striping_unit_size = 4096;
 	mirror->ffm_client_id = 0;
@@ -1209,7 +1243,21 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			return 0;
 		}
 
-		/* Build the layout segment. */
+		/*
+		 * Build the layout segment.  The per-SB
+		 * sb_checksum_algorithm is the configured policy for new
+		 * layouts on this export; a zero value means "no policy
+		 * set, use the implementation default" -- CRC32 today,
+		 * the only algorithm chunk_checksum_unpack_crc32 accepts.
+		 * Once additional algorithm dispatchers land, the default
+		 * can move to CRC32C (per Pending Change 6 step 6).
+		 */
+		uint32_t seg_alg =
+			compound->c_inode->i_sb->sb_checksum_algorithm;
+
+		if (seg_alg == LAYOUT_CHECKSUM_ALG_NONE)
+			seg_alg = LAYOUT_CHECKSUM_ALG_CRC32;
+
 		struct layout_segment seg = {
 			.ls_offset = 0,
 			.ls_length = 0, /* entire file */
@@ -1219,6 +1267,7 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 			.ls_m = 0,
 			.ls_nfiles = nfiles,
 			.ls_layout_type = layout_type,
+			.ls_checksum_algorithm = seg_alg,
 			.ls_files = files,
 		};
 

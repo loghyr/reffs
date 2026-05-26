@@ -240,6 +240,8 @@ static void posix_inode_sync(struct inode *inode)
 					.ls_m = seg->ls_m,
 					.ls_nfiles = seg->ls_nfiles,
 					.ls_layout_type = seg->ls_layout_type,
+					.ls_checksum_algorithm =
+						seg->ls_checksum_algorithm,
 				};
 
 				ok = ok && write(fd, &lsd, sizeof(lsd)) ==
@@ -622,6 +624,19 @@ static int inode_load_from_disk(struct inode *inode)
 						}
 
 						if (ok) {
+							/*
+							 * Map a zero
+							 * ls_checksum_algorithm
+							 * on load to CRC32 --
+							 * see layout_segment.h
+							 * for the rationale.
+							 */
+							uint32_t alg =
+								lsd.ls_checksum_algorithm;
+
+							if (alg ==
+							    LAYOUT_CHECKSUM_ALG_NONE)
+								alg = LAYOUT_CHECKSUM_ALG_CRC32;
 							struct layout_segment seg = {
 								.ls_offset =
 									lsd.ls_offset,
@@ -635,6 +650,8 @@ static int inode_load_from_disk(struct inode *inode)
 									lsd.ls_nfiles,
 								.ls_layout_type =
 									lsd.ls_layout_type,
+								.ls_checksum_algorithm =
+									alg,
 								.ls_files =
 									files,
 							};

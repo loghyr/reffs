@@ -183,6 +183,18 @@ struct super_block {
 	 * to mirror i % ffl_mirrors_len.  Set via probe sb-set-stripe-unit.
 	 */
 	uint32_t sb_stripe_unit;
+	/*
+	 * Default checksum algorithm for layouts the MDS issues on
+	 * files in this export.  CHECKSUM_ALG_* wire value (see
+	 * layout_segment.h LAYOUT_CHECKSUM_ALG_* mirrors).  0
+	 * (NONE) means "no policy set"; the LAYOUTGET path treats
+	 * that as CRC32, the only algorithm the server can compute
+	 * end-to-end today.  Set via probe sb-set-checksum-algorithm.
+	 *
+	 * Pending Change 6 step 6 from
+	 * ../flexfiles-v2/reffs-pending-changes.md.
+	 */
+	uint32_t sb_checksum_algorithm;
 
 	/* Per-op NFS4 statistics -- superblock scope. */
 	struct reffs_op_stats sb_nfs4_op_stats[REFFS_NFS4_OP_MAX];

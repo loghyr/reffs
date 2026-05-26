@@ -80,6 +80,12 @@ struct sb_registry_entry {
 	uint32_t sre_ndstores;
 	uint32_t sre_dstore_ids[SB_REGISTRY_MAX_DSTORES];
 	uint32_t sre_stripe_unit;
+	/*
+	 * MDS-side per-SB checksum algorithm policy.  CHECKSUM_ALG_*
+	 * (LAYOUT_CHECKSUM_ALG_* mirrors in layout_segment.h).  Zero
+	 * means "no policy set", treated as CRC32 at LAYOUTGET time.
+	 */
+	uint32_t sre_checksum_algorithm;
 	char sre_path[SB_REGISTRY_MAX_PATH];
 	char sre_backend_path[SB_REGISTRY_MAX_PATH];
 };

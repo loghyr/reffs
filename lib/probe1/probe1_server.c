@@ -898,6 +898,7 @@ static void fill_sb_info(probe_sb_info1 *psi, const struct super_block *sb)
 		}
 	}
 	psi->psi_stripe_unit = sb->sb_stripe_unit;
+	psi->psi_checksum_algorithm = sb->sb_checksum_algorithm;
 
 	/* Chunk activity counters. */
 	const struct reffs_chunk_stats *cs = &sb->sb_chunk_stats;
@@ -2123,6 +2124,49 @@ static int probe1_op_sb_set_stripe_unit(struct rpc_trans *rt)
 	return 0;
 }
 
+/*
+ * SB_SET_CHECKSUM_ALGORITHM -- Pending Change 6 step 6.
+ *
+ * Stores a per-SB CHECKSUM_ALG_* policy value used by the MDS when
+ * it stamps ffm_checksum_algorithm onto new layout_segments at
+ * LAYOUTGET-creation time.  Zero ("no policy set") is accepted to
+ * clear the field; the LAYOUTGET path then falls back to the
+ * implementation default (CRC32 today).  Algorithm values outside
+ * the registered CHECKSUM_ALG_* range are rejected with INVAL.
+ */
+static int probe1_op_sb_set_checksum_algorithm(struct rpc_trans *rt)
+{
+	struct protocol_handler *ph = (struct protocol_handler *)rt->rt_context;
+	SB_SET_CHECKSUM_ALGORITHM1args *args = ph->ph_args;
+	probe_stat1 *res = ph->ph_res;
+
+	uint32_t alg = args->sca_checksum_algorithm;
+
+	if (alg > LAYOUT_CHECKSUM_ALG_BLAKE3) {
+		TRACE("sb-set-checksum-algorithm: unknown algorithm %u", alg);
+		*res = PROBE1ERR_INVAL;
+		return *res;
+	}
+
+	struct super_block *sb = super_block_find(args->sca_id);
+
+	if (!sb) {
+		*res = PROBE1ERR_NOENT;
+		return *res;
+	}
+
+	sb->sb_checksum_algorithm = alg;
+
+	struct server_state *ss = server_state_find();
+
+	if (ss && ss->ss_persist_ops)
+		ss->ss_persist_ops->registry_save(ss->ss_persist_ctx);
+	server_state_put(ss);
+
+	super_block_put(sb);
+	return 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Identity management ops                                            */
 /* ------------------------------------------------------------------ */
@@ -2351,6 +2395,10 @@ struct rpc_operations_handler probe1_operations_handler[] = {
 			   xdr_PS_WRITE_BUFFER_STATS1res,
 			   PS_WRITE_BUFFER_STATS1res,
 			   probe1_op_ps_write_buffer_stats),
+	RPC_OPERATION_INIT(PROBEPROC1, SB_SET_CHECKSUM_ALGORITHM,
+			   xdr_SB_SET_CHECKSUM_ALGORITHM1args,
+			   SB_SET_CHECKSUM_ALGORITHM1args, xdr_probe_stat1,
+			   probe_stat1, probe1_op_sb_set_checksum_algorithm),
 };
 
 static struct rpc_program_handler *probe1_handler;

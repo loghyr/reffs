@@ -327,6 +327,12 @@ struct probe_sb_info1 {
 	unsigned int		psi_stripe_unit;
 	/* Chunk activity counters (appended for wire compat). */
 	probe_chunk_stats1	psi_chunk_stats;
+	/*
+	 * MDS-side checksum algorithm policy (Pending Change 6 step 6).
+	 * CHECKSUM_ALG_* wire value; 0 means "no policy, use default".
+	 * Appended for wire compat.
+	 */
+	unsigned int		psi_checksum_algorithm;
 };
 
 /* SB_LIST (op 13) */
@@ -434,6 +440,25 @@ union SB_GET_CLIENT_RULES1res switch (probe_stat1 sgcrr_status) {
 struct SB_SET_STRIPE_UNIT1args {
 	unsigned hyper		ssu_id;
 	unsigned int		ssu_stripe_unit;
+};
+
+/*
+ * SB_SET_CHECKSUM_ALGORITHM (op 38) -- per-export checksum policy
+ * for MDS-issued layouts.  Pending Change 6 step 6 from
+ * ../flexfiles-v2/reffs-pending-changes.md.  Values are the
+ * checksum_algorithm4 wire constants (CHECKSUM_ALG_NONE / CRC32 /
+ * CRC32C / FLETCHER4 / SHA256 / SHA512 / BLAKE3).
+ *
+ * The MDS stores this on the super_block and stamps it onto every
+ * new layout_segment at LAYOUTGET-creation time; the segment then
+ * echoes the value through ffm_checksum_algorithm on subsequent
+ * LAYOUTGETs.  Setting CHECKSUM_ALG_NONE (0) clears the policy --
+ * the LAYOUTGET path falls back to the implementation default
+ * (CRC32 today).  Returns probe_stat1 directly.
+ */
+struct SB_SET_CHECKSUM_ALGORITHM1args {
+	unsigned hyper		sca_id;
+	unsigned int		sca_checksum_algorithm;
 };
 
 /*
@@ -916,5 +941,10 @@ program PROBE_PROGRAM {
 		 * (.claude/design/proxy-server-phase4a.md slice 4a.4) */
 		PS_WRITE_BUFFER_STATS1res
 		PROBEPROC1_PS_WRITE_BUFFER_STATS(void) = 37;
+
+		/* Per-SB checksum algorithm policy for MDS layouts
+		 * (Pending Change 6 step 6) */
+		probe_stat1 PROBEPROC1_SB_SET_CHECKSUM_ALGORITHM(
+			SB_SET_CHECKSUM_ALGORITHM1args) = 38;
 	} = 1;
 } = 211768;

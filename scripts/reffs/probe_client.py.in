@@ -240,6 +240,19 @@ class Probe1Client(ProtocolClient):
         return self.proc(PROBEPROC1_SB_SET_STRIPE_UNIT, args,
                          response_type='probe_stat1')
 
+    def sb_set_checksum_algorithm(self, sb_id, algorithm):
+        """Set MDS checksum-algorithm policy on a superblock.
+
+        Pending Change 6 step 6.  `algorithm` is a CHECKSUM_ALG_*
+        wire constant (0 = NONE = "no policy, use server default";
+        1 = CRC32; 2 = CRC32C; 3 = FLETCHER4; 4 = SHA256;
+        5 = SHA512; 6 = BLAKE3).  The MDS stamps this onto every
+        new layout_segment at LAYOUTGET-creation time.
+        """
+        args = SB_SET_CHECKSUM_ALGORITHM1args(sb_id, algorithm)
+        return self.proc(PROBEPROC1_SB_SET_CHECKSUM_ALGORITHM, args,
+                         response_type='probe_stat1')
+
     def inode_layout_list(self, sb_id, inum):
         """Read-only enumeration of an inode's mirror set.
 
