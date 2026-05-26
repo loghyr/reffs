@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Chunk-collision Track 2 harness: drive IOR (shared-file,
-# write-then-verify) through N Proxy Server containers.  Each PS
-# holds its own MDS-facing session, so N PSes = N distinct
+# Chunk-collision Track 2 harness: drive fio (shared-file,
+# write-then-verify, no MPI) through N Proxy Server containers.
+# Each PS holds its own MDS-facing session, so N PSes = N distinct
 # clientid4s contending on one shared MDS file -- the multi-writer
 # contention surface, exercised through the client-visible POSIX
 # path (kernel NFS mount -> PS :4098+ listener -> REFFS_DATA_PROXY
@@ -15,19 +15,32 @@
 # throughput numbers do not transfer (see chunk-collision-
 # validation.md "Cost model").
 #
+# Why fio and not IOR/mpirun?  The Fedora 43 image's OpenMPI 5.0.8
+# stack wedges in two distinct collectives back-to-back:
+#   1. MPI_Init -> mca_btl_base_select -> libfabric SIGBUS
+#      (worked around once by --mca pml ob1 --mca btl self,tcp)
+#   2. MPI_Comm_split_type -> ompi_comm_nextcid -> opal_progress
+#      busy-loop, never makes forward progress with the same
+#      MCA workaround
+# fio runs N independent processes -- no MPI, no PMIx, no UCX, no
+# libfabric.  Pattern-based verify (verify_pattern keyed on rank)
+# detects both byte corruption and cross-PS misrouting: a chunk-
+# collision bug that lands rank A's writes in rank B's offsets
+# shows up as B's verify pass reading A's pattern.
+#
 # See .claude/design/chunk-collision-track2.md.
 #
 # Usage:
 #   run_chunk_collision_track2.sh [--n N] [--reorder]
 #       [--transfer SZ] [--block SZ] [--segments N] [--iterations N]
 #
-#   --n N          PS count == MPI rank count (default 4)
-#   --reorder      add IOR -C (reorderTasks): each rank verifies
-#                  another rank's data, cross-PS
-#   --transfer SZ  IOR -t transfer size   (default 64k)
-#   --block SZ     IOR -b block size      (default 4m)
-#   --segments N   IOR -s segment count   (default 4)
-#   --iterations N IOR -i repeat count    (default 3)
+#   --n N          PS count == fio writer count (default 4)
+#   --reorder      rank r verifies rank ((r+1)%N)'s stripe through
+#                  rank r's PS mount -- cross-PS readback path
+#   --transfer SZ  fio --bs (block size)         (default 64k)
+#   --block SZ     per-rank per-segment size     (default 4m)
+#   --segments N   segments per rank             (default 4)
+#   --iterations N write+verify repeat count     (default 3)
 #
 # Pre-conditions: see deploy/benchmark/run-ps-bench-bringup.sh.
 
@@ -35,7 +48,7 @@ set -euo pipefail
 
 # -- args -------------------------------------------------------------
 N=4
-REORDER=""
+REORDER=0
 XFER="64k"
 BLOCK="4m"
 SEGS=4
@@ -44,7 +57,7 @@ ITERS=3
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--n)          N="$2";       shift 2 ;;
-		--reorder)    REORDER="-C"; shift   ;;
+		--reorder)    REORDER=1;    shift   ;;
 		--transfer)   XFER="$2";    shift 2 ;;
 		--block)      BLOCK="$2";   shift 2 ;;
 		--segments)   SEGS="$2";    shift 2 ;;
@@ -68,10 +81,12 @@ IOR_CONTAINER=reffs-ior-client
 IMAGE=reffs-dev:latest
 
 echo "=== chunk-collision Track 2 ==="
-echo "  PSes / ranks: ${N}"
-echo "  IOR:          shared file, -w -r -W -R ${REORDER} -e -k"
-echo "                -t ${XFER} -b ${BLOCK} -s ${SEGS} -i ${ITERS}"
-echo "  shared file:  /ior_shared.dat (one MDS file via N PSes)"
+echo "  PSes / ranks:   ${N}"
+echo "  driver:         fio (no MPI; pattern verify, do_verify=1)"
+echo "  per-rank stripe: ${BLOCK} * ${SEGS} segments"
+echo "  transfer:       ${XFER}"
+echo "  iterations:     ${ITERS}"
+echo "  reorder mode:   $([ "$REORDER" -eq 1 ] && echo "ON (cross-PS verify)" || echo "off (same-PS verify)")"
 echo ""
 
 # -- step 1: bring up MDS + 10 DSes + N PSes --------------------------
@@ -83,7 +98,7 @@ NPS="${N}" bash "${HERE}/run-ps-bench-bringup.sh"
 # displaced, sb_chunk_finalize_crc_fail, ...) shipped with the
 # chunk-collision BLOCKER 2 work.  Snapshot them so the operator
 # can read the deltas; this is diagnostic -- the hard gate is the
-# IOR verify result and the sanitizer scan below.
+# fio verify result and the sanitizer scan below.
 snapshot_counters() {
 	local label="$1"
 	echo "--- chunk counters (${label}) ---"
@@ -99,85 +114,174 @@ snapshot_counters() {
 			2>/dev/null || echo "(probe sb-list failed)"
 	else
 		echo "(probe client not found -- counter snapshot skipped;"
-		echo " IOR verify + sanitizer scan remain the hard gate)"
+		echo " fio verify + sanitizer scan remain the hard gate)"
 	fi
 }
 snapshot_counters "pre-run"
 
-# -- step 3: run IOR via N PSes ---------------------------------------
-# One privileged, host-networked IOR container kernel-mounts each
-# PS listener and runs mpirun -np N locally.  An ior-rank wrapper
-# rewrites -o per rank so each rank reaches the SAME MDS file
-# through a DIFFERENT PS (= a different clientid on the MDS).
+# -- step 3: run fio via N PSes ---------------------------------------
+# One privileged, host-networked container kernel-mounts each PS
+# listener and launches N parallel fio processes (one per PS).
+# Rank r writes a deterministic 4-byte pattern (0xRRRRRRRR, where
+# RR is r's byte) into its stripe; the verify pass re-reads and
+# compares against the same pattern.  With --reorder, rank r
+# verifies rank ((r+1)%N)'s stripe through rank r's PS mount, so
+# a chunk-collision bug that misroutes blocks between PSes shows
+# up as a pattern mismatch.
 echo ""
-echo "[t2] launching IOR client container..."
+echo "[t2] launching fio client container..."
 sudo docker rm -f "${IOR_CONTAINER}" 2>/dev/null || true
 
-# Build the in-container driver script.
-IOR_DRIVER=$(cat <<EOF
+# Build the in-container driver script in a tempfile.  Writing the
+# heredoc directly to a file (rather than capturing via
+# FIO_DRIVER=$(cat <<EOF ...)) avoids a bash static-parser issue:
+# `case` arms inside an inline command-substitution heredoc trip
+# the paren-balance tracker and bash -n rejects the whole script.
+# The body is single-quoted (<<'EOF') so it stays literal until the
+# sed pass below substitutes the placeholders.
+FIO_DRIVER=$(mktemp /tmp/reffs-t2-driver.XXXXXX.sh)
+trap "rm -f \"${FIO_DRIVER}\"" EXIT INT TERM
+cat > "${FIO_DRIVER}" <<'EOF'
 set -eu
-N=${N}
-XFER=${XFER}
-BLOCK=${BLOCK}
-SEGS=${SEGS}
-ITERS=${ITERS}
-REORDER='${REORDER}'
+N=__N__
+XFER=__XFER__
+BLOCK=__BLOCK__
+SEGS=__SEGS__
+ITERS=__ITERS__
+REORDER=__REORDER__
+
+# fio is not in reffs-dev:latest yet; install on first run.
+# NOT_NOW_BROWN_COW: fold fio into Dockerfile in a follow-up.
+if ! command -v fio >/dev/null 2>&1; then
+	echo "[t2] installing fio in container..."
+	dnf -y -q install fio
+fi
 
 # Mount every PS listener.  PS r serves the proxy namespace on
 # host port 4098+r; mount its root at /mnt/ps-r.
-for r in \$(seq 0 \$((N - 1))); do
-	mkdir -p /mnt/ps-\$r
-	mount -t nfs4 -o port=\$((4098 + r)),vers=4.2,sec=sys,nolock \
-	      127.0.0.1:/ /mnt/ps-\$r
+for r in $(seq 0 $((N - 1))); do
+	mkdir -p /mnt/ps-$r
+	mount -t nfs4 -o port=$((4098 + r)),vers=4.2,sec=sys,nolock \
+	      127.0.0.1:/ /mnt/ps-$r
 done
 
-# ior-rank wrapper: substitute the MPI rank into -o so each rank
-# targets the shared file through its own PS mount.
-cat > /usr/local/bin/ior-rank.sh <<'WRAP'
-#!/bin/bash
-exec ior "\$@" -o "/mnt/ps-\${OMPI_COMM_WORLD_RANK}/ior_shared.dat"
-WRAP
-chmod +x /usr/local/bin/ior-rank.sh
+# Convert size suffixes (k/K/m/M/g/G) to bytes for offset math.
+to_bytes() {
+	local v="$1"
+	case "${v: -1}" in
+		k|K) echo $(( ${v%[kK]} * 1024 )) ;;
+		m|M) echo $(( ${v%[mM]} * 1024 * 1024 )) ;;
+		g|G) echo $(( ${v%[gG]} * 1024 * 1024 * 1024 )) ;;
+		*)   echo "$v" ;;
+	esac
+}
+BLOCK_BYTES=$(to_bytes "$BLOCK")
+STRIPE_BYTES=$(( BLOCK_BYTES * SEGS ))
+TOTAL_BYTES=$(( STRIPE_BYTES * N ))
+echo "[t2] stripe=$STRIPE_BYTES bytes/rank, file size=$TOTAL_BYTES bytes"
 
-set +e
-# IOR shared-file mode is the DEFAULT -- do NOT pass -F (that flag
-# is the boolean file-per-process toggle; there is no "-F 0", and
-# a stray "0" makes IOR reject the whole command line).
-#
-# --mca pml ob1 --mca btl self,tcp forces OpenMPI off the OFI /
-# libfabric path that SIGBUSes inside MPI_Init on the Fedora 43
-# image's OpenMPI 5.0.8 / UCX 1.18.1 / libfabric 2.2.0 stack.
-# The failing backtrace is mca_btl_base_select -> libopen-pal ->
-# libfabric -> libucs page-fault.  The OB1 PML + self/tcp BTLs
-# bypass UCX/libfabric entirely.  Repro confirmed in isolation
-# (np=8 IOR write+read): default mpirun SIGBUSes, this flag set
-# completes cleanly.  Track 2 is a correctness validation, not
-# a benchmark, so the TCP transport between in-container ranks
-# is fine.
-mpirun --allow-run-as-root --oversubscribe -np \$N \
-	--mca pml ob1 --mca btl self,tcp \
-	/usr/local/bin/ior-rank.sh \
-	-a POSIX -w -r -W -R \$REORDER -e -k \
-	-t \$XFER -b \$BLOCK -s \$SEGS -i \$ITERS
-rc=\$?
-set -e
+# Rank-keyed 4-byte pattern: 0xRRRRRRRR.
+pat() { printf '0x%02x%02x%02x%02x' "$1" "$1" "$1" "$1"; }
 
-for r in \$(seq 0 \$((N - 1))); do
-	umount /mnt/ps-\$r 2>/dev/null || true
+rc_total=0
+for iter in $(seq 1 $ITERS); do
+	echo ""
+	echo "=== iter $iter / $ITERS ==="
+
+	# --- write phase: N parallel fio writers -----------------
+	pids=()
+	for r in $(seq 0 $((N - 1))); do
+		off=$(( r * STRIPE_BYTES ))
+		fio --name=w$r \
+		    --filename=/mnt/ps-$r/shared.dat \
+		    --rw=write --bs=$XFER \
+		    --offset=$off --size=$STRIPE_BYTES \
+		    --verify=pattern --verify_pattern=$(pat $r) \
+		    --do_verify=0 \
+		    --create_on_open=1 --allow_file_create=1 \
+		    --thread=0 --ioengine=psync \
+		    > /tmp/fio-w-r$r-i$iter.log 2>&1 &
+		pids+=($!)
+	done
+	rc_write=0
+	for p in "${pids[@]}"; do
+		wait $p || rc_write=1
+	done
+	if [ $rc_write -ne 0 ]; then
+		echo "iter $iter: WRITE phase failed"
+		for r in $(seq 0 $((N - 1))); do
+			echo "--- rank $r write log ---"
+			tail -20 /tmp/fio-w-r$r-i$iter.log
+		done
+		rc_total=1
+		break
+	fi
+
+	# --- verify phase: N parallel fio readers ----------------
+	# Same-PS verify: rank r reads its own stripe through its
+	# own mount.  Cross-PS verify (REORDER): rank r reads rank
+	# ((r+1) % N)'s stripe through rank r's mount.
+	pids=()
+	for r in $(seq 0 $((N - 1))); do
+		if [ "$REORDER" -eq 1 ]; then
+			src=$(( (r + 1) % N ))
+		else
+			src=$r
+		fi
+		off=$(( src * STRIPE_BYTES ))
+		fio --name=v$r \
+		    --filename=/mnt/ps-$r/shared.dat \
+		    --rw=read --bs=$XFER \
+		    --offset=$off --size=$STRIPE_BYTES \
+		    --verify=pattern --verify_pattern=$(pat $src) \
+		    --do_verify=1 --verify_only=1 \
+		    --thread=0 --ioengine=psync \
+		    > /tmp/fio-v-r$r-i$iter.log 2>&1 &
+		pids+=($!)
+	done
+	rc_verify=0
+	for p in "${pids[@]}"; do
+		wait $p || rc_verify=1
+	done
+	if [ $rc_verify -ne 0 ]; then
+		echo "iter $iter: VERIFY phase failed"
+		for r in $(seq 0 $((N - 1))); do
+			echo "--- rank $r verify log ---"
+			tail -20 /tmp/fio-v-r$r-i$iter.log
+		done
+		rc_total=1
+		break
+	fi
+
+	echo "iter $iter: PASS"
 done
-exit \$rc
+
+# Unmount (don't fail teardown on a wedged unmount).
+for r in $(seq 0 $((N - 1))); do
+	umount /mnt/ps-$r 2>/dev/null || true
+done
+exit $rc_total
 EOF
-)
+
+# Substitute outer-script values into the literal heredoc.
+sed -i \
+	-e "s|__N__|${N}|g" \
+	-e "s|__XFER__|${XFER}|g" \
+	-e "s|__BLOCK__|${BLOCK}|g" \
+	-e "s|__SEGS__|${SEGS}|g" \
+	-e "s|__ITERS__|${ITERS}|g" \
+	-e "s|__REORDER__|${REORDER}|g" \
+	"${FIO_DRIVER}"
 
 set +e
-sudo docker run --rm --name "${IOR_CONTAINER}" \
+sudo docker run --rm -i --name "${IOR_CONTAINER}" \
 	--network=host \
 	--privileged \
 	-v benchmark_build-vol:/shared:ro,z \
 	"${IMAGE}" \
-	/bin/bash -c "${IOR_DRIVER}" \
-	2>&1 | tee /tmp/reffs-t2-ior.log
-ior_rc=${PIPESTATUS[0]}
+	bash -s < "${FIO_DRIVER}" \
+	2>&1 | tee /tmp/reffs-t2-fio.log
+fio_rc=${PIPESTATUS[0]}
 set -e
 
 # -- step 4: post-run counter snapshot --------------------------------
@@ -189,17 +293,20 @@ echo ""
 echo "=== Track 2 result ==="
 fail=0
 
-# Criterion 1: IOR reports zero verify mismatches.
-if [ "${ior_rc}" -ne 0 ]; then
-	echo "FAIL: IOR exited non-zero (${ior_rc})"
+# Criterion 1: fio reports zero verify mismatches.
+# fio's verify-failure phrasing varies by version: "verify: bad",
+# "verify failed", "bad pattern", "verify_dump", and the per-rank
+# "PASS" lines from our driver.  Grep broadly.
+if [ "${fio_rc}" -ne 0 ]; then
+	echo "FAIL: fio driver exited non-zero (${fio_rc})"
 	fail=$((fail + 1))
-elif grep -qiE 'errors? *[1-9]|verification failed|data check error' \
-	     /tmp/reffs-t2-ior.log; then
-	echo "FAIL: IOR reported verify mismatches"
-	grep -iE 'error|verif' /tmp/reffs-t2-ior.log | head -10
+elif grep -qiE 'verify: bad|verify failed|verification failed|bad pattern|data check error' \
+	     /tmp/reffs-t2-fio.log; then
+	echo "FAIL: fio reported verify mismatches"
+	grep -iE 'verify|pattern|data check' /tmp/reffs-t2-fio.log | head -10
 	fail=$((fail + 1))
 else
-	echo "PASS: IOR write+verify clean (rc=0, no mismatches)"
+	echo "PASS: fio write+verify clean (rc=0, no mismatches)"
 fi
 
 # Criterion 3: zero ASAN / UBSAN errors in any MDS / DS / PS log.
@@ -249,10 +356,10 @@ fi
 echo ""
 if [ "${fail}" -gt 0 ]; then
 	echo "Track 2: FAIL (${fail} issue(s)).  Containers left up for"
-	echo "inspection; IOR log at /tmp/reffs-t2-ior.log"
+	echo "inspection; fio log at /tmp/reffs-t2-fio.log"
 	exit 2
 fi
 
-echo "Track 2: PASS (${N} PSes, IOR clean, sanitizers clean, no force-drain warnings)"
-echo "IOR log: /tmp/reffs-t2-ior.log"
+echo "Track 2: PASS (${N} PSes, fio clean, sanitizers clean, no force-drain warnings)"
+echo "fio log: /tmp/reffs-t2-fio.log"
 exit 0
