@@ -143,7 +143,19 @@ set +e
 # IOR shared-file mode is the DEFAULT -- do NOT pass -F (that flag
 # is the boolean file-per-process toggle; there is no "-F 0", and
 # a stray "0" makes IOR reject the whole command line).
+#
+# --mca pml ob1 --mca btl self,tcp forces OpenMPI off the OFI /
+# libfabric path that SIGBUSes inside MPI_Init on the Fedora 43
+# image's OpenMPI 5.0.8 / UCX 1.18.1 / libfabric 2.2.0 stack.
+# The failing backtrace is mca_btl_base_select -> libopen-pal ->
+# libfabric -> libucs page-fault.  The OB1 PML + self/tcp BTLs
+# bypass UCX/libfabric entirely.  Repro confirmed in isolation
+# (np=8 IOR write+read): default mpirun SIGBUSes, this flag set
+# completes cleanly.  Track 2 is a correctness validation, not
+# a benchmark, so the TCP transport between in-container ranks
+# is fine.
 mpirun --allow-run-as-root --oversubscribe -np \$N \
+	--mca pml ob1 --mca btl self,tcp \
 	/usr/local/bin/ior-rank.sh \
 	-a POSIX -w -r -W -R \$REORDER -e -k \
 	-t \$XFER -b \$BLOCK -s \$SEGS -i \$ITERS
