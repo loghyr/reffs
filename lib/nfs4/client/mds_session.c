@@ -326,6 +326,66 @@ out:
 	return ret;
 }
 
+/*
+ * Session-death classifier shared by both the PS-to-MDS and the
+ * MDS-to-DS keep-alive paths (lib/nfs4/ps/ps_renewal.c +
+ * lib/nfs4/dstore/ds_renewal.c).  Promoted from
+ * lib/nfs4/ps/ps_state.c::ps_session_is_dead so DS renewal can
+ * share it.  PS keeps a thin wrapper for source compatibility;
+ * future cleanup may delete that wrapper.  See
+ * .claude/design/mds-ds-session-keepalive.md.
+ */
+bool mds_session_is_dead(int err, nfsstat4 sr_status)
+{
+	switch (sr_status) {
+	case NFS4ERR_BADSESSION:
+	case NFS4ERR_DEADSESSION:
+	case NFS4ERR_STALE_CLIENTID:
+	case NFS4ERR_BAD_SESSION_DIGEST:
+		return true;
+	default:
+		break;
+	}
+	switch (err) {
+	case -EIO:
+	case -EPIPE:
+	case -ECONNRESET:
+	case -ETIMEDOUT:
+	case -ENOTCONN:
+	case -ENETUNREACH:
+		return true;
+	default:
+		return false;
+	}
+}
+
+uint32_t mds_reconnect_backoff_next(uint32_t *backoff_sec)
+{
+	if (!backoff_sec)
+		return 0;
+
+	uint32_t cur = *backoff_sec;
+
+	/*
+	 * Schedule: 0, 1, 2, 4, 8, 16, 32, 60, 60, ...  First call
+	 * (cur == 0) returns 0 (immediate retry permitted), bumps to 1.
+	 * Subsequent calls double the wait until the 60-second cap.
+	 */
+	if (cur == 0)
+		*backoff_sec = 1;
+	else if (cur < 32)
+		*backoff_sec = cur * 2;
+	else
+		*backoff_sec = 60;
+	return cur;
+}
+
+void mds_reconnect_backoff_reset(uint32_t *backoff_sec)
+{
+	if (backoff_sec)
+		*backoff_sec = 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* PROXY_REGISTRATION (slice plan-A.iii)                               */
 /* ------------------------------------------------------------------ */

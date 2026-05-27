@@ -251,6 +251,41 @@ int mds_session_renew_lease(struct mds_session *ms);
 int mds_session_renew_lease_ex(struct mds_session *ms, nfsstat4 *sr_status_out);
 
 /*
+ * Session-death classifier shared by both the PS-to-MDS and the
+ * MDS-to-DS keep-alive paths (lib/nfs4/ps/ps_renewal.c +
+ * lib/nfs4/dstore/ds_renewal.c).  Promoted from ps_state.c so DS
+ * renewal does not have to copy-paste.  Returns true when the
+ * combination of (errno from the renewal call, sr_status from the
+ * SEQUENCE op) indicates the session is dead and the caller should
+ * destroy + reconnect.  Returns false for per-op transients
+ * (e.g. NFS4ERR_DELAY) where the session is still alive.
+ *
+ * Session-killer NFSv4.2 statuses: NFS4ERR_BADSESSION,
+ * NFS4ERR_DEADSESSION, NFS4ERR_STALE_CLIENTID,
+ * NFS4ERR_BAD_SESSION_DIGEST.
+ *
+ * Session-killer wire errnos: -EIO, -EPIPE, -ECONNRESET, -ETIMEDOUT,
+ * -ENOTCONN, -ENETUNREACH (TCP teardown signals).
+ *
+ * See .claude/design/mds-ds-session-keepalive.md.
+ */
+bool mds_session_is_dead(int err, nfsstat4 sr_status);
+
+/*
+ * Exponential backoff scheduler for reconnect attempts after a
+ * session-killer.  Schedule: 0, 1, 2, 4, 8, 16, 32, 60, 60, ...
+ * First call (*backoff_sec == 0) returns 0 (immediate retry
+ * permitted) and bumps *backoff_sec to 1.  Subsequent calls return
+ * the prior wait and double it, capped at 60.
+ *
+ * Promoted from ps_state.c alongside mds_session_is_dead.
+ */
+uint32_t mds_reconnect_backoff_next(uint32_t *backoff_sec);
+
+/* Reset the backoff counter to 0 after a successful reconnect. */
+void mds_reconnect_backoff_reset(uint32_t *backoff_sec);
+
+/*
  * Slice 6c-z: PS-side PROXY_PROGRESS / PROXY_DONE / PROXY_CANCEL
  * senders + the PS migration step driver.  See
  * lib/nfs4/server/proxy_registration.c for the MDS side and

@@ -606,53 +606,26 @@ int ps_listener_session_replace(uint32_t listener_id,
 	return 0;
 }
 
+/*
+ * ps_session_is_dead / ps_reconnect_backoff_next / _reset are now
+ * thin wrappers around the canonical lib/nfs4/client/mds_session
+ * implementations (mds_session_is_dead etc.), promoted there so the
+ * MDS-to-DS keep-alive thread (lib/nfs4/dstore/ds_renewal.c) shares
+ * the same classifier and backoff schedule.  See
+ * .claude/design/mds-ds-session-keepalive.md.  PS source untouched;
+ * future cleanup may inline the call sites and delete these wrappers.
+ */
 bool ps_session_is_dead(int err, nfsstat4 sr_status)
 {
-	switch (sr_status) {
-	case NFS4ERR_BADSESSION:
-	case NFS4ERR_DEADSESSION:
-	case NFS4ERR_STALE_CLIENTID:
-	case NFS4ERR_BAD_SESSION_DIGEST:
-		return true;
-	default:
-		break;
-	}
-	switch (err) {
-	case -EIO:
-	case -EPIPE:
-	case -ECONNRESET:
-	case -ETIMEDOUT:
-	case -ENOTCONN:
-	case -ENETUNREACH:
-		return true;
-	default:
-		return false;
-	}
+	return mds_session_is_dead(err, sr_status);
 }
 
 uint32_t ps_reconnect_backoff_next(uint32_t *backoff_sec)
 {
-	if (!backoff_sec)
-		return 0;
-
-	uint32_t cur = *backoff_sec;
-
-	/*
-	 * Schedule: 0, 1, 2, 4, 8, 16, 32, 60, 60, ...  First call
-	 * (cur == 0) returns 0 (immediate retry permitted), bumps to 1.
-	 * Subsequent calls double the wait until the 60-second cap.
-	 */
-	if (cur == 0)
-		*backoff_sec = 1;
-	else if (cur < 32)
-		*backoff_sec = cur * 2;
-	else
-		*backoff_sec = 60;
-	return cur;
+	return mds_reconnect_backoff_next(backoff_sec);
 }
 
 void ps_reconnect_backoff_reset(uint32_t *backoff_sec)
 {
-	if (backoff_sec)
-		*backoff_sec = 0;
+	mds_reconnect_backoff_reset(backoff_sec);
 }
