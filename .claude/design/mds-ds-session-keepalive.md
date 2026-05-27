@@ -5,6 +5,37 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # MDS-to-DS NFSv4.2 Session Keep-Alive
 
+## Revision history
+
+- **2026-05-26 (initial)**: drafted alongside the buffer-state
+  fold-in (committed as `b49f83ddd1a0`).
+- **2026-05-27 (revision 1)**: design-stage reviewer pass returned
+  2 BLOCKERs + 5 WARNINGs + 9 NOTEs.  Key changes:
+  - **B1 fix**: `struct dstore` has no rwlock today (`ds_v4_session`
+    is a bare pointer accessed by ~16 sites in
+    `dstore_ops_nfsv4.c`).  The PS accessor pattern relies on
+    `pls_session_rwlock`.  Slice scope now explicitly includes:
+    add `ds_v4_session_rwlock` to `struct dstore` + convert every
+    existing `ds->ds_v4_session` dereference in
+    `dstore_ops_nfsv4.c` and `ds_session.c` to go through the new
+    `dstore_session_borrow/_release` accessor pair.  This is a
+    pre-existing latent UAF that the renewal thread would convert
+    to active.
+  - **B2 fix**: documented that `dstore_session_replace` MUST
+    destroy the old session AFTER releasing the wlock, matching
+    `ps_listener_session_replace` (rationale: DESTROY_SESSION can
+    take RPC-timeout seconds to complete; holding wlock during
+    destroy blocks every new borrower).
+  - **W2 fix**: `ds_renewal_kick` now explicitly wired into
+    `send_and_check_ds` after BADSESSION so worker-observed
+    session death gets immediate reconnect rather than waiting
+    one full renewal interval.
+  - **W3, W4, W5, N1-N9**: incorporated inline; ds_renewal
+    uses `s_renewal_running` shutdown check, reuses
+    `dstore_collect_all`, drops the unused `max_sec` knob,
+    documents `[mds]` as a new TOML section, hardens the
+    transient test to assert backoff state unchanged.
+
 ## Context
 
 The MDS opens an NFSv4.2 session to each DS at startup (per
@@ -54,11 +85,12 @@ implementation.
 | `test_renewal_thread_lifecycle` | `ds_renewal_start(N)` spawns the keepalive thread; `ds_renewal_stop()` joins it cleanly under ASAN.  No leaked pthread, no UAF on the per-dstore state. |
 | `test_renewal_tick_one_sends_sequence` | Single-dstore tick: `renewal_tick_one(ds)` calls `mds_session_renew_lease_ex` on the dstore's session, increments the `renewed` counter, returns 0. |
 | `test_renewal_tick_skips_dead_session` | `dstore` with `ds_v4_session == NULL` (e.g. boot-time mds_session_create_tls failed): tick records `skipped_no_session`, attempts reconnect honouring the backoff deadline. |
-| `test_renewal_tick_handles_transient` | Tick where `mds_session_renew_lease_ex` returns a transient error (`NFS4ERR_DELAY` or `-EAGAIN` on the wire): increment `failed`, log once, leave session alive. |
+| `test_renewal_tick_handles_transient` | Tick where `mds_session_renew_lease_ex` returns a transient error (`NFS4ERR_DELAY` or `-EAGAIN` on the wire): increment `failed`, log once, leave session alive.  Assert `ds_reconnect_backoff_sec == 0` after the transient (transient must NOT arm backoff -- only session-killer responses do). |
 | `test_renewal_tick_kills_dead_session` | Tick where the server returns a session-killer (`NFS4ERR_BADSESSION` / `NFS4ERR_STALE_CLIENTID`): clear `ds_v4_session`, mark for reconnect, set initial backoff. |
 | `test_renewal_reconnect_backoff` | Three consecutive failed reconnect attempts: backoff doubles (1s -> 2s -> 4s, clamped at the configured max).  Use `ps_reconnect_backoff_next` template from `lib/nfs4/ps/ps_renewal.c`. |
 | `test_renewal_interval_clamp` | `ds_renewal_start(0)` returns -EINVAL.  `ds_renewal_start(1)` accepted; very large value (>= 86400) refused. |
 | `test_renewal_kick_wakes_thread` | While the thread is sleeping on its cv between ticks, `ds_renewal_kick()` wakes it so a fresh tick runs immediately.  Asserts the next tick timestamp advances within 50ms of the kick. |
+| `test_session_replace_quiesces_in_flight` | B1 regression test (mirrors the PS test of the same name).  Borrower thread holds `dstore_session_borrow(ds)` for an extended window (simulates an in-flight RPC).  A second thread calls `dstore_session_replace(ds, NULL)` which must block on the wrlock until the borrower releases, then complete cleanly.  Verifies the rwlock serialisation prevents a swap-under-active-borrower UAF.  Without B1's rwlock, this test would race; with it, the replace blocks for the borrow duration then succeeds. |
 
 ### Test impact analysis
 
@@ -142,15 +174,64 @@ int ds_renewal_tick_one(struct dstore *ds, struct ds_renewal_ctx *ctx)
 ```
 
 The PS already provides:
-- `ps_listener_session_borrow` / `_release` / `_replace` — ref-counted
-  session accessor pattern under listener wlock.  Mirror as
-  `dstore_session_borrow` / `_release` / `_replace` on `struct dstore`.
+- `ps_listener_session_borrow` / `_release` / `_replace`
+  (`lib/nfs4/ps/ps_state.c:507-607`) — **rwlock**-protected
+  session accessor (NOT refcount-based; the rwlock is
+  `pls_session_rwlock` on `struct ps_listener_state`).
+  `borrow` takes `pthread_rwlock_rdlock`; `replace` takes
+  `pthread_rwlock_wrlock`, swaps, releases the wlock, then
+  destroys the old session **outside** the wlock (a
+  DESTROY_SESSION round-trip can take RPC-timeout seconds, and
+  holding the wlock during destroy would block every new
+  borrower).  Mirror as `dstore_session_borrow` / `_release` /
+  `_replace` on `struct dstore`.
 - `ps_session_is_dead(ret, sr_status)` — classification helper.
   Promote to `lib/nfs4/client/mds_session.h` so both PS and DS
   consumers share it; rename to `mds_session_is_dead` if the
   function body is identical (verify).
 - `ps_reconnect_backoff_next` — exponential backoff scheduler.
   Same promotion.
+
+### BLOCKER B1: pre-existing `ds_v4_session` lock gap
+
+`struct dstore` (`lib/include/reffs/dstore.h`) does NOT have an
+analogue of `pls_session_rwlock` today.  `ds_clnt_mutex`
+protects the NFSv3 CLIENT handle, not the v4 session.
+`ds_v4_session` is a bare pointer with no lock at all.
+
+Today `ds_session_create` and `ds_session_destroy` assign and
+free `ds_v4_session` directly
+(`lib/nfs4/dstore/ds_session.c:148, 182-183`); every caller in
+`dstore_ops_nfsv4.c` reads `ds->ds_v4_session` as a bare
+pointer dereference (16+ sites).  `send_and_check_ds` even
+calls `ds_session_destroy(ds)` + `ds_session_create(ds)` while
+other dstore-vtable threads may simultaneously hold a copy of
+the old pointer.  This is a pre-existing latent UAF.
+
+Introducing an asynchronous renewal thread (this slice) would
+convert that latent race to active.  Therefore this slice
+**must** include:
+
+1. Add `pthread_rwlock_t ds_v4_session_rwlock` field to
+   `struct dstore`, mirroring `pls_session_rwlock`.
+2. Implement `dstore_session_borrow(ds)` (rdlock + return
+   `ds->ds_v4_session`) and `dstore_session_release(ds)`
+   (rwlock unlock).
+3. Implement `dstore_session_replace(ds, new_ms)` (wrlock +
+   swap + unlock + destroy-old-outside-wlock).
+4. **Convert every existing `ds->ds_v4_session` dereference**
+   in `lib/nfs4/dstore/dstore_ops_nfsv4.c` and
+   `lib/nfs4/dstore/ds_session.c` to go through the new
+   accessors.  Each call site captures the borrowed pointer
+   for the duration of one RPC round-trip, then releases.
+5. Add `test_session_replace_quiesces_in_flight` to the
+   ds_renewal_test suite — mirroring the PS test of the same
+   name — as the regression net for the swap-under-active-
+   borrower race.
+
+This step (the call-site sweep) is the largest part of the
+slice in LOC terms; it is **not** optional and is the actual
+fix for B1.
 
 ### State diagram
 
@@ -193,12 +274,14 @@ The PS already provides:
 
 ### Interval choice
 
-PS uses `server_lease_time(ss) / 3`, capped at 30 seconds (per
-reffsd.c:1139).  The MDS-as-DS-client should use the **same
-interval** because the failure mode is identical: a SEQUENCE
-must arrive at the DS before `2 * NFS4_LEASE_TIME + epsilon`
-elapses, or the DS expires the session.  `lease_time / 3`
-guarantees at least 2 successful SEQUENCEs per lease period.
+PS uses `server_lease_time(ss) / 3`, with a **floor** of 30s
+when `lease_time / 3` would be 0 (per reffsd.c:1139-1142 —
+correction to revision 0 which mis-stated this as a "cap").
+The MDS-as-DS-client should use the **same** value because the
+failure mode is identical: a SEQUENCE must arrive at the DS
+before `2 * NFS4_LEASE_TIME + epsilon` elapses or the DS
+expires the session.  `lease_time / 3` guarantees at least 2
+successful SEQUENCEs per lease period.
 
 The 600s socket idle-timeout is **independent** of session lease
 expiry — it's a TCP-layer reap.  With `lease_time = 90` (the
@@ -210,39 +293,82 @@ Configurable knob (TOML):
 ```toml
 [mds]
 ds_session_renewal_interval_sec = 30  # default; 0 = disabled
-ds_session_renewal_max_sec      = 60  # clamp; renewal won't sleep longer
 ```
 
 The disabled-mode (`= 0`) is for tests and for the
 "no remote DSes" pure-local-VFS combined-mode case.  Default-on
 otherwise.
 
+**Note**: `[mds]` is a **new** top-level TOML table.  No
+existing `[mds]` table; the closest is `[[proxy_mds]]`
+(array-of-tables) and `[server]` (with `role = "mds"`).  Adding
+`[mds]` is a one-table parser hook in `lib/config/config.c`,
+not "one more field in an existing table".  Earlier draft
+included a `ds_session_renewal_max_sec` knob -- dropped from
+this revision because it was not wired into the implementation
+order; if a true ceiling becomes useful later, add it as a
+follow-up.
+
+### EXCHGID4 flag verification
+
+The MDS-to-DS session uses `EXCHGID4_FLAG_USE_NON_PNFS`
+(per `lib/nfs4/dstore/ds_session.c:68-78`, set by the
+dstore-vtable-v2 slice).  The PS-to-MDS session uses the same
+flag.  Lease-renewal SEQUENCE semantics on the DS are
+identical to those on the MDS — no divergent semantics that
+would invalidate mirroring `ps_session_is_dead` /
+`ps_reconnect_backoff_next` to a shared helper.
+
 ### Concurrency
 
-`ds_renewal` runs on its own pthread, same as `ps_renewal`.  It
-iterates the dstore registry under `rcu_read_lock` (since
-`dstore_find` + the dstore table are already RCU-protected per
-`design/per-export-dstore.md`).  Per-dstore tick takes the
-session-borrow ref (already locked); the renewal thread does
-NOT hold any dstore lock across the SEQUENCE round-trip.
+`ds_renewal` runs on its own pthread, same as `ps_renewal`.
 
-`dstore_session_borrow` returns a `struct mds_session *` with a
-ref the caller must drop via `dstore_session_release`.  The ref
-count guarantees the session lives across the round-trip even
-if another path concurrently destroys the dstore's session
-(`dstore_session_replace(ds, NULL)` after a BADSESSION).
+**Session-pointer protection** (correction to revision 0):
+`dstore_session_borrow` takes a per-dstore `pthread_rwlock_rdlock`
+on `ds_v4_session_rwlock` and returns the current
+`ds->ds_v4_session`.  `dstore_session_release` calls
+`pthread_rwlock_unlock`.  The session pointer is valid for the
+duration of the lock-held window only — callers must NOT cache
+it beyond `dstore_session_release`.  This is the same
+rwlock-protected-pointer discipline as `ps_listener_session_borrow`.
 
-The renewal thread uses RCU for iterating the dstore list:
-1. `rcu_read_lock()`
-2. `for each ds in dstore_list: dstore_get_ref(ds)`
-3. Collect refs into a stack array (`dstores_to_tick[]`).
-4. `rcu_read_unlock()`
-5. For each refcounted dstore: `ds_renewal_tick_one(ds)`; then
-   `dstore_put_ref(ds)`.
+`dstore_session_replace(ds, new_ms)` takes
+`pthread_rwlock_wrlock`, swaps `ds_v4_session` to `new_ms`,
+releases the wlock, then **destroys the old session OUTSIDE
+the wlock**.  Mandatory: DESTROY_SESSION + DESTROY_CLIENTID
+round-trip can take RPC-timeout-many seconds; holding the
+wlock during destroy blocks every new borrower (the renewal
+thread, every dstore-vtable thread issuing CREATE / REMOVE /
+GETATTR / SETATTR / TRUST_STATEID).  Mirrors
+`ps_listener_session_replace` rationale at
+`lib/nfs4/ps/ps_state.c:589-605`.
 
-This matches the established `cds_lfht` iteration pattern in
-`.claude/patterns/rcu-violations.md` (collect refs under lock,
-operate outside).
+**Worker-driven `ds_renewal_kick`** (W2 fix): when
+`send_and_check_ds` observes a session-killer error
+(`mds_session_is_dead` returns true) on its own RPC, it calls
+`ds_renewal_kick()` to wake the renewal thread immediately
+rather than waiting one full renewal interval (~30s) for the
+periodic tick to notice.  Without this, the recovery latency
+after a BADSESSION storm is one interval per affected dstore —
+exactly the failure mode this slice exists to mitigate.
+
+**Shutdown-mid-reconnect** (N1 fix): inside the reconnect path
+(the equivalent of `ps_listener_reconnect`), check
+`atomic_load_explicit(&s_renewal_running, memory_order_acquire)`
+at every step that could block (TCP connect, EXCHANGE_ID,
+CREATE_SESSION).  Abort cleanly if shutdown arrived
+mid-reconnect.  Without this check, `ds_renewal_stop` would
+block for the full RPC timeout when the renewal thread is
+mid-reconnect to an unreachable DS.
+
+**Dstore registry iteration**: reuse the existing
+`dstore_collect_all(dstores_out, max)` helper
+(`lib/nfs4/dstore/dstore.c` -- already RCU-protected per
+`design/per-export-dstore.md`) rather than re-rolling the
+iteration.  Cap at `DSTORE_REVOKE_MAX = 64`
+(`lib/include/reffs/dstore.h:32`) — same bound used by other
+bulk operations.  The collected refs are dropped via
+`dstore_put_ref(ds)` after each tick.
 
 ### Why a single thread (not per-dstore)
 
@@ -335,54 +461,93 @@ tick is sufficient.
 
 ## Implementation order
 
-Single-commit slice:
+Single-commit slice (substantially larger than revision 0 due to
+the B1 call-site sweep):
 
-1. **TDD: write the 8 unit tests** referencing the new API.  The
-   tests will not compile against the pre-fix tree (no
-   `ds_renewal_start`, no `ds_renewal_tick_one`, no
-   `dstore_session_borrow`).  Land them in the same commit as
-   the implementation.
+1. **TDD: write the 9 unit tests** (8 original + 1 B1
+   regression) referencing the new API.  The tests will not
+   compile against the pre-fix tree (no `ds_renewal_start`, no
+   `ds_renewal_tick_one`, no `dstore_session_borrow`).  Land
+   them in the same commit as the implementation.
 
 2. **Promote `ps_session_is_dead` and `ps_reconnect_backoff_next`
    to lib/nfs4/client/mds_session.{c,h}.**  Rename to
    `mds_session_is_dead` and `mds_reconnect_backoff_next`.
-   Update the one PS call site.  This is a pure rename + move,
-   no behaviour change, but it's a precondition for the new
-   ds_renewal sharing the same helpers without copy-paste.
+   Update the one PS call site.  Pure rename + move, no
+   behaviour change.  Precondition for shared helpers.
 
-3. **Add `ds_reconnect_backoff_sec` and
-   `ds_reconnect_next_attempt_ns` to `struct dstore`** (atomic
-   fields).  Add `dstore_session_borrow` / `_release` /
-   `_replace` accessors mirroring the PS pattern.
+3. **Add `ds_v4_session_rwlock`** (`pthread_rwlock_t`) to
+   `struct dstore` -- the B1 fix.  Initialise in
+   `dstore_alloc`, destroy in `dstore_free`.
 
-4. **Write `lib/nfs4/dstore/ds_renewal.c`** mirroring
-   `lib/nfs4/ps/ps_renewal.c` line-by-line, swapping the
-   listener iteration for the dstore iteration.
+4. **Implement `dstore_session_borrow / _release / _replace`
+   accessors** mirroring `ps_listener_session_*`.  Replace
+   acquires wrlock + swaps + releases wrlock + destroys old
+   session **outside** the wrlock.
 
-5. **Wire `ds_renewal_start` into `reffsd.c`** alongside the
+5. **Call-site conversion sweep** (B1 scope expansion):
+   convert every `ds->ds_v4_session` dereference in
+   `lib/nfs4/dstore/dstore_ops_nfsv4.c` and
+   `lib/nfs4/dstore/ds_session.c` to go through the new
+   accessors.  Each RPC site does
+   `ms = dstore_session_borrow(ds); ...rpc...;
+   dstore_session_release(ds);`.  ~16 sites in
+   `dstore_ops_nfsv4.c` (use grep to enumerate before editing).
+
+6. **Add atomic backoff fields**
+   (`_Atomic uint32_t ds_reconnect_backoff_sec`,
+   `_Atomic uint64_t ds_reconnect_next_attempt_ns`) to
+   `struct dstore`.  Zero-init in `dstore_alloc`.
+
+7. **Write `lib/nfs4/dstore/ds_renewal.c`** mirroring
+   `lib/nfs4/ps/ps_renewal.c` line-by-line:
+   - `ds_renewal_thread_fn` loops with `pthread_cond_timedwait`
+     on `s_renewal_cv`, ticks all dstores via
+     `dstore_collect_all` + per-dstore `ds_renewal_tick_one`.
+   - `ds_renewal_tick_one` calls
+     `dstore_session_borrow` + `mds_session_renew_lease_ex` +
+     `dstore_session_release`; classifies via
+     `mds_session_is_dead`; on session-killer calls
+     `dstore_session_replace(ds, NULL)` + arms backoff.
+   - `ds_renewal_kick` signals `s_renewal_cv`.
+   - Reconnect path checks `s_renewal_running` between each
+     blocking step (TCP connect, EXCHANGE_ID, CREATE_SESSION)
+     so shutdown is bounded.
+
+8. **Wire `ds_renewal_kick` into `send_and_check_ds`** in
+   `dstore_ops_nfsv4.c` (W2 fix): when an RPC returns a
+   session-killer status, call `ds_renewal_kick()` so recovery
+   latency is sub-second rather than one full renewal interval.
+
+9. **Wire `ds_renewal_start` into `reffsd.c`** alongside the
    existing `ps_renewal_start` call.  Read interval from
-   TOML config (`mds.ds_session_renewal_interval_sec`, default
-   `server_lease_time(ss) / 3`).
+   TOML config (`mds.ds_session_renewal_interval_sec`).
+   Default: `server_lease_time(ss) / 3` with **floor** of 30s
+   when `lease_time / 3 == 0` (matches PS).
 
-6. **Wire `ds_renewal_stop` into `reffsd_shutdown`** before
-   the dstore registry teardown.
+10. **Wire `ds_renewal_stop` into `reffsd_shutdown`** before
+    the dstore registry teardown.
 
-7. **Add TOML knob.**  Parse `[mds]
-   ds_session_renewal_interval_sec` (default `lease_time / 3`,
-   value `0` disables).
+11. **Add TOML knob.**  Add `[mds]` table (new -- first
+    `[mds]` field in the parser); parse
+    `ds_session_renewal_interval_sec` (default `lease_time / 3`,
+    floor 30; value `0` disables).
 
-8. **Run `make check`.**  All 32 conn_info tests + the 8 new
-   ds_renewal tests pass.  Pre-existing flake
-   `ps_reconnect_test::test_session_replace_quiesces_in_flight`
-   continues to be unrelated.
+12. **Run `make check`.**  All 32 conn_info tests + the 9 new
+    ds_renewal tests pass.  Pre-existing flake
+    `ps_reconnect_test::test_session_replace_quiesces_in_flight`
+    continues to be unrelated.
 
-9. **Functional gate**: re-run Track 2 N=8 fio on garbo, grep
-   for "601 seconds inactive" in any DS log.  Expected count
-   after the fix: **0**.
+13. **Functional gate**: re-run Track 2 N=8 fio on garbo, grep
+    for `"601 seconds inactive"` in any DS log.  Expected count
+    after the fix: **0**.  Criterion 1 (fio verify) should
+    PASS.  Criterion 4 (force-drain) should remain PASS from
+    the buffer-state slice.
 
-10. **Reviewer gate.**  This is a concurrency / lifecycle slice
-    touching session state.  Run the reviewer agent before
-    commit per `.claude/CLAUDE.md`.
+14. **Reviewer gate.**  Run the reviewer agent on the code
+    diff before commit.  This is a ref-counting / lifecycle
+    change touching `lib/nfs4/dstore/` -- standards.md gating
+    criterion applies.
 
 ## Reviewer rules
 
@@ -413,8 +578,10 @@ slice must follow Rule 6 in `.claude/patterns/ref-counting.md`.
 | `lib/nfs4/dstore/ds_renewal.c` | NEW — mirror of ps_renewal.c |
 | `lib/nfs4/dstore/ds_renewal.h` | NEW — public API (start/stop/kick) |
 | `lib/nfs4/dstore/Makefile.am` | wire new .c into libdstore |
-| `lib/include/reffs/dstore.h` | `ds_reconnect_backoff_sec`, `ds_reconnect_next_attempt_ns` fields |
-| `lib/nfs4/dstore/dstore.c` | `dstore_session_borrow`/_release/_replace accessors |
+| `lib/include/reffs/dstore.h` | `ds_v4_session_rwlock`, `ds_reconnect_backoff_sec`, `ds_reconnect_next_attempt_ns` fields |
+| `lib/nfs4/dstore/dstore.c` | `dstore_session_borrow`/_release/_replace accessors; rwlock init in `dstore_alloc` + destroy in `dstore_free` |
+| `lib/nfs4/dstore/dstore_ops_nfsv4.c` | **B1 sweep**: convert ~16 sites from bare `ds->ds_v4_session` deref to `dstore_session_borrow/_release` pair.  Wire `ds_renewal_kick` into `send_and_check_ds` after BADSESSION (W2) |
+| `lib/nfs4/dstore/ds_session.c` | Use accessors in `ds_session_create`/`_destroy` rather than bare assign |
 | `lib/nfs4/client/mds_session.h` | declare `mds_session_is_dead`, `mds_reconnect_backoff_next` |
 | `lib/nfs4/client/mds_session.c` | move bodies from ps_renewal.c |
 | `lib/nfs4/ps/ps_renewal.c` | call the promoted helpers; net delete-only |
@@ -429,7 +596,13 @@ slice must follow Rule 6 in `.claude/patterns/ref-counting.md`.
 - `.claude/design/io-buffer-state-fd-recycle.md` — the BLOCKER
   this slice's trigger surfaced.  Co-author: the bench timeline
   in that doc's "Symptom Chain" is the same one this slice
-  removes.
+  removes.  **Close-once gate on `io_socket_close` (deferred
+  item #5 in that doc)** retains its priority — the keep-alive
+  removes the 600s idle close for MDS-to-DS sockets specifically,
+  but the same 600s reap path still applies to client-to-MDS,
+  NFSv3-client-to-DS, and PS-forwarder-to-MDS sockets.  The
+  close-once gate is one socket class lighter to enforce after
+  this slice, but its scope (other socket classes) is unchanged.
 - `.claude/design/dstore-vtable-v2.md` — defines the MDS-to-DS
   session that this slice keeps alive.
 - `.claude/design/trust-stateid.md` — uses the same MDS-to-DS
