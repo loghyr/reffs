@@ -529,6 +529,8 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 
 	bool accept_resubmitted = false;
 
+	LOG("BENCH4-DBG io_handle_accept: listen_fd=%d client_fd=%d", listen_fd,
+	    client_fd);
 	trace_io_context(ic, __func__, __LINE__);
 
 	/*
@@ -632,7 +634,12 @@ int io_handle_accept(struct io_context *ic, int client_fd,
 		    client_fd);
 	}
 
-	io_request_read_op(client_fd, &ic->ic_ci, rc);
+	{
+		int _rr = io_request_read_op(client_fd, &ic->ic_ci, rc);
+		LOG("BENCH4-DBG accept-done client_fd=%d read_op_rc=%d "
+		    "accept_resubmitted=%d",
+		    client_fd, _rr, accept_resubmitted ? 1 : 0);
+	}
 
 	if (!accept_resubmitted) {
 		io_request_accept_op(listen_fd, &ic->ic_ci, rc);
@@ -1337,6 +1344,8 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 	char *buffer = (char *)ic->ic_buffer;
 	int client_fd = ic->ic_fd;
 
+	LOG("BENCH4-DBG io_handle_read: client_fd=%d bytes_read=%d", client_fd,
+	    bytes_read);
 	trace_io_read(client_fd, bytes_read);
 
 	struct conn_info *ci = io_conn_get(client_fd);
@@ -1479,6 +1488,7 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 	// carrying RPC traffic and the probe would false-positive on payload
 	// bytes that happen to match the TLS record header pattern.
 	bs = io_buffer_state_get(client_fd);
+	LOG("BENCH4-DBG bs_get client_fd=%d bs=%p", client_fd, (void *)bs);
 	if (!bs && is_tls_client_hello(ic->ic_buffer, bytes_read)) {
 		TRACE("TLS ClientHello detected on fd=%d", ic->ic_fd);
 		ret = handle_tls_handshake(ic->ic_fd, ic->ic_buffer, bytes_read,
@@ -1499,6 +1509,8 @@ int io_handle_read(struct io_context *ic, int bytes_read,
 	// Create buffer state if this is the first plain-NFS read
 	if (!bs) {
 		bs = io_buffer_state_create(client_fd);
+		LOG("BENCH4-DBG bs_create client_fd=%d bs=%p", client_fd,
+		    (void *)bs);
 		if (!bs) {
 			LOG("Failed to create buffer state for fd: %d",
 			    client_fd);
