@@ -87,11 +87,12 @@ static void dstore_free_rcu(struct rcu_head *rcu)
 	 * (reconnect / shutdown) had to drop their dstore ref before
 	 * the refcount could reach zero, so no thread can hold the
 	 * rwlock at this point regardless of whether ds_v4_session
-	 * itself is still installed.  (The v4 session pointer is
-	 * NOT_NOW_BROWN_COW: a separate slice will wire
-	 * ds_session_destroy into dstore_unload_all to drop the
-	 * session cleanly at shutdown; that is a pre-existing leak
-	 * the keep-alive slice does not introduce or fix.)
+	 * itself is still installed.  ds_v4_session is now reliably
+	 * NULL'd by dstore_unload_all (calls ds_session_destroy on the
+	 * collect_all snapshot before dropping the hash ref), so the
+	 * pre-existing shutdown leak the original keep-alive slice
+	 * called out as NOT_NOW_BROWN_COW is closed; only the rwlock
+	 * teardown remains here.
 	 */
 	pthread_rwlock_destroy(&ds->ds_v4_session_rwlock);
 	free(ds);
@@ -735,21 +736,51 @@ uint32_t dstore_collect_all(struct dstore **out, uint32_t max)
 
 void dstore_unload_all(void)
 {
-	struct cds_lfht_iter iter;
-	struct cds_lfht_node *node;
-	struct dstore *ds;
+	struct dstore *snapshot[DSTORE_REVOKE_MAX];
+	uint32_t n;
+	uint32_t i;
 
 	if (!g_dstore_ht)
 		return;
 
-	rcu_read_lock();
-	cds_lfht_first(g_dstore_ht, &iter);
-	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
-		ds = caa_container_of(node, struct dstore, ds_node);
+	/*
+	 * Snapshot via dstore_collect_all so the destroy-side work runs
+	 * OUTSIDE rcu_read_lock.  ds_session_destroy issues blocking
+	 * RPCs (DESTROY_SESSION + DESTROY_CLIENTID via
+	 * mds_session_destroy) and rcu-violations.md rule 1 forbids
+	 * blocking inside a read-side critical section.  The snapshot
+	 * also lets us tear down sessions before dropping the hash ref
+	 * so the v4 session, the rwlock that protects it, and the
+	 * dstore itself all die in a single deterministic sequence.
+	 * dstore_collect_all bumps each ref; we drop it explicitly
+	 * after the unhash.
+	 *
+	 * DSTORE_REVOKE_MAX (64) bound: the configured limit is
+	 * REFFS_CONFIG_MAX_DSTORES (16); 64 is the same bound the
+	 * renewal worker (ds_renewal.c) uses for an in-flight scan
+	 * and is well above any realistic deployment.
+	 */
+	n = dstore_collect_all(snapshot, DSTORE_REVOKE_MAX);
+
+	for (i = 0; i < n; i++) {
+		struct dstore *ds = snapshot[i];
+
 		trace_dstore(ds, __func__, __LINE__);
-		cds_lfht_next(g_dstore_ht, &iter);
+		/*
+		 * Drop the v4 session BEFORE dropping the hash ref.
+		 * ds_session_destroy is idempotent on a NULL session
+		 * (dstore_session_replace with old_session=NULL skips
+		 * the destroy block) so dstores that never created a
+		 * session (NFSv3, local, do_mount=false) take a fast
+		 * path here.  This call replaces the pre-existing
+		 * NOT_NOW_BROWN_COW in dstore_free_rcu's comment and
+		 * in ds_session_destroy's caller-side note: the v4
+		 * session is now reliably torn down at shutdown.
+		 */
+		ds_session_destroy(ds);
+
 		if (dstore_unhash(ds))
-			dstore_put(ds);
+			dstore_put(ds); /* drop hash ref */
+		dstore_put(ds); /* drop collect_all ref */
 	}
-	rcu_read_unlock();
 }

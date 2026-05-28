@@ -18,6 +18,19 @@ type            = "posix"
 path            = "/tmp/reffs_mds_data"
 state_file      = "/tmp/reffs_mds_state"
 
+[mds]
+# MDS-to-DS NFSv4.2 session keep-alive interval.  Set explicitly
+# rather than letting reffsd derive server_lease_time(ss) / 3 with
+# a 30s floor -- the explicit number is the cadence the
+# chunk-collision Track 2 bench (deploy/benchmark/run_chunk_collision_track2.sh)
+# was validated against (see .claude/design/chunk-collision-track2.md).
+# 30s comfortably beats the 601s CONNECTION_TIMEOUT_SECONDS in
+# lib/io/conn_info while leaving headroom for backoff retries on a
+# wedged DS; lower values waste cycles, higher values can let the
+# inactivity timer expire and trigger the EREMOTEIO / nfsv3_fence
+# cascade BLOCKER 2 closed.
+ds_session_renewal_interval_sec = 30
+
 [[export]]
 path         = "/"
 layout_types = ["ffv1", "ffv2"]

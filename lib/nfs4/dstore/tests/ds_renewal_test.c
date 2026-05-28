@@ -15,48 +15,89 @@
 #include <string.h>
 
 #include "reffs/dstore.h"
+#include "reffs/dstore_ops.h"
+#include "reffs/time.h"
 
 #include "ds_renewal.h"
+#include "ds_renewal_internal.h"
+#include "nfs4_test_harness.h"
+
+extern const struct dstore_ops dstore_ops_local;
 
 /*
  * ds_renewal unit tests.
  *
- * The PS mirror at lib/nfs4/ps/tests/ps_reconnect_test.c uses a
- * whitebox internal header (ps_renewal_internal.h) to exercise
- * renewal_tick_one with a synthetic mds_session pointer.  The
- * ds_renewal slice does not (yet) expose an equivalent internal
- * header -- the tick is exercised end-to-end by the
- * deploy/benchmark/run_chunk_collision_track2.sh harness when
- * NFSv4 dstores are configured.  The tests below cover the
- * publicly-visible state machine: thread lifecycle, kick
- * semantics, and disabled-mode opt-out.
+ * Mirrors the lib/nfs4/ps/tests/ps_reconnect_test.c whitebox
+ * pattern: the renewal-tick dispatcher is exposed via
+ * ds_renewal_internal.h so tests invoke renewal_tick_one()
+ * directly with synthesised dstores and assert on the
+ * struct renewal_tick_ctx counters that record which branch of
+ * the decision tree fired.
  *
- * NOT_NOW_BROWN_COW: whitebox tick test that asserts
- *   - tick_one sends SEQUENCE on a live session
- *   - tick_one parks + reconnects on a dead classification
- *   - backoff schedule advances on reconnect failure
- *   - test_session_replace_quiesces_in_flight (B1 regression)
+ * Coverage matrix:
  *
- * Adding those requires either a ds_renewal_internal.h with the
- * tick_one signature exposed, a mock mds_session_create that the
- * test can intercept, or a full fixture (mock DS + real
- * MDS-to-DS session).  Tracked.
+ *   - Lifecycle: start / stop / kick API (test_renewal_disabled,
+ *     thread_lifecycle, kick_null_safe, kick_resets_per_dstore_schedule,
+ *     kick_nfsv3_dstore_clears_schedule, stop_before_start,
+ *     immediate_stop, kick_during_running).
+ *
+ *   - Borrow / release / replace (test_session_borrow_release_replace_cycle):
+ *     BLOCKER B1 surface from the keep-alive slice; idempotent
+ *     replace(NULL).
+ *
+ *   - Tick decision tree (whitebox via internal header):
+ *       * test_tick_local_skip                 -- local dstore takes
+ *         the no-op fast path; ctx->skipped_local++.
+ *       * test_tick_nfsv3_in_backoff           -- NFSv3 dstore with
+ *         a future next_attempt_ns deadline never issues the NULL
+ *         RPC; ctx->reconnect_skipped_backoff++.
+ *       * test_tick_nfsv4_no_session_in_backoff -- NFSv4 dstore with
+ *         no session and a future deadline records both
+ *         skipped_no_session++ and reconnect_skipped_backoff++ and
+ *         does not call ds_session_create.
+ *
+ *   The "active RPC" branches (live SEQUENCE renewal, dead-session
+ *   reconnect, NFSv3 NULL fail -> dstore_reconnect, backoff
+ *   schedule advance after a failed connect) are NOT_NOW_BROWN_COW
+ *   here -- they require either a mock CLIENT* / mock
+ *   mds_session_create or a real DS fixture.  The chunk-collision
+ *   Track 2 bench (deploy/benchmark/run_chunk_collision_track2.sh)
+ *   exercises them end-to-end and is the canonical signal until a
+ *   mocked fixture lands.
  */
 
+/*
+ * The check-fixture setup/teardown brackets each test, but the
+ * RCU registration + trace init + nfs4 protocol register happen
+ * once per process inside reffs_test_run_suite (called via
+ * nfs4_test_run() in main).  We follow the dstore_test.c pattern
+ * for consistency: per-test nfs4_test_setup()/teardown() reaches
+ * through to the global init the first time and is idempotent on
+ * subsequent calls.
+ *
+ * The bare main() that ran srunner_create + srunner_run_all
+ * directly (without the harness) leaked every dstore_alloc'd
+ * entry under -fsanitize=address: dstore_release queues
+ * call_rcu(dstore_free_rcu), and without rcu_register_thread the
+ * callback never fires.  rcu_barrier in dstore_fini does nothing
+ * if the calling thread is unregistered.
+ */
 static void setup(void)
 {
+	nfs4_test_setup();
 	dstore_init();
 }
 
 static void teardown(void)
 {
 	/*
-	 * No-op fini: ds_renewal_stop must run before dstore_fini
-	 * so the next collect_all cannot outlive the hash table;
-	 * each test that starts the thread is responsible for
-	 * stopping it before returning.
+	 * dstore_fini drains the hash table and rcu_barriers pending
+	 * call_rcu callbacks.  Each test that starts the renewal thread
+	 * is responsible for ds_renewal_stop before returning so the
+	 * worker is joined before dstore_fini destroys the hash.
 	 */
 	dstore_fini();
+	nfs4_test_teardown();
 }
 
 /*
@@ -139,7 +180,15 @@ START_TEST(test_renewal_kick_resets_per_dstore_schedule)
 				     memory_order_acquire),
 		0);
 
-	dstore_unhash(ds);
+	/*
+	 * dstore_alloc returns refcount=2 (one for the hash table, one
+	 * for the caller -- see dstore.c:565-566).  Drop the caller ref;
+	 * dstore_fini's dstore_unload_all walks the hash and drops the
+	 * other one.  The earlier "unhash + put" pattern leaked because
+	 * unhash removes from the hash table without decrementing the
+	 * refcount, so put then dropped only the caller ref and the
+	 * orphaned hash ref kept the dstore alive past dstore_fini.
+	 */
 	dstore_put(ds);
 }
 END_TEST
@@ -196,7 +245,8 @@ START_TEST(test_session_borrow_release_replace_cycle)
 	rret = dstore_session_replace(ds, NULL);
 	ck_assert_int_eq(rret, 0);
 
-	dstore_unhash(ds);
+	/* See comment in test_renewal_kick_resets_per_dstore_schedule
+	 * for the dstore_alloc refcount-2 convention. */
 	dstore_put(ds);
 }
 END_TEST
@@ -233,7 +283,8 @@ START_TEST(test_renewal_kick_nfsv3_dstore_clears_schedule)
 				     memory_order_acquire),
 		0);
 
-	dstore_unhash(ds);
+	/* See comment in test_renewal_kick_resets_per_dstore_schedule
+	 * for the dstore_alloc refcount-2 convention. */
 	dstore_put(ds);
 }
 END_TEST
@@ -295,6 +346,134 @@ START_TEST(test_renewal_kick_during_running)
 }
 END_TEST
 
+/*
+ * Whitebox: local dstore takes the early no-op path in
+ * renewal_tick_one.  dstore_alloc with address="127.0.0.1" selects
+ * dstore_ops_local; the dispatcher recognises the vtable and bumps
+ * ctx->skipped_local without touching any other branch.  This is
+ * the path combined-mode reffsd takes: no socket to keep alive, so
+ * the renewal thread must skip cleanly.
+ */
+START_TEST(test_tick_local_skip)
+{
+	struct dstore *ds = dstore_alloc(200, "127.0.0.1", 0, "/test",
+					 REFFS_DS_PROTO_NFSV3, false, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert_ptr_eq(ds->ds_ops, &dstore_ops_local);
+
+	struct renewal_tick_ctx ctx = { 0 };
+
+	ds_renewal_tick_one(ds, &ctx);
+
+	ck_assert_uint_eq(ctx.skipped_local, 1);
+	ck_assert_uint_eq(ctx.skipped_no_session, 0);
+	ck_assert_uint_eq(ctx.reconnect_attempted, 0);
+	ck_assert_uint_eq(ctx.reconnect_skipped_backoff, 0);
+	ck_assert_uint_eq(ctx.v3_renewed, 0);
+	ck_assert_uint_eq(ctx.v3_failed, 0);
+	ck_assert_uint_eq(ctx.renewed, 0);
+	ck_assert_uint_eq(ctx.failed, 0);
+
+	dstore_put(ds);
+}
+END_TEST
+
+/*
+ * Whitebox: NFSv3 dstore with a future next_attempt_ns deadline
+ * takes the in-backoff early-return in renewal_tick_one_nfsv3 and
+ * issues NO NULL RPC.  This is the cooperative-throttle path that
+ * protects a wedged DS from a hammering renewal loop -- a failure
+ * here would let the worker thrash on a DS that just refused a
+ * connection.
+ *
+ * The dstore uses TEST-NET-1 (RFC 5737, 192.0.2.0/24) so the
+ * address is guaranteed non-local across hosts (no interface ever
+ * binds it), which keeps dstore_alloc's local-detection bypass
+ * from selecting dstore_ops_local.
+ */
+START_TEST(test_tick_nfsv3_in_backoff)
+{
+	struct dstore *ds = dstore_alloc(201, "192.0.2.1", 0, "/test",
+					 REFFS_DS_PROTO_NFSV3, false, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert_ptr_ne(ds->ds_ops, &dstore_ops_local);
+
+	/* Plant a deadline 1 hour out -- well past any test runtime. */
+	uint64_t now_ns = reffs_now_ns();
+
+	atomic_store_explicit(&ds->ds_reconnect_next_attempt_ns,
+			      now_ns + 3600ULL * 1000000000ULL,
+			      memory_order_release);
+	atomic_store_explicit(&ds->ds_reconnect_backoff_sec, 16,
+			      memory_order_release);
+
+	struct renewal_tick_ctx ctx = { 0 };
+
+	ds_renewal_tick_one(ds, &ctx);
+
+	ck_assert_uint_eq(ctx.reconnect_skipped_backoff, 1);
+	ck_assert_uint_eq(ctx.skipped_local, 0);
+	ck_assert_uint_eq(ctx.v3_renewed, 0);
+	ck_assert_uint_eq(ctx.v3_failed, 0);
+	ck_assert_uint_eq(ctx.reconnect_attempted, 0);
+	/* Skip path must NOT clear backoff state. */
+	ck_assert_uint_eq(atomic_load_explicit(&ds->ds_reconnect_backoff_sec,
+					       memory_order_acquire),
+			  16);
+
+	dstore_put(ds);
+}
+END_TEST
+
+/*
+ * Whitebox: NFSv4 dstore with no session AND a future deadline.
+ * dstore_session_borrow returns NULL (the slot was never published
+ * because do_mount=false), and the dispatcher's no-session arm
+ * checks the same per-dstore deadline.  Future deadline -> skipped,
+ * NO ds_session_create attempt.  This is the parked-by-prior-
+ * reconnect-failure steady state.
+ *
+ * Asserts both skipped_no_session and reconnect_skipped_backoff
+ * because the dispatcher bumps both -- the borrow returning NULL
+ * is independent of whether the deadline gates the reconnect.
+ */
+START_TEST(test_tick_nfsv4_no_session_in_backoff)
+{
+	struct dstore *ds = dstore_alloc(202, "192.0.2.2", 0, "/test",
+					 REFFS_DS_PROTO_NFSV4, false, false);
+
+	ck_assert_ptr_nonnull(ds);
+	ck_assert_ptr_ne(ds->ds_ops, &dstore_ops_local);
+
+	uint64_t now_ns = reffs_now_ns();
+
+	atomic_store_explicit(&ds->ds_reconnect_next_attempt_ns,
+			      now_ns + 3600ULL * 1000000000ULL,
+			      memory_order_release);
+	atomic_store_explicit(&ds->ds_reconnect_backoff_sec, 32,
+			      memory_order_release);
+
+	struct renewal_tick_ctx ctx = { 0 };
+
+	ds_renewal_tick_one(ds, &ctx);
+
+	ck_assert_uint_eq(ctx.skipped_no_session, 1);
+	ck_assert_uint_eq(ctx.reconnect_skipped_backoff, 1);
+	ck_assert_uint_eq(ctx.skipped_local, 0);
+	ck_assert_uint_eq(ctx.reconnect_attempted, 0);
+	ck_assert_uint_eq(ctx.renewed, 0);
+	ck_assert_uint_eq(ctx.failed, 0);
+	/* Skip path must NOT clear backoff state. */
+	ck_assert_uint_eq(atomic_load_explicit(&ds->ds_reconnect_backoff_sec,
+					       memory_order_acquire),
+			  32);
+
+	dstore_put(ds);
+}
+END_TEST
+
 static Suite *ds_renewal_suite(void)
 {
 	Suite *s = suite_create("ds_renewal");
@@ -310,19 +489,14 @@ static Suite *ds_renewal_suite(void)
 	tcase_add_test(tc, test_renewal_stop_before_start);
 	tcase_add_test(tc, test_renewal_immediate_stop);
 	tcase_add_test(tc, test_renewal_kick_during_running);
+	tcase_add_test(tc, test_tick_local_skip);
+	tcase_add_test(tc, test_tick_nfsv3_in_backoff);
+	tcase_add_test(tc, test_tick_nfsv4_no_session_in_backoff);
 	suite_add_tcase(s, tc);
 	return s;
 }
 
 int main(void)
 {
-	int failed;
-	Suite *s = ds_renewal_suite();
-	SRunner *sr = srunner_create(s);
-
-	srunner_run_all(sr, CK_NORMAL);
-	failed = srunner_ntests_failed(sr);
-	srunner_free(sr);
-
-	return failed ? 1 : 0;
+	return nfs4_test_run(ds_renewal_suite());
 }

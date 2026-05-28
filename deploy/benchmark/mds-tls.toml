@@ -36,6 +36,13 @@ type            = "posix"
 path            = "/tmp/reffs_mds_data"
 state_file      = "/tmp/reffs_mds_state"
 
+[mds]
+# Mirror the explicit interval on deploy/benchmark/mds.toml -- this
+# TLS variant exercises the same MDS-to-DS keep-alive contract, just
+# over the RPC-over-TLS xprt.  Comment on the non-TLS file
+# (mds.toml) carries the full rationale.
+ds_session_renewal_interval_sec = 30
+
 [[export]]
 path         = "/"
 layout_types = ["ffv1", "ffv2"]

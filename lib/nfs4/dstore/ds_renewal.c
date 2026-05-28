@@ -67,6 +67,7 @@
 #include "reffs/time.h"
 
 #include "ds_renewal.h"
+#include "ds_renewal_internal.h"
 
 /* NFSv3 keep-alive RPC timeout.  Short -- the renewal worker is the
  * only caller; we want quick failure detection so the next tick can
@@ -80,17 +81,13 @@ static pthread_mutex_t s_renewal_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_renewal_cv = PTHREAD_COND_INITIALIZER;
 static uint32_t s_renewal_interval_seconds;
 
-struct renewal_tick_ctx {
-	uint32_t renewed;
-	uint32_t failed;
-	uint32_t skipped_no_session;
-	uint32_t skipped_local; /* combined-mode local dstores need no keep-alive */
-	uint32_t reconnect_attempted;
-	uint32_t reconnect_succeeded;
-	uint32_t reconnect_skipped_backoff;
-	uint32_t v3_renewed;
-	uint32_t v3_failed;
-};
+/*
+ * struct renewal_tick_ctx lives in ds_renewal_internal.h so the
+ * whitebox unit tests (lib/nfs4/dstore/tests/ds_renewal_test.c)
+ * can read its counter fields after invoking renewal_tick_one
+ * directly.  Mirror of the lib/nfs4/ps/ps_renewal_internal.h
+ * pattern used by ps_reconnect_test.
+ */
 
 /*
  * NFSv3 keep-alive: send NFSPROC3_NULL on the cached CLIENT handle.
@@ -260,7 +257,7 @@ static void renewal_tick_one_nfsv3(struct dstore *ds,
  *
  * Returns nothing; caller updates ctx counters via the pointer.
  */
-static void renewal_tick_one(struct dstore *ds, struct renewal_tick_ctx *ctx)
+void ds_renewal_tick_one(struct dstore *ds, struct renewal_tick_ctx *ctx)
 {
 	if (!ds || !ctx)
 		return;
@@ -423,7 +420,7 @@ static void ds_renewal_one_tick(void)
 	for (uint32_t i = 0; i < n; i++) {
 		if (atomic_load_explicit(&s_renewal_running,
 					 memory_order_acquire))
-			renewal_tick_one(dss[i], &ctx);
+			ds_renewal_tick_one(dss[i], &ctx);
 		dstore_put(dss[i]);
 	}
 
