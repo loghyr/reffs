@@ -69,6 +69,7 @@ LOG_COMPILER = $(top_srcdir)/scripts/timed-test.sh
 
 TESTS = \
 	ec_pipeline_dispatch_test \
+	ec_pipeline_range_test \
 	ec_pipeline_stripe_test \
 	ps_discovery_test \
 	ps_inode_test \

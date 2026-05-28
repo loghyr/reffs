@@ -133,16 +133,38 @@ static int session_open(struct mds_session *ms, const char *mds_host)
 static int cmd_write(const char *mds_host, const char *nfs_file,
 		     const char *local_file, int k, int m,
 		     enum ec_codec_type codec_type, layouttype4 layout_type,
-		     size_t shard_size)
+		     size_t shard_size, uint64_t range_offset,
+		     size_t range_length)
 {
 	struct mds_session ms;
 	size_t data_len;
 	int ret;
+	bool range_mode = (range_offset != 0 || range_length != 0);
 
 	uint8_t *data = read_local_file(local_file, &data_len);
 
 	if (!data)
 		return 1;
+
+	if (range_mode) {
+		/*
+		 * Partial-range mode (Track 1b, see
+		 * .claude/design/chunk-collision-t1b.md): write
+		 * data[0..range_length) into the MDS file at
+		 * [range_offset, range_offset+range_length).
+		 * `--length 0` means "use the whole input file".
+		 */
+		if (range_length == 0)
+			range_length = data_len;
+		if (range_length > data_len) {
+			fprintf(stderr,
+				"ec_demo: --length %zu exceeds input size "
+				"%zu\n",
+				range_length, data_len);
+			free(data);
+			return 1;
+		}
+	}
 
 	ret = session_open(&ms, mds_host);
 	if (ret) {
@@ -151,10 +173,22 @@ static int cmd_write(const char *mds_host, const char *nfs_file,
 		return 1;
 	}
 
-	fprintf(stderr, "ec_demo: writing %zu bytes to %s (%d+%d, shard=%zu)\n",
-		data_len, nfs_file, k, m, shard_size);
-	ret = ec_write_codec(&ms, nfs_file, data, data_len, k, m, codec_type,
-			     layout_type, shard_size);
+	if (range_mode) {
+		fprintf(stderr,
+			"ec_demo: writing %zu bytes to %s at offset %llu "
+			"(%d+%d, shard=%zu, range mode)\n",
+			range_length, nfs_file,
+			(unsigned long long)range_offset, k, m, shard_size);
+		ret = ec_write_codec_range(&ms, nfs_file, data, range_length,
+					   range_offset, k, m, codec_type,
+					   layout_type, shard_size);
+	} else {
+		fprintf(stderr,
+			"ec_demo: writing %zu bytes to %s (%d+%d, shard=%zu)\n",
+			data_len, nfs_file, k, m, shard_size);
+		ret = ec_write_codec(&ms, nfs_file, data, data_len, k, m,
+				     codec_type, layout_type, shard_size);
+	}
 	if (ret)
 		fprintf(stderr, "ec_demo: write failed: %d\n", ret);
 	else
@@ -211,16 +245,44 @@ static int cmd_read(const char *mds_host, const char *nfs_file,
 static int cmd_verify(const char *mds_host, const char *nfs_file,
 		      const char *local_file, int k, int m,
 		      enum ec_codec_type codec_type, layouttype4 layout_type,
-		      uint64_t skip_ds_mask, size_t shard_size)
+		      uint64_t skip_ds_mask, size_t shard_size,
+		      uint64_t range_offset, size_t range_length)
 {
 	struct mds_session ms;
 	size_t orig_len;
 	int ret;
+	bool range_mode = (range_offset != 0 || range_length != 0);
+	size_t cmp_len;
 
 	uint8_t *orig = read_local_file(local_file, &orig_len);
 
 	if (!orig)
 		return 1;
+
+	if (range_mode) {
+		/*
+		 * Partial-range verify (Track 1b): read the MDS file
+		 * bytes [range_offset, range_offset+range_length) and
+		 * compare against orig[0..range_length).  Symmetric
+		 * with cmd_write: writers and verifiers pass the same
+		 * --offset and --length so their per-rank input
+		 * payloads stay aligned.  --length 0 means "use the
+		 * whole input file".
+		 */
+		if (range_length == 0)
+			range_length = orig_len;
+		if (range_length > orig_len) {
+			fprintf(stderr,
+				"ec_demo: --length %zu exceeds input size "
+				"%zu\n",
+				range_length, orig_len);
+			free(orig);
+			return 1;
+		}
+		cmp_len = range_length;
+	} else {
+		cmp_len = orig_len;
+	}
 
 	ret = session_open(&ms, mds_host);
 	if (ret) {
@@ -229,7 +291,7 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 		return 1;
 	}
 
-	uint8_t *buf = calloc(1, orig_len);
+	uint8_t *buf = calloc(1, cmp_len);
 
 	if (!buf) {
 		mds_session_destroy(&ms);
@@ -239,20 +301,34 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 
 	size_t out_len = 0;
 
-	fprintf(stderr, "ec_demo: verifying %s against %s (%d+%d, shard=%zu)\n",
-		nfs_file, local_file, k, m, shard_size);
-	ret = ec_read_codec(&ms, nfs_file, buf, orig_len, &out_len, k, m,
-			    codec_type, layout_type, skip_ds_mask, shard_size);
+	if (range_mode) {
+		fprintf(stderr,
+			"ec_demo: verifying %s at offset %llu len %zu "
+			"against %s (%d+%d, shard=%zu, range mode)\n",
+			nfs_file, (unsigned long long)range_offset, cmp_len,
+			local_file, k, m, shard_size);
+		ret = ec_read_codec_range(&ms, nfs_file, buf, cmp_len,
+					  range_offset, k, m, codec_type,
+					  layout_type, shard_size);
+		out_len = ret ? 0 : cmp_len;
+	} else {
+		fprintf(stderr,
+			"ec_demo: verifying %s against %s (%d+%d, shard=%zu)\n",
+			nfs_file, local_file, k, m, shard_size);
+		ret = ec_read_codec(&ms, nfs_file, buf, cmp_len, &out_len, k, m,
+				    codec_type, layout_type, skip_ds_mask,
+				    shard_size);
+	}
 	if (ret) {
 		fprintf(stderr, "ec_demo: read failed: %d\n", ret);
-	} else if (out_len < orig_len) {
+	} else if (out_len < cmp_len) {
 		fprintf(stderr,
 			"ec_demo: MISMATCH: read %zu bytes, expected %zu\n",
-			out_len, orig_len);
+			out_len, cmp_len);
 		ret = -1;
-	} else if (memcmp(orig, buf, orig_len) != 0) {
+	} else if (memcmp(orig, buf, cmp_len) != 0) {
 		/* Find first differing byte for diagnostic. */
-		for (size_t i = 0; i < orig_len; i++) {
+		for (size_t i = 0; i < cmp_len; i++) {
 			if (orig[i] != buf[i]) {
 				fprintf(stderr,
 					"ec_demo: MISMATCH at offset %zu: "
@@ -264,7 +340,7 @@ static int cmd_verify(const char *mds_host, const char *nfs_file,
 		ret = -1;
 	} else {
 		fprintf(stderr, "ec_demo: VERIFY OK (%zu bytes match)\n",
-			orig_len);
+			cmp_len);
 	}
 
 	free(buf);
@@ -739,7 +815,14 @@ static void usage(void)
 		"  --shard-size N   Per-data-shard byte size for EC"
 		" (default: 4096; must be a multiple of 8).\n"
 		"                   Use 24576 for the Mojette 24 KiB"
-		" demo at 96 KiB / k=4 payloads.\n");
+		" demo at 96 KiB / k=4 payloads.\n"
+		"  --offset OFF     Partial-range write / verify (Track 1b):\n"
+		"                   start byte offset in the MDS file.\n"
+		"                   Default 0.  --length defaults to the\n"
+		"                   input file size if omitted.\n"
+		"  --length LEN     Partial-range byte count.  Both --offset\n"
+		"                   and --length apply only to write /\n"
+		"                   verify; ignored elsewhere.\n");
 }
 
 static struct option long_options[] = {
@@ -760,6 +843,8 @@ static struct option long_options[] = {
 	{ "force-gd", no_argument, NULL, 'G' },
 	{ "sec", required_argument, NULL, 'x' },
 	{ "shard-size", required_argument, NULL, 'Z' },
+	{ "offset", required_argument, NULL, 'O' },
+	{ "length", required_argument, NULL, 'L' },
 	{ "help", no_argument, NULL, '?' },
 	{ NULL, 0, NULL, 0 },
 };
@@ -779,6 +864,8 @@ int main(int argc, char *argv[])
 	const char *client_id = NULL;
 	uint64_t skip_ds_mask = 0;
 	size_t shard_size = EC_SHARD_SIZE_DEFAULT;
+	uint64_t range_offset = 0;
+	size_t range_length = 0;
 	int opt;
 
 	if (argc < 2) {
@@ -794,7 +881,7 @@ int main(int argc, char *argv[])
 	optind = 1;
 
 	while ((opt = getopt_long(argc, argv,
-				  "h:f:i:o:k:m:s:C:c:d:l:S:x:Z:DFG?",
+				  "h:f:i:o:k:m:s:C:c:d:l:S:x:Z:O:L:DFG?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -901,6 +988,12 @@ int main(int argc, char *argv[])
 				return 1;
 			}
 			break;
+		case 'O':
+			range_offset = (uint64_t)strtoull(optarg, NULL, 0);
+			break;
+		case 'L':
+			range_length = (size_t)strtoull(optarg, NULL, 0);
+			break;
 		case 'x':
 			if (!strcasecmp(optarg, "sys"))
 				g_sec = EC_SEC_SYS;
@@ -996,7 +1089,8 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 		return cmd_write(mds_host, nfs_file, local_input, k, m,
-				 codec_type, layout_type, shard_size);
+				 codec_type, layout_type, shard_size,
+				 range_offset, range_length);
 	}
 
 	if (strcmp(cmd, "read") == 0) {
@@ -1016,7 +1110,7 @@ int main(int argc, char *argv[])
 		}
 		return cmd_verify(mds_host, nfs_file, local_input, k, m,
 				  codec_type, layout_type, skip_ds_mask,
-				  shard_size);
+				  shard_size, range_offset, range_length);
 	}
 
 	fprintf(stderr, "ec_demo: unknown command '%s'\n", cmd);

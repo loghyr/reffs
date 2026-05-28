@@ -698,6 +698,34 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 		  uint64_t skip_ds_mask, size_t shard_size);
 
 /*
+ * Partial-range variants -- chunk-collision Track 1b
+ * (.claude/design/chunk-collision-t1b.md).  Write or read
+ * `length` bytes of the file starting at `offset`, walking only
+ * the stripes the range touches.  The prefix and suffix stripes
+ * are RMW-merged via ec_read_stripe_with_file +
+ * ec_write_stripe_with_file; fully-dirty interior stripes go
+ * straight through ec_write_stripe_with_file.
+ *
+ * `length == 0` is a no-op success.  `offset + length` MUST NOT
+ * overflow uint64_t.  For the write side, `offset + length` MUST
+ * NOT exceed the existing file's logical size on the prefix /
+ * suffix stripes that need RMW -- sparse RMW is the
+ * per-stripe-primitive's NOT_NOW_BROWN_COW, so the harness
+ * pre-fills the file with a full-file ec_write_codec before any
+ * range writers start.  Each stripe is one LAYOUTGET /
+ * FINALIZE / COMMIT / LAYOUTRETURN cycle; the demo client cost
+ * model is correctness over throughput.
+ */
+int ec_write_codec_range(struct mds_session *ms, const char *path,
+			 const uint8_t *data, size_t length, uint64_t offset,
+			 int k, int m, enum ec_codec_type codec_type,
+			 layouttype4 layout_type, size_t shard_size);
+int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
+			size_t length, uint64_t offset, int k, int m,
+			enum ec_codec_type codec_type, layouttype4 layout_type,
+			size_t shard_size);
+
+/*
  * FH-anchored variant of ec_read_codec.  Skips the OPEN-by-path
  * dance (PUTROOTFH + LOOKUP* + OPEN + GETFH) and uses the caller-
  * provided mds_file directly.  The caller owns the mds_file's

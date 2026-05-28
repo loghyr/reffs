@@ -1937,6 +1937,216 @@ int ec_read_codec(struct mds_session *ms, const char *path, uint8_t *buf,
 }
 
 /* ------------------------------------------------------------------ */
+/* Partial-range I/O -- chunk-collision Track 1b                       */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Helper: compute the overlap of stripe `s` (covering
+ * [s*stripe_data, (s+1)*stripe_data) in the file) with the
+ * requested range [offset, offset+length).  Outputs are byte
+ * positions within the stripe and within the caller's data
+ * buffer; *sub_len is the count of bytes the caller cares about
+ * in stripe `s`.  Always non-zero for any stripe in
+ * [first_stripe, last_stripe].
+ */
+static void range_stripe_overlap(uint64_t s, size_t stripe_data,
+				 uint64_t offset, size_t length,
+				 size_t *sub_off_in_stripe,
+				 size_t *sub_off_in_data, size_t *sub_len)
+{
+	uint64_t stripe_base = s * (uint64_t)stripe_data;
+	uint64_t stripe_end = stripe_base + (uint64_t)stripe_data;
+	uint64_t range_end = offset + (uint64_t)length;
+	uint64_t sub_start = stripe_base > offset ? stripe_base : offset;
+	uint64_t sub_endx = stripe_end < range_end ? stripe_end : range_end;
+
+	*sub_off_in_stripe = (size_t)(sub_start - stripe_base);
+	*sub_off_in_data = (size_t)(sub_start - offset);
+	*sub_len = (size_t)(sub_endx - sub_start);
+}
+
+int ec_write_codec_range(struct mds_session *ms, const char *path,
+			 const uint8_t *data, size_t length, uint64_t offset,
+			 int k, int m, enum ec_codec_type codec_type,
+			 layouttype4 layout_type, size_t shard_size)
+{
+	struct mds_file mf;
+	uint8_t *scratch = NULL;
+	size_t stripe_data;
+	uint64_t end;
+	uint64_t first_stripe;
+	uint64_t last_stripe;
+	int ret;
+
+	if (length == 0)
+		return 0;
+	if (k < 1 || m < 0 || shard_size == 0 ||
+	    (shard_size % sizeof(uint64_t)) != 0 ||
+	    shard_size > EC_SHARD_SIZE_MAX)
+		return -EINVAL;
+
+	stripe_data = (size_t)k * shard_size;
+	if (stripe_data / shard_size != (size_t)k)
+		return -EINVAL; /* size_t overflow */
+	if (length > UINT64_MAX - offset)
+		return -EINVAL;
+	end = offset + (uint64_t)length;
+
+	first_stripe = offset / (uint64_t)stripe_data;
+	last_stripe = (end - 1) / (uint64_t)stripe_data;
+
+	ret = mds_file_open(ms, path, &mf);
+	if (ret) {
+		ec_log("ec_write_range: OPEN failed: %d\n", ret);
+		return ret;
+	}
+
+	scratch = malloc(stripe_data);
+	if (!scratch) {
+		ret = -ENOMEM;
+		goto out_close;
+	}
+
+	for (uint64_t s = first_stripe; s <= last_stripe; s++) {
+		size_t sub_off_stripe;
+		size_t sub_off_data;
+		size_t sub_len;
+		const uint8_t *write_payload;
+
+		range_stripe_overlap(s, stripe_data, offset, length,
+				     &sub_off_stripe, &sub_off_data, &sub_len);
+
+		if (sub_off_stripe == 0 && sub_len == stripe_data) {
+			/*
+			 * Fully-dirty stripe -- the caller's data covers
+			 * every byte of this stripe.  Hand straight to
+			 * the per-stripe primitive; no RMW prefix read.
+			 */
+			write_payload = data + sub_off_data;
+		} else {
+			/*
+			 * Partial stripe -- read the existing stripe,
+			 * overwrite the dirty range in place, write the
+			 * merged result.  Sparse RMW (file shorter than
+			 * the stripe end) is NOT_NOW_BROWN_COW per
+			 * ec_read_stripe_with_file's contract -- the
+			 * harness pre-fills the file with a full-file
+			 * write before any range writers start.
+			 */
+			ret = ec_read_stripe_with_file(ms, &mf, s, scratch,
+						       stripe_data, k, m,
+						       codec_type, layout_type,
+						       shard_size, NULL, NULL);
+			if (ret) {
+				ec_log("ec_write_range: RMW read stripe "
+				       "%llu failed: %d\n",
+				       (unsigned long long)s, ret);
+				goto out_free;
+			}
+			memcpy(scratch + sub_off_stripe, data + sub_off_data,
+			       sub_len);
+			write_payload = scratch;
+		}
+
+		ret = ec_write_stripe_with_file(ms, &mf, s, write_payload,
+						stripe_data, k, m, codec_type,
+						layout_type, shard_size, NULL,
+						NULL, NULL, NULL);
+		if (ret) {
+			ec_log("ec_write_range: write stripe %llu failed: "
+			       "%d\n",
+			       (unsigned long long)s, ret);
+			goto out_free;
+		}
+	}
+
+out_free:
+	free(scratch);
+out_close:
+	mds_file_close(ms, &mf);
+	return ret;
+}
+
+int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
+			size_t length, uint64_t offset, int k, int m,
+			enum ec_codec_type codec_type, layouttype4 layout_type,
+			size_t shard_size)
+{
+	struct mds_file mf;
+	uint8_t *scratch = NULL;
+	size_t stripe_data;
+	uint64_t end;
+	uint64_t first_stripe;
+	uint64_t last_stripe;
+	int ret;
+
+	/*
+	 * skip_ds_mask is intentionally absent.  Track 1b's harness only
+	 * uses healthy reads to assert the post-write state of each
+	 * writer's range; degraded-read tolerance is the
+	 * full-file ec_read_codec's concern.
+	 * ec_read_stripe_with_file does not expose a per-stripe skip
+	 * mask, so adding one here would be misleading.
+	 */
+
+	if (length == 0)
+		return 0;
+	if (k < 1 || m < 0 || shard_size == 0 ||
+	    (shard_size % sizeof(uint64_t)) != 0 ||
+	    shard_size > EC_SHARD_SIZE_MAX)
+		return -EINVAL;
+
+	stripe_data = (size_t)k * shard_size;
+	if (stripe_data / shard_size != (size_t)k)
+		return -EINVAL;
+	if (length > UINT64_MAX - offset)
+		return -EINVAL;
+	end = offset + (uint64_t)length;
+
+	first_stripe = offset / (uint64_t)stripe_data;
+	last_stripe = (end - 1) / (uint64_t)stripe_data;
+
+	ret = mds_file_open(ms, path, &mf);
+	if (ret) {
+		ec_log("ec_read_range: OPEN failed: %d\n", ret);
+		return ret;
+	}
+
+	scratch = malloc(stripe_data);
+	if (!scratch) {
+		ret = -ENOMEM;
+		goto out_close;
+	}
+
+	for (uint64_t s = first_stripe; s <= last_stripe; s++) {
+		size_t sub_off_stripe;
+		size_t sub_off_data;
+		size_t sub_len;
+
+		range_stripe_overlap(s, stripe_data, offset, length,
+				     &sub_off_stripe, &sub_off_data, &sub_len);
+
+		ret = ec_read_stripe_with_file(ms, &mf, s, scratch, stripe_data,
+					       k, m, codec_type, layout_type,
+					       shard_size, NULL, NULL);
+		if (ret) {
+			ec_log("ec_read_range: read stripe %llu failed: "
+			       "%d\n",
+			       (unsigned long long)s, ret);
+			goto out_free;
+		}
+
+		memcpy(buf + sub_off_data, scratch + sub_off_stripe, sub_len);
+	}
+
+out_free:
+	free(scratch);
+out_close:
+	mds_file_close(ms, &mf);
+	return ret;
+}
+
+/* ------------------------------------------------------------------ */
 /* Backward-compatible wrappers (default to Reed-Solomon)              */
 /* ------------------------------------------------------------------ */
 
