@@ -17,6 +17,7 @@
  */
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,6 +27,8 @@
 #include "reffs/dstore_ops.h"
 #include "reffs/layout_segment.h"
 #include "reffs/log.h"
+
+#include "ds_renewal.h"
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -57,60 +60,59 @@ static int add_seq_putfh(struct mds_compound *mc, struct mds_session *ms,
  * -EIO on RPC or compound-level failure.
  */
 /*
- * send_and_check_ds -- send a compound + reconnect-on-BADSESSION.
+ * send_and_check_ds -- send a compound on a borrowed session,
+ * classify the reply, surface dead-session via *dead_out.
  *
- * If the DS replies NFS4ERR_BADSESSION on SEQUENCE (the MDS-to-DS
- * session got expired or evicted -- typically because ec_demo's
- * client sessions to the same DS have crowded the DS's session
- * table), tear down our session, reconnect, patch the SEQUENCE
- * args in the compound with the new sessionid + slot seqid, and
- * resend once.  If the resend also fails, give up with -EIO.
+ * Keep-alive slice rewrite:
  *
- * This is the Phase 2 fix for the round-2-and-on regression seen
- * in the slice 1.5/1.6 N=20 v2 race sweep: round 1's race fired a
- * REVOKE_STATEID fan-out that hit BADSESSION on every DS, prior
- * trust entries persisted, and every subsequent client's
- * CHUNK_WRITE got rejected with BAD_STATEID for layouts whose
- * stateid the MDS thought it had registered.
+ *   OLD behavior (BADSESSION on SEQUENCE -> inline ds_session_destroy
+ *   + ds_session_create + retry) was a band-aid for the 601s idle
+ *   timeout that the keep-alive thread now fixes at the source.  It
+ *   also could not coexist with the BLOCKER B1 rwlock pattern:
+ *   inline ds_session_create needs the wrlock (via
+ *   dstore_session_replace) while the caller of this helper is
+ *   already holding the rdlock (via dstore_session_borrow), which
+ *   is a guaranteed self-deadlock under any rdlock-then-wrlock
+ *   policy.
+ *
+ *   NEW contract:
+ *     - Caller borrows the session pointer (dstore_session_borrow)
+ *       and passes it as `ms`.  No fresh dereference of
+ *       ds->ds_v4_session inside this helper.
+ *     - On success: returns 0; *dead_out is false.
+ *     - On non-dead failure (e.g., NFS4ERR_PERM, NFS4ERR_ACCESS):
+ *       returns -EIO; *dead_out is false; caller handles per-op.
+ *     - On dead-session classification (BADSESSION, DEADSESSION,
+ *       STALE_CLIENTID, BAD_SESSION_DIGEST, or a fatal -errno from
+ *       the transport):  returns -EIO; *dead_out is true.  Caller
+ *       MUST drop the borrow, call dstore_session_replace(ds, NULL)
+ *       to park the pointer, and ds_renewal_kick(ds) to wake the
+ *       renewal thread for reconnect.
+ *
+ * The classifier is the canonical mds_session_is_dead() promoted
+ * from ps_state.c in commit 2bac5feb7085.
+ *
+ * Rationale for moving park+kick to the caller rather than doing
+ * it here: this helper runs UNDER the caller's rdlock, so it
+ * cannot itself acquire the wrlock that replace needs.  The
+ * caller pattern (borrow -> send -> release -> maybe park+kick)
+ * makes the lock transition explicit at one well-marked point.
  */
-static int send_and_check_ds(struct mds_compound *mc, struct dstore *ds)
+static int send_and_check_ds(struct mds_compound *mc, struct dstore *ds,
+			     struct mds_session *ms, bool *dead_out)
 {
-	struct mds_session *ms = ds->ds_v4_session;
 	int ret = mds_compound_send(mc, ms);
 
-	if (ret == -EREMOTEIO && mc->mc_res.status == NFS4ERR_BADSESSION) {
-		LOG("dstore[%u]: BADSESSION on MDS-to-DS session, "
-		    "reconnecting and retrying once",
-		    ds->ds_id);
-		ds_session_destroy(ds);
-		if (ds_session_create(ds) < 0) {
-			LOG("dstore[%u]: BADSESSION reconnect failed",
-			    ds->ds_id);
-			return -EIO;
-		}
+	if (dead_out)
+		*dead_out = false;
 
-		/* New session -- patch SEQUENCE op (always op 0 in our
-		 * compounds) with the new sessionid + slot seqid before
-		 * resending.
-		 */
-		ms = ds->ds_v4_session;
-		if (mc->mc_args.argarray.argarray_len > 0) {
-			nfs_argop4 *seq = &mc->mc_args.argarray.argarray_val[0];
-			if (seq->argop == OP_SEQUENCE) {
-				SEQUENCE4args *sa =
-					&seq->nfs_argop4_u.opsequence;
-
-				memcpy(sa->sa_sessionid, ms->ms_sessionid,
-				       sizeof(sessionid4));
-				sa->sa_sequenceid = ms->ms_slot_seqid;
-			}
-		}
-
-		/* Drop the previous (BADSESSION) reply before retry. */
-		xdr_free((xdrproc_t)xdr_COMPOUND4res, (caddr_t)&mc->mc_res);
-		memset(&mc->mc_res, 0, sizeof(mc->mc_res));
-
-		ret = mds_compound_send(mc, ms);
+	if (mds_session_is_dead(ret, mc->mc_res.status)) {
+		LOG("dstore[%u]: MDS-to-DS session dead "
+		    "(ret=%d status=%u) -- caller will park + kick renewal",
+		    ds->ds_id, ret, (unsigned)mc->mc_res.status);
+		if (dead_out)
+			*dead_out = true;
+		return -EIO;
 	}
 
 	if (ret) {
@@ -129,6 +131,40 @@ static int send_and_check_ds(struct mds_compound *mc, struct dstore *ds)
 	return 0;
 }
 
+/*
+ * ds_after_send -- post-borrow cleanup for control-plane ops.
+ *
+ * Every ops function in this file follows the same shape:
+ *   1. ms = dstore_session_borrow(ds)
+ *   2. build + send via send_and_check_ds (may set dead=true)
+ *   3. dstore_session_release(ds)
+ *   4. if dead, park + kick renewal
+ *
+ * This helper folds steps 3-4 into one call so the boilerplate
+ * does not multiply across 14 ops sites.  ms is taken as a
+ * parameter so the helper can be a no-op when the caller never
+ * acquired the borrow (e.g., the leading !ms guard returned
+ * -ENOTCONN before any work was queued).
+ */
+static void ds_after_send(struct dstore *ds, struct mds_session *ms, bool dead)
+{
+	if (!ms)
+		return;
+	dstore_session_release(ds);
+	if (dead) {
+		/*
+		 * Park the session pointer so subsequent ops short-circuit
+		 * to -ENOTCONN until the renewal thread reconnects.
+		 * dstore_session_replace takes the wrlock, destroys the
+		 * old session OUTSIDE the lock.  Idempotent across
+		 * concurrent dead-classifications: the loser observes
+		 * old_session == NULL and the destroy block is a no-op.
+		 */
+		dstore_session_replace(ds, NULL);
+		ds_renewal_kick(ds);
+	}
+}
+
 /* ------------------------------------------------------------------ */
 /* CREATE                                                              */
 /* ------------------------------------------------------------------ */
@@ -137,10 +173,11 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 			uint32_t dir_fh_len, const char *name, uint8_t *out_fh,
 			uint32_t *out_fh_len)
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
@@ -161,8 +198,10 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 	 * follow-on; not blocking Phase 2 bring-up.
 	 */
 	ret = mds_compound_init(&mc, 4, "ds_create");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, dir_fh, dir_fh_len))
 		goto err;
@@ -197,9 +236,10 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 	if (!mds_compound_add_op(&mc, OP_GETFH))
 		goto err;
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	if (ret) {
 		mds_compound_fini(&mc);
+		ds_after_send(ds, ms, dead);
 		return ret;
 	}
 
@@ -221,10 +261,12 @@ static int nfsv4_create(struct dstore *ds, const uint8_t *dir_fh,
 	}
 
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return ret;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -235,17 +277,20 @@ err:
 static int nfsv4_remove(struct dstore *ds, const uint8_t *dir_fh,
 			uint32_t dir_fh_len, const char *name)
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
 
 	ret = mds_compound_init(&mc, 3, "ds_remove");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, dir_fh, dir_fh_len))
 		goto err;
@@ -259,12 +304,14 @@ static int nfsv4_remove(struct dstore *ds, const uint8_t *dir_fh,
 	ra->target.utf8string_val = (char *)name;
 	ra->target.utf8string_len = strlen(name);
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return ret;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -275,10 +322,11 @@ err:
 static int nfsv4_getattr(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 			 struct layout_data_file *ldf)
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms) {
 		ldf->ldf_stale = true;
@@ -287,8 +335,10 @@ static int nfsv4_getattr(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 
 	/* SEQUENCE + PUTFH + GETATTR(size, mode, uid, gid, times) */
 	ret = mds_compound_init(&mc, 3, "ds_getattr");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, fh, fh_len))
 		goto err;
@@ -309,10 +359,11 @@ static int nfsv4_getattr(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	ga->attr_request.bitmap4_len = 2;
 	ga->attr_request.bitmap4_val = attr_bits;
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	if (ret) {
 		ldf->ldf_stale = true;
 		mds_compound_fini(&mc);
+		ds_after_send(ds, ms, dead);
 		return ret;
 	}
 
@@ -353,11 +404,13 @@ static int nfsv4_getattr(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	}
 
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return ret;
 
 err:
 	ldf->ldf_stale = true;
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -368,18 +421,21 @@ err:
 static int nfsv4_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 		       struct dstore_wcc *wcc __attribute__((unused)))
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
 
 	/* SEQUENCE + PUTFH + SETATTR(mode=0640) */
 	ret = mds_compound_init(&mc, 3, "ds_chmod");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, fh, fh_len))
 		goto err;
@@ -408,12 +464,14 @@ static int nfsv4_chmod(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	sa->obj_attributes.attr_vals.attrlist4_len = 4;
 	sa->obj_attributes.attr_vals.attrlist4_val = mode_buf;
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return ret;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -425,18 +483,21 @@ static int nfsv4_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 			  uint64_t size,
 			  struct dstore_wcc *wcc __attribute__((unused)))
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
 
 	/* SEQUENCE + PUTFH + SETATTR(size) */
 	ret = mds_compound_init(&mc, 3, "ds_truncate");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, fh, fh_len))
 		goto err;
@@ -463,12 +524,14 @@ static int nfsv4_truncate(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	sa->obj_attributes.attr_vals.attrlist4_len = 8;
 	sa->obj_attributes.attr_vals.attrlist4_val = size_buf;
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return ret;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -481,9 +544,10 @@ static int nfsv4_fence(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 		       uint32_t fence_max,
 		       struct dstore_wcc *wcc __attribute__((unused)))
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
@@ -504,18 +568,22 @@ static int nfsv4_fence(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 
 	/* Send a no-op compound to keep the session alive. */
 	ret = mds_compound_init(&mc, 2, "ds_fence");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, fh, fh_len))
 		goto err;
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return ret;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -528,17 +596,20 @@ static ssize_t nfsv4_read(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 			  uint32_t uid __attribute__((unused)),
 			  uint32_t gid __attribute__((unused)))
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
 
 	ret = mds_compound_init(&mc, 3, "ds_read");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, fh, fh_len))
 		goto err;
@@ -553,9 +624,10 @@ static ssize_t nfsv4_read(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	ra->offset = offset;
 	ra->count = (uint32_t)(len > UINT32_MAX ? UINT32_MAX : len);
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	if (ret) {
 		mds_compound_fini(&mc);
+		ds_after_send(ds, ms, dead);
 		return ret;
 	}
 
@@ -575,10 +647,12 @@ static ssize_t nfsv4_read(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	}
 
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return bytes_read;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -592,17 +666,20 @@ static ssize_t nfsv4_write(struct dstore *ds, const uint8_t *fh,
 			   uint32_t uid __attribute__((unused)),
 			   uint32_t gid __attribute__((unused)))
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
 
 	ret = mds_compound_init(&mc, 3, "ds_write");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, fh, fh_len))
 		goto err;
@@ -619,9 +696,10 @@ static ssize_t nfsv4_write(struct dstore *ds, const uint8_t *fh,
 	wa->data.data_val = (char *)buf;
 	wa->data.data_len = (uint32_t)(len > UINT32_MAX ? UINT32_MAX : len);
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	if (ret) {
 		mds_compound_fini(&mc);
+		ds_after_send(ds, ms, dead);
 		return ret;
 	}
 
@@ -636,10 +714,12 @@ static ssize_t nfsv4_write(struct dstore *ds, const uint8_t *fh,
 	}
 
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return bytes_written;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -650,17 +730,20 @@ err:
 static int nfsv4_commit(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 			uint64_t offset, uint32_t count)
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
 
 	ret = mds_compound_init(&mc, 3, "ds_commit");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, fh, fh_len))
 		goto err;
@@ -674,12 +757,14 @@ static int nfsv4_commit(struct dstore *ds, const uint8_t *fh, uint32_t fh_len,
 	ca->offset = offset;
 	ca->count = count;
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return ret;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -700,7 +785,16 @@ err:
  */
 static int nfsv4_probe_tight_coupling(struct dstore *ds)
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	/*
+	 * Special case: called from dstore_alloc() during initial session
+	 * bring-up.  At that moment ds is not yet visible to any other
+	 * thread, so the borrow is functionally a plain read -- but we
+	 * still go through dstore_session_borrow so the lock-ordering
+	 * audit ("every ds_v4_session reader holds the rdlock") is true
+	 * by inspection rather than by argument.  The borrow is also
+	 * defensive against future callers (e.g. an admin re-probe op).
+	 */
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
@@ -716,8 +810,10 @@ static int nfsv4_probe_tight_coupling(struct dstore *ds)
 	 * That error code is the capability probe signal.
 	 */
 	ret = mds_compound_init(&mc, 3, "ds_probe_tight_coupling");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (mds_compound_add_sequence(&mc, ms))
 		goto err;
@@ -760,10 +856,20 @@ static int nfsv4_probe_tight_coupling(struct dstore *ds)
 	/* else ret == -EIO: RPC transport failure */
 
 	mds_compound_fini(&mc);
+	/*
+	 * Probe path does its own classification (does NOT route through
+	 * send_and_check_ds), so dead-session detection is not wired
+	 * here.  This is correct: the probe runs once at session
+	 * bring-up, never on the hot path -- if the DS is dead at that
+	 * moment ds_session_create's caller treats the probe failure as
+	 * "no tight coupling", not as a session-killer signal.
+	 */
+	dstore_session_release(ds);
 	return ret;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -777,18 +883,21 @@ static int nfsv4_trust_stateid(struct dstore *ds, const uint8_t *fh,
 			       int64_t expire_sec, uint32_t expire_nsec,
 			       const char *principal)
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
 
 	/* SEQUENCE + PUTFH + TRUST_STATEID */
 	ret = mds_compound_init(&mc, 3, "ds_trust_stateid");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, fh, fh_len))
 		goto err;
@@ -813,12 +922,14 @@ static int nfsv4_trust_stateid(struct dstore *ds, const uint8_t *fh,
 		ta->tsa_principal.utf8string_len = 0;
 	}
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return ret;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -829,18 +940,21 @@ static int nfsv4_revoke_stateid(struct dstore *ds, const uint8_t *fh,
 				uint32_t fh_len, uint32_t stid_seqid,
 				const uint8_t *stid_other)
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
 
 	/* SEQUENCE + PUTFH + REVOKE_STATEID */
 	ret = mds_compound_init(&mc, 3, "ds_revoke_stateid");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (add_seq_putfh(&mc, ms, fh, fh_len))
 		goto err;
@@ -854,12 +968,14 @@ static int nfsv4_revoke_stateid(struct dstore *ds, const uint8_t *fh,
 	ra->rsa_layout_stateid.seqid = stid_seqid;
 	memcpy(ra->rsa_layout_stateid.other, stid_other, NFS4_OTHER_SIZE);
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return ret;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 
@@ -873,18 +989,21 @@ err:
  */
 static int nfsv4_bulk_revoke_stateid(struct dstore *ds, uint64_t clientid)
 {
-	struct mds_session *ms = ds->ds_v4_session;
+	struct mds_session *ms = dstore_session_borrow(ds);
 	struct mds_compound mc;
 	nfs_argop4 *slot;
 	int ret;
+	bool dead = false;
 
 	if (!ms)
 		return -ENOTCONN;
 
 	/* SEQUENCE + BULK_REVOKE_STATEID (no PUTFH) */
 	ret = mds_compound_init(&mc, 2, "ds_bulk_revoke_stateid");
-	if (ret)
+	if (ret) {
+		dstore_session_release(ds);
 		return ret;
+	}
 
 	if (mds_compound_add_sequence(&mc, ms))
 		goto err;
@@ -898,12 +1017,14 @@ static int nfsv4_bulk_revoke_stateid(struct dstore *ds, uint64_t clientid)
 
 	ba->brsa_clientid = clientid;
 
-	ret = send_and_check_ds(&mc, ds);
+	ret = send_and_check_ds(&mc, ds, ms, &dead);
 	mds_compound_fini(&mc);
+	ds_after_send(ds, ms, dead);
 	return ret;
 
 err:
 	mds_compound_fini(&mc);
+	dstore_session_release(ds);
 	return -ENOSPC;
 }
 

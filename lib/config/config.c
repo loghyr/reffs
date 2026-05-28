@@ -546,6 +546,32 @@ int reffs_config_load(struct reffs_config *cfg, const char *path)
 	if (tbl)
 		parse_iouring(cfg, tbl);
 
+	/*
+	 * [mds] section.  MDS-only tuning.  At present a single key:
+	 * ds_session_renewal_interval_sec controls the MDS-to-DS
+	 * NFSv4.2 session keep-alive cadence.  Absent = boot-path
+	 * default (server_lease_time / 3 with 30s floor).  Explicit 0
+	 * disables the keep-alive thread entirely; we record the
+	 * "explicit" intent in ds_session_renewal_explicit_zero so
+	 * reffsd's boot path can distinguish absent (apply default)
+	 * from present-and-zero (honour opt-out).
+	 */
+	tbl = toml_table_in(root, "mds");
+	if (tbl) {
+		toml_datum_t d =
+			toml_int_in(tbl, "ds_session_renewal_interval_sec");
+
+		if (d.ok) {
+			if (d.u.i < 0)
+				cfg->mds.ds_session_renewal_interval_sec = 0;
+			else
+				cfg->mds.ds_session_renewal_interval_sec =
+					(uint32_t)d.u.i;
+			cfg->mds.ds_session_renewal_explicit_zero =
+				(d.u.i == 0);
+		}
+	}
+
 	arr = toml_array_in(root, "export");
 	if (arr) {
 		nexports = toml_array_nelem(arr);

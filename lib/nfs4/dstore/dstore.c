@@ -79,6 +79,21 @@ static void dstore_free_rcu(struct rcu_head *rcu)
 	if (ds->ds_clnt)
 		clnt_destroy(ds->ds_clnt);
 	pthread_mutex_destroy(&ds->ds_clnt_mutex);
+	/*
+	 * Keep-alive slice: destroy the rwlock that protected
+	 * ds_v4_session.  Lifetime guarantee: by the time this RCU
+	 * callback runs, refcount has hit zero AND a grace period has
+	 * elapsed; all rdlock holders (borrowers) and wrlock holders
+	 * (reconnect / shutdown) had to drop their dstore ref before
+	 * the refcount could reach zero, so no thread can hold the
+	 * rwlock at this point regardless of whether ds_v4_session
+	 * itself is still installed.  (The v4 session pointer is
+	 * NOT_NOW_BROWN_COW: a separate slice will wire
+	 * ds_session_destroy into dstore_unload_all to drop the
+	 * session cleanly at shutdown; that is a pre-existing leak
+	 * the keep-alive slice does not introduce or fix.)
+	 */
+	pthread_rwlock_destroy(&ds->ds_v4_session_rwlock);
 	free(ds);
 }
 
@@ -445,6 +460,17 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 	strncpy(ds->ds_address, address, sizeof(ds->ds_address) - 1);
 	strncpy(ds->ds_path, path, sizeof(ds->ds_path) - 1);
 	pthread_mutex_init(&ds->ds_clnt_mutex, NULL);
+	/*
+	 * Keep-alive slice: rwlock protects ds_v4_session.  Atomic backoff
+	 * fields default to 0 from calloc (no current backoff, next attempt
+	 * is "now"); explicit init for clarity and future-proofing if calloc
+	 * semantics change.  See struct dstore in lib/include/reffs/dstore.h.
+	 */
+	pthread_rwlock_init(&ds->ds_v4_session_rwlock, NULL);
+	atomic_store_explicit(&ds->ds_reconnect_backoff_sec, 0,
+			      memory_order_relaxed);
+	atomic_store_explicit(&ds->ds_reconnect_next_attempt_ns, 0,
+			      memory_order_relaxed);
 
 	/*
 	 * Trust-stateid slice 1.5: opt-in tight-coupling for NFSv3
@@ -531,6 +557,7 @@ struct dstore *dstore_alloc(uint32_t id, const char *address, uint16_t port,
 		if (ds->ds_clnt)
 			clnt_destroy(ds->ds_clnt);
 		pthread_mutex_destroy(&ds->ds_clnt_mutex);
+		pthread_rwlock_destroy(&ds->ds_v4_session_rwlock);
 		free(ds);
 		return NULL;
 	}

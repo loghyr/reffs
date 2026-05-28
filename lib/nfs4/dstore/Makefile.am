@@ -19,4 +19,4 @@ AM_CFLAGS = -I$(top_srcdir)/lib/include \
 # &dstore_ops_local` address comparisons that would silently fail
 # across copies.  Single shared-lib instance fixes both.
 lib_LTLIBRARIES = libreffs_dstore.la
-libreffs_dstore_la_SOURCES = dstore.c dstore_fanout.c dstore_ops_nfsv3.c dstore_ops_nfsv4.c dstore_ops_local.c dstore_wcc.c runway.c ds_session.c
+libreffs_dstore_la_SOURCES = dstore.c dstore_fanout.c dstore_ops_nfsv3.c dstore_ops_nfsv4.c dstore_ops_local.c dstore_wcc.c runway.c ds_session.c ds_renewal.c

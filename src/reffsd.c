@@ -60,6 +60,7 @@
 #include "reffs/dstore.h"
 #include "reffs/runway.h"
 #include "reffs/settings.h"
+#include "ds_renewal.h"
 #include "ec_client.h"
 #include "ps_discovery.h"
 #include "ps_renewal.h"
@@ -1153,6 +1154,46 @@ int main(int argc, char *argv[])
 	}
 
 	/*
+	 * Start the MDS-to-DS session keepalive thread.  Same
+	 * motivation as the PS keep-alive above: each NFSv4 dstore
+	 * holds a long-lived MDS-to-DS session for control-plane
+	 * fan-out (fence / chmod / getattr / reflected GETATTR) and
+	 * InBand I/O proxy; without periodic SEQUENCE renewals the DS
+	 * expires the session and the next fan-out fails with
+	 * NFS4ERR_BADSESSION -- exactly the chunk-collision Track 2
+	 * Criterion 1 cascade observed on bench-4.
+	 *
+	 * Interval: TOML [mds] ds_session_renewal_interval_sec overrides
+	 * the default of server_lease_time(ss) / 3.  An explicit 0 in
+	 * config disables the keep-alive entirely (opt-out for
+	 * deployments without NFSv4 dstores or for benchmark isolation).
+	 * Skip start if no dstores are configured -- mirrors the PS
+	 * "no [[proxy_mds]]" short-circuit above.
+	 */
+	if ((cfg.role == REFFS_ROLE_MDS || cfg.role == REFFS_ROLE_COMBINED) &&
+	    cfg.ndata_servers > 0) {
+		uint32_t interval = cfg.mds.ds_session_renewal_interval_sec;
+
+		if (interval == 0 &&
+		    !cfg.mds.ds_session_renewal_explicit_zero) {
+			interval = server_lease_time(ss) / 3;
+			if (interval < 30)
+				interval = 30;
+		}
+
+		int drret = ds_renewal_start(interval);
+
+		if (drret < 0)
+			LOG("ds_renewal_start failed: %d (MDS-to-DS sessions "
+			    "may expire under low fan-out traffic)",
+			    drret);
+		else if (interval > 0)
+			TRACE("ds_renewal: keepalive thread running, "
+			      "interval=%us",
+			      interval);
+	}
+
+	/*
 	 * Skip rpcbind registration entirely when [server]
 	 * register_with_rpcbind = false.  See
 	 * .claude/design/no-rpcbind.md: NFSv4 uses well-known port 2049
@@ -1424,8 +1465,18 @@ out:
 		nfs4_protocol_deregister();
 
 		if (cfg.role == REFFS_ROLE_MDS ||
-		    cfg.role == REFFS_ROLE_COMBINED)
+		    cfg.role == REFFS_ROLE_COMBINED) {
+			/*
+			 * Stop the MDS-to-DS keep-alive thread BEFORE
+			 * dstore_fini, by symmetry with the ps_renewal_stop
+			 * call above: ds_renewal_stop joins the worker so
+			 * the next dstore_collect_all snapshot cannot
+			 * outlive the dstore hash table.  Idempotent and
+			 * safe even when the thread was never started.
+			 */
+			ds_renewal_stop();
 			dstore_fini();
+		}
 		client_unload_all_clients();
 
 		server_state_fini(ss);

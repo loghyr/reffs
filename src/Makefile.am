@@ -16,6 +16,7 @@ AM_CFLAGS = \
 	-I$(top_srcdir)/lib/nlm		\
 	-I$(top_srcdir)/lib/nsm		\
 	-I$(top_srcdir)/lib/nfs4/client	\
+	-I$(top_srcdir)/lib/nfs4/dstore	\
 	-I$(top_srcdir)/lib/nfs4/ps	\
 	-I$(top_builddir)/lib/xdr	\
 	-I$(top_srcdir)/third_party/tomlc99	\

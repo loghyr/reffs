@@ -72,8 +72,41 @@ struct dstore {
 	 * NFSv4.2 session for control-plane + InBand I/O (nfsv4 vtable).
 	 * The MDS acts as a plain NFSv4 client (USE_NON_PNFS) to the DS.
 	 * NULL when the dstore uses NFSv3 or local VFS.
+	 *
+	 * Synchronised by ds_v4_session_rwlock (keep-alive slice B1 fix):
+	 * - Readers (control-plane ops, InBand I/O, renewal tick) take
+	 *   the rdlock via dstore_session_borrow() and hold it across the
+	 *   RPC, then release via dstore_session_release().  This pins
+	 *   the pointer for the duration of the call.
+	 * - Reconnect / shutdown take the wrlock via dstore_session_replace()
+	 *   to swap or NULL the pointer.  The old session is destroyed
+	 *   OUTSIDE the wlock so a DESTROY_SESSION RPC does not block
+	 *   every borrower for RPC-timeout-many seconds.
+	 *
+	 * See .claude/design/mds-ds-session-keepalive.md "BLOCKER B1".
+	 * Mirrors the ps_listener_session_* pattern at
+	 * lib/nfs4/ps/ps_state.c.
 	 */
 	struct mds_session *ds_v4_session;
+	pthread_rwlock_t ds_v4_session_rwlock;
+
+	/*
+	 * Renewal / reconnect backoff state (keep-alive slice).
+	 *
+	 * ds_reconnect_backoff_sec is the current delay (0, 1, 2, 4, 8,
+	 * 16, 32, 60-capped).  Bumped by mds_reconnect_backoff_next()
+	 * on every dead-session classification; reset to 0 by
+	 * mds_reconnect_backoff_reset() after a successful renewal or
+	 * reconnect.
+	 *
+	 * ds_reconnect_next_attempt_ns is the CLOCK_MONOTONIC ns deadline
+	 * before which the renewal thread skips this dstore.  Computed
+	 * as reffs_now_ns() + backoff_sec*1e9 when a dead session is
+	 * observed.  Relaxed memory order -- read-mostly hot path,
+	 * dirty reads are tolerated (worst case: one extra skipped tick).
+	 */
+	_Atomic uint32_t ds_reconnect_backoff_sec;
+	_Atomic uint64_t ds_reconnect_next_attempt_ns;
 
 	/* RCU + refcount infrastructure */
 	struct rcu_head ds_rcu;
@@ -178,9 +211,52 @@ struct dstore *dstore_find(uint32_t id);
  * ds_session_create -- establish an NFSv4.2 session to a DS.
  * Used for NFSv4 dstores (control plane + InBand I/O).
  * Sets ds->ds_v4_session and ds->ds_root_fh on success.
+ *
+ * Keep-alive slice: this is the legacy entrypoint used at
+ * dstore_alloc() time when no other thread can yet see ds.  The
+ * renewal / reconnect path goes through dstore_session_replace()
+ * which serialises pointer publication via ds_v4_session_rwlock.
  */
 int ds_session_create(struct dstore *ds);
 void ds_session_destroy(struct dstore *ds);
+
+/*
+ * Borrow / release the NFSv4.2 session pointer under
+ * ds_v4_session_rwlock.  Mirrors ps_listener_session_borrow / release
+ * (lib/nfs4/ps/ps_state.c:507-549) but takes a struct dstore *
+ * directly because callers already hold an RCU ref via dstore_find().
+ *
+ * Pairing contract:
+ *   ms = dstore_session_borrow(ds);
+ *   if (!ms) return NFS4ERR_DELAY;
+ *   ... use ms for one RPC round-trip ...
+ *   dstore_session_release(ds);
+ *
+ * Never hold the borrow across two RPCs (a slow remote DS would
+ * starve dstore_session_replace and stall every reconnect attempt
+ * across the renewal thread).
+ *
+ * borrow returns NULL when:
+ *   - ds is NULL,
+ *   - the dstore has no NFSv4 session yet (NFSv3 or local dstore),
+ *   - the previous session was torn down (reconnect in progress).
+ * On NULL return, the rwlock is NOT held -- do not call release.
+ */
+struct mds_session *dstore_session_borrow(struct dstore *ds);
+void dstore_session_release(struct dstore *ds);
+
+/*
+ * Atomically swap the NFSv4.2 session pointer.  Takes the wrlock,
+ * publishes new_session (may be NULL to "park" the dstore during
+ * reconnect), releases the wrlock, then destroys the OLD session
+ * outside the lock -- mds_session_destroy sends DESTROY_SESSION
+ * + DESTROY_CLIENTID and on a dead DS that round-trip blocks for
+ * RPC-timeout-many seconds; holding the wrlock that long stalls
+ * every borrower.
+ *
+ * Returns 0 on success, -EINVAL if ds is NULL.
+ */
+int dstore_session_replace(struct dstore *ds, struct mds_session *new_session);
 
 /* Bump / drop ref.  NULL-safe. */
 struct dstore *dstore_get(struct dstore *ds);

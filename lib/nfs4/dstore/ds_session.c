@@ -42,8 +42,19 @@ int ds_session_create(struct dstore *ds)
 	struct mds_session *ms;
 	int ret;
 
-	if (ds->ds_v4_session)
-		return 0; /* already connected */
+	/*
+	 * Already-connected short-circuit.  Read via the borrow accessor
+	 * so concurrent reconnect (renewal thread) cannot swap the
+	 * pointer between this check and the early return.  Release
+	 * immediately -- we only consult the pointer to decide whether
+	 * to skip work, we don't hold ms across any RPC here.
+	 */
+	struct mds_session *existing = dstore_session_borrow(ds);
+
+	if (existing) {
+		dstore_session_release(ds);
+		return 0;
+	}
 
 	ms = calloc(1, sizeof(*ms));
 	if (!ms)
@@ -145,7 +156,15 @@ int ds_session_create(struct dstore *ds)
 	__atomic_or_fetch(&ds->ds_state, DSTORE_IS_MOUNTED, __ATOMIC_RELEASE);
 
 	mds_compound_fini(&mc);
-	ds->ds_v4_session = ms;
+	/*
+	 * Publish the new session via the wrlock-taking accessor.  Any
+	 * pre-existing session pointer (e.g., after a reconnect that
+	 * parked the slot to NULL) is destroyed outside the wlock by
+	 * dstore_session_replace itself.  On the initial bring-up from
+	 * dstore_alloc the slot is NULL, so the destroy block is a
+	 * no-op.
+	 */
+	(void)dstore_session_replace(ds, ms);
 
 	/*
 	 * Capability probe: send TRUST_STATEID with anonymous stateid.
@@ -175,10 +194,89 @@ fh_err:
 
 void ds_session_destroy(struct dstore *ds)
 {
-	if (!ds->ds_v4_session)
-		return;
+	/*
+	 * Park the slot via the wrlock-taking accessor.  Replace with
+	 * NULL atomically publishes the absence to all future borrowers,
+	 * then destroys the old session outside the wlock.  Idempotent:
+	 * second call observes old_session == NULL and is a no-op.
+	 */
+	(void)dstore_session_replace(ds, NULL);
+}
 
-	mds_session_destroy(ds->ds_v4_session);
-	free(ds->ds_v4_session);
-	ds->ds_v4_session = NULL;
+/* ------------------------------------------------------------------ */
+/* Borrow / release / replace under ds_v4_session_rwlock              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The borrow / release / replace pattern closes a pre-existing latent
+ * UAF window where dstore_ops_nfsv4 callers dereferenced
+ * ds->ds_v4_session without synchronisation against reconnect.  See
+ * .claude/design/mds-ds-session-keepalive.md "BLOCKER B1" and the
+ * mirror implementation at lib/nfs4/ps/ps_state.c:507-607 -- the
+ * shape is identical; we replicate it (rather than share code) because
+ * the dstore has no listener-id indirection (callers already hold the
+ * struct dstore *) and the gate condition is "pointer non-NULL",
+ * not "listener RUNNING".
+ */
+
+struct mds_session *dstore_session_borrow(struct dstore *ds)
+{
+	if (!ds)
+		return NULL;
+
+	pthread_rwlock_rdlock(&ds->ds_v4_session_rwlock);
+
+	/*
+	 * Load the pointer UNDER the rdlock so dstore_session_replace
+	 * cannot swap it out from under us.  No separate "state"
+	 * acquire-load needed -- a NULL pointer already encodes the
+	 * "parked during reconnect" state (replace publishes NULL
+	 * before destroying the old session).
+	 */
+	struct mds_session *ms = ds->ds_v4_session;
+
+	if (!ms) {
+		pthread_rwlock_unlock(&ds->ds_v4_session_rwlock);
+		return NULL;
+	}
+	return ms;
+}
+
+void dstore_session_release(struct dstore *ds)
+{
+	if (!ds)
+		return;
+	pthread_rwlock_unlock(&ds->ds_v4_session_rwlock);
+}
+
+int dstore_session_replace(struct dstore *ds, struct mds_session *new_session)
+{
+	if (!ds)
+		return -EINVAL;
+
+	pthread_rwlock_wrlock(&ds->ds_v4_session_rwlock);
+	struct mds_session *old_session = ds->ds_v4_session;
+
+	ds->ds_v4_session = new_session;
+	pthread_rwlock_unlock(&ds->ds_v4_session_rwlock);
+
+	/*
+	 * Destroy the old session OUTSIDE the wrlock.  See the mirror
+	 * rationale in lib/nfs4/ps/ps_state.c:589-605:
+	 *   1. mds_session_destroy issues DESTROY_SESSION +
+	 *      DESTROY_CLIENTID -- RPC-timeout-many seconds on a wedged
+	 *      DS.  Holding the wrlock that long blocks every new
+	 *      borrower; replace calls would also serialise on each
+	 *      other through destroy.
+	 *   2. By the time we get here, no thread can reach the old
+	 *      session via ds_v4_session: the publish-pointer was
+	 *      cleared under the wlock above, and existing borrowers
+	 *      still hold the rdlock -- our wrlock acquisition above
+	 *      already waited them out.
+	 */
+	if (old_session) {
+		mds_session_destroy(old_session);
+		free(old_session);
+	}
+	return 0;
 }

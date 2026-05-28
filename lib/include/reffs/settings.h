@@ -315,6 +315,28 @@ struct reffs_config {
 	/* [[allowed_ps]] -- MDS-side allowlist for PROXY_REGISTRATION */
 	struct reffs_allowed_ps_config allowed_ps[REFFS_CONFIG_MAX_ALLOWED_PS];
 	unsigned int nallowed_ps;
+
+	/*
+	 * [mds] -- MDS-side tuning that does not belong in [server]
+	 * (server is generic across roles).  Keep-alive slice landed
+	 * the first knob here; future MDS-only options (e.g. fan-out
+	 * worker pool sizes) extend this struct.
+	 */
+	struct {
+		/*
+		 * MDS-to-DS NFSv4.2 session keep-alive interval in seconds.
+		 * 0 disables the keep-alive thread entirely (opt-out for
+		 * NFSv3-only dstores or for benchmark isolation runs).
+		 * Default (when the config line is ABSENT): the reffsd
+		 * boot path computes server_lease_time(ss) / 3 with a 30s
+		 * floor.  When the line is PRESENT and set to 0, the
+		 * thread does not start; explicit_zero distinguishes
+		 * "absent" from "explicit zero" so the boot-path default
+		 * fires only on absence.
+		 */
+		uint32_t ds_session_renewal_interval_sec;
+		bool ds_session_renewal_explicit_zero;
+	} mds;
 };
 
 /*
