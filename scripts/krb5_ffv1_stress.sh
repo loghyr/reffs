@@ -23,14 +23,21 @@ principals=
 ec_demo=./build/tools/ec_demo
 local_input=
 size=$((10 * 1024 * 1024))
-# Default to a single mirror (k=1, m=0) -- matches the common
-# "one DS per share" Anvil configuration this stress targets.
-# RS 4+2 still works (override with --k 4 --m 2) but needs the
-# share to back the layout with at least 6 DSes; on a 1-DS share
-# ec_demo bails with "need 6 mirrors, got 1" -- EINVAL.
+# Default to a single mirror with the `mirror` codec (k=1, m=0)
+# -- matches the common "one DS per share" Anvil configuration
+# this stress targets.  The `mirror` codec (lib/ec/mirror.c) does
+# "N replicas, no parity transform"; with k=1 the encoder's copy
+# loop runs zero times so it degenerates to a plain write to the
+# single DS, which is exactly what a 1-DS share can back.  The
+# EC codecs (rs, mojette-sys, mojette-nonsys) require m >= 1 per
+# ec_demo's validator -- m=0 is degenerate for erasure coding
+# since "no parity shards" means there's nothing to recover from.
+# RS 4+2 still works (override with --codec rs --k 4 --m 2) but
+# needs the share to back the layout with at least 6 DSes; on a
+# 1-DS share ec_demo bails with "need 6 mirrors, got 1" -- EINVAL.
 k=1
 m=0
-codec=rs
+codec=mirror
 sec=krb5
 
 usage() {
@@ -43,7 +50,8 @@ Usage: krb5_ffv1_stress.sh --server <host[:port]>
                            [--input <file>]    (else generate --size of urandom)
                            [--size <bytes>]    (default 10 MB)
                            [--k <K>] [--m <M>] (default 1+0)
-                           [--codec rs|mojette-sys|mojette-nonsys|stripe]
+                           [--codec rs|mojette-sys|mojette-nonsys|stripe|mirror]
+                                                            (default mirror)
                            [--sec krb5|krb5i|krb5p]   (default krb5)
 
 Drives N krb5-authenticated NFSv4.2 clients at an external FFv1
