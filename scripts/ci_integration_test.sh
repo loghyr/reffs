@@ -244,6 +244,13 @@ section_start "NFSv4 identity test"
 EC_DEMO="env ASAN_OPTIONS=detect_leaks=0 $BUILD_DIR/tools/ec_demo"
 MDS="127.0.0.1"
 
+# Make libtool's in-tree .libs/ visible to the inner ELF; see
+# krb5_ffv1_stress.sh for the full rationale.
+if [ -d "$BUILD_DIR/lib" ]; then
+	_extra=$(find "$BUILD_DIR" -type d -name '.libs' 2>/dev/null | paste -sd:)
+	[ -n "$_extra" ] && export LD_LIBRARY_PATH="$_extra${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 # All operations via ec_demo userspace client -- no kernel mount needed.
 # Use configure.ac from the git clone test (already on the server).
 

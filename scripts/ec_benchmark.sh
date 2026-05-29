@@ -47,6 +47,16 @@ done
 
 EC_DEMO="${1:-/build/tools/ec_demo}"
 MDS="${2:-localhost}"
+
+# Make libtool's in-tree .libs/ visible to the inner ELF; see
+# krb5_ffv1_stress.sh for the full rationale.  No-op when running
+# inside the Docker container where libs live at /build/lib/*/.libs.
+_build_root=$(cd "$(dirname "$EC_DEMO")/.." 2>/dev/null && pwd)
+if [ -n "$_build_root" ] && [ -d "$_build_root/lib" ]; then
+	_extra=$(find "$_build_root" -type d -name '.libs' 2>/dev/null | paste -sd:)
+	[ -n "$_extra" ] && export LD_LIBRARY_PATH="$_extra${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 RUNS=5
 WARMUP=2
 # File sizes (bytes) are env-overridable so wrapper scripts can

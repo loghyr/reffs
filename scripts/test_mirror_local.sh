@@ -47,6 +47,14 @@ die() {
 [ -x "$EC_DEMO" ] || die "ec_demo not executable: $EC_DEMO"
 [ "$MIRRORS" -ge 2 ] || die "MIRRORS must be >= 2 (got $MIRRORS)"
 
+# Make libtool's in-tree .libs/ visible to the inner ELF; see
+# krb5_ffv1_stress.sh for the full rationale.
+_build_root=$(cd "$(dirname "$EC_DEMO")/.." 2>/dev/null && pwd)
+if [ -n "$_build_root" ] && [ -d "$_build_root/lib" ]; then
+	_extra=$(find "$_build_root" -type d -name '.libs' 2>/dev/null | paste -sd:)
+	[ -n "$_extra" ] && export LD_LIBRARY_PATH="$_extra${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 run_dir=$(mktemp -d /tmp/test_mirror.XXXXXX)
 keep_dir=0
 reffsd_pid=0

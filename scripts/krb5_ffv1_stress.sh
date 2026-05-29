@@ -98,6 +98,28 @@ done
 command -v kinit >/dev/null 2>&1 || die "kinit not in PATH"
 
 # --------------------------------------------------------------------
+# Make sure the libtool .libs/ dirs are on LD_LIBRARY_PATH.
+#
+# When ec_demo runs from an in-tree build, the libtool wrapper at
+# build/tools/ec_demo is supposed to set LD_LIBRARY_PATH before
+# exec'ing the inner ELF in build/tools/.libs/.  Two ways that
+# falls over:
+#   - the wrapper got replaced by a `make install` relink (now a
+#     stub that just execs without env-fixing), and
+#   - the script's `exec "$ec_demo"` for the verify pass inherits
+#     whatever LD_LIBRARY_PATH the parent shell had, not the
+#     wrapper-set one.
+# Cover both by inferring the build root from $ec_demo and prefixing
+# every .libs/ dir.  No-op if user already exported LD_LIBRARY_PATH.
+build_root=$(cd "$(dirname "$ec_demo")/.." 2>/dev/null && pwd)
+if [ -n "$build_root" ] && [ -d "$build_root/lib" ]; then
+	extra=$(find "$build_root" -type d -name '.libs' 2>/dev/null | paste -sd:)
+	if [ -n "$extra" ]; then
+		export LD_LIBRARY_PATH="$extra${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+	fi
+fi
+
+# --------------------------------------------------------------------
 # Read the principals file.
 
 declare -a princ_names princ_pws
