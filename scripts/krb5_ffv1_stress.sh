@@ -97,6 +97,18 @@ done
 [ -r "$principals" ]  || die "principals file not readable: $principals"
 command -v kinit >/dev/null 2>&1 || die "kinit not in PATH"
 
+# Default port to 2049 if the caller didn't pass one.  Hammerspace
+# Anvil-class MDSes (the intended target for this stress) do not
+# register with rpcbind, so ec_demo's portmap-driven clnt_create
+# path (lib/nfs4/client/mds_session.c mds_session_clnt_open) fails
+# with ECONNREFUSED on port 111 before any NFS-port traffic ever
+# leaves the host.  Appending :2049 makes ec_demo take the
+# explicit-port branch and connect straight TCP via clnttcp_create.
+case "$server" in
+	*:*) ;;  # caller already specified host:port
+	*)   server="${server}:2049" ;;
+esac
+
 # --------------------------------------------------------------------
 # Make sure the libtool .libs/ dirs are on LD_LIBRARY_PATH.
 #
