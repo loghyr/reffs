@@ -1803,6 +1803,61 @@ uint32_t nfs4_op_layoutreturn(struct compound *compound)
 	}
 
 	/*
+	 * Validate the layout-type-specific lrf_body BEFORE either
+	 * the proxy-SB forward path or the local processing path
+	 * uses it.  For LAYOUTRETURN4_FILE on a Flex Files variant,
+	 * lrf_body encodes ff_layoutreturn4 (RFC 8435 5.4) or
+	 * ffv2_layoutreturn4 -- both two var-length arrays.  An
+	 * empty-arrays body is still 8 bytes on the wire (two
+	 * 4-byte length-zero counts); anything shorter, or anything
+	 * that xdr_*_layoutreturn4 cannot decode, is malformed and
+	 * must be rejected.
+	 *
+	 * Historically reffs's own client (lib/nfs4/client/mds_layout.c)
+	 * sent length-zero here and reffs's server silently tolerated
+	 * it -- the asymmetry only surfaced when QA pointed ec_demo
+	 * at a strict server (Hammerspace Anvil), which correctly
+	 * returned NFS4ERR_BADXDR via its layoutreturn_prep validator.
+	 * Enforce the spec here too so future malformed senders get
+	 * the same diagnostic against reffs that they get elsewhere.
+	 */
+	if (args->lora_layoutreturn.lr_returntype == LAYOUTRETURN4_FILE) {
+		layoutreturn_file4 *_lrf =
+			&args->lora_layoutreturn.layoutreturn4_u.lr_layout;
+		XDR _xdrs;
+		bool _ok = true;
+
+		xdrmem_create(&_xdrs, _lrf->lrf_body.lrf_body_val,
+			      _lrf->lrf_body.lrf_body_len, XDR_DECODE);
+		if (args->lora_layout_type == LAYOUT4_FLEX_FILES) {
+			ff_layoutreturn4 _fflr;
+
+			memset(&_fflr, 0, sizeof(_fflr));
+			_ok = xdr_ff_layoutreturn4(&_xdrs, &_fflr);
+			if (_ok)
+				xdr_free((xdrproc_t)xdr_ff_layoutreturn4,
+					 (caddr_t)&_fflr);
+		} else if (args->lora_layout_type == LAYOUT4_FLEX_FILES_V2) {
+			ffv2_layoutreturn4 _fflr;
+
+			memset(&_fflr, 0, sizeof(_fflr));
+			_ok = xdr_ffv2_layoutreturn4(&_xdrs, &_fflr);
+			if (_ok)
+				xdr_free((xdrproc_t)xdr_ffv2_layoutreturn4,
+					 (caddr_t)&_fflr);
+		}
+		xdr_destroy(&_xdrs);
+		if (!_ok) {
+			TRACE("LAYOUTRETURN: malformed lrf_body for layout type"
+			      " %d (%u bytes)",
+			      args->lora_layout_type,
+			      _lrf->lrf_body.lrf_body_len);
+			*status = NFS4ERR_BADXDR;
+			return 0;
+		}
+	}
+
+	/*
 	 * Proxy-SB fast path (task #150): forward LAYOUTRETURN to the
 	 * upstream MDS so it can free the layout state it issued via
 	 * the forwarded LAYOUTGET.  Foundation stub returns -ENOSYS ->
