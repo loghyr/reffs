@@ -53,12 +53,26 @@ static gss_OID_desc krb5oid_desc = {
 #include <openssl/ssl.h>
 
 #include "nfsv42_xdr.h"
+#include "nfsv42_names.h"
 #include "nfs4/proxy_deviceid.h"
 #include "reffs/filehandle.h"
 #include "reffs/settings.h"
 #include "reffs/tls_client.h"
 #include "ec_client.h"
 #include "mds_tls_xprt.h"
+
+/*
+ * Surface the upstream nfsstat4 by symbolic name when we are about
+ * to collapse it to -EREMOTEIO.  Without this, callers see "-121"
+ * and have no way to tell NFS4ERR_PERM (Anvil strict-port reject)
+ * from NFS4ERR_WRONGSEC, NFS4ERR_DELAY, NFS4ERR_RESOURCE, etc.
+ * which all collapse to the same default in nfs4_to_errno.
+ */
+static void mds_log_nfs4_err(const char *op, const char *level, nfsstat4 status)
+{
+	fprintf(stderr, "ec_demo: %s %s status %s (%u)\n", op, level,
+		nfs4_err_name(status), status);
+}
 
 /* ------------------------------------------------------------------ */
 /* EXCHANGE_ID                                                         */
@@ -130,6 +144,7 @@ static int mds_exchange_id(struct mds_session *ms)
 
 	if (mc.mc_res.status != NFS4_OK ||
 	    mc.mc_res.resarray.resarray_len < 1) {
+		mds_log_nfs4_err("EXCHANGE_ID", "compound", mc.mc_res.status);
 		mds_compound_fini(&mc);
 		return -EREMOTEIO;
 	}
@@ -138,6 +153,7 @@ static int mds_exchange_id(struct mds_session *ms)
 	EXCHANGE_ID4res *eid_res = &res_slot->nfs_resop4_u.opexchange_id;
 
 	if (eid_res->eir_status != NFS4_OK) {
+		mds_log_nfs4_err("EXCHANGE_ID", "op", eid_res->eir_status);
 		mds_compound_fini(&mc);
 		return -EREMOTEIO;
 	}
@@ -226,6 +242,8 @@ static int mds_create_session(struct mds_session *ms)
 
 	if (mc.mc_res.status != NFS4_OK ||
 	    mc.mc_res.resarray.resarray_len < 1) {
+		mds_log_nfs4_err("CREATE_SESSION", "compound",
+				 mc.mc_res.status);
 		mds_compound_fini(&mc);
 		return -EREMOTEIO;
 	}
@@ -234,6 +252,7 @@ static int mds_create_session(struct mds_session *ms)
 	CREATE_SESSION4res *cs_res = &res_slot->nfs_resop4_u.opcreate_session;
 
 	if (cs_res->csr_status != NFS4_OK) {
+		mds_log_nfs4_err("CREATE_SESSION", "op", cs_res->csr_status);
 		mds_compound_fini(&mc);
 		return -EREMOTEIO;
 	}
