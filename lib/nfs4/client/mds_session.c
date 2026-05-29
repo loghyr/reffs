@@ -911,6 +911,33 @@ static CLIENT *mds_session_clnt_open(const char *host)
 
 	if (fd < 0)
 		return NULL;
+
+	/*
+	 * Best-effort: bind to a reserved source port (< 1024) before
+	 * connecting.  Some NFS servers -- notably Hammerspace Anvil
+	 * with `protod_config_nfs_strict_port_checking` enabled --
+	 * reject any client whose source port is >= 1024 with
+	 * NFS4ERR_PERM at the compound-level hook, before EXCHANGE_ID
+	 * even runs.  The libtirpc clnt_create path uses bindresvport
+	 * automatically; this explicit-port branch (added for PS
+	 * deployments where the listener does not register with
+	 * portmap) skips that and would otherwise get an ephemeral
+	 * port from the kernel, tripping strict servers.
+	 *
+	 * Failure on EACCES/EPERM (running non-root) is non-fatal: we
+	 * fall through to the kernel-assigned port and only strict
+	 * servers will reject -- which they would have done anyway.
+	 * Other failures (rare) get a one-line warning so the operator
+	 * is not surprised when the connect succeeds but the server
+	 * rejects at EXCHANGE_ID.
+	 */
+	if (bindresvport(fd, NULL) < 0 && errno != EACCES && errno != EPERM)
+		fprintf(stderr,
+			"ec_demo: bindresvport failed (%s); strict-port "
+			"servers (e.g. Hammerspace Anvil) will reject the "
+			"connection with NFS4ERR_PERM\n",
+			strerror(errno));
+
 	if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
 		close(fd);
 		return NULL;
