@@ -23,8 +23,13 @@ principals=
 ec_demo=./build/tools/ec_demo
 local_input=
 size=$((10 * 1024 * 1024))
-k=4
-m=2
+# Default to a single mirror (k=1, m=0) -- matches the common
+# "one DS per share" Anvil configuration this stress targets.
+# RS 4+2 still works (override with --k 4 --m 2) but needs the
+# share to back the layout with at least 6 DSes; on a 1-DS share
+# ec_demo bails with "need 6 mirrors, got 1" -- EINVAL.
+k=1
+m=0
 codec=rs
 sec=krb5
 
@@ -37,7 +42,7 @@ Usage: krb5_ffv1_stress.sh --server <host[:port]>
                            [--ec-demo <path>]   (default ./build/tools/ec_demo)
                            [--input <file>]    (else generate --size of urandom)
                            [--size <bytes>]    (default 10 MB)
-                           [--k <K>] [--m <M>] (default 4+2)
+                           [--k <K>] [--m <M>] (default 1+0)
                            [--codec rs|mojette-sys|mojette-nonsys|stripe]
                            [--sec krb5|krb5i|krb5p]   (default krb5)
 
