@@ -536,8 +536,39 @@ int mds_layout_return(struct mds_session *ms, struct mds_file *mf,
 	lrf->lrf_offset = 0;
 	lrf->lrf_length = 0xFFFFFFFFFFFFFFFFULL;
 	memcpy(&lrf->lrf_stateid, &layout->el_stateid, sizeof(stateid4));
-	lrf->lrf_body.lrf_body_len = 0;
-	lrf->lrf_body.lrf_body_val = NULL;
+
+	/*
+	 * lrf_body is layout-type-specific (RFC 8881 18.44.1).  For
+	 * the Flex Files variants -- FFv1 (RFC 8435 5.4) and FFv2
+	 * (draft-haynes-nfsv4-flexfiles-v2) -- it's a struct with two
+	 * variable-length-array fields (ioerr / iostats reports).
+	 * When the client has nothing to report, both arrays are
+	 * empty, but the body still encodes to EIGHT bytes on the
+	 * wire: two 4-byte length-zero counts.  Sending an empty
+	 * opaque (lrf_body_len = 0) is a wire-encoding error: the
+	 * outer opaque parses fine but the layout-type-specific
+	 * decoder fails on a zero-byte input.
+	 *
+	 * reffs's own server tolerates the empty form, which is why
+	 * this slipped through; Hammerspace Anvil correctly rejects
+	 * with NFS4ERR_BADXDR (layoutreturn_prep validator).
+	 */
+	static char empty_ff_body[8] = { 0 }; /* two XDR-length-zero arrays */
+
+	switch (lr_args->lora_layout_type) {
+	case LAYOUT4_FLEX_FILES:
+	case LAYOUT4_FLEX_FILES_V2:
+		lrf->lrf_body.lrf_body_len = sizeof(empty_ff_body);
+		lrf->lrf_body.lrf_body_val = empty_ff_body;
+		break;
+	default:
+		/* Unknown layout types -- best-effort empty body.  May
+		 * be rejected by strict servers; ec_demo only issues
+		 * Flex Files layouts today so this default is unused. */
+		lrf->lrf_body.lrf_body_len = 0;
+		lrf->lrf_body.lrf_body_val = NULL;
+		break;
+	}
 
 	ret = mds_compound_send_with_auth(&mc, ms, creds);
 	mds_compound_fini(&mc);
