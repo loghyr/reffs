@@ -1230,7 +1230,8 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 }
 
 int mds_session_create_sec_spn(struct mds_session *ms, const char *host,
-			       enum ec_sec_flavor sec, const char *spn)
+			       enum ec_sec_flavor sec,
+			       const char *spn __attribute__((unused)))
 {
 #ifdef REFFS_HAVE_GSS_RPC
 	if (sec == EC_SEC_SYS)
@@ -1356,7 +1357,6 @@ err:
 	return ret;
 #else
 	(void)sec;
-	(void)spn;
 	return mds_session_create(ms, host);
 #endif
 }

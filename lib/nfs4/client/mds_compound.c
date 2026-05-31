@@ -21,6 +21,7 @@
 #include <rpc/rpc.h>
 
 #include "nfsv42_xdr.h"
+#include "nfsv42_names.h"
 #include "ec_client.h"
 
 #define MDS_RPC_TIMEOUT_SEC 30
@@ -219,8 +220,52 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 		goto out;
 	}
 
-	if (mc->mc_res.status != NFS4_OK)
+	if (mc->mc_res.status != NFS4_OK) {
+		/*
+		 * Surface which op failed and the symbolic NFS4ERR_* name
+		 * before collapsing every COMPOUND-level non-OK to -121
+		 * (-EREMOTEIO).  Without this, callers (mds_file_open,
+		 * mds_layoutget, mds_write, ...) only see a generic -121
+		 * with no attribution -- and the QA reproducer for the
+		 * krb5 multi-mount stress lived in that fog window for
+		 * a while.
+		 *
+		 * NFSv4 stops on first error per RFC 8881 sec 2.10.6.4,
+		 * so the failing op is the last entry in resarray.  When
+		 * resarray_len == 0 (no op processed -- server rejected
+		 * before dispatch, e.g. NFS4ERR_MINOR_VERS_MISMATCH), we
+		 * print "(no op)" instead of dereferencing.
+		 */
+		nfs_opnum4 failing_op = 0;
+		const char *op_name = "(no op)";
+		uint32_t nres = mc->mc_res.resarray.resarray_len;
+
+		if (nres > 0) {
+			failing_op =
+				mc->mc_res.resarray.resarray_val[nres - 1].resop;
+			op_name = nfs4_op_name(failing_op);
+		}
+
+		/*
+		 * Tag distinguishes the endpoint by convention -- "open",
+		 * "layoutget", "exchange_id", ...  go to the MDS; tags
+		 * with the "chunk_" or "ds_" prefix go to a data server.
+		 * Caller of mds_compound_init sets the tag; this log
+		 * thus carries enough to disambiguate MDS vs DS.
+		 */
+		fprintf(stderr,
+			"mds_compound_send: COMPOUND tag=\"%.*s\" "
+			"op[%u]=%s(%u) status=%s(%u)\n",
+			(int)mc->mc_args.tag.utf8string_len,
+			mc->mc_args.tag.utf8string_val ?
+				mc->mc_args.tag.utf8string_val :
+				"",
+			nres ? nres - 1 : 0, op_name, (unsigned int)failing_op,
+			nfs4_err_name(mc->mc_res.status),
+			(unsigned int)mc->mc_res.status);
+
 		ret = -EREMOTEIO;
+	}
 
 out:
 	return ret;
