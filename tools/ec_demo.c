@@ -32,6 +32,7 @@
  * with "no change" -- the current posture is correct for a demo CLI.
  */
 
+#include <dirent.h>
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
@@ -41,7 +42,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
@@ -159,6 +163,94 @@ static int g_nsessions = 1;
 static char **g_spn_list;
 static int g_spn_list_n;
 
+/*
+ * Optional directory of pre-baked Kerberos credential caches for
+ * per-worker initiator-identity rotation under `burst`.  Parsed
+ * from --ccache-dir DIR at flag-time.
+ *
+ * Driver: the customer load shape is many concurrent mounts, each
+ * with its own machine-account ccache provisioned out of band (the
+ * K8s "kerberos operator" model where each pod gets a pre-baked
+ * krb5.ccache from a Kubernetes secret).  Each distinct initiator
+ * principal lands in the server-side identmap path independently,
+ * which is the wire pattern this stress generator drives at scale.
+ *
+ * Worker i picks g_ccache_list[i % g_ccache_n] as its KRB5CCNAME.
+ *
+ * --ccache-dir implies forked-worker mode rather than the threaded
+ * default: setenv(KRB5CCNAME) is process-wide on glibc and libkrb5
+ * resolves the ccache name at gss_acquire_cred time, so threaded
+ * workers cannot each carry a distinct ccache without serialising
+ * around the env-var assignment (which would defeat the burst).
+ * Forked workers each have their own envp and their own libkrb5
+ * context, which also more faithfully mirrors the per-pod
+ * one-process-per-identity shape on the wire.
+ */
+static const char *g_ccache_dir;
+static char **g_ccache_list;
+static int g_ccache_n;
+
+/*
+ * Scan g_ccache_dir for regular files and populate g_ccache_list.
+ * Skips dotfiles and non-regular entries.  Each ccache path stored
+ * is the full absolute path the child will pass to setenv.
+ *
+ * Returns 0 with g_ccache_n > 0 on success, -errno on failure.
+ * Does not validate that each file is a parseable krb5_cc -- a bad
+ * ccache surfaces as a per-worker handshake failure with the
+ * symbolic auth_stat name from the central log, which is the right
+ * diagnostic shape.
+ */
+static int load_ccache_dir(const char *dir)
+{
+	DIR *d = opendir(dir);
+
+	if (!d) {
+		fprintf(stderr, "ec_demo: cannot opendir(%s): %s\n", dir,
+			strerror(errno));
+		return -errno;
+	}
+
+	struct dirent *de;
+
+	while ((de = readdir(d)) != NULL) {
+		if (de->d_name[0] == '.')
+			continue;
+
+		char path[PATH_MAX];
+		int n = snprintf(path, sizeof(path), "%s/%s", dir, de->d_name);
+
+		if (n < 0 || (size_t)n >= sizeof(path))
+			continue;
+
+		struct stat st;
+
+		if (stat(path, &st) != 0 || !S_ISREG(st.st_mode))
+			continue;
+
+		char **grown = realloc(g_ccache_list,
+				       (g_ccache_n + 1) * sizeof(char *));
+		if (!grown)
+			break;
+		g_ccache_list = grown;
+		g_ccache_list[g_ccache_n] = strdup(path);
+		if (!g_ccache_list[g_ccache_n])
+			break;
+		g_ccache_n++;
+	}
+
+	closedir(d);
+
+	if (g_ccache_n == 0) {
+		fprintf(stderr,
+			"ec_demo: --ccache-dir %s contains no usable ccache files\n",
+			dir);
+		return -ENOENT;
+	}
+
+	return 0;
+}
+
 static int session_open(struct mds_session *ms, const char *mds_host)
 {
 	memset(ms, 0, sizeof(*ms));
@@ -237,10 +329,140 @@ static void *burst_worker(void *vargs)
 	return NULL;
 }
 
+/*
+ * Forked-worker burst, taken when --ccache-dir is set.
+ *
+ * Each child sets KRB5CCNAME to g_ccache_list[i % g_ccache_n] and
+ * adjusts its g_client_id to encode the worker index, so the
+ * server sees a distinct (NFSv4 clientowner, krb5 initiator
+ * principal) tuple per child.  Children run the same handshake
+ * sequence as burst_worker() and exit(0) on success / exit(1) on
+ * failure; the parent waitpid's and tallies pass/fail by exit
+ * status.  Per-worker timing is not piped back -- the aggregate
+ * wall-clock is what matters for the load shape, and individual
+ * failures self-identify via the central mds_compound log
+ * (auth_stat=... for the seal-broken path).
+ */
+static int cmd_burst_forked(const char *mds_host, int nsessions)
+{
+	pid_t *pids = calloc(nsessions, sizeof(pid_t));
+
+	if (!pids) {
+		fprintf(stderr, "ec_demo burst: out of memory\n");
+		return 1;
+	}
+
+	const char *sec_name[] = { "sys", "krb5", "krb5i", "krb5p" };
+
+	fprintf(stderr,
+		"ec_demo burst: forking %d worker%s to %s (sec=%s, ccache-dir=%s [%d ccaches]%s%s)\n",
+		nsessions, nsessions == 1 ? "" : "s", mds_host, sec_name[g_sec],
+		g_ccache_dir, g_ccache_n,
+		g_spn_list_n > 0 ? ", spn-list[" : (g_spn ? ", spn=" : ""),
+		g_spn_list_n > 0 ? "rotating]" : (g_spn ? g_spn : ""));
+
+	struct timespec t_start, t_end;
+
+	clock_gettime(CLOCK_MONOTONIC, &t_start);
+
+	for (int i = 0; i < nsessions; i++) {
+		pid_t pid = fork();
+
+		if (pid < 0) {
+			fprintf(stderr, "ec_demo burst: fork %d failed: %s\n",
+				i, strerror(errno));
+			pids[i] = -1;
+			continue;
+		}
+
+		if (pid == 0) {
+			/*
+			 * Child.  Carry the parent's --spn / --spn-list
+			 * decision through static globals (post-fork copy);
+			 * override KRB5CCNAME and g_client_id so this worker
+			 * presents a distinct initiator identity on the wire.
+			 */
+			const char *cc = g_ccache_list[i % g_ccache_n];
+
+			if (setenv("KRB5CCNAME", cc, 1) != 0) {
+				fprintf(stderr,
+					"ec_demo burst: child %d setenv KRB5CCNAME=%s failed: %s\n",
+					i, cc, strerror(errno));
+				_exit(1);
+			}
+
+			/*
+			 * Decorate g_client_id with the worker index so the
+			 * server resolves N distinct clientowners (case 1
+			 * of EXCHANGE_ID for each), matching the K8s
+			 * one-pod-per-identity shape.  The decoration is
+			 * stable per worker and idempotent across retries.
+			 */
+			char *owner = NULL;
+
+			if (asprintf(&owner, "%s.%d", g_client_id, i) > 0 &&
+			    owner)
+				g_client_id = owner;
+
+			struct burst_worker_args wa = {
+				.mds_host = mds_host,
+				.spn = g_spn_list_n > 0 ?
+					       g_spn_list[i % g_spn_list_n] :
+					       g_spn,
+				.worker_idx = i,
+			};
+
+			burst_worker(&wa);
+			_exit(wa.result == 0 ? 0 : 1);
+		}
+
+		pids[i] = pid;
+	}
+
+	int n_pass = 0, n_fail = 0;
+
+	for (int i = 0; i < nsessions; i++) {
+		if (pids[i] <= 0) {
+			n_fail++;
+			continue;
+		}
+		int status = 0;
+
+		if (waitpid(pids[i], &status, 0) < 0) {
+			n_fail++;
+			continue;
+		}
+		if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+			n_pass++;
+		else
+			n_fail++;
+	}
+
+	clock_gettime(CLOCK_MONOTONIC, &t_end);
+	int total_ms = (int)((t_end.tv_sec - t_start.tv_sec) * 1000 +
+			     (t_end.tv_nsec - t_start.tv_nsec) / 1000000);
+
+	fprintf(stderr,
+		"ec_demo burst: %d passed, %d failed in %d ms total"
+		" (forked-worker mode; per-worker timing in child stderr)\n",
+		n_pass, n_fail, total_ms);
+
+	free(pids);
+	return n_fail ? 1 : 0;
+}
+
 static int cmd_burst(const char *mds_host, int nsessions)
 {
 	if (nsessions < 1)
 		nsessions = 1;
+
+	/*
+	 * --ccache-dir takes the forked-worker path; threaded path
+	 * stays for the single-ccache "one user, N parallel handshakes"
+	 * axis.
+	 */
+	if (g_ccache_dir)
+		return cmd_burst_forked(mds_host, nsessions);
 
 	pthread_t *tids = calloc(nsessions, sizeof(pthread_t));
 	struct burst_worker_args *args = calloc(nsessions, sizeof(*args));
@@ -1071,6 +1293,17 @@ static void usage(void)
 	 * 4095-char minimum-mandated length (-Woverlength-strings).
 	 */
 	fprintf(stderr,
+		"  --ccache-dir D   Per-worker krb5 ccache rotation: scan\n"
+		"                   directory D for regular files, and use\n"
+		"                   ccaches[i %% N] as KRB5CCNAME for burst\n"
+		"                   worker i.  Implies forked-worker mode\n"
+		"                   (each child carries its own KRB5CCNAME\n"
+		"                   and libkrb5 context).  Worker i also\n"
+		"                   decorates --id as \"id.i\" so the server\n"
+		"                   sees N distinct NFSv4 clientowners --\n"
+		"                   drives the multi-identity load shape.\n"
+		"                   Default: unset (threaded burst, one\n"
+		"                   ccache from the inherited environment).\n"
 		"\n"
 		"Subcommands:\n"
 		"  burst            Open --nsessions N parallel mds_sessions\n"
@@ -1101,6 +1334,7 @@ static struct option long_options[] = {
 	{ "sec", required_argument, NULL, 'x' },
 	{ "spn", required_argument, NULL, 'p' },
 	{ "spn-list", required_argument, NULL, 'P' },
+	{ "ccache-dir", required_argument, NULL, 257 },
 	{ "nsessions", required_argument, NULL, 'n' },
 	/*
 	 * --nconnect kept as a deprecated alias.  Uses 256 (out of
@@ -1342,6 +1576,19 @@ int main(int argc, char *argv[])
 					"ec_demo: --nconnect/--nsessions must be >= 1\n");
 				return 1;
 			}
+			break;
+		case 257:
+			/*
+			 * --ccache-dir DIR: per-worker krb5 ccache rotation.
+			 * Switches burst to forked-worker mode so each child
+			 * carries its own KRB5CCNAME / libkrb5 context, and
+			 * each NFSv4 EXCHANGE_ID carries a distinct
+			 * clientowner.  Drives the multi-identity load shape
+			 * the threaded burst (one-ccache by design) cannot.
+			 */
+			g_ccache_dir = optarg;
+			if (load_ccache_dir(g_ccache_dir) < 0)
+				return 1;
 			break;
 		default:
 			usage();
