@@ -26,6 +26,61 @@
 
 #define MDS_RPC_TIMEOUT_SEC 30
 
+/*
+ * Symbolic name for an enum auth_stat value (RFC 5531 sec 8.2).
+ *
+ * Used when clnt_call returns RPC_AUTHERROR -- without decoding,
+ * the central log surfaces only the integer sub-code, which
+ * collapses several distinct on-wire failure modes
+ * (rejected creds, GSS context problem, GSS cred problem, ...)
+ * into one indistinguishable line.  The "Auth Bogus Credentials
+ * (seal broken)" failure that motivates the krb5 multi-mount
+ * stress harness lives in the AUTH_REJECTEDCRED /
+ * RPCSEC_GSS_CREDPROBLEM / RPCSEC_GSS_CTXPROBLEM neighbourhood;
+ * naming it on the wire is what lets the operator confirm the
+ * load shape is hitting the right path.
+ *
+ * Names match RFC 5531 sec 8.2 and the libtirpc auth_stat enum.
+ * Unknown values produce "AUTH_STAT_?".
+ */
+static const char *auth_stat_name(enum auth_stat s)
+{
+	switch (s) {
+	case AUTH_OK:
+		return "AUTH_OK";
+	case AUTH_BADCRED:
+		return "AUTH_BADCRED";
+	case AUTH_REJECTEDCRED:
+		return "AUTH_REJECTEDCRED";
+	case AUTH_BADVERF:
+		return "AUTH_BADVERF";
+	case AUTH_REJECTEDVERF:
+		return "AUTH_REJECTEDVERF";
+	case AUTH_TOOWEAK:
+		return "AUTH_TOOWEAK";
+	case AUTH_INVALIDRESP:
+		return "AUTH_INVALIDRESP";
+	case AUTH_FAILED:
+		return "AUTH_FAILED";
+	case AUTH_KERB_GENERIC:
+		return "AUTH_KERB_GENERIC";
+	case AUTH_TIMEEXPIRE:
+		return "AUTH_TIMEEXPIRE";
+	case AUTH_TKT_FILE:
+		return "AUTH_TKT_FILE";
+	case AUTH_DECODE:
+		return "AUTH_DECODE";
+	case AUTH_NET_ADDR:
+		return "AUTH_NET_ADDR";
+	case RPCSEC_GSS_CREDPROBLEM:
+		return "RPCSEC_GSS_CREDPROBLEM";
+	case RPCSEC_GSS_CTXPROBLEM:
+		return "RPCSEC_GSS_CTXPROBLEM";
+	default:
+		return "AUTH_STAT_?";
+	}
+}
+
 /* ------------------------------------------------------------------ */
 /* Init / fini                                                         */
 /* ------------------------------------------------------------------ */
@@ -207,16 +262,42 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 		 */
 		struct rpc_err rerr;
 		clnt_geterr(ms->ms_clnt, &rerr);
-		fprintf(stderr,
-			"mds_compound_send: clnt_call returned rpc_stat=%d (%s) "
-			"re_status=%d re_errno=%d tag=%.*s\n",
-			(int)rpc_stat, clnt_sperrno(rpc_stat),
-			(int)rerr.re_status, rerr.re_errno,
-			(int)mc->mc_args.tag.utf8string_len,
-			mc->mc_args.tag.utf8string_val ?
-				mc->mc_args.tag.utf8string_val :
-				"");
-		ret = -EIO;
+		/*
+		 * For RPC_AUTHERROR, re_errno and re_why alias the same
+		 * union member -- re_why holds the enum auth_stat (RFC 5531
+		 * sec 8.2).  Decode it symbolically; otherwise stick with
+		 * the numeric re_errno (it is the related system errno for
+		 * non-AUTH RPC failures).  The auth_stat surfacing is what
+		 * lets the operator distinguish AUTH_REJECTEDCRED (rejected
+		 * credential) from RPCSEC_GSS_CTXPROBLEM (context broken)
+		 * from RPCSEC_GSS_CREDPROBLEM (credential expired) on the
+		 * wire -- the customer "seal broken" symptom that motivates
+		 * the krb5 multi-mount stress harness lives in that group.
+		 */
+		if (rpc_stat == RPC_AUTHERROR) {
+			fprintf(stderr,
+				"mds_compound_send: clnt_call returned rpc_stat=%d (%s) "
+				"re_status=%d auth_stat=%s(%d) tag=%.*s\n",
+				(int)rpc_stat, clnt_sperrno(rpc_stat),
+				(int)rerr.re_status,
+				auth_stat_name(rerr.re_why), (int)rerr.re_why,
+				(int)mc->mc_args.tag.utf8string_len,
+				mc->mc_args.tag.utf8string_val ?
+					mc->mc_args.tag.utf8string_val :
+					"");
+			ret = -EACCES;
+		} else {
+			fprintf(stderr,
+				"mds_compound_send: clnt_call returned rpc_stat=%d (%s) "
+				"re_status=%d re_errno=%d tag=%.*s\n",
+				(int)rpc_stat, clnt_sperrno(rpc_stat),
+				(int)rerr.re_status, rerr.re_errno,
+				(int)mc->mc_args.tag.utf8string_len,
+				mc->mc_args.tag.utf8string_val ?
+					mc->mc_args.tag.utf8string_val :
+					"");
+			ret = -EIO;
+		}
 		goto out;
 	}
 
