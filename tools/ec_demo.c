@@ -277,15 +277,19 @@ static int session_open(struct mds_session *ms, const char *mds_host)
 
 	if (g_spn && g_sec != EC_SEC_SYS)
 		fprintf(stderr,
-			"ec_demo: connecting to MDS %s (owner %s, sec=%s, spn=%s)\n",
-			mds_host, ms->ms_owner, sec_name[g_sec], g_spn);
+			"ec_demo: connecting to MDS %s (owner %s, sec=%s, spn=%s, nconnect=%d)\n",
+			mds_host, ms->ms_owner, sec_name[g_sec], g_spn,
+			g_nconnect);
 	else
 		fprintf(stderr,
-			"ec_demo: connecting to MDS %s (owner %s, sec=%s)\n",
-			mds_host, ms->ms_owner, sec_name[g_sec]);
+			"ec_demo: connecting to MDS %s (owner %s, sec=%s, nconnect=%d)\n",
+			mds_host, ms->ms_owner, sec_name[g_sec], g_nconnect);
 
 	if (g_sec == EC_SEC_SYS)
 		return mds_session_create(ms, mds_host);
+	if (g_nconnect > 1)
+		return mds_session_create_sec_spn_nc(ms, mds_host, g_sec, g_spn,
+						     g_nconnect);
 	return mds_session_create_sec_spn(ms, mds_host, g_sec, g_spn);
 }
 

@@ -39,6 +39,7 @@ k=1
 m=0
 codec=mirror
 sec=krb5
+nconnect=1
 
 usage() {
 	cat >&2 <<'EOF'
@@ -53,6 +54,13 @@ Usage: krb5_ffv1_stress.sh --server <host[:port]>
                            [--codec rs|mojette-sys|mojette-nonsys|stripe|mirror]
                                                             (default mirror)
                            [--sec krb5|krb5i|krb5p]   (default krb5)
+                           [--nconnect M]             (default 1; kernel-style
+                                                       TCP transports per
+                                                       mds_session.  Total wire
+                                                       transports = clients x
+                                                       nconnect.  Each transport
+                                                       carries its own
+                                                       RPCSEC_GSS context.)
 
 Drives N krb5-authenticated NFSv4.2 clients at an external FFv1
 server.  Each worker writes <path>/krb5stress_<i> with the supplied
@@ -95,6 +103,7 @@ while [ $# -gt 0 ]; do
 	--m) m=$2; shift 2 ;;
 	--codec) codec=$2; shift 2 ;;
 	--sec) sec=$2; shift 2 ;;
+	--nconnect) nconnect=$2; shift 2 ;;
 	-h | --help) usage; exit 0 ;;
 	*) echo "Unknown argument: $1" >&2; usage; exit 2 ;;
 	esac
@@ -106,6 +115,8 @@ done
 [ -n "$principals" ]  || { usage; die "--principals is required"; }
 [[ "$clients" =~ ^[0-9]+$ ]] || die "--clients must be a positive integer"
 [ "$clients" -ge 1 ]  || die "--clients must be >= 1"
+[[ "$nconnect" =~ ^[0-9]+$ ]] || die "--nconnect must be a positive integer"
+[ "$nconnect" -ge 1 ] || die "--nconnect must be >= 1"
 [ -x "$ec_demo" ]     || die "ec_demo not executable: $ec_demo"
 [ -r "$principals" ]  || die "principals file not readable: $principals"
 command -v kinit >/dev/null 2>&1 || die "kinit not in PATH"
@@ -224,6 +235,7 @@ for ((i = 0; i < clients; i++)); do
 			--codec "$codec" \
 			--k "$k" \
 			--m "$m" \
+			--nconnect "$nconnect" \
 			--id "krb5stress_$i"
 		exec "$ec_demo" verify \
 			--mds "$server" \
@@ -234,6 +246,7 @@ for ((i = 0; i < clients; i++)); do
 			--codec "$codec" \
 			--k "$k" \
 			--m "$m" \
+			--nconnect "$nconnect" \
 			--id "krb5stress_$i"
 	) >"$log_dir/worker_$i.log" 2>&1 &
 	pids+=("$!")
