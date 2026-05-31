@@ -134,6 +134,22 @@ static const char *g_spn;
  */
 static int g_nconnect = 1;
 
+/*
+ * Optional list of target SPNs to rotate across burst workers.
+ * Parsed from --spn-list a,b,c,... into a NULL-terminated
+ * array of strings.  When set, worker i uses g_spn_list[i % N]
+ * as its target SPN, overriding any single --spn value.  When
+ * unset, every worker uses g_spn (or the krb5 library default
+ * if g_spn is also unset).
+ *
+ * Per-worker SPN rotation drives the server's SPN-resolution
+ * fan-out: with N different SPNs, each handshake forces the
+ * server to look up a fresh principal, which is the protod
+ * code path the customer reproducer is designed to stress.
+ */
+static char **g_spn_list;
+static int g_spn_list_n;
+
 static int session_open(struct mds_session *ms, const char *mds_host)
 {
 	memset(ms, 0, sizeof(*ms));
@@ -229,10 +245,18 @@ static int cmd_burst(const char *mds_host, int nconnect)
 
 	const char *sec_name[] = { "sys", "krb5", "krb5i", "krb5p" };
 
-	fprintf(stderr,
-		"ec_demo burst: opening %d parallel mds_session%s to %s (sec=%s%s%s)\n",
-		nconnect, nconnect == 1 ? "" : "s", mds_host, sec_name[g_sec],
-		g_spn ? ", spn=" : "", g_spn ? g_spn : "");
+	if (g_spn_list_n > 0)
+		fprintf(stderr,
+			"ec_demo burst: opening %d parallel mds_session%s to %s "
+			"(sec=%s, spn-list[%d])\n",
+			nconnect, nconnect == 1 ? "" : "s", mds_host,
+			sec_name[g_sec], g_spn_list_n);
+	else
+		fprintf(stderr,
+			"ec_demo burst: opening %d parallel mds_session%s to %s (sec=%s%s%s)\n",
+			nconnect, nconnect == 1 ? "" : "s", mds_host,
+			sec_name[g_sec], g_spn ? ", spn=" : "",
+			g_spn ? g_spn : "");
 
 	struct timespec t_start, t_end;
 
@@ -240,7 +264,16 @@ static int cmd_burst(const char *mds_host, int nconnect)
 
 	for (int i = 0; i < nconnect; i++) {
 		args[i].mds_host = mds_host;
-		args[i].spn = g_spn;
+		/*
+		 * Per-worker SPN selection: when --spn-list is set, rotate
+		 * modularly so each worker drives a distinct target SPN
+		 * (stresses the server's SPN-resolution path).  When unset,
+		 * fall back to the single --spn / library-default behaviour.
+		 */
+		if (g_spn_list_n > 0)
+			args[i].spn = g_spn_list[i % g_spn_list_n];
+		else
+			args[i].spn = g_spn;
 		args[i].worker_idx = i;
 		int err =
 			pthread_create(&tids[i], NULL, burst_worker, &args[i]);
@@ -999,6 +1032,14 @@ static void usage(void)
 		"                   Only meaningful with --sec krb5*.\n"
 		"                   When omitted, the krb5 library defaults\n"
 		"                   to nfs/<server>@<REALM>.\n"
+		"  --spn-list L     Comma-separated list of SPNs to rotate\n"
+		"                   across burst workers (e.g.\n"
+		"                   nfs/h0,nfs/h1,nfs/h2).  When set,\n"
+		"                   worker i uses list[i %% N] as its target.\n"
+		"                   Overrides --spn.  List length need not\n"
+		"                   match --nconnect (modular).  Drives the\n"
+		"                   server's SPN-resolution path with a fan\n"
+		"                   of distinct principals from one process.\n"
 		"  --nconnect N     Number of parallel mds_sessions for the\n"
 		"                   `burst` subcommand (default: 1).  Each\n"
 		"                   session is an independent EXCHANGE_ID +\n"
@@ -1036,6 +1077,7 @@ static struct option long_options[] = {
 	{ "force-gd", no_argument, NULL, 'G' },
 	{ "sec", required_argument, NULL, 'x' },
 	{ "spn", required_argument, NULL, 'p' },
+	{ "spn-list", required_argument, NULL, 'P' },
 	{ "nconnect", required_argument, NULL, 'n' },
 	{ "shard-size", required_argument, NULL, 'Z' },
 	{ "offset", required_argument, NULL, 'O' },
@@ -1076,7 +1118,7 @@ int main(int argc, char *argv[])
 	optind = 1;
 
 	while ((opt = getopt_long(argc, argv,
-				  "h:f:i:o:k:m:s:C:c:d:l:S:x:p:n:Z:O:L:DFG?",
+				  "h:f:i:o:k:m:s:C:c:d:l:S:x:p:P:n:Z:O:L:DFG?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -1207,6 +1249,45 @@ int main(int argc, char *argv[])
 		case 'p':
 			g_spn = optarg;
 			break;
+		case 'P': {
+			/*
+			 * Parse comma-separated SPN list into g_spn_list[]
+			 * for round-robin rotation across burst workers.
+			 * The optarg buffer survives until exit (argv-based),
+			 * so we can safely strdup once and NUL-terminate
+			 * the comma boundaries in-place via strtok.
+			 */
+			char *dup = strdup(optarg);
+
+			if (!dup) {
+				fprintf(stderr,
+					"ec_demo: --spn-list strdup failed\n");
+				return 1;
+			}
+			/* First pass: count comma-separated tokens. */
+			int n = 1;
+
+			for (const char *q = dup; *q; q++)
+				if (*q == ',')
+					n++;
+			g_spn_list = calloc(n, sizeof(*g_spn_list));
+			if (!g_spn_list) {
+				free(dup);
+				fprintf(stderr,
+					"ec_demo: --spn-list alloc failed\n");
+				return 1;
+			}
+			char *save = NULL;
+			char *tok = strtok_r(dup, ",", &save);
+			int i = 0;
+
+			while (tok && i < n) {
+				g_spn_list[i++] = tok;
+				tok = strtok_r(NULL, ",", &save);
+			}
+			g_spn_list_n = i;
+			break;
+		}
 		case 'n':
 			g_nconnect = atoi(optarg);
 			if (g_nconnect < 1) {

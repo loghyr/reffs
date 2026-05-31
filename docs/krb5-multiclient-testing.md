@@ -386,9 +386,88 @@ it uses the realm you point it at (the embedded KDC steps above are
 replaced by the artifacts you supply), and still spawns its own
 throwaway reffsd.
 
+## Threaded burst mode via ec_demo
+
+`nfs_krb5_multiclient` runs N **forked** workers, one process per
+Kerberos identity.  That covers the "N distinct identities, each
+its own client process" axis: each worker has its own krb5
+credential cache, its own clientid, its own NFSv4 session.
+
+There is an orthogonal axis the customer reproducer also needs to
+drive: **one identity, N parallel handshakes inside one process**.
+The kernel NFS client driving N concurrent mounts of the same
+share from one user produces this shape — same `KRB5CCNAME`, but
+N independent `gss_init_sec_context` exchanges firing within
+microseconds of each other.  The server sees a synchronous fan of
+N `GSS_ACCEPT_SEC_CONTEXT` calls on the same principal, and that
+is what stresses the server-side identity-resolution path.
+
+The threaded driver is `ec_demo burst`.
+
+### Running it
+
+```sh
+# 32 parallel handshakes to MDS, one principal (whatever
+# KRB5CCNAME points at), default library SPN.
+ec_demo burst --mds anvil.example.com --sec krb5 --nconnect 32
+```
+
+```sh
+# Drive 32 *different* SPNs across the 32 workers, to stress the
+# server's SPN-resolution path with a fan of distinct principals
+# from one process.
+ec_demo burst --mds anvil.example.com --sec krb5 --nconnect 32 \
+              --spn-list nfs/h0,nfs/h1,nfs/h2,...,nfs/h31
+```
+
+### What you get
+
+Per-handshake timing and aggregate counts:
+
+```
+ec_demo burst: opening 32 parallel mds_sessions to anvil.example.com (sec=krb5)
+ec_demo burst: 32 passed, 0 failed in 187 ms total (handshake min=42 max=181 avg=98 ms)
+```
+
+A failure pinpoints the worker, the return code, and (via the
+new central log in `mds_compound_send`) the symbolic NFS4ERR_
+name and the failing op:
+
+```
+mds_compound_send: COMPOUND tag="exchange_id" op[0]=OP_EXCHANGE_ID(42) status=NFS4ERR_PERM(13)
+ec_demo burst: worker 7 FAIL ret=-121 (Remote I/O error)
+ec_demo burst: 31 passed, 1 failed in 203 ms total (handshake min=44 max=199 avg=104 ms)
+```
+
+That collapses what used to be "31 passes, 1 fail with errno=-121
+and no context" into "31 passes, 1 fail with `NFS4ERR_PERM` at
+`EXCHANGE_ID` from worker 7" — the failure self-identifies.
+
+### Forked vs threaded — when to use which
+
+| Driver | Workers | Identities | Sessions | Use when |
+|---|---|---|---|---|
+| `nfs_krb5_multiclient` | forked processes | N distinct | independent | exercising N distinct AD principals; checking per-credential cache state; mimicking N separate client boxes |
+| `ec_demo burst` | pthreads | 1 (same `KRB5CCNAME`) | N independent under one clientid | exercising the server's per-connection GSS-accept fan-out; reproducing the multi-mount handshake burst from one client; isolating SPN-resolution load via `--spn-list` |
+
+The two are complementary.  A full stress matrix would run both:
+forked for credential-state coverage, threaded for handshake-burst
+coverage.
+
+### What it does NOT do
+
+- **Per-worker `KRB5CCNAME`**: forked is the right axis for that
+  (`nfs_krb5_multiclient`).
+- **End-to-end I/O after the handshake**: burst stops after
+  `mds_session_destroy`.  This is by design — the customer
+  symptom we are chasing is at handshake time, not at READ/WRITE.
+
 ## See also
 
 - `docs/security-test-tools.md` — `nfs_krb5_test`, the single-client
   Kerberos tester this multi-client driver is built on.
 - `.claude/design/krb5-multiclient-test.md` — the design rationale,
   for developers extending the test.
+- `.claude/design/krb5-stress-multi-xprt.md` — the design rationale
+  for `ec_demo burst` and the `--spn` / `--spn-list` / `--nconnect`
+  family of flags.
