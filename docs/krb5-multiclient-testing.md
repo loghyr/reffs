@@ -386,98 +386,149 @@ it uses the realm you point it at (the embedded KDC steps above are
 replaced by the artifacts you supply), and still spawns its own
 throwaway reffsd.
 
-## Threaded burst mode via ec_demo
+## `ec_demo burst` — Kerberos identmap stress generator
 
-`nfs_krb5_multiclient` runs N **forked** workers, one process per
+`nfs_krb5_multiclient` runs N forked workers, one process per
 Kerberos identity.  That covers the "N distinct identities, each
-its own client process" axis: each worker has its own krb5
-credential cache, its own clientid, its own NFSv4 session.
+its own client process" axis: per-worker `KRB5CCNAME`, per-worker
+clientid, per-worker session.  It is the right tool for credential-
+state coverage on a small N.
 
-There is an orthogonal axis the customer reproducer also needs to
-drive: **one identity, N parallel handshakes inside one process**.
-The kernel NFS client driving N concurrent mounts of the same
-share from one user produces this shape — same `KRB5CCNAME`, but
-N independent `gss_init_sec_context` exchanges firing within
-microseconds of each other.  The server sees a synchronous fan of
-N `GSS_ACCEPT_SEC_CONTEXT` calls on the same principal, and that
-is what stresses the server-side identity-resolution path.
+`ec_demo burst` is the other tool — a configurable wire-shape
+generator that drives the server-side Kerberos identmap path at
+scale.  Three independent axes:
 
-The threaded driver is `ec_demo burst`.
+| Axis | Flag | What it varies | Server-side load |
+|---|---|---|---|
+| Sessions | `--nsessions N` | N parallel mds_sessions (threaded by default; forked under `--ccache-dir`) | N EXCHANGE_ID + CREATE_SESSION pairs |
+| Transports | `--nconnect M` | M TCP transports per session, kernel-style; transport 0 carries EXCHANGE_ID + CREATE_SESSION, transports 1..M-1 land via BIND_CONN_TO_SESSION | N × M RPCSEC_GSS contexts (M GSS_INIT per session) |
+| Initiator identities | `--ccache-dir DIR` | per-worker `KRB5CCNAME` from a directory of pre-baked ccaches; rotation `ccaches[i % len]` | N distinct initiator principals → N distinct server-side identmap lookups |
 
-### Running it
+These compose orthogonally.  Total wire transports for a `burst`
+run is `nsessions × nconnect`; total distinct initiator identities
+on the wire is `min(nsessions, ccache-count)` or 1 if `--ccache-dir`
+is unset.  The customer load shape this harness is designed to
+reproduce is 32 concurrent K8s pod mounts with `nconnect=8` — 256
+parallel `gss_accept_sec_context` calls, each triggering a server-
+side identmap upcall.  Set `--nsessions 32 --nconnect 8` to match.
+
+### Running it — the common shapes
+
+**Single-identity handshake burst** (threaded, same KRB5CCNAME on
+every worker):
 
 ```sh
-# 32 parallel handshakes to MDS, one principal (whatever
-# KRB5CCNAME points at), default library SPN.
 ec_demo burst --mds anvil.example.com --sec krb5 --nsessions 32
 ```
 
+**Kernel-style multi-transport per session** (one identity, but
+each session has M concurrent transports doing GSS_INIT):
+
 ```sh
-# Drive 32 *different* SPNs across the 32 workers, to stress the
-# server's SPN-resolution path with a fan of distinct principals
-# from one process.
+ec_demo burst --mds anvil.example.com --sec krb5 \
+              --nsessions 32 --nconnect 8
+```
+
+**Multi-identity, multi-transport** (K8s pod model — N pods, each
+with its own pre-baked ccache, each mounting with nconnect=8):
+
+```sh
+ec_demo burst --mds anvil.example.com --sec krb5 \
+              --nsessions 32 --nconnect 8 \
+              --ccache-dir /var/run/krb5/pod-ccaches
+```
+
+`--ccache-dir` switches to forked-worker mode (each child has its
+own envp and its own libkrb5 context) and decorates each worker's
+NFSv4 clientowner with the worker index, so the server resolves N
+distinct (clientowner, krb5 principal) tuples.  The directory
+should contain one regular file per identity; whatever provisions
+your pod ccaches in production is the right tool to provision
+this directory in test.
+
+**SPN rotation** (the target-service axis, orthogonal to the
+above; useful when the server hosts multiple service principals):
+
+```sh
 ec_demo burst --mds anvil.example.com --sec krb5 --nsessions 32 \
               --spn-list nfs/h0,nfs/h1,nfs/h2,...,nfs/h31
 ```
 
-> **Note**: `--nsessions N` opens **N independent NFSv4 sessions**
-> (each its own EXCHANGE_ID + CREATE_SESSION + GSS context).  This is
-> deliberately **not** the kernel mount option `nconnect=N`, which
-> sets up N TCP transports under **one** NFSv4 session (a multiplexing
-> axis used by knfsd / Linux NFS / pd-protod).  The reproducer
-> stresses the server-side GSS_ACCEPT_SEC_CONTEXT + principal-
-> resolution fan-out, not transport multiplexing.  The old
-> `--nconnect` flag still works as a deprecated alias and emits a
-> stderr warning on use.
+### Reading the output
 
-### What you get
-
-Per-handshake timing and aggregate counts:
+Aggregate counts in threaded mode:
 
 ```
 ec_demo burst: opening 32 parallel mds_sessions to anvil.example.com (sec=krb5)
 ec_demo burst: 32 passed, 0 failed in 187 ms total (handshake min=42 max=181 avg=98 ms)
 ```
 
-A failure pinpoints the worker, the return code, and (via the
-new central log in `mds_compound_send`) the symbolic NFS4ERR_
-name and the failing op:
+Forked mode (when `--ccache-dir` is set) reports aggregate
+pass/fail + wall-clock only; per-worker timing goes to each
+child's stderr.
+
+### Reading the failures
+
+The central log in `mds_compound_send` surfaces both NFS4-layer
+and RPC-layer failures symbolically.
+
+**NFS4 layer** — failing op + symbolic `NFS4ERR_` name:
 
 ```
 mds_compound_send: COMPOUND tag="exchange_id" op[0]=OP_EXCHANGE_ID(42) status=NFS4ERR_PERM(13)
 ec_demo burst: worker 7 FAIL ret=-121 (Remote I/O error)
-ec_demo burst: 31 passed, 1 failed in 203 ms total (handshake min=44 max=199 avg=104 ms)
 ```
 
-That collapses what used to be "31 passes, 1 fail with errno=-121
-and no context" into "31 passes, 1 fail with `NFS4ERR_PERM` at
-`EXCHANGE_ID` from worker 7" — the failure self-identifies.
+**RPC-AUTH layer** — `auth_stat` decoded against the RFC 5531
+enum.  The customer "Auth Bogus Credentials (seal broken)"
+symptom from the multi-mount stress lives in this group:
 
-### Forked vs threaded — when to use which
+```
+mds_compound_send: clnt_call returned rpc_stat=1 (RPC can't decode result) \
+    re_status=5 auth_stat=RPCSEC_GSS_CTXPROBLEM(14) tag=exchange_id
+ec_demo burst: worker 12 FAIL ret=-13 (Permission denied)
+```
 
-| Driver | Workers | Identities | Sessions | Use when |
+The `auth_stat` value names the wire-level failure mode directly:
+
+| auth_stat | What the server is telling the client |
+|---|---|
+| `AUTH_REJECTEDCRED` | Client credential rejected (e.g. expired ticket past server's clock skew) |
+| `AUTH_BADVERF` / `AUTH_REJECTEDVERF` | RPC verifier integrity check failed |
+| `RPCSEC_GSS_CREDPROBLEM` | Client's GSS credential is stale; rpc.gssd should re-init |
+| `RPCSEC_GSS_CTXPROBLEM` | Server-side GSS context broken (MIC mismatch, sequence window exceeded, identmap chain returned ENOENT in the middle of `nfs4_cred_auth_gss_construct_token`) — this is the canonical "seal broken" footprint |
+
+### Comparison with `nfs_krb5_multiclient`
+
+| Driver | Workers | Identities | Transports per worker | Use when |
 |---|---|---|---|---|
-| `nfs_krb5_multiclient` | forked processes | N distinct | independent | exercising N distinct AD principals; checking per-credential cache state; mimicking N separate client boxes |
-| `ec_demo burst` | pthreads | 1 (same `KRB5CCNAME`) | N independent under one clientid | exercising the server's per-connection GSS-accept fan-out; reproducing the multi-mount handshake burst from one client; isolating SPN-resolution load via `--spn-list` |
+| `nfs_krb5_multiclient` | forked | N distinct (default mode) | 1 (mount per process) | small-N credential-state coverage, per-pod identity, kernel-mount path |
+| `ec_demo burst` | pthreads (default) or forked (`--ccache-dir`) | 1 or N (depending on `--ccache-dir`) | 1 or M (depending on `--nconnect`) | userspace handshake bursting at scale, axis-independent stressing, reproducing the K8s multi-mount load |
 
-The two are complementary.  A full stress matrix would run both:
-forked for credential-state coverage, threaded for handshake-burst
-coverage.
+The two are complementary; a full credential + identmap stress
+matrix runs `nfs_krb5_multiclient` for the per-process kernel-mount
+shape and `ec_demo burst` for everything that needs scale or
+axis-independent variation.
 
-### What it does NOT do
+### What `burst` does NOT do
 
-- **Per-worker `KRB5CCNAME`**: forked is the right axis for that
-  (`nfs_krb5_multiclient`).
-- **End-to-end I/O after the handshake**: burst stops after
-  `mds_session_destroy`.  This is by design — the customer
-  symptom we are chasing is at handshake time, not at READ/WRITE.
+- **End-to-end I/O after the handshake.**  `burst` opens, runs the
+  full EXCHANGE_ID + CREATE_SESSION (+ M-1 BIND_CONN_TO_SESSION if
+  `--nconnect > 1`) sequence, then calls `mds_session_destroy`.
+  The stress surface this harness is built for lives at handshake
+  time; READ / WRITE coverage is the job of the other ec_demo
+  subcommands.
+- **`kinit` / keytab handling.**  `--ccache-dir` consumes
+  pre-baked ccaches; the harness does not acquire credentials
+  itself.  Whatever your production deployment uses to provision
+  pod ccaches is the right tool for the test side too.
 
 ## See also
 
 - `docs/security-test-tools.md` — `nfs_krb5_test`, the single-client
   Kerberos tester this multi-client driver is built on.
-- `.claude/design/krb5-multiclient-test.md` — the design rationale,
-  for developers extending the test.
-- `.claude/design/krb5-stress-multi-xprt.md` — the design rationale
-  for `ec_demo burst` and the `--spn` / `--spn-list` / `--nsessions`
-  family of flags.
+- `.claude/design/krb5-multiclient-test.md` — design rationale for
+  the forked driver.
+- `.claude/design/krb5-stress-multi-xprt.md` — design rationale for
+  `ec_demo burst` and the `--spn` / `--spn-list` / `--nsessions` /
+  `--nconnect` / `--ccache-dir` flag family.

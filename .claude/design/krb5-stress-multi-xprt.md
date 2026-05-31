@@ -46,17 +46,26 @@ commit series) sets up `KRB5_CONFIG` to a synthesized config
 with `dns_canonicalize_hostname = false`, so the server sees
 the SPN-form cname rather than the canonicalized one.
 
-### 2. Multi-xprt session (`--nsessions N`)
+### 2. Burst axes: sessions, transports, identities
 
-> **Flag-naming note.**  This knob was originally named `--nconnect`,
-> which overloads the kernel / pd-protod mount option of the same
-> name.  The kernel `nconnect=N` sets up N TCP transports under one
-> NFSv4 session (a multiplexing axis); this reproducer wants N
-> independent sessions (the GSS-fan-out axis).  Renamed to
-> `--nsessions` to match the wire artifact; `--nconnect` is kept
-> as a deprecated alias that emits a stderr warning.  The design
-> below still uses "xprt" / "multi-xprt" to describe the
-> per-handshake fan-out for historical reasons.
+> **Flag-naming note (resolved).**  This axis was originally named
+> `--nconnect`, which overloads the kernel / pd-protod mount option
+> of the same name.  Kernel `nconnect=N` is N TCP transports under
+> one NFSv4 session (multiplexing).  The N-independent-sessions
+> axis was renamed to `--nsessions` to match the wire artifact, and
+> `--nconnect` was reclaimed for the kernel-style meaning -- M TCP
+> transports per session with `BIND_CONN_TO_SESSION` on transports
+> 1..M-1.  Both axes are now exposed independently; total wire
+> transport count is `nsessions * nconnect`.  The design below
+> still uses "xprt" / "multi-xprt" to describe the per-handshake
+> GSS fan-out for historical reasons.
+
+A third axis -- per-worker initiator identity -- is exposed via
+`--ccache-dir DIR`, which rotates `KRB5CCNAME` across forked
+workers.  The K8s pod model (one pre-baked ccache per pod,
+provisioned by the kerberos operator) maps directly onto this
+shape: forked workers each have their own envp and their own
+libkrb5 context.
 
 `struct mds_session` grows from one `CLIENT *` to an array of N
 under `ms_clnts[]`.  `mds_session_create_sec_spn` opens N xprts
