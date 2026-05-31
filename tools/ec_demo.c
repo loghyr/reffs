@@ -124,15 +124,24 @@ static enum ec_sec_flavor g_sec = EC_SEC_SYS;
 static const char *g_spn;
 
 /*
- * Number of parallel transports / sessions for the `burst`
- * subcommand.  Each worker opens an independent mds_session
- * (its own EXCHANGE_ID + CREATE_SESSION + GSS context),
- * driving the server's per-handshake fan-out without forking
- * N processes.  Closest in-process analogue to the
- * many-concurrent-mounts shape the krb5 stress reproducer needs
- * to drive.  Set by --nconnect.
+ * Number of parallel MDS sessions for the `burst` subcommand.
+ * Each worker opens an independent mds_session (its own
+ * EXCHANGE_ID + CREATE_SESSION + GSS context), driving the
+ * server's per-handshake fan-out without forking N processes.
+ * Closest in-process analogue to the many-concurrent-mounts shape
+ * the krb5 stress reproducer needs to drive.  Set by --nsessions.
+ *
+ * Naming note: this knob was originally exposed as --nconnect,
+ * which overloads the kernel / pd-protod mount option of the same
+ * name.  The kernel nconnect means "N TCP transports under one
+ * NFSv4 session" -- a multiplexing axis.  This burst opens N
+ * independent sessions, which is a different stressor (server
+ * GSS_ACCEPT_SEC_CONTEXT + principal-resolution fan-out, the
+ * customer reproducer's target).  Renamed to --nsessions to
+ * match the wire artifact; --nconnect is kept as a deprecated
+ * alias that emits a stderr warning, for one cycle.
  */
-static int g_nconnect = 1;
+static int g_nsessions = 1;
 
 /*
  * Optional list of target SPNs to rotate across burst workers.
@@ -228,13 +237,13 @@ static void *burst_worker(void *vargs)
 	return NULL;
 }
 
-static int cmd_burst(const char *mds_host, int nconnect)
+static int cmd_burst(const char *mds_host, int nsessions)
 {
-	if (nconnect < 1)
-		nconnect = 1;
+	if (nsessions < 1)
+		nsessions = 1;
 
-	pthread_t *tids = calloc(nconnect, sizeof(pthread_t));
-	struct burst_worker_args *args = calloc(nconnect, sizeof(*args));
+	pthread_t *tids = calloc(nsessions, sizeof(pthread_t));
+	struct burst_worker_args *args = calloc(nsessions, sizeof(*args));
 
 	if (!tids || !args) {
 		free(tids);
@@ -249,12 +258,12 @@ static int cmd_burst(const char *mds_host, int nconnect)
 		fprintf(stderr,
 			"ec_demo burst: opening %d parallel mds_session%s to %s "
 			"(sec=%s, spn-list[%d])\n",
-			nconnect, nconnect == 1 ? "" : "s", mds_host,
+			nsessions, nsessions == 1 ? "" : "s", mds_host,
 			sec_name[g_sec], g_spn_list_n);
 	else
 		fprintf(stderr,
 			"ec_demo burst: opening %d parallel mds_session%s to %s (sec=%s%s%s)\n",
-			nconnect, nconnect == 1 ? "" : "s", mds_host,
+			nsessions, nsessions == 1 ? "" : "s", mds_host,
 			sec_name[g_sec], g_spn ? ", spn=" : "",
 			g_spn ? g_spn : "");
 
@@ -262,7 +271,7 @@ static int cmd_burst(const char *mds_host, int nconnect)
 
 	clock_gettime(CLOCK_MONOTONIC, &t_start);
 
-	for (int i = 0; i < nconnect; i++) {
+	for (int i = 0; i < nsessions; i++) {
 		args[i].mds_host = mds_host;
 		/*
 		 * Per-worker SPN selection: when --spn-list is set, rotate
@@ -290,7 +299,7 @@ static int cmd_burst(const char *mds_host, int nconnect)
 	int n_pass = 0, n_fail = 0;
 	int min_ms = INT_MAX, max_ms = 0, sum_ms = 0;
 
-	for (int i = 0; i < nconnect; i++) {
+	for (int i = 0; i < nsessions; i++) {
 		if (tids[i])
 			pthread_join(tids[i], NULL);
 		if (args[i].result == 0) {
@@ -1037,20 +1046,34 @@ static void usage(void)
 		"                   nfs/h0,nfs/h1,nfs/h2).  When set,\n"
 		"                   worker i uses list[i %% N] as its target.\n"
 		"                   Overrides --spn.  List length need not\n"
-		"                   match --nconnect (modular).  Drives the\n"
+		"                   match --nsessions (modular).  Drives the\n"
 		"                   server's SPN-resolution path with a fan\n"
 		"                   of distinct principals from one process.\n"
-		"  --nconnect N     Number of parallel mds_sessions for the\n"
+		"  --nsessions N    Number of parallel mds_sessions for the\n"
 		"                   `burst` subcommand (default: 1).  Each\n"
 		"                   session is an independent EXCHANGE_ID +\n"
 		"                   CREATE_SESSION + GSS context establishment,\n"
 		"                   driving N concurrent handshakes from one\n"
 		"                   process.  Closest in-process analogue to\n"
 		"                   the multi-mount load that motivates the\n"
-		"                   krb5 stress reproducer.\n"
+		"                   krb5 stress reproducer.  NOTE: this is\n"
+		"                   NOT the kernel / pd-protod nconnect knob,\n"
+		"                   which means N TCP transports under one\n"
+		"                   session.  burst opens N independent\n"
+		"                   sessions; the stressor is server-side\n"
+		"                   GSS_ACCEPT_SEC_CONTEXT + principal\n"
+		"                   resolution, not transport multiplexing.\n"
+		"  --nconnect N     DEPRECATED alias for --nsessions.  Emits\n"
+		"                   a stderr warning; will be removed.\n");
+
+	/*
+	 * Second fprintf to keep each string literal under C99's
+	 * 4095-char minimum-mandated length (-Woverlength-strings).
+	 */
+	fprintf(stderr,
 		"\n"
 		"Subcommands:\n"
-		"  burst            Open --nconnect N parallel mds_sessions\n"
+		"  burst            Open --nsessions N parallel mds_sessions\n"
 		"                   to --mds HOST, optionally under --sec\n"
 		"                   krb5 with --spn NAME, then close.\n"
 		"                   Prints per-handshake min/max/avg ms and\n"
@@ -1078,7 +1101,14 @@ static struct option long_options[] = {
 	{ "sec", required_argument, NULL, 'x' },
 	{ "spn", required_argument, NULL, 'p' },
 	{ "spn-list", required_argument, NULL, 'P' },
-	{ "nconnect", required_argument, NULL, 'n' },
+	{ "nsessions", required_argument, NULL, 'n' },
+	/*
+	 * --nconnect kept as a deprecated alias.  Uses 256 (out of
+	 * ASCII range) as its return value so the handler can detect
+	 * the alias path and emit a one-line deprecation warning,
+	 * without colliding with the canonical -n short option.
+	 */
+	{ "nconnect", required_argument, NULL, 256 },
 	{ "shard-size", required_argument, NULL, 'Z' },
 	{ "offset", required_argument, NULL, 'O' },
 	{ "length", required_argument, NULL, 'L' },
@@ -1289,10 +1319,27 @@ int main(int argc, char *argv[])
 			break;
 		}
 		case 'n':
-			g_nconnect = atoi(optarg);
-			if (g_nconnect < 1) {
+			g_nsessions = atoi(optarg);
+			if (g_nsessions < 1) {
 				fprintf(stderr,
-					"ec_demo: --nconnect must be >= 1\n");
+					"ec_demo: --nsessions must be >= 1\n");
+				return 1;
+			}
+			break;
+		case 256:
+			/*
+			 * Deprecated --nconnect alias.  Behaviour identical
+			 * to --nsessions; one stderr warning to signal the
+			 * rename and surface any scripts that still use it.
+			 */
+			fprintf(stderr,
+				"ec_demo: --nconnect is deprecated; use --nsessions "
+				"(N parallel mds_sessions, not kernel-style nconnect "
+				"TCP transport multiplexing)\n");
+			g_nsessions = atoi(optarg);
+			if (g_nsessions < 1) {
+				fprintf(stderr,
+					"ec_demo: --nconnect/--nsessions must be >= 1\n");
 				return 1;
 			}
 			break;
@@ -1401,7 +1448,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (strcmp(cmd, "burst") == 0)
-		return cmd_burst(mds_host, g_nconnect);
+		return cmd_burst(mds_host, g_nsessions);
 
 	fprintf(stderr, "ec_demo: unknown command '%s'\n", cmd);
 	usage();

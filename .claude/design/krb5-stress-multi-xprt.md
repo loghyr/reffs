@@ -46,7 +46,17 @@ commit series) sets up `KRB5_CONFIG` to a synthesized config
 with `dns_canonicalize_hostname = false`, so the server sees
 the SPN-form cname rather than the canonicalized one.
 
-### 2. Multi-xprt session (`--nconnect N`)
+### 2. Multi-xprt session (`--nsessions N`)
+
+> **Flag-naming note.**  This knob was originally named `--nconnect`,
+> which overloads the kernel / pd-protod mount option of the same
+> name.  The kernel `nconnect=N` sets up N TCP transports under one
+> NFSv4 session (a multiplexing axis); this reproducer wants N
+> independent sessions (the GSS-fan-out axis).  Renamed to
+> `--nsessions` to match the wire artifact; `--nconnect` is kept
+> as a deprecated alias that emits a stderr warning.  The design
+> below still uses "xprt" / "multi-xprt" to describe the
+> per-handshake fan-out for historical reasons.
 
 `struct mds_session` grows from one `CLIENT *` to an array of N
 under `ms_clnts[]`.  `mds_session_create_sec_spn` opens N xprts
@@ -69,7 +79,7 @@ round-robin via a small atomic counter on `struct mds_session`.
 ### 3. Combined reproducer + docs
 
 ec_demo gets `--spn-list a,b,c,...` -- when paired with
-`--nconnect N`, the comma-separated list is round-robined
+`--nsessions N`, the comma-separated list is round-robined
 across xprts.  Length need not match N (modular).
 
 `docs/krb5-multiclient-testing.md` documents the canonical
@@ -81,7 +91,7 @@ The combined invocation looks like:
 ```
 ec_demo write --mds <server> --file /bigdata --input <local> \
               --sec krb5 \
-              --nconnect 32 \
+              --nsessions 32 \
               --spn-list nfs/h0,nfs/h1,...,nfs/h31 \
               --canonicalize no
 ```

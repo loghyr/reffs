@@ -409,16 +409,26 @@ The threaded driver is `ec_demo burst`.
 ```sh
 # 32 parallel handshakes to MDS, one principal (whatever
 # KRB5CCNAME points at), default library SPN.
-ec_demo burst --mds anvil.example.com --sec krb5 --nconnect 32
+ec_demo burst --mds anvil.example.com --sec krb5 --nsessions 32
 ```
 
 ```sh
 # Drive 32 *different* SPNs across the 32 workers, to stress the
 # server's SPN-resolution path with a fan of distinct principals
 # from one process.
-ec_demo burst --mds anvil.example.com --sec krb5 --nconnect 32 \
+ec_demo burst --mds anvil.example.com --sec krb5 --nsessions 32 \
               --spn-list nfs/h0,nfs/h1,nfs/h2,...,nfs/h31
 ```
+
+> **Note**: `--nsessions N` opens **N independent NFSv4 sessions**
+> (each its own EXCHANGE_ID + CREATE_SESSION + GSS context).  This is
+> deliberately **not** the kernel mount option `nconnect=N`, which
+> sets up N TCP transports under **one** NFSv4 session (a multiplexing
+> axis used by knfsd / Linux NFS / pd-protod).  The reproducer
+> stresses the server-side GSS_ACCEPT_SEC_CONTEXT + principal-
+> resolution fan-out, not transport multiplexing.  The old
+> `--nconnect` flag still works as a deprecated alias and emits a
+> stderr warning on use.
 
 ### What you get
 
@@ -469,5 +479,5 @@ coverage.
 - `.claude/design/krb5-multiclient-test.md` — the design rationale,
   for developers extending the test.
 - `.claude/design/krb5-stress-multi-xprt.md` — the design rationale
-  for `ec_demo burst` and the `--spn` / `--spn-list` / `--nconnect`
+  for `ec_demo burst` and the `--spn` / `--spn-list` / `--nsessions`
   family of flags.
