@@ -161,6 +161,29 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 			   enum ec_sec_flavor sec);
 
 /*
+ * Like mds_session_create_sec, with an explicit Kerberos target
+ * service principal name (SPN) override.  When spn is non-NULL,
+ * it is passed verbatim to authgss_create_default as the service
+ * name.  Accepted forms:
+ *
+ *    nfs/host.example.com           principal-name; library fills
+ *                                   in the default realm
+ *    nfs/host.example.com@REALM     fully-qualified
+ *    nfs@host.example.com           host-based service form; library
+ *                                   canonicalizes to nfs/<host>@<REALM>
+ *
+ * When spn is NULL, the behavior is identical to mds_session_create_sec
+ * (build "nfs@<host>" from the host argument).
+ *
+ * Intended for the krb5 stress reproducer (see
+ * .claude/design/krb5-stress-multi-xprt.md): drives the server's
+ * SPN-resolution path with caller-chosen principals rather than
+ * letting the library default.
+ */
+int mds_session_create_sec_spn(struct mds_session *ms, const char *host,
+			       enum ec_sec_flavor sec, const char *spn);
+
+/*
  * TLS variant for the PS-MDS session (slice plan-1-tls.b,
  * .claude/design/proxy-server-tls.md).  When tls_cert and tls_key
  * are non-empty, opens a TCP connection to host:port, brings up

@@ -111,6 +111,15 @@ static const char *g_client_id; /* set from --id, NULL = use PID */
 
 static enum ec_sec_flavor g_sec = EC_SEC_SYS;
 
+/*
+ * Target Kerberos service principal name override.  When NULL,
+ * the krb5 library defaults to nfs/<server-fqdn>@<REALM>.  When
+ * non-NULL, passed verbatim to authgss_create_default.  Set by
+ * --spn for the krb5 stress reproducer (see
+ * .claude/design/krb5-stress-multi-xprt.md).
+ */
+static const char *g_spn;
+
 static int session_open(struct mds_session *ms, const char *mds_host)
 {
 	memset(ms, 0, sizeof(*ms));
@@ -118,12 +127,18 @@ static int session_open(struct mds_session *ms, const char *mds_host)
 
 	const char *sec_name[] = { "sys", "krb5", "krb5i", "krb5p" };
 
-	fprintf(stderr, "ec_demo: connecting to MDS %s (owner %s, sec=%s)\n",
-		mds_host, ms->ms_owner, sec_name[g_sec]);
+	if (g_spn && g_sec != EC_SEC_SYS)
+		fprintf(stderr,
+			"ec_demo: connecting to MDS %s (owner %s, sec=%s, spn=%s)\n",
+			mds_host, ms->ms_owner, sec_name[g_sec], g_spn);
+	else
+		fprintf(stderr,
+			"ec_demo: connecting to MDS %s (owner %s, sec=%s)\n",
+			mds_host, ms->ms_owner, sec_name[g_sec]);
 
 	if (g_sec == EC_SEC_SYS)
 		return mds_session_create(ms, mds_host);
-	return mds_session_create_sec(ms, mds_host, g_sec);
+	return mds_session_create_sec_spn(ms, mds_host, g_sec, g_spn);
 }
 
 /* ------------------------------------------------------------------ */
@@ -822,7 +837,17 @@ static void usage(void)
 		"                   input file size if omitted.\n"
 		"  --length LEN     Partial-range byte count.  Both --offset\n"
 		"                   and --length apply only to write /\n"
-		"                   verify; ignored elsewhere.\n");
+		"                   verify; ignored elsewhere.\n"
+		"  --sec FLAVOR     Security flavor: sys (default), krb5,\n"
+		"                   krb5i, krb5p.\n"
+		"  --spn NAME       Target Kerberos service principal name\n"
+		"                   override.  Accepted forms:\n"
+		"                     nfs/host.example.com\n"
+		"                     nfs/host.example.com@REALM\n"
+		"                     nfs@host.example.com (default shape)\n"
+		"                   Only meaningful with --sec krb5*.\n"
+		"                   When omitted, the krb5 library defaults\n"
+		"                   to nfs/<server>@<REALM>.\n");
 }
 
 static struct option long_options[] = {
@@ -842,6 +867,7 @@ static struct option long_options[] = {
 	{ "force-scalar", no_argument, NULL, 'F' },
 	{ "force-gd", no_argument, NULL, 'G' },
 	{ "sec", required_argument, NULL, 'x' },
+	{ "spn", required_argument, NULL, 'p' },
 	{ "shard-size", required_argument, NULL, 'Z' },
 	{ "offset", required_argument, NULL, 'O' },
 	{ "length", required_argument, NULL, 'L' },
@@ -881,7 +907,7 @@ int main(int argc, char *argv[])
 	optind = 1;
 
 	while ((opt = getopt_long(argc, argv,
-				  "h:f:i:o:k:m:s:C:c:d:l:S:x:Z:O:L:DFG?",
+				  "h:f:i:o:k:m:s:C:c:d:l:S:x:p:Z:O:L:DFG?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -1008,6 +1034,9 @@ int main(int argc, char *argv[])
 					optarg);
 				return 1;
 			}
+			break;
+		case 'p':
+			g_spn = optarg;
 			break;
 		default:
 			usage();

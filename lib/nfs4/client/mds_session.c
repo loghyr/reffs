@@ -1226,6 +1226,12 @@ err:
 int mds_session_create_sec(struct mds_session *ms, const char *host,
 			   enum ec_sec_flavor sec)
 {
+	return mds_session_create_sec_spn(ms, host, sec, NULL);
+}
+
+int mds_session_create_sec_spn(struct mds_session *ms, const char *host,
+			       enum ec_sec_flavor sec, const char *spn)
+{
 #ifdef REFFS_HAVE_GSS_RPC
 	if (sec == EC_SEC_SYS)
 		return mds_session_create(ms, host);
@@ -1251,22 +1257,37 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
 
 	/*
 	 * RPCSEC_GSS via libtirpc's authgss_create_default.
-	 * service_name is "nfs@host" -- the server's service principal.
 	 *
-	 * Strip any ":port" suffix: the GSS host-based service name
-	 * must be the bare host so it canonicalizes to
-	 * nfs/<host>@REALM.  mds_session_clnt_open() already parses
-	 * host:port for the transport; do the same here.
+	 * The service_name passed to authgss_create_default is the
+	 * target Kerberos service principal the client asks the KDC
+	 * for a ticket against.
+	 *
+	 * Default (spn == NULL): build "nfs@<host>" -- the host-based
+	 * service form, which the krb5 library canonicalizes to
+	 * nfs/<host>@<REALM>.  Strip any ":port" suffix: the bare
+	 * host is what canonicalizes correctly.  mds_session_clnt_open()
+	 * already parses host:port for the transport; do the same here.
+	 *
+	 * Caller override (spn != NULL): pass the SPN verbatim.  Used
+	 * by the krb5 stress reproducer to drive the server's SPN-
+	 * resolution path with caller-chosen principals rather than
+	 * letting the library default.  Accepted forms documented at
+	 * the mds_session_create_sec_spn prototype in ec_client.h.
 	 */
 	char service[512];
-	char svc_host[256];
-	int svc_port = 0;
 
-	if (mds_parse_host_port(host, svc_host, sizeof(svc_host), &svc_port) ==
-	    0)
-		snprintf(service, sizeof(service), "nfs@%s", svc_host);
-	else
-		snprintf(service, sizeof(service), "nfs@%s", host);
+	if (spn && spn[0]) {
+		snprintf(service, sizeof(service), "%s", spn);
+	} else {
+		char svc_host[256];
+		int svc_port = 0;
+
+		if (mds_parse_host_port(host, svc_host, sizeof(svc_host),
+					&svc_port) == 0)
+			snprintf(service, sizeof(service), "nfs@%s", svc_host);
+		else
+			snprintf(service, sizeof(service), "nfs@%s", host);
+	}
 
 	rpc_gss_svc_t gss_svc;
 
@@ -1335,6 +1356,7 @@ err:
 	return ret;
 #else
 	(void)sec;
+	(void)spn;
 	return mds_session_create(ms, host);
 #endif
 }
