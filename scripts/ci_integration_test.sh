@@ -167,11 +167,13 @@ path       = "$DATA"
 state_file = "$STATE"
 
 [[export]]
-path        = "/"
-clients     = "*"
-access      = "rw"
-root_squash = false
-flavors     = ["sys", "tls", "krb5", "krb5i", "krb5p"]
+path = "/"
+
+    [[export.clients]]
+    match       = "*"
+    access      = "rw"
+    root_squash = false
+    flavors     = ["sys", "tls", "krb5", "krb5i", "krb5p"]
 EOF
 
 # ---------------------------------------------------------------------------
