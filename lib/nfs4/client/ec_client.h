@@ -67,7 +67,36 @@ struct ps_listener_state;
 /* ------------------------------------------------------------------ */
 
 struct mds_session {
-	CLIENT *ms_clnt;
+	CLIENT *ms_clnt; /* primary transport == ms_clnts[0] when ms_nconnect > 0 */
+	/*
+	 * Optional secondary transports for kernel-style nconnect.
+	 *
+	 * Default (single-transport): ms_clnts == NULL, ms_nconnect == 1,
+	 * ms_clnt is the only transport.  Every existing caller of
+	 * mds_session_create / _sec / _sec_spn / _tls lands here byte-
+	 * identical to before; mds_compound_send_with_auth's hot path
+	 * resolves to ms_clnt without an array deref.
+	 *
+	 * Multi-transport (kernel-style nconnect, opt-in via the
+	 * mds_session_create_sec_spn_nc variant): ms_clnts is an array
+	 * of ms_nconnect CLIENT* with ms_clnts[0] == ms_clnt.  Transport
+	 * 0 carries EXCHANGE_ID + CREATE_SESSION; transports 1..N-1 are
+	 * bound to the same sessionid via BIND_CONN_TO_SESSION (RFC 8881
+	 * sec 18.34).  All N carry their own RPCSEC_GSS context, which
+	 * is the axis the krb5 multi-mount stress harness uses to drive
+	 * concurrent gss_accept_sec_context calls on the server.
+	 *
+	 * COMPOUND submission round-robins across the array via
+	 * ms_xprt_rr.  Single-slot serialisation via ms_call_mutex still
+	 * applies (sa_slotid is hardcoded to 0 in mds_compound_add_sequence);
+	 * the nconnect knob currently delivers wire-shape accuracy and
+	 * GSS-context fan-out, NOT multi-slot throughput.  Multi-slot is
+	 * a separate slice the consumers (ps, dstore, ec_pipeline) can
+	 * opt into after it lands.
+	 */
+	CLIENT **ms_clnts;
+	unsigned int ms_nconnect;
+	_Atomic unsigned int ms_xprt_rr;
 	clientid4 ms_clientid;
 	sequenceid4 ms_create_seq;
 	sessionid4 ms_sessionid;
@@ -182,6 +211,31 @@ int mds_session_create_sec(struct mds_session *ms, const char *host,
  */
 int mds_session_create_sec_spn(struct mds_session *ms, const char *host,
 			       enum ec_sec_flavor sec, const char *spn);
+
+/*
+ * Kernel-style nconnect variant of mds_session_create_sec_spn.
+ *
+ * Opens nconnect TCP transports to host.  Transport 0 carries
+ * EXCHANGE_ID + CREATE_SESSION; transports 1..nconnect-1 are bound
+ * to the same sessionid4 via BIND_CONN_TO_SESSION (RFC 8881 sec
+ * 18.34, cdfc4_dir = CDFC4_FORE).  Each transport carries its own
+ * RPCSEC_GSS context -- nconnect parallel gss_init_sec_context /
+ * gss_accept_sec_context exchanges, which is the load shape the
+ * krb5 multi-mount stress harness drives at scale.
+ *
+ * COMPOUND submission round-robins across the transports inside
+ * mds_compound_send_with_auth (ms_xprt_rr counter).  Single-slot
+ * serialisation via ms_call_mutex still applies; the current client
+ * lib hardcodes sa_slotid = 0 so the nconnect knob delivers
+ * wire-shape accuracy and per-transport GSS context fan-out, NOT
+ * throughput improvement.  See ec_client.h struct comment.
+ *
+ * nconnect == 1 is byte-identical to mds_session_create_sec_spn.
+ * nconnect == 0 is rejected (-EINVAL).
+ */
+int mds_session_create_sec_spn_nc(struct mds_session *ms, const char *host,
+				  enum ec_sec_flavor sec, const char *spn,
+				  unsigned int nconnect);
 
 /*
  * TLS variant for the PS-MDS session (slice plan-1-tls.b,

@@ -211,20 +211,44 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 		seq->sa_sequenceid = ms->ms_slot_seqid;
 	}
 
+	/*
+	 * Pick the transport for this COMPOUND.  Single-transport
+	 * sessions (the default; ms_clnts NULL or ms_nconnect <= 1)
+	 * resolve to ms_clnt with no array deref.  Multi-transport
+	 * sessions (kernel-style nconnect, opt-in via
+	 * mds_session_create_sec_spn_nc) round-robin via ms_xprt_rr
+	 * with relaxed ordering -- the rotation is purely a load-
+	 * distribution hint; correctness across transports comes from
+	 * the single-slot ms_call_mutex serialisation that is already
+	 * held by the surrounding lock.
+	 *
+	 * Auth-swap and clnt_call must hit the SAME transport: cl_auth
+	 * is a per-CLIENT field, swapping on one transport while
+	 * calling on another would race.  Both branches below use
+	 * `clnt`.
+	 */
+	CLIENT *clnt = ms->ms_clnt;
+
+	if (ms->ms_clnts && ms->ms_nconnect > 1) {
+		unsigned int idx = atomic_fetch_add_explicit(
+			&ms->ms_xprt_rr, 1, memory_order_relaxed);
+		clnt = ms->ms_clnts[idx % ms->ms_nconnect];
+	}
+
 	AUTH *saved_auth = NULL;
 
 	if (override_auth) {
-		saved_auth = ms->ms_clnt->cl_auth;
-		ms->ms_clnt->cl_auth = override_auth;
+		saved_auth = clnt->cl_auth;
+		clnt->cl_auth = override_auth;
 	}
 
-	rpc_stat = clnt_call(ms->ms_clnt, NFSPROC4_COMPOUND,
+	rpc_stat = clnt_call(clnt, NFSPROC4_COMPOUND,
 			     (xdrproc_t)xdr_COMPOUND4args,
 			     (caddr_t)&mc->mc_args, (xdrproc_t)xdr_COMPOUND4res,
 			     (caddr_t)&mc->mc_res, tv);
 
 	if (override_auth) {
-		ms->ms_clnt->cl_auth = saved_auth;
+		clnt->cl_auth = saved_auth;
 	}
 
 	/*
@@ -261,7 +285,7 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 		 * clnt_geterr) is the missing attribution.
 		 */
 		struct rpc_err rerr;
-		clnt_geterr(ms->ms_clnt, &rerr);
+		clnt_geterr(clnt, &rerr);
 		/*
 		 * For RPC_AUTHERROR, re_errno and re_why alias the same
 		 * union member -- re_why holds the enum auth_stat (RFC 5531

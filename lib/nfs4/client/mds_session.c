@@ -1368,6 +1368,23 @@ void mds_session_destroy(struct mds_session *ms)
 
 	mds_destroy_session(ms);
 	mds_destroy_clientid(ms);
+	/*
+	 * Tear down secondary transports (ms_clnts[1..N-1]) before the
+	 * primary -- they share the same sessionid which is already
+	 * destroyed on the server side by mds_destroy_session above.
+	 * clnt_destroy here releases each transport's CLIENT* and its
+	 * per-transport GSS auth (cl_auth) via libtirpc's standard
+	 * auth_destroy.  ms_clnts[0] aliases ms_clnt and gets torn down
+	 * below with the primary path so it lands exactly once.
+	 */
+	if (ms->ms_clnts && ms->ms_nconnect > 1) {
+		for (unsigned int i = 1; i < ms->ms_nconnect; i++) {
+			if (ms->ms_clnts[i])
+				clnt_destroy(ms->ms_clnts[i]);
+		}
+		free(ms->ms_clnts);
+		ms->ms_clnts = NULL;
+	}
 	clnt_destroy(ms->ms_clnt);
 	/*
 	 * clnt_destroy calls auth_destroy on cl_auth; the default auth
@@ -1387,4 +1404,235 @@ void mds_session_destroy(struct mds_session *ms)
 	}
 	pthread_mutex_destroy(&ms->ms_call_mutex);
 	memset(ms, 0, sizeof(*ms));
+}
+
+#ifdef REFFS_HAVE_GSS_RPC
+/*
+ * BIND_CONN_TO_SESSION compound builder (RFC 8881 sec 18.34).
+ *
+ * Used to attach a freshly-opened secondary transport to the
+ * sessionid established on the primary transport by CREATE_SESSION.
+ * Sends a one-op compound (no SEQUENCE -- BIND_CONN_TO_SESSION is
+ * defined as a solo op like EXCHANGE_ID / CREATE_SESSION) on the
+ * given clnt; the clnt parameter is the SECONDARY transport, NOT
+ * ms->ms_clnt, because we are binding THIS specific transport to
+ * the session.
+ *
+ * cdfc4_dir = CDFC4_FORE: the secondary transport is fore-channel
+ * only (the back-channel stays on ms->ms_clnt; the PS does not
+ * spread its callbacks across multiple transports).
+ *
+ * Caller's responsibility: clnt must have its own GSS auth installed
+ * (each kernel-nconnect transport carries an independent RPCSEC_GSS
+ * context, which is the axis the krb5 stress harness drives).
+ */
+static int mds_bind_conn_to_session(struct mds_session *ms, CLIENT *clnt)
+{
+	struct mds_compound mc;
+	nfs_argop4 *slot;
+	BIND_CONN_TO_SESSION4args *args;
+	int ret;
+
+	ret = mds_compound_init(&mc, 1, "bind_conn_to_session");
+	if (ret)
+		return ret;
+
+	slot = mds_compound_add_op(&mc, OP_BIND_CONN_TO_SESSION);
+	if (!slot) {
+		mds_compound_fini(&mc);
+		return -ENOSPC;
+	}
+
+	args = &slot->nfs_argop4_u.opbind_conn_to_session;
+	memcpy(args->bctsa_sessid, ms->ms_sessionid, sizeof(sessionid4));
+	args->bctsa_dir = CDFC4_FORE;
+	args->bctsa_use_conn_in_rdma_mode = false;
+
+	struct timeval tv = { .tv_sec = 30, .tv_usec = 0 };
+	enum clnt_stat rpc_stat;
+
+	memset(&mc.mc_res, 0, sizeof(mc.mc_res));
+	rpc_stat = clnt_call(clnt, NFSPROC4_COMPOUND,
+			     (xdrproc_t)xdr_COMPOUND4args, (caddr_t)&mc.mc_args,
+			     (xdrproc_t)xdr_COMPOUND4res, (caddr_t)&mc.mc_res,
+			     tv);
+	if (rpc_stat != RPC_SUCCESS) {
+		mds_compound_fini(&mc);
+		return -EIO;
+	}
+
+	if (mc.mc_res.status != NFS4_OK ||
+	    mc.mc_res.resarray.resarray_len < 1) {
+		mds_log_nfs4_err("BIND_CONN_TO_SESSION", "compound",
+				 mc.mc_res.status);
+		mds_compound_fini(&mc);
+		return -EREMOTEIO;
+	}
+
+	nfs_resop4 *res_slot = &mc.mc_res.resarray.resarray_val[0];
+	BIND_CONN_TO_SESSION4res *bres =
+		&res_slot->nfs_resop4_u.opbind_conn_to_session;
+
+	if (bres->bctsr_status != NFS4_OK) {
+		mds_log_nfs4_err("BIND_CONN_TO_SESSION", "op",
+				 bres->bctsr_status);
+		mds_compound_fini(&mc);
+		return -EREMOTEIO;
+	}
+
+	mds_compound_fini(&mc);
+	return 0;
+}
+
+/*
+ * Open one secondary transport for an existing session and bind it
+ * to ms->ms_sessionid via BIND_CONN_TO_SESSION.
+ *
+ * On success, returns 0 and the caller stores the returned CLIENT*
+ * in ms->ms_clnts[i].  On failure, the transport is torn down
+ * before returning -- the caller does not own anything partial.
+ *
+ * Each call independently runs authgss_create_default, which is a
+ * full GSS_INIT exchange against the KDC + server.  That is exactly
+ * the load axis the krb5 multi-mount stress harness drives: N
+ * transports = N parallel gss_accept_sec_context calls on the
+ * server, each of which traverses the server-side identmap path.
+ */
+static int mds_session_open_secondary(struct mds_session *ms, const char *host,
+				      enum ec_sec_flavor sec, const char *spn,
+				      CLIENT **out)
+{
+	CLIENT *clnt = mds_session_clnt_open(host);
+
+	if (!clnt)
+		return -ECONNREFUSED;
+
+	char service[512];
+
+	if (spn && spn[0]) {
+		snprintf(service, sizeof(service), "%s", spn);
+	} else {
+		char svc_host[256];
+		int svc_port = 0;
+
+		if (mds_parse_host_port(host, svc_host, sizeof(svc_host),
+					&svc_port) == 0)
+			snprintf(service, sizeof(service), "nfs@%s", svc_host);
+		else
+			snprintf(service, sizeof(service), "nfs@%s", host);
+	}
+
+	rpc_gss_svc_t gss_svc;
+
+	switch (sec) {
+	case EC_SEC_KRB5:
+		gss_svc = RPCSEC_GSS_SVC_NONE;
+		break;
+	case EC_SEC_KRB5I:
+		gss_svc = RPCSEC_GSS_SVC_INTEGRITY;
+		break;
+	case EC_SEC_KRB5P:
+		gss_svc = RPCSEC_GSS_SVC_PRIVACY;
+		break;
+	default:
+		clnt_destroy(clnt);
+		return -EINVAL;
+	}
+
+	struct rpc_gss_sec gss_sec = {
+		.mech = &krb5oid_desc,
+		.qop = GSS_C_QOP_DEFAULT,
+		.svc = gss_svc,
+		.cred = GSS_C_NO_CREDENTIAL,
+		.req_flags = GSS_C_MUTUAL_FLAG,
+	};
+
+	AUTH *auth = authgss_create_default(clnt, service, &gss_sec);
+
+	if (!auth) {
+		fprintf(stderr,
+			"mds_session_open_secondary: authgss_create_default failed\n");
+		clnt_destroy(clnt);
+		return -EACCES;
+	}
+
+	auth_destroy(clnt->cl_auth);
+	clnt->cl_auth = auth;
+
+	int ret = mds_bind_conn_to_session(ms, clnt);
+
+	if (ret) {
+		/* clnt_destroy releases the GSS auth via cl_auth. */
+		clnt_destroy(clnt);
+		return ret;
+	}
+
+	*out = clnt;
+	return 0;
+}
+#endif /* REFFS_HAVE_GSS_RPC */
+
+int mds_session_create_sec_spn_nc(struct mds_session *ms, const char *host,
+				  enum ec_sec_flavor sec, const char *spn,
+				  unsigned int nconnect)
+{
+	if (nconnect == 0)
+		return -EINVAL;
+
+	int ret = mds_session_create_sec_spn(ms, host, sec, spn);
+
+	if (ret)
+		return ret;
+
+	if (nconnect == 1)
+		return 0;
+
+#ifdef REFFS_HAVE_GSS_RPC
+	/*
+	 * AUTH_SYS sessions fall through mds_session_create_sec_spn to
+	 * mds_session_create above; the secondary-transport path here
+	 * is GSS-only because authgss_create_default and the per-clnt
+	 * RPCSEC_GSS context are the load axis the harness drives.
+	 * Future: an AUTH_SYS secondary-transport helper for non-krb5
+	 * multi-transport tests.  Out of scope here.
+	 */
+	if (sec == EC_SEC_SYS)
+		return 0;
+
+	ms->ms_clnts = calloc(nconnect, sizeof(CLIENT *));
+	if (!ms->ms_clnts) {
+		mds_session_destroy(ms);
+		return -ENOMEM;
+	}
+	ms->ms_clnts[0] = ms->ms_clnt;
+	ms->ms_nconnect = 1;
+
+	for (unsigned int i = 1; i < nconnect; i++) {
+		CLIENT *clnt = NULL;
+
+		ret = mds_session_open_secondary(ms, host, sec, spn, &clnt);
+		if (ret) {
+			fprintf(stderr,
+				"mds_session_create_sec_spn_nc: secondary transport %u/%u failed: %d\n",
+				i, nconnect, ret);
+			/*
+			 * Tear down all transports established so far,
+			 * including the primary -- a partially-bound
+			 * session is not a useful return shape for the
+			 * caller (the burst worker treats the whole
+			 * session as the unit of pass/fail).
+			 */
+			mds_session_destroy(ms);
+			return ret;
+		}
+		ms->ms_clnts[i] = clnt;
+		ms->ms_nconnect++;
+	}
+
+	return 0;
+#else
+	(void)spn;
+	mds_session_destroy(ms);
+	return -ENOSYS;
+#endif
 }

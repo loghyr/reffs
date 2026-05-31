@@ -148,6 +148,23 @@ static const char *g_spn;
 static int g_nsessions = 1;
 
 /*
+ * Kernel-style nconnect: TCP transports per mds_session.  Set by
+ * --nconnect M.  When > 1, burst workers call
+ * mds_session_create_sec_spn_nc with M transports per session
+ * (one EXCHANGE_ID + CREATE_SESSION + M-1 BIND_CONN_TO_SESSION).
+ * Total wire transports per `burst` run = nsessions x nconnect.
+ *
+ * Was a deprecated alias for --nsessions for one cycle (the rename
+ * after the term-overload review); now reclaimed for the kernel
+ * meaning that matches the Linux mount option and pd-protod's
+ * sxo_nconnect.  Drives the per-transport GSS context fan-out the
+ * customer load shape produces -- N sessions x M transports each
+ * with its own gss_init_sec_context -> gss_accept_sec_context
+ * exchange against the server's identmap path.
+ */
+static int g_nconnect = 1;
+
+/*
  * Optional list of target SPNs to rotate across burst workers.
  * Parsed from --spn-list a,b,c,... into a NULL-terminated
  * array of strings.  When set, worker i uses g_spn_list[i % N]
@@ -311,6 +328,9 @@ static void *burst_worker(void *vargs)
 
 	if (g_sec == EC_SEC_SYS)
 		ret = mds_session_create(&ms, a->mds_host);
+	else if (g_nconnect > 1)
+		ret = mds_session_create_sec_spn_nc(&ms, a->mds_host, g_sec,
+						    a->spn, g_nconnect);
 	else
 		ret = mds_session_create_sec_spn(&ms, a->mds_host, g_sec,
 						 a->spn);
@@ -1278,21 +1298,27 @@ static void usage(void)
 		"                   driving N concurrent handshakes from one\n"
 		"                   process.  Closest in-process analogue to\n"
 		"                   the multi-mount load that motivates the\n"
-		"                   krb5 stress reproducer.  NOTE: this is\n"
-		"                   NOT the kernel / pd-protod nconnect knob,\n"
-		"                   which means N TCP transports under one\n"
-		"                   session.  burst opens N independent\n"
-		"                   sessions; the stressor is server-side\n"
-		"                   GSS_ACCEPT_SEC_CONTEXT + principal\n"
-		"                   resolution, not transport multiplexing.\n"
-		"  --nconnect N     DEPRECATED alias for --nsessions.  Emits\n"
-		"                   a stderr warning; will be removed.\n");
+		"                   krb5 stress reproducer.  The kernel /\n"
+		"                   pd-protod nconnect knob (N TCP transports\n"
+		"                   under one session) is exposed separately\n"
+		"                   as --nconnect.\n");
 
 	/*
 	 * Second fprintf to keep each string literal under C99's
 	 * 4095-char minimum-mandated length (-Woverlength-strings).
 	 */
 	fprintf(stderr,
+		"  --nconnect M     Kernel-style TCP transports per\n"
+		"                   mds_session (default: 1).  Transport 0\n"
+		"                   carries EXCHANGE_ID + CREATE_SESSION;\n"
+		"                   transports 1..M-1 are bound to the same\n"
+		"                   sessionid via BIND_CONN_TO_SESSION.  Each\n"
+		"                   transport carries its own RPCSEC_GSS\n"
+		"                   context, so M transports = M parallel\n"
+		"                   GSS_INIT exchanges per session.  Total\n"
+		"                   wire transports for `burst` = nsessions x\n"
+		"                   nconnect.  Only meaningful with\n"
+		"                   --sec krb5*; ignored for sec=sys.\n"
 		"  --ccache-dir D   Per-worker krb5 ccache rotation: scan\n"
 		"                   directory D for regular files, and use\n"
 		"                   ccaches[i %% N] as KRB5CCNAME for burst\n"
@@ -1562,18 +1588,18 @@ int main(int argc, char *argv[])
 			break;
 		case 256:
 			/*
-			 * Deprecated --nconnect alias.  Behaviour identical
-			 * to --nsessions; one stderr warning to signal the
-			 * rename and surface any scripts that still use it.
+			 * --nconnect M: kernel-style TCP transports per
+			 * mds_session (was a deprecated alias for one cycle;
+			 * now reclaimed for the kernel meaning).  One
+			 * EXCHANGE_ID + CREATE_SESSION on transport 0, then
+			 * M-1 BIND_CONN_TO_SESSION on transports 1..M-1, each
+			 * carrying its own RPCSEC_GSS context.  Total wire
+			 * transports for `burst` = nsessions x nconnect.
 			 */
-			fprintf(stderr,
-				"ec_demo: --nconnect is deprecated; use --nsessions "
-				"(N parallel mds_sessions, not kernel-style nconnect "
-				"TCP transport multiplexing)\n");
-			g_nsessions = atoi(optarg);
-			if (g_nsessions < 1) {
+			g_nconnect = atoi(optarg);
+			if (g_nconnect < 1) {
 				fprintf(stderr,
-					"ec_demo: --nconnect/--nsessions must be >= 1\n");
+					"ec_demo: --nconnect must be >= 1\n");
 				return 1;
 			}
 			break;
