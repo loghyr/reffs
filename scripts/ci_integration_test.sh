@@ -96,12 +96,46 @@ section_end() {
 # Setup
 # ---------------------------------------------------------------------------
 [ -x "$REFFSD_BIN" ] || die "reffsd binary not found or not executable: $REFFSD_BIN"
-[ -d "$SRC_DIR/.git" ] || die "SRC_DIR does not look like a git repo: $SRC_DIR"
 
 # Git 2.35.2+ refuses to operate in directories owned by a different user.
 # In CI the bind-mounted source is owned by the host user but this script
 # runs as root, so mark all directories safe for this container session.
+# Must run before any `git` invocation against SRC_DIR.
 git config --global --add safe.directory '*'
+
+# Accept SRC_DIR as either a standard git checkout (.git is a directory)
+# or a `git worktree` (.git is a regular file with "gitdir: <path>"
+# pointing at the main repo's .git/worktrees/<name>/).  In the worktree
+# case, the gitdir path is OUTSIDE SRC_DIR -- the only bind mount into
+# this container is SRC_DIR itself, so the .git pointer resolves to a
+# missing path and subsequent `git clone $SRC_DIR` invocations fail.
+#
+# Materialize a self-contained source by rsync'ing the working tree to
+# a temp dir and `git init`-ing it as a one-commit repo.  The integration
+# test only needs SRC_DIR to be a clonable source -- it does not need the
+# real upstream history.  Standard checkouts skip this and continue with
+# the original SRC_DIR.
+if [ -d "$SRC_DIR/.git" ]; then
+	: # standard checkout, no adaptation needed
+elif [ -f "$SRC_DIR/.git" ]; then
+	SRC_REAL=$(mktemp -d -t reffs-ci-src.XXXXXX)
+	trap "rm -rf '$SRC_REAL'" EXIT
+	echo "ci_integration_test: SRC_DIR is a worktree; materializing self-contained source at $SRC_REAL"
+	rsync -a --exclude='.git' --exclude='build' --exclude='build-*' \
+		--exclude='logs' --exclude='node_modules' \
+		"$SRC_DIR"/ "$SRC_REAL"/
+	(
+		cd "$SRC_REAL" &&
+			git init -q &&
+			git config user.email ci@reffs &&
+			git config user.name CI &&
+			git add -A &&
+			git commit -q -m 'worktree snapshot for ci_integration_test'
+	) || die "failed to materialize self-contained source from worktree at $SRC_DIR"
+	SRC_DIR="$SRC_REAL"
+else
+	die "SRC_DIR does not look like a git repo: $SRC_DIR"
+fi
 
 rm -rf "$DATA" "$STATE"
 mkdir -p "$DATA" "$MOUNT" "$STATE"
