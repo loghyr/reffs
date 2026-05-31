@@ -34,11 +34,14 @@
 
 #include <errno.h>
 #include <getopt.h>
+#include <limits.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 
 #include "nfsv42_xdr.h"
 #include "ec_client.h"
@@ -120,6 +123,17 @@ static enum ec_sec_flavor g_sec = EC_SEC_SYS;
  */
 static const char *g_spn;
 
+/*
+ * Number of parallel transports / sessions for the `burst`
+ * subcommand.  Each worker opens an independent mds_session
+ * (its own EXCHANGE_ID + CREATE_SESSION + GSS context),
+ * driving the server's per-handshake fan-out without forking
+ * N processes.  Closest in-process analogue to the
+ * many-concurrent-mounts shape the krb5 stress reproducer needs
+ * to drive.  Set by --nconnect.
+ */
+static int g_nconnect = 1;
+
 static int session_open(struct mds_session *ms, const char *mds_host)
 {
 	memset(ms, 0, sizeof(*ms));
@@ -139,6 +153,143 @@ static int session_open(struct mds_session *ms, const char *mds_host)
 	if (g_sec == EC_SEC_SYS)
 		return mds_session_create(ms, mds_host);
 	return mds_session_create_sec_spn(ms, mds_host, g_sec, g_spn);
+}
+
+/* ------------------------------------------------------------------ */
+/* burst -- N parallel-handshake stress for the krb5 multi-mount       */
+/* reproducer (see .claude/design/krb5-stress-multi-xprt.md).          */
+/* ------------------------------------------------------------------ */
+
+struct burst_worker_args {
+	const char *mds_host;
+	const char *spn;
+	int worker_idx;
+	int result; /* 0 on success, -errno on failure */
+	int handshake_ms;
+};
+
+static void *burst_worker(void *vargs)
+{
+	struct burst_worker_args *a = vargs;
+	struct mds_session ms;
+	struct timespec t0, t1;
+
+	memset(&ms, 0, sizeof(ms));
+	/*
+	 * Same KRB5CCNAME / same g_client_id on every worker -- this
+	 * reproducer drives "one user, N parallel handshakes" per
+	 * Tom's 2026-05-30 confirmation.  All N EXCHANGE_IDs carry
+	 * the same clientowner; the server resolves the first one
+	 * (case 1 of nfs4_client_alloc_or_find -- new clientid) and
+	 * the remaining N-1 land on case 2 (same principal, same
+	 * verifier -- return existing clientid).  CREATE_SESSION
+	 * then mints a fresh sessionid per worker.  N concurrent
+	 * GSS_ACCEPT_SEC_CONTEXT on the server, which is the
+	 * principal-resolution fan-out we want to drive.
+	 */
+	mds_session_set_owner(&ms, g_client_id);
+
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+	int ret;
+
+	if (g_sec == EC_SEC_SYS)
+		ret = mds_session_create(&ms, a->mds_host);
+	else
+		ret = mds_session_create_sec_spn(&ms, a->mds_host, g_sec,
+						 a->spn);
+	clock_gettime(CLOCK_MONOTONIC, &t1);
+
+	a->handshake_ms = (int)((t1.tv_sec - t0.tv_sec) * 1000 +
+				(t1.tv_nsec - t0.tv_nsec) / 1000000);
+
+	if (ret) {
+		a->result = ret;
+		return NULL;
+	}
+
+	mds_session_destroy(&ms);
+	a->result = 0;
+	return NULL;
+}
+
+static int cmd_burst(const char *mds_host, int nconnect)
+{
+	if (nconnect < 1)
+		nconnect = 1;
+
+	pthread_t *tids = calloc(nconnect, sizeof(pthread_t));
+	struct burst_worker_args *args = calloc(nconnect, sizeof(*args));
+
+	if (!tids || !args) {
+		free(tids);
+		free(args);
+		fprintf(stderr, "ec_demo burst: out of memory\n");
+		return 1;
+	}
+
+	const char *sec_name[] = { "sys", "krb5", "krb5i", "krb5p" };
+
+	fprintf(stderr,
+		"ec_demo burst: opening %d parallel mds_session%s to %s (sec=%s%s%s)\n",
+		nconnect, nconnect == 1 ? "" : "s", mds_host, sec_name[g_sec],
+		g_spn ? ", spn=" : "", g_spn ? g_spn : "");
+
+	struct timespec t_start, t_end;
+
+	clock_gettime(CLOCK_MONOTONIC, &t_start);
+
+	for (int i = 0; i < nconnect; i++) {
+		args[i].mds_host = mds_host;
+		args[i].spn = g_spn;
+		args[i].worker_idx = i;
+		int err =
+			pthread_create(&tids[i], NULL, burst_worker, &args[i]);
+
+		if (err) {
+			fprintf(stderr,
+				"ec_demo burst: pthread_create %d failed: %s\n",
+				i, strerror(err));
+			args[i].result = -err;
+			tids[i] = 0;
+		}
+	}
+
+	int n_pass = 0, n_fail = 0;
+	int min_ms = INT_MAX, max_ms = 0, sum_ms = 0;
+
+	for (int i = 0; i < nconnect; i++) {
+		if (tids[i])
+			pthread_join(tids[i], NULL);
+		if (args[i].result == 0) {
+			n_pass++;
+			if (args[i].handshake_ms < min_ms)
+				min_ms = args[i].handshake_ms;
+			if (args[i].handshake_ms > max_ms)
+				max_ms = args[i].handshake_ms;
+			sum_ms += args[i].handshake_ms;
+		} else {
+			n_fail++;
+			fprintf(stderr,
+				"ec_demo burst: worker %d FAIL ret=%d (%s)\n",
+				i, args[i].result,
+				strerror(args[i].result < 0 ? -args[i].result :
+							      args[i].result));
+		}
+	}
+
+	clock_gettime(CLOCK_MONOTONIC, &t_end);
+	int total_ms = (int)((t_end.tv_sec - t_start.tv_sec) * 1000 +
+			     (t_end.tv_nsec - t_start.tv_nsec) / 1000000);
+
+	fprintf(stderr,
+		"ec_demo burst: %d passed, %d failed in %d ms total"
+		" (handshake min=%d max=%d avg=%d ms)\n",
+		n_pass, n_fail, total_ms, n_pass ? min_ms : 0, max_ms,
+		n_pass ? sum_ms / n_pass : 0);
+
+	free(tids);
+	free(args);
+	return n_fail ? 1 : 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -847,7 +998,24 @@ static void usage(void)
 		"                     nfs@host.example.com (default shape)\n"
 		"                   Only meaningful with --sec krb5*.\n"
 		"                   When omitted, the krb5 library defaults\n"
-		"                   to nfs/<server>@<REALM>.\n");
+		"                   to nfs/<server>@<REALM>.\n"
+		"  --nconnect N     Number of parallel mds_sessions for the\n"
+		"                   `burst` subcommand (default: 1).  Each\n"
+		"                   session is an independent EXCHANGE_ID +\n"
+		"                   CREATE_SESSION + GSS context establishment,\n"
+		"                   driving N concurrent handshakes from one\n"
+		"                   process.  Closest in-process analogue to\n"
+		"                   the multi-mount load that motivates the\n"
+		"                   krb5 stress reproducer.\n"
+		"\n"
+		"Subcommands:\n"
+		"  burst            Open --nconnect N parallel mds_sessions\n"
+		"                   to --mds HOST, optionally under --sec\n"
+		"                   krb5 with --spn NAME, then close.\n"
+		"                   Prints per-handshake min/max/avg ms and\n"
+		"                   total elapsed.  No file I/O -- this is a\n"
+		"                   handshake-burst-only driver for the\n"
+		"                   krb5 stress reproducer.\n");
 }
 
 static struct option long_options[] = {
@@ -868,6 +1036,7 @@ static struct option long_options[] = {
 	{ "force-gd", no_argument, NULL, 'G' },
 	{ "sec", required_argument, NULL, 'x' },
 	{ "spn", required_argument, NULL, 'p' },
+	{ "nconnect", required_argument, NULL, 'n' },
 	{ "shard-size", required_argument, NULL, 'Z' },
 	{ "offset", required_argument, NULL, 'O' },
 	{ "length", required_argument, NULL, 'L' },
@@ -907,7 +1076,7 @@ int main(int argc, char *argv[])
 	optind = 1;
 
 	while ((opt = getopt_long(argc, argv,
-				  "h:f:i:o:k:m:s:C:c:d:l:S:x:p:Z:O:L:DFG?",
+				  "h:f:i:o:k:m:s:C:c:d:l:S:x:p:n:Z:O:L:DFG?",
 				  long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'h':
@@ -1038,6 +1207,14 @@ int main(int argc, char *argv[])
 		case 'p':
 			g_spn = optarg;
 			break;
+		case 'n':
+			g_nconnect = atoi(optarg);
+			if (g_nconnect < 1) {
+				fprintf(stderr,
+					"ec_demo: --nconnect must be >= 1\n");
+				return 1;
+			}
+			break;
 		default:
 			usage();
 			return 1;
@@ -1141,6 +1318,9 @@ int main(int argc, char *argv[])
 				  codec_type, layout_type, skip_ds_mask,
 				  shard_size, range_offset, range_length);
 	}
+
+	if (strcmp(cmd, "burst") == 0)
+		return cmd_burst(mds_host, g_nconnect);
 
 	fprintf(stderr, "ec_demo: unknown command '%s'\n", cmd);
 	usage();
