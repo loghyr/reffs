@@ -72,6 +72,12 @@ __attribute__((format(printf, 1, 2))) static void ec_log(const char *fmt, ...)
 /* Resolve all mirrors to DS connections                                */
 /* ------------------------------------------------------------------ */
 
+/* Hard cap matching the largest geometry today's harness produces (k=8,
+ * m=8 = 16).  When the geometry knob exceeds this, the RMW guard array
+ * collapses to "no guard" rather than corrupting -- per-build assert
+ * keeps the cap honest. */
+#define EC_CTX_MAX_MIRRORS 16
+
 struct ec_context {
 	struct mds_session *ctx_ms;
 	struct mds_file ctx_file;
@@ -95,6 +101,26 @@ struct ec_context {
 	 * set correctly.
 	 */
 	struct ps_listener_state *ctx_pls;
+	/*
+	 * Track 1b RMW-prefix-read guard capture (Option C full,
+	 * design/chunk-collision-validation.md).  When the RMW prefix
+	 * read in ec_write_codec_range captures per-shard chunk_owner4
+	 * values via ec_read_stripe_with_file, they land here.  The
+	 * matching ec_write_stripe_with_file picks them up and presents
+	 * each (co_guard) as a cwa_guard on the corresponding data-shard
+	 * CHUNK_WRITE so the server can CAS-check.
+	 *
+	 * Valid only when ctx_read_owners_valid is true; producer
+	 * (ec_read_stripe_with_file shared-ctx path) sets the flag,
+	 * consumer (ec_write_stripe_with_file shared-ctx path) clears
+	 * it after threading the guards through.  Fixed-size array
+	 * keeps the struct shallow-copyable across the shared-ctx
+	 * pattern's `ctx = *shared_ctx` step; geometry exceeding
+	 * EC_CTX_MAX_MIRRORS leaves the flag false (no guards), which
+	 * degrades to today's unguarded behaviour.
+	 */
+	chunk_owner4 ctx_read_owners[EC_CTX_MAX_MIRRORS];
+	bool ctx_read_owners_valid;
 };
 
 /*
@@ -299,7 +325,7 @@ static void ec_report_ds_error(struct ec_context *ctx, int mirror_idx,
  */
 int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 		   uint64_t block_offset, uint32_t chunk_sz, const uint8_t *src,
-		   uint32_t wsz, uint32_t owner_id)
+		   uint32_t wsz, uint32_t owner_id, const chunk_guard4 *guard)
 {
 	struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[mirror_idx];
 	const stateid4 *stid =
@@ -335,7 +361,7 @@ int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
 
 		ret = ds_chunk_write(ctx->ctx_ds_sess[mirror_idx], em->em_fh,
 				     em->em_fh_len, block_offset, chunk_sz, src,
-				     wsz, owner_id, stid);
+				     wsz, owner_id, stid, guard);
 		if (ret != -ESTALE)
 			return ret;
 
@@ -369,7 +395,7 @@ int ec_chunk_write(struct ec_context *ctx, int mirror_idx,
  */
 int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 		  uint32_t nblk, uint8_t *shard, uint32_t rd_chunk_sz,
-		  uint32_t *nread)
+		  uint32_t *nread, chunk_owner4 *out_owners)
 {
 	struct ec_mirror *em = &ctx->ctx_layout.el_mirrors[mirror_idx];
 	const stateid4 *stid =
@@ -398,7 +424,7 @@ int ec_chunk_read(struct ec_context *ctx, int mirror_idx, uint64_t block_offset,
 
 		ret = ds_chunk_read(ctx->ctx_ds_sess[mirror_idx], em->em_fh,
 				    em->em_fh_len, block_offset, nblk, shard,
-				    rd_chunk_sz, nread, stid);
+				    rd_chunk_sz, nread, stid, out_owners);
 		if (ret != -ESTALE)
 			return ret;
 
@@ -969,11 +995,12 @@ retry_stripe:
 			       "fh_len=%u wsz=%u\n",
 			       s, i, em->em_fh_len, wsz);
 			if (ctx.ctx_ds_sess) {
-				ret = ec_chunk_write(&ctx, i,
-						     (uint64_t)s *
-							     DIV_CEIL(ds_stride,
-								      chunk_sz),
-						     chunk_sz, src, wsz, 1);
+				/* Whole-file path: no RMW, no guard. */
+				ret = ec_chunk_write(
+					&ctx, i,
+					(uint64_t)s *
+						DIV_CEIL(ds_stride, chunk_sz),
+					chunk_sz, src, wsz, 1, NULL);
 			} else {
 				ret = ds_write(&ctx.ctx_conns[i], em->em_fh,
 					       em->em_fh_len, s * ds_stride,
@@ -1016,11 +1043,13 @@ retry_stripe:
 			       "fh_len=%u wsz=%u\n",
 			       s, i, em->em_fh_len, wsz);
 			if (ctx.ctx_ds_sess) {
-				ret = ec_chunk_write(
-					&ctx, k + i,
-					(uint64_t)s *
-						DIV_CEIL(ds_stride, chunk_sz),
-					chunk_sz, parity_shards[i], wsz, 1);
+				/* Whole-file path: no RMW, no guard. */
+				ret = ec_chunk_write(&ctx, k + i,
+						     (uint64_t)s *
+							     DIV_CEIL(ds_stride,
+								      chunk_sz),
+						     chunk_sz, parity_shards[i],
+						     wsz, 1, NULL);
 			} else {
 				ret = ds_write(&ctx.ctx_conns[k + i], em->em_fh,
 					       em->em_fh_len, s * ds_stride,
@@ -1295,18 +1324,29 @@ retry_stripe:
 		goto out_shards;
 	}
 
-	/* Write data shards to mirrors 0..k-1 at the stripe's DS offset. */
+	/* Write data shards to mirrors 0..k-1 at the stripe's DS offset.
+	 * If the shared ctx has captured chunk_owner4 from a matching
+	 * ec_read_stripe_with_file (the RMW prefix read), present each
+	 * shard's read-time co_guard as a cwa_guard on the CHUNK_WRITE
+	 * so the server CAS-checks the version.  -EAGAIN bubbles up
+	 * (mapped from NFS4ERR_DELAY) and the outer RMW retry redoes
+	 * the read with fresh state. */
 	for (int i = 0; i < k; i++) {
 		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[i];
 		uint32_t wsz = (uint32_t)shard_write_size(ctx.ctx_codec, i,
 							  shard_size);
 		uint8_t *src = nonsys ? enc_data[i] : data_shards[i];
+		const chunk_guard4 *guard = NULL;
+
+		if (shared_ctx && ctx.ctx_read_owners_valid &&
+		    i < EC_CTX_MAX_MIRRORS)
+			guard = &ctx.ctx_read_owners[i].co_guard;
 
 		if (ctx.ctx_ds_sess) {
 			ret = ec_chunk_write(&ctx, i,
 					     stripe_no * DIV_CEIL(ds_stride,
 								  chunk_sz),
-					     chunk_sz, src, wsz, 1);
+					     chunk_sz, src, wsz, 1, guard);
 		} else {
 			ret = ds_write(&ctx.ctx_conns[i], em->em_fh,
 				       em->em_fh_len, stripe_no * ds_stride,
@@ -1336,7 +1376,15 @@ retry_stripe:
 	if (ret)
 		goto out_shards;
 
-	/* Write parity shards to mirrors k..k+m-1. */
+	/* Write parity shards to mirrors k..k+m-1.  Parity is NEVER
+	 * guarded: the writer didn't read parity to encode (parity is
+	 * computed from data), so there's no read-time version to
+	 * present.  Data-shard guards above already catch the cross-
+	 * writer RMW conflict and bail before parity writes happen,
+	 * so parity-level last-write-wins doesn't matter -- the only
+	 * way we reach parity writes is when the data writes all
+	 * succeeded (one writer wins the CAS, the other gets -EAGAIN
+	 * and bails before its parity goes out). */
 	for (int i = 0; i < m; i++) {
 		struct ec_mirror *em = &ctx.ctx_layout.el_mirrors[k + i];
 		uint32_t wsz = (uint32_t)shard_write_size(ctx.ctx_codec, k + i,
@@ -1346,7 +1394,7 @@ retry_stripe:
 			ret = ec_chunk_write(
 				&ctx, k + i,
 				stripe_no * DIV_CEIL(ds_stride, chunk_sz),
-				chunk_sz, parity_shards[i], wsz, 1);
+				chunk_sz, parity_shards[i], wsz, 1, NULL);
 		} else {
 			ret = ds_write(&ctx.ctx_conns[k + i], em->em_fh,
 				       em->em_fh_len, stripe_no * ds_stride,
@@ -1588,13 +1636,31 @@ retry_stripe_read: {
 
 		if (ctx.ctx_ds_sess) {
 			uint32_t nblk = DIV_CEIL(rsz, rd_chunk_sz);
+			/*
+			 * Capture the first block's chunk_owner4 per shard
+			 * when we have a shared ctx and the geometry fits.
+			 * That captured version becomes the cwa_guard the
+			 * matching ec_write_stripe_with_file presents on
+			 * the corresponding data-shard CHUNK_WRITE.  nblk>1
+			 * (variable-size shards) only captures block 0 --
+			 * the multi-block guard story is NOT_NOW_BROWN_COW.
+			 */
+			chunk_owner4 owner_capture = { 0 };
+			chunk_owner4 *capture_arg = NULL;
+
+			if (shared_ctx && i < EC_CTX_MAX_MIRRORS && i < k)
+				capture_arg = &owner_capture;
 
 			err_opnum = OP_CHUNK_READ;
-			ret = ec_chunk_read(
-				&ctx, i,
-				stripe_no * DIV_CEIL(ds_stride, rd_chunk_sz),
-				nblk, shards[i], rd_chunk_sz, &nread);
+			ret = ec_chunk_read(&ctx, i,
+					    stripe_no * DIV_CEIL(ds_stride,
+								 rd_chunk_sz),
+					    nblk, shards[i], rd_chunk_sz,
+					    &nread, capture_arg);
 			present[i] = (ret == 0 && nread == nblk);
+
+			if (capture_arg && ret == 0)
+				ctx.ctx_read_owners[i] = owner_capture;
 		} else {
 			ret = ds_read(&ctx.ctx_conns[i], em->em_fh,
 				      em->em_fh_len, stripe_no * ds_stride,
@@ -1637,6 +1703,16 @@ retry_stripe_read: {
 	for (int i = 0; i < k; i++)
 		memcpy(stripe_bytes + (size_t)i * shard_size, shards[i],
 		       shard_size);
+
+	/*
+	 * Read completed cleanly -- flag the captured ctx_read_owners as
+	 * valid so the matching ec_write_stripe_with_file (shared-ctx
+	 * path) can present each shard's read-time version as a CAS
+	 * guard on the corresponding CHUNK_WRITE.  Only meaningful for
+	 * the shared-ctx caller (ec_write_codec_range RMW prefix read).
+	 */
+	if (shared_ctx)
+		ctx.ctx_read_owners_valid = true;
 
 out_shards:
 	if (shards) {
@@ -1858,11 +1934,15 @@ retry_stripe_read:
 				uint32_t nblk = DIV_CEIL(rsz, rd_chunk_sz);
 
 				err_opnum = OP_CHUNK_READ;
+				/* ec_read_codec_with_file is the whole-file
+				 * read path; no RMW prefix, so no need to
+				 * capture chunk_owner4 for a guard. */
 				ret = ec_chunk_read(
 					&ctx, i,
 					(uint64_t)s * DIV_CEIL(ds_stride,
 							       rd_chunk_sz),
-					nblk, shards[i], rd_chunk_sz, &nread);
+					nblk, shards[i], rd_chunk_sz, &nread,
+					NULL);
 				present[i] = (ret == 0 && nread == nblk);
 				ec_log("ec_read: stripe %zu shard[%d] CHUNK_READ rsz=%u nblk=%u rd_chunk_sz=%u ret=%d nread=%u present=%d\n",
 				       s, i, rsz, nblk, rd_chunk_sz, ret, nread,
@@ -2089,15 +2169,33 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 	}
 	ctx_built = true;
 
+	/*
+	 * Per-stripe RMW with CAS-guard retry (Track 1b Option C full).
+	 * EC_RMW_RETRY_MAX bounds the retry budget; backoff is 50/100/
+	 * 200/400/800 ms with linear ramp.  -EAGAIN bubbles up from
+	 * ec_write_stripe_with_file when the server returns NFS4ERR_
+	 * DELAY because the cwa_guard CAS-check failed -- meaning a
+	 * concurrent writer modified the block between this writer's
+	 * RMW prefix read and CHUNK_WRITE.  Re-do the read so we pick
+	 * up the concurrent writer's bytes, re-encode against the new
+	 * state, and re-issue the write with a fresh guard.  After
+	 * EC_RMW_RETRY_MAX failures, surface -EAGAIN to the caller so
+	 * the harness sees a loud "could not converge under contention"
+	 * signal rather than silent corruption.
+	 */
+#define EC_RMW_RETRY_MAX 5
+
 	for (uint64_t s = first_stripe; s <= last_stripe; s++) {
 		size_t sub_off_stripe;
 		size_t sub_off_data;
 		size_t sub_len;
 		const uint8_t *write_payload;
+		int rmw_attempt = 0;
 
 		range_stripe_overlap(s, stripe_data, offset, length,
 				     &sub_off_stripe, &sub_off_data, &sub_len);
 
+rmw_retry:
 		if (sub_off_stripe == 0 && sub_len == stripe_data) {
 			/* Fully-dirty stripe; no RMW prefix read. */
 			write_payload = data + sub_off_data;
@@ -2110,7 +2208,14 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 			 * ec_read_stripe_with_file's contract -- the
 			 * harness pre-fills the file with a full-file
 			 * write before any range writers start.
+			 *
+			 * The shared ctx captures each shard's chunk_owner4
+			 * here; the matching ec_write_stripe_with_file
+			 * below presents each as a cwa_guard so the server
+			 * CAS-checks before stomping any concurrent
+			 * writer's bytes.
 			 */
+			ctx.ctx_read_owners_valid = false;
 			ret = ec_read_stripe_with_file(ms, &mf, s, scratch,
 						       stripe_data, k, m,
 						       codec_type, layout_type,
@@ -2131,6 +2236,28 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 						stripe_data, k, m, codec_type,
 						layout_type, shard_size, NULL,
 						NULL, NULL, NULL, &ctx);
+		/* Clear the guard flag whether we succeeded or not -- the
+		 * write consumed (or attempted to consume) the captured
+		 * versions.  A retry below will re-capture via a fresh
+		 * read. */
+		ctx.ctx_read_owners_valid = false;
+
+		if (ret == -EAGAIN && rmw_attempt < EC_RMW_RETRY_MAX) {
+			struct timespec delay = { 0, (long)(50 * 1000000)
+							     << rmw_attempt };
+			rmw_attempt++;
+			ec_log("ec_write_range: stripe %llu CAS-miss, "
+			       "RMW retry %d/%d\n",
+			       (unsigned long long)s, rmw_attempt,
+			       EC_RMW_RETRY_MAX);
+#ifdef __APPLE__
+			nanosleep(&delay, NULL);
+#else
+			clock_nanosleep(CLOCK_MONOTONIC, 0, &delay, NULL);
+#endif
+			goto rmw_retry;
+		}
+
 		if (ret) {
 			ec_log("ec_write_range: write stripe %llu failed: "
 			       "%d\n",

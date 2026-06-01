@@ -14,9 +14,11 @@
  */
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <zlib.h>
 
@@ -25,13 +27,59 @@
 #include "nfs4/chunk_checksum.h"
 
 /* ------------------------------------------------------------------ */
+/* Per-process chunk-write identity (Track 1b Option C full)           */
+/*                                                                     */
+/* Each writer process needs a UNIQUE cg_client_id so the server's     */
+/* CAS-guard check (cwa_guard.cwg_check=TRUE) can distinguish writers. */
+/* Pre-Option-C all writers hard-coded {cg_gen_id=1, cg_client_id=1}   */
+/* which collapsed every block's "writer identity" to the same tuple   */
+/* -- the guard CAS could not see cross-writer contention even when    */
+/* it tried.                                                           */
+/*                                                                     */
+/* Derive cg_client_id from getpid() (with the two reserved sentinels  */
+/* avoided per draft-haynes-nfsv4-flexfiles-v2 sec-chunk_guard_none /  */
+/* sec-chunk_guard_mds: 0x00000000 and 0xFFFFFFFF respectively).       */
+/* Bump cg_gen_id monotonically per CHUNK_WRITE so successive writes   */
+/* from the same process stamp distinct versions too -- catches the    */
+/* same-writer stale-read case (read at v=N, another write lands at    */
+/* v=N+1, the stale-read writer's guard {N} mismatches current {N+1}). */
+/* ------------------------------------------------------------------ */
+
+static uint32_t chunk_writer_client_id(void)
+{
+	pid_t pid = getpid();
+	uint32_t cid = (uint32_t)pid;
+	/* Sentinels NONE=0, MDS=0xFFFFFFFF: rotate either away to keep
+	 * the wire valid; pid==0 is impossible but the check is cheap.
+	 * pid 0xFFFFFFFF can't occur on Linux/Darwin either, but the
+	 * defensive check costs nothing. */
+	if (cid == 0)
+		cid = 1;
+	else if (cid == 0xFFFFFFFFu)
+		cid = 0xFFFFFFFEu;
+	return cid;
+}
+
+static uint32_t chunk_writer_next_gen_id(void)
+{
+	static _Atomic uint32_t gen = 1;
+	uint32_t n = atomic_fetch_add_explicit(&gen, 1, memory_order_relaxed);
+	/* Skip 0 on wrap -- 0 is the all-zero sentinel CHUNK_GUARD_GEN_NONE
+	 * if/when the draft assigns one; today no value is reserved for
+	 * cg_gen_id but we keep room. */
+	if (n == 0)
+		n = atomic_fetch_add_explicit(&gen, 1, memory_order_relaxed);
+	return n;
+}
+
+/* ------------------------------------------------------------------ */
 /* CHUNK_WRITE                                                         */
 /* ------------------------------------------------------------------ */
 
 int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		   uint64_t block_offset, uint32_t chunk_size,
 		   const uint8_t *data, uint32_t data_len, uint32_t owner_id,
-		   const stateid4 *stateid)
+		   const stateid4 *stateid, const chunk_guard4 *guard)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -72,12 +120,24 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		memset(&cwa->cwa_stateid, 0, sizeof(cwa->cwa_stateid));
 	cwa->cwa_offset = block_offset;
 	cwa->cwa_stable = FILE_SYNC4;
-	cwa->cwa_owner.co_guard.cg_gen_id = 1;
-	cwa->cwa_owner.co_guard.cg_client_id = 1;
+	cwa->cwa_owner.co_guard.cg_gen_id = chunk_writer_next_gen_id();
+	cwa->cwa_owner.co_guard.cg_client_id = chunk_writer_client_id();
 	cwa->cwa_owner.co_id = owner_id;
 	cwa->cwa_payload_id = 0;
 	cwa->cwa_flags = 0;
-	cwa->cwa_guard.cwg_check = FALSE;
+	if (guard) {
+		/*
+		 * CAS guard: present the version the caller captured at
+		 * its prior CHUNK_READ.  Server rejects with NFS4ERR_DELAY
+		 * if the current block has a different {cg_gen_id,
+		 * cg_client_id}; mapped below to -EAGAIN for the RMW retry
+		 * path (see ec_write_codec_range).
+		 */
+		cwa->cwa_guard.cwg_check = TRUE;
+		cwa->cwa_guard.write_chunk_guard4_u.cwg_guard = *guard;
+	} else {
+		cwa->cwa_guard.cwg_check = FALSE;
+	}
 	cwa->cwa_chunk_size = chunk_size;
 
 	/*
@@ -141,6 +201,8 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 			mc.mc_res.resarray.resarray_len);
 		if (mc.mc_res.status == NFS4ERR_BAD_STATEID)
 			ret = -ESTALE;
+		else if (mc.mc_res.status == NFS4ERR_DELAY)
+			ret = -EAGAIN;
 	}
 	if (ret)
 		goto out_crc;
@@ -152,8 +214,14 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 	} else {
 		nfsstat4 st = res_slot->nfs_resop4_u.opchunk_write.cwr_status;
 
-		if (st != NFS4_OK)
-			ret = (st == NFS4ERR_BAD_STATEID) ? -ESTALE : -EIO;
+		if (st != NFS4_OK) {
+			if (st == NFS4ERR_BAD_STATEID)
+				ret = -ESTALE;
+			else if (st == NFS4ERR_DELAY)
+				ret = -EAGAIN;
+			else
+				ret = -EIO;
+		}
 	}
 
 out_crc:
@@ -193,7 +261,8 @@ out:
 
 int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		  uint64_t block_offset, uint32_t count, uint8_t *out_data,
-		  uint32_t chunk_size, uint32_t *nread, const stateid4 *stateid)
+		  uint32_t chunk_size, uint32_t *nread, const stateid4 *stateid,
+		  chunk_owner4 *out_owners)
 {
 	struct mds_compound mc;
 	nfs_argop4 *slot;
@@ -271,6 +340,15 @@ int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 			copy = chunk_size;
 		memcpy(out_data + (size_t)i * chunk_size,
 		       rc->cr_chunk.cr_chunk_val, copy);
+
+		/*
+		 * Capture per-block chunk_owner4 if the caller wants it.
+		 * The RMW path uses this to build a cwa_guard for the
+		 * matching CHUNK_WRITE -- presents the version it just
+		 * read so the server can CAS-check on write.
+		 */
+		if (out_owners)
+			out_owners[i] = rc->cr_owner;
 
 		/*
 		 * Verify the server-supplied checksum against the received

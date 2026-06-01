@@ -285,7 +285,8 @@ START_TEST(test_dispatch_local_mirror_writes_via_stub)
 	g_mirrors[1].em_local = false; /* unused this test */
 
 	int ret = ec_chunk_write(&ctx, 0, TEST_BLOCK_OFFSET, TEST_CHUNK_SZ,
-				 payload, sizeof(payload), /* owner */ 0xBEEF);
+				 payload, sizeof(payload), /* owner */ 0xBEEF,
+				 NULL);
 	ck_assert_int_eq(ret, 0);
 
 	ck_assert_int_eq(g_sc_write_calls, 1);
@@ -328,7 +329,7 @@ START_TEST(test_dispatch_remote_mirror_skips_stub)
 	g_mirrors[1].em_local = false;
 
 	int ret = ec_chunk_write(&ctx, 1, TEST_BLOCK_OFFSET, TEST_CHUNK_SZ,
-				 payload, sizeof(payload), 0xCAFE);
+				 payload, sizeof(payload), 0xCAFE, NULL);
 	ck_assert_int_eq(ret, -EIO);
 
 	ck_assert_int_eq(g_sc_write_calls, 0);
@@ -356,9 +357,9 @@ START_TEST(test_dispatch_two_mirrors_partial_shortcircuit)
 	g_mirrors[1].em_local = false; /* RPC fallback */
 
 	int ret0 = ec_chunk_write(&ctx, 0, TEST_BLOCK_OFFSET, TEST_CHUNK_SZ,
-				  payload, sizeof(payload), 0x1111);
+				  payload, sizeof(payload), 0x1111, NULL);
 	int ret1 = ec_chunk_write(&ctx, 1, TEST_BLOCK_OFFSET, TEST_CHUNK_SZ,
-				  payload, sizeof(payload), 0x1111);
+				  payload, sizeof(payload), 0x1111, NULL);
 
 	ck_assert_int_eq(ret0, 0);
 	ck_assert_int_eq(ret1, -EIO);
@@ -398,7 +399,7 @@ START_TEST(test_dispatch_null_pls_skips_stub)
 	g_mirrors[0].em_local = true;
 
 	int ret = ec_chunk_write(&ctx, 0, TEST_BLOCK_OFFSET, TEST_CHUNK_SZ,
-				 payload, sizeof(payload), 0x2222);
+				 payload, sizeof(payload), 0x2222, NULL);
 	ck_assert_int_eq(ret, -EIO);
 
 	ck_assert_int_eq(g_sc_write_calls, 0);
@@ -427,7 +428,7 @@ START_TEST(test_dispatch_null_sc_fn_skips_stub)
 	g_mirrors[0].em_local = true;
 
 	int ret = ec_chunk_write(&ctx, 0, TEST_BLOCK_OFFSET, TEST_CHUNK_SZ,
-				 payload, sizeof(payload), 0x3333);
+				 payload, sizeof(payload), 0x3333, NULL);
 	ck_assert_int_eq(ret, -EIO);
 
 	ck_assert_int_eq(g_sc_write_calls, 0);
@@ -458,9 +459,9 @@ START_TEST(test_dispatch_read_path_mirrors_write)
 	g_mirrors[1].em_local = false;
 
 	int ret0 = ec_chunk_read(&ctx, 0, TEST_BLOCK_OFFSET, /* nblk */ 1,
-				 shard0, TEST_CHUNK_SZ, &nread0);
+				 shard0, TEST_CHUNK_SZ, &nread0, NULL);
 	int ret1 = ec_chunk_read(&ctx, 1, TEST_BLOCK_OFFSET, 1, shard1,
-				 TEST_CHUNK_SZ, &nread1);
+				 TEST_CHUNK_SZ, &nread1, NULL);
 
 	ck_assert_int_eq(ret0, 0);
 	ck_assert_int_eq(ret1, -EIO);

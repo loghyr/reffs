@@ -687,13 +687,20 @@ int ds_read(struct ds_conn *dc, const uint8_t *fh, uint32_t fh_len,
  * data/data_len: chunk data (one or more chunks of chunk_size bytes).
  * owner_id: chunk owner identifier.
  * stateid: layout stateid for tight coupling (NULL = anonymous stateid).
+ * guard: when non-NULL, sets cwa_guard.cwg_check=TRUE and CAS-checks
+ *   the existing block's {cg_gen_id, cg_client_id} against this guard
+ *   on the server side.  Returns -EAGAIN on mismatch (NFS4ERR_DELAY on
+ *   the wire), distinct from -ESTALE / -EREMOTEIO so the RMW retry
+ *   path can recognise it as "the read-time version moved underneath
+ *   us; redo the RMW".
  * Returns 0 on success, -ESTALE if DS returns NFS4ERR_BAD_STATEID,
+ * -EAGAIN if DS returns NFS4ERR_DELAY (typically a guard mismatch),
  * or other negative errno on failure.
  */
 int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		   uint64_t block_offset, uint32_t chunk_size,
 		   const uint8_t *data, uint32_t data_len, uint32_t owner_id,
-		   const stateid4 *stateid);
+		   const stateid4 *stateid, const chunk_guard4 *guard);
 
 /*
  * ds_chunk_read -- CHUNK_READ from a data server.
@@ -701,13 +708,19 @@ int ds_chunk_write(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
  * count: number of blocks to read.
  * out_data/out_len: output buffer (caller-allocated, chunk_size * count).
  * stateid: layout stateid for tight coupling (NULL = anonymous stateid).
+ * out_owners: when non-NULL, caller-allocated array of `count`
+ *   chunk_owner4 entries.  Populated with the server's per-block
+ *   chunk_owner4 (one per returned block).  Lets the RMW path
+ *   capture the version it just read so the matching CHUNK_WRITE can
+ *   present a CAS guard.  Blocks not returned (server returned fewer
+ *   than `count`) leave their out_owners[i] zeroed.
  * Returns 0 on success, -ESTALE if DS returns NFS4ERR_BAD_STATEID,
  * or other negative errno on failure.
  */
 int ds_chunk_read(struct mds_session *ds, const uint8_t *fh, uint32_t fh_len,
 		  uint64_t block_offset, uint32_t count, uint8_t *out_data,
-		  uint32_t chunk_size, uint32_t *nread,
-		  const stateid4 *stateid);
+		  uint32_t chunk_size, uint32_t *nread, const stateid4 *stateid,
+		  chunk_owner4 *out_owners);
 
 /*
  * ds_chunk_finalize -- CHUNK_FINALIZE on a data server.

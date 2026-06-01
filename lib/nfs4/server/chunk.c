@@ -317,10 +317,55 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	 * through; this is the same identity comparison
 	 * cs_pending_displaced uses to count cross-writer displacement.
 	 */
+	/*
+	 * Two independent rejection axes, both bump cs_chunk_busy_delay
+	 * because both surface the same observer signal ("a writer was
+	 * told to retry because the block is contended").
+	 *
+	 * (i)  PENDING from a different writer -- the writer is racing
+	 *      ahead of another writer's still-in-flight write.
+	 *
+	 * (ii) cwa_guard.cwg_check == TRUE and the current block's
+	 *      {cb_gen_id, cb_client_id} does not match cwg_guard --
+	 *      CAS-style stale-RMW detection per draft-haynes-nfsv4-
+	 *      flexfiles-v2 sec-write_chunk_guard4.  The writer
+	 *      presented the version it read; the server enforces that
+	 *      no concurrent writer has advanced the block since.  This
+	 *      catches the case the PENDING gate misses: a prior writer
+	 *      that already finished its full PENDING -> FINALIZED ->
+	 *      COMMITTED cycle, after which the block looks "clean" to
+	 *      a stale-RMW writer.
+	 *
+	 * Both checks fire BEFORE data_block_write so neither leaves
+	 * half-applied payload on the reject path.  An EMPTY block
+	 * with cwg_check=TRUE is allowed through with no version
+	 * comparison -- a guarded write to a never-written block IS
+	 * a first-write, which is exactly the contract the guard
+	 * mechanism is for.
+	 */
+	bool guarded = (args->cwa_guard.cwg_check == TRUE);
+	const chunk_guard4 *guard =
+		guarded ? &args->cwa_guard.write_chunk_guard4_u.cwg_guard :
+			  NULL;
+
 	for (uint32_t i = 0; i < nchunks; i++) {
 		struct chunk_block *prev =
 			chunk_store_lookup(cs, args->cwa_offset + i);
 
+		/* Axis (ii): CAS via cwa_guard. */
+		if (guarded && prev &&
+		    (prev->cb_gen_id != guard->cg_gen_id ||
+		     prev->cb_client_id != guard->cg_client_id)) {
+			if (cstats)
+				atomic_fetch_add_explicit(
+					&cstats->cs_chunk_busy_delay, 1,
+					memory_order_relaxed);
+			pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+			*status = NFS4ERR_DELAY;
+			return 0;
+		}
+
+		/* Axis (i): PENDING from a different writer. */
 		if (!prev || prev->cb_state != CHUNK_STATE_PENDING)
 			continue;
 		if (prev->cb_owner_id == args->cwa_owner.co_id &&
