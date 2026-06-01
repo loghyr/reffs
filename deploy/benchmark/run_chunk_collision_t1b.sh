@@ -97,7 +97,22 @@ if [[ -z "${EC_DEMO}" || ! -x "${EC_DEMO}" ]]; then
 fi
 
 WORKDIR="$(mktemp -d -t reffs-coll-t1b.XXXXXX)"
-trap 'rm -rf "${WORKDIR}"' EXIT
+# Preserve WORKDIR on failure so per-writer logs survive for triage.
+# A successful exit cleans up; any non-zero exit leaves the dir behind
+# and tells the operator how to inspect / remove it.
+cleanup_workdir() {
+	local rc=$?
+	if [[ $rc -ne 0 ]]; then
+		echo "" >&2
+		echo "[t1b] non-zero exit ($rc); WORKDIR preserved for triage:" >&2
+		echo "[t1b]   ${WORKDIR}" >&2
+		echo "[t1b] per-writer logs: writer-<i>.log, verify-<i>.log, prefill.log" >&2
+		echo "[t1b] remove manually with: rm -rf '${WORKDIR}'" >&2
+	else
+		rm -rf "${WORKDIR}"
+	fi
+}
+trap cleanup_workdir EXIT
 
 # stripe_data = k * shard_size
 STRIPE_DATA=$((K * SHARD_SIZE))
