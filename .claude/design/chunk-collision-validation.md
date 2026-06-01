@@ -511,6 +511,68 @@ outstanding list) blocks publishing INV-1 counter deltas
 alongside this analysis, but doesn't block the triage of the
 DS-side session lifecycle itself.
 
+**2026-06-01 -- lease-reaper hypothesis FALSIFIED.**
+
+Tested by patching `lib/nfs4/server/lease_reaper.c`:
+`LEASE_EXPIRE_FACTOR_NUM` 3 -> 100, making the effective
+expiry ~37 minutes instead of ~67 seconds.  Rebuilt reffsd,
+restarted MDS + DSes, waited for `health=healthy`, re-ran all
+four sub-modes.
+
+Result: the failure pattern is unchanged:
+
+| Mode | Result |
+|------|--------|
+| disjoint | PASS (unchanged) |
+| chunk-split | FAIL: same BADSESSION cascade |
+| overlap | FAIL: same BADSESSION cascade |
+| subchunk | FAIL: same BADSESSION cascade |
+
+The writer-0 log on `--mode chunk-split` shows the same wire
+signature as the unpatched run -- 8x `tag="reclaim_complete"`
+BADSESSION immediately after CREATE_SESSION, then
+`tag="chunk_write"` BADSESSION, then `[596.123]
+ec_write_stripe: stripe 0 data[0] FAILED: -121`, then 8x
+`tag="destroy_session"` BADSESSION on shutdown.  Timing
+remains seconds, not minutes -- the reaper isn't the
+mechanism.
+
+Patch reverted before any further work.
+
+Narrowed hypothesis space:
+
+- **DS-side session destroy from a non-reaper path.**  The
+  remaining candidates are
+  `nfs4_session_destroy_for_client` (called from
+  `nfs4_client_expire`),
+  `nfs4_session_destroy_zombies` (called from
+  `nfs4_op_create_session`), or a manual unhash on a
+  client-eviction path that doesn't go through the reaper.
+  Need TRACE instrumentation on the unhash sites to see
+  which one fires under RMW load.
+- **DS-side sessionid mismatch.**  The client may be
+  encoding the sessionid into the `SEQUENCE` differently
+  than what the DS hashed.  A direct correlation between
+  the bytes in the client's `ms->ms_sessionid` and the bytes
+  in the DS's `ns->ns_sessionid` for the same xid would
+  rule this in or out.
+- **Concurrent EXCHANGE_ID -> CREATE_SESSION race on the
+  DS.**  When 4 writers each issue `EXCHANGE_ID +
+  CREATE_SESSION` to the same DS within a few ms, a server-
+  side race in `nfs4_client_alloc_or_find` or
+  `nfs4_session_alloc` might leave the wrong client/session
+  bound to the wrong sessionid, with a valid-looking
+  CREATE_SESSION response.  This would explain why the
+  client's SEQUENCE doesn't match anything in the hash
+  table.
+
+Next slice's lightest probe: a fprintf in
+`nfs4_session_unhash`, `nfs4_session_destroy_zombies`, and
+`nfs4_client_expire` that prints the sessionid (or the
+ns_sessionid + nc clientid pair).  After a rebuild + re-run,
+correlate any DS unhash event with the BADSESSION the client
+sees right after it.
+
 Validation framing for the run: the harness delivered exactly
 what a chunk-collision harness should -- 1 clean control case
 plus 3 distinct failing variants that all converge on the
