@@ -46,11 +46,27 @@ LAYOUT="v2"
 K=4
 M=2
 SHARD_SIZE=4096
-MDS="reffs-mds"
+# Default to the docker-published port on localhost.  ec_demo's
+# host:port syntax bypasses libtirpc's clnt_create_timed portmap
+# path, which on the host fails because the in-container reffsd
+# doesn't register NFS with the host rpcbind.  Inside a container
+# attached to the bench network, override with --mds reffs-mds.
+MDS="127.0.0.1:2049"
 EC_DEMO=""
 INV1_REPORT=0
 PROBE=""
 DS_LIST=""
+
+# Sanitizer-quiet ec_demo: libtirpc allocates inside
+# clnt_create_timed / authunix_create_default without a matching
+# free on session teardown.  LSan reports those ~6 KiB on every
+# successful exit, which would flip ec_demo's rc to 1 and trip
+# `set -euo pipefail` here before the per-writer racers spawn.
+# Same mitigation the CI integration test (ci_integration_test.sh)
+# uses.
+export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:halt_on_error=0}"
+export LSAN_OPTIONS="${LSAN_OPTIONS:-halt_on_error=0}"
+export UBSAN_OPTIONS="${UBSAN_OPTIONS:-halt_on_error=0}"
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -82,7 +98,15 @@ case "${MODE}" in
 esac
 
 if [[ -z "${EC_DEMO}" ]]; then
-	for cand in /shared/build/tools/ec_demo \
+	# Search a script-relative path first so a host invocation
+	# picks up the fresh build under ../../build/tools/ ahead of
+	# any stale /usr/local/bin/ec_demo left over from an old
+	# package install.  The /shared and /reffs entries are
+	# container paths that resolve when this script runs inside
+	# a docker container attached to the bench network.
+	script_dir="$(cd "$(dirname "$0")" && pwd)"
+	for cand in "${script_dir}/../../build/tools/ec_demo" \
+		    /shared/build/tools/ec_demo \
 		    /reffs/build/tools/ec_demo \
 		    /usr/local/bin/ec_demo; do
 		if [[ -x "${cand}" ]]; then
