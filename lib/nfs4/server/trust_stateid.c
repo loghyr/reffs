@@ -338,7 +338,7 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 		return -EINVAL;
 
 	/* Track 1b BAD_STATEID triage. */
-	const uint8_t *o = stateid->other;
+	const uint8_t *o = (const uint8_t *)stateid->other;
 
 	LOG("trust_register: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x ino=%" PRIu64
 	    " clid=%" PRIu64 " iomode=%u",
@@ -418,7 +418,7 @@ void trust_stateid_revoke(const stateid4 *stateid)
 		return;
 
 	/* Track 1b BAD_STATEID triage. */
-	const uint8_t *o = stateid->other;
+	const uint8_t *o = (const uint8_t *)stateid->other;
 	bool hit = false;
 
 	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
@@ -557,7 +557,7 @@ struct trust_entry *trust_stateid_find(const stateid4 *stateid)
 	 * because the BAD_STATEID return tells the operator the lookup
 	 * failed but not why -- maybe the entry was never registered,
 	 * maybe it was just revoked. */
-	const uint8_t *o = stateid->other;
+	const uint8_t *o = (const uint8_t *)stateid->other;
 
 	LOG("trust_find: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x hit=%s%s",
 	    o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8], o[9], o[10],
