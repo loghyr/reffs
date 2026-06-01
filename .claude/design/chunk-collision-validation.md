@@ -297,46 +297,77 @@ the verified file.  CRC vs payload divergence and PENDING-block
 leak counters both fire on these runs.  Root cause not yet
 diagnosed.
 
-### Track 1b (partial-range race) -- 2026-05-30 first smoke
+### Track 1b (partial-range race) -- 2026-06-01 triage
 
-First smoke on `--mode disjoint` exposed two distinct failures
-in the same run:
+First-smoke (pre-trap-fix, 2026-05-30): the harness exited
+non-zero during pre-fill and the unconditional `rm -rf`
+WORKDIR trap wiped all per-writer logs before anyone could
+read them.  The session-summary characterization of "concurrent
+ec_demo writers exit with NFS4ERR_BADSESSION cascades" was
+stitched together from partial stderr and turns out to be
+**incorrect**: no BADSESSION has been observed.
 
-1. **Harness defect.**  `run_chunk_collision_t1b.sh` installed
-   `trap 'rm -rf "${WORKDIR}"' EXIT`, which wiped per-writer
-   logs (`writer-<i>.log`, `verify-<i>.log`, `prefill.log`,
-   `stats-after.csv`) on any exit -- including failure exits,
-   which is the case we most need them for.  Fixed: `EXIT` trap
-   now preserves WORKDIR on any non-zero exit and prints the
-   path and per-writer log names.  Successful runs still clean
-   up.  Shipped as a follow-up to the Track 1b ship commit.
+Today's preserved-WORKDIR runs (after the trap fix in this
+document set) walk a stack of harness / environment defects
+that have prevented the race from ever running end-to-end on
+the shadow lab host:
 
-2. **Concurrent ec_demo writers exit with NFS4ERR_BADSESSION
-   cascades** rather than the last-FINALIZE-wins verify
-   mismatches the harness was designed for.  The harness's
-   `verify` step was not reached.  This is a *different* bug
-   than Track 1's frankenstein: Track 1 finishes writes and
-   produces wrong bytes; Track 1b's writers do not finish
-   writes at all.  Triage requires re-running with the trap
-   fix to capture per-writer logs.  Working hypothesis space:
+1. **Stale `ec_demo` binary at the head of the discovery
+   list.**  The harness searches `/shared/build/tools/ec_demo`,
+   `/reffs/build/tools/ec_demo`, then `/usr/local/bin/ec_demo`.
+   On the host (outside the docker network), only the last
+   path exists -- and it is an old `ec_demo` from before
+   `--shard-size` landed.  Hit symptom: `write:
+   unrecognized option '--shard-size'`.  Workaround:
+   `--ec_demo /home/<user>/reffs/build/tools/ec_demo`.
 
-   - DS-session multiplexing assumption in the combined-mode
-     CHUNK path (known-issue `goals.md` "v2 CHUNK + combined
-     mode: DS session multiplexing needed for single-host
-     combined mode");
-   - lease reaper destroying a session while concurrent writers
-     still hold slots;
-   - shared MDS session across writer instances when each
-     should have its own.
+2. **Hard-coded `MDS=reffs-mds` doesn't resolve on the host.**
+   That hostname is a docker-network alias only.  Hit symptom:
+   `session create failed: -111` (ECONNREFUSED), but actually
+   prior to TCP -- this is the libtirpc DNS-failure code path.
+   Workaround: `--mds 127.0.0.1`.
 
-   Marked NOT_NOW_BROWN_COW until a preserved WORKDIR confirms
-   the actual failure path.
+3. **libtirpc `clnt_create_timed` portmap-path mismatch.**
+   With `--mds 127.0.0.1` (no explicit port), libtirpc tries
+   the host rpcbind for the NFS program; the host rpcbind is
+   running but does not register the in-container NFS service,
+   so the lookup fails before any TCP connect to 2049.  Hit
+   symptom: `session create failed: -111`.  Workaround:
+   `--mds 127.0.0.1:2049` (ec_demo's host:port syntax bypasses
+   portmap).
 
-Validation framing: the harness did its job.  It surfaced a
-real concurrency defect in the path we care about (per-stripe
-RMW under contention), and a real defect in the harness itself
-(forensics wiped on the only exit we'd want them for).  Both
-are now visible to follow-up commits instead of hidden.
+4. **No `ASAN_OPTIONS=detect_leaks=0:halt_on_error=0` /
+   `LSAN_OPTIONS=halt_on_error=0` around `ec_demo`
+   invocations.**  The ASAN/LSAN-instrumented `ec_demo` build
+   reports libtirpc allocation leaks in `clnt_create_timed`
+   and `authunix_create_default` (~6 KiB total) even when the
+   actual RPC completes successfully.  Default LSan exits the
+   process with rc=1 on any leak.  The harness's
+   `set -euo pipefail` catches that and aborts before
+   launching the per-writer racers, even though the pre-fill
+   `ec_demo: write OK` line is in the log just above.  Hit
+   symptom: the harness trap fires after the pre-fill, no
+   `writer-<i>.log` files are produced.  The CI integration
+   test (`ci_integration_test.sh`) already mitigates this
+   class of leak with `ASAN_OPTIONS=detect_leaks=0:halt_on_error=0`
+   and `UBSAN_OPTIONS=halt_on_error=0`; the Track 1b harness
+   needs the same.
+
+Validation framing: this is exactly the value of the trap
+fix.  The preserved WORKDIR turned a "BADSESSION cascade"
+narrative (which would have anchored several days of
+server-side triage) into a 4-step walk through harness
+defects in under 10 minutes.  None of the layers below the
+harness are implicated.  Manual `ec_demo write --mds
+127.0.0.1:2049 --shard-size 4096 ...` against the fresh
+build completes end-to-end (4 stripes x (4+2) shards), so the
+NFSv4.2 + CHUNK + EC wire path is healthy for the single-writer
+case.
+
+The actual multi-writer disjoint race has **not yet been
+executed**.  The Track 1 chunk-level frankenstein finding
+(2026-05, mid-May) and the Track 2 NPS=4 PASS (2026-06-01)
+remain the only on-wire chunk-collision signals to date.
 
 ### Track 2 (fio via N PSes) -- 2026-06-01 first clean smoke
 
