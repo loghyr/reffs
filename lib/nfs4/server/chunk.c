@@ -283,6 +283,59 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 	if (cs->cs_chunk_size == 0)
 		cs->cs_chunk_size = chunk_size;
 
+	/*
+	 * Pull cstats up before the gate so the gate's reject path can
+	 * bump cs_chunk_busy_delay.  The existing INV-1 increments below
+	 * still see the same pointer.
+	 */
+	struct reffs_chunk_stats *cstats =
+		compound->c_curr_sb ? &compound->c_curr_sb->sb_chunk_stats :
+				      NULL;
+
+	/*
+	 * Track 1b chunk-collision gate (Option C, design/chunk-collision-
+	 * validation.md).  Before committing any payload or metadata, scan
+	 * the target range for an existing PENDING block owned by a different
+	 * writer.  If we find one, refuse the write with NFS4ERR_DELAY -- the
+	 * client retries the full RMW, picks up the prior writer's COMMITTED
+	 * bytes on its CHUNK_READ, and re-encodes with fresh state.  Without
+	 * this gate, the on-wire signature is "last-FINALIZE-wins": the
+	 * second writer's CHUNK_WRITE payload (which encodes the prior writer's
+	 * range as PRE-FILL because the second writer's RMW read happened too
+	 * early) stomps the first writer's bytes.
+	 *
+	 * The check happens BEFORE data_block_write so we leave no half-
+	 * applied payload on disk on the reject path; the check happens
+	 * AFTER the cs lookup + algorithm-policy + chunk_size init because
+	 * those are setup steps the prior writer also paid for, and skipping
+	 * them on the reject path would diverge metadata between accept and
+	 * reject paths.
+	 *
+	 * Per-owner identity matches on (co_id, cg_client_id) -- the wire-
+	 * identifying tuple from chunk_owner4.co_guard plus co_id.  An
+	 * idempotent retry from the SAME writer (same tuple) is allowed
+	 * through; this is the same identity comparison
+	 * cs_pending_displaced uses to count cross-writer displacement.
+	 */
+	for (uint32_t i = 0; i < nchunks; i++) {
+		struct chunk_block *prev =
+			chunk_store_lookup(cs, args->cwa_offset + i);
+
+		if (!prev || prev->cb_state != CHUNK_STATE_PENDING)
+			continue;
+		if (prev->cb_owner_id == args->cwa_owner.co_id &&
+		    prev->cb_client_id == args->cwa_owner.co_guard.cg_client_id)
+			continue;
+
+		if (cstats)
+			atomic_fetch_add_explicit(&cstats->cs_chunk_busy_delay,
+						  1, memory_order_relaxed);
+
+		pthread_mutex_unlock(&compound->c_inode->i_attr_mutex);
+		*status = NFS4ERR_DELAY;
+		return 0;
+	}
+
 	/* Ensure the data block exists. */
 	pthread_rwlock_wrlock(&compound->c_inode->i_db_rwlock);
 	if (!compound->c_inode->i_db) {
@@ -318,10 +371,6 @@ uint32_t nfs4_op_chunk_write(struct compound *compound)
 		compound->c_inode->i_size = new_end;
 
 	pthread_rwlock_unlock(&compound->c_inode->i_db_rwlock);
-
-	struct reffs_chunk_stats *cstats =
-		compound->c_curr_sb ? &compound->c_curr_sb->sb_chunk_stats :
-				      NULL;
 
 	/* Record per-block metadata.  Last block may be smaller. */
 	for (uint32_t i = 0; i < nchunks; i++) {
