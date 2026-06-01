@@ -365,6 +365,14 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 	trust_build_key(key, stateid);
 	unsigned long hash = trust_hash(key);
 
+	/* Track 1b trace -- watch the seqids the MDS hands out. */
+	const uint8_t *o = (const uint8_t *)stateid->other;
+
+	LOG("trust_register: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x seqid=%u ino=%" PRIu64
+	    " clid=%" PRIu64 " iomode=%u",
+	    o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8], o[9], o[10],
+	    o[11], stateid->seqid, ino, (uint64_t)clientid, (unsigned)iomode);
+
 	/*
 	 * Check for existing entry first (idempotent MDS retry).
 	 * The key is (other + seqid), so an idempotent retry of the
@@ -444,6 +452,13 @@ void trust_stateid_revoke(const stateid4 *stateid)
 	unsigned long hash = trust_hash(key);
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
+
+	/* Track 1b trace */
+	const uint8_t *o = (const uint8_t *)stateid->other;
+
+	LOG("trust_revoke: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x seqid=%u",
+	    o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8], o[9], o[10],
+	    o[11], stateid->seqid);
 
 	rcu_read_lock();
 	cds_lfht_lookup(trust_ht, hash, trust_match, key, &iter);
@@ -567,6 +582,13 @@ struct trust_entry *trust_stateid_find(const stateid4 *stateid)
 			te = tmp;
 	}
 	rcu_read_unlock();
+
+	/* Track 1b trace -- log misses + hits with seqid. */
+	const uint8_t *o = (const uint8_t *)stateid->other;
+
+	LOG("trust_find: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x seqid=%u hit=%s",
+	    o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8], o[9], o[10],
+	    o[11], stateid->seqid, te ? "Y" : "N");
 
 	return te;
 }
