@@ -666,6 +666,74 @@ concurrent partial-stripe RMW is the bug surface.  Disjoint
 passes because full-stripe writes don't invoke CHUNK_READ.
 The bug is NOT a generic NFSv4.1 session lifecycle issue.
 
+**2026-06-01 -- root cause locked: trust-table key is per-inode,
+shared by concurrent writers.**
+
+Extended the WIP instrumentation with LOG in
+`trust_stateid_register`, `trust_stateid_revoke`, and
+`trust_stateid_find`.  Re-ran `--mode chunk-split` against the
+patched MDS+DSes.  ds1's trust-event timeline (xtimes /
+sessionid context redacted):
+
+```
+[+ 0.000] register  other=0500...e136a16c  iomode=1 (READ)  ino=3
+[+ 0.002] revoke    other=0500...e136a16c  hit=Y            ino=3
+[+ 0.114] find      other=0500...e136a16c  hit=N -- BAD_STATEID
+[+ 0.116] register  other=0500...e136a16c  iomode=2 (RW)    ino=3
+[+ 0.153] revoke    other=0500...e136a16c  hit=Y            ino=3
+[+ 0.176] find      other=0500...e136a16c  hit=N -- BAD_STATEID
+[+ 0.178] register  other=0500...e136a16c  iomode=2 (RW)
+[+ 0.289] find      other=0500...e136a16c  hit=Y
+```
+
+The exact same 12-byte `other` (`0500000003000000e136a16c`)
+gets registered, revoked, re-registered, revoked, re-registered
+multiple times within hundreds of milliseconds.  The MDS log
+shows the matching `LAYOUTERROR: trust gap healed for ino=2
+(BAD_STATEID re-registered on 6 DS(es))` events firing twice
+in response.
+
+The trust table key is `stateid.other` (12 bytes -- see
+`trust_match` in `lib/nfs4/server/trust_stateid.c`).  When two
+writers hold layouts on the same MDS file simultaneously,
+their stateids share the same `other`.  Writer A's
+LAYOUTRETURN fires `trust_revoke` keyed on `other`; the
+operation deletes the shared trust entry; writer B's next
+CHUNK op calls `trust_stateid_find` and gets NULL ->
+BAD_STATEID.
+
+The MDS's "trust gap healed" path then re-registers, and
+writer B's retry MAY succeed -- but if writer A revokes again
+before writer B's retry actually issues, the thrash repeats.
+Each thrash cycle the client retries up to 3x per
+`ec_pipeline.c` ("ec_chunk_write retries NFS4ERR_BAD_STATEID
+three times"), then bails up to `ec_layout_refresh` which
+tears down + recreates the DS session.  That recreate path is
+where the BADSESSION cascade originates -- not because the DS
+destroyed the session, but because the client tore it down
+and the recreate is racing with the trust thrash.
+
+`disjoint` PASSES because each writer covers one full stripe
+with no `ec_read_stripe_with_file` call -- the entire READ-half
+LAYOUTGET / CHUNK_READ / LAYOUTRETURN cycle never fires, so
+the per-inode trust entry isn't being shared between
+concurrent operations.
+
+`trust-stateid.md` anticipated the in-place update risk in the
+NOT_NOW_BROWN_COW comment on `te_iomode`.  The deeper issue is
+**entry lifetime**: not just the iomode field, but the entry
+itself can't be shared between writers under multi-writer RMW.
+
+Fix space (out of scope for the current triage slice):
+- Change the trust table key from `stateid.other` to the full
+  stateid (other + seqid).  Each writer's stateid becomes its
+  own entry with its own lifetime.  Cleanest, matches NFSv4.1
+  per-layout-stateid semantics.
+- Or: reference-count the trust entry on register, only
+  unhash when the count drops to zero on revoke.
+- Or: track per-writer iomode lists on the same entry and
+  revoke only when every writer's reference is gone.
+
 Validation framing for the run: the harness delivered exactly
 what a chunk-collision harness should -- 1 clean control case
 plus 3 distinct failing variants that all converge on the
