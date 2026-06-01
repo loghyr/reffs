@@ -20,6 +20,7 @@
 #endif
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -336,6 +337,14 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 	if (!trust_ht)
 		return -EINVAL;
 
+	/* Track 1b BAD_STATEID triage. */
+	const uint8_t *o = stateid->other;
+
+	LOG("trust_register: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x ino=%" PRIu64
+	    " clid=%" PRIu64 " iomode=%u",
+	    o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8], o[9], o[10],
+	    o[11], ino, (uint64_t)clientid, (unsigned)iomode);
+
 	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
 
 	/*
@@ -408,6 +417,10 @@ void trust_stateid_revoke(const stateid4 *stateid)
 	if (!trust_ht)
 		return;
 
+	/* Track 1b BAD_STATEID triage. */
+	const uint8_t *o = stateid->other;
+	bool hit = false;
+
 	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
@@ -421,18 +434,26 @@ void trust_stateid_revoke(const stateid4 *stateid)
 			caa_container_of(node, struct trust_entry, te_ht_node);
 
 		if (urcu_ref_get_unless_zero(&te->te_ref)) {
+			hit = true;
 			/*
 			 * Explicit removal: unhash now so it is no longer
 			 * findable; drop find ref + creation ref.
 			 */
 			cds_lfht_del(trust_ht, &te->te_ht_node);
 			rcu_read_unlock();
+			LOG("trust_revoke: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x hit=Y ino=%" PRIu64,
+			    o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7],
+			    o[8], o[9], o[10], o[11], te->te_ino);
 			trust_entry_put(te); /* find ref */
 			trust_entry_put(te); /* creation ref */
 			return;
 		}
 	}
 	rcu_read_unlock();
+	if (!hit)
+		LOG("trust_revoke: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x hit=N",
+		    o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8], o[9],
+		    o[10], o[11]);
 }
 
 void trust_stateid_bulk_revoke(clientid4 clientid)
@@ -531,6 +552,17 @@ struct trust_entry *trust_stateid_find(const stateid4 *stateid)
 			te = tmp;
 	}
 	rcu_read_unlock();
+
+	/* Track 1b BAD_STATEID triage: log misses + hits.  We need both
+	 * because the BAD_STATEID return tells the operator the lookup
+	 * failed but not why -- maybe the entry was never registered,
+	 * maybe it was just revoked. */
+	const uint8_t *o = stateid->other;
+
+	LOG("trust_find: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x hit=%s%s",
+	    o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8], o[9], o[10],
+	    o[11], te ? "Y" : "N",
+	    te ? "" : " -- BAD_STATEID will be returned by caller");
 
 	return te;
 }
