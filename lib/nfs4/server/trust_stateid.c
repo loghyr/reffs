@@ -336,6 +336,16 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 	if (!trust_ht)
 		return -EINVAL;
 
+	/* WIP t1b-trust-trace: revert before merge. */
+	{
+		const unsigned char *_o = (const unsigned char *)stateid->other;
+
+		LOG("[t1b-trust] REGISTER other=%02x%02x%02x%02x%02x%02x%02x%02x ino=%lu iomode=%u clid=%lu",
+		    _o[0], _o[1], _o[2], _o[3], _o[4], _o[5], _o[6], _o[7],
+		    (unsigned long)ino, (unsigned)iomode,
+		    (unsigned long)clientid);
+	}
+
 	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
 
 	/*
@@ -407,6 +417,14 @@ void trust_stateid_revoke(const stateid4 *stateid)
 {
 	if (!trust_ht)
 		return;
+
+	/* WIP t1b-trust-trace: revert before merge. */
+	{
+		const unsigned char *_o = (const unsigned char *)stateid->other;
+
+		LOG("[t1b-trust] REVOKE other=%02x%02x%02x%02x%02x%02x%02x%02x",
+		    _o[0], _o[1], _o[2], _o[3], _o[4], _o[5], _o[6], _o[7]);
+	}
 
 	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
 	struct cds_lfht_iter iter;
