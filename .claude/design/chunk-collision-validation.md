@@ -409,6 +409,108 @@ Triage targets for the next slice:
   before the actual op runs);
 - the chunk-store lock-contention path on simultaneous RMW.
 
+**2026-06-01 -- BADSESSION localized to the DSes, not the MDS.**
+
+Counts of `NFS4ERR_BADSESSION` returns in each container's
+trace file (`/build/reffsd.log`) after the 4-mode batch run:
+
+| Container | BADSESSION count |
+|-----------|------------------|
+| reffs-bench-mds | **0** |
+| reffs-bench-ds0 | 48 |
+| reffs-bench-ds1 | 34 |
+| reffs-bench-ds2 | 34 |
+| reffs-bench-ds3 | 34 |
+| reffs-bench-ds4 | 34 |
+| reffs-bench-ds5 | 34 |
+| reffs-bench-ds6 | 32 |
+| reffs-bench-ds7 | 32 |
+| reffs-bench-ds8 | 32 |
+| reffs-bench-ds9 | 32 |
+
+The DS-side traces show the failing pattern explicitly:
+
+```
+[FS] dispatch_compound:269: dispatch op=OP_SEQUENCE(53) curr_op=0 ss=...
+[FS] dispatch_compound:295: dispatch done op=OP_SEQUENCE(53) curr_op=0 ss=...
+[NFS] dispatch_compound:296: compound=... c_op=0 op=OP_SEQUENCE status=NFS4ERR_BADSESSION(10052) ...
+[FS] dispatch_compound:335: dispatch op=OP_SEQUENCE(53) FAILED status=NFS4ERR_BADSESSION(10052)
+[FS] rpc_protocol_op_call:711: op 100003/1 ret=10052 xid=...
+```
+
+Per `lib/nfs4/server/session.c:776-797` (`nfs4_op_sequence`),
+`NFS4ERR_BADSESSION` returns from exactly one place: the
+`nfs4_session_find(...)` lookup returns NULL.  So whatever
+sessionid the client is sending on these failing SEQUENCEs,
+the DS's `ss_session_ht` doesn't have it.
+
+The misleading wire signature is that the client log shows
+`tag="reclaim_complete"` / `tag="chunk_write"` failing -- both
+of those tags route through `mds_compound_send` regardless of
+whether the destination is the MDS or a DS, because the same
+client library serves both endpoints (`mds_session` is shared
+between MDS and DS connections; the "mds" prefix in the
+function name is a misnomer once the layout client uses it for
+DS sessions too).
+
+Revised triage targets, narrower:
+
+1. **DS-side `nfs4_session_find` lookup miss** -- the only path
+   to `NFS4ERR_BADSESSION`.  Why is the sessionid being sent by
+   the client not in the DS's `ss_session_ht`?
+   - DS-side `nfs4_session_alloc` returns NULL on a session-id
+     hash collision (`err_put_client`), and the client logs
+     `mds_log_nfs4_err("CREATE_SESSION", ...)` -- look for that
+     log on the client side and the corresponding DS-side
+     CREATE_SESSION trace to confirm session-id collision is
+     the trigger.
+   - DS-side session being destroyed between `CREATE_SESSION`
+     return and the client's next op.  Candidate triggers:
+     * `nfs4_session_destroy_zombies` in
+       `nfs4_op_create_session` -- destroys all
+       `NFS4_SESSION_IS_ZOMBIE` sessions for the same client.
+       But zombies only exist via `nfs4_session_reparent_for_replace`
+       (RFC 8881 case 7), which only fires when EXCHANGE_ID
+       returns an existing client with a different
+       verifier or principal.  Each ec_demo writer uses a
+       distinct `--id`, so this shouldn't fire.  Worth
+       confirming by adding a TRACE in
+       `nfs4_session_destroy_zombies` showing what it unhashed.
+     * Lease reaper destroying the session via
+       `nfs4_session_destroy_for_client` --> `client_expire`
+       path.
+     * A bug in `nfs4_op_destroy_session` that races with
+       `nfs4_op_sequence`: SEQUENCE looks up the session ref,
+       DESTROY_SESSION fires from another connection, unhashes
+       the session, and SEQUENCE on the now-unhashed-but-still-
+       reachable session takes a stale path.  This is unlikely
+       since `nfs4_session_find` checks the hash table and the
+       URCU mechanics serialize.
+
+2. **Why does `--mode disjoint` PASS while the RMW modes
+   FAIL?**  Disjoint exercises full-stripe writes only -- no
+   `ec_read_stripe_with_file` (no CHUNK_READ).  The failing
+   modes always invoke RMW.  So the RMW path on the client
+   (`ec_read_stripe_with_file` --> `ds_chunk_read`) might be
+   the only path that triggers whatever destroys the DS
+   session.  Worth comparing one passing and one failing run
+   trace side-by-side to see the difference in DS session
+   creation/destroy events.
+
+3. **First DS-side BADSESSION timing.**  Pull the timestamp of
+   the first BADSESSION on each DS and correlate to the
+   client's first DS session creation.  If `[CREATE_SESSION
+   OK]` --> `[BADSESSION immediately]` with no other events in
+   between, the bug is in CREATE_SESSION itself (returning a
+   session that isn't actually in the hash table); if there's
+   a `[CREATE_SESSION OK]` --> `[some destroy event]` -->
+   `[BADSESSION]` sequence, the destroy is the smoking gun.
+
+The probe-client LD path issue (separate item in the
+outstanding list) blocks publishing INV-1 counter deltas
+alongside this analysis, but doesn't block the triage of the
+DS-side session lifecycle itself.
+
 Validation framing for the run: the harness delivered exactly
 what a chunk-collision harness should -- 1 clean control case
 plus 3 distinct failing variants that all converge on the
