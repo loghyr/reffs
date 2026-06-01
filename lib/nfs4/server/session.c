@@ -8,6 +8,7 @@
 #endif
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -140,6 +141,21 @@ bool nfs4_session_unhash(struct server_state *ss, struct nfs4_session *ns)
 	ret = cds_lfht_del(ss->ss_session_ht, &ns->ns_node);
 	assert(!ret);
 
+	/* Track 1b BADSESSION triage: log every session removal so we
+	 * can correlate with the client-side BADSESSION that follows. */
+	LOG("session_unhash: sid=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x clid=%" PRIu64
+	    " state=0x%" PRIx64,
+	    ns->ns_sessionid[0], ns->ns_sessionid[1], ns->ns_sessionid[2],
+	    ns->ns_sessionid[3], ns->ns_sessionid[4], ns->ns_sessionid[5],
+	    ns->ns_sessionid[6], ns->ns_sessionid[7], ns->ns_sessionid[8],
+	    ns->ns_sessionid[9], ns->ns_sessionid[10], ns->ns_sessionid[11],
+	    ns->ns_sessionid[12], ns->ns_sessionid[13], ns->ns_sessionid[14],
+	    ns->ns_sessionid[15],
+	    ns->ns_client ?
+		    (uint64_t)nfs4_client_to_client(ns->ns_client)->c_id :
+		    0,
+	    state);
+
 	/*
 	 * Drop the hash table's own ref.  The caller still holds theirs;
 	 * the session is freed when the last ref is released.
@@ -215,6 +231,12 @@ void nfs4_session_destroy_zombies(struct server_state *ss,
 
 	if (!ss || !ss->ss_session_ht || !nc)
 		return;
+
+	/* Track 1b BADSESSION triage: log the entry into the zombie-
+	 * destroy path so we can tell whether CREATE_SESSION is the
+	 * mechanism that removes sessions before the client's next op. */
+	LOG("destroy_zombies: enter for clid=%" PRIu64,
+	    (uint64_t)nfs4_client_to_client(nc)->c_id);
 
 	rcu_read_lock();
 	cds_lfht_first(ss->ss_session_ht, &iter);
@@ -323,6 +345,16 @@ struct nfs4_session *nfs4_session_alloc(struct server_state *ss,
 		ns->ns_state &= ~NFS4_SESSION_IS_HASHED;
 		goto err_put_client;
 	}
+
+	/* Track 1b BADSESSION triage: log every session add so we can
+	 * pair it against the unhash event for the same sessionid. */
+	LOG("session_alloc: sid=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x clid=%" PRIu64,
+	    ns->ns_sessionid[0], ns->ns_sessionid[1], ns->ns_sessionid[2],
+	    ns->ns_sessionid[3], ns->ns_sessionid[4], ns->ns_sessionid[5],
+	    ns->ns_sessionid[6], ns->ns_sessionid[7], ns->ns_sessionid[8],
+	    ns->ns_sessionid[9], ns->ns_sessionid[10], ns->ns_sessionid[11],
+	    ns->ns_sessionid[12], ns->ns_sessionid[13], ns->ns_sessionid[14],
+	    ns->ns_sessionid[15], (uint64_t)nfs4_client_to_client(nc)->c_id);
 
 	/* Bump ref for the caller; hash table holds its own ref. */
 	nfs4_session_get(ns);
