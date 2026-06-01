@@ -173,6 +173,12 @@ static int ec_resolve_mirrors(struct ec_context *ctx)
 		if (ret)
 			goto out_err;
 
+		/* WIP t1b-unhash-trace: log every mirror's resolved host
+		 * so we can see whether dedup is firing or not.  Revert
+		 * before merge. */
+		fprintf(stderr, "[t1b-resolve] mirror[%u] host=%s port=%u\n", i,
+			ctx->ctx_devs[i].ed_host, ctx->ctx_devs[i].ed_port);
+
 		/*
 		 * Propagate the tight-coupling flag from the device to the
 		 * mirror.  When set, ds_chunk_write/read use the real layout
