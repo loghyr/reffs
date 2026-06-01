@@ -2609,7 +2609,8 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 				(int)buf->pwb_geom.pwbg_k,
 				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
 				LAYOUT4_FLEX_FILES_V2,
-				buf->pwb_geom.pwbg_shard_size, creds, pls);
+				buf->pwb_geom.pwbg_shard_size, creds, pls,
+				NULL);
 			if (ret) {
 				atomic_fetch_add_explicit(
 					&pls->pls_rmw_read_failures_total, 1,
@@ -2643,7 +2644,8 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
 				LAYOUT4_FLEX_FILES_V2,
 				buf->pwb_geom.pwbg_shard_size, creds,
-				stripe_mds_verf, &stripe_mds_verf_set, pls);
+				stripe_mds_verf, &stripe_mds_verf_set, pls,
+				NULL);
 			free(scratch);
 			if (ret)
 				break;
@@ -2662,7 +2664,8 @@ static int pwb_flush_range_locked(struct ps_write_buffer *buf,
 				(int)buf->pwb_geom.pwbg_m, EC_CODEC_RS,
 				LAYOUT4_FLEX_FILES_V2,
 				buf->pwb_geom.pwbg_shard_size, creds,
-				stripe_mds_verf, &stripe_mds_verf_set, pls);
+				stripe_mds_verf, &stripe_mds_verf_set, pls,
+				NULL);
 			if (ret)
 				break;
 		}

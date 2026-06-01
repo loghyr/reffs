@@ -1135,8 +1135,18 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      layouttype4 layout_type, size_t shard_size,
 			      const struct authunix_parms *creds,
 			      uint8_t mds_verf_out[8], bool *mds_verf_set_out,
-			      struct ps_listener_state *pls)
+			      struct ps_listener_state *pls, void *ctx_in_out)
 {
+	/* Shared-ctx fast path (Track 1b second-mechanism fix): if the
+	 * caller passes a populated ctx, skip the per-call codec /
+	 * LAYOUTGET / ec_resolve_mirrors and the matching
+	 * ec_disconnect_all + LAYOUTRETURN.  Re-uses DS sessions across
+	 * stripes within one ec_write_codec_range call.  Local `ctx` is
+	 * a working copy: we copy IN from the shared ctx (if any) at
+	 * the top and copy OUT to it (if any) at the bottom so any
+	 * mid-flight ec_layout_refresh propagates.
+	 */
+	struct ec_context *shared_ctx = (struct ec_context *)ctx_in_out;
 	struct ec_context ctx;
 	uint8_t **data_shards = NULL;
 	uint8_t **parity_shards = NULL;
@@ -1146,6 +1156,9 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	size_t ds_stride;
 	int outer_retry = 0;
 	int ret;
+
+	if (shared_ctx)
+		ctx = *shared_ctx; /* shallow-copy populated state */
 
 	if (!mf || !stripe_bytes) {
 		ec_log("ec_write_stripe: NULL mf / stripe_bytes\n");
@@ -1178,35 +1191,38 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 		return -EINVAL;
 	}
 
-	memset(&ctx, 0, sizeof(ctx));
-	ctx.ctx_ms = ms;
-	ctx.ctx_k = k;
-	ctx.ctx_m = m;
-	ctx.ctx_pls = pls;
-	ctx.ctx_file = *mf; /* shallow copy; caller owns mf */
+	if (!shared_ctx) {
+		memset(&ctx, 0, sizeof(ctx));
+		ctx.ctx_ms = ms;
+		ctx.ctx_k = k;
+		ctx.ctx_m = m;
+		ctx.ctx_pls = pls;
+		ctx.ctx_file = *mf; /* shallow copy; caller owns mf */
 
-	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
-	if (!ctx.ctx_codec)
-		return -ENOMEM;
+		ctx.ctx_codec = ec_create_codec(k, m, codec_type);
+		if (!ctx.ctx_codec)
+			return -ENOMEM;
 
-	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
-			     creds, &ctx.ctx_layout);
-	if (ret) {
-		ec_log("ec_write_stripe: LAYOUTGET failed: %d\n", ret);
-		goto out_codec;
-	}
+		ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW,
+				     layout_type, creds, &ctx.ctx_layout);
+		if (ret) {
+			ec_log("ec_write_stripe: LAYOUTGET failed: %d\n", ret);
+			goto out_codec;
+		}
 
-	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
-		ec_log("ec_write_stripe: need %d mirrors, got %u\n", k + m,
-		       ctx.ctx_layout.el_nmirrors);
-		ret = -EINVAL;
-		goto out_layout;
-	}
+		if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
+			ec_log("ec_write_stripe: need %d mirrors, got %u\n",
+			       k + m, ctx.ctx_layout.el_nmirrors);
+			ret = -EINVAL;
+			goto out_layout;
+		}
 
-	ret = ec_resolve_mirrors(&ctx);
-	if (ret) {
-		ec_log("ec_write_stripe: resolve_mirrors failed: %d\n", ret);
-		goto out_layout;
+		ret = ec_resolve_mirrors(&ctx);
+		if (ret) {
+			ec_log("ec_write_stripe: resolve_mirrors failed: %d\n",
+			       ret);
+			goto out_layout;
+		}
 	}
 
 	data_shards = calloc(k, sizeof(uint8_t *));
@@ -1425,12 +1441,19 @@ out_shards:
 		free(parity_shards);
 	}
 	free(data_shards);
-	ec_disconnect_all(&ctx);
+	if (!shared_ctx)
+		ec_disconnect_all(&ctx);
 out_layout:
-	mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
-	ec_layout_free(&ctx.ctx_layout);
+	if (!shared_ctx) {
+		mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
+		ec_layout_free(&ctx.ctx_layout);
+	}
 out_codec:
-	ec_codec_destroy(ctx.ctx_codec);
+	if (!shared_ctx)
+		ec_codec_destroy(ctx.ctx_codec);
+	if (shared_ctx)
+		*shared_ctx = ctx; /* propagate any mid-flight changes
+				    * (e.g., ec_layout_refresh) */
 	return ret;
 }
 
@@ -1440,8 +1463,10 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			     enum ec_codec_type codec_type,
 			     layouttype4 layout_type, size_t shard_size,
 			     const struct authunix_parms *creds,
-			     struct ps_listener_state *pls)
+			     struct ps_listener_state *pls, void *ctx_in_out)
 {
+	/* See ec_write_stripe_with_file for the shared-ctx contract. */
+	struct ec_context *shared_ctx = (struct ec_context *)ctx_in_out;
 	struct ec_context ctx;
 	uint8_t **shards = NULL;
 	bool *present = NULL;
@@ -1450,6 +1475,9 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 	int total;
 	int outer_retry = 0;
 	int ret;
+
+	if (shared_ctx)
+		ctx = *shared_ctx;
 
 	if (!mf || !stripe_bytes) {
 		ec_log("ec_read_stripe: NULL mf / stripe_bytes\n");
@@ -1476,35 +1504,38 @@ int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 		return -EINVAL;
 	}
 
-	memset(&ctx, 0, sizeof(ctx));
-	ctx.ctx_ms = ms;
-	ctx.ctx_k = k;
-	ctx.ctx_m = m;
-	ctx.ctx_pls = pls;
-	ctx.ctx_file = *mf; /* shallow copy; caller owns mf */
+	if (!shared_ctx) {
+		memset(&ctx, 0, sizeof(ctx));
+		ctx.ctx_ms = ms;
+		ctx.ctx_k = k;
+		ctx.ctx_m = m;
+		ctx.ctx_pls = pls;
+		ctx.ctx_file = *mf; /* shallow copy; caller owns mf */
 
-	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
-	if (!ctx.ctx_codec)
-		return -ENOMEM;
+		ctx.ctx_codec = ec_create_codec(k, m, codec_type);
+		if (!ctx.ctx_codec)
+			return -ENOMEM;
 
-	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ, layout_type,
-			     creds, &ctx.ctx_layout);
-	if (ret) {
-		ec_log("ec_read_stripe: LAYOUTGET failed: %d\n", ret);
-		goto out_codec;
-	}
+		ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_READ,
+				     layout_type, creds, &ctx.ctx_layout);
+		if (ret) {
+			ec_log("ec_read_stripe: LAYOUTGET failed: %d\n", ret);
+			goto out_codec;
+		}
 
-	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
-		ec_log("ec_read_stripe: need %d mirrors, got %u\n", k + m,
-		       ctx.ctx_layout.el_nmirrors);
-		ret = -EINVAL;
-		goto out_layout;
-	}
+		if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
+			ec_log("ec_read_stripe: need %d mirrors, got %u\n",
+			       k + m, ctx.ctx_layout.el_nmirrors);
+			ret = -EINVAL;
+			goto out_layout;
+		}
 
-	ret = ec_resolve_mirrors(&ctx);
-	if (ret) {
-		ec_log("ec_read_stripe: resolve_mirrors failed: %d\n", ret);
-		goto out_layout;
+		ret = ec_resolve_mirrors(&ctx);
+		if (ret) {
+			ec_log("ec_read_stripe: resolve_mirrors failed: %d\n",
+			       ret);
+			goto out_layout;
+		}
 	}
 
 	rd_chunk_sz = ctx.ctx_layout.el_chunk_size;
@@ -1614,12 +1645,18 @@ out_shards:
 		free(shards);
 	}
 	free(present);
-	ec_disconnect_all(&ctx);
+	if (!shared_ctx)
+		ec_disconnect_all(&ctx);
 out_layout:
-	mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
-	ec_layout_free(&ctx.ctx_layout);
+	if (!shared_ctx) {
+		mds_layout_return(ms, &ctx.ctx_file, creds, &ctx.ctx_layout);
+		ec_layout_free(&ctx.ctx_layout);
+	}
 out_codec:
-	ec_codec_destroy(ctx.ctx_codec);
+	if (!shared_ctx)
+		ec_codec_destroy(ctx.ctx_codec);
+	if (shared_ctx)
+		*shared_ctx = ctx; /* propagate any ec_layout_refresh */
 	return ret;
 }
 
@@ -1971,11 +2008,13 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 			 layouttype4 layout_type, size_t shard_size)
 {
 	struct mds_file mf;
+	struct ec_context ctx;
 	uint8_t *scratch = NULL;
 	size_t stripe_data;
 	uint64_t end;
 	uint64_t first_stripe;
 	uint64_t last_stripe;
+	bool ctx_built = false;
 	int ret;
 
 	if (length == 0)
@@ -2007,6 +2046,49 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 		goto out_close;
 	}
 
+	/*
+	 * Track 1b second-mechanism fix: build a single shared ctx
+	 * (codec + RW layout + ec_resolve_mirrors) ONCE at the top and
+	 * thread it through every per-stripe call.  Without this, each
+	 * ec_read_stripe_with_file / ec_write_stripe_with_file call
+	 * built its own ctx and called ec_disconnect_all on the way out
+	 * -- which sent DESTROY_SESSION to every DS between stripes,
+	 * causing the BADSESSION cascade documented in
+	 * chunk-collision-validation.md "What we found".
+	 */
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.ctx_ms = ms;
+	ctx.ctx_k = k;
+	ctx.ctx_m = m;
+	ctx.ctx_file = mf;
+
+	ctx.ctx_codec = ec_create_codec(k, m, codec_type);
+	if (!ctx.ctx_codec) {
+		ret = -ENOMEM;
+		goto out_free;
+	}
+
+	ret = mds_layout_get(ms, &ctx.ctx_file, LAYOUTIOMODE4_RW, layout_type,
+			     NULL, &ctx.ctx_layout);
+	if (ret) {
+		ec_log("ec_write_range: LAYOUTGET failed: %d\n", ret);
+		goto out_codec;
+	}
+
+	if (ctx.ctx_layout.el_nmirrors < (uint32_t)(k + m)) {
+		ec_log("ec_write_range: need %d mirrors, got %u\n", k + m,
+		       ctx.ctx_layout.el_nmirrors);
+		ret = -EINVAL;
+		goto out_layout;
+	}
+
+	ret = ec_resolve_mirrors(&ctx);
+	if (ret) {
+		ec_log("ec_write_range: resolve_mirrors failed: %d\n", ret);
+		goto out_layout;
+	}
+	ctx_built = true;
+
 	for (uint64_t s = first_stripe; s <= last_stripe; s++) {
 		size_t sub_off_stripe;
 		size_t sub_off_data;
@@ -2017,11 +2099,7 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 				     &sub_off_stripe, &sub_off_data, &sub_len);
 
 		if (sub_off_stripe == 0 && sub_len == stripe_data) {
-			/*
-			 * Fully-dirty stripe -- the caller's data covers
-			 * every byte of this stripe.  Hand straight to
-			 * the per-stripe primitive; no RMW prefix read.
-			 */
+			/* Fully-dirty stripe; no RMW prefix read. */
 			write_payload = data + sub_off_data;
 		} else {
 			/*
@@ -2036,12 +2114,13 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 			ret = ec_read_stripe_with_file(ms, &mf, s, scratch,
 						       stripe_data, k, m,
 						       codec_type, layout_type,
-						       shard_size, NULL, NULL);
+						       shard_size, NULL, NULL,
+						       &ctx);
 			if (ret) {
 				ec_log("ec_write_range: RMW read stripe "
 				       "%llu failed: %d\n",
 				       (unsigned long long)s, ret);
-				goto out_free;
+				goto out_disconnect;
 			}
 			memcpy(scratch + sub_off_stripe, data + sub_off_data,
 			       sub_len);
@@ -2051,15 +2130,23 @@ int ec_write_codec_range(struct mds_session *ms, const char *path,
 		ret = ec_write_stripe_with_file(ms, &mf, s, write_payload,
 						stripe_data, k, m, codec_type,
 						layout_type, shard_size, NULL,
-						NULL, NULL, NULL);
+						NULL, NULL, NULL, &ctx);
 		if (ret) {
 			ec_log("ec_write_range: write stripe %llu failed: "
 			       "%d\n",
 			       (unsigned long long)s, ret);
-			goto out_free;
+			goto out_disconnect;
 		}
 	}
 
+out_disconnect:
+	if (ctx_built)
+		ec_disconnect_all(&ctx);
+out_layout:
+	mds_layout_return(ms, &ctx.ctx_file, NULL, &ctx.ctx_layout);
+	ec_layout_free(&ctx.ctx_layout);
+out_codec:
+	ec_codec_destroy(ctx.ctx_codec);
 out_free:
 	free(scratch);
 out_close:
@@ -2128,7 +2215,7 @@ int ec_read_codec_range(struct mds_session *ms, const char *path, uint8_t *buf,
 
 		ret = ec_read_stripe_with_file(ms, &mf, s, scratch, stripe_data,
 					       k, m, codec_type, layout_type,
-					       shard_size, NULL, NULL);
+					       shard_size, NULL, NULL, NULL);
 		if (ret) {
 			ec_log("ec_read_range: read stripe %llu failed: "
 			       "%d\n",

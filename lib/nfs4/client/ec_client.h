@@ -896,6 +896,19 @@ int ec_write_codec_with_file(struct mds_session *ms, struct mds_file *mf,
  * not need this).  On failure or NULL pass-through neither out-
  * param is touched.
  */
+/*
+ * `ctx_in_out` is an opaque pointer to a `struct ec_context` (internal
+ * to ec_pipeline.c).  Pass NULL for the today-default behavior --
+ * each call builds its own ctx, issues LAYOUTGET + ec_resolve_mirrors,
+ * does its work, then tears down (ec_disconnect_all + LAYOUTRETURN).
+ * Pass a populated context to share DS sessions and the layout across
+ * a batch of stripe calls -- the bulk RMW path
+ * (`ec_write_codec_range`) uses this to avoid the per-stripe DS
+ * session create/destroy storm that pre-empts concurrent multi-writer
+ * RMW workloads (Track 1b second-mechanism finding in
+ * chunk-collision-validation.md).  Callers outside ec_pipeline.c must
+ * pass NULL.
+ */
 int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      uint64_t stripe_no, const uint8_t *stripe_bytes,
 			      size_t stripe_len, int k, int m,
@@ -903,7 +916,7 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			      layouttype4 layout_type, size_t shard_size,
 			      const struct authunix_parms *creds,
 			      uint8_t mds_verf_out[8], bool *mds_verf_set_out,
-			      struct ps_listener_state *pls);
+			      struct ps_listener_state *pls, void *ctx_in_out);
 
 /*
  * Per-stripe read primitive (PS Phase 4b slice 4b.3).  Mirror of
@@ -933,13 +946,18 @@ int ec_write_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
  * default auth.  The same NOT_NOW_BROWN_COW for DS-side cred
  * forwarding documented on ec_read_codec_with_file applies.
  */
+/*
+ * `ctx_in_out` -- same opaque-shared-ctx contract as
+ * ec_write_stripe_with_file: pass NULL for default per-call
+ * setup/teardown; the bulk RMW path passes a shared ctx.
+ */
 int ec_read_stripe_with_file(struct mds_session *ms, struct mds_file *mf,
 			     uint64_t stripe_no, uint8_t *stripe_bytes,
 			     size_t stripe_len, int k, int m,
 			     enum ec_codec_type codec_type,
 			     layouttype4 layout_type, size_t shard_size,
 			     const struct authunix_parms *creds,
-			     struct ps_listener_state *pls);
+			     struct ps_listener_state *pls, void *ctx_in_out);
 
 /*
  * Default shard size for the back-compat ec_write / ec_read
