@@ -1317,8 +1317,28 @@ uint32_t nfs4_op_layoutget(struct compound *compound)
 	 * DS-side trust entries but leaves the MDS-side stateid in
 	 * inode->i_stateids until lease expiry / LAYOUTRETURN, so the
 	 * scan would otherwise find the same priors and loop.
+	 *
+	 * Skip the exclusivity check for LAYOUT4_FLEX_FILES_V2.  The
+	 * chunk-store arbitrates concurrent writes at the per-block
+	 * granularity (PENDING / FINALIZED / COMMITTED state machine
+	 * plus per-block CRC32), so multiple clients holding layouts
+	 * on the same file is by design.  Track 1b chunk-collision
+	 * triage caught the exclusivity check thrashing partial-stripe
+	 * RMW workloads: each writer's per-stripe LAYOUTGET evicted
+	 * the others' DS trust entries via FANOUT_REVOKE_STATEID,
+	 * their in-flight CHUNK ops hit BAD_STATEID, and the retry
+	 * path tore down the DS session.  See
+	 * chunk-collision-validation.md "real bug is MDS
+	 * exclusive-layout revoke".
+	 *
+	 * LAYOUT4_FLEX_FILES (v1) keeps the check for now -- the v1
+	 * client side does not exercise the chunk-store arbitration,
+	 * so coexisting v1 layouts would race.  LAYOUT4_NFSV4_1_FILES
+	 * also keeps the check (RFC 5661 sec-12.5.4 -- file layouts
+	 * grant unsupervised byte-range I/O).
 	 */
-	if (!(compound->c_flags & COMPOUND_LAYOUTGET_REVOKE_DONE) &&
+	if (layout_type != LAYOUT4_FLEX_FILES_V2 &&
+	    !(compound->c_flags & COMPOUND_LAYOUTGET_REVOKE_DONE) &&
 	    nfs4_layoutget_check_conflicts(compound))
 		return NFS4_OP_FLAG_ASYNC;
 
