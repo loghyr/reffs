@@ -932,6 +932,22 @@ static CLIENT *mds_session_clnt_open(const char *host)
 		return NULL;
 
 	/*
+	 * SO_REUSEADDR lets bindresvport reuse a reserved port that is
+	 * still in TIME_WAIT from a previous run.  Without it, a stress
+	 * driver with N workers x M transports per worker (e.g. 33 x 8
+	 * = 264 reserved ports per run) exhausts the 600-odd usable
+	 * ports under 1024 on the second back-to-back run -- the kernel
+	 * holds each port in TIME_WAIT for ~60-120s after close, and
+	 * bindresvport cycles through every reserved port and fails
+	 * with EADDRINUSE.  This matches the Linux kernel NFS client's
+	 * behaviour, which sets SO_REUSEADDR on the rpc_xprt socket
+	 * before bindresvport.
+	 */
+	int reuse = 1;
+
+	(void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+	/*
 	 * Best-effort: bind to a reserved source port (< 1024) before
 	 * connecting.  Some NFS servers -- notably Hammerspace Anvil
 	 * with `protod_config_nfs_strict_port_checking` enabled --
