@@ -1395,3 +1395,101 @@ mainline regardless -- per-stripe DS-session churn was a real
 scaling defect (2*N session lifecycle events per writer per
 stripe) and the new shared-ctx pattern is the right shape.  It
 just doesn't fix THIS bug.
+
+**2026-06-01 -- root cause located via session-lifecycle trace:
+client-side stale-sessionid use after self-destroy.**
+
+WIP branch `wip-t1b-unhash-trace` instrumented every server-side
+unhash call site (`session_release`, `destroy_for_client`,
+`destroy_zombies`, `DESTROY_SESSION_op`, `CREATE_SESSION_alloc`)
+and the SEQUENCE BADSESSION return.  Built + ran chunk-split on
+shadow against the instrumented build.
+
+Server-side counts:
+
+| Container | SEQUENCE_BADSESSION returns |
+|-----------|------------------------------|
+| reffs-bench-mds | **0** |
+| reffs-bench-ds0..ds9 | 4-6 each, **42 total** |
+
+So MDS sessions are fine throughout.  The BADSESSION cascade is
+on the DSes -- which means the writer-log `tag="reclaim_complete"`
+lines are NOT going to the MDS; they're going to DSes during
+`ec_resolve_mirrors`.  The `mds_compound_send` function name is a
+misnomer carried over from when it only spoke to the MDS.
+
+42 = 21 BADSESSIONs per writer = 10 (reclaim_complete) + 1
+(chunk_write) + 10 (destroy_session).  That's a complete
+ec_pipeline reconnect sequence: ec_resolve_mirrors hits all 10
+DSes (each with RECLAIM_COMPLETE), then one CHUNK_WRITE attempt,
+then ec_disconnect_all teardown of all 10.
+
+DS0 trace for writer-A (clid 659, sid 0300):
+
+```
+[t+0.538] CREATE_SESSION_alloc sid=0300 clid=659  (initial setup)
+[t+0.677] DESTROY_SESSION_op   sid=0300 clid=659  (writer destroys ITS OWN session)
+[t+0.705] SEQUENCE_BADSESSION  sid=0300           (writer SEQUENCE on the dead session)
+[t+0.756] SEQUENCE_BADSESSION  sid=0300
+[t+0.773] SEQUENCE_BADSESSION  sid=0300
+```
+
+Between `.538` and `.677` the session is alive (139 ms).  In that
+window the writer did EXCHANGE_ID + CREATE_SESSION + the now-silent
+successful RECLAIM_COMPLETE, then some work, then ec_disconnect_all.
+
+**Every BADSESSION fires AFTER the writer's own DESTROY_SESSION on
+that sid.**  The writer is sending compounds on sessionids it just
+destroyed itself.  This is a client-side stale-state bug, not a
+server-side eviction.
+
+Most likely mechanism: an inner BAD_STATEID (from the trust-stateid
+table miss documented earlier on the same `--mode chunk-split` run)
+drives `ec_layout_refresh` mid-stripe.  `ec_layout_refresh`
+re-LAYOUTGETs and re-resolves mirrors, which tears down + recreates
+DS sessions.  Tear-down sends DESTROY_SESSION, recreate sends
+EXCHANGE_ID + CREATE_SESSION + RECLAIM_COMPLETE.  The shared-ctx
+refactor preserves the ctx pointer across the refresh, but the
+underlying `struct ds_conn`s (or whatever holds the per-DS session)
+hand back updated sessionids -- and ANY code path that cached the
+pre-refresh sessionid (in a compound builder, a retry queue, a
+slot-table snapshot) sends on the stale one and gets BADSESSION.
+
+The trust-stateid hit on the DS that triggered the BAD_STATEID
+storm in the first place is the same surface documented in the
+earlier "(other + seqid) NO-OP" + "MDS exclusive-layout revoke"
+entries.  The shipped `nfs4_layoutget_check_conflicts` gate stopped
+the MDS-side revoke for FFv2, but the DSes maintain their own trust
+tables and another revoke channel could still hit them -- earlier
+ds-side trust LOGs showed REGISTER -> REVOKE thrash even on the
+FFv2 path.
+
+Disjoint PASSES because writers don't share inode-level trust
+entries on the DSes (each writes its own chunks; per-writer
+trust-stateid entries don't overlap with the others' work).
+
+Triage targets, narrower again:
+
+1. **Find the client-side site that caches a sessionid across an
+   `ec_layout_refresh` / session-rebuild boundary.**  The 10
+   reclaim_complete BADSESSIONs followed by 1 chunk_write
+   BADSESSION followed by 10 destroy_session BADSESSIONs map
+   cleanly to a full ec_resolve_mirrors -> CHUNK_WRITE ->
+   ec_disconnect_all cycle running with stale sessionids.
+   `lib/nfs4/client/mds_session.c` + `ec_pipeline.c` is the
+   surface to read.
+2. **Eliminate the upstream BAD_STATEID.**  If we can keep the
+   trust table populated for the duration of an
+   `ec_write_codec_range` call, the refresh path doesn't fire,
+   the BADSESSION cascade is moot.  This is the deeper fix the
+   earlier `trust-stateid.md` triage targets pointed at:
+   per-writer trust entry lifetime under multi-writer RMW.
+
+Either fix unblocks the t1b validation.  Option 2 is closer to
+the eventual correctness target ("FFv2 supports concurrent
+writers").  Option 1 is a defensive band-aid that won't hold up
+under other transient errors that drive `ec_layout_refresh`.
+
+The wip-t1b-unhash-trace branch stays on origin (not on main) for
+future re-instrumentation.  Reverting will be a clean revert of
+its two commits.
