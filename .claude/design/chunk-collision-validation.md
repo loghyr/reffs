@@ -357,17 +357,62 @@ Validation framing: this is exactly the value of the trap
 fix.  The preserved WORKDIR turned a "BADSESSION cascade"
 narrative (which would have anchored several days of
 server-side triage) into a 4-step walk through harness
-defects in under 10 minutes.  None of the layers below the
-harness are implicated.  Manual `ec_demo write --mds
-127.0.0.1:2049 --shard-size 4096 ...` against the fresh
-build completes end-to-end (4 stripes x (4+2) shards), so the
-NFSv4.2 + CHUNK + EC wire path is healthy for the single-writer
-case.
+defects in under 10 minutes.
 
-The actual multi-writer disjoint race has **not yet been
-executed**.  The Track 1 chunk-level frankenstein finding
-(2026-05, mid-May) and the Track 2 NPS=4 PASS (2026-06-01)
-remain the only on-wire chunk-collision signals to date.
+Once the four harness defects were addressed in a follow-up
+commit, the multi-writer race ran end-to-end across all four
+sub-modes and produced a genuine validation signal:
+
+| Mode | Result | Why |
+|------|--------|-----|
+| `disjoint` | **PASS** -- all 4 writers' ranges verify clean | Each writer owns its own byte range; no chunk overlap, no per-stripe RMW contention.  Acts as the control case for "concurrent same-file clientid4s". |
+| `chunk-split` | FAIL: BADSESSION cascade | Writes straddle chunk boundaries; multiple writers RMW the same chunk-block. |
+| `overlap` | FAIL: BADSESSION cascade | Writers overlap on the same chunks. |
+| `subchunk` | FAIL: BADSESSION cascade | Writes are smaller than a chunk; multiple writers RMW the same chunk. |
+
+The three failing modes share the same on-wire signature.
+Per-writer log (writer-0.log on `--mode overlap`):
+
+```
+ec_demo: connecting to MDS 127.0.0.1:2049 (owner shadow:writer0, ...)
+ec_demo: writing 32768 bytes ... at offset 0 (4+2, shard=4096, range mode)
+mds_compound_send: COMPOUND tag="reclaim_complete" op[0]=OP_SEQUENCE(53) status=NFS4ERR_BADSESSION(10052)  (x10)
+mds_compound_send: COMPOUND tag="chunk_write" op[0]=OP_SEQUENCE(53) status=NFS4ERR_BADSESSION(10052)
+ds_chunk_write: COMPOUND failed status=10052 (resarray_len=1)
+[7.496] ec_write_stripe: stripe 1 data[0] FAILED: -121
+mds_compound_send: COMPOUND tag="destroy_session" op[0]=OP_SEQUENCE(53) status=NFS4ERR_BADSESSION(10052)  (x10)
+ec_demo: write failed: -121
+```
+
+The pattern: CREATE_SESSION appears to succeed (no error
+logged), the very next op (RECLAIM_COMPLETE) returns
+BADSESSION, the writer retries 10x with the same result, the
+client falls through into CHUNK_WRITE to the DS which also
+returns BADSESSION on its SEQUENCE op, then DESTROY_SESSION
+also gets BADSESSION 10x.  Client surfaces it as
+`ec_write_range: write stripe N failed: -121` (EREMOTEIO).
+The disjoint PASS rules out a generic "N clientid4s on one
+file" trigger -- the bug is specifically in the per-stripe
+RMW path when multiple writers hit the same chunk-block.
+
+The MDS log is silent on this -- no LOG/TRACE on the
+BADSESSION return path -- which is itself a finding (the
+operator gets no actionable signal when this fires; from the
+client side it looks like a transient retry storm).
+
+Triage targets for the next slice:
+
+- DS session lifecycle under concurrent
+  CHUNK_WRITE+FINALIZE+COMMIT on the same chunk-block;
+- any MDS-side session-destroy-on-error path that fires
+  before the client sees the failing op (BADSESSION returns
+  before the actual op runs);
+- the chunk-store lock-contention path on simultaneous RMW.
+
+Validation framing for the run: the harness delivered exactly
+what a chunk-collision harness should -- 1 clean control case
+plus 3 distinct failing variants that all converge on the
+same wire signature in the same code path.
 
 ### Track 2 (fio via N PSes) -- 2026-06-01 first clean smoke
 
