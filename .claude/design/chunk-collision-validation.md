@@ -338,10 +338,33 @@ RMW under contention), and a real defect in the harness itself
 (forensics wiped on the only exit we'd want them for).  Both
 are now visible to follow-up commits instead of hidden.
 
-### Track 2 (IOR via N PSes) -- first smoke in flight
+### Track 2 (IOR via N PSes) -- 2026-06-01 first smoke
 
-NPS=4 staged on the shadow lab box.  First-smoke result will
-land here.
+NPS=4 smoke on the shadow lab box failed before any CHUNK op
+issued.  The fio client container ran
+`mount -t nfs4 -o port=4098,vers=4.2,sec=sys,nolock 127.0.0.1:/
+/mnt/ps-0` and the kernel returned
+`NFS: mount program didn't pass remote address`.
+
+Root cause: the `reffs-dev:latest` image used as the fio client
+container ships without `nfs-utils`, so there is no
+`mount.nfs` / `mount.nfs4` helper.  When the helper is absent,
+the generic util-linux `mount(8)` falls through to the
+`fsconfig()` path without the address translation the helper
+would have done, and the in-kernel NFS code rejects the mount
+because `nfs_server.address_len == 0`.
+
+Harness fix is a one-line addition: install `nfs-utils`
+alongside the existing in-container `dnf install fio`.
+
+Validation framing: this is a harness defect, not a server
+defect.  MDS / DS / PS logs are ASAN/UBSAN clean for this run
+because no operation reached the server -- a clean failure
+surface that the harness output also called out
+("`PASS: no ASAN / UBSAN errors`", "`PASS: no CONN_CLOSING
+force-drain warnings`", "`FAIL: fio driver exited non-zero
+(32)`").  No chunk-collision signal yet on Track 2; first
+real signal needs the harness fix re-run.
 
 ## Cost model: containers vs. bare metal
 

@@ -150,11 +150,16 @@ SEGS=__SEGS__
 ITERS=__ITERS__
 REORDER=__REORDER__
 
-# fio is not in reffs-dev:latest yet; install on first run.
-# NOT_NOW_BROWN_COW: fold fio into Dockerfile in a follow-up.
-if ! command -v fio >/dev/null 2>&1; then
-	echo "[t2] installing fio in container..."
-	dnf -y -q install fio
+# fio + mount.nfs are not in reffs-dev:latest yet; install on
+# first run.  Without nfs-utils, util-linux mount(8) falls
+# through to fsconfig() with no remote-address translation and
+# the kernel rejects the mount as "mount program didn't pass
+# remote address".  NOT_NOW_BROWN_COW: fold both into Dockerfile
+# in a follow-up.
+if ! command -v fio >/dev/null 2>&1 || \
+   ! command -v mount.nfs >/dev/null 2>&1; then
+	echo "[t2] installing fio + nfs-utils in container..."
+	dnf -y -q install fio nfs-utils
 fi
 
 # Mount every PS listener.  PS r serves the proxy namespace on
