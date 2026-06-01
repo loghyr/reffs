@@ -823,6 +823,14 @@ uint32_t nfs4_op_sequence(struct compound *compound)
 
 	ns = nfs4_session_find(compound->c_server_state, args->sa_sessionid);
 	if (!ns) {
+		/* WIP t1b-unhash-trace: log every BADSESSION-from-SEQUENCE
+		 * so we see what sessionid the client is sending that the
+		 * table doesn't have.  Revert before merge. */
+		const unsigned char *_sid =
+			(const unsigned char *)args->sa_sessionid;
+		LOG("[t1b-unhash] SEQUENCE_BADSESSION sid=%02x%02x%02x%02x%02x%02x%02x%02x slot=%u seqid=%u",
+		    _sid[0], _sid[1], _sid[2], _sid[3], _sid[4], _sid[5],
+		    _sid[6], _sid[7], args->sa_slotid, args->sa_sequenceid);
 		*status = NFS4ERR_BADSESSION;
 		goto out;
 	}
