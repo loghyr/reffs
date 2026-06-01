@@ -501,7 +501,14 @@ static void ec_disconnect_all(struct ec_context *ctx)
 				}
 			}
 			if (!dup) {
-				mds_session_destroy(ctx->ctx_ds_sess[i]);
+				/* HYPOTHESIS TEST 2026-06-01 (NOT FOR
+				 * MERGE): skip mds_session_destroy to
+				 * confirm that per-stripe DS-session
+				 * teardown is the second BADSESSION
+				 * mechanism.  Leaks the session until
+				 * lease expiry; the proper fix is the
+				 * ec_pipeline ctx-sharing refactor. */
+				/* mds_session_destroy(ctx->ctx_ds_sess[i]); */
 				free(ctx->ctx_ds_sess[i]);
 			}
 			ctx->ctx_ds_sess[i] = NULL;
