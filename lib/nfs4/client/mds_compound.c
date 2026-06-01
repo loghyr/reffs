@@ -358,16 +358,32 @@ mds_compound_send_with_auth(struct mds_compound *mc, struct mds_session *ms,
 		 * Caller of mds_compound_init sets the tag; this log
 		 * thus carries enough to disambiguate MDS vs DS.
 		 */
+		/* WIP t1b-unhash-trace: append the SEQUENCE sessionid (first
+		 * 8 bytes) + ms->ms_sessionid (what we cached) so we can see
+		 * whether the wire sid matches the local cache.  Revert
+		 * before merge.  ms is the session this compound is being
+		 * sent on; for solo-op compounds (no SEQUENCE), seq is NULL
+		 * and we still print ms->ms_sessionid. */
+		const unsigned char *_msid =
+			(const unsigned char *)ms->ms_sessionid;
+		const unsigned char *_wsid =
+			seq ? (const unsigned char *)seq->sa_sessionid : _msid;
+
 		fprintf(stderr,
 			"mds_compound_send: COMPOUND tag=\"%.*s\" "
-			"op[%u]=%s(%u) status=%s(%u)\n",
+			"op[%u]=%s(%u) status=%s(%u) "
+			"wire_sid=%02x%02x%02x%02x%02x%02x%02x%02x "
+			"ms_sid=%02x%02x%02x%02x%02x%02x%02x%02x\n",
 			(int)mc->mc_args.tag.utf8string_len,
 			mc->mc_args.tag.utf8string_val ?
 				mc->mc_args.tag.utf8string_val :
 				"",
 			nres ? nres - 1 : 0, op_name, (unsigned int)failing_op,
 			nfs4_err_name(mc->mc_res.status),
-			(unsigned int)mc->mc_res.status);
+			(unsigned int)mc->mc_res.status, _wsid[0], _wsid[1],
+			_wsid[2], _wsid[3], _wsid[4], _wsid[5], _wsid[6],
+			_wsid[7], _msid[0], _msid[1], _msid[2], _msid[3],
+			_msid[4], _msid[5], _msid[6], _msid[7]);
 
 		ret = -EREMOTEIO;
 	}
