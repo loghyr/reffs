@@ -734,6 +734,123 @@ Fix space (out of scope for the current triage slice):
 - Or: track per-writer iomode lists on the same entry and
   revoke only when every writer's reference is gone.
 
+**2026-06-01 -- the (other + seqid) fix is a NO-OP for this
+workload; the real bug is in MDS exclusive-layout enforcement.**
+
+Shipped a (other + seqid) trust-table re-key (commit
+`8f442303574a` on the topic branch) on the working hypothesis
+that concurrent writers shared `stateid.other`.  Re-instrumented
+with the fix in place + a `seqid=...` field added to every
+trust_register / revoke / find LOG.  Re-ran `--mode chunk-split`.
+
+Trace on ds1:
+
+```
+[+ 0.000] register other=03000000030000... seqid=1 iomode=RW   ino=3
+[+ 0.135] find     other=03000000030000... seqid=1 hit=Y
+[+ 0.314] register other=05000000030000... seqid=1 iomode=READ ino=3
+[+ 0.316] revoke   other=05000000030000... seqid=1
+[+ 0.319] register other=07000000030000... seqid=1 iomode=READ ino=3
+[+ 0.451] register other=05000000030000... seqid=1 iomode=RW   ino=3
+[+ 0.453] find     other=07000000030000... seqid=1 hit=Y
+[+ 0.491] revoke   other=05000000030000... seqid=1
+...
+```
+
+Three observations falsify the "shared other" hypothesis:
+
+1. **Every layout stateid has `seqid=1`.**  The MDS doesn't bump
+   seqid across LAYOUTGET cycles in this codebase -- each
+   `layout_stateid_alloc` mints a fresh stateid that starts at
+   `seqid=1`.  Adding seqid to the trust table key changes
+   nothing: with seqid identical across all entries, the
+   composite key collapses to `other` alone.
+2. **Writers DO have distinct `other` values.**  `0300...`,
+   `0500...`, `0700...`, `0800...`, `0900...` all appear --
+   different `s_id` per `layout_stateid_alloc` call.  So
+   per-writer trust entries already existed before the rekey.
+3. **The revoke targets the *correct* per-writer stateid.**
+   Each revoke removes the specific stateid that the MDS just
+   told it to remove.  No collateral damage on neighboring
+   entries.
+
+The real mechanism is in `nfs4_layoutget_check_conflicts`
+(`lib/nfs4/server/layout.c:855`).  When writer B does
+LAYOUTGET on an inode that already has another client's layout
+stateid, the MDS:
+
+1. Sends CB_LAYOUTRECALL_FNF to that client (fire-and-forget).
+2. **Immediately fans out FANOUT_REVOKE_STATEID to all DSes
+   for that client's stateid**, deleting the DS trust entries
+   for the writer that was still using them.
+3. Returns the new layout to writer B.
+
+The code's own comment captures the intent:
+> The recall is best-effort and fire-and-forget -- the MDS does
+> not wait for the client's DELEGRETURN/LAYOUTRETURN.
+> Correctness comes from the synchronous REVOKE_STATEID below,
+> not from the client honoring this recall.
+
+The MDS is enforcing **exclusive layouts**: only one client
+holds a layout on a file at a time, and the next LAYOUTGET
+forcibly evicts the prior holder via REVOKE_STATEID rather
+than waiting for LAYOUTRETURN.  For partial-stripe RMW
+workloads with N writers, each writer's LAYOUTGET cycle (and
+RMW does at least one READ-layout + one RW-layout cycle per
+stripe) triggers an immediate REVOKE on the other writer.
+The other writer's in-flight CHUNK ops hit BAD_STATEID; the
+client retries up to 3x; if still failing, `ec_layout_refresh`
+tears down + recreates the DS session and the BADSESSION
+cascade we've been chasing surfaces.
+
+`disjoint` PASSES because each writer's range maps to a
+different set of stripes, so per-stripe LAYOUTGET on writer A
+doesn't touch the inode-layouts the other writers hold on
+THEIR stripes.  The MDS's exclusivity check is per-inode --
+if all writers were on the same single-stripe file there
+would be the same thrash regardless of whether they overlap
+at the byte level.  (Worth re-checking: do the disjoint
+writers actually all hit `nfs4_layoutget_check_conflicts`
+treating each other as conflicts and just happen to win the
+race?  Or is the conflict check checking iomode such that
+non-overlapping read+read passes?)
+
+Reverting the no-op (other + seqid) fix (commit
+`8d9e039c9d7f`).  The test
+`test_register_same_other_distinct_seqid` is dropped along
+with the code -- with the old key on just `other`, the
+invariant the test asserts doesn't hold and the test would
+fail.  If we eventually want that invariant for forward
+compatibility (e.g. when LAYOUTGET seqid-bumps land), we can
+re-introduce both code and test together.
+
+Real fix space:
+
+1. **MDS-side: don't immediately revoke; wait for LAYOUTRETURN
+   with timeout.**  Send CB_LAYOUTRECALL, set a recall
+   deadline, complete the new LAYOUTGET on the recalled
+   client's LAYOUTRETURN or after the timeout.  This is the
+   RFC 8881 §12.5.5.1 recall semantics.  The downside is
+   added latency on every contended LAYOUTGET.
+2. **MDS-side: allow concurrent layouts of compatible
+   iomodes.**  Multiple READ layouts can coexist; one writer
+   plus N readers if the underlying chunk-store can
+   atomically serialize the writes.  RFC 8881 §12.5.4
+   actually permits this for the file layout type; FFv2's
+   own design needs to decide whether it does too.
+3. **Client-side: on BAD_STATEID, drive a fresh LAYOUTGET
+   before the next CHUNK retry.**  Today the client's
+   ec_chunk_write retries 3x with the same stateid before
+   bailing to `ec_layout_refresh`.  If a single BAD_STATEID
+   triggered an immediate fresh LAYOUTGET, the writer would
+   recover faster -- but the next LAYOUTGET also evicts the
+   other writer, so the thrash continues.  Doesn't fix it.
+
+Option 1 is the architecturally correct path.  Option 2 is
+appealing for FFv2 (the chunk-store enforces ordering at the
+write level, so multiple concurrent layouts is genuinely
+safe), but needs design discussion.  Option 3 is a Band-Aid.
+
 Validation framing for the run: the harness delivered exactly
 what a chunk-collision harness should -- 1 clean control case
 plus 3 distinct failing variants that all converge on the
