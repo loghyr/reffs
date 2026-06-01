@@ -3,16 +3,16 @@ SPDX-FileCopyrightText: 2026 Tom Haynes <loghyr@gmail.com>
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
-# PS-encoder vs client-encoder benchmark (IETF 127 bucket 2)
+# PS-encoder vs client-encoder benchmark (IETF 126 bucket 2)
 
 ## Goal
 
-Produce a head-to-head benchmark that lets us answer
-Hellwig + Black's "encoding should be in the server, not the
-client" position with numbers rather than rhetoric.  The IETF
-127 plan (`~/Documents/reffs-docs/ietf127-plan.md` bucket 2)
-identified this as the highest-leverage missing data point for
-the 6-week run-up.
+Produce a head-to-head benchmark that lets us answer the WG
+position that encoding should be in the server (not the client)
+with numbers rather than rhetoric.  The IETF 126 plan
+(`~/Documents/reffs-docs/ietf126-plan.md` bucket 2) identified
+this as the highest-leverage missing data point for the 6-week
+run-up.
 
 Companion to:
 
@@ -24,6 +24,11 @@ Companion to:
 - `~/Documents/reffs-docs/ec_benchmark_full_report.md` -- the
   existing single-variant benchmark report that this slice
   extends.
+
+Some citations point at `~/Documents/reffs-docs/` paths
+(private to the author's workstation, not redistributed with
+reffs).  External readers can ignore those; the in-tree
+companion docs above are sufficient to execute this slice.
 
 ## What we measure
 
@@ -53,10 +58,13 @@ SIMD on (NEON or AVX2 by host).
   also pays the *extra* NFSv4 hop (client -> PS over the wire),
   so A is the lower-bound for "EC is fast" and B is the
   upper-bound for "PS-mediated EC is acceptable."
-- **C is the baseline Hellwig + Black implicitly argue for.**
-  No EC at all -- whatever the MDS does inband to the first
-  available mirror.  C is the "do nothing" floor; A and B both
-  pay an EC cost above it.
+- **C is the no-EC cost floor.**  No EC at all -- whatever the
+  MDS does inband to the first available mirror.  C is the "do
+  nothing" floor for cost comparison; A and B both pay an EC
+  cost above it.  Note that variant C is NOT what the
+  server-side-encoding WG position argues for; that position
+  argues for variant B.  Variant C exists only to bound the
+  cost of EC itself.
 - **No "client without EC" variant.**  A plain NFSv4.2 client
   doing `dd` to the MDS is variant C; ec_demo without `--codec`
   goes through `cmd_put` (the plain-mirrored path) which is
@@ -121,6 +129,15 @@ so any variant whose counter delta is suspicious (e.g.,
 variant B showing 2x the writes of variant A) is flagged for
 investigation before the numbers go on a slide.
 
+**Threshold for "suspicious":** for the bucket-2 comparison
+to be meaningful, variant A and B at the same (size, op) cell
+must agree on `sb_chunk_writes` delta to within +/- 5% (the
+ec_demo write fan-out and the PS-mediated write fan-out emit
+the same number of CHUNK_WRITE ops by construction).  If the
+deltas diverge more than that, root-cause before reporting
+medians.  Variant C must show zero `sb_chunk_writes` delta
+(no CHUNK ops on the inband path).
+
 ## Risks
 
 1. **PS Phase 4 was smoke-tested for chunk-collision Track 2
@@ -161,9 +178,10 @@ investigation before the numbers go on a slide.
 - `.claude/design/ps-encoder-bench.md` -- this doc.
 - CSV output: one file per topology run, ingestable by the
   existing report generator with a "variant" axis added.
-- Slide: bucket-2 slide in `~/Documents/reffs-docs/ietf127.md`
-  showing the three-variant comparison at the 4-64 KB and
-  1 MB cells, with the noise-floor band from
+- Slide: bucket-2 slide in `~/Documents/reffs-docs/ietf126.md`
+  ("Where does EC encoding belong?") -- replace the
+  parked-placeholder body with the three-variant comparison at
+  the 4-64 KB and 1 MB cells, with the noise-floor band from
   `ec_benchmark_full_report.md` overlaid.
 
 ## What this slice does NOT do
@@ -193,7 +211,9 @@ investigation before the numbers go on a slide.
    and the INV-1 counter deltas.
 4. **Full 150-cell run** -- N=5 iterations.  Eyeball the medians.
 5. **N=10 final run** -- when the numbers look stable.
-6. **Slide** -- pull the medians into `ietf127.md` bucket 2.
+6. **Slide** -- pull the medians into the bucket-2 slide
+   already appended to `ietf126.md` (currently parked-with-
+   placeholder).
 
 Steps 3-6 happen on the dreamer / garbo Linux bench host, not
 on Darwin.  Steps 1-2 can be drafted on Darwin (no execution

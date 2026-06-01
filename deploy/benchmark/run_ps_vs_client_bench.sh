@@ -12,11 +12,9 @@
 #   C -- MDS inband (kernel NFSv4.2 mount of MDS :2049, no EC)
 #
 # This is the data side of bucket 2 in
-# ~/Documents/reffs-docs/ietf127-plan.md ("better to encode at
-# the server than the client" -- the load-bearing argument
-# against the Hellwig + Black "encoding should be in the server"
-# position).  Design lives in
-# .claude/design/ps-encoder-bench.md.
+# ~/Documents/reffs-docs/ietf126-plan.md (the load-bearing
+# argument for the WG-relevant "where does encoding belong"
+# question).  Design lives in .claude/design/ps-encoder-bench.md.
 #
 # Topology: reuses run-ps-bench-bringup.sh with NPS=1.  Linux
 # host required (host networking + privileged containers); will
