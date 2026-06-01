@@ -70,10 +70,13 @@ per-worker krb5 ccache, exercising the full FFv1 LAYOUTGET + DS I/O
 path under one identity.
 
 The script does NOT provision the server, the KDC, or the AD users.
---principals is a file of "<principal> <password>" lines, one per
-worker, principals fully qualified (user@REALM); blank lines and
-'#' comments are ignored.  The script kinit's each principal into
-its own credential cache and points the corresponding worker at it.
+--principals is a file of "<principal> <password> [<spn>]" lines,
+one per worker.  Principals are fully qualified (user@REALM); the
+optional third token, when present, is passed verbatim to
+ec_demo's --spn to override the target service principal for that
+worker.  Blank lines and '#' comments are ignored.  The script
+kinit's each principal into its own credential cache and points
+the corresponding worker at it.
 
 The test host must be configured so its sssd/idmap resolves the
 realm's users to distinct uids -- otherwise the server side sees
@@ -179,12 +182,13 @@ fi
 # --------------------------------------------------------------------
 # Read the principals file.
 
-declare -a princ_names princ_pws
-while read -r name pw rest; do
+declare -a princ_names princ_pws princ_spns
+while read -r name pw spn rest; do
 	case "$name" in '' | '#'*) continue ;; esac
 	[ -n "$pw" ] || die "malformed principals line (no password): $name"
 	princ_names+=("$name")
 	princ_pws+=("$pw")
+	princ_spns+=("$spn")
 done <"$principals"
 
 [ "${#princ_names[@]}" -ge "$clients" ] ||
@@ -244,6 +248,13 @@ declare -a pids
 # against the per-worker krb5 ccache so the round-trip exercises
 # write + read against the FFv1 server under one identity.
 for ((i = 0; i < clients; i++)); do
+	# Per-worker SPN override.  Empty third column in the principals
+	# file (or missing column) leaves spn_args empty, so ec_demo
+	# falls back to the krb5 library default of nfs/<server>@<REALM>.
+	spn_args=()
+	if [ -n "${princ_spns[$i]}" ]; then
+		spn_args=(--spn "${princ_spns[$i]}")
+	fi
 	(
 		export KRB5CCNAME=$cc_dir/cc_$i
 		set -e
@@ -257,7 +268,8 @@ for ((i = 0; i < clients; i++)); do
 			--k "$k" \
 			--m "$m" \
 			--nconnect "$nconnect" \
-			--id "krb5stress_$i"
+			--id "krb5stress_$i" \
+			"${spn_args[@]}"
 		exec "$ec_demo" verify \
 			--mds "$server" \
 			--file "$path_dir/krb5stress_$i" \
@@ -268,7 +280,8 @@ for ((i = 0; i < clients; i++)); do
 			--k "$k" \
 			--m "$m" \
 			--nconnect "$nconnect" \
-			--id "krb5stress_$i"
+			--id "krb5stress_$i" \
+			"${spn_args[@]}"
 	) >"$log_dir/worker_$i.log" 2>&1 &
 	pids+=("$!")
 done
