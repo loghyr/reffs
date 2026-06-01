@@ -283,6 +283,66 @@ Pass criteria:
 | `coll_t3_v4_baseline` | same via NFSv4.2 | same |
 | `coll_t3_cross_protocol` | ec_demo writes file F; Linux client reads F via NFSv3; bytes match | every byte matches the write |
 
+## What we found
+
+Observed-state log of first-pass smoke runs.  Each entry is
+"what the harness produced", not "what we have triaged" --
+triage moves to NOT_NOW_BROWN_COW items and follow-up commits.
+
+### Track 1 (full-file race) -- 2026-05 first smoke
+
+Reproduced a chunk-level **frankenstein** in 4 of 5 iterations:
+two writers complete cleanly, neither writer's payload matches
+the verified file.  CRC vs payload divergence and PENDING-block
+leak counters both fire on these runs.  Root cause not yet
+diagnosed.
+
+### Track 1b (partial-range race) -- 2026-05-30 first smoke
+
+First smoke on `--mode disjoint` exposed two distinct failures
+in the same run:
+
+1. **Harness defect.**  `run_chunk_collision_t1b.sh` installed
+   `trap 'rm -rf "${WORKDIR}"' EXIT`, which wiped per-writer
+   logs (`writer-<i>.log`, `verify-<i>.log`, `prefill.log`,
+   `stats-after.csv`) on any exit -- including failure exits,
+   which is the case we most need them for.  Fixed: `EXIT` trap
+   now preserves WORKDIR on any non-zero exit and prints the
+   path and per-writer log names.  Successful runs still clean
+   up.  Shipped as a follow-up to the Track 1b ship commit.
+
+2. **Concurrent ec_demo writers exit with NFS4ERR_BADSESSION
+   cascades** rather than the last-FINALIZE-wins verify
+   mismatches the harness was designed for.  The harness's
+   `verify` step was not reached.  This is a *different* bug
+   than Track 1's frankenstein: Track 1 finishes writes and
+   produces wrong bytes; Track 1b's writers do not finish
+   writes at all.  Triage requires re-running with the trap
+   fix to capture per-writer logs.  Working hypothesis space:
+
+   - DS-session multiplexing assumption in the combined-mode
+     CHUNK path (known-issue `goals.md` "v2 CHUNK + combined
+     mode: DS session multiplexing needed for single-host
+     combined mode");
+   - lease reaper destroying a session while concurrent writers
+     still hold slots;
+   - shared MDS session across writer instances when each
+     should have its own.
+
+   Marked NOT_NOW_BROWN_COW until a preserved WORKDIR confirms
+   the actual failure path.
+
+Validation framing: the harness did its job.  It surfaced a
+real concurrency defect in the path we care about (per-stripe
+RMW under contention), and a real defect in the harness itself
+(forensics wiped on the only exit we'd want them for).  Both
+are now visible to follow-up commits instead of hidden.
+
+### Track 2 (IOR via N PSes) -- first smoke in flight
+
+NPS=4 staged on the shadow lab box.  First-smoke result will
+land here.
+
 ## Cost model: containers vs. bare metal
 
 The container topology produces correct NFSv4.2 traffic, with
