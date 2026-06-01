@@ -917,6 +917,69 @@ Next slice candidates:
   bug surface and triage why concurrent writers produce
   inconsistent shards.
 
+**2026-06-01 -- second mechanism identified: per-stripe
+DS-session create/destroy churn in `ec_pipeline.c`.**
+
+Re-instrumented `nfs4_session_unhash` with caller markers
+(`destroy_for_client`, `destroy_zombies`, `DESTROY_SESSION_op`,
+`session_release`).  Re-ran chunk-split.  ds1 trace shows the
+writer's own session lifetime is only ~200ms, torn down by a
+client-initiated `DESTROY_SESSION_op`, then subsequent
+compounds the writer queued on the dying session hit
+BADSESSION:
+
+```
+[17:24:31.803] trace_unhash from=destroy_zombies clid=658
+[17:24:31.996] trace_unhash from=DESTROY_SESSION_op
+[17:24:31.996] session_unhash sid=0200... clid=658
+[17:24:32.288] OP_SEQUENCE FAILED BADSESSION (compound on dead sid)
+```
+
+Root cause: `ec_pipeline.c`.  `ec_read_stripe_with_file` and
+`ec_write_stripe_with_file` each construct a fresh
+`struct ec_context`, call `ec_resolve_mirrors` (EXCHANGE_ID +
+CREATE_SESSION + RECLAIM_COMPLETE on every DS), do I/O, then
+call `ec_disconnect_all` which sends DESTROY_SESSION +
+DESTROY_CLIENTID to every DS.  For chunk-split RMW: 1 stripe
+x (RMW = 2 calls) x N mirrors = 2*N full DS-session lifecycle
+events per writer per stripe.  Under concurrent N writers,
+the storm produces the BADSESSION cascade.
+
+`ec_write_codec_with_file` (whole-file path) already does the
+right thing -- one ctx, one resolve_mirrors, loop over stripes.
+`ec_write_codec_range` (the partial-range RMW added for
+Track 1b) does NOT -- it calls the per-stripe wrappers in a
+loop, each with its own setup/teardown.
+
+Hypothesis-test (NOT MERGED) confirmed the mechanism by
+commenting out the `mds_session_destroy` call in
+`ec_disconnect_all`.  Result: the BADSESSION cascade
+disappeared from DS traces.  BUT: `LAYOUTGET` started
+returning only 1 mirror instead of the required 6
+(`need 6 mirrors, got 1`), so even disjoint failed at prefill.
+Leaked client/session state breaks MDS-side bookkeeping; the
+naive bypass is not viable.
+
+Proper fix is the `ec_pipeline.c` **refactor**: factor the
+per-stripe inner loops so a caller can supply a pre-populated
+ctx and share DS sessions across stripes.
+`ec_write_codec_range` and `ec_read_codec_range` then do ONE
+setup at the top, ONE teardown at the bottom, with the inner
+loop reusing the ctx -- exactly the structure
+`ec_write_codec_with_file` already uses for the whole-file
+path.  Scope: ~480 lines of complex existing code to refactor
+without regressing the whole-file and PS-proxy callers,
+including the BAD_STATEID retry and layout-refresh paths.
+1-2 hours of careful work + smoke.
+
+**Pivoted to the `overlap` decode failure as the next slice
+per the "find or pivot" directive.**  The session-churn fix
+stays on the followup list -- it's a real architectural bug,
+but it's tangential to the validation thesis.  The overlap
+decode is the actual concurrent-write surface Track 1b was
+designed to detect (RMW shards mismatching on read after
+multi-writer concurrent CHUNK_WRITE).
+
 Validation framing for the run: the harness delivered exactly
 what a chunk-collision harness should -- 1 clean control case
 plus 3 distinct failing variants that all converge on the
