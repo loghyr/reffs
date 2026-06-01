@@ -98,6 +98,7 @@ static void session_release(struct urcu_ref *ref)
 	struct server_state *ss = server_state_find();
 
 	if (ss) {
+		LOG("trace_unhash: from=session_release ref-callback");
 		nfs4_session_unhash(ss, ns);
 		server_state_put(ss);
 	}
@@ -170,6 +171,9 @@ void nfs4_session_destroy_for_client(struct server_state *ss,
 	if (!ss || !ss->ss_session_ht || !nc)
 		return;
 
+	LOG("trace_unhash: from=destroy_for_client clid=%" PRIu64,
+	    (uint64_t)nfs4_client_to_client(nc)->c_id);
+
 	rcu_read_lock();
 	cds_lfht_first(ss->ss_session_ht, &iter);
 	while ((node = cds_lfht_iter_get_node(&iter)) != NULL) {
@@ -228,6 +232,9 @@ void nfs4_session_destroy_zombies(struct server_state *ss,
 
 	if (!ss || !ss->ss_session_ht || !nc)
 		return;
+
+	LOG("trace_unhash: from=destroy_zombies clid=%" PRIu64,
+	    (uint64_t)nfs4_client_to_client(nc)->c_id);
 
 	rcu_read_lock();
 	cds_lfht_first(ss->ss_session_ht, &iter);
@@ -779,6 +786,7 @@ uint32_t nfs4_op_destroy_session(struct compound *compound)
 		goto out;
 	}
 
+	LOG("trace_unhash: from=DESTROY_SESSION_op");
 	nfs4_session_unhash(compound->c_server_state, ns);
 
 out:
