@@ -338,33 +338,64 @@ RMW under contention), and a real defect in the harness itself
 (forensics wiped on the only exit we'd want them for).  Both
 are now visible to follow-up commits instead of hidden.
 
-### Track 2 (IOR via N PSes) -- 2026-06-01 first smoke
+### Track 2 (fio via N PSes) -- 2026-06-01 first clean smoke
 
-NPS=4 smoke on the shadow lab box failed before any CHUNK op
-issued.  The fio client container ran
+Two smoke runs back-to-back on the shadow lab box.
+
+**Run 1 (pre-harness-fix): FAIL on mount.** The fio client
+container ran
 `mount -t nfs4 -o port=4098,vers=4.2,sec=sys,nolock 127.0.0.1:/
 /mnt/ps-0` and the kernel returned
-`NFS: mount program didn't pass remote address`.
+`NFS: mount program didn't pass remote address` before any
+CHUNK op issued.  Root cause: the `reffs-dev:latest` image used
+as the fio client container ships without `nfs-utils`, so there
+is no `mount.nfs` helper.  Without the helper, the generic
+util-linux `mount(8)` falls through to the `fsconfig()` path
+without the address translation the helper would have done, and
+the in-kernel NFS code rejects the mount because
+`nfs_server.address_len == 0`.  Fix: extend the harness's
+existing one-shot in-container `dnf install fio` to also
+install `nfs-utils`, and gate on both `fio` and `mount.nfs`
+being present.
 
-Root cause: the `reffs-dev:latest` image used as the fio client
-container ships without `nfs-utils`, so there is no
-`mount.nfs` / `mount.nfs4` helper.  When the helper is absent,
-the generic util-linux `mount(8)` falls through to the
-`fsconfig()` path without the address translation the helper
-would have done, and the in-kernel NFS code rejects the mount
-because `nfs_server.address_len == 0`.
+**Run 2 (post-fix): PASS.**  4 PSes, NPS=4 default geometry
+(`--n 4 --transfer 64k --block 4m --segments 4 --iterations 3`),
+3 iterations of write + pattern-verify on one shared 64 MiB MDS
+file.  Each rank writes a 16 MiB stripe through its own PS at
+`127.0.0.1:4098+r` with a rank-keyed `verify_pattern`, then
+re-reads its own stripe and confirms the pattern.  fio
+returned 0; the harness reported `PASS: fio write+verify clean
+(rc=0, no mismatches)`, `PASS: no ASAN / UBSAN errors`, `PASS:
+no CONN_CLOSING force-drain warnings`.
 
-Harness fix is a one-line addition: install `nfs-utils`
-alongside the existing in-container `dnf install fio`.
+This is the first clean multi-PS chunk-collision result on the
+wire path the WG asked about: 4 distinct clientid4s contend
+for the same MDS file's layout state and chunk-store while
+each commits its own byte range; the server-side state machine
+(LAYOUTGET fan-out across 4 sessions, the chunk-store under
+concurrent CHUNK_WRITE / FINALIZE / COMMIT from 4 layout
+holders, in-flight LAYOUTERROR + fence rotation if any) did
+not corrupt bytes, leak PENDING blocks visible to a verify
+read, or trip the sanitizers.
 
-Validation framing: this is a harness defect, not a server
-defect.  MDS / DS / PS logs are ASAN/UBSAN clean for this run
-because no operation reached the server -- a clean failure
-surface that the harness output also called out
-("`PASS: no ASAN / UBSAN errors`", "`PASS: no CONN_CLOSING
-force-drain warnings`", "`FAIL: fio driver exited non-zero
-(32)`").  No chunk-collision signal yet on Track 2; first
-real signal needs the harness fix re-run.
+Smaller open item: the harness's post-run probe-counter snapshot
+prints `(probe sb-list failed)` because the in-MDS-container
+`reffs_probe1_clnt` binary lacks its shared-library path
+(`libreffs_nfs4_server.so.0: cannot open shared object file`).
+The probe RPC server itself is fine -- this is a per-binary
+LD_LIBRARY_PATH gap in the container, not a server defect.
+Doesn't gate the validation result, but blocks publishing
+INV-1 counter deltas alongside the PASS.  Fix: set
+`LD_LIBRARY_PATH=/shared/build/lib/.libs:/shared/build/src/.libs`
+in the `docker exec` invocation in `snapshot_counters()`.
+
+Validation framing: Run 1's "FAIL before any server work"
+shape is exactly what a validation harness is supposed to give
+you when the harness itself is broken -- ASAN/UBSAN clean
+because nothing reached the server, sentinel "did not issue
+CHUNK ops" visible in the chunk counters had they been
+readable.  Run 2 is the actual chunk-collision signal Track 2
+was designed to deliver.
 
 ## Cost model: containers vs. bare metal
 
