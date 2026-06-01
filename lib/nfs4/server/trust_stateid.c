@@ -54,16 +54,40 @@ static _Atomic bool trust_reaper_running;
 /* ------------------------------------------------------------------ */
 /* Hash and match                                                      */
 
-static unsigned long trust_hash(const uint8_t *other)
+/*
+ * The hash key is the full layout stateid: 12 bytes of `other` plus
+ * 4 bytes of `seqid`.  Keying on `other` alone was the chunk-collision
+ * Track 1b bug -- concurrent writers on the same MDS file share
+ * `stateid.other` (it encodes the inode), so one writer's
+ * LAYOUTRETURN -> trust_revoke deleted the entry the other writer
+ * was still using.  See chunk-collision-validation.md "root cause
+ * locked".
+ */
+#define TRUST_KEY_SIZE (NFS4_OTHER_SIZE + sizeof(uint32_t))
+
+static void trust_build_key(uint8_t key[TRUST_KEY_SIZE],
+			    const stateid4 *stateid)
 {
-	return (unsigned long)XXH3_64bits(other, NFS4_OTHER_SIZE);
+	memcpy(key, stateid->other, NFS4_OTHER_SIZE);
+	memcpy(key + NFS4_OTHER_SIZE, &stateid->seqid, sizeof(uint32_t));
 }
 
-static int trust_match(struct cds_lfht_node *node, const void *key)
+static unsigned long trust_hash(const uint8_t key[TRUST_KEY_SIZE])
+{
+	return (unsigned long)XXH3_64bits(key, TRUST_KEY_SIZE);
+}
+
+static int trust_match(struct cds_lfht_node *node, const void *vkey)
 {
 	const struct trust_entry *te =
 		caa_container_of(node, struct trust_entry, te_ht_node);
-	return memcmp(te->te_other, key, NFS4_OTHER_SIZE) == 0;
+	const uint8_t *key = vkey;
+	uint32_t key_seqid;
+
+	if (memcmp(te->te_other, key, NFS4_OTHER_SIZE) != 0)
+		return 0;
+	memcpy(&key_seqid, key + NFS4_OTHER_SIZE, sizeof(uint32_t));
+	return te->te_seqid == key_seqid;
 }
 
 /* ------------------------------------------------------------------ */
@@ -336,17 +360,22 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 	if (!trust_ht)
 		return -EINVAL;
 
-	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
+	uint8_t key[TRUST_KEY_SIZE];
+
+	trust_build_key(key, stateid);
+	unsigned long hash = trust_hash(key);
 
 	/*
 	 * Check for existing entry first (idempotent MDS retry).
-	 * If found, update in-place (expiry + flags).
+	 * The key is (other + seqid), so an idempotent retry of the
+	 * same layout stateid hits this path.  A new layout stateid
+	 * (different seqid) misses and allocates a fresh entry below.
 	 */
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *found;
 
 	rcu_read_lock();
-	cds_lfht_lookup(trust_ht, hash, trust_match, stateid->other, &iter);
+	cds_lfht_lookup(trust_ht, hash, trust_match, key, &iter);
 	found = cds_lfht_iter_get_node(&iter);
 
 	if (found) {
@@ -381,6 +410,7 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 		return -ENOMEM;
 
 	memcpy(te->te_other, stateid->other, NFS4_OTHER_SIZE);
+	te->te_seqid = stateid->seqid;
 	te->te_ino = ino;
 	te->te_clientid = clientid;
 	te->te_iomode = iomode;
@@ -408,12 +438,15 @@ void trust_stateid_revoke(const stateid4 *stateid)
 	if (!trust_ht)
 		return;
 
-	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
+	uint8_t key[TRUST_KEY_SIZE];
+
+	trust_build_key(key, stateid);
+	unsigned long hash = trust_hash(key);
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 
 	rcu_read_lock();
-	cds_lfht_lookup(trust_ht, hash, trust_match, stateid->other, &iter);
+	cds_lfht_lookup(trust_ht, hash, trust_match, key, &iter);
 	node = cds_lfht_iter_get_node(&iter);
 
 	if (node) {
@@ -511,7 +544,7 @@ restart:
 
 struct trust_entry *trust_stateid_find(const stateid4 *stateid)
 {
-	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
+	uint8_t key[TRUST_KEY_SIZE];
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
 	struct trust_entry *te = NULL;
@@ -519,8 +552,11 @@ struct trust_entry *trust_stateid_find(const stateid4 *stateid)
 	if (!trust_ht)
 		return NULL;
 
+	trust_build_key(key, stateid);
+	unsigned long hash = trust_hash(key);
+
 	rcu_read_lock();
-	cds_lfht_lookup(trust_ht, hash, trust_match, stateid->other, &iter);
+	cds_lfht_lookup(trust_ht, hash, trust_match, key, &iter);
 	node = cds_lfht_iter_get_node(&iter);
 
 	if (node) {
