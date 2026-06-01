@@ -851,6 +851,72 @@ appealing for FFv2 (the chunk-store enforces ordering at the
 write level, so multiple concurrent layouts is genuinely
 safe), but needs design discussion.  Option 3 is a Band-Aid.
 
+**2026-06-01 -- option 2 partial fix shipped, exposes a
+second revoke mechanism.**
+
+Gated `nfs4_layoutget_check_conflicts` on layout type --
+`LAYOUT4_FLEX_FILES_V2` skips the FANOUT_REVOKE_STATEID
+exclusivity check (commit `1e2fde440e2e` on the topic branch).
+v1 and file layouts keep the exclusivity.
+
+Result on the 4-mode smoke against the patched build:
+
+| Mode | Result | Notes |
+|------|--------|-------|
+| `disjoint` | PASS | unchanged |
+| `overlap` | **NEW SIGNAL** | `ec_read_stripe: stripe 2 decode failed: -5` -- this is the actual concurrent-write surface Track 1b was designed for (RMW prefix reads see inconsistent shards). |
+| `chunk-split` | FAIL | same wire signature as before (RECLAIM_COMPLETE BADSESSION x9 -> CHUNK_WRITE BADSESSION -> -121) |
+| `subchunk` | FAIL | same |
+
+Server-side BADSESSION counts after the run:
+
+| Container | BADSESSION count |
+|-----------|------------------|
+| reffs-bench-mds | 0 |
+| reffs-bench-ds0 | 60 |
+| reffs-bench-ds1 | 96 |
+
+So the fix is correct in direction (the `overlap` mode now
+reaches the real collision surface instead of dying at
+LAYOUTGET conflict) but **incomplete** for `chunk-split` and
+`subchunk`.  A second mechanism is still revoking
+something the DSes hold.  Candidates:
+
+1. Another FANOUT_REVOKE_STATEID call site
+   (`grep -rn FANOUT_REVOKE_STATEID` shows only the
+   conflict-check, but the writer logs show the BADSESSION
+   cascade still fires -- so either there's an indirect
+   path, or the DS-side session table is losing sessions
+   for a separate reason).
+2. The DS-side session table itself losing sessions, not
+   the trust table.  Earlier session-lifecycle LOGs (before
+   this slice) showed NO `nfs4_session_unhash` events during
+   the smoke window on DSes, but those LOGs were on the
+   pre-fix build -- worth re-running with both the fix AND
+   the session-lifecycle instrumentation in place to
+   confirm.
+3. The OPEN / CLOSE state machine on the DS file mistreating
+   concurrent OPENs.  CHUNK ops are gated on a server-side
+   OPEN of the DS file; under multi-writer load some OPEN
+   path might be evicting the prior OPEN's state.
+
+The `overlap` decode failure is meaningful regardless of
+whether `chunk-split` / `subchunk` are also fixed: the
+harness is producing actual concurrent-write corruption
+signal on the wire, which is the entire point of Track 1b.
+The focus shifts from "BADSESSION cascade" (a downstream
+symptom that turned out to be two mechanisms stacked) to
+"RMW shard inconsistency under multi-writer" (the real
+surface the validation is meant to detect).
+
+Next slice candidates:
+- Re-instrument with both layout-type fix AND
+  session-lifecycle + trust-table LOGs at once, re-run
+  chunk-split, identify the second mechanism.
+- Or pivot to the `overlap` decode failure as the primary
+  bug surface and triage why concurrent writers produce
+  inconsistent shards.
+
 Validation framing for the run: the harness delivered exactly
 what a chunk-collision harness should -- 1 clean control case
 plus 3 distinct failing variants that all converge on the
