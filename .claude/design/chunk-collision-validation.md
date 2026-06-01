@@ -1290,3 +1290,108 @@ Status as of review #1 follow-up:
   chunk-collision scope.
 - Cross-MDS replication scenarios (no replication today).
 - Bare-metal Track 2 validation (Tier 5 in `goals.md`).
+
+**2026-06-01 -- ec_pipeline refactor SHIPPED, but did NOT fix the
+chunk-split / overlap / subchunk modes.**
+
+Commit `efaff665437b` on main:
+`nfs4/ps/ec_pipeline: ec_write_codec_range shares ctx across stripes`.
+
+Pattern shipped:
+
+- New optional `void *ctx_in_out` last parameter on
+  `ec_write_stripe_with_file` and `ec_read_stripe_with_file`.
+  NULL preserves today's setup/teardown semantics (PS-proxy
+  callers, `ec_read_codec_range`).  Non-NULL points at a caller-
+  owned `struct ec_context`: the per-stripe function copies state
+  in, skips `ec_resolve_mirrors` / `ec_disconnect_all` /
+  LAYOUTGET / LAYOUTRETURN, does I/O, copies state back out.
+- `ec_write_codec_range` rewritten: build one shared ctx at the
+  top (codec + LAYOUTGET(RW) + ec_resolve_mirrors), thread it
+  through every per-stripe call, tear down once at the bottom.
+  ASAN/UBSAN-clean build via shadow's docker builder.
+
+Re-ran all four sub-modes on shadow (`MDS=127.0.0.1:2049`,
+clean container restart + healthy MDS).
+
+| Mode | Result | First failure |
+|------|--------|---------------|
+| `disjoint` | PASS | -- |
+| `chunk-split` | FAIL | `stripe 0 data[0] FAILED: -121` |
+| `overlap` | FAIL | `stripe 2 data[0] FAILED: -121` |
+| `subchunk` | FAIL | `stripe 0 data[0] FAILED: -121` |
+
+Per-writer log (writer-0.log on chunk-split, distilled):
+
+```
+ec_demo: connecting to MDS 127.0.0.1:2049 (owner shadow:writer0, ...)
+ec_demo: writing 8192 bytes ... at offset 0 (4+2, shard=4096, range mode)
+mds_compound_send: COMPOUND tag="reclaim_complete" status=NFS4ERR_BADSESSION  (x10)
+mds_compound_send: COMPOUND tag="chunk_write"     status=NFS4ERR_BADSESSION
+ds_chunk_write: COMPOUND failed status=10052 (resarray_len=1)
+[806.544] ec_write_stripe: stripe 0 data[0] FAILED: -121
+mds_compound_send: COMPOUND tag="destroy_session" status=NFS4ERR_BADSESSION  (x10)
+ec_demo: write failed: -121
+```
+
+Same wire signature as the pre-refactor build.  The refactor was
+necessary but not sufficient.  Mechanism #3 is still active.
+
+Diagnostic: the BADSESSION cascade now starts with the VERY FIRST
+post-CREATE_SESSION compound (RECLAIM_COMPLETE).  That rules out
+the in-stripe per-DS-session churn the refactor targeted (a
+ctx-rebuild would have shown success on RECLAIM_COMPLETE and only
+failed mid-loop).  Something earlier kills the session.
+
+The earlier `nfs4_layoutget_check_conflicts` fix is still in
+place (commit `1e2fde44`) -- gating on layout type so FFv2 skips
+FANOUT_REVOKE_STATEID exclusivity.  Confirmed present in shadow's
+checkout.
+
+Remaining hypotheses:
+
+1. A second `FANOUT_REVOKE_STATEID` call site (or equivalent
+   session-invalidator) that fires under concurrent
+   LAYOUTGET / OPEN to the same file.  The earlier grep for
+   FANOUT_REVOKE_STATEID showed only the conflict-check, but
+   maybe `client_expire` or another path tears down sessions
+   for "old" clients when a new EXCHANGE_ID for the same
+   client_owner arrives with a different verifier.
+2. EXCHANGE_ID verifier collision.  Each writer has a distinct
+   `--id` (`shadow:writer0`, `shadow:writer1`).  If their
+   verifiers happen to coincide (e.g. all derived from the
+   same boot epoch) AND there's a server-side path that treats
+   the second writer's CREATE_SESSION as a "replace_client"
+   that tears down the first writer's session, that fits the
+   pattern -- the FIRST writer's RECLAIM_COMPLETE would hit
+   BADSESSION the moment the SECOND writer's CREATE_SESSION
+   completes.
+3. Per-stripe `LAYOUTGET(RW)` issued by `ec_write_codec_range`
+   on each writer still racing with the OTHER writer's
+   LAYOUTGET, and some non-conflict-check path is triggered
+   under multi-client OPEN-on-same-file.
+
+The disjoint PASS is now critically informative: disjoint
+writers each open and write a DISTINCT chunk range with no
+overlap.  The failing modes have writers OPENing and LAYOUTGETing
+on the SAME chunk range simultaneously.  The differentiator
+between disjoint and the others is "concurrent OPEN/LAYOUTGET on
+the same file region", not "RMW".
+
+Next slice candidates:
+
+- Add MDS-side LOG to every code path that invokes
+  `nfs4_session_destroy_for_client`, `nfs4_session_unhash`, or
+  any inline session-teardown to find which one fires during
+  the failing modes.  Run the chunk-split smoke against the
+  instrumented build, see what fires and why.
+- Move sideways: triage the `overlap` decode failure that
+  surfaced briefly under the previous slice.  That's the real
+  Track 1b validation signal; the BADSESSION cascade is still
+  swallowing the test on these other modes.
+
+The refactor itself is a clean architectural fix that stays in
+mainline regardless -- per-stripe DS-session churn was a real
+scaling defect (2*N session lifecycle events per writer per
+stripe) and the new shared-ctx pattern is the right shape.  It
+just doesn't fix THIS bug.
