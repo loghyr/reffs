@@ -117,7 +117,15 @@ done
 [ "$clients" -ge 1 ]  || die "--clients must be >= 1"
 [[ "$nconnect" =~ ^[0-9]+$ ]] || die "--nconnect must be a positive integer"
 [ "$nconnect" -ge 1 ] || die "--nconnect must be >= 1"
-[ -x "$ec_demo" ]     || die "ec_demo not executable: $ec_demo"
+if [ ! -e "$ec_demo" ]; then
+	die "ec_demo not found at: $ec_demo
+  CWD is: $(pwd)
+  The default --ec-demo is ./build/tools/ec_demo and is relative to
+  the current working directory.  Either cd to the reffs source root
+  before running, or pass --ec-demo with an absolute path:
+    --ec-demo /path/to/reffs/build/tools/ec_demo"
+fi
+[ -x "$ec_demo" ]     || die "ec_demo not executable (chmod +x?): $ec_demo"
 [ -r "$principals" ]  || die "principals file not readable: $principals"
 command -v kinit >/dev/null 2>&1 || die "kinit not in PATH"
 
@@ -138,16 +146,29 @@ esac
 #
 # When ec_demo runs from an in-tree build, the libtool wrapper at
 # build/tools/ec_demo is supposed to set LD_LIBRARY_PATH before
-# exec'ing the inner ELF in build/tools/.libs/.  Two ways that
+# exec'ing the inner ELF in build/tools/.libs/.  Three ways that
 # falls over:
 #   - the wrapper got replaced by a `make install` relink (now a
-#     stub that just execs without env-fixing), and
+#     stub that just execs without env-fixing),
 #   - the script's `exec "$ec_demo"` for the verify pass inherits
 #     whatever LD_LIBRARY_PATH the parent shell had, not the
-#     wrapper-set one.
-# Cover both by inferring the build root from $ec_demo and prefixing
-# every .libs/ dir.  No-op if user already exported LD_LIBRARY_PATH.
-build_root=$(cd "$(dirname "$ec_demo")/.." 2>/dev/null && pwd)
+#     wrapper-set one, and
+#   - the operator passed --ec-demo pointing at the inner ELF
+#     (.../build/tools/.libs/ec_demo) directly, bypassing the
+#     wrapper entirely.
+#
+# Cover all three by inferring the build root from $ec_demo and
+# prefixing every .libs/ dir.  Detect the inner-ELF case via the
+# .libs/ suffix on dirname and back up one extra level so the
+# build root is found.  No-op if user already exported
+# LD_LIBRARY_PATH.
+ec_demo_dir=$(dirname "$ec_demo")
+case "$ec_demo_dir" in
+*/.libs)
+	build_root=$(cd "$ec_demo_dir/../.." 2>/dev/null && pwd) ;;
+*)
+	build_root=$(cd "$ec_demo_dir/.." 2>/dev/null && pwd) ;;
+esac
 if [ -n "$build_root" ] && [ -d "$build_root/lib" ]; then
 	extra=$(find "$build_root" -type d -name '.libs' 2>/dev/null | paste -sd:)
 	if [ -n "$extra" ]; then
