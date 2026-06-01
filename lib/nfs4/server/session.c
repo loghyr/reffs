@@ -33,6 +33,26 @@
 /* ------------------------------------------------------------------ */
 /* Session hash table helpers                                          */
 
+/*
+ * WIP t1b-unhash-trace: log every production unhash with caller +
+ * first 8 bytes of sessionid + owning clientid.  Revert before
+ * merging to main.  Tests still call nfs4_session_unhash directly
+ * without the LOG, so test output stays uncluttered.
+ */
+#define TRACE_UNHASH(ss, ns, why)                                              \
+	do {                                                                   \
+		const unsigned char *_sid =                                    \
+			(const unsigned char *)(ns)->ns_sessionid;             \
+		uint64_t _clid =                                               \
+			(ns)->ns_client ?                                      \
+				nfs4_client_to_client((ns)->ns_client)->c_id : \
+				0;                                             \
+		LOG("[t1b-unhash] %s sid=%02x%02x%02x%02x%02x%02x%02x%02x "    \
+		    "clid=%lu",                                                \
+		    (why), _sid[0], _sid[1], _sid[2], _sid[3], _sid[4],        \
+		    _sid[5], _sid[6], _sid[7], (unsigned long)_clid);          \
+	} while (0)
+
 static uint64_t g_session_counter = 0;
 
 static void session_make_id(sessionid4 sid, const struct nfs4_client *nc)
@@ -97,6 +117,7 @@ static void session_release(struct urcu_ref *ref)
 	struct server_state *ss = server_state_find();
 
 	if (ss) {
+		TRACE_UNHASH(ss, ns, "session_release");
 		nfs4_session_unhash(ss, ns);
 		server_state_put(ss);
 	}
@@ -163,8 +184,10 @@ void nfs4_session_destroy_for_client(struct server_state *ss,
 		struct nfs4_session *ns =
 			caa_container_of(node, struct nfs4_session, ns_node);
 		cds_lfht_next(ss->ss_session_ht, &iter);
-		if (ns->ns_client == nc)
+		if (ns->ns_client == nc) {
+			TRACE_UNHASH(ss, ns, "destroy_for_client");
 			nfs4_session_unhash(ss, ns);
+		}
 	}
 	rcu_read_unlock();
 }
@@ -224,8 +247,10 @@ void nfs4_session_destroy_zombies(struct server_state *ss,
 		cds_lfht_next(ss->ss_session_ht, &iter);
 		if (ns->ns_client == nc &&
 		    (__atomic_load_n(&ns->ns_state, __ATOMIC_ACQUIRE) &
-		     NFS4_SESSION_IS_ZOMBIE))
+		     NFS4_SESSION_IS_ZOMBIE)) {
+			TRACE_UNHASH(ss, ns, "destroy_zombies");
 			nfs4_session_unhash(ss, ns);
+		}
 	}
 	rcu_read_unlock();
 }
@@ -632,6 +657,11 @@ uint32_t nfs4_op_create_session(struct compound *compound)
 		goto out;
 	}
 
+	/* WIP t1b-unhash-trace: log every successful CREATE_SESSION so
+	 * we can correlate "session created at T0 sid=X" with the
+	 * matching "[t1b-unhash] sid=X" lines.  Revert before merge. */
+	TRACE_UNHASH(compound->c_server_state, ns, "CREATE_SESSION_alloc");
+
 	nc->nc_confirmed = true;
 
 	/*
@@ -766,6 +796,7 @@ uint32_t nfs4_op_destroy_session(struct compound *compound)
 		goto out;
 	}
 
+	TRACE_UNHASH(compound->c_server_state, ns, "DESTROY_SESSION_op");
 	nfs4_session_unhash(compound->c_server_state, ns);
 
 out:
