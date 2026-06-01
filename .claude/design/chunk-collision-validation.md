@@ -573,6 +573,99 @@ ns_sessionid + nc clientid pair).  After a rebuild + re-run,
 correlate any DS unhash event with the BADSESSION the client
 sees right after it.
 
+**2026-06-01 -- instrumentation ran, the real primary failure
+is BAD_STATEID on CHUNK_READ, not BADSESSION.**
+
+Added LOGs in `nfs4_session_alloc` (post-add), `nfs4_session_unhash`,
+and `nfs4_session_destroy_zombies` on a throwaway
+`wip-t1b-session-trace` branch.  Rebuild + restart + re-run on
+`--mode chunk-split`.
+
+What the DS-side LOGs showed:
+
+- ds0 / ds1: ONE `session_alloc` per writer + ONE
+  `destroy_zombies` (entered after CREATE_SESSION; nothing to
+  unhash since this is each writer's first session on this DS).
+- **No `session_unhash` events on the DSes during the smoke
+  window.**  Sessions stay in the hash table.  The
+  earlier "session destroyed" narrative is wrong.
+
+What the writer log shows once the head of the log is read
+(prior `tail -25` was truncating it):
+
+```
+ec_demo: writing 8192 bytes ... at offset 0 (4+2, shard=4096, range mode)
+mds_compound_send: COMPOUND tag="chunk_read" op[2]=OP_CHUNK_READ(83) status=NFS4ERR_BAD_STATEID(10025)
+mds_compound_send: COMPOUND tag="chunk_read" op[2]=OP_CHUNK_READ(83) status=NFS4ERR_BAD_STATEID(10025)
+mds_compound_send: COMPOUND tag="reclaim_complete" op[0]=OP_SEQUENCE(53) status=NFS4ERR_BADSESSION(10052)   (x6)
+mds_compound_send: COMPOUND tag="chunk_write" op[0]=OP_SEQUENCE(53) status=NFS4ERR_BADSESSION(10052)
+ds_chunk_write: COMPOUND failed status=10052 (resarray_len=1)
+[141.103] ec_write_stripe: stripe 0 data[0] FAILED: -121
+mds_compound_send: COMPOUND tag="destroy_session" op[0]=OP_SEQUENCE(53) status=NFS4ERR_BADSESSION(10052)   (x6)
+[141.123] ec_write_range: write stripe 0 failed: -121
+```
+
+The **first** failure on the wire is `CHUNK_READ ->
+NFS4ERR_BAD_STATEID`, twice (client retry).  This is the
+tight-coupling stateid validation path: the DS-side
+`nfs4_op_chunk_read` looks the layout stateid up in the trust
+table; if not found, returns BAD_STATEID.
+
+What the MDS log shows in the same window:
+
+```
+[NFS] LAYOUTERROR: trust gap healed for ino=2
+      (BAD_STATEID re-registered on 6 DS(es))
+[NFS] LAYOUTERROR: trust gap healed for ino=2
+      (BAD_STATEID re-registered on 6 DS(es))
+```
+
+So the trust-gap recovery path fires (`stateids.md` step 2.7,
+`trust-stateid.md`).  It re-registers TRUST_STATEID on the 6
+DSes carrying this file's mirrors and returns NFS4_OK for the
+LAYOUTERROR.  But by then the client's retry path on the DS
+session has already torn it down or moved off it, and the
+subsequent client compounds (the RECLAIM_COMPLETE retry on
+re-create, then the CHUNK_WRITE, then DESTROY_SESSION) all hit
+BADSESSION.
+
+So the BADSESSION cascade is **downstream** of a BAD_STATEID
+on CHUNK_READ.  The earlier "DS lease reaper destroys
+sessions" hypothesis was wrong because the primary failure
+isn't a session-destroy at all -- it's a trust-stateid lookup
+miss on the DS during RMW.
+
+Revised triage targets, narrower again:
+
+1. **Why does CHUNK_READ get BAD_STATEID under multi-writer
+   RMW?**  Candidates:
+   - LAYOUTGET's TRUST_STATEID fan-out finishes after the
+     client's CHUNK_READ arrives (race on layout completion).
+   - Two writers share the same `stateid.other` (per-inode
+     key) in the trust table, and one writer's LAYOUTRETURN /
+     LAYOUTERROR removes the shared entry while the other is
+     mid-read.
+   - The trust table entry was registered correctly but the
+     in-flight CHUNK_READ uses a different stateid (different
+     seqid) that lookups against `stateid.other` should still
+     match, unless the lookup is keyed on the full stateid.
+2. **Why does the BAD_STATEID retry path trash the DS
+   session?**  After the second BAD_STATEID, the client
+   surfaces -ESTALE up to `ec_layout_refresh`, which presumably
+   tears down DS sessions and re-establishes.  The re-establish
+   path may be on a different connection that the DS doesn't
+   associate with the existing session, leaving CREATE_SESSION
+   on the new connection orphaned from the running compound.
+3. **MDS-side trust-gap healing is firing twice in this run.**
+   That's the design path responding to the BAD_STATEID.  If it
+   succeeds (and the log line says "healed"), why does the
+   client's CHUNK_READ still fail on retry?
+
+Substantial finding: the trust-stateid implementation under
+concurrent partial-stripe RMW is the bug surface.  Disjoint
+passes because full-stripe writes don't invoke CHUNK_READ.
+The bug is NOT a generic NFSv4.1 session lifecycle issue.
+
 Validation framing for the run: the harness delivered exactly
 what a chunk-collision harness should -- 1 clean control case
 plus 3 distinct failing variants that all converge on the
