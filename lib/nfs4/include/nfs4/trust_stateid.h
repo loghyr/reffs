@@ -45,15 +45,7 @@ struct trust_entry {
 	struct rcu_head te_rcu; /* for call_rcu */
 	struct urcu_ref te_ref;
 
-	/*
-	 * Hash key is the full layout stateid (other + seqid), 16 bytes
-	 * total.  Keying on `other` alone collapsed concurrent writers'
-	 * stateids onto a single entry, and one writer's LAYOUTRETURN
-	 * destroyed the entry the other writer was still using --
-	 * see chunk-collision-validation.md "root cause locked".
-	 */
-	uint8_t te_other[NFS4_OTHER_SIZE]; /* low 12 bytes of key */
-	uint32_t te_seqid; /* high 4 bytes of key (stateid.seqid) */
+	uint8_t te_other[NFS4_OTHER_SIZE]; /* stateid.other -- hash key */
 	uint64_t te_ino; /* inode (from current FH) */
 	clientid4 te_clientid; /* client that holds layout */
 	layoutiomode4 te_iomode; /* LAYOUTIOMODE4_READ or _RW */

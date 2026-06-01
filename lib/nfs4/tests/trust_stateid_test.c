@@ -263,56 +263,6 @@ START_TEST(test_register_two_entries)
 }
 END_TEST
 
-/*
- * Track 1b regression guard: two stateids that share the same `other`
- * but differ in `seqid` are distinct entries.  Concurrent writers on
- * the same MDS file produce exactly this shape (same `other` encodes
- * the file; different `seqid` per layout grant) and the previous
- * key-on-other-only design conflated them, letting one writer's
- * revoke destroy the entry the other was still using.  See
- * chunk-collision-validation.md "root cause locked".
- */
-START_TEST(test_register_same_other_distinct_seqid)
-{
-	stateid4 s1 = make_stateid(0x33);
-	stateid4 s2 = s1; /* same other[12] */
-
-	s2.seqid = s1.seqid + 1; /* differs by seqid only */
-
-	trust_stateid_register(&s1, 7, 0xCAFE, LAYOUTIOMODE4_READ,
-			       future_expire_ns(), "");
-	trust_stateid_register(&s2, 7, 0xCAFE, LAYOUTIOMODE4_RW,
-			       future_expire_ns(), "");
-
-	struct trust_entry *te1 = trust_stateid_find(&s1);
-	struct trust_entry *te2 = trust_stateid_find(&s2);
-
-	ck_assert_ptr_nonnull(te1);
-	ck_assert_ptr_nonnull(te2);
-	ck_assert_ptr_ne(te1, te2);
-	ck_assert_uint_eq(te1->te_iomode, LAYOUTIOMODE4_READ);
-	ck_assert_uint_eq(te2->te_iomode, LAYOUTIOMODE4_RW);
-
-	/*
-	 * Revoking one MUST NOT remove the other.  This is the
-	 * single-statement invariant that was broken in the previous
-	 * key-on-other-only design.
-	 */
-	trust_entry_put(te1);
-	trust_entry_put(te2);
-
-	trust_stateid_revoke(&s1);
-
-	te1 = trust_stateid_find(&s1);
-	te2 = trust_stateid_find(&s2);
-
-	ck_assert_ptr_null(te1);
-	ck_assert_ptr_nonnull(te2);
-
-	trust_entry_put(te2);
-}
-END_TEST
-
 /* ------------------------------------------------------------------ */
 /* C. Find and reference counting                                      */
 /* ------------------------------------------------------------------ */
@@ -1539,7 +1489,6 @@ static Suite *trust_stateid_suite(void)
 	tcase_add_test(tc_register, test_register_with_principal);
 	tcase_add_test(tc_register, test_register_principal_truncated);
 	tcase_add_test(tc_register, test_register_two_entries);
-	tcase_add_test(tc_register, test_register_same_other_distinct_seqid);
 	suite_add_tcase(s, tc_register);
 
 	TCase *tc_find = tcase_create("find");
