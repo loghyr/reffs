@@ -1612,3 +1612,107 @@ is the architecturally correct one.
 Track 2 (PS-based IOR `-F 0`) is what would actually exercise B
 at scale; until that's ramped, A's serialisation cost is the
 same as not having the bug at all.
+
+## Option C first cut: PENDING-PENDING gate shipped, doesn't fire
+
+Commit `d8a09448671b` adds the defensive gate: refuse CHUNK_WRITE
+with NFS4ERR_DELAY when the target block already holds a PENDING
+entry from a different (co_id, cg_client_id) writer.  Binary
+deployed clean on shadow (`strings reffsd | grep cs_chunk_busy_delay`
+returns 1 in both the host and in-container `.libs/reffsd`).
+
+Re-ran all four modes against the gated build.  Result is
+unchanged from before the gate: chunk-split / overlap / subchunk
+still show last-FINALIZE-wins corruption, disjoint still PASSes.
+**The `cs_chunk_busy_delay` counter on every DS is zero.**  The
+gate is correct code that the test workload never reaches.
+
+Diagnosis: the two writers don't actually overlap at the
+PENDING-PENDING stage.  Writer-0's full per-block lifecycle
+(CHUNK_WRITE -> PENDING -> CHUNK_FINALIZE -> FINALIZED ->
+CHUNK_COMMIT -> COMMITTED) completes faster than writer-1's
+gap between its own per-block CHUNK_WRITEs.  So writer-1's
+CHUNK_WRITE finds the block COMMITTED, not PENDING, and the gate
+short-circuits.  Then the COMMITTED bytes get clobbered by
+writer-1's stale-RMW payload.
+
+The real surface is **COMMITTED-overwrite with stale-read**:
+writer-1 RMW-read happened BEFORE writer-0's CHUNK_COMMIT made
+its bytes visible, so writer-1's local encode used the
+pre-fill payload for writer-0's shards; writer-1's CHUNK_WRITE
+then stamps that stale payload onto the already-committed
+writer-0 bytes.
+
+### The protocol already has the CAS primitive
+
+`cwa_guard` (write_chunk_guard4 in lib/xdr/nfsv42_xdr.x:3586)
+is exactly the right field:
+
+```
+union write_chunk_guard4 switch (bool cwg_check) {
+    case TRUE:  chunk_guard4 cwg_guard;
+    case FALSE: void;
+};
+```
+
+The semantic is "fail this write if the block's existing
+{cg_gen_id, cg_client_id} does not match `cwg_guard`".  The
+writer presents the version it read; the server CAS-compares
+on write.  This is the standard RAID-5-RMW / log-structured
+atomicity primitive, already in the FFv2 draft and already in
+reffs's XDR.
+
+ec_demo today never uses it -- `lib/nfs4/ps/chunk_io.c:80`
+hardcodes `cwa->cwa_guard.cwg_check = FALSE` for every
+CHUNK_WRITE.  And every writer stamps the constant
+`{cg_gen_id=1, cg_client_id=1}` (lines 75-76), so even if the
+guard were enabled, every writer's "version" looks the same to
+the server.
+
+### Full Option C scope (next slice)
+
+Five touch points to make Option C actually enforce sub-stripe
+RMW correctness:
+
+1. **ec_demo: per-write monotonic cg_gen_id.** Initialize a
+   per-process counter at startup (e.g., pid << 32 | counter,
+   or just incrementing from a randomised base); bump on every
+   CHUNK_WRITE so each write stamps a unique version.
+
+2. **ds_chunk_write: pass cb_gen_id/cb_client_id captured from
+   the matching CHUNK_READ as cwa_guard.cwg_guard, with
+   cwg_check=TRUE.**  When the writer is doing RMW, the version
+   it read MUST be the version it expects to overwrite.
+
+3. **ds_chunk_read: return cr_owner.co_guard so the client
+   captures the version.**  Today CHUNK_READ already includes
+   cr_owner per the XDR (line 3623 of nfsv42_xdr.x); the client-
+   side decode needs to surface co_guard up to the caller.
+
+4. **ec_pipeline RMW path: thread the captured guard from
+   read-time through to write-time.**  Currently the RMW loop
+   throws away the CHUNK_READ response after copying the bytes;
+   the {gen_id, client_id} per shard must travel from
+   ec_read_stripe_with_file into ec_write_stripe_with_file.
+
+5. **chunk.c: enforce cwa_guard.cwg_check=TRUE.** Look up the
+   existing block at the offset; if its {cb_gen_id, cb_client_id}
+   differ from the wire guard, return NFS4ERR_DELAY without
+   writing.  Same code path as the PENDING-PENDING gate, just
+   broadened to cover COMMITTED.
+
+This makes Option C protocol-correct (uses the existing draft
+mechanism rather than bolting on a side-channel check) and
+covers the actual stale-RMW corruption path.  Estimated scope:
+~150 LOC across ec_demo + chunk_io.c + ec_pipeline.c + chunk.c.
+
+The PENDING-PENDING gate already shipped stays in place -- it's
+correct, narrow, and fires for the (real, just rare) racing-
+within-PENDING case that the broader CAS gate also has to cover.
+
+Pinning the BAT decision: the deeper Option B (delta-parity)
+remains the right long-term answer for parallel performance.
+Option C with full CAS is the correct semantics; the BAT demo
+runs it serialised at acceptable cost as long as the IOR `-F 0`
+throughput target lives in Track 2 (PS-based) rather than direct
+ec_demo, which it does.
