@@ -1775,3 +1775,27 @@ non-overlapping sub-stripe modes (chunk-split, subchunk) and
 correctly distinguishes them from the inherently-ambiguous
 overlap mode.  The actual chunk-store atomicity bug it was
 designed to expose is fixed at the protocol-correct level.
+
+### Final 4-mode validation, post-harness-flip
+
+```
+disjoint     PASS (4/4)  -- control, unchanged
+chunk-split  PASS (2/2)  -- was deterministic FAIL, now deterministic PASS
+overlap      writer error -- 1 writer hit -EAGAIN retry budget exhaustion
+subchunk     PASS (2/2)  -- was deterministic FAIL, now deterministic PASS
+```
+
+The overlap-mode writer error is the loud-failure-under-heavy-
+contention property Option C promised: 4 writers competing on
+the same stripes with EC_RMW_RETRY_MAX=5 cannot all converge.
+The harness now surfaces this as a writer-level error rather
+than silent corruption.  A future tuning slice can raise
+EC_RMW_RETRY_MAX, add jitter to the backoff, or pivot overlap
+to the "every byte matches SOME writer" verify mode.
+
+The Track 1b chunk-collision validation work is done at the
+fundamental level: the protocol-correct CAS gate eliminates
+silent sub-stripe RMW corruption, the harness verifies it
+deterministically for the two designed-for non-overlap cases,
+and the inherently-ambiguous overlap case is correctly
+identified as such by its non-deterministic outcome.
