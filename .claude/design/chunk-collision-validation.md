@@ -1468,3 +1468,147 @@ next slice's instrumentation if needed.  Real fix work
 starts from a clean main, with the discipline check:
 **always `make -C tools` on shadow after any pull that
 touches lib/nfs4/ps or lib/nfs4/client**.
+
+## Triage: chunk-store sub-stripe atomicity (last-FINALIZE-wins)
+
+With the BADSESSION-cascade noise gone (the stale-build artifact),
+the harness exposes exactly the bug the chunk-split / overlap /
+subchunk modes were designed to find:
+
+```
+mode=chunk-split (k=4 m=2 shard=4KB stripe=16KB file=16KB N=2)
+prefill: full-file write of 16384 bytes (bytes = 0x00)
+writer-0: write 8192 B at offset 0      (bytes = 0x10 marker)
+writer-1: write 8192 B at offset 8192   (bytes = 0x11 marker)
+verify writer-0 range 0..8191:    expected 0x10, got 0x00 -- FAIL
+verify writer-1 range 8192..16383: expected 0x11, got 0x11 -- PASS
+(next run: roles flip -- writer-1 loses while writer-0 wins)
+```
+
+The loser's bytes are zeroed (pre-fill value), not garbled.  That
+pinpoints the mechanism:
+
+### Why the bytes go to zero, not to the other writer
+
+Each writer does a full-stripe RMW:
+
+1. CHUNK_READ all 4 data shards (sees pre-fill = `0x00 ...`).
+2. Overwrite the writer's own half of the buffer in memory.
+3. RS-encode the entire stripe -> 4 data shards + 2 parity shards.
+4. CHUNK_WRITE all 6 shards to the 6 DSes.
+5. CHUNK_FINALIZE the stripe's blocks on every DS.
+
+Crucially, writer-N's local stripe buffer at encode time looks like:
+
+  shards 0..1 = pre-fill if writer-N is writing 8192..16383, else N's marker
+  shards 2..3 = pre-fill if writer-N is writing 0..8191,     else N's marker
+
+So writer-0 emits `{wr0, wr0, prefill, prefill}` + parity.
+Writer-1 emits `{prefill, prefill, wr1, wr1}` + parity.
+
+At each DS, `chunk_store_write` (`lib/nfs4/server/chunk_store.c:197`)
+does `cs->cs_blocks[offset] = *blk;` -- a flat assignment.  No
+merge, no rejection, no per-writer queue.  The payload .dat is
+overwritten too.
+
+So the contended shards are the data shards in the OTHER writer's
+range, where one writer is stamping pre-fill bytes ON TOP of the
+other writer's just-written real bytes.  Whichever CHUNK_WRITE
+lands last on each DS wins that DS.
+
+Reads succeed (CHUNK_READ pulls k surviving shards and decodes)
+but the decoded bytes in the loser's range are pre-fill = `0x00`.
+
+### What the chunk-store actually has
+
+The chunk_block already tracks per-block owner identity
+(`cb_gen_id`, `cb_client_id`, `cb_owner_id`, `cb_writer_clientid`,
+`cb_payload_id`) -- `lib/nfs4/server/chunk.c:359-385`.  The
+INV-1 `cs_pending_displaced` counter
+(`lib/nfs4/server/chunk.c:407-413`) already INCREMENTS when a
+PENDING block from a different owner gets overwritten.  So the
+chunk-store has the contention signal -- it just doesn't act on
+it.  The ec_demo client also has no atomicity primitive to take.
+
+### Fix space
+
+Two viable architectures.  Both keep the per-block ownership the
+chunk-store already records; they differ on where the
+serialisation happens.
+
+**Option A: per-stripe write lock on the MDS (CB_LAYOUTRECALL-like).**
+
+Add a per-inode-stripe lock the MDS hands out to a single writer
+at a time before granting a LAYOUTGET(RW) on that stripe.  Other
+writers either block on LAYOUTGET, or get a partial-stripe layout
+that excludes the contended stripe.  Same drumbeat as RFC 8881
+S12.5.5.1 layout recall, but at per-stripe granularity.
+
+Pros: simple correctness; matches existing layout-stateid model;
+chunk-store and ec_demo unchanged.
+
+Cons: kills the parallel-writes property the FFv2 chunk-store
+arbitration was supposed to provide.  Disjoint workloads
+(currently PASS) stay fast; sub-stripe contention serializes.
+Worst case = one writer at a time on a hot stripe.
+
+**Option B: sub-shard write tracking + delta-parity in the
+chunk-store.**
+
+Each CHUNK_WRITE carries the byte range it actually modified
+within the shard (a `[off, len]` annotation on the existing
+`cwa_chunks` payload, or a new wire field).  The chunk-store
+maintains a "dirty range" per pending block and accepts multiple
+writers' PENDING contributions as long as their dirty ranges are
+DISJOINT within the shard.  CHUNK_FINALIZE merges contributions
+shard-by-shard.
+
+Parity is the hard bit: each writer must send a delta-parity (the
+XOR of "old bytes -> new bytes" pushed through the RS matrix), and
+the chunk-store XORs it into the on-disk parity instead of
+clobbering.  Same trick mainline software RAID-5 uses for RMW.
+
+Pros: keeps both writers running in parallel; correct for
+arbitrary disjoint sub-stripe RMW; the disjoint-mode PASS
+generalises to chunk-split/overlap/subchunk.
+
+Cons: substantial work -- wire-format change (ASCII XDR additions
+to `lib/xdr/nfsv42_xdr.x` and the v2 draft), ec_demo client
+rewrite to compute delta-parity instead of full-stripe parity,
+chunk-store XOR-merge for parity shards + range-tracking for data
+shards, FINALIZE rewrite to coordinate per-writer per-shard
+completion.  Touches the FFv2 draft.
+
+**Option C (informational): widen `cs_pending_displaced` into a
+loud failure.**
+
+When CHUNK_WRITE arrives at a block with a PENDING entry from a
+different owner whose dirty range overlaps, return
+NFS4ERR_DELAY (or a new NFS4ERR_CHUNK_BUSY).  Client retries
+after the prior writer COMMITs.  Simpler than A or B but
+collapses to serialisation under contention with worse
+worst-case latency (the prior writer must FINALIZE+COMMIT
+before the retry will succeed).
+
+Useful as an intermediate step: ships visibility before either
+deeper fix lands, prevents silent data loss in the meantime.
+
+### Recommendation
+
+Ship **Option C** as a defensive correctness gate first (single
+slice, ~50 LOC in chunk.c + a probe counter + a harness mode that
+re-runs chunk-split with the expectation of NFS4ERR_CHUNK_BUSY
++ retry success instead of last-FINALIZE-wins).  That removes
+the silent corruption.
+
+Then choose between **A** (correct, simple, single-writer
+performance ceiling) and **B** (correct, complex, parallel
+performance ceiling) as a follow-on, based on whether IOR `-F 0`
+shared-file performance matters more than implementation cost.
+For the BAT demo: Option A is the lower-risk path.  For long-
+term FFv2 viability against HPC shared-file workloads: Option B
+is the architecturally correct one.
+
+Track 2 (PS-based IOR `-F 0`) is what would actually exercise B
+at scale; until that's ramped, A's serialisation cost is the
+same as not having the bug at all.
