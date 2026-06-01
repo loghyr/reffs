@@ -32,6 +32,7 @@
  * with "no change" -- the current posture is correct for a demo CLI.
  */
 
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <getopt.h>
@@ -218,6 +219,47 @@ static int g_ccache_n;
  * symbolic auth_stat name from the central log, which is the right
  * diagnostic shape.
  */
+/*
+ * Natural-order comparator on the basename of two paths.  Runs of
+ * digits compare numerically, runs of non-digits compare via
+ * strcmp.  Yields the order a human expects: cc_2 < cc_10 < cc_11
+ * rather than the strcmp order cc_10 < cc_11 < cc_2.  This matters
+ * because worker i picks g_ccache_list[i % N] and pairs with
+ * g_spn_list[i % M]; if the two indexes don't align by name, a
+ * caller curating parallel UPN-and-SPN lists gets the pairing
+ * wrong without warning.
+ */
+static int natcmp_basename(const void *a, const void *b)
+{
+	const char *pa = *(const char *const *)a;
+	const char *pb = *(const char *const *)b;
+	const char *sa = strrchr(pa, '/');
+	const char *sb = strrchr(pb, '/');
+
+	sa = sa ? sa + 1 : pa;
+	sb = sb ? sb + 1 : pb;
+
+	while (*sa && *sb) {
+		if (isdigit((unsigned char)*sa) &&
+		    isdigit((unsigned char)*sb)) {
+			unsigned long va = 0, vb = 0;
+
+			while (isdigit((unsigned char)*sa))
+				va = va * 10 + (unsigned)(*sa++ - '0');
+			while (isdigit((unsigned char)*sb))
+				vb = vb * 10 + (unsigned)(*sb++ - '0');
+			if (va != vb)
+				return va < vb ? -1 : 1;
+			continue;
+		}
+		if (*sa != *sb)
+			return (unsigned char)*sa - (unsigned char)*sb;
+		sa++;
+		sb++;
+	}
+	return (unsigned char)*sa - (unsigned char)*sb;
+}
+
 static int load_ccache_dir(const char *dir)
 {
 	DIR *d = opendir(dir);
@@ -264,6 +306,8 @@ static int load_ccache_dir(const char *dir)
 			dir);
 		return -ENOENT;
 	}
+
+	qsort(g_ccache_list, g_ccache_n, sizeof(char *), natcmp_basename);
 
 	return 0;
 }
