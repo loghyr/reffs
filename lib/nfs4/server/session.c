@@ -8,6 +8,7 @@
 #endif
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,6 +140,18 @@ bool nfs4_session_unhash(struct server_state *ss, struct nfs4_session *ns)
 
 	ret = cds_lfht_del(ss->ss_session_ht, &ns->ns_node);
 	assert(!ret);
+
+	/* Track 1b 2nd-mechanism triage */
+	LOG("session_unhash: sid=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x clid=%" PRIu64,
+	    ns->ns_sessionid[0], ns->ns_sessionid[1], ns->ns_sessionid[2],
+	    ns->ns_sessionid[3], ns->ns_sessionid[4], ns->ns_sessionid[5],
+	    ns->ns_sessionid[6], ns->ns_sessionid[7], ns->ns_sessionid[8],
+	    ns->ns_sessionid[9], ns->ns_sessionid[10], ns->ns_sessionid[11],
+	    ns->ns_sessionid[12], ns->ns_sessionid[13], ns->ns_sessionid[14],
+	    ns->ns_sessionid[15],
+	    ns->ns_client ?
+		    (uint64_t)nfs4_client_to_client(ns->ns_client)->c_id :
+		    0);
 
 	/*
 	 * Drop the hash table's own ref.  The caller still holds theirs;

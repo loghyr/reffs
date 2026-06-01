@@ -20,6 +20,7 @@
 #endif
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -336,6 +337,17 @@ int trust_stateid_register(const stateid4 *stateid, uint64_t ino,
 	if (!trust_ht)
 		return -EINVAL;
 
+	/* Track 1b 2nd-mechanism triage */
+	{
+		const uint8_t *o = (const uint8_t *)stateid->other;
+
+		LOG("trust_register: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x seqid=%u ino=%" PRIu64
+		    " clid=%" PRIu64 " iomode=%u",
+		    o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8], o[9],
+		    o[10], o[11], stateid->seqid, ino, (uint64_t)clientid,
+		    (unsigned)iomode);
+	}
+
 	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
 
 	/*
@@ -408,6 +420,15 @@ void trust_stateid_revoke(const stateid4 *stateid)
 	if (!trust_ht)
 		return;
 
+	/* Track 1b 2nd-mechanism triage */
+	{
+		const uint8_t *o = (const uint8_t *)stateid->other;
+
+		LOG("trust_revoke: other=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x seqid=%u",
+		    o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8], o[9],
+		    o[10], o[11], stateid->seqid);
+	}
+
 	unsigned long hash = trust_hash((const uint8_t *)stateid->other);
 	struct cds_lfht_iter iter;
 	struct cds_lfht_node *node;
@@ -439,6 +460,9 @@ void trust_stateid_bulk_revoke(clientid4 clientid)
 {
 	if (!trust_ht)
 		return;
+
+	LOG("trust_bulk_revoke: clid=%" PRIu64 " clear_all=%d",
+	    (uint64_t)clientid, (clientid == 0));
 
 	bool clear_all = (clientid == 0);
 	struct cds_lfht_iter iter;
