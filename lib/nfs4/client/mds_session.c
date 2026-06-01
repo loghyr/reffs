@@ -893,14 +893,20 @@ void mds_session_set_owner(struct mds_session *ms, const char *id)
  */
 static CLIENT *mds_session_clnt_open(const char *host)
 {
-	if (!host)
+	if (!host) {
+		fprintf(stderr, "mds_session_clnt_open: NULL host\n");
 		return NULL;
+	}
 
 	char host_buf[256];
 	int port = 0;
 
-	if (mds_parse_host_port(host, host_buf, sizeof(host_buf), &port) < 0)
+	if (mds_parse_host_port(host, host_buf, sizeof(host_buf), &port) < 0) {
+		fprintf(stderr,
+			"mds_session_clnt_open: cannot parse host:port '%s'\n",
+			host);
 		return NULL;
+	}
 
 	/*
 	 * No explicit port -> hand the bare host string to libtirpc's
@@ -909,8 +915,15 @@ static CLIENT *mds_session_clnt_open(const char *host)
 	 * it for PS deployments where the proxy listener does not
 	 * register with rpcbind.
 	 */
-	if (port == 0)
-		return clnt_create(host_buf, NFS4_PROGRAM, NFS_V4, "tcp");
+	if (port == 0) {
+		CLIENT *c = clnt_create(host_buf, NFS4_PROGRAM, NFS_V4, "tcp");
+
+		if (!c)
+			fprintf(stderr,
+				"mds_session_clnt_open: clnt_create('%s') failed: %s\n",
+				host_buf, clnt_spcreateerror(""));
+		return c;
+	}
 
 	struct addrinfo hints = {
 		.ai_family = AF_INET,
@@ -918,8 +931,12 @@ static CLIENT *mds_session_clnt_open(const char *host)
 	};
 	struct addrinfo *res = NULL;
 
-	if (getaddrinfo(host_buf, NULL, &hints, &res) != 0 || !res)
+	if (getaddrinfo(host_buf, NULL, &hints, &res) != 0 || !res) {
+		fprintf(stderr,
+			"mds_session_clnt_open: getaddrinfo('%s') failed\n",
+			host_buf);
 		return NULL;
+	}
 
 	struct sockaddr_in sin = *(struct sockaddr_in *)res->ai_addr;
 
@@ -928,8 +945,11 @@ static CLIENT *mds_session_clnt_open(const char *host)
 
 	int fd = socket(AF_INET, SOCK_STREAM, 0);
 
-	if (fd < 0)
+	if (fd < 0) {
+		fprintf(stderr, "mds_session_clnt_open: socket() failed: %s\n",
+			strerror(errno));
 		return NULL;
+	}
 
 	/*
 	 * SO_REUSEADDR lets bindresvport reuse a reserved port that is
@@ -974,13 +994,22 @@ static CLIENT *mds_session_clnt_open(const char *host)
 			strerror(errno));
 
 	if (connect(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0) {
+		int e = errno;
+
+		fprintf(stderr,
+			"mds_session_clnt_open: connect(%s:%d) failed: %s\n",
+			host_buf, port, strerror(e));
 		close(fd);
+		errno = e;
 		return NULL;
 	}
 
 	CLIENT *clnt = clnttcp_create(&sin, NFS4_PROGRAM, NFS_V4, &fd, 0, 0);
 
 	if (!clnt) {
+		fprintf(stderr,
+			"mds_session_clnt_open: clnttcp_create(%s:%d) failed: %s\n",
+			host_buf, port, clnt_spcreateerror(""));
 		close(fd);
 		return NULL;
 	}
@@ -1518,10 +1547,19 @@ static int mds_session_open_secondary(struct mds_session *ms, const char *host,
 				      enum ec_sec_flavor sec, const char *spn,
 				      CLIENT **out)
 {
+	/*
+	 * mds_session_clnt_open prints a per-step failure diagnostic
+	 * on stderr; preserve whatever errno it left so the caller's
+	 * "secondary transport %u/%u failed: %d" log line carries a
+	 * meaningful errno rather than the historical -ECONNREFUSED
+	 * fallback (which masked bindresvport / getaddrinfo / etc.
+	 * as TCP rejects).
+	 */
+	errno = 0;
 	CLIENT *clnt = mds_session_clnt_open(host);
 
 	if (!clnt)
-		return -ECONNREFUSED;
+		return errno ? -errno : -ECONNREFUSED;
 
 	char service[512];
 
