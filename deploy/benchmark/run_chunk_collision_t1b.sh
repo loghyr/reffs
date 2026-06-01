@@ -165,10 +165,17 @@ case "${MODE}" in
 		HALF=$((STRIPE_DATA / 2))
 		RANK_OFFSET=(0 $HALF)
 		RANK_LENGTH=($HALF $HALF)
-		# Both halves go through RMW on the same stripe.
-		# Race semantics make per-writer verify
-		# informational unless sub-shard atomicity holds.
-		EXPECT_DETERMINISTIC=0
+		# Disjoint sub-stripe halves on the same stripe.
+		# Each writer's RMW touches ALL k data shards
+		# (writes its half + read-back of the other half).
+		# With Option C's cwa_guard CAS (see
+		# chunk-collision-validation.md "Triage: chunk-store
+		# sub-stripe atomicity"), stale-RMW writes are
+		# rejected on the server side and the client retries
+		# the read+encode+write, eventually converging on
+		# both writers' bytes surviving.  Deterministic
+		# pass.
+		EXPECT_DETERMINISTIC=1
 		;;
 	overlap)
 		N=4
@@ -187,11 +194,16 @@ case "${MODE}" in
 		# One stripe-worth, two writers alternating 1 KiB
 		# halves in the FIRST 4 KiB shard.  This is the
 		# hardest case: sub-shard sub-stripe RMW on the same
-		# physical block.
+		# physical block.  With Option C's cwa_guard CAS the
+		# two writers serialize at the chunk-store level: the
+		# first writer's CHUNK_WRITE+COMMIT wins, the second
+		# writer's CHUNK_WRITE rejects with NFS4ERR_DELAY,
+		# the retry re-reads the just-committed state and
+		# encodes around it.  Both 1 KiB halves survive.
 		FILE_SIZE=$((STRIPE_DATA))
 		RANK_OFFSET=(0 1024)
 		RANK_LENGTH=(1024 1024)
-		EXPECT_DETERMINISTIC=0
+		EXPECT_DETERMINISTIC=1
 		;;
 esac
 

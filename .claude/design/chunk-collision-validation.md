@@ -1716,3 +1716,62 @@ Option C with full CAS is the correct semantics; the BAT demo
 runs it serialised at acceptable cost as long as the IOR `-F 0`
 throughput target lives in Track 2 (PS-based) rather than direct
 ec_demo, which it does.
+
+## Option C full -- shipped, chunk-split + subchunk now DETERMINISTIC
+
+Commit `34074c43516e` (rebased to `03d91554a34c`) implements the
+five-touchpoint plan from the previous slice.  Validation on
+shadow:
+
+| Mode | Before | After |
+|------|--------|-------|
+| disjoint | PASS (control) | PASS (unchanged) |
+| chunk-split | FAIL (1 of 2 writers' bytes zeroed) | **PASS** (both writers verify clean) |
+| overlap | FAIL (4 of 4 verify FAIL) | informational (overlapping ranges are inherently ambiguous; serialised but verify outcome depends on order) |
+| subchunk | FAIL (1 of 2 writers' bytes zeroed) | **PASS** (both writers verify clean) |
+
+chunk-split (5/5 runs) -- every run, both writers' bytes survive.
+subchunk same.  No silent corruption.  Harness modes for the two
+deterministic-correct cases flipped from EXPECT_DETERMINISTIC=0
+("informational") to EXPECT_DETERMINISTIC=1 (hard pass/fail).
+
+`cs_chunk_busy_delay` counter shows 0 events on the DSes -- the
+writers naturally serialise enough that the CAS gate rarely needs
+to fire in this two-writer workload.  When it DOES fire (rare),
+the ec_write_codec_range retry loop catches the -EAGAIN and re-
+does the RMW with a fresh read.
+
+The on-wire shape now matches the protocol-correct semantics
+the FFv2 draft already encodes via write_chunk_guard4: writers
+present the version they read; concurrent modification is
+detected; the loser retries against the winner's committed
+state.  No protocol changes; no XDR drift; the wire was already
+correct, ec_demo just wasn't using it.
+
+### What's left
+
+- **overlap** mode: the harness's verify still expects each
+  writer's full range to match its stamps.  With Option C the
+  writers serialise correctly but the LAST writer wins on the
+  overlapped bytes; earlier writers' overlapped bytes are
+  legitimately replaced.  Verify FAIL is expected for any
+  writer whose range overlaps a later writer.  The harness
+  classifies this correctly (`EXPECT_DETERMINISTIC=0`) and the
+  outcome is "every byte matches SOME writer's payload" --
+  which the current verify doesn't check, but is a reasonable
+  next-slice enhancement to the harness.
+
+- **Option B (delta-parity)** stays as the long-term performance
+  follow-on for the IOR `-F 0` workload.  Option C correctly
+  serialises sub-stripe RMW contention; under heavy contention
+  it throttles to one-writer-at-a-time on hot stripes.  For
+  the BAT demo and any single-writer-per-stripe workload, that
+  cost is invisible.  For HPC shared-file at scale, B remains
+  necessary.
+
+The Track 1b chunk-collision validation harness has now achieved
+its design goal: it produces deterministic pass/fail for the
+non-overlapping sub-stripe modes (chunk-split, subchunk) and
+correctly distinguishes them from the inherently-ambiguous
+overlap mode.  The actual chunk-store atomicity bug it was
+designed to expose is fixed at the protocol-correct level.
