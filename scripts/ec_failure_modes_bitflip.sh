@@ -124,9 +124,13 @@ run_one() {
 		# derived from the inode number, which we don't know
 		# directly.  Find the most-recently-modified .dat under
 		# /state in the DS container.
+		# DS data lives under /tmp/reffs_ds_data/sb_1/ino_*.dat on
+		# this docker image; --backend=ram defaults to /tmp.
+		# Newest-mtime .dat = the file we just wrote (the test
+		# only writes one file at a time).
 		local dat
 		dat=$(sudo docker exec reffs-bench-ds0 sh -c \
-			'find /state -name "ino_*.dat" -newer /etc/hostname -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-' \
+			'find /tmp -name "ino_*.dat" -printf "%T@ %p\n" 2>/dev/null | sort -nr | head -1 | cut -d" " -f2-' \
 			2>&1 | tail -1)
 		if [[ -n "${dat}" ]]; then
 			# XOR byte 17 with 0xFF -- arbitrary mid-block offset
